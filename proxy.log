@@ -1,0 +1,9 @@
+
+> expense-app-proxy@1.0.0 start
+> node proxy-server.js
+
+🚀 プロキシサーバーが起動しました: http://localhost:3001
+✅ Slack通知を送信しました
+✅ Slack通知を送信しました
+✅ Slack通知を送信しました
+✅ Slack通知を送信しました

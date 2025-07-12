@@ -1,0 +1,127 @@
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
+
+/* 新しいスタイル */
+.expense-row {
+  display: flex;
+  margin-bottom: 10px;
+  align-items: center;
+  flex-wrap: wrap; /* 画面が狭い場合に折り返す */
+  gap: 10px; /* 要素間の隙間 */
+}
+
+.expense-input {
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  flex: 1; /* 均等な幅に広がる */
+  min-width: 120px; /* 最小幅を設定 */
+}
+
+.amount-input {
+  min-width: 60px; /* 金額の最小幅をより小さく */
+  max-width: 100px; /* 金額の最大幅を制限 */
+}
+
+.transportation-input {
+  min-width: 220px; /* 交通機関の最小幅をさらに広げる */
+}
+
+.notes-input {
+  min-width: 900px; /* 備考欄の最小幅をさらに広げる */
+  flex: 2; /* 備考欄により多くのスペースを割り当て */
+}
+
+/* 日付入力フィールドのスタイル */
+.date-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 120px;
+}
+
+.date-input {
+  width: 100%;
+  color: transparent;
+}
+
+.date-input:focus,
+.date-input:valid {
+  color: #000;
+}
+
+.date-placeholder {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #999;
+  pointer-events: none;
+  font-size: 14px;
+  background: white;
+  padding: 0 2px;
+}
+
+.date-input:focus + .date-placeholder,
+.date-input:valid + .date-placeholder {
+  display: none;
+}
+
+/* スマホ表示時の調整 */
+@media (max-width: 600px) {
+  .expense-row {
+    flex-direction: column; /* 縦に並べる */
+    align-items: stretch; /* 幅をいっぱいに広げる */
+  }
+
+  .expense-input {
+    width: 100%; /* 幅をいっぱいに広げる */
+    margin-right: 0 !important; /* インラインスタイルを上書き */
+  }
+
+  .expense-row button {
+    width: 100%;
+    margin-left: 0 !important;
+  }
+}
