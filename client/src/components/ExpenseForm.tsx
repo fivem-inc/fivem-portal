@@ -169,13 +169,35 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
           text: `新しい交通費申請\n申請者: ${applicantName}\n申請日: ${new Date().toLocaleDateString('ja-JP')}\n申請内容: ${expenseTypes}\n項目数: ${expensesToSubmit.length}件`
         };
         
-        // プロキシサーバー経由でSlackに送信
-        await fetch('http://localhost:3001/api/slack-notify', {
+        // Supabase Edge Function経由でSlackに送信
+        const totalAmount = expensesToSubmit.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0);
+        
+        const slackPayload = {
+          expense: {
+            user_name: applicantName,
+            date: new Date().toLocaleDateString('ja-JP'),
+            total_amount: totalAmount,
+            items_count: expensesToSubmit.length,
+            items: expensesToSubmit.map(item => ({
+              type: item.type,
+              from_station: item.from_station,
+              to_station: item.to_station,
+              amount: item.amount,
+              start_date: item.start_date,
+              end_date: item.end_date,
+              notes: item.notes,
+              transportation: item.transportation
+            }))
+          }
+        };
+
+        await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/slack-notify`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
           },
-          body: JSON.stringify({ message })
+          body: JSON.stringify(slackPayload)
         });
         
         console.log('Slack通知を送信しました');
