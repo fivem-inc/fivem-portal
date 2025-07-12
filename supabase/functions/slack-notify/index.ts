@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 
 // Slack Webhook URL
-const SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/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"
+const SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/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"
 
 serve(async (req) => {
   try {
