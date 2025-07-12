@@ -3,7 +3,17 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 // Slack Webhook URL
 const SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/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"
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
 serve(async (req) => {
+  // Handle CORS preflight requests
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
   try {
     // 申請データを受け取る
     const { expense } = await req.json()
@@ -94,7 +104,7 @@ serve(async (req) => {
     
     if (response.ok) {
       return new Response(JSON.stringify({ success: true }), {
-        headers: { "Content-Type": "application/json" },
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200
       })
     } else {
@@ -106,7 +116,7 @@ serve(async (req) => {
     console.error('Slack通知エラー:', error)
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
-      headers: { "Content-Type": "application/json" }
+      headers: { ...corsHeaders, "Content-Type": "application/json" }
     })
   }
 })
