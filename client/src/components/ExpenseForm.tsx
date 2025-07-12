@@ -165,11 +165,6 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
         
         // Slackメッセージを作成（シンプル版）
         const applicantName = (parentProfileName || profileName).trim() || user.email;
-        const message = {
-          text: `新しい交通費申請\n申請者: ${applicantName}\n申請日: ${new Date().toLocaleDateString('ja-JP')}\n申請内容: ${expenseTypes}\n項目数: ${expensesToSubmit.length}件`
-        };
-        
-        // Supabase Edge Function経由でSlackに送信
         const totalAmount = expensesToSubmit.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0);
         
         const slackPayload = {
@@ -191,7 +186,10 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
           }
         };
 
-        await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/slack-notify`, {
+        console.log('Slack通知URL:', `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/slack-notify`);
+        console.log('Slack通知ペイロード:', JSON.stringify(slackPayload, null, 2));
+
+        const slackResponse = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/slack-notify`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -200,7 +198,16 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
           body: JSON.stringify(slackPayload)
         });
         
-        console.log('Slack通知を送信しました');
+        console.log('Slack通知レスポンス:', slackResponse.status, slackResponse.statusText);
+        
+        if (!slackResponse.ok) {
+          const errorText = await slackResponse.text();
+          console.error('Slack通知エラー:', errorText);
+          throw new Error(`Slack通知失敗: ${slackResponse.status} - ${errorText}`);
+        } else {
+          const responseData = await slackResponse.json();
+          console.log('Slack通知成功:', responseData);
+        }
       } catch (slackError) {
         console.error('Slack通知の送信に失敗:', slackError);
         // エラーでも申請は成功させる
