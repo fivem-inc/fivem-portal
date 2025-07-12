@@ -158,11 +158,6 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     } else {
       // 🚀 Slack通知を送信
       try {
-        // 申請項目の種類のみを作成（単発、定期、出張のみ）
-        const expenseTypes = expensesToSubmit.map(item => {
-          return item.type === 'regular' ? '定期' : item.type === 'business_trip' ? '出張' : '単発';
-        }).join('、');
-        
         // Slackメッセージを作成（シンプル版）
         const applicantName = (parentProfileName || profileName).trim() || user.email;
         const totalAmount = expensesToSubmit.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0);
