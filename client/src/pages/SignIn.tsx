@@ -142,6 +142,15 @@ export default function SignIn() {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    
+    // パスワードリセット中のユーザーはログインをブロック
+    const blockedEmail = localStorage.getItem('blockedUserEmail');
+    if (blockedEmail === email) {
+      setError('このアカウントはパスワードリセット中です。メールを確認して新しいパスワードを設定してください。');
+      setLoading(false);
+      return;
+    }
+    
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
       // エラーメッセージを日本語化
@@ -212,6 +221,9 @@ export default function SignIn() {
     setError(null);
 
     try {
+      // ユーザーの現在のセッションを確認
+      const { data: currentUser } = await supabase.auth.getUser();
+      
       // パスワードリセットメールを送信
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: 'https://five-m-expense.vercel.app/'
@@ -220,8 +232,15 @@ export default function SignIn() {
       if (error) {
         setError(error.message);
       } else {
-        // フラグを設定
+        // フラグを設定してユーザーをブラックリスト化
         localStorage.setItem('pendingPasswordReset', 'true');
+        localStorage.setItem('blockedUserEmail', email);
+        
+        // 現在ログインしている場合は強制ログアウト
+        if (currentUser?.user) {
+          await supabase.auth.signOut();
+        }
+        
         alert('パスワードリセットのメールを送信しました。メールを確認して新しいパスワードを設定してください。');
         setIsResettingPassword(false);
       }
@@ -262,6 +281,11 @@ export default function SignIn() {
         setIsSettingNewPassword(false);
         setNewPassword('');
         setConfirmNewPassword('');
+        
+        // ブロックを解除
+        localStorage.removeItem('pendingPasswordReset');
+        localStorage.removeItem('blockedUserEmail');
+        
         setConfirmationMessage('✅ パスワードが更新されました！新しいパスワードでログインしてください。');
       }
     } catch (error) {
