@@ -238,7 +238,12 @@ export default function SignIn() {
     }
 
     try {
-      // 保存されたトークンでセッションを復元
+      console.log('パスワード更新処理開始...');
+      
+      // 複数のアプローチでセッション確立を試行
+      let sessionEstablished = false;
+      
+      // 1. 保存されたトークンを試行
       const resetTokensStr = localStorage.getItem('resetTokens');
       if (resetTokensStr) {
         try {
@@ -250,28 +255,45 @@ export default function SignIn() {
             refresh_token: resetTokens.refreshToken
           });
           
-          if (sessionError) {
-            console.error('セッション設定エラー:', sessionError);
+          if (!sessionError) {
+            console.log('保存されたトークンでセッション設定成功');
+            sessionEstablished = true;
           } else {
-            console.log('セッション設定成功');
+            console.error('保存されたトークンでセッション設定失敗:', sessionError);
           }
         } catch (parseError) {
           console.error('トークン解析エラー:', parseError);
         }
       }
+      
+      // 2. 現在のセッションを確認
+      if (!sessionEstablished) {
+        const { data: session } = await supabase.auth.getSession();
+        if (session.session) {
+          console.log('既存のセッションを使用');
+          sessionEstablished = true;
+        }
+      }
+      
+      console.log('セッション状態:', sessionEstablished ? '確立済み' : '未確立');
 
-      console.log('パスワード更新中...');
+      // パスワード更新実行
+      console.log('パスワード更新実行中...');
       const { error } = await supabase.auth.updateUser({
         password: newPassword
       });
 
       if (error) {
         console.error('パスワード更新エラー:', error);
-        setError(`パスワードの更新に失敗しました: ${error.message}`);
+        if (error.message.includes('session') || error.message.includes('Auth')) {
+          setError('セッションが無効です。メールリンクから再度アクセスしてください。');
+        } else {
+          setError(`パスワードの更新に失敗しました: ${error.message}`);
+        }
       } else {
-        console.log('パスワード更新成功');
+        console.log('パスワード更新成功！');
         
-        // 清掃処理
+        // 成功後の清掃処理
         localStorage.removeItem('resetTokens');
         await supabase.auth.signOut();
         
@@ -282,7 +304,7 @@ export default function SignIn() {
       }
     } catch (error) {
       console.error('パスワード設定エラー:', error);
-      setError('パスワードの更新中にエラーが発生しました。');
+      setError('パスワードの更新中にエラーが発生しました。再度お試しください。');
     }
     setLoading(false);
   };
@@ -387,12 +409,36 @@ export default function SignIn() {
           {isSignUp ? 'ログイン画面に戻る' : '新規登録はこちら'}
         </button>
       )}
-      {!isSignUp && !isResettingPassword && (
+      {!isSignUp && !isResettingPassword && !isSettingNewPassword && (
         <button
           onClick={() => setIsResettingPassword(true)}
           style={{ background: 'none', border: 'none', color: 'gray', cursor: 'pointer', marginTop: '10px' }}
         >
           パスワードを忘れた場合
+        </button>
+      )}
+      {!isSignUp && !isResettingPassword && !isSettingNewPassword && (
+        <button
+          onClick={() => {
+            console.log('手動でパスワード設定画面に切り替え');
+            setIsSettingNewPassword(true);
+            setIsSignUp(false);
+            setIsResettingPassword(false);
+            setConfirmationMessage('🔐 メールリンクから来た場合は、ここで新しいパスワードを設定してください。');
+          }}
+          style={{ 
+            background: '#ff6b6b', 
+            color: 'white', 
+            border: 'none', 
+            padding: '8px 16px', 
+            borderRadius: '4px',
+            cursor: 'pointer', 
+            marginTop: '15px',
+            fontSize: '14px',
+            fontWeight: 'bold'
+          }}
+        >
+          パスワード設定画面へ（メールリンク用）
         </button>
       )}
       {isResettingPassword && (
