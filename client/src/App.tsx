@@ -22,6 +22,32 @@ const ProtectedLayout: React.FC = () => {
 
 // メインのDashboardコンポーネント
 const Dashboard: React.FC = () => {
+  // パスワードリセット検知処理（ルートパスでも実行）
+  React.useEffect(() => {
+    const currentUrl = window.location.href;
+    const urlObj = new URL(currentUrl);
+    
+    console.log('Dashboard: URL解析', {
+      href: currentUrl,
+      hash: urlObj.hash,
+      search: urlObj.search
+    });
+    
+    // URLハッシュにトークンがある場合はサインイン画面にリダイレクト
+    if (urlObj.hash) {
+      const hashParams = new URLSearchParams(urlObj.hash.substring(1));
+      const accessToken = hashParams.get('access_token');
+      const type = hashParams.get('type');
+      
+      console.log('Dashboard: ハッシュパラメータ', { hasAccessToken: !!accessToken, type });
+      
+      if (accessToken && type === 'recovery') {
+        console.log('Dashboard: パスワードリセットトークン検知 - サインイン画面にリダイレクト');
+        window.location.href = '/signin' + urlObj.hash;
+        return;
+      }
+    }
+  }, []);
 
   const { 
     user, 
