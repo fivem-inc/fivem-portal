@@ -270,6 +270,36 @@ export default function SignIn() {
     }
 
     try {
+      // URLパラメータからセッション情報を取得してセットアップ
+      const currentUrl = window.location.href;
+      const urlObj = new URL(currentUrl);
+      
+      let accessToken = urlObj.searchParams.get('access_token');
+      let refreshToken = urlObj.searchParams.get('refresh_token');
+      
+      // URLフラグメントからも確認
+      if (!accessToken || !refreshToken) {
+        const hashParams = new URLSearchParams(urlObj.hash.substring(1));
+        accessToken = hashParams.get('access_token');
+        refreshToken = hashParams.get('refresh_token');
+      }
+      
+      if (accessToken && refreshToken) {
+        // セッションを設定
+        const { error: sessionError } = await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken
+        });
+        
+        if (sessionError) {
+          console.error('セッション設定エラー:', sessionError);
+          setError('認証セッションの設定に失敗しました。メールリンクから再度アクセスしてください。');
+          setLoading(false);
+          return;
+        }
+      }
+
+      // パスワード更新
       const { error } = await supabase.auth.updateUser({
         password: newPassword
       });
@@ -289,6 +319,7 @@ export default function SignIn() {
         setConfirmationMessage('✅ パスワードが更新されました！新しいパスワードでログインしてください。');
       }
     } catch (error) {
+      console.error('パスワード設定エラー:', error);
       setError('パスワードの更新中にエラーが発生しました。');
     }
     setLoading(false);
