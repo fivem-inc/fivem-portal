@@ -232,9 +232,15 @@ export default function SignIn() {
         }
         setError(errorMessage);
       } else {
-        // パスワードリセット試行の記録とフラグ設定
-        localStorage.setItem('recentPasswordResetAttempt', Date.now().toString());
+        // 複数の方法でパスワードリセット試行を記録
+        const resetTime = Date.now().toString();
+        localStorage.setItem('recentPasswordResetAttempt', resetTime);
         localStorage.setItem('forcedPasswordReset', 'true');
+        localStorage.setItem('passwordResetEmail', cleanEmail);
+        sessionStorage.setItem('recentPasswordResetAttempt', resetTime);
+        
+        // URLにもパラメータを追加してリダイレクト
+        console.log('パスワードリセット記録保存:', { resetTime, email: cleanEmail });
         
         alert('パスワードをリセットしました。メールを確認して新しいパスワードを設定してください。');
         setIsResettingPassword(false);
