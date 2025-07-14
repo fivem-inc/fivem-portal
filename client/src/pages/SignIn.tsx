@@ -292,40 +292,48 @@ export default function SignIn() {
     }
 
     try {
-      // URLパラメータからセッション情報を取得してセットアップ
-      const currentUrl = window.location.href;
-      const urlObj = new URL(currentUrl);
+      // 現在のセッションを確認
+      const { data: currentSession } = await supabase.auth.getSession();
+      console.log('現在のセッション状態:', !!currentSession.session);
       
-      let accessToken = urlObj.searchParams.get('access_token');
-      let refreshToken = urlObj.searchParams.get('refresh_token');
-      
-      // URLフラグメントからも確認
-      if (!accessToken || !refreshToken) {
-        const hashParams = new URLSearchParams(urlObj.hash.substring(1));
-        accessToken = hashParams.get('access_token');
-        refreshToken = hashParams.get('refresh_token');
-      }
-      
-      if (accessToken && refreshToken) {
-        // セッションを設定
-        console.log('セッション設定中...', { hasAccessToken: !!accessToken, hasRefreshToken: !!refreshToken });
-        const { error: sessionError } = await supabase.auth.setSession({
-          access_token: accessToken,
-          refresh_token: refreshToken
-        });
+      if (!currentSession.session) {
+        // URLパラメータからセッション情報を取得してセットアップ
+        const currentUrl = window.location.href;
+        const urlObj = new URL(currentUrl);
         
-        if (sessionError) {
-          console.error('セッション設定エラー:', sessionError);
-          setError(`認証セッションの設定に失敗しました: ${sessionError.message}`);
+        let accessToken = urlObj.searchParams.get('access_token');
+        let refreshToken = urlObj.searchParams.get('refresh_token');
+        
+        // URLフラグメントからも確認
+        if (!accessToken || !refreshToken) {
+          const hashParams = new URLSearchParams(urlObj.hash.substring(1));
+          accessToken = hashParams.get('access_token');
+          refreshToken = hashParams.get('refresh_token');
+        }
+        
+        if (accessToken && refreshToken) {
+          // セッションを設定
+          console.log('セッション設定中...', { hasAccessToken: !!accessToken, hasRefreshToken: !!refreshToken });
+          const { error: sessionError } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken
+          });
+          
+          if (sessionError) {
+            console.error('セッション設定エラー:', sessionError);
+            setError(`認証セッションの設定に失敗しました: ${sessionError.message}`);
+            setLoading(false);
+            return;
+          }
+          console.log('セッション設定成功');
+        } else {
+          console.log('トークンが見つかりません', { accessToken: !!accessToken, refreshToken: !!refreshToken });
+          setError('認証トークンが見つかりません。メールリンクから再度アクセスしてください。');
           setLoading(false);
           return;
         }
-        console.log('セッション設定成功');
       } else {
-        console.log('トークンが見つかりません', { accessToken: !!accessToken, refreshToken: !!refreshToken });
-        setError('認証トークンが見つかりません。メールリンクから再度アクセスしてください。');
-        setLoading(false);
-        return;
+        console.log('既存のセッションを使用');
       }
 
       // パスワード更新
