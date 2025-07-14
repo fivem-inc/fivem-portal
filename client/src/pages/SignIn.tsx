@@ -55,7 +55,8 @@ export default function SignIn() {
       options: {
         data: { 
           name: name.trim(),
-          display_name: name.trim()
+          display_name: name.trim(),
+          full_name: name.trim()
         }
       }
     });
