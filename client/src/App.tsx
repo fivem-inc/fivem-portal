@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { Routes, Route, Navigate, Outlet, BrowserRouter } from 'react-router-dom';
 import SignIn from './pages/SignIn';
 import ResetPassword from './pages/ResetPassword';
+import ChangeEmail from './pages/ChangeEmail';
 import ExpenseForm from './components/ExpenseForm';
 import AdminPanel from './components/AdminPanel';
 import HistoryView from './components/HistoryView';
@@ -165,6 +166,7 @@ function App() {
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/" element={<ProtectedLayout />}>
             <Route index element={<Dashboard />} />
+            <Route path="/change-email" element={<ChangeEmail />} />
           </Route>
         </Routes>
       </AuthProvider>
