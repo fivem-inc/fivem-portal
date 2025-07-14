@@ -51,10 +51,16 @@ export default function SignIn() {
       // SIGNED_INイベントでrecoveryタイプかチェック
       if (event === 'SIGNED_IN' && session) {
         const currentUrl = window.location.href;
+        const awaitingReset = localStorage.getItem('awaitingPasswordReset');
         
-        // URLにtype=recoveryが含まれているかチェック
-        if (currentUrl.includes('type=recovery') || currentUrl.includes('#access_token')) {
+        // URLにtype=recoveryが含まれているか、リセット待機中かチェック
+        if (currentUrl.includes('type=recovery') || currentUrl.includes('#access_token') || awaitingReset === 'true') {
           console.log('✅ SIGNED_IN + recovery検知 - パスワード設定画面に切り替え');
+          console.log('検知理由:', { 
+            hasRecoveryUrl: currentUrl.includes('type=recovery'),
+            hasAccessToken: currentUrl.includes('#access_token'),
+            awaitingReset: awaitingReset === 'true'
+          });
           
           setIsSettingNewPassword(true);
           setIsSignUp(false);
@@ -65,6 +71,9 @@ export default function SignIn() {
             accessToken: session.access_token,
             refreshToken: session.refresh_token
           }));
+          
+          // フラグをクリア
+          localStorage.removeItem('awaitingPasswordReset');
           
           // URLクリーンアップ
           window.history.replaceState({}, document.title, window.location.pathname);
@@ -81,14 +90,25 @@ export default function SignIn() {
       console.log('初期URL確認:', {
         url: currentUrl,
         hash: urlObj.hash,
-        hasRecovery: currentUrl.includes('type=recovery')
+        search: urlObj.search,
+        hasRecovery: currentUrl.includes('type=recovery'),
+        hasResetParam: urlObj.searchParams.get('reset')
       });
+      
+      // URLクエリパラメータからreset=trueをチェック
+      if (urlObj.searchParams.get('reset') === 'true') {
+        console.log('✅ リセットパラメータ検知 - パスワード設定準備');
+        // この時点ではまだセッションがないので、flagを立てておく
+        localStorage.setItem('awaitingPasswordReset', 'true');
+      }
       
       // URLハッシュからrecoveryパラメータを検出
       if (urlObj.hash) {
         const hashParams = new URLSearchParams(urlObj.hash.substring(1));
         const accessToken = hashParams.get('access_token');
         const type = hashParams.get('type');
+        
+        console.log('ハッシュ詳細:', { accessToken: !!accessToken, type, fullHash: urlObj.hash });
         
         if (accessToken && type === 'recovery') {
           console.log('✅ 初期状態でrecoveryトークン検知 - パスワード設定画面表示');
@@ -97,6 +117,9 @@ export default function SignIn() {
           setIsSignUp(false);
           setIsResettingPassword(false);
           setConfirmationMessage('🔐 メールからアクセスしました。新しいパスワードを設定してください。');
+          
+          // フラグをクリア
+          localStorage.removeItem('awaitingPasswordReset');
           
           // URLクリーンアップ
           window.history.replaceState({}, document.title, window.location.pathname);
@@ -198,7 +221,7 @@ export default function SignIn() {
       
       // パスワードリセットメールを送信
       const { error: resetError } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-        redirectTo: `${window.location.origin}/signin`
+        redirectTo: `${window.location.origin}/signin?reset=true`
       });
 
       if (resetError) {
