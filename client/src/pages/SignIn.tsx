@@ -1,5 +1,5 @@
 import { useState, useContext, useEffect } from 'react';
-import { Navigate, useSearchParams } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { AuthContext } from '../contexts/AuthContext.tsx';
 
@@ -17,7 +17,6 @@ export default function SignIn() {
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
   const { user } = useContext(AuthContext); // AuthContextからuserを取得
-  const [searchParams] = useSearchParams();
 
   // シンプルなパスワードリセット検知
   useEffect(() => {
