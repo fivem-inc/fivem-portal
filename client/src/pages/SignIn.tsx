@@ -211,16 +211,53 @@ export default function SignIn() {
     setLoading(true);
     setError(null);
 
-    const { error } = await supabase.auth.resetPasswordForEmail(email);
+    try {
+      // 1. パスワードリセットメールを送信
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: 'https://five-m-expense.vercel.app/'
+      });
 
-    if (error) {
-      setError(error.message);
-    } else {
-      // パスワードリセット送信時にフラグを設定
+      if (error) {
+        setError(error.message);
+        setLoading(false);
+        return;
+      }
+
+      // 2. 即座にランダムパスワードに変更して古いパスワードを無効化
+      const randomPassword = Math.random().toString(36).slice(-12) + 'A1!';
+      
+      // まず一時的にログイン（管理者権限で）
+      const { error: signInError } = await supabase.auth.signInWithPassword({ 
+        email, 
+        password 
+      });
+
+      if (!signInError) {
+        // ログイン成功したらパスワードを即座に変更
+        const { error: updateError } = await supabase.auth.updateUser({
+          password: randomPassword
+        });
+        
+        if (updateError) {
+          console.error('パスワード無効化失敗:', updateError);
+        } else {
+          console.log('古いパスワードを無効化しました');
+        }
+        
+        // 即座にログアウト
+        await supabase.auth.signOut();
+      }
+
+      // 3. フラグを設定
       localStorage.setItem('pendingPasswordReset', 'true');
-      alert('パスワードリセットのメールを送信しました。メールを確認してください。');
-      setIsResettingPassword(false); // リセット後、ログインフォームに戻る
+      alert('パスワードリセットのメールを送信しました。古いパスワードは無効になりました。メールを確認して新しいパスワードを設定してください。');
+      setIsResettingPassword(false);
+      
+    } catch (error) {
+      console.error('パスワードリセット処理エラー:', error);
+      setError('パスワードリセット処理中にエラーが発生しました。');
     }
+    
     setLoading(false);
   };
 
