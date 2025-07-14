@@ -167,7 +167,11 @@ export default function SignIn() {
     
     // パスワードリセット中のユーザーはログインをブロック
     const blockedEmail = localStorage.getItem('blockedUserEmail');
-    if (blockedEmail === email) {
+    const pendingPasswordReset = localStorage.getItem('pendingPasswordReset');
+    
+    console.log('ログイン試行:', { email, blockedEmail, pendingPasswordReset });
+    
+    if (blockedEmail === email && pendingPasswordReset) {
       setError('このアカウントはパスワードリセット中です。メールを確認して新しいパスワードを設定してください。');
       setLoading(false);
       return;
@@ -479,6 +483,18 @@ export default function SignIn() {
           style={{ background: 'none', border: 'none', color: 'blue', cursor: 'pointer', marginTop: '10px' }}
         >
           ログイン画面に戻る
+        </button>
+      )}
+      {!isSignUp && !isResettingPassword && !isSettingNewPassword && (
+        <button
+          onClick={() => {
+            localStorage.removeItem('pendingPasswordReset');
+            localStorage.removeItem('blockedUserEmail');
+            alert('パスワードリセット状態をクリアしました。');
+          }}
+          style={{ background: 'none', border: 'none', color: 'red', cursor: 'pointer', marginTop: '5px', fontSize: '12px' }}
+        >
+          リセット状態をクリア
         </button>
       )}
     </div>
