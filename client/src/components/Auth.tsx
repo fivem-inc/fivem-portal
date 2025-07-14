@@ -53,6 +53,13 @@ export default function Auth() {
     return <div>Loading...</div>
   }
 
+  // パスワードリセット中はログイン画面に強制リダイレクト
+  const pendingPasswordReset = localStorage.getItem('pendingPasswordReset')
+  if (pendingPasswordReset && user) {
+    console.log('Auth.tsx: パスワードリセット中のためログイン画面にリダイレクト')
+    return <Navigate to="/" />
+  }
+
   if (!user) {
     return <Navigate to="/" />
   }

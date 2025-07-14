@@ -22,6 +22,15 @@ const ProtectedLayout: React.FC = () => {
 
 // メインのDashboardコンポーネント
 const Dashboard: React.FC = () => {
+  // パスワードリセット中はログイン画面にリダイレクト
+  React.useEffect(() => {
+    const pendingPasswordReset = localStorage.getItem('pendingPasswordReset');
+    if (pendingPasswordReset) {
+      console.log('Dashboard: パスワードリセット中のためリダイレクト');
+      window.location.href = '/signin';
+    }
+  }, []);
+
   const { 
     user, 
     isAdmin, 
