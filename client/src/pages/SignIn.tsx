@@ -18,15 +18,52 @@ export default function SignIn() {
   const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
   const { user } = useContext(AuthContext); // AuthContextからuserを取得
 
-  // シンプルなパスワードリセット検知
+  // パスワードリセット検知の強化
   useEffect(() => {
     const currentUrl = window.location.href;
-    if (currentUrl.includes('type=recovery')) {
-      console.log('URLからパスワードリセット検知 - パスワード設定画面表示');
-      setIsSettingNewPassword(true);
-      setIsSignUp(false);
-      setIsResettingPassword(false);
-      setConfirmationMessage('🔐 新しいパスワードを設定してください。');
+    const urlObj = new URL(currentUrl);
+    
+    console.log('URL解析:', {
+      href: currentUrl,
+      search: urlObj.search,
+      hash: urlObj.hash,
+      searchParams: Object.fromEntries(urlObj.searchParams.entries())
+    });
+    
+    // URLパラメータから type を確認
+    const type = urlObj.searchParams.get('type');
+    
+    // URL ハッシュからも確認
+    const hashParams = new URLSearchParams(urlObj.hash.substring(1));
+    const hashType = hashParams.get('type');
+    
+    // 複数の方法でパスワードリセットを検知
+    const isPasswordReset = 
+      type === 'recovery' || 
+      hashType === 'recovery' || 
+      currentUrl.includes('type=recovery') ||
+      currentUrl.includes('#type=recovery');
+    
+    console.log('パスワードリセット検知:', {
+      type,
+      hashType,
+      urlIncludes: currentUrl.includes('type=recovery'),
+      hashIncludes: currentUrl.includes('#type=recovery'),
+      isPasswordReset
+    });
+    
+    if (isPasswordReset) {
+      console.log('パスワードリセット検知 - パスワード設定画面表示');
+      
+      // 自動ログインを防ぐために強制ログアウト
+      supabase.auth.signOut().then(() => {
+        console.log('パスワードリセット用に強制ログアウト実行');
+        setIsSettingNewPassword(true);
+        setIsSignUp(false);
+        setIsResettingPassword(false);
+        setConfirmationMessage('🔐 新しいパスワードを設定してください。');
+      });
+      
       // URLをクリーンアップ
       window.history.replaceState({}, document.title, window.location.pathname);
     }
