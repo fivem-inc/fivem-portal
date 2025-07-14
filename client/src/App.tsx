@@ -13,13 +13,6 @@ import type { Expense, Submission } from './types';
 const ProtectedLayout: React.FC = () => {
   const { user } = useAuth();
 
-  // パスワードリセット中はログイン画面にリダイレクト
-  const pendingPasswordReset = localStorage.getItem('pendingPasswordReset');
-  if (pendingPasswordReset) {
-    console.log('ProtectedLayout: パスワードリセット中のためログイン画面にリダイレクト');
-    return <Navigate to="/signin" />;
-  }
-
   if (!user) {
     return <Navigate to="/signin" />;
   }
@@ -29,14 +22,6 @@ const ProtectedLayout: React.FC = () => {
 
 // メインのDashboardコンポーネント
 const Dashboard: React.FC = () => {
-  // パスワードリセット中はログイン画面にリダイレクト
-  React.useEffect(() => {
-    const pendingPasswordReset = localStorage.getItem('pendingPasswordReset');
-    if (pendingPasswordReset) {
-      console.log('Dashboard: パスワードリセット中のためリダイレクト');
-      window.location.href = '/signin';
-    }
-  }, []);
 
   const { 
     user, 

@@ -19,185 +19,26 @@ export default function SignIn() {
   const { user } = useContext(AuthContext); // AuthContextからuserを取得
   const [searchParams] = useSearchParams();
 
-  // 初期状態でパスワードリセットURLかチェック
+  // シンプルなパスワードリセット検知
   useEffect(() => {
     const currentUrl = window.location.href;
     if (currentUrl.includes('type=recovery')) {
-      console.log('初期状態でパスワードリセットURL検知 - パスワード設定画面表示');
+      console.log('URLからパスワードリセット検知 - パスワード設定画面表示');
       setIsSettingNewPassword(true);
       setIsSignUp(false);
       setIsResettingPassword(false);
       setConfirmationMessage('🔐 新しいパスワードを設定してください。');
-      localStorage.setItem('pendingPasswordReset', 'true');
+      // URLをクリーンアップ
+      window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
-
-  // Supabase認証イベントを監視
-  useEffect(() => {
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('認証イベント:', event, !!session);
-      
-      // PASSWORD_RECOVERYイベントを検知
-      if (event === 'PASSWORD_RECOVERY' && session) {
-        console.log('PASSWORD_RECOVERYイベント検知 - パスワード設定画面表示');
-        console.log('セッション情報を保存:', {
-          access_token: !!session.access_token,
-          refresh_token: !!session.refresh_token
-        });
-        
-        // セッション情報を保存
-        localStorage.setItem('passwordResetSession', JSON.stringify({
-          access_token: session.access_token,
-          refresh_token: session.refresh_token
-        }));
-        
-        setIsSettingNewPassword(true);
-        setIsSignUp(false);
-        setIsResettingPassword(false);
-        setConfirmationMessage('🔐 新しいパスワードを設定してください。');
-        localStorage.setItem('pendingPasswordReset', 'true');
-        return;
-      }
-      
-      // パスワードリセット中の自動ログインをブロック（ただし、レート制限を避ける）
-      const pendingPasswordReset = localStorage.getItem('pendingPasswordReset');
-      if (pendingPasswordReset && event === 'SIGNED_IN' && session && !isSettingNewPassword) {
-        console.log('パスワードリセット中の自動ログインを検知');
-        setIsSettingNewPassword(true);
-        setIsSignUp(false);
-        setIsResettingPassword(false);
-        setConfirmationMessage('🔐 新しいパスワードを設定してください。');
-        return;
-      }
-    });
-
-    return () => {
-      authListener.subscription.unsubscribe();
-    };
-  }, [isSettingNewPassword]);
-
-  // メール確認・パスワードリセット完了の検知
-  useEffect(() => {
-    const handleAuthRedirect = async () => {
-      // LocalStorageから回復フラグをチェック（有効なセッションがある場合のみ）
-      const pendingPasswordReset = localStorage.getItem('pendingPasswordReset');
-      
-      if (pendingPasswordReset) {
-        console.log('LocalStorageからパスワードリセット検知');
-        // 有効なセッションがあるかチェック
-        const { data: currentUser } = await supabase.auth.getUser();
-        
-        if (currentUser.user) {
-          console.log('有効なセッションでパスワード設定画面に移行');
-          await supabase.auth.signOut();
-          localStorage.removeItem('pendingPasswordReset');
-          setIsSettingNewPassword(true);
-          setIsSignUp(false);
-          setIsResettingPassword(false);
-          setConfirmationMessage('🔐 新しいパスワードを設定してください。');
-          return;
-        } else {
-          console.log('無効なセッション - リセット状態をクリア');
-          localStorage.removeItem('pendingPasswordReset');
-          localStorage.removeItem('blockedUserEmail');
-          localStorage.removeItem('passwordResetSession');
-        }
-      }
-      
-      // まず強制ログアウト（自動ログインを防ぐ）
-      if (window.location.href.includes('type=recovery')) {
-        await supabase.auth.signOut();
-      }
-      // URLから直接パラメータを取得
-      const currentUrl = window.location.href;
-      const urlObj = new URL(currentUrl);
-      
-      // クエリパラメータから取得
-      const accessToken = urlObj.searchParams.get('access_token');
-      const refreshToken = urlObj.searchParams.get('refresh_token');
-      const type = urlObj.searchParams.get('type');
-      
-      // URLフラグメント（#）からも確認
-      const urlHash = urlObj.hash;
-      const hashParams = new URLSearchParams(urlHash.substring(1));
-      const hashAccessToken = hashParams.get('access_token');
-      const hashRefreshToken = hashParams.get('refresh_token');
-      const hashType = hashParams.get('type');
-      
-      // デバッグ用ログ
-      console.log('URL検知:', { 
-        query: { accessToken: !!accessToken, refreshToken: !!refreshToken, type },
-        hash: { accessToken: !!hashAccessToken, refreshToken: !!hashRefreshToken, type: hashType }
-      });
-      console.log('Current URL:', window.location.href);
-      
-      // hashとqueryの両方をチェック
-      const finalAccessToken = accessToken || hashAccessToken;
-      const finalRefreshToken = refreshToken || hashRefreshToken;
-      const finalType = type || hashType;
-      
-      // type=recoveryを直接URLから検知
-      const isRecovery = currentUrl.includes('type=recovery') || finalType === 'recovery';
-      
-      console.log('Recovery検知:', { isRecovery, finalType, urlContainsRecovery: currentUrl.includes('type=recovery') });
-      
-      if (isRecovery) {
-        // パスワードリセット確認後は新しいパスワード設定画面を表示
-        console.log('パスワードリセット検知 - 設定画面表示');
-        setIsSettingNewPassword(true);
-        setIsSignUp(false);
-        setIsResettingPassword(false);
-        setConfirmationMessage('🔐 新しいパスワードを設定してください。');
-        
-        // URLをクリーンアップ
-        window.history.replaceState({}, document.title, window.location.pathname);
-        return;
-      }
-      
-      if (finalAccessToken && finalRefreshToken) {
-        try {
-          // 一旦ログアウトして、手動ログインを促す
-          await supabase.auth.signOut();
-          
-          if (finalType === 'signup') {
-            setConfirmationMessage('✅ メール確認が完了しました！ログイン情報を入力してログインしてください。');
-            setIsSignUp(false); // ログインフォームに切り替え
-          } else if (finalType === 'recovery') {
-            // パスワードリセット確認後は新しいパスワード設定画面を表示
-            console.log('パスワードリセット検知 - 設定画面表示');
-            setIsSettingNewPassword(true);
-            setIsSignUp(false);
-            setIsResettingPassword(false);
-            setConfirmationMessage('🔐 新しいパスワードを設定してください。');
-          }
-          
-          // URLをクリーンアップ
-          window.history.replaceState({}, document.title, window.location.pathname);
-        } catch (error) {
-          console.error('Auth redirect handling error:', error);
-        }
-      }
-    };
-
-    handleAuthRedirect();
-  }, [searchParams]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
     
-    // パスワードリセット中のユーザーはログインをブロック
-    const blockedEmail = localStorage.getItem('blockedUserEmail');
-    const pendingPasswordReset = localStorage.getItem('pendingPasswordReset');
-    
-    console.log('ログイン試行:', { email, blockedEmail, pendingPasswordReset });
-    
-    if (blockedEmail === email && pendingPasswordReset) {
-      setError('このアカウントはパスワードリセット中です。メールを確認して新しいパスワードを設定してください。');
-      setLoading(false);
-      return;
-    }
+    // シンプルなログイン処理
     
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
@@ -269,19 +110,11 @@ export default function SignIn() {
     setError(null);
 
     try {
-      // まず既存の状態を完全にクリア
-      localStorage.removeItem('pendingPasswordReset');
-      localStorage.removeItem('blockedUserEmail');
-      localStorage.removeItem('passwordResetSession');
-      
       // メールアドレスの形式を検証・修正
       const cleanEmail = email.replace(/＠/g, '@').trim();
       console.log('パスワードリセット email:', { original: email, clean: cleanEmail });
       
-      // ユーザーの現在のセッションを確認
-      const { data: currentUser } = await supabase.auth.getUser();
-      
-      // パスワードリセットメールを送信
+      // シンプルにパスワードリセットメールを送信
       const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
         redirectTo: 'https://five-m-expense.vercel.app/'
       });
@@ -293,15 +126,6 @@ export default function SignIn() {
         }
         setError(errorMessage);
       } else {
-        // フラグを設定してユーザーをブラックリスト化
-        localStorage.setItem('pendingPasswordReset', 'true');
-        localStorage.setItem('blockedUserEmail', cleanEmail);
-        
-        // 現在ログインしている場合は強制ログアウト
-        if (currentUser?.user) {
-          await supabase.auth.signOut();
-        }
-        
         alert('パスワードリセットのメールを送信しました。メールを確認して新しいパスワードを設定してください。');
         setIsResettingPassword(false);
       }
@@ -331,32 +155,7 @@ export default function SignIn() {
     }
 
     try {
-      // セッション設定をスキップして、直接認証状態をチェック
-      console.log('パスワード更新のため認証状態を確認...');
-      
-      // まず現在のユーザー情報を取得
-      const { data: currentUser, error: userError } = await supabase.auth.getUser();
-      console.log('現在のユーザー状態:', { hasUser: !!currentUser.user, error: userError?.message });
-      
-      if (!currentUser.user && userError) {
-        // セッションが無効な場合、完全にリセット状態をクリアして通常のログイン画面に戻る
-        console.log('セッションが無効 - リセット状態をクリアして通常のログイン画面に戻る');
-        
-        // リセット状態を完全にクリア
-        localStorage.removeItem('pendingPasswordReset');
-        localStorage.removeItem('blockedUserEmail');
-        localStorage.removeItem('passwordResetSession');
-        
-        setIsSettingNewPassword(false);
-        setIsResettingPassword(false);
-        setIsSignUp(false);
-        setError('認証セッションが期限切れです。新しいパスワードリセットが必要な場合は「パスワードを忘れた場合」をクリックしてください。');
-        setConfirmationMessage(null);
-        setLoading(false);
-        return;
-      }
-
-      // パスワード更新
+      // シンプルにパスワード更新を試行
       console.log('パスワード更新中...');
       const { error } = await supabase.auth.updateUser({
         password: newPassword
@@ -364,17 +163,19 @@ export default function SignIn() {
 
       if (error) {
         console.error('パスワード更新エラー:', error);
-        setError(`パスワードの更新に失敗しました: ${error.message}`);
+        if (error.message.includes('Auth session missing') || error.message.includes('session')) {
+          setError('認証セッションが期限切れです。新しいパスワードリセットメールを送信してください。');
+          setIsSettingNewPassword(false);
+          setIsResettingPassword(true);
+        } else {
+          setError(`パスワードの更新に失敗しました: ${error.message}`);
+        }
       } else {
+        console.log('パスワード更新成功');
         await supabase.auth.signOut(); // 一旦ログアウト
         setIsSettingNewPassword(false);
         setNewPassword('');
         setConfirmNewPassword('');
-        
-        // ブロックを解除
-        localStorage.removeItem('pendingPasswordReset');
-        localStorage.removeItem('blockedUserEmail');
-        localStorage.removeItem('passwordResetSession');
         
         setConfirmationMessage('✅ パスワードが更新されました！新しいパスワードでログインしてください。');
       }
@@ -386,9 +187,8 @@ export default function SignIn() {
   };
 
   // すでにログイン済みの場合は、ダッシュボードにリダイレクト
-  // ただし、パスワードリセット中の場合は除く
-  const pendingPasswordReset = localStorage.getItem('pendingPasswordReset');
-  if (user && !pendingPasswordReset && !isSettingNewPassword) {
+  // ただし、パスワード設定中の場合は除く
+  if (user && !isSettingNewPassword) {
     return <Navigate to="/" replace />;
   }
 
@@ -500,18 +300,6 @@ export default function SignIn() {
           style={{ background: 'none', border: 'none', color: 'blue', cursor: 'pointer', marginTop: '10px' }}
         >
           ログイン画面に戻る
-        </button>
-      )}
-      {!isSignUp && !isResettingPassword && !isSettingNewPassword && (
-        <button
-          onClick={() => {
-            localStorage.removeItem('pendingPasswordReset');
-            localStorage.removeItem('blockedUserEmail');
-            alert('パスワードリセット状態をクリアしました。');
-          }}
-          style={{ background: 'none', border: 'none', color: 'red', cursor: 'pointer', marginTop: '5px', fontSize: '12px' }}
-        >
-          リセット状態をクリア
         </button>
       )}
     </div>
