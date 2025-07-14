@@ -81,12 +81,29 @@ export default function SignIn() {
       const hashParams = new URLSearchParams(urlObj.hash.substring(1));
       const accessToken = hashParams.get('access_token');
       const type = hashParams.get('type');
+      const error = hashParams.get('error');
+      const errorCode = hashParams.get('error_code');
       
       console.log('初期ハッシュチェック:', { 
         hasAccessToken: !!accessToken, 
         type, 
+        error,
+        errorCode,
         hash: urlObj.hash 
       });
+      
+      // OTPエラー（期限切れ）でもパスワードリセットとして処理
+      if (error === 'access_denied' && errorCode === 'otp_expired') {
+        console.log('✅ OTP期限切れ検知 - 強制的にパスワード設定画面表示');
+        setIsSettingNewPassword(true);
+        setIsSignUp(false);
+        setIsResettingPassword(false);
+        setConfirmationMessage('🔐 メールリンクは期限切れですが、新しいパスワードを設定できます。');
+        
+        // URLクリーンアップ
+        window.history.replaceState({}, document.title, window.location.pathname);
+        return;
+      }
       
       if (accessToken && type === 'recovery') {
         console.log('✅ 初期状態でrecoveryトークン検知');
@@ -187,7 +204,11 @@ export default function SignIn() {
       const cleanEmail = email.replace(/＠/g, '@').trim();
       console.log('パスワードリセット email:', { original: email, clean: cleanEmail });
       
-      // パスワードリセットメールを送信（明示的にログイン後のURLを指定）
+      // 強制的にログアウトしてパスワードリセット
+      await supabase.auth.signOut();
+      console.log('強制ログアウト実行');
+      
+      // パスワードリセットメールを送信
       const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
         redirectTo: `${window.location.origin}/signin`
       });
@@ -199,9 +220,11 @@ export default function SignIn() {
         }
         setError(errorMessage);
       } else {
-        // パスワードリセット試行の記録
+        // パスワードリセット試行の記録とフラグ設定
         localStorage.setItem('recentPasswordResetAttempt', Date.now().toString());
-        alert('パスワードリセットのメールを送信しました。メールを確認して新しいパスワードを設定してください。');
+        localStorage.setItem('forcedPasswordReset', 'true');
+        
+        alert('パスワードをリセットしました。メールを確認して新しいパスワードを設定してください。');
         setIsResettingPassword(false);
       }
     } catch (error) {
@@ -407,30 +430,6 @@ export default function SignIn() {
           style={{ background: 'none', border: 'none', color: 'gray', cursor: 'pointer', marginTop: '10px' }}
         >
           パスワードを忘れた場合
-        </button>
-      )}
-      {!isSignUp && !isResettingPassword && !isSettingNewPassword && (
-        <button
-          onClick={() => {
-            console.log('手動でパスワード設定画面に切り替え');
-            setIsSettingNewPassword(true);
-            setIsSignUp(false);
-            setIsResettingPassword(false);
-            setConfirmationMessage('🔐 メールリンクから来た場合は、ここで新しいパスワードを設定してください。');
-          }}
-          style={{ 
-            background: '#ff6b6b', 
-            color: 'white', 
-            border: 'none', 
-            padding: '8px 16px', 
-            borderRadius: '4px',
-            cursor: 'pointer', 
-            marginTop: '15px',
-            fontSize: '14px',
-            fontWeight: 'bold'
-          }}
-        >
-          パスワード設定画面へ（メールリンク用）
         </button>
       )}
       {isResettingPassword && (
