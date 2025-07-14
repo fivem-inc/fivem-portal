@@ -40,6 +40,17 @@ export default function SignIn() {
       // PASSWORD_RECOVERYイベントを検知
       if (event === 'PASSWORD_RECOVERY' && session) {
         console.log('PASSWORD_RECOVERYイベント検知 - パスワード設定画面表示');
+        console.log('セッション情報を保存:', {
+          access_token: !!session.access_token,
+          refresh_token: !!session.refresh_token
+        });
+        
+        // セッション情報を保存
+        localStorage.setItem('passwordResetSession', JSON.stringify({
+          access_token: session.access_token,
+          refresh_token: session.refresh_token
+        }));
+        
         setIsSettingNewPassword(true);
         setIsSignUp(false);
         setIsResettingPassword(false);
@@ -301,18 +312,37 @@ export default function SignIn() {
       console.log('現在のセッション状態:', !!currentSession.session);
       
       if (!currentSession.session) {
-        // URLパラメータからセッション情報を取得してセットアップ
-        const currentUrl = window.location.href;
-        const urlObj = new URL(currentUrl);
+        // 保存されたパスワードリセットセッションを確認
+        const savedSessionStr = localStorage.getItem('passwordResetSession');
+        let accessToken = null;
+        let refreshToken = null;
         
-        let accessToken = urlObj.searchParams.get('access_token');
-        let refreshToken = urlObj.searchParams.get('refresh_token');
+        if (savedSessionStr) {
+          try {
+            const savedSession = JSON.parse(savedSessionStr);
+            accessToken = savedSession.access_token;
+            refreshToken = savedSession.refresh_token;
+            console.log('保存されたセッションを使用:', { hasAccessToken: !!accessToken, hasRefreshToken: !!refreshToken });
+          } catch (error) {
+            console.error('保存されたセッション解析エラー:', error);
+          }
+        }
         
-        // URLフラグメントからも確認
+        // URLパラメータからも確認（フォールバック）
         if (!accessToken || !refreshToken) {
-          const hashParams = new URLSearchParams(urlObj.hash.substring(1));
-          accessToken = hashParams.get('access_token');
-          refreshToken = hashParams.get('refresh_token');
+          const currentUrl = window.location.href;
+          const urlObj = new URL(currentUrl);
+          
+          accessToken = urlObj.searchParams.get('access_token');
+          refreshToken = urlObj.searchParams.get('refresh_token');
+          
+          // URLフラグメントからも確認
+          if (!accessToken || !refreshToken) {
+            const hashParams = new URLSearchParams(urlObj.hash.substring(1));
+            accessToken = hashParams.get('access_token');
+            refreshToken = hashParams.get('refresh_token');
+          }
+          console.log('URLからトークン取得:', { hasAccessToken: !!accessToken, hasRefreshToken: !!refreshToken });
         }
         
         if (accessToken && refreshToken) {
@@ -358,6 +388,7 @@ export default function SignIn() {
         // ブロックを解除
         localStorage.removeItem('pendingPasswordReset');
         localStorage.removeItem('blockedUserEmail');
+        localStorage.removeItem('passwordResetSession');
         
         setConfirmationMessage('✅ パスワードが更新されました！新しいパスワードでログインしてください。');
       }
