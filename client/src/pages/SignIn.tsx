@@ -24,12 +24,21 @@ export default function SignIn() {
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
       console.log('認証イベント:', event, !!session);
       
-      // パスワードリセット中の場合
+      // PASSWORD_RECOVERYイベントを検知
+      if (event === 'PASSWORD_RECOVERY' && session) {
+        console.log('PASSWORD_RECOVERYイベント検知 - パスワード設定画面表示');
+        setIsSettingNewPassword(true);
+        setIsSignUp(false);
+        setIsResettingPassword(false);
+        setConfirmationMessage('🔐 新しいパスワードを設定してください。');
+        localStorage.setItem('pendingPasswordReset', 'true');
+        return;
+      }
+      
+      // パスワードリセット中の自動ログインをブロック（ただし、レート制限を避ける）
       const pendingPasswordReset = localStorage.getItem('pendingPasswordReset');
-      if (pendingPasswordReset && event === 'SIGNED_IN' && session) {
-        console.log('パスワードリセット中の自動ログインを阻止');
-        await supabase.auth.signOut();
-        localStorage.removeItem('pendingPasswordReset');
+      if (pendingPasswordReset && event === 'SIGNED_IN' && session && !isSettingNewPassword) {
+        console.log('パスワードリセット中の自動ログインを検知');
         setIsSettingNewPassword(true);
         setIsSignUp(false);
         setIsResettingPassword(false);
@@ -41,7 +50,7 @@ export default function SignIn() {
     return () => {
       authListener.subscription.unsubscribe();
     };
-  }, []);
+  }, [isSettingNewPassword]);
 
   // メール確認・パスワードリセット完了の検知
   useEffect(() => {
