@@ -40,36 +40,57 @@ const Dashboard: React.FC = () => {
     const hasEmptyHash = currentUrl.includes('#') && !urlObj.hash;
     console.log('Dashboard: 空ハッシュ検知:', hasEmptyHash);
     
-    // 最近のパスワードリセット試行をlocalStorageで確認
+    // 最近のパスワードリセット試行を複数の方法で確認
     const recentPasswordReset = localStorage.getItem('recentPasswordResetAttempt');
+    const sessionPasswordReset = sessionStorage.getItem('recentPasswordResetAttempt');
+    const forcedReset = localStorage.getItem('forcedPasswordReset');
+    const resetEmail = localStorage.getItem('passwordResetEmail');
     const now = Date.now();
     
-    console.log('Dashboard: localStorage確認', { 
-      recentPasswordReset, 
-      hasValue: !!recentPasswordReset,
+    console.log('Dashboard: ストレージ確認', { 
+      localStorage: recentPasswordReset, 
+      sessionStorage: sessionPasswordReset,
+      forcedReset,
+      resetEmail,
+      hasValue: !!(recentPasswordReset || sessionPasswordReset),
       hasEmptyHash,
       urlHash: urlObj.hash 
     });
     
-    if (recentPasswordReset) {
-      const resetTime = parseInt(recentPasswordReset);
+    // localStorageまたはsessionStorageのどちらかにデータがあれば処理
+    const activeReset = recentPasswordReset || sessionPasswordReset;
+    
+    if (activeReset) {
+      const resetTime = parseInt(activeReset);
       const timeDiff = now - resetTime;
-      console.log('Dashboard: 最近のパスワードリセット:', { 
+      console.log('Dashboard: パスワードリセット検知:', { 
         resetTime, 
         now, 
         timeDiff, 
-        withinWindow: timeDiff < 300000, 
-        hasHashCondition: hasEmptyHash || !!urlObj.hash 
+        withinWindow: timeDiff < 300000,
+        source: recentPasswordReset ? 'localStorage' : 'sessionStorage'
       });
       
       if (timeDiff < 300000) { // 5分以内であればハッシュに関係なく判定
         console.log('Dashboard: 5分以内のパスワードリセット検知 - 強制的にサインイン画面へ');
+        
+        // 全てのリセット関連データをクリア
         localStorage.removeItem('recentPasswordResetAttempt');
+        sessionStorage.removeItem('recentPasswordResetAttempt');
         localStorage.setItem('autoPasswordReset', 'true');
+        
         alert('パスワードリセットのリダイレクトを検知しました。パスワード設定画面に移動します。');
         window.location.href = '/signin';
         return;
       }
+    } else if (forcedReset === 'true') {
+      // forcedPasswordResetフラグがある場合も処理
+      console.log('Dashboard: 強制パスワードリセットフラグ検知');
+      localStorage.removeItem('forcedPasswordReset');
+      localStorage.setItem('autoPasswordReset', 'true');
+      alert('パスワードリセットを検知しました。パスワード設定画面に移動します。');
+      window.location.href = '/signin';
+      return;
     } else {
       console.log('Dashboard: パスワードリセット記録なし - 通常アクセス');
     }
