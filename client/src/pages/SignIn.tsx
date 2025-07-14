@@ -212,57 +212,19 @@ export default function SignIn() {
     setError(null);
 
     try {
-      // 1. パスワードリセットメールを送信
+      // パスワードリセットメールを送信
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: 'https://five-m-expense.vercel.app/'
       });
 
       if (error) {
         setError(error.message);
-        setLoading(false);
-        return;
+      } else {
+        // フラグを設定
+        localStorage.setItem('pendingPasswordReset', 'true');
+        alert('パスワードリセットのメールを送信しました。メールを確認して新しいパスワードを設定してください。');
+        setIsResettingPassword(false);
       }
-
-      // 2. 現在のパスワードでログインしてパスワードを変更
-      console.log('現在のパスワードでログインを試行...');
-      const { error: signInError } = await supabase.auth.signInWithPassword({ 
-        email, 
-        password 
-      });
-
-      if (signInError) {
-        console.error('ログイン失敗:', signInError.message);
-        setError('現在のパスワードが正しくありません。');
-        setLoading(false);
-        return;
-      }
-
-      console.log('ログイン成功、パスワードを無効化中...');
-      
-      // ログイン成功したらパスワードを即座にランダム文字列に変更
-      const randomPassword = Math.random().toString(36).slice(-12) + 'A1!';
-      const { error: updateError } = await supabase.auth.updateUser({
-        password: randomPassword
-      });
-      
-      if (updateError) {
-        console.error('パスワード無効化失敗:', updateError.message);
-        setError('パスワードの無効化に失敗しました。もう一度お試しください。');
-        setLoading(false);
-        return;
-      }
-      
-      console.log('パスワード無効化成功:', randomPassword);
-      
-      // 即座にログアウト
-      await supabase.auth.signOut();
-      console.log('ログアウト完了');
-
-      // 3. フラグを設定
-      localStorage.setItem('pendingPasswordReset', 'true');
-      alert('パスワードリセットのメールを送信しました。古いパスワードは無効になりました。メールを確認して新しいパスワードを設定してください。');
-      setIsResettingPassword(false);
-      
     } catch (error) {
       console.error('パスワードリセット処理エラー:', error);
       setError('パスワードリセット処理中にエラーが発生しました。');
@@ -385,7 +347,7 @@ export default function SignIn() {
         </form>
       ) : (
         <form onSubmit={handlePasswordReset}>
-          <p>メールアドレスと現在のパスワードを入力してください。</p>
+          <p>パスワードをリセットするメールアドレスを入力してください。</p>
           <input
             style={{ width: '100%', margin: '6px 0', padding: 8 }}
             placeholder='メールアドレス'
@@ -393,16 +355,8 @@ export default function SignIn() {
             onChange={e => setEmail(e.target.value)}
             required
           />
-          <input
-            type='password'
-            style={{ width: '100%', margin: '6px 0', padding: 8 }}
-            placeholder='現在のパスワード'
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            required
-          />
           <button type="submit" style={{ width: '100%', padding: 8 }} disabled={loading}>
-            {loading ? '処理中...' : 'パスワードをリセット'}
+            {loading ? '送信中...' : 'パスワードをリセット'}
           </button>
           {error && <p style={{ color: 'red', marginTop: '10px' }}>{error}</p>}
         </form>
