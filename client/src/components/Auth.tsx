@@ -10,6 +10,16 @@ export default function Auth() {
 
   useEffect(() => {
     const fetchUser = async () => {
+      // パスワードリセット中はユーザーを無視
+      const pendingPasswordReset = localStorage.getItem('pendingPasswordReset')
+      if (pendingPasswordReset) {
+        console.log('Auth.tsx: パスワードリセット中のためユーザーを無視')
+        await supabase.auth.signOut()
+        setUser(null)
+        setLoading(false)
+        return
+      }
+
       const { data, error } = await supabase.auth.getUser()
       if (error) {
         console.error('Error fetching user:', error)
@@ -21,7 +31,16 @@ export default function Auth() {
 
     fetchUser()
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      const pendingPasswordReset = localStorage.getItem('pendingPasswordReset')
+      
+      if (pendingPasswordReset && event === 'SIGNED_IN' && session) {
+        console.log('Auth.tsx: パスワードリセット中の自動ログインをブロック')
+        await supabase.auth.signOut()
+        setUser(null)
+        return
+      }
+      
       setUser(session?.user ?? null)
     })
 
