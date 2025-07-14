@@ -18,72 +18,94 @@ export default function SignIn() {
   const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
   const { user } = useContext(AuthContext); // AuthContextからuserを取得
 
-  // Supabase認証フローの処理（簡素化）
+  // Supabase認証フロー処理（パスワードリセット対応）
   useEffect(() => {
-    const currentUrl = window.location.href;
-    const urlObj = new URL(currentUrl);
+    console.log('=== 認証フロー初期化 ===');
     
-    console.log('=== パスワードリセット検知 ===');
-    console.log('URL:', currentUrl);
-    console.log('hash:', urlObj.hash);
-    
-    // Supabase認証イベント監視
-    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log('🔥 認証イベント:', event, !!session);
+    // 認証イベント監視（最重要）
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('🔥 認証イベント:', event, '| セッション:', !!session);
       
-      if (event === 'PASSWORD_RECOVERY' && session) {
-        console.log('✅ PASSWORD_RECOVERY イベント検知');
+      // PASSWORD_RECOVERYイベントを最優先で処理
+      if (event === 'PASSWORD_RECOVERY') {
+        console.log('✅ PASSWORD_RECOVERY イベント検知 - パスワード設定画面に切り替え');
         
-        // パスワード設定画面表示
+        // 即座にパスワード設定モードに切り替え
         setIsSettingNewPassword(true);
         setIsSignUp(false);
         setIsResettingPassword(false);
         setConfirmationMessage('🔐 新しいパスワードを設定してください。');
         
-        // セッション情報を保存
-        localStorage.setItem('resetTokens', JSON.stringify({
-          accessToken: session.access_token,
-          refreshToken: session.refresh_token
-        }));
+        // セッション情報があれば保存
+        if (session) {
+          localStorage.setItem('resetSession', JSON.stringify({
+            accessToken: session.access_token,
+            refreshToken: session.refresh_token
+          }));
+          console.log('✅ リセットセッション保存');
+        }
         
-        return;
+        return; // 他の処理をスキップ
       }
       
-      // ハッシュからrecoveryタイプ検知
-      if (event === 'SIGNED_IN' && session && urlObj.hash.includes('type=recovery')) {
-        console.log('✅ ハッシュからrecovery検知');
+      // SIGNED_INイベントでrecoveryタイプかチェック
+      if (event === 'SIGNED_IN' && session) {
+        const currentUrl = window.location.href;
         
-        setIsSettingNewPassword(true);
-        setIsSignUp(false);
-        setIsResettingPassword(false);
-        setConfirmationMessage('🔐 新しいパスワードを設定してください。');
-        
-        localStorage.setItem('resetTokens', JSON.stringify({
-          accessToken: session.access_token,
-          refreshToken: session.refresh_token
-        }));
-        
-        // URL クリーンアップ
-        window.history.replaceState({}, document.title, window.location.pathname);
+        // URLにtype=recoveryが含まれているかチェック
+        if (currentUrl.includes('type=recovery') || currentUrl.includes('#access_token')) {
+          console.log('✅ SIGNED_IN + recovery検知 - パスワード設定画面に切り替え');
+          
+          setIsSettingNewPassword(true);
+          setIsSignUp(false);
+          setIsResettingPassword(false);
+          setConfirmationMessage('🔐 新しいパスワードを設定してください。');
+          
+          localStorage.setItem('resetSession', JSON.stringify({
+            accessToken: session.access_token,
+            refreshToken: session.refresh_token
+          }));
+          
+          // URLクリーンアップ
+          window.history.replaceState({}, document.title, window.location.pathname);
+          return;
+        }
       }
     });
 
-    // 初期URLチェック
-    const hashParams = new URLSearchParams(urlObj.hash.substring(1));
-    const accessToken = hashParams.get('access_token');
-    const type = hashParams.get('type');
+    // 初期URL確認（ページロード時）
+    const checkInitialUrl = () => {
+      const currentUrl = window.location.href;
+      const urlObj = new URL(currentUrl);
+      
+      console.log('初期URL確認:', {
+        url: currentUrl,
+        hash: urlObj.hash,
+        hasRecovery: currentUrl.includes('type=recovery')
+      });
+      
+      // URLハッシュからrecoveryパラメータを検出
+      if (urlObj.hash) {
+        const hashParams = new URLSearchParams(urlObj.hash.substring(1));
+        const accessToken = hashParams.get('access_token');
+        const type = hashParams.get('type');
+        
+        if (accessToken && type === 'recovery') {
+          console.log('✅ 初期状態でrecoveryトークン検知 - パスワード設定画面表示');
+          
+          setIsSettingNewPassword(true);
+          setIsSignUp(false);
+          setIsResettingPassword(false);
+          setConfirmationMessage('🔐 メールからアクセスしました。新しいパスワードを設定してください。');
+          
+          // URLクリーンアップ
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+      }
+    };
     
-    if (accessToken && type === 'recovery') {
-      console.log('✅ 初期状態でrecoveryトークン検知');
-      
-      setIsSettingNewPassword(true);
-      setIsSignUp(false);
-      setIsResettingPassword(false);
-      setConfirmationMessage('🔐 新しいパスワードを設定してください。');
-      
-      // URLクリーンアップ
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
+    // 初期チェック実行
+    checkInitialUrl();
 
     return () => {
       authListener.subscription.unsubscribe();
@@ -219,74 +241,88 @@ export default function SignIn() {
     }
 
     try {
-      console.log('パスワード更新処理開始...');
+      console.log('=== パスワード更新処理開始 ===');
       
-      // 複数のアプローチでセッション確立を試行
-      let sessionEstablished = false;
+      // Step 1: セッション確立を確認・試行
+      let currentSession = null;
       
-      // 1. 保存されたトークンを試行
-      const resetTokensStr = localStorage.getItem('resetTokens');
-      if (resetTokensStr) {
-        try {
-          const resetTokens = JSON.parse(resetTokensStr);
-          console.log('保存されたトークンでセッション設定中...');
-          
-          const { error: sessionError } = await supabase.auth.setSession({
-            access_token: resetTokens.accessToken,
-            refresh_token: resetTokens.refreshToken
-          });
-          
-          if (!sessionError) {
-            console.log('保存されたトークンでセッション設定成功');
-            sessionEstablished = true;
-          } else {
-            console.error('保存されたトークンでセッション設定失敗:', sessionError);
+      // 現在のセッションを取得
+      const { data: sessionData } = await supabase.auth.getSession();
+      currentSession = sessionData.session;
+      
+      if (!currentSession) {
+        // セッションがない場合は保存されたセッションを復元
+        const resetSessionStr = localStorage.getItem('resetSession');
+        if (resetSessionStr) {
+          try {
+            const resetSession = JSON.parse(resetSessionStr);
+            console.log('保存されたリセットセッションを復元中...');
+            
+            const { error: setSessionError } = await supabase.auth.setSession({
+              access_token: resetSession.accessToken,
+              refresh_token: resetSession.refreshToken
+            });
+            
+            if (!setSessionError) {
+              console.log('✅ セッション復元成功');
+              const { data: newSessionData } = await supabase.auth.getSession();
+              currentSession = newSessionData.session;
+            } else {
+              console.error('セッション復元エラー:', setSessionError);
+            }
+          } catch (parseError) {
+            console.error('セッションデータ解析エラー:', parseError);
           }
-        } catch (parseError) {
-          console.error('トークン解析エラー:', parseError);
         }
       }
       
-      // 2. 現在のセッションを確認
-      if (!sessionEstablished) {
-        const { data: session } = await supabase.auth.getSession();
-        if (session.session) {
-          console.log('既存のセッションを使用');
-          sessionEstablished = true;
-        }
+      if (!currentSession) {
+        setError('認証セッションが見つかりません。メールリンクから再度アクセスしてください。');
+        setLoading(false);
+        return;
       }
       
-      console.log('セッション状態:', sessionEstablished ? '確立済み' : '未確立');
+      console.log('✅ セッション確認完了 - パスワード更新実行');
 
-      // パスワード更新実行
-      console.log('パスワード更新実行中...');
-      const { error } = await supabase.auth.updateUser({
+      // Step 2: パスワード更新実行
+      const { error: updateError } = await supabase.auth.updateUser({
         password: newPassword
       });
 
-      if (error) {
-        console.error('パスワード更新エラー:', error);
-        if (error.message.includes('session') || error.message.includes('Auth')) {
-          setError('セッションが無効です。メールリンクから再度アクセスしてください。');
-        } else {
-          setError(`パスワードの更新に失敗しました: ${error.message}`);
-        }
-      } else {
-        console.log('パスワード更新成功！');
+      if (updateError) {
+        console.error('❌ パスワード更新エラー:', updateError);
         
-        // 成功後の清掃処理
+        let errorMessage = updateError.message;
+        if (updateError.message.includes('session') || updateError.message.includes('unauthorized')) {
+          errorMessage = 'セッションが無効です。メールリンクから再度アクセスしてください。';
+        } else if (updateError.message.includes('Password should be at least')) {
+          errorMessage = 'パスワードは6文字以上で入力してください。';
+        }
+        setError(errorMessage);
+      } else {
+        console.log('✅ パスワード更新成功！');
+        
+        // Step 3: 成功後の処理
+        localStorage.removeItem('resetSession');
         localStorage.removeItem('resetTokens');
+        
+        alert('✅ パスワードが更新されました！新しいパスワードでログインしてください。');
+        
+        // ログアウトして初期状態に戻す
         await supabase.auth.signOut();
         
         setIsSettingNewPassword(false);
         setNewPassword('');
         setConfirmNewPassword('');
-        setConfirmationMessage('✅ パスワードが更新されました！新しいパスワードでログインしてください。');
+        setIsSignUp(false);
+        setIsResettingPassword(false);
+        setConfirmationMessage(null);
       }
     } catch (error) {
-      console.error('パスワード設定エラー:', error);
+      console.error('❌ パスワード設定処理エラー:', error);
       setError('パスワードの更新中にエラーが発生しました。再度お試しください。');
     }
+    
     setLoading(false);
   };
 
