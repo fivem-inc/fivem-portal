@@ -258,20 +258,33 @@ export default function SignIn() {
     setError(null);
 
     try {
+      // まず既存の状態を完全にクリア
+      localStorage.removeItem('pendingPasswordReset');
+      localStorage.removeItem('blockedUserEmail');
+      localStorage.removeItem('passwordResetSession');
+      
+      // メールアドレスの形式を検証・修正
+      const cleanEmail = email.replace(/＠/g, '@').trim();
+      console.log('パスワードリセット email:', { original: email, clean: cleanEmail });
+      
       // ユーザーの現在のセッションを確認
       const { data: currentUser } = await supabase.auth.getUser();
       
       // パスワードリセットメールを送信
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
         redirectTo: 'https://five-m-expense.vercel.app/'
       });
 
       if (error) {
-        setError(error.message);
+        let errorMessage = error.message;
+        if (error.message.includes('Unable to validate email address: invalid format')) {
+          errorMessage = 'メールアドレスの形式が正しくありません。半角の@を使用してください。';
+        }
+        setError(errorMessage);
       } else {
         // フラグを設定してユーザーをブラックリスト化
         localStorage.setItem('pendingPasswordReset', 'true');
-        localStorage.setItem('blockedUserEmail', email);
+        localStorage.setItem('blockedUserEmail', cleanEmail);
         
         // 現在ログインしている場合は強制ログアウト
         if (currentUser?.user) {
