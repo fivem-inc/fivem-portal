@@ -62,10 +62,11 @@ const Dashboard: React.FC = () => {
         hasHashCondition: hasEmptyHash || !!urlObj.hash 
       });
       
-      if (timeDiff < 300000 && (hasEmptyHash || urlObj.hash)) { // 5分以内
-        console.log('Dashboard: 最近のパスワードリセット + ハッシュ検知 - 強制的にサインイン画面へ');
+      if (timeDiff < 300000) { // 5分以内であればハッシュに関係なく判定
+        console.log('Dashboard: 5分以内のパスワードリセット検知 - 強制的にサインイン画面へ');
         localStorage.removeItem('recentPasswordResetAttempt');
-        alert('パスワードリセットのリダイレクトを検知しました。サインイン画面に移動します。');
+        localStorage.setItem('autoPasswordReset', 'true');
+        alert('パスワードリセットのリダイレクトを検知しました。パスワード設定画面に移動します。');
         window.location.href = '/signin';
         return;
       }

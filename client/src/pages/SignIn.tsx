@@ -78,6 +78,18 @@ export default function SignIn() {
 
     // 初期URLチェック（即座に実行）
     setTimeout(() => {
+      // 自動パスワードリセットフラグをチェック
+      const autoPasswordReset = localStorage.getItem('autoPasswordReset');
+      if (autoPasswordReset) {
+        console.log('✅ 自動パスワードリセットフラグ検知 - パスワード設定画面表示');
+        localStorage.removeItem('autoPasswordReset');
+        setIsSettingNewPassword(true);
+        setIsSignUp(false);
+        setIsResettingPassword(false);
+        setConfirmationMessage('🔐 パスワードリセットが検知されました。新しいパスワードを設定してください。');
+        return;
+      }
+      
       const hashParams = new URLSearchParams(urlObj.hash.substring(1));
       const accessToken = hashParams.get('access_token');
       const type = hashParams.get('type');
