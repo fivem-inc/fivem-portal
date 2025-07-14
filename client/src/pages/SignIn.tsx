@@ -12,6 +12,9 @@ export default function SignIn() {
   const [error, setError] = useState<string | null>(null);
   const [isSignUp, setIsSignUp] = useState(false); // 新規登録モードかどうかの状態
   const [isResettingPassword, setIsResettingPassword] = useState(false); // パスワードリセットモードかどうかの状態
+  const [isSettingNewPassword, setIsSettingNewPassword] = useState(false); // 新しいパスワード設定モード
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
   const { user } = useContext(AuthContext); // AuthContextからuserを取得
   const [searchParams] = useSearchParams();
@@ -33,9 +36,11 @@ export default function SignIn() {
             setConfirmationMessage('✅ メール確認が完了しました！ログイン情報を入力してログインしてください。');
             setIsSignUp(false); // ログインフォームに切り替え
           } else if (type === 'recovery') {
-            setConfirmationMessage('🔐 パスワードリセットが確認されました！新しいパスワードでログインしてください。');
-            setIsSignUp(false); // ログインフォームに切り替え
-            setIsResettingPassword(false); // パスワードリセットモードを終了
+            // パスワードリセット確認後は新しいパスワード設定画面を表示
+            setIsSettingNewPassword(true);
+            setIsSignUp(false);
+            setIsResettingPassword(false);
+            setConfirmationMessage('🔐 新しいパスワードを設定してください。');
           }
           
           // URLをクリーンアップ
@@ -133,6 +138,43 @@ export default function SignIn() {
     setLoading(false);
   };
 
+  const handleNewPasswordSet = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+
+    if (newPassword !== confirmNewPassword) {
+      setError('パスワードが一致しません。');
+      setLoading(false);
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      setError('パスワードは6文字以上で入力してください。');
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword
+      });
+
+      if (error) {
+        setError('パスワードの更新に失敗しました: ' + error.message);
+      } else {
+        await supabase.auth.signOut(); // 一旦ログアウト
+        setIsSettingNewPassword(false);
+        setNewPassword('');
+        setConfirmNewPassword('');
+        setConfirmationMessage('✅ パスワードが更新されました！新しいパスワードでログインしてください。');
+      }
+    } catch (error) {
+      setError('パスワードの更新中にエラーが発生しました。');
+    }
+    setLoading(false);
+  };
+
   // すでにログイン済みの場合は、ダッシュボードにリダイレクト
   if (user) {
     return <Navigate to="/" replace />;
@@ -141,7 +183,32 @@ export default function SignIn() {
   return (
     <div style={{ maxWidth: 320, margin: '80px auto', textAlign: 'center' }}>
       <h2>ファイブM 交通費精算</h2>
-      {!isResettingPassword ? (
+      {isSettingNewPassword ? (
+        <form onSubmit={handleNewPasswordSet}>
+          <p>新しいパスワードを設定してください。</p>
+          <input
+            type='password'
+            style={{ width: '100%', margin: '6px 0', padding: 8 }}
+            placeholder='新しいパスワード'
+            value={newPassword}
+            onChange={e => setNewPassword(e.target.value)}
+            required
+          />
+          <input
+            type='password'
+            style={{ width: '100%', margin: '6px 0', padding: 8 }}
+            placeholder='新しいパスワード（確認用）'
+            value={confirmNewPassword}
+            onChange={e => setConfirmNewPassword(e.target.value)}
+            required
+          />
+          <button type="submit" style={{ width: '100%', padding: 8 }} disabled={loading}>
+            {loading ? 'パスワード更新中...' : 'パスワードを更新'}
+          </button>
+          {confirmationMessage && <p style={{ color: 'green', marginTop: '10px', fontWeight: 'bold' }}>{confirmationMessage}</p>}
+          {error && <p style={{ color: 'red', marginTop: '10px' }}>{error}</p>}
+        </form>
+      ) : !isResettingPassword ? (
         <form onSubmit={isSignUp ? handleSignUp : handleLogin}>
           {isSignUp && (
             <input
