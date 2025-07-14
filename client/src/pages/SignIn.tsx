@@ -22,13 +22,21 @@ export default function SignIn() {
   // メール確認・パスワードリセット完了の検知
   useEffect(() => {
     const handleAuthRedirect = async () => {
-      // URLパラメータをチェック
-      const accessToken = searchParams.get('access_token');
-      const refreshToken = searchParams.get('refresh_token');
-      const type = searchParams.get('type');
+      // まず強制ログアウト（自動ログインを防ぐ）
+      if (window.location.href.includes('type=recovery')) {
+        await supabase.auth.signOut();
+      }
+      // URLから直接パラメータを取得
+      const currentUrl = window.location.href;
+      const urlObj = new URL(currentUrl);
+      
+      // クエリパラメータから取得
+      const accessToken = urlObj.searchParams.get('access_token');
+      const refreshToken = urlObj.searchParams.get('refresh_token');
+      const type = urlObj.searchParams.get('type');
       
       // URLフラグメント（#）からも確認
-      const urlHash = window.location.hash;
+      const urlHash = urlObj.hash;
       const hashParams = new URLSearchParams(urlHash.substring(1));
       const hashAccessToken = hashParams.get('access_token');
       const hashRefreshToken = hashParams.get('refresh_token');
@@ -45,6 +53,24 @@ export default function SignIn() {
       const finalAccessToken = accessToken || hashAccessToken;
       const finalRefreshToken = refreshToken || hashRefreshToken;
       const finalType = type || hashType;
+      
+      // type=recoveryを直接URLから検知
+      const isRecovery = currentUrl.includes('type=recovery') || finalType === 'recovery';
+      
+      console.log('Recovery検知:', { isRecovery, finalType, urlContainsRecovery: currentUrl.includes('type=recovery') });
+      
+      if (isRecovery) {
+        // パスワードリセット確認後は新しいパスワード設定画面を表示
+        console.log('パスワードリセット検知 - 設定画面表示');
+        setIsSettingNewPassword(true);
+        setIsSignUp(false);
+        setIsResettingPassword(false);
+        setConfirmationMessage('🔐 新しいパスワードを設定してください。');
+        
+        // URLをクリーンアップ
+        window.history.replaceState({}, document.title, window.location.pathname);
+        return;
+      }
       
       if (finalAccessToken && finalRefreshToken) {
         try {
