@@ -79,18 +79,29 @@ export default function SignIn() {
   // メール確認・パスワードリセット完了の検知
   useEffect(() => {
     const handleAuthRedirect = async () => {
-      // LocalStorageから回復フラグをチェック
+      // LocalStorageから回復フラグをチェック（有効なセッションがある場合のみ）
       const pendingPasswordReset = localStorage.getItem('pendingPasswordReset');
       
       if (pendingPasswordReset) {
         console.log('LocalStorageからパスワードリセット検知');
-        await supabase.auth.signOut();
-        localStorage.removeItem('pendingPasswordReset');
-        setIsSettingNewPassword(true);
-        setIsSignUp(false);
-        setIsResettingPassword(false);
-        setConfirmationMessage('🔐 新しいパスワードを設定してください。');
-        return;
+        // 有効なセッションがあるかチェック
+        const { data: currentUser } = await supabase.auth.getUser();
+        
+        if (currentUser.user) {
+          console.log('有効なセッションでパスワード設定画面に移行');
+          await supabase.auth.signOut();
+          localStorage.removeItem('pendingPasswordReset');
+          setIsSettingNewPassword(true);
+          setIsSignUp(false);
+          setIsResettingPassword(false);
+          setConfirmationMessage('🔐 新しいパスワードを設定してください。');
+          return;
+        } else {
+          console.log('無効なセッション - リセット状態をクリア');
+          localStorage.removeItem('pendingPasswordReset');
+          localStorage.removeItem('blockedUserEmail');
+          localStorage.removeItem('passwordResetSession');
+        }
       }
       
       // まず強制ログアウト（自動ログインを防ぐ）
@@ -328,17 +339,19 @@ export default function SignIn() {
       console.log('現在のユーザー状態:', { hasUser: !!currentUser.user, error: userError?.message });
       
       if (!currentUser.user && userError) {
-        // セッションが無効な場合、新しいパスワードリセットを要求
-        console.log('セッションが無効 - 新しいパスワードリセットが必要');
-        setError('認証セッションが期限切れです。新しいパスワードリセットメールを送信してください。');
+        // セッションが無効な場合、完全にリセット状態をクリアして通常のログイン画面に戻る
+        console.log('セッションが無効 - リセット状態をクリアして通常のログイン画面に戻る');
         
-        // リセット状態をクリア
+        // リセット状態を完全にクリア
         localStorage.removeItem('pendingPasswordReset');
         localStorage.removeItem('blockedUserEmail');
         localStorage.removeItem('passwordResetSession');
         
         setIsSettingNewPassword(false);
-        setIsResettingPassword(true);
+        setIsResettingPassword(false);
+        setIsSignUp(false);
+        setError('認証セッションが期限切れです。新しいパスワードリセットが必要な場合は「パスワードを忘れた場合」をクリックしてください。');
+        setConfirmationMessage(null);
         setLoading(false);
         return;
       }
