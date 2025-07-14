@@ -22,15 +22,24 @@ const ProtectedLayout: React.FC = () => {
 
 // メインのDashboardコンポーネント
 const Dashboard: React.FC = () => {
-  // パスワードリセット検知処理（簡素化）
+  // パスワードリセット検知処理
   React.useEffect(() => {
     const currentUrl = window.location.href;
     const urlObj = new URL(currentUrl);
     
     console.log('Dashboard: URL確認', {
       href: currentUrl,
-      hash: urlObj.hash
+      hash: urlObj.hash,
+      search: urlObj.search
     });
+    
+    // パスワードリセット待機フラグをチェック
+    const awaitingReset = localStorage.getItem('awaitingPasswordReset');
+    if (awaitingReset === 'true') {
+      console.log('Dashboard: パスワードリセット待機中 - サインイン画面にリダイレクト');
+      window.location.href = '/signin';
+      return;
+    }
     
     // URLハッシュにrecoveryトークンがある場合はサインイン画面にリダイレクト
     if (urlObj.hash) {
