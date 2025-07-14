@@ -19,6 +19,19 @@ export default function SignIn() {
   const { user } = useContext(AuthContext); // AuthContextからuserを取得
   const [searchParams] = useSearchParams();
 
+  // 初期状態でパスワードリセットURLかチェック
+  useEffect(() => {
+    const currentUrl = window.location.href;
+    if (currentUrl.includes('type=recovery')) {
+      console.log('初期状態でパスワードリセットURL検知 - パスワード設定画面表示');
+      setIsSettingNewPassword(true);
+      setIsSignUp(false);
+      setIsResettingPassword(false);
+      setConfirmationMessage('🔐 新しいパスワードを設定してください。');
+      localStorage.setItem('pendingPasswordReset', 'true');
+    }
+  }, []);
+
   // Supabase認証イベントを監視
   useEffect(() => {
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
@@ -335,7 +348,9 @@ export default function SignIn() {
   };
 
   // すでにログイン済みの場合は、ダッシュボードにリダイレクト
-  if (user) {
+  // ただし、パスワードリセット中の場合は除く
+  const pendingPasswordReset = localStorage.getItem('pendingPasswordReset');
+  if (user && !pendingPasswordReset && !isSettingNewPassword) {
     return <Navigate to="/" replace />;
   }
 
