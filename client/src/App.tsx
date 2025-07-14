@@ -44,10 +44,23 @@ const Dashboard: React.FC = () => {
     const recentPasswordReset = localStorage.getItem('recentPasswordResetAttempt');
     const now = Date.now();
     
+    console.log('Dashboard: localStorage確認', { 
+      recentPasswordReset, 
+      hasValue: !!recentPasswordReset,
+      hasEmptyHash,
+      urlHash: urlObj.hash 
+    });
+    
     if (recentPasswordReset) {
       const resetTime = parseInt(recentPasswordReset);
       const timeDiff = now - resetTime;
-      console.log('Dashboard: 最近のパスワードリセット:', { timeDiff, withinWindow: timeDiff < 300000 }); // 5分以内
+      console.log('Dashboard: 最近のパスワードリセット:', { 
+        resetTime, 
+        now, 
+        timeDiff, 
+        withinWindow: timeDiff < 300000, 
+        hasHashCondition: hasEmptyHash || !!urlObj.hash 
+      });
       
       if (timeDiff < 300000 && (hasEmptyHash || urlObj.hash)) { // 5分以内
         console.log('Dashboard: 最近のパスワードリセット + ハッシュ検知 - 強制的にサインイン画面へ');
@@ -56,6 +69,16 @@ const Dashboard: React.FC = () => {
         window.location.href = '/signin';
         return;
       }
+    } else {
+      console.log('Dashboard: パスワードリセット記録なし - 通常アクセス');
+    }
+    
+    // 空ハッシュが検知された場合の追加対策
+    if (hasEmptyHash) {
+      console.log('Dashboard: 空ハッシュ検知 - 強制的にパスワードリセットと判定');
+      alert('Supabaseからのリダイレクトを検知しました。パスワード設定画面に移動します。');
+      window.location.href = '/signin';
+      return;
     }
     
     // URLハッシュにトークンがある場合はサインイン画面にリダイレクト
