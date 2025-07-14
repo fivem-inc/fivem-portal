@@ -27,11 +27,36 @@ const Dashboard: React.FC = () => {
     const currentUrl = window.location.href;
     const urlObj = new URL(currentUrl);
     
-    console.log('Dashboard: URL解析', {
+    console.log('Dashboard: 詳細URL解析', {
       href: currentUrl,
       hash: urlObj.hash,
-      search: urlObj.search
+      search: urlObj.search,
+      hashLength: urlObj.hash.length,
+      rawHash: window.location.hash,
+      locationHref: window.location.href
     });
+    
+    // 空のハッシュでもパスワードリセットの可能性があるかチェック
+    const hasEmptyHash = currentUrl.includes('#') && !urlObj.hash;
+    console.log('Dashboard: 空ハッシュ検知:', hasEmptyHash);
+    
+    // 最近のパスワードリセット試行をlocalStorageで確認
+    const recentPasswordReset = localStorage.getItem('recentPasswordResetAttempt');
+    const now = Date.now();
+    
+    if (recentPasswordReset) {
+      const resetTime = parseInt(recentPasswordReset);
+      const timeDiff = now - resetTime;
+      console.log('Dashboard: 最近のパスワードリセット:', { timeDiff, withinWindow: timeDiff < 300000 }); // 5分以内
+      
+      if (timeDiff < 300000 && (hasEmptyHash || urlObj.hash)) { // 5分以内
+        console.log('Dashboard: 最近のパスワードリセット + ハッシュ検知 - 強制的にサインイン画面へ');
+        localStorage.removeItem('recentPasswordResetAttempt');
+        alert('パスワードリセットのリダイレクトを検知しました。サインイン画面に移動します。');
+        window.location.href = '/signin';
+        return;
+      }
+    }
     
     // URLハッシュにトークンがある場合はサインイン画面にリダイレクト
     if (urlObj.hash) {

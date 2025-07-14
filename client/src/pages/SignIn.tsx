@@ -187,9 +187,9 @@ export default function SignIn() {
       const cleanEmail = email.replace(/＠/g, '@').trim();
       console.log('パスワードリセット email:', { original: email, clean: cleanEmail });
       
-      // パスワードリセットメールを送信（ルートパスにリダイレクト）
+      // パスワードリセットメールを送信（明示的にログイン後のURLを指定）
       const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-        redirectTo: 'https://five-m-expense.vercel.app/'
+        redirectTo: `${window.location.origin}/signin`
       });
 
       if (error) {
@@ -199,6 +199,8 @@ export default function SignIn() {
         }
         setError(errorMessage);
       } else {
+        // パスワードリセット試行の記録
+        localStorage.setItem('recentPasswordResetAttempt', Date.now().toString());
         alert('パスワードリセットのメールを送信しました。メールを確認して新しいパスワードを設定してください。');
         setIsResettingPassword(false);
       }
