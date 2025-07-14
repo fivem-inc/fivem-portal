@@ -197,9 +197,9 @@ export default function SignIn() {
       const cleanEmail = email.replace(/＠/g, '@').trim();
       console.log('パスワードリセット email:', { original: email, clean: cleanEmail });
       
-      // シンプルにパスワードリセットメールを送信
+      // パスワードリセットメールを送信（正しいリダイレクトURL）
       const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-        redirectTo: 'https://five-m-expense.vercel.app/'
+        redirectTo: 'https://five-m-expense.vercel.app/signin'
       });
 
       if (error) {
