@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { Routes, Route, Navigate, Outlet, BrowserRouter } from 'react-router-dom';
 import SignIn from './pages/SignIn';
+import ResetPassword from './pages/ResetPassword';
 import ExpenseForm from './components/ExpenseForm';
 import AdminPanel from './components/AdminPanel';
 import HistoryView from './components/HistoryView';
@@ -22,38 +23,7 @@ const ProtectedLayout: React.FC = () => {
 
 // メインのDashboardコンポーネント
 const Dashboard: React.FC = () => {
-  // パスワードリセット検知処理
-  React.useEffect(() => {
-    const currentUrl = window.location.href;
-    const urlObj = new URL(currentUrl);
-    
-    console.log('Dashboard: URL確認', {
-      href: currentUrl,
-      hash: urlObj.hash,
-      search: urlObj.search
-    });
-    
-    // パスワードリセット待機フラグをチェック
-    const awaitingReset = localStorage.getItem('awaitingPasswordReset');
-    if (awaitingReset === 'true') {
-      console.log('Dashboard: パスワードリセット待機中 - サインイン画面にリダイレクト');
-      window.location.href = '/signin';
-      return;
-    }
-    
-    // URLハッシュにrecoveryトークンがある場合はサインイン画面にリダイレクト
-    if (urlObj.hash) {
-      const hashParams = new URLSearchParams(urlObj.hash.substring(1));
-      const accessToken = hashParams.get('access_token');
-      const type = hashParams.get('type');
-      
-      if (accessToken && type === 'recovery') {
-        console.log('Dashboard: パスワードリセットトークン検知 - サインイン画面にリダイレクト');
-        window.location.href = '/signin' + urlObj.hash;
-        return;
-      }
-    }
-  }, []);
+  // 通常のダッシュボード処理（パスワードリセットは専用ページで処理）
 
   const { 
     user, 
@@ -192,6 +162,7 @@ function App() {
       <AuthProvider>
         <Routes>
           <Route path="/signin" element={<SignIn />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/" element={<ProtectedLayout />}>
             <Route index element={<Dashboard />} />
           </Route>
