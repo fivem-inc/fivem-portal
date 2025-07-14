@@ -27,16 +27,36 @@ export default function SignIn() {
       const refreshToken = searchParams.get('refresh_token');
       const type = searchParams.get('type');
       
-      if (accessToken && refreshToken) {
+      // URLフラグメント（#）からも確認
+      const urlHash = window.location.hash;
+      const hashParams = new URLSearchParams(urlHash.substring(1));
+      const hashAccessToken = hashParams.get('access_token');
+      const hashRefreshToken = hashParams.get('refresh_token');
+      const hashType = hashParams.get('type');
+      
+      // デバッグ用ログ
+      console.log('URL検知:', { 
+        query: { accessToken: !!accessToken, refreshToken: !!refreshToken, type },
+        hash: { accessToken: !!hashAccessToken, refreshToken: !!hashRefreshToken, type: hashType }
+      });
+      console.log('Current URL:', window.location.href);
+      
+      // hashとqueryの両方をチェック
+      const finalAccessToken = accessToken || hashAccessToken;
+      const finalRefreshToken = refreshToken || hashRefreshToken;
+      const finalType = type || hashType;
+      
+      if (finalAccessToken && finalRefreshToken) {
         try {
           // 一旦ログアウトして、手動ログインを促す
           await supabase.auth.signOut();
           
-          if (type === 'signup') {
+          if (finalType === 'signup') {
             setConfirmationMessage('✅ メール確認が完了しました！ログイン情報を入力してログインしてください。');
             setIsSignUp(false); // ログインフォームに切り替え
-          } else if (type === 'recovery') {
+          } else if (finalType === 'recovery') {
             // パスワードリセット確認後は新しいパスワード設定画面を表示
+            console.log('パスワードリセット検知 - 設定画面表示');
             setIsSettingNewPassword(true);
             setIsSignUp(false);
             setIsResettingPassword(false);
