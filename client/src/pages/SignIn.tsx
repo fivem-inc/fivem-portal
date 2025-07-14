@@ -22,6 +22,20 @@ export default function SignIn() {
   // メール確認・パスワードリセット完了の検知
   useEffect(() => {
     const handleAuthRedirect = async () => {
+      // LocalStorageから回復フラグをチェック
+      const pendingPasswordReset = localStorage.getItem('pendingPasswordReset');
+      
+      if (pendingPasswordReset) {
+        console.log('LocalStorageからパスワードリセット検知');
+        localStorage.removeItem('pendingPasswordReset');
+        await supabase.auth.signOut();
+        setIsSettingNewPassword(true);
+        setIsSignUp(false);
+        setIsResettingPassword(false);
+        setConfirmationMessage('🔐 新しいパスワードを設定してください。');
+        return;
+      }
+      
       // まず強制ログアウト（自動ログインを防ぐ）
       if (window.location.href.includes('type=recovery')) {
         await supabase.auth.signOut();
@@ -178,6 +192,8 @@ export default function SignIn() {
     if (error) {
       setError(error.message);
     } else {
+      // パスワードリセット送信時にフラグを設定
+      localStorage.setItem('pendingPasswordReset', 'true');
       alert('パスワードリセットのメールを送信しました。メールを確認してください。');
       setIsResettingPassword(false); // リセット後、ログインフォームに戻る
     }
