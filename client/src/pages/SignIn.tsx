@@ -322,13 +322,45 @@ export default function SignIn() {
           {isSignUp ? 'ログイン画面に戻る' : '新規登録はこちら'}
         </button>
       )}
-      {!isSignUp && !isResettingPassword && (
+      {!isSignUp && !isResettingPassword && !isSettingNewPassword && (
         <button
           onClick={() => setIsResettingPassword(true)}
           style={{ background: 'none', border: 'none', color: 'gray', cursor: 'pointer', marginTop: '10px' }}
         >
           パスワードを忘れた場合
         </button>
+      )}
+      {!isSignUp && !isResettingPassword && !isSettingNewPassword && (
+        <div style={{ marginTop: '10px' }}>
+          <button
+            onClick={() => {
+              console.log('手動でパスワード設定画面に切り替え');
+              setIsSettingNewPassword(true);
+              setIsSignUp(false);
+              setIsResettingPassword(false);
+              setConfirmationMessage('🔐 新しいパスワードを設定してください。');
+            }}
+            style={{ background: 'none', border: 'none', color: 'orange', cursor: 'pointer', fontSize: '12px', display: 'block', margin: '5px auto' }}
+          >
+            パスワード設定画面（メールリンク用）
+          </button>
+          <button
+            onClick={() => {
+              const currentUrl = window.location.href;
+              const urlObj = new URL(currentUrl);
+              console.log('現在のURL情報:', {
+                href: currentUrl,
+                search: urlObj.search,
+                hash: urlObj.hash,
+                searchParams: Object.fromEntries(urlObj.searchParams.entries())
+              });
+              alert(`現在のURL: ${currentUrl}\nコンソールで詳細確認`);
+            }}
+            style={{ background: 'none', border: 'none', color: 'green', cursor: 'pointer', fontSize: '12px', display: 'block', margin: '5px auto' }}
+          >
+            URL情報確認
+          </button>
+        </div>
       )}
       {isResettingPassword && (
         <button
