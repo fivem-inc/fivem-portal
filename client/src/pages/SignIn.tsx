@@ -46,26 +46,17 @@ export default function SignIn() {
       email,
       password,
       options: {
-        data: { name: name.trim() } // ここで名前を渡す
+        data: { 
+          name: name.trim(),
+          display_name: name.trim()
+        }
       }
     });
 
     if (error) {
       setError(error.message);
-    } else if (data.user) {
-      // ユーザー登録成功後、profilesテーブルに名前を挿入
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .insert({ id: data.user.id, name: name.trim() });
-
-      if (profileError) {
-        console.error('Error inserting profile:', profileError.message);
-        setError('登録は完了しましたが、プロファイル情報の保存に失敗しました。');
-      } else {
-        alert('登録が完了しました。メールを確認してアカウントを有効にしてください。');
-        setIsSignUp(false); // 登録後、ログインフォームに戻る
-      }
     } else {
+      // トリガーで自動作成されるため、コード側での作成は不要
       alert('登録が完了しました。メールを確認してアカウントを有効にしてください。');
       setIsSignUp(false); // 登録後、ログインフォームに戻る
     }
