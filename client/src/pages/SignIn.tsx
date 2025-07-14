@@ -18,117 +18,72 @@ export default function SignIn() {
   const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
   const { user } = useContext(AuthContext); // AuthContextからuserを取得
 
-  // Supabase認証フローの処理
+  // Supabase認証フローの処理（簡素化）
   useEffect(() => {
-    // URLパラメータとハッシュの両方をチェック
     const currentUrl = window.location.href;
     const urlObj = new URL(currentUrl);
     
-    console.log('=== 認証フロー解析 ===');
-    console.log('完全URL:', currentUrl);
-    console.log('search:', urlObj.search);
+    console.log('=== パスワードリセット検知 ===');
+    console.log('URL:', currentUrl);
     console.log('hash:', urlObj.hash);
     
-    // Supabase認証イベント監視（最優先）
+    // Supabase認証イベント監視
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       console.log('🔥 認証イベント:', event, !!session);
       
       if (event === 'PASSWORD_RECOVERY' && session) {
-        console.log('✅ PASSWORD_RECOVERY イベント検知 - セッション有効');
+        console.log('✅ PASSWORD_RECOVERY イベント検知');
         
-        // 即座にパスワード設定画面表示
+        // パスワード設定画面表示
         setIsSettingNewPassword(true);
         setIsSignUp(false);
         setIsResettingPassword(false);
         setConfirmationMessage('🔐 新しいパスワードを設定してください。');
         
-        // セッション情報をlocalStorageに保存
+        // セッション情報を保存
         localStorage.setItem('resetTokens', JSON.stringify({
           accessToken: session.access_token,
           refreshToken: session.refresh_token
         }));
         
-        console.log('✅ セッション情報を保存しました');
         return;
       }
       
-      // トークンがハッシュに含まれている場合の処理
-      if (event === 'SIGNED_IN' && session && currentUrl.includes('#')) {
-        const hashParams = new URLSearchParams(urlObj.hash.substring(1));
-        const type = hashParams.get('type');
-        
-        if (type === 'recovery') {
-          console.log('✅ ハッシュからrecovery検知');
-          
-          setIsSettingNewPassword(true);
-          setIsSignUp(false);
-          setIsResettingPassword(false);
-          setConfirmationMessage('🔐 新しいパスワードを設定してください。');
-          
-          localStorage.setItem('resetTokens', JSON.stringify({
-            accessToken: session.access_token,
-            refreshToken: session.refresh_token
-          }));
-          
-          // URL クリーンアップ
-          window.history.replaceState({}, document.title, window.location.pathname);
-        }
-      }
-    });
-
-    // 初期URLチェック（即座に実行）
-    setTimeout(() => {
-      // 自動パスワードリセットフラグをチェック
-      const autoPasswordReset = localStorage.getItem('autoPasswordReset');
-      if (autoPasswordReset) {
-        console.log('✅ 自動パスワードリセットフラグ検知 - パスワード設定画面表示');
-        localStorage.removeItem('autoPasswordReset');
-        setIsSettingNewPassword(true);
-        setIsSignUp(false);
-        setIsResettingPassword(false);
-        setConfirmationMessage('🔐 パスワードリセットが検知されました。新しいパスワードを設定してください。');
-        return;
-      }
-      
-      const hashParams = new URLSearchParams(urlObj.hash.substring(1));
-      const accessToken = hashParams.get('access_token');
-      const type = hashParams.get('type');
-      const error = hashParams.get('error');
-      const errorCode = hashParams.get('error_code');
-      
-      console.log('初期ハッシュチェック:', { 
-        hasAccessToken: !!accessToken, 
-        type, 
-        error,
-        errorCode,
-        hash: urlObj.hash 
-      });
-      
-      // OTPエラー（期限切れ）でもパスワードリセットとして処理
-      if (error === 'access_denied' && errorCode === 'otp_expired') {
-        console.log('✅ OTP期限切れ検知 - 強制的にパスワード設定画面表示');
-        setIsSettingNewPassword(true);
-        setIsSignUp(false);
-        setIsResettingPassword(false);
-        setConfirmationMessage('🔐 メールリンクは期限切れですが、新しいパスワードを設定できます。');
-        
-        // URLクリーンアップ
-        window.history.replaceState({}, document.title, window.location.pathname);
-        return;
-      }
-      
-      if (accessToken && type === 'recovery') {
-        console.log('✅ 初期状態でrecoveryトークン検知');
+      // ハッシュからrecoveryタイプ検知
+      if (event === 'SIGNED_IN' && session && urlObj.hash.includes('type=recovery')) {
+        console.log('✅ ハッシュからrecovery検知');
         
         setIsSettingNewPassword(true);
         setIsSignUp(false);
         setIsResettingPassword(false);
         setConfirmationMessage('🔐 新しいパスワードを設定してください。');
         
-        // URLクリーンアップ
+        localStorage.setItem('resetTokens', JSON.stringify({
+          accessToken: session.access_token,
+          refreshToken: session.refresh_token
+        }));
+        
+        // URL クリーンアップ
         window.history.replaceState({}, document.title, window.location.pathname);
       }
-    }, 100);
+    });
+
+    // 初期URLチェック
+    const hashParams = new URLSearchParams(urlObj.hash.substring(1));
+    const accessToken = hashParams.get('access_token');
+    const type = hashParams.get('type');
+    
+    if (accessToken && type === 'recovery') {
+      console.log('✅ 初期状態でrecoveryトークン検知');
+      
+      setIsSettingNewPassword(true);
+      setIsSignUp(false);
+      setIsResettingPassword(false);
+      setConfirmationMessage('🔐 新しいパスワードを設定してください。');
+      
+      // URLクリーンアップ
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
 
     return () => {
       authListener.subscription.unsubscribe();
@@ -216,34 +171,56 @@ export default function SignIn() {
       const cleanEmail = email.replace(/＠/g, '@').trim();
       console.log('パスワードリセット email:', { original: email, clean: cleanEmail });
       
-      // 強制的にログアウトしてパスワードリセット
+      // Step 1: まず一時的にログインして現在のパスワードを無効化
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
+        password: password
+      });
+
+      if (signInError) {
+        let errorMessage = signInError.message;
+        if (signInError.message.includes('Invalid login credentials')) {
+          errorMessage = 'メールアドレスまたはパスワードが正しくありません。';
+        }
+        setError(errorMessage);
+        setLoading(false);
+        return;
+      }
+
+      // Step 2: パスワードを無効化（ランダムな文字列に設定）
+      const randomPassword = 'INVALIDATED_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: randomPassword
+      });
+
+      if (updateError) {
+        console.error('パスワード無効化エラー:', updateError);
+        setError('パスワードの無効化に失敗しました。');
+        setLoading(false);
+        return;
+      }
+
+      console.log('✅ パスワードを無効化しました');
+
+      // Step 3: ログアウト
       await supabase.auth.signOut();
-      console.log('強制ログアウト実行');
       
-      // パスワードリセットメールを送信
-      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+      // Step 4: パスワードリセットメールを送信
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
         redirectTo: `${window.location.origin}/signin`
       });
 
-      if (error) {
-        let errorMessage = error.message;
-        if (error.message.includes('Unable to validate email address: invalid format')) {
+      if (resetError) {
+        let errorMessage = resetError.message;
+        if (resetError.message.includes('Unable to validate email address: invalid format')) {
           errorMessage = 'メールアドレスの形式が正しくありません。半角の@を使用してください。';
         }
         setError(errorMessage);
       } else {
-        // 複数の方法でパスワードリセット試行を記録
-        const resetTime = Date.now().toString();
-        localStorage.setItem('recentPasswordResetAttempt', resetTime);
-        localStorage.setItem('forcedPasswordReset', 'true');
-        localStorage.setItem('passwordResetEmail', cleanEmail);
-        sessionStorage.setItem('recentPasswordResetAttempt', resetTime);
-        
-        // URLにもパラメータを追加してリダイレクト
-        console.log('パスワードリセット記録保存:', { resetTime, email: cleanEmail });
-        
-        alert('パスワードをリセットしました。メールを確認して新しいパスワードを設定してください。');
+        // シンプルな成功メッセージ
+        alert('パスワードをリセットしました。元のパスワードでのログインは無効になりました。メールを確認して新しいパスワードを設定してください。');
         setIsResettingPassword(false);
+        setPassword(''); // パスワードフィールドをクリア
       }
     } catch (error) {
       console.error('パスワードリセット処理エラー:', error);
@@ -420,7 +397,7 @@ export default function SignIn() {
         </form>
       ) : (
         <form onSubmit={handlePasswordReset}>
-          <p>パスワードをリセットするメールアドレスを入力してください。</p>
+          <p>パスワードをリセットします。現在のメールアドレスとパスワードを入力してください。</p>
           <input
             style={{ width: '100%', margin: '6px 0', padding: 8 }}
             placeholder='メールアドレス'
@@ -428,9 +405,20 @@ export default function SignIn() {
             onChange={e => setEmail(e.target.value)}
             required
           />
+          <input
+            type='password'
+            style={{ width: '100%', margin: '6px 0', padding: 8 }}
+            placeholder='現在のパスワード'
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            required
+          />
           <button type="submit" style={{ width: '100%', padding: 8 }} disabled={loading}>
-            {loading ? '送信中...' : 'パスワードをリセット'}
+            {loading ? 'リセット中...' : 'パスワードをリセット'}
           </button>
+          <p style={{ fontSize: '0.9em', color: '#666', marginTop: '10px' }}>
+            ※リセット後、現在のパスワードでのログインはできなくなります。
+          </p>
           {error && <p style={{ color: 'red', marginTop: '10px' }}>{error}</p>}
         </form>
       )}

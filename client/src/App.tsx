@@ -22,94 +22,21 @@ const ProtectedLayout: React.FC = () => {
 
 // メインのDashboardコンポーネント
 const Dashboard: React.FC = () => {
-  // パスワードリセット検知処理（ルートパスでも実行）
+  // パスワードリセット検知処理（簡素化）
   React.useEffect(() => {
     const currentUrl = window.location.href;
     const urlObj = new URL(currentUrl);
     
-    console.log('Dashboard: 詳細URL解析', {
+    console.log('Dashboard: URL確認', {
       href: currentUrl,
-      hash: urlObj.hash,
-      search: urlObj.search,
-      hashLength: urlObj.hash.length,
-      rawHash: window.location.hash,
-      locationHref: window.location.href
+      hash: urlObj.hash
     });
     
-    // 空のハッシュでもパスワードリセットの可能性があるかチェック
-    const hasEmptyHash = currentUrl.includes('#') && !urlObj.hash;
-    console.log('Dashboard: 空ハッシュ検知:', hasEmptyHash);
-    
-    // 最近のパスワードリセット試行を複数の方法で確認
-    const recentPasswordReset = localStorage.getItem('recentPasswordResetAttempt');
-    const sessionPasswordReset = sessionStorage.getItem('recentPasswordResetAttempt');
-    const forcedReset = localStorage.getItem('forcedPasswordReset');
-    const resetEmail = localStorage.getItem('passwordResetEmail');
-    const now = Date.now();
-    
-    console.log('Dashboard: ストレージ確認', { 
-      localStorage: recentPasswordReset, 
-      sessionStorage: sessionPasswordReset,
-      forcedReset,
-      resetEmail,
-      hasValue: !!(recentPasswordReset || sessionPasswordReset),
-      hasEmptyHash,
-      urlHash: urlObj.hash 
-    });
-    
-    // localStorageまたはsessionStorageのどちらかにデータがあれば処理
-    const activeReset = recentPasswordReset || sessionPasswordReset;
-    
-    if (activeReset) {
-      const resetTime = parseInt(activeReset);
-      const timeDiff = now - resetTime;
-      console.log('Dashboard: パスワードリセット検知:', { 
-        resetTime, 
-        now, 
-        timeDiff, 
-        withinWindow: timeDiff < 300000,
-        source: recentPasswordReset ? 'localStorage' : 'sessionStorage'
-      });
-      
-      if (timeDiff < 300000) { // 5分以内であればハッシュに関係なく判定
-        console.log('Dashboard: 5分以内のパスワードリセット検知 - 強制的にサインイン画面へ');
-        
-        // 全てのリセット関連データをクリア
-        localStorage.removeItem('recentPasswordResetAttempt');
-        sessionStorage.removeItem('recentPasswordResetAttempt');
-        localStorage.setItem('autoPasswordReset', 'true');
-        
-        alert('パスワードリセットのリダイレクトを検知しました。パスワード設定画面に移動します。');
-        window.location.href = '/signin';
-        return;
-      }
-    } else if (forcedReset === 'true') {
-      // forcedPasswordResetフラグがある場合も処理
-      console.log('Dashboard: 強制パスワードリセットフラグ検知');
-      localStorage.removeItem('forcedPasswordReset');
-      localStorage.setItem('autoPasswordReset', 'true');
-      alert('パスワードリセットを検知しました。パスワード設定画面に移動します。');
-      window.location.href = '/signin';
-      return;
-    } else {
-      console.log('Dashboard: パスワードリセット記録なし - 通常アクセス');
-    }
-    
-    // 空ハッシュが検知された場合の追加対策
-    if (hasEmptyHash) {
-      console.log('Dashboard: 空ハッシュ検知 - 強制的にパスワードリセットと判定');
-      alert('Supabaseからのリダイレクトを検知しました。パスワード設定画面に移動します。');
-      window.location.href = '/signin';
-      return;
-    }
-    
-    // URLハッシュにトークンがある場合はサインイン画面にリダイレクト
+    // URLハッシュにrecoveryトークンがある場合はサインイン画面にリダイレクト
     if (urlObj.hash) {
       const hashParams = new URLSearchParams(urlObj.hash.substring(1));
       const accessToken = hashParams.get('access_token');
       const type = hashParams.get('type');
-      
-      console.log('Dashboard: ハッシュパラメータ', { hasAccessToken: !!accessToken, type });
       
       if (accessToken && type === 'recovery') {
         console.log('Dashboard: パスワードリセットトークン検知 - サインイン画面にリダイレクト');
