@@ -20,7 +20,14 @@ export default function SignIn() {
     setError(null);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
-      setError(error.message);
+      // エラーメッセージを日本語化
+      let errorMessage = error.message;
+      if (error.message.includes('Invalid login credentials')) {
+        errorMessage = 'メールアドレスまたはパスワードが正しくありません。';
+      } else if (error.message.includes('Email not confirmed')) {
+        errorMessage = 'メールアドレスが確認されていません。メールを確認してください。';
+      }
+      setError(errorMessage);
     }
     setLoading(false);
   };
@@ -54,7 +61,18 @@ export default function SignIn() {
     });
 
     if (error) {
-      setError(error.message);
+      // エラーメッセージを日本語化
+      let errorMessage = error.message;
+      if (error.message.includes('Unable to validate email address: invalid format')) {
+        errorMessage = 'メールアドレスの形式が正しくありません。';
+      } else if (error.message.includes('User already registered')) {
+        errorMessage = 'このメールアドレスは既に登録されています。';
+      } else if (error.message.includes('Password should be at least')) {
+        errorMessage = 'パスワードは6文字以上で入力してください。';
+      } else if (error.message.includes('Signup is disabled')) {
+        errorMessage = '新規登録は現在無効になっています。';
+      }
+      setError(errorMessage);
     } else {
       // トリガーで自動作成されるため、コード側での作成は不要
       alert('登録が完了しました。メールを確認してアカウントを有効にしてください。');
