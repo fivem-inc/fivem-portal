@@ -171,41 +171,10 @@ export default function SignIn() {
       const cleanEmail = email.replace(/＠/g, '@').trim();
       console.log('パスワードリセット email:', { original: email, clean: cleanEmail });
       
-      // Step 1: まず一時的にログインして現在のパスワードを無効化
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: cleanEmail,
-        password: password
-      });
-
-      if (signInError) {
-        let errorMessage = signInError.message;
-        if (signInError.message.includes('Invalid login credentials')) {
-          errorMessage = 'メールアドレスまたはパスワードが正しくありません。';
-        }
-        setError(errorMessage);
-        setLoading(false);
-        return;
-      }
-
-      // Step 2: パスワードを無効化（ランダムな文字列に設定）
-      const randomPassword = 'INVALIDATED_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-      const { error: updateError } = await supabase.auth.updateUser({
-        password: randomPassword
-      });
-
-      if (updateError) {
-        console.error('パスワード無効化エラー:', updateError);
-        setError('パスワードの無効化に失敗しました。');
-        setLoading(false);
-        return;
-      }
-
-      console.log('✅ パスワードを無効化しました');
-
-      // Step 3: ログアウト
+      // 強制的にログアウト
       await supabase.auth.signOut();
       
-      // Step 4: パスワードリセットメールを送信
+      // パスワードリセットメールを送信
       const { error: resetError } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
         redirectTo: `${window.location.origin}/signin`
       });
@@ -214,13 +183,15 @@ export default function SignIn() {
         let errorMessage = resetError.message;
         if (resetError.message.includes('Unable to validate email address: invalid format')) {
           errorMessage = 'メールアドレスの形式が正しくありません。半角の@を使用してください。';
+        } else if (resetError.message.includes('For security purposes')) {
+          errorMessage = 'セキュリティのため、しばらく時間をおいてから再度お試しください。';
+        } else if (resetError.message.includes('User not found')) {
+          errorMessage = 'このメールアドレスは登録されていません。';
         }
         setError(errorMessage);
       } else {
-        // シンプルな成功メッセージ
-        alert('パスワードをリセットしました。元のパスワードでのログインは無効になりました。メールを確認して新しいパスワードを設定してください。');
+        alert('パスワードリセットメールを送信しました。メールを確認して新しいパスワードを設定してください。');
         setIsResettingPassword(false);
-        setPassword(''); // パスワードフィールドをクリア
       }
     } catch (error) {
       console.error('パスワードリセット処理エラー:', error);
@@ -397,7 +368,7 @@ export default function SignIn() {
         </form>
       ) : (
         <form onSubmit={handlePasswordReset}>
-          <p>パスワードをリセットします。現在のメールアドレスとパスワードを入力してください。</p>
+          <p>パスワードリセットメールを送信します。メールアドレスを入力してください。</p>
           <input
             style={{ width: '100%', margin: '6px 0', padding: 8 }}
             placeholder='メールアドレス'
@@ -405,20 +376,9 @@ export default function SignIn() {
             onChange={e => setEmail(e.target.value)}
             required
           />
-          <input
-            type='password'
-            style={{ width: '100%', margin: '6px 0', padding: 8 }}
-            placeholder='現在のパスワード'
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            required
-          />
           <button type="submit" style={{ width: '100%', padding: 8 }} disabled={loading}>
-            {loading ? 'リセット中...' : 'パスワードをリセット'}
+            {loading ? '送信中...' : 'パスワードリセットメールを送信'}
           </button>
-          <p style={{ fontSize: '0.9em', color: '#666', marginTop: '10px' }}>
-            ※リセット後、現在のパスワードでのログインはできなくなります。
-          </p>
           {error && <p style={{ color: 'red', marginTop: '10px' }}>{error}</p>}
         </form>
       )}
