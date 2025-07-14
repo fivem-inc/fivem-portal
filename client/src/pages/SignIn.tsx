@@ -35,7 +35,7 @@ export default function SignIn() {
     console.log('searchParams:', searchParams);
     
     // ハッシュパラメータ
-    let hashParams = {};
+    let hashParams: Record<string, string> = {};
     if (urlObj.hash) {
       hashParams = Object.fromEntries(new URLSearchParams(urlObj.hash.substring(1)).entries());
       console.log('hashParams:', hashParams);
@@ -45,7 +45,7 @@ export default function SignIn() {
     const checks = {
       urlIncludes: currentUrl.includes('type=recovery'),
       searchType: urlObj.searchParams.get('type') === 'recovery',
-      hashType: hashParams.type === 'recovery',
+      hashType: hashParams['type'] === 'recovery',
       searchIncludes: urlObj.search.includes('type=recovery'),
       hashIncludes: urlObj.hash.includes('type=recovery')
     };
@@ -81,8 +81,8 @@ export default function SignIn() {
         setConfirmationMessage('🔐 新しいパスワードを設定してください。');
         
         // トークン保存処理
-        const accessToken = searchParams.access_token || hashParams.access_token;
-        const refreshToken = searchParams.refresh_token || hashParams.refresh_token;
+        const accessToken = searchParams['access_token'] || hashParams['access_token'];
+        const refreshToken = searchParams['refresh_token'] || hashParams['refresh_token'];
         
         if (accessToken && refreshToken) {
           localStorage.setItem('resetTokens', JSON.stringify({ accessToken, refreshToken }));
