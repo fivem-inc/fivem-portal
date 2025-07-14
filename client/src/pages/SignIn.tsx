@@ -225,7 +225,7 @@ export default function SignIn() {
 
       // 2. 現在のパスワードでログインしてパスワードを変更
       console.log('現在のパスワードでログインを試行...');
-      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ 
+      const { error: signInError } = await supabase.auth.signInWithPassword({ 
         email, 
         password 
       });
