@@ -18,55 +18,23 @@ export default function SignIn() {
   const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
   const { user } = useContext(AuthContext); // AuthContextからuserを取得
 
-  // パスワードリセット検知の強化
+  // Supabaseの認証状態変更を監視
   useEffect(() => {
-    const currentUrl = window.location.href;
-    const urlObj = new URL(currentUrl);
-    
-    console.log('URL解析:', {
-      href: currentUrl,
-      search: urlObj.search,
-      hash: urlObj.hash,
-      searchParams: Object.fromEntries(urlObj.searchParams.entries())
-    });
-    
-    // URLパラメータから type を確認
-    const type = urlObj.searchParams.get('type');
-    
-    // URL ハッシュからも確認
-    const hashParams = new URLSearchParams(urlObj.hash.substring(1));
-    const hashType = hashParams.get('type');
-    
-    // 複数の方法でパスワードリセットを検知
-    const isPasswordReset = 
-      type === 'recovery' || 
-      hashType === 'recovery' || 
-      currentUrl.includes('type=recovery') ||
-      currentUrl.includes('#type=recovery');
-    
-    console.log('パスワードリセット検知:', {
-      type,
-      hashType,
-      urlIncludes: currentUrl.includes('type=recovery'),
-      hashIncludes: currentUrl.includes('#type=recovery'),
-      isPasswordReset
-    });
-    
-    if (isPasswordReset) {
-      console.log('パスワードリセット検知 - パスワード設定画面表示');
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log('認証イベント:', event, !!session);
       
-      // 自動ログインを防ぐために強制ログアウト
-      supabase.auth.signOut().then(() => {
-        console.log('パスワードリセット用に強制ログアウト実行');
+      if (event === 'PASSWORD_RECOVERY' && session) {
+        console.log('PASSWORD_RECOVERY検知 - パスワード設定画面表示');
         setIsSettingNewPassword(true);
         setIsSignUp(false);
         setIsResettingPassword(false);
         setConfirmationMessage('🔐 新しいパスワードを設定してください。');
-      });
-      
-      // URLをクリーンアップ
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
+      }
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
   }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -191,7 +159,6 @@ export default function SignIn() {
     }
 
     try {
-      // シンプルにパスワード更新を試行
       console.log('パスワード更新中...');
       const { error } = await supabase.auth.updateUser({
         password: newPassword
@@ -199,20 +166,13 @@ export default function SignIn() {
 
       if (error) {
         console.error('パスワード更新エラー:', error);
-        if (error.message.includes('Auth session missing') || error.message.includes('session')) {
-          setError('認証セッションが期限切れです。新しいパスワードリセットメールを送信してください。');
-          setIsSettingNewPassword(false);
-          setIsResettingPassword(true);
-        } else {
-          setError(`パスワードの更新に失敗しました: ${error.message}`);
-        }
+        setError(`パスワードの更新に失敗しました: ${error.message}`);
       } else {
         console.log('パスワード更新成功');
-        await supabase.auth.signOut(); // 一旦ログアウト
+        await supabase.auth.signOut();
         setIsSettingNewPassword(false);
         setNewPassword('');
         setConfirmNewPassword('');
-        
         setConfirmationMessage('✅ パスワードが更新されました！新しいパスワードでログインしてください。');
       }
     } catch (error) {
@@ -322,45 +282,13 @@ export default function SignIn() {
           {isSignUp ? 'ログイン画面に戻る' : '新規登録はこちら'}
         </button>
       )}
-      {!isSignUp && !isResettingPassword && !isSettingNewPassword && (
+      {!isSignUp && !isResettingPassword && (
         <button
           onClick={() => setIsResettingPassword(true)}
           style={{ background: 'none', border: 'none', color: 'gray', cursor: 'pointer', marginTop: '10px' }}
         >
           パスワードを忘れた場合
         </button>
-      )}
-      {!isSignUp && !isResettingPassword && !isSettingNewPassword && (
-        <div style={{ marginTop: '10px' }}>
-          <button
-            onClick={() => {
-              console.log('手動でパスワード設定画面に切り替え');
-              setIsSettingNewPassword(true);
-              setIsSignUp(false);
-              setIsResettingPassword(false);
-              setConfirmationMessage('🔐 新しいパスワードを設定してください。');
-            }}
-            style={{ background: 'none', border: 'none', color: 'orange', cursor: 'pointer', fontSize: '12px', display: 'block', margin: '5px auto' }}
-          >
-            パスワード設定画面（メールリンク用）
-          </button>
-          <button
-            onClick={() => {
-              const currentUrl = window.location.href;
-              const urlObj = new URL(currentUrl);
-              console.log('現在のURL情報:', {
-                href: currentUrl,
-                search: urlObj.search,
-                hash: urlObj.hash,
-                searchParams: Object.fromEntries(urlObj.searchParams.entries())
-              });
-              alert(`現在のURL: ${currentUrl}\nコンソールで詳細確認`);
-            }}
-            style={{ background: 'none', border: 'none', color: 'green', cursor: 'pointer', fontSize: '12px', display: 'block', margin: '5px auto' }}
-          >
-            URL情報確認
-          </button>
-        </div>
       )}
       {isResettingPassword && (
         <button
