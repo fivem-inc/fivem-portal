@@ -18,98 +18,88 @@ export default function SignIn() {
   const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
   const { user } = useContext(AuthContext); // AuthContextからuserを取得
 
-  // 強制的なURL解析とデバッグ
+  // Supabase認証フローの処理
   useEffect(() => {
+    // URLパラメータとハッシュの両方をチェック
     const currentUrl = window.location.href;
     const urlObj = new URL(currentUrl);
     
-    // 完全なURL解析ログ
-    console.log('=== URL解析開始 ===');
+    console.log('=== 認証フロー解析 ===');
     console.log('完全URL:', currentUrl);
-    console.log('pathname:', urlObj.pathname);
     console.log('search:', urlObj.search);
     console.log('hash:', urlObj.hash);
     
-    // 全てのクエリパラメータ
-    const searchParams = Object.fromEntries(urlObj.searchParams.entries());
-    console.log('searchParams:', searchParams);
-    
-    // ハッシュパラメータ
-    let hashParams: Record<string, string> = {};
-    if (urlObj.hash) {
-      hashParams = Object.fromEntries(new URLSearchParams(urlObj.hash.substring(1)).entries());
-      console.log('hashParams:', hashParams);
-    }
-    
-    // 複数の方法でtype=recoveryをチェック
-    const checks = {
-      urlIncludes: currentUrl.includes('type=recovery'),
-      searchType: urlObj.searchParams.get('type') === 'recovery',
-      hashType: hashParams['type'] === 'recovery',
-      searchIncludes: urlObj.search.includes('type=recovery'),
-      hashIncludes: urlObj.hash.includes('type=recovery')
-    };
-    console.log('recovery checks:', checks);
-    
-    const isPasswordReset = Object.values(checks).some(check => check === true);
-    console.log('最終判定 isPasswordReset:', isPasswordReset);
-    console.log('=== URL解析終了 ===');
-    
-    // パスワードリセットURLでない場合でも、強制的に表示するテスト
-    if (currentUrl.includes('unwdmdgtzbhwflepabud.supabase.co')) {
-      console.log('🚨 Supabase URLを検知 - 強制的にパスワード設定画面表示');
-      alert('Supabase URLを検知しました。強制的にパスワード設定画面を表示します。');
-      
-      supabase.auth.signOut().then(() => {
-        setIsSettingNewPassword(true);
-        setIsSignUp(false);
-        setIsResettingPassword(false);
-        setConfirmationMessage('🔐 新しいパスワードを設定してください。');
-      });
-      
-      // URLクリーンアップ
-      window.history.replaceState({}, document.title, window.location.pathname);
-      return;
-    }
-    
-    if (isPasswordReset) {
-      console.log('通常のパスワードリセット検知');
-      supabase.auth.signOut().then(() => {
-        setIsSettingNewPassword(true);
-        setIsSignUp(false);
-        setIsResettingPassword(false);
-        setConfirmationMessage('🔐 新しいパスワードを設定してください。');
-        
-        // トークン保存処理
-        const accessToken = searchParams['access_token'] || hashParams['access_token'];
-        const refreshToken = searchParams['refresh_token'] || hashParams['refresh_token'];
-        
-        if (accessToken && refreshToken) {
-          localStorage.setItem('resetTokens', JSON.stringify({ accessToken, refreshToken }));
-          console.log('トークンを保存しました');
-        }
-      });
-      
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
-
-    // 認証イベント監視
+    // Supabase認証イベント監視（最優先）
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log('認証イベント:', event, !!session);
+      console.log('🔥 認証イベント:', event, !!session);
       
       if (event === 'PASSWORD_RECOVERY' && session) {
-        console.log('PASSWORD_RECOVERY イベント検知');
+        console.log('✅ PASSWORD_RECOVERY イベント検知 - セッション有効');
+        
+        // 即座にパスワード設定画面表示
         setIsSettingNewPassword(true);
         setIsSignUp(false);
         setIsResettingPassword(false);
         setConfirmationMessage('🔐 新しいパスワードを設定してください。');
         
+        // セッション情報をlocalStorageに保存
         localStorage.setItem('resetTokens', JSON.stringify({
           accessToken: session.access_token,
           refreshToken: session.refresh_token
         }));
+        
+        console.log('✅ セッション情報を保存しました');
+        return;
+      }
+      
+      // トークンがハッシュに含まれている場合の処理
+      if (event === 'SIGNED_IN' && session && currentUrl.includes('#')) {
+        const hashParams = new URLSearchParams(urlObj.hash.substring(1));
+        const type = hashParams.get('type');
+        
+        if (type === 'recovery') {
+          console.log('✅ ハッシュからrecovery検知');
+          
+          setIsSettingNewPassword(true);
+          setIsSignUp(false);
+          setIsResettingPassword(false);
+          setConfirmationMessage('🔐 新しいパスワードを設定してください。');
+          
+          localStorage.setItem('resetTokens', JSON.stringify({
+            accessToken: session.access_token,
+            refreshToken: session.refresh_token
+          }));
+          
+          // URL クリーンアップ
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
       }
     });
+
+    // 初期URLチェック（即座に実行）
+    setTimeout(() => {
+      const hashParams = new URLSearchParams(urlObj.hash.substring(1));
+      const accessToken = hashParams.get('access_token');
+      const type = hashParams.get('type');
+      
+      console.log('初期ハッシュチェック:', { 
+        hasAccessToken: !!accessToken, 
+        type, 
+        hash: urlObj.hash 
+      });
+      
+      if (accessToken && type === 'recovery') {
+        console.log('✅ 初期状態でrecoveryトークン検知');
+        
+        setIsSettingNewPassword(true);
+        setIsSignUp(false);
+        setIsResettingPassword(false);
+        setConfirmationMessage('🔐 新しいパスワードを設定してください。');
+        
+        // URLクリーンアップ
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    }, 100);
 
     return () => {
       authListener.subscription.unsubscribe();
