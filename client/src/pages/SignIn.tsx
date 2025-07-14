@@ -18,40 +18,82 @@ export default function SignIn() {
   const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
   const { user } = useContext(AuthContext); // AuthContextからuserを取得
 
-  // 複合的なパスワードリセット検知（最も確実な方法）
+  // 強制的なURL解析とデバッグ
   useEffect(() => {
-    // 1. URL検知（即座に実行）
     const currentUrl = window.location.href;
-    console.log('現在のURL:', currentUrl);
+    const urlObj = new URL(currentUrl);
     
-    if (currentUrl.includes('type=recovery')) {
-      console.log('URL検知: パスワードリセット検知');
+    // 完全なURL解析ログ
+    console.log('=== URL解析開始 ===');
+    console.log('完全URL:', currentUrl);
+    console.log('pathname:', urlObj.pathname);
+    console.log('search:', urlObj.search);
+    console.log('hash:', urlObj.hash);
+    
+    // 全てのクエリパラメータ
+    const searchParams = Object.fromEntries(urlObj.searchParams.entries());
+    console.log('searchParams:', searchParams);
+    
+    // ハッシュパラメータ
+    let hashParams = {};
+    if (urlObj.hash) {
+      hashParams = Object.fromEntries(new URLSearchParams(urlObj.hash.substring(1)).entries());
+      console.log('hashParams:', hashParams);
+    }
+    
+    // 複数の方法でtype=recoveryをチェック
+    const checks = {
+      urlIncludes: currentUrl.includes('type=recovery'),
+      searchType: urlObj.searchParams.get('type') === 'recovery',
+      hashType: hashParams.type === 'recovery',
+      searchIncludes: urlObj.search.includes('type=recovery'),
+      hashIncludes: urlObj.hash.includes('type=recovery')
+    };
+    console.log('recovery checks:', checks);
+    
+    const isPasswordReset = Object.values(checks).some(check => check === true);
+    console.log('最終判定 isPasswordReset:', isPasswordReset);
+    console.log('=== URL解析終了 ===');
+    
+    // パスワードリセットURLでない場合でも、強制的に表示するテスト
+    if (currentUrl.includes('unwdmdgtzbhwflepabud.supabase.co')) {
+      console.log('🚨 Supabase URLを検知 - 強制的にパスワード設定画面表示');
+      alert('Supabase URLを検知しました。強制的にパスワード設定画面を表示します。');
       
-      // 強制ログアウトしてからパスワード設定画面表示
+      supabase.auth.signOut().then(() => {
+        setIsSettingNewPassword(true);
+        setIsSignUp(false);
+        setIsResettingPassword(false);
+        setConfirmationMessage('🔐 新しいパスワードを設定してください。');
+      });
+      
+      // URLクリーンアップ
+      window.history.replaceState({}, document.title, window.location.pathname);
+      return;
+    }
+    
+    if (isPasswordReset) {
+      console.log('通常のパスワードリセット検知');
       supabase.auth.signOut().then(() => {
         setIsSettingNewPassword(true);
         setIsSignUp(false);
         setIsResettingPassword(false);
         setConfirmationMessage('🔐 新しいパスワードを設定してください。');
         
-        // URLパラメータからトークンを保存
-        const urlObj = new URL(currentUrl);
-        const accessToken = urlObj.searchParams.get('access_token') || 
-                           new URLSearchParams(urlObj.hash.substring(1)).get('access_token');
-        const refreshToken = urlObj.searchParams.get('refresh_token') || 
-                            new URLSearchParams(urlObj.hash.substring(1)).get('refresh_token');
+        // トークン保存処理
+        const accessToken = searchParams.access_token || hashParams.access_token;
+        const refreshToken = searchParams.refresh_token || hashParams.refresh_token;
         
         if (accessToken && refreshToken) {
           localStorage.setItem('resetTokens', JSON.stringify({ accessToken, refreshToken }));
           console.log('トークンを保存しました');
         }
-        
-        // URLクリーンアップ
-        window.history.replaceState({}, document.title, window.location.pathname);
       });
+      
+      window.history.replaceState({}, document.title, window.location.pathname);
     }
 
-    // 2. 認証イベント監視（フォールバック）
+    // 認証イベント監視
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       console.log('認証イベント:', event, !!session);
       
@@ -62,7 +104,6 @@ export default function SignIn() {
         setIsResettingPassword(false);
         setConfirmationMessage('🔐 新しいパスワードを設定してください。');
         
-        // セッション情報も保存
         localStorage.setItem('resetTokens', JSON.stringify({
           accessToken: session.access_token,
           refreshToken: session.refresh_token
