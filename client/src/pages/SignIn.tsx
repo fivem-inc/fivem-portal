@@ -16,31 +16,37 @@ export default function SignIn() {
   const { user } = useContext(AuthContext); // AuthContextからuserを取得
   const [searchParams] = useSearchParams();
 
-  // メール確認完了の検知
+  // メール確認・パスワードリセット完了の検知
   useEffect(() => {
-    const handleEmailConfirmation = async () => {
+    const handleAuthRedirect = async () => {
       // URLパラメータをチェック
       const accessToken = searchParams.get('access_token');
       const refreshToken = searchParams.get('refresh_token');
       const type = searchParams.get('type');
       
-      if (type === 'signup' && accessToken && refreshToken) {
-        // メール確認完了後の処理
+      if (accessToken && refreshToken) {
         try {
           // 一旦ログアウトして、手動ログインを促す
           await supabase.auth.signOut();
-          setConfirmationMessage('✅ メール確認が完了しました！ログイン情報を入力してログインしてください。');
-          setIsSignUp(false); // ログインフォームに切り替え
+          
+          if (type === 'signup') {
+            setConfirmationMessage('✅ メール確認が完了しました！ログイン情報を入力してログインしてください。');
+            setIsSignUp(false); // ログインフォームに切り替え
+          } else if (type === 'recovery') {
+            setConfirmationMessage('🔐 パスワードリセットが確認されました！新しいパスワードでログインしてください。');
+            setIsSignUp(false); // ログインフォームに切り替え
+            setIsResettingPassword(false); // パスワードリセットモードを終了
+          }
           
           // URLをクリーンアップ
           window.history.replaceState({}, document.title, window.location.pathname);
         } catch (error) {
-          console.error('Email confirmation handling error:', error);
+          console.error('Auth redirect handling error:', error);
         }
       }
     };
 
-    handleEmailConfirmation();
+    handleAuthRedirect();
   }, [searchParams]);
 
   const handleLogin = async (e: React.FormEvent) => {
