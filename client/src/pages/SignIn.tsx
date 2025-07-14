@@ -1,5 +1,5 @@
-import { useState, useContext } from 'react';
-import { Navigate } from 'react-router-dom';
+import { useState, useContext, useEffect } from 'react';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { AuthContext } from '../contexts/AuthContext.tsx';
 
@@ -12,7 +12,36 @@ export default function SignIn() {
   const [error, setError] = useState<string | null>(null);
   const [isSignUp, setIsSignUp] = useState(false); // 新規登録モードかどうかの状態
   const [isResettingPassword, setIsResettingPassword] = useState(false); // パスワードリセットモードかどうかの状態
+  const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
   const { user } = useContext(AuthContext); // AuthContextからuserを取得
+  const [searchParams] = useSearchParams();
+
+  // メール確認完了の検知
+  useEffect(() => {
+    const handleEmailConfirmation = async () => {
+      // URLパラメータをチェック
+      const accessToken = searchParams.get('access_token');
+      const refreshToken = searchParams.get('refresh_token');
+      const type = searchParams.get('type');
+      
+      if (type === 'signup' && accessToken && refreshToken) {
+        // メール確認完了後の処理
+        try {
+          // 一旦ログアウトして、手動ログインを促す
+          await supabase.auth.signOut();
+          setConfirmationMessage('✅ メール確認が完了しました！ログイン情報を入力してログインしてください。');
+          setIsSignUp(false); // ログインフォームに切り替え
+          
+          // URLをクリーンアップ
+          window.history.replaceState({}, document.title, window.location.pathname);
+        } catch (error) {
+          console.error('Email confirmation handling error:', error);
+        }
+      }
+    };
+
+    handleEmailConfirmation();
+  }, [searchParams]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -145,6 +174,7 @@ export default function SignIn() {
           <button type="submit" style={{ width: '100%', padding: 8 }} disabled={loading}>
             {loading ? (isSignUp ? '登録中...' : 'ログイン中...') : (isSignUp ? '新規登録' : 'ログイン')}
           </button>
+          {confirmationMessage && <p style={{ color: 'green', marginTop: '10px', fontWeight: 'bold' }}>{confirmationMessage}</p>}
           {error && <p style={{ color: 'red', marginTop: '10px' }}>{error}</p>}
         </form>
       ) : (
