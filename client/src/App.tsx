@@ -89,7 +89,15 @@ const Dashboard: React.FC = () => {
     <div style={{ maxWidth: 800, margin: '40px auto', position: 'relative', paddingTop: '80px' }}>
       {/* ユーザー情報表示 */}
       <div style={{ position: 'absolute', top: 20, left: 20, textAlign: 'left' }}>
-        <p style={{ margin: 0, fontWeight: 'bold' }}>{user.email}</p>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
+          <p style={{ margin: 0, fontWeight: 'bold', marginRight: 8 }}>{user.email}</p>
+          <button 
+            onClick={() => window.location.href = '/change-email'}
+            style={{ padding: '2px 8px', fontSize: '12px' }}
+          >
+            メール変更
+          </button>
+        </div>
         {showNameInput ? (
           <div style={{ display: 'flex', alignItems: 'center', marginTop: 4 }}>
             <input
