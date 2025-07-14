@@ -308,6 +308,7 @@ export default function SignIn() {
       
       if (accessToken && refreshToken) {
         // セッションを設定
+        console.log('セッション設定中...', { hasAccessToken: !!accessToken, hasRefreshToken: !!refreshToken });
         const { error: sessionError } = await supabase.auth.setSession({
           access_token: accessToken,
           refresh_token: refreshToken
@@ -315,19 +316,27 @@ export default function SignIn() {
         
         if (sessionError) {
           console.error('セッション設定エラー:', sessionError);
-          setError('認証セッションの設定に失敗しました。メールリンクから再度アクセスしてください。');
+          setError(`認証セッションの設定に失敗しました: ${sessionError.message}`);
           setLoading(false);
           return;
         }
+        console.log('セッション設定成功');
+      } else {
+        console.log('トークンが見つかりません', { accessToken: !!accessToken, refreshToken: !!refreshToken });
+        setError('認証トークンが見つかりません。メールリンクから再度アクセスしてください。');
+        setLoading(false);
+        return;
       }
 
       // パスワード更新
+      console.log('パスワード更新中...');
       const { error } = await supabase.auth.updateUser({
         password: newPassword
       });
 
       if (error) {
-        setError('パスワードの更新に失敗しました: ' + error.message);
+        console.error('パスワード更新エラー:', error);
+        setError(`パスワードの更新に失敗しました: ${error.message}`);
       } else {
         await supabase.auth.signOut(); // 一旦ログアウト
         setIsSettingNewPassword(false);
