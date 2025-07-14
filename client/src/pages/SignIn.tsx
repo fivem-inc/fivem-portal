@@ -19,6 +19,30 @@ export default function SignIn() {
   const { user } = useContext(AuthContext); // AuthContextからuserを取得
   const [searchParams] = useSearchParams();
 
+  // Supabase認証イベントを監視
+  useEffect(() => {
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('認証イベント:', event, !!session);
+      
+      // パスワードリセット中の場合
+      const pendingPasswordReset = localStorage.getItem('pendingPasswordReset');
+      if (pendingPasswordReset && event === 'SIGNED_IN' && session) {
+        console.log('パスワードリセット中の自動ログインを阻止');
+        await supabase.auth.signOut();
+        localStorage.removeItem('pendingPasswordReset');
+        setIsSettingNewPassword(true);
+        setIsSignUp(false);
+        setIsResettingPassword(false);
+        setConfirmationMessage('🔐 新しいパスワードを設定してください。');
+        return;
+      }
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
+
   // メール確認・パスワードリセット完了の検知
   useEffect(() => {
     const handleAuthRedirect = async () => {
@@ -27,8 +51,8 @@ export default function SignIn() {
       
       if (pendingPasswordReset) {
         console.log('LocalStorageからパスワードリセット検知');
-        localStorage.removeItem('pendingPasswordReset');
         await supabase.auth.signOut();
+        localStorage.removeItem('pendingPasswordReset');
         setIsSettingNewPassword(true);
         setIsSignUp(false);
         setIsResettingPassword(false);
