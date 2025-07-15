@@ -251,7 +251,15 @@ export default function SignIn() {
       {!isResettingPassword && (
         <button
           onClick={() => setIsSignUp(!isSignUp)}
-          style={{ background: 'none', border: 'none', color: 'blue', cursor: 'pointer', marginTop: '10px' }}
+          style={{ 
+            background: '#007bff', 
+            border: '1px solid #007bff', 
+            color: 'white', 
+            cursor: 'pointer', 
+            marginTop: '10px',
+            padding: '8px 16px',
+            borderRadius: '4px'
+          }}
         >
           {isSignUp ? 'ログイン画面に戻る' : '新規登録はこちら'}
         </button>
@@ -259,7 +267,15 @@ export default function SignIn() {
       {!isSignUp && !isResettingPassword && (
         <button
           onClick={() => setIsResettingPassword(true)}
-          style={{ background: 'none', border: 'none', color: 'gray', cursor: 'pointer', marginTop: '10px' }}
+          style={{ 
+            background: '#6c757d', 
+            border: '1px solid #6c757d', 
+            color: 'white', 
+            cursor: 'pointer', 
+            marginTop: '10px',
+            padding: '8px 16px',
+            borderRadius: '4px'
+          }}
         >
           パスワードを忘れた場合
         </button>
@@ -267,7 +283,15 @@ export default function SignIn() {
       {isResettingPassword && (
         <button
           onClick={() => setIsResettingPassword(false)}
-          style={{ background: 'none', border: 'none', color: 'blue', cursor: 'pointer', marginTop: '10px' }}
+          style={{ 
+            background: '#007bff', 
+            border: '1px solid #007bff', 
+            color: 'white', 
+            cursor: 'pointer', 
+            marginTop: '10px',
+            padding: '8px 16px',
+            borderRadius: '4px'
+          }}
         >
           ログイン画面に戻る
         </button>
