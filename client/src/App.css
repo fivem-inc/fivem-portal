@@ -5,6 +5,13 @@
   text-align: center;
 }
 
+/* スマホでは余白を小さくして横スクロールを防ぐ */
+@media (max-width: 600px) {
+  #root {
+    padding: 0.5rem;
+  }
+}
+
 .logo {
   height: 6em;
   padding: 1.5em;
@@ -60,8 +67,8 @@
 }
 
 .amount-input {
-  min-width: 60px; /* 金額の最小幅をより小さく */
-  max-width: 100px; /* 金額の最大幅を制限 */
+  min-width: 80px; /* 金額の最小幅を大きく */
+  max-width: 90px; /* 金額の最大幅を少し小さく */
 }
 
 .transportation-input {
