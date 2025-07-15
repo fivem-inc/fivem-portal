@@ -237,7 +237,6 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                   value={expense.start_date || ''}
                   onChange={(e) => handleInputChange(index, 'start_date', e.target.value)}
                   className="expense-input date-input"
-                  placeholder="利用日"
                 />
                 {!expense.start_date && (
                   <span className="date-placeholder">利用日</span>
