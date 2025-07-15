@@ -67,11 +67,12 @@
   min-width: 220px; /* 交通機関の最小幅をさらに広げる */
 }
 
-.notes-input {
-  min-width: 400px; /* 備考欄の最小幅を実用的なサイズに */
-  width: 400px; /* 固定幅を設定 */
-  max-width: none; /* 最大幅制限を解除 */
-  flex: 0 0 400px; /* grow: 0, shrink: 0, basis: 400px - 伸縮しない固定幅 */
+/* 備考欄だけ固定幅＆Flex伸縮禁止 - 詳細度を上げて確実に適用 */
+.expense-input.notes-input {
+  flex: 0 0 400px;
+  width: 400px;
+  min-width: 400px;
+  max-width: 100%;
   box-sizing: border-box;
 }
 
