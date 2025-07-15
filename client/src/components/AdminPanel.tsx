@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import type { PendingApproval, Submission } from '../types';
-import { groupSubmissionsByYearAndMonth, generateCSVData, downloadCSV } from '../utils';
+import { groupSubmissionsByYearAndMonth, generateCSVData, downloadCSV, formatAmount } from '../utils';
 import { supabase } from '../lib/supabaseClient';
 
 interface AdminPanelProps {
@@ -171,7 +171,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
               <strong>申請者:</strong> {p.profiles?.name || p.profiles?.email || '不明'} <br />
               <strong>申請日:</strong> {new Date(p.created_at).toLocaleString()} <br />
               <strong>ステータス:</strong> {p.status === 'pending' ? '申請中' : p.status === 'approved' ? '承認' : '却下'} <br />
-              <strong>合計金額:</strong> {p.expenses_data.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0)}円 <br />
+              <strong>合計金額:</strong> {formatAmount(p.expenses_data.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0).toString())}円 <br />
               {p.approved_at && (
                 <><strong>承認日:</strong> {new Date(p.approved_at).toLocaleString()} <br /></>
               )}
@@ -254,7 +254,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                               <strong>申請者:</strong> {s.profiles?.name || s.profiles?.email || '不明'} <br />
                               <strong>申請日:</strong> {new Date(s.created_at).toLocaleString()} <br />
                               <strong>ステータス:</strong> {s.status === 'pending' ? '申請中' : s.status === 'approved' ? '承認' : '却下'} <br />
-                              <strong>合計金額:</strong> {s.expenses_data.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0)}円 <br />
+                              <strong>合計金額:</strong> {formatAmount(s.expenses_data.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0).toString())}円 <br />
                               {s.approved_at && (
                                 <><strong>承認日:</strong> {new Date(s.approved_at).toLocaleString()} <br /></>
                               )}

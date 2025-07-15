@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import type { Submission, AuthUser } from '../types';
-import { groupSubmissionsByYearAndMonth } from '../utils';
+import { groupSubmissionsByYearAndMonth, formatAmount } from '../utils';
 
 interface HistoryViewProps {
   submissions: Submission[];
@@ -47,8 +47,8 @@ const HistoryView: React.FC<HistoryViewProps> = ({
   const groupedSubmissions = groupSubmissionsByYearAndMonth(userSubmissions);
 
   return (
-    <div style={{ marginTop: 40, borderTop: '1px solid #eee', paddingTop: 20 }}>
-      <h3 style={{ marginBottom: 8 }}>あなたの申請履歴</h3>
+    <div style={{ marginTop: 40, borderTop: '1px solid #eee', paddingTop: 20, textAlign: 'left' }}>
+      <h3 style={{ marginBottom: 8, textAlign: 'left' }}>あなたの申請履歴</h3>
       <p style={{ 
         margin: '0 0 20px 0', 
         fontSize: '14px', 
@@ -106,7 +106,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({
                               <strong>申請者:</strong> {s.profiles?.name || s.profiles?.email || '不明'} <br />
                               <strong>申請日:</strong> {new Date(s.created_at).toLocaleString()} <br />
                               <strong>ステータス:</strong> {s.status === 'pending' ? '申請中' : s.status === 'approved' ? '承認' : '却下'} <br />
-                              <strong>合計金額:</strong> {s.expenses_data.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0)}円 <br />
+                              <strong>合計金額:</strong> {formatAmount(s.expenses_data.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0).toString())}円 <br />
                               {s.approved_at && (
                                 <><strong>承認日:</strong> {new Date(s.approved_at).toLocaleString()} <br /></>
                               )}
@@ -121,7 +121,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({
                                       ? `${e.start_date || '未設定'} ~ ${e.end_date || '未設定'}` 
                                       : `${e.start_date || '未設定'}`
                                     } | 
-                                    {e.from_station} - {e.to_station}: {e.amount}円
+                                    {e.from_station} - {e.to_station}: {formatAmount(e.amount || '0')}円
                                     {e.notes && ` (備考: ${e.notes})`}
                                   </li>
                                 ))}
