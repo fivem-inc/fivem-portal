@@ -186,6 +186,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                       ? `${e.start_date || '未設定'} ~ ${e.end_date || '未設定'}` 
                       : `${e.start_date || '未設定'}`
                     } | 
+                    {e.transportation && `[${e.transportation}] `}
                     {e.from_station} - {e.to_station}: {e.amount}円
                     {e.notes && ` (備考: ${e.notes})`}
                   </li>
@@ -269,6 +270,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                                       ? `${e.start_date || '未設定'} ~ ${e.end_date || '未設定'}` 
                                       : `${e.start_date || '未設定'}`
                                     } | 
+                                    {e.transportation && `[${e.transportation}] `}
                                     {e.from_station} - {e.to_station}: {e.amount}円
                                     {e.notes && ` (備考: ${e.notes})`}
                                   </li>

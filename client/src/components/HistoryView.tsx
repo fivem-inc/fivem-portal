@@ -121,6 +121,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({
                                       ? `${e.start_date || '未設定'} ~ ${e.end_date || '未設定'}` 
                                       : `${e.start_date || '未設定'}`
                                     } | 
+                                    {e.transportation && `[${e.transportation}] `}
                                     {e.from_station} - {e.to_station}: {formatAmount(e.amount || '0')}円
                                     {e.notes && ` (備考: ${e.notes})`}
                                   </li>
