@@ -335,20 +335,22 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                 x
               </button>
               
-              <button 
-                type="button" 
-                onClick={() => handleMakeRoundTrip(index)} 
-                style={{ 
-                  padding: '8px 12px', 
-                  background: '#28a745', 
-                  color: 'white', 
-                  border: 'none', 
-                  borderRadius: 4, 
-                  cursor: 'pointer' 
-                }}
-              >
-                往復
-              </button>
+              {expense.type !== 'regular' && (
+                <button 
+                  type="button" 
+                  onClick={() => handleMakeRoundTrip(index)} 
+                  style={{ 
+                    padding: '8px 12px', 
+                    background: '#28a745', 
+                    color: 'white', 
+                    border: 'none', 
+                    borderRadius: 4, 
+                    cursor: 'pointer' 
+                  }}
+                >
+                  往復
+                </button>
+              )}
               
               {expenses.length > 1 && (
                 <button 
