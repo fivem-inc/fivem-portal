@@ -48,7 +48,15 @@ const HistoryView: React.FC<HistoryViewProps> = ({
 
   return (
     <div style={{ marginTop: 40, borderTop: '1px solid #eee', paddingTop: 20 }}>
-      <h3>あなたの申請履歴</h3>
+      <h3 style={{ marginBottom: 8 }}>あなたの申請履歴</h3>
+      <p style={{ 
+        margin: '0 0 20px 0', 
+        fontSize: '14px', 
+        color: '#666',
+        fontStyle: 'italic'
+      }}>
+        過去の申請をテンプレートとして使用できます。申請項目の「テンプレ適用」ボタンをクリックしてください。
+      </p>
       {isLoading ? (
         <p>読み込み中...</p>
       ) : (
@@ -58,7 +66,16 @@ const HistoryView: React.FC<HistoryViewProps> = ({
             <div key={year} style={{ marginBottom: 20, border: '1px solid #eee', borderRadius: 4, padding: 10 }}>
               <h4 
                 onClick={() => toggleYearExpansion(year)} 
-                style={{ cursor: 'pointer', margin: 0, padding: 5, background: '#f0f0f0' }}
+                style={{ 
+                  cursor: 'pointer', 
+                  margin: 0, 
+                  padding: 8, 
+                  background: '#f0f0f0',
+                  color: '#333',
+                  fontWeight: 'bold',
+                  borderRadius: 4,
+                  border: '1px solid #ddd'
+                }}
               >
                 {year}年度 ({expandedUserYears.has(year) ? '閉じる' : '開く'})
               </h4>
