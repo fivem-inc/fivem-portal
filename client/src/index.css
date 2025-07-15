@@ -66,3 +66,110 @@ button:focus-visible {
     background-color: #f9f9f9;
   }
 }
+
+/* 緊急対応: App.cssの内容を直接追加 */
+.expense-row {
+  display: flex;
+  margin-bottom: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.expense-input {
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  flex: 1;
+  min-width: 120px;
+  max-width: 200px;
+}
+
+.amount-input {
+  min-width: 60px;
+  max-width: 100px;
+}
+
+.transportation-input {
+  min-width: 220px;
+}
+
+.date-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 120px;
+  max-width: 150px;
+}
+
+.date-input {
+  width: 100%;
+  color: transparent;
+}
+
+.date-input:focus,
+.date-input:valid {
+  color: #000;
+}
+
+.date-placeholder {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #999;
+  pointer-events: none;
+  font-size: 14px;
+  background: white;
+  padding: 0 2px;
+}
+
+.date-input:focus + .date-placeholder,
+.date-input:valid + .date-placeholder {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .expense-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .expense-input:not(.notes-input) {
+    width: 100%;
+    max-width: 100%;
+    margin-right: 0 !important;
+    box-sizing: border-box;
+  }
+
+  .amount-input {
+    max-width: 150px;
+  }
+
+  .notes-input {
+    width: 100%;
+    max-width: 100%;
+    height: 36px;
+    resize: none;
+    box-sizing: border-box;
+  }
+
+  .date-input-wrapper {
+    max-width: 100%;
+  }
+
+  .expense-row button {
+    width: 100%;
+    margin-left: 0 !important;
+  }
+}
+
+.expense-input.notes-input {
+  flex: 0 0 400px;
+  width: 400px;
+  min-width: 400px;
+  max-width: 100%;
+  height: 36px;
+  box-sizing: border-box;
+}
