@@ -170,7 +170,7 @@ export default function SignIn() {
           <div style={{ position: 'relative', margin: '6px 0' }}>
             <input
               type={showPassword ? 'text' : 'password'}
-              style={{ width: '100%', padding: '8px 40px 8px 8px' }}
+              style={{ width: '100%', padding: 8, paddingRight: '35px', boxSizing: 'border-box' }}
               placeholder='パスワード'
               value={password}
               onChange={e => setPassword(e.target.value)}
@@ -181,14 +181,16 @@ export default function SignIn() {
               onClick={() => setShowPassword(!showPassword)}
               style={{
                 position: 'absolute',
-                right: '8px',
+                right: '10px',
                 top: '50%',
                 transform: 'translateY(-50%)',
                 background: 'none',
                 border: 'none',
                 cursor: 'pointer',
-                fontSize: '14px',
-                color: '#666'
+                fontSize: '16px',
+                color: '#666',
+                padding: 0,
+                lineHeight: 1
               }}
             >
               {showPassword ? '🙈' : '👁️'}
@@ -198,7 +200,7 @@ export default function SignIn() {
             <div style={{ position: 'relative', margin: '6px 0' }}>
               <input
                 type={showConfirmPassword ? 'text' : 'password'}
-                style={{ width: '100%', padding: '8px 40px 8px 8px' }}
+                style={{ width: '100%', padding: 8, paddingRight: '35px', boxSizing: 'border-box' }}
                 placeholder='パスワード（確認用）'
                 value={confirmPassword}
                 onChange={e => setConfirmPassword(e.target.value)}
@@ -209,14 +211,16 @@ export default function SignIn() {
                 onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                 style={{
                   position: 'absolute',
-                  right: '8px',
+                  right: '10px',
                   top: '50%',
                   transform: 'translateY(-50%)',
                   background: 'none',
                   border: 'none',
                   cursor: 'pointer',
-                  fontSize: '14px',
-                  color: '#666'
+                  fontSize: '16px',
+                  color: '#666',
+                  padding: 0,
+                  lineHeight: 1
                 }}
               >
                 {showConfirmPassword ? '🙈' : '👁️'}
