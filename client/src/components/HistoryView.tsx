@@ -128,7 +128,15 @@ const HistoryView: React.FC<HistoryViewProps> = ({
                               </ul>
                               <button 
                                 onClick={() => onApplyTemplate(s)} 
-                                style={{ marginTop: 10, padding: '8px 12px' }}
+                                style={{ 
+                                  marginTop: 10, 
+                                  padding: '8px 12px',
+                                  backgroundColor: '#f8f9fa',
+                                  border: '1px solid #dee2e6',
+                                  borderRadius: '4px',
+                                  cursor: 'pointer',
+                                  fontSize: '14px'
+                                }}
                               >
                                 テンプレートとして適用
                               </button>
