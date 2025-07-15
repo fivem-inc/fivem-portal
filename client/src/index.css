@@ -149,7 +149,22 @@ select.expense-input {
   display: none;
 }
 
-/* 縦一列は完全に無効化 - 常に横並びで段が増える */
+/* 600px未満では入力欄のflex-growを0にして広がらないようにする */
+@media (max-width: 599px) {
+  .expense-input,
+  select.expense-input {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    max-width: unset !important;
+  }
+
+  /* 備考欄だけは可変幅を維持 */
+  .expense-input.notes-input {
+    flex: 1 1 300px;
+    min-width: 240px;
+    max-width: 400px;
+  }
+}
 
 .expense-input.notes-input {
   flex: 1 1 300px;
