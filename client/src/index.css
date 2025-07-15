@@ -165,13 +165,13 @@ select.expense-input {
 
   /* 各要素の幅をbasisで指定 */
   .single-select {
-    flex-basis: 60px !important;
+    flex-basis: 50px !important;
   }
   .amount-input {
     flex-basis: 90px !important;
   }
   .transportation-input {
-    flex-basis: 140px !important;
+    flex-basis: 160px !important;
   }
   .date-input-wrapper {
     flex-basis: 130px !important;
