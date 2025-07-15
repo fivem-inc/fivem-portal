@@ -161,11 +161,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
       </div>
 
       {/* 承認待ち一覧 */}
-      <h3>承認待ち一覧</h3>
+      <h3 style={{ textAlign: 'left' }}>承認待ち一覧</h3>
       {isLoading ? (
-        <p>読み込み中...</p>
+        <p style={{ textAlign: 'left' }}>読み込み中...</p>
       ) : (
-        <ul style={{ listStyle: 'none', padding: 0 }}>
+        <ul style={{ listStyle: 'none', padding: 0, textAlign: 'left' }}>
           {pendingApprovals.map(p => (
             <li key={p.id} style={{ border: '1px solid #ccc', padding: 10, marginBottom: 10, borderRadius: 4 }}>
               <strong>申請者:</strong> {p.profiles?.name || p.profiles?.email || '不明'} <br />
@@ -207,9 +207,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
       {/* すべての申請履歴 */}
       <h3 style={{ marginTop: 40, textAlign: 'left' }}>すべての申請履歴</h3>
       {isLoading ? (
-        <p>読み込み中...</p>
+        <p style={{ textAlign: 'left' }}>読み込み中...</p>
       ) : (
-        Object.entries(groupedSubmissions)
+        <div style={{ textAlign: 'left' }}>
+        {Object.entries(groupedSubmissions)
           .sort(([yearA], [yearB]) => parseInt(yearB) - parseInt(yearA))
           .map(([year, months]) => (
             <div key={year} style={{ marginBottom: 20, border: '1px solid #eee', borderRadius: 4, padding: 10 }}>
@@ -310,7 +311,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                   ))
               )}
             </div>
-          ))
+          ))}
+        </div>
       )}
     </div>
   );
