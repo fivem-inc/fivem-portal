@@ -106,45 +106,6 @@
   display: none;
 }
 
-/* スマホ表示時の調整 */
-@media (max-width: 600px) {
-  .expense-row {
-    flex-direction: column; /* 縦に並べる */
-    align-items: stretch; /* 幅をいっぱいに広げる */
-  }
-
-  /* 備考欄以外はフル幅だが画面幅を超えない */
-  .expense-input:not(.notes-input) {
-    width: 100%; /* 幅をいっぱいに広げる */
-    max-width: 100%; /* 画面幅を超えない */
-    margin-right: 0 !important; /* インラインスタイルを上書き */
-    box-sizing: border-box;
-  }
-
-  /* 金額フィールドはスマホでも小さめに */
-  .amount-input {
-    max-width: 150px;
-  }
-
-  /* 備考欄は1行の高さに制限 */
-  .notes-input {
-    width: 100%;
-    max-width: 100%;
-    height: 36px; /* 他のフィールドと同じ高さ */
-    resize: none; /* サイズ変更を無効化 */
-    box-sizing: border-box;
-  }
-
-  /* 日付フィールドもスマホでは幅制限 */
-  .date-input-wrapper {
-    max-width: 100%;
-  }
-
-  .expense-row button {
-    width: 100%;
-    margin-left: 0 !important;
-  }
-}
 
 /* 備考欄だけ固定幅＆Flex伸縮禁止 - 詳細度を上げて確実に適用 */
 .expense-input.notes-input {
