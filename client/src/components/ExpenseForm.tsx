@@ -231,42 +231,39 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
             </select>
             
             {(expense.type === 'one_time' || expense.type === 'business_trip') && (
-              <div className="date-input-wrapper">
+              <div className="date-input-wrapper" data-hasvalue={Boolean(expense.start_date)}>
                 <input
                   type="date"
                   value={expense.start_date || ''}
                   onChange={(e) => handleInputChange(index, 'start_date', e.target.value)}
                   className="expense-input date-input"
+                  required
                 />
-                {!expense.start_date && (
-                  <span className="date-placeholder">利用日</span>
-                )}
+                <span className="date-placeholder">利用日</span>
               </div>
             )}
             
             {expense.type === 'regular' && (
               <>
-                <div className="date-input-wrapper">
+                <div className="date-input-wrapper" data-hasvalue={Boolean(expense.start_date)}>
                   <input
                     type="date"
                     value={expense.start_date || ''}
                     onChange={(e) => handleInputChange(index, 'start_date', e.target.value)}
                     className="expense-input date-input"
+                    required
                   />
-                  {!expense.start_date && (
-                    <span className="date-placeholder">開始日</span>
-                  )}
+                  <span className="date-placeholder">開始日</span>
                 </div>
-                <div className="date-input-wrapper">
+                <div className="date-input-wrapper" data-hasvalue={Boolean(expense.end_date)}>
                   <input
                     type="date"
                     value={expense.end_date || ''}
                     onChange={(e) => handleInputChange(index, 'end_date', e.target.value)}
                     className="expense-input date-input"
+                    required
                   />
-                  {!expense.end_date && (
-                    <span className="date-placeholder">終了日</span>
-                  )}
+                  <span className="date-placeholder">終了日</span>
                 </div>
               </>
             )}
