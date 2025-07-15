@@ -214,7 +214,16 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
             <div key={year} style={{ marginBottom: 20, border: '1px solid #eee', borderRadius: 4, padding: 10 }}>
               <h4 
                 onClick={() => toggleYearExpansion(year)} 
-                style={{ cursor: 'pointer', margin: 0, padding: 5, background: '#f0f0f0' }}
+                style={{ 
+                  cursor: 'pointer', 
+                  margin: 0, 
+                  padding: 8, 
+                  background: '#f0f0f0',
+                  color: '#333',
+                  fontWeight: 'bold',
+                  borderRadius: 4,
+                  border: '1px solid #ddd'
+                }}
               >
                 {year}年度 ({expandedAdminYears.has(year) ? '閉じる' : '開く'})
               </h4>
@@ -225,7 +234,16 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                     <div key={`${year}-${month}`} style={{ marginTop: 10, border: '1px solid #ddd', borderRadius: 4, padding: 5 }}>
                       <h5 
                         onClick={() => toggleMonthExpansion(`${year}-${month}`)} 
-                        style={{ cursor: 'pointer', margin: 0, padding: 5, background: '#f9f9f9' }}
+                        style={{ 
+                          cursor: 'pointer', 
+                          margin: 0, 
+                          padding: 8, 
+                          background: '#f9f9f9',
+                          color: '#333',
+                          fontWeight: 'bold',
+                          borderRadius: 4,
+                          border: '1px solid #ccc'
+                        }}
                       >
                         {month}月 ({expandedMonths.has(`${year}-${month}`) ? '閉じる' : '開く'})
                       </h5>
