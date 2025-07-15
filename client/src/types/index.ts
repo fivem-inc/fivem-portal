@@ -41,6 +41,12 @@ export interface AuthUser {
   app_metadata?: {
     role?: string;
   };
+  user_metadata?: {
+    name?: string;
+    display_name?: string;
+    full_name?: string;
+    [key: string]: any;
+  };
 }
 
 export interface AuthContextType {
