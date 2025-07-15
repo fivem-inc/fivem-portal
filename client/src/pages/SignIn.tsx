@@ -12,6 +12,8 @@ export default function SignIn() {
   const [error, setError] = useState<string | null>(null);
   const [isSignUp, setIsSignUp] = useState(false); // 新規登録モードかどうかの状態
   const [isResettingPassword, setIsResettingPassword] = useState(false); // パスワードリセットモードかどうかの状態
+  const [showPassword, setShowPassword] = useState(false); // パスワード表示切り替え
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false); // 確認用パスワード表示切り替え
   const { user } = useContext(AuthContext); // AuthContextからuserを取得
 
   // 認証フロー処理（簡素化 - パスワードリセットは専用ページで処理）
@@ -165,23 +167,61 @@ export default function SignIn() {
             onChange={e => setEmail(e.target.value)}
             required
           />
-          <input
-            type='password'
-            style={{ width: '100%', margin: '6px 0', padding: 8 }}
-            placeholder='パスワード'
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            required
-          />
-          {isSignUp && (
+          <div style={{ position: 'relative', margin: '6px 0' }}>
             <input
-              type='password'
-              style={{ width: '100%', margin: '6px 0', padding: 8 }}
-              placeholder='パスワード（確認用）'
-              value={confirmPassword}
-              onChange={e => setConfirmPassword(e.target.value)}
+              type={showPassword ? 'text' : 'password'}
+              style={{ width: '100%', padding: '8px 40px 8px 8px' }}
+              placeholder='パスワード'
+              value={password}
+              onChange={e => setPassword(e.target.value)}
               required
             />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              style={{
+                position: 'absolute',
+                right: '8px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '14px',
+                color: '#666'
+              }}
+            >
+              {showPassword ? '🙈' : '👁️'}
+            </button>
+          </div>
+          {isSignUp && (
+            <div style={{ position: 'relative', margin: '6px 0' }}>
+              <input
+                type={showConfirmPassword ? 'text' : 'password'}
+                style={{ width: '100%', padding: '8px 40px 8px 8px' }}
+                placeholder='パスワード（確認用）'
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                style={{
+                  position: 'absolute',
+                  right: '8px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  color: '#666'
+                }}
+              >
+                {showConfirmPassword ? '🙈' : '👁️'}
+              </button>
+            </div>
           )}
           <button type="submit" style={{ width: '100%', padding: 8 }} disabled={loading}>
             {loading ? (isSignUp ? '登録中...' : 'ログイン中...') : (isSignUp ? '新規登録' : 'ログイン')}
