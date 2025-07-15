@@ -26,6 +26,18 @@ export const useAuth = (): UseAuthReturn => {
   const fetchProfileName = useCallback(async () => {
     if (!user) return;
     
+    console.log('=== 名前取得開始 ===');
+    console.log('user_metadata:', user.user_metadata);
+    
+    // まずuser_metadataから名前を取得
+    if (user.user_metadata?.name) {
+      console.log('user_metadataから名前取得:', user.user_metadata.name);
+      setProfileName(user.user_metadata.name);
+      setShowNameInput(false);
+      return;
+    }
+    
+    // user_metadataに名前がない場合はprofilesテーブルから取得
     try {
       const { data, error } = await supabase
         .from('profiles')
@@ -33,8 +45,11 @@ export const useAuth = (): UseAuthReturn => {
         .eq('id', user.id)
         .single();
 
+      console.log('profilesテーブルから取得:', data);
+
       if (error) {
         console.error('Error fetching profile name:', error.message);
+        setShowNameInput(true);
       } else if (data && data.name) {
         setProfileName(data.name);
         setShowNameInput(false);
@@ -43,6 +58,7 @@ export const useAuth = (): UseAuthReturn => {
       }
     } catch (error) {
       console.error('Unexpected error fetching profile name:', error);
+      setShowNameInput(true);
     }
   }, [user]);
 
@@ -57,39 +73,32 @@ export const useAuth = (): UseAuthReturn => {
     console.log('保存する名前:', profileName.trim());
 
     try {
-      // まずprofilesテーブルにレコードが存在するかチェック
-      const { data: existingProfile, error: fetchError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single();
+      // user_metadataを更新
+      const { error: updateError } = await supabase.auth.updateUser({
+        data: { 
+          name: profileName.trim(),
+          display_name: profileName.trim(),
+          full_name: profileName.trim()
+        }
+      });
 
-      console.log('既存プロフィール:', existingProfile);
-      console.log('取得エラー:', fetchError);
+      console.log('user_metadata更新結果:', updateError);
 
-      let result;
-      if (fetchError && fetchError.code === 'PGRST116') {
-        // レコードが存在しない場合は新規作成
-        console.log('新規プロフィール作成');
-        result = await supabase
-          .from('profiles')
-          .insert({ id: user.id, name: profileName.trim() });
+      if (updateError) {
+        console.error('user_metadata更新エラー:', updateError);
+        alert('名前の保存に失敗しました: ' + updateError.message);
       } else {
-        // レコードが存在する場合は更新
-        console.log('既存プロフィール更新');
-        result = await supabase
+        console.log('✅ user_metadata名前保存成功');
+        
+        // profilesテーブルも同期更新（既存データとの整合性のため）
+        const { error: profileError } = await supabase
           .from('profiles')
-          .update({ name: profileName.trim() })
-          .eq('id', user.id);
-      }
-
-      console.log('保存結果:', result);
-
-      if (result.error) {
-        console.error('保存エラー:', result.error);
-        alert('名前の保存に失敗しました: ' + result.error.message);
-      } else {
-        console.log('✅ 名前保存成功');
+          .upsert({ id: user.id, name: profileName.trim() });
+        
+        if (profileError) {
+          console.warn('profiles同期更新エラー:', profileError);
+        }
+        
         alert('名前を保存しました！');
         setShowNameInput(false);
       }
