@@ -149,20 +149,48 @@ select.expense-input {
   display: none;
 }
 
-/* 600px未満では入力欄のflex-growを0にして広がらないようにする */
+/* 600px未満では各フィールドの最小幅を再設定 */
 @media (max-width: 599px) {
-  .expense-input,
-  select.expense-input {
-    flex: 0 0 auto !important;
-    width: auto !important;
-    max-width: unset !important;
+  /* 基本の入力欄は縮小を許可 */
+  .expense-input {
+    flex: 1 1 80px;
+    min-width: 70px;
+    max-width: 120px;
   }
 
-  /* 備考欄だけは可変幅を維持 */
+  /* 単発と金額は固定で小さく */
+  select.expense-input {
+    flex: 0 0 60px;
+    max-width: 60px;
+    min-width: 50px;
+  }
+
+  .amount-input {
+    flex: 0 0 50px;
+    max-width: 50px;
+    min-width: 40px;
+  }
+
+  /* 交通機関も縮小 */
+  .transportation-input {
+    flex: 1 1 120px;
+    min-width: 100px;
+    max-width: 150px;
+  }
+
+  /* 日付フィールドも縮小 */
+  .date-input-wrapper {
+    flex: 1 1 90px;
+    min-width: 80px;
+    max-width: 120px;
+  }
+
+  /* 備考欄は最後尾に配置 */
   .expense-input.notes-input {
-    flex: 1 1 300px;
-    min-width: 240px;
-    max-width: 400px;
+    flex: 1 1 200px;
+    min-width: 180px;
+    max-width: 300px;
+    order: 99;
   }
 }
 
