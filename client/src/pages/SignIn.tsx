@@ -153,7 +153,7 @@ export default function SignIn() {
         <form onSubmit={isSignUp ? handleSignUp : handleLogin}>
           {isSignUp && (
             <input
-              style={{ width: '100%', margin: '6px 0', padding: 8 }}
+              style={{ width: '100%', margin: '6px 0', padding: 8, boxSizing: 'border-box' }}
               placeholder='名前'
               value={name}
               onChange={e => setName(e.target.value)}
@@ -161,7 +161,7 @@ export default function SignIn() {
             />
           )}
           <input
-            style={{ width: '100%', margin: '6px 0', padding: 8 }}
+            style={{ width: '100%', margin: '6px 0', padding: 8, boxSizing: 'border-box' }}
             placeholder='メールアドレス'
             value={email}
             onChange={e => setEmail(e.target.value)}
@@ -193,7 +193,7 @@ export default function SignIn() {
                 lineHeight: 1
               }}
             >
-              {showPassword ? '🙈' : '👁️'}
+              {showPassword ? '●' : '○'}
             </button>
           </div>
           {isSignUp && (
@@ -223,7 +223,7 @@ export default function SignIn() {
                   lineHeight: 1
                 }}
               >
-                {showConfirmPassword ? '🙈' : '👁️'}
+                {showConfirmPassword ? '●' : '○'}
               </button>
             </div>
           )}
