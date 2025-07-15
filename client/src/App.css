@@ -56,6 +56,7 @@
   border-radius: 4px;
   flex: 1; /* 均等な幅に広がる */
   min-width: 120px; /* 最小幅を設定 */
+  max-width: 200px; /* 最大幅を制限してPC表示での重複を防ぐ */
 }
 
 .amount-input {
@@ -75,6 +76,7 @@
   align-items: center;
   flex: 1;
   min-width: 120px;
+  max-width: 150px; /* 日付フィールドの最大幅を制限 */
 }
 
 .date-input {
@@ -111,17 +113,31 @@
     align-items: stretch; /* 幅をいっぱいに広げる */
   }
 
-  /* 備考欄以外はフル幅 */
+  /* 備考欄以外はフル幅だが画面幅を超えない */
   .expense-input:not(.notes-input) {
     width: 100%; /* 幅をいっぱいに広げる */
+    max-width: 100%; /* 画面幅を超えない */
     margin-right: 0 !important; /* インラインスタイルを上書き */
+    box-sizing: border-box;
   }
 
-  /* 備考欄は固定幅を維持しつつ画面幅を超えない */
+  /* 金額フィールドはスマホでも小さめに */
+  .amount-input {
+    max-width: 150px;
+  }
+
+  /* 備考欄は1行の高さに制限 */
   .notes-input {
-    width: 400px;
+    width: 100%;
     max-width: 100%;
+    height: 36px; /* 他のフィールドと同じ高さ */
+    resize: none; /* サイズ変更を無効化 */
     box-sizing: border-box;
+  }
+
+  /* 日付フィールドもスマホでは幅制限 */
+  .date-input-wrapper {
+    max-width: 100%;
   }
 
   .expense-row button {
@@ -136,5 +152,6 @@
   width: 400px;
   min-width: 400px;
   max-width: 100%;
+  height: 36px; /* 他のフィールドと同じ高さ */
   box-sizing: border-box;
 }
