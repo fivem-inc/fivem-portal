@@ -227,7 +227,19 @@ export default function SignIn() {
               </button>
             </div>
           )}
-          <button type="submit" style={{ width: '100%', padding: 8 }} disabled={loading}>
+          <button 
+            type="submit" 
+            style={{ 
+              width: '100%', 
+              padding: 8,
+              background: '#28a745',
+              color: 'white',
+              border: '1px solid #28a745',
+              borderRadius: '4px',
+              cursor: 'pointer'
+            }} 
+            disabled={loading}
+          >
             {loading ? (isSignUp ? '登録中...' : 'ログイン中...') : (isSignUp ? '新規登録' : 'ログイン')}
           </button>
           {error && <p style={{ color: 'red', marginTop: '10px' }}>{error}</p>}
@@ -236,13 +248,25 @@ export default function SignIn() {
         <form onSubmit={handlePasswordReset}>
           <p>パスワードリセットメールを送信します。メールアドレスを入力してください。</p>
           <input
-            style={{ width: '100%', margin: '6px 0', padding: 8 }}
+            style={{ width: '100%', margin: '6px 0', padding: 8, boxSizing: 'border-box' }}
             placeholder='メールアドレス'
             value={email}
             onChange={e => setEmail(e.target.value)}
             required
           />
-          <button type="submit" style={{ width: '100%', padding: 8 }} disabled={loading}>
+          <button 
+            type="submit" 
+            style={{ 
+              width: '100%', 
+              padding: 8,
+              background: '#dc3545',
+              color: 'white',
+              border: '1px solid #dc3545',
+              borderRadius: '4px',
+              cursor: 'pointer'
+            }} 
+            disabled={loading}
+          >
             {loading ? '送信中...' : 'パスワードリセットメールを送信'}
           </button>
           {error && <p style={{ color: 'red', marginTop: '10px' }}>{error}</p>}
