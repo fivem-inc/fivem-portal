@@ -149,26 +149,7 @@ select.expense-input {
   display: none;
 }
 
-/* 非常に小さい画面でのみ縦一列を許可 */
-@media (max-width: 400px) {
-  .expense-row {
-    flex-direction: column;
-  }
-  
-  .expense-input {
-    height: 36px !important;
-    box-sizing: border-box;
-  }
-  
-  .expense-input.notes-input {
-    height: 36px !important;
-    resize: none !important;
-  }
-  
-  select.expense-input {
-    height: 36px !important;
-  }
-}
+/* 縦一列は完全に無効化 - 常に横並びで段が増える */
 
 .expense-input.notes-input {
   flex: 1 1 300px;
