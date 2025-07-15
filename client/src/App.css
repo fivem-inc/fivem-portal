@@ -71,7 +71,8 @@
   min-width: 400px; /* 備考欄の最小幅を実用的なサイズに */
   width: 400px; /* 固定幅を設定 */
   max-width: none; /* 最大幅制限を解除 */
-  flex: none; /* flex設定を無効化 */
+  flex: 0 0 400px; /* grow: 0, shrink: 0, basis: 400px - 伸縮しない固定幅 */
+  box-sizing: border-box;
 }
 
 /* 日付入力フィールドのスタイル */
