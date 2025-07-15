@@ -86,7 +86,16 @@ const HistoryView: React.FC<HistoryViewProps> = ({
                     <div key={`${year}-${month}`} style={{ marginTop: 10, border: '1px solid #ddd', borderRadius: 4, padding: 5 }}>
                       <h5 
                         onClick={() => toggleMonthExpansion(`${year}-${month}`)} 
-                        style={{ cursor: 'pointer', margin: 0, padding: 5, background: '#f9f9f9' }}
+                        style={{ 
+                          cursor: 'pointer', 
+                          margin: 0, 
+                          padding: 8, 
+                          background: '#f9f9f9',
+                          color: '#333',
+                          fontWeight: 'bold',
+                          borderRadius: 4,
+                          border: '1px solid #ccc'
+                        }}
                       >
                         {month}月 ({expandedMonths.has(`${year}-${month}`) ? '閉じる' : '開く'})
                       </h5>
