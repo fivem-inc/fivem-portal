@@ -67,6 +67,15 @@
   font-size: 14px;
   min-width: 20px;
   text-align: center;
+  color: #333;
+}
+
+/* ダークモード対応 */
+@media (prefers-color-scheme: dark) {
+  .expense-number {
+    background-color: #444;
+    color: #fff;
+  }
 }
 
 .expense-input {
