@@ -28,9 +28,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       console.log('🔥 認証イベント:', event, '| セッション:', !!session);
       
-      if (event === 'EMAIL_CHANGE') {
-        console.log('✅ EMAIL_CHANGE イベント検知 - メールアドレス変更完了');
-        alert('メールアドレスの変更が完了しました！');
+      if (event === 'USER_UPDATED') {
+        console.log('✅ USER_UPDATED イベント検知 - ユーザー情報更新完了');
+        // メールアドレス変更の場合の通知
+        if (session?.user) {
+          alert('メールアドレスの変更が完了しました！');
+        }
       }
       
       setUser(session?.user as AuthUser ?? null);
