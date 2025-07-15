@@ -117,9 +117,17 @@
     align-items: stretch; /* 幅をいっぱいに広げる */
   }
 
-  .expense-input {
+  /* 備考欄以外はフル幅 */
+  .expense-input:not(.notes-input) {
     width: 100%; /* 幅をいっぱいに広げる */
     margin-right: 0 !important; /* インラインスタイルを上書き */
+  }
+
+  /* 備考欄は固定幅を維持しつつ画面幅を超えない */
+  .notes-input {
+    width: 400px;
+    max-width: 100%;
+    box-sizing: border-box;
   }
 
   .expense-row button {
