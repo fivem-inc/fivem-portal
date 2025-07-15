@@ -52,15 +52,44 @@ export const useAuth = (): UseAuthReturn => {
       return;
     }
 
-    try {
-      const { error } = await supabase
-        .from('profiles')
-        .update({ name: profileName.trim() })
-        .eq('id', user.id);
+    console.log('=== 名前保存開始 ===');
+    console.log('ユーザーID:', user.id);
+    console.log('保存する名前:', profileName.trim());
 
-      if (error) {
-        alert('名前の保存に失敗しました: ' + error.message);
+    try {
+      // まずprofilesテーブルにレコードが存在するかチェック
+      const { data: existingProfile, error: fetchError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+
+      console.log('既存プロフィール:', existingProfile);
+      console.log('取得エラー:', fetchError);
+
+      let result;
+      if (fetchError && fetchError.code === 'PGRST116') {
+        // レコードが存在しない場合は新規作成
+        console.log('新規プロフィール作成');
+        result = await supabase
+          .from('profiles')
+          .insert({ id: user.id, name: profileName.trim() });
       } else {
+        // レコードが存在する場合は更新
+        console.log('既存プロフィール更新');
+        result = await supabase
+          .from('profiles')
+          .update({ name: profileName.trim() })
+          .eq('id', user.id);
+      }
+
+      console.log('保存結果:', result);
+
+      if (result.error) {
+        console.error('保存エラー:', result.error);
+        alert('名前の保存に失敗しました: ' + result.error.message);
+      } else {
+        console.log('✅ 名前保存成功');
         alert('名前を保存しました！');
         setShowNameInput(false);
       }
