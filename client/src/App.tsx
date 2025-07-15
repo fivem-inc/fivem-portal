@@ -3,6 +3,7 @@ import { Routes, Route, Navigate, Outlet, BrowserRouter } from 'react-router-dom
 import SignIn from './pages/SignIn';
 import ResetPassword from './pages/ResetPassword';
 import ChangeEmail from './pages/ChangeEmail';
+import SupabaseSettingsCheck from './pages/SupabaseSettingsCheck';
 import ExpenseForm from './components/ExpenseForm';
 import AdminPanel from './components/AdminPanel';
 import HistoryView from './components/HistoryView';
@@ -175,6 +176,7 @@ function App() {
           <Route path="/" element={<ProtectedLayout />}>
             <Route index element={<Dashboard />} />
             <Route path="/change-email" element={<ChangeEmail />} />
+            <Route path="/settings-check" element={<SupabaseSettingsCheck />} />
           </Route>
         </Routes>
       </AuthProvider>
