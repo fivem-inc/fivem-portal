@@ -67,14 +67,6 @@
   min-width: 220px; /* 交通機関の最小幅をさらに広げる */
 }
 
-/* 備考欄だけ固定幅＆Flex伸縮禁止 - 詳細度を上げて確実に適用 */
-.expense-input.notes-input {
-  flex: 0 0 400px;
-  width: 400px;
-  min-width: 400px;
-  max-width: 100%;
-  box-sizing: border-box;
-}
 
 /* 日付入力フィールドのスタイル */
 .date-input-wrapper {
@@ -136,4 +128,13 @@
     width: 100%;
     margin-left: 0 !important;
   }
+}
+
+/* 備考欄だけ固定幅＆Flex伸縮禁止 - 詳細度を上げて確実に適用 */
+.expense-input.notes-input {
+  flex: 0 0 400px;
+  width: 400px;
+  min-width: 400px;
+  max-width: 100%;
+  box-sizing: border-box;
 }
