@@ -91,12 +91,14 @@ button:focus-visible {
 }
 
 select.expense-input {
-  max-width: 100px;
+  max-width: 80px;
+  flex: 0 0 80px;
 }
 
 .amount-input {
   min-width: 60px;
-  max-width: 100px;
+  max-width: 80px;
+  flex: 0 0 80px;
 }
 
 .transportation-input {
@@ -115,6 +117,10 @@ select.expense-input {
 
 .date-input {
   width: 100%;
+  color: transparent;
+}
+
+.date-input:not(:focus):invalid {
   color: transparent;
 }
 
@@ -141,58 +147,13 @@ select.expense-input {
   display: none;
 }
 
-@media (max-width: 480px) {
-  .expense-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .expense-input:not(.notes-input) {
-    width: calc(100% - 16px);
-    max-width: calc(100% - 16px);
-    margin-right: 0 !important;
-    box-sizing: border-box;
-  }
-
-  .amount-input {
-    max-width: 150px;
-  }
-
-  .date-input-wrapper {
-    max-width: calc(100% - 16px);
-  }
-
-  .expense-row button {
-    width: 100%;
-    margin-left: 0 !important;
-  }
-  
-  /* 備考欄もスマホでは適切なサイズに */
-  .expense-input.notes-input {
-    width: calc(100% - 16px) !important;
-    max-width: calc(100% - 16px) !important;
-    min-width: auto !important;
-    flex: none !important;
-    height: 36px !important;
-  }
+.date-input:not(:placeholder-shown) + .date-placeholder {
+  display: none;
 }
 
-/* 中間サイズでも横並びを維持 */
-@media (max-width: 768px) and (min-width: 481px) {
-  .expense-row {
-    flex-wrap: wrap;
-    justify-content: flex-start;
-  }
-  
-  .expense-input {
-    flex: 0 0 auto;
-  }
-  
-  .expense-input.notes-input {
-    flex: 0 0 400px;
-    max-width: 400px;
-  }
-}
+/* 縦一列表示を完全に無効化 - 削除 */
+
+/* 中間サイズ設定も削除 - 常に横並び */
 
 .expense-input.notes-input {
   flex: 0 0 400px;
