@@ -9,7 +9,7 @@
 /* スマホでは余白を小さくして横スクロールを防ぐ */
 @media (max-width: 600px) {
   #root {
-    padding: 0.25rem;
+    padding: 0.25rem 0.5rem;
     overflow-x: hidden;
   }
 }
@@ -68,6 +68,12 @@
   max-width: 200px; /* 最大幅を制限してPC表示での重複を防ぐ */
 }
 
+/* 出発駅・帰着駅の幅を大きく */
+.expense-input[placeholder*="駅"] {
+  min-width: 140px;
+  max-width: 180px;
+}
+
 .amount-input {
   min-width: 80px; /* 金額の最小幅を大きく */
   max-width: 90px; /* 金額の最大幅を少し小さく */
@@ -86,7 +92,7 @@
   align-items: center;
   flex: 1;
   min-width: 120px;
-  max-width: 150px; /* 日付フィールドの最大幅を制限 */
+  max-width: 170px; /* 日付フィールドの最大幅を拡大 */
 }
 
 .date-input {
@@ -97,6 +103,14 @@
 .date-input:focus,
 .date-input:valid {
   color: #000;
+}
+
+/* ダークモード対応 */
+@media (prefers-color-scheme: dark) {
+  .date-input:focus,
+  .date-input:valid {
+    color: #fff;
+  }
 }
 
 .date-placeholder {

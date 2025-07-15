@@ -223,11 +223,11 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
             <select
               value={expense.type}
               onChange={(e) => handleInputChange(index, 'type', e.target.value as 'regular' | 'business_trip' | 'one_time')}
-              className="expense-input"
+              className="expense-input single-select"
             >
-              <option value="one_time">単発</option>
-              <option value="regular">定期</option>
-              <option value="business_trip">出張</option>
+              <option value="one_time">{index + 1} 単発</option>
+              <option value="regular">{index + 1} 定期</option>
+              <option value="business_trip">{index + 1} 出張</option>
             </select>
             
             {(expense.type === 'one_time' || expense.type === 'business_trip') && (
