@@ -30,8 +30,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       if (event === 'USER_UPDATED') {
         console.log('✅ USER_UPDATED イベント検知 - ユーザー情報更新完了');
-        // メールアドレス変更の場合の処理
-        if (session?.user) {
+        
+        // 現在のユーザー情報と比較してメール変更かどうかを判断
+        const currentUser = user;
+        const newUser = session?.user;
+        
+        if (currentUser && newUser && currentUser.email !== newUser.email) {
+          // メールアドレスが変更された場合のみ処理
+          console.log('📧 メールアドレス変更検知:', currentUser.email, '→', newUser.email);
           alert('メールアドレスの変更が完了しました！新しいメールアドレスでログインし直してください。');
           
           // 3秒後にログアウトしてサインイン画面に移動
@@ -39,6 +45,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             await supabase.auth.signOut();
             window.location.href = '/signin';
           }, 3000);
+        } else {
+          // 名前変更やその他の更新の場合
+          console.log('👤 ユーザー情報更新（メール以外）');
         }
       }
       
