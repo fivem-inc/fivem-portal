@@ -82,7 +82,7 @@ button:focus-visible {
   border-radius: 4px;
   flex: 1;
   min-width: 120px;
-  max-width: 200px;
+  max-width: 180px;
 }
 
 .amount-input {
@@ -91,7 +91,8 @@ button:focus-visible {
 }
 
 .transportation-input {
-  min-width: 220px;
+  min-width: 180px;
+  max-width: 220px;
 }
 
 .date-input-wrapper {
@@ -100,7 +101,7 @@ button:focus-visible {
   align-items: center;
   flex: 1;
   min-width: 120px;
-  max-width: 150px;
+  max-width: 160px;
 }
 
 .date-input {
@@ -123,6 +124,7 @@ button:focus-visible {
   font-size: 14px;
   background: white;
   padding: 0 2px;
+  z-index: 1;
 }
 
 .date-input:focus + .date-placeholder,
@@ -130,15 +132,15 @@ button:focus-visible {
   display: none;
 }
 
-@media (max-width: 600px) {
+@media (max-width: 768px) {
   .expense-row {
     flex-direction: column;
     align-items: stretch;
   }
 
   .expense-input:not(.notes-input) {
-    width: 100%;
-    max-width: 100%;
+    width: calc(100% - 16px);
+    max-width: calc(100% - 16px);
     margin-right: 0 !important;
     box-sizing: border-box;
   }
@@ -147,15 +149,22 @@ button:focus-visible {
     max-width: 150px;
   }
 
-  /* 備考欄は.expense-input.notes-inputのルールを使用（削除） */
-
   .date-input-wrapper {
-    max-width: 100%;
+    max-width: calc(100% - 16px);
   }
 
   .expense-row button {
     width: 100%;
     margin-left: 0 !important;
+  }
+  
+  /* 備考欄もスマホでは適切なサイズに */
+  .expense-input.notes-input {
+    width: calc(100% - 16px) !important;
+    max-width: calc(100% - 16px) !important;
+    min-width: auto !important;
+    flex: none !important;
+    height: 36px !important;
   }
 }
 
@@ -166,4 +175,6 @@ button:focus-visible {
   max-width: 100%;
   height: 36px;
   box-sizing: border-box;
+  resize: none;
+  overflow: hidden;
 }
