@@ -87,53 +87,65 @@ const Dashboard: React.FC = () => {
   }
 
   return (
-    <div style={{ maxWidth: 800, margin: '40px auto', position: 'relative', paddingTop: '80px' }}>
-      {/* ユーザー情報表示 */}
-      <div style={{ position: 'absolute', top: 20, left: 20, textAlign: 'left' }}>
-        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
-          <p style={{ margin: 0, fontWeight: 'bold', marginRight: 8 }}>{user.email}</p>
-          <button 
-            onClick={() => window.location.href = '/change-email'}
-            style={{ padding: '2px 8px', fontSize: '12px' }}
-          >
-            メール変更
-          </button>
+    <div style={{ maxWidth: 800, margin: '40px auto', position: 'relative', paddingTop: '120px' }}>
+      {/* ヘッダー部分 - スマホ対応 */}
+      <div style={{ 
+        position: 'absolute', 
+        top: 20, 
+        left: 20, 
+        right: 20,
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        flexWrap: 'wrap',
+        gap: '10px'
+      }}>
+        {/* ユーザー情報表示 */}
+        <div style={{ textAlign: 'left', minWidth: '200px', flex: '1' }}>
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4, flexWrap: 'wrap', gap: '8px' }}>
+            <p style={{ margin: 0, fontWeight: 'bold' }}>{user.email}</p>
+            <button 
+              onClick={() => window.location.href = '/change-email'}
+              style={{ padding: '2px 8px', fontSize: '12px', whiteSpace: 'nowrap' }}
+            >
+              メール変更
+            </button>
+          </div>
+          {showNameInput ? (
+            <div style={{ display: 'flex', alignItems: 'center', marginTop: 4, flexWrap: 'wrap', gap: '8px' }}>
+              <input
+                type="text"
+                placeholder="名前を入力"
+                value={profileName}
+                onChange={(e) => setProfileName(e.target.value)}
+                style={{ padding: '4px 8px', border: '1px solid #ccc', borderRadius: 4, minWidth: '120px' }}
+              />
+              <button onClick={handleSaveName} style={{ padding: '4px 10px', whiteSpace: 'nowrap' }}>
+                保存
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', marginTop: 4, flexWrap: 'wrap', gap: '8px' }}>
+              <p style={{ margin: 0 }}>{profileName}</p>
+              <button onClick={startEditingName} style={{ padding: '2px 8px', fontSize: '12px', whiteSpace: 'nowrap' }}>
+                編集
+              </button>
+            </div>
+          )}
         </div>
-        {showNameInput ? (
-          <div style={{ display: 'flex', alignItems: 'center', marginTop: 4 }}>
-            <input
-              type="text"
-              placeholder="名前を入力"
-              value={profileName}
-              onChange={(e) => setProfileName(e.target.value)}
-              style={{ padding: '4px 8px', marginRight: 8, border: '1px solid #ccc', borderRadius: 4 }}
-            />
-            <button onClick={handleSaveName} style={{ padding: '4px 10px' }}>
-              保存
-            </button>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', alignItems: 'center', marginTop: 4 }}>
-            <p style={{ margin: 0, marginRight: 8 }}>{profileName}</p>
-            <button onClick={startEditingName} style={{ padding: '2px 8px', fontSize: '12px' }}>
-              編集
-            </button>
-          </div>
-        )}
-      </div>
 
-      {/* ログアウトボタン */}
-      <button
-        onClick={handleLogout}
-        style={{
-          position: 'absolute',
-          top: 20,
-          right: 20,
-          padding: '10px 20px'
-        }}
-      >
-        ログアウト
-      </button>
+        {/* ログアウトボタン */}
+        <button
+          onClick={handleLogout}
+          style={{
+            padding: '10px 20px',
+            whiteSpace: 'nowrap',
+            alignSelf: 'flex-start'
+          }}
+        >
+          ログアウト
+        </button>
+      </div>
 
       {/* 交通費申請フォーム */}
       <ExpenseForm 
