@@ -65,9 +65,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
 
   const handleAddRow = useCallback(() => {
     setExpenses(prev => {
-      const lastExpense = prev[prev.length - 1];
-      const newFromStation = lastExpense ? lastExpense.to_station : '';
-      return [...prev, { type: 'one_time', from_station: newFromStation, to_station: '', amount: '', start_date: '', end_date: '' }];
+      return [...prev, { type: 'one_time', from_station: '', to_station: '', amount: '', start_date: '', end_date: '' }];
     });
   }, [setExpenses]);
 

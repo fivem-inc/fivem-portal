@@ -205,7 +205,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
       )}
 
       {/* すべての申請履歴 */}
-      <h3 style={{ marginTop: 40 }}>すべての申請履歴</h3>
+      <h3 style={{ marginTop: 40, textAlign: 'left' }}>すべての申請履歴</h3>
       {isLoading ? (
         <p>読み込み中...</p>
       ) : (
