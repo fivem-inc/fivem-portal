@@ -151,43 +151,38 @@ select.expense-input {
 
 /* 600px未満では各フィールドの最小幅を再設定 */
 @media (max-width: 599px) {
-  /* 共通：grow 1 / shrink 1 / basis 80px に揃える */
+  .expense-row {
+    /* gapを少し狭くしてスペースを確保 */
+    gap: 4px;
+  }
+
+  /* 共通スタイル: growさせず、縮小は許可、basisはautoに */
   .expense-input,
-  select.expense-input {
-    flex: 1 1 80px !important;
-    min-width: 60px;
-    max-width: 140px;
-  }
-
-  /* 単発セレクト・金額はよりタイトに固定 */
-  .single-select,
-  .amount-input {
-    flex: 0 0 60px !important;
-    max-width: 60px;
-    min-width: 50px;
-  }
-
-  /* 交通機関も縮小 */
-  .transportation-input {
-    flex: 1 1 100px !important;
-    min-width: 80px;
-    max-width: 140px;
-  }
-
-  /* 日付フィールドも縮小 */
+  select.expense-input,
   .date-input-wrapper {
-    flex: 1 1 90px !important;
-    min-width: 70px;
-    max-width: 120px;
+    flex: 0 1 auto !important; /* grow, shrink, basis */
   }
 
-  /* 備考は 240〜400px 可変。2 段目に回っても高さは 36px */
+  /* 各要素の幅をbasisで指定 */
+  .single-select {
+    flex-basis: 70px !important;
+  }
+  .amount-input {
+    flex-basis: 60px !important;
+  }
+  .transportation-input {
+    flex-basis: 120px !important;
+  }
+  .date-input-wrapper {
+    flex-basis: 110px !important;
+  }
+
+  /* 備考は残りのスペースを埋めるようにし、改行を促す */
   .expense-input.notes-input {
-    flex: 1 1 300px !important;
-    min-width: 240px;
-    max-width: 400px;
+    flex: 1 1 100% !important; /* grow, shrink, basis */
+    order: 99; /* 最後に配置 */
+    min-width: 100%; /* 最小幅も100%に */
     height: 36px;
-    order: 99;
   }
 }
 
