@@ -22,6 +22,7 @@ export interface Submission {
   profiles?: Profile | null;
   approved_at?: string | null;
   rejected_at?: string | null;
+  rejected_reason?: string | null;
   user_id?: string;
 }
 
