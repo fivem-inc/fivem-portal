@@ -47,6 +47,39 @@ export const useExpenses = (user: AuthUser | null, isAdmin: boolean): UseExpense
           console.error('Error fetching your expenses:', myError);
         } else {
           expensesToSet = myData || [];
+          
+          // 一般ユーザーの場合、新しく却下された申請をチェック
+          const recentlyRejected = myData?.filter(submission => {
+            if (submission.status !== 'rejected' || !submission.rejected_at) return false;
+            
+            const rejectedDate = new Date(submission.rejected_at);
+            const lastCheckKey = `lastRejectionCheck_${user.id}`;
+            const lastCheck = localStorage.getItem(lastCheckKey);
+            
+            if (!lastCheck) {
+              // 初回アクセスの場合、現在時刻を保存して通知なし
+              localStorage.setItem(lastCheckKey, new Date().toISOString());
+              return false;
+            }
+            
+            const lastCheckDate = new Date(lastCheck);
+            return rejectedDate > lastCheckDate;
+          }) || [];
+          
+          // 新しく却下された申請がある場合、通知を表示
+          if (recentlyRejected.length > 0) {
+            const messages = recentlyRejected.map(submission => {
+              const rejectedDate = new Date(submission.rejected_at!).toLocaleDateString('ja-JP');
+              const reason = submission.rejected_reason || '理由なし';
+              return `申請日: ${new Date(submission.created_at).toLocaleDateString('ja-JP')}\n却下日: ${rejectedDate}\n却下理由: ${reason}`;
+            });
+            
+            alert(`交通費申請が却下されました\n\n${messages.join('\n\n---\n\n')}\n\n詳細は申請履歴で確認できます。`);
+            
+            // チェック時刻を更新
+            const lastCheckKey = `lastRejectionCheck_${user.id}`;
+            localStorage.setItem(lastCheckKey, new Date().toISOString());
+          }
         }
       }
     } catch (error) {
