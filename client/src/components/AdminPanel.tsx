@@ -243,10 +243,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     if (error) {
       alert('更新に失敗しました: ' + error.message);
     } else {
-      // 却下時の通知
-      if (newStatus === 'rejected') {
-        alert(`申請を却下しました。\n却下理由: ${reason || '理由未入力'}`);
-      }
       
       alert(`ステータスを「${newStatus === 'pending' ? '申請中' : newStatus === 'approved' ? '承認' : '却下'}」に更新しました。`);
       onRefresh();
@@ -306,10 +302,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
         } else {
           successCount++;
           
-          // 却下時の通知
-          if (newStatus === 'rejected') {
-            console.log(`申請ID ${approval.id} を却下しました - 理由: ${reason || '理由未入力'}`);
-          }
         }
       } catch (error) {
         console.error(`申請ID ${approval.id} の処理中にエラー:`, error);
