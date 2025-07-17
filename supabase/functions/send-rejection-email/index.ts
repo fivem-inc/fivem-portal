@@ -4,11 +4,16 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS, PUT, DELETE',
 }
 
 serve(async (req) => {
+  // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
+    return new Response('ok', { 
+      headers: corsHeaders,
+      status: 200
+    })
   }
 
   try {
@@ -18,6 +23,10 @@ serve(async (req) => {
     )
 
     const { submissionId, reason } = await req.json()
+
+    console.log('=== 却下メール送信開始 ===')
+    console.log('申請ID:', submissionId)
+    console.log('却下理由:', reason)
 
     // 申請情報とユーザー情報を取得
     const { data: submission, error: submissionError } = await supabaseClient
@@ -30,67 +39,49 @@ serve(async (req) => {
       .single()
 
     if (submissionError) {
+      console.error('申請情報取得エラー:', submissionError)
       throw submissionError
     }
 
-    // メール送信処理
-    const emailHtml = `
-      <html>
-        <body>
-          <h2>交通費申請が却下されました</h2>
-          <p>こんにちは、${submission.profiles.name || 'ユーザー'}さん</p>
-          
-          <p>あなたの交通費申請が却下されました。</p>
-          
-          <h3>申請詳細</h3>
-          <p><strong>申請日:</strong> ${new Date(submission.created_at).toLocaleDateString('ja-JP')}</p>
-          <p><strong>却下日:</strong> ${new Date().toLocaleDateString('ja-JP')}</p>
-          
-          ${reason ? `
-          <h3>却下理由</h3>
-          <p>${reason}</p>
-          ` : ''}
-          
-          <h3>申請内容</h3>
-          <ul>
-            ${submission.expenses_data.map((expense: any) => `
-              <li>
-                ${expense.type === 'regular' ? '定期' : expense.type === 'business_trip' ? '出張' : '単発'}: 
-                ${expense.from_station} → ${expense.to_station} (${expense.amount}円)
-                ${expense.notes ? `<br>備考: ${expense.notes}` : ''}
-              </li>
-            `).join('')}
-          </ul>
-          
-          <p>詳細については管理者にお問い合わせください。</p>
-          
-          <p>ファイブM 交通費精算システム</p>
-        </body>
-      </html>
-    `
-
-    // Supabaseの組み込みメール機能を使用
-    const { error: emailError } = await supabaseClient.auth.admin.generateLink({
-      type: 'email_change_current',
-      email: submission.profiles.email,
-      options: {
-        redirectTo: `${Deno.env.get('SITE_URL') || 'http://localhost:3000'}`,
-      }
+    console.log('申請情報取得成功:', {
+      申請者: submission.profiles.name,
+      メール: submission.profiles.email,
+      申請日: submission.created_at
     })
 
-    // 実際のメール送信は外部サービス（SendGrid、Resend等）を使用する必要があります
-    // ここでは簡単な通知として console.log を使用
-    console.log('却下メール送信:', {
+    // メール内容をコンソールに出力（実際のメール送信の代わり）
+    const emailContent = {
       to: submission.profiles.email,
       subject: '交通費申請が却下されました',
-      html: emailHtml
-    })
+      body: `
+        こんにちは、${submission.profiles.name || 'ユーザー'}さん
+        
+        あなたの交通費申請が却下されました。
+        
+        申請日: ${new Date(submission.created_at).toLocaleDateString('ja-JP')}
+        却下日: ${new Date().toLocaleDateString('ja-JP')}
+        ${reason ? `却下理由: ${reason}` : ''}
+        
+        申請内容:
+        ${submission.expenses_data.map((expense, i) => 
+          `${i + 1}. ${expense.from_station} → ${expense.to_station}: ${expense.amount}円`
+        ).join('\n')}
+        
+        詳細については管理者にお問い合わせください。
+        
+        ファイブM 交通費精算システム
+      `
+    }
+
+    console.log('📧 メール内容:', emailContent)
 
     return new Response(
       JSON.stringify({ 
         success: true, 
-        message: 'メール送信完了',
-        email: submission.profiles.email
+        message: 'メール送信完了（ログ出力）',
+        email: submission.profiles.email,
+        reason: reason,
+        submissionId: submissionId
       }),
       { 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
