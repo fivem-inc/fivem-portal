@@ -252,6 +252,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           
           if (emailError) {
             console.warn('メール送信エラー:', emailError);
+          } else {
+            console.log('✅ メール送信成功 - 申請ID:', id, '理由:', reason);
           }
         } catch (emailError) {
           console.warn('メール送信例外:', emailError);
@@ -655,6 +657,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                       )}
                       {p.rejected_at && (
                         <><strong>却下日:</strong> {new Date(p.rejected_at).toLocaleString()} <br /></>
+                      )}
+                      {p.rejected_reason && (
+                        <><strong>却下理由:</strong> {p.rejected_reason} <br /></>
                       )}
                       <ul>
                         {p.expenses_data.map((e, i) => (

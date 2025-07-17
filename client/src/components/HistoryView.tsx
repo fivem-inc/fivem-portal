@@ -113,6 +113,9 @@ const HistoryView: React.FC<HistoryViewProps> = ({
                               {s.rejected_at && (
                                 <><strong>却下日:</strong> {new Date(s.rejected_at).toLocaleString()} <br /></>
                               )}
+                              {s.rejected_reason && (
+                                <><strong>却下理由:</strong> {s.rejected_reason} <br /></>
+                              )}
                               <ul>
                                 {s.expenses_data.map((e, i) => (
                                   <li key={i}>
