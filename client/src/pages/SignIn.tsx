@@ -259,9 +259,9 @@ export default function SignIn() {
             style={{ 
               width: '100%', 
               padding: 8,
-              background: '#dc3545',
-              color: 'white',
-              border: '1px solid #dc3545',
+              background: '#ffc107',
+              color: '#212529',
+              border: '1px solid #ffc107',
               borderRadius: '4px',
               cursor: 'pointer'
             }} 
@@ -292,8 +292,8 @@ export default function SignIn() {
         <button
           onClick={() => setIsResettingPassword(true)}
           style={{ 
-            background: '#6c757d', 
-            border: '1px solid #6c757d', 
+            background: '#17a2b8', 
+            border: '1px solid #17a2b8', 
             color: 'white', 
             cursor: 'pointer', 
             marginTop: '10px',

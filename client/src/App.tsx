@@ -31,11 +31,7 @@ const Dashboard: React.FC = () => {
     user, 
     isAdmin, 
     profileName, 
-    showNameInput, 
-    setProfileName, 
-    handleSaveName, 
-    handleLogout, 
-    startEditingName
+    handleLogout
   } = useAuth();
 
   const { submissions, pendingApprovals, isLoading, fetchExpenses } = useExpenses(user, isAdmin);
@@ -106,32 +102,23 @@ const Dashboard: React.FC = () => {
             <p style={{ margin: 0, fontWeight: 'bold' }}>{user.email}</p>
             <button 
               onClick={() => window.location.href = '/change-email'}
-              style={{ padding: '2px 8px', fontSize: '12px', whiteSpace: 'nowrap' }}
+              style={{ 
+                padding: '2px 8px', 
+                fontSize: '12px', 
+                whiteSpace: 'nowrap',
+                background: '#17a2b8',
+                color: 'white',
+                border: '1px solid #17a2b8',
+                borderRadius: '4px',
+                cursor: 'pointer'
+              }}
             >
               メール変更
             </button>
           </div>
-          {showNameInput ? (
-            <div style={{ display: 'flex', alignItems: 'center', marginTop: 4, flexWrap: 'wrap', gap: '8px' }}>
-              <input
-                type="text"
-                placeholder="名前を入力"
-                value={profileName}
-                onChange={(e) => setProfileName(e.target.value)}
-                style={{ padding: '4px 8px', border: '1px solid #ccc', borderRadius: 4, minWidth: '120px' }}
-              />
-              <button onClick={handleSaveName} style={{ padding: '4px 10px', whiteSpace: 'nowrap' }}>
-                保存
-              </button>
-            </div>
-          ) : (
-            <div style={{ display: 'flex', alignItems: 'center', marginTop: 4, flexWrap: 'wrap', gap: '8px' }}>
-              <p style={{ margin: 0 }}>{profileName}</p>
-              <button onClick={startEditingName} style={{ padding: '2px 8px', fontSize: '12px', whiteSpace: 'nowrap' }}>
-                編集
-              </button>
-            </div>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', marginTop: 4, flexWrap: 'wrap', gap: '8px' }}>
+            <p style={{ margin: 0 }}>{profileName || '名前未設定'}</p>
+          </div>
         </div>
 
         {/* ログアウトボタン */}
