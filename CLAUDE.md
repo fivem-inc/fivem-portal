@@ -4,26 +4,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This appears to be a fresh environment with no existing codebase. The directory `/home/kohei` is currently empty of project files.
+Expense management application built with React/TypeScript frontend and Supabase backend.
 
 ## Development Setup
 
-Since this is an empty directory, you'll need to:
-
-1. Initialize a new project based on the user's requirements
-2. Set up the appropriate build tools and dependencies
-3. Establish project structure and conventions
+Working directory: `/mnt/c/Users/kohei/expense-app`
 
 ## Commands
 
-No existing build, test, or lint commands are present. These will need to be established based on the project type and requirements.
+**Deployment workflow:**
+- `git add .` → `git commit -m "message"` → `git push`
+- Vercel: Auto-deploys from GitHub (no manual action needed)
+- Supabase Edge Functions: Manual deploy via dashboard when needed
 
 ## Architecture
 
-No existing code architecture to document. This will be established as the project develops.
+- Frontend: React + TypeScript + Vite
+- Backend: Supabase (database, auth, Edge Functions)
+- Deployment: Vercel (frontend), Supabase (backend functions)
+- Repository: GitHub integration with auto-deploy
 
 ## Notes
 
-- This is a fresh workspace without any existing project files
-- Project structure, dependencies, and tooling will need to be established based on user requirements
-- Future updates to this file should include specific commands and architecture details as they are implemented
+- Always use git workflow for deployments
+- Vercel automatically deploys on git push
+- Edge Functions require manual deployment in Supabase dashboard
+- Project configured with proper TypeScript types and CORS handling

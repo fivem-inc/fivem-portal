@@ -243,21 +243,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     if (error) {
       alert('更新に失敗しました: ' + error.message);
     } else {
-      // 却下時のメール通知
+      // 却下時の通知
       if (newStatus === 'rejected') {
-        try {
-          const { error: emailError } = await supabase.functions.invoke('send-rejection-email', {
-            body: { submissionId: id, reason: reason || '' }
-          });
-          
-          if (emailError) {
-            console.warn('メール送信エラー:', emailError);
-          } else {
-            console.log('✅ メール送信成功 - 申請ID:', id, '理由:', reason);
-          }
-        } catch (emailError) {
-          console.warn('メール送信例外:', emailError);
-        }
+        alert(`申請を却下しました。\n却下理由: ${reason || '理由未入力'}`);
       }
       
       alert(`ステータスを「${newStatus === 'pending' ? '申請中' : newStatus === 'approved' ? '承認' : '却下'}」に更新しました。`);
@@ -318,19 +306,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
         } else {
           successCount++;
           
-          // 却下時のメール通知
+          // 却下時の通知
           if (newStatus === 'rejected') {
-            try {
-              const { error: emailError } = await supabase.functions.invoke('send-rejection-email', {
-                body: { submissionId: approval.id, reason: reason || '' }
-              });
-              
-              if (emailError) {
-                console.warn('メール送信エラー:', emailError);
-              }
-            } catch (emailError) {
-              console.warn('メール送信例外:', emailError);
-            }
+            console.log(`申請ID ${approval.id} を却下しました - 理由: ${reason || '理由未入力'}`);
           }
         }
       } catch (error) {
