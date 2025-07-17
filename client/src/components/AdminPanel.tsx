@@ -243,6 +243,21 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     if (error) {
       alert('更新に失敗しました: ' + error.message);
     } else {
+      // 却下時のメール通知
+      if (newStatus === 'rejected') {
+        try {
+          const { error: emailError } = await supabase.functions.invoke('send-rejection-email', {
+            body: { submissionId: id, reason: reason || '' }
+          });
+          
+          if (emailError) {
+            console.warn('メール送信エラー:', emailError);
+          }
+        } catch (emailError) {
+          console.warn('メール送信例外:', emailError);
+        }
+      }
+      
       alert(`ステータスを「${newStatus === 'pending' ? '申請中' : newStatus === 'approved' ? '承認' : '却下'}」に更新しました。`);
       onRefresh();
     }
@@ -300,6 +315,21 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           errorCount++;
         } else {
           successCount++;
+          
+          // 却下時のメール通知
+          if (newStatus === 'rejected') {
+            try {
+              const { error: emailError } = await supabase.functions.invoke('send-rejection-email', {
+                body: { submissionId: approval.id, reason: reason || '' }
+              });
+              
+              if (emailError) {
+                console.warn('メール送信エラー:', emailError);
+              }
+            } catch (emailError) {
+              console.warn('メール送信例外:', emailError);
+            }
+          }
         }
       } catch (error) {
         console.error(`申請ID ${approval.id} の処理中にエラー:`, error);
