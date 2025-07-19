@@ -24,6 +24,8 @@ export interface Submission {
   rejected_at?: string | null;
   rejected_reason?: string | null;
   user_id?: string;
+  printed_at?: string | null;
+  printed_by?: string | null;
 }
 
 export interface PendingApproval extends Submission {

@@ -39,6 +39,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectingSubmissionId, setRejectingSubmissionId] = useState<string | null>(null);
 
+  // 印刷機能用の状態
+  const [selectedForPrint, setSelectedForPrint] = useState<Set<string>>(new Set());
+  const [showPrintPreview, setShowPrintPreview] = useState(false);
+
   // ユーザー一覧取得
   const fetchUsers = useCallback(async () => {
     setLoadingUsers(true);
@@ -326,6 +330,111 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     setRejectReason('');
   }, []);
 
+  // 印刷選択処理
+  const handlePrintSelect = useCallback((submissionId: string, checked: boolean) => {
+    setSelectedForPrint(prev => {
+      const newSet = new Set(prev);
+      if (checked) {
+        newSet.add(submissionId);
+      } else {
+        newSet.delete(submissionId);
+      }
+      return newSet;
+    });
+  }, []);
+
+  // 印刷用伝票データ生成
+  const getVouchersForPrint = useCallback(() => {
+    // 承認待ちと申請履歴両方から選択されたものを取得
+    const allSubmissions = [...pendingApprovals, ...submissions];
+    const selectedSubmissions = allSubmissions.filter(submission => 
+      selectedForPrint.has(submission.id)
+    );
+
+    const vouchers = [];
+    for (const submission of selectedSubmissions) {
+      const expenses = submission.expenses_data;
+      const expensesPerVoucher = 10;
+      const totalPages = Math.ceil(expenses.length / expensesPerVoucher);
+      
+      for (let i = 0; i < expenses.length; i += expensesPerVoucher) {
+        const voucherExpenses = expenses.slice(i, i + expensesPerVoucher);
+        const voucherTotal = voucherExpenses.reduce((sum, exp) => 
+          sum + (parseInt(exp.amount || '0') || 0), 0
+        );
+        const currentPage = Math.floor(i / expensesPerVoucher) + 1;
+        
+        vouchers.push({
+          submissionId: submission.id,
+          submitterName: submission.profiles?.name || submission.profiles?.email || '不明',
+          submittedDate: new Date(submission.created_at).toLocaleDateString('ja-JP'),
+          expenses: voucherExpenses,
+          total: voucherTotal,
+          voucherNumber: vouchers.length + 1,
+          currentPage: currentPage,
+          totalPages: totalPages,
+          pageInfo: totalPages > 1 ? `${currentPage}/${totalPages}` : ''
+        });
+      }
+    }
+    return vouchers;
+  }, [pendingApprovals, submissions, selectedForPrint]);
+
+  // 印刷プレビュー表示
+  const handlePrintPreview = useCallback(() => {
+    if (selectedForPrint.size === 0) {
+      alert('印刷する申請を選択してください');
+      return;
+    }
+    setShowPrintPreview(true);
+  }, [selectedForPrint]);
+
+  // 実際の印刷実行
+  const executePrint = useCallback(async () => {
+    const currentUser = await supabase.auth.getUser();
+    
+    if (currentUser.data.user) {
+      const updatePromises = Array.from(selectedForPrint).map(submissionId =>
+        supabase
+          .from('expenses')
+          .update({
+            printed_at: new Date().toISOString(),
+            printed_by: currentUser.data.user?.id
+          })
+          .eq('id', submissionId)
+      );
+      
+      await Promise.all(updatePromises);
+    }
+
+    window.print();
+    setShowPrintPreview(false);
+    setSelectedForPrint(new Set());
+    onRefresh();
+  }, [selectedForPrint, onRefresh]);
+
+  // 印刷キャンセル
+  const cancelPrint = useCallback(() => {
+    setShowPrintPreview(false);
+  }, []);
+
+  // 全選択/全解除機能
+  const handleSelectAll = useCallback(() => {
+    const allSubmissions = [...pendingApprovals, ...submissions];
+    const allIds = new Set(allSubmissions.map(s => s.id));
+    setSelectedForPrint(allIds);
+  }, [pendingApprovals, submissions]);
+
+  // 承認待ち一覧のみ全選択
+  const handleSelectPendingOnly = useCallback(() => {
+    const pendingIds = new Set(pendingApprovals.map(p => p.id));
+    setSelectedForPrint(pendingIds);
+  }, [pendingApprovals]);
+
+  const handleDeselectAll = useCallback(() => {
+    setSelectedForPrint(new Set());
+  }, []);
+
   // 却下理由確定
   const handleConfirmReject = useCallback(async () => {
     if (!rejectingSubmissionId) return;
@@ -454,6 +563,180 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
         @keyframes spin {
           0% { transform: rotate(0deg); }
           100% { transform: rotate(360deg); }
+        }
+        
+        @media print {
+          @page { 
+            size: A4 portrait;
+            margin: 15mm;
+          }
+          
+          body * {
+            visibility: hidden;
+          }
+          
+          .print-area, .print-area * {
+            visibility: visible;
+          }
+          
+          .print-area {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+          }
+          
+          .print-voucher-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 5mm;
+            width: 100%;
+            max-width: 180mm;
+          }
+          
+          .print-voucher {
+            width: 100%;
+            max-width: 87mm;
+            height: 110mm;
+            border: 1px solid #000;
+            padding: 2mm;
+            page-break-inside: avoid;
+            display: flex;
+            flex-direction: column;
+            font-family: "MS Gothic", "Yu Gothic", monospace;
+            color: #000 !important;
+            background: white;
+          }
+          
+          .print-voucher-header {
+            text-align: center;
+            font-size: 8pt;
+            font-weight: bold;
+            margin-bottom: 1mm;
+            border-bottom: 1px solid #000;
+            padding-bottom: 0.5mm;
+            color: #000 !important;
+          }
+          
+          .print-voucher-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+          }
+          
+          .print-voucher-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.5mm;
+            font-size: 6pt;
+            color: #000 !important;
+          }
+          
+          .print-expense-list {
+            flex: 1;
+            margin: 1mm 0;
+          }
+          
+          .print-expense-item {
+            display: grid;
+            grid-template-columns: 6mm 1fr 18mm;
+            gap: 1mm;
+            margin-bottom: 0.5mm;
+            align-items: center;
+            font-size: 5pt;
+            min-height: 3mm;
+            color: #000 !important;
+          }
+          
+          .print-expense-number {
+            text-align: center;
+            font-weight: bold;
+            border: 1px solid #000;
+            padding: 0.2mm;
+            color: #000 !important;
+            background: white;
+            font-size: 5pt;
+          }
+          
+          .print-expense-detail {
+            padding: 0.2mm;
+            border: 1px solid #000;
+            color: #000 !important;
+            font-size: 5pt;
+            line-height: 1.0;
+          }
+          
+          .print-expense-amount {
+            text-align: right;
+            padding: 0.2mm;
+            border: 1px solid #000;
+            color: #000 !important;
+            font-size: 5pt;
+          }
+          
+          .print-voucher-amount {
+            text-align: center;
+            font-size: 7pt;
+            font-weight: bold;
+            margin: 1mm 0 0.5mm 0;
+            padding: 0.5mm;
+            border: 1px solid #000;
+            color: #000 !important;
+            background: white;
+          }
+          
+          .print-voucher-footer {
+            display: flex;
+            justify-content: space-between;
+            font-size: 6pt;
+            border-top: 1px solid #000;
+            padding-top: 0.5mm;
+            margin-top: auto;
+            color: #000 !important;
+          }
+        }
+        
+        @media screen {
+          .print-area {
+            display: none;
+          }
+        }
+        
+        /* プレビュー用スタイル */
+        .preview-modal {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          backgroundColor: rgba(0, 0, 0, 0.5);
+          display: flex;
+          alignItems: center;
+          justifyContent: center;
+          z-index: 1000;
+        }
+        
+        .preview-content {
+          width: 600px;
+          height: 850px;
+          backgroundColor: white;
+          borderRadius: 8px;
+          padding: 20px;
+          position: relative;
+          aspectRatio: 210/297;
+        }
+        
+        .preview-voucher-grid {
+          transform: scale(0.5);
+          transform-origin: top center;
+          width: 210mm;
+          height: 297mm;
+          border: 1px solid #ddd;
+          background: white;
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 5mm;
+          padding: 15mm;
         }
       `}</style>
       <h2 style={{ textAlign: 'center', marginBottom: '30px' }}>管理画面</h2>
@@ -585,43 +868,140 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
             ) : (
               <div>
                 {pendingApprovals.length > 0 && (
-                  <div style={{ marginBottom: '20px' }}>
-                    <button 
-                      onClick={() => handleBulkApproval('approved')}
-                      style={{ 
-                        padding: '10px 20px', 
-                        marginRight: '10px', 
-                        backgroundColor: '#28a745', 
-                        color: 'white', 
-                        border: 'none', 
-                        borderRadius: '4px',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      全て承認
-                    </button>
-                    <button 
-                      onClick={() => handleBulkApproval('rejected')}
-                      style={{ 
-                        padding: '10px 20px', 
-                        backgroundColor: '#dc3545', 
-                        color: 'white', 
-                        border: 'none', 
-                        borderRadius: '4px',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      全て却下
-                    </button>
-                  </div>
+                  <>
+                    {/* 印刷操作ボタン */}
+                    <div style={{ marginBottom: '10px', padding: '10px', backgroundColor: '#f8f9fa', borderRadius: '4px' }}>
+                      <strong>印刷操作:</strong>
+                      <button 
+                        onClick={handlePrintPreview}
+                        style={{ 
+                          padding: '8px 16px', 
+                          marginLeft: '10px',
+                          marginRight: '8px', 
+                          backgroundColor: '#17a2b8', 
+                          color: 'white', 
+                          border: 'none', 
+                          borderRadius: '4px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        選択印刷 ({selectedForPrint.size})
+                      </button>
+                      <button 
+                        onClick={handleSelectPendingOnly}
+                        style={{ 
+                          padding: '8px 16px', 
+                          marginRight: '8px', 
+                          backgroundColor: '#6c757d', 
+                          color: 'white', 
+                          border: 'none', 
+                          borderRadius: '4px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        承認待ち全選択
+                      </button>
+                      <button 
+                        onClick={handleSelectAll}
+                        style={{ 
+                          padding: '8px 16px', 
+                          marginRight: '8px', 
+                          backgroundColor: '#6c757d', 
+                          color: 'white', 
+                          border: 'none', 
+                          borderRadius: '4px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        全選択
+                      </button>
+                      <button 
+                        onClick={handleDeselectAll}
+                        style={{ 
+                          padding: '8px 16px', 
+                          backgroundColor: '#6c757d', 
+                          color: 'white', 
+                          border: 'none', 
+                          borderRadius: '4px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        全解除
+                      </button>
+                    </div>
+                    
+                    {/* 承認・却下操作ボタン */}
+                    <div style={{ marginBottom: '20px' }}>
+                      <strong>承認操作:</strong>
+                      <button 
+                        onClick={() => handleBulkApproval('approved')}
+                        style={{ 
+                          padding: '10px 20px', 
+                          marginLeft: '10px',
+                          marginRight: '10px', 
+                          backgroundColor: '#28a745', 
+                          color: 'white', 
+                          border: 'none', 
+                          borderRadius: '4px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        全て承認
+                      </button>
+                      <button 
+                        onClick={() => handleBulkApproval('rejected')}
+                        style={{ 
+                          padding: '10px 20px', 
+                          backgroundColor: '#dc3545', 
+                          color: 'white', 
+                          border: 'none', 
+                          borderRadius: '4px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        全て却下
+                      </button>
+                    </div>
+                  </>
                 )}
                 <ul style={{ listStyle: 'none', padding: 0, textAlign: 'left' }}>
                   {pendingApprovals.map(p => (
                     <li key={p.id} style={{ border: '1px solid #ccc', padding: 10, marginBottom: 10, borderRadius: 4 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedForPrint.has(p.id)}
+                          onChange={(e) => handlePrintSelect(p.id, e.target.checked)}
+                          style={{ marginRight: '8px' }}
+                        />
+                        <label style={{ fontWeight: 'bold' }}>印刷選択</label>
+                        {p.printed_at && (
+                          <span style={{ 
+                            marginLeft: '10px', 
+                            padding: '2px 6px', 
+                            backgroundColor: '#28a745', 
+                            color: 'white', 
+                            borderRadius: '3px', 
+                            fontSize: '12px',
+                            fontWeight: 'bold',
+                            cursor: 'pointer'
+                          }}
+                          title={`印刷日時: ${new Date(p.printed_at).toLocaleString()}`}
+                          >
+                            ✓ 印刷済み ({new Date(p.printed_at).toLocaleString()})
+                          </span>
+                        )}
+                      </div>
                       <strong>申請者:</strong> {p.profiles?.name || p.profiles?.email || '不明'} <br />
                       <strong>申請日:</strong> {new Date(p.created_at).toLocaleString()} <br />
                       <strong>ステータス:</strong> {p.status === 'pending' ? '申請中' : p.status === 'approved' ? '承認' : '却下'} <br />
                       <strong>合計金額:</strong> {formatAmount(p.expenses_data.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0).toString())}円 <br />
+                      {p.printed_at && (
+                        <><strong>印刷日時:</strong> {new Date(p.printed_at).toLocaleString()} <br /></>
+                      )}
+                      {p.printed_by && (
+                        <><strong>印刷者ID:</strong> {p.printed_by} <br /></>
+                      )}
                       {p.approved_at && (
                         <><strong>承認日:</strong> {new Date(p.approved_at).toLocaleString()} <br /></>
                       )}
@@ -664,7 +1044,52 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
             )}
 
             {/* すべての申請履歴 */}
-            <h4 style={{ marginTop: 40, textAlign: 'left' }}>すべての申請履歴</h4>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 40 }}>
+              <h4 style={{ textAlign: 'left', margin: 0 }}>すべての申請履歴</h4>
+              <div>
+                <button 
+                  onClick={handlePrintPreview}
+                  style={{ 
+                    padding: '8px 16px', 
+                    marginRight: '8px',
+                    backgroundColor: '#17a2b8', 
+                    color: 'white', 
+                    border: 'none', 
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  選択印刷 ({selectedForPrint.size})
+                </button>
+                <button 
+                  onClick={handleSelectAll}
+                  style={{ 
+                    padding: '8px 16px', 
+                    marginRight: '8px',
+                    backgroundColor: '#6c757d', 
+                    color: 'white', 
+                    border: 'none', 
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  全選択
+                </button>
+                <button 
+                  onClick={handleDeselectAll}
+                  style={{ 
+                    padding: '8px 16px', 
+                    backgroundColor: '#6c757d', 
+                    color: 'white', 
+                    border: 'none', 
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  全解除
+                </button>
+              </div>
+            </div>
             {isLoading ? (
               <p style={{ textAlign: 'left' }}>読み込み中...</p>
             ) : (
@@ -712,10 +1137,41 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                               <ul style={{ listStyle: 'none', padding: 0 }}>
                                 {monthSubmissions.map(s => (
                                   <li key={s.id} style={{ border: '1px solid #ccc', padding: 10, marginBottom: 10, borderRadius: 4 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={selectedForPrint.has(s.id)}
+                                        onChange={(e) => handlePrintSelect(s.id, e.target.checked)}
+                                        style={{ marginRight: '8px' }}
+                                      />
+                                      <label style={{ fontWeight: 'bold' }}>印刷選択</label>
+                                      {s.printed_at && (
+                                        <span style={{ 
+                                          marginLeft: '10px', 
+                                          padding: '2px 6px', 
+                                          backgroundColor: '#28a745', 
+                                          color: 'white', 
+                                          borderRadius: '3px', 
+                                          fontSize: '12px',
+                                          fontWeight: 'bold',
+                                          cursor: 'pointer'
+                                        }}
+                                        title={`印刷日時: ${new Date(s.printed_at).toLocaleString()}`}
+                                        >
+                                          ✓ 印刷済み ({new Date(s.printed_at).toLocaleString()})
+                                        </span>
+                                      )}
+                                    </div>
                                     <strong>申請者:</strong> {s.profiles?.name || s.profiles?.email || '不明'} <br />
                                     <strong>申請日:</strong> {new Date(s.created_at).toLocaleString()} <br />
                                     <strong>ステータス:</strong> {s.status === 'pending' ? '申請中' : s.status === 'approved' ? '承認' : '却下'} <br />
                                     <strong>合計金額:</strong> {formatAmount(s.expenses_data.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0).toString())}円 <br />
+                                    {s.printed_at && (
+                                      <><strong>印刷日時:</strong> {new Date(s.printed_at).toLocaleString()} <br /></>
+                                    )}
+                                    {s.printed_by && (
+                                      <><strong>印刷者ID:</strong> {s.printed_by} <br /></>
+                                    )}
                                     {s.approved_at && (
                                       <><strong>承認日:</strong> {new Date(s.approved_at).toLocaleString()} <br /></>
                                     )}
@@ -1090,6 +1546,182 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
             )}
           </div>
         )}
+      </div>
+
+      {/* 印刷プレビューモーダル */}
+      {showPrintPreview && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            width: '600px',
+            height: '850px',
+            backgroundColor: 'white',
+            borderRadius: '8px',
+            padding: '20px',
+            position: 'relative',
+            aspectRatio: '210/297',
+            overflow: 'auto'
+          }}>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '20px',
+              borderBottom: '1px solid #ddd',
+              paddingBottom: '10px'
+            }}>
+              <h3>印刷プレビュー (A4)</h3>
+              <div>
+                <button 
+                  onClick={executePrint}
+                  style={{
+                    padding: '8px 16px',
+                    marginRight: '10px',
+                    backgroundColor: '#007bff',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  印刷実行
+                </button>
+                <button 
+                  onClick={cancelPrint}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: '#6c757d',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  キャンセル
+                </button>
+              </div>
+            </div>
+            
+            <div className="preview-voucher-grid">
+              {getVouchersForPrint().map((voucher, index) => (
+                <div key={index} className="print-voucher">
+                  <div className="print-voucher-header">
+                    交通費精算書 #{voucher.voucherNumber}
+                    {voucher.pageInfo && <span style={{ marginLeft: '10px', fontSize: '6pt' }}>({voucher.pageInfo})</span>}
+                  </div>
+                  
+                  <div className="print-voucher-content">
+                    <div className="print-voucher-row">
+                      <span>申請者: {voucher.submitterName}</span>
+                      <span>申請日: {voucher.submittedDate}</span>
+                    </div>
+                    
+                    <div className="print-expense-list">
+                      {Array.from({ length: 10 }, (_, i) => {
+                        const expense = voucher.expenses[i];
+                        return (
+                          <div key={i} className="print-expense-item">
+                            <div className="print-expense-number">
+                              {expense ? i + 1 : ''}
+                            </div>
+                            <div className="print-expense-detail">
+                              {expense ? (
+                                <>
+                                  {expense.type === 'regular' ? '定期' : 
+                                   expense.type === 'business_trip' ? '出張' : '単発'} | 
+                                  {expense.from_station} - {expense.to_station}
+                                  {expense.transportation && ` [${expense.transportation}]`}
+                                </>
+                              ) : ''}
+                            </div>
+                            <div className="print-expense-amount">
+                              {expense ? `¥${expense.amount}` : ''}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    
+                    <div className="print-voucher-amount">
+                      合計: ¥{voucher.total.toLocaleString()}
+                    </div>
+                    
+                    <div className="print-voucher-footer">
+                      <span>承認印:</span>
+                      <span>受付印:</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 印刷用エリア（非表示） */}
+      <div className="print-area">
+        <div className="print-voucher-grid">
+          {getVouchersForPrint().map((voucher, index) => (
+            <div key={index} className="print-voucher">
+              <div className="print-voucher-header">
+                交通費精算書 #{voucher.voucherNumber}
+                {voucher.pageInfo && <span style={{ marginLeft: '10px', fontSize: '6pt' }}>({voucher.pageInfo})</span>}
+              </div>
+              
+              <div className="print-voucher-content">
+                <div className="print-voucher-row">
+                  <span>申請者: {voucher.submitterName}</span>
+                  <span>申請日: {voucher.submittedDate}</span>
+                </div>
+                
+                <div className="print-expense-list">
+                  {Array.from({ length: 10 }, (_, i) => {
+                    const expense = voucher.expenses[i];
+                    return (
+                      <div key={i} className="print-expense-item">
+                        <div className="print-expense-number">
+                          {expense ? i + 1 : ''}
+                        </div>
+                        <div className="print-expense-detail">
+                          {expense ? (
+                            <>
+                              {expense.type === 'regular' ? '定期' : 
+                               expense.type === 'business_trip' ? '出張' : '単発'} | 
+                              {expense.from_station} - {expense.to_station}
+                              {expense.transportation && ` [${expense.transportation}]`}
+                            </>
+                          ) : ''}
+                        </div>
+                        <div className="print-expense-amount">
+                          {expense ? `¥${expense.amount}` : ''}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                
+                <div className="print-voucher-amount">
+                  合計: ¥{voucher.total.toLocaleString()}
+                </div>
+                
+                <div className="print-voucher-footer">
+                  <span>承認印:</span>
+                  <span>受付印:</span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
