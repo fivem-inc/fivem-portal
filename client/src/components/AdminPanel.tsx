@@ -343,16 +343,17 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     });
   }, []);
 
-  // 印刷用伝票データ生成
+  // 印刷用伝票データ生成（重複排除付き）
   const getVouchersForPrint = useCallback(() => {
-    // 承認待ちと申請履歴両方から選択されたものを取得
+    // 承認待ちと申請履歴から重複を排除して取得
     const allSubmissions = [...pendingApprovals, ...submissions];
-    const selectedSubmissions = allSubmissions.filter(submission => 
-      selectedForPrint.has(submission.id)
+    const uniqueSubmissions = allSubmissions.filter((submission, index, self) => 
+      selectedForPrint.has(submission.id) && 
+      self.findIndex(s => s.id === submission.id) === index
     );
 
     const vouchers = [];
-    for (const submission of selectedSubmissions) {
+    for (const submission of uniqueSubmissions) {
       const expenses = submission.expenses_data;
       const expensesPerVoucher = 10;
       const totalPages = Math.ceil(expenses.length / expensesPerVoucher);
@@ -379,6 +380,23 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     }
     return vouchers;
   }, [pendingApprovals, submissions, selectedForPrint]);
+
+  // ページ分割された伝票データ生成（1ページに2つの伝票）
+  const getPaginatedVouchers = useCallback(() => {
+    const vouchers = getVouchersForPrint();
+    const pages = [];
+    
+    for (let i = 0; i < vouchers.length; i += 2) {
+      const pageVouchers = vouchers.slice(i, i + 2);
+      pages.push({
+        pageNumber: Math.floor(i / 2) + 1,
+        totalPages: Math.ceil(vouchers.length / 2),
+        vouchers: pageVouchers
+      });
+    }
+    
+    return pages;
+  }, [getVouchersForPrint]);
 
   // 印刷プレビュー表示
   const handlePrintPreview = useCallback(() => {
@@ -586,12 +604,23 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
             width: 100%;
           }
           
+          .print-page {
+            page-break-after: always;
+            width: 100%;
+            height: 267mm;
+          }
+          
+          .print-page:last-child {
+            page-break-after: auto;
+          }
+          
           .print-voucher-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 5mm;
             width: 100%;
             max-width: 180mm;
+            height: 100%;
           }
           
           .print-voucher {
@@ -717,26 +746,33 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
         }
         
         .preview-content {
-          width: 600px;
-          height: 850px;
+          width: 80vw;
+          height: 90vh;
           backgroundColor: white;
           borderRadius: 8px;
           padding: 20px;
           position: relative;
-          aspectRatio: 210/297;
+          overflow: auto;
         }
         
-        .preview-voucher-grid {
-          transform: scale(0.5);
-          transform-origin: top center;
+        .preview-page {
           width: 210mm;
           height: 297mm;
           border: 1px solid #ddd;
           background: white;
+          margin: 0 auto 20px auto;
+          position: relative;
+          transform: scale(0.7);
+          transform-origin: top center;
+        }
+        
+        .preview-voucher-grid {
           display: grid;
           grid-template-columns: 1fr 1fr;
           gap: 5mm;
           padding: 15mm;
+          width: 100%;
+          height: 100%;
         }
       `}</style>
       <h2 style={{ textAlign: 'center', marginBottom: '30px' }}>管理画面</h2>
@@ -1562,16 +1598,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           justifyContent: 'center',
           zIndex: 1000
         }}>
-          <div style={{
-            width: '600px',
-            height: '850px',
-            backgroundColor: 'white',
-            borderRadius: '8px',
-            padding: '20px',
-            position: 'relative',
-            aspectRatio: '210/297',
-            overflow: 'auto'
-          }}>
+          <div className="preview-content">
             <div style={{
               display: 'flex',
               justifyContent: 'space-between',
@@ -1612,8 +1639,72 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
               </div>
             </div>
             
-            <div className="preview-voucher-grid">
-              {getVouchersForPrint().map((voucher, index) => (
+            {getPaginatedVouchers().map((page, pageIndex) => (
+              <div key={pageIndex} className="preview-page">
+                <div className="preview-voucher-grid">
+                  {page.vouchers.map((voucher, index) => (
+                <div key={index} className="print-voucher">
+                  <div className="print-voucher-header">
+                    交通費精算書 #{voucher.voucherNumber}
+                    {voucher.pageInfo && <span style={{ marginLeft: '10px', fontSize: '6pt' }}>({voucher.pageInfo})</span>}
+                  </div>
+                  
+                  <div className="print-voucher-content">
+                    <div className="print-voucher-row">
+                      <span>申請者: {voucher.submitterName}</span>
+                      <span>申請日: {voucher.submittedDate}</span>
+                    </div>
+                    
+                    <div className="print-expense-list">
+                      {Array.from({ length: 10 }, (_, i) => {
+                        const expense = voucher.expenses[i];
+                        return (
+                          <div key={i} className="print-expense-item">
+                            <div className="print-expense-number">
+                              {expense ? i + 1 : ''}
+                            </div>
+                            <div className="print-expense-detail">
+                              {expense ? (
+                                <>
+                                  {expense.type === 'regular' ? '定期' : 
+                                   expense.type === 'business_trip' ? '出張' : '単発'} | 
+                                  {expense.from_station} - {expense.to_station}
+                                  {expense.transportation && ` [${expense.transportation}]`}
+                                </>
+                              ) : ''}
+                            </div>
+                            <div className="print-expense-amount">
+                              {expense ? `¥${expense.amount}` : ''}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    
+                    <div className="print-voucher-amount">
+                      合計: ¥{voucher.total.toLocaleString()}
+                    </div>
+                    
+                    <div className="print-voucher-footer">
+                      <span>承認印:</span>
+                      <span>受付印:</span>
+                    </div>
+                    </div>
+                  </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 印刷用エリア（非表示） */}
+      <div className="print-area">
+        {getPaginatedVouchers().map((page, pageIndex) => (
+          <div key={pageIndex} className="print-page">
+            <div className="print-voucher-grid">
+              {page.vouchers.map((voucher, index) => (
                 <div key={index} className="print-voucher">
                   <div className="print-voucher-header">
                     交通費精算書 #{voucher.voucherNumber}
@@ -1665,63 +1756,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
               ))}
             </div>
           </div>
-        </div>
-      )}
-
-      {/* 印刷用エリア（非表示） */}
-      <div className="print-area">
-        <div className="print-voucher-grid">
-          {getVouchersForPrint().map((voucher, index) => (
-            <div key={index} className="print-voucher">
-              <div className="print-voucher-header">
-                交通費精算書 #{voucher.voucherNumber}
-                {voucher.pageInfo && <span style={{ marginLeft: '10px', fontSize: '6pt' }}>({voucher.pageInfo})</span>}
-              </div>
-              
-              <div className="print-voucher-content">
-                <div className="print-voucher-row">
-                  <span>申請者: {voucher.submitterName}</span>
-                  <span>申請日: {voucher.submittedDate}</span>
-                </div>
-                
-                <div className="print-expense-list">
-                  {Array.from({ length: 10 }, (_, i) => {
-                    const expense = voucher.expenses[i];
-                    return (
-                      <div key={i} className="print-expense-item">
-                        <div className="print-expense-number">
-                          {expense ? i + 1 : ''}
-                        </div>
-                        <div className="print-expense-detail">
-                          {expense ? (
-                            <>
-                              {expense.type === 'regular' ? '定期' : 
-                               expense.type === 'business_trip' ? '出張' : '単発'} | 
-                              {expense.from_station} - {expense.to_station}
-                              {expense.transportation && ` [${expense.transportation}]`}
-                            </>
-                          ) : ''}
-                        </div>
-                        <div className="print-expense-amount">
-                          {expense ? `¥${expense.amount}` : ''}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                
-                <div className="print-voucher-amount">
-                  合計: ¥{voucher.total.toLocaleString()}
-                </div>
-                
-                <div className="print-voucher-footer">
-                  <span>承認印:</span>
-                  <span>受付印:</span>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+        ))}
       </div>
     </div>
   );
