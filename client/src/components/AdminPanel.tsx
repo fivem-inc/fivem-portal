@@ -659,6 +659,19 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
             top: 0 !important;
             width: 100% !important;
             height: auto !important;
+            display: block !important;
+          }
+          
+          .print-page {
+            display: block !important;
+          }
+          
+          .print-voucher-grid {
+            display: grid !important;
+          }
+          
+          .print-voucher {
+            display: flex !important;
           }
           
           .print-page {
@@ -679,7 +692,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           }
           
           .print-voucher-grid {
-            display: grid;
+            display: grid !important;
             grid-template-columns: 1fr 1fr;
             gap: 5mm;
             width: 100%;
@@ -796,7 +809,16 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
         
         @media screen {
           .print-area {
-            display: none;
+            display: none !important;
+          }
+        }
+        
+        @media print {
+          html, body {
+            width: 100% !important;
+            height: auto !important;
+            margin: 0 !important;
+            padding: 0 !important;
           }
         }
         
