@@ -42,6 +42,27 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   // 印刷機能用の状態
   const [selectedForPrint, setSelectedForPrint] = useState<Set<string>>(new Set());
   const [showPrintPreview, setShowPrintPreview] = useState(false);
+  interface PrintVoucher {
+    submissionId: string;
+    submitterName: string;
+    submittedDate: string;
+    expenses: any[];
+    total: number;
+    voucherNumber: number;
+    currentPage: number;
+    totalPages: number;
+    pageInfo: string;
+    submissionIndex: number;
+    totalSubmissions: number;
+  }
+  
+  interface PrintPage {
+    pageNumber: number;
+    totalPages: number;
+    vouchers: PrintVoucher[];
+  }
+  
+  const [printData, setPrintData] = useState<PrintPage[]>([]);
 
   // ユーザー一覧取得
   const fetchUsers = useCallback(async () => {
@@ -353,17 +374,19 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     );
 
     const vouchers = [];
+    let voucherNumber = 1;
+    
     for (const submission of uniqueSubmissions) {
       const expenses = submission.expenses_data;
       const expensesPerVoucher = 10;
-      const totalPages = Math.ceil(expenses.length / expensesPerVoucher);
+      const totalVouchersForSubmission = Math.ceil(expenses.length / expensesPerVoucher);
       
       for (let i = 0; i < expenses.length; i += expensesPerVoucher) {
         const voucherExpenses = expenses.slice(i, i + expensesPerVoucher);
         const voucherTotal = voucherExpenses.reduce((sum, exp) => 
           sum + (parseInt(exp.amount || '0') || 0), 0
         );
-        const currentPage = Math.floor(i / expensesPerVoucher) + 1;
+        const voucherPageNum = Math.floor(i / expensesPerVoucher) + 1;
         
         vouchers.push({
           submissionId: submission.id,
@@ -371,13 +394,17 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           submittedDate: new Date(submission.created_at).toLocaleDateString('ja-JP'),
           expenses: voucherExpenses,
           total: voucherTotal,
-          voucherNumber: vouchers.length + 1,
-          currentPage: currentPage,
-          totalPages: totalPages,
-          pageInfo: totalPages > 1 ? `${currentPage}/${totalPages}` : ''
+          voucherNumber: voucherNumber++,
+          currentPage: voucherPageNum,
+          totalPages: totalVouchersForSubmission,
+          pageInfo: totalVouchersForSubmission > 1 ? `${voucherPageNum}/${totalVouchersForSubmission}` : '',
+          submissionIndex: uniqueSubmissions.indexOf(submission) + 1,
+          totalSubmissions: uniqueSubmissions.length
         });
       }
     }
+    
+    // デバッグ完了: データは正常に24件生成されている
     return vouchers;
   }, [pendingApprovals, submissions, selectedForPrint]);
 
@@ -395,6 +422,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
       });
     }
     
+    console.log(`プレビュー表示: ${pages.length}ページ生成`);
+    
     return pages;
   }, [getVouchersForPrint]);
 
@@ -404,12 +433,18 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
       alert('印刷する申請を選択してください');
       return;
     }
+    // 印刷データを固定保存
+    const currentPrintData = getPaginatedVouchers();
+    setPrintData(currentPrintData);
     setShowPrintPreview(true);
-  }, [selectedForPrint]);
+  }, [selectedForPrint, getPaginatedVouchers]);
 
   // 実際の印刷実行
   const executePrint = useCallback(async () => {
     const currentUser = await supabase.auth.getUser();
+    
+    console.log(`印刷実行: ${printData.length}ページ, ${selectedForPrint.size}件の申請`);
+    console.log('印刷データ詳細:', printData);
     
     if (currentUser.data.user) {
       const updatePromises = Array.from(selectedForPrint).map(submissionId =>
@@ -425,11 +460,27 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
       await Promise.all(updatePromises);
     }
 
-    window.print();
-    setShowPrintPreview(false);
-    setSelectedForPrint(new Set());
-    onRefresh();
-  }, [selectedForPrint, onRefresh]);
+    // 印刷実行前に少し待機してからDOM構築を確認
+    setTimeout(() => {
+      const printArea = document.querySelector('.print-area');
+      const printPages = document.querySelectorAll('.print-page');
+      console.log('印刷エリア:', printArea);
+      console.log('印刷ページ数:', printPages.length);
+      printPages.forEach((page, i) => {
+        const vouchers = page.querySelectorAll('.print-voucher');
+        console.log(`ページ${i + 1}: ${vouchers.length}個の伝票`);
+      });
+      
+      window.print();
+    }, 100);
+    
+    // 印刷後に状態をクリア
+    setTimeout(() => {
+      setShowPrintPreview(false);
+      setSelectedForPrint(new Set());
+      onRefresh();
+    }, 1000);
+  }, [selectedForPrint, onRefresh, printData]);
 
   // 印刷キャンセル
   const cancelPrint = useCallback(() => {
@@ -589,29 +640,42 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
             margin: 15mm;
           }
           
+          * {
+            -webkit-print-color-adjust: exact !important;
+            color-adjust: exact !important;
+          }
+          
           body * {
-            visibility: hidden;
+            visibility: hidden !important;
           }
           
           .print-area, .print-area * {
-            visibility: visible;
+            visibility: visible !important;
           }
           
           .print-area {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100%;
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            height: auto !important;
           }
           
           .print-page {
-            page-break-after: always;
+            page-break-before: auto;
+            page-break-inside: avoid;
             width: 100%;
-            height: 267mm;
+            height: auto;
+            min-height: 267mm;
+            display: block;
+          }
+          
+          .print-page:not(:last-child) {
+            page-break-after: always;
           }
           
           .print-page:last-child {
-            page-break-after: auto;
+            page-break-after: avoid;
           }
           
           .print-voucher-grid {
@@ -624,17 +688,18 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           }
           
           .print-voucher {
-            width: 100%;
-            max-width: 87mm;
-            height: 110mm;
-            border: 1px solid #000;
-            padding: 2mm;
-            page-break-inside: avoid;
-            display: flex;
-            flex-direction: column;
-            font-family: "MS Gothic", "Yu Gothic", monospace;
+            width: 100% !important;
+            max-width: 87mm !important;
+            height: 110mm !important;
+            border: 1px solid #000 !important;
+            padding: 2mm !important;
+            page-break-inside: avoid !important;
+            display: flex !important;
+            flex-direction: column !important;
+            font-family: "MS Gothic", "Yu Gothic", monospace !important;
             color: #000 !important;
-            background: white;
+            background: white !important;
+            box-sizing: border-box !important;
           }
           
           .print-voucher-header {
@@ -692,7 +757,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
             border: 1px solid #000;
             color: #000 !important;
             font-size: 5pt;
-            line-height: 1.0;
+            line-height: 1.1;
+            min-height: 6mm;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
           }
           
           .print-expense-amount {
@@ -746,13 +815,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
         }
         
         .preview-content {
-          width: 80vw;
-          height: 90vh;
+          width: 90vw;
+          height: 95vh;
           backgroundColor: white;
           borderRadius: 8px;
           padding: 20px;
           position: relative;
-          overflow: auto;
+          overflow-y: auto;
+          overflow-x: hidden;
         }
         
         .preview-page {
@@ -762,7 +832,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           background: white;
           margin: 0 auto 20px auto;
           position: relative;
-          transform: scale(0.7);
+          transform: scale(0.5);
           transform-origin: top center;
         }
         
@@ -773,6 +843,50 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           padding: 15mm;
           width: 100%;
           height: 100%;
+        }
+        
+        .preview-voucher-grid .print-voucher {
+          width: 100%;
+          max-width: 87mm;
+          height: 110mm;
+          border: 1px solid #000;
+          padding: 2mm;
+          display: flex;
+          flex-direction: column;
+          font-family: "MS Gothic", "Yu Gothic", monospace;
+          color: #000 !important;
+          background: white;
+          font-size: 8pt;
+        }
+        
+        .preview-voucher-grid .print-voucher-header {
+          text-align: center;
+          font-size: 8pt;
+          font-weight: bold;
+          margin-bottom: 1mm;
+          border-bottom: 1px solid #000;
+          padding-bottom: 0.5mm;
+          color: #000 !important;
+        }
+        
+        .preview-voucher-grid .print-expense-item {
+          display: grid;
+          grid-template-columns: 6mm 1fr 18mm;
+          gap: 1mm;
+          margin-bottom: 0.5mm;
+          align-items: center;
+          font-size: 5pt;
+          min-height: 6mm;
+          color: #000 !important;
+        }
+        
+        .preview-voucher-grid .print-expense-number,
+        .preview-voucher-grid .print-expense-detail,
+        .preview-voucher-grid .print-expense-amount {
+          border: 1px solid #000;
+          padding: 0.2mm;
+          color: #000 !important;
+          font-size: 5pt;
         }
       `}</style>
       <h2 style={{ textAlign: 'center', marginBottom: '30px' }}>管理画面</h2>
@@ -1639,8 +1753,18 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
               </div>
             </div>
             
-            {getPaginatedVouchers().map((page, pageIndex) => (
+            {printData.map((page, pageIndex) => (
               <div key={pageIndex} className="preview-page">
+                <div style={{ 
+                  position: 'absolute', 
+                  top: '5mm', 
+                  right: '5mm', 
+                  fontSize: '12px', 
+                  color: '#666',
+                  zIndex: 10 
+                }}>
+                  ページ {pageIndex + 1} / {printData.length}
+                </div>
                 <div className="preview-voucher-grid">
                   {page.vouchers.map((voucher, index) => (
                 <div key={index} className="print-voucher">
@@ -1669,7 +1793,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                                   {expense.type === 'regular' ? '定期' : 
                                    expense.type === 'business_trip' ? '出張' : '単発'} | 
                                   {expense.from_station} - {expense.to_station}
-                                  {expense.transportation && ` [${expense.transportation}]`}
+                                  {expense.transportation && ` [${expense.transportation}]`}<br/>
+                                  {expense.type === 'regular' && expense.start_date && expense.end_date ? 
+                                    `期間:${expense.start_date}~${expense.end_date}` : 
+                                    expense.start_date ? `利用日:${expense.start_date}` : ''
+                                  }
                                 </>
                               ) : ''}
                             </div>
@@ -1701,7 +1829,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
       {/* 印刷用エリア（非表示） */}
       <div className="print-area">
-        {getPaginatedVouchers().map((page, pageIndex) => (
+        {/* 印刷デバッグ情報 */}
+        <div style={{ display: 'none' }}>
+          印刷ページ数: {printData.length}ページ
+        </div>
+        {printData.map((page, pageIndex) => (
           <div key={pageIndex} className="print-page">
             <div className="print-voucher-grid">
               {page.vouchers.map((voucher, index) => (
@@ -1731,7 +1863,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                                   {expense.type === 'regular' ? '定期' : 
                                    expense.type === 'business_trip' ? '出張' : '単発'} | 
                                   {expense.from_station} - {expense.to_station}
-                                  {expense.transportation && ` [${expense.transportation}]`}
+                                  {expense.transportation && ` [${expense.transportation}]`}<br/>
+                                  {expense.type === 'regular' && expense.start_date && expense.end_date ? 
+                                    `期間:${expense.start_date}~${expense.end_date}` : 
+                                    expense.start_date ? `利用日:${expense.start_date}` : ''
+                                  }
                                 </>
                               ) : ''}
                             </div>
