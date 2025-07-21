@@ -470,8 +470,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
     // 印刷実行前に少し待機してからDOM構築を確認
     setTimeout(() => {
-      const printArea = document.querySelector('.print-area');
-      const printPages = document.querySelectorAll('.print-page');
+        const printPages = document.querySelectorAll('.print-page');
       console.log(`印刷実行: DOM ${printPages.length}ページ, Data ${printData.length}ページ`);
       
       window.print();
