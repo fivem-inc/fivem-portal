@@ -913,11 +913,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
         .preview-voucher-grid .print-expense-item {
           display: grid;
           grid-template-columns: 15mm 25mm 1fr 25mm;
-          gap: 1mm;
-          margin-bottom: 0.5mm;
+          gap: 0.5mm;
+          margin-bottom: 0.3mm;
           align-items: center;
-          font-size: 5pt;
-          min-height: 6mm;
+          font-size: 7pt;
+          min-height: 5mm;
           color: #000 !important;
         }
         
@@ -926,7 +926,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
         .preview-voucher-grid .print-expense-detail,
         .preview-voucher-grid .print-expense-amount {
           border: 1px solid #000;
-          padding: 0.2mm;
+          padding: 0.1mm;
           color: #000 !important;
           font-size: 7pt;
         }
