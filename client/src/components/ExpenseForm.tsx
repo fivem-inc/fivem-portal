@@ -115,6 +115,15 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       return;
     }
 
+    // 定期券と他の申請タイプの混在チェック
+    const hasRegular = expensesToSubmit.some(expense => expense.type === 'regular');
+    const hasOther = expensesToSubmit.some(expense => expense.type !== 'regular');
+    
+    if (hasRegular && hasOther) {
+      alert('定期券の申請と他の申請（単発・出張）は混ぜて申請できません。\n別々に申請してください。');
+      return;
+    }
+
     // バリデーション
     for (const expense of expensesToSubmit) {
       if (!expense.from_station.trim()) {
@@ -215,6 +224,30 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
   return (
     <div>
       <h2 style={{ textAlign: 'center' }}>ファイブM 交通費精算フォーム</h2>
+      
+      <div style={{ 
+        backgroundColor: '#f8f9fa', 
+        border: '1px solid #dee2e6', 
+        borderRadius: '8px', 
+        padding: '16px', 
+        margin: '16px 0',
+        fontSize: '14px',
+        lineHeight: '1.6'
+      }}>
+        <div style={{ marginBottom: '8px' }}>
+          📋 申請は「まとめて申請」 ・ 「都度申請」どちらでも大丈夫です。
+        </div>
+        <div style={{ 
+          padding: '12px', 
+          backgroundColor: '#fff3cd', 
+          border: '1px solid #ffeaa7', 
+          borderRadius: '6px',
+          color: '#856404'
+        }}>
+          <strong>⚠️</strong> 定期券の申請と他の申請（単発・出張）は混ぜないでください。別々に申請してください。
+        </div>
+      </div>
+      
       <form>
         {expenses.map((expense, index) => (
           <div key={index} className="expense-row">
