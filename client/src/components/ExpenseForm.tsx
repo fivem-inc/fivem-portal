@@ -234,7 +234,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
         fontSize: '14px',
         lineHeight: '1.6'
       }}>
-        <div style={{ marginBottom: '8px' }}>
+        <div style={{ marginBottom: '8px', color: '#000' }}>
           📋 申請は「まとめて申請」 ・ 「都度申請」どちらでも大丈夫です。
         </div>
         <div style={{ 
