@@ -246,7 +246,7 @@ export default function SignIn() {
         </form>
       ) : (
         <form onSubmit={handlePasswordReset}>
-          <p>パスワードリセットメールを送信します。メールアドレスを入力してください。</p>
+          <p>パスワードリセットメールを送信します。登録しているメールアドレスを入力してください。</p>
           <input
             style={{ width: '100%', margin: '6px 0', padding: 8, boxSizing: 'border-box' }}
             placeholder='メールアドレス'
