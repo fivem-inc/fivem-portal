@@ -1192,7 +1192,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                       <strong>申請日:</strong> {new Date(p.created_at).toLocaleString()} <br />
                       <strong>ステータス:</strong> {
                         p.status === 'pending' ? '申請中' : 
-                        p.status === 'approved' ? '承認' : 
+                        p.status === 'approved' ? <span style={{ color: '#007bff', fontWeight: 'bold' }}>承認</span> : 
                         <span style={{ color: '#dc3545', fontWeight: 'bold' }}>却下</span>
                       } <br />
                       <strong>合計金額:</strong> {formatAmount(p.expenses_data.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0).toString())}円 <br />
@@ -1366,7 +1366,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                                     <strong>申請日:</strong> {new Date(s.created_at).toLocaleString()} <br />
                                     <strong>ステータス:</strong> {
                                       s.status === 'pending' ? '申請中' : 
-                                      s.status === 'approved' ? '承認' : 
+                                      s.status === 'approved' ? <span style={{ color: '#007bff', fontWeight: 'bold' }}>承認</span> : 
                                       <span style={{ color: '#dc3545', fontWeight: 'bold' }}>却下</span>
                                     } <br />
                                     <strong>合計金額:</strong> {formatAmount(s.expenses_data.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0).toString())}円 <br />
