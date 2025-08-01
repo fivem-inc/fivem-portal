@@ -48,7 +48,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     submittedDate: string;
     expenses: any[];
     total: number;
-    voucherNumber: number;
+    submissionTotal: number;
+    isLastPage: boolean;
+    voucherNumber: string;
+    printDate: string;
     currentPage: number;
     totalPages: number;
     pageInfo: string;
@@ -702,10 +705,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   </style>
 </head>
 <body>
-${printData.map((page, pageIndex) => `
+${printData.map((page) => `
   <div class="print-page">
     <div class="print-voucher-grid">
-      ${page.vouchers.map((voucher, index) => `
+      ${page.vouchers.map((voucher) => `
         <div class="print-voucher">
           <div class="print-voucher-header">
             [交通費請求明細書] ${voucher.voucherNumber} ${voucher.pageInfo || ''}
