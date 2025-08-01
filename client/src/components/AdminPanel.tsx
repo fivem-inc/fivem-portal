@@ -1845,7 +1845,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                             </div>
                             <div className="print-expense-type">
                               {expense ? (expense.type === 'regular' ? '定期' : 
-                                         expense.type === 'business_trip' ? '出張' : '単発') : ''}
+                                         expense.type === 'business_trip' ? '出張（園指導等）' : '通勤（単発）') : ''}
                             </div>
                             <div className="print-expense-detail">
                               {expense ? (
@@ -1856,6 +1856,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                                   }<br/>
                                   {expense.from_station} → {expense.to_station}
                                   {expense.transportation && ` [${expense.transportation}]`}<br/>
+                                  {expense.workplace && `勤務先:${expense.workplace} `}
                                   {expense.notes || ''}
                                 </>
                               ) : ''}
@@ -1924,7 +1925,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                             </div>
                             <div className="print-expense-type">
                               {expense ? (expense.type === 'regular' ? '定期' : 
-                                         expense.type === 'business_trip' ? '出張' : '単発') : ''}
+                                         expense.type === 'business_trip' ? '出張（園指導等）' : '通勤（単発）') : ''}
                             </div>
                             <div className="print-expense-detail">
                               {expense ? (
@@ -1935,6 +1936,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                                   }<br/>
                                   {expense.from_station} → {expense.to_station}
                                   {expense.transportation && ` [${expense.transportation}]`}<br/>
+                                  {expense.workplace && `勤務先:${expense.workplace} `}
                                   {expense.notes || ''}
                                 </>
                               ) : ''}

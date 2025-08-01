@@ -38,7 +38,7 @@ export const generateCSVData = (submissions: Submission[]): string => {
   const headers = [
     '申請NO', '申請ID', '申請者', '申請日', 'ステータス', 'タイプ', 
     '利用日', '定期期間', '交通機関', '出発駅', '帰着駅', '金額', 
-    '備考欄', '承認日', '却下日'
+    '勤務先', '備考欄', '承認日', '却下日'
   ];
   
   let csvContent = headers.join(',') + '\r\n';
@@ -53,13 +53,14 @@ export const generateCSVData = (submissions: Submission[]): string => {
         submission.profiles?.name || submission.profiles?.email || '不明',
         new Date(submission.created_at).toLocaleString(),
         submission.status === 'pending' ? '申請中' : submission.status === 'approved' ? '承認' : '却下',
-        expense.type === 'regular' ? '定期' : expense.type === 'business_trip' ? '出張' : '単発',
+        expense.type === 'regular' ? '定期' : expense.type === 'business_trip' ? '出張（園指導等）' : '通勤（単発）',
         (expense.type === 'one_time' || expense.type === 'business_trip') ? (expense.start_date || '') : '',
         expense.type === 'regular' ? `${expense.start_date || ''} ~ ${expense.end_date || ''}` : '',
         expense.transportation || '',
         expense.from_station,
         expense.to_station,
         expense.amount,
+        expense.workplace || '',
         expense.notes || '',
         submission.approved_at ? new Date(submission.approved_at).toLocaleString() : '',
         submission.rejected_at ? new Date(submission.rejected_at).toLocaleString() : '',
