@@ -374,16 +374,30 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     );
 
     // 伝票データ生成 (デバッグ)
+    
+    // 現在の日時を取得（YYYYMMDD-HHMM形式）
+    const today = new Date();
+    const dateStr = today.getFullYear().toString() + 
+                   (today.getMonth() + 1).toString().padStart(2, '0') + 
+                   today.getDate().toString().padStart(2, '0');
+    const timeStr = today.getHours().toString().padStart(2, '0') + 
+                   today.getMinutes().toString().padStart(2, '0');
 
     const vouchers = [];
-    let voucherNumber = 1;
+    const printDate = today.toLocaleDateString('ja-JP') + ' ' + 
+                     today.getHours().toString().padStart(2, '0') + ':' + 
+                     today.getMinutes().toString().padStart(2, '0');
+    let voucherCounter = 1;
     
     for (const submission of uniqueSubmissions) {
       const expenses = submission.expenses_data;
-      const expensesPerVoucher = 10;
+      const expensesPerVoucher = 12;
       const totalVouchersForSubmission = Math.ceil(expenses.length / expensesPerVoucher);
       
-      // 申請処理中
+      // 申請全体の合計金額を計算
+      const submissionTotal = expenses.reduce((sum, exp) => 
+        sum + (parseInt(exp.amount || '0') || 0), 0
+      );
       
       for (let i = 0; i < expenses.length; i += expensesPerVoucher) {
         const voucherExpenses = expenses.slice(i, i + expensesPerVoucher);
@@ -391,6 +405,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           sum + (parseInt(exp.amount || '0') || 0), 0
         );
         const voucherPageNum = Math.floor(i / expensesPerVoucher) + 1;
+        const isLastPage = voucherPageNum === totalVouchersForSubmission;
+        
+        // 時刻ベースの伝票番号生成
+        const voucherNumber = `#${dateStr}-${timeStr}-${voucherCounter.toString().padStart(2, '0')}`;
+        voucherCounter++;
         
         vouchers.push({
           submissionId: submission.id,
@@ -398,10 +417,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           submittedDate: new Date(submission.created_at).toLocaleDateString('ja-JP'),
           expenses: voucherExpenses,
           total: voucherTotal,
-          voucherNumber: voucherNumber++,
+          submissionTotal: submissionTotal,
+          isLastPage: isLastPage,
+          voucherNumber: voucherNumber,
+          printDate: printDate,
           currentPage: voucherPageNum,
           totalPages: totalVouchersForSubmission,
-          pageInfo: totalVouchersForSubmission > 1 ? `${voucherPageNum}/${totalVouchersForSubmission}` : '',
+          pageInfo: totalVouchersForSubmission > 1 ? `【${voucherPageNum}/${totalVouchersForSubmission}】` : '',
           submissionIndex: uniqueSubmissions.indexOf(submission) + 1,
           totalSubmissions: uniqueSubmissions.length
         });
@@ -447,7 +469,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     setShowPrintPreview(true);
   }, [selectedForPrint, getPaginatedVouchers, getVouchersForPrint]);
 
-  // 実際の印刷実行
+  // 実際の印刷実行（印刷専用ウィンドウ使用）
   const executePrint = useCallback(async () => {
     const currentUser = await supabase.auth.getUser();
     
@@ -468,20 +490,315 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
       await Promise.all(updatePromises);
     }
 
-    // 印刷実行前に少し待機してからDOM構築を確認
-    setTimeout(() => {
-        const printPages = document.querySelectorAll('.print-page');
-      console.log(`印刷実行: DOM ${printPages.length}ページ, Data ${printData.length}ページ`);
-      
-      window.print();
-    }, 100);
+    // 印刷専用ウィンドウを作成
+    const printWindow = window.open('', '_blank', 'width=800,height=600');
+    if (!printWindow) {
+      alert('ポップアップがブロックされました。ポップアップを許可してから再試行してください。');
+      return;
+    }
+
+    // 印刷用HTMLを生成
+    const printHTML = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>交通費請求明細書</title>
+  <style>
+    @page { 
+      size: A4 portrait;
+      margin: 5mm;
+    }
+    
+    * {
+      -webkit-print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    
+    body {
+      font-family: "MS Gothic", "Yu Gothic", monospace;
+      margin: 0;
+      padding: 0;
+    }
+    
+    .print-page {
+      page-break-before: auto;
+      page-break-inside: avoid;
+      page-break-after: always;
+      width: 100%;
+      height: 287mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      align-items: center;
+      padding: 0;
+      margin: 0;
+      overflow: hidden;
+    }
+    
+    .print-page:last-child {
+      page-break-after: avoid;
+    }
+    
+    .print-voucher-grid {
+      display: flex !important;
+      justify-content: center;
+      align-items: flex-start;
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 2mm 0;
+    }
+    
+    .print-voucher {
+      width: 180mm !important;
+      height: 280mm !important;
+      max-height: 280mm !important;
+      margin: 0 !important;
+      overflow: hidden !important;
+      border: 1px solid #000 !important;
+      padding: 2mm !important;
+      page-break-inside: avoid !important;
+      page-break-after: avoid !important;
+      display: flex !important;
+      flex-direction: column !important;
+      font-family: "MS Gothic", "Yu Gothic", monospace !important;
+      color: #000 !important;
+      background: white !important;
+      box-sizing: border-box !important;
+    }
+    
+    .print-voucher-header {
+      text-align: center;
+      font-weight: bold;
+      margin-bottom: 2mm;
+      border-bottom: 2px solid #000;
+      padding-bottom: 1mm;
+      color: #000 !important;
+      white-space: nowrap;
+      font-size: 18pt;
+    }
+    
+    .print-title-main {
+      font-size: 24pt;
+    }
+    
+    .print-title-number {
+      font-size: 16pt;
+    }
+    
+    .print-title-page {
+      font-size: 18pt;
+      font-weight: bold;
+    }
+    
+    .print-title-date {
+      font-size: 14pt;
+    }
+    
+    .print-voucher-content {
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .print-voucher-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 2mm;
+      font-size: 16pt;
+      font-weight: bold;
+      color: #000 !important;
+    }
+    
+    .print-expense-list {
+      margin: 1mm 0 0 0;
+    }
+    
+    .print-expense-item {
+      display: grid;
+      grid-template-columns: 12mm 30mm 1fr 30mm;
+      gap: 1mm;
+      margin-bottom: 0.3mm;
+      align-items: flex-start;
+      font-size: 12pt;
+      min-height: 8mm;
+      color: #000 !important;
+    }
+    
+    .print-expense-number {
+      text-align: center;
+      font-weight: bold;
+      border: 2px solid #000;
+      padding: 0.5mm;
+      color: #000 !important;
+      background: white;
+      font-size: 12pt;
+    }
+    
+    .print-expense-type {
+      text-align: center;
+      padding: 0.5mm;
+      border: 2px solid #000;
+      color: #000 !important;
+      font-size: 11pt;
+      font-weight: bold;
+    }
+    
+    .print-expense-detail {
+      padding: 1mm;
+      border: 2px solid #000;
+      color: #000 !important;
+      font-size: 10pt;
+      line-height: 1.3;
+      min-height: 8mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      font-weight: 500;
+    }
+    
+    .print-expense-amount {
+      text-align: right;
+      padding: 0.5mm;
+      border: 2px solid #000;
+      color: #000 !important;
+      font-size: 14pt;
+      font-weight: bold;
+    }
+    
+    .print-voucher-amount {
+      text-align: center;
+      font-size: 20pt;
+      font-weight: bold;
+      margin: 2mm 0 0 0;
+      padding: 3mm;
+      border: 3px solid #000;
+      color: #000 !important;
+      background: #f0f0f0;
+    }
+    
+    .print-voucher-footer {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8mm;
+      font-size: 14pt;
+      font-weight: bold;
+      margin: 2mm 0 0 0;
+      padding: 2mm 0;
+      color: #000 !important;
+    }
+    
+    .print-voucher-footer-item {
+      display: flex;
+      align-items: center;
+      gap: 5mm;
+    }
+    
+    .print-voucher-footer-space {
+      border-bottom: 2px solid #000;
+      height: 8mm;
+      flex: 1;
+    }
+  </style>
+</head>
+<body>
+${printData.map((page, pageIndex) => `
+  <div class="print-page">
+    <div class="print-voucher-grid">
+      ${page.vouchers.map((voucher, index) => `
+        <div class="print-voucher">
+          <div class="print-voucher-header">
+            [交通費請求明細書] ${voucher.voucherNumber} ${voucher.pageInfo || ''}
+          </div>
+          
+          <div class="print-voucher-content">
+            <div class="print-voucher-row">
+              <span>申請者: ${voucher.submitterName}</span>
+              <span>申請日: ${voucher.submittedDate}</span>
+            </div>
+            
+            <div class="print-expense-list">
+              ${Array.from({ length: 12 }, (_, i) => {
+                const expense = voucher.expenses[i];
+                return `
+                  <div class="print-expense-item">
+                    <div class="print-expense-number">
+                      ${expense ? i + 1 : ''}
+                    </div>
+                    <div class="print-expense-type">
+                      ${expense ? (expense.type === 'regular' ? '定期' : 
+                                   expense.type === 'business_trip' ? '出張（園指導等）' : '通勤（単発）') : ''}
+                    </div>
+                    <div class="print-expense-detail">
+                      ${expense ? `
+                        <div>${expense.type === 'regular' && expense.start_date && expense.end_date ? 
+                          `期間:${new Date(expense.start_date).toLocaleDateString('ja-JP', {year: 'numeric', month: '2-digit', day: '2-digit'})}~${new Date(expense.end_date).toLocaleDateString('ja-JP', {year: 'numeric', month: '2-digit', day: '2-digit'})}` :
+                          expense.start_date ? `利用日:${new Date(expense.start_date).toLocaleDateString('ja-JP', {year: 'numeric', month: '2-digit', day: '2-digit'})}` : ''
+                        }${expense.workplace ? ` 勤務先:${expense.workplace}` : ''}</div>
+                        <div>${expense.transportation || ''} ${expense.from_station}→${expense.to_station}</div>
+                        <div>${expense.notes || ''}</div>
+                      ` : ''}
+                    </div>
+                    <div class="print-expense-amount">
+                      ${expense ? `¥${parseInt(expense.amount || '0').toLocaleString()}` : ''}
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+            
+            <div class="print-voucher-amount">
+              ${voucher.isLastPage ? 
+                `申請合計: ¥${voucher.submissionTotal.toLocaleString()}` : 
+                `ページ小計: ¥${voucher.total.toLocaleString()}`
+              }
+            </div>
+            ${voucher.isLastPage && voucher.totalPages > 1 ? 
+              `<div style="font-size: 12pt; text-align: center; margin-top: 2mm; padding: 1mm; border: 1px solid #000; background: #e0e0e0;">
+                (このページ: ¥${voucher.total.toLocaleString()})
+              </div>` : ''
+            }
+            
+            <div class="print-voucher-footer">
+              <div class="print-voucher-footer-item">
+                <span>承認印:</span>
+                <div class="print-voucher-footer-space"></div>
+              </div>
+              <div class="print-voucher-footer-item">
+                <span>受付日:</span>
+                <div class="print-voucher-footer-space"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  </div>
+`).join('')}
+</body>
+</html>`;
+
+    // HTMLを印刷ウィンドウに書き込み
+    printWindow.document.write(printHTML);
+    printWindow.document.close();
+
+    // 印刷ウィンドウが読み込まれてから印刷実行
+    printWindow.onload = () => {
+      setTimeout(() => {
+        printWindow.print();
+        // 印刷後にウィンドウを閉じる
+        printWindow.onafterprint = () => {
+          printWindow.close();
+        };
+      }, 500);
+    };
     
     // 印刷後に状態をクリア
     setTimeout(() => {
       setShowPrintPreview(false);
       setSelectedForPrint(new Set());
       onRefresh();
-    }, 1000);
+    }, 2000);
   }, [selectedForPrint, onRefresh, printData]);
 
   // 印刷キャンセル
