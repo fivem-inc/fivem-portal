@@ -58,14 +58,14 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
   const handleClearRow = useCallback((index: number) => {
     setExpenses(prev => {
       const newExpenses = [...prev];
-      newExpenses[index] = { type: 'one_time', from_station: '', to_station: '', amount: '', start_date: '', end_date: '' };
+      newExpenses[index] = { type: 'one_time', from_station: '', to_station: '', amount: '', start_date: '', end_date: '', workplace: '' };
       return newExpenses;
     });
   }, [setExpenses]);
 
   const handleAddRow = useCallback(() => {
     setExpenses(prev => {
-      return [...prev, { type: 'one_time', from_station: '', to_station: '', amount: '', start_date: '', end_date: '' }];
+      return [...prev, { type: 'one_time', from_station: '', to_station: '', amount: '', start_date: '', end_date: '', workplace: '' }];
     });
   }, [setExpenses]);
 
@@ -154,6 +154,10 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
         alert('交通機関を入力してください。');
         return;
       }
+      if (!expense.workplace?.trim()) {
+        alert('勤務先を入力してください。');
+        return;
+      }
     }
 
     const { error } = await supabase.from('expenses').insert([
@@ -216,7 +220,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       }
       
       alert('交通費を登録しました。承認をお待ちください。');
-      setExpenses([{ type: 'one_time', from_station: '', to_station: '', amount: '', start_date: '', end_date: '' }]);
+      setExpenses([{ type: 'one_time', from_station: '', to_station: '', amount: '', start_date: '', end_date: '', workplace: '' }]);
       onSubmissionComplete();
     }
   };
@@ -257,9 +261,9 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
               onChange={(e) => handleInputChange(index, 'type', e.target.value as 'regular' | 'business_trip' | 'one_time')}
               className="expense-input single-select"
             >
-              <option value="one_time">単発</option>
+              <option value="one_time">通勤（単発）</option>
               <option value="regular">定期</option>
-              <option value="business_trip">出張</option>
+              <option value="business_trip">出張（園指導等）</option>
             </select>
             
             {(expense.type === 'one_time' || expense.type === 'business_trip') && (
@@ -332,6 +336,15 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
               value={formatAmount(expense.amount)}
               onChange={(e) => handleInputChange(index, 'amount', parseAmount(e.target.value))}
               className="expense-input amount-input"
+            />
+            
+            <input
+              type="text"
+              placeholder="勤務先"
+              value={expense.workplace || ''}
+              onChange={(e) => handleInputChange(index, 'workplace', e.target.value)}
+              className="expense-input workplace-input"
+              style={{ maxWidth: '120px' }}
             />
             
             <input

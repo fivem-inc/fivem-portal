@@ -7,6 +7,7 @@ export interface Expense {
   end_date?: string;
   transportation?: string;
   notes?: string;
+  workplace?: string;
 }
 
 export interface Profile {
