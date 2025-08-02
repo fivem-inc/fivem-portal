@@ -42,6 +42,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   // 印刷機能用の状態
   const [selectedForPrint, setSelectedForPrint] = useState<Set<string>>(new Set());
   const [showPrintPreview, setShowPrintPreview] = useState(false);
+  
+  // フィルター機能用の状態
+  const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
   interface PrintVoucher {
     submissionId: string;
     submitterName: string;
@@ -66,6 +70,31 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   }
   
   const [printData, setPrintData] = useState<PrintPage[]>([]);
+
+  // フィルタリング関数
+  const getFilteredSubmissions = useCallback(() => {
+    return submissions.filter(submission => {
+      // ステータスフィルター
+      if (statusFilter !== 'all' && submission.status !== statusFilter) {
+        return false;
+      }
+      
+      // 申請種別フィルター
+      if (typeFilter !== 'all') {
+        const hasMatchingType = submission.expenses_data?.some(expense => expense.type === typeFilter);
+        if (!hasMatchingType) {
+          return false;
+        }
+      }
+      
+      return true;
+    });
+  }, [submissions, typeFilter, statusFilter]);
+
+  // フィルター済み承認待ちデータ
+  const filteredPending = React.useMemo(() => {
+    return getFilteredSubmissions().filter(s => s.status === 'pending');
+  }, [getFilteredSubmissions]);
 
   // ユーザー一覧取得
   const fetchUsers = useCallback(async () => {
@@ -279,14 +308,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
   // 一括承認機能
   const handleBulkApproval = useCallback(async (newStatus: 'approved' | 'rejected') => {
-    if (pendingApprovals.length === 0) {
+    if (filteredPending.length === 0) {
       alert('承認待ちの申請がありません。');
       return;
     }
 
     const confirmMessage = newStatus === 'approved' 
-      ? `${pendingApprovals.length}件の申請をすべて承認しますか？` 
-      : `${pendingApprovals.length}件の申請をすべて却下しますか？`;
+      ? `${filteredPending.length}件の申請をすべて承認しますか？` 
+      : `${filteredPending.length}件の申請をすべて却下しますか？`;
     
     if (!window.confirm(confirmMessage)) {
       return;
@@ -300,7 +329,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     let successCount = 0;
     let errorCount = 0;
 
-    for (const approval of pendingApprovals) {
+    for (const approval of filteredPending) {
       try {
         const updateData: { 
           status: 'approved' | 'rejected'; 
@@ -345,7 +374,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     }
     
     onRefresh();
-  }, [pendingApprovals, onRefresh]);
+  }, [filteredPending, onRefresh]);
 
   // 個別却下機能（理由入力付き）
   const handleIndividualReject = useCallback((id: string) => {
@@ -789,19 +818,48 @@ ${printData.map((page) => `
     printWindow.onload = () => {
       setTimeout(() => {
         printWindow.print();
-        // 印刷後にウィンドウを閉じる
+        
+        // 印刷実行後のイベントハンドラ
         printWindow.onafterprint = () => {
+          // 印刷が実行された場合のみデータベース更新
+          setShowPrintPreview(false);
+          setSelectedForPrint(new Set());
+          onRefresh();
           printWindow.close();
+        };
+        
+        // 印刷ダイアログのキャンセルを検知するため、一定時間後にウィンドウの状態をチェック
+        setTimeout(() => {
+          // 印刷ダイアログが表示されてから3秒後に、まだウィンドウが開いていて印刷されていない場合
+          if (!printWindow.closed) {
+            // 印刷がキャンセルされた可能性が高い
+            try {
+              // フォーカスをチェックして印刷ダイアログの状態を確認
+              printWindow.focus();
+              
+              // さらに少し待ってからウィンドウを閉じる
+              setTimeout(() => {
+                if (!printWindow.closed) {
+                  setShowPrintPreview(false);
+                  printWindow.close();
+                }
+              }, 1000);
+            } catch (e) {
+              // エラーが発生した場合もウィンドウを閉じる
+              setShowPrintPreview(false);
+              if (!printWindow.closed) {
+                printWindow.close();
+              }
+            }
+          }
+        }, 3000);
+        
+        // ウィンドウが閉じられた場合のハンドラ
+        printWindow.onbeforeunload = () => {
+          setShowPrintPreview(false);
         };
       }, 500);
     };
-    
-    // 印刷後に状態をクリア
-    setTimeout(() => {
-      setShowPrintPreview(false);
-      setSelectedForPrint(new Set());
-      onRefresh();
-    }, 2000);
   }, [selectedForPrint, onRefresh, printData]);
 
   // 印刷キャンセル
@@ -811,16 +869,16 @@ ${printData.map((page) => `
 
   // 全選択/全解除機能
   const handleSelectAll = useCallback(() => {
-    const allSubmissions = [...pendingApprovals, ...submissions];
-    const allIds = new Set(allSubmissions.map(s => s.id));
+    const filteredSubmissions = getFilteredSubmissions();
+    const allIds = new Set(filteredSubmissions.map(s => s.id));
     setSelectedForPrint(allIds);
-  }, [pendingApprovals, submissions]);
+  }, [getFilteredSubmissions]);
 
   // 承認待ち一覧のみ全選択
   const handleSelectPendingOnly = useCallback(() => {
-    const pendingIds = new Set(pendingApprovals.map(p => p.id));
+    const pendingIds = new Set(filteredPending.map(p => p.id));
     setSelectedForPrint(pendingIds);
-  }, [pendingApprovals]);
+  }, [filteredPending]);
 
   const handleDeselectAll = useCallback(() => {
     setSelectedForPrint(new Set());
@@ -922,7 +980,7 @@ ${printData.map((page) => `
     });
   }, []);
 
-  const groupedSubmissions = groupSubmissionsByYearAndMonth(submissions);
+  const groupedSubmissions = groupSubmissionsByYearAndMonth(getFilteredSubmissions());
 
   // タブのスタイル
   const tabStyle = (isActive: boolean) => ({
@@ -1376,6 +1434,44 @@ ${printData.map((page) => `
               </div>
               <button onClick={handleExportCsv}>承認済みCSV出力</button>
             </div>
+            
+            {/* フィルターセクション */}
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'center', 
+              gap: '20px', 
+              marginBottom: '20px',
+              alignItems: 'center'
+            }}>
+              <div>
+                <label htmlFor="typeFilter" style={{ marginRight: '8px' }}>申請種別:</label>
+                <select
+                  id="typeFilter"
+                  value={typeFilter}
+                  onChange={(e) => setTypeFilter(e.target.value)}
+                  style={{ padding: '6px 10px', borderRadius: '4px', border: '1px solid #ccc' }}
+                >
+                  <option value="all">すべて</option>
+                  <option value="one_time">通勤（単発）</option>
+                  <option value="regular">定期</option>
+                  <option value="business_trip">出張（園指導等）</option>
+                </select>
+              </div>
+              <div>
+                <label htmlFor="statusFilter" style={{ marginRight: '8px' }}>ステータス:</label>
+                <select
+                  id="statusFilter"
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  style={{ padding: '6px 10px', borderRadius: '4px', border: '1px solid #ccc' }}
+                >
+                  <option value="all">すべて</option>
+                  <option value="pending">申請中</option>
+                  <option value="approved">承認済み</option>
+                  <option value="rejected">却下</option>
+                </select>
+              </div>
+            </div>
 
             {/* 承認待ち一覧 */}
             <h4 style={{ textAlign: 'left' }}>承認待ち一覧</h4>
@@ -1383,7 +1479,7 @@ ${printData.map((page) => `
               <p style={{ textAlign: 'left' }}>読み込み中...</p>
             ) : (
               <div>
-                {pendingApprovals.length > 0 && (
+                {filteredPending.length > 0 && (
                   <>
                     {/* 印刷操作ボタン */}
                     <div style={{ marginBottom: '10px', padding: '10px', backgroundColor: '#f8f9fa', borderRadius: '4px' }}>
@@ -1481,7 +1577,7 @@ ${printData.map((page) => `
                   </>
                 )}
                 <ul style={{ listStyle: 'none', padding: 0, textAlign: 'left' }}>
-                  {pendingApprovals.map(p => (
+                  {filteredPending.map(p => (
                     <li key={p.id} style={{ border: '1px solid #ccc', padding: 10, marginBottom: 10, borderRadius: 4 }}>
                       <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
                         <input
@@ -1548,13 +1644,31 @@ ${printData.map((page) => `
                       </ul>
                       <button 
                         onClick={() => handleApproval(p.id, 'approved')} 
-                        style={{ marginRight: 10 }}
+                        style={{ 
+                          marginRight: 10, 
+                          padding: '8px 16px',
+                          backgroundColor: '#28a745',
+                          color: 'white',
+                          border: '2px solid #1e7e34',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          fontWeight: 'bold'
+                        }}
                       >
                         承認
                       </button>
                       <button 
                         onClick={() => handleIndividualReject(p.id)}
-                        style={{ marginRight: 10 }}
+                        style={{ 
+                          marginRight: 10,
+                          padding: '8px 16px',
+                          backgroundColor: '#dc3545',
+                          color: 'white',
+                          border: '2px solid #bd2130',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          fontWeight: 'bold'
+                        }}
                       >
                         却下
                       </button>

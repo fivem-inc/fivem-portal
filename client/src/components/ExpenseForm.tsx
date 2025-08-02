@@ -239,7 +239,8 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
         lineHeight: '1.6'
       }}>
         <div style={{ marginBottom: '8px', color: '#000' }}>
-          📋 申請は「まとめて申請」 ・ 「都度申請」どちらでも大丈夫です。
+          📋 申請は「まとめて申請」 ・ 「都度申請」どちらでも大丈夫です。<br />
+          申請履歴をテンプレートとして使用できます。
         </div>
         <div style={{ 
           padding: '12px', 
