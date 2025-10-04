@@ -26,7 +26,7 @@ export const useExpenses = (user: AuthUser | null, isAdmin: boolean): UseExpense
         // 管理者の場合、すべての申請履歴と承認待ち一覧を取得
         const { data: allData, error: allError } = await supabase
           .from('expenses')
-          .select('*, profiles(name, email)')
+          .select('*, profiles!user_id(name, email)')
           .order('created_at', { ascending: false });
 
         if (allError) {
@@ -39,7 +39,7 @@ export const useExpenses = (user: AuthUser | null, isAdmin: boolean): UseExpense
         // 一般ユーザーの場合、自分の申請履歴のみを取得
         const { data: myData, error: myError } = await supabase
           .from('expenses')
-          .select('*, profiles(name, email)')
+          .select('*, profiles!user_id(name, email)')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false });
 
