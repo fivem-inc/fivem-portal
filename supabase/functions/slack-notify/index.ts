@@ -20,7 +20,7 @@ serve(async (req) => {
     
     // 申請項目の詳細を作成
     const expenseDetails = expense.items.map((item: any, index: number) => {
-      const typeText = item.type === 'regular' ? '定期' : item.type === 'business_trip' ? '出張' : '単発'
+      const typeText = item.type === 'regular' ? '⭐定期⭐' : item.type === 'business_trip' ? '出張' : '単発'
       const dateText = item.type === 'regular' 
         ? `${item.start_date || '未設定'} ~ ${item.end_date || '未設定'}`
         : `${item.start_date || '未設定'}`
