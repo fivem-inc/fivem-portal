@@ -65,10 +65,26 @@ const MonthlyApplicationStatus: React.FC<MonthlyApplicationStatusProps> = ({
       });
     });
 
+    // 種別別に日付でグループ化してカウント情報を生成
+    const groupByDate = (applications: ApplicationInfo[]) => {
+      const grouped = applications.reduce((acc, app) => {
+        const key = `${app.day}-${app.dayOfWeek}`;
+        if (!acc[key]) {
+          acc[key] = { day: app.day, dayOfWeek: app.dayOfWeek, count: 0, date: app.submissionDate };
+        }
+        acc[key].count++;
+        return acc;
+      }, {} as Record<string, { day: number; dayOfWeek: string; count: number; date: Date }>);
+      
+      return Object.values(grouped).sort((a, b) => a.date.getTime() - b.date.getTime());
+    };
+
     return {
       regular: regular.sort((a, b) => a.submissionDate.getTime() - b.submissionDate.getTime()),
       oneTime: oneTime.sort((a, b) => a.submissionDate.getTime() - b.submissionDate.getTime()),
-      businessTrip: businessTrip.sort((a, b) => a.submissionDate.getTime() - b.submissionDate.getTime())
+      businessTrip: businessTrip.sort((a, b) => a.submissionDate.getTime() - b.submissionDate.getTime()),
+      oneTimeGrouped: groupByDate(oneTime),
+      businessTripGrouped: groupByDate(businessTrip)
     };
   }, [submissions, currentYear, currentMonth]);
 
@@ -172,13 +188,14 @@ const MonthlyApplicationStatus: React.FC<MonthlyApplicationStatusProps> = ({
         {/* 通勤（単発）申請 */}
         {monthlyApplications.oneTime.length > 0 && (
           <div style={{ marginBottom: '8px' }}>
-            <strong>通勤（単発）申請: </strong>{monthlyApplications.oneTime.length}日
+            <strong>通勤（単発）申請: </strong>
+            {monthlyApplications.oneTimeGrouped.length}日・{monthlyApplications.oneTime.length}件
             <span style={{ marginLeft: '10px' }}>
               (
-              {monthlyApplications.oneTime.map((app, index) => (
-                <span key={`onetime-${app.date}-${index}`}>
-                  {currentMonth}/{app.day}({app.dayOfWeek})
-                  {index < monthlyApplications.oneTime.length - 1 ? '、' : ''}
+              {monthlyApplications.oneTimeGrouped.map((group, index) => (
+                <span key={`onetime-group-${group.day}`}>
+                  {currentMonth}/{group.day}({group.dayOfWeek}){group.count > 1 ? `×${group.count}` : ''}
+                  {index < monthlyApplications.oneTimeGrouped.length - 1 ? '、' : ''}
                 </span>
               ))}
               )
@@ -189,13 +206,14 @@ const MonthlyApplicationStatus: React.FC<MonthlyApplicationStatusProps> = ({
         {/* 出張（園指導等）申請 */}
         {monthlyApplications.businessTrip.length > 0 && (
           <div style={{ marginBottom: '8px' }}>
-            <strong>出張（園指導等）申請: </strong>{monthlyApplications.businessTrip.length}日
+            <strong>出張（園指導等）申請: </strong>
+            {monthlyApplications.businessTripGrouped.length}日・{monthlyApplications.businessTrip.length}件
             <span style={{ marginLeft: '10px' }}>
               (
-              {monthlyApplications.businessTrip.map((app, index) => (
-                <span key={`business-${app.date}-${index}`}>
-                  {currentMonth}/{app.day}({app.dayOfWeek})
-                  {index < monthlyApplications.businessTrip.length - 1 ? '、' : ''}
+              {monthlyApplications.businessTripGrouped.map((group, index) => (
+                <span key={`business-group-${group.day}`}>
+                  {currentMonth}/{group.day}({group.dayOfWeek}){group.count > 1 ? `×${group.count}` : ''}
+                  {index < monthlyApplications.businessTripGrouped.length - 1 ? '、' : ''}
                 </span>
               ))}
               )
