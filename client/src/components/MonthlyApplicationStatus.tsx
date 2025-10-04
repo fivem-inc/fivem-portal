@@ -107,7 +107,8 @@ const MonthlyApplicationStatus: React.FC<MonthlyApplicationStatusProps> = ({
       padding: '15px',
       borderRadius: '8px',
       margin: '20px 0',
-      border: '1px solid #e9ecef'
+      border: '1px solid #e9ecef',
+      color: '#212529'
     }}>
       {/* ヘッダー部分 */}
       <div style={{
@@ -116,7 +117,7 @@ const MonthlyApplicationStatus: React.FC<MonthlyApplicationStatusProps> = ({
         alignItems: 'center',
         marginBottom: '15px'
       }}>
-        <h3 style={{ margin: 0, color: '#495057' }}>
+        <h3 style={{ margin: 0, color: '#212529' }}>
           {userName} - {currentYear}年{currentMonth}月申請状況
         </h3>
         
@@ -161,7 +162,7 @@ const MonthlyApplicationStatus: React.FC<MonthlyApplicationStatusProps> = ({
           <div style={{ marginBottom: '8px' }}>
             <strong>定期申請: </strong>{monthlyApplications.regular.length}件
             {monthlyApplications.regular.map((app, index) => (
-              <div key={`regular-${app.date}-${index}`} style={{ marginLeft: '20px', fontSize: '14px' }}>
+              <div key={`regular-${app.date}-${index}`} style={{ marginLeft: '20px', fontSize: '14px', color: '#212529' }}>
                 {currentMonth}/{app.day}({app.dayOfWeek})申請: {app.expense.start_date}〜{app.expense.end_date}
               </div>
             ))}
@@ -206,7 +207,7 @@ const MonthlyApplicationStatus: React.FC<MonthlyApplicationStatusProps> = ({
         {monthlyApplications.regular.length === 0 && 
          monthlyApplications.oneTime.length === 0 && 
          monthlyApplications.businessTrip.length === 0 && (
-          <span style={{ color: '#6c757d' }}>申請なし</span>
+          <span style={{ color: '#495057' }}>申請なし</span>
         )}
       </div>
     </div>
