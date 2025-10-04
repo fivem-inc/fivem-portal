@@ -30,37 +30,50 @@ const MonthlyApplicationStatus: React.FC<MonthlyApplicationStatusProps> = ({
 
   // 該当月の申請データを種別別に分類
   const monthlyApplications = useMemo(() => {
-    const filteredSubmissions = submissions.filter(submission => {
-      const submissionDate = new Date(submission.created_at);
-      return submissionDate.getFullYear() === currentYear && 
-             submissionDate.getMonth() + 1 === currentMonth;
-    });
 
     const regular: ApplicationInfo[] = [];
     const oneTime: ApplicationInfo[] = [];
     const businessTrip: ApplicationInfo[] = [];
 
-    filteredSubmissions.forEach(submission => {
-      const submissionDate = new Date(submission.created_at);
-      const day = submissionDate.getDate();
-      const dayOfWeek = dayNames[submissionDate.getDay()];
-      
+    submissions.forEach(submission => {
       // 各申請の項目を種別別に分類
       submission.expenses_data.forEach(expense => {
-        const applicationInfo = {
-          day,
-          dayOfWeek,
-          date: submissionDate.toISOString().split('T')[0],
-          submissionDate: submissionDate,
-          expense: expense
-        };
-
+        let targetDate: Date;
+        
         if (expense.type === 'regular') {
-          regular.push(applicationInfo);
-        } else if (expense.type === 'one_time') {
-          oneTime.push(applicationInfo);
-        } else if (expense.type === 'business_trip') {
-          businessTrip.push(applicationInfo);
+          // 定期申請は申請日ベース
+          targetDate = new Date(submission.created_at);
+        } else {
+          // 単発・出張申請は利用日ベース（start_date）
+          if (expense.start_date) {
+            targetDate = new Date(expense.start_date);
+          } else {
+            targetDate = new Date(submission.created_at); // fallback
+          }
+        }
+        
+        // 該当月の利用日/申請日のみを対象とする
+        if (targetDate.getFullYear() === currentYear && 
+            targetDate.getMonth() + 1 === currentMonth) {
+          
+          const day = targetDate.getDate();
+          const dayOfWeek = dayNames[targetDate.getDay()];
+          
+          const applicationInfo = {
+            day,
+            dayOfWeek,
+            date: targetDate.toISOString().split('T')[0],
+            submissionDate: targetDate,
+            expense: expense
+          };
+
+          if (expense.type === 'regular') {
+            regular.push(applicationInfo);
+          } else if (expense.type === 'one_time') {
+            oneTime.push(applicationInfo);
+          } else if (expense.type === 'business_trip') {
+            businessTrip.push(applicationInfo);
+          }
         }
       });
     });
