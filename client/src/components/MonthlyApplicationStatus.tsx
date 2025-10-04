@@ -1,5 +1,13 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import type { Submission, AuthUser } from '../types';
+import React, { useState, useMemo } from 'react';
+import type { Submission, AuthUser, Expense } from '../types';
+
+interface ApplicationInfo {
+  day: number;
+  dayOfWeek: string;
+  date: string;
+  submissionDate: Date;
+  expense: Expense;
+}
 
 interface MonthlyApplicationStatusProps {
   user: AuthUser;
@@ -8,7 +16,6 @@ interface MonthlyApplicationStatusProps {
 }
 
 const MonthlyApplicationStatus: React.FC<MonthlyApplicationStatusProps> = ({
-  user,
   submissions,
   userName
 }) => {
@@ -29,9 +36,9 @@ const MonthlyApplicationStatus: React.FC<MonthlyApplicationStatusProps> = ({
              submissionDate.getMonth() + 1 === currentMonth;
     });
 
-    const regular = [];
-    const oneTime = [];
-    const businessTrip = [];
+    const regular: ApplicationInfo[] = [];
+    const oneTime: ApplicationInfo[] = [];
+    const businessTrip: ApplicationInfo[] = [];
 
     filteredSubmissions.forEach(submission => {
       const submissionDate = new Date(submission.created_at);
