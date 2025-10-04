@@ -96,6 +96,73 @@ five-m-expense.vercel.appにデプロイして。
 - ページサイズ: A4 (210mm × 297mm)
 - 印刷時CSS: @media print + page-break制御
 
+## ✅ 2025-10-04 編集履歴機能実装完了
+
+### 🎯 実装した機能
+**編集履歴機能** - 管理者が申請内容を編集した履歴を記録・表示
+
+#### **1. データベース設計** ✅
+```sql
+-- 編集履歴用カラム追加（安全な設計）
+ALTER TABLE expenses ADD COLUMN last_edited_at timestamp;
+ALTER TABLE expenses ADD COLUMN last_edited_by text;  -- 外部キー制約なしで安全
+ALTER TABLE expenses ADD COLUMN edit_count integer DEFAULT 0;
+```
+
+#### **2. 編集保存機能の拡張** ✅
+- `AdminPanel.tsx`の`handleSaveEdit`関数を修正
+- 編集時に履歴情報を自動更新：
+  - `last_edited_at`: 編集日時（UTC）
+  - `last_edited_by`: '管理者'
+  - `edit_count`: 編集回数（累積）
+
+#### **3. 編集済みバッジ表示** ✅
+- **黄色バッジ**: `編集済み (X回)` 
+- **詳細情報**: `最終編集: 日時 (編集者)`
+- **表示場所**: 承認待ち一覧 + 全申請履歴
+- **日本時間表示**: UTC+9時間で正確な時刻表示
+
+#### **4. TypeScript型定義** ✅
+```typescript
+export interface Submission {
+  // ... 既存フィールド
+  last_edited_at?: string | null;
+  last_edited_by?: string | null;
+  edit_count?: number;
+}
+```
+
+### 🚀 技術的実装詳細
+- **安全性**: 外部キー制約なしでPostgREST問題を回避
+- **時刻変換**: 手動UTC+9計算で確実な日本時間表示
+- **型安全性**: null/undefinedチェックでTypeScript厳密モード対応
+- **表示条件**: `((edit_count && edit_count > 0) || last_edited_at)`
+
+### 🎨 UI/UX設計
+- **視認性**: 黄色バッジ（#ffc107）で編集済みを強調
+- **情報量**: 編集回数 + 最終編集日時 + 編集者名
+- **一貫性**: 承認待ち・全申請履歴で統一表示
+
+### 📋 実装順序と問題解決
+1. **データベース構造設計** → 安全なカラム追加
+2. **保存機能実装** → 編集時の履歴更新
+3. **表示機能実装** → バッジと詳細情報表示
+4. **表示問題解決** → useExpensesクエリ条件修正
+5. **時刻表示修正** → 日本時間への確実な変換
+6. **TypeScript対応** → 型定義追加とnull安全性
+
+### 🔧 トラブルシューティング履歴
+- **PostgREST関係エラー**: 外部キー制約回避で解決
+- **表示されない問題**: 条件式修正で解決  
+- **時刻表示問題**: 手動UTC+9変換で解決
+- **TypeScriptエラー**: 型定義追加とnull checkで解決
+
+### 📂 変更ファイル
+- `supabase/migrations/`: 編集履歴カラム追加
+- `client/src/types/index.ts`: Submission型にedit履歴フィールド追加
+- `client/src/components/AdminPanel.tsx`: 編集保存・表示機能実装
+- `client/src/hooks/useExpenses.ts`: データ取得対応
+
 ## ✅ 2025-08-02 作業完了
 
 ### 🎯 完了した機能実装
