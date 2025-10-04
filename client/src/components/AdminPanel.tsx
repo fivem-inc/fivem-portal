@@ -46,6 +46,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   // フィルター機能用の状態
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  
+  // 申請内容編集用の状態
+  const [editingSubmissionId, setEditingSubmissionId] = useState<string | null>(null);
+  const [editingExpenses, setEditingExpenses] = useState<any[]>([]);
   interface PrintVoucher {
     submissionId: string;
     submitterName: string;
@@ -177,7 +181,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   }, [editName, fetchUsers]);
 
-  const handleCancelEdit = useCallback(() => {
+  const handleCancelUserEdit = useCallback(() => {
     setEditingUser(null);
     setEditName('');
   }, []);
@@ -899,6 +903,48 @@ ${printData.map((page) => `
     setShowRejectModal(false);
     setRejectingSubmissionId(null);
     setRejectReason('');
+  }, []);
+
+  // 申請内容編集開始
+  const handleStartEdit = useCallback((submissionId: string, expensesData: any[]) => {
+    setEditingSubmissionId(submissionId);
+    setEditingExpenses([...expensesData]);
+  }, []);
+
+  // 申請内容編集キャンセル
+  const handleCancelEdit = useCallback(() => {
+    setEditingSubmissionId(null);
+    setEditingExpenses([]);
+  }, []);
+
+  // 申請内容編集保存
+  const handleSaveEdit = useCallback(async (submissionId: string) => {
+    if (!window.confirm('申請内容を更新しますか？')) {
+      return;
+    }
+
+    const { error } = await supabase
+      .from('expenses')
+      .update({ expenses_data: editingExpenses })
+      .eq('id', submissionId);
+
+    if (error) {
+      alert('更新に失敗しました: ' + error.message);
+    } else {
+      alert('申請内容を更新しました。');
+      setEditingSubmissionId(null);
+      setEditingExpenses([]);
+      onRefresh();
+    }
+  }, [editingExpenses, onRefresh]);
+
+  // 編集中の費用項目更新
+  const handleUpdateEditingExpense = useCallback((index: number, field: string, value: string) => {
+    setEditingExpenses(prev => {
+      const updated = [...prev];
+      updated[index] = { ...updated[index], [field]: value };
+      return updated;
+    });
   }, []);
 
   const handleDeleteSubmission = useCallback(async (id: string) => {
@@ -1818,45 +1864,185 @@ ${printData.map((page) => `
                                       <><strong>却下日:</strong> {new Date(s.rejected_at).toLocaleString()} <br /></>
                                     )}
                                     <ul>
-                                      {s.expenses_data.map((e, i) => (
-                                        <li key={i}>
-                                          {e.type === 'regular' ? '定期' : e.type === 'business_trip' ? '出張（園指導等）' : '通勤（単発）'}: 
-                                          {e.type === 'regular' 
-                                            ? `${e.start_date || '未設定'} ~ ${e.end_date || '未設定'}` 
-                                            : `${e.start_date || '未設定'}`
-                                          } | 
-                                          {e.transportation && `[${e.transportation}] `}
-                                          {e.from_station} - {e.to_station}: {e.amount}円
-                                          {e.workplace && ` [勤務先: ${e.workplace}]`}
-                                          {e.notes && ` (備考: ${e.notes})`}
+                                      {(editingSubmissionId === s.id ? editingExpenses : s.expenses_data).map((e, i) => (
+                                        <li key={i} style={{ marginBottom: '10px' }}>
+                                          {editingSubmissionId === s.id ? (
+                                            <div style={{ border: '1px solid #ddd', padding: '10px', borderRadius: '4px', backgroundColor: '#f8f9fa' }}>
+                                              <div style={{ marginBottom: '8px' }}>
+                                                <strong>申請種別:</strong>
+                                                <select
+                                                  value={e.type || 'commute'}
+                                                  onChange={(event) => handleUpdateEditingExpense(i, 'type', event.target.value)}
+                                                  style={{ marginLeft: '10px', padding: '4px' }}
+                                                >
+                                                  <option value="commute">通勤（単発）</option>
+                                                  <option value="regular">定期</option>
+                                                  <option value="business_trip">出張（園指導等）</option>
+                                                </select>
+                                              </div>
+                                              <div style={{ marginBottom: '8px' }}>
+                                                <strong>日付:</strong>
+                                                <input
+                                                  type="date"
+                                                  value={e.start_date || ''}
+                                                  onChange={(event) => handleUpdateEditingExpense(i, 'start_date', event.target.value)}
+                                                  style={{ marginLeft: '10px', padding: '4px' }}
+                                                />
+                                                {e.type === 'regular' && (
+                                                  <>
+                                                    <span style={{ margin: '0 10px' }}>〜</span>
+                                                    <input
+                                                      type="date"
+                                                      value={e.end_date || ''}
+                                                      onChange={(event) => handleUpdateEditingExpense(i, 'end_date', event.target.value)}
+                                                      style={{ padding: '4px' }}
+                                                    />
+                                                  </>
+                                                )}
+                                              </div>
+                                              <div style={{ marginBottom: '8px' }}>
+                                                <strong>交通手段:</strong>
+                                                <input
+                                                  type="text"
+                                                  value={e.transportation || ''}
+                                                  onChange={(event) => handleUpdateEditingExpense(i, 'transportation', event.target.value)}
+                                                  style={{ marginLeft: '10px', padding: '4px', width: '100px' }}
+                                                />
+                                              </div>
+                                              <div style={{ marginBottom: '8px' }}>
+                                                <strong>出発地:</strong>
+                                                <input
+                                                  type="text"
+                                                  value={e.from_station || ''}
+                                                  onChange={(event) => handleUpdateEditingExpense(i, 'from_station', event.target.value)}
+                                                  style={{ marginLeft: '10px', padding: '4px', width: '120px' }}
+                                                />
+                                                <strong style={{ marginLeft: '10px' }}>到着地:</strong>
+                                                <input
+                                                  type="text"
+                                                  value={e.to_station || ''}
+                                                  onChange={(event) => handleUpdateEditingExpense(i, 'to_station', event.target.value)}
+                                                  style={{ marginLeft: '10px', padding: '4px', width: '120px' }}
+                                                />
+                                              </div>
+                                              <div style={{ marginBottom: '8px' }}>
+                                                <strong>金額:</strong>
+                                                <input
+                                                  type="number"
+                                                  value={e.amount || ''}
+                                                  onChange={(event) => handleUpdateEditingExpense(i, 'amount', event.target.value)}
+                                                  style={{ marginLeft: '10px', padding: '4px', width: '80px' }}
+                                                />円
+                                                <strong style={{ marginLeft: '20px' }}>勤務先:</strong>
+                                                <input
+                                                  type="text"
+                                                  value={e.workplace || ''}
+                                                  onChange={(event) => handleUpdateEditingExpense(i, 'workplace', event.target.value)}
+                                                  style={{ marginLeft: '10px', padding: '4px', width: '100px' }}
+                                                />
+                                              </div>
+                                              <div>
+                                                <strong>備考:</strong>
+                                                <input
+                                                  type="text"
+                                                  value={e.notes || ''}
+                                                  onChange={(event) => handleUpdateEditingExpense(i, 'notes', event.target.value)}
+                                                  style={{ marginLeft: '10px', padding: '4px', width: '200px' }}
+                                                />
+                                              </div>
+                                            </div>
+                                          ) : (
+                                            <>
+                                              {e.type === 'regular' ? '定期' : e.type === 'business_trip' ? '出張（園指導等）' : '通勤（単発）'}: 
+                                              {e.type === 'regular' 
+                                                ? `${e.start_date || '未設定'} ~ ${e.end_date || '未設定'}` 
+                                                : `${e.start_date || '未設定'}`
+                                              } | 
+                                              {e.transportation && `[${e.transportation}] `}
+                                              {e.from_station} - {e.to_station}: {e.amount}円
+                                              {e.workplace && ` [勤務先: ${e.workplace}]`}
+                                              {e.notes && ` (備考: ${e.notes})`}
+                                            </>
+                                          )}
                                         </li>
                                       ))}
                                     </ul>
                                     <div style={{ marginTop: 10 }}>
-                                      <select
-                                        defaultValue={s.status}
-                                        onChange={(e) => handleApproval(s.id, e.target.value as 'pending' | 'approved' | 'rejected')}
-                                        style={{ marginRight: 10, padding: 8 }}
-                                      >
-                                        <option value="pending">申請中</option>
-                                        <option value="approved">承認</option>
-                                        <option value="rejected">却下</option>
-                                      </select>
-                                      <button onClick={() => handleApproval(s.id, s.status)} style={{ padding: '8px 12px' }}>更新</button>
-                                      <button 
-                                        onClick={() => handleDeleteSubmission(s.id)} 
-                                        style={{ 
-                                          marginLeft: 10, 
-                                          padding: '8px 12px', 
-                                          background: '#dc3545', 
-                                          color: 'white', 
-                                          border: 'none', 
-                                          borderRadius: 4, 
-                                          cursor: 'pointer' 
-                                        }}
-                                      >
-                                        削除
-                                      </button>
+                                      {editingSubmissionId === s.id ? (
+                                        <div>
+                                          <button 
+                                            onClick={() => handleSaveEdit(s.id)}
+                                            style={{ 
+                                              marginRight: 10, 
+                                              padding: '8px 16px', 
+                                              backgroundColor: '#28a745', 
+                                              color: 'white', 
+                                              border: 'none', 
+                                              borderRadius: 4, 
+                                              cursor: 'pointer',
+                                              fontWeight: 'bold'
+                                            }}
+                                          >
+                                            保存
+                                          </button>
+                                          <button 
+                                            onClick={handleCancelEdit}
+                                            style={{ 
+                                              padding: '8px 16px', 
+                                              backgroundColor: '#6c757d', 
+                                              color: 'white', 
+                                              border: 'none', 
+                                              borderRadius: 4, 
+                                              cursor: 'pointer' 
+                                            }}
+                                          >
+                                            キャンセル
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <div>
+                                          <select
+                                            defaultValue={s.status}
+                                            onChange={(e) => handleApproval(s.id, e.target.value as 'pending' | 'approved' | 'rejected')}
+                                            style={{ marginRight: 10, padding: 8 }}
+                                          >
+                                            <option value="pending">申請中</option>
+                                            <option value="approved">承認</option>
+                                            <option value="rejected">却下</option>
+                                          </select>
+                                          <button onClick={() => handleApproval(s.id, s.status)} style={{ padding: '8px 12px' }}>更新</button>
+                                          {(s.status === 'approved' || s.status === 'rejected') && (
+                                            <button 
+                                              onClick={() => handleStartEdit(s.id, s.expenses_data)}
+                                              style={{ 
+                                                marginLeft: 10, 
+                                                padding: '8px 12px', 
+                                                backgroundColor: '#007bff', 
+                                                color: 'white', 
+                                                border: 'none', 
+                                                borderRadius: 4, 
+                                                cursor: 'pointer' 
+                                              }}
+                                            >
+                                              編集
+                                            </button>
+                                          )}
+                                          <button 
+                                            onClick={() => handleDeleteSubmission(s.id)} 
+                                            style={{ 
+                                              marginLeft: 10, 
+                                              padding: '8px 12px', 
+                                              background: '#dc3545', 
+                                              color: 'white', 
+                                              border: 'none', 
+                                              borderRadius: 4, 
+                                              cursor: 'pointer' 
+                                            }}
+                                          >
+                                            削除
+                                          </button>
+                                        </div>
+                                      )}
                                     </div>
                                   </li>
                                 ))}
@@ -1936,7 +2122,7 @@ ${printData.map((page) => `
                                   保存
                                 </button>
                                 <button
-                                  onClick={handleCancelEdit}
+                                  onClick={handleCancelUserEdit}
                                   style={{
                                     padding: '4px 8px',
                                     background: '#6c757d',
