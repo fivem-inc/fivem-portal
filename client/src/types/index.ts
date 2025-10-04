@@ -27,6 +27,9 @@ export interface Submission {
   user_id?: string;
   printed_at?: string | null;
   printed_by?: string | null;
+  last_edited_at?: string | null;
+  last_edited_by?: string | null;
+  edit_count?: number;
 }
 
 export interface PendingApproval extends Submission {

@@ -1690,7 +1690,7 @@ ${printData.map((page) => `
                       {p.printed_by && (
                         <><strong>印刷者ID:</strong> {p.printed_by} <br /></>
                       )}
-                      {(p.edit_count > 0 || p.last_edited_at) && (
+                      {((p.edit_count && p.edit_count > 0) || p.last_edited_at) && (
                         <>
                           <span style={{ 
                             backgroundColor: '#ffc107', 
@@ -1700,13 +1700,14 @@ ${printData.map((page) => `
                             fontSize: '12px',
                             fontWeight: 'bold'
                           }}>
-                            編集済み ({p.edit_count}回)
+                            編集済み ({p.edit_count || 0}回)
                           </span> <br />
                           <strong>最終編集:</strong> {(() => {
+                            if (!p.last_edited_at) return '';
                             const utcDate = new Date(p.last_edited_at);
                             const jpDate = new Date(utcDate.getTime() + (9 * 60 * 60 * 1000)); // UTC+9
                             return jpDate.toLocaleString('ja-JP').replace(/\//g, '/');
-                          })()} ({p.last_edited_by}) <br />
+                          })()} ({p.last_edited_by || ''}) <br />
                         </>
                       )}
                       {p.approved_at && (
@@ -1902,7 +1903,7 @@ ${printData.map((page) => `
                                     {s.printed_by && (
                                       <><strong>印刷者ID:</strong> {s.printed_by} <br /></>
                                     )}
-                                    {(s.edit_count > 0 || s.last_edited_at) && (
+                                    {((s.edit_count && s.edit_count > 0) || s.last_edited_at) && (
                                       <>
                                         <span style={{ 
                                           backgroundColor: '#ffc107', 
@@ -1912,13 +1913,14 @@ ${printData.map((page) => `
                                           fontSize: '12px',
                                           fontWeight: 'bold'
                                         }}>
-                                          編集済み ({s.edit_count}回)
+                                          編集済み ({s.edit_count || 0}回)
                                         </span> <br />
                                         <strong>最終編集:</strong> {(() => {
+                                          if (!s.last_edited_at) return '';
                                           const utcDate = new Date(s.last_edited_at);
                                           const jpDate = new Date(utcDate.getTime() + (9 * 60 * 60 * 1000)); // UTC+9
                                           return jpDate.toLocaleString('ja-JP').replace(/\//g, '/');
-                                        })()} ({s.last_edited_by}) <br />
+                                        })()} ({s.last_edited_by || ''}) <br />
                                       </>
                                     )}
                                     {s.approved_at && (
