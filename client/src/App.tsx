@@ -7,6 +7,7 @@ import SupabaseSettingsCheck from './pages/SupabaseSettingsCheck';
 import ExpenseForm from './components/ExpenseForm';
 import AdminPanel from './components/AdminPanel';
 import HistoryView from './components/HistoryView';
+import MonthlyApplicationStatus from './components/MonthlyApplicationStatus';
 import { AuthProvider } from './contexts/AuthContext.tsx';
 import { useAuth } from './hooks/useAuth';
 import { useExpenses } from './hooks/useExpenses';
@@ -142,6 +143,15 @@ const Dashboard: React.FC = () => {
         setExpenses={setExpenses}
         profileName={profileName}
       />
+
+      {/* 月別申請状況 - 一般ユーザーのみ表示 */}
+      {!isAdmin && (
+        <MonthlyApplicationStatus
+          user={user}
+          submissions={submissions}
+          userName={profileName || user.email || ''}
+        />
+      )}
 
       {/* 管理者パネル */}
       {isAdmin && (
