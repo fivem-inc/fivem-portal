@@ -923,14 +923,40 @@ ${printData.map((page) => `
       return;
     }
 
+    // まず現在のedit_countを取得
+    const { data: currentData, error: fetchError } = await supabase
+      .from('expenses')
+      .select('edit_count')
+      .eq('id', submissionId)
+      .single();
+
+    if (fetchError) {
+      console.error('edit_count取得エラー:', fetchError);
+    }
+
+    const currentEditCount = currentData?.edit_count || 0;
+    console.log('現在のedit_count:', currentEditCount);
+
+    // 編集履歴も同時に更新
+    const updateData = { 
+      expenses_data: editingExpenses,
+      last_edited_at: new Date().toISOString(),
+      last_edited_by: '管理者',
+      edit_count: currentEditCount + 1
+    };
+    
+    console.log('更新データ:', updateData);
+
     const { error } = await supabase
       .from('expenses')
-      .update({ expenses_data: editingExpenses })
+      .update(updateData)
       .eq('id', submissionId);
 
     if (error) {
+      console.error('更新エラー:', error);
       alert('更新に失敗しました: ' + error.message);
     } else {
+      console.log('更新成功');
       alert('申請内容を更新しました。');
       setEditingSubmissionId(null);
       setEditingExpenses([]);
@@ -1664,6 +1690,25 @@ ${printData.map((page) => `
                       {p.printed_by && (
                         <><strong>印刷者ID:</strong> {p.printed_by} <br /></>
                       )}
+                      {(p.edit_count > 0 || p.last_edited_at) && (
+                        <>
+                          <span style={{ 
+                            backgroundColor: '#ffc107', 
+                            color: '#000', 
+                            padding: '2px 6px', 
+                            borderRadius: '4px', 
+                            fontSize: '12px',
+                            fontWeight: 'bold'
+                          }}>
+                            編集済み ({p.edit_count}回)
+                          </span> <br />
+                          <strong>最終編集:</strong> {(() => {
+                            const utcDate = new Date(p.last_edited_at);
+                            const jpDate = new Date(utcDate.getTime() + (9 * 60 * 60 * 1000)); // UTC+9
+                            return jpDate.toLocaleString('ja-JP').replace(/\//g, '/');
+                          })()} ({p.last_edited_by}) <br />
+                        </>
+                      )}
                       {p.approved_at && (
                         <><strong>承認日:</strong> {new Date(p.approved_at).toLocaleString()} <br /></>
                       )}
@@ -1856,6 +1901,25 @@ ${printData.map((page) => `
                                     )}
                                     {s.printed_by && (
                                       <><strong>印刷者ID:</strong> {s.printed_by} <br /></>
+                                    )}
+                                    {(s.edit_count > 0 || s.last_edited_at) && (
+                                      <>
+                                        <span style={{ 
+                                          backgroundColor: '#ffc107', 
+                                          color: '#000', 
+                                          padding: '2px 6px', 
+                                          borderRadius: '4px', 
+                                          fontSize: '12px',
+                                          fontWeight: 'bold'
+                                        }}>
+                                          編集済み ({s.edit_count}回)
+                                        </span> <br />
+                                        <strong>最終編集:</strong> {(() => {
+                                          const utcDate = new Date(s.last_edited_at);
+                                          const jpDate = new Date(utcDate.getTime() + (9 * 60 * 60 * 1000)); // UTC+9
+                                          return jpDate.toLocaleString('ja-JP').replace(/\//g, '/');
+                                        })()} ({s.last_edited_by}) <br />
+                                      </>
                                     )}
                                     {s.approved_at && (
                                       <><strong>承認日:</strong> {new Date(s.approved_at).toLocaleString()} <br /></>
