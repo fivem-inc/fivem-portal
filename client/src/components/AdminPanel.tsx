@@ -21,6 +21,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const [activeTab, setActiveTab] = useState<AdminTab>('approvals');
   const [csvStartDate, setCsvStartDate] = useState<string>('');
   const [csvEndDate, setCsvEndDate] = useState<string>('');
+  const [csvDateType, setCsvDateType] = useState<'created' | 'approved'>('approved'); // 日付種別（申請日 or 承認日）
   const [expandedAdminYears, setExpandedAdminYears] = useState<Set<string>>(new Set());
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
   
@@ -998,19 +999,22 @@ ${printData.map((page) => `
   }, [onRefresh]);
 
   const handleExportCsv = useCallback(async () => {
+    // 日付種別に応じてフィールドを選択
+    const dateField = csvDateType === 'approved' ? 'approved_at' : 'created_at';
+
     let query = supabase
       .from('expenses')
       .select('*, profiles(name, email)')
       .eq('status', 'approved');
 
     if (csvStartDate) {
-      query = query.gte('created_at', `${csvStartDate}T00:00:00Z`);
+      query = query.gte(dateField, `${csvStartDate}T00:00:00Z`);
     }
     if (csvEndDate) {
-      query = query.lte('created_at', `${csvEndDate}T23:59:59Z`);
+      query = query.lte(dateField, `${csvEndDate}T23:59:59Z`);
     }
 
-    const { data, error } = await query.order('created_at', { ascending: true });
+    const { data, error } = await query.order(dateField, { ascending: true });
 
     if (error) {
       console.error('Error fetching approved expenses:', error.message);
@@ -1026,7 +1030,7 @@ ${printData.map((page) => `
     const csvContent = generateCSVData(data);
     downloadCSV(csvContent);
     alert('CSVを出力しました。');
-  }, [csvStartDate, csvEndDate]);
+  }, [csvStartDate, csvEndDate, csvDateType]);
 
   const toggleYearExpansion = useCallback((year: string) => {
     setExpandedAdminYears(prev => {
@@ -1493,6 +1497,32 @@ ${printData.map((page) => `
             
             {/* CSV出力セクション */}
             <div style={{ textAlign: 'center', marginBottom: 20 }}>
+              {/* 日付種別選択（ラジオボタン） */}
+              <div style={{ marginBottom: 15 }}>
+                <label style={{ color: isDarkMode ? '#fff' : '#000', fontWeight: 'bold', marginRight: 20 }}>抽出基準:</label>
+                <label style={{ marginRight: 20, color: isDarkMode ? '#fff' : '#000', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="csvDateType"
+                    value="approved"
+                    checked={csvDateType === 'approved'}
+                    onChange={(e) => setCsvDateType(e.target.value as 'created' | 'approved')}
+                    style={{ marginRight: 5 }}
+                  />
+                  承認日
+                </label>
+                <label style={{ color: isDarkMode ? '#fff' : '#000', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="csvDateType"
+                    value="created"
+                    checked={csvDateType === 'created'}
+                    onChange={(e) => setCsvDateType(e.target.value as 'created' | 'approved')}
+                    style={{ marginRight: 5 }}
+                  />
+                  申請日
+                </label>
+              </div>
               <div style={{ marginBottom: 10 }}>
                 <label htmlFor="csvStartDate" style={{ color: isDarkMode ? '#fff' : '#000' }}>開始日:</label>
                 <input
