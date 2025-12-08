@@ -316,3 +316,173 @@ const isDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
 - コミットID: `bb17130`
 - デプロイ先: https://five-m-expense.vercel.app/
 - 自動デプロイ: Vercel（1〜2分で反映）
+
+## ✅ 2025-12-08 二重送信防止機能実装完了
+
+### 🎯 実装した機能
+**申請フォームの二重送信防止** - 送信ボタンの連続クリックによる重複申請を防止
+
+#### **実装内容** ✅
+1. **送信中フラグ管理**
+   - `isSubmitting` stateを追加
+   - 送信中はボタンを無効化（disabled）
+
+2. **視覚的フィードバック**
+   - ボタンテキスト: 「申請する」→「送信中...」
+   - 背景色: 青色（#007bff）→グレー（#6c757d）
+   - 透明度: 60%に変更
+   - カーソル: not-allowed
+
+3. **送信完了後の制限**
+   - 送信成功後、3秒間はボタンを押せない
+   - `setTimeout`で3秒後に自動的にボタン復活
+
+4. **エラー時の対応**
+   - バリデーションエラー: 即座にボタン復活
+   - データベースエラー: 即座にボタン復活
+
+### 📋 修正ファイル
+- `client/src/components/ExpenseForm.tsx`: 二重送信防止機能追加
+
+### 🚀 デプロイ
+- コミットID: `ba44a25`
+- デプロイ先: https://five-m-expense.vercel.app/
+- 自動デプロイ: Vercel（1〜2分で反映）
+
+## 🔜 次回実装予定: 出張報告機能
+
+### 📋 機能概要
+**出張・園指導等の到着/終了報告機能** - GPS位置情報付きで報告を記録・管理
+
+### 1. **UI/ナビゲーション**
+- ナビゲーションに「📍出張報告」を追加
+- 一般ユーザーのみアクセス可能（管理者は閲覧のみ）
+
+### 2. **入力フォーム仕様**
+```
+┌─────────────────────────────┐
+│  📍 出張報告                 │
+├─────────────────────────────┤
+│ 報告種別: ○ 到着  ○ 終了    │
+│                             │
+│ 区分: [選択 ▼]              │
+│  - 出張                     │
+│  - 園指導                   │
+│  - 試合                     │
+│  - 下見                     │
+│  - その他 (→自由記載欄表示) │
+│                             │
+│ 場所: [____________]        │
+│      （出張先・園名など）    │
+│                             │
+│ 備考: [____________]        │
+│       [            ]        │
+│                             │
+│ GPS: 未取得                 │
+│ [📍 現在地を取得]           │
+│                             │
+│ [送信] ※確認画面あり        │
+└─────────────────────────────┘
+```
+
+**重要な仕様:**
+- 自分の出張申請を選択する形式ではなく、**都度入力する**
+- 送信前に**確認画面を表示**
+- 区分で「その他」を選択時は自由記載欄を表示
+
+### 3. **GPS位置情報取得**
+- **技術**: Geolocation API（無料、ブラウザ標準）
+- **取得データ**: 緯度、経度、精度
+- **マップリンク**: `https://www.google.com/maps?q={latitude},{longitude}`
+
+```javascript
+navigator.geolocation.getCurrentPosition(
+  (position) => {
+    const lat = position.coords.latitude;
+    const lng = position.coords.longitude;
+    const accuracy = position.coords.accuracy;
+  }
+);
+```
+
+### 4. **Slack通知**
+- **通知タイミング**: 終了報告時のみ
+- **通知内容**:
+  - 報告者名
+  - 区分（出張/園指導/試合/下見/その他）
+  - 場所
+  - 備考
+  - GPS座標
+  - Googleマップリンク
+
+**通知例:**
+```
+📍 出張終了報告
+
+👤 報告者: 山田太郎
+📋 区分: 園指導
+📍 場所: 〇〇保育園
+💬 備考: 無事に終了しました
+🗺️ 位置情報: https://www.google.com/maps?q=35.6812,139.7671
+```
+
+### 5. **管理者画面**
+- **新規タブ**: 「📍出張報告」を追加
+- **表示内容**:
+  - 報告種別（到着/終了）
+  - 区分
+  - 場所
+  - 報告日時
+  - 報告者名
+  - GPS位置情報（Googleマップリンク）
+  - 備考
+- **機能**:
+  - 一覧表示（最新順）
+  - CSV出力
+  - Googleマップリンクで位置確認
+
+### 6. **データベース設計**
+テーブル名: `business_trip_reports`
+
+```sql
+CREATE TABLE business_trip_reports (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES auth.users(id),
+  report_type TEXT NOT NULL,        -- '到着' or '終了'
+  category TEXT NOT NULL,            -- '出張', '園指導', '試合', '下見', 'その他'
+  category_other TEXT,               -- 区分が「その他」の場合の自由記載
+  location TEXT NOT NULL,            -- 場所
+  notes TEXT,                        -- 備考
+  latitude NUMERIC(10, 8),           -- 緯度
+  longitude NUMERIC(11, 8),          -- 経度
+  accuracy NUMERIC,                  -- GPS精度（メートル）
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- インデックス
+CREATE INDEX idx_business_trip_reports_user_id ON business_trip_reports(user_id);
+CREATE INDEX idx_business_trip_reports_created_at ON business_trip_reports(created_at DESC);
+```
+
+### 7. **実装タスク（次回セッション用）**
+1. データベーステーブル作成
+2. TypeScript型定義追加
+3. 出張報告フォームコンポーネント作成
+4. GPS取得機能実装
+5. 確認画面モーダル作成
+6. Slack通知Edge Function作成（終了報告時のみ）
+7. 管理者画面に出張報告タブ追加
+8. CSV出力機能追加
+9. ナビゲーションメニューに追加
+
+### 8. **技術スタック**
+- **フロントエンド**: React + TypeScript
+- **GPS**: Geolocation API（ブラウザ標準、無料）
+- **バックエンド**: Supabase（データベース + Edge Functions）
+- **通知**: Slack Webhook（終了報告時のみ）
+
+### 9. **注意事項**
+- スプレッドシート連携は不要
+- GPS取得はHTTPS環境が必須（本番環境のみ動作）
+- 位置情報の許可をユーザーに求める必要あり
+- Slack通知はEdge Functionで実装（手動デプロイ必要）
