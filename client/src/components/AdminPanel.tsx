@@ -1054,14 +1054,17 @@ ${printData.map((page) => `
 
   const groupedSubmissions = groupSubmissionsByYearAndMonth(getFilteredSubmissions());
 
+  // ダークモード検出
+  const isDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
   // タブのスタイル
   const tabStyle = (isActive: boolean) => ({
     padding: '12px 24px',
     marginRight: '4px',
-    background: isActive ? '#007bff' : '#f8f9fa',
-    color: isActive ? 'white' : '#333',
-    border: `1px solid ${isActive ? '#007bff' : '#dee2e6'}`,
-    borderBottom: isActive ? 'none' : '1px solid #dee2e6',
+    background: isActive ? '#007bff' : (isDarkMode ? '#495057' : '#f8f9fa'),
+    color: isActive ? 'white' : (isDarkMode ? '#fff' : '#333'),
+    border: `1px solid ${isActive ? '#007bff' : (isDarkMode ? '#6c757d' : '#dee2e6')}`,
+    borderBottom: isActive ? 'none' : `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`,
     borderRadius: '8px 8px 0 0',
     cursor: 'pointer',
     fontSize: '16px',
@@ -1070,11 +1073,12 @@ ${printData.map((page) => `
   });
 
   const tabContentStyle = {
-    border: '1px solid #dee2e6',
+    border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`,
     borderTop: 'none',
     borderRadius: '0 8px 8px 8px',
     padding: '20px',
-    background: 'white',
+    background: isDarkMode ? '#343a40' : 'white',
+    color: isDarkMode ? '#fff' : '#000',
     minHeight: '400px'
   };
 
@@ -1385,7 +1389,7 @@ ${printData.map((page) => `
           font-weight: bold;
         }
       `}</style>
-      <h2 style={{ textAlign: 'center', marginBottom: '30px' }}>管理画面</h2>
+      <h2 style={{ textAlign: 'center', marginBottom: '30px', color: isDarkMode ? '#fff' : '#000' }}>管理画面</h2>
       
       {/* 却下理由入力モーダル */}
       {showRejectModal && (
@@ -1402,14 +1406,15 @@ ${printData.map((page) => `
           zIndex: 1000
         }}>
           <div style={{
-            backgroundColor: 'white',
+            backgroundColor: isDarkMode ? '#343a40' : 'white',
+            color: isDarkMode ? '#fff' : '#000',
             padding: '30px',
             borderRadius: '8px',
             width: '90%',
             maxWidth: '500px',
             boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
           }}>
-            <h3 style={{ marginBottom: '20px', textAlign: 'center' }}>却下理由を入力</h3>
+            <h3 style={{ marginBottom: '20px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>却下理由を入力</h3>
             <textarea
               value={rejectReason}
               onChange={(e) => setRejectReason(e.target.value)}
@@ -1418,10 +1423,12 @@ ${printData.map((page) => `
                 width: '100%',
                 minHeight: '100px',
                 padding: '10px',
-                border: '1px solid #ccc',
+                border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`,
                 borderRadius: '4px',
                 marginBottom: '20px',
-                resize: 'vertical'
+                resize: 'vertical',
+                backgroundColor: isDarkMode ? '#495057' : 'white',
+                color: isDarkMode ? '#fff' : '#000'
               }}
             />
             <div style={{ textAlign: 'right', display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
@@ -1482,46 +1489,63 @@ ${printData.map((page) => `
       <div style={tabContentStyle}>
         {activeTab === 'approvals' && (
           <div>
-            <h3 style={{ textAlign: 'center', marginBottom: '30px' }}>承認管理</h3>
+            <h3 style={{ textAlign: 'center', marginBottom: '30px', color: isDarkMode ? '#fff' : '#000' }}>承認管理</h3>
             
             {/* CSV出力セクション */}
             <div style={{ textAlign: 'center', marginBottom: 20 }}>
               <div style={{ marginBottom: 10 }}>
-                <label htmlFor="csvStartDate">開始日:</label>
+                <label htmlFor="csvStartDate" style={{ color: isDarkMode ? '#fff' : '#000' }}>開始日:</label>
                 <input
                   type="date"
                   id="csvStartDate"
                   value={csvStartDate}
                   onChange={(e) => setCsvStartDate(e.target.value)}
-                  style={{ marginRight: 10, padding: 5 }}
+                  style={{
+                    marginRight: 10,
+                    padding: 5,
+                    backgroundColor: isDarkMode ? '#495057' : 'white',
+                    color: isDarkMode ? '#fff' : '#000',
+                    border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`
+                  }}
                 />
-                <label htmlFor="csvEndDate">終了日:</label>
+                <label htmlFor="csvEndDate" style={{ color: isDarkMode ? '#fff' : '#000' }}>終了日:</label>
                 <input
                   type="date"
                   id="csvEndDate"
                   value={csvEndDate}
                   onChange={(e) => setCsvEndDate(e.target.value)}
-                  style={{ padding: 5 }}
+                  style={{
+                    padding: 5,
+                    backgroundColor: isDarkMode ? '#495057' : 'white',
+                    color: isDarkMode ? '#fff' : '#000',
+                    border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`
+                  }}
                 />
               </div>
               <button onClick={handleExportCsv}>承認済みCSV出力</button>
             </div>
             
             {/* フィルターセクション */}
-            <div style={{ 
-              display: 'flex', 
-              justifyContent: 'center', 
-              gap: '20px', 
+            <div style={{
+              display: 'flex',
+              justifyContent: 'center',
+              gap: '20px',
               marginBottom: '20px',
               alignItems: 'center'
             }}>
               <div>
-                <label htmlFor="typeFilter" style={{ marginRight: '8px' }}>申請種別:</label>
+                <label htmlFor="typeFilter" style={{ marginRight: '8px', color: isDarkMode ? '#fff' : '#000' }}>申請種別:</label>
                 <select
                   id="typeFilter"
                   value={typeFilter}
                   onChange={(e) => setTypeFilter(e.target.value)}
-                  style={{ padding: '6px 10px', borderRadius: '4px', border: '1px solid #ccc' }}
+                  style={{
+                    padding: '6px 10px',
+                    borderRadius: '4px',
+                    border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`,
+                    backgroundColor: isDarkMode ? '#495057' : 'white',
+                    color: isDarkMode ? '#fff' : '#000'
+                  }}
                 >
                   <option value="all">すべて</option>
                   <option value="one_time">通勤（単発）</option>
@@ -1530,12 +1554,18 @@ ${printData.map((page) => `
                 </select>
               </div>
               <div>
-                <label htmlFor="statusFilter" style={{ marginRight: '8px' }}>ステータス:</label>
+                <label htmlFor="statusFilter" style={{ marginRight: '8px', color: isDarkMode ? '#fff' : '#000' }}>ステータス:</label>
                 <select
                   id="statusFilter"
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
-                  style={{ padding: '6px 10px', borderRadius: '4px', border: '1px solid #ccc' }}
+                  style={{
+                    padding: '6px 10px',
+                    borderRadius: '4px',
+                    border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`,
+                    backgroundColor: isDarkMode ? '#495057' : 'white',
+                    color: isDarkMode ? '#fff' : '#000'
+                  }}
                 >
                   <option value="all">すべて</option>
                   <option value="pending">申請中</option>
@@ -1546,9 +1576,9 @@ ${printData.map((page) => `
             </div>
 
             {/* 承認待ち一覧 */}
-            <h4 style={{ textAlign: 'left' }}>承認待ち一覧</h4>
+            <h4 style={{ textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>承認待ち一覧</h4>
             {isLoading ? (
-              <p style={{ textAlign: 'left' }}>読み込み中...</p>
+              <p style={{ textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>読み込み中...</p>
             ) : (
               <div>
                 {filteredPending.length > 0 && (
@@ -1772,7 +1802,7 @@ ${printData.map((page) => `
 
             {/* すべての申請履歴 */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 40 }}>
-              <h4 style={{ textAlign: 'left', margin: 0 }}>すべての申請履歴</h4>
+              <h4 style={{ textAlign: 'left', margin: 0, color: isDarkMode ? '#fff' : '#000' }}>すべての申請履歴</h4>
               <div>
                 <button 
                   onClick={handlePrintPreview}
@@ -2127,13 +2157,13 @@ ${printData.map((page) => `
         {/* ユーザー管理タブ */}
         {activeTab === 'users' && (
           <div>
-            <h3 style={{ textAlign: 'center', marginBottom: '30px' }}>ユーザー管理</h3>
+            <h3 style={{ textAlign: 'center', marginBottom: '30px', color: isDarkMode ? '#fff' : '#000' }}>ユーザー管理</h3>
             {loadingUsers ? (
-              <p style={{ textAlign: 'center' }}>読み込み中...</p>
+              <p style={{ textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>読み込み中...</p>
             ) : (
               <div>
                 <div style={{ marginBottom: '20px', textAlign: 'center' }}>
-                  <p>登録ユーザー数: {users.length}人</p>
+                  <p style={{ color: isDarkMode ? '#fff' : '#000' }}>登録ユーザー数: {users.length}人</p>
                   <button onClick={fetchUsers} style={{ padding: '8px 16px' }}>
                     更新
                   </button>
@@ -2141,30 +2171,32 @@ ${printData.map((page) => `
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
-                      <tr style={{ backgroundColor: '#f8f9fa' }}>
-                        <th style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'left' }}>名前</th>
-                        <th style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'left' }}>メールアドレス</th>
-                        <th style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'left' }}>申請数</th>
-                        <th style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'left' }}>権限</th>
-                        <th style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'left' }}>操作</th>
+                      <tr style={{ backgroundColor: isDarkMode ? '#495057' : '#f8f9fa' }}>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>名前</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>メールアドレス</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>申請数</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>権限</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>操作</th>
                       </tr>
                     </thead>
                     <tbody>
                       {users.map(user => (
                         <tr key={user.id}>
-                          <td style={{ border: '1px solid #dee2e6', padding: '12px' }}>
+                          <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', color: isDarkMode ? '#fff' : '#000' }}>
                             {editingUser === user.id ? (
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 <input
                                   type="text"
                                   value={editName}
                                   onChange={(e) => setEditName(e.target.value)}
-                                  style={{ 
-                                    flex: 1, 
-                                    padding: '4px 8px', 
-                                    border: '1px solid #ccc', 
+                                  style={{
+                                    flex: 1,
+                                    padding: '4px 8px',
+                                    border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`,
                                     borderRadius: '4px',
-                                    fontSize: '14px'
+                                    fontSize: '14px',
+                                    backgroundColor: isDarkMode ? '#495057' : 'white',
+                                    color: isDarkMode ? '#fff' : '#000'
                                   }}
                                   placeholder="名前を入力"
                                   onKeyPress={(e) => {
@@ -2204,7 +2236,7 @@ ${printData.map((page) => `
                               </div>
                             ) : (
                               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <span>{user.name || '未設定'}</span>
+                                <span style={{ color: isDarkMode ? '#fff' : '#000' }}>{user.name || '未設定'}</span>
                                 <button
                                   onClick={() => handleEditName(user.id, user.name)}
                                   style={{
@@ -2224,16 +2256,16 @@ ${printData.map((page) => `
                               </div>
                             )}
                           </td>
-                          <td style={{ border: '1px solid #dee2e6', padding: '12px' }}>
+                          <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', color: isDarkMode ? '#fff' : '#000' }}>
                             {user.email}
                           </td>
-                          <td style={{ border: '1px solid #dee2e6', padding: '12px' }}>
+                          <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', color: isDarkMode ? '#fff' : '#000' }}>
                             {submissions.filter(s => s.profiles?.email === user.email).length}
                           </td>
-                          <td style={{ border: '1px solid #dee2e6', padding: '12px' }}>
+                          <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', color: isDarkMode ? '#fff' : '#000' }}>
                             {user.email === 'fivem.kyoto@gmail.com' ? '管理者' : '一般ユーザー'}
                           </td>
-                          <td style={{ border: '1px solid #dee2e6', padding: '12px' }}>
+                          <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', color: isDarkMode ? '#fff' : '#000' }}>
                             <button 
                               style={{ 
                                 padding: '4px 8px', 
@@ -2264,11 +2296,11 @@ ${printData.map((page) => `
         {/* レポート・分析タブ */}
         {activeTab === 'reports' && (
           <div>
-            <h3 style={{ textAlign: 'center', marginBottom: '30px' }}>レポート・分析</h3>
-            
+            <h3 style={{ textAlign: 'center', marginBottom: '30px', color: isDarkMode ? '#fff' : '#000' }}>レポート・分析</h3>
+
             {loadingReports || !reportStats ? (
               <div style={{ textAlign: 'center', padding: '40px' }}>
-                <p>統計データを計算中...</p>
+                <p style={{ color: isDarkMode ? '#fff' : '#000' }}>統計データを計算中...</p>
                 <div style={{ margin: '20px 0' }}>
                   <div style={{ 
                     width: '40px', 
@@ -2285,62 +2317,62 @@ ${printData.map((page) => `
               <div>
                 {/* ダッシュボード統計 */}
                 <div style={{ marginBottom: '40px' }}>
-                  <h4 style={{ textAlign: 'center', marginBottom: '20px' }}>📊 ダッシュボード</h4>
+                  <h4 style={{ textAlign: 'center', marginBottom: '20px', color: isDarkMode ? '#fff' : '#000' }}>📊 ダッシュボード</h4>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px', marginBottom: '20px' }}>
-                    <div style={{ padding: '20px', backgroundColor: '#e3f2fd', borderRadius: '8px', textAlign: 'center' }}>
-                      <h5 style={{ margin: '0 0 10px 0', color: '#1976d2' }}>総申請数</h5>
-                      <p style={{ margin: 0, fontSize: '24px', fontWeight: 'bold' }}>{reportStats.overview.totalSubmissions}</p>
+                    <div style={{ padding: '20px', backgroundColor: isDarkMode ? '#1a3a52' : '#e3f2fd', borderRadius: '8px', textAlign: 'center' }}>
+                      <h5 style={{ margin: '0 0 10px 0', color: isDarkMode ? '#64b5f6' : '#1976d2' }}>総申請数</h5>
+                      <p style={{ margin: 0, fontSize: '24px', fontWeight: 'bold', color: isDarkMode ? '#fff' : '#000' }}>{reportStats.overview.totalSubmissions}</p>
                     </div>
-                    <div style={{ padding: '20px', backgroundColor: '#fff3e0', borderRadius: '8px', textAlign: 'center' }}>
-                      <h5 style={{ margin: '0 0 10px 0', color: '#f57c00' }}>申請中</h5>
-                      <p style={{ margin: 0, fontSize: '24px', fontWeight: 'bold' }}>{reportStats.overview.pendingSubmissions}</p>
+                    <div style={{ padding: '20px', backgroundColor: isDarkMode ? '#4a3800' : '#fff3e0', borderRadius: '8px', textAlign: 'center' }}>
+                      <h5 style={{ margin: '0 0 10px 0', color: isDarkMode ? '#ffb74d' : '#f57c00' }}>申請中</h5>
+                      <p style={{ margin: 0, fontSize: '24px', fontWeight: 'bold', color: isDarkMode ? '#fff' : '#000' }}>{reportStats.overview.pendingSubmissions}</p>
                     </div>
-                    <div style={{ padding: '20px', backgroundColor: '#e8f5e8', borderRadius: '8px', textAlign: 'center' }}>
-                      <h5 style={{ margin: '0 0 10px 0', color: '#388e3c' }}>承認済み</h5>
-                      <p style={{ margin: 0, fontSize: '24px', fontWeight: 'bold' }}>{reportStats.overview.approvedSubmissions}</p>
+                    <div style={{ padding: '20px', backgroundColor: isDarkMode ? '#1b4d1b' : '#e8f5e8', borderRadius: '8px', textAlign: 'center' }}>
+                      <h5 style={{ margin: '0 0 10px 0', color: isDarkMode ? '#81c784' : '#388e3c' }}>承認済み</h5>
+                      <p style={{ margin: 0, fontSize: '24px', fontWeight: 'bold', color: isDarkMode ? '#fff' : '#000' }}>{reportStats.overview.approvedSubmissions}</p>
                     </div>
-                    <div style={{ padding: '20px', backgroundColor: '#ffebee', borderRadius: '8px', textAlign: 'center' }}>
-                      <h5 style={{ margin: '0 0 10px 0', color: '#d32f2f' }}>却下</h5>
-                      <p style={{ margin: 0, fontSize: '24px', fontWeight: 'bold' }}>{reportStats.overview.rejectedSubmissions}</p>
+                    <div style={{ padding: '20px', backgroundColor: isDarkMode ? '#5a1a1a' : '#ffebee', borderRadius: '8px', textAlign: 'center' }}>
+                      <h5 style={{ margin: '0 0 10px 0', color: isDarkMode ? '#e57373' : '#d32f2f' }}>却下</h5>
+                      <p style={{ margin: 0, fontSize: '24px', fontWeight: 'bold', color: isDarkMode ? '#fff' : '#000' }}>{reportStats.overview.rejectedSubmissions}</p>
                     </div>
-                    <div style={{ padding: '20px', backgroundColor: '#f3e5f5', borderRadius: '8px', textAlign: 'center' }}>
-                      <h5 style={{ margin: '0 0 10px 0', color: '#7b1fa2' }}>承認率</h5>
-                      <p style={{ margin: 0, fontSize: '24px', fontWeight: 'bold' }}>{reportStats.overview.approvalRate}%</p>
+                    <div style={{ padding: '20px', backgroundColor: isDarkMode ? '#4a1a5a' : '#f3e5f5', borderRadius: '8px', textAlign: 'center' }}>
+                      <h5 style={{ margin: '0 0 10px 0', color: isDarkMode ? '#ba68c8' : '#7b1fa2' }}>承認率</h5>
+                      <p style={{ margin: 0, fontSize: '24px', fontWeight: 'bold', color: isDarkMode ? '#fff' : '#000' }}>{reportStats.overview.approvalRate}%</p>
                     </div>
                   </div>
                 </div>
 
                 {/* ユーザー別統計 */}
                 <div style={{ marginBottom: '40px' }}>
-                  <h4 style={{ textAlign: 'center', marginBottom: '20px' }}>👥 ユーザー別統計</h4>
+                  <h4 style={{ textAlign: 'center', marginBottom: '20px', color: isDarkMode ? '#fff' : '#000' }}>👥 ユーザー別統計</h4>
                   <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                       <thead>
-                        <tr style={{ backgroundColor: '#f8f9fa' }}>
-                          <th style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'left' }}>ユーザー</th>
-                          <th style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'center' }}>申請数</th>
-                          <th style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'center' }}>承認数</th>
-                          <th style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'center' }}>承認率</th>
-                          <th style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'right' }}>総額（承認済み）</th>
+                        <tr style={{ backgroundColor: isDarkMode ? '#495057' : '#f8f9fa' }}>
+                          <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>ユーザー</th>
+                          <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>申請数</th>
+                          <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>承認数</th>
+                          <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>承認率</th>
+                          <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'right', color: isDarkMode ? '#fff' : '#000' }}>総額（承認済み）</th>
                         </tr>
                       </thead>
                       <tbody>
                         {reportStats.userStats.map((user: any, index: number) => (
-                          <tr key={user.email} style={{ backgroundColor: index % 2 === 0 ? '#f8f9fa' : 'white' }}>
-                            <td style={{ border: '1px solid #dee2e6', padding: '12px' }}>
+                          <tr key={user.email} style={{ backgroundColor: index % 2 === 0 ? (isDarkMode ? '#495057' : '#f8f9fa') : (isDarkMode ? '#343a40' : 'white') }}>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', color: isDarkMode ? '#fff' : '#000' }}>
                               <strong>{user.name}</strong><br />
-                              <small style={{ color: '#6c757d' }}>{user.email}</small>
+                              <small style={{ color: isDarkMode ? '#adb5bd' : '#6c757d' }}>{user.email}</small>
                             </td>
-                            <td style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'center' }}>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>
                               {user.totalSubmissions}
                             </td>
-                            <td style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'center' }}>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>
                               {user.approvedSubmissions}
                             </td>
-                            <td style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'center' }}>
-                              <span style={{ 
-                                padding: '4px 8px', 
-                                borderRadius: '4px', 
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'center' }}>
+                              <span style={{
+                                padding: '4px 8px',
+                                borderRadius: '4px',
                                 backgroundColor: parseFloat(user.approvalRate) >= 80 ? '#d4edda' : parseFloat(user.approvalRate) >= 50 ? '#fff3cd' : '#f8d7da',
                                 color: parseFloat(user.approvalRate) >= 80 ? '#155724' : parseFloat(user.approvalRate) >= 50 ? '#856404' : '#721c24',
                                 fontSize: '12px',
@@ -2349,7 +2381,7 @@ ${printData.map((page) => `
                                 {user.approvalRate}%
                               </span>
                             </td>
-                            <td style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'right', fontWeight: 'bold', color: isDarkMode ? '#fff' : '#000' }}>
                               {formatAmount(user.totalAmount.toString())}円
                             </td>
                           </tr>
@@ -2361,38 +2393,38 @@ ${printData.map((page) => `
 
                 {/* 月次レポート */}
                 <div style={{ marginBottom: '40px' }}>
-                  <h4 style={{ textAlign: 'center', marginBottom: '20px' }}>📅 月次レポート</h4>
+                  <h4 style={{ textAlign: 'center', marginBottom: '20px', color: isDarkMode ? '#fff' : '#000' }}>📅 月次レポート</h4>
                   <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                       <thead>
-                        <tr style={{ backgroundColor: '#f8f9fa' }}>
-                          <th style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'left' }}>月</th>
-                          <th style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'center' }}>総申請数</th>
-                          <th style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'center' }}>承認</th>
-                          <th style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'center' }}>申請中</th>
-                          <th style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'center' }}>却下</th>
-                          <th style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'right' }}>承認済み総額</th>
+                        <tr style={{ backgroundColor: isDarkMode ? '#495057' : '#f8f9fa' }}>
+                          <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>月</th>
+                          <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>総申請数</th>
+                          <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>承認</th>
+                          <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>申請中</th>
+                          <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>却下</th>
+                          <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'right', color: isDarkMode ? '#fff' : '#000' }}>承認済み総額</th>
                         </tr>
                       </thead>
                       <tbody>
                         {reportStats.monthlyStats.map((month: any, index: number) => (
-                          <tr key={month.month} style={{ backgroundColor: index % 2 === 0 ? '#f8f9fa' : 'white' }}>
-                            <td style={{ border: '1px solid #dee2e6', padding: '12px', fontWeight: 'bold' }}>
+                          <tr key={month.month} style={{ backgroundColor: index % 2 === 0 ? (isDarkMode ? '#495057' : '#f8f9fa') : (isDarkMode ? '#343a40' : 'white') }}>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', fontWeight: 'bold', color: isDarkMode ? '#fff' : '#000' }}>
                               {month.month}
                             </td>
-                            <td style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'center' }}>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>
                               {month.total}
                             </td>
-                            <td style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'center' }}>
-                              <span style={{ color: '#28a745', fontWeight: 'bold' }}>{month.approved}</span>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'center' }}>
+                              <span style={{ color: isDarkMode ? '#81c784' : '#28a745', fontWeight: 'bold' }}>{month.approved}</span>
                             </td>
-                            <td style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'center' }}>
-                              <span style={{ color: '#ffc107', fontWeight: 'bold' }}>{month.pending}</span>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'center' }}>
+                              <span style={{ color: isDarkMode ? '#ffb74d' : '#ffc107', fontWeight: 'bold' }}>{month.pending}</span>
                             </td>
-                            <td style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'center' }}>
-                              <span style={{ color: '#dc3545', fontWeight: 'bold' }}>{month.rejected}</span>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'center' }}>
+                              <span style={{ color: isDarkMode ? '#e57373' : '#dc3545', fontWeight: 'bold' }}>{month.rejected}</span>
                             </td>
-                            <td style={{ border: '1px solid #dee2e6', padding: '12px', textAlign: 'right', fontWeight: 'bold' }}>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'right', fontWeight: 'bold', color: isDarkMode ? '#fff' : '#000' }}>
                               {formatAmount(month.amount.toString())}円
                             </td>
                           </tr>
