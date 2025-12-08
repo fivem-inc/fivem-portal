@@ -14,6 +14,7 @@ interface ExpenseFormProps {
 const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, expenses, setExpenses, profileName: parentProfileName }) => {
   const [totalAmount, setTotalAmount] = useState(0);
   const [profileName, setProfileName] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // 合計金額を計算
   useEffect(() => {
@@ -101,6 +102,9 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
   const handleSubmit = async () => {
     if (!user) return;
 
+    // 送信中フラグをオンにする
+    setIsSubmitting(true);
+
     const expensesToSubmit = expenses.filter(e =>
       e.from_station.trim() ||
       e.to_station.trim() ||
@@ -112,6 +116,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
 
     if (expensesToSubmit.length === 0) {
       alert('申請する項目がありません。');
+      setIsSubmitting(false);
       return;
     }
 
@@ -121,6 +126,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     
     if (hasRegular && hasOther) {
       alert('定期券の申請と他の申請（単発・出張）は混ぜて申請できません。\n別々に申請してください。');
+      setIsSubmitting(false);
       return;
     }
 
@@ -128,34 +134,41 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     for (const expense of expensesToSubmit) {
       if (!expense.from_station.trim()) {
         alert('出発駅を入力してください。');
+        setIsSubmitting(false);
         return;
       }
       if (!expense.to_station.trim()) {
         alert('帰着駅を入力してください。');
+        setIsSubmitting(false);
         return;
       }
       const parsedAmount = parseInt(expense.amount.replace(/,/g, ''), 10);
       if (!expense.amount.trim() || isNaN(parsedAmount)) {
         alert('金額を正しく入力してください。');
+        setIsSubmitting(false);
         return;
       }
       if (expense.type === 'one_time' || expense.type === 'business_trip') {
         if (!expense.start_date?.trim()) {
           alert('単発または出張の場合、利用日を入力してください。');
+          setIsSubmitting(false);
           return;
         }
       } else if (expense.type === 'regular') {
         if (!expense.start_date?.trim() || !expense.end_date?.trim()) {
           alert('定期の場合、開始日と終了日を入力してください。');
+          setIsSubmitting(false);
           return;
         }
       }
       if (!expense.transportation?.trim()) {
         alert('交通機関を入力してください。');
+        setIsSubmitting(false);
         return;
       }
       if (!expense.workplace?.trim()) {
         alert('勤務先を入力してください。');
+        setIsSubmitting(false);
         return;
       }
     }
@@ -166,6 +179,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
 
     if (error) {
       alert('登録に失敗しました: ' + error.message);
+      setIsSubmitting(false);
     } else {
       // 🚀 Slack通知を送信
       try {
@@ -222,6 +236,11 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       alert('交通費を登録しました。承認をお待ちください。');
       setExpenses([{ type: 'one_time', from_station: '', to_station: '', amount: '', start_date: '', end_date: '', workplace: '' }]);
       onSubmissionComplete();
+
+      // 3秒後に送信ボタンを再度有効化
+      setTimeout(() => {
+        setIsSubmitting(false);
+      }, 3000);
     }
   };
 
@@ -442,21 +461,23 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
           合計金額: {formatAmount(totalAmount.toString())}円
         </div>
         
-        <button 
-          type="button" 
-          onClick={handleSubmit} 
-          style={{ 
-            width: '100%', 
-            padding: 10, 
-            marginTop: 20, 
-            background: '#007bff', 
-            color: 'white', 
-            border: 'none', 
-            borderRadius: 4, 
-            cursor: 'pointer' 
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={isSubmitting}
+          style={{
+            width: '100%',
+            padding: 10,
+            marginTop: 20,
+            background: isSubmitting ? '#6c757d' : '#007bff',
+            color: 'white',
+            border: 'none',
+            borderRadius: 4,
+            cursor: isSubmitting ? 'not-allowed' : 'pointer',
+            opacity: isSubmitting ? 0.6 : 1
           }}
         >
-          申請する
+          {isSubmitting ? '送信中...' : '申請する'}
         </button>
       </form>
     </div>
