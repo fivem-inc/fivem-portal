@@ -102,6 +102,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     return getFilteredSubmissions().filter(s => s.status === 'pending');
   }, [getFilteredSubmissions]);
 
+  // 承認選択用の状態
+  const [selectedForApproval, setSelectedForApproval] = useState<Set<string>>(new Set());
+
   // ユーザー一覧取得
   const fetchUsers = useCallback(async () => {
     setLoadingUsers(true);
@@ -412,6 +415,52 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     
     onRefresh();
   }, [filteredPending, onRefresh]);
+
+  // 承認選択チェックボックス操作
+  const handleApprovalSelect = useCallback((id: string, checked: boolean) => {
+    setSelectedForApproval(prev => {
+      const next = new Set(prev);
+      if (checked) next.add(id); else next.delete(id);
+      return next;
+    });
+  }, []);
+
+  // 全選択・全解除
+  const handleSelectAllForApproval = useCallback((checked: boolean) => {
+    if (checked) {
+      setSelectedForApproval(new Set(filteredPending.map(p => p.id)));
+    } else {
+      setSelectedForApproval(new Set());
+    }
+  }, [filteredPending]);
+
+  // 選択した申請を承認
+  const handleApproveSelected = useCallback(async () => {
+    if (selectedForApproval.size === 0) {
+      alert('承認する申請を選択してください。');
+      return;
+    }
+    if (!window.confirm(`選択した${selectedForApproval.size}件を承認しますか？`)) return;
+
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const id of selectedForApproval) {
+      const { error } = await supabase
+        .from('expenses')
+        .update({ status: 'approved', approved_at: new Date().toISOString(), rejected_at: null, rejected_reason: null })
+        .eq('id', id);
+      if (error) errorCount++; else successCount++;
+    }
+
+    if (errorCount > 0) {
+      alert(`${successCount}件を承認しました。${errorCount}件でエラーが発生しました。`);
+    } else {
+      alert(`${successCount}件を承認しました。`);
+    }
+    setSelectedForApproval(new Set());
+    onRefresh();
+  }, [selectedForApproval, onRefresh]);
 
   // 個別却下機能（理由入力付き）
   const handleIndividualReject = useCallback((id: string) => {
@@ -1709,28 +1758,28 @@ ${printData.map((page) => `
                     {/* 承認・却下操作ボタン */}
                     <div style={{ marginBottom: '20px' }}>
                       <strong>承認操作:</strong>
-                      <button 
+                      <button
                         onClick={() => handleBulkApproval('approved')}
-                        style={{ 
-                          padding: '10px 20px', 
+                        style={{
+                          padding: '10px 20px',
                           marginLeft: '10px',
-                          marginRight: '10px', 
-                          backgroundColor: '#28a745', 
-                          color: 'white', 
-                          border: 'none', 
+                          marginRight: '10px',
+                          backgroundColor: '#28a745',
+                          color: 'white',
+                          border: 'none',
                           borderRadius: '4px',
                           cursor: 'pointer'
                         }}
                       >
                         全て承認
                       </button>
-                      <button 
+                      <button
                         onClick={() => handleBulkApproval('rejected')}
-                        style={{ 
-                          padding: '10px 20px', 
-                          backgroundColor: '#dc3545', 
-                          color: 'white', 
-                          border: 'none', 
+                        style={{
+                          padding: '10px 20px',
+                          backgroundColor: '#dc3545',
+                          color: 'white',
+                          border: 'none',
                           borderRadius: '4px',
                           cursor: 'pointer'
                         }}
@@ -1738,19 +1787,71 @@ ${printData.map((page) => `
                         全て却下
                       </button>
                     </div>
+
+                    {/* 選択承認エリア */}
+                    <div style={{
+                      marginBottom: '20px',
+                      padding: '12px 16px',
+                      border: `2px solid ${isDarkMode ? '#495057' : '#dee2e6'}`,
+                      borderRadius: '8px',
+                      backgroundColor: isDarkMode ? '#2c3034' : '#f8f9fa'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: isDarkMode ? '#fff' : '#000', fontWeight: 'bold' }}>
+                          <input
+                            type="checkbox"
+                            style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                            checked={filteredPending.length > 0 && selectedForApproval.size === filteredPending.length}
+                            onChange={(e) => handleSelectAllForApproval(e.target.checked)}
+                          />
+                          全選択
+                        </label>
+                        <span style={{ color: isDarkMode ? '#adb5bd' : '#6c757d', fontSize: '14px' }}>
+                          {selectedForApproval.size > 0 ? `${selectedForApproval.size}件選択中` : '選択なし'}
+                        </span>
+                        <button
+                          onClick={handleApproveSelected}
+                          disabled={selectedForApproval.size === 0}
+                          style={{
+                            padding: '8px 20px',
+                            backgroundColor: selectedForApproval.size === 0 ? '#6c757d' : '#28a745',
+                            color: 'white',
+                            border: '2px solid',
+                            borderColor: selectedForApproval.size === 0 ? '#5a6268' : '#1e7e34',
+                            borderRadius: '4px',
+                            cursor: selectedForApproval.size === 0 ? 'not-allowed' : 'pointer',
+                            fontWeight: 'bold',
+                            opacity: selectedForApproval.size === 0 ? 0.6 : 1
+                          }}
+                        >
+                          選択したものを承認 {selectedForApproval.size > 0 ? `(${selectedForApproval.size}件)` : ''}
+                        </button>
+                      </div>
+                    </div>
                   </>
                 )}
                 <ul style={{ listStyle: 'none', padding: 0, textAlign: 'left' }}>
                   {filteredPending.map(p => (
                     <li key={p.id} style={{ border: '1px solid #ccc', padding: 10, marginBottom: 10, borderRadius: 4 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
-                        <input
-                          type="checkbox"
-                          checked={selectedForPrint.has(p.id)}
-                          onChange={(e) => handlePrintSelect(p.id, e.target.checked)}
-                          style={{ marginRight: '8px' }}
-                        />
-                        <label style={{ fontWeight: 'bold' }}>印刷選択</label>
+                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px', gap: '16px', flexWrap: 'wrap' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontWeight: 'bold', color: isDarkMode ? '#fff' : '#000' }}>
+                          <input
+                            type="checkbox"
+                            checked={selectedForApproval.has(p.id)}
+                            onChange={(e) => handleApprovalSelect(p.id, e.target.checked)}
+                            style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                          />
+                          承認選択
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontWeight: 'bold', color: isDarkMode ? '#fff' : '#000' }}>
+                          <input
+                            type="checkbox"
+                            checked={selectedForPrint.has(p.id)}
+                            onChange={(e) => handlePrintSelect(p.id, e.target.checked)}
+                            style={{ marginRight: '2px' }}
+                          />
+                          印刷選択
+                        </label>
                         {p.printed_at && (
                           <span style={{ 
                             marginLeft: '10px', 
