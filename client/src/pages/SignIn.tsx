@@ -37,9 +37,8 @@ export default function SignIn() {
     
     // シンプルなログイン処理
     
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
-      // エラーメッセージを日本語化
       let errorMessage = error.message;
       if (error.message.includes('Invalid login credentials')) {
         errorMessage = 'メールアドレスまたはパスワードが正しくありません。';
@@ -47,6 +46,17 @@ export default function SignIn() {
         errorMessage = 'メールアドレスが確認されていません。メールを確認してください。';
       }
       setError(errorMessage);
+    } else if (data.user) {
+      // 退職者チェック
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('is_active')
+        .eq('id', data.user.id)
+        .single();
+      if (profile && profile.is_active === false) {
+        await supabase.auth.signOut();
+        setError('このアカウントは無効です。管理者にお問い合わせください。');
+      }
     }
     setLoading(false);
   };

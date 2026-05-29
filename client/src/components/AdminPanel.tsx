@@ -30,6 +30,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [editingUser, setEditingUser] = useState<string | null>(null);
   const [editName, setEditName] = useState<string>('');
+  const [showRetired, setShowRetired] = useState(false); // 退職者表示切り替え
   
   // レポート用の状態
   const [reportStats, setReportStats] = useState<any>(null);
@@ -110,7 +111,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
         .select(`
           id,
           email,
-          name
+          name,
+          is_active
         `)
         .order('email', { ascending: true });
 
@@ -186,6 +188,36 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     setEditingUser(null);
     setEditName('');
   }, []);
+
+  // 退職・復活切り替え
+  const handleToggleActive = useCallback(async (userId: string, currentIsActive: boolean) => {
+    const action = currentIsActive ? '退職済みにします' : '現役に戻します';
+    if (!window.confirm(`このユーザーを${action}。よろしいですか？`)) return;
+    const { error } = await supabase
+      .from('profiles')
+      .update({ is_active: !currentIsActive })
+      .eq('id', userId);
+    if (error) {
+      alert('更新に失敗しました: ' + error.message);
+    } else {
+      fetchUsers();
+    }
+  }, [fetchUsers]);
+
+  // ユーザー完全削除
+  const handleDeleteUser = useCallback(async (userId: string, userName: string) => {
+    if (!window.confirm(`「${userName}」を完全に削除します。この操作は取り消せません。よろしいですか？`)) return;
+    const { error } = await supabase
+      .from('profiles')
+      .delete()
+      .eq('id', userId);
+    if (error) {
+      alert('削除に失敗しました: ' + error.message);
+    } else {
+      alert('削除しました');
+      fetchUsers();
+    }
+  }, [fetchUsers]);
 
   // レポート統計を取得
   const fetchReportStats = useCallback(async () => {
@@ -2193,10 +2225,25 @@ ${printData.map((page) => `
             ) : (
               <div>
                 <div style={{ marginBottom: '20px', textAlign: 'center' }}>
-                  <p style={{ color: isDarkMode ? '#fff' : '#000' }}>登録ユーザー数: {users.length}人</p>
-                  <button onClick={fetchUsers} style={{ padding: '8px 16px' }}>
-                    更新
-                  </button>
+                  <p style={{ color: isDarkMode ? '#fff' : '#000' }}>
+                    現役: {users.filter(u => u.is_active !== false).length}人 ／ 退職済み: {users.filter(u => u.is_active === false).length}人
+                  </p>
+                  <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <button
+                      onClick={() => setShowRetired(!showRetired)}
+                      style={{
+                        padding: '8px 16px',
+                        background: showRetired ? '#6c757d' : '#17a2b8',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {showRetired ? '現役のみ表示' : '退職者も表示'}
+                    </button>
+                    <button onClick={fetchUsers} style={{ padding: '8px 16px' }}>更新</button>
+                  </div>
                 </div>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -2206,12 +2253,13 @@ ${printData.map((page) => `
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>メールアドレス</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>申請数</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>権限</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>状態</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>操作</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {users.map(user => (
-                        <tr key={user.id}>
+                      {users.filter(u => showRetired ? true : u.is_active !== false).map(user => (
+                        <tr key={user.id} style={{ opacity: user.is_active === false ? 0.6 : 1 }}>
                           <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', color: isDarkMode ? '#fff' : '#000' }}>
                             {editingUser === user.id ? (
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -2295,23 +2343,64 @@ ${printData.map((page) => `
                           <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', color: isDarkMode ? '#fff' : '#000' }}>
                             {user.email === 'fivem.kyoto@gmail.com' ? '管理者' : '一般ユーザー'}
                           </td>
+                          <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px' }}>
+                            {user.is_active === false ? (
+                              <span style={{ color: '#dc3545', fontWeight: 'bold', fontSize: '12px' }}>退職済み</span>
+                            ) : (
+                              <span style={{ color: '#28a745', fontWeight: 'bold', fontSize: '12px' }}>現役</span>
+                            )}
+                          </td>
                           <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', color: isDarkMode ? '#fff' : '#000' }}>
-                            <button 
-                              style={{ 
-                                padding: '4px 8px', 
-                                marginRight: '5px',
-                                background: '#17a2b8',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: '4px',
-                                cursor: 'pointer'
-                              }}
-                              onClick={() => {
-                                setActiveTab('reports');
-                              }}
-                            >
-                              履歴確認
-                            </button>
+                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                              <button
+                                style={{
+                                  padding: '4px 8px',
+                                  background: '#17a2b8',
+                                  color: 'white',
+                                  border: 'none',
+                                  borderRadius: '4px',
+                                  cursor: 'pointer',
+                                  fontSize: '12px'
+                                }}
+                                onClick={() => setActiveTab('reports')}
+                              >
+                                履歴確認
+                              </button>
+                              {user.email !== 'fivem.kyoto@gmail.com' && (
+                                <>
+                                  <button
+                                    style={{
+                                      padding: '4px 8px',
+                                      background: user.is_active === false ? '#28a745' : '#fd7e14',
+                                      color: 'white',
+                                      border: 'none',
+                                      borderRadius: '4px',
+                                      cursor: 'pointer',
+                                      fontSize: '12px'
+                                    }}
+                                    onClick={() => handleToggleActive(user.id, user.is_active !== false)}
+                                  >
+                                    {user.is_active === false ? '復活' : '退職'}
+                                  </button>
+                                  {user.is_active === false && (
+                                    <button
+                                      style={{
+                                        padding: '4px 8px',
+                                        background: '#dc3545',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer',
+                                        fontSize: '12px'
+                                      }}
+                                      onClick={() => handleDeleteUser(user.id, user.name || user.email)}
+                                    >
+                                      完全削除
+                                    </button>
+                                  )}
+                                </>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))}
