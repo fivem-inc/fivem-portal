@@ -1,0 +1,19 @@
+name: Keep Alive
+
+on:
+  schedule:
+    # 毎日午前9時（日本時間）に実行
+    - cron: '0 0 * * *'
+  workflow_dispatch: # 手動実行も可能
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase（新環境）
+        run: |
+          curl -s "https://xaeynaxctiiyqxjyuzfi.supabase.co/auth/v1/health" || true
+
+      - name: Ping Vercel（新サイト）
+        run: |
+          curl -s "https://fivem-portal.vercel.app" || true
