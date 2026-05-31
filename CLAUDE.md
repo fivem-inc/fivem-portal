@@ -64,6 +64,31 @@ VITE_SUPABASE_ANON_KEY=sb_publishable_ZA6Udr3Ww9_dQO0CKKhSGw_Phx8Kegp
 - 新しいテーブルが404になる場合はSupabaseのURLが変わっていないか確認
 - Settings → General でProject URLを確認し、`.env`と一致させる
 
+## ✅ 2026-05-31 出張報告機能実装完了
+
+### 実装内容
+- **出張報告フォーム** (`client/src/components/BusinessTripReport.tsx`)
+  - 報告種別（到着/終了）
+  - 区分（出張/園指導/試合/下見/その他）
+  - 場所・備考入力
+  - GPS位置情報取得
+  - 送信確認モーダル
+- **ナビゲーションバー** (App.tsx) - 申請・出張報告の切り替え
+- **管理者画面に出張報告タブ追加** (AdminPanel.tsx)
+  - 全スタッフの報告一覧
+  - Googleマップリンク表示
+
+### データベース
+- テーブル: `business_trip_reports`
+- RLSポリシー: ユーザーは自分のデータのみ、管理者は全件閲覧可
+- `profiles`テーブルとの外部キー設定済み
+
+### 次回実装予定
+- Slack通知（終了報告時のみ）
+- CSV出力機能
+
+---
+
 ## Project Overview
 
 Expense management application built with React/TypeScript frontend and Supabase backend.
