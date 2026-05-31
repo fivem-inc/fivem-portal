@@ -26,7 +26,7 @@ const ProtectedLayout: React.FC = () => {
 };
 
 // ナビゲーションバー
-const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null }> = ({ isAdmin, onLogout, email, profileName }) => {
+const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null }> = ({ isAdmin: _isAdmin, onLogout, email, profileName }) => {
   const navigate = useNavigate();
   const location = useLocation();
 
