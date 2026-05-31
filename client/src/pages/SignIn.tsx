@@ -158,7 +158,7 @@ export default function SignIn() {
 
   return (
     <div style={{ maxWidth: 320, margin: '80px auto', textAlign: 'center' }}>
-      <h2>ファイブM 交通費精算</h2>
+      <h2>ファイブM スタッフサイト</h2>
       {!isResettingPassword ? (
         <form onSubmit={isSignUp ? handleSignUp : handleLogin}>
           {isSignUp && (
