@@ -2,6 +2,68 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 🖥️ 新しいPCでの環境構築手順
+
+### 1. Node.js インストール
+以下のURLから直接ダウンロード：
+https://nodejs.org/dist/v24.16.0/node-v24.16.0-x64.msi
+
+- ダウンロードしたファイルをダブルクリック
+- 「Next」を連打してインストール（途中のチェックボックスはそのままでOK）
+- **インストール後はPCを再起動する**
+
+### 2. リポジトリをクローン
+```
+git clone https://github.com/fivem-inc/fivem-portal
+```
+
+### 3. パッケージをインストール（2か所で必要）
+```
+cd fivem-portal
+npm install
+
+cd client
+npm install
+```
+
+### 4. アプリを起動
+```
+cd client
+npm run dev
+```
+
+### 5. ブラウザで開く
+http://localhost:5173
+
+### 注意
+- `.env` ファイルはリポジトリに含まれているので設定不要
+- `npm install` はルートと `client` フォルダの**両方**で実行すること
+
+---
+
+## ⚠️ Supabase URL移行トラブル（2026-05-31 発生・解決済み）
+
+### 問題
+- `business_trip_reports` テーブルへのAPIアクセスが404エラーになり続けた
+- テーブルはダッシュボードに存在するのに送信できなかった
+
+### 原因
+- SupabaseがプロジェクトのURLを新形式に移行していた
+  - 旧URL: `https://unwdmdgtzbhwflepabud.supabase.co`
+  - 新URL: `https://xaeynaxctiiyqxjyuzfi.supabase.co`
+- `.env`が古いURLのままだったため、新しいテーブルが認識されなかった
+
+### 解決方法
+`.env` を以下のように更新する：
+```
+VITE_SUPABASE_URL=https://xaeynaxctiiyqxjyuzfi.supabase.co
+VITE_SUPABASE_ANON_KEY=sb_publishable_ZA6Udr3Ww9_dQO0CKKhSGw_Phx8Kegp
+```
+
+### 教訓
+- 新しいテーブルが404になる場合はSupabaseのURLが変わっていないか確認
+- Settings → General でProject URLを確認し、`.env`と一致させる
+
 ## Project Overview
 
 Expense management application built with React/TypeScript frontend and Supabase backend.

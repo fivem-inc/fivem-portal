@@ -59,3 +59,18 @@ export interface AuthUser {
 export interface AuthContextType {
   user: AuthUser | null;
 }
+
+export interface BusinessTripReport {
+  id?: string;
+  user_id?: string;
+  report_type: '到着' | '終了';
+  category: '出張' | '園指導' | '試合' | '下見' | 'その他';
+  category_other?: string;
+  location: string;
+  notes?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  accuracy?: number | null;
+  created_at?: string;
+  profiles?: Profile | null;
+}
