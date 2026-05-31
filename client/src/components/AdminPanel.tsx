@@ -1977,8 +1977,7 @@ ${printData.map((page) => `
                           <strong>最終編集:</strong> {(() => {
                             if (!p.last_edited_at) return '';
                             const utcDate = new Date(p.last_edited_at);
-                            const jpDate = new Date(utcDate.getTime() + (9 * 60 * 60 * 1000)); // UTC+9
-                            return jpDate.toLocaleString('ja-JP').replace(/\//g, '/');
+                            return utcDate.toLocaleString('ja-JP').replace(/\//g, '/');
                           })()} ({p.last_edited_by || ''}) <br />
                         </>
                       )}
