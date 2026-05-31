@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import type { PendingApproval, Submission } from '../types';
 import { groupSubmissionsByYearAndMonth, generateCSVData, downloadCSV, formatAmount } from '../utils';
 import { supabase } from '../lib/supabaseClient';
@@ -31,6 +31,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const [editingUser, setEditingUser] = useState<string | null>(null);
   const [editName, setEditName] = useState<string>('');
   const [showRetired, setShowRetired] = useState(false); // 退職者表示切り替え
+  const [userSortKey, setUserSortKey] = useState<'sort_order' | 'name' | 'registered_at' | 'submission_count'>('sort_order');
+  const [userSortAsc, setUserSortAsc] = useState(true);
+  const [editingSortOrder, setEditingSortOrder] = useState<string | null>(null);
+  const [editSortOrderValue, setEditSortOrderValue] = useState<string>('');
   
   // レポート用の状態
   const [reportStats, setReportStats] = useState<any>(null);
@@ -119,9 +123,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           id,
           email,
           name,
-          is_active
+          is_active,
+          sort_order,
+          registered_at
         `)
-        .order('email', { ascending: true });
+        .order('sort_order', { ascending: true, nullsFirst: false });
 
       if (error) {
         console.error('ユーザー取得エラー:', error);
@@ -135,6 +141,49 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     }
     setLoadingUsers(false);
   }, []);
+
+  // ユーザーソート
+  const sortedUsers = useMemo(() => {
+    const filtered = showRetired ? users : users.filter(u => u.is_active !== false);
+    return [...filtered].sort((a, b) => {
+      let aVal, bVal;
+      if (userSortKey === 'sort_order') {
+        aVal = a.sort_order ?? 9999;
+        bVal = b.sort_order ?? 9999;
+      } else if (userSortKey === 'name') {
+        aVal = a.name || '';
+        bVal = b.name || '';
+        return userSortAsc ? aVal.localeCompare(bVal, 'ja') : bVal.localeCompare(aVal, 'ja');
+      } else if (userSortKey === 'registered_at') {
+        aVal = a.registered_at ? new Date(a.registered_at).getTime() : 0;
+        bVal = b.registered_at ? new Date(b.registered_at).getTime() : 0;
+      } else {
+        aVal = a.submission_count || 0;
+        bVal = b.submission_count || 0;
+      }
+      return userSortAsc ? aVal - bVal : bVal - aVal;
+    });
+  }, [users, showRetired, userSortKey, userSortAsc]);
+
+  const handleUserSort = (key: typeof userSortKey) => {
+    if (userSortKey === key) {
+      setUserSortAsc(!userSortAsc);
+    } else {
+      setUserSortKey(key);
+      setUserSortAsc(true);
+    }
+  };
+
+  // No.変更
+  const handleSaveSortOrder = async (userId: string) => {
+    const newOrder = parseInt(editSortOrderValue);
+    if (isNaN(newOrder)) return;
+    const { error } = await supabase.from('profiles').update({ sort_order: newOrder }).eq('id', userId);
+    if (!error) {
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, sort_order: newOrder } : u));
+    }
+    setEditingSortOrder(null);
+  };
 
   // ユーザー名編集機能
   const handleEditName = useCallback((userId: string, currentName: string) => {
@@ -2376,165 +2425,122 @@ ${printData.map((page) => `
                     <button onClick={fetchUsers} style={{ padding: '8px 16px' }}>更新</button>
                   </div>
                 </div>
+                {/* 並び替えボタン */}
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+                  {[
+                    { key: 'sort_order', label: 'No.順' },
+                    { key: 'name', label: '名前順' },
+                    { key: 'registered_at', label: '登録日順' },
+                    { key: 'submission_count', label: '申請数順' },
+                  ].map(({ key, label }) => (
+                    <button
+                      key={key}
+                      onClick={() => handleUserSort(key as any)}
+                      style={{
+                        padding: '6px 12px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                        background: userSortKey === key ? '#007bff' : (isDarkMode ? '#495057' : '#e9ecef'),
+                        color: userSortKey === key ? 'white' : (isDarkMode ? '#fff' : '#333'),
+                        fontSize: 13, fontWeight: userSortKey === key ? 'bold' : 'normal'
+                      }}
+                    >
+                      {label} {userSortKey === key ? (userSortAsc ? '▲' : '▼') : ''}
+                    </button>
+                  ))}
+                </div>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
                       <tr style={{ backgroundColor: isDarkMode ? '#495057' : '#f8f9fa' }}>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>名前</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>メールアドレス</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>申請数</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>権限</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>状態</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>操作</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', width: 60 }}>No.</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>名前</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>メールアドレス</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>申請数</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>登録日</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>状態</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>操作</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {users.filter(u => showRetired ? true : u.is_active !== false).map(user => (
-                        <tr key={user.id} style={{ opacity: user.is_active === false ? 0.6 : 1 }}>
-                          <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', color: isDarkMode ? '#fff' : '#000' }}>
-                            {editingUser === user.id ? (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <input
-                                  type="text"
-                                  value={editName}
-                                  onChange={(e) => setEditName(e.target.value)}
-                                  style={{
-                                    flex: 1,
-                                    padding: '4px 8px',
-                                    border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`,
-                                    borderRadius: '4px',
-                                    fontSize: '14px',
-                                    backgroundColor: isDarkMode ? '#495057' : 'white',
-                                    color: isDarkMode ? '#fff' : '#000'
-                                  }}
-                                  placeholder="名前を入力"
-                                  onKeyPress={(e) => {
-                                    if (e.key === 'Enter') {
-                                      handleSaveName(user.id);
-                                    }
-                                  }}
-                                />
-                                <button
-                                  onClick={() => handleSaveName(user.id)}
-                                  style={{
-                                    padding: '4px 8px',
-                                    background: '#28a745',
-                                    color: 'white',
-                                    border: 'none',
-                                    borderRadius: '4px',
-                                    cursor: 'pointer',
-                                    fontSize: '12px'
-                                  }}
+                      {sortedUsers.map(user => {
+                        const regDate = user.registered_at ? new Date(new Date(user.registered_at).getTime() + 9*60*60*1000) : null;
+                        const regDateStr = regDate ? `${regDate.getFullYear()}/${String(regDate.getMonth()+1).padStart(2,'0')}/${String(regDate.getDate()).padStart(2,'0')}` : '-';
+                        return (
+                          <tr key={user.id} style={{ opacity: user.is_active === false ? 0.6 : 1, background: sortedUsers.indexOf(user) % 2 === 0 ? (isDarkMode ? '#343a40' : 'white') : (isDarkMode ? '#3d4349' : '#f8f9fa') }}>
+                            {/* No.列 */}
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>
+                              {editingSortOrder === user.id ? (
+                                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                                  <input
+                                    type="number"
+                                    value={editSortOrderValue}
+                                    onChange={e => setEditSortOrderValue(e.target.value)}
+                                    style={{ width: 50, padding: '2px 4px', textAlign: 'center', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: '1px solid #ccc', borderRadius: 4 }}
+                                    onKeyPress={e => e.key === 'Enter' && handleSaveSortOrder(user.id)}
+                                    autoFocus
+                                  />
+                                  <button onClick={() => handleSaveSortOrder(user.id)} style={{ padding: '2px 6px', background: '#28a745', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11 }}>✓</button>
+                                  <button onClick={() => setEditingSortOrder(null)} style={{ padding: '2px 6px', background: '#6c757d', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11 }}>✕</button>
+                                </div>
+                              ) : (
+                                <span
+                                  onClick={() => { setEditingSortOrder(user.id); setEditSortOrderValue(String(user.sort_order ?? '')); }}
+                                  style={{ cursor: 'pointer', fontWeight: 'bold', color: isDarkMode ? '#adb5bd' : '#666' }}
+                                  title="クリックして変更"
                                 >
-                                  保存
-                                </button>
-                                <button
-                                  onClick={handleCancelUserEdit}
-                                  style={{
-                                    padding: '4px 8px',
-                                    background: '#6c757d',
-                                    color: 'white',
-                                    border: 'none',
-                                    borderRadius: '4px',
-                                    cursor: 'pointer',
-                                    fontSize: '12px'
-                                  }}
-                                >
-                                  キャンセル
-                                </button>
-                              </div>
-                            ) : (
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <span style={{ color: isDarkMode ? '#fff' : '#000' }}>{user.name || '未設定'}</span>
-                                <button
-                                  onClick={() => handleEditName(user.id, user.name)}
-                                  style={{
-                                    padding: '2px 6px',
-                                    background: '#ffc107',
-                                    color: '#212529',
-                                    border: 'none',
-                                    borderRadius: '3px',
-                                    cursor: 'pointer',
-                                    fontSize: '11px',
-                                    marginLeft: '8px'
-                                  }}
-                                  title="名前を編集"
-                                >
-                                  編集
-                                </button>
-                              </div>
-                            )}
-                          </td>
-                          <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', color: isDarkMode ? '#fff' : '#000' }}>
-                            {user.email}
-                          </td>
-                          <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', color: isDarkMode ? '#fff' : '#000' }}>
-                            {submissions.filter(s => s.profiles?.email === user.email).length}
-                          </td>
-                          <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', color: isDarkMode ? '#fff' : '#000' }}>
-                            {user.email === 'fivem.kyoto@gmail.com' ? '管理者' : '一般ユーザー'}
-                          </td>
-                          <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px' }}>
-                            {user.is_active === false ? (
-                              <span style={{ color: '#dc3545', fontWeight: 'bold', fontSize: '12px' }}>退職済み</span>
-                            ) : (
-                              <span style={{ color: '#28a745', fontWeight: 'bold', fontSize: '12px' }}>現役</span>
-                            )}
-                          </td>
-                          <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', color: isDarkMode ? '#fff' : '#000' }}>
-                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                              <button
-                                style={{
-                                  padding: '4px 8px',
-                                  background: '#17a2b8',
-                                  color: 'white',
-                                  border: 'none',
-                                  borderRadius: '4px',
-                                  cursor: 'pointer',
-                                  fontSize: '12px'
-                                }}
-                                onClick={() => setActiveTab('reports')}
-                              >
-                                履歴確認
-                              </button>
-                              {user.email !== 'fivem.kyoto@gmail.com' && (
-                                <>
-                                  <button
-                                    style={{
-                                      padding: '4px 8px',
-                                      background: user.is_active === false ? '#28a745' : '#fd7e14',
-                                      color: 'white',
-                                      border: 'none',
-                                      borderRadius: '4px',
-                                      cursor: 'pointer',
-                                      fontSize: '12px'
-                                    }}
-                                    onClick={() => handleToggleActive(user.id, user.is_active !== false)}
-                                  >
-                                    {user.is_active === false ? '復活' : '退職'}
-                                  </button>
-                                  {user.is_active === false && (
-                                    <button
-                                      style={{
-                                        padding: '4px 8px',
-                                        background: '#dc3545',
-                                        color: 'white',
-                                        border: 'none',
-                                        borderRadius: '4px',
-                                        cursor: 'pointer',
-                                        fontSize: '12px'
-                                      }}
-                                      onClick={() => handleDeleteUser(user.id, user.name || user.email)}
-                                    >
-                                      完全削除
-                                    </button>
-                                  )}
-                                </>
+                                  {user.sort_order ?? '-'}
+                                </span>
                               )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                            </td>
+                            {/* 名前列 */}
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', color: isDarkMode ? '#fff' : '#000' }}>
+                              {editingUser === user.id ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <input
+                                    type="text"
+                                    value={editName}
+                                    onChange={(e) => setEditName(e.target.value)}
+                                    style={{ flex: 1, padding: '4px 8px', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: '4px', fontSize: '14px', backgroundColor: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000' }}
+                                    placeholder="名前を入力"
+                                    onKeyPress={(e) => { if (e.key === 'Enter') handleSaveName(user.id); }}
+                                  />
+                                  <button onClick={() => handleSaveName(user.id)} style={{ padding: '4px 8px', background: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>保存</button>
+                                  <button onClick={handleCancelUserEdit} style={{ padding: '4px 8px', background: '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>キャンセル</button>
+                                </div>
+                              ) : (
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                  <span>{user.name || '未設定'}</span>
+                                  <button onClick={() => handleEditName(user.id, user.name)} style={{ padding: '2px 6px', background: '#ffc107', color: '#212529', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '11px', marginLeft: '8px' }}>編集</button>
+                                </div>
+                              )}
+                            </td>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', color: isDarkMode ? '#fff' : '#000', fontSize: 13 }}>{user.email}</td>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>{submissions.filter(s => s.profiles?.email === user.email).length}</td>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', color: isDarkMode ? '#adb5bd' : '#666', fontSize: 13, whiteSpace: 'nowrap' }}>{regDateStr}</td>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px' }}>
+                              {user.is_active === false ? (
+                                <span style={{ color: '#dc3545', fontWeight: 'bold', fontSize: '12px' }}>退職済み</span>
+                              ) : (
+                                <span style={{ color: '#28a745', fontWeight: 'bold', fontSize: '12px' }}>現役</span>
+                              )}
+                            </td>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px' }}>
+                              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                <button style={{ padding: '4px 8px', background: '#17a2b8', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }} onClick={() => setActiveTab('reports')}>履歴確認</button>
+                                {user.email !== 'fivem.kyoto@gmail.com' && (
+                                  <>
+                                    <button style={{ padding: '4px 8px', background: user.is_active === false ? '#28a745' : '#fd7e14', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }} onClick={() => handleToggleActive(user.id, user.is_active !== false)}>
+                                      {user.is_active === false ? '復活' : '退職'}
+                                    </button>
+                                    {user.is_active === false && (
+                                      <button style={{ padding: '4px 8px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }} onClick={() => handleDeleteUser(user.id, user.name || user.email)}>完全削除</button>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
