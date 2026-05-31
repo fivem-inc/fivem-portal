@@ -87,6 +87,11 @@ VALUES (
 );
 ```
 
+### パスワードのルール
+- 仮パスワードは **メールアドレスの@より前** にする
+  - 例: `sgwhryk@gmail.com` → パスワードは `sgwhryk`
+  - 例: `na0246@icloud.com` → パスワードは `na0246`
+
 ### ⚠️ 注意事項
 - `confirmation_token`, `recovery_token`, `email_change`, `email_change_token_new` は必ず **空文字（''）** にすること（NULLにするとログイン時に500エラーになる）
 - `provider_id` は必ず **UUID** にすること（メールアドレスにするとログインできない）
