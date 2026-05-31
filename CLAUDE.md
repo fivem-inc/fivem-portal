@@ -145,7 +145,7 @@ five-m-expense.vercel.appにデプロイして。
 - **Root Directory**: `client` (Vercel設定済み)
 - **vercel.json**: `/client/vercel.json` (正しい位置)
 - **作業ディレクトリ**: `/mnt/c/Users/kohei/expense-app`
-- **メインURL**: https://five-m-expense.vercel.app
+- **メインURL**: https://fivem-portal.vercel.app
 
 ### ✅ 現在完了済み
 - 却下理由の表示機能 ✅
@@ -401,7 +401,7 @@ const isDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
 
 ### 🚀 デプロイ
 - コミットID: `bb17130`
-- デプロイ先: https://five-m-expense.vercel.app/
+- デプロイ先: https://fivem-portal.vercel.app/
 - 自動デプロイ: Vercel（1〜2分で反映）
 
 ## ✅ 2025-12-08 二重送信防止機能実装完了
@@ -433,7 +433,7 @@ const isDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
 
 ### 🚀 デプロイ
 - コミットID: `ba44a25`
-- デプロイ先: https://five-m-expense.vercel.app/
+- デプロイ先: https://fivem-portal.vercel.app/
 - 自動デプロイ: Vercel（1〜2分で反映）
 
 ## 🔜 次回実装予定: 出張報告機能
