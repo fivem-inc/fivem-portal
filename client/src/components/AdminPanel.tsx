@@ -10,7 +10,7 @@ interface AdminPanelProps {
   onRefresh: () => void;
 }
 
-type AdminTab = 'approvals' | 'users' | 'reports';
+type AdminTab = 'approvals' | 'users' | 'reports' | 'trip_reports';
 
 const AdminPanel: React.FC<AdminPanelProps> = ({ 
   pendingApprovals, 
@@ -49,6 +49,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   
+  // 出張報告用の状態
+  const [tripReports, setTripReports] = useState<any[]>([]);
+  const [loadingTripReports, setLoadingTripReports] = useState(false);
+
   // 申請内容編集用の状態
   const [editingSubmissionId, setEditingSubmissionId] = useState<string | null>(null);
   const [editingExpenses, setEditingExpenses] = useState<any[]>([]);
@@ -296,12 +300,32 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     setLoadingReports(false);
   }, [submissions, users]);
 
+  // 出張報告を取得
+  const fetchTripReports = useCallback(async () => {
+    setLoadingTripReports(true);
+    try {
+      const { data, error } = await supabase
+        .from('business_trip_reports')
+        .select('*, profiles(name, email)')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setTripReports(data || []);
+    } catch (err) {
+      console.error('出張報告の取得に失敗:', err);
+    } finally {
+      setLoadingTripReports(false);
+    }
+  }, []);
+
   // タブが変更された時にデータを読み込み
   useEffect(() => {
     if (activeTab === 'users') {
       fetchUsers();
     }
-  }, [activeTab, fetchUsers]);
+    if (activeTab === 'trip_reports') {
+      fetchTripReports();
+    }
+  }, [activeTab, fetchUsers, fetchTripReports]);
 
   // レポートタブでデータが準備できたら統計を計算
   useEffect(() => {
@@ -1563,6 +1587,12 @@ ${printData.map((page) => `
           ユーザー管理
         </button>
         <button
+          style={tabStyle(activeTab === 'trip_reports')}
+          onClick={() => setActiveTab('trip_reports')}
+        >
+          📍 出張報告
+        </button>
+        <button
           style={tabStyle(activeTab === 'reports')}
           onClick={() => setActiveTab('reports')}
         >
@@ -2508,6 +2538,60 @@ ${printData.map((page) => `
                     </tbody>
                   </table>
                 </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 出張報告タブ */}
+        {activeTab === 'trip_reports' && (
+          <div>
+            <h3 style={{ textAlign: 'center', marginBottom: '30px', color: isDarkMode ? '#fff' : '#000' }}>📍 出張報告一覧</h3>
+            {loadingTripReports ? (
+              <p style={{ textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>読み込み中...</p>
+            ) : tripReports.length === 0 ? (
+              <p style={{ textAlign: 'center', color: isDarkMode ? '#aaa' : '#666' }}>出張報告はありません</p>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', color: isDarkMode ? '#fff' : '#000' }}>
+                  <thead>
+                    <tr style={{ background: isDarkMode ? '#495057' : '#f8f9fa' }}>
+                      {['報告日時', '報告者', '種別', '区分', '場所', '備考', 'GPS'].map(h => (
+                        <th key={h} style={{ padding: '10px 12px', textAlign: 'left', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, whiteSpace: 'nowrap', color: isDarkMode ? '#fff' : '#000' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tripReports.map((report, i) => {
+                      const date = new Date(report.created_at);
+                      const jst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+                      const dateStr = `${jst.getFullYear()}/${String(jst.getMonth()+1).padStart(2,'0')}/${String(jst.getDate()).padStart(2,'0')} ${String(jst.getHours()).padStart(2,'0')}:${String(jst.getMinutes()).padStart(2,'0')}`;
+                      return (
+                        <tr key={report.id} style={{ background: i % 2 === 0 ? (isDarkMode ? '#343a40' : 'white') : (isDarkMode ? '#3d4349' : '#f8f9fa') }}>
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, whiteSpace: 'nowrap' }}>{dateStr}</td>
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}` }}>{report.profiles?.name || report.profiles?.email || '不明'}</td>
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}` }}>
+                            <span style={{ padding: '2px 8px', borderRadius: 4, background: report.report_type === '到着' ? '#17a2b8' : '#28a745', color: 'white', fontSize: 13 }}>
+                              {report.report_type}
+                            </span>
+                          </td>
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}` }}>
+                            {report.category === 'その他' ? `その他（${report.category_other}）` : report.category}
+                          </td>
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}` }}>{report.location}</td>
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}` }}>{report.notes || '-'}</td>
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}` }}>
+                            {report.latitude ? (
+                              <a href={`https://www.google.com/maps?q=${report.latitude},${report.longitude}`} target="_blank" rel="noreferrer" style={{ color: '#17a2b8' }}>
+                                🗺️ 地図
+                              </a>
+                            ) : '-'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
