@@ -45,7 +45,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
             background: location.pathname === '/' ? '#007bff' : '#444', color: 'white', fontSize: 14
           }}
         >
-          🏠 申請
+          🏠 交通費申請
         </button>
         <button
           onClick={() => navigate('/trip-report')}
