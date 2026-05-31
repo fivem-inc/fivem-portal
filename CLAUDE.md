@@ -43,6 +43,21 @@ http://localhost:5173
 
 ## 👥 SQLでユーザーを一括追加する方法
 
+### 手順
+古いSupabaseから以下の形式でprofilesデータをもらう：
+```
+INSERT INTO "public"."profiles" ("id", "email", "name", "is_admin", "is_active") VALUES ('UUID', 'email', '名前', false, true), ...;
+```
+
+このデータをClaudeに渡すと、以下の3つのSQLを自動生成します：
+1. **auth.usersに一括INSERT** （パスワード=メールの@より前）
+2. **auth.identitiesに一括INSERT**
+3. **profilesのnameを一括UPDATE** （退職者はis_active=falseも設定）
+
+**既存ユーザーは自動スキップ（重複しない）**
+
+---
+
 ### 正しい手順（必ずこのSQLを使うこと）
 
 ```sql
