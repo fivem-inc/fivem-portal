@@ -83,7 +83,12 @@ VITE_SUPABASE_ANON_KEY=sb_publishable_ZA6Udr3Ww9_dQO0CKKhSGw_Phx8Kegp
 - RLSポリシー: ユーザーは自分のデータのみ、管理者は全件閲覧可
 - `profiles`テーブルとの外部キー設定済み
 
+### その他変更
+- ログイン画面タイトル: 「ファイブM 交通費精算」→「ファイブM スタッフサイト」
+- ナビゲーション: 「🏠 申請」→「🏠 交通費申請」
+
 ### 次回実装予定
+- GPS位置情報を住所に変換して管理画面に表示（Nominatim API使用・無料）
 - Slack通知（終了報告時のみ）
 - CSV出力機能
 
