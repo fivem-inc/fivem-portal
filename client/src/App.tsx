@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { Routes, Route, Navigate, Outlet, BrowserRouter } from 'react-router-dom';
+import { Routes, Route, Navigate, Outlet, BrowserRouter, useNavigate, useLocation } from 'react-router-dom';
 import SignIn from './pages/SignIn';
 import ResetPassword from './pages/ResetPassword';
 import ChangeEmail from './pages/ChangeEmail';
@@ -8,6 +8,7 @@ import ExpenseForm from './components/ExpenseForm';
 import AdminPanel from './components/AdminPanel';
 import HistoryView from './components/HistoryView';
 import MonthlyApplicationStatus from './components/MonthlyApplicationStatus';
+import BusinessTripReportForm from './components/BusinessTripReport';
 import { AuthProvider } from './contexts/AuthContext.tsx';
 import { useAuth } from './hooks/useAuth';
 import { useExpenses } from './hooks/useExpenses';
@@ -22,6 +23,51 @@ const ProtectedLayout: React.FC = () => {
   }
 
   return <Outlet />;
+};
+
+// ナビゲーションバー
+const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null }> = ({ isAdmin, onLogout, email, profileName }) => {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  return (
+    <div style={{
+      position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100,
+      background: '#1a1a2e', color: 'white', padding: '10px 20px',
+      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
+    }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button
+          onClick={() => navigate('/')}
+          style={{
+            padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer',
+            background: location.pathname === '/' ? '#007bff' : '#444', color: 'white', fontSize: 14
+          }}
+        >
+          🏠 申請
+        </button>
+        <button
+          onClick={() => navigate('/trip-report')}
+          style={{
+            padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer',
+            background: location.pathname === '/trip-report' ? '#007bff' : '#444', color: 'white', fontSize: 14
+          }}
+        >
+          📍 出張報告
+        </button>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <span style={{ fontSize: 13, opacity: 0.8 }}>{profileName || email}</span>
+        <button
+          onClick={onLogout}
+          style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #aaa', background: 'transparent', color: 'white', cursor: 'pointer', fontSize: 14 }}
+        >
+          ログアウト
+        </button>
+      </div>
+    </div>
+  );
 };
 
 // メインのDashboardコンポーネント
@@ -84,56 +130,8 @@ const Dashboard: React.FC = () => {
   }
 
   return (
-    <div style={{ maxWidth: 800, margin: '40px auto', position: 'relative', paddingTop: '120px' }}>
-      {/* ヘッダー部分 - スマホ対応 */}
-      <div style={{ 
-        position: 'absolute', 
-        top: 20, 
-        left: 20, 
-        right: 20,
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start',
-        flexWrap: 'wrap',
-        gap: '10px'
-      }}>
-        {/* ユーザー情報表示 */}
-        <div style={{ textAlign: 'left', minWidth: '200px', flex: '1' }}>
-          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4, flexWrap: 'wrap', gap: '8px' }}>
-            <p style={{ margin: 0, fontWeight: 'bold' }}>{user.email}</p>
-            <button 
-              onClick={() => window.location.href = '/change-email'}
-              style={{ 
-                padding: '2px 8px', 
-                fontSize: '12px', 
-                whiteSpace: 'nowrap',
-                background: '#17a2b8',
-                color: 'white',
-                border: '1px solid #17a2b8',
-                borderRadius: '4px',
-                cursor: 'pointer'
-              }}
-            >
-              メール変更
-            </button>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', marginTop: 4, flexWrap: 'wrap', gap: '8px' }}>
-            <p style={{ margin: 0 }}>{profileName || '名前未設定'}</p>
-          </div>
-        </div>
-
-        {/* ログアウトボタン */}
-        <button
-          onClick={handleLogout}
-          style={{
-            padding: '10px 20px',
-            whiteSpace: 'nowrap',
-            alignSelf: 'flex-start'
-          }}
-        >
-          ログアウト
-        </button>
-      </div>
+    <div style={{ maxWidth: 800, margin: '40px auto', position: 'relative', paddingTop: '80px' }}>
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} />
 
       {/* 交通費申請フォーム */}
       <ExpenseForm 
@@ -174,6 +172,18 @@ const Dashboard: React.FC = () => {
   );
 };
 
+// 出張報告ページ
+const TripReportPage: React.FC = () => {
+  const { user, isAdmin, profileName, handleLogout } = useAuth();
+  if (!user) return <div>読み込んでいます...</div>;
+  return (
+    <div style={{ paddingTop: '60px' }}>
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} />
+      <BusinessTripReportForm user={user} profileName={profileName} />
+    </div>
+  );
+};
+
 // メインのAppコンポーネント
 function App() {
   return (
@@ -184,6 +194,7 @@ function App() {
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/" element={<ProtectedLayout />}>
             <Route index element={<Dashboard />} />
+            <Route path="/trip-report" element={<TripReportPage />} />
             <Route path="/change-email" element={<ChangeEmail />} />
             <Route path="/settings-check" element={<SupabaseSettingsCheck />} />
           </Route>
