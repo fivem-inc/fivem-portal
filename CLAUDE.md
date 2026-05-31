@@ -48,7 +48,7 @@ http://localhost:5173
 ```sql
 -- 1. auth.usersに追加（空文字カラムに注意！NULLにしてはいけない）
 INSERT INTO auth.users (
-  id, email, encrypted_password,
+  id, instance_id, email, encrypted_password,
   email_confirmed_at, created_at, updated_at,
   aud, role,
   raw_app_meta_data,
@@ -57,6 +57,7 @@ INSERT INTO auth.users (
 )
 VALUES (
   gen_random_uuid(),
+  '00000000-0000-0000-0000-000000000000',
   'staff@example.com',
   crypt('moriakiko', gen_salt('bf', 10)),
   NOW(), NOW(), NOW(),
@@ -96,6 +97,7 @@ VALUES (
 - **「Database error querying schema」エラー** → `email_change`等が空文字でなくNULLになっていた → 上記SQLで修正
 - **「Database error querying schema」エラー** → `auth.identities`の`provider_id`がメールアドレスになっていた → UUIDに修正
 - **ログインできない** → `auth.identities`テーブルへの追加を忘れていた → 追加で解決
+- **「メールアドレスまたはパスワードが正しくありません」エラー（パスワードは正しいのに）** → `instance_id` が NULL になっていた → `UPDATE auth.users SET instance_id = '00000000-0000-0000-0000-000000000000' WHERE email = '...';` で解決
 - **ログイン後に expenses/profiles リレーションエラー** → `expenses`テーブルに外部キーがなかった → `ALTER TABLE public.expenses ADD CONSTRAINT fk_expenses_profiles FOREIGN KEY (user_id) REFERENCES public.profiles(id);` で解決
 
 ---
