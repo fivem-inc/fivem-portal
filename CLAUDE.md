@@ -41,6 +41,64 @@ http://localhost:5173
 
 ---
 
+## 👥 SQLでユーザーを一括追加する方法
+
+### 正しい手順（必ずこのSQLを使うこと）
+
+```sql
+-- 1. auth.usersに追加（空文字カラムに注意！NULLにしてはいけない）
+INSERT INTO auth.users (
+  id, email, encrypted_password,
+  email_confirmed_at, created_at, updated_at,
+  aud, role,
+  raw_app_meta_data,
+  confirmation_token, recovery_token,
+  email_change, email_change_token_new
+)
+VALUES (
+  gen_random_uuid(),
+  'staff@example.com',
+  crypt('moriakiko', gen_salt('bf', 10)),
+  NOW(), NOW(), NOW(),
+  'authenticated', 'authenticated',
+  '{"provider":"email","providers":["email"]}',
+  '', '', '', ''
+);
+
+-- 2. auth.identitiesに追加（provider_idはUUIDにすること！メールアドレスにしてはいけない）
+INSERT INTO auth.identities (id, user_id, identity_data, provider, provider_id, last_sign_in_at, created_at, updated_at)
+VALUES (
+  gen_random_uuid(),
+  (SELECT id FROM auth.users WHERE email = 'staff@example.com'),
+  jsonb_build_object('sub', (SELECT id FROM auth.users WHERE email = 'staff@example.com')::text, 'email', 'staff@example.com'),
+  'email',
+  (SELECT id FROM auth.users WHERE email = 'staff@example.com')::text,
+  NOW(), NOW(), NOW()
+);
+
+-- 3. profilesに追加
+INSERT INTO profiles (id, email, name, is_active)
+VALUES (
+  (SELECT id FROM auth.users WHERE email = 'staff@example.com'),
+  'staff@example.com',
+  'スタッフ名前',
+  true
+);
+```
+
+### ⚠️ 注意事項
+- `confirmation_token`, `recovery_token`, `email_change`, `email_change_token_new` は必ず **空文字（''）** にすること（NULLにするとログイン時に500エラーになる）
+- `provider_id` は必ず **UUID** にすること（メールアドレスにするとログインできない）
+- `encrypted_password` は `gen_salt('bf', 10)` でコスト10にすること（コスト6だとエラーになる場合あり）
+- 仮パスワードは `moriakiko` で統一。本人にパスワード変更してもらうこと
+
+### トラブルシューティング（2026-05-31 発生・解決済み）
+- **「Database error querying schema」エラー** → `email_change`等が空文字でなくNULLになっていた → 上記SQLで修正
+- **「Database error querying schema」エラー** → `auth.identities`の`provider_id`がメールアドレスになっていた → UUIDに修正
+- **ログインできない** → `auth.identities`テーブルへの追加を忘れていた → 追加で解決
+
+---
+
 ## ⚠️ Supabase URL移行トラブル（2026-05-31 発生・解決済み）
 
 ### 問題
