@@ -173,61 +173,55 @@ VITE_SUPABASE_ANON_KEY=sb_publishable_ZA6Udr3Ww9_dQO0CKKhSGw_Phx8Kegp
 
 ---
 
-## ✅ 2026-06-02 Phase3: 休暇申請機能 実装（途中）
+## ✅ 2026-06-02 Phase3: 休暇申請機能 実装完了
 
-### 完了した内容
-- **leave_requestsテーブル作成**（Supabase）
-  - id, user_id, leave_type, leave_type_other, start_date, end_date, reason, status, current_approver, approver_id, rejected_reason
-- **leave_approvalsテーブル作成**（Supabase）
-- **RLSポリシー設定**（insert_own / select_own / select_admin / update_admin）
-- **LeaveRequest.tsx** 休暇申請フォーム作成
-  - 申請先選択（リーダー上・マネージャー下の順）
-  - 休暇種別（有給・特別休暇・その他）
-  - 開始日・終了日・日数自動計算
-  - 確認モーダル・完了画面（ホームに戻る／続けて申請）
-- **App.tsx** ナビに「🌿 休暇申請」追加・ルート追加
-- **useAuth.ts** roleTitle・canLeave追加（管理者・リーダー等は常時表示）
-- **AdminPanel.tsx** 休暇申請タブ追加
-  - 申請一覧（申請日・申請者・申請先・種別・日付・日数・理由・ステータス）
-  - 承認/却下ボタン（段階承認フロー対応）
+### 完了した内容（全て）
 
-### 段階承認フロー
+#### DBに追加したカラム
+- `leave_requests.approver2_id` UUID（マネージャー用・2026-06-02追加）
+- `profiles` RLS: 全認証ユーザーが読み取り可能ポリシー追加
+
+#### 承認フロー（確定版）
 ```
-通常スタッフ: 申請 → リーダー(pending) → マネージャー(leader_approved) → 経理(manager_approved) → 社長(admin_approved) → 完了(approved)
-管理部スタッフ: 申請 → マネージャー(pending_manager) → 経理(manager_approved) → 社長(admin_approved) → 完了
+申請者 → 一人目(pending) → 承認時にマネージャー選択 → マネージャー(step2_pending) → 経理(manager_approved) → 社長(admin_approved) → 完了(approved)
 ```
+- 一人目承認時にマネージャーを選んで送る（モーダルで選択）
+- 管理者は全申請を強制的に次へ進められる
+- 却下取り消し機能あり（管理者: pending戻し、承認者: 自分のステップ戻し）
 
-### ⚠️ 今日のトラブルと解決方法
+#### LeaveRequest.tsx（申請者画面）
+- 新規申請タブ + 申請履歴タブ（切り替え）
+- 履歴カードにステータスバッジ・却下理由表示
+- 申請完了後「申請履歴を確認」ボタン追加
 
-1. **Viteのぐるぐる問題（ページが開かない）**
-   - 原因: HMRのホットリロード中にページが固まる
-   - 解決: `npm run dev` を止めて再起動するとキャッシュから読まれて開く
+#### LeaveApprovals.tsx（承認者専用ページ /leave-approvals）
+- リーダー・マネージャー: 自分の番の申請のみ表示
+- 管理者: 全申請表示
+- 一人目承認 → マネージャー選択モーダル
+- 却下済みカードに「↩ 却下を取り消す」ボタン（自分のステップに戻す）
+- 右上 ✕ でホームに戻る
 
-2. **leave_type_other カラムが存在しないエラー（400エラー）**
-   - 原因: CREATE TABLE時にカラムを入れ忘れた
-   - 解決: `ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS leave_type_other TEXT;`
+#### App.tsx
+- Dashboard に承認バナー（自分の番が N件）表示
+- `/leave-approvals` ルート追加
+- useAuth の loading フラグ修正（プロフィール取得前に弾かない）
 
-3. **is_admin カラムが存在しないエラー**
-   - 原因: profilesテーブルにis_adminカラムはない（app_metadataで管理）
-   - 解決: RLSポリシーから `is_admin` を削除し `auth.jwt() ->> 'role' = 'admin'` に変更
+#### AdminPanel.tsx 休暇申請タブ改善
+- フィルター: 承認待ち / 承認済み / 却下 / すべて（デフォルト: 承認待ち）
+- ソート: フロー順①②③④→承認済み→却下、同ステップ内は新着順
+- 承認状況列: 役職＋名前の2行バッジ（①②③④番号付き）
+- 操作列: 承認（緑）・却下（赤）・削除（グレー縦書き）
+- 却下済みに「↩ 取り消し」ボタン → pending に戻す
+- 名前を全角スペースで2行分割表示
 
-4. **管理者画面の休暇申請タブが表示されない**
-   - 原因: タブコンテンツが印刷プレビューモーダルの中に入ってしまった
-   - 解決: tabContentStyle divの内側・印刷モーダルの前に配置し直した
-
-5. **approver_id のリレーションエラー（Supabase join失敗）**
-   - 原因: `approver_id` が `auth.users` を参照しており `profiles` に直接joinできない
-   - 解決: 別クエリで profiles を取得して手動でマージ
-
-### 🔜 次回続きからやること（Phase3残タスク）
-1. **申請者側の休暇申請履歴表示**（自分の申請一覧・ステータス確認）
-2. **承認者への通知**（承認が来たら表示、却下理由表示）
-3. **パートへの有給申請フォーム送信**（管理者がパートを指定して一時表示）
-4. **Phase 1: メール送信機能**
+### 🔜 次回やること
+1. **パートへの有給申請フォーム送信**（管理者がパートを指定して一時表示）
+2. **Phase 1: メール送信機能**
 
 ### コミット
 - `2bc4c23` Phase3: 休暇申請フォーム実装
 - `e8cdb96` Phase3: 管理者画面に休暇申請タブ追加
+- 本日分: Phase3完了・承認フロー改善・UI整備
 
 ---
 
