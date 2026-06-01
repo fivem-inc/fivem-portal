@@ -145,6 +145,34 @@ VITE_SUPABASE_ANON_KEY=sb_publishable_ZA6Udr3Ww9_dQO0CKKhSGw_Phx8Kegp
 - 新しいテーブルが404になる場合はSupabaseのURLが変わっていないか確認
 - Settings → General でProject URLを確認し、`.env`と一致させる
 
+## ✅ 2026-06-01 Phase2: ユーザー情報拡張・グループ管理完了
+
+### DBに追加したカラム（profilesテーブル）
+- `employment_type` TEXT DEFAULT '正社員'
+- `role_title` TEXT DEFAULT '一般'
+- `group_names` TEXT[]（複数グループ対応・配列型）
+- `leave_request_enabled` BOOLEAN DEFAULT false
+
+### 追加したテーブル: `master_options`
+- category / value / sort_order
+- employment_type: 正社員・パート
+- role_title: 一般・リーダー・マネージャー・社長・管理者
+- group: こども・パート・アルバイトスタッフ・マネージャー・リーダー・マネージャー専用・三役・大人・正社員・契約社員
+- RLS: 全員読み取り可
+
+### フロントエンド変更
+- ユーザー管理テーブルに雇用形態・役職列（編集モードボタン・確認ポップアップ付き）
+- 非編集時はセレクト矢印非表示
+- 👥 グループ管理タブ追加（グループ一覧・名前変更・削除・メンバー追加削除・新規作成）
+- コミット: `80dc859`
+
+### 次回やること（優先順）
+1. **Phase 3: 休暇・有給申請**（優先①）
+2. **Phase 1: メール送信機能**（優先②）
+3. **Phase 4: 出張報告拡張**（住所変換・Slackチャンネル選択）
+
+---
+
 ## ✅ 2026-05-31 出張報告機能実装完了
 
 ### 実装内容
