@@ -10,7 +10,7 @@ interface AdminPanelProps {
   onRefresh: () => void;
 }
 
-type AdminTab = 'approvals' | 'users' | 'reports' | 'trip_reports';
+type AdminTab = 'approvals' | 'users' | 'groups' | 'reports' | 'trip_reports';
 
 const AdminPanel: React.FC<AdminPanelProps> = ({ 
   pendingApprovals, 
@@ -39,6 +39,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const [masterOptions, setMasterOptions] = useState<{ employment_type: string[]; role_title: string[]; group: string[] }>({ employment_type: [], role_title: [], group: [] });
   const [isUserEditMode, setIsUserEditMode] = useState(false);
   const [confirmChange, setConfirmChange] = useState<{ userId: string; field: string; label: string; oldVal: string; newVal: string; } | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
   
   // レポート用の状態
   const [reportStats, setReportStats] = useState<any>(null);
@@ -390,6 +391,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   // タブが変更された時にデータを読み込み
   useEffect(() => {
     if (activeTab === 'users') {
+      fetchUsers();
+      fetchMasterOptions();
+    }
+    if (activeTab === 'groups') {
       fetchUsers();
       fetchMasterOptions();
     }
@@ -1658,6 +1663,12 @@ ${printData.map((page) => `
           ユーザー管理
         </button>
         <button
+          style={tabStyle(activeTab === 'groups')}
+          onClick={() => { setActiveTab('groups'); setSelectedGroup(null); }}
+        >
+          👥 グループ管理
+        </button>
+        <button
           style={tabStyle(activeTab === 'trip_reports')}
           onClick={() => setActiveTab('trip_reports')}
         >
@@ -2417,6 +2428,107 @@ ${printData.map((page) => `
           </div>
         )}
 
+        {/* グループ管理タブ */}
+        {activeTab === 'groups' && (
+          <div>
+            <h3 style={{ textAlign: 'center', marginBottom: 20, color: isDarkMode ? '#fff' : '#000' }}>
+              {selectedGroup ? (
+                <span>
+                  <button onClick={() => setSelectedGroup(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, marginRight: 8, color: isDarkMode ? '#fff' : '#000' }}>←</button>
+                  {selectedGroup}
+                </span>
+              ) : 'グループ管理'}
+            </h3>
+
+            {!selectedGroup ? (
+              /* グループ一覧 */
+              <div style={{ maxWidth: 600, margin: '0 auto' }}>
+                {masterOptions.group.map(g => {
+                  const memberCount = users.filter(u => u.is_active !== false && (u.group_names || []).includes(g)).length;
+                  return (
+                    <div
+                      key={g}
+                      onClick={() => setSelectedGroup(g)}
+                      style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 20px', marginBottom: 8, background: isDarkMode ? '#343a40' : 'white', border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, borderRadius: 10, cursor: 'pointer', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}
+                    >
+                      <span style={{ fontWeight: 'bold', color: isDarkMode ? '#fff' : '#000' }}>{g}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <span style={{ fontSize: 13, color: isDarkMode ? '#adb5bd' : '#666' }}>メンバー {memberCount}人</span>
+                        <span style={{ color: '#fd7e14', fontSize: 18 }}>›</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              /* メンバー一覧 */
+              <div style={{ maxWidth: 600, margin: '0 auto' }}>
+                {/* メンバー追加（編集モード時） */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                  <span style={{ color: isDarkMode ? '#adb5bd' : '#666', fontSize: 14 }}>
+                    メンバー {users.filter(u => u.is_active !== false && (u.group_names || []).includes(selectedGroup)).length}人
+                  </span>
+                  {isUserEditMode && (
+                    <span style={{ color: '#fd7e14', fontSize: 12 }}>⚠️ 編集モード中</span>
+                  )}
+                  {isUserEditMode ? (
+                    <button onClick={() => setIsUserEditMode(false)} style={{ padding: '5px 14px', background: '#28a745', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 12 }}>✅ 編集終了</button>
+                  ) : (
+                    <button onClick={() => setIsUserEditMode(true)} style={{ padding: '5px 14px', background: '#fd7e14', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 12 }}>✏️ メンバーを編集</button>
+                  )}
+                </div>
+
+                {/* 現在のメンバー */}
+                {users.filter(u => u.is_active !== false && (u.group_names || []).includes(selectedGroup)).map(u => (
+                  <div key={u.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', marginBottom: 6, background: isDarkMode ? '#343a40' : 'white', border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, borderRadius: 8 }}>
+                    <div>
+                      <span style={{ fontWeight: 'bold', color: isDarkMode ? '#fff' : '#000' }}>{u.name || '未設定'}</span>
+                      <span style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888', marginLeft: 8 }}>{u.email}</span>
+                    </div>
+                    {isUserEditMode && (
+                      <button
+                        onClick={async () => {
+                          const next = (u.group_names || []).filter((x: string) => x !== selectedGroup);
+                          await supabase.from('profiles').update({ group_names: next }).eq('id', u.id);
+                          setUsers(prev => prev.map(p => p.id === u.id ? { ...p, group_names: next } : p));
+                        }}
+                        style={{ padding: '3px 10px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 20, cursor: 'pointer', fontSize: 12 }}
+                      >
+                        削除
+                      </button>
+                    )}
+                  </div>
+                ))}
+
+                {/* メンバー追加（編集モード時：未所属ユーザーを表示） */}
+                {isUserEditMode && (
+                  <div style={{ marginTop: 20 }}>
+                    <p style={{ color: isDarkMode ? '#adb5bd' : '#666', fontSize: 13, marginBottom: 8 }}>＋ 追加できるメンバー</p>
+                    {users.filter(u => u.is_active !== false && !(u.group_names || []).includes(selectedGroup)).map(u => (
+                      <div key={u.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', marginBottom: 6, background: isDarkMode ? '#3d4349' : '#f8f9fa', border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, borderRadius: 8, opacity: 0.8 }}>
+                        <div>
+                          <span style={{ color: isDarkMode ? '#fff' : '#000' }}>{u.name || '未設定'}</span>
+                          <span style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888', marginLeft: 8 }}>{u.email}</span>
+                        </div>
+                        <button
+                          onClick={async () => {
+                            const next = [...(u.group_names || []), selectedGroup];
+                            await supabase.from('profiles').update({ group_names: next }).eq('id', u.id);
+                            setUsers(prev => prev.map(p => p.id === u.id ? { ...p, group_names: next } : p));
+                          }}
+                          style={{ padding: '3px 10px', background: '#007bff', color: 'white', border: 'none', borderRadius: 20, cursor: 'pointer', fontSize: 12 }}
+                        >
+                          ＋追加
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ユーザー管理タブ */}
         {activeTab === 'users' && (
           <div>
@@ -2538,7 +2650,6 @@ ${printData.map((page) => `
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000', fontSize: 12 }}>メール</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 80 }}>雇用形態</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 110 }}>役職</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 130 }}>グループ</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 50 }}>件数</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 85 }}>登録日</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 55 }}>状態</th>
@@ -2622,37 +2733,6 @@ ${printData.map((page) => `
                               >
                                 {masterOptions.role_title.map(v => <option key={v}>{v}</option>)}
                               </select>
-                            </td>
-                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', position: 'relative' }}>
-                              <button
-                                onClick={() => isUserEditMode && setOpenGroupDropdown(openGroupDropdown === user.id ? null : user.id)}
-                                style={{ fontSize: 11, padding: '2px 4px', width: '100%', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, cursor: isUserEditMode ? 'pointer' : 'default', textAlign: 'left', opacity: isUserEditMode ? 1 : 0.7 }}
-                              >
-                                {(user.group_names && user.group_names.length > 0) ? user.group_names.join('・') : '未設定'}{isUserEditMode ? ' ▼' : ''}
-                              </button>
-                              {openGroupDropdown === user.id && (
-                                <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 100, background: isDarkMode ? '#343a40' : 'white', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, padding: '6px 8px', minWidth: 160, boxShadow: '0 2px 8px rgba(0,0,0,0.2)', textAlign: 'left' }}>
-                                  {masterOptions.group.map(g => {
-                                    const checked = (user.group_names || []).includes(g);
-                                    return (
-                                      <label key={g} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', cursor: 'pointer', fontSize: 12, color: isDarkMode ? '#fff' : '#000', whiteSpace: 'nowrap' }}>
-                                        <input
-                                          type="checkbox"
-                                          checked={checked}
-                                          onChange={async () => {
-                                            const current: string[] = user.group_names || [];
-                                            const next = checked ? current.filter((x: string) => x !== g) : [...current, g];
-                                            await supabase.from('profiles').update({ group_names: next }).eq('id', user.id);
-                                            setUsers(prev => prev.map(u => u.id === user.id ? { ...u, group_names: next } : u));
-                                          }}
-                                        />
-                                        {g}
-                                      </label>
-                                    );
-                                  })}
-                                  <button onClick={() => setOpenGroupDropdown(null)} style={{ marginTop: 6, padding: '2px 8px', fontSize: 11, background: '#6c757d', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', width: '100%' }}>閉じる</button>
-                                </div>
-                              )}
                             </td>
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12 }}>{submissions.filter(s => s.profiles?.email === user.email).length}</td>
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', color: isDarkMode ? '#adb5bd' : '#666', fontSize: 11, whiteSpace: 'nowrap' }}>{regDateStr}</td>
