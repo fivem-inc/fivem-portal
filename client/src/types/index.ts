@@ -64,6 +64,31 @@ export interface AuthContextType {
   user: AuthUser | null;
 }
 
+export interface LeaveRequest {
+  id?: string;
+  user_id?: string;
+  leave_type: '有給' | '特別休暇' | 'その他';
+  leave_type_other?: string;
+  start_date: string;
+  end_date: string;
+  reason?: string;
+  status: 'pending' | 'leader_approved' | 'manager_approved' | 'admin_approved' | 'approved' | 'rejected';
+  current_approver?: string;
+  rejected_reason?: string;
+  created_at?: string;
+  profiles?: Profile | null;
+}
+
+export interface LeaveApproval {
+  id?: string;
+  leave_request_id: string;
+  approver_id: string;
+  approver_role: string;
+  action: 'approved' | 'rejected';
+  comment?: string;
+  created_at?: string;
+}
+
 export interface BusinessTripReport {
   id?: string;
   user_id?: string;

@@ -8,6 +8,8 @@ interface UseAuthReturn {
   loading: boolean;
   isAdmin: boolean;
   profileName: string;
+  roleTitle: string;
+  canLeave: boolean;
   handleLogout: () => Promise<void>;
 }
 
@@ -15,6 +17,8 @@ export const useAuth = (): UseAuthReturn => {
   const { user } = useContext(AuthContext);
   const [loading] = useState(false);
   const [profileName, setProfileName] = useState('');
+  const [roleTitle, setRoleTitle] = useState('一般');
+  const [canLeave, setCanLeave] = useState(false);
 
   const isAdmin = user?.app_metadata?.role === 'admin';
 
@@ -25,12 +29,18 @@ export const useAuth = (): UseAuthReturn => {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('name')
+        .select('name, role_title, employment_type')
         .eq('id', user.id)
         .single();
 
-      if (!error && data && data.name) {
-        setProfileName(data.name);
+      if (!error && data) {
+        if (data.name) setProfileName(data.name);
+        if (data.role_title) setRoleTitle(data.role_title);
+        // 休暇申請表示条件: 管理者・リーダー・マネージャー・社長 は常時表示
+        // パート(一般) は leave_request_enabled=true のときのみ表示
+        const alwaysShow = ['リーダー', 'マネージャー', '社長', '管理者'].includes(data.role_title || '');
+        const isAdmin = user?.app_metadata?.role === 'admin';
+        setCanLeave(alwaysShow || isAdmin);
         return;
       }
     } catch (error) {
@@ -70,6 +80,8 @@ export const useAuth = (): UseAuthReturn => {
     loading,
     isAdmin,
     profileName,
+    roleTitle,
+    canLeave,
     handleLogout
   };
 };

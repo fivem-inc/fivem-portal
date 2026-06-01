@@ -9,6 +9,7 @@ import AdminPanel from './components/AdminPanel';
 import HistoryView from './components/HistoryView';
 import MonthlyApplicationStatus from './components/MonthlyApplicationStatus';
 import BusinessTripReportForm from './components/BusinessTripReport';
+import LeaveRequestForm from './components/LeaveRequest';
 import { AuthProvider } from './contexts/AuthContext.tsx';
 import { useAuth } from './hooks/useAuth';
 import { useExpenses } from './hooks/useExpenses';
@@ -26,7 +27,7 @@ const ProtectedLayout: React.FC = () => {
 };
 
 // ナビゲーションバー
-const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null }> = ({ isAdmin: _isAdmin, onLogout, email, profileName }) => {
+const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean }> = ({ isAdmin: _isAdmin, onLogout, email, profileName, canLeave }) => {
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -56,6 +57,17 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
         >
           📍 出張報告
         </button>
+        {canLeave && (
+          <button
+            onClick={() => navigate('/leave')}
+            style={{
+              padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer',
+              background: location.pathname === '/leave' ? '#28a745' : '#444', color: 'white', fontSize: 14
+            }}
+          >
+            🌿 休暇申請
+          </button>
+        )}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <span style={{ fontSize: 13, opacity: 0.8 }}>{profileName || email}</span>
@@ -74,10 +86,12 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
 const Dashboard: React.FC = () => {
   // 通常のダッシュボード処理（パスワードリセットは専用ページで処理）
 
-  const { 
-    user, 
-    isAdmin, 
-    profileName, 
+  const {
+    user,
+    isAdmin,
+    profileName,
+    roleTitle: _roleTitle,
+    canLeave,
     handleLogout
   } = useAuth();
 
@@ -131,7 +145,7 @@ const Dashboard: React.FC = () => {
 
   return (
     <div style={{ maxWidth: 800, margin: '40px auto', position: 'relative', paddingTop: '80px' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} />
 
       {/* 交通費申請フォーム */}
       <ExpenseForm 
@@ -174,12 +188,24 @@ const Dashboard: React.FC = () => {
 
 // 出張報告ページ
 const TripReportPage: React.FC = () => {
-  const { user, isAdmin, profileName, handleLogout } = useAuth();
+  const { user, isAdmin, profileName, canLeave, handleLogout } = useAuth();
   if (!user) return <div>読み込んでいます...</div>;
   return (
     <div style={{ paddingTop: '60px' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} />
       <BusinessTripReportForm user={user} profileName={profileName} />
+    </div>
+  );
+};
+
+// 休暇申請ページ
+const LeaveRequestPage: React.FC = () => {
+  const { user, isAdmin, profileName, roleTitle, canLeave, handleLogout } = useAuth();
+  if (!user) return <div>読み込んでいます...</div>;
+  return (
+    <div style={{ paddingTop: '60px' }}>
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} />
+      <LeaveRequestForm user={user} profileName={profileName} roleTitle={roleTitle} />
     </div>
   );
 };
@@ -195,6 +221,7 @@ function App() {
           <Route path="/" element={<ProtectedLayout />}>
             <Route index element={<Dashboard />} />
             <Route path="/trip-report" element={<TripReportPage />} />
+            <Route path="/leave" element={<LeaveRequestPage />} />
             <Route path="/change-email" element={<ChangeEmail />} />
             <Route path="/settings-check" element={<SupabaseSettingsCheck />} />
           </Route>
