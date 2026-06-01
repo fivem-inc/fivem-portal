@@ -126,7 +126,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           name,
           is_active,
           sort_order,
-          registered_at
+          registered_at,
+          employment_type,
+          role_title,
+          group_name,
+          leave_request_enabled
         `)
         .order('sort_order', { ascending: true, nullsFirst: false });
 
@@ -2459,6 +2463,9 @@ ${printData.map((page) => `
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', width: 60 }}>No.</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>名前</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>メールアドレス</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>雇用形態</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>役職</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>グループ</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>申請数</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>登録日</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>状態</th>
@@ -2519,6 +2526,53 @@ ${printData.map((page) => `
                               )}
                             </td>
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', color: isDarkMode ? '#fff' : '#000', fontSize: 13 }}>{user.email}</td>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center' }}>
+                              <select
+                                value={user.employment_type || '正社員'}
+                                onChange={async (e) => {
+                                  await supabase.from('profiles').update({ employment_type: e.target.value }).eq('id', user.id);
+                                  fetchUsers();
+                                }}
+                                style={{ padding: '2px 4px', fontSize: 12, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4 }}
+                              >
+                                <option>正社員</option>
+                                <option>パート</option>
+                              </select>
+                            </td>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center' }}>
+                              <select
+                                value={user.role_title || '一般'}
+                                onChange={async (e) => {
+                                  await supabase.from('profiles').update({ role_title: e.target.value }).eq('id', user.id);
+                                  fetchUsers();
+                                }}
+                                style={{ padding: '2px 4px', fontSize: 12, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4 }}
+                              >
+                                <option>一般</option>
+                                <option>リーダー</option>
+                                <option>マネージャー</option>
+                                <option>社長</option>
+                              </select>
+                            </td>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center' }}>
+                              <select
+                                value={user.group_name || ''}
+                                onChange={async (e) => {
+                                  await supabase.from('profiles').update({ group_name: e.target.value || null }).eq('id', user.id);
+                                  fetchUsers();
+                                }}
+                                style={{ padding: '2px 4px', fontSize: 12, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4 }}
+                              >
+                                <option value="">未設定</option>
+                                <option>こども</option>
+                                <option>パート・アルバイトスタッフ</option>
+                                <option>マネージャー・リーダー</option>
+                                <option>マネージャー専用</option>
+                                <option>三役</option>
+                                <option>大人</option>
+                                <option>正社員・契約社員</option>
+                              </select>
+                            </td>
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>{submissions.filter(s => s.profiles?.email === user.email).length}</td>
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', color: isDarkMode ? '#adb5bd' : '#666', fontSize: 13, whiteSpace: 'nowrap' }}>{regDateStr}</td>
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px' }}>

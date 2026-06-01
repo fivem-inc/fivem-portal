@@ -13,6 +13,10 @@ export interface Expense {
 export interface Profile {
   email: string;
   name?: string;
+  employment_type?: string;
+  role_title?: string;
+  group_name?: string;
+  leave_request_enabled?: boolean;
 }
 
 export interface Submission {
