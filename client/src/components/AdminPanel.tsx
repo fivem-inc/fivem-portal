@@ -38,6 +38,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const [openGroupDropdown, setOpenGroupDropdown] = useState<string | null>(null);
   const [masterOptions, setMasterOptions] = useState<{ employment_type: string[]; role_title: string[]; group: string[] }>({ employment_type: [], role_title: [], group: [] });
   const [isUserEditMode, setIsUserEditMode] = useState(false);
+  const [confirmChange, setConfirmChange] = useState<{ userId: string; field: string; label: string; oldVal: string; newVal: string; } | null>(null);
   
   // レポート用の状態
   const [reportStats, setReportStats] = useState<any>(null);
@@ -2451,26 +2452,61 @@ ${printData.map((page) => `
                   </div>
                 </div>
                 {/* 編集モードボタン */}
-                <div style={{ textAlign: 'center', marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                  {isUserEditMode && (
+                    <span style={{ color: '#fd7e14', fontSize: 11 }}>⚠️ 編集モード中（変更は確認後に保存）</span>
+                  )}
                   {isUserEditMode ? (
                     <button
                       onClick={() => { setIsUserEditMode(false); setOpenGroupDropdown(null); }}
-                      style={{ padding: '8px 24px', background: '#28a745', color: 'white', border: '2px solid #1e7e34', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}
+                      style={{ padding: '5px 14px', background: '#28a745', color: 'white', border: '2px solid #1e7e34', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: 12 }}
                     >
                       ✅ 編集終了
                     </button>
                   ) : (
                     <button
                       onClick={() => setIsUserEditMode(true)}
-                      style={{ padding: '8px 24px', background: '#fd7e14', color: 'white', border: '2px solid #e8690b', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}
+                      style={{ padding: '5px 14px', background: '#fd7e14', color: 'white', border: '2px solid #e8690b', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: 12 }}
                     >
                       ✏️ 雇用形態・役職・グループを編集
                     </button>
                   )}
-                  {isUserEditMode && (
-                    <p style={{ color: '#fd7e14', fontSize: 12, marginTop: 4 }}>編集モード中です。変更は即時保存されます。終了したら「編集終了」を押してください。</p>
-                  )}
                 </div>
+
+                {/* 変更確認ポップアップ */}
+                {confirmChange && (
+                  <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ background: isDarkMode ? '#343a40' : 'white', borderRadius: 8, padding: 24, minWidth: 300, boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>
+                      <h4 style={{ margin: '0 0 16px', color: isDarkMode ? '#fff' : '#000' }}>変更の確認</h4>
+                      <p style={{ color: isDarkMode ? '#ddd' : '#333', marginBottom: 8 }}>
+                        <strong>{confirmChange.label}</strong> を変更します
+                      </p>
+                      <div style={{ background: isDarkMode ? '#495057' : '#f8f9fa', borderRadius: 6, padding: '10px 14px', marginBottom: 16, fontSize: 14 }}>
+                        <span style={{ color: '#dc3545' }}>「{confirmChange.oldVal}」</span>
+                        <span style={{ color: isDarkMode ? '#ddd' : '#666', margin: '0 8px' }}>→</span>
+                        <span style={{ color: '#28a745', fontWeight: 'bold' }}>「{confirmChange.newVal}」</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                        <button
+                          onClick={() => setConfirmChange(null)}
+                          style={{ padding: '6px 16px', background: '#6c757d', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer' }}
+                        >
+                          キャンセル
+                        </button>
+                        <button
+                          onClick={async () => {
+                            await supabase.from('profiles').update({ [confirmChange.field]: confirmChange.newVal }).eq('id', confirmChange.userId);
+                            fetchUsers();
+                            setConfirmChange(null);
+                          }}
+                          style={{ padding: '6px 16px', background: '#007bff', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold' }}
+                        >
+                          保存する
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {/* 並び替えボタン */}
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
                   {[
@@ -2567,9 +2603,8 @@ ${printData.map((page) => `
                               <select
                                 value={user.employment_type || '正社員'}
                                 disabled={!isUserEditMode}
-                                onChange={async (e) => {
-                                  await supabase.from('profiles').update({ employment_type: e.target.value }).eq('id', user.id);
-                                  fetchUsers();
+                                onChange={(e) => {
+                                  setConfirmChange({ userId: user.id, field: 'employment_type', label: `${user.name || user.email} の雇用形態`, oldVal: user.employment_type || '正社員', newVal: e.target.value });
                                 }}
                                 style={{ padding: '2px 2px', fontSize: 11, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, width: '100%', opacity: isUserEditMode ? 1 : 0.7, cursor: isUserEditMode ? 'pointer' : 'default' }}
                               >
@@ -2580,9 +2615,8 @@ ${printData.map((page) => `
                               <select
                                 value={user.role_title || '一般'}
                                 disabled={!isUserEditMode}
-                                onChange={async (e) => {
-                                  await supabase.from('profiles').update({ role_title: e.target.value }).eq('id', user.id);
-                                  fetchUsers();
+                                onChange={(e) => {
+                                  setConfirmChange({ userId: user.id, field: 'role_title', label: `${user.name || user.email} の役職`, oldVal: user.role_title || '一般', newVal: e.target.value });
                                 }}
                                 style={{ padding: '2px 2px', fontSize: 11, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, width: '100%', opacity: isUserEditMode ? 1 : 0.7, cursor: isUserEditMode ? 'pointer' : 'default' }}
                               >
@@ -2594,7 +2628,7 @@ ${printData.map((page) => `
                                 onClick={() => isUserEditMode && setOpenGroupDropdown(openGroupDropdown === user.id ? null : user.id)}
                                 style={{ fontSize: 11, padding: '2px 4px', width: '100%', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, cursor: isUserEditMode ? 'pointer' : 'default', textAlign: 'left', opacity: isUserEditMode ? 1 : 0.7 }}
                               >
-                                {(user.group_names && user.group_names.length > 0) ? user.group_names.join('・') : '未設定'} ▼
+                                {(user.group_names && user.group_names.length > 0) ? user.group_names.join('・') : '未設定'}{isUserEditMode ? ' ▼' : ''}
                               </button>
                               {openGroupDropdown === user.id && (
                                 <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 100, background: isDarkMode ? '#343a40' : 'white', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, padding: '6px 8px', minWidth: 160, boxShadow: '0 2px 8px rgba(0,0,0,0.2)', textAlign: 'left' }}>
