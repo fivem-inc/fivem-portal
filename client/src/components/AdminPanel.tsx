@@ -37,6 +37,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const [editSortOrderValue, setEditSortOrderValue] = useState<string>('');
   const [openGroupDropdown, setOpenGroupDropdown] = useState<string | null>(null);
   const [masterOptions, setMasterOptions] = useState<{ employment_type: string[]; role_title: string[]; group: string[] }>({ employment_type: [], role_title: [], group: [] });
+  const [isUserEditMode, setIsUserEditMode] = useState(false);
   
   // レポート用の状態
   const [reportStats, setReportStats] = useState<any>(null);
@@ -2449,6 +2450,27 @@ ${printData.map((page) => `
                     <button onClick={fetchUsers} style={{ padding: '8px 16px' }}>更新</button>
                   </div>
                 </div>
+                {/* 編集モードボタン */}
+                <div style={{ textAlign: 'center', marginBottom: 12 }}>
+                  {isUserEditMode ? (
+                    <button
+                      onClick={() => { setIsUserEditMode(false); setOpenGroupDropdown(null); }}
+                      style={{ padding: '8px 24px', background: '#28a745', color: 'white', border: '2px solid #1e7e34', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}
+                    >
+                      ✅ 編集終了
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setIsUserEditMode(true)}
+                      style={{ padding: '8px 24px', background: '#fd7e14', color: 'white', border: '2px solid #e8690b', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}
+                    >
+                      ✏️ 雇用形態・役職・グループを編集
+                    </button>
+                  )}
+                  {isUserEditMode && (
+                    <p style={{ color: '#fd7e14', fontSize: 12, marginTop: 4 }}>編集モード中です。変更は即時保存されます。終了したら「編集終了」を押してください。</p>
+                  )}
+                </div>
                 {/* 並び替えボタン */}
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
                   {[
@@ -2544,11 +2566,12 @@ ${printData.map((page) => `
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center' }}>
                               <select
                                 value={user.employment_type || '正社員'}
+                                disabled={!isUserEditMode}
                                 onChange={async (e) => {
                                   await supabase.from('profiles').update({ employment_type: e.target.value }).eq('id', user.id);
                                   fetchUsers();
                                 }}
-                                style={{ padding: '2px 2px', fontSize: 11, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, width: '100%' }}
+                                style={{ padding: '2px 2px', fontSize: 11, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, width: '100%', opacity: isUserEditMode ? 1 : 0.7, cursor: isUserEditMode ? 'pointer' : 'default' }}
                               >
                                 {masterOptions.employment_type.map(v => <option key={v}>{v}</option>)}
                               </select>
@@ -2556,19 +2579,20 @@ ${printData.map((page) => `
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center' }}>
                               <select
                                 value={user.role_title || '一般'}
+                                disabled={!isUserEditMode}
                                 onChange={async (e) => {
                                   await supabase.from('profiles').update({ role_title: e.target.value }).eq('id', user.id);
                                   fetchUsers();
                                 }}
-                                style={{ padding: '2px 2px', fontSize: 11, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, width: '100%' }}
+                                style={{ padding: '2px 2px', fontSize: 11, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, width: '100%', opacity: isUserEditMode ? 1 : 0.7, cursor: isUserEditMode ? 'pointer' : 'default' }}
                               >
                                 {masterOptions.role_title.map(v => <option key={v}>{v}</option>)}
                               </select>
                             </td>
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', position: 'relative' }}>
                               <button
-                                onClick={() => setOpenGroupDropdown(openGroupDropdown === user.id ? null : user.id)}
-                                style={{ fontSize: 11, padding: '2px 4px', width: '100%', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, cursor: 'pointer', textAlign: 'left' }}
+                                onClick={() => isUserEditMode && setOpenGroupDropdown(openGroupDropdown === user.id ? null : user.id)}
+                                style={{ fontSize: 11, padding: '2px 4px', width: '100%', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, cursor: isUserEditMode ? 'pointer' : 'default', textAlign: 'left', opacity: isUserEditMode ? 1 : 0.7 }}
                               >
                                 {(user.group_names && user.group_names.length > 0) ? user.group_names.join('・') : '未設定'} ▼
                               </button>
