@@ -30,7 +30,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [editingUser, setEditingUser] = useState<string | null>(null);
   const [editName, setEditName] = useState<string>('');
-  const [showRetired, setShowRetired] = useState(false); // 退職者表示切り替え
+  const [showRetired, setShowRetired] = useState<'active' | 'retired' | 'all'>('active'); // 退職者表示切り替え
   const [userSortKey, setUserSortKey] = useState<'sort_order' | 'name' | 'registered_at' | 'submission_count'>('sort_order');
   const [userSortAsc, setUserSortAsc] = useState(true);
   const [editingSortOrder, setEditingSortOrder] = useState<string | null>(null);
@@ -145,7 +145,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
   // ユーザーソート
   const sortedUsers = useMemo(() => {
-    const filtered = showRetired ? users : users.filter(u => u.is_active !== false);
+    const filtered = showRetired === 'all' ? users : showRetired === 'retired' ? users.filter(u => u.is_active === false) : users.filter(u => u.is_active !== false);
     return [...filtered].sort((a, b) => {
       let aVal, bVal;
       if (userSortKey === 'sort_order') {
@@ -2410,17 +2410,22 @@ ${printData.map((page) => `
                   </p>
                   <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', flexWrap: 'wrap' }}>
                     <button
-                      onClick={() => setShowRetired(!showRetired)}
-                      style={{
-                        padding: '8px 16px',
-                        background: showRetired ? '#6c757d' : '#17a2b8',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '4px',
-                        cursor: 'pointer'
-                      }}
+                      onClick={() => setShowRetired('active')}
+                      style={{ padding: '8px 16px', background: showRetired === 'active' ? '#007bff' : '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
                     >
-                      {showRetired ? '現役のみ表示' : '退職者も表示'}
+                      現役のみ
+                    </button>
+                    <button
+                      onClick={() => setShowRetired('retired')}
+                      style={{ padding: '8px 16px', background: showRetired === 'retired' ? '#dc3545' : '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                    >
+                      退職者のみ
+                    </button>
+                    <button
+                      onClick={() => setShowRetired('all')}
+                      style={{ padding: '8px 16px', background: showRetired === 'all' ? '#28a745' : '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                    >
+                      全員表示
                     </button>
                     <button onClick={fetchUsers} style={{ padding: '8px 16px' }}>更新</button>
                   </div>
