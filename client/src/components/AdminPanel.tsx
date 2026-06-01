@@ -10,7 +10,7 @@ interface AdminPanelProps {
   onRefresh: () => void;
 }
 
-type AdminTab = 'approvals' | 'users' | 'groups' | 'reports' | 'trip_reports';
+type AdminTab = 'approvals' | 'users' | 'groups' | 'reports' | 'trip_reports' | 'leave_requests';
 
 const AdminPanel: React.FC<AdminPanelProps> = ({ 
   pendingApprovals, 
@@ -61,6 +61,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   
+  // 休暇申請用の状態
+  const [leaveRequests, setLeaveRequests] = useState<any[]>([]);
+  const [loadingLeaveRequests, setLoadingLeaveRequests] = useState(false);
+
   // 出張報告用の状態
   const [tripReports, setTripReports] = useState<any[]>([]);
   const [loadingTripReports, setLoadingTripReports] = useState(false);
@@ -391,6 +395,43 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   }, []);
 
+  // 休暇申請を取得
+  const fetchLeaveRequests = useCallback(async () => {
+    setLoadingLeaveRequests(true);
+    try {
+      // まず休暇申請を取得
+      const { data, error } = await supabase
+        .from('leave_requests')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) { console.error('休暇申請取得エラー:', error); return; }
+      if (!data) return;
+
+      // user_id と approver_id のプロフィールを一括取得
+      const ids = [...new Set([
+        ...data.map((r: any) => r.user_id),
+        ...data.map((r: any) => r.approver_id).filter(Boolean)
+      ])];
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, name, email')
+        .in('id', ids);
+      const profileMap: Record<string, any> = {};
+      (profiles || []).forEach((p: any) => { profileMap[p.id] = p; });
+
+      const enriched = data.map((r: any) => ({
+        ...r,
+        profile: profileMap[r.user_id] || null,
+        approver: profileMap[r.approver_id] || null,
+      }));
+      setLeaveRequests(enriched);
+    } catch (err) {
+      console.error('休暇申請の取得に失敗:', err);
+    } finally {
+      setLoadingLeaveRequests(false);
+    }
+  }, []);
+
   // タブが変更された時にデータを読み込み
   useEffect(() => {
     if (activeTab === 'users') {
@@ -404,7 +445,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     if (activeTab === 'trip_reports') {
       fetchTripReports();
     }
-  }, [activeTab, fetchUsers, fetchTripReports, fetchMasterOptions]);
+    if (activeTab === 'leave_requests') {
+      fetchLeaveRequests();
+    }
+  }, [activeTab, fetchUsers, fetchTripReports, fetchMasterOptions, fetchLeaveRequests]);
 
   // レポートタブでデータが準備できたら統計を計算
   useEffect(() => {
@@ -1676,6 +1720,12 @@ ${printData.map((page) => `
           onClick={() => setActiveTab('trip_reports')}
         >
           📍 出張報告
+        </button>
+        <button
+          style={tabStyle(activeTab === 'leave_requests')}
+          onClick={() => setActiveTab('leave_requests')}
+        >
+          🌿 休暇申請
         </button>
         <button
           style={tabStyle(activeTab === 'reports')}
@@ -3138,6 +3188,97 @@ ${printData.map((page) => `
             )}
           </div>
         )}
+
+        {/* 休暇申請タブ */}
+        {activeTab === 'leave_requests' && (
+          <div>
+            <h3 style={{ textAlign: 'center', marginBottom: 24, color: isDarkMode ? '#fff' : '#000' }}>🌿 休暇申請一覧</h3>
+            {loadingLeaveRequests ? (
+              <p style={{ textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>読み込み中...</p>
+            ) : leaveRequests.length === 0 ? (
+              <p style={{ textAlign: 'center', color: isDarkMode ? '#aaa' : '#666' }}>休暇申請はありません</p>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', color: isDarkMode ? '#fff' : '#000', fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: isDarkMode ? '#495057' : '#f8f9fa' }}>
+                      {['申請日', '申請者', '申請先', '種別', '開始日', '終了日', '日数', '理由', 'ステータス', '操作'].map(h => (
+                        <th key={h} style={{ padding: '10px 12px', textAlign: 'left', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, whiteSpace: 'nowrap', color: isDarkMode ? '#fff' : '#000' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {leaveRequests.map((req, i) => {
+                      const start = new Date(req.start_date);
+                      const end = new Date(req.end_date);
+                      const days = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                      const createdAt = new Date(req.created_at);
+                      const jst = new Date(createdAt.getTime() + 9 * 60 * 60 * 1000);
+                      const dateStr = `${jst.getFullYear()}/${String(jst.getMonth()+1).padStart(2,'0')}/${String(jst.getDate()).padStart(2,'0')}`;
+                      const statusLabel: Record<string, { label: string; color: string }> = {
+                        pending:          { label: 'リーダー承認待ち', color: '#ffc107' },
+                        pending_manager:  { label: 'マネージャー承認待ち', color: '#fd7e14' },
+                        leader_approved:  { label: 'マネージャー承認待ち', color: '#fd7e14' },
+                        manager_approved: { label: '経理承認待ち', color: '#17a2b8' },
+                        admin_approved:   { label: '社長承認待ち', color: '#6f42c1' },
+                        approved:         { label: '承認済み', color: '#28a745' },
+                        rejected:         { label: '却下', color: '#dc3545' },
+                      };
+                      const st = statusLabel[req.status] || { label: req.status, color: '#999' };
+                      return (
+                        <tr key={req.id} style={{ background: i % 2 === 0 ? (isDarkMode ? '#343a40' : 'white') : (isDarkMode ? '#3d4349' : '#f8f9fa') }}>
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}` }}>{dateStr}</td>
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}` }}>{req.profile?.name || req.profile?.email || '-'}</td>
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}` }}>{req.approver?.name || '-'}</td>
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}` }}>{req.leave_type === 'その他' ? req.leave_type_other : req.leave_type}</td>
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, whiteSpace: 'nowrap' }}>{req.start_date}</td>
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, whiteSpace: 'nowrap' }}>{req.end_date}</td>
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center' }}>{days}日</td>
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}` }}>{req.reason || '-'}</td>
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}` }}>
+                            <span style={{ padding: '3px 8px', borderRadius: 12, background: st.color, color: 'white', fontSize: 12, whiteSpace: 'nowrap' }}>{st.label}</span>
+                          </td>
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}` }}>
+                            {req.status !== 'approved' && req.status !== 'rejected' && (
+                              <div style={{ display: 'flex', gap: 6 }}>
+                                <button
+                                  onClick={async () => {
+                                    if (!window.confirm('承認しますか？')) return;
+                                    const nextStatus: Record<string, string> = {
+                                      pending: 'leader_approved',
+                                      pending_manager: 'manager_approved',
+                                      leader_approved: 'manager_approved',
+                                      manager_approved: 'admin_approved',
+                                      admin_approved: 'approved',
+                                    };
+                                    const next = nextStatus[req.status] || 'approved';
+                                    await supabase.from('leave_requests').update({ status: next }).eq('id', req.id);
+                                    fetchLeaveRequests();
+                                  }}
+                                  style={{ padding: '4px 10px', background: '#28a745', color: 'white', border: '2px solid #1e7e34', borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}
+                                >承認</button>
+                                <button
+                                  onClick={async () => {
+                                    const reason = window.prompt('却下理由を入力してください（任意）');
+                                    if (reason === null) return;
+                                    await supabase.from('leave_requests').update({ status: 'rejected', rejected_reason: reason || null }).eq('id', req.id);
+                                    fetchLeaveRequests();
+                                  }}
+                                  style={{ padding: '4px 10px', background: '#dc3545', color: 'white', border: '2px solid #bd2130', borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}
+                                >却下</button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
       </div>
 
       {/* 印刷プレビューモーダル */}
@@ -3355,6 +3496,7 @@ ${printData.map((page) => `
             </div>
           </div>
         ))}
+
       </div>
     </div>
   );
