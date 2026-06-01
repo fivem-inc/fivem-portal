@@ -2,6 +2,24 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 🚀 毎回の開発開始手順（ローカル）
+
+### 同じPCで続きから始める場合
+```
+cd C:\Users\[ユーザー名]\fivem-portal
+git pull
+cd client
+npm run dev
+```
+ブラウザで http://localhost:5173 を開く
+
+### Claude Code での作業開始
+1. Claude Code を開く
+2. 作業ディレクトリ: `C:\Users\[ユーザー名]\fivem-portal`
+3. CLAUDE.md の「次回やること」を確認して作業開始
+
+---
+
 ## 🖥️ 新しいPCでの環境構築手順
 
 ### 1. Node.js インストール
