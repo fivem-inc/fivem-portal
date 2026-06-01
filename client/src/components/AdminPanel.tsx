@@ -2606,7 +2606,7 @@ ${printData.map((page) => `
                                 onChange={(e) => {
                                   setConfirmChange({ userId: user.id, field: 'employment_type', label: `${user.name || user.email} の雇用形態`, oldVal: user.employment_type || '正社員', newVal: e.target.value });
                                 }}
-                                style={{ padding: '2px 2px', fontSize: 11, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, width: '100%', opacity: isUserEditMode ? 1 : 0.7, cursor: isUserEditMode ? 'pointer' : 'default' }}
+                                style={{ padding: '2px 2px', fontSize: 11, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, width: '100%', opacity: isUserEditMode ? 1 : 0.7, cursor: isUserEditMode ? 'pointer' : 'default', appearance: isUserEditMode ? 'auto' : 'none' as any }}
                               >
                                 {masterOptions.employment_type.map(v => <option key={v}>{v}</option>)}
                               </select>
@@ -2618,7 +2618,7 @@ ${printData.map((page) => `
                                 onChange={(e) => {
                                   setConfirmChange({ userId: user.id, field: 'role_title', label: `${user.name || user.email} の役職`, oldVal: user.role_title || '一般', newVal: e.target.value });
                                 }}
-                                style={{ padding: '2px 2px', fontSize: 11, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, width: '100%', opacity: isUserEditMode ? 1 : 0.7, cursor: isUserEditMode ? 'pointer' : 'default' }}
+                                style={{ padding: '2px 2px', fontSize: 11, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, width: '100%', opacity: isUserEditMode ? 1 : 0.7, cursor: isUserEditMode ? 'pointer' : 'default', appearance: isUserEditMode ? 'auto' : 'none' as any }}
                               >
                                 {masterOptions.role_title.map(v => <option key={v}>{v}</option>)}
                               </select>
