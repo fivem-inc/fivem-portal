@@ -30,11 +30,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [editingUser, setEditingUser] = useState<string | null>(null);
   const [editName, setEditName] = useState<string>('');
-  const [showRetired, setShowRetired] = useState<'active' | 'retired' | 'all'>('active'); // 退職者表示切り替え
+  const [showRetired, setShowRetired] = useState<'active' | 'retired' | 'all'>('active');
   const [userSortKey, setUserSortKey] = useState<'sort_order' | 'name' | 'registered_at' | 'submission_count'>('sort_order');
   const [userSortAsc, setUserSortAsc] = useState(true);
   const [editingSortOrder, setEditingSortOrder] = useState<string | null>(null);
   const [editSortOrderValue, setEditSortOrderValue] = useState<string>('');
+  const [openGroupDropdown, setOpenGroupDropdown] = useState<string | null>(null);
+  const [masterOptions, setMasterOptions] = useState<{ employment_type: string[]; role_title: string[]; group: string[] }>({ employment_type: [], role_title: [], group: [] });
   
   // レポート用の状態
   const [reportStats, setReportStats] = useState<any>(null);
@@ -129,7 +131,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           registered_at,
           employment_type,
           role_title,
-          group_name,
+          group_names,
           leave_request_enabled
         `)
         .order('sort_order', { ascending: true, nullsFirst: false });
@@ -169,6 +171,18 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
       return userSortAsc ? aVal - bVal : bVal - aVal;
     });
   }, [users, showRetired, userSortKey, userSortAsc]);
+
+  // マスターオプション取得
+  const fetchMasterOptions = useCallback(async () => {
+    const { data } = await supabase.from('master_options').select('category, value').order('sort_order');
+    if (data) {
+      const opts: { employment_type: string[]; role_title: string[]; group: string[] } = { employment_type: [], role_title: [], group: [] };
+      data.forEach((row: any) => {
+        if (row.category in opts) opts[row.category as keyof typeof opts].push(row.value);
+      });
+      setMasterOptions(opts);
+    }
+  }, []);
 
   const handleUserSort = (key: typeof userSortKey) => {
     if (userSortKey === key) {
@@ -375,11 +389,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   useEffect(() => {
     if (activeTab === 'users') {
       fetchUsers();
+      fetchMasterOptions();
     }
     if (activeTab === 'trip_reports') {
       fetchTripReports();
     }
-  }, [activeTab, fetchUsers, fetchTripReports]);
+  }, [activeTab, fetchUsers, fetchTripReports, fetchMasterOptions]);
 
   // レポートタブでデータが準備できたら統計を計算
   useEffect(() => {
@@ -2460,16 +2475,16 @@ ${printData.map((page) => `
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
                       <tr style={{ backgroundColor: isDarkMode ? '#495057' : '#f8f9fa' }}>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', width: 60 }}>No.</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>名前</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>メールアドレス</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>雇用形態</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>役職</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>グループ</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>申請数</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>登録日</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>状態</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000' }}>操作</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', width: 45, fontSize: 12 }}>No.</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 100 }}>名前</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000', fontSize: 12 }}>メール</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 80 }}>雇用形態</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 110 }}>役職</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 130 }}>グループ</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 50 }}>件数</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 85 }}>登録日</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 55 }}>状態</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000', fontSize: 12 }}>操作</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2479,7 +2494,7 @@ ${printData.map((page) => `
                         return (
                           <tr key={user.id} style={{ opacity: user.is_active === false ? 0.6 : 1, background: sortedUsers.indexOf(user) % 2 === 0 ? (isDarkMode ? '#343a40' : 'white') : (isDarkMode ? '#3d4349' : '#f8f9fa') }}>
                             {/* No.列 */}
-                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>
                               {editingSortOrder === user.id ? (
                                 <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                                   <input
@@ -2504,7 +2519,7 @@ ${printData.map((page) => `
                               )}
                             </td>
                             {/* 名前列 */}
-                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', color: isDarkMode ? '#fff' : '#000' }}>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', color: isDarkMode ? '#fff' : '#000', fontSize: 12 }}>
                               {editingUser === user.id ? (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                   <input
@@ -2525,73 +2540,81 @@ ${printData.map((page) => `
                                 </div>
                               )}
                             </td>
-                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', color: isDarkMode ? '#fff' : '#000', fontSize: 13 }}>{user.email}</td>
-                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center' }}>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', color: isDarkMode ? '#adb5bd' : '#555', fontSize: 11, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={user.email}>{user.email}</td>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center' }}>
                               <select
                                 value={user.employment_type || '正社員'}
                                 onChange={async (e) => {
                                   await supabase.from('profiles').update({ employment_type: e.target.value }).eq('id', user.id);
                                   fetchUsers();
                                 }}
-                                style={{ padding: '2px 4px', fontSize: 12, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4 }}
+                                style={{ padding: '2px 2px', fontSize: 11, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, width: '100%' }}
                               >
-                                <option>正社員</option>
-                                <option>パート</option>
+                                {masterOptions.employment_type.map(v => <option key={v}>{v}</option>)}
                               </select>
                             </td>
-                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center' }}>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center' }}>
                               <select
                                 value={user.role_title || '一般'}
                                 onChange={async (e) => {
                                   await supabase.from('profiles').update({ role_title: e.target.value }).eq('id', user.id);
                                   fetchUsers();
                                 }}
-                                style={{ padding: '2px 4px', fontSize: 12, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4 }}
+                                style={{ padding: '2px 2px', fontSize: 11, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, width: '100%' }}
                               >
-                                <option>一般</option>
-                                <option>リーダー</option>
-                                <option>マネージャー</option>
-                                <option>社長</option>
+                                {masterOptions.role_title.map(v => <option key={v}>{v}</option>)}
                               </select>
                             </td>
-                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center' }}>
-                              <select
-                                value={user.group_name || ''}
-                                onChange={async (e) => {
-                                  await supabase.from('profiles').update({ group_name: e.target.value || null }).eq('id', user.id);
-                                  fetchUsers();
-                                }}
-                                style={{ padding: '2px 4px', fontSize: 12, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4 }}
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', position: 'relative' }}>
+                              <button
+                                onClick={() => setOpenGroupDropdown(openGroupDropdown === user.id ? null : user.id)}
+                                style={{ fontSize: 11, padding: '2px 4px', width: '100%', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, cursor: 'pointer', textAlign: 'left' }}
                               >
-                                <option value="">未設定</option>
-                                <option>こども</option>
-                                <option>パート・アルバイトスタッフ</option>
-                                <option>マネージャー・リーダー</option>
-                                <option>マネージャー専用</option>
-                                <option>三役</option>
-                                <option>大人</option>
-                                <option>正社員・契約社員</option>
-                              </select>
-                            </td>
-                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>{submissions.filter(s => s.profiles?.email === user.email).length}</td>
-                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px', color: isDarkMode ? '#adb5bd' : '#666', fontSize: 13, whiteSpace: 'nowrap' }}>{regDateStr}</td>
-                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px' }}>
-                              {user.is_active === false ? (
-                                <span style={{ color: '#dc3545', fontWeight: 'bold', fontSize: '12px' }}>退職済み</span>
-                              ) : (
-                                <span style={{ color: '#28a745', fontWeight: 'bold', fontSize: '12px' }}>現役</span>
+                                {(user.group_names && user.group_names.length > 0) ? user.group_names.join('・') : '未設定'} ▼
+                              </button>
+                              {openGroupDropdown === user.id && (
+                                <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 100, background: isDarkMode ? '#343a40' : 'white', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, padding: '6px 8px', minWidth: 160, boxShadow: '0 2px 8px rgba(0,0,0,0.2)', textAlign: 'left' }}>
+                                  {masterOptions.group.map(g => {
+                                    const checked = (user.group_names || []).includes(g);
+                                    return (
+                                      <label key={g} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', cursor: 'pointer', fontSize: 12, color: isDarkMode ? '#fff' : '#000', whiteSpace: 'nowrap' }}>
+                                        <input
+                                          type="checkbox"
+                                          checked={checked}
+                                          onChange={async () => {
+                                            const current: string[] = user.group_names || [];
+                                            const next = checked ? current.filter((x: string) => x !== g) : [...current, g];
+                                            await supabase.from('profiles').update({ group_names: next }).eq('id', user.id);
+                                            setUsers(prev => prev.map(u => u.id === user.id ? { ...u, group_names: next } : u));
+                                          }}
+                                        />
+                                        {g}
+                                      </label>
+                                    );
+                                  })}
+                                  <button onClick={() => setOpenGroupDropdown(null)} style={{ marginTop: 6, padding: '2px 8px', fontSize: 11, background: '#6c757d', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', width: '100%' }}>閉じる</button>
+                                </div>
                               )}
                             </td>
-                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '8px' }}>
-                              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                                <button style={{ padding: '4px 8px', background: '#17a2b8', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }} onClick={() => setActiveTab('reports')}>履歴確認</button>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12 }}>{submissions.filter(s => s.profiles?.email === user.email).length}</td>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', color: isDarkMode ? '#adb5bd' : '#666', fontSize: 11, whiteSpace: 'nowrap' }}>{regDateStr}</td>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px' }}>
+                              {user.is_active === false ? (
+                                <span style={{ color: '#dc3545', fontWeight: 'bold', fontSize: '11px' }}>退職済</span>
+                              ) : (
+                                <span style={{ color: '#28a745', fontWeight: 'bold', fontSize: '11px' }}>現役</span>
+                              )}
+                            </td>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px' }}>
+                              <div style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
+                                <button style={{ padding: '3px 6px', background: '#17a2b8', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }} onClick={() => setActiveTab('reports')}>履歴</button>
                                 {user.email !== 'fivem.kyoto@gmail.com' && (
                                   <>
-                                    <button style={{ padding: '4px 8px', background: user.is_active === false ? '#28a745' : '#fd7e14', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }} onClick={() => handleToggleActive(user.id, user.is_active !== false)}>
+                                    <button style={{ padding: '3px 6px', background: user.is_active === false ? '#28a745' : '#fd7e14', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }} onClick={() => handleToggleActive(user.id, user.is_active !== false)}>
                                       {user.is_active === false ? '復活' : '退職'}
                                     </button>
                                     {user.is_active === false && (
-                                      <button style={{ padding: '4px 8px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }} onClick={() => handleDeleteUser(user.id, user.name || user.email)}>完全削除</button>
+                                      <button style={{ padding: '3px 6px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }} onClick={() => handleDeleteUser(user.id, user.name || user.email)}>削除</button>
                                     )}
                                   </>
                                 )}
