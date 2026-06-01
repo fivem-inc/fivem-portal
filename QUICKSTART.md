@@ -1,5 +1,24 @@
 # 🚀 Claude作業開始メモ（どのPCでもコピペするだけ）
 
+## 📌 別のPCで作業を再開する方法
+
+**チャット履歴は別PCでは見られません。でも大丈夫！**
+
+### 手順（3ステップ）
+
+1. このファイル（QUICKSTART.md）を開く
+   👉 https://github.com/fivem-inc/fivem-portal/blob/master/QUICKSTART.md
+
+2. 下の「Claudeへの最初のメッセージ」をコピー
+
+3. Claude Codeを起動して貼り付ける
+
+→ ClaudeがGitHubとCLAUDE.mdから状況を把握して続きから作業してくれます！
+
+**コードはGitHubに全部保存されているので、チャット履歴がなくても続きから作業できます。**
+
+---
+
 ## Claudeへの最初のメッセージ（コピペ用）
 
 ```
