@@ -2579,7 +2579,7 @@ ${printData.map((page) => `
                       onClick={() => setIsUserEditMode(true)}
                       style={{ padding: '5px 14px', background: '#fd7e14', color: 'white', border: '2px solid #e8690b', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: 12 }}
                     >
-                      ✏️ 雇用形態・役職・グループを編集
+                      ✏️ 雇用形態・役職を編集
                     </button>
                   )}
                 </div>
