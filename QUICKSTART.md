@@ -44,7 +44,10 @@ git add . && git commit -m "変更内容" && git push
 - SMTP: office@five-m.com（Gmail）
 
 【現在の状況・次回やること】
-CLAUDE.mdを読んで確認してください。
+以下の2つを必ず両方読んで確認してください：
+1. CLAUDE.md（プロジェクトルートにある）
+2. メモリファイル: C:\Users\kohei\.claude\projects\D---------Claude-kohei\memory\work_history.md
+※ work_history.md に開発ロードマップ・次回タスクが記録されています。
 ```
 
 ---
