@@ -2605,7 +2605,7 @@ ${printData.map((page) => `
                                 <table style={{ width: '100%', borderCollapse: 'collapse', color: isDarkMode ? '#fff' : '#000' }}>
                                   <thead>
                                     <tr style={{ background: isDarkMode ? '#495057' : '#f8f9fa' }}>
-                                      {['報告日時', '報告者', '種別', '区分', '場所', '備考', 'GPS'].map(h => (
+                                      {['報告日時', '報告者', '種別', '区分', '場所', '備考', 'GPS', '操作'].map(h => (
                                         <th key={h} style={{ padding: '8px 12px', textAlign: 'left', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, whiteSpace: 'nowrap', color: isDarkMode ? '#fff' : '#000', fontSize: 13 }}>{h}</th>
                                       ))}
                                     </tr>
@@ -2634,6 +2634,35 @@ ${printData.map((page) => `
                                                 🗺️ 地図
                                               </a>
                                             ) : '-'}
+                                          </td>
+                                          <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, fontSize: 13 }}>
+                                            <button
+                                              onClick={async () => {
+                                                const reporter = report.profiles?.name || report.profiles?.email || '不明';
+                                                const dateStr = new Date(report.created_at).toLocaleString('ja-JP');
+                                                if (!window.confirm(`以下の出張報告を削除しますか？\n\n報告者: ${reporter}\n日時: ${dateStr}\n場所: ${report.location}\n\nこの操作は取り消せません。`)) return;
+                                                const { error } = await supabase
+                                                  .from('business_trip_reports')
+                                                  .delete()
+                                                  .eq('id', report.id);
+                                                if (error) {
+                                                  alert('削除に失敗しました: ' + error.message);
+                                                } else {
+                                                  fetchTripReports();
+                                                }
+                                              }}
+                                              style={{
+                                                padding: '3px 10px',
+                                                background: '#dc3545',
+                                                color: 'white',
+                                                border: 'none',
+                                                borderRadius: 4,
+                                                cursor: 'pointer',
+                                                fontSize: 12
+                                              }}
+                                            >
+                                              削除
+                                            </button>
                                           </td>
                                         </tr>
                                       );
