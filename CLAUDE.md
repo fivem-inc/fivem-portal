@@ -167,9 +167,67 @@ VITE_SUPABASE_ANON_KEY=sb_publishable_ZA6Udr3Ww9_dQO0CKKhSGw_Phx8Kegp
 - コミット: `80dc859`
 
 ### 次回やること（優先順）
-1. **Phase 3: 休暇・有給申請**（優先①）
+1. **Phase 3: 休暇・有給申請**（優先①）← 2026-06-02に着手・途中
 2. **Phase 1: メール送信機能**（優先②）
 3. **Phase 4: 出張報告拡張**（住所変換・Slackチャンネル選択）
+
+---
+
+## ✅ 2026-06-02 Phase3: 休暇申請機能 実装（途中）
+
+### 完了した内容
+- **leave_requestsテーブル作成**（Supabase）
+  - id, user_id, leave_type, leave_type_other, start_date, end_date, reason, status, current_approver, approver_id, rejected_reason
+- **leave_approvalsテーブル作成**（Supabase）
+- **RLSポリシー設定**（insert_own / select_own / select_admin / update_admin）
+- **LeaveRequest.tsx** 休暇申請フォーム作成
+  - 申請先選択（リーダー上・マネージャー下の順）
+  - 休暇種別（有給・特別休暇・その他）
+  - 開始日・終了日・日数自動計算
+  - 確認モーダル・完了画面（ホームに戻る／続けて申請）
+- **App.tsx** ナビに「🌿 休暇申請」追加・ルート追加
+- **useAuth.ts** roleTitle・canLeave追加（管理者・リーダー等は常時表示）
+- **AdminPanel.tsx** 休暇申請タブ追加
+  - 申請一覧（申請日・申請者・申請先・種別・日付・日数・理由・ステータス）
+  - 承認/却下ボタン（段階承認フロー対応）
+
+### 段階承認フロー
+```
+通常スタッフ: 申請 → リーダー(pending) → マネージャー(leader_approved) → 経理(manager_approved) → 社長(admin_approved) → 完了(approved)
+管理部スタッフ: 申請 → マネージャー(pending_manager) → 経理(manager_approved) → 社長(admin_approved) → 完了
+```
+
+### ⚠️ 今日のトラブルと解決方法
+
+1. **Viteのぐるぐる問題（ページが開かない）**
+   - 原因: HMRのホットリロード中にページが固まる
+   - 解決: `npm run dev` を止めて再起動するとキャッシュから読まれて開く
+
+2. **leave_type_other カラムが存在しないエラー（400エラー）**
+   - 原因: CREATE TABLE時にカラムを入れ忘れた
+   - 解決: `ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS leave_type_other TEXT;`
+
+3. **is_admin カラムが存在しないエラー**
+   - 原因: profilesテーブルにis_adminカラムはない（app_metadataで管理）
+   - 解決: RLSポリシーから `is_admin` を削除し `auth.jwt() ->> 'role' = 'admin'` に変更
+
+4. **管理者画面の休暇申請タブが表示されない**
+   - 原因: タブコンテンツが印刷プレビューモーダルの中に入ってしまった
+   - 解決: tabContentStyle divの内側・印刷モーダルの前に配置し直した
+
+5. **approver_id のリレーションエラー（Supabase join失敗）**
+   - 原因: `approver_id` が `auth.users` を参照しており `profiles` に直接joinできない
+   - 解決: 別クエリで profiles を取得して手動でマージ
+
+### 🔜 次回続きからやること（Phase3残タスク）
+1. **申請者側の休暇申請履歴表示**（自分の申請一覧・ステータス確認）
+2. **承認者への通知**（承認が来たら表示、却下理由表示）
+3. **パートへの有給申請フォーム送信**（管理者がパートを指定して一時表示）
+4. **Phase 1: メール送信機能**
+
+### コミット
+- `2bc4c23` Phase3: 休暇申請フォーム実装
+- `e8cdb96` Phase3: 管理者画面に休暇申請タブ追加
 
 ---
 
