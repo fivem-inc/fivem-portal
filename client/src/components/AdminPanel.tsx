@@ -64,6 +64,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   // 休暇申請用の状態
   const [leaveRequests, setLeaveRequests] = useState<any[]>([]);
   const [loadingLeaveRequests, setLoadingLeaveRequests] = useState(false);
+  const [leaveStatusFilter, setLeaveStatusFilter] = useState<string>('active');
 
   // 出張報告用の状態
   const [tripReports, setTripReports] = useState<any[]>([]);
@@ -407,10 +408,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
       if (error) { console.error('休暇申請取得エラー:', error); return; }
       if (!data) return;
 
-      // user_id と approver_id のプロフィールを一括取得
+      // user_id / approver_id / approver2_id のプロフィールを一括取得
       const ids = [...new Set([
         ...data.map((r: any) => r.user_id),
-        ...data.map((r: any) => r.approver_id).filter(Boolean)
+        ...data.map((r: any) => r.approver_id).filter(Boolean),
+        ...data.map((r: any) => r.approver2_id).filter(Boolean),
       ])];
       const { data: profiles } = await supabase
         .from('profiles')
@@ -423,6 +425,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
         ...r,
         profile: profileMap[r.user_id] || null,
         approver: profileMap[r.approver_id] || null,
+        approver2: profileMap[r.approver2_id] || null,
       }));
       setLeaveRequests(enriched);
     } catch (err) {
@@ -3190,94 +3193,161 @@ ${printData.map((page) => `
         )}
 
         {/* 休暇申請タブ */}
-        {activeTab === 'leave_requests' && (
-          <div>
-            <h3 style={{ textAlign: 'center', marginBottom: 24, color: isDarkMode ? '#fff' : '#000' }}>🌿 休暇申請一覧</h3>
-            {loadingLeaveRequests ? (
-              <p style={{ textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>読み込み中...</p>
-            ) : leaveRequests.length === 0 ? (
-              <p style={{ textAlign: 'center', color: isDarkMode ? '#aaa' : '#666' }}>休暇申請はありません</p>
-            ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', color: isDarkMode ? '#fff' : '#000', fontSize: 13 }}>
-                  <thead>
-                    <tr style={{ background: isDarkMode ? '#495057' : '#f8f9fa' }}>
-                      {['申請日', '申請者', '申請先', '種別', '開始日', '終了日', '日数', '理由', 'ステータス', '操作'].map(h => (
-                        <th key={h} style={{ padding: '10px 12px', textAlign: 'left', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, whiteSpace: 'nowrap', color: isDarkMode ? '#fff' : '#000' }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {leaveRequests.map((req, i) => {
-                      const start = new Date(req.start_date);
-                      const end = new Date(req.end_date);
-                      const days = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-                      const createdAt = new Date(req.created_at);
-                      const jst = new Date(createdAt.getTime() + 9 * 60 * 60 * 1000);
-                      const dateStr = `${jst.getFullYear()}/${String(jst.getMonth()+1).padStart(2,'0')}/${String(jst.getDate()).padStart(2,'0')}`;
-                      const statusLabel: Record<string, { label: string; color: string }> = {
-                        pending:          { label: 'リーダー承認待ち', color: '#ffc107' },
-                        pending_manager:  { label: 'マネージャー承認待ち', color: '#fd7e14' },
-                        leader_approved:  { label: 'マネージャー承認待ち', color: '#fd7e14' },
-                        manager_approved: { label: '経理承認待ち', color: '#17a2b8' },
-                        admin_approved:   { label: '社長承認待ち', color: '#6f42c1' },
-                        approved:         { label: '承認済み', color: '#28a745' },
-                        rejected:         { label: '却下', color: '#dc3545' },
-                      };
-                      const st = statusLabel[req.status] || { label: req.status, color: '#999' };
-                      return (
-                        <tr key={req.id} style={{ background: i % 2 === 0 ? (isDarkMode ? '#343a40' : 'white') : (isDarkMode ? '#3d4349' : '#f8f9fa') }}>
-                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}` }}>{dateStr}</td>
-                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}` }}>{req.profile?.name || req.profile?.email || '-'}</td>
-                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}` }}>{req.approver?.name || '-'}</td>
-                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}` }}>{req.leave_type === 'その他' ? req.leave_type_other : req.leave_type}</td>
-                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, whiteSpace: 'nowrap' }}>{req.start_date}</td>
-                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, whiteSpace: 'nowrap' }}>{req.end_date}</td>
-                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center' }}>{days}日</td>
-                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}` }}>{req.reason || '-'}</td>
-                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}` }}>
-                            <span style={{ padding: '3px 8px', borderRadius: 12, background: st.color, color: 'white', fontSize: 12, whiteSpace: 'nowrap' }}>{st.label}</span>
-                          </td>
-                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}` }}>
-                            {req.status !== 'approved' && req.status !== 'rejected' && (
-                              <div style={{ display: 'flex', gap: 6 }}>
-                                <button
-                                  onClick={async () => {
-                                    if (!window.confirm('承認しますか？')) return;
-                                    const nextStatus: Record<string, string> = {
-                                      pending: 'leader_approved',
-                                      pending_manager: 'manager_approved',
-                                      leader_approved: 'manager_approved',
-                                      manager_approved: 'admin_approved',
-                                      admin_approved: 'approved',
-                                    };
-                                    const next = nextStatus[req.status] || 'approved';
-                                    await supabase.from('leave_requests').update({ status: next }).eq('id', req.id);
-                                    fetchLeaveRequests();
-                                  }}
-                                  style={{ padding: '4px 10px', background: '#28a745', color: 'white', border: '2px solid #1e7e34', borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}
-                                >承認</button>
-                                <button
-                                  onClick={async () => {
-                                    const reason = window.prompt('却下理由を入力してください（任意）');
-                                    if (reason === null) return;
-                                    await supabase.from('leave_requests').update({ status: 'rejected', rejected_reason: reason || null }).eq('id', req.id);
-                                    fetchLeaveRequests();
-                                  }}
-                                  style={{ padding: '4px 10px', background: '#dc3545', color: 'white', border: '2px solid #bd2130', borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}
-                                >却下</button>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+        {activeTab === 'leave_requests' && (() => {
+          const STATUS_ORDER: Record<string, number> = { pending: 1, step2_pending: 2, manager_approved: 3, admin_approved: 4, approved: 5, rejected: 6 };
+          const leaveFilters = [
+            { key: 'active',   label: '承認待ち' },
+            { key: 'approved', label: '承認済み' },
+            { key: 'rejected', label: '却下' },
+            { key: 'all',      label: 'すべて' },
+          ];
+          const filteredLeave = leaveRequests
+            .filter(r => {
+              if (leaveStatusFilter === 'all') return true;
+              if (leaveStatusFilter === 'active') return !['approved','rejected'].includes(r.status);
+              return r.status === leaveStatusFilter;
+            })
+            .sort((a, b) => {
+              const so = (STATUS_ORDER[a.status] || 9) - (STATUS_ORDER[b.status] || 9);
+              if (so !== 0) return so;
+              return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+            });
+
+          const getStatusDisplay = (req: any): { role: string; name: string; color: string } => {
+            if (req.status === 'pending')          return { role: `① ${req.approver?.role_title || '一人目'}`, name: req.approver?.name || '承認待ち', color: '#ffc107' };
+            if (req.status === 'step2_pending')    return { role: '② マネージャー', name: req.approver2?.name || '-', color: '#fd7e14' };
+            if (req.status === 'manager_approved') return { role: '③ 経理', name: '管理者', color: '#17a2b8' };
+            if (req.status === 'admin_approved')   return { role: '', name: '④ 社長', color: '#6f42c1' };
+            if (req.status === 'approved')         return { role: '', name: '承認済み', color: '#28a745' };
+            if (req.status === 'rejected')         return { role: '', name: '却下', color: '#dc3545' };
+            return { role: '', name: req.status, color: '#999' };
+          };
+
+          return (
+            <div>
+              <h3 style={{ textAlign: 'center', marginBottom: 16, color: isDarkMode ? '#fff' : '#000' }}>🌿 休暇申請一覧</h3>
+
+              {/* フィルターボタン */}
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16, justifyContent: 'center' }}>
+                {leaveFilters.map(f => (
+                  <button
+                    key={f.key}
+                    onClick={() => setLeaveStatusFilter(f.key)}
+                    style={{
+                      padding: '5px 12px', borderRadius: 16, border: 'none', cursor: 'pointer', fontSize: 12,
+                      background: leaveStatusFilter === f.key ? '#007bff' : (isDarkMode ? '#495057' : '#e9ecef'),
+                      color: leaveStatusFilter === f.key ? 'white' : (isDarkMode ? '#fff' : '#333'),
+                      fontWeight: leaveStatusFilter === f.key ? 'bold' : 'normal',
+                    }}
+                  >{f.label}</button>
+                ))}
               </div>
-            )}
-          </div>
-        )}
+
+              {loadingLeaveRequests ? (
+                <p style={{ textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>読み込み中...</p>
+              ) : filteredLeave.length === 0 ? (
+                <p style={{ textAlign: 'center', color: isDarkMode ? '#aaa' : '#666' }}>該当する申請はありません</p>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', color: isDarkMode ? '#fff' : '#000', fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ background: isDarkMode ? '#495057' : '#f8f9fa' }}>
+                        {[
+                          { label: '申請日', w: 70 }, { label: '申請者', w: 65 }, { label: '申請先', w: 65 },
+                          { label: '種別', w: 55 }, { label: '開始日', w: 55 }, { label: '終了日', w: 55 },
+                          { label: '日数', w: 40 }, { label: '理由', w: 70 }, { label: '承認状況', w: 85 }, { label: '操作', w: 90 },
+                        ].map(col => (
+                          <th key={col.label} style={{ padding: '8px 4px', textAlign: 'center', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, color: isDarkMode ? '#fff' : '#000', width: col.w, fontSize: 12 }}>{col.label}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredLeave.map((req, i) => {
+                        const end = new Date(req.end_date);
+                        const days = Math.floor((end.getTime() - new Date(req.start_date).getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                        const jst = new Date(new Date(req.created_at).getTime() + 9 * 60 * 60 * 1000);
+                        const st = getStatusDisplay(req);
+                        return (
+                          <tr key={req.id} style={{ background: i % 2 === 0 ? (isDarkMode ? '#343a40' : 'white') : (isDarkMode ? '#3d4349' : '#f8f9fa') }}>
+                            <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12 }}>
+                              <div>{jst.getFullYear()}</div><div>{jst.getMonth()+1}/{jst.getDate()}</div>
+                            </td>
+                            <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12 }}>
+                              {(req.profile?.name || '-').split(/[\s　]/).map((s: string, j: number) => <div key={j}>{s}</div>)}
+                            </td>
+                            <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12 }}>
+                              {(req.approver?.name || '-').split(/[\s　]/).map((s: string, j: number) => <div key={j}>{s}</div>)}
+                            </td>
+                            <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12, wordBreak: 'break-word' }}>{req.leave_type === 'その他' ? req.leave_type_other : req.leave_type}</td>
+                            <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12 }}>
+                              {(() => { const d = new Date(req.start_date); return <><div>{d.getFullYear()}</div><div>{d.getMonth()+1}/{d.getDate()}</div></>; })()}
+                            </td>
+                            <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12 }}>
+                              {(() => { const d = new Date(req.end_date); return <><div>{d.getFullYear()}</div><div>{d.getMonth()+1}/{d.getDate()}</div></>; })()}
+                            </td>
+                            <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12 }}>{days}日</td>
+                            <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12, wordBreak: 'break-word' }}>{req.reason || '-'}</td>
+                            <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center' }}>
+                              <div style={{ display: 'inline-block', padding: '3px 8px', borderRadius: 8, background: st.color, color: 'white', textAlign: 'center', lineHeight: 1.4 }}>
+                                {st.role && <div style={{ fontSize: 9, opacity: 0.9, whiteSpace: 'nowrap' }}>{st.role}</div>}
+                                <div style={{ fontWeight: 'bold', fontSize: 11, whiteSpace: 'nowrap' }}>{st.name}</div>
+                              </div>
+                            </td>
+                            <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center' }}>
+                              <div style={{ display: 'flex', gap: 4, justifyContent: 'center', alignItems: 'center' }}>
+                              {req.status === 'rejected' && (
+                                <button
+                                  onClick={async () => {
+                                    if (!window.confirm('却下を取り消して最初に戻しますか？')) return;
+                                    await supabase.from('leave_requests').update({ status: 'pending', rejected_reason: null }).eq('id', req.id);
+                                    fetchLeaveRequests();
+                                  }}
+                                  style={{ padding: '4px 8px', background: '#6c757d', color: 'white', border: '2px solid #545b62', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}
+                                >↩ 取り消し</button>
+                              )}
+                              {req.status !== 'approved' && req.status !== 'rejected' && (
+                                <div style={{ display: 'flex', gap: 4 }}>
+                                  <button
+                                    onClick={async () => {
+                                      if (!window.confirm('承認しますか？')) return;
+                                      const nextStatus: Record<string, string> = { pending: 'manager_approved', step2_pending: 'manager_approved', manager_approved: 'admin_approved', admin_approved: 'approved' };
+                                      await supabase.from('leave_requests').update({ status: nextStatus[req.status] || 'approved' }).eq('id', req.id);
+                                      fetchLeaveRequests();
+                                    }}
+                                    style={{ padding: '4px 8px', background: '#28a745', color: 'white', border: '2px solid #1e7e34', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}
+                                  >承認</button>
+                                  <button
+                                    onClick={async () => {
+                                      const reason = window.prompt('却下理由を入力してください（任意）');
+                                      if (reason === null) return;
+                                      await supabase.from('leave_requests').update({ status: 'rejected', rejected_reason: reason || null }).eq('id', req.id);
+                                      fetchLeaveRequests();
+                                    }}
+                                    style={{ padding: '4px 8px', background: '#dc3545', color: 'white', border: '2px solid #bd2130', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}
+                                  >却下</button>
+                                </div>
+                              )}
+                              <button
+                                onClick={async () => {
+                                  if (!window.confirm('この申請を削除しますか？')) return;
+                                  if (!window.confirm('本当に削除します。この操作は取り消せません。')) return;
+                                  await supabase.from('leave_requests').delete().eq('id', req.id);
+                                  fetchLeaveRequests();
+                                }}
+                                style={{ padding: '4px 3px', background: 'transparent', color: isDarkMode ? '#888' : '#aaa', border: `1px solid ${isDarkMode ? '#555' : '#ddd'}`, borderRadius: 4, cursor: 'pointer', fontSize: 9, writingMode: 'vertical-rl', letterSpacing: 1 }}
+                              >削除</button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
       </div>
 

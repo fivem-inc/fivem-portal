@@ -13,11 +13,12 @@ interface UseAuthReturn {
   handleLogout: () => Promise<void>;
 }
 
+
 export const useAuth = (): UseAuthReturn => {
   const { user } = useContext(AuthContext);
-  const [loading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [profileName, setProfileName] = useState('');
-  const [roleTitle, setRoleTitle] = useState('一般');
+  const [roleTitle, setRoleTitle] = useState('');
   const [canLeave, setCanLeave] = useState(false);
 
   const isAdmin = user?.app_metadata?.role === 'admin';
@@ -35,12 +36,12 @@ export const useAuth = (): UseAuthReturn => {
 
       if (!error && data) {
         if (data.name) setProfileName(data.name);
-        if (data.role_title) setRoleTitle(data.role_title);
-        // 休暇申請表示条件: 管理者・リーダー・マネージャー・社長 は常時表示
-        // パート(一般) は leave_request_enabled=true のときのみ表示
-        const alwaysShow = ['リーダー', 'マネージャー', '社長', '管理者'].includes(data.role_title || '');
+        const role = data.role_title || '一般';
+        setRoleTitle(role);
+        const alwaysShow = ['リーダー', 'マネージャー', '社長', '管理者'].includes(role);
         const isAdmin = user?.app_metadata?.role === 'admin';
         setCanLeave(alwaysShow || isAdmin);
+        setLoading(false);
         return;
       }
     } catch (error) {
@@ -51,6 +52,7 @@ export const useAuth = (): UseAuthReturn => {
     if (user.user_metadata?.name) {
       setProfileName(user.user_metadata.name);
     }
+    setLoading(false);
   }, [user]);
 
   const handleLogout = useCallback(async () => {

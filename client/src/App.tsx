@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Routes, Route, Navigate, Outlet, BrowserRouter, useNavigate, useLocation } from 'react-router-dom';
 import SignIn from './pages/SignIn';
 import ResetPassword from './pages/ResetPassword';
@@ -10,8 +10,10 @@ import HistoryView from './components/HistoryView';
 import MonthlyApplicationStatus from './components/MonthlyApplicationStatus';
 import BusinessTripReportForm from './components/BusinessTripReport';
 import LeaveRequestForm from './components/LeaveRequest';
+import LeaveApprovals from './components/LeaveApprovals';
 import { AuthProvider } from './contexts/AuthContext.tsx';
 import { useAuth } from './hooks/useAuth';
+import { supabase } from './lib/supabaseClient';
 import { useExpenses } from './hooks/useExpenses';
 import type { Expense, Submission } from './types';
 
@@ -82,6 +84,62 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   );
 };
 
+// 休暇申請の承認待ち通知バナー
+const LeaveApprovalBanner: React.FC<{ userId: string; roleTitle: string; isAdmin: boolean }> = ({ userId, roleTitle, isAdmin }) => {
+  const navigate = useNavigate();
+  const [pendingCount, setPendingCount] = useState(0);
+
+  useEffect(() => {
+    const approverRoles = ['リーダー', 'マネージャー', '社長', '管理者'];
+    if (!isAdmin && !approverRoles.includes(roleTitle)) return;
+
+    const fetchPending = async () => {
+      // 自分の番の申請のみカウント
+      // 一人目: status=pending かつ approver_id=自分
+      // 二人目: status=step2_pending かつ approver2_id=自分
+      const { data: d1 } = await supabase
+        .from('leave_requests')
+        .select('id')
+        .eq('status', 'pending')
+        .eq('approver_id', userId);
+      const { data: d2 } = await supabase
+        .from('leave_requests')
+        .select('id')
+        .eq('status', 'step2_pending')
+        .eq('approver2_id', userId);
+      const data = [...(d1 || []), ...(d2 || [])];
+      if (data) setPendingCount(data.length);
+    };
+    fetchPending();
+  }, [userId, roleTitle, isAdmin]);
+
+  if (pendingCount === 0) return null;
+
+  return (
+    <div
+      onClick={() => navigate('/leave-approvals')}
+      style={{
+        margin: '0 0 16px 0',
+        padding: '12px 16px',
+        background: '#fff3cd',
+        border: '2px solid #ffc107',
+        borderRadius: 10,
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        fontSize: 15,
+        color: '#856404',
+        fontWeight: 'bold',
+      }}
+    >
+      <span style={{ fontSize: 22 }}>🌿</span>
+      <span>休暇申請の承認依頼が {pendingCount}件 あります</span>
+      <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 'normal' }}>タップして確認 →</span>
+    </div>
+  );
+};
+
 // メインのDashboardコンポーネント
 const Dashboard: React.FC = () => {
   // 通常のダッシュボード処理（パスワードリセットは専用ページで処理）
@@ -90,7 +148,7 @@ const Dashboard: React.FC = () => {
     user,
     isAdmin,
     profileName,
-    roleTitle: _roleTitle,
+    roleTitle,
     canLeave,
     handleLogout
   } = useAuth();
@@ -146,6 +204,9 @@ const Dashboard: React.FC = () => {
   return (
     <div style={{ maxWidth: 800, margin: '40px auto', position: 'relative', paddingTop: '80px' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} />
+
+      {/* 休暇申請承認バナー（承認者のみ） */}
+      <LeaveApprovalBanner userId={user.id} roleTitle={roleTitle} isAdmin={isAdmin} />
 
       {/* 交通費申請フォーム */}
       <ExpenseForm 
@@ -210,6 +271,21 @@ const LeaveRequestPage: React.FC = () => {
   );
 };
 
+// 休暇申請承認ページ（リーダー・マネージャー・管理者用）
+const LeaveApprovalsPage: React.FC = () => {
+  const { user, isAdmin, profileName, roleTitle, canLeave, handleLogout, loading } = useAuth();
+  if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
+  const approverRoles = ['リーダー', 'マネージャー', '社長', '管理者'];
+  // roleTitle が空の場合はまだプロフィール未取得なので弾かない
+  if (roleTitle && !isAdmin && !approverRoles.includes(roleTitle)) return <Navigate to="/" />;
+  return (
+    <div style={{ paddingTop: '60px' }}>
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} />
+      <LeaveApprovals user={user} profileName={profileName} isAdmin={isAdmin} />
+    </div>
+  );
+};
+
 // メインのAppコンポーネント
 function App() {
   return (
@@ -222,6 +298,7 @@ function App() {
             <Route index element={<Dashboard />} />
             <Route path="/trip-report" element={<TripReportPage />} />
             <Route path="/leave" element={<LeaveRequestPage />} />
+            <Route path="/leave-approvals" element={<LeaveApprovalsPage />} />
             <Route path="/change-email" element={<ChangeEmail />} />
             <Route path="/settings-check" element={<SupabaseSettingsCheck />} />
           </Route>
