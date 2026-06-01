@@ -35,7 +35,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const [userSortAsc, setUserSortAsc] = useState(true);
   const [editingSortOrder, setEditingSortOrder] = useState<string | null>(null);
   const [editSortOrderValue, setEditSortOrderValue] = useState<string>('');
-  const [openGroupDropdown, setOpenGroupDropdown] = useState<string | null>(null);
   const [masterOptions, setMasterOptions] = useState<{ employment_type: string[]; role_title: string[]; group: string[] }>({ employment_type: [], role_title: [], group: [] });
   const [isUserEditMode, setIsUserEditMode] = useState(false);
   const [confirmChange, setConfirmChange] = useState<{ userId: string; field: string; label: string; oldVal: string; newVal: string; } | null>(null);
@@ -2570,7 +2569,7 @@ ${printData.map((page) => `
                   )}
                   {isUserEditMode ? (
                     <button
-                      onClick={() => { setIsUserEditMode(false); setOpenGroupDropdown(null); }}
+                      onClick={() => { setIsUserEditMode(false); }}
                       style={{ padding: '5px 14px', background: '#28a745', color: 'white', border: '2px solid #1e7e34', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: 12 }}
                     >
                       ✅ 編集終了
