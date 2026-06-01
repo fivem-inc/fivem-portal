@@ -2553,7 +2553,8 @@ ${printData.map((page) => `
                       <button onClick={async () => {
                         if (!newGroupName.trim()) return;
                         const maxOrder = masterOptions.group.length + 1;
-                        await supabase.from('master_options').insert({ category: 'group', value: newGroupName.trim(), sort_order: maxOrder });
+                        const { error } = await supabase.from('master_options').insert({ category: 'group', value: newGroupName.trim(), sort_order: maxOrder });
+                        if (error) { alert('グループの追加に失敗しました。\n' + error.message); return; }
                         await fetchMasterOptions();
                         setNewGroupName('');
                         setShowAddGroup(false);
