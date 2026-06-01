@@ -2,9 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 🚀 毎回の開発開始手順（ローカル）
+## 🚀 毎回の開発開始手順
 
-### 同じPCで続きから始める場合
+### ⚠️ 作業開始前に必ず確認すること
+**Claudeは最初に必ずユーザーに以下を確認すること：**
+1. **ローカルで開発するか、直接デプロイだけか？**
+   - ローカル開発 → `npm run dev` でサーバー起動してから作業
+   - 確認・デプロイのみ → サーバー起動不要
+2. **どのPCか？**（ユーザー名によってパスが変わる）
+
+### ローカルで開発する場合
 ```
 cd C:\Users\[ユーザー名]\fivem-portal
 git pull
@@ -16,7 +23,7 @@ npm run dev
 ### Claude Code での作業開始
 1. Claude Code を開く
 2. 作業ディレクトリ: `C:\Users\[ユーザー名]\fivem-portal`
-3. CLAUDE.md の「次回やること」を確認して作業開始
+3. **CLAUDE.md の「次回やること」を確認してから作業開始**
 
 ---
 
@@ -232,15 +239,21 @@ VITE_SUPABASE_ANON_KEY=sb_publishable_ZA6Udr3Ww9_dQO0CKKhSGw_Phx8Kegp
 - 却下済みに「↩ 取り消し」ボタン → pending に戻す
 - 名前を全角スペースで2行分割表示
 
+### ✅ 2026-06-02 グループ追加機能 修正完了
+- `master_options`テーブルにRLSポリシー追加（管理者のINSERT/UPDATE/DELETE許可）
+  - `(auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'` で判定
+- エラーハンドリング追加（失敗時にalertで表示）
+- コミット: `d4f23c3`
+
 ### 🔜 次回やること
 1. **パートへの有給申請フォーム送信**（管理者がパートを指定して一時表示）
-2. **グループ追加機能**（現在グループの追加ができない・管理者画面のグループ管理タブから新規グループを作成できるようにする）
-3. **Phase 1: メール送信機能**
+2. **Phase 1: メール送信機能**
 
 ### コミット
 - `2bc4c23` Phase3: 休暇申請フォーム実装
 - `e8cdb96` Phase3: 管理者画面に休暇申請タブ追加
 - 本日分: Phase3完了・承認フロー改善・UI整備
+- `d4f23c3` グループ追加機能修正（RLSポリシー追加）
 
 ---
 
