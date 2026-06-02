@@ -307,6 +307,16 @@ CREATE POLICY "leader_manager_update_leave_enabled" ON public.profiles FOR UPDAT
    - GPS → 住所変換（Nominatim API）
    - Slack通知（終了報告時・チャンネル選択）
 
+### ✅ 休暇申請機能　完了一覧（2026-06-02時点）
+- 承認フロー: pending→step2_pending→manager_approved→admin_approved→approved
+- 申請者画面: 新規申請・申請履歴タブ・承認者選択
+- 承認者画面(/leave-approvals): リーダー/マネージャー/社長それぞれの番のみ表示
+- 管理者画面: 全申請管理・フィルター・承認時マネージャー選択モーダル
+- パート: 管理者/リーダー/マネージャー/社長からフォーム送信→通知バナー→申請→自動非表示
+- リーダーは自分が送ったパートのみ表示、管理者/マネージャー/社長は全員表示
+- 「✅ 承認ページへ」ボタン: 休暇申請ページのタブ下に独立配置（承認者のみ）
+- 却下・却下取り消し・削除すべて対応
+
 ### コミット
 - `2bc4c23` Phase3: 休暇申請フォーム実装
 - `e8cdb96` Phase3: 管理者画面に休暇申請タブ追加
