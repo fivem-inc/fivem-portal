@@ -245,15 +245,47 @@ VITE_SUPABASE_ANON_KEY=sb_publishable_ZA6Udr3Ww9_dQO0CKKhSGw_Phx8Kegp
 - エラーハンドリング追加（失敗時にalertで表示）
 - コミット: `d4f23c3`
 
+### ✅ 2026-06-02 休暇申請フロー改善完了
+- **パートへ申請フォーム送信機能**
+  - 管理者画面「休暇申請」タブ → パートを選択 → 「送信」で`leave_request_enabled=true`
+  - パートのホームに「📨 申請フォームが届いています」バナー表示 → タップで申請画面へ
+  - パートには申請履歴タブ非表示・送信後「ホームへ戻る」のみ
+  - 申請完了後`leave_request_enabled=false`に自動リセット
+  - RLS追加: `leave_requests`テーブルで承認者が自分宛を読める
+- **社長の承認フロー**
+  - `admin_approved`ステータスをLeaveApprovals・バナーに追加
+  - 社長ホームに承認待ちバナー表示
+  - 承認ボタンに確認ダイアログ追加
+- **管理者画面の承認フロー修正**
+  - `pending → step2_pending`のスキップバグ修正
+- コミット: `e8a8bd9`, `1cb310e`
+
+### Supabase RLS（追加済み）
+```sql
+-- master_options: 管理者のINSERT/UPDATE/DELETE
+(auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'
+
+-- leave_requests: 承認者が自分宛を読める
+approver_id = auth.uid() OR approver2_id = auth.uid()
+OR role_title = '社長' で admin_approved も読める
+```
+
 ### 🔜 次回やること
-1. **パートへの有給申請フォーム送信**（管理者がパートを指定して一時表示）
-2. **Phase 1: メール送信機能**
+1. **Phase 1: メール送信機能**（管理者から全員・グループ・個人にメール送信）
+   - グループ: こども / パート・アルバイトスタッフ / マネージャー・リーダー等
+   - 送信履歴管理
+   - SMTP設定済み（office@five-m.com）
+2. **Phase 4: 出張報告機能拡張**
+   - GPS → 住所変換（Nominatim API）
+   - Slack通知（終了報告時・チャンネル選択）
 
 ### コミット
 - `2bc4c23` Phase3: 休暇申請フォーム実装
 - `e8cdb96` Phase3: 管理者画面に休暇申請タブ追加
-- 本日分: Phase3完了・承認フロー改善・UI整備
+- `b1fc733` Phase3完了・承認フロー改善・UI整備
 - `d4f23c3` グループ追加機能修正（RLSポリシー追加）
+- `e8a8bd9` docs更新
+- `1cb310e` 休暇申請フロー改善（パート通知・社長承認・確認ダイアログ）
 
 ---
 
