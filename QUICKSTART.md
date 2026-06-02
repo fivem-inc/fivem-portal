@@ -40,6 +40,7 @@ fivem-portalの続きの作業をしたい。
 以下のどちらかに存在します。両方確認して、あるほうを使ってください。
 - C:\Users\kohei\fivem-portal
 - C:\Users\nisij\fivem-portal
+存在する場合は必ず git pull で最新にしてから作業してください。
 どちらもなければ git clone してください：
 git clone https://github.com/fivem-inc/fivem-portal.git C:\Users\[ユーザー名]\fivem-portal
 
