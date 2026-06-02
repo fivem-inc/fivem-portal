@@ -287,6 +287,11 @@ OR role_title = '社長' で admin_approved も読める
 - コミット: `c8cd3dc`
 - ビルドエラー修正: `1d77e8a`（canApprove未使用・TripReportPageでroleTitle未定義）
 
+### ✅ 2026-06-02 管理者承認フロー改善
+- 管理者が`pending`申請を承認する際にマネージャー選択モーダルを追加
+- 「✅ 承認ページへ」ボタンをタブ下に独立配置（承認者のみ表示）
+- コミット: `22e4b32`
+
 ### Supabase SQL（追加済み）
 ```sql
 ALTER TABLE public.profiles ADD COLUMN leave_enabled_by UUID REFERENCES auth.users(id);
