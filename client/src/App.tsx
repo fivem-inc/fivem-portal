@@ -29,7 +29,7 @@ const ProtectedLayout: React.FC = () => {
 };
 
 // ナビゲーションバー
-const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean }> = ({ isAdmin: _isAdmin, onLogout, email, profileName, canLeave, canApprove }) => {
+const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean }> = ({ isAdmin: _isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove }) => {
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -268,7 +268,7 @@ const Dashboard: React.FC = () => {
 
 // 出張報告ページ
 const TripReportPage: React.FC = () => {
-  const { user, isAdmin, profileName, canLeave, handleLogout } = useAuth();
+  const { user, isAdmin, profileName, roleTitle, canLeave, handleLogout } = useAuth();
   if (!user) return <div>読み込んでいます...</div>;
   return (
     <div style={{ paddingTop: '60px' }}>
