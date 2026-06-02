@@ -84,6 +84,77 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   );
 };
 
+// 休暇申請の受理通知バナー（申請者向け）
+const LeaveApprovedBanner: React.FC<{ userId: string }> = ({ userId }) => {
+  const navigate = useNavigate();
+  const [approved, setApproved] = useState<{ id: string; leave_type: string; leave_type_other: string | null; leave_dates: string | null; start_date: string; end_date: string }[]>([]);
+
+  useEffect(() => {
+    const fetch = async () => {
+      const { data } = await supabase
+        .from('leave_requests')
+        .select('id, leave_type, leave_type_other, leave_dates, start_date, end_date')
+        .eq('user_id', userId)
+        .eq('status', 'approved')
+        .order('created_at', { ascending: false });
+      if (!data) return;
+      // localStorageで既読チェック
+      const dismissed = JSON.parse(localStorage.getItem('leave_approved_dismissed') || '[]') as string[];
+      setApproved(data.filter((r: any) => !dismissed.includes(r.id)));
+    };
+    fetch();
+  }, [userId]);
+
+  const dismiss = (id: string, navigate_to_history: boolean) => {
+    const dismissed = JSON.parse(localStorage.getItem('leave_approved_dismissed') || '[]') as string[];
+    localStorage.setItem('leave_approved_dismissed', JSON.stringify([...dismissed, id]));
+    setApproved(prev => prev.filter(r => r.id !== id));
+    if (navigate_to_history) navigate('/leave?tab=history');
+  };
+
+  if (approved.length === 0) return null;
+
+  return (
+    <>
+      {approved.map(req => {
+        let dates: string[] = [];
+        try { if (req.leave_dates) dates = JSON.parse(req.leave_dates); } catch {}
+        const dayCount = dates.length > 0 ? dates.length
+          : Math.max(1, Math.floor((new Date(req.end_date).getTime() - new Date(req.start_date).getTime()) / (1000*60*60*24)) + 1);
+        const typeName = req.leave_type === 'その他' ? req.leave_type_other : req.leave_type;
+        const dateLabel = dates.length > 0
+          ? `${dates[0]}（${dayCount}日）`
+          : `${req.start_date}（${dayCount}日）`;
+
+        return (
+          <div
+            key={req.id}
+            onClick={() => dismiss(req.id, true)}
+            style={{
+              background: '#28a745', color: 'white', borderRadius: 10,
+              padding: '12px 16px', marginBottom: 10, cursor: 'pointer',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              boxShadow: '0 2px 8px rgba(40,167,69,0.4)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 20 }}>✅</span>
+              <div>
+                <div style={{ fontWeight: 'bold', fontSize: 14 }}>休暇申請が受理されました</div>
+                <div style={{ fontSize: 12, opacity: 0.9 }}>{typeName}　{dateLabel}</div>
+              </div>
+            </div>
+            <button
+              onClick={e => { e.stopPropagation(); dismiss(req.id, false); }}
+              style={{ background: 'rgba(255,255,255,0.25)', border: 'none', color: 'white', borderRadius: '50%', width: 24, height: 24, cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >✕</button>
+          </div>
+        );
+      })}
+    </>
+  );
+};
+
 // 休暇申請の承認待ち通知バナー
 const LeaveApprovalBanner: React.FC<{ userId: string; roleTitle: string; isAdmin: boolean }> = ({ userId, roleTitle, isAdmin }) => {
   const navigate = useNavigate();
@@ -224,6 +295,9 @@ const Dashboard: React.FC = () => {
         </div>
       )}
 
+      {/* 休暇申請受理通知バナー（申請者向け） */}
+      {!isAdmin && <LeaveApprovedBanner userId={user.id} />}
+
       {/* 休暇申請承認バナー（承認者のみ） */}
       <LeaveApprovalBanner userId={user.id} roleTitle={roleTitle} isAdmin={isAdmin} />
 
@@ -298,7 +372,7 @@ const LeaveApprovalsPage: React.FC = () => {
   // roleTitle が空の場合はまだプロフィール未取得なので弾かない
   if (roleTitle && !isAdmin && !approverRoles.includes(roleTitle)) return <Navigate to="/" />;
   return (
-    <div style={{ paddingTop: '60px' }}>
+    <div style={{ paddingTop: '80px' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isAdmin || ['リーダー','マネージャー','社長','管理者'].includes(roleTitle)} />
       <LeaveApprovals user={user} profileName={profileName} isAdmin={isAdmin} roleTitle={roleTitle} />
     </div>
