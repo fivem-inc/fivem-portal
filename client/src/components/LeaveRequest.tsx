@@ -490,7 +490,6 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                 const st = STATUS_LABEL[req.status] || { label: req.status, color: '#333' };
                 const isApproved = req.status === 'approved';
                 const isRejected = req.status === 'rejected';
-                const isPending = !isApproved && !isRejected;
                 return (
                   <div
                     key={req.id}

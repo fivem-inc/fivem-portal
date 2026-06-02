@@ -3200,7 +3200,6 @@ ${printData.map((page) => `
 
         {/* 休暇申請タブ */}
         {activeTab === 'leave_requests' && (() => {
-          const STATUS_ORDER: Record<string, number> = { pending: 1, step2_pending: 2, manager_approved: 3, admin_approved: 4, approved: 5, rejected: 6 };
           const leaveFilters = [
             { key: 'active',   label: '確認待ち' },
             { key: 'approved', label: '受理済み' },
