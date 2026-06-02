@@ -271,7 +271,7 @@ const TripReportPage: React.FC = () => {
   const { user, isAdmin, profileName, roleTitle, canLeave, handleLogout } = useAuth();
   if (!user) return <div>読み込んでいます...</div>;
   return (
-    <div style={{ paddingTop: '60px' }}>
+    <div style={{ paddingTop: '80px' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isAdmin || ['リーダー','マネージャー','社長','管理者'].includes(roleTitle)} />
       <BusinessTripReportForm user={user} profileName={profileName} />
     </div>
@@ -283,7 +283,7 @@ const LeaveRequestPage: React.FC = () => {
   const { user, isAdmin, profileName, roleTitle, canLeave, leaveRequestEnabled, handleLogout } = useAuth();
   if (!user) return <div>読み込んでいます...</div>;
   return (
-    <div style={{ paddingTop: '60px' }}>
+    <div style={{ paddingTop: '80px' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isAdmin || ['リーダー','マネージャー','社長','管理者'].includes(roleTitle)} />
       <LeaveRequestForm user={user} profileName={profileName} roleTitle={roleTitle} leaveRequestEnabled={leaveRequestEnabled} />
     </div>
