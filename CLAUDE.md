@@ -278,6 +278,20 @@ OR role_title = '社長' で admin_approved も読める
 (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'
 ```
 
+### ✅ 2026-06-02 パートフォーム送信の権限制御
+- `profiles`に`leave_enabled_by` UUID カラム追加（Supabase SQL済み）
+- リーダー → 自分が送ったパートのみ表示・取り消し可
+- マネージャー・社長・管理者 → 全員分表示・取り消し可
+- 承認ページ（/leave-approvals）にもパート送信UIを追加
+- LeaveRequest.tsx に「✅ 承認ページ」ボタン追加（承認者のみ表示）
+- コミット: `c8cd3dc`
+
+### Supabase SQL（追加済み）
+```sql
+ALTER TABLE public.profiles ADD COLUMN leave_enabled_by UUID REFERENCES auth.users(id);
+CREATE POLICY "leader_manager_update_leave_enabled" ON public.profiles FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+```
+
 ### 🔜 次回やること
 1. **Phase 1: メール送信機能**（管理者から全員・グループ・個人にメール送信）
    - グループ: こども / パート・アルバイトスタッフ / マネージャー・リーダー等
