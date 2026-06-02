@@ -311,7 +311,7 @@ CREATE POLICY "leader_manager_update_leave_enabled" ON public.profiles FOR UPDAT
 - **管理者画面**: 申請日新着順固定（ステータス変更で並び替わらない）
 - **ナビ重なり修正**: 全ページpaddingTop 80px
 
-### Supabase SQLが必要（未実施の場合）
+### Supabase SQL（実施済み ✅）
 ```sql
 ALTER TABLE public.leave_requests ADD COLUMN IF NOT EXISTS leave_dates TEXT;
 ALTER TABLE public.leave_requests ADD COLUMN IF NOT EXISTS purpose TEXT;
