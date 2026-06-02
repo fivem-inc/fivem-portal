@@ -285,6 +285,7 @@ OR role_title = '社長' で admin_approved も読める
 - 承認ページ（/leave-approvals）にもパート送信UIを追加
 - LeaveRequest.tsx に「✅ 承認ページ」ボタン追加（承認者のみ表示）
 - コミット: `c8cd3dc`
+- ビルドエラー修正: `1d77e8a`（canApprove未使用・TripReportPageでroleTitle未定義）
 
 ### Supabase SQL（追加済み）
 ```sql
