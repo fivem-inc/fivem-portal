@@ -29,10 +29,6 @@ fivem-portalの続きの作業をしたい。
 確認してからデプロイする方法ですすめて
 作業前に必ず確認してから、開始ください。
 
-【このPCの情報】
-- ユーザー名: [ユーザー名]
-- ローカルパス: C:\Users\[ユーザー名]\fivem-portal（なければgit cloneする）
-
 【プロジェクト情報】
 - GitHub: https://github.com/fivem-inc/fivem-portal
 - 本番サイト: https://fivem-portal.vercel.app
@@ -40,7 +36,11 @@ fivem-portalの続きの作業をしたい。
 - 管理者メール: fivem.kyoto@gmail.com
 - SMTP: office@five-m.com（Gmail）
 
-【初めてのPCの場合】
+【ローカルパス】
+以下のどちらかに存在します。両方確認して、あるほうを使ってください。
+- C:\Users\kohei\fivem-portal
+- C:\Users\nisij\fivem-portal
+どちらもなければ git clone してください：
 git clone https://github.com/fivem-inc/fivem-portal.git C:\Users\[ユーザー名]\fivem-portal
 
 【デプロイ方法】
