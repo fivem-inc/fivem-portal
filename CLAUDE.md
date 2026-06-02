@@ -260,6 +260,11 @@ VITE_SUPABASE_ANON_KEY=sb_publishable_ZA6Udr3Ww9_dQO0CKKhSGw_Phx8Kegp
   - `pending → step2_pending`のスキップバグ修正
 - コミット: `e8a8bd9`, `1cb310e`
 
+### ✅ 2026-06-02 バグ修正
+- **休暇申請 削除できない** → RLSにDELETE権限がなかった → 追加済み
+- **削除エラーハンドリング追加** → 失敗時にalertで表示
+- コミット: `505e9ed`
+
 ### Supabase RLS（追加済み）
 ```sql
 -- master_options: 管理者のINSERT/UPDATE/DELETE
@@ -268,6 +273,9 @@ VITE_SUPABASE_ANON_KEY=sb_publishable_ZA6Udr3Ww9_dQO0CKKhSGw_Phx8Kegp
 -- leave_requests: 承認者が自分宛を読める
 approver_id = auth.uid() OR approver2_id = auth.uid()
 OR role_title = '社長' で admin_approved も読める
+
+-- leave_requests: 管理者のDELETE
+(auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'
 ```
 
 ### 🔜 次回やること
