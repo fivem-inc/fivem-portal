@@ -206,15 +206,16 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             📋 申請履歴
           </button>
         )}
-        {isApprover && (
-          <button
-            onClick={() => navigate('/leave-approvals')}
-            style={{ flex: 1, padding: '12px', background: '#fd7e14', color: 'white', border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 'bold' }}
-          >
-            ✅ 承認ページ
-          </button>
-        )}
       </div>
+
+      {isApprover && (
+        <button
+          onClick={() => navigate('/leave-approvals')}
+          style={{ width: '100%', padding: '10px', background: '#fd7e14', color: 'white', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', marginTop: 8, borderRadius: 8 }}
+        >
+          ✅ 承認ページへ
+        </button>
+      )}
 
       {/* 申請フォーム */}
       {tab === 'form' && (

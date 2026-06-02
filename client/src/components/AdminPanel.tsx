@@ -65,6 +65,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const [leaveRequests, setLeaveRequests] = useState<any[]>([]);
   const [loadingLeaveRequests, setLoadingLeaveRequests] = useState(false);
   const [leaveStatusFilter, setLeaveStatusFilter] = useState<string>('active');
+  // 管理者承認時マネージャー選択モーダル
+  const [adminSelectingManagerFor, setAdminSelectingManagerFor] = useState<any | null>(null);
+  const [adminManagerList, setAdminManagerList] = useState<any[]>([]);
+  const [adminSelectedManagerId, setAdminSelectedManagerId] = useState('');
 
   // 出張報告用の状態
   const [tripReports, setTripReports] = useState<any[]>([]);
@@ -3361,10 +3365,18 @@ ${printData.map((page) => `
                                 <div style={{ display: 'flex', gap: 4 }}>
                                   <button
                                     onClick={async () => {
-                                      if (!window.confirm('承認しますか？')) return;
-                                      const nextStatus: Record<string, string> = { pending: 'step2_pending', step2_pending: 'manager_approved', manager_approved: 'admin_approved', admin_approved: 'approved' };
-                                      await supabase.from('leave_requests').update({ status: nextStatus[req.status] || 'approved' }).eq('id', req.id);
-                                      fetchLeaveRequests();
+                                      if (req.status === 'pending') {
+                                        // マネージャー選択モーダルを開く
+                                        const { data: mgrs } = await supabase.from('profiles').select('id, name, role_title').eq('role_title', 'マネージャー').eq('is_active', true).order('name');
+                                        setAdminManagerList(mgrs || []);
+                                        setAdminSelectedManagerId(mgrs && mgrs.length > 0 ? mgrs[0].id : '');
+                                        setAdminSelectingManagerFor(req);
+                                      } else {
+                                        if (!window.confirm('承認しますか？')) return;
+                                        const nextStatus: Record<string, string> = { step2_pending: 'manager_approved', manager_approved: 'admin_approved', admin_approved: 'approved' };
+                                        await supabase.from('leave_requests').update({ status: nextStatus[req.status] || 'approved' }).eq('id', req.id);
+                                        fetchLeaveRequests();
+                                      }
                                     }}
                                     style={{ padding: '4px 8px', background: '#28a745', color: 'white', border: '2px solid #1e7e34', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}
                                   >承認</button>
@@ -3403,6 +3415,46 @@ ${printData.map((page) => `
         })()}
 
       </div>
+
+      {/* 管理者承認時マネージャー選択モーダル */}
+      {adminSelectingManagerFor && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: isDarkMode ? '#343a40' : 'white', borderRadius: 12, padding: 24, width: 340, boxShadow: '0 4px 24px rgba(0,0,0,0.3)' }}>
+            <h3 style={{ margin: '0 0 16px', color: isDarkMode ? '#fff' : '#333', fontSize: 16 }}>マネージャーを選択して承認</h3>
+            <p style={{ fontSize: 13, color: isDarkMode ? '#adb5bd' : '#666', marginBottom: 12 }}>
+              {adminSelectingManagerFor.requester?.name || '申請者'} の申請を承認し、マネージャーへ送ります
+            </p>
+            {adminManagerList.length === 0 ? (
+              <p style={{ color: '#dc3545', fontSize: 13 }}>マネージャーが登録されていません</p>
+            ) : (
+              <select
+                value={adminSelectedManagerId}
+                onChange={e => setAdminSelectedManagerId(e.target.value)}
+                style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', fontSize: 14, marginBottom: 16 }}
+              >
+                {adminManagerList.map(m => (
+                  <option key={m.id} value={m.id}>{m.name}（{m.role_title}）</option>
+                ))}
+              </select>
+            )}
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                onClick={() => setAdminSelectingManagerFor(null)}
+                style={{ flex: 1, padding: '10px', background: '#6c757d', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold' }}
+              >キャンセル</button>
+              <button
+                disabled={!adminSelectedManagerId}
+                onClick={async () => {
+                  await supabase.from('leave_requests').update({ status: 'step2_pending', approver2_id: adminSelectedManagerId }).eq('id', adminSelectingManagerFor.id);
+                  setAdminSelectingManagerFor(null);
+                  fetchLeaveRequests();
+                }}
+                style={{ flex: 1, padding: '10px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold' }}
+              >承認して送る</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 印刷プレビューモーダル */}
       {showPrintPreview && (
