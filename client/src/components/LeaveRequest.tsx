@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import type { AuthUser } from '../types';
 
@@ -20,8 +20,10 @@ interface LeaveRecord {
   id: string;
   leave_type: string;
   leave_type_other: string | null;
+  leave_dates: string | null;
   start_date: string;
   end_date: string;
+  purpose: string | null;
   reason: string | null;
   status: string;
   created_at: string;
@@ -29,54 +31,181 @@ interface LeaveRecord {
   approver?: { name: string; role_title: string } | null;
 }
 
+type LeaveType = '有給休暇' | 'バースデー休暇（有給）' | '慶弔休暇' | 'その他';
+
 const STATUS_LABEL: Record<string, { label: string; color: string }> = {
-  pending:          { label: '承認待ち（一人目）', color: '#856404' },
-  step2_pending:    { label: '承認待ち（マネージャー）', color: '#856404' },
-  manager_approved: { label: 'マネージャー承認済み', color: '#0c5460' },
-  admin_approved:   { label: '経理承認済み', color: '#0c5460' },
-  approved:         { label: '承認完了', color: '#155724' },
-  rejected:         { label: '却下', color: '#721c24' },
+  pending:          { label: '確認中（一人目）',      color: '#856404' },
+  step2_pending:    { label: '確認中（マネージャー）', color: '#856404' },
+  manager_approved: { label: 'マネージャー受理済み',   color: '#0c5460' },
+  admin_approved:   { label: '経理受理済み',           color: '#0c5460' },
+  approved:         { label: '受理済み',               color: '#155724' },
+  rejected:         { label: '差し戻し',               color: '#721c24' },
 };
 
+// ---- カレンダーコンポーネント ----
+const MultiDatePicker: React.FC<{
+  selectedDates: string[];
+  onChange: (dates: string[]) => void;
+  isDark: boolean;
+}> = ({ selectedDates, onChange, isDark }) => {
+  const today = new Date();
+  const [viewYear, setViewYear] = useState(today.getFullYear());
+  const [viewMonth, setViewMonth] = useState(today.getMonth());
+
+  const text = isDark ? '#fff' : '#333';
+  const borderColor = isDark ? '#6c757d' : '#ddd';
+
+  const getDaysInMonth = (y: number, m: number) => new Date(y, m + 1, 0).getDate();
+  const getFirstDayOfWeek = (y: number, m: number) => new Date(y, m, 1).getDay();
+  const fmt = (y: number, m: number, d: number) =>
+    `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+  const toggleDate = (dateStr: string) => {
+    let newDates: string[];
+    if (selectedDates.includes(dateStr)) {
+      newDates = selectedDates.filter(d => d !== dateStr);
+    } else {
+      newDates = [...selectedDates, dateStr].sort();
+      // 2か月以上またがる選択を禁止
+      const months = [...new Set(newDates.map(d => d.substring(0, 7)))].sort();
+      if (months.length > 1) {
+        const first = new Date(months[0] + '-01');
+        const last = new Date(months[months.length - 1] + '-01');
+        const diff =
+          (last.getFullYear() - first.getFullYear()) * 12 +
+          last.getMonth() - first.getMonth();
+        if (diff > 1) {
+          alert('2か月を超える期間は選択できません（例：5月と7月の同時選択は不可）');
+          return;
+        }
+      }
+    }
+    onChange(newDates);
+  };
+
+  const prevMonth = () => {
+    if (viewMonth === 0) { setViewYear(y => y - 1); setViewMonth(11); }
+    else setViewMonth(m => m - 1);
+  };
+  const nextMonth = () => {
+    if (viewMonth === 11) { setViewYear(y => y + 1); setViewMonth(0); }
+    else setViewMonth(m => m + 1);
+  };
+
+  const daysInMonth = getDaysInMonth(viewYear, viewMonth);
+  const firstDay = getFirstDayOfWeek(viewYear, viewMonth);
+  const monthNames = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+  const dayNames = ['日','月','火','水','木','金','土'];
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  return (
+    <div style={{ background: isDark ? '#495057' : '#f8f9fa', borderRadius: 10, padding: 12, border: `1px solid ${borderColor}` }}>
+      {/* ヘッダー */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <button onClick={prevMonth} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: text, padding: '0 10px', lineHeight: 1 }}>‹</button>
+        <span style={{ fontWeight: 'bold', color: text, fontSize: 15 }}>{viewYear}年 {monthNames[viewMonth]}</span>
+        <button onClick={nextMonth} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: text, padding: '0 10px', lineHeight: 1 }}>›</button>
+      </div>
+      {/* 曜日ヘッダー */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, marginBottom: 4 }}>
+        {dayNames.map((d, i) => (
+          <div key={d} style={{ textAlign: 'center', fontSize: 11, fontWeight: 'bold', color: i === 0 ? '#e74c3c' : i === 6 ? '#3498db' : text, padding: '3px 0' }}>
+            {d}
+          </div>
+        ))}
+      </div>
+      {/* 日付グリッド */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
+        {cells.map((day, i) => {
+          if (!day) return <div key={`e-${i}`} />;
+          const dateStr = fmt(viewYear, viewMonth, day);
+          const isSelected = selectedDates.includes(dateStr);
+          const dow = (firstDay + day - 1) % 7;
+          const isToday = dateStr === todayStr;
+          const isSun = dow === 0;
+          const isSat = dow === 6;
+          return (
+            <button
+              key={dateStr}
+              onClick={() => toggleDate(dateStr)}
+              style={{
+                padding: '7px 0',
+                borderRadius: 6,
+                border: isToday ? '2px solid #007bff' : '1px solid transparent',
+                background: isSelected ? '#28a745' : 'transparent',
+                color: isSelected ? 'white' : isSun ? '#e74c3c' : isSat ? '#3498db' : text,
+                cursor: 'pointer',
+                fontSize: 13,
+                fontWeight: isSelected ? 'bold' : 'normal',
+                textAlign: 'center',
+              }}
+            >
+              {day}
+            </button>
+          );
+        })}
+      </div>
+      {/* 選択中表示 */}
+      {selectedDates.length > 0 && (
+        <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 13, color: '#28a745', fontWeight: 'bold' }}>✓ {selectedDates.length}日選択中</span>
+          <button
+            onClick={() => onChange([])}
+            style={{ padding: '2px 10px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 11 }}
+          >クリア</button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// 選択日の表示用ヘルパー
+const formatSelectedDates = (dates: string[]): string => {
+  if (dates.length === 0) return '';
+  if (dates.length === 1) return dates[0];
+  return `${dates[0]} ～ ${dates[dates.length - 1]}（${dates.length}日選択）`;
+};
+
+// ---- メインコンポーネント ----
 const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _roleTitle = '', leaveRequestEnabled }) => {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<'form' | 'history'>('form');
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState<'form' | 'history'>(searchParams.get('tab') === 'history' ? 'history' : 'form');
 
-  // フォーム用state
-  const [leaveType, setLeaveType] = useState<'有給' | '特別休暇' | 'その他'>('有給');
+  const [leaveType, setLeaveType] = useState<LeaveType>('有給休暇');
   const [leaveTypeOther, setLeaveTypeOther] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [reason, setReason] = useState('');
+  const [selectedDates, setSelectedDates] = useState<string[]>([]);
+  const [purpose, setPurpose] = useState('');
+  const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [approvers, setApprovers] = useState<Approver[]>([]);
   const [selectedApproverId, setSelectedApproverId] = useState('');
 
-  // 履歴用state
   const [history, setHistory] = useState<LeaveRecord[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
-  // リーダー・マネージャー一覧を取得
   useEffect(() => {
-    const fetchApprovers = async () => {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('id, name, role_title')
-        .in('role_title', ['リーダー', 'マネージャー'])
-        .eq('is_active', true)
-        .order('role_title', { ascending: false })
-        .order('name');
-      if (!error && data) {
-        setApprovers(data);
-        if (data.length > 0) setSelectedApproverId(data[0].id);
-      }
-    };
-    fetchApprovers();
+    supabase
+      .from('profiles')
+      .select('id, name, role_title')
+      .in('role_title', ['リーダー', 'マネージャー'])
+      .eq('is_active', true)
+      .order('role_title', { ascending: false })
+      .order('name')
+      .then(({ data, error }) => {
+        if (!error && data) {
+          setApprovers(data);
+          if (data.length > 0) setSelectedApproverId(data[0].id);
+        }
+      });
   }, []);
 
-  // 履歴取得
   useEffect(() => {
     if (tab !== 'history') return;
     const fetchHistory = async () => {
@@ -87,17 +216,12 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
       if (!error && data) {
-        // approver_id から profiles を別取得してマージ
         const approverIds = [...new Set(data.map((r: any) => r.approver_id).filter(Boolean))];
         let profileMap: Record<string, { name: string; role_title: string }> = {};
         if (approverIds.length > 0) {
           const { data: profiles } = await supabase
-            .from('profiles')
-            .select('id, name, role_title')
-            .in('id', approverIds);
-          if (profiles) {
-            profiles.forEach((p: any) => { profileMap[p.id] = p; });
-          }
+            .from('profiles').select('id, name, role_title').in('id', approverIds);
+          if (profiles) profiles.forEach((p: any) => { profileMap[p.id] = p; });
         }
         setHistory(data.map((r: any) => ({ ...r, approver: profileMap[r.approver_id] || null })));
       }
@@ -108,31 +232,25 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
 
   const selectedApprover = approvers.find(a => a.id === selectedApproverId);
 
-  const calcDays = (s: string, e: string) => {
-    if (!s || !e) return 0;
-    const diff = Math.floor((new Date(e).getTime() - new Date(s).getTime()) / (1000 * 60 * 60 * 24)) + 1;
-    return diff > 0 ? diff : 0;
-  };
-
-  const getInitialStatus = () => 'pending';
-  const getInitialApproverRole = () => 'first';
-
   const handleSubmit = async () => {
     setIsSubmitting(true);
     try {
+      const startDate = selectedDates[0] || '';
+      const endDate = selectedDates[selectedDates.length - 1] || '';
       const { error } = await supabase.from('leave_requests').insert({
         user_id: user.id,
         leave_type: leaveType,
         leave_type_other: leaveType === 'その他' ? leaveTypeOther : null,
+        leave_dates: JSON.stringify(selectedDates),
         start_date: startDate,
         end_date: endDate,
-        reason: reason || null,
-        status: getInitialStatus(),
-        current_approver: getInitialApproverRole(),
+        purpose: purpose,
+        reason: notes || null,
+        status: 'pending',
+        current_approver: 'first',
         approver_id: selectedApproverId,
       });
       if (error) throw error;
-      // パートの場合は申請完了後にフォームを非表示に戻す
       await supabase.from('profiles').update({ leave_request_enabled: false, leave_enabled_by: null }).eq('id', user.id);
       setSubmitted(true);
       setShowConfirm(false);
@@ -144,11 +262,11 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   };
 
   const handleReset = () => {
-    setLeaveType('有給');
+    setLeaveType('有給休暇');
     setLeaveTypeOther('');
-    setStartDate('');
-    setEndDate('');
-    setReason('');
+    setSelectedDates([]);
+    setPurpose('');
+    setNotes('');
     setSubmitted(false);
     if (approvers.length > 0) setSelectedApproverId(approvers[0].id);
   };
@@ -160,13 +278,12 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const inputBg = isDark ? '#495057' : 'white';
   const borderColor = isDark ? '#6c757d' : '#ddd';
 
-  // 申請完了画面
   if (submitted) {
     return (
       <div style={{ maxWidth: 500, margin: '40px auto', padding: 24, background: bg, borderRadius: 12, boxShadow: '0 2px 12px rgba(0,0,0,0.1)', textAlign: 'center' }}>
         <div style={{ fontSize: 48, marginBottom: 16 }}>✅</div>
         <h2 style={{ color: '#28a745', marginBottom: 8 }}>申請しました</h2>
-        <p style={{ color: subText, marginBottom: 24 }}>承認者に通知されます。</p>
+        <p style={{ color: subText, marginBottom: 24 }}>担当者に通知されます。</p>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
           <button onClick={() => navigate('/')} style={{ padding: '10px 24px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 15 }}>
             🏠 ホームに戻る
@@ -190,8 +307,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
 
   return (
     <div style={{ maxWidth: 600, margin: '20px auto', padding: '0 12px' }}>
-      {/* タブ切替（パートの場合は新規申請のみ） */}
-      <div style={{ display: 'flex', gap: 0, marginBottom: 0, borderRadius: '10px 10px 0 0', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+      {/* タブ切替 */}
+      <div style={{ display: 'flex', marginBottom: 0, borderRadius: '10px 10px 0 0', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
         <button
           onClick={() => setTab('form')}
           style={{ flex: 1, padding: '12px', background: tab === 'form' ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'), color: tab === 'form' ? 'white' : text, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: tab === 'form' ? 'bold' : 'normal' }}
@@ -213,14 +330,29 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           onClick={() => navigate('/leave-approvals')}
           style={{ width: '100%', padding: '10px', background: '#fd7e14', color: 'white', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', marginTop: 8, borderRadius: 8 }}
         >
-          ✅ 承認ページへ
+          ✅ 受理ページへ
         </button>
       )}
 
       {/* 申請フォーム */}
       {tab === 'form' && (
         <div style={{ padding: 24, background: bg, borderRadius: '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)' }}>
-          <h2 style={{ marginBottom: 20, fontSize: 20, color: text }}>🌿 休暇申請</h2>
+          <h2 style={{ marginBottom: 12, fontSize: 20, color: text }}>🌿 休暇申請</h2>
+
+          {/* 注意事項 */}
+          <div style={{
+            background: isDark ? '#2c3e50' : '#e8f4fd',
+            border: `1px solid ${isDark ? '#3d5a73' : '#bee5eb'}`,
+            borderRadius: 8, padding: '12px 14px', marginBottom: 20, textAlign: 'left',
+          }}>
+            <p style={{ fontSize: 13, fontWeight: 'bold', color: isDark ? '#fff' : '#1a4a5a', marginBottom: 8 }}>【注意事項】</p>
+            <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8, textAlign: 'left' }}>
+              <li>休暇申請は、できるだけ休暇予定日の<strong>2週間前まで</strong>に行ってください。</li>
+              <li>申請前に、必ずご自身の<strong>所属チームのリーダーへ相談</strong>してください。</li>
+              <li>申請後、担当者が内容を確認します。申請が受理されると、ホーム画面に通知が表示されます。</li>
+              <li>パートタイマーの方も、正社員と同様に上記の手順で申請してください。</li>
+            </ol>
+          </div>
 
           {/* 申請者 */}
           <div style={{ marginBottom: 16 }}>
@@ -255,11 +387,12 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: text }}>休暇種別 *</label>
             <select
               value={leaveType}
-              onChange={e => setLeaveType(e.target.value as '有給' | '特別休暇' | 'その他')}
+              onChange={e => setLeaveType(e.target.value as LeaveType)}
               style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 15, background: inputBg, color: text }}
             >
-              <option value="有給">有給休暇</option>
-              <option value="特別休暇">特別休暇</option>
+              <option value="有給休暇">有給休暇</option>
+              <option value="バースデー休暇（有給）">バースデー休暇（有給）</option>
+              <option value="慶弔休暇">慶弔休暇</option>
               <option value="その他">その他</option>
             </select>
             {leaveType === 'その他' && (
@@ -273,40 +406,47 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             )}
           </div>
 
-          {/* 開始日 */}
+          {/* 休暇日 カレンダー */}
           <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: text }}>開始日 *</label>
-            <input
-              type="date"
-              value={startDate}
-              onChange={e => setStartDate(e.target.value)}
-              style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 15, boxSizing: 'border-box', background: inputBg, color: text }}
+            <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: text }}>
+              休暇日 * <span style={{ fontSize: 12, fontWeight: 'normal', color: subText }}>（日付をタップして選択・解除）</span>
+            </label>
+            <MultiDatePicker
+              selectedDates={selectedDates}
+              onChange={setSelectedDates}
+              isDark={isDark}
             />
-          </div>
-
-          {/* 終了日 */}
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: text }}>終了日 *</label>
-            <input
-              type="date"
-              value={endDate}
-              onChange={e => setEndDate(e.target.value)}
-              min={startDate}
-              style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 15, boxSizing: 'border-box', background: inputBg, color: text }}
-            />
-            {calcDays(startDate, endDate) > 0 && (
-              <div style={{ marginTop: 6, color: '#007bff', fontSize: 14 }}>{calcDays(startDate, endDate)}日間</div>
+            {selectedDates.length > 0 && (
+              <div style={{ marginTop: 8, padding: '8px 12px', background: isDark ? '#1b4d1b' : '#d4edda', borderRadius: 6, fontSize: 13, color: isDark ? '#75d475' : '#155724' }}>
+                選択中の日付：{selectedDates.join('、')}
+              </div>
             )}
           </div>
 
-          {/* 理由 */}
-          <div style={{ marginBottom: 24 }}>
-            <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: text }}>理由・備考</label>
+          {/* 事由（必須） */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: text }}>
+              事由 * <span style={{ fontSize: 12, fontWeight: 'normal', color: '#dc3545' }}>（必須）</span>
+            </label>
             <textarea
-              value={reason}
-              onChange={e => setReason(e.target.value)}
-              placeholder="任意"
+              value={purpose}
+              onChange={e => setPurpose(e.target.value)}
+              placeholder="休暇取得の理由を入力してください"
               rows={3}
+              style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 15, boxSizing: 'border-box', resize: 'vertical', background: inputBg, color: text }}
+            />
+          </div>
+
+          {/* 備考（任意） */}
+          <div style={{ marginBottom: 24 }}>
+            <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: text }}>
+              備考 <span style={{ fontSize: 12, fontWeight: 'normal', color: subText }}>（任意）</span>
+            </label>
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              placeholder="その他、連絡事項があれば入力"
+              rows={2}
               style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 15, boxSizing: 'border-box', resize: 'vertical', background: inputBg, color: text }}
             />
           </div>
@@ -314,7 +454,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           <button
             onClick={() => {
               if (!selectedApproverId) { alert('申請先を選んでください'); return; }
-              if (!startDate || !endDate) { alert('開始日・終了日を入力してください'); return; }
+              if (selectedDates.length === 0) { alert('休暇日を選択してください'); return; }
+              if (!purpose.trim()) { alert('事由を入力してください'); return; }
               if (leaveType === 'その他' && !leaveTypeOther) { alert('種別を入力してください'); return; }
               setShowConfirm(true);
             }}
@@ -336,7 +477,16 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {history.map(req => {
-                const days = calcDays(req.start_date, req.end_date);
+                // leave_dates があれば使用、なければ start_date/end_date にフォールバック
+                let dates: string[] = [];
+                try { if (req.leave_dates) dates = JSON.parse(req.leave_dates); } catch {}
+                const dayCount = dates.length > 0
+                  ? dates.length
+                  : Math.max(0, Math.floor((new Date(req.end_date).getTime() - new Date(req.start_date).getTime()) / (1000*60*60*24)) + 1);
+                const dateDisplay = dates.length > 0
+                  ? (dates.length === 1 ? dates[0] : `${dates[0]} ～ ${dates[dates.length-1]}（${dates.length}日）`)
+                  : `${req.start_date} ～ ${req.end_date}（${dayCount}日間）`;
+
                 const st = STATUS_LABEL[req.status] || { label: req.status, color: '#333' };
                 const isApproved = req.status === 'approved';
                 const isRejected = req.status === 'rejected';
@@ -345,53 +495,40 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                   <div
                     key={req.id}
                     style={{
-                      padding: 16,
-                      borderRadius: 10,
+                      padding: 16, borderRadius: 10,
                       border: `2px solid ${isApproved ? '#28a745' : isRejected ? '#dc3545' : borderColor}`,
                       background: isApproved ? (isDark ? '#1b4d1b' : '#f0fff4') : isRejected ? (isDark ? '#5a1a1a' : '#fff5f5') : (isDark ? '#495057' : '#fafafa'),
                     }}
                   >
-                    {/* ヘッダー行 */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8, flexWrap: 'wrap', gap: 4 }}>
                       <div style={{ fontWeight: 'bold', fontSize: 16, color: text }}>
                         {req.leave_type === 'その他' ? req.leave_type_other : req.leave_type}
                       </div>
                       <span style={{
                         padding: '3px 10px', borderRadius: 20, fontSize: 12, fontWeight: 'bold',
-                        background: isApproved ? '#28a745' : isRejected ? '#dc3545' : '#ffc107',
-                        color: isPending ? '#333' : 'white',
+                        background: isApproved ? '#28a745' : isRejected ? '#dc3545' : '#e67e22',
+                        color: 'white',
                       }}>
                         {st.label}
                       </span>
                     </div>
-
-                    {/* 日付・日数 */}
-                    <div style={{ color: subText, fontSize: 14, marginBottom: 6 }}>
-                      {req.start_date} ～ {req.end_date}（{days}日間）
-                    </div>
-
-                    {/* 申請先 */}
+                    <div style={{ color: subText, fontSize: 14, marginBottom: 6 }}>{dateDisplay}</div>
                     {req.approver && (
                       <div style={{ color: subText, fontSize: 13, marginBottom: 4 }}>
                         申請先: {req.approver.name}（{req.approver.role_title}）
                       </div>
                     )}
-
-                    {/* 理由 */}
-                    {req.reason && (
-                      <div style={{ color: subText, fontSize: 13, marginBottom: 4 }}>
-                        理由: {req.reason}
-                      </div>
+                    {req.purpose && (
+                      <div style={{ color: subText, fontSize: 13, marginBottom: 4 }}>事由: {req.purpose}</div>
                     )}
-
-                    {/* 却下理由 */}
+                    {req.reason && (
+                      <div style={{ color: subText, fontSize: 13, marginBottom: 4 }}>備考: {req.reason}</div>
+                    )}
                     {isRejected && req.rejected_reason && (
                       <div style={{ marginTop: 8, padding: '8px 12px', background: isDark ? '#721c24' : '#f8d7da', borderRadius: 6, color: isDark ? '#f5c6cb' : '#721c24', fontSize: 13 }}>
-                        却下理由: {req.rejected_reason}
+                        差し戻し理由: {req.rejected_reason}
                       </div>
                     )}
-
-                    {/* 申請日 */}
                     <div style={{ color: isDark ? '#6c757d' : '#aaa', fontSize: 12, marginTop: 8 }}>
                       申請日: {new Date(req.created_at).toLocaleDateString('ja-JP')}
                     </div>
@@ -406,17 +543,24 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       {/* 確認モーダル */}
       {showConfirm && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-          <div style={{ background: isDark ? '#343a40' : 'white', borderRadius: 12, padding: 24, maxWidth: 400, width: '100%', color: text }}>
+          <div style={{ background: isDark ? '#343a40' : 'white', borderRadius: 12, padding: 24, maxWidth: 440, width: '100%', color: text, maxHeight: '90vh', overflowY: 'auto' }}>
             <h3 style={{ marginBottom: 16, color: text }}>申請内容の確認</h3>
             <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 20 }}>
               <tbody>
-                <tr><td style={{ padding: '8px 0', color: subText, width: '40%' }}>申請者</td><td style={{ padding: '8px 0', fontWeight: 'bold', color: text }}>{profileName || user.email}</td></tr>
-                <tr><td style={{ padding: '8px 0', color: subText }}>申請先</td><td style={{ padding: '8px 0', fontWeight: 'bold', color: text }}>{selectedApprover?.name}（{selectedApprover?.role_title}）</td></tr>
-                <tr><td style={{ padding: '8px 0', color: subText }}>休暇種別</td><td style={{ padding: '8px 0', fontWeight: 'bold', color: text }}>{leaveType === 'その他' ? leaveTypeOther : leaveType}</td></tr>
-                <tr><td style={{ padding: '8px 0', color: subText }}>開始日</td><td style={{ padding: '8px 0', fontWeight: 'bold', color: text }}>{startDate}</td></tr>
-                <tr><td style={{ padding: '8px 0', color: subText }}>終了日</td><td style={{ padding: '8px 0', fontWeight: 'bold', color: text }}>{endDate}</td></tr>
-                <tr><td style={{ padding: '8px 0', color: subText }}>日数</td><td style={{ padding: '8px 0', fontWeight: 'bold', color: '#007bff' }}>{calcDays(startDate, endDate)}日間</td></tr>
-                {reason && <tr><td style={{ padding: '8px 0', color: subText }}>理由</td><td style={{ padding: '8px 0', color: text }}>{reason}</td></tr>}
+                <tr><td style={{ padding: '8px 0', color: subText, width: '30%', verticalAlign: 'top' }}>申請者</td><td style={{ padding: '8px 0', fontWeight: 'bold', color: text }}>{profileName || user.email}</td></tr>
+                <tr><td style={{ padding: '8px 0', color: subText, verticalAlign: 'top' }}>申請先</td><td style={{ padding: '8px 0', fontWeight: 'bold', color: text }}>{selectedApprover?.name}（{selectedApprover?.role_title}）</td></tr>
+                <tr><td style={{ padding: '8px 0', color: subText, verticalAlign: 'top' }}>休暇種別</td><td style={{ padding: '8px 0', fontWeight: 'bold', color: text }}>{leaveType === 'その他' ? leaveTypeOther : leaveType}</td></tr>
+                <tr>
+                  <td style={{ padding: '8px 0', color: subText, verticalAlign: 'top' }}>休暇日</td>
+                  <td style={{ padding: '8px 0', fontWeight: 'bold', color: '#007bff' }}>
+                    {formatSelectedDates(selectedDates)}
+                    <div style={{ marginTop: 4, fontSize: 12, color: subText, fontWeight: 'normal' }}>
+                      {selectedDates.slice(0, 10).join('、')}{selectedDates.length > 10 ? `…他${selectedDates.length - 10}日` : ''}
+                    </div>
+                  </td>
+                </tr>
+                <tr><td style={{ padding: '8px 0', color: subText, verticalAlign: 'top' }}>事由</td><td style={{ padding: '8px 0', color: text }}>{purpose}</td></tr>
+                {notes && <tr><td style={{ padding: '8px 0', color: subText, verticalAlign: 'top' }}>備考</td><td style={{ padding: '8px 0', color: text }}>{notes}</td></tr>}
               </tbody>
             </table>
             <div style={{ display: 'flex', gap: 12 }}>
