@@ -29,7 +29,7 @@ const ProtectedLayout: React.FC = () => {
 };
 
 // ナビゲーションバー
-const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean }> = ({ isAdmin: _isAdmin, onLogout, email, profileName, canLeave }) => {
+const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean }> = ({ isAdmin: _isAdmin, onLogout, email, profileName, canLeave, canApprove }) => {
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -208,7 +208,7 @@ const Dashboard: React.FC = () => {
 
   return (
     <div style={{ maxWidth: 800, margin: '40px auto', position: 'relative', paddingTop: '80px' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isAdmin || ['リーダー','マネージャー','社長','管理者'].includes(roleTitle)} />
 
       {/* 有給申請フォーム送信通知バナー（パート向け） */}
       {leaveRequestEnabled && (
@@ -272,7 +272,7 @@ const TripReportPage: React.FC = () => {
   if (!user) return <div>読み込んでいます...</div>;
   return (
     <div style={{ paddingTop: '60px' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isAdmin || ['リーダー','マネージャー','社長','管理者'].includes(roleTitle)} />
       <BusinessTripReportForm user={user} profileName={profileName} />
     </div>
   );
@@ -284,7 +284,7 @@ const LeaveRequestPage: React.FC = () => {
   if (!user) return <div>読み込んでいます...</div>;
   return (
     <div style={{ paddingTop: '60px' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isAdmin || ['リーダー','マネージャー','社長','管理者'].includes(roleTitle)} />
       <LeaveRequestForm user={user} profileName={profileName} roleTitle={roleTitle} leaveRequestEnabled={leaveRequestEnabled} />
     </div>
   );
@@ -299,7 +299,7 @@ const LeaveApprovalsPage: React.FC = () => {
   if (roleTitle && !isAdmin && !approverRoles.includes(roleTitle)) return <Navigate to="/" />;
   return (
     <div style={{ paddingTop: '60px' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isAdmin || ['リーダー','マネージャー','社長','管理者'].includes(roleTitle)} />
       <LeaveApprovals user={user} profileName={profileName} isAdmin={isAdmin} roleTitle={roleTitle} />
     </div>
   );

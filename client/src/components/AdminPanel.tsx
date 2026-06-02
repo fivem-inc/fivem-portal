@@ -3252,7 +3252,7 @@ ${printData.map((page) => `
                       const target = partUsers.find(u => u.id === userId);
                       if (!target) return;
                       if (!window.confirm(`「${target.name || target.email}」さんに有給申請フォームを送信しますか？`)) return;
-                      const { error } = await supabase.from('profiles').update({ leave_request_enabled: true }).eq('id', userId);
+                      const { error } = await supabase.from('profiles').update({ leave_request_enabled: true, leave_enabled_by: (await supabase.auth.getUser()).data.user?.id }).eq('id', userId);
                       if (error) { alert('送信に失敗しました: ' + error.message); return; }
                       await fetchUsers();
                       alert(`「${target.name || target.email}」さんに有給申請フォームを送信しました。`);
@@ -3268,7 +3268,7 @@ ${printData.map((page) => `
                         <span style={{ fontSize: 13, color: isDarkMode ? '#fff' : '#333' }}>✅ {u.name || u.email}</span>
                         <button
                           onClick={async () => {
-                            await supabase.from('profiles').update({ leave_request_enabled: false }).eq('id', u.id);
+                            await supabase.from('profiles').update({ leave_request_enabled: false, leave_enabled_by: null }).eq('id', u.id);
                             await fetchUsers();
                           }}
                           style={{ padding: '2px 8px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 11 }}
