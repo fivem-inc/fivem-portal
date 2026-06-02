@@ -107,7 +107,11 @@ const LeaveApprovalBanner: React.FC<{ userId: string; roleTitle: string; isAdmin
         .select('id')
         .eq('status', 'step2_pending')
         .eq('approver2_id', userId);
-      const data = [...(d1 || []), ...(d2 || [])];
+      // 社長: admin_approved ステータスをカウント
+      const { data: d3 } = roleTitle === '社長'
+        ? await supabase.from('leave_requests').select('id').eq('status', 'admin_approved')
+        : { data: [] };
+      const data = [...(d1 || []), ...(d2 || []), ...(d3 || [])];
       if (data) setPendingCount(data.length);
     };
     fetchPending();
@@ -150,6 +154,7 @@ const Dashboard: React.FC = () => {
     profileName,
     roleTitle,
     canLeave,
+    leaveRequestEnabled,
     handleLogout
   } = useAuth();
 
@@ -204,6 +209,20 @@ const Dashboard: React.FC = () => {
   return (
     <div style={{ maxWidth: 800, margin: '40px auto', position: 'relative', paddingTop: '80px' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} />
+
+      {/* 有給申請フォーム送信通知バナー（パート向け） */}
+      {leaveRequestEnabled && (
+        <div
+          onClick={() => window.location.href = '/leave'}
+          style={{ background: '#28a745', color: 'white', borderRadius: 10, padding: '14px 20px', marginBottom: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, boxShadow: '0 2px 8px rgba(40,167,69,0.4)' }}
+        >
+          <span style={{ fontSize: 24 }}>📨</span>
+          <div>
+            <div style={{ fontWeight: 'bold', fontSize: 15 }}>申請フォームが届いています</div>
+            <div style={{ fontSize: 13, opacity: 0.9 }}>タップして申請画面へ →</div>
+          </div>
+        </div>
+      )}
 
       {/* 休暇申請承認バナー（承認者のみ） */}
       <LeaveApprovalBanner userId={user.id} roleTitle={roleTitle} isAdmin={isAdmin} />
@@ -261,12 +280,12 @@ const TripReportPage: React.FC = () => {
 
 // 休暇申請ページ
 const LeaveRequestPage: React.FC = () => {
-  const { user, isAdmin, profileName, roleTitle, canLeave, handleLogout } = useAuth();
+  const { user, isAdmin, profileName, roleTitle, canLeave, leaveRequestEnabled, handleLogout } = useAuth();
   if (!user) return <div>読み込んでいます...</div>;
   return (
     <div style={{ paddingTop: '60px' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} />
-      <LeaveRequestForm user={user} profileName={profileName} roleTitle={roleTitle} />
+      <LeaveRequestForm user={user} profileName={profileName} roleTitle={roleTitle} leaveRequestEnabled={leaveRequestEnabled} />
     </div>
   );
 };
@@ -281,7 +300,7 @@ const LeaveApprovalsPage: React.FC = () => {
   return (
     <div style={{ paddingTop: '60px' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} />
-      <LeaveApprovals user={user} profileName={profileName} isAdmin={isAdmin} />
+      <LeaveApprovals user={user} profileName={profileName} isAdmin={isAdmin} roleTitle={roleTitle} />
     </div>
   );
 };

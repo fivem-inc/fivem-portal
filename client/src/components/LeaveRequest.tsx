@@ -7,6 +7,7 @@ interface Props {
   user: AuthUser;
   profileName: string | null;
   roleTitle: string;
+  leaveRequestEnabled?: boolean;
 }
 
 interface Approver {
@@ -37,7 +38,7 @@ const STATUS_LABEL: Record<string, { label: string; color: string }> = {
   rejected:         { label: '却下', color: '#721c24' },
 };
 
-const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _roleTitle }) => {
+const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _roleTitle, leaveRequestEnabled }) => {
   const navigate = useNavigate();
   const [tab, setTab] = useState<'form' | 'history'>('form');
 
@@ -131,6 +132,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         approver_id: selectedApproverId,
       });
       if (error) throw error;
+      // パートの場合は申請完了後にフォームを非表示に戻す
+      await supabase.from('profiles').update({ leave_request_enabled: false }).eq('id', user.id);
       setSubmitted(true);
       setShowConfirm(false);
     } catch (err: any) {
@@ -164,16 +167,20 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         <div style={{ fontSize: 48, marginBottom: 16 }}>✅</div>
         <h2 style={{ color: '#28a745', marginBottom: 8 }}>申請しました</h2>
         <p style={{ color: subText, marginBottom: 24 }}>承認者に通知されます。</p>
-        <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-          <button onClick={() => navigate('/')} style={{ padding: '10px 24px', background: '#6c757d', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 15 }}>
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <button onClick={() => navigate('/')} style={{ padding: '10px 24px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 15 }}>
             🏠 ホームに戻る
           </button>
-          <button onClick={handleReset} style={{ padding: '10px 24px', background: '#007bff', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 15 }}>
-            続けて申請する
-          </button>
-          <button onClick={() => { handleReset(); setTab('history'); }} style={{ padding: '10px 24px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 15 }}>
-            申請履歴を確認
-          </button>
+          {!leaveRequestEnabled && (
+            <>
+              <button onClick={handleReset} style={{ padding: '10px 24px', background: '#007bff', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 15 }}>
+                続けて申請する
+              </button>
+              <button onClick={() => { handleReset(); setTab('history'); }} style={{ padding: '10px 24px', background: '#6c757d', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 15 }}>
+                申請履歴を確認
+              </button>
+            </>
+          )}
         </div>
       </div>
     );
@@ -181,7 +188,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
 
   return (
     <div style={{ maxWidth: 600, margin: '20px auto', padding: '0 12px' }}>
-      {/* タブ切替 */}
+      {/* タブ切替（パートの場合は新規申請のみ） */}
       <div style={{ display: 'flex', gap: 0, marginBottom: 0, borderRadius: '10px 10px 0 0', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
         <button
           onClick={() => setTab('form')}
@@ -189,12 +196,14 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         >
           🌿 新規申請
         </button>
-        <button
-          onClick={() => setTab('history')}
-          style={{ flex: 1, padding: '12px', background: tab === 'history' ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'), color: tab === 'history' ? 'white' : text, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: tab === 'history' ? 'bold' : 'normal' }}
-        >
-          📋 申請履歴
-        </button>
+        {!leaveRequestEnabled && (
+          <button
+            onClick={() => setTab('history')}
+            style={{ flex: 1, padding: '12px', background: tab === 'history' ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'), color: tab === 'history' ? 'white' : text, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: tab === 'history' ? 'bold' : 'normal' }}
+          >
+            📋 申請履歴
+          </button>
+        )}
       </div>
 
       {/* 申請フォーム */}

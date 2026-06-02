@@ -7,6 +7,7 @@ interface Props {
   user: AuthUser;
   profileName: string | null;
   isAdmin: boolean;
+  roleTitle?: string;
 }
 
 interface LeaveReq {
@@ -41,7 +42,8 @@ const STATUS_LABEL: Record<string, string> = {
   rejected:         '却下',
 };
 
-const LeaveApprovals: React.FC<Props> = ({ user, isAdmin }) => {
+const LeaveApprovals: React.FC<Props> = ({ user, isAdmin, roleTitle }) => {
+  const isPresident = roleTitle === '社長';
   const navigate = useNavigate();
   const [requests, setRequests] = useState<LeaveReq[]>([]);
   const [loading, setLoading] = useState(false);
@@ -79,6 +81,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, isAdmin }) => {
   }, []);
 
   const fetchRequests = useCallback(async () => {
+    // isPresidentをcallback内でも参照できるよう依存に含める
     setLoading(true);
     try {
       let query = supabase
@@ -88,13 +91,17 @@ const LeaveApprovals: React.FC<Props> = ({ user, isAdmin }) => {
         .order('created_at', { ascending: false });
 
       if (!isAdmin) {
-        // 自分の番 + 自分が却下したもの
-        query = query.or(
-          `and(status.eq.pending,approver_id.eq.${user.id}),` +
-          `and(status.eq.step2_pending,approver2_id.eq.${user.id}),` +
-          `and(status.eq.rejected,approver_id.eq.${user.id}),` +
-          `and(status.eq.rejected,approver2_id.eq.${user.id})`
-        );
+        // 自分の番 + 自分が却下したもの + 社長は admin_approved も表示
+        const orConditions = [
+          `and(status.eq.pending,approver_id.eq.${user.id})`,
+          `and(status.eq.step2_pending,approver2_id.eq.${user.id})`,
+          `and(status.eq.rejected,approver_id.eq.${user.id})`,
+          `and(status.eq.rejected,approver2_id.eq.${user.id})`,
+        ];
+        if (isPresident) {
+          orConditions.push(`status.eq.admin_approved`);
+        }
+        query = query.or(orConditions.join(','));
       }
 
       const { data, error } = await query;
@@ -115,7 +122,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, isAdmin }) => {
     } finally {
       setLoading(false);
     }
-  }, [user.id, isAdmin]);
+  }, [user.id, isAdmin, isPresident]);
 
   useEffect(() => { fetchRequests(); }, [fetchRequests]);
 
@@ -139,6 +146,8 @@ const LeaveApprovals: React.FC<Props> = ({ user, isAdmin }) => {
       admin_approved:   'approved',
     };
     const next = nextMap[req.status] || 'manager_approved';
+    const label = next === 'approved' ? '最終承認（完了）' : '承認';
+    if (!window.confirm(`${label}しますか？`)) return;
     await supabase.from('leave_requests').update({ status: next }).eq('id', req.id);
     fetchRequests();
   };
@@ -180,6 +189,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, isAdmin }) => {
     if (isAdmin) return true;
     if (req.status === 'pending' && req.approver_id === user.id) return true;
     if (req.status === 'step2_pending' && req.approver2_id === user.id) return true;
+    if (req.status === 'admin_approved' && isPresident) return true;
     return false;
   };
 

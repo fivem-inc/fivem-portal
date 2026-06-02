@@ -450,6 +450,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     }
     if (activeTab === 'leave_requests') {
       fetchLeaveRequests();
+      fetchUsers();
     }
   }, [activeTab, fetchUsers, fetchTripReports, fetchMasterOptions, fetchLeaveRequests]);
 
@@ -3224,9 +3225,59 @@ ${printData.map((page) => `
             return { role: '', name: req.status, color: '#999' };
           };
 
+          const partUsers = users.filter(u => u.is_active !== false && u.employment_type === 'パート');
+
           return (
             <div>
               <h3 style={{ textAlign: 'center', marginBottom: 16, color: isDarkMode ? '#fff' : '#000' }}>🌿 休暇申請一覧</h3>
+
+              {/* パートへ有給申請フォーム送信 */}
+              <div style={{ background: isDarkMode ? '#2d3136' : '#f8f9fa', border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, borderRadius: 10, padding: '12px 16px', marginBottom: 20, maxWidth: 500, marginLeft: 'auto', marginRight: 'auto' }}>
+                <p style={{ fontWeight: 'bold', fontSize: 13, color: isDarkMode ? '#fff' : '#333', marginBottom: 8 }}>📨 パートへ有給申請フォームを送信</p>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <select
+                    id="part-leave-target"
+                    style={{ flex: 1, minWidth: 160, padding: '6px 8px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', fontSize: 13 }}
+                  >
+                    <option value="">-- パートを選択 --</option>
+                    {partUsers.map(u => (
+                      <option key={u.id} value={u.id}>{u.name || u.email}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={async () => {
+                      const sel = document.getElementById('part-leave-target') as HTMLSelectElement;
+                      const userId = sel?.value;
+                      if (!userId) { alert('パートを選択してください'); return; }
+                      const target = partUsers.find(u => u.id === userId);
+                      if (!target) return;
+                      if (!window.confirm(`「${target.name || target.email}」さんに有給申請フォームを送信しますか？`)) return;
+                      const { error } = await supabase.from('profiles').update({ leave_request_enabled: true }).eq('id', userId);
+                      if (error) { alert('送信に失敗しました: ' + error.message); return; }
+                      await fetchUsers();
+                      alert(`「${target.name || target.email}」さんに有給申請フォームを送信しました。`);
+                    }}
+                    style={{ padding: '6px 16px', background: '#28a745', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 13, whiteSpace: 'nowrap' }}
+                  >送信</button>
+                </div>
+                {partUsers.filter(u => u.leave_request_enabled).length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <p style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666', marginBottom: 4 }}>現在フォーム表示中のパート：</p>
+                    {partUsers.filter(u => u.leave_request_enabled).map(u => (
+                      <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                        <span style={{ fontSize: 13, color: isDarkMode ? '#fff' : '#333' }}>✅ {u.name || u.email}</span>
+                        <button
+                          onClick={async () => {
+                            await supabase.from('profiles').update({ leave_request_enabled: false }).eq('id', u.id);
+                            await fetchUsers();
+                          }}
+                          style={{ padding: '2px 8px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 11 }}
+                        >取り消し</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               {/* フィルターボタン */}
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16, justifyContent: 'center' }}>
@@ -3311,7 +3362,7 @@ ${printData.map((page) => `
                                   <button
                                     onClick={async () => {
                                       if (!window.confirm('承認しますか？')) return;
-                                      const nextStatus: Record<string, string> = { pending: 'manager_approved', step2_pending: 'manager_approved', manager_approved: 'admin_approved', admin_approved: 'approved' };
+                                      const nextStatus: Record<string, string> = { pending: 'step2_pending', step2_pending: 'manager_approved', manager_approved: 'admin_approved', admin_approved: 'approved' };
                                       await supabase.from('leave_requests').update({ status: nextStatus[req.status] || 'approved' }).eq('id', req.id);
                                       fetchLeaveRequests();
                                     }}

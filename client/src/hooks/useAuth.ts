@@ -10,6 +10,7 @@ interface UseAuthReturn {
   profileName: string;
   roleTitle: string;
   canLeave: boolean;
+  leaveRequestEnabled: boolean;
   handleLogout: () => Promise<void>;
 }
 
@@ -20,6 +21,7 @@ export const useAuth = (): UseAuthReturn => {
   const [profileName, setProfileName] = useState('');
   const [roleTitle, setRoleTitle] = useState('');
   const [canLeave, setCanLeave] = useState(false);
+  const [leaveRequestEnabled, setLeaveRequestEnabled] = useState(false);
 
   const isAdmin = user?.app_metadata?.role === 'admin';
 
@@ -30,7 +32,7 @@ export const useAuth = (): UseAuthReturn => {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('name, role_title, employment_type')
+        .select('name, role_title, employment_type, leave_request_enabled')
         .eq('id', user.id)
         .single();
 
@@ -41,6 +43,7 @@ export const useAuth = (): UseAuthReturn => {
         const alwaysShow = ['リーダー', 'マネージャー', '社長', '管理者'].includes(role);
         const isAdmin = user?.app_metadata?.role === 'admin';
         setCanLeave(alwaysShow || isAdmin);
+        setLeaveRequestEnabled(!!data.leave_request_enabled);
         setLoading(false);
         return;
       }
@@ -84,6 +87,7 @@ export const useAuth = (): UseAuthReturn => {
     profileName,
     roleTitle,
     canLeave,
+    leaveRequestEnabled,
     handleLogout
   };
 };
