@@ -3383,7 +3383,8 @@ ${printData.map((page) => `
                                 onClick={async () => {
                                   if (!window.confirm('この申請を削除しますか？')) return;
                                   if (!window.confirm('本当に削除します。この操作は取り消せません。')) return;
-                                  await supabase.from('leave_requests').delete().eq('id', req.id);
+                                  const { error } = await supabase.from('leave_requests').delete().eq('id', req.id);
+                                  if (error) { alert('削除に失敗しました: ' + error.message); return; }
                                   fetchLeaveRequests();
                                 }}
                                 style={{ padding: '4px 3px', background: 'transparent', color: isDarkMode ? '#888' : '#aaa', border: `1px solid ${isDarkMode ? '#555' : '#ddd'}`, borderRadius: 4, cursor: 'pointer', fontSize: 9, writingMode: 'vertical-rl', letterSpacing: 1 }}
