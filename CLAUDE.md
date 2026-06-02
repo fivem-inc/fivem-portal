@@ -298,6 +298,27 @@ ALTER TABLE public.profiles ADD COLUMN leave_enabled_by UUID REFERENCES auth.use
 CREATE POLICY "leader_manager_update_leave_enabled" ON public.profiles FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
 ```
 
+## ✅ 2026-06-03 休暇申請UI全面改善 完了
+
+### 変更内容
+- **カレンダー多日付選択**: 日付をタップで個別選択・解除、2か月超はNG
+- **休暇種別**: 有給休暇 / バースデー休暇（有給）/ 慶弔休暇 / その他
+- **事由（必須）・備考（任意）** フィールド追加
+- **注意事項** 4項目をフォーム上部に表示
+- **文言変更（全画面）**: 承認→受理、却下→差し戻し
+- **受理済みバナー**: ホーム画面に表示、タップで申請履歴へ・localStorage消去
+- **管理者画面**: 承認状況→確認状況、開始日/終了日→休暇日（年/月/日・日・日形式）
+- **管理者画面**: 申請日新着順固定（ステータス変更で並び替わらない）
+- **ナビ重なり修正**: 全ページpaddingTop 80px
+
+### Supabase SQLが必要（未実施の場合）
+```sql
+ALTER TABLE public.leave_requests ADD COLUMN IF NOT EXISTS leave_dates TEXT;
+ALTER TABLE public.leave_requests ADD COLUMN IF NOT EXISTS purpose TEXT;
+```
+
+### コミット: ee686a7
+
 ### 🔜 次回やること
 1. **Phase 1: メール送信機能**（管理者から全員・グループ・個人にメール送信）
    - グループ: こども / パート・アルバイトスタッフ / マネージャー・リーダー等
