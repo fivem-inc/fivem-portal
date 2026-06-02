@@ -38,7 +38,7 @@ const STATUS_LABEL: Record<string, { label: string; color: string }> = {
   rejected:         { label: '却下', color: '#721c24' },
 };
 
-const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _roleTitle, leaveRequestEnabled }) => {
+const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _roleTitle = '', leaveRequestEnabled }) => {
   const navigate = useNavigate();
   const [tab, setTab] = useState<'form' | 'history'>('form');
 
@@ -133,7 +133,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       });
       if (error) throw error;
       // パートの場合は申請完了後にフォームを非表示に戻す
-      await supabase.from('profiles').update({ leave_request_enabled: false }).eq('id', user.id);
+      await supabase.from('profiles').update({ leave_request_enabled: false, leave_enabled_by: null }).eq('id', user.id);
       setSubmitted(true);
       setShowConfirm(false);
     } catch (err: any) {
@@ -186,6 +186,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     );
   }
 
+  const isApprover = ['リーダー', 'マネージャー', '社長', '管理者'].includes(_roleTitle);
+
   return (
     <div style={{ maxWidth: 600, margin: '20px auto', padding: '0 12px' }}>
       {/* タブ切替（パートの場合は新規申請のみ） */}
@@ -202,6 +204,14 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             style={{ flex: 1, padding: '12px', background: tab === 'history' ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'), color: tab === 'history' ? 'white' : text, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: tab === 'history' ? 'bold' : 'normal' }}
           >
             📋 申請履歴
+          </button>
+        )}
+        {isApprover && (
+          <button
+            onClick={() => navigate('/leave-approvals')}
+            style={{ flex: 1, padding: '12px', background: '#fd7e14', color: 'white', border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 'bold' }}
+          >
+            ✅ 承認ページ
           </button>
         )}
       </div>

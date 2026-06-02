@@ -57,6 +57,9 @@ const LeaveApprovals: React.FC<Props> = ({ user, isAdmin, roleTitle }) => {
   const [managers, setManagers] = useState<Approver[]>([]);
   const [selectedManagerId, setSelectedManagerId] = useState('');
 
+  // パートへフォーム送信
+  const [partUsers, setPartUsers] = useState<any[]>([]);
+
   const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   const bg = isDark ? '#343a40' : 'white';
   const text = isDark ? '#fff' : '#333';
@@ -78,6 +81,17 @@ const LeaveApprovals: React.FC<Props> = ({ user, isAdmin, roleTitle }) => {
           if (data.length > 0) setSelectedManagerId(data[0].id);
         }
       });
+  }, []);
+
+  // パート一覧取得
+  useEffect(() => {
+    supabase
+      .from('profiles')
+      .select('id, name, email, employment_type, leave_request_enabled')
+      .eq('employment_type', 'パート')
+      .eq('is_active', true)
+      .order('name')
+      .then(({ data }) => { if (data) setPartUsers(data); });
   }, []);
 
   const fetchRequests = useCallback(async () => {
@@ -195,6 +209,66 @@ const LeaveApprovals: React.FC<Props> = ({ user, isAdmin, roleTitle }) => {
 
   return (
     <div style={{ maxWidth: 680, margin: '20px auto', padding: '0 12px' }}>
+
+      {/* パートへ申請フォーム送信 */}
+      {(() => {
+        const canSeeAll = isAdmin || roleTitle === 'マネージャー' || roleTitle === '社長' || roleTitle === '管理者';
+        const isLeader = roleTitle === 'リーダー';
+        // リーダーは自分が送ったものだけ表示
+        const visibleEnabled = partUsers.filter(u =>
+          u.leave_request_enabled && (canSeeAll ? true : u.leave_enabled_by === user.id)
+        );
+        return (
+          <div style={{ background: isDark ? '#2d3136' : '#f8f9fa', border: `1px solid ${isDark ? '#6c757d' : '#dee2e6'}`, borderRadius: 10, padding: '12px 16px', marginBottom: 16 }}>
+            <p style={{ fontWeight: 'bold', fontSize: 13, color: isDark ? '#fff' : '#333', marginBottom: 8 }}>📨 パートへ申請フォームを送信</p>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <select id="part-leave-target-approvals" style={{ flex: 1, minWidth: 160, padding: '6px 8px', borderRadius: 6, border: `1px solid ${isDark ? '#6c757d' : '#ccc'}`, background: isDark ? '#495057' : 'white', color: isDark ? '#fff' : '#000', fontSize: 13 }}>
+                <option value="">-- パートを選択 --</option>
+                {partUsers.filter(u => !u.leave_request_enabled).map(u => (
+                  <option key={u.id} value={u.id}>{u.name || u.email}</option>
+                ))}
+              </select>
+              <button
+                onClick={async () => {
+                  const sel = document.getElementById('part-leave-target-approvals') as HTMLSelectElement;
+                  const userId = sel?.value;
+                  if (!userId) { alert('パートを選択してください'); return; }
+                  const target = partUsers.find(u => u.id === userId);
+                  if (!target) return;
+                  if (!window.confirm(`「${target.name || target.email}」さんに申請フォームを送信しますか？`)) return;
+                  const { error } = await supabase.from('profiles').update({ leave_request_enabled: true, leave_enabled_by: user.id }).eq('id', userId);
+                  if (error) { alert('送信に失敗しました: ' + error.message); return; }
+                  setPartUsers(prev => prev.map(u => u.id === userId ? { ...u, leave_request_enabled: true, leave_enabled_by: user.id } : u));
+                  alert(`「${target.name || target.email}」さんに申請フォームを送信しました。`);
+                }}
+                style={{ padding: '6px 16px', background: '#28a745', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 13, whiteSpace: 'nowrap' }}
+              >送信</button>
+            </div>
+            {visibleEnabled.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <p style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#666', marginBottom: 4 }}>
+                  現在フォーム表示中{isLeader ? '（自分が送ったもの）' : ''}：
+                </p>
+                {visibleEnabled.map(u => (
+                  <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: 13, color: isDark ? '#fff' : '#333' }}>✅ {u.name || u.email}</span>
+                    {(canSeeAll || u.leave_enabled_by === user.id) && (
+                      <button
+                        onClick={async () => {
+                          await supabase.from('profiles').update({ leave_request_enabled: false, leave_enabled_by: null }).eq('id', u.id);
+                          setPartUsers(prev => prev.map(p => p.id === u.id ? { ...p, leave_request_enabled: false, leave_enabled_by: null } : p));
+                        }}
+                        style={{ padding: '2px 8px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 11 }}
+                      >取り消し</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       <div style={{ padding: 24, background: bg, borderRadius: 12, boxShadow: '0 2px 12px rgba(0,0,0,0.1)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
           <h2 style={{ margin: 0, fontSize: 20, color: text }}>🌿 休暇申請 承認待ち一覧</h2>
