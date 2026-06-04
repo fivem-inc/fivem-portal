@@ -460,7 +460,8 @@ INSERT INTO public.master_options (category, value, sort_order) VALUES
 ### ✅ Slack Edge Functionデプロイ完了（2026-06-04）
 - `send-trip-slack` デプロイ済み
 - Supabase Secrets登録済み（KOHEI / ADULT / KIDS_* / JUNIOR / SUPPORT）
-- `#07_1お客様サポートへ`（SLACK_WEBHOOK_TRIP_SUPPORT）追加済み
+- `#07_1お客様サポートへ`（SLACK_WEBHOOK_TRIP_SUPPORT）追加済み・デプロイ済み
+- チャンネル一覧: 晃平先生へ（自動）/ 大人 / 本校こども / 西陣校 / 上桂校 / 洛西口校 / 南草津校 / ジュニア / お客様サポート
 - コミット: `9bcb6b4`
 
 ### 🔜 次回やること
