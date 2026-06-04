@@ -1,0 +1,69 @@
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
+
+const CHANNEL_SECRET_MAP: Record<string, string> = {
+  kohei:             'SLACK_WEBHOOK_TRIP_KOHEI',
+  adult:             'SLACK_WEBHOOK_TRIP_ADULT',
+  kids_main:         'SLACK_WEBHOOK_TRIP_KIDS_MAIN',
+  kids_nishijin:     'SLACK_WEBHOOK_TRIP_KIDS_NISHIJIN',
+  kids_kamikatsura:  'SLACK_WEBHOOK_TRIP_KIDS_KAMIKATSURA',
+  kids_rakusaiguchi: 'SLACK_WEBHOOK_TRIP_KIDS_RAKUSAIGUCHI',
+  kids_minamisusita: 'SLACK_WEBHOOK_TRIP_KIDS_MINAMISUSITA',
+  junior:            'SLACK_WEBHOOK_TRIP_JUNIOR',
+};
+
+async function sendSlack(webhookUrl: string, text: string) {
+  const res = await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) console.error('Slack送信失敗:', await res.text());
+}
+
+serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders });
+  }
+
+  try {
+    const { message, channels } = await req.json();
+
+    const sendPromises: Promise<void>[] = [];
+
+    // チャンネルが1つも選択されていない場合は送信しない
+    if (!channels || channels.length === 0) {
+      return new Response(JSON.stringify({ ok: true, skipped: true }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // チャンネルが選択されている場合は晃平先生へも自動送信
+    const koheiUrl = Deno.env.get('SLACK_WEBHOOK_TRIP_KOHEI');
+    if (koheiUrl) sendPromises.push(sendSlack(koheiUrl, message));
+
+    // 選択されたチャンネルへ送信
+    for (const ch of channels) {
+      const secretName = CHANNEL_SECRET_MAP[ch];
+      if (!secretName) continue;
+      const url = Deno.env.get(secretName);
+      if (url) sendPromises.push(sendSlack(url, message));
+    }
+
+    await Promise.all(sendPromises);
+
+    return new Response(JSON.stringify({ ok: true }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error(err);
+    return new Response(JSON.stringify({ error: String(err) }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+});
