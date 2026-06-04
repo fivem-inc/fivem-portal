@@ -424,15 +424,46 @@ npx supabase functions deploy send-leave-slack --project-ref xaeynaxctiiyqxjyuzf
 
 ---
 
+## ✅ 2026-06-04 Phase4: 出張報告機能拡張 完了
+
+### 実装内容
+- GPS取得後にNominatim APIで住所変換（「京都市左京区〇〇町」レベル）
+- 住所・次回予定をDBに保存（`address`, `next_dates` カラム追加済み）
+- 終了報告時のSlack通知（チャンネル選択制・晃平先生は選択時に自動付与）
+- 区分「出張」「園指導」選択時に場所プリセット表示（DBから取得）
+- 次回（次月）予定カレンダー（終了・出張/園指導のみ）
+- 管理画面: 到着/終了フィルターボタン、GPS→住所リンク、次回予定列
+- 管理画面: 区分・場所リスト管理モーダル（追加・削除・名前変更）
+
+### Slack Edge Function（未デプロイ）
+- ファイル: `supabase/functions/send-trip-slack/index.ts`
+- デプロイコマンド: `npx supabase functions deploy send-trip-slack --project-ref xaeynaxctiiyqxjyuzfi`
+- Supabase Secrets登録が必要（SLACK_WEBHOOK_TRIP_KOHEI / ADULT / KIDS_* / JUNIOR）
+
+### Supabase SQL（実施済み）
+```sql
+ALTER TABLE public.business_trip_reports ADD COLUMN IF NOT EXISTS address TEXT;
+ALTER TABLE public.business_trip_reports ADD COLUMN IF NOT EXISTS next_dates TEXT;
+INSERT INTO public.master_options (category, value, sort_order) VALUES
+  ('trip_category', '出張', 1), ('trip_category', '園指導', 2),
+  ('trip_category', '試合', 3), ('trip_category', '下見', 4), ('trip_category', 'その他', 5),
+  ('trip_location_出張', '上牧', 1), ('trip_location_出張', 'JEUGIA 四条', 2),
+  ('trip_location_出張', 'JEUGIA 西友山科', 3), ('trip_location_出張', 'バンディエラA.F.C', 4),
+  ('trip_location_園指導', '太秦保育園', 1), ('trip_location_園指導', '上京陵和園', 2),
+  ('trip_location_園指導', '認定こども園 下鴨夢', 3), ('trip_location_園指導', 'HOPPA からすま京都ホテル', 4);
+```
+
+### コミット: `8210827`
+
+---
+
 ### 🔜 次回やること
-1. **Phase 1: メール送信機能**（優先①）
+1. **Slack Edge Functionデプロイ**（send-trip-slack）+ Secrets登録
+2. **Phase 1: メール送信機能**（優先①）
    - 管理者から全員・グループ・個人にメール送信
    - グループ: こども / パート・アルバイトスタッフ / マネージャー・リーダー等
    - 送信履歴管理
    - SMTP設定済み（office@five-m.com / Gmail）
-2. **Phase 4: 出張報告機能拡張**（優先②）
-   - GPS → 住所変換（Nominatim API）
-   - Slack通知（終了報告時・チャンネル選択）
 - `b1fc733` Phase3完了・承認フロー改善・UI整備
 - `d4f23c3` グループ追加機能修正（RLSポリシー追加）
 - `e8a8bd9` docs更新
