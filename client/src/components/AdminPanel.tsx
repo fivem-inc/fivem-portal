@@ -75,6 +75,73 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   const [tripReports, setTripReports] = useState<any[]>([]);
   const [loadingTripReports, setLoadingTripReports] = useState(false);
   const [expandedTripYearMonths, setExpandedTripYearMonths] = useState<Set<string>>(new Set());
+  const [tripReportFilter, setTripReportFilter] = useState<'all' | '到着' | '終了'>('all');
+
+  // 場所・区分リスト管理
+  const [showLocationEditor, setShowLocationEditor] = useState(false);
+  const [tripCategories, setTripCategories] = useState<{ id: number; value: string; sort_order: number }[]>([]);
+  const [locationOptions, setLocationOptions] = useState<{ id: number; category: string; value: string; sort_order: number }[]>([]);
+  const [newLocationByCategory, setNewLocationByCategory] = useState<Record<string, string>>({});
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [renamingCategoryId, setRenamingCategoryId] = useState<number | null>(null);
+  const [renamingCategoryValue, setRenamingCategoryValue] = useState('');
+
+  const fetchLocationEditor = async () => {
+    const [catRes, locRes] = await Promise.all([
+      supabase.from('master_options').select('id, value, sort_order').eq('category', 'trip_category').order('sort_order'),
+      supabase.from('master_options').select('id, category, value, sort_order').like('category', 'trip_location_%').order('category').order('sort_order'),
+    ]);
+    if (catRes.data) setTripCategories(catRes.data);
+    if (locRes.data) setLocationOptions(locRes.data);
+  };
+
+  const handleAddCategory = async () => {
+    const name = newCategoryName.trim();
+    if (!name) return;
+    if (tripCategories.some(c => c.value === name)) { alert('同じ名前の区分がすでに存在します'); return; }
+    const maxOrder = tripCategories.reduce((m, c) => Math.max(m, c.sort_order), 0);
+    const { error } = await supabase.from('master_options').insert({ category: 'trip_category', value: name, sort_order: maxOrder + 1 });
+    if (error) { alert('追加に失敗しました: ' + error.message); return; }
+    setNewCategoryName('');
+    await fetchLocationEditor();
+  };
+
+  const handleDeleteCategory = async (id: number, name: string) => {
+    if (!window.confirm(`区分「${name}」と、その場所リストをすべて削除しますか？`)) return;
+    await supabase.from('master_options').delete().eq('id', id);
+    await supabase.from('master_options').delete().eq('category', `trip_location_${name}`);
+    await fetchLocationEditor();
+  };
+
+  const handleRenameCategory = async (id: number, oldName: string) => {
+    const newName = renamingCategoryValue.trim();
+    if (!newName || newName === oldName) { setRenamingCategoryId(null); return; }
+    if (tripCategories.some(c => c.value === newName && c.id !== id)) { alert('同じ名前の区分がすでに存在します'); return; }
+    await supabase.from('master_options').update({ value: newName }).eq('id', id);
+    // 場所リストのカテゴリキーも更新
+    await supabase.from('master_options').update({ category: `trip_location_${newName}` }).eq('category', `trip_location_${oldName}`);
+    setRenamingCategoryId(null);
+    setRenamingCategoryValue('');
+    await fetchLocationEditor();
+  };
+
+  const handleAddLocation = async (categoryName: string) => {
+    const value = (newLocationByCategory[categoryName] || '').trim();
+    if (!value) return;
+    const cat = `trip_location_${categoryName}`;
+    const maxOrder = locationOptions.filter(o => o.category === cat).reduce((m, o) => Math.max(m, o.sort_order), 0);
+    const { error } = await supabase.from('master_options').insert({ category: cat, value, sort_order: maxOrder + 1 });
+    if (error) { alert('追加に失敗しました: ' + error.message); return; }
+    setNewLocationByCategory(prev => ({ ...prev, [categoryName]: '' }));
+    await fetchLocationEditor();
+  };
+
+  const handleDeleteLocation = async (id: number) => {
+    if (!window.confirm('この場所を削除しますか？')) return;
+    const { error } = await supabase.from('master_options').delete().eq('id', id);
+    if (error) { alert('削除に失敗しました: ' + error.message); return; }
+    await fetchLocationEditor();
+  };
 
   // 申請内容編集用の状態
   const [editingSubmissionId, setEditingSubmissionId] = useState<string | null>(null);
@@ -2891,18 +2958,163 @@ ${printData.map((page) => `
         {/* 出張報告タブ */}
         {activeTab === 'trip_reports' && (
           <div>
-            <h3 style={{ textAlign: 'center', marginBottom: '30px', color: isDarkMode ? '#fff' : '#000' }}>📍 出張報告一覧</h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 30 }}>
+              <div style={{ flex: 1 }} />
+              <h3 style={{ margin: 0, color: isDarkMode ? '#fff' : '#000', textAlign: 'center' }}>📍 出張報告一覧</h3>
+              <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => { fetchLocationEditor(); setShowLocationEditor(true); }}
+                  style={{ padding: '6px 14px', borderRadius: 6, border: isDarkMode ? '1px solid #666' : '1px solid #ccc', background: isDarkMode ? '#495057' : '#f8f9fa', color: isDarkMode ? '#fff' : '#333', cursor: 'pointer', fontSize: 13 }}
+                >
+                  ⚙️ 区分・場所リストを管理
+                </button>
+              </div>
+            </div>
+
+            {/* 区分・場所リスト管理モーダル */}
+            {showLocationEditor && (
+              <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}>
+                <div style={{ background: isDarkMode ? '#343a40' : 'white', borderRadius: 12, padding: 28, width: '90%', maxWidth: 500, maxHeight: '85vh', overflowY: 'auto', color: isDarkMode ? '#fff' : '#333' }}>
+                  <h3 style={{ marginTop: 0 }}>⚙️ 区分・場所リスト管理</h3>
+
+                  {/* ── 区分の管理 ── */}
+                  <div style={{ marginBottom: 24 }}>
+                    <div style={{ fontWeight: 'bold', fontSize: 15, marginBottom: 10, borderBottom: isDarkMode ? '1px solid #555' : '1px solid #dee2e6', paddingBottom: 6 }}>
+                      区分の管理
+                    </div>
+                    {tripCategories.map(cat => (
+                      <div key={cat.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        {renamingCategoryId === cat.id ? (
+                          <>
+                            <input
+                              autoFocus
+                              value={renamingCategoryValue}
+                              onChange={e => setRenamingCategoryValue(e.target.value)}
+                              onKeyDown={e => { if (e.key === 'Enter') handleRenameCategory(cat.id, cat.value); if (e.key === 'Escape') setRenamingCategoryId(null); }}
+                              style={{ flex: 1, padding: '5px 8px', borderRadius: 6, border: '2px solid #007bff', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#333', fontSize: 14 }}
+                            />
+                            <button onClick={() => handleRenameCategory(cat.id, cat.value)}
+                              style={{ padding: '4px 10px', background: '#007bff', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>保存</button>
+                            <button onClick={() => setRenamingCategoryId(null)}
+                              style={{ padding: '4px 10px', background: isDarkMode ? '#555' : '#e9ecef', color: isDarkMode ? '#fff' : '#333', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>取消</button>
+                          </>
+                        ) : (
+                          <>
+                            <span style={{ flex: 1, fontSize: 14, padding: '5px 8px', background: isDarkMode ? '#495057' : '#f8f9fa', borderRadius: 6 }}>{cat.value}</span>
+                            <button onClick={() => { setRenamingCategoryId(cat.id); setRenamingCategoryValue(cat.value); }}
+                              style={{ padding: '4px 10px', background: isDarkMode ? '#555' : '#e9ecef', color: isDarkMode ? '#fff' : '#333', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>名前変更</button>
+                            <button onClick={() => handleDeleteCategory(cat.id, cat.value)}
+                              style={{ padding: '4px 10px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>削除</button>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                    {/* 区分追加 */}
+                    <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                      <input
+                        type="text"
+                        placeholder="新しい区分名を入力"
+                        value={newCategoryName}
+                        onChange={e => setNewCategoryName(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleAddCategory(); }}
+                        style={{ flex: 1, padding: '7px 10px', borderRadius: 6, border: isDarkMode ? '1px solid #666' : '1px solid #ccc', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#333', fontSize: 14 }}
+                      />
+                      <button onClick={handleAddCategory} disabled={!newCategoryName.trim()}
+                        style={{ padding: '7px 14px', borderRadius: 6, background: '#28a745', color: 'white', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>
+                        ＋追加
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* ── 場所リスト（区分ごと） ── */}
+                  {tripCategories.map(cat => {
+                    const locKey = `trip_location_${cat.value}`;
+                    const items = locationOptions.filter(o => o.category === locKey);
+                    const newVal = newLocationByCategory[cat.value] || '';
+                    return (
+                      <div key={cat.id} style={{ marginBottom: 20 }}>
+                        <div style={{ fontWeight: 'bold', fontSize: 14, marginBottom: 8, borderBottom: isDarkMode ? '1px solid #555' : '1px solid #dee2e6', paddingBottom: 5, color: isDarkMode ? '#adb5bd' : '#6c757d' }}>
+                          【{cat.value}】の場所リスト
+                        </div>
+                        {items.length === 0 && (
+                          <div style={{ color: isDarkMode ? '#888' : '#999', fontSize: 13, marginBottom: 6 }}>（未登録）</div>
+                        )}
+                        {items.map(item => (
+                          <div key={item.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 10px', marginBottom: 4, background: isDarkMode ? '#495057' : '#f8f9fa', borderRadius: 6 }}>
+                            <span style={{ fontSize: 13 }}>{item.value}</span>
+                            <button onClick={() => handleDeleteLocation(item.id)}
+                              style={{ padding: '2px 8px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>削除</button>
+                          </div>
+                        ))}
+                        <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                          <input
+                            type="text"
+                            placeholder={`${cat.value}の場所を追加`}
+                            value={newVal}
+                            onChange={e => setNewLocationByCategory(prev => ({ ...prev, [cat.value]: e.target.value }))}
+                            onKeyDown={e => { if (e.key === 'Enter') handleAddLocation(cat.value); }}
+                            style={{ flex: 1, padding: '6px 10px', borderRadius: 6, border: isDarkMode ? '1px solid #666' : '1px solid #ccc', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#333', fontSize: 13 }}
+                          />
+                          <button onClick={() => handleAddLocation(cat.value)} disabled={!newVal.trim()}
+                            style={{ padding: '6px 12px', borderRadius: 6, background: '#007bff', color: 'white', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 'bold' }}>
+                            ＋
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+                    <button onClick={() => setShowLocationEditor(false)}
+                      style={{ padding: '8px 20px', borderRadius: 6, border: isDarkMode ? '1px solid #666' : '1px solid #ccc', background: isDarkMode ? '#444' : '#f8f9fa', color: isDarkMode ? '#fff' : '#333', cursor: 'pointer', fontSize: 14 }}>
+                      閉じる
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* フィルターボタン */}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
+              {(['all', '到着', '終了'] as const).map((f) => {
+                const label = f === 'all' ? 'すべて' : f;
+                const isActive = tripReportFilter === f;
+                return (
+                  <button key={f} onClick={() => setTripReportFilter(f)}
+                    style={{
+                      padding: '6px 18px', borderRadius: 20, border: 'none', cursor: 'pointer',
+                      fontWeight: isActive ? 'bold' : 'normal', fontSize: 14,
+                      background: isActive
+                        ? (f === '到着' ? '#17a2b8' : f === '終了' ? '#28a745' : '#007bff')
+                        : isDarkMode ? '#495057' : '#e9ecef',
+                      color: isActive ? '#fff' : isDarkMode ? '#fff' : '#333',
+                    }}>
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+
             {loadingTripReports ? (
               <p style={{ textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>読み込み中...</p>
             ) : tripReports.length === 0 ? (
               <p style={{ textAlign: 'center', color: isDarkMode ? '#aaa' : '#666' }}>出張報告はありません</p>
             ) : (() => {
+              // フィルタリング
+              const filtered = tripReportFilter === 'all'
+                ? tripReports
+                : tripReports.filter(r => r.report_type === tripReportFilter);
+
+              if (filtered.length === 0) return (
+                <p style={{ textAlign: 'center', color: isDarkMode ? '#aaa' : '#666' }}>該当する報告はありません</p>
+              );
+
               // 年月でグループ化
               const now = new Date();
               const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
               const grouped: Record<string, Record<string, any[]>> = {};
-              tripReports.forEach(report => {
+              filtered.forEach(report => {
                 const d = new Date(report.created_at);
                 const year = `${d.getFullYear()}年度`;
                 const month = `${String(d.getMonth() + 1).padStart(2, '0')}月`;
@@ -2944,7 +3156,7 @@ ${printData.map((page) => `
                                 <table style={{ width: '100%', borderCollapse: 'collapse', color: isDarkMode ? '#fff' : '#000' }}>
                                   <thead>
                                     <tr style={{ background: isDarkMode ? '#495057' : '#f8f9fa' }}>
-                                      {['報告日時', '報告者', '種別', '区分', '場所', '備考', 'GPS', '操作'].map(h => (
+                                      {['報告日時', '報告者', '種別', '区分', '場所', '備考', 'GPS・住所', '次回予定', '操作'].map(h => (
                                         <th key={h} style={{ padding: '8px 12px', textAlign: 'left', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, whiteSpace: 'nowrap', color: isDarkMode ? '#fff' : '#000', fontSize: 13 }}>{h}</th>
                                       ))}
                                     </tr>
@@ -2958,7 +3170,7 @@ ${printData.map((page) => `
                                           <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, whiteSpace: 'nowrap', fontSize: 13 }}>{dateStr}</td>
                                           <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, fontSize: 13 }}>{report.profiles?.name || report.profiles?.email || '不明'}</td>
                                           <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, fontSize: 13 }}>
-                                            <span style={{ padding: '2px 8px', borderRadius: 4, background: report.report_type === '到着' ? '#17a2b8' : '#28a745', color: 'white', fontSize: 12 }}>
+                                            <span style={{ display: 'inline-block', padding: '3px 10px', borderRadius: 4, background: report.report_type === '到着' ? '#17a2b8' : '#28a745', color: '#fff', fontSize: 12, fontWeight: 'bold', whiteSpace: 'nowrap' }}>
                                               {report.report_type}
                                             </span>
                                           </td>
@@ -2967,12 +3179,29 @@ ${printData.map((page) => `
                                           </td>
                                           <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, fontSize: 13 }}>{report.location}</td>
                                           <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, fontSize: 13 }}>{report.notes || '-'}</td>
-                                          <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, fontSize: 13 }}>
+                                          <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, fontSize: 12 }}>
                                             {report.latitude ? (
-                                              <a href={`https://www.google.com/maps?q=${report.latitude},${report.longitude}`} target="_blank" rel="noreferrer" style={{ color: '#17a2b8' }}>
-                                                🗺️ 地図
-                                              </a>
+                                              report.address ? (
+                                                <a href={`https://www.google.com/maps?q=${report.latitude},${report.longitude}`} target="_blank" rel="noreferrer"
+                                                  style={{ color: '#17a2b8', textDecoration: 'underline', wordBreak: 'break-all' }}>
+                                                  {report.address}
+                                                </a>
+                                              ) : (
+                                                <a href={`https://www.google.com/maps?q=${report.latitude},${report.longitude}`} target="_blank" rel="noreferrer"
+                                                  style={{ color: '#17a2b8' }}>
+                                                  地図を開く
+                                                </a>
+                                              )
                                             ) : '-'}
+                                          </td>
+                                          <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, fontSize: 12, color: isDarkMode ? '#ccc' : '#555' }}>
+                                            {report.next_dates
+                                              ? report.next_dates.split(',').map((d: string) => {
+                                                  const dt = new Date(d);
+                                                  const wd = ['日','月','火','水','木','金','土'][dt.getDay()];
+                                                  return `${dt.getMonth()+1}/${dt.getDate()}（${wd}）`;
+                                                }).join('\n')
+                                              : '-'}
                                           </td>
                                           <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, fontSize: 13 }}>
                                             <button
