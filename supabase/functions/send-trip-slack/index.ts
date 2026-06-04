@@ -14,6 +14,7 @@ const CHANNEL_SECRET_MAP: Record<string, string> = {
   kids_rakusaiguchi: 'SLACK_WEBHOOK_TRIP_KIDS_RAKUSAIGUCHI',
   kids_minamisusita: 'SLACK_WEBHOOK_TRIP_KIDS_MINAMISUSITA',
   junior:            'SLACK_WEBHOOK_TRIP_JUNIOR',
+  support:           'SLACK_WEBHOOK_TRIP_SUPPORT',
 };
 
 async function sendSlack(webhookUrl: string, text: string) {

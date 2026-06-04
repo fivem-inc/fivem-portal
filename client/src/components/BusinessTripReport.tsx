@@ -15,6 +15,7 @@ const SLACK_CHANNELS = [
   { key: 'kids_rakusaiguchi', label: '05_4洛西口校こどもへ' },
   { key: 'kids_minamisusita', label: '05_5南草津校こどもへ' },
   { key: 'junior',            label: '06ジュニアへ' },
+  { key: 'support',           label: '07_1お客様サポートへ' },
 ];
 
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
