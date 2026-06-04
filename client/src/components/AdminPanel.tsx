@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import type { PendingApproval, Submission } from '../types';
 import { groupSubmissionsByYearAndMonth, generateCSVData, downloadCSV, formatAmount } from '../utils';
 import { supabase } from '../lib/supabaseClient';
+import { sendLeaveSlack } from '../lib/leaveSlack';
 
 interface AdminPanelProps {
   pendingApprovals: PendingApproval[];
@@ -3389,6 +3390,14 @@ ${printData.map((page) => `
                                         if (!window.confirm('受理しますか？')) return;
                                         const nextStatus: Record<string, string> = { step2_pending: 'manager_approved', manager_approved: 'admin_approved', admin_approved: 'approved' };
                                         await supabase.from('leave_requests').update({ status: nextStatus[req.status] || 'approved' }).eq('id', req.id);
+                                        // Slack通知
+                                        if (req.status === 'step2_pending') {
+                                          await sendLeaveSlack('leader_approved', req.approver2?.name || '承認者', 'マネージャー');
+                                        } else if (req.status === 'manager_approved') {
+                                          await sendLeaveSlack('manager_approved', req.approver2?.name || '承認者', 'マネージャー');
+                                        } else if (req.status === 'admin_approved') {
+                                          await sendLeaveSlack('accounting_approved', '経理担当者', '管理者');
+                                        }
                                         fetchLeaveRequests();
                                       }
                                     }}
@@ -3460,6 +3469,8 @@ ${printData.map((page) => `
                 disabled={!adminSelectedManagerId}
                 onClick={async () => {
                   await supabase.from('leave_requests').update({ status: 'step2_pending', approver2_id: adminSelectedManagerId }).eq('id', adminSelectingManagerFor.id);
+                  // Slack通知（管理者がpendingを受理 → マネージャーへ）
+                  await sendLeaveSlack('leader_approved', '管理者', '管理者');
                   setAdminSelectingManagerFor(null);
                   fetchLeaveRequests();
                 }}
