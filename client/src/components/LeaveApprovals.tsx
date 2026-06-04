@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import { sendLeaveSlack } from '../lib/leaveSlack';
 import type { AuthUser } from '../types';
 
 interface Props {
@@ -163,6 +164,16 @@ const LeaveApprovals: React.FC<Props> = ({ user, isAdmin, roleTitle }) => {
     const label = next === 'approved' ? '最終受理（完了）' : '受理';
     if (!window.confirm(`${label}しますか？`)) return;
     await supabase.from('leave_requests').update({ status: next }).eq('id', req.id);
+
+    // Slack通知
+    if (req.status === 'step2_pending') {
+      await sendLeaveSlack('leader_approved', profileName || '承認者', roleTitle || 'マネージャー');
+    } else if (req.status === 'manager_approved') {
+      await sendLeaveSlack('manager_approved', profileName || '承認者', 'マネージャー');
+    } else if (req.status === 'admin_approved') {
+      await sendLeaveSlack('accounting_approved', profileName || '経理担当者', '管理者');
+    }
+
     fetchRequests();
   };
 
@@ -173,6 +184,10 @@ const LeaveApprovals: React.FC<Props> = ({ user, isAdmin, roleTitle }) => {
       status: 'step2_pending',
       approver2_id: selectedManagerId,
     }).eq('id', selectingManagerFor.id);
+
+    // Slack通知（リーダーが受理 → マネージャーへ）
+    await sendLeaveSlack('leader_approved', profileName || '承認者', roleTitle || 'リーダー');
+
     setSelectingManagerFor(null);
     fetchRequests();
   };
