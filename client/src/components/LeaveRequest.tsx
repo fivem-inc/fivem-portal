@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import { sendLeaveSlack } from '../lib/leaveSlack';
 import type { AuthUser } from '../types';
 
 interface Props {
@@ -252,6 +253,10 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       });
       if (error) throw error;
       await supabase.from('profiles').update({ leave_request_enabled: false, leave_enabled_by: null }).eq('id', user.id);
+      // Slack通知（申請先の役職に応じてチャンネルを切り替え）
+      if (selectedApprover) {
+        await sendLeaveSlack('new_request', selectedApprover.name, selectedApprover.role_title);
+      }
       setSubmitted(true);
       setShowConfirm(false);
     } catch (err: any) {
