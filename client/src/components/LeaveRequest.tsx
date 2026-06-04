@@ -348,9 +348,10 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             <p style={{ fontSize: 13, fontWeight: 'bold', color: isDark ? '#fff' : '#1a4a5a', marginBottom: 8 }}>【注意事項】</p>
             <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8, textAlign: 'left' }}>
               <li>休暇申請は、できるだけ休暇予定日の<strong>2週間前まで</strong>に行ってください。</li>
-              <li>申請前に、必ずご自身の<strong>所属チームのリーダーへ相談</strong>してください。</li>
-              <li>申請後、担当者が内容を確認します。申請が受理されると、ホーム画面に通知が表示されます。</li>
-              <li>パートタイマーの方も、正社員と同様に上記の手順で申請してください。</li>
+              <li>申請先は、休暇を取得する日の<strong>勤務校リーダー</strong>を選択してください。</li>
+              <li>申請後、選択したリーダーへ<strong>直接相談</strong>してください。</li>
+              <li>申請が受理されると、ホーム画面に通知が表示されます。</li>
+              <li>パートタイマーの方も、正社員と同様に申請してください。</li>
             </ol>
           </div>
 
