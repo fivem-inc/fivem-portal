@@ -457,9 +457,14 @@ INSERT INTO public.master_options (category, value, sort_order) VALUES
 
 ---
 
+### ✅ Slack Edge Functionデプロイ完了（2026-06-04）
+- `send-trip-slack` デプロイ済み
+- Supabase Secrets登録済み（KOHEI / ADULT / KIDS_* / JUNIOR / SUPPORT）
+- `#07_1お客様サポートへ`（SLACK_WEBHOOK_TRIP_SUPPORT）追加済み
+- コミット: `9bcb6b4`
+
 ### 🔜 次回やること
-1. **Slack Edge Functionデプロイ**（send-trip-slack）+ Secrets登録
-2. **Phase 1: メール送信機能**（優先①）
+1. **Phase 1: メール送信機能**（優先①）
    - 管理者から全員・グループ・個人にメール送信
    - グループ: こども / パート・アルバイトスタッフ / マネージャー・リーダー等
    - 送信履歴管理
