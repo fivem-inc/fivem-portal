@@ -11,6 +11,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    - 確認・デプロイのみ → サーバー起動不要
 2. **どのPCか？**（ユーザー名によってパスが変わる）
 
+### 🚨 デプロイのルール
+- **git push（デプロイ）はユーザーの指示があってから行うこと**
+- コード修正後はローカルで確認してもらい、OKの指示が出てからpushする
+- 自動デプロイはしない
+
 ### ローカルで開発する場合
 ```
 cd C:\Users\[ユーザー名]\fivem-portal
@@ -324,6 +329,59 @@ ALTER TABLE public.leave_requests ADD COLUMN IF NOT EXISTS purpose TEXT;
 - 休暇申請 注意事項を5項目に改訂（申請後リーダーへ相談の流れに変更）
 - 出張報告ページ ダークモード対応（カード #343a40・入力欄 #495057 で休暇申請と統一）
 - コミット: `16a3201`
+
+---
+
+## ✅ 2026-06-04 休暇申請Slack通知 実装完了
+
+### 通知フロー（確定版）
+| タイミング | 送信先チャンネル | 通知文 |
+|---|---|---|
+| 申請時（リーダー宛） | `#01リーダー回覧` | 【休暇申請】新しい申請・申請先名 |
+| 申請時（マネージャー宛） | `#01マネージャー回覧` | 【休暇申請】新しい申請・申請先名 |
+| マネージャーが受理 | `#07_3閲覧禁止-経理専用` | 【休暇申請】確認が必要・受理者名 |
+| 経理（管理者）が受理 | `#03晃平先生へ` | 【休暇申請】確認が必要・経理担当者＋リンク |
+| 社長が受理 | 通知なし（完了） | - |
+
+### 実装ファイル
+- `supabase/functions/send-leave-slack/index.ts` （Edge Function）
+- `client/src/lib/leaveSlack.ts` （フロント共通関数）
+- `client/src/components/LeaveRequest.tsx` （申請時通知）
+- `client/src/components/LeaveApprovals.tsx` （承認者画面）
+- `client/src/components/AdminPanel.tsx` （管理者画面）
+
+### Slack Webhook URLの管理
+⚠️ **Webhook URLはコードに直書き禁止**（GitHubのSecret Scanningで拒否される）
+→ **Supabase Edge Function Secrets に登録すること**
+
+Supabase Secrets登録場所：
+https://supabase.com/dashboard/project/xaeynaxctiiyqxjyuzfi/functions → Secrets
+
+| Secret名 | 対応チャンネル |
+|---|---|
+| `SLACK_WEBHOOK_LEADER` | `#01リーダー回覧` |
+| `SLACK_WEBHOOK_MANAGER` | `#01マネージャー回覧` |
+| `SLACK_WEBHOOK_ACCOUNTING` | `#07_3閲覧禁止-経理専用` |
+| `SLACK_WEBHOOK_PRESIDENT` | `#03晃平先生へ` |
+
+### Edge Functionのデプロイ方法
+```
+cd C:\Users\kohei\fivem-portal
+npx supabase functions deploy send-leave-slack --project-ref xaeynaxctiiyqxjyuzfi
+```
+※ 初回のみ `npx supabase login` が必要
+
+### 今回の問題点・改善メモ
+1. **Webhook URLをコードに直書きした** → GitHubにpushできなかった → Supabase Secretsに移動して解決
+2. **AdminPanel.tsx に通知を入れ忘れた** → 管理者画面からの受理で通知が来なかった → 追加して解決
+3. **Slack通知のステータスマッピングがズレていた** → 1ステップずれた通知が届いた → 修正して解決
+4. **LeaveApprovals.tsx で profileName をpropsから受け取っていなかった** → ビルドエラー → 追加して解決
+
+### コミット
+- `c160d50` feat: 休暇申請Slack通知実装
+- `29c4ffd` fix: 管理者画面にもSlack通知追加
+- `64c1fb6` fix: ステータスマッピング修正
+- `06a75dc` fix: profileName props修正
 
 ### 🔜 次回やること
 1. **Phase 1: メール送信機能**（管理者から全員・グループ・個人にメール送信）
