@@ -3310,7 +3310,7 @@ ${printData.map((page) => `
                         {[
                           { label: '申請日', w: 70 }, { label: '申請者', w: 65 }, { label: '申請先', w: 65 },
                           { label: '種別', w: 55 }, { label: '休暇日', w: 100 },
-                          { label: '日数', w: 40 }, { label: '事由', w: 80 }, { label: '確認状況', w: 85 }, { label: '操作', w: 90 },
+                          { label: '日数', w: 40 }, { label: '事由・備考', w: 100 }, { label: '確認状況', w: 85 }, { label: '操作', w: 90 },
                         ].map(col => (
                           <th key={col.label} style={{ padding: '8px 4px', textAlign: 'center', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, color: isDarkMode ? '#fff' : '#000', width: col.w, fontSize: 12 }}>{col.label}</th>
                         ))}
@@ -3356,7 +3356,11 @@ ${printData.map((page) => `
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12, wordBreak: 'break-word' }}>{req.leave_type === 'その他' ? req.leave_type_other : req.leave_type}</td>
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 11 }}>{dateDisplay}</td>
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12 }}>{days}日</td>
-                            <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12, wordBreak: 'break-word' }}>{req.purpose || req.reason || '-'}</td>
+                            <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'left', fontSize: 12, wordBreak: 'break-word' }}>
+                              {req.purpose && <div>{req.purpose}</div>}
+                              {req.reason && <div style={{ color: isDarkMode ? '#adb5bd' : '#666', fontSize: 11 }}>備考: {req.reason}</div>}
+                              {!req.purpose && !req.reason && <span>-</span>}
+                            </td>
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center' }}>
                               <div style={{ display: 'inline-block', padding: '3px 8px', borderRadius: 8, background: st.color, color: 'white', textAlign: 'center', lineHeight: 1.4 }}>
                                 {st.role && <div style={{ fontSize: 9, opacity: 0.9, whiteSpace: 'nowrap' }}>{st.role}</div>}
@@ -3374,7 +3378,18 @@ ${printData.map((page) => `
                                   }}
                                   style={{ padding: '4px 8px', background: '#6c757d', color: 'white', border: '2px solid #545b62', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}
                                 >↩ 取り消し</button>
-
+                              )}
+                              {req.status === 'approved' && (
+                                <button
+                                  onClick={async () => {
+                                    if (!window.confirm('受理済みを差し戻しますか？\n申請者に差し戻し通知が届きます。')) return;
+                                    const reason = window.prompt('差し戻し理由を入力してください（任意）') ?? '';
+                                    if (reason === null) return;
+                                    await supabase.from('leave_requests').update({ status: 'rejected', rejected_reason: reason || null }).eq('id', req.id);
+                                    fetchLeaveRequests();
+                                  }}
+                                  style={{ padding: '4px 8px', background: '#dc3545', color: 'white', border: '2px solid #bd2130', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}
+                                >差戻</button>
                               )}
                               {req.status !== 'approved' && req.status !== 'rejected' && (
                                 <div style={{ display: 'flex', gap: 4 }}>
@@ -3390,15 +3405,11 @@ ${printData.map((page) => `
                                         if (!window.confirm('受理しますか？')) return;
                                         const nextStatus: Record<string, string> = { step2_pending: 'manager_approved', manager_approved: 'admin_approved', admin_approved: 'approved' };
                                         await supabase.from('leave_requests').update({ status: nextStatus[req.status] || 'approved' }).eq('id', req.id);
-                                        // Slack通知（承認後の次のステップへ通知）
-                                        if (req.status === 'step2_pending') {
-                                          // マネージャーが受理 → 経理へ通知
-                                          await sendLeaveSlack('manager_approved', req.approver2?.name || '承認者', 'マネージャー');
-                                        } else if (req.status === 'manager_approved') {
-                                          // 経理が受理 → 社長へ通知
+                                        // 管理者が自分のステップ（経理）を進めた時のみ社長へ通知
+                                        if (req.status === 'manager_approved') {
                                           await sendLeaveSlack('accounting_approved', '経理担当者', '管理者');
                                         }
-                                        // admin_approved（社長受理）は通知なし
+                                        // pending/step2_pending/admin_approvedを管理者が代わりに進めた場合は通知なし
                                         fetchLeaveRequests();
                                       }
                                     }}
@@ -3470,8 +3481,7 @@ ${printData.map((page) => `
                 disabled={!adminSelectedManagerId}
                 onClick={async () => {
                   await supabase.from('leave_requests').update({ status: 'step2_pending', approver2_id: adminSelectedManagerId }).eq('id', adminSelectingManagerFor.id);
-                  // Slack通知（管理者がpendingを受理 → マネージャーへ）
-                  await sendLeaveSlack('leader_approved', '管理者', '管理者');
+                  // 管理者が代わりにpendingを進めた場合は通知なし
                   setAdminSelectingManagerFor(null);
                   fetchLeaveRequests();
                 }}
