@@ -43,7 +43,7 @@ const STATUS_LABEL: Record<string, string> = {
   rejected:         '差し戻し',
 };
 
-const LeaveApprovals: React.FC<Props> = ({ user, isAdmin, roleTitle }) => {
+const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle }) => {
   const isPresident = roleTitle === '社長';
   const navigate = useNavigate();
   const [requests, setRequests] = useState<LeaveReq[]>([]);
