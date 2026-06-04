@@ -3390,14 +3390,15 @@ ${printData.map((page) => `
                                         if (!window.confirm('受理しますか？')) return;
                                         const nextStatus: Record<string, string> = { step2_pending: 'manager_approved', manager_approved: 'admin_approved', admin_approved: 'approved' };
                                         await supabase.from('leave_requests').update({ status: nextStatus[req.status] || 'approved' }).eq('id', req.id);
-                                        // Slack通知
+                                        // Slack通知（承認後の次のステップへ通知）
                                         if (req.status === 'step2_pending') {
-                                          await sendLeaveSlack('leader_approved', req.approver2?.name || '承認者', 'マネージャー');
-                                        } else if (req.status === 'manager_approved') {
+                                          // マネージャーが受理 → 経理へ通知
                                           await sendLeaveSlack('manager_approved', req.approver2?.name || '承認者', 'マネージャー');
-                                        } else if (req.status === 'admin_approved') {
+                                        } else if (req.status === 'manager_approved') {
+                                          // 経理が受理 → 社長へ通知
                                           await sendLeaveSlack('accounting_approved', '経理担当者', '管理者');
                                         }
+                                        // admin_approved（社長受理）は通知なし
                                         fetchLeaveRequests();
                                       }
                                     }}

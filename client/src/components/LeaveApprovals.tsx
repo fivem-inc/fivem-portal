@@ -165,14 +165,15 @@ const LeaveApprovals: React.FC<Props> = ({ user, isAdmin, roleTitle }) => {
     if (!window.confirm(`${label}しますか？`)) return;
     await supabase.from('leave_requests').update({ status: next }).eq('id', req.id);
 
-    // Slack通知
+    // Slack通知（承認後の次のステップへ通知）
     if (req.status === 'step2_pending') {
-      await sendLeaveSlack('leader_approved', profileName || '承認者', roleTitle || 'マネージャー');
-    } else if (req.status === 'manager_approved') {
+      // マネージャーが受理 → 経理へ通知
       await sendLeaveSlack('manager_approved', profileName || '承認者', 'マネージャー');
-    } else if (req.status === 'admin_approved') {
+    } else if (req.status === 'manager_approved') {
+      // 経理が受理 → 社長へ通知
       await sendLeaveSlack('accounting_approved', profileName || '経理担当者', '管理者');
     }
+    // admin_approved（社長受理）は通知なし
 
     fetchRequests();
   };
