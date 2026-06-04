@@ -8,6 +8,7 @@ interface Props {
 }
 
 const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
+  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   const [reportType, setReportType] = useState<'到着' | '終了'>('到着');
   const [category, setCategory] = useState<'出張' | '園指導' | '試合' | '下見' | 'その他'>('出張');
   const [categoryOther, setCategoryOther] = useState('');
@@ -109,14 +110,14 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
         </div>
       )}
 
-      <div style={{ background: 'var(--card-bg, #2a2a2a)', borderRadius: 12, padding: 24, boxShadow: '0 2px 8px rgba(0,0,0,0.3)', color: '#fff' }}>
+      <div style={{ background: isDark ? '#343a40' : 'white', borderRadius: 12, padding: 24, boxShadow: '0 2px 8px rgba(0,0,0,0.1)', color: isDark ? '#fff' : '#333' }}>
 
         {/* 報告種別 */}
         <div style={{ marginBottom: 20 }}>
-          <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 8, color: '#fff' }}>報告種別</label>
+          <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 8, color: isDark ? '#fff' : '#333' }}>報告種別</label>
           <div style={{ display: 'flex', gap: 24 }}>
             {(['到着', '終了'] as const).map((type) => (
-              <label key={type} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#fff' }}>
+              <label key={type} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: isDark ? '#fff' : '#333' }}>
                 <input
                   type="radio"
                   name="reportType"
@@ -132,11 +133,11 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
 
         {/* 区分 */}
         <div style={{ marginBottom: 20 }}>
-          <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 8, color: '#fff' }}>区分</label>
+          <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 8, color: isDark ? '#fff' : '#333' }}>区分</label>
           <select
             value={category}
             onChange={(e) => setCategory(e.target.value as any)}
-            style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #ccc', fontSize: 16 }}
+            style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: isDark ? '1px solid #666' : '1px solid #ccc', fontSize: 16, background: isDark ? '#495057' : 'white', color: isDark ? '#fff' : '#333' }}
           >
             {['出張', '園指導', '試合', '下見', 'その他'].map((c) => (
               <option key={c} value={c}>{c}</option>
@@ -148,38 +149,38 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
               placeholder="内容を入力"
               value={categoryOther}
               onChange={(e) => setCategoryOther(e.target.value)}
-              style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #ccc', fontSize: 16, marginTop: 8, boxSizing: 'border-box' }}
+              style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: isDark ? '1px solid #666' : '1px solid #ccc', fontSize: 16, marginTop: 8, boxSizing: 'border-box', background: isDark ? '#495057' : 'white', color: isDark ? '#fff' : '#333' }}
             />
           )}
         </div>
 
         {/* 場所 */}
         <div style={{ marginBottom: 20 }}>
-          <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 8, color: '#fff' }}>場所 <span style={{ color: 'red' }}>*</span></label>
+          <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 8, color: isDark ? '#fff' : '#333' }}>場所 <span style={{ color: 'red' }}>*</span></label>
           <input
             type="text"
             placeholder="出張先・園名など"
             value={location}
             onChange={(e) => setLocation(e.target.value)}
-            style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #ccc', fontSize: 16, boxSizing: 'border-box' }}
+            style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: isDark ? '1px solid #666' : '1px solid #ccc', fontSize: 16, boxSizing: 'border-box', background: isDark ? '#495057' : 'white', color: isDark ? '#fff' : '#333' }}
           />
         </div>
 
         {/* 備考 */}
         <div style={{ marginBottom: 20 }}>
-          <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 8, color: '#fff' }}>備考</label>
+          <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 8, color: isDark ? '#fff' : '#333' }}>備考</label>
           <textarea
             placeholder="備考があれば入力"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             rows={3}
-            style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #ccc', fontSize: 16, boxSizing: 'border-box', resize: 'vertical' }}
+            style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: isDark ? '1px solid #666' : '1px solid #ccc', fontSize: 16, boxSizing: 'border-box', resize: 'vertical', background: isDark ? '#495057' : 'white', color: isDark ? '#fff' : '#333' }}
           />
         </div>
 
         {/* GPS */}
         <div style={{ marginBottom: 24 }}>
-          <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 8, color: '#fff' }}>GPS位置情報</label>
+          <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 8, color: isDark ? '#fff' : '#333' }}>GPS位置情報</label>
           {gps ? (
             <div style={{ background: '#e8f5e9', padding: '10px 14px', borderRadius: 6, fontSize: 14 }}>
               ✅ 取得済み（精度: 約{Math.round(gps.accuracy)}m）<br />
@@ -221,9 +222,9 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
           background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center',
           zIndex: 1000
         }}>
-          <div style={{ background: '#2a2a2a', borderRadius: 12, padding: 28, maxWidth: 400, width: '90%' }}>
-            <h3 style={{ marginTop: 0, color: '#fff' }}>📋 送信内容の確認</h3>
-            <table style={{ width: '100%', borderCollapse: 'collapse', color: '#fff' }}>
+          <div style={{ background: isDark ? '#343a40' : 'white', borderRadius: 12, padding: 28, maxWidth: 400, width: '90%' }}>
+            <h3 style={{ marginTop: 0, color: isDark ? '#fff' : '#333' }}>📋 送信内容の確認</h3>
+            <table style={{ width: '100%', borderCollapse: 'collapse', color: isDark ? '#fff' : '#333' }}>
               <tbody>
                 {[
                   ['報告者', profileName || user.email],
@@ -235,7 +236,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
                 ].map(([label, value]) => (
                   <tr key={label}>
                     <td style={{ padding: '6px 8px', fontWeight: 'bold', whiteSpace: 'nowrap', color: '#aaa' }}>{label}</td>
-                    <td style={{ padding: '6px 8px', color: '#fff' }}>{value}</td>
+                    <td style={{ padding: '6px 8px', color: isDark ? '#fff' : '#333' }}>{value}</td>
                   </tr>
                 ))}
               </tbody>
@@ -243,7 +244,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
             <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>
               <button
                 onClick={() => setShowConfirm(false)}
-                style={{ flex: 1, padding: '10px', borderRadius: 6, border: '1px solid #666', background: '#444', color: '#fff', cursor: 'pointer', fontSize: 15 }}
+                style={{ flex: 1, padding: '10px', borderRadius: 6, border: isDark ? '1px solid #666' : '1px solid #ccc', background: isDark ? '#444' : '#f8f9fa', color: isDark ? '#fff' : '#333', cursor: 'pointer', fontSize: 15 }}
               >
                 戻る
               </button>
