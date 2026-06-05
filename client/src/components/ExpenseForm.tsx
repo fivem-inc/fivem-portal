@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import type { Expense, AuthUser } from '../types';
 import { formatAmount, parseAmount } from '../utils';
 import { supabase } from '../lib/supabaseClient';
@@ -96,7 +96,12 @@ interface ExpenseFormProps {
 const TRANSPORT_PRESETS = ['JR', '阪急', '京阪', '京都地下鉄', '京都市バス'];
 
 const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, expenses, setExpenses, profileName: parentProfileName }) => {
-  const [totalAmount, setTotalAmount] = useState(0);
+  const totalAmount = useMemo(() => {
+    return expenses.reduce((sum, expense) => {
+      const amount = parseInt(parseAmount(expense.amount || '0'), 10);
+      return sum + (isNaN(amount) ? 0 : amount);
+    }, 0);
+  }, [expenses]);
   const [profileName, setProfileName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string>('');
@@ -119,14 +124,6 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     }
   }, [formError]);
 
-  // 合計金額を計算
-  useEffect(() => {
-    const calculatedTotal = expenses.reduce((sum, expense) => {
-      const amount = parseInt(expense.amount || '0');
-      return sum + (isNaN(amount) ? 0 : amount);
-    }, 0);
-    setTotalAmount(calculatedTotal);
-  }, [expenses]);
 
   // 区分・場所リストを取得
   useEffect(() => {
@@ -611,7 +608,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                     cursor: 'pointer' 
                   }}
                 >
-                  往復
+                  <span translate="no">往復</span>
                 </button>
               )}
               

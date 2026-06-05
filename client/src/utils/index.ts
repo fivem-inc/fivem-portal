@@ -10,7 +10,7 @@ export const formatAmount = (value: string): string => {
 // カンマを取り除き数値文字列を返すヘルパー関数（全角数字→半角に変換）
 export const parseAmount = (value: string): string => {
   return value
-    .replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
+    .replace(/[！-～]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))
     .replace(/[^0-9]/g, '');
 };
 
