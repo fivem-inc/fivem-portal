@@ -570,6 +570,28 @@ INSERT INTO master_options (category, value, sort_order) VALUES
 - **totalAmount を useMemo 化**: リアルタイム計算に変更（旧サイトと同様）
 - **往復ボタンに translate="no"**: ブラウザ自動翻訳で「対抗」になるバグを根本修正
 
+### ✅ 2026-06-05 ファビコン・ホーム画面アイコン設定 完了（コミット: af74f4d）
+
+- あいみんキャラクター画像をアイコンとして使用
+  - 元画像: `\\NAS-SIJYO\Public\...\あいみん 名前入り元画像 - コピー.jpg`
+  - PowerShellで4サイズに自動リサイズして配置
+- 配置ファイル（`client/public/`）:
+  - `favicon.ico`（32×32）→ ブラウザタブ
+  - `icon-192.png`（192×192）→ Android ホーム画面
+  - `icon-512.png`（512×512）→ Android スプラッシュ
+  - `apple-touch-icon.png`（180×180）→ iPhone ホーム画面
+  - `manifest.json` → PWA設定
+- `index.html` 更新：favicon・apple-touch-icon・manifest・タイトル設定
+- `manifest.json` 設定：
+  - name: ファイブM スタッフサイト
+  - short_name: ファイブM
+  - display: standalone（ホーム画面から開くとアドレスバーなし）
+- **ホーム画面への追加方法**:
+  - Android: Chrome右上 `⋮` → 「ホーム画面に追加」
+  - iPhone: Safari共有ボタン `□↑` → 「ホーム画面に追加」
+  - 既存のPWAアイコンは一度アンインストールしてから再追加すること
+- **注意**: サービスワーカー未設定のため自動インストールバナーは出ない（手動追加のみ）
+
 ### ✅ 2026-06-05 アカウント設定・UI改善 完了（コミット: 6f8cf51）
 
 - アカウント設定ページ新規作成 `client/src/pages/AccountSettings.tsx`（`/account`）
