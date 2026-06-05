@@ -1,13 +1,17 @@
 export interface Expense {
-  type: 'regular' | 'business_trip' | 'one_time';
+  type: 'regular' | 'business_trip' | 'one_time' | 'other';
+  type_other?: string;
+  trip_category?: string;
   from_station: string;
   to_station: string;
   amount: string;
   start_date?: string;
   end_date?: string;
   transportation?: string;
+  transportation_other?: string;
   notes?: string;
   workplace?: string;
+  workplace_other?: string;
 }
 
 export interface Profile {

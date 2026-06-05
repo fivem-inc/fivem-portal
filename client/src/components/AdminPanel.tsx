@@ -24,6 +24,14 @@ const AdminPanelContent: React.FC = () => {
     adminSelectingManagerFor, setAdminSelectingManagerFor,
     adminManagerList, adminSelectedManagerId, setAdminSelectedManagerId,
     fetchLeaveRequests, supabase,
+    showLocationEditor, setShowLocationEditor,
+    tripCategories, locationOptions, newLocationByCategory, setNewLocationByCategory,
+    newCategoryName, setNewCategoryName, renamingCategoryId, setRenamingCategoryId,
+    renamingCategoryValue, setRenamingCategoryValue,
+    handleAddCategory, handleDeleteCategory, handleRenameCategory, handleAddLocation, handleDeleteLocation,
+    workplaceOptions, newWorkplaceName, setNewWorkplaceName, handleAddWorkplace, handleDeleteWorkplace,
+    customExpenseTypes, newExpenseTypeName, setNewExpenseTypeName, handleAddExpenseType, handleDeleteExpenseType,
+    expenseTypeLabels, renamingExpenseTypeLabelId, setRenamingExpenseTypeLabelId, renamingExpenseTypeLabelValue, setRenamingExpenseTypeLabelValue, handleRenameExpenseTypeLabel,
   } = useAdminPanel();
 
   return (    <div style={{ marginTop: 40, borderTop: '1px solid #eee', paddingTop: 20 }}>
@@ -455,6 +463,160 @@ const AdminPanelContent: React.FC = () => {
         {activeTab === 'reports' && <ReportsTab />}
         {activeTab === 'leave_requests' && <LeaveRequestsTab />}
       </div>
+
+      {/* 区分・勤務先リスト管理モーダル（全タブから開ける） */}
+      {showLocationEditor && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}>
+          <div style={{ background: isDarkMode ? '#343a40' : 'white', borderRadius: 12, padding: 28, width: '90%', maxWidth: 500, maxHeight: '85vh', overflowY: 'auto', color: isDarkMode ? '#fff' : '#333' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h3 style={{ margin: 0 }}>⚙️ 区分・勤務先リスト管理</h3>
+              <button onClick={() => setShowLocationEditor(false)}
+                style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: isDarkMode ? '#adb5bd' : '#6c757d', lineHeight: 1 }}>✕</button>
+            </div>
+
+            {/* ═══ 交通費申請 関連 ═══ */}
+            <div style={{ fontSize: 13, fontWeight: 'bold', color: isDarkMode ? '#adb5bd' : '#6c757d', marginBottom: 12, letterSpacing: 1 }}>
+              ── 交通費申請 ──────────────────
+            </div>
+
+            {/* ── 通勤区分 ── */}
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ fontWeight: 'bold', fontSize: 15, marginBottom: 10, borderBottom: isDarkMode ? '1px solid #555' : '1px solid #dee2e6', paddingBottom: 6 }}>
+                🚃 通勤区分の管理
+              </div>
+              {expenseTypeLabels.map(label => (
+                <div key={label.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  {renamingExpenseTypeLabelId === label.id ? (
+                    <>
+                      <input autoFocus value={renamingExpenseTypeLabelValue}
+                        onChange={e => setRenamingExpenseTypeLabelValue(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleRenameExpenseTypeLabel(label.id); if (e.key === 'Escape') setRenamingExpenseTypeLabelId(null); }}
+                        style={{ flex: 1, padding: '5px 8px', borderRadius: 6, border: '2px solid #007bff', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#333', fontSize: 14 }} />
+                      <button onClick={() => handleRenameExpenseTypeLabel(label.id)} style={{ padding: '4px 10px', background: '#007bff', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>保存</button>
+                      <button onClick={() => setRenamingExpenseTypeLabelId(null)} style={{ padding: '4px 10px', background: isDarkMode ? '#555' : '#e9ecef', color: isDarkMode ? '#fff' : '#333', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>取消</button>
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ flex: 1, fontSize: 14, padding: '5px 8px', background: isDarkMode ? '#495057' : '#f8f9fa', borderRadius: 6 }}>{label.value}</span>
+                      <button onClick={() => { setRenamingExpenseTypeLabelId(label.id); setRenamingExpenseTypeLabelValue(label.value); }} style={{ padding: '4px 10px', background: isDarkMode ? '#555' : '#e9ecef', color: isDarkMode ? '#fff' : '#333', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>名前変更</button>
+                    </>
+                  )}
+                </div>
+              ))}
+              {customExpenseTypes.map(et => (
+                <div key={et.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 10px', marginBottom: 4, background: isDarkMode ? '#3a4a3a' : '#e8f5e9', borderRadius: 6 }}>
+                  <span style={{ fontSize: 13 }}>＋ {et.value}</span>
+                  <button onClick={() => handleDeleteExpenseType(et.id)} style={{ padding: '2px 8px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>削除</button>
+                </div>
+              ))}
+              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                <input type="text" placeholder="区分名を追加（例: 研修）" value={newExpenseTypeName}
+                  onChange={e => setNewExpenseTypeName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleAddExpenseType(); }}
+                  style={{ flex: 1, padding: '7px 10px', borderRadius: 6, border: isDarkMode ? '1px solid #666' : '1px solid #ccc', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#333', fontSize: 14 }} />
+                <button onClick={handleAddExpenseType} disabled={!newExpenseTypeName.trim()}
+                  style={{ padding: '7px 14px', borderRadius: 6, background: '#28a745', color: 'white', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>＋追加</button>
+              </div>
+            </div>
+
+            {/* ── 勤務先リスト ── */}
+            <div style={{ marginBottom: 28 }}>
+              <div style={{ fontWeight: 'bold', fontSize: 15, marginBottom: 10, borderBottom: isDarkMode ? '1px solid #555' : '1px solid #dee2e6', paddingBottom: 6 }}>
+                🏫 勤務先リスト
+              </div>
+              {workplaceOptions.length === 0 && <div style={{ color: isDarkMode ? '#888' : '#999', fontSize: 13, marginBottom: 6 }}>（未登録）</div>}
+              {workplaceOptions.map(wp => (
+                <div key={wp.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 10px', marginBottom: 4, background: isDarkMode ? '#495057' : '#f8f9fa', borderRadius: 6 }}>
+                  <span style={{ fontSize: 13 }}>{wp.value}</span>
+                  <button onClick={() => handleDeleteWorkplace(wp.id)} style={{ padding: '2px 8px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>削除</button>
+                </div>
+              ))}
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <input type="text" placeholder="勤務先を追加（例: 四条本校）" value={newWorkplaceName}
+                  onChange={e => setNewWorkplaceName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleAddWorkplace(); }}
+                  style={{ flex: 1, padding: '7px 10px', borderRadius: 6, border: isDarkMode ? '1px solid #666' : '1px solid #ccc', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#333', fontSize: 14 }} />
+                <button onClick={handleAddWorkplace} disabled={!newWorkplaceName.trim()}
+                  style={{ padding: '7px 14px', borderRadius: 6, background: '#28a745', color: 'white', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>＋追加</button>
+              </div>
+            </div>
+
+            {/* ═══ 出張報告 関連 ═══ */}
+            <div style={{ fontSize: 13, fontWeight: 'bold', color: isDarkMode ? '#adb5bd' : '#6c757d', marginBottom: 12, letterSpacing: 1 }}>
+              ── 出張報告 ──────────────────
+            </div>
+
+            {/* ── 出張区分の管理 ── */}
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ fontWeight: 'bold', fontSize: 15, marginBottom: 10, borderBottom: isDarkMode ? '1px solid #555' : '1px solid #dee2e6', paddingBottom: 6 }}>
+                📍 出張区分の管理
+              </div>
+              {tripCategories.map(cat => (
+                <div key={cat.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  {renamingCategoryId === cat.id ? (
+                    <>
+                      <input autoFocus value={renamingCategoryValue} onChange={e => setRenamingCategoryValue(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleRenameCategory(cat.id, cat.value); if (e.key === 'Escape') setRenamingCategoryId(null); }}
+                        style={{ flex: 1, padding: '5px 8px', borderRadius: 6, border: '2px solid #007bff', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#333', fontSize: 14 }} />
+                      <button onClick={() => handleRenameCategory(cat.id, cat.value)} style={{ padding: '4px 10px', background: '#007bff', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>保存</button>
+                      <button onClick={() => setRenamingCategoryId(null)} style={{ padding: '4px 10px', background: isDarkMode ? '#555' : '#e9ecef', color: isDarkMode ? '#fff' : '#333', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>取消</button>
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ flex: 1, fontSize: 14, padding: '5px 8px', background: isDarkMode ? '#495057' : '#f8f9fa', borderRadius: 6 }}>{cat.value}</span>
+                      <button onClick={() => { setRenamingCategoryId(cat.id); setRenamingCategoryValue(cat.value); }} style={{ padding: '4px 10px', background: isDarkMode ? '#555' : '#e9ecef', color: isDarkMode ? '#fff' : '#333', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>名前変更</button>
+                      <button onClick={() => handleDeleteCategory(cat.id, cat.value)} style={{ padding: '4px 10px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>削除</button>
+                    </>
+                  )}
+                </div>
+              ))}
+              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                <input type="text" placeholder="新しい区分名を入力" value={newCategoryName} onChange={e => setNewCategoryName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleAddCategory(); }}
+                  style={{ flex: 1, padding: '7px 10px', borderRadius: 6, border: isDarkMode ? '1px solid #666' : '1px solid #ccc', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#333', fontSize: 14 }} />
+                <button onClick={handleAddCategory} disabled={!newCategoryName.trim()}
+                  style={{ padding: '7px 14px', borderRadius: 6, background: '#28a745', color: 'white', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>＋追加</button>
+              </div>
+            </div>
+
+            {/* ── 場所リスト（区分ごと） ── */}
+            {tripCategories.map(cat => {
+              const locKey = `trip_location_${cat.value}`;
+              const items = locationOptions.filter(o => o.category === locKey);
+              const newVal = newLocationByCategory[cat.value] || '';
+              return (
+                <div key={cat.id} style={{ marginBottom: 20 }}>
+                  <div style={{ fontWeight: 'bold', fontSize: 14, marginBottom: 8, borderBottom: isDarkMode ? '1px solid #555' : '1px solid #dee2e6', paddingBottom: 5, color: isDarkMode ? '#adb5bd' : '#6c757d' }}>
+                    【{cat.value}】の場所リスト
+                  </div>
+                  {items.length === 0 && <div style={{ color: isDarkMode ? '#888' : '#999', fontSize: 13, marginBottom: 6 }}>（未登録）</div>}
+                  {items.map(item => (
+                    <div key={item.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 10px', marginBottom: 4, background: isDarkMode ? '#495057' : '#f8f9fa', borderRadius: 6 }}>
+                      <span style={{ fontSize: 13 }}>{item.value}</span>
+                      <button onClick={() => handleDeleteLocation(item.id)} style={{ padding: '2px 8px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>削除</button>
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                    <input type="text" placeholder={`${cat.value}の場所を追加`} value={newVal}
+                      onChange={e => setNewLocationByCategory(prev => ({ ...prev, [cat.value]: e.target.value }))}
+                      onKeyDown={e => { if (e.key === 'Enter') handleAddLocation(cat.value); }}
+                      style={{ flex: 1, padding: '6px 10px', borderRadius: 6, border: isDarkMode ? '1px solid #666' : '1px solid #ccc', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#333', fontSize: 13 }} />
+                    <button onClick={() => handleAddLocation(cat.value)} disabled={!newVal.trim()}
+                      style={{ padding: '6px 12px', borderRadius: 6, background: '#007bff', color: 'white', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 'bold' }}>＋</button>
+                  </div>
+                </div>
+              );
+            })}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+              <button onClick={() => setShowLocationEditor(false)}
+                style={{ padding: '8px 20px', borderRadius: 6, border: isDarkMode ? '1px solid #666' : '1px solid #ccc', background: isDarkMode ? '#444' : '#f8f9fa', color: isDarkMode ? '#fff' : '#333', cursor: 'pointer', fontSize: 14 }}>
+                閉じる
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 管理者承認時マネージャー選択モーダル */}
       {adminSelectingManagerFor && (

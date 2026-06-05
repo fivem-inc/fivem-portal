@@ -157,6 +157,18 @@ export interface AdminPanelContextType {
   handleRenameCategory: (id: number, oldName: string) => Promise<void>;
   handleAddLocation: (categoryName: string) => Promise<void>;
   handleDeleteLocation: (id: number) => Promise<void>;
+  workplaceOptions: { id: number; value: string; sort_order: number }[];
+  newWorkplaceName: string; setNewWorkplaceName: React.Dispatch<React.SetStateAction<string>>;
+  handleAddWorkplace: () => Promise<void>;
+  handleDeleteWorkplace: (id: number) => Promise<void>;
+  customExpenseTypes: { id: number; value: string; sort_order: number }[];
+  newExpenseTypeName: string; setNewExpenseTypeName: React.Dispatch<React.SetStateAction<string>>;
+  handleAddExpenseType: () => Promise<void>;
+  handleDeleteExpenseType: (id: number) => Promise<void>;
+  expenseTypeLabels: { id: number; value: string; sort_order: number }[];
+  renamingExpenseTypeLabelId: number | null; setRenamingExpenseTypeLabelId: React.Dispatch<React.SetStateAction<number | null>>;
+  renamingExpenseTypeLabelValue: string; setRenamingExpenseTypeLabelValue: React.Dispatch<React.SetStateAction<string>>;
+  handleRenameExpenseTypeLabel: (id: number) => Promise<void>;
 
   // Leave requests
   leaveRequests: any[];
@@ -249,6 +261,13 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const [newCategoryName, setNewCategoryName] = useState('');
   const [renamingCategoryId, setRenamingCategoryId] = useState<number | null>(null);
   const [renamingCategoryValue, setRenamingCategoryValue] = useState('');
+  const [workplaceOptions, setWorkplaceOptions] = useState<{ id: number; value: string; sort_order: number }[]>([]);
+  const [newWorkplaceName, setNewWorkplaceName] = useState('');
+  const [customExpenseTypes, setCustomExpenseTypes] = useState<{ id: number; value: string; sort_order: number }[]>([]);
+  const [newExpenseTypeName, setNewExpenseTypeName] = useState('');
+  const [expenseTypeLabels, setExpenseTypeLabels] = useState<{ id: number; value: string; sort_order: number }[]>([]);
+  const [renamingExpenseTypeLabelId, setRenamingExpenseTypeLabelId] = useState<number | null>(null);
+  const [renamingExpenseTypeLabelValue, setRenamingExpenseTypeLabelValue] = useState('');
 
   const [editingSubmissionId, setEditingSubmissionId] = useState<string | null>(null);
   const [editingExpenses, setEditingExpenses] = useState<any[]>([]);
@@ -258,12 +277,64 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   // ---- fetch functions ----
 
   const fetchLocationEditor = async () => {
-    const [catRes, locRes] = await Promise.all([
+    const [catRes, locRes, wpRes, etRes, elRes] = await Promise.all([
       supabase.from('master_options').select('id, value, sort_order').eq('category', 'trip_category').order('sort_order'),
       supabase.from('master_options').select('id, category, value, sort_order').like('category', 'trip_location_%').order('category').order('sort_order'),
+      supabase.from('master_options').select('id, value, sort_order').eq('category', 'workplace').order('sort_order'),
+      supabase.from('master_options').select('id, value, sort_order').eq('category', 'expense_type').order('sort_order'),
+      supabase.from('master_options').select('id, value, sort_order').eq('category', 'expense_type_label').order('sort_order'),
     ]);
     if (catRes.data) setTripCategories(catRes.data);
     if (locRes.data) setLocationOptions(locRes.data);
+    if (wpRes.data) setWorkplaceOptions(wpRes.data);
+    if (etRes.data) setCustomExpenseTypes(etRes.data);
+    if (elRes.data) setExpenseTypeLabels(elRes.data);
+  };
+
+  const handleAddWorkplace = async () => {
+    const name = newWorkplaceName.trim();
+    if (!name) return;
+    if (workplaceOptions.some(w => w.value === name)) { alert('同じ名前の勤務先がすでに存在します'); return; }
+    const maxOrder = workplaceOptions.reduce((m, w) => Math.max(m, w.sort_order), 0);
+    const { error } = await supabase.from('master_options').insert({ category: 'workplace', value: name, sort_order: maxOrder + 1 });
+    if (error) { alert('追加に失敗しました: ' + error.message); return; }
+    setNewWorkplaceName('');
+    await fetchLocationEditor();
+  };
+
+  const handleDeleteWorkplace = async (id: number) => {
+    if (!window.confirm('この勤務先を削除しますか？')) return;
+    const { error } = await supabase.from('master_options').delete().eq('id', id);
+    if (error) { alert('削除に失敗しました: ' + error.message); return; }
+    await fetchLocationEditor();
+  };
+
+  const handleAddExpenseType = async () => {
+    const name = newExpenseTypeName.trim();
+    if (!name) return;
+    if (customExpenseTypes.some(t => t.value === name)) { alert('同じ名前の区分がすでに存在します'); return; }
+    const maxOrder = customExpenseTypes.reduce((m, t) => Math.max(m, t.sort_order), 0);
+    const { error } = await supabase.from('master_options').insert({ category: 'expense_type', value: name, sort_order: maxOrder + 1 });
+    if (error) { alert('追加に失敗しました: ' + error.message); return; }
+    setNewExpenseTypeName('');
+    await fetchLocationEditor();
+  };
+
+  const handleRenameExpenseTypeLabel = async (id: number) => {
+    const newLabel = renamingExpenseTypeLabelValue.trim();
+    if (!newLabel) { setRenamingExpenseTypeLabelId(null); return; }
+    const { error } = await supabase.from('master_options').update({ value: newLabel }).eq('id', id);
+    if (error) { alert('更新に失敗しました: ' + error.message); return; }
+    setRenamingExpenseTypeLabelId(null);
+    setRenamingExpenseTypeLabelValue('');
+    await fetchLocationEditor();
+  };
+
+  const handleDeleteExpenseType = async (id: number) => {
+    if (!window.confirm('この区分を削除しますか？')) return;
+    const { error } = await supabase.from('master_options').delete().eq('id', id);
+    if (error) { alert('削除に失敗しました: ' + error.message); return; }
+    await fetchLocationEditor();
   };
 
   const handleAddCategory = async () => {
@@ -794,6 +865,9 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       renamingCategoryValue, setRenamingCategoryValue,
       fetchTripReports, fetchLocationEditor,
       handleAddCategory, handleDeleteCategory, handleRenameCategory, handleAddLocation, handleDeleteLocation,
+      workplaceOptions, newWorkplaceName, setNewWorkplaceName, handleAddWorkplace, handleDeleteWorkplace,
+      customExpenseTypes, newExpenseTypeName, setNewExpenseTypeName, handleAddExpenseType, handleDeleteExpenseType,
+      expenseTypeLabels, renamingExpenseTypeLabelId, setRenamingExpenseTypeLabelId, renamingExpenseTypeLabelValue, setRenamingExpenseTypeLabelValue, handleRenameExpenseTypeLabel,
       leaveRequests, loadingLeaveRequests, leaveStatusFilter, setLeaveStatusFilter,
       adminSelectingManagerFor, setAdminSelectingManagerFor,
       adminManagerList, setAdminManagerList, adminSelectedManagerId, setAdminSelectedManagerId,

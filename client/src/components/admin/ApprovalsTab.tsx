@@ -19,10 +19,22 @@ const ApprovalsTab: React.FC = () => {
     handleStartEdit, handleCancelEdit, handleSaveEdit, handleUpdateEditingExpense,
     editingSubmissionId, editingExpenses,
     handleDeleteSubmission, handleExportCsv,
+    fetchLocationEditor, setShowLocationEditor,
   } = ctx;
 
   return (          <div>
-            <h3 style={{ textAlign: 'center', marginBottom: '30px', color: isDarkMode ? '#fff' : '#000' }}>承認管理</h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 30 }}>
+              <div style={{ flex: 1 }} />
+              <h3 style={{ margin: 0, color: isDarkMode ? '#fff' : '#000' }}>承認管理</h3>
+              <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => { fetchLocationEditor(); setShowLocationEditor(true); }}
+                  style={{ padding: '6px 14px', borderRadius: 6, border: isDarkMode ? '1px solid #666' : '1px solid #ccc', background: isDarkMode ? '#495057' : '#f8f9fa', color: isDarkMode ? '#fff' : '#333', cursor: 'pointer', fontSize: 13 }}
+                >
+                  ⚙️ 区分・勤務先リストを管理
+                </button>
+              </div>
+            </div>
             
             {/* CSV出力セクション */}
             <div style={{ textAlign: 'center', marginBottom: 20 }}>
