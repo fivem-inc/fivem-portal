@@ -109,3 +109,67 @@ export interface BusinessTripReport {
   created_at?: string;
   profiles?: Profile | null;
 }
+
+// Admin-specific types
+
+export interface AdminUserProfile {
+  id: string;
+  email?: string;
+  name?: string | null;
+  is_active?: boolean;
+  sort_order?: number | null;
+  registered_at?: string | null;
+  employment_type?: string;
+  role_title?: string;
+  group_names?: string[];
+  leave_request_enabled?: boolean;
+  leave_enabled_by?: string | null;
+  submission_count?: number;
+}
+
+export interface AdminLeaveRequest {
+  id: string;
+  user_id: string;
+  leave_type: string;
+  leave_type_other?: string;
+  leave_dates?: string;
+  purpose?: string;
+  start_date?: string;
+  end_date?: string;
+  reason?: string;
+  status: string;
+  approver_id?: string | null;
+  approver2_id?: string | null;
+  rejected_reason?: string | null;
+  created_at: string;
+  profile?: { id: string; name: string; email: string } | null;
+  requester?: { id: string; name: string; email: string } | null;
+  approver?: { id: string; name: string; email: string } | null;
+  approver2?: { id: string; name: string; email: string } | null;
+}
+
+export interface ReportStats {
+  overview: {
+    totalSubmissions: number;
+    pendingSubmissions: number;
+    approvedSubmissions: number;
+    rejectedSubmissions: number;
+    approvalRate: string;
+  };
+  userStats: {
+    name: string;
+    email: string;
+    totalSubmissions: number;
+    approvedSubmissions: number;
+    totalAmount: number;
+    approvalRate: string;
+  }[];
+  monthlyStats: {
+    month: string;
+    total: number;
+    approved: number;
+    rejected: number;
+    pending: number;
+    amount: number;
+  }[];
+}
