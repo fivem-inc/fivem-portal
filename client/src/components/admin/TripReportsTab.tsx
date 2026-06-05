@@ -61,7 +61,7 @@ const TripReportsTab: React.FC = () => {
 
               const grouped: Record<string, Record<string, any[]>> = {};
               filtered.forEach(report => {
-                const d = new Date(report.created_at);
+                const d = new Date(report.created_at || '');
                 const year = `${d.getFullYear()}年度`;
                 const month = `${String(d.getMonth() + 1).padStart(2, '0')}月`;
                 const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;

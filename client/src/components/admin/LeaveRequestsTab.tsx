@@ -129,7 +129,7 @@ const LeaveRequestsTab: React.FC = () => {
                         const leaveDates: string[] = (() => { try { return req.leave_dates ? JSON.parse(req.leave_dates) : []; } catch { return []; } })();
                         const days = leaveDates.length > 0
                           ? leaveDates.length
-                          : Math.max(1, Math.floor((new Date(req.end_date).getTime() - new Date(req.start_date).getTime()) / (1000 * 60 * 60 * 24)) + 1);
+                          : Math.max(1, Math.floor((new Date(req.end_date || '').getTime() - new Date(req.start_date || '').getTime()) / (1000 * 60 * 60 * 24)) + 1);
                         // 休暇日を "2026/6/3・4・8、7/1・2" 形式に整形
                         const dateDisplay = (() => {
                           if (leaveDates.length > 0) {
@@ -146,7 +146,7 @@ const LeaveRequestsTab: React.FC = () => {
                           }
                           // fallback: 旧形式
                           if (req.start_date === req.end_date) return req.start_date;
-                          return `${req.start_date.slice(5)}～${req.end_date.slice(5)}`;
+                          return `${(req.start_date || '').slice(5)}～${(req.end_date || '').slice(5)}`;
                         })();
                         const jst = new Date(new Date(req.created_at).getTime() + 9 * 60 * 60 * 1000);
                         const st = getStatusDisplay(req);

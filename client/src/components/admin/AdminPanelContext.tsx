@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react';
-import type { PendingApproval, Submission } from '../../types';
+import type { PendingApproval, Submission, Expense, AdminUserProfile, AdminLeaveRequest, ReportStats, BusinessTripReport } from '../../types';
 import { groupSubmissionsByYearAndMonth, generateCSVData, downloadCSV, formatAmount } from '../../utils';
 import { supabase } from '../../lib/supabaseClient';
 import { sendLeaveSlack } from '../../lib/leaveSlack';
@@ -11,7 +11,7 @@ interface PrintVoucher {
   submissionId: string;
   submitterName: string;
   submittedDate: string;
-  expenses: any[];
+  expenses: Expense[];
   total: number;
   submissionTotal: number;
   isLastPage: boolean;
@@ -64,9 +64,9 @@ export interface AdminPanelContextType {
   groupedSubmissions: ReturnType<typeof groupSubmissionsByYearAndMonth>;
 
   // Users
-  users: any[]; setUsers: React.Dispatch<React.SetStateAction<any[]>>;
+  users: AdminUserProfile[]; setUsers: React.Dispatch<React.SetStateAction<AdminUserProfile[]>>;
   loadingUsers: boolean;
-  sortedUsers: any[];
+  sortedUsers: AdminUserProfile[];
   editingUser: string | null; setEditingUser: React.Dispatch<React.SetStateAction<string | null>>;
   editName: string; setEditName: React.Dispatch<React.SetStateAction<string>>;
   showRetired: 'active' | 'retired' | 'all'; setShowRetired: React.Dispatch<React.SetStateAction<'active' | 'retired' | 'all'>>;
@@ -96,7 +96,7 @@ export interface AdminPanelContextType {
   showAddGroup: boolean; setShowAddGroup: React.Dispatch<React.SetStateAction<boolean>>;
 
   // Reports
-  reportStats: any;
+  reportStats: ReportStats | null;
   loadingReports: boolean;
   fetchReportStats: () => Promise<void>;
 
@@ -130,8 +130,8 @@ export interface AdminPanelContextType {
 
   // Edit submission
   editingSubmissionId: string | null;
-  editingExpenses: any[];
-  handleStartEdit: (submissionId: string, expensesData: any[]) => void;
+  editingExpenses: Expense[];
+  handleStartEdit: (submissionId: string, expensesData: Expense[]) => void;
   handleCancelEdit: () => void;
   handleSaveEdit: (submissionId: string) => Promise<void>;
   handleUpdateEditingExpense: (index: number, field: string, value: string) => void;
@@ -139,7 +139,7 @@ export interface AdminPanelContextType {
   handleExportCsv: () => Promise<void>;
 
   // Trip reports
-  tripReports: any[];
+  tripReports: BusinessTripReport[];
   loadingTripReports: boolean;
   expandedTripYearMonths: Set<string>; setExpandedTripYearMonths: React.Dispatch<React.SetStateAction<Set<string>>>;
   tripReportFilter: 'all' | '到着' | '終了'; setTripReportFilter: React.Dispatch<React.SetStateAction<'all' | '到着' | '終了'>>;
@@ -171,11 +171,11 @@ export interface AdminPanelContextType {
   handleRenameExpenseTypeLabel: (id: number) => Promise<void>;
 
   // Leave requests
-  leaveRequests: any[];
+  leaveRequests: AdminLeaveRequest[];
   loadingLeaveRequests: boolean;
   leaveStatusFilter: string; setLeaveStatusFilter: React.Dispatch<React.SetStateAction<string>>;
-  adminSelectingManagerFor: any | null; setAdminSelectingManagerFor: React.Dispatch<React.SetStateAction<any | null>>;
-  adminManagerList: any[]; setAdminManagerList: React.Dispatch<React.SetStateAction<any[]>>;
+  adminSelectingManagerFor: AdminLeaveRequest | null; setAdminSelectingManagerFor: React.Dispatch<React.SetStateAction<AdminLeaveRequest | null>>;
+  adminManagerList: AdminUserProfile[]; setAdminManagerList: React.Dispatch<React.SetStateAction<AdminUserProfile[]>>;
   adminSelectedManagerId: string; setAdminSelectedManagerId: React.Dispatch<React.SetStateAction<string>>;
   fetchLeaveRequests: () => Promise<void>;
 
@@ -211,7 +211,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const [expandedAdminYears, setExpandedAdminYears] = useState<Set<string>>(new Set());
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
 
-  const [users, setUsers] = useState<any[]>([]);
+  const [users, setUsers] = useState<AdminUserProfile[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [editingUser, setEditingUser] = useState<string | null>(null);
   const [editName, setEditName] = useState<string>('');
@@ -229,7 +229,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const [newGroupName, setNewGroupName] = useState('');
   const [showAddGroup, setShowAddGroup] = useState(false);
 
-  const [reportStats, setReportStats] = useState<any>(null);
+  const [reportStats, setReportStats] = useState<ReportStats | null>(null);
   const [loadingReports, setLoadingReports] = useState(false);
 
   const [rejectReason, setRejectReason] = useState<string>('');
@@ -242,14 +242,14 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
 
-  const [leaveRequests, setLeaveRequests] = useState<any[]>([]);
+  const [leaveRequests, setLeaveRequests] = useState<AdminLeaveRequest[]>([]);
   const [loadingLeaveRequests, setLoadingLeaveRequests] = useState(false);
   const [leaveStatusFilter, setLeaveStatusFilter] = useState<string>('active');
-  const [adminSelectingManagerFor, setAdminSelectingManagerFor] = useState<any | null>(null);
-  const [adminManagerList, setAdminManagerList] = useState<any[]>([]);
+  const [adminSelectingManagerFor, setAdminSelectingManagerFor] = useState<AdminLeaveRequest | null>(null);
+  const [adminManagerList, setAdminManagerList] = useState<AdminUserProfile[]>([]);
   const [adminSelectedManagerId, setAdminSelectedManagerId] = useState('');
 
-  const [tripReports, setTripReports] = useState<any[]>([]);
+  const [tripReports, setTripReports] = useState<BusinessTripReport[]>([]);
   const [loadingTripReports, setLoadingTripReports] = useState(false);
   const [expandedTripYearMonths, setExpandedTripYearMonths] = useState<Set<string>>(new Set());
   const [tripReportFilter, setTripReportFilter] = useState<'all' | '到着' | '終了'>('all');
@@ -270,7 +270,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const [renamingExpenseTypeLabelValue, setRenamingExpenseTypeLabelValue] = useState('');
 
   const [editingSubmissionId, setEditingSubmissionId] = useState<string | null>(null);
-  const [editingExpenses, setEditingExpenses] = useState<any[]>([]);
+  const [editingExpenses, setEditingExpenses] = useState<Expense[]>([]);
   const [printData, setPrintData] = useState<PrintPage[]>([]);
   const [selectedForApproval, setSelectedForApproval] = useState<Set<string>>(new Set());
 
@@ -443,7 +443,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     const { data } = await supabase.from('master_options').select('category, value').order('sort_order');
     if (data) {
       const opts: { employment_type: string[]; role_title: string[]; group: string[] } = { employment_type: [], role_title: [], group: [] };
-      data.forEach((row: any) => {
+      data.forEach((row: { category: string; value: string }) => {
         if (row.category in opts) opts[row.category as keyof typeof opts].push(row.value);
       });
       setMasterOptions(opts);
@@ -516,9 +516,9 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       const userStats = users.map(user => {
         const userSubmissions = submissions.filter(s => s.profiles?.email === user.email);
         const userApproved = userSubmissions.filter(s => s.status === 'approved');
-        const totalAmount = userApproved.reduce((sum, s) => sum + s.expenses_data.reduce((expSum: number, exp: any) => expSum + (parseInt(exp.amount || '0') || 0), 0), 0);
+        const totalAmount = userApproved.reduce((sum, s) => sum + s.expenses_data.reduce((expSum: number, exp: Expense) => expSum + (parseInt(exp.amount || '0') || 0), 0), 0);
         return {
-          name: user.name || user.email, email: user.email,
+          name: user.name || user.email || '', email: user.email || '',
           totalSubmissions: userSubmissions.length, approvedSubmissions: userApproved.length,
           totalAmount, approvalRate: userSubmissions.length > 0 ? (userApproved.length / userSubmissions.length * 100).toFixed(1) : '0'
         };
@@ -530,15 +530,15 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
         acc[monthKey].total++;
         acc[monthKey][submission.status as 'approved' | 'rejected' | 'pending']++;
         if (submission.status === 'approved') {
-          const amount = submission.expenses_data.reduce((sum: number, exp: any) => sum + (parseInt(exp.amount || '0') || 0), 0);
+          const amount = submission.expenses_data.reduce((sum: number, exp: Expense) => sum + (parseInt(exp.amount || '0') || 0), 0);
           acc[monthKey].amount += amount;
         }
         return acc;
-      }, {} as Record<string, any>);
+      }, {} as Record<string, ReportStats['monthlyStats'][number]>);
       setReportStats({
         overview: { totalSubmissions, pendingSubmissions, approvedSubmissions, rejectedSubmissions, approvalRate },
         userStats,
-        monthlyStats: Object.values(monthlyStats).sort((a: any, b: any) => b.month.localeCompare(a.month))
+        monthlyStats: Object.values(monthlyStats).sort((a, b) => b.month.localeCompare(a.month))
       });
     } catch (error) {
       console.error('レポート統計取得エラー:', error);
@@ -566,18 +566,18 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       if (error) { console.error('休暇申請取得エラー:', error); return; }
       if (!data) return;
       const ids = [...new Set([
-        ...data.map((r: any) => r.user_id),
-        ...data.map((r: any) => r.approver_id).filter(Boolean),
-        ...data.map((r: any) => r.approver2_id).filter(Boolean),
+        ...data.map((r: { user_id: string }) => r.user_id),
+        ...data.map((r: { approver_id?: string }) => r.approver_id).filter(Boolean),
+        ...data.map((r: { approver2_id?: string }) => r.approver2_id).filter(Boolean),
       ])];
       const { data: profiles } = await supabase.from('profiles').select('id, name, email').in('id', ids);
-      const profileMap: Record<string, any> = {};
-      (profiles || []).forEach((p: any) => { profileMap[p.id] = p; });
-      setLeaveRequests(data.map((r: any) => ({
+      const profileMap: Record<string, { id: string; name: string; email: string }> = {};
+      (profiles || []).forEach((p: { id: string; name: string; email: string }) => { profileMap[p.id] = p; });
+      setLeaveRequests(data.map((r: AdminLeaveRequest) => ({
         ...r,
         profile: profileMap[r.user_id] || null,
-        approver: profileMap[r.approver_id] || null,
-        approver2: profileMap[r.approver2_id] || null,
+        approver: r.approver_id ? (profileMap[r.approver_id] || null) : null,
+        approver2: r.approver2_id ? (profileMap[r.approver2_id] || null) : null,
       })));
     } catch (err) {
       console.error('休暇申請の取得に失敗:', err);
@@ -616,7 +616,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     let successCount = 0, errorCount = 0;
     for (const approval of filteredPending) {
       try {
-        const updateData: any = { status: newStatus };
+        const updateData: { status: string; approved_at?: string | null; rejected_at?: string | null; rejected_reason?: string | null } = { status: newStatus };
         if (newStatus === 'approved') { updateData.approved_at = new Date().toISOString(); updateData.rejected_at = null; updateData.rejected_reason = null; }
         else { updateData.rejected_at = new Date().toISOString(); updateData.approved_at = null; updateData.rejected_reason = reason || null; }
         const { error } = await supabase.from('expenses').update(updateData).eq('id', approval.id);
@@ -673,10 +673,10 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       const expenses = submission.expenses_data;
       const expensesPerVoucher = 12;
       const totalVouchersForSubmission = Math.ceil(expenses.length / expensesPerVoucher);
-      const submissionTotal = expenses.reduce((sum: number, exp: any) => sum + (parseInt(exp.amount || '0') || 0), 0);
+      const submissionTotal = expenses.reduce((sum: number, exp: Expense) => sum + (parseInt(exp.amount || '0') || 0), 0);
       for (let i = 0; i < expenses.length; i += expensesPerVoucher) {
         const voucherExpenses = expenses.slice(i, i + expensesPerVoucher);
-        const voucherTotal = voucherExpenses.reduce((sum: number, exp: any) => sum + (parseInt(exp.amount || '0') || 0), 0);
+        const voucherTotal = voucherExpenses.reduce((sum: number, exp: Expense) => sum + (parseInt(exp.amount || '0') || 0), 0);
         const voucherPageNum = Math.floor(i / expensesPerVoucher) + 1;
         const isLastPage = voucherPageNum === totalVouchersForSubmission;
         const voucherNumber = `#${dateStr}-${timeStr}-${voucherCounter.toString().padStart(2, '0')}`;
@@ -759,7 +759,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     setShowRejectModal(false); setRejectingSubmissionId(null); setRejectReason('');
   }, []);
 
-  const handleStartEdit = useCallback((submissionId: string, expensesData: any[]) => {
+  const handleStartEdit = useCallback((submissionId: string, expensesData: Expense[]) => {
     setEditingSubmissionId(submissionId); setEditingExpenses([...expensesData]);
   }, []);
 

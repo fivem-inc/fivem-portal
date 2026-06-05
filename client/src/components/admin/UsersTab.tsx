@@ -180,7 +180,7 @@ const UsersTab: React.FC = () => {
                               ) : (
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                   <span>{user.name || '未設定'}</span>
-                                  <button onClick={() => handleEditName(user.id, user.name)} style={{ padding: '2px 6px', background: '#ffc107', color: '#212529', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '11px', marginLeft: '8px' }}>編集</button>
+                                  <button onClick={() => handleEditName(user.id, user.name || '')} style={{ padding: '2px 6px', background: '#ffc107', color: '#212529', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '11px', marginLeft: '8px' }}>編集</button>
                                 </div>
                               )}
                             </td>
@@ -227,7 +227,7 @@ const UsersTab: React.FC = () => {
                                       {user.is_active === false ? '復活' : '退職'}
                                     </button>
                                     {user.is_active === false && (
-                                      <button style={{ padding: '3px 6px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }} onClick={() => handleDeleteUser(user.id, user.name || user.email)}>削除</button>
+                                      <button style={{ padding: '3px 6px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }} onClick={() => handleDeleteUser(user.id, user.name || user.email || '')}>削除</button>
                                     )}
                                   </>
                                 )}
