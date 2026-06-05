@@ -538,10 +538,72 @@ INSERT INTO public.master_options (category, value, sort_order) VALUES
 - `34665f7` fix: カレンダー中央固定表示
 - `200bb49` fix: ビルドエラー修正
 
+### ✅ 2026-06-05 AdminPanel 6ファイル分割 完了
+
+- Context API方式で全state/handlerを `admin/AdminPanelContext.tsx` に集約
+- タブごとに6ファイル（ApprovalsTab / GroupsTab / UsersTab / TripReportsTab / ReportsTab / LeaveRequestsTab）
+- AdminPanel.tsx は730行に削減（元3945行）
+- ExpenseForm.tsx: 利用日ボタンのダークモード対応（background/color修正）
+
 ### 🔜 次回やること
-1. **AdminPanel 6ファイル分割**（保守性向上・工数2〜3時間）
-2. **`any` 型を型定義に置き換え**（型安全性）
-3. **Phase 1: メール送信機能**（現状は別ツール使用中のため後回し）
+1. **`any` 型を型定義に置き換え**（型安全性）
+2. **Phase 1: メール送信機能**（現状は別ツール使用中のため後回し）
+
+---
+
+---
+
+## 🏗️ 新規ページ・機能の実装方針
+
+### ファイル配置ルール
+
+```
+client/src/
+├── components/
+│   ├── XxxPage.tsx          ← 薄いオーケストレーター（~200行以内を目標）
+│   └── xxx/                 ← タブ・セクションが複数ある場合はサブフォルダ
+│       ├── XxxContext.tsx   ← 共有state + handler（Context API）
+│       ├── XxxTabA.tsx      ← タブ/セクションごとのJSX
+│       └── XxxTabB.tsx
+├── hooks/
+│   └── useXxx.ts            ← DBアクセス・非同期処理を切り出す
+└── types/index.ts           ← 型定義はここに集約
+```
+
+### 実装の判断基準
+
+| 状況 | 対応 |
+|---|---|
+| 500行以下のシンプルなページ | 1ファイルでOK |
+| タブが複数ある | **最初からタブごとに分割**して作る |
+| DBアクセスが多い | `useXxx.ts` フックに分離 |
+| stateを複数タブで共有 | Context API（AdminPanelの方式） |
+| any型の使用 | 型定義を先に `types/index.ts` に書く |
+
+### 実装ステップ（メール送信など新機能のとき）
+
+1. **型定義**を `types/index.ts` に追加（DB型 + コンポーネントprops型）
+2. **DB操作フック**を `hooks/useXxx.ts` に作成（fetch + state）
+3. **コンポーネント**を機能単位で1ファイル（1タブ = 1ファイル）
+4. **状態共有**が必要になったらContextに昇格
+5. **AdminPanel**に新タブを追加する場合は `admin/` に新ファイルを作り、`AdminPanelContext.tsx` にstateを追加
+
+### Context APIの使い方（AdminPanelの方式）
+
+```typescript
+// 1. Context + Provider を作成（xxx/XxxContext.tsx）
+export const useXxx = () => { const ctx = useContext(XxxContext); if (!ctx) throw ...; return ctx; };
+export const XxxProvider: React.FC<{children}> = ({ children }) => {
+  const [state, setState] = useState(...);
+  return <XxxContext.Provider value={{ state, setState }}>{children}</XxxContext.Provider>;
+};
+
+// 2. ページコンポーネントでProviderでラップ
+const XxxPage = () => <XxxProvider><XxxContent /></XxxProvider>;
+
+// 3. 子コンポーネントでContextを使う（propsなし）
+const XxxTabA = () => { const { state, setState } = useXxx(); return <div>...</div>; };
+```
 
 ---
 

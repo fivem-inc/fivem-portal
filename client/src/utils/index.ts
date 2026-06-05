@@ -7,9 +7,11 @@ export const formatAmount = (value: string): string => {
   return isNaN(num) ? '' : num.toLocaleString();
 };
 
-// カンマを取り除き数値文字列を返すヘルパー関数
+// カンマを取り除き数値文字列を返すヘルパー関数（全角数字→半角に変換）
 export const parseAmount = (value: string): string => {
-  return value.replace(/,/g, '');
+  return value
+    .replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
+    .replace(/[^0-9]/g, '');
 };
 
 // 申請データを年度と月ごとにグループ化するヘルパー関数

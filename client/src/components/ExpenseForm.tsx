@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { Expense, AuthUser } from '../types';
 import { formatAmount, parseAmount } from '../utils';
 import { supabase } from '../lib/supabaseClient';
+import { useDarkMode } from '../hooks/useDarkMode';
 
 // タップで即確定するカスタム日付ピッカー
 const SingleDatePicker: React.FC<{
@@ -102,6 +103,15 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
   const [confirmedExpenses, setConfirmedExpenses] = useState<typeof expenses>([]);
   // 日付ピッカー表示管理: key = `${rowIndex}-start` | `${rowIndex}-end`
   const [openDatePicker, setOpenDatePicker] = useState<string | null>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  const isDarkMode = useDarkMode();
+
+  // エラー発生時に自動スクロール
+  useEffect(() => {
+    if (formError && errorRef.current) {
+      errorRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [formError]);
 
   // 合計金額を計算
   useEffect(() => {
@@ -331,7 +341,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
               <div style={{ position: 'relative' }}>
                 <button type="button" onClick={() => setOpenDatePicker(openDatePicker === `${index}-start` ? null : `${index}-start`)}
                   className="expense-input date-input"
-                  style={{ textAlign: 'left', cursor: 'pointer', background: expense.start_date ? 'white' : '#f8f9fa', color: expense.start_date ? '#333' : '#999' }}
+                  style={{ textAlign: 'left', cursor: 'pointer', background: isDarkMode ? '#495057' : (expense.start_date ? 'white' : '#f8f9fa'), color: expense.start_date ? (isDarkMode ? '#fff' : '#333') : (isDarkMode ? '#adb5bd' : '#999') }}
                 >
                   {expense.start_date || '利用日'}
                 </button>
@@ -346,7 +356,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                 <div style={{ position: 'relative' }}>
                   <button type="button" onClick={() => setOpenDatePicker(openDatePicker === `${index}-start` ? null : `${index}-start`)}
                     className="expense-input date-input"
-                    style={{ textAlign: 'left', cursor: 'pointer', background: expense.start_date ? 'white' : '#f8f9fa', color: expense.start_date ? '#333' : '#999' }}
+                    style={{ textAlign: 'left', cursor: 'pointer', background: isDarkMode ? '#495057' : (expense.start_date ? 'white' : '#f8f9fa'), color: expense.start_date ? (isDarkMode ? '#fff' : '#333') : (isDarkMode ? '#adb5bd' : '#999') }}
                   >
                     {expense.start_date || '開始日'}
                   </button>
@@ -357,7 +367,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                 <div style={{ position: 'relative' }}>
                   <button type="button" onClick={() => setOpenDatePicker(openDatePicker === `${index}-end` ? null : `${index}-end`)}
                     className="expense-input date-input"
-                    style={{ textAlign: 'left', cursor: 'pointer', background: expense.end_date ? 'white' : '#f8f9fa', color: expense.end_date ? '#333' : '#999' }}
+                    style={{ textAlign: 'left', cursor: 'pointer', background: isDarkMode ? '#495057' : (expense.end_date ? 'white' : '#f8f9fa'), color: expense.end_date ? (isDarkMode ? '#fff' : '#333') : (isDarkMode ? '#adb5bd' : '#999') }}
                   >
                     {expense.end_date || '終了日'}
                   </button>
@@ -525,7 +535,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
         </button>
 
         {formError && (
-          <div style={{
+          <div ref={errorRef} style={{
             background: '#f8d7da', border: '1px solid #f5c6cb', borderRadius: 8,
             padding: '12px 16px', marginTop: 12, color: '#721c24', fontSize: 14,
             display: 'flex', alignItems: 'center', gap: 8,
