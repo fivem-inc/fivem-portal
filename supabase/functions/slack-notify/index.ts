@@ -27,81 +27,18 @@ serve(async (req) => {
   try {
     // 申請データを受け取る
     const { expense } = await req.json()
-    
-    // 申請項目の詳細を作成
-    const expenseDetails = expense.items.map((item: any, index: number) => {
-      const typeText = item.type === 'regular' ? '⭐定期⭐' : item.type === 'business_trip' ? '出張' : '単発'
-      const dateText = item.type === 'regular' 
-        ? `${item.start_date || '未設定'} ~ ${item.end_date || '未設定'}`
-        : `${item.start_date || '未設定'}`
-      
-      return `${index + 1}. *${typeText}* (${dateText})\n   ${item.from_station} → ${item.to_station}: *${item.amount}円*${item.notes ? `\n   備考: ${item.notes}` : ''}`
-    }).join('\n\n')
-    
-    // Slackに送るメッセージを作成
-    const message = {
-      text: `💰 新しい交通費申請がありました！`,
-      blocks: [
-        {
-          type: "header",
-          text: {
-            type: "plain_text",
-            text: "💰 新しい交通費申請"
-          }
-        },
-        {
-          type: "section",
-          fields: [
-            {
-              type: "mrkdwn",
-              text: `*申請者:*\n${expense.user_name}`
-            },
-            {
-              type: "mrkdwn",
-              text: `*申請日:*\n${expense.date}`
-            },
-            {
-              type: "mrkdwn",
-              text: `*合計金額:*\n¥${expense.total_amount.toLocaleString()}`
-            },
-            {
-              type: "mrkdwn",
-              text: `*項目数:*\n${expense.items_count}件`
-            }
-          ]
-        },
-        {
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: `*申請内容:*\n${expenseDetails}`
-          }
-        },
-        {
-          type: "actions",
-          elements: [
-            {
-              type: "button",
-              text: {
-                type: "plain_text",
-                text: "📋 申請を確認・承認"
-              },
-              url: `${Deno.env.get('APP_URL') || 'http://localhost:5173'}/`,
-              style: "primary"
-            }
-          ]
-        },
-        {
-          type: "context",
-          elements: [
-            {
-              type: "mrkdwn",
-              text: "交通費精算システムからの自動通知"
-            }
-          ]
-        }
-      ]
-    }
+
+    // 申請内容（種別リスト）を作成
+    const typeList = expense.items.map((item: any) => {
+      if (item.type === 'regular') return '⭐定期⭐'
+      if (item.type === 'business_trip') return '出張'
+      return '単発'
+    }).join('、')
+
+    // シンプルなテキスト形式
+    const text = `🆕【新しい交通費申請】\n\n申請者: ${expense.user_name}\n申請日: ${expense.date}\n申請内容: ${typeList}\n項目数: ${expense.items_count}件`
+
+    const message = { text }
     
     if (!SLACK_WEBHOOK_URL) {
       console.warn('SLACK_WEBHOOK_EXPENSE が設定されていません');
