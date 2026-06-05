@@ -570,6 +570,17 @@ INSERT INTO master_options (category, value, sort_order) VALUES
 - **totalAmount を useMemo 化**: リアルタイム計算に変更（旧サイトと同様）
 - **往復ボタンに translate="no"**: ブラウザ自動翻訳で「対抗」になるバグを根本修正
 
+### ✅ 2026-06-05 アカウント設定・UI改善 完了（コミット: 6f8cf51）
+
+- アカウント設定ページ新規作成 `client/src/pages/AccountSettings.tsx`（`/account`）
+  - 名前・メールアドレス表示
+  - メールアドレス変更・パスワード変更へのリンク
+- パスワード変更ページ新規作成 `client/src/pages/ChangePassword.tsx`（`/change-password`）
+  - ログイン中に直接パスワード変更可能（`supabase.auth.updateUser`）
+- ナビバーの名前タップ → `/account` へ移動（メール変更ボタンは削除）
+- 交通費申請タイトルUI改善（🚃アイコン・ファイブMスタッフサイトサブタイトル）
+- 休暇申請 注意事項4番：「ホーム画面」→「交通費申請ページ」に修正
+
 ### ✅ 2026-06-05 any型→型定義置き換え 完了（コミット: 96d951c）
 
 - `types/index.ts` に `AdminUserProfile` / `AdminLeaveRequest` / `ReportStats` を追加
