@@ -3,21 +3,25 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 // Slack Webhook URL
 const SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/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"
 
-const ALLOWED_ORIGIN = 'https://fivem-portal.vercel.app';
+const ALLOWED_ORIGINS = ['https://fivem-portal.vercel.app', 'http://localhost:5173', 'http://localhost:5174'];
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+function getCorsHeaders(req: Request) {
+  const origin = req.headers.get('Origin') || '';
+  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    'Access-Control-Allow-Origin': allowedOrigin,
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  };
 }
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
+    return new Response('ok', { headers: getCorsHeaders(req) })
   }
 
   const authHeader = req.headers.get('Authorization');
   if (!authHeader?.startsWith('Bearer ')) {
-    return new Response('Unauthorized', { status: 401, headers: corsHeaders });
+    return new Response('Unauthorized', { status: 401, headers: getCorsHeaders(req) });
   }
 
   try {
@@ -110,7 +114,7 @@ serve(async (req) => {
     
     if (response.ok) {
       return new Response(JSON.stringify({ success: true }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: { ...getCorsHeaders(req), "Content-Type": "application/json" },
         status: 200
       })
     } else {
@@ -122,7 +126,7 @@ serve(async (req) => {
     console.error('Slack通知エラー:', error)
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" }
+      headers: { ...getCorsHeaders(req), "Content-Type": "application/json" }
     })
   }
 })
