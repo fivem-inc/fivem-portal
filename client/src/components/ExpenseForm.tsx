@@ -1,7 +1,88 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { Expense, AuthUser } from '../types';
 import { formatAmount, parseAmount } from '../utils';
 import { supabase } from '../lib/supabaseClient';
+
+// タップで即確定するカスタム日付ピッカー
+const SingleDatePicker: React.FC<{
+  value: string;
+  onChange: (date: string) => void;
+  placeholder: string;
+  onClose: () => void;
+}> = ({ value, onChange, placeholder, onClose }) => {
+  const today = new Date();
+  const initYear = value ? parseInt(value.slice(0, 4)) : today.getFullYear();
+  const initMonth = value ? parseInt(value.slice(5, 7)) - 1 : today.getMonth();
+  const [viewYear, setViewYear] = useState(initYear);
+  const [viewMonth, setViewMonth] = useState(initMonth);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [onClose]);
+
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const firstDay = new Date(viewYear, viewMonth, 1).getDay();
+  const monthNames = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+  const dayNames = ['日','月','火','水','木','金','土'];
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  const cells: (number|null)[] = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  const fmt = (y: number, m: number, d: number) =>
+    `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+
+  const prevMonth = () => { if (viewMonth === 0) { setViewYear(y => y-1); setViewMonth(11); } else setViewMonth(m => m-1); };
+  const nextMonth = () => { if (viewMonth === 11) { setViewYear(y => y+1); setViewMonth(0); } else setViewMonth(m => m+1); };
+
+  return (
+    <div ref={ref} style={{
+      position: 'absolute', zIndex: 500, background: 'white', border: '1px solid #ccc',
+      borderRadius: 10, padding: 10, boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+      width: 280, top: '100%', left: 0,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <button onClick={prevMonth} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', padding: '0 10px' }}>‹</button>
+        <span style={{ fontWeight: 'bold', fontSize: 14 }}>{viewYear}年 {monthNames[viewMonth]}</span>
+        <button onClick={nextMonth} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', padding: '0 10px' }}>›</button>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, marginBottom: 4 }}>
+        {dayNames.map((d, i) => (
+          <div key={d} style={{ textAlign: 'center', fontSize: 11, fontWeight: 'bold', color: i===0?'#e74c3c':i===6?'#3498db':'#666', padding: '2px 0' }}>{d}</div>
+        ))}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
+        {cells.map((day, i) => {
+          if (!day) return <div key={`e-${i}`} />;
+          const dateStr = fmt(viewYear, viewMonth, day);
+          const isSelected = dateStr === value;
+          const isToday = dateStr === todayStr;
+          const dow = (firstDay + day - 1) % 7;
+          return (
+            <button key={dateStr} onClick={() => { onChange(dateStr); onClose(); }} style={{
+              padding: '8px 2px', minHeight: 36, borderRadius: 6,
+              border: isToday ? '2px solid #007bff' : '1px solid transparent',
+              background: isSelected ? '#007bff' : 'transparent',
+              color: isSelected ? 'white' : dow===0 ? '#e74c3c' : dow===6 ? '#3498db' : '#333',
+              cursor: 'pointer', fontSize: 13, fontWeight: isSelected ? 'bold' : 'normal',
+            }}>{day}</button>
+          );
+        })}
+      </div>
+      {value && (
+        <div style={{ textAlign: 'center', marginTop: 8, fontSize: 12, color: '#666' }}>
+          選択中: {value}
+          <button onClick={() => { onChange(''); onClose(); }} style={{ marginLeft: 8, fontSize: 11, color: '#dc3545', background: 'none', border: 'none', cursor: 'pointer' }}>クリア</button>
+        </div>
+      )}
+    </div>
+  );
+};
 
 interface ExpenseFormProps {
   user: AuthUser | null;
@@ -17,6 +98,10 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string>('');
   const [submitSuccess, setSubmitSuccess] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [confirmedExpenses, setConfirmedExpenses] = useState<typeof expenses>([]);
+  // 日付ピッカー表示管理: key = `${rowIndex}-start` | `${rowIndex}-end`
+  const [openDatePicker, setOpenDatePicker] = useState<string | null>(null);
 
   // 合計金額を計算
   useEffect(() => {
@@ -101,78 +186,49 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     });
   }, [expenses, setExpenses]);
 
-  const handleSubmit = async () => {
+  // バリデーションして確認モーダルを表示
+  const handleValidateAndConfirm = () => {
     if (!user) return;
-
-    // 送信中フラグをオンにする
-    setIsSubmitting(true);
+    setFormError('');
 
     const expensesToSubmit = expenses.filter(e =>
-      e.from_station.trim() ||
-      e.to_station.trim() ||
-      e.amount.trim() ||
+      e.from_station.trim() || e.to_station.trim() || e.amount.trim() ||
       (e.type !== 'regular' && e.start_date?.trim()) ||
       (e.type === 'regular' && (e.start_date?.trim() || e.end_date?.trim())) ||
       e.transportation?.trim()
     );
 
-    setFormError('');
+    if (expensesToSubmit.length === 0) { setFormError('申請する項目がありません。'); return; }
 
-    if (expensesToSubmit.length === 0) {
-      setFormError('申請する項目がありません。');
-      setIsSubmitting(false);
-      return;
-    }
-
-    const hasRegular = expensesToSubmit.some(expense => expense.type === 'regular');
-    const hasOther = expensesToSubmit.some(expense => expense.type !== 'regular');
-    if (hasRegular && hasOther) {
-      setFormError('定期券の申請と他の申請（単発・出張）は混ぜて申請できません。別々に申請してください。');
-      setIsSubmitting(false);
-      return;
-    }
+    const hasRegular = expensesToSubmit.some(e => e.type === 'regular');
+    const hasOther = expensesToSubmit.some(e => e.type !== 'regular');
+    if (hasRegular && hasOther) { setFormError('定期券の申請と他の申請（単発・出張）は混ぜて申請できません。別々に申請してください。'); return; }
 
     for (const expense of expensesToSubmit) {
-      if (!expense.from_station.trim()) {
-        setFormError('出発駅を入力してください。');
-        setIsSubmitting(false);
-        return;
-      }
-      if (!expense.to_station.trim()) {
-        setFormError('帰着駅を入力してください。');
-        setIsSubmitting(false);
-        return;
-      }
+      if (!expense.from_station.trim()) { setFormError('出発駅を入力してください。'); return; }
+      if (!expense.to_station.trim()) { setFormError('帰着駅を入力してください。'); return; }
       const parsedAmount = parseInt(expense.amount.replace(/,/g, ''), 10);
-      if (!expense.amount.trim() || isNaN(parsedAmount)) {
-        setFormError('金額を正しく入力してください。');
-        setIsSubmitting(false);
-        return;
+      if (!expense.amount.trim() || isNaN(parsedAmount)) { setFormError('金額を正しく入力してください。'); return; }
+      if ((expense.type === 'one_time' || expense.type === 'business_trip') && !expense.start_date?.trim()) {
+        setFormError('利用日を入力してください。'); return;
       }
-      if (expense.type === 'one_time' || expense.type === 'business_trip') {
-        if (!expense.start_date?.trim()) {
-          setFormError('単発または出張の場合、利用日を入力してください。');
-          setIsSubmitting(false);
-          return;
-        }
-      } else if (expense.type === 'regular') {
-        if (!expense.start_date?.trim() || !expense.end_date?.trim()) {
-          setFormError('定期の場合、開始日と終了日を入力してください。');
-          setIsSubmitting(false);
-          return;
-        }
+      if (expense.type === 'regular' && (!expense.start_date?.trim() || !expense.end_date?.trim())) {
+        setFormError('定期の場合、開始日と終了日を入力してください。'); return;
       }
-      if (!expense.transportation?.trim()) {
-        setFormError('交通機関を入力してください。');
-        setIsSubmitting(false);
-        return;
-      }
-      if (!expense.workplace?.trim()) {
-        setFormError('勤務先を入力してください。');
-        setIsSubmitting(false);
-        return;
-      }
+      if (!expense.transportation?.trim()) { setFormError('交通機関を入力してください。'); return; }
+      if (!expense.workplace?.trim()) { setFormError('勤務先を入力してください。'); return; }
     }
+
+    setConfirmedExpenses(expensesToSubmit);
+    setShowConfirm(true);
+  };
+
+  // 確認後の実際の送信
+  const handleSubmit = async () => {
+    if (!user) return;
+    setShowConfirm(false);
+    setIsSubmitting(true);
+    const expensesToSubmit = confirmedExpenses;
 
     const { error } = await supabase.from('expenses').insert([
       { user_id: user.id, expenses_data: expensesToSubmit, status: 'pending' }
@@ -272,39 +328,42 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
             </select>
             
             {(expense.type === 'one_time' || expense.type === 'business_trip') && (
-              <div className="date-input-wrapper" data-hasvalue={Boolean(expense.start_date)}>
-                <input
-                  type="date"
-                  value={expense.start_date || ''}
-                  onChange={(e) => handleInputChange(index, 'start_date', e.target.value)}
+              <div style={{ position: 'relative' }}>
+                <button type="button" onClick={() => setOpenDatePicker(openDatePicker === `${index}-start` ? null : `${index}-start`)}
                   className="expense-input date-input"
-                  required
-                />
-                <span className="date-placeholder">利用日</span>
+                  style={{ textAlign: 'left', cursor: 'pointer', background: expense.start_date ? 'white' : '#f8f9fa', color: expense.start_date ? '#333' : '#999' }}
+                >
+                  {expense.start_date || '利用日'}
+                </button>
+                {openDatePicker === `${index}-start` && (
+                  <SingleDatePicker value={expense.start_date || ''} onChange={v => handleInputChange(index, 'start_date', v)} placeholder="利用日" onClose={() => setOpenDatePicker(null)} />
+                )}
               </div>
             )}
-            
+
             {expense.type === 'regular' && (
               <>
-                <div className="date-input-wrapper" data-hasvalue={Boolean(expense.start_date)}>
-                  <input
-                    type="date"
-                    value={expense.start_date || ''}
-                    onChange={(e) => handleInputChange(index, 'start_date', e.target.value)}
+                <div style={{ position: 'relative' }}>
+                  <button type="button" onClick={() => setOpenDatePicker(openDatePicker === `${index}-start` ? null : `${index}-start`)}
                     className="expense-input date-input"
-                    required
-                  />
-                  <span className="date-placeholder">開始日</span>
+                    style={{ textAlign: 'left', cursor: 'pointer', background: expense.start_date ? 'white' : '#f8f9fa', color: expense.start_date ? '#333' : '#999' }}
+                  >
+                    {expense.start_date || '開始日'}
+                  </button>
+                  {openDatePicker === `${index}-start` && (
+                    <SingleDatePicker value={expense.start_date || ''} onChange={v => handleInputChange(index, 'start_date', v)} placeholder="開始日" onClose={() => setOpenDatePicker(null)} />
+                  )}
                 </div>
-                <div className="date-input-wrapper" data-hasvalue={Boolean(expense.end_date)}>
-                  <input
-                    type="date"
-                    value={expense.end_date || ''}
-                    onChange={(e) => handleInputChange(index, 'end_date', e.target.value)}
+                <div style={{ position: 'relative' }}>
+                  <button type="button" onClick={() => setOpenDatePicker(openDatePicker === `${index}-end` ? null : `${index}-end`)}
                     className="expense-input date-input"
-                    required
-                  />
-                  <span className="date-placeholder">終了日</span>
+                    style={{ textAlign: 'left', cursor: 'pointer', background: expense.end_date ? 'white' : '#f8f9fa', color: expense.end_date ? '#333' : '#999' }}
+                  >
+                    {expense.end_date || '終了日'}
+                  </button>
+                  {openDatePicker === `${index}-end` && (
+                    <SingleDatePicker value={expense.end_date || ''} onChange={v => handleInputChange(index, 'end_date', v)} placeholder="終了日" onClose={() => setOpenDatePicker(null)} />
+                  )}
                 </div>
               </>
             )}
@@ -448,7 +507,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
         
         <button
           type="button"
-          onClick={handleSubmit}
+          onClick={handleValidateAndConfirm}
           disabled={isSubmitting}
           style={{
             width: '100%',
@@ -488,6 +547,67 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
           </div>
         )}
       </form>
+
+      {/* 確認モーダル */}
+      {showConfirm && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.6)', zIndex: 1000,
+          display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+        }} onClick={() => setShowConfirm(false)}>
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'white', borderRadius: '16px 16px 0 0',
+              padding: '24px 20px', width: '100%', maxWidth: 480,
+              maxHeight: '80vh', overflowY: 'auto',
+            }}
+          >
+            <h3 style={{ margin: '0 0 16px', fontSize: 17, textAlign: 'center', color: '#333' }}>
+              📋 申請内容の確認
+            </h3>
+
+            {confirmedExpenses.map((e, i) => {
+              const typeLabel = e.type === 'regular' ? '⭐定期' : e.type === 'business_trip' ? '出張' : '単発';
+              const dateLabel = e.type === 'regular'
+                ? `${e.start_date} 〜 ${e.end_date}`
+                : e.start_date;
+              return (
+                <div key={i} style={{
+                  background: '#f8f9fa', borderRadius: 8, padding: '12px 14px',
+                  marginBottom: 10, fontSize: 14, color: '#333',
+                }}>
+                  <div style={{ fontWeight: 'bold', marginBottom: 4 }}>{i + 1}. {typeLabel}　{e.transportation}</div>
+                  <div>{e.from_station} → {e.to_station}</div>
+                  <div>{dateLabel}　　<strong>{formatAmount(e.amount)}円</strong></div>
+                  {e.workplace && <div style={{ color: '#666', fontSize: 12 }}>勤務先: {e.workplace}</div>}
+                  {e.notes && <div style={{ color: '#666', fontSize: 12 }}>備考: {e.notes}</div>}
+                </div>
+              );
+            })}
+
+            <div style={{ textAlign: 'right', fontWeight: 'bold', fontSize: 16, margin: '12px 0 20px' }}>
+              合計: {formatAmount(confirmedExpenses.reduce((s, e) => s + (parseInt(e.amount.replace(/,/g, '')) || 0), 0).toString())}円
+            </div>
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                onClick={() => setShowConfirm(false)}
+                style={{ flex: 1, padding: 12, background: '#6c757d', color: 'white', border: 'none', borderRadius: 8, fontSize: 15, cursor: 'pointer' }}
+              >
+                修正する
+              </button>
+              <button
+                onClick={handleSubmit}
+                disabled={isSubmitting}
+                style={{ flex: 2, padding: 12, background: '#007bff', color: 'white', border: 'none', borderRadius: 8, fontSize: 15, fontWeight: 'bold', cursor: 'pointer' }}
+              >
+                {isSubmitting ? '送信中...' : '✅ この内容で申請する'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
