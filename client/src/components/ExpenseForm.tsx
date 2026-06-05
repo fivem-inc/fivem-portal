@@ -250,18 +250,6 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     <div>
       <h2 style={{ textAlign: 'center' }}>ファイブM 交通費精算フォーム</h2>
 
-      {formError && (
-        <div style={{
-          background: '#f8d7da', border: '1px solid #f5c6cb', borderRadius: 8,
-          padding: '12px 16px', marginBottom: 12, color: '#721c24', fontSize: 14,
-          display: 'flex', alignItems: 'center', gap: 8,
-        }}>
-          <span style={{ fontSize: 18 }}>⚠️</span>
-          <span>{formError}</span>
-          <button onClick={() => setFormError('')} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#721c24', fontSize: 18, lineHeight: 1 }}>✕</button>
-        </div>
-      )}
-
       {submitSuccess && (
         <div style={{
           background: '#d4edda', border: '1px solid #c3e6cb', borderRadius: 8,
@@ -504,6 +492,18 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
         >
           {isSubmitting ? '送信中...' : '申請する'}
         </button>
+
+        {formError && (
+          <div style={{
+            background: '#f8d7da', border: '1px solid #f5c6cb', borderRadius: 8,
+            padding: '12px 16px', marginTop: 12, color: '#721c24', fontSize: 14,
+            display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <span style={{ fontSize: 18 }}>⚠️</span>
+            <span>{formError}</span>
+            <button onClick={() => setFormError('')} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#721c24', fontSize: 18, lineHeight: 1 }}>✕</button>
+          </div>
+        )}
       </form>
     </div>
   );
