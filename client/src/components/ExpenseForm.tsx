@@ -336,7 +336,10 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
 
   return (
     <div>
-      <h2 style={{ textAlign: 'center' }}>ファイブM 交通費精算フォーム</h2>
+      <div style={{ textAlign: 'center', marginBottom: 12, paddingBottom: 12, borderBottom: `1px solid ${isDarkMode ? '#2c2c3e' : '#e9ecef'}` }}>
+        <p style={{ margin: '0 0 3px', fontSize: 10, letterSpacing: '0.22em', color: isDarkMode ? '#6c757d' : '#adb5bd', fontWeight: 700 }}>ファイブMスタッフサイト</p>
+        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: isDarkMode ? '#fff' : '#1a1a2e', letterSpacing: '0.04em', lineHeight: 1.2 }} aria-label="交通費申請フォーム">🚃 交通費申請</h1>
+      </div>
 
       
       <div style={{ 
