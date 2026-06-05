@@ -161,7 +161,7 @@ const LeaveApprovalBanner: React.FC<{ userId: string; roleTitle: string; isAdmin
   const [pendingCount, setPendingCount] = useState(0);
 
   useEffect(() => {
-        if (!isAdmin && !approverRoles.includes(roleTitle)) return;
+        if (!isAdmin && !['リーダー', 'マネージャー', '社長', '管理者'].includes(roleTitle)) return;
 
     const fetchPending = async () => {
       // 自分の番の申請のみカウント
