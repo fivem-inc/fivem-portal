@@ -42,9 +42,10 @@ const SingleDatePicker: React.FC<{
 
   return (
     <div ref={ref} style={{
-      position: 'absolute', zIndex: 500, background: 'white', border: '1px solid #ccc',
+      position: 'fixed', zIndex: 500, background: 'white', border: '1px solid #ccc',
       borderRadius: 10, padding: 10, boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
-      width: 280, top: '100%', left: 0,
+      width: 'min(300px, 90vw)',
+      top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <button onClick={prevMonth} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', padding: '0 10px' }}>‹</button>
