@@ -570,9 +570,14 @@ INSERT INTO master_options (category, value, sort_order) VALUES
 - **totalAmount を useMemo 化**: リアルタイム計算に変更（旧サイトと同様）
 - **往復ボタンに translate="no"**: ブラウザ自動翻訳で「対抗」になるバグを根本修正
 
+### ✅ 2026-06-05 any型→型定義置き換え 完了（コミット: 96d951c）
+
+- `types/index.ts` に `AdminUserProfile` / `AdminLeaveRequest` / `ReportStats` を追加
+- `AdminPanelContext.tsx` の `useState<any[]>` をすべて型付きに置き換え
+- ビルドエラー全修正・デプロイ済み
+
 ### 🔜 次回やること
-1. **`any` 型を型定義に置き換え**（型安全性）
-2. **Phase 1: メール送信機能**（現状は別ツール使用中のため後回し）
+1. **Phase 1: メール送信機能**（現状は別ツール使用中のため後回し）
 
 ---
 
