@@ -154,18 +154,18 @@ export default function ChangeEmail() {
         {error && <p style={{ color: 'red', marginTop: '15px' }}>{error}</p>}
       </form>
       
-      <div style={{ marginTop: '20px' }}>
+      <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+        <button
+          onClick={() => window.location.href = '/change-password'}
+          style={{ background: 'none', border: 'none', color: '#007bff', cursor: 'pointer', textDecoration: 'underline', fontSize: 13 }}
+        >
+          パスワード変更はこちら
+        </button>
         <button
           onClick={() => window.location.href = '/'}
-          style={{ 
-            background: 'none', 
-            border: 'none', 
-            color: 'blue', 
-            cursor: 'pointer',
-            textDecoration: 'underline'
-          }}
+          style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', textDecoration: 'underline', fontSize: 13 }}
         >
-          ダッシュボードに戻る
+          ファイブＭスタッフサイトに戻る
         </button>
       </div>
     </div>

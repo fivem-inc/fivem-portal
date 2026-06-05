@@ -3,6 +3,8 @@ import { Routes, Route, Navigate, Outlet, BrowserRouter, useNavigate, useLocatio
 import SignIn from './pages/SignIn';
 import ResetPassword from './pages/ResetPassword';
 import ChangeEmail from './pages/ChangeEmail';
+import ChangePassword from './pages/ChangePassword';
+import AccountSettings from './pages/AccountSettings';
 import SupabaseSettingsCheck from './pages/SupabaseSettingsCheck';
 import ExpenseForm from './components/ExpenseForm';
 import AdminPanel from './components/AdminPanel';
@@ -71,8 +73,14 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
           </button>
         )}
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <span style={{ fontSize: 13, opacity: 0.8 }}>{profileName || email}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span
+          onClick={() => navigate('/account')}
+          style={{ fontSize: 13, opacity: 0.8, cursor: 'pointer', textDecoration: 'underline dotted', textUnderlineOffset: 3 }}
+          title="タップでアカウント設定"
+        >
+          {profileName || email}
+        </span>
         <button
           onClick={onLogout}
           style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #aaa', background: 'transparent', color: 'white', cursor: 'pointer', fontSize: 14 }}
@@ -390,7 +398,9 @@ function App() {
             <Route path="/trip-report" element={<TripReportPage />} />
             <Route path="/leave" element={<LeaveRequestPage />} />
             <Route path="/leave-approvals" element={<LeaveApprovalsPage />} />
+            <Route path="/account" element={<AccountSettings />} />
             <Route path="/change-email" element={<ChangeEmail />} />
+            <Route path="/change-password" element={<ChangePassword />} />
             <Route path="/settings-check" element={<SupabaseSettingsCheck />} />
           </Route>
         </Routes>

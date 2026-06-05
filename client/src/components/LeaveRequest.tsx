@@ -357,7 +357,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               <li>休暇申請は、できるだけ休暇予定日の<strong>2週間前まで</strong>に行ってください。</li>
               <li>申請先は、休暇を取得する日の<strong>勤務校リーダー</strong>を選択してください。</li>
               <li>申請後、選択したリーダーへ<strong>直接相談</strong>してください。</li>
-              <li>申請が受理されると、ホーム画面に通知が表示されます。</li>
+              <li>申請が受理されると、交通費申請ページに通知が表示されます。</li>
               <li>パートタイマーの方も、正社員と同様に申請してください。</li>
             </ol>
           </div>
