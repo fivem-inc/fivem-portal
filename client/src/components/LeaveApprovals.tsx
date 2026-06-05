@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { sendLeaveSlack } from '../lib/leaveSlack';
+import { useDarkMode } from '../hooks/useDarkMode';
 import type { AuthUser } from '../types';
 
 interface Props {
@@ -61,7 +62,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   // パートへフォーム送信
   const [partUsers, setPartUsers] = useState<any[]>([]);
 
-  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const isDark = useDarkMode();
   const bg = isDark ? '#343a40' : 'white';
   const text = isDark ? '#fff' : '#333';
   const subText = isDark ? '#adb5bd' : '#666';

@@ -3,15 +3,21 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 // Slack Webhook URL
 const SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/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"
 
+const ALLOWED_ORIGIN = 'https://fivem-portal.vercel.app';
+
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
 serve(async (req) => {
-  // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
+  }
+
+  const authHeader = req.headers.get('Authorization');
+  if (!authHeader?.startsWith('Bearer ')) {
+    return new Response('Unauthorized', { status: 401, headers: corsHeaders });
   }
 
   try {

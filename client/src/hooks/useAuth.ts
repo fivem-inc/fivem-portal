@@ -3,10 +3,13 @@ import type { AuthUser } from '../types';
 import { supabase } from '../lib/supabaseClient';
 import { AuthContext } from '../contexts/AuthContext.tsx';
 
+const APPROVER_ROLES = ['リーダー', 'マネージャー', '社長', '管理者'] as const;
+
 interface UseAuthReturn {
   user: AuthUser | null;
   loading: boolean;
   isAdmin: boolean;
+  isApprover: boolean;
   profileName: string;
   roleTitle: string;
   canLeave: boolean;
@@ -24,6 +27,7 @@ export const useAuth = (): UseAuthReturn => {
   const [leaveRequestEnabled, setLeaveRequestEnabled] = useState(false);
 
   const isAdmin = user?.app_metadata?.role === 'admin';
+  const isApprover = isAdmin || APPROVER_ROLES.includes(roleTitle as typeof APPROVER_ROLES[number]);
 
   const fetchProfileName = useCallback(async () => {
     if (!user) return;
@@ -84,6 +88,7 @@ export const useAuth = (): UseAuthReturn => {
     user,
     loading,
     isAdmin,
+    isApprover,
     profileName,
     roleTitle,
     canLeave,

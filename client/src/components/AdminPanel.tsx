@@ -3,6 +3,7 @@ import type { PendingApproval, Submission } from '../types';
 import { groupSubmissionsByYearAndMonth, generateCSVData, downloadCSV, formatAmount } from '../utils';
 import { supabase } from '../lib/supabaseClient';
 import { sendLeaveSlack } from '../lib/leaveSlack';
+import { useDarkMode } from '../hooks/useDarkMode';
 
 interface AdminPanelProps {
   pendingApprovals: PendingApproval[];
@@ -1362,8 +1363,7 @@ ${printData.map((page) => `
 
   const groupedSubmissions = groupSubmissionsByYearAndMonth(getFilteredSubmissions());
 
-  // ダークモード検出
-  const isDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const isDarkMode = useDarkMode();
 
   // タブのスタイル
   const tabStyle = (isActive: boolean) => ({
