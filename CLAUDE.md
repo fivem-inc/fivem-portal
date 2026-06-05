@@ -506,14 +506,42 @@ INSERT INTO public.master_options (category, value, sort_order) VALUES
 - `4eb605b` refactor: レビュー改善
 - `58fc85f` docs: STRUCTURE.md追加
 
+---
+
+## ✅ 2026-06-05 追加修正・機能追加 完了
+
+### Slack通知（交通費）修正
+- `slack-notify` のWebhook URLをコードから削除 → Supabase Secrets `SLACK_WEBHOOK_EXPENSE` に移動
+  - 登録先チャンネル: `#07_3閲覧禁止-経理専用`（`SLACK_WEBHOOK_ACCOUNTING` と同じURL）
+- 通知フォーマットを旧シンプル形式に戻した（申請者・申請日・申請内容・項目数）
+- Edge FunctionのCORSをlocalhost:5173/5174も許可するよう修正
+- Slack通知送信を `fetch()` → `supabase.functions.invoke()` に変更（JWT形式エラー解消）
+
+### 交通費申請フォーム改善
+- **送信前確認モーダル追加**（出張報告と同じ仕様）
+  - 「申請する」→ 内容確認画面（下からスライド）→「この内容で申請する」で送信
+  - 「修正する」でフォームに戻れる
+- **日付入力をカスタムカレンダーに変更**（スマホ対応）
+  - `<input type="date">` を廃止 → タップで即確定するカスタムカレンダー
+  - 画面中央に固定表示（切れない）
+- エラーバナー・成功バナーを「申請する」ボタン直下に配置
+- 成功バナーの表示時間を6秒に延長
+
+### コミット
+- `5e7fb5f` fix: approverRoles未定義エラー
+- `68da92a` fix: エラーバナー位置修正
+- `02a0f6b` fix: CORS修正・成功バナー移動
+- `943bca2` fix: Slack通知をfetch→invoke
+- `b98be1d` fix: WebhookをSecretsに移動
+- `ae208ee` fix: Slack通知フォーマット旧形式に戻す
+- `4c9d96c` feat: 確認モーダル・カスタム日付ピッカー追加
+- `34665f7` fix: カレンダー中央固定表示
+- `200bb49` fix: ビルドエラー修正
+
 ### 🔜 次回やること
-- Edge Function 3本のデプロイ（send-leave-slack / send-trip-slack / slack-notify）
-  ```
-  npx supabase functions deploy send-leave-slack --project-ref xaeynaxctiiyqxjyuzfi
-  npx supabase functions deploy send-trip-slack --project-ref xaeynaxctiiyqxjyuzfi
-  npx supabase functions deploy slack-notify --project-ref xaeynaxctiiyqxjyuzfi
-  ```
-- **Phase 1: メール送信機能**（現状は別ツール使用中のため後回し）
+1. **AdminPanel 6ファイル分割**（保守性向上・工数2〜3時間）
+2. **`any` 型を型定義に置き換え**（型安全性）
+3. **Phase 1: メール送信機能**（現状は別ツール使用中のため後回し）
 
 ---
 
