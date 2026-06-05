@@ -464,16 +464,56 @@ INSERT INTO public.master_options (category, value, sort_order) VALUES
 - チャンネル一覧: 晃平先生へ（自動）/ 大人 / 本校こども / 西陣校 / 上桂校 / 洛西口校 / 南草津校 / ジュニア / お客様サポート
 - コミット: `9bcb6b4`
 
+---
+
+## ✅ 2026-06-05 コードレビュー改善 完了
+
+### 実施内容（UIデザイナー＋シニアエンジニア 2エージェントレビューに基づく）
+
+#### フロントエンド改善
+- **`useDarkMode()` カスタムフック新設** (`client/src/hooks/useDarkMode.ts`)
+  - 静的な `window.matchMedia(...).matches` をリアクティブに置き換え
+  - LeaveRequest / LeaveApprovals / BusinessTripReport / AdminPanel 全4ファイルに適用
+  - OS のダークモード切り替えに即座に追従するようになった
+- **`isApprover` を `useAuth` に集約** (`client/src/hooks/useAuth.ts`)
+  - `['リーダー', 'マネージャー', '社長', '管理者'].includes(roleTitle)` の重複を排除
+  - `APPROVER_ROLES` 定数として1か所で管理
+  - App.tsx 全ページで `isApprover` を使用するよう統一
+- **カレンダーのタップ領域拡大** (`LeaveRequest.tsx`)
+  - `padding: '7px 0'` → `padding: '10px 2px', minHeight: 40` に変更
+  - スマホでのタップ失敗を防止
+- **`alert()` → インラインエラーバナーに変更** (`ExpenseForm.tsx`)
+  - 全バリデーションエラーを赤いバナーで表示（✕で閉じられる）
+  - 送信成功も緑のバナーで表示
+  - `alert()` ダイアログを完全廃止
+
+#### Edge Function セキュリティ改善
+- **JWT 認証チェック追加**（slack-notify / send-leave-slack / send-trip-slack 全3本）
+  - `Authorization: Bearer ...` ヘッダーがない場合 401 を返す
+- **CORS を本番ドメインに制限**（全3本）
+  - `Access-Control-Allow-Origin: *` → `https://fivem-portal.vercel.app` に変更
+
+#### その他
+- `STRUCTURE.md` 追加（プロジェクト構造をアスキーアートで整理）
+
+### 保留項目（リリース後に対応）
+- AdminPanel.tsx (3803行) の6ファイル分割
+  - タブ: approvals(L1816) / groups(L2561) / users(L2719) / trip_reports(L2959) / reports(L3254) / leave_requests(L3432)
+  - 全タブが同一stateを共有しているため、リリース後に余裕をもって実施する
+- `any` 型を型定義に置き換え（`useState<any[]>` → `useState<LeaveRequest[]>` 等）
+
+### コミット
+- `4eb605b` refactor: レビュー改善
+- `58fc85f` docs: STRUCTURE.md追加
+
 ### 🔜 次回やること
-1. **Phase 1: メール送信機能**（優先①）
-   - 管理者から全員・グループ・個人にメール送信
-   - グループ: こども / パート・アルバイトスタッフ / マネージャー・リーダー等
-   - 送信履歴管理
-   - SMTP設定済み（office@five-m.com / Gmail）
-- `b1fc733` Phase3完了・承認フロー改善・UI整備
-- `d4f23c3` グループ追加機能修正（RLSポリシー追加）
-- `e8a8bd9` docs更新
-- `1cb310e` 休暇申請フロー改善（パート通知・社長承認・確認ダイアログ）
+- Edge Function 3本のデプロイ（send-leave-slack / send-trip-slack / slack-notify）
+  ```
+  npx supabase functions deploy send-leave-slack --project-ref xaeynaxctiiyqxjyuzfi
+  npx supabase functions deploy send-trip-slack --project-ref xaeynaxctiiyqxjyuzfi
+  npx supabase functions deploy slack-notify --project-ref xaeynaxctiiyqxjyuzfi
+  ```
+- **Phase 1: メール送信機能**（現状は別ツール使用中のため後回し）
 
 ---
 
