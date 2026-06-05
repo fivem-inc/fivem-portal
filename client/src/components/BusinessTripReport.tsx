@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import { useDarkMode } from '../hooks/useDarkMode';
 import type { AuthUser, BusinessTripReport } from '../types';
 
 interface Props {
@@ -91,7 +92,7 @@ const DateCalendar: React.FC<CalendarProps> = ({ selected, onToggle, isDark }) =
 };
 
 const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
-  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const isDark = useDarkMode();
 
   // 区分リスト・場所プリセット（DBから取得）
   const [categories, setCategories] = useState<string[]>(['出張', '園指導', '試合', '下見', 'その他']);

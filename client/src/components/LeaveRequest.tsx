@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { sendLeaveSlack } from '../lib/leaveSlack';
+import { useDarkMode } from '../hooks/useDarkMode';
 import type { AuthUser } from '../types';
 
 interface Props {
@@ -134,7 +135,8 @@ const MultiDatePicker: React.FC<{
               key={dateStr}
               onClick={() => toggleDate(dateStr)}
               style={{
-                padding: '7px 0',
+                padding: '10px 2px',
+                minHeight: 40,
                 borderRadius: 6,
                 border: isToday ? '2px solid #007bff' : '1px solid transparent',
                 background: isSelected ? '#28a745' : 'transparent',
@@ -276,7 +278,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     if (approvers.length > 0) setSelectedApproverId(approvers[0].id);
   };
 
-  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const isDark = useDarkMode();
   const bg = isDark ? '#343a40' : 'white';
   const text = isDark ? '#fff' : '#333';
   const subText = isDark ? '#adb5bd' : '#666';

@@ -15,6 +15,8 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
   const [totalAmount, setTotalAmount] = useState(0);
   const [profileName, setProfileName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string>('');
+  const [submitSuccess, setSubmitSuccess] = useState(false);
 
   // 合計金額を計算
   useEffect(() => {
@@ -81,7 +83,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
   const handleMakeRoundTrip = useCallback((index: number) => {
     const originalExpense = expenses[index];
     if (!originalExpense || !originalExpense.from_station || !originalExpense.to_station) {
-      alert('往復にするには、出発駅と到着駅を入力してください。');
+      setFormError('往復にするには、出発駅と到着駅を入力してください。');
       return;
     }
 
@@ -114,60 +116,59 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       e.transportation?.trim()
     );
 
+    setFormError('');
+
     if (expensesToSubmit.length === 0) {
-      alert('申請する項目がありません。');
+      setFormError('申請する項目がありません。');
       setIsSubmitting(false);
       return;
     }
 
-    // 定期券と他の申請タイプの混在チェック
     const hasRegular = expensesToSubmit.some(expense => expense.type === 'regular');
     const hasOther = expensesToSubmit.some(expense => expense.type !== 'regular');
-    
     if (hasRegular && hasOther) {
-      alert('定期券の申請と他の申請（単発・出張）は混ぜて申請できません。\n別々に申請してください。');
+      setFormError('定期券の申請と他の申請（単発・出張）は混ぜて申請できません。別々に申請してください。');
       setIsSubmitting(false);
       return;
     }
 
-    // バリデーション
     for (const expense of expensesToSubmit) {
       if (!expense.from_station.trim()) {
-        alert('出発駅を入力してください。');
+        setFormError('出発駅を入力してください。');
         setIsSubmitting(false);
         return;
       }
       if (!expense.to_station.trim()) {
-        alert('帰着駅を入力してください。');
+        setFormError('帰着駅を入力してください。');
         setIsSubmitting(false);
         return;
       }
       const parsedAmount = parseInt(expense.amount.replace(/,/g, ''), 10);
       if (!expense.amount.trim() || isNaN(parsedAmount)) {
-        alert('金額を正しく入力してください。');
+        setFormError('金額を正しく入力してください。');
         setIsSubmitting(false);
         return;
       }
       if (expense.type === 'one_time' || expense.type === 'business_trip') {
         if (!expense.start_date?.trim()) {
-          alert('単発または出張の場合、利用日を入力してください。');
+          setFormError('単発または出張の場合、利用日を入力してください。');
           setIsSubmitting(false);
           return;
         }
       } else if (expense.type === 'regular') {
         if (!expense.start_date?.trim() || !expense.end_date?.trim()) {
-          alert('定期の場合、開始日と終了日を入力してください。');
+          setFormError('定期の場合、開始日と終了日を入力してください。');
           setIsSubmitting(false);
           return;
         }
       }
       if (!expense.transportation?.trim()) {
-        alert('交通機関を入力してください。');
+        setFormError('交通機関を入力してください。');
         setIsSubmitting(false);
         return;
       }
       if (!expense.workplace?.trim()) {
-        alert('勤務先を入力してください。');
+        setFormError('勤務先を入力してください。');
         setIsSubmitting(false);
         return;
       }
@@ -178,7 +179,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     ]);
 
     if (error) {
-      alert('登録に失敗しました: ' + error.message);
+      setFormError('登録に失敗しました: ' + error.message);
       setIsSubmitting(false);
     } else {
       // 🚀 Slack通知を送信
@@ -233,13 +234,14 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
         // エラーでも申請は成功させる
       }
       
-      alert('交通費を登録しました。承認をお待ちください。');
+      setSubmitSuccess(true);
+      setFormError('');
       setExpenses([{ type: 'one_time', from_station: '', to_station: '', amount: '', start_date: '', end_date: '', workplace: '' }]);
       onSubmissionComplete();
 
-      // 3秒後に送信ボタンを再度有効化
       setTimeout(() => {
         setIsSubmitting(false);
+        setSubmitSuccess(false);
       }, 3000);
     }
   };
@@ -247,6 +249,29 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
   return (
     <div>
       <h2 style={{ textAlign: 'center' }}>ファイブM 交通費精算フォーム</h2>
+
+      {formError && (
+        <div style={{
+          background: '#f8d7da', border: '1px solid #f5c6cb', borderRadius: 8,
+          padding: '12px 16px', marginBottom: 12, color: '#721c24', fontSize: 14,
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <span style={{ fontSize: 18 }}>⚠️</span>
+          <span>{formError}</span>
+          <button onClick={() => setFormError('')} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#721c24', fontSize: 18, lineHeight: 1 }}>✕</button>
+        </div>
+      )}
+
+      {submitSuccess && (
+        <div style={{
+          background: '#d4edda', border: '1px solid #c3e6cb', borderRadius: 8,
+          padding: '12px 16px', marginBottom: 12, color: '#155724', fontSize: 14,
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <span style={{ fontSize: 18 }}>✅</span>
+          <span>交通費を登録しました。承認をお待ちください。</span>
+        </div>
+      )}
       
       <div style={{ 
         backgroundColor: '#f8f9fa', 

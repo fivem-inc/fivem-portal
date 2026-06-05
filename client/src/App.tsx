@@ -161,8 +161,7 @@ const LeaveApprovalBanner: React.FC<{ userId: string; roleTitle: string; isAdmin
   const [pendingCount, setPendingCount] = useState(0);
 
   useEffect(() => {
-    const approverRoles = ['リーダー', 'マネージャー', '社長', '管理者'];
-    if (!isAdmin && !approverRoles.includes(roleTitle)) return;
+        if (!isAdmin && !approverRoles.includes(roleTitle)) return;
 
     const fetchPending = async () => {
       // 自分の番の申請のみカウント
@@ -222,6 +221,7 @@ const Dashboard: React.FC = () => {
   const {
     user,
     isAdmin,
+    isApprover,
     profileName,
     roleTitle,
     canLeave,
@@ -279,7 +279,7 @@ const Dashboard: React.FC = () => {
 
   return (
     <div style={{ maxWidth: 800, margin: '40px auto', position: 'relative', paddingTop: '80px' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isAdmin || ['リーダー','マネージャー','社長','管理者'].includes(roleTitle)} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} />
 
       {/* 有給申請フォーム送信通知バナー（パート向け） */}
       {leaveRequestEnabled && (
@@ -342,11 +342,11 @@ const Dashboard: React.FC = () => {
 
 // 出張報告ページ
 const TripReportPage: React.FC = () => {
-  const { user, isAdmin, profileName, roleTitle, canLeave, handleLogout } = useAuth();
+  const { user, isAdmin, isApprover, profileName, canLeave, handleLogout } = useAuth();
   if (!user) return <div>読み込んでいます...</div>;
   return (
     <div style={{ paddingTop: '80px' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isAdmin || ['リーダー','マネージャー','社長','管理者'].includes(roleTitle)} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} />
       <BusinessTripReportForm user={user} profileName={profileName} />
     </div>
   );
@@ -354,11 +354,11 @@ const TripReportPage: React.FC = () => {
 
 // 休暇申請ページ
 const LeaveRequestPage: React.FC = () => {
-  const { user, isAdmin, profileName, roleTitle, canLeave, leaveRequestEnabled, handleLogout } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, leaveRequestEnabled, handleLogout } = useAuth();
   if (!user) return <div>読み込んでいます...</div>;
   return (
     <div style={{ paddingTop: '80px' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isAdmin || ['リーダー','マネージャー','社長','管理者'].includes(roleTitle)} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} />
       <LeaveRequestForm user={user} profileName={profileName} roleTitle={roleTitle} leaveRequestEnabled={leaveRequestEnabled} />
     </div>
   );
@@ -366,14 +366,12 @@ const LeaveRequestPage: React.FC = () => {
 
 // 休暇申請承認ページ（リーダー・マネージャー・管理者用）
 const LeaveApprovalsPage: React.FC = () => {
-  const { user, isAdmin, profileName, roleTitle, canLeave, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, handleLogout, loading } = useAuth();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
-  const approverRoles = ['リーダー', 'マネージャー', '社長', '管理者'];
-  // roleTitle が空の場合はまだプロフィール未取得なので弾かない
-  if (roleTitle && !isAdmin && !approverRoles.includes(roleTitle)) return <Navigate to="/" />;
+  if (roleTitle && !isApprover) return <Navigate to="/" />;
   return (
     <div style={{ paddingTop: '80px' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isAdmin || ['リーダー','マネージャー','社長','管理者'].includes(roleTitle)} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} />
       <LeaveApprovals user={user} profileName={profileName} isAdmin={isAdmin} roleTitle={roleTitle} />
     </div>
   );
