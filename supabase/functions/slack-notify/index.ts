@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 
-// Slack Webhook URL
-const SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/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"
+// Slack Webhook URL（Supabase Secretsから取得）
+const SLACK_WEBHOOK_URL = Deno.env.get('SLACK_WEBHOOK_EXPENSE') || ''
 
 const ALLOWED_ORIGINS = ['https://fivem-portal.vercel.app', 'http://localhost:5173', 'http://localhost:5174'];
 
@@ -103,6 +103,14 @@ serve(async (req) => {
       ]
     }
     
+    if (!SLACK_WEBHOOK_URL) {
+      console.warn('SLACK_WEBHOOK_EXPENSE が設定されていません');
+      return new Response(JSON.stringify({ success: true, skipped: true }), {
+        headers: { ...getCorsHeaders(req), "Content-Type": "application/json" },
+        status: 200
+      });
+    }
+
     // Slackに送信
     const response = await fetch(SLACK_WEBHOOK_URL, {
       method: 'POST',
