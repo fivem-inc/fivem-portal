@@ -93,11 +93,17 @@ interface ExpenseFormProps {
   profileName?: string;
 }
 
+const TRANSPORT_PRESETS = ['JR', '阪急', '京阪', '京都地下鉄', '京都市バス'];
+
 const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, expenses, setExpenses, profileName: parentProfileName }) => {
   const [totalAmount, setTotalAmount] = useState(0);
   const [profileName, setProfileName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string>('');
+  const [locationsByCategory, setLocationsByCategory] = useState<Record<string, string[]>>({});
+  const [workplaceOptions, setWorkplaceOptions] = useState<string[]>([]);
+  const [customExpenseTypes, setCustomExpenseTypes] = useState<string[]>([]);
+  const [expenseTypeLabels, setExpenseTypeLabels] = useState<{ sort_order: number; value: string }[]>([]);
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [confirmedExpenses, setConfirmedExpenses] = useState<typeof expenses>([]);
@@ -121,6 +127,26 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     }, 0);
     setTotalAmount(calculatedTotal);
   }, [expenses]);
+
+  // 区分・場所リストを取得
+  useEffect(() => {
+    const fetchMasterOptions = async () => {
+      const { data } = await supabase.from('master_options').select('category, value, sort_order').order('sort_order');
+      if (data) {
+        const locs: Record<string, string[]> = {};
+        data.filter(r => r.category.startsWith('trip_location_')).forEach(r => {
+          const cat = r.category.replace('trip_location_', '');
+          if (!locs[cat]) locs[cat] = [];
+          locs[cat].push(r.value);
+        });
+        setLocationsByCategory(locs);
+        setWorkplaceOptions(data.filter(r => r.category === 'workplace').map(r => r.value));
+        setCustomExpenseTypes(data.filter(r => r.category === 'expense_type').map(r => r.value));
+        setExpenseTypeLabels(data.filter(r => r.category === 'expense_type_label').map(r => ({ sort_order: r.sort_order, value: r.value })));
+      }
+    };
+    fetchMasterOptions();
+  }, []);
 
   // プロファイル名を取得
   useEffect(() => {
@@ -153,17 +179,25 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     });
   }, [setExpenses]);
 
+  const handleMultiUpdate = useCallback((index: number, fields: Partial<Expense>) => {
+    setExpenses(prev => {
+      const next = [...prev];
+      next[index] = { ...next[index], ...fields };
+      return next;
+    });
+  }, [setExpenses]);
+
   const handleClearRow = useCallback((index: number) => {
     setExpenses(prev => {
       const newExpenses = [...prev];
-      newExpenses[index] = { type: 'one_time', from_station: '', to_station: '', amount: '', start_date: '', end_date: '', workplace: '' };
+      newExpenses[index] = { type: 'one_time', from_station: '', to_station: '', amount: '', start_date: '', end_date: '', transportation: '', workplace: '', trip_category: '', type_other: '', transportation_other: '', workplace_other: '' };
       return newExpenses;
     });
   }, [setExpenses]);
 
   const handleAddRow = useCallback(() => {
     setExpenses(prev => {
-      return [...prev, { type: 'one_time', from_station: '', to_station: '', amount: '', start_date: '', end_date: '', workplace: '' }];
+      return [...prev, { type: 'one_time', from_station: '', to_station: '', amount: '', start_date: '', end_date: '', transportation: '', workplace: '', trip_category: '', type_other: '', transportation_other: '', workplace_other: '' }];
     });
   }, [setExpenses]);
 
@@ -219,17 +253,26 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       if (!expense.to_station.trim()) { setFormError('帰着駅を入力してください。'); return; }
       const parsedAmount = parseInt(expense.amount.replace(/,/g, ''), 10);
       if (!expense.amount.trim() || isNaN(parsedAmount)) { setFormError('金額を正しく入力してください。'); return; }
-      if ((expense.type === 'one_time' || expense.type === 'business_trip') && !expense.start_date?.trim()) {
+      if ((expense.type === 'one_time' || expense.type === 'business_trip' || expense.type === 'other') && !expense.start_date?.trim()) {
         setFormError('利用日を入力してください。'); return;
       }
       if (expense.type === 'regular' && (!expense.start_date?.trim() || !expense.end_date?.trim())) {
         setFormError('定期の場合、開始日と終了日を入力してください。'); return;
       }
-      if (!expense.transportation?.trim()) { setFormError('交通機関を入力してください。'); return; }
-      if (!expense.workplace?.trim()) { setFormError('勤務先を入力してください。'); return; }
+      const effectiveTransport = expense.transportation === 'その他' ? expense.transportation_other : expense.transportation;
+      if (!effectiveTransport?.trim()) { setFormError('交通機関を入力してください。'); return; }
+      if (expense.type === 'business_trip' && !expense.trip_category?.trim()) { setFormError('区分を選択してください。'); return; }
+      const effectiveWorkplace = expense.workplace === 'その他' ? expense.workplace_other : expense.workplace;
+      if (!effectiveWorkplace?.trim()) { setFormError('勤務先を入力してください。'); return; }
     }
 
-    setConfirmedExpenses(expensesToSubmit);
+    // 送信前に transportation/workplace の "その他" テキストをマージ
+    const mergeExpense = (e: typeof expensesToSubmit[0]) => ({
+      ...e,
+      transportation: e.transportation === 'その他' ? (e.transportation_other || '') : (e.transportation || ''),
+      workplace: e.workplace === 'その他' ? (e.workplace_other || '') : (e.workplace || ''),
+    });
+    setConfirmedExpenses(expensesToSubmit.map(mergeExpense));
     setShowConfirm(true);
   };
 
@@ -327,15 +370,54 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
         {expenses.map((expense, index) => (
           <div key={index} className="expense-row">
             <span className="expense-number">{index + 1}</span>
-            <select
-              value={expense.type}
-              onChange={(e) => handleInputChange(index, 'type', e.target.value as 'regular' | 'business_trip' | 'one_time')}
-              className="expense-input single-select"
-            >
-              <option value="one_time">通勤（単発）</option>
-              <option value="regular">定期</option>
-              <option value="business_trip">出張（園指導等）</option>
-            </select>
+            {(() => {
+              // カスタム区分選択中かどうかを判定
+              const isCustomType = expense.type === 'other' && !!expense.type_other && customExpenseTypes.includes(expense.type_other);
+              const typeSelectValue = isCustomType ? `custom:${expense.type_other}` : expense.type;
+              return (
+                <>
+                  {(() => {
+                    const ORDER_TO_TYPE: Record<number, string> = { 1: 'one_time', 2: 'regular', 3: 'business_trip', 4: 'other' };
+                    const getLabel = (sortOrder: number, fallback: string) =>
+                      expenseTypeLabels.find(l => l.sort_order === sortOrder)?.value ?? fallback;
+                    return (
+                      <select
+                        value={typeSelectValue}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val.startsWith('custom:')) {
+                            const label = val.slice(7);
+                            handleMultiUpdate(index, { type: 'other', type_other: label, trip_category: '', workplace: '', workplace_other: '' });
+                          } else {
+                            handleMultiUpdate(index, { type: val as Expense['type'], type_other: '', trip_category: '', workplace: '', workplace_other: '' });
+                          }
+                        }}
+                        className="expense-input single-select"
+                      >
+                        <option value="one_time">{getLabel(1, '通勤（単発）')}</option>
+                        <option value="regular">{getLabel(2, '定期')}</option>
+                        <option value="business_trip">{getLabel(3, '出張（園指導等）')}</option>
+                        {customExpenseTypes.map(ct => (
+                          <option key={ct} value={`custom:${ct}`}>{ct}</option>
+                        ))}
+                        <option value="other">{getLabel(4, 'その他')}</option>
+                      </select>
+                    );
+                    void ORDER_TO_TYPE;
+                  })()}
+                  {expense.type === 'other' && !isCustomType && (
+                    <input
+                      type="text"
+                      placeholder="内容を入力"
+                      value={expense.type_other || ''}
+                      onChange={(e) => handleInputChange(index, 'type_other', e.target.value)}
+                      className="expense-input"
+                      style={{ minWidth: 120, maxWidth: 200 }}
+                    />
+                  )}
+                </>
+              );
+            })()}
             
             {(expense.type === 'one_time' || expense.type === 'business_trip') && (
               <div style={{ position: 'relative' }}>
@@ -378,13 +460,28 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
               </>
             )}
             
-            <input
-              type="text"
-              placeholder="交通機関(JR,阪急,市バス)"
+            <select
               value={expense.transportation || ''}
-              onChange={(e) => handleInputChange(index, 'transportation', e.target.value)}
-              className="expense-input transportation-input"
-            />
+              onChange={(e) => {
+                handleMultiUpdate(index, { transportation: e.target.value, transportation_other: '' });
+              }}
+              className="expense-input"
+              style={{ minWidth: 110, maxWidth: 140 }}
+            >
+              <option value="">交通機関</option>
+              {TRANSPORT_PRESETS.map(t => <option key={t} value={t}>{t}</option>)}
+              <option value="その他">その他</option>
+            </select>
+            {expense.transportation === 'その他' && (
+              <input
+                type="text"
+                placeholder="交通機関を入力"
+                value={expense.transportation_other || ''}
+                onChange={(e) => handleInputChange(index, 'transportation_other', e.target.value)}
+                className="expense-input"
+                style={{ minWidth: 120, maxWidth: 180 }}
+              />
+            )}
             
             <input
               type="text"
@@ -412,14 +509,64 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
               className="expense-input amount-input"
             />
             
-            <input
-              type="text"
-              placeholder="勤務先"
-              value={expense.workplace || ''}
-              onChange={(e) => handleInputChange(index, 'workplace', e.target.value)}
-              className="expense-input workplace-input"
-              style={{ maxWidth: '120px' }}
-            />
+            {expense.type === 'other' ? (
+              <input
+                type="text"
+                placeholder="勤務先を入力"
+                value={expense.workplace || ''}
+                onChange={(e) => handleInputChange(index, 'workplace', e.target.value)}
+                className="expense-input"
+                style={{ minWidth: 120, maxWidth: 180 }}
+              />
+            ) : expense.type === 'business_trip' ? (
+              <>
+                <select
+                  value={expense.workplace || ''}
+                  onChange={(e) => handleMultiUpdate(index, { workplace: e.target.value, workplace_other: '' })}
+                  className="expense-input"
+                  style={{ minWidth: 130, maxWidth: 200 }}
+                >
+                  <option value="">勤務先</option>
+                  {Object.values(locationsByCategory).flat().map(loc => (
+                    <option key={loc} value={loc}>{loc}</option>
+                  ))}
+                  <option value="その他">その他</option>
+                </select>
+                {expense.workplace === 'その他' && (
+                  <input
+                    type="text"
+                    placeholder="場所を入力"
+                    value={expense.workplace_other || ''}
+                    onChange={(e) => handleInputChange(index, 'workplace_other', e.target.value)}
+                    className="expense-input"
+                    style={{ minWidth: 120, maxWidth: 180 }}
+                  />
+                )}
+              </>
+            ) : (
+              <>
+                <select
+                  value={expense.workplace || ''}
+                  onChange={(e) => handleMultiUpdate(index, { workplace: e.target.value, workplace_other: '' })}
+                  className="expense-input"
+                  style={{ minWidth: 110, maxWidth: 160 }}
+                >
+                  <option value="">勤務先</option>
+                  {workplaceOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                  <option value="その他">その他</option>
+                </select>
+                {expense.workplace === 'その他' && (
+                  <input
+                    type="text"
+                    placeholder="勤務先を入力"
+                    value={expense.workplace_other || ''}
+                    onChange={(e) => handleInputChange(index, 'workplace_other', e.target.value)}
+                    className="expense-input"
+                    style={{ minWidth: 120, maxWidth: 180 }}
+                  />
+                )}
+              </>
+            )}
             
             <input
               type="text"
@@ -578,7 +725,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
             </h3>
 
             {confirmedExpenses.map((e, i) => {
-              const typeLabel = e.type === 'regular' ? '⭐定期' : e.type === 'business_trip' ? '出張' : '単発';
+              const typeLabel = e.type === 'regular' ? '⭐定期' : e.type === 'business_trip' ? `出張（${e.trip_category || ''}）` : e.type === 'other' ? (e.type_other || 'その他') : '単発';
               const dateLabel = e.type === 'regular'
                 ? `${e.start_date} 〜 ${e.end_date}`
                 : e.start_date;

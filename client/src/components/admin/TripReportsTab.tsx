@@ -3,7 +3,7 @@ import { useAdminPanel } from './AdminPanelContext';
 
 const TripReportsTab: React.FC = () => {
   const ctx = useAdminPanel();
-  const { isDarkMode, tripReports, loadingTripReports, expandedTripYearMonths, setExpandedTripYearMonths, tripReportFilter, setTripReportFilter, showLocationEditor, setShowLocationEditor, tripCategories, locationOptions, newLocationByCategory, setNewLocationByCategory, newCategoryName, setNewCategoryName, renamingCategoryId, setRenamingCategoryId, renamingCategoryValue, setRenamingCategoryValue, fetchTripReports, fetchLocationEditor, handleAddCategory, handleDeleteCategory, handleRenameCategory, handleAddLocation, handleDeleteLocation, supabase } = ctx;
+  const { isDarkMode, tripReports, loadingTripReports, expandedTripYearMonths, setExpandedTripYearMonths, tripReportFilter, setTripReportFilter, setShowLocationEditor, fetchTripReports, fetchLocationEditor, supabase } = ctx;
 
   return (
           <div>
@@ -15,113 +15,10 @@ const TripReportsTab: React.FC = () => {
                   onClick={() => { fetchLocationEditor(); setShowLocationEditor(true); }}
                   style={{ padding: '6px 14px', borderRadius: 6, border: isDarkMode ? '1px solid #666' : '1px solid #ccc', background: isDarkMode ? '#495057' : '#f8f9fa', color: isDarkMode ? '#fff' : '#333', cursor: 'pointer', fontSize: 13 }}
                 >
-                  ⚙️ 区分・場所リストを管理
+                  ⚙️ 区分・勤務先リストを管理
                 </button>
               </div>
             </div>
-
-            {/* 区分・場所リスト管理モーダル */}
-            {showLocationEditor && (
-              <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}>
-                <div style={{ background: isDarkMode ? '#343a40' : 'white', borderRadius: 12, padding: 28, width: '90%', maxWidth: 500, maxHeight: '85vh', overflowY: 'auto', color: isDarkMode ? '#fff' : '#333' }}>
-                  <h3 style={{ marginTop: 0 }}>⚙️ 区分・場所リスト管理</h3>
-
-                  {/* ── 区分の管理 ── */}
-                  <div style={{ marginBottom: 24 }}>
-                    <div style={{ fontWeight: 'bold', fontSize: 15, marginBottom: 10, borderBottom: isDarkMode ? '1px solid #555' : '1px solid #dee2e6', paddingBottom: 6 }}>
-                      区分の管理
-                    </div>
-                    {tripCategories.map(cat => (
-                      <div key={cat.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                        {renamingCategoryId === cat.id ? (
-                          <>
-                            <input
-                              autoFocus
-                              value={renamingCategoryValue}
-                              onChange={e => setRenamingCategoryValue(e.target.value)}
-                              onKeyDown={e => { if (e.key === 'Enter') handleRenameCategory(cat.id, cat.value); if (e.key === 'Escape') setRenamingCategoryId(null); }}
-                              style={{ flex: 1, padding: '5px 8px', borderRadius: 6, border: '2px solid #007bff', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#333', fontSize: 14 }}
-                            />
-                            <button onClick={() => handleRenameCategory(cat.id, cat.value)}
-                              style={{ padding: '4px 10px', background: '#007bff', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>保存</button>
-                            <button onClick={() => setRenamingCategoryId(null)}
-                              style={{ padding: '4px 10px', background: isDarkMode ? '#555' : '#e9ecef', color: isDarkMode ? '#fff' : '#333', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>取消</button>
-                          </>
-                        ) : (
-                          <>
-                            <span style={{ flex: 1, fontSize: 14, padding: '5px 8px', background: isDarkMode ? '#495057' : '#f8f9fa', borderRadius: 6 }}>{cat.value}</span>
-                            <button onClick={() => { setRenamingCategoryId(cat.id); setRenamingCategoryValue(cat.value); }}
-                              style={{ padding: '4px 10px', background: isDarkMode ? '#555' : '#e9ecef', color: isDarkMode ? '#fff' : '#333', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>名前変更</button>
-                            <button onClick={() => handleDeleteCategory(cat.id, cat.value)}
-                              style={{ padding: '4px 10px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>削除</button>
-                          </>
-                        )}
-                      </div>
-                    ))}
-                    {/* 区分追加 */}
-                    <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                      <input
-                        type="text"
-                        placeholder="新しい区分名を入力"
-                        value={newCategoryName}
-                        onChange={e => setNewCategoryName(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') handleAddCategory(); }}
-                        style={{ flex: 1, padding: '7px 10px', borderRadius: 6, border: isDarkMode ? '1px solid #666' : '1px solid #ccc', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#333', fontSize: 14 }}
-                      />
-                      <button onClick={handleAddCategory} disabled={!newCategoryName.trim()}
-                        style={{ padding: '7px 14px', borderRadius: 6, background: '#28a745', color: 'white', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>
-                        ＋追加
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* ── 場所リスト（区分ごと） ── */}
-                  {tripCategories.map(cat => {
-                    const locKey = `trip_location_${cat.value}`;
-                    const items = locationOptions.filter(o => o.category === locKey);
-                    const newVal = newLocationByCategory[cat.value] || '';
-                    return (
-                      <div key={cat.id} style={{ marginBottom: 20 }}>
-                        <div style={{ fontWeight: 'bold', fontSize: 14, marginBottom: 8, borderBottom: isDarkMode ? '1px solid #555' : '1px solid #dee2e6', paddingBottom: 5, color: isDarkMode ? '#adb5bd' : '#6c757d' }}>
-                          【{cat.value}】の場所リスト
-                        </div>
-                        {items.length === 0 && (
-                          <div style={{ color: isDarkMode ? '#888' : '#999', fontSize: 13, marginBottom: 6 }}>（未登録）</div>
-                        )}
-                        {items.map(item => (
-                          <div key={item.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 10px', marginBottom: 4, background: isDarkMode ? '#495057' : '#f8f9fa', borderRadius: 6 }}>
-                            <span style={{ fontSize: 13 }}>{item.value}</span>
-                            <button onClick={() => handleDeleteLocation(item.id)}
-                              style={{ padding: '2px 8px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>削除</button>
-                          </div>
-                        ))}
-                        <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-                          <input
-                            type="text"
-                            placeholder={`${cat.value}の場所を追加`}
-                            value={newVal}
-                            onChange={e => setNewLocationByCategory(prev => ({ ...prev, [cat.value]: e.target.value }))}
-                            onKeyDown={e => { if (e.key === 'Enter') handleAddLocation(cat.value); }}
-                            style={{ flex: 1, padding: '6px 10px', borderRadius: 6, border: isDarkMode ? '1px solid #666' : '1px solid #ccc', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#333', fontSize: 13 }}
-                          />
-                          <button onClick={() => handleAddLocation(cat.value)} disabled={!newVal.trim()}
-                            style={{ padding: '6px 12px', borderRadius: 6, background: '#007bff', color: 'white', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 'bold' }}>
-                            ＋
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
-                    <button onClick={() => setShowLocationEditor(false)}
-                      style={{ padding: '8px 20px', borderRadius: 6, border: isDarkMode ? '1px solid #666' : '1px solid #ccc', background: isDarkMode ? '#444' : '#f8f9fa', color: isDarkMode ? '#fff' : '#333', cursor: 'pointer', fontSize: 14 }}>
-                      閉じる
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
 
             {/* フィルターボタン */}
             <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
