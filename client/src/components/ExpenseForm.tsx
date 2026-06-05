@@ -207,28 +207,10 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
           }
         };
 
-        console.log('Slack通知URL:', `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/slack-notify`);
-        console.log('Slack通知ペイロード:', JSON.stringify(slackPayload, null, 2));
-
-        const slackResponse = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/slack-notify`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
-          },
-          body: JSON.stringify(slackPayload)
+        const { error: slackInvokeError } = await supabase.functions.invoke('slack-notify', {
+          body: slackPayload,
         });
-        
-        console.log('Slack通知レスポンス:', slackResponse.status, slackResponse.statusText);
-        
-        if (!slackResponse.ok) {
-          const errorText = await slackResponse.text();
-          console.error('Slack通知エラー:', errorText);
-          throw new Error(`Slack通知失敗: ${slackResponse.status} - ${errorText}`);
-        } else {
-          const responseData = await slackResponse.json();
-          console.log('Slack通知成功:', responseData);
-        }
+        if (slackInvokeError) throw slackInvokeError;
       } catch (slackError) {
         console.error('Slack通知の送信に失敗:', slackError);
         // エラーでも申請は成功させる
