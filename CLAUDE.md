@@ -545,6 +545,31 @@ INSERT INTO public.master_options (category, value, sort_order) VALUES
 - AdminPanel.tsx は730行に削減（元3945行）
 - ExpenseForm.tsx: 利用日ボタンのダークモード対応（background/color修正）
 
+### ✅ 2026-06-05 交通費申請フォーム改善 完了（コミット: 43f98b0）
+
+- 通勤区分に「その他」追加・交通機関セレクト化・勤務先スマートセレクト化
+- 勤務先リスト・通勤区分ラベルを master_options で管理（管理画面から編集可能）
+- 管理画面モーダルを全タブから開けるよう AdminPanel.tsx に移動
+- モーダル構成を「交通費関連」「出張報告関連」に整理
+
+### Supabase に追加したデータ（2026-06-05）
+```sql
+-- 勤務先リスト（category='workplace'）
+INSERT INTO master_options (category, value, sort_order) VALUES
+  ('workplace', '四条本校', 1), ('workplace', '西陣校', 2),
+  ('workplace', '上桂校', 3), ('workplace', '洛西口校', 4), ('workplace', '南草津校', 5);
+-- 通勤区分ラベル（category='expense_type_label'、sort_order 1〜4 固定）
+INSERT INTO master_options (category, value, sort_order) VALUES
+  ('expense_type_label', '通勤（単発）', 1), ('expense_type_label', '定期', 2),
+  ('expense_type_label', '出張（園指導等）', 3), ('expense_type_label', 'その他', 4);
+```
+
+### ✅ 2026-06-05 バグ修正3件 完了（コミット: c31125f）
+
+- **parseAmount強化**: 全角文字全般（￥・円・カンマ等）に対応 `/[！-～]/g`
+- **totalAmount を useMemo 化**: リアルタイム計算に変更（旧サイトと同様）
+- **往復ボタンに translate="no"**: ブラウザ自動翻訳で「対抗」になるバグを根本修正
+
 ### 🔜 次回やること
 1. **`any` 型を型定義に置き換え**（型安全性）
 2. **Phase 1: メール送信機能**（現状は別ツール使用中のため後回し）
