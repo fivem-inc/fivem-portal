@@ -7,9 +7,8 @@ import { supabase } from '../lib/supabaseClient';
 const SingleDatePicker: React.FC<{
   value: string;
   onChange: (date: string) => void;
-  placeholder: string;
   onClose: () => void;
-}> = ({ value, onChange, placeholder, onClose }) => {
+}> = ({ value, onChange, onClose }) => {
   const today = new Date();
   const initYear = value ? parseInt(value.slice(0, 4)) : today.getFullYear();
   const initMonth = value ? parseInt(value.slice(5, 7)) - 1 : today.getMonth();
@@ -337,7 +336,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                   {expense.start_date || '利用日'}
                 </button>
                 {openDatePicker === `${index}-start` && (
-                  <SingleDatePicker value={expense.start_date || ''} onChange={v => handleInputChange(index, 'start_date', v)} placeholder="利用日" onClose={() => setOpenDatePicker(null)} />
+                  <SingleDatePicker value={expense.start_date || ''} onChange={v => handleInputChange(index, 'start_date', v)} onClose={() => setOpenDatePicker(null)} />
                 )}
               </div>
             )}
@@ -352,7 +351,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                     {expense.start_date || '開始日'}
                   </button>
                   {openDatePicker === `${index}-start` && (
-                    <SingleDatePicker value={expense.start_date || ''} onChange={v => handleInputChange(index, 'start_date', v)} placeholder="開始日" onClose={() => setOpenDatePicker(null)} />
+                    <SingleDatePicker value={expense.start_date || ''} onChange={v => handleInputChange(index, 'start_date', v)} onClose={() => setOpenDatePicker(null)} />
                   )}
                 </div>
                 <div style={{ position: 'relative' }}>
@@ -363,7 +362,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                     {expense.end_date || '終了日'}
                   </button>
                   {openDatePicker === `${index}-end` && (
-                    <SingleDatePicker value={expense.end_date || ''} onChange={v => handleInputChange(index, 'end_date', v)} placeholder="終了日" onClose={() => setOpenDatePicker(null)} />
+                    <SingleDatePicker value={expense.end_date || ''} onChange={v => handleInputChange(index, 'end_date', v)} onClose={() => setOpenDatePicker(null)} />
                   )}
                 </div>
               </>
