@@ -65,7 +65,7 @@ const SingleDatePicker: React.FC<{
           const isToday = dateStr === todayStr;
           const dow = (firstDay + day - 1) % 7;
           return (
-            <button key={dateStr} onClick={() => { onChange(dateStr); onClose(); }} style={{
+            <button key={dateStr} type="button" onClick={() => { onChange(dateStr); onClose(); }} style={{
               padding: '8px 2px', minHeight: 36, borderRadius: 6,
               border: isToday ? '2px solid #007bff' : '1px solid transparent',
               background: isSelected ? '#007bff' : 'transparent',
@@ -651,7 +651,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
           <div ref={errorRef} style={{ background: '#f8d7da', border: '1px solid #f5c6cb', borderRadius: 8, padding: '12px 16px', marginTop: 12, color: '#721c24', fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 18 }}>⚠️</span>
             <span>{formError}</span>
-            <button onClick={() => setFormError('')} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#721c24', fontSize: 18 }}>✕</button>
+            <button type="button" onClick={() => setFormError('')} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#721c24', fontSize: 18 }}>✕</button>
           </div>
         )}
 
