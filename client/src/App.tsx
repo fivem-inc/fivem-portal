@@ -239,47 +239,23 @@ const Dashboard: React.FC = () => {
 
   const { submissions, pendingApprovals, isLoading, fetchExpenses } = useExpenses(user, isAdmin);
 
-  const [expenses, setExpensesState] = useState<Expense[]>([
-    { type: 'one_time', from_station: '', to_station: '', amount: '', start_date: '', end_date: '' }
-  ]);
+  const [expenses, setExpensesState] = useState<Expense[]>([]);
+  const [templateQueue, setTemplateQueue] = useState<Expense[]>([]);
 
   const setExpenses = useCallback((value: React.SetStateAction<Expense[]>) => {
     setExpensesState(value);
   }, []);
 
   const handleApplyTemplate = useCallback((submission: Submission) => {
-    const templateExpenses = submission.expenses_data;
-
-    if (!templateExpenses || templateExpenses.length === 0) {
+    const items = (submission.expenses_data || [])
+      .map(e => ({ ...e, start_date: '', end_date: '' }));
+    if (items.length === 0) {
       alert('適用できるテンプレートデータがありません。');
       return;
     }
-
-    let currentExpenses = [...expenses];
-    let appliedCount = 0;
-
-    templateExpenses.forEach(templateItem => {
-      let appliedToExistingRow = false;
-      
-      for (let i = 0; i < currentExpenses.length; i++) {
-        const expense = currentExpenses[i];
-        if (!expense.from_station && !expense.to_station && !expense.amount) {
-          currentExpenses[i] = { ...templateItem, start_date: '', end_date: '' };
-          appliedToExistingRow = true;
-          appliedCount++;
-          break;
-        }
-      }
-
-      if (!appliedToExistingRow) {
-        currentExpenses = [...currentExpenses, { ...templateItem, start_date: '', end_date: '' }];
-        appliedCount++;
-      }
-    });
-
-    setExpensesState(currentExpenses);
-    alert(`${appliedCount}件の項目をフォームに適用しました。`);
-  }, [expenses]);
+    setTemplateQueue(items);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
 
   if (!user) {
     return <div>読み込んでいます...</div>;
@@ -310,12 +286,14 @@ const Dashboard: React.FC = () => {
       <LeaveApprovalBanner userId={user.id} roleTitle={roleTitle} isAdmin={isAdmin} />
 
       {/* 交通費申請フォーム */}
-      <ExpenseForm 
-        user={user} 
-        onSubmissionComplete={fetchExpenses} 
+      <ExpenseForm
+        user={user}
+        onSubmissionComplete={fetchExpenses}
         expenses={expenses}
         setExpenses={setExpenses}
         profileName={profileName}
+        pendingTemplates={templateQueue}
+        onTemplateApplied={() => setTemplateQueue([])}
       />
 
       {/* 月別申請状況 - 一般ユーザーのみ表示 */}

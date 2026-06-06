@@ -59,6 +59,61 @@
   gap: 10px; /* 要素間の隙間 */
 }
 
+/* 新フォーム用フル幅入力 */
+.form-input-full {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  flex: none !important;
+  box-sizing: border-box;
+}
+
+/* カード型行レイアウト */
+.expense-card {
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 10px;
+  border: 1px solid #cfe2ff;
+  border-left: 3px solid #0d6efd;
+  background: white;
+}
+.expense-card.type-regular {
+  border-color: #d4edda;
+  border-left-color: #198754;
+  background: #f6fff8;
+}
+.expense-card.type-other {
+  border-color: #e2d9f3;
+  border-left-color: #6f42c1;
+  background: #fdf8ff;
+}
+.expense-line {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+  align-items: center;
+}
+.expense-line-indent {
+  padding-left: 34px;
+}
+@media (prefers-color-scheme: dark) {
+  .expense-card {
+    background: #2c3e50 !important;
+    border-color: #344a5e;
+    border-left-color: #4a9eff;
+  }
+  .expense-card.type-regular {
+    background: #1e3d2a !important;
+    border-color: #2d5a3d;
+    border-left-color: #28a745;
+  }
+  .expense-card.type-other {
+    background: #2a1f3d !important;
+    border-color: #3d2d5a;
+    border-left-color: #9b59b6;
+  }
+}
+
 .expense-number {
   font-weight: bold;
   padding: 8px 12px;
