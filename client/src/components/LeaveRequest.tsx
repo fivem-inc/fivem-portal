@@ -396,7 +396,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               }}>
                 {(() => {
                   const th: React.CSSProperties = { textAlign: 'left', padding: '8px', background: isDark ? '#2c3e50' : '#e8f4fd', fontWeight: 'bold' };
-                  const td: React.CSSProperties = { padding: '7px 8px', borderBottom: `1px solid ${isDark ? '#495057' : '#e5eef1'}`, verticalAlign: 'top' };
+                  const td: React.CSSProperties = { padding: '7px 8px', borderBottom: `1px solid ${isDark ? '#495057' : '#e5eef1'}`, verticalAlign: 'middle' };
                   const sectionTd: React.CSSProperties = { padding: '6px 8px', background: '#1a4a5a', color: '#fff', fontWeight: 'bold' };
                   const Section = ({ label }: { label: string }) => (
                     <tr><td colSpan={3} style={sectionTd}>{label}</td></tr>
