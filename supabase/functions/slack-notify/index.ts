@@ -35,10 +35,29 @@ serve(async (req) => {
       return '単発'
     }).join('、')
 
-    // シンプルなテキスト形式
-    const text = `🆕【新しい交通費申請】\n\n申請者: ${expense.user_name}\n申請日: ${expense.date}\n申請内容: ${typeList}\n項目数: ${expense.items_count}件`
-
-    const message = { text }
+    const message = {
+      text: `🆕【新しい交通費申請】${expense.user_name}`,
+      blocks: [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `🆕 *【新しい交通費申請】*\n\n*申請者:* ${expense.user_name}\n*申請日:* ${expense.date}\n*申請内容:* ${typeList}\n*項目数:* ${expense.items_count}件`
+          }
+        },
+        {
+          type: 'actions',
+          elements: [
+            {
+              type: 'button',
+              text: { type: 'plain_text', text: '申請を確認・承認' },
+              url: 'https://fivem-portal.vercel.app',
+              style: 'primary'
+            }
+          ]
+        }
+      ]
+    }
     
     if (!SLACK_WEBHOOK_URL) {
       console.warn('SLACK_WEBHOOK_EXPENSE が設定されていません');
