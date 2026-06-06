@@ -222,10 +222,27 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     });
   }, [setExpenses]);
 
+  // 保存済みexpenseをドラフト形式に変換（transportationやworkplaceがマージされている場合を戻す）
+  const toDraft = useCallback((item: Expense): Expense => {
+    const t = item.transportation || '';
+    const w = item.workplace || '';
+    const tIsPreset = TRANSPORT_PRESETS.includes(t) || t === '' || t === 'その他';
+    const wIsPreset = item.type === 'other' || workplaceOptions.includes(w) || Object.values(locationsByCategory).flat().includes(w) || w === '' || w === 'その他';
+    return {
+      ...item,
+      start_date: '',
+      end_date: '',
+      transportation: tIsPreset ? t : 'その他',
+      transportation_other: tIsPreset ? (item.transportation_other || '') : t,
+      workplace: wIsPreset ? w : 'その他',
+      workplace_other: wIsPreset ? (item.workplace_other || '') : w,
+    };
+  }, [workplaceOptions, locationsByCategory]);
+
   // テンプレートキュー処理
   useEffect(() => {
     if (!pendingTemplates || pendingTemplates.length === 0) return;
-    setDraftExpense({ ...pendingTemplates[0] });
+    setDraftExpense(toDraft(pendingTemplates[0]));
     setTemplateQueue(pendingTemplates.slice(1));
     setHighlightFields(new Set(['start_date']));
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -275,7 +292,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     if (!validateDraft()) return;
     setExpenses(prev => [...prev, { ...draftExpense }]);
     if (templateQueue.length > 0) {
-      setDraftExpense({ ...templateQueue[0] });
+      setDraftExpense(toDraft(templateQueue[0]));
       setTemplateQueue(prev => prev.slice(1));
       setHighlightFields(new Set(['start_date']));
     } else {
@@ -461,7 +478,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                 <button
                   type="button"
                   onClick={() => {
-                    setDraftExpense({ ...tpl, start_date: '', end_date: '' });
+                    setDraftExpense(toDraft(tpl));
                     setHighlightFields(new Set(['start_date']));
                   }}
                   style={{ background: '#1976d2', color: '#fff', fontSize: 11, padding: '4px 10px', border: 'none', borderRadius: 4, cursor: 'pointer', flexShrink: 0 }}
@@ -655,7 +672,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                     <div style={{ fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: isDarkMode ? '#fff' : '#333', fontSize: 14 }}>{expense.from_station} → {expense.to_station}</div>
                   </div>
                   <div style={{ fontWeight: 'bold', color: isDarkMode ? '#4a9eff' : '#0d6efd', flexShrink: 0 }}>¥{parseInt(expense.amount || '0').toLocaleString()}</div>
-                  <button type="button" onClick={() => setDraftExpense({ ...expense, start_date: '', end_date: '' })} style={{ background: '#6c757d', color: 'white', border: 'none', borderRadius: 4, padding: '4px 8px', fontSize: 11, cursor: 'pointer', flexShrink: 0 }}>複製</button>
+                  <button type="button" onClick={() => { setDraftExpense(toDraft(expense)); setTimeout(() => setHighlightFields(new Set(['start_date'])), 0); }} style={{ background: '#6c757d', color: 'white', border: 'none', borderRadius: 4, padding: '4px 8px', fontSize: 11, cursor: 'pointer', flexShrink: 0 }}>複製</button>
                   <button type="button" onClick={() => handleRemoveRow(index)} style={{ background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, padding: '4px 8px', fontSize: 11, cursor: 'pointer', flexShrink: 0 }}>削除</button>
                 </div>
               );
