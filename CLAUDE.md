@@ -664,7 +664,7 @@ INSERT INTO master_options (category, value, sort_order) VALUES
 - 定期の終了日が開始日より前を禁止
 
 ### コミット
-- 今回のコミット
+- `15c4a80` feat: よく使う経路改善・必須項目ハイライト・クリアボタン追加
 
 ### 🔜 次回やること
 1. **Phase 1: メール送信機能**（現状は別ツール使用中のため後回し）
