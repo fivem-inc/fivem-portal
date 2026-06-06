@@ -445,7 +445,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
           <div style={{ fontSize: 12, fontWeight: 'bold', color: isDarkMode ? '#7fb3d3' : '#1565c0', marginBottom: 8 }}>
             📋 よく使う経路
           </div>
-          {(showAllTemplates ? recentTemplates : recentTemplates.slice(0, 5)).map((tpl, i) => {
+          {(showAllTemplates ? recentTemplates : recentTemplates.slice(0, 3)).map((tpl, i) => {
             const typeLabels: Record<string, string> = { one_time: '通勤（単発）', regular: '定期', business_trip: '出張（園指導等）', other: tpl.type_other || 'その他' };
             const typeLabel = typeLabels[tpl.type] || tpl.type;
             return (
@@ -472,13 +472,13 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
               </div>
             );
           })}
-          {recentTemplates.length > 5 && (
+          {recentTemplates.length > 3 && (
             <button
               type="button"
               onClick={() => setShowAllTemplates(prev => !prev)}
               style={{ width: '100%', padding: '5px', background: 'none', border: `1px dashed ${isDarkMode ? '#4a7aaa' : '#90caf9'}`, borderRadius: 4, cursor: 'pointer', fontSize: 11, color: isDarkMode ? '#7fb3d3' : '#1565c0', marginTop: 2 }}
             >
-              {showAllTemplates ? '▲ 閉じる' : `▼ もっと見る（あと${recentTemplates.length - 5}件）`}
+              {showAllTemplates ? '▲ 閉じる' : `▼ もっと見る（あと${recentTemplates.length - 3}件）`}
             </button>
           )}
         </div>
@@ -534,17 +534,17 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                   <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#6c757d', marginBottom: 3 }}>期間</div>
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                     <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-                      <button type="button" onClick={() => setDraftDatePicker(draftDatePicker === 'start' ? null : 'start')} className="expense-input date-input" style={{ textAlign: 'left', cursor: 'pointer', width: '100%', background: isDarkMode ? '#495057' : (draftExpense.start_date ? 'white' : '#f8f9fa'), color: draftExpense.start_date ? (isDarkMode ? '#fff' : '#333') : (isDarkMode ? '#adb5bd' : '#999') }}>
+                      <button type="button" onClick={() => { setDraftDatePicker(draftDatePicker === 'start' ? null : 'start'); clearHL('start_date'); }} className="expense-input date-input" style={{ textAlign: 'left', cursor: 'pointer', width: '100%', background: highlightFields.has('start_date') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : (isDarkMode ? '#495057' : (draftExpense.start_date ? 'white' : '#f8f9fa')), borderColor: highlightFields.has('start_date') ? '#f06292' : undefined, color: draftExpense.start_date ? (isDarkMode ? '#fff' : '#333') : (isDarkMode ? '#adb5bd' : '#999') }}>
                         {draftExpense.start_date || '開始日'}
                       </button>
-                      {draftDatePicker === 'start' && <SingleDatePicker value={draftExpense.start_date || ''} onChange={v => { setDraftExpense(prev => ({ ...prev, start_date: v })); setDraftDatePicker(null); }} onClose={() => setDraftDatePicker(null)} />}
+                      {draftDatePicker === 'start' && <SingleDatePicker value={draftExpense.start_date || ''} onChange={v => { setDraftExpense(prev => ({ ...prev, start_date: v })); setDraftDatePicker(null); clearHL('start_date'); }} onClose={() => setDraftDatePicker(null)} />}
                     </div>
                     <span style={{ color: '#999', flexShrink: 0 }}>〜</span>
                     <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-                      <button type="button" onClick={() => setDraftDatePicker(draftDatePicker === 'end' ? null : 'end')} className="expense-input date-input" style={{ textAlign: 'left', cursor: 'pointer', width: '100%', background: isDarkMode ? '#495057' : (draftExpense.end_date ? 'white' : '#f8f9fa'), color: draftExpense.end_date ? (isDarkMode ? '#fff' : '#333') : (isDarkMode ? '#adb5bd' : '#999') }}>
+                      <button type="button" onClick={() => { setDraftDatePicker(draftDatePicker === 'end' ? null : 'end'); clearHL('end_date'); }} className="expense-input date-input" style={{ textAlign: 'left', cursor: 'pointer', width: '100%', background: highlightFields.has('end_date') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : (isDarkMode ? '#495057' : (draftExpense.end_date ? 'white' : '#f8f9fa')), borderColor: highlightFields.has('end_date') ? '#f06292' : undefined, color: draftExpense.end_date ? (isDarkMode ? '#fff' : '#333') : (isDarkMode ? '#adb5bd' : '#999') }}>
                         {draftExpense.end_date || '終了日'}
                       </button>
-                      {draftDatePicker === 'end' && <SingleDatePicker value={draftExpense.end_date || ''} onChange={v => { setDraftExpense(prev => ({ ...prev, end_date: v })); setDraftDatePicker(null); }} onClose={() => setDraftDatePicker(null)} />}
+                      {draftDatePicker === 'end' && <SingleDatePicker value={draftExpense.end_date || ''} onChange={v => { setDraftExpense(prev => ({ ...prev, end_date: v })); setDraftDatePicker(null); clearHL('end_date'); }} onClose={() => setDraftDatePicker(null)} />}
                     </div>
                   </div>
                 </div>
@@ -652,7 +652,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                 <div key={index} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: isDarkMode ? (isTeiki ? '#1e3d2a' : '#2c3e50') : (isTeiki ? '#f6fff8' : '#f8fbff'), border: `1px solid ${isDarkMode ? (isTeiki ? '#2d5a3d' : '#344a5e') : (isTeiki ? '#d4edda' : '#cfe2ff')}`, borderLeft: `3px solid ${isTeiki ? '#198754' : '#0d6efd'}`, borderRadius: 6, marginBottom: 6, fontSize: 13 }}>
                   <span style={{ background: isDarkMode ? '#444' : '#e9ecef', borderRadius: 4, padding: '3px 8px', fontWeight: 'bold', fontSize: 12, flexShrink: 0 }}>{index + 1}</span>
                   <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
-                    <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#6c757d' }}>{typeLabel}　{expense.transportation}　{dateLabel}</div>
+                    <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#6c757d' }}>{typeLabel}　{expense.transportation === 'その他' ? expense.transportation_other : expense.transportation}　{dateLabel}{expense.workplace === 'その他' ? `　${expense.workplace_other}` : expense.workplace ? `　${expense.workplace}` : ''}</div>
                     <div style={{ fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: isDarkMode ? '#fff' : '#333', fontSize: 14 }}>{expense.from_station} → {expense.to_station}</div>
                   </div>
                   <div style={{ fontWeight: 'bold', color: isDarkMode ? '#4a9eff' : '#0d6efd', flexShrink: 0 }}>¥{parseInt(expense.amount || '0').toLocaleString()}</div>
@@ -700,20 +700,30 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
             </h3>
 
             {confirmedExpenses.map((e, i) => {
-              const typeLabel = e.type === 'regular' ? '⭐定期' : e.type === 'business_trip' ? `出張（${e.trip_category || ''}）` : e.type === 'other' ? (e.type_other || 'その他') : '単発';
-              const dateLabel = e.type === 'regular'
-                ? `${e.start_date} 〜 ${e.end_date}`
-                : e.start_date;
+              const typeLabel = e.type === 'regular' ? '⭐定期' : e.type === 'business_trip' ? '出張' : e.type === 'other' ? (e.type_other || 'その他') : '単発';
+              const dateLabel = e.type === 'regular' ? `${e.start_date}〜${e.end_date}` : e.start_date;
+              const isTeiki = e.type === 'regular';
               return (
                 <div key={i} style={{
-                  background: '#f8f9fa', borderRadius: 8, padding: '12px 14px',
-                  marginBottom: 10, fontSize: 14, color: '#333',
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '7px 10px',
+                  background: isTeiki ? '#f6fff8' : '#f8f9fa',
+                  borderLeft: `3px solid ${isTeiki ? '#198754' : '#0d6efd'}`,
+                  borderRadius: 4, marginBottom: 6, fontSize: 13,
                 }}>
-                  <div style={{ fontWeight: 'bold', marginBottom: 4 }}>{i + 1}. {typeLabel}　{e.transportation}</div>
-                  <div>{e.from_station} → {e.to_station}</div>
-                  <div>{dateLabel}　　<strong>{formatAmount(e.amount)}円</strong></div>
-                  {e.workplace && <div style={{ color: '#666', fontSize: 12 }}>勤務先: {e.workplace}</div>}
-                  {e.notes && <div style={{ color: '#666', fontSize: 12 }}>備考: {e.notes}</div>}
+                  <span style={{ color: '#888', fontSize: 11, flexShrink: 0, minWidth: 18 }}>{i + 1}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 11, color: '#666', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {typeLabel}　{e.transportation === 'その他' ? e.transportation_other : e.transportation}　{dateLabel}{e.workplace === 'その他' ? `　${e.workplace_other}` : e.workplace ? `　${e.workplace}` : ''}
+                    </div>
+                    <div style={{ fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {e.from_station} → {e.to_station}
+                    </div>
+                    {e.notes && <div style={{ fontSize: 11, color: '#888' }}>備考: {e.notes}</div>}
+                  </div>
+                  <div style={{ fontWeight: 'bold', color: '#0d6efd', flexShrink: 0, fontSize: 14 }}>
+                    ¥{parseInt(e.amount || '0').toLocaleString()}
+                  </div>
                 </div>
               );
             })}
