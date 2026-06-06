@@ -190,6 +190,17 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const [approvers, setApprovers] = useState<Approver[]>([]);
   const [selectedApproverId, setSelectedApproverId] = useState('');
   const [showApproverGuide, setShowApproverGuide] = useState(false);
+  const [leaderAssignments, setLeaderAssignments] = useState<{ id: string; course: string; school: string; leader: string; manager: string }[]>([]);
+
+  useEffect(() => {
+    supabase
+      .from('leader_assignments')
+      .select('id, course, school, leader, manager')
+      .order('display_order', { ascending: true })
+      .then(({ data, error }) => {
+        if (!error && data) setLeaderAssignments(data);
+      });
+  }, []);
 
   const [history, setHistory] = useState<LeaveRecord[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -384,31 +395,33 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                 {(() => {
                   const th: React.CSSProperties = { textAlign: 'left', padding: '8px', background: isDark ? '#2c3e50' : '#e8f4fd', fontWeight: 'bold' };
                   const td: React.CSSProperties = { padding: '7px 8px', borderBottom: `1px solid ${isDark ? '#495057' : '#e5eef1'}`, verticalAlign: 'top' };
-                  const tdSchool: React.CSSProperties = { ...td, textAlign: 'center' };
                   const sectionTd: React.CSSProperties = { padding: '6px 8px', background: '#1a4a5a', color: '#fff', fontWeight: 'bold' };
                   const Section = ({ label }: { label: string }) => (
                     <tr><td colSpan={3} style={sectionTd}>{label}</td></tr>
                   );
+
+                  if (leaderAssignments.length === 0) return <p style={{ margin: 0 }}>読み込み中...</p>;
+
+                  const courses: string[] = [];
+                  leaderAssignments.forEach(a => { if (!courses.includes(a.course)) courses.push(a.course); });
+
                   return (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                       <colgroup><col style={{ width: '32%' }} /><col style={{ width: '38%' }} /><col style={{ width: '30%' }} /></colgroup>
                       <thead><tr><th style={th}>校・コース</th><th style={th}>リーダー</th><th style={th}>マネージャー</th></tr></thead>
                       <tbody>
-                        <Section label="【こども】" />
-                        <tr><td style={td}>四条本校</td><td style={td}>太田 英次朗<br/>清水 治彦<br/>森本 純矢</td><td style={td}>長岡 貴子</td></tr>
-                        <tr><td style={td}>西陣校</td><td style={td}>清水 治彦</td><td style={td}>西村 友彦</td></tr>
-                        <tr><td style={td}>上桂校</td><td style={td}>清水 治彦</td><td style={td}>西村 友彦</td></tr>
-                        <tr><td style={td}>洛西口校</td><td style={td}>太田 英次朗</td><td style={td}>長岡 貴子</td></tr>
-                        <tr><td style={td}>南草津校</td><td style={td}>太田 英次朗</td><td style={td}>長岡 貴子</td></tr>
-
-                        <Section label="【ジュニア】" />
-                        <tr><td style={td}>四条本校<br/>洛西口校</td><td style={{ ...td, verticalAlign: 'middle' }}>曽川 裕之</td><td style={{ ...td, verticalAlign: 'middle' }}>曽川 裕之</td></tr>
-
-                        <Section label="【ウェルネス】" />
-                        <tr><td style={td}>四条本校<br/>洛西口校</td><td style={{ ...td, verticalAlign: 'middle' }}>山本 香澄</td><td style={{ ...td, verticalAlign: 'middle' }}>濱口 美由紀</td></tr>
-
-                        <Section label="【管理部】" />
-                        <tr><td style={td}>全校</td><td style={td}>太田 恭子</td><td style={td}>太田 恭子</td></tr>
+                        {courses.map(course => (
+                          <React.Fragment key={course}>
+                            <Section label={`【${course}】`} />
+                            {leaderAssignments.filter(a => a.course === course).map(a => (
+                              <tr key={a.id}>
+                                <td style={td}>{a.school.split('\n').map((line, i) => <React.Fragment key={i}>{i > 0 && <br/>}{line}</React.Fragment>)}</td>
+                                <td style={td}>{a.leader.split('\n').map((line, i) => <React.Fragment key={i}>{i > 0 && <br/>}{line}</React.Fragment>)}</td>
+                                <td style={td}>{a.manager}</td>
+                              </tr>
+                            ))}
+                          </React.Fragment>
+                        ))}
                       </tbody>
                     </table>
                   );
