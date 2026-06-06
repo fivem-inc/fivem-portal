@@ -200,12 +200,12 @@ VITE_SUPABASE_ANON_KEY=sb_publishable_ZA6Udr3Ww9_dQO0CKKhSGw_Phx8Kegp
 
 UI/UXとシニアエンジニアの2エージェントでレビュー、以下が未対応:
 
-### 優先度高(実害あり)
-1. `LeaveRequest.tsx`約403行目: `leaderAssignments.length === 0`で
-   「読み込み中...」表示 → データを全削除した場合も同じ表示になり区別できない。
-   `isLoading`等の専用stateで「読み込み中」と「データなし」を分けるべき。
-2. `LeaderAssignmentsTab.tsx`の`saveEdit`/`handleDelete`: 処理中のローディング
-   状態がなく、ボタン連打で重複登録の恐れ。処理中はボタンをdisabledに。
+### 優先度高(実害あり) → 対応済み(2026-06-06)
+1. ✅ `LeaveRequest.tsx`: `loadingAssignments` stateを追加し、「読み込み中」と
+   「担当者情報が登録されていません」を区別して表示するよう修正。
+2. ✅ `LeaderAssignmentsTab.tsx`: `isProcessing` stateを追加し、`saveEdit`/
+   `handleDelete`実行中はボタンをdisabled化（「保存中...」「処理中...」表示）して
+   二重クリックによる重複登録・削除を防止。
 
 ### 優先度中
 3. migration `20260606000000_create_leader_assignments_table.sql`: UPDATEポリシーに
