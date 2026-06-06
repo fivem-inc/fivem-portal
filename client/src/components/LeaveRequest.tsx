@@ -189,6 +189,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const [submitted, setSubmitted] = useState(false);
   const [approvers, setApprovers] = useState<Approver[]>([]);
   const [selectedApproverId, setSelectedApproverId] = useState('');
+  const [showApproverGuide, setShowApproverGuide] = useState(false);
 
   const [history, setHistory] = useState<LeaveRecord[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -360,6 +361,60 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               <li>申請が受理されると、交通費申請ページに通知が表示されます。</li>
               <li>パートタイマーの方も、正社員と同様に申請してください。</li>
             </ol>
+
+            <button
+              type="button"
+              onClick={() => setShowApproverGuide(v => !v)}
+              style={{
+                marginTop: 10, padding: '6px 12px', fontSize: 12, fontWeight: 'bold',
+                background: isDark ? '#3d5a73' : '#bee5eb', color: isDark ? '#fff' : '#1a4a5a',
+                border: 'none', borderRadius: 6, cursor: 'pointer',
+              }}
+            >
+              {showApproverGuide ? '▲ 勤務校リーダー・マネージャー 一覧を閉じる' : '▼ 勤務校リーダー・マネージャー 一覧を表示'}
+            </button>
+
+            {showApproverGuide && (
+              <div style={{
+                marginTop: 10, padding: '12px 14px', borderRadius: 8,
+                background: isDark ? '#343a40' : '#ffffff',
+                border: `1px solid ${isDark ? '#495057' : '#bee5eb'}`,
+                fontSize: 12, lineHeight: 1.8, color: isDark ? '#d0dde8' : '#2c5f6e', textAlign: 'left',
+              }}>
+                {(() => {
+                  const th: React.CSSProperties = { textAlign: 'left', padding: '8px', background: isDark ? '#2c3e50' : '#e8f4fd', fontWeight: 'bold' };
+                  const td: React.CSSProperties = { padding: '7px 8px', borderBottom: `1px solid ${isDark ? '#495057' : '#e5eef1'}`, verticalAlign: 'top' };
+                  const tdSchool: React.CSSProperties = { ...td, textAlign: 'center' };
+                  const sectionTd: React.CSSProperties = { padding: '6px 8px', background: '#1a4a5a', color: '#fff', fontWeight: 'bold' };
+                  const Section = ({ label }: { label: string }) => (
+                    <tr><td colSpan={3} style={sectionTd}>{label}</td></tr>
+                  );
+                  return (
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <colgroup><col style={{ width: '32%' }} /><col style={{ width: '38%' }} /><col style={{ width: '30%' }} /></colgroup>
+                      <thead><tr><th style={th}>校・コース</th><th style={th}>リーダー</th><th style={th}>マネージャー</th></tr></thead>
+                      <tbody>
+                        <Section label="【こども】" />
+                        <tr><td style={td}>四条本校</td><td style={td}>太田 英次朗<br/>清水 治彦<br/>森本 純矢</td><td style={td}>長岡 貴子</td></tr>
+                        <tr><td style={td}>西陣校</td><td style={td}>清水 治彦</td><td style={td}>西村 友彦</td></tr>
+                        <tr><td style={td}>上桂校</td><td style={td}>清水 治彦</td><td style={td}>西村 友彦</td></tr>
+                        <tr><td style={td}>洛西口校</td><td style={td}>太田 英次朗</td><td style={td}>長岡 貴子</td></tr>
+                        <tr><td style={td}>南草津校</td><td style={td}>太田 英次朗</td><td style={td}>長岡 貴子</td></tr>
+
+                        <Section label="【ジュニア】" />
+                        <tr><td style={td}>四条本校<br/>洛西口校</td><td style={{ ...td, verticalAlign: 'middle' }}>曽川 裕之</td><td style={{ ...td, verticalAlign: 'middle' }}>曽川 裕之</td></tr>
+
+                        <Section label="【ウェルネス】" />
+                        <tr><td style={td}>四条本校<br/>洛西口校</td><td style={{ ...td, verticalAlign: 'middle' }}>山本 香澄</td><td style={{ ...td, verticalAlign: 'middle' }}>濱口 美由紀</td></tr>
+
+                        <Section label="【管理部】" />
+                        <tr><td style={td}>全校</td><td style={td}>太田 恭子</td><td style={td}>太田 恭子</td></tr>
+                      </tbody>
+                    </table>
+                  );
+                })()}
+              </div>
+            )}
           </div>
 
           {/* 申請者 */}
