@@ -251,12 +251,13 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     if (!draftExpense.from_station) missing.push('出発駅');
     if (!draftExpense.to_station) missing.push('帰着駅');
     if (draftExpense.amount === '' || draftExpense.amount === undefined) missing.push('金額');
+    if (!draftExpense.workplace && !draftExpense.workplace_other) missing.push('勤務先');
     if (draftExpense.type !== 'regular' && !draftExpense.start_date) missing.push('利用日');
     if (draftExpense.type === 'regular' && !draftExpense.start_date) missing.push('開始日');
     if (draftExpense.type === 'regular' && !draftExpense.end_date) missing.push('終了日');
     if (missing.length > 0) {
       setFormError(`未入力の必須項目があります：${missing.join('、')}`);
-      const fieldMap: Record<string, string> = { '交通機関': 'transportation', '出発駅': 'from_station', '帰着駅': 'to_station', '金額': 'amount', '利用日': 'start_date', '開始日': 'start_date', '終了日': 'end_date' };
+      const fieldMap: Record<string, string> = { '交通機関': 'transportation', '出発駅': 'from_station', '帰着駅': 'to_station', '金額': 'amount', '利用日': 'start_date', '開始日': 'start_date', '終了日': 'end_date', '勤務先': 'workplace' };
       setHighlightFields(new Set(missing.map(m => fieldMap[m]).filter(Boolean)));
       return false;
     }
@@ -586,15 +587,15 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                 <div>
                   <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#6c757d', marginBottom: 3 }}>勤務先</div>
                   {draftExpense.type === 'other' ? (
-                    <input type="text" placeholder="勤務先を入力" value={draftExpense.workplace || ''} onChange={(e) => setDraftExpense(prev => ({ ...prev, workplace: e.target.value }))} className="expense-input form-input-full" style={{ ...inp }} />
+                    <input type="text" placeholder="勤務先を入力" value={draftExpense.workplace || ''} onChange={(e) => { setDraftExpense(prev => ({ ...prev, workplace: e.target.value })); clearHL('workplace'); }} className="expense-input form-input-full" style={{ ...hl('workplace') }} />
                   ) : draftExpense.type === 'business_trip' ? (
-                    <select value={draftExpense.workplace || ''} onChange={(e) => setDraftExpense(prev => ({ ...prev, workplace: e.target.value, workplace_other: '' }))} className="expense-input form-input-full" style={{ ...inp }}>
+                    <select value={draftExpense.workplace || ''} onChange={(e) => { setDraftExpense(prev => ({ ...prev, workplace: e.target.value, workplace_other: '' })); clearHL('workplace'); }} className="expense-input form-input-full" style={{ ...hl('workplace') }}>
                       <option value="">選択</option>
                       {Object.values(locationsByCategory).flat().map(loc => <option key={loc} value={loc}>{loc}</option>)}
                       <option value="その他">その他</option>
                     </select>
                   ) : (
-                    <select value={draftExpense.workplace || ''} onChange={(e) => setDraftExpense(prev => ({ ...prev, workplace: e.target.value, workplace_other: '' }))} className="expense-input form-input-full" style={{ ...inp }}>
+                    <select value={draftExpense.workplace || ''} onChange={(e) => { setDraftExpense(prev => ({ ...prev, workplace: e.target.value, workplace_other: '' })); clearHL('workplace'); }} className="expense-input form-input-full" style={{ ...hl('workplace') }}>
                       <option value="">選択</option>
                       {workplaceOptions.map(s => <option key={s} value={s}>{s}</option>)}
                       <option value="その他">その他</option>
