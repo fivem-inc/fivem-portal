@@ -655,7 +655,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                     <div style={{ fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: isDarkMode ? '#fff' : '#333', fontSize: 14 }}>{expense.from_station} → {expense.to_station}</div>
                   </div>
                   <div style={{ fontWeight: 'bold', color: isDarkMode ? '#4a9eff' : '#0d6efd', flexShrink: 0 }}>¥{parseInt(expense.amount || '0').toLocaleString()}</div>
-                  <button type="button" onClick={() => { setDraftExpense({ ...expense, start_date: '', end_date: '' }); setHighlightFields(new Set(['start_date'])); }} style={{ background: '#6c757d', color: 'white', border: 'none', borderRadius: 4, padding: '4px 8px', fontSize: 11, cursor: 'pointer', flexShrink: 0 }}>複製</button>
+                  <button type="button" onClick={() => setDraftExpense({ ...expense, start_date: '', end_date: '' })} style={{ background: '#6c757d', color: 'white', border: 'none', borderRadius: 4, padding: '4px 8px', fontSize: 11, cursor: 'pointer', flexShrink: 0 }}>複製</button>
                   <button type="button" onClick={() => handleRemoveRow(index)} style={{ background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, padding: '4px 8px', fontSize: 11, cursor: 'pointer', flexShrink: 0 }}>削除</button>
                 </div>
               );
