@@ -327,7 +327,6 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       }
       const effectiveTransport = expense.transportation === 'その他' ? expense.transportation_other : expense.transportation;
       if (!effectiveTransport?.trim()) { setFormError('交通機関を入力してください。'); return; }
-      if (expense.type === 'business_trip' && !expense.trip_category?.trim()) { setFormError('区分を選択してください。'); return; }
       const effectiveWorkplace = expense.workplace === 'その他' ? expense.workplace_other : expense.workplace;
       if (!effectiveWorkplace?.trim()) { setFormError('勤務先を入力してください。'); return; }
     }
