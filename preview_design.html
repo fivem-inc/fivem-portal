@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>新UI プレビュー</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: sans-serif; background: #f0f0f0; margin: 0; }
+  .page { max-width: 480px; margin: 0 auto; background: #fff; min-height: 100vh; }
+
+  .nav { background: #343a40; padding: 10px 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .nav-btn { padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; border: none; cursor: pointer; }
+  .nav-active { background: #0d6efd; color: #fff; }
+  .nav-gray   { background: #6c757d; color: #fff; }
+
+  .content { padding: 16px; }
+  .page-title { text-align: center; font-size: 18px; font-weight: bold; margin-bottom: 12px; }
+
+  select, input { padding: 8px; border: 1px solid #ced4da; border-radius: 4px; font-size: 14px; background: #fff; color: #333; box-sizing: border-box; }
+  .btn { padding: 8px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; white-space: nowrap; }
+  .btn-primary { background: #0d6efd; color: #fff; }
+  .btn-green   { background: #198754; color: #fff; }
+  .btn-gray    { background: #6c757d; color: #fff; }
+  .btn-red     { background: #dc3545; color: #fff; }
+  .btn-submit  { background: #0d6efd; color: #fff; width: 100%; padding: 12px; font-size: 15px; border: none; border-radius: 6px; cursor: pointer; margin-top: 12px; }
+  .btn-add-row { background: #343a40; color: #fff; width: 100%; padding: 10px; font-size: 14px; border: none; border-radius: 6px; cursor: pointer; margin-top: 8px; }
+
+  /* ===== 追加済みリスト ===== */
+  .added-list { margin-bottom: 12px; }
+  .added-card {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: #f8fbff;
+    border: 1px solid #cfe2ff;
+    border-left: 3px solid #0d6efd;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    font-size: 13px;
+  }
+  .added-card.teiki { border-color: #d4edda; border-left-color: #198754; background: #f6fff8; }
+  .added-num { background: #e9ecef; border-radius: 4px; padding: 3px 8px; font-weight: bold; font-size: 12px; flex-shrink: 0; }
+  .added-info { flex: 1; min-width: 0; }
+  .added-type { font-size: 11px; color: #6c757d; }
+  .added-route { font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .added-sub { font-size: 11px; color: #555; }
+  .added-amount { font-weight: bold; color: #0d6efd; flex-shrink: 0; font-size: 14px; }
+
+  /* ===== 入力フォーム（1件ずつ） ===== */
+  .input-form {
+    background: #f8f9fa;
+    border: 2px solid #0d6efd;
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 8px;
+  }
+  .form-row { display: flex; gap: 6px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
+  .form-label { font-size: 11px; color: #6c757d; margin-bottom: 3px; }
+  .form-group { display: flex; flex-direction: column; }
+
+  /* 追加ボタンエリア */
+  .add-btn-area { display: flex; gap: 8px; margin-top: 4px; }
+  .btn-add      { flex: 1; background: #0d6efd; color: #fff; padding: 10px; font-size: 14px; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; }
+  .btn-add-rt   { flex: 1; background: #198754; color: #fff; padding: 10px; font-size: 13px; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; }
+
+  /* 合計・申請 */
+  .total-area { text-align: right; font-size: 14px; font-weight: bold; margin: 12px 0 4px; color: #333; }
+
+  hr { border: none; border-top: 1px dashed #ccc; margin: 16px 0; }
+  .notice-box  { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; font-size: 12px; color: #555; }
+  .notice-warn { background: #fff8e1; border: 1px solid #ffc107; border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 12px; color: #856404; }
+
+  /* テンプレート */
+  .tpl-section { background: #e8f4fd; border: 1px solid #90caf9; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+  .tpl-title { font-size: 12px; font-weight: bold; color: #1565c0; margin-bottom: 6px; }
+  .tpl-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; background: #fff; border-radius: 5px; margin-bottom: 4px; border: 1px solid #bbdefb; font-size: 12px; }
+  .tpl-text { flex: 1; color: #333; }
+  .btn-tpl { background: #1976d2; color: #fff; font-size: 11px; padding: 4px 10px; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<div class="nav">
+  <button class="nav-btn nav-active">🚃 交通費申請</button>
+  <button class="nav-btn nav-gray">📍 出張報告</button>
+  <button class="nav-btn nav-gray">🌿 休暇申請</button>
+  <div style="margin-left:auto; color:#ccc; font-size:11px;">管理者</div>
+</div>
+
+<div class="content">
+  <div class="page-title">🚃 交通費申請</div>
+
+  <div class="notice-box">📋 1件ずつ入力して「追加」してください。まとめて申請できます。</div>
+  <div class="notice-warn">⚠️ 定期券と他の申請（単発・出張）は混ぜないでください。</div>
+
+  <!-- テンプレート -->
+  <div class="tpl-section">
+    <div class="tpl-title">📋 よく使う経路</div>
+    <div class="tpl-row">
+      <span class="tpl-text">通勤（単発） 阪急 桂→烏丸 ¥400</span>
+      <button class="btn-tpl">+ セット</button>
+    </div>
+    <div class="tpl-row">
+      <span class="tpl-text">出張（園指導等） JR 京都→南草津 ¥640</span>
+      <button class="btn-tpl">+ セット</button>
+    </div>
+  </div>
+
+  <!-- ===== 入力フォーム（1件入力） ===== -->
+  <div class="input-form">
+
+    <!-- 区分 -->
+    <div style="margin-bottom:8px;">
+      <div class="form-label">区分</div>
+      <select style="width:100%;">
+        <option>通勤（単発）</option>
+        <option>定期</option>
+        <option>出張（園指導等）</option>
+        <option>その他</option>
+      </select>
+    </div>
+
+    <!-- 利用日 -->
+    <div style="margin-bottom:8px;">
+      <div class="form-label">利用日</div>
+      <input type="text" placeholder="タップして選択" style="width:100%;">
+    </div>
+
+    <!-- 交通機関 -->
+    <div style="margin-bottom:8px;">
+      <div class="form-label">交通機関</div>
+      <select style="width:100%;">
+        <option value="">選択してください</option>
+        <option>JR</option>
+        <option>阪急</option>
+        <option>京阪</option>
+        <option>京都地下鉄</option>
+        <option>京都市バス</option>
+        <option>その他</option>
+      </select>
+    </div>
+
+    <!-- 出発駅 → 帰着駅 -->
+    <div style="margin-bottom:8px;">
+      <div class="form-label">出発駅　→　帰着駅</div>
+      <div style="display:flex; gap:6px; align-items:center;">
+        <input type="text" placeholder="出発駅" style="flex:1; min-width:0;">
+        <span style="color:#999; font-size:14px; flex-shrink:0;">→</span>
+        <input type="text" placeholder="帰着駅" style="flex:1; min-width:0;">
+      </div>
+    </div>
+
+    <!-- 金額 + 勤務先 -->
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px;">
+      <div>
+        <div class="form-label">金額（円）</div>
+        <input type="number" placeholder="0" style="width:100%;">
+      </div>
+      <div>
+        <div class="form-label">勤務先</div>
+        <select style="width:100%;">
+          <option value="">選択</option>
+          <option>四条本校</option>
+          <option>西陣校</option>
+          <option>上桂校</option>
+          <option>洛西口校</option>
+          <option>南草津校</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- 備考 -->
+    <div style="margin-bottom:12px;">
+      <div class="form-label">備考（任意）</div>
+      <input type="text" placeholder="経由地など" style="width:100%;">
+    </div>
+
+    <!-- 追加ボタン -->
+    <div class="add-btn-area">
+      <button class="btn-add">＋ 追加</button>
+      <button class="btn-add-rt">⇄ 往復で追加</button>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- ===== 追加済みリスト（入力欄の下） ===== -->
+  <div class="added-list">
+    <div style="font-size:11px; color:#888; margin-bottom:6px;">✅ 追加済み（3件）</div>
+
+    <div class="added-card">
+      <span class="added-num">1</span>
+      <div class="added-info">
+        <div class="added-type">通勤（単発）　阪急　2026/6/5</div>
+        <div class="added-route">桂 → 烏丸</div>
+      </div>
+      <div class="added-amount">¥400</div>
+      <button class="btn btn-red" style="font-size:11px;padding:4px 8px;">削除</button>
+    </div>
+
+    <div class="added-card">
+      <span class="added-num">2</span>
+      <div class="added-info">
+        <div class="added-type">通勤（単発）　阪急　2026/6/5</div>
+        <div class="added-route">烏丸 → 桂（復路）</div>
+      </div>
+      <div class="added-amount">¥400</div>
+      <button class="btn btn-red" style="font-size:11px;padding:4px 8px;">削除</button>
+    </div>
+
+    <div class="added-card teiki">
+      <span class="added-num">3</span>
+      <div class="added-info">
+        <div class="added-type">定期　JR　2026/6/1 〜 2026/8/31</div>
+        <div class="added-route">山科 → 南草津</div>
+      </div>
+      <div class="added-amount">¥27,150</div>
+      <button class="btn btn-red" style="font-size:11px;padding:4px 8px;">削除</button>
+    </div>
+  </div>
+
+  <div class="total-area">合計: ¥27,950</div>
+  <button class="btn-submit">📤 まとめて申請する（3件）</button>
+
+</div>
+</div>
+</body>
+</html>

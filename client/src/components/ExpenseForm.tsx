@@ -48,9 +48,9 @@ const SingleDatePicker: React.FC<{
       top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-        <button onClick={prevMonth} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', padding: '0 10px', color: '#333' }}>‹</button>
+        <button type="button" onClick={prevMonth} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', padding: '0 10px', color: '#333' }}>‹</button>
         <span style={{ fontWeight: 'bold', fontSize: 14, color: '#333' }}>{viewYear}年 {monthNames[viewMonth]}</span>
-        <button onClick={nextMonth} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', padding: '0 10px', color: '#333' }}>›</button>
+        <button type="button" onClick={nextMonth} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', padding: '0 10px', color: '#333' }}>›</button>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, marginBottom: 4 }}>
         {dayNames.map((d, i) => (
@@ -78,7 +78,7 @@ const SingleDatePicker: React.FC<{
       {value && (
         <div style={{ textAlign: 'center', marginTop: 8, fontSize: 12, color: '#666' }}>
           選択中: {value}
-          <button onClick={() => { onChange(''); onClose(); }} style={{ marginLeft: 8, fontSize: 11, color: '#dc3545', background: 'none', border: 'none', cursor: 'pointer' }}>クリア</button>
+          <button type="button" onClick={() => { onChange(''); onClose(); }} style={{ marginLeft: 8, fontSize: 11, color: '#dc3545', background: 'none', border: 'none', cursor: 'pointer' }}>クリア</button>
         </div>
       )}
     </div>
@@ -632,11 +632,11 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
               {/* 追加ボタン */}
               <div style={{ display: 'flex', gap: 8 }}>
                 <button type="button" onClick={handleAddDraft} style={{ flex: 1, padding: 10, background: '#0d6efd', color: 'white', border: 'none', borderRadius: 6, fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
-                  ＋ 追加
+                  ＋ 申請リストに追加
                 </button>
                 {draftExpense.type !== 'regular' && (
                   <button type="button" onClick={handleAddRoundTripDraft} style={{ flex: 1, padding: 10, background: '#198754', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}>
-                    ⇄ 往復で追加
+                    ⇄ 往復で申請リストに追加
                   </button>
                 )}
                 <button type="button" onClick={() => { setDraftExpense(emptyDraft); setHighlightFields(new Set()); setFormError(''); }} style={{ padding: '10px 12px', background: '#6c757d', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer', flexShrink: 0 }}>
