@@ -196,6 +196,25 @@ VITE_SUPABASE_ANON_KEY=sb_publishable_ZA6Udr3Ww9_dQO0CKKhSGw_Phx8Kegp
 - 👥 グループ管理タブ追加（グループ一覧・名前変更・削除・メンバー追加削除・新規作成）
 - コミット: `80dc859`
 
+## 🔧 リーダー管理機能(2026-06-06実装)レビュー指摘・要修正
+
+UI/UXとシニアエンジニアの2エージェントでレビュー、以下が未対応:
+
+### 優先度高(実害あり)
+1. `LeaveRequest.tsx`約403行目: `leaderAssignments.length === 0`で
+   「読み込み中...」表示 → データを全削除した場合も同じ表示になり区別できない。
+   `isLoading`等の専用stateで「読み込み中」と「データなし」を分けるべき。
+2. `LeaderAssignmentsTab.tsx`の`saveEdit`/`handleDelete`: 処理中のローディング
+   状態がなく、ボタン連打で重複登録の恐れ。処理中はボタンをdisabledに。
+
+### 優先度中
+3. migration `20260606000000_create_leader_assignments_table.sql`: UPDATEポリシーに
+   `WITH CHECK`がない(INSERTにはある→不統一)。
+4. UI/UX: 改行区切り入力の説明不足、削除確認ダイアログに対象名がない、
+   表示順(display_order)の意味が伝わりにくい。
+
+---
+
 ## ✅ 2026-06-06 休暇申請: リーダー・マネージャー一覧を管理画面で編集可能に
 
 ### 完了した内容
