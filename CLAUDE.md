@@ -196,6 +196,23 @@ VITE_SUPABASE_ANON_KEY=sb_publishable_ZA6Udr3Ww9_dQO0CKKhSGw_Phx8Kegp
 - 👥 グループ管理タブ追加（グループ一覧・名前変更・削除・メンバー追加削除・新規作成）
 - コミット: `80dc859`
 
+## ✅ 2026-06-06 休暇申請: リーダー・マネージャー一覧を管理画面で編集可能に
+
+### 完了した内容
+- Supabaseに`leader_assignments`テーブルを新規作成(course/school/leader/manager/display_order)
+  - RLS: 閲覧は全認証ユーザー、編集はadmin(app_metadata.role='admin')のみ
+  - 既存のハードコード内容を初期データとして投入済み
+- 管理画面に「📋 リーダー管理」タブ(LeaderAssignmentsTab.tsx)を追加し、
+  一覧の追加・編集・削除がGUIから可能に
+- LeaveRequest.tsxの担当リーダー一覧パネルをDB読み込み方式に変更
+  (ハードコードされた表を撤去し、leader_assignmentsテーブルから動的に表示)
+
+### 不具合修正(同時対応)
+- 前回コミットで'tdSchool'という未使用変数の宣言が残りビルドエラーになっていた
+  → 表示部分をDB読み込み方式に書き換えたことで解消
+
+---
+
 ## ✅ 2026-06-06 休暇申請: 担当リーダー・マネージャー一覧パネル追加
 
 ### 完了した内容

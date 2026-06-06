@@ -7,6 +7,7 @@ import UsersTab from './admin/UsersTab';
 import TripReportsTab from './admin/TripReportsTab';
 import ReportsTab from './admin/ReportsTab';
 import LeaveRequestsTab from './admin/LeaveRequestsTab';
+import LeaderAssignmentsTab from './admin/LeaderAssignmentsTab';
 
 interface AdminPanelProps {
   pendingApprovals: PendingApproval[];
@@ -447,6 +448,12 @@ const AdminPanelContent: React.FC = () => {
           🌿 休暇申請
         </button>
         <button
+          style={tabStyle(activeTab === 'leader_assignments')}
+          onClick={() => setActiveTab('leader_assignments')}
+        >
+          📋 リーダー管理
+        </button>
+        <button
           style={tabStyle(activeTab === 'reports')}
           onClick={() => setActiveTab('reports')}
         >
@@ -462,6 +469,7 @@ const AdminPanelContent: React.FC = () => {
         {activeTab === 'trip_reports' && <TripReportsTab />}
         {activeTab === 'reports' && <ReportsTab />}
         {activeTab === 'leave_requests' && <LeaveRequestsTab />}
+        {activeTab === 'leader_assignments' && <LeaderAssignmentsTab />}
       </div>
 
       {/* 区分・勤務先リスト管理モーダル（全タブから開ける） */}
