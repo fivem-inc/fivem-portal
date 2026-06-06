@@ -19,6 +19,7 @@ const LeaderAssignmentsTab: React.FC = () => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const text = isDarkMode ? '#fff' : '#000';
   const subText = isDarkMode ? '#adb5bd' : '#666';
@@ -47,31 +48,43 @@ const LeaderAssignmentsTab: React.FC = () => {
   };
 
   const saveEdit = async () => {
+    if (isProcessing) return;
     if (!form.course.trim() || !form.school.trim() || !form.leader.trim() || !form.manager.trim()) {
       alert('すべての項目を入力してください');
       return;
     }
-    if (editingId) {
-      const { error } = await supabase.from('leader_assignments').update({
-        course: form.course, school: form.school, leader: form.leader, manager: form.manager, display_order: form.display_order,
-        updated_at: new Date().toISOString(),
-      }).eq('id', editingId);
-      if (error) { alert('更新に失敗しました: ' + error.message); return; }
-    } else {
-      const { error } = await supabase.from('leader_assignments').insert({
-        course: form.course, school: form.school, leader: form.leader, manager: form.manager, display_order: form.display_order,
-      });
-      if (error) { alert('追加に失敗しました: ' + error.message); return; }
+    setIsProcessing(true);
+    try {
+      if (editingId) {
+        const { error } = await supabase.from('leader_assignments').update({
+          course: form.course, school: form.school, leader: form.leader, manager: form.manager, display_order: form.display_order,
+          updated_at: new Date().toISOString(),
+        }).eq('id', editingId);
+        if (error) { alert('更新に失敗しました: ' + error.message); return; }
+      } else {
+        const { error } = await supabase.from('leader_assignments').insert({
+          course: form.course, school: form.school, leader: form.leader, manager: form.manager, display_order: form.display_order,
+        });
+        if (error) { alert('追加に失敗しました: ' + error.message); return; }
+      }
+      cancelEdit();
+      fetchItems();
+    } finally {
+      setIsProcessing(false);
     }
-    cancelEdit();
-    fetchItems();
   };
 
   const handleDelete = async (id: string) => {
+    if (isProcessing) return;
     if (!window.confirm('この項目を削除しますか？')) return;
-    const { error } = await supabase.from('leader_assignments').delete().eq('id', id);
-    if (error) { alert('削除に失敗しました: ' + error.message); return; }
-    fetchItems();
+    setIsProcessing(true);
+    try {
+      const { error } = await supabase.from('leader_assignments').delete().eq('id', id);
+      if (error) { alert('削除に失敗しました: ' + error.message); return; }
+      fetchItems();
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const inputStyle: React.CSSProperties = {
@@ -107,10 +120,10 @@ const LeaderAssignmentsTab: React.FC = () => {
         <input type="number" style={inputStyle} value={form.display_order} onChange={e => setForm(f => ({ ...f, display_order: parseInt(e.target.value) || 0 }))} />
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
-        <button onClick={saveEdit} style={{ padding: '8px 16px', background: '#0d6efd', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}>
-          保存
+        <button onClick={saveEdit} disabled={isProcessing} style={{ padding: '8px 16px', background: '#0d6efd', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 'bold', cursor: isProcessing ? 'default' : 'pointer', opacity: isProcessing ? 0.6 : 1 }}>
+          {isProcessing ? '保存中...' : '保存'}
         </button>
-        <button onClick={cancelEdit} style={{ padding: '8px 16px', background: '#6c757d', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer' }}>
+        <button onClick={cancelEdit} disabled={isProcessing} style={{ padding: '8px 16px', background: '#6c757d', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, cursor: isProcessing ? 'default' : 'pointer', opacity: isProcessing ? 0.6 : 1 }}>
           キャンセル
         </button>
       </div>
@@ -152,11 +165,11 @@ const LeaderAssignmentsTab: React.FC = () => {
                     <div style={{ color: subText, fontSize: 11, marginTop: 2 }}>表示順: {item.display_order}</div>
                   </div>
                   <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                    <button onClick={() => startEdit(item)} style={{ padding: '6px 12px', background: '#0d6efd', color: 'white', border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>
+                    <button onClick={() => startEdit(item)} disabled={isProcessing} style={{ padding: '6px 12px', background: '#0d6efd', color: 'white', border: 'none', borderRadius: 6, fontSize: 12, cursor: isProcessing ? 'default' : 'pointer', opacity: isProcessing ? 0.6 : 1 }}>
                       編集
                     </button>
-                    <button onClick={() => handleDelete(item.id)} style={{ padding: '6px 12px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>
-                      削除
+                    <button onClick={() => handleDelete(item.id)} disabled={isProcessing} style={{ padding: '6px 12px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 6, fontSize: 12, cursor: isProcessing ? 'default' : 'pointer', opacity: isProcessing ? 0.6 : 1 }}>
+                      {isProcessing ? '処理中...' : '削除'}
                     </button>
                   </div>
                 </div>

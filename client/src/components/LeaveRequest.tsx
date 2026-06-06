@@ -191,6 +191,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const [selectedApproverId, setSelectedApproverId] = useState('');
   const [showApproverGuide, setShowApproverGuide] = useState(false);
   const [leaderAssignments, setLeaderAssignments] = useState<{ id: string; course: string; school: string; leader: string; manager: string }[]>([]);
+  const [loadingAssignments, setLoadingAssignments] = useState(true);
 
   useEffect(() => {
     supabase
@@ -199,6 +200,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       .order('display_order', { ascending: true })
       .then(({ data, error }) => {
         if (!error && data) setLeaderAssignments(data);
+        setLoadingAssignments(false);
       });
   }, []);
 
@@ -400,7 +402,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                     <tr><td colSpan={3} style={sectionTd}>{label}</td></tr>
                   );
 
-                  if (leaderAssignments.length === 0) return <p style={{ margin: 0 }}>読み込み中...</p>;
+                  if (loadingAssignments) return <p style={{ margin: 0 }}>読み込み中...</p>;
+                  if (leaderAssignments.length === 0) return <p style={{ margin: 0 }}>担当者情報が登録されていません。</p>;
 
                   const courses: string[] = [];
                   leaderAssignments.forEach(a => { if (!courses.includes(a.course)) courses.push(a.course); });
