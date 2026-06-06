@@ -114,8 +114,6 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [confirmedExpenses, setConfirmedExpenses] = useState<typeof expenses>([]);
-  // 日付ピッカー表示管理: key = `${rowIndex}-start` | `${rowIndex}-end`
-  const [openDatePicker, setOpenDatePicker] = useState<string | null>(null);
   const [recentTemplates, setRecentTemplates] = useState<Expense[]>([]);
   const emptyDraft: Expense = { type: 'one_time', from_station: '', to_station: '', amount: '', start_date: '', end_date: '', transportation: '', workplace: '', trip_category: '', type_other: '', transportation_other: '', workplace_other: '', notes: '' };
   const [draftExpense, setDraftExpense] = useState<Expense>(emptyDraft);
@@ -213,35 +211,6 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     fetchProfileName();
   }, [user]);
 
-  const handleInputChange = useCallback((index: number, field: keyof Expense, value: string) => {
-    setExpenses(prev => {
-      const newExpenses = [...prev];
-      newExpenses[index] = { ...newExpenses[index], [field]: value };
-      return newExpenses;
-    });
-  }, [setExpenses]);
-
-  const handleMultiUpdate = useCallback((index: number, fields: Partial<Expense>) => {
-    setExpenses(prev => {
-      const next = [...prev];
-      next[index] = { ...next[index], ...fields };
-      return next;
-    });
-  }, [setExpenses]);
-
-  const handleClearRow = useCallback((index: number) => {
-    setExpenses(prev => {
-      const newExpenses = [...prev];
-      newExpenses[index] = { type: 'one_time', from_station: '', to_station: '', amount: '', start_date: '', end_date: '', transportation: '', workplace: '', trip_category: '', type_other: '', transportation_other: '', workplace_other: '' };
-      return newExpenses;
-    });
-  }, [setExpenses]);
-
-  const handleAddRow = useCallback(() => {
-    setExpenses(prev => {
-      return [...prev, { type: 'one_time', from_station: '', to_station: '', amount: '', start_date: '', end_date: '', transportation: '', workplace: '', trip_category: '', type_other: '', transportation_other: '', workplace_other: '' }];
-    });
-  }, [setExpenses]);
 
   const handleRemoveRow = useCallback((index: number) => {
     setExpenses(prev => {
@@ -318,35 +287,6 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     setFormError('');
   }, [draftExpense, emptyDraft, setExpenses, onTemplateApplied, validateDraft]);
 
-  const handleDuplicateRow = useCallback((index: number) => {
-    setExpenses(prev => {
-      const copy = { ...prev[index], start_date: '', end_date: '' };
-      const next = [...prev];
-      next.splice(index + 1, 0, copy);
-      return next;
-    });
-  }, [setExpenses]);
-
-  const handleMakeRoundTrip = useCallback((index: number) => {
-    const originalExpense = expenses[index];
-    if (!originalExpense || !originalExpense.from_station || !originalExpense.to_station) {
-      setFormError('往復にするには、出発駅と到着駅を入力してください。');
-      return;
-    }
-
-    setExpenses(prev => {
-      const newExpenses = [...prev];
-      const returnExpense: Expense = {
-        ...originalExpense,
-        from_station: originalExpense.to_station,
-        to_station: originalExpense.from_station,
-        start_date: originalExpense.start_date,
-        end_date: originalExpense.end_date
-      };
-      newExpenses.splice(index + 1, 0, returnExpense);
-      return newExpenses;
-    });
-  }, [expenses, setExpenses]);
 
   // バリデーションして確認モーダルを表示
   const handleValidateAndConfirm = () => {
