@@ -2,6 +2,20 @@ import React from 'react';
 import { formatAmount } from '../../utils';
 import { useAdminPanel } from './AdminPanelContext';
 
+const toJST = (utcStr: string | null | undefined): string => {
+  if (!utcStr) return '';
+  // タイムゾーン情報がない場合はUTCとして解釈（Supabaseが+00:00なしで返す場合の対策）
+  const hasTimezone = utcStr.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(utcStr);
+  const d = new Date(hasTimezone ? utcStr : utcStr + 'Z');
+  const y = d.getFullYear();
+  const mo = d.getMonth() + 1;
+  const day = d.getDate();
+  const h = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  const s = String(d.getSeconds()).padStart(2, '0');
+  return `${y}/${mo}/${day} ${h}:${mi}:${s}`;
+};
+
 const ApprovalsTab: React.FC = () => {
   const ctx = useAdminPanel();
   const { isDarkMode } = ctx;
@@ -323,22 +337,22 @@ const ApprovalsTab: React.FC = () => {
                             fontWeight: 'bold',
                             cursor: 'pointer'
                           }}
-                          title={`印刷日時: ${new Date(p.printed_at).toLocaleString()}`}
+                          title={`印刷日時: ${toJST(p.printed_at)}`}
                           >
-                            ✓ 印刷済み ({new Date(p.printed_at).toLocaleString()})
+                            ✓ 印刷済み ({toJST(p.printed_at)})
                           </span>
                         )}
                       </div>
                       <strong>申請者:</strong> {p.profiles?.name || p.profiles?.email || '不明'} <br />
-                      <strong>申請日:</strong> {new Date(p.created_at).toLocaleString()} <br />
+                      <strong>申請日:</strong> {toJST(p.created_at)} <br />
                       <strong>ステータス:</strong> {
-                        p.status === 'pending' ? '申請中' : 
-                        p.status === 'approved' ? <span style={{ color: '#007bff', fontWeight: 'bold' }}>承認</span> : 
+                        p.status === 'pending' ? '申請中' :
+                        p.status === 'approved' ? <span style={{ color: '#007bff', fontWeight: 'bold' }}>承認</span> :
                         <span style={{ color: '#dc3545', fontWeight: 'bold' }}>却下</span>
                       } <br />
                       <strong>合計金額:</strong> {formatAmount(p.expenses_data.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0).toString())}円 <br />
                       {p.printed_at && (
-                        <><strong>印刷日時:</strong> {new Date(p.printed_at).toLocaleString()} <br /></>
+                        <><strong>印刷日時:</strong> {toJST(p.printed_at)} <br /></>
                       )}
                       {p.printed_by && (
                         <><strong>印刷者ID:</strong> {p.printed_by} <br /></>
@@ -355,18 +369,14 @@ const ApprovalsTab: React.FC = () => {
                           }}>
                             編集済み ({p.edit_count || 0}回)
                           </span> <br />
-                          <strong>最終編集:</strong> {(() => {
-                            if (!p.last_edited_at) return '';
-                            const utcDate = new Date(p.last_edited_at);
-                            return utcDate.toLocaleString('ja-JP').replace(/\//g, '/');
-                          })()} ({p.last_edited_by || ''}) <br />
+                          <strong>最終編集:</strong> {toJST(p.last_edited_at)} ({p.last_edited_by || ''}) <br />
                         </>
                       )}
                       {p.approved_at && (
-                        <><strong>承認日:</strong> {new Date(p.approved_at).toLocaleString()} <br /></>
+                        <><strong>承認日:</strong> {toJST(p.approved_at)} <br /></>
                       )}
                       {p.rejected_at && (
-                        <><strong>却下日:</strong> {new Date(p.rejected_at).toLocaleString()} <br /></>
+                        <><strong>却下日:</strong> {toJST(p.rejected_at)} <br /></>
                       )}
                       {p.rejected_reason && (
                         <><strong>却下理由:</strong> {p.rejected_reason} <br /></>
@@ -535,14 +545,14 @@ const ApprovalsTab: React.FC = () => {
                                           fontWeight: 'bold',
                                           cursor: 'pointer'
                                         }}
-                                        title={`印刷日時: ${new Date(s.printed_at).toLocaleString()}`}
+                                        title={`印刷日時: ${toJST(s.printed_at)}`}
                                         >
-                                          ✓ 印刷済み ({new Date(s.printed_at).toLocaleString()})
+                                          ✓ 印刷済み ({toJST(s.printed_at)})
                                         </span>
                                       )}
                                     </div>
                                     <strong>申請者:</strong> {s.profiles?.name || s.profiles?.email || '不明'} <br />
-                                    <strong>申請日:</strong> {new Date(s.created_at).toLocaleString()} <br />
+                                    <strong>申請日:</strong> {toJST(s.created_at)} <br />
                                     <strong>ステータス:</strong> {
                                       s.status === 'pending' ? '申請中' : 
                                       s.status === 'approved' ? <span style={{ color: '#007bff', fontWeight: 'bold' }}>承認</span> : 
@@ -550,7 +560,7 @@ const ApprovalsTab: React.FC = () => {
                                     } <br />
                                     <strong>合計金額:</strong> {formatAmount(s.expenses_data.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0).toString())}円 <br />
                                     {s.printed_at && (
-                                      <><strong>印刷日時:</strong> {new Date(s.printed_at).toLocaleString()} <br /></>
+                                      <><strong>印刷日時:</strong> {toJST(s.printed_at)} <br /></>
                                     )}
                                     {s.printed_by && (
                                       <><strong>印刷者ID:</strong> {s.printed_by} <br /></>
@@ -567,19 +577,14 @@ const ApprovalsTab: React.FC = () => {
                                         }}>
                                           編集済み ({s.edit_count || 0}回)
                                         </span> <br />
-                                        <strong>最終編集:</strong> {(() => {
-                                          if (!s.last_edited_at) return '';
-                                          const utcDate = new Date(s.last_edited_at);
-                                          const jpDate = new Date(utcDate.getTime() + (9 * 60 * 60 * 1000)); // UTC+9
-                                          return jpDate.toLocaleString('ja-JP').replace(/\//g, '/');
-                                        })()} ({s.last_edited_by || ''}) <br />
+                                        <strong>最終編集:</strong> {toJST(s.last_edited_at)} ({s.last_edited_by || ''}) <br />
                                       </>
                                     )}
                                     {s.approved_at && (
-                                      <><strong>承認日:</strong> {new Date(s.approved_at).toLocaleString()} <br /></>
+                                      <><strong>承認日:</strong> {toJST(s.approved_at)} <br /></>
                                     )}
                                     {s.rejected_at && (
-                                      <><strong>却下日:</strong> {new Date(s.rejected_at).toLocaleString()} <br /></>
+                                      <><strong>却下日:</strong> {toJST(s.rejected_at)} <br /></>
                                     )}
                                     <ul>
                                       {(editingSubmissionId === s.id ? editingExpenses : s.expenses_data).map((e, i) => (

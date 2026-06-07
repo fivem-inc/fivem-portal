@@ -23,11 +23,20 @@ const CHANNEL_SECRET_MAP: Record<string, string> = {
   support:           'SLACK_WEBHOOK_TRIP_SUPPORT',
 };
 
-async function sendSlack(webhookUrl: string, text: string) {
+async function sendSlack(webhookUrl: string, messageText: string) {
+  const payload = {
+    text: messageText,
+    blocks: [
+      {
+        type: 'section',
+        text: { type: 'mrkdwn', text: messageText },
+      },
+    ],
+  };
   const res = await fetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) console.error('Slack送信失敗:', await res.text());
 }
