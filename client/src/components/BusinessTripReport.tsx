@@ -188,16 +188,17 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
 
   const buildSlackMessage = () => {
     const lines = [
-      `📍 出張終了報告`,
-      `👤 報告者: ${profileName || user.email}`,
-      `📋 区分: ${category === 'その他' ? `その他（${categoryOther}）` : category}`,
-      `🏢 場所: ${effectiveLocation}`,
+      `📝 *【出張終了報告】*`,
+      ``,
+      `*報告者：* ${profileName || user.email}`,
+      `*区分：* ${category === 'その他' ? `その他（${categoryOther}）` : category}`,
+      `*場所：* ${effectiveLocation}`,
     ];
     if (nextDates.length > 0) {
       const formatted = [...nextDates].sort().map(d => formatDate(new Date(d)));
-      lines.push(`📅 次回（次月）予定: ${formatted.join('、')}`);
+      lines.push(`*次回（次月）予定：* ${formatted.join('、')}`);
     }
-    if (slackComment) lines.push(`💬 ${slackComment}`);
+    if (slackComment) lines.push(`📢 ${slackComment}`);
     return lines.join('\n');
   };
 
