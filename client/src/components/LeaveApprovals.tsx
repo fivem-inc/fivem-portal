@@ -188,7 +188,8 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     }).eq('id', selectingManagerFor.id);
 
     // Slack通知（リーダーが受理 → マネージャーへ）
-    await sendLeaveSlack('leader_approved', profileName || '承認者', roleTitle || 'リーダー');
+    const selectedManager = managers.find(m => m.id === selectedManagerId);
+    await sendLeaveSlack('leader_approved', profileName || '承認者', roleTitle || 'リーダー', selectedManager?.name || '', 'マネージャー');
 
     setSelectingManagerFor(null);
     fetchRequests();

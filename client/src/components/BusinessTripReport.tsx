@@ -186,6 +186,9 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
     );
   };
 
+  // プレビュー用：Slackのmrkdwn記号（*）を除去して表示
+  const buildSlackPreview = () => buildSlackMessage().replace(/\*/g, '');
+
   const buildSlackMessage = () => {
     const lines = [
       `📝 *【出張終了報告】*`,
@@ -432,7 +435,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
                   fontSize: 13, whiteSpace: 'pre-wrap',
                   color: isDark ? '#ddd' : '#333', fontFamily: 'monospace', lineHeight: 1.6,
                 }}>
-                  {buildSlackMessage()}
+                  {buildSlackPreview()}
                 </div>
                 <div style={{ fontSize: 12, color: isDark ? '#888' : '#999', marginTop: 4 }}>
                   送信先: {selectedChannels.map(k => '#' + (SLACK_CHANNELS.find(c => c.key === k)?.label ?? k)).join('、')}
@@ -485,7 +488,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
                   fontSize: 12, whiteSpace: 'pre-wrap',
                   color: isDark ? '#ddd' : '#333', fontFamily: 'monospace', lineHeight: 1.6,
                 }}>
-                  {buildSlackMessage()}
+                  {buildSlackPreview()}
                 </div>
                 <div style={{ fontSize: 12, color: isDark ? '#888' : '#999', marginTop: 4 }}>
                   送信先: {selectedChannels.map(k => '#' + (SLACK_CHANNELS.find(c => c.key === k)?.label ?? k)).join('、')}
