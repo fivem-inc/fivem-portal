@@ -805,6 +805,95 @@ INSERT INTO master_options (category, value, sort_order) VALUES
 ### 🔜 次回やること
 1. **Phase 1: メール送信機能**（現状は別ツール使用中のため後回し）
 
+---
+
+## ✅ 2026-06-07 バグ修正・Slack通知フォーマット改善 完了
+
+### 申請日時 9時間ズレ修正（`ApprovalsTab.tsx`）
+
+#### 原因
+- Supabase は `timestamptz` カラムをタイムゾーン情報なし（`2026-06-07T12:58:09` ← Zなし）で返す場合がある
+- `new Date('2026-06-07T12:58:09')` はブラウザがローカル時間として解釈 → JST機では「12:58 JST」扱い
+- 実際は UTC 12:58 = JST 21:58 なのに 12:58 と表示されていた（9時間ズレ）
+
+#### 解決策
+タイムゾーン情報がない文字列に `Z` を強制付加してUTCとして解釈させる：
+```ts
+const toJST = (utcStr: string | null | undefined): string => {
+  if (!utcStr) return '';
+  const hasTimezone = utcStr.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(utcStr);
+  const d = new Date(hasTimezone ? utcStr : utcStr + 'Z');
+  // getHours() 等はブラウザのローカル時間（JST）で返る
+  return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+};
+```
+
+#### 教訓
+- `toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })` は Zなし文字列をローカル時間として変換してしまうため効果なし
+- `getHours()` も同様（Zなし文字列をローカル時間と解釈）
+- **Zなし文字列には必ず + 'Z' してからparseすること**
+
+---
+
+### Slack通知 太字が効かない問題（出張報告・休暇申請）
+
+#### 原因
+- plain text（`{ text: '...' }`）で送信すると `*テキスト*` がそのままアスタリスク付きで表示される
+- Slack の太字は **Blocks API + `mrkdwn` 形式** でのみ正しく機能する
+
+#### 解決策（Blocks API使用）
+```ts
+const payload = {
+  text: message,        // フォールバック用（通知バナーに表示）
+  blocks: [
+    { type: 'section', text: { type: 'mrkdwn', text: message } },
+    // ボタンが必要な場合:
+    { type: 'actions', elements: [{ type: 'button', text: { type: 'plain_text', text: 'ボタン名' }, url: 'URL', style: 'primary' }] }
+  ]
+}
+```
+
+#### 太字ルール（Slack mrkdwn）
+- `*テキスト*` → 太字（前後に空白が必要）
+- `*ラベル：* 値` → ✅ 効く（閉じ`*`の後にスペース）
+- `*ラベル：*値` → ❌ 効かない（閉じ`*`の直後に日本語）
+- `*ラベル：値*` → ✅ 効く（行全体を太字）
+
+---
+
+### 出張報告 Slack通知フォーマット（`BusinessTripReport.tsx` + `send-trip-slack`）
+
+#### 完了後フォーマット
+```
+📝 *【出張終了報告】*
+
+*報告者：* 濱口　美由紀
+*区分：* 出張
+*場所：* JEUGIA 西友山科
+*次回（次月）予定：* 6/3（水）
+📢 ポスティング後、14:00に戻ります。
+```
+- `buildSlackPreview()` 関数で `*` を除去してアプリ内プレビュー表示（Slack送信本体は `buildSlackMessage()` のまま）
+
+---
+
+### 休暇申請 Slack通知フォーマット（`send-leave-slack` Edge Function）
+
+#### 通知フロー（確定版）
+| ステップ | タイミング | 送信先 | 通知内容 | ボタン |
+|---|---|---|---|---|
+| ① | 新規申請 | リーダーorマネージャー回覧 | `🔔【休暇申請/新規】` `申請先：〇〇（役職）` | なし |
+| ② | リーダー受理 | マネージャー回覧 | `✅【休暇申請/確認①】` `確認先：〇〇（マネージャー）` `受理者：〇〇（リーダー）` | なし |
+| ③ | マネージャー受理 | 経理専用 | `✅【休暇申請/確認②】` `受理者：〇〇（マネージャー）` | あり |
+| ④ | 経理受理 | 晃平先生へ | `✅【休暇申請/確認③】` `受理者：経理` | あり |
+
+- ②の「確認先（マネージャー名）」は `handleApproveWithManager` 内で `managers.find(m => m.id === selectedManagerId)` で取得して渡す
+- `sendLeaveSlack()` に `nextApproverName?` / `nextApproverRole?` パラメータを追加済み
+
+### コミット
+- `74872b1` fix: 申請日時JST表示修正・出張報告Slack通知をBlocks形式に変更
+- `8537131` fix: 休暇申請・出張報告Slack通知フォーマット改善
+
 ### 📅 運用スケジュール
 - 確認期限：2026年6月13日（金）※幹部・マネージャーにテスト依頼済み
 - 運用開始目標：2026年7月1日（火）
