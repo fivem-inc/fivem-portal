@@ -47,7 +47,7 @@ serve(async (req) => {
   }
 
   try {
-    const { event, approverName, approverRole } = await req.json()
+    const { event, approverName, approverRole, nextApproverName, nextApproverRole } = await req.json()
 
     const webhookUrl = getWebhookUrl(event, approverRole || '')
     if (!webhookUrl) {
@@ -58,22 +58,44 @@ serve(async (req) => {
     }
 
     let text = ''
+
     const appUrl = 'https://fivem-portal.vercel.app/leave-approvals'
+    let addButton = false
 
     if (event === 'new_request') {
-      text = `【休暇申請】新しい申請が届いています\n申請先: ${approverName}（${approverRole}）`
+      text = `🔔 *【休暇申請 / 新規】*\n*申請先：* ${approverName}（${approverRole}）`
     } else if (event === 'leader_approved') {
-      text = `【休暇申請】確認が必要な申請があります\n受理者: ${approverName}（${approverRole}）が受理しました`
+      const nextLine = nextApproverName ? `*確認先：* ${nextApproverName}（${nextApproverRole || 'マネージャー'}）` : '*確認先：* マネージャー'
+      text = `✅ *【休暇申請 / 確認①】*\n${nextLine}\n*受理者：* ${approverName}（${approverRole}）`
     } else if (event === 'manager_approved') {
-      text = `【休暇申請】確認が必要な申請があります\n受理者: ${approverName}（${approverRole}）が受理しました\n▶ 承認画面: ${appUrl}`
+      text = `✅ *【休暇申請 / 確認②】*\n*受理者：* ${approverName}（${approverRole}）`
+      addButton = true
     } else if (event === 'accounting_approved') {
-      text = `【休暇申請】確認が必要な申請があります\n受理者: 経理担当者が受理しました\n▶ 承認画面: ${appUrl}`
+      text = `✅ *【休暇申請 / 確認③】*\n*受理者：* 経理`
+      addButton = true
     }
+
+    const blocks: unknown[] = [
+      { type: 'section', text: { type: 'mrkdwn', text } },
+    ]
+    if (addButton) {
+      blocks.push({
+        type: 'actions',
+        elements: [{
+          type: 'button',
+          text: { type: 'plain_text', text: '申請を確認・承認' },
+          url: appUrl,
+          style: 'primary',
+        }],
+      })
+    }
+
+    const payload = { text, blocks }
 
     const response = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(payload),
     })
 
     if (!response.ok) {
