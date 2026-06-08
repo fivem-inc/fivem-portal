@@ -120,6 +120,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
   const emptyDraft: Expense = { type: 'one_time', from_station: '', to_station: '', amount: '', start_date: '', end_date: '', transportation: '', workplace: '', trip_category: '', type_other: '', transportation_other: '', workplace_other: '', notes: '' };
   const [draftExpense, setDraftExpense] = useState<Expense>(emptyDraft);
   const [draftDatePicker, setDraftDatePicker] = useState<string | null>(null);
+  const [showTransportPicker, setShowTransportPicker] = useState(false);
   const [templateQueue, setTemplateQueue] = useState<Expense[]>([]);
   const errorRef = useRef<HTMLDivElement>(null);
   const isDarkMode = useDarkMode();
@@ -226,7 +227,9 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
   const toDraft = useCallback((item: Expense): Expense => {
     const t = item.transportation || '';
     const w = item.workplace || '';
-    const tIsPreset = TRANSPORT_PRESETS.includes(t) || t === '' || t === 'その他';
+    // 複数選択対応: ・区切りで分割し全てプリセットかチェック
+    const tParts = t.split('・').filter(Boolean);
+    const tIsPreset = t === '' || tParts.every(p => TRANSPORT_PRESETS.includes(p) || p === 'その他');
     const wIsPreset = item.type === 'other' || workplaceOptions.includes(w) || Object.values(locationsByCategory).flat().includes(w) || w === '' || w === 'その他';
     return {
       ...item,
@@ -264,17 +267,24 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     }
 
     const missing: string[] = [];
-    if (!draftExpense.transportation) missing.push('交通機関');
+    const selectedTransports = (draftExpense.transportation || '').split('・').filter(Boolean);
+    if (selectedTransports.length === 0) missing.push('交通機関');
+    if (selectedTransports.includes('その他') && !draftExpense.transportation_other?.trim()) missing.push('交通機関（その他）');
     if (!draftExpense.from_station) missing.push('出発駅');
     if (!draftExpense.to_station) missing.push('帰着駅');
     if (draftExpense.amount === '' || draftExpense.amount === undefined) missing.push('金額');
-    if (!draftExpense.workplace && !draftExpense.workplace_other) missing.push('勤務先');
+    const effectiveWorkplace = draftExpense.workplace === 'その他' ? draftExpense.workplace_other : draftExpense.workplace;
+    if (!effectiveWorkplace?.trim()) missing.push('勤務先');
     if (draftExpense.type !== 'regular' && !draftExpense.start_date) missing.push('利用日');
     if (draftExpense.type === 'regular' && !draftExpense.start_date) missing.push('開始日');
     if (draftExpense.type === 'regular' && !draftExpense.end_date) missing.push('終了日');
     if (missing.length > 0) {
       setFormError(`未入力の必須項目があります：${missing.join('、')}`);
-      const fieldMap: Record<string, string> = { '交通機関': 'transportation', '出発駅': 'from_station', '帰着駅': 'to_station', '金額': 'amount', '利用日': 'start_date', '開始日': 'start_date', '終了日': 'end_date', '勤務先': 'workplace' };
+      const fieldMap: Record<string, string> = {
+        '交通機関': 'transportation', '交通機関（その他）': 'transportation_other',
+        '出発駅': 'from_station', '帰着駅': 'to_station', '金額': 'amount',
+        '利用日': 'start_date', '開始日': 'start_date', '終了日': 'end_date', '勤務先': 'workplace'
+      };
       setHighlightFields(new Set(missing.map(m => fieldMap[m]).filter(Boolean)));
       return false;
     }
@@ -342,7 +352,8 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       if (expense.type === 'regular' && (!expense.start_date?.trim() || !expense.end_date?.trim())) {
         setFormError('定期の場合、開始日と終了日を入力してください。'); return;
       }
-      const effectiveTransport = expense.transportation === 'その他' ? expense.transportation_other : expense.transportation;
+      const transportParts = (expense.transportation || '').split('・').filter(Boolean);
+      const effectiveTransport = transportParts.map(p => p === 'その他' ? (expense.transportation_other || '') : p).filter(Boolean).join('・');
       if (!effectiveTransport?.trim()) { setFormError('交通機関を入力してください。'); return; }
       const effectiveWorkplace = expense.workplace === 'その他' ? expense.workplace_other : expense.workplace;
       if (!effectiveWorkplace?.trim()) { setFormError('勤務先を入力してください。'); return; }
@@ -351,7 +362,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     // 送信前に transportation/workplace の "その他" テキストをマージ
     const mergeExpense = (e: typeof expensesToSubmit[0]) => ({
       ...e,
-      transportation: e.transportation === 'その他' ? (e.transportation_other || '') : (e.transportation || ''),
+      transportation: (e.transportation || '').split('・').map(p => p === 'その他' ? (e.transportation_other || '') : p).filter(Boolean).join('・'),
       workplace: e.workplace === 'その他' ? (e.workplace_other || '') : (e.workplace || ''),
     });
     setConfirmedExpenses(expensesToSubmit.map(mergeExpense));
@@ -520,15 +531,17 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
           return (
             <div style={{ background: isDarkMode ? '#2c3e50' : '#fff', border: '2px solid #0d6efd', borderRadius: 8, padding: 16, marginBottom: 8, boxShadow: isDarkMode ? 'none' : '0 2px 8px rgba(0,0,0,0.06)' }}>
               {/* 区分 */}
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#6c757d', marginBottom: 3 }}>区分</div>
-                <select value={typeSelectValue} onChange={(e) => { const val = e.target.value; if (val.startsWith('custom:')) { setDraftExpense(prev => ({ ...prev, type: 'other', type_other: val.slice(7), trip_category: '', workplace: '', workplace_other: '' })); } else { setDraftExpense(prev => ({ ...prev, type: val as Expense['type'], type_other: '', trip_category: '', workplace: '', workplace_other: '' })); } }} className="expense-input form-input-full" style={{ ...inp }}>
-                  <option value="one_time">{getLabel(1, '通勤（単発）')}</option>
-                  <option value="regular">{getLabel(2, '定期')}</option>
-                  <option value="business_trip">{getLabel(3, '出張（園指導等）')}</option>
-                  {customExpenseTypes.map(ct => <option key={ct} value={`custom:${ct}`}>{ct}</option>)}
-                  <option value="other">{getLabel(4, 'その他')}</option>
-                </select>
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, overflow: 'hidden' }}>
+                  <span style={{ background: isDarkMode ? '#6c757d' : '#9e9e9e', color: '#fff', fontSize: 12, padding: '7px 8px', whiteSpace: 'nowrap', flexShrink: 0 }}>区分</span>
+                  <select value={typeSelectValue} onChange={(e) => { const val = e.target.value; if (val.startsWith('custom:')) { setDraftExpense(prev => ({ ...prev, type: 'other', type_other: val.slice(7), trip_category: '', workplace: '', workplace_other: '' })); } else { setDraftExpense(prev => ({ ...prev, type: val as Expense['type'], type_other: '', trip_category: '', workplace: '', workplace_other: '' })); } }} style={{ border: 'none', outline: 'none', flex: 1, padding: '7px 6px', fontSize: 14, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', minWidth: 0 }}>
+                    <option value="one_time">{getLabel(1, '通勤（単発）')}</option>
+                    <option value="regular">{getLabel(2, '定期')}</option>
+                    <option value="business_trip">{getLabel(3, '出張（園指導等）')}</option>
+                    {customExpenseTypes.map(ct => <option key={ct} value={`custom:${ct}`}>{ct}</option>)}
+                    <option value="other">{getLabel(4, 'その他')}</option>
+                  </select>
+                </div>
                 {draftExpense.type === 'other' && !isCustomType && (
                   <input type="text" placeholder="内容を入力" value={draftExpense.type_other || ''} onChange={(e) => setDraftExpense(prev => ({ ...prev, type_other: e.target.value }))} className="expense-input form-input-full" style={{ marginTop: 6, ...inp }} />
                 )}
@@ -536,89 +549,135 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
 
               {/* 利用日 or 開始日〜終了日 */}
               {draftExpense.type !== 'regular' ? (
-                <div style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#6c757d', marginBottom: 3 }}>利用日</div>
-                  <div style={{ position: 'relative', width: '100%' }}>
-                    <button type="button" onClick={() => { setDraftDatePicker(draftDatePicker === 'start' ? null : 'start'); clearHL('start_date'); }} className="expense-input form-input-full date-input" style={{ textAlign: 'left', cursor: 'pointer', background: highlightFields.has('start_date') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : (isDarkMode ? '#495057' : (draftExpense.start_date ? 'white' : '#f8f9fa')), color: draftExpense.start_date ? (isDarkMode ? '#fff' : '#333') : (isDarkMode ? '#adb5bd' : '#999'), borderColor: highlightFields.has('start_date') ? '#f06292' : undefined }}>
-                      {draftExpense.start_date || '利用日'}
-                    </button>
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ position: 'relative' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', border: `1px solid ${highlightFields.has('start_date') ? '#f06292' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, overflow: 'hidden', background: highlightFields.has('start_date') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : 'transparent' }}>
+                      <span style={{ background: isDarkMode ? '#6c757d' : '#9e9e9e', color: '#fff', fontSize: 12, padding: '7px 8px', whiteSpace: 'nowrap', flexShrink: 0 }}>利用日</span>
+                      <button type="button" onClick={() => { setDraftDatePicker(draftDatePicker === 'start' ? null : 'start'); clearHL('start_date'); }} style={{ border: 'none', outline: 'none', flex: 1, padding: '7px 6px', fontSize: 14, background: 'transparent', color: draftExpense.start_date ? (isDarkMode ? '#fff' : '#333') : (isDarkMode ? '#adb5bd' : '#999'), textAlign: 'left', cursor: 'pointer' }}>
+                        {draftExpense.start_date || '日付を選択'}
+                      </button>
+                    </div>
                     {draftDatePicker === 'start' && <SingleDatePicker value={draftExpense.start_date || ''} onChange={v => { setDraftExpense(prev => ({ ...prev, start_date: v })); setDraftDatePicker(null); }} onClose={() => setDraftDatePicker(null)} />}
                   </div>
                 </div>
               ) : (
-                <div style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#6c757d', marginBottom: 3 }}>期間</div>
+                <div style={{ marginBottom: 8 }}>
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                     <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-                      <button type="button" onClick={() => { setDraftDatePicker(draftDatePicker === 'start' ? null : 'start'); clearHL('start_date'); }} className="expense-input date-input" style={{ textAlign: 'left', cursor: 'pointer', width: '100%', background: highlightFields.has('start_date') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : (isDarkMode ? '#495057' : (draftExpense.start_date ? 'white' : '#f8f9fa')), borderColor: highlightFields.has('start_date') ? '#f06292' : undefined, color: draftExpense.start_date ? (isDarkMode ? '#fff' : '#333') : (isDarkMode ? '#adb5bd' : '#999') }}>
-                        {draftExpense.start_date || '開始日'}
-                      </button>
+                      <div style={{ display: 'flex', alignItems: 'center', border: `1px solid ${highlightFields.has('start_date') ? '#f06292' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, overflow: 'hidden', background: highlightFields.has('start_date') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : 'transparent' }}>
+                        <span style={{ background: isDarkMode ? '#6c757d' : '#9e9e9e', color: '#fff', fontSize: 12, padding: '7px 8px', whiteSpace: 'nowrap', flexShrink: 0 }}>開始日</span>
+                        <button type="button" onClick={() => { setDraftDatePicker(draftDatePicker === 'start' ? null : 'start'); clearHL('start_date'); }} style={{ border: 'none', outline: 'none', flex: 1, padding: '7px 6px', fontSize: 14, background: 'transparent', color: draftExpense.start_date ? (isDarkMode ? '#fff' : '#333') : (isDarkMode ? '#adb5bd' : '#999'), textAlign: 'left', cursor: 'pointer', width: '100%' }}>
+                          {draftExpense.start_date || '開始日'}
+                        </button>
+                      </div>
                       {draftDatePicker === 'start' && <SingleDatePicker value={draftExpense.start_date || ''} onChange={v => { setDraftExpense(prev => ({ ...prev, start_date: v })); setDraftDatePicker(null); clearHL('start_date'); }} onClose={() => setDraftDatePicker(null)} />}
                     </div>
                     <span style={{ color: '#999', flexShrink: 0 }}>〜</span>
                     <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-                      <button type="button" onClick={() => { setDraftDatePicker(draftDatePicker === 'end' ? null : 'end'); clearHL('end_date'); }} className="expense-input date-input" style={{ textAlign: 'left', cursor: 'pointer', width: '100%', background: highlightFields.has('end_date') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : (isDarkMode ? '#495057' : (draftExpense.end_date ? 'white' : '#f8f9fa')), borderColor: highlightFields.has('end_date') ? '#f06292' : undefined, color: draftExpense.end_date ? (isDarkMode ? '#fff' : '#333') : (isDarkMode ? '#adb5bd' : '#999') }}>
-                        {draftExpense.end_date || '終了日'}
-                      </button>
+                      <div style={{ display: 'flex', alignItems: 'center', border: `1px solid ${highlightFields.has('end_date') ? '#f06292' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, overflow: 'hidden', background: highlightFields.has('end_date') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : 'transparent' }}>
+                        <span style={{ background: isDarkMode ? '#6c757d' : '#9e9e9e', color: '#fff', fontSize: 12, padding: '7px 8px', whiteSpace: 'nowrap', flexShrink: 0 }}>終了日</span>
+                        <button type="button" onClick={() => { setDraftDatePicker(draftDatePicker === 'end' ? null : 'end'); clearHL('end_date'); }} style={{ border: 'none', outline: 'none', flex: 1, padding: '7px 6px', fontSize: 14, background: 'transparent', color: draftExpense.end_date ? (isDarkMode ? '#fff' : '#333') : (isDarkMode ? '#adb5bd' : '#999'), textAlign: 'left', cursor: 'pointer', width: '100%' }}>
+                          {draftExpense.end_date || '終了日'}
+                        </button>
+                      </div>
                       {draftDatePicker === 'end' && <SingleDatePicker value={draftExpense.end_date || ''} onChange={v => { setDraftExpense(prev => ({ ...prev, end_date: v })); setDraftDatePicker(null); clearHL('end_date'); }} onClose={() => setDraftDatePicker(null)} />}
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* 交通機関 */}
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#6c757d', marginBottom: 3 }}>交通機関</div>
-                <select value={draftExpense.transportation || ''} onChange={(e) => { setDraftExpense(prev => ({ ...prev, transportation: e.target.value, transportation_other: '' })); clearHL('transportation'); }} className="expense-input form-input-full" style={{ ...hl('transportation') }}>
-                  <option value="">選択してください</option>
-                  {TRANSPORT_PRESETS.map(t => <option key={t} value={t}>{t}</option>)}
-                  <option value="その他">その他</option>
-                </select>
-                {draftExpense.transportation === 'その他' && (
-                  <input type="text" placeholder="交通機関を入力" value={draftExpense.transportation_other || ''} onChange={(e) => setDraftExpense(prev => ({ ...prev, transportation_other: e.target.value }))} className="expense-input form-input-full" style={{ marginTop: 6, ...inp }} />
-                )}
-              </div>
-
-              {/* 出発駅 → 帰着駅 */}
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end' }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#6c757d', marginBottom: 3 }}>出発駅</div>
-                    <input type="text" placeholder="出発駅" value={draftExpense.from_station} onChange={(e) => { setDraftExpense(prev => ({ ...prev, from_station: e.target.value })); clearHL('from_station'); }} className="expense-input form-input-full" style={{ ...hl('from_station') }} />
+              {/* 交通機関（複数選択） */}
+              {(() => {
+                const selectedTransports = (draftExpense.transportation || '').split('・').filter(Boolean);
+                const toggleTransport = (t: string) => {
+                  const next = selectedTransports.includes(t)
+                    ? selectedTransports.filter(x => x !== t)
+                    : [...selectedTransports, t];
+                  setDraftExpense(prev => ({ ...prev, transportation: next.join('・'), transportation_other: next.includes('その他') ? prev.transportation_other : '' }));
+                  clearHL('transportation');
+                };
+                return (
+                  <div style={{ marginBottom: 8, position: 'relative' }}>
+                    <div onClick={() => setShowTransportPicker(p => !p)} style={{ display: 'flex', alignItems: 'center', border: `1px solid ${highlightFields.has('transportation') ? '#f06292' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, overflow: 'hidden', cursor: 'pointer', minHeight: 36, background: highlightFields.has('transportation') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : 'transparent' }}>
+                      <span style={{ background: isDarkMode ? '#6c757d' : '#9e9e9e', color: '#fff', fontSize: 12, padding: '7px 8px', whiteSpace: 'nowrap', flexShrink: 0 }}>交通機関</span>
+                      <div style={{ flex: 1, padding: '4px 6px', display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center', minHeight: 30 }}>
+                        {selectedTransports.length === 0
+                          ? <span style={{ color: isDarkMode ? '#adb5bd' : '#999', fontSize: 14 }}>選択してください</span>
+                          : selectedTransports.map(t => <span key={t} style={{ background: isDarkMode ? '#1e3d5c' : '#e3f2fd', color: isDarkMode ? '#90caf9' : '#1565c0', borderRadius: 3, padding: '2px 7px', fontSize: 13 }}>{t}</span>)
+                        }
+                      </div>
+                      <span style={{ color: isDarkMode ? '#adb5bd' : '#999', padding: '0 8px', fontSize: 12 }}>{showTransportPicker ? '▲' : '▼'}</span>
+                    </div>
+                    {showTransportPicker && (
+                      <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: isDarkMode ? '#343a40' : '#fff', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, zIndex: 200, boxShadow: '0 4px 12px rgba(0,0,0,0.18)', padding: '4px 0' }}>
+                        {[...TRANSPORT_PRESETS, 'その他'].map(t => {
+                          const checked = selectedTransports.includes(t);
+                          return (
+                            <label key={t} style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', cursor: 'pointer', borderBottom: `1px solid ${isDarkMode ? '#495057' : '#f0f0f0'}`, background: checked ? (isDarkMode ? '#1e3d5c' : '#e8f4fd') : 'transparent' }}>
+                              <input type="checkbox" checked={checked} onChange={() => toggleTransport(t)} style={{ width: 18, height: 18, marginRight: 12, accentColor: '#0d6efd' }} />
+                              <span style={{ fontSize: 15, color: isDarkMode ? '#fff' : '#333' }}>{t}</span>
+                            </label>
+                          );
+                        })}
+                        <div style={{ padding: '6px 8px' }}>
+                          <button type="button" onClick={() => setShowTransportPicker(false)} style={{ width: '100%', padding: '8px', background: '#0d6efd', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>決定</button>
+                        </div>
+                      </div>
+                    )}
+                    {selectedTransports.includes('その他') && (
+                      <input type="text" placeholder="交通機関を入力" value={draftExpense.transportation_other || ''} onChange={(e) => { setDraftExpense(prev => ({ ...prev, transportation_other: e.target.value })); clearHL('transportation_other'); }} className="expense-input form-input-full" style={{ marginTop: 6, ...hl('transportation_other') }} />
+                    )}
                   </div>
-                  <span style={{ color: '#999', fontSize: 18, flexShrink: 0, paddingBottom: 6 }}>→</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#6c757d', marginBottom: 3 }}>帰着駅</div>
-                    <input type="text" placeholder="帰着駅" value={draftExpense.to_station} onChange={(e) => { setDraftExpense(prev => ({ ...prev, to_station: e.target.value })); clearHL('to_station'); }} className="expense-input form-input-full" style={{ ...hl('to_station') }} />
+                );
+              })()}
+
+              {/* 出発駅 ⇄ 帰着駅 */}
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                  {/* 出発 */}
+                  <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, border: `1px solid ${highlightFields.has('from_station') ? '#f06292' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, overflow: 'hidden', background: highlightFields.has('from_station') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : 'transparent' }}>
+                    <span style={{ background: isDarkMode ? '#6c757d' : '#9e9e9e', color: '#fff', fontSize: 12, padding: '7px 8px', whiteSpace: 'nowrap', flexShrink: 0 }}>出発</span>
+                    <input type="text" placeholder="駅、バス停" value={draftExpense.from_station} onChange={(e) => { setDraftExpense(prev => ({ ...prev, from_station: e.target.value })); clearHL('from_station'); }} style={{ border: 'none', outline: 'none', flex: 1, minWidth: 0, padding: '7px 6px', fontSize: 14, background: 'transparent', color: isDarkMode ? '#fff' : '#333' }} />
+                  </div>
+                  {/* 反転ボタン */}
+                  <button type="button" onClick={() => setDraftExpense(prev => ({ ...prev, from_station: prev.to_station, to_station: prev.from_station }))} style={{ flexShrink: 0, background: isDarkMode ? '#495057' : '#f0f0f0', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, padding: '6px 8px', cursor: 'pointer', fontSize: 16, color: isDarkMode ? '#fff' : '#555' }} title="出発・到着を入れ替え">⇄</button>
+                  {/* 到着 */}
+                  <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, border: `1px solid ${highlightFields.has('to_station') ? '#f06292' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, overflow: 'hidden', background: highlightFields.has('to_station') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : 'transparent' }}>
+                    <span style={{ background: isDarkMode ? '#6c757d' : '#9e9e9e', color: '#fff', fontSize: 12, padding: '7px 8px', whiteSpace: 'nowrap', flexShrink: 0 }}>到着</span>
+                    <input type="text" placeholder="駅、バス停" value={draftExpense.to_station} onChange={(e) => { setDraftExpense(prev => ({ ...prev, to_station: e.target.value })); clearHL('to_station'); }} style={{ border: 'none', outline: 'none', flex: 1, minWidth: 0, padding: '7px 6px', fontSize: 14, background: 'transparent', color: isDarkMode ? '#fff' : '#333' }} />
                   </div>
                 </div>
               </div>
 
               {/* 金額 + 勤務先 */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 8, marginBottom: 10 }}>
                 <div>
-                  <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#6c757d', marginBottom: 3 }}>金額（円）</div>
-                  <input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" value={formatAmount(draftExpense.amount)} onChange={(e) => { setDraftExpense(prev => ({ ...prev, amount: parseAmount(e.target.value) })); clearHL('amount'); }} className="expense-input form-input-full" style={{ ...hl('amount') }} />
+                  <div style={{ display: 'flex', alignItems: 'center', border: `1px solid ${highlightFields.has('amount') ? '#f06292' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, overflow: 'hidden', background: highlightFields.has('amount') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : 'transparent' }}>
+                    <span style={{ background: isDarkMode ? '#6c757d' : '#9e9e9e', color: '#fff', fontSize: 12, padding: '7px 8px', whiteSpace: 'nowrap', flexShrink: 0 }}>金額</span>
+                    <input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" value={formatAmount(draftExpense.amount)} onChange={(e) => { setDraftExpense(prev => ({ ...prev, amount: parseAmount(e.target.value) })); clearHL('amount'); }} style={{ border: 'none', outline: 'none', flex: 1, minWidth: 0, padding: '7px 6px', fontSize: 14, background: 'transparent', color: isDarkMode ? '#fff' : '#333' }} />
+                  </div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#6c757d', marginBottom: 3 }}>勤務先</div>
-                  {draftExpense.type === 'other' ? (
-                    <input type="text" placeholder="勤務先を入力" value={draftExpense.workplace || ''} onChange={(e) => { setDraftExpense(prev => ({ ...prev, workplace: e.target.value })); clearHL('workplace'); }} className="expense-input form-input-full" style={{ ...hl('workplace') }} />
-                  ) : draftExpense.type === 'business_trip' ? (
-                    <select value={draftExpense.workplace || ''} onChange={(e) => { setDraftExpense(prev => ({ ...prev, workplace: e.target.value, workplace_other: '' })); clearHL('workplace'); }} className="expense-input form-input-full" style={{ ...hl('workplace') }}>
-                      <option value="">選択</option>
-                      {Object.values(locationsByCategory).flat().map(loc => <option key={loc} value={loc}>{loc}</option>)}
-                      <option value="その他">その他</option>
-                    </select>
-                  ) : (
-                    <select value={draftExpense.workplace || ''} onChange={(e) => { setDraftExpense(prev => ({ ...prev, workplace: e.target.value, workplace_other: '' })); clearHL('workplace'); }} className="expense-input form-input-full" style={{ ...hl('workplace') }}>
-                      <option value="">選択</option>
-                      {workplaceOptions.map(s => <option key={s} value={s}>{s}</option>)}
-                      <option value="その他">その他</option>
-                    </select>
-                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', border: `1px solid ${highlightFields.has('workplace') ? '#f06292' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, overflow: 'hidden', background: highlightFields.has('workplace') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : 'transparent' }}>
+                    <span style={{ background: isDarkMode ? '#6c757d' : '#9e9e9e', color: '#fff', fontSize: 12, padding: '7px 8px', whiteSpace: 'nowrap', flexShrink: 0 }}>勤務先</span>
+                    {draftExpense.type === 'other' ? (
+                      <input type="text" placeholder="勤務先を入力" value={draftExpense.workplace || ''} onChange={(e) => { setDraftExpense(prev => ({ ...prev, workplace: e.target.value })); clearHL('workplace'); }} style={{ border: 'none', outline: 'none', flex: 1, minWidth: 0, padding: '7px 6px', fontSize: 14, background: 'transparent', color: isDarkMode ? '#fff' : '#333' }} />
+                    ) : draftExpense.type === 'business_trip' ? (
+                      <select value={draftExpense.workplace || ''} onChange={(e) => { setDraftExpense(prev => ({ ...prev, workplace: e.target.value, workplace_other: '' })); clearHL('workplace'); }} style={{ border: 'none', outline: 'none', flex: 1, padding: '7px 4px', fontSize: 14, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', minWidth: 0 }}>
+                        <option value="">選択</option>
+                        {Object.values(locationsByCategory).flat().map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                        <option value="その他">その他</option>
+                      </select>
+                    ) : (
+                      <select value={draftExpense.workplace || ''} onChange={(e) => { setDraftExpense(prev => ({ ...prev, workplace: e.target.value, workplace_other: '' })); clearHL('workplace'); }} style={{ border: 'none', outline: 'none', flex: 1, padding: '7px 4px', fontSize: 14, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', minWidth: 0 }}>
+                        <option value="">選択</option>
+                        {workplaceOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                        <option value="その他">その他</option>
+                      </select>
+                    )}
+                  </div>
                   {draftExpense.workplace === 'その他' && draftExpense.type !== 'other' && (
-                    <input type="text" placeholder="勤務先を入力" value={draftExpense.workplace_other || ''} onChange={(e) => setDraftExpense(prev => ({ ...prev, workplace_other: e.target.value }))} className="expense-input form-input-full" style={{ marginTop: 4, ...inp }} />
+                    <input type="text" placeholder="勤務先を入力" value={draftExpense.workplace_other || ''} onChange={(e) => { setDraftExpense(prev => ({ ...prev, workplace_other: e.target.value })); clearHL('workplace'); }} className="expense-input form-input-full" style={{ marginTop: 4, ...hl('workplace') }} />
                   )}
                 </div>
               </div>
@@ -668,7 +727,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                 <div key={index} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: isDarkMode ? (isTeiki ? '#1e3d2a' : '#2c3e50') : (isTeiki ? '#f6fff8' : '#f8fbff'), border: `1px solid ${isDarkMode ? (isTeiki ? '#2d5a3d' : '#344a5e') : (isTeiki ? '#d4edda' : '#cfe2ff')}`, borderLeft: `3px solid ${isTeiki ? '#198754' : '#0d6efd'}`, borderRadius: 6, marginBottom: 6, fontSize: 13 }}>
                   <span style={{ background: isDarkMode ? '#444' : '#e9ecef', borderRadius: 4, padding: '3px 8px', fontWeight: 'bold', fontSize: 12, flexShrink: 0 }}>{index + 1}</span>
                   <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
-                    <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#6c757d' }}>{typeLabel}　{expense.transportation === 'その他' ? expense.transportation_other : expense.transportation}　{dateLabel}{expense.workplace === 'その他' ? `　${expense.workplace_other}` : expense.workplace ? `　${expense.workplace}` : ''}</div>
+                    <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#6c757d' }}>{typeLabel}　{expense.transportation}　{dateLabel}{expense.workplace === 'その他' ? `　${expense.workplace_other}` : expense.workplace ? `　${expense.workplace}` : ''}</div>
                     <div style={{ fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: isDarkMode ? '#fff' : '#333', fontSize: 14 }}>{expense.from_station} → {expense.to_station}</div>
                   </div>
                   <div style={{ fontWeight: 'bold', color: isDarkMode ? '#4a9eff' : '#0d6efd', flexShrink: 0 }}>¥{parseInt(expense.amount || '0').toLocaleString()}</div>
@@ -731,7 +790,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                   <span style={{ color: '#888', fontSize: 11, flexShrink: 0, minWidth: 18 }}>{i + 1}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 11, color: '#666', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {typeLabel}　{e.transportation === 'その他' ? e.transportation_other : e.transportation}　{dateLabel}{e.workplace === 'その他' ? `　${e.workplace_other}` : e.workplace ? `　${e.workplace}` : ''}
+                      {typeLabel}　{e.transportation}　{dateLabel}{e.workplace === 'その他' ? `　${e.workplace_other}` : e.workplace ? `　${e.workplace}` : ''}
                     </div>
                     <div style={{ fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {e.from_station} → {e.to_station}
