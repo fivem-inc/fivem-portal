@@ -343,33 +343,33 @@ const ApprovalsTab: React.FC = () => {
                           </span>
                         )}
                       </div>
-                      <strong>申請者:</strong> {p.profiles?.name || p.profiles?.email || '不明'} <br />
-                      <strong>申請日:</strong> {toJST(p.created_at)} <br />
-                      <strong>ステータス:</strong> {
+                      <div><strong>申請者:</strong> {p.profiles?.name || p.profiles?.email || '不明'}</div>
+                      <div><strong>申請日:</strong> {toJST(p.created_at)}</div>
+                      <div><strong>ステータス:</strong> {
                         p.status === 'pending' ? '申請中' :
                         p.status === 'approved' ? <span style={{ color: '#007bff', fontWeight: 'bold' }}>承認</span> :
                         <span style={{ color: '#dc3545', fontWeight: 'bold' }}>却下</span>
-                      } <br />
-                      <strong>合計金額:</strong> {formatAmount(p.expenses_data.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0).toString())}円 <br />
+                      }</div>
+                      <div><strong>合計金額:</strong> {formatAmount(p.expenses_data.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0).toString())}円</div>
                       {p.printed_at && (
-                        <><strong>印刷日時:</strong> {toJST(p.printed_at)} <br /></>
+                        <div><strong>印刷日時:</strong> {toJST(p.printed_at)}</div>
                       )}
                       {p.printed_by && (
-                        <><strong>印刷者ID:</strong> {p.printed_by} <br /></>
+                        <div><strong>印刷者ID:</strong> {p.printed_by}</div>
                       )}
                       {((p.edit_count && p.edit_count > 0) || p.last_edited_at) && (
                         <>
-                          <span style={{ 
-                            backgroundColor: '#ffc107', 
-                            color: '#000', 
-                            padding: '2px 6px', 
-                            borderRadius: '4px', 
+                          <span style={{
+                            backgroundColor: '#ffc107',
+                            color: '#000',
+                            padding: '2px 6px',
+                            borderRadius: '4px',
                             fontSize: '12px',
                             fontWeight: 'bold'
                           }}>
                             編集済み ({p.edit_count || 0}回)
-                          </span> <br />
-                          <strong>最終編集:</strong> {toJST(p.last_edited_at)} ({p.last_edited_by || ''}) <br />
+                          </span>
+                          <div><strong>最終編集:</strong> {toJST(p.last_edited_at)} ({p.last_edited_by || ''})</div>
                         </>
                       )}
                       {p.approved_at && (
@@ -551,33 +551,33 @@ const ApprovalsTab: React.FC = () => {
                                         </span>
                                       )}
                                     </div>
-                                    <strong>申請者:</strong> {s.profiles?.name || s.profiles?.email || '不明'} <br />
-                                    <strong>申請日:</strong> {toJST(s.created_at)} <br />
-                                    <strong>ステータス:</strong> {
-                                      s.status === 'pending' ? '申請中' : 
-                                      s.status === 'approved' ? <span style={{ color: '#007bff', fontWeight: 'bold' }}>承認</span> : 
+                                    <div><strong>申請者:</strong> {s.profiles?.name || s.profiles?.email || '不明'}</div>
+                                    <div><strong>申請日:</strong> {toJST(s.created_at)}</div>
+                                    <div><strong>ステータス:</strong> {
+                                      s.status === 'pending' ? '申請中' :
+                                      s.status === 'approved' ? <span style={{ color: '#007bff', fontWeight: 'bold' }}>承認</span> :
                                       <span style={{ color: '#dc3545', fontWeight: 'bold' }}>却下</span>
-                                    } <br />
-                                    <strong>合計金額:</strong> {formatAmount(s.expenses_data.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0).toString())}円 <br />
+                                    }</div>
+                                    <div><strong>合計金額:</strong> {formatAmount(s.expenses_data.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0).toString())}円</div>
                                     {s.printed_at && (
-                                      <><strong>印刷日時:</strong> {toJST(s.printed_at)} <br /></>
+                                      <div><strong>印刷日時:</strong> {toJST(s.printed_at)}</div>
                                     )}
                                     {s.printed_by && (
-                                      <><strong>印刷者ID:</strong> {s.printed_by} <br /></>
+                                      <div><strong>印刷者ID:</strong> {s.printed_by}</div>
                                     )}
                                     {((s.edit_count && s.edit_count > 0) || s.last_edited_at) && (
                                       <>
-                                        <span style={{ 
-                                          backgroundColor: '#ffc107', 
-                                          color: '#000', 
-                                          padding: '2px 6px', 
-                                          borderRadius: '4px', 
+                                        <span style={{
+                                          backgroundColor: '#ffc107',
+                                          color: '#000',
+                                          padding: '2px 6px',
+                                          borderRadius: '4px',
                                           fontSize: '12px',
                                           fontWeight: 'bold'
                                         }}>
                                           編集済み ({s.edit_count || 0}回)
-                                        </span> <br />
-                                        <strong>最終編集:</strong> {toJST(s.last_edited_at)} ({s.last_edited_by || ''}) <br />
+                                        </span>
+                                        <div><strong>最終編集:</strong> {toJST(s.last_edited_at)} ({s.last_edited_by || ''})</div>
                                       </>
                                     )}
                                     {s.approved_at && (
