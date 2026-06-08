@@ -140,6 +140,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
         start_date: r.start_date ?? '',
         end_date: r.end_date ?? '',
         reason: (r as unknown as { reason?: string | null }).reason ?? null,
+        rejected_reason: r.rejected_reason ?? null,
         requester: profileMap[r.user_id] || null,
       })));
     } finally {
