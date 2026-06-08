@@ -247,6 +247,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           start_date: r.start_date ?? '',
           end_date: r.end_date ?? '',
           purpose: r.purpose ?? null,
+          reason: r.reason ?? null,
+          rejected_reason: r.rejected_reason ?? null,
           approver: profileMap[r.approver_id ?? ''] || null,
         })));
       }
