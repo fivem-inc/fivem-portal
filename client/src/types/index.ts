@@ -144,8 +144,8 @@ export interface AdminLeaveRequest {
   created_at: string;
   profile?: { id: string; name: string; email: string } | null;
   requester?: { id: string; name: string; email: string } | null;
-  approver?: { id: string; name: string; email: string } | null;
-  approver2?: { id: string; name: string; email: string } | null;
+  approver?: { id: string; name: string; email: string; role_title?: string } | null;
+  approver2?: { id: string; name: string; email: string; role_title?: string } | null;
 }
 
 export interface ReportStats {
