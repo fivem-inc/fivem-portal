@@ -240,7 +240,15 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             .from('profiles').select('id, name, role_title').in('id', approverIds);
           if (profiles) profiles.forEach((p: { id: string; name: string; role_title: string }) => { profileMap[p.id] = p; });
         }
-        setHistory(data.map((r: AdminLeaveRequest) => ({ ...r, leave_type_other: r.leave_type_other ?? null, approver: profileMap[r.approver_id ?? ''] || null })));
+        setHistory(data.map((r: AdminLeaveRequest) => ({
+          ...r,
+          leave_type_other: r.leave_type_other ?? null,
+          leave_dates: r.leave_dates ?? null,
+          start_date: r.start_date ?? '',
+          end_date: r.end_date ?? '',
+          purpose: r.purpose ?? null,
+          approver: profileMap[r.approver_id ?? ''] || null,
+        })));
       }
       setLoadingHistory(false);
     };

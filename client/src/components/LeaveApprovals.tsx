@@ -134,7 +134,14 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
       const profileMap: Record<string, { name: string }> = {};
       (profiles || []).forEach((p: { id: string; name: string }) => { profileMap[p.id] = p; });
 
-      setRequests(data.map((r: AdminLeaveRequest) => ({ ...r, leave_type_other: r.leave_type_other ?? null, requester: profileMap[r.user_id] || null })));
+      setRequests(data.map((r: AdminLeaveRequest) => ({
+        ...r,
+        leave_type_other: r.leave_type_other ?? null,
+        start_date: r.start_date ?? '',
+        end_date: r.end_date ?? '',
+        reason: (r as unknown as { reason?: string | null }).reason ?? null,
+        requester: profileMap[r.user_id] || null,
+      })));
     } finally {
       setLoading(false);
     }
