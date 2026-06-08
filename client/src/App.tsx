@@ -108,7 +108,7 @@ const LeaveApprovedBanner: React.FC<{ userId: string }> = ({ userId }) => {
       if (!data) return;
       // localStorageで既読チェック
       const dismissed = JSON.parse(localStorage.getItem('leave_approved_dismissed') || '[]') as string[];
-      setApproved(data.filter((r: Submission) => !dismissed.includes(r.id)));
+      setApproved(data.filter((r: { id: string }) => !dismissed.includes(r.id)));
     };
     fetch();
   }, [userId]);
