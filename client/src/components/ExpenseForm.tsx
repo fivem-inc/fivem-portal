@@ -694,7 +694,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
               {/* 備考 */}
               <div style={{ marginBottom: 12 }}>
                 <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#6c757d', marginBottom: 3 }}>備考（任意）</div>
-                <input type="text" placeholder="経由地など" value={draftExpense.notes || ''} onChange={(e) => setDraftExpense(prev => ({ ...prev, notes: e.target.value }))} className="expense-input form-input-full" style={{ ...inp }} />
+                <input type="text" placeholder="経由地、経理担当者への連絡事項など" value={draftExpense.notes || ''} onChange={(e) => setDraftExpense(prev => ({ ...prev, notes: e.target.value }))} className="expense-input form-input-full" style={{ ...inp }} />
               </div>
 
               {/* 追加ボタン */}
