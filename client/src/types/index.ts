@@ -60,7 +60,7 @@ export interface AuthUser {
     name?: string;
     display_name?: string;
     full_name?: string;
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }
 

@@ -1,6 +1,7 @@
 import React from 'react';
 import { formatAmount } from '../../utils';
 import { useAdminPanel } from './AdminPanelContext';
+import type { ReportStats } from '../../types';
 
 const ReportsTab: React.FC = () => {
   const ctx = useAdminPanel();
@@ -69,7 +70,7 @@ const ReportsTab: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        {reportStats.userStats.map((user: any, index: number) => (
+                        {reportStats.userStats.map((user: ReportStats['userStats'][0], index: number) => (
                           <tr key={user.email} style={{ backgroundColor: index % 2 === 0 ? (isDarkMode ? '#495057' : '#f8f9fa') : (isDarkMode ? '#343a40' : 'white') }}>
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', color: isDarkMode ? '#fff' : '#000' }}>
                               <strong>{user.name}</strong><br />
@@ -119,7 +120,7 @@ const ReportsTab: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        {reportStats.monthlyStats.map((month: any, index: number) => (
+                        {reportStats.monthlyStats.map((month: ReportStats['monthlyStats'][0], index: number) => (
                           <tr key={month.month} style={{ backgroundColor: index % 2 === 0 ? (isDarkMode ? '#495057' : '#f8f9fa') : (isDarkMode ? '#343a40' : 'white') }}>
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '12px', fontWeight: 'bold', color: isDarkMode ? '#fff' : '#000' }}>
                               {month.month}

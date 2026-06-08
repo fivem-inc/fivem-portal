@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { sendLeaveSlack } from '../lib/leaveSlack';
 import { useDarkMode } from '../hooks/useDarkMode';
-import type { AuthUser } from '../types';
+import type { AuthUser, AdminLeaveRequest } from '../types';
 
 interface Props {
   user: AuthUser;
@@ -233,14 +233,14 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
       if (!error && data) {
-        const approverIds = [...new Set(data.map((r: any) => r.approver_id).filter(Boolean))];
+        const approverIds = [...new Set(data.map((r: AdminLeaveRequest) => r.approver_id).filter(Boolean))];
         let profileMap: Record<string, { name: string; role_title: string }> = {};
         if (approverIds.length > 0) {
           const { data: profiles } = await supabase
             .from('profiles').select('id, name, role_title').in('id', approverIds);
-          if (profiles) profiles.forEach((p: any) => { profileMap[p.id] = p; });
+          if (profiles) profiles.forEach((p: { id: string; name: string; role_title: string }) => { profileMap[p.id] = p; });
         }
-        setHistory(data.map((r: any) => ({ ...r, approver: profileMap[r.approver_id] || null })));
+        setHistory(data.map((r: AdminLeaveRequest) => ({ ...r, approver: profileMap[r.approver_id ?? ''] || null })));
       }
       setLoadingHistory(false);
     };
@@ -275,8 +275,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       }
       setSubmitted(true);
       setShowConfirm(false);
-    } catch (err: any) {
-      alert('送信に失敗しました。\n' + (err?.message || JSON.stringify(err)));
+    } catch (err: unknown) {
+      alert('送信に失敗しました。\n' + (err instanceof Error ? err.message : JSON.stringify(err)));
     } finally {
       setIsSubmitting(false);
     }
