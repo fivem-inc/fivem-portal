@@ -131,6 +131,8 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
   const [gps, setGps] = useState<{ lat: number; lng: number; accuracy: number } | null>(null);
   const [address, setAddress] = useState<string | null>(null);
   const [gpsLoading, setGpsLoading] = useState(false);
+  const [gpsAttempted, setGpsAttempted] = useState(false);
+  const [gpsUnavailable, setGpsUnavailable] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -157,6 +159,8 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
   const handleGetGps = () => {
     if (!navigator.geolocation) { alert('このブラウザはGPSに対応していません'); return; }
     setGpsLoading(true);
+    setGpsAttempted(true);
+    setGpsUnavailable(false);
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const { latitude: lat, longitude: lng, accuracy } = pos.coords;
@@ -180,8 +184,8 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
         setGpsLoading(false);
       },
       () => {
-        alert('位置情報の取得に失敗しました。ブラウザの許可設定を確認してください。');
         setGpsLoading(false);
+        // 失敗 → チェックボックスを表示（alertは出さない）
       }
     );
   };
@@ -208,6 +212,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
   const handleSubmitConfirm = () => {
     if (!effectiveLocation.trim()) { alert('場所を入力してください'); return; }
     if (category === 'その他' && !categoryOther.trim()) { alert('区分（その他）の内容を入力してください'); return; }
+    if (!gps && !gpsUnavailable) { alert('📍 現在地を取得してください。\n取得できない場合は「取得できませんでした」にチェックしてください。'); return; }
     setShowConfirm(true);
   };
 
@@ -358,20 +363,31 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
 
         {/* GPS */}
         <div style={{ marginBottom: 24 }}>
-          <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 8 }}>GPS位置情報</label>
+          <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 8 }}>
+            GPS位置情報 <span style={{ color: '#dc3545', fontSize: 13 }}>*</span>
+          </label>
           {gps ? (
             <div style={{ background: isDark ? '#1d3a1d' : '#e8f5e9', padding: '10px 14px', borderRadius: 6, fontSize: 14, color: isDark ? '#adf5ad' : '#155724' }}>
-              ✅ 取得済み（精度: 約{Math.round(gps.accuracy)}m）<br />
-              <a href={`https://www.google.com/maps?q=${gps.lat},${gps.lng}`} target="_blank" rel="noreferrer"
-                style={{ color: isDark ? '#80c8ff' : '#007bff' }}>
-                Googleマップで確認
-              </a>
+              ✅ 取得済み
             </div>
           ) : (
-            <button onClick={handleGetGps} disabled={gpsLoading}
-              style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid #28a745', background: '#28a745', color: 'white', cursor: 'pointer', fontSize: 15 }}>
-              {gpsLoading ? '取得中...' : '📍 現在地を取得'}
-            </button>
+            <div>
+              <button onClick={handleGetGps} disabled={gpsLoading}
+                style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid #28a745', background: '#28a745', color: 'white', cursor: 'pointer', fontSize: 15 }}>
+                {gpsLoading ? '取得中...' : '📍 現在地を取得'}
+              </button>
+              <div style={{ marginTop: 6, fontSize: 12, color: isDark ? '#adb5bd' : '#888', lineHeight: 1.6, textAlign: 'left' }}>
+                <div>・許可を求めるダイアログが出たら「今回のみ」または「許可」を選んでください</div>
+                <div>・位置情報はボタンを押したときのみ取得します（常時追跡はしません）</div>
+              </div>
+              {/* GPS取得試みたが失敗した場合のみチェックボックスを表示 */}
+              {gpsAttempted && !gpsLoading && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, padding: '10px 12px', background: isDark ? '#3a2800' : '#fff9e6', border: `1px solid ${isDark ? '#5a4400' : '#ffe499'}`, borderRadius: 6, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={gpsUnavailable} onChange={(e) => setGpsUnavailable(e.target.checked)} style={{ width: 18, height: 18, accentColor: '#fd7e14' }} />
+                  <span style={{ fontSize: 14, color: isDark ? '#ffe082' : '#b8860b' }}>取得できませんでした（チェックして送信）</span>
+                </label>
+              )}
+            </div>
           )}
         </div>
 
