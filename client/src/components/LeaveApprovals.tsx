@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { sendLeaveSlack } from '../lib/leaveSlack';
 import { useDarkMode } from '../hooks/useDarkMode';
-import type { AuthUser } from '../types';
+import type { AuthUser, AdminLeaveRequest } from '../types';
 
 interface Props {
   user: AuthUser;
@@ -125,16 +125,16 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
       if (!data || data.length === 0) { setRequests([]); return; }
 
       // 申請者名を取得
-      const userIds = [...new Set(data.map((r: any) => r.user_id))];
+      const userIds = [...new Set(data.map((r: AdminLeaveRequest) => r.user_id))];
       const { data: profiles } = await supabase
         .from('profiles')
         .select('id, name')
         .in('id', userIds);
 
       const profileMap: Record<string, { name: string }> = {};
-      (profiles || []).forEach((p: any) => { profileMap[p.id] = p; });
+      (profiles || []).forEach((p: { id: string; name: string }) => { profileMap[p.id] = p; });
 
-      setRequests(data.map((r: any) => ({ ...r, requester: profileMap[r.user_id] || null })));
+      setRequests(data.map((r: AdminLeaveRequest) => ({ ...r, requester: profileMap[r.user_id] || null })));
     } finally {
       setLoading(false);
     }

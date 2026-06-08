@@ -1,5 +1,6 @@
 import React from 'react';
 import { useAdminPanel } from './AdminPanelContext';
+import type { AdminLeaveRequest } from '../../types';
 
 const LeaveRequestsTab: React.FC = () => {
   const ctx = useAdminPanel();
@@ -23,7 +24,7 @@ const LeaveRequestsTab: React.FC = () => {
             })
             .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-          const getStatusDisplay = (req: any): { role: string; name: string; color: string } => {
+          const getStatusDisplay = (req: AdminLeaveRequest): { role: string; name: string; color: string } => {
             if (req.status === 'pending')          return { role: req.approver?.role_title ? `① ${req.approver.role_title}` : '①', name: req.approver?.name || '確認待ち', color: '#e67e22' };
             if (req.status === 'step2_pending')    return { role: '② マネージャー', name: req.approver2?.name || '-', color: '#d35400' };
             if (req.status === 'manager_approved') return { role: '③ 経理', name: '管理者', color: '#17a2b8' };
