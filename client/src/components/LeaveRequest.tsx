@@ -354,14 +354,14 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       {/* タブ切替 */}
       <div style={{ display: 'flex', marginBottom: 0, borderRadius: '10px 10px 0 0', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
         <button
-          onClick={() => { setTab('form'); window.scrollTo(0, 0); }}
+          onClick={() => { setTab('form'); window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }); document.documentElement.scrollTop = 0; document.body.scrollTop = 0; }}
           style={{ flex: 1, padding: '12px', background: tab === 'form' ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'), color: tab === 'form' ? 'white' : text, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: tab === 'form' ? 'bold' : 'normal' }}
         >
           🌿 新規申請
         </button>
         {!leaveRequestEnabled && (
           <button
-            onClick={() => { setTab('history'); window.scrollTo(0, 0); }}
+            onClick={() => { setTab('history'); window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }); document.documentElement.scrollTop = 0; document.body.scrollTop = 0; }}
             style={{ flex: 1, padding: '12px', background: tab === 'history' ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'), color: tab === 'history' ? 'white' : text, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: tab === 'history' ? 'bold' : 'normal' }}
           >
             📋 申請履歴
