@@ -4,7 +4,7 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import type { AuthUser } from '../types';
 
 interface Props {
-  user: AuthUser;
+  user?: AuthUser;
   roleTitle?: string;
   isAdmin?: boolean;
 }
@@ -298,7 +298,7 @@ const SpCalendar: React.FC<{
 };
 
 // ===== メインコンポーネント =====
-const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin }) => {
+const CalendarPage: React.FC<Props> = ({ roleTitle, isAdmin }) => {
   const isDark = useDarkMode();
   const bg = isDark ? '#343a40' : '#fff';
   const textColor = isDark ? '#fff' : '#333';
