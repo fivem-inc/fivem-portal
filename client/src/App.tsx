@@ -13,6 +13,7 @@ import MonthlyApplicationStatus from './components/MonthlyApplicationStatus';
 import BusinessTripReportForm from './components/BusinessTripReport';
 import LeaveRequestForm from './components/LeaveRequest';
 import LeaveApprovals from './components/LeaveApprovals';
+import CalendarPage from './pages/CalendarPage';
 import { AuthProvider } from './contexts/AuthContext.tsx';
 import { useAuth } from './hooks/useAuth';
 import { supabase } from './lib/supabaseClient';
@@ -44,7 +45,9 @@ const ProtectedLayout: React.FC = () => {
 };
 
 // ナビゲーションバー
-const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean }> = ({ isAdmin: _isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove }) => {
+const CALENDAR_ROLES = ['リーダー', 'マネージャー', '社長', '管理者'];
+
+const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean; roleTitle?: string }> = ({ isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove, roleTitle }) => {
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -83,6 +86,17 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
             }}
           >
             🌿 休暇申請
+          </button>
+        )}
+        {(isAdmin || (roleTitle && CALENDAR_ROLES.includes(roleTitle))) && (
+          <button
+            onClick={() => navigate('/calendar')}
+            style={{
+              padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer',
+              background: location.pathname === '/calendar' ? '#4a90d9' : '#444', color: 'white', fontSize: 14
+            }}
+          >
+📅 休暇
           </button>
         )}
       </div>
@@ -276,7 +290,7 @@ const Dashboard: React.FC = () => {
 
   return (
     <div style={{ maxWidth: 800, margin: '0 auto', position: 'relative', padding: '110px 16px 0', boxSizing: 'border-box' as const, width: '100%' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} />
 
       {/* 有給申請フォーム送信通知バナー（パート向け） */}
       {leaveRequestEnabled && (
@@ -341,11 +355,11 @@ const Dashboard: React.FC = () => {
 
 // 出張報告ページ
 const TripReportPage: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, canLeave, handleLogout } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, handleLogout } = useAuth();
   if (!user) return <div>読み込んでいます...</div>;
   return (
     <div style={{ padding: '110px 16px 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} />
       <BusinessTripReportForm user={user} profileName={profileName} />
     </div>
   );
@@ -357,7 +371,7 @@ const LeaveRequestPage: React.FC = () => {
   if (!user) return <div>読み込んでいます...</div>;
   return (
     <div style={{ padding: '110px 16px 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} />
       <LeaveRequestForm user={user} profileName={profileName} roleTitle={roleTitle} leaveRequestEnabled={leaveRequestEnabled} />
     </div>
   );
@@ -370,8 +384,22 @@ const LeaveApprovalsPage: React.FC = () => {
   if (roleTitle && !isApprover) return <Navigate to="/" />;
   return (
     <div style={{ padding: '110px 16px 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} />
       <LeaveApprovals user={user} profileName={profileName} isAdmin={isAdmin} roleTitle={roleTitle} />
+    </div>
+  );
+};
+
+// チームカレンダーページ
+const TeamCalendarPage: React.FC = () => {
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, handleLogout, loading } = useAuth();
+  if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
+  if (roleTitle && !isAdmin && !CALENDAR_ROLES.includes(roleTitle)) return <Navigate to="/" />;
+  return (
+    <div style={{ padding: '110px 16px 0' }}>
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} />
+      <h2 style={{ marginBottom: 16, fontSize: 18, color: '#333' }}>📅 休暇カレンダー</h2>
+      <CalendarPage user={user} roleTitle={roleTitle} isAdmin={isAdmin} />
     </div>
   );
 };
@@ -390,6 +418,7 @@ function App() {
             <Route path="/trip-report" element={<TripReportPage />} />
             <Route path="/leave" element={<LeaveRequestPage />} />
             <Route path="/leave-approvals" element={<LeaveApprovalsPage />} />
+            <Route path="/calendar" element={<TeamCalendarPage />} />
             <Route path="/account" element={<AccountSettings />} />
             <Route path="/change-email" element={<ChangeEmail />} />
             <Route path="/change-password" element={<ChangePassword />} />

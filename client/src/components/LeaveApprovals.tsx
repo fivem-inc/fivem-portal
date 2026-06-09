@@ -166,8 +166,10 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
 
   // 承認実行（一人目以外）
   const handleApprove = async (req: LeaveReq) => {
+    // 調整給はマネージャー受理で完了（経理・社長ステップをスキップ）
+    const isChosei = req.leave_type === '調整休';
     const nextMap: Record<string, string> = {
-      step2_pending:    'manager_approved',
+      step2_pending:    isChosei ? 'approved' : 'manager_approved',
       manager_approved: 'admin_approved',
       admin_approved:   'approved',
     };
