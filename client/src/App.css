@@ -1,18 +1,10 @@
 #root {
-  max-width: 1280px;
   width: 100%;
   margin: 0 auto;
-  padding: 2rem;
+  padding: 0;
   text-align: center;
-  overflow-x: hidden; /* 横スクロールを防ぐ */
-}
-
-/* スマホでは余白を小さくして横スクロールを防ぐ */
-@media (max-width: 600px) {
-  #root {
-    padding: 0.25rem 0.75rem;
-    overflow-x: hidden;
-  }
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 
 .logo {

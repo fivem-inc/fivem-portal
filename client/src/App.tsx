@@ -275,7 +275,7 @@ const Dashboard: React.FC = () => {
   }
 
   return (
-    <div style={{ maxWidth: 800, margin: '0 auto', position: 'relative', paddingTop: '110px' }}>
+    <div style={{ maxWidth: 800, margin: '0 auto', position: 'relative', padding: '110px 16px 0', boxSizing: 'border-box' as const, width: '100%' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} />
 
       {/* 有給申請フォーム送信通知バナー（パート向け） */}
@@ -344,7 +344,7 @@ const TripReportPage: React.FC = () => {
   const { user, isAdmin, isApprover, profileName, canLeave, handleLogout } = useAuth();
   if (!user) return <div>読み込んでいます...</div>;
   return (
-    <div style={{ paddingTop: '110px' }}>
+    <div style={{ padding: '110px 16px 0' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} />
       <BusinessTripReportForm user={user} profileName={profileName} />
     </div>
@@ -356,7 +356,7 @@ const LeaveRequestPage: React.FC = () => {
   const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, leaveRequestEnabled, handleLogout } = useAuth();
   if (!user) return <div>読み込んでいます...</div>;
   return (
-    <div style={{ paddingTop: '110px' }}>
+    <div style={{ padding: '110px 16px 0' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} />
       <LeaveRequestForm user={user} profileName={profileName} roleTitle={roleTitle} leaveRequestEnabled={leaveRequestEnabled} />
     </div>
@@ -369,7 +369,7 @@ const LeaveApprovalsPage: React.FC = () => {
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   if (roleTitle && !isApprover) return <Navigate to="/" />;
   return (
-    <div style={{ paddingTop: '110px' }}>
+    <div style={{ padding: '110px 16px 0' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} />
       <LeaveApprovals user={user} profileName={profileName} isAdmin={isAdmin} roleTitle={roleTitle} />
     </div>
