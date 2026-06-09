@@ -514,45 +514,66 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       const rejectedSubmissions = submissions.filter(s => s.status === 'rejected').length;
       const approvalRate = totalSubmissions > 0 ? (approvedSubmissions / totalSubmissions * 100).toFixed(1) : '0';
 
-      const calcAmounts = (exps: Expense[]) => ({
-        regular: exps.filter(e => e.type === 'regular').reduce((s, e) => s + (parseInt(e.amount || '0') || 0), 0),
-        other: exps.filter(e => e.type !== 'regular').reduce((s, e) => s + (parseInt(e.amount || '0') || 0), 0),
-      });
+      const calcAmounts = (exps: Expense[]) => {
+        const sum = (type: string) => exps.filter(e => e.type === type).reduce((s, e) => s + (parseInt(e.amount || '0') || 0), 0);
+        return {
+          regular: sum('regular'),
+          oneTime: sum('one_time'),
+          businessTrip: sum('business_trip'),
+          other: sum('other'),
+        };
+      };
 
       let overviewRegular = 0;
       let overviewOther = 0;
       const userStats = users.map(user => {
         const userSubmissions = submissions.filter(s => s.profiles?.email === user.email);
         const userApproved = userSubmissions.filter(s => s.status === 'approved');
+        const userPending = userSubmissions.filter(s => s.status === 'pending');
         const allApprovedExps = userApproved.flatMap(s => s.expenses_data);
-        const { regular, other } = calcAmounts(allApprovedExps);
+        const allPendingExps = userPending.flatMap(s => s.expenses_data);
+        const { regular, oneTime, businessTrip, other } = calcAmounts(allApprovedExps);
+        const { regular: pR, oneTime: pO, businessTrip: pB, other: pOt } = calcAmounts(allPendingExps);
         overviewRegular += regular;
-        overviewOther += other;
+        overviewOther += oneTime + businessTrip + other;
         return {
           name: user.name || user.email || '', email: user.email || '',
           totalSubmissions: userSubmissions.length, approvedSubmissions: userApproved.length,
-          totalAmount: regular + other, regularAmount: regular, otherAmount: other,
-          approvalRate: userSubmissions.length > 0 ? (userApproved.length / userSubmissions.length * 100).toFixed(1) : '0'
+          totalAmount: regular + oneTime + businessTrip + other, regularAmount: regular, otherAmount: oneTime + businessTrip + other,
+          approvalRate: userSubmissions.length > 0 ? (userApproved.length / userSubmissions.length * 100).toFixed(1) : '0',
+          apRegular: regular + pR, apOneTime: oneTime + pO, apBusinessTrip: businessTrip + pB, apOther: other + pOt,
         };
       }).sort((a, b) => b.totalAmount - a.totalAmount);
 
       const monthlyStats = submissions.reduce((acc, submission) => {
         const date = new Date(submission.created_at);
         const monthKey = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}`;
-        if (!acc[monthKey]) acc[monthKey] = { month: monthKey, total: 0, approved: 0, rejected: 0, pending: 0, amount: 0, regularAmount: 0, otherAmount: 0 };
+        if (!acc[monthKey]) acc[monthKey] = { month: monthKey, total: 0, approved: 0, rejected: 0, pending: 0, amount: 0, regularAmount: 0, oneTimeAmount: 0, businessTripAmount: 0, otherAmount: 0, pendingRegularAmount: 0, pendingOneTimeAmount: 0, pendingBusinessTripAmount: 0, pendingOtherAmount: 0, rejectedRegularAmount: 0, rejectedOneTimeAmount: 0, rejectedBusinessTripAmount: 0, rejectedOtherAmount: 0 };
         acc[monthKey].total++;
         acc[monthKey][submission.status as 'approved' | 'rejected' | 'pending']++;
+        const { regular, oneTime, businessTrip, other } = calcAmounts(submission.expenses_data);
         if (submission.status === 'approved') {
-          const { regular, other } = calcAmounts(submission.expenses_data);
-          acc[monthKey].amount += regular + other;
+          acc[monthKey].amount += regular + oneTime + businessTrip + other;
           acc[monthKey].regularAmount += regular;
+          acc[monthKey].oneTimeAmount += oneTime;
+          acc[monthKey].businessTripAmount += businessTrip;
           acc[monthKey].otherAmount += other;
+        } else if (submission.status === 'pending') {
+          acc[monthKey].pendingRegularAmount += regular;
+          acc[monthKey].pendingOneTimeAmount += oneTime;
+          acc[monthKey].pendingBusinessTripAmount += businessTrip;
+          acc[monthKey].pendingOtherAmount += other;
+        } else if (submission.status === 'rejected') {
+          acc[monthKey].rejectedRegularAmount += regular;
+          acc[monthKey].rejectedOneTimeAmount += oneTime;
+          acc[monthKey].rejectedBusinessTripAmount += businessTrip;
+          acc[monthKey].rejectedOtherAmount += other;
         }
         return acc;
       }, {} as Record<string, ReportStats['monthlyStats'][number]>);
 
       // 休暇申請データ取得
-      const { data: leaveData } = await supabase.from('leave_requests').select('status, created_at, user_id').order('created_at', { ascending: false });
+      const { data: leaveData } = await supabase.from('leave_requests').select('status, created_at, user_id, leave_type, leave_dates').order('created_at', { ascending: false });
       const leaves = leaveData || [];
       const leaveApproved = leaves.filter((l: { status: string }) => l.status === 'approved' || l.status === 'admin_approved' || l.status === 'manager_approved');
       const leavePending = leaves.filter((l: { status: string }) => ['pending', 'leader_approved'].includes(l.status));
@@ -567,25 +588,153 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
         acc[mk][st as 'approved' | 'rejected' | 'pending']++;
         return acc;
       }, {});
-      const leaveUserMap: Record<string, { total: number; approved: number }> = {};
-      leaves.forEach((l: { user_id: string; status: string }) => {
-        if (!leaveUserMap[l.user_id]) leaveUserMap[l.user_id] = { total: 0, approved: 0 };
-        leaveUserMap[l.user_id].total++;
-        if (l.status === 'approved' || l.status === 'admin_approved' || l.status === 'manager_approved') leaveUserMap[l.user_id].approved++;
+      type LeaveUserEntry = { total: number; approved: number; pending: number; byType: Record<string, { total: number; approved: number; pending: number; rejected: number; totalDays: number; approvedDays: number; pendingDays: number; rejectedDays: number }> };
+      const leaveUserMap: Record<string, LeaveUserEntry> = {};
+      leaves.forEach((l: { user_id: string; status: string; leave_type?: string; leave_dates?: string | null }) => {
+        if (!leaveUserMap[l.user_id]) leaveUserMap[l.user_id] = { total: 0, approved: 0, pending: 0, byType: {} };
+        const entry = leaveUserMap[l.user_id];
+        const t = l.leave_type || 'その他';
+        if (!entry.byType[t]) entry.byType[t] = { total: 0, approved: 0, pending: 0, rejected: 0, totalDays: 0, approvedDays: 0, pendingDays: 0, rejectedDays: 0 };
+        const days = (() => { try { const d = JSON.parse(l.leave_dates || '[]'); return Array.isArray(d) ? d.length : 1; } catch { return 1; } })();
+        const st = (l.status === 'approved' || l.status === 'admin_approved' || l.status === 'manager_approved') ? 'approved' : l.status === 'rejected' ? 'rejected' : 'pending';
+        entry.total++;
+        entry.byType[t].total++; entry.byType[t].totalDays += days;
+        entry.byType[t][st as 'approved' | 'pending' | 'rejected']++;
+        entry.byType[t][`${st}Days` as 'approvedDays' | 'pendingDays' | 'rejectedDays'] += days;
+        if (st === 'approved') entry.approved++;
+        if (st === 'pending') entry.pending++;
       });
       const leaveUserStats = users
         .filter(u => leaveUserMap[u.id])
         .map(u => ({ name: u.name || u.email || '', email: u.email || '', ...leaveUserMap[u.id] }))
         .sort((a, b) => b.total - a.total);
 
+      // 年度別・年月別ユーザー集計
+      const userStatsByYear: ReportStats['userStatsByYear'] = {};
+      const userStatsByYearMonth: ReportStats['userStatsByYearMonth'] = {};
+      const addToUserMap = (map: ReportStats['userStatsByYear'], key: string, sub: typeof submissions[0], email: string, name: string) => {
+        if (!map[key]) map[key] = [];
+        let entry = map[key].find(e => e.email === email);
+        if (!entry) { entry = { name, email, apRegular: 0, apOneTime: 0, apBusinessTrip: 0, apOther: 0, approvedCount: 0, pendingCount: 0 }; map[key].push(entry); }
+        if (sub.status === 'approved' || sub.status === 'pending') {
+          const { regular, oneTime, businessTrip, other } = calcAmounts(sub.expenses_data);
+          entry.apRegular += regular; entry.apOneTime += oneTime; entry.apBusinessTrip += businessTrip; entry.apOther += other;
+        }
+        if (sub.status === 'approved') entry.approvedCount++;
+        if (sub.status === 'pending') entry.pendingCount++;
+      };
+      submissions.forEach(sub => {
+        const d = new Date(sub.created_at);
+        const year = d.getFullYear().toString();
+        const month = (d.getMonth() + 1).toString().padStart(2, '0');
+        const email = sub.profiles?.email || '';
+        const name = users.find(u => u.email === email)?.name || email;
+        addToUserMap(userStatsByYear, year, sub, email, name);
+        if (!userStatsByYearMonth[year]) userStatsByYearMonth[year] = {};
+        addToUserMap(userStatsByYearMonth[year], month, sub, email, name);
+      });
+      const sortByTotal = (arr: ReportStats['userStatsByYear'][string]) =>
+        arr.sort((a, b) => (b.apRegular + b.apOneTime + b.apBusinessTrip + b.apOther) - (a.apRegular + a.apOneTime + a.apBusinessTrip + a.apOther));
+      Object.keys(userStatsByYear).forEach(y => sortByTotal(userStatsByYear[y]));
+      Object.keys(userStatsByYearMonth).forEach(y => Object.keys(userStatsByYearMonth[y]).forEach(m => sortByTotal(userStatsByYearMonth[y][m])));
+
       setReportStats({
         overview: { totalSubmissions, pendingSubmissions, approvedSubmissions, rejectedSubmissions, approvalRate, regularAmount: overviewRegular, otherAmount: overviewOther },
         userStats,
+        userStatsByYear,
+        userStatsByYearMonth,
         monthlyStats: Object.values(monthlyStats).sort((a, b) => b.month.localeCompare(a.month)),
         leaveStats: {
           total: leaves.length, pending: leavePending.length, approved: leaveApproved.length, rejected: leaveRejected.length,
+          byType: leaves.reduce((acc: ReportStats['leaveStats']['byType'], l: { status: string; leave_type?: string; leave_dates?: string | null }) => {
+            const t = l.leave_type || 'その他';
+            if (!acc[t]) acc[t] = { total: 0, approved: 0, pending: 0, rejected: 0, totalDays: 0, approvedDays: 0, pendingDays: 0, rejectedDays: 0 };
+            const days = (() => { try { const d = JSON.parse(l.leave_dates || '[]'); return Array.isArray(d) ? d.length : 1; } catch { return 1; } })();
+            acc[t].total++; acc[t].totalDays += days;
+            const st = (l.status === 'approved' || l.status === 'admin_approved' || l.status === 'manager_approved') ? 'approved'
+              : l.status === 'rejected' ? 'rejected' : 'pending';
+            acc[t][st as 'approved' | 'pending' | 'rejected']++;
+            acc[t][`${st}Days` as 'approvedDays' | 'pendingDays' | 'rejectedDays'] += days;
+            return acc;
+          }, {}),
           monthlyStats: Object.values(leaveMonthly).sort((a, b) => b.month.localeCompare(a.month)),
           userStats: leaveUserStats,
+          leaveStatsByYear: (() => {
+            const getFY = (dateStr: string) => { const d = new Date(dateStr); const m = d.getMonth() + 1; return m >= 4 ? d.getFullYear() : d.getFullYear() - 1; };
+            type FYUserMap = Record<string, LeaveUserEntry>;
+            type FYData = { total: number; pending: number; approved: number; rejected: number; byType: LeaveUserEntry['byType']; userMap: FYUserMap };
+            const fyMap: Record<string, FYData> = {};
+            const fymMap: Record<string, Record<string, FYData>> = {};
+            const addToFYData = (fyD: FYData, l: { user_id: string; status: string; leave_type?: string; leave_dates?: string | null }, st: string, t: string, days: number) => {
+              if (!fyD.byType[t]) fyD.byType[t] = { total: 0, approved: 0, pending: 0, rejected: 0, totalDays: 0, approvedDays: 0, pendingDays: 0, rejectedDays: 0 };
+              fyD.total++; fyD[st as 'approved' | 'pending' | 'rejected']++;
+              fyD.byType[t].total++; fyD.byType[t].totalDays += days;
+              fyD.byType[t][st as 'approved' | 'pending' | 'rejected']++;
+              fyD.byType[t][`${st}Days` as 'approvedDays' | 'pendingDays' | 'rejectedDays'] += days;
+              if (!fyD.userMap[l.user_id]) fyD.userMap[l.user_id] = { total: 0, approved: 0, pending: 0, byType: {} };
+              const ue = fyD.userMap[l.user_id];
+              if (!ue.byType[t]) ue.byType[t] = { total: 0, approved: 0, pending: 0, rejected: 0, totalDays: 0, approvedDays: 0, pendingDays: 0, rejectedDays: 0 };
+              ue.total++; ue.byType[t].total++; ue.byType[t].totalDays += days;
+              ue.byType[t][st as 'approved' | 'pending' | 'rejected']++;
+              ue.byType[t][`${st}Days` as 'approvedDays' | 'pendingDays' | 'rejectedDays'] += days;
+              if (st === 'approved') ue.approved++;
+              if (st === 'pending') ue.pending++;
+            };
+            leaves.forEach((l: { user_id: string; status: string; leave_type?: string; leave_dates?: string | null; created_at: string }) => {
+              const fy = String(getFY(l.created_at));
+              const mo = (new Date(l.created_at).getMonth() + 1).toString().padStart(2, '0');
+              const t = l.leave_type || 'その他';
+              const days = (() => { try { const d = JSON.parse(l.leave_dates || '[]'); return Array.isArray(d) ? d.length : 1; } catch { return 1; } })();
+              const st = (l.status === 'approved' || l.status === 'admin_approved' || l.status === 'manager_approved') ? 'approved' : l.status === 'rejected' ? 'rejected' : 'pending';
+              if (!fyMap[fy]) fyMap[fy] = { total: 0, pending: 0, approved: 0, rejected: 0, byType: {}, userMap: {} };
+              addToFYData(fyMap[fy], l, st, t, days);
+              if (!fymMap[fy]) fymMap[fy] = {};
+              if (!fymMap[fy][mo]) fymMap[fy][mo] = { total: 0, pending: 0, approved: 0, rejected: 0, byType: {}, userMap: {} };
+              addToFYData(fymMap[fy][mo], l, st, t, days);
+            });
+            const toStats = (data: FYData) => ({
+              total: data.total, pending: data.pending, approved: data.approved, rejected: data.rejected,
+              byType: data.byType,
+              userStats: users.filter(u => data.userMap[u.id]).map(u => ({ name: u.name || u.email || '', email: u.email || '', ...data.userMap[u.id] })).sort((a, b) => b.total - a.total),
+            });
+            return Object.fromEntries(Object.entries(fyMap).map(([fy, data]) => [fy, toStats(data)]));
+          })(),
+          leaveStatsByYearMonth: (() => {
+            const getFY = (dateStr: string) => { const d = new Date(dateStr); const m = d.getMonth() + 1; return m >= 4 ? d.getFullYear() : d.getFullYear() - 1; };
+            type FYUserMap = Record<string, LeaveUserEntry>;
+            type FYData = { total: number; pending: number; approved: number; rejected: number; byType: LeaveUserEntry['byType']; userMap: FYUserMap };
+            const addToFYData = (fyD: FYData, l: { user_id: string; status: string; leave_type?: string; leave_dates?: string | null }, st: string, t: string, days: number) => {
+              if (!fyD.byType[t]) fyD.byType[t] = { total: 0, approved: 0, pending: 0, rejected: 0, totalDays: 0, approvedDays: 0, pendingDays: 0, rejectedDays: 0 };
+              fyD.total++; fyD[st as 'approved' | 'pending' | 'rejected']++;
+              fyD.byType[t].total++; fyD.byType[t].totalDays += days;
+              fyD.byType[t][st as 'approved' | 'pending' | 'rejected']++;
+              fyD.byType[t][`${st}Days` as 'approvedDays' | 'pendingDays' | 'rejectedDays'] += days;
+              if (!fyD.userMap[l.user_id]) fyD.userMap[l.user_id] = { total: 0, approved: 0, pending: 0, byType: {} };
+              const ue = fyD.userMap[l.user_id];
+              if (!ue.byType[t]) ue.byType[t] = { total: 0, approved: 0, pending: 0, rejected: 0, totalDays: 0, approvedDays: 0, pendingDays: 0, rejectedDays: 0 };
+              ue.total++; ue.byType[t].total++; ue.byType[t].totalDays += days;
+              ue.byType[t][st as 'approved' | 'pending' | 'rejected']++;
+              ue.byType[t][`${st}Days` as 'approvedDays' | 'pendingDays' | 'rejectedDays'] += days;
+              if (st === 'approved') ue.approved++;
+              if (st === 'pending') ue.pending++;
+            };
+            const fymMap: Record<string, Record<string, FYData>> = {};
+            leaves.forEach((l: { user_id: string; status: string; leave_type?: string; leave_dates?: string | null; created_at: string }) => {
+              const fy = String(getFY(l.created_at));
+              const mo = (new Date(l.created_at).getMonth() + 1).toString().padStart(2, '0');
+              const t = l.leave_type || 'その他';
+              const days = (() => { try { const d = JSON.parse(l.leave_dates || '[]'); return Array.isArray(d) ? d.length : 1; } catch { return 1; } })();
+              const st = (l.status === 'approved' || l.status === 'admin_approved' || l.status === 'manager_approved') ? 'approved' : l.status === 'rejected' ? 'rejected' : 'pending';
+              if (!fymMap[fy]) fymMap[fy] = {};
+              if (!fymMap[fy][mo]) fymMap[fy][mo] = { total: 0, pending: 0, approved: 0, rejected: 0, byType: {}, userMap: {} };
+              addToFYData(fymMap[fy][mo], l, st, t, days);
+            });
+            return Object.fromEntries(Object.entries(fymMap).map(([fy, months]) => [fy, Object.fromEntries(Object.entries(months).map(([mo, data]) => [mo, {
+              total: data.total, pending: data.pending, approved: data.approved, rejected: data.rejected,
+              byType: data.byType,
+              userStats: users.filter(u => data.userMap[u.id]).map(u => ({ name: u.name || u.email || '', email: u.email || '', ...data.userMap[u.id] })).sort((a, b) => b.total - a.total),
+            }]))]));
+          })(),
         },
       });
     } catch (error) {
@@ -643,7 +792,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   }, [activeTab, fetchUsers, fetchTripReports, fetchMasterOptions, fetchLeaveRequests]);
 
   useEffect(() => {
-    if (activeTab === 'reports' && users.length > 0 && submissions.length > 0) fetchReportStats();
+    if (activeTab === 'reports' && users.length > 0 && submissions.length > 0 && !reportStats) fetchReportStats();
   }, [activeTab, users, submissions, fetchReportStats]);
 
   const handleApproval = useCallback(async (id: string, newStatus: 'pending' | 'approved' | 'rejected', reason?: string) => {

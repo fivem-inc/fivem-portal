@@ -167,7 +167,32 @@ export interface ReportStats {
     regularAmount: number;
     otherAmount: number;
     approvalRate: string;
+    // 承認済み+申請中 の4分類金額
+    apRegular: number;
+    apOneTime: number;
+    apBusinessTrip: number;
+    apOther: number;
   }[];
+  userStatsByYear: Record<string, {
+    name: string;
+    email: string;
+    apRegular: number;
+    apOneTime: number;
+    apBusinessTrip: number;
+    apOther: number;
+    approvedCount: number;
+    pendingCount: number;
+  }[]>;
+  userStatsByYearMonth: Record<string, Record<string, {
+    name: string;
+    email: string;
+    apRegular: number;
+    apOneTime: number;
+    apBusinessTrip: number;
+    apOther: number;
+    approvedCount: number;
+    pendingCount: number;
+  }[]>>;
   monthlyStats: {
     month: string;
     total: number;
@@ -175,15 +200,39 @@ export interface ReportStats {
     rejected: number;
     pending: number;
     amount: number;
+    // 承認済み
     regularAmount: number;
+    oneTimeAmount: number;
+    businessTripAmount: number;
     otherAmount: number;
+    // 申請中
+    pendingRegularAmount: number;
+    pendingOneTimeAmount: number;
+    pendingBusinessTripAmount: number;
+    pendingOtherAmount: number;
+    // 却下
+    rejectedRegularAmount: number;
+    rejectedOneTimeAmount: number;
+    rejectedBusinessTripAmount: number;
+    rejectedOtherAmount: number;
   }[];
   leaveStats: {
     total: number;
     pending: number;
     approved: number;
     rejected: number;
+    byType: Record<string, { total: number; approved: number; pending: number; rejected: number; totalDays: number; approvedDays: number; pendingDays: number; rejectedDays: number }>;
     monthlyStats: { month: string; total: number; approved: number; rejected: number; pending: number; }[];
-    userStats: { name: string; email: string; total: number; approved: number; }[];
+    userStats: { name: string; email: string; total: number; approved: number; pending: number; byType: Record<string, { total: number; approved: number; pending: number; rejected: number; totalDays: number; approvedDays: number; pendingDays: number; rejectedDays: number }> }[];
+    leaveStatsByYear: Record<string, {
+      total: number; pending: number; approved: number; rejected: number;
+      byType: Record<string, { total: number; approved: number; pending: number; rejected: number; totalDays: number; approvedDays: number; pendingDays: number; rejectedDays: number }>;
+      userStats: { name: string; email: string; total: number; approved: number; pending: number; byType: Record<string, { total: number; approved: number; pending: number; rejected: number; totalDays: number; approvedDays: number; pendingDays: number; rejectedDays: number }> }[];
+    }>;
+    leaveStatsByYearMonth: Record<string, Record<string, {
+      total: number; pending: number; approved: number; rejected: number;
+      byType: Record<string, { total: number; approved: number; pending: number; rejected: number; totalDays: number; approvedDays: number; pendingDays: number; rejectedDays: number }>;
+      userStats: { name: string; email: string; total: number; approved: number; pending: number; byType: Record<string, { total: number; approved: number; pending: number; rejected: number; totalDays: number; approvedDays: number; pendingDays: number; rejectedDays: number }> }[];
+    }>>;
   };
 }
