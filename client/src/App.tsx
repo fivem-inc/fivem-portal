@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useLayoutEffect } from 'react';
 import { Routes, Route, Navigate, Outlet, BrowserRouter, useNavigate, useLocation } from 'react-router-dom';
 import SignIn from './pages/SignIn';
 import ResetPassword from './pages/ResetPassword';
@@ -22,7 +22,13 @@ import type { Expense, Submission } from './types';
 // ページ遷移のたびにスクロールをトップへ戻す
 const ScrollToTop: React.FC = () => {
   const { pathname } = useLocation();
-  useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
+  // useLayoutEffect fires synchronously before paint, preventing the "content appears lower" flash
+  useLayoutEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
+    // Also reset document.documentElement and body in case either is the scroll container
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+  }, [pathname]);
   return null;
 };
 
@@ -269,7 +275,7 @@ const Dashboard: React.FC = () => {
   }
 
   return (
-    <div style={{ maxWidth: 800, margin: '40px auto', position: 'relative', paddingTop: '80px' }}>
+    <div style={{ maxWidth: 800, margin: '0 auto', position: 'relative', paddingTop: '80px' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} />
 
       {/* 有給申請フォーム送信通知バナー（パート向け） */}
