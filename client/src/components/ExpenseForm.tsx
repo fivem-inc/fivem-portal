@@ -116,6 +116,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
   const [confirmedExpenses, setConfirmedExpenses] = useState<typeof expenses>([]);
   const [recentTemplates, setRecentTemplates] = useState<Expense[]>([]);
   const [showAllTemplates, setShowAllTemplates] = useState(false);
+  const [templateSource, setTemplateSource] = useState<'route' | 'copy' | null>(null);
   const [highlightFields, setHighlightFields] = useState<Set<string>>(new Set());
   const withDay = (d: string, short = false) => {
     if (!d) return d;
@@ -320,6 +321,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     } else {
       setDraftExpense(emptyDraft);
       setHighlightFields(new Set());
+      setTemplateSource(null);
       if (onTemplateApplied) onTemplateApplied();
     }
     setFormError('');
@@ -330,6 +332,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     const returnExpense: Expense = { ...draftExpense, from_station: draftExpense.to_station, to_station: draftExpense.from_station };
     setExpenses(prev => [...prev, { ...draftExpense }, returnExpense]);
     setDraftExpense(emptyDraft);
+    setTemplateSource(null);
     if (onTemplateApplied) onTemplateApplied();
     setFormError('');
   }, [draftExpense, emptyDraft, setExpenses, onTemplateApplied, validateDraft]);
@@ -432,7 +435,8 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       
       setSubmitSuccess(true);
       setFormError('');
-      setExpenses([{ type: 'one_time', from_station: '', to_station: '', amount: '', start_date: '', end_date: '', workplace: '' }]);
+      setTemplateSource(null);
+      setExpenses([]);
       onSubmissionComplete();
 
       setTimeout(() => {
@@ -503,6 +507,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                   onClick={() => {
                     setDraftExpense(toDraft(tpl));
                     setHighlightFields(new Set(['start_date']));
+                    setTemplateSource('route');
                   }}
                   style={{ background: '#1976d2', color: '#fff', fontSize: 11, padding: '4px 10px', border: 'none', borderRadius: 4, cursor: 'pointer', flexShrink: 0 }}
                 >
@@ -529,6 +534,13 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
           <div style={{ background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 6, padding: '8px 12px', marginBottom: 8, fontSize: 13, color: '#856404', display: 'flex', alignItems: 'center', gap: 8 }}>
             <span>📋</span>
             <span>テンプレート適用中：残り <strong>{templateQueue.length}件</strong>（利用日を入力して「追加」してください）</span>
+          </div>
+        )}
+        {/* 複製・よく使う経路からの適用バナー */}
+        {templateSource !== null && templateQueue.length === 0 && (
+          <div style={{ background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 6, padding: '8px 12px', marginBottom: 8, fontSize: 13, color: '#856404', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>📋</span>
+            <span>{templateSource === 'route' ? 'よく使う経路を適用中' : '複製を適用中'}（利用日を入力して「追加」してください）</span>
           </div>
         )}
 
@@ -629,6 +641,8 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                       <span style={{ color: isDarkMode ? '#adb5bd' : '#999', padding: '0 8px', fontSize: 12 }}>{showTransportPicker ? '▲' : '▼'}</span>
                     </div>
                     {showTransportPicker && (
+                      <>
+                      <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 199 }} onClick={() => setShowTransportPicker(false)} />
                       <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: isDarkMode ? '#343a40' : '#fff', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, zIndex: 200, boxShadow: '0 4px 12px rgba(0,0,0,0.18)', padding: '4px 0' }}>
                         <div style={{ fontSize: 13, color: isDarkMode ? '#90caf9' : '#1565c0', background: isDarkMode ? '#3d3000' : '#fff9e6', padding: '8px 14px', borderBottom: `1px solid ${isDarkMode ? '#5a4400' : '#ffe499'}`, textAlign: 'left' }}>ℹ️ 複数選択可（🚌バス除く）</div>
                         {[...TRANSPORT_PRESETS, 'その他'].map(t => {
@@ -644,6 +658,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                           <button type="button" onClick={() => setShowTransportPicker(false)} style={{ width: '100%', padding: '8px', background: '#0d6efd', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>決定</button>
                         </div>
                       </div>
+                      </>
                     )}
                     {selectedTransports.includes('その他') && (
                       <input type="text" placeholder="交通機関を入力" value={draftExpense.transportation_other || ''} onChange={(e) => { setDraftExpense(prev => ({ ...prev, transportation_other: e.target.value })); clearHL('transportation_other'); }} className="expense-input form-input-full" style={{ marginTop: 6, ...hl('transportation_other') }} />
@@ -719,7 +734,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                     ⇄ 往復で申請リストに追加
                   </button>
                 )}
-                <button type="button" onClick={() => { setDraftExpense(emptyDraft); setHighlightFields(new Set()); setFormError(''); }} style={{ padding: '10px 12px', background: '#6c757d', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer', flexShrink: 0 }}>
+                <button type="button" onClick={() => { setDraftExpense(emptyDraft); setHighlightFields(new Set()); setFormError(''); setTemplateSource(null); }} style={{ padding: '10px 12px', background: '#6c757d', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer', flexShrink: 0 }}>
                   クリア
                 </button>
               </div>
@@ -756,7 +771,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                     <div style={{ fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: isDarkMode ? '#fff' : '#333', fontSize: 14 }}>{expense.from_station} → {expense.to_station}</div>
                   </div>
                   <div style={{ fontWeight: 'bold', color: isDarkMode ? '#4a9eff' : '#0d6efd', flexShrink: 0 }}>¥{parseInt(expense.amount || '0').toLocaleString()}</div>
-                  <button type="button" onClick={() => { setDraftExpense(toDraft(expense)); setTimeout(() => setHighlightFields(new Set(['start_date'])), 0); }} style={{ background: '#6c757d', color: 'white', border: 'none', borderRadius: 4, padding: '4px 8px', fontSize: 11, cursor: 'pointer', flexShrink: 0 }}>複製</button>
+                  <button type="button" onClick={() => { setDraftExpense(toDraft(expense)); setTemplateSource('copy'); setTimeout(() => setHighlightFields(new Set(['start_date'])), 0); }} style={{ background: '#6c757d', color: 'white', border: 'none', borderRadius: 4, padding: '4px 8px', fontSize: 11, cursor: 'pointer', flexShrink: 0 }}>複製</button>
                   <button type="button" onClick={() => handleRemoveRow(index)} style={{ background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, padding: '4px 8px', fontSize: 11, cursor: 'pointer', flexShrink: 0 }}>削除</button>
                 </div>
               );
