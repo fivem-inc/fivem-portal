@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>チームカレンダー イメージ</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; }
+
+  /* NavBar */
+  .navbar {
+    background: #1a1a2e;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-height: 56px;
+  }
+  .nav-btn {
+    color: #fff;
+    background: none;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    white-space: nowrap;
+  }
+  .nav-btn:hover { background: rgba(255,255,255,0.1); }
+  .nav-btn.active { background: #4a90d9; }
+  .nav-logout { margin-left: auto; background: #c0392b; border-radius: 6px; padding: 8px 12px; color: #fff; font-size: 14px; border: none; cursor: pointer; }
+
+  /* ページ切り替えタブ */
+  .view-tabs {
+    display: flex;
+    gap: 8px;
+    padding: 16px 16px 0;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+  .view-tab {
+    padding: 8px 20px;
+    border-radius: 20px;
+    border: 2px solid #4a90d9;
+    background: #fff;
+    color: #4a90d9;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: bold;
+  }
+  .view-tab.active { background: #4a90d9; color: #fff; }
+
+  /* メインコンテナ */
+  .container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 16px;
+  }
+
+  /* カレンダーカード */
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    padding: 20px;
+  }
+
+  /* ヘッダー */
+  .cal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .cal-title { font-size: 20px; font-weight: bold; color: #1a1a2e; }
+  .cal-nav { display: flex; align-items: center; gap: 12px; }
+  .cal-nav button {
+    background: #f0f4ff;
+    border: none;
+    border-radius: 8px;
+    width: 32px; height: 32px;
+    font-size: 18px;
+    cursor: pointer;
+    color: #4a90d9;
+  }
+  .cal-month { font-size: 16px; font-weight: bold; min-width: 100px; text-align: center; }
+
+  /* グループ切替 */
+  .group-select {
+    padding: 6px 12px;
+    border: 2px solid #4a90d9;
+    border-radius: 8px;
+    font-size: 14px;
+    color: #4a90d9;
+    background: #f0f4ff;
+    cursor: pointer;
+  }
+
+  /* 凡例 */
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+    font-size: 12px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 4px; }
+  .dot { width: 12px; height: 12px; border-radius: 3px; }
+  .dot-approved { background: #27ae60; }
+  .dot-pending  { background: #f39c12; }
+  .dot-chosei   { background: #8e44ad; }
+  .dot-keicho   { background: #e74c3c; }
+
+  /* ===== PC カレンダー ===== */
+  .pc-calendar { display: block; }
+  .cal-grid {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .cal-grid th {
+    text-align: center;
+    font-size: 12px;
+    color: #888;
+    padding: 6px 0;
+    border-bottom: 2px solid #eee;
+  }
+  .cal-grid th.sat { color: #4a90d9; }
+  .cal-grid th.sun { color: #e74c3c; }
+  .cal-grid td {
+    border: 1px solid #f0f0f0;
+    vertical-align: top;
+    min-height: 80px;
+    padding: 4px;
+    width: 14.28%;
+  }
+  .day-num {
+    font-size: 13px;
+    font-weight: bold;
+    color: #333;
+    margin-bottom: 4px;
+  }
+  .day-num.sat { color: #4a90d9; }
+  .day-num.sun { color: #e74c3c; }
+  .day-num.today {
+    background: #4a90d9;
+    color: #fff;
+    border-radius: 50%;
+    width: 22px; height: 22px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .event {
+    font-size: 11px;
+    border-radius: 4px;
+    padding: 2px 4px;
+    margin-bottom: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+  }
+  .event-approved { background: #d5f5e3; color: #1e8449; }
+  .event-pending  { background: #fef9e7; color: #b7770d; border: 1px dashed #f39c12; }
+  .event-chosei   { background: #f4ecf7; color: #7d3c98; }
+  .event-keicho   { background: #fdedec; color: #c0392b; }
+  .other-month td { background: #fafafa; }
+  .other-month .day-num { color: #ccc; }
+
+  /* ===== スマホ カレンダー ===== */
+  .sp-calendar { display: none; }
+  .mini-cal { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+  .mini-cal th {
+    text-align: center;
+    font-size: 11px;
+    color: #888;
+    padding: 4px 0;
+  }
+  .mini-cal th.sat { color: #4a90d9; }
+  .mini-cal th.sun { color: #e74c3c; }
+  .mini-cal td {
+    text-align: center;
+    padding: 4px 2px;
+    cursor: pointer;
+    border-radius: 6px;
+    font-size: 13px;
+    position: relative;
+  }
+  .mini-cal td:hover { background: #f0f4ff; }
+  .mini-cal td.selected { background: #4a90d9; color: #fff; border-radius: 50%; }
+  .mini-cal td.has-event::after {
+    content: '';
+    display: block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #27ae60;
+    margin: 1px auto 0;
+  }
+  .mini-cal td.has-pending::after { background: #f39c12; }
+  .mini-cal td.today-sp { font-weight: bold; color: #4a90d9; }
+
+  /* ドロワー */
+  .drawer {
+    background: #f8f9ff;
+    border-radius: 10px;
+    padding: 12px;
+  }
+  .drawer-title {
+    font-size: 14px;
+    font-weight: bold;
+    color: #1a1a2e;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #e0e7ff;
+  }
+  .drawer-empty {
+    text-align: center;
+    color: #aaa;
+    font-size: 13px;
+    padding: 16px 0;
+  }
+  .drawer-event {
+    background: #fff;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    border-left: 4px solid #27ae60;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .drawer-event.pending { border-left-color: #f39c12; }
+  .drawer-event.chosei  { border-left-color: #8e44ad; }
+  .drawer-name { font-size: 14px; font-weight: bold; color: #222; }
+  .drawer-type { font-size: 12px; color: #666; margin-top: 2px; }
+  .drawer-status {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 10px;
+    background: #d5f5e3;
+    color: #1e8449;
+    white-space: nowrap;
+  }
+  .drawer-status.pending { background: #fef9e7; color: #b7770d; }
+
+  /* 説明ラベル */
+  .mock-label {
+    text-align: center;
+    font-size: 12px;
+    color: #aaa;
+    margin-bottom: 8px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  /* レスポンシブ */
+  @media (max-width: 600px) {
+    .pc-calendar { display: none; }
+    .sp-calendar { display: block; }
+    .view-tab { font-size: 12px; padding: 6px 14px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- NavBar -->
+<nav class="navbar">
+  <button class="nav-btn">🚃 交通費申請</button>
+  <button class="nav-btn">📍 出張報告</button>
+  <button class="nav-btn active">📅 カレンダー</button>
+  <button class="nav-btn">🌿 休暇申請</button>
+  <span style="color:#aaa;font-size:12px;margin-left:4px;">管理者</span>
+  <button class="nav-logout">ログアウト</button>
+</nav>
+
+<!-- 切り替えタブ（デモ用） -->
+<div class="view-tabs">
+  <button class="view-tab active" onclick="showView('pc')">💻 PC表示イメージ</button>
+  <button class="view-tab" onclick="showView('sp')">📱 スマホ表示イメージ</button>
+</div>
+
+<div class="container">
+
+  <!-- ===== PC表示 ===== -->
+  <div id="view-pc">
+    <p class="mock-label">PC・タブレット表示</p>
+    <div class="card">
+      <div class="cal-header">
+        <div class="cal-nav">
+          <button>‹</button>
+          <span class="cal-month">2026年 6月</span>
+          <button>›</button>
+        </div>
+        <select class="group-select">
+          <option>自分のグループ</option>
+          <option>全員</option>
+        </select>
+      </div>
+
+      <div class="legend">
+        <div class="legend-item"><div class="dot dot-approved"></div>有給（承認済）</div>
+        <div class="legend-item"><div class="dot dot-chosei"></div>調整給（承認済）</div>
+        <div class="legend-item"><div class="dot dot-pending"></div>申請中</div>
+        <div class="legend-item"><div class="dot dot-keicho"></div>慶弔・その他</div>
+      </div>
+
+      <table class="cal-grid">
+        <thead>
+          <tr>
+            <th>月</th><th>火</th><th>水</th><th>木</th><th>金</th>
+            <th class="sat">土</th><th class="sun">日</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="other-month">
+            <td><div class="day-num">26</div></td>
+            <td><div class="day-num">27</div></td>
+            <td><div class="day-num">28</div></td>
+            <td><div class="day-num">29</div></td>
+            <td><div class="day-num">30</div></td>
+            <td><div class="day-num sat">31</div></td>
+            <td style="background:#fafafa"><div class="day-num sun" style="color:#ccc">1</div></td>
+          </tr>
+          <tr>
+            <td><div class="day-num">2</div></td>
+            <td><div class="day-num">3</div></td>
+            <td><div class="day-num">4</div></td>
+            <td><div class="day-num">5</div></td>
+            <td><div class="day-num">6</div></td>
+            <td><div class="day-num sat">7</div></td>
+            <td><div class="day-num sun">8</div></td>
+          </tr>
+          <tr>
+            <td><div class="day-num today">9</div></td>
+            <td>
+              <div class="day-num">10</div>
+              <div class="event event-approved">田中 一郎</div>
+            </td>
+            <td>
+              <div class="day-num">11</div>
+              <div class="event event-approved">田中 一郎</div>
+              <div class="event event-pending">山田 花子</div>
+            </td>
+            <td>
+              <div class="day-num">12</div>
+              <div class="event event-pending">山田 花子</div>
+              <div class="event event-chosei">佐藤 健二</div>
+            </td>
+            <td><div class="day-num">13</div></td>
+            <td><div class="day-num sat">14</div></td>
+            <td><div class="day-num sun">15</div></td>
+          </tr>
+          <tr>
+            <td><div class="day-num">16</div></td>
+            <td><div class="day-num">17</div></td>
+            <td>
+              <div class="day-num">18</div>
+              <div class="event event-approved">鈴木 美咲</div>
+            </td>
+            <td><div class="day-num">19</div></td>
+            <td>
+              <div class="day-num">20</div>
+              <div class="event event-keicho">中村 大輔</div>
+            </td>
+            <td><div class="day-num sat">21</div></td>
+            <td><div class="day-num sun">22</div></td>
+          </tr>
+          <tr>
+            <td><div class="day-num">23</div></td>
+            <td><div class="day-num">24</div></td>
+            <td><div class="day-num">25</div></td>
+            <td>
+              <div class="day-num">26</div>
+              <div class="event event-approved">田中 一郎</div>
+            </td>
+            <td><div class="day-num">27</div></td>
+            <td><div class="day-num sat">28</div></td>
+            <td><div class="day-num sun">29</div></td>
+          </tr>
+          <tr>
+            <td><div class="day-num">30</div></td>
+            <td class="other-month"><div class="day-num" style="color:#ccc">1</div></td>
+            <td class="other-month"><div class="day-num" style="color:#ccc">2</div></td>
+            <td class="other-month"><div class="day-num" style="color:#ccc">3</div></td>
+            <td class="other-month"><div class="day-num" style="color:#ccc">4</div></td>
+            <td class="other-month"><div class="day-num sat" style="color:#ccc">5</div></td>
+            <td class="other-month"><div class="day-num sun" style="color:#ccc">6</div></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ===== スマホ表示 ===== -->
+  <div id="view-sp" style="display:none; max-width:390px; margin:0 auto;">
+    <p class="mock-label">スマホ表示</p>
+    <div class="card">
+      <div class="cal-header">
+        <div class="cal-nav">
+          <button>‹</button>
+          <span class="cal-month" style="font-size:14px">2026年 6月</span>
+          <button>›</button>
+        </div>
+        <select class="group-select" style="font-size:12px;padding:4px 8px">
+          <option>自分のグループ</option>
+          <option>全員</option>
+        </select>
+      </div>
+
+      <!-- ミニカレンダー -->
+      <table class="mini-cal">
+        <thead>
+          <tr>
+            <th>月</th><th>火</th><th>水</th><th>木</th><th>金</th>
+            <th class="sat">土</th><th class="sun">日</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td></td><td></td><td></td><td></td><td></td>
+            <td></td><td></td>
+          </tr>
+          <tr>
+            <td>2</td><td>3</td><td>4</td><td>5</td><td>6</td>
+            <td style="color:#4a90d9">7</td><td style="color:#e74c3c">8</td>
+          </tr>
+          <tr>
+            <td class="today-sp">9</td>
+            <td class="has-event" onclick="selectDay(10)">10</td>
+            <td class="has-event selected" onclick="selectDay(11)">11</td>
+            <td class="has-event has-pending" onclick="selectDay(12)">12</td>
+            <td>13</td>
+            <td style="color:#4a90d9">14</td>
+            <td style="color:#e74c3c">15</td>
+          </tr>
+          <tr>
+            <td>16</td><td>17</td>
+            <td class="has-event" onclick="selectDay(18)">18</td>
+            <td>19</td>
+            <td class="has-event" onclick="selectDay(20)">20</td>
+            <td style="color:#4a90d9">21</td>
+            <td style="color:#e74c3c">22</td>
+          </tr>
+          <tr>
+            <td>23</td><td>24</td><td>25</td>
+            <td class="has-event" onclick="selectDay(26)">26</td>
+            <td>27</td>
+            <td style="color:#4a90d9">28</td>
+            <td style="color:#e74c3c">29</td>
+          </tr>
+          <tr>
+            <td>30</td><td></td><td></td><td></td><td></td><td></td><td></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- 凡例（スマホ用コンパクト） -->
+      <div class="legend" style="font-size:11px;margin-bottom:12px">
+        <div class="legend-item"><div class="dot dot-approved"></div>承認済</div>
+        <div class="legend-item"><div class="dot dot-pending"></div>申請中</div>
+        <div class="legend-item"><div class="dot dot-chosei"></div>調整給</div>
+      </div>
+
+      <!-- ドロワー -->
+      <div class="drawer" id="drawer">
+        <div class="drawer-title" id="drawer-title">6月11日（水）の休暇</div>
+        <div id="drawer-content">
+          <div class="drawer-event">
+            <div>
+              <div class="drawer-name">田中 一郎</div>
+              <div class="drawer-type">有給休暇</div>
+            </div>
+            <div class="drawer-status">承認済</div>
+          </div>
+          <div class="drawer-event pending">
+            <div>
+              <div class="drawer-name">山田 花子</div>
+              <div class="drawer-type">有給休暇</div>
+            </div>
+            <div class="drawer-status pending">申請中</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const dayData = {
+  10: [{ name:'田中 一郎', type:'有給休暇', status:'approved' }],
+  11: [
+    { name:'田中 一郎', type:'有給休暇', status:'approved' },
+    { name:'山田 花子', type:'有給休暇', status:'pending' }
+  ],
+  12: [
+    { name:'山田 花子', type:'有給休暇', status:'pending' },
+    { name:'佐藤 健二', type:'調整給', status:'approved' }
+  ],
+  18: [{ name:'鈴木 美咲', type:'有給休暇', status:'approved' }],
+  20: [{ name:'中村 大輔', type:'慶弔休暇', status:'approved' }],
+  26: [{ name:'田中 一郎', type:'有給休暇', status:'approved' }],
+};
+
+const days = ['日','月','火','水','木','金','土'];
+const weekdays = [0,1,2,3,4,5,6];
+
+function selectDay(d) {
+  document.querySelectorAll('.mini-cal td').forEach(el => {
+    if (el.classList.contains('selected')) el.classList.remove('selected');
+  });
+  event.target.classList.add('selected');
+
+  const wday = new Date(2026, 5, d).getDay();
+  document.getElementById('drawer-title').textContent = `6月${d}日（${days[wday]}）の休暇`;
+
+  const content = document.getElementById('drawer-content');
+  const events = dayData[d];
+  if (!events || events.length === 0) {
+    content.innerHTML = '<div class="drawer-empty">この日の休暇申請はありません</div>';
+    return;
+  }
+  content.innerHTML = events.map(e => `
+    <div class="drawer-event ${e.status === 'pending' ? 'pending' : e.type === '調整給' ? 'chosei' : ''}">
+      <div>
+        <div class="drawer-name">${e.name}</div>
+        <div class="drawer-type">${e.type}</div>
+      </div>
+      <div class="drawer-status ${e.status === 'pending' ? 'pending' : ''}">${e.status === 'pending' ? '申請中' : '承認済'}</div>
+    </div>
+  `).join('');
+}
+
+function showView(v) {
+  document.getElementById('view-pc').style.display = v === 'pc' ? 'block' : 'none';
+  document.getElementById('view-sp').style.display = v === 'sp' ? 'block' : 'none';
+  document.querySelectorAll('.view-tab').forEach((el, i) => {
+    el.classList.toggle('active', (i === 0 && v === 'pc') || (i === 1 && v === 'sp'));
+  });
+}
+</script>
+</body>
+</html>

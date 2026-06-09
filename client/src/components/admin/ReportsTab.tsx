@@ -1,6 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { formatAmount } from '../../utils';
 import { useAdminPanel } from './AdminPanelContext';
+import { supabase } from '../../lib/supabaseClient';
 
 const thStyle = (isDarkMode: boolean): React.CSSProperties => ({
   border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`,
@@ -56,6 +57,34 @@ const ReportsTab: React.FC = () => {
   });
   const [leaveMonth, setLeaveMonth] = useState('');
   const [leaveUserStatsOpen, setLeaveUserStatsOpen] = useState(false);
+  const [absenceStats, setAbsenceStats] = useState<Record<string, { absent: number; late: number; early_leave: number }>>({});
+
+  const fetchAbsenceStats = useCallback(async () => {
+    const y = leaveYear || String(new Date().getFullYear());
+    const fiscalStart = `${y}-04-01`;
+    const fiscalEnd = `${Number(y) + 1}-03-31`;
+    const from = leaveMonth ? `${y}-${leaveMonth}-01` : fiscalStart;
+    const toDate = leaveMonth
+      ? new Date(Number(y), Number(leaveMonth), 0).toISOString().split('T')[0]
+      : fiscalEnd;
+    const { data } = await supabase
+      .from('attendance_exceptions')
+      .select('user_id, type')
+      .gte('date', from)
+      .lte('date', toDate);
+    const stats: Record<string, { absent: number; late: number; early_leave: number }> = {};
+    for (const row of data || []) {
+      if (!stats[row.user_id]) stats[row.user_id] = { absent: 0, late: 0, early_leave: 0 };
+      if (row.type === 'absent') stats[row.user_id].absent++;
+      else if (row.type === 'late') stats[row.user_id].late++;
+      else if (row.type === 'early_leave') stats[row.user_id].early_leave++;
+    }
+    setAbsenceStats(stats);
+  }, [leaveYear, leaveMonth]);
+
+  useEffect(() => {
+    if (leaveUserStatsOpen) fetchAbsenceStats();
+  }, [leaveUserStatsOpen, fetchAbsenceStats]);
 
   const availableYears = useMemo(() => {
     if (!reportStats) return [];
@@ -441,51 +470,60 @@ const ReportsTab: React.FC = () => {
           type LeaveKey = 'pending' | 'approved' | 'rejected' | 'total';
           type LeaveDayKey = 'pendingDays' | 'approvedDays' | 'rejectedDays' | 'totalDays';
           const dayKey = (k: LeaveKey): LeaveDayKey => `${k}Days` as LeaveDayKey;
-          const get = (type: string, key: LeaveKey) => byType[type]?.[key] ?? 0;
           const getDays = (type: string, key: LeaveKey) => byType[type]?.[dayKey(key)] ?? 0;
-          const paidSum = (key: LeaveKey) => paidCols.reduce((s, t) => s + get(t, key), 0);
           const paidSumDays = (key: LeaveKey) => paidCols.reduce((s, t) => s + getDays(t, key), 0);
-          const grandSum = (key: LeaveKey) => allCols.reduce((s, t) => s + get(t, key), 0);
           const grandSumDays = (key: LeaveKey) => allCols.reduce((s, t) => s + getDays(t, key), 0);
           const STATUS_ROWS = [
             { key: 'pending'  as const, label: '申請中',   color: isDarkMode ? '#ffb74d' : '#f57c00' },
             { key: 'approved' as const, label: '承認済み', color: isDarkMode ? '#81c784' : '#388e3c' },
             { key: 'rejected' as const, label: '却下',     color: isDarkMode ? '#e57373' : '#d32f2f' },
           ];
-          const thN = (isDM: boolean): React.CSSProperties => ({ ...thStyle(isDM), whiteSpace: 'pre-line', lineHeight: '1.3', padding: '6px 8px', minWidth: '52px' });
+          const thN = (isDM: boolean): React.CSSProperties => ({ ...thStyle(isDM), whiteSpace: 'pre-line', lineHeight: '1.3', padding: '4px 6px', minWidth: '44px', fontSize: '12px' });
+          const thS = (isDM: boolean): React.CSSProperties => ({ ...thStyle(isDM), padding: '4px 6px', fontSize: '12px' });
           const subtotalBgL = isDarkMode ? '#3a3500' : '#fffde7';
           const borderTop = `2px solid ${isDarkMode ? '#adb5bd' : '#999'}`;
-          const val = (count: number, days: number) => count > 0
-            ? <>{count}件<span style={{ color: isDarkMode ? '#adb5bd' : '#999', margin: '0 3px' }}>|</span>{days}日</>
-            : <span>—</span>;
+          const abBorderLeft = `3px double ${isDarkMode ? '#adb5bd' : '#999'}`;
+          const val = (days: number) => days > 0 ? <>{days}日</> : <span>—</span>;
+          const totalAbsent = Object.values(absenceStats).reduce((s, a) => s + a.absent, 0);
+          const totalLate   = Object.values(absenceStats).reduce((s, a) => s + a.late, 0);
+          const totalEarly  = Object.values(absenceStats).reduce((s, a) => s + a.early_leave, 0);
           return (
-            <div style={{ marginBottom: '20px', overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+            <div style={{ marginBottom: '20px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', tableLayout: 'fixed' }}>
                 <thead>
                   <tr>
-                    <th style={thStyle(isDarkMode)}>ステータス</th>
+                    <th style={{ ...thS(isDarkMode), width: '54px' }}>ステータス</th>
                     {paidCols.map(t => <th key={t} style={thN(isDarkMode)}>{(COL_LABELS[t] ?? [t, ''])[0]}<br />{(COL_LABELS[t] ?? [t, ''])[1]}</th>)}
                     {paidCols.length > 0 && <th style={{ ...thN(isDarkMode), backgroundColor: subtotalBgL }}>有給{'\n'}小計</th>}
                     {[...otherCols, ...unknownCols].map(t => <th key={t} style={thN(isDarkMode)}>{(COL_LABELS[t] ?? [t, ''])[0]}<br />{(COL_LABELS[t] ?? [t, ''])[1]}</th>)}
-                    <th style={thStyle(isDarkMode)}>合計</th>
+                    <th style={{ ...thS(isDarkMode), width: '44px' }}>合計</th>
+                    <th style={{ ...thS(isDarkMode), borderLeft: abBorderLeft, color: isDarkMode ? '#e57373' : '#c0392b', width: '40px' }}>欠勤</th>
+                    <th style={{ ...thS(isDarkMode), color: isDarkMode ? '#ffb74d' : '#e65100', width: '40px' }}>遅刻</th>
+                    <th style={{ ...thS(isDarkMode), color: isDarkMode ? '#64b5f6' : '#1565c0', width: '40px' }}>早退</th>
                   </tr>
                 </thead>
                 <tbody>
                   {STATUS_ROWS.map((row, i) => (
                     <tr key={row.key}>
-                      <td style={{ ...td(isDarkMode, i), fontWeight: 'bold', color: row.color }}>{row.label}</td>
-                      {paidCols.map(t => <td key={t} style={td(isDarkMode, i)}>{val(get(t, row.key), getDays(t, row.key))}</td>)}
-                      {paidCols.length > 0 && <td style={{ ...td(isDarkMode, i), backgroundColor: subtotalBgL, fontWeight: 'bold' }}>{val(paidSum(row.key), paidSumDays(row.key))}</td>}
-                      {[...otherCols, ...unknownCols].map(t => <td key={t} style={td(isDarkMode, i)}>{val(get(t, row.key), getDays(t, row.key))}</td>)}
-                      <td style={{ ...td(isDarkMode, i), fontWeight: 'bold' }}>{val(grandSum(row.key), grandSumDays(row.key))}</td>
+                      <td style={{ ...td(isDarkMode, i), fontWeight: 'bold', color: row.color, padding: '6px 4px', fontSize: '12px' }}>{row.label}</td>
+                      {paidCols.map(t => <td key={t} style={{ ...td(isDarkMode, i), padding: '6px 4px', fontSize: '12px' }}>{val(getDays(t, row.key))}</td>)}
+                      {paidCols.length > 0 && <td style={{ ...td(isDarkMode, i), backgroundColor: subtotalBgL, fontWeight: 'bold', padding: '6px 4px', fontSize: '12px' }}>{val(paidSumDays(row.key))}</td>}
+                      {[...otherCols, ...unknownCols].map(t => <td key={t} style={{ ...td(isDarkMode, i), padding: '6px 4px', fontSize: '12px' }}>{val(getDays(t, row.key))}</td>)}
+                      <td style={{ ...td(isDarkMode, i), fontWeight: 'bold', padding: '6px 4px', fontSize: '12px' }}>{val(grandSumDays(row.key))}</td>
+                      <td style={{ ...td(isDarkMode, i), borderLeft: abBorderLeft, padding: '6px 4px', fontSize: '12px', color: isDarkMode ? '#adb5bd' : '#999' }}>—</td>
+                      <td style={{ ...td(isDarkMode, i), padding: '6px 4px', fontSize: '12px', color: isDarkMode ? '#adb5bd' : '#999' }}>—</td>
+                      <td style={{ ...td(isDarkMode, i), padding: '6px 4px', fontSize: '12px', color: isDarkMode ? '#adb5bd' : '#999' }}>—</td>
                     </tr>
                   ))}
                   <tr>
-                    <td style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop }}>合計</td>
-                    {paidCols.map(t => <td key={t} style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop }}>{val(get(t, 'total'), getDays(t, 'total'))}</td>)}
-                    {paidCols.length > 0 && <td style={{ ...td(isDarkMode, 1), backgroundColor: subtotalBgL, fontWeight: 'bold', borderTop }}>{val(paidSum('total'), paidSumDays('total'))}</td>}
-                    {[...otherCols, ...unknownCols].map(t => <td key={t} style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop }}>{val(get(t, 'total'), getDays(t, 'total'))}</td>)}
-                    <td style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop }}>{val(grandSum('total'), grandSumDays('total'))}</td>
+                    <td style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop, padding: '6px 4px', fontSize: '12px' }}>合計</td>
+                    {paidCols.map(t => <td key={t} style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop, padding: '6px 4px', fontSize: '12px' }}>{val(getDays(t, 'total'))}</td>)}
+                    {paidCols.length > 0 && <td style={{ ...td(isDarkMode, 1), backgroundColor: subtotalBgL, fontWeight: 'bold', borderTop, padding: '6px 4px', fontSize: '12px' }}>{val(paidSumDays('total'))}</td>}
+                    {[...otherCols, ...unknownCols].map(t => <td key={t} style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop, padding: '6px 4px', fontSize: '12px' }}>{val(getDays(t, 'total'))}</td>)}
+                    <td style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop, padding: '6px 4px', fontSize: '12px' }}>{val(grandSumDays('total'))}</td>
+                    <td style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop, borderLeft: abBorderLeft, color: isDarkMode ? '#e57373' : '#c0392b', padding: '6px 4px', fontSize: '12px' }}>{totalAbsent > 0 ? `${totalAbsent}日` : '—'}</td>
+                    <td style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop, color: isDarkMode ? '#ffb74d' : '#e65100', padding: '6px 4px', fontSize: '12px' }}>{totalLate > 0 ? `${totalLate}回` : '—'}</td>
+                    <td style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop, color: isDarkMode ? '#64b5f6' : '#1565c0', padding: '6px 4px', fontSize: '12px' }}>{totalEarly > 0 ? `${totalEarly}回` : '—'}</td>
                   </tr>
                 </tbody>
               </table>
@@ -523,54 +561,65 @@ const ReportsTab: React.FC = () => {
               const paidCols = PAID_TYPES.filter(t => allTypes.has(t));
               const otherCols = OTHER_TYPES.filter(t => allTypes.has(t));
               const unknownCols = [...allTypes].filter(t => !PAID_TYPES.includes(t) && !OTHER_TYPES.includes(t));
-              const thN = (isDM: boolean): React.CSSProperties => ({ ...thStyle(isDM), whiteSpace: 'pre-line', lineHeight: '1.3', padding: '6px 8px', minWidth: '52px' });
+              const thN = (isDM: boolean): React.CSSProperties => ({ ...thStyle(isDM), whiteSpace: 'pre-line', lineHeight: '1.3', padding: '4px 5px', minWidth: '40px', fontSize: '11px' });
+              const thS = (isDM: boolean, extra?: React.CSSProperties): React.CSSProperties => ({ ...thStyle(isDM), padding: '4px 5px', fontSize: '11px', ...extra });
               const subtotalBgL = isDarkMode ? '#3a3500' : '#fffde7';
               const borderTop = `2px solid ${isDarkMode ? '#adb5bd' : '#999'}`;
-              const val = (count: number, days: number) => count > 0
-                ? <>{count}件<span style={{ color: isDarkMode ? '#adb5bd' : '#999', margin: '0 3px' }}>|</span>{days}日</>
-                : <span>—</span>;
-              const get = (u: typeof lv.userStats[0], t: string, k: 'total' | 'approved' | 'pending' | 'rejected') => u.byType[t]?.[k] ?? 0;
+              const val = (days: number) => days > 0 ? <>{days}日</> : <span>—</span>;
+              const absenceBorderLeft = `3px double ${isDarkMode ? '#adb5bd' : '#999'}`;
+              const emailToId: Record<string, string> = {};
+              users.forEach(u => { if (u.email) emailToId[u.email] = u.id; });
               const getDays = (u: typeof lv.userStats[0], t: string, k: 'totalDays' | 'approvedDays' | 'pendingDays' | 'rejectedDays') => u.byType[t]?.[k] ?? 0;
-              const paidSum = (u: typeof lv.userStats[0]) => paidCols.reduce((s, t) => s + get(u, t, 'total'), 0);
               const paidSumDays = (u: typeof lv.userStats[0]) => paidCols.reduce((s, t) => s + getDays(u, t, 'totalDays'), 0);
-              const colTotal = (t: string, k: 'total' | 'approved' | 'pending' | 'rejected') => lv.userStats.reduce((s, u) => s + get(u, t, k), 0);
               const colTotalDays = (t: string, k: 'totalDays' | 'approvedDays' | 'pendingDays' | 'rejectedDays') => lv.userStats.reduce((s, u) => s + getDays(u, t, k), 0);
-              const grandTotal = lv.userStats.reduce((s, u) => s + u.total, 0);
               const grandTotalDays = lv.userStats.reduce((s, u) => s + [...Object.values(u.byType)].reduce((ss, b) => ss + b.totalDays, 0), 0);
               return (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                <div>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', tableLayout: 'fixed' }}>
                     <thead>
                       <tr>
-                        <th style={thStyle(isDarkMode)}>ユーザー</th>
-                        <th style={thStyle(isDarkMode)}>受理</th>
-                        <th style={thStyle(isDarkMode)}>申請中</th>
+                        <th style={thS(isDarkMode, { width: '90px', textAlign: 'left' })}>ユーザー</th>
+                        <th style={thS(isDarkMode, { width: '36px' })}>受理</th>
+                        <th style={thS(isDarkMode, { width: '40px' })}>申請中</th>
                         {paidCols.map(t => <th key={t} style={thN(isDarkMode)}>{(COL_LABELS[t] ?? [t, ''])[0]}<br />{(COL_LABELS[t] ?? [t, ''])[1]}</th>)}
                         {paidCols.length > 0 && <th style={{ ...thN(isDarkMode), backgroundColor: subtotalBgL }}>有給{'\n'}小計</th>}
                         {[...otherCols, ...unknownCols].map(t => <th key={t} style={thN(isDarkMode)}>{(COL_LABELS[t] ?? [t, ''])[0]}<br />{(COL_LABELS[t] ?? [t, ''])[1]}</th>)}
-                        <th style={thStyle(isDarkMode)}>合計</th>
+                        <th style={thS(isDarkMode, { width: '40px' })}>合計</th>
+                        <th style={{ ...thS(isDarkMode, { width: '38px' }), borderLeft: absenceBorderLeft, color: isDarkMode ? '#e57373' : '#c0392b' }}>欠勤</th>
+                        <th style={{ ...thS(isDarkMode, { width: '38px' }), color: isDarkMode ? '#ffb74d' : '#e65100' }}>遅刻</th>
+                        <th style={{ ...thS(isDarkMode, { width: '38px' }), color: isDarkMode ? '#64b5f6' : '#1565c0' }}>早退</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {lv.userStats.map((u, i) => (
-                        <tr key={u.email}>
-                          <td style={tdLeft(isDarkMode, i)}><strong>{u.name}</strong><br /><small style={{ color: isDarkMode ? '#adb5bd' : '#6c757d' }}>{u.email}</small></td>
-                          <td style={td(isDarkMode, i)}><span style={{ color: isDarkMode ? '#81c784' : '#388e3c', fontWeight: 'bold' }}>{u.approved}</span></td>
-                          <td style={td(isDarkMode, i)}><span style={{ color: isDarkMode ? '#ffb74d' : '#f57c00', fontWeight: 'bold' }}>{u.pending}</span></td>
-                          {paidCols.map(t => <td key={t} style={td(isDarkMode, i)}>{val(get(u, t, 'total'), getDays(u, t, 'totalDays'))}</td>)}
-                          {paidCols.length > 0 && <td style={{ ...td(isDarkMode, i), backgroundColor: subtotalBgL, fontWeight: 'bold' }}>{val(paidSum(u), paidSumDays(u))}</td>}
-                          {[...otherCols, ...unknownCols].map(t => <td key={t} style={td(isDarkMode, i)}>{val(get(u, t, 'total'), getDays(u, t, 'totalDays'))}</td>)}
-                          <td style={{ ...td(isDarkMode, i), fontWeight: 'bold' }}>{val(u.total, [...Object.values(u.byType)].reduce((s, b) => s + b.totalDays, 0))}</td>
-                        </tr>
-                      ))}
+                      {lv.userStats.map((u, i) => {
+                        const uid = emailToId[u.email] || '';
+                        const ab = absenceStats[uid] || { absent: 0, late: 0, early_leave: 0 };
+                        return (
+                          <tr key={u.email}>
+                            <td style={{ ...tdLeft(isDarkMode, i), padding: '5px 6px', fontSize: '12px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><strong>{u.name}</strong></td>
+                            <td style={{ ...td(isDarkMode, i), padding: '5px 4px', fontSize: '11px' }}><span style={{ color: isDarkMode ? '#81c784' : '#388e3c', fontWeight: 'bold' }}>{u.approved}</span></td>
+                            <td style={{ ...td(isDarkMode, i), padding: '5px 4px', fontSize: '11px' }}><span style={{ color: isDarkMode ? '#ffb74d' : '#f57c00', fontWeight: 'bold' }}>{u.pending}</span></td>
+                            {paidCols.map(t => <td key={t} style={{ ...td(isDarkMode, i), padding: '5px 4px', fontSize: '11px' }}>{val(getDays(u, t, 'totalDays'))}</td>)}
+                            {paidCols.length > 0 && <td style={{ ...td(isDarkMode, i), backgroundColor: subtotalBgL, fontWeight: 'bold', padding: '5px 4px', fontSize: '11px' }}>{val(paidSumDays(u))}</td>}
+                            {[...otherCols, ...unknownCols].map(t => <td key={t} style={{ ...td(isDarkMode, i), padding: '5px 4px', fontSize: '11px' }}>{val(getDays(u, t, 'totalDays'))}</td>)}
+                            <td style={{ ...td(isDarkMode, i), fontWeight: 'bold', padding: '5px 4px', fontSize: '11px' }}>{val([...Object.values(u.byType)].reduce((s, b) => s + b.totalDays, 0))}</td>
+                            <td style={{ ...td(isDarkMode, i), borderLeft: absenceBorderLeft, color: isDarkMode ? '#e57373' : '#c0392b', fontWeight: 'bold', padding: '5px 4px', fontSize: '11px' }}>{ab.absent > 0 ? `${ab.absent}日` : <span style={{ color: isDarkMode ? '#495057' : '#ccc' }}>—</span>}</td>
+                            <td style={{ ...td(isDarkMode, i), color: isDarkMode ? '#ffb74d' : '#e65100', fontWeight: 'bold', padding: '5px 4px', fontSize: '11px' }}>{ab.late > 0 ? `${ab.late}回` : <span style={{ color: isDarkMode ? '#495057' : '#ccc' }}>—</span>}</td>
+                            <td style={{ ...td(isDarkMode, i), color: isDarkMode ? '#64b5f6' : '#1565c0', fontWeight: 'bold', padding: '5px 4px', fontSize: '11px' }}>{ab.early_leave > 0 ? `${ab.early_leave}回` : <span style={{ color: isDarkMode ? '#495057' : '#ccc' }}>—</span>}</td>
+                          </tr>
+                        );
+                      })}
                       <tr>
-                        <td style={{ ...tdLeft(isDarkMode, 1), fontWeight: 'bold', borderTop }}>合計</td>
-                        <td style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop }}><span style={{ color: isDarkMode ? '#81c784' : '#388e3c' }}>{lv.userStats.reduce((s, u) => s + u.approved, 0)}</span></td>
-                        <td style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop }}><span style={{ color: isDarkMode ? '#ffb74d' : '#f57c00' }}>{lv.userStats.reduce((s, u) => s + u.pending, 0)}</span></td>
-                        {paidCols.map(t => <td key={t} style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop }}>{val(colTotal(t, 'total'), colTotalDays(t, 'totalDays'))}</td>)}
-                        {paidCols.length > 0 && <td style={{ ...td(isDarkMode, 1), backgroundColor: subtotalBgL, fontWeight: 'bold', borderTop }}>{val(paidCols.reduce((s, t) => s + colTotal(t, 'total'), 0), paidCols.reduce((s, t) => s + colTotalDays(t, 'totalDays'), 0))}</td>}
-                        {[...otherCols, ...unknownCols].map(t => <td key={t} style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop }}>{val(colTotal(t, 'total'), colTotalDays(t, 'totalDays'))}</td>)}
-                        <td style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop }}>{val(grandTotal, grandTotalDays)}</td>
+                        <td style={{ ...tdLeft(isDarkMode, 1), fontWeight: 'bold', borderTop, padding: '5px 6px', fontSize: '12px' }}>合計</td>
+                        <td style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop, padding: '5px 4px', fontSize: '11px' }}><span style={{ color: isDarkMode ? '#81c784' : '#388e3c' }}>{lv.userStats.reduce((s, u) => s + u.approved, 0)}</span></td>
+                        <td style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop, padding: '5px 4px', fontSize: '11px' }}><span style={{ color: isDarkMode ? '#ffb74d' : '#f57c00' }}>{lv.userStats.reduce((s, u) => s + u.pending, 0)}</span></td>
+                        {paidCols.map(t => <td key={t} style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop, padding: '5px 4px', fontSize: '11px' }}>{val(colTotalDays(t, 'totalDays'))}</td>)}
+                        {paidCols.length > 0 && <td style={{ ...td(isDarkMode, 1), backgroundColor: subtotalBgL, fontWeight: 'bold', borderTop, padding: '5px 4px', fontSize: '11px' }}>{val(paidCols.reduce((s, t) => s + colTotalDays(t, 'totalDays'), 0))}</td>}
+                        {[...otherCols, ...unknownCols].map(t => <td key={t} style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop, padding: '5px 4px', fontSize: '11px' }}>{val(colTotalDays(t, 'totalDays'))}</td>)}
+                        <td style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop, padding: '5px 4px', fontSize: '11px' }}>{val(grandTotalDays)}</td>
+                        <td style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop, borderLeft: absenceBorderLeft, color: isDarkMode ? '#e57373' : '#c0392b', padding: '5px 4px', fontSize: '11px' }}>{Object.values(absenceStats).reduce((s, a) => s + a.absent, 0) > 0 ? `${Object.values(absenceStats).reduce((s, a) => s + a.absent, 0)}日` : '—'}</td>
+                        <td style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop, color: isDarkMode ? '#ffb74d' : '#e65100', padding: '5px 4px', fontSize: '11px' }}>{Object.values(absenceStats).reduce((s, a) => s + a.late, 0) > 0 ? `${Object.values(absenceStats).reduce((s, a) => s + a.late, 0)}回` : '—'}</td>
+                        <td style={{ ...td(isDarkMode, 1), fontWeight: 'bold', borderTop, color: isDarkMode ? '#64b5f6' : '#1565c0', padding: '5px 4px', fontSize: '11px' }}>{Object.values(absenceStats).reduce((s, a) => s + a.early_leave, 0) > 0 ? `${Object.values(absenceStats).reduce((s, a) => s + a.early_leave, 0)}回` : '—'}</td>
                       </tr>
                     </tbody>
                   </table>
