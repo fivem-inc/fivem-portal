@@ -639,6 +639,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     if (activeTab === 'groups') { fetchUsers(); fetchMasterOptions(); }
     if (activeTab === 'trip_reports') { fetchTripReports(); }
     if (activeTab === 'leave_requests') { fetchLeaveRequests(); fetchUsers(); }
+    if (activeTab === 'reports') { fetchUsers(); }
   }, [activeTab, fetchUsers, fetchTripReports, fetchMasterOptions, fetchLeaveRequests]);
 
   useEffect(() => {
