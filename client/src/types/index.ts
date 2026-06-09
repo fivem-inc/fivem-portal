@@ -155,6 +155,8 @@ export interface ReportStats {
     approvedSubmissions: number;
     rejectedSubmissions: number;
     approvalRate: string;
+    regularAmount: number;
+    otherAmount: number;
   };
   userStats: {
     name: string;
@@ -162,6 +164,8 @@ export interface ReportStats {
     totalSubmissions: number;
     approvedSubmissions: number;
     totalAmount: number;
+    regularAmount: number;
+    otherAmount: number;
     approvalRate: string;
   }[];
   monthlyStats: {
@@ -171,5 +175,15 @@ export interface ReportStats {
     rejected: number;
     pending: number;
     amount: number;
+    regularAmount: number;
+    otherAmount: number;
   }[];
+  leaveStats: {
+    total: number;
+    pending: number;
+    approved: number;
+    rejected: number;
+    monthlyStats: { month: string; total: number; approved: number; rejected: number; pending: number; }[];
+    userStats: { name: string; email: string; total: number; approved: number; }[];
+  };
 }

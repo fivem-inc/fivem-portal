@@ -513,32 +513,80 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       const approvedSubmissions = submissions.filter(s => s.status === 'approved').length;
       const rejectedSubmissions = submissions.filter(s => s.status === 'rejected').length;
       const approvalRate = totalSubmissions > 0 ? (approvedSubmissions / totalSubmissions * 100).toFixed(1) : '0';
+
+      const calcAmounts = (exps: Expense[]) => ({
+        regular: exps.filter(e => e.type === 'regular').reduce((s, e) => s + (parseInt(e.amount || '0') || 0), 0),
+        other: exps.filter(e => e.type !== 'regular').reduce((s, e) => s + (parseInt(e.amount || '0') || 0), 0),
+      });
+
+      let overviewRegular = 0;
+      let overviewOther = 0;
       const userStats = users.map(user => {
         const userSubmissions = submissions.filter(s => s.profiles?.email === user.email);
         const userApproved = userSubmissions.filter(s => s.status === 'approved');
-        const totalAmount = userApproved.reduce((sum, s) => sum + s.expenses_data.reduce((expSum: number, exp: Expense) => expSum + (parseInt(exp.amount || '0') || 0), 0), 0);
+        const allApprovedExps = userApproved.flatMap(s => s.expenses_data);
+        const { regular, other } = calcAmounts(allApprovedExps);
+        overviewRegular += regular;
+        overviewOther += other;
         return {
           name: user.name || user.email || '', email: user.email || '',
           totalSubmissions: userSubmissions.length, approvedSubmissions: userApproved.length,
-          totalAmount, approvalRate: userSubmissions.length > 0 ? (userApproved.length / userSubmissions.length * 100).toFixed(1) : '0'
+          totalAmount: regular + other, regularAmount: regular, otherAmount: other,
+          approvalRate: userSubmissions.length > 0 ? (userApproved.length / userSubmissions.length * 100).toFixed(1) : '0'
         };
       }).sort((a, b) => b.totalAmount - a.totalAmount);
+
       const monthlyStats = submissions.reduce((acc, submission) => {
         const date = new Date(submission.created_at);
         const monthKey = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}`;
-        if (!acc[monthKey]) acc[monthKey] = { month: monthKey, total: 0, approved: 0, rejected: 0, pending: 0, amount: 0 };
+        if (!acc[monthKey]) acc[monthKey] = { month: monthKey, total: 0, approved: 0, rejected: 0, pending: 0, amount: 0, regularAmount: 0, otherAmount: 0 };
         acc[monthKey].total++;
         acc[monthKey][submission.status as 'approved' | 'rejected' | 'pending']++;
         if (submission.status === 'approved') {
-          const amount = submission.expenses_data.reduce((sum: number, exp: Expense) => sum + (parseInt(exp.amount || '0') || 0), 0);
-          acc[monthKey].amount += amount;
+          const { regular, other } = calcAmounts(submission.expenses_data);
+          acc[monthKey].amount += regular + other;
+          acc[monthKey].regularAmount += regular;
+          acc[monthKey].otherAmount += other;
         }
         return acc;
       }, {} as Record<string, ReportStats['monthlyStats'][number]>);
+
+      // 休暇申請データ取得
+      const { data: leaveData } = await supabase.from('leave_requests').select('status, created_at, user_id').order('created_at', { ascending: false });
+      const leaves = leaveData || [];
+      const leaveApproved = leaves.filter((l: { status: string }) => l.status === 'approved' || l.status === 'admin_approved' || l.status === 'manager_approved');
+      const leavePending = leaves.filter((l: { status: string }) => ['pending', 'leader_approved'].includes(l.status));
+      const leaveRejected = leaves.filter((l: { status: string }) => l.status === 'rejected');
+      const leaveMonthly = leaves.reduce((acc: Record<string, { month: string; total: number; approved: number; rejected: number; pending: number }>, l: { status: string; created_at: string }) => {
+        const d = new Date(l.created_at);
+        const mk = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}`;
+        if (!acc[mk]) acc[mk] = { month: mk, total: 0, approved: 0, rejected: 0, pending: 0 };
+        acc[mk].total++;
+        const st = (l.status === 'approved' || l.status === 'admin_approved' || l.status === 'manager_approved') ? 'approved'
+          : l.status === 'rejected' ? 'rejected' : 'pending';
+        acc[mk][st as 'approved' | 'rejected' | 'pending']++;
+        return acc;
+      }, {});
+      const leaveUserMap: Record<string, { total: number; approved: number }> = {};
+      leaves.forEach((l: { user_id: string; status: string }) => {
+        if (!leaveUserMap[l.user_id]) leaveUserMap[l.user_id] = { total: 0, approved: 0 };
+        leaveUserMap[l.user_id].total++;
+        if (l.status === 'approved' || l.status === 'admin_approved' || l.status === 'manager_approved') leaveUserMap[l.user_id].approved++;
+      });
+      const leaveUserStats = users
+        .filter(u => leaveUserMap[u.id])
+        .map(u => ({ name: u.name || u.email || '', email: u.email || '', ...leaveUserMap[u.id] }))
+        .sort((a, b) => b.total - a.total);
+
       setReportStats({
-        overview: { totalSubmissions, pendingSubmissions, approvedSubmissions, rejectedSubmissions, approvalRate },
+        overview: { totalSubmissions, pendingSubmissions, approvedSubmissions, rejectedSubmissions, approvalRate, regularAmount: overviewRegular, otherAmount: overviewOther },
         userStats,
-        monthlyStats: Object.values(monthlyStats).sort((a, b) => b.month.localeCompare(a.month))
+        monthlyStats: Object.values(monthlyStats).sort((a, b) => b.month.localeCompare(a.month)),
+        leaveStats: {
+          total: leaves.length, pending: leavePending.length, approved: leaveApproved.length, rejected: leaveRejected.length,
+          monthlyStats: Object.values(leaveMonthly).sort((a, b) => b.month.localeCompare(a.month)),
+          userStats: leaveUserStats,
+        },
       });
     } catch (error) {
       console.error('レポート統計取得エラー:', error);
