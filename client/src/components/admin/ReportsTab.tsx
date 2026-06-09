@@ -1,7 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { formatAmount } from '../../utils';
 import { useAdminPanel } from './AdminPanelContext';
-import type { ReportStats } from '../../types';
 
 const thStyle = (isDarkMode: boolean): React.CSSProperties => ({
   border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`,
@@ -11,8 +10,6 @@ const thStyle = (isDarkMode: boolean): React.CSSProperties => ({
   backgroundColor: isDarkMode ? '#495057' : '#f8f9fa',
   whiteSpace: 'nowrap',
 });
-const thLeft = (isDarkMode: boolean): React.CSSProperties => ({ ...thStyle(isDarkMode), textAlign: 'left' });
-const thRight = (isDarkMode: boolean): React.CSSProperties => ({ ...thStyle(isDarkMode), textAlign: 'right' });
 const td = (isDarkMode: boolean, idx: number): React.CSSProperties => ({
   border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`,
   padding: '10px',
@@ -103,7 +100,7 @@ const ReportsTab: React.FC = () => {
     );
   }
 
-  const { userStats, leaveStats } = reportStats;
+  const { leaveStats } = reportStats;
 
   return (
     <div>
