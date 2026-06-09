@@ -282,13 +282,19 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
         {/* 報告種別 */}
         <div style={{ marginBottom: 20 }}>
           <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 8 }}>報告種別</label>
-          <div style={{ display: 'flex', gap: 24 }}>
+          <div style={{ display: 'flex', gap: 0, borderRadius: 8, overflow: 'hidden', border: `1px solid ${isDark ? '#6c757d' : '#dee2e6'}` }}>
             {(['到着', '終了'] as const).map((type) => (
-              <label key={type} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                <input type="radio" name="reportType" value={type}
-                  checked={reportType === type} onChange={() => setReportType(type)} />
+              <button
+                key={type}
+                onClick={() => setReportType(type)}
+                style={{
+                  flex: 1, padding: '10px 0', border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 'bold',
+                  background: reportType === type ? '#3d9a3d' : (isDark ? '#495057' : '#f8f9fa'),
+                  color: reportType === type ? 'white' : (isDark ? '#fff' : '#333'),
+                }}
+              >
                 {type}
-              </label>
+              </button>
             ))}
           </div>
         </div>
