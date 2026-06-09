@@ -19,6 +19,13 @@ import { supabase } from './lib/supabaseClient';
 import { useExpenses } from './hooks/useExpenses';
 import type { Expense, Submission } from './types';
 
+// ページ遷移のたびにスクロールをトップへ戻す
+const ScrollToTop: React.FC = () => {
+  const { pathname } = useLocation();
+  useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
+  return null;
+};
+
 // 保護されたルートのためのレイアウト
 const ProtectedLayout: React.FC = () => {
   const { user } = useAuth();
@@ -367,6 +374,7 @@ const LeaveApprovalsPage: React.FC = () => {
 function App() {
   return (
     <BrowserRouter>
+      <ScrollToTop />
       <AuthProvider>
         <Routes>
           <Route path="/signin" element={<SignIn />} />
