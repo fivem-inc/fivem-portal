@@ -34,7 +34,7 @@ interface LeaveRecord {
   approver2?: { name: string; role_title: string } | null;
 }
 
-type LeaveType = '有給休暇' | 'バースデー休暇（有給）' | '慶弔休暇' | 'その他';
+type LeaveType = '有給休暇' | 'バースデー休暇（有給）' | '慶弔休暇' | '調整休' | 'その他';
 
 const STATUS_LABEL: Record<string, { label: string; color: string }> = {
   pending:          { label: '確認中（一人目）',      color: '#856404' },
@@ -193,6 +193,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const [showApproverGuide, setShowApproverGuide] = useState(false);
   const [leaderAssignments, setLeaderAssignments] = useState<{ id: string; course: string; school: string; leader: string; manager: string }[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(true);
+  // 調整休専用
+  const [choseiSubType, setChoseiSubType] = useState<'furikae' | 'zangyou'>('furikae');
+  const [choseiOriginDate, setChoseiOriginDate] = useState('');
 
   useEffect(() => {
     supabase
@@ -277,6 +280,12 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     try {
       const startDate = selectedDates[0] || '';
       const endDate = selectedDates[selectedDates.length - 1] || '';
+      // 調整休の場合、種別と振替元日付を reason に付加
+      let reasonValue = notes || null;
+      if (leaveType === '調整休') {
+        const subLabel = choseiSubType === 'furikae' ? `振替休日（振替元：${choseiOriginDate}）` : '残業調整休';
+        reasonValue = [subLabel, notes].filter(Boolean).join(' / ');
+      }
       const { error } = await supabase.from('leave_requests').insert({
         user_id: user.id,
         leave_type: leaveType,
@@ -285,7 +294,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         start_date: startDate,
         end_date: endDate,
         purpose: purpose,
-        reason: notes || null,
+        reason: reasonValue,
         status: 'pending',
         current_approver: 'first',
         approver_id: selectedApproverId,
@@ -312,6 +321,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     setPurpose('');
     setNotes('');
     setSubmitted(false);
+    setChoseiSubType('furikae');
+    setChoseiOriginDate('');
     if (approvers.length > 0) setSelectedApproverId(approvers[0].id);
   };
 
@@ -466,7 +477,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
 
           {/* 申請先 */}
           <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: text }}>申請先 *</label>
+            <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: text }}>申請先 <span style={{ color: '#dc3545' }}>*</span></label>
             {approvers.length === 0 ? (
               <div style={{ padding: '10px 14px', background: '#fff3cd', borderRadius: 8, color: '#856404', fontSize: 14 }}>
                 承認者が登録されていません
@@ -486,7 +497,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
 
           {/* 休暇種別 */}
           <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: text }}>休暇種別 *</label>
+            <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: text }}>休暇種別 <span style={{ color: '#dc3545' }}>*</span></label>
             <select
               value={leaveType}
               onChange={e => setLeaveType(e.target.value as LeaveType)}
@@ -495,6 +506,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               <option value="有給休暇">有給休暇</option>
               <option value="バースデー休暇（有給）">バースデー休暇（有給）</option>
               <option value="慶弔休暇">慶弔休暇</option>
+              <option value="調整休">調整休</option>
               <option value="その他">その他</option>
             </select>
             {leaveType === 'その他' && (
@@ -506,12 +518,63 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                 style={{ width: '100%', marginTop: 8, padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 15, boxSizing: 'border-box', background: inputBg, color: text }}
               />
             )}
+            {leaveType === '調整休' && (
+              <div style={{ marginTop: 12, padding: 14, background: isDark ? '#2a2f35' : '#f8f9ff', borderRadius: 8, border: `1px solid ${isDark ? '#495057' : '#c8d6f0'}` }}>
+                <div style={{ fontWeight: 'bold', fontSize: 14, color: text, marginBottom: 10 }}>調整休の種類 <span style={{ color: '#dc3545' }}>*</span></div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, cursor: 'pointer', color: text }}>
+                  <input type="radio" name="choseiSubType" value="furikae" checked={choseiSubType === 'furikae'} onChange={() => setChoseiSubType('furikae')} />
+                  <span>振替休日 <span style={{ fontSize: 12, color: subText }}>（休日出勤・特定日の振替）</span></span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: text }}>
+                  <input type="radio" name="choseiSubType" value="zangyou" checked={choseiSubType === 'zangyou'} onChange={() => setChoseiSubType('zangyou')} />
+                  <span>残業調整休 <span style={{ fontSize: 12, color: subText }}>（残業分の消化）</span></span>
+                </label>
+
+                {choseiSubType === 'furikae' && (
+                  <div style={{ marginTop: 12 }}>
+                    <label style={{ display: 'block', fontSize: 14, fontWeight: 'bold', marginBottom: 6, color: text }}>
+                      振替元の勤務日 <span style={{ color: '#dc3545' }}>*</span>
+                    </label>
+                    <input
+                      type="date"
+                      value={choseiOriginDate}
+                      onChange={e => setChoseiOriginDate(e.target.value)}
+                      style={{ padding: '8px 12px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 14, background: inputBg, color: text }}
+                    />
+                    <label style={{ display: 'block', fontSize: 14, fontWeight: 'bold', marginTop: 12, marginBottom: 6, color: text }}>
+                      理由 <span style={{ color: '#dc3545' }}>*</span>
+                    </label>
+                    <textarea
+                      value={purpose}
+                      onChange={e => setPurpose(e.target.value)}
+                      placeholder="例：〇〇により休日出勤したため"
+                      rows={2}
+                      style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 14, boxSizing: 'border-box', resize: 'vertical', background: inputBg, color: text }}
+                    />
+                  </div>
+                )}
+                {choseiSubType === 'zangyou' && (
+                  <div style={{ marginTop: 12 }}>
+                    <label style={{ display: 'block', fontSize: 14, fontWeight: 'bold', marginBottom: 6, color: text }}>
+                      理由 <span style={{ color: '#dc3545' }}>*</span>
+                    </label>
+                    <textarea
+                      value={purpose}
+                      onChange={e => setPurpose(e.target.value)}
+                      placeholder="例：残業分の消化のため"
+                      rows={2}
+                      style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 14, boxSizing: 'border-box', resize: 'vertical', background: inputBg, color: text }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* 休暇日 カレンダー */}
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: text }}>
-              休暇日 * <span style={{ fontSize: 12, fontWeight: 'normal', color: subText }}>（日付をタップして選択・解除）</span>
+              休暇日 <span style={{ color: '#dc3545' }}>*</span> <span style={{ fontSize: 12, fontWeight: 'normal', color: subText }}>（日付をタップして選択・解除）</span>
             </label>
             <MultiDatePicker
               selectedDates={selectedDates}
@@ -525,10 +588,10 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             )}
           </div>
 
-          {/* 事由（必須） */}
-          <div style={{ marginBottom: 16 }}>
+          {/* 事由（必須）調整休は専用欄を使うため非表示 */}
+          {leaveType !== '調整休' && <div style={{ marginBottom: 16 }}>
             <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: text }}>
-              事由 * <span style={{ fontSize: 12, fontWeight: 'normal', color: '#dc3545' }}>（必須）</span>
+              事由 <span style={{ color: '#dc3545' }}>*</span>
             </label>
             <textarea
               value={purpose}
@@ -537,7 +600,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               rows={3}
               style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 15, boxSizing: 'border-box', resize: 'vertical', background: inputBg, color: text }}
             />
-          </div>
+          </div>}
 
           {/* 備考（任意） */}
           <div style={{ marginBottom: 24 }}>
