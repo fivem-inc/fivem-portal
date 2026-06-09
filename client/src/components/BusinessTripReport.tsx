@@ -268,7 +268,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
   };
 
   return (
-    <div style={{ maxWidth: 600, margin: '0 auto', padding: '80px 16px 40px' }}>
+    <div style={{ maxWidth: 600, margin: '0 auto', padding: '16px 16px 40px' }}>
       <h2 style={{ textAlign: 'center', marginBottom: 24, color: isDark ? '#fff' : '#333' }}>📍 出張報告</h2>
 
       {submitted && (
