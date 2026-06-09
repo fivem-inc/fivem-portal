@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useLayoutEffect } from 'react';
+import React, { useState, useCallback, useEffect, useLayoutEffect, Suspense } from 'react';
 import { Routes, Route, Navigate, Outlet, BrowserRouter, useNavigate, useLocation } from 'react-router-dom';
 import SignIn from './pages/SignIn';
 import ResetPassword from './pages/ResetPassword';
@@ -7,13 +7,18 @@ import ChangePassword from './pages/ChangePassword';
 import AccountSettings from './pages/AccountSettings';
 import SupabaseSettingsCheck from './pages/SupabaseSettingsCheck';
 import ExpenseForm from './components/ExpenseForm';
-import AdminPanel from './components/AdminPanel';
-import HistoryView from './components/HistoryView';
-import MonthlyApplicationStatus from './components/MonthlyApplicationStatus';
-import BusinessTripReportForm from './components/BusinessTripReport';
-import LeaveRequestForm from './components/LeaveRequest';
-import LeaveApprovals from './components/LeaveApprovals';
-import CalendarPage from './pages/CalendarPage';
+
+const AdminPanel = React.lazy(() => import('./components/AdminPanel'));
+const HistoryView = React.lazy(() => import('./components/HistoryView'));
+const MonthlyApplicationStatus = React.lazy(() => import('./components/MonthlyApplicationStatus'));
+const BusinessTripReportForm = React.lazy(() => import('./components/BusinessTripReport'));
+const LeaveRequestForm = React.lazy(() => import('./components/LeaveRequest'));
+const LeaveApprovals = React.lazy(() => import('./components/LeaveApprovals'));
+const CalendarPage = React.lazy(() => import('./pages/CalendarPage'));
+
+const PageLoader: React.FC = () => (
+  <div style={{ padding: 40, textAlign: 'center', color: '#888' }}>読み込んでいます...</div>
+);
 import { AuthProvider } from './contexts/AuthContext.tsx';
 import { useAuth } from './hooks/useAuth';
 import { supabase } from './lib/supabaseClient';
@@ -325,30 +330,36 @@ const Dashboard: React.FC = () => {
 
       {/* 月別申請状況 - 一般ユーザーのみ表示 */}
       {!isAdmin && (
-        <MonthlyApplicationStatus
-          user={user}
-          submissions={submissions}
-          userName={profileName || user.email || ''}
-        />
+        <Suspense fallback={<PageLoader />}>
+          <MonthlyApplicationStatus
+            user={user}
+            submissions={submissions}
+            userName={profileName || user.email || ''}
+          />
+        </Suspense>
       )}
 
       {/* 管理者パネル */}
       {isAdmin && (
-        <AdminPanel
-          pendingApprovals={pendingApprovals}
-          submissions={submissions}
-          isLoading={isLoading}
-          onRefresh={fetchExpenses}
-        />
+        <Suspense fallback={<PageLoader />}>
+          <AdminPanel
+            pendingApprovals={pendingApprovals}
+            submissions={submissions}
+            isLoading={isLoading}
+            onRefresh={fetchExpenses}
+          />
+        </Suspense>
       )}
 
       {/* 申請履歴 */}
-      <HistoryView
-        submissions={submissions}
-        user={user}
-        isLoading={isLoading}
-        onApplyTemplate={handleApplyTemplate}
-      />
+      <Suspense fallback={<PageLoader />}>
+        <HistoryView
+          submissions={submissions}
+          user={user}
+          isLoading={isLoading}
+          onApplyTemplate={handleApplyTemplate}
+        />
+      </Suspense>
     </div>
   );
 };
@@ -360,7 +371,9 @@ const TripReportPage: React.FC = () => {
   return (
     <div style={{ padding: '110px 16px 0' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} />
-      <BusinessTripReportForm user={user} profileName={profileName} />
+      <Suspense fallback={<PageLoader />}>
+        <BusinessTripReportForm user={user} profileName={profileName} />
+      </Suspense>
     </div>
   );
 };
@@ -372,7 +385,9 @@ const LeaveRequestPage: React.FC = () => {
   return (
     <div style={{ padding: '110px 16px 0' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} />
-      <LeaveRequestForm user={user} profileName={profileName} roleTitle={roleTitle} leaveRequestEnabled={leaveRequestEnabled} />
+      <Suspense fallback={<PageLoader />}>
+        <LeaveRequestForm user={user} profileName={profileName} roleTitle={roleTitle} leaveRequestEnabled={leaveRequestEnabled} />
+      </Suspense>
     </div>
   );
 };
@@ -385,7 +400,9 @@ const LeaveApprovalsPage: React.FC = () => {
   return (
     <div style={{ padding: '110px 16px 0' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} />
-      <LeaveApprovals user={user} profileName={profileName} isAdmin={isAdmin} roleTitle={roleTitle} />
+      <Suspense fallback={<PageLoader />}>
+        <LeaveApprovals user={user} profileName={profileName} isAdmin={isAdmin} roleTitle={roleTitle} />
+      </Suspense>
     </div>
   );
 };
@@ -399,7 +416,9 @@ const TeamCalendarPage: React.FC = () => {
     <div style={{ padding: '110px 16px 0' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} />
       <h2 style={{ marginBottom: 16, fontSize: 18, color: '#333' }}>📅 休暇カレンダー</h2>
-      <CalendarPage user={user} roleTitle={roleTitle} isAdmin={isAdmin} />
+      <Suspense fallback={<PageLoader />}>
+        <CalendarPage user={user} roleTitle={roleTitle} isAdmin={isAdmin} />
+      </Suspense>
     </div>
   );
 };
