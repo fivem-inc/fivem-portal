@@ -51,6 +51,14 @@
   color: #888;
 }
 
+/* 管理画面タブ PC/スマホ切り替え */
+.admin-tabs-pc     { display: flex !important; }
+.admin-tabs-mobile { display: none !important; }
+@media (max-width: 600px) {
+  .admin-tabs-pc     { display: none !important; }
+  .admin-tabs-mobile { display: block !important; }
+}
+
 /* 新しいスタイル */
 .expense-row {
   display: flex;

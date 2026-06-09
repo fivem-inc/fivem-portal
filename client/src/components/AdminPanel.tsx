@@ -416,50 +416,58 @@ const AdminPanelContent: React.FC = () => {
       )}
       
       {/* タブナビゲーション */}
-      <div style={{ display: 'flex', marginBottom: '0', justifyContent: 'center' }}>
-        <button
-          style={tabStyle(activeTab === 'approvals')}
-          onClick={() => setActiveTab('approvals')}
-        >
-          承認管理
-        </button>
-        <button
-          style={tabStyle(activeTab === 'users')}
-          onClick={() => setActiveTab('users')}
-        >
-          ユーザー管理
-        </button>
-        <button
-          style={tabStyle(activeTab === 'groups')}
-          onClick={() => { setActiveTab('groups'); setSelectedGroup(null); }}
-        >
-          👥 グループ管理
-        </button>
-        <button
-          style={tabStyle(activeTab === 'trip_reports')}
-          onClick={() => setActiveTab('trip_reports')}
-        >
-          📍 出張報告
-        </button>
-        <button
-          style={tabStyle(activeTab === 'leave_requests')}
-          onClick={() => setActiveTab('leave_requests')}
-        >
-          🌿 休暇申請
-        </button>
-        <button
-          style={tabStyle(activeTab === 'leader_assignments')}
-          onClick={() => setActiveTab('leader_assignments')}
-        >
-          📋 リーダー管理
-        </button>
-        <button
-          style={tabStyle(activeTab === 'reports')}
-          onClick={() => setActiveTab('reports')}
-        >
-          レポート・分析
-        </button>
-      </div>
+      {(() => {
+        const TABS = [
+          { key: 'approvals',          label: '承認管理',      icon: '' },
+          { key: 'users',              label: 'ユーザー管理',  icon: '' },
+          { key: 'groups',             label: 'グループ管理',  icon: '👥' },
+          { key: 'trip_reports',       label: '出張報告',      icon: '📍' },
+          { key: 'leave_requests',     label: '休暇申請',      icon: '🌿' },
+          { key: 'leader_assignments', label: 'リーダー管理',  icon: '📋' },
+          { key: 'reports',            label: 'レポート・分析',icon: '' },
+        ] as const;
+        const handleTabChange = (key: typeof TABS[number]['key']) => {
+          if (key === 'groups') setSelectedGroup(null);
+          setActiveTab(key);
+        };
+        return (
+          <>
+            {/* PC: 通常タブ */}
+            <div style={{ display: 'flex', marginBottom: '0', justifyContent: 'center' }}
+                 className="admin-tabs-pc">
+              {TABS.map(t => (
+                <button key={t.key} style={tabStyle(activeTab === t.key)}
+                        onClick={() => handleTabChange(t.key)}>
+                  {t.icon ? `${t.icon} ${t.label}` : t.label}
+                </button>
+              ))}
+            </div>
+            {/* スマホ: セレクトボックス */}
+            <div className="admin-tabs-mobile">
+              <select
+                value={activeTab}
+                onChange={e => handleTabChange(e.target.value as typeof TABS[number]['key'])}
+                style={{
+                  width: '100%', padding: '12px 16px', fontSize: 16, fontWeight: 'bold',
+                  borderRadius: '8px 8px 0 0', border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`,
+                  borderBottom: 'none',
+                  background: isDarkMode ? '#007bff' : '#007bff',
+                  color: 'white', cursor: 'pointer', appearance: 'none',
+                  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='white' d='M6 8L0 0h12z'/%3E%3C/svg%3E")`,
+                  backgroundRepeat: 'no-repeat', backgroundPosition: 'right 16px center',
+                }}
+              >
+                {TABS.map(t => (
+                  <option key={t.key} value={t.key}
+                    style={{ background: isDarkMode ? '#343a40' : 'white', color: isDarkMode ? '#fff' : '#333' }}>
+                    {t.icon ? `${t.icon} ${t.label}` : t.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </>
+        );
+      })()}
 
       {/* タブコンテンツ */}
       <div style={tabContentStyle}>
