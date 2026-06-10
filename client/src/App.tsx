@@ -122,11 +122,11 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   }, []);
 
   const btnStyle = (active: boolean, activeColor = '#007bff') => ({
-    padding: isMobile ? '8px 10px' : '5px 8px',
+    padding: isMobile ? '10px 8px' : '6px 14px',
     borderRadius: 6, border: 'none', cursor: 'pointer',
     background: active ? activeColor : '#444',
     color: 'white',
-    fontSize: isMobile ? 14 : 12,
+    fontSize: isMobile ? 14 : 14,
     whiteSpace: 'nowrap' as const,
     flex: isMobile ? '1 1 calc(50% - 4px)' : undefined,
   });
