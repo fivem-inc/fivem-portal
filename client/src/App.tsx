@@ -122,31 +122,31 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
       display: 'flex', justifyContent: 'space-between', alignItems: 'center',
       boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
     }}>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap', alignItems: 'center' }}>
         <button
           onClick={() => navigate('/')}
           style={{
-            padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer',
-            background: location.pathname === '/' ? '#007bff' : '#444', color: 'white', fontSize: 14
+            padding: '5px 8px', borderRadius: 6, border: 'none', cursor: 'pointer',
+            background: location.pathname === '/' ? '#007bff' : '#444', color: 'white', fontSize: 12, whiteSpace: 'nowrap'
           }}
         >
-          🏠 交通費申請
+          🏠 交通費
         </button>
         <button
           onClick={() => navigate('/trip-report')}
           style={{
-            padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer',
-            background: location.pathname === '/trip-report' ? '#007bff' : '#444', color: 'white', fontSize: 14
+            padding: '5px 8px', borderRadius: 6, border: 'none', cursor: 'pointer',
+            background: location.pathname === '/trip-report' ? '#007bff' : '#444', color: 'white', fontSize: 12, whiteSpace: 'nowrap'
           }}
         >
-          📍 出張報告
+          📍 出張
         </button>
         {canLeave && (
           <button
             onClick={() => navigate('/leave')}
             style={{
-              padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer',
-              background: location.pathname === '/leave' ? '#28a745' : '#444', color: 'white', fontSize: 14
+              padding: '5px 8px', borderRadius: 6, border: 'none', cursor: 'pointer',
+              background: location.pathname === '/leave' ? '#28a745' : '#444', color: 'white', fontSize: 12, whiteSpace: 'nowrap'
             }}
           >
             🌿 休暇申請
@@ -156,26 +156,26 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
           <button
             onClick={() => navigate('/calendar')}
             style={{
-              padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer',
-              background: location.pathname === '/calendar' ? '#4a90d9' : '#444', color: 'white', fontSize: 14
+              padding: '5px 8px', borderRadius: 6, border: 'none', cursor: 'pointer',
+              background: location.pathname === '/calendar' ? '#4a90d9' : '#444', color: 'white', fontSize: 12, whiteSpace: 'nowrap'
             }}
           >
-📅 休暇
+            📅 休暇
           </button>
         )}
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
         {userId && <BellIcon userId={userId} />}
         <span
           onClick={() => navigate('/account')}
-          style={{ fontSize: 13, opacity: 0.8, cursor: 'pointer', textDecoration: 'underline dotted', textUnderlineOffset: 3 }}
+          style={{ fontSize: 12, opacity: 0.8, cursor: 'pointer', textDecoration: 'underline dotted', textUnderlineOffset: 3, whiteSpace: 'nowrap', maxWidth: 70, overflow: 'hidden', textOverflow: 'ellipsis' }}
           title="タップでアカウント設定"
         >
           {profileName || email}
         </span>
         <button
           onClick={onLogout}
-          style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #aaa', background: 'transparent', color: 'white', cursor: 'pointer', fontSize: 14 }}
+          style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid #aaa', background: 'transparent', color: 'white', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}
         >
           ログアウト
         </button>
