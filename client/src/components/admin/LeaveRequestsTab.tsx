@@ -123,7 +123,7 @@ const LeaveRequestsTab: React.FC = () => {
     const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
     const map: Record<string, string> = {};
     (profs || []).forEach((p: { id: string; name: string }) => { map[p.id] = p.name; });
-    setAbsenceRecs(data.map((r: AbsenceRec) => ({ ...r, targetName: map[r.user_id] || '不明', creatorName: r.created_by ? (map[r.created_by] || '不明') : '不明' })));
+    setAbsenceRecs((data as AbsenceRec[]).map(r => ({ ...r, targetName: map[r.user_id] || '不明', creatorName: r.created_by ? (map[r.created_by] || '不明') : '不明' })));
     setAbsenceLoading(false);
   }, [supabase]);
 
