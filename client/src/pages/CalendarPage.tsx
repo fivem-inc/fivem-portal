@@ -407,17 +407,19 @@ const AbsenceInputSheet: React.FC<{
           )}
 
           {/* 遅刻 / 調整遅出 行 */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, opacity: isAbsent ? 0.4 : 1 }}>
+          <div style={{ marginBottom: 8, opacity: isAbsent ? 0.4 : 1 }}>
+            <div style={{ display: 'flex', gap: 6 }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', border: `2px solid ${isLate ? '#ff9800' : '#e0e0e0'}`, borderRadius: 10, cursor: isAbsent ? 'default' : 'pointer', background: isLate ? '#fff8f0' : '#fff', whiteSpace: 'nowrap' }}>
               <input type="checkbox" checked={isLate} onChange={e => toggleLate(e.target.checked)} disabled={isAbsent} style={{ width: 18, height: 18, accentColor: '#ff9800', flexShrink: 0 }} />
-              <span style={{ fontSize: 14, fontWeight: 'bold', color: '#e65100' }}>🟡 遅刻</span>
+              <span style={{ fontSize: 14, fontWeight: 'bold', color: '#e65100' }}>🟠 遅刻</span>
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', border: `2px solid ${isLateStart ? '#8bc34a' : '#e0e0e0'}`, borderRadius: 10, cursor: isAbsent ? 'default' : 'pointer', background: isLateStart ? '#f9fbe7' : '#fff', whiteSpace: 'nowrap' }}>
               <input type="checkbox" checked={isLateStart} onChange={e => toggleLateStart(e.target.checked)} disabled={isAbsent} style={{ width: 18, height: 18, accentColor: '#8bc34a', flexShrink: 0 }} />
               <span style={{ fontSize: 14, fontWeight: 'bold', color: '#558b2f' }}>🟢 調整遅出</span>
             </label>
+            </div>
             {(isLate || isLateStart) && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 'auto' }} onClick={e => e.preventDefault()}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 8 }} onClick={e => e.preventDefault()}>
                 <span style={{ fontSize: 12, color: '#666', whiteSpace: 'nowrap' }}>出勤時間</span>
                 <select value={timeH(lateTime)} onChange={e => setLateTime(toTimeStr(+e.target.value, timeM(lateTime)))} style={selStyle} onClick={e => e.stopPropagation()}>
                   {HOURS_24.map(h => <option key={h} value={h}>{String(h).padStart(2,'0')}</option>)}
@@ -431,17 +433,19 @@ const AbsenceInputSheet: React.FC<{
           </div>
 
           {/* 早退 / 調整早退 行 */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, opacity: isAbsent ? 0.4 : 1 }}>
+          <div style={{ marginBottom: 8, opacity: isAbsent ? 0.4 : 1 }}>
+            <div style={{ display: 'flex', gap: 6 }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', border: `2px solid ${isEarlyLeave ? '#2196f3' : '#e0e0e0'}`, borderRadius: 10, cursor: isAbsent ? 'default' : 'pointer', background: isEarlyLeave ? '#f0f8ff' : '#fff', whiteSpace: 'nowrap' }}>
               <input type="checkbox" checked={isEarlyLeave} onChange={e => toggleEarlyLeave(e.target.checked)} disabled={isAbsent} style={{ width: 18, height: 18, accentColor: '#2196f3', flexShrink: 0 }} />
-              <span style={{ fontSize: 14, fontWeight: 'bold', color: '#1565c0' }}>🟠 早退</span>
+              <span style={{ fontSize: 14, fontWeight: 'bold', color: '#1565c0' }}>🔵 早退</span>
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', border: `2px solid ${isEarlyEnd ? '#9c27b0' : '#e0e0e0'}`, borderRadius: 10, cursor: isAbsent ? 'default' : 'pointer', background: isEarlyEnd ? '#f3e5f5' : '#fff', whiteSpace: 'nowrap' }}>
               <input type="checkbox" checked={isEarlyEnd} onChange={e => toggleEarlyEnd(e.target.checked)} disabled={isAbsent} style={{ width: 18, height: 18, accentColor: '#9c27b0', flexShrink: 0 }} />
               <span style={{ fontSize: 14, fontWeight: 'bold', color: '#6a1b9a' }}>🟣 調整早退</span>
             </label>
+            </div>
             {(isEarlyLeave || isEarlyEnd) && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 'auto' }} onClick={e => e.preventDefault()}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 8 }} onClick={e => e.preventDefault()}>
                 <span style={{ fontSize: 12, color: '#666', whiteSpace: 'nowrap' }}>退勤時間</span>
                 <select value={timeH(earlyTime)} onChange={e => setEarlyTime(toTimeStr(+e.target.value, timeM(earlyTime)))} style={selStyle} onClick={e => e.stopPropagation()}>
                   {HOURS_24.map(h => <option key={h} value={h}>{String(h).padStart(2,'0')}</option>)}

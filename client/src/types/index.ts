@@ -142,10 +142,13 @@ export interface AdminLeaveRequest {
   approver2_id?: string | null;
   rejected_reason?: string | null;
   created_at: string;
+  modified_by?: string | null;
+  modified_at?: string | null;
   profile?: { id: string; name: string; email: string } | null;
   requester?: { id: string; name: string; email: string } | null;
   approver?: { id: string; name: string; email: string; role_title?: string } | null;
   approver2?: { id: string; name: string; email: string; role_title?: string } | null;
+  modifier?: { id: string; name: string; email: string } | null;
 }
 
 export interface ReportStats {
