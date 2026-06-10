@@ -81,6 +81,11 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
     }
   };
 
+  const dismissOne = async (id: string) => {
+    await supabase.from('notifications').update({ read: true }).eq('id', id);
+    setNotifs(prev => prev.filter(n => n.id !== id));
+  };
+
   const handleOpen = () => { setOpen(o => !o); if (!open) markAllRead(); };
 
   return (
@@ -98,10 +103,13 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
             {notifs.length === 0 ? (
               <div style={{ padding: '20px', textAlign: 'center', color: '#888', fontSize: 13 }}>通知はありません</div>
             ) : notifs.map(n => (
-              <div key={n.id} style={{ padding: '10px 14px', borderBottom: '1px solid #f0f0f0', background: n.read ? '#fff' : '#f0f8ff' }}>
-                <div style={{ fontSize: 13, color: '#333', fontWeight: n.read ? 'normal' : 'bold' }}>{n.message}</div>
-                {n.sub_message && <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>{n.sub_message}</div>}
-                <div style={{ fontSize: 10, color: '#aaa', marginTop: 4 }}>{new Date(new Date(n.created_at).getTime() + 9*60*60*1000).toLocaleString('ja-JP')}</div>
+              <div key={n.id} style={{ padding: '10px 14px', borderBottom: '1px solid #f0f0f0', background: n.read ? '#fff' : '#f0f8ff', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: '#333', fontWeight: n.read ? 'normal' : 'bold' }}>{n.message}</div>
+                  {n.sub_message && <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>{n.sub_message}</div>}
+                  <div style={{ fontSize: 10, color: '#aaa', marginTop: 4 }}>{new Date(n.created_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>
+                </div>
+                <button onClick={() => dismissOne(n.id)} style={{ background: 'none', border: 'none', color: '#bbb', cursor: 'pointer', fontSize: 14, padding: '0 2px', flexShrink: 0, lineHeight: 1 }}>✕</button>
               </div>
             ))}
           </div>
@@ -179,6 +187,38 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
 };
 
 // 通知バナー（notifications テーブルから未読を表示）
+const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: string | null; read: boolean }; onDismiss: (id: string) => void }> = ({ n, onDismiss }) => {
+  const [visible, setVisible] = useState(true);
+  const isReject = n.message.includes('差し戻し') || n.message.includes('差し戻され');
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setVisible(false);
+      setTimeout(() => onDismiss(n.id), 400);
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [n.id, onDismiss]);
+
+  return (
+    <div style={{
+      background: isReject ? '#dc3545' : '#28a745', color: 'white', borderRadius: 10, padding: '12px 16px', marginBottom: 10,
+      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+      boxShadow: `0 2px 8px ${isReject ? 'rgba(220,53,69,0.4)' : 'rgba(40,167,69,0.4)'}`,
+      opacity: visible ? 1 : 0, transition: 'opacity 0.4s ease',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 20 }}>{isReject ? '⚠️' : '✅'}</span>
+        <div>
+          <div style={{ fontWeight: 'bold', fontSize: 14 }}>{n.message}</div>
+          {n.sub_message && <div style={{ fontSize: 12, opacity: 0.9 }}>{n.sub_message}</div>}
+        </div>
+      </div>
+      <button onClick={() => { setVisible(false); setTimeout(() => onDismiss(n.id), 400); }}
+        style={{ background: 'rgba(255,255,255,0.25)', border: 'none', color: 'white', borderRadius: '50%', width: 24, height: 24, cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>✕</button>
+    </div>
+  );
+};
+
 const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
   const [notifs, setNotifs] = useState<{ id: string; message: string; sub_message: string | null; read: boolean }[]>([]);
 
@@ -194,32 +234,16 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
 
   useEffect(() => { fetchNotifs(); }, [fetchNotifs]);
 
-  const dismiss = async (id: string) => {
+  const dismiss = useCallback(async (id: string) => {
     await supabase.from('notifications').update({ read: true }).eq('id', id);
     setNotifs(prev => prev.filter(n => n.id !== id));
-  };
+  }, []);
 
   if (notifs.length === 0) return null;
 
   return (
     <>
-      {notifs.map(n => {
-        const isReject = n.message.includes('差し戻し') || n.message.includes('差し戻され');
-        return (
-          <div key={n.id}
-            style={{ background: isReject ? '#dc3545' : '#28a745', color: 'white', borderRadius: 10, padding: '12px 16px', marginBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: `0 2px 8px ${isReject ? 'rgba(220,53,69,0.4)' : 'rgba(40,167,69,0.4)'}` }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ fontSize: 20 }}>{isReject ? '⚠️' : '✅'}</span>
-              <div>
-                <div style={{ fontWeight: 'bold', fontSize: 14 }}>{n.message}</div>
-                {n.sub_message && <div style={{ fontSize: 12, opacity: 0.9 }}>{n.sub_message}</div>}
-              </div>
-            </div>
-            <button onClick={() => dismiss(n.id)}
-              style={{ background: 'rgba(255,255,255,0.25)', border: 'none', color: 'white', borderRadius: '50%', width: 24, height: 24, cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>✕</button>
-          </div>
-        );
-      })}
+      {notifs.map(n => <NotifItem key={n.id} n={n} onDismiss={dismiss} />)}
     </>
   );
 };

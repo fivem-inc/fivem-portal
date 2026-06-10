@@ -766,6 +766,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
         ...data.map((r: { user_id: string }) => r.user_id),
         ...data.map((r: { approver_id?: string }) => r.approver_id).filter(Boolean),
         ...data.map((r: { approver2_id?: string }) => r.approver2_id).filter(Boolean),
+        ...data.map((r: { modified_by?: string }) => r.modified_by).filter(Boolean),
       ])];
       const { data: profiles } = await supabase.from('profiles').select('id, name, email').in('id', ids);
       const profileMap: Record<string, { id: string; name: string; email: string }> = {};
@@ -775,6 +776,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
         profile: profileMap[r.user_id] || null,
         approver: r.approver_id ? (profileMap[r.approver_id] || null) : null,
         approver2: r.approver2_id ? (profileMap[r.approver2_id] || null) : null,
+        modifier: r.modified_by ? (profileMap[r.modified_by] || null) : null,
       })));
     } catch (err) {
       console.error('休暇申請の取得に失敗:', err);

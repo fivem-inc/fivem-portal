@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import type { AuthUser, BusinessTripReport } from '../types';
@@ -93,6 +93,7 @@ const DateCalendar: React.FC<CalendarProps> = ({ selected, onToggle, isDark }) =
 
 const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
   const isDark = useDarkMode();
+  const topRef = useRef<HTMLDivElement>(null);
 
   // 区分リスト・場所プリセット（DBから取得）
   const [categories, setCategories] = useState<string[]>(['出張', '園指導', '試合', '下見', 'その他']);
@@ -246,11 +247,13 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
       }
 
       setSubmitted(true);
+      setTimeout(() => topRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
       setShowConfirm(false);
       setReportType('到着'); setCategory('出張'); setCategoryOther('');
       setLocation(''); setLocationCustom(''); setUseCustomLocation(false);
       setNotes(''); setNextDates([]); setSlackComment('');
       setSelectedChannels([]); setGps(null); setAddress(null);
+      setGpsAttempted(false); setGpsUnavailable(false);
       setTimeout(() => setSubmitted(false), 4000);
     } catch {
       alert('送信に失敗しました。もう一度試してください。');
@@ -269,13 +272,16 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
 
   return (
     <div style={{ maxWidth: 600, margin: '0 auto', padding: '16px 16px 40px' }}>
+      <div ref={topRef} />
       <h2 style={{ textAlign: 'center', marginBottom: 24, color: isDark ? '#fff' : '#333' }}>📍 出張報告</h2>
 
       {submitted && (
-        <div style={{ background: '#d4edda', color: '#155724', padding: '12px 16px', borderRadius: 8, marginBottom: 16, textAlign: 'center' }}>
-          ✅ 報告を送信しました！
+        <div style={{ background: '#d4edda', border: '1px solid #c3e6cb', borderRadius: 8, padding: '14px 16px', marginBottom: 16, color: '#155724', fontSize: 15, display: 'flex', alignItems: 'center', gap: 8, fontWeight: 'bold' }}>
+          <span style={{ fontSize: 20 }}>✅</span>
+          報告を送信しました！
         </div>
       )}
+
 
       <div style={{ background: isDark ? '#343a40' : 'white', borderRadius: 12, padding: 24, boxShadow: '0 2px 8px rgba(0,0,0,0.1)', color: isDark ? '#fff' : '#333' }}>
 

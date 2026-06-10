@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
+import { useAuth } from '../../hooks/useAuth';
 import type { AdminLeaveRequest } from '../../types';
 import { insertNotification } from '../../lib/notifications';
 
@@ -98,6 +99,7 @@ const LeaveRequestsTab: React.FC = () => {
     setAdminManagerList, setAdminSelectedManagerId, setAdminSelectingManagerFor,
     sendLeaveSlack, supabase,
   } = ctx;
+  const { user: authUser } = useAuth();
 
   const [absenceView, setAbsenceView] = useState(false);
   const [rejectModal, setRejectModal] = useState<AdminLeaveRequest | null>(null);
@@ -113,6 +115,7 @@ const LeaveRequestsTab: React.FC = () => {
   const [deleteTarget, setDeleteTarget] = useState<AbsenceRec | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [expandedReapply, setExpandedReapply] = useState<string | null>(null);
+  const [expandedModify, setExpandedModify] = useState<string | null>(null);
 
   const fetchAbsences = useCallback(async () => {
     setAbsenceLoading(true);
@@ -459,8 +462,9 @@ const LeaveRequestsTab: React.FC = () => {
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'left', fontSize: 12, wordBreak: 'break-word' }}>
                               {req.purpose && <div>{req.purpose}</div>}
                               {req.reason && (() => {
-                                const displayReason = req.reason.replace(/[\s　]?【再申請】元申請ID: \S+/g, '').trim();
+                                const displayReason = req.reason.replace(/[\s　]?【再申請】元申請ID: \S+/g, '').replace(/【管理者が種別変更】[^　]+(（変更して受理）)?/g, '').trim();
                                 const isReapply = req.reason.includes('【再申請】');
+                                const isModified = !!req.modified_by;
                                 return (
                                   <>
                                     {displayReason && <div style={{ color: isDarkMode ? '#adb5bd' : '#666', fontSize: 11 }}>備考: {displayReason}</div>}
@@ -475,10 +479,19 @@ const LeaveRequestsTab: React.FC = () => {
                                       );
                                       void parentId;
                                     })()}
+                                    {isModified && (() => {
+                                      const isOpen = expandedModify === req.id;
+                                      return (
+                                        <button onClick={() => setExpandedModify(isOpen ? null : req.id)}
+                                          style={{ fontSize: 10, background: '#fd7e14', color: '#fff', borderRadius: 4, padding: '2px 6px', marginTop: 3, marginLeft: 3, display: 'inline-block', border: 'none', cursor: 'pointer' }}>
+                                          {isOpen ? '▼ 修正' : '▶ 修正'}
+                                        </button>
+                                      );
+                                    })()}
                                   </>
                                 );
                               })()}
-                              {!req.purpose && !req.reason && <span>-</span>}
+                              {!req.purpose && !req.reason && !req.modified_by && <span>-</span>}
                             </td>
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center' }}>
                               <div style={{ display: 'inline-block', padding: '3px 8px', borderRadius: 8, background: st.color, color: 'white', textAlign: 'center', lineHeight: 1.4 }}>
@@ -603,6 +616,21 @@ const LeaveRequestsTab: React.FC = () => {
                               </tr>
                             );
                           })()}
+                          {/* 修正展開行 */}
+                          {expandedModify === req.id && (() => {
+                            const match = req.reason?.match(/【管理者が種別変更】(.+?) → (.+?)（変更して受理）/);
+                            const modifiedAtJst = req.modified_at ? new Date(req.modified_at) : null;
+                            return (
+                              <tr key={`modify-${req.id}`} style={{ background: isDarkMode ? '#2a1e00' : '#fff8f0' }}>
+                                <td colSpan={9} style={{ padding: '7px 12px', borderBottom: `2px solid #fd7e14`, borderLeft: '4px solid #fd7e14', fontSize: 11, color: isDarkMode ? '#ffe082' : '#7c4d00' }}>
+                                  <span style={{ fontSize: 10, color: '#fd7e14', fontWeight: 'bold', marginRight: 8 }}>🖊 修正履歴</span>
+                                  <strong>{req.modifier?.name ?? '管理者'}</strong>
+                                  {modifiedAtJst && <span style={{ marginLeft: 8 }}>{modifiedAtJst.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>}
+                                  {match && <span style={{ marginLeft: 8 }}>「{match[1]}」→「{match[2]}」に変更して受理</span>}
+                                </td>
+                              </tr>
+                            );
+                          })()}
                         </React.Fragment>
                       );
                       })}
@@ -670,7 +698,7 @@ const LeaveRequestsTab: React.FC = () => {
                           <button onClick={async () => {
                             const origType = rejectModal.leave_type === 'その他' ? (rejectModal.leave_type_other || 'その他') : rejectModal.leave_type;
                             const autoNote = `【管理者が種別変更】${origType} → ${rejectNewType}（変更して受理）`;
-                            await supabase.from('leave_requests').update({ leave_type: rejectNewType, status: 'approved', reason: rejectReason ? `${rejectReason}　${autoNote}` : autoNote }).eq('id', rejectModal.id);
+                            await supabase.from('leave_requests').update({ leave_type: rejectNewType, status: 'approved', reason: rejectReason ? `${rejectReason}　${autoNote}` : autoNote, modified_by: authUser?.id ?? null, modified_at: new Date().toISOString() }).eq('id', rejectModal.id);
                             await insertNotification(rejectModal.user_id, `「${origType}」が「${rejectNewType}」に変更され、受理されました`);
                             setRejectModal(null); setRejectReason(''); setRejectNewType('');
                             fetchLeaveRequests();
