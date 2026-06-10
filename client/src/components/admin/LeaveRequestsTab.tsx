@@ -72,7 +72,7 @@ interface AbsenceRec {
   id: string;
   user_id: string;
   date: string;
-  type: 'absent' | 'late' | 'early_leave';
+  type: 'absent' | 'late' | 'early_leave' | 'late_start' | 'early_end';
   actual_time: string | null;
   notes: string | null;
   created_at: string;
@@ -81,11 +81,13 @@ interface AbsenceRec {
   creatorName: string;
 }
 
-const ABSENCE_LABEL: Record<string, string> = { absent: '全欠勤', late: '遅刻', early_leave: '早退' };
+const ABSENCE_LABEL: Record<string, string> = { absent: '全欠勤', late: '遅刻', early_leave: '早退', late_start: '遅出', early_end: '早退(残業調整)' };
 const ABSENCE_COLOR: Record<string, { bg: string; text: string }> = {
   absent:      { bg: '#fde8e8', text: '#c0392b' },
   late:        { bg: '#ff9800', text: '#fff' },
   early_leave: { bg: '#e3f2fd', text: '#1565c0' },
+  late_start:  { bg: '#8bc34a', text: '#fff' },
+  early_end:   { bg: '#e1bee7', text: '#6a1b9a' },
 };
 
 const LeaveRequestsTab: React.FC = () => {
