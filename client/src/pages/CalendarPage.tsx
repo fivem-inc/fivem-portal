@@ -51,12 +51,16 @@ const ABSENCE_LABEL: Record<string, string> = {
   absent:      '全欠勤',
   late:        '遅刻',
   early_leave: '早退',
+  late_start:  '遅出',
+  early_end:   '早退(残業調整)',
 };
 
 const ABSENCE_COLOR: Record<string, { bg: string; text: string }> = {
   absent:      { bg: '#fde8e8', text: '#c0392b' },
   late:        { bg: '#ff9800', text: '#fff' },
   early_leave: { bg: '#e3f2fd', text: '#1565c0' },
+  late_start:  { bg: '#8bc34a', text: '#fff' },
+  early_end:   { bg: '#e1bee7', text: '#6a1b9a' },
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -281,7 +285,9 @@ const AbsenceInputSheet: React.FC<{
   const [isAbsent, setIsAbsent] = useState(false);
   const [absentDates, setAbsentDates] = useState<Set<string>>(() => new Set([date]));
   const [isLate, setIsLate] = useState(false);
+  const [isLateStart, setIsLateStart] = useState(false);
   const [isEarlyLeave, setIsEarlyLeave] = useState(false);
+  const [isEarlyEnd, setIsEarlyEnd] = useState(false);
   const [lateTime, setLateTime] = useState('');
   const [earlyTime, setEarlyTime] = useState('');
   const MINUTES_5 = Array.from({ length: 12 }, (_, i) => i * 5);
@@ -300,7 +306,31 @@ const AbsenceInputSheet: React.FC<{
 
   const toggleAbsent = (checked: boolean) => {
     setIsAbsent(checked);
-    if (checked) { setIsLate(false); setIsEarlyLeave(false); }
+    if (checked) { setIsLate(false); setIsLateStart(false); setIsEarlyLeave(false); setIsEarlyEnd(false); }
+  };
+
+  const toggleLate = (checked: boolean) => {
+    if (isAbsent) return;
+    setIsLate(checked);
+    if (checked) setIsLateStart(false);
+  };
+
+  const toggleLateStart = (checked: boolean) => {
+    if (isAbsent) return;
+    setIsLateStart(checked);
+    if (checked) setIsLate(false);
+  };
+
+  const toggleEarlyLeave = (checked: boolean) => {
+    if (isAbsent) return;
+    setIsEarlyLeave(checked);
+    if (checked) setIsEarlyEnd(false);
+  };
+
+  const toggleEarlyEnd = (checked: boolean) => {
+    if (isAbsent) return;
+    setIsEarlyEnd(checked);
+    if (checked) setIsEarlyLeave(false);
   };
 
   const toggleAbsentDate = (d: string) => {
@@ -315,9 +345,9 @@ const AbsenceInputSheet: React.FC<{
   const handleConfirm = () => {
     setError('');
     if (!userId) { setError('対象者を選択してください'); return; }
-    if (!isAbsent && !isLate && !isEarlyLeave) { setError('種別を選択してください'); return; }
-    if (isLate && !lateTime) { setError('遅刻の出勤時間を入力してください'); return; }
-    if (isEarlyLeave && !earlyTime) { setError('早退の退勤時間を入力してください'); return; }
+    if (!isAbsent && !isLate && !isLateStart && !isEarlyLeave && !isEarlyEnd) { setError('種別を選択してください'); return; }
+    if ((isLate || isLateStart) && !lateTime) { setError('出勤時間を入力してください'); return; }
+    if ((isEarlyLeave || isEarlyEnd) && !earlyTime) { setError('退勤時間を入力してください'); return; }
     setConfirming(true);
   };
 
@@ -330,7 +360,9 @@ const AbsenceInputSheet: React.FC<{
       }
     }
     if (isLate)       records.push({ user_id: userId, date, type: 'late',        actual_time: lateTime,  notes, created_by: currentUserId });
+    if (isLateStart)  records.push({ user_id: userId, date, type: 'late_start',  actual_time: lateTime,  notes, created_by: currentUserId });
     if (isEarlyLeave) records.push({ user_id: userId, date, type: 'early_leave', actual_time: earlyTime, notes, created_by: currentUserId });
+    if (isEarlyEnd)   records.push({ user_id: userId, date, type: 'early_end',   actual_time: earlyTime, notes, created_by: currentUserId });
 
     const { error: err } = await supabase.from('attendance_exceptions').insert(records);
     setSaving(false);
@@ -374,11 +406,18 @@ const AbsenceInputSheet: React.FC<{
             </div>
           )}
 
-          <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px', border: `2px solid ${isLate ? '#ff9800' : '#e0e0e0'}`, borderRadius: 10, marginBottom: 8, cursor: isAbsent ? 'default' : 'pointer', background: isLate ? '#fff8f0' : '#fff', opacity: isAbsent ? 0.4 : 1 }}>
-            <input type="checkbox" checked={isLate} onChange={e => !isAbsent && setIsLate(e.target.checked)} disabled={isAbsent} style={{ width: 20, height: 20, accentColor: '#ff9800' }} />
-            <span style={{ fontSize: 15, fontWeight: 'bold', color: '#e65100' }}>🟡 遅刻</span>
-            {isLate && (
-              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }} onClick={e => e.preventDefault()}>
+          {/* 遅刻 / 調整遅出 行 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, opacity: isAbsent ? 0.4 : 1 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', border: `2px solid ${isLate ? '#ff9800' : '#e0e0e0'}`, borderRadius: 10, cursor: isAbsent ? 'default' : 'pointer', background: isLate ? '#fff8f0' : '#fff', whiteSpace: 'nowrap' }}>
+              <input type="checkbox" checked={isLate} onChange={e => toggleLate(e.target.checked)} disabled={isAbsent} style={{ width: 18, height: 18, accentColor: '#ff9800', flexShrink: 0 }} />
+              <span style={{ fontSize: 14, fontWeight: 'bold', color: '#e65100' }}>🟡 遅刻</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', border: `2px solid ${isLateStart ? '#8bc34a' : '#e0e0e0'}`, borderRadius: 10, cursor: isAbsent ? 'default' : 'pointer', background: isLateStart ? '#f9fbe7' : '#fff', whiteSpace: 'nowrap' }}>
+              <input type="checkbox" checked={isLateStart} onChange={e => toggleLateStart(e.target.checked)} disabled={isAbsent} style={{ width: 18, height: 18, accentColor: '#8bc34a', flexShrink: 0 }} />
+              <span style={{ fontSize: 14, fontWeight: 'bold', color: '#558b2f' }}>🟢 調整遅出</span>
+            </label>
+            {(isLate || isLateStart) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 'auto' }} onClick={e => e.preventDefault()}>
                 <span style={{ fontSize: 12, color: '#666', whiteSpace: 'nowrap' }}>出勤時間</span>
                 <select value={timeH(lateTime)} onChange={e => setLateTime(toTimeStr(+e.target.value, timeM(lateTime)))} style={selStyle} onClick={e => e.stopPropagation()}>
                   {HOURS_24.map(h => <option key={h} value={h}>{String(h).padStart(2,'0')}</option>)}
@@ -389,13 +428,20 @@ const AbsenceInputSheet: React.FC<{
                 </select>
               </div>
             )}
-          </label>
+          </div>
 
-          <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px', border: `2px solid ${isEarlyLeave ? '#2196f3' : '#e0e0e0'}`, borderRadius: 10, marginBottom: 8, cursor: isAbsent ? 'default' : 'pointer', background: isEarlyLeave ? '#f0f8ff' : '#fff', opacity: isAbsent ? 0.4 : 1 }}>
-            <input type="checkbox" checked={isEarlyLeave} onChange={e => !isAbsent && setIsEarlyLeave(e.target.checked)} disabled={isAbsent} style={{ width: 20, height: 20, accentColor: '#2196f3' }} />
-            <span style={{ fontSize: 15, fontWeight: 'bold', color: '#1565c0' }}>🟠 早退</span>
-            {isEarlyLeave && (
-              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }} onClick={e => e.preventDefault()}>
+          {/* 早退 / 調整早退 行 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, opacity: isAbsent ? 0.4 : 1 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', border: `2px solid ${isEarlyLeave ? '#2196f3' : '#e0e0e0'}`, borderRadius: 10, cursor: isAbsent ? 'default' : 'pointer', background: isEarlyLeave ? '#f0f8ff' : '#fff', whiteSpace: 'nowrap' }}>
+              <input type="checkbox" checked={isEarlyLeave} onChange={e => toggleEarlyLeave(e.target.checked)} disabled={isAbsent} style={{ width: 18, height: 18, accentColor: '#2196f3', flexShrink: 0 }} />
+              <span style={{ fontSize: 14, fontWeight: 'bold', color: '#1565c0' }}>🟠 早退</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', border: `2px solid ${isEarlyEnd ? '#9c27b0' : '#e0e0e0'}`, borderRadius: 10, cursor: isAbsent ? 'default' : 'pointer', background: isEarlyEnd ? '#f3e5f5' : '#fff', whiteSpace: 'nowrap' }}>
+              <input type="checkbox" checked={isEarlyEnd} onChange={e => toggleEarlyEnd(e.target.checked)} disabled={isAbsent} style={{ width: 18, height: 18, accentColor: '#9c27b0', flexShrink: 0 }} />
+              <span style={{ fontSize: 14, fontWeight: 'bold', color: '#6a1b9a' }}>🟣 調整早退</span>
+            </label>
+            {(isEarlyLeave || isEarlyEnd) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 'auto' }} onClick={e => e.preventDefault()}>
                 <span style={{ fontSize: 12, color: '#666', whiteSpace: 'nowrap' }}>退勤時間</span>
                 <select value={timeH(earlyTime)} onChange={e => setEarlyTime(toTimeStr(+e.target.value, timeM(earlyTime)))} style={selStyle} onClick={e => e.stopPropagation()}>
                   {HOURS_24.map(h => <option key={h} value={h}>{String(h).padStart(2,'0')}</option>)}
@@ -406,7 +452,7 @@ const AbsenceInputSheet: React.FC<{
                 </select>
               </div>
             )}
-          </label>
+          </div>
         </div>
 
         {/* 備考 */}
@@ -435,8 +481,10 @@ const AbsenceInputSheet: React.FC<{
           const personName = profiles.find(p => p.id === userId)?.name ?? '';
           const lines: string[] = [];
           if (isAbsent) [...absentDates].sort().forEach(d => lines.push(`${d}　全欠勤`));
-          if (isLate) lines.push(`${date}　遅刻　出勤 ${lateTime}`);
+          if (isLate)       lines.push(`${date}　遅刻　出勤 ${lateTime}`);
+          if (isLateStart)  lines.push(`${date}　遅出（残業調整）　出勤 ${lateTime}`);
           if (isEarlyLeave) lines.push(`${date}　早退　退勤 ${earlyTime}`);
+          if (isEarlyEnd)   lines.push(`${date}　早退（残業調整）　退勤 ${earlyTime}`);
           return (
             <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
               <div style={{ background: '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 360 }}>
@@ -767,7 +815,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
     const profileMap: Record<string, string> = {};
     (profs || []).forEach((p: { id: string; name: string }) => { profileMap[p.id] = p.name; });
 
-    setAbsences(data.map((a: { id: string; user_id: string; date: string; type: 'late' | 'early_leave' | 'absent'; actual_time: string | null; notes: string | null }) => ({
+    setAbsences(data.map((a: { id: string; user_id: string; date: string; type: 'late' | 'early_leave' | 'absent' | 'late_start' | 'early_end'; actual_time: string | null; notes: string | null }) => ({
       ...a, name: profileMap[a.user_id] || '不明',
     })));
   }, [year, month]);
