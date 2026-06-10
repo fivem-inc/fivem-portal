@@ -122,7 +122,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
       display: 'flex', justifyContent: 'space-between', alignItems: 'center',
       boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
     }}>
-      <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap', alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
         <button
           onClick={() => navigate('/')}
           style={{
@@ -139,7 +139,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
             background: location.pathname === '/trip-report' ? '#007bff' : '#444', color: 'white', fontSize: 12, whiteSpace: 'nowrap'
           }}
         >
-          📍 出張
+          📍 出張報告
         </button>
         {canLeave && (
           <button
