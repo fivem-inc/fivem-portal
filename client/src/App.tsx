@@ -143,7 +143,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
           {isMobile ? <><span style={{ fontSize: 20 }}>🏠</span><span>交通費</span></> : '🏠 交通費'}
         </button>
         <button onClick={() => navigate('/trip-report')} style={btnStyle(location.pathname === '/trip-report')}>
-          {isMobile ? <><span style={{ fontSize: 20 }}>📍</span><span>出張</span></> : '📍 出張報告'}
+          {isMobile ? <><span style={{ fontSize: 20 }}>📍</span><span>出張報告</span></> : '📍 出張報告'}
         </button>
         {canLeave && (
           <button onClick={() => navigate('/leave')} style={btnStyle(location.pathname === '/leave', '#28a745')}>
