@@ -51,16 +51,16 @@ const ABSENCE_LABEL: Record<string, string> = {
   absent:      '全欠勤',
   late:        '遅刻',
   early_leave: '早退',
-  late_start:  '遅出',
-  early_end:   '早退(残業調整)',
+  late_start:  '遅出(調整)',
+  early_end:   '早退(調整)',
 };
 
 const ABSENCE_COLOR: Record<string, { bg: string; text: string }> = {
   absent:      { bg: '#fde8e8', text: '#c0392b' },
   late:        { bg: '#ff9800', text: '#fff' },
-  early_leave: { bg: '#e3f2fd', text: '#1565c0' },
-  late_start:  { bg: '#8bc34a', text: '#fff' },
-  early_end:   { bg: '#e1bee7', text: '#6a1b9a' },
+  early_leave: { bg: '#1565c0', text: '#fff' },
+  late_start:  { bg: '#558b2f', text: '#fff' },
+  early_end:   { bg: '#7b1fa2', text: '#fff' },
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -922,8 +922,10 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
             { label: '慶弔・その他', bg: '#fdedec' },
             { label: '申請中', bg: '#fef9e7', border: '#f39c12' },
             { label: '全欠勤', bg: '#fde8e8' },
-            { label: '遅刻', bg: '#fff8e1' },
-            { label: '早退', bg: '#e3f2fd' },
+            { label: '遅刻', bg: '#ff9800' },
+            { label: '早退', bg: '#1565c0' },
+            { label: '遅出(調整)', bg: '#558b2f' },
+            { label: '早退(調整)', bg: '#7b1fa2' },
           ].map(({ label, bg: cbg, border }) => (
             <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <div style={{ width: 12, height: 12, borderRadius: 3, background: cbg, border: border ? `1px dashed ${border}` : 'none' }} />
