@@ -804,6 +804,32 @@ INSERT INTO master_options (category, value, sort_order) VALUES
 
 ### 🔜 次回やること
 1. **Phase 1: メール送信機能**（現状は別ツール使用中のため後回し）
+2. **Googleカレンダー同期**（休暇カレンダー・相談中）
+
+---
+
+## ✅ 2026-06-11 UI改善・通知機能強化 完了
+
+### 変更内容
+
+#### 欠勤入力UI改善（CalendarPage.tsx）
+- 遅刻アイコン 🟡→🟠、早退アイコン 🟠→🔵（凡例と色を統一）
+- 時間入力をチェックボックス行の下段に展開表示（スマホ見切れ解消）
+
+#### 出張報告 送信後UX修正（BusinessTripReport.tsx）
+- 送信後に `gpsAttempted` / `gpsUnavailable` をリセット（チェックボックスが残るバグ修正）
+- 送信成功バナーをページ最上部に移動＋自動スクロール（`scrollIntoView`）
+
+#### 休暇申請 管理者修正履歴（LeaveRequestsTab.tsx / AdminPanelContext.tsx / types/index.ts）
+- Supabase: `leave_requests` に `modified_by`（uuid）・`modified_at`（timestamptz）カラム追加
+- 管理者が「変更して受理」時に修正者・日時を保存
+- 一覧に「▶ 修正」ボタン追加→クリックで修正者・日時・変更内容を1行展開
+
+#### 通知機能強化（App.tsx）
+- バナー通知: 5秒後に自動フェードアウト＋✕手動消し
+- ベルドロップダウン: 各通知に✕ボタン追加（個別既読・非表示）
+- 時刻表示: `timeZone: 'Asia/Tokyo'` 明示（二重JST変換バグ修正）
+- Supabase pg_cron: 毎日午前3時に既読30日以上の通知を自動削除
 
 ---
 
