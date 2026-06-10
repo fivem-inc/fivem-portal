@@ -122,13 +122,14 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   }, []);
 
   const btnStyle = (active: boolean, activeColor = '#007bff') => ({
-    padding: isMobile ? '10px 8px' : '6px 14px',
+    padding: isMobile ? '8px 4px' : '6px 14px',
     borderRadius: 6, border: 'none', cursor: 'pointer',
     background: active ? activeColor : '#444',
     color: 'white',
-    fontSize: isMobile ? 14 : 14,
+    fontSize: isMobile ? 12 : 14,
     whiteSpace: 'nowrap' as const,
-    flex: isMobile ? '1 1 100%' : undefined,
+    flex: isMobile ? '1' : undefined,
+    textAlign: 'center' as const,
   });
 
   return (
@@ -138,7 +139,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
       display: 'flex', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center',
       boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
     }}>
-      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center', flex: 1 }}>
+      <div style={{ display: 'flex', gap: 4, flexWrap: isMobile ? 'nowrap' : 'wrap', alignItems: 'center', flex: 1 }}>
         <button onClick={() => navigate('/')} style={btnStyle(location.pathname === '/')}>
           🏠 交通費
         </button>
