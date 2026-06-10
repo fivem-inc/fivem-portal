@@ -43,6 +43,7 @@ const STATUS_LABEL: Record<string, { label: string; color: string }> = {
   admin_approved:   { label: '経理受理済み',           color: '#0c5460' },
   approved:         { label: '受理済み',               color: '#155724' },
   rejected:         { label: '差し戻し',               color: '#721c24' },
+  cancelled:        { label: '取消済み',               color: '#6c757d' },
 };
 
 // ---- カレンダーコンポーネント ----
@@ -193,6 +194,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const [showApproverGuide, setShowApproverGuide] = useState(false);
   const [leaderAssignments, setLeaderAssignments] = useState<{ id: string; course: string; school: string; leader: string; manager: string }[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(true);
+  const [reapplySourceId, setReapplySourceId] = useState<string | null>(null);
   // 調整休専用
   const [choseiSubType, setChoseiSubType] = useState<'furikae' | 'zangyou'>('furikae');
   const [choseiOriginDate, setChoseiOriginDate] = useState('');
@@ -286,6 +288,10 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         const subLabel = choseiSubType === 'furikae' ? `振替休日（振替元：${choseiOriginDate}）` : '残業調整休';
         reasonValue = [subLabel, notes].filter(Boolean).join(' / ');
       }
+      if (reapplySourceId) {
+        const reapplyNote = `【再申請】元申請ID: ${reapplySourceId}`;
+        reasonValue = reasonValue ? `${reasonValue}　${reapplyNote}` : reapplyNote;
+      }
       const { error } = await supabase.from('leave_requests').insert({
         user_id: user.id,
         leave_type: leaveType,
@@ -300,6 +306,11 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         approver_id: selectedApproverId,
       });
       if (error) throw error;
+      // 再申請の場合、元申請を取消済みにする
+      if (reapplySourceId) {
+        await supabase.from('leave_requests').update({ status: 'cancelled' }).eq('id', reapplySourceId);
+        setReapplySourceId(null);
+      }
       await supabase.from('profiles').update({ leave_request_enabled: false, leave_enabled_by: null }).eq('id', user.id);
       // Slack通知（申請先の役職に応じてチャンネルを切り替え）
       if (selectedApprover) {
@@ -323,6 +334,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     setSubmitted(false);
     setChoseiSubType('furikae');
     setChoseiOriginDate('');
+    setReapplySourceId(null);
     if (approvers.length > 0) setSelectedApproverId(approvers[0].id);
   };
 
@@ -393,6 +405,19 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       {tab === 'form' && (
         <div style={{ padding: 24, background: bg, borderRadius: '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
           <h2 style={{ marginBottom: 12, fontSize: 20, color: text }}>🌿 休暇申請</h2>
+
+          {/* 再申請バナー */}
+          {reapplySourceId && (
+            <div style={{ background: isDark ? '#0d3a5e' : '#cce5ff', border: `1px solid ${isDark ? '#1a6fa8' : '#b8daff'}`, borderRadius: 8, padding: '10px 14px', marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontWeight: 'bold', fontSize: 13, color: isDark ? '#90c9f5' : '#004085' }}>🔄 再申請モード</div>
+                <div style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#555', marginTop: 2 }}>差し戻された申請の内容がセットされています。修正して申請してください。送信すると元の申請は自動で取消済みになります。</div>
+              </div>
+              <button onClick={() => { handleReset(); }} style={{ marginLeft: 12, padding: '4px 10px', background: 'transparent', border: `1px solid ${isDark ? '#90c9f5' : '#004085'}`, borderRadius: 6, color: isDark ? '#90c9f5' : '#004085', fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                キャンセル
+              </button>
+            </div>
+          )}
 
           {/* 注意事項 */}
           <div style={{
@@ -651,7 +676,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             // 年度 → { yukyu: {有給休暇, その他各種}, keicho: {慶弔休暇} }
             const fyMap: Record<number, { yukyu: Record<string, FYData>; keicho: Record<string, FYData> }> = {};
             history.forEach(req => {
-              if (req.status === 'rejected') return;
+              if (req.status === 'rejected' || req.status === 'cancelled') return;
               // 特別休暇は旧データのため集計除外
               if (req.leave_type === '特別休暇' || req.leave_type_other === '特別休暇') return;
               const fy = getFY(req.start_date || req.created_at);
@@ -819,13 +844,14 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                 const st = STATUS_LABEL[req.status] || { label: req.status, color: '#333' };
                 const isApproved = req.status === 'approved';
                 const isRejected = req.status === 'rejected';
+                const isCancelled = req.status === 'cancelled';
                 return (
                   <div
                     key={req.id}
                     style={{
                       padding: '10px 12px', borderRadius: 8,
-                      border: `2px solid ${isApproved ? '#28a745' : isRejected ? '#dc3545' : borderColor}`,
-                      background: isApproved ? (isDark ? '#1b4d1b' : '#f0fff4') : isRejected ? (isDark ? '#5a1a1a' : '#fff5f5') : (isDark ? '#495057' : '#fafafa'),
+                      border: `2px solid ${isApproved ? '#28a745' : isRejected ? '#dc3545' : isCancelled ? '#6c757d' : borderColor}`,
+                      background: isApproved ? (isDark ? '#1b4d1b' : '#f0fff4') : isRejected ? (isDark ? '#5a1a1a' : '#fff5f5') : isCancelled ? (isDark ? '#343a40' : '#f8f9fa') : (isDark ? '#495057' : '#fafafa'),
                       boxSizing: 'border-box',
                     }}
                   >
@@ -860,6 +886,31 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                     {isRejected && req.rejected_reason && (
                       <div style={{ marginTop: 4, padding: '4px 8px', background: isDark ? '#721c24' : '#f8d7da', borderRadius: 6, color: isDark ? '#f5c6cb' : '#721c24', fontSize: 12, textAlign: 'left' }}>
                         差し戻し理由: {req.rejected_reason}
+                      </div>
+                    )}
+                    {isRejected && (
+                      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                        <button onClick={async () => {
+                          if (!window.confirm('この申請を取り消しますか？')) return;
+                          await supabase.from('leave_requests').update({ status: 'cancelled' }).eq('id', req.id);
+                          setHistory(h => h.map(r => r.id === req.id ? { ...r, status: 'cancelled' } : r));
+                        }} style={{ flex: 1, padding: '6px 0', background: '#6c757d', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
+                          取消
+                        </button>
+                        <button onClick={() => {
+                          // フォームに元申請の内容をセットしてフォームタブへ
+                          setLeaveType((req.leave_type as LeaveType) || '有給休暇');
+                          setLeaveTypeOther(req.leave_type_other || '');
+                          try { setSelectedDates(req.leave_dates ? JSON.parse(req.leave_dates) : []); } catch { setSelectedDates([]); }
+                          setPurpose(req.purpose || '');
+                          if (req.approver_id) setSelectedApproverId(req.approver_id);
+                          // 再申請元のIDを備考に埋め込む（送信時に追記）
+                          setReapplySourceId(req.id);
+                          setTab('form');
+                          window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
+                        }} style={{ flex: 1, padding: '6px 0', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
+                          再申請
+                        </button>
                       </div>
                     )}
                   </div>

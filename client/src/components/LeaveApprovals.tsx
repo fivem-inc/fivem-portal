@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { sendLeaveSlack } from '../lib/leaveSlack';
+import { insertNotification } from '../lib/notifications';
 import { useDarkMode } from '../hooks/useDarkMode';
 import type { AuthUser, AdminLeaveRequest } from '../types';
 
@@ -50,9 +51,12 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   const [requests, setRequests] = useState<LeaveReq[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // 却下モーダル
-  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  // 差し戻しモーダル
+  const [rejectingReq, setRejectingReq] = useState<LeaveReq | null>(null);
   const [rejectReason, setRejectReason] = useState('');
+  const [rejectNewType, setRejectNewType] = useState('');
+
+  const LEAVE_TYPES = ['有給休暇', 'BD休暇', '慶弔休', '調整休', 'その他', '病欠'];
 
   // 一人目承認 → マネージャー選択モーダル
   const [selectingManagerFor, setSelectingManagerFor] = useState<LeaveReq | null>(null);
@@ -178,15 +182,18 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     if (!window.confirm(`${label}しますか？`)) return;
     await supabase.from('leave_requests').update({ status: next }).eq('id', req.id);
 
+    // 申請者へのアプリ内通知（マネージャー受理時のみ）
+    const typeName = req.leave_type === 'その他' ? (req.leave_type_other || 'その他') : req.leave_type;
+    if (req.status === 'step2_pending') {
+      await insertNotification(req.user_id, `休暇申請がマネージャーに受理されました`, `種別：${typeName}`);
+    }
+
     // Slack通知（承認後の次のステップへ通知）
     if (req.status === 'step2_pending') {
-      // マネージャーが受理 → 経理へ通知
       await sendLeaveSlack('manager_approved', profileName || '承認者', 'マネージャー');
     } else if (req.status === 'manager_approved') {
-      // 経理が受理 → 社長へ通知
       await sendLeaveSlack('accounting_approved', profileName || '経理担当者', '管理者');
     }
-    // admin_approved（社長受理）は通知なし
 
     fetchRequests();
   };
@@ -207,10 +214,17 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     fetchRequests();
   };
 
-  const handleReject = async (id: string) => {
-    await supabase.from('leave_requests').update({ status: 'rejected', rejected_reason: rejectReason || null }).eq('id', id);
-    setRejectingId(null);
+  const handleReject = async () => {
+    if (!rejectingReq) return;
+    const finalReason = rejectNewType
+      ? `種別を「${rejectNewType}」に変更しました。${rejectReason ? `　理由：${rejectReason}` : ''}`
+      : (rejectReason || null);
+    const update: Record<string, string | null> = { status: 'rejected', rejected_reason: finalReason };
+    if (rejectNewType) update.leave_type = rejectNewType;
+    await supabase.from('leave_requests').update(update).eq('id', rejectingReq.id);
+    setRejectingReq(null);
     setRejectReason('');
+    setRejectNewType('');
     fetchRequests();
   };
 
@@ -350,7 +364,18 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                     {req.start_date} ～ {req.end_date}（{days}日間）
                   </div>
                   {req.reason && (
-                    <div style={{ color: subText, fontSize: 13, marginBottom: 8 }}>理由: {req.reason}</div>
+                    <div style={{ color: subText, fontSize: 13, marginBottom: 8 }}>
+                      {(() => {
+                        const displayReason = req.reason.replace(/[\s　]?【再申請】元申請ID: \S+/g, '').trim();
+                        const isReapply = req.reason.includes('【再申請】');
+                        return (
+                          <>
+                            {displayReason && <>理由: {displayReason}</>}
+                            {isReapply && <span style={{ marginLeft: 6, fontSize: 11, background: '#007bff', color: '#fff', borderRadius: 4, padding: '1px 6px' }}>再申請</span>}
+                          </>
+                        );
+                      })()}
+                    </div>
                   )}
                   <div style={{ color: isDark ? '#6c757d' : '#aaa', fontSize: 12, marginBottom: 12 }}>
                     申請日: {new Date(req.created_at).toLocaleDateString('ja-JP')}
@@ -381,7 +406,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                         {getApproveLabel(req.status)}
                       </button>
                       <button
-                        onClick={() => { setRejectingId(req.id); setRejectReason(''); }}
+                        onClick={() => { setRejectingReq(req); setRejectReason(''); setRejectNewType(''); }}
                         style={{ flex: 1, padding: '8px', background: '#dc3545', color: 'white', border: '2px solid #bd2130', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}
                       >
                         ↩ 差し戻し
@@ -439,29 +464,45 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
         </div>
       )}
 
-      {/* 却下モーダル */}
-      {rejectingId && (
+      {/* 差し戻しモーダル */}
+      {rejectingReq && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-          <div style={{ background: isDark ? '#343a40' : 'white', borderRadius: 12, padding: 24, maxWidth: 380, width: '100%' }}>
-            <h3 style={{ marginBottom: 12, color: text }}>差し戻し理由（任意）</h3>
-            <textarea
-              value={rejectReason}
-              onChange={e => setRejectReason(e.target.value)}
-              placeholder="差し戻し理由を入力してください"
-              rows={3}
-              style={{ width: '100%', padding: '10px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 14, boxSizing: 'border-box', background: inputBg, color: text, resize: 'vertical' }}
-            />
-            <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-              <button
-                onClick={() => setRejectingId(null)}
-                style={{ flex: 1, padding: '10px', background: isDark ? '#495057' : '#f8f9fa', border: `1px solid ${borderColor}`, borderRadius: 8, cursor: 'pointer', color: text }}
-              >
+          <div style={{ background: isDark ? '#343a40' : 'white', borderRadius: 12, padding: 24, maxWidth: 400, width: '100%' }}>
+            <h3 style={{ marginBottom: 4, color: text }}>差し戻し</h3>
+            <div style={{ fontSize: 13, color: subText, marginBottom: 16 }}>
+              {rejectingReq.requester?.name}　{rejectingReq.leave_type === 'その他' ? rejectingReq.leave_type_other : rejectingReq.leave_type}
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 13, color: subText, marginBottom: 6 }}>種別を変更する（任意）</div>
+              <select value={rejectNewType} onChange={e => setRejectNewType(e.target.value)}
+                style={{ width: '100%', padding: '8px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 14, background: inputBg, color: text }}>
+                <option value="">変更しない</option>
+                {LEAVE_TYPES.filter(t => t !== (rejectingReq.leave_type === 'その他' ? rejectingReq.leave_type_other : rejectingReq.leave_type)).map(t => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+              {rejectNewType && (
+                <div style={{ fontSize: 12, color: '#e65100', marginTop: 4 }}>
+                  「{rejectingReq.leave_type}」→「{rejectNewType}」に変更して差し戻します
+                </div>
+              )}
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 13, color: subText, marginBottom: 6 }}>差し戻し理由（任意）</div>
+              <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)}
+                placeholder="差し戻し理由を入力してください" rows={3}
+                style={{ width: '100%', padding: '10px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 14, boxSizing: 'border-box', background: inputBg, color: text, resize: 'vertical' }} />
+            </div>
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => { setRejectingReq(null); setRejectReason(''); setRejectNewType(''); }}
+                style={{ flex: 1, padding: '10px', background: isDark ? '#495057' : '#f8f9fa', border: `1px solid ${borderColor}`, borderRadius: 8, cursor: 'pointer', color: text }}>
                 キャンセル
               </button>
-              <button
-                onClick={() => handleReject(rejectingId)}
-                style={{ flex: 1, padding: '10px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold' }}
-              >
+              <button onClick={handleReject}
+                style={{ flex: 1, padding: '10px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold' }}>
                 差し戻す
               </button>
             </div>

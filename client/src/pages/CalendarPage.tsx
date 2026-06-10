@@ -55,7 +55,7 @@ const ABSENCE_LABEL: Record<string, string> = {
 
 const ABSENCE_COLOR: Record<string, { bg: string; text: string }> = {
   absent:      { bg: '#fde8e8', text: '#c0392b' },
-  late:        { bg: '#fff8e1', text: '#e65100' },
+  late:        { bg: '#ff9800', text: '#fff' },
   early_leave: { bg: '#e3f2fd', text: '#1565c0' },
 };
 
@@ -284,9 +284,16 @@ const AbsenceInputSheet: React.FC<{
   const [isEarlyLeave, setIsEarlyLeave] = useState(false);
   const [lateTime, setLateTime] = useState('');
   const [earlyTime, setEarlyTime] = useState('');
+  const MINUTES_5 = Array.from({ length: 12 }, (_, i) => i * 5);
+  const HOURS_24 = Array.from({ length: 24 }, (_, i) => i);
+  const timeH = (t: string) => t ? parseInt(t.split(':')[0], 10) : 8;
+  const timeM = (t: string) => t ? parseInt(t.split(':')[1], 10) : 0;
+  const toTimeStr = (h: number, m: number) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  const selStyle: React.CSSProperties = { padding: '4px 4px', borderRadius: 6, border: '1px solid #ccc', fontSize: 14 };
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [confirming, setConfirming] = useState(false);
 
   const dateLabel = `${date.slice(5, 7)}月${date.slice(8, 10)}日（${dow(date)}）`;
   const grouped = buildProfileGroups(profiles);
@@ -305,13 +312,16 @@ const AbsenceInputSheet: React.FC<{
     });
   };
 
-  const handleSave = async () => {
+  const handleConfirm = () => {
     setError('');
     if (!userId) { setError('対象者を選択してください'); return; }
     if (!isAbsent && !isLate && !isEarlyLeave) { setError('種別を選択してください'); return; }
     if (isLate && !lateTime) { setError('遅刻の出勤時間を入力してください'); return; }
     if (isEarlyLeave && !earlyTime) { setError('早退の退勤時間を入力してください'); return; }
+    setConfirming(true);
+  };
 
+  const handleSave = async () => {
     setSaving(true);
     const records: { user_id: string; date: string; type: string; actual_time: string | null; notes: string; created_by: string }[] = [];
     if (isAbsent) {
@@ -370,8 +380,13 @@ const AbsenceInputSheet: React.FC<{
             {isLate && (
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }} onClick={e => e.preventDefault()}>
                 <span style={{ fontSize: 12, color: '#666', whiteSpace: 'nowrap' }}>出勤時間</span>
-                <input type="time" value={lateTime} onChange={e => setLateTime(e.target.value)}
-                  style={{ padding: '4px 6px', borderRadius: 6, border: '1px solid #ccc', fontSize: 14 }} onClick={e => e.stopPropagation()} />
+                <select value={timeH(lateTime)} onChange={e => setLateTime(toTimeStr(+e.target.value, timeM(lateTime)))} style={selStyle} onClick={e => e.stopPropagation()}>
+                  {HOURS_24.map(h => <option key={h} value={h}>{String(h).padStart(2,'0')}</option>)}
+                </select>
+                <span style={{ fontSize: 14 }}>:</span>
+                <select value={timeM(lateTime)} onChange={e => setLateTime(toTimeStr(timeH(lateTime), +e.target.value))} style={selStyle} onClick={e => e.stopPropagation()}>
+                  {MINUTES_5.map(m => <option key={m} value={m}>{String(m).padStart(2,'0')}</option>)}
+                </select>
               </div>
             )}
           </label>
@@ -382,8 +397,13 @@ const AbsenceInputSheet: React.FC<{
             {isEarlyLeave && (
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }} onClick={e => e.preventDefault()}>
                 <span style={{ fontSize: 12, color: '#666', whiteSpace: 'nowrap' }}>退勤時間</span>
-                <input type="time" value={earlyTime} onChange={e => setEarlyTime(e.target.value)}
-                  style={{ padding: '4px 6px', borderRadius: 6, border: '1px solid #ccc', fontSize: 14 }} onClick={e => e.stopPropagation()} />
+                <select value={timeH(earlyTime)} onChange={e => setEarlyTime(toTimeStr(+e.target.value, timeM(earlyTime)))} style={selStyle} onClick={e => e.stopPropagation()}>
+                  {HOURS_24.map(h => <option key={h} value={h}>{String(h).padStart(2,'0')}</option>)}
+                </select>
+                <span style={{ fontSize: 14 }}>:</span>
+                <select value={timeM(earlyTime)} onChange={e => setEarlyTime(toTimeStr(timeH(earlyTime), +e.target.value))} style={selStyle} onClick={e => e.stopPropagation()}>
+                  {MINUTES_5.map(m => <option key={m} value={m}>{String(m).padStart(2,'0')}</option>)}
+                </select>
               </div>
             )}
           </label>
@@ -406,10 +426,38 @@ const AbsenceInputSheet: React.FC<{
           <button onClick={onClose} style={{ flex: 1, padding: 12, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, cursor: 'pointer' }}>
             キャンセル
           </button>
-          <button onClick={handleSave} disabled={saving} style={{ flex: 2, padding: 12, background: '#dc3545', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.7 : 1 }}>
-            {saving ? '保存中...' : `登録する${isAbsent && absentDates.size > 1 ? `（${absentDates.size}日）` : ''}`}
+          <button onClick={handleConfirm} style={{ flex: 2, padding: 12, background: '#dc3545', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: 'pointer' }}>
+            {`登録する${isAbsent && absentDates.size > 1 ? `（${absentDates.size}日）` : ''}`}
           </button>
         </div>
+
+        {confirming && (() => {
+          const personName = profiles.find(p => p.id === userId)?.name ?? '';
+          const lines: string[] = [];
+          if (isAbsent) [...absentDates].sort().forEach(d => lines.push(`${d}　全欠勤`));
+          if (isLate) lines.push(`${date}　遅刻　出勤 ${lateTime}`);
+          if (isEarlyLeave) lines.push(`${date}　早退　退勤 ${earlyTime}`);
+          return (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+              <div style={{ background: '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 360 }}>
+                <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 16 }}>登録内容の確認</div>
+                <div style={{ fontSize: 14, color: '#333', marginBottom: 4 }}>対象者：<strong>{personName}</strong></div>
+                <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 12, marginBottom: 16 }}>
+                  {lines.map((l, i) => <div key={i} style={{ fontSize: 14, padding: '4px 0', borderBottom: i < lines.length - 1 ? '1px solid #f0f0f0' : 'none' }}>{l}</div>)}
+                  {notes && <div style={{ fontSize: 13, color: '#666', marginTop: 8 }}>備考：{notes}</div>}
+                </div>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button onClick={() => setConfirming(false)} style={{ flex: 1, padding: 12, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, cursor: 'pointer' }}>
+                    戻る
+                  </button>
+                  <button onClick={handleSave} disabled={saving} style={{ flex: 2, padding: 12, background: '#dc3545', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.7 : 1 }}>
+                    {saving ? '保存中...' : '確定する'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
@@ -581,6 +629,8 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
   const [groupMode, setGroupMode] = useState<string>(defaultGroup);
   const [events, setEvents] = useState<LeaveEvent[]>([]);
   const [absences, setAbsences] = useState<AbsenceEvent[]>([]);
+  const [deleteTarget, setDeleteTarget] = useState<AbsenceEvent | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [profiles, setProfiles] = useState<ProfileEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [absenceSheet, setAbsenceSheet] = useState<string | null>(null);
@@ -612,7 +662,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
     const rangeEnd = `${endM.getFullYear()}-${String(endM.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
 
     const [{ data: leaves }, { data: absenceData }] = await Promise.all([
-      supabase.from('leave_requests').select('user_id, leave_dates, start_date, end_date, status').not('status', 'in', '("rejected")').or(`and(start_date.lte.${rangeEnd},end_date.gte.${rangeStart})`),
+      supabase.from('leave_requests').select('user_id, leave_dates, start_date, end_date, status').not('status', 'in', '("rejected","cancelled")').or(`and(start_date.lte.${rangeEnd},end_date.gte.${rangeStart})`),
       supabase.from('attendance_exceptions').select('user_id, date, type').gte('date', rangeStart).lte('date', rangeEnd).eq('type', 'absent'),
     ]);
 
@@ -663,7 +713,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
       const { data: leaves } = await supabase
         .from('leave_requests')
         .select('id, user_id, leave_type, leave_type_other, leave_dates, start_date, end_date, status')
-        .not('status', 'in', '("rejected")')
+        .not('status', 'in', '("rejected","cancelled")')
         .or(`and(start_date.lte.${endStr},end_date.gte.${startStr})`);
 
       if (!leaves || leaves.length === 0) { setEvents([]); return; }
@@ -765,6 +815,15 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
   const btnStyle = { background: isDark ? '#495057' : '#f0f4ff', border: 'none', borderRadius: 8, width: 32, height: 32, fontSize: 16, cursor: 'pointer', color: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1, padding: 0 } as const;
 
   const canInput = isApprover || isAdmin;
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    await supabase.from('attendance_exceptions').delete().eq('id', deleteTarget.id);
+    setDeleting(false);
+    setDeleteTarget(null);
+    fetchAbsences();
+  };
 
   return (
     <div style={{ maxWidth: 900, margin: '0 auto' }}>
@@ -889,7 +948,13 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
                     <span style={{ fontSize: 12, color: textColor, textAlign: 'center', fontWeight: ab.actual_time ? 'bold' : 'normal' }}>
                       {timeLabel}
                     </span>
-                    <span style={{ fontSize: 11, textAlign: 'right', color: subColor }}>—</span>
+                    <span style={{ fontSize: 11, textAlign: 'right', color: subColor }}>
+                      {canInput && (
+                        <button onClick={() => setDeleteTarget(ab)} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, border: '1px solid #dc3545', background: 'transparent', color: '#dc3545', cursor: 'pointer' }}>
+                          取消
+                        </button>
+                      )}
+                    </span>
                   </div>
                 );
               }
@@ -897,6 +962,29 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
           </div>
         )}
       </div>
+
+      {/* 取消確認モーダル */}
+      {deleteTarget && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ background: '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 340 }}>
+            <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 16, color: '#dc3545' }}>取消の確認</div>
+            <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 12, marginBottom: 20, fontSize: 14, color: '#333' }}>
+              <div><strong>{deleteTarget.name}</strong></div>
+              <div style={{ marginTop: 4 }}>{deleteTarget.date}　{ABSENCE_LABEL[deleteTarget.type]}{deleteTarget.actual_time ? `　${deleteTarget.actual_time.slice(0, 5)}` : ''}</div>
+              {deleteTarget.notes && <div style={{ marginTop: 4, fontSize: 13, color: '#666' }}>備考：{deleteTarget.notes}</div>}
+            </div>
+            <div style={{ fontSize: 13, color: '#666', marginBottom: 16 }}>このレコードを削除します。元に戻せません。</div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setDeleteTarget(null)} style={{ flex: 1, padding: 12, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, cursor: 'pointer' }}>
+                戻る
+              </button>
+              <button onClick={handleDelete} disabled={deleting} style={{ flex: 2, padding: 12, background: '#dc3545', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: deleting ? 'not-allowed' : 'pointer', opacity: deleting ? 0.7 : 1 }}>
+                {deleting ? '削除中...' : '取消を確定する'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 欠勤入力ボトムシート */}
       {absenceSheet && user && (

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useLayoutEffect, Suspense } from 'react';
+import React, { useState, useCallback, useEffect, useLayoutEffect, Suspense, useRef } from 'react';
 import { Routes, Route, Navigate, Outlet, BrowserRouter, useNavigate, useLocation } from 'react-router-dom';
 import SignIn from './pages/SignIn';
 import ResetPassword from './pages/ResetPassword';
@@ -52,7 +52,66 @@ const ProtectedLayout: React.FC = () => {
 // ナビゲーションバー
 const CALENDAR_ROLES = ['リーダー', 'マネージャー', '社長', '管理者'];
 
-const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean; roleTitle?: string }> = ({ isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove, roleTitle }) => {
+interface NotificationRow { id: string; message: string; sub_message: string | null; read: boolean; created_at: string; }
+
+const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
+  const [notifs, setNotifs] = useState<NotificationRow[]>([]);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  const fetchNotifs = useCallback(async () => {
+    const { data } = await supabase.from('notifications').select('id, message, sub_message, read, created_at').eq('user_id', userId).order('created_at', { ascending: false }).limit(30);
+    if (data) setNotifs(data);
+  }, [userId]);
+
+  useEffect(() => { fetchNotifs(); const t = setInterval(fetchNotifs, 30000); return () => clearInterval(t); }, [fetchNotifs]);
+  useEffect(() => {
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+
+  const unread = notifs.filter(n => !n.read).length;
+
+  const markAllRead = async () => {
+    const ids = notifs.filter(n => !n.read).map(n => n.id);
+    if (ids.length > 0) {
+      await supabase.from('notifications').update({ read: true }).in('id', ids);
+      setNotifs(prev => prev.map(n => ({ ...n, read: true })));
+    }
+  };
+
+  const handleOpen = () => { setOpen(o => !o); if (!open) markAllRead(); };
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button onClick={handleOpen} style={{ position: 'relative', background: 'transparent', border: 'none', color: 'white', cursor: 'pointer', fontSize: 20, padding: '4px 6px', lineHeight: 1 }}>
+        🔔
+        {unread > 0 && (
+          <span style={{ position: 'absolute', top: 0, right: 0, background: '#dc3545', color: '#fff', borderRadius: '50%', fontSize: 10, width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', lineHeight: 1 }}>{unread > 9 ? '9+' : unread}</span>
+        )}
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', right: 0, top: '100%', marginTop: 4, width: 300, background: '#fff', borderRadius: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.2)', zIndex: 999, overflow: 'hidden' }}>
+          <div style={{ padding: '10px 14px', borderBottom: '1px solid #eee', fontSize: 13, fontWeight: 'bold', color: '#333' }}>通知</div>
+          <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+            {notifs.length === 0 ? (
+              <div style={{ padding: '20px', textAlign: 'center', color: '#888', fontSize: 13 }}>通知はありません</div>
+            ) : notifs.map(n => (
+              <div key={n.id} style={{ padding: '10px 14px', borderBottom: '1px solid #f0f0f0', background: n.read ? '#fff' : '#f0f8ff' }}>
+                <div style={{ fontSize: 13, color: '#333', fontWeight: n.read ? 'normal' : 'bold' }}>{n.message}</div>
+                {n.sub_message && <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>{n.sub_message}</div>}
+                <div style={{ fontSize: 10, color: '#aaa', marginTop: 4 }}>{new Date(new Date(n.created_at).getTime() + 9*60*60*1000).toLocaleString('ja-JP')}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean; roleTitle?: string; userId?: string }> = ({ isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove, roleTitle, userId }) => {
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -106,6 +165,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
         )}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {userId && <BellIcon userId={userId} />}
         <span
           onClick={() => navigate('/account')}
           style={{ fontSize: 13, opacity: 0.8, cursor: 'pointer', textDecoration: 'underline dotted', textUnderlineOffset: 3 }}
@@ -124,70 +184,45 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   );
 };
 
-// 休暇申請の受理通知バナー（申請者向け）
-const LeaveApprovedBanner: React.FC<{ userId: string }> = ({ userId }) => {
-  const navigate = useNavigate();
-  const [approved, setApproved] = useState<{ id: string; leave_type: string; leave_type_other: string | null; leave_dates: string | null; start_date: string; end_date: string }[]>([]);
+// 通知バナー（notifications テーブルから未読を表示）
+const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
+  const [notifs, setNotifs] = useState<{ id: string; message: string; sub_message: string | null; read: boolean }[]>([]);
 
-  useEffect(() => {
-    const fetch = async () => {
-      const { data } = await supabase
-        .from('leave_requests')
-        .select('id, leave_type, leave_type_other, leave_dates, start_date, end_date')
-        .eq('user_id', userId)
-        .eq('status', 'approved')
-        .order('created_at', { ascending: false });
-      if (!data) return;
-      // localStorageで既読チェック
-      const dismissed = JSON.parse(localStorage.getItem('leave_approved_dismissed') || '[]') as string[];
-      setApproved(data.filter((r: { id: string }) => !dismissed.includes(r.id)));
-    };
-    fetch();
+  const fetchNotifs = useCallback(async () => {
+    const { data } = await supabase
+      .from('notifications')
+      .select('id, message, sub_message, read')
+      .eq('user_id', userId)
+      .eq('read', false)
+      .order('created_at', { ascending: false });
+    if (data) setNotifs(data);
   }, [userId]);
 
-  const dismiss = (id: string, navigate_to_history: boolean) => {
-    const dismissed = JSON.parse(localStorage.getItem('leave_approved_dismissed') || '[]') as string[];
-    localStorage.setItem('leave_approved_dismissed', JSON.stringify([...dismissed, id]));
-    setApproved(prev => prev.filter(r => r.id !== id));
-    if (navigate_to_history) navigate('/leave?tab=history');
+  useEffect(() => { fetchNotifs(); }, [fetchNotifs]);
+
+  const dismiss = async (id: string) => {
+    await supabase.from('notifications').update({ read: true }).eq('id', id);
+    setNotifs(prev => prev.filter(n => n.id !== id));
   };
 
-  if (approved.length === 0) return null;
+  if (notifs.length === 0) return null;
 
   return (
     <>
-      {approved.map(req => {
-        let dates: string[] = [];
-        try { if (req.leave_dates) dates = JSON.parse(req.leave_dates); } catch {}
-        const dayCount = dates.length > 0 ? dates.length
-          : Math.max(1, Math.floor((new Date(req.end_date).getTime() - new Date(req.start_date).getTime()) / (1000*60*60*24)) + 1);
-        const typeName = req.leave_type === 'その他' ? req.leave_type_other : req.leave_type;
-        const dateLabel = dates.length > 0
-          ? `${dates[0]}（${dayCount}日）`
-          : `${req.start_date}（${dayCount}日）`;
-
+      {notifs.map(n => {
+        const isReject = n.message.includes('差し戻し') || n.message.includes('差し戻され');
         return (
-          <div
-            key={req.id}
-            onClick={() => dismiss(req.id, true)}
-            style={{
-              background: '#28a745', color: 'white', borderRadius: 10,
-              padding: '12px 16px', marginBottom: 10, cursor: 'pointer',
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              boxShadow: '0 2px 8px rgba(40,167,69,0.4)',
-            }}
-          >
+          <div key={n.id}
+            style={{ background: isReject ? '#dc3545' : '#28a745', color: 'white', borderRadius: 10, padding: '12px 16px', marginBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: `0 2px 8px ${isReject ? 'rgba(220,53,69,0.4)' : 'rgba(40,167,69,0.4)'}` }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ fontSize: 20 }}>✅</span>
+              <span style={{ fontSize: 20 }}>{isReject ? '⚠️' : '✅'}</span>
               <div>
-                <div style={{ fontWeight: 'bold', fontSize: 14 }}>休暇申請が受理されました</div>
-                <div style={{ fontSize: 12, opacity: 0.9 }}>{typeName}　{dateLabel}</div>
+                <div style={{ fontWeight: 'bold', fontSize: 14 }}>{n.message}</div>
+                {n.sub_message && <div style={{ fontSize: 12, opacity: 0.9 }}>{n.sub_message}</div>}
               </div>
             </div>
-            <button
-              onClick={e => { e.stopPropagation(); dismiss(req.id, false); }}
-              style={{ background: 'rgba(255,255,255,0.25)', border: 'none', color: 'white', borderRadius: '50%', width: 24, height: 24, cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            >✕</button>
+            <button onClick={() => dismiss(n.id)}
+              style={{ background: 'rgba(255,255,255,0.25)', border: 'none', color: 'white', borderRadius: '50%', width: 24, height: 24, cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>✕</button>
           </div>
         );
       })}
@@ -295,7 +330,7 @@ const Dashboard: React.FC = () => {
 
   return (
     <div style={{ maxWidth: 800, margin: '0 auto', position: 'relative', padding: '110px 16px 0', boxSizing: 'border-box' as const, width: '100%' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} userId={user.id} />
 
       {/* 有給申請フォーム送信通知バナー（パート向け） */}
       {leaveRequestEnabled && (
@@ -311,8 +346,8 @@ const Dashboard: React.FC = () => {
         </div>
       )}
 
-      {/* 休暇申請受理通知バナー（申請者向け） */}
-      {!isAdmin && <LeaveApprovedBanner userId={user.id} />}
+      {/* 通知バナー（申請者向け） */}
+      {!isAdmin && <NotificationBanner userId={user.id} />}
 
       {/* 休暇申請承認バナー（承認者のみ） */}
       <LeaveApprovalBanner userId={user.id} roleTitle={roleTitle} isAdmin={isAdmin} />
@@ -370,7 +405,7 @@ const TripReportPage: React.FC = () => {
   if (!user) return <div>読み込んでいます...</div>;
   return (
     <div style={{ padding: '110px 16px 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <BusinessTripReportForm user={user} profileName={profileName} />
       </Suspense>
@@ -384,7 +419,7 @@ const LeaveRequestPage: React.FC = () => {
   if (!user) return <div>読み込んでいます...</div>;
   return (
     <div style={{ padding: '110px 16px 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <LeaveRequestForm user={user} profileName={profileName} roleTitle={roleTitle} leaveRequestEnabled={leaveRequestEnabled} />
       </Suspense>
@@ -399,7 +434,7 @@ const LeaveApprovalsPage: React.FC = () => {
   if (roleTitle && !isApprover) return <Navigate to="/" />;
   return (
     <div style={{ padding: '110px 16px 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <LeaveApprovals user={user} profileName={profileName} isAdmin={isAdmin} roleTitle={roleTitle} />
       </Suspense>
@@ -414,7 +449,7 @@ const TeamCalendarPage: React.FC = () => {
   if (roleTitle && !isAdmin && !CALENDAR_ROLES.includes(roleTitle)) return <Navigate to="/" />;
   return (
     <div style={{ padding: '110px 16px 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} userId={user.id} />
       <h2 style={{ marginBottom: 16, fontSize: 18, color: '#333' }}>📅 休暇カレンダー</h2>
       <Suspense fallback={<PageLoader />}>
         <CalendarPage user={user} roleTitle={roleTitle} isAdmin={isAdmin} isApprover={isApprover} />
