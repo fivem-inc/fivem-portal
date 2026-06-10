@@ -121,17 +121,14 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     return () => window.removeEventListener('resize', check);
   }, []);
 
-  const btnStyle = (active: boolean, activeColor = '#007bff') => ({
-    padding: isMobile ? '6px 4px' : '6px 14px',
-    borderRadius: 6, border: 'none', cursor: 'pointer',
+  const btnStyle = (active: boolean, activeColor = '#007bff') => isMobile ? ({
+    width: 52, height: 52, borderRadius: 8, border: 'none', cursor: 'pointer',
     background: active ? activeColor : '#444',
-    color: 'white',
-    fontSize: isMobile ? 12 : 14,
-    writingMode: isMobile ? 'vertical-rl' as const : undefined,
-    textOrientation: isMobile ? 'upright' as const : undefined,
-    flex: isMobile ? '1' : undefined,
-    textAlign: 'center' as const,
-    lineHeight: isMobile ? 1.3 : undefined,
+    color: 'white', fontSize: 10, display: 'flex', flexDirection: 'column' as const,
+    alignItems: 'center', justifyContent: 'center', gap: 1, padding: 0, flexShrink: 0,
+  }) : ({
+    padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer',
+    background: active ? activeColor : '#444', color: 'white', fontSize: 14, whiteSpace: 'nowrap' as const,
   });
 
   return (
@@ -143,19 +140,19 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     }}>
       <div style={{ display: 'flex', gap: 4, flexWrap: isMobile ? 'nowrap' : 'wrap', alignItems: 'center', flex: 1 }}>
         <button onClick={() => navigate('/')} style={btnStyle(location.pathname === '/')}>
-          🏠 交通費
+          {isMobile ? <><span style={{ fontSize: 20 }}>🏠</span><span>交通費</span></> : '🏠 交通費'}
         </button>
         <button onClick={() => navigate('/trip-report')} style={btnStyle(location.pathname === '/trip-report')}>
-          📍 出張報告
+          {isMobile ? <><span style={{ fontSize: 20 }}>📍</span><span>出張</span></> : '📍 出張報告'}
         </button>
         {canLeave && (
           <button onClick={() => navigate('/leave')} style={btnStyle(location.pathname === '/leave', '#28a745')}>
-            🌿 休暇申請
+            {isMobile ? <><span style={{ fontSize: 20 }}>🌿</span><span>休暇申請</span></> : '🌿 休暇申請'}
           </button>
         )}
         {(isAdmin || (roleTitle && CALENDAR_ROLES.includes(roleTitle))) && (
           <button onClick={() => navigate('/calendar')} style={btnStyle(location.pathname === '/calendar', '#4a90d9')}>
-            📅 休暇
+            {isMobile ? <><span style={{ fontSize: 20 }}>📅</span><span>休暇</span></> : '📅 休暇'}
           </button>
         )}
       </div>
