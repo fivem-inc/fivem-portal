@@ -25,7 +25,7 @@ interface AbsenceEvent {
   user_id: string;
   name: string;
   date: string;
-  type: 'late' | 'early_leave' | 'absent';
+  type: 'late' | 'early_leave' | 'absent' | 'late_start' | 'early_end';
   actual_time: string | null;
   notes: string | null;
 }
