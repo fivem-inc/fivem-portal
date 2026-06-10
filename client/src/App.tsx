@@ -166,19 +166,21 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
         {userId && <BellIcon userId={userId} />}
-        <span
-          onClick={() => navigate('/account')}
-          style={{ fontSize: 12, opacity: 0.8, cursor: 'pointer', textDecoration: 'underline dotted', textUnderlineOffset: 3, whiteSpace: 'nowrap', maxWidth: 70, overflow: 'hidden', textOverflow: 'ellipsis' }}
-          title="タップでアカウント設定"
-        >
-          {profileName || email}
-        </span>
-        <button
-          onClick={onLogout}
-          style={{ padding: '5px 8px', borderRadius: 6, border: '1px solid #aaa', background: 'transparent', color: 'white', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}
-        >
-          ログアウト
-        </button>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+          <span
+            onClick={() => navigate('/account')}
+            style={{ fontSize: 12, opacity: 0.8, cursor: 'pointer', textDecoration: 'underline dotted', textUnderlineOffset: 3, whiteSpace: 'nowrap', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis' }}
+            title="タップでアカウント設定"
+          >
+            {profileName || email}
+          </span>
+          <button
+            onClick={onLogout}
+            style={{ padding: '2px 8px', borderRadius: 6, border: '1px solid #aaa', background: 'transparent', color: 'white', cursor: 'pointer', fontSize: 11, whiteSpace: 'nowrap' }}
+          >
+            ログアウト
+          </button>
+        </div>
       </div>
     </div>
   );
