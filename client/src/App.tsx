@@ -128,7 +128,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     color: 'white',
     fontSize: isMobile ? 14 : 14,
     whiteSpace: 'nowrap' as const,
-    flex: isMobile ? '1 1 calc(50% - 4px)' : undefined,
+    flex: isMobile ? '1 1 100%' : undefined,
   });
 
   return (
