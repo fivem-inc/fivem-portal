@@ -452,7 +452,6 @@ const TeamCalendarPage: React.FC = () => {
   return (
     <div style={{ padding: '110px 16px 0' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} userId={user.id} />
-      <h2 style={{ marginBottom: 16, fontSize: 18, color: '#333' }}>📅 休暇カレンダー</h2>
       <Suspense fallback={<PageLoader />}>
         <CalendarPage user={user} roleTitle={roleTitle} isAdmin={isAdmin} isApprover={isApprover} />
       </Suspense>
