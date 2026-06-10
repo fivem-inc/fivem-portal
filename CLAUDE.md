@@ -970,6 +970,26 @@ const payload = {
 
 ---
 
+## ✅ 2026-06-10 欠勤入力に「遅出・早退（残業調整）」追加 完了
+
+### 変更内容
+- `attendance_exceptions.type` の CHECK制約に `late_start` / `early_end` を追加
+  - migration: `20260610200000_add_late_start_early_end_to_attendance_exceptions.sql`
+- 欠勤入力フォームに「🟢 調整遅出」「🟣 調整早退」チェックボックス追加
+  - 遅刻と調整遅出は排他（片方チェックで自動解除）
+  - 早退と調整早退も同様に排他
+  - 時間入力欄は同じ行の右に配置（1つを共有）
+- `ABSENCE_LABEL` / `ABSENCE_COLOR` に追加
+  - `late_start`：遅出（黄緑 `#8bc34a`）
+  - `early_end`：早退(残業調整)（紫 `#e1bee7`）
+- `AbsenceEvent` 型定義・LeaveRequestsTab.tsx も同様に更新
+
+### コミット
+- `4f0bdef` feat: 欠勤入力に遅出・早退(残業調整)を追加
+- `025d654` fix: AbsenceEvent型にlate_start/early_endを追加
+
+---
+
 ---
 
 ## 🏗️ 新規ページ・機能の実装方針
