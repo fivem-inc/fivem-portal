@@ -114,57 +114,49 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
 const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean; roleTitle?: string; userId?: string }> = ({ isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove, roleTitle, userId }) => {
   const navigate = useNavigate();
   const location = useLocation();
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 640);
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
+
+  const btnStyle = (active: boolean, activeColor = '#007bff') => ({
+    padding: isMobile ? '8px 10px' : '5px 8px',
+    borderRadius: 6, border: 'none', cursor: 'pointer',
+    background: active ? activeColor : '#444',
+    color: 'white',
+    fontSize: isMobile ? 14 : 12,
+    whiteSpace: 'nowrap' as const,
+    flex: isMobile ? '1 1 calc(50% - 4px)' : undefined,
+  });
 
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100,
-      background: '#1a1a2e', color: 'white', padding: '10px 20px',
-      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+      background: '#1a1a2e', color: 'white', padding: '8px 12px',
+      display: 'flex', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center',
       boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
     }}>
-      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-        <button
-          onClick={() => navigate('/')}
-          style={{
-            padding: '5px 8px', borderRadius: 6, border: 'none', cursor: 'pointer',
-            background: location.pathname === '/' ? '#007bff' : '#444', color: 'white', fontSize: 12, whiteSpace: 'nowrap'
-          }}
-        >
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center', flex: 1 }}>
+        <button onClick={() => navigate('/')} style={btnStyle(location.pathname === '/')}>
           🏠 交通費
         </button>
-        <button
-          onClick={() => navigate('/trip-report')}
-          style={{
-            padding: '5px 8px', borderRadius: 6, border: 'none', cursor: 'pointer',
-            background: location.pathname === '/trip-report' ? '#007bff' : '#444', color: 'white', fontSize: 12, whiteSpace: 'nowrap'
-          }}
-        >
+        <button onClick={() => navigate('/trip-report')} style={btnStyle(location.pathname === '/trip-report')}>
           📍 出張報告
         </button>
         {canLeave && (
-          <button
-            onClick={() => navigate('/leave')}
-            style={{
-              padding: '5px 8px', borderRadius: 6, border: 'none', cursor: 'pointer',
-              background: location.pathname === '/leave' ? '#28a745' : '#444', color: 'white', fontSize: 12, whiteSpace: 'nowrap'
-            }}
-          >
+          <button onClick={() => navigate('/leave')} style={btnStyle(location.pathname === '/leave', '#28a745')}>
             🌿 休暇申請
           </button>
         )}
         {(isAdmin || (roleTitle && CALENDAR_ROLES.includes(roleTitle))) && (
-          <button
-            onClick={() => navigate('/calendar')}
-            style={{
-              padding: '5px 8px', borderRadius: 6, border: 'none', cursor: 'pointer',
-              background: location.pathname === '/calendar' ? '#4a90d9' : '#444', color: 'white', fontSize: 12, whiteSpace: 'nowrap'
-            }}
-          >
+          <button onClick={() => navigate('/calendar')} style={btnStyle(location.pathname === '/calendar', '#4a90d9')}>
             📅 休暇
           </button>
         )}
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, paddingLeft: 8 }}>
         {userId && <BellIcon userId={userId} />}
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
           <span
