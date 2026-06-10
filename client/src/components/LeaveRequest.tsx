@@ -30,6 +30,8 @@ interface LeaveRecord {
   status: string;
   created_at: string;
   rejected_reason: string | null;
+  approver_id?: string | null;
+  approver2_id?: string | null;
   approver?: { name: string; role_title: string } | null;
   approver2?: { name: string; role_title: string } | null;
 }
