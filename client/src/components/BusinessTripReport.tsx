@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
+import { dispatchEmail, dispatchSiteNotification } from '../lib/notificationDispatch';
+import { insertNotification } from '../lib/notifications';
 import type { AuthUser, BusinessTripReport } from '../types';
 
 interface Props {
@@ -238,6 +240,13 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
       if (error) throw error;
 
       // 終了報告 かつ チャンネルが1つ以上選択されている場合のみSlack送信
+      // サイト通知・メール（ON/OFF制御あり）
+      if (reportType === '終了') {
+        const tripVars = { 申請者名: profileName || user.email || '' };
+        await dispatchSiteNotification('trip:report_end', tripVars, { applicant: user.id }, insertNotification);
+        await dispatchEmail('trip:report_end', tripVars, { applicant: user.email || '' });
+      }
+      // Slack: 申請者が画面上でチャンネルを手動選択して送信する仕組みのため、ON/OFFチェック対象外
       if (reportType === '終了' && selectedChannels.length > 0) {
         try {
           await supabase.functions.invoke('send-trip-slack', {

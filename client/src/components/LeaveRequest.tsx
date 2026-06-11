@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { sendLeaveSlack } from '../lib/leaveSlack';
+import { shouldSend, dispatchEmail, dispatchSiteNotification, getUserEmail } from '../lib/notificationDispatch';
+import { insertNotification } from '../lib/notifications';
 import { useDarkMode } from '../hooks/useDarkMode';
 import type { AuthUser, AdminLeaveRequest } from '../types';
 
@@ -315,9 +317,15 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       }
       await supabase.from('profiles').update({ leave_request_enabled: false, leave_enabled_by: null }).eq('id', user.id);
       // Slack通知（申請先の役職に応じてチャンネルを切り替え）
-      if (selectedApprover) {
+      if (selectedApprover && await shouldSend('leave:new_request', 'slack')) {
         await sendLeaveSlack('new_request', selectedApprover.name, selectedApprover.role_title);
       }
+      // サイト通知・メール（申請者 or 承認者）
+      const vars = { 申請者名: profileName || user.email || '', 休暇種別: leaveType, 申請日数: String(selectedDates.length) };
+      const applicantEmail = user.email || '';
+      const leaderEmail = selectedApprover ? (await getUserEmail(selectedApprover.id) ?? '') : '';
+      await dispatchSiteNotification('leave:new_request', vars, { applicant: user.id, leader: selectedApprover?.id }, insertNotification);
+      await dispatchEmail('leave:new_request', vars, { applicant: applicantEmail, leader: leaderEmail });
       setSubmitted(true);
       setShowConfirm(false);
     } catch (err: unknown) {

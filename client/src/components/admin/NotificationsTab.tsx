@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { supabase } from '../../lib/supabaseClient';
+import { invalidateNotificationCache } from '../../lib/notificationDispatch';
 
 interface NotificationSetting {
   id: string;
@@ -65,14 +66,7 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
   'trip:report_end':        ['{{申請者名}}', '{{申請日}}'],
 };
 
-const ALL_SLACK_CHANNELS = [
-  { value: 'injury_report',      label: '#00怪我報告_重要' },
-  { value: 'manager_review',     label: '#01マネージャー回覧' },
-  { value: 'leader_review',      label: '#01リーダー回覧' },
-  { value: 'all_company',        label: '#01全社共有' },
-  { value: 'morning',            label: '#02朝礼' },
-  { value: 'kohei',              label: '#03晃平先生へ' },
-  { value: 'mori',               label: '#03森先生へ' },
+const TRIP_SLACK_CHANNELS = [
   { value: 'adult',              label: '#03大人へ' },
   { value: 'kids_main',          label: '#04本校こどもへ' },
   { value: 'kids_nishijin',      label: '#05_2西陣校こどもへ' },
@@ -81,23 +75,15 @@ const ALL_SLACK_CHANNELS = [
   { value: 'kids_minamisusita',  label: '#05_5南草津校こどもへ' },
   { value: 'junior',             label: '#06ジュニアへ' },
   { value: 'support',            label: '#07_1お客様サポートへ' },
-  { value: 'admin_internal',     label: '#07_2管理部内共有' },
-  { value: 'accounting_only',    label: '#07_3閲覧禁止-経理専用' },
-  { value: 'general_affairs',    label: '#08総務部' },
-  { value: 'pr_sales',           label: '#09広報営業部' },
-  { value: 'planning',           label: '#10企画' },
-  { value: 'event_kids',         label: '#11イベント-こども共有' },
-  { value: 'five_cup',           label: '#11ファイブ杯事前確認フォーム' },
-  { value: 'kids_private',       label: '#12本校子供プライベート共有' },
 ];
 
 const SLACK_CHANNEL_OPTIONS_BY_EVENT: Record<string, { value: string; label: string }[]> = {
-  'leave:new_request':      ALL_SLACK_CHANNELS,
-  'leave:leader_approved':  ALL_SLACK_CHANNELS,
-  'leave:manager_approved': ALL_SLACK_CHANNELS,
-  'leave:rejected':         ALL_SLACK_CHANNELS,
-  'expense:new_request':    ALL_SLACK_CHANNELS,
-  'trip:report_end':        ALL_SLACK_CHANNELS,
+  'leave:new_request':      [{ value: 'leader',     label: '#01リーダー回覧' }, { value: 'manager', label: '#01マネージャー回覧' }],
+  'leave:leader_approved':  [{ value: 'manager',    label: '#01マネージャー回覧' }],
+  'leave:manager_approved': [{ value: 'accounting', label: '#07_3閲覧禁止-経理専用' }],
+  'leave:rejected':         [{ value: 'leader', label: '#01リーダー回覧' }, { value: 'manager', label: '#01マネージャー回覧' }, { value: 'accounting', label: '#07_3閲覧禁止-経理専用' }],
+  'expense:new_request':    [{ value: 'expense',    label: '#07_3閲覧禁止-経理専用' }],
+  'trip:report_end':        TRIP_SLACK_CHANNELS,
 };
 
 const RECIPIENT_OPTIONS: Record<string, { value: string; label: string }[]> = {
@@ -106,7 +92,7 @@ const RECIPIENT_OPTIONS: Record<string, { value: string; label: string }[]> = {
     { value: 'applicant', label: '申請者本人' },
     { value: 'leader',    label: 'リーダー' },
     { value: 'manager',   label: 'マネージャー' },
-    { value: 'approver',  label: '承認者' },
+    { value: 'approver',  label: '申請先（承認者）' },
   ],
   site: [
     { value: 'applicant', label: '申請者本人' },
@@ -163,6 +149,7 @@ const NotificationsTab: React.FC = () => {
         updated_at: new Date().toISOString(),
       });
     }
+    invalidateNotificationCache();
     setSaving(null);
     setSavedMsg(eventKey);
     setTimeout(() => setSavedMsg(null), 2000);
@@ -248,7 +235,19 @@ const NotificationsTab: React.FC = () => {
 
                 {isOpen && (
                   <div style={{ borderTop: `0.5px solid ${borderColor}`, padding: 16, background: sectionBg }}>
-                    {(['slack', 'email', 'site'] as ChannelType[]).map(channel => {
+                    {(<>{(['slack', 'email', 'site'] as ChannelType[]).map(channel => {
+                      if (event.key === 'trip:report_end' && channel === 'slack') {
+                        return (
+                          <div key={channel} style={{
+                            fontSize: 13, color: subText, padding: '10px 14px', marginBottom: 8,
+                            background: bg, border: `0.5px solid ${borderColor}`, borderRadius: 8,
+                            lineHeight: 1.7,
+                          }}>
+                            <div>📌 出張報告のSlack通知は、申請者が報告画面でチャンネルを手動選択して送信する仕組みです。</div>
+                            <div style={{ marginTop: 4 }}>通知設定画面からのON/OFF制御は対象外となります。</div>
+                          </div>
+                        );
+                      }
                       const s = getSetting(event.key, channel);
                       if (!s) return null;
                       const vars = VARIABLES_BY_EVENT[event.key] ?? [];
@@ -284,68 +283,86 @@ const NotificationsTab: React.FC = () => {
                               <div style={{ fontSize: 12, color: subText, marginBottom: 4 }}>
                                 {channel === 'slack' ? '送信先チャンネル' : '宛先'}
                               </div>
-                              <select
-                                value={s.recipient ?? ''}
-                                onChange={e => updateLocal(event.key, channel, { recipient: e.target.value })}
-                                style={{
-                                  fontSize: 12, padding: '4px 8px', width: '100%', marginBottom: 10,
+                              {channel === 'slack' && event.key === 'leave:new_request' ? (
+                                <div style={{
+                                  fontSize: 12, padding: '6px 10px', marginBottom: 10,
                                   border: `0.5px solid ${borderColor}`, borderRadius: 8,
-                                  background: inputBg, color: text, boxSizing: 'border-box',
-                                }}
-                              >
-                                {(channel === 'slack'
-                                  ? (SLACK_CHANNEL_OPTIONS_BY_EVENT[event.key] ?? [])
-                                  : (RECIPIENT_OPTIONS[channel] ?? [])
-                                ).map(opt => (
-                                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                ))}
-                              </select>
-
-                              {channel === 'email' && (
-                                <>
-                                  <div style={{ fontSize: 12, color: subText, marginBottom: 4 }}>件名</div>
-                                  <input
-                                    value={s.subject ?? ''}
-                                    onChange={e => updateLocal(event.key, channel, { subject: e.target.value })}
-                                    style={{
-                                      fontSize: 12, padding: '6px 10px', width: '100%', marginBottom: 10,
-                                      border: `0.5px solid ${borderColor}`, borderRadius: 8,
-                                      background: inputBg, color: text, boxSizing: 'border-box',
-                                    }}
-                                  />
-                                </>
+                                  background: sectionBg, color: subText,
+                                }}>
+                                  <div>申請先がリーダーの場合 → <strong style={{ color: text }}>#01リーダー回覧</strong></div>
+                                  <div style={{ marginTop: 4 }}>申請先がマネージャーの場合 → <strong style={{ color: text }}>#01マネージャー回覧</strong></div>
+                                  <div style={{ marginTop: 6, fontSize: 11, color: subText }}>※ 申請先の役職に応じて自動で振り分けられます</div>
+                                </div>
+                              ) : (
+                                <select
+                                  value={s.recipient ?? ''}
+                                  onChange={e => updateLocal(event.key, channel, { recipient: e.target.value })}
+                                  style={{
+                                    fontSize: 12, padding: '4px 8px', width: '100%', marginBottom: 10,
+                                    border: `0.5px solid ${borderColor}`, borderRadius: 8,
+                                    background: inputBg, color: text, boxSizing: 'border-box',
+                                  }}
+                                >
+                                  {(channel === 'slack'
+                                    ? (SLACK_CHANNEL_OPTIONS_BY_EVENT[event.key] ?? [])
+                                    : (RECIPIENT_OPTIONS[channel] ?? [])
+                                  ).map(opt => (
+                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                  ))}
+                                </select>
                               )}
 
-                              <div style={{ fontSize: 12, color: subText, marginBottom: 4 }}>
-                                {channel === 'email' ? '本文' : 'メッセージ'}
-                              </div>
-                              <textarea
-                                value={s.template ?? ''}
-                                onChange={e => updateLocal(event.key, channel, { template: e.target.value })}
-                                rows={channel === 'email' ? 7 : 6}
-                                style={{
-                                  fontSize: 12, padding: '6px 10px', width: '100%', marginBottom: 6,
-                                  border: `0.5px solid ${borderColor}`, borderRadius: 8,
-                                  background: inputBg, color: text, boxSizing: 'border-box',
-                                  resize: 'vertical', fontFamily: 'monospace',
-                                }}
-                              />
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 4 }}>
-                                <span style={{ fontSize: 11, color: subText, alignSelf: 'center' }}>変数：</span>
-                                {vars.map(v => (
-                                  <span
-                                    key={v}
-                                    onClick={() => insertVar(event.key, channel, 'template', v)}
+                              {channel !== 'slack' && (
+                                <>
+                                  {channel === 'email' && (
+                                    <>
+                                      <div style={{ fontSize: 12, color: subText, marginBottom: 4 }}>件名</div>
+                                      <input
+                                        value={s.subject ?? ''}
+                                        onChange={e => updateLocal(event.key, channel, { subject: e.target.value })}
+                                        style={{
+                                          fontSize: 12, padding: '6px 10px', width: '100%', marginBottom: 10,
+                                          border: `0.5px solid ${borderColor}`, borderRadius: 8,
+                                          background: inputBg, color: text, boxSizing: 'border-box',
+                                        }}
+                                      />
+                                    </>
+                                  )}
+                                  <div style={{ fontSize: 12, color: subText, marginBottom: 4 }}>本文</div>
+                                  <textarea
+                                    value={s.template ?? ''}
+                                    onChange={e => updateLocal(event.key, channel, { template: e.target.value })}
+                                    rows={7}
                                     style={{
-                                      fontSize: 11, padding: '2px 7px', borderRadius: 20, cursor: 'pointer',
-                                      background: '#FFF8E1', color: '#F57F17', border: '0.5px solid #FFE082',
+                                      fontSize: 12, padding: '6px 10px', width: '100%', marginBottom: 6,
+                                      border: `0.5px solid ${borderColor}`, borderRadius: 8,
+                                      background: inputBg, color: text, boxSizing: 'border-box',
+                                      resize: 'vertical', fontFamily: 'monospace',
                                     }}
-                                    title="クリックで末尾に挿入"
-                                  >
-                                    {v}
-                                  </span>
-                                ))}
-                              </div>
+                                  />
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 4 }}>
+                                    <span style={{ fontSize: 11, color: subText, alignSelf: 'center' }}>変数：</span>
+                                    {vars.map(v => (
+                                      <span
+                                        key={v}
+                                        onClick={() => insertVar(event.key, channel, 'template', v)}
+                                        style={{
+                                          fontSize: 11, padding: '2px 7px', borderRadius: 20, cursor: 'pointer',
+                                          background: '#FFF8E1', color: '#F57F17', border: '0.5px solid #FFE082',
+                                        }}
+                                        title="クリックで末尾に挿入"
+                                      >
+                                        {v}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </>
+                              )}
+                              {channel === 'slack' && (
+                                <div style={{ fontSize: 11, color: subText, padding: '6px 0' }}>
+                                  ※ Slackのメッセージ内容はシステムで自動生成されます
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -363,14 +380,15 @@ const NotificationsTab: React.FC = () => {
                         disabled={isSaving}
                         style={{
                           fontSize: 13, padding: '6px 20px',
-                          border: '1px solid #29B6F6', borderRadius: 8,
-                          background: '#E1F5FE', color: '#0277BD', cursor: 'pointer',
+                          border: 'none', borderRadius: 8,
+                          background: '#0277BD', color: '#fff', cursor: 'pointer',
                           opacity: isSaving ? 0.6 : 1,
                         }}
                       >
                         {isSaving ? '保存中...' : '保存'}
                       </button>
                     </div>
+                  </>)}
                   </div>
                 )}
               </div>
