@@ -201,7 +201,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const [reapplySourceId, setReapplySourceId] = useState<string | null>(null);
   // 調整休専用
   const [choseiSubType, setChoseiSubType] = useState<'furikae' | 'zangyou'>('furikae');
-  const [choseiOriginDate, setChoseiOriginDate] = useState('');
+  const [choseiOriginDates, setChoseiOriginDates] = useState<string[]>([]);
 
   useEffect(() => {
     supabase
@@ -289,7 +289,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       // 調整休の場合、種別と振替元日付を reason に付加
       let reasonValue = notes || null;
       if (leaveType === '調整休') {
-        const subLabel = choseiSubType === 'furikae' ? `振替休日（振替元：${choseiOriginDate}）` : '時間外調整休';
+        const subLabel = choseiSubType === 'furikae' ? `振替休日（振替元：${choseiOriginDates.join('、')}）` : '時間外調整休';
         reasonValue = [subLabel, notes].filter(Boolean).join(' / ');
       }
       if (reapplySourceId) {
@@ -345,7 +345,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     setChoseiSubType('furikae');
     setChoseiOriginDate('');
     setReapplySourceId(null);
-    if (approvers.length > 0) setSelectedApproverId(approvers[0].id);
+    // 初期選択なし（ユーザーに明示的に選ばせる）
   };
 
   const isDark = useDarkMode();
@@ -521,8 +521,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               <select
                 value={selectedApproverId}
                 onChange={e => setSelectedApproverId(e.target.value)}
-                style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 15, background: inputBg, color: text }}
+                style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 15, background: inputBg, color: selectedApproverId ? text : subText }}
               >
+                <option value="" disabled>申請先を選択してください</option>
                 {approvers.map(a => (
                   <option key={a.id} value={a.id}>{a.name}（{a.role_title}）</option>
                 ))}
@@ -568,14 +569,18 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                 {choseiSubType === 'furikae' && (
                   <div style={{ marginTop: 12 }}>
                     <label style={{ display: 'block', fontSize: 14, fontWeight: 'bold', marginBottom: 6, color: text }}>
-                      振替元の勤務日 <span style={{ color: '#dc3545' }}>*</span>
+                      振替元の勤務日 <span style={{ color: '#dc3545' }}>*</span> <span style={{ fontSize: 12, fontWeight: 'normal', color: subText }}>（日付をタップして選択・解除）</span>
                     </label>
-                    <input
-                      type="date"
-                      value={choseiOriginDate}
-                      onChange={e => setChoseiOriginDate(e.target.value)}
-                      style={{ padding: '8px 12px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 14, background: inputBg, color: text }}
+                    <MultiDatePicker
+                      selectedDates={choseiOriginDates}
+                      onChange={setChoseiOriginDates}
+                      isDark={isDark}
                     />
+                    {choseiOriginDates.length > 0 && (
+                      <div style={{ marginTop: 8, padding: '8px 12px', background: isDark ? '#1b4d1b' : '#d4edda', borderRadius: 6, fontSize: 13, color: isDark ? '#75d475' : '#155724' }}>
+                        選択中の日付：{choseiOriginDates.join('、')}
+                      </div>
+                    )}
                     <label style={{ display: 'block', fontSize: 14, fontWeight: 'bold', marginTop: 12, marginBottom: 6, color: text }}>
                       理由 <span style={{ color: '#dc3545' }}>*</span>
                     </label>
@@ -669,7 +674,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             onClick={() => {
               if (!selectedApproverId) { alert('申請先を選んでください'); return; }
               if (selectedDates.length === 0) { alert('休暇日を選択してください'); return; }
-              if (!purpose.trim()) { alert('事由を入力してください'); return; }
+              if (leaveType === '調整休' && choseiSubType === 'furikae' && choseiOriginDates.length === 0) { alert('振替元の勤務日を選択してください'); return; }
+              if (!purpose.trim() && leaveType !== '調整休') { alert('事由を入力してください'); return; }
+              if (leaveType === '調整休' && !purpose.trim()) { alert('理由を入力してください'); return; }
               if (leaveType === 'その他' && !leaveTypeOther) { alert('種別を入力してください'); return; }
               setShowConfirm(true);
             }}
