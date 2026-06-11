@@ -101,6 +101,7 @@ serve(async (req) => {
     const { data: maxData } = await supabaseAdmin
       .from('profiles')
       .select('sort_order')
+      .not('sort_order', 'is', null)
       .order('sort_order', { ascending: false })
       .limit(1)
       .single();
