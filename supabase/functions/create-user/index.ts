@@ -97,7 +97,16 @@ serve(async (req) => {
       });
     }
 
-    // 2. profiles テーブルに追加情報を登録
+    // 2. 現在の最大 sort_order を取得して +1 をセット
+    const { data: maxData } = await supabaseAdmin
+      .from('profiles')
+      .select('sort_order')
+      .order('sort_order', { ascending: false })
+      .limit(1)
+      .single();
+    const nextSortOrder = (maxData?.sort_order ?? 0) + 1;
+
+    // 3. profiles テーブルに追加情報を登録
     const { error: profileError } = await supabaseAdmin
       .from('profiles')
       .upsert({
@@ -108,6 +117,7 @@ serve(async (req) => {
         role_title: role_title || '一般',
         is_active: true,
         registered_at: new Date().toISOString(),
+        sort_order: nextSortOrder,
       });
 
     if (profileError) {
