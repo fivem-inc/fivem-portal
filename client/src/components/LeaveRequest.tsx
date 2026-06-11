@@ -236,7 +236,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       .then(({ data, error }) => {
         if (!error && data) {
           setApprovers(data);
-          if (data.length > 0) setSelectedApproverId(data[0].id);
+          // 初期選択なし（ユーザーに明示的に選ばせる）
         }
       });
   }, []);
@@ -343,7 +343,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     setNotes('');
     setSubmitted(false);
     setChoseiSubType('furikae');
-    setChoseiOriginDate('');
+    setChoseiOriginDates([]);
     setReapplySourceId(null);
     // 初期選択なし（ユーザーに明示的に選ばせる）
   };
