@@ -5,7 +5,7 @@ import { supabase } from '../../lib/supabaseClient';
 import { sendLeaveSlack } from '../../lib/leaveSlack';
 import { useDarkMode } from '../../hooks/useDarkMode';
 
-export type AdminTab = 'approvals' | 'users' | 'groups' | 'reports' | 'trip_reports' | 'leave_requests' | 'leader_assignments';
+export type AdminTab = 'approvals' | 'users' | 'groups' | 'reports' | 'trip_reports' | 'leave_requests' | 'leader_assignments' | 'notifications';
 
 interface PrintVoucher {
   submissionId: string;

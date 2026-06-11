@@ -8,6 +8,7 @@ import TripReportsTab from './admin/TripReportsTab';
 import ReportsTab from './admin/ReportsTab';
 import LeaveRequestsTab from './admin/LeaveRequestsTab';
 import LeaderAssignmentsTab from './admin/LeaderAssignmentsTab';
+import NotificationsTab from './admin/NotificationsTab';
 
 interface AdminPanelProps {
   pendingApprovals: PendingApproval[];
@@ -425,6 +426,7 @@ const AdminPanelContent: React.FC = () => {
           { key: 'leave_requests',     label: '休暇申請',      icon: '🌿' },
           { key: 'leader_assignments', label: 'リーダー管理',  icon: '📋' },
           { key: 'reports',            label: 'レポート・分析',icon: '' },
+          { key: 'notifications',      label: '通知設定',      icon: '🔔' },
         ] as const;
         const handleTabChange = (key: typeof TABS[number]['key']) => {
           if (key === 'groups') setSelectedGroup(null);
@@ -478,6 +480,7 @@ const AdminPanelContent: React.FC = () => {
         {activeTab === 'reports' && <ReportsTab />}
         {activeTab === 'leave_requests' && <LeaveRequestsTab />}
         {activeTab === 'leader_assignments' && <LeaderAssignmentsTab />}
+        {activeTab === 'notifications' && <NotificationsTab />}
       </div>
 
       {/* 区分・勤務先リスト管理モーダル（全タブから開ける） */}
