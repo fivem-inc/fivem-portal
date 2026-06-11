@@ -104,6 +104,7 @@ const RECIPIENT_OPTIONS: Record<string, { value: string; label: string }[]> = {
 const NotificationsTab: React.FC = () => {
   const { isDarkMode } = useAdminPanel();
   const [settings, setSettings] = useState<NotificationSetting[]>([]);
+  const [savedSettings, setSavedSettings] = useState<NotificationSetting[]>([]);
   const [loading, setLoading] = useState(true);
   const [openEvent, setOpenEvent] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
@@ -119,7 +120,7 @@ const NotificationsTab: React.FC = () => {
   const fetchSettings = useCallback(async () => {
     setLoading(true);
     const { data } = await supabase.from('notification_settings').select('*');
-    if (data) setSettings(data);
+    if (data) { setSettings(data); setSavedSettings(data); }
     setLoading(false);
   }, []);
 
@@ -150,6 +151,10 @@ const NotificationsTab: React.FC = () => {
       });
     }
     invalidateNotificationCache();
+    setSavedSettings(prev => {
+      const others = prev.filter(s => s.event_key !== eventKey);
+      return [...others, ...settings.filter(s => s.event_key === eventKey)];
+    });
     setSaving(null);
     setSavedMsg(eventKey);
     setTimeout(() => setSavedMsg(null), 2000);
@@ -207,6 +212,13 @@ const NotificationsTab: React.FC = () => {
             const badges = getBadges(event.key);
             const isSaving = saving === event.key;
             const isSaved = savedMsg === event.key;
+            const isDirty = settings.some(s => {
+              if (s.event_key !== event.key) return false;
+              const orig = savedSettings.find(o => o.id === s.id);
+              if (!orig) return true;
+              return s.enabled !== orig.enabled || s.recipient !== orig.recipient ||
+                s.subject !== orig.subject || s.template !== orig.template;
+            });
 
             return (
               <div key={event.key} style={{
@@ -381,7 +393,9 @@ const NotificationsTab: React.FC = () => {
                         style={{
                           fontSize: 13, padding: '6px 20px',
                           border: 'none', borderRadius: 8,
-                          background: '#0277BD', color: '#fff', cursor: 'pointer',
+                          background: isDirty ? '#0277BD' : (isDarkMode ? '#495057' : '#ccc'),
+                          color: isDirty ? '#fff' : (isDarkMode ? '#adb5bd' : '#888'),
+                          cursor: isDirty ? 'pointer' : 'default',
                           opacity: isSaving ? 0.6 : 1,
                         }}
                       >
