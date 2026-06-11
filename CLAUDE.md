@@ -15,6 +15,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **git push（デプロイ）はユーザーの指示があってから行うこと**
 - コード修正後はローカルで確認してもらい、OKの指示が出てからpushする
 - 自動デプロイはしない
+- **実装完了時・セッション終了前に必ず `git status` で未コミットがないか確認すること**
+  - 未コミットがあればユーザーに伝えてからpushする
 
 ### 🔥 本番だけ動かないとき（トラブル時に確認）
 - `.env` と `.env.production` の `VITE_SUPABASE_URL` が一致しているか確認
