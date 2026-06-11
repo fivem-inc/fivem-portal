@@ -16,6 +16,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - コード修正後はローカルで確認してもらい、OKの指示が出てからpushする
 - 自動デプロイはしない
 
+### 🔥 本番だけ動かないとき（トラブル時に確認）
+- `.env` と `.env.production` の `VITE_SUPABASE_URL` が一致しているか確認
+  - 正しい値: `https://xaeynaxctiiyqxjyuzfi.supabase.co`
+  - ローカルは `.env`、本番ビルド（Vercel）は `.env.production` が優先される
+- Edge Function が 403 → Supabase Legacy Anon Key（`eyJ...`）を使っているか確認
+- Supabase CLI が「Cannot find project ref」→ `supabase link --project-ref xaeynaxctiiyqxjyuzfi`
+
 ### ローカルで開発する場合
 ```
 cd C:\Users\[ユーザー名]\fivem-portal
