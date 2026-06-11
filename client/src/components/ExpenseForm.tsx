@@ -3,6 +3,8 @@ import type { Expense, AuthUser } from '../types';
 import { formatAmount, parseAmount } from '../utils';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
+import { shouldSend, dispatchEmail, dispatchSiteNotification } from '../lib/notificationDispatch';
+import { insertNotification } from '../lib/notifications';
 
 // タップで即確定するカスタム日付ピッカー
 const SingleDatePicker: React.FC<{
@@ -399,8 +401,8 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       setFormError('登録に失敗しました: ' + error.message);
       setIsSubmitting(false);
     } else {
-      // 🚀 Slack通知を送信
-      try {
+      // 🚀 Slack通知を送信（通知設定でONの場合のみ）
+      if (await shouldSend('expense:new_request', 'slack')) try {
         // Slackメッセージを作成（シンプル版）
         const applicantName = (parentProfileName || profileName).trim() || user.email;
         const totalAmount = expensesToSubmit.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0);
@@ -433,6 +435,12 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
         // エラーでも申請は成功させる
       }
       
+      // サイト通知・メール
+      const expTotal = expensesToSubmit.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0);
+      const expVars = { 申請者名: (parentProfileName || profileName).trim() || user.email || '', 金額: String(expTotal) };
+      await dispatchSiteNotification('expense:new_request', expVars, { applicant: user.id }, insertNotification);
+      await dispatchEmail('expense:new_request', expVars, { applicant: user.email || '' });
+
       setSubmitSuccess(true);
       setFormError('');
       setTemplateSource(null);

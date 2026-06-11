@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { sendLeaveSlack } from '../lib/leaveSlack';
 import { insertNotification } from '../lib/notifications';
+import { shouldSend, getNotificationTemplate, dispatchEmail, dispatchSiteNotification, getUserEmail } from '../lib/notificationDispatch';
 import { useDarkMode } from '../hooks/useDarkMode';
 import type { AuthUser, AdminLeaveRequest } from '../types';
 
@@ -182,17 +183,27 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     if (!window.confirm(`${label}しますか？`)) return;
     await supabase.from('leave_requests').update({ status: next }).eq('id', req.id);
 
-    // 申請者へのアプリ内通知（マネージャー受理時のみ）
     const typeName = req.leave_type === 'その他' ? (req.leave_type_other || 'その他') : req.leave_type;
-    if (req.status === 'step2_pending') {
-      await insertNotification(req.user_id, `休暇申請がマネージャーに受理されました`, `種別：${typeName}`);
-    }
 
-    // Slack通知（承認後の次のステップへ通知）
     if (req.status === 'step2_pending') {
-      await sendLeaveSlack('manager_approved', profileName || '承認者', 'マネージャー');
+      const daysCount = req.leave_dates ? (() => { try { return String(JSON.parse(req.leave_dates!).length); } catch { return ''; } })() : '';
+      const vars = { 休暇種別: typeName, 申請日数: daysCount };
+      const applicantEmail = await getUserEmail(req.user_id) ?? '';
+      // サイト内通知
+      if (await shouldSend('leave:manager_approved', 'site')) {
+        const t = await getNotificationTemplate('leave:manager_approved', 'site', vars);
+        await insertNotification(req.user_id, t?.template ?? `休暇申請がマネージャーに受理されました`, t?.subject || `種別：${typeName}`);
+      }
+      // Slack通知
+      if (await shouldSend('leave:manager_approved', 'slack')) {
+        await sendLeaveSlack('manager_approved', profileName || '承認者', 'マネージャー');
+      }
+      // メール
+      await dispatchEmail('leave:manager_approved', vars, { applicant: applicantEmail });
     } else if (req.status === 'manager_approved') {
-      await sendLeaveSlack('accounting_approved', profileName || '経理担当者', '管理者');
+      if (await shouldSend('leave:manager_approved', 'slack')) {
+        await sendLeaveSlack('accounting_approved', profileName || '経理担当者', '管理者');
+      }
     }
 
     fetchRequests();
@@ -207,8 +218,17 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     }).eq('id', selectingManagerFor.id);
 
     // Slack通知（リーダーが受理 → マネージャーへ）
-    const selectedManager = managers.find(m => m.id === selectedManagerId);
-    await sendLeaveSlack('leader_approved', profileName || '承認者', roleTitle || 'リーダー', selectedManager?.name || '', 'マネージャー');
+    if (await shouldSend('leave:leader_approved', 'slack')) {
+      const selectedManager = managers.find(m => m.id === selectedManagerId);
+      await sendLeaveSlack('leader_approved', profileName || '承認者', roleTitle || 'リーダー', selectedManager?.name || '', 'マネージャー');
+    }
+    // サイト通知・メール
+    const leaderDays = selectingManagerFor.leave_dates ? (() => { try { return String(JSON.parse(selectingManagerFor.leave_dates!).length); } catch { return ''; } })() : '';
+    const leaderVars = { 休暇種別: selectingManagerFor.leave_type === 'その他' ? (selectingManagerFor.leave_type_other || 'その他') : selectingManagerFor.leave_type, 申請日数: leaderDays };
+    const applicantEmail = await getUserEmail(selectingManagerFor.user_id) ?? '';
+    const managerEmail = await getUserEmail(selectedManagerId) ?? '';
+    await dispatchSiteNotification('leave:leader_approved', leaderVars, { applicant: selectingManagerFor.user_id, manager: selectedManagerId }, insertNotification);
+    await dispatchEmail('leave:leader_approved', leaderVars, { applicant: applicantEmail, manager: managerEmail });
 
     setSelectingManagerFor(null);
     fetchRequests();

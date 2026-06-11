@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 
-const ALLOWED_ORIGINS = ['https://fivem-portal.vercel.app', 'http://localhost:5173', 'http://localhost:5174'];
+const ALLOWED_ORIGINS = ['https://fivem-portal.vercel.app', 'http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'];
 
 function getCorsHeaders(req: Request) {
   const origin = req.headers.get('Origin') || '';
@@ -25,14 +25,18 @@ const WEBHOOKS = {
 //   'leader_approved'   → リーダー/一人目受理 → マネージャーへ
 //   'manager_approved'  → マネージャー受理 → 経理へ
 //   'accounting_approved' → 経理（管理者）受理 → 社長へ
-function getWebhookUrl(event: string, approverRole: string): string | null {
+function getWebhookUrl(event: string, approverRole: string, targetChannel?: string): string | null {
   if (event === 'new_request') {
     if (approverRole === 'マネージャー') return WEBHOOKS.manager;
-    return WEBHOOKS.leader; // リーダーまたはその他
+    return WEBHOOKS.leader;
   }
   if (event === 'leader_approved') return WEBHOOKS.manager;
   if (event === 'manager_approved') return WEBHOOKS.accounting;
   if (event === 'accounting_approved') return WEBHOOKS.president;
+  if (event === 'rejected') {
+    const ch = targetChannel as keyof typeof WEBHOOKS;
+    return WEBHOOKS[ch] ?? WEBHOOKS.leader;
+  }
   return null;
 }
 
@@ -47,9 +51,9 @@ serve(async (req) => {
   }
 
   try {
-    const { event, approverName, approverRole, nextApproverName, nextApproverRole } = await req.json()
+    const { event, approverName, approverRole, nextApproverName, nextApproverRole, targetChannel } = await req.json()
 
-    const webhookUrl = getWebhookUrl(event, approverRole || '')
+    const webhookUrl = getWebhookUrl(event, approverRole || '', targetChannel)
     if (!webhookUrl) {
       return new Response(JSON.stringify({ error: 'invalid event' }), {
         status: 400,
@@ -73,6 +77,8 @@ serve(async (req) => {
     } else if (event === 'accounting_approved') {
       text = `✅ *【休暇申請 / 確認③】*\n*受理者：* 経理`
       addButton = true
+    } else if (event === 'rejected') {
+      text = `🔴 *【休暇申請 / 差し戻し】*\n*差し戻し担当：* ${approverName}（${approverRole}）`
     }
 
     const blocks: unknown[] = [

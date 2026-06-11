@@ -3,6 +3,7 @@ import { useAdminPanel } from './AdminPanelContext';
 import { useAuth } from '../../hooks/useAuth';
 import type { AdminLeaveRequest } from '../../types';
 import { insertNotification } from '../../lib/notifications';
+import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatchEmail, getUserEmail } from '../../lib/notificationDispatch';
 
 const SearchableSelect: React.FC<{
   value: string;
@@ -531,12 +532,21 @@ const LeaveRequestsTab: React.FC = () => {
                                         if (!window.confirm('受理しますか？')) return;
                                         const nextStatus: Record<string, string> = { step2_pending: 'manager_approved', manager_approved: 'admin_approved', admin_approved: 'approved' };
                                         await supabase.from('leave_requests').update({ status: nextStatus[req.status] || 'approved' }).eq('id', req.id);
-                                        // 申請者へのアプリ内通知（リーダー・マネージャー受理時）
                                         const typeName = req.leave_type === 'その他' ? (req.leave_type_other || 'その他') : req.leave_type;
                                         if (req.status === 'step2_pending') {
-                                          await insertNotification(req.user_id, `休暇申請がマネージャーに受理されました`, `種別：${typeName}`);
+                                          const daysCount = req.leave_dates ? (() => { try { return String(JSON.parse(req.leave_dates).length); } catch { return ''; } })() : '';
+                                          const vars = { 休暇種別: typeName, 申請日数: daysCount };
+                                          if (await shouldSend('leave:manager_approved', 'site')) {
+                                            const t = await getNotificationTemplate('leave:manager_approved', 'site', vars);
+                                            await insertNotification(req.user_id, t?.template ?? `休暇申請がマネージャーに受理されました`, t?.subject || `種別：${typeName}`);
+                                          }
+                                          if (await shouldSend('leave:manager_approved', 'slack')) {
+                                            await sendLeaveSlack('manager_approved', '管理者', 'マネージャー');
+                                          }
+                                          const applicantEmail = await getUserEmail(req.user_id) ?? '';
+                                          await dispatchEmail('leave:manager_approved', vars, { applicant: applicantEmail });
                                         }
-                                        if (req.status === 'manager_approved') {
+                                        if (req.status === 'manager_approved' && await shouldSend('leave:manager_approved', 'slack')) {
                                           await sendLeaveSlack('accounting_approved', '経理担当者', '管理者');
                                         }
                                         fetchLeaveRequests();
@@ -699,7 +709,10 @@ const LeaveRequestsTab: React.FC = () => {
                             const origType = rejectModal.leave_type === 'その他' ? (rejectModal.leave_type_other || 'その他') : rejectModal.leave_type;
                             const autoNote = `【管理者が種別変更】${origType} → ${rejectNewType}（変更して受理）`;
                             await supabase.from('leave_requests').update({ leave_type: rejectNewType, status: 'approved', reason: rejectReason ? `${rejectReason}　${autoNote}` : autoNote, modified_by: authUser?.id ?? null, modified_at: new Date().toISOString() }).eq('id', rejectModal.id);
-                            await insertNotification(rejectModal.user_id, `「${origType}」が「${rejectNewType}」に変更され、受理されました`);
+                            if (await shouldSend('leave:rejected_type_changed', 'site')) {
+                              const t = await getNotificationTemplate('leave:rejected_type_changed', 'site', { 元種別: origType, 新種別: rejectNewType });
+                              await insertNotification(rejectModal.user_id, t?.template ?? `「${origType}」が「${rejectNewType}」に変更され、受理されました`);
+                            }
                             setRejectModal(null); setRejectReason(''); setRejectNewType('');
                             fetchLeaveRequests();
                           }} style={{ flex: 1, padding: '14px 8px', background: '#28a745', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 'bold', cursor: 'pointer', lineHeight: 1.4 }}>
@@ -728,9 +741,21 @@ const LeaveRequestsTab: React.FC = () => {
                               approver_id: rejectModal.approver_id,
                               approver2_id: rejectModal.approver2_id,
                             });
-                            await insertNotification(rejectModal.user_id, `${origType}が差し戻され、${rejectNewType}で再申請・受理済みです`);
+                            if (await shouldSend('leave:rejected_reapplied', 'site')) {
+                              const t = await getNotificationTemplate('leave:rejected_reapplied', 'site', { 元種別: origType, 新種別: rejectNewType });
+                              await insertNotification(rejectModal.user_id, t?.template ?? `${origType}が差し戻され、${rejectNewType}で再申請・受理済みです`);
+                            }
                           } else {
-                            await insertNotification(rejectModal.user_id, `休暇申請が差し戻されました`, rejectReason || undefined);
+                            if (await shouldSend('leave:rejected', 'site')) {
+                              const t = await getNotificationTemplate('leave:rejected', 'site', { 申請者名: '', 休暇種別: rejectModal.leave_type, 差し戻し理由: rejectReason || '' });
+                              await insertNotification(rejectModal.user_id, t?.template ?? `休暇申請が差し戻されました`, t?.subject || rejectReason || undefined);
+                            }
+                            if (await shouldSend('leave:rejected', 'slack')) {
+                              const targetChannel = await getNotificationRecipient('leave:rejected', 'slack');
+                              await sendLeaveSlack('rejected', '管理者', '管理者', undefined, undefined, targetChannel ?? 'leader');
+                            }
+                            const rejectedEmail = await getUserEmail(rejectModal.user_id) ?? '';
+                            await dispatchEmail('leave:rejected', { 申請者名: '', 休暇種別: rejectModal.leave_type, 差し戻し理由: rejectReason || '' }, { applicant: rejectedEmail });
                           }
                           setRejectModal(null); setRejectReason(''); setRejectNewType('');
                           fetchLeaveRequests();
