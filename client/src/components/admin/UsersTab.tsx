@@ -1,9 +1,295 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
+import { supabase } from '../../lib/supabaseClient';
+
+// ユーザー追加モーダル
+const AddUserModal: React.FC<{
+  isDarkMode: boolean;
+  masterOptions: { employment_type: string[]; role_title: string[] };
+  onClose: () => void;
+  onSuccess: () => void;
+}> = ({ isDarkMode, masterOptions, onClose, onSuccess }) => {
+  const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
+  const [employmentType, setEmploymentType] = useState('正社員');
+  const [roleTitle, setRoleTitle] = useState('一般');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  // メール入力時に自動でパスワードをセット（@前の部分）
+  const handleEmailChange = (val: string) => {
+    setEmail(val);
+    const atIdx = val.indexOf('@');
+    if (atIdx > 0) {
+      setPassword(val.slice(0, atIdx));
+    } else {
+      setPassword(val);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!email || !name) {
+      setError('メールアドレスと名前は必須です');
+      return;
+    }
+    if (password.length < 6) {
+      setError('パスワードは6文字以上が必要です');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const { data: result, error } = await supabase.functions.invoke('create-user', {
+        body: { email, password, name, employment_type: employmentType, role_title: roleTitle },
+      });
+
+      if (error || result?.error) {
+        setError(result?.error || error?.message || '登録に失敗しました');
+      } else {
+        onSuccess();
+        onClose();
+      }
+    } catch (e) {
+      setError('通信エラーが発生しました');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const overlayStyle: React.CSSProperties = {
+    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+    background: 'rgba(0,0,0,0.5)', zIndex: 1000,
+    display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px',
+  };
+  const modalStyle: React.CSSProperties = {
+    background: isDarkMode ? '#343a40' : 'white',
+    borderRadius: 10, padding: 24, width: '100%', maxWidth: 420,
+    boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
+  };
+  const labelStyle: React.CSSProperties = {
+    display: 'block', fontSize: 13, fontWeight: 'bold',
+    color: isDarkMode ? '#adb5bd' : '#555', marginBottom: 4, marginTop: 14,
+  };
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '8px 10px', borderRadius: 6, fontSize: 14, boxSizing: 'border-box',
+    border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`,
+    background: isDarkMode ? '#495057' : 'white',
+    color: isDarkMode ? '#fff' : '#000',
+  };
+  const selectStyle: React.CSSProperties = { ...inputStyle };
+
+  return (
+    <div style={overlayStyle}>
+      <div style={modalStyle}>
+        <h4 style={{ margin: '0 0 4px', color: isDarkMode ? '#fff' : '#000', fontSize: 18 }}>👤 新しいスタッフを登録</h4>
+        <p style={{ margin: '0 0 16px', fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888' }}>
+          登録後、本人がパスワードを変更することを推奨します
+        </p>
+
+        <label style={labelStyle}>メールアドレス <span style={{ color: '#dc3545' }}>*</span></label>
+        <input
+          type="email" value={email} onChange={e => handleEmailChange(e.target.value)}
+          placeholder="例: tanaka@fivem.co.jp" style={inputStyle}
+        />
+
+        <label style={labelStyle}>名前 <span style={{ color: '#dc3545' }}>*</span></label>
+        <input
+          type="text" value={name} onChange={e => setName(e.target.value)}
+          placeholder="例: 田中 太郎" style={inputStyle}
+        />
+
+        <label style={labelStyle}>初期パスワード</label>
+        <input
+          type="text" value={password} onChange={e => setPassword(e.target.value)}
+          placeholder="メール入力で自動セット" style={inputStyle}
+        />
+        <p style={{ margin: '4px 0 0', fontSize: 11, color: isDarkMode ? '#adb5bd' : '#888' }}>
+          ※ メールの@前が自動でセットされます（6文字以上必要）
+        </p>
+
+        <label style={labelStyle}>雇用形態</label>
+        <select value={employmentType} onChange={e => setEmploymentType(e.target.value)} style={selectStyle}>
+          {(masterOptions.employment_type.length > 0 ? masterOptions.employment_type : ['正社員', 'パート', 'アルバイト', '契約社員']).map(v => (
+            <option key={v}>{v}</option>
+          ))}
+        </select>
+
+        <label style={labelStyle}>役職</label>
+        <select value={roleTitle} onChange={e => setRoleTitle(e.target.value)} style={selectStyle}>
+          {(masterOptions.role_title.length > 0 ? masterOptions.role_title : ['一般', 'リーダー', 'マネージャー', '管理者', '社長']).map(v => (
+            <option key={v}>{v}</option>
+          ))}
+        </select>
+
+        {error && (
+          <div style={{ marginTop: 14, padding: '8px 12px', background: '#f8d7da', color: '#842029', borderRadius: 6, fontSize: 13 }}>
+            ⚠️ {error}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, marginTop: 20, justifyContent: 'flex-end' }}>
+          <button
+            onClick={onClose} disabled={loading}
+            style={{ padding: '8px 20px', background: '#6c757d', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 14 }}
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={handleSubmit} disabled={loading}
+            style={{ padding: '8px 20px', background: '#28a745', color: 'white', border: 'none', borderRadius: 6, cursor: loading ? 'not-allowed' : 'pointer', fontSize: 14, fontWeight: 'bold', opacity: loading ? 0.7 : 1 }}
+          >
+            {loading ? '登録中...' : '✅ 登録する'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// メール送信確認モーダル
+const SendEmailModal: React.FC<{
+  isDarkMode: boolean;
+  targets: { id: string; name: string; email: string }[];
+  onClose: () => void;
+  onSent: () => void;
+}> = ({ isDarkMode, targets, onClose, onSent }) => {
+  const [subject, setSubject] = useState('fivem-portal へのご招待');
+  const [body, setBody] = useState(
+    `{{name}} さん\n\nfivem-portal をご利用いただけるようになりました。\n\n以下のURLからログインしてください。\nhttps://fivem-portal.vercel.app\n\n初期パスワードはメールの@前の部分です。\nログイン後にパスワードを変更することをお勧めします。\n\n不明な点があればご連絡ください。`
+  );
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<{ success: number; failed: string[] } | null>(null);
+
+  const handleSend = async () => {
+    setLoading(true);
+    let success = 0;
+    const failed: string[] = [];
+
+    for (const t of targets) {
+      const personalBody = body.replace(/\{\{name\}\}/g, t.name || t.email);
+      const html = personalBody.replace(/\n/g, '<br>');
+      try {
+        const response = await fetch(
+          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-email`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ to: t.email, subject, html }),
+          }
+        );
+        const responseText = await response.text();
+        console.log('send-email response', { status: response.status, ok: response.ok, body: responseText });
+        if (!response.ok) { failed.push(t.name || t.email); } else { success++; }
+      } catch { failed.push(t.name || t.email); }
+    }
+    setLoading(false);
+    setResult({ success, failed });
+  };
+
+  const overlayStyle: React.CSSProperties = {
+    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+    background: 'rgba(0,0,0,0.5)', zIndex: 1000,
+    display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px',
+  };
+  const modalStyle: React.CSSProperties = {
+    background: isDarkMode ? '#343a40' : 'white',
+    borderRadius: 10, padding: 24, width: '100%', maxWidth: 500,
+    boxShadow: '0 4px 24px rgba(0,0,0,0.3)', maxHeight: '90vh', overflowY: 'auto',
+  };
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '8px 10px', borderRadius: 6, fontSize: 13, boxSizing: 'border-box',
+    border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`,
+    background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000',
+  };
+
+  if (result) {
+    return (
+      <div style={overlayStyle}>
+        <div style={modalStyle}>
+          <h4 style={{ margin: '0 0 16px', color: isDarkMode ? '#fff' : '#000' }}>📧 送信完了</h4>
+          <p style={{ color: '#28a745', fontWeight: 'bold' }}>✅ 成功: {result.success}件</p>
+          {result.failed.length > 0 && (
+            <p style={{ color: '#dc3545' }}>❌ 失敗: {result.failed.join(', ')}</p>
+          )}
+          <button onClick={() => { onSent(); onClose(); }}
+            style={{ marginTop: 16, padding: '8px 24px', background: '#28a745', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold' }}>
+            閉じる
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={overlayStyle}>
+      <div style={modalStyle}>
+        <h4 style={{ margin: '0 0 4px', color: isDarkMode ? '#fff' : '#000', fontSize: 18 }}>📧 メール送信</h4>
+        <div style={{ marginBottom: 16, padding: '8px 12px', background: isDarkMode ? '#495057' : '#f8f9fa', borderRadius: 6 }}>
+          <p style={{ margin: 0, fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>送信先 ({targets.length}名)：</p>
+          <p style={{ margin: '4px 0 0', fontSize: 13, color: isDarkMode ? '#fff' : '#333' }}>
+            {targets.map(t => t.name || t.email).join('、')}
+          </p>
+          {targets.length >= 10 && (
+            <p style={{ margin: '4px 0 0', fontSize: 12, color: '#dc3545', fontWeight: 'bold' }}>
+              ⚠️ {targets.length}名に送信します
+            </p>
+          )}
+        </div>
+
+        <label style={{ display: 'block', fontSize: 12, fontWeight: 'bold', color: isDarkMode ? '#adb5bd' : '#555', marginBottom: 4 }}>件名</label>
+        <input type="text" value={subject} onChange={e => setSubject(e.target.value)} style={{ ...inputStyle, marginBottom: 12 }} />
+
+        <label style={{ display: 'block', fontSize: 12, fontWeight: 'bold', color: isDarkMode ? '#adb5bd' : '#555', marginBottom: 4 }}>
+          本文 <span style={{ fontWeight: 'normal', color: '#888' }}>（{`{{name}}`} で宛名に置き換わります）</span>
+        </label>
+        <textarea value={body} onChange={e => setBody(e.target.value)}
+          rows={10} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
+
+        <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
+          <button onClick={onClose} disabled={loading}
+            style={{ padding: '8px 20px', background: '#6c757d', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
+            キャンセル
+          </button>
+          <button onClick={handleSend} disabled={loading}
+            style={{ padding: '8px 20px', background: targets.length >= 10 ? '#dc3545' : '#007bff', color: 'white', border: 'none', borderRadius: 6, cursor: loading ? 'not-allowed' : 'pointer', fontWeight: 'bold', opacity: loading ? 0.7 : 1 }}>
+            {loading ? '送信中...' : `📧 ${targets.length}名に送信する`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const UsersTab: React.FC = () => {
   const ctx = useAdminPanel();
-  const { isDarkMode, users, loadingUsers, sortedUsers, userSortKey, userSortAsc, handleUserSort, editingUser, editName, setEditName, handleEditName, handleSaveName, handleCancelUserEdit, showRetired, setShowRetired, editingSortOrder, setEditingSortOrder, editSortOrderValue, setEditSortOrderValue, handleSaveSortOrder, masterOptions, isUserEditMode, setIsUserEditMode, confirmChange, setConfirmChange, submissions, fetchUsers, handleToggleActive, handleDeleteUser, setActiveTab, supabase } = ctx;
+  const { isDarkMode, users, loadingUsers, sortedUsers, userSortKey, userSortAsc, handleUserSort, editingUser, editName, setEditName, handleEditName, handleSaveName, handleCancelUserEdit, showRetired, setShowRetired, editingSortOrder, setEditingSortOrder, editSortOrderValue, setEditSortOrderValue, handleSaveSortOrder, masterOptions, isUserEditMode, setIsUserEditMode, confirmChange, setConfirmChange, submissions, fetchUsers, handleToggleActive, handleDeleteUser, setActiveTab } = ctx;
+
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [selectedForEmail, setSelectedForEmail] = useState<Set<string>>(new Set());
+  const [showEmailModal, setShowEmailModal] = useState(false);
+  const [emailTarget, setEmailTarget] = useState<{ id: string; name: string; email: string }[]>([]);
+
+  const toggleEmailSelect = (id: string) => {
+    setSelectedForEmail(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const handleBulkEmail = () => {
+    const targets = sortedUsers
+      .filter(u => selectedForEmail.has(u.id) && u.email)
+      .map(u => ({ id: u.id, name: u.name || '', email: u.email || '' }));
+    setEmailTarget(targets);
+    setShowEmailModal(true);
+  };
+
+  const handleSingleEmail = (user: typeof sortedUsers[0]) => {
+    setEmailTarget([{ id: user.id, name: user.name || '', email: user.email || '' }]);
+    setShowEmailModal(true);
+  };
 
   return (
           <div>
@@ -12,10 +298,50 @@ const UsersTab: React.FC = () => {
               <p style={{ textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>読み込み中...</p>
             ) : (
               <div>
+                {showAddModal && (
+                  <AddUserModal
+                    isDarkMode={isDarkMode}
+                    masterOptions={masterOptions}
+                    onClose={() => setShowAddModal(false)}
+                    onSuccess={() => { fetchUsers(); }}
+                  />
+                )}
+                {showEmailModal && (
+                  <SendEmailModal
+                    isDarkMode={isDarkMode}
+                    targets={emailTarget}
+                    onClose={() => setShowEmailModal(false)}
+                    onSent={() => setSelectedForEmail(new Set())}
+                  />
+                )}
                 <div style={{ marginBottom: '20px', textAlign: 'center' }}>
                   <p style={{ color: isDarkMode ? '#fff' : '#000' }}>
                     現役: {users.filter(u => u.is_active !== false).length}人 ／ 退職済み: {users.filter(u => u.is_active === false).length}人
                   </p>
+                  <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: 8 }}>
+                    <button
+                      onClick={() => setShowAddModal(true)}
+                      style={{ padding: '8px 20px', background: '#28a745', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}
+                    >
+                      ＋ ユーザー追加
+                    </button>
+                    {selectedForEmail.size > 0 && (
+                      <button
+                        onClick={handleBulkEmail}
+                        style={{ padding: '8px 20px', background: selectedForEmail.size >= 10 ? '#dc3545' : '#007bff', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}
+                      >
+                        📧 選択した{selectedForEmail.size}名にメール送信
+                      </button>
+                    )}
+                    {selectedForEmail.size > 0 && (
+                      <button
+                        onClick={() => setSelectedForEmail(new Set())}
+                        style={{ padding: '8px 12px', background: '#6c757d', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: 13 }}
+                      >
+                        選択解除
+                      </button>
+                    )}
+                  </div>
                   <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', flexWrap: 'wrap' }}>
                     <button
                       onClick={() => setShowRetired('active')}
@@ -120,6 +446,18 @@ const UsersTab: React.FC = () => {
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
                       <tr style={{ backgroundColor: isDarkMode ? '#495057' : '#f8f9fa' }}>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', width: 30, fontSize: 12 }}>
+                          <input type="checkbox"
+                            checked={selectedForEmail.size === sortedUsers.filter(u => u.email && u.email !== 'fivem.kyoto@gmail.com').length}
+                            onChange={e => {
+                              if (e.target.checked) {
+                                setSelectedForEmail(new Set(sortedUsers.filter(u => u.email && u.email !== 'fivem.kyoto@gmail.com').map(u => u.id)));
+                              } else {
+                                setSelectedForEmail(new Set());
+                              }
+                            }}
+                          />
+                        </th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', width: 45, fontSize: 12 }}>No.</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 100 }}>名前</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000', fontSize: 12 }}>メール</th>
@@ -137,6 +475,15 @@ const UsersTab: React.FC = () => {
                         const regDateStr = regDate ? `${regDate.getFullYear()}/${String(regDate.getMonth()+1).padStart(2,'0')}/${String(regDate.getDate()).padStart(2,'0')}` : '-';
                         return (
                           <tr key={user.id} style={{ opacity: user.is_active === false ? 0.6 : 1, background: sortedUsers.indexOf(user) % 2 === 0 ? (isDarkMode ? '#343a40' : 'white') : (isDarkMode ? '#3d4349' : '#f8f9fa') }}>
+                            {/* チェックボックス列 */}
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center' }}>
+                              {user.email !== 'fivem.kyoto@gmail.com' && user.email && (
+                                <input type="checkbox"
+                                  checked={selectedForEmail.has(user.id)}
+                                  onChange={() => toggleEmailSelect(user.id)}
+                                />
+                              )}
+                            </td>
                             {/* No.列 */}
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>
                               {editingSortOrder === user.id ? (
@@ -221,6 +568,9 @@ const UsersTab: React.FC = () => {
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px' }}>
                               <div style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
                                 <button style={{ padding: '3px 6px', background: '#17a2b8', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }} onClick={() => setActiveTab('reports')}>履歴</button>
+                                {user.email && user.email !== 'fivem.kyoto@gmail.com' && (
+                                  <button style={{ padding: '3px 6px', background: '#6610f2', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }} onClick={() => handleSingleEmail(user)}>📧</button>
+                                )}
                                 {user.email !== 'fivem.kyoto@gmail.com' && (
                                   <>
                                     <button style={{ padding: '3px 6px', background: user.is_active === false ? '#28a745' : '#fd7e14', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }} onClick={() => handleToggleActive(user.id, user.is_active !== false)}>
