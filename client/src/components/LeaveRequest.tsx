@@ -287,7 +287,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       // 調整休の場合、種別と振替元日付を reason に付加
       let reasonValue = notes || null;
       if (leaveType === '調整休') {
-        const subLabel = choseiSubType === 'furikae' ? `振替休日（振替元：${choseiOriginDate}）` : '残業調整休';
+        const subLabel = choseiSubType === 'furikae' ? `振替休日（振替元：${choseiOriginDate}）` : '時間外調整休';
         reasonValue = [subLabel, notes].filter(Boolean).join(' / ');
       }
       if (reapplySourceId) {
@@ -527,7 +527,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: text }}>休暇種別 <span style={{ color: '#dc3545' }}>*</span></label>
             <select
               value={leaveType}
-              onChange={e => setLeaveType(e.target.value as LeaveType)}
+              onChange={e => { setLeaveType(e.target.value as LeaveType); setPurpose(''); }}
               style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 15, background: inputBg, color: text }}
             >
               <option value="有給休暇">有給休暇</option>
@@ -549,12 +549,12 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               <div style={{ marginTop: 12, padding: 14, background: isDark ? '#2a2f35' : '#f8f9ff', borderRadius: 8, border: `1px solid ${isDark ? '#495057' : '#c8d6f0'}` }}>
                 <div style={{ fontWeight: 'bold', fontSize: 14, color: text, marginBottom: 10 }}>調整休の種類 <span style={{ color: '#dc3545' }}>*</span></div>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, cursor: 'pointer', color: text }}>
-                  <input type="radio" name="choseiSubType" value="furikae" checked={choseiSubType === 'furikae'} onChange={() => setChoseiSubType('furikae')} />
+                  <input type="radio" name="choseiSubType" value="furikae" checked={choseiSubType === 'furikae'} onChange={() => { setChoseiSubType('furikae'); setPurpose(''); }} />
                   <span>振替休日 <span style={{ fontSize: 12, color: subText }}>（休日出勤・特定日の振替）</span></span>
                 </label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: text }}>
-                  <input type="radio" name="choseiSubType" value="zangyou" checked={choseiSubType === 'zangyou'} onChange={() => setChoseiSubType('zangyou')} />
-                  <span>残業調整休 <span style={{ fontSize: 12, color: subText }}>（残業分の消化）</span></span>
+                  <input type="radio" name="choseiSubType" value="zangyou" checked={choseiSubType === 'zangyou'} onChange={() => { setChoseiSubType('zangyou'); setPurpose(''); }} />
+                  <span>時間外調整休 <span style={{ fontSize: 12, color: subText }}>（勤務調整のため取得）</span></span>
                 </label>
 
                 {choseiSubType === 'furikae' && (
@@ -574,10 +574,17 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                     <textarea
                       value={purpose}
                       onChange={e => setPurpose(e.target.value)}
-                      placeholder="例：〇〇により休日出勤したため"
+                      placeholder="〇〇により休日出勤したため"
                       rows={2}
                       style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 14, boxSizing: 'border-box', resize: 'vertical', background: inputBg, color: text }}
                     />
+                    <button
+                      type="button"
+                      onClick={() => setPurpose('〇〇により休日出勤したため')}
+                      style={{ marginTop: 6, fontSize: 12, padding: '4px 12px', border: '1px solid #29b6f6', borderRadius: 6, background: '#e1f5fe', color: '#0277bd', cursor: 'pointer' }}
+                    >
+                      文例を使う → 「〇〇により休日出勤したため」
+                    </button>
                   </div>
                 )}
                 {choseiSubType === 'zangyou' && (
@@ -588,10 +595,17 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                     <textarea
                       value={purpose}
                       onChange={e => setPurpose(e.target.value)}
-                      placeholder="例：残業分の消化のため"
+                      placeholder="〇〇イベント準備により時間外労働が発生したため"
                       rows={2}
                       style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 14, boxSizing: 'border-box', resize: 'vertical', background: inputBg, color: text }}
                     />
+                    <button
+                      type="button"
+                      onClick={() => setPurpose('〇〇イベント準備により時間外労働が発生したため')}
+                      style={{ marginTop: 6, fontSize: 12, padding: '4px 12px', border: '1px solid #29b6f6', borderRadius: 6, background: '#e1f5fe', color: '#0277bd', cursor: 'pointer' }}
+                    >
+                      文例を使う → 「〇〇イベント準備により時間外労働が発生したため」
+                    </button>
                   </div>
                 )}
               </div>
