@@ -325,7 +325,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       const applicantEmail = user.email || '';
       const leaderEmail = selectedApprover ? (await getUserEmail(selectedApprover.id) ?? '') : '';
       await dispatchSiteNotification('leave:new_request', vars, { applicant: user.id, leader: selectedApprover?.id }, insertNotification);
-      await dispatchEmail('leave:new_request', vars, { applicant: applicantEmail, leader: leaderEmail });
+      await dispatchEmail('leave:new_request', vars, { applicant: applicantEmail, leader: leaderEmail, approver: leaderEmail });
       setSubmitted(true);
       setShowConfirm(false);
     } catch (err: unknown) {
