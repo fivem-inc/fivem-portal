@@ -675,6 +675,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               if (!selectedApproverId) { alert('申請先を選んでください'); return; }
               if (selectedDates.length === 0) { alert('休暇日を選択してください'); return; }
               if (leaveType === '調整休' && choseiSubType === 'furikae' && choseiOriginDates.length === 0) { alert('振替元の勤務日を選択してください'); return; }
+              if (leaveType === '調整休' && choseiSubType === 'furikae' && choseiOriginDates.length !== selectedDates.length) { alert(`振替元の勤務日（${choseiOriginDates.length}日）と休暇日（${selectedDates.length}日）の日数が一致していません`); return; }
               if (!purpose.trim() && leaveType !== '調整休') { alert('事由を入力してください'); return; }
               if (leaveType === '調整休' && !purpose.trim()) { alert('理由を入力してください'); return; }
               if (leaveType === 'その他' && !leaveTypeOther) { alert('種別を入力してください'); return; }
