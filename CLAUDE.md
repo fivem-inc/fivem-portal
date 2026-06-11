@@ -1662,3 +1662,79 @@ CREATE INDEX idx_business_trip_reports_created_at ON business_trip_reports(creat
 - GPS取得はHTTPS環境が必須（本番環境のみ動作）
 - 位置情報の許可をユーザーに求める必要あり
 - Slack通知はEdge Functionで実装（手動デプロイ必要）
+
+---
+
+## ✅ 2026-06-11 通知設定システム完成・全イベント配線完了
+
+### 🎯 実装した機能
+
+#### 1. 通知設定UI改善（NotificationsTab.tsx）
+- **leave:new_request Slack**: ドロップダウン廃止 → 静的2行表示（リーダー申請先・マネージャー申請先）＋自動振り分け説明
+- **leave:rejected Slack**: チャンネル選択肢を3択に（リーダー・マネージャー・経理）
+- **trip:report_end**: Slackは説明テキスト表示のみ、メール・サイト通知はON/OFFトグル維持
+- **Slackテンプレート欄を非表示**: Slackメッセージはシステム自動生成のため「※ Slackのメッセージ内容はシステムで自動生成されます」に変更
+- **保存ボタン**: 背景色を濃い青（#0277BD）・白文字に変更（視認性向上）
+- **承認者ラベル**: 「承認者」→「申請先（承認者）」に変更
+
+#### 2. 差し戻し時Slackチャンネル通知（leaveSlack.ts / send-leave-slack/index.ts）
+- `LeaveSlackEvent` 型に `'rejected'` 追加
+- `sendLeaveSlack` に `targetChannel?` パラメータ追加
+- send-leave-slack Edge Function に rejected ルーティング追加（`🔴 *【休暇申請 / 差し戻し】*` メッセージ）
+
+#### 3. 全イベントへのメール・サイト通知配線
+| イベント | メール | サイト通知 |
+|---|---|---|
+| leave:new_request | ✅ LeaveRequest.tsx | ✅ LeaveRequest.tsx |
+| leave:leader_approved | ✅ LeaveApprovals.tsx | ✅ LeaveApprovals.tsx |
+| leave:manager_approved | ✅ LeaveApprovals.tsx + LeaveRequestsTab.tsx | - |
+| leave:rejected | ✅ LeaveRequestsTab.tsx | - |
+| expense:new_request | ✅ ExpenseForm.tsx | ✅ ExpenseForm.tsx |
+| trip:report_end | ✅ BusinessTripReport.tsx | ✅ BusinessTripReport.tsx |
+
+#### 4. notificationDispatch.ts ヘルパー追加
+- `getUserEmail(userId)`: profilesテーブルからメールアドレスを取得
+- `dispatchEmail(eventKey, vars, emails)`: 宛先キーで解決してメール送信（console.logデバッグ付き）
+- `dispatchSiteNotification(eventKey, vars, userIds, insertFn)`: 宛先キーでuser_idを解決してサイト通知
+
+#### 5. RLS修正（notification_settings テーブル）
+- 問題: 管理者のみ読み取り可能 → 一般ユーザーが設定を読めずshouldSend()が常にfalse
+- 修正: SELECTポリシーを全認証ユーザーに許可（INSERT/UPDATE/DELETEは管理者のみ維持）
+- ファイル: `fix_notification_rls.sql`（実行済み）
+
+#### 6. CORS修正（Edge Functions）
+- 問題: ローカル開発サーバーがポート5175で動作しているが、全Edge FunctionはCORSに5175未記載
+- 修正: 5つのEdge Functionすべてに `http://localhost:5175` を追加・デプロイ済み
+  - send-email, send-leave-slack, slack-notify, send-trip-slack, create-user
+
+#### 7. 休暇申請フォーム改善（LeaveRequest.tsx）
+- **申請先（承認者）ドロップダウン**: 初期値を空に（「申請先を選択してください」プレースホルダー）
+- **振替元の勤務日**: `<input type="date">` → `<MultiDatePicker>` （振替休日と同じ複数選択カレンダー）
+- **バリデーション追加**: 振替元勤務日と休暇日の日数が一致しないと送信不可
+
+#### 8. メール送信バグ修正
+- 問題: 宛先が「申請先（承認者）」の場合、`emails['approver']` がundefinedでメール未送信
+- 修正: `dispatchEmail('leave:new_request', vars, { applicant: ..., leader: ..., approver: leaderEmail })`
+
+### 🔧 トラブルシューティング履歴
+- **Vercel ビルドエラー（TS2339）**: LeaveReq インターフェースに `leave_dates?: string | null` 追加で解決
+- **Vercel ビルドエラー（TS2552）**: `setChoseiOriginDate` → `setChoseiOriginDates` 修正で解決
+- **メール不達（RLS）**: notification_settings の読み取りポリシー修正で解決
+- **メール不達（CORS）**: ポート5175をすべてのEdge FunctionのCORSに追加で解決
+- **メール不達（Gmailフィルター）**: noreply@five-m.com からのメールを削除するフィルター設定されていた → ユーザーが削除して解決
+
+### 📂 変更ファイル
+- `client/src/components/admin/NotificationsTab.tsx`
+- `client/src/lib/notificationDispatch.ts`
+- `client/src/lib/leaveSlack.ts`
+- `client/src/components/LeaveRequest.tsx`
+- `client/src/components/LeaveApprovals.tsx`
+- `client/src/components/admin/LeaveRequestsTab.tsx`
+- `client/src/components/ExpenseForm.tsx`
+- `client/src/components/BusinessTripReport.tsx`
+- `supabase/functions/send-leave-slack/index.ts`
+- `supabase/functions/send-email/index.ts`
+- `supabase/functions/slack-notify/index.ts`
+- `supabase/functions/send-trip-slack/index.ts`
+- `supabase/functions/create-user/index.ts`
+- `fix_notification_rls.sql`（新規・実行済み）
