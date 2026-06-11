@@ -19,6 +19,7 @@ interface LeaveReq {
   user_id: string;
   leave_type: string;
   leave_type_other: string | null;
+  leave_dates?: string | null;
   start_date: string;
   end_date: string;
   reason: string | null;
