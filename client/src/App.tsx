@@ -147,6 +147,11 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
       boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
     }}>
       <div style={{ display: 'flex', gap: 4, flexWrap: isMobile ? 'nowrap' : 'wrap', alignItems: 'center', flex: 1 }}>
+        {isAdmin && (
+          <button onClick={() => navigate('/admin')} style={btnStyle(location.pathname === '/admin', '#6f42c1')}>
+            {isMobile ? <><span style={{ fontSize: 20 }}>⚙️</span><span>管理</span></> : '⚙️ 管理'}
+          </button>
+        )}
         <button onClick={() => navigate('/')} style={btnStyle(location.pathname === '/')}>
           {isMobile ? <><span style={{ fontSize: 20 }}>🏠</span><span>交通費</span></> : '🏠 交通費'}
         </button>
@@ -346,6 +351,7 @@ const Dashboard: React.FC = () => {
     return <div>読み込んでいます...</div>;
   }
 
+
   return (
     <div style={{ maxWidth: 800, margin: '0 auto', position: 'relative', padding: '110px 16px 0', boxSizing: 'border-box' as const, width: '100%' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} userId={user.id} />
@@ -388,18 +394,6 @@ const Dashboard: React.FC = () => {
             user={user}
             submissions={submissions}
             userName={profileName || user.email || ''}
-          />
-        </Suspense>
-      )}
-
-      {/* 管理者パネル */}
-      {isAdmin && (
-        <Suspense fallback={<PageLoader />}>
-          <AdminPanel
-            pendingApprovals={pendingApprovals}
-            submissions={submissions}
-            isLoading={isLoading}
-            onRefresh={fetchExpenses}
           />
         </Suspense>
       )}
@@ -475,6 +469,27 @@ const TeamCalendarPage: React.FC = () => {
   );
 };
 
+// 管理画面ページ（/admin）
+const AdminPage: React.FC = () => {
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, handleLogout, loading } = useAuth();
+  const { submissions, pendingApprovals, isLoading, fetchExpenses } = useExpenses(user, isAdmin);
+  if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
+  if (!isAdmin) return <Navigate to="/" />;
+  return (
+    <div style={{ padding: '110px 16px 0' }}>
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} userId={user.id} />
+<Suspense fallback={<PageLoader />}>
+        <AdminPanel
+          pendingApprovals={pendingApprovals}
+          submissions={submissions}
+          isLoading={isLoading}
+          onRefresh={fetchExpenses}
+        />
+      </Suspense>
+    </div>
+  );
+};
+
 // メインのAppコンポーネント
 function App() {
   return (
@@ -490,6 +505,7 @@ function App() {
             <Route path="/leave" element={<LeaveRequestPage />} />
             <Route path="/leave-approvals" element={<LeaveApprovalsPage />} />
             <Route path="/calendar" element={<TeamCalendarPage />} />
+            <Route path="/admin" element={<AdminPage />} />
             <Route path="/account" element={<AccountSettings />} />
             <Route path="/change-email" element={<ChangeEmail />} />
             <Route path="/change-password" element={<ChangePassword />} />

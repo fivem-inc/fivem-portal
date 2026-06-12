@@ -36,7 +36,7 @@ const AdminPanelContent: React.FC = () => {
     expenseTypeLabels, renamingExpenseTypeLabelId, setRenamingExpenseTypeLabelId, renamingExpenseTypeLabelValue, setRenamingExpenseTypeLabelValue, handleRenameExpenseTypeLabel,
   } = useAdminPanel();
 
-  return (    <div style={{ marginTop: 40, borderTop: '1px solid #eee', paddingTop: 20 }}>
+  return (    <div style={{ marginTop: 0, paddingTop: 0 }}>
       <style>{`
         @keyframes spin {
           0% { transform: rotate(0deg); }

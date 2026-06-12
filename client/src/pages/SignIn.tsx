@@ -2,6 +2,7 @@ import { useState, useContext, useEffect } from 'react';
 import { Navigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { AuthContext } from '../contexts/AuthContext.tsx';
+import { useAuth } from '../hooks/useAuth';
 
 export default function SignIn() {
   const [email, setEmail] = useState('');
@@ -14,7 +15,8 @@ export default function SignIn() {
   const [isResettingPassword, setIsResettingPassword] = useState(false); // パスワードリセットモードかどうかの状態
   const [showPassword, setShowPassword] = useState(false); // パスワード表示切り替え
   const [showConfirmPassword, setShowConfirmPassword] = useState(false); // 確認用パスワード表示切り替え
-  const { user } = useContext(AuthContext); // AuthContextからuserを取得
+  const { user } = useContext(AuthContext);
+  const { isAdmin } = useAuth();
 
   // 認証フロー処理（簡素化 - パスワードリセットは専用ページで処理）
   useEffect(() => {
@@ -151,9 +153,8 @@ export default function SignIn() {
     setLoading(false);
   };
 
-  // すでにログイン済みの場合は、ダッシュボードにリダイレクト
   if (user) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={isAdmin ? '/admin' : '/'} replace />;
   }
 
   return (
