@@ -1730,12 +1730,117 @@ CREATE INDEX idx_business_trip_reports_created_at ON business_trip_reports(creat
 ## 📋 次回作業予定
 
 ### 優先順
-1. **Googleカレンダーとの同期**（休暇カレンダー連携）
+1. **Googleカレンダーとの同期**（休暇カレンダー連携）← 次回最優先・下記プラン参照
 2. **承認フロー各ステップのメール通知テンプレート整備**
    - 件名・本文を管理者が通知設定画面から調整できるようになった
 3. **会議審議予定の運用ルール確定後に対応**
    - 出張報告：入り報告の要否 / 2名出張時の扱い
    - 休暇申請：申請期限・承認者不在時のエスカレーション
+
+---
+
+## 🗓️ Googleカレンダー連携プラン（2026-06-12 確定）
+
+### 確定仕様
+
+| 項目 | 決定内容 |
+|------|---------|
+| 方向 | ポータル → Googleカレンダー（一方向） |
+| 書き込み先 | テスト中：新規「休暇」カレンダー / 本番：ファイブM共有カレンダー |
+| 切り替え方法 | Supabase Secrets の `GCAL_CALENDAR_ID` を差し替えるだけ |
+| 認証 | サービスアカウント（five-m.com の Google Workspace） |
+| 書き込みタイミング | 休暇：最終受理時 / 欠勤・遅刻・早退：管理者入力時 |
+| 変更・差し戻し | 自動で更新・削除（gcal_events テーブルのIDを使う） |
+| 時間 | 終日イベント（全種別） |
+| 複数日 | 1日ずつ個別イベント（ポータルの日付選択と対応） |
+
+### イベントタイトルフォーマット
+
+```
+休暇系（薄ピンク）：
+  林 晃平｜有給休暇
+  川井 玲｜BD休暇
+  清水 治彦｜慶弔休
+  阿部 勇輝｜調整休
+  鈴木 雄介｜病欠
+  小出 佳奈｜その他
+
+欠勤・時間変更系：
+  林 晃平｜休み          ← 全欠勤（薄ピンク）
+  林 晃平｜遅刻｜13:30〜  ← 遅刻（緑）
+  清水 治彦｜遅出(調整)｜14:00〜  ← late_start（緑）
+  阿部 勇輝｜早退｜〜15:00        ← 早退（緑）
+  清水 治彦｜早退(調整)｜〜18:00  ← early_end（緑）
+```
+
+### カレンダー色分け（Google colorId）
+- **薄ピンク**：休み系（有給・BD・慶弔・調整休・病欠・その他・全欠勤）
+- **緑**：時間変更系（遅刻・遅出・早退・早退調整）
+
+### DB設計：gcal_events テーブル（新規作成）
+
+```sql
+CREATE TABLE gcal_events (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_type   TEXT NOT NULL,  -- 'leave' | 'absence'
+  source_id     UUID NOT NULL,
+  event_date    DATE NOT NULL,
+  gcal_event_id TEXT NOT NULL,
+  created_at    TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX ON gcal_events (source_type, source_id);
+```
+
+差し戻し・削除時は `source_id` で全イベントを一括取得 → Google API で削除 → レコード削除
+
+### 同期失敗キュー：gcal_sync_queue テーブル（新規作成）
+
+```sql
+CREATE TABLE gcal_sync_queue (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_type TEXT NOT NULL,
+  source_id   UUID NOT NULL,
+  operation   TEXT NOT NULL,  -- 'upsert' | 'delete'
+  retry_count INT DEFAULT 0,
+  last_error  TEXT,
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+```
+
+- Google API 失敗時：ポータル処理はそのまま確定、キューに追加
+- 失敗時は Slack で経理担当・社長に通知（SLACK_WEBHOOK_ACCOUNTING / SLACK_WEBHOOK_PRESIDENT）
+- pg_cron または定期 Edge Function でリトライ
+
+### Edge Function 実装順序
+
+| フェーズ | 内容 | 工数目安 |
+|---------|------|---------|
+| Phase 1 | サービスアカウント認証PoC（JWT RS256 in Deno） | 1〜2日 |
+| Phase 2 | イベント作成・更新・削除の基本 Edge Function | 2日 |
+| Phase 3 | 休暇承認フロー（最終受理トリガー）組み込み | 1日 |
+| Phase 4 | 欠勤・遅刻・早退（管理者入力時）組み込み | 1日 |
+| Phase 5 | リトライキュー + 管理画面の同期ステータス表示 | 2日 |
+
+### ⚠️ 技術的注意点
+
+1. **Deno での JWT 実装**
+   - `googleapis` ライブラリ不可（Node.js専用）
+   - `crypto.subtle.importKey` + `djwt` ライブラリで RS256 署名
+   - **必ずPhase 1でPoCを完成させてから本実装に入ること**
+
+2. **gcal_event_id の保存**
+   - 配列カラムではなく `gcal_events` 別テーブルで管理
+   - 保存前クラッシュでゴーストイベントが残る可能性あり（設計上許容）
+
+3. **Supabase Secrets に追加が必要なもの**
+   - `GCAL_SERVICE_ACCOUNT_KEY`（JSONキー）
+   - `GCAL_CALENDAR_ID`（テスト用カレンダーID → 後で本番に切り替え）
+
+### 初回セットアップ手順（実装前に必要）
+1. Google Cloud Console でサービスアカウント作成（five-m.com Workspace）
+2. 「休暇テスト」カレンダーを作成、サービスアカウントに編集権限を付与
+3. サービスアカウントのキー（JSON）をダウンロード → Supabase Secrets に登録
+4. Phase 1 PoC でテストイベントを1件投入して動作確認
 
 ---
 
