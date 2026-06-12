@@ -811,9 +811,27 @@ INSERT INTO master_options (category, value, sort_order) VALUES
   - **実運用**: 人間が画面を見てボタンを押すまで最低1〜2秒かかるため、ほぼ発生しない
   - **対応が必要な場合**: データ取得完了までボタンをグレーアウト（`disabled`）にする対応で解決可能
 
-### 🔜 次回やること
-1. **Phase 1: メール送信機能**（現状は別ツール使用中のため後回し）
-2. **Googleカレンダー同期**（休暇カレンダー・相談中）
+### 🔜 次回やること（2026-06-12時点）
+
+#### 優先①: バックフィル実行（Googleカレンダーの過去データ同期）
+```
+# 既存の欠勤データを一括同期（client/フォルダから）
+node backfill-gcal-absence.mjs <SERVICE_ROLE_KEY>
+```
+- backfill-gcal.mjs（休暇）・backfill-gcal-absence.mjs（欠勤）を実行後は削除してOK
+
+#### 優先②: 西村さんの色問題修正
+- gcal_eventsテーブルから西村さんのleaveレコードを削除
+- GoogleカレンダーのイベントをUI上で手動削除
+- backfill-gcal.mjs を再実行して色を統一（colorId='4'ピンクに）
+
+#### 優先③: Phase 5（任意）
+- gcal-sync失敗時リトライキュー
+- 管理画面でカレンダー同期ステータス表示
+
+#### その他
+- backfill用スクリプト（client/backfill-gcal.mjs・client/backfill-gcal-absence.mjs）は使用後に削除
+- UI/UX改善（コードレビュー結果・高優先項目）
 
 ---
 
@@ -839,6 +857,44 @@ INSERT INTO master_options (category, value, sort_order) VALUES
 - ベルドロップダウン: 各通知に✕ボタン追加（個別既読・非表示）
 - 時刻表示: `timeZone: 'Asia/Tokyo'` 明示（二重JST変換バグ修正）
 - Supabase pg_cron: 毎日午前3時に既読30日以上の通知を自動削除
+
+---
+
+## ✅ 2026-06-12 Googleカレンダー連携・欠勤登録UX改善 完了
+
+### 変更内容
+
+#### LeaveRequestsTab.tsx（管理者画面）
+- 休暇申請の「取り消し」ボタンでgcal-sync deleteを呼び出し、Googleカレンダーからイベントを削除
+
+#### CalendarPage.tsx（休暇カレンダー）
+- 欠勤登録「確定する」押下後：ボタンが「登録中...」表示になり連打を防止
+- DB保存・gcal-sync完了後にシートを閉じ「登録しました」バナーを即時表示
+- 欠勤「取消」ボタン：DB削除後にgcal-sync deleteを呼び出しGoogleカレンダーからも削除
+- 欠勤削除後に「削除しました」バナーを表示（薄ピンク `#fce8ed`・中央オーバーレイ）
+- 「登録しました」バナー：薄緑(`#d4edda`)・中央モーダル型・✅大アイコン
+
+#### gcal-sync Edge Function
+- colorId '11'(Tomato赤) → '4'(Flamingo ピンク)に変更（全LEAVE_CONFIGエントリ）
+- デプロイ済み: `npx supabase functions deploy gcal-sync`
+
+#### backfill-gcal-absence.mjs（新規）
+- 既存の`attendance_exceptions`を一括でGoogleカレンダーに同期するスクリプト
+- 使い方: `node backfill-gcal-absence.mjs <SERVICE_ROLE_KEY>` (client/フォルダから実行)
+
+### gcal_events テーブル
+- `source_type`: 'leave' または 'absence'
+- `source_id`: leave_requests.id または attendance_exceptions.id
+- upsert時: 既存eventを削除→再作成（colorId反映のため）
+
+### カレンダーイベントの色設定
+| 種別 | colorId | 色名 |
+|---|---|---|
+| 有給・慶弔・調整休・その他 | '4' | Flamingo（ピンク） |
+| 遅刻・遅出(調整)・早退 | '2' | Sage（緑） |
+| 全欠勤 | '4' | Flamingo（ピンク） |
+
+### コミット: `bddd62c`
 
 ---
 
