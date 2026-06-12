@@ -184,6 +184,28 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     if (!window.confirm(`${label}しますか？`)) return;
     await supabase.from('leave_requests').update({ status: next }).eq('id', req.id);
 
+    // マネージャー受理時（step2_pending → manager_approved）にGoogleカレンダーへ書き込む
+    // 調整休はstep2_pending → approvedのためそのままapprovedも対象
+    if (next === 'manager_approved' || next === 'approved') {
+      try {
+        const dates: string[] = req.leave_dates ? JSON.parse(req.leave_dates) : [];
+        if (dates.length > 0) {
+          await supabase.functions.invoke('gcal-sync', {
+            body: {
+              action: 'upsert',
+              source_type: 'leave',
+              source_id: req.id,
+              dates,
+              name: req.requester?.name ?? '',
+              leave_type: req.leave_type === 'その他' ? 'その他' : req.leave_type,
+            },
+          });
+        }
+      } catch (e) {
+        console.error('[gcal-sync] 書き込み失敗:', e);
+      }
+    }
+
     const typeName = req.leave_type === 'その他' ? (req.leave_type_other || 'その他') : req.leave_type;
 
     if (req.status === 'step2_pending') {
@@ -243,6 +265,16 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     const update: Record<string, string | null> = { status: 'rejected', rejected_reason: finalReason };
     if (rejectNewType) update.leave_type = rejectNewType;
     await supabase.from('leave_requests').update(update).eq('id', rejectingReq.id);
+
+    // 差し戻し時にGoogleカレンダーのイベントを削除
+    try {
+      await supabase.functions.invoke('gcal-sync', {
+        body: { action: 'delete', source_type: 'leave', source_id: rejectingReq.id },
+      });
+    } catch (e) {
+      console.error('[gcal-sync] 削除失敗:', e);
+    }
+
     setRejectingReq(null);
     setRejectReason('');
     setRejectNewType('');

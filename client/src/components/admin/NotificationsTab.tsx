@@ -25,6 +25,7 @@ const EVENT_GROUPS = [
       { key: 'leave:leader_approved',  label: 'リーダー受理時' },
       { key: 'leave:manager_approved', label: 'マネージャー受理時' },
       { key: 'leave:rejected',         label: '差し戻し時' },
+      { key: 'leave:cancelled',        label: '取り消し時' },
     ],
   },
   {
@@ -62,6 +63,7 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
   'leave:leader_approved':  ['{{承認者名}}', '{{承認者役職}}', '{{次承認者名}}'],
   'leave:manager_approved': ['{{承認者名}}', '{{休暇種別}}'],
   'leave:rejected':         ['{{申請者名}}', '{{休暇種別}}', '{{差し戻し理由}}'],
+  'leave:cancelled':        ['{{申請者名}}', '{{休暇種別}}', '{{取り消し理由}}'],
   'expense:new_request':    ['{{申請者名}}', '{{申請日}}', '{{申請内容}}', '{{項目数}}'],
   'trip:report_end':        ['{{申請者名}}', '{{申請日}}'],
 };
@@ -82,6 +84,7 @@ const SLACK_CHANNEL_OPTIONS_BY_EVENT: Record<string, { value: string; label: str
   'leave:leader_approved':  [{ value: 'manager',    label: '#01マネージャー回覧' }],
   'leave:manager_approved': [{ value: 'accounting', label: '#07_3閲覧禁止-経理専用' }],
   'leave:rejected':         [{ value: 'leader', label: '#01リーダー回覧' }, { value: 'manager', label: '#01マネージャー回覧' }, { value: 'accounting', label: '#07_3閲覧禁止-経理専用' }],
+  'leave:cancelled':        [{ value: 'leader', label: '#01リーダー回覧' }, { value: 'manager', label: '#01マネージャー回覧' }, { value: 'accounting', label: '#07_3閲覧禁止-経理専用' }],
   'expense:new_request':    [{ value: 'expense',    label: '#07_3閲覧禁止-経理専用' }],
   'trip:report_end':        TRIP_SLACK_CHANNELS,
 };
