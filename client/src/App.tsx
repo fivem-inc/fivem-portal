@@ -327,7 +327,7 @@ const Dashboard: React.FC = () => {
     handleLogout
   } = useAuth();
 
-  const { submissions, pendingApprovals, isLoading, fetchExpenses } = useExpenses(user, isAdmin);
+  const { submissions, isLoading, fetchExpenses } = useExpenses(user, isAdmin);
 
   const [expenses, setExpensesState] = useState<Expense[]>([]);
   const [templateQueue, setTemplateQueue] = useState<Expense[]>([]);
