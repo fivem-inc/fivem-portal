@@ -882,6 +882,12 @@ node backfill-gcal-absence.mjs <SERVICE_ROLE_KEY>
 - 既存の`attendance_exceptions`を一括でGoogleカレンダーに同期するスクリプト
 - 使い方: `node backfill-gcal-absence.mjs <SERVICE_ROLE_KEY>` (client/フォルダから実行)
 
+### ⚠️ Googleカレンダーの色に関する重要な仕様メモ
+- **過去日付のイベントは自動的に薄く表示される**（Googleカレンダーの仕様）
+- colorIdの設定値とは無関係
+- 「色がおかしい」報告があったら、まず対象日が過去かどうかを確認すること
+- 過去日付なら仕様通りであり、colorId変更やバックフィルは不要（2026-06-12 確認）
+
 ### gcal_events テーブル
 - `source_type`: 'leave' または 'absence'
 - `source_id`: leave_requests.id または attendance_exceptions.id
