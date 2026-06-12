@@ -970,11 +970,7 @@ npx supabase functions deploy time-adjustment-notify --project-ref xaeynaxctiiyq
 
 ### 🔜 次回やること（2026-06-13時点）
 
-#### 優先①: Supabase 手動適用（上記参照）
-- マイグレーションSQL を Supabase ダッシュボードで実行
-- time-adjustment-notify Edge Function をデプロイ
-
-#### 優先②: バックフィル実行（Googleカレンダーの過去データ同期）
+#### 優先①: バックフィル実行（Googleカレンダーの過去データ同期）
 ```
 # client/フォルダから実行
 node backfill-gcal-absence.mjs <SERVICE_ROLE_KEY>
@@ -982,7 +978,7 @@ node backfill-gcal.mjs <SERVICE_ROLE_KEY>
 ```
 - 実行後は両スクリプトを削除してOK
 
-#### 優先③: 通知設定画面でメール追加
+#### 優先②: 通知設定画面でメール追加
 - 時間調整通知をメールでも受け取れるよう通知設定画面に選択肢追加
 
 #### その他
