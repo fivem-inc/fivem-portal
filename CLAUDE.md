@@ -982,7 +982,6 @@ node backfill-gcal.mjs <SERVICE_ROLE_KEY>
 - 時間調整通知をメールでも受け取れるよう通知設定画面に選択肢追加
 
 #### その他
-- 西村さんのGoogleカレンダー色問題: gcal_eventsのleaveレコード削除 → 手動削除 → backfill再実行
 - UI/UX改善（コードレビュー結果・高優先項目）
 
 ---
