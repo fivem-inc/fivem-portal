@@ -904,6 +904,93 @@ node backfill-gcal-absence.mjs <SERVICE_ROLE_KEY>
 
 ---
 
+## ✅ 2026-06-13 時間調整（自己登録）機能 実装完了
+
+### 機能概要
+一般社員が自分で「調整遅出（late_start）」「調整早退（early_end）」を申請なし・承認フローなしで直接登録できる機能。
+
+### 変更ファイル
+
+#### `client/src/components/LeaveRequest.tsx`
+- タブ追加: 🌿 休暇 ┃ 🕐 時間調整 ┃ 📋 申請履歴（3タブ構成）
+- 時間調整フォーム（adjustmentタブ）:
+  - 自己登録説明ボックス（承認フロー不要・即時記録の旨を明示）
+  - 注意事項バー（事前にフロア責任者・リーダー・マネージャーへ了承を得ること）
+  - タイプ選択: 調整遅出（緑●）/ 調整早退（紫●）チェックボックス（各種別で時間入力が展開）
+  - 時間入力: 時/分のセレクト（未選択時は赤枠・placeholder表示）
+  - 日付カレンダー: 当日以降のみ選択可（過去日は無効・グレー表示）
+  - 了承者フィールド: リーダー/マネージャーからの選択 または 自由記入（任意）
+  - 理由テキストエリア（必須・文例ボタン付き）
+- バリデーション（全て必須）:
+  - 種別1つ以上チェック必須
+  - 日付は当日以降のみ（過去日不可）
+  - 時間は各種別で必須（デフォルト値なし、必ず選択）
+  - 両種別チェック時: 遅出時刻 < 早退時刻
+  - 理由は空白不可
+- 送信後: attendance_exceptions にINSERT → gcal-sync → time-adjustment-notify で通知
+- 申請履歴タブにサブタブ追加: 🌿 休暇申請 ┃ 🕐 時間調整
+  - 時間調整履歴: 年度フィルター + 月グループ表示
+  - 休暇申請履歴: 有給取得状況（承認中/受理/合計日数）を年度選択下に追加
+
+#### `supabase/migrations/20260613000000_time_adjustment_self_register.sql`（新規）
+```sql
+-- 一般社員が自分の late_start/early_end を自己登録できるRLS
+CREATE POLICY "Users can insert own time adjustments"
+  ON attendance_exceptions FOR INSERT
+  WITH CHECK (
+    user_id = auth.uid()
+    AND created_by = auth.uid()
+    AND type IN ('late_start', 'early_end')
+    AND date >= current_date
+  );
+
+-- 同日・同種別の重複登録防止
+ALTER TABLE attendance_exceptions
+  ADD CONSTRAINT uq_attendance_exceptions_user_date_type
+  UNIQUE (user_id, date, type);
+```
+
+#### `supabase/functions/time-adjustment-notify/index.ts`（新規）
+- 時間調整登録時に同グループのリーダー・マネージャーへサイト内通知
+- profiles.group_names で同グループを検索 → 未設定の場合は全マネージャーにフォールバック
+- Service Role Key でRLSをバイパスしてnotificationsテーブルにINSERT
+
+### ⚠️ Supabase への手動適用が必要（未適用）
+
+#### 1. マイグレーション適用
+Supabase ダッシュボード SQL Editor で実行:
+https://supabase.com/dashboard/project/xaeynaxctiiyqxjyuzfi/sql
+→ `supabase/migrations/20260613000000_time_adjustment_self_register.sql` の内容をコピペ実行
+
+#### 2. Edge Function デプロイ
+```
+cd C:\Users\kohei\fivem-portal
+npx supabase functions deploy time-adjustment-notify --project-ref xaeynaxctiiyqxjyuzfi
+```
+
+### 🔜 次回やること（2026-06-13時点）
+
+#### 優先①: Supabase 手動適用（上記参照）
+- マイグレーションSQL を Supabase ダッシュボードで実行
+- time-adjustment-notify Edge Function をデプロイ
+
+#### 優先②: バックフィル実行（Googleカレンダーの過去データ同期）
+```
+# client/フォルダから実行
+node backfill-gcal-absence.mjs <SERVICE_ROLE_KEY>
+node backfill-gcal.mjs <SERVICE_ROLE_KEY>
+```
+- 実行後は両スクリプトを削除してOK
+
+#### 優先③: 通知設定画面でメール追加
+- 時間調整通知をメールでも受け取れるよう通知設定画面に選択肢追加
+
+#### その他
+- 西村さんのGoogleカレンダー色問題: gcal_eventsのleaveレコード削除 → 手動削除 → backfill再実行
+- UI/UX改善（コードレビュー結果・高優先項目）
+
+---
+
 ## ✅ 2026-06-08 出張報告GPS必須化・UI改善 完了
 
 ### 変更内容

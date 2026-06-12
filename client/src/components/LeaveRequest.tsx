@@ -183,7 +183,7 @@ const formatSelectedDates = (dates: string[]): string => {
 const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _roleTitle = '', leaveRequestEnabled }) => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [tab, setTab] = useState<'form' | 'history'>(searchParams.get('tab') === 'history' ? 'history' : 'form');
+  const [tab, setTab] = useState<'form' | 'history' | 'adjustment'>(searchParams.get('tab') === 'history' ? 'history' : 'form');
 
   const [leaveType, setLeaveType] = useState<LeaveType>('有給休暇');
   const [leaveTypeOther, setLeaveTypeOther] = useState('');
@@ -199,6 +199,21 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const [leaderAssignments, setLeaderAssignments] = useState<{ id: string; course: string; school: string; leader: string; manager: string }[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(true);
   const [reapplySourceId, setReapplySourceId] = useState<string | null>(null);
+  // 時間調整フォーム用
+  const [adjLateStart, setAdjLateStart] = useState(false);
+  const [adjEarlyEnd, setAdjEarlyEnd] = useState(false);
+  const [adjDate, setAdjDate] = useState<string>('');
+  const [adjLateTime, setAdjLateTime] = useState('');
+  const [adjEarlyTime, setAdjEarlyTime] = useState('');
+  const [adjReason, setAdjReason] = useState('');
+  const [adjApproverMode, setAdjApproverMode] = useState<'select' | 'free'>('select');
+  const [adjApproverSelectedId, setAdjApproverSelectedId] = useState('');
+  const [adjApproverFree, setAdjApproverFree] = useState('');
+  const [adjSubmitting, setAdjSubmitting] = useState(false);
+  const [adjBanner, setAdjBanner] = useState(false);
+  const [adjError, setAdjError] = useState('');
+  const [adjCalYear, setAdjCalYear] = useState(() => new Date().getFullYear());
+  const [adjCalMonth, setAdjCalMonth] = useState(() => new Date().getMonth());
   // 調整休専用
   const [choseiSubType, setChoseiSubType] = useState<'furikae' | 'zangyou'>('furikae');
   const [choseiOriginDates, setChoseiOriginDates] = useState<string[]>([]);
@@ -216,6 +231,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
 
   const [history, setHistory] = useState<LeaveRecord[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [adjHistory, setAdjHistory] = useState<{ id: string; date: string; type: string; actual_time: string | null; notes: string | null; created_at: string }[]>([]);
+  const [historySubTab, setHistorySubTab] = useState<'leave' | 'adjustment'>('leave');
   const [openFiscalYears, setOpenFiscalYears] = useState<Record<string, boolean>>({});
   const [showPastYears, setShowPastYears] = useState(false);
   const [selectedFY, setSelectedFY] = useState<string>(() => {
@@ -240,6 +257,18 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         }
       });
   }, []);
+
+  useEffect(() => {
+    if (tab !== 'history') return;
+    supabase
+      .from('attendance_exceptions')
+      .select('id, date, type, actual_time, notes, created_at')
+      .eq('user_id', user.id)
+      .eq('created_by', user.id)
+      .in('type', ['late_start', 'early_end'])
+      .order('date', { ascending: false })
+      .then(({ data }) => { if (data) setAdjHistory(data); });
+  }, [tab, user.id]);
 
   useEffect(() => {
     if (tab !== 'history') return;
@@ -390,12 +419,18 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           onClick={() => { setTab('form'); window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }); document.documentElement.scrollTop = 0; document.body.scrollTop = 0; }}
           style={{ flex: 1, padding: '12px', background: tab === 'form' ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'), color: tab === 'form' ? 'white' : text, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: tab === 'form' ? 'bold' : 'normal' }}
         >
-          🌿 新規申請
+          🌿 休暇
+        </button>
+        <button
+          onClick={() => { setTab('adjustment'); window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }); document.documentElement.scrollTop = 0; document.body.scrollTop = 0; }}
+          style={{ flex: 1, padding: '12px', background: tab === 'adjustment' ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'), color: tab === 'adjustment' ? 'white' : text, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: tab === 'adjustment' ? 'bold' : 'normal', borderLeft: `1px solid ${isDark ? '#6c757d' : '#dee2e6'}` }}
+        >
+          🕐 時間調整
         </button>
         {!leaveRequestEnabled && (
           <button
             onClick={() => { setTab('history'); window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }); document.documentElement.scrollTop = 0; document.body.scrollTop = 0; }}
-            style={{ flex: 1, padding: '12px', background: tab === 'history' ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'), color: tab === 'history' ? 'white' : text, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: tab === 'history' ? 'bold' : 'normal' }}
+            style={{ flex: 1, padding: '12px', background: tab === 'history' ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'), color: tab === 'history' ? 'white' : text, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: tab === 'history' ? 'bold' : 'normal', borderLeft: `1px solid ${isDark ? '#6c757d' : '#dee2e6'}` }}
           >
             📋 申請履歴
           </button>
@@ -688,10 +723,362 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         </div>
       )}
 
+      {/* 時間調整フォーム */}
+      {tab === 'adjustment' && (() => {
+        const today = new Date();
+        const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+        const daysInMonth = new Date(adjCalYear, adjCalMonth + 1, 0).getDate();
+        const firstDow = new Date(adjCalYear, adjCalMonth, 1).getDay();
+        const HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
+        const MINS = ['00', '05', '10', '15', '20', '25', '30', '35', '40', '45', '50', '55'];
+        const fmtDate = (y: number, m: number, d: number) => `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+        const adjDateLabel = adjDate ? `${parseInt(adjDate.slice(5,7))}月${parseInt(adjDate.slice(8,10))}日（${'日月火水木金土'[new Date(adjDate).getDay()]}）` : '';
+
+        const handleAdjSubmit = async () => {
+          setAdjError('');
+          if (!adjLateStart && !adjEarlyEnd) { setAdjError('種別を選択してください'); return; }
+          if (!adjDate) { setAdjError('日付を選択してください'); return; }
+          if (adjDate < todayStr) { setAdjError('当日より前の日付は登録できません'); return; }
+          if (adjLateStart && adjEarlyEnd) {
+            const [lh, lm] = adjLateTime.split(':').map(Number);
+            const [eh, em] = adjEarlyTime.split(':').map(Number);
+            if (lh * 60 + lm >= eh * 60 + em) { setAdjError('遅出時刻は早退時刻より前にしてください'); return; }
+          }
+          if (adjLateStart && !adjLateTime) { setAdjError('調整遅出の出勤時刻を選択してください'); return; }
+          if (adjEarlyEnd && !adjEarlyTime) { setAdjError('調整早退の退勤時刻を選択してください'); return; }
+          if (!adjReason.trim()) { setAdjError('理由を入力してください'); return; }
+          setAdjSubmitting(true);
+          try {
+            const approverName = adjApproverMode === 'select'
+              ? (approvers.find(a => a.id === adjApproverSelectedId)?.name ?? '')
+              : adjApproverFree.trim();
+            const notesVal = approverName ? `【了承者】${approverName}　${adjReason.trim()}` : adjReason.trim();
+            const records: { user_id: string; date: string; type: string; actual_time: string; notes: string; created_by: string }[] = [];
+            if (adjLateStart) records.push({ user_id: user.id, date: adjDate, type: 'late_start', actual_time: adjLateTime, notes: notesVal, created_by: user.id });
+            if (adjEarlyEnd)  records.push({ user_id: user.id, date: adjDate, type: 'early_end',  actual_time: adjEarlyTime, notes: notesVal, created_by: user.id });
+            const { data: inserted, error: err } = await supabase.from('attendance_exceptions').insert(records).select('id, type, date, actual_time');
+            if (err) {
+              if (err.code === '23505') { setAdjError('この日付・種別はすでに登録済みです'); }
+              else { setAdjError('保存に失敗しました: ' + err.message); }
+              setAdjSubmitting(false);
+              return;
+            }
+            // gcal-sync
+            for (const rec of inserted ?? []) {
+              try {
+                await supabase.functions.invoke('gcal-sync', {
+                  body: { action: 'upsert', source_type: 'absence', source_id: rec.id, dates: [rec.date], name: profileName ?? '', absence_type: rec.type, time: rec.actual_time ?? undefined },
+                });
+              } catch (e) { console.error('[gcal-sync] 時間調整書き込み失敗:', e); }
+            }
+            // 通知 Edge Function
+            try {
+              await supabase.functions.invoke('time-adjustment-notify', {
+                body: { user_id: user.id, user_name: profileName ?? '', date: adjDate, types: records.map(r => r.type), reason: adjReason.trim() },
+              });
+            } catch (e) { console.error('[time-adjustment-notify] 通知失敗:', e); }
+            // リセット＆バナー
+            setAdjLateStart(false); setAdjEarlyEnd(false);
+            setAdjDate(''); setAdjLateTime(''); setAdjEarlyTime('');
+            setAdjReason(''); setAdjApproverSelectedId(''); setAdjApproverFree('');
+            setAdjBanner(true);
+            setTimeout(() => setAdjBanner(false), 4000);
+          } finally {
+            setAdjSubmitting(false);
+          }
+        };
+
+        const calCells: (number | null)[] = [];
+        for (let i = 0; i < firstDow; i++) calCells.push(null);
+        for (let d = 1; d <= daysInMonth; d++) calCells.push(d);
+
+        return (
+          <div style={{ padding: 20, background: bg, borderRadius: '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
+            {/* 登録完了バナー */}
+            {adjBanner && (
+              <div style={{ position: 'fixed', top: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 300, background: '#d4edda', border: '1px solid #c3e6cb', borderRadius: 10, padding: '12px 24px', color: '#155724', fontWeight: 'bold', fontSize: 15, boxShadow: '0 4px 16px rgba(0,0,0,0.15)', whiteSpace: 'nowrap' }}>
+                ✅ 登録しました
+              </div>
+            )}
+
+            {/* info-box */}
+            <div style={{ background: isDark ? '#1a3a4a' : '#e8f4fd', border: `1px solid ${isDark ? '#2a6a8a' : '#bee5eb'}`, borderRadius: 10, padding: '12px 14px', marginBottom: 14 }}>
+              <div style={{ fontWeight: 'bold', fontSize: 13, color: isDark ? '#90d0f0' : '#0c4a6e', marginBottom: 6 }}>自己登録（申請不要）</div>
+              <div style={{ fontSize: 12, color: isDark ? '#a8cfe8' : '#0e5a8a', lineHeight: 1.7 }}>
+                時間調整は承認フローがありません。登録するとGoogleカレンダーにも反映されます。<br />
+                <span style={{ opacity: 0.85 }}>※ 有給休暇などの休暇申請とは異なり、承認待ちにはなりません。</span><br />
+                <span style={{ opacity: 0.85 }}>※ 登録の取り消しはリーダー・マネージャーまたは経理担当者へご連絡ください。</span>
+              </div>
+            </div>
+
+            {/* 注意文 */}
+            <div style={{ background: isDark ? '#3a2e00' : '#fff8e1', borderLeft: '4px solid #f59e0b', borderRadius: '0 8px 8px 0', padding: '10px 14px', marginBottom: 18, fontSize: 13, color: isDark ? '#ffd54f' : '#92400e', lineHeight: 1.6 }}>
+              ⚠️ 事前にフロア責任者・リーダー（マネージャー）へ必ず相談し、了承を得てから登録してください
+            </div>
+
+            {/* 種別 */}
+            <div style={{ marginBottom: 18 }}>
+              <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 8, color: text, fontSize: 14 }}>種別 <span style={{ color: '#dc3545' }}>*</span> <span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（複数選択可）</span></label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                {/* 調整遅出 */}
+                <div
+                  onClick={() => setAdjLateStart(v => !v)}
+                  style={{ border: adjLateStart ? '2px solid #28a745' : `1px solid ${borderColor}`, borderRadius: 10, padding: 12, cursor: 'pointer', background: adjLateStart ? (isDark ? '#1b4d1b' : '#f0fff4') : bg }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: adjLateStart ? 10 : 0 }}>
+                    <div style={{ width: 16, height: 16, borderRadius: 4, border: adjLateStart ? 'none' : `1.5px solid ${borderColor}`, background: adjLateStart ? '#28a745' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      {adjLateStart && <span style={{ color: '#fff', fontSize: 11, lineHeight: 1 }}>✓</span>}
+                    </div>
+                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#4caf50', flexShrink: 0, display: 'inline-block' }} />
+                    <span style={{ fontSize: 14, fontWeight: 'bold', color: text }}>調整遅出</span>
+                  </div>
+                  {adjLateStart && (
+                    <div onClick={e => e.stopPropagation()}>
+                      <label style={{ fontSize: 12, color: subText, marginBottom: 4, display: 'block' }}>出勤時刻 <span style={{ color: '#dc3545' }}>*</span></label>
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                        <select value={adjLateTime.split(':')[0] ?? ''} onChange={e => setAdjLateTime(e.target.value + ':' + (adjLateTime.split(':')[1] || '00'))}
+                          style={{ flex: 1, padding: '6px 4px', borderRadius: 6, border: `1px solid ${!adjLateTime ? '#dc3545' : borderColor}`, fontSize: 13, background: inputBg, color: text }}>
+                          <option value="" disabled>時</option>
+                          {HOURS.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                        <span style={{ color: subText, fontSize: 12 }}>時</span>
+                        <select value={adjLateTime.split(':')[1] ?? ''} onChange={e => setAdjLateTime((adjLateTime.split(':')[0] || '09') + ':' + e.target.value)}
+                          style={{ flex: 1, padding: '6px 4px', borderRadius: 6, border: `1px solid ${!adjLateTime ? '#dc3545' : borderColor}`, fontSize: 13, background: inputBg, color: text }}>
+                          <option value="" disabled>分</option>
+                          {MINS.map(m => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                        <span style={{ color: subText, fontSize: 12 }}>分</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {/* 調整早退 */}
+                <div
+                  onClick={() => setAdjEarlyEnd(v => !v)}
+                  style={{ border: adjEarlyEnd ? '2px solid #28a745' : `1px solid ${borderColor}`, borderRadius: 10, padding: 12, cursor: 'pointer', background: adjEarlyEnd ? (isDark ? '#1b4d1b' : '#f0fff4') : bg }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: adjEarlyEnd ? 10 : 0 }}>
+                    <div style={{ width: 16, height: 16, borderRadius: 4, border: adjEarlyEnd ? 'none' : `1.5px solid ${borderColor}`, background: adjEarlyEnd ? '#28a745' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      {adjEarlyEnd && <span style={{ color: '#fff', fontSize: 11, lineHeight: 1 }}>✓</span>}
+                    </div>
+                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#9c27b0', flexShrink: 0, display: 'inline-block' }} />
+                    <span style={{ fontSize: 14, fontWeight: 'bold', color: text }}>調整早退</span>
+                  </div>
+                  {adjEarlyEnd && (
+                    <div onClick={e => e.stopPropagation()}>
+                      <label style={{ fontSize: 12, color: subText, marginBottom: 4, display: 'block' }}>退勤時刻 <span style={{ color: '#dc3545' }}>*</span></label>
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                        <select value={adjEarlyTime.split(':')[0] ?? ''} onChange={e => setAdjEarlyTime(e.target.value + ':' + (adjEarlyTime.split(':')[1] || '00'))}
+                          style={{ flex: 1, padding: '6px 4px', borderRadius: 6, border: `1px solid ${!adjEarlyTime ? '#dc3545' : borderColor}`, fontSize: 13, background: inputBg, color: text }}>
+                          <option value="" disabled>時</option>
+                          {HOURS.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                        <span style={{ color: subText, fontSize: 12 }}>時</span>
+                        <select value={adjEarlyTime.split(':')[1] ?? ''} onChange={e => setAdjEarlyTime((adjEarlyTime.split(':')[0] || '17') + ':' + e.target.value)}
+                          style={{ flex: 1, padding: '6px 4px', borderRadius: 6, border: `1px solid ${!adjEarlyTime ? '#dc3545' : borderColor}`, fontSize: 13, background: inputBg, color: text }}>
+                          <option value="" disabled>分</option>
+                          {MINS.map(m => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                        <span style={{ color: subText, fontSize: 12 }}>分</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* 日付カレンダー */}
+            <div style={{ marginBottom: 18 }}>
+              <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 8, color: text, fontSize: 14 }}>
+                日付 <span style={{ color: '#dc3545' }}>*</span> <span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（日付をタップして選択・当日以降のみ）</span>
+              </label>
+              <div style={{ background: isDark ? '#495057' : '#f8f9fa', borderRadius: 10, padding: 12, border: `1px solid ${borderColor}` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <button onClick={() => { if (adjCalMonth === 0) { setAdjCalYear(y => y-1); setAdjCalMonth(11); } else setAdjCalMonth(m => m-1); }}
+                    style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: text, padding: '0 10px', lineHeight: 1 }}>‹</button>
+                  <span style={{ fontWeight: 'bold', color: text, fontSize: 15 }}>{adjCalYear}年 {adjCalMonth+1}月</span>
+                  <button onClick={() => { if (adjCalMonth === 11) { setAdjCalYear(y => y+1); setAdjCalMonth(0); } else setAdjCalMonth(m => m+1); }}
+                    style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: text, padding: '0 10px', lineHeight: 1 }}>›</button>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, marginBottom: 4 }}>
+                  {['日','月','火','水','木','金','土'].map((d, i) => (
+                    <div key={d} style={{ textAlign: 'center', fontSize: 11, fontWeight: 'bold', color: i === 0 ? '#e74c3c' : i === 6 ? '#3498db' : text, padding: '3px 0' }}>{d}</div>
+                  ))}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
+                  {calCells.map((d, i) => {
+                    if (d === null) return <div key={i} />;
+                    const ds = fmtDate(adjCalYear, adjCalMonth, d);
+                    const isPast = ds < todayStr;
+                    const isSelected = ds === adjDate;
+                    const dow = (firstDow + d - 1) % 7;
+                    const color = dow === 0 ? '#e74c3c' : dow === 6 ? '#3498db' : text;
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => !isPast && setAdjDate(ds)}
+                        disabled={isPast}
+                        style={{
+                          padding: '6px 2px', textAlign: 'center', fontSize: 13, border: 'none', cursor: isPast ? 'default' : 'pointer', borderRadius: 6,
+                          background: isSelected ? '#28a745' : 'transparent',
+                          color: isSelected ? '#fff' : isPast ? (isDark ? '#6c757d' : '#ccc') : color,
+                          fontWeight: ds === todayStr ? 'bold' : 'normal',
+                          outline: ds === todayStr && !isSelected ? `2px solid #28a745` : 'none',
+                        }}
+                      >{d}</button>
+                    );
+                  })}
+                </div>
+              </div>
+              {adjDate && (
+                <div style={{ marginTop: 8, padding: '8px 12px', background: isDark ? '#1b4d1b' : '#d4edda', borderRadius: 6, fontSize: 13, color: isDark ? '#75d475' : '#155724' }}>
+                  選択中：{adjDateLabel}
+                </div>
+              )}
+            </div>
+
+            {/* 了承者（任意） */}
+            <div style={{ marginBottom: 18 }}>
+              <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 8, color: text, fontSize: 14 }}>
+                了承者 <span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（任意）</span>
+              </label>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <button onClick={() => setAdjApproverMode('select')}
+                  style={{ flex: 1, padding: '7px 0', borderRadius: 6, border: `1px solid ${adjApproverMode === 'select' ? '#28a745' : borderColor}`, background: adjApproverMode === 'select' ? (isDark ? '#1b4d1b' : '#f0fff4') : bg, color: adjApproverMode === 'select' ? '#28a745' : text, cursor: 'pointer', fontSize: 13, fontWeight: adjApproverMode === 'select' ? 'bold' : 'normal' }}>
+                  リストから選択
+                </button>
+                <button onClick={() => setAdjApproverMode('free')}
+                  style={{ flex: 1, padding: '7px 0', borderRadius: 6, border: `1px solid ${adjApproverMode === 'free' ? '#28a745' : borderColor}`, background: adjApproverMode === 'free' ? (isDark ? '#1b4d1b' : '#f0fff4') : bg, color: adjApproverMode === 'free' ? '#28a745' : text, cursor: 'pointer', fontSize: 13, fontWeight: adjApproverMode === 'free' ? 'bold' : 'normal' }}>
+                  直接入力
+                </button>
+              </div>
+              {adjApproverMode === 'select' ? (
+                <select value={adjApproverSelectedId} onChange={e => setAdjApproverSelectedId(e.target.value)}
+                  style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 14, background: inputBg, color: adjApproverSelectedId ? text : subText }}>
+                  <option value="">了承者を選択（任意）</option>
+                  {approvers.map(a => <option key={a.id} value={a.id}>{a.name}（{a.role_title}）</option>)}
+                </select>
+              ) : (
+                <input type="text" value={adjApproverFree} onChange={e => setAdjApproverFree(e.target.value)}
+                  placeholder="了承者名を入力（任意）"
+                  style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 14, background: inputBg, color: text, boxSizing: 'border-box' }} />
+              )}
+            </div>
+
+            {/* 理由 */}
+            <div style={{ marginBottom: 24 }}>
+              <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 8, color: text, fontSize: 14 }}>理由 <span style={{ color: '#dc3545' }}>*</span></label>
+              <textarea
+                value={adjReason}
+                onChange={e => setAdjReason(e.target.value)}
+                placeholder="〇〇により時間外労働が発生したため"
+                rows={3}
+                style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 14, boxSizing: 'border-box', resize: 'vertical', background: inputBg, color: text }}
+              />
+              <button type="button" onClick={() => setAdjReason('〇〇により時間外労働が発生したため')}
+                style={{ marginTop: 6, fontSize: 12, padding: '6px 14px', border: `1px solid #29b6f6`, borderRadius: 6, background: isDark ? '#0d3a5e' : '#e1f5fe', color: isDark ? '#90caf9' : '#0277bd', cursor: 'pointer', width: '100%' }}>
+                文例を使う ー「〇〇により時間外労働が発生したため」
+              </button>
+            </div>
+
+            {adjError && (
+              <div style={{ marginBottom: 12, padding: '10px 14px', background: isDark ? '#5a1a1a' : '#f8d7da', borderRadius: 8, color: isDark ? '#f5c6cb' : '#721c24', fontSize: 13 }}>
+                {adjError}
+              </div>
+            )}
+
+            <button
+              onClick={handleAdjSubmit}
+              disabled={adjSubmitting}
+              style={{ width: '100%', padding: '13px', background: adjSubmitting ? '#6c757d' : '#28a745', color: 'white', border: 'none', borderRadius: 8, fontSize: 16, fontWeight: 'bold', cursor: adjSubmitting ? 'not-allowed' : 'pointer' }}
+            >
+              {adjSubmitting ? '登録中...' : '登録する'}
+            </button>
+          </div>
+        );
+      })()}
+
       {/* 申請履歴 */}
       {tab === 'history' && (
         <div style={{ padding: 24, background: bg, borderRadius: '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
-          <h2 style={{ marginBottom: 12, fontSize: 20, color: text }}>📋 休暇申請履歴</h2>
+          <h2 style={{ marginBottom: 12, fontSize: 20, color: text }}>📋 申請履歴</h2>
+
+          {/* ── 履歴サブタブ ── */}
+          <div style={{ display: 'flex', marginBottom: 16, borderRadius: 8, overflow: 'hidden', border: `1px solid ${borderColor}` }}>
+            <button onClick={() => setHistorySubTab('leave')}
+              style={{ flex: 1, padding: '9px 0', background: historySubTab === 'leave' ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'), color: historySubTab === 'leave' ? '#fff' : text, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: historySubTab === 'leave' ? 'bold' : 'normal' }}>
+              🌿 休暇申請
+            </button>
+            <button onClick={() => setHistorySubTab('adjustment')}
+              style={{ flex: 1, padding: '9px 0', background: historySubTab === 'adjustment' ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'), color: historySubTab === 'adjustment' ? '#fff' : text, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: historySubTab === 'adjustment' ? 'bold' : 'normal', borderLeft: `1px solid ${borderColor}` }}>
+              🕐 時間調整
+            </button>
+          </div>
+
+          {/* ── 時間調整履歴 ── */}
+          {historySubTab === 'adjustment' && (() => {
+            const getFY = (d: string) => { const dt = new Date(d); const m = dt.getMonth()+1; const y = dt.getFullYear(); return m >= 4 ? y : y - 1; };
+            const fyList = [...new Set(adjHistory.map(r => String(getFY(r.date))))].sort((a,b) => Number(b)-Number(a));
+            const adjFY = adjHistory.length > 0 && !fyList.includes(String(selectedFY))
+              ? fyList[0]
+              : String(selectedFY);
+            const filtered = adjHistory.filter(r => String(getFY(r.date)) === adjFY);
+            const months = [...new Set(filtered.map(r => r.date.slice(0,7)))].sort((a,b) => b.localeCompare(a));
+            return (
+              <div>
+                {adjHistory.length === 0 ? (
+                  <div style={{ textAlign: 'center', color: subText, fontSize: 14, padding: '24px 0' }}>時間調整の記録はありません</div>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+                      {fyList.map(fy => (
+                        <button key={fy} onClick={() => setSelectedFY(fy)}
+                          style={{ padding: '5px 12px', borderRadius: 999, border: `1px solid ${adjFY === fy ? '#28a745' : borderColor}`, fontSize: 12, background: adjFY === fy ? '#28a745' : bg, color: adjFY === fy ? '#fff' : text, cursor: 'pointer', fontWeight: adjFY === fy ? 'bold' : 'normal' }}>
+                          {fy}年度
+                        </button>
+                      ))}
+                    </div>
+                    {filtered.length === 0 ? (
+                      <div style={{ textAlign: 'center', color: subText, fontSize: 14, padding: '16px 0' }}>この年度の記録はありません</div>
+                    ) : (
+                      months.map(ym => {
+                        const recs = filtered.filter(r => r.date.slice(0,7) === ym);
+                        const [y, m] = ym.split('-');
+                        return (
+                          <div key={ym} style={{ marginBottom: 14 }}>
+                            <div style={{ fontSize: 12, fontWeight: 'bold', color: subText, borderBottom: `1px solid ${borderColor}`, paddingBottom: 5, marginBottom: 8 }}>
+                              {y}年 {parseInt(m)}月
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              {recs.map(rec => {
+                                const typeLabel = rec.type === 'late_start' ? '調整遅出' : '調整早退';
+                                const dotColor = rec.type === 'late_start' ? '#4caf50' : '#9c27b0';
+                                const dateStr = `${parseInt(rec.date.slice(5,7))}月${parseInt(rec.date.slice(8,10))}日（${'日月火水木金土'[new Date(rec.date).getDay()]}）`;
+                                const timeLabel = rec.actual_time ? `　${rec.type === 'late_start' ? '出勤' : '退勤'}：${rec.actual_time}` : '';
+                                return (
+                                  <div key={rec.id} style={{ padding: '10px 12px', borderRadius: 8, border: `1px solid ${borderColor}`, background: bg }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                                      <span style={{ width: 9, height: 9, borderRadius: '50%', background: dotColor, flexShrink: 0, display: 'inline-block' }} />
+                                      <span style={{ fontWeight: 'bold', fontSize: 13, color: text }}>{typeLabel}</span>
+                                      <span style={{ marginLeft: 'auto', fontSize: 11, color: subText }}>{new Date(rec.created_at).toLocaleDateString('ja-JP')} 登録</span>
+                                    </div>
+                                    <div style={{ fontSize: 12, color: subText, paddingLeft: 17 }}>{dateStr}{timeLabel}</div>
+                                    {rec.notes && <div style={{ fontSize: 11, color: subText, marginTop: 2, paddingLeft: 17 }}>{rec.notes}</div>}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })()}
+
+          {historySubTab === 'leave' && (<>
 
           {/* ── 取得状況 ── */}
           {!loadingHistory && history.length > 0 && (() => {
@@ -843,6 +1230,30 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                     {fyOptions.map(fy => <option key={fy} value={fy}>{fy}年度</option>)}
                   </select>
                 </div>
+                {/* 選択年度の有給サマリー */}
+                {selectedFY !== 'all' && (() => {
+                  const filtered = history.filter(req => {
+                    if (req.status === 'rejected' || req.status === 'cancelled') return false;
+                    const d = new Date(req.start_date || req.created_at);
+                    const fy = (d.getMonth() + 1) >= 4 ? d.getFullYear() : d.getFullYear() - 1;
+                    return String(fy) === selectedFY && ['有給休暇', 'バースデー休暇（有給）', '有給'].includes(req.leave_type);
+                  });
+                  let pending = 0, approved = 0;
+                  filtered.forEach(req => {
+                    let days = 1;
+                    try { if (req.leave_dates) days = JSON.parse(req.leave_dates).length || 1; } catch {}
+                    if (req.status === 'approved') approved += days;
+                    else pending += days;
+                  });
+                  return (
+                    <div style={{ marginTop: 8, padding: '10px 14px', background: isDark ? '#1a2e1a' : '#f0fff4', border: `1px solid ${isDark ? '#2d5a2d' : '#c3e6cb'}`, borderRadius: 8, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#75d475' : '#155724' }}>🌿 有給取得状況（{selectedFY}年度）</span>
+                      <span style={{ fontSize: 12, color: isDark ? '#d0e8d0' : '#1e5631' }}>承認中：<strong>{pending}日</strong></span>
+                      <span style={{ fontSize: 12, color: isDark ? '#d0e8d0' : '#1e5631' }}>受理済み：<strong>{approved}日</strong></span>
+                      <span style={{ fontSize: 12, color: isDark ? '#d0e8d0' : '#1e5631' }}>合計：<strong>{pending + approved}日</strong></span>
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}
@@ -950,6 +1361,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               })}
             </div>
           )}
+
+          </>)}
 
         </div>
       )}
