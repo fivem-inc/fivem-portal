@@ -676,7 +676,7 @@ const LeaveRequestsTab: React.FC = () => {
                                       <span style={{ marginLeft: 8 }}>「{matchChange[1]}」→「{matchChange[2]}」に変更して受理</span>
                                     </div>
                                   )}
-                                  {!matchChange && modifiedAtJst && (
+                                  {!matchChange && modifiedAtJst && !isCancelled && (
                                     <div>
                                       <span style={{ fontSize: 10, color: '#fd7e14', fontWeight: 'bold', marginRight: 8 }}>🖊 修正</span>
                                       <strong>{req.modifier?.name ?? '管理者'}</strong>
@@ -684,9 +684,10 @@ const LeaveRequestsTab: React.FC = () => {
                                     </div>
                                   )}
                                   {isCancelled && (
-                                    <div style={{ marginTop: matchChange || modifiedAtJst ? 4 : 0 }}>
+                                    <div style={{ marginTop: matchChange ? 4 : 0 }}>
                                       <span style={{ fontSize: 10, color: '#fd7e14', fontWeight: 'bold', marginRight: 8 }}>🚫 取り消し</span>
                                       <strong>{req.modifier?.name ?? '管理者'}</strong>
+                                      {modifiedAtJst && <span style={{ marginLeft: 8 }}>{modifiedAtJst.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>}
                                       {cancelReason && <span style={{ marginLeft: 8 }}>{cancelReason}</span>}
                                     </div>
                                   )}
