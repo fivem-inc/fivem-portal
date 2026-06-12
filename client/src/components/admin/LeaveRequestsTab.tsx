@@ -112,7 +112,7 @@ const LeaveRequestsTab: React.FC = () => {
   const [absFilterFY, setAbsFilterFY] = useState<string>('__current__');
   const [absFilterPerson, setAbsFilterPerson] = useState<string>('all');
   const [absFilterType, setAbsFilterType] = useState<string>('all');
-  const [absSortKey, setAbsSortKey] = useState<'date' | 'created_at'>('date');
+  const [absSortKey, setAbsSortKey] = useState<'date' | 'created_at'>('created_at');
   const [absSortAsc, setAbsSortAsc] = useState(false);
   const [absenceRecs, setAbsenceRecs] = useState<AbsenceRec[]>([]);
   const [absenceLoading, setAbsenceLoading] = useState(false);
@@ -142,6 +142,12 @@ const LeaveRequestsTab: React.FC = () => {
     if (!deleteTarget) return;
     setDeleting(true);
     await supabase.from('attendance_exceptions').delete().eq('id', deleteTarget.id);
+    // Googleカレンダーからも削除
+    try {
+      await supabase.functions.invoke('gcal-sync', {
+        body: { action: 'delete', source_type: 'absence', source_id: deleteTarget.id },
+      });
+    } catch (e) { console.error('[gcal-sync] 欠勤削除失敗:', e); }
     setDeleting(false);
     setDeleteTarget(null);
     fetchAbsences();
@@ -380,12 +386,12 @@ const LeaveRequestsTab: React.FC = () => {
                       <thead>
                         <tr style={{ background: isDarkMode ? '#5a1a1a' : '#fdf0f0' }}>
                           {[
-                            { label: '日付', sortKey: 'date' as const },
+                            { label: '追加日', sortKey: 'created_at' as const },
+                            { label: '追加者' },
                             { label: '対象者' },
                             { label: '種別' },
+                            { label: '日付', sortKey: 'date' as const },
                             { label: '時間' },
-                            { label: '追加日時', sortKey: 'created_at' as const },
-                            { label: '追加者' },
                             { label: '備考' },
                             { label: '操作' },
                           ].map(col => (
@@ -403,20 +409,20 @@ const LeaveRequestsTab: React.FC = () => {
                       <tbody>
                         {filteredAbsRecs.map((rec, i) => {
                           const c = ABSENCE_COLOR[rec.type];
-                          const addedDate = new Date(new Date(rec.created_at).getTime() + 9 * 60 * 60 * 1000);
+                          const addedDate = new Date(rec.created_at);
                           return (
                             <tr key={rec.id} style={{ background: i % 2 === 0 ? (isDarkMode ? '#343a40' : 'white') : (isDarkMode ? '#3d4349' : '#fdf8f8') }}>
-                              <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 12 }}>{rec.date}</td>
+                              <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 11, color: isDarkMode ? '#adb5bd' : '#666' }}>
+                                <div>{addedDate.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric' })}</div>
+                                <div>{addedDate.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: 'numeric', minute: '2-digit' })}</div>
+                              </td>
+                              <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 12 }}>{rec.creatorName}</td>
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 12, fontWeight: 'bold' }}>{rec.targetName}</td>
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center' }}>
                                 <span style={{ padding: '2px 8px', borderRadius: 6, background: c.bg, color: c.text, fontSize: 11, fontWeight: 'bold' }}>{ABSENCE_LABEL[rec.type]}</span>
                               </td>
+                              <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 12 }}>{rec.date}</td>
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 12 }}>{rec.actual_time ? rec.actual_time.slice(0, 5) : '—'}</td>
-                              <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 11, color: isDarkMode ? '#adb5bd' : '#666' }}>
-                                <div>{addedDate.getFullYear()}/{addedDate.getMonth()+1}/{addedDate.getDate()}</div>
-                                <div>{String(addedDate.getHours()).padStart(2,'0')}:{String(addedDate.getMinutes()).padStart(2,'0')}</div>
-                              </td>
-                              <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 12 }}>{rec.creatorName}</td>
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'left', fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>{rec.notes || '—'}</td>
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center' }}>
                                 <button onClick={() => setDeleteTarget(rec)} style={{ padding: '3px 10px', background: 'transparent', border: '1px solid #dc3545', color: '#dc3545', borderRadius: 6, cursor: 'pointer', fontSize: 11 }}>取消</button>
