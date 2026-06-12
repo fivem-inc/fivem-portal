@@ -111,6 +111,9 @@ const LeaveRequestsTab: React.FC = () => {
   const [filterPerson, setFilterPerson] = useState<string>('all');
   const [absFilterFY, setAbsFilterFY] = useState<string>('__current__');
   const [absFilterPerson, setAbsFilterPerson] = useState<string>('all');
+  const [absFilterType, setAbsFilterType] = useState<string>('all');
+  const [absSortKey, setAbsSortKey] = useState<'date' | 'created_at'>('date');
+  const [absSortAsc, setAbsSortAsc] = useState(false);
   const [absenceRecs, setAbsenceRecs] = useState<AbsenceRec[]>([]);
   const [absenceLoading, setAbsenceLoading] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<AbsenceRec | null>(null);
@@ -339,7 +342,12 @@ const LeaveRequestsTab: React.FC = () => {
                 const filteredAbsRecs = absenceRecs.filter(r => {
                   if (activeFY !== null && toAbsFY(r.date) !== activeFY) return false;
                   if (absFilterPerson !== 'all' && r.user_id !== absFilterPerson) return false;
+                  if (absFilterType !== 'all' && r.type !== absFilterType) return false;
                   return true;
+                }).sort((a, b) => {
+                  const av = absSortKey === 'date' ? a.date : a.created_at;
+                  const bv = absSortKey === 'date' ? b.date : b.created_at;
+                  return absSortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
                 });
                 return (
                   <>
@@ -350,8 +358,13 @@ const LeaveRequestsTab: React.FC = () => {
                         {absFyOptions.map(fy => <option key={fy} value={String(fy)}>{fy}年度（{fy}/4/1〜{fy+1}/3/31）</option>)}
                       </select>
                       <SearchableSelect value={absFilterPerson} options={absPersonOptions} onChange={setAbsFilterPerson} isDarkMode={isDarkMode} />
-                      {(absFilterFY !== '__current__' || absFilterPerson !== 'all') && (
-                        <button onClick={() => { setAbsFilterFY('__current__'); setAbsFilterPerson('all'); }}
+                      <select value={absFilterType} onChange={e => setAbsFilterType(e.target.value)}
+                        style={{ padding: '5px 10px', borderRadius: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', fontSize: 12 }}>
+                        <option value="all">全種別</option>
+                        {Object.entries(ABSENCE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                      </select>
+                      {(absFilterFY !== '__current__' || absFilterPerson !== 'all' || absFilterType !== 'all') && (
+                        <button onClick={() => { setAbsFilterFY('__current__'); setAbsFilterPerson('all'); setAbsFilterType('all'); }}
                           style={{ padding: '4px 10px', borderRadius: 8, border: 'none', background: '#6c757d', color: '#fff', fontSize: 11, cursor: 'pointer' }}>
                           リセット
                         </button>
@@ -366,8 +379,24 @@ const LeaveRequestsTab: React.FC = () => {
                     <table style={{ width: '100%', borderCollapse: 'collapse', color: isDarkMode ? '#fff' : '#000', fontSize: 13 }}>
                       <thead>
                         <tr style={{ background: isDarkMode ? '#5a1a1a' : '#fdf0f0' }}>
-                          {['日付','対象者','種別','時間','追加日','追加者','備考','操作'].map(label => (
-                            <th key={label} style={{ padding: '8px 6px', textAlign: 'center', borderBottom: `2px solid #dc3545`, color: isDarkMode ? '#fff' : '#333', fontSize: 12 }}>{label}</th>
+                          {[
+                            { label: '日付', sortKey: 'date' as const },
+                            { label: '対象者' },
+                            { label: '種別' },
+                            { label: '時間' },
+                            { label: '追加日時', sortKey: 'created_at' as const },
+                            { label: '追加者' },
+                            { label: '備考' },
+                            { label: '操作' },
+                          ].map(col => (
+                            <th key={col.label} style={{ padding: '8px 6px', textAlign: 'center', borderBottom: `2px solid #dc3545`, color: isDarkMode ? '#fff' : '#333', fontSize: 12, cursor: col.sortKey ? 'pointer' : 'default', userSelect: 'none' }}
+                              onClick={() => {
+                                if (!col.sortKey) return;
+                                if (absSortKey === col.sortKey) setAbsSortAsc(v => !v);
+                                else { setAbsSortKey(col.sortKey); setAbsSortAsc(false); }
+                              }}>
+                              {col.label}{col.sortKey && (absSortKey === col.sortKey ? (absSortAsc ? ' ▲' : ' ▼') : ' ↕')}
+                            </th>
                           ))}
                         </tr>
                       </thead>
@@ -384,7 +413,8 @@ const LeaveRequestsTab: React.FC = () => {
                               </td>
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 12 }}>{rec.actual_time ? rec.actual_time.slice(0, 5) : '—'}</td>
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 11, color: isDarkMode ? '#adb5bd' : '#666' }}>
-                                <div>{addedDate.getFullYear()}</div><div>{addedDate.getMonth()+1}/{addedDate.getDate()}</div>
+                                <div>{addedDate.getFullYear()}/{addedDate.getMonth()+1}/{addedDate.getDate()}</div>
+                                <div>{String(addedDate.getHours()).padStart(2,'0')}:{String(addedDate.getMinutes()).padStart(2,'0')}</div>
                               </td>
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 12 }}>{rec.creatorName}</td>
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'left', fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>{rec.notes || '—'}</td>
