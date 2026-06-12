@@ -280,7 +280,8 @@ const AbsenceInputSheet: React.FC<{
   currentUserId: string;
   onClose: () => void;
   onSaved: () => void;
-}> = ({ date, profiles, currentUserId, onClose, onSaved }) => {
+  onSaving: () => void;
+}> = ({ date, profiles, currentUserId, onClose, onSaved, onSaving }) => {
   const [userId, setUserId] = useState('');
   const [isAbsent, setIsAbsent] = useState(false);
   const [absentDates, setAbsentDates] = useState<Set<string>>(() => new Set([date]));
@@ -298,6 +299,8 @@ const AbsenceInputSheet: React.FC<{
   const selStyle: React.CSSProperties = { padding: '4px 4px', borderRadius: 6, border: '1px solid #ccc', fontSize: 14 };
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const savingRef = React.useRef(false);
+  const confirmingRef = React.useRef(false);
   const [error, setError] = useState('');
   const [confirming, setConfirming] = useState(false);
 
@@ -343,15 +346,19 @@ const AbsenceInputSheet: React.FC<{
   };
 
   const handleConfirm = () => {
+    if (confirmingRef.current) return;
     setError('');
     if (!userId) { setError('対象者を選択してください'); return; }
     if (!isAbsent && !isLate && !isLateStart && !isEarlyLeave && !isEarlyEnd) { setError('種別を選択してください'); return; }
     if ((isLate || isLateStart) && !lateTime) { setError('出勤時間を入力してください'); return; }
     if ((isEarlyLeave || isEarlyEnd) && !earlyTime) { setError('退勤時間を入力してください'); return; }
+    confirmingRef.current = true;
     setConfirming(true);
   };
 
   const handleSave = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     const records: { user_id: string; date: string; type: string; actual_time: string | null; notes: string; created_by: string }[] = [];
     if (isAbsent) {
@@ -365,8 +372,12 @@ const AbsenceInputSheet: React.FC<{
     if (isEarlyEnd)   records.push({ user_id: userId, date, type: 'early_end',   actual_time: earlyTime, notes, created_by: currentUserId });
 
     const { data: inserted, error: err } = await supabase.from('attendance_exceptions').insert(records).select('id, type, date, actual_time');
-    setSaving(false);
-    if (err) { setError('保存に失敗しました: ' + err.message); return; }
+    if (err) {
+      setSaving(false);
+      savingRef.current = false;
+      setError('保存に失敗しました: ' + err.message);
+      return;
+    }
     // Googleカレンダーに書き込む
     const name = profiles.find((p: ProfileEntry) => p.id === userId)?.name ?? '';
     for (const rec of inserted ?? []) {
@@ -384,8 +395,9 @@ const AbsenceInputSheet: React.FC<{
         });
       } catch (e) { console.error('[gcal-sync] 欠勤書き込み失敗:', e); }
     }
-    onSaved();
-    onClose();
+    onSaving(); // バナー表示
+    onClose();  // モーダル・シートを閉じる
+    onSaved();  // カレンダーを再取得
   };
 
   return (
@@ -493,7 +505,7 @@ const AbsenceInputSheet: React.FC<{
           <button onClick={onClose} style={{ flex: 1, padding: 12, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, cursor: 'pointer' }}>
             キャンセル
           </button>
-          <button onClick={handleConfirm} style={{ flex: 2, padding: 12, background: '#dc3545', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: 'pointer' }}>
+          <button onClick={handleConfirm} disabled={confirming || saving} style={{ flex: 2, padding: 12, background: '#dc3545', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: (confirming || saving) ? 'not-allowed' : 'pointer', opacity: (confirming || saving) ? 0.7 : 1 }}>
             {`登録する${isAbsent && absentDates.size > 1 ? `（${absentDates.size}日）` : ''}`}
           </button>
         </div>
@@ -507,7 +519,7 @@ const AbsenceInputSheet: React.FC<{
           if (isEarlyLeave) lines.push(`${date}　早退　退勤 ${earlyTime}`);
           if (isEarlyEnd)   lines.push(`${date}　早退（残業調整）　退勤 ${earlyTime}`);
           return (
-            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, pointerEvents: saving ? 'none' : 'auto' }}>
               <div style={{ background: '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 360 }}>
                 <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 16 }}>登録内容の確認</div>
                 <div style={{ fontSize: 14, color: '#333', marginBottom: 4 }}>対象者：<strong>{personName}</strong></div>
@@ -516,10 +528,10 @@ const AbsenceInputSheet: React.FC<{
                   {notes && <div style={{ fontSize: 13, color: '#666', marginTop: 8 }}>備考：{notes}</div>}
                 </div>
                 <div style={{ display: 'flex', gap: 10 }}>
-                  <button onClick={() => setConfirming(false)} style={{ flex: 1, padding: 12, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, cursor: 'pointer' }}>
+                  <button onClick={() => { confirmingRef.current = false; setConfirming(false); }} disabled={saving} style={{ flex: 1, padding: 12, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, cursor: 'pointer' }}>
                     戻る
                   </button>
-                  <button onClick={handleSave} disabled={saving} style={{ flex: 2, padding: 12, background: '#dc3545', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.7 : 1 }}>
+                  <button onClick={handleSave} disabled={saving} style={{ flex: 2, padding: 12, background: saving ? '#aaa' : '#dc3545', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: saving ? 'not-allowed' : 'pointer' }}>
                     {saving ? '保存中...' : '確定する'}
                   </button>
                 </div>
@@ -703,6 +715,8 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
   const [profiles, setProfiles] = useState<ProfileEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [absenceSheet, setAbsenceSheet] = useState<string | null>(null);
+  const [absenceSaved, setAbsenceSaved] = useState(false);
+  const [absenceDeleted, setAbsenceDeleted] = useState(false);
   const [monthSummary, setMonthSummary] = useState<{ year: number; month: number; days: number }[]>([]);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 600);
 
@@ -889,9 +903,16 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
     if (!deleteTarget) return;
     setDeleting(true);
     await supabase.from('attendance_exceptions').delete().eq('id', deleteTarget.id);
+    try {
+      await supabase.functions.invoke('gcal-sync', {
+        body: { action: 'delete', source_type: 'absence', source_id: deleteTarget.id },
+      });
+    } catch (e) { console.error('[gcal-sync] 欠勤削除失敗:', e); }
     setDeleting(false);
     setDeleteTarget(null);
     fetchAbsences();
+    setAbsenceDeleted(true);
+    setTimeout(() => setAbsenceDeleted(false), 2500);
   };
 
   return (
@@ -1059,6 +1080,26 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
         </div>
       )}
 
+      {/* 欠勤削除完了バナー */}
+      {absenceDeleted && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ background: '#fce8ed', borderRadius: 14, padding: 24, width: '100%', maxWidth: 360, textAlign: 'center', boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>🗑️</div>
+            <div style={{ fontSize: 22, fontWeight: 'bold', color: '#b04060' }}>削除しました</div>
+          </div>
+        </div>
+      )}
+
+      {/* 欠勤登録完了バナー */}
+      {absenceSaved && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ background: '#d4edda', border: '2px solid #28a745', borderRadius: 14, padding: 24, width: '100%', maxWidth: 360, textAlign: 'center', boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
+            <div style={{ fontSize: 22, fontWeight: 'bold', color: '#155724' }}>登録しました</div>
+          </div>
+        </div>
+      )}
+
       {/* 欠勤入力ボトムシート */}
       {absenceSheet && user && (
         <AbsenceInputSheet
@@ -1066,7 +1107,8 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
           profiles={profiles}
           currentUserId={user.id}
           onClose={() => setAbsenceSheet(null)}
-          onSaved={fetchAbsences}
+          onSaving={() => { setAbsenceSaved(true); setTimeout(() => setAbsenceSaved(false), 2500); }}
+          onSaved={() => { fetchAbsences(); }}
         />
       )}
     </div>
