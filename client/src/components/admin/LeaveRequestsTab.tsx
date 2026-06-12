@@ -442,14 +442,16 @@ const LeaveRequestsTab: React.FC = () => {
                           if (req.start_date === req.end_date) return req.start_date;
                           return `${(req.start_date || '').slice(5)}～${(req.end_date || '').slice(5)}`;
                         })();
-                        const jst = new Date(new Date(req.created_at).getTime() + 9 * 60 * 60 * 1000);
+                        const jst = new Date(req.created_at);
+                        const jstParts = Object.fromEntries(new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(jst).map(p => [p.type, p.value]));
+                        const jstY = jstParts.year; const jstM = Number(jstParts.month); const jstD = Number(jstParts.day); const jstH = Number(jstParts.hour); const jstMin = jstParts.minute;
                         const st = getStatusDisplay(req);
                         return (
                           <React.Fragment key={req.id}>
                           <tr style={{ background: indent ? (isDarkMode ? '#1e3a1e' : '#f0fff4') : (i % 2 === 0 ? (isDarkMode ? '#343a40' : 'white') : (isDarkMode ? '#3d4349' : '#f8f9fa')) }}>
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12, borderLeft: indent ? '3px solid #28a745' : undefined, paddingLeft: indent ? 8 : undefined }}>
                               {indent && <div style={{ fontSize: 9, color: '#28a745', lineHeight: 1 }}>└→</div>}
-                              <div>{jst.getFullYear()}</div><div>{jst.getMonth()+1}/{jst.getDate()}</div>
+                              <div>{jstY}/{jstM}/{jstD}</div><div>{jstH}:{jstMin}</div>
                             </td>
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12 }}>
                               {(req.profile?.name || '-').split(/[\s　]/).map((s: string, j: number) => <div key={j}>{s}</div>)}
@@ -594,14 +596,16 @@ const LeaveRequestsTab: React.FC = () => {
                                   return `${year}/${[...groups.entries()].map(([m, ds]) => `${m}/${ds.join('・')}`).join('、')}`;
                                 })()
                               : (parent.start_date === parent.end_date ? parent.start_date : `${(parent.start_date || '').slice(5)}～${(parent.end_date || '').slice(5)}`);
-                            const pJst = new Date(new Date(parent.created_at).getTime() + 9 * 60 * 60 * 1000);
+                            const pJst = new Date(parent.created_at);
+                            const pJstParts = Object.fromEntries(new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(pJst).map(p => [p.type, p.value]));
+                            const pJstY = pJstParts.year; const pJstM = Number(pJstParts.month); const pJstD = Number(pJstParts.day); const pJstH = Number(pJstParts.hour); const pJstMin = pJstParts.minute;
                             const pSt = getStatusDisplay(parent);
                             const pDisplayReason = (parent.reason || '').replace(/[\s　]?【再申請】元申請ID: \S+/g, '').trim();
                             return (
                               <tr key={`expand-${req.id}`} style={{ background: isDarkMode ? '#1e3a1e' : '#f0fff4' }}>
                                 <td style={{ padding: '6px 4px', borderBottom: `2px solid #28a745`, textAlign: 'center', fontSize: 11, borderLeft: '4px solid #28a745', color: isDarkMode ? '#adb5bd' : '#555' }}>
                                   <div style={{ fontSize: 9, color: '#28a745' }}>元申請</div>
-                                  <div>{pJst.getFullYear()}</div><div>{pJst.getMonth()+1}/{pJst.getDate()}</div>
+                                  <div>{pJstY}/{pJstM}/{pJstD}</div><div>{pJstH}:{pJstMin}</div>
                                 </td>
                                 <td style={{ padding: '6px 4px', borderBottom: `2px solid #28a745`, textAlign: 'center', fontSize: 11, color: isDarkMode ? '#adb5bd' : '#555' }}>
                                   {(parent.profile?.name || '-').split(/[\s　]/).map((s: string, j: number) => <div key={j}>{s}</div>)}

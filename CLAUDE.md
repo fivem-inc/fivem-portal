@@ -1679,16 +1679,63 @@ CREATE INDEX idx_business_trip_reports_created_at ON business_trip_reports(creat
 
 ---
 
-## 📋 次回作業予定（2026-06-12以降）
+## ✅ 2026-06-12 管理画面の独立ページ化 完了
 
-### 管理画面の独立ページ化
-- **概要**: 現在、管理機能が交通費申請（ExpenseForm / AdminPanel）の中に組み込まれている
-- **目標**: 管理画面を独立したページ・タブとして分離する
-- **具体的な作業**:
-  1. 管理ページ（`/admin` など）を新規作成
-  2. 交通費申請コンポーネントから管理機能を切り出す
-  3. NavBar または既存のルーティングに管理ページを追加
-- **構成は翌日（2026-06-12）に確認・設計してから実装開始**
+### 実装内容
+
+#### 管理画面を `/admin` として独立（App.tsx / AdminPanel.tsx）
+- `AdminPage` コンポーネント新規追加（`/admin` ルート）
+  - `isAdmin` でなければ `/` にリダイレクト
+  - `useExpenses` を独立して呼び出し（Dashboard と共有しない）
+- Dashboard から `AdminPanel` ブロックを削除
+- `AdminPanel.tsx`: `borderTop` 区切り線と上マージンを削除（管理画面内のタイトルと二重になるため）
+
+#### NavBar に `⚙️ 管理` ボタン追加（isAdmin のみ・左端）
+- 色: `#6f42c1`（紫）
+- スマホ: 絵文字＋ラベルの 52×52px 正方形ボタン（他ボタンと統一）
+- PC: テキストボタン
+
+#### ログイン後のリダイレクト（SignIn.tsx）
+- 管理者 → `/admin`
+- 一般ユーザー → `/`（変更なし）
+- `useAuth()` の `isAdmin` を使って振り分け
+
+### ⚠️ 注意事項
+- `useAuth()` の `loading` が `true` の間は `isAdmin` が確定していない場合があるため、
+  `SignIn.tsx` でのリダイレクトは `loading` 完了後に行われる（`useAuth` の実装に依存）
+- `/admin` は **クライアントサイドのルートガードのみ**。
+  AdminPanel が fetch する Supabase テーブルは RLS で管理者のみアクセス可能になっていることを確認すること
+- 管理者は `🏠 交通費` ボタンから `/` に遷移できる（テスト・確認用途）
+
+### 日時表示の修正
+
+#### LeaveRequestsTab.tsx：申請日に時刻追加
+- 申請日を `2026/6/12` + `9:23` の2行表示に変更（時間は0埋めなし）
+- タイムゾーン処理を `Intl.DateTimeFormat.formatToParts` + `Asia/Tokyo` 指定に変更
+  - **旧方式の問題**: `new Date(str).getTime() + 9*60*60*1000` → ブラウザのローカル時間（JST）に+9時間で二重加算になる
+  - **新方式**: `new Date(str)` のまま `Intl.DateTimeFormat` でタイムゾーン指定して取得
+
+#### TripReportsTab.tsx：報告日時のゼロ埋め削除
+- `06/10 18:05` → `6/10 18:05`（月・日・時の先頭ゼロを除去）
+
+### 変更ファイル
+- `client/src/App.tsx`
+- `client/src/pages/SignIn.tsx`
+- `client/src/components/AdminPanel.tsx`
+- `client/src/components/admin/LeaveRequestsTab.tsx`
+- `client/src/components/admin/TripReportsTab.tsx`
+
+---
+
+## 📋 次回作業予定
+
+### 優先順
+1. **Googleカレンダーとの同期**（休暇カレンダー連携）
+2. **承認フロー各ステップのメール通知テンプレート整備**
+   - 件名・本文を管理者が通知設定画面から調整できるようになった
+3. **会議審議予定の運用ルール確定後に対応**
+   - 出張報告：入り報告の要否 / 2名出張時の扱い
+   - 休暇申請：申請期限・承認者不在時のエスカレーション
 
 ---
 
