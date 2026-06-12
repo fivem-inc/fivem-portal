@@ -116,7 +116,7 @@ const LeaveRequestsTab: React.FC = () => {
   const [deleteTarget, setDeleteTarget] = useState<AbsenceRec | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [expandedReapply, setExpandedReapply] = useState<string | null>(null);
-  const [expandedModify, setExpandedModify] = useState<string | null>(null);
+  const [expandedModify, setExpandedModify] = useState<Set<string>>(new Set());
 
   const fetchAbsences = useCallback(async () => {
     setAbsenceLoading(true);
@@ -483,9 +483,9 @@ const LeaveRequestsTab: React.FC = () => {
                                       void parentId;
                                     })()}
                                     {isModified && (() => {
-                                      const isOpen = expandedModify === req.id;
+                                      const isOpen = expandedModify.has(req.id);
                                       return (
-                                        <button onClick={() => setExpandedModify(isOpen ? null : req.id)}
+                                        <button onClick={() => setExpandedModify(prev => { const next = new Set(prev); isOpen ? next.delete(req.id) : next.add(req.id); return next; })}
                                           style={{ fontSize: 10, background: '#fd7e14', color: '#fff', borderRadius: 4, padding: '2px 6px', marginTop: 3, marginLeft: 3, display: 'inline-block', border: 'none', cursor: 'pointer' }}>
                                           {isOpen ? '▼ 修正' : '▶ 修正'}
                                         </button>
@@ -660,16 +660,36 @@ const LeaveRequestsTab: React.FC = () => {
                             );
                           })()}
                           {/* 修正展開行 */}
-                          {expandedModify === req.id && (() => {
-                            const match = req.reason?.match(/【管理者が種別変更】(.+?) → (.+?)（変更して受理）/);
+                          {expandedModify.has(req.id) && (() => {
+                            const matchChange = req.reason?.match(/【管理者が種別変更】(.+?) → (.+?)（変更して受理）/);
                             const modifiedAtJst = req.modified_at ? new Date(req.modified_at) : null;
+                            const isCancelled = req.status === 'cancelled';
+                            const cancelReason = req.rejected_reason;
                             return (
                               <tr key={`modify-${req.id}`} style={{ background: isDarkMode ? '#2a1e00' : '#fff8f0' }}>
                                 <td colSpan={9} style={{ padding: '7px 12px', borderBottom: `2px solid #fd7e14`, borderLeft: '4px solid #fd7e14', fontSize: 11, color: isDarkMode ? '#ffe082' : '#7c4d00' }}>
-                                  <span style={{ fontSize: 10, color: '#fd7e14', fontWeight: 'bold', marginRight: 8 }}>🖊 修正履歴</span>
-                                  <strong>{req.modifier?.name ?? '管理者'}</strong>
-                                  {modifiedAtJst && <span style={{ marginLeft: 8 }}>{modifiedAtJst.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>}
-                                  {match && <span style={{ marginLeft: 8 }}>「{match[1]}」→「{match[2]}」に変更して受理</span>}
+                                  {matchChange && (
+                                    <div>
+                                      <span style={{ fontSize: 10, color: '#fd7e14', fontWeight: 'bold', marginRight: 8 }}>🖊 種別変更</span>
+                                      <strong>{req.modifier?.name ?? '管理者'}</strong>
+                                      {modifiedAtJst && <span style={{ marginLeft: 8 }}>{modifiedAtJst.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>}
+                                      <span style={{ marginLeft: 8 }}>「{matchChange[1]}」→「{matchChange[2]}」に変更して受理</span>
+                                    </div>
+                                  )}
+                                  {!matchChange && modifiedAtJst && (
+                                    <div>
+                                      <span style={{ fontSize: 10, color: '#fd7e14', fontWeight: 'bold', marginRight: 8 }}>🖊 修正</span>
+                                      <strong>{req.modifier?.name ?? '管理者'}</strong>
+                                      <span style={{ marginLeft: 8 }}>{modifiedAtJst.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                                    </div>
+                                  )}
+                                  {isCancelled && (
+                                    <div style={{ marginTop: matchChange || modifiedAtJst ? 4 : 0 }}>
+                                      <span style={{ fontSize: 10, color: '#fd7e14', fontWeight: 'bold', marginRight: 8 }}>🚫 取り消し</span>
+                                      <strong>{req.modifier?.name ?? '管理者'}</strong>
+                                      {cancelReason && <span style={{ marginLeft: 8 }}>{cancelReason}</span>}
+                                    </div>
+                                  )}
                                 </td>
                               </tr>
                             );
