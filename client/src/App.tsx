@@ -195,6 +195,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
 const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: string | null; read: boolean }; onDismiss: (id: string) => void }> = ({ n, onDismiss }) => {
   const [visible, setVisible] = useState(true);
   const isReject = n.message.includes('差し戻し') || n.message.includes('差し戻され');
+  const isCancel = n.message.includes('取り消され');
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -204,15 +205,18 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
     return () => clearTimeout(t);
   }, [n.id, onDismiss]);
 
+  const bgColor = isReject ? '#dc3545' : isCancel ? '#fd7e14' : '#28a745';
+  const shadowColor = isReject ? 'rgba(220,53,69,0.4)' : isCancel ? 'rgba(253,126,20,0.4)' : 'rgba(40,167,69,0.4)';
+
   return (
     <div style={{
-      background: isReject ? '#dc3545' : '#28a745', color: 'white', borderRadius: 10, padding: '12px 16px', marginBottom: 10,
+      background: bgColor, color: 'white', borderRadius: 10, padding: '12px 16px', marginBottom: 10,
       display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-      boxShadow: `0 2px 8px ${isReject ? 'rgba(220,53,69,0.4)' : 'rgba(40,167,69,0.4)'}`,
+      boxShadow: `0 2px 8px ${shadowColor}`,
       opacity: visible ? 1 : 0, transition: 'opacity 0.4s ease',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ fontSize: 20 }}>{isReject ? '⚠️' : '✅'}</span>
+        <span style={{ fontSize: 20 }}>{isReject ? '⚠️' : isCancel ? '🚫' : '✅'}</span>
         <div>
           <div style={{ fontWeight: 'bold', fontSize: 14 }}>{n.message}</div>
           {n.sub_message && <div style={{ fontSize: 12, opacity: 0.9 }}>{n.sub_message}</div>}

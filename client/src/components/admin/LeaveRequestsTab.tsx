@@ -533,7 +533,30 @@ const LeaveRequestsTab: React.FC = () => {
                                       } else {
                                         if (!window.confirm('受理しますか？')) return;
                                         const nextStatus: Record<string, string> = { step2_pending: 'manager_approved', manager_approved: 'admin_approved', admin_approved: 'approved' };
-                                        await supabase.from('leave_requests').update({ status: nextStatus[req.status] || 'approved' }).eq('id', req.id);
+                                        const nextSt = nextStatus[req.status] || 'approved';
+                                        await supabase.from('leave_requests').update({ status: nextSt }).eq('id', req.id);
+
+                                        // マネージャー受理時にGoogleカレンダーへ書き込む
+                                        if (nextSt === 'manager_approved' || nextSt === 'approved') {
+                                          try {
+                                            const dates: string[] = req.leave_dates ? JSON.parse(req.leave_dates) : [];
+                                            if (dates.length > 0) {
+                                              await supabase.functions.invoke('gcal-sync', {
+                                                body: {
+                                                  action: 'upsert',
+                                                  source_type: 'leave',
+                                                  source_id: req.id,
+                                                  dates,
+                                                  name: req.profile?.name ?? '',
+                                                  leave_type: req.leave_type,
+                                                },
+                                              });
+                                            }
+                                          } catch (e) {
+                                            console.error('[gcal-sync] 書き込み失敗:', e);
+                                          }
+                                        }
+
                                         const typeName = req.leave_type === 'その他' ? (req.leave_type_other || 'その他') : req.leave_type;
                                         if (req.status === 'step2_pending') {
                                           const daysCount = req.leave_dates ? (() => { try { return String(JSON.parse(req.leave_dates).length); } catch { return ''; } })() : '';
@@ -568,6 +591,12 @@ const LeaveRequestsTab: React.FC = () => {
                                   if (!window.confirm('本当に削除します。この操作は取り消せません。')) return;
                                   const { error } = await supabase.from('leave_requests').delete().eq('id', req.id);
                                   if (error) { alert('削除に失敗しました: ' + error.message); return; }
+                                  // カレンダーからも削除
+                                  try {
+                                    await supabase.functions.invoke('gcal-sync', {
+                                      body: { action: 'delete', source_type: 'leave', source_id: req.id },
+                                    });
+                                  } catch (e) { console.error('[gcal-sync] 削除失敗:', e); }
                                   fetchLeaveRequests();
                                 }}
                                 style={{ padding: '4px 3px', background: 'transparent', color: isDarkMode ? '#888' : '#aaa', border: `1px solid ${isDarkMode ? '#555' : '#ddd'}`, borderRadius: 4, cursor: 'pointer', fontSize: 9, writingMode: 'vertical-rl', letterSpacing: 1 }}
@@ -717,6 +746,15 @@ const LeaveRequestsTab: React.FC = () => {
                               const t = await getNotificationTemplate('leave:rejected_type_changed', 'site', { 元種別: origType, 新種別: rejectNewType });
                               await insertNotification(rejectModal.user_id, t?.template ?? `「${origType}」が「${rejectNewType}」に変更され、受理されました`);
                             }
+                            // 種別変更して受理 → カレンダーを新種別でupsert
+                            try {
+                              const dates: string[] = rejectModal.leave_dates ? JSON.parse(rejectModal.leave_dates) : [];
+                              if (dates.length > 0) {
+                                await supabase.functions.invoke('gcal-sync', {
+                                  body: { action: 'upsert', source_type: 'leave', source_id: rejectModal.id, dates, name: rejectModal.profile?.name ?? '', leave_type: rejectNewType },
+                                });
+                              }
+                            } catch (e) { console.error('[gcal-sync] upsert失敗:', e); }
                             setRejectModal(null); setRejectReason(''); setRejectNewType('');
                             fetchLeaveRequests();
                           }} style={{ flex: 1, padding: '14px 8px', background: '#28a745', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 'bold', cursor: 'pointer', lineHeight: 1.4 }}>
@@ -731,10 +769,16 @@ const LeaveRequestsTab: React.FC = () => {
                           const update: Record<string, string | null> = { status: 'rejected', rejected_reason: finalReason };
                           if (rejectNewType) update.leave_type = rejectNewType;
                           await supabase.from('leave_requests').update(update).eq('id', rejectModal.id);
+                          // 差戻し元のカレンダーイベントを削除
+                          try {
+                            await supabase.functions.invoke('gcal-sync', {
+                              body: { action: 'delete', source_type: 'leave', source_id: rejectModal.id },
+                            });
+                          } catch (e) { console.error('[gcal-sync] 削除失敗:', e); }
                           if (rejectNewType) {
                             // 種別変更あり → 新申請を受理済みで自動作成
                             const autoNote = `【管理者が種別変更】${origType} → ${rejectNewType}（元の申請から自動作成）`;
-                            await supabase.from('leave_requests').insert({
+                            const { data: newReq } = await supabase.from('leave_requests').insert({
                               user_id: rejectModal.user_id,
                               leave_type: rejectNewType,
                               leave_dates: rejectModal.leave_dates,
@@ -744,7 +788,18 @@ const LeaveRequestsTab: React.FC = () => {
                               status: 'approved',
                               approver_id: rejectModal.approver_id,
                               approver2_id: rejectModal.approver2_id,
-                            });
+                            }).select('id').single();
+                            // 新申請をカレンダーにupsert
+                            if (newReq?.id) {
+                              try {
+                                const dates: string[] = rejectModal.leave_dates ? JSON.parse(rejectModal.leave_dates) : [];
+                                if (dates.length > 0) {
+                                  await supabase.functions.invoke('gcal-sync', {
+                                    body: { action: 'upsert', source_type: 'leave', source_id: newReq.id, dates, name: rejectModal.profile?.name ?? '', leave_type: rejectNewType },
+                                  });
+                                }
+                              } catch (e) { console.error('[gcal-sync] upsert失敗:', e); }
+                            }
                             if (await shouldSend('leave:rejected_reapplied', 'site')) {
                               const t = await getNotificationTemplate('leave:rejected_reapplied', 'site', { 元種別: origType, 新種別: rejectNewType });
                               await insertNotification(rejectModal.user_id, t?.template ?? `${origType}が差し戻され、${rejectNewType}で再申請・受理済みです`);
@@ -768,6 +823,29 @@ const LeaveRequestsTab: React.FC = () => {
                             ? <>「{rejectModal.leave_type}」を差戻し<br />「{rejectNewType}」の<br />受理を追加</>
                             : '差し戻す'
                           }
+                        </button>
+                        <button onClick={async () => {
+                          if (!confirm(`「${rejectModal.leave_type}」の受理を取り消しますか？\n申請者への通知を送り、カレンダーのイベントを削除します。\n（申請記録は残ります）`)) return;
+                          await supabase.from('leave_requests').update({
+                            status: 'cancelled',
+                            rejected_reason: rejectReason || '管理者が受理を取り消しました',
+                            modified_by: authUser?.id ?? null,
+                            modified_at: new Date().toISOString(),
+                          }).eq('id', rejectModal.id);
+                          // カレンダーから削除
+                          try {
+                            await supabase.functions.invoke('gcal-sync', {
+                              body: { action: 'delete', source_type: 'leave', source_id: rejectModal.id },
+                            });
+                          } catch (e) { console.error('[gcal-sync] 削除失敗:', e); }
+                          // 申請者に通知
+                          if (await shouldSend('leave:cancelled', 'site')) {
+                            await insertNotification(rejectModal.user_id, `休暇申請（${rejectModal.leave_type}）の受理が取り消されました${rejectReason ? `。理由：${rejectReason}` : ''}`);
+                          }
+                          setRejectModal(null); setRejectReason(''); setRejectNewType('');
+                          fetchLeaveRequests();
+                        }} style={{ flex: 1, padding: '14px 8px', background: '#fd7e14', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 'bold', cursor: 'pointer', lineHeight: 1.4 }}>
+                          取り消し
                         </button>
                       </div>
                     </div>

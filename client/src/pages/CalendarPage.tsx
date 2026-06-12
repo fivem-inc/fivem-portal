@@ -364,9 +364,26 @@ const AbsenceInputSheet: React.FC<{
     if (isEarlyLeave) records.push({ user_id: userId, date, type: 'early_leave', actual_time: earlyTime, notes, created_by: currentUserId });
     if (isEarlyEnd)   records.push({ user_id: userId, date, type: 'early_end',   actual_time: earlyTime, notes, created_by: currentUserId });
 
-    const { error: err } = await supabase.from('attendance_exceptions').insert(records);
+    const { data: inserted, error: err } = await supabase.from('attendance_exceptions').insert(records).select('id, type, date, actual_time');
     setSaving(false);
     if (err) { setError('保存に失敗しました: ' + err.message); return; }
+    // Googleカレンダーに書き込む
+    const name = profiles.find((p: ProfileEntry) => p.id === userId)?.name ?? '';
+    for (const rec of inserted ?? []) {
+      try {
+        await supabase.functions.invoke('gcal-sync', {
+          body: {
+            action: 'upsert',
+            source_type: 'absence',
+            source_id: rec.id,
+            dates: [rec.date],
+            name,
+            absence_type: rec.type,
+            time: rec.actual_time ?? undefined,
+          },
+        });
+      } catch (e) { console.error('[gcal-sync] 欠勤書き込み失敗:', e); }
+    }
     onSaved();
     onClose();
   };
