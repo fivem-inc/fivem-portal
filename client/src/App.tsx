@@ -193,8 +193,10 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
 
 // 通知バナー（notifications テーブルから未読を表示）
 const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: string | null; read: boolean }; onDismiss: (id: string) => void }> = ({ n, onDismiss }) => {
+  const navigate = useNavigate();
   const isReject = n.message.includes('差し戻し') || n.message.includes('差し戻され');
   const isCancel = n.message.includes('取り消され');
+  const isEnc = n.message.includes('有給奨励日');
 
   const borderColor = isReject ? '#f5b8bb' : isCancel ? '#fcd5a0' : '#b7e4cc';
   const bgColor = isReject ? '#fff5f5' : isCancel ? '#fff8ee' : '#f0fdf4';
@@ -202,21 +204,26 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
   const subColor = isReject ? '#a03030' : isCancel ? '#9a5200' : '#3a7d52';
 
   return (
-    <div style={{
-      background: bgColor, border: `1px solid ${borderColor}`,
-      borderLeft: `4px solid ${isReject ? '#dc3545' : isCancel ? '#fd7e14' : '#28a745'}`,
-      borderRadius: '0 10px 10px 0',
-      padding: '12px 16px', marginBottom: 10,
-      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+    <div onClick={isEnc ? () => { onDismiss(n.id); navigate('/leave'); } : undefined}
+      style={{
+        background: bgColor, border: `1px solid ${borderColor}`,
+        borderLeft: `4px solid ${isReject ? '#dc3545' : isCancel ? '#fd7e14' : '#28a745'}`,
+        borderRadius: '0 10px 10px 0',
+        padding: '12px 16px', marginBottom: 10,
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        cursor: isEnc ? 'pointer' : 'default',
+      }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
         <div>
           <div style={{ fontWeight: 500, fontSize: 14, color: textColor }}>{n.message}</div>
           {n.sub_message && <div style={{ fontSize: 12, color: subColor }}>{n.sub_message}</div>}
+          {isEnc && <div style={{ fontSize: 11, color: subColor, marginTop: 2 }}>タップして回答する →</div>}
         </div>
       </div>
-      <button onClick={() => onDismiss(n.id)}
-        style={{ background: 'rgba(0,0,0,0.07)', border: 'none', color: textColor, borderRadius: '50%', width: 24, height: 24, cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>✕</button>
+      {!isEnc && (
+        <button onClick={e => { e.stopPropagation(); onDismiss(n.id); }}
+          style={{ background: 'rgba(0,0,0,0.07)', border: 'none', color: textColor, borderRadius: '50%', width: 24, height: 24, cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>✕</button>
+      )}
     </div>
   );
 };
@@ -230,6 +237,7 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
       .select('id, message, sub_message, read')
       .eq('user_id', userId)
       .eq('read', false)
+      .not('message', 'like', '%有給奨励日%')
       .order('created_at', { ascending: false });
     if (data) setNotifs(data);
   }, [userId]);
@@ -246,6 +254,63 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
   return (
     <>
       {notifs.map(n => <NotifItem key={n.id} n={n} onDismiss={dismiss} />)}
+    </>
+  );
+};
+
+const DOW = ['日', '月', '火', '水', '木', '金', '土'];
+const fmtDow = (dateStr: string) => {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  return `${d.getUTCFullYear()}年${d.getUTCMonth() + 1}月${d.getUTCDate()}日(${DOW[d.getUTCDay()]})`;
+};
+
+// 有給奨励日バナー（消せない固定バナー）
+type EncDay = { id: string; target_date: string; deadline: string };
+const EncouragementBanner: React.FC<{ userId: string; refreshKey: number; onAnswer: (day: EncDay) => void }> = ({ userId, refreshKey, onAnswer }) => {
+  const [pending, setPending] = useState<EncDay[]>([]);
+
+  useEffect(() => {
+    const fetch = async () => {
+      const { data: targets } = await supabase.from('paid_leave_encouragement_targets').select('encouragement_day_id').eq('user_id', userId);
+      if (!targets || targets.length === 0) { setPending([]); return; }
+      const dayIds = targets.map((t: { encouragement_day_id: string }) => t.encouragement_day_id);
+      const { data: responses } = await supabase.from('paid_leave_encouragement_responses').select('encouragement_day_id').eq('user_id', userId).in('encouragement_day_id', dayIds);
+      const answeredIds = new Set((responses || []).map((r: { encouragement_day_id: string }) => r.encouragement_day_id));
+      const unansweredIds = dayIds.filter((id: string) => !answeredIds.has(id));
+      if (unansweredIds.length === 0) { setPending([]); return; }
+      const { data: days } = await supabase.from('paid_leave_encouragement_days').select('id, target_date, deadline').in('id', unansweredIds).order('deadline', { ascending: true });
+      if (days) setPending(days);
+    };
+    fetch();
+  }, [userId, refreshKey]);
+
+  if (pending.length === 0) return null;
+
+  return (
+    <>
+      {pending.map(d => {
+        const today = new Date().toISOString().slice(0, 10);
+        const diff = Math.round((new Date(d.deadline + 'T00:00:00Z').getTime() - new Date(today + 'T00:00:00Z').getTime()) / 86400000);
+        const dateLabel = `${Number(d.deadline.slice(5,7))}月${Number(d.deadline.slice(8,10))}日`;
+        let msg: string;
+        if (diff > 3) msg = `📅 有給奨励日の回答をお願いします（期限：${dateLabel}）`;
+        else if (diff === 3) msg = `⚠️ 有給奨励日の回答期限まで3日です`;
+        else if (diff === 2) msg = `⚠️ 有給奨励日の回答期限まで2日です`;
+        else if (diff === 1) msg = `⚠️ 有給奨励日の回答期限まで1日です`;
+        else if (diff === 0) msg = `🔴 本日が回答期限です！`;
+        else msg = `❗ 有給奨励日の回答が未完了です`;
+        const bg = diff <= 0 ? '#dc3545' : diff <= 1 ? '#fd7e14' : diff <= 3 ? '#ffc107' : '#007bff';
+        return (
+          <div key={d.id} onClick={() => onAnswer(d)}
+            style={{ cursor: 'pointer', marginBottom: 10, padding: '12px 16px', borderRadius: 10,
+              background: bg, color: '#fff', fontSize: 14, fontWeight: 'bold',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+            <span>{msg}　（対象日: {fmtDow(d.target_date)}）</span>
+            <span style={{ fontSize: 12, opacity: 0.85, whiteSpace: 'nowrap', marginLeft: 8 }}>タップして回答 →</span>
+          </div>
+        );
+      })}
     </>
   );
 };
@@ -328,6 +393,12 @@ const Dashboard: React.FC = () => {
 
   const [expenses, setExpensesState] = useState<Expense[]>([]);
   const [templateQueue, setTemplateQueue] = useState<Expense[]>([]);
+  const [encAnsweringDay, setEncAnsweringDay] = useState<EncDay | null>(null);
+  const [encAnswerChoice, setEncAnswerChoice] = useState<number | null>(null);
+  const [encAnswerNote, setEncAnswerNote] = useState('');
+  const [encAnswerSubmitting, setEncAnswerSubmitting] = useState(false);
+  const [encRefreshKey, setEncRefreshKey] = useState(0);
+  const [encAnswerSuccess, setEncAnswerSuccess] = useState(false);
 
   const setExpenses = useCallback((value: React.SetStateAction<Expense[]>) => {
     setExpensesState(value);
@@ -348,10 +419,92 @@ const Dashboard: React.FC = () => {
     return <div>読み込んでいます...</div>;
   }
 
+  const encAnswerModal = encAnsweringDay ? (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 3000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div style={{ background: '#343a40', borderRadius: 16, padding: 24, width: '100%', maxWidth: 420, boxSizing: 'border-box' }}>
+        <h3 style={{ margin: '0 0 4px', color: '#fff', fontSize: 16 }}>📅 有給奨励日への回答</h3>
+        <p style={{ margin: '0 0 16px', fontSize: 13, color: '#adb5bd' }}>対象日: {fmtDow(encAnsweringDay.target_date)}　期限: {fmtDow(encAnsweringDay.deadline)}</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+          {([1, 2, 3, 4] as const).map(n => {
+            const labels: Record<number, string> = { 1: '有給休暇', 2: '欠勤（調整休）', 3: '定休日', 4: 'その他' };
+            const colors: Record<number, string> = { 1: '#28a745', 2: '#fd7e14', 3: '#17a2b8', 4: '#6c757d' };
+            const selected = encAnswerChoice === n;
+            return (
+              <button key={n} onClick={() => setEncAnswerChoice(n)} style={{
+                padding: '12px 16px', borderRadius: 10,
+                border: selected ? `2px solid ${colors[n]}` : '1px solid #6c757d',
+                background: selected ? colors[n] : '#495057',
+                color: '#fff', fontSize: 14, fontWeight: selected ? 'bold' : 'normal', cursor: 'pointer', textAlign: 'left',
+              }}>{labels[n]}</button>
+            );
+          })}
+        </div>
+        {encAnswerChoice === 4 && (
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ fontSize: 12, color: '#adb5bd', display: 'block', marginBottom: 4 }}>備考（必須）</label>
+            <textarea value={encAnswerNote} onChange={e => setEncAnswerNote(e.target.value)} rows={3}
+              style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #6c757d', background: '#495057', color: '#fff', fontSize: 13, resize: 'vertical', boxSizing: 'border-box' }}
+              placeholder="詳細を入力してください" />
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button onClick={() => { setEncAnsweringDay(null); setEncAnswerChoice(null); setEncAnswerNote(''); }}
+            style={{ flex: 1, padding: '10px 0', background: '#495057', color: '#fff', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 13 }}>キャンセル</button>
+          <button disabled={!encAnswerChoice || (encAnswerChoice === 4 && !encAnswerNote.trim()) || encAnswerSubmitting}
+            onClick={async () => {
+              if (!encAnswerChoice || !encAnsweringDay) return;
+              if (encAnswerChoice === 4 && !encAnswerNote.trim()) return;
+              setEncAnswerSubmitting(true);
+              await supabase.from('paid_leave_encouragement_responses').insert({
+                encouragement_day_id: encAnsweringDay.id,
+                user_id: user.id,
+                choice: encAnswerChoice,
+                note: encAnswerNote.trim() || null,
+              });
+              // TODO: 申請フォーム送信後の追加処理（例：奨励日との照合・連携）をここに追加
+              {
+                const encLeaveType = encAnswerChoice === 1 ? '有給休暇' : encAnswerChoice === 2 ? '調整休' : 'その他';
+                const encLeaveTypeOther = encAnswerChoice === 3 ? '定休日' : encAnswerChoice === 4 ? (encAnswerNote.trim() || 'その他') : undefined;
+                await supabase.from('leave_requests').insert({
+                  user_id: user.id,
+                  leave_type: encLeaveType,
+                  ...(encLeaveTypeOther ? { leave_type_other: encLeaveTypeOther } : {}),
+                  leave_dates: JSON.stringify([encAnsweringDay.target_date]),
+                  start_date: encAnsweringDay.target_date,
+                  end_date: encAnsweringDay.target_date,
+                  purpose: '有給奨励日',
+                  reason: '【有給奨励日】',
+                  status: 'approved',
+                  current_approver: 'none',
+                });
+              }
+              setEncAnswerSubmitting(false);
+              setEncAnsweringDay(null); setEncAnswerChoice(null); setEncAnswerNote('');
+              setEncRefreshKey(k => k + 1);
+              setEncAnswerSuccess(true);
+              setTimeout(() => setEncAnswerSuccess(false), 3000);
+            }}
+            style={{ flex: 2, padding: '10px 0', background: encAnswerSubmitting ? '#6c757d' : '#28a745', color: '#fff', border: 'none', borderRadius: 10, cursor: encAnswerSubmitting ? 'default' : 'pointer', fontSize: 13, fontWeight: 'bold' }}>
+            {encAnswerSubmitting ? '送信中...' : '回答を送信'}
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   return (
     <div style={{ maxWidth: 800, margin: '0 auto', position: 'relative', padding: '110px 16px 0', boxSizing: 'border-box' as const, width: '100%' }}>
+      {encAnswerModal}
+      {encAnswerSuccess && (
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 4000, background: '#f0fdf4', border: '1.5px solid #b7e4cc', borderRadius: 18, padding: '24px 32px', textAlign: 'center', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+          <div style={{ fontSize: 40, marginBottom: 10 }}>✅</div>
+          <div style={{ fontSize: 15, fontWeight: 'bold', color: '#155724' }}>回答を送信しました</div>
+        </div>
+      )}
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} userId={user.id} />
+
+      {/* 有給奨励日バナー（消せない） */}
+      <EncouragementBanner userId={user.id} refreshKey={encRefreshKey} onAnswer={d => { setEncAnsweringDay(d); setEncAnswerChoice(null); setEncAnswerNote(''); }} />
 
       {/* 有給申請フォーム送信通知バナー（パート向け） */}
       {leaveRequestEnabled && (

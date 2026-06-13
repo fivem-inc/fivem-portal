@@ -976,10 +976,90 @@ npx supabase functions deploy time-adjustment-notify --project-ref xaeynaxctiiyq
 - time-adjustment-notify Edge Function 実装・デプロイ済み
 - 全バナー・モーダルのデザイン統一（下記参照）
 - 通知設定 複数宛先対応（下記参照）
+- **有給奨励日機能 全面実装（下記参照）**
 
 #### 優先①: その他
 - UI/UX改善（コードレビュー結果・高優先項目）
 - gcal-sync 失敗時リトライキュー（低優先）
+
+---
+
+## ✅ 2026-06-13 有給奨励日機能 実装完了
+
+### 機能概要
+管理者が「有給奨励日」を作成し、対象スタッフに回答を求める機能。
+承認フローなし・回答のみ。choice=有給休暇のときleave_requestsに自動挿入（受理済み）。
+
+### DBテーブル（Supabase SQLで作成済み）
+
+```sql
+-- 奨励日マスター
+paid_leave_encouragement_days (id, target_date, deadline, fiscal_year, created_by, created_at)
+
+-- 対象者
+paid_leave_encouragement_targets (id, encouragement_day_id, user_id, created_at)
+
+-- 回答
+paid_leave_encouragement_responses (id, encouragement_day_id, user_id, choice, note, responded_at, created_at)
+-- choice: 1=有給休暇, 2=欠勤（調整休）, 3=定休日, 4=その他
+```
+
+### RLS（追加済み）
+```sql
+-- 管理者がleave_requestsを代理挿入できるポリシー
+CREATE POLICY "admin_insert_leave_requests" ON leave_requests FOR INSERT TO authenticated
+WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE profiles.id = auth.uid() AND profiles.role_title IN ('管理者', '社長')));
+```
+
+### Edge Function
+- `supabase/functions/encouragement-notify/index.ts`（新規・デプロイ済み）
+- 毎朝UTC 0:00（JST 9:00）実行
+- deadline - today が 3日 or 0日 の奨励日の未回答者にベル通知
+- Cron登録済み（pg_cron jobid: 2）
+
+### 変更ファイル
+
+#### `client/src/components/admin/LeaveRequestsTab.tsx`
+- 奨励日セクション追加（年度フィルター・新規作成ボタン・進捗バー付き一覧）
+- 確認モーダル（回答状況一覧・編集・削除・対象者追加・CSV出力・未回答者メール送信）
+- 新規作成モーダル（日付・期限・対象者選択: 雇用形態グループ・役職ヘッダー中央揃え）
+- 種別フィルター追加（全種別・有給休暇・調整休 等）
+- 回答編集: ✏️ ボタンでインライン編集（choice変更 + 備考変更）
+- 保存時: leave_requestsを削除→再挿入（choice変更に追従）
+- ✕削除時: leave_requests からも同時削除
+- 「登録しました」3秒表示（緑バナー）
+- 回答日時: 日付と時刻を2行表示・中央揃え（Asia/Tokyo）
+
+#### `client/src/components/LeaveRequest.tsx`
+- 未回答バナー（青→黄→赤→期限切れ色で変化）・タップして回答モーダル表示
+- 回答モーダル（4択＋備考）
+- 回答送信後 leave_requests に自動挿入:
+  - choice=1 → leave_type='有給休暇'
+  - choice=2 → leave_type='調整休'
+  - choice=3 → leave_type='その他'（leave_type_other='定休日'）
+  - choice=4 → leave_type='その他'（leave_type_other=備考内容）
+- 「確認中」表記修正（承認中→確認中）
+
+#### `client/src/App.tsx`
+- EncouragementBanner コンポーネント（ホーム画面の消せない奨励日バナー）
+- Dashboard に encAnswerModal（/leaveに遷移不要・ホーム完結）
+- 回答送信後「回答を送信しました」✅バナー（3秒）
+- 有給奨励日のベル通知をサイト通知バナーから除外（.not('message', 'like', '%有給奨励日%')）
+
+### 日付フォーマット（全箇所統一）
+```ts
+const fmtEncDow = (dateStr: string) => {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  return `${d.getUTCFullYear()}年${d.getUTCMonth()+1}月${d.getUTCDate()}日(${ENC_DOW[d.getUTCDay()]})`;
+};
+// 例: 2026年7月29日(水)
+```
+
+### ⚠️ 注意事項
+- モーダルは `const modal = condition ? (...JSX...) : null` のJSX変数形式（コンポーネント関数化禁止）
+- `responded_at` は Supabase が既にタイムゾーン付きで返すため `+ 'Z'` 不要（`new Date(r.responded_at)` のみ）
+- leave_requests 代理挿入には `admin_insert_leave_requests` ポリシーが必要（上記SQL）
+- choice変更時は既存 leave_requests を削除してから再挿入（start_date + reason='【有給奨励日】' + status='approved' で特定）
 
 ---
 
