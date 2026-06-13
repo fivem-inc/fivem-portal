@@ -1057,8 +1057,13 @@ npx supabase functions deploy time-adjustment-notify --project-ref xaeynaxctiiyq
   - 将来的に Context 化して共有することも可能だが、現状は件数が少ないため問題なし
 - NavBar のバッジは `location.pathname !== '/board'` の条件で `/board` 表示中は非表示にしている
 
+### ✅ 2026-06-14 追加変更
+- **boardToast の位置変更**: 画面中央ポップアップ → NavBar直下の上部バナー（`position: fixed, top: 56`）
+- **連絡板ヘッダーに🔔ボタン追加**: タップでアカウント設定（通知設定）画面に遷移
+
 ### 🔜 次回タスク（2026-06-14時点）
 - 残業申請フォーム（パート用）← 最優先
+- 忘れん坊通知①②③（send-push Edge Function は完成済み・呼び出し側を実装）
 - タブ・機能の表示権限管理画面
 - UI/UX改善（コードレビュー高優先項目）
 
@@ -2526,14 +2531,43 @@ ALTER TABLE profiles ADD COLUMN last_sign_in_at timestamptz;
 - スレッド有無・既読・添付など詳細は設計継続中
 
 ### プッシュ通知 実装ステップ
-| Step | 内容 | 目安 | 難易度 |
-|------|------|------|--------|
-| 1 | 掲示板・連絡機能を作る（DB・画面・自動投稿） | 2〜3週間 | ★★★☆ |
-| 2 | Service Worker を追加（public/sw.js・manifest.json更新） | 2〜3日 | ★★☆☆ |
-| 3 | プッシュ通知送信（VAPID鍵・購読情報DB保存・Edge Function） | 3〜4日 | ★★★☆ |
-| 4 | 通知設定画面（許可ボタン・ON/OFFスイッチ） | 1〜2日 | ★★☆☆ |
+| Step | 内容 | 状態 |
+|------|------|------|
+| 1 | 掲示板・連絡機能を作る（DB・画面・自動投稿） | ✅ 完了 |
+| 2 | Service Worker を追加（public/sw.js） | ✅ 完了（2026-06-14） |
+| 3 | VAPID鍵・購読情報DB・Edge Function（send-push） | ✅ 完了（2026-06-14） |
+| 4 | 通知設定画面（アカウント画面に許可ボタン・ON/OFF） | ✅ 完了（2026-06-14） |
 
-**合計目安: 約1か月**　まず掲示板を作り、通知は後から追加できる。
+### プッシュ通知 実装詳細（2026-06-14 完了）
+- **VAPID公開鍵**: `BOjtAkA5HCLTuJwop__FzxcccvAfwoyNt1e0uybDz83cI0p7zBZQcLx7EWy3edif4JTUKcc_0dUKly2iozylyq8`
+- **VAPID秘密鍵**: Supabase Edge Functions Secrets に保存済み（`VAPID_PRIVATE_KEY`）
+- **DBテーブル**: `push_subscriptions`（user_id, endpoint, p256dh, auth）
+- **Edge Function**: `send-push`（user_ids・title・body・url を受け取り通知送信）
+- **クライアント**: `src/utils/pushNotification.ts`（許可取得・購読・解除）
+- **通知設定UI**: `AccountSettings.tsx`（🔔 許可する / OFFにする・拒否時は手順表示）
+
+### 通知を送る方法（他の Edge Function から呼び出す）
+```typescript
+await supabase.functions.invoke('send-push', {
+  body: {
+    user_ids: ['uuid1', 'uuid2'],  // 送り先ユーザーIDの配列
+    title: '連絡板',
+    body: '新しいメッセージがあります',
+    url: '/board',  // タップで開くURL
+  }
+});
+```
+
+### 未実装（次回タスク）
+- 忘れん坊通知①: 期限付き投稿 → 未回答者に send-push 呼び出し
+- 忘れん坊通知②: 定期リマインド（毎月◯日）→ Supabase Cron + send-push
+- 忘れん坊通知③: 「確認しました」ボタン → 未確認者を管理者が把握
+- 送信・投稿権限設定画面（役職×個人/グループのON/OFF）
+
+### 注意事項
+- iPhone はホーム画面に追加（PWAインストール）しないとプッシュ通知が届かない
+- ブラウザで「拒否」した場合はアプリ側から再許可できない（ブラウザ設定で手動変更が必要）
+- `visibilitychange` イベントで権限状態を自動再チェックするため、ブラウザ設定変更後にタブに戻ると自動反映される
 
 ### 対応端末
 | 端末 | 条件 | 通知 |
