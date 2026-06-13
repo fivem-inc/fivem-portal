@@ -27,6 +27,7 @@ interface Props {
   profileName: string | null;
   roleTitle: string;
   leaveRequestEnabled?: boolean;
+  onSubmitSuccess?: () => void;
 }
 
 interface Approver {
@@ -195,7 +196,7 @@ const formatSelectedDates = (dates: string[]): string => {
 };
 
 // ---- メインコンポーネント ----
-const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _roleTitle = '', leaveRequestEnabled }) => {
+const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _roleTitle = '', leaveRequestEnabled, onSubmitSuccess }) => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<'form' | 'history' | 'adjustment'>(searchParams.get('tab') === 'history' ? 'history' : 'form');
@@ -431,28 +432,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const borderColor = isDark ? '#6c757d' : '#ddd';
 
   if (submitted) {
-    return (
-      <div style={{ maxWidth: 500, margin: '40px auto', padding: 24, background: bg, borderRadius: 12, boxShadow: '0 2px 12px rgba(0,0,0,0.1)', textAlign: 'center' }}>
-        <div style={{ fontSize: 48, marginBottom: 16 }}>✅</div>
-        <h2 style={{ color: '#28a745', marginBottom: 8 }}>申請しました</h2>
-        <p style={{ color: subText, marginBottom: 24 }}>担当者に通知されます。</p>
-        <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-          <button onClick={() => navigate('/')} style={{ padding: '10px 24px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 15 }}>
-            🏠 ホームに戻る
-          </button>
-          {!leaveRequestEnabled && (
-            <>
-              <button onClick={handleReset} style={{ padding: '10px 24px', background: '#007bff', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 15 }}>
-                続けて申請する
-              </button>
-              <button onClick={() => { handleReset(); setTab('history'); }} style={{ padding: '10px 24px', background: '#6c757d', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 15 }}>
-                申請履歴を確認
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    );
+    return <BannerSuccess message="申請しました" onClose={() => { if (onSubmitSuccess) { onSubmitSuccess(); } else { handleReset(); navigate('/'); } }} />;
   }
 
   const isApprover = ['リーダー', 'マネージャー', '社長', '管理者'].includes(_roleTitle);
@@ -568,12 +548,14 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         >
           🌿 休暇
         </button>
-        <button
-          onClick={() => { setTab('adjustment'); window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }); document.documentElement.scrollTop = 0; document.body.scrollTop = 0; }}
-          style={{ flex: 1, padding: '12px', background: tab === 'adjustment' ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'), color: tab === 'adjustment' ? 'white' : text, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: tab === 'adjustment' ? 'bold' : 'normal', borderLeft: `1px solid ${isDark ? '#6c757d' : '#dee2e6'}` }}
-        >
-          🕐 時間調整
-        </button>
+        {!leaveRequestEnabled && (
+          <button
+            onClick={() => { setTab('adjustment'); window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }); document.documentElement.scrollTop = 0; document.body.scrollTop = 0; }}
+            style={{ flex: 1, padding: '12px', background: tab === 'adjustment' ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'), color: tab === 'adjustment' ? 'white' : text, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: tab === 'adjustment' ? 'bold' : 'normal', borderLeft: `1px solid ${isDark ? '#6c757d' : '#dee2e6'}` }}
+          >
+            🕐 時間調整
+          </button>
+        )}
         {!leaveRequestEnabled && (
           <button
             onClick={() => { setTab('history'); window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }); document.documentElement.scrollTop = 0; document.body.scrollTop = 0; }}
@@ -719,13 +701,14 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             <select
               value={leaveType}
               onChange={e => { setLeaveType(e.target.value as LeaveType); setPurpose(''); }}
+              disabled={!!leaveRequestEnabled}
               style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 15, background: inputBg, color: text }}
             >
               <option value="有給休暇">有給休暇</option>
-              <option value="バースデー休暇（有給）">バースデー休暇（有給）</option>
-              <option value="慶弔休暇">慶弔休暇</option>
-              <option value="調整休">調整休</option>
-              <option value="その他">その他</option>
+              {!leaveRequestEnabled && <option value="バースデー休暇（有給）">バースデー休暇（有給）</option>}
+              {!leaveRequestEnabled && <option value="慶弔休暇">慶弔休暇</option>}
+              {!leaveRequestEnabled && <option value="調整休">調整休</option>}
+              {!leaveRequestEnabled && <option value="その他">その他</option>}
             </select>
             {leaveType === 'その他' && (
               <input
