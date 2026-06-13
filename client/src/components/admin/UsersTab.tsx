@@ -309,7 +309,7 @@ const SendEmailModal: React.FC<{
 
 const UsersTab: React.FC = () => {
   const ctx = useAdminPanel();
-  const { isDarkMode, users, loadingUsers, sortedUsers, userSortKey, userSortAsc, handleUserSort, editingUser, editName, setEditName, handleEditName, handleSaveName, handleCancelUserEdit, showRetired, setShowRetired, editingSortOrder, setEditingSortOrder, editSortOrderValue, setEditSortOrderValue, handleSaveSortOrder, masterOptions, isUserEditMode, setIsUserEditMode, confirmChange, setConfirmChange, submissions, fetchUsers, handleToggleActive, handleDeleteUser, setActiveTab } = ctx;
+  const { isDarkMode, users, loadingUsers, sortedUsers, userSortKey, userSortAsc, handleUserSort, editingUser, editName, setEditName, handleEditName, handleSaveName, handleCancelUserEdit, showRetired, setShowRetired, editingSortOrder, setEditingSortOrder, editSortOrderValue, setEditSortOrderValue, handleSaveSortOrder, masterOptions, isUserEditMode, setIsUserEditMode, confirmChange, setConfirmChange, fetchUsers, handleToggleActive, handleDeleteUser, setActiveTab } = ctx;
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedForEmail, setSelectedForEmail] = useState<Set<string>>(new Set());
@@ -504,8 +504,6 @@ const UsersTab: React.FC = () => {
                     </thead>
                     <tbody>
                       {sortedUsers.map(user => {
-                        const regDate = user.registered_at ? new Date(new Date(user.registered_at).getTime() + 9*60*60*1000) : null;
-                        const regDateStr = regDate ? `${regDate.getFullYear()}/${String(regDate.getMonth()+1).padStart(2,'0')}/${String(regDate.getDate()).padStart(2,'0')}` : '-';
                         return (
                           <tr key={user.id} style={{ opacity: user.is_active === false ? 0.6 : 1, background: sortedUsers.indexOf(user) % 2 === 0 ? (isDarkMode ? '#343a40' : 'white') : (isDarkMode ? '#3d4349' : '#f8f9fa') }}>
                             {/* チェックボックス列 */}
