@@ -13,7 +13,7 @@ interface LeaderAssignment {
 const emptyForm = { course: '', school: '', leader: '', manager: '', display_order: 0 };
 
 const LeaderAssignmentsTab: React.FC = () => {
-  const { isDarkMode, supabase } = useAdminPanel();
+  const { isDarkMode, supabase, setSuccessMsg } = useAdminPanel();
   const [items, setItems] = useState<LeaderAssignment[]>([]);
   const [loading, setLoading] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -69,6 +69,7 @@ const LeaderAssignmentsTab: React.FC = () => {
       }
       cancelEdit();
       fetchItems();
+      setSuccessMsg(editingId ? '更新しました' : '追加しました');
     } finally {
       setIsProcessing(false);
     }
@@ -82,6 +83,7 @@ const LeaderAssignmentsTab: React.FC = () => {
       const { error } = await supabase.from('leader_assignments').delete().eq('id', id);
       if (error) { alert('削除に失敗しました: ' + error.message); return; }
       fetchItems();
+      setSuccessMsg('削除しました');
     } finally {
       setIsProcessing(false);
     }

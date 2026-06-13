@@ -15,6 +15,7 @@ const BusinessTripReportForm = React.lazy(() => import('./components/BusinessTri
 const LeaveRequestForm = React.lazy(() => import('./components/LeaveRequest'));
 const LeaveApprovals = React.lazy(() => import('./components/LeaveApprovals'));
 const CalendarPage = React.lazy(() => import('./pages/CalendarPage'));
+const BoardPage    = React.lazy(() => import('./pages/BoardPage'));
 
 const PageLoader: React.FC = () => (
   <div style={{ padding: 40, textAlign: 'center', color: '#888' }}>読み込んでいます...</div>
@@ -122,6 +123,10 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
 const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean; roleTitle?: string; userId?: string }> = ({ isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove, roleTitle, userId }) => {
   const navigate = useNavigate();
   const location = useLocation();
+  const navTo = (path: string) => {
+    if (location.pathname === path) window.scrollTo({ top: 0, behavior: 'smooth' });
+    else navigate(path);
+  };
   const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 640);
@@ -148,26 +153,29 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     }}>
       <div style={{ display: 'flex', gap: 4, flexWrap: isMobile ? 'nowrap' : 'wrap', alignItems: 'center', flex: 1 }}>
         {isAdmin && (
-          <button onClick={() => navigate('/admin')} style={btnStyle(location.pathname === '/admin', '#6f42c1')}>
+          <button onClick={() => navTo('/admin')} style={btnStyle(location.pathname === '/admin', '#6f42c1')}>
             {isMobile ? <><span style={{ fontSize: 20 }}>⚙️</span><span>管理</span></> : '⚙️ 管理'}
           </button>
         )}
-        <button onClick={() => navigate('/')} style={btnStyle(location.pathname === '/')}>
+        <button onClick={() => navTo('/')} style={btnStyle(location.pathname === '/')}>
           {isMobile ? <><span style={{ fontSize: 20 }}>🏠</span><span>交通費</span></> : '🏠 交通費'}
         </button>
-        <button onClick={() => navigate('/trip-report')} style={btnStyle(location.pathname === '/trip-report')}>
+        <button onClick={() => navTo('/trip-report')} style={btnStyle(location.pathname === '/trip-report')}>
           {isMobile ? <><span style={{ fontSize: 20 }}>📍</span><span>出張報告</span></> : '📍 出張報告'}
         </button>
         {canLeave && (
-          <button onClick={() => navigate('/leave')} style={btnStyle(location.pathname === '/leave', '#28a745')}>
+          <button onClick={() => navTo('/leave')} style={btnStyle(location.pathname === '/leave', '#28a745')}>
             {isMobile ? <><span style={{ fontSize: 20 }}>🌿</span><span>休暇申請</span></> : '🌿 休暇申請'}
           </button>
         )}
         {(isAdmin || (roleTitle && CALENDAR_ROLES.includes(roleTitle))) && (
-          <button onClick={() => navigate('/calendar')} style={btnStyle(location.pathname === '/calendar', '#4a90d9')}>
+          <button onClick={() => navTo('/calendar')} style={btnStyle(location.pathname === '/calendar', '#4a90d9')}>
             {isMobile ? <><span style={{ fontSize: 20 }}>📅</span><span>休暇</span></> : '📅 休暇'}
           </button>
         )}
+        <button onClick={() => navTo('/board')} style={btnStyle(location.pathname === '/board', '#e67e22')}>
+          {isMobile ? <><span style={{ fontSize: 20 }}>💬</span><span>連絡板</span></> : '💬 連絡板'}
+        </button>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, paddingLeft: 8 }}>
         {userId && <BellIcon userId={userId} />}
@@ -654,6 +662,20 @@ const AdminPage: React.FC = () => {
   );
 };
 
+// 連絡板ページ（/board）
+const BoardPageWrapper: React.FC = () => {
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, handleLogout, loading } = useAuth();
+  if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
+  return (
+    <>
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} userId={user.id} />
+      <Suspense fallback={<PageLoader />}>
+        <BoardPage />
+      </Suspense>
+    </>
+  );
+};
+
 // メインのAppコンポーネント
 function App() {
   return (
@@ -674,6 +696,7 @@ function App() {
             <Route path="/change-email" element={<ChangeEmail />} />
             <Route path="/change-password" element={<ChangePassword />} />
             <Route path="/settings-check" element={<SupabaseSettingsCheck />} />
+            <Route path="/board" element={<BoardPageWrapper />} />
           </Route>
         </Routes>
       </AuthProvider>

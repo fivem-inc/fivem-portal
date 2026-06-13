@@ -984,6 +984,45 @@ npx supabase functions deploy time-adjustment-notify --project-ref xaeynaxctiiyq
 
 ---
 
+## ✅ 2026-06-14 社内連絡板・フィードバック統一・UX改善 完了
+
+### 社内連絡板（BoardPage.tsx）新規実装
+- LINE風チャットUI（チャンネルリスト左・メッセージ右・モバイル切り替え）
+- グループ / 個人DM チャンネル
+- スレッド（リプライ）・既読数表示・未読バッジ
+- メッセージ編集・削除
+- グループ作成モーダル（有給奨励日スタイル: 雇用形態ヘッダー+役職列+一括選択）
+- メンバー管理モーダル（同スタイル: チェックボックス一括編集+保存）
+- DB: board_channels / board_channel_members / board_messages / board_channel_last_seen / board_reads（RLS付き）
+- グループはprofiles.group_namesから一括作成（SQL済み）
+
+### バグ修正
+- board_messages / board_channel_members のprofilesジョイン（FK→auth.usersのため失敗）を削除
+  → 名前はallProfiles stateからclient-sideでlookup
+- DM チャンネル名もallProfilesから取得するよう修正
+
+### 全ページ フィードバック統一（成功時は緑カード・alert廃止）
+- AdminPanelContext: successMsg state追加・success alert を9箇所 setSuccessMsg() に置き換え
+- AdminPanel.tsx: 管理画面全体に共通バナー表示
+- LeaveApprovals.tsx: パート送信後バナー追加
+- LeaderAssignmentsTab: 保存・追加・削除後バナー
+- LeaveRequestsTab: メール送信・パート有給フォーム送信後バナー
+- BoardPage: メッセージ編集保存後バナー
+
+### UX改善
+- NavBar: 現在地と同じボタンを押すと先頭スクロール（全ボタン共通）
+
+### CLAUDE.md
+- UIフィードバック標準仕様を追記（成功系は緑カード必須・alert禁止・コードテンプレート付き）
+
+### 🔜 次回タスク
+- 残業申請フォーム（パート用）← 次タスク②
+- タブ・機能の表示権限管理画面 ← 次タスク③
+- UI/UX改善（コードレビュー結果・高優先項目）
+- gcal-sync 失敗時リトライキュー（低優先）
+
+---
+
 ## ✅ 2026-06-13 有給奨励日機能 実装完了
 
 ### 機能概要
@@ -1151,6 +1190,42 @@ const fmtEncDow = (dateStr: string) => {
 - `BannerSuccess` は各ファイルにローカル定義（共通化は意図的にしていない）
 - `CalendarResultModal` は `position: fixed` をオーバーレイdivに使用（通常はNG だが CalendarPage は専用ページのため問題なし）
 - NotifItem の `visible` state と setTimeout フェードアウトは削除済み（即時 onDismiss を呼ぶ）
+
+---
+
+## 🎨 UIフィードバック標準仕様（新規機能を作るときに必ず守ること）
+
+### 成功フィードバック → BannerSuccess パターン（緑カード）
+
+**すべての「登録しました」「保存しました」「送信しました」「削除しました」系は必ずこのパターンを使うこと。**
+`alert()` を使用することは禁止。
+
+```tsx
+// stateを定義
+const [saveBanner, setSaveBanner] = useState(false);
+
+// 処理成功後に設定
+setSaveBanner(true);
+setTimeout(() => setSaveBanner(false), 3000);
+
+// JSX（returnの最後、モーダルより外側に配置）
+{saveBanner && (
+  <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 220 }}>
+    <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>✓</div>
+    <span style={{ fontSize: 15, fontWeight: 'bold', color: '#166534' }}>保存しました</span>
+    <button type="button" onClick={() => setSaveBanner(false)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#166534', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
+  </div>
+)}
+```
+
+### エラー・バリデーション → alert() は可（ただしできればインラインバナー推奨）
+
+| フィードバック種別 | UI |
+|---|---|
+| 成功（登録・保存・送信・削除） | 画面中央 緑カード（3秒自動消え＋✕）|
+| エラー（API失敗） | `alert()` 可（致命的なものはインライン赤バナーが望ましい）|
+| バリデーション（未入力等） | `alert()` 可 |
+| 確認（取り消せない操作） | `window.confirm()` 可 |
 
 ---
 
