@@ -31,6 +31,16 @@ serve(async (req) => {
       });
     }
 
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const toList = Array.isArray(to) ? to : [to];
+    const invalidEmails = toList.filter((addr: string) => !emailRegex.test(addr));
+    if (invalidEmails.length > 0) {
+      return new Response(JSON.stringify({ error: `メールアドレスの形式が正しくありません: ${invalidEmails.join(', ')}` }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
     if (!RESEND_API_KEY) {
       return new Response(JSON.stringify({ error: 'RESEND_API_KEY が設定されていません' }), {
