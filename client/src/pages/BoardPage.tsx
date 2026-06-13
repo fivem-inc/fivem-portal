@@ -104,6 +104,8 @@ const BoardPage: React.FC = () => {
   const [showDMSearch,     setShowDMSearch]     = useState(false);
   const [dmQuery,          setDmQuery]          = useState('');
   const [loadingData,      setLoadingData]      = useState(true);
+  const [readDetailMsgId,  setReadDetailMsgId]  = useState<string | null>(null);
+  const [readDetailUsers,  setReadDetailUsers]  = useState<string[]>([]);
 
   const [saveBanner, setSaveBanner] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -398,7 +400,17 @@ const BoardPage: React.FC = () => {
               <button type="button" onClick={() => setExpandedThreadId(isExpanded ? null : msg.id)} style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 12, padding: 0 }}>
                 {isExpanded ? '▲ 閉じる' : replyCount > 0 ? `▼ リプライ ${replyCount}件` : '💬 リプライ'}
               </button>
-              <span style={{ fontSize: 11, color: subColor }}>既読 {readCount}</span>
+              {isAdmin ? (
+                <button type="button" onClick={async () => {
+                  const { data } = await supabase.from('board_reads').select('user_id').eq('message_id', msg.id);
+                  setReadDetailUsers((data || []).map((r: any) => r.user_id));
+                  setReadDetailMsgId(msg.id);
+                }} style={{ background: 'none', border: 'none', color: subColor, cursor: 'pointer', fontSize: 11, padding: 0, textDecoration: 'underline dotted', textUnderlineOffset: 2 }}>
+                  既読 {readCount}
+                </button>
+              ) : (
+                <span style={{ fontSize: 11, color: subColor }}>既読 {readCount}</span>
+              )}
             </div>
           )}
         </div>
@@ -514,12 +526,12 @@ const BoardPage: React.FC = () => {
         <p style={{ fontSize: 12, color: subColor, marginTop: 4 }}>{groupMemberIds.length}人選択中</p>
 
         <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+          <button type="button" onClick={() => { setShowGroupModal(false); setGroupName(''); setGroupMemberIds([]); }}
+            style={{ flex: 1, padding: 10, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
           <button type="button" onClick={createGroup} disabled={!groupName.trim() || groupMemberIds.length === 0}
             style={{ flex: 1, padding: 10, background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, opacity: !groupName.trim() || groupMemberIds.length === 0 ? 0.5 : 1 }}>
             作成（{groupMemberIds.length}人）
           </button>
-          <button type="button" onClick={() => { setShowGroupModal(false); setGroupName(''); setGroupMemberIds([]); }}
-            style={{ flex: 1, padding: 10, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
         </div>
       </div>
     </div>
@@ -533,9 +545,31 @@ const BoardPage: React.FC = () => {
     return (
       <div style={overlayStyle}>
         <div style={{ ...modalStyle, maxWidth: 520 }}>
-          <div style={{ fontSize: 16, fontWeight: 'bold', color: textColor, marginBottom: 14 }}>
+          <div style={{ fontSize: 16, fontWeight: 'bold', color: textColor, marginBottom: 10 }}>
             {isGroup ? `👥 ${channelDisplayName(selectedChannel)}` : 'メンバー'}
           </div>
+
+          {isAdmin && isGroup && pendingMemberIds.length > 0 && (
+            <div style={{ marginBottom: 10, padding: '8px 10px', background: isDark ? '#1e2328' : '#f0f4ff', border: `1px solid ${isDark ? '#3d4349' : '#c7d4f5'}`, borderRadius: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 'bold', color: isDark ? '#8fa8e8' : '#3b5bdb', marginBottom: 6 }}>選択中 {pendingMemberIds.length}人</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                {pendingMemberIds.map(id => {
+                  const p = allProfiles.find(ap => ap.id === id);
+                  if (!p) return null;
+                  const isSelf = id === user?.id;
+                  return (
+                    <span key={id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 12, fontSize: 12, background: isSelf ? (isDark ? '#2d4a2d' : '#dcfce7') : (isDark ? '#2c3e50' : '#e0e7ff'), color: isSelf ? (isDark ? '#86efac' : '#166534') : textColor, border: `1px solid ${isSelf ? (isDark ? '#4ade80' : '#86efac') : (isDark ? '#4a5568' : '#c7d4f5')}` }}>
+                      {p.name}
+                      {!isSelf && (
+                        <button type="button" onClick={() => setPendingMemberIds(prev => prev.filter(i => i !== id))}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, lineHeight: 1, color: isDark ? '#adb5bd' : '#888', fontSize: 13 }}>✕</button>
+                      )}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {isAdmin && isGroup ? (
             <>
@@ -594,14 +628,14 @@ const BoardPage: React.FC = () => {
                   );
                 })}
               </div>
-              <p style={{ fontSize: 12, color: subColor, marginTop: 4 }}>{pendingMemberIds.length}人選択中（自分は常に含まれます）</p>
+              <p style={{ fontSize: 12, color: subColor, marginTop: 4 }}>自分は常に含まれます</p>
               <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                <button type="button" onClick={() => setShowMemberModal(false)}
+                  style={{ flex: 1, padding: 10, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
                 <button type="button" onClick={saveMemberChanges} disabled={memberSaving}
                   style={{ flex: 1, padding: 10, background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, opacity: memberSaving ? 0.6 : 1 }}>
                   {memberSaving ? '保存中...' : '保存'}
                 </button>
-                <button type="button" onClick={() => setShowMemberModal(false)}
-                  style={{ flex: 1, padding: 10, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
               </div>
             </>
           ) : (
@@ -776,6 +810,40 @@ const BoardPage: React.FC = () => {
       {groupModal}
       {memberModal}
       {dmModal}
+      {readDetailMsgId && (() => {
+        const chMembers = members.filter(m => m.channel_id === selectedChannelId);
+        const readSet = new Set(readDetailUsers);
+        const readProfiles   = chMembers.filter(m => readSet.has(m.user_id)).map(m => allProfiles.find(p => p.id === m.user_id)?.name || '不明');
+        const unreadProfiles = chMembers.filter(m => !readSet.has(m.user_id)).map(m => allProfiles.find(p => p.id === m.user_id)?.name || '不明');
+        return (
+          <div style={overlayStyle} onClick={() => setReadDetailMsgId(null)}>
+            <div style={{ ...modalStyle, maxWidth: 340 }} onClick={e => e.stopPropagation()}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                <span style={{ fontSize: 16, fontWeight: 'bold', color: textColor }}>既読状況</span>
+                <button type="button" onClick={() => setReadDetailMsgId(null)} style={{ background: 'none', border: 'none', color: subColor, cursor: 'pointer', fontSize: 18, padding: 0 }}>✕</button>
+              </div>
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 'bold', color: '#22c55e', marginBottom: 6 }}>✓ 既読 ({readProfiles.length}人)</div>
+                {readProfiles.length === 0
+                  ? <div style={{ fontSize: 13, color: subColor }}>まだ誰も読んでいません</div>
+                  : readProfiles.map((name, i) => (
+                    <div key={i} style={{ fontSize: 13, color: textColor, padding: '4px 0', borderBottom: `1px solid ${border}` }}>{name}</div>
+                  ))
+                }
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 'bold', color: '#dc3545', marginBottom: 6 }}>… 未読 ({unreadProfiles.length}人)</div>
+                {unreadProfiles.length === 0
+                  ? <div style={{ fontSize: 13, color: subColor }}>全員が既読です</div>
+                  : unreadProfiles.map((name, i) => (
+                    <div key={i} style={{ fontSize: 13, color: textColor, padding: '4px 0', borderBottom: `1px solid ${border}` }}>{name}</div>
+                  ))
+                }
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       {(saveBanner || memberBanner) && (
         <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 220 }}>
           <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>✓</div>
