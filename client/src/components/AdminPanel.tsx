@@ -483,12 +483,12 @@ const AdminPanelContent: React.FC = () => {
         {activeTab === 'notifications' && <NotificationsTab />}
       </div>
 
-      {/* 区分・勤務先リスト管理モーダル（全タブから開ける） */}
+      {/* 区分・行き先リスト管理モーダル（全タブから開ける） */}
       {showLocationEditor && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}>
           <div style={{ background: isDarkMode ? '#343a40' : 'white', borderRadius: 12, padding: 28, width: '90%', maxWidth: 500, maxHeight: '85vh', overflowY: 'auto', color: isDarkMode ? '#fff' : '#333' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h3 style={{ margin: 0 }}>⚙️ 区分・勤務先リスト管理</h3>
+              <h3 style={{ margin: 0 }}>⚙️ 区分・行き先リスト管理</h3>
               <button onClick={() => setShowLocationEditor(false)}
                 style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: isDarkMode ? '#adb5bd' : '#6c757d', lineHeight: 1 }}>✕</button>
             </div>
@@ -538,10 +538,10 @@ const AdminPanelContent: React.FC = () => {
               </div>
             </div>
 
-            {/* ── 勤務先リスト ── */}
+            {/* ── 行き先リスト ── */}
             <div style={{ marginBottom: 28 }}>
               <div style={{ fontWeight: 'bold', fontSize: 15, marginBottom: 10, borderBottom: isDarkMode ? '1px solid #555' : '1px solid #dee2e6', paddingBottom: 6 }}>
-                🏫 勤務先リスト
+                🏫 行き先リスト
               </div>
               {workplaceOptions.length === 0 && <div style={{ color: isDarkMode ? '#888' : '#999', fontSize: 13, marginBottom: 6 }}>（未登録）</div>}
               {workplaceOptions.map(wp => (
@@ -551,7 +551,7 @@ const AdminPanelContent: React.FC = () => {
                 </div>
               ))}
               <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                <input type="text" placeholder="勤務先を追加（例: 四条本校）" value={newWorkplaceName}
+                <input type="text" placeholder="行き先を追加（例: 四条本校）" value={newWorkplaceName}
                   onChange={e => setNewWorkplaceName(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') handleAddWorkplace(); }}
                   style={{ flex: 1, padding: '7px 10px', borderRadius: 6, border: isDarkMode ? '1px solid #666' : '1px solid #ccc', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#333', fontSize: 14 }} />
@@ -780,7 +780,7 @@ const AdminPanelContent: React.FC = () => {
                                   }<br/>
                                   {expense.from_station} → {expense.to_station}
                                   {expense.transportation && ` [${expense.transportation}]`}<br/>
-                                  {expense.workplace && `勤務先:${expense.workplace} `}
+                                  {expense.workplace && `行き先:${expense.workplace} `}
                                   {expense.notes || ''}
                                 </>
                               ) : ''}
@@ -860,7 +860,7 @@ const AdminPanelContent: React.FC = () => {
                                   }<br/>
                                   {expense.from_station} → {expense.to_station}
                                   {expense.transportation && ` [${expense.transportation}]`}<br/>
-                                  {expense.workplace && `勤務先:${expense.workplace} `}
+                                  {expense.workplace && `行き先:${expense.workplace} `}
                                   {expense.notes || ''}
                                 </>
                               ) : ''}

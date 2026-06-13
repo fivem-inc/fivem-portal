@@ -202,6 +202,7 @@ const NotificationsTab: React.FC = () => {
     });
     setSaving(null);
     setSavedMsg(eventKey);
+    setTimeout(() => setSavedMsg(null), 3000);
   };
 
   const insertVar = (eventKey: string, channel: ChannelType, field: 'template' | 'subject', variable: string) => {
@@ -522,7 +523,6 @@ const NotificationsTab: React.FC = () => {
                       {isSaved && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginRight: 8, background: '#28a745', color: 'white', borderRadius: 8, padding: '4px 10px', fontSize: 12 }}>
                           <span>✓ 保存しました</span>
-                          <button onClick={() => setSavedMsg(null)} style={{ background: 'rgba(255,255,255,0.25)', border: 'none', color: 'white', borderRadius: '50%', width: 18, height: 18, cursor: 'pointer', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
                         </div>
                       )}
                       <button

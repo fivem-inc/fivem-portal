@@ -304,7 +304,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     if (!draftExpense.to_station) missing.push('帰着駅');
     if (draftExpense.amount === '' || draftExpense.amount === undefined) missing.push('金額');
     const effectiveWorkplace = draftExpense.workplace === 'その他' ? draftExpense.workplace_other : draftExpense.workplace;
-    if (!effectiveWorkplace?.trim()) missing.push('勤務先');
+    if (!effectiveWorkplace?.trim()) missing.push('行き先');
     if (draftExpense.type !== 'regular' && !draftExpense.start_date) missing.push('利用日');
     if (draftExpense.type === 'regular' && !draftExpense.start_date) missing.push('開始日');
     if (draftExpense.type === 'regular' && !draftExpense.end_date) missing.push('終了日');
@@ -313,7 +313,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       const fieldMap: Record<string, string> = {
         '交通機関': 'transportation', '交通機関（その他）': 'transportation_other',
         '出発駅': 'from_station', '帰着駅': 'to_station', '金額': 'amount',
-        '利用日': 'start_date', '開始日': 'start_date', '終了日': 'end_date', '勤務先': 'workplace'
+        '利用日': 'start_date', '開始日': 'start_date', '終了日': 'end_date', '行き先': 'workplace'
       };
       setHighlightFields(new Set(missing.map(m => fieldMap[m]).filter(Boolean)));
       return false;
@@ -388,7 +388,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       const effectiveTransport = transportParts.map(p => p === 'その他' ? (expense.transportation_other || '') : p).filter(Boolean).join('・');
       if (!effectiveTransport?.trim()) { setFormError('交通機関を入力してください。'); return; }
       const effectiveWorkplace = expense.workplace === 'その他' ? expense.workplace_other : expense.workplace;
-      if (!effectiveWorkplace?.trim()) { setFormError('勤務先を入力してください。'); return; }
+      if (!effectiveWorkplace?.trim()) { setFormError('行き先を入力してください。'); return; }
     }
 
     // 送信前に transportation/workplace の "その他" テキストをマージ
@@ -713,12 +713,12 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                 </div>
               </div>
 
-              {/* 勤務先（全幅） */}
+              {/* 行き先（全幅） */}
               <div style={{ marginBottom: 10 }}>
                 <div style={{ display: 'flex', alignItems: 'center', border: `1px solid ${highlightFields.has('workplace') ? '#f06292' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, background: highlightFields.has('workplace') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : 'transparent' }}>
-                  <span style={{ background: isDarkMode ? '#6c757d' : '#9e9e9e', color: '#fff', fontSize: 12, padding: '0 8px', whiteSpace: 'nowrap', flexShrink: 0, borderRadius: '3px 0 0 3px', alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>勤務先</span>
+                  <span style={{ background: isDarkMode ? '#6c757d' : '#9e9e9e', color: '#fff', fontSize: 12, padding: '0 8px', whiteSpace: 'nowrap', flexShrink: 0, borderRadius: '3px 0 0 3px', alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>行き先</span>
                   {draftExpense.type === 'other' ? (
-                    <input type="text" placeholder="勤務先を入力" value={draftExpense.workplace || ''} onChange={(e) => { setDraftExpense(prev => ({ ...prev, workplace: e.target.value })); clearHL('workplace'); }} style={{ border: 'none', outline: 'none', flex: 1, minWidth: 0, padding: '7px 6px', fontSize: 14, background: 'transparent', color: isDarkMode ? '#fff' : '#333' }} />
+                    <input type="text" placeholder="行き先を入力" value={draftExpense.workplace || ''} onChange={(e) => { setDraftExpense(prev => ({ ...prev, workplace: e.target.value })); clearHL('workplace'); }} style={{ border: 'none', outline: 'none', flex: 1, minWidth: 0, padding: '7px 6px', fontSize: 14, background: 'transparent', color: isDarkMode ? '#fff' : '#333' }} />
                   ) : draftExpense.type === 'business_trip' ? (
                     <select value={draftExpense.workplace || ''} onChange={(e) => { setDraftExpense(prev => ({ ...prev, workplace: e.target.value, workplace_other: '' })); clearHL('workplace'); }} style={{ border: 'none', outline: 'none', flex: 1, padding: '7px 4px', fontSize: 14, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', minWidth: 0 }}>
                       <option value="">選択</option>
@@ -734,7 +734,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                   )}
                 </div>
                 {draftExpense.workplace === 'その他' && draftExpense.type !== 'other' && (
-                  <input type="text" placeholder="勤務先を入力" value={draftExpense.workplace_other || ''} onChange={(e) => { setDraftExpense(prev => ({ ...prev, workplace_other: e.target.value })); clearHL('workplace'); }} className="expense-input form-input-full" style={{ marginTop: 4, ...hl('workplace') }} />
+                  <input type="text" placeholder="行き先を入力" value={draftExpense.workplace_other || ''} onChange={(e) => { setDraftExpense(prev => ({ ...prev, workplace_other: e.target.value })); clearHL('workplace'); }} className="expense-input form-input-full" style={{ marginTop: 4, ...hl('workplace') }} />
                 )}
               </div>
 

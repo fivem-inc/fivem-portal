@@ -130,7 +130,7 @@ const HistoryView: React.FC<HistoryViewProps> = ({
                                     } | 
                                     {e.transportation && `[${e.transportation}] `}
                                     {e.from_station} - {e.to_station}: {formatAmount(e.amount || '0')}円
-                                    {e.workplace && ` [勤務先: ${e.workplace}]`}
+                                    {e.workplace && ` [行き先: ${e.workplace}]`}
                                     {e.notes && ` (備考: ${e.notes})`}
                                   </li>
                                 ))}
