@@ -83,6 +83,29 @@ interface AbsenceRec {
   creatorName: string;
 }
 
+interface EncDay {
+  id: string;
+  fiscal_year: number;
+  target_date: string;
+  deadline: string;
+  created_by: string | null;
+  created_at: string;
+  targetCount: number;
+  responseCount: number;
+}
+
+interface EncResponse {
+  user_id: string;
+  userName: string;
+  choice: number | null;
+  note: string | null;
+  responded_at: string | null;
+}
+
+const ENC_CHOICE_LABEL: Record<number, string> = { 1: '有給休暇', 2: '欠勤（調整休）', 3: '定休日', 4: 'その他' };
+const ENC_DOW = ['日', '月', '火', '水', '木', '金', '土'];
+const fmtEncDow = (dateStr: string) => { const d = new Date(dateStr + 'T00:00:00Z'); return `${d.getUTCFullYear()}年${d.getUTCMonth()+1}月${d.getUTCDate()}日(${ENC_DOW[d.getUTCDay()]})`; };
+
 const ABSENCE_LABEL: Record<string, string> = { absent: '全欠勤', late: '遅刻', early_leave: '早退', late_start: '遅出', early_end: '早退(残業調整)' };
 const ABSENCE_COLOR: Record<string, { bg: string; text: string }> = {
   absent:      { bg: '#fde8e8', text: '#c0392b' },
@@ -120,6 +143,29 @@ const LeaveRequestsTab: React.FC = () => {
   const [deleting, setDeleting] = useState(false);
   const [expandedReapply, setExpandedReapply] = useState<string | null>(null);
   const [expandedModify, setExpandedModify] = useState<Set<string>>(new Set());
+  const [filterType, setFilterType] = useState<string>('all');
+  const [encDays, setEncDays] = useState<EncDay[]>([]);
+  const [encLoading, setEncLoading] = useState(false);
+  const [encFY, setEncFY] = useState<string>('__current__');
+  const [showEncCreate, setShowEncCreate] = useState(false);
+  const [encCreateDate, setEncCreateDate] = useState('');
+  const [encCreateDeadline, setEncCreateDeadline] = useState('');
+  const [encCreateTargets, setEncCreateTargets] = useState<string[]>([]);
+  const [encCreating, setEncCreating] = useState(false);
+  const [showEncDetail, setShowEncDetail] = useState<string | null>(null);
+  const [encDetailDay, setEncDetailDay] = useState<EncDay | null>(null);
+  const [encResponses, setEncResponses] = useState<EncResponse[]>([]);
+  const [encDetailLoading, setEncDetailLoading] = useState(false);
+  const [encSendingMail, setEncSendingMail] = useState(false);
+  const [encShowAddTargets, setEncShowAddTargets] = useState(false);
+  const [encAddTargetIds, setEncAddTargetIds] = useState<string[]>([]);
+  const [encAddingTargets, setEncAddingTargets] = useState(false);
+  const [encEditingUserId, setEncEditingUserId] = useState<string | null>(null);
+  const [encEditChoice, setEncEditChoice] = useState<number | null>(null);
+  const [encEditNote, setEncEditNote] = useState('');
+  const [encEditSaving, setEncEditSaving] = useState(false);
+  const [encEditError, setEncEditError] = useState<string | null>(null);
+  const [encEditSuccess, setEncEditSuccess] = useState<string | null>(null);
 
   const fetchAbsences = useCallback(async () => {
     setAbsenceLoading(true);
@@ -137,6 +183,55 @@ const LeaveRequestsTab: React.FC = () => {
   }, [supabase]);
 
   useEffect(() => { if (absenceView) fetchAbsences(); }, [absenceView, fetchAbsences]);
+
+  const fetchEncDays = useCallback(async () => {
+    setEncLoading(true);
+    const { data: days } = await supabase
+      .from('paid_leave_encouragement_days')
+      .select('*')
+      .order('target_date', { ascending: false });
+    if (!days || days.length === 0) { setEncDays([]); setEncLoading(false); return; }
+    const dayIds = days.map((d: { id: string }) => d.id);
+    const [{ data: targets }, { data: responses }] = await Promise.all([
+      supabase.from('paid_leave_encouragement_targets').select('encouragement_day_id').in('encouragement_day_id', dayIds),
+      supabase.from('paid_leave_encouragement_responses').select('encouragement_day_id').in('encouragement_day_id', dayIds),
+    ]);
+    const tgtCounts: Record<string, number> = {};
+    (targets || []).forEach((t: { encouragement_day_id: string }) => { tgtCounts[t.encouragement_day_id] = (tgtCounts[t.encouragement_day_id] || 0) + 1; });
+    const resCounts: Record<string, number> = {};
+    (responses || []).forEach((r: { encouragement_day_id: string }) => { resCounts[r.encouragement_day_id] = (resCounts[r.encouragement_day_id] || 0) + 1; });
+    setEncDays(days.map((d: EncDay) => ({ ...d, targetCount: tgtCounts[d.id] || 0, responseCount: resCounts[d.id] || 0 })));
+    setEncLoading(false);
+  }, [supabase]);
+
+  const fetchEncDetail = useCallback(async (dayId: string) => {
+    setEncDetailLoading(true);
+    setEncDetailDay(encDays.find(d => d.id === dayId) || null);
+    const { data: targets } = await supabase
+      .from('paid_leave_encouragement_targets')
+      .select('user_id')
+      .eq('encouragement_day_id', dayId);
+    if (!targets || targets.length === 0) { setEncResponses([]); setEncDetailLoading(false); return; }
+    const userIds = targets.map((t: { user_id: string }) => t.user_id);
+    const [{ data: profiles }, { data: responses }] = await Promise.all([
+      supabase.from('profiles').select('id, name').in('id', userIds),
+      supabase.from('paid_leave_encouragement_responses').select('*').eq('encouragement_day_id', dayId),
+    ]);
+    const nameMap: Record<string, string> = {};
+    (profiles || []).forEach((p: { id: string; name: string }) => { nameMap[p.id] = p.name || p.id; });
+    const resMap: Record<string, { choice: number; note: string | null; responded_at: string }> = {};
+    (responses || []).forEach((r: { user_id: string; choice: number; note: string | null; responded_at: string }) => { resMap[r.user_id] = r; });
+    setEncResponses(userIds.map((uid: string) => ({
+      user_id: uid,
+      userName: nameMap[uid] || '不明',
+      choice: resMap[uid]?.choice ?? null,
+      note: resMap[uid]?.note ?? null,
+      responded_at: resMap[uid]?.responded_at ?? null,
+    })));
+    setEncDetailLoading(false);
+  }, [supabase, encDays]);
+
+  useEffect(() => { fetchEncDays(); }, [fetchEncDays]);
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
@@ -180,6 +275,7 @@ const LeaveRequestsTab: React.FC = () => {
               }
               // 人フィルターは未完了でも適用
               if (filterPerson !== 'all' && r.user_id !== filterPerson) return false;
+              if (filterType !== 'all' && r.leave_type !== filterType) return false;
               // 未完了は年度フィルターをスキップ（人フィルターのみ適用）
               if (isIncomplete(r)) return true;
               // 年度フィルター
@@ -235,10 +331,455 @@ const LeaveRequestsTab: React.FC = () => {
             return { role: '', name: req.status, color: '#999' };
           };
 
+          const typeOptions: string[] = [...new Set(leaveRequests.map(r => r.leave_type))].sort();
+
+          const activeUsers = users.filter(u => u.is_active !== false);
+          const EMP_ORDER = ['正社員', 'パート'];
+          const employmentTypes = [...new Set(activeUsers.map(u => u.employment_type).filter(Boolean))]
+            .sort((a,b) => {
+              const ai = EMP_ORDER.indexOf(a); const bi = EMP_ORDER.indexOf(b);
+              if (ai === -1 && bi === -1) return a > b ? 1 : -1;
+              if (ai === -1) return 1; if (bi === -1) return -1;
+              return ai - bi;
+            }) as string[];
+
+          const encFYDisplay = encFY === '__current__' ? nowFY : (encFY === 'all' ? null : Number(encFY));
+          const filteredEncDays = encFYDisplay === null ? encDays : encDays.filter(d => d.fiscal_year === encFYDisplay);
+
+          const encCreateModal = showEncCreate ? (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+              <div style={{ background: isDarkMode ? '#343a40' : '#fff', borderRadius: 16, padding: 24, width: '100%', maxWidth: 500, maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box' }}>
+                <h3 style={{ margin: '0 0 16px', color: isDarkMode ? '#fff' : '#333', fontSize: 16 }}>📅 有給奨励日 新規作成</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div>
+                    <label style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666', display: 'block', marginBottom: 4 }}>対象日</label>
+                    <input type="date" value={encCreateDate} onChange={e => setEncCreateDate(e.target.value)}
+                      style={{ width: '100%', padding: '7px 10px', borderRadius: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', fontSize: 14, boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666', display: 'block', marginBottom: 4 }}>回答期限</label>
+                    <input type="date" value={encCreateDeadline} onChange={e => setEncCreateDeadline(e.target.value)}
+                      style={{ width: '100%', padding: '7px 10px', borderRadius: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', fontSize: 14, boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666', display: 'block', marginBottom: 6 }}>対象者</label>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+                      {employmentTypes.map(et => (
+                        <button key={et} onClick={() => {
+                          const ids = activeUsers.filter(u => u.employment_type === et).map(u => u.id);
+                          const allSelected = ids.every(id => encCreateTargets.includes(id));
+                          setEncCreateTargets(prev => allSelected ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])]);
+                        }} style={{ padding: '4px 10px', borderRadius: 12, border: 'none', cursor: 'pointer', fontSize: 12,
+                          background: activeUsers.filter(u => u.employment_type === et).every(u => encCreateTargets.includes(u.id)) ? '#007bff' : (isDarkMode ? '#495057' : '#e9ecef'),
+                          color: activeUsers.filter(u => u.employment_type === et).every(u => encCreateTargets.includes(u.id)) ? '#fff' : (isDarkMode ? '#fff' : '#333'),
+                        }}>{et}を一括選択</button>
+                      ))}
+                      <button onClick={() => setEncCreateTargets(activeUsers.map(u => u.id))}
+                        style={{ padding: '4px 10px', borderRadius: 12, border: 'none', cursor: 'pointer', fontSize: 12, background: isDarkMode ? '#495057' : '#e9ecef', color: isDarkMode ? '#fff' : '#333' }}>全員</button>
+                      <button onClick={() => setEncCreateTargets([])}
+                        style={{ padding: '4px 10px', borderRadius: 12, border: 'none', cursor: 'pointer', fontSize: 12, background: isDarkMode ? '#495057' : '#e9ecef', color: isDarkMode ? '#fff' : '#333' }}>クリア</button>
+                    </div>
+                    <div style={{ maxHeight: 300, overflowY: 'auto', border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, borderRadius: 8 }}>
+                      {employmentTypes.map((et, gi) => {
+                        const etUsers = activeUsers.filter(u => u.employment_type === et);
+                        const roles = [...new Set(etUsers.map(u => u.role_title || 'その他'))].sort();
+                        return (
+                          <div key={et}>
+                            {/* 雇用形態ヘッダー */}
+                            <div style={{ padding: '5px 10px', background: isDarkMode ? '#2d3136' : '#e9ecef', borderTop: gi > 0 ? `2px solid ${isDarkMode ? '#6c757d' : '#bbb'}` : undefined, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontSize: 12, fontWeight: 'bold', color: isDarkMode ? '#adb5bd' : '#444' }}>{et}</span>
+                              <span style={{ fontSize: 11, color: isDarkMode ? '#6c757d' : '#999' }}>{etUsers.filter(u => encCreateTargets.includes(u.id)).length}/{etUsers.length}</span>
+                            </div>
+                            {/* 役職別横並び */}
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 0, borderBottom: `1px solid ${isDarkMode ? '#3d4349' : '#e0e0e0'}` }}>
+                              {roles.map((role, ri) => {
+                                const roleUsers = etUsers.filter(u => (u.role_title || 'その他') === role).sort((a,b) => (a.name||'') > (b.name||'') ? 1 : -1);
+                                return (
+                                  <div key={role} style={{ flex: '1 1 140px', borderLeft: ri > 0 ? `1px solid ${isDarkMode ? '#3d4349' : '#e0e0e0'}` : undefined, padding: '6px 8px' }}>
+                                    <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, marginBottom: 4, paddingBottom: 3, borderBottom: `1px solid ${isDarkMode ? '#3d4349' : '#eee'}`, cursor: 'pointer', userSelect: 'none' }}>
+                                      <input type="checkbox"
+                                        checked={roleUsers.length > 0 && roleUsers.every(u => encCreateTargets.includes(u.id))}
+                                        onChange={() => {
+                                          const ids = roleUsers.map(u => u.id);
+                                          const allSelected = ids.every(id => encCreateTargets.includes(id));
+                                          setEncCreateTargets(prev => allSelected ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])]);
+                                        }} />
+                                      <span style={{ fontSize: 10, fontWeight: 'bold', color: isDarkMode ? '#adb5bd' : '#555' }}>{role}</span>
+                                    </label>
+                                    {roleUsers.map(u => (
+                                      <label key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', cursor: 'pointer', fontSize: 12, color: isDarkMode ? '#fff' : '#333' }}>
+                                        <input type="checkbox" checked={encCreateTargets.includes(u.id)} onChange={e => {
+                                          setEncCreateTargets(prev => e.target.checked ? [...prev, u.id] : prev.filter(id => id !== u.id));
+                                        }} />
+                                        <span>{u.name || u.email}</span>
+                                      </label>
+                                    ))}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <p style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888', marginTop: 4 }}>{encCreateTargets.length}人選択中</p>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+                  <button onClick={() => { setShowEncCreate(false); setEncCreateDate(''); setEncCreateDeadline(''); setEncCreateTargets([]); }}
+                    style={{ flex: 1, padding: '10px 0', background: isDarkMode ? '#495057' : '#e9ecef', color: isDarkMode ? '#fff' : '#333', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 13 }}>キャンセル</button>
+                  <button disabled={!encCreateDate || !encCreateDeadline || encCreateTargets.length === 0 || encCreating}
+                    onClick={async () => {
+                      if (!encCreateDate || !encCreateDeadline || encCreateTargets.length === 0) return;
+                      setEncCreating(true);
+                      const d = new Date(encCreateDate);
+                      const fy = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1;
+                      const { data: newDay, error } = await supabase
+                        .from('paid_leave_encouragement_days')
+                        .insert({ fiscal_year: fy, target_date: encCreateDate, deadline: encCreateDeadline, created_by: authUser?.id })
+                        .select('id').single();
+                      if (error || !newDay) { alert('作成に失敗しました: ' + error?.message); setEncCreating(false); return; }
+                      await supabase.from('paid_leave_encouragement_targets').insert(
+                        encCreateTargets.map(uid => ({ encouragement_day_id: newDay.id, user_id: uid }))
+                      );
+                      const dateLabel = `${d.getMonth()+1}月${d.getDate()}日`;
+                      await supabase.from('notifications').insert(
+                        encCreateTargets.map(uid => ({ user_id: uid, message: `📅 有給奨励日の回答をお願いします（${dateLabel}、期限：${encCreateDeadline}）` }))
+                      );
+                      setEncCreating(false);
+                      setShowEncCreate(false); setEncCreateDate(''); setEncCreateDeadline(''); setEncCreateTargets([]);
+                      fetchEncDays();
+                    }}
+                    style={{ flex: 2, padding: '10px 0', background: encCreating ? '#6c757d' : '#007bff', color: '#fff', border: 'none', borderRadius: 10, cursor: encCreating ? 'default' : 'pointer', fontSize: 13, fontWeight: 'bold' }}>
+                    {encCreating ? '作成中...' : '作成してベル通知を送信'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null;
+
+          const encDetailModal = showEncDetail ? (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+              <div style={{ background: isDarkMode ? '#343a40' : '#fff', borderRadius: 16, padding: 24, width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                  <div>
+                    <h3 style={{ margin: 0, color: isDarkMode ? '#fff' : '#333', fontSize: 16 }}>📅 奨励日回答状況</h3>
+                    {encDetailDay && (
+                      <p style={{ margin: '4px 0 0', fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888' }}>
+                        {fmtEncDow(encDetailDay.target_date)}　期限: {fmtEncDow(encDetailDay.deadline)}　{encDetailDay.responseCount}/{encDetailDay.targetCount}人回答済み
+                      </p>
+                    )}
+                  </div>
+                  <button onClick={() => { setShowEncDetail(null); setEncDetailDay(null); setEncResponses([]); setEncShowAddTargets(false); setEncAddTargetIds([]); setEncEditingUserId(null); setEncEditError(null); }}
+                    style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: isDarkMode ? '#adb5bd' : '#666', lineHeight: 1 }}>✕</button>
+                </div>
+
+                {encDetailLoading ? (
+                  <p style={{ textAlign: 'center', fontSize: 13, color: isDarkMode ? '#adb5bd' : '#888' }}>読み込み中...</p>
+                ) : (
+                  <>
+                    {/* ヘッダー */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 12px', marginBottom: 4 }}>
+                      <span style={{ fontSize: 11, fontWeight: 'bold', color: isDarkMode ? '#adb5bd' : '#888', minWidth: 80 }}>名前</span>
+                      <span style={{ fontSize: 11, fontWeight: 'bold', color: isDarkMode ? '#adb5bd' : '#888', flex: 1 }}>回答</span>
+                      <span style={{ fontSize: 11, fontWeight: 'bold', color: isDarkMode ? '#adb5bd' : '#888', width: 80, textAlign: 'center' }}>回答日時</span>
+                      <span style={{ width: 36 }} />
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
+                      {encResponses.map(r => {
+                        const isEditing = encEditingUserId === r.user_id;
+                        return (
+                        <div key={r.user_id} style={{
+                          borderRadius: 8, overflow: 'hidden',
+                          background: r.choice ? (isDarkMode ? '#495057' : '#f8f9fa') : (isDarkMode ? '#4a2a2a' : '#fff5f5'),
+                          border: `1px solid ${r.choice ? (isDarkMode ? '#6c757d' : '#dee2e6') : '#dc3545'}`,
+                        }}>
+                          {/* 通常行 */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: 13, color: isDarkMode ? '#fff' : '#333', fontWeight: 'bold', minWidth: 80 }}>{r.userName}</span>
+                            {r.choice ? (
+                              <>
+                                <span style={{ fontSize: 12, padding: '2px 10px', borderRadius: 10, whiteSpace: 'nowrap',
+                                  background: r.choice === 1 ? '#28a745' : r.choice === 2 ? '#fd7e14' : r.choice === 3 ? '#17a2b8' : '#6c757d',
+                                  color: '#fff' }}>{ENC_CHOICE_LABEL[r.choice]}</span>
+                                {r.note && <span style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#666', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.note}</span>}
+                                {r.responded_at && (() => {
+                                  const d = new Date(r.responded_at);
+                                  const date = d.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' });
+                                  const time = d.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' });
+                                  return (
+                                    <span style={{ fontSize: 10, color: isDarkMode ? '#adb5bd' : '#888', whiteSpace: 'nowrap', marginLeft: 'auto', textAlign: 'center', lineHeight: 1.4 }}>
+                                      <span style={{ display: 'block' }}>{date}</span>
+                                      <span style={{ display: 'block' }}>{time}</span>
+                                    </span>
+                                  );
+                                })()}
+                              </>
+                            ) : (
+                              <span style={{ fontSize: 12, color: '#dc3545', fontWeight: 'bold', marginLeft: 'auto' }}>未回答</span>
+                            )}
+                            {/* 編集ボタン */}
+                            <button onClick={() => {
+                              if (isEditing) { setEncEditingUserId(null); return; }
+                              setEncEditingUserId(r.user_id);
+                              setEncEditChoice(r.choice);
+                              setEncEditNote(r.note || '');
+                            }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: isDarkMode ? '#adb5bd' : '#999', fontSize: 13, padding: '0 2px', lineHeight: 1, flexShrink: 0 }}
+                              title="編集">✏️</button>
+                            <button onClick={async () => {
+                              if (!confirm(`「${r.userName}」を対象から削除しますか？`)) return;
+                              await supabase.from('paid_leave_encouragement_responses').delete().eq('encouragement_day_id', showEncDetail).eq('user_id', r.user_id);
+                              await supabase.from('paid_leave_encouragement_targets').delete().eq('encouragement_day_id', showEncDetail).eq('user_id', r.user_id);
+                              if (encDetailDay) {
+                                await supabase.from('leave_requests').delete()
+                                  .eq('user_id', r.user_id)
+                                  .eq('start_date', encDetailDay.target_date)
+                                  .eq('reason', '【有給奨励日】')
+                                  .eq('status', 'approved');
+                              }
+                              fetchEncDetail(showEncDetail!);
+                              fetchEncDays();
+                            }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: isDarkMode ? '#6c757d' : '#ccc', fontSize: 14, padding: '0 2px', lineHeight: 1, flexShrink: 0 }}
+                              title="対象から削除">✕</button>
+                          </div>
+                          {/* 編集パネル */}
+                          {isEditing && (
+                            <div style={{ padding: '10px 12px', borderTop: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, background: isDarkMode ? '#3d4349' : '#fff' }}>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                                {([1, 2, 3, 4] as const).map(n => {
+                                  const colors: Record<number, string> = { 1: '#28a745', 2: '#fd7e14', 3: '#17a2b8', 4: '#6c757d' };
+                                  const sel = encEditChoice === n;
+                                  return (
+                                    <button key={n} onClick={() => setEncEditChoice(n)} style={{
+                                      padding: '5px 12px', borderRadius: 8, fontSize: 12,
+                                      border: sel ? `2px solid ${colors[n]}` : `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`,
+                                      background: sel ? colors[n] : (isDarkMode ? '#495057' : '#f8f9fa'),
+                                      color: sel ? '#fff' : (isDarkMode ? '#fff' : '#333'), cursor: 'pointer', fontWeight: sel ? 'bold' : 'normal',
+                                    }}>{ENC_CHOICE_LABEL[n]}</button>
+                                  );
+                                })}
+                              </div>
+                              {encEditChoice === 4 && (
+                                <input value={encEditNote} onChange={e => setEncEditNote(e.target.value)} placeholder="備考（必須）"
+                                  style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, fontSize: 12, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', boxSizing: 'border-box', marginBottom: 8 }} />
+                              )}
+                              {encEditChoice !== 4 && (
+                                <input value={encEditNote} onChange={e => setEncEditNote(e.target.value)} placeholder="備考（任意）"
+                                  style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, fontSize: 12, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', boxSizing: 'border-box', marginBottom: 8 }} />
+                              )}
+                              {encEditError && (
+                                <div style={{ marginBottom: 8, padding: '6px 10px', borderRadius: 6, background: '#f8d7da', border: '1px solid #f5c6cb', color: '#721c24', fontSize: 11 }}>
+                                  ⚠️ {encEditError}
+                                </div>
+                              )}
+                              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                                <button onClick={() => { setEncEditingUserId(null); setEncEditError(null); }}
+                                  style={{ padding: '5px 14px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : '#e9ecef', color: isDarkMode ? '#fff' : '#333', cursor: 'pointer', fontSize: 12 }}>キャンセル</button>
+                                <button disabled={!encEditChoice || (encEditChoice === 4 && !encEditNote.trim()) || encEditSaving}
+                                  onClick={async () => {
+                                    if (!encEditChoice) return;
+                                    setEncEditError(null);
+                                    setEncEditSaving(true);
+                                    if (r.choice) {
+                                      await supabase.from('paid_leave_encouragement_responses')
+                                        .update({ choice: encEditChoice, note: encEditNote.trim() || null }).select('id')
+                                        .eq('encouragement_day_id', showEncDetail).eq('user_id', r.user_id);
+                                    } else {
+                                      await supabase.from('paid_leave_encouragement_responses').insert({
+                                        encouragement_day_id: showEncDetail,
+                                        user_id: r.user_id,
+                                        choice: encEditChoice,
+                                        note: encEditNote.trim() || null,
+                                      });
+                                    }
+                                    // 既存の回答がある場合、leave_requestsから削除してから再挿入
+                                    if (encDetailDay) {
+                                      await supabase.from('leave_requests')
+                                        .delete()
+                                        .eq('user_id', r.user_id)
+                                        .eq('start_date', encDetailDay.target_date)
+                                        .eq('reason', '【有給奨励日】')
+                                        .eq('status', 'approved');
+                                      const encLeaveType = encEditChoice === 1 ? '有給休暇' : encEditChoice === 2 ? '調整休' : 'その他';
+                                      const encLeaveTypeOther = encEditChoice === 3 ? '定休日' : encEditChoice === 4 ? (encEditNote.trim() || 'その他') : undefined;
+                                      const { error: lrErr } = await supabase.from('leave_requests').insert({
+                                        user_id: r.user_id,
+                                        leave_type: encLeaveType,
+                                        ...(encLeaveTypeOther ? { leave_type_other: encLeaveTypeOther } : {}),
+                                        leave_dates: JSON.stringify([encDetailDay.target_date]),
+                                        start_date: encDetailDay.target_date,
+                                        end_date: encDetailDay.target_date,
+                                        purpose: '有給奨励日',
+                                        reason: '【有給奨励日】',
+                                        status: 'approved',
+                                        current_approver: 'none',
+                                      });
+                                      if (lrErr) { setEncEditError(lrErr.message); setEncEditSaving(false); return; }
+                                    }
+                                    setEncEditingUserId(null);
+                                    setEncEditError(null);
+                                    setEncEditSaving(false);
+                                    setEncEditSuccess('登録しました');
+                                    setTimeout(() => setEncEditSuccess(null), 3000);
+                                    fetchEncDetail(showEncDetail!);
+                                    fetchEncDays();
+                                  }}
+                                  style={{ padding: '5px 14px', borderRadius: 6, border: 'none', background: encEditSaving ? '#6c757d' : '#28a745', color: '#fff', cursor: encEditSaving ? 'default' : 'pointer', fontSize: 12, fontWeight: 'bold' }}>
+                                  {encEditSaving ? '保存中...' : '保存'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* 対象者を追加 */}
+                    <div style={{ marginBottom: 12 }}>
+                      <button onClick={() => { setEncShowAddTargets(v => !v); setEncAddTargetIds([]); }}
+                        style={{ padding: '7px 14px', background: isDarkMode ? '#495057' : '#e9ecef', color: isDarkMode ? '#fff' : '#333', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>
+                        {encShowAddTargets ? '▲ 閉じる' : '＋ 対象者を追加'}
+                      </button>
+                      {encShowAddTargets && (() => {
+                        const existingIds = new Set(encResponses.map(r => r.user_id));
+                        const addableUsers = activeUsers.filter(u => !existingIds.has(u.id));
+                        const addRoles = [...new Set(addableUsers.map(u => u.employment_type || 'その他'))];
+                        return (
+                          <div style={{ marginTop: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, borderRadius: 8 }}>
+                            {addableUsers.length === 0 ? (
+                              <p style={{ padding: '10px 12px', fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888', margin: 0 }}>追加できるスタッフがいません</p>
+                            ) : (
+                              <>
+                                <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                                  {addRoles.map((et, gi) => {
+                                    const group = addableUsers.filter(u => (u.employment_type || 'その他') === et).sort((a,b) => (a.name||'') > (b.name||'') ? 1 : -1);
+                                    const roles = [...new Set(group.map(u => u.role_title || 'その他'))].sort();
+                                    return (
+                                      <div key={et}>
+                                        <div style={{ padding: '4px 10px', background: isDarkMode ? '#2d3136' : '#e9ecef', borderTop: gi > 0 ? `2px solid ${isDarkMode ? '#6c757d' : '#bbb'}` : undefined }}>
+                                          <span style={{ fontSize: 11, fontWeight: 'bold', color: isDarkMode ? '#adb5bd' : '#444' }}>{et}</span>
+                                        </div>
+                                        <div style={{ display: 'flex', flexWrap: 'wrap' }}>
+                                          {roles.map((role, ri) => {
+                                            const ru = group.filter(u => (u.role_title || 'その他') === role);
+                                            return (
+                                              <div key={role} style={{ flex: '1 1 130px', borderLeft: ri > 0 ? `1px solid ${isDarkMode ? '#3d4349' : '#e0e0e0'}` : undefined, padding: '4px 8px' }}>
+                                                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, marginBottom: 3, paddingBottom: 2, borderBottom: `1px solid ${isDarkMode ? '#3d4349' : '#eee'}`, cursor: 'pointer', userSelect: 'none' }}>
+                                                  <input type="checkbox"
+                                                    checked={ru.length > 0 && ru.every(u => encAddTargetIds.includes(u.id))}
+                                                    onChange={() => {
+                                                      const ids = ru.map(u => u.id);
+                                                      const allSelected = ids.every(id => encAddTargetIds.includes(id));
+                                                      setEncAddTargetIds(prev => allSelected ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])]);
+                                                    }} />
+                                                  <span style={{ fontSize: 10, fontWeight: 'bold', color: isDarkMode ? '#adb5bd' : '#555' }}>{role}</span>
+                                                </label>
+                                                {ru.map(u => (
+                                                  <label key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '2px 0', cursor: 'pointer', fontSize: 12, color: isDarkMode ? '#fff' : '#333' }}>
+                                                    <input type="checkbox" checked={encAddTargetIds.includes(u.id)} onChange={e => {
+                                                      setEncAddTargetIds(prev => e.target.checked ? [...prev, u.id] : prev.filter(id => id !== u.id));
+                                                    }} />
+                                                    <span>{u.name || u.email}</span>
+                                                  </label>
+                                                ))}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                                <div style={{ padding: '8px 10px', borderTop: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <span style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888' }}>{encAddTargetIds.length}人選択中</span>
+                                  <button disabled={encAddTargetIds.length === 0 || encAddingTargets}
+                                    onClick={async () => {
+                                      if (!showEncDetail || encAddTargetIds.length === 0) return;
+                                      setEncAddingTargets(true);
+                                      await supabase.from('paid_leave_encouragement_targets').insert(
+                                        encAddTargetIds.map(uid => ({ encouragement_day_id: showEncDetail, user_id: uid }))
+                                      );
+                                      const d = encDetailDay;
+                                      if (d) {
+                                        const dateLabel = `${Number(d.target_date.slice(5,7))}月${Number(d.target_date.slice(8,10))}日`;
+                                        await supabase.from('notifications').insert(
+                                          encAddTargetIds.map(uid => ({ user_id: uid, message: `📅 有給奨励日の回答をお願いします（${dateLabel}、期限：${d.deadline}）` }))
+                                        );
+                                      }
+                                      setEncAddingTargets(false);
+                                      setEncShowAddTargets(false); setEncAddTargetIds([]);
+                                      fetchEncDetail(showEncDetail);
+                                      fetchEncDays();
+                                    }}
+                                    style={{ padding: '6px 14px', background: encAddingTargets ? '#6c757d' : '#007bff', color: '#fff', border: 'none', borderRadius: 7, cursor: encAddingTargets ? 'default' : 'pointer', fontSize: 12, fontWeight: 'bold' }}>
+                                    {encAddingTargets ? '追加中...' : '追加してベル通知'}
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    {encEditSuccess && (
+                      <div style={{ marginBottom: 10, padding: '8px 14px', borderRadius: 8, background: '#d4edda', border: '1px solid #c3e6cb', color: '#155724', fontSize: 13, fontWeight: 'bold', textAlign: 'center' }}>
+                        ✓ {encEditSuccess}
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <button onClick={() => {
+                        const header = '名前,回答,備考,回答日時';
+                        const rows = encResponses.map(r => [
+                          r.userName,
+                          r.choice ? ENC_CHOICE_LABEL[r.choice] : '未回答',
+                          r.note || '',
+                          r.responded_at ? new Date(r.responded_at + 'Z').toLocaleString('ja-JP') : '',
+                        ].map(v => `"${v}"`).join(','));
+                        const csv = [header, ...rows].join('\n');
+                        const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+                        const a = document.createElement('a');
+                        a.href = URL.createObjectURL(blob);
+                        a.download = `奨励日回答_${encDetailDay?.target_date || ''}.csv`;
+                        a.click();
+                      }} style={{ padding: '8px 16px', background: '#28a745', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>
+                        CSV出力
+                      </button>
+                      <button disabled={encSendingMail} onClick={async () => {
+                        const unanswered = encResponses.filter(r => !r.choice);
+                        if (unanswered.length === 0) { alert('未回答者はいません'); return; }
+                        if (!confirm(`未回答の${unanswered.length}人にメールを送信しますか？`)) return;
+                        setEncSendingMail(true);
+                        const { data: profiles } = await supabase.from('profiles').select('id, email').in('id', unanswered.map(r => r.user_id));
+                        const emailMap: Record<string, string> = {};
+                        (profiles || []).forEach((p: { id: string; email: string }) => { emailMap[p.id] = p.email; });
+                        for (const r of unanswered) {
+                          const email = emailMap[r.user_id];
+                          if (!email) continue;
+                          await supabase.functions.invoke('send-email', {
+                            body: { to: email, subject: '有給奨励日の回答をお願いします', text: `${r.userName}さん\n\n有給奨励日（${encDetailDay?.target_date}）の回答期限（${encDetailDay?.deadline}）が近づいています。\nサイトよりご回答ください。` },
+                          });
+                        }
+                        setEncSendingMail(false);
+                        alert(`${unanswered.length}人にメールを送信しました`);
+                      }} style={{ padding: '8px 16px', background: encSendingMail ? '#6c757d' : '#fd7e14', color: '#fff', border: 'none', borderRadius: 8, cursor: encSendingMail ? 'default' : 'pointer', fontSize: 12, fontWeight: 'bold' }}>
+                        {encSendingMail ? '送信中...' : `未回答者（${encResponses.filter(r => !r.choice).length}人）にメール`}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          ) : null;
+
           const partUsers = users.filter(u => u.is_active !== false && u.employment_type === 'パート');
 
           return (
             <div>
+              {encCreateModal}
+              {encDetailModal}
               <h3 style={{ textAlign: 'center', marginBottom: 8, color: isDarkMode ? '#fff' : '#000' }}>🌿 休暇申請一覧</h3>
               <p style={{ textAlign: 'center', fontSize: 13, color: isDarkMode ? '#adb5bd' : '#666', marginBottom: 16 }}>
                 管理者として全ての申請を確認・承認できます。承認が止まっている場合は強制的に次のステップへ進められます。
@@ -292,6 +833,56 @@ const LeaveRequestsTab: React.FC = () => {
                 )}
               </div>
 
+              {/* 有給奨励日 */}
+              <div style={{ background: isDarkMode ? '#2d3136' : '#f8f9fa', border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, borderRadius: 10, padding: '12px 16px', marginBottom: 20, maxWidth: 500, marginLeft: 'auto', marginRight: 'auto' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <p style={{ fontWeight: 'bold', fontSize: 13, color: isDarkMode ? '#fff' : '#333', margin: 0 }}>📅 有給奨励日</p>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <select value={encFY} onChange={e => setEncFY(e.target.value)}
+                      style={{ padding: '4px 8px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', fontSize: 11 }}>
+                      <option value="__current__">{nowFY}年度</option>
+                      {[...new Set(encDays.map(d => d.fiscal_year))].sort((a,b) => b-a).filter(fy => fy !== nowFY).map(fy => <option key={fy} value={String(fy)}>{fy}年度</option>)}
+                      <option value="all">全年度</option>
+                    </select>
+                    <button onClick={() => setShowEncCreate(true)}
+                      style={{ padding: '4px 12px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontWeight: 'bold' }}>＋ 新規作成</button>
+                  </div>
+                </div>
+                {encLoading ? (
+                  <p style={{ textAlign: 'center', fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888', margin: 0 }}>読み込み中...</p>
+                ) : filteredEncDays.length === 0 ? (
+                  <p style={{ textAlign: 'center', fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888', margin: 0 }}>奨励日がありません</p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {filteredEncDays.map(d => {
+                      const pct = d.targetCount > 0 ? Math.round((d.responseCount / d.targetCount) * 100) : 0;
+                      const today = new Date().toISOString().slice(0, 10);
+                      const isPast = d.deadline < today;
+                      return (
+                        <div key={d.id} style={{ background: isDarkMode ? '#495057' : '#fff', borderRadius: 8, padding: '8px 12px', border: `1px solid ${isDarkMode ? '#6c757d' : '#e0e0e0'}` }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                            <div>
+                              <span style={{ fontWeight: 'bold', fontSize: 13, color: isDarkMode ? '#fff' : '#333' }}>{fmtEncDow(d.target_date)}</span>
+                              <span style={{ fontSize: 11, color: isPast ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), marginLeft: 8 }}>
+                                期限: {fmtEncDow(d.deadline)}{isPast ? '（期限超過）' : ''}
+                              </span>
+                            </div>
+                            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                              <span style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#666' }}>{d.responseCount}/{d.targetCount}人</span>
+                              <button onClick={() => { setShowEncDetail(d.id); fetchEncDetail(d.id); }}
+                                style={{ padding: '3px 10px', background: '#17a2b8', color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>確認</button>
+                            </div>
+                          </div>
+                          <div style={{ height: 6, borderRadius: 3, background: isDarkMode ? '#6c757d' : '#e9ecef', overflow: 'hidden' }}>
+                            <div style={{ height: '100%', borderRadius: 3, background: pct === 100 ? '#28a745' : '#007bff', width: `${pct}%`, transition: 'width 0.3s' }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               {/* フィルターボタン */}
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16, justifyContent: 'center', alignItems: 'center' }}>
                 {leaveFilters.map(f => (
@@ -327,8 +918,13 @@ const LeaveRequestsTab: React.FC = () => {
                     {fyOptions.map(fy => <option key={fy} value={String(fy)}>{fy}年度（{fy}/4/1〜{fy+1}/3/31）</option>)}
                   </select>
                   <SearchableSelect value={filterPerson} options={personOptions} onChange={setFilterPerson} isDarkMode={isDarkMode} />
-                  {(filterFY !== '__current__' || filterPerson !== 'all') && (
-                    <button onClick={() => { setFilterFY('__current__'); setFilterPerson('all'); }}
+                  <select value={filterType} onChange={e => setFilterType(e.target.value)}
+                    style={{ padding: '5px 10px', borderRadius: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', fontSize: 12 }}>
+                    <option value="all">全種別</option>
+                    {typeOptions.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  {(filterFY !== '__current__' || filterPerson !== 'all' || filterType !== 'all') && (
+                    <button onClick={() => { setFilterFY('__current__'); setFilterPerson('all'); setFilterType('all'); }}
                       style={{ padding: '4px 10px', borderRadius: 8, border: 'none', background: '#6c757d', color: '#fff', fontSize: 11, cursor: 'pointer' }}>
                       リセット
                     </button>
