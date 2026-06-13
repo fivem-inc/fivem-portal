@@ -125,6 +125,7 @@ export interface AdminUserProfile {
   leave_request_enabled?: boolean;
   leave_enabled_by?: string | null;
   submission_count?: number;
+  last_sign_in_at?: string | null;
 }
 
 export interface AdminLeaveRequest {

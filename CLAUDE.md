@@ -2135,3 +2135,73 @@ CREATE TABLE gcal_sync_queue (
 - `supabase/functions/send-trip-slack/index.ts`
 - `supabase/functions/create-user/index.ts`
 - `fix_notification_rls.sql`（新規・実行済み）
+
+---
+
+## ✅ 2026-06-13 セキュリティ改善・ユーザー管理UI改善 完了
+
+### セキュリティ改善（コードレビュー対応）
+
+#### UsersTab.tsx
+- `console.log` 削除（本番稼働中のデバッグログ除去）
+- パスワード入力欄を `type="text"` → `type="password"` に変更（平文表示を廃止）
+- 👁️ トグルボタンでパスワードの表示/非表示を切り替え可能に
+- `passwordManuallyEdited` フラグ追加：手動でパスワードを変更済みの場合、メールアドレスを編集してもパスワードが上書きされないバグを修正
+- メールアドレス形式バリデーション追加（`/^[^\s@]+@[^\s@]+\.[^\s@]+$/` でチェック）
+
+#### send-email/index.ts（Edge Function）
+- HTMLインジェクション対策：受信した `html` から `<script>...</script>` タグを除去してから Resend に渡す
+- 不正Origin へのCORSフォールバックを `ALLOWED_ORIGINS[0]`（本番URL）→ `'null'` に変更
+
+### ユーザー管理画面UI改善
+
+#### テーブル構造変更
+- 「件数」列を削除
+- 「グループ」列を追加（`profiles.group_names` を表示）
+- 「最終ログイン」列を追加（ログイン時に `profiles.last_sign_in_at` を更新）
+
+#### Supabase SQL（実施済み）
+```sql
+ALTER TABLE profiles ADD COLUMN last_sign_in_at timestamptz;
+```
+
+#### レイアウト改善
+- テーブルを中央寄せ（`width: auto` + `justifyContent: center`）
+- 全ヘッダーを中央揃えに統一
+- メール列を `width: 160px` に縮小（省略表示）
+- 名前列を `140px` に拡大
+- グループ列を `120px` に設定
+- 📧 アイコン → 「メール」テキストに変更（わかりやすく）
+- 「雇用形態・役職を編集」ボタンを「ユーザー追加」と同じ行に移動
+- 並び替えボタンを中央寄せ
+
+### 変更ファイル
+- `client/src/components/admin/UsersTab.tsx`
+- `client/src/hooks/useAuth.ts`（ログイン時に `last_sign_in_at` を更新）
+- `client/src/types/index.ts`（`AdminUserProfile` に `last_sign_in_at` 追加）
+- `client/src/components/admin/AdminPanelContext.tsx`（fetchUsers に `last_sign_in_at` 追加）
+- `supabase/functions/send-email/index.ts`
+
+### デプロイ済み
+- `send-email` Edge Function デプロイ済み
+
+---
+
+### 🔜 次回やること（2026-06-13時点）
+
+#### 優先①：UsersTab・send-email コードレビュー対応の残り（余裕時）
+| 内容 | 場所 |
+|------|------|
+| レート制限設定 | Supabase Dashboard → Rate Limits |
+| 送信進捗表示（progress バー） | UsersTab SendEmailModal |
+| 失敗分の再送ボタン | UsersTab SendEmailModal |
+| 並列送信（Promise.allSettled） | UsersTab handleSend |
+
+#### 優先②：承認フロー通知メール（Phase 3）
+- 承認・差し戻し・受理の各ステップでメール送信
+
+#### 優先③：メールテンプレート管理（Phase 2）
+- `email_templates` テーブル作成・テンプレート選択UI
+
+#### 低優先
+- gcal-sync 失敗時リトライキュー（Phase 5）
