@@ -335,10 +335,10 @@ const LeaveRequestsTab: React.FC = () => {
 
           const activeUsers = users.filter(u => u.is_active !== false);
           const EMP_ORDER = ['正社員', 'パート'];
-          const employmentTypes = [...new Set(activeUsers.map(u => u.employment_type).filter(Boolean))]
+          const employmentTypes = [...new Set(activeUsers.map(u => u.employment_type).filter(Boolean))] as string[]
             .sort((a,b) => {
-              const ai = EMP_ORDER.indexOf(a); const bi = EMP_ORDER.indexOf(b);
-              if (ai === -1 && bi === -1) return a > b ? 1 : -1;
+              const ai = EMP_ORDER.indexOf(a as string); const bi = EMP_ORDER.indexOf(b as string);
+              if (ai === -1 && bi === -1) return (a as string) > (b as string) ? 1 : -1;
               if (ai === -1) return 1; if (bi === -1) return -1;
               return ai - bi;
             }) as string[];
@@ -582,8 +582,8 @@ const LeaveRequestsTab: React.FC = () => {
                                     setEncEditSaving(true);
                                     if (r.choice) {
                                       await supabase.from('paid_leave_encouragement_responses')
-                                        .update({ choice: encEditChoice, note: encEditNote.trim() || null }).select('id')
-                                        .eq('encouragement_day_id', showEncDetail).eq('user_id', r.user_id);
+                                        .update({ choice: encEditChoice, note: encEditNote.trim() || null })
+                                        .eq('encouragement_day_id', showEncDetail).eq('user_id', r.user_id).select('id');
                                     } else {
                                       await supabase.from('paid_leave_encouragement_responses').insert({
                                         encouragement_day_id: showEncDetail,
