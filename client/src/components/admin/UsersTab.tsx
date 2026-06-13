@@ -497,7 +497,7 @@ const UsersTab: React.FC = () => {
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 80 }}>雇用形態</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 90 }}>役職</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 120 }}>グループ</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 85 }}>最終ログイン</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 85 }}>最終アクセス</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 55 }}>状態</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 140 }}>操作</th>
                       </tr>
@@ -590,11 +590,12 @@ const UsersTab: React.FC = () => {
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 11 }}>
                               {user.group_names && user.group_names.length > 0 ? user.group_names.join('・') : '-'}
                             </td>
-                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', color: isDarkMode ? '#adb5bd' : '#666', fontSize: 11, whiteSpace: 'nowrap' }}>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', color: isDarkMode ? '#adb5bd' : '#666', fontSize: 11, whiteSpace: 'nowrap', textAlign: 'center' }}>
                               {user.last_sign_in_at
                                 ? (() => {
-                                    const d = new Date(new Date(user.last_sign_in_at).getTime() + 9*60*60*1000);
-                                    return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
+                                    const s = user.last_sign_in_at;
+                                    const d = new Date(s.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(s) ? s : s + 'Z');
+                                    return <>{`${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`}<br />{`${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`}</>;
                                   })()
                                 : <span style={{ color: '#adb5bd' }}>未ログイン</span>
                               }
