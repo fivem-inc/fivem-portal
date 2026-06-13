@@ -130,7 +130,7 @@ serve(async (req) => {
     if (slackSetting?.enabled) {
       let channels: string[] = []
       try { channels = JSON.parse(slackSetting.recipient ?? '{}').channels ?? [] } catch { /* ignore */ }
-      const slackMsg = `⏰ *時間調整が登録されました*\n\n*登録者：* ${user_name}\n*日付：* ${dateLabel}\n*種別：* ${typeLabels}\n*理由：* ${reason}`
+      const slackMsg = `⏰ *時間調整が登録されました*\n\n*登録者：* ${user_name}\n*日付：* ${dateLabel}\n*種別：* ${typeLabels}`
       for (const ch of channels) {
         const url = Deno.env.get(SLACK_WEBHOOK_KEYS[ch] ?? '')
         if (!url) continue
