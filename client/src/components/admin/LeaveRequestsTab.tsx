@@ -121,7 +121,7 @@ const LeaveRequestsTab: React.FC = () => {
     isDarkMode, leaveRequests, loadingLeaveRequests, leaveStatusFilter, setLeaveStatusFilter,
     users, fetchLeaveRequests, fetchUsers,
     setAdminManagerList, setAdminSelectedManagerId, setAdminSelectingManagerFor,
-    sendLeaveSlack, supabase,
+    sendLeaveSlack, supabase, setSuccessMsg,
   } = ctx;
   const { user: authUser } = useAuth();
 
@@ -763,7 +763,7 @@ const LeaveRequestsTab: React.FC = () => {
                           });
                         }
                         setEncSendingMail(false);
-                        alert(`${unanswered.length}人にメールを送信しました`);
+                        setSuccessMsg(`${unanswered.length}人にメールを送信しました`);
                       }} style={{ padding: '8px 16px', background: encSendingMail ? '#6c757d' : '#fd7e14', color: '#fff', border: 'none', borderRadius: 8, cursor: encSendingMail ? 'default' : 'pointer', fontSize: 12, fontWeight: 'bold' }}>
                         {encSendingMail ? '送信中...' : `未回答者（${encResponses.filter(r => !r.choice).length}人）にメール`}
                       </button>
@@ -809,7 +809,7 @@ const LeaveRequestsTab: React.FC = () => {
                       const { error } = await supabase.from('profiles').update({ leave_request_enabled: true, leave_enabled_by: (await supabase.auth.getUser()).data.user?.id }).eq('id', userId);
                       if (error) { alert('送信に失敗しました: ' + error.message); return; }
                       await fetchUsers();
-                      alert(`「${target.name || target.email}」さんに有給申請フォームを送信しました。`);
+                      setSuccessMsg(`「${target.name || target.email}」さんに送信しました`);
                     }}
                     style={{ padding: '6px 16px', background: '#28a745', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 13, whiteSpace: 'nowrap' }}
                   >送信</button>

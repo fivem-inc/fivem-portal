@@ -34,9 +34,17 @@ const AdminPanelContent: React.FC = () => {
     workplaceOptions, newWorkplaceName, setNewWorkplaceName, handleAddWorkplace, handleDeleteWorkplace,
     customExpenseTypes, newExpenseTypeName, setNewExpenseTypeName, handleAddExpenseType, handleDeleteExpenseType,
     expenseTypeLabels, renamingExpenseTypeLabelId, setRenamingExpenseTypeLabelId, renamingExpenseTypeLabelValue, setRenamingExpenseTypeLabelValue, handleRenameExpenseTypeLabel,
+    successMsg, setSuccessMsg,
   } = useAdminPanel();
 
   return (    <div style={{ marginTop: 0, paddingTop: 0 }}>
+      {successMsg && (
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 240 }}>
+          <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>✓</div>
+          <span style={{ fontSize: 15, fontWeight: 'bold', color: '#166534' }}>{successMsg}</span>
+          <button type="button" onClick={() => setSuccessMsg(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#166534', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
+        </div>
+      )}
       <style>{`
         @keyframes spin {
           0% { transform: rotate(0deg); }

@@ -179,6 +179,10 @@ export interface AdminPanelContextType {
   adminSelectedManagerId: string; setAdminSelectedManagerId: React.Dispatch<React.SetStateAction<string>>;
   fetchLeaveRequests: () => Promise<void>;
 
+  // Success banner
+  successMsg: string | null;
+  setSuccessMsg: (msg: string | null) => void;
+
   // Utilities
   formatAmount: typeof formatAmount;
   supabase: typeof supabase;
@@ -268,6 +272,11 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const [expenseTypeLabels, setExpenseTypeLabels] = useState<{ id: number; value: string; sort_order: number }[]>([]);
   const [renamingExpenseTypeLabelId, setRenamingExpenseTypeLabelId] = useState<number | null>(null);
   const [renamingExpenseTypeLabelValue, setRenamingExpenseTypeLabelValue] = useState('');
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (successMsg) { const t = setTimeout(() => setSuccessMsg(null), 3000); return () => clearTimeout(t); }
+  }, [successMsg]);
 
   const [editingSubmissionId, setEditingSubmissionId] = useState<string | null>(null);
   const [editingExpenses, setEditingExpenses] = useState<Expense[]>([]);
@@ -479,7 +488,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
             metadata: { name: editName.trim(), display_name: editName.trim(), full_name: editName.trim() }
           });
         } catch {}
-        alert('名前を更新しました');
+        setSuccessMsg('名前を更新しました');
         setEditingUser(null);
         setEditName('');
         fetchUsers();
@@ -501,7 +510,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const handleDeleteUser = useCallback(async (userId: string, userName: string) => {
     if (!window.confirm(`「${userName}」を完全に削除します。この操作は取り消せません。よろしいですか？`)) return;
     const { error } = await supabase.from('profiles').delete().eq('id', userId);
-    if (error) { alert('削除に失敗しました: ' + error.message); } else { alert('削除しました'); fetchUsers(); }
+    if (error) { alert('削除に失敗しました: ' + error.message); } else { setSuccessMsg('削除しました'); fetchUsers(); }
   }, [fetchUsers]);
 
   const fetchReportStats = useCallback(async () => {
@@ -804,7 +813,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     else { updateData.approved_at = null; updateData.rejected_at = null; updateData.rejected_reason = null; }
     const { error } = await supabase.from('expenses').update(updateData).eq('id', id);
     if (error) { alert('更新に失敗しました: ' + error.message); }
-    else { alert(`ステータスを「${newStatus === 'pending' ? '申請中' : newStatus === 'approved' ? '承認' : '却下'}」に更新しました。`); onRefresh(); }
+    else { setSuccessMsg(`ステータスを「${newStatus === 'pending' ? '申請中' : newStatus === 'approved' ? '承認' : '却下'}」に更新しました`); onRefresh(); }
   }, [onRefresh]);
 
   const handleBulkApproval = useCallback(async (newStatus: 'approved' | 'rejected') => {
@@ -824,7 +833,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       } catch { errorCount++; }
     }
     const statusText = newStatus === 'approved' ? '承認' : '却下';
-    alert(errorCount > 0 ? `${successCount}件の申請を${statusText}しました。${errorCount}件でエラーが発生しました。` : `${successCount}件の申請をすべて${statusText}しました。`);
+    setSuccessMsg(errorCount > 0 ? `${successCount}件の申請を${statusText}しました（${errorCount}件エラー）` : `${successCount}件の申請をすべて${statusText}しました`);
     onRefresh();
   }, [filteredPending, onRefresh]);
 
@@ -845,7 +854,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       const { error } = await supabase.from('expenses').update({ status: 'approved', approved_at: new Date().toISOString(), rejected_at: null, rejected_reason: null }).eq('id', id);
       if (error) errorCount++; else successCount++;
     }
-    alert(errorCount > 0 ? `${successCount}件を承認しました。${errorCount}件でエラーが発生しました。` : `${successCount}件を承認しました。`);
+    setSuccessMsg(errorCount > 0 ? `${successCount}件を承認しました（${errorCount}件エラー）` : `${successCount}件を承認しました`);
     setSelectedForApproval(new Set());
     onRefresh();
   }, [selectedForApproval, onRefresh]);
@@ -972,7 +981,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     const updateData = { expenses_data: editingExpenses, last_edited_at: new Date().toISOString(), last_edited_by: '管理者', edit_count: currentEditCount + 1 };
     const { error } = await supabase.from('expenses').update(updateData).eq('id', submissionId);
     if (error) { alert('更新に失敗しました: ' + error.message); }
-    else { alert('申請内容を更新しました。'); setEditingSubmissionId(null); setEditingExpenses([]); onRefresh(); }
+    else { setSuccessMsg('申請内容を更新しました'); setEditingSubmissionId(null); setEditingExpenses([]); onRefresh(); }
   }, [editingExpenses, onRefresh]);
 
   const handleUpdateEditingExpense = useCallback((index: number, field: string, value: string) => {
@@ -982,9 +991,9 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const handleDeleteSubmission = useCallback(async (id: string) => {
     if (!window.confirm('本当にこの申請を削除しますか？')) return;
     const confirmationText = prompt('削除を確定するには「削除」と入力してください。');
-    if (confirmationText !== '削除') { alert('削除がキャンセルされました。'); return; }
+    if (confirmationText !== '削除') return;
     const { error } = await supabase.from('expenses').delete().eq('id', id);
-    if (error) { alert('削除に失敗しました: ' + error.message); } else { alert('申請を削除しました。'); onRefresh(); }
+    if (error) { alert('削除に失敗しました: ' + error.message); } else { setSuccessMsg('申請を削除しました'); onRefresh(); }
   }, [onRefresh]);
 
   const handleExportCsv = useCallback(async () => {
@@ -996,7 +1005,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     if (error) { alert('CSV出力に失敗しました。'); return; }
     if (!data || data.length === 0) { alert('承認済みの交通費がありません。'); return; }
     downloadCSV(generateCSVData(data));
-    alert('CSVを出力しました。');
+    setSuccessMsg('CSVを出力しました');
   }, [csvStartDate, csvEndDate, csvDateType]);
 
   const toggleYearExpansion = useCallback((year: string) => {
@@ -1072,6 +1081,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       adminSelectingManagerFor, setAdminSelectingManagerFor,
       adminManagerList, setAdminManagerList, adminSelectedManagerId, setAdminSelectedManagerId,
       fetchLeaveRequests,
+      successMsg, setSuccessMsg,
       formatAmount, supabase, sendLeaveSlack,
     }}>
       {children}

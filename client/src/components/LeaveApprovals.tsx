@@ -67,6 +67,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
 
   // パートへフォーム送信
   const [partUsers, setPartUsers] = useState<any[]>([]);
+  const [partSendSuccess, setPartSendSuccess] = useState<string | null>(null);
 
   const isDark = useDarkMode();
   const bg = isDark ? '#343a40' : 'white';
@@ -306,6 +307,13 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
 
   return (
     <div style={{ maxWidth: 680, margin: '20px auto', padding: '0 12px' }}>
+      {partSendSuccess && (
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 240 }}>
+          <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>✓</div>
+          <span style={{ fontSize: 15, fontWeight: 'bold', color: '#166534' }}>{partSendSuccess}</span>
+          <button type="button" onClick={() => setPartSendSuccess(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#166534', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
+        </div>
+      )}
 
       {/* パートへ申請フォーム送信 */}
       {(() => {
@@ -336,7 +344,8 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                   const { error } = await supabase.from('profiles').update({ leave_request_enabled: true, leave_enabled_by: user.id }).eq('id', userId);
                   if (error) { alert('送信に失敗しました: ' + error.message); return; }
                   setPartUsers(prev => prev.map(u => u.id === userId ? { ...u, leave_request_enabled: true, leave_enabled_by: user.id } : u));
-                  alert(`「${target.name || target.email}」さんに申請フォームを送信しました。`);
+                  setPartSendSuccess(`「${target.name || target.email}」さんに送信しました`);
+                  setTimeout(() => setPartSendSuccess(null), 3000);
                 }}
                 style={{ padding: '6px 16px', background: '#28a745', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 13, whiteSpace: 'nowrap' }}
               >送信</button>
