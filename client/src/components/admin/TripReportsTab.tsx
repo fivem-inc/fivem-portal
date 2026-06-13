@@ -15,7 +15,7 @@ const TripReportsTab: React.FC = () => {
                   onClick={() => { fetchLocationEditor(); setShowLocationEditor(true); }}
                   style={{ padding: '6px 14px', borderRadius: 6, border: isDarkMode ? '1px solid #666' : '1px solid #ccc', background: isDarkMode ? '#495057' : '#f8f9fa', color: isDarkMode ? '#fff' : '#333', cursor: 'pointer', fontSize: 13 }}
                 >
-                  ⚙️ 区分・勤務先リストを管理
+                  ⚙️ 区分・行き先リストを管理
                 </button>
               </div>
             </div>

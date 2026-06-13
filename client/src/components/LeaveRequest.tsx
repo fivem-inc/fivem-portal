@@ -782,7 +782,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             for (const rec of inserted ?? []) {
               try {
                 await supabase.functions.invoke('gcal-sync', {
-                  body: { action: 'upsert', source_type: 'absence', source_id: rec.id, dates: [rec.date], name: profileName ?? '', absence_type: rec.type, time: rec.actual_time ?? undefined },
+                  body: { action: 'upsert', source_type: 'absence', source_id: rec.id, dates: [rec.date], name: profileName ?? '', absence_type: rec.type, time: rec.actual_time ? rec.actual_time.slice(0, 5) : undefined },
                 });
               } catch (e) { console.error('[gcal-sync] 時間調整書き込み失敗:', e); }
             }

@@ -45,7 +45,7 @@ const ApprovalsTab: React.FC = () => {
                   onClick={() => { fetchLocationEditor(); setShowLocationEditor(true); }}
                   style={{ padding: '6px 14px', borderRadius: 6, border: isDarkMode ? '1px solid #666' : '1px solid #ccc', background: isDarkMode ? '#495057' : '#f8f9fa', color: isDarkMode ? '#fff' : '#333', cursor: 'pointer', fontSize: 13 }}
                 >
-                  ⚙️ 区分・勤務先リストを管理
+                  ⚙️ 区分・行き先リストを管理
                 </button>
               </div>
             </div>
@@ -391,7 +391,7 @@ const ApprovalsTab: React.FC = () => {
                             } | 
                             {e.transportation && `[${e.transportation}] `}
                             {e.from_station} - {e.to_station}: {e.amount}円
-                            {e.workplace && ` [勤務先: ${e.workplace}]`}
+                            {e.workplace && ` [行き先: ${e.workplace}]`}
                             {e.notes && ` (備考: ${e.notes})`}
                           </li>
                         ))}
@@ -656,7 +656,7 @@ const ApprovalsTab: React.FC = () => {
                                                   onChange={(event) => handleUpdateEditingExpense(i, 'amount', event.target.value)}
                                                   style={{ marginLeft: '10px', padding: '4px', width: '80px' }}
                                                 />円
-                                                <strong style={{ marginLeft: '20px' }}>勤務先:</strong>
+                                                <strong style={{ marginLeft: '20px' }}>行き先:</strong>
                                                 <input
                                                   type="text"
                                                   value={e.workplace || ''}
@@ -683,7 +683,7 @@ const ApprovalsTab: React.FC = () => {
                                               } | 
                                               {e.transportation && `[${e.transportation}] `}
                                               {e.from_station} - {e.to_station}: {e.amount}円
-                                              {e.workplace && ` [勤務先: ${e.workplace}]`}
+                                              {e.workplace && ` [行き先: ${e.workplace}]`}
                                               {e.notes && ` (備考: ${e.notes})`}
                                             </>
                                           )}

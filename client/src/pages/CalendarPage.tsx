@@ -407,7 +407,7 @@ const AbsenceInputSheet: React.FC<{
             dates: [rec.date],
             name,
             absence_type: rec.type,
-            time: rec.actual_time ?? undefined,
+            time: rec.actual_time ? rec.actual_time.slice(0, 5) : undefined,
           },
         });
       } catch (e) { console.error('[gcal-sync] 欠勤書き込み失敗:', e); }

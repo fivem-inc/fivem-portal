@@ -40,7 +40,7 @@ export const generateCSVData = (submissions: Submission[]): string => {
   const headers = [
     '申請NO', '申請ID', '申請者', '申請日', 'ステータス', 'タイプ', 
     '利用日', '定期期間', '交通機関', '出発駅', '帰着駅', '金額', 
-    '勤務先', '備考欄', '承認日', '却下日'
+    '行き先', '備考欄', '承認日', '却下日'
   ];
   
   let csvContent = headers.join(',') + '\r\n';

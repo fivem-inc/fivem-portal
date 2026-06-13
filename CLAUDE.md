@@ -984,6 +984,27 @@ npx supabase functions deploy time-adjustment-notify --project-ref xaeynaxctiiyq
 
 ---
 
+## ✅ 2026-06-13 細かいUI修正まとめ 完了
+
+### 変更内容
+
+#### 「勤務先」→「行き先」に全面改称
+- 変更ファイル: ExpenseForm / HistoryView / AdminPanel / AdminPanelContext / ApprovalsTab / TripReportsTab / utils/index.ts（CSV列名も変更）
+
+#### Googleカレンダー 時刻フォーマット修正
+- `actual_time` が `"18:00:00"` でDBに保存されるため、gcal-sync に渡す前に `.slice(0, 5)` で `"18:00"` に切り詰め
+- 変更ファイル: CalendarPage.tsx / LeaveRequest.tsx
+
+#### 通知設定「保存しました」バッジ
+- 3秒で自動消え・✕ボタン削除
+- 変更ファイル: NotificationsTab.tsx
+
+#### time-adjustment-notify Slack メッセージ
+- 公開チャンネルのため「理由」を削除
+- notification_settings: Slack・メール・サイト通知を全て有効化、Slack を全4チャンネル（leader/manager/accounting/president）に設定（SQL手動実行済み）
+
+---
+
 ## ✅ 2026-06-13 通知バナー・モーダルデザイン統一 完了
 
 ### 変更方針
