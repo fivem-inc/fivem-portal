@@ -4,7 +4,7 @@ const ALLOWED_ORIGINS = ['https://fivem-portal.vercel.app', 'http://localhost:51
 
 function getCorsHeaders(req: Request) {
   const origin = req.headers.get('Origin') || '';
-  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : 'null';
   return {
     'Access-Control-Allow-Origin': allowedOrigin,
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -39,12 +39,14 @@ serve(async (req) => {
       });
     }
 
+    const sanitizedHtml = html?.replace(/<script[\s\S]*?<\/script>/gi, '') ?? undefined;
+
     const body: Record<string, unknown> = {
       from: `${FROM_NAME} <${FROM_ADDRESS}>`,
       to: Array.isArray(to) ? to : [to],
       subject,
     };
-    if (html) body.html = html;
+    if (sanitizedHtml) body.html = sanitizedHtml;
     if (text) body.text = text;
 
     const res = await fetch('https://api.resend.com/emails', {

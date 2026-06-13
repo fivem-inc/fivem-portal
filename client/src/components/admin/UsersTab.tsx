@@ -14,23 +14,27 @@ const AddUserModal: React.FC<{
   const [employmentType, setEmploymentType] = useState('正社員');
   const [roleTitle, setRoleTitle] = useState('一般');
   const [password, setPassword] = useState('');
+  const [passwordManuallyEdited, setPasswordManuallyEdited] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // メール入力時に自動でパスワードをセット（@前の部分）
+  // メール入力時に自動でパスワードをセット（手動変更済みの場合は上書きしない）
   const handleEmailChange = (val: string) => {
     setEmail(val);
-    const atIdx = val.indexOf('@');
-    if (atIdx > 0) {
-      setPassword(val.slice(0, atIdx));
-    } else {
-      setPassword(val);
+    if (!passwordManuallyEdited) {
+      const atIdx = val.indexOf('@');
+      setPassword(atIdx > 0 ? val.slice(0, atIdx) : val);
     }
   };
 
   const handleSubmit = async () => {
     if (!email || !name) {
       setError('メールアドレスと名前は必須です');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError('メールアドレスの形式が正しくありません');
       return;
     }
     if (password.length < 6) {
@@ -100,10 +104,19 @@ const AddUserModal: React.FC<{
         />
 
         <label style={labelStyle}>初期パスワード</label>
-        <input
-          type="text" value={password} onChange={e => setPassword(e.target.value)}
-          placeholder="メール入力で自動セット" style={inputStyle}
-        />
+        <div style={{ position: 'relative' }}>
+          <input
+            type={showPassword ? 'text' : 'password'} value={password} onChange={e => { setPassword(e.target.value); setPasswordManuallyEdited(true); }}
+            placeholder="メール入力で自動セット" style={{ ...inputStyle, paddingRight: 36 }}
+          />
+          <button
+            type="button" onClick={() => setShowPassword(v => !v)}
+            style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: isDarkMode ? '#adb5bd' : '#666', padding: 0 }}
+            title={showPassword ? 'パスワードを隠す' : 'パスワードを表示'}
+          >
+            {showPassword ? '🙈' : '👁️'}
+          </button>
+        </div>
         <p style={{ margin: '4px 0 0', fontSize: 11, color: isDarkMode ? '#adb5bd' : '#888' }}>
           ※ メールの@前が自動でセットされます（6文字以上必要）
         </p>
@@ -178,8 +191,6 @@ const SendEmailModal: React.FC<{
             body: JSON.stringify({ to: t.email, subject, html }),
           }
         );
-        const responseText = await response.text();
-        console.log('send-email response', { status: response.status, ok: response.ok, body: responseText });
         if (!response.ok) { failed.push(t.name || t.email); } else { success++; }
       } catch { failed.push(t.name || t.email); }
     }
@@ -325,6 +336,14 @@ const UsersTab: React.FC = () => {
                     >
                       ＋ ユーザー追加
                     </button>
+                    {isUserEditMode ? (
+                      <>
+                        <span style={{ color: '#fd7e14', fontSize: 11, alignSelf: 'center' }}>⚠️ 編集モード中</span>
+                        <button onClick={() => setIsUserEditMode(false)} style={{ padding: '8px 14px', background: '#28a745', color: 'white', border: '2px solid #1e7e34', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}>✅ 編集終了</button>
+                      </>
+                    ) : (
+                      <button onClick={() => setIsUserEditMode(true)} style={{ padding: '8px 14px', background: '#fd7e14', color: 'white', border: '2px solid #e8690b', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}>✏️ 雇用形態・役職を編集</button>
+                    )}
                     {selectedForEmail.size > 0 && (
                       <button
                         onClick={handleBulkEmail}
@@ -364,27 +383,6 @@ const UsersTab: React.FC = () => {
                     <button onClick={fetchUsers} style={{ padding: '8px 16px' }}>更新</button>
                   </div>
                 </div>
-                {/* 編集モードボタン */}
-                <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                  {isUserEditMode && (
-                    <span style={{ color: '#fd7e14', fontSize: 11 }}>⚠️ 編集モード中（変更は確認後に保存）</span>
-                  )}
-                  {isUserEditMode ? (
-                    <button
-                      onClick={() => { setIsUserEditMode(false); }}
-                      style={{ padding: '5px 14px', background: '#28a745', color: 'white', border: '2px solid #1e7e34', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: 12 }}
-                    >
-                      ✅ 編集終了
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => setIsUserEditMode(true)}
-                      style={{ padding: '5px 14px', background: '#fd7e14', color: 'white', border: '2px solid #e8690b', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: 12 }}
-                    >
-                      ✏️ 雇用形態・役職を編集
-                    </button>
-                  )}
-                </div>
 
                 {/* 変更確認ポップアップ */}
                 {confirmChange && (
@@ -421,7 +419,7 @@ const UsersTab: React.FC = () => {
                   </div>
                 )}
                 {/* 並び替えボタン */}
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, justifyContent: 'center' }}>
                   {[
                     { key: 'sort_order', label: 'No.順' },
                     { key: 'name', label: '名前順' },
@@ -442,8 +440,8 @@ const UsersTab: React.FC = () => {
                     </button>
                   ))}
                 </div>
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <div style={{ overflowX: 'auto', display: 'flex', justifyContent: 'center' }}>
+                  <table style={{ width: 'auto', minWidth: 700, borderCollapse: 'collapse' }}>
                     <thead>
                       <tr style={{ backgroundColor: isDarkMode ? '#495057' : '#f8f9fa' }}>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', width: 30, fontSize: 12 }}>
@@ -459,14 +457,14 @@ const UsersTab: React.FC = () => {
                           />
                         </th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', width: 45, fontSize: 12 }}>No.</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 100 }}>名前</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000', fontSize: 12 }}>メール</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 140 }}>名前</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 160 }}>メール</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 80 }}>雇用形態</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 110 }}>役職</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 50 }}>件数</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 85 }}>登録日</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 55 }}>状態</th>
-                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'left', color: isDarkMode ? '#fff' : '#000', fontSize: 12 }}>操作</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 90 }}>役職</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 120 }}>グループ</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 85 }}>最終ログイン</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 55 }}>状態</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 140 }}>操作</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -556,8 +554,18 @@ const UsersTab: React.FC = () => {
                                 {masterOptions.role_title.map(v => <option key={v}>{v}</option>)}
                               </select>
                             </td>
-                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12 }}>{submissions.filter(s => s.profiles?.email === user.email).length}</td>
-                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', color: isDarkMode ? '#adb5bd' : '#666', fontSize: 11, whiteSpace: 'nowrap' }}>{regDateStr}</td>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 11 }}>
+                              {user.group_names && user.group_names.length > 0 ? user.group_names.join('・') : '-'}
+                            </td>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', color: isDarkMode ? '#adb5bd' : '#666', fontSize: 11, whiteSpace: 'nowrap' }}>
+                              {user.last_sign_in_at
+                                ? (() => {
+                                    const d = new Date(new Date(user.last_sign_in_at).getTime() + 9*60*60*1000);
+                                    return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
+                                  })()
+                                : <span style={{ color: '#adb5bd' }}>未ログイン</span>
+                              }
+                            </td>
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px' }}>
                               {user.is_active === false ? (
                                 <span style={{ color: '#dc3545', fontWeight: 'bold', fontSize: '11px' }}>退職済</span>
@@ -569,7 +577,7 @@ const UsersTab: React.FC = () => {
                               <div style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
                                 <button style={{ padding: '3px 6px', background: '#17a2b8', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }} onClick={() => setActiveTab('reports')}>履歴</button>
                                 {user.email && user.email !== 'fivem.kyoto@gmail.com' && (
-                                  <button style={{ padding: '3px 6px', background: '#6610f2', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }} onClick={() => handleSingleEmail(user)}>📧</button>
+                                  <button style={{ padding: '3px 6px', background: '#6610f2', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }} onClick={() => handleSingleEmail(user)}>メール</button>
                                 )}
                                 {user.email !== 'fivem.kyoto@gmail.com' && (
                                   <>

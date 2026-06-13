@@ -48,6 +48,7 @@ export const useAuth = (): UseAuthReturn => {
         const isAdmin = user?.app_metadata?.role === 'admin';
         setCanLeave(alwaysShow || isAdmin);
         setLeaveRequestEnabled(!!data.leave_request_enabled);
+        supabase.from('profiles').update({ last_sign_in_at: new Date().toISOString() }).eq('id', user.id);
         setLoading(false);
         return;
       }
