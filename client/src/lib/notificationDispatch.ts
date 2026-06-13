@@ -49,6 +49,16 @@ export async function getUserEmail(userId: string): Promise<string | null> {
   return (data as { email?: string } | null)?.email ?? null;
 }
 
+// recipient フィールドを解析して宛先キーの配列を返す（新旧両形式対応）
+function parseRecipientKeys(recipient: string | null): string[] {
+  if (!recipient) return ['applicant'];
+  try {
+    const p = JSON.parse(recipient);
+    if (Array.isArray(p.recipients)) return p.recipients;
+  } catch { /* 旧形式: plain string */ }
+  return [recipient];
+}
+
 // 宛先キー（'applicant'/'leader'/'manager'/'approver'）をもとにメールアドレスを解決して送信する
 export async function dispatchEmail(
   eventKey: string,
@@ -58,17 +68,14 @@ export async function dispatchEmail(
   const settings = await getSettings();
   const s = settings.find(s => s.event_key === eventKey && s.channel === 'email');
   if (!s?.enabled || !s.template) return;
-  const key = (s.recipient ?? 'applicant') as keyof typeof emails;
-  const to = emails[key];
-  if (!to) return;
+  const keys = parseRecipientKeys(s.recipient);
   const text = applyTemplate(s.template, vars);
   const subject = s.subject ? applyTemplate(s.subject, vars) : eventKey;
-  console.log('[dispatchEmail] 送信開始', { eventKey, to, subject });
-  const { error } = await supabase.functions.invoke('send-email', { body: { to, subject, text } });
-  if (error) {
-    console.error('[dispatchEmail] 送信失敗', error);
-  } else {
-    console.log('[dispatchEmail] 送信成功', { to });
+  for (const key of keys) {
+    const to = emails[key as keyof typeof emails];
+    if (!to) continue;
+    const { error } = await supabase.functions.invoke('send-email', { body: { to, subject, text } });
+    if (error) console.error('[dispatchEmail] 送信失敗', { key, error });
   }
 }
 
@@ -82,12 +89,16 @@ export async function dispatchSiteNotification(
   const settings = await getSettings();
   const s = settings.find(s => s.event_key === eventKey && s.channel === 'site');
   if (!s?.enabled || !s.template) return;
-  const key = (s.recipient ?? 'applicant') as keyof typeof userIds;
-  const userId = userIds[key];
-  if (!userId) return;
+  const keys = parseRecipientKeys(s.recipient);
   const message = applyTemplate(s.template, vars);
   const subject = s.subject ? applyTemplate(s.subject, vars) : undefined;
-  await insertFn(userId, message, subject);
+  const seen = new Set<string>();
+  for (const key of keys) {
+    const userId = userIds[key as keyof typeof userIds];
+    if (!userId || seen.has(userId)) continue;
+    seen.add(userId);
+    await insertFn(userId, message, subject);
+  }
 }
 
 export async function getNotificationTemplate(
