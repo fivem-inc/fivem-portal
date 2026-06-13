@@ -13,6 +13,14 @@ interface NotificationSetting {
   template: string | null;
 }
 
+interface EmailTemplate {
+  id: string;
+  name: string;
+  subject: string | null;
+  template: string | null;
+  created_at: string;
+}
+
 type ChannelType = 'slack' | 'email' | 'site';
 
 const EVENT_GROUPS = [
@@ -140,6 +148,44 @@ const SLACK_CHANNEL_OPTIONS_BY_EVENT: Record<string, { value: string; label: str
   'trip:report_end':        TRIP_SLACK_CHANNELS,
 };
 
+// テンプレートライブラリで使える全変数（カテゴリ別）
+const TEMPLATE_VAR_GROUPS: { label: string; color: string; vars: { v: string; desc: string }[] }[] = [
+  {
+    label: '共通', color: '#546e7a',
+    vars: [
+      { v: '{{申請者名}}', desc: '申請した人の名前' },
+    ],
+  },
+  {
+    label: '休暇申請', color: '#2E7D32',
+    vars: [
+      { v: '{{承認者名}}',    desc: '承認する人の名前' },
+      { v: '{{承認者役職}}',  desc: '承認する人の役職（リーダー等）' },
+      { v: '{{次承認者名}}',  desc: '次のステップの承認者名' },
+      { v: '{{休暇種別}}',    desc: '有給・特別休暇・慶弔休暇など' },
+      { v: '{{差し戻し理由}}', desc: '差し戻し時のコメント' },
+      { v: '{{取り消し理由}}', desc: '申請を取り消した理由' },
+    ],
+  },
+  {
+    label: '交通費申請', color: '#1565C0',
+    vars: [
+      { v: '{{申請日}}',   desc: '申請が行われた日付' },
+      { v: '{{申請内容}}', desc: '交通費の経路・内容' },
+      { v: '{{項目数}}',   desc: '経路の件数（例：3件分）' },
+    ],
+  },
+  {
+    label: '時間調整', color: '#3949AB',
+    vars: [
+      { v: '{{登録者名}}', desc: '登録した人の名前' },
+      { v: '{{種別}}',     desc: '調整遅出 または 調整早退' },
+      { v: '{{日付}}',     desc: '対象日（例：6/13）' },
+      { v: '{{理由}}',     desc: '登録理由' },
+    ],
+  },
+];
+
 const RECIPIENT_OPTIONS: Record<string, { value: string; label: string }[]> = {
   slack: [],
   email: [
@@ -165,6 +211,23 @@ const NotificationsTab: React.FC = () => {
   const [saving, setSaving] = useState<string | null>(null);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
 
+  // テンプレートライブラリ
+  const [templates, setTemplates] = useState<EmailTemplate[]>([]);
+  const [showLibrary, setShowLibrary] = useState(false);
+  const [librarySelectFor, setLibrarySelectFor] = useState<{ eventKey: string; channel: ChannelType } | null>(null);
+  const [editingTpl, setEditingTpl] = useState<EmailTemplate | null>(null);
+  const [newTpl, setNewTpl] = useState<{ name: string; subject: string; template: string } | null>(null);
+  const [tplSaving, setTplSaving] = useState(false);
+  const [showVarPanel, setShowVarPanel] = useState(false);
+
+  // プレビュー
+  const [previewFor, setPreviewFor] = useState<{ eventKey: string; channel: ChannelType } | null>(null);
+  const [previewVars, setPreviewVars] = useState<Record<string, string>>({});
+
+  // テンプレートとして保存
+  const [saveAsTplFor, setSaveAsTplFor] = useState<{ eventKey: string; channel: ChannelType } | null>(null);
+  const [saveAsTplName, setSaveAsTplName] = useState('');
+
   const bg = isDarkMode ? '#343a40' : 'white';
   const text = isDarkMode ? '#fff' : '#333';
   const subText = isDarkMode ? '#adb5bd' : '#666';
@@ -179,7 +242,12 @@ const NotificationsTab: React.FC = () => {
     setLoading(false);
   }, []);
 
-  useEffect(() => { fetchSettings(); }, [fetchSettings]);
+  const fetchTemplates = useCallback(async () => {
+    const { data } = await supabase.from('email_templates').select('*').order('created_at', { ascending: false });
+    if (data) setTemplates(data);
+  }, []);
+
+  useEffect(() => { fetchSettings(); fetchTemplates(); }, [fetchSettings, fetchTemplates]);
 
   const getSetting = (eventKey: string, channel: ChannelType): NotificationSetting | undefined =>
     settings.find(s => s.event_key === eventKey && s.channel === channel);
@@ -244,10 +312,266 @@ const NotificationsTab: React.FC = () => {
     return { fontSize: 11, padding: '2px 8px', borderRadius: 20, ...colors[channel] };
   };
 
+  // 現在の設定をテンプレートとして保存
+  const handleSaveAsTpl = async () => {
+    if (!saveAsTplFor || !saveAsTplName.trim()) return;
+    const s = getSetting(saveAsTplFor.eventKey, saveAsTplFor.channel);
+    if (!s) return;
+    setTplSaving(true);
+    await supabase.from('email_templates').insert({ name: saveAsTplName.trim(), subject: s.subject, template: s.template });
+    await fetchTemplates();
+    setSaveAsTplFor(null);
+    setSaveAsTplName('');
+    setTplSaving(false);
+  };
+
+  // テンプレート保存
+  const handleSaveTpl = async (tpl: { name: string; subject: string; template: string }) => {
+    if (!tpl.name.trim()) return;
+    setTplSaving(true);
+    await supabase.from('email_templates').insert({ name: tpl.name, subject: tpl.subject, template: tpl.template });
+    await fetchTemplates();
+    setNewTpl(null);
+    setTplSaving(false);
+  };
+
+  const handleUpdateTpl = async () => {
+    if (!editingTpl) return;
+    setTplSaving(true);
+    await supabase.from('email_templates').update({ name: editingTpl.name, subject: editingTpl.subject, template: editingTpl.template }).eq('id', editingTpl.id);
+    await fetchTemplates();
+    setEditingTpl(null);
+    setTplSaving(false);
+  };
+
+  const handleDeleteTpl = async (id: string) => {
+    if (!confirm('このテンプレートを削除しますか？')) return;
+    await supabase.from('email_templates').delete().eq('id', id);
+    await fetchTemplates();
+  };
+
+  // {{変数}} を抽出
+  const extractVars = (text: string): string[] => {
+    const matches = text.match(/\{\{(.+?)\}\}/g) ?? [];
+    return [...new Set(matches.map(m => m.slice(2, -2).trim()))];
+  };
+
+  // テンプレートに変数を適用
+  const applyVars = (text: string, vars: Record<string, string>): string =>
+    text.replace(/\{\{(.+?)\}\}/g, (_, k) => vars[k.trim()] || `{{${k.trim()}}}`);
+
+  // プレビュー用の変数一覧
+  const previewAllVars = previewFor
+    ? extractVars((getSetting(previewFor.eventKey, previewFor.channel)?.subject ?? '') + ' ' + (getSetting(previewFor.eventKey, previewFor.channel)?.template ?? ''))
+    : [];
+
+  // テンプレートライブラリ モーダル（コンポーネント関数にしない → 再マウント防止）
+  const libraryModal = showLibrary ? (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+      onClick={e => { if (e.target === e.currentTarget) { setShowLibrary(false); setLibrarySelectFor(null); setNewTpl(null); setEditingTpl(null); } }}>
+      <div style={{ background: bg, borderRadius: 12, padding: 24, width: '100%', maxWidth: 560, maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <span style={{ fontSize: 15, fontWeight: 600, color: text }}>
+            📋 テンプレートライブラリ{librarySelectFor ? '　（選択して適用）' : ''}
+          </span>
+          <button onClick={() => { setShowLibrary(false); setLibrarySelectFor(null); setNewTpl(null); setEditingTpl(null); }}
+            style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: subText }}>✕</button>
+        </div>
+
+        {/* 新規追加フォーム */}
+        {newTpl ? (
+          <div style={{ background: sectionBg, borderRadius: 8, padding: 14, marginBottom: 12, border: `0.5px solid ${borderColor}` }}>
+            <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>テンプレート名</div>
+            <input value={newTpl.name} onChange={e => setNewTpl({ ...newTpl, name: e.target.value })}
+              placeholder="例：承認依頼 基本文"
+              style={{ width: '100%', fontSize: 13, padding: '6px 10px', border: `0.5px solid ${borderColor}`, borderRadius: 8, background: inputBg, color: text, boxSizing: 'border-box', marginBottom: 10 }} />
+            <div style={{ fontSize: 12, color: subText, marginBottom: 4 }}>件名</div>
+            <input value={newTpl.subject} onChange={e => setNewTpl({ ...newTpl, subject: e.target.value })}
+              placeholder="例：【休暇申請】承認をお願いします"
+              style={{ width: '100%', fontSize: 13, padding: '6px 10px', border: `0.5px solid ${borderColor}`, borderRadius: 8, background: inputBg, color: text, boxSizing: 'border-box', marginBottom: 6 }} />
+            <div style={{ fontSize: 12, color: subText, marginBottom: 4 }}>本文</div>
+            <textarea value={newTpl.template} onChange={e => setNewTpl({ ...newTpl, template: e.target.value })}
+              rows={5} placeholder="{{申請者名}} さんから申請が届いています。"
+              style={{ width: '100%', fontSize: 12, padding: '6px 10px', border: `0.5px solid ${borderColor}`, borderRadius: 8, background: inputBg, color: text, boxSizing: 'border-box', resize: 'vertical', fontFamily: 'monospace', marginBottom: 8 }} />
+            {/* 変数パネル */}
+            <button onClick={() => setShowVarPanel(p => !p)}
+              style={{ fontSize: 11, padding: '4px 12px', border: `0.5px solid ${borderColor}`, borderRadius: 8, background: 'none', color: subText, cursor: 'pointer', marginBottom: showVarPanel ? 6 : 10 }}>
+              📝 使える変数一覧 {showVarPanel ? '▲' : '▼'}
+            </button>
+            {showVarPanel && (
+              <div style={{ border: `0.5px solid ${borderColor}`, borderRadius: 8, padding: 10, marginBottom: 10, background: isDarkMode ? '#2d3136' : '#fafafa' }}>
+                {TEMPLATE_VAR_GROUPS.map(group => (
+                  <div key={group.label} style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: group.color, marginBottom: 5, paddingBottom: 3, borderBottom: `1px solid ${borderColor}` }}>
+                      {group.label}
+                    </div>
+                    {group.vars.map(({ v, desc }) => (
+                      <div key={v} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5, flexWrap: 'wrap' }}>
+                        <code style={{ fontSize: 11, background: '#FFF8E1', color: '#F57F17', border: '0.5px solid #FFE082', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap' }}>{v}</code>
+                        <span style={{ fontSize: 11, color: subText, flex: 1, minWidth: 100 }}>{desc}</span>
+                        <button onClick={() => setNewTpl({ ...newTpl, subject: newTpl.subject + v })}
+                          style={{ fontSize: 10, padding: '2px 8px', border: `0.5px solid ${borderColor}`, borderRadius: 6, background: 'none', color: text, cursor: 'pointer', whiteSpace: 'nowrap' }}>件名へ</button>
+                        <button onClick={() => setNewTpl({ ...newTpl, template: newTpl.template + v })}
+                          style={{ fontSize: 10, padding: '2px 8px', border: `0.5px solid ${borderColor}`, borderRadius: 6, background: 'none', color: text, cursor: 'pointer', whiteSpace: 'nowrap' }}>本文へ</button>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setNewTpl(null)} style={{ fontSize: 12, padding: '5px 14px', border: `0.5px solid ${borderColor}`, borderRadius: 8, background: 'none', color: subText, cursor: 'pointer' }}>キャンセル</button>
+              <button onClick={() => handleSaveTpl(newTpl)} disabled={tplSaving}
+                style={{ fontSize: 12, padding: '5px 14px', border: 'none', borderRadius: 8, background: '#0277BD', color: 'white', cursor: 'pointer', opacity: tplSaving ? 0.6 : 1 }}>
+                {tplSaving ? '保存中...' : '保存'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button onClick={() => setNewTpl({ name: '', subject: '', template: '' })}
+            style={{ fontSize: 12, padding: '6px 14px', border: `0.5px solid #0277BD`, borderRadius: 8, background: 'none', color: '#0277BD', cursor: 'pointer', marginBottom: 12 }}>
+            ＋ 新規テンプレートを追加
+          </button>
+        )}
+
+        {/* テンプレート一覧 */}
+        {templates.length === 0 && !newTpl && (
+          <div style={{ color: subText, fontSize: 13, textAlign: 'center', padding: 24 }}>テンプレートがありません</div>
+        )}
+        {templates.map(tpl => (
+          <div key={tpl.id} style={{ border: `0.5px solid ${borderColor}`, borderRadius: 8, padding: 12, marginBottom: 8, background: sectionBg }}>
+            {editingTpl?.id === tpl.id ? (
+              <>
+                <input value={editingTpl.name} onChange={e => setEditingTpl({ ...editingTpl, name: e.target.value })}
+                  style={{ width: '100%', fontSize: 13, padding: '5px 8px', border: `0.5px solid ${borderColor}`, borderRadius: 8, background: inputBg, color: text, boxSizing: 'border-box', marginBottom: 8, fontWeight: 600 }} />
+                <input value={editingTpl.subject ?? ''} onChange={e => setEditingTpl({ ...editingTpl, subject: e.target.value })}
+                  placeholder="件名"
+                  style={{ width: '100%', fontSize: 12, padding: '5px 8px', border: `0.5px solid ${borderColor}`, borderRadius: 8, background: inputBg, color: text, boxSizing: 'border-box', marginBottom: 4 }} />
+                <textarea value={editingTpl.template ?? ''} onChange={e => setEditingTpl({ ...editingTpl, template: e.target.value })}
+                  rows={4}
+                  style={{ width: '100%', fontSize: 12, padding: '5px 8px', border: `0.5px solid ${borderColor}`, borderRadius: 8, background: inputBg, color: text, boxSizing: 'border-box', resize: 'vertical', fontFamily: 'monospace', marginBottom: 8 }} />
+                <button onClick={() => setShowVarPanel(p => !p)}
+                  style={{ fontSize: 11, padding: '4px 12px', border: `0.5px solid ${borderColor}`, borderRadius: 8, background: 'none', color: subText, cursor: 'pointer', marginBottom: showVarPanel ? 6 : 8 }}>
+                  📝 使える変数一覧 {showVarPanel ? '▲' : '▼'}
+                </button>
+                {showVarPanel && (
+                  <div style={{ border: `0.5px solid ${borderColor}`, borderRadius: 8, padding: 10, marginBottom: 8, background: isDarkMode ? '#2d3136' : '#fafafa' }}>
+                    {TEMPLATE_VAR_GROUPS.map(group => (
+                      <div key={group.label} style={{ marginBottom: 10 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: group.color, marginBottom: 5, paddingBottom: 3, borderBottom: `1px solid ${borderColor}` }}>
+                          {group.label}
+                        </div>
+                        {group.vars.map(({ v, desc }) => (
+                          <div key={v} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5, flexWrap: 'wrap' }}>
+                            <code style={{ fontSize: 11, background: '#FFF8E1', color: '#F57F17', border: '0.5px solid #FFE082', borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap' }}>{v}</code>
+                            <span style={{ fontSize: 11, color: subText, flex: 1, minWidth: 100 }}>{desc}</span>
+                            <button onClick={() => setEditingTpl({ ...editingTpl, subject: (editingTpl.subject ?? '') + v })}
+                              style={{ fontSize: 10, padding: '2px 8px', border: `0.5px solid ${borderColor}`, borderRadius: 6, background: 'none', color: text, cursor: 'pointer', whiteSpace: 'nowrap' }}>件名へ</button>
+                            <button onClick={() => setEditingTpl({ ...editingTpl, template: (editingTpl.template ?? '') + v })}
+                              style={{ fontSize: 10, padding: '2px 8px', border: `0.5px solid ${borderColor}`, borderRadius: 6, background: 'none', color: text, cursor: 'pointer', whiteSpace: 'nowrap' }}>本文へ</button>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <button onClick={() => setEditingTpl(null)} style={{ fontSize: 11, padding: '4px 12px', border: `0.5px solid ${borderColor}`, borderRadius: 8, background: 'none', color: subText, cursor: 'pointer' }}>キャンセル</button>
+                  <button onClick={handleUpdateTpl} disabled={tplSaving}
+                    style={{ fontSize: 11, padding: '4px 12px', border: 'none', borderRadius: 8, background: '#0277BD', color: 'white', cursor: 'pointer' }}>保存</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontWeight: 600, fontSize: 13, color: text, marginBottom: 4 }}>{tpl.name}</div>
+                {tpl.subject && <div style={{ fontSize: 11, color: subText, marginBottom: 2 }}>件名: {tpl.subject}</div>}
+                {tpl.template && <div style={{ fontSize: 11, color: subText, whiteSpace: 'pre-wrap', maxHeight: 60, overflow: 'hidden', opacity: 0.8 }}>{tpl.template}</div>}
+                <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                  {librarySelectFor && (
+                    <button onClick={() => {
+                      updateLocal(librarySelectFor.eventKey, librarySelectFor.channel, { subject: tpl.subject, template: tpl.template });
+                      setShowLibrary(false); setLibrarySelectFor(null);
+                    }}
+                      style={{ fontSize: 11, padding: '4px 12px', border: 'none', borderRadius: 8, background: '#28a745', color: 'white', cursor: 'pointer' }}>
+                      この内容を適用
+                    </button>
+                  )}
+                  <button onClick={() => setEditingTpl(tpl)}
+                    style={{ fontSize: 11, padding: '4px 12px', border: `0.5px solid ${borderColor}`, borderRadius: 8, background: 'none', color: text, cursor: 'pointer' }}>編集</button>
+                  <button onClick={() => handleDeleteTpl(tpl.id)}
+                    style={{ fontSize: 11, padding: '4px 12px', border: `0.5px solid #dc3545`, borderRadius: 8, background: 'none', color: '#dc3545', cursor: 'pointer' }}>削除</button>
+                </div>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  ) : null;
+
+  // プレビュー モーダル（JSX変数）
+  const previewSetting = previewFor ? getSetting(previewFor.eventKey, previewFor.channel) : null;
+  const renderedSubject = previewSetting ? applyVars(previewSetting.subject ?? '', previewVars) : '';
+  const renderedBody = previewSetting ? applyVars(previewSetting.template ?? '', previewVars) : '';
+  const previewModal = previewFor && previewSetting ? (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+      onClick={e => { if (e.target === e.currentTarget) { setPreviewFor(null); setPreviewVars({}); } }}>
+      <div style={{ background: bg, borderRadius: 12, padding: 24, width: '100%', maxWidth: 520, maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <span style={{ fontSize: 15, fontWeight: 600, color: text }}>👁 プレビュー</span>
+          <button onClick={() => { setPreviewFor(null); setPreviewVars({}); }}
+            style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: subText }}>✕</button>
+        </div>
+
+        {previewAllVars.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 12, color: subText, marginBottom: 8 }}>変数にサンプル値を入力（省略可）</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {previewAllVars.map(v => (
+                <div key={v} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 12, color: '#F57F17', background: '#FFF8E1', border: '0.5px solid #FFE082', borderRadius: 20, padding: '2px 8px', whiteSpace: 'nowrap' }}>{`{{${v}}}`}</span>
+                  <input
+                    value={previewVars[v] ?? ''}
+                    onChange={e => setPreviewVars(prev => ({ ...prev, [v]: e.target.value }))}
+                    placeholder={`例：${v}`}
+                    style={{ flex: 1, fontSize: 12, padding: '4px 8px', border: `0.5px solid ${borderColor}`, borderRadius: 8, background: inputBg, color: text }}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div style={{ border: `0.5px solid ${borderColor}`, borderRadius: 8, overflow: 'hidden' }}>
+          <div style={{ background: sectionBg, padding: '8px 14px', borderBottom: `0.5px solid ${borderColor}` }}>
+            <span style={{ fontSize: 11, color: subText }}>件名　</span>
+            <span style={{ fontSize: 13, color: text, fontWeight: 500 }}>{renderedSubject || '（件名なし）'}</span>
+          </div>
+          <div style={{ padding: 14 }}>
+            <span style={{ fontSize: 11, color: subText, display: 'block', marginBottom: 6 }}>本文</span>
+            <pre style={{ fontSize: 13, color: text, whiteSpace: 'pre-wrap', fontFamily: 'inherit', margin: 0, lineHeight: 1.7 }}>
+              {renderedBody || '（本文なし）'}
+            </pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   if (loading) return <div style={{ padding: 32, color: subText, textAlign: 'center' }}>読み込み中...</div>;
 
   return (
     <div style={{ maxWidth: 720, margin: '0 auto', padding: '16px 0' }}>
+      {libraryModal}
+      {previewModal}
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+        <button onClick={() => { setShowLibrary(true); setLibrarySelectFor(null); }}
+          style={{ fontSize: 12, padding: '6px 16px', border: `0.5px solid #0277BD`, borderRadius: 8, background: 'none', color: '#0277BD', cursor: 'pointer' }}>
+          📋 テンプレートライブラリ
+        </button>
+      </div>
+
       {EVENT_GROUPS.map(group => (
         <div key={group.label} style={{ marginBottom: 24 }}>
           <div style={{
@@ -509,6 +833,38 @@ const NotificationsTab: React.FC = () => {
                                 <>
                                   {channel === 'email' && (
                                     <>
+                                      <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                                        <button onClick={() => { setShowLibrary(true); setLibrarySelectFor({ eventKey: event.key, channel }); }}
+                                          style={{ fontSize: 11, padding: '4px 12px', border: `0.5px solid ${borderColor}`, borderRadius: 8, background: 'none', color: text, cursor: 'pointer' }}>
+                                          📋 テンプレートから選択
+                                        </button>
+                                        <button onClick={() => { setPreviewFor({ eventKey: event.key, channel }); setPreviewVars({}); }}
+                                          style={{ fontSize: 11, padding: '4px 12px', border: `0.5px solid ${borderColor}`, borderRadius: 8, background: 'none', color: text, cursor: 'pointer' }}>
+                                          👁 プレビュー
+                                        </button>
+                                        <button onClick={() => { setSaveAsTplFor({ eventKey: event.key, channel }); setSaveAsTplName(''); }}
+                                          style={{ fontSize: 11, padding: '4px 12px', border: `0.5px solid ${borderColor}`, borderRadius: 8, background: 'none', color: text, cursor: 'pointer' }}>
+                                          💾 テンプレートとして保存
+                                        </button>
+                                      </div>
+                                      {saveAsTplFor?.eventKey === event.key && saveAsTplFor?.channel === channel && (
+                                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, padding: '8px 10px', background: sectionBg, borderRadius: 8, border: `0.5px solid ${borderColor}` }}>
+                                          <input
+                                            value={saveAsTplName}
+                                            onChange={e => setSaveAsTplName(e.target.value)}
+                                            placeholder="テンプレート名を入力（例：承認依頼 基本文）"
+                                            autoFocus
+                                            onKeyDown={e => { if (e.key === 'Enter') handleSaveAsTpl(); if (e.key === 'Escape') setSaveAsTplFor(null); }}
+                                            style={{ flex: 1, fontSize: 12, padding: '5px 8px', border: `0.5px solid ${borderColor}`, borderRadius: 8, background: inputBg, color: text }}
+                                          />
+                                          <button onClick={handleSaveAsTpl} disabled={tplSaving || !saveAsTplName.trim()}
+                                            style={{ fontSize: 11, padding: '5px 12px', border: 'none', borderRadius: 8, background: saveAsTplName.trim() ? '#0277BD' : '#ccc', color: 'white', cursor: saveAsTplName.trim() ? 'pointer' : 'default' }}>
+                                            {tplSaving ? '保存中...' : '保存'}
+                                          </button>
+                                          <button onClick={() => setSaveAsTplFor(null)}
+                                            style={{ fontSize: 11, padding: '5px 10px', border: `0.5px solid ${borderColor}`, borderRadius: 8, background: 'none', color: subText, cursor: 'pointer' }}>✕</button>
+                                        </div>
+                                      )}
                                       <div style={{ fontSize: 12, color: subText, marginBottom: 4 }}>件名</div>
                                       <input
                                         value={s.subject ?? ''}
