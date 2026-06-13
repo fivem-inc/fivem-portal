@@ -975,12 +975,39 @@ npx supabase functions deploy time-adjustment-notify --project-ref xaeynaxctiiyq
 - 通知設定画面（NotificationsTab）に「🕐 時間調整」グループ追加（Slack複数チャンネル・メール・サイト通知・役職＋グループフィルター・テンプレート編集）
 - time-adjustment-notify Edge Function 実装・デプロイ済み
 - 全バナー・モーダルのデザイン統一（下記参照）
+- 通知設定 複数宛先対応（下記参照）
 
-#### 優先①: 通知バナー・モーダルデザインのローカル確認
-- 変更した4ファイルの動作確認（登録/削除/報告バナー・CalendarPageモーダル）
+#### 優先①: メールテンプレート管理（Phase 2）
+- email_templates テーブル作成
+- 管理画面からテンプレートを編集できるUI
 
 #### 優先②: その他
 - UI/UX改善（コードレビュー結果・高優先項目）
+
+---
+
+## ✅ 2026-06-13 通知設定 複数宛先対応 完了
+
+### 変更内容
+
+#### `client/src/lib/notificationDispatch.ts`
+- `dispatchEmail`: 旧・1人 → 新・複数人に送信（JSON `{"recipients":["applicant","approver"]}` を解析してループ送信）
+- `dispatchSiteNotification`: 同様に複数ユーザーへ通知、重複排除（`seen` セット）
+- `parseRecipientKeys()`: 旧形式（plain string）・新形式（JSON配列）の両方に対応
+
+#### `client/src/components/admin/NotificationsTab.tsx`
+- メール・サイト通知の「宛先」: ドロップダウン(1択) → **チェックボックス複数選択**に変更
+  - 選択肢: 申請者本人 / 申請先（承認者）/ リーダー / マネージャー
+  - DBへの保存形式: `{"recipients":["applicant","approver"]}` の JSON
+- Slack「送信先チャンネル」（差し戻し時・取り消し時など）: ドロップダウン(1択) → **チェックボックス複数選択**に変更
+  - DBへの保存形式: `{"channels":["leader","manager"]}` の JSON
+- `parseSlackChannels()`: 旧形式（plain string）対応追加
+- `parseEmailSiteRecipients()`: 新ヘルパー追加
+- `RECIPIENT_OPTIONS.site` に `申請先（承認者）` 追加
+
+#### 変更なし
+- 時間調整（役職チェックボックス + グループ絞り込み）→ 元から複数選択対応
+- `leave:new_request` Slack → 申請先役職で自動振り分け（変更不要）
 
 ---
 

@@ -102,12 +102,21 @@ const parseRoleRecipient = (recipient: string | null): { roles: string[]; groupF
 };
 
 const parseSlackChannels = (recipient: string | null): string[] => {
+  if (!recipient) return [];
   try {
-    const p = JSON.parse(recipient ?? '{}');
-    return Array.isArray(p.channels) ? p.channels : [];
-  } catch {
-    return [];
-  }
+    const p = JSON.parse(recipient);
+    if (Array.isArray(p.channels)) return p.channels;
+  } catch { /* 旧形式: plain string */ }
+  return [recipient];
+};
+
+const parseEmailSiteRecipients = (recipient: string | null): string[] => {
+  if (!recipient) return ['applicant'];
+  try {
+    const p = JSON.parse(recipient);
+    if (Array.isArray(p.recipients)) return p.recipients;
+  } catch { /* 旧形式: plain string */ }
+  return [recipient];
 };
 
 const TRIP_SLACK_CHANNELS = [
@@ -141,6 +150,7 @@ const RECIPIENT_OPTIONS: Record<string, { value: string; label: string }[]> = {
   ],
   site: [
     { value: 'applicant', label: '申請者本人' },
+    { value: 'approver',  label: '申請先（承認者）' },
     { value: 'leader',    label: 'リーダー' },
     { value: 'manager',   label: 'マネージャー' },
   ],
@@ -443,23 +453,56 @@ const NotificationsTab: React.FC = () => {
                                     </div>
                                   );
                                 })()
+                              ) : channel === 'slack' ? (
+                                // Slack: チャンネルチェックボックス（複数選択）
+                                (() => {
+                                  const slackOptions = SLACK_CHANNEL_OPTIONS_BY_EVENT[event.key] ?? [];
+                                  const selectedChannels = parseSlackChannels(s.recipient);
+                                  return (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
+                                      {slackOptions.map(opt => (
+                                        <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', color: text }}>
+                                          <input
+                                            type="checkbox"
+                                            checked={selectedChannels.includes(opt.value)}
+                                            onChange={e => {
+                                              const newCh = e.target.checked
+                                                ? [...selectedChannels, opt.value]
+                                                : selectedChannels.filter(c => c !== opt.value);
+                                              updateLocal(event.key, channel, { recipient: JSON.stringify({ channels: newCh }) });
+                                            }}
+                                          />
+                                          {opt.label}
+                                        </label>
+                                      ))}
+                                    </div>
+                                  );
+                                })()
                               ) : (
-                                <select
-                                  value={s.recipient ?? ''}
-                                  onChange={e => updateLocal(event.key, channel, { recipient: e.target.value })}
-                                  style={{
-                                    fontSize: 12, padding: '4px 8px', width: '100%', marginBottom: 10,
-                                    border: `0.5px solid ${borderColor}`, borderRadius: 8,
-                                    background: inputBg, color: text, boxSizing: 'border-box',
-                                  }}
-                                >
-                                  {(channel === 'slack'
-                                    ? (SLACK_CHANNEL_OPTIONS_BY_EVENT[event.key] ?? [])
-                                    : (RECIPIENT_OPTIONS[channel] ?? [])
-                                  ).map(opt => (
-                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                  ))}
-                                </select>
+                                // メール・サイト通知: 宛先チェックボックス（複数選択）
+                                (() => {
+                                  const recipientOptions = RECIPIENT_OPTIONS[channel] ?? [];
+                                  const selectedRecipients = parseEmailSiteRecipients(s.recipient);
+                                  return (
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
+                                      {recipientOptions.map(opt => (
+                                        <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', color: text }}>
+                                          <input
+                                            type="checkbox"
+                                            checked={selectedRecipients.includes(opt.value)}
+                                            onChange={e => {
+                                              const newRecs = e.target.checked
+                                                ? [...selectedRecipients, opt.value]
+                                                : selectedRecipients.filter(r => r !== opt.value);
+                                              updateLocal(event.key, channel, { recipient: JSON.stringify({ recipients: newRecs }) });
+                                            }}
+                                          />
+                                          {opt.label}
+                                        </label>
+                                      ))}
+                                    </div>
+                                  );
+                                })()
                               )}
 
                               {channel !== 'slack' && (
