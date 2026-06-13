@@ -3,6 +3,23 @@ import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import type { AuthUser } from '../types';
 
+const CalendarResultModal: React.FC<{ type: 'save' | 'delete'; onClose: () => void }> = ({ type, onClose }) => {
+  useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, [onClose]);
+  const isSave = type === 'save';
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: isSave ? '#f0fdf4' : '#fff5f5', border: `1.5px solid ${isSave ? '#b7e4cc' : '#f5b8bb'}`, borderRadius: 18, padding: '28px 24px', width: '100%', maxWidth: 300, textAlign: 'center', position: 'relative' }}>
+        <button onClick={onClose} style={{ position: 'absolute', top: 10, right: 10, background: isSave ? 'rgba(21,87,36,0.1)' : 'rgba(114,28,36,0.1)', border: 'none', color: isSave ? '#155724' : '#721c24', borderRadius: '50%', width: 26, height: 26, cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+        <div style={{ width: 64, height: 64, borderRadius: '50%', background: isSave ? '#d4edda' : '#f8d7da', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>
+          <span style={{ fontSize: 28, color: isSave ? '#28a745' : '#dc3545' }}>{isSave ? '✓' : '🗑'}</span>
+        </div>
+        <div style={{ fontSize: 16, fontWeight: 500, color: isSave ? '#155724' : '#721c24' }}>{isSave ? '登録しました' : '削除しました'}</div>
+        <div style={{ fontSize: 11, color: isSave ? '#3a7d52' : '#a03030', marginTop: 6, opacity: .7 }}>✕ または画面タップで閉じる</div>
+      </div>
+    </div>
+  );
+};
+
 interface Props {
   user?: AuthUser;
   roleTitle?: string;
@@ -912,7 +929,6 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
     setDeleteTarget(null);
     fetchAbsences();
     setAbsenceDeleted(true);
-    setTimeout(() => setAbsenceDeleted(false), 2500);
   };
 
   return (
@@ -1081,24 +1097,10 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
       )}
 
       {/* 欠勤削除完了バナー */}
-      {absenceDeleted && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-          <div style={{ background: '#fce8ed', borderRadius: 14, padding: 24, width: '100%', maxWidth: 360, textAlign: 'center', boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
-            <div style={{ fontSize: 48, marginBottom: 12 }}>🗑️</div>
-            <div style={{ fontSize: 22, fontWeight: 'bold', color: '#b04060' }}>削除しました</div>
-          </div>
-        </div>
-      )}
+      {absenceDeleted && <CalendarResultModal type="delete" onClose={() => setAbsenceDeleted(false)} />}
 
       {/* 欠勤登録完了バナー */}
-      {absenceSaved && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-          <div style={{ background: '#d4edda', border: '2px solid #28a745', borderRadius: 14, padding: 24, width: '100%', maxWidth: 360, textAlign: 'center', boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
-            <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
-            <div style={{ fontSize: 22, fontWeight: 'bold', color: '#155724' }}>登録しました</div>
-          </div>
-        </div>
-      )}
+      {absenceSaved && <CalendarResultModal type="save" onClose={() => setAbsenceSaved(false)} />}
 
       {/* 欠勤入力ボトムシート */}
       {absenceSheet && user && (
@@ -1107,7 +1109,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
           profiles={profiles}
           currentUserId={user.id}
           onClose={() => setAbsenceSheet(null)}
-          onSaving={() => { setAbsenceSaved(true); setTimeout(() => setAbsenceSaved(false), 2500); }}
+          onSaving={() => { setAbsenceSaved(true); }}
           onSaved={() => { fetchAbsences(); }}
         />
       )}

@@ -44,6 +44,14 @@ const EVENT_GROUPS = [
       { key: 'trip:report_end', label: '終了報告時' },
     ],
   },
+  {
+    label: '時間調整',
+    icon: '🕐',
+    headerBg: '#E8EAF6', headerBorder: '#3949AB', headerText: '#1A237E',
+    events: [
+      { key: 'time_adjustment:registered', label: '登録時' },
+    ],
+  },
 ];
 
 const CHANNEL_LABELS: Record<ChannelType, string> = {
@@ -59,13 +67,47 @@ const CHANNEL_ICONS: Record<ChannelType, string> = {
 };
 
 const VARIABLES_BY_EVENT: Record<string, string[]> = {
-  'leave:new_request':      ['{{承認者名}}', '{{承認者役職}}'],
-  'leave:leader_approved':  ['{{承認者名}}', '{{承認者役職}}', '{{次承認者名}}'],
-  'leave:manager_approved': ['{{承認者名}}', '{{休暇種別}}'],
-  'leave:rejected':         ['{{申請者名}}', '{{休暇種別}}', '{{差し戻し理由}}'],
-  'leave:cancelled':        ['{{申請者名}}', '{{休暇種別}}', '{{取り消し理由}}'],
-  'expense:new_request':    ['{{申請者名}}', '{{申請日}}', '{{申請内容}}', '{{項目数}}'],
-  'trip:report_end':        ['{{申請者名}}', '{{申請日}}'],
+  'leave:new_request':           ['{{承認者名}}', '{{承認者役職}}'],
+  'leave:leader_approved':       ['{{承認者名}}', '{{承認者役職}}', '{{次承認者名}}'],
+  'leave:manager_approved':      ['{{承認者名}}', '{{休暇種別}}'],
+  'leave:rejected':              ['{{申請者名}}', '{{休暇種別}}', '{{差し戻し理由}}'],
+  'leave:cancelled':             ['{{申請者名}}', '{{休暇種別}}', '{{取り消し理由}}'],
+  'expense:new_request':         ['{{申請者名}}', '{{申請日}}', '{{申請内容}}', '{{項目数}}'],
+  'trip:report_end':             ['{{申請者名}}', '{{申請日}}'],
+  'time_adjustment:registered':  ['{{登録者名}}', '{{種別}}', '{{日付}}', '{{理由}}'],
+};
+
+// 時間調整イベント用: Slackチャンネル選択肢
+const TIME_ADJ_SLACK_OPTIONS = [
+  { value: 'leader',     label: '#01リーダー回覧' },
+  { value: 'manager',    label: '#01マネージャー回覧' },
+  { value: 'accounting', label: '#07_3経理専用' },
+  { value: 'president',  label: '#03晃平先生へ' },
+];
+
+// 時間調整イベント用: 役職選択肢（メール・サイト通知）
+const TIME_ADJ_ROLE_OPTIONS = ['申請者本人', 'リーダー', 'マネージャー', '管理者', '社長'];
+
+// 時間調整用 recipient JSON パーサー
+const parseRoleRecipient = (recipient: string | null): { roles: string[]; groupFilter: string } => {
+  try {
+    const p = JSON.parse(recipient ?? '{}');
+    return {
+      roles: Array.isArray(p.roles) ? p.roles : ['リーダー', 'マネージャー'],
+      groupFilter: p.groupFilter ?? 'same',
+    };
+  } catch {
+    return { roles: ['リーダー', 'マネージャー'], groupFilter: 'same' };
+  }
+};
+
+const parseSlackChannels = (recipient: string | null): string[] => {
+  try {
+    const p = JSON.parse(recipient ?? '{}');
+    return Array.isArray(p.channels) ? p.channels : [];
+  } catch {
+    return [];
+  }
 };
 
 const TRIP_SLACK_CHANNELS = [
@@ -160,7 +202,6 @@ const NotificationsTab: React.FC = () => {
     });
     setSaving(null);
     setSavedMsg(eventKey);
-    setTimeout(() => setSavedMsg(null), 2000);
   };
 
   const insertVar = (eventKey: string, channel: ChannelType, field: 'template' | 'subject', variable: string) => {
@@ -263,6 +304,52 @@ const NotificationsTab: React.FC = () => {
                           </div>
                         );
                       }
+
+                      // 時間調整: Slackチャンネル複数選択UI
+                      if (event.key === 'time_adjustment:registered' && channel === 'slack') {
+                        const s = getSetting(event.key, channel);
+                        if (!s) return null;
+                        const selectedChannels = parseSlackChannels(s.recipient);
+                        return (
+                          <div key={channel} style={{ background: bg, border: `0.5px solid ${borderColor}`, borderRadius: 8, padding: '12px 14px', marginBottom: 8 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: s.enabled ? 12 : 0 }}>
+                              <span style={{ fontSize: 14 }}>💬</span>
+                              <span style={{ fontSize: 13, fontWeight: 500, color: text, flex: 1 }}>Slack</span>
+                              <div onClick={() => updateLocal(event.key, channel, { enabled: !s.enabled })} style={{
+                                width: 36, height: 20, borderRadius: 10, cursor: 'pointer',
+                                background: s.enabled ? '#29B6F6' : (isDarkMode ? '#6c757d' : '#ccc'),
+                                position: 'relative', flexShrink: 0, transition: 'background 0.15s',
+                              }}>
+                                <div style={{ width: 16, height: 16, borderRadius: '50%', background: 'white', position: 'absolute', top: 2, transition: 'left 0.15s', left: s.enabled ? 18 : 2 }} />
+                              </div>
+                            </div>
+                            {s.enabled && (
+                              <div style={{ borderTop: `0.5px solid ${borderColor}`, paddingTop: 10 }}>
+                                <div style={{ fontSize: 12, color: subText, marginBottom: 8 }}>送信先チャンネル（複数選択可）</div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                  {TIME_ADJ_SLACK_OPTIONS.map(opt => (
+                                    <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', color: text }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={selectedChannels.includes(opt.value)}
+                                        onChange={e => {
+                                          const newCh = e.target.checked
+                                            ? [...selectedChannels, opt.value]
+                                            : selectedChannels.filter(c => c !== opt.value);
+                                          updateLocal(event.key, channel, { recipient: JSON.stringify({ channels: newCh }) });
+                                        }}
+                                      />
+                                      {opt.label}
+                                    </label>
+                                  ))}
+                                </div>
+                                <div style={{ fontSize: 11, color: subText, marginTop: 10 }}>※ メッセージはシステムで自動生成されます</div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      }
+
                       const s = getSetting(event.key, channel);
                       if (!s) return null;
                       const vars = VARIABLES_BY_EVENT[event.key] ?? [];
@@ -308,6 +395,53 @@ const NotificationsTab: React.FC = () => {
                                   <div style={{ marginTop: 4 }}>申請先がマネージャーの場合 → <strong style={{ color: text }}>#01マネージャー回覧</strong></div>
                                   <div style={{ marginTop: 6, fontSize: 11, color: subText }}>※ 申請先の役職に応じて自動で振り分けられます</div>
                                 </div>
+                              ) : event.key === 'time_adjustment:registered' && channel !== 'slack' ? (
+                                // 時間調整: 役職チェックボックス + グループ絞り込み
+                                (() => {
+                                  const { roles, groupFilter } = parseRoleRecipient(s.recipient);
+                                  const updateRoleRecipient = (newRoles: string[], newFilter: string) =>
+                                    updateLocal(event.key, channel, { recipient: JSON.stringify({ roles: newRoles, groupFilter: newFilter }) });
+                                  return (
+                                    <div style={{ marginBottom: 12 }}>
+                                      <div style={{ fontSize: 12, color: subText, marginBottom: 8 }}>通知先の役職（複数選択可）</div>
+                                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
+                                        {TIME_ADJ_ROLE_OPTIONS.map(role => (
+                                          <label key={role} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', color: text }}>
+                                            <input
+                                              type="checkbox"
+                                              checked={roles.includes(role)}
+                                              onChange={e => {
+                                                const newRoles = e.target.checked
+                                                  ? [...roles, role]
+                                                  : roles.filter(r => r !== role);
+                                                updateRoleRecipient(newRoles, groupFilter);
+                                              }}
+                                            />
+                                            {role}
+                                          </label>
+                                        ))}
+                                      </div>
+                                      <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>グループ絞り込み</div>
+                                      <div style={{ display: 'flex', gap: 16 }}>
+                                        {[
+                                          { value: 'same', label: '同グループのみ' },
+                                          { value: 'all',  label: 'グループに関係なく全員' },
+                                        ].map(opt => (
+                                          <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', color: text }}>
+                                            <input
+                                              type="radio"
+                                              name={`groupFilter_${event.key}_${channel}`}
+                                              value={opt.value}
+                                              checked={groupFilter === opt.value}
+                                              onChange={() => updateRoleRecipient(roles, opt.value)}
+                                            />
+                                            {opt.label}
+                                          </label>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  );
+                                })()
                               ) : (
                                 <select
                                   value={s.recipient ?? ''}
@@ -386,9 +520,10 @@ const NotificationsTab: React.FC = () => {
 
                     <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
                       {isSaved && (
-                        <span style={{ fontSize: 12, color: '#2E7D32', marginRight: 12, alignSelf: 'center' }}>
-                          ✓ 保存しました
-                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginRight: 8, background: '#28a745', color: 'white', borderRadius: 8, padding: '4px 10px', fontSize: 12 }}>
+                          <span>✓ 保存しました</span>
+                          <button onClick={() => setSavedMsg(null)} style={{ background: 'rgba(255,255,255,0.25)', border: 'none', color: 'white', borderRadius: '50%', width: 18, height: 18, cursor: 'pointer', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+                        </div>
                       )}
                       <button
                         onClick={() => handleSaveEvent(event.key)}

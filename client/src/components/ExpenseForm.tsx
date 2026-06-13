@@ -1,4 +1,19 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+
+const BannerSuccess: React.FC<{ message: string; onClose: () => void }> = ({ message, onClose }) => {
+  useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, [onClose]);
+  return (
+    <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999 }}>
+      <div style={{ background: '#f0fdf4', border: '1.5px solid #b7e4cc', borderRadius: 18, padding: '24px 28px', minWidth: 200, textAlign: 'center', position: 'relative' }}>
+        <button onClick={onClose} style={{ position: 'absolute', top: 10, right: 10, background: 'rgba(21,87,36,0.1)', border: 'none', color: '#155724', borderRadius: '50%', width: 26, height: 26, cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+        <div style={{ width: 60, height: 60, borderRadius: '50%', background: '#d4edda', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>
+          <span style={{ fontSize: 26, color: '#28a745' }}>✓</span>
+        </div>
+        <div style={{ fontSize: 15, fontWeight: 500, color: '#155724' }}>{message}</div>
+      </div>
+    </div>
+  );
+};
 import type { Expense, AuthUser } from '../types';
 import { formatAmount, parseAmount } from '../utils';
 import { supabase } from '../lib/supabaseClient';
@@ -447,10 +462,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       setExpenses([]);
       onSubmissionComplete();
 
-      setTimeout(() => {
-        setIsSubmitting(false);
-        setSubmitSuccess(false);
-      }, 6000);
+      setIsSubmitting(false);
     }
   };
 
@@ -797,10 +809,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
         </button>
 
         {submitSuccess && (
-          <div style={{ background: '#d4edda', border: '1px solid #c3e6cb', borderRadius: 8, padding: '14px 16px', marginTop: 12, color: '#155724', fontSize: 15, display: 'flex', alignItems: 'center', gap: 8, fontWeight: 'bold' }}>
-            <span style={{ fontSize: 20 }}>✅</span>
-            <span>登録しました。承認をお待ちください。</span>
-          </div>
+          <BannerSuccess message="登録しました。承認をお待ちください。" onClose={() => setSubmitSuccess(false)} />
         )}
       </form>
 

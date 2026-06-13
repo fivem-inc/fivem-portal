@@ -1,4 +1,19 @@
 import React, { useState, useEffect } from 'react';
+
+const BannerSuccess: React.FC<{ message: string; onClose: () => void }> = ({ message, onClose }) => {
+  useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, [onClose]);
+  return (
+    <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999 }}>
+      <div style={{ background: '#f0fdf4', border: '1.5px solid #b7e4cc', borderRadius: 18, padding: '24px 28px', minWidth: 200, textAlign: 'center', position: 'relative' }}>
+        <button onClick={onClose} style={{ position: 'absolute', top: 10, right: 10, background: 'rgba(21,87,36,0.1)', border: 'none', color: '#155724', borderRadius: '50%', width: 26, height: 26, cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+        <div style={{ width: 60, height: 60, borderRadius: '50%', background: '#d4edda', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>
+          <span style={{ fontSize: 26, color: '#28a745' }}>✓</span>
+        </div>
+        <div style={{ fontSize: 15, fontWeight: 500, color: '#155724' }}>{message}</div>
+      </div>
+    </div>
+  );
+};
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { sendLeaveSlack } from '../lib/leaveSlack';
@@ -782,7 +797,6 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             setAdjDate(''); setAdjLateTime(''); setAdjEarlyTime('');
             setAdjReason(''); setAdjApproverSelectedId(''); setAdjApproverFree('');
             setAdjBanner(true);
-            setTimeout(() => setAdjBanner(false), 4000);
           } finally {
             setAdjSubmitting(false);
           }
@@ -796,9 +810,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           <div style={{ padding: 20, background: bg, borderRadius: '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
             {/* 登録完了バナー */}
             {adjBanner && (
-              <div style={{ position: 'fixed', top: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 300, background: '#d4edda', border: '1px solid #c3e6cb', borderRadius: 10, padding: '12px 24px', color: '#155724', fontWeight: 'bold', fontSize: 15, boxShadow: '0 4px 16px rgba(0,0,0,0.15)', whiteSpace: 'nowrap' }}>
-                ✅ 登録しました
-              </div>
+              <BannerSuccess message="登録しました" onClose={() => setAdjBanner(false)} />
             )}
 
             {/* info-box */}

@@ -5,6 +5,21 @@ import { dispatchEmail, dispatchSiteNotification } from '../lib/notificationDisp
 import { insertNotification } from '../lib/notifications';
 import type { AuthUser, BusinessTripReport } from '../types';
 
+const BannerSuccess: React.FC<{ message: string; icon?: 'check' | 'send'; onClose: () => void }> = ({ message, icon = 'check', onClose }) => {
+  useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, [onClose]);
+  return (
+    <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999 }}>
+      <div style={{ background: '#f0fdf4', border: '1.5px solid #b7e4cc', borderRadius: 18, padding: '24px 28px', minWidth: 200, textAlign: 'center', position: 'relative' }}>
+        <button onClick={onClose} style={{ position: 'absolute', top: 10, right: 10, background: 'rgba(21,87,36,0.1)', border: 'none', color: '#155724', borderRadius: '50%', width: 26, height: 26, cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+        <div style={{ width: 60, height: 60, borderRadius: '50%', background: '#d4edda', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>
+          <span style={{ fontSize: 26, color: '#28a745' }}>{icon === 'send' ? '📤' : '✓'}</span>
+        </div>
+        <div style={{ fontSize: 15, fontWeight: 500, color: '#155724' }}>{message}</div>
+      </div>
+    </div>
+  );
+};
+
 interface Props {
   user: AuthUser;
   profileName: string | null;
@@ -263,7 +278,6 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
       setNotes(''); setNextDates([]); setSlackComment('');
       setSelectedChannels([]); setGps(null); setAddress(null);
       setGpsAttempted(false); setGpsUnavailable(false);
-      setTimeout(() => setSubmitted(false), 4000);
     } catch {
       alert('送信に失敗しました。もう一度試してください。');
     } finally {
@@ -285,10 +299,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
       <h2 style={{ textAlign: 'center', marginBottom: 24, color: isDark ? '#fff' : '#333' }}>📍 出張報告</h2>
 
       {submitted && (
-        <div style={{ background: '#d4edda', border: '1px solid #c3e6cb', borderRadius: 8, padding: '14px 16px', marginBottom: 16, color: '#155724', fontSize: 15, display: 'flex', alignItems: 'center', gap: 8, fontWeight: 'bold' }}>
-          <span style={{ fontSize: 20 }}>✅</span>
-          報告を送信しました！
-        </div>
+        <BannerSuccess message="報告を送信しました！" onClose={() => setSubmitted(false)} />
       )}
 
 
