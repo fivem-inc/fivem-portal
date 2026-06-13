@@ -120,6 +120,24 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
   );
 };
 
+const useBoardUnread = (userId: string | undefined) => {
+  const [count, setCount] = useState(0);
+  const fetch = useCallback(async () => {
+    if (!userId) return;
+    const { data: memberRows } = await supabase.from('board_channel_members').select('channel_id').eq('user_id', userId);
+    if (!memberRows || memberRows.length === 0) { setCount(0); return; }
+    const channelIds = memberRows.map((r: any) => r.channel_id);
+    const { data: msgs } = await supabase.from('board_messages').select('id').in('channel_id', channelIds).is('parent_id', null);
+    if (!msgs || msgs.length === 0) { setCount(0); return; }
+    const msgIds = msgs.map((m: any) => m.id);
+    const { data: reads } = await supabase.from('board_reads').select('message_id').eq('user_id', userId).in('message_id', msgIds);
+    const readSet = new Set((reads || []).map((r: any) => r.message_id));
+    setCount(msgIds.filter(id => !readSet.has(id)).length);
+  }, [userId]);
+  useEffect(() => { fetch(); const t = setInterval(fetch, 30000); return () => clearInterval(t); }, [fetch]);
+  return count;
+};
+
 const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean; roleTitle?: string; userId?: string }> = ({ isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove, roleTitle, userId }) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -133,6 +151,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     window.addEventListener('resize', check);
     return () => window.removeEventListener('resize', check);
   }, []);
+  const boardUnread = useBoardUnread(userId);
 
   const btnStyle = (active: boolean, activeColor = '#007bff') => isMobile ? ({
     width: 52, height: 52, borderRadius: 8, border: 'none', cursor: 'pointer',
@@ -173,9 +192,16 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
             {isMobile ? <><span style={{ fontSize: 20 }}>📅</span><span>休暇</span></> : '📅 休暇'}
           </button>
         )}
-        <button onClick={() => navTo('/board')} style={btnStyle(location.pathname === '/board', '#e67e22')}>
-          {isMobile ? <><span style={{ fontSize: 20 }}>💬</span><span>連絡板</span></> : '💬 連絡板'}
-        </button>
+        <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
+          <button onClick={() => navTo('/board')} style={btnStyle(location.pathname === '/board', '#e67e22')}>
+            {isMobile ? <><span style={{ fontSize: 20 }}>💬</span><span>連絡板</span></> : '💬 連絡板'}
+          </button>
+          {boardUnread > 0 && location.pathname !== '/board' && (
+            <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
+              {boardUnread > 99 ? '99+' : boardUnread}
+            </span>
+          )}
+        </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, paddingLeft: 8 }}>
         {userId && <BellIcon userId={userId} />}
@@ -397,6 +423,7 @@ const Dashboard: React.FC = () => {
     handleLogout
   } = useAuth();
 
+  const navigate = useNavigate();
   const { submissions, isLoading, fetchExpenses } = useExpenses(user, isAdmin);
 
   const [expenses, setExpensesState] = useState<Expense[]>([]);
@@ -409,6 +436,15 @@ const Dashboard: React.FC = () => {
   const [encAnswerSuccess, setEncAnswerSuccess] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [leaveSubmitted, setLeaveSubmitted] = useState(false);
+  const [boardToast, setBoardToast] = useState(false);
+  const boardUnread = useBoardUnread(user?.id);
+  useEffect(() => {
+    if (boardUnread > 0) {
+      setBoardToast(true);
+      const t = setTimeout(() => setBoardToast(false), 5000);
+      return () => clearTimeout(t);
+    }
+  }, [boardUnread]);
 
   const setExpenses = useCallback((value: React.SetStateAction<Expense[]>) => {
     setExpensesState(value);
@@ -509,6 +545,16 @@ const Dashboard: React.FC = () => {
         <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 4000, background: '#f0fdf4', border: '1.5px solid #b7e4cc', borderRadius: 18, padding: '24px 32px', textAlign: 'center', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
           <div style={{ fontSize: 40, marginBottom: 10 }}>✅</div>
           <div style={{ fontSize: 15, fontWeight: 'bold', color: '#155724' }}>回答を送信しました</div>
+        </div>
+      )}
+      {boardToast && (
+        <div onClick={() => { setBoardToast(false); navigate('/board'); }} style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 4000, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '16px 20px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 260, cursor: 'pointer' }}>
+          <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>💬</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 14, fontWeight: 'bold', color: '#166534' }}>連絡板に未読が{boardUnread}件あります</div>
+            <div style={{ fontSize: 12, color: '#3a7d52', marginTop: 2 }}>タップして確認 →</div>
+          </div>
+          <button type="button" onClick={e => { e.stopPropagation(); setBoardToast(false); }} style={{ background: 'none', border: 'none', color: '#166534', cursor: 'pointer', fontSize: 16, padding: '0 2px', flexShrink: 0 }}>✕</button>
         </div>
       )}
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} userId={user.id} />
