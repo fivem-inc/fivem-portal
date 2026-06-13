@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../hooks/useAuth';
 import { useDarkMode } from '../hooks/useDarkMode';
@@ -64,6 +65,7 @@ const avatarLetter = (name: string | null | undefined) => (name || '?')[0];
 const BoardPage: React.FC = () => {
   const { user, isAdmin, profileName } = useAuth();
   const isDark = useDarkMode();
+  const navigate = useNavigate();
 
   const bg        = isDark ? '#1a1a2e' : '#f0f2f5';
   const sidebarBg = isDark ? '#16213e' : '#f8f9fa';
@@ -101,11 +103,13 @@ const BoardPage: React.FC = () => {
   const [pendingMemberIds, setPendingMemberIds] = useState<string[]>([]);
   const [memberSaving,     setMemberSaving]     = useState(false);
   const [memberBanner,     setMemberBanner]     = useState(false);
+  const [chipExpanded,     setChipExpanded]     = useState(false);
   const [showDMSearch,     setShowDMSearch]     = useState(false);
   const [dmQuery,          setDmQuery]          = useState('');
   const [loadingData,      setLoadingData]      = useState(true);
   const [readDetailMsgId,  setReadDetailMsgId]  = useState<string | null>(null);
-  const [readDetailUsers,  setReadDetailUsers]  = useState<string[]>([]);
+  const [readDetailUsers,  setReadDetailUsers]  = useState<{ user_id: string; read_at: string }[]>([]);
+  const [showReadDetail,   setShowReadDetail]   = useState(true); // 設定: 全員が既読詳細を見れるか
 
   const [saveBanner, setSaveBanner] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -134,12 +138,13 @@ const BoardPage: React.FC = () => {
       setChannels([]); setMessages([]); setLoadingData(false); return;
     }
 
-    const [chRes, memRes, msgRes, lsRes, profRes] = await Promise.all([
+    const [chRes, memRes, msgRes, lsRes, profRes, settingsRes] = await Promise.all([
       supabase.from('board_channels').select('*').in('id', cids),
       supabase.from('board_channel_members').select('channel_id, user_id').in('channel_id', cids),
       supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
       supabase.from('board_channel_last_seen').select('channel_id, last_seen_at').eq('user_id', user.id),
       supabase.from('profiles').select('id, name, role_title, employment_type').eq('is_active', true).order('name'),
+      supabase.from('master_options').select('value').eq('category', 'board_show_read_detail').limit(1),
     ]);
 
     setChannels((chRes.data || []) as Channel[]);
@@ -151,6 +156,9 @@ const BoardPage: React.FC = () => {
     setLastSeen(ls);
 
     setAllProfiles((profRes.data || []) as SimpleProfile[]);
+    if (settingsRes.data && settingsRes.data.length > 0) {
+      setShowReadDetail(settingsRes.data[0].value !== 'false');
+    }
 
     // Read counts
     const msgIds = (msgRes.data || []).map((m: any) => m.id);
@@ -400,17 +408,22 @@ const BoardPage: React.FC = () => {
               <button type="button" onClick={() => setExpandedThreadId(isExpanded ? null : msg.id)} style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 12, padding: 0 }}>
                 {isExpanded ? '▲ 閉じる' : replyCount > 0 ? `▼ リプライ ${replyCount}件` : '💬 リプライ'}
               </button>
-              {isAdmin ? (
-                <button type="button" onClick={async () => {
-                  const { data } = await supabase.from('board_reads').select('user_id').eq('message_id', msg.id);
-                  setReadDetailUsers((data || []).map((r: any) => r.user_id));
-                  setReadDetailMsgId(msg.id);
-                }} style={{ background: 'none', border: 'none', color: subColor, cursor: 'pointer', fontSize: 11, padding: 0, textDecoration: 'underline dotted', textUnderlineOffset: 2 }}>
-                  既読 {readCount}
-                </button>
-              ) : (
-                <span style={{ fontSize: 11, color: subColor }}>既読 {readCount}</span>
-              )}
+              {(() => {
+                const chMemberCount = members.filter(m => m.channel_id === msg.channel_id).length;
+                const unreadCount = Math.max(0, chMemberCount - readCount);
+                const label = <span style={{ fontSize: 11, color: subColor }}>既読{readCount} 未読{unreadCount}</span>;
+                return showReadDetail ? (
+                  <button type="button" onClick={async () => {
+                    const { data } = await supabase.from('board_reads').select('user_id, read_at').eq('message_id', msg.id);
+                    setReadDetailUsers((data || []).map((r: any) => ({ user_id: r.user_id, read_at: r.read_at })));
+                    setReadDetailMsgId(msg.id);
+                  }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, padding: 0, textDecoration: 'underline dotted', textUnderlineOffset: 2, color: subColor }}>
+                    {label}
+                  </button>
+                ) : (
+                  <span style={{ fontSize: 11 }}>{label}</span>
+                );
+              })()}
             </div>
           )}
         </div>
@@ -442,6 +455,7 @@ const BoardPage: React.FC = () => {
 
   // グループ作成モーダル用: 雇用形態→役職でグループ化
   const EMP_ORDER = ['正社員', 'パート'];
+  const ROLE_ORDER = ['管理者', '社長', 'マネージャー', 'リーダー', '一般', 'その他'];
   const activeOthers = allProfiles.filter(p => p.id !== user?.id);
   const empTypes = ([...new Set(activeOthers.map(p => p.employment_type || 'その他'))] as string[])
     .sort((a, b) => {
@@ -549,27 +563,38 @@ const BoardPage: React.FC = () => {
             {isGroup ? `👥 ${channelDisplayName(selectedChannel)}` : 'メンバー'}
           </div>
 
-          {isAdmin && isGroup && pendingMemberIds.length > 0 && (
-            <div style={{ marginBottom: 10, padding: '8px 10px', background: isDark ? '#1e2328' : '#f0f4ff', border: `1px solid ${isDark ? '#3d4349' : '#c7d4f5'}`, borderRadius: 8 }}>
-              <div style={{ fontSize: 11, fontWeight: 'bold', color: isDark ? '#8fa8e8' : '#3b5bdb', marginBottom: 6 }}>選択中 {pendingMemberIds.length}人</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                {pendingMemberIds.map(id => {
-                  const p = allProfiles.find(ap => ap.id === id);
-                  if (!p) return null;
-                  const isSelf = id === user?.id;
-                  return (
-                    <span key={id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 12, fontSize: 12, background: isSelf ? (isDark ? '#2d4a2d' : '#dcfce7') : (isDark ? '#2c3e50' : '#e0e7ff'), color: isSelf ? (isDark ? '#86efac' : '#166534') : textColor, border: `1px solid ${isSelf ? (isDark ? '#4ade80' : '#86efac') : (isDark ? '#4a5568' : '#c7d4f5')}` }}>
-                      {p.name}
-                      {!isSelf && (
-                        <button type="button" onClick={() => setPendingMemberIds(prev => prev.filter(i => i !== id))}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, lineHeight: 1, color: isDark ? '#adb5bd' : '#888', fontSize: 13 }}>✕</button>
-                      )}
-                    </span>
-                  );
-                })}
+          {isAdmin && isGroup && pendingMemberIds.length > 0 && (() => {
+            const CHIP_LIMIT = 10;
+            const visible = chipExpanded ? pendingMemberIds : pendingMemberIds.slice(0, CHIP_LIMIT);
+            const hasMore = pendingMemberIds.length > CHIP_LIMIT;
+            return (
+              <div style={{ marginBottom: 10, padding: '8px 10px', background: isDark ? '#1e2328' : '#f0f4ff', border: `1px solid ${isDark ? '#3d4349' : '#c7d4f5'}`, borderRadius: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 'bold', color: isDark ? '#8fa8e8' : '#3b5bdb', marginBottom: 6 }}>選択中 {pendingMemberIds.length}人</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                  {visible.map(id => {
+                    const p = allProfiles.find(ap => ap.id === id);
+                    if (!p) return null;
+                    const isSelf = id === user?.id;
+                    return (
+                      <span key={id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 12, fontSize: 12, background: isSelf ? (isDark ? '#2d4a2d' : '#dcfce7') : (isDark ? '#2c3e50' : '#e0e7ff'), color: isSelf ? (isDark ? '#86efac' : '#166534') : textColor, border: `1px solid ${isSelf ? (isDark ? '#4ade80' : '#86efac') : (isDark ? '#4a5568' : '#c7d4f5')}` }}>
+                        {p.name}
+                        {!isSelf && (
+                          <button type="button" onClick={() => setPendingMemberIds(prev => prev.filter(i => i !== id))}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, lineHeight: 1, color: isDark ? '#adb5bd' : '#888', fontSize: 13 }}>✕</button>
+                        )}
+                      </span>
+                    );
+                  })}
+                  {hasMore && (
+                    <button type="button" onClick={() => setChipExpanded(e => !e)}
+                      style={{ padding: '2px 10px', borderRadius: 12, fontSize: 12, background: 'none', border: `1px solid ${isDark ? '#4a5568' : '#c7d4f5'}`, color: isDark ? '#8fa8e8' : '#3b5bdb', cursor: 'pointer' }}>
+                      {chipExpanded ? '▲ 閉じる' : `▼ あと${pendingMemberIds.length - CHIP_LIMIT}人`}
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {isAdmin && isGroup ? (
             <>
@@ -670,18 +695,54 @@ const BoardPage: React.FC = () => {
           autoFocus
           style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, marginBottom: 10, boxSizing: 'border-box' }}
         />
-        <div style={{ maxHeight: 300, overflowY: 'auto' }}>
-          {allProfiles
-            .filter(p => p.id !== user?.id && (p.name || '').includes(dmQuery))
-            .map(p => (
-              <div key={p.id} onClick={() => startDM(p.id)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderBottom: `1px solid ${border}`, cursor: 'pointer', borderRadius: 6 }}>
-                <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, fontWeight: 'bold', flexShrink: 0 }}>{avatarLetter(p.name)}</div>
-                <div>
-                  <div style={{ fontSize: 14, color: textColor, fontWeight: 'bold' }}>{p.name}</div>
-                  <div style={{ fontSize: 11, color: subColor }}>{p.role_title}</div>
+        <div style={{ maxHeight: 300, overflowY: 'auto', border: `1px solid ${border}`, borderRadius: 8 }}>
+          {(() => {
+            const filtered = allProfiles
+              .filter(p => p.id !== user?.id && (p.name || '').includes(dmQuery))
+              .sort((a, b) => {
+                const ea = EMP_ORDER.indexOf(a.employment_type || 'その他');
+                const eb = EMP_ORDER.indexOf(b.employment_type || 'その他');
+                const ei = (ea === -1 ? 99 : ea) - (eb === -1 ? 99 : eb);
+                if (ei !== 0) return ei;
+                const ra = ROLE_ORDER.indexOf(a.role_title || 'その他');
+                const rb = ROLE_ORDER.indexOf(b.role_title || 'その他');
+                const ri = (ra === -1 ? 99 : ra) - (rb === -1 ? 99 : rb);
+                if (ri !== 0) return ri;
+                return (a.name || '') > (b.name || '') ? 1 : -1;
+              });
+            let lastEmp = '';
+            let lastRole = '';
+            return filtered.map((p, i) => {
+              const emp = p.employment_type || 'その他';
+              const role = p.role_title || 'その他';
+              const showEmpHeader = emp !== lastEmp;
+              const showRoleHeader = showEmpHeader || role !== lastRole;
+              lastEmp = emp; lastRole = role;
+              return (
+                <div key={p.id}>
+                  {showEmpHeader && (
+                    <div style={{ padding: '5px 12px', background: isDark ? '#1e2328' : '#dde3ee', borderTop: i > 0 ? `2px solid ${isDark ? '#4a5568' : '#8fa0c0'}` : undefined, fontSize: 12, fontWeight: 'bold', color: isDark ? '#90b4e8' : '#2c4a8a' }}>
+                      {emp}
+                    </div>
+                  )}
+                  {showRoleHeader && !showEmpHeader && (
+                    <div style={{ padding: '3px 12px 3px 20px', background: isDark ? '#2d3136' : '#f0f0f0', borderTop: `1px solid ${isDark ? '#3d4349' : '#ccc'}`, fontSize: 11, color: isDark ? '#adb5bd' : '#666' }}>
+                      {role}
+                    </div>
+                  )}
+                  {showRoleHeader && showEmpHeader && (
+                    <div style={{ padding: '3px 12px 3px 20px', background: isDark ? '#2d3136' : '#f0f0f0', fontSize: 11, color: isDark ? '#adb5bd' : '#666' }}>
+                      {role}
+                    </div>
+                  )}
+                  <div onClick={() => startDM(p.id)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderBottom: `1px solid ${border}`, cursor: 'pointer' }}>
+                    <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, fontWeight: 'bold', flexShrink: 0 }}>{avatarLetter(p.name)}</div>
+                    <div style={{ fontSize: 14, color: textColor, fontWeight: 'bold' }}>{p.name}</div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            });
+          })()}
         </div>
         <button type="button" onClick={() => { setShowDMSearch(false); setDmQuery(''); }} style={{ width: '100%', marginTop: 12, padding: 10, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
       </div>
@@ -696,6 +757,7 @@ const BoardPage: React.FC = () => {
       <div style={{ padding: '12px 14px', borderBottom: `1px solid ${border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
         <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>💬 連絡板</span>
         <div style={{ display: 'flex', gap: 6 }}>
+          <button type="button" onClick={() => navigate('/account')} title="通知設定" style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '4px 8px' }}>🔔</button>
           <button type="button" onClick={() => setShowDMSearch(true)} title="個人メッセージ" style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '4px 8px' }}>✉️</button>
           {isAdmin && (
             <button type="button" onClick={() => setShowGroupModal(true)} title="グループ作成" style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '4px 8px' }}>＋</button>
@@ -755,6 +817,16 @@ const BoardPage: React.FC = () => {
           <div style={{ fontSize: 14, fontWeight: 'bold', color: textColor }}>{channelDisplayName(selectedChannel)}</div>
           <div style={{ fontSize: 11, color: subColor }}>{currentMembers.length}人</div>
         </div>
+        {isAdmin && (
+          <button type="button" onClick={async () => {
+            const next = !showReadDetail;
+            setShowReadDetail(next);
+            await supabase.from('master_options').delete().eq('category', 'board_show_read_detail');
+            await supabase.from('master_options').insert({ category: 'board_show_read_detail', value: String(next), sort_order: 0 });
+          }} title={showReadDetail ? '既読詳細: 全員表示中（タップでOFF）' : '既読詳細: 非表示中（タップでON）'} style={{ background: 'none', border: `1px solid ${showReadDetail ? '#22c55e' : border}`, borderRadius: 6, color: showReadDetail ? '#22c55e' : subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px', flexShrink: 0 }}>
+            👁 既読
+          </button>
+        )}
         <button type="button" onClick={openMemberModal} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px', flexShrink: 0 }}>👥 メンバー</button>
       </div>
 
@@ -812,9 +884,17 @@ const BoardPage: React.FC = () => {
       {dmModal}
       {readDetailMsgId && (() => {
         const chMembers = members.filter(m => m.channel_id === selectedChannelId);
-        const readSet = new Set(readDetailUsers);
-        const readProfiles   = chMembers.filter(m => readSet.has(m.user_id)).map(m => allProfiles.find(p => p.id === m.user_id)?.name || '不明');
-        const unreadProfiles = chMembers.filter(m => !readSet.has(m.user_id)).map(m => allProfiles.find(p => p.id === m.user_id)?.name || '不明');
+        const readMap = new Map(readDetailUsers.map(r => [r.user_id, r.read_at]));
+        const fmtReadAt = (at: string | null | undefined) => {
+          if (!at) return '';
+          const hasOffset = at.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(at);
+          const d = new Date(hasOffset ? at : at + 'Z');
+          if (isNaN(d.getTime())) return '';
+          return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+        };
+        const readMembers   = chMembers.filter(m => readMap.has(m.user_id));
+        const unreadMembers = chMembers.filter(m => !readMap.has(m.user_id));
+        const headerColor = isDark ? '#8fa8c8' : '#4a6a9a';
         return (
           <div style={overlayStyle} onClick={() => setReadDetailMsgId(null)}>
             <div style={{ ...modalStyle, maxWidth: 340 }} onClick={e => e.stopPropagation()}>
@@ -823,21 +903,31 @@ const BoardPage: React.FC = () => {
                 <button type="button" onClick={() => setReadDetailMsgId(null)} style={{ background: 'none', border: 'none', color: subColor, cursor: 'pointer', fontSize: 18, padding: 0 }}>✕</button>
               </div>
               <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 12, fontWeight: 'bold', color: '#22c55e', marginBottom: 6 }}>✓ 既読 ({readProfiles.length}人)</div>
-                {readProfiles.length === 0
+                <div style={{ fontSize: 12, fontWeight: 'bold', color: headerColor, marginBottom: 6 }}>既読 {readMembers.length}人</div>
+                {readMembers.length === 0
                   ? <div style={{ fontSize: 13, color: subColor }}>まだ誰も読んでいません</div>
-                  : readProfiles.map((name, i) => (
-                    <div key={i} style={{ fontSize: 13, color: textColor, padding: '4px 0', borderBottom: `1px solid ${border}` }}>{name}</div>
-                  ))
+                  : readMembers.map((m, i) => {
+                    const name = allProfiles.find(p => p.id === m.user_id)?.name || '不明';
+                    const at = readMap.get(m.user_id) || '';
+                    return (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, color: textColor, padding: '5px 0', borderBottom: `1px solid ${border}` }}>
+                        <span>{name}</span>
+                        <span style={{ fontSize: 11, color: subColor }}>{fmtReadAt(at)}</span>
+                      </div>
+                    );
+                  })
                 }
               </div>
               <div>
-                <div style={{ fontSize: 12, fontWeight: 'bold', color: '#dc3545', marginBottom: 6 }}>… 未読 ({unreadProfiles.length}人)</div>
-                {unreadProfiles.length === 0
+                <div style={{ fontSize: 12, fontWeight: 'bold', color: headerColor, marginBottom: 6 }}>未読 {unreadMembers.length}人</div>
+                {unreadMembers.length === 0
                   ? <div style={{ fontSize: 13, color: subColor }}>全員が既読です</div>
-                  : unreadProfiles.map((name, i) => (
-                    <div key={i} style={{ fontSize: 13, color: textColor, padding: '4px 0', borderBottom: `1px solid ${border}` }}>{name}</div>
-                  ))
+                  : unreadMembers.map((m, i) => {
+                    const name = allProfiles.find(p => p.id === m.user_id)?.name || '不明';
+                    return (
+                      <div key={i} style={{ fontSize: 13, color: textColor, padding: '5px 0', borderBottom: `1px solid ${border}` }}>{name}</div>
+                    );
+                  })
                 }
               </div>
             </div>

@@ -548,8 +548,8 @@ const Dashboard: React.FC = () => {
         </div>
       )}
       {boardToast && (
-        <div onClick={() => { setBoardToast(false); navigate('/board'); }} style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 4000, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '16px 20px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 260, cursor: 'pointer' }}>
-          <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>💬</div>
+        <div onClick={() => { setBoardToast(false); navigate('/board'); }} style={{ position: 'fixed', top: 56, left: 0, right: 0, zIndex: 4000, margin: '0 12px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
+          <div style={{ width: 34, height: 34, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 16, flexShrink: 0 }}>💬</div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 14, fontWeight: 'bold', color: '#166534' }}>連絡板に未読が{boardUnread}件あります</div>
             <div style={{ fontSize: 12, color: '#3a7d52', marginTop: 2 }}>タップして確認 →</div>
