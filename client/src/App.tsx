@@ -399,6 +399,8 @@ const Dashboard: React.FC = () => {
   const [encAnswerSubmitting, setEncAnswerSubmitting] = useState(false);
   const [encRefreshKey, setEncRefreshKey] = useState(0);
   const [encAnswerSuccess, setEncAnswerSuccess] = useState(false);
+  const [showLeaveModal, setShowLeaveModal] = useState(false);
+  const [leaveSubmitted, setLeaveSubmitted] = useState(false);
 
   const setExpenses = useCallback((value: React.SetStateAction<Expense[]>) => {
     setExpensesState(value);
@@ -506,17 +508,29 @@ const Dashboard: React.FC = () => {
       {/* 有給奨励日バナー（消せない） */}
       <EncouragementBanner userId={user.id} refreshKey={encRefreshKey} onAnswer={d => { setEncAnsweringDay(d); setEncAnswerChoice(null); setEncAnswerNote(''); }} />
 
-      {/* 有給申請フォーム送信通知バナー（パート向け） */}
-      {leaveRequestEnabled && (
+      {/* 有給申請バナー（パート向け） */}
+      {leaveRequestEnabled && !leaveSubmitted && (
         <div
-          onClick={() => window.location.href = '/leave'}
+          onClick={() => setShowLeaveModal(true)}
           style={{ background: '#28a745', color: 'white', borderRadius: 10, padding: '14px 20px', marginBottom: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, boxShadow: '0 2px 8px rgba(40,167,69,0.4)' }}
         >
           <span style={{ fontSize: 24 }}>📨</span>
           <div>
-            <div style={{ fontWeight: 'bold', fontSize: 15 }}>申請フォームが届いています</div>
-            <div style={{ fontSize: 13, opacity: 0.9 }}>タップして申請画面へ →</div>
+            <div style={{ fontWeight: 'bold', fontSize: 15 }}>有給申請を送信してください</div>
+            <div style={{ fontSize: 13, opacity: 0.9 }}>タップして申請する</div>
           </div>
+        </div>
+      )}
+      {showLeaveModal && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 4000, background: '#fff', overflowY: 'auto' }}>
+          <div style={{ position: 'sticky', top: 0, zIndex: 10, background: '#fff', padding: '12px 16px', borderBottom: '1px solid #dee2e6', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button onClick={() => setShowLeaveModal(false)}
+              style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: '#333', lineHeight: 1 }}>✕</button>
+            <span style={{ fontWeight: 'bold', fontSize: 16 }}>休暇申請</span>
+          </div>
+          <Suspense fallback={<PageLoader />}>
+            <LeaveRequestForm user={user} profileName={profileName} roleTitle={roleTitle} leaveRequestEnabled={leaveRequestEnabled} onSubmitSuccess={() => { setShowLeaveModal(false); setLeaveSubmitted(true); }} />
+          </Suspense>
         </div>
       )}
 

@@ -2331,3 +2331,50 @@ ALTER TABLE profiles ADD COLUMN last_sign_in_at timestamptz;
 
 #### 低優先
 - gcal-sync 失敗時リトライキュー（Phase 5）
+
+---
+
+## ✅ 2026-06-13 パート向け有給申請フォーム（ホーム表示）実装
+
+### 概要
+`leaveRequestEnabled = true` のパート社員がホーム画面から直接休暇申請できる機能。
+
+### 実装内容
+#### App.tsx
+- 緑バナー「有給申請を送信してください」をホームに表示（`leaveRequestEnabled && !leaveSubmitted`）
+- タップでフルスクリーンモーダルが開き、通常の休暇申請フォームと全く同じ内容を表示
+- 上部に✕ボタン（モーダルを閉じる）
+- 申請完了後：`leaveSubmitted = true` でバナー非表示（画面遷移なし）
+- Props: `onSubmitSuccess={() => { setShowLeaveModal(false); setLeaveSubmitted(true); }}`
+
+#### LeaveRequest.tsx
+- Props に `onSubmitSuccess?: () => void` を追加
+- `leaveRequestEnabled = true` のとき：
+  - タブを「🌿 休暇」のみ表示（「時間調整」「申請履歴」非表示）
+  - 休暇種別セレクトを「有給休暇」固定（他の選択肢非表示・disabled）
+- 申請完了後：`onSubmitSuccess` があればそれを呼ぶ（モーダルを閉じる）、なければ従来通り `/` へ navigate
+- 成功表示を `BannerSuccess` コンポーネントに統一（フルページ表示廃止）
+
+### 注意事項
+- `leaveRequestEnabled` は管理者・リーダー・マネージャーいずれが送信しても `true` になる
+- 申請完了後に `leave_request_enabled = false` がDBに書かれるが、useAuth の再取得は即時されない
+  → `leaveSubmitted` ローカルstate でバナーを隠すことで対応
+
+### 🔜 次回やること（2026-06-13更新）
+
+#### 優先①：UsersTab・send-email コードレビュー対応の残り
+| 内容 | 場所 |
+|------|------|
+| レート制限設定 | Supabase Dashboard → Rate Limits |
+| 送信進捗表示（progress バー） | UsersTab SendEmailModal |
+| 失敗分の再送ボタン | UsersTab SendEmailModal |
+| 並列送信（Promise.allSettled） | UsersTab handleSend |
+
+#### 優先②：承認フロー通知メール（Phase 3）
+- 承認・差し戻し・受理の各ステップでメール送信
+
+#### 優先③：メールテンプレート管理（Phase 2）
+- `email_templates` テーブル作成・テンプレート選択UI
+
+#### 低優先
+- gcal-sync 失敗時リトライキュー（Phase 5）
