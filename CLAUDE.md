@@ -970,19 +970,40 @@ npx supabase functions deploy time-adjustment-notify --project-ref xaeynaxctiiyq
 
 ### 🔜 次回やること（2026-06-13時点）
 
-#### 優先①: バックフィル実行（Googleカレンダーの過去データ同期）
-```
-# client/フォルダから実行
-node backfill-gcal-absence.mjs <SERVICE_ROLE_KEY>
-node backfill-gcal.mjs <SERVICE_ROLE_KEY>
-```
-- 実行後は両スクリプトを削除してOK
+#### ✅ 完了済み（2026-06-13）
+- バックフィル（backfill-gcal.mjs・backfill-gcal-absence.mjs）実行済み
+- 通知設定画面（NotificationsTab）に「🕐 時間調整」グループ追加（Slack複数チャンネル・メール・サイト通知・役職＋グループフィルター・テンプレート編集）
+- time-adjustment-notify Edge Function 実装・デプロイ済み
+- 全バナー・モーダルのデザイン統一（下記参照）
 
-#### 優先②: 通知設定画面でメール追加
-- 時間調整通知をメールでも受け取れるよう通知設定画面に選択肢追加
+#### 優先①: 通知バナー・モーダルデザインのローカル確認
+- 変更した4ファイルの動作確認（登録/削除/報告バナー・CalendarPageモーダル）
 
-#### その他
+#### 優先②: その他
 - UI/UX改善（コードレビュー結果・高優先項目）
+
+---
+
+## ✅ 2026-06-13 通知バナー・モーダルデザイン統一 完了
+
+### 変更方針
+- **サイト通知 NotifItem**（App.tsx）→ Bスタイル（左ライン+薄背景）、✕ボタンのみ・自動消えなし
+- **登録/削除/報告バナー** → 案Aスタイル（カード+丸アイコン）、自動消え3秒＋✕ボタン
+- **CalendarPage モーダル** → 案Aスタイル（カード+丸アイコン）、自動消え3秒＋✕ボタン＋オーバーレイタップで閉じる
+
+### 変更ファイル
+| ファイル | 変更内容 |
+|---|---|
+| `client/src/App.tsx` | NotifItem → 左ライン+薄背景（緑/赤/オレンジ）・✕のみ |
+| `client/src/components/BusinessTripReport.tsx` | BannerSuccess コンポーネント追加（カード型・3秒自動消え） |
+| `client/src/components/ExpenseForm.tsx` | 同上 |
+| `client/src/components/LeaveRequest.tsx` | adjBanner → BannerSuccess に置き換え |
+| `client/src/pages/CalendarPage.tsx` | CalendarResultModal コンポーネント追加（登録/削除・3秒自動消え+オーバーレイ） |
+
+### ⚠️ 注意事項
+- `BannerSuccess` は各ファイルにローカル定義（共通化は意図的にしていない）
+- `CalendarResultModal` は `position: fixed` をオーバーレイdivに使用（通常はNG だが CalendarPage は専用ページのため問題なし）
+- NotifItem の `visible` state と setTimeout フェードアウトは削除済み（即時 onDismiss を呼ぶ）
 
 ---
 

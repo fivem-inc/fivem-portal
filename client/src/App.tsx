@@ -193,37 +193,30 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
 
 // 通知バナー（notifications テーブルから未読を表示）
 const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: string | null; read: boolean }; onDismiss: (id: string) => void }> = ({ n, onDismiss }) => {
-  const [visible, setVisible] = useState(true);
   const isReject = n.message.includes('差し戻し') || n.message.includes('差し戻され');
   const isCancel = n.message.includes('取り消され');
 
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setVisible(false);
-      setTimeout(() => onDismiss(n.id), 400);
-    }, 5000);
-    return () => clearTimeout(t);
-  }, [n.id, onDismiss]);
-
-  const bgColor = isReject ? '#dc3545' : isCancel ? '#fd7e14' : '#28a745';
-  const shadowColor = isReject ? 'rgba(220,53,69,0.4)' : isCancel ? 'rgba(253,126,20,0.4)' : 'rgba(40,167,69,0.4)';
+  const borderColor = isReject ? '#f5b8bb' : isCancel ? '#fcd5a0' : '#b7e4cc';
+  const bgColor = isReject ? '#fff5f5' : isCancel ? '#fff8ee' : '#f0fdf4';
+  const textColor = isReject ? '#721c24' : isCancel ? '#7a3c00' : '#155724';
+  const subColor = isReject ? '#a03030' : isCancel ? '#9a5200' : '#3a7d52';
 
   return (
     <div style={{
-      background: bgColor, color: 'white', borderRadius: 10, padding: '12px 16px', marginBottom: 10,
+      background: bgColor, border: `1px solid ${borderColor}`,
+      borderLeft: `4px solid ${isReject ? '#dc3545' : isCancel ? '#fd7e14' : '#28a745'}`,
+      borderRadius: '0 10px 10px 0',
+      padding: '12px 16px', marginBottom: 10,
       display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-      boxShadow: `0 2px 8px ${shadowColor}`,
-      opacity: visible ? 1 : 0, transition: 'opacity 0.4s ease',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ fontSize: 20 }}>{isReject ? '⚠️' : isCancel ? '🚫' : '✅'}</span>
         <div>
-          <div style={{ fontWeight: 'bold', fontSize: 14 }}>{n.message}</div>
-          {n.sub_message && <div style={{ fontSize: 12, opacity: 0.9 }}>{n.sub_message}</div>}
+          <div style={{ fontWeight: 500, fontSize: 14, color: textColor }}>{n.message}</div>
+          {n.sub_message && <div style={{ fontSize: 12, color: subColor }}>{n.sub_message}</div>}
         </div>
       </div>
-      <button onClick={() => { setVisible(false); setTimeout(() => onDismiss(n.id), 400); }}
-        style={{ background: 'rgba(255,255,255,0.25)', border: 'none', color: 'white', borderRadius: '50%', width: 24, height: 24, cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>✕</button>
+      <button onClick={() => onDismiss(n.id)}
+        style={{ background: 'rgba(0,0,0,0.07)', border: 'none', color: textColor, borderRadius: '50%', width: 24, height: 24, cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>✕</button>
     </div>
   );
 };
