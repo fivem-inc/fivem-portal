@@ -172,28 +172,32 @@ const SendEmailModal: React.FC<{
     `{{name}} さん\n\nfivem-portal をご利用いただけるようになりました。\n\n以下のURLからログインしてください。\nhttps://fivem-portal.vercel.app\n\n初期パスワードはメールの@前の部分です。\nログイン後にパスワードを変更することをお勧めします。\n\n不明な点があればご連絡ください。`
   );
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<{ success: number; failed: string[] } | null>(null);
+  const [progress, setProgress] = useState(0);
+  const [result, setResult] = useState<{ success: number; failed: { name: string; email: string }[] } | null>(null);
+  const [showAllTargets, setShowAllTargets] = useState(false);
 
-  const handleSend = async () => {
+  const sendToTargets = async (sendTargets: { id: string; name: string; email: string }[]) => {
     setLoading(true);
+    setProgress(0);
     let success = 0;
-    const failed: string[] = [];
+    const failed: { name: string; email: string }[] = [];
+    let done = 0;
 
-    for (const t of targets) {
-      const personalBody = body.replace(/\{\{name\}\}/g, t.name || t.email);
-      const html = personalBody.replace(/\n/g, '<br>');
-      try {
-        const response = await fetch(
-          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-email`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ to: t.email, subject, html }),
-          }
-        );
-        if (!response.ok) { failed.push(t.name || t.email); } else { success++; }
-      } catch { failed.push(t.name || t.email); }
-    }
+    await Promise.allSettled(
+      sendTargets.map(async t => {
+        const personalBody = body.replace(/\{\{name\}\}/g, t.name || t.email);
+        const html = personalBody.replace(/\n/g, '<br>');
+        try {
+          const response = await fetch(
+            `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-email`,
+            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: t.email, subject, html }) }
+          );
+          if (!response.ok) { failed.push({ name: t.name || t.email, email: t.email }); } else { success++; }
+        } catch { failed.push({ name: t.name || t.email, email: t.email }); }
+        done++;
+        setProgress(Math.round((done / sendTargets.length) * 100));
+      })
+    );
     setLoading(false);
     setResult({ success, failed });
   };
@@ -214,6 +218,18 @@ const SendEmailModal: React.FC<{
     background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000',
   };
 
+  if (loading) {
+    return (
+      <div style={overlayStyle}>
+        <div style={modalStyle}>
+          <h4 style={{ margin: '0 0 16px', color: isDarkMode ? '#fff' : '#000' }}>📧 送信中...</h4>
+          <p style={{ color: isDarkMode ? '#adb5bd' : '#666', fontSize: 13, marginBottom: 8 }}>{progress} % 完了</p>
+          <progress value={progress} max={100} style={{ width: '100%', height: 12 }} />
+        </div>
+      </div>
+    );
+  }
+
   if (result) {
     return (
       <div style={overlayStyle}>
@@ -221,12 +237,22 @@ const SendEmailModal: React.FC<{
           <h4 style={{ margin: '0 0 16px', color: isDarkMode ? '#fff' : '#000' }}>📧 送信完了</h4>
           <p style={{ color: '#28a745', fontWeight: 'bold' }}>✅ 成功: {result.success}件</p>
           {result.failed.length > 0 && (
-            <p style={{ color: '#dc3545' }}>❌ 失敗: {result.failed.join(', ')}</p>
+            <>
+              <p style={{ color: '#dc3545', marginBottom: 8 }}>❌ 失敗: {result.failed.map(f => f.name).join('、')}</p>
+              <button
+                onClick={() => { setResult(null); sendToTargets(result.failed.map(f => ({ id: '', name: f.name, email: f.email }))); }}
+                style={{ padding: '6px 16px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 13, marginBottom: 12 }}
+              >
+                失敗した {result.failed.length} 名に再送する
+              </button>
+            </>
           )}
-          <button onClick={() => { onSent(); onClose(); }}
-            style={{ marginTop: 16, padding: '8px 24px', background: '#28a745', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold' }}>
-            閉じる
-          </button>
+          <div>
+            <button onClick={() => { onSent(); onClose(); }}
+              style={{ padding: '8px 24px', background: '#28a745', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold' }}>
+              閉じる
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -238,9 +264,18 @@ const SendEmailModal: React.FC<{
         <h4 style={{ margin: '0 0 4px', color: isDarkMode ? '#fff' : '#000', fontSize: 18 }}>📧 メール送信</h4>
         <div style={{ marginBottom: 16, padding: '8px 12px', background: isDarkMode ? '#495057' : '#f8f9fa', borderRadius: 6 }}>
           <p style={{ margin: 0, fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>送信先 ({targets.length}名)：</p>
-          <p style={{ margin: '4px 0 0', fontSize: 13, color: isDarkMode ? '#fff' : '#333' }}>
-            {targets.map(t => t.name || t.email).join('、')}
-          </p>
+          <div style={{ marginTop: 6, maxHeight: showAllTargets ? 180 : 60, overflowY: 'auto', display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {targets.map(t => (
+              <span key={t.id} style={{ background: isDarkMode ? '#6c757d' : '#e9ecef', color: isDarkMode ? '#fff' : '#333', borderRadius: 4, padding: '2px 8px', fontSize: 12, whiteSpace: 'nowrap' }}>
+                {t.name || t.email}
+              </span>
+            ))}
+          </div>
+          {targets.length > 8 && (
+            <button onClick={() => setShowAllTargets(v => !v)} style={{ marginTop: 4, background: 'none', border: 'none', color: '#007bff', cursor: 'pointer', fontSize: 12, padding: 0 }}>
+              {showAllTargets ? '▲ 折りたたむ' : `▼ 全${targets.length}名を表示`}
+            </button>
+          )}
           {targets.length >= 10 && (
             <p style={{ margin: '4px 0 0', fontSize: 12, color: '#dc3545', fontWeight: 'bold' }}>
               ⚠️ {targets.length}名に送信します
@@ -258,13 +293,13 @@ const SendEmailModal: React.FC<{
           rows={10} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
 
         <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
-          <button onClick={onClose} disabled={loading}
+          <button onClick={onClose}
             style={{ padding: '8px 20px', background: '#6c757d', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
             キャンセル
           </button>
-          <button onClick={handleSend} disabled={loading}
-            style={{ padding: '8px 20px', background: targets.length >= 10 ? '#dc3545' : '#007bff', color: 'white', border: 'none', borderRadius: 6, cursor: loading ? 'not-allowed' : 'pointer', fontWeight: 'bold', opacity: loading ? 0.7 : 1 }}>
-            {loading ? '送信中...' : `📧 ${targets.length}名に送信する`}
+          <button onClick={() => sendToTargets(targets)}
+            style={{ padding: '8px 20px', background: targets.length >= 10 ? '#dc3545' : '#007bff', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold' }}>
+            📧 {targets.length}名に送信する
           </button>
         </div>
       </div>
