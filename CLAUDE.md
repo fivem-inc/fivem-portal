@@ -2362,19 +2362,36 @@ ALTER TABLE profiles ADD COLUMN last_sign_in_at timestamptz;
 
 ### 🔜 次回やること（2026-06-13更新）
 
-#### 優先①：UsersTab・send-email コードレビュー対応の残り
-| 内容 | 場所 |
+#### ✅ 完了済み：UsersTab・send-email コードレビュー対応
+| 内容 | 状態 |
 |------|------|
-| レート制限設定 | Supabase Dashboard → Rate Limits |
-| 送信進捗表示（progress バー） | UsersTab SendEmailModal |
-| 失敗分の再送ボタン | UsersTab SendEmailModal |
-| 並列送信（Promise.allSettled） | UsersTab handleSend |
+| console.log 削除 | ✅ 対応済み（該当行なし） |
+| HTMLインジェクション対策 | ✅ 対応済み（send-email:42） |
+| 並列送信（Promise.allSettled） | ✅ 対応済み（UsersTab.tsx:186） |
+| 送信進捗バー | ✅ 対応済み（UsersTab.tsx:227） |
+| 失敗分の再送ボタン | ✅ 対応済み（UsersTab.tsx:242） |
+| パスワード表示トグル（👁️） | ✅ 対応済み（UsersTab.tsx:18） |
+| メールバリデーション追加 | ✅ 対応済み（send-email/index.ts コミット: 2b9496b） |
 
-#### 優先②：承認フロー通知メール（Phase 3）
+#### 優先①：承認フロー通知メール（Phase 3）
 - 承認・差し戻し・受理の各ステップでメール送信
 
-#### 優先③：メールテンプレート管理（Phase 2）
-- `email_templates` テーブル作成・テンプレート選択UI
+#### 優先②：レート制限設定
+- Supabase Dashboard → Rate Limits で設定
 
 #### 低優先
 - gcal-sync 失敗時リトライキュー（Phase 5）
+
+---
+
+## ⚠️ セッション開始時のルール（必ず守る）
+
+### タスク確認の手順
+1. 「次回やること」に残っているタスクを**コードで確認してから**状況を報告する
+2. 「メモにこう書いてある」ではなく「コードを見たらこうなっている」を先に伝える
+3. 完了済みのタスクを未対応として報告しない
+
+### なぜこのルールが必要か
+- 引き継ぎメモに「どれが完了済みか」が書かれていない場合がある
+- コードを見ずにメモの内容をそのまま報告すると、すでに実装済みのタスクを「残っている」と誤って伝えてしまう
+- ユーザーに余計な確認コストをかけないため、必ずコードで事実確認してから報告する
