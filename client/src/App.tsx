@@ -191,9 +191,9 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   const boardUnread = useBoardUnread(userId);
 
   const btnStyle = (active: boolean, activeColor = '#007bff') => isMobile ? ({
-    width: 52, height: 52, borderRadius: 8, border: 'none', cursor: 'pointer',
+    width: 44, height: 44, borderRadius: 8, border: 'none', cursor: 'pointer',
     background: active ? activeColor : '#444',
-    color: 'white', fontSize: 10, display: 'flex', flexDirection: 'column' as const,
+    color: 'white', fontSize: 9, display: 'flex', flexDirection: 'column' as const,
     alignItems: 'center', justifyContent: 'center', gap: 1, padding: 0, flexShrink: 0,
   }) : ({
     padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer',

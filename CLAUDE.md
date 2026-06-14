@@ -1640,6 +1640,36 @@ Working directory: `/mnt/c/Users/kohei/expense-app`
 - Edge Functions require manual deployment in Supabase dashboard
 - Project configured with proper TypeScript types and CORS handling
 
+---
+
+## ✅ 2026-06-15 通知整理・NavBarボタン縮小 完了
+
+### 通知の重複解消（App.tsx / notifications.ts / BoardPage.tsx）
+- `notifications` テーブルに `source_type text` カラムを追加（Supabase SQL手動実行済み）
+- `insertNotification()` に第4引数 `sourceType?: string` を追加（`client/src/lib/notifications.ts`）
+- `BoardPage.tsx` の board系通知挿入2箇所に `source_type: 'board'` を付与
+- `NotificationBanner` のクエリに `.or('source_type.is.null,source_type.neq.board')` を追加
+  → board通知は連絡板未読バナー（`useBoardUnread`）に一本化し、ベル通知と重複しなくなった
+- ベル（BellIcon）・名前メニュー（AvatarMenu）のドロップダウン z-index を 999 → 1500 に引き上げ
+
+### NavBarモバイルボタン縮小（App.tsx）
+- モバイル（640px未満）のナビボタンを **52×52px → 44×44px**、fontSize: 10 → 9 に変更
+- 管理者6ボタン（44×6 + gap4×5 = 284px）+ 右端60px = 344px → 390px画面に収まる
+
+### 🔜 次回タスク
+- 残業申請フォーム（パート用）← 最優先
+- ナビバー将来対応：ボタンが7個以上（残業申請追加時）になった場合は ☰ ハンバーガーメニュー方式に移行予定
+  - 固定: ☰（左）/ 🏠交通費 / 💬連絡板（右） / 🔔 / 名前アイコン
+  - カスタム2スロット: ユーザーが選択・並び替え可能
+  - 保存先: `nav_preferences` テーブル（専用）
+  - D&D: `@dnd-kit/core` 使用予定
+- タブ・機能の表示権限管理画面
+- UI/UX改善（コードレビュー高優先項目）
+- gcal-sync 失敗時リトライキュー（低優先）
+
+### migration
+- `supabase/migrations/20260615000000_add_source_type_to_notifications.sql`（Supabase手動適用済み）
+
 ## Next Session TODO (明日の実装予定)
 
 ### ✅ 印刷機能完了 - 伝票番号・表示改善 (2025-08-01)
