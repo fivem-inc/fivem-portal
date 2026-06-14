@@ -101,7 +101,6 @@ const BoardPage: React.FC = () => {
   const [allProfiles, setAllProfiles] = useState<SimpleProfile[]>([]);
 
   const [selectedChannelId,  setSelectedChannelId]  = useState<string | null>(null);
-  const [expandedThreadId,   setExpandedThreadId]   = useState<string | null>(null);
   const [threadMsgId,        setThreadMsgId]        = useState<string | null>(null);
   const [showChannelList,    setShowChannelList]     = useState(true);
 
@@ -266,7 +265,7 @@ const BoardPage: React.FC = () => {
 
   const selectChannel = async (channelId: string) => {
     setSelectedChannelId(channelId);
-    setExpandedThreadId(null);
+
     setNewBody('');
     setShowOptionsExpanded(false);
     setNewDeadline(''); setNewDeadlineType(''); setNewScheduledAt(''); setNewTitle(''); setNewAnswerPrompt(''); setNewAnswerLocation(''); setNewAnswerLink('');
