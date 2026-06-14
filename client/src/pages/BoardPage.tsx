@@ -1256,18 +1256,7 @@ const BoardPage: React.FC = () => {
 
   const channelListPanel = (
     <div style={{ width: isMobile ? '100%' : 280, background: sidebarBg, borderRight: isMobile ? 'none' : `1px solid ${border}`, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, flexShrink: 0 }}>
-      {/* チャンネルリストヘッダー（フロー固定） */}
-      <div style={{ padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-        <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>💬 連絡板</span>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button type="button" onClick={() => setShowDMSearch(true)} style={{ background: '#007bff', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, padding: '4px 10px', fontWeight: 'bold' }}>メッセージ送信</button>
-          <button type="button" onClick={() => navigate('/notification-settings')} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px' }}>通知設定</button>
-          {isAdmin && (
-            <button type="button" onClick={() => setShowGroupModal(true)} title="グループ作成" style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '4px 8px' }}>＋</button>
-          )}
-        </div>
-      </div>
-      <div ref={channelListRef} style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
+      <div ref={channelListRef} style={{ overflowY: 'auto', flex: 1, minHeight: 0, paddingTop: 50 }}>
         {loadingData ? (
           <div style={{ padding: 20, textAlign: 'center', color: subColor, fontSize: 13 }}>読み込み中...</div>
         ) : sortedChannels.length === 0 ? (
@@ -1461,6 +1450,19 @@ const BoardPage: React.FC = () => {
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: bg, overflow: 'hidden', paddingTop: 60, boxSizing: 'border-box' }}>
+      {/* チャンネルリストヘッダー — position:fixed, メッセージビューヘッダーと同じ方式 */}
+      {showChannelList && (
+        <div style={{ position: 'fixed', top: 60, left: 0, right: 0, zIndex: 100, padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>💬 連絡板</span>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button type="button" onClick={() => setShowDMSearch(true)} style={{ background: '#007bff', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, padding: '4px 10px', fontWeight: 'bold' }}>メッセージ送信</button>
+            <button type="button" onClick={() => navigate('/notification-settings')} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px' }}>通知設定</button>
+            {isAdmin && (
+              <button type="button" onClick={() => setShowGroupModal(true)} title="グループ作成" style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '4px 8px' }}>＋</button>
+            )}
+          </div>
+        </div>
+      )}
       {/* Channel header — fixed, shown when a channel is open */}
       {selectedChannelId && selectedChannel && !showChannelList && (
         <div style={{ padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, alignItems: 'center', gap: 8, flexShrink: 0, position: 'fixed', top: 60, left: 0, right: 0, zIndex: 50, display: 'flex' }}>
