@@ -34,6 +34,8 @@ interface BoardMessage {
   deadline_type: string | null;
   requires_confirmation: boolean;
   scheduled_at: string | null;
+  answer_prompt: string | null;
+  answer_location: string | null;
   profile: { name: string | null } | null;
 }
 
@@ -110,6 +112,8 @@ const BoardPage: React.FC = () => {
   const [unconfirmedMsgId,     setUnconfirmedMsgId]     = useState<string | null>(null);
   const [answerInputId,        setAnswerInputId]        = useState<string | null>(null);
   const [answerText,           setAnswerText]           = useState('');
+  const [newAnswerPrompt,      setNewAnswerPrompt]      = useState('');
+  const [newAnswerLocation,    setNewAnswerLocation]    = useState('');
   const [replyBody,            setReplyBody]            = useState('');
   const [editingId,   setEditingId]   = useState<string | null>(null);
   const [editBody,         setEditBody]         = useState('');
@@ -162,7 +166,7 @@ const BoardPage: React.FC = () => {
     const [chRes, memRes, msgRes, lsRes, profRes, settingsRes] = await Promise.all([
       supabase.from('board_channels').select('*').in('id', cids),
       supabase.from('board_channel_members').select('channel_id, user_id').in('channel_id', cids),
-      supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at').in('channel_id', cids).or(`scheduled_at.is.null,scheduled_at.lte.${new Date().toISOString()}`).order('created_at', { ascending: false }).limit(500),
+      supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, answer_prompt, answer_location').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
       supabase.from('board_channel_last_seen').select('channel_id, last_seen_at').eq('user_id', user.id),
       supabase.from('profiles').select('id, name, role_title, employment_type').eq('is_active', true).order('name'),
       supabase.from('master_options').select('value').eq('category', 'board_show_read_detail').limit(1),
@@ -170,7 +174,8 @@ const BoardPage: React.FC = () => {
 
     setChannels((chRes.data || []) as Channel[]);
     setMembers((memRes.data || []).map((m: any) => ({ channel_id: m.channel_id, user_id: m.user_id, profile: null })));
-    setMessages((msgRes.data || []).map((m: any) => ({ ...m, profile: null })));
+    const now = new Date().toISOString();
+    setMessages((msgRes.data || []).filter((m: any) => !m.scheduled_at || m.scheduled_at <= now).map((m: any) => ({ ...m, profile: null })));
 
     // requires_confirmation / deadline_type ありの投稿の確認者を取得
     const confirmMsgIds = (msgRes.data || []).filter((m: any) => m.requires_confirmation || m.deadline_type).map((m: any) => m.id);
@@ -294,11 +299,15 @@ const BoardPage: React.FC = () => {
       insertData.requires_confirmation = true;
     }
     if (!parentId && newScheduledAt) insertData.scheduled_at = new Date(newScheduledAt).toISOString();
+    if (!parentId && newDeadlineType === 'answer') {
+      if (newAnswerPrompt.trim()) insertData.answer_prompt = newAnswerPrompt.trim();
+      if (newAnswerLocation.trim()) insertData.answer_location = newAnswerLocation.trim();
+    }
 
     const { data, error } = await supabase
       .from('board_messages')
       .insert(insertData)
-      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at')
+      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, answer_prompt, answer_location')
       .single();
 
     if (!error && data) {
@@ -307,7 +316,7 @@ const BoardPage: React.FC = () => {
       await supabase.from('board_reads').upsert({ message_id: data.id, user_id: user.id }, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
       setReadCounts(prev => ({ ...prev, [data.id]: 1 }));
     }
-    if (parentId) setReplyBody(''); else { setNewBody(''); setNewDeadline(''); setNewDeadlineType(''); setNewScheduledAt(''); }
+    if (parentId) setReplyBody(''); else { setNewBody(''); setNewDeadline(''); setNewDeadlineType(''); setNewScheduledAt(''); setNewAnswerPrompt(''); setNewAnswerLocation(''); }
     setSending(false);
   };
 
@@ -447,6 +456,24 @@ const BoardPage: React.FC = () => {
               </div>
             );
           })()}
+          {/* 回答タイプの質問内容・場所 */}
+          {msg.deadline_type === 'answer' && !msg.parent_id && (msg.answer_prompt || msg.answer_location) && (
+            <div style={{ margin: '6px 0 4px', padding: '8px 10px', background: isDark ? '#1e2a3a' : '#eff6ff', borderRadius: 8, border: `1px solid ${isDark ? '#3b5270' : '#bfdbfe'}` }}>
+              {msg.answer_prompt && (
+                <div style={{ fontSize: 13, color: textColor, marginBottom: msg.answer_location ? 4 : 0 }}>
+                  <span style={{ fontSize: 11, fontWeight: 'bold', color: isDark ? '#93c5fd' : '#1d4ed8' }}>❓ 回答内容　</span>{msg.answer_prompt}
+                </div>
+              )}
+              {msg.answer_location && (
+                <div style={{ fontSize: 13, color: textColor }}>
+                  <span style={{ fontSize: 11, fontWeight: 'bold', color: isDark ? '#93c5fd' : '#1d4ed8' }}>📍 回答場所　</span>
+                  {msg.answer_location.startsWith('http') ? (
+                    <a href={msg.answer_location} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', wordBreak: 'break-all' }}>{msg.answer_location}</a>
+                  ) : msg.answer_location}
+                </div>
+              )}
+            </div>
+          )}
           {/* 回答一覧（回答タイプで送信済みのもの） */}
           {msg.deadline_type === 'answer' && !msg.parent_id && (() => {
             const answers = (confirmations[msg.id] || []).filter(c => c.comment);
@@ -1028,6 +1055,31 @@ const BoardPage: React.FC = () => {
                   ))}
                 </div>
               </div>
+              {/* 回答タイプ専用フィールド */}
+              {newDeadlineType === 'answer' && (
+                <>
+                  <div>
+                    <div style={{ fontSize: 11, color: subColor, marginBottom: 4 }}>何を回答するのか（質問内容）</div>
+                    <input
+                      type="text"
+                      value={newAnswerPrompt}
+                      onChange={e => setNewAnswerPrompt(e.target.value)}
+                      placeholder="例：来月のシフト希望を回答してください"
+                      style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, fontSize: 13, boxSizing: 'border-box' }}
+                    />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: subColor, marginBottom: 4 }}>どこで回答するのか（場所・URL）</div>
+                    <input
+                      type="text"
+                      value={newAnswerLocation}
+                      onChange={e => setNewAnswerLocation(e.target.value)}
+                      placeholder="例：https://forms.google.com/... または「紙で提出」"
+                      style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, fontSize: 13, boxSizing: 'border-box' }}
+                    />
+                  </div>
+                </>
+              )}
               {/* 期限日 */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 12, color: subColor, flexShrink: 0 }}>⏰ 期限日</span>
