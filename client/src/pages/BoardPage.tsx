@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import { insertNotification } from '../lib/notifications';
 import { useAuth } from '../hooks/useAuth';
 import { useDarkMode } from '../hooks/useDarkMode';
 
@@ -101,6 +102,7 @@ const BoardPage: React.FC = () => {
 
   const [selectedChannelId,  setSelectedChannelId]  = useState<string | null>(null);
   const [expandedThreadId,   setExpandedThreadId]   = useState<string | null>(null);
+  const [threadMsgId,        setThreadMsgId]        = useState<string | null>(null);
   const [showChannelList,    setShowChannelList]     = useState(true);
 
   // Compose
@@ -268,7 +270,7 @@ const BoardPage: React.FC = () => {
     setNewBody('');
     setShowOptionsExpanded(false);
     setNewDeadline(''); setNewDeadlineType(''); setNewScheduledAt(''); setNewTitle(''); setNewAnswerPrompt(''); setNewAnswerLocation(''); setNewAnswerLink('');
-    if (isMobile) setShowChannelList(false);
+    setShowChannelList(false);
 
     await supabase.from('board_channel_last_seen').upsert(
       { channel_id: channelId, user_id: user!.id, last_seen_at: new Date().toISOString() },
@@ -323,6 +325,20 @@ const BoardPage: React.FC = () => {
       setMessages(prev => [...prev, msg]);
       await supabase.from('board_reads').upsert({ message_id: data.id, user_id: user.id }, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
       setReadCounts(prev => ({ ...prev, [data.id]: 1 }));
+
+      // リプライ通知: スレッド参加者（親メッセージ投稿者 + 既存リプライ投稿者）に通知
+      if (parentId) {
+        const parentMsg = messages.find(m => m.id === parentId);
+        const threadParticipants = new Set<string>();
+        if (parentMsg) threadParticipants.add(parentMsg.user_id);
+        messages.filter(m => m.parent_id === parentId).forEach(m => threadParticipants.add(m.user_id));
+        threadParticipants.delete(user.id); // 自分には送らない
+        const senderName = profileName || '誰か';
+        const chName = selectedChannel ? (selectedChannel.name || 'チャンネル') : 'チャンネル';
+        await Promise.all([...threadParticipants].map(uid =>
+          insertNotification(uid, `${senderName}がスレッドにリプライしました`, `${chName}: ${body.trim().slice(0, 40)}`)
+        ));
+      }
     }
     if (parentId) setReplyBody(''); else { setNewBody(''); setNewDeadline(''); setNewDeadlineType(''); setNewScheduledAt(''); setNewTitle(''); setNewAnswerPrompt(''); setNewAnswerLocation(''); setNewAnswerLink(''); }
     setSending(false);
@@ -447,7 +463,7 @@ const BoardPage: React.FC = () => {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <div style={{ width: 28, height: 28, borderRadius: '50%', background: isReply ? '#28a745' : '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 'bold', flexShrink: 0 }}>
-                {avatarLetter(msg.profile?.name)}
+                {avatarLetter(senderName)}
               </div>
               <span style={{ fontSize: 13, fontWeight: 'bold', color: textColor }}>{senderName}</span>
               <span style={{ fontSize: 11, color: subColor }}>{fmtTime(msg.created_at)}</span>
@@ -520,13 +536,13 @@ const BoardPage: React.FC = () => {
             const answers = (confirmations[msg.id] || []).filter(c => c.comment);
             if (answers.length === 0) return null;
             return (
-              <div style={{ margin: '6px 0 8px', padding: '8px 10px', background: isDark ? '#1a3a28' : '#f0fdf4', borderRadius: 8, border: '1px solid #86efac' }}>
-                <div style={{ fontSize: 11, fontWeight: 'bold', color: '#166534', marginBottom: 4 }}>📝 回答</div>
+              <div style={{ margin: '6px 0 8px', padding: '8px 10px', background: isDark ? '#1a3a28' : '#f0fdf4', borderRadius: 8, border: `1px solid ${isDark ? '#16532a' : '#86efac'}` }}>
+                <div style={{ fontSize: 11, fontWeight: 'bold', color: isDark ? '#4ade80' : '#166534', marginBottom: 4 }}>📝 回答</div>
                 {answers.map(c => {
                   const name = allProfiles.find(p => p.id === c.user_id)?.name || '不明';
                   return (
-                    <div key={c.user_id} style={{ fontSize: 13, color: textColor, padding: '4px 0', borderBottom: `1px solid #bbf7d0` }}>
-                      <span style={{ fontWeight: 500, color: '#166534' }}>{name}：</span>{c.comment}
+                    <div key={c.user_id} style={{ fontSize: 13, color: textColor, padding: '4px 0', borderBottom: `1px solid ${isDark ? '#16532a' : '#bbf7d0'}` }}>
+                      <span style={{ fontWeight: 500, color: isDark ? '#4ade80' : '#166534' }}>{name}：</span>{c.comment}
                     </div>
                   );
                 })}
@@ -546,7 +562,7 @@ const BoardPage: React.FC = () => {
               <button type="button" onClick={() => setEditingId(null)} style={{ padding: '6px 8px', background: '#6c757d', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>✕</button>
             </div>
           ) : (
-            <div style={{ fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5 }}>{msg.body}</div>
+            <div style={{ fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5, textAlign: 'left' }}>{msg.body}</div>
           )}
 
           {/* 確認ボタン（deadline_type / requires_confirmation ありの親投稿） */}
@@ -563,38 +579,38 @@ const BoardPage: React.FC = () => {
             const isAnswerType = !!msg.deadline_type;
             return (
               <div style={{ marginTop: 10 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                {!alreadyConfirmed ? (
-                  <button type="button" onClick={() => {
-                    if (isAnswerType) {
-                      setAnswerInputId(answerInputId === msg.id ? null : msg.id);
-                      setAnswerText('');
-                    } else {
-                      (async () => {
-                        if (!user) return;
-                        const now = new Date().toISOString();
-                        await supabase.from('board_confirmations').upsert({ message_id: msg.id, user_id: user.id, comment: null }, { onConflict: 'message_id,user_id' });
-                        setConfirmations(prev => ({ ...prev, [msg.id]: [...(prev[msg.id] || []).filter(c => c.user_id !== user.id), { user_id: user.id, comment: null }] }));
-                        setMyConfirmTimes(prev => ({ ...prev, [msg.id]: now }));
-                      })();
-                    }
-                  }} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', background: '#fff', border: '1.5px solid #22c55e', borderRadius: 20, cursor: 'pointer', fontSize: 13, fontWeight: 500, color: '#166534' }}>
-                    <span style={{ fontSize: 15, lineHeight: 1 }}>○</span> {reportLabel}
-                  </button>
-                ) : (
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', background: '#22c55e', border: '1.5px solid #22c55e', borderRadius: 20, fontSize: 13, fontWeight: 500, color: '#fff' }}>
-                    <span style={{ fontSize: 15, lineHeight: 1 }}>✓</span> {doneLabel}（{myConfirmTime ? fmtTime(myConfirmTime) : '済み'}）
-                  </span>
-                )}
-                <span style={{ fontSize: 12, color: subColor }}>
-                  {confirmedIds.length}人{doneLabel}
-                </span>
-                {isAdmin && unconfirmedIds.length > 0 && (
-                  <button type="button" onClick={() => setUnconfirmedMsgId(msg.id)}
-                    style={{ padding: '5px 10px', background: '#fd7e14', color: '#fff', border: 'none', borderRadius: 20, cursor: 'pointer', fontSize: 12 }}>
-                    未確認者・リマインド
-                  </button>
-                )}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                  {!alreadyConfirmed ? (
+                    <button type="button" onClick={() => {
+                      if (isAnswerType) {
+                        setAnswerInputId(answerInputId === msg.id ? null : msg.id);
+                        setAnswerText('');
+                      } else {
+                        (async () => {
+                          if (!user) return;
+                          const now = new Date().toISOString();
+                          await supabase.from('board_confirmations').upsert({ message_id: msg.id, user_id: user.id, comment: null }, { onConflict: 'message_id,user_id' });
+                          setConfirmations(prev => ({ ...prev, [msg.id]: [...(prev[msg.id] || []).filter(c => c.user_id !== user.id), { user_id: user.id, comment: null }] }));
+                          setMyConfirmTimes(prev => ({ ...prev, [msg.id]: now }));
+                        })();
+                      }
+                    }} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', background: cardBg, border: '1.5px solid #22c55e', borderRadius: 20, cursor: 'pointer', fontSize: 13, fontWeight: 500, color: isDark ? '#4ade80' : '#166534' }}>
+                      <span style={{ fontSize: 15, lineHeight: 1 }}>○</span> {reportLabel}
+                    </button>
+                  ) : (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', background: '#22c55e', border: '1.5px solid #22c55e', borderRadius: 20, fontSize: 13, fontWeight: 500, color: '#fff' }}>
+                      <span style={{ fontSize: 15, lineHeight: 1 }}>✓</span> {doneLabel}（{myConfirmTime ? fmtTime(myConfirmTime) : '済み'}）
+                    </span>
+                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 12, color: subColor }}>{confirmedIds.length}人/{channelMemberIds.length}人</span>
+                    {isAdmin && unconfirmedIds.length > 0 && (
+                      <button type="button" onClick={() => setUnconfirmedMsgId(msg.id)}
+                        style={{ padding: '4px 12px', background: 'none', color: '#f59e0b', border: '1.5px solid #f59e0b', borderRadius: 20, cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
+                        リマインド送信
+                      </button>
+                    )}
+                  </div>
                 </div>
                 {/* 回答入力欄 */}
                 {isAnswerType && answerInputId === msg.id && !alreadyConfirmed && (
@@ -635,14 +651,29 @@ const BoardPage: React.FC = () => {
 
           {/* Footer (parent only) */}
           {!isReply && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
-              <button type="button" onClick={() => setExpandedThreadId(isExpanded ? null : msg.id)} style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 12, padding: 0 }}>
-                {isExpanded ? '▲ 閉じる' : replyCount > 0 ? `▼ リプライ ${replyCount}件` : '💬 リプライ'}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 6 }}>
+              <button type="button" onClick={() => setThreadMsgId(msg.id)}
+                style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 12, padding: 0 }}>
+                {(() => {
+                  if (replyCount === 0) return '💬 リプライ';
+                  const myLastSeen = lastSeen[msg.channel_id] || '';
+                  const unreadReplies = replies.filter(r => r.user_id !== user?.id && r.created_at > myLastSeen).length;
+                  return (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                      💬 リプライ {replyCount}件
+                      {unreadReplies > 0 && <span style={{ fontSize: 11, color: subColor }}>（未読{unreadReplies}）</span>}
+                    </span>
+                  );
+                })()}
               </button>
               {(() => {
                 const chMemberCount = members.filter(m => m.channel_id === msg.channel_id).length;
                 const unreadCount = Math.max(0, chMemberCount - readCount);
-                const label = <span style={{ fontSize: 11, color: subColor }}>既読{readCount} 未読{unreadCount}</span>;
+                const label = (
+                  <span style={{ fontSize: 11, color: subColor }}>
+                    既読{readCount} 未読{unreadCount}
+                  </span>
+                );
                 return showReadDetail ? (
                   <button type="button" onClick={async () => {
                     const { data } = await supabase.from('board_reads').select('user_id, read_at').eq('message_id', msg.id);
@@ -651,30 +682,12 @@ const BoardPage: React.FC = () => {
                   }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, padding: 0, textDecoration: 'underline dotted', textUnderlineOffset: 2, color: subColor }}>
                     {label}
                   </button>
-                ) : (
-                  <span style={{ fontSize: 11 }}>{label}</span>
-                );
+                ) : label;
               })()}
             </div>
           )}
         </div>
 
-        {/* Thread replies */}
-        {!isReply && isExpanded && (
-          <div style={{ marginTop: 4 }}>
-            {replies.map(r => renderMsg(r, true))}
-            <div style={{ marginLeft: 36, marginTop: 6, display: 'flex', gap: 6 }}>
-              <input
-                value={replyBody}
-                onChange={e => setReplyBody(e.target.value)}
-                placeholder="リプライを入力..."
-                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(msg.id); }}}
-                style={{ flex: 1, padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13 }}
-              />
-              <button type="button" onClick={() => sendMessage(msg.id)} disabled={sending || !replyBody.trim()} style={{ padding: '6px 12px', background: '#28a745', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, opacity: sending || !replyBody.trim() ? 0.5 : 1 }}>送信</button>
-            </div>
-          </div>
-        )}
       </div>
     );
   };
@@ -683,6 +696,94 @@ const BoardPage: React.FC = () => {
 
   const overlayStyle: React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 };
   const modalStyle: React.CSSProperties = { background: cardBg, borderRadius: 12, padding: 24, width: '90%', maxWidth: 440, maxHeight: '80vh', overflowY: 'auto' };
+
+  // ── Thread Panel ─────────────────────────────────────────────────
+  const threadPanel = threadMsgId ? (() => {
+    const parentMsg = messages.find(m => m.id === threadMsgId);
+    if (!parentMsg) return null;
+    const threadRepliesList = messages.filter(m => m.parent_id === threadMsgId)
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    const parentSender = allProfiles.find(p => p.id === parentMsg.user_id)?.name || '不明';
+    return (
+      <div style={{ position: 'fixed', top: 60, left: 0, right: 0, bottom: 0, zIndex: 200, background: bg, display: 'flex', flexDirection: 'column' }}>
+        {/* Thread header */}
+        <div style={{ padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, position: 'sticky', top: 0, zIndex: 10 }}>
+          <button type="button" onClick={() => { setThreadMsgId(null); setReplyBody(''); }}
+            style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 22, padding: '0 6px', fontWeight: 'bold' }}>←</button>
+          <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>スレッド</span>
+        </div>
+        {/* Scrollable area */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px' }}>
+          {/* Parent message */}
+          <div style={{ background: isDark ? '#2a2a3e' : '#f0f4ff', border: `1px solid ${isDark ? '#3a3a6c' : '#c7d4f5'}`, borderRadius: 10, padding: '10px 14px', marginBottom: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 'bold', flexShrink: 0 }}>
+                {avatarLetter(parentSender)}
+              </div>
+              <span style={{ fontSize: 13, fontWeight: 'bold', color: textColor }}>{parentSender}</span>
+              <span style={{ fontSize: 11, color: subColor }}>{fmtTime(parentMsg.created_at)}</span>
+            </div>
+            {parentMsg.deadline_type && (
+              <div style={{ fontSize: 12, color: isDark ? '#93c5fd' : '#3b82f6', marginBottom: 4 }}>
+                {DEADLINE_TYPES.find(d => d.value === parentMsg.deadline_type)?.label}
+              </div>
+            )}
+            <div style={{ fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5, textAlign: 'left' }}>{parentMsg.body}</div>
+          </div>
+          {/* Replies */}
+          {threadRepliesList.length === 0 && (
+            <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 20 }}>まだリプライはありません</div>
+          )}
+          {threadRepliesList.map(r => {
+            const rSender = allProfiles.find(p => p.id === r.user_id)?.name || '不明';
+            return (
+              <div key={r.id} style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+                <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#28a745', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 13, fontWeight: 'bold', flexShrink: 0 }}>
+                  {avatarLetter(rSender)}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                    <span style={{ fontSize: 13, fontWeight: 'bold', color: textColor }}>{rSender}</span>
+                    <span style={{ fontSize: 11, color: subColor }}>{fmtTime(r.created_at)}</span>
+                  </div>
+                  <div style={{ fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, padding: '8px 12px', textAlign: 'left' }}>{r.body}</div>
+                  {(() => {
+                    const chMembers = members.filter(m => m.channel_id === selectedChannelId);
+                    const readN = readCounts[r.id] || 0;
+                    const unreadN = Math.max(0, chMembers.length - readN);
+                    return (
+                      <div style={{ display: 'flex', gap: 8, marginTop: 4, fontSize: 11, color: subColor, justifyContent: 'flex-end' }}>
+                        <span>既読{readN}</span>
+                        <span>未読{unreadN}</span>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            );
+          })}
+          <div ref={messagesEndRef} />
+        </div>
+        {/* Fixed input */}
+        <div style={{ padding: '10px 14px', borderTop: `1px solid ${border}`, background: cardBg, flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <textarea
+              value={replyBody}
+              onChange={e => setReplyBody(e.target.value)}
+              placeholder="リプライを入力... (Enterで送信、Shift+Enterで改行)"
+              rows={2}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(threadMsgId); } }}
+              style={{ flex: 1, padding: '8px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, resize: 'none', fontFamily: 'inherit' }}
+            />
+            <button type="button" onClick={() => sendMessage(threadMsgId)} disabled={sending || !replyBody.trim()}
+              style={{ padding: '8px 14px', background: '#28a745', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 500, opacity: sending || !replyBody.trim() ? 0.5 : 1, alignSelf: 'flex-end' }}>
+              送信
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  })() : null;
 
   // グループ作成モーダル用: 雇用形態→役職でグループ化
   const EMP_ORDER = ['正社員', 'パート'];
@@ -984,20 +1085,8 @@ const BoardPage: React.FC = () => {
 
   const channelListPanel = (
     <div style={{ width: isMobile ? '100%' : 280, background: sidebarBg, borderRight: isMobile ? 'none' : `1px solid ${border}`, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', flexShrink: 0 }}>
-      {/* Sidebar header */}
-      <div style={{ padding: '12px 14px', borderBottom: `1px solid ${border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-        <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>💬 連絡板</span>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button type="button" onClick={() => navigate('/account')} title="通知設定" style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '4px 8px' }}>🔔</button>
-          <button type="button" onClick={() => setShowDMSearch(true)} title="個人メッセージ" style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '4px 8px' }}>✉️</button>
-          {isAdmin && (
-            <button type="button" onClick={() => setShowGroupModal(true)} title="グループ作成" style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '4px 8px' }}>＋</button>
-          )}
-        </div>
-      </div>
-
       {/* Channel list */}
-      <div style={{ overflowY: 'auto', flex: 1 }}>
+      <div style={{ overflowY: 'auto', flex: 1, paddingTop: 50 }}>
         {loadingData ? (
           <div style={{ padding: 20, textAlign: 'center', color: subColor, fontSize: 13 }}>読み込み中...</div>
         ) : sortedChannels.length === 0 ? (
@@ -1044,33 +1133,8 @@ const BoardPage: React.FC = () => {
 
   const messagePanel = selectedChannelId && selectedChannel ? (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      {/* Channel header */}
-      <div style={{ padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-        {!showChannelList && (
-          <button type="button" onClick={() => { setShowChannelList(true); setSelectedChannelId(null); }} style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 20, padding: '0 4px', lineHeight: 1 }}>←</button>
-        )}
-        <div style={{ width: 32, height: 32, borderRadius: selectedChannel.type === 'group' ? 8 : '50%', background: selectedChannel.type === 'group' ? '#6f42c1' : '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, flexShrink: 0 }}>
-          {selectedChannel.type === 'group' ? '👥' : avatarLetter(channelDisplayName(selectedChannel))}
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 'bold', color: textColor }}>{channelDisplayName(selectedChannel)}</div>
-          <div style={{ fontSize: 11, color: subColor }}>{currentMembers.length}人</div>
-        </div>
-        {isAdmin && (
-          <button type="button" onClick={async () => {
-            const next = !showReadDetail;
-            setShowReadDetail(next);
-            await supabase.from('master_options').delete().eq('category', 'board_show_read_detail');
-            await supabase.from('master_options').insert({ category: 'board_show_read_detail', value: String(next), sort_order: 0 });
-          }} title={showReadDetail ? '既読詳細: 全員表示中（タップでOFF）' : '既読詳細: 非表示中（タップでON）'} style={{ background: 'none', border: `1px solid ${showReadDetail ? '#22c55e' : border}`, borderRadius: 6, color: showReadDetail ? '#22c55e' : subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px', flexShrink: 0 }}>
-            👁 既読
-          </button>
-        )}
-        <button type="button" onClick={openMemberModal} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px', flexShrink: 0 }}>👥 メンバー</button>
-      </div>
-
       {/* Messages */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px', background: bg }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px', paddingTop: 64, background: bg }}>
         {channelMessages.length === 0 && (
           <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>まだメッセージがありません</div>
         )}
@@ -1203,10 +1267,46 @@ const BoardPage: React.FC = () => {
 
   return (
     <div style={{ paddingTop: 60, height: '100vh', display: 'flex', flexDirection: 'column', background: bg, overflow: 'hidden' }}>
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {(!isMobile || showChannelList)  && channelListPanel}
-        {(!isMobile || !showChannelList) && messagePanel}
+      {/* Channel list header — fixed */}
+      <div style={{ padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, display: showChannelList ? 'flex' : 'none', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, position: 'fixed', top: 60, left: 0, right: 0, zIndex: 50 }}>
+        <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>💬 連絡板</span>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button type="button" onClick={() => navigate('/account')} title="通知設定" style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '4px 8px' }}>🔔</button>
+          <button type="button" onClick={() => setShowDMSearch(true)} title="個人メッセージ" style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '4px 8px' }}>✉️</button>
+          {isAdmin && (
+            <button type="button" onClick={() => setShowGroupModal(true)} title="グループ作成" style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '4px 8px' }}>＋</button>
+          )}
+        </div>
       </div>
+      {/* Channel header — fixed, always mounted, hidden when channel list is shown */}
+      {selectedChannelId && selectedChannel && (
+        <div style={{ padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, alignItems: 'center', gap: 8, flexShrink: 0, position: 'fixed', top: 60, left: 0, right: 0, zIndex: 50, display: showChannelList ? 'none' : 'flex' }}>
+          <button type="button" onClick={() => { setShowChannelList(true); setSelectedChannelId(null); }} style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 22, padding: '0 6px', lineHeight: 1, fontWeight: 'bold' }}>←</button>
+          <div style={{ width: 32, height: 32, borderRadius: selectedChannel.type === 'group' ? 8 : '50%', background: selectedChannel.type === 'group' ? '#6f42c1' : '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, flexShrink: 0 }}>
+            {selectedChannel.type === 'group' ? '👥' : avatarLetter(channelDisplayName(selectedChannel))}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 'bold', color: textColor }}>{channelDisplayName(selectedChannel)}</div>
+            <div style={{ fontSize: 11, color: subColor }}>{currentMembers.length}人</div>
+          </div>
+          {isAdmin && (
+            <button type="button" onClick={async () => {
+              const next = !showReadDetail;
+              setShowReadDetail(next);
+              await supabase.from('master_options').delete().eq('category', 'board_show_read_detail');
+              await supabase.from('master_options').insert({ category: 'board_show_read_detail', value: String(next), sort_order: 0 });
+            }} title={showReadDetail ? '既読詳細: 全員表示中（タップでOFF）' : '既読詳細: 非表示中（タップでON）'} style={{ background: 'none', border: `1px solid ${showReadDetail ? '#22c55e' : border}`, borderRadius: 6, color: showReadDetail ? '#22c55e' : subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px', flexShrink: 0 }}>
+              👁 既読
+            </button>
+          )}
+          <button type="button" onClick={openMemberModal} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px', flexShrink: 0 }}>👥 メンバー</button>
+        </div>
+      )}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        {showChannelList  && channelListPanel}
+        {!showChannelList && messagePanel}
+      </div>
+      {threadPanel}
       {groupModal}
       {memberModal}
       {dmModal}
@@ -1267,7 +1367,7 @@ const BoardPage: React.FC = () => {
         <div onClick={() => setShowSendConfirm(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 5000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 16, padding: 20, width: '100%', maxWidth: 420, boxSizing: 'border-box' }}>
             <p style={{ margin: '0 0 12px', fontSize: 16, fontWeight: 'bold', color: textColor }}>送信確認</p>
-            <div style={{ background: inputBg, borderRadius: 10, padding: '12px 14px', marginBottom: 12, fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6, maxHeight: 200, overflowY: 'auto' }}>
+            <div style={{ background: inputBg, borderRadius: 10, padding: '12px 14px', marginBottom: 12, fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6, maxHeight: 200, overflowY: 'auto', textAlign: 'left' }}>
               {newBody}
             </div>
             {newDeadlineType && (
@@ -1370,10 +1470,10 @@ const BoardPage: React.FC = () => {
       })()}
 
       {(saveBanner || memberBanner) && (
-        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 220 }}>
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: isDark ? '#1a3a28' : '#f0fdf4', border: `1px solid ${isDark ? '#16532a' : '#86efac'}`, borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 220 }}>
           <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>✓</div>
-          <span style={{ fontSize: 15, fontWeight: 'bold', color: '#166534' }}>{memberBanner ? 'メンバーを保存しました' : '保存しました'}</span>
-          <button type="button" onClick={() => { setSaveBanner(false); setMemberBanner(false); }} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#166534', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
+          <span style={{ fontSize: 15, fontWeight: 'bold', color: isDark ? '#4ade80' : '#166534' }}>{memberBanner ? 'メンバーを保存しました' : '保存しました'}</span>
+          <button type="button" onClick={() => { setSaveBanner(false); setMemberBanner(false); }} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: isDark ? '#4ade80' : '#166534', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
         </div>
       )}
     </div>

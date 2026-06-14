@@ -120,6 +120,42 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
   );
 };
 
+const AvatarMenu: React.FC<{ userId: string; profileName: string | null; email: string; onLogout: () => void }> = ({ userId: _userId, profileName, email, onLogout }) => {
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+
+  const initial = (profileName || email || '?')[0].toUpperCase();
+
+  return (
+    <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
+      <div onClick={() => setOpen(o => !o)} style={{ width: 38, height: 38, borderRadius: '50%', background: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 15, fontWeight: 'bold', cursor: 'pointer', userSelect: 'none' }}>
+        {initial}
+      </div>
+      {open && (
+        <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', width: 200, background: '#fff', borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.2)', zIndex: 999, overflow: 'hidden' }}>
+          <div style={{ padding: '12px 14px', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 13, fontWeight: 'bold', flexShrink: 0 }}>{initial}</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 'bold', color: '#333', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{profileName || email}</div>
+              <div onClick={() => { navigate('/account'); setOpen(false); }} style={{ fontSize: 11, color: '#4a90d9', cursor: 'pointer', marginTop: 2 }}>アカウント設定 →</div>
+            </div>
+          </div>
+          <div style={{ padding: '10px 14px' }}>
+            <button onClick={onLogout} style={{ width: '100%', padding: '8px', borderRadius: 8, border: '1px solid #ddd', background: 'transparent', color: '#666', cursor: 'pointer', fontSize: 13 }}>ログアウト</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const useBoardUnread = (userId: string | undefined) => {
   const [count, setCount] = useState(0);
   const fetch = useCallback(async () => {
@@ -203,23 +239,9 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
           )}
         </div>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, paddingLeft: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, paddingLeft: 6 }}>
         {userId && <BellIcon userId={userId} />}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-          <span
-            onClick={() => navigate('/account')}
-            style={{ fontSize: 12, opacity: 0.8, cursor: 'pointer', textDecoration: 'underline dotted', textUnderlineOffset: 3, whiteSpace: 'nowrap', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis' }}
-            title="タップでアカウント設定"
-          >
-            {profileName || email}
-          </span>
-          <button
-            onClick={onLogout}
-            style={{ padding: '2px 8px', borderRadius: 6, border: '1px solid #aaa', background: 'transparent', color: 'white', cursor: 'pointer', fontSize: 11, whiteSpace: 'nowrap' }}
-          >
-            ログアウト
-          </button>
-        </div>
+        {userId && <AvatarMenu userId={userId} profileName={profileName} email={email} onLogout={onLogout} />}
       </div>
     </div>
   );
@@ -436,15 +458,7 @@ const Dashboard: React.FC = () => {
   const [encAnswerSuccess, setEncAnswerSuccess] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [leaveSubmitted, setLeaveSubmitted] = useState(false);
-  const [boardToast, setBoardToast] = useState(false);
   const boardUnread = useBoardUnread(user?.id);
-  useEffect(() => {
-    if (boardUnread > 0) {
-      setBoardToast(true);
-      const t = setTimeout(() => setBoardToast(false), 5000);
-      return () => clearTimeout(t);
-    }
-  }, [boardUnread]);
 
   const setExpenses = useCallback((value: React.SetStateAction<Expense[]>) => {
     setExpensesState(value);
@@ -547,17 +561,18 @@ const Dashboard: React.FC = () => {
           <div style={{ fontSize: 15, fontWeight: 'bold', color: '#155724' }}>回答を送信しました</div>
         </div>
       )}
-      {boardToast && (
-        <div onClick={() => { setBoardToast(false); navigate('/board'); }} style={{ position: 'fixed', top: 56, left: 0, right: 0, zIndex: 4000, margin: '0 12px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
-          <div style={{ width: 34, height: 34, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 16, flexShrink: 0 }}>💬</div>
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} userId={user.id} />
+
+      {/* 連絡板未読バナー（消えない・インライン） */}
+      {boardUnread > 0 && location.pathname !== '/board' && (
+        <div onClick={() => navigate('/board')} style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 10, padding: '12px 16px', marginBottom: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 15, flexShrink: 0 }}>💬</div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 14, fontWeight: 'bold', color: '#166534' }}>連絡板に未読が{boardUnread}件あります</div>
             <div style={{ fontSize: 12, color: '#3a7d52', marginTop: 2 }}>タップして確認 →</div>
           </div>
-          <button type="button" onClick={e => { e.stopPropagation(); setBoardToast(false); }} style={{ background: 'none', border: 'none', color: '#166534', cursor: 'pointer', fontSize: 16, padding: '0 2px', flexShrink: 0 }}>✕</button>
         </div>
       )}
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} userId={user.id} />
 
       {/* 有給奨励日バナー（消せない） */}
       <EncouragementBanner userId={user.id} refreshKey={encRefreshKey} onAnswer={d => { setEncAnsweringDay(d); setEncAnswerChoice(null); setEncAnswerNote(''); }} />
