@@ -53,7 +53,7 @@ const fmtTime = (ts: string) => {
   const now = new Date();
   const isToday = d.toDateString() === now.toDateString();
   if (isToday)
-    return d.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: 'numeric', minute: '2-digit' });
   return d.toLocaleDateString('ja-JP', {
     timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric',
     hour: '2-digit', minute: '2-digit',
@@ -402,13 +402,16 @@ const BoardPage: React.FC = () => {
     const isExpanded = expandedThreadId === msg.id;
     const readCount = readCounts[msg.id] || 0;
     const senderName = allProfiles.find(p => p.id === msg.user_id)?.name || msg.profile?.name || '不明';
+    const confirmedIdsTop = confirmations[msg.id] || [];
+    const isConfirmable = (msg.deadline_type || msg.requires_confirmation) && !msg.parent_id;
+    const alreadyConfirmedTop = isConfirmable && confirmedIdsTop.includes(user?.id ?? '');
 
     return (
       <div key={msg.id} style={{ marginBottom: isReply ? 4 : 14 }}>
         <div style={{
           background: cardBg, borderRadius: isReply ? 6 : 10,
           padding: isReply ? '6px 10px' : '10px 14px',
-          border: `1px solid ${border}`,
+          border: alreadyConfirmedTop ? '1.5px solid #22c55e' : `1px solid ${border}`,
           marginLeft: isReply ? 36 : 0,
         }}>
           {/* Header row */}
@@ -469,7 +472,7 @@ const BoardPage: React.FC = () => {
             const reportLabel = dtConfig ? dtConfig.reportLabel : '確認報告';
             const doneLabel   = dtConfig ? dtConfig.doneLabel   : '確認済み';
             return (
-              <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                 {!alreadyConfirmed ? (
                   <button type="button" onClick={async () => {
                     if (!user) return;
@@ -477,16 +480,16 @@ const BoardPage: React.FC = () => {
                     await supabase.from('board_confirmations').upsert({ message_id: msg.id, user_id: user.id }, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
                     setConfirmations(prev => ({ ...prev, [msg.id]: [...(prev[msg.id] || []), user.id] }));
                     setMyConfirmTimes(prev => ({ ...prev, [msg.id]: now }));
-                  }} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', background: '#f0fdf4', border: '1.5px solid #28a745', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, color: '#166534' }}>
-                    ☐ {reportLabel}
+                  }} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 18px', background: '#fff', border: '2px solid #22c55e', borderRadius: 24, cursor: 'pointer', fontSize: 14, fontWeight: 500, color: '#166534' }}>
+                    <span style={{ fontSize: 18, lineHeight: 1 }}>○</span> {reportLabel}
                   </button>
                 ) : (
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', background: '#f0fdf4', border: '1.5px solid #28a745', borderRadius: 8, fontSize: 14, fontWeight: 500, color: '#166534' }}>
-                    ☑ {doneLabel}（{myConfirmTime ? fmtTime(myConfirmTime) : '済み'}）
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 18px', background: '#22c55e', border: '2px solid #22c55e', borderRadius: 24, fontSize: 14, fontWeight: 500, color: '#fff' }}>
+                    <span style={{ fontSize: 18, lineHeight: 1 }}>✓</span> {doneLabel}（{myConfirmTime ? fmtTime(myConfirmTime) : '済み'}）
                   </span>
                 )}
-                <span style={{ fontSize: 12, color: subColor }}>
-                  確認済み {confirmedIds.length}人 / 未確認 {unconfirmedIds.length}人
+                <span style={{ fontSize: 13, color: subColor }}>
+                  {confirmedIds.length}人確認済み
                 </span>
                 {isAdmin && unconfirmedIds.length > 0 && (
                   <button type="button" onClick={() => setUnconfirmedMsgId(msg.id)}
