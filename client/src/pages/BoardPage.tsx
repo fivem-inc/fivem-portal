@@ -1256,7 +1256,8 @@ const BoardPage: React.FC = () => {
 
   const channelListPanel = (
     <div style={{ width: isMobile ? '100%' : 280, background: sidebarBg, borderRight: isMobile ? 'none' : `1px solid ${border}`, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, flexShrink: 0 }}>
-      <div ref={(el) => { (channelListRef as React.MutableRefObject<HTMLDivElement | null>).current = el; if (el) el.scrollTop = 0; }} style={{ overflowY: 'auto', flex: 1, minHeight: 0, paddingTop: 50 }}>
+      <div ref={(el) => { (channelListRef as React.MutableRefObject<HTMLDivElement | null>).current = el; if (el) el.scrollTop = 0; }} style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
+        <div style={{ height: 52, flexShrink: 0 }} />
         {loadingData ? (
           <div style={{ padding: 20, textAlign: 'center', color: subColor, fontSize: 13 }}>読み込み中...</div>
         ) : sortedChannels.length === 0 ? (
