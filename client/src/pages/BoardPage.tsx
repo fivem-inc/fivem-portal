@@ -235,6 +235,12 @@ const BoardPage: React.FC = () => {
     if (selectedChannelId) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length, selectedChannelId]);
 
+  useEffect(() => {
+    if (showChannelList && channelListRef.current) {
+      channelListRef.current.scrollTop = 0;
+    }
+  }, [showChannelList]);
+
   // ── Computed ────────────────────────────────────────────────────
 
   const channelDisplayName = (ch: Channel) => {
@@ -749,20 +755,31 @@ const BoardPage: React.FC = () => {
 
           {/* Footer (parent only) */}
           {!isReply && (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 6 }}>
+            <div style={{ marginTop: 6 }}>
+              {/* 最新リプライのプレビュー */}
+              {replyCount > 0 && (() => {
+                const latestReply = replies[replies.length - 1];
+                const replierName = allProfiles.find(p => p.id === latestReply.user_id)?.name || '不明';
+                const myLastSeen = lastSeen[msg.channel_id] || '';
+                const unreadReplies = replies.filter(r => r.user_id !== user?.id && r.created_at > myLastSeen).length;
+                return (
+                  <button type="button" onClick={() => setThreadMsgId(msg.id)}
+                    style={{ width: '100%', background: isDark ? '#1e2328' : '#f0f4ff', border: `1px solid ${isDark ? '#3d4349' : '#c7d4f5'}`, borderRadius: 8, padding: '6px 10px', cursor: 'pointer', textAlign: 'left', marginBottom: 6 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                      <span style={{ fontSize: 11, fontWeight: 'bold', color: isDark ? '#90b4e8' : '#3b5bdb' }}>💬 {replierName}</span>
+                      <span style={{ fontSize: 10, color: subColor }}>{fmtTime(latestReply.created_at)}</span>
+                      <span style={{ fontSize: 10, color: subColor, marginLeft: 'auto' }}>リプライ {replyCount}件{unreadReplies > 0 ? `（未読${unreadReplies}）` : ''}</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                      {latestReply.body}
+                    </div>
+                  </button>
+                );
+              })()}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
               <button type="button" onClick={() => setThreadMsgId(msg.id)}
                 style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 12, padding: 0 }}>
-                {(() => {
-                  if (replyCount === 0) return '💬 リプライ';
-                  const myLastSeen = lastSeen[msg.channel_id] || '';
-                  const unreadReplies = replies.filter(r => r.user_id !== user?.id && r.created_at > myLastSeen).length;
-                  return (
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                      💬 リプライ {replyCount}件
-                      {unreadReplies > 0 && <span style={{ fontSize: 11, color: subColor }}>（未読{unreadReplies}）</span>}
-                    </span>
-                  );
-                })()}
+                {replyCount === 0 ? '💬 リプライ' : null}
               </button>
               {(() => {
                 const chMemberCount = members.filter(m => m.channel_id === msg.channel_id).length;
@@ -782,6 +799,7 @@ const BoardPage: React.FC = () => {
                   </button>
                 ) : label;
               })()}
+              </div>
             </div>
           )}
         </div>
@@ -1237,9 +1255,19 @@ const BoardPage: React.FC = () => {
   // ── Panels ───────────────────────────────────────────────────────
 
   const channelListPanel = (
-    <div style={{ width: isMobile ? '100%' : 280, background: sidebarBg, borderRight: isMobile ? 'none' : `1px solid ${border}`, display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', flexShrink: 0 }}>
-      {/* Channel list — paddingTop で fixed ヘッダー分を確保 */}
-      <div ref={channelListRef} style={{ overflowY: 'auto', flex: 1, paddingTop: 52 }}>
+    <div style={{ width: isMobile ? '100%' : 280, background: sidebarBg, borderRight: isMobile ? 'none' : `1px solid ${border}`, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, flexShrink: 0 }}>
+      {/* チャンネルリストヘッダー（フロー固定） */}
+      <div style={{ padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+        <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>💬 連絡板</span>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button type="button" onClick={() => setShowDMSearch(true)} style={{ background: '#007bff', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, padding: '4px 10px', fontWeight: 'bold' }}>メッセージ送信</button>
+          <button type="button" onClick={() => navigate('/notification-settings')} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px' }}>通知設定</button>
+          {isAdmin && (
+            <button type="button" onClick={() => setShowGroupModal(true)} title="グループ作成" style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '4px 8px' }}>＋</button>
+          )}
+        </div>
+      </div>
+      <div ref={channelListRef} style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
         {loadingData ? (
           <div style={{ padding: 20, textAlign: 'center', color: subColor, fontSize: 13 }}>読み込み中...</div>
         ) : sortedChannels.length === 0 ? (
@@ -1287,7 +1315,7 @@ const BoardPage: React.FC = () => {
   const messagePanel = selectedChannelId && selectedChannel ? (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Messages */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px', paddingTop: 64, background: bg }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px', paddingTop: 110, background: bg }}>
         {channelMessages.length === 0 && (
           <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>まだメッセージがありません</div>
         )}
@@ -1432,11 +1460,11 @@ const BoardPage: React.FC = () => {
   // ── Render ───────────────────────────────────────────────────────
 
   return (
-    <div style={{ paddingTop: 60, height: '100vh', display: 'flex', flexDirection: 'column', background: bg, overflow: 'hidden' }}>
-      {/* Channel header — fixed, always mounted, hidden when channel list is shown */}
-      {selectedChannelId && selectedChannel && (
-        <div style={{ padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, alignItems: 'center', gap: 8, flexShrink: 0, position: 'fixed', top: 60, left: 0, right: 0, zIndex: 50, display: showChannelList ? 'none' : 'flex' }}>
-          <button type="button" onClick={() => { setShowChannelList(true); setSelectedChannelId(null); setTimeout(() => channelListRef.current?.scrollTo({ top: 0 }), 0); }} style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 22, padding: '0 6px', lineHeight: 1, fontWeight: 'bold' }}>←</button>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: bg, overflow: 'hidden', paddingTop: 60, boxSizing: 'border-box' }}>
+      {/* Channel header — fixed, shown when a channel is open */}
+      {selectedChannelId && selectedChannel && !showChannelList && (
+        <div style={{ padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, alignItems: 'center', gap: 8, flexShrink: 0, position: 'fixed', top: 60, left: 0, right: 0, zIndex: 50, display: 'flex' }}>
+          <button type="button" onClick={() => { setShowChannelList(true); setSelectedChannelId(null); }} style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 22, padding: '0 6px', lineHeight: 1, fontWeight: 'bold' }}>←</button>
           <div style={{ width: 32, height: 32, borderRadius: selectedChannel.type === 'group' ? 8 : '50%', background: selectedChannel.type === 'group' ? '#6f42c1' : '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, flexShrink: 0 }}>
             {selectedChannel.type === 'group' ? '👥' : avatarLetter(channelDisplayName(selectedChannel))}
           </div>
@@ -1445,19 +1473,6 @@ const BoardPage: React.FC = () => {
             <div style={{ fontSize: 11, color: subColor }}>{currentMembers.length}人</div>
           </div>
           <button type="button" onClick={openMemberModal} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px', flexShrink: 0 }}>👥 メンバー</button>
-        </div>
-      )}
-      {/* 連絡板ヘッダー — position:fixed、チャンネルリスト表示時のみ */}
-      {showChannelList && (
-        <div style={{ padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, position: 'fixed', top: 60, left: 0, right: 0, zIndex: 50 }}>
-          <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>💬 連絡板</span>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button type="button" onClick={() => setShowDMSearch(true)} style={{ background: '#007bff', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, padding: '4px 10px', fontWeight: 'bold' }}>メッセージ送信</button>
-            <button type="button" onClick={() => navigate('/notification-settings')} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px' }}>通知設定</button>
-            {isAdmin && (
-              <button type="button" onClick={() => setShowGroupModal(true)} title="グループ作成" style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '4px 8px' }}>＋</button>
-            )}
-          </div>
         </div>
       )}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>

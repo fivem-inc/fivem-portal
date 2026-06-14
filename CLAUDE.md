@@ -2857,3 +2857,35 @@ ALTER TABLE board_channels ADD CONSTRAINT board_channels_type_check
 2. **タブ・機能の表示権限管理画面**
 3. **UI/UX改善**（コードレビュー高優先項目）
 4. **gcal-sync 失敗時リトライキュー**（低優先）
+
+---
+
+## ✅ 2026-06-14 連絡板 レイアウト修正・スクロール改善 完了
+
+### 変更ファイル
+- `client/src/pages/BoardPage.tsx`
+
+### 変更内容
+
+#### チャンネルリスト ヘッダー固定表示
+- 「💬 連絡板」ヘッダーをチャンネルリストパネル内のフロー要素として配置
+- `display: flex; flexDirection: column` で親パネルを構成
+  - ヘッダー（`flexShrink: 0`）
+  - スクロールエリア（`flex: 1; minHeight: 0; overflowY: auto`）
+- `position: fixed` や `paddingTop` スペーサーを廃止し、flexレイアウトで自然に高さを確保
+- 外側ルートdivに `boxSizing: 'border-box'` を明示（`height: 100vh + paddingTop: 60` が正確に 100vh 内に収まる）
+
+#### 戻るボタン後のスクロールリセット
+- チャンネルから ← で戻ったとき、チャンネルリストが末尾にスクロールしたまま表示される問題を修正
+- `useEffect` で `showChannelList` が `true` になったとき `channelListRef.current.scrollTop = 0` を即時実行
+
+### ⚠️ 注意事項
+- `channelListPanel` は `{showChannelList && channelListPanel}` で条件レンダリングされている。`showChannelList=false` 時は DOM からアンマウントされ、再表示時は新規マウントになる
+- 外側ルートdivの `boxSizing: 'border-box'` は必須。省略すると `height: 100vh + paddingTop: 60` で合計 `100vh + 60px` になりはみ出す
+- メッセージエリアの `paddingTop: 110` は別の固定ヘッダー（チャンネル名ヘッダー）のためのもので変更不要
+
+### 🔜 次回タスク（2026-06-14 セッション3 終了時点）
+1. **残業申請フォーム（パート用）** ← 最優先
+2. **タブ・機能の表示権限管理画面**
+3. **UI/UX改善**（コードレビュー高優先項目）
+4. **gcal-sync 失敗時リトライキュー**（低優先）
