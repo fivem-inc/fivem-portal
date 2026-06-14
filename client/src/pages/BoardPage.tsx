@@ -372,7 +372,7 @@ const BoardPage: React.FC = () => {
         const senderName = profileName || '誰か';
         const chName = selectedChannel ? (selectedChannel.name || 'チャンネル') : 'チャンネル';
         await Promise.all([...threadParticipants].map(uid =>
-          insertNotification(uid, `${senderName}がスレッドにリプライしました`, `${chName}: ${body.trim().slice(0, 40)}`)
+          insertNotification(uid, `${senderName}がスレッドにリプライしました`, `${chName}: ${body.trim().slice(0, 40)}`, 'board')
         ));
       }
     }
@@ -465,7 +465,7 @@ const BoardPage: React.FC = () => {
       }
       if (dmCh) {
         await supabase.from('board_messages').insert({ channel_id: dmCh.id, user_id: user.id, body: broadcastMessage.trim() });
-        await insertNotification(targetId, `${profileName || '誰か'}からメッセージが届きました`, broadcastMessage.trim().slice(0, 40));
+        await insertNotification(targetId, `${profileName || '誰か'}からメッセージが届きました`, broadcastMessage.trim().slice(0, 40), 'board');
       }
     }
 

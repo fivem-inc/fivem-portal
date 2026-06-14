@@ -99,7 +99,7 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
         )}
       </button>
       {open && (
-        <div style={{ position: 'absolute', right: 0, top: '100%', marginTop: 4, width: 300, background: '#fff', borderRadius: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.2)', zIndex: 999, overflow: 'hidden' }}>
+        <div style={{ position: 'absolute', right: 0, top: '100%', marginTop: 4, width: 300, background: '#fff', borderRadius: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.2)', zIndex: 1500, overflow: 'hidden' }}>
           <div style={{ padding: '10px 14px', borderBottom: '1px solid #eee', fontSize: 13, fontWeight: 'bold', color: '#333' }}>通知</div>
           <div style={{ maxHeight: 320, overflowY: 'auto' }}>
             {notifs.length === 0 ? (
@@ -140,7 +140,7 @@ const AvatarMenu: React.FC<{ userId: string; profileName: string | null; email: 
         {initial}
       </div>
       {open && (
-        <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', width: 200, background: '#fff', borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.2)', zIndex: 999, overflow: 'hidden' }}>
+        <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', width: 200, background: '#fff', borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.2)', zIndex: 1500, overflow: 'hidden' }}>
           <div style={{ padding: '12px 14px', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 13, fontWeight: 'bold', flexShrink: 0 }}>{initial}</div>
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -295,6 +295,7 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
       .eq('user_id', userId)
       .eq('read', false)
       .not('message', 'like', '%有給奨励日%')
+      .or('source_type.is.null,source_type.neq.board')
       .order('created_at', { ascending: false });
     if (data) setNotifs(data);
   }, [userId]);
@@ -564,7 +565,7 @@ const Dashboard: React.FC = () => {
       )}
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} userId={user.id} />
 
-      {/* 連絡板未読バナー（消えない・インライン） */}
+      {/* 連絡板未読バナー（読むまで消えない） */}
       {boardUnread > 0 && location.pathname !== '/board' && (
         <div onClick={() => navigate('/board')} style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 10, padding: '12px 16px', marginBottom: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 15, flexShrink: 0 }}>💬</div>
