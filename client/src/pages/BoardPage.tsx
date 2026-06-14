@@ -394,6 +394,16 @@ const BoardPage: React.FC = () => {
     setShowMemberModal(true);
   };
 
+  const deleteChannel = async (chId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm('このチャンネルを削除しますか？\nメッセージもすべて削除されます。')) return;
+    await supabase.from('board_channel_members').delete().eq('channel_id', chId);
+    await supabase.from('board_messages').delete().eq('channel_id', chId);
+    await supabase.from('board_channels').delete().eq('id', chId);
+    if (selectedChannelId === chId) { setSelectedChannelId(null); setShowChannelList(true); }
+    await loadAll();
+  };
+
   const saveMemberChanges = async () => {
     if (!selectedChannelId) return;
     setMemberSaving(true);
@@ -451,28 +461,37 @@ const BoardPage: React.FC = () => {
             )}
           </div>
 
-          {/* Body / Edit field */}
-          {(msg.title || msg.deadline) && !msg.parent_id && (() => {
+          {/* 種別ラベル＋期限バッジ（案C: 左ボーダー＋右端バッジ） */}
+          {msg.deadline_type && !msg.parent_id && (() => {
             const today = new Date().toISOString().slice(0, 10);
             const isOverdue = msg.deadline ? msg.deadline < today : false;
-            const isToday = msg.deadline === today;
+            const isToday = msg.deadline ? msg.deadline === today : false;
             const dtConfig = DEADLINE_TYPES.find(d => d.value === msg.deadline_type);
-            const badgeBg = isOverdue ? '#fee2e2' : isToday ? '#fef3c7' : '#e0f2fe';
-            const badgeColor = isOverdue ? '#991b1b' : isToday ? '#92400e' : '#0369a1';
+            const typeText = dtConfig ? dtConfig.label.replace(/^\S+\s/, '') : '確認';
+            const accentColor = isOverdue ? '#dc2626' : isToday ? '#d97706' : '#1d4ed8';
+            const dateLabel = msg.deadline ? (() => {
+              const [y, m, d] = msg.deadline.split('-');
+              return `${y}/${parseInt(m)}/${parseInt(d)}まで`;
+            })() : '';
+            const badgeLeftText = isOverdue ? '期限切れ' : isToday ? '本日締切' : '期限';
             return (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, marginBottom: 4, flexWrap: 'wrap' }}>
-                {msg.title && (
-                  <span style={{ fontSize: 14, fontWeight: 'bold', color: textColor }}>【{msg.title}】</span>
-                )}
-                {msg.deadline && (
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 'bold', background: badgeBg, color: badgeColor }}>
-                    {isOverdue ? '⚠️ 期限切れ' : isToday ? '⏰ 本日期限' : dtConfig ? `📅 ${dtConfig.label}` : '📅 期限'}
-                    {' '}{msg.deadline.replace(/-/g, '/') + 'まで'}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, paddingBottom: 8, borderBottom: `1px solid ${border}` }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 0, flexShrink: 0 }}>
+                    <div style={{ width: 3, height: 22, background: accentColor, borderRadius: 2, marginRight: 8, flexShrink: 0 }} />
+                    <span style={{ fontSize: 20, fontWeight: 800, color: textColor }}>{typeText}確認</span>
                   </div>
-                )}
+                  {msg.deadline && (
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 0, borderRadius: 20, overflow: 'hidden', border: `1.5px solid ${accentColor}` }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: '#fff', background: accentColor, padding: '2px 9px' }}>{badgeLeftText}</span>
+                      <span style={{ fontSize: 11, color: accentColor, padding: '2px 9px' }}>{dateLabel}</span>
+                    </div>
+                  )}
+                </div>
               </div>
             );
           })()}
+          {/* Body / Edit field */}
           {/* 回答タイプの質問内容・場所 */}
           {msg.deadline_type && !msg.parent_id && (msg.answer_prompt || msg.answer_location || msg.answer_link) && (
             <div style={{ margin: '6px 0 4px', padding: '8px 12px', background: isDark ? '#1e2a3a' : '#eff6ff', borderRadius: 8, borderLeft: `3px solid ${isDark ? '#3b82f6' : '#3b82f6'}` }}>
@@ -987,6 +1006,7 @@ const BoardPage: React.FC = () => {
           const last = channelLastMsg(ch.id);
           const unread = channelUnread(ch.id);
           const isSelected = ch.id === selectedChannelId;
+          const canDelete = isAdmin || ch.created_by === user?.id;
           return (
             <div key={ch.id} onClick={() => selectChannel(ch.id)} style={{
               padding: '10px 14px', cursor: 'pointer', borderBottom: `1px solid ${border}`,
@@ -998,8 +1018,15 @@ const BoardPage: React.FC = () => {
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: 13, fontWeight: unread > 0 ? 'bold' : 'normal', color: textColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }}>{channelDisplayName(ch)}</span>
-                  <span style={{ fontSize: 10, color: subColor, flexShrink: 0 }}>{last ? fmtTime(last.created_at) : ''}</span>
+                  <span style={{ fontSize: 13, fontWeight: unread > 0 ? 'bold' : 'normal', color: textColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 130 }}>{channelDisplayName(ch)}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                    <span style={{ fontSize: 10, color: subColor }}>{last ? fmtTime(last.created_at) : ''}</span>
+                    {canDelete && (
+                      <button type="button" onClick={e => deleteChannel(ch.id, e)}
+                        style={{ background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 13, padding: '0 2px', lineHeight: 1 }}
+                        title="チャンネルを削除">🗑️</button>
+                    )}
+                  </div>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
                   <span style={{ fontSize: 12, color: subColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '75%' }}>{last?.body || 'まだメッセージがありません'}</span>
@@ -1019,7 +1046,7 @@ const BoardPage: React.FC = () => {
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Channel header */}
       <div style={{ padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-        {isMobile && (
+        {!showChannelList && (
           <button type="button" onClick={() => { setShowChannelList(true); setSelectedChannelId(null); }} style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 20, padding: '0 4px', lineHeight: 1 }}>←</button>
         )}
         <div style={{ width: 32, height: 32, borderRadius: selectedChannel.type === 'group' ? 8 : '50%', background: selectedChannel.type === 'group' ? '#6f42c1' : '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, flexShrink: 0 }}>
@@ -1056,14 +1083,23 @@ const BoardPage: React.FC = () => {
         {/* 詳細設定（折りたたみ） */}
         <div style={{ marginBottom: 6 }}>
           <button type="button" onClick={() => setShowOptionsExpanded(e => !e)}
-            style={{ background: 'none', border: 'none', color: subColor, cursor: 'pointer', fontSize: 12, padding: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
-            {showOptionsExpanded ? '▲' : '▼'} 期限・種別・送信予約
-            {(newDeadlineType || newDeadline || newScheduledAt) && (
-              <span style={{ color: '#007bff', fontWeight: 'bold', fontSize: 14 }}>●</span>
-            )}
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '6px 10px', borderRadius: showOptionsExpanded ? '8px 8px 0 0' : 8,
+              border: `1px solid ${border}`, background: inputBg,
+              cursor: 'pointer', color: textColor, fontSize: 12, fontWeight: 600,
+            }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 13 }}>⚙️</span>
+              期限・種別・送信予約
+              {(newDeadlineType || newDeadline || newScheduledAt) && (
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#007bff', display: 'inline-block' }} />
+              )}
+            </span>
+            <span style={{ fontSize: 11, color: subColor }}>{showOptionsExpanded ? '▲ 閉じる' : '▼ 開く'}</span>
           </button>
           {showOptionsExpanded && (
-            <div style={{ marginTop: 8, padding: '10px 12px', background: inputBg, borderRadius: 8, border: `1px solid ${border}`, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ padding: '10px 12px', background: inputBg, borderRadius: '0 0 8px 8px', border: `1px solid ${border}`, borderTop: 'none', display: 'flex', flexDirection: 'column', gap: 10 }}>
               {/* 種別ボタングリッド */}
               <div>
                 <div style={{ fontSize: 11, color: subColor, marginBottom: 6 }}>種別（選ぶと確認ボタンが付きます）</div>
@@ -1077,19 +1113,6 @@ const BoardPage: React.FC = () => {
                   ))}
                 </div>
               </div>
-              {/* タイトル */}
-              {newDeadlineType && (
-                <div>
-                  <div style={{ fontSize: 11, color: subColor, marginBottom: 4 }}>タイトル（何の連絡か）</div>
-                  <input
-                    type="text"
-                    value={newTitle}
-                    onChange={e => setNewTitle(e.target.value)}
-                    placeholder="例：シフト確認のお願い、年末調整について"
-                    style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, fontSize: 13, boxSizing: 'border-box' }}
-                  />
-                </div>
-              )}
               {/* 内容・場所・URL */}
               {newDeadlineType && (
                 <>
