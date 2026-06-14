@@ -348,7 +348,7 @@ const BoardPage: React.FC = () => {
       .single();
 
     if (!error && data) {
-      const msg: BoardMessage = { ...data, profile: { name: profileName || null } };
+      const msg: BoardMessage = { ...data, broadcast_recipients: null, profile: { name: profileName || null } };
       setMessages(prev => [...prev, msg]);
       await supabase.from('board_reads').upsert({ message_id: data.id, user_id: user.id }, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
       setReadCounts(prev => ({ ...prev, [data.id]: 1 }));
