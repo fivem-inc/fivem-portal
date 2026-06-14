@@ -440,8 +440,8 @@ const BoardPage: React.FC = () => {
             const dtConfig = DEADLINE_TYPES.find(d => d.value === msg.deadline_type);
             return (
               <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 4, marginBottom: 2, padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 'bold', background: isOverdue ? '#fee2e2' : isToday ? '#fef3c7' : '#e0f2fe', color: isOverdue ? '#991b1b' : isToday ? '#92400e' : '#0369a1' }}>
-                {isOverdue ? '⚠️ 期限切れ' : isToday ? '⏰ 本日期限' : '📅 期限'}
-                {dtConfig && ` ${dtConfig.label}`}: {msg.deadline}
+                {isOverdue ? '⚠️ 期限切れ' : isToday ? '⏰ 本日期限' : dtConfig ? `📅 ${dtConfig.label}` : '📅 期限'}
+                {' '}{msg.deadline.replace(/-/g, '/') + 'まで'}
               </div>
             );
           })()}
