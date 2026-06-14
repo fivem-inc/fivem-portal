@@ -34,8 +34,10 @@ interface BoardMessage {
   deadline_type: string | null;
   requires_confirmation: boolean;
   scheduled_at: string | null;
+  title: string | null;
   answer_prompt: string | null;
   answer_location: string | null;
+  answer_link: string | null;
   profile: { name: string | null } | null;
 }
 
@@ -65,10 +67,10 @@ const fmtTime = (ts: string) => {
 const avatarLetter = (name: string | null | undefined) => (name || '?')[0];
 
 const DEADLINE_TYPES = [
-  { value: 'read',    label: '📖 読了',  reportLabel: '読了報告',  doneLabel: '読了済み' },
-  { value: 'answer',  label: '✏️ 回答', reportLabel: '回答報告',  doneLabel: '回答済み' },
-  { value: 'submit',  label: '📤 提出', reportLabel: '提出報告',  doneLabel: '提出済み' },
-  { value: 'approve', label: '✅ 承認', reportLabel: '承認報告',  doneLabel: '承認済み' },
+  { value: 'read',    label: '📖 読了',  reportLabel: '読了報告',  doneLabel: '読了済み', promptPlaceholder: '例：2026年経営方針',   locationPlaceholder: '例：Slackのcanvas',      linkPlaceholder: 'https://...' },
+  { value: 'answer',  label: '✏️ 回答', reportLabel: '回答報告',  doneLabel: '回答済み', promptPlaceholder: '例：短期シフト',       locationPlaceholder: '例：スプレッドシート',   linkPlaceholder: 'https://forms.google.com/...' },
+  { value: 'submit',  label: '📤 提出', reportLabel: '提出報告',  doneLabel: '提出済み', promptPlaceholder: '例：年末調整資料',     locationPlaceholder: '例：経理担当者に提出',   linkPlaceholder: 'https://...' },
+  { value: 'approve', label: '✅ 承認', reportLabel: '承認報告',  doneLabel: '承認済み', promptPlaceholder: '例：〇〇企画書',       locationPlaceholder: '例：スプレッドシート',   linkPlaceholder: 'https://...' },
 ] as const;
 
 // ────────────────────────────────────────────────────────────────
@@ -112,8 +114,10 @@ const BoardPage: React.FC = () => {
   const [unconfirmedMsgId,     setUnconfirmedMsgId]     = useState<string | null>(null);
   const [answerInputId,        setAnswerInputId]        = useState<string | null>(null);
   const [answerText,           setAnswerText]           = useState('');
+  const [newTitle,             setNewTitle]             = useState('');
   const [newAnswerPrompt,      setNewAnswerPrompt]      = useState('');
   const [newAnswerLocation,    setNewAnswerLocation]    = useState('');
+  const [newAnswerLink,        setNewAnswerLink]        = useState('');
   const [replyBody,            setReplyBody]            = useState('');
   const [editingId,   setEditingId]   = useState<string | null>(null);
   const [editBody,         setEditBody]         = useState('');
@@ -166,7 +170,7 @@ const BoardPage: React.FC = () => {
     const [chRes, memRes, msgRes, lsRes, profRes, settingsRes] = await Promise.all([
       supabase.from('board_channels').select('*').in('id', cids),
       supabase.from('board_channel_members').select('channel_id, user_id').in('channel_id', cids),
-      supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, answer_prompt, answer_location').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
+      supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, answer_prompt, answer_location, answer_link').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
       supabase.from('board_channel_last_seen').select('channel_id, last_seen_at').eq('user_id', user.id),
       supabase.from('profiles').select('id, name, role_title, employment_type').eq('is_active', true).order('name'),
       supabase.from('master_options').select('value').eq('category', 'board_show_read_detail').limit(1),
@@ -262,6 +266,8 @@ const BoardPage: React.FC = () => {
     setSelectedChannelId(channelId);
     setExpandedThreadId(null);
     setNewBody('');
+    setShowOptionsExpanded(false);
+    setNewDeadline(''); setNewDeadlineType(''); setNewScheduledAt(''); setNewTitle(''); setNewAnswerPrompt(''); setNewAnswerLocation(''); setNewAnswerLink('');
     if (isMobile) setShowChannelList(false);
 
     await supabase.from('board_channel_last_seen').upsert(
@@ -299,15 +305,17 @@ const BoardPage: React.FC = () => {
       insertData.requires_confirmation = true;
     }
     if (!parentId && newScheduledAt) insertData.scheduled_at = new Date(newScheduledAt).toISOString();
-    if (!parentId && newDeadlineType === 'answer') {
+    if (!parentId && newDeadlineType) {
+      if (newTitle.trim()) insertData.title = newTitle.trim();
       if (newAnswerPrompt.trim()) insertData.answer_prompt = newAnswerPrompt.trim();
       if (newAnswerLocation.trim()) insertData.answer_location = newAnswerLocation.trim();
+      if (newAnswerLink.trim()) insertData.answer_link = newAnswerLink.trim();
     }
 
     const { data, error } = await supabase
       .from('board_messages')
       .insert(insertData)
-      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, answer_prompt, answer_location')
+      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, answer_prompt, answer_location, answer_link')
       .single();
 
     if (!error && data) {
@@ -316,7 +324,7 @@ const BoardPage: React.FC = () => {
       await supabase.from('board_reads').upsert({ message_id: data.id, user_id: user.id }, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
       setReadCounts(prev => ({ ...prev, [data.id]: 1 }));
     }
-    if (parentId) setReplyBody(''); else { setNewBody(''); setNewDeadline(''); setNewDeadlineType(''); setNewScheduledAt(''); setNewAnswerPrompt(''); setNewAnswerLocation(''); }
+    if (parentId) setReplyBody(''); else { setNewBody(''); setNewDeadline(''); setNewDeadlineType(''); setNewScheduledAt(''); setNewTitle(''); setNewAnswerPrompt(''); setNewAnswerLocation(''); setNewAnswerLink(''); }
     setSending(false);
   };
 
@@ -444,38 +452,52 @@ const BoardPage: React.FC = () => {
           </div>
 
           {/* Body / Edit field */}
-          {msg.deadline && !msg.parent_id && (() => {
+          {(msg.title || msg.deadline) && !msg.parent_id && (() => {
             const today = new Date().toISOString().slice(0, 10);
-            const isOverdue = msg.deadline < today;
+            const isOverdue = msg.deadline ? msg.deadline < today : false;
             const isToday = msg.deadline === today;
             const dtConfig = DEADLINE_TYPES.find(d => d.value === msg.deadline_type);
+            const badgeBg = isOverdue ? '#fee2e2' : isToday ? '#fef3c7' : '#e0f2fe';
+            const badgeColor = isOverdue ? '#991b1b' : isToday ? '#92400e' : '#0369a1';
             return (
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 4, marginBottom: 2, padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 'bold', background: isOverdue ? '#fee2e2' : isToday ? '#fef3c7' : '#e0f2fe', color: isOverdue ? '#991b1b' : isToday ? '#92400e' : '#0369a1' }}>
-                {isOverdue ? '⚠️ 期限切れ' : isToday ? '⏰ 本日期限' : dtConfig ? `📅 ${dtConfig.label}` : '📅 期限'}
-                {' '}{msg.deadline.replace(/-/g, '/') + 'まで'}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, marginBottom: 4, flexWrap: 'wrap' }}>
+                {msg.title && (
+                  <span style={{ fontSize: 14, fontWeight: 'bold', color: textColor }}>【{msg.title}】</span>
+                )}
+                {msg.deadline && (
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 'bold', background: badgeBg, color: badgeColor }}>
+                    {isOverdue ? '⚠️ 期限切れ' : isToday ? '⏰ 本日期限' : dtConfig ? `📅 ${dtConfig.label}` : '📅 期限'}
+                    {' '}{msg.deadline.replace(/-/g, '/') + 'まで'}
+                  </div>
+                )}
               </div>
             );
           })()}
           {/* 回答タイプの質問内容・場所 */}
-          {msg.deadline_type === 'answer' && !msg.parent_id && (msg.answer_prompt || msg.answer_location) && (
-            <div style={{ margin: '6px 0 4px', padding: '8px 10px', background: isDark ? '#1e2a3a' : '#eff6ff', borderRadius: 8, border: `1px solid ${isDark ? '#3b5270' : '#bfdbfe'}` }}>
+          {msg.deadline_type && !msg.parent_id && (msg.answer_prompt || msg.answer_location || msg.answer_link) && (
+            <div style={{ margin: '6px 0 4px', padding: '8px 12px', background: isDark ? '#1e2a3a' : '#eff6ff', borderRadius: 8, borderLeft: `3px solid ${isDark ? '#3b82f6' : '#3b82f6'}` }}>
               {msg.answer_prompt && (
-                <div style={{ fontSize: 13, color: textColor, marginBottom: msg.answer_location ? 4 : 0 }}>
-                  <span style={{ fontSize: 11, fontWeight: 'bold', color: isDark ? '#93c5fd' : '#1d4ed8' }}>❓ 回答内容　</span>{msg.answer_prompt}
+                <div style={{ display: 'flex', gap: 8, fontSize: 13, color: textColor, marginBottom: msg.answer_location || msg.answer_link ? 4 : 0 }}>
+                  <span style={{ color: isDark ? '#93c5fd' : '#3b82f6', flexShrink: 0, minWidth: 36, fontSize: 12 }}>内容</span>
+                  <span>{msg.answer_prompt}</span>
                 </div>
               )}
               {msg.answer_location && (
-                <div style={{ fontSize: 13, color: textColor }}>
-                  <span style={{ fontSize: 11, fontWeight: 'bold', color: isDark ? '#93c5fd' : '#1d4ed8' }}>📍 回答場所　</span>
-                  {msg.answer_location.startsWith('http') ? (
-                    <a href={msg.answer_location} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', wordBreak: 'break-all' }}>{msg.answer_location}</a>
-                  ) : msg.answer_location}
+                <div style={{ display: 'flex', gap: 8, fontSize: 13, color: textColor, marginBottom: msg.answer_link ? 4 : 0 }}>
+                  <span style={{ color: isDark ? '#93c5fd' : '#3b82f6', flexShrink: 0, minWidth: 36, fontSize: 12 }}>場所</span>
+                  <span>{msg.answer_location}</span>
+                </div>
+              )}
+              {msg.answer_link && (
+                <div style={{ display: 'flex', gap: 8, fontSize: 13 }}>
+                  <span style={{ color: isDark ? '#93c5fd' : '#3b82f6', flexShrink: 0, minWidth: 36, fontSize: 12 }}>URL</span>
+                  <a href={msg.answer_link} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', wordBreak: 'break-all' }}>{msg.answer_link}</a>
                 </div>
               )}
             </div>
           )}
           {/* 回答一覧（回答タイプで送信済みのもの） */}
-          {msg.deadline_type === 'answer' && !msg.parent_id && (() => {
+          {msg.deadline_type && !msg.parent_id && (() => {
             const answers = (confirmations[msg.id] || []).filter(c => c.comment);
             if (answers.length === 0) return null;
             return (
@@ -519,7 +541,7 @@ const BoardPage: React.FC = () => {
             const dtConfig = DEADLINE_TYPES.find(d => d.value === msg.deadline_type);
             const reportLabel = dtConfig ? dtConfig.reportLabel : '確認報告';
             const doneLabel   = dtConfig ? dtConfig.doneLabel   : '確認済み';
-            const isAnswerType = msg.deadline_type === 'answer';
+            const isAnswerType = !!msg.deadline_type;
             return (
               <div style={{ marginTop: 10 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -1055,26 +1077,49 @@ const BoardPage: React.FC = () => {
                   ))}
                 </div>
               </div>
-              {/* 回答タイプ専用フィールド */}
-              {newDeadlineType === 'answer' && (
+              {/* タイトル */}
+              {newDeadlineType && (
+                <div>
+                  <div style={{ fontSize: 11, color: subColor, marginBottom: 4 }}>タイトル（何の連絡か）</div>
+                  <input
+                    type="text"
+                    value={newTitle}
+                    onChange={e => setNewTitle(e.target.value)}
+                    placeholder="例：シフト確認のお願い、年末調整について"
+                    style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, fontSize: 13, boxSizing: 'border-box' }}
+                  />
+                </div>
+              )}
+              {/* 内容・場所・URL */}
+              {newDeadlineType && (
                 <>
                   <div>
-                    <div style={{ fontSize: 11, color: subColor, marginBottom: 4 }}>何を回答するのか（質問内容）</div>
+                    <div style={{ fontSize: 11, color: subColor, marginBottom: 4 }}>内容（何を{DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.label.replace(/\S+\s/, '') ?? ''}するのか）</div>
                     <input
                       type="text"
                       value={newAnswerPrompt}
                       onChange={e => setNewAnswerPrompt(e.target.value)}
-                      placeholder="例：来月のシフト希望を回答してください"
+                      placeholder={DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.promptPlaceholder ?? ''}
                       style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, fontSize: 13, boxSizing: 'border-box' }}
                     />
                   </div>
                   <div>
-                    <div style={{ fontSize: 11, color: subColor, marginBottom: 4 }}>どこで回答するのか（場所・URL）</div>
+                    <div style={{ fontSize: 11, color: subColor, marginBottom: 4 }}>場所・URL（どこで{DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.label.replace(/\S+\s/, '') ?? ''}するのか）</div>
                     <input
                       type="text"
                       value={newAnswerLocation}
                       onChange={e => setNewAnswerLocation(e.target.value)}
-                      placeholder="例：https://forms.google.com/... または「紙で提出」"
+                      placeholder={DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.locationPlaceholder ?? ''}
+                      style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, fontSize: 13, boxSizing: 'border-box' }}
+                    />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: subColor, marginBottom: 4 }}>リンク（URL）</div>
+                    <input
+                      type="url"
+                      value={newAnswerLink}
+                      onChange={e => setNewAnswerLink(e.target.value)}
+                      placeholder={DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.linkPlaceholder ?? 'https://...'}
                       style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, fontSize: 13, boxSizing: 'border-box' }}
                     />
                   </div>
