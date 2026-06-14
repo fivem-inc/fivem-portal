@@ -2668,3 +2668,49 @@ await supabase.functions.invoke('send-push', {
 - 13:00前出勤で勤務6:30の場合 → 休憩 0:30
 
 **申請先：** リーダー・マネージャーから選択（LeaveRequestと同様の選択UI）
+
+---
+
+## ✅ 2026-06-14 連絡板UI全面改善・NavBar刷新 完了
+
+### 変更ファイル
+- `client/src/pages/BoardPage.tsx`
+- `client/src/App.tsx`
+
+### BoardPage.tsx 変更内容
+
+#### スレッド（リプライ）Case B 実装
+- リプライボタンを押すと全画面スレッドパネルが開く（Slack方式）
+- `threadMsgId` state で制御、`position: fixed; top:60; bottom:0; zIndex:200`
+- スレッドパネル構成: 固定ヘッダー（← スレッド）+ 親メッセージ固定表示 + リプライ一覧 + 固定入力欄
+- リプライにも 既読N 未読N を右揃えで表示
+- リプライ送信時: スレッド参加者（親メッセージ投稿者 + 既存リプライ投稿者）に `insertNotification` で通知
+
+#### チャンネルヘッダー・連絡板ヘッダーの常時固定化
+- 両ヘッダーを `position: fixed; top:60` で常時DOM常駐
+- `showChannelList` の true/false で `display: flex / none` を切り替え
+- channelListPanel・messagePanel のヘッダーをJSX外（return内のルート）に移動
+
+#### その他UI修正
+- 送信確認モーダルの本文テキストを左揃えに
+- スレッドパネル内メッセージを左揃えに
+
+#### 未読バナー改善（App.tsx）
+- boardToast（5秒で消えるポップアップ）→ インラインバナー（消えない）に変更
+- `boardToast` state・useEffect を削除
+- 連絡板ページを開いている間はバナー非表示（`location.pathname !== '/board'`）
+
+### NavBar 刷新（App.tsx）
+
+#### 右端をアバター丸アイコン + ベルに変更
+- 旧: ベル + 名前テキスト + ログアウトボタン（幅が足りずはみ出ていた）
+- 新: ベル（既存 BellIcon）+ アバター丸（初期文字1文字、青`#4a90d9`）
+- `AvatarMenu` コンポーネント新規作成
+  - タップでドロップダウン: 名前 / アカウント設定リンク / ログアウトボタン
+  - 通知リストはベルアイコンが担当するためアバターメニューには含めない
+  - 外クリックで閉じる（`mousedown` イベント）
+
+### 🔜 次回タスク（2026-06-14時点）
+1. **残業申請フォーム（パート用）** ← 最優先
+2. **タブ・機能の表示権限管理画面**
+3. **gcal-sync 失敗時リトライキュー**（低優先）
