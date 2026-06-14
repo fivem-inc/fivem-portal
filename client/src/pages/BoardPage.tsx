@@ -489,7 +489,7 @@ const BoardPage: React.FC = () => {
                   </span>
                 )}
                 <span style={{ fontSize: 13, color: subColor }}>
-                  {confirmedIds.length}人確認済み
+                  {confirmedIds.length}人{doneLabel}
                 </span>
                 {isAdmin && unconfirmedIds.length > 0 && (
                   <button type="button" onClick={() => setUnconfirmedMsgId(msg.id)}
