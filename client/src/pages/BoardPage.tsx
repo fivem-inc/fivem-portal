@@ -232,7 +232,7 @@ const BoardPage: React.FC = () => {
   useEffect(() => { loadAll(); }, [loadAll]);
 
   useEffect(() => {
-    if (selectedChannelId) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (selectedChannelId) messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
   }, [messages.length, selectedChannelId]);
 
   useEffect(() => {
