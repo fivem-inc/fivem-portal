@@ -8,7 +8,7 @@ import TripReportsTab from './admin/TripReportsTab';
 import ReportsTab from './admin/ReportsTab';
 import LeaveRequestsTab from './admin/LeaveRequestsTab';
 import LeaderAssignmentsTab from './admin/LeaderAssignmentsTab';
-import NotificationsTab from './admin/NotificationsTab';
+import NotificationsTab, { ScheduledRemindersPanel } from './admin/NotificationsTab';
 
 interface AdminPanelProps {
   pendingApprovals: PendingApproval[];
@@ -488,7 +488,12 @@ const AdminPanelContent: React.FC = () => {
         {activeTab === 'reports' && <ReportsTab />}
         {activeTab === 'leave_requests' && <LeaveRequestsTab />}
         {activeTab === 'leader_assignments' && <LeaderAssignmentsTab />}
-        {activeTab === 'notifications' && <NotificationsTab />}
+        {activeTab === 'notifications' && (
+          <>
+            <NotificationsTab />
+            <ScheduledRemindersPanel />
+          </>
+        )}
       </div>
 
       {/* 区分・行き先リスト管理モーダル（全タブから開ける） */}
