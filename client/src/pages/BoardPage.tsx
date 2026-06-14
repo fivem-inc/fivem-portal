@@ -444,7 +444,7 @@ const BoardPage: React.FC = () => {
     const canEdit = isOwn || isAdmin;
     const replies = isReply ? [] : threadReplies(msg.id);
     const replyCount = replies.length;
-    const isExpanded = expandedThreadId === msg.id;
+
     const readCount = readCounts[msg.id] || 0;
     const senderName = allProfiles.find(p => p.id === msg.user_id)?.name || msg.profile?.name || '不明';
     const confirmedIdsTop = (confirmations[msg.id] || []).map(c => c.user_id);
