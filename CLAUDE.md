@@ -2710,6 +2710,21 @@ await supabase.functions.invoke('send-push', {
   - 通知リストはベルアイコンが担当するためアバターメニューには含めない
   - 外クリックで閉じる（`mousedown` イベント）
 
+### 連絡板 管理者設定（実装済み・記載漏れ）
+
+#### 既読詳細表示設定（管理者のみ操作可）
+- チャンネルヘッダー右の `👁 既読` ボタンで ON/OFF 切り替え
+- ON（緑枠）: 全メンバーが「既読N 未読N」を見られる
+- OFF: 既読数表示を非表示にする
+- 設定は `master_options` テーブル `category='board_show_read_detail'` に保存（全体共通）
+- 初期値: `true`（ON）
+
+#### 設定の保存方法
+```ts
+await supabase.from('master_options').delete().eq('category', 'board_show_read_detail');
+await supabase.from('master_options').insert({ category: 'board_show_read_detail', value: String(next), sort_order: 0 });
+```
+
 ### 🔜 次回タスク（2026-06-14時点）
 1. **残業申請フォーム（パート用）** ← 最優先
 2. **タブ・機能の表示権限管理画面**
