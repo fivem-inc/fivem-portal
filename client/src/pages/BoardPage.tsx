@@ -63,10 +63,10 @@ const fmtTime = (ts: string) => {
 const avatarLetter = (name: string | null | undefined) => (name || '?')[0];
 
 const DEADLINE_TYPES = [
-  { value: 'read',    label: '📖 読了',  confirmLabel: '読みました' },
-  { value: 'answer',  label: '✏️ 回答', confirmLabel: '回答しました' },
-  { value: 'submit',  label: '📤 提出', confirmLabel: '提出しました' },
-  { value: 'approve', label: '✅ 承認', confirmLabel: '承認します' },
+  { value: 'read',    label: '📖 読了',  reportLabel: '読了報告',  doneLabel: '読了済み' },
+  { value: 'answer',  label: '✏️ 回答', reportLabel: '回答報告',  doneLabel: '回答済み' },
+  { value: 'submit',  label: '📤 提出', reportLabel: '提出報告',  doneLabel: '提出済み' },
+  { value: 'approve', label: '✅ 承認', reportLabel: '承認報告',  doneLabel: '承認済み' },
 ] as const;
 
 // ────────────────────────────────────────────────────────────────
@@ -466,7 +466,8 @@ const BoardPage: React.FC = () => {
             const channelMemberIds = members.filter(m => m.channel_id === msg.channel_id).map(m => m.user_id);
             const unconfirmedIds = channelMemberIds.filter(id => !confirmedIds.includes(id));
             const dtConfig = DEADLINE_TYPES.find(d => d.value === msg.deadline_type);
-            const confirmLabel = dtConfig ? dtConfig.confirmLabel : '確認しました';
+            const reportLabel = dtConfig ? dtConfig.reportLabel : '確認報告';
+            const doneLabel   = dtConfig ? dtConfig.doneLabel   : '確認済み';
             return (
               <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                 {!alreadyConfirmed ? (
@@ -476,11 +477,13 @@ const BoardPage: React.FC = () => {
                     await supabase.from('board_confirmations').upsert({ message_id: msg.id, user_id: user.id }, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
                     setConfirmations(prev => ({ ...prev, [msg.id]: [...(prev[msg.id] || []), user.id] }));
                     setMyConfirmTimes(prev => ({ ...prev, [msg.id]: now }));
-                  }} style={{ padding: '5px 14px', background: '#28a745', color: '#fff', border: 'none', borderRadius: 20, cursor: 'pointer', fontSize: 13, fontWeight: 'bold' }}>
-                    ✅ {confirmLabel}
+                  }} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', background: '#f0fdf4', border: '1.5px solid #28a745', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, color: '#166534' }}>
+                    ☐ {reportLabel}
                   </button>
                 ) : (
-                  <span style={{ fontSize: 12, color: '#28a745', fontWeight: 'bold' }}>✅ {confirmLabel}（{myConfirmTime ? fmtTime(myConfirmTime) : '確認済み'}）</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', background: '#f0fdf4', border: '1.5px solid #28a745', borderRadius: 8, fontSize: 14, fontWeight: 500, color: '#166534' }}>
+                    ☑ {doneLabel}（{myConfirmTime ? fmtTime(myConfirmTime) : '済み'}）
+                  </span>
                 )}
                 <span style={{ fontSize: 12, color: subColor }}>
                   確認済み {confirmedIds.length}人 / 未確認 {unconfirmedIds.length}人
