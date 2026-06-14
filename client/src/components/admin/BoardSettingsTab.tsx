@@ -47,8 +47,10 @@ const BoardSettingsTab: React.FC = () => {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newChannelName, setNewChannelName] = useState('');
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
-  const [memberSearch, setMemberSearch] = useState('');
   const [creating, setCreating] = useState(false);
+
+  // 既読詳細表示設定
+  const [showReadDetail, setShowReadDetail] = useState(true);
 
   const text   = isDark ? '#ffffff' : '#212529';
   const sub    = isDark ? '#adb5bd' : '#6c757d';
@@ -58,11 +60,12 @@ const BoardSettingsTab: React.FC = () => {
 
   useEffect(() => {
     (async () => {
-      const [chRes, profRes, memRes, dmSettingsRes] = await Promise.all([
+      const [chRes, profRes, memRes, dmSettingsRes, readDetailRes] = await Promise.all([
         supabase.from('board_channels').select('id, name, type, send_permissions').order('type').order('created_at'),
         supabase.from('profiles').select('id, name, employment_type, role_title').eq('is_active', true),
         supabase.from('board_channel_members').select('channel_id, user_id'),
         supabase.from('app_settings').select('value').eq('key', DM_SETTINGS_KEY).maybeSingle(),
+        supabase.from('master_options').select('value').eq('category', 'board_show_read_detail').limit(1),
       ]);
       const profiles: Profile[] = profRes.data || [];
       setAllProfiles(profiles);
@@ -81,6 +84,9 @@ const BoardSettingsTab: React.FC = () => {
 
       if (dmSettingsRes.data?.value) {
         setDmPerms(dmSettingsRes.data.value as SendPermissions);
+      }
+      if (readDetailRes.data && readDetailRes.data.length > 0) {
+        setShowReadDetail(readDetailRes.data[0].value !== 'false');
       }
 
       const ets = [...new Set(profiles.map((p: Profile) => p.employment_type).filter(Boolean))] as string[];
@@ -151,9 +157,17 @@ const BoardSettingsTab: React.FC = () => {
     }
     setNewChannelName('');
     setSelectedMemberIds([]);
-    setMemberSearch('');
     setShowCreateForm(false);
     setCreating(false);
+    showBanner();
+  };
+
+  const deleteChannel = async (chId: string, chName: string) => {
+    if (!window.confirm(`「${chName}」を削除しますか？\nメッセージ・メンバー情報もすべて削除されます。`)) return;
+    await supabase.from('board_channel_members').delete().eq('channel_id', chId);
+    await supabase.from('board_messages').delete().eq('channel_id', chId);
+    await supabase.from('board_channels').delete().eq('id', chId);
+    setChannels(prev => prev.filter(ch => ch.id !== chId));
     showBanner();
   };
 
@@ -294,10 +308,26 @@ const BoardSettingsTab: React.FC = () => {
         何も選択しない場合は全員が送信できます。管理者は常に送信可能です。
       </p>
 
+      {/* ── 既読詳細表示設定 ── */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, padding: '10px 14px', background: rowBg, borderRadius: 8, border: `1px solid ${border}` }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 'bold', color: text }}>👁 既読詳細の表示</div>
+          <div style={{ fontSize: 12, color: sub, marginTop: 2 }}>ONにすると、全員がメッセージの既読者リストを確認できます</div>
+        </div>
+        <button type="button" onClick={async () => {
+          const next = !showReadDetail;
+          setShowReadDetail(next);
+          await supabase.from('master_options').delete().eq('category', 'board_show_read_detail');
+          await supabase.from('master_options').insert({ category: 'board_show_read_detail', value: String(next), sort_order: 0 });
+        }} style={{ padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 'bold', background: showReadDetail ? '#22c55e' : '#6c757d', color: '#fff', flexShrink: 0 }}>
+          {showReadDetail ? 'ON' : 'OFF'}
+        </button>
+      </div>
+
       {/* ── グループチャンネル ── */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, marginTop: 4 }}>
         <div style={{ fontSize: 13, fontWeight: 'bold', color: sub }}>👥 グループチャンネル</div>
-        <button type="button" onClick={() => { setShowCreateForm(v => !v); setNewChannelName(''); setSelectedMemberIds([]); setMemberSearch(''); }}
+        <button type="button" onClick={() => { setShowCreateForm(v => !v); setNewChannelName(''); setSelectedMemberIds([]); }}
           style={{ padding: '4px 12px', background: showCreateForm ? 'none' : '#6f42c1', color: showCreateForm ? sub : '#fff', border: showCreateForm ? `1px solid ${border}` : 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>
           {showCreateForm ? 'キャンセル' : '＋ 新規作成'}
         </button>
@@ -306,63 +336,86 @@ const BoardSettingsTab: React.FC = () => {
       {showCreateForm && (
         <div style={{ marginBottom: 12, padding: '14px 16px', border: `1px solid ${border}`, borderRadius: 10, background: rowBg }}>
           {/* チャンネル名 */}
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 12, color: sub, marginBottom: 6, fontWeight: 'bold' }}>チャンネル名</div>
-            <input
-              type="text"
-              value={newChannelName}
-              onChange={e => setNewChannelName(e.target.value)}
-              placeholder="例：全員・パート・三役"
-              style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#1e2328' : '#fff', color: text, fontSize: 13, boxSizing: 'border-box' }}
-              autoFocus
-            />
+          <input
+            type="text"
+            value={newChannelName}
+            onChange={e => setNewChannelName(e.target.value)}
+            placeholder="グループ名（例: リーダー連絡、西陣校チームなど）"
+            style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#1e2328' : '#fff', color: text, fontSize: 13, marginBottom: 10, boxSizing: 'border-box' }}
+            autoFocus
+          />
+
+          {/* 雇用形態一括ボタン */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+            {empTypes.map(et => {
+              const ids = allProfiles.filter(p => p.id !== user?.id && (p.employment_type || 'その他') === et).map(p => p.id);
+              const allSel = ids.length > 0 && ids.every(id => selectedMemberIds.includes(id));
+              return (
+                <button key={et} type="button" onClick={() =>
+                  setSelectedMemberIds(prev => allSel ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])])
+                } style={{ padding: '4px 10px', borderRadius: 12, border: 'none', cursor: 'pointer', fontSize: 12, background: allSel ? '#007bff' : (isDark ? '#495057' : '#e9ecef'), color: allSel ? '#fff' : (isDark ? '#fff' : '#333') }}>
+                  {et}を一括選択
+                </button>
+              );
+            })}
+            <button type="button" onClick={() => setSelectedMemberIds(allProfiles.filter(p => p.id !== user?.id).map(p => p.id))}
+              style={{ padding: '4px 10px', borderRadius: 12, border: 'none', cursor: 'pointer', fontSize: 12, background: isDark ? '#495057' : '#e9ecef', color: isDark ? '#fff' : '#333' }}>全員</button>
+            <button type="button" onClick={() => setSelectedMemberIds([])}
+              style={{ padding: '4px 10px', borderRadius: 12, border: 'none', cursor: 'pointer', fontSize: 12, background: isDark ? '#495057' : '#e9ecef', color: isDark ? '#fff' : '#333' }}>全解除</button>
           </div>
 
-          {/* メンバー選択 */}
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 12, color: sub, marginBottom: 6, fontWeight: 'bold' }}>
-              メンバーを追加
-              {selectedMemberIds.length > 0 && <span style={{ color: '#6f42c1', marginLeft: 6 }}>{selectedMemberIds.length}人選択中</span>}
-            </div>
-            <input
-              type="text"
-              value={memberSearch}
-              onChange={e => setMemberSearch(e.target.value)}
-              placeholder="名前で絞り込み"
-              style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#1e2328' : '#fff', color: text, fontSize: 12, boxSizing: 'border-box', marginBottom: 8 }}
-            />
-            <div style={{ maxHeight: 180, overflowY: 'auto', border: `1px solid ${border}`, borderRadius: 8 }}>
-              {allProfiles
-                .filter(p => p.id !== user?.id && (p.name || '').includes(memberSearch))
-                .map(p => {
-                  const checked = selectedMemberIds.includes(p.id);
-                  return (
-                    <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', cursor: 'pointer', background: checked ? (isDark ? '#1e3a5f' : '#eff6ff') : 'transparent', borderBottom: `1px solid ${border}` }}>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => setSelectedMemberIds(prev =>
-                          prev.includes(p.id) ? prev.filter(id => id !== p.id) : [...prev, p.id]
-                        )}
-                        style={{ accentColor: '#6f42c1' }}
-                      />
-                      <span style={{ fontSize: 13, color: text }}>{p.name || '不明'}</span>
-                      {p.role_title && <span style={{ fontSize: 11, color: sub }}>{p.role_title}</span>}
-                    </label>
-                  );
-                })}
-            </div>
+          {/* 雇用形態→役職別グリッド */}
+          <div style={{ maxHeight: 300, overflowY: 'auto', border: `1px solid ${border}`, borderRadius: 8, marginBottom: 8 }}>
+            {empTypes.map((et, gi) => {
+              const etProfiles = allProfiles.filter(p => p.id !== user?.id && (p.employment_type || 'その他') === et);
+              const roles = [...new Set(etProfiles.map(p => p.role_title || 'その他'))].sort();
+              return (
+                <div key={et}>
+                  <div style={{ padding: '5px 10px', background: isDark ? '#2d3136' : '#e9ecef', borderTop: gi > 0 ? `2px solid ${isDark ? '#6c757d' : '#bbb'}` : undefined, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#adb5bd' : '#444' }}>{et}</span>
+                    <span style={{ fontSize: 11, color: isDark ? '#6c757d' : '#999' }}>{etProfiles.filter(p => selectedMemberIds.includes(p.id)).length}/{etProfiles.length}</span>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', borderBottom: `1px solid ${isDark ? '#3d4349' : '#e0e0e0'}` }}>
+                    {roles.map((role, ri) => {
+                      const roleProfiles = etProfiles.filter(p => (p.role_title || 'その他') === role).sort((a, b) => (a.name || '') > (b.name || '') ? 1 : -1);
+                      const allRoleSel = roleProfiles.length > 0 && roleProfiles.every(p => selectedMemberIds.includes(p.id));
+                      return (
+                        <div key={role} style={{ flex: '1 1 140px', borderLeft: ri > 0 ? `1px solid ${isDark ? '#3d4349' : '#e0e0e0'}` : undefined, padding: '6px 8px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, marginBottom: 4, paddingBottom: 3, borderBottom: `1px solid ${isDark ? '#3d4349' : '#eee'}`, cursor: 'pointer' }}>
+                            <input type="checkbox" checked={allRoleSel}
+                              onChange={() => {
+                                const ids = roleProfiles.map(p => p.id);
+                                setSelectedMemberIds(prev => allRoleSel ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])]);
+                              }} />
+                            <span style={{ fontSize: 10, fontWeight: 'bold', color: isDark ? '#adb5bd' : '#555' }}>{role}</span>
+                          </label>
+                          {roleProfiles.map(p => (
+                            <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', cursor: 'pointer', fontSize: 12, color: text }}>
+                              <input type="checkbox" checked={selectedMemberIds.includes(p.id)}
+                                onChange={e => setSelectedMemberIds(prev => e.target.checked ? [...prev, p.id] : prev.filter(id => id !== p.id))} />
+                              <span>{p.name || '不明'}</span>
+                            </label>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </div>
+
+          <p style={{ fontSize: 12, color: sub, marginBottom: 10 }}>{selectedMemberIds.length}人選択中</p>
 
           {/* 作成ボタン */}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button type="button" onClick={() => { setShowCreateForm(false); setNewChannelName(''); setSelectedMemberIds([]); setMemberSearch(''); }}
-              style={{ padding: '6px 14px', background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: sub, cursor: 'pointer', fontSize: 13 }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" onClick={() => { setShowCreateForm(false); setNewChannelName(''); setSelectedMemberIds([]); }}
+              style={{ flex: 1, padding: '8px 0', background: '#6c757d', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>
               キャンセル
             </button>
             <button type="button" onClick={createChannel} disabled={creating || !newChannelName.trim()}
-              style={{ padding: '6px 18px', background: '#6f42c1', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 'bold', opacity: (creating || !newChannelName.trim()) ? 0.5 : 1 }}>
-              {creating ? '作成中...' : '✓ 作成'}
+              style={{ flex: 1, padding: '8px 0', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold', opacity: (creating || !newChannelName.trim()) ? 0.5 : 1 }}>
+              {creating ? '作成中...' : `作成（${selectedMemberIds.length}人）`}
             </button>
           </div>
         </div>
@@ -387,10 +440,16 @@ const BoardSettingsTab: React.FC = () => {
                 </button>
               </div>
             ) : (
-              <button type="button" onClick={() => startEdit(ch)}
-                style={{ padding: '4px 12px', background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: sub, cursor: 'pointer', fontSize: 12 }}>
-                ✏️ 編集
-              </button>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button type="button" onClick={() => startEdit(ch)}
+                  style={{ padding: '4px 12px', background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: sub, cursor: 'pointer', fontSize: 12 }}>
+                  ✏️ 編集
+                </button>
+                <button type="button" onClick={() => deleteChannel(ch.id, ch.name || 'チャンネル')}
+                  style={{ padding: '4px 10px', background: 'none', border: `1px solid #dc3545`, borderRadius: 6, color: '#dc3545', cursor: 'pointer', fontSize: 12 }}>
+                  🗑
+                </button>
+              </div>
             )}
           </div>
           {editingId === ch.id && renderEditPanel(pendingPerms, toggleEmp, toggleRole, () => save(ch.id), () => setEditingId(null), setPendingPerms)}

@@ -2798,3 +2798,62 @@ CREATE POLICY "allow_all" ON app_settings FOR ALL USING (true) WITH CHECK (true)
 2. **連絡板 送信時 宛先指定（機能B）**
 3. **タブ・機能の表示権限管理画面**
 4. **gcal-sync 失敗時リトライキュー**（低優先）
+
+---
+
+## ✅ 2026-06-14 連絡板 一斉送信・UI改善 完了
+
+### 実装内容
+
+#### 一斉送信機能（BoardPage.tsx）
+- ✉️ボタン → 「メッセージ送信」テキストボタンに変更（青色・目立つデザイン）
+- 送信モーダルをチェックボックスUI（雇用形態ヘッダー+役職列+一括選択ボタン）に変更
+  - **1人選択** → 「DMを開始」ボタン → 既存の1対1DMを開く
+  - **複数選択** → メッセージ入力欄が出現 → 「一斉送信（N人）」ボタン
+- 一斉送信の動作:
+  - 各受信者に個別DM（1対1）としてメッセージが届く
+  - 送信者には「📤 送信メール」チャンネルが自動作成され、送信履歴が残る
+  - 各メッセージに「宛先: ○○、△△、...」が緑色で表示される
+  - 「送信メール」チャンネルは返信不可（「送信した連絡の履歴です（返信不可）」表示）
+
+#### 送信メールチャンネル（board_channels type='sent_mail'）
+- 型: Channel.type に `'sent_mail'` を追加
+- board_messages に `broadcast_recipients JSONB` カラム追加（Supabase SQLで適用済み）
+- board_channels の type 制約を更新（'group' | 'dm' | 'sent_mail'）
+- チャンネルリストで 📤 緑アイコンで表示
+
+### Supabase SQL（実施済み）
+```sql
+ALTER TABLE board_messages ADD COLUMN IF NOT EXISTS broadcast_recipients JSONB;
+ALTER TABLE board_channels DROP CONSTRAINT IF EXISTS board_channels_type_check;
+ALTER TABLE board_channels ADD CONSTRAINT board_channels_type_check
+  CHECK (type IN ('group', 'dm', 'sent_mail'));
+```
+
+#### 既読設定の移動
+- 「👁 既読」ボタンをチャットヘッダーから削除
+- 管理画面「連絡板設定」タブ上部に「👁 既読詳細の表示 ON/OFF」として移設
+- 既読数タップ（詳細モーダル）は管理者のみに制限（`isAdmin && showReadDetail`）
+
+#### メンバー表示
+- チャンネルヘッダーの人数（例：20人）をタップするとメンバー一覧モーダルが開く（既存動作を確認）
+
+#### ヘッダーボタン整理（BoardPage.tsx）
+- ボタン順: **メッセージ送信（青）** → **通知設定** → **＋（管理者のみ）**
+- アイコンボタン（🔔・✉️）からテキストボタンに統一
+- ベルボタンの遷移先: `/account` → `/notification-settings`（新規ページ）
+
+#### 通知設定ページ（NotificationSettings.tsx）新規作成
+- プッシュ通知のON/OFFのみ表示するシンプルなページ（`/notification-settings`）
+- 「戻る」で前のページに戻る
+
+### ⚠️ 注意事項
+- `sent_mail` チャンネルは送信者だけがメンバー（RLSは既存member-basedポリシーで対応）
+- 一斉送信は「各受信者に個別DM」として届く（全員が同じグループに入るわけではない）
+- 送信メールの `broadcast_recipients` カラムは board_messages に追加済み
+
+### 🔜 次回タスク（2026-06-14 セッション2 終了時点）
+1. **残業申請フォーム（パート用）** ← 最優先
+2. **タブ・機能の表示権限管理画面**
+3. **UI/UX改善**（コードレビュー高優先項目）
+4. **gcal-sync 失敗時リトライキュー**（低優先）

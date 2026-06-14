@@ -5,6 +5,7 @@ import ResetPassword from './pages/ResetPassword';
 import ChangeEmail from './pages/ChangeEmail';
 import ChangePassword from './pages/ChangePassword';
 import AccountSettings from './pages/AccountSettings';
+import NotificationSettings from './pages/NotificationSettings';
 import SupabaseSettingsCheck from './pages/SupabaseSettingsCheck';
 import ExpenseForm from './components/ExpenseForm';
 
@@ -754,6 +755,7 @@ function App() {
             <Route path="/calendar" element={<TeamCalendarPage />} />
             <Route path="/admin" element={<AdminPage />} />
             <Route path="/account" element={<AccountSettings />} />
+            <Route path="/notification-settings" element={<NotificationSettings />} />
             <Route path="/change-email" element={<ChangeEmail />} />
             <Route path="/change-password" element={<ChangePassword />} />
             <Route path="/settings-check" element={<SupabaseSettingsCheck />} />

@@ -16,7 +16,7 @@ interface SendPermissions {
 
 interface Channel {
   id: string;
-  type: 'group' | 'dm';
+  type: 'group' | 'dm' | 'sent_mail';
   name: string | null;
   created_by: string | null;
   created_at: string;
@@ -45,6 +45,7 @@ interface BoardMessage {
   answer_prompt: string | null;
   answer_location: string | null;
   answer_link: string | null;
+  broadcast_recipients: { id: string; name: string }[] | null;
   profile: { name: string | null } | null;
 }
 
@@ -144,6 +145,8 @@ const BoardPage: React.FC = () => {
   const [chipExpanded,     setChipExpanded]     = useState(false);
   const [showDMSearch,     setShowDMSearch]     = useState(false);
   const [dmQuery,          setDmQuery]          = useState('');
+  const [dmSelectedIds,    setDmSelectedIds]    = useState<string[]>([]);
+  const [broadcastMessage, setBroadcastMessage] = useState('');
   const [loadingData,      setLoadingData]      = useState(true);
   const [readDetailMsgId,  setReadDetailMsgId]  = useState<string | null>(null);
   const [readDetailUsers,  setReadDetailUsers]  = useState<{ user_id: string; read_at: string }[]>([]);
@@ -180,7 +183,7 @@ const BoardPage: React.FC = () => {
     const [chRes, memRes, msgRes, lsRes, profRes, settingsRes, dmSettingsRes] = await Promise.all([
       supabase.from('board_channels').select('id, type, name, created_by, created_at, send_permissions').in('id', cids),
       supabase.from('board_channel_members').select('channel_id, user_id').in('channel_id', cids),
-      supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, answer_prompt, answer_location, answer_link').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
+      supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, answer_prompt, answer_location, answer_link, broadcast_recipients').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
       supabase.from('board_channel_last_seen').select('channel_id, last_seen_at').eq('user_id', user.id),
       supabase.from('profiles').select('id, name, role_title, employment_type').eq('is_active', true).order('name'),
       supabase.from('master_options').select('value').eq('category', 'board_show_read_detail').limit(1),
@@ -236,6 +239,7 @@ const BoardPage: React.FC = () => {
 
   const channelDisplayName = (ch: Channel) => {
     if (ch.type === 'group') return ch.name || 'グループ';
+    if (ch.type === 'sent_mail') return '送信メール';
     const other = members.find(m => m.channel_id === ch.id && m.user_id !== user?.id);
     return allProfiles.find(p => p.id === other?.user_id)?.name || 'DM';
   };
@@ -413,6 +417,71 @@ const BoardPage: React.FC = () => {
     setShowDMSearch(false); setDmQuery('');
   };
 
+  const sendBroadcast = async () => {
+    if (!user || dmSelectedIds.length === 0 || !broadcastMessage.trim()) return;
+    setSending(true);
+
+    // 送信メールチャンネルを取得or作成
+    let sentMailCh = channels.find(c => c.type === 'sent_mail' && c.created_by === user.id);
+    if (!sentMailCh) {
+      const { data: newCh } = await supabase
+        .from('board_channels')
+        .insert({ type: 'sent_mail', created_by: user.id })
+        .select().single();
+      if (newCh) {
+        await supabase.from('board_channel_members').insert({ channel_id: newCh.id, user_id: user.id });
+        sentMailCh = newCh as Channel;
+      }
+    }
+
+    // 各受信者に個別DMを送信
+    for (const targetId of dmSelectedIds) {
+      let dmCh = channels.find(c => {
+        if (c.type !== 'dm') return false;
+        const mems = members.filter(m => m.channel_id === c.id);
+        return mems.some(m => m.user_id === targetId) && mems.some(m => m.user_id === user.id);
+      });
+      if (!dmCh) {
+        const { data: newDm } = await supabase
+          .from('board_channels')
+          .insert({ type: 'dm', created_by: user.id })
+          .select().single();
+        if (newDm) {
+          await supabase.from('board_channel_members').insert([
+            { channel_id: newDm.id, user_id: user.id },
+            { channel_id: newDm.id, user_id: targetId },
+          ]);
+          dmCh = newDm as Channel;
+        }
+      }
+      if (dmCh) {
+        await supabase.from('board_messages').insert({ channel_id: dmCh.id, user_id: user.id, body: broadcastMessage.trim() });
+        await insertNotification(targetId, `${profileName || '誰か'}からメッセージが届きました`, broadcastMessage.trim().slice(0, 40));
+      }
+    }
+
+    // 送信メールチャンネルに記録
+    if (sentMailCh) {
+      const recipients = dmSelectedIds.map(id => {
+        const p = allProfiles.find(ap => ap.id === id);
+        return { id, name: p?.name || '?' };
+      });
+      await supabase.from('board_messages').insert({
+        channel_id: sentMailCh.id,
+        user_id: user.id,
+        body: broadcastMessage.trim(),
+        broadcast_recipients: recipients,
+      });
+    }
+
+    await loadAll();
+    setSending(false);
+    setShowDMSearch(false);
+    setDmSelectedIds([]);
+    setBroadcastMessage('');
+    setDmQuery('');
+  };
+
   const createGroup = async () => {
     if (!groupName.trim() || groupMemberIds.length === 0 || !user) return;
     const { data: ch } = await supabase
@@ -587,6 +656,12 @@ const BoardPage: React.FC = () => {
           ) : (
             <div style={{ fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5, textAlign: 'left' }}>{msg.body}</div>
           )}
+          {/* 送信メールチャンネルの宛先表示 */}
+          {msg.broadcast_recipients && msg.broadcast_recipients.length > 0 && (
+            <div style={{ marginTop: 6, padding: '4px 8px', background: isDark ? '#1e2d1e' : '#f0fdf4', borderRadius: 6, fontSize: 12, color: isDark ? '#86efac' : '#166534' }}>
+              宛先: {msg.broadcast_recipients.map(r => r.name).join('、')}
+            </div>
+          )}
 
           {/* 確認ボタン（deadline_type / requires_confirmation ありの親投稿） */}
           {(msg.deadline_type || msg.requires_confirmation) && !msg.parent_id && (() => {
@@ -697,7 +772,7 @@ const BoardPage: React.FC = () => {
                     既読{readCount} 未読{unreadCount}
                   </span>
                 );
-                return showReadDetail ? (
+                return (isAdmin && showReadDetail) ? (
                   <button type="button" onClick={async () => {
                     const { data } = await supabase.from('board_reads').select('user_id, read_at').eq('message_id', msg.id);
                     setReadDetailUsers((data || []).map((r: any) => ({ user_id: r.user_id, read_at: r.read_at })));
@@ -1045,70 +1120,119 @@ const BoardPage: React.FC = () => {
     );
   })() : null;
 
-  const dmModal = showDMSearch ? (
-    <div style={overlayStyle}>
-      <div style={modalStyle}>
-        <div style={{ fontSize: 16, fontWeight: 'bold', color: textColor, marginBottom: 12 }}>個人メッセージを送る</div>
-        <input
-          value={dmQuery}
-          onChange={e => setDmQuery(e.target.value)}
-          placeholder="名前で検索..."
-          autoFocus
-          style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, marginBottom: 10, boxSizing: 'border-box' }}
-        />
-        <div style={{ maxHeight: 300, overflowY: 'auto', border: `1px solid ${border}`, borderRadius: 8 }}>
-          {(() => {
-            const filtered = allProfiles
-              .filter(p => p.id !== user?.id && (p.name || '').includes(dmQuery))
-              .sort((a, b) => {
-                const ea = EMP_ORDER.indexOf(a.employment_type || 'その他');
-                const eb = EMP_ORDER.indexOf(b.employment_type || 'その他');
-                const ei = (ea === -1 ? 99 : ea) - (eb === -1 ? 99 : eb);
-                if (ei !== 0) return ei;
-                const ra = ROLE_ORDER.indexOf(a.role_title || 'その他');
-                const rb = ROLE_ORDER.indexOf(b.role_title || 'その他');
-                const ri = (ra === -1 ? 99 : ra) - (rb === -1 ? 99 : rb);
-                if (ri !== 0) return ri;
-                return (a.name || '') > (b.name || '') ? 1 : -1;
-              });
-            let lastEmp = '';
-            let lastRole = '';
-            return filtered.map((p, i) => {
-              const emp = p.employment_type || 'その他';
-              const role = p.role_title || 'その他';
-              const showEmpHeader = emp !== lastEmp;
-              const showRoleHeader = showEmpHeader || role !== lastRole;
-              lastEmp = emp; lastRole = role;
+  const dmModal = showDMSearch ? (() => {
+    const dmEmpTypes = ([...new Set(activeOthers.map(p => p.employment_type || 'その他'))] as string[])
+      .sort((a, b) => { const ai = EMP_ORDER.indexOf(a), bi = EMP_ORDER.indexOf(b); if (ai === -1 && bi === -1) return a > b ? 1 : -1; if (ai === -1) return 1; if (bi === -1) return -1; return ai - bi; });
+    const filteredProfiles = activeOthers.filter(p => !dmQuery || (p.name || '').includes(dmQuery));
+    const isSingle = dmSelectedIds.length === 1;
+    const isMulti = dmSelectedIds.length > 1;
+    return (
+      <div style={overlayStyle}>
+        <div style={{ ...modalStyle, maxWidth: 520 }}>
+          <div style={{ fontSize: 16, fontWeight: 'bold', color: textColor, marginBottom: 12 }}>
+            {isMulti ? '一斉送信' : 'メッセージを送る'}
+          </div>
+          <input
+            value={dmQuery}
+            onChange={e => setDmQuery(e.target.value)}
+            placeholder="名前で検索..."
+            autoFocus
+            style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, marginBottom: 10, boxSizing: 'border-box' }}
+          />
+          {/* 一括ボタン */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+            {dmEmpTypes.map(et => {
+              const ids = filteredProfiles.filter(p => (p.employment_type || 'その他') === et).map(p => p.id);
+              const allSel = ids.length > 0 && ids.every(id => dmSelectedIds.includes(id));
               return (
-                <div key={p.id}>
-                  {showEmpHeader && (
-                    <div style={{ padding: '5px 12px', background: isDark ? '#1e2328' : '#dde3ee', borderTop: i > 0 ? `2px solid ${isDark ? '#4a5568' : '#8fa0c0'}` : undefined, fontSize: 12, fontWeight: 'bold', color: isDark ? '#90b4e8' : '#2c4a8a' }}>
-                      {emp}
-                    </div>
-                  )}
-                  {showRoleHeader && !showEmpHeader && (
-                    <div style={{ padding: '3px 12px 3px 20px', background: isDark ? '#2d3136' : '#f0f0f0', borderTop: `1px solid ${isDark ? '#3d4349' : '#ccc'}`, fontSize: 11, color: isDark ? '#adb5bd' : '#666' }}>
-                      {role}
-                    </div>
-                  )}
-                  {showRoleHeader && showEmpHeader && (
-                    <div style={{ padding: '3px 12px 3px 20px', background: isDark ? '#2d3136' : '#f0f0f0', fontSize: 11, color: isDark ? '#adb5bd' : '#666' }}>
-                      {role}
-                    </div>
-                  )}
-                  <div onClick={() => startDM(p.id)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderBottom: `1px solid ${border}`, cursor: 'pointer' }}>
-                    <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, fontWeight: 'bold', flexShrink: 0 }}>{avatarLetter(p.name)}</div>
-                    <div style={{ fontSize: 14, color: textColor, fontWeight: 'bold' }}>{p.name}</div>
+                <button key={et} type="button" onClick={() => {
+                  setDmSelectedIds(prev => allSel ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])]);
+                }} style={{ padding: '4px 10px', borderRadius: 12, border: 'none', cursor: 'pointer', fontSize: 12, background: allSel ? '#007bff' : (isDark ? '#495057' : '#e9ecef'), color: allSel ? '#fff' : (isDark ? '#fff' : '#333') }}>
+                  {et}を一括選択
+                </button>
+              );
+            })}
+            <button type="button" onClick={() => setDmSelectedIds(filteredProfiles.map(p => p.id))}
+              style={{ padding: '4px 10px', borderRadius: 12, border: 'none', cursor: 'pointer', fontSize: 12, background: isDark ? '#495057' : '#e9ecef', color: isDark ? '#fff' : '#333' }}>全員</button>
+            <button type="button" onClick={() => setDmSelectedIds([])}
+              style={{ padding: '4px 10px', borderRadius: 12, border: 'none', cursor: 'pointer', fontSize: 12, background: isDark ? '#495057' : '#e9ecef', color: isDark ? '#fff' : '#333' }}>全解除</button>
+          </div>
+          {/* チェックボックスグリッド */}
+          <div style={{ maxHeight: 260, overflowY: 'auto', border: `1px solid ${border}`, borderRadius: 8 }}>
+            {dmEmpTypes.map((et, gi) => {
+              const etProfiles = filteredProfiles.filter(p => (p.employment_type || 'その他') === et);
+              if (etProfiles.length === 0) return null;
+              const roles = [...new Set(etProfiles.map(p => p.role_title || 'その他'))].sort((a, b) => {
+                const ai = ROLE_ORDER.indexOf(a), bi = ROLE_ORDER.indexOf(b);
+                if (ai === -1 && bi === -1) return a > b ? 1 : -1;
+                if (ai === -1) return 1; if (bi === -1) return -1; return ai - bi;
+              });
+              return (
+                <div key={et}>
+                  <div style={{ padding: '5px 10px', background: isDark ? '#2d3136' : '#e9ecef', borderTop: gi > 0 ? `2px solid ${isDark ? '#6c757d' : '#bbb'}` : undefined, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#adb5bd' : '#444' }}>{et}</span>
+                    <span style={{ fontSize: 11, color: isDark ? '#6c757d' : '#999' }}>{etProfiles.filter(p => dmSelectedIds.includes(p.id)).length}/{etProfiles.length}</span>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', borderBottom: `1px solid ${isDark ? '#3d4349' : '#e0e0e0'}` }}>
+                    {roles.map((role, ri) => {
+                      const roleProfiles = etProfiles.filter(p => (p.role_title || 'その他') === role).sort((a, b) => (a.name || '') > (b.name || '') ? 1 : -1);
+                      const allRoleSel = roleProfiles.every(p => dmSelectedIds.includes(p.id));
+                      return (
+                        <div key={role} style={{ flex: '1 1 140px', borderLeft: ri > 0 ? `1px solid ${isDark ? '#3d4349' : '#e0e0e0'}` : undefined, padding: '6px 8px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, marginBottom: 4, paddingBottom: 3, borderBottom: `1px solid ${isDark ? '#3d4349' : '#eee'}`, cursor: 'pointer' }}>
+                            <input type="checkbox" checked={allRoleSel && roleProfiles.length > 0}
+                              onChange={() => {
+                                const ids = roleProfiles.map(p => p.id);
+                                setDmSelectedIds(prev => allRoleSel ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])]);
+                              }} />
+                            <span style={{ fontSize: 10, fontWeight: 'bold', color: isDark ? '#adb5bd' : '#555' }}>{role}</span>
+                          </label>
+                          {roleProfiles.map(p => (
+                            <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', cursor: 'pointer', fontSize: 12, color: textColor }}>
+                              <input type="checkbox" checked={dmSelectedIds.includes(p.id)}
+                                onChange={e => setDmSelectedIds(prev => e.target.checked ? [...prev, p.id] : prev.filter(id => id !== p.id))} />
+                              <span>{p.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               );
-            });
-          })()}
+            })}
+          </div>
+          <p style={{ fontSize: 12, color: subColor, marginTop: 4 }}>{dmSelectedIds.length}人選択中</p>
+          {/* 複数選択時: メッセージ入力 */}
+          {isMulti && (
+            <textarea
+              value={broadcastMessage}
+              onChange={e => setBroadcastMessage(e.target.value)}
+              placeholder="メッセージを入力..."
+              rows={3}
+              style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, marginTop: 8, boxSizing: 'border-box', resize: 'vertical' }}
+            />
+          )}
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <button type="button" onClick={() => { setShowDMSearch(false); setDmQuery(''); setDmSelectedIds([]); setBroadcastMessage(''); }}
+              style={{ flex: 1, padding: 10, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
+            {isSingle && (
+              <button type="button" onClick={() => startDM(dmSelectedIds[0])}
+                style={{ flex: 1, padding: 10, background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>
+                DMを開始
+              </button>
+            )}
+            {isMulti && (
+              <button type="button" onClick={sendBroadcast} disabled={!broadcastMessage.trim() || sending}
+                style={{ flex: 1, padding: 10, background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, opacity: !broadcastMessage.trim() || sending ? 0.5 : 1 }}>
+                一斉送信（{dmSelectedIds.length}人）
+              </button>
+            )}
+          </div>
         </div>
-        <button type="button" onClick={() => { setShowDMSearch(false); setDmQuery(''); }} style={{ width: '100%', marginTop: 12, padding: 10, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
       </div>
-    </div>
-  ) : null;
+    );
+  })() : null;
 
   // ── Panels ───────────────────────────────────────────────────────
 
@@ -1131,8 +1255,8 @@ const BoardPage: React.FC = () => {
               background: isSelected ? (isDark ? '#2d3561' : '#e8f0fe') : 'transparent',
               display: 'flex', alignItems: 'center', gap: 10,
             }}>
-              <div style={{ width: 38, height: 38, borderRadius: ch.type === 'group' ? 8 : '50%', background: ch.type === 'group' ? '#6f42c1' : '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 15, flexShrink: 0 }}>
-                {ch.type === 'group' ? '👥' : avatarLetter(channelDisplayName(ch))}
+              <div style={{ width: 38, height: 38, borderRadius: ch.type === 'group' ? 8 : '50%', background: ch.type === 'group' ? '#6f42c1' : ch.type === 'sent_mail' ? '#28a745' : '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 15, flexShrink: 0 }}>
+                {ch.type === 'group' ? '👥' : ch.type === 'sent_mail' ? '📤' : avatarLetter(channelDisplayName(ch))}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1172,6 +1296,11 @@ const BoardPage: React.FC = () => {
       </div>
 
       {/* Input */}
+      {selectedChannel?.type === 'sent_mail' ? (
+        <div style={{ padding: '10px 14px', borderTop: `1px solid ${border}`, background: cardBg, flexShrink: 0, textAlign: 'center', color: subColor, fontSize: 13 }}>
+          送信した連絡の履歴です（返信不可）
+        </div>
+      ) : (
       <div style={{ padding: '10px 14px', borderTop: `1px solid ${border}`, background: cardBg, flexShrink: 0 }}>
         {!canSendInChannel(selectedChannelId) && (
           <div style={{ textAlign: 'center', color: subColor, fontSize: 13, padding: '8px 0' }}>
@@ -1288,6 +1417,7 @@ const BoardPage: React.FC = () => {
         </div>
         </>}
       </div>
+      )}
     </div>
   ) : (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: bg }}>
@@ -1314,16 +1444,6 @@ const BoardPage: React.FC = () => {
             <div style={{ fontSize: 14, fontWeight: 'bold', color: textColor }}>{channelDisplayName(selectedChannel)}</div>
             <div style={{ fontSize: 11, color: subColor }}>{currentMembers.length}人</div>
           </div>
-          {isAdmin && (
-            <button type="button" onClick={async () => {
-              const next = !showReadDetail;
-              setShowReadDetail(next);
-              await supabase.from('master_options').delete().eq('category', 'board_show_read_detail');
-              await supabase.from('master_options').insert({ category: 'board_show_read_detail', value: String(next), sort_order: 0 });
-            }} title={showReadDetail ? '既読詳細: 全員表示中（タップでOFF）' : '既読詳細: 非表示中（タップでON）'} style={{ background: 'none', border: `1px solid ${showReadDetail ? '#22c55e' : border}`, borderRadius: 6, color: showReadDetail ? '#22c55e' : subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px', flexShrink: 0 }}>
-              👁 既読
-            </button>
-          )}
           <button type="button" onClick={openMemberModal} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px', flexShrink: 0 }}>👥 メンバー</button>
         </div>
       )}
@@ -1332,8 +1452,8 @@ const BoardPage: React.FC = () => {
         <div style={{ padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, position: 'fixed', top: 60, left: 0, right: 0, zIndex: 50 }}>
           <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>💬 連絡板</span>
           <div style={{ display: 'flex', gap: 6 }}>
-            <button type="button" onClick={() => navigate('/account')} title="通知設定" style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '4px 8px' }}>🔔</button>
-            <button type="button" onClick={() => setShowDMSearch(true)} title="個人メッセージ" style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '4px 8px' }}>✉️</button>
+            <button type="button" onClick={() => setShowDMSearch(true)} style={{ background: '#007bff', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, padding: '4px 10px', fontWeight: 'bold' }}>メッセージ送信</button>
+            <button type="button" onClick={() => navigate('/notification-settings')} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px' }}>通知設定</button>
             {isAdmin && (
               <button type="button" onClick={() => setShowGroupModal(true)} title="グループ作成" style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '4px 8px' }}>＋</button>
             )}
