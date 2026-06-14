@@ -9,6 +9,7 @@ import ReportsTab from './admin/ReportsTab';
 import LeaveRequestsTab from './admin/LeaveRequestsTab';
 import LeaderAssignmentsTab from './admin/LeaderAssignmentsTab';
 import NotificationsTab, { ScheduledRemindersPanel } from './admin/NotificationsTab';
+import BoardSettingsTab from './admin/BoardSettingsTab';
 
 interface AdminPanelProps {
   pendingApprovals: PendingApproval[];
@@ -435,6 +436,7 @@ const AdminPanelContent: React.FC = () => {
           { key: 'leader_assignments', label: 'リーダー管理',  icon: '📋' },
           { key: 'reports',            label: 'レポート・分析',icon: '' },
           { key: 'notifications',      label: '通知設定',      icon: '🔔' },
+          { key: 'board_settings',     label: '連絡板設定',    icon: '📨' },
         ] as const;
         const handleTabChange = (key: typeof TABS[number]['key']) => {
           if (key === 'groups') setSelectedGroup(null);
@@ -488,6 +490,7 @@ const AdminPanelContent: React.FC = () => {
         {activeTab === 'reports' && <ReportsTab />}
         {activeTab === 'leave_requests' && <LeaveRequestsTab />}
         {activeTab === 'leader_assignments' && <LeaderAssignmentsTab />}
+        {activeTab === 'board_settings' && <BoardSettingsTab />}
         {activeTab === 'notifications' && (
           <>
             <NotificationsTab />

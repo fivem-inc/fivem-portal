@@ -2741,15 +2741,60 @@ await supabase.functions.invoke('send-push', {
 
 ### 🔜 次回タスク（2026-06-14時点）
 1. **残業申請フォーム（パート用）** ← 最優先
-2. **連絡板 役職別送信権限設定（機能A）**
-   - 管理画面「連絡板」タブに追加
-   - 役職ごとに「グループ送信 ON/OFF」「DM送信 ON/OFF」をトグル設定
-   - 設定は `master_options` テーブル（例: `board_perm_send_group_パート=false`）に保存
-   - BoardPage側でも権限チェックして入力欄・ボタンを表示制御
-3. **連絡板 送信時 宛先指定（機能B）**
+2. **連絡板 送信時 宛先指定（機能B）**
    - メッセージ入力欄の上に「宛先」欄＋「＋ 追加」ボタンを追加
    - タップで既存チェックボックスUI（グループ一覧 + 役職別メンバー一覧）が開く
    - グループ名・個人を混在で複数選択 → チップ表示
-   - 送信 → 選択した全員が参加するチャンネルへ送信（なければ自動作成）
-4. **タブ・機能の表示権限管理画面**
-5. **gcal-sync 失敗時リトライキュー**（低優先）
+3. **タブ・機能の表示権限管理画面**
+4. **gcal-sync 失敗時リトライキュー**（低優先）
+
+---
+
+## ✅ 2026-06-14 連絡板 送信権限設定・チャンネル管理 完了
+
+### 実装内容
+
+#### 管理画面「📨 連絡板設定」タブ（BoardSettingsTab.tsx）新規作成
+- AdminPanelContext に `'board_settings'` タブ追加
+- AdminPanel.tsx にタブ登録・BoardSettingsTab インポート追加
+
+#### グループチャンネル作成（管理者のみ）
+- 連絡板ページの「＋」ボタンはすでに `isAdmin` チェック済み（管理者のみ表示）
+- 連絡板設定タブからもグループチャンネルを作成可能
+  - チャンネル名入力＋メンバー選択（名前絞り込み・チェックボックス）
+  - 作成時に `created_by` + 選択メンバーを `board_channel_members` に INSERT
+
+#### チャンネルごとの送信権限設定
+- グループチャンネル: チャンネルごとに個別設定（雇用形態・役職チェックボックス）
+- 全選択・全解除ボタン（雇用形態・役職それぞれに追加）
+- 設定は `board_channels.send_permissions`（JSONB）に保存
+- BoardPage.tsx の `canSendInChannel()` で権限チェック → 非権限者は入力欄を非表示
+
+#### DM全体デフォルト送信権限設定
+- DMチャンネルは個別設定ではなく全体共通のデフォルト権限
+- 設定は `app_settings` テーブル key=`dm_default_send_permissions` に保存（JSONB）
+- BoardPage.tsx ロード時に `app_settings` から取得、DMチャンネルに適用
+
+### Supabase SQL（実施済み）
+```sql
+ALTER TABLE board_channels ADD COLUMN IF NOT EXISTS send_permissions JSONB;
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value JSONB,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "allow_all" ON app_settings FOR ALL USING (true) WITH CHECK (true);
+```
+
+### 注意事項
+- `app_settings` テーブルのRLSポリシー `allow_all` は作成済み
+- 管理者は `canSendInChannel()` を常にバイパス（isAdmin = true）
+- 送信権限ロジック: `employment_types` OR `role_titles` のどちらかに含まれれば送信可（OR条件）
+
+### 🔜 次回タスク（2026-06-14 セッション終了時点）
+1. **残業申請フォーム（パート用）** ← 最優先
+2. **連絡板 送信時 宛先指定（機能B）**
+3. **タブ・機能の表示権限管理画面**
+4. **gcal-sync 失敗時リトライキュー**（低優先）
