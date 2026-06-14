@@ -480,21 +480,21 @@ const BoardPage: React.FC = () => {
                     await supabase.from('board_confirmations').upsert({ message_id: msg.id, user_id: user.id }, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
                     setConfirmations(prev => ({ ...prev, [msg.id]: [...(prev[msg.id] || []), user.id] }));
                     setMyConfirmTimes(prev => ({ ...prev, [msg.id]: now }));
-                  }} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 18px', background: '#fff', border: '2px solid #22c55e', borderRadius: 24, cursor: 'pointer', fontSize: 14, fontWeight: 500, color: '#166534' }}>
-                    <span style={{ fontSize: 18, lineHeight: 1 }}>○</span> {reportLabel}
+                  }} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', background: '#fff', border: '1.5px solid #22c55e', borderRadius: 20, cursor: 'pointer', fontSize: 13, fontWeight: 500, color: '#166534' }}>
+                    <span style={{ fontSize: 15, lineHeight: 1 }}>○</span> {reportLabel}
                   </button>
                 ) : (
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 18px', background: '#22c55e', border: '2px solid #22c55e', borderRadius: 24, fontSize: 14, fontWeight: 500, color: '#fff' }}>
-                    <span style={{ fontSize: 18, lineHeight: 1 }}>✓</span> {doneLabel}（{myConfirmTime ? fmtTime(myConfirmTime) : '済み'}）
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', background: '#22c55e', border: '1.5px solid #22c55e', borderRadius: 20, fontSize: 13, fontWeight: 500, color: '#fff' }}>
+                    <span style={{ fontSize: 15, lineHeight: 1 }}>✓</span> {doneLabel}（{myConfirmTime ? fmtTime(myConfirmTime) : '済み'}）
                   </span>
                 )}
-                <span style={{ fontSize: 13, color: subColor }}>
+                <span style={{ fontSize: 12, color: subColor }}>
                   {confirmedIds.length}人{doneLabel}
                 </span>
                 {isAdmin && unconfirmedIds.length > 0 && (
                   <button type="button" onClick={() => setUnconfirmedMsgId(msg.id)}
-                    style={{ padding: '4px 12px', background: '#fd7e14', color: '#fff', border: 'none', borderRadius: 20, cursor: 'pointer', fontSize: 12 }}>
-                    未確認者を確認・リマインド
+                    style={{ padding: '5px 10px', background: '#fd7e14', color: '#fff', border: 'none', borderRadius: 20, cursor: 'pointer', fontSize: 12 }}>
+                    未確認者・リマインド
                   </button>
                 )}
               </div>
