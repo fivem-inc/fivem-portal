@@ -30,6 +30,10 @@ interface BoardMessage {
   body: string;
   edited_at: string | null;
   created_at: string;
+  deadline: string | null;
+  deadline_type: string | null;
+  requires_confirmation: boolean;
+  scheduled_at: string | null;
   profile: { name: string | null } | null;
 }
 
@@ -57,6 +61,13 @@ const fmtTime = (ts: string) => {
 };
 
 const avatarLetter = (name: string | null | undefined) => (name || '?')[0];
+
+const DEADLINE_TYPES = [
+  { value: 'read',    label: '📖 読了',  confirmLabel: '読みました' },
+  { value: 'answer',  label: '✏️ 回答', confirmLabel: '回答しました' },
+  { value: 'submit',  label: '📤 提出', confirmLabel: '提出しました' },
+  { value: 'approve', label: '✅ 承認', confirmLabel: '承認します' },
+] as const;
 
 // ────────────────────────────────────────────────────────────────
 // Component
@@ -89,11 +100,19 @@ const BoardPage: React.FC = () => {
   const [showChannelList,    setShowChannelList]     = useState(true);
 
   // Compose
-  const [newBody,    setNewBody]    = useState('');
-  const [replyBody,  setReplyBody]  = useState('');
-  const [editingId,  setEditingId]  = useState<string | null>(null);
-  const [editBody,   setEditBody]   = useState('');
-  const [sending,    setSending]    = useState(false);
+  const [newBody,              setNewBody]              = useState('');
+  const [newDeadline,          setNewDeadline]          = useState('');
+  const [newDeadlineType,      setNewDeadlineType]      = useState('');
+  const [newScheduledAt,       setNewScheduledAt]       = useState('');
+  const [showOptionsExpanded,  setShowOptionsExpanded]  = useState(false);
+  const [confirmations,        setConfirmations]        = useState<Record<string, string[]>>({});
+  const [myConfirmTimes,       setMyConfirmTimes]       = useState<Record<string, string>>({});
+  const [unconfirmedMsgId,     setUnconfirmedMsgId]     = useState<string | null>(null);
+  const [replyBody,            setReplyBody]            = useState('');
+  const [editingId,   setEditingId]   = useState<string | null>(null);
+  const [editBody,         setEditBody]         = useState('');
+  const [sending,          setSending]          = useState(false);
+  const [showSendConfirm,  setShowSendConfirm]  = useState(false);
 
   // Modals
   const [showGroupModal,   setShowGroupModal]   = useState(false);
@@ -141,7 +160,7 @@ const BoardPage: React.FC = () => {
     const [chRes, memRes, msgRes, lsRes, profRes, settingsRes] = await Promise.all([
       supabase.from('board_channels').select('*').in('id', cids),
       supabase.from('board_channel_members').select('channel_id, user_id').in('channel_id', cids),
-      supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
+      supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at').in('channel_id', cids).or(`scheduled_at.is.null,scheduled_at.lte.${new Date().toISOString()}`).order('created_at', { ascending: false }).limit(500),
       supabase.from('board_channel_last_seen').select('channel_id, last_seen_at').eq('user_id', user.id),
       supabase.from('profiles').select('id, name, role_title, employment_type').eq('is_active', true).order('name'),
       supabase.from('master_options').select('value').eq('category', 'board_show_read_detail').limit(1),
@@ -150,6 +169,18 @@ const BoardPage: React.FC = () => {
     setChannels((chRes.data || []) as Channel[]);
     setMembers((memRes.data || []).map((m: any) => ({ channel_id: m.channel_id, user_id: m.user_id, profile: null })));
     setMessages((msgRes.data || []).map((m: any) => ({ ...m, profile: null })));
+
+    // requires_confirmation / deadline_type ありの投稿の確認者を取得
+    const confirmMsgIds = (msgRes.data || []).filter((m: any) => m.requires_confirmation || m.deadline_type).map((m: any) => m.id);
+    if (confirmMsgIds.length > 0) {
+      const { data: confData } = await supabase.from('board_confirmations').select('message_id, user_id').in('message_id', confirmMsgIds);
+      const confMap: Record<string, string[]> = {};
+      (confData || []).forEach((c: { message_id: string; user_id: string }) => {
+        if (!confMap[c.message_id]) confMap[c.message_id] = [];
+        confMap[c.message_id].push(c.user_id);
+      });
+      setConfirmations(confMap);
+    }
 
     const ls: Record<string, string> = {};
     (lsRes.data || []).forEach((r: any) => { ls[r.channel_id] = r.last_seen_at; });
@@ -249,10 +280,23 @@ const BoardPage: React.FC = () => {
     if (!body.trim()) return;
     setSending(true);
 
+    const insertData: Record<string, unknown> = {
+      channel_id: selectedChannelId,
+      parent_id: parentId || null,
+      user_id: user.id,
+      body: body.trim(),
+    };
+    if (!parentId && newDeadline) insertData.deadline = newDeadline;
+    if (!parentId && newDeadlineType) {
+      insertData.deadline_type = newDeadlineType;
+      insertData.requires_confirmation = true;
+    }
+    if (!parentId && newScheduledAt) insertData.scheduled_at = new Date(newScheduledAt).toISOString();
+
     const { data, error } = await supabase
       .from('board_messages')
-      .insert({ channel_id: selectedChannelId, parent_id: parentId || null, user_id: user.id, body: body.trim() })
-      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at')
+      .insert(insertData)
+      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at')
       .single();
 
     if (!error && data) {
@@ -261,7 +305,7 @@ const BoardPage: React.FC = () => {
       await supabase.from('board_reads').upsert({ message_id: data.id, user_id: user.id }, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
       setReadCounts(prev => ({ ...prev, [data.id]: 1 }));
     }
-    if (parentId) setReplyBody(''); else setNewBody('');
+    if (parentId) setReplyBody(''); else { setNewBody(''); setNewDeadline(''); setNewDeadlineType(''); setNewScheduledAt(''); }
     setSending(false);
   };
 
@@ -386,6 +430,18 @@ const BoardPage: React.FC = () => {
           </div>
 
           {/* Body / Edit field */}
+          {msg.deadline && !msg.parent_id && (() => {
+            const today = new Date().toISOString().slice(0, 10);
+            const isOverdue = msg.deadline < today;
+            const isToday = msg.deadline === today;
+            const dtConfig = DEADLINE_TYPES.find(d => d.value === msg.deadline_type);
+            return (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 4, marginBottom: 2, padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 'bold', background: isOverdue ? '#fee2e2' : isToday ? '#fef3c7' : '#e0f2fe', color: isOverdue ? '#991b1b' : isToday ? '#92400e' : '#0369a1' }}>
+                {isOverdue ? '⚠️ 期限切れ' : isToday ? '⏰ 本日期限' : '📅 期限'}
+                {dtConfig && ` ${dtConfig.label}`}: {msg.deadline}
+              </div>
+            );
+          })()}
           {editingId === msg.id ? (
             <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
               <input
@@ -401,6 +457,43 @@ const BoardPage: React.FC = () => {
           ) : (
             <div style={{ fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5 }}>{msg.body}</div>
           )}
+
+          {/* 確認ボタン（deadline_type / requires_confirmation ありの親投稿） */}
+          {(msg.deadline_type || msg.requires_confirmation) && !msg.parent_id && (() => {
+            const confirmedIds = confirmations[msg.id] || [];
+            const alreadyConfirmed = confirmedIds.includes(user?.id ?? '');
+            const myConfirmTime = myConfirmTimes[msg.id];
+            const channelMemberIds = members.filter(m => m.channel_id === msg.channel_id).map(m => m.user_id);
+            const unconfirmedIds = channelMemberIds.filter(id => !confirmedIds.includes(id));
+            const dtConfig = DEADLINE_TYPES.find(d => d.value === msg.deadline_type);
+            const confirmLabel = dtConfig ? dtConfig.confirmLabel : '確認しました';
+            return (
+              <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                {!alreadyConfirmed ? (
+                  <button type="button" onClick={async () => {
+                    if (!user) return;
+                    const now = new Date().toISOString();
+                    await supabase.from('board_confirmations').upsert({ message_id: msg.id, user_id: user.id }, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
+                    setConfirmations(prev => ({ ...prev, [msg.id]: [...(prev[msg.id] || []), user.id] }));
+                    setMyConfirmTimes(prev => ({ ...prev, [msg.id]: now }));
+                  }} style={{ padding: '5px 14px', background: '#28a745', color: '#fff', border: 'none', borderRadius: 20, cursor: 'pointer', fontSize: 13, fontWeight: 'bold' }}>
+                    ✅ {confirmLabel}
+                  </button>
+                ) : (
+                  <span style={{ fontSize: 12, color: '#28a745', fontWeight: 'bold' }}>✅ {confirmLabel}（{myConfirmTime ? fmtTime(myConfirmTime) : '確認済み'}）</span>
+                )}
+                <span style={{ fontSize: 12, color: subColor }}>
+                  確認済み {confirmedIds.length}人 / 未確認 {unconfirmedIds.length}人
+                </span>
+                {isAdmin && unconfirmedIds.length > 0 && (
+                  <button type="button" onClick={() => setUnconfirmedMsgId(msg.id)}
+                    style={{ padding: '4px 12px', background: '#fd7e14', color: '#fff', border: 'none', borderRadius: 20, cursor: 'pointer', fontSize: 12 }}>
+                    未確認者を確認・リマインド
+                  </button>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Footer (parent only) */}
           {!isReply && (
@@ -841,6 +934,51 @@ const BoardPage: React.FC = () => {
 
       {/* Input */}
       <div style={{ padding: '10px 14px', borderTop: `1px solid ${border}`, background: cardBg, flexShrink: 0 }}>
+        {/* 詳細設定（折りたたみ） */}
+        <div style={{ marginBottom: 6 }}>
+          <button type="button" onClick={() => setShowOptionsExpanded(e => !e)}
+            style={{ background: 'none', border: 'none', color: subColor, cursor: 'pointer', fontSize: 12, padding: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
+            {showOptionsExpanded ? '▲' : '▼'} 期限・種別・送信予約
+            {(newDeadlineType || newDeadline || newScheduledAt) && (
+              <span style={{ color: '#007bff', fontWeight: 'bold', fontSize: 14 }}>●</span>
+            )}
+          </button>
+          {showOptionsExpanded && (
+            <div style={{ marginTop: 8, padding: '10px 12px', background: inputBg, borderRadius: 8, border: `1px solid ${border}`, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {/* 種別ボタングリッド */}
+              <div>
+                <div style={{ fontSize: 11, color: subColor, marginBottom: 6 }}>種別（選ぶと確認ボタンが付きます）</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                  {DEADLINE_TYPES.map(dt => (
+                    <button key={dt.value} type="button"
+                      onClick={() => setNewDeadlineType(prev => prev === dt.value ? '' : dt.value)}
+                      style={{ padding: '8px 4px', borderRadius: 8, border: `2px solid ${newDeadlineType === dt.value ? '#007bff' : border}`, background: newDeadlineType === dt.value ? '#007bff' : 'transparent', color: newDeadlineType === dt.value ? '#fff' : textColor, cursor: 'pointer', fontSize: 13, fontWeight: newDeadlineType === dt.value ? 'bold' : 'normal' }}>
+                      {dt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* 期限日 */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 12, color: subColor, flexShrink: 0 }}>⏰ 期限日</span>
+                <input type="date" value={newDeadline}
+                  onChange={e => setNewDeadline(e.target.value)}
+                  min={new Date().toISOString().slice(0, 10)}
+                  style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, cursor: 'pointer', flex: 1 }} />
+                {newDeadline && <button type="button" onClick={() => setNewDeadline('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
+              </div>
+              {/* 送信予約 */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 12, color: subColor, flexShrink: 0 }}>🕐 送信予約</span>
+                <input type="datetime-local" value={newScheduledAt}
+                  onChange={e => setNewScheduledAt(e.target.value)}
+                  min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
+                  style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, cursor: 'pointer', flex: 1 }} />
+                {newScheduledAt && <button type="button" onClick={() => setNewScheduledAt('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
+              </div>
+            </div>
+          )}
+        </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
           <textarea
             value={newBody}
@@ -852,7 +990,7 @@ const BoardPage: React.FC = () => {
           />
           <button
             type="button"
-            onClick={() => sendMessage()}
+            onClick={() => { if (newBody.trim()) setShowSendConfirm(true); }}
             disabled={sending || !newBody.trim()}
             style={{ padding: '10px 18px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, alignSelf: 'flex-end', opacity: sending || !newBody.trim() ? 0.5 : 1 }}
           >
@@ -934,6 +1072,107 @@ const BoardPage: React.FC = () => {
           </div>
         );
       })()}
+      {/* 送信確認モーダル */}
+      {showSendConfirm && (
+        <div onClick={() => setShowSendConfirm(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 5000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 16, padding: 20, width: '100%', maxWidth: 420, boxSizing: 'border-box' }}>
+            <p style={{ margin: '0 0 12px', fontSize: 16, fontWeight: 'bold', color: textColor }}>送信確認</p>
+            <div style={{ background: inputBg, borderRadius: 10, padding: '12px 14px', marginBottom: 12, fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6, maxHeight: 200, overflowY: 'auto' }}>
+              {newBody}
+            </div>
+            {newDeadlineType && (
+              <p style={{ margin: '0 0 8px', fontSize: 12, color: '#007bff' }}>
+                種別: {DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.label}（確認ボタンあり）
+              </p>
+            )}
+            {newDeadline && (
+              <p style={{ margin: '0 0 8px', fontSize: 12, color: '#0369a1' }}>📅 期限: {newDeadline}</p>
+            )}
+            {newScheduledAt && (
+              <p style={{ margin: '0 0 8px', fontSize: 12, color: '#6f42c1' }}>
+                🕐 送信予約: {new Date(newScheduledAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+              </p>
+            )}
+            <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+              <button type="button" onClick={() => setShowSendConfirm(false)}
+                style={{ flex: 1, padding: '10px 0', background: 'none', border: `1px solid ${border}`, borderRadius: 8, color: subColor, cursor: 'pointer', fontSize: 14 }}>
+                キャンセル
+              </button>
+              <button type="button" onClick={() => { setShowSendConfirm(false); sendMessage(); }}
+                style={{ flex: 2, padding: '10px 0', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>
+                送信する
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 未確認者一覧モーダル */}
+      {unconfirmedMsgId && (() => {
+        const msg = messages.find(m => m.id === unconfirmedMsgId);
+        if (!msg) return null;
+        const confirmedIds = confirmations[unconfirmedMsgId] || [];
+        const channelMemberIds = members.filter(m => m.channel_id === msg.channel_id).map(m => m.user_id);
+        const unconfirmedUserIds = channelMemberIds.filter(id => !confirmedIds.includes(id));
+        const dtConfig = DEADLINE_TYPES.find(d => d.value === msg.deadline_type);
+        return (
+          <div style={overlayStyle} onClick={() => setUnconfirmedMsgId(null)}>
+            <div style={{ ...modalStyle, maxWidth: 380 }} onClick={e => e.stopPropagation()}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                <span style={{ fontSize: 16, fontWeight: 'bold', color: textColor }}>確認状況</span>
+                <button type="button" onClick={() => setUnconfirmedMsgId(null)} style={{ background: 'none', border: 'none', color: subColor, cursor: 'pointer', fontSize: 18, padding: 0 }}>✕</button>
+              </div>
+              <div style={{ fontSize: 12, color: subColor, marginBottom: 12, padding: '8px 10px', background: inputBg, borderRadius: 8, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {msg.body.slice(0, 80)}{msg.body.length > 80 ? '…' : ''}
+              </div>
+              {unconfirmedUserIds.length > 0 && (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 12, fontWeight: 'bold', color: '#dc3545', marginBottom: 6 }}>未確認 {unconfirmedUserIds.length}人</div>
+                  {unconfirmedUserIds.map(uid => {
+                    const p = allProfiles.find(ap => ap.id === uid);
+                    return <div key={uid} style={{ fontSize: 13, color: textColor, padding: '5px 0', borderBottom: `1px solid ${border}` }}>{p?.name || '不明'}</div>;
+                  })}
+                </div>
+              )}
+              {confirmedIds.length > 0 && (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 12, fontWeight: 'bold', color: '#28a745', marginBottom: 6 }}>確認済み {confirmedIds.length}人</div>
+                  {confirmedIds.map(uid => {
+                    const p = allProfiles.find(ap => ap.id === uid);
+                    return <div key={uid} style={{ fontSize: 13, color: subColor, padding: '5px 0', borderBottom: `1px solid ${border}` }}>✅ {p?.name || '不明'}</div>;
+                  })}
+                </div>
+              )}
+              {unconfirmedUserIds.length === 0 && (
+                <div style={{ fontSize: 14, color: '#28a745', textAlign: 'center', padding: '12px 0' }}>全員が確認済みです ✅</div>
+              )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                {unconfirmedUserIds.length > 0 && (
+                  <button type="button" onClick={async () => {
+                    await supabase.functions.invoke('send-push', {
+                      body: {
+                        user_ids: unconfirmedUserIds,
+                        title: `📌 ${dtConfig ? dtConfig.label + 'をお願いします' : '確認をお願いします'}`,
+                        body: msg.body.slice(0, 50),
+                        url: '/board',
+                        tag: `confirm-${unconfirmedMsgId}`,
+                      },
+                    });
+                    setUnconfirmedMsgId(null);
+                    setSaveBanner(true);
+                    setTimeout(() => setSaveBanner(false), 3000);
+                  }} style={{ padding: '10px 0', background: '#fd7e14', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>
+                    🔔 {unconfirmedUserIds.length}人にリマインドを送る
+                  </button>
+                )}
+                <button type="button" onClick={() => setUnconfirmedMsgId(null)}
+                  style={{ padding: '10px 0', background: 'none', border: `1px solid ${border}`, borderRadius: 8, color: subColor, cursor: 'pointer', fontSize: 14 }}>閉じる</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {(saveBanner || memberBanner) && (
         <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 220 }}>
           <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>✓</div>

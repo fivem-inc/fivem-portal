@@ -951,4 +951,149 @@ const NotificationsTab: React.FC = () => {
   );
 };
 
+// ── 定期リマインド設定 ─────────────────────────────────────────────
+interface ScheduledReminder {
+  id: string;
+  channel_id: string | null;
+  day_of_month: number;
+  title: string;
+  body: string;
+  is_active: boolean;
+}
+
+interface BoardChannel {
+  id: string;
+  name: string;
+}
+
+export const ScheduledRemindersPanel: React.FC = () => {
+  const { isDarkMode } = useAdminPanel();
+  const [reminders, setReminders] = useState<ScheduledReminder[]>([]);
+  const [channels, setChannels] = useState<BoardChannel[]>([]);
+  const [form, setForm] = useState({ channel_id: '', day_of_month: 1, title: '', body: '' });
+  const [saving, setSaving] = useState(false);
+
+  const bg = isDarkMode ? '#2c2c3e' : '#fff';
+  const text = isDarkMode ? '#fff' : '#1a1a2e';
+  const sub = isDarkMode ? '#adb5bd' : '#6c757d';
+  const border = isDarkMode ? '#3d3d55' : '#dee2e6';
+  const inputBg = isDarkMode ? '#3d3d55' : '#f8f9fa';
+
+  const fetch = useCallback(async () => {
+    const [{ data: r }, { data: c }] = await Promise.all([
+      supabase.from('board_scheduled_reminders').select('*').order('day_of_month'),
+      supabase.from('board_channels').select('id, name').order('name'),
+    ]);
+    if (r) setReminders(r);
+    if (c) setChannels(c);
+  }, []);
+
+  useEffect(() => { fetch(); }, [fetch]);
+
+  const handleSave = async () => {
+    if (!form.title.trim() || !form.body.trim()) return;
+    setSaving(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    await supabase.from('board_scheduled_reminders').insert({
+      created_by: user!.id,
+      channel_id: form.channel_id || null,
+      day_of_month: form.day_of_month,
+      title: form.title.trim(),
+      body: form.body.trim(),
+    });
+    setForm({ channel_id: '', day_of_month: 1, title: '', body: '' });
+    await fetch();
+    setSaving(false);
+  };
+
+  const handleToggle = async (id: string, is_active: boolean) => {
+    await supabase.from('board_scheduled_reminders').update({ is_active }).eq('id', id);
+    setReminders(prev => prev.map(r => r.id === id ? { ...r, is_active } : r));
+  };
+
+  const handleDelete = async (id: string) => {
+    await supabase.from('board_scheduled_reminders').delete().eq('id', id);
+    setReminders(prev => prev.filter(r => r.id !== id));
+  };
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '8px 10px', borderRadius: 8,
+    border: `1px solid ${border}`, background: inputBg, color: text, fontSize: 14,
+    boxSizing: 'border-box',
+  };
+
+  return (
+    <div style={{ padding: 16 }}>
+      <h3 style={{ color: text, margin: '0 0 16px', fontSize: 16 }}>📅 定期リマインド設定</h3>
+
+      {/* 新規追加フォーム */}
+      <div style={{ background: bg, border: `1px solid ${border}`, borderRadius: 12, padding: 16, marginBottom: 20 }}>
+        <p style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 'bold', color: text }}>新しいリマインドを追加</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <div style={{ flex: 1 }}>
+              <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>毎月◯日</p>
+              <input type="number" min={1} max={31} value={form.day_of_month}
+                onChange={e => setForm(f => ({ ...f, day_of_month: Number(e.target.value) }))}
+                style={{ ...inputStyle, width: 80 }} />
+            </div>
+            <div style={{ flex: 2 }}>
+              <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>送り先グループ（空欄＝全員）</p>
+              <select value={form.channel_id} onChange={e => setForm(f => ({ ...f, channel_id: e.target.value }))}
+                style={inputStyle}>
+                <option value="">全スタッフ</option>
+                {channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>通知タイトル</p>
+            <input type="text" value={form.title} placeholder="例: 月目標を提出してください"
+              onChange={e => setForm(f => ({ ...f, title: e.target.value }))} style={inputStyle} />
+          </div>
+          <div>
+            <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>通知本文</p>
+            <textarea value={form.body} rows={2} placeholder="例: 今月の目標をシートに入力してください。"
+              onChange={e => setForm(f => ({ ...f, body: e.target.value }))}
+              style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
+          </div>
+          <button onClick={handleSave} disabled={saving || !form.title.trim() || !form.body.trim()}
+            style={{ padding: '10px 0', background: saving ? '#6c757d' : '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold', opacity: !form.title.trim() || !form.body.trim() ? 0.5 : 1 }}>
+            {saving ? '保存中...' : '追加する'}
+          </button>
+        </div>
+      </div>
+
+      {/* 登録済み一覧 */}
+      {reminders.length === 0 ? (
+        <p style={{ color: sub, fontSize: 13, textAlign: 'center' }}>定期リマインドはまだ登録されていません</p>
+      ) : reminders.map(r => (
+        <div key={r.id} style={{ background: bg, border: `1px solid ${border}`, borderRadius: 12, padding: 14, marginBottom: 10, opacity: r.is_active ? 1 : 0.5 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+            <div style={{ flex: 1 }}>
+              <p style={{ margin: '0 0 2px', fontSize: 14, fontWeight: 'bold', color: text }}>
+                毎月{r.day_of_month}日 — {r.title}
+              </p>
+              <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>{r.body}</p>
+              <p style={{ margin: 0, fontSize: 11, color: sub }}>
+                送り先: {r.channel_id ? (channels.find(c => c.id === r.channel_id)?.name ?? 'グループ') : '全スタッフ'}
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+              <button onClick={() => handleToggle(r.id, !r.is_active)}
+                style={{ padding: '4px 10px', borderRadius: 6, border: `1px solid ${border}`, background: 'none', color: r.is_active ? '#28a745' : sub, cursor: 'pointer', fontSize: 12 }}>
+                {r.is_active ? 'ON' : 'OFF'}
+              </button>
+              <button onClick={() => handleDelete(r.id)}
+                style={{ padding: '4px 8px', borderRadius: 6, border: 'none', background: '#dc3545', color: '#fff', cursor: 'pointer', fontSize: 12 }}>
+                削除
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 export default NotificationsTab;
