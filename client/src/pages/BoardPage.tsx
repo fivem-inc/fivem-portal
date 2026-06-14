@@ -105,9 +105,11 @@ const BoardPage: React.FC = () => {
   const [newDeadlineType,      setNewDeadlineType]      = useState('');
   const [newScheduledAt,       setNewScheduledAt]       = useState('');
   const [showOptionsExpanded,  setShowOptionsExpanded]  = useState(false);
-  const [confirmations,        setConfirmations]        = useState<Record<string, string[]>>({});
+  const [confirmations,        setConfirmations]        = useState<Record<string, {user_id: string; comment: string | null}[]>>({});
   const [myConfirmTimes,       setMyConfirmTimes]       = useState<Record<string, string>>({});
   const [unconfirmedMsgId,     setUnconfirmedMsgId]     = useState<string | null>(null);
+  const [answerInputId,        setAnswerInputId]        = useState<string | null>(null);
+  const [answerText,           setAnswerText]           = useState('');
   const [replyBody,            setReplyBody]            = useState('');
   const [editingId,   setEditingId]   = useState<string | null>(null);
   const [editBody,         setEditBody]         = useState('');
@@ -173,11 +175,11 @@ const BoardPage: React.FC = () => {
     // requires_confirmation / deadline_type ありの投稿の確認者を取得
     const confirmMsgIds = (msgRes.data || []).filter((m: any) => m.requires_confirmation || m.deadline_type).map((m: any) => m.id);
     if (confirmMsgIds.length > 0) {
-      const { data: confData } = await supabase.from('board_confirmations').select('message_id, user_id').in('message_id', confirmMsgIds);
-      const confMap: Record<string, string[]> = {};
-      (confData || []).forEach((c: { message_id: string; user_id: string }) => {
+      const { data: confData } = await supabase.from('board_confirmations').select('message_id, user_id, comment').in('message_id', confirmMsgIds);
+      const confMap: Record<string, {user_id: string; comment: string | null}[]> = {};
+      (confData || []).forEach((c: { message_id: string; user_id: string; comment: string | null }) => {
         if (!confMap[c.message_id]) confMap[c.message_id] = [];
-        confMap[c.message_id].push(c.user_id);
+        confMap[c.message_id].push({ user_id: c.user_id, comment: c.comment });
       });
       setConfirmations(confMap);
     }
@@ -402,7 +404,7 @@ const BoardPage: React.FC = () => {
     const isExpanded = expandedThreadId === msg.id;
     const readCount = readCounts[msg.id] || 0;
     const senderName = allProfiles.find(p => p.id === msg.user_id)?.name || msg.profile?.name || '不明';
-    const confirmedIdsTop = confirmations[msg.id] || [];
+    const confirmedIdsTop = (confirmations[msg.id] || []).map(c => c.user_id);
     const isConfirmable = (msg.deadline_type || msg.requires_confirmation) && !msg.parent_id;
     const alreadyConfirmedTop = isConfirmable && confirmedIdsTop.includes(user?.id ?? '');
 
@@ -445,6 +447,24 @@ const BoardPage: React.FC = () => {
               </div>
             );
           })()}
+          {/* 回答一覧（回答タイプで送信済みのもの） */}
+          {msg.deadline_type === 'answer' && !msg.parent_id && (() => {
+            const answers = (confirmations[msg.id] || []).filter(c => c.comment);
+            if (answers.length === 0) return null;
+            return (
+              <div style={{ margin: '6px 0 8px', padding: '8px 10px', background: isDark ? '#1a3a28' : '#f0fdf4', borderRadius: 8, border: '1px solid #86efac' }}>
+                <div style={{ fontSize: 11, fontWeight: 'bold', color: '#166534', marginBottom: 4 }}>📝 回答</div>
+                {answers.map(c => {
+                  const name = allProfiles.find(p => p.id === c.user_id)?.name || '不明';
+                  return (
+                    <div key={c.user_id} style={{ fontSize: 13, color: textColor, padding: '4px 0', borderBottom: `1px solid #bbf7d0` }}>
+                      <span style={{ fontWeight: 500, color: '#166534' }}>{name}：</span>{c.comment}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
           {editingId === msg.id ? (
             <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
               <input
@@ -463,7 +483,8 @@ const BoardPage: React.FC = () => {
 
           {/* 確認ボタン（deadline_type / requires_confirmation ありの親投稿） */}
           {(msg.deadline_type || msg.requires_confirmation) && !msg.parent_id && (() => {
-            const confirmedIds = confirmations[msg.id] || [];
+            const confirmedObjs = confirmations[msg.id] || [];
+            const confirmedIds = confirmedObjs.map(c => c.user_id);
             const alreadyConfirmed = confirmedIds.includes(user?.id ?? '');
             const myConfirmTime = myConfirmTimes[msg.id];
             const channelMemberIds = members.filter(m => m.channel_id === msg.channel_id).map(m => m.user_id);
@@ -471,15 +492,24 @@ const BoardPage: React.FC = () => {
             const dtConfig = DEADLINE_TYPES.find(d => d.value === msg.deadline_type);
             const reportLabel = dtConfig ? dtConfig.reportLabel : '確認報告';
             const doneLabel   = dtConfig ? dtConfig.doneLabel   : '確認済み';
+            const isAnswerType = msg.deadline_type === 'answer';
             return (
-              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <div style={{ marginTop: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                 {!alreadyConfirmed ? (
-                  <button type="button" onClick={async () => {
-                    if (!user) return;
-                    const now = new Date().toISOString();
-                    await supabase.from('board_confirmations').upsert({ message_id: msg.id, user_id: user.id }, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
-                    setConfirmations(prev => ({ ...prev, [msg.id]: [...(prev[msg.id] || []), user.id] }));
-                    setMyConfirmTimes(prev => ({ ...prev, [msg.id]: now }));
+                  <button type="button" onClick={() => {
+                    if (isAnswerType) {
+                      setAnswerInputId(answerInputId === msg.id ? null : msg.id);
+                      setAnswerText('');
+                    } else {
+                      (async () => {
+                        if (!user) return;
+                        const now = new Date().toISOString();
+                        await supabase.from('board_confirmations').upsert({ message_id: msg.id, user_id: user.id, comment: null }, { onConflict: 'message_id,user_id' });
+                        setConfirmations(prev => ({ ...prev, [msg.id]: [...(prev[msg.id] || []).filter(c => c.user_id !== user.id), { user_id: user.id, comment: null }] }));
+                        setMyConfirmTimes(prev => ({ ...prev, [msg.id]: now }));
+                      })();
+                    }
                   }} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', background: '#fff', border: '1.5px solid #22c55e', borderRadius: 20, cursor: 'pointer', fontSize: 13, fontWeight: 500, color: '#166534' }}>
                     <span style={{ fontSize: 15, lineHeight: 1 }}>○</span> {reportLabel}
                   </button>
@@ -496,6 +526,40 @@ const BoardPage: React.FC = () => {
                     style={{ padding: '5px 10px', background: '#fd7e14', color: '#fff', border: 'none', borderRadius: 20, cursor: 'pointer', fontSize: 12 }}>
                     未確認者・リマインド
                   </button>
+                )}
+                </div>
+                {/* 回答入力欄 */}
+                {isAnswerType && answerInputId === msg.id && !alreadyConfirmed && (
+                  <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
+                    <textarea
+                      value={answerText}
+                      onChange={e => setAnswerText(e.target.value)}
+                      placeholder="回答内容を入力..."
+                      rows={2}
+                      autoFocus
+                      style={{ flex: 1, padding: '6px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, resize: 'none', fontFamily: 'inherit', lineHeight: 1.4 }}
+                    />
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <button type="button" disabled={!answerText.trim()} onClick={async () => {
+                        if (!user || !answerText.trim()) return;
+                        const now = new Date().toISOString();
+                        await supabase.from('board_confirmations').upsert(
+                          { message_id: msg.id, user_id: user.id, comment: answerText.trim() },
+                          { onConflict: 'message_id,user_id' }
+                        );
+                        setConfirmations(prev => ({ ...prev, [msg.id]: [...(prev[msg.id] || []).filter(c => c.user_id !== user.id), { user_id: user.id, comment: answerText.trim() }] }));
+                        setMyConfirmTimes(prev => ({ ...prev, [msg.id]: now }));
+                        setAnswerInputId(null);
+                        setAnswerText('');
+                      }} style={{ padding: '6px 10px', background: '#22c55e', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500, opacity: !answerText.trim() ? 0.5 : 1 }}>
+                        回答して完了
+                      </button>
+                      <button type="button" onClick={() => { setAnswerInputId(null); setAnswerText(''); }}
+                        style={{ padding: '6px 10px', background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12 }}>
+                        キャンセル
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
             );
@@ -1117,7 +1181,8 @@ const BoardPage: React.FC = () => {
       {unconfirmedMsgId && (() => {
         const msg = messages.find(m => m.id === unconfirmedMsgId);
         if (!msg) return null;
-        const confirmedIds = confirmations[unconfirmedMsgId] || [];
+        const confirmedObjs2 = confirmations[unconfirmedMsgId] || [];
+        const confirmedIds = confirmedObjs2.map(c => c.user_id);
         const channelMemberIds = members.filter(m => m.channel_id === msg.channel_id).map(m => m.user_id);
         const unconfirmedUserIds = channelMemberIds.filter(id => !confirmedIds.includes(id));
         const dtConfig = DEADLINE_TYPES.find(d => d.value === msg.deadline_type);
@@ -1143,9 +1208,14 @@ const BoardPage: React.FC = () => {
               {confirmedIds.length > 0 && (
                 <div style={{ marginBottom: 12 }}>
                   <div style={{ fontSize: 12, fontWeight: 'bold', color: '#28a745', marginBottom: 6 }}>確認済み {confirmedIds.length}人</div>
-                  {confirmedIds.map(uid => {
-                    const p = allProfiles.find(ap => ap.id === uid);
-                    return <div key={uid} style={{ fontSize: 13, color: subColor, padding: '5px 0', borderBottom: `1px solid ${border}` }}>✅ {p?.name || '不明'}</div>;
+                  {confirmedObjs2.map(c => {
+                    const p = allProfiles.find(ap => ap.id === c.user_id);
+                    return (
+                      <div key={c.user_id} style={{ fontSize: 13, color: subColor, padding: '5px 0', borderBottom: `1px solid ${border}` }}>
+                        ✅ {p?.name || '不明'}
+                        {c.comment && <span style={{ display: 'block', fontSize: 12, color: textColor, marginTop: 2, paddingLeft: 18 }}>{c.comment}</span>}
+                      </div>
+                    );
                   })}
                 </div>
               )}
