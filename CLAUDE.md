@@ -2710,20 +2710,34 @@ await supabase.functions.invoke('send-push', {
   - 通知リストはベルアイコンが担当するためアバターメニューには含めない
   - 外クリックで閉じる（`mousedown` イベント）
 
-### 連絡板 管理者設定（実装済み・記載漏れ）
+### 連絡板 管理者設定・管理機能（実装済み・記載漏れ）
 
-#### 既読詳細表示設定（管理者のみ操作可）
+#### ① グループチャンネル作成（管理者のみ）
+- チャンネルリストヘッダー右の `＋` ボタン or チャンネルなし画面の「＋ グループを作成」
+- グループ名入力 + メンバー選択（雇用形態ヘッダー+役職列+チェックボックス+チップ表示）
+- 作成後 `board_channels` + `board_channel_members` に INSERT
+
+#### ② メンバー管理（管理者: 全操作 / 一般: 閲覧のみ）
+- チャンネルヘッダー右の `👥 メンバー` ボタンでモーダル表示
+- 管理者: チェックボックスで追加・削除・一括保存
+- 一般: メンバー一覧の閲覧のみ
+
+#### ③ チャンネル削除（管理者 or チャンネル作成者）
+- チャンネルリスト各行の右端 🗑 ボタン
+- `confirm()` ダイアログ → `board_channel_members` / `board_messages` / `board_channels` を順に DELETE
+
+#### ④ 既読詳細表示設定（管理者のみ）
 - チャンネルヘッダー右の `👁 既読` ボタンで ON/OFF 切り替え
 - ON（緑枠）: 全メンバーが「既読N 未読N」を見られる
-- OFF: 既読数表示を非表示にする
+- OFF: 既読数非表示
 - 設定は `master_options` テーブル `category='board_show_read_detail'` に保存（全体共通）
-- 初期値: `true`（ON）
 
-#### 設定の保存方法
-```ts
-await supabase.from('master_options').delete().eq('category', 'board_show_read_detail');
-await supabase.from('master_options').insert({ category: 'board_show_read_detail', value: String(next), sort_order: 0 });
-```
+#### ⑤ 未確認者リマインド（管理者のみ）
+- 読了確認付きメッセージ（deadline_type あり）に「リマインド送信」黄ボタン表示
+- 押すと未確認者の名前一覧モーダル → 「リマインドを送信」で `insertNotification` 実行
+
+#### ⑥ DM（個人メッセージ）作成（全員）
+- チャンネルリストヘッダーの `✉️` ボタンから相手を選んで DM チャンネル作成
 
 ### 🔜 次回タスク（2026-06-14時点）
 1. **残業申請フォーム（パート用）** ← 最優先
