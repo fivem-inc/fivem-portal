@@ -236,8 +236,11 @@ const BoardPage: React.FC = () => {
   }, [messages.length, selectedChannelId]);
 
   useEffect(() => {
-    if (showChannelList && channelListRef.current) {
-      channelListRef.current.scrollTop = 0;
+    if (showChannelList) {
+      const id = setTimeout(() => {
+        if (channelListRef.current) channelListRef.current.scrollTop = 0;
+      }, 0);
+      return () => clearTimeout(id);
     }
   }, [showChannelList]);
 
@@ -1256,8 +1259,7 @@ const BoardPage: React.FC = () => {
 
   const channelListPanel = (
     <div style={{ width: isMobile ? '100%' : 280, background: sidebarBg, borderRight: isMobile ? 'none' : `1px solid ${border}`, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, flexShrink: 0 }}>
-      <div ref={(el) => { (channelListRef as React.MutableRefObject<HTMLDivElement | null>).current = el; if (el) el.scrollTop = 0; }} style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
-        <div style={{ height: 52, flexShrink: 0 }} />
+      <div ref={channelListRef} style={{ overflowY: 'auto', flex: 1, minHeight: 0, paddingTop: 52 }}>
         {loadingData ? (
           <div style={{ padding: 20, textAlign: 'center', color: subColor, fontSize: 13 }}>読み込み中...</div>
         ) : sortedChannels.length === 0 ? (
@@ -1450,7 +1452,7 @@ const BoardPage: React.FC = () => {
   // ── Render ───────────────────────────────────────────────────────
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: bg, overflow: 'hidden', paddingTop: 60, boxSizing: 'border-box' }}>
+    <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column', background: bg, overflow: 'hidden', paddingTop: 60, boxSizing: 'border-box' } as React.CSSProperties}>
       {/* チャンネルリストヘッダー — position:fixed, メッセージビューヘッダーと同じ方式 */}
       {showChannelList && (
         <div style={{ position: 'fixed', top: 60, left: 0, right: 0, zIndex: 100, padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
