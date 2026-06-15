@@ -53,7 +53,7 @@ interface BoardMessage {
   profile: { name: string | null } | null;
 }
 
-type View = 'inbox' | 'outbox' | 'compose' | 'channel' | 'search';
+type View = 'inbox' | 'outbox' | 'compose' | 'channel' | 'search' | 'favorites';
 
 interface SimpleProfile {
   id: string;
@@ -940,12 +940,18 @@ const BoardPage: React.FC = () => {
               <span style={{ fontSize: 11, color: subColor }}>{fmtTime(msg.created_at)}</span>
               {msg.edited_at && <span style={{ fontSize: 10, color: subColor }}>(編集済み)</span>}
             </div>
-            {canEdit && (
-              <div style={{ display: 'flex', gap: 2 }}>
-                <button type="button" onClick={() => { setEditingId(msg.id); setEditBody(msg.body); }} style={{ background: 'none', border: 'none', color: subColor, cursor: 'pointer', fontSize: 13, padding: '2px 4px' }}>✏️</button>
-                <button type="button" onClick={() => deleteMessage(msg.id)} style={{ background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 13, padding: '2px 4px' }}>🗑️</button>
-              </div>
-            )}
+            <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+              <button type="button" onClick={e => toggleFavMessage(e, msg.id, msg)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: '2px 3px', color: favMessageIds.has(msg.id) ? '#f59e0b' : subColor, opacity: favMessageIds.has(msg.id) ? 1 : 0.4 }}>
+                {favMessageIds.has(msg.id) ? '★' : '☆'}
+              </button>
+              {canEdit && (
+                <>
+                  <button type="button" onClick={() => { setEditingId(msg.id); setEditBody(msg.body); }} style={{ background: 'none', border: 'none', color: subColor, cursor: 'pointer', fontSize: 13, padding: '2px 4px' }}>✏️</button>
+                  <button type="button" onClick={() => deleteMessage(msg.id)} style={{ background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 13, padding: '2px 4px' }}>🗑️</button>
+                </>
+              )}
+            </div>
           </div>
 
           {/* 種別ラベル＋期限バッジ（案C: 左ボーダー＋右端バッジ） */}
@@ -1701,47 +1707,24 @@ const BoardPage: React.FC = () => {
             </div>
           );
         })}
-        {/* ── お気に入り ── */}
-        {(favChannelIds.size > 0 || favMessageIds.size > 0) && (
-          <>
-            <div style={{ padding: '8px 14px 4px' }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: '#f59e0b', letterSpacing: 0.5 }}>⭐ お気に入り</span>
+        {/* ── お気に入り（常時表示） ── */}
+        {(() => {
+          const isActive = view === 'favorites' && !showSidebar;
+          const favCount = favChannelIds.size + favMessageIds.size;
+          return (
+            <div onClick={() => { setView('favorites'); setShowSidebar(false); }} style={{
+              padding: '10px 14px', cursor: 'pointer', borderBottom: `1px solid ${border}`,
+              background: isActive ? (isDark ? '#2d3561' : '#e8f0fe') : 'transparent',
+              display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left',
+            }}>
+              <div style={{ width: 38, height: 38, borderRadius: 10, background: isDark ? '#3a3020' : '#fef9c3', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>⭐</div>
+              <span style={{ flex: 1, fontSize: 14, fontWeight: isActive ? 700 : 500, color: textColor }}>お気に入り</span>
+              {favCount > 0 && (
+                <span style={{ background: '#f59e0b', color: '#fff', borderRadius: 10, fontSize: 11, minWidth: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px', fontWeight: 'bold' }}>{favCount}</span>
+              )}
             </div>
-            {channels.filter(c => favChannelIds.has(c.id)).map(ch => {
-              const isSelected = view === 'channel' && ch.id === selectedChannelId;
-              return (
-                <div key={`fav-ch-${ch.id}`} onClick={() => { selectChannel(ch.id); setView('channel'); setShowSidebar(false); setShowChannelList(false); }} style={{
-                  padding: '7px 14px', cursor: 'pointer', borderBottom: `1px solid ${border}`,
-                  background: isSelected ? (isDark ? '#2d3561' : '#e8f0fe') : 'transparent',
-                  display: 'flex', alignItems: 'center', gap: 10,
-                }}>
-                  <div style={{ width: 28, height: 28, borderRadius: ch.type === 'group' ? 6 : '50%', background: ch.type === 'group' ? '#6f42c1' : '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, flexShrink: 0 }}>
-                    {ch.type === 'group' ? '👥' : avatarLetter(channelDisplayName(ch))}
-                  </div>
-                  <span style={{ flex: 1, fontSize: 13, color: textColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{channelDisplayName(ch)}</span>
-                  <button type="button" onClick={e => toggleFavChannel(e, ch.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: 0, color: '#f59e0b' }}>★</button>
-                </div>
-              );
-            })}
-            {favMessages.map(msg => {
-              const senderName = allProfiles.find(p => p.id === msg.user_id)?.name || '不明';
-              return (
-                <div key={`fav-msg-${msg.id}`} onClick={() => { setInboxDetailId(msg.id); setView('inbox'); setShowSidebar(false); }} style={{
-                  padding: '7px 14px', cursor: 'pointer', borderBottom: `1px solid ${border}`,
-                  background: 'transparent', display: 'flex', alignItems: 'flex-start', gap: 10,
-                }}>
-                  <span style={{ fontSize: 16, flexShrink: 0, marginTop: 2 }}>📨</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: textColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{msg.subject || msg.title || msg.body.slice(0, 20)}</div>
-                    <div style={{ fontSize: 11, color: subColor }}>{senderName} · {fmtTime(msg.created_at)}</div>
-                  </div>
-                  <button type="button" onClick={e => toggleFavMessage(e, msg.id, msg)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: 0, color: '#f59e0b', flexShrink: 0 }}>★</button>
-                </div>
-              );
-            })}
-            <div style={{ margin: '4px 0', borderBottom: `1px solid ${border}` }} />
-          </>
-        )}
+          );
+        })()}
 
         {/* ── 区切り線 ── */}
         <div style={{ margin: '4px 0', borderBottom: `2px solid ${border}` }} />
@@ -2344,11 +2327,12 @@ const BoardPage: React.FC = () => {
   // ── Render ───────────────────────────────────────────────────────
 
   const viewTitle: Record<View, string> = {
-    inbox:   '📥 受信トレイ',
-    outbox:  '📤 送信トレイ',
-    compose: '✉️ お知らせを作成',
-    channel: selectedChannel ? (selectedChannel.type === 'group' ? `👥 ${channelDisplayName(selectedChannel)}` : channelDisplayName(selectedChannel)) : '',
-    search:  `🔍 「${searchText}」の検索結果`,
+    inbox:     '📥 受信トレイ',
+    outbox:    '📤 送信トレイ',
+    compose:   '✉️ お知らせを作成',
+    channel:   selectedChannel ? (selectedChannel.type === 'group' ? `👥 ${channelDisplayName(selectedChannel)}` : channelDisplayName(selectedChannel)) : '',
+    search:    `🔍 「${searchText}」の検索結果`,
+    favorites: '⭐ お気に入り',
   };
 
   // ── 検索結果のマッチ箇所をハイライト ──────────────────────────────
@@ -2370,6 +2354,67 @@ const BoardPage: React.FC = () => {
       </span>
     );
   };
+
+  const favoritesPanel = (
+    <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px', paddingTop: 62 }}>
+      {favChannelIds.size === 0 && favMessageIds.size === 0 ? (
+        <div style={{ textAlign: 'center', color: subColor, fontSize: 14, marginTop: 60 }}>
+          <div style={{ fontSize: 32, marginBottom: 12 }}>⭐</div>
+          <div>お気に入りがまだありません</div>
+          <div style={{ fontSize: 12, marginTop: 8 }}>チャンネルやメッセージの ☆ をタップして追加できます</div>
+        </div>
+      ) : (
+        <>
+          {favChannelIds.size > 0 && (
+            <>
+              <div style={{ fontSize: 12, fontWeight: 700, color: subColor, marginBottom: 8, marginTop: 4 }}>チャンネル</div>
+              {channels.filter(c => favChannelIds.has(c.id)).map(ch => (
+                <div key={`fav-ch-${ch.id}`} onClick={() => { selectChannel(ch.id); setView('channel'); setShowSidebar(false); }} style={{
+                  background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: '10px 14px',
+                  marginBottom: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12,
+                }}>
+                  <div style={{ width: 34, height: 34, borderRadius: ch.type === 'group' ? 8 : '50%', background: ch.type === 'group' ? '#6f42c1' : '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 16, flexShrink: 0 }}>
+                    {ch.type === 'group' ? '👥' : avatarLetter(channelDisplayName(ch))}
+                  </div>
+                  <span style={{ flex: 1, fontSize: 14, fontWeight: 500, color: textColor }}>{channelDisplayName(ch)}</span>
+                  <button type="button" onClick={e => toggleFavChannel(e, ch.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, padding: 0, color: '#f59e0b' }}>★</button>
+                </div>
+              ))}
+            </>
+          )}
+          {favMessages.length > 0 && (
+            <>
+              <div style={{ fontSize: 12, fontWeight: 700, color: subColor, marginBottom: 8, marginTop: favChannelIds.size > 0 ? 16 : 4 }}>メッセージ</div>
+              {favMessages.map(msg => {
+                const senderName = allProfiles.find(p => p.id === msg.user_id)?.name || '不明';
+                return (
+                  <div key={`fav-msg-${msg.id}`} onClick={() => { setInboxDetailId(msg.id); setView('inbox'); setShowSidebar(false); }} style={{
+                    background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: '10px 14px',
+                    marginBottom: 8, cursor: 'pointer',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 'bold', flexShrink: 0 }}>
+                          {avatarLetter(senderName)}
+                        </div>
+                        <span style={{ fontSize: 13, fontWeight: 'bold', color: textColor }}>{senderName}</span>
+                        <span style={{ fontSize: 11, color: subColor }}>{fmtTime(msg.created_at)}</span>
+                      </div>
+                      <button type="button" onClick={e => toggleFavMessage(e, msg.id, msg)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, padding: 0, color: '#f59e0b', flexShrink: 0 }}>★</button>
+                    </div>
+                    {(msg.subject || msg.title) && (
+                      <div style={{ fontSize: 14, fontWeight: 700, color: textColor, marginTop: 6 }}>{msg.subject || msg.title}</div>
+                    )}
+                    <div style={{ fontSize: 13, color: subColor, marginTop: 4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', wordBreak: 'break-word' }}>{msg.body}</div>
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
 
   const searchPanel = (
     <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px', paddingTop: 62 }}>
@@ -2482,11 +2527,12 @@ const BoardPage: React.FC = () => {
         {/* コンテンツエリア */}
         {(!showSidebar || !isMobile) && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            {view === 'search'  && searchPanel}
-            {view === 'inbox'   && inboxPanel}
-            {view === 'outbox'  && outboxPanel}
-            {view === 'compose' && composePanel}
-            {view === 'channel' && messagePanel}
+            {view === 'favorites' && favoritesPanel}
+            {view === 'search'    && searchPanel}
+            {view === 'inbox'     && inboxPanel}
+            {view === 'outbox'    && outboxPanel}
+            {view === 'compose'   && composePanel}
+            {view === 'channel'   && messagePanel}
           </div>
         )}
       </div>
