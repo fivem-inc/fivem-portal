@@ -219,10 +219,14 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     if (location.pathname === path) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
       window.dispatchEvent(new CustomEvent('board-reset'));
-    } else {
-      // replace: true でタブ切り替えを履歴に積まない
-      // → /board エントリが重複しないため「戻るボタン空振り」が起きない
+    } else if (path === '/board' && location.pathname !== '/board') {
+      // /board への初回遷移は通常 push（戻るボタンで前ページに戻れるように）
+      navigate(path);
+    } else if (location.pathname === '/board' && path !== '/board') {
+      // /board から他タブへは replace（/board を履歴に残さない）
       navigate(path, { replace: true });
+    } else {
+      navigate(path);
     }
   };
   const [isMobile, setIsMobile] = useState(window.innerWidth < 640);

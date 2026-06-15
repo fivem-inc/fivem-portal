@@ -381,40 +381,8 @@ const BoardPage: React.FC = () => {
     return () => window.removeEventListener('board-reset', resetToTop);
   }, [resetToTop]);
 
-  // スマホ戻るボタン対応：navigate('/board', replace) 方式
-  // - history/state を直接触らない → ログアウト・通知など他の操作に干渉しない
-  // - popstate（戻るボタン）を検知したとき、内部状態があれば /board に留まってUIだけ戻す
-  const navigateRef = useRef(navigate);
-  useEffect(() => { navigateRef.current = navigate; });
-
-  const boardStateRef = useRef({ view, showSidebar, selectedChannelId, inboxDetailId, outboxDetailId, threadMsgId, inboxCommentOpen });
-  useEffect(() => {
-    boardStateRef.current = { view, showSidebar, selectedChannelId, inboxDetailId, outboxDetailId, threadMsgId, inboxCommentOpen };
-  });
-
-  useEffect(() => {
-    const onPopState = () => {
-      // BoardPageがマウントされている間にpopstateが発火 = /boardから離脱しようとしている
-      const s = boardStateRef.current;
-      const hasDepth = !!(s.threadMsgId
-        || Object.values(s.inboxCommentOpen).some(Boolean)
-        || s.inboxDetailId
-        || s.outboxDetailId
-        || (s.selectedChannelId && !s.showSidebar)
-        || s.view !== 'inbox');
-      if (!hasDepth) return; // ベース状態 → 自然に前ページへ離脱させる
-      // 内部状態あり → /board に戻してUIだけ1段階更新
-      navigateRef.current('/board', { replace: true });
-      if (s.threadMsgId) { setThreadMsgId(null); return; }
-      if (Object.values(s.inboxCommentOpen).some(Boolean)) { setInboxCommentOpen({}); return; }
-      if (s.inboxDetailId) { setInboxDetailId(null); return; }
-      if (s.outboxDetailId) { setOutboxDetailId(null); return; }
-      if (s.selectedChannelId && !s.showSidebar) { setShowSidebar(true); setSelectedChannelId(null); return; }
-      if (s.view !== 'inbox') { setView('inbox'); return; }
-    };
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
-  }, []);
+  // スマホ戻るボタン対応：BoardPage側のpopstate制御は一旦無効化
+  // NavBar側のhistory entry蓄積対策のみで対応する方針
 
   // メッセージ全文検索（300msデバウンス）
   useEffect(() => {
