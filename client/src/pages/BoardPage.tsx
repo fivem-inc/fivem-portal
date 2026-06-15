@@ -135,6 +135,7 @@ const BoardPage: React.FC = () => {
   const [outboxMessages,   setOutboxMessages]   = useState<BoardMessage[]>([]);
   const [outboxTab,        setOutboxTab]        = useState<'sent' | 'draft'>('sent');
   const [outboxDetailId,   setOutboxDetailId]   = useState<string | null>(null);
+  const [showAllOutboxRecipients, setShowAllOutboxRecipients] = useState(false);
 
   // グループ/DM 折りたたみ
   const [expandGroups,     setExpandGroups]     = useState(false);
@@ -2134,16 +2135,44 @@ const BoardPage: React.FC = () => {
             </span>
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 14px' }}>
-            {/* 宛先リスト */}
-            {(inboxRecipients[outboxDetail.id] || []).length > 0 && (
-              <div style={{ marginBottom: 12, padding: '8px 12px', background: isDark ? '#1e2a3a' : '#eff6ff', borderRadius: 8, fontSize: 12 }}>
-                <span style={{ color: isDark ? '#93c5fd' : '#3b82f6', fontWeight: 700 }}>宛先：</span>
-                <span style={{ color: textColor }}>
-                  {(inboxRecipients[outboxDetail.id] || []).map(uid => allProfiles.find(p => p.id === uid)?.name || '不明').join('、')}
-                </span>
-              </div>
-            )}
+            {/* 宛先タグ（10人以上折りたたみ） */}
+            {(inboxRecipients[outboxDetail.id] || []).length > 0 && (() => {
+              const allIds = inboxRecipients[outboxDetail.id] || [];
+              const LIMIT = 10;
+              const shown = showAllOutboxRecipients ? allIds : allIds.slice(0, LIMIT);
+              return (
+                <div style={{ marginBottom: 12, padding: '8px 12px', background: isDark ? '#1e2a3a' : '#eff6ff', borderRadius: 8 }}>
+                  <div style={{ fontSize: 12, color: isDark ? '#93c5fd' : '#3b82f6', fontWeight: 700, marginBottom: 6 }}>宛先 {allIds.length}人</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {shown.map(uid => (
+                      <span key={uid} style={{ padding: '2px 8px', background: isDark ? '#2d3561' : '#dbeafe', color: isDark ? '#93c5fd' : '#1d4ed8', borderRadius: 12, fontSize: 11, fontWeight: 500 }}>
+                        {allProfiles.find(p => p.id === uid)?.name || '不明'}
+                      </span>
+                    ))}
+                  </div>
+                  {allIds.length > LIMIT && (
+                    <button type="button" onClick={() => setShowAllOutboxRecipients(v => !v)}
+                      style={{ marginTop: 6, background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 12, padding: 0 }}>
+                      {showAllOutboxRecipients ? '▲ 閉じる' : `▼ あと${allIds.length - LIMIT}人を表示`}
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
             {renderMsg(outboxDetail)}
+            {/* 削除ボタン */}
+            <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
+              <button type="button" onClick={async () => {
+                if (!window.confirm('このお知らせを取り消し（削除）しますか？\n受信者の受信トレイからも削除されます。')) return;
+                await supabase.from('board_message_recipients').delete().eq('message_id', outboxDetail.id);
+                await supabase.from('board_messages').delete().eq('id', outboxDetail.id);
+                setOutboxMessages(prev => prev.filter(m => m.id !== outboxDetail.id));
+                setOutboxDetailId(null);
+                setShowAllOutboxRecipients(false);
+              }} style={{ padding: '8px 18px', background: 'none', border: '1.5px solid #dc3545', color: '#dc3545', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                🗑️ 送信を取り消す
+              </button>
+            </div>
           </div>
         </div>
       ) : (
@@ -2167,7 +2196,7 @@ const BoardPage: React.FC = () => {
               const recipientIds = inboxRecipients[msg.id] || [];
               const recipientNames = recipientIds.slice(0, 3).map(uid => allProfiles.find(p => p.id === uid)?.name || '不明');
               return (
-                <div key={msg.id} onClick={() => setOutboxDetailId(msg.id)}
+                <div key={msg.id} onClick={() => { setOutboxDetailId(msg.id); setShowAllOutboxRecipients(false); }}
                   style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: '12px 14px', marginBottom: 8, cursor: 'pointer' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                     <span style={{ fontSize: 11, color: subColor }}>{fmtTime(msg.created_at)}</span>
