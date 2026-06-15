@@ -21,6 +21,7 @@ interface Channel {
   created_by: string | null;
   created_at: string;
   send_permissions: SendPermissions | null;
+  show_read_detail: 'all' | 'permitted' | 'none';
 }
 
 interface ChannelMember {
@@ -31,7 +32,7 @@ interface ChannelMember {
 
 interface BoardMessage {
   id: string;
-  channel_id: string;
+  channel_id: string | null;
   parent_id: string | null;
   user_id: string;
   body: string;
@@ -42,12 +43,17 @@ interface BoardMessage {
   requires_confirmation: boolean;
   scheduled_at: string | null;
   title: string | null;
+  subject: string | null;
+  status: string | null;
+  comment_enabled: boolean;
   answer_prompt: string | null;
   answer_location: string | null;
   answer_link: string | null;
   broadcast_recipients: { id: string; name: string }[] | null;
   profile: { name: string | null } | null;
 }
+
+type View = 'inbox' | 'outbox' | 'compose' | 'channel';
 
 interface SimpleProfile {
   id: string;
@@ -108,9 +114,41 @@ const BoardPage: React.FC = () => {
   const [allProfiles, setAllProfiles] = useState<SimpleProfile[]>([]);
   const [dmDefaultPerms, setDmDefaultPerms] = useState<SendPermissions | null>(null);
 
+  const [view,               setView]               = useState<View>('inbox');
+  const [showSidebar,        setShowSidebar]         = useState(true);
   const [selectedChannelId,  setSelectedChannelId]  = useState<string | null>(null);
   const [threadMsgId,        setThreadMsgId]        = useState<string | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [showChannelList,    setShowChannelList]     = useState(true);
+
+  // 受信ボックス
+  const [inboxMessages,    setInboxMessages]    = useState<BoardMessage[]>([]);
+  const [inboxFilter,      setInboxFilter]      = useState<'all' | 'pending' | 'read' | 'answer' | 'submit' | 'approve'>('all');
+  const [inboxDetailId,    setInboxDetailId]    = useState<string | null>(null);
+  const [inboxRecipients,  setInboxRecipients]  = useState<Record<string, string[]>>({}); // message_id -> user_ids
+
+  // 送信トレイ
+  const [outboxMessages,   setOutboxMessages]   = useState<BoardMessage[]>([]);
+  const [outboxTab,        setOutboxTab]        = useState<'sent' | 'draft'>('sent');
+  const [outboxDetailId,   setOutboxDetailId]   = useState<string | null>(null);
+
+  // グループ/DM 折りたたみ
+  const [expandGroups,     setExpandGroups]     = useState(false);
+  const [expandDMs,        setExpandDMs]        = useState(false);
+
+  // 送信フロー（compose）
+  const [composeSubject,       setComposeSubject]       = useState('');
+  const [composeBody,          setComposeBody]          = useState('');
+  const [composeRecipientIds,  setComposeRecipientIds]  = useState<string[]>([]);
+  const [composeDeadlineType,  setComposeDeadlineType]  = useState('');
+  const [composeDeadline,      setComposeDeadline]      = useState('');
+  const [composeScheduledAt,   setComposeScheduledAt]   = useState('');
+  const [composeOptions,       setComposeOptions]       = useState(false);
+  const [composeDraftId,       setComposeDraftId]       = useState<string | null>(null);
+  const [composeQuery,         setComposeQuery]         = useState('');
+  const [showComposeSendConfirm, setShowComposeSendConfirm] = useState(false);
+  const [showSearch,  setShowSearch]  = useState(false);
+  const [searchText,  setSearchText]  = useState('');
 
   // Compose
   const [newBody,              setNewBody]              = useState('');
@@ -181,7 +219,7 @@ const BoardPage: React.FC = () => {
     }
 
     const [chRes, memRes, msgRes, lsRes, profRes, settingsRes, dmSettingsRes] = await Promise.all([
-      supabase.from('board_channels').select('id, type, name, created_by, created_at, send_permissions').in('id', cids),
+      supabase.from('board_channels').select('id, type, name, created_by, created_at, send_permissions, show_read_detail').in('id', cids),
       supabase.from('board_channel_members').select('channel_id, user_id').in('channel_id', cids),
       supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, answer_prompt, answer_location, answer_link, broadcast_recipients').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
       supabase.from('board_channel_last_seen').select('channel_id, last_seen_at').eq('user_id', user.id),
@@ -230,6 +268,71 @@ const BoardPage: React.FC = () => {
   }, [user]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  const loadInbox = useCallback(async () => {
+    if (!user) return;
+    // 自分が受信者のメッセージを取得
+    const { data: recData } = await supabase
+      .from('board_message_recipients')
+      .select('message_id')
+      .eq('user_id', user.id);
+    const msgIds = (recData || []).map((r: any) => r.message_id);
+    if (msgIds.length === 0) { setInboxMessages([]); return; }
+
+    const { data: msgData } = await supabase
+      .from('board_messages')
+      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+      .in('id', msgIds)
+      .is('parent_id', null)
+      .order('created_at', { ascending: false });
+
+    const now = new Date().toISOString();
+    setInboxMessages((msgData || [])
+      .filter((m: any) => !m.scheduled_at || m.scheduled_at <= now)
+      .map((m: any) => ({ ...m, broadcast_recipients: null, profile: null })));
+
+    // confirmations を読む（deadline_type / requires_confirmation があるもの）
+    const confirmMsgIds = (msgData || []).filter((m: any) => m.requires_confirmation || m.deadline_type).map((m: any) => m.id);
+    if (confirmMsgIds.length > 0) {
+      const { data: confData } = await supabase.from('board_confirmations').select('message_id, user_id, comment').in('message_id', confirmMsgIds);
+      const confMap: Record<string, {user_id: string; comment: string | null}[]> = {};
+      (confData || []).forEach((c: any) => {
+        if (!confMap[c.message_id]) confMap[c.message_id] = [];
+        confMap[c.message_id].push({ user_id: c.user_id, comment: c.comment });
+      });
+      setConfirmations(prev => ({ ...prev, ...confMap }));
+    }
+  }, [user]);
+
+  const loadOutbox = useCallback(async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('board_messages')
+      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+      .eq('user_id', user.id)
+      .is('channel_id', null)
+      .is('parent_id', null)
+      .order('created_at', { ascending: false });
+    setOutboxMessages((data || []).map((m: any) => ({ ...m, broadcast_recipients: null, profile: null })));
+
+    // recipients を取得
+    const ids = (data || []).map((m: any) => m.id);
+    if (ids.length > 0) {
+      const { data: recData } = await supabase
+        .from('board_message_recipients')
+        .select('message_id, user_id')
+        .in('message_id', ids);
+      const map: Record<string, string[]> = {};
+      (recData || []).forEach((r: any) => {
+        if (!map[r.message_id]) map[r.message_id] = [];
+        map[r.message_id].push(r.user_id);
+      });
+      setInboxRecipients(prev => ({ ...prev, ...map }));
+    }
+  }, [user]);
+
+  useEffect(() => { loadInbox(); }, [loadInbox]);
+  useEffect(() => { loadOutbox(); }, [loadOutbox]);
 
   useEffect(() => {
     if (selectedChannelId) messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
@@ -509,6 +612,45 @@ const BoardPage: React.FC = () => {
   const openMemberModal = () => {
     setPendingMemberIds(currentMembers.map(m => m.user_id));
     setShowMemberModal(true);
+  };
+
+  const resetCompose = () => {
+    setComposeSubject(''); setComposeBody(''); setComposeRecipientIds([]);
+    setComposeDeadlineType(''); setComposeDeadline(''); setComposeScheduledAt('');
+    setComposeOptions(false); setComposeDraftId(null); setComposeQuery('');
+  };
+
+  const sendNotice = async () => {
+    if (!user || composeRecipientIds.length === 0 || !composeBody.trim()) return;
+    setSending(true);
+    const insertData: Record<string, unknown> = {
+      user_id: user.id,
+      body: composeBody.trim(),
+      status: 'sent',
+    };
+    if (composeSubject.trim())    insertData.subject      = composeSubject.trim();
+    if (composeDeadlineType)      { insertData.deadline_type = composeDeadlineType; insertData.requires_confirmation = true; }
+    if (composeDeadline)          insertData.deadline     = composeDeadline;
+    if (composeScheduledAt)       insertData.scheduled_at = new Date(composeScheduledAt).toISOString();
+
+    const { data, error } = await supabase.from('board_messages').insert(insertData).select('id').single();
+    if (!error && data) {
+      const recs = composeRecipientIds.map(uid => ({ message_id: data.id, user_id: uid }));
+      await supabase.from('board_message_recipients').insert(recs);
+
+      // 受信者に通知
+      const senderName = profileName || '誰か';
+      const preview = (composeSubject.trim() || composeBody.trim()).slice(0, 40);
+      await Promise.all(composeRecipientIds.map(uid =>
+        insertNotification(uid, `${senderName}からお知らせが届きました`, preview, 'board')
+      ));
+
+      resetCompose();
+      await loadOutbox();
+      setView('outbox');
+      setShowSidebar(false);
+    }
+    setSending(false);
   };
 
   const deleteChannel = async (chId: string, e: React.MouseEvent) => {
@@ -792,7 +934,11 @@ const BoardPage: React.FC = () => {
                     既読{readCount} 未読{unreadCount}
                   </span>
                 );
-                return (isAdmin && showReadDetail) ? (
+                const rdSetting = selectedChannel?.show_read_detail ?? 'all';
+                const canSeeReadDetail =
+                  rdSetting === 'all' ||
+                  (rdSetting === 'permitted' && canSendInChannel(selectedChannelId));
+                return (canSeeReadDetail) ? (
                   <button type="button" onClick={async () => {
                     const { data } = await supabase.from('board_reads').select('user_id, read_at').eq('message_id', msg.id);
                     setReadDetailUsers((data || []).map((r: any) => ({ user_id: r.user_id, read_at: r.read_at })));
@@ -1257,50 +1403,421 @@ const BoardPage: React.FC = () => {
 
   // ── Panels ───────────────────────────────────────────────────────
 
+  // サイドバー用 チャンネルリスト行
+  const renderChannelRow = (ch: Channel) => {
+    const last = channelLastMsg(ch.id);
+    const unread = channelUnread(ch.id);
+    const isSelected = view === 'channel' && ch.id === selectedChannelId;
+    const canDelete = isAdmin || ch.created_by === user?.id;
+    return (
+      <div key={ch.id} onClick={() => { selectChannel(ch.id); setView('channel'); setShowSidebar(false); setShowChannelList(false); }} style={{
+        padding: '8px 14px', cursor: 'pointer', borderBottom: `1px solid ${border}`,
+        background: isSelected ? (isDark ? '#2d3561' : '#e8f0fe') : 'transparent',
+        display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left',
+      }}>
+        <div style={{ width: 34, height: 34, borderRadius: ch.type === 'group' ? 8 : '50%', background: ch.type === 'group' ? '#6f42c1' : '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, flexShrink: 0 }}>
+          {ch.type === 'group' ? '👥' : avatarLetter(channelDisplayName(ch))}
+        </div>
+        <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 13, fontWeight: unread > 0 ? 'bold' : 'normal', color: textColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, textAlign: 'left' }}>{channelDisplayName(ch)}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+              <span style={{ fontSize: 10, color: subColor }}>{last ? fmtTime(last.created_at) : ''}</span>
+              {canDelete && (
+                <button type="button" onClick={e => deleteChannel(ch.id, e)}
+                  style={{ background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 13, padding: '0 2px', lineHeight: 1 }}>🗑️</button>
+              )}
+            </div>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 1 }}>
+            <span style={{ fontSize: 12, color: subColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%', textAlign: 'left' }}>{last?.body || 'まだメッセージがありません'}</span>
+            {unread > 0 && (
+              <span style={{ background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', fontWeight: 'bold', flexShrink: 0 }}>{unread > 99 ? '99+' : unread}</span>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const searchLower = searchText.toLowerCase();
+  const groupChannels = sortedChannels.filter(c => c.type === 'group' && (!searchText || channelDisplayName(c).toLowerCase().includes(searchLower)));
+  const dmChannels    = sortedChannels.filter(c => c.type === 'dm'    && (!searchText || channelDisplayName(c).toLowerCase().includes(searchLower)));
+  const inboxUnread   = inboxMessages.filter(m => !(confirmations[m.id] || []).find(c => c.user_id === user?.id) && (m.requires_confirmation || m.deadline_type)).length;
+
   const channelListPanel = (
     <div style={{ width: isMobile ? '100%' : 280, background: sidebarBg, borderRight: isMobile ? 'none' : `1px solid ${border}`, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, flexShrink: 0 }}>
-      <div ref={channelListRef} style={{ overflowY: 'auto', flex: 1, minHeight: 0, paddingTop: 52 }}>
-        {loadingData ? (
-          <div style={{ padding: 20, textAlign: 'center', color: subColor, fontSize: 13 }}>読み込み中...</div>
-        ) : sortedChannels.length === 0 ? (
-          <div style={{ padding: 20, textAlign: 'center', color: subColor, fontSize: 13 }}>チャンネルがありません</div>
-        ) : sortedChannels.map(ch => {
-          const last = channelLastMsg(ch.id);
-          const unread = channelUnread(ch.id);
-          const isSelected = ch.id === selectedChannelId;
-          const canDelete = isAdmin || ch.created_by === user?.id;
+      <div ref={channelListRef} style={{ overflowY: 'auto', flex: 1, minHeight: 0, paddingTop: showSearch ? 92 : 52 }}>
+        {/* ── 受信・送信・お気に入り ── */}
+        {[
+          { key: 'inbox'  as const, icon: '📨', label: '受信ボックス', bg: isDark ? '#1e3a5f' : '#dbeafe', badge: inboxUnread, onClick: () => { setView('inbox'); setShowSidebar(false); setInboxDetailId(null); } },
+          { key: 'outbox' as const, icon: '📤', label: '送信トレイ',   bg: isDark ? '#1e3a2a' : '#dcfce7', badge: 0,           onClick: () => { setView('outbox'); setShowSidebar(false); setOutboxDetailId(null); } },
+        ].map(item => {
+          const isActive = view === item.key && !showSidebar;
           return (
-            <div key={ch.id} onClick={() => selectChannel(ch.id)} style={{
+            <div key={item.key} onClick={item.onClick} style={{
               padding: '10px 14px', cursor: 'pointer', borderBottom: `1px solid ${border}`,
-              background: isSelected ? (isDark ? '#2d3561' : '#e8f0fe') : 'transparent',
-              display: 'flex', alignItems: 'center', gap: 10,
+              background: isActive ? (isDark ? '#2d3561' : '#e8f0fe') : 'transparent',
+              display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left',
             }}>
-              <div style={{ width: 38, height: 38, borderRadius: ch.type === 'group' ? 8 : '50%', background: ch.type === 'group' ? '#6f42c1' : ch.type === 'sent_mail' ? '#28a745' : '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 15, flexShrink: 0 }}>
-                {ch.type === 'group' ? '👥' : ch.type === 'sent_mail' ? '📤' : avatarLetter(channelDisplayName(ch))}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: 13, fontWeight: unread > 0 ? 'bold' : 'normal', color: textColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>{channelDisplayName(ch)}</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-                    <span style={{ fontSize: 10, color: subColor }}>{last ? fmtTime(last.created_at) : ''}</span>
-                    {canDelete && (
-                      <button type="button" onClick={e => deleteChannel(ch.id, e)}
-                        style={{ background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 13, padding: '0 2px', lineHeight: 1 }}
-                        title="チャンネルを削除">🗑️</button>
-                    )}
-                  </div>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
-                  <span style={{ fontSize: 12, color: subColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '75%' }}>{last?.body || 'まだメッセージがありません'}</span>
-                  {unread > 0 && (
-                    <span style={{ background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', fontWeight: 'bold', flexShrink: 0 }}>{unread > 99 ? '99+' : unread}</span>
-                  )}
-                </div>
-              </div>
+              <div style={{ width: 38, height: 38, borderRadius: 10, background: item.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>{item.icon}</div>
+              <span style={{ flex: 1, fontSize: 14, fontWeight: isActive ? 700 : 500, color: textColor, textAlign: 'left' }}>{item.label}</span>
+              {item.badge > 0 && (
+                <span style={{ background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 11, minWidth: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px', fontWeight: 'bold', flexShrink: 0 }}>{item.badge}</span>
+              )}
             </div>
           );
         })}
+        <div style={{
+          padding: '10px 14px', borderBottom: `1px solid ${border}`,
+          display: 'flex', alignItems: 'center', gap: 12, opacity: 0.45, textAlign: 'left',
+        }}>
+          <div style={{ width: 38, height: 38, borderRadius: 10, background: isDark ? '#3a3020' : '#fef9c3', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>⭐</div>
+          <span style={{ flex: 1, fontSize: 14, fontWeight: 500, color: textColor, textAlign: 'left' }}>お気に入り</span>
+        </div>
+
+        {/* ── 区切り線 ── */}
+        <div style={{ margin: '4px 0', borderBottom: `2px solid ${border}` }} />
+
+        {/* ── グループ ── */}
+        {loadingData ? null : (
+          <>
+            <div style={{ padding: '8px 14px 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: subColor, letterSpacing: 0.5 }}>👥 グループ</span>
+              {isAdmin && (
+                <button type="button" onClick={() => setShowGroupModal(true)}
+                  style={{ background: 'none', border: 'none', color: '#6f42c1', cursor: 'pointer', fontSize: 18, padding: 0, lineHeight: 1 }} title="グループ作成">＋</button>
+              )}
+            </div>
+            {groupChannels.slice(0, expandGroups ? undefined : 3).map(renderChannelRow)}
+            {groupChannels.length > 3 && (
+              <button type="button" onClick={() => setExpandGroups(e => !e)}
+                style={{ width: '100%', padding: '6px 0', background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 12, borderBottom: `1px solid ${border}` }}>
+                {expandGroups ? '▲ 閉じる' : `▼ あと${groupChannels.length - 3}件`}
+              </button>
+            )}
+            {groupChannels.length === 0 && (
+              <div style={{ padding: '8px 16px', fontSize: 12, color: subColor }}>グループがありません</div>
+            )}
+
+            {/* ── DM ── */}
+            <div style={{ padding: '10px 16px 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: subColor, letterSpacing: 1 }}>💬 DM</span>
+              <button type="button" onClick={() => setShowDMSearch(true)}
+                style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 16, padding: 0, lineHeight: 1 }} title="DM開始">＋</button>
+            </div>
+            {dmChannels.slice(0, expandDMs ? undefined : 3).map(renderChannelRow)}
+            {dmChannels.length > 3 && (
+              <button type="button" onClick={() => setExpandDMs(e => !e)}
+                style={{ width: '100%', padding: '6px 0', background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 12, borderBottom: `1px solid ${border}` }}>
+                {expandDMs ? '▲ 閉じる' : `▼ あと${dmChannels.length - 3}件`}
+              </button>
+            )}
+            {dmChannels.length === 0 && (
+              <div style={{ padding: '8px 16px', fontSize: 12, color: subColor }}>DMがありません</div>
+            )}
+          </>
+        )}
       </div>
+    </div>
+  );
+
+  // ── 受信ボックス ────────────────────────────────────────────────
+  const INBOX_FILTERS = [
+    { key: 'all',     label: 'すべて' },
+    { key: 'pending', label: '未対応' },
+    { key: 'read',    label: '読了' },
+    { key: 'answer',  label: '回答' },
+    { key: 'submit',  label: '提出' },
+    { key: 'approve', label: '承認' },
+  ] as const;
+
+  const filteredInbox = inboxMessages.filter(m => {
+    if (inboxFilter === 'all') return true;
+    if (inboxFilter === 'pending') {
+      const confirmed = (confirmations[m.id] || []).some(c => c.user_id === user?.id);
+      return (m.requires_confirmation || m.deadline_type) && !confirmed;
+    }
+    return m.deadline_type === inboxFilter;
+  });
+
+  const inboxDetail = inboxDetailId ? inboxMessages.find(m => m.id === inboxDetailId) : null;
+
+  const inboxPanel = (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: bg }}>
+      {inboxDetail ? (
+        /* 詳細ビュー */
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ padding: '10px 14px', background: cardBg, borderBottom: `1px solid ${border}`, flexShrink: 0, paddingTop: 58 }}>
+            <button type="button" onClick={() => setInboxDetailId(null)}
+              style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 22, padding: '0 6px 0 0', fontWeight: 'bold', verticalAlign: 'middle' }}>←</button>
+            <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor, verticalAlign: 'middle' }}>
+              {inboxDetail.subject || inboxDetail.title || 'お知らせ'}
+            </span>
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 14px' }}>
+            {renderMsg(inboxDetail)}
+          </div>
+        </div>
+      ) : (
+        /* 一覧ビュー */
+        <>
+          <div style={{ paddingTop: 52, flexShrink: 0 }}>
+            {/* フィルタータブ */}
+            <div style={{ display: 'flex', overflowX: 'auto', borderBottom: `1px solid ${border}`, background: cardBg, padding: '0 8px' }}>
+              {INBOX_FILTERS.map(f => (
+                <button key={f.key} type="button" onClick={() => setInboxFilter(f.key)}
+                  style={{ padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: inboxFilter === f.key ? 700 : 400, color: inboxFilter === f.key ? '#007bff' : subColor, borderBottom: inboxFilter === f.key ? '2px solid #007bff' : '2px solid transparent', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px' }}>
+            {filteredInbox.length === 0 ? (
+              <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>
+                {inboxFilter === 'all' ? 'お知らせはありません' : '該当するお知らせはありません'}
+              </div>
+            ) : filteredInbox.map(msg => {
+              const senderName = allProfiles.find(p => p.id === msg.user_id)?.name || '不明';
+              const confirmed = (confirmations[msg.id] || []).some(c => c.user_id === user?.id);
+              const today = new Date().toISOString().slice(0, 10);
+              const isOverdue = msg.deadline ? msg.deadline < today : false;
+              const dtConfig = DEADLINE_TYPES.find(d => d.value === msg.deadline_type);
+              return (
+                <div key={msg.id} onClick={() => setInboxDetailId(msg.id)}
+                  style={{ background: cardBg, border: confirmed ? '1.5px solid #22c55e' : `1px solid ${border}`, borderRadius: 10, padding: '12px 14px', marginBottom: 8, cursor: 'pointer' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 'bold', flexShrink: 0 }}>
+                        {avatarLetter(senderName)}
+                      </div>
+                      <span style={{ fontSize: 13, fontWeight: 'bold', color: textColor }}>{senderName}</span>
+                      <span style={{ fontSize: 11, color: subColor }}>{fmtTime(msg.created_at)}</span>
+                    </div>
+                    {confirmed && <span style={{ fontSize: 11, color: '#22c55e', fontWeight: 700, flexShrink: 0 }}>✓ 完了</span>}
+                  </div>
+                  {(msg.subject || msg.title) && (
+                    <div style={{ fontSize: 14, fontWeight: 700, color: textColor, marginBottom: 4 }}>{msg.subject || msg.title}</div>
+                  )}
+                  <div style={{ fontSize: 13, color: subColor, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', wordBreak: 'break-word', marginBottom: dtConfig ? 6 : 0 }}>
+                    {msg.body}
+                  </div>
+                  {dtConfig && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                      <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: isDark ? '#1e2a3a' : '#eff6ff', color: '#3b82f6', fontWeight: 600 }}>{dtConfig.label}</span>
+                      {msg.deadline && (
+                        <span style={{ fontSize: 11, color: isOverdue ? '#dc2626' : '#d97706', fontWeight: 600 }}>
+                          {isOverdue ? '期限切れ' : `${msg.deadline}まで`}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  // ── 送信フロー（Compose） ─────────────────────────────────────────
+  const activeOthersForCompose = allProfiles.filter(p => p.id !== user?.id);
+  const composeFiltered = activeOthersForCompose.filter(p => !composeQuery || (p.name || '').includes(composeQuery));
+  const composeEmpTypes = ([...new Set(activeOthersForCompose.map(p => p.employment_type || 'その他'))] as string[])
+    .sort((a, b) => { const o = EMP_ORDER; const ai = o.indexOf(a), bi = o.indexOf(b); if (ai === -1 && bi === -1) return a > b ? 1 : -1; if (ai === -1) return 1; if (bi === -1) return -1; return ai - bi; });
+
+  const composePanel = (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: bg }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 16px', paddingTop: 58 }}>
+        {/* 宛先 */}
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: subColor, marginBottom: 6, marginTop: 8 }}>宛先を選択</div>
+          <input value={composeQuery} onChange={e => setComposeQuery(e.target.value)} placeholder="名前で検索..."
+            style={{ width: '100%', padding: '7px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, boxSizing: 'border-box', marginBottom: 6 }} />
+          {/* 一括ボタン */}
+          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 6 }}>
+            {composeEmpTypes.map(et => {
+              const ids = composeFiltered.filter(p => (p.employment_type || 'その他') === et).map(p => p.id);
+              const allSel = ids.length > 0 && ids.every(id => composeRecipientIds.includes(id));
+              return (
+                <button key={et} type="button" onClick={() => setComposeRecipientIds(prev => allSel ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])])}
+                  style={{ padding: '3px 8px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 11, background: allSel ? '#007bff' : (isDark ? '#495057' : '#e9ecef'), color: allSel ? '#fff' : (isDark ? '#fff' : '#333') }}>
+                  {et}
+                </button>
+              );
+            })}
+            <button type="button" onClick={() => setComposeRecipientIds(composeFiltered.map(p => p.id))}
+              style={{ padding: '3px 8px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 11, background: isDark ? '#495057' : '#e9ecef', color: isDark ? '#fff' : '#333' }}>全員</button>
+            <button type="button" onClick={() => setComposeRecipientIds([])}
+              style={{ padding: '3px 8px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 11, background: isDark ? '#495057' : '#e9ecef', color: isDark ? '#fff' : '#333' }}>全解除</button>
+          </div>
+          {/* メンバーグリッド */}
+          <div style={{ maxHeight: 200, overflowY: 'auto', border: `1px solid ${border}`, borderRadius: 8 }}>
+            {composeEmpTypes.map((et, gi) => {
+              const etProfiles = composeFiltered.filter(p => (p.employment_type || 'その他') === et);
+              if (etProfiles.length === 0) return null;
+              const roles = [...new Set(etProfiles.map(p => p.role_title || 'その他'))].sort((a, b) => { const ai = ROLE_ORDER.indexOf(a), bi = ROLE_ORDER.indexOf(b); if (ai === -1 && bi === -1) return a > b ? 1 : -1; if (ai === -1) return 1; if (bi === -1) return -1; return ai - bi; });
+              return (
+                <div key={et}>
+                  <div style={{ padding: '4px 10px', background: isDark ? '#2d3136' : '#e9ecef', borderTop: gi > 0 ? `2px solid ${isDark ? '#6c757d' : '#bbb'}` : undefined }}>
+                    <span style={{ fontSize: 11, fontWeight: 'bold', color: isDark ? '#adb5bd' : '#444' }}>{et}</span>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap' }}>
+                    {roles.map((role, ri) => {
+                      const roleProfiles = etProfiles.filter(p => (p.role_title || 'その他') === role).sort((a, b) => (a.name || '') > (b.name || '') ? 1 : -1);
+                      const allRoleSel = roleProfiles.every(p => composeRecipientIds.includes(p.id));
+                      return (
+                        <div key={role} style={{ flex: '1 1 130px', borderLeft: ri > 0 ? `1px solid ${isDark ? '#3d4349' : '#e0e0e0'}` : undefined, padding: '5px 8px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 3, cursor: 'pointer' }}>
+                            <input type="checkbox" checked={allRoleSel && roleProfiles.length > 0}
+                              onChange={() => { const ids = roleProfiles.map(p => p.id); setComposeRecipientIds(prev => allRoleSel ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])]); }} />
+                            <span style={{ fontSize: 10, fontWeight: 'bold', color: isDark ? '#adb5bd' : '#555' }}>{role}</span>
+                          </label>
+                          {roleProfiles.map(p => (
+                            <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '2px 0', cursor: 'pointer', fontSize: 12, color: textColor }}>
+                              <input type="checkbox" checked={composeRecipientIds.includes(p.id)}
+                                onChange={e => setComposeRecipientIds(prev => e.target.checked ? [...prev, p.id] : prev.filter(id => id !== p.id))} />
+                              {p.name}
+                            </label>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {composeRecipientIds.length > 0 && (
+            <div style={{ fontSize: 12, color: '#007bff', marginTop: 4 }}>{composeRecipientIds.length}人選択中</div>
+          )}
+        </div>
+
+        {/* ⚙️ 設定（折りたたみ） */}
+        <div style={{ marginBottom: 10 }}>
+          <button type="button" onClick={() => setComposeOptions(e => !e)}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 10px', borderRadius: composeOptions ? '8px 8px 0 0' : 8, border: `1px solid ${border}`, background: inputBg, cursor: 'pointer', color: textColor, fontSize: 12, fontWeight: 600 }}>
+            <span>⚙️ 件名・種別・期限・送信予約</span>
+            <span style={{ fontSize: 11, color: subColor }}>{composeOptions ? '▲ 閉じる' : '▼ 開く'}</span>
+          </button>
+          {composeOptions && (
+            <div style={{ padding: '10px 12px', background: inputBg, borderRadius: '0 0 8px 8px', border: `1px solid ${border}`, borderTop: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <input value={composeSubject} onChange={e => setComposeSubject(e.target.value)} placeholder="件名（任意）"
+                style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, fontSize: 13, boxSizing: 'border-box' }} />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                {DEADLINE_TYPES.map(dt => (
+                  <button key={dt.value} type="button" onClick={() => setComposeDeadlineType(prev => prev === dt.value ? '' : dt.value)}
+                    style={{ padding: '7px 4px', borderRadius: 8, border: `2px solid ${composeDeadlineType === dt.value ? '#007bff' : border}`, background: composeDeadlineType === dt.value ? '#007bff' : 'transparent', color: composeDeadlineType === dt.value ? '#fff' : textColor, cursor: 'pointer', fontSize: 13, fontWeight: composeDeadlineType === dt.value ? 'bold' : 'normal' }}>
+                    {dt.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 12, color: subColor, flexShrink: 0 }}>⏰ 期限日</span>
+                <input type="date" value={composeDeadline} onChange={e => setComposeDeadline(e.target.value)} min={new Date().toISOString().slice(0, 10)}
+                  style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, flex: 1 }} />
+                {composeDeadline && <button type="button" onClick={() => setComposeDeadline('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 12, color: subColor, flexShrink: 0 }}>🕐 送信予約</span>
+                <input type="datetime-local" value={composeScheduledAt} onChange={e => setComposeScheduledAt(e.target.value)} min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
+                  style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, flex: 1 }} />
+                {composeScheduledAt && <button type="button" onClick={() => setComposeScheduledAt('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
+              </div>
+            </div>
+          )}
+        </div>
+
+      </div>
+
+      {/* 本文 + 送信（チャンネルと同レイアウト） */}
+      <div style={{ padding: '10px 14px', borderTop: `1px solid ${border}`, background: cardBg, flexShrink: 0, display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+        <textarea value={composeBody} onChange={e => setComposeBody(e.target.value)} placeholder="本文を入力... (Ctrl+Enterで送信)"
+          rows={2}
+          onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (composeBody.trim() && composeRecipientIds.length > 0) setShowComposeSendConfirm(true); }}}
+          style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, resize: 'none', fontFamily: 'inherit', lineHeight: 1.4 }} />
+        <button type="button" onClick={() => { if (composeBody.trim() && composeRecipientIds.length > 0) setShowComposeSendConfirm(true); }}
+          disabled={!composeBody.trim() || composeRecipientIds.length === 0 || sending}
+          style={{ padding: '10px 18px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, alignSelf: 'flex-end', opacity: (!composeBody.trim() || composeRecipientIds.length === 0 || sending) ? 0.5 : 1, whiteSpace: 'nowrap' }}>
+          {sending ? '送信中...' : `送信（${composeRecipientIds.length}人）`}
+        </button>
+      </div>
+    </div>
+  );
+
+  // ── 送信トレイ ────────────────────────────────────────────────────
+  const outboxDetail = outboxDetailId ? outboxMessages.find(m => m.id === outboxDetailId) : null;
+
+  const outboxPanel = (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: bg }}>
+      {outboxDetail ? (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ padding: '10px 14px', background: cardBg, borderBottom: `1px solid ${border}`, flexShrink: 0, paddingTop: 58 }}>
+            <button type="button" onClick={() => setOutboxDetailId(null)}
+              style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 22, padding: '0 6px 0 0', fontWeight: 'bold', verticalAlign: 'middle' }}>←</button>
+            <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor, verticalAlign: 'middle' }}>
+              {outboxDetail.subject || outboxDetail.title || 'お知らせ'}
+            </span>
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 14px' }}>
+            {/* 宛先リスト */}
+            {(inboxRecipients[outboxDetail.id] || []).length > 0 && (
+              <div style={{ marginBottom: 12, padding: '8px 12px', background: isDark ? '#1e2a3a' : '#eff6ff', borderRadius: 8, fontSize: 12 }}>
+                <span style={{ color: isDark ? '#93c5fd' : '#3b82f6', fontWeight: 700 }}>宛先：</span>
+                <span style={{ color: textColor }}>
+                  {(inboxRecipients[outboxDetail.id] || []).map(uid => allProfiles.find(p => p.id === uid)?.name || '不明').join('、')}
+                </span>
+              </div>
+            )}
+            {renderMsg(outboxDetail)}
+          </div>
+        </div>
+      ) : (
+        <>
+          <div style={{ paddingTop: 52, flexShrink: 0 }}>
+            <div style={{ display: 'flex', borderBottom: `1px solid ${border}`, background: cardBg }}>
+              {(['sent', 'draft'] as const).map(tab => (
+                <button key={tab} type="button" onClick={() => setOutboxTab(tab)}
+                  style={{ flex: 1, padding: '10px 0', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: outboxTab === tab ? 700 : 400, color: outboxTab === tab ? '#007bff' : subColor, borderBottom: outboxTab === tab ? '2px solid #007bff' : '2px solid transparent' }}>
+                  {tab === 'sent' ? '送信済み' : '下書き'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px' }}>
+            {outboxMessages.filter(m => outboxTab === 'sent' ? m.status !== 'draft' : m.status === 'draft').length === 0 ? (
+              <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>
+                {outboxTab === 'sent' ? '送信済みのお知らせはありません' : '下書きはありません'}
+              </div>
+            ) : outboxMessages.filter(m => outboxTab === 'sent' ? m.status !== 'draft' : m.status === 'draft').map(msg => {
+              const recipientIds = inboxRecipients[msg.id] || [];
+              const recipientNames = recipientIds.slice(0, 3).map(uid => allProfiles.find(p => p.id === uid)?.name || '不明');
+              return (
+                <div key={msg.id} onClick={() => setOutboxDetailId(msg.id)}
+                  style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: '12px 14px', marginBottom: 8, cursor: 'pointer' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span style={{ fontSize: 11, color: subColor }}>{fmtTime(msg.created_at)}</span>
+                    <span style={{ fontSize: 11, color: subColor }}>{recipientIds.length}人</span>
+                  </div>
+                  {(msg.subject || msg.title) && (
+                    <div style={{ fontSize: 14, fontWeight: 700, color: textColor, marginBottom: 4 }}>{msg.subject || msg.title}</div>
+                  )}
+                  <div style={{ fontSize: 13, color: subColor, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', wordBreak: 'break-word', marginBottom: 4 }}>
+                    {msg.body}
+                  </div>
+                  {recipientNames.length > 0 && (
+                    <div style={{ fontSize: 11, color: isDark ? '#93c5fd' : '#3b82f6' }}>
+                      宛先: {recipientNames.join('、')}{recipientIds.length > 3 ? ` 他${recipientIds.length - 3}人` : ''}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
 
@@ -1350,7 +1867,7 @@ const BoardPage: React.FC = () => {
             <div style={{ padding: '10px 12px', background: inputBg, borderRadius: '0 0 8px 8px', border: `1px solid ${border}`, borderTop: 'none', display: 'flex', flexDirection: 'column', gap: 10 }}>
               {/* 種別ボタングリッド */}
               <div>
-                <div style={{ fontSize: 11, color: subColor, marginBottom: 6 }}>種別（選ぶと確認ボタンが付きます）</div>
+                <div style={{ fontSize: 11, color: textColor, fontWeight: 600, marginBottom: 6 }}>種別（選ぶと確認ボタンが付きます）</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
                   {DEADLINE_TYPES.map(dt => (
                     <button key={dt.value} type="button"
@@ -1365,53 +1882,39 @@ const BoardPage: React.FC = () => {
               {newDeadlineType && (
                 <>
                   <div>
-                    <div style={{ fontSize: 11, color: subColor, marginBottom: 4 }}>内容（何を{DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.label.replace(/\S+\s/, '') ?? ''}するのか）</div>
-                    <input
-                      type="text"
-                      value={newAnswerPrompt}
-                      onChange={e => setNewAnswerPrompt(e.target.value)}
+                    <div style={{ fontSize: 11, color: textColor, fontWeight: 600, marginBottom: 4 }}>内容（何を{DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.label.replace(/\S+\s/, '') ?? ''}するのか）</div>
+                    <input type="text" value={newAnswerPrompt} onChange={e => setNewAnswerPrompt(e.target.value)}
                       placeholder={DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.promptPlaceholder ?? ''}
-                      style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, fontSize: 13, boxSizing: 'border-box' }}
-                    />
+                      style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, fontSize: 13, boxSizing: 'border-box' }} />
                   </div>
                   <div>
-                    <div style={{ fontSize: 11, color: subColor, marginBottom: 4 }}>場所・URL（どこで{DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.label.replace(/\S+\s/, '') ?? ''}するのか）</div>
-                    <input
-                      type="text"
-                      value={newAnswerLocation}
-                      onChange={e => setNewAnswerLocation(e.target.value)}
+                    <div style={{ fontSize: 11, color: textColor, fontWeight: 600, marginBottom: 4 }}>場所・URL（どこで{DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.label.replace(/\S+\s/, '') ?? ''}するのか）</div>
+                    <input type="text" value={newAnswerLocation} onChange={e => setNewAnswerLocation(e.target.value)}
                       placeholder={DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.locationPlaceholder ?? ''}
-                      style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, fontSize: 13, boxSizing: 'border-box' }}
-                    />
+                      style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, fontSize: 13, boxSizing: 'border-box' }} />
                   </div>
                   <div>
-                    <div style={{ fontSize: 11, color: subColor, marginBottom: 4 }}>リンク（URL）</div>
-                    <input
-                      type="url"
-                      value={newAnswerLink}
-                      onChange={e => setNewAnswerLink(e.target.value)}
+                    <div style={{ fontSize: 11, color: textColor, fontWeight: 600, marginBottom: 4 }}>リンク（URL）</div>
+                    <input type="url" value={newAnswerLink} onChange={e => setNewAnswerLink(e.target.value)}
                       placeholder={DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.linkPlaceholder ?? 'https://...'}
-                      style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, fontSize: 13, boxSizing: 'border-box' }}
-                    />
+                      style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, fontSize: 13, boxSizing: 'border-box' }} />
                   </div>
                 </>
               )}
               {/* 期限日 */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 12, color: subColor, flexShrink: 0 }}>⏰ 期限日</span>
-                <input type="date" value={newDeadline}
-                  onChange={e => setNewDeadline(e.target.value)}
+                <span style={{ fontSize: 12, color: textColor, fontWeight: 600, flexShrink: 0 }}>⏰ 期限日</span>
+                <input type="date" value={newDeadline} onChange={e => setNewDeadline(e.target.value)}
                   min={new Date().toISOString().slice(0, 10)}
-                  style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, cursor: 'pointer', flex: 1 }} />
+                  style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, cursor: 'pointer', flex: 1 }} />
                 {newDeadline && <button type="button" onClick={() => setNewDeadline('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
               </div>
               {/* 送信予約 */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 12, color: subColor, flexShrink: 0 }}>🕐 送信予約</span>
-                <input type="datetime-local" value={newScheduledAt}
-                  onChange={e => setNewScheduledAt(e.target.value)}
+                <span style={{ fontSize: 12, color: textColor, fontWeight: 600, flexShrink: 0 }}>🕐 送信予約</span>
+                <input type="datetime-local" value={newScheduledAt} onChange={e => setNewScheduledAt(e.target.value)}
                   min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
-                  style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, cursor: 'pointer', flex: 1 }} />
+                  style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, cursor: 'pointer', flex: 1 }} />
                 {newScheduledAt && <button type="button" onClick={() => setNewScheduledAt('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
               </div>
             </div>
@@ -1451,38 +1954,77 @@ const BoardPage: React.FC = () => {
 
   // ── Render ───────────────────────────────────────────────────────
 
+  const viewTitle: Record<View, string> = {
+    inbox:   '📥 受信ボックス',
+    outbox:  '📤 送信トレイ',
+    compose: '✉️ お知らせを作成',
+    channel: selectedChannel ? (selectedChannel.type === 'group' ? `👥 ${channelDisplayName(selectedChannel)}` : channelDisplayName(selectedChannel)) : '',
+  };
+
   return (
     <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column', background: bg, overflow: 'hidden', paddingTop: 60, boxSizing: 'border-box' } as React.CSSProperties}>
-      {/* チャンネルリストヘッダー — position:fixed, メッセージビューヘッダーと同じ方式 */}
-      {showChannelList && (
-        <div style={{ position: 'fixed', top: 60, left: 0, right: 0, zIndex: 100, padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>💬 連絡板</span>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button type="button" onClick={() => setShowDMSearch(true)} style={{ background: '#007bff', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, padding: '4px 10px', fontWeight: 'bold' }}>メッセージ送信</button>
-            <button type="button" onClick={() => navigate('/notification-settings')} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px' }}>通知設定</button>
-            {isAdmin && (
-              <button type="button" onClick={() => setShowGroupModal(true)} title="グループ作成" style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '4px 8px' }}>＋</button>
-            )}
+      {/* サイドバーヘッダー */}
+      {(showSidebar || !isMobile) && (
+        <div style={{ position: 'fixed', top: 60, left: 0, zIndex: 100, background: cardBg, borderBottom: `1px solid ${border}`, width: isMobile ? '100%' : 280, boxSizing: 'border-box' }}>
+          <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>💬 連絡板</span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button type="button" onClick={() => { setShowSearch(s => !s); setSearchText(''); }}
+                style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '4px 8px', lineHeight: 1 }}>🔍</button>
+              <button type="button" onClick={() => { resetCompose(); setView('compose'); setShowSidebar(false); }}
+                style={{ background: '#007bff', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 13, padding: '5px 12px', fontWeight: 'bold' }}>＋送信</button>
+              <button type="button" onClick={() => navigate('/notification-settings')}
+                style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px' }}>通知設定</button>
+            </div>
           </div>
+          {showSearch && (
+            <div style={{ padding: '0 14px 10px' }}>
+              <input
+                autoFocus
+                value={searchText}
+                onChange={e => setSearchText(e.target.value)}
+                placeholder="メッセージを検索..."
+                style={{ width: '100%', boxSizing: 'border-box', padding: '6px 10px', borderRadius: 8, border: `1px solid ${border}`, background: bg, color: textColor, fontSize: 13 }}
+              />
+            </div>
+          )}
         </div>
       )}
-      {/* Channel header — fixed, shown when a channel is open */}
-      {selectedChannelId && selectedChannel && !showChannelList && (
-        <div style={{ padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, alignItems: 'center', gap: 8, flexShrink: 0, position: 'fixed', top: 60, left: 0, right: 0, zIndex: 50, display: 'flex' }}>
-          <button type="button" onClick={() => { setShowChannelList(true); setSelectedChannelId(null); }} style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 22, padding: '0 6px', lineHeight: 1, fontWeight: 'bold' }}>←</button>
-          <div style={{ width: 32, height: 32, borderRadius: selectedChannel.type === 'group' ? 8 : '50%', background: selectedChannel.type === 'group' ? '#6f42c1' : '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, flexShrink: 0 }}>
-            {selectedChannel.type === 'group' ? '👥' : avatarLetter(channelDisplayName(selectedChannel))}
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 14, fontWeight: 'bold', color: textColor }}>{channelDisplayName(selectedChannel)}</div>
-            <div style={{ fontSize: 11, color: subColor }}>{currentMembers.length}人</div>
-          </div>
-          <button type="button" onClick={openMemberModal} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px', flexShrink: 0 }}>👥 メンバー</button>
+      {/* コンテンツヘッダー（モバイル: サイドバー非表示時、デスクトップ: 常時） */}
+      {(!showSidebar || !isMobile) && (
+        <div style={{ position: 'fixed', top: 60, left: isMobile ? 0 : 280, right: 0, zIndex: 100, padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', gap: 8 }}>
+          {isMobile && (
+            <button type="button" onClick={() => { setShowSidebar(true); if (view === 'channel') { setSelectedChannelId(null); setShowChannelList(true); } }}
+              style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 22, padding: '0 6px', lineHeight: 1, fontWeight: 'bold' }}>←</button>
+          )}
+          {view === 'channel' && selectedChannel ? (
+            <>
+              <div style={{ width: 32, height: 32, borderRadius: selectedChannel.type === 'group' ? 8 : '50%', background: selectedChannel.type === 'group' ? '#6f42c1' : '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, flexShrink: 0 }}>
+                {selectedChannel.type === 'group' ? '👥' : avatarLetter(channelDisplayName(selectedChannel))}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 'bold', color: textColor }}>{channelDisplayName(selectedChannel)}</div>
+                <div style={{ fontSize: 11, color: subColor }}>{currentMembers.length}人</div>
+              </div>
+              <button type="button" onClick={openMemberModal} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px', flexShrink: 0 }}>👥 メンバー</button>
+            </>
+          ) : (
+            <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>{viewTitle[view]}</span>
+          )}
         </div>
       )}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {showChannelList  && channelListPanel}
-        {!showChannelList && messagePanel}
+        {/* サイドバー */}
+        {(showSidebar || !isMobile) && channelListPanel}
+        {/* コンテンツエリア */}
+        {(!showSidebar || !isMobile) && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            {view === 'inbox'   && inboxPanel}
+            {view === 'outbox'  && outboxPanel}
+            {view === 'compose' && composePanel}
+            {view === 'channel' && messagePanel}
+          </div>
+        )}
       </div>
       {threadPanel}
       {groupModal}
@@ -1668,6 +2210,26 @@ const BoardPage: React.FC = () => {
           </div>
         );
       })()}
+
+      {/* お知らせ送信確認モーダル */}
+      {showComposeSendConfirm && (
+        <div onClick={() => setShowComposeSendConfirm(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 5000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 16, padding: 20, width: '100%', maxWidth: 420, boxSizing: 'border-box' }}>
+            <p style={{ margin: '0 0 8px', fontSize: 16, fontWeight: 'bold', color: textColor }}>お知らせを送信しますか？</p>
+            <p style={{ margin: '0 0 12px', fontSize: 13, color: subColor }}>宛先: {composeRecipientIds.length}人</p>
+            {composeSubject && <p style={{ margin: '0 0 8px', fontSize: 14, fontWeight: 600, color: textColor }}>{composeSubject}</p>}
+            <div style={{ background: inputBg, borderRadius: 8, padding: '10px 12px', marginBottom: 12, fontSize: 13, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 160, overflowY: 'auto' }}>{composeBody}</div>
+            {composeDeadlineType && <p style={{ margin: '0 0 6px', fontSize: 12, color: '#007bff' }}>種別: {DEADLINE_TYPES.find(d => d.value === composeDeadlineType)?.label}</p>}
+            {composeDeadline    && <p style={{ margin: '0 0 6px', fontSize: 12, color: '#0369a1' }}>期限: {composeDeadline}</p>}
+            <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+              <button type="button" onClick={() => setShowComposeSendConfirm(false)}
+                style={{ flex: 1, padding: '10px 0', background: 'none', border: `1px solid ${border}`, borderRadius: 8, color: subColor, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
+              <button type="button" onClick={() => { setShowComposeSendConfirm(false); sendNotice(); }}
+                style={{ flex: 2, padding: '10px 0', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>送信する</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {(saveBanner || memberBanner) && (
         <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: isDark ? '#1a3a28' : '#f0fdf4', border: `1px solid ${isDark ? '#16532a' : '#86efac'}`, borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 220 }}>

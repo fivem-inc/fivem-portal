@@ -3016,3 +3016,45 @@ ALTER TABLE board_channels ADD CONSTRAINT board_channels_type_check
 2. **残業申請フォーム（パート用）**
 3. **タブ・機能の表示権限管理画面**
 4. **gcal-sync 失敗時リトライキュー**（低優先）
+
+---
+
+## ✅ 2026-06-15 連絡板リニューアル Phase1+2 実装完了
+
+### 変更ファイル
+- `client/src/pages/BoardPage.tsx`
+- `client/src/components/admin/BoardSettingsTab.tsx`
+- `supabase/migrations/20260616000000_board_inbox_refactor.sql`
+- `supabase/migrations/20260616000001_board_channel_show_read_detail.sql`
+
+### 実装内容
+
+#### DBマイグレーション（Supabase手動実行済み）
+- `board_messages` に `subject`・`comment_enabled`・`status` カラム追加
+- `board_message_recipients` 中間テーブル新設（RLS付き）
+- `board_favorites` テーブル新設
+- `board_channels.show_read_detail` カラム追加（boolean → TEXT `'all'|'permitted'|'none'`）
+
+#### RLS循環参照バグ修正
+- 原因: `board_recipients_select_sender` が `board_messages` を参照 → `board_messages` RLS が `board_message_recipients` を参照 → 循環で500エラー
+- 修正: Supabase SQL エディタで該当ポリシーを DROP
+
+#### BoardPage.tsx 主な変更
+- 通知設定ボタン復活（ヘッダー右端に配置）
+- 検索バー展開時 `paddingTop: 92`（52固定でチャンネルが裏に隠れるバグ修正）
+- チャンネル名フィルタ検索（デバウンス300ms）
+- composeパネルを横並びレイアウト `[textarea][送信]` に変更
+- 既読詳細表示を3択判定（`show_read_detail: 'all'|'permitted'|'none'`）
+- ダークモードのラベル・input背景色改善
+
+#### BoardSettingsTab.tsx 主な変更
+- チャンネルごとの既読詳細表示3択ボタン（全員ON / 権限連動 / 全員OFF）
+- 送信権限説明に「新規・リプライ両方」と明記
+- `show_read_detail` の DB保存・読み込み対応
+
+### 🔜 次回タスク（2026-06-15 夜 終了時点）
+1. **メッセージ全文検索（DB ilike クエリ）** ← ユーザーが「２でやる」選択済み
+   - searchResults state → searchMessages関数（ilike） → デバウンス → サイドバーに結果リスト → クリックでチャンネル移動
+2. **残業申請フォーム（パート用）**
+3. **タブ・機能の表示権限管理画面**
+4. **gcal-sync 失敗時リトライキュー**（低優先）

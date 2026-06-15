@@ -13,6 +13,7 @@ interface Channel {
   name: string | null;
   type: 'group' | 'dm';
   send_permissions: SendPermissions | null;
+  show_read_detail: 'all' | 'permitted' | 'none';
   member_names?: string[];
 }
 
@@ -35,6 +36,7 @@ const BoardSettingsTab: React.FC = () => {
   const [roleTitles, setRoleTitles] = useState<string[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pendingPerms, setPendingPerms] = useState<SendPermissions>({ employment_types: [], role_titles: [] });
+  const [pendingShowReadDetail, setPendingShowReadDetail] = useState<'all' | 'permitted' | 'none'>('all');
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState(false);
 
@@ -61,7 +63,7 @@ const BoardSettingsTab: React.FC = () => {
   useEffect(() => {
     (async () => {
       const [chRes, profRes, memRes, dmSettingsRes, readDetailRes] = await Promise.all([
-        supabase.from('board_channels').select('id, name, type, send_permissions').order('type').order('created_at'),
+        supabase.from('board_channels').select('id, name, type, send_permissions, show_read_detail').order('type').order('created_at'),
         supabase.from('profiles').select('id, name, employment_type, role_title').eq('is_active', true),
         supabase.from('board_channel_members').select('channel_id, user_id'),
         supabase.from('app_settings').select('value').eq('key', DM_SETTINGS_KEY).maybeSingle(),
@@ -107,6 +109,7 @@ const BoardSettingsTab: React.FC = () => {
       ? { ...ch.send_permissions }
       : { employment_types: [], role_titles: [] }
     );
+    setPendingShowReadDetail((ch.show_read_detail as 'all' | 'permitted' | 'none') ?? 'all');
   };
 
   const save = async (chId: string) => {
@@ -115,8 +118,8 @@ const BoardSettingsTab: React.FC = () => {
       pendingPerms.employment_types.length === 0 && pendingPerms.role_titles.length === 0
         ? null
         : pendingPerms;
-    await supabase.from('board_channels').update({ send_permissions: perms }).eq('id', chId);
-    setChannels(prev => prev.map(ch => ch.id === chId ? { ...ch, send_permissions: perms } : ch));
+    await supabase.from('board_channels').update({ send_permissions: perms, show_read_detail: pendingShowReadDetail }).eq('id', chId);
+    setChannels(prev => prev.map(ch => ch.id === chId ? { ...ch, send_permissions: perms, show_read_detail: pendingShowReadDetail } : ch));
     setEditingId(null);
     setSaving(false);
     showBanner();
@@ -239,10 +242,13 @@ const BoardSettingsTab: React.FC = () => {
     onSave: () => void,
     onCancel: () => void,
     onSetPerms: (p: SendPermissions) => void,
+    showReadDetail?: 'all' | 'permitted' | 'none',
+    onSetReadDetail?: (v: 'all' | 'permitted' | 'none') => void,
   ) => (
     <div style={{ padding: '14px 16px', background: editBg, borderTop: `1px solid ${border}` }}>
       <p style={{ fontSize: 12, color: sub, marginBottom: 12 }}>
-        チェックした雇用形態・役職のみ送信できます。何も選択しない = 全員送信可
+        チェックした雇用形態・役職のみ、このチャンネルへの<strong>メッセージ投稿（新規・リプライ両方）</strong>が可能です。<br />
+        何も選択しない場合 = 全員が投稿可能。管理者は常に投稿できます。
       </p>
       <div style={{ marginBottom: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -285,6 +291,25 @@ const BoardSettingsTab: React.FC = () => {
       {(pending.employment_types.length > 0 || pending.role_titles.length > 0) && (
         <div style={{ marginBottom: 12, padding: '8px 12px', background: isDark ? '#1a2a3a' : '#eff6ff', borderRadius: 8, fontSize: 12, color: '#3b82f6' }}>
           送信できる人：{[...pending.employment_types, ...pending.role_titles].join('・')} ＋ 管理者
+        </div>
+      )}
+      {onSetReadDetail !== undefined && showReadDetail !== undefined && (
+        <div style={{ marginBottom: 14, padding: '10px 12px', background: isDark ? '#1e2328' : '#fff', borderRadius: 8, border: `1px solid ${border}` }}>
+          <div style={{ fontSize: 13, fontWeight: 'bold', color: text, marginBottom: 6 }}>👁 既読詳細の表示</div>
+          <div style={{ fontSize: 11, color: sub, marginBottom: 10 }}>誰が既読したか確認できる人の範囲を設定します</div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {([
+              { value: 'all',       label: '全員ON',   desc: '全員が確認できる',                 color: '#22c55e' },
+              { value: 'permitted', label: '権限連動', desc: '送信権限のある人だけ確認できる',   color: '#3b82f6' },
+              { value: 'none',      label: '全員OFF',  desc: '誰も確認できない',                 color: '#6c757d' },
+            ] as const).map(opt => (
+              <button key={opt.value} type="button" onClick={() => onSetReadDetail(opt.value)}
+                style={{ flex: 1, padding: '8px 4px', borderRadius: 8, border: `2px solid ${showReadDetail === opt.value ? opt.color : border}`, background: showReadDetail === opt.value ? opt.color : 'transparent', color: showReadDetail === opt.value ? '#fff' : text, cursor: 'pointer', fontSize: 12, fontWeight: showReadDetail === opt.value ? 'bold' : 'normal', textAlign: 'center' }}>
+                <div>{opt.label}</div>
+                <div style={{ fontSize: 10, marginTop: 2, opacity: 0.85 }}>{opt.desc}</div>
+              </button>
+            ))}
+          </div>
         </div>
       )}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
@@ -452,7 +477,7 @@ const BoardSettingsTab: React.FC = () => {
               </div>
             )}
           </div>
-          {editingId === ch.id && renderEditPanel(pendingPerms, toggleEmp, toggleRole, () => save(ch.id), () => setEditingId(null), setPendingPerms)}
+          {editingId === ch.id && renderEditPanel(pendingPerms, toggleEmp, toggleRole, () => save(ch.id), () => setEditingId(null), setPendingPerms, pendingShowReadDetail, setPendingShowReadDetail)}
         </div>
       ))}
 
