@@ -1177,6 +1177,7 @@ const BoardPage: React.FC = () => {
                       placeholder={isAnswerRequired ? '回答内容を入力（必須）...' : 'コメントを入力（任意）...'}
                       rows={2}
                       autoFocus
+                      ref={el => { if (el) { el.focus(); el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } }}
                       style={{ flex: 1, padding: '6px 10px', borderRadius: 8, border: `1px solid ${isAnswerRequired && !answerText.trim() ? '#ef4444' : border}`, background: inputBg, color: textColor, fontSize: 13, resize: 'none', fontFamily: 'inherit', lineHeight: 1.4 }}
                     />
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
