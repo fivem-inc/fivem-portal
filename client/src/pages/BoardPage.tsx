@@ -129,7 +129,10 @@ const BoardPage: React.FC = () => {
   const [archivedMessages, setArchivedMessages] = useState<BoardMessage[]>([]);
   const [inboxCommentOpen, setInboxCommentOpen] = useState<Record<string, boolean>>({});
   const [inboxComments,    setInboxComments]    = useState<Record<string, BoardMessage[]>>({});
-  const [inboxCommentBody, setInboxCommentBody] = useState<Record<string, string>>({}); // message_id -> user_ids
+  const [inboxCommentBody, setInboxCommentBody] = useState<Record<string, string>>({});
+  const [inboxDetailRecipients,   setInboxDetailRecipients]   = useState<string[]>([]);
+  const [inboxDetailUnconfirmed,  setInboxDetailUnconfirmed]  = useState<string[]>([]);
+  const [inboxRemindSending,      setInboxRemindSending]      = useState(false);
 
   // 送信トレイ
   const [outboxMessages,   setOutboxMessages]   = useState<BoardMessage[]>([]);
@@ -558,6 +561,24 @@ const BoardPage: React.FC = () => {
   useEffect(() => { loadInbox(); }, [loadInbox]);
   useEffect(() => { loadArchived(); }, [loadArchived]);
   useEffect(() => { loadOutbox(); }, [loadOutbox]);
+
+  // 受信トレイ詳細を開いた時、送信者 or 管理者なら受信者＋未対応者を取得
+  useEffect(() => {
+    if (!inboxDetailId || !user) { setInboxDetailRecipients([]); setInboxDetailUnconfirmed([]); return; }
+    const msg = inboxMessages.find(m => m.id === inboxDetailId) || archivedMessages.find(m => m.id === inboxDetailId);
+    if (!msg || (msg.user_id !== user.id && !isAdmin)) return;
+    if (!msg.requires_confirmation && !msg.deadline_type) return;
+    (async () => {
+      const [{ data: recData }, { data: confData }] = await Promise.all([
+        supabase.from('board_message_recipients').select('user_id').eq('message_id', inboxDetailId),
+        supabase.from('board_confirmations').select('user_id').eq('message_id', inboxDetailId),
+      ]);
+      const allIds = (recData || []).map((r: any) => r.user_id as string);
+      const confirmedIds = new Set((confData || []).map((c: any) => c.user_id as string));
+      setInboxDetailRecipients(allIds);
+      setInboxDetailUnconfirmed(allIds.filter(id => !confirmedIds.has(id)));
+    })();
+  }, [inboxDetailId, user, isAdmin, inboxMessages, archivedMessages]);
 
   useEffect(() => {
     if (selectedChannelId) messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
@@ -1811,6 +1832,43 @@ const BoardPage: React.FC = () => {
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 14px' }}>
             {renderMsg(inboxDetail)}
+            {/* リマインド（送信者 or 管理者かつ確認系メッセージのみ） */}
+            {(inboxDetail.user_id === user?.id || isAdmin) && (inboxDetail.requires_confirmation || inboxDetail.deadline_type) && inboxDetailRecipients.length > 0 && (
+              <div style={{ marginTop: 16, padding: '12px 14px', background: isDark ? '#2a1f00' : '#fffbeb', border: `1px solid ${isDark ? '#5a3e00' : '#fcd34d'}`, borderRadius: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: isDark ? '#fcd34d' : '#92400e', marginBottom: 8 }}>
+                  🔔 対応状況 {inboxDetailRecipients.length - inboxDetailUnconfirmed.length}/{inboxDetailRecipients.length}人 完了
+                </div>
+                {inboxDetailUnconfirmed.length > 0 ? (
+                  <>
+                    <div style={{ fontSize: 12, color: isDark ? '#fcd34d' : '#92400e', marginBottom: 8 }}>
+                      未対応 {inboxDetailUnconfirmed.length}人：
+                      {inboxDetailUnconfirmed.map(uid => allProfiles.find(p => p.id === uid)?.name || '不明').join('、')}
+                    </div>
+                    <button type="button" disabled={inboxRemindSending}
+                      onClick={async () => {
+                        if (!user) return;
+                        setInboxRemindSending(true);
+                        await Promise.all(inboxDetailUnconfirmed.map(uid =>
+                          insertNotification({
+                            userId: uid,
+                            message: `【リマインド】${inboxDetail.subject || inboxDetail.title || 'お知らせ'}への対応がまだ完了していません`,
+                            senderId: user.id,
+                            tag: `remind-${inboxDetail.id}`,
+                          })
+                        ));
+                        setInboxRemindSending(false);
+                        setSaveBanner(true);
+                        setTimeout(() => setSaveBanner(false), 3000);
+                      }}
+                      style={{ padding: '7px 16px', background: '#f59e0b', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, opacity: inboxRemindSending ? 0.6 : 1 }}>
+                      {inboxRemindSending ? '送信中...' : `🔔 ${inboxDetailUnconfirmed.length}人にリマインドを送る`}
+                    </button>
+                  </>
+                ) : (
+                  <div style={{ fontSize: 13, color: '#22c55e', fontWeight: 600 }}>✅ 全員対応済みです</div>
+                )}
+              </div>
+            )}
             {/* コメント折りたたみ（comment_enabled=true の場合のみ） */}
             {inboxDetail.comment_enabled && (
               <div style={{ marginTop: 16 }}>
