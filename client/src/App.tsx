@@ -248,10 +248,11 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
 
   return (
     <div style={{
-      position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100,
-      background: '#1a1a2e', color: 'white', padding: '8px 12px',
-      display: 'flex', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center',
-      boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
+      position: 'fixed', top: 0, left: 0, right: 0, zIndex: 300,
+      height: 60, minHeight: 60, maxHeight: 60,
+      background: '#1a1a2e', color: 'white', padding: '0 12px',
+      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.3)', overflow: 'hidden', boxSizing: 'border-box',
     }}>
       <div style={{ display: 'flex', gap: 4, flexWrap: isMobile ? 'nowrap' : 'wrap', alignItems: 'center', flex: 1 }}>
         {isAdmin && (
