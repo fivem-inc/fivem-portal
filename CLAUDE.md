@@ -1714,6 +1714,77 @@ const XxxTabA = () => { const { state, setState } = useXxx(); return <div>...</d
 
 ---
 
+## ✅ 2026-06-15 連絡板 UX修正 追加対応 完了
+
+### 変更ファイル
+- `client/src/App.tsx`
+- `client/src/pages/BoardPage.tsx`
+- `supabase/migrations/20260616100000_board_recipients_peer_select.sql`（新規）
+
+### 修正内容
+
+#### 未読バッジが連絡板訪問後も消えない問題（App.tsx）
+- **根本原因①**: `useBoardUnread` が `board_reads` を使用 → チャンネルをクリックしないと `board_reads` が更新されないため、連絡板を開いただけでは count が 0 にならなかった
+- **根本原因②**: `Dashboard` コンポーネントは `/board` ナビゲーション時にアンマウントされるため、`useRef` の `clearedAt` がリセットされていた
+- **修正**: `boardClearedAt` をモジュールレベル変数（React 外）で管理
+  - `/board` を開いた瞬間に `boardClearedAt = new Date().toISOString()` をセット + `setCount(0)`
+  - 以降のフェッチは `boardClearedAt` より新しいメッセージのみカウント（自分の投稿は除外）
+  - `/board` から離れたときのみリフェッチ（clearedAt 以降の新着のみ）
+
+#### 受信トレイ 未読バッジが一瞬「6」になる問題（BoardPage.tsx）
+- **根本原因**: `loadInbox` で `setInboxMessages` を先に呼んでから非同期で reads を取得して `setInboxReadIds` を呼ぶ間に1レンダリングが走り、inboxUnread = 全件数 になっていた
+- **修正**: メッセージ・既読ID・既読カウントを `Promise.all` で並行取得し、全て揃ってから同時 setState（React 18 の自動バッチングで1レンダリングに統合）
+
+#### 時刻フォーマット統一（BoardPage.tsx）
+- **方針**: 「連絡板TOPのチャンネル一覧（サイドバー）」は `fmtTime`（月/日 時:分）、それ以外は `fmtFull`（年/月/日 時:分）
+- **変更箇所**: 受信トレイカード・グループメッセージ親/返信・スレッド最終返信・完了確認時刻・お気に入り・検索結果
+
+#### 受信トレイ詳細に「宛先 Xeople」チップ表示追加（BoardPage.tsx）
+- 送信トレイと同仕様で、受信者全員の名前チップを表示
+- `inboxRecipients[inboxDetail.id]` を使用（inboxDetailId effect で自動取得済み）
+
+#### 既読状況ポップアップ: 受信者が1人しか表示されない問題（Supabase RLS）
+- **根本原因**: `board_recipients_select_own` ポリシーが `user_id = auth.uid()` のみ許可 → 受信者が他の受信者のレコードを取得できなかった
+- **修正 ①**: SECURITY DEFINER 関数 `get_my_recipient_message_ids()` を作成（再帰回避）
+  ```sql
+  CREATE OR REPLACE FUNCTION get_my_recipient_message_ids()
+  RETURNS SETOF uuid LANGUAGE sql SECURITY DEFINER SET search_path = public
+  AS $$ SELECT message_id FROM board_message_recipients WHERE user_id = auth.uid(); $$;
+  ```
+- **修正 ②**: 新ポリシー `board_recipients_select_peer` を追加
+  ```sql
+  CREATE POLICY "board_recipients_select_peer" ON public.board_message_recipients
+    FOR SELECT TO authenticated
+    USING (message_id IN (SELECT get_my_recipient_message_ids()));
+  ```
+- **⚠️ 注意**: 単純な `USING (message_id IN (SELECT message_id FROM ... WHERE user_id = auth.uid()))` はRLS再帰で全件消失する → 必ず SECURITY DEFINER 関数を経由すること
+
+#### `readDetailMsgId` 自動フェッチ追加（BoardPage.tsx）
+- 既読状況ポップアップを開いたとき `inboxRecipients[readDetailMsgId]` が未取得なら自動で `board_message_recipients` を取得する useEffect を追加
+
+#### ヘッダータイトル変更（BoardPage.tsx）
+- 受信トレイ詳細: `📩 メッセージ` → `📨 受信メッセージ`
+- 送信トレイ詳細: `📩 メッセージ` → `📤 送信メッセージ`
+
+### ⚠️ 注意事項
+
+#### useBoardUnread のモジュール変数
+- `boardClearedAt` は React コンポーネント外のモジュールレベル変数（NavBar/Dashboard のインスタンスをまたいで共有される）
+- ページリロード時はリセットされる → 初回ロード時は DB から全件チェックして正確な count を表示
+
+#### RLS 再帰回避
+- `board_message_recipients` に対して同テーブルを参照するサブクエリを USING 句に書くと再帰になり全件消失する
+- 必ず `SECURITY DEFINER` 関数を経由すること
+
+### 🔜 次回タスク（2026-06-15時点・更新）
+- 残業申請フォーム（パート用）← 最優先
+- 忘れん坊通知①②③（send-push Edge Function は完成済み・呼び出し側を実装）
+- タブ・機能の表示権限管理画面
+- UI/UX改善（コードレビュー高優先項目）
+- gcal-sync 失敗時リトライキュー（低優先）
+
+---
+
 ## Project Overview
 
 Expense management application built with React/TypeScript frontend and Supabase backend.

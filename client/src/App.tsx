@@ -169,26 +169,45 @@ const AvatarMenu: React.FC<{ userId: string; profileName: string | null; email: 
   );
 };
 
+// モジュールレベルで保持：コンポーネントのアンマウントをまたいで /board 訪問時刻を記憶する
+let boardClearedAt: string | null = null;
+
 const useBoardUnread = (userId: string | undefined, pathname: string) => {
   const [count, setCount] = useState(0);
+  const prevPath = useRef(pathname);
+
   const fetchCount = useCallback(async () => {
     if (!userId) return;
     const { data: memberRows } = await supabase.from('board_channel_members').select('channel_id').eq('user_id', userId);
     if (!memberRows || memberRows.length === 0) { setCount(0); return; }
     const channelIds = memberRows.map((r: any) => r.channel_id);
-    const { data: msgs } = await supabase.from('board_messages').select('id').in('channel_id', channelIds).is('parent_id', null);
+    let query = supabase
+      .from('board_messages')
+      .select('id')
+      .in('channel_id', channelIds)
+      .is('parent_id', null)
+      .neq('user_id', userId);
+    if (boardClearedAt) query = query.gt('created_at', boardClearedAt);
+    const { data: msgs } = await query;
     if (!msgs || msgs.length === 0) { setCount(0); return; }
     const msgIds = msgs.map((m: any) => m.id);
     const { data: reads } = await supabase.from('board_reads').select('message_id').eq('user_id', userId).in('message_id', msgIds);
     const readSet = new Set((reads || []).map((r: any) => r.message_id));
     setCount(msgIds.filter(id => !readSet.has(id)).length);
   }, [userId]);
-  // /board から離れたタイミングで即時リフェッチ
-  const prevPath = useRef(pathname);
+
   useEffect(() => {
-    if (prevPath.current === '/board' && pathname !== '/board') fetchCount();
+    if (pathname === '/board') {
+      // /board を開いた瞬間にバッジをクリアし、訪問時刻をモジュール変数に記録
+      boardClearedAt = new Date().toISOString();
+      setCount(0);
+    } else if (prevPath.current === '/board') {
+      // /board から離れたらリフェッチ（boardClearedAt 以降の新着だけカウント）
+      fetchCount();
+    }
     prevPath.current = pathname;
   }, [pathname, fetchCount]);
+
   useEffect(() => { fetchCount(); const t = setInterval(fetchCount, 30000); return () => clearInterval(t); }, [fetchCount]);
   return count;
 };

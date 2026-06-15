@@ -492,17 +492,27 @@ const BoardPage: React.FC = () => {
     const msgIds = (recData || []).map((r: any) => r.message_id);
     if (msgIds.length === 0) { setInboxMessages([]); return; }
 
-    const { data: msgData } = await supabase
-      .from('board_messages')
-      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
-      .in('id', msgIds)
-      .is('parent_id', null)
-      .order('created_at', { ascending: false });
+    // メッセージ・既読・カウントを並行取得してフラッシュを防ぐ
+    const [{ data: msgData }, { data: readData }, { data: rcData }] = await Promise.all([
+      supabase
+        .from('board_messages')
+        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+        .in('id', msgIds)
+        .is('parent_id', null)
+        .order('created_at', { ascending: false }),
+      supabase.from('board_reads').select('message_id').in('message_id', msgIds).eq('user_id', user.id),
+      supabase.from('board_reads').select('message_id').in('message_id', msgIds),
+    ]);
 
     const now = new Date().toISOString();
+    // React 18 の自動バッチングにより、連続した setState は1回のレンダリングにまとめられる
     setInboxMessages((msgData || [])
       .filter((m: any) => !m.scheduled_at || m.scheduled_at <= now)
       .map((m: any) => ({ ...m, broadcast_recipients: null, profile: null })));
+    setInboxReadIds(new Set((readData || []).map((r: any) => r.message_id)));
+    const rc: Record<string, number> = {};
+    (rcData || []).forEach((r: any) => { rc[r.message_id] = (rc[r.message_id] || 0) + 1; });
+    setReadCounts(prev => ({ ...prev, ...rc }));
 
     // confirmations を読む（deadline_type / requires_confirmation があるもの）
     const confirmMsgIds = (msgData || []).filter((m: any) => m.requires_confirmation || m.deadline_type).map((m: any) => m.id);
@@ -514,17 +524,6 @@ const BoardPage: React.FC = () => {
         confMap[c.message_id].push({ user_id: c.user_id, comment: c.comment });
       });
       setConfirmations(prev => ({ ...prev, ...confMap }));
-    }
-    // 既読IDと既読カウントを取得
-    if (msgIds.length > 0) {
-      const [{ data: readData }, { data: rcData }] = await Promise.all([
-        supabase.from('board_reads').select('message_id').in('message_id', msgIds).eq('user_id', user.id),
-        supabase.from('board_reads').select('message_id').in('message_id', msgIds),
-      ]);
-      setInboxReadIds(new Set((readData || []).map((r: any) => r.message_id)));
-      const rc: Record<string, number> = {};
-      (rcData || []).forEach((r: any) => { rc[r.message_id] = (rc[r.message_id] || 0) + 1; });
-      setReadCounts(prev => ({ ...prev, ...rc }));
     }
   }, [user]);
 
@@ -620,6 +619,20 @@ const BoardPage: React.FC = () => {
   useEffect(() => {
     if (selectedChannelId) messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
   }, [messages.length, selectedChannelId]);
+
+  // 既読状況ポップアップを開いたとき、受信者が未取得なら取得する
+  useEffect(() => {
+    if (!readDetailMsgId || !user) return;
+    if (inboxRecipients[readDetailMsgId]) return; // 既に取得済み
+    const allMsgs = [...messages, ...inboxMessages, ...outboxMessages, ...archivedMessages];
+    const msg = allMsgs.find(m => m.id === readDetailMsgId);
+    if (!msg || msg.channel_id) return; // チャンネルメッセージは members を使う
+    supabase.from('board_message_recipients').select('user_id').eq('message_id', readDetailMsgId)
+      .then(({ data }) => {
+        if (data) setInboxRecipients(prev => ({ ...prev, [readDetailMsgId]: data.map((r: any) => r.user_id) }));
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readDetailMsgId, user]);
 
   useEffect(() => {
     if (showChannelList) {
@@ -1142,7 +1155,7 @@ const BoardPage: React.FC = () => {
                     </button>
                   ) : (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', background: '#22c55e', border: '1.5px solid #22c55e', borderRadius: 20, fontSize: 13, fontWeight: 500, color: '#fff' }}>
-                      <span style={{ fontSize: 15, lineHeight: 1 }}>✓</span> {doneLabel}（{myConfirmTime ? fmtTime(myConfirmTime) : '済み'}）
+                      <span style={{ fontSize: 15, lineHeight: 1 }}>✓</span> {doneLabel}（{myConfirmTime ? fmtFull(myConfirmTime) : '済み'}）
                     </span>
                   )}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1207,7 +1220,7 @@ const BoardPage: React.FC = () => {
                     style={{ width: '100%', background: isDark ? '#1e2328' : '#f0f4ff', border: `1px solid ${isDark ? '#3d4349' : '#c7d4f5'}`, borderRadius: 8, padding: '6px 10px', cursor: 'pointer', textAlign: 'left', marginBottom: 6 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
                       <span style={{ fontSize: 11, fontWeight: 'bold', color: isDark ? '#90b4e8' : '#3b5bdb' }}>💬 {replierName}</span>
-                      <span style={{ fontSize: 10, color: subColor }}>{fmtTime(latestReply.created_at)}</span>
+                      <span style={{ fontSize: 10, color: subColor }}>{fmtFull(latestReply.created_at)}</span>
                       <span style={{ fontSize: 10, color: subColor, marginLeft: 'auto' }}>リプライ {replyCount}件{unreadReplies > 0 ? `（未読${unreadReplies}）` : ''}</span>
                     </div>
                     <div style={{ fontSize: 12, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
@@ -1283,7 +1296,7 @@ const BoardPage: React.FC = () => {
                 {avatarLetter(parentSender)}
               </div>
               <span style={{ fontSize: 13, fontWeight: 'bold', color: textColor }}>{parentSender}</span>
-              <span style={{ fontSize: 11, color: subColor }}>{fmtTime(parentMsg.created_at)}</span>
+              <span style={{ fontSize: 11, color: subColor }}>{fmtFull(parentMsg.created_at)}</span>
             </div>
             {parentMsg.deadline_type && (
               <div style={{ fontSize: 12, color: isDark ? '#93c5fd' : '#3b82f6', marginBottom: 4 }}>
@@ -1306,7 +1319,7 @@ const BoardPage: React.FC = () => {
                 <div style={{ flex: 1 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
                     <span style={{ fontSize: 13, fontWeight: 'bold', color: textColor }}>{rSender}</span>
-                    <span style={{ fontSize: 11, color: subColor }}>{fmtTime(r.created_at)}</span>
+                    <span style={{ fontSize: 11, color: subColor }}>{fmtFull(r.created_at)}</span>
                   </div>
                   <div style={{ fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, padding: '8px 12px', textAlign: 'left' }}>{r.body}</div>
                   {(() => {
@@ -1866,6 +1879,22 @@ const BoardPage: React.FC = () => {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{ paddingTop: 58 }} />
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 14px' }}>
+            {/* 宛先タグ */}
+            {(inboxRecipients[inboxDetail.id] || []).length > 0 && (() => {
+              const allIds = inboxRecipients[inboxDetail.id] || [];
+              return (
+                <div style={{ marginBottom: 12, padding: '8px 12px', background: isDark ? '#1e2a3a' : '#eff6ff', borderRadius: 8 }}>
+                  <div style={{ fontSize: 12, color: isDark ? '#93c5fd' : '#3b82f6', fontWeight: 700, marginBottom: 6 }}>宛先 {allIds.length}人</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {allIds.map(uid => (
+                      <span key={uid} style={{ padding: '2px 8px', background: isDark ? '#2d3561' : '#dbeafe', color: isDark ? '#93c5fd' : '#1d4ed8', borderRadius: 12, fontSize: 11, fontWeight: 500 }}>
+                        {allProfiles.find(p => p.id === uid)?.name || '不明'}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
             {renderMsg(inboxDetail)}
             {/* リマインド（送信者 or 管理者かつ確認系メッセージのみ） */}
             {(inboxDetail.user_id === user?.id || isAdmin) && (inboxDetail.requires_confirmation || inboxDetail.deadline_type) && inboxDetailRecipients.length > 0 && (
@@ -1934,7 +1963,7 @@ const BoardPage: React.FC = () => {
                             <div style={{ flex: 1 }}>
                               <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 2 }}>
                                 <span style={{ fontSize: 12, fontWeight: 700, color: textColor }}>{cName}</span>
-                                <span style={{ fontSize: 11, color: subColor }}>{fmtTime(c.created_at)}</span>
+                                <span style={{ fontSize: 11, color: subColor }}>{fmtFull(c.created_at)}</span>
                               </div>
                               <div style={{ fontSize: 13, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5 }}>{c.body}</div>
                             </div>
@@ -2051,7 +2080,7 @@ const BoardPage: React.FC = () => {
                         {avatarLetter(senderName)}
                       </div>
                       <span style={{ fontSize: 12, fontWeight: 'bold', color: textColor }}>{senderName}</span>
-                      <span style={{ fontSize: 10, color: subColor }}>{fmtTime(msg.created_at)}</span>
+                      <span style={{ fontSize: 10, color: subColor }}>{fmtFull(msg.created_at)}</span>
                       {confirmed && !isArchived && <span style={{ fontSize: 10, color: '#22c55e', fontWeight: 700 }}>✓ 完了</span>}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -2571,7 +2600,7 @@ const BoardPage: React.FC = () => {
                           {avatarLetter(senderName)}
                         </div>
                         <span style={{ fontSize: 13, fontWeight: 'bold', color: textColor }}>{senderName}</span>
-                        <span style={{ fontSize: 11, color: subColor }}>{fmtTime(msg.created_at)}</span>
+                        <span style={{ fontSize: 11, color: subColor }}>{fmtFull(msg.created_at)}</span>
                       </div>
                       <button type="button" onClick={e => toggleFavMessage(e, msg.id, msg)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, padding: 0, color: '#f59e0b', flexShrink: 0 }}>★</button>
                     </div>
@@ -2624,7 +2653,7 @@ const BoardPage: React.FC = () => {
                   <span style={{ fontSize: 11, color: '#4a90d9', fontWeight: 600 }}>{chLabel}</span>
                   <span style={{ fontSize: 11, color: subColor }}>·</span>
                   <span style={{ fontSize: 11, fontWeight: 600, color: textColor }}>{senderName}</span>
-                  <span style={{ fontSize: 11, color: subColor, marginLeft: 'auto' }}>{fmtTime(msg.created_at)}</span>
+                  <span style={{ fontSize: 11, color: subColor, marginLeft: 'auto' }}>{fmtFull(msg.created_at)}</span>
                 </div>
                 {(matchSubject || msg.subject) && (
                   <div style={{ fontSize: 13, fontWeight: 700, color: textColor, marginBottom: 6, paddingBottom: 6, borderBottom: `1px solid ${border}`, textAlign: 'left' }}>
@@ -2697,7 +2726,11 @@ const BoardPage: React.FC = () => {
               <button type="button" onClick={openMemberModal} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px', flexShrink: 0 }}>👥 メンバー</button>
             </>
           ) : (
-            <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>{(view === 'inbox' && inboxDetailId) || (view === 'outbox' && outboxDetailId) ? '📩 メッセージ' : viewTitle[view]}</span>
+            <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>
+              {view === 'inbox' && inboxDetailId ? '📨 受信メッセージ'
+                : view === 'outbox' && outboxDetailId ? '📤 送信メッセージ'
+                : viewTitle[view]}
+            </span>
           )}
         </div>
       )}
