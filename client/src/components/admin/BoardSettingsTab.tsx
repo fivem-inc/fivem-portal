@@ -156,7 +156,7 @@ const BoardSettingsTab: React.FC = () => {
       const memberNames = memberIds
         .map(uid => allProfiles.find(p => p.id === uid)?.name || '不明')
         .filter(n => n !== '不明' || memberIds.some(id => allProfiles.find(p => p.id === id)));
-      setChannels(prev => [...prev, { ...data, member_names: memberNames }]);
+      setChannels(prev => [...prev, { ...data, show_read_detail: 'all' as const, member_names: memberNames }]);
     }
     setNewChannelName('');
     setSelectedMemberIds([]);

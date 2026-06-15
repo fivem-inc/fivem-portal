@@ -144,7 +144,7 @@ const BoardPage: React.FC = () => {
   const [composeDeadline,      setComposeDeadline]      = useState('');
   const [composeScheduledAt,   setComposeScheduledAt]   = useState('');
   const [composeOptions,       setComposeOptions]       = useState(false);
-  const [composeDraftId,       setComposeDraftId]       = useState<string | null>(null);
+  const [_composeDraftId,      setComposeDraftId]       = useState<string | null>(null);
   const [composeQuery,         setComposeQuery]         = useState('');
   const [showComposeSendConfirm, setShowComposeSendConfirm] = useState(false);
   const [showSearch,  setShowSearch]  = useState(false);
@@ -188,7 +188,7 @@ const BoardPage: React.FC = () => {
   const [loadingData,      setLoadingData]      = useState(true);
   const [readDetailMsgId,  setReadDetailMsgId]  = useState<string | null>(null);
   const [readDetailUsers,  setReadDetailUsers]  = useState<{ user_id: string; read_at: string }[]>([]);
-  const [showReadDetail,   setShowReadDetail]   = useState(true); // 設定: 全員が既読詳細を見れるか
+  const [_showReadDetail,  setShowReadDetail]   = useState(true); // 設定: 全員が既読詳細を見れるか
 
   const [saveBanner, setSaveBanner] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -460,7 +460,7 @@ const BoardPage: React.FC = () => {
       .single();
 
     if (!error && data) {
-      const msg: BoardMessage = { ...data, broadcast_recipients: null, profile: { name: profileName || null } };
+      const msg: BoardMessage = { ...data, subject: null, status: 'sent', comment_enabled: false, broadcast_recipients: null, profile: { name: profileName || null } };
       setMessages(prev => [...prev, msg]);
       await supabase.from('board_reads').upsert({ message_id: data.id, user_id: user.id }, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
       setReadCounts(prev => ({ ...prev, [data.id]: 1 }));
@@ -905,7 +905,7 @@ const BoardPage: React.FC = () => {
               {replyCount > 0 && (() => {
                 const latestReply = replies[replies.length - 1];
                 const replierName = allProfiles.find(p => p.id === latestReply.user_id)?.name || '不明';
-                const myLastSeen = lastSeen[msg.channel_id] || '';
+                const myLastSeen = lastSeen[msg.channel_id ?? ''] || '';
                 const unreadReplies = replies.filter(r => r.user_id !== user?.id && r.created_at > myLastSeen).length;
                 return (
                   <button type="button" onClick={() => setThreadMsgId(msg.id)}
@@ -937,7 +937,7 @@ const BoardPage: React.FC = () => {
                 const rdSetting = selectedChannel?.show_read_detail ?? 'all';
                 const canSeeReadDetail =
                   rdSetting === 'all' ||
-                  (rdSetting === 'permitted' && canSendInChannel(selectedChannelId));
+                  (rdSetting === 'permitted' && canSendInChannel(selectedChannelId ?? ''));
                 return (canSeeReadDetail) ? (
                   <button type="button" onClick={async () => {
                     const { data } = await supabase.from('board_reads').select('user_id, read_at').eq('message_id', msg.id);
