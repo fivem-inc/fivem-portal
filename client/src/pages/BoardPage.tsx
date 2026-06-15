@@ -121,7 +121,7 @@ const BoardPage: React.FC = () => {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [showChannelList,    setShowChannelList]     = useState(true);
 
-  // 受信ボックス
+  // 受信トレイ
   const [inboxMessages,    setInboxMessages]    = useState<BoardMessage[]>([]);
   const [inboxFilter,      setInboxFilter]      = useState<'all' | 'pending' | 'read' | 'answer' | 'submit' | 'approve' | 'archived'>('all');
   const [inboxDetailId,    setInboxDetailId]    = useState<string | null>(null);
@@ -202,6 +202,11 @@ const BoardPage: React.FC = () => {
 
   const [saveBanner, setSaveBanner] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+  // お気に入り
+  const [favChannelIds, setFavChannelIds] = useState<Set<string>>(new Set());
+  const [favMessageIds, setFavMessageIds] = useState<Set<string>>(new Set());
+  const [favMessages,   setFavMessages]   = useState<BoardMessage[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const channelListRef = useRef<HTMLDivElement>(null);
 
@@ -277,7 +282,62 @@ const BoardPage: React.FC = () => {
     setLoadingData(false);
   }, [user]);
 
+  const loadFavorites = useCallback(async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('board_favorites')
+      .select('message_id, channel_id')
+      .eq('user_id', user.id);
+    const chIds  = new Set<string>();
+    const msgIds = new Set<string>();
+    (data || []).forEach((f: any) => {
+      if (f.channel_id) chIds.add(f.channel_id);
+      if (f.message_id) msgIds.add(f.message_id);
+    });
+    setFavChannelIds(chIds);
+    setFavMessageIds(msgIds);
+    if (msgIds.size > 0) {
+      const { data: msgs } = await supabase
+        .from('board_messages')
+        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+        .in('id', [...msgIds])
+        .order('created_at', { ascending: false });
+      setFavMessages((msgs || []) as BoardMessage[]);
+    } else {
+      setFavMessages([]);
+    }
+  }, [user]);
+
   useEffect(() => { loadAll(); }, [loadAll]);
+  useEffect(() => { loadFavorites(); }, [loadFavorites]);
+
+  const toggleFavChannel = async (e: React.MouseEvent, chId: string) => {
+    e.stopPropagation();
+    if (!user) return;
+    const isFav = favChannelIds.has(chId);
+    if (isFav) {
+      await supabase.from('board_favorites').delete().eq('user_id', user.id).eq('channel_id', chId);
+      setFavChannelIds(prev => { const s = new Set(prev); s.delete(chId); return s; });
+    } else {
+      await supabase.from('board_favorites').insert({ user_id: user.id, channel_id: chId });
+      setFavChannelIds(prev => new Set([...prev, chId]));
+    }
+  };
+
+  const toggleFavMessage = async (e: React.MouseEvent, msgId: string, msg: BoardMessage) => {
+    e.stopPropagation();
+    if (!user) return;
+    const isFav = favMessageIds.has(msgId);
+    if (isFav) {
+      await supabase.from('board_favorites').delete().eq('user_id', user.id).eq('message_id', msgId);
+      setFavMessageIds(prev => { const s = new Set(prev); s.delete(msgId); return s; });
+      setFavMessages(prev => prev.filter(m => m.id !== msgId));
+    } else {
+      await supabase.from('board_favorites').insert({ user_id: user.id, message_id: msgId });
+      setFavMessageIds(prev => new Set([...prev, msgId]));
+      setFavMessages(prev => [msg, ...prev.filter(m => m.id !== msgId)]);
+    }
+  };
 
   // 連絡板ボタン再タップ → サイドバーTOPにリセット
   const resetToTop = useCallback(() => {
@@ -346,7 +406,7 @@ const BoardPage: React.FC = () => {
         .eq('user_id', user.id);
       const cids = (myMem || []).map((m: any) => m.channel_id);
 
-      // 受信ボックスメッセージID
+      // 受信トレイメッセージID
       const { data: recData } = await supabase
         .from('board_message_recipients')
         .select('message_id')
@@ -366,7 +426,7 @@ const BoardPage: React.FC = () => {
             .limit(30)
         : Promise.resolve({ data: [] });
 
-      // 受信ボックスメッセージ検索
+      // 受信トレイメッセージ検索
       const inboxQuery = inboxIds.length > 0
         ? supabase
             .from('board_messages')
@@ -1591,6 +1651,11 @@ const BoardPage: React.FC = () => {
             <span style={{ fontSize: 13, fontWeight: unread > 0 ? 'bold' : 'normal', color: textColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, textAlign: 'left' }}>{channelDisplayName(ch)}</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
               <span style={{ fontSize: 10, color: subColor }}>{last ? fmtTime(last.created_at) : ''}</span>
+              <button type="button" onClick={e => toggleFavChannel(e, ch.id)}
+                title={favChannelIds.has(ch.id) ? 'お気に入り解除' : 'お気に入り追加'}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: '0 2px', lineHeight: 1, color: favChannelIds.has(ch.id) ? '#f59e0b' : subColor, opacity: favChannelIds.has(ch.id) ? 1 : 0.4 }}>
+                {favChannelIds.has(ch.id) ? '★' : '☆'}
+              </button>
               {canDelete && (
                 <button type="button" onClick={e => deleteChannel(ch.id, e)}
                   style={{ background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 13, padding: '0 2px', lineHeight: 1 }}>🗑️</button>
@@ -1618,7 +1683,7 @@ const BoardPage: React.FC = () => {
       <div ref={channelListRef} style={{ overflowY: 'auto', flex: 1, minHeight: 0, paddingTop: showSearch ? 92 : 52 }}>
         {/* ── 受信・送信・お気に入り ── */}
         {[
-          { key: 'inbox'  as const, icon: '📨', label: '受信ボックス', bg: isDark ? '#1e3a5f' : '#dbeafe', badge: inboxUnread, onClick: () => { setView('inbox'); setShowSidebar(false); setInboxDetailId(null); } },
+          { key: 'inbox'  as const, icon: '📨', label: '受信トレイ', bg: isDark ? '#1e3a5f' : '#dbeafe', badge: inboxUnread, onClick: () => { setView('inbox'); setShowSidebar(false); setInboxDetailId(null); } },
           { key: 'outbox' as const, icon: '📤', label: '送信トレイ',   bg: isDark ? '#1e3a2a' : '#dcfce7', badge: 0,           onClick: () => { setView('outbox'); setShowSidebar(false); setOutboxDetailId(null); } },
         ].map(item => {
           const isActive = view === item.key && !showSidebar;
@@ -1636,13 +1701,47 @@ const BoardPage: React.FC = () => {
             </div>
           );
         })}
-        <div style={{
-          padding: '10px 14px', borderBottom: `1px solid ${border}`,
-          display: 'flex', alignItems: 'center', gap: 12, opacity: 0.45, textAlign: 'left',
-        }}>
-          <div style={{ width: 38, height: 38, borderRadius: 10, background: isDark ? '#3a3020' : '#fef9c3', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>⭐</div>
-          <span style={{ flex: 1, fontSize: 14, fontWeight: 500, color: textColor, textAlign: 'left' }}>お気に入り</span>
-        </div>
+        {/* ── お気に入り ── */}
+        {(favChannelIds.size > 0 || favMessageIds.size > 0) && (
+          <>
+            <div style={{ padding: '8px 14px 4px' }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#f59e0b', letterSpacing: 0.5 }}>⭐ お気に入り</span>
+            </div>
+            {channels.filter(c => favChannelIds.has(c.id)).map(ch => {
+              const isSelected = view === 'channel' && ch.id === selectedChannelId;
+              return (
+                <div key={`fav-ch-${ch.id}`} onClick={() => { selectChannel(ch.id); setView('channel'); setShowSidebar(false); setShowChannelList(false); }} style={{
+                  padding: '7px 14px', cursor: 'pointer', borderBottom: `1px solid ${border}`,
+                  background: isSelected ? (isDark ? '#2d3561' : '#e8f0fe') : 'transparent',
+                  display: 'flex', alignItems: 'center', gap: 10,
+                }}>
+                  <div style={{ width: 28, height: 28, borderRadius: ch.type === 'group' ? 6 : '50%', background: ch.type === 'group' ? '#6f42c1' : '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, flexShrink: 0 }}>
+                    {ch.type === 'group' ? '👥' : avatarLetter(channelDisplayName(ch))}
+                  </div>
+                  <span style={{ flex: 1, fontSize: 13, color: textColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{channelDisplayName(ch)}</span>
+                  <button type="button" onClick={e => toggleFavChannel(e, ch.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: 0, color: '#f59e0b' }}>★</button>
+                </div>
+              );
+            })}
+            {favMessages.map(msg => {
+              const senderName = allProfiles.find(p => p.id === msg.user_id)?.name || '不明';
+              return (
+                <div key={`fav-msg-${msg.id}`} onClick={() => { setInboxDetailId(msg.id); setView('inbox'); setShowSidebar(false); }} style={{
+                  padding: '7px 14px', cursor: 'pointer', borderBottom: `1px solid ${border}`,
+                  background: 'transparent', display: 'flex', alignItems: 'flex-start', gap: 10,
+                }}>
+                  <span style={{ fontSize: 16, flexShrink: 0, marginTop: 2 }}>📨</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: textColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{msg.subject || msg.title || msg.body.slice(0, 20)}</div>
+                    <div style={{ fontSize: 11, color: subColor }}>{senderName} · {fmtTime(msg.created_at)}</div>
+                  </div>
+                  <button type="button" onClick={e => toggleFavMessage(e, msg.id, msg)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: 0, color: '#f59e0b', flexShrink: 0 }}>★</button>
+                </div>
+              );
+            })}
+            <div style={{ margin: '4px 0', borderBottom: `1px solid ${border}` }} />
+          </>
+        )}
 
         {/* ── 区切り線 ── */}
         <div style={{ margin: '4px 0', borderBottom: `2px solid ${border}` }} />
@@ -1690,7 +1789,7 @@ const BoardPage: React.FC = () => {
     </div>
   );
 
-  // ── 受信ボックス ────────────────────────────────────────────────
+  // ── 受信トレイ ────────────────────────────────────────────────
   const INBOX_FILTERS = [
     { key: 'all',      label: 'すべて' },
     { key: 'pending',  label: '未対応' },
@@ -1863,12 +1962,17 @@ const BoardPage: React.FC = () => {
                       </div>
                     )}
                   </div>
-                  {/* アーカイブボタン */}
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+                  {/* アーカイブ・お気に入りボタン */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+                    <button type="button"
+                      onClick={e => toggleFavMessage(e, msg.id, msg)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, padding: '2px 4px', color: favMessageIds.has(msg.id) ? '#f59e0b' : subColor, opacity: favMessageIds.has(msg.id) ? 1 : 0.4 }}>
+                      {favMessageIds.has(msg.id) ? '★' : '☆'}
+                    </button>
                     <button type="button"
                       onClick={e => { e.stopPropagation(); archiveMessage(msg.id, !isArchived); }}
                       style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 11, padding: '3px 8px' }}>
-                      {isArchived ? '📥 受信ボックスに戻す' : '📦 アーカイブ'}
+                      {isArchived ? '📥 受信トレイに戻す' : '📦 アーカイブ'}
                     </button>
                   </div>
                 </div>
@@ -2240,7 +2344,7 @@ const BoardPage: React.FC = () => {
   // ── Render ───────────────────────────────────────────────────────
 
   const viewTitle: Record<View, string> = {
-    inbox:   '📥 受信ボックス',
+    inbox:   '📥 受信トレイ',
     outbox:  '📤 送信トレイ',
     compose: '✉️ お知らせを作成',
     channel: selectedChannel ? (selectedChannel.type === 'group' ? `👥 ${channelDisplayName(selectedChannel)}` : channelDisplayName(selectedChannel)) : '',
@@ -2281,7 +2385,7 @@ const BoardPage: React.FC = () => {
           {searchResults.map(msg => {
             const senderName = allProfiles.find(p => p.id === msg.user_id)?.name || '不明';
             const ch = channels.find(c => c.id === msg.channel_id);
-            const chLabel = ch ? (ch.type === 'group' ? `👥 ${ch.name || 'グループ'}` : ch.type === 'dm' ? '💬 DM' : '📧 送信メール') : '📥 受信ボックス';
+            const chLabel = ch ? (ch.type === 'group' ? `👥 ${ch.name || 'グループ'}` : ch.type === 'dm' ? '💬 DM' : '📧 送信メール') : '📥 受信トレイ';
             const matchBody = msg.body.toLowerCase().includes(searchText.toLowerCase());
             const matchSubject = msg.subject && msg.subject.toLowerCase().includes(searchText.toLowerCase());
             return (
