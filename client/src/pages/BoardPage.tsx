@@ -381,31 +381,30 @@ const BoardPage: React.FC = () => {
     return () => window.removeEventListener('board-reset', resetToTop);
   }, [resetToTop]);
 
-  // スマホ戻るボタン対応：replaceState方式（履歴を汚染しない・ログアウト安全）
-  // mount時：現在の/boardエントリにフラグを付ける（新エントリは作らない）
-  useEffect(() => {
-    window.history.replaceState({ ...window.history.state, boardInternal: true }, '');
-  }, []);
+  // スマホ戻るボタン対応：navigate('/board', replace) 方式
+  // - history/state を直接触らない → ログアウト・通知など他の操作に干渉しない
+  // - popstate（戻るボタン）を検知したとき、内部状態があれば /board に留まってUIだけ戻す
+  const navigateRef = useRef(navigate);
+  useEffect(() => { navigateRef.current = navigate; });
 
-  // 最新の内部状態を ref で保持（stale closure 防止）
   const boardStateRef = useRef({ view, showSidebar, selectedChannelId, inboxDetailId, outboxDetailId, threadMsgId, inboxCommentOpen });
   useEffect(() => {
     boardStateRef.current = { view, showSidebar, selectedChannelId, inboxDetailId, outboxDetailId, threadMsgId, inboxCommentOpen };
   });
 
   useEffect(() => {
-    const onPopState = (e: PopStateEvent) => {
-      if (e.state?.boardInternal !== true) return; // board以外のエントリは無視
+    const onPopState = () => {
+      // BoardPageがマウントされている間にpopstateが発火 = /boardから離脱しようとしている
       const s = boardStateRef.current;
-      const hasDepth = s.threadMsgId
+      const hasDepth = !!(s.threadMsgId
         || Object.values(s.inboxCommentOpen).some(Boolean)
         || s.inboxDetailId
         || s.outboxDetailId
         || (s.selectedChannelId && !s.showSidebar)
-        || s.view !== 'inbox';
-      if (!hasDepth) return; // ベース状態 → そのまま前ページへ離脱
-      // 深さあり → 合成エントリを追加してUIを1段階戻す
-      window.history.pushState({ boardInternal: true }, '');
+        || s.view !== 'inbox');
+      if (!hasDepth) return; // ベース状態 → 自然に前ページへ離脱させる
+      // 内部状態あり → /board に戻してUIだけ1段階更新
+      navigateRef.current('/board', { replace: true });
       if (s.threadMsgId) { setThreadMsgId(null); return; }
       if (Object.values(s.inboxCommentOpen).some(Boolean)) { setInboxCommentOpen({}); return; }
       if (s.inboxDetailId) { setInboxDetailId(null); return; }
@@ -415,7 +414,7 @@ const BoardPage: React.FC = () => {
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
-  }, []); // 依存配列なし：refで最新値を参照するため再登録不要
+  }, []);
 
   // メッセージ全文検索（300msデバウンス）
   useEffect(() => {

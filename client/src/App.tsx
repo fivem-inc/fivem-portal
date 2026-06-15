@@ -220,7 +220,9 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
       window.scrollTo({ top: 0, behavior: 'smooth' });
       window.dispatchEvent(new CustomEvent('board-reset'));
     } else {
-      navigate(path);
+      // replace: true でタブ切り替えを履歴に積まない
+      // → /board エントリが重複しないため「戻るボタン空振り」が起きない
+      navigate(path, { replace: true });
     }
   };
   const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
