@@ -381,23 +381,24 @@ const BoardPage: React.FC = () => {
     return () => window.removeEventListener('board-reset', resetToTop);
   }, [resetToTop]);
 
-  // スマホ戻るボタン対応：センチネル方式（履歴エントリは常に1つだけ維持）
+  // スマホ戻るボタン対応：go(1)キャンセル方式（pushStateを使わない）
   useEffect(() => {
-    window.history.pushState({ boardInternal: true }, '');
-  }, []);
-
-  useEffect(() => {
-    const onPopState = (e: PopStateEvent) => {
-      if (e.state?.boardInternal !== true) return;
-      // まだ戻るべき内部状態があれば処理してセンチネルを再push
-      if (threadMsgId) { setThreadMsgId(null); window.history.pushState({ boardInternal: true }, ''); return; }
-      // コメント欄が開いていれば先に閉じる
-      if (Object.values(inboxCommentOpen).some(Boolean)) { setInboxCommentOpen({}); window.history.pushState({ boardInternal: true }, ''); return; }
-      if (inboxDetailId) { setInboxDetailId(null); window.history.pushState({ boardInternal: true }, ''); return; }
-      if (outboxDetailId) { setOutboxDetailId(null); window.history.pushState({ boardInternal: true }, ''); return; }
-      if (selectedChannelId && !showSidebar) { setShowSidebar(true); setSelectedChannelId(null); window.history.pushState({ boardInternal: true }, ''); return; }
-      if (view !== 'inbox') { setView('inbox'); window.history.pushState({ boardInternal: true }, ''); return; }
-      // ベース状態 → 再pushしない → 次の戻るでページ離脱
+    const onPopState = () => {
+      const hasDepth = threadMsgId
+        || Object.values(inboxCommentOpen).some(Boolean)
+        || inboxDetailId
+        || outboxDetailId
+        || (selectedChannelId && !showSidebar)
+        || view !== 'inbox';
+      if (!hasDepth) return; // ベース状態 → そのままページ離脱
+      // 内部状態あり → 戻る操作をキャンセルしてUIだけ更新
+      window.history.go(1);
+      if (threadMsgId) { setThreadMsgId(null); return; }
+      if (Object.values(inboxCommentOpen).some(Boolean)) { setInboxCommentOpen({}); return; }
+      if (inboxDetailId) { setInboxDetailId(null); return; }
+      if (outboxDetailId) { setOutboxDetailId(null); return; }
+      if (selectedChannelId && !showSidebar) { setShowSidebar(true); setSelectedChannelId(null); return; }
+      if (view !== 'inbox') { setView('inbox'); return; }
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
