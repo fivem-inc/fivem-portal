@@ -68,19 +68,16 @@ export const useAuth = (): UseAuthReturn => {
   }, [user]);
 
   const handleLogout = useCallback(async () => {
+    console.log('[logout] clicked');
     try {
-      // セッションをクリアしてからログアウト
-      await supabase.auth.signOut({ scope: 'local' });
-      
-      // ローカルストレージをクリア（念のため）
+      const { error } = await supabase.auth.signOut({ scope: 'local' });
+      if (error) { console.error('[logout] signOut error', error); return; }
+      console.log('[logout] signOut success');
       localStorage.clear();
       sessionStorage.clear();
-      
-      // ページをリロードしてサインイン画面に移動
       window.location.href = '/signin';
     } catch (error) {
-      console.error('Unexpected error during logout:', error);
-      // エラーが発生してもサインイン画面に移動
+      console.error('[logout] unexpected error:', error);
       window.location.href = '/signin';
     }
   }, []);

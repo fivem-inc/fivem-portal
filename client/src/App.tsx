@@ -85,7 +85,10 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
   };
 
   const dismissOne = async (id: string) => {
-    await supabase.from('notifications').update({ read: true }).eq('id', id);
+    console.log('[notification] dismiss clicked', id);
+    const { error } = await supabase.from('notifications').update({ read: true }).eq('id', id);
+    if (error) { console.error('[notification] dismiss error', error); return; }
+    console.log('[notification] dismiss success', id);
     setNotifs(prev => prev.filter(n => n.id !== id));
   };
 
