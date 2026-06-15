@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useLayoutEffect, Suspense, useRef } from 'react';
+import ReactDOM from 'react-dom';
 import { Routes, Route, Navigate, Outlet, BrowserRouter, useNavigate, useLocation } from 'react-router-dom';
 import SignIn from './pages/SignIn';
 import ResetPassword from './pages/ResetPassword';
@@ -88,18 +89,25 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
     setNotifs(prev => prev.filter(n => n.id !== id));
   };
 
-  const handleOpen = () => { setOpen(o => !o); if (!open) markAllRead(); };
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [dropRect, setDropRect] = useState<DOMRect | null>(null);
+
+  const handleOpen = () => {
+    if (!open && btnRef.current) setDropRect(btnRef.current.getBoundingClientRect());
+    setOpen(o => !o);
+    if (!open) markAllRead();
+  };
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <button onClick={handleOpen} style={{ position: 'relative', background: 'transparent', border: 'none', color: 'white', cursor: 'pointer', fontSize: 20, padding: '4px 6px', lineHeight: 1 }}>
+    <div ref={ref}>
+      <button ref={btnRef} onClick={handleOpen} style={{ position: 'relative', background: 'transparent', border: 'none', color: 'white', cursor: 'pointer', fontSize: 20, padding: '4px 6px', lineHeight: 1 }}>
         🔔
         {unread > 0 && (
           <span style={{ position: 'absolute', top: 0, right: 0, background: '#dc3545', color: '#fff', borderRadius: '50%', fontSize: 10, width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', lineHeight: 1 }}>{unread > 9 ? '9+' : unread}</span>
         )}
       </button>
-      {open && (
-        <div style={{ position: 'absolute', right: 0, top: '100%', marginTop: 4, width: 300, background: '#fff', borderRadius: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.2)', zIndex: 1500, overflow: 'hidden' }}>
+      {open && dropRect && ReactDOM.createPortal(
+        <div style={{ position: 'fixed', top: dropRect.bottom + 4, right: window.innerWidth - dropRect.right, width: 300, background: '#fff', borderRadius: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.2)', zIndex: 9999, overflow: 'hidden' }}>
           <div style={{ padding: '10px 14px', borderBottom: '1px solid #eee', fontSize: 13, fontWeight: 'bold', color: '#333' }}>通知</div>
           <div style={{ maxHeight: 320, overflowY: 'auto' }}>
             {notifs.length === 0 ? (
@@ -109,13 +117,14 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, color: '#333', fontWeight: n.read ? 'normal' : 'bold' }}>{n.message}</div>
                   {n.sub_message && <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>{n.sub_message}</div>}
-                  <div style={{ fontSize: 10, color: '#aaa', marginTop: 4 }}>{new Date(n.created_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>
+                  <div style={{ fontSize: 10, color: '#aaa', marginTop: 4 }}>{(() => { const d = new Date(n.created_at); const now = new Date(); if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: 'numeric', minute: '2-digit' }); const m = d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric' }); const day = d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', day: 'numeric' }); const time = d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }); return `${m}/${day} ${time}`; })()}</div>
                 </div>
                 <button onClick={() => dismissOne(n.id)} style={{ background: 'none', border: 'none', color: '#bbb', cursor: 'pointer', fontSize: 14, padding: '0 2px', flexShrink: 0, lineHeight: 1 }}>✕</button>
               </div>
             ))}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -125,6 +134,8 @@ const AvatarMenu: React.FC<{ userId: string; profileName: string | null; email: 
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const btnRef2 = useRef<HTMLDivElement>(null);
+  const [dropRect2, setDropRect2] = useState<DOMRect | null>(null);
 
   useEffect(() => {
     const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
@@ -135,12 +146,12 @@ const AvatarMenu: React.FC<{ userId: string; profileName: string | null; email: 
   const initial = (profileName || email || '?')[0].toUpperCase();
 
   return (
-    <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
-      <div onClick={() => setOpen(o => !o)} style={{ width: 38, height: 38, borderRadius: '50%', background: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 15, fontWeight: 'bold', cursor: 'pointer', userSelect: 'none' }}>
+    <div ref={ref} style={{ flexShrink: 0 }}>
+      <div ref={btnRef2} onClick={() => { if (!open && btnRef2.current) setDropRect2(btnRef2.current.getBoundingClientRect()); setOpen(o => !o); }} style={{ width: 38, height: 38, borderRadius: '50%', background: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 15, fontWeight: 'bold', cursor: 'pointer', userSelect: 'none' }}>
         {initial}
       </div>
-      {open && (
-        <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', width: 200, background: '#fff', borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.2)', zIndex: 1500, overflow: 'hidden' }}>
+      {open && dropRect2 && ReactDOM.createPortal(
+        <div style={{ position: 'fixed', top: dropRect2.bottom + 6, right: window.innerWidth - dropRect2.right, width: 200, background: '#fff', borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.2)', zIndex: 9999, overflow: 'hidden' }}>
           <div style={{ padding: '12px 14px', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 13, fontWeight: 'bold', flexShrink: 0 }}>{initial}</div>
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -151,7 +162,8 @@ const AvatarMenu: React.FC<{ userId: string; profileName: string | null; email: 
           <div style={{ padding: '10px 14px' }}>
             <button onClick={onLogout} style={{ width: '100%', padding: '8px', borderRadius: 8, border: '1px solid #ddd', background: 'transparent', color: '#666', cursor: 'pointer', fontSize: 13 }}>ログアウト</button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

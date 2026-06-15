@@ -1611,6 +1611,109 @@ const XxxTabA = () => { const { state, setState } = useXxx(); return <div>...</d
 
 ---
 
+## ✅ 2026-06-15 連絡板リニューアル Phase3 UX改善 完了
+
+### 変更ファイル
+- `client/src/pages/BoardPage.tsx`
+- `client/src/App.tsx`
+
+### 主な変更内容
+
+#### 連絡板（BoardPage.tsx）
+
+**UI/UXリニューアル**
+- グループチャンネルに件名フィールドを追加（⚙️パネル内）
+- 件名・本文・内容・企画・場所・リンクを左揃えに統一（全カード）
+- 件名と本文の間に区切り線追加
+- 種別ラベル（読了確認など）を件名の上に配置
+- 受信トレイ・送信トレイカードをコンパクトなデザインにリデザイン
+- ★とアーカイブ📦をヘッダー右に移動
+
+**種別（deadline_type）**
+- 確認（confirm）を5つ目の種別として追加
+- DEADLINE_TYPES: read / answer / submit / approve / confirm
+- DBのCHECK制約に 'confirm' を追加（Supabase SQLで手動実行済み）
+  ```sql
+  ALTER TABLE board_messages DROP CONSTRAINT board_messages_deadline_type_check;
+  ALTER TABLE board_messages ADD CONSTRAINT board_messages_deadline_type_check
+    CHECK (deadline_type IN ('read', 'answer', 'submit', 'approve', 'confirm'));
+  ```
+- 「確認確認」バグ修正: typeText === '確認' のとき `${typeText}確認` → `確認` のみ表示
+
+**入力欄（全種別対応）**
+- 全種別でコメント入力欄を表示（任意）
+- `回答` のみ必須（赤枠 + ボタン無効化）
+- 他種別（読了・提出・承認・確認）は任意（空でも「完了」ボタン有効）
+
+**未読管理（board_reads テーブル）**
+- `inboxReadIds` state（Set<string>）で開封済みID管理
+- 未読カードを青左ボーダー（`3px solid #4a90d9`）で強調
+- 受信トレイカードを開いたとき board_reads に upsert → readCounts もインクリメント
+- `loadInbox` / `loadOutbox` / `loadData` でそれぞれ readCounts を取得（マージ方式: `prev => ({ ...prev, ...rc })`）
+- **注意**: `loadData` が `setReadCounts(rc)` で全置換していた → `setReadCounts(prev => ...)` に修正済み
+
+**既読カウント・既読状況ポップアップ**
+- お知らせ（channel_id = null）の場合: チャンネルメンバーではなく `inboxRecipients[msg.id]` を使用
+  - renderMsg 内 `channelMemberIds`（3箇所）
+  - 既読状況ポップアップ `chMembers`（1箇所）
+- 既読状況ポップアップのメッセージ検索: `[...messages, ...inboxMessages, ...outboxMessages, ...archivedMessages]` に変更（グループメッセージが `messages` state にあるため）
+- 受信トレイ詳細を開いたとき `inboxRecipients` にも受信者一覧を格納
+
+**自分への通知除外**
+- `sendNotice` で `composeRecipientIds.filter(uid => uid !== user.id)` で送信者自身を除外
+
+**時刻フォーマット**
+- `fmtFull`（年/月/日 時:分）→ 送信トレイカード・renderMsg の時刻
+- 通知ベルは `fmtNotif`（月/日 時:分 / 今日は時刻のみ）を App.tsx に直接インライン実装
+
+**お知らせ件名を必須化**
+- `sendNotice` バリデーション: `!composeSubject.trim()` を条件に追加
+
+**ナビゲーション改善（← が2つある問題を解消）**
+- グローバルヘッダーの ← ボタン: 詳細ビュー → リスト、リスト → サイドバー へ1クリックで戻る
+- ヘッダータイトル: 詳細ビュー時は「📩 メッセージ」、それ以外は各ビュー名
+
+**件名DB保存バグ修正**
+- `insertData.title = newTitle.trim()` を `if (!parentId && newDeadlineType)` ブロック外に移動
+
+**`insertNotification` 呼び出し修正**
+- 旧オブジェクト形式（`insertNotification({ userId, message, ... })`）を正しい引数形式（`insertNotification(uid, message, undefined, 'board')`）に修正（リマインド送信の2箇所）
+
+#### App.tsx（通知ベル・アバターメニュー）
+
+**ドロップダウン重なり修正（ReactDOM.createPortal）**
+- `BellIcon` と `AvatarMenu` のドロップダウンを `ReactDOM.createPortal` で `document.body` 直下にマウント
+- ヘッダー（`position: fixed; zIndex: 100`）のスタッキングコンテキスト問題を根本解決
+- ドロップダウンは `position: fixed; zIndex: 9999`、ボタン位置を `getBoundingClientRect()` で取得
+
+**通知時刻フォーマット**
+- `new Date().toLocaleString('ja-JP', { year: 'numeric', ... })` → `fmtNotif` 相当のインライン実装に変更（年なし・月/日 時:分 / 今日は時刻のみ）
+
+### ⚠️ 注意事項
+
+#### readCounts の管理
+- `loadData`（チャンネル）・`loadInbox`（受信トレイ）・`loadOutbox`（送信トレイ）の3か所でそれぞれ取得
+- 全て `setReadCounts(prev => ({ ...prev, ...rc }))` のマージ方式（`setReadCounts(rc)` の全置換禁止）
+- カード開封時: `setReadCounts(prev => ({ ...prev, [msg.id]: (prev[msg.id] || 0) + 1 }))` でインクリメント
+
+#### inboxRecipients の管理
+- お知らせの受信者リストは `board_message_recipients` テーブルから取得
+- `loadOutbox` で送信者側から取得
+- 受信トレイ詳細を開いたとき `setInboxRecipients(prev => ({ ...prev, [inboxDetailId]: allIds }))` で格納
+- `channelMemberIds` / `chMembers` を参照する全箇所で channel_id が null の場合は `inboxRecipients[msg.id]` を使うこと
+
+#### スタッキングコンテキスト
+- ヘッダーは `position: fixed; zIndex: 100` → 内部子要素の zIndex は root context では 100 相当にしかならない
+- ドロップダウン系は必ず `ReactDOM.createPortal(…, document.body)` + `position: fixed; zIndex: 9999` で実装すること
+
+### 🔜 次回タスク（2026-06-15時点）
+- 残業申請フォーム（パート用）← 最優先
+- 忘れん坊通知①②③（send-push Edge Function は完成済み・呼び出し側を実装）
+- タブ・機能の表示権限管理画面
+- UI/UX改善（コードレビュー高優先項目）
+
+---
+
 ## Project Overview
 
 Expense management application built with React/TypeScript frontend and Supabase backend.
