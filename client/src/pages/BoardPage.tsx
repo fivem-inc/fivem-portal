@@ -391,6 +391,8 @@ const BoardPage: React.FC = () => {
       if (e.state?.boardInternal !== true) return;
       // まだ戻るべき内部状態があれば処理してセンチネルを再push
       if (threadMsgId) { setThreadMsgId(null); window.history.pushState({ boardInternal: true }, ''); return; }
+      // コメント欄が開いていれば先に閉じる
+      if (Object.values(inboxCommentOpen).some(Boolean)) { setInboxCommentOpen({}); window.history.pushState({ boardInternal: true }, ''); return; }
       if (inboxDetailId) { setInboxDetailId(null); window.history.pushState({ boardInternal: true }, ''); return; }
       if (outboxDetailId) { setOutboxDetailId(null); window.history.pushState({ boardInternal: true }, ''); return; }
       if (selectedChannelId && !showSidebar) { setShowSidebar(true); setSelectedChannelId(null); window.history.pushState({ boardInternal: true }, ''); return; }
@@ -399,7 +401,7 @@ const BoardPage: React.FC = () => {
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
-  }, [view, showSidebar, selectedChannelId, inboxDetailId, outboxDetailId, threadMsgId]);
+  }, [view, showSidebar, selectedChannelId, inboxDetailId, outboxDetailId, threadMsgId, inboxCommentOpen]);
 
   // メッセージ全文検索（300msデバウンス）
   useEffect(() => {
@@ -1936,9 +1938,11 @@ const BoardPage: React.FC = () => {
                     }
                     setInboxCommentOpen(prev => ({ ...prev, [inboxDetail.id]: !isOpen }));
                   }}
-                  style={{ width: '100%', padding: '8px 14px', background: isDark ? '#2d2d3e' : '#f3f4f6', border: `1px solid ${border}`, borderRadius: 8, cursor: 'pointer', color: textColor, fontSize: 13, fontWeight: 600, textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  style={{ width: '100%', padding: '10px 14px', background: isDark ? '#2d2d3e' : '#f3f4f6', border: `1px solid ${border}`, borderRadius: 8, cursor: 'pointer', color: textColor, fontSize: 13, fontWeight: 600, textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: 44 }}>
                   <span>💬 コメント</span>
-                  <span style={{ fontSize: 12, color: subColor }}>{inboxCommentOpen[inboxDetail.id] ? '▲ 閉じる' : '▼ 開く'}</span>
+                  <span style={{ fontSize: 13, color: inboxCommentOpen[inboxDetail.id] ? '#ef4444' : '#3b82f6', fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: inboxCommentOpen[inboxDetail.id] ? (isDark ? '#3f1a1a' : '#fee2e2') : (isDark ? '#1a2a3f' : '#dbeafe') }}>
+                    {inboxCommentOpen[inboxDetail.id] ? '✕ 閉じる' : '▼ 開く'}
+                  </span>
                 </button>
                 {inboxCommentOpen[inboxDetail.id] && (
                   <div style={{ marginTop: 8, padding: '10px 12px', background: cardBg, border: `1px solid ${border}`, borderRadius: 8 }}>
