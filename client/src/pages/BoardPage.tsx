@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useNavigate, useBlocker } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { insertNotification } from '../lib/notifications';
 import { useAuth } from '../hooks/useAuth';
@@ -381,37 +381,41 @@ const BoardPage: React.FC = () => {
     return () => window.removeEventListener('board-reset', resetToTop);
   }, [resetToTop]);
 
-  // スマホ戻るボタン対応：useBlocker方式（React Router v7 推奨、履歴を汚染しない）
-  const hasDepthRef = useRef(false);
+  // スマホ戻るボタン対応：replaceState方式（履歴を汚染しない・ログアウト安全）
+  // mount時：現在の/boardエントリにフラグを付ける（新エントリは作らない）
   useEffect(() => {
-    hasDepthRef.current = !!(
-      threadMsgId
-      || Object.values(inboxCommentOpen).some(Boolean)
-      || inboxDetailId
-      || outboxDetailId
-      || (selectedChannelId && !showSidebar)
-      || view !== 'inbox'
-    );
+    window.history.replaceState({ ...window.history.state, boardInternal: true }, '');
+  }, []);
+
+  // 最新の内部状態を ref で保持（stale closure 防止）
+  const boardStateRef = useRef({ view, showSidebar, selectedChannelId, inboxDetailId, outboxDetailId, threadMsgId, inboxCommentOpen });
+  useEffect(() => {
+    boardStateRef.current = { view, showSidebar, selectedChannelId, inboxDetailId, outboxDetailId, threadMsgId, inboxCommentOpen };
   });
 
-  const blocker = useBlocker(
-    useCallback(({ currentLocation }: { currentLocation: { pathname: string } }) =>
-      currentLocation.pathname === '/board' && hasDepthRef.current,
-    [])
-  );
-
   useEffect(() => {
-    if (blocker.state !== 'blocked') return;
-    // 内部状態を1段階戻してブロックをリセット（ページには留まる）
-    if (threadMsgId) { setThreadMsgId(null); blocker.reset(); return; }
-    if (Object.values(inboxCommentOpen).some(Boolean)) { setInboxCommentOpen({}); blocker.reset(); return; }
-    if (inboxDetailId) { setInboxDetailId(null); blocker.reset(); return; }
-    if (outboxDetailId) { setOutboxDetailId(null); blocker.reset(); return; }
-    if (selectedChannelId && !showSidebar) { setShowSidebar(true); setSelectedChannelId(null); blocker.reset(); return; }
-    if (view !== 'inbox') { setView('inbox'); blocker.reset(); return; }
-    // 深さなし（hasDepthRef がズレた場合の安全網）
-    blocker.proceed?.();
-  }, [blocker, threadMsgId, inboxCommentOpen, inboxDetailId, outboxDetailId, selectedChannelId, showSidebar, view]);
+    const onPopState = (e: PopStateEvent) => {
+      if (e.state?.boardInternal !== true) return; // board以外のエントリは無視
+      const s = boardStateRef.current;
+      const hasDepth = s.threadMsgId
+        || Object.values(s.inboxCommentOpen).some(Boolean)
+        || s.inboxDetailId
+        || s.outboxDetailId
+        || (s.selectedChannelId && !s.showSidebar)
+        || s.view !== 'inbox';
+      if (!hasDepth) return; // ベース状態 → そのまま前ページへ離脱
+      // 深さあり → 合成エントリを追加してUIを1段階戻す
+      window.history.pushState({ boardInternal: true }, '');
+      if (s.threadMsgId) { setThreadMsgId(null); return; }
+      if (Object.values(s.inboxCommentOpen).some(Boolean)) { setInboxCommentOpen({}); return; }
+      if (s.inboxDetailId) { setInboxDetailId(null); return; }
+      if (s.outboxDetailId) { setOutboxDetailId(null); return; }
+      if (s.selectedChannelId && !s.showSidebar) { setShowSidebar(true); setSelectedChannelId(null); return; }
+      if (s.view !== 'inbox') { setView('inbox'); return; }
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []); // 依存配列なし：refで最新値を参照するため再登録不要
 
   // メッセージ全文検索（300msデバウンス）
   useEffect(() => {
