@@ -137,7 +137,7 @@ const BoardPage: React.FC = () => {
 
   // 送信トレイ
   const [outboxMessages,   setOutboxMessages]   = useState<BoardMessage[]>([]);
-  const [outboxTab,        setOutboxTab]        = useState<'sent' | 'draft'>('sent');
+  const [outboxTab,        setOutboxTab]        = useState<'sent' | 'scheduled' | 'draft'>('sent');
   const [outboxDetailId,   setOutboxDetailId]   = useState<string | null>(null);
   const [showAllOutboxRecipients, setShowAllOutboxRecipients] = useState(false);
 
@@ -873,10 +873,11 @@ const BoardPage: React.FC = () => {
   const sendNotice = async () => {
     if (!user || composeRecipientIds.length === 0 || !composeBody.trim()) return;
     setSending(true);
+    const isScheduled = !!composeScheduledAt;
     const insertData: Record<string, unknown> = {
       user_id: user.id,
       body: composeBody.trim(),
-      status: 'sent',
+      status: isScheduled ? 'scheduled' : 'sent',
     };
     if (composeSubject.trim())         insertData.subject         = composeSubject.trim();
     if (composeDeadlineType)           { insertData.deadline_type = composeDeadlineType; insertData.requires_confirmation = true; }
@@ -891,12 +892,14 @@ const BoardPage: React.FC = () => {
       const recs = composeRecipientIds.map(uid => ({ message_id: data.id, user_id: uid }));
       await supabase.from('board_message_recipients').insert(recs);
 
-      // 受信者に通知
-      const senderName = profileName || '誰か';
-      const preview = (composeSubject.trim() || composeBody.trim()).slice(0, 40);
-      await Promise.all(composeRecipientIds.map(uid =>
-        insertNotification(uid, `${senderName}からお知らせが届きました`, preview, 'board')
-      ));
+      // 予約送信の場合は通知しない（Edge Functionが予約時刻に送信）
+      if (!isScheduled) {
+        const senderName = profileName || '誰か';
+        const preview = (composeSubject.trim() || composeBody.trim()).slice(0, 40);
+        await Promise.all(composeRecipientIds.map(uid =>
+          insertNotification(uid, `${senderName}からお知らせが届きました`, preview, 'board')
+        ));
+      }
 
       resetCompose();
       await loadOutbox();
@@ -2240,20 +2243,20 @@ const BoardPage: React.FC = () => {
         <>
           <div style={{ paddingTop: 52, flexShrink: 0 }}>
             <div style={{ display: 'flex', borderBottom: `1px solid ${border}`, background: cardBg }}>
-              {(['sent', 'draft'] as const).map(tab => (
+              {([['sent', '送信済み'], ['scheduled', '📅 予約済み'], ['draft', '下書き']] as const).map(([tab, label]) => (
                 <button key={tab} type="button" onClick={() => setOutboxTab(tab)}
-                  style={{ flex: 1, padding: '10px 0', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: outboxTab === tab ? 700 : 400, color: outboxTab === tab ? '#007bff' : subColor, borderBottom: outboxTab === tab ? '2px solid #007bff' : '2px solid transparent' }}>
-                  {tab === 'sent' ? '送信済み' : '下書き'}
+                  style={{ flex: 1, padding: '10px 0', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: outboxTab === tab ? 700 : 400, color: outboxTab === tab ? '#007bff' : subColor, borderBottom: outboxTab === tab ? '2px solid #007bff' : '2px solid transparent' }}>
+                  {label}
                 </button>
               ))}
             </div>
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px' }}>
-            {outboxMessages.filter(m => outboxTab === 'sent' ? m.status !== 'draft' : m.status === 'draft').length === 0 ? (
+            {outboxMessages.filter(m => outboxTab === 'sent' ? (m.status !== 'draft' && m.status !== 'scheduled') : m.status === outboxTab).length === 0 ? (
               <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>
-                {outboxTab === 'sent' ? '送信済みのお知らせはありません' : '下書きはありません'}
+                {outboxTab === 'sent' ? '送信済みのお知らせはありません' : outboxTab === 'scheduled' ? '予約済みのお知らせはありません' : '下書きはありません'}
               </div>
-            ) : outboxMessages.filter(m => outboxTab === 'sent' ? m.status !== 'draft' : m.status === 'draft').map(msg => {
+            ) : outboxMessages.filter(m => outboxTab === 'sent' ? (m.status !== 'draft' && m.status !== 'scheduled') : m.status === outboxTab).map(msg => {
               const recipientIds = inboxRecipients[msg.id] || [];
               const recipientNames = recipientIds.slice(0, 3).map(uid => allProfiles.find(p => p.id === uid)?.name || '不明');
               return (
