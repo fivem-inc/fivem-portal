@@ -92,7 +92,7 @@ const DEADLINE_TYPES = [
 // ────────────────────────────────────────────────────────────────
 
 const BoardPage: React.FC = () => {
-  const { user, isAdmin, profileName } = useAuth();
+  const { user, isAdmin, profileName, roleTitle } = useAuth();
   const isDark = useDarkMode();
   const navigate = useNavigate();
 
@@ -113,6 +113,7 @@ const BoardPage: React.FC = () => {
   const [readCounts,  setReadCounts]  = useState<Record<string, number>>({});
   const [allProfiles, setAllProfiles] = useState<SimpleProfile[]>([]);
   const [dmDefaultPerms, setDmDefaultPerms] = useState<SendPermissions | null>(null);
+  const [noticeSendRoles, setNoticeSendRoles] = useState<string[]>([]); // 空=全員OK
 
   const [view,               setView]               = useState<View>('inbox');
   const [showSidebar,        setShowSidebar]         = useState(true);
@@ -237,7 +238,7 @@ const BoardPage: React.FC = () => {
       setChannels([]); setMessages([]); setLoadingData(false); return;
     }
 
-    const [chRes, memRes, msgRes, lsRes, profRes, settingsRes, dmSettingsRes] = await Promise.all([
+    const [chRes, memRes, msgRes, lsRes, profRes, settingsRes, dmSettingsRes, noticeSendRes] = await Promise.all([
       supabase.from('board_channels').select('id, type, name, created_by, created_at, send_permissions, show_read_detail').in('id', cids),
       supabase.from('board_channel_members').select('channel_id, user_id').in('channel_id', cids),
       supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, answer_prompt, answer_location, answer_link, broadcast_recipients').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
@@ -245,8 +246,10 @@ const BoardPage: React.FC = () => {
       supabase.from('profiles').select('id, name, role_title, employment_type').eq('is_active', true).order('name'),
       supabase.from('master_options').select('value').eq('category', 'board_show_read_detail').limit(1),
       supabase.from('app_settings').select('value').eq('key', 'dm_default_send_permissions').maybeSingle(),
+      supabase.from('app_settings').select('value').eq('key', 'board_notice_send_roles').maybeSingle(),
     ]);
     if (dmSettingsRes.data?.value) setDmDefaultPerms(dmSettingsRes.data.value as SendPermissions);
+    if (noticeSendRes.data?.value) setNoticeSendRoles(noticeSendRes.data.value as string[]);
 
     setChannels((chRes.data || []) as Channel[]);
     setMembers((memRes.data || []).map((m: any) => ({ channel_id: m.channel_id, user_id: m.user_id, profile: null })));
@@ -2572,8 +2575,10 @@ const BoardPage: React.FC = () => {
             <div style={{ display: 'flex', gap: 6 }}>
               <button type="button" onClick={() => { setShowSearch(s => !s); setSearchText(''); setSearchResults([]); if (view === 'search') setView('inbox'); }}
                 style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '4px 8px', lineHeight: 1 }}>🔍</button>
-              <button type="button" onClick={() => { resetCompose(); setView('compose'); setShowSidebar(false); }}
-                style={{ background: '#007bff', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 13, padding: '5px 12px', fontWeight: 'bold' }}>＋送信</button>
+              {(isAdmin || noticeSendRoles.length === 0 || noticeSendRoles.includes(roleTitle)) && (
+                <button type="button" onClick={() => { resetCompose(); setView('compose'); setShowSidebar(false); }}
+                  style={{ background: '#007bff', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 13, padding: '5px 12px', fontWeight: 'bold' }}>＋送信</button>
+              )}
               <button type="button" onClick={() => navigate('/notification-settings')}
                 style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px' }}>通知設定</button>
             </div>

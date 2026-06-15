@@ -45,6 +45,12 @@ const BoardSettingsTab: React.FC = () => {
   const [editingDm, setEditingDm] = useState(false);
   const [pendingDmPerms, setPendingDmPerms] = useState<SendPermissions>({ employment_types: [], role_titles: [] });
 
+  // お知らせ送信権限（役職）
+  const NOTICE_SEND_KEY = 'board_notice_send_roles';
+  const [noticeSendRoles, setNoticeSendRoles] = useState<string[]>([]); // 空=全員OK
+  const [editingNoticeSend, setEditingNoticeSend] = useState(false);
+  const [pendingNoticeSendRoles, setPendingNoticeSendRoles] = useState<string[]>([]);
+
   // グループチャンネル作成
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newChannelName, setNewChannelName] = useState('');
@@ -62,12 +68,13 @@ const BoardSettingsTab: React.FC = () => {
 
   useEffect(() => {
     (async () => {
-      const [chRes, profRes, memRes, dmSettingsRes, readDetailRes] = await Promise.all([
+      const [chRes, profRes, memRes, dmSettingsRes, readDetailRes, noticeSendRes] = await Promise.all([
         supabase.from('board_channels').select('id, name, type, send_permissions, show_read_detail').order('type').order('created_at'),
         supabase.from('profiles').select('id, name, employment_type, role_title').eq('is_active', true),
         supabase.from('board_channel_members').select('channel_id, user_id'),
         supabase.from('app_settings').select('value').eq('key', DM_SETTINGS_KEY).maybeSingle(),
         supabase.from('master_options').select('value').eq('category', 'board_show_read_detail').limit(1),
+        supabase.from('app_settings').select('value').eq('key', 'board_notice_send_roles').maybeSingle(),
       ]);
       const profiles: Profile[] = profRes.data || [];
       setAllProfiles(profiles);
@@ -89,6 +96,9 @@ const BoardSettingsTab: React.FC = () => {
       }
       if (readDetailRes.data && readDetailRes.data.length > 0) {
         setShowReadDetail(readDetailRes.data[0].value !== 'false');
+      }
+      if (noticeSendRes.data?.value) {
+        setNoticeSendRoles(noticeSendRes.data.value as string[]);
       }
 
       const ets = [...new Set(profiles.map((p: Profile) => p.employment_type).filter(Boolean))] as string[];
@@ -347,6 +357,45 @@ const BoardSettingsTab: React.FC = () => {
         }} style={{ padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 'bold', background: showReadDetail ? '#22c55e' : '#6c757d', color: '#fff', flexShrink: 0 }}>
           {showReadDetail ? 'ON' : 'OFF'}
         </button>
+      </div>
+
+      {/* ── お知らせ送信権限（役職） ── */}
+      <div style={{ marginBottom: 20, padding: '12px 14px', background: rowBg, borderRadius: 8, border: `1px solid ${border}` }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 'bold', color: text }}>✉️ お知らせ送信権限</div>
+            <div style={{ fontSize: 12, color: sub, marginTop: 2 }}>
+              {noticeSendRoles.length === 0 ? '全員が+送信ボタンを使えます' : `${noticeSendRoles.join('・')} のみ送信可`}
+            </div>
+          </div>
+          <button type="button" onClick={() => { setEditingNoticeSend(v => !v); setPendingNoticeSendRoles([...noticeSendRoles]); }}
+            style={{ padding: '5px 12px', borderRadius: 6, border: `1px solid ${border}`, background: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 12, fontWeight: 'bold', flexShrink: 0 }}>
+            {editingNoticeSend ? 'キャンセル' : '設定'}
+          </button>
+        </div>
+        {editingNoticeSend && (
+          <div>
+            <div style={{ fontSize: 12, color: sub, marginBottom: 6 }}>許可する役職（未選択=全員OK）：</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+              {roleTitles.map(rt => {
+                const on = pendingNoticeSendRoles.includes(rt);
+                return (
+                  <button key={rt} type="button" onClick={() => setPendingNoticeSendRoles(prev => on ? prev.filter(r => r !== rt) : [...prev, rt])}
+                    style={{ padding: '4px 12px', borderRadius: 20, border: `1.5px solid ${on ? '#007bff' : border}`, background: on ? '#007bff' : 'none', color: on ? '#fff' : text, cursor: 'pointer', fontSize: 12, fontWeight: on ? 700 : 400 }}>
+                    {rt}
+                  </button>
+                );
+              })}
+            </div>
+            <button type="button" onClick={async () => {
+              await supabase.from('app_settings').upsert({ key: NOTICE_SEND_KEY, value: pendingNoticeSendRoles }, { onConflict: 'key' });
+              setNoticeSendRoles([...pendingNoticeSendRoles]);
+              setEditingNoticeSend(false);
+            }} style={{ padding: '6px 18px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 'bold' }}>
+              保存
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ── グループチャンネル ── */}
