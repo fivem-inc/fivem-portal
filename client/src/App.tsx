@@ -169,9 +169,9 @@ const AvatarMenu: React.FC<{ userId: string; profileName: string | null; email: 
   );
 };
 
-const useBoardUnread = (userId: string | undefined) => {
+const useBoardUnread = (userId: string | undefined, pathname: string) => {
   const [count, setCount] = useState(0);
-  const fetch = useCallback(async () => {
+  const fetchCount = useCallback(async () => {
     if (!userId) return;
     const { data: memberRows } = await supabase.from('board_channel_members').select('channel_id').eq('user_id', userId);
     if (!memberRows || memberRows.length === 0) { setCount(0); return; }
@@ -183,7 +183,13 @@ const useBoardUnread = (userId: string | undefined) => {
     const readSet = new Set((reads || []).map((r: any) => r.message_id));
     setCount(msgIds.filter(id => !readSet.has(id)).length);
   }, [userId]);
-  useEffect(() => { fetch(); const t = setInterval(fetch, 30000); return () => clearInterval(t); }, [fetch]);
+  // /board から離れたタイミングで即時リフェッチ
+  const prevPath = useRef(pathname);
+  useEffect(() => {
+    if (prevPath.current === '/board' && pathname !== '/board') fetchCount();
+    prevPath.current = pathname;
+  }, [pathname, fetchCount]);
+  useEffect(() => { fetchCount(); const t = setInterval(fetchCount, 30000); return () => clearInterval(t); }, [fetchCount]);
   return count;
 };
 
@@ -204,7 +210,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     window.addEventListener('resize', check);
     return () => window.removeEventListener('resize', check);
   }, []);
-  const boardUnread = useBoardUnread(userId);
+  const boardUnread = useBoardUnread(userId, location.pathname);
 
   const btnStyle = (active: boolean, activeColor = '#007bff') => isMobile ? ({
     width: 44, height: 44, borderRadius: 8, border: 'none', cursor: 'pointer',
@@ -464,6 +470,7 @@ const Dashboard: React.FC = () => {
   } = useAuth();
 
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const { submissions, isLoading, fetchExpenses } = useExpenses(user, isAdmin);
 
   const [expenses, setExpensesState] = useState<Expense[]>([]);
@@ -476,7 +483,7 @@ const Dashboard: React.FC = () => {
   const [encAnswerSuccess, setEncAnswerSuccess] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [leaveSubmitted, setLeaveSubmitted] = useState(false);
-  const boardUnread = useBoardUnread(user?.id);
+  const boardUnread = useBoardUnread(user?.id, pathname);
 
   const setExpenses = useCallback((value: React.SetStateAction<Expense[]>) => {
     setExpensesState(value);
