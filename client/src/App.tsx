@@ -218,16 +218,12 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   const navTo = (path: string) => {
     if (location.pathname === path) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
-      window.dispatchEvent(new CustomEvent('board-reset'));
-    } else if (path === '/board' && location.pathname !== '/board') {
-      // /board への初回遷移は通常 push（戻るボタンで前ページに戻れるように）
-      navigate(path);
-    } else if (location.pathname === '/board' && path !== '/board') {
-      // /board から他タブへは replace（/board を履歴に残さない）
-      navigate(path, { replace: true });
-    } else {
-      navigate(path);
+      if (path === '/board') {
+        window.dispatchEvent(new CustomEvent('board-reset'));
+      }
+      return;
     }
+    navigate(path);
   };
   const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
   useEffect(() => {

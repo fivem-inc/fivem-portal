@@ -381,8 +381,6 @@ const BoardPage: React.FC = () => {
     return () => window.removeEventListener('board-reset', resetToTop);
   }, [resetToTop]);
 
-  // スマホ戻るボタン対応：BoardPage側のpopstate制御は一旦無効化
-  // NavBar側のhistory entry蓄積対策のみで対応する方針
 
   // メッセージ全文検索（300msデバウンス）
   useEffect(() => {
