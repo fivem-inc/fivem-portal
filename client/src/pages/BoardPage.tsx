@@ -381,30 +381,21 @@ const BoardPage: React.FC = () => {
     return () => window.removeEventListener('board-reset', resetToTop);
   }, [resetToTop]);
 
-  // スマホ戻るボタン対応：BoardPage内の遷移を履歴に積む
+  // スマホ戻るボタン対応：センチネル方式（履歴エントリは常に1つだけ維持）
   useEffect(() => {
-    // 内部状態が変わるたびにダミー履歴を積む
-    // チャンネル選択中の !showSidebar のみ履歴に積む（受信トレイ単体での sidebar 非表示は積まない）
-    const hasDetail = view !== 'inbox' || (selectedChannelId && !showSidebar) || inboxDetailId || outboxDetailId || threadMsgId;
-    if (hasDetail) {
-      window.history.pushState({ boardInternal: true }, '');
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, showSidebar, selectedChannelId, inboxDetailId, outboxDetailId, threadMsgId]);
+    window.history.pushState({ boardInternal: true }, '');
+  }, []);
 
   useEffect(() => {
     const onPopState = (e: PopStateEvent) => {
-      if (e.state?.boardInternal !== true) {
-        // 内部履歴でない場合のみ通常の戻る動作（ページ離脱）を許可
-        return;
-      }
-      // 内部履歴 → ページ離脱せずリセット
-      e.preventDefault?.();
-      if (threadMsgId) { setThreadMsgId(null); return; }
-      if (inboxDetailId) { setInboxDetailId(null); return; }
-      if (outboxDetailId) { setOutboxDetailId(null); return; }
-      if (selectedChannelId && !showSidebar) { setShowSidebar(true); setSelectedChannelId(null); return; }
-      if (view !== 'inbox') { setView('inbox'); return; }
+      if (e.state?.boardInternal !== true) return;
+      // まだ戻るべき内部状態があれば処理してセンチネルを再push
+      if (threadMsgId) { setThreadMsgId(null); window.history.pushState({ boardInternal: true }, ''); return; }
+      if (inboxDetailId) { setInboxDetailId(null); window.history.pushState({ boardInternal: true }, ''); return; }
+      if (outboxDetailId) { setOutboxDetailId(null); window.history.pushState({ boardInternal: true }, ''); return; }
+      if (selectedChannelId && !showSidebar) { setShowSidebar(true); setSelectedChannelId(null); window.history.pushState({ boardInternal: true }, ''); return; }
+      if (view !== 'inbox') { setView('inbox'); window.history.pushState({ boardInternal: true }, ''); return; }
+      // ベース状態 → 再pushしない → 次の戻るでページ離脱
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
