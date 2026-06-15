@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useBlocker } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { insertNotification } from '../lib/notifications';
 import { useAuth } from '../hooks/useAuth';
@@ -381,28 +381,37 @@ const BoardPage: React.FC = () => {
     return () => window.removeEventListener('board-reset', resetToTop);
   }, [resetToTop]);
 
-  // スマホ戻るボタン対応：go(1)キャンセル方式（pushStateを使わない）
+  // スマホ戻るボタン対応：useBlocker方式（React Router v7 推奨、履歴を汚染しない）
+  const hasDepthRef = useRef(false);
   useEffect(() => {
-    const onPopState = () => {
-      const hasDepth = threadMsgId
-        || Object.values(inboxCommentOpen).some(Boolean)
-        || inboxDetailId
-        || outboxDetailId
-        || (selectedChannelId && !showSidebar)
-        || view !== 'inbox';
-      if (!hasDepth) return; // ベース状態 → そのままページ離脱
-      // 内部状態あり → 戻る操作をキャンセルしてUIだけ更新
-      window.history.go(1);
-      if (threadMsgId) { setThreadMsgId(null); return; }
-      if (Object.values(inboxCommentOpen).some(Boolean)) { setInboxCommentOpen({}); return; }
-      if (inboxDetailId) { setInboxDetailId(null); return; }
-      if (outboxDetailId) { setOutboxDetailId(null); return; }
-      if (selectedChannelId && !showSidebar) { setShowSidebar(true); setSelectedChannelId(null); return; }
-      if (view !== 'inbox') { setView('inbox'); return; }
-    };
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
-  }, [view, showSidebar, selectedChannelId, inboxDetailId, outboxDetailId, threadMsgId, inboxCommentOpen]);
+    hasDepthRef.current = !!(
+      threadMsgId
+      || Object.values(inboxCommentOpen).some(Boolean)
+      || inboxDetailId
+      || outboxDetailId
+      || (selectedChannelId && !showSidebar)
+      || view !== 'inbox'
+    );
+  });
+
+  const blocker = useBlocker(
+    useCallback(({ currentLocation }: { currentLocation: { pathname: string } }) =>
+      currentLocation.pathname === '/board' && hasDepthRef.current,
+    [])
+  );
+
+  useEffect(() => {
+    if (blocker.state !== 'blocked') return;
+    // 内部状態を1段階戻してブロックをリセット（ページには留まる）
+    if (threadMsgId) { setThreadMsgId(null); blocker.reset(); return; }
+    if (Object.values(inboxCommentOpen).some(Boolean)) { setInboxCommentOpen({}); blocker.reset(); return; }
+    if (inboxDetailId) { setInboxDetailId(null); blocker.reset(); return; }
+    if (outboxDetailId) { setOutboxDetailId(null); blocker.reset(); return; }
+    if (selectedChannelId && !showSidebar) { setShowSidebar(true); setSelectedChannelId(null); blocker.reset(); return; }
+    if (view !== 'inbox') { setView('inbox'); blocker.reset(); return; }
+    // 深さなし（hasDepthRef がズレた場合の安全網）
+    blocker.proceed?.();
+  }, [blocker, threadMsgId, inboxCommentOpen, inboxDetailId, outboxDetailId, selectedChannelId, showSidebar, view]);
 
   // メッセージ全文検索（300msデバウンス）
   useEffect(() => {
