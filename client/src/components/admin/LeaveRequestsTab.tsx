@@ -152,6 +152,8 @@ const LeaveRequestsTab: React.FC = () => {
   const [encCreateDeadline, setEncCreateDeadline] = useState('');
   const [encCreateTargets, setEncCreateTargets] = useState<string[]>([]);
   const [encCreating, setEncCreating] = useState(false);
+  const [showEncConfirm, setShowEncConfirm] = useState(false);
+  const [showAllEncTargets, setShowAllEncTargets] = useState(false);
   const [showEncDetail, setShowEncDetail] = useState<string | null>(null);
   const [encDetailDay, setEncDetailDay] = useState<EncDay | null>(null);
   const [encResponses, setEncResponses] = useState<EncResponse[]>([]);
@@ -428,12 +430,79 @@ const LeaveRequestsTab: React.FC = () => {
                 <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
                   <button onClick={() => { setShowEncCreate(false); setEncCreateDate(''); setEncCreateDeadline(''); setEncCreateTargets([]); }}
                     style={{ flex: 1, padding: '10px 0', background: isDarkMode ? '#495057' : '#e9ecef', color: isDarkMode ? '#fff' : '#333', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 13 }}>キャンセル</button>
-                  <button disabled={!encCreateDate || !encCreateDeadline || encCreateTargets.length === 0 || encCreating}
-                    onClick={async () => {
+                  <button disabled={!encCreateDate || !encCreateDeadline || encCreateTargets.length === 0}
+                    onClick={() => setShowEncConfirm(true)}
+                    style={{ flex: 2, padding: '10px 0', background: (!encCreateDate || !encCreateDeadline || encCreateTargets.length === 0) ? '#6c757d' : '#007bff', color: '#fff', border: 'none', borderRadius: 10, cursor: (!encCreateDate || !encCreateDeadline || encCreateTargets.length === 0) ? 'default' : 'pointer', fontSize: 13, fontWeight: 'bold' }}>
+                    内容を確認して送信
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null;
+
+          const encConfirmModal = showEncConfirm ? (() => {
+            const d = encCreateDate ? new Date(encCreateDate) : null;
+            const dateLabel = d ? `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日` : '';
+            const allTargetNames = encCreateTargets.map(id => activeUsers.find(u => u.id === id)?.name || '').filter(Boolean);
+            return (
+              <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 3000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+                <div style={{ background: isDarkMode ? '#343a40' : '#fff', borderRadius: 16, padding: '20px 20px 24px', width: '100%', maxWidth: 420, maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box' }}>
+                  <p style={{ margin: '0 0 4px', fontSize: 15, fontWeight: 'bold', color: isDarkMode ? '#fff' : '#333', textAlign: 'center' }}>送信内容を確認</p>
+                  <p style={{ margin: '0 0 14px', fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888', textAlign: 'center' }}>以下の内容でベル通知を送信します</p>
+                  <div style={{ background: isDarkMode ? '#2d3136' : '#f8f9fa', borderRadius: 10, padding: '14px 16px', border: `1px solid ${isDarkMode ? '#495057' : '#dee2e6'}`, marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <span style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888', minWidth: 60, flexShrink: 0 }}>対象日</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: isDarkMode ? '#fff' : '#333' }}>{dateLabel || '—'}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <span style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888', minWidth: 60, flexShrink: 0 }}>回答期限</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: '#dc2626' }}>{encCreateDeadline || '—'}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <span style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888', minWidth: 60, flexShrink: 0 }}>通知人数</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: isDarkMode ? '#fff' : '#333' }}>{encCreateTargets.length}人</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <span style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888', minWidth: 60, flexShrink: 0, paddingTop: 2 }}>対象者</span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: allTargetNames.length >= 10 ? 4 : 0 }}>
+                          {(allTargetNames.length >= 10 && !showAllEncTargets
+                            ? allTargetNames.slice(0, 9)
+                            : allTargetNames
+                          ).map((name, i) => (
+                            <span key={i} style={{ fontSize: 12, padding: '2px 8px', background: isDarkMode ? '#2d3a4a' : '#dbeafe', color: isDarkMode ? '#93c5fd' : '#1d4ed8', borderRadius: 12 }}>{name}</span>
+                          ))}
+                          {allTargetNames.length >= 10 && !showAllEncTargets && (
+                            <button onClick={() => setShowAllEncTargets(true)}
+                              style={{ fontSize: 12, padding: '2px 8px', background: 'none', border: `1px dashed ${isDarkMode ? '#3b82f6' : '#93c5fd'}`, color: isDarkMode ? '#93c5fd' : '#3b82f6', borderRadius: 12, cursor: 'pointer' }}>
+                              +{allTargetNames.length - 9}人
+                            </button>
+                          )}
+                        </div>
+                        {allTargetNames.length >= 10 && showAllEncTargets && (
+                          <button onClick={() => setShowAllEncTargets(false)}
+                            style={{ fontSize: 11, background: 'none', border: 'none', color: isDarkMode ? '#93c5fd' : '#3b82f6', cursor: 'pointer', padding: '2px 0', marginTop: 2 }}>
+                            ▲ 閉じる
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{ padding: '10px 12px', background: isDarkMode ? '#1e2a3a' : '#eff6ff', borderRadius: 8, borderLeft: '3px solid #3b82f6' }}>
+                      <p style={{ margin: 0, fontSize: 12, color: isDarkMode ? '#93c5fd' : '#1d4ed8' }}>
+                        📅 有給奨励日の回答をお願いします（{dateLabel}、期限：{encCreateDeadline}）
+                      </p>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button onClick={() => { setShowEncConfirm(false); setShowAllEncTargets(false); }}
+                      style={{ flex: 1, padding: '10px 0', background: isDarkMode ? '#495057' : '#e9ecef', color: isDarkMode ? '#fff' : '#333', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 13 }}>
+                      戻る
+                    </button>
+                    <button disabled={encCreating} onClick={async () => {
                       if (!encCreateDate || !encCreateDeadline || encCreateTargets.length === 0) return;
                       setEncCreating(true);
-                      const d = new Date(encCreateDate);
-                      const fy = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1;
+                      const d2 = new Date(encCreateDate);
+                      const fy = d2.getMonth() >= 3 ? d2.getFullYear() : d2.getFullYear() - 1;
                       const { data: newDay, error } = await supabase
                         .from('paid_leave_encouragement_days')
                         .insert({ fiscal_year: fy, target_date: encCreateDate, deadline: encCreateDeadline, created_by: authUser?.id })
@@ -442,21 +511,23 @@ const LeaveRequestsTab: React.FC = () => {
                       await supabase.from('paid_leave_encouragement_targets').insert(
                         encCreateTargets.map(uid => ({ encouragement_day_id: newDay.id, user_id: uid }))
                       );
-                      const dateLabel = `${d.getMonth()+1}月${d.getDate()}日`;
+                      const dl2 = `${d2.getMonth()+1}月${d2.getDate()}日`;
                       await supabase.from('notifications').insert(
-                        encCreateTargets.map(uid => ({ user_id: uid, message: `📅 有給奨励日の回答をお願いします（${dateLabel}、期限：${encCreateDeadline}）` }))
+                        encCreateTargets.map(uid => ({ user_id: uid, message: `📅 有給奨励日の回答をお願いします（${dl2}、期限：${encCreateDeadline}）` }))
                       );
                       setEncCreating(false);
+                      setShowEncConfirm(false); setShowAllEncTargets(false);
                       setShowEncCreate(false); setEncCreateDate(''); setEncCreateDeadline(''); setEncCreateTargets([]);
                       fetchEncDays();
                     }}
-                    style={{ flex: 2, padding: '10px 0', background: encCreating ? '#6c757d' : '#007bff', color: '#fff', border: 'none', borderRadius: 10, cursor: encCreating ? 'default' : 'pointer', fontSize: 13, fontWeight: 'bold' }}>
-                    {encCreating ? '作成中...' : '作成してベル通知を送信'}
-                  </button>
+                      style={{ flex: 2, padding: '10px 0', background: encCreating ? '#6c757d' : '#007bff', color: '#fff', border: 'none', borderRadius: 10, cursor: encCreating ? 'default' : 'pointer', fontSize: 13, fontWeight: 'bold' }}>
+                      {encCreating ? '送信中...' : '送信する'}
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          ) : null;
+            );
+          })() : null;
 
           const encDetailModal = showEncDetail ? (
             <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
@@ -779,6 +850,7 @@ const LeaveRequestsTab: React.FC = () => {
           return (
             <div>
               {encCreateModal}
+              {encConfirmModal}
               {encDetailModal}
               <h3 style={{ textAlign: 'center', marginBottom: 8, color: isDarkMode ? '#fff' : '#000' }}>🌿 休暇申請一覧</h3>
               <p style={{ textAlign: 'center', fontSize: 13, color: isDarkMode ? '#adb5bd' : '#666', marginBottom: 16 }}>

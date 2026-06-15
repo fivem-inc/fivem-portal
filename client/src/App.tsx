@@ -179,8 +179,12 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   const navigate = useNavigate();
   const location = useLocation();
   const navTo = (path: string) => {
-    if (location.pathname === path) window.scrollTo({ top: 0, behavior: 'smooth' });
-    else navigate(path);
+    if (location.pathname === path) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      window.dispatchEvent(new CustomEvent('board-reset'));
+    } else {
+      navigate(path);
+    }
   };
   const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
   useEffect(() => {

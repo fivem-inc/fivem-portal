@@ -53,7 +53,7 @@ interface BoardMessage {
   profile: { name: string | null } | null;
 }
 
-type View = 'inbox' | 'outbox' | 'compose' | 'channel';
+type View = 'inbox' | 'outbox' | 'compose' | 'channel' | 'search';
 
 interface SimpleProfile {
   id: string;
@@ -123,9 +123,13 @@ const BoardPage: React.FC = () => {
 
   // 受信ボックス
   const [inboxMessages,    setInboxMessages]    = useState<BoardMessage[]>([]);
-  const [inboxFilter,      setInboxFilter]      = useState<'all' | 'pending' | 'read' | 'answer' | 'submit' | 'approve'>('all');
+  const [inboxFilter,      setInboxFilter]      = useState<'all' | 'pending' | 'read' | 'answer' | 'submit' | 'approve' | 'archived'>('all');
   const [inboxDetailId,    setInboxDetailId]    = useState<string | null>(null);
-  const [inboxRecipients,  setInboxRecipients]  = useState<Record<string, string[]>>({}); // message_id -> user_ids
+  const [inboxRecipients,  setInboxRecipients]  = useState<Record<string, string[]>>({});
+  const [archivedMessages, setArchivedMessages] = useState<BoardMessage[]>([]);
+  const [inboxCommentOpen, setInboxCommentOpen] = useState<Record<string, boolean>>({});
+  const [inboxComments,    setInboxComments]    = useState<Record<string, BoardMessage[]>>({});
+  const [inboxCommentBody, setInboxCommentBody] = useState<Record<string, string>>({}); // message_id -> user_ids
 
   // 送信トレイ
   const [outboxMessages,   setOutboxMessages]   = useState<BoardMessage[]>([]);
@@ -143,12 +147,18 @@ const BoardPage: React.FC = () => {
   const [composeDeadlineType,  setComposeDeadlineType]  = useState('');
   const [composeDeadline,      setComposeDeadline]      = useState('');
   const [composeScheduledAt,   setComposeScheduledAt]   = useState('');
-  const [composeOptions,       setComposeOptions]       = useState(false);
-  const [_composeDraftId,      setComposeDraftId]       = useState<string | null>(null);
-  const [composeQuery,         setComposeQuery]         = useState('');
+  const [composeOptions,        setComposeOptions]        = useState(true);
+  const [_composeDraftId,       setComposeDraftId]        = useState<string | null>(null);
+  const [composeQuery,          setComposeQuery]          = useState('');
+  const [composeAnswerPrompt,   setComposeAnswerPrompt]   = useState('');
+  const [composeAnswerLocation, setComposeAnswerLocation] = useState('');
+  const [composeAnswerLink,     setComposeAnswerLink]     = useState('');
   const [showComposeSendConfirm, setShowComposeSendConfirm] = useState(false);
+  const [showAllRecipients, setShowAllRecipients] = useState(false);
   const [showSearch,  setShowSearch]  = useState(false);
   const [searchText,  setSearchText]  = useState('');
+  const [searchResults, setSearchResults] = useState<BoardMessage[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
 
   // Compose
   const [newBody,              setNewBody]              = useState('');
@@ -269,13 +279,132 @@ const BoardPage: React.FC = () => {
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
+  // 連絡板ボタン再タップ → サイドバーTOPにリセット
+  const resetToTop = useCallback(() => {
+    setView('inbox');
+    setShowSidebar(true);
+    setSelectedChannelId(null);
+    setInboxDetailId(null);
+    setOutboxDetailId(null);
+    setThreadMsgId(null);
+    setShowSearch(false);
+    setSearchText('');
+    setSearchResults([]);
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener('board-reset', resetToTop);
+    return () => window.removeEventListener('board-reset', resetToTop);
+  }, [resetToTop]);
+
+  // スマホ戻るボタン対応：BoardPage内の遷移を履歴に積む
+  useEffect(() => {
+    // 内部状態が変わるたびにダミー履歴を積む
+    const hasDetail = view !== 'inbox' || !showSidebar || selectedChannelId || inboxDetailId || outboxDetailId || threadMsgId;
+    if (hasDetail) {
+      window.history.pushState({ boardInternal: true }, '');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, showSidebar, selectedChannelId, inboxDetailId, outboxDetailId, threadMsgId]);
+
+  useEffect(() => {
+    const onPopState = (e: PopStateEvent) => {
+      if (e.state?.boardInternal !== true) {
+        // 内部履歴でない場合のみ通常の戻る動作（ページ離脱）を許可
+        return;
+      }
+      // 内部履歴 → ページ離脱せずリセット
+      e.preventDefault?.();
+      if (threadMsgId) { setThreadMsgId(null); return; }
+      if (inboxDetailId) { setInboxDetailId(null); return; }
+      if (outboxDetailId) { setOutboxDetailId(null); return; }
+      if (selectedChannelId && !showSidebar) { setShowSidebar(true); setSelectedChannelId(null); return; }
+      if (!showSidebar) { setShowSidebar(true); return; }
+      if (view !== 'inbox') { setView('inbox'); return; }
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [view, showSidebar, selectedChannelId, inboxDetailId, outboxDetailId, threadMsgId]);
+
+  // メッセージ全文検索（300msデバウンス）
+  useEffect(() => {
+    if (!searchText.trim() || searchText.trim().length < 2) {
+      setSearchResults([]);
+      if (view === 'search') setView('inbox');
+      return;
+    }
+    const timer = setTimeout(async () => {
+      if (!user) return;
+      setSearchLoading(true);
+      setView('search');
+      setShowSidebar(false);
+
+      // 自分がメンバーのチャンネルID
+      const { data: myMem } = await supabase
+        .from('board_channel_members')
+        .select('channel_id')
+        .eq('user_id', user.id);
+      const cids = (myMem || []).map((m: any) => m.channel_id);
+
+      // 受信ボックスメッセージID
+      const { data: recData } = await supabase
+        .from('board_message_recipients')
+        .select('message_id')
+        .eq('user_id', user.id);
+      const inboxIds = (recData || []).map((r: any) => r.message_id);
+
+      const q = `%${searchText.trim()}%`;
+
+      // チャンネルメッセージ検索
+      const channelQuery = cids.length > 0
+        ? supabase
+            .from('board_messages')
+            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+            .in('channel_id', cids)
+            .or(`body.ilike.${q},subject.ilike.${q}`)
+            .order('created_at', { ascending: false })
+            .limit(30)
+        : Promise.resolve({ data: [] });
+
+      // 受信ボックスメッセージ検索
+      const inboxQuery = inboxIds.length > 0
+        ? supabase
+            .from('board_messages')
+            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+            .in('id', inboxIds)
+            .or(`body.ilike.${q},subject.ilike.${q}`)
+            .order('created_at', { ascending: false })
+            .limit(30)
+        : Promise.resolve({ data: [] });
+
+      const [chRes, inRes] = await Promise.all([channelQuery, inboxQuery]);
+
+      // 重複排除してマージ
+      const seen = new Set<string>();
+      const merged: BoardMessage[] = [];
+      for (const m of [...((chRes.data || []) as any[]), ...((inRes.data || []) as any[])]) {
+        if (!seen.has(m.id)) {
+          seen.add(m.id);
+          merged.push({ ...m, broadcast_recipients: null, profile: null });
+        }
+      }
+      merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+      setSearchResults(merged.slice(0, 50));
+      setSearchLoading(false);
+    }, 300);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchText, user]);
+
   const loadInbox = useCallback(async () => {
     if (!user) return;
-    // 自分が受信者のメッセージを取得
+    // 自分が受信者のメッセージを取得（archived=falseのみ）
     const { data: recData } = await supabase
       .from('board_message_recipients')
       .select('message_id')
-      .eq('user_id', user.id);
+      .eq('user_id', user.id)
+      .eq('archived', false);
     const msgIds = (recData || []).map((r: any) => r.message_id);
     if (msgIds.length === 0) { setInboxMessages([]); return; }
 
@@ -303,6 +432,40 @@ const BoardPage: React.FC = () => {
       setConfirmations(prev => ({ ...prev, ...confMap }));
     }
   }, [user]);
+
+  const loadArchived = useCallback(async () => {
+    if (!user) return;
+    const { data: recData } = await supabase
+      .from('board_message_recipients')
+      .select('message_id')
+      .eq('user_id', user.id)
+      .eq('archived', true);
+    const msgIds = (recData || []).map((r: any) => r.message_id);
+    if (msgIds.length === 0) { setArchivedMessages([]); return; }
+    const { data: msgData } = await supabase
+      .from('board_messages')
+      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+      .in('id', msgIds)
+      .is('parent_id', null)
+      .order('created_at', { ascending: false });
+    setArchivedMessages((msgData || []).map((m: any) => ({ ...m, broadcast_recipients: null, profile: null })));
+  }, [user]);
+
+  const archiveMessage = async (msgId: string, archive: boolean) => {
+    if (!user) return;
+    await supabase
+      .from('board_message_recipients')
+      .update({ archived: archive })
+      .eq('message_id', msgId)
+      .eq('user_id', user.id);
+    if (archive) {
+      setInboxMessages(prev => prev.filter(m => m.id !== msgId));
+      if (inboxDetailId === msgId) setInboxDetailId(null);
+    } else {
+      setArchivedMessages(prev => prev.filter(m => m.id !== msgId));
+      await loadInbox();
+    }
+  };
 
   const loadOutbox = useCallback(async () => {
     if (!user) return;
@@ -332,6 +495,7 @@ const BoardPage: React.FC = () => {
   }, [user]);
 
   useEffect(() => { loadInbox(); }, [loadInbox]);
+  useEffect(() => { loadArchived(); }, [loadArchived]);
   useEffect(() => { loadOutbox(); }, [loadOutbox]);
 
   useEffect(() => {
@@ -617,7 +781,8 @@ const BoardPage: React.FC = () => {
   const resetCompose = () => {
     setComposeSubject(''); setComposeBody(''); setComposeRecipientIds([]);
     setComposeDeadlineType(''); setComposeDeadline(''); setComposeScheduledAt('');
-    setComposeOptions(false); setComposeDraftId(null); setComposeQuery('');
+    setComposeOptions(true); setComposeDraftId(null); setComposeQuery('');
+    setComposeAnswerPrompt(''); setComposeAnswerLocation(''); setComposeAnswerLink('');
   };
 
   const sendNotice = async () => {
@@ -628,10 +793,13 @@ const BoardPage: React.FC = () => {
       body: composeBody.trim(),
       status: 'sent',
     };
-    if (composeSubject.trim())    insertData.subject      = composeSubject.trim();
-    if (composeDeadlineType)      { insertData.deadline_type = composeDeadlineType; insertData.requires_confirmation = true; }
-    if (composeDeadline)          insertData.deadline     = composeDeadline;
-    if (composeScheduledAt)       insertData.scheduled_at = new Date(composeScheduledAt).toISOString();
+    if (composeSubject.trim())         insertData.subject         = composeSubject.trim();
+    if (composeDeadlineType)           { insertData.deadline_type = composeDeadlineType; insertData.requires_confirmation = true; }
+    if (composeDeadline)               insertData.deadline        = composeDeadline;
+    if (composeScheduledAt)            insertData.scheduled_at    = new Date(composeScheduledAt).toISOString();
+    if (composeAnswerPrompt.trim())    insertData.answer_prompt   = composeAnswerPrompt.trim();
+    if (composeAnswerLocation.trim())  insertData.answer_location = composeAnswerLocation.trim();
+    if (composeAnswerLink.trim())      insertData.answer_link     = composeAnswerLink.trim();
 
     const { data, error } = await supabase.from('board_messages').insert(insertData).select('id').single();
     if (!error && data) {
@@ -762,7 +930,7 @@ const BoardPage: React.FC = () => {
               )}
               {msg.answer_location && (
                 <div style={{ display: 'flex', gap: 8, fontSize: 13, color: textColor, marginBottom: msg.answer_link ? 4 : 0 }}>
-                  <span style={{ color: isDark ? '#93c5fd' : '#3b82f6', flexShrink: 0, minWidth: 36, fontSize: 12 }}>場所</span>
+                  <span style={{ color: isDark ? '#93c5fd' : '#3b82f6', flexShrink: 0, minWidth: 36, fontSize: 12 }}>保存先</span>
                   <span>{msg.answer_location}</span>
                 </div>
               )}
@@ -1524,15 +1692,16 @@ const BoardPage: React.FC = () => {
 
   // ── 受信ボックス ────────────────────────────────────────────────
   const INBOX_FILTERS = [
-    { key: 'all',     label: 'すべて' },
-    { key: 'pending', label: '未対応' },
-    { key: 'read',    label: '読了' },
-    { key: 'answer',  label: '回答' },
-    { key: 'submit',  label: '提出' },
-    { key: 'approve', label: '承認' },
+    { key: 'all',      label: 'すべて' },
+    { key: 'pending',  label: '未対応' },
+    { key: 'read',     label: '読了' },
+    { key: 'answer',   label: '回答' },
+    { key: 'submit',   label: '提出' },
+    { key: 'approve',  label: '承認' },
+    { key: 'archived', label: '📦 アーカイブ' },
   ] as const;
 
-  const filteredInbox = inboxMessages.filter(m => {
+  const filteredInbox = inboxFilter === 'archived' ? archivedMessages : inboxMessages.filter(m => {
     if (inboxFilter === 'all') return true;
     if (inboxFilter === 'pending') {
       const confirmed = (confirmations[m.id] || []).some(c => c.user_id === user?.id);
@@ -1541,7 +1710,9 @@ const BoardPage: React.FC = () => {
     return m.deadline_type === inboxFilter;
   });
 
-  const inboxDetail = inboxDetailId ? inboxMessages.find(m => m.id === inboxDetailId) : null;
+  const inboxDetail = inboxDetailId
+    ? (inboxMessages.find(m => m.id === inboxDetailId) || archivedMessages.find(m => m.id === inboxDetailId))
+    : null;
 
   const inboxPanel = (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: bg }}>
@@ -1557,6 +1728,82 @@ const BoardPage: React.FC = () => {
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 14px' }}>
             {renderMsg(inboxDetail)}
+            {/* コメント折りたたみ（comment_enabled=true の場合のみ） */}
+            {inboxDetail.comment_enabled && (
+              <div style={{ marginTop: 16 }}>
+                <button type="button"
+                  onClick={async () => {
+                    const isOpen = !!inboxCommentOpen[inboxDetail.id];
+                    if (!isOpen && !inboxComments[inboxDetail.id]) {
+                      const { data } = await supabase
+                        .from('board_messages')
+                        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+                        .eq('parent_id', inboxDetail.id)
+                        .order('created_at', { ascending: true });
+                      setInboxComments(prev => ({ ...prev, [inboxDetail.id]: (data || []).map((m: any) => ({ ...m, broadcast_recipients: null, profile: null })) }));
+                    }
+                    setInboxCommentOpen(prev => ({ ...prev, [inboxDetail.id]: !isOpen }));
+                  }}
+                  style={{ width: '100%', padding: '8px 14px', background: isDark ? '#2d2d3e' : '#f3f4f6', border: `1px solid ${border}`, borderRadius: 8, cursor: 'pointer', color: textColor, fontSize: 13, fontWeight: 600, textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>💬 コメント</span>
+                  <span style={{ fontSize: 12, color: subColor }}>{inboxCommentOpen[inboxDetail.id] ? '▲ 閉じる' : '▼ 開く'}</span>
+                </button>
+                {inboxCommentOpen[inboxDetail.id] && (
+                  <div style={{ marginTop: 8, padding: '10px 12px', background: cardBg, border: `1px solid ${border}`, borderRadius: 8 }}>
+                    {(inboxComments[inboxDetail.id] || []).length === 0 ? (
+                      <div style={{ fontSize: 13, color: subColor, textAlign: 'center', padding: '8px 0' }}>コメントはまだありません</div>
+                    ) : (
+                      (inboxComments[inboxDetail.id] || []).map(c => {
+                        const cName = allProfiles.find(p => p.id === c.user_id)?.name || '不明';
+                        return (
+                          <div key={c.id} style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                            <div style={{ width: 26, height: 26, borderRadius: '50%', background: '#28a745', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 11, fontWeight: 'bold', flexShrink: 0 }}>
+                              {avatarLetter(cName)}
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 2 }}>
+                                <span style={{ fontSize: 12, fontWeight: 700, color: textColor }}>{cName}</span>
+                                <span style={{ fontSize: 11, color: subColor }}>{fmtTime(c.created_at)}</span>
+                              </div>
+                              <div style={{ fontSize: 13, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5 }}>{c.body}</div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                    {/* コメント入力 */}
+                    <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                      <textarea
+                        value={inboxCommentBody[inboxDetail.id] || ''}
+                        onChange={e => setInboxCommentBody(prev => ({ ...prev, [inboxDetail.id]: e.target.value }))}
+                        placeholder="コメントを入力..."
+                        rows={2}
+                        style={{ flex: 1, padding: '6px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, resize: 'none', fontFamily: 'inherit' }}
+                      />
+                      <button type="button"
+                        disabled={!(inboxCommentBody[inboxDetail.id] || '').trim()}
+                        onClick={async () => {
+                          const body = (inboxCommentBody[inboxDetail.id] || '').trim();
+                          if (!body || !user) return;
+                          const { data } = await supabase
+                            .from('board_messages')
+                            .insert({ parent_id: inboxDetail.id, user_id: user.id, body })
+                            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+                            .single();
+                          if (data) {
+                            const newComment: BoardMessage = { ...data, broadcast_recipients: null, profile: null };
+                            setInboxComments(prev => ({ ...prev, [inboxDetail.id]: [...(prev[inboxDetail.id] || []), newComment] }));
+                            setInboxCommentBody(prev => ({ ...prev, [inboxDetail.id]: '' }));
+                          }
+                        }}
+                        style={{ padding: '6px 12px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, alignSelf: 'flex-end', opacity: !(inboxCommentBody[inboxDetail.id] || '').trim() ? 0.5 : 1 }}>
+                        送信
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       ) : (
@@ -1566,7 +1813,7 @@ const BoardPage: React.FC = () => {
             {/* フィルタータブ */}
             <div style={{ display: 'flex', overflowX: 'auto', borderBottom: `1px solid ${border}`, background: cardBg, padding: '0 8px' }}>
               {INBOX_FILTERS.map(f => (
-                <button key={f.key} type="button" onClick={() => setInboxFilter(f.key)}
+                <button key={f.key} type="button" onClick={() => { setInboxFilter(f.key); if (f.key === 'archived') loadArchived(); }}
                   style={{ padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: inboxFilter === f.key ? 700 : 400, color: inboxFilter === f.key ? '#007bff' : subColor, borderBottom: inboxFilter === f.key ? '2px solid #007bff' : '2px solid transparent', whiteSpace: 'nowrap', flexShrink: 0 }}>
                   {f.label}
                 </button>
@@ -1584,35 +1831,46 @@ const BoardPage: React.FC = () => {
               const today = new Date().toISOString().slice(0, 10);
               const isOverdue = msg.deadline ? msg.deadline < today : false;
               const dtConfig = DEADLINE_TYPES.find(d => d.value === msg.deadline_type);
+              const isArchived = inboxFilter === 'archived';
               return (
-                <div key={msg.id} onClick={() => setInboxDetailId(msg.id)}
-                  style={{ background: cardBg, border: confirmed ? '1.5px solid #22c55e' : `1px solid ${border}`, borderRadius: 10, padding: '12px 14px', marginBottom: 8, cursor: 'pointer' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 'bold', flexShrink: 0 }}>
-                        {avatarLetter(senderName)}
+                <div key={msg.id}
+                  style={{ background: cardBg, border: confirmed ? '1.5px solid #22c55e' : `1px solid ${border}`, borderRadius: 10, padding: '12px 14px', marginBottom: 8, position: 'relative' }}>
+                  <div onClick={() => setInboxDetailId(msg.id)} style={{ cursor: 'pointer' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 'bold', flexShrink: 0 }}>
+                          {avatarLetter(senderName)}
+                        </div>
+                        <span style={{ fontSize: 13, fontWeight: 'bold', color: textColor }}>{senderName}</span>
+                        <span style={{ fontSize: 11, color: subColor }}>{fmtTime(msg.created_at)}</span>
                       </div>
-                      <span style={{ fontSize: 13, fontWeight: 'bold', color: textColor }}>{senderName}</span>
-                      <span style={{ fontSize: 11, color: subColor }}>{fmtTime(msg.created_at)}</span>
+                      {confirmed && !isArchived && <span style={{ fontSize: 11, color: '#22c55e', fontWeight: 700, flexShrink: 0 }}>✓ 完了</span>}
                     </div>
-                    {confirmed && <span style={{ fontSize: 11, color: '#22c55e', fontWeight: 700, flexShrink: 0 }}>✓ 完了</span>}
-                  </div>
-                  {(msg.subject || msg.title) && (
-                    <div style={{ fontSize: 14, fontWeight: 700, color: textColor, marginBottom: 4 }}>{msg.subject || msg.title}</div>
-                  )}
-                  <div style={{ fontSize: 13, color: subColor, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', wordBreak: 'break-word', marginBottom: dtConfig ? 6 : 0 }}>
-                    {msg.body}
-                  </div>
-                  {dtConfig && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                      <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: isDark ? '#1e2a3a' : '#eff6ff', color: '#3b82f6', fontWeight: 600 }}>{dtConfig.label}</span>
-                      {msg.deadline && (
-                        <span style={{ fontSize: 11, color: isOverdue ? '#dc2626' : '#d97706', fontWeight: 600 }}>
-                          {isOverdue ? '期限切れ' : `${msg.deadline}まで`}
-                        </span>
-                      )}
+                    {(msg.subject || msg.title) && (
+                      <div style={{ fontSize: 14, fontWeight: 700, color: textColor, marginBottom: 4 }}>{msg.subject || msg.title}</div>
+                    )}
+                    <div style={{ fontSize: 13, color: subColor, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', wordBreak: 'break-word', marginBottom: dtConfig ? 6 : 0 }}>
+                      {msg.body}
                     </div>
-                  )}
+                    {dtConfig && !isArchived && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                        <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: isDark ? '#1e2a3a' : '#eff6ff', color: '#3b82f6', fontWeight: 600 }}>{dtConfig.label}</span>
+                        {msg.deadline && (
+                          <span style={{ fontSize: 11, color: isOverdue ? '#dc2626' : '#d97706', fontWeight: 600 }}>
+                            {isOverdue ? '期限切れ' : `${msg.deadline}まで`}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {/* アーカイブボタン */}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+                    <button type="button"
+                      onClick={e => { e.stopPropagation(); archiveMessage(msg.id, !isArchived); }}
+                      style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 11, padding: '3px 8px' }}>
+                      {isArchived ? '📥 受信ボックスに戻す' : '📦 アーカイブ'}
+                    </button>
+                  </div>
                 </div>
               );
             })}
@@ -1633,7 +1891,7 @@ const BoardPage: React.FC = () => {
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 16px', paddingTop: 58 }}>
         {/* 宛先 */}
         <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: subColor, marginBottom: 6, marginTop: 8 }}>宛先を選択</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: subColor, marginBottom: 6, marginTop: 8 }}>宛先を選択 <span style={{ color: '#dc3545', fontSize: 11 }}>*必須</span></div>
           <input value={composeQuery} onChange={e => setComposeQuery(e.target.value)} placeholder="名前で検索..."
             style={{ width: '100%', padding: '7px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, boxSizing: 'border-box', marginBottom: 6 }} />
           {/* 一括ボタン */}
@@ -1714,6 +1972,33 @@ const BoardPage: React.FC = () => {
                   </button>
                 ))}
               </div>
+              {/* 内容・保存先・URL（種別選択時のみ） */}
+              {composeDeadlineType && (() => {
+                const dt = DEADLINE_TYPES.find(d => d.value === composeDeadlineType);
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', background: isDark ? '#1e2a3a' : '#eff6ff', borderRadius: 8, border: `1px solid ${isDark ? '#3b82f6' : '#bfdbfe'}` }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: isDark ? '#93c5fd' : '#3b82f6', marginBottom: 2 }}>{dt?.label} の詳細（任意）</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 12, color: subColor, flexShrink: 0, minWidth: 38 }}>内容</span>
+                      <input value={composeAnswerPrompt} onChange={e => setComposeAnswerPrompt(e.target.value)}
+                        placeholder={dt?.promptPlaceholder || '例：タイトルや件名'}
+                        style={{ flex: 1, padding: '5px 8px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, fontSize: 12 }} />
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 12, color: subColor, flexShrink: 0, minWidth: 38 }}>保存先</span>
+                      <input value={composeAnswerLocation} onChange={e => setComposeAnswerLocation(e.target.value)}
+                        placeholder={dt?.locationPlaceholder || '例：スプレッドシート'}
+                        style={{ flex: 1, padding: '5px 8px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, fontSize: 12 }} />
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 12, color: subColor, flexShrink: 0, minWidth: 38 }}>URL</span>
+                      <input value={composeAnswerLink} onChange={e => setComposeAnswerLink(e.target.value)}
+                        placeholder={dt?.linkPlaceholder || 'https://...'}
+                        style={{ flex: 1, padding: '5px 8px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, fontSize: 12 }} />
+                    </div>
+                  </div>
+                );
+              })()}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 12, color: subColor, flexShrink: 0 }}>⏰ 期限日</span>
                 <input type="date" value={composeDeadline} onChange={e => setComposeDeadline(e.target.value)} min={new Date().toISOString().slice(0, 10)}
@@ -1734,7 +2019,7 @@ const BoardPage: React.FC = () => {
 
       {/* 本文 + 送信（チャンネルと同レイアウト） */}
       <div style={{ padding: '10px 14px', borderTop: `1px solid ${border}`, background: cardBg, flexShrink: 0, display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-        <textarea value={composeBody} onChange={e => setComposeBody(e.target.value)} placeholder="本文を入力... (Ctrl+Enterで送信)"
+        <textarea value={composeBody} onChange={e => setComposeBody(e.target.value)} placeholder="本文を入力... *必須 (Ctrl+Enterで送信)"
           rows={2}
           onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (composeBody.trim() && composeRecipientIds.length > 0) setShowComposeSendConfirm(true); }}}
           style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, resize: 'none', fontFamily: 'inherit', lineHeight: 1.4 }} />
@@ -1888,7 +2173,7 @@ const BoardPage: React.FC = () => {
                       style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, fontSize: 13, boxSizing: 'border-box' }} />
                   </div>
                   <div>
-                    <div style={{ fontSize: 11, color: textColor, fontWeight: 600, marginBottom: 4 }}>場所・URL（どこで{DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.label.replace(/\S+\s/, '') ?? ''}するのか）</div>
+                    <div style={{ fontSize: 11, color: textColor, fontWeight: 600, marginBottom: 4 }}>保存先（どこで{DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.label.replace(/\S+\s/, '') ?? ''}するのか）</div>
                     <input type="text" value={newAnswerLocation} onChange={e => setNewAnswerLocation(e.target.value)}
                       placeholder={DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.locationPlaceholder ?? ''}
                       style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, fontSize: 13, boxSizing: 'border-box' }} />
@@ -1959,7 +2244,81 @@ const BoardPage: React.FC = () => {
     outbox:  '📤 送信トレイ',
     compose: '✉️ お知らせを作成',
     channel: selectedChannel ? (selectedChannel.type === 'group' ? `👥 ${channelDisplayName(selectedChannel)}` : channelDisplayName(selectedChannel)) : '',
+    search:  `🔍 「${searchText}」の検索結果`,
   };
+
+  // ── 検索結果のマッチ箇所をハイライト ──────────────────────────────
+  const highlightMatch = (text: string, query: string) => {
+    if (!query) return <span>{text}</span>;
+    const idx = text.toLowerCase().indexOf(query.toLowerCase());
+    if (idx < 0) return <span>{text}</span>;
+    const start = Math.max(0, idx - 30);
+    const excerpt = (start > 0 ? '…' : '') + text.slice(start, start + 120) + (start + 120 < text.length ? '…' : '');
+    const eIdx = excerpt.toLowerCase().indexOf(query.toLowerCase());
+    if (eIdx < 0) return <span>{excerpt}</span>;
+    return (
+      <span>
+        {excerpt.slice(0, eIdx)}
+        <mark style={{ background: isDark ? '#854d0e' : '#fef08a', color: textColor, borderRadius: 2, padding: '0 2px' }}>
+          {excerpt.slice(eIdx, eIdx + query.length)}
+        </mark>
+        {excerpt.slice(eIdx + query.length)}
+      </span>
+    );
+  };
+
+  const searchPanel = (
+    <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px', paddingTop: 62 }}>
+      {searchLoading ? (
+        <div style={{ textAlign: 'center', color: subColor, fontSize: 14, marginTop: 40 }}>検索中...</div>
+      ) : searchResults.length === 0 ? (
+        <div style={{ textAlign: 'center', color: subColor, fontSize: 14, marginTop: 40 }}>
+          「{searchText}」に一致するメッセージがありません
+        </div>
+      ) : (
+        <>
+          <div style={{ fontSize: 12, color: subColor, marginBottom: 10 }}>{searchResults.length}件のメッセージが見つかりました</div>
+          {searchResults.map(msg => {
+            const senderName = allProfiles.find(p => p.id === msg.user_id)?.name || '不明';
+            const ch = channels.find(c => c.id === msg.channel_id);
+            const chLabel = ch ? (ch.type === 'group' ? `👥 ${ch.name || 'グループ'}` : ch.type === 'dm' ? '💬 DM' : '📧 送信メール') : '📥 受信ボックス';
+            const matchBody = msg.body.toLowerCase().includes(searchText.toLowerCase());
+            const matchSubject = msg.subject && msg.subject.toLowerCase().includes(searchText.toLowerCase());
+            return (
+              <div key={msg.id}
+                onClick={() => {
+                  if (msg.channel_id) {
+                    selectChannel(msg.channel_id);
+                    setView('channel');
+                  } else {
+                    setView('inbox');
+                    setInboxDetailId(msg.id);
+                  }
+                  setShowSearch(false);
+                  setSearchText('');
+                }}
+                style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: '10px 14px', marginBottom: 10, cursor: 'pointer' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontSize: 11, color: '#4a90d9', fontWeight: 600 }}>{chLabel}</span>
+                  <span style={{ fontSize: 11, color: subColor }}>·</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: textColor }}>{senderName}</span>
+                  <span style={{ fontSize: 11, color: subColor, marginLeft: 'auto' }}>{fmtTime(msg.created_at)}</span>
+                </div>
+                {(matchSubject || msg.subject) && (
+                  <div style={{ fontSize: 13, fontWeight: 600, color: textColor, marginBottom: 4 }}>
+                    {matchSubject ? highlightMatch(msg.subject!, searchText) : msg.subject}
+                  </div>
+                )}
+                <div style={{ fontSize: 13, color: subColor, lineHeight: 1.5 }}>
+                  {matchBody ? highlightMatch(msg.body, searchText) : <span>{msg.body.slice(0, 80)}{msg.body.length > 80 ? '…' : ''}</span>}
+                </div>
+              </div>
+            );
+          })}
+        </>
+      )}
+    </div>
+  );
 
   return (
     <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column', background: bg, overflow: 'hidden', paddingTop: 60, boxSizing: 'border-box' } as React.CSSProperties}>
@@ -1969,7 +2328,7 @@ const BoardPage: React.FC = () => {
           <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>💬 連絡板</span>
             <div style={{ display: 'flex', gap: 6 }}>
-              <button type="button" onClick={() => { setShowSearch(s => !s); setSearchText(''); }}
+              <button type="button" onClick={() => { setShowSearch(s => !s); setSearchText(''); setSearchResults([]); if (view === 'search') setView('inbox'); }}
                 style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '4px 8px', lineHeight: 1 }}>🔍</button>
               <button type="button" onClick={() => { resetCompose(); setView('compose'); setShowSidebar(false); }}
                 style={{ background: '#007bff', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 13, padding: '5px 12px', fontWeight: 'bold' }}>＋送信</button>
@@ -2019,6 +2378,7 @@ const BoardPage: React.FC = () => {
         {/* コンテンツエリア */}
         {(!showSidebar || !isMobile) && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            {view === 'search'  && searchPanel}
             {view === 'inbox'   && inboxPanel}
             {view === 'outbox'  && outboxPanel}
             {view === 'compose' && composePanel}
@@ -2083,39 +2443,63 @@ const BoardPage: React.FC = () => {
         );
       })()}
       {/* 送信確認モーダル */}
-      {showSendConfirm && (
-        <div onClick={() => setShowSendConfirm(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 5000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-          <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 16, padding: 20, width: '100%', maxWidth: 420, boxSizing: 'border-box' }}>
-            <p style={{ margin: '0 0 12px', fontSize: 16, fontWeight: 'bold', color: textColor }}>送信確認</p>
-            <div style={{ background: inputBg, borderRadius: 10, padding: '12px 14px', marginBottom: 12, fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6, maxHeight: 200, overflowY: 'auto', textAlign: 'left' }}>
-              {newBody}
-            </div>
-            {newDeadlineType && (
-              <p style={{ margin: '0 0 8px', fontSize: 12, color: '#007bff' }}>
-                種別: {DEADLINE_TYPES.find(d => d.value === newDeadlineType)?.label}（確認ボタンあり）
-              </p>
-            )}
-            {newDeadline && (
-              <p style={{ margin: '0 0 8px', fontSize: 12, color: '#0369a1' }}>📅 期限: {newDeadline}</p>
-            )}
-            {newScheduledAt && (
-              <p style={{ margin: '0 0 8px', fontSize: 12, color: '#6f42c1' }}>
-                🕐 送信予約: {new Date(newScheduledAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-              </p>
-            )}
-            <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
-              <button type="button" onClick={() => setShowSendConfirm(false)}
-                style={{ flex: 1, padding: '10px 0', background: 'none', border: `1px solid ${border}`, borderRadius: 8, color: subColor, cursor: 'pointer', fontSize: 14 }}>
-                キャンセル
-              </button>
-              <button type="button" onClick={() => { setShowSendConfirm(false); sendMessage(); }}
-                style={{ flex: 2, padding: '10px 0', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>
-                送信する
-              </button>
+      {showSendConfirm && (() => {
+        const dtConfig = DEADLINE_TYPES.find(d => d.value === newDeadlineType);
+        const today = new Date().toISOString().slice(0, 10);
+        const isOverdue = newDeadline ? newDeadline < today : false;
+        const isToday   = newDeadline ? newDeadline === today : false;
+        const accentColor = isOverdue ? '#dc2626' : isToday ? '#d97706' : '#1d4ed8';
+        return (
+          <div onClick={() => setShowSendConfirm(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 5000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+            <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 16, padding: '16px 16px 20px', width: '100%', maxWidth: 420, boxSizing: 'border-box' }}>
+              <p style={{ margin: '0 0 12px', fontSize: 15, fontWeight: 'bold', color: textColor, textAlign: 'center' }}>送信プレビュー</p>
+              {/* メッセージカードプレビュー */}
+              <div style={{ background: isDark ? '#2a2a3e' : '#f8f9fa', borderRadius: 10, padding: '12px 14px', border: `1px solid ${border}`, marginBottom: 14 }}>
+                {/* 送信者行 */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 'bold', flexShrink: 0 }}>
+                    {avatarLetter(profileName)}
+                  </div>
+                  <span style={{ fontSize: 13, fontWeight: 'bold', color: textColor }}>{profileName || '自分'}</span>
+                  <span style={{ fontSize: 11, color: subColor }}>今</span>
+                </div>
+                {/* 種別・期限バッジ */}
+                {dtConfig && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingBottom: 8, borderBottom: `1px solid ${border}` }}>
+                    <span style={{ fontSize: 18, fontWeight: 800, color: textColor }}>{dtConfig.label.replace(/^\S+\s/, '')}確認</span>
+                    {newDeadline && (
+                      <div style={{ display: 'inline-flex', alignItems: 'center', borderRadius: 20, overflow: 'hidden', border: `1.5px solid ${accentColor}` }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', background: accentColor, padding: '2px 8px' }}>{isOverdue ? '期限切れ' : isToday ? '本日締切' : '期限'}</span>
+                        <span style={{ fontSize: 11, color: accentColor, padding: '2px 8px' }}>{newDeadline.replace(/-/g, '/')}まで</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {/* 本文 */}
+                <div style={{ fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6, maxHeight: 180, overflowY: 'auto', textAlign: 'left' }}>
+                  {newBody}
+                </div>
+                {/* 送信予約 */}
+                {newScheduledAt && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: '#6f42c1' }}>
+                    🕐 送信予約: {new Date(newScheduledAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button type="button" onClick={() => setShowSendConfirm(false)}
+                  style={{ flex: 1, padding: '10px 0', background: 'none', border: `1px solid ${border}`, borderRadius: 8, color: subColor, cursor: 'pointer', fontSize: 14 }}>
+                  キャンセル
+                </button>
+                <button type="button" onClick={() => { setShowSendConfirm(false); sendMessage(); }}
+                  style={{ flex: 2, padding: '10px 0', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>
+                  送信する
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* リプライ送信確認モーダル */}
       {showReplySendConfirm && threadMsgId && (
@@ -2212,24 +2596,98 @@ const BoardPage: React.FC = () => {
       })()}
 
       {/* お知らせ送信確認モーダル */}
-      {showComposeSendConfirm && (
-        <div onClick={() => setShowComposeSendConfirm(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 5000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-          <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 16, padding: 20, width: '100%', maxWidth: 420, boxSizing: 'border-box' }}>
-            <p style={{ margin: '0 0 8px', fontSize: 16, fontWeight: 'bold', color: textColor }}>お知らせを送信しますか？</p>
-            <p style={{ margin: '0 0 12px', fontSize: 13, color: subColor }}>宛先: {composeRecipientIds.length}人</p>
-            {composeSubject && <p style={{ margin: '0 0 8px', fontSize: 14, fontWeight: 600, color: textColor }}>{composeSubject}</p>}
-            <div style={{ background: inputBg, borderRadius: 8, padding: '10px 12px', marginBottom: 12, fontSize: 13, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 160, overflowY: 'auto' }}>{composeBody}</div>
-            {composeDeadlineType && <p style={{ margin: '0 0 6px', fontSize: 12, color: '#007bff' }}>種別: {DEADLINE_TYPES.find(d => d.value === composeDeadlineType)?.label}</p>}
-            {composeDeadline    && <p style={{ margin: '0 0 6px', fontSize: 12, color: '#0369a1' }}>期限: {composeDeadline}</p>}
-            <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
-              <button type="button" onClick={() => setShowComposeSendConfirm(false)}
-                style={{ flex: 1, padding: '10px 0', background: 'none', border: `1px solid ${border}`, borderRadius: 8, color: subColor, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
-              <button type="button" onClick={() => { setShowComposeSendConfirm(false); sendNotice(); }}
-                style={{ flex: 2, padding: '10px 0', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>送信する</button>
+      {showComposeSendConfirm && (() => {
+        const dtConfig = DEADLINE_TYPES.find(d => d.value === composeDeadlineType);
+        const today = new Date().toISOString().slice(0, 10);
+        const isOverdue = composeDeadline ? composeDeadline < today : false;
+        const isToday   = composeDeadline ? composeDeadline === today : false;
+        const accentColor = isOverdue ? '#dc2626' : isToday ? '#d97706' : '#1d4ed8';
+        const allRecipientNames = composeRecipientIds.map(id => allProfiles.find(p => p.id === id)?.name || '').filter(Boolean);
+        return (
+          <div onClick={() => { setShowComposeSendConfirm(false); setShowAllRecipients(false); }} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 5000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+            <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 16, padding: '16px 16px 20px', width: '100%', maxWidth: 420, maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box' }}>
+              <p style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 'bold', color: textColor, textAlign: 'center' }}>送信プレビュー</p>
+              {/* 宛先表示（10人以上は折りたたみ） */}
+              <div style={{ marginBottom: 12, padding: '10px 12px', background: isDark ? '#1e2a3a' : '#eff6ff', borderRadius: 8, border: `1px solid ${isDark ? '#3b82f6' : '#bfdbfe'}` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: isDark ? '#93c5fd' : '#3b82f6' }}>宛先（{composeRecipientIds.length}人）</span>
+                  {allRecipientNames.length >= 10 && (
+                    <button type="button" onClick={() => setShowAllRecipients(v => !v)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: isDark ? '#93c5fd' : '#3b82f6', padding: 0 }}>
+                      {showAllRecipients ? '▲ 閉じる' : '▼ 全員見る'}
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {(allRecipientNames.length >= 10 && !showAllRecipients
+                    ? allRecipientNames.slice(0, 9)
+                    : allRecipientNames
+                  ).map((name, i) => (
+                    <span key={i} style={{ fontSize: 12, padding: '2px 8px', background: isDark ? '#2d3a4a' : '#dbeafe', color: isDark ? '#93c5fd' : '#1d4ed8', borderRadius: 12 }}>{name}</span>
+                  ))}
+                  {allRecipientNames.length >= 10 && !showAllRecipients && (
+                    <button type="button" onClick={() => setShowAllRecipients(true)}
+                      style={{ fontSize: 12, padding: '2px 8px', background: 'none', border: `1px dashed ${isDark ? '#3b82f6' : '#93c5fd'}`, color: isDark ? '#93c5fd' : '#3b82f6', borderRadius: 12, cursor: 'pointer' }}>
+                      +{allRecipientNames.length - 9}人
+                    </button>
+                  )}
+                </div>
+              </div>
+              {/* メッセージカードプレビュー */}
+              <div style={{ background: isDark ? '#2a2a3e' : '#f8f9fa', borderRadius: 10, padding: '12px 14px', border: `1px solid ${border}`, marginBottom: 14 }}>
+                {/* 送信者行 */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 'bold', flexShrink: 0 }}>
+                    {avatarLetter(profileName)}
+                  </div>
+                  <span style={{ fontSize: 13, fontWeight: 'bold', color: textColor }}>{profileName || '自分'}</span>
+                  <span style={{ fontSize: 11, color: subColor }}>今</span>
+                </div>
+                {/* 件名 */}
+                {composeSubject && (
+                  <div style={{ fontSize: 15, fontWeight: 700, color: textColor, marginBottom: 6 }}>{composeSubject}</div>
+                )}
+                {/* 種別・期限バッジ */}
+                {dtConfig && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingBottom: 8, borderBottom: `1px solid ${border}` }}>
+                    <span style={{ fontSize: 18, fontWeight: 800, color: textColor }}>{dtConfig.label.replace(/^\S+\s/, '')}確認</span>
+                    {composeDeadline && (
+                      <div style={{ display: 'inline-flex', alignItems: 'center', borderRadius: 20, overflow: 'hidden', border: `1.5px solid ${accentColor}` }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', background: accentColor, padding: '2px 8px' }}>{isOverdue ? '期限切れ' : isToday ? '本日締切' : '期限'}</span>
+                        <span style={{ fontSize: 11, color: accentColor, padding: '2px 8px' }}>{composeDeadline.replace(/-/g, '/')}まで</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {/* 内容・保存先・URL */}
+                {(composeAnswerPrompt || composeAnswerLocation || composeAnswerLink) && (
+                  <div style={{ marginBottom: 8, padding: '7px 10px', background: isDark ? '#1e2a3a' : '#eff6ff', borderRadius: 8, borderLeft: '3px solid #3b82f6', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {composeAnswerPrompt && <div style={{ fontSize: 12, color: textColor }}><span style={{ color: '#3b82f6', marginRight: 6 }}>内容</span>{composeAnswerPrompt}</div>}
+                    {composeAnswerLocation && <div style={{ fontSize: 12, color: textColor }}><span style={{ color: '#3b82f6', marginRight: 6 }}>保存先</span>{composeAnswerLocation}</div>}
+                    {composeAnswerLink && <div style={{ fontSize: 12, color: '#2563eb', wordBreak: 'break-all' }}><span style={{ color: '#3b82f6', marginRight: 6 }}>URL</span>{composeAnswerLink}</div>}
+                  </div>
+                )}
+                {/* 本文 */}
+                <div style={{ fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6, maxHeight: 160, overflowY: 'auto', textAlign: 'left' }}>
+                  {composeBody}
+                </div>
+                {/* 送信予約 */}
+                {composeScheduledAt && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: '#6f42c1' }}>
+                    🕐 送信予約: {new Date(composeScheduledAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button type="button" onClick={() => { setShowComposeSendConfirm(false); setShowAllRecipients(false); }}
+                  style={{ flex: 1, padding: '10px 0', background: 'none', border: `1px solid ${border}`, borderRadius: 8, color: subColor, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
+                <button type="button" onClick={() => { setShowComposeSendConfirm(false); setShowAllRecipients(false); sendNotice(); }}
+                  style={{ flex: 2, padding: '10px 0', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>送信する</button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {(saveBanner || memberBanner) && (
         <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: isDark ? '#1a3a28' : '#f0fdf4', border: `1px solid ${isDark ? '#16532a' : '#86efac'}`, borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 220 }}>

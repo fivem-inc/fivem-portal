@@ -3058,3 +3058,70 @@ ALTER TABLE board_channels ADD CONSTRAINT board_channels_type_check
 2. **残業申請フォーム（パート用）**
 3. **タブ・機能の表示権限管理画面**
 4. **gcal-sync 失敗時リトライキュー**（低優先）
+
+---
+
+## ✅ 2026-06-15 連絡板リニューアル Phase3 実装完了
+
+### 変更ファイル
+- `client/src/pages/BoardPage.tsx`
+- `client/src/components/admin/LeaveRequestsTab.tsx`
+- `client/src/App.tsx`
+
+### 実装内容
+
+#### 全文検索（BoardPage.tsx）
+- `board_messages.body` に対して `ilike` クエリ（デバウンス300ms）
+- チャンネルメッセージ（channel_id IS NOT NULL）と受信ボックス（channel_id IS NULL）を別クエリで取得・重複排除・マージ
+- `highlightMatch()` でマッチ箇所を `<mark>` タグでハイライト
+- `View` 型に `'search'` を追加、`viewTitle` にも対応
+
+#### 受信ボックスUI改善（BoardPage.tsx）
+- カード形式の一覧表示、タップで全文展開
+- `INBOX_FILTERS` に `'archived'` タブ追加
+- `loadArchived()` 関数追加（archived=true のメッセージを取得）
+- `archiveMessage(msgId, archive)` 関数追加（board_message_recipients.archived を更新）
+- `loadInbox` に `.eq('archived', false)` フィルター追加
+
+#### コメント折りたたみ（BoardPage.tsx）
+- `comment_enabled` が true のメッセージの詳細ビューにコメント欄を追加
+- `inboxCommentOpen` / `inboxComments` / `inboxCommentBody` state 追加
+
+#### Composeパネル改善（BoardPage.tsx）
+- 「内容」「保存先」「URL」フィールドを追加（種別選択時のみ表示）
+- 「場所」→「保存先」に統一
+- `composeOptions` 初期値を `true`（最初から展開済み状態）
+- 件名・種別パネルを最初から開いた状態に変更
+
+#### 送信確認モーダル（BoardPage.tsx）
+- チャンネルメッセージ・お知らせ両方でプレビュー形式の送信確認モーダルを実装
+- 宛先を全員タグ表示（10人以上は「▼ もっと見る」で折りたたみ）
+- `showComposeSendConfirm` / `showAllRecipients` state 追加
+
+#### 有給奨励日 2段階送信確認（LeaveRequestsTab.tsx）
+- 「内容を確認して送信」ボタンで確認モーダルを表示してから送信
+- 対象者タグ表示（10人以上は折りたたみ）
+- `showEncConfirm` / `showAllEncTargets` state 追加
+
+#### 連絡板ボタンTOPリセット（App.tsx / BoardPage.tsx）
+- `navTo` 関数で同パスの場合 `window.dispatchEvent(new CustomEvent('board-reset'))` を発火
+- BoardPage に `resetToTop` コールバック + `board-reset` イベントリスナーを追加
+- タップでチャンネル・詳細・検索をすべてリセットし受信ボックストップに戻る
+
+#### スマホ戻るボタン対応（BoardPage.tsx）
+- 内部状態変化時（チャンネル選択・詳細表示等）に `history.pushState({ boardInternal: true }, '')` を積む
+- `popstate` ハンドラーで段階的にリセット（thread → inboxDetail → outboxDetail → selectedChannel → view）
+- `e.state?.boardInternal` が true のときのみ処理（外部遷移には干渉しない）
+
+### ⚠️ 注意事項（JSX構文）
+- JSX属性の onClick 内でセミコロン区切り複数文は構文エラーになる
+  - ❌ `onClick={() => setA(false); setB(false)}`
+  - ✅ `onClick={() => { setA(false); setB(false); }}`
+- スタイル内の余分なシングルクォート（`gap: 4'`）も構文エラー → `gap: 4` に修正
+
+### 🔜 次回タスク（2026-06-15 終了時点）
+1. **送信の取消・修正・完全削除**（本人＋管理者）
+2. **残業申請フォーム（パート用）**
+3. **タブ・機能の表示権限管理画面**
+4. 送信トレイ宛先表示（BoardPage.tsx:2034）も10人以上折りたたみ化
+5. **gcal-sync 失敗時リトライキュー**（低優先）
