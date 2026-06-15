@@ -384,7 +384,8 @@ const BoardPage: React.FC = () => {
   // スマホ戻るボタン対応：BoardPage内の遷移を履歴に積む
   useEffect(() => {
     // 内部状態が変わるたびにダミー履歴を積む
-    const hasDetail = view !== 'inbox' || !showSidebar || selectedChannelId || inboxDetailId || outboxDetailId || threadMsgId;
+    // チャンネル選択中の !showSidebar のみ履歴に積む（受信トレイ単体での sidebar 非表示は積まない）
+    const hasDetail = view !== 'inbox' || (selectedChannelId && !showSidebar) || inboxDetailId || outboxDetailId || threadMsgId;
     if (hasDetail) {
       window.history.pushState({ boardInternal: true }, '');
     }
@@ -403,7 +404,6 @@ const BoardPage: React.FC = () => {
       if (inboxDetailId) { setInboxDetailId(null); return; }
       if (outboxDetailId) { setOutboxDetailId(null); return; }
       if (selectedChannelId && !showSidebar) { setShowSidebar(true); setSelectedChannelId(null); return; }
-      if (!showSidebar) { setShowSidebar(true); return; }
       if (view !== 'inbox') { setView('inbox'); return; }
     };
     window.addEventListener('popstate', onPopState);
