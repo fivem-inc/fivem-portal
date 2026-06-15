@@ -942,7 +942,7 @@ const BoardPage: React.FC = () => {
             </div>
             <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
               <button type="button" onClick={e => toggleFavMessage(e, msg.id, msg)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: '2px 3px', color: favMessageIds.has(msg.id) ? '#f59e0b' : subColor, opacity: favMessageIds.has(msg.id) ? 1 : 0.4 }}>
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, padding: '2px 3px', color: favMessageIds.has(msg.id) ? '#f59e0b' : (isDark ? '#888' : '#bbb') }}>
                 {favMessageIds.has(msg.id) ? '★' : '☆'}
               </button>
               {canEdit && (
@@ -1659,7 +1659,7 @@ const BoardPage: React.FC = () => {
               <span style={{ fontSize: 10, color: subColor }}>{last ? fmtTime(last.created_at) : ''}</span>
               <button type="button" onClick={e => toggleFavChannel(e, ch.id)}
                 title={favChannelIds.has(ch.id) ? 'お気に入り解除' : 'お気に入り追加'}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: '0 2px', lineHeight: 1, color: favChannelIds.has(ch.id) ? '#f59e0b' : subColor, opacity: favChannelIds.has(ch.id) ? 1 : 0.4 }}>
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, padding: '0 3px', lineHeight: 1, color: favChannelIds.has(ch.id) ? '#f59e0b' : (isDark ? '#888' : '#bbb') }}>
                 {favChannelIds.has(ch.id) ? '★' : '☆'}
               </button>
               {canDelete && (
@@ -1949,7 +1949,7 @@ const BoardPage: React.FC = () => {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
                     <button type="button"
                       onClick={e => toggleFavMessage(e, msg.id, msg)}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, padding: '2px 4px', color: favMessageIds.has(msg.id) ? '#f59e0b' : subColor, opacity: favMessageIds.has(msg.id) ? 1 : 0.4 }}>
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, padding: '2px 4px', color: favMessageIds.has(msg.id) ? '#f59e0b' : (isDark ? '#888' : '#bbb') }}>
                       {favMessageIds.has(msg.id) ? '★' : '☆'}
                     </button>
                     <button type="button"
