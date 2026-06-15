@@ -2388,7 +2388,13 @@ const BoardPage: React.FC = () => {
               {favMessages.map(msg => {
                 const senderName = allProfiles.find(p => p.id === msg.user_id)?.name || '不明';
                 return (
-                  <div key={`fav-msg-${msg.id}`} onClick={() => { setInboxDetailId(msg.id); setView('inbox'); setShowSidebar(false); }} style={{
+                  <div key={`fav-msg-${msg.id}`} onClick={() => {
+                    if (msg.channel_id) {
+                      selectChannel(msg.channel_id); setView('channel'); setShowSidebar(false);
+                    } else {
+                      setInboxDetailId(msg.id); setView('inbox'); setShowSidebar(false);
+                    }
+                  }} style={{
                     background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: '10px 14px',
                     marginBottom: 8, cursor: 'pointer',
                   }}>
