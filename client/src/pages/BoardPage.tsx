@@ -134,6 +134,8 @@ const BoardPage: React.FC = () => {
   const [inboxDetailRecipients,   setInboxDetailRecipients]   = useState<string[]>([]);
   const [inboxDetailUnconfirmed,  setInboxDetailUnconfirmed]  = useState<string[]>([]);
   const [inboxRemindSending,      setInboxRemindSending]      = useState(false);
+  const [archiveBulkPeriod,       setArchiveBulkPeriod]       = useState<'1m' | '3m' | '1y' | 'all' | ''>('');
+  const [archiveBulkDeleting,     setArchiveBulkDeleting]     = useState(false);
 
   // 送信トレイ
   const [outboxMessages,   setOutboxMessages]   = useState<BoardMessage[]>([]);
@@ -1967,6 +1969,42 @@ const BoardPage: React.FC = () => {
               ))}
             </div>
           </div>
+          {/* アーカイブ一括削除UI */}
+          {inboxFilter === 'archived' && (
+            <div style={{ padding: '8px 12px', background: isDark ? '#2a1a1a' : '#fff5f5', borderBottom: `1px solid ${border}`, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 12, color: subColor, flexShrink: 0 }}>🗑️ 一括削除：</span>
+              {([['1m', '1ヶ月以上前'], ['3m', '3ヶ月以上前'], ['1y', '1年以上前'], ['all', 'すべて']] as const).map(([key, label]) => (
+                <button key={key} type="button" onClick={() => setArchiveBulkPeriod(archiveBulkPeriod === key ? '' : key)}
+                  style={{ padding: '4px 10px', borderRadius: 20, border: `1.5px solid ${archiveBulkPeriod === key ? '#dc3545' : border}`, background: archiveBulkPeriod === key ? '#dc3545' : 'none', color: archiveBulkPeriod === key ? '#fff' : subColor, cursor: 'pointer', fontSize: 12, fontWeight: archiveBulkPeriod === key ? 700 : 400 }}>
+                  {label}
+                </button>
+              ))}
+              {archiveBulkPeriod && (
+                <button type="button" disabled={archiveBulkDeleting} onClick={async () => {
+                  const now = new Date();
+                  let cutoff: Date | null = null;
+                  if (archiveBulkPeriod === '1m') cutoff = new Date(now.setMonth(now.getMonth() - 1));
+                  else if (archiveBulkPeriod === '3m') cutoff = new Date(now.setMonth(now.getMonth() - 3));
+                  else if (archiveBulkPeriod === '1y') cutoff = new Date(now.setFullYear(now.getFullYear() - 1));
+                  const targets = cutoff
+                    ? archivedMessages.filter(m => new Date(m.created_at) < cutoff!)
+                    : archivedMessages;
+                  if (targets.length === 0) { alert('削除対象がありません'); return; }
+                  if (!window.confirm(`${targets.length}件のアーカイブを完全に削除しますか？\n元に戻せません。`)) return;
+                  setArchiveBulkDeleting(true);
+                  const ids = targets.map(m => m.id);
+                  await supabase.from('board_message_recipients').delete().in('message_id', ids).eq('user_id', user!.id);
+                  setArchivedMessages(prev => prev.filter(m => !ids.includes(m.id)));
+                  setArchiveBulkPeriod('');
+                  setArchiveBulkDeleting(false);
+                  setSaveBanner(true);
+                  setTimeout(() => setSaveBanner(false), 3000);
+                }} style={{ padding: '4px 14px', borderRadius: 20, border: 'none', background: '#dc3545', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700, opacity: archiveBulkDeleting ? 0.6 : 1 }}>
+                  {archiveBulkDeleting ? '削除中...' : '削除実行'}
+                </button>
+              )}
+            </div>
+          )}
           <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px' }}>
             {filteredInbox.length === 0 ? (
               <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>
