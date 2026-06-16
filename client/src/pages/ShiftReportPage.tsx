@@ -375,7 +375,7 @@ const ShiftReportForm: React.FC<{
                 <select value={applicantId} onChange={e => setApplicantId(e.target.value)} style={f}>
                   <option value={user.id}>{profileName}（自分）</option>
                   {staffList.filter(s => s.id !== user.id).map(s => (
-                    <option key={s.id} value={s.id}>{s.name}（{s.role_title}）</option>
+                    <option key={s.id} value={s.id}>{s.name}（パート）</option>
                   ))}
                 </select>
               </div>
