@@ -12,7 +12,7 @@ interface ShiftReport {
   submitted_by: string;
   work_date: string;
   pay_period_start: string;
-  application_type: 'overtime' | 'early_leave' | 'tardiness' | 'absence';
+  application_type: 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence';
   reason: string;
   original_location: string | null;
   original_start: string | null;
@@ -87,10 +87,11 @@ function origDuration(start: string | null, end: string | null): number {
 }
 
 const TYPE_INFO: Record<string, { label: string; color: string; emoji: string }> = {
-  overtime:    { label: '残業',   color: '#1565c0', emoji: '⏰' },
-  early_leave: { label: '早退',   color: '#e65100', emoji: '🏃' },
-  tardiness:   { label: '遅刻',   color: '#7b1fa2', emoji: '⏱️' },
-  absence:     { label: '欠勤',   color: '#c62828', emoji: '❌' },
+  overtime:     { label: '残業',     color: '#1565c0', emoji: '⏰' },
+  holiday_work: { label: '休日出勤', color: '#0f766e', emoji: '🏢' },
+  early_leave:  { label: '早退',     color: '#e65100', emoji: '🏃' },
+  tardiness:    { label: '遅刻',     color: '#7b1fa2', emoji: '⏱️' },
+  absence:      { label: '欠勤',     color: '#c62828', emoji: '❌' },
 };
 const STATUS_INFO: Record<string, { label: string; color: string; bg: string }> = {
   pending:     { label: '申請中',   color: '#856404', bg: '#fff3cd' },
@@ -152,7 +153,7 @@ const SingleDatePicker: React.FC<{ value: string; onChange: (d: string) => void;
 // Confirm Modal (pre-submit review)
 // ────────────────────────────────────────────────────────────────
 interface ConfirmData {
-  date: string; type: 'overtime' | 'early_leave' | 'tardiness' | 'absence'; reason: string;
+  date: string; type: 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence'; reason: string;
   origLoc: string; origStart: string; origEnd: string; origDayOff: boolean;
   actLoc: string; actStart: string; actEnd: string;
   breakMin: number; laborMin: number; reviewerName: string; isSelfReview: boolean;
@@ -245,7 +246,7 @@ const ShiftReportForm: React.FC<{
 
   const [applicantId, setApplicantId] = useState(editTarget?.applicant_id ?? user.id);
   const [date, setDate]               = useState(editTarget?.work_date ?? todayStr());
-  const [type, setType]               = useState<'overtime' | 'early_leave' | 'tardiness' | 'absence'>(editTarget?.application_type ?? 'overtime');
+  const [type, setType]               = useState<'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence'>(editTarget?.application_type ?? 'overtime');
   const [reason, setReason]           = useState(editTarget?.reason ?? '');
   const [origDayOff, setOrigDayOff]   = useState(false);
 
@@ -311,9 +312,9 @@ const ShiftReportForm: React.FC<{
       pay_period_start:  calcPayPeriodStart(date),
       application_type:  type,
       reason:            reason.trim(),
-      original_location: origDayOff ? null : (finalOrigLoc || null),
-      original_start:    origDayOff ? null : (origStart || null),
-      original_end:      origDayOff ? null : (origEnd || null),
+      original_location: (origDayOff || type === 'holiday_work') ? null : (finalOrigLoc || null),
+      original_start:    (origDayOff || type === 'holiday_work') ? null : (origStart || null),
+      original_end:      (origDayOff || type === 'holiday_work') ? null : (origEnd || null),
       actual_location:   type !== 'absence' ? (finalActLoc || null) : null,
       actual_start:      type !== 'absence' ? (actStart || null) : null,
       actual_end:        type !== 'absence' ? (actEnd || null) : null,
@@ -389,7 +390,7 @@ const ShiftReportForm: React.FC<{
             <div style={{ marginBottom: 14 }}>
               <label style={L}>種別 {Req}</label>
               <div style={{ display: 'flex', gap: 8 }}>
-                {(['overtime', 'early_leave', 'tardiness', 'absence'] as const).map(t => (
+                {(['overtime', 'holiday_work', 'early_leave', 'tardiness', 'absence'] as const).map(t => (
                   <button key={t} onClick={() => setType(t)}
                     style={{ flex: 1, padding: '9px 4px', borderRadius: 8, border: `2px solid ${type === t ? TYPE_INFO[t].color : '#dee2e6'}`, background: type === t ? TYPE_INFO[t].color : '#fff', color: type === t ? '#fff' : '#555', fontSize: 12, fontWeight: type === t ? 'bold' : 'normal', cursor: 'pointer' }}>
                     {TYPE_INFO[t].emoji} {TYPE_INFO[t].label}
@@ -403,7 +404,8 @@ const ShiftReportForm: React.FC<{
               <textarea value={reason} onChange={e => setReason(e.target.value)} rows={2} placeholder="例：保護者対応のため、急病のため" style={{ ...f, resize: 'none' }} />
             </div>
 
-            {/* 通常シフト */}
+            {/* 通常シフト（休日出勤の場合は非表示） */}
+            {type !== 'holiday_work' && (
             <div style={{ background: cardBg, borderRadius: 10, padding: '12px 14px', marginBottom: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 'bold', color: subColor, marginBottom: 10 }}>📋 通常シフト（もともとの予定）</div>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: textColor, marginBottom: 10, cursor: 'pointer' }}>
@@ -437,6 +439,7 @@ const ShiftReportForm: React.FC<{
                 </>
               )}
             </div>
+            )}
 
             {/* 実際のシフト */}
             {type !== 'absence' && (
@@ -657,7 +660,9 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                 </div>
                 {r.original_start
                   ? <div style={{ fontSize: 12, color: '#555', marginBottom: 2 }}>📋 {r.original_location} {r.original_start.slice(0, 5)}〜{r.original_end?.slice(0, 5)}（{formatMin(oMin)}）</div>
-                  : <div style={{ fontSize: 12, color: '#aaa', marginBottom: 2 }}>📋 もともと休みの日</div>
+                  : r.application_type !== 'holiday_work'
+                    ? <div style={{ fontSize: 12, color: '#aaa', marginBottom: 2 }}>📋 もともと休みの日</div>
+                    : null
                 }
                 {r.actual_start && (
                   <div style={{ fontSize: 12, color: '#166534', marginBottom: 4 }}>
@@ -814,7 +819,9 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                             </div>
                             {r.original_start
                               ? <div style={{ fontSize: 11, color: '#888' }}>📋 {r.original_location} {r.original_start.slice(0, 5)}〜{r.original_end?.slice(0, 5)}</div>
-                              : <div style={{ fontSize: 11, color: '#bbb' }}>📋 もともと休みの日</div>
+                              : r.application_type !== 'holiday_work'
+                                ? <div style={{ fontSize: 11, color: '#bbb' }}>📋 もともと休みの日</div>
+                                : null
                             }
                             {r.actual_start && (
                               <div style={{ fontSize: 11, color: '#166534' }}>

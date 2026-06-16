@@ -29,10 +29,11 @@ interface ShiftReport {
 }
 
 const TYPE_INFO: Record<string, { label: string; color: string; emoji: string }> = {
-  overtime:    { label: '残業',   color: '#1565c0', emoji: '⏰' },
-  early_leave: { label: '早退',   color: '#e65100', emoji: '🏃' },
-  tardiness:   { label: '遅刻',   color: '#7b1fa2', emoji: '⏱️' },
-  absence:     { label: '欠勤',   color: '#c62828', emoji: '❌' },
+  overtime:     { label: '残業',     color: '#1565c0', emoji: '⏰' },
+  holiday_work: { label: '休日出勤', color: '#0f766e', emoji: '🏢' },
+  early_leave:  { label: '早退',     color: '#e65100', emoji: '🏃' },
+  tardiness:    { label: '遅刻',     color: '#7b1fa2', emoji: '⏱️' },
+  absence:      { label: '欠勤',     color: '#c62828', emoji: '❌' },
 };
 
 const STATUS_INFO: Record<string, { label: string; color: string; bg: string }> = {
