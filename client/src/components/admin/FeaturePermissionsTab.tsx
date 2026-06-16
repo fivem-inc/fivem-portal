@@ -29,6 +29,8 @@ const FeaturePermissionsTab: React.FC = () => {
 
   const [roles, setRoles] = useState<Role[]>([]);
   const [perms, setPerms] = useState<Record<string, Record<string, boolean>>>({});
+  const [savedPerms, setSavedPerms] = useState<Record<string, Record<string, boolean>>>({});
+  const [isEditMode, setIsEditMode] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -65,7 +67,9 @@ const FeaturePermissionsTab: React.FC = () => {
       if (permsMap[p.role_id]) permsMap[p.role_id][p.feature_key] = p.enabled;
     });
     setPerms(permsMap);
+    setSavedPerms(JSON.parse(JSON.stringify(permsMap)));
     setIsDirty(false);
+    setIsEditMode(false);
     setLoading(false);
   }, [supabase]);
 
@@ -97,7 +101,9 @@ const FeaturePermissionsTab: React.FC = () => {
       .upsert(upserts, { onConflict: 'role_id,feature_key' });
     setSaving(false);
     if (error) { alert('保存に失敗しました: ' + error.message); return; }
+    setSavedPerms(JSON.parse(JSON.stringify(perms)));
     setIsDirty(false);
+    setIsEditMode(false);
     setSuccessMsg('権限設定を保存しました');
   };
 
@@ -352,10 +358,10 @@ const FeaturePermissionsTab: React.FC = () => {
 
       {/* ── 機能別権限マトリクス ── */}
       <div style={{ maxWidth: 820, margin: '0 auto', padding: '0 12px' }}>
-        <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${isDirty ? '#22c55e' : border}`, overflow: 'hidden', transition: 'border-color .2s' }}>
-          <div style={{ padding: '12px 16px', background: isDirty ? (isDarkMode ? '#1a3a1a' : '#f0fdf4') : headerBg, borderBottom: `1px solid ${isDirty ? '#22c55e' : border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', transition: 'background .2s' }}>
+        <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${isEditMode ? '#f59e0b' : border}`, overflow: 'hidden', transition: 'border-color .2s' }}>
+          <div style={{ padding: '12px 16px', background: isEditMode ? (isDarkMode ? '#3a2e00' : '#fffbeb') : headerBg, borderBottom: `1px solid ${isEditMode ? '#f59e0b' : border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', transition: 'background .2s' }}>
             <span style={{ fontWeight: 'bold', fontSize: 14, color: text }}>🔐 機能別 表示権限</span>
-            {isDirty && <span style={{ fontSize: 12, color: '#22c55e', fontWeight: 'bold' }}>● 未保存の変更あり</span>}
+            {isEditMode && <span style={{ fontSize: 12, color: '#d97706', fontWeight: 'bold' }}>✏️ 編集中</span>}
           </div>
 
           <div style={{ overflowX: 'auto' }}>
@@ -396,14 +402,16 @@ const FeaturePermissionsTab: React.FC = () => {
                       return (
                         <td key={role.id} style={{ textAlign: 'center', padding: '8px 6px', borderBottom: `1px solid ${border}` }}>
                           <button
-                            onClick={() => { if (!isFixed) togglePerm(role.id, feat.key); }}
-                            disabled={isFixed}
-                            title={isFixed ? '管理者は常にすべての機能を利用できます' : undefined}
+                            onClick={() => { if (!isFixed && isEditMode) togglePerm(role.id, feat.key); }}
+                            disabled={isFixed || !isEditMode}
+                            title={isFixed ? '管理者は常にすべての機能を利用できます' : !isEditMode ? '「変更する」を押して編集モードに入ってください' : undefined}
                             style={{
                               width: 36, height: 20, borderRadius: 10, border: 'none', padding: 0,
-                              position: 'relative', cursor: isFixed ? 'default' : 'pointer',
+                              position: 'relative',
+                              cursor: isFixed || !isEditMode ? 'default' : 'pointer',
                               background: isFixed ? '#93c5fd' : on ? '#22c55e' : (isDarkMode ? '#555' : '#ccc'),
-                              transition: 'background .15s',
+                              opacity: !isEditMode && !isFixed ? 0.7 : 1,
+                              transition: 'background .15s, opacity .15s',
                             }}
                           >
                             <span style={{
@@ -427,29 +435,43 @@ const FeaturePermissionsTab: React.FC = () => {
           </div>
 
           <div style={{ padding: '12px 16px', borderTop: `1px solid ${border}`, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-            <button
-              onClick={() => { fetchAll(); }}
-              disabled={!isDirty}
-              style={{ ...btnBase, opacity: isDirty ? 1 : 0.4, cursor: isDirty ? 'pointer' : 'default' }}
-            >
-              リセット
-            </button>
-            <button
-              onClick={handleSavePerms}
-              disabled={saving || !isDirty}
-              style={{
-                ...btnBase,
-                background: saving ? '#6c757d' : isDirty ? '#22c55e' : (isDarkMode ? '#495057' : '#e9ecef'),
-                color: isDirty || saving ? '#fff' : subText,
-                border: 'none',
-                opacity: !isDirty && !saving ? 0.5 : 1,
-                cursor: isDirty ? 'pointer' : 'default',
-                fontWeight: isDirty ? 'bold' : 'normal',
-                transition: 'background .2s',
-              }}
-            >
-              {saving ? '保存中...' : isDirty ? '✓ 保存する' : '変更なし'}
-            </button>
+            {!isEditMode ? (
+              <button
+                onClick={() => setIsEditMode(true)}
+                style={{ ...btnBase, background: '#f59e0b', color: '#fff', border: 'none', fontWeight: 'bold' }}
+              >
+                ✏️ 変更する
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={() => {
+                    setPerms(JSON.parse(JSON.stringify(savedPerms)));
+                    setIsDirty(false);
+                    setIsEditMode(false);
+                  }}
+                  style={btnBase}
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={handleSavePerms}
+                  disabled={saving || !isDirty}
+                  style={{
+                    ...btnBase,
+                    background: saving ? '#6c757d' : isDirty ? '#22c55e' : (isDarkMode ? '#495057' : '#e9ecef'),
+                    color: isDirty || saving ? '#fff' : subText,
+                    border: 'none',
+                    opacity: !isDirty && !saving ? 0.5 : 1,
+                    cursor: isDirty ? 'pointer' : 'default',
+                    fontWeight: isDirty ? 'bold' : 'normal',
+                    transition: 'background .2s',
+                  }}
+                >
+                  {saving ? '保存中...' : isDirty ? '✓ 保存する' : '変更なし'}
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
