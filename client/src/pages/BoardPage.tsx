@@ -332,8 +332,25 @@ const BoardPage: React.FC = () => {
     }
   }, [user]);
 
+  const markAllChannelsRead = useCallback(async () => {
+    if (!user) return;
+    const { data: memberRows } = await supabase.from('board_channel_members').select('channel_id').eq('user_id', user.id);
+    if (!memberRows || memberRows.length === 0) return;
+    const channelIds = memberRows.map((r: any) => r.channel_id);
+    const { data: msgs } = await supabase
+      .from('board_messages')
+      .select('id')
+      .in('channel_id', channelIds)
+      .is('parent_id', null)
+      .neq('user_id', user.id);
+    if (!msgs || msgs.length === 0) return;
+    const reads = msgs.map((m: any) => ({ message_id: m.id, user_id: user.id }));
+    await supabase.from('board_reads').upsert(reads, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
+  }, [user]);
+
   useEffect(() => { loadAll(); }, [loadAll]);
   useEffect(() => { loadFavorites(); }, [loadFavorites]);
+  useEffect(() => { markAllChannelsRead(); }, [markAllChannelsRead]);
 
   const toggleFavChannel = async (e: React.MouseEvent, chId: string) => {
     e.stopPropagation();
