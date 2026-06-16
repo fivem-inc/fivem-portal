@@ -3298,4 +3298,49 @@ ALTER TABLE board_channels ADD CONSTRAINT board_channels_type_check
 2. **残業申請フォーム（パート用）**
 3. **タブ・機能の表示権限管理画面**
 4. 送信トレイ宛先表示（BoardPage.tsx:2034）も10人以上折りたたみ化
+
+---
+
+## ⚠️ 既知バグ・トラブル事例（2026-06-16）
+
+### 🔴 ReactDOM.createPortal + mousedown outside-click ハンドラの競合
+
+**症状：** BellIcon（通知ドロップダウン）や AvatarMenu（ログアウトメニュー）の内部ボタン（✕・ログアウト）を押しても何も起きない。
+
+**原因：**
+`ReactDOM.createPortal` でドロップダウンを `document.body` に挿入した後、
+「外側クリックで閉じる」ハンドラが **ポータル内クリックを「外側」と誤判定** する。
+
+```ts
+// NG: ポータルは ref.current の外に挿入されるため contains() が false になる
+const h = (e: MouseEvent) => {
+  if (!ref.current?.contains(e.target as Node)) setOpen(false); // ← ポータル内も「外側」扱い
+};
+```
+
+タップ → `mousedown` → `setOpen(false)` → ドロップダウンDOM削除 → `click` が届かない。
+
+**修正方法：** ポータルの div に `portalRef` を付けて、mousedown ハンドラで両方チェックする。
+
+```ts
+const portalRef = useRef<HTMLDivElement>(null);
+
+const h = (e: MouseEvent) => {
+  const inside = ref.current?.contains(e.target as Node)
+               || portalRef.current?.contains(e.target as Node);
+  if (!inside) setOpen(false);
+};
+
+// ポータルの div に ref を付与
+{open && dropRect && ReactDOM.createPortal(
+  <div ref={portalRef} style={{ ... }}>
+    ...
+  </div>,
+  document.body
+)}
+```
+
+**実装済みコミット：** `1f4c0fd`（App.tsx: BellIcon・AvatarMenu 両方修正済み）
+
+**教訓：** `createPortal` を使うときは、outside-click ハンドラが **ポータルの中身を認識できない** ことに注意。必ず `portalRef` でポータルの div も追跡すること。
 5. **gcal-sync 失敗時リトライキュー**（低優先）
