@@ -364,70 +364,69 @@ const FeaturePermissionsTab: React.FC = () => {
             {isEditMode && <span style={{ fontSize: 12, color: '#d97706', fontWeight: 'bold' }}>✏️ 編集中</span>}
           </div>
 
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 480 }}>
-              <thead>
-                <tr>
-                  <th style={{
-                    fontSize: 12, color: subText, padding: '10px 14px',
-                    textAlign: 'left', background: isDarkMode ? '#2d3136' : '#fafafa',
-                    borderBottom: `1px solid ${border}`, minWidth: 140,
+          <div style={{ padding: '14px 16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
+            {roles.map(role => {
+              const isFixed = role.is_fixed;
+              return (
+                <div key={role.id} style={{
+                  background: isFixed
+                    ? (isDarkMode ? '#1a3a6b22' : '#eff6ff')
+                    : (isDarkMode ? '#3d4147' : '#fafafa'),
+                  border: `1px solid ${isFixed ? '#93c5fd55' : border}`,
+                  borderRadius: 10, overflow: 'hidden',
+                }}>
+                  {/* 役職名ヘッダー */}
+                  <div style={{
+                    padding: '8px 12px',
+                    background: isFixed
+                      ? (isDarkMode ? '#1a3a6b' : '#dbeafe')
+                      : (isDarkMode ? '#495057' : '#e9ecef'),
+                    display: 'flex', alignItems: 'center', gap: 6,
                   }}>
-                    機能
-                  </th>
-                  {roles.map(role => (
-                    <th key={role.id} style={{
-                      fontSize: 11, color: subText, padding: '10px 6px',
-                      textAlign: 'center', background: isDarkMode ? '#2d3136' : '#fafafa',
-                      borderBottom: `1px solid ${border}`, whiteSpace: 'nowrap', minWidth: 68,
-                    }}>
-                      {role.name}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {FEATURES.map(feat => (
-                  <tr key={feat.key}>
-                    <td style={{ padding: '10px 14px', fontSize: 13, color: text, borderBottom: `1px solid ${border}` }}>
-                      <span style={{ marginRight: 5 }}>{feat.icon}</span>
-                      {feat.label}
-                      {feat.note && (
-                        <div style={{ fontSize: 10, color: subText, marginTop: 2 }}>{feat.note}</div>
-                      )}
-                    </td>
-                    {roles.map(role => {
-                      const isFixed = role.is_fixed;
+                    <span style={{ fontSize: 13, fontWeight: 'bold', color: text }}>{role.name}</span>
+                    {isFixed && (
+                      <span style={{ fontSize: 10, background: '#3b82f6', color: '#fff', borderRadius: 8, padding: '1px 6px' }}>固定</span>
+                    )}
+                  </div>
+                  {/* 機能一覧 */}
+                  <div style={{ padding: '6px 0' }}>
+                    {FEATURES.map(feat => {
                       const on = isFixed ? true : (perms[role.id]?.[feat.key] ?? false);
                       return (
-                        <td key={role.id} style={{ textAlign: 'center', padding: '8px 6px', borderBottom: `1px solid ${border}` }}>
+                        <div key={feat.key} style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          padding: '6px 12px',
+                          opacity: !isEditMode && !isFixed ? 0.75 : 1,
+                        }}>
+                          <span style={{ fontSize: 12, color: text }}>
+                            {feat.icon} {feat.label}
+                          </span>
                           <button
                             onClick={() => { if (!isFixed && isEditMode) togglePerm(role.id, feat.key); }}
                             disabled={isFixed || !isEditMode}
                             title={isFixed ? '管理者は常にすべての機能を利用できます' : !isEditMode ? '「変更する」を押して編集モードに入ってください' : undefined}
                             style={{
-                              width: 36, height: 20, borderRadius: 10, border: 'none', padding: 0,
-                              position: 'relative',
+                              width: 34, height: 19, borderRadius: 10, border: 'none', padding: 0,
+                              position: 'relative', flexShrink: 0,
                               cursor: isFixed || !isEditMode ? 'default' : 'pointer',
                               background: isFixed ? '#93c5fd' : on ? '#22c55e' : (isDarkMode ? '#555' : '#ccc'),
-                              opacity: !isEditMode && !isFixed ? 0.7 : 1,
-                              transition: 'background .15s, opacity .15s',
+                              transition: 'background .15s',
                             }}
                           >
                             <span style={{
-                              position: 'absolute', top: 3,
-                              left: on || isFixed ? 19 : 3,
+                              position: 'absolute', top: 2.5,
+                              left: on || isFixed ? 17 : 2.5,
                               width: 14, height: 14, borderRadius: '50%',
                               background: '#fff', transition: 'left .15s', display: 'block',
                             }} />
                           </button>
-                        </td>
+                        </div>
                       );
                     })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           <div style={{ padding: '8px 14px', fontSize: 11, color: subText }}>
