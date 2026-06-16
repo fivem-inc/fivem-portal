@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { insertNotification } from '../lib/notifications';
 import { useAuth } from '../hooks/useAuth';
@@ -109,6 +109,7 @@ const BoardPage: React.FC = () => {
   const { user, isAdmin, profileName, roleTitle } = useAuth();
   const isDark = useDarkMode();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const bg        = isDark ? '#1a1a2e' : '#f0f2f5';
   const sidebarBg = isDark ? '#16213e' : '#f8f9fa';
@@ -123,7 +124,8 @@ const BoardPage: React.FC = () => {
   const [channels,    setChannels]    = useState<Channel[]>([]);
   const [members,     setMembers]     = useState<ChannelMember[]>([]);
   const [messages,    setMessages]    = useState<BoardMessage[]>([]);
-  const [lastSeen,    setLastSeen]    = useState<Record<string, string>>({});
+  const [lastSeen,          setLastSeen]          = useState<Record<string, string>>({});
+  const [prevChannelLastSeen, setPrevChannelLastSeen] = useState<string | null>(null);
   const [readCounts,  setReadCounts]  = useState<Record<string, number>>({});
   const [allProfiles, setAllProfiles] = useState<SimpleProfile[]>([]);
   const [dmDefaultPerms, setDmDefaultPerms] = useState<SendPermissions | null>(null);
@@ -226,9 +228,10 @@ const BoardPage: React.FC = () => {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
   // お気に入り
-  const [favChannelIds, setFavChannelIds] = useState<Set<string>>(new Set());
-  const [favMessageIds, setFavMessageIds] = useState<Set<string>>(new Set());
-  const [favMessages,   setFavMessages]   = useState<BoardMessage[]>([]);
+  const [favChannelIds,  setFavChannelIds]  = useState<Set<string>>(new Set());
+  const [favMessageIds,  setFavMessageIds]  = useState<Set<string>>(new Set());
+  const [favMessages,    setFavMessages]    = useState<BoardMessage[]>([]);
+  const [favUnreadIds,   setFavUnreadIds]   = useState<Set<string>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const channelListRef = useRef<HTMLDivElement>(null);
 
@@ -321,36 +324,29 @@ const BoardPage: React.FC = () => {
     setFavChannelIds(chIds);
     setFavMessageIds(msgIds);
     if (msgIds.size > 0) {
-      const { data: msgs } = await supabase
-        .from('board_messages')
-        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
-        .in('id', [...msgIds])
-        .order('created_at', { ascending: false });
-      setFavMessages((msgs || []) as BoardMessage[]);
+      const [msgsRes, readsRes] = await Promise.all([
+        supabase
+          .from('board_messages')
+          .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+          .in('id', [...msgIds])
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('board_reads')
+          .select('message_id')
+          .eq('user_id', user.id)
+          .in('message_id', [...msgIds]),
+      ]);
+      setFavMessages((msgsRes.data || []) as BoardMessage[]);
+      const readSet = new Set((readsRes.data || []).map((r: any) => r.message_id));
+      setFavUnreadIds(new Set([...msgIds].filter(id => !readSet.has(id))));
     } else {
       setFavMessages([]);
+      setFavUnreadIds(new Set());
     }
-  }, [user]);
-
-  const markAllChannelsRead = useCallback(async () => {
-    if (!user) return;
-    const { data: memberRows } = await supabase.from('board_channel_members').select('channel_id').eq('user_id', user.id);
-    if (!memberRows || memberRows.length === 0) return;
-    const channelIds = memberRows.map((r: any) => r.channel_id);
-    const { data: msgs } = await supabase
-      .from('board_messages')
-      .select('id')
-      .in('channel_id', channelIds)
-      .is('parent_id', null)
-      .neq('user_id', user.id);
-    if (!msgs || msgs.length === 0) return;
-    const reads = msgs.map((m: any) => ({ message_id: m.id, user_id: user.id }));
-    await supabase.from('board_reads').upsert(reads, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
   }, [user]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
   useEffect(() => { loadFavorites(); }, [loadFavorites]);
-  useEffect(() => { markAllChannelsRead(); }, [markAllChannelsRead]);
 
   const toggleFavChannel = async (e: React.MouseEvent, chId: string) => {
     e.stopPropagation();
@@ -587,6 +583,18 @@ const BoardPage: React.FC = () => {
   useEffect(() => { loadArchived(); }, [loadArchived]);
   useEffect(() => { loadOutbox(); }, [loadOutbox]);
 
+  // URLパラメータ openInboxId で受信トレイ詳細を自動展開
+  useEffect(() => {
+    const openId = searchParams.get('openInboxId');
+    if (!openId || inboxMessages.length === 0) return;
+    const msg = inboxMessages.find(m => m.id === openId);
+    if (!msg) return;
+    setView('inbox');
+    setShowSidebar(false);
+    setInboxDetailId(openId);
+    window.history.replaceState({}, '', '/board');
+  }, [searchParams, inboxMessages]);
+
   // 受信トレイ詳細を開いた時、送信者 or 管理者なら受信者＋未対応者を取得
   useEffect(() => {
     if (!inboxDetailId || !user) { setInboxDetailRecipients([]); setInboxDetailUnconfirmed([]); return; }
@@ -676,6 +684,8 @@ const BoardPage: React.FC = () => {
   // ── Actions ─────────────────────────────────────────────────────
 
   const selectChannel = async (channelId: string) => {
+    // 「ここから未読」表示用に前回の lastSeen を保存してから更新
+    setPrevChannelLastSeen(lastSeen[channelId] || null);
     setSelectedChannelId(channelId);
 
     setNewBody('');
@@ -853,7 +863,7 @@ const BoardPage: React.FC = () => {
       }
       if (dmCh) {
         await supabase.from('board_messages').insert({ channel_id: dmCh.id, user_id: user.id, body: broadcastMessage.trim() });
-        await insertNotification(targetId, `${profileName || '誰か'}からメッセージが届きました`, broadcastMessage.trim().slice(0, 40), 'board');
+        await insertNotification(targetId, `${profileName || '誰か'}からメッセージが届きました`, broadcastMessage.trim().slice(0, 40));
       }
     }
 
@@ -933,7 +943,7 @@ const BoardPage: React.FC = () => {
         const senderName = profileName || '誰か';
         const preview = (composeSubject.trim() || composeBody.trim()).slice(0, 40);
         await Promise.all(composeRecipientIds.filter(uid => uid !== user.id).map(uid =>
-          insertNotification(uid, `${senderName}からお知らせが届きました`, preview, 'board')
+          insertNotification(uid, `${senderName}からお知らせが届きました`, preview, undefined, data.id)
         ));
       }
 
@@ -1903,7 +1913,7 @@ const BoardPage: React.FC = () => {
                         if (!user) return;
                         setInboxRemindSending(true);
                         await Promise.all(inboxDetailUnconfirmed.map(uid =>
-                          insertNotification(uid, `【リマインド】${inboxDetail.subject || inboxDetail.title || 'お知らせ'}への対応がまだ完了していません`, undefined, 'board')
+                          insertNotification(uid, `【リマインド】${inboxDetail.subject || inboxDetail.title || 'お知らせ'}への対応がまだ完了していません`, undefined, undefined, inboxDetail.id)
                         ));
                         setInboxRemindSending(false);
                         setSaveBanner(true);
@@ -2381,7 +2391,23 @@ const BoardPage: React.FC = () => {
         {channelMessages.length === 0 && (
           <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>まだメッセージがありません</div>
         )}
-        {channelMessages.map(msg => renderMsg(msg))}
+        {(() => {
+          const unreadStartIdx = prevChannelLastSeen
+            ? channelMessages.findIndex(m => new Date(m.created_at) > new Date(prevChannelLastSeen))
+            : -1;
+          return channelMessages.map((msg, idx) => (
+            <React.Fragment key={msg.id}>
+              {unreadStartIdx !== -1 && idx === unreadStartIdx && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '10px 0' }}>
+                  <div style={{ flex: 1, height: 1, background: '#3b82f6', opacity: 0.5 }} />
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#3b82f6', whiteSpace: 'nowrap', padding: '2px 8px', border: '1px solid #3b82f6', borderRadius: 20 }}>ここから未読</span>
+                  <div style={{ flex: 1, height: 1, background: '#3b82f6', opacity: 0.5 }} />
+                </div>
+              )}
+              {renderMsg(msg)}
+            </React.Fragment>
+          ));
+        })()}
         <div ref={messagesEndRef} />
       </div>
 
@@ -2575,17 +2601,55 @@ const BoardPage: React.FC = () => {
               <div style={{ fontSize: 12, fontWeight: 700, color: subColor, marginBottom: 8, marginTop: favChannelIds.size > 0 ? 16 : 4 }}>メッセージ</div>
               {favMessages.map(msg => {
                 const senderName = allProfiles.find(p => p.id === msg.user_id)?.name || '不明';
+                const ch = channels.find(c => c.id === msg.channel_id);
+                const isGroupOrDm = !!ch && (ch.type === 'group' || ch.type === 'dm');
+                const borderColor = ch
+                  ? (ch.type === 'group' ? '#4a90d9' : ch.type === 'dm' ? '#6f42c1' : '#f59e0b')
+                  : '#f59e0b';
+                const typeLabel = ch
+                  ? (ch.type === 'group'
+                      ? `# ${ch.name || 'グループ'}`
+                      : ch.type === 'dm'
+                        ? `💬 ${channelDisplayName(ch)}`
+                        : `📢 ${msg.title || 'お知らせ'}`)
+                  : `📢 ${msg.title || 'お知らせ'}`;
+                const isUnread = favUnreadIds.has(msg.id);
+
+                const handleFavMsgClick = async () => {
+                  if (isUnread && user) {
+                    await supabase.from('board_reads').upsert(
+                      { message_id: msg.id, user_id: user.id },
+                      { onConflict: 'message_id,user_id', ignoreDuplicates: true }
+                    );
+                    setFavUnreadIds(prev => { const s = new Set(prev); s.delete(msg.id); return s; });
+                  }
+                  if (isGroupOrDm && msg.channel_id) {
+                    selectChannel(msg.channel_id); setView('channel'); setShowSidebar(false);
+                  } else {
+                    setInboxDetailId(msg.id); setView('inbox'); setShowSidebar(false);
+                  }
+                };
+
                 return (
-                  <div key={`fav-msg-${msg.id}`} onClick={() => {
-                    if (msg.channel_id) {
-                      selectChannel(msg.channel_id); setView('channel'); setShowSidebar(false);
-                    } else {
-                      setInboxDetailId(msg.id); setView('inbox'); setShowSidebar(false);
-                    }
-                  }} style={{
-                    background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: '10px 14px',
-                    marginBottom: 8, cursor: 'pointer',
+                  <div key={`fav-msg-${msg.id}`} onClick={handleFavMsgClick} style={{
+                    background: cardBg,
+                    borderTop: `1px solid ${border}`,
+                    borderRight: `1px solid ${border}`,
+                    borderBottom: `1px solid ${border}`,
+                    borderLeft: `4px solid ${borderColor}`,
+                    borderRadius: 10,
+                    padding: '10px 14px',
+                    marginBottom: 8,
+                    cursor: 'pointer',
                   }}>
+                    {/* 種別ラベル行 */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: borderColor }}>{typeLabel}</span>
+                      {isUnread && (
+                        <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#3b82f6', display: 'inline-block', flexShrink: 0 }} />
+                      )}
+                    </div>
+                    {/* 送信者行 */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 'bold', flexShrink: 0 }}>
@@ -2596,9 +2660,11 @@ const BoardPage: React.FC = () => {
                       </div>
                       <button type="button" onClick={e => toggleFavMessage(e, msg.id, msg)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, padding: 0, color: '#f59e0b', flexShrink: 0 }}>★</button>
                     </div>
+                    {/* タイトル */}
                     {(msg.subject || msg.title) && (
                       <div style={{ fontSize: 14, fontWeight: 700, color: textColor, marginTop: 6, paddingBottom: 6, borderBottom: `1px solid ${border}`, textAlign: 'left' }}>{msg.subject || msg.title}</div>
                     )}
+                    {/* 本文プレビュー */}
                     <div style={{ fontSize: 13, color: subColor, marginTop: 4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', wordBreak: 'break-word', textAlign: 'left' }}>{msg.body}</div>
                   </div>
                 );

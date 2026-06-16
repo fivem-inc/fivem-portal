@@ -1785,6 +1785,72 @@ const XxxTabA = () => { const { state, setState } = useXxx(); return <div>...</d
 
 ---
 
+## ✅ 2026-06-16 連絡板バナー・通知 UX全面改善 完了
+
+### 変更ファイル
+- `client/src/App.tsx`
+- `client/src/pages/BoardPage.tsx`
+- `client/src/lib/notifications.ts`
+
+### DB変更
+- `notifications` テーブルに `reference_id text` 列を追加（nullable）
+  - コマンド: `npx supabase db query --linked "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS reference_id text;"`
+
+### 主な変更内容
+
+#### お知らせ通知バナー → 直接メッセージ詳細へ遷移（App.tsx / BoardPage.tsx / notifications.ts）
+- `insertNotification` に `referenceId?` 第5引数を追加、DB に `reference_id` として保存
+- お知らせ送信時: `insertNotification(uid, "...お知らせ...", preview, undefined, data.id)` で `message_id` を紐付け
+- リマインド通知時も同様に `inboxDetail.id` を渡す
+- `NotifItem` タップ時: `reference_id` があれば `/board?openInboxId=<id>` へ遷移
+- `BoardPage` に `useSearchParams` 追加、`openInboxId` パラメータ受け取り後 `inboxMessages` ロード完了を待ってから詳細を自動展開 → `window.history.replaceState` でURLをクリア
+
+#### 通知バナー `isBoard` 判定を改善（App.tsx）
+- 旧: `n.message.includes('お知らせ')` 等の文字列マッチ（脆弱）
+- 新: `n.source_type === 'inbox'` を優先し、フォールバックで文字列マッチ（シニアエンジニアレビュー反映）
+- `NotificationRow` 型と fetch クエリに `source_type` / `reference_id` を追加
+
+#### お知らせバナー 複数件折りたたみ（App.tsx）
+- 3件以上のときは最初の2件のみ表示し「他n件を表示 ▼」リンクで展開（UI/UXデザイナーレビュー反映）
+- `expanded` state で制御
+
+#### バナー色の整理（App.tsx）
+- お知らせポップアップ（NotifItem）: 水色 → 元の緑（`#f0fdf4`）に戻す
+- 連絡板未読バナー（グループのみ）: 緑 → 水色（`#eff6ff`・`#3b82f6`）に変更
+
+#### 連絡板を開いただけでバナーが消えるバグを修正（App.tsx）
+- **旧**: `pathname === '/board'` になった瞬間に `boardClearedAt = now` を localStorage に書き強制リセット
+- **新**: 連絡板を開いてもカウントはそのまま。以下のタイミングでのみ自然に減少:
+  - グループ未読 → チャンネルを開いたとき（`selectChannel` → `board_reads` upsert）
+  - お知らせ未読 → 個別メッセージを開いたとき（受信トレイ詳細タップ → `board_reads` upsert）
+  - NavBadge → 連絡板から戻ったとき + 30秒ポーリング
+
+### ⚠️ 注意事項
+
+#### reference_id の活用
+- `reference_id` はお知らせ（board_messages の id）を指す
+- 将来的にリマインド通知も同じ仕組みで直接遷移可能
+- `reference_id` が null の古い通知（実装前に送ったもの）はタップで `/board` トップに遷移（フォールバック）
+
+#### BoardPage の `openInboxId` 処理
+- `inboxMessages.length === 0` のときは guard で skip（データ未ロード時の誤作動防止）
+- 該当メッセージが見つからない場合（アーカイブ済み等）も skip（フォールバックなし）
+- `window.history.replaceState({}, '', '/board')` でURL から `?openInboxId=xxx` を除去（戻る→再タップ時の二重展開防止）
+
+#### boardClearedAt の役割
+- localStorage に残った `boardClearedAt` は「この日付より前のメッセージは無視」という既存のカットオフ値として機能し続ける
+- 今回の修正で「連絡板を開いた瞬間に更新」する処理を削除したため、カットオフ値は固定になった
+- 新着メッセージは `board_reads` テーブルで正確に管理される
+
+### 🔜 次回タスク（2026-06-16時点）
+- 残業申請フォーム（パート用）← 最優先
+- 忘れん坊通知①②③（send-push Edge Function は完成済み・呼び出し側を実装）
+- タブ・機能の表示権限管理画面
+- UI/UX改善（コードレビュー高優先項目）
+- gcal-sync 失敗時リトライキュー（低優先）
+
+---
+
 ## Project Overview
 
 Expense management application built with React/TypeScript frontend and Supabase backend.

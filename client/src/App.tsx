@@ -55,7 +55,7 @@ const ProtectedLayout: React.FC = () => {
 // ナビゲーションバー
 const CALENDAR_ROLES = ['リーダー', 'マネージャー', '社長', '管理者'];
 
-interface NotificationRow { id: string; message: string; sub_message: string | null; read: boolean; created_at: string; }
+interface NotificationRow { id: string; message: string; sub_message: string | null; read: boolean; created_at: string; source_type: string | null; reference_id: string | null; }
 
 const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
   const [notifs, setNotifs] = useState<NotificationRow[]>([]);
@@ -64,7 +64,7 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
   const portalRef = useRef<HTMLDivElement>(null);
 
   const fetchNotifs = useCallback(async () => {
-    const { data } = await supabase.from('notifications').select('id, message, sub_message, read, created_at').eq('user_id', userId).or('source_type.is.null,source_type.neq.board').order('created_at', { ascending: false }).limit(30);
+    const { data } = await supabase.from('notifications').select('id, message, sub_message, read, created_at, source_type, reference_id').eq('user_id', userId).or('source_type.is.null,source_type.neq.board').order('created_at', { ascending: false }).limit(30);
     if (data) setNotifs(data);
   }, [userId]);
 
@@ -180,39 +180,59 @@ const AvatarMenu: React.FC<{ userId: string; profileName: string | null; email: 
   );
 };
 
+const BOARD_CLEARED_KEY = 'boardClearedAt';
+
 const useBoardUnread = (userId: string | undefined, pathname: string) => {
-  const [count, setCount] = useState(0);
+  const [channelCount, setChannelCount] = useState(0);
+  const [inboxCount,   setInboxCount]   = useState(0);
   const prevPath = useRef(pathname);
 
   const fetchCount = useCallback(async () => {
     if (!userId) return;
-    const { data: memberRows } = await supabase.from('board_channel_members').select('channel_id').eq('user_id', userId);
-    if (!memberRows || memberRows.length === 0) { setCount(0); return; }
-    const channelIds = memberRows.map((r: any) => r.channel_id);
-    const { data: msgs } = await supabase
-      .from('board_messages')
-      .select('id')
-      .in('channel_id', channelIds)
-      .is('parent_id', null)
-      .neq('user_id', userId);
-    if (!msgs || msgs.length === 0) { setCount(0); return; }
-    const msgIds = msgs.map((m: any) => m.id);
-    const { data: reads } = await supabase.from('board_reads').select('message_id').eq('user_id', userId).in('message_id', msgIds);
-    const readSet = new Set((reads || []).map((r: any) => r.message_id));
-    setCount(msgIds.filter(id => !readSet.has(id)).length);
+
+    const [memberRes, inboxRes] = await Promise.all([
+      supabase.from('board_channel_members').select('channel_id').eq('user_id', userId),
+      supabase.from('board_message_recipients').select('message_id').eq('user_id', userId).eq('archived', false),
+    ]);
+
+    // チャンネル未読
+    let channelUnread = 0;
+    if (memberRes.data && memberRes.data.length > 0) {
+      const channelIds = memberRes.data.map((r: any) => r.channel_id);
+      const boardClearedAt = localStorage.getItem(BOARD_CLEARED_KEY);
+      let query = supabase.from('board_messages').select('id').in('channel_id', channelIds).is('parent_id', null).neq('user_id', userId);
+      if (boardClearedAt) query = query.gt('created_at', boardClearedAt);
+      const { data: msgs } = await query;
+      if (msgs && msgs.length > 0) {
+        const msgIds = msgs.map((m: any) => m.id);
+        const { data: reads } = await supabase.from('board_reads').select('message_id').eq('user_id', userId).in('message_id', msgIds);
+        const readSet = new Set((reads || []).map((r: any) => r.message_id));
+        channelUnread = msgIds.filter((id: string) => !readSet.has(id)).length;
+      }
+    }
+
+    // 受信トレイ未読
+    let inboxUnread = 0;
+    if (inboxRes.data && inboxRes.data.length > 0) {
+      const inboxMsgIds = inboxRes.data.map((r: any) => r.message_id);
+      const { data: reads } = await supabase.from('board_reads').select('message_id').eq('user_id', userId).in('message_id', inboxMsgIds);
+      const readSet = new Set((reads || []).map((r: any) => r.message_id));
+      inboxUnread = inboxMsgIds.filter((id: string) => !readSet.has(id)).length;
+    }
+
+    setChannelCount(channelUnread);
+    setInboxCount(inboxUnread);
   }, [userId]);
 
   useEffect(() => {
-    if (pathname === '/board') {
-      setCount(0);
-    } else if (prevPath.current === '/board') {
+    if (prevPath.current === '/board' && pathname !== '/board') {
       fetchCount();
     }
     prevPath.current = pathname;
   }, [pathname, fetchCount]);
 
   useEffect(() => { fetchCount(); const t = setInterval(fetchCount, 30000); return () => clearInterval(t); }, [fetchCount]);
-  return count;
+  return { total: channelCount + inboxCount, channelOnly: channelCount };
 };
 
 const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean; roleTitle?: string; userId?: string }> = ({ isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove, roleTitle, userId }) => {
@@ -234,7 +254,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     window.addEventListener('resize', check);
     return () => window.removeEventListener('resize', check);
   }, []);
-  const boardUnread = useBoardUnread(userId, location.pathname);
+  const { total: boardUnread } = useBoardUnread(userId, location.pathname);
 
   const btnStyle = (active: boolean, activeColor = '#007bff') => isMobile ? ({
     width: 44, height: 44, borderRadius: 8, border: 'none', cursor: 'pointer',
@@ -296,49 +316,56 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
 };
 
 // 通知バナー（notifications テーブルから未読を表示）
-const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: string | null; read: boolean }; onDismiss: (id: string) => void }> = ({ n, onDismiss }) => {
+const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: string | null; read: boolean; source_type: string | null; reference_id: string | null }; onDismiss: (id: string) => void }> = ({ n, onDismiss }) => {
   const navigate = useNavigate();
   const isReject = n.message.includes('差し戻し') || n.message.includes('差し戻され');
   const isCancel = n.message.includes('取り消され');
   const isEnc = n.message.includes('有給奨励日');
+  const isBoard = n.source_type === 'inbox' || n.message.includes('お知らせ') || n.message.includes('メッセージが届き') || n.message.includes('リマインド');
 
-  const borderColor = isReject ? '#f5b8bb' : isCancel ? '#fcd5a0' : '#b7e4cc';
-  const bgColor = isReject ? '#fff5f5' : isCancel ? '#fff8ee' : '#f0fdf4';
-  const textColor = isReject ? '#721c24' : isCancel ? '#7a3c00' : '#155724';
-  const subColor = isReject ? '#a03030' : isCancel ? '#9a5200' : '#3a7d52';
+  const bgColor    = isReject ? '#fff5f5' : isCancel ? '#fff8ee' : isBoard ? '#f0fdf4' : '#f0fdf4';
+  const borderMain = isReject ? '#dc3545' : isCancel ? '#fd7e14' : isBoard ? '#28a745' : '#28a745';
+  const borderSub  = isReject ? '#f5b8bb' : isCancel ? '#fcd5a0' : isBoard ? '#b7e4cc' : '#b7e4cc';
+  const textColor  = isReject ? '#721c24' : isCancel ? '#7a3c00' : isBoard ? '#155724' : '#155724';
+  const subColor   = isReject ? '#a03030' : isCancel ? '#9a5200' : isBoard ? '#3a7d52' : '#3a7d52';
+
+  const handleTap = () => {
+    onDismiss(n.id);
+    if (isEnc) { navigate('/leave'); return; }
+    if (isBoard) {
+      if (n.reference_id) { navigate(`/board?openInboxId=${n.reference_id}`); } else { navigate('/board'); }
+      return;
+    }
+    if (isReject || isCancel) { navigate('/leave'); return; }
+  };
 
   return (
-    <div onClick={isEnc ? () => { onDismiss(n.id); navigate('/leave'); } : undefined}
+    <div onClick={handleTap}
       style={{
-        background: bgColor, border: `1px solid ${borderColor}`,
-        borderLeft: `4px solid ${isReject ? '#dc3545' : isCancel ? '#fd7e14' : '#28a745'}`,
+        background: bgColor, border: `1px solid ${borderSub}`,
+        borderLeft: `4px solid ${borderMain}`,
         borderRadius: '0 10px 10px 0',
         padding: '12px 16px', marginBottom: 10,
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        cursor: isEnc ? 'pointer' : 'default',
+        display: 'flex', alignItems: 'center', gap: 10,
+        cursor: 'pointer',
       }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
-        <div>
-          <div style={{ fontWeight: 500, fontSize: 14, color: textColor }}>{n.message}</div>
-          {n.sub_message && <div style={{ fontSize: 12, color: subColor }}>{n.sub_message}</div>}
-          {isEnc && <div style={{ fontSize: 11, color: subColor, marginTop: 2 }}>タップして回答する →</div>}
-        </div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontWeight: 500, fontSize: 14, color: textColor }}>{n.message}</div>
+        {n.sub_message && <div style={{ fontSize: 12, color: subColor }}>{n.sub_message}</div>}
       </div>
-      {!isEnc && (
-        <button onClick={e => { e.stopPropagation(); onDismiss(n.id); }}
-          style={{ background: 'rgba(0,0,0,0.07)', border: 'none', color: textColor, borderRadius: '50%', width: 24, height: 24, cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>✕</button>
-      )}
+      <div style={{ fontSize: 12, color: subColor, whiteSpace: 'nowrap', flexShrink: 0 }}>タップして確認 →</div>
     </div>
   );
 };
 
 const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
-  const [notifs, setNotifs] = useState<{ id: string; message: string; sub_message: string | null; read: boolean }[]>([]);
+  const [notifs, setNotifs] = useState<{ id: string; message: string; sub_message: string | null; read: boolean; source_type: string | null; reference_id: string | null }[]>([]);
+  const [expanded, setExpanded] = useState(false);
 
   const fetchNotifs = useCallback(async () => {
     const { data } = await supabase
       .from('notifications')
-      .select('id, message, sub_message, read')
+      .select('id, message, sub_message, read, source_type, reference_id')
       .eq('user_id', userId)
       .eq('read', false)
       .not('message', 'like', '%有給奨励日%')
@@ -356,9 +383,18 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
 
   if (notifs.length === 0) return null;
 
+  const visible = expanded ? notifs : notifs.slice(0, 2);
+  const hiddenCount = notifs.length - 2;
+
   return (
     <>
-      {notifs.map(n => <NotifItem key={n.id} n={n} onDismiss={dismiss} />)}
+      {visible.map(n => <NotifItem key={n.id} n={n} onDismiss={dismiss} />)}
+      {!expanded && hiddenCount > 0 && (
+        <div onClick={() => setExpanded(true)}
+          style={{ textAlign: 'center', fontSize: 12, color: '#3b82f6', padding: '4px 0 8px', cursor: 'pointer' }}>
+          他{hiddenCount}件を表示 ▼
+        </div>
+      )}
     </>
   );
 };
@@ -508,7 +544,7 @@ const Dashboard: React.FC = () => {
   const [encAnswerSuccess, setEncAnswerSuccess] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [leaveSubmitted, setLeaveSubmitted] = useState(false);
-  const boardUnread = useBoardUnread(user?.id, pathname);
+  const { channelOnly: boardChannelUnread } = useBoardUnread(user?.id, pathname);
 
   const setExpenses = useCallback((value: React.SetStateAction<Expense[]>) => {
     setExpensesState(value);
@@ -613,31 +649,35 @@ const Dashboard: React.FC = () => {
       )}
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} userId={user.id} />
 
-      {/* 連絡板未読バナー（読むまで消えない） */}
-      {boardUnread > 0 && location.pathname !== '/board' && (
-        <div onClick={() => navigate('/board')} style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 10, padding: '12px 16px', marginBottom: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 15, flexShrink: 0 }}>💬</div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 14, fontWeight: 'bold', color: '#166534' }}>連絡板に未読が{boardUnread}件あります</div>
-            <div style={{ fontSize: 12, color: '#3a7d52', marginTop: 2 }}>タップして確認 →</div>
-          </div>
+      {/* ① お知らせ通知バナー（申請者向け） */}
+      {!isAdmin && <NotificationBanner userId={user.id} />}
+
+      {/* ② 連絡板未読バナー（グループのみ・消えない） */}
+      {boardChannelUnread > 0 && location.pathname !== '/board' && (
+        <div onClick={() => navigate('/board')} style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, padding: '12px 16px', marginBottom: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 15, flexShrink: 0 }}>💬</div>
+          <div style={{ fontSize: 14, fontWeight: 'bold', color: '#1e40af', flex: 1 }}>連絡板に未読が{boardChannelUnread}件あります</div>
+          <div style={{ fontSize: 12, color: '#3b82f6', whiteSpace: 'nowrap', flexShrink: 0 }}>タップして確認 →</div>
         </div>
       )}
 
-      {/* 有給奨励日バナー（消せない） */}
+      {/* ③ 有給奨励日バナー（消せない） */}
       <EncouragementBanner userId={user.id} refreshKey={encRefreshKey} onAnswer={d => { setEncAnsweringDay(d); setEncAnswerChoice(null); setEncAnswerNote(''); }} />
 
-      {/* 有給申請バナー（パート向け） */}
+      {/* ④ 休暇申請承認バナー（承認者のみ） */}
+      <LeaveApprovalBanner userId={user.id} roleTitle={roleTitle} isAdmin={isAdmin} />
+
+      {/* ⑤ 有給申請バナー（パート向け） */}
       {leaveRequestEnabled && !leaveSubmitted && (
         <div
           onClick={() => setShowLeaveModal(true)}
           style={{ background: '#28a745', color: 'white', borderRadius: 10, padding: '14px 20px', marginBottom: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, boxShadow: '0 2px 8px rgba(40,167,69,0.4)' }}
         >
           <span style={{ fontSize: 24 }}>📨</span>
-          <div>
+          <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 'bold', fontSize: 15 }}>有給申請を送信してください</div>
-            <div style={{ fontSize: 13, opacity: 0.9 }}>タップして申請する</div>
           </div>
+          <div style={{ fontSize: 13, opacity: 0.9, whiteSpace: 'nowrap', flexShrink: 0 }}>タップして申請する →</div>
         </div>
       )}
       {showLeaveModal && (
@@ -652,12 +692,6 @@ const Dashboard: React.FC = () => {
           </Suspense>
         </div>
       )}
-
-      {/* 通知バナー（申請者向け） */}
-      {!isAdmin && <NotificationBanner userId={user.id} />}
-
-      {/* 休暇申請承認バナー（承認者のみ） */}
-      <LeaveApprovalBanner userId={user.id} roleTitle={roleTitle} isAdmin={isAdmin} />
 
       {/* 交通費申請フォーム */}
       <ExpenseForm
