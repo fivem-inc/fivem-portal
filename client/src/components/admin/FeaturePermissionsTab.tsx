@@ -219,7 +219,7 @@ const FeaturePermissionsTab: React.FC = () => {
               : null}
           </div>
 
-          <div style={{ padding: '12px 16px', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ padding: '8px 0' }}>
             {roles.map((role) => {
               const nonFixedIdx = sortable.findIndex(r => r.id === role.id);
               const canUp   = !role.is_fixed && nonFixedIdx > 0;
@@ -227,43 +227,42 @@ const FeaturePermissionsTab: React.FC = () => {
 
               return (
                 <div key={role.id} style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 10px',
-                  borderRadius: 20, border: `1px solid ${role.is_fixed ? '#93c5fd55' : border}`, fontSize: 13, color: text,
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '9px 16px',
+                  borderBottom: `1px solid ${border}`,
                   background: role.is_fixed
-                    ? (isDarkMode ? '#1a3a6b' : '#dbeafe')
-                    : (isDarkMode ? '#3d4147' : '#f8f9fa'),
+                    ? (isDarkMode ? '#1a3a6b22' : '#eff6ff')
+                    : 'transparent',
                 }}>
                   {/* 並び替えボタン（編集モード時のみ） */}
-                  {!role.is_fixed && isRoleEditMode && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      <button onClick={() => handleMove(role, 'up')} disabled={!canUp}
-                        title="上へ"
-                        style={{ background: 'none', border: 'none', cursor: canUp ? 'pointer' : 'default', color: canUp ? subText : 'transparent', fontSize: 9, padding: 0, lineHeight: 1 }}>
+                  {isRoleEditMode && !role.is_fixed && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 1, flexShrink: 0 }}>
+                      <button onClick={() => handleMove(role, 'up')} disabled={!canUp} title="上へ"
+                        style={{ background: 'none', border: 'none', cursor: canUp ? 'pointer' : 'default', color: canUp ? subText : (isDarkMode ? '#444' : '#ddd'), fontSize: 10, padding: 0, lineHeight: 1 }}>
                         ▲
                       </button>
-                      <button onClick={() => handleMove(role, 'down')} disabled={!canDown}
-                        title="下へ"
-                        style={{ background: 'none', border: 'none', cursor: canDown ? 'pointer' : 'default', color: canDown ? subText : 'transparent', fontSize: 9, padding: 0, lineHeight: 1 }}>
+                      <button onClick={() => handleMove(role, 'down')} disabled={!canDown} title="下へ"
+                        style={{ background: 'none', border: 'none', cursor: canDown ? 'pointer' : 'default', color: canDown ? subText : (isDarkMode ? '#444' : '#ddd'), fontSize: 10, padding: 0, lineHeight: 1 }}>
                         ▼
                       </button>
                     </div>
                   )}
-
-                  <span>{role.name}</span>
-
+                  {/* 役職名 */}
+                  <span style={{ fontSize: 13, fontWeight: 500, color: text, flex: 1 }}>{role.name}</span>
+                  {/* 固定バッジ or 編集/削除ボタン */}
                   {role.is_fixed ? (
-                    <span style={{ fontSize: 10, background: '#3b82f6', color: '#fff', borderRadius: 8, padding: '1px 6px' }}>固定</span>
+                    <span style={{ fontSize: 10, background: '#3b82f6', color: '#fff', borderRadius: 8, padding: '2px 8px', flexShrink: 0 }}>固定</span>
                   ) : isRoleEditMode ? (
-                    <>
-                      <button onClick={() => handleOpenEdit(role)} title="編集"
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: subText, fontSize: 13, padding: '0 2px', lineHeight: 1 }}>
-                        ✏️
+                    <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                      <button onClick={() => handleOpenEdit(role)} title="名前を変更"
+                        style={{ ...btnBase, padding: '4px 10px', fontSize: 12 }}>
+                        ✏️ 編集
                       </button>
                       <button onClick={() => handleClickDelete(role)} title="削除"
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc3545', fontSize: 14, padding: '0 2px', lineHeight: 1 }}>
-                        ✕
+                        style={{ ...btnBase, padding: '4px 10px', fontSize: 12, color: '#dc3545', borderColor: '#fca5a5' }}>
+                        ✕ 削除
                       </button>
-                    </>
+                    </div>
                   ) : null}
                 </div>
               );
