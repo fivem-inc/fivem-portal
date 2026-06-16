@@ -362,8 +362,14 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
 const PreviewBodyOffset: React.FC = () => {
   const { previewRole } = useContext(AuthContext);
   useEffect(() => {
-    document.body.style.paddingTop = previewRole ? '32px' : '0px';
-    return () => { document.body.style.paddingTop = '0px'; };
+    const offset = previewRole ? '32px' : '0px';
+    const topbarHeight = previewRole ? '92px' : '60px';
+    document.body.style.paddingTop = offset;
+    document.documentElement.style.setProperty('--topbar-height', topbarHeight);
+    return () => {
+      document.body.style.paddingTop = '0px';
+      document.documentElement.style.setProperty('--topbar-height', '60px');
+    };
   }, [previewRole]);
   return null;
 };
