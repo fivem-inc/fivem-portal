@@ -31,7 +31,7 @@ interface ShiftReport {
   reviewer?: { name: string | null } | null;
 }
 interface Reviewer { id: string; name: string; role_title: string; }
-interface Staff    { id: string; name: string; role_title: string; }
+interface Staff    { id: string; name: string; role_title: string; employment_type: string; }
 
 interface Props {
   user: AuthUser;
@@ -275,10 +275,10 @@ const ShiftReportForm: React.FC<{
 
   useEffect(() => {
     if (!canProxy) return;
-    // 代行対象はパート・アルバイトのみ（REVIEWER_ROLES以外）
-    supabase.from('profiles').select('id, name, role_title').eq('is_active', true).order('name')
+    // 代行対象はパート・アルバイトのみ（employment_type='パート'）
+    supabase.from('profiles').select('id, name, role_title, employment_type').eq('is_active', true).order('name')
       .then(({ data }) => {
-        if (data) setStaffList((data as Staff[]).filter(s => !REVIEWER_ROLES.includes(s.role_title)));
+        if (data) setStaffList((data as Staff[]).filter(s => s.employment_type === 'パート'));
       });
   }, [canProxy]);
 

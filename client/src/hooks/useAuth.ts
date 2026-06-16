@@ -12,7 +12,9 @@ interface UseAuthReturn {
   isApprover: boolean;
   profileName: string;
   roleTitle: string;
+  employmentType: string;
   canLeave: boolean;
+  canShiftReport: boolean;
   leaveRequestEnabled: boolean;
   handleLogout: () => Promise<void>;
 }
@@ -26,6 +28,7 @@ export const useAuth = (): UseAuthReturn => {
   const [loading, setLoading] = useState(true);
   const [profileName, setProfileName] = useState('');
   const [roleTitle, setRoleTitle] = useState('');
+  const [employmentType, setEmploymentType] = useState('');
   const [canLeave, setCanLeave] = useState(false);
   const [leaveRequestEnabled, setLeaveRequestEnabled] = useState(false);
 
@@ -52,7 +55,10 @@ export const useAuth = (): UseAuthReturn => {
         if (data.name) setProfileName(data.name);
         const role = data.role_title || '一般';
         setRoleTitle(role);
-        const alwaysShow = ['リーダー', 'マネージャー', '社長', '管理者'].includes(role);
+        const empType = data.employment_type || '正社員';
+        setEmploymentType(empType);
+        // 一般・フロア責任者も休暇申請ボタンを表示
+        const alwaysShow = ['リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者', '一般'].includes(role);
         const isAdmin = user?.app_metadata?.role === 'admin';
         setCanLeave(alwaysShow || isAdmin);
         setLeaveRequestEnabled(!!data.leave_request_enabled);
@@ -94,6 +100,17 @@ export const useAuth = (): UseAuthReturn => {
     fetchProfileName();
   }, [fetchProfileName]);
 
+  const effectiveEmploymentType = previewRole
+    ? (previewRole === 'パート' ? 'パート' : '正社員')
+    : employmentType;
+
+  const effectiveCanLeave = previewRole
+    ? ['リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者', '一般'].includes(previewRole)
+    : canLeave;
+
+  // 勤務変更: パート本人 or 承認者（代行・確認用）
+  const canShiftReport = isApprover || effectiveEmploymentType === 'パート';
+
   return {
     user,
     loading,
@@ -101,7 +118,9 @@ export const useAuth = (): UseAuthReturn => {
     isApprover,
     profileName,
     roleTitle: effectiveRoleTitle,
-    canLeave: previewRole ? ['リーダー', 'マネージャー', '社長', '管理者'].includes(previewRole) : canLeave,
+    employmentType: effectiveEmploymentType,
+    canLeave: effectiveCanLeave,
+    canShiftReport,
     leaveRequestEnabled,
     handleLogout
   };
