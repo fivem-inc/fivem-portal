@@ -35,6 +35,7 @@ const FeaturePermissionsTab: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  const [isRoleEditMode, setIsRoleEditMode] = useState(false);
   const [newRoleName, setNewRoleName] = useState('');
   const [addingRole, setAddingRole] = useState(false);
 
@@ -211,12 +212,15 @@ const FeaturePermissionsTab: React.FC = () => {
       {/* ── 役職管理カード ── */}
       <div style={{ maxWidth: 820, margin: '0 auto 20px', padding: '0 12px' }}>
         <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${border}`, overflow: 'hidden' }}>
-          <div style={{ padding: '12px 16px', background: headerBg, borderBottom: `1px solid ${border}`, fontWeight: 'bold', fontSize: 14, color: text }}>
-            👥 役職一覧
+          <div style={{ padding: '12px 16px', background: isRoleEditMode ? (isDarkMode ? '#3a2e00' : '#fffbeb') : headerBg, borderBottom: `1px solid ${isRoleEditMode ? '#f59e0b' : border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', transition: 'background .2s' }}>
+            <span style={{ fontWeight: 'bold', fontSize: 14, color: text }}>👥 役職一覧</span>
+            {isRoleEditMode
+              ? <span style={{ fontSize: 12, color: '#d97706', fontWeight: 'bold' }}>✏️ 編集中</span>
+              : null}
           </div>
 
           <div style={{ padding: '12px 16px', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {roles.map((role, idx) => {
+            {roles.map((role) => {
               const nonFixedIdx = sortable.findIndex(r => r.id === role.id);
               const canUp   = !role.is_fixed && nonFixedIdx > 0;
               const canDown = !role.is_fixed && nonFixedIdx < sortable.length - 1;
@@ -224,13 +228,13 @@ const FeaturePermissionsTab: React.FC = () => {
               return (
                 <div key={role.id} style={{
                   display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 10px',
-                  borderRadius: 20, border: `1px solid ${border}`, fontSize: 13, color: text,
+                  borderRadius: 20, border: `1px solid ${role.is_fixed ? '#93c5fd55' : border}`, fontSize: 13, color: text,
                   background: role.is_fixed
                     ? (isDarkMode ? '#1a3a6b' : '#dbeafe')
                     : (isDarkMode ? '#3d4147' : '#f8f9fa'),
                 }}>
-                  {/* 並び替えボタン */}
-                  {!role.is_fixed && (
+                  {/* 並び替えボタン（編集モード時のみ） */}
+                  {!role.is_fixed && isRoleEditMode && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                       <button onClick={() => handleMove(role, 'up')} disabled={!canUp}
                         title="上へ"
@@ -249,7 +253,7 @@ const FeaturePermissionsTab: React.FC = () => {
 
                   {role.is_fixed ? (
                     <span style={{ fontSize: 10, background: '#3b82f6', color: '#fff', borderRadius: 8, padding: '1px 6px' }}>固定</span>
-                  ) : (
+                  ) : isRoleEditMode ? (
                     <>
                       <button onClick={() => handleOpenEdit(role)} title="編集"
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: subText, fontSize: 13, padding: '0 2px', lineHeight: 1 }}>
@@ -260,33 +264,55 @@ const FeaturePermissionsTab: React.FC = () => {
                         ✕
                       </button>
                     </>
-                  )}
+                  ) : null}
                 </div>
               );
             })}
           </div>
 
-          <div style={{ padding: '8px 16px 16px', display: 'flex', gap: 8 }}>
-            <input
-              type="text"
-              value={newRoleName}
-              onChange={e => setNewRoleName(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') handleAddRole(); }}
-              placeholder="新しい役職名を入力..."
-              style={{
-                flex: 1, padding: '7px 12px', borderRadius: 8,
-                border: `1px solid ${border}`,
-                background: isDarkMode ? '#3d4147' : '#fff',
-                color: text, fontSize: 13,
-              }}
-            />
-            <button
-              onClick={handleAddRole}
-              disabled={addingRole || !newRoleName.trim()}
-              style={{ ...btnBase, background: '#3b82f6', color: '#fff', border: 'none', opacity: !newRoleName.trim() ? 0.5 : 1 }}
-            >
-              {addingRole ? '追加中...' : '+ 追加'}
-            </button>
+          {/* 追加フォーム（編集モード時のみ） */}
+          {isRoleEditMode && (
+            <div style={{ padding: '8px 16px 14px', display: 'flex', gap: 8 }}>
+              <input
+                type="text"
+                value={newRoleName}
+                onChange={e => setNewRoleName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleAddRole(); }}
+                placeholder="新しい役職名を入力..."
+                style={{
+                  flex: 1, padding: '7px 12px', borderRadius: 8,
+                  border: `1px solid ${border}`,
+                  background: isDarkMode ? '#3d4147' : '#fff',
+                  color: text, fontSize: 13,
+                }}
+              />
+              <button
+                onClick={handleAddRole}
+                disabled={addingRole || !newRoleName.trim()}
+                style={{ ...btnBase, background: '#3b82f6', color: '#fff', border: 'none', opacity: !newRoleName.trim() ? 0.5 : 1 }}
+              >
+                {addingRole ? '追加中...' : '+ 追加'}
+              </button>
+            </div>
+          )}
+
+          {/* フッターボタン */}
+          <div style={{ padding: '10px 16px', borderTop: `1px solid ${border}`, display: 'flex', justifyContent: 'flex-end' }}>
+            {!isRoleEditMode ? (
+              <button
+                onClick={() => setIsRoleEditMode(true)}
+                style={{ ...btnBase, background: '#f59e0b', color: '#fff', border: 'none', fontWeight: 'bold' }}
+              >
+                ✏️ 変更する
+              </button>
+            ) : (
+              <button
+                onClick={() => { setIsRoleEditMode(false); setNewRoleName(''); }}
+                style={{ ...btnBase, background: '#6c757d', color: '#fff', border: 'none' }}
+              >
+                完了
+              </button>
+            )}
           </div>
         </div>
       </div>
