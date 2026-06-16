@@ -14,6 +14,12 @@ interface FeaturePermission {
   enabled: boolean;
 }
 
+interface StaffMember {
+  id: string;
+  name: string;
+  role_title: string;
+}
+
 const FEATURES = [
   { key: 'leave_request',   icon: '🌿', label: '休暇申請',       note: 'パートは別フロー' },
   { key: 'leave_calendar',  icon: '📅', label: '休暇カレンダー', note: '' },
@@ -45,6 +51,12 @@ const FeaturePermissionsTab: React.FC = () => {
   // 削除確認モーダル
   const [deleteTarget, setDeleteTarget] = useState<{ role: Role; staffCount: number } | null>(null);
 
+  // スタッフ割り当てモーダル
+  const [staffCounts, setStaffCounts] = useState<Record<string, number>>({});
+  const [assignTarget, setAssignTarget] = useState<{ role: Role; staff: StaffMember[] } | null>(null);
+  const [staffRoleChanges, setStaffRoleChanges] = useState<Record<string, string>>({});
+  const [savingAssign, setSavingAssign] = useState(false);
+
   const bg       = isDarkMode ? '#1e2328' : '#f8f9fa';
   const cardBg   = isDarkMode ? '#2d3136' : '#ffffff';
   const border   = isDarkMode ? '#495057' : '#dee2e6';
@@ -71,6 +83,15 @@ const FeaturePermissionsTab: React.FC = () => {
     setSavedPerms(JSON.parse(JSON.stringify(permsMap)));
     setIsDirty(false);
     setIsEditMode(false);
+
+    // スタッフ人数を役職名ごとに集計
+    const { data: profilesData } = await supabase.from('profiles').select('role_title');
+    const counts: Record<string, number> = {};
+    (profilesData || []).forEach((p: { role_title: string }) => {
+      if (p.role_title) counts[p.role_title] = (counts[p.role_title] || 0) + 1;
+    });
+    setStaffCounts(counts);
+
     setLoading(false);
   }, [supabase]);
 
@@ -190,6 +211,31 @@ const FeaturePermissionsTab: React.FC = () => {
     setSuccessMsg(`「${name}」を削除しました`);
   };
 
+  // ── スタッフ割り当てモーダル ──
+  const handleOpenAssign = async (role: Role) => {
+    const { data } = await supabase
+      .from('profiles')
+      .select('id, name, role_title')
+      .eq('role_title', role.name)
+      .order('name');
+    setAssignTarget({ role, staff: (data as StaffMember[]) || [] });
+    setStaffRoleChanges({});
+  };
+
+  const handleSaveAssignments = async () => {
+    if (!assignTarget) return;
+    setSavingAssign(true);
+    await Promise.all(
+      Object.entries(staffRoleChanges).map(([id, newRole]) =>
+        supabase.from('profiles').update({ role_title: newRole }).eq('id', id)
+      )
+    );
+    setSavingAssign(false);
+    setAssignTarget(null);
+    fetchAll();
+    setSuccessMsg('スタッフの役職を更新しました');
+  };
+
   const btnBase: React.CSSProperties = {
     padding: '6px 14px', borderRadius: 8,
     border: `1px solid ${border}`, cursor: 'pointer',
@@ -214,9 +260,20 @@ const FeaturePermissionsTab: React.FC = () => {
         <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${border}`, overflow: 'hidden' }}>
           <div style={{ padding: '12px 16px', background: isRoleEditMode ? (isDarkMode ? '#3a2e00' : '#fffbeb') : headerBg, borderBottom: `1px solid ${isRoleEditMode ? '#f59e0b' : border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', transition: 'background .2s' }}>
             <span style={{ fontWeight: 'bold', fontSize: 14, color: text }}>👥 役職一覧</span>
-            {isRoleEditMode
-              ? <span style={{ fontSize: 12, color: '#d97706', fontWeight: 'bold' }}>✏️ 編集中</span>
-              : null}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {isRoleEditMode && <span style={{ fontSize: 12, color: '#d97706', fontWeight: 'bold' }}>✏️ 編集中</span>}
+              {!isRoleEditMode ? (
+                <button onClick={() => setIsRoleEditMode(true)}
+                  style={{ ...btnBase, background: '#f59e0b', color: '#fff', border: 'none', fontWeight: 'bold', padding: '5px 12px', fontSize: 12 }}>
+                  ✏️ 変更する
+                </button>
+              ) : (
+                <button onClick={() => { setIsRoleEditMode(false); setNewRoleName(''); }}
+                  style={{ ...btnBase, background: '#6c757d', color: '#fff', border: 'none', padding: '5px 12px', fontSize: 12 }}>
+                  完了
+                </button>
+              )}
+            </div>
           </div>
 
           <div style={{ padding: '8px 0' }}>
@@ -234,21 +291,31 @@ const FeaturePermissionsTab: React.FC = () => {
                     ? (isDarkMode ? '#1a3a6b22' : '#eff6ff')
                     : 'transparent',
                 }}>
-                  {/* 並び替えボタン（編集モード時のみ） */}
-                  {isRoleEditMode && !role.is_fixed && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 1, flexShrink: 0 }}>
-                      <button onClick={() => handleMove(role, 'up')} disabled={!canUp} title="上へ"
-                        style={{ background: 'none', border: 'none', cursor: canUp ? 'pointer' : 'default', color: canUp ? subText : (isDarkMode ? '#444' : '#ddd'), fontSize: 10, padding: 0, lineHeight: 1 }}>
-                        ▲
-                      </button>
-                      <button onClick={() => handleMove(role, 'down')} disabled={!canDown} title="下へ"
-                        style={{ background: 'none', border: 'none', cursor: canDown ? 'pointer' : 'default', color: canDown ? subText : (isDarkMode ? '#444' : '#ddd'), fontSize: 10, padding: 0, lineHeight: 1 }}>
-                        ▼
-                      </button>
+                  {/* 並び替えボタン（編集モード時のみ・固定役職はスペーサー） */}
+                  {isRoleEditMode && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 1, flexShrink: 0, width: 14 }}>
+                      {!role.is_fixed && <>
+                        <button onClick={() => handleMove(role, 'up')} disabled={!canUp} title="上へ"
+                          style={{ background: 'none', border: 'none', cursor: canUp ? 'pointer' : 'default', color: canUp ? subText : (isDarkMode ? '#444' : '#ddd'), fontSize: 10, padding: 0, lineHeight: 1 }}>
+                          ▲
+                        </button>
+                        <button onClick={() => handleMove(role, 'down')} disabled={!canDown} title="下へ"
+                          style={{ background: 'none', border: 'none', cursor: canDown ? 'pointer' : 'default', color: canDown ? subText : (isDarkMode ? '#444' : '#ddd'), fontSize: 10, padding: 0, lineHeight: 1 }}>
+                          ▼
+                        </button>
+                      </>}
                     </div>
                   )}
                   {/* 役職名 */}
-                  <span style={{ fontSize: 13, fontWeight: 500, color: text, flex: 1 }}>{role.name}</span>
+                  <span style={{ fontSize: 13, fontWeight: 500, color: text, flex: 1, textAlign: 'left' }}>{role.name}</span>
+                  {/* スタッフ人数バッジ（クリックで割り当てモーダル） */}
+                  <button
+                    onClick={() => handleOpenAssign(role)}
+                    title="スタッフ一覧を確認・変更"
+                    style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 10, padding: '2px 8px', fontSize: 11, color: subText, cursor: 'pointer', flexShrink: 0 }}
+                  >
+                    {staffCounts[role.name] || 0}人
+                  </button>
                   {/* 固定バッジ or 編集/削除ボタン */}
                   {role.is_fixed ? (
                     <span style={{ fontSize: 10, background: '#3b82f6', color: '#fff', borderRadius: 8, padding: '2px 8px', flexShrink: 0 }}>固定</span>
@@ -295,24 +362,6 @@ const FeaturePermissionsTab: React.FC = () => {
             </div>
           )}
 
-          {/* フッターボタン */}
-          <div style={{ padding: '10px 16px', borderTop: `1px solid ${border}`, display: 'flex', justifyContent: 'flex-end' }}>
-            {!isRoleEditMode ? (
-              <button
-                onClick={() => setIsRoleEditMode(true)}
-                style={{ ...btnBase, background: '#f59e0b', color: '#fff', border: 'none', fontWeight: 'bold' }}
-              >
-                ✏️ 変更する
-              </button>
-            ) : (
-              <button
-                onClick={() => { setIsRoleEditMode(false); setNewRoleName(''); }}
-                style={{ ...btnBase, background: '#6c757d', color: '#fff', border: 'none' }}
-              >
-                完了
-              </button>
-            )}
-          </div>
         </div>
       </div>
 
@@ -381,12 +430,97 @@ const FeaturePermissionsTab: React.FC = () => {
         </div>
       )}
 
+      {/* ── スタッフ割り当てモーダル ── */}
+      {assignTarget && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}>
+          <div style={{ background: cardBg, borderRadius: 12, padding: 24, width: 400, maxWidth: '92vw', maxHeight: '80vh', display: 'flex', flexDirection: 'column', color: text, boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>
+            <h4 style={{ margin: '0 0 4px', fontSize: 15 }}>👥 {assignTarget.role.name} のスタッフ</h4>
+            <p style={{ margin: '0 0 14px', fontSize: 12, color: subText }}>役職を変更する場合はドロップダウンで選択して保存してください</p>
+
+            <div style={{ overflowY: 'auto', flex: 1, marginBottom: 14 }}>
+              {assignTarget.staff.length === 0 ? (
+                <p style={{ textAlign: 'center', color: subText, fontSize: 13, padding: '20px 0' }}>この役職のスタッフはいません</p>
+              ) : (
+                assignTarget.staff.map(staff => {
+                  const currentRole = staffRoleChanges[staff.id] ?? staff.role_title;
+                  const changed = staffRoleChanges[staff.id] !== undefined && staffRoleChanges[staff.id] !== staff.role_title;
+                  return (
+                    <div key={staff.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: `1px solid ${border}` }}>
+                      <span style={{ flex: 1, fontSize: 13, color: text }}>{staff.name}</span>
+                      <select
+                        value={currentRole}
+                        onChange={e => setStaffRoleChanges(prev => ({ ...prev, [staff.id]: e.target.value }))}
+                        style={{
+                          padding: '4px 8px', borderRadius: 6, fontSize: 12,
+                          border: `1px solid ${changed ? '#f59e0b' : border}`,
+                          background: changed ? (isDarkMode ? '#3a2e00' : '#fffbeb') : (isDarkMode ? '#3d4147' : '#fff'),
+                          color: text, cursor: 'pointer',
+                        }}
+                      >
+                        {roles.map(r => (
+                          <option key={r.id} value={r.name}>{r.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setAssignTarget(null)} style={btnBase}>閉じる</button>
+              {Object.keys(staffRoleChanges).some(id => staffRoleChanges[id] !== assignTarget.staff.find(s => s.id === id)?.role_title) && (
+                <button
+                  onClick={handleSaveAssignments}
+                  disabled={savingAssign}
+                  style={{ ...btnBase, background: '#22c55e', color: '#fff', border: 'none', fontWeight: 'bold' }}
+                >
+                  {savingAssign ? '保存中...' : '✓ 保存する'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── 機能別権限マトリクス ── */}
       <div style={{ maxWidth: 820, margin: '0 auto', padding: '0 12px' }}>
         <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${isEditMode ? '#f59e0b' : border}`, overflow: 'hidden', transition: 'border-color .2s' }}>
           <div style={{ padding: '12px 16px', background: isEditMode ? (isDarkMode ? '#3a2e00' : '#fffbeb') : headerBg, borderBottom: `1px solid ${isEditMode ? '#f59e0b' : border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', transition: 'background .2s' }}>
             <span style={{ fontWeight: 'bold', fontSize: 14, color: text }}>🔐 機能別 表示権限</span>
-            {isEditMode && <span style={{ fontSize: 12, color: '#d97706', fontWeight: 'bold' }}>✏️ 編集中</span>}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {isEditMode && <span style={{ fontSize: 12, color: '#d97706', fontWeight: 'bold' }}>✏️ 編集中</span>}
+              {!isEditMode ? (
+                <button onClick={() => setIsEditMode(true)}
+                  style={{ ...btnBase, background: '#f59e0b', color: '#fff', border: 'none', fontWeight: 'bold', padding: '5px 12px', fontSize: 12 }}>
+                  ✏️ 変更する
+                </button>
+              ) : (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    onClick={() => { setPerms(JSON.parse(JSON.stringify(savedPerms))); setIsDirty(false); setIsEditMode(false); }}
+                    style={{ ...btnBase, padding: '5px 12px', fontSize: 12 }}
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    onClick={handleSavePerms}
+                    disabled={saving || !isDirty}
+                    style={{
+                      ...btnBase, padding: '5px 12px', fontSize: 12, border: 'none',
+                      background: saving ? '#6c757d' : isDirty ? '#22c55e' : (isDarkMode ? '#495057' : '#e9ecef'),
+                      color: isDirty || saving ? '#fff' : subText,
+                      opacity: !isDirty && !saving ? 0.5 : 1,
+                      cursor: isDirty ? 'pointer' : 'default',
+                      fontWeight: isDirty ? 'bold' : 'normal',
+                      transition: 'background .2s',
+                    }}
+                  >
+                    {saving ? '保存中...' : isDirty ? '✓ 保存する' : '変更なし'}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
           <div style={{ overflowX: 'auto' }}>
@@ -449,45 +583,6 @@ const FeaturePermissionsTab: React.FC = () => {
             🔵 管理者は常にすべての機能を利用できます（変更不可）
           </div>
 
-          <div style={{ padding: '12px 16px', borderTop: `1px solid ${border}`, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-            {!isEditMode ? (
-              <button
-                onClick={() => setIsEditMode(true)}
-                style={{ ...btnBase, background: '#f59e0b', color: '#fff', border: 'none', fontWeight: 'bold' }}
-              >
-                ✏️ 変更する
-              </button>
-            ) : (
-              <>
-                <button
-                  onClick={() => {
-                    setPerms(JSON.parse(JSON.stringify(savedPerms)));
-                    setIsDirty(false);
-                    setIsEditMode(false);
-                  }}
-                  style={btnBase}
-                >
-                  キャンセル
-                </button>
-                <button
-                  onClick={handleSavePerms}
-                  disabled={saving || !isDirty}
-                  style={{
-                    ...btnBase,
-                    background: saving ? '#6c757d' : isDirty ? '#22c55e' : (isDarkMode ? '#495057' : '#e9ecef'),
-                    color: isDirty || saving ? '#fff' : subText,
-                    border: 'none',
-                    opacity: !isDirty && !saving ? 0.5 : 1,
-                    cursor: isDirty ? 'pointer' : 'default',
-                    fontWeight: isDirty ? 'bold' : 'normal',
-                    transition: 'background .2s',
-                  }}
-                >
-                  {saving ? '保存中...' : isDirty ? '✓ 保存する' : '変更なし'}
-                </button>
-              </>
-            )}
-          </div>
         </div>
       </div>
     </div>
