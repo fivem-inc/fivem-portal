@@ -16,8 +16,9 @@ const MonthlyApplicationStatus = React.lazy(() => import('./components/MonthlyAp
 const BusinessTripReportForm = React.lazy(() => import('./components/BusinessTripReport'));
 const LeaveRequestForm = React.lazy(() => import('./components/LeaveRequest'));
 const LeaveApprovals = React.lazy(() => import('./components/LeaveApprovals'));
-const CalendarPage = React.lazy(() => import('./pages/CalendarPage'));
-const BoardPage    = React.lazy(() => import('./pages/BoardPage'));
+const CalendarPage     = React.lazy(() => import('./pages/CalendarPage'));
+const BoardPage        = React.lazy(() => import('./pages/BoardPage'));
+const ShiftReportPage  = React.lazy(() => import('./pages/ShiftReportPage'));
 
 const PageLoader: React.FC = () => (
   <div style={{ padding: 40, textAlign: 'center', color: '#888' }}>読み込んでいます...</div>
@@ -291,6 +292,9 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
             {isMobile ? <><span style={{ fontSize: 20 }}>📅</span><span>休暇</span></> : '📅 休暇'}
           </button>
         )}
+        <button onClick={() => navTo('/shift-report')} style={btnStyle(location.pathname === '/shift-report', '#c0392b')}>
+          {isMobile ? <><span style={{ fontSize: 20 }}>⏰</span><span>勤務変更</span></> : '⏰ 勤務変更'}
+        </button>
         <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
           <button onClick={() => navTo('/board')} style={btnStyle(location.pathname === '/board', '#e67e22')}>
             {isMobile ? <><span style={{ fontSize: 20 }}>💬</span><span>連絡板</span></> : '💬 連絡板'}
@@ -816,6 +820,20 @@ const BoardPageWrapper: React.FC = () => {
   );
 };
 
+// シフト実績申請ページ（/shift-report）
+const ShiftReportPageWrapper: React.FC = () => {
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, handleLogout, loading } = useAuth();
+  if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
+  return (
+    <>
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} roleTitle={roleTitle} userId={user.id} />
+      <Suspense fallback={<PageLoader />}>
+        <ShiftReportPage user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin} />
+      </Suspense>
+    </>
+  );
+};
+
 // メインのAppコンポーネント
 function App() {
   return (
@@ -838,6 +856,7 @@ function App() {
             <Route path="/change-password" element={<ChangePassword />} />
             <Route path="/settings-check" element={<SupabaseSettingsCheck />} />
             <Route path="/board" element={<BoardPageWrapper />} />
+            <Route path="/shift-report" element={<ShiftReportPageWrapper />} />
           </Route>
         </Routes>
       </AuthProvider>

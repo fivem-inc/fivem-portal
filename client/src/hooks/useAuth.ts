@@ -3,7 +3,7 @@ import type { AuthUser } from '../types';
 import { supabase } from '../lib/supabaseClient';
 import { AuthContext } from '../contexts/AuthContext.tsx';
 
-const APPROVER_ROLES = ['リーダー', 'マネージャー', '社長', '管理者'] as const;
+const APPROVER_ROLES = ['リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者'] as const;
 
 interface UseAuthReturn {
   user: AuthUser | null;

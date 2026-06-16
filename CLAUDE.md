@@ -1851,6 +1851,30 @@ const XxxTabA = () => { const { state, setState } = useXxx(); return <div>...</d
 
 ---
 
+## ✅ 2026-06-16 boardClearedAt バグ修正 完了
+
+### 変更ファイル
+- `client/src/App.tsx`
+
+### 問題
+- `/board`（連絡板）を一度開くと `boardClearedAt=現在時刻` が localStorage に保存されていた
+- 次回以降の `useBoardUnread` の `fetchCount` でこの値をフィルターとして使用
+- 結果：保存時刻より前のメッセージが全て「既読扱い」になり、連絡板バナー・NavBadgeが消えるバグ
+
+### 修正内容
+- `BOARD_CLEARED_KEY` 定数と `localStorage.getItem(BOARD_CLEARED_KEY)` フィルターを完全削除
+- `board_reads` テーブルのみを既読判定の唯一ソースとして使用
+- チャンネルを開いた際に `board_reads` へ upsert する処理（BoardPage.tsx の `selectChannel`）は引き続き機能
+
+### ⚠️ 注意事項
+- 既存ユーザーの localStorage に古い `boardClearedAt` が残っている場合でも、コード側でその値を参照しなくなったため影響なし
+- 初回アクセス時、過去に一度も開いていないチャンネルのメッセージが「未読」として表示される場合がある
+  → チャンネルを開けば `board_reads` に書き込まれ以降は正常
+
+### コミット: `0c75b8c`
+
+---
+
 ## Project Overview
 
 Expense management application built with React/TypeScript frontend and Supabase backend.
@@ -3409,4 +3433,78 @@ const h = (e: MouseEvent) => {
 **実装済みコミット：** `1f4c0fd`（App.tsx: BellIcon・AvatarMenu 両方修正済み）
 
 **教訓：** `createPortal` を使うときは、outside-click ハンドラが **ポータルの中身を認識できない** ことに注意。必ず `portalRef` でポータルの div も追跡すること。
+
+---
+
+## ✅ 2026-06-16 勤務変更申請（ShiftReportPage）実装完了
+
+### 実装したファイル
+
+| ファイル | 内容 |
+|---|---|
+| `client/src/pages/ShiftReportPage.tsx` | 新規作成（メインページ） |
+| `client/src/App.tsx` | ルート追加・ナビボタン追加 |
+| `client/src/hooks/useAuth.ts` | `フロア責任者` を APPROVER_ROLES に追加 |
+| `supabase/migrations/20260616200000_create_shift_reports.sql` | テーブル作成・RLS |
+| `supabase/migrations/20260616210000_add_tardiness_type.sql` | 遅刻（tardiness）種別追加 |
+
+### 機能概要
+
+- **対象**: パート・アルバイト（パート以外のスタッフはページ非表示）
+- **申請種別**: 残業（overtime）・早退（early_leave）・遅刻（tardiness）・欠勤（absence）
+- **タブ構成**: 申請 ┃ 履歴
+- **フォーム**:
+  - 単日カレンダー選択（休暇申請と同じスタイル）
+  - 通常シフト（勤務地・時間・「もともと休みの日」チェック）
+  - 実際の勤務（勤務地・時間）
+  - 休憩/実労働 自動計算（スプレッドシート式ロジック）
+  - 勤務地は workplaces ドロップダウン + 「その他（自由入力）」
+  - 確認依頼先ドロップダウン（自分選択 → 申請と同時に受理、管理者は非表示）
+- **代行申請**: リーダー以上が対象スタッフ（パートのみ）を選択して申請可能
+- **自己受理**: 申請者 = 確認依頼先のとき `status: 'confirmed'` で即受理
+- **修正ボタン**: リーダー以上のみ表示（パートは修正不可）
+- **ステータス**: pending（申請中）・resubmitted（再申請）・confirmed（受理済み）
+- **履歴**: 給与期間（16日〜翌15日）でグループ化・開閉可能
+- **承認ページへボタン**: リーダー以上のみ表示（オレンジ）
+- **ダークモード**: 全要素対応済み
+
+### DB テーブル: `shift_reports`
+
+```
+applicant_id / submitted_by / work_date / pay_period_start
+application_type CHECK ('overtime','early_leave','tardiness','absence')
+original_location / original_start / original_end
+actual_location / actual_start / actual_end
+break_minutes / labor_minutes
+reviewer_id / status / confirmed_by / confirmed_at
+```
+
+- ユニーク制約: `(applicant_id, work_date)`
+- RLS: 本人参照・代行INSERT・承認者UPDATE・全件SELECT（リーダー以上）
+- `calc_pay_period_start(date)` SQL関数
+
+### ルーティング
+- パス: `/shift-report`
+- ナビボタン: `⏰ 勤務変更`
+
+### 注意事項（表示テキスト）
+1. 残業・早退・遅刻・欠勤が発生した場合に申請してください。
+2. 出勤する校の担当のリーダー・マネージャー（スタッフ）を選択してください。
+3. 受理されると「受理済み」に変わります。
+4. 間違えた場合は、担当のリーダー・マネージャー（スタッフ）にお知らせください。
+
+### ⚠️ Supabase への手動適用が必要
+
+SQL Editor で以下を順番に実行:
+1. `supabase/migrations/20260616200000_create_shift_reports.sql`
+2. `supabase/migrations/20260616210000_add_tardiness_type.sql`
+
+---
+
+### 🔜 次回タスク（2026-06-16 終了時点）
+
+1. **管理画面「勤務変更申請」タブ** ← 最優先（承認・確認・設定）
+2. **連絡板 送信の取消・修正・完全削除**（本人＋管理者）
+3. **タブ・機能の表示権限管理画面**
+4. **忘れん坊通知①②③**（send-push Edge Function は完成済み・呼び出し側を実装）
 5. **gcal-sync 失敗時リトライキュー**（低優先）
