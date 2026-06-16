@@ -180,8 +180,6 @@ const AvatarMenu: React.FC<{ userId: string; profileName: string | null; email: 
   );
 };
 
-const BOARD_CLEARED_KEY = 'boardClearedAt';
-
 const useBoardUnread = (userId: string | undefined, pathname: string) => {
   const [channelCount, setChannelCount] = useState(0);
   const [inboxCount,   setInboxCount]   = useState(0);
@@ -195,14 +193,11 @@ const useBoardUnread = (userId: string | undefined, pathname: string) => {
       supabase.from('board_message_recipients').select('message_id').eq('user_id', userId).eq('archived', false),
     ]);
 
-    // チャンネル未読
+    // チャンネル未読（board_reads を唯一の既読判定ソースとして使用）
     let channelUnread = 0;
     if (memberRes.data && memberRes.data.length > 0) {
       const channelIds = memberRes.data.map((r: any) => r.channel_id);
-      const boardClearedAt = localStorage.getItem(BOARD_CLEARED_KEY);
-      let query = supabase.from('board_messages').select('id').in('channel_id', channelIds).is('parent_id', null).neq('user_id', userId);
-      if (boardClearedAt) query = query.gt('created_at', boardClearedAt);
-      const { data: msgs } = await query;
+      const { data: msgs } = await supabase.from('board_messages').select('id').in('channel_id', channelIds).is('parent_id', null).neq('user_id', userId);
       if (msgs && msgs.length > 0) {
         const msgIds = msgs.map((m: any) => m.id);
         const { data: reads } = await supabase.from('board_reads').select('message_id').eq('user_id', userId).in('message_id', msgIds);
