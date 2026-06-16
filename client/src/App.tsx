@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useLayoutEffect, Suspense, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useLayoutEffect, Suspense, useRef, useContext } from 'react';
 import ReactDOM from 'react-dom';
 import { Routes, Route, Navigate, Outlet, BrowserRouter, useNavigate, useLocation } from 'react-router-dom';
 import SignIn from './pages/SignIn';
@@ -23,7 +23,7 @@ const ShiftReportPage  = React.lazy(() => import('./pages/ShiftReportPage'));
 const PageLoader: React.FC = () => (
   <div style={{ padding: 40, textAlign: 'center', color: '#888' }}>読み込んでいます...</div>
 );
-import { AuthProvider } from './contexts/AuthContext.tsx';
+import { AuthProvider, AuthContext } from './contexts/AuthContext.tsx';
 import { useAuth } from './hooks/useAuth';
 import { supabase } from './lib/supabaseClient';
 import { useExpenses } from './hooks/useExpenses';
@@ -234,6 +234,8 @@ const useBoardUnread = (userId: string | undefined, pathname: string) => {
 const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean; roleTitle?: string; userId?: string }> = ({ isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove, roleTitle, userId }) => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { previewRole, setPreviewRole, user: ctxUser } = useContext(AuthContext);
+  const realIsAdmin = ctxUser?.app_metadata?.role === 'admin';
   const navTo = (path: string) => {
     if (location.pathname === path) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -307,9 +309,51 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, paddingLeft: 6 }}>
+        {realIsAdmin && (
+          <select
+            value={previewRole || ''}
+            onChange={e => setPreviewRole(e.target.value || null)}
+            title="役職プレビュー"
+            style={{
+              fontSize: 11, padding: '3px 4px', borderRadius: 6,
+              border: previewRole ? '2px solid #ffc107' : '1px solid #555',
+              background: previewRole ? '#ffc107' : '#2d2d4e',
+              color: previewRole ? '#333' : '#aaa',
+              cursor: 'pointer', maxWidth: isMobile ? 54 : 100,
+            }}
+          >
+            <option value="">👁 確認</option>
+            <option value="パート">パート</option>
+            <option value="一般">一般</option>
+            <option value="リーダー">リーダー</option>
+            <option value="マネージャー">マネージャー</option>
+            <option value="フロア責任者">フロア責任者</option>
+            <option value="社長">社長</option>
+          </select>
+        )}
         {userId && <BellIcon userId={userId} />}
         {userId && <AvatarMenu userId={userId} profileName={profileName} email={email} onLogout={onLogout} />}
       </div>
+    </div>
+  );
+};
+
+// プレビューモードバナー
+const PreviewBanner: React.FC = () => {
+  const { previewRole, setPreviewRole } = useContext(AuthContext);
+  if (!previewRole) return null;
+  return (
+    <div style={{
+      position: 'fixed', top: 60, left: 0, right: 0, zIndex: 299,
+      background: '#ffc107', color: '#333', fontSize: 12, fontWeight: 'bold',
+      padding: '5px 16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+      boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+    }}>
+      👁 プレビュー中：{previewRole} として表示
+      <button onClick={() => setPreviewRole(null)}
+        style={{ fontSize: 11, padding: '2px 10px', borderRadius: 4, border: 'none', background: '#333', color: '#fff', cursor: 'pointer' }}>
+        × 終了
+      </button>
     </div>
   );
 };
@@ -840,6 +884,7 @@ function App() {
     <BrowserRouter>
       <ScrollToTop />
       <AuthProvider>
+        <PreviewBanner />
         <Routes>
           <Route path="/signin" element={<SignIn />} />
           <Route path="/reset-password" element={<ResetPassword />} />

@@ -4,12 +4,13 @@ import { supabase } from '../lib/supabaseClient';
 
 // AuthContextの作成
 // eslint-disable-next-line react-refresh/only-export-components
-export const AuthContext = createContext<AuthContextType>({ user: null });
+export const AuthContext = createContext<AuthContextType>({ user: null, previewRole: null, setPreviewRole: () => {} });
 
 // AuthProviderコンポーネント
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [previewRole, setPreviewRole] = useState<string | null>(null);
 
   useEffect(() => {
     const getSession = async () => {
@@ -60,7 +61,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user }}>
+    <AuthContext.Provider value={{ user, previewRole, setPreviewRole }}>
       {!loading && children}
     </AuthContext.Provider>
   );

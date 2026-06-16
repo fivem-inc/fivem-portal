@@ -66,6 +66,8 @@ export interface AuthUser {
 
 export interface AuthContextType {
   user: AuthUser | null;
+  previewRole: string | null;
+  setPreviewRole: (role: string | null) => void;
 }
 
 export interface LeaveRequest {

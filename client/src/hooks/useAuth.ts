@@ -18,16 +18,24 @@ interface UseAuthReturn {
 }
 
 
+const PREVIEW_ROLES = ['パート', '一般', 'リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者'] as const;
+export { PREVIEW_ROLES };
+
 export const useAuth = (): UseAuthReturn => {
-  const { user } = useContext(AuthContext);
+  const { user, previewRole } = useContext(AuthContext);
   const [loading, setLoading] = useState(true);
   const [profileName, setProfileName] = useState('');
   const [roleTitle, setRoleTitle] = useState('');
   const [canLeave, setCanLeave] = useState(false);
   const [leaveRequestEnabled, setLeaveRequestEnabled] = useState(false);
 
-  const isAdmin = user?.app_metadata?.role === 'admin';
-  const isApprover = isAdmin || APPROVER_ROLES.includes(roleTitle as typeof APPROVER_ROLES[number]);
+  const realIsAdmin = user?.app_metadata?.role === 'admin';
+  // プレビューモード中は role を上書き（管理者権限は常に無効化）
+  const effectiveRoleTitle = previewRole ?? roleTitle;
+  const isAdmin = previewRole ? false : realIsAdmin;
+  const isApprover = previewRole
+    ? APPROVER_ROLES.includes(previewRole as typeof APPROVER_ROLES[number])
+    : (realIsAdmin || APPROVER_ROLES.includes(roleTitle as typeof APPROVER_ROLES[number]));
 
   const fetchProfileName = useCallback(async () => {
     if (!user) return;
@@ -92,8 +100,8 @@ export const useAuth = (): UseAuthReturn => {
     isAdmin,
     isApprover,
     profileName,
-    roleTitle,
-    canLeave,
+    roleTitle: effectiveRoleTitle,
+    canLeave: previewRole ? ['リーダー', 'マネージャー', '社長', '管理者'].includes(previewRole) : canLeave,
     leaveRequestEnabled,
     handleLogout
   };
