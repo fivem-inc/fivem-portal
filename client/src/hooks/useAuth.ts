@@ -15,13 +15,32 @@ interface UseAuthReturn {
   employmentType: string;
   canLeave: boolean;
   canShiftReport: boolean;
+  canCalendar: boolean;
   leaveRequestEnabled: boolean;
   handleLogout: () => Promise<void>;
 }
 
-
 const PREVIEW_ROLES = ['パート', '一般', 'リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者'] as const;
 export { PREVIEW_ROLES };
+
+// 役職名からDB権限マップを取得する共通処理
+async function fetchPermsForRole(roleName: string): Promise<Record<string, boolean>> {
+  const { data: roleData } = await supabase
+    .from('roles')
+    .select('id')
+    .eq('name', roleName)
+    .single();
+  if (!roleData) return {};
+  const { data } = await supabase
+    .from('feature_permissions')
+    .select('feature_key, enabled')
+    .eq('role_id', roleData.id);
+  const map: Record<string, boolean> = {};
+  (data || []).forEach((p: { feature_key: string; enabled: boolean }) => {
+    map[p.feature_key] = p.enabled;
+  });
+  return map;
+}
 
 export const useAuth = (): UseAuthReturn => {
   const { user, previewRole } = useContext(AuthContext);
@@ -29,11 +48,14 @@ export const useAuth = (): UseAuthReturn => {
   const [profileName, setProfileName] = useState('');
   const [roleTitle, setRoleTitle] = useState('');
   const [employmentType, setEmploymentType] = useState('');
-  const [canLeave, setCanLeave] = useState(false);
   const [leaveRequestEnabled, setLeaveRequestEnabled] = useState(false);
 
+  // 実際の役職の権限
+  const [featurePerms, setFeaturePerms] = useState<Record<string, boolean>>({});
+  // プレビュー役職の権限
+  const [previewPerms, setPreviewPerms] = useState<Record<string, boolean>>({});
+
   const realIsAdmin = user?.app_metadata?.role === 'admin';
-  // プレビューモード中は role を上書き（管理者権限は常に無効化）
   const effectiveRoleTitle = previewRole ?? roleTitle;
   const isAdmin = previewRole ? false : realIsAdmin;
   const isApprover = previewRole
@@ -42,8 +64,7 @@ export const useAuth = (): UseAuthReturn => {
 
   const fetchProfileName = useCallback(async () => {
     if (!user) return;
-    
-    // まずprofilesテーブルから名前を取得（管理者が更新した場合に対応）
+
     try {
       const { data, error } = await supabase
         .from('profiles')
@@ -57,29 +78,50 @@ export const useAuth = (): UseAuthReturn => {
         setRoleTitle(role);
         const empType = data.employment_type || '正社員';
         setEmploymentType(empType);
-        // 一般・フロア責任者も休暇申請ボタンを表示
-        const alwaysShow = ['リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者', '一般'].includes(role);
-        const isAdmin = user?.app_metadata?.role === 'admin';
-        setCanLeave(alwaysShow || isAdmin);
         setLeaveRequestEnabled(!!data.leave_request_enabled);
+
+        // DBから権限を取得
+        const perms = await fetchPermsForRole(role);
+        setFeaturePerms(perms);
+
         supabase.from('profiles')
           .update({ last_sign_in_at: new Date().toISOString() })
           .eq('id', user.id)
           .select('id')
           .then(({ error }) => { if (error) console.error('[useAuth] last_sign_in_at update failed:', error); });
+
         setLoading(false);
         return;
       }
     } catch (error) {
       console.error('Error fetching profile name:', error);
     }
-    
-    // profilesテーブルに名前がない場合はuser_metadataから取得
+
     if (user.user_metadata?.name) {
       setProfileName(user.user_metadata.name);
     }
     setLoading(false);
   }, [user]);
+
+  useEffect(() => { fetchProfileName(); }, [fetchProfileName]);
+
+  // プレビュー役職が変わったらその役職の権限を取得
+  useEffect(() => {
+    if (!previewRole) { setPreviewPerms({}); return; }
+    fetchPermsForRole(previewRole).then(setPreviewPerms);
+  }, [previewRole]);
+
+  // 実効権限（プレビュー中はプレビュー役職の権限を使う）
+  const effectivePerms = previewRole ? previewPerms : featurePerms;
+
+  const effectiveEmploymentType = previewRole
+    ? (previewRole === 'パート' ? 'パート' : '正社員')
+    : employmentType;
+
+  // 各権限フラグ（管理者は常に全てtrue）
+  const canLeave      = realIsAdmin && !previewRole ? true : (effectivePerms.leave_request   ?? false);
+  const canShiftReport = realIsAdmin && !previewRole ? true : (effectivePerms.shift_report    ?? false);
+  const canCalendar   = realIsAdmin && !previewRole ? true : (effectivePerms.leave_calendar  ?? false);
 
   const handleLogout = useCallback(async () => {
     console.log('[logout] clicked');
@@ -96,21 +138,6 @@ export const useAuth = (): UseAuthReturn => {
     }
   }, []);
 
-  useEffect(() => {
-    fetchProfileName();
-  }, [fetchProfileName]);
-
-  const effectiveEmploymentType = previewRole
-    ? (previewRole === 'パート' ? 'パート' : '正社員')
-    : employmentType;
-
-  const effectiveCanLeave = previewRole
-    ? ['リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者', '一般'].includes(previewRole)
-    : canLeave;
-
-  // 勤務変更: パート本人 or 承認者（代行・確認用）
-  const canShiftReport = isApprover || effectiveEmploymentType === 'パート';
-
   return {
     user,
     loading,
@@ -119,9 +146,10 @@ export const useAuth = (): UseAuthReturn => {
     profileName,
     roleTitle: effectiveRoleTitle,
     employmentType: effectiveEmploymentType,
-    canLeave: effectiveCanLeave,
+    canLeave,
     canShiftReport,
+    canCalendar,
     leaveRequestEnabled,
-    handleLogout
+    handleLogout,
   };
 };
