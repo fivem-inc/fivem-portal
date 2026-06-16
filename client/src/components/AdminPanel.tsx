@@ -10,6 +10,7 @@ import LeaveRequestsTab from './admin/LeaveRequestsTab';
 import LeaderAssignmentsTab from './admin/LeaderAssignmentsTab';
 import NotificationsTab, { ScheduledRemindersPanel } from './admin/NotificationsTab';
 import BoardSettingsTab from './admin/BoardSettingsTab';
+import ShiftReportsTab from './admin/ShiftReportsTab';
 
 interface AdminPanelProps {
   pendingApprovals: PendingApproval[];
@@ -433,6 +434,7 @@ const AdminPanelContent: React.FC = () => {
           { key: 'groups',             label: 'グループ管理',  icon: '👥' },
           { key: 'trip_reports',       label: '出張報告',      icon: '📍' },
           { key: 'leave_requests',     label: '休暇申請',      icon: '🌿' },
+          { key: 'shift_reports',      label: '勤務変更申請',  icon: '⏰' },
           { key: 'leader_assignments', label: 'リーダー管理',  icon: '📋' },
           { key: 'reports',            label: 'レポート・分析',icon: '' },
           { key: 'notifications',      label: '通知設定',      icon: '🔔' },
@@ -489,6 +491,7 @@ const AdminPanelContent: React.FC = () => {
         {activeTab === 'trip_reports' && <TripReportsTab />}
         {activeTab === 'reports' && <ReportsTab />}
         {activeTab === 'leave_requests' && <LeaveRequestsTab />}
+        {activeTab === 'shift_reports' && <ShiftReportsTab />}
         {activeTab === 'leader_assignments' && <LeaderAssignmentsTab />}
         {activeTab === 'board_settings' && <BoardSettingsTab />}
         {activeTab === 'notifications' && (
