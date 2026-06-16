@@ -61,6 +61,7 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
   const [notifs, setNotifs] = useState<NotificationRow[]>([]);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const portalRef = useRef<HTMLDivElement>(null);
 
   const fetchNotifs = useCallback(async () => {
     const { data } = await supabase.from('notifications').select('id, message, sub_message, read, created_at').eq('user_id', userId).order('created_at', { ascending: false }).limit(30);
@@ -69,7 +70,10 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
 
   useEffect(() => { fetchNotifs(); const t = setInterval(fetchNotifs, 30000); return () => clearInterval(t); }, [fetchNotifs]);
   useEffect(() => {
-    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const h = (e: MouseEvent) => {
+      const inside = (ref.current?.contains(e.target as Node)) || (portalRef.current?.contains(e.target as Node));
+      if (!inside) setOpen(false);
+    };
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, []);
@@ -110,7 +114,7 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
         )}
       </button>
       {open && dropRect && ReactDOM.createPortal(
-        <div style={{ position: 'fixed', top: dropRect.bottom + 4, right: window.innerWidth - dropRect.right, width: 300, background: '#fff', borderRadius: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.2)', zIndex: 9999, overflow: 'hidden' }}>
+        <div ref={portalRef} style={{ position: 'fixed', top: dropRect.bottom + 4, right: window.innerWidth - dropRect.right, width: 300, background: '#fff', borderRadius: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.2)', zIndex: 9999, overflow: 'hidden' }}>
           <div style={{ padding: '10px 14px', borderBottom: '1px solid #eee', fontSize: 13, fontWeight: 'bold', color: '#333' }}>通知</div>
           <div style={{ maxHeight: 320, overflowY: 'auto' }}>
             {notifs.length === 0 ? (
@@ -137,11 +141,15 @@ const AvatarMenu: React.FC<{ userId: string; profileName: string | null; email: 
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const portalRef2 = useRef<HTMLDivElement>(null);
   const btnRef2 = useRef<HTMLDivElement>(null);
   const [dropRect2, setDropRect2] = useState<DOMRect | null>(null);
 
   useEffect(() => {
-    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const h = (e: MouseEvent) => {
+      const inside = (ref.current?.contains(e.target as Node)) || (portalRef2.current?.contains(e.target as Node));
+      if (!inside) setOpen(false);
+    };
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, []);
@@ -154,7 +162,7 @@ const AvatarMenu: React.FC<{ userId: string; profileName: string | null; email: 
         {initial}
       </div>
       {open && dropRect2 && ReactDOM.createPortal(
-        <div style={{ position: 'fixed', top: dropRect2.bottom + 6, right: window.innerWidth - dropRect2.right, width: 200, background: '#fff', borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.2)', zIndex: 9999, overflow: 'hidden' }}>
+        <div ref={portalRef2} style={{ position: 'fixed', top: dropRect2.bottom + 6, right: window.innerWidth - dropRect2.right, width: 200, background: '#fff', borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.2)', zIndex: 9999, overflow: 'hidden' }}>
           <div style={{ padding: '12px 14px', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 13, fontWeight: 'bold', flexShrink: 0 }}>{initial}</div>
             <div style={{ flex: 1, minWidth: 0 }}>
