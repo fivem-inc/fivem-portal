@@ -1280,7 +1280,7 @@ const BoardPage: React.FC = () => {
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
     const parentSender = allProfiles.find(p => p.id === parentMsg.user_id)?.name || '不明';
     return (
-      <div style={{ position: 'fixed', top: 60, left: 0, right: 0, bottom: 0, zIndex: 200, background: bg, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ position: 'fixed', top: 'var(--topbar-height, 60px)' as string, left: 0, right: 0, bottom: 0, zIndex: 200, background: bg, display: 'flex', flexDirection: 'column' }}>
         {/* Thread header */}
         <div style={{ padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, position: 'sticky', top: 0, zIndex: 10 }}>
           <button type="button" onClick={() => { setThreadMsgId(null); setReplyBody(''); }}
@@ -2733,7 +2733,7 @@ const BoardPage: React.FC = () => {
     <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column', background: bg, overflow: 'hidden', paddingTop: 60, boxSizing: 'border-box' } as React.CSSProperties}>
       {/* サイドバーヘッダー */}
       {(showSidebar || !isMobile) && (
-        <div style={{ position: 'fixed', top: 60, left: 0, zIndex: 50, background: cardBg, borderBottom: `1px solid ${border}`, width: isMobile ? '100%' : 280, boxSizing: 'border-box' }}>
+        <div style={{ position: 'fixed', top: 'var(--topbar-height, 60px)' as string, left: 0, zIndex: 50, background: cardBg, borderBottom: `1px solid ${border}`, width: isMobile ? '100%' : 280, boxSizing: 'border-box' }}>
           <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>💬 連絡板</span>
             <div style={{ display: 'flex', gap: 6 }}>
@@ -2762,7 +2762,7 @@ const BoardPage: React.FC = () => {
       )}
       {/* コンテンツヘッダー（モバイル: サイドバー非表示時、デスクトップ: 常時） */}
       {(!showSidebar || !isMobile) && (
-        <div style={{ position: 'fixed', top: 60, left: isMobile ? 0 : 280, right: 0, zIndex: 50, padding: '10px 14px', minHeight: 48, boxSizing: 'border-box', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ position: 'fixed', top: 'var(--topbar-height, 60px)' as string, left: isMobile ? 0 : 280, right: 0, zIndex: 50, padding: '10px 14px', minHeight: 48, boxSizing: 'border-box', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', gap: 8 }}>
           {isMobile && (
             <button type="button" onClick={() => {
               if (inboxDetailId) { setInboxDetailId(null); return; }
