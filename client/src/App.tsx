@@ -267,95 +267,103 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, zIndex: 300,
-      height: 60, minHeight: 60, maxHeight: 60,
-      background: '#1a1a2e', color: 'white', padding: '0 12px',
-      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-      boxShadow: '0 2px 8px rgba(0,0,0,0.3)', overflow: 'hidden', boxSizing: 'border-box',
+      background: '#1a1a2e', color: 'white',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
     }}>
-      <div style={{ display: 'flex', gap: 4, flexWrap: isMobile ? 'nowrap' : 'wrap', alignItems: 'center', flex: 1 }}>
-        {isAdmin && (
-          <button onClick={() => navTo('/admin')} style={btnStyle(location.pathname === '/admin', '#6f42c1')}>
-            {isMobile ? <><span style={{ fontSize: 20 }}>⚙️</span><span>管理</span></> : '⚙️ 管理'}
-          </button>
-        )}
-        <button onClick={() => navTo('/')} style={btnStyle(location.pathname === '/')}>
-          {isMobile ? <><span style={{ fontSize: 20 }}>🏠</span><span>交通費</span></> : '🏠 交通費'}
-        </button>
-        <button onClick={() => navTo('/trip-report')} style={btnStyle(location.pathname === '/trip-report')}>
-          {isMobile ? <><span style={{ fontSize: 20 }}>📍</span><span>出張報告</span></> : '📍 出張報告'}
-        </button>
-        {canLeave && (
-          <button onClick={() => navTo('/leave')} style={btnStyle(location.pathname === '/leave', '#28a745')}>
-            {isMobile ? <><span style={{ fontSize: 20 }}>🌿</span><span>休暇申請</span></> : '🌿 休暇申請'}
-          </button>
-        )}
-        {(isAdmin || (roleTitle && CALENDAR_ROLES.includes(roleTitle))) && (
-          <button onClick={() => navTo('/calendar')} style={btnStyle(location.pathname === '/calendar', '#4a90d9')}>
-            {isMobile ? <><span style={{ fontSize: 20 }}>📅</span><span>休暇</span></> : '📅 休暇'}
-          </button>
-        )}
-        <button onClick={() => navTo('/shift-report')} style={btnStyle(location.pathname === '/shift-report', '#c0392b')}>
-          {isMobile ? <><span style={{ fontSize: 20 }}>⏰</span><span>勤務変更</span></> : '⏰ 勤務変更'}
-        </button>
-        <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
-          <button onClick={() => navTo('/board')} style={btnStyle(location.pathname === '/board', '#e67e22')}>
-            {isMobile ? <><span style={{ fontSize: 20 }}>💬</span><span>連絡板</span></> : '💬 連絡板'}
-          </button>
-          {boardUnread > 0 && location.pathname !== '/board' && (
-            <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
-              {boardUnread > 99 ? '99+' : boardUnread}
-            </span>
+      {/* メインナビ行 */}
+      <div style={{
+        height: 60, padding: '0 12px', display: 'flex',
+        justifyContent: 'space-between', alignItems: 'center',
+        overflow: 'hidden', boxSizing: 'border-box',
+      }}>
+        <div style={{ display: 'flex', gap: 4, flexWrap: isMobile ? 'nowrap' : 'wrap', alignItems: 'center', flex: 1 }}>
+          {isAdmin && (
+            <button onClick={() => navTo('/admin')} style={btnStyle(location.pathname === '/admin', '#6f42c1')}>
+              {isMobile ? <><span style={{ fontSize: 20 }}>⚙️</span><span>管理</span></> : '⚙️ 管理'}
+            </button>
           )}
+          <button onClick={() => navTo('/')} style={btnStyle(location.pathname === '/')}>
+            {isMobile ? <><span style={{ fontSize: 20 }}>🏠</span><span>交通費</span></> : '🏠 交通費'}
+          </button>
+          <button onClick={() => navTo('/trip-report')} style={btnStyle(location.pathname === '/trip-report')}>
+            {isMobile ? <><span style={{ fontSize: 20 }}>📍</span><span>出張報告</span></> : '📍 出張報告'}
+          </button>
+          {canLeave && (
+            <button onClick={() => navTo('/leave')} style={btnStyle(location.pathname === '/leave', '#28a745')}>
+              {isMobile ? <><span style={{ fontSize: 20 }}>🌿</span><span>休暇申請</span></> : '🌿 休暇申請'}
+            </button>
+          )}
+          {(isAdmin || (roleTitle && CALENDAR_ROLES.includes(roleTitle))) && (
+            <button onClick={() => navTo('/calendar')} style={btnStyle(location.pathname === '/calendar', '#4a90d9')}>
+              {isMobile ? <><span style={{ fontSize: 20 }}>📅</span><span>休暇</span></> : '📅 休暇'}
+            </button>
+          )}
+          <button onClick={() => navTo('/shift-report')} style={btnStyle(location.pathname === '/shift-report', '#c0392b')}>
+            {isMobile ? <><span style={{ fontSize: 20 }}>⏰</span><span>勤務変更</span></> : '⏰ 勤務変更'}
+          </button>
+          <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
+            <button onClick={() => navTo('/board')} style={btnStyle(location.pathname === '/board', '#e67e22')}>
+              {isMobile ? <><span style={{ fontSize: 20 }}>💬</span><span>連絡板</span></> : '💬 連絡板'}
+            </button>
+            {boardUnread > 0 && location.pathname !== '/board' && (
+              <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
+                {boardUnread > 99 ? '99+' : boardUnread}
+              </span>
+            )}
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, paddingLeft: 6 }}>
+          {realIsAdmin && (
+            <select
+              value={previewRole || ''}
+              onChange={e => setPreviewRole(e.target.value || null)}
+              title="役職プレビュー"
+              style={{
+                fontSize: 11, padding: '3px 4px', borderRadius: 6,
+                border: previewRole ? '2px solid #ffc107' : '1px solid #555',
+                background: previewRole ? '#ffc107' : '#2d2d4e',
+                color: previewRole ? '#333' : '#aaa',
+                cursor: 'pointer', maxWidth: isMobile ? 54 : 100,
+              }}
+            >
+              <option value="">👁 確認</option>
+              <option value="パート">パート</option>
+              <option value="一般">一般</option>
+              <option value="リーダー">リーダー</option>
+              <option value="マネージャー">マネージャー</option>
+              <option value="フロア責任者">フロア責任者</option>
+              <option value="社長">社長</option>
+            </select>
+          )}
+          {userId && <BellIcon userId={userId} />}
+          {userId && <AvatarMenu userId={userId} profileName={profileName} email={email} onLogout={onLogout} />}
         </div>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, paddingLeft: 6 }}>
-        {realIsAdmin && (
-          <select
-            value={previewRole || ''}
-            onChange={e => setPreviewRole(e.target.value || null)}
-            title="役職プレビュー"
-            style={{
-              fontSize: 11, padding: '3px 4px', borderRadius: 6,
-              border: previewRole ? '2px solid #ffc107' : '1px solid #555',
-              background: previewRole ? '#ffc107' : '#2d2d4e',
-              color: previewRole ? '#333' : '#aaa',
-              cursor: 'pointer', maxWidth: isMobile ? 54 : 100,
-            }}
-          >
-            <option value="">👁 確認</option>
-            <option value="パート">パート</option>
-            <option value="一般">一般</option>
-            <option value="リーダー">リーダー</option>
-            <option value="マネージャー">マネージャー</option>
-            <option value="フロア責任者">フロア責任者</option>
-            <option value="社長">社長</option>
-          </select>
-        )}
-        {userId && <BellIcon userId={userId} />}
-        {userId && <AvatarMenu userId={userId} profileName={profileName} email={email} onLogout={onLogout} />}
-      </div>
+      {/* プレビューバナー行（NavBar内に統合） */}
+      {previewRole && (
+        <div style={{
+          background: '#ffc107', color: '#333', fontSize: 12, fontWeight: 'bold',
+          padding: '5px 16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+        }}>
+          👁 プレビュー中：{previewRole} として表示
+          <button onClick={() => setPreviewRole(null)}
+            style={{ fontSize: 11, padding: '2px 10px', borderRadius: 4, border: 'none', background: '#333', color: '#fff', cursor: 'pointer' }}>
+            × 終了
+          </button>
+        </div>
+      )}
     </div>
   );
 };
 
-// プレビューモードバナー
-const PreviewBanner: React.FC = () => {
-  const { previewRole, setPreviewRole } = useContext(AuthContext);
-  if (!previewRole) return null;
-  return (
-    <div style={{
-      position: 'fixed', top: 60, left: 0, right: 0, zIndex: 299,
-      background: '#ffc107', color: '#333', fontSize: 12, fontWeight: 'bold',
-      padding: '5px 16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-      boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-    }}>
-      👁 プレビュー中：{previewRole} として表示
-      <button onClick={() => setPreviewRole(null)}
-        style={{ fontSize: 11, padding: '2px 10px', borderRadius: 4, border: 'none', background: '#333', color: '#fff', cursor: 'pointer' }}>
-        × 終了
-      </button>
-    </div>
-  );
+// プレビュー時にページコンテンツを下にずらす（NavBarのバナー行分）
+const PreviewBodyOffset: React.FC = () => {
+  const { previewRole } = useContext(AuthContext);
+  useEffect(() => {
+    document.body.style.paddingTop = previewRole ? '32px' : '0px';
+    return () => { document.body.style.paddingTop = '0px'; };
+  }, [previewRole]);
+  return null;
 };
 
 // 通知バナー（notifications テーブルから未読を表示）
@@ -884,7 +892,7 @@ function App() {
     <BrowserRouter>
       <ScrollToTop />
       <AuthProvider>
-        <PreviewBanner />
+        <PreviewBodyOffset />
         <Routes>
           <Route path="/signin" element={<SignIn />} />
           <Route path="/reset-password" element={<ResetPassword />} />
