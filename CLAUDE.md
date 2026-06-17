@@ -3647,7 +3647,7 @@ SQL Editor で以下を順番に実行:
 - ShiftReportsTab.tsx の `fetchLeaderAssignments` と `LeaderAssignment` 型は削除済み（groupベースに変更したため不要）
 
 ### コミット
-- `{commit_hash}` feat: 勤務変更申請 複数種別・早出・グループフィルター・管理タブ改善
+- `2857043` feat: 勤務変更申請 複数種別・早出・グループフィルター・管理タブ改善
 
 ---
 
