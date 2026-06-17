@@ -296,7 +296,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
   return (
     <div style={{ maxWidth: 600, margin: '0 auto', padding: '16px 16px 40px' }}>
       <div ref={topRef} />
-      <h2 style={{ textAlign: 'center', marginBottom: 24, color: isDark ? '#fff' : '#333' }}>📍 出張報告</h2>
+      <h2 style={{ textAlign: 'center', marginBottom: 24, fontSize: 20, fontWeight: 'bold', color: isDark ? '#fff' : '#333' }}>📍 出張報告</h2>
 
       {submitted && (
         <BannerSuccess message="報告を送信しました！" onClose={() => setSubmitted(false)} />

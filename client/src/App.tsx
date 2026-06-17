@@ -573,6 +573,53 @@ const LeaveApprovalBanner: React.FC<{ userId: string; roleTitle: string; isAdmin
   );
 };
 
+// 勤務変更申請の承認待ち通知バナー
+const ShiftReportApprovalBanner: React.FC<{ userId: string; roleTitle: string; isAdmin: boolean; canShiftReport: boolean }> = ({ userId, roleTitle, isAdmin, canShiftReport }) => {
+  const navigate = useNavigate();
+  const [pendingCount, setPendingCount] = useState(0);
+
+  useEffect(() => {
+    if (!canShiftReport) return;
+    if (!isAdmin && !['リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者'].includes(roleTitle)) return;
+
+    const fetchPending = async () => {
+      const { data } = await supabase
+        .from('shift_reports')
+        .select('id')
+        .eq('reviewer_id', userId)
+        .in('status', ['pending', 'resubmitted']);
+      setPendingCount(data?.length ?? 0);
+    };
+    fetchPending();
+  }, [userId, roleTitle, isAdmin, canShiftReport]);
+
+  if (pendingCount === 0) return null;
+
+  return (
+    <div
+      onClick={() => navigate('/shift-report')}
+      style={{
+        margin: '0 0 16px 0',
+        padding: '12px 16px',
+        background: '#fff3cd',
+        border: '2px solid #ffc107',
+        borderRadius: 10,
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        fontSize: 15,
+        color: '#856404',
+        fontWeight: 'bold',
+      }}
+    >
+      <span style={{ fontSize: 22 }}>⏰</span>
+      <span>勤務変更申請の確認依頼が {pendingCount}件 あります</span>
+      <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 'normal' }}>タップして確認 →</span>
+    </div>
+  );
+};
+
 // メインのDashboardコンポーネント
 const Dashboard: React.FC = () => {
   // 通常のダッシュボード処理（パスワードリセットは専用ページで処理）
@@ -726,6 +773,9 @@ const Dashboard: React.FC = () => {
 
       {/* ④ 休暇申請承認バナー（承認者のみ） */}
       <LeaveApprovalBanner userId={user.id} roleTitle={roleTitle} isAdmin={isAdmin} />
+
+      {/* ④-2 勤務変更申請確認バナー（承認者のみ） */}
+      <ShiftReportApprovalBanner userId={user.id} roleTitle={roleTitle} isAdmin={isAdmin} canShiftReport={canShiftReport} />
 
       {/* ⑤ 有給申請バナー（パート向け） */}
       {leaveRequestEnabled && !leaveSubmitted && (

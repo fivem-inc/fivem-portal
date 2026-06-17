@@ -467,13 +467,7 @@ const AbsenceInputSheet: React.FC<{
             {(isLate || isLateStart) && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 8 }} onClick={e => e.preventDefault()}>
                 <span style={{ fontSize: 12, color: '#666', whiteSpace: 'nowrap' }}>出勤時間</span>
-                <select value={timeH(lateTime)} onChange={e => setLateTime(toTimeStr(+e.target.value, timeM(lateTime)))} style={selStyle} onClick={e => e.stopPropagation()}>
-                  {HOURS_24.map(h => <option key={h} value={h}>{String(h).padStart(2,'0')}</option>)}
-                </select>
-                <span style={{ fontSize: 14 }}>:</span>
-                <select value={timeM(lateTime)} onChange={e => setLateTime(toTimeStr(timeH(lateTime), +e.target.value))} style={selStyle} onClick={e => e.stopPropagation()}>
-                  {MINUTES_5.map(m => <option key={m} value={m}>{String(m).padStart(2,'0')}</option>)}
-                </select>
+                <input type="time" value={lateTime} onChange={e => setLateTime(e.target.value)} onClick={e => e.stopPropagation()} style={{ ...selStyle, flex: 1 }} />
               </div>
             )}
           </div>
@@ -493,13 +487,7 @@ const AbsenceInputSheet: React.FC<{
             {(isEarlyLeave || isEarlyEnd) && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 8 }} onClick={e => e.preventDefault()}>
                 <span style={{ fontSize: 12, color: '#666', whiteSpace: 'nowrap' }}>退勤時間</span>
-                <select value={timeH(earlyTime)} onChange={e => setEarlyTime(toTimeStr(+e.target.value, timeM(earlyTime)))} style={selStyle} onClick={e => e.stopPropagation()}>
-                  {HOURS_24.map(h => <option key={h} value={h}>{String(h).padStart(2,'0')}</option>)}
-                </select>
-                <span style={{ fontSize: 14 }}>:</span>
-                <select value={timeM(earlyTime)} onChange={e => setEarlyTime(toTimeStr(timeH(earlyTime), +e.target.value))} style={selStyle} onClick={e => e.stopPropagation()}>
-                  {MINUTES_5.map(m => <option key={m} value={m}>{String(m).padStart(2,'0')}</option>)}
-                </select>
+                <input type="time" value={earlyTime} onChange={e => setEarlyTime(e.target.value)} onClick={e => e.stopPropagation()} style={{ ...selStyle, flex: 1 }} />
               </div>
             )}
           </div>
@@ -934,7 +922,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
   return (
     <div style={{ maxWidth: 900, margin: '0 auto' }}>
 
-      <h1 style={{ margin: '0 0 16px', fontSize: 22, fontWeight: 800, color: textColor, letterSpacing: '0.04em', lineHeight: 1.2 }}>📅 休暇カレンダー</h1>
+      <h1 style={{ margin: '0 0 16px', fontSize: 20, fontWeight: 800, color: textColor, letterSpacing: '0.04em', lineHeight: 1.2 }}>📅 休暇カレンダー</h1>
 
       {/* 直近6ヶ月サマリー */}
       <div style={{ background: bg, borderRadius: 12, boxShadow: '0 2px 12px rgba(0,0,0,0.08)', padding: isMobile ? 14 : 20, marginBottom: 16 }}>

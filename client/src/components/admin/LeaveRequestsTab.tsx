@@ -169,6 +169,74 @@ const LeaveRequestsTab: React.FC = () => {
   const [encEditError, setEncEditError] = useState<string | null>(null);
   const [encEditSuccess, setEncEditSuccess] = useState<string | null>(null);
 
+  // CSV export state
+  const [showLeaveCsvModal, setShowLeaveCsvModal]   = useState(false);
+  const [leaveCsvMode, setLeaveCsvMode]             = useState<'fy' | 'custom'>('fy');
+  const [leaveCsvFy, setLeaveCsvFy]                 = useState<string>('');
+  const [leaveCsvFrom, setLeaveCsvFrom]             = useState('');
+  const [leaveCsvTo, setLeaveCsvTo]                 = useState('');
+  const [leaveCsvExporting, setLeaveCsvExporting]   = useState(false);
+
+  const toFiscalYearStatic = (dateStr: string) => { const d = new Date(dateStr); return d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1; };
+  const nowFyStatic = (() => { const n = new Date(); return n.getMonth() >= 3 ? n.getFullYear() : n.getFullYear() - 1; })();
+  const fyList = [...new Set(leaveRequests.map(r => toFiscalYearStatic(r.created_at)))].sort((a, b) => b - a);
+
+  const STATUS_LABEL: Record<string, string> = {
+    pending: '申請中', step2_pending: '申請中（2次待ち）', manager_approved: '申請中（経理待ち）',
+    admin_approved: '申請中（社長待ち）', approved: '受理済み', rejected: '差戻し', cancelled: '取消済み',
+  };
+
+  const exportLeavesCsv = async () => {
+    setLeaveCsvExporting(true);
+    let query = supabase.from('leave_requests').select('*').order('created_at', { ascending: true });
+    if (leaveCsvMode === 'fy') {
+      const fy = leaveCsvFy ? Number(leaveCsvFy) : nowFyStatic;
+      const from = `${fy}-04-01`; const to = `${fy + 1}-03-31`;
+      query = query.gte('created_at', from).lte('created_at', to + 'T23:59:59');
+    } else {
+      if (leaveCsvFrom) query = query.gte('created_at', leaveCsvFrom);
+      if (leaveCsvTo)   query = query.lte('created_at', leaveCsvTo + 'T23:59:59');
+    }
+    const { data } = await query;
+    if (!data || data.length === 0) { setLeaveCsvExporting(false); alert('データがありません'); return; }
+    const ids = [...new Set([
+      ...data.map((r: AdminLeaveRequest) => r.user_id),
+      ...data.map((r: AdminLeaveRequest) => r.approver_id).filter(Boolean),
+      ...data.map((r: AdminLeaveRequest) => r.approver2_id).filter(Boolean),
+    ])] as string[];
+    const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
+    const nm: Record<string, string> = Object.fromEntries((profs || []).map((p: { id: string; name: string }) => [p.id, p.name]));
+    const esc = (v: string | number | null | undefined) => {
+      const s = v == null ? '' : String(v);
+      return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const headers = ['申請日', '申請者', '種別', '休暇日', '日数', '理由・目的', '第一承認者', '第二承認者', 'ステータス'];
+    const rows = (data as AdminLeaveRequest[]).map(r => {
+      const leaveDates = r.leave_dates ?? (r.start_date && r.end_date ? `${r.start_date}〜${r.end_date}` : r.start_date ?? '');
+      const daysArr = (r.leave_dates ?? '').split(',').map(s => s.trim()).filter(Boolean);
+      const days = daysArr.length > 0 ? daysArr.length : (r.start_date && r.end_date ? '' : '');
+      return [
+        r.created_at.slice(0, 10),
+        nm[r.user_id] ?? '不明',
+        r.leave_type_other ? `${r.leave_type}（${r.leave_type_other}）` : r.leave_type,
+        leaveDates,
+        days,
+        r.purpose ?? r.reason ?? '',
+        r.approver_id ? (nm[r.approver_id] ?? '') : '',
+        r.approver2_id ? (nm[r.approver2_id] ?? '') : '',
+        STATUS_LABEL[r.status] ?? r.status,
+      ].map(esc).join(',');
+    });
+    const csv = '﻿' + [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const label = leaveCsvMode === 'fy' ? `${leaveCsvFy || nowFyStatic}年度` : `${leaveCsvFrom}〜${leaveCsvTo}`;
+    a.href = url; a.download = `休暇申請_${label}.csv`; a.click();
+    URL.revokeObjectURL(url);
+    setLeaveCsvExporting(false); setShowLeaveCsvModal(false);
+  };
+
   const fetchAbsences = useCallback(async () => {
     setAbsenceLoading(true);
     const { data } = await supabase
@@ -853,9 +921,15 @@ const LeaveRequestsTab: React.FC = () => {
               {encConfirmModal}
               {encDetailModal}
               <h3 style={{ textAlign: 'center', marginBottom: 8, color: isDarkMode ? '#fff' : '#000' }}>🌿 休暇申請一覧</h3>
-              <p style={{ textAlign: 'center', fontSize: 13, color: isDarkMode ? '#adb5bd' : '#666', marginBottom: 16 }}>
+              <p style={{ textAlign: 'center', fontSize: 13, color: isDarkMode ? '#adb5bd' : '#666', marginBottom: 4 }}>
                 管理者として全ての申請を確認・承認できます。承認が止まっている場合は強制的に次のステップへ進められます。
               </p>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', paddingRight: 16, marginBottom: 8 }}>
+                <button onClick={() => { setLeaveCsvFy(String(nowFyStatic)); setShowLeaveCsvModal(true); }}
+                  style={{ padding: '5px 12px', borderRadius: 6, border: 'none', background: '#28a745', color: '#fff', fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
+                  📥 CSV出力
+                </button>
+              </div>
 
               {/* パートへ有給申請フォーム送信 */}
               <div style={{ background: isDarkMode ? '#2d3136' : '#f8f9fa', border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, borderRadius: 10, padding: '12px 16px', marginBottom: 20, maxWidth: 500, marginLeft: 'auto', marginRight: 'auto' }}>
@@ -1573,6 +1647,60 @@ const LeaveRequestsTab: React.FC = () => {
                           取り消し
                         </button>
                       </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* CSV出力モーダル */}
+              {showLeaveCsvModal && (
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px' }}>
+                  <div style={{ background: isDarkMode ? '#343a40' : '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 360 }}>
+                    <div style={{ fontSize: 15, fontWeight: 'bold', color: isDarkMode ? '#fff' : '#333', marginBottom: 16 }}>📥 CSV出力 — 休暇申請</div>
+
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                      {(['fy', 'custom'] as const).map(m => (
+                        <button key={m} onClick={() => setLeaveCsvMode(m)}
+                          style={{ flex: 1, padding: '7px 0', borderRadius: 8, border: 'none', fontSize: 12, fontWeight: 'bold', cursor: 'pointer', background: leaveCsvMode === m ? '#007bff' : (isDarkMode ? '#495057' : '#e9ecef'), color: leaveCsvMode === m ? '#fff' : (isDarkMode ? '#fff' : '#333') }}>
+                          {m === 'fy' ? '年度で選択' : 'カスタム期間'}
+                        </button>
+                      ))}
+                    </div>
+
+                    {leaveCsvMode === 'fy' ? (
+                      <div>
+                        <label style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666', display: 'block', marginBottom: 6 }}>年度（4月〜翌3月）</label>
+                        <select value={leaveCsvFy || String(nowFyStatic)} onChange={e => setLeaveCsvFy(e.target.value)}
+                          style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#ddd'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', fontSize: 13 }}>
+                          {(fyList.length > 0 ? fyList : [nowFyStatic]).map(fy => (
+                            <option key={fy} value={String(fy)}>{fy}年度（{fy}/4/1〜{fy+1}/3/31）</option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        <div>
+                          <label style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666', display: 'block', marginBottom: 4 }}>申請日（開始）</label>
+                          <input type="date" value={leaveCsvFrom} onChange={e => setLeaveCsvFrom(e.target.value)}
+                            style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#ddd'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', fontSize: 13, boxSizing: 'border-box' }} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666', display: 'block', marginBottom: 4 }}>申請日（終了）</label>
+                          <input type="date" value={leaveCsvTo} onChange={e => setLeaveCsvTo(e.target.value)}
+                            style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#ddd'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', fontSize: 13, boxSizing: 'border-box' }} />
+                        </div>
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+                      <button onClick={() => setShowLeaveCsvModal(false)}
+                        style={{ flex: 1, padding: 10, borderRadius: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#ddd'}`, background: 'none', color: isDarkMode ? '#adb5bd' : '#666', fontSize: 14, cursor: 'pointer' }}>
+                        閉じる
+                      </button>
+                      <button onClick={exportLeavesCsv} disabled={leaveCsvExporting}
+                        style={{ flex: 1, padding: 10, borderRadius: 8, border: 'none', background: leaveCsvExporting ? '#6c757d' : '#28a745', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
+                        {leaveCsvExporting ? '出力中...' : 'ダウンロード'}
+                      </button>
                     </div>
                   </div>
                 </div>

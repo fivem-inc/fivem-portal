@@ -540,6 +540,11 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           <span style={{ fontSize: 11, opacity: 0.85 }}>タップして回答 →</span>
         </div>
       ))}
+      {/* ページタイトル */}
+      <div style={{ textAlign: 'center', padding: '8px 0 12px' }}>
+        <h1 style={{ fontSize: 20, fontWeight: 'bold', color: text, margin: 0 }}>🌿 休暇申請</h1>
+      </div>
+
       {/* タブ切替 */}
       <div style={{ display: 'flex', marginBottom: 0, borderRadius: '10px 10px 0 0', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
         <button
@@ -578,8 +583,6 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       {/* 申請フォーム */}
       {tab === 'form' && (
         <div style={{ padding: 24, background: bg, borderRadius: '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
-          <h2 style={{ marginBottom: 12, fontSize: 20, color: text }}>🌿 休暇申請</h2>
-
           {/* 再申請バナー */}
           {reapplySourceId && (
             <div style={{ background: isDark ? '#0d3a5e' : '#cce5ff', border: `1px solid ${isDark ? '#1a6fa8' : '#b8daff'}`, borderRadius: 8, padding: '10px 14px', marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -962,20 +965,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                   {adjLateStart && (
                     <div onClick={e => e.stopPropagation()}>
                       <label style={{ fontSize: 12, color: subText, marginBottom: 4, display: 'block' }}>出勤時刻 <span style={{ color: '#dc3545' }}>*</span></label>
-                      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                        <select value={adjLateTime.split(':')[0] ?? ''} onChange={e => setAdjLateTime(e.target.value + ':' + (adjLateTime.split(':')[1] || '00'))}
-                          style={{ flex: 1, padding: '6px 4px', borderRadius: 6, border: `1px solid ${!adjLateTime ? '#dc3545' : borderColor}`, fontSize: 13, background: inputBg, color: text }}>
-                          <option value="" disabled>時</option>
-                          {HOURS.map(h => <option key={h} value={h}>{h}</option>)}
-                        </select>
-                        <span style={{ color: subText, fontSize: 12 }}>時</span>
-                        <select value={adjLateTime.split(':')[1] ?? ''} onChange={e => setAdjLateTime((adjLateTime.split(':')[0] || '09') + ':' + e.target.value)}
-                          style={{ flex: 1, padding: '6px 4px', borderRadius: 6, border: `1px solid ${!adjLateTime ? '#dc3545' : borderColor}`, fontSize: 13, background: inputBg, color: text }}>
-                          <option value="" disabled>分</option>
-                          {MINS.map(m => <option key={m} value={m}>{m}</option>)}
-                        </select>
-                        <span style={{ color: subText, fontSize: 12 }}>分</span>
-                      </div>
+                      <input type="time" value={adjLateTime} onChange={e => setAdjLateTime(e.target.value)}
+                        style={{ width: '100%', padding: '8px', borderRadius: 6, border: `1px solid ${!adjLateTime ? '#dc3545' : borderColor}`, fontSize: 14, background: inputBg, color: text, boxSizing: 'border-box' }} />
                     </div>
                   )}
                 </div>
@@ -994,20 +985,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                   {adjEarlyEnd && (
                     <div onClick={e => e.stopPropagation()}>
                       <label style={{ fontSize: 12, color: subText, marginBottom: 4, display: 'block' }}>退勤時刻 <span style={{ color: '#dc3545' }}>*</span></label>
-                      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                        <select value={adjEarlyTime.split(':')[0] ?? ''} onChange={e => setAdjEarlyTime(e.target.value + ':' + (adjEarlyTime.split(':')[1] || '00'))}
-                          style={{ flex: 1, padding: '6px 4px', borderRadius: 6, border: `1px solid ${!adjEarlyTime ? '#dc3545' : borderColor}`, fontSize: 13, background: inputBg, color: text }}>
-                          <option value="" disabled>時</option>
-                          {HOURS.map(h => <option key={h} value={h}>{h}</option>)}
-                        </select>
-                        <span style={{ color: subText, fontSize: 12 }}>時</span>
-                        <select value={adjEarlyTime.split(':')[1] ?? ''} onChange={e => setAdjEarlyTime((adjEarlyTime.split(':')[0] || '17') + ':' + e.target.value)}
-                          style={{ flex: 1, padding: '6px 4px', borderRadius: 6, border: `1px solid ${!adjEarlyTime ? '#dc3545' : borderColor}`, fontSize: 13, background: inputBg, color: text }}>
-                          <option value="" disabled>分</option>
-                          {MINS.map(m => <option key={m} value={m}>{m}</option>)}
-                        </select>
-                        <span style={{ color: subText, fontSize: 12 }}>分</span>
-                      </div>
+                      <input type="time" value={adjEarlyTime} onChange={e => setAdjEarlyTime(e.target.value)}
+                        style={{ width: '100%', padding: '8px', borderRadius: 6, border: `1px solid ${!adjEarlyTime ? '#dc3545' : borderColor}`, fontSize: 14, background: inputBg, color: text, boxSizing: 'border-box' }} />
                     </div>
                   )}
                 </div>
