@@ -90,7 +90,6 @@ const ShiftReportsTab: React.FC = () => {
   const [sortDir, setSortDir]           = useState<'asc' | 'desc'>('desc');
 
   const bg        = isDarkMode ? '#1e2328' : '#f8f9fa';
-  const cardBg    = isDarkMode ? '#2d3136' : '#ffffff';
   const border    = isDarkMode ? '#495057' : '#dee2e6';
   const text      = isDarkMode ? '#ffffff' : '#333333';
   const sub       = isDarkMode ? '#adb5bd' : '#666666';

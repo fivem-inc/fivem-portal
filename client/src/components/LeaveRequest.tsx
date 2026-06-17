@@ -862,8 +862,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
         const daysInMonth = new Date(adjCalYear, adjCalMonth + 1, 0).getDate();
         const firstDow = new Date(adjCalYear, adjCalMonth, 1).getDay();
-        const HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
-        const MINS = ['00', '05', '10', '15', '20', '25', '30', '35', '40', '45', '50', '55'];
+        const _HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')); void _HOURS;
+        const _MINS = ['00', '05', '10', '15', '20', '25', '30', '35', '40', '45', '50', '55']; void _MINS;
         const fmtDate = (y: number, m: number, d: number) => `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
         const adjDateLabel = adjDate ? `${parseInt(adjDate.slice(5,7))}月${parseInt(adjDate.slice(8,10))}日（${'日月火水木金土'[new Date(adjDate).getDay()]}）` : '';
 

@@ -308,11 +308,11 @@ const AbsenceInputSheet: React.FC<{
   const [isEarlyEnd, setIsEarlyEnd] = useState(false);
   const [lateTime, setLateTime] = useState('');
   const [earlyTime, setEarlyTime] = useState('');
-  const MINUTES_5 = Array.from({ length: 12 }, (_, i) => i * 5);
-  const HOURS_24 = Array.from({ length: 24 }, (_, i) => i);
-  const timeH = (t: string) => t ? parseInt(t.split(':')[0], 10) : 8;
-  const timeM = (t: string) => t ? parseInt(t.split(':')[1], 10) : 0;
-  const toTimeStr = (h: number, m: number) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  const _MINUTES_5 = Array.from({ length: 12 }, (_, i) => i * 5); void _MINUTES_5;
+  const _HOURS_24 = Array.from({ length: 24 }, (_, i) => i); void _HOURS_24;
+  const _timeH = (t: string) => t ? parseInt(t.split(':')[0], 10) : 8; void _timeH;
+  const _timeM = (t: string) => t ? parseInt(t.split(':')[1], 10) : 0; void _timeM;
+  const _toTimeStr = (h: number, m: number) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`; void _toTimeStr;
   const selStyle: React.CSSProperties = { padding: '4px 4px', borderRadius: 6, border: '1px solid #ccc', fontSize: 14 };
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);

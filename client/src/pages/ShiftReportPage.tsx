@@ -151,32 +151,6 @@ const SingleDatePicker: React.FC<{ value: string; onChange: (d: string) => void;
   );
 };
 
-// ────────────────────────────────────────────────────────────────
-// Time Picker (hour/minute selects — mobile-friendly)
-// ────────────────────────────────────────────────────────────────
-const TimePicker: React.FC<{
-  value: string; onChange: (v: string) => void; isDark: boolean; flex?: number;
-}> = ({ value, onChange, isDark, flex = 1 }) => {
-  const HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
-  const MINS  = ['00','05','10','15','20','25','30','35','40','45','50','55'];
-  const [h, m] = value.split(':');
-  const s: React.CSSProperties = {
-    flex: 1, padding: '9px 4px', borderRadius: 8,
-    border: `1px solid ${isDark ? '#6c757d' : '#ddd'}`,
-    fontSize: 14, background: isDark ? '#495057' : 'white', color: isDark ? '#fff' : '#333',
-  };
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex }}>
-      <select value={h ?? '12'} onChange={e => onChange(e.target.value + ':' + (m ?? '00'))} style={s}>
-        {HOURS.map(hh => <option key={hh} value={hh}>{hh}</option>)}
-      </select>
-      <span style={{ color: '#888', flexShrink: 0, fontSize: 14 }}>:</span>
-      <select value={m ?? '00'} onChange={e => onChange((h ?? '12') + ':' + e.target.value)} style={s}>
-        {MINS.map(mm => <option key={mm} value={mm}>{mm}</option>)}
-      </select>
-    </div>
-  );
-};
 
 // ────────────────────────────────────────────────────────────────
 // Confirm Modal (pre-submit review)
@@ -278,7 +252,7 @@ const ShiftReportForm: React.FC<{
   leaderAssignments: LeaderAssignment[];
   inline?: boolean;
   onClose: () => void; onSaved: () => void;
-}> = ({ user, profileName, roleTitle, isAdmin, editTarget, reviewers, workplaces, leaderAssignments, inline = false, onClose, onSaved }) => {
+}> = ({ user, profileName, roleTitle, isAdmin, editTarget, reviewers, workplaces, leaderAssignments: _leaderAssignments, inline = false, onClose, onSaved }) => {
   const canProxy = IS_APPROVER(roleTitle, isAdmin);
   const [staffList, setStaffList]     = useState<Staff[]>([]);
   const [showConfirm, setShowConfirm] = useState(false);
