@@ -39,7 +39,7 @@ const ApprovalsTab: React.FC = () => {
   return (          <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 30 }}>
               <div style={{ flex: 1 }} />
-              <h3 style={{ margin: 0, color: isDarkMode ? '#fff' : '#000' }}>承認管理</h3>
+              <h3 style={{ margin: 0, color: isDarkMode ? '#fff' : '#000' }}>🚃 交通費申請一覧</h3>
               <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end' }}>
                 <button
                   onClick={() => { fetchLocationEditor(); setShowLocationEditor(true); }}

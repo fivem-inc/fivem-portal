@@ -1020,13 +1020,14 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const isDarkMode = useDarkMode();
 
   const tabStyle = (isActive: boolean): React.CSSProperties => ({
-    padding: '12px 24px', marginRight: '4px',
+    padding: '10px 16px', marginRight: '4px',
     background: isActive ? '#007bff' : (isDarkMode ? '#495057' : '#f8f9fa'),
     color: isActive ? 'white' : (isDarkMode ? '#fff' : '#333'),
     border: `1px solid ${isActive ? '#007bff' : (isDarkMode ? '#6c757d' : '#dee2e6')}`,
     borderBottom: isActive ? 'none' : `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`,
-    borderRadius: '8px 8px 0 0', cursor: 'pointer', fontSize: '16px',
-    fontWeight: isActive ? 'bold' : 'normal', transition: 'all 0.2s ease'
+    borderRadius: '8px 8px 0 0', cursor: 'pointer', fontSize: '14px',
+    fontWeight: isActive ? 'bold' : 'normal', transition: 'all 0.2s ease',
+    whiteSpace: 'nowrap', flexShrink: 0
   });
 
   const tabContentStyle: React.CSSProperties = {

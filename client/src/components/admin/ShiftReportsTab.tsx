@@ -1,13 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 
+type AppType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start';
+
 interface ShiftReport {
   id: string;
   applicant_id: string;
   submitted_by: string;
   work_date: string;
   pay_period_start: string;
-  application_type: string;
+  application_type: AppType;
+  application_types: AppType[];
   reason: string;
   original_location: string | null;
   original_start: string | null;
@@ -35,15 +38,18 @@ interface HistoryRec {
   changerName?: string;
 }
 
-interface LeaderAssignment { course: string; school: string; }
 
-const TYPE_INFO: Record<string, { label: string; color: string; emoji: string }> = {
+const TYPE_INFO: Record<AppType, { label: string; color: string; emoji: string }> = {
   overtime:     { label: '残業',     color: '#1565c0', emoji: '⏰' },
   holiday_work: { label: '休日出勤', color: '#0f766e', emoji: '🏢' },
   early_leave:  { label: '早退',     color: '#e65100', emoji: '🏃' },
   tardiness:    { label: '遅刻',     color: '#7b1fa2', emoji: '⏱️' },
   absence:      { label: '欠勤',     color: '#c62828', emoji: '❌' },
+  early_start:  { label: '早出',     color: '#0891b2', emoji: '🌅' },
 };
+function getTypes(r: ShiftReport): AppType[] {
+  return r.application_types?.length ? r.application_types : [r.application_type];
+}
 
 const STATUS_INFO: Record<string, { label: string; color: string }> = {
   pending:     { label: '申請中',   color: '#856404' },
@@ -78,8 +84,8 @@ const ShiftReportsTab: React.FC = () => {
   const [groupFilter, setGroupFilter]   = useState('all');
   const [typeFilter, setTypeFilter]     = useState('all');
   const [periodFilter, setPeriodFilter] = useState('__current__');
-  const [courses, setCourses]           = useState<string[]>([]);
-  const [courseSchoolMap, setCourseSchoolMap] = useState<Record<string, string[]>>({});
+  const [groupOptions, setGroupOptions] = useState<string[]>([]);
+  const [groupMap, setGroupMap]         = useState<Record<string, string[]>>({});
   const [confirming, setConfirming]     = useState<string | null>(null);
   const [expandedHistory, setExpandedHistory] = useState<Set<string>>(new Set());
   const [historyData, setHistoryData]   = useState<Record<string, HistoryRec[]>>({});
@@ -106,18 +112,6 @@ const ShiftReportsTab: React.FC = () => {
     return `${p.getFullYear()}-${String(p.getMonth() + 1).padStart(2, '0')}-16`;
   })();
 
-  const fetchLeaderAssignments = useCallback(async () => {
-    const { data } = await supabase.from('leader_assignments').select('course, school');
-    if (!data) return;
-    const map: Record<string, string[]> = {};
-    (data as LeaderAssignment[]).forEach(({ course, school }) => {
-      const schools = school.split('\n').map((s: string) => s.trim()).filter(Boolean);
-      if (!map[course]) map[course] = [];
-      schools.forEach((s: string) => { if (!map[course].includes(s)) map[course].push(s); });
-    });
-    setCourseSchoolMap(map);
-    setCourses([...new Set((data as LeaderAssignment[]).map(d => d.course))]);
-  }, [supabase]);
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
@@ -129,8 +123,11 @@ const ShiftReportsTab: React.FC = () => {
       ...data.map((r: ShiftReport) => r.reviewer_id).filter(Boolean),
       ...data.map((r: ShiftReport) => r.confirmed_by).filter(Boolean),
     ])] as string[];
-    const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
+    const { data: profs } = await supabase.from('profiles').select('id, name, group_names').in('id', ids);
     const nm = Object.fromEntries((profs || []).map((p: { id: string; name: string }) => [p.id, p.name]));
+    const gm: Record<string, string[]> = {};
+    (profs || []).forEach((p: { id: string; group_names?: string[] }) => { gm[p.id] = p.group_names ?? []; });
+    setGroupMap(gm);
     setReports(data.map((r: ShiftReport) => ({
       ...r,
       applicantName:  nm[r.applicant_id] ?? '不明',
@@ -141,7 +138,11 @@ const ShiftReportsTab: React.FC = () => {
     setLoading(false);
   }, [supabase]);
 
-  useEffect(() => { fetchReports(); fetchLeaderAssignments(); }, [fetchReports, fetchLeaderAssignments]);
+  useEffect(() => {
+    fetchReports();
+    supabase.from('master_options').select('value').eq('category', 'shift_report_group').order('sort_order')
+      .then(({ data }) => { if (data) setGroupOptions(data.map((r: { value: string }) => r.value)); });
+  }, [fetchReports]);
 
   const loadHistory = useCallback(async (reportId: string) => {
     if (historyData[reportId]) return;
@@ -174,7 +175,7 @@ const ShiftReportsTab: React.FC = () => {
     await supabase.from('shift_report_history').insert({ report_id: r.id, changed_by: user?.id, change_summary: '管理者が受理しました', snapshot: r }).then(null, () => {});
     await supabase.from('notifications').insert({
       user_id: r.applicant_id, message: '勤務変更申請が受理されました',
-      sub_message: `${TYPE_INFO[r.application_type]?.label}　${r.work_date}`,
+      sub_message: `${getTypes(r).map(t => TYPE_INFO[t]?.label ?? t).join('＋')}　${r.work_date}`,
       source_type: 'shift_report', reference_id: r.id, read: false,
     }).then(null, () => {});
     setConfirming(null);
@@ -195,7 +196,7 @@ const ShiftReportsTab: React.FC = () => {
     }).then(null, () => {});
     await supabase.from('notifications').insert({
       user_id: r.applicant_id, message: '勤務変更申請が差戻されました',
-      sub_message: `${TYPE_INFO[r.application_type]?.label}　${r.work_date}${comment ? `\n理由：${comment}` : ''}`,
+      sub_message: `${getTypes(r).map(t => TYPE_INFO[t]?.label ?? t).join('＋')}　${r.work_date}${comment ? `\n理由：${comment}` : ''}`,
       source_type: 'shift_report', reference_id: r.id, read: false,
     }).then(null, () => {});
     setReturning(false); setReturnTarget(null); setReturnComment('');
@@ -222,9 +223,8 @@ const ShiftReportsTab: React.FC = () => {
     if (personFilter !== 'all'       && r.applicant_id !== personFilter) return false;
     if (typeFilter !== 'all'         && r.application_type !== typeFilter) return false;
     if (groupFilter !== 'all') {
-      const schools = courseSchoolMap[groupFilter] ?? [];
-      const loc = r.actual_location ?? r.original_location ?? '';
-      if (!schools.some(s => loc.includes(s))) return false;
+      const userGroups = groupMap[r.applicant_id] ?? [];
+      if (!userGroups.includes(groupFilter)) return false;
     }
     if (statusFilter !== 'active') {
       const p = periodFilter === '__current__' ? currentPeriod : (periodFilter === 'all' ? null : periodFilter);
@@ -280,7 +280,7 @@ const ShiftReportsTab: React.FC = () => {
       r.created_at.slice(0, 10),
       nm[r.applicant_id] ?? '不明',
       r.submitted_by && r.submitted_by !== r.applicant_id ? (nm[r.submitted_by] ?? '') : '',
-      TYPE_INFO[r.application_type]?.label ?? r.application_type,
+      getTypes(r).map(t => TYPE_INFO[t]?.label ?? t).join('＋'),
       r.work_date,
       r.actual_location ?? r.original_location ?? '',
       r.actual_start ?? r.original_start ?? '',
@@ -349,7 +349,7 @@ const ShiftReportsTab: React.FC = () => {
         <select value={groupFilter} onChange={e => setGroupFilter(e.target.value)}
           style={{ padding: '4px 8px', borderRadius: 8, border: `1px solid ${border}`, background: selBg, color: text, fontSize: 12 }}>
           <option value="all">全グループ</option>
-          {courses.map(c => <option key={c} value={c}>{c}</option>)}
+          {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
         </select>
         <select value={personFilter} onChange={e => setPersonFilter(e.target.value)}
           style={{ padding: '4px 8px', borderRadius: 8, border: `1px solid ${border}`, background: selBg, color: text, fontSize: 12 }}>
@@ -408,7 +408,7 @@ const ShiftReportsTab: React.FC = () => {
             </thead>
             <tbody>
               {sorted.map((r, i) => {
-                const info    = TYPE_INFO[r.application_type] ?? { label: r.application_type, color: '#888', emoji: '📋' };
+                const rTypes  = getTypes(r);
                 const stBg    = STATUS_BG[r.status] ?? '#6c757d';
                 const isPend  = ['pending', 'resubmitted'].includes(r.status);
                 const isReSub = r.status === 'resubmitted';
@@ -437,7 +437,10 @@ const ShiftReportsTab: React.FC = () => {
                       </td>
                       {/* 種別 */}
                       <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'center' }}>
-                        <span style={{ fontSize: 12, fontWeight: 'bold', color: info.color }}>{info.emoji}<br/>{info.label}</span>
+                        {rTypes.map(t => {
+                          const inf = TYPE_INFO[t] ?? { label: t, color: '#888', emoji: '📋' };
+                          return <div key={t} style={{ fontSize: 11, fontWeight: 'bold', color: inf.color, lineHeight: 1.4 }}>{inf.emoji} {inf.label}</div>;
+                        })}
                       </td>
                       {/* 勤務日 */}
                       <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'center', fontSize: 12 }}>

@@ -44,7 +44,7 @@
 }
 
 /* 管理画面タブ PC/スマホ切り替え */
-.admin-tabs-pc     { display: flex !important; }
+.admin-tabs-pc     { display: flex !important; flex-direction: column; }
 .admin-tabs-mobile { display: none !important; }
 @media (max-width: 600px) {
   .admin-tabs-pc     { display: none !important; }

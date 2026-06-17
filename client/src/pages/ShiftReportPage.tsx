@@ -6,13 +6,16 @@ import type { AuthUser } from '../types';
 // ────────────────────────────────────────────────────────────────
 // Types
 // ────────────────────────────────────────────────────────────────
+type ApplicationType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start';
+
 interface ShiftReport {
   id: string;
   applicant_id: string;
   submitted_by: string;
   work_date: string;
   pay_period_start: string;
-  application_type: 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence';
+  application_type: ApplicationType;
+  application_types: ApplicationType[];
   reason: string;
   original_location: string | null;
   original_start: string | null;
@@ -86,13 +89,42 @@ function origDuration(start: string | null, end: string | null): number {
   return toMin(end) - toMin(start);
 }
 
-const TYPE_INFO: Record<string, { label: string; color: string; emoji: string }> = {
+const TYPE_INFO: Record<ApplicationType, { label: string; color: string; emoji: string }> = {
   overtime:     { label: '残業',     color: '#1565c0', emoji: '⏰' },
   holiday_work: { label: '休日出勤', color: '#0f766e', emoji: '🏢' },
   early_leave:  { label: '早退',     color: '#e65100', emoji: '🏃' },
   tardiness:    { label: '遅刻',     color: '#7b1fa2', emoji: '⏱️' },
   absence:      { label: '欠勤',     color: '#c62828', emoji: '❌' },
+  early_start:  { label: '早出',     color: '#0891b2', emoji: '🌅' },
 };
+
+const TYPE_PRIORITY: ApplicationType[] = ['absence', 'holiday_work', 'overtime', 'early_start', 'tardiness', 'early_leave'];
+function primaryType(types: ApplicationType[]): ApplicationType {
+  return TYPE_PRIORITY.find(t => types.includes(t)) ?? types[0] ?? 'overtime';
+}
+function typesLabel(types: ApplicationType[]): string {
+  return types.map(t => `${TYPE_INFO[t].emoji} ${TYPE_INFO[t].label}`).join(' ＋ ');
+}
+
+// 排他チェック（pure function）
+function isBlockedWith(current: ApplicationType[], t: ApplicationType): boolean {
+  if (current.includes('absence') && t !== 'absence') return true;
+  if (t === 'absence' && current.length > 0 && !current.includes('absence')) return true;
+  if (t === 'tardiness'   && current.includes('early_start')) return true;
+  if (t === 'early_start' && current.includes('tardiness'))   return true;
+  if (t === 'early_leave' && current.includes('overtime'))    return true;
+  if (t === 'overtime'    && current.includes('early_leave')) return true;
+  return false;
+}
+function blockReason(current: ApplicationType[], t: ApplicationType): string {
+  if (current.includes('absence')) return '欠勤を選択中は他を選べません';
+  if (t === 'absence') return '他の種別が選択中は欠勤を選べません';
+  if (t === 'tardiness'   && current.includes('early_start')) return '早出と遅刻は同時に選べません';
+  if (t === 'early_start' && current.includes('tardiness'))   return '遅刻と早出は同時に選べません';
+  if (t === 'early_leave' && current.includes('overtime'))    return '残業と早退は同時に選べません';
+  if (t === 'overtime'    && current.includes('early_leave')) return '早退と残業は同時に選べません';
+  return '';
+}
 const STATUS_INFO: Record<string, { label: string; color: string; bg: string }> = {
   pending:     { label: '申請中',   color: '#856404', bg: '#fff3cd' },
   resubmitted: { label: '申請中',   color: '#856404', bg: '#fff3cd' },
@@ -156,7 +188,7 @@ const SingleDatePicker: React.FC<{ value: string; onChange: (d: string) => void;
 // Confirm Modal (pre-submit review)
 // ────────────────────────────────────────────────────────────────
 interface ConfirmData {
-  date: string; type: 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence'; reason: string;
+  date: string; types: ApplicationType[]; reason: string;
   origLoc: string; origStart: string; origEnd: string; origDayOff: boolean;
   actLoc: string; actStart: string; actEnd: string; actNotes: string;
   breakMin: number; laborMin: number; reviewerName: string; isSelfReview: boolean;
@@ -168,7 +200,8 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
   const text = isDark ? '#fff' : '#1a1a2e';
   const border = isDark ? '#495057' : '#dee2e6';
   const origMin = data.origDayOff ? 0 : origDuration(data.origStart, data.origEnd);
-  const diffMin = data.type !== 'absence' ? data.laborMin - origMin : -origMin;
+  const hasAbsence = data.types.includes('absence');
+  const diffMin = !hasAbsence ? data.laborMin - origMin : -origMin;
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1100, display: 'flex', alignItems: 'flex-end' }}>
@@ -185,7 +218,7 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
           )}
           <CRow label="申請者"     value={data.applicantName} textColor={text} />
           <CRow label="日付"       value={`${data.date}（${dow(data.date)}）`} textColor={text} />
-          <CRow label="種別"       value={`${TYPE_INFO[data.type].emoji} ${TYPE_INFO[data.type].label}`} textColor={text} />
+          <CRow label="種別"       value={typesLabel(data.types)} textColor={text} />
           <CRow label="理由"       value={data.reason} textColor={text} />
           <Sep isDark={isDark} />
           <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>📋 通常シフト（もともとの予定）</div>
@@ -193,7 +226,7 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
             ? <CRow label="" value="休みの日" textColor={text} />
             : <CRow label="" value={`${data.origLoc || '—'}　${data.origStart}〜${data.origEnd}（${formatMin(origMin)}）`} textColor={text} />
           }
-          {data.type !== 'absence' && (
+          {!hasAbsence && (
             <>
               <Sep isDark={isDark} />
               <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>✅ 実際に勤務した時間</div>
@@ -202,15 +235,12 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
               <CRow label="休憩"    value={`${data.breakMin}分`} textColor={text} />
               <CRow label="実労働"  value={formatMin(data.laborMin)} textColor={text} />
               {data.actNotes && <CRow label="備考" value={data.actNotes} textColor={text} />}
-              {!data.origDayOff && origMin > 0 && (
-                <div style={{ background: data.type === 'overtime' ? (isDark ? '#1e3a5f' : '#eff6ff') : data.type === 'tardiness' ? (isDark ? '#2d1b4e' : '#f3e8ff') : (isDark ? '#431407' : '#fff7ed'), borderRadius: 8, padding: '8px 12px', marginTop: 4 }}>
-                  <span style={{ fontSize: 13, fontWeight: 'bold', color: data.type === 'overtime' ? '#60a5fa' : data.type === 'tardiness' ? '#c084fc' : '#fb923c' }}>
-                    {data.type === 'overtime'
-                      ? `⏰ 時間外労働：${formatMin(Math.max(0, diffMin))}`
-                      : data.type === 'tardiness'
-                      ? `⏱️ 遅刻時間：${formatMin(Math.abs(Math.min(0, diffMin)))}`
-                      : `🏃 早退・短縮：${formatMin(Math.abs(Math.min(0, diffMin)))}`}
-                  </span>
+              {!data.origDayOff && origMin > 0 && diffMin !== 0 && (
+                <div style={{ background: isDark ? '#1e3a5f' : '#eff6ff', borderRadius: 8, padding: '8px 12px', marginTop: 4 }}>
+                  {data.types.includes('overtime') && diffMin > 0 && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#60a5fa' }}>⏰ 時間外労働：{formatMin(Math.max(0, diffMin))}</div>}
+                  {data.types.includes('early_start') && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#22d3ee' }}>🌅 早出：{formatMin(Math.max(0, toMin(data.origStart) - toMin(data.actStart)))}</div>}
+                  {data.types.includes('tardiness') && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#c084fc' }}>⏱️ 遅刻：{formatMin(Math.max(0, toMin(data.actStart) - toMin(data.origStart)))}</div>}
+                  {data.types.includes('early_leave') && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#fb923c' }}>🏃 早退：{formatMin(Math.max(0, toMin(data.origEnd) - toMin(data.actEnd)))}</div>}
                 </div>
               )}
             </>
@@ -261,7 +291,12 @@ const ShiftReportForm: React.FC<{
 
   const [applicantId, setApplicantId] = useState(editTarget?.applicant_id ?? user.id);
   const [date, setDate]               = useState(editTarget?.work_date ?? todayStr());
-  const [type, setType]               = useState<'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence'>(editTarget?.application_type ?? 'overtime');
+  const [types, setTypes]             = useState<ApplicationType[]>(
+    editTarget?.application_types?.length ? editTarget.application_types
+    : editTarget?.application_type        ? [editTarget.application_type]
+    : []
+  );
+  const [blockMsg, setBlockMsg]       = useState('');
   const [reason, setReason]           = useState(editTarget?.reason ?? '');
   const [origDayOff, setOrigDayOff]   = useState(false);
 
@@ -284,11 +319,34 @@ const ShiftReportForm: React.FC<{
   const [actNotes, setActNotes]       = useState('');
   const [changeSummary, setChangeSummary] = useState('');
 
-  const breakMin = actStart && actEnd && type !== 'absence' ? calcBreakMinutes(actStart, actEnd) : 0;
-  const laborMin = actStart && actEnd && type !== 'absence'
+  const hasAbsence    = types.includes('absence');
+  const hasHoliday    = types.includes('holiday_work');
+  const pType         = primaryType(types);
+
+  const toggleType = (t: ApplicationType) => {
+    if (isBlockedWith(types, t)) {
+      setBlockMsg(blockReason(types, t));
+      setTimeout(() => setBlockMsg(''), 2200);
+      return;
+    }
+    setTypes(prev => {
+      if (t === 'absence') return prev.includes('absence') ? [] : ['absence'];
+      const without = prev.filter(x => x !== 'absence');
+      const EXCL: Partial<Record<ApplicationType, ApplicationType>> = {
+        early_start: 'tardiness', tardiness: 'early_start',
+        overtime: 'early_leave', early_leave: 'overtime',
+      };
+      const excl = EXCL[t];
+      const base = excl ? without.filter(x => x !== excl) : without;
+      return base.includes(t) ? base.filter(x => x !== t) : [...base, t];
+    });
+  };
+
+  const breakMin = actStart && actEnd && !hasAbsence ? calcBreakMinutes(actStart, actEnd) : 0;
+  const laborMin = actStart && actEnd && !hasAbsence
     ? Math.max(0, (toMin(actEnd) - toMin(actStart)) - breakMin) : 0;
-  const origMin  = origDayOff ? 0 : origDuration(origStart, origEnd);
-  const diffMin  = type !== 'absence' ? laborMin - origMin : -origMin;
+  const origMin  = (origDayOff || hasHoliday) ? 0 : origDuration(origStart, origEnd);
+  const diffMin  = !hasAbsence ? laborMin - origMin : -origMin;
 
   useEffect(() => {
     if (!canProxy) return;
@@ -301,13 +359,14 @@ const ShiftReportForm: React.FC<{
 
   const validate = () => {
     if (!date)          return '日付を選択してください';
+    if (types.length === 0) return '種別を選択してください';
     if (!reason.trim()) return '理由を入力してください';
-    if (!origDayOff && type !== 'holiday_work' && (!origStart || !origEnd)) return '通常シフトの時間を入力してください';
-    if (!origDayOff && type !== 'holiday_work' && origStart && origEnd && origStart === origEnd) return '通常シフトの開始・終了が同じ時間です。正しい時間を入力してください';
-    if (!origDayOff && origLoc === 'その他' && !origLocCustom.trim()) return '通常シフトの場所を入力してください';
-    if (type !== 'absence' && (!actStart || !actEnd)) return '実際の時間を入力してください';
-    if (type !== 'absence' && actStart && actEnd && actStart === actEnd) return '開始時間と終了時間が同じです。正しい時間を入力してください';
-    if (type !== 'absence' && actLoc === 'その他' && !actLocCustom.trim()) return '実際の勤務場所を入力してください';
+    if (!origDayOff && !hasHoliday && (!origStart || !origEnd)) return '通常シフトの時間を入力してください';
+    if (!origDayOff && !hasHoliday && origStart && origEnd && origStart === origEnd) return '通常シフトの開始・終了が同じ時間です。正しい時間を入力してください';
+    if (!origDayOff && !hasHoliday && origLoc === 'その他' && !origLocCustom.trim()) return '通常シフトの場所を入力してください';
+    if (!hasAbsence && (!actStart || !actEnd)) return '実際の時間を入力してください';
+    if (!hasAbsence && actStart && actEnd && actStart === actEnd) return '開始時間と終了時間が同じです。正しい時間を入力してください';
+    if (!hasAbsence && actLoc === 'その他' && !actLocCustom.trim()) return '実際の勤務場所を入力してください';
     if (!reviewerId)    return '確認依頼先を選択してください';
     if (editTarget && !changeSummary.trim()) return '修正内容を入力してください';
     return '';
@@ -329,16 +388,17 @@ const ShiftReportForm: React.FC<{
         submitted_by:      user.id,
         work_date:         date,
         pay_period_start:  calcPayPeriodStart(date),
-        application_type:  type,
+        application_type:  pType,
+        application_types: types,
         reason:            reason.trim() + (actNotes.trim() ? `\n備考：${actNotes.trim()}` : ''),
-        original_location: (origDayOff || type === 'holiday_work') ? null : (finalOrigLoc || null),
-        original_start:    (origDayOff || type === 'holiday_work') ? null : (origStart || null),
-        original_end:      (origDayOff || type === 'holiday_work') ? null : (origEnd || null),
-        actual_location:   type !== 'absence' ? (finalActLoc || null) : null,
-        actual_start:      type !== 'absence' ? (actStart || null) : null,
-        actual_end:        type !== 'absence' ? (actEnd || null) : null,
-        break_minutes:     type !== 'absence' && actStart && actEnd ? breakMin : null,
-        labor_minutes:     type !== 'absence' && actStart && actEnd ? laborMin : null,
+        original_location: (origDayOff || hasHoliday) ? null : (finalOrigLoc || null),
+        original_start:    (origDayOff || hasHoliday) ? null : (origStart || null),
+        original_end:      (origDayOff || hasHoliday) ? null : (origEnd || null),
+        actual_location:   !hasAbsence ? (finalActLoc || null) : null,
+        actual_start:      !hasAbsence ? (actStart || null) : null,
+        actual_end:        !hasAbsence ? (actEnd || null) : null,
+        break_minutes:     !hasAbsence && actStart && actEnd ? breakMin : null,
+        labor_minutes:     !hasAbsence && actStart && actEnd ? laborMin : null,
         reviewer_id:       reviewerId,
         status:       isSelfReview ? 'confirmed' : (editTarget ? 'resubmitted' : 'pending'),
         confirmed_by: isSelfReview ? user.id : null,
@@ -360,7 +420,7 @@ const ShiftReportForm: React.FC<{
           supabase.from('notifications').insert({
             user_id: reviewerId,
             message: `${profileName ?? ''}さんから勤務変更申請が届きました`,
-            sub_message: `${TYPE_INFO[type].label}　${date}`,
+            sub_message: `${types.map(t => TYPE_INFO[t].label).join('＋')}　${date}`,
             source_type: 'shift_report',
             read: false,
           }).then(null, () => {});
@@ -416,15 +476,63 @@ const ShiftReportForm: React.FC<{
             </div>
             {/* 種別 */}
             <div style={{ marginBottom: 14 }}>
-              <label style={L}>種別 {Req}</label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                {(['overtime', 'holiday_work', 'early_leave', 'tardiness', 'absence'] as const).map(t => (
-                  <button key={t} onClick={() => setType(t)}
-                    style={{ flex: 1, padding: '9px 4px', borderRadius: 8, border: `2px solid ${type === t ? TYPE_INFO[t].color : '#dee2e6'}`, background: type === t ? TYPE_INFO[t].color : '#fff', color: type === t ? '#fff' : '#555', fontSize: 12, fontWeight: type === t ? 'bold' : 'normal', cursor: 'pointer' }}>
-                    {TYPE_INFO[t].emoji} {TYPE_INFO[t].label}
-                  </button>
-                ))}
+              <label style={L}>種別 {Req}（複数選択可）</label>
+              {/* 1段目：休日出勤・欠勤 */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                {(['holiday_work', 'absence'] as ApplicationType[]).map(t => {
+                  const sel = types.includes(t);
+                  const blk = isBlockedWith(types, t) && !sel;
+                  return (
+                    <button key={t} onClick={() => toggleType(t)} disabled={blk}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 12px', borderRadius: 10, border: `2px solid ${sel ? TYPE_INFO[t].color : t === 'absence' ? '#fecaca' : '#e5e7eb'}`, background: sel ? (isDark ? '#1a2e2a' : '#f0fdf4') : t === 'absence' ? (isDark ? '#2d1215' : '#fff8f8') : (isDark ? '#495057' : 'white'), cursor: blk ? 'not-allowed' : 'pointer', opacity: blk ? 0.35 : 1, transition: 'all 0.15s', textAlign: 'left' as const }}>
+                      <div style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${sel ? TYPE_INFO[t].color : '#d1d5db'}`, background: sel ? TYPE_INFO[t].color : 'transparent', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 11, fontWeight: 'bold' }}>{sel ? '✓' : ''}</div>
+                      <span style={{ fontSize: 14 }}>{TYPE_INFO[t].emoji}</span>
+                      <span style={{ fontSize: 13, fontWeight: sel ? 'bold' : 'normal', color: sel ? TYPE_INFO[t].color : (t === 'absence' ? '#991b1b' : textColor) }}>{TYPE_INFO[t].label}</span>
+                      {t === 'absence' && <span style={{ fontSize: 10, color: sel ? TYPE_INFO[t].color : '#f87171', border: `1px solid ${sel ? TYPE_INFO[t].color : '#fecaca'}`, borderRadius: 4, padding: '1px 5px', marginLeft: 'auto', background: sel ? '#fee2e2' : '#fff5f5', fontWeight: 600 }}>単独</span>}
+                    </button>
+                  );
+                })}
               </div>
+              {/* 2段目：出勤時 */}
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', letterSpacing: '0.06em', marginBottom: 6 }}>🌅 出勤時</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                {(['early_start', 'tardiness'] as ApplicationType[]).map(t => {
+                  const sel = types.includes(t);
+                  const blk = isBlockedWith(types, t) && !sel;
+                  return (
+                    <button key={t} onClick={() => toggleType(t)} disabled={blk}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 12px', borderRadius: 10, border: `2px solid ${sel ? TYPE_INFO[t].color : '#e5e7eb'}`, background: sel ? (isDark ? '#1a2e3a' : '#f0f9ff') : (isDark ? '#495057' : 'white'), cursor: blk ? 'not-allowed' : 'pointer', opacity: blk ? 0.35 : 1, transition: 'all 0.15s', textAlign: 'left' as const }}>
+                      <div style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${sel ? TYPE_INFO[t].color : '#d1d5db'}`, background: sel ? TYPE_INFO[t].color : 'transparent', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 11, fontWeight: 'bold' }}>{sel ? '✓' : ''}</div>
+                      <span style={{ fontSize: 14 }}>{TYPE_INFO[t].emoji}</span>
+                      <span style={{ fontSize: 13, fontWeight: sel ? 'bold' : 'normal', color: sel ? TYPE_INFO[t].color : textColor }}>{TYPE_INFO[t].label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {/* 3段目：退勤時 */}
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', letterSpacing: '0.06em', marginBottom: 6 }}>🌙 退勤時</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                {(['overtime', 'early_leave'] as ApplicationType[]).map(t => {
+                  const sel = types.includes(t);
+                  const blk = isBlockedWith(types, t) && !sel;
+                  return (
+                    <button key={t} onClick={() => toggleType(t)} disabled={blk}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 12px', borderRadius: 10, border: `2px solid ${sel ? TYPE_INFO[t].color : '#e5e7eb'}`, background: sel ? (isDark ? '#1a2e3a' : '#f0f9ff') : (isDark ? '#495057' : 'white'), cursor: blk ? 'not-allowed' : 'pointer', opacity: blk ? 0.35 : 1, transition: 'all 0.15s', textAlign: 'left' as const }}>
+                      <div style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${sel ? TYPE_INFO[t].color : '#d1d5db'}`, background: sel ? TYPE_INFO[t].color : 'transparent', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 11, fontWeight: 'bold' }}>{sel ? '✓' : ''}</div>
+                      <span style={{ fontSize: 14 }}>{TYPE_INFO[t].emoji}</span>
+                      <span style={{ fontSize: 13, fontWeight: sel ? 'bold' : 'normal', color: sel ? TYPE_INFO[t].color : textColor }}>{TYPE_INFO[t].label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {/* 選択中サマリー / ブロック理由 */}
+              {blockMsg ? (
+                <div style={{ marginTop: 8, fontSize: 12, color: '#f97316', fontWeight: 500 }}>⚠️ {blockMsg}</div>
+              ) : types.length > 0 ? (
+                <div style={{ marginTop: 8, padding: '6px 12px', background: isDark ? '#1e3d2f' : '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, fontSize: 12, color: '#065f46', fontWeight: 600 }}>
+                  ✓ {typesLabel(types)}
+                </div>
+              ) : null}
             </div>
             {/* 理由 */}
             <div style={{ marginBottom: 14 }}>
@@ -440,8 +548,8 @@ const ShiftReportForm: React.FC<{
               </div>
             </div>
 
-            {/* 通常シフト（休日出勤の場合は非表示） */}
-            {type !== 'holiday_work' && (
+            {/* 通常シフト（休日出勤のみ選択時は非表示） */}
+            {!hasHoliday && (
             <div style={{ background: cardBg, borderRadius: 10, padding: '12px 14px', marginBottom: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 'bold', color: subColor, marginBottom: 10 }}>📋 通常シフト（もともとの予定）</div>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: textColor, marginBottom: 10, cursor: 'pointer' }}>
@@ -478,7 +586,7 @@ const ShiftReportForm: React.FC<{
             )}
 
             {/* 実際のシフト */}
-            {type !== 'absence' && (
+            {!hasAbsence && (
               <div style={{ background: cardBg2, borderRadius: 10, padding: '12px 14px', marginBottom: 12 }}>
                 <div style={{ fontSize: 12, fontWeight: 'bold', color: subColor, marginBottom: 10 }}>✅ 実際に勤務した時間</div>
                 <div style={{ marginBottom: 8 }}>
@@ -500,15 +608,14 @@ const ShiftReportForm: React.FC<{
                   <input type="time" value={actEnd} onChange={e => setActEnd(e.target.value)} style={{ ...f, flex: 1 }} />
                 </div>
                 {actStart && actEnd && laborMin > 0 && (
-                  <div style={{ background: '#dcfce7', borderRadius: 8, padding: '8px 12px' }}>
+                  <div style={{ background: isDark ? '#1e3d2f' : '#dcfce7', borderRadius: 8, padding: '8px 12px' }}>
                     <div style={{ fontSize: 12, color: '#166534' }}>🕐 休憩 {breakMin}分　／　実労働 {formatMin(laborMin)}</div>
-                    {!origDayOff && origMin > 0 && diffMin !== 0 && (
-                      <div style={{ fontSize: 13, fontWeight: 'bold', color: type === 'overtime' ? '#1565c0' : type === 'tardiness' ? '#7b1fa2' : '#c2410c', marginTop: 4 }}>
-                        {type === 'overtime'
-                          ? `⏰ 時間外労働：${formatMin(Math.max(0, diffMin))}`
-                          : type === 'tardiness'
-                          ? `⏱️ 遅刻時間：${formatMin(Math.abs(Math.min(0, diffMin)))}`
-                          : `🏃 早退・短縮時間：${formatMin(Math.abs(Math.min(0, diffMin)))}`}
+                    {!origDayOff && !hasHoliday && origMin > 0 && (
+                      <div style={{ marginTop: 4 }}>
+                        {types.includes('overtime') && diffMin > 0 && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#1565c0' }}>⏰ 時間外労働：{formatMin(Math.max(0, diffMin))}</div>}
+                        {types.includes('early_start') && toMin(origStart) > toMin(actStart) && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#0891b2' }}>🌅 早出：{formatMin(toMin(origStart) - toMin(actStart))}</div>}
+                        {types.includes('tardiness') && toMin(actStart) > toMin(origStart) && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#7b1fa2' }}>⏱️ 遅刻：{formatMin(toMin(actStart) - toMin(origStart))}</div>}
+                        {types.includes('early_leave') && toMin(origEnd) > toMin(actEnd) && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#c2410c' }}>🏃 早退：{formatMin(toMin(origEnd) - toMin(actEnd))}</div>}
                       </div>
                     )}
                   </div>
@@ -564,7 +671,7 @@ const ShiftReportForm: React.FC<{
 
   const confirmModal = showConfirm ? (
     <ConfirmModal
-      data={{ date, type, reason, origLoc: finalOrigLoc, origStart, origEnd, origDayOff: origDayOff || type === 'holiday_work', actLoc: finalActLoc, actStart, actEnd, actNotes, breakMin, laborMin, reviewerName, isSelfReview: reviewerId === user.id, applicantName: applicantId === user.id ? (profileName ?? '') : (staffList.find(s => s.id === applicantId)?.name ?? ''), isProxy: applicantId !== user.id }}
+      data={{ date, types, reason, origLoc: finalOrigLoc, origStart, origEnd, origDayOff: origDayOff || hasHoliday, actLoc: finalActLoc, actStart, actEnd, actNotes, breakMin, laborMin, reviewerName, isSelfReview: reviewerId === user.id, applicantName: applicantId === user.id ? (profileName ?? '') : (staffList.find(s => s.id === applicantId)?.name ?? ''), isProxy: applicantId !== user.id }}
       onBack={() => setShowConfirm(false)}
       onSubmit={handleSubmit}
       saving={saving}
@@ -650,6 +757,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const [allReports, setAllReports]           = useState<ShiftReport[]>([]);
   const [histGroupFilter, setHistGroupFilter] = useState('all');
   const [histStatusFilter, setHistStatusFilter] = useState('all');
+  const [groupOptions, setGroupOptions] = useState<string[]>([]);
+  const [groupMap, setGroupMap]         = useState<Record<string, string[]>>({});
 
   const fetchMyReports = useCallback(async () => {
     const { data } = await supabase
@@ -704,8 +813,11 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     const { data } = await supabase.from('shift_reports').select('*').order('work_date', { ascending: false });
     if (!data || data.length === 0) { setAllReports([]); return; }
     const ids = [...new Set(data.map((r: ShiftReport) => r.applicant_id))];
-    const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
+    const { data: profs } = await supabase.from('profiles').select('id, name, group_names').in('id', ids);
     const nm = Object.fromEntries((profs || []).map((p: { id: string; name: string }) => [p.id, p.name]));
+    const gm: Record<string, string[]> = {};
+    (profs || []).forEach((p: { id: string; group_names?: string[] }) => { gm[p.id] = p.group_names ?? []; });
+    setGroupMap(gm);
     setAllReports(data.map((r: ShiftReport) => ({ ...r, applicant: { name: nm[r.applicant_id] ?? '不明' } })));
   }, [canSeeAll, user.id]);
 
@@ -721,6 +833,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       .then(({ data }) => { if (data) setReviewers(data as Reviewer[]); });
     supabase.from('leader_assignments').select('id, course, school, leader, manager').order('display_order', { ascending: true })
       .then(({ data }) => { if (data) setLeaderAssignments(data as LeaderAssignment[]); setLoadingAssignments(false); });
+    supabase.from('master_options').select('value').eq('category', 'shift_report_group').order('sort_order')
+      .then(({ data }) => { if (data) setGroupOptions(data.map((r: { value: string }) => r.value)); });
   }, [fetchMyReports, fetchPending, fetchReviewedReports, fetchProxyReports, fetchAllReports]);
 
   const handleSaved = () => {
@@ -798,18 +912,6 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     setSuccessMsg('削除しました');
   };
 
-  const courseSchoolMap = React.useMemo(() => {
-    const map: Record<string, string[]> = {};
-    leaderAssignments.forEach(({ course, school }) => {
-      const schools = school.split('\n').map((s: string) => s.trim()).filter(Boolean);
-      if (!map[course]) map[course] = [];
-      schools.forEach((s: string) => { if (!map[course].includes(s)) map[course].push(s); });
-    });
-    return map;
-  }, [leaderAssignments]);
-
-  const uniqueCourses = [...new Set(leaderAssignments.map(a => a.course))];
-
   const histReports = React.useMemo(() => {
     let base = histMode === 'own' ? myReports
       : histMode === 'reviewed' ? reviewedReports
@@ -817,14 +919,10 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       : allReports;
     if (histStatusFilter !== 'all') base = base.filter(r => r.status === histStatusFilter);
     if (histMode === 'all' && histGroupFilter !== 'all') {
-      const schools = courseSchoolMap[histGroupFilter] ?? [];
-      base = base.filter(r => {
-        const loc = r.actual_location ?? r.original_location ?? '';
-        return schools.some(s => loc.includes(s));
-      });
+      base = base.filter(r => (groupMap[r.applicant_id] ?? []).includes(histGroupFilter));
     }
     return base;
-  }, [histMode, myReports, reviewedReports, proxyReports, allReports, histStatusFilter, histGroupFilter, courseSchoolMap]);
+  }, [histMode, myReports, reviewedReports, proxyReports, allReports, histStatusFilter, histGroupFilter, groupMap]);
 
   const histGrouped = histReports.reduce<Record<string, ShiftReport[]>>((acc, r) => {
     if (!acc[r.pay_period_start]) acc[r.pay_period_start] = [];
@@ -860,7 +958,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                   <span style={{ fontSize: 13, fontWeight: 'bold', color: text }}>{(r.applicant as { name: string | null } | null)?.name ?? '不明'}</span>
                   <span style={{ fontSize: 11, color: '#888' }}>{r.work_date.slice(5).replace('-', '/')}（{dow(r.work_date)}）</span>
                   <span style={{ fontSize: 11, fontWeight: 'bold', color: TYPE_INFO[r.application_type].color, marginLeft: 'auto' }}>
-                    {TYPE_INFO[r.application_type].emoji} {TYPE_INFO[r.application_type].label}
+                    {(r.application_types?.length ? r.application_types : [r.application_type]).map(t => `${TYPE_INFO[t].emoji} ${TYPE_INFO[t].label}`).join(' ＋ ')}
                   </span>
                 </div>
                 {r.original_start
@@ -1040,11 +1138,11 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
             {/* フィルタ行（全スタッフ時のグループ + ステータス） */}
             {(histMode === 'all' || isApprover) && (
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
-                {histMode === 'all' && uniqueCourses.length > 0 && (
+                {histMode === 'all' && groupOptions.length > 0 && (
                   <select value={histGroupFilter} onChange={e => setHistGroupFilter(e.target.value)}
                     style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: `1px solid ${borderCol}`, background: isDark ? '#495057' : '#fff', color: text }}>
                     <option value="all">全グループ</option>
-                    {uniqueCourses.map(c => <option key={c} value={c}>{c}</option>)}
+                    {groupOptions.map(g => <option key={g} value={g}>{g}</option>)}
                   </select>
                 )}
                 <select value={histStatusFilter} onChange={e => setHistStatusFilter(e.target.value)}
@@ -1084,7 +1182,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                               </div>
                             )}
                             <div style={{ fontSize: 11, fontWeight: 'bold', color: TYPE_INFO[r.application_type].color, marginBottom: 2 }}>
-                              {TYPE_INFO[r.application_type].emoji} {TYPE_INFO[r.application_type].label}
+                              {(r.application_types?.length ? r.application_types : [r.application_type]).map(t => `${TYPE_INFO[t].emoji} ${TYPE_INFO[t].label}`).join(' ＋ ')}
                             </div>
                             {r.original_start
                               ? <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#888' }}>📋 {r.original_location} {r.original_start.slice(0, 5)}〜{r.original_end?.slice(0, 5)}</div>
@@ -1153,7 +1251,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
               申請を取り消す
             </div>
             <div style={{ fontSize: 13, color: isDark ? '#adb5bd' : '#555', marginBottom: 16 }}>
-              {TYPE_INFO[cancelTarget.application_type].emoji} {TYPE_INFO[cancelTarget.application_type].label}　{cancelTarget.work_date.slice(5).replace('-', '/')}
+              {(cancelTarget.application_types?.length ? cancelTarget.application_types : [cancelTarget.application_type]).map(t => `${TYPE_INFO[t].emoji} ${TYPE_INFO[t].label}`).join(' ＋ ')}　{cancelTarget.work_date.slice(5).replace('-', '/')}
             </div>
             <label style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#666', display: 'block', marginBottom: 6 }}>
               取り消し理由（任意）
@@ -1185,7 +1283,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
           <div style={{ background: isDark ? '#343a40' : '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 340, boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
             <div style={{ fontSize: 15, fontWeight: 'bold', color: isDark ? '#fff' : '#1a1a2e', marginBottom: 6 }}>差戻し</div>
             <div style={{ fontSize: 13, color: isDark ? '#adb5bd' : '#555', marginBottom: 16 }}>
-              {TYPE_INFO[returnTarget.application_type].emoji} {TYPE_INFO[returnTarget.application_type].label}　{returnTarget.work_date.slice(5).replace('-', '/')}
+              {(returnTarget.application_types?.length ? returnTarget.application_types : [returnTarget.application_type]).map(t => `${TYPE_INFO[t].emoji} ${TYPE_INFO[t].label}`).join(' ＋ ')}　{returnTarget.work_date.slice(5).replace('-', '/')}
               <br /><span style={{ fontSize: 12 }}>（{(returnTarget.applicant as { name: string | null } | null)?.name ?? '不明'}）</span>
             </div>
             <label style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#666', display: 'block', marginBottom: 6 }}>差戻し理由（任意・本人に通知されます）</label>

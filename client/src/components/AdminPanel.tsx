@@ -429,54 +429,71 @@ const AdminPanelContent: React.FC = () => {
       
       {/* タブナビゲーション */}
       {(() => {
-        const TABS = [
-          { key: 'approvals',          label: '承認管理',      icon: '' },
-          { key: 'users',              label: 'ユーザー管理',  icon: '' },
-          { key: 'groups',             label: 'グループ管理',  icon: '👥' },
+        const ROW1 = [
+          { key: 'approvals',          label: '交通費',        icon: '🚃' },
           { key: 'trip_reports',       label: '出張報告',      icon: '📍' },
           { key: 'leave_requests',     label: '休暇申請',      icon: '🌿' },
-          { key: 'shift_reports',      label: '勤務変更申請',  icon: '⏰' },
-          { key: 'leader_assignments', label: 'リーダー管理',  icon: '📋' },
-          { key: 'reports',            label: 'レポート・分析',icon: '' },
-          { key: 'notifications',      label: '通知設定',      icon: '🔔' },
-          { key: 'board_settings',        label: '連絡板設定',    icon: '📨' },
-          { key: 'feature_permissions',   label: '表示権限管理',  icon: '🔐' },
+          { key: 'shift_reports',      label: '勤務変更',      icon: '⏰' },
         ] as const;
-        const handleTabChange = (key: typeof TABS[number]['key']) => {
+        const ROW2 = [
+          { key: 'users',              label: 'ユーザー',      icon: '👤' },
+          { key: 'groups',             label: 'グループ',      icon: '👥' },
+          { key: 'leader_assignments', label: 'リーダー',      icon: '📋' },
+          { key: 'reports',            label: 'レポート',      icon: '📊' },
+          { key: 'notifications',      label: '通知設定',      icon: '🔔' },
+          { key: 'board_settings',     label: '連絡板設定',    icon: '📨' },
+          { key: 'feature_permissions',label: '権限管理',      icon: '🔐' },
+        ] as const;
+        const ALL_TABS = [...ROW1, ...ROW2];
+        const handleTabChange = (key: typeof ALL_TABS[number]['key']) => {
           if (key === 'groups') setSelectedGroup(null);
           setActiveTab(key);
         };
+        const rowStyle = (row: 1 | 2): React.CSSProperties => ({
+          display: 'flex', justifyContent: 'center', flexWrap: 'nowrap',
+          marginBottom: row === 1 ? 2 : 0,
+          overflowX: row === 2 ? 'auto' : undefined,
+        });
         return (
           <>
-            {/* PC: 通常タブ */}
-            <div style={{ display: 'flex', marginBottom: '0', justifyContent: 'center' }}
-                 className="admin-tabs-pc">
-              {TABS.map(t => (
-                <button key={t.key} style={tabStyle(activeTab === t.key)}
-                        onClick={() => handleTabChange(t.key)}>
-                  {t.icon ? `${t.icon} ${t.label}` : t.label}
-                </button>
-              ))}
+            {/* PC: 2段タブ */}
+            <div className="admin-tabs-pc">
+              <div style={rowStyle(1)}>
+                {ROW1.map(t => (
+                  <button key={t.key} style={tabStyle(activeTab === t.key)}
+                          onClick={() => handleTabChange(t.key)}>
+                    {t.icon} {t.label}
+                  </button>
+                ))}
+              </div>
+              <div style={rowStyle(2)}>
+                {ROW2.map(t => (
+                  <button key={t.key} style={tabStyle(activeTab === t.key)}
+                          onClick={() => handleTabChange(t.key)}>
+                    {t.icon} {t.label}
+                  </button>
+                ))}
+              </div>
             </div>
             {/* スマホ: セレクトボックス */}
             <div className="admin-tabs-mobile">
               <select
                 value={activeTab}
-                onChange={e => handleTabChange(e.target.value as typeof TABS[number]['key'])}
+                onChange={e => handleTabChange(e.target.value as typeof ALL_TABS[number]['key'])}
                 style={{
                   width: '100%', padding: '12px 16px', fontSize: 16, fontWeight: 'bold',
                   borderRadius: '8px 8px 0 0', border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`,
                   borderBottom: 'none',
-                  background: isDarkMode ? '#007bff' : '#007bff',
+                  background: '#007bff',
                   color: 'white', cursor: 'pointer', appearance: 'none',
                   backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='white' d='M6 8L0 0h12z'/%3E%3C/svg%3E")`,
                   backgroundRepeat: 'no-repeat', backgroundPosition: 'right 16px center',
                 }}
               >
-                {TABS.map(t => (
+                {ALL_TABS.map(t => (
                   <option key={t.key} value={t.key}
                     style={{ background: isDarkMode ? '#343a40' : 'white', color: isDarkMode ? '#fff' : '#333' }}>
-                    {t.icon ? `${t.icon} ${t.label}` : t.label}
+                    {t.icon} {t.label}
                   </option>
                 ))}
               </select>

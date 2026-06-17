@@ -3595,7 +3595,63 @@ SQL Editor で以下を順番に実行:
 
 ---
 
-### 🔜 次回タスク（2026-06-17 最新）
+---
+
+## ✅ 2026-06-17〜18 勤務変更申請 複数種別・早出追加・管理画面改善 完了
+
+### 変更内容
+
+#### 種別を複数選択チェックボックスに変更（ShiftReportPage.tsx）
+- `type ApplicationType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start'`
+- `application_types: ApplicationType[]` フィールド追加（`application_type` と後方互換維持）
+- `TYPE_INFO` に `early_start: { label: '早出', color: '#0891b2', emoji: '🌅' }` 追加
+- `toggleType()` で排他ロジック実装:
+  - 欠勤(absence) ↔ 他全種別（欠勤単独のみ許可）
+  - 早出(early_start) ↔ 遅刻(tardiness)
+  - 残業(overtime) ↔ 早退(early_leave)
+- チェックボックスを3グループで表示: 「休日出勤・欠勤」/ 「出勤時」/ 「退勤時」
+- 初期値 `[]`（何も選択なし）
+
+#### DBマイグレーション（Supabase SQLで手動適用済み）
+- `supabase/migrations/20260617700000_add_application_types_and_early_start.sql`
+  - `application_type` CHECK制約に `'early_start'` 追加
+  - `application_types text[] NOT NULL DEFAULT '{}'` カラム追加
+  - 既存レコードを `application_types = ARRAY[application_type]` に移行
+
+#### グループフィルター修正（ShiftReportPage.tsx / ShiftReportsTab.tsx 両方）
+- 旧: 勤務地ベース（`courseSchoolMap` 経由）
+- 新: 申請者の `profiles.group_names` ベース
+- グループ選択肢: `master_options` テーブルの `category='shift_report_group'` から取得
+  - こども / 大人 / 管理部 の3グループのみ
+- DBマイグレーション: `20260617800000_add_shift_report_groups.sql` 適用済み
+
+#### 管理画面タブ改善（AdminPanel.tsx / AdminPanelContext.tsx）
+- タブを2段レイアウトに変更:
+  - ROW1（申請系4つ）: 🚃 交通費 / 📍 出張報告 / 🌿 休暇申請 / ⏰ 勤務変更
+  - ROW2（管理系7つ）: 👤 ユーザー / 👥 グループ / 📋 リーダー / 📊 レポート / 🔔 通知設定 / 📨 連絡板設定 / 🔐 権限管理
+- `承認管理` → `🚃 交通費` に改名（ApprovalsTab.tsx のタイトルも「🚃 交通費申請一覧」に変更）
+- スマホはセレクトボックス（変更なし）
+
+#### タブレイアウト崩れ修正（App.css / AdminPanel.tsx / AdminPanelContext.tsx）
+- `App.css`: `.admin-tabs-pc` に `flex-direction: column` 追加（ROW1/ROW2が横並びになるバグ修正）
+- `AdminPanel.tsx` `rowStyle`: `flexWrap: 'nowrap'`、ROW2は `overflowX: 'auto'`
+- `AdminPanelContext.tsx` `tabStyle`: `whiteSpace: 'nowrap'`・`flexShrink: 0` 追加、padding/fontSize 小さく調整
+
+### 適用済みDBマイグレーション
+- `20260617700000_add_application_types_and_early_start.sql`
+- `20260617800000_add_shift_report_groups.sql`
+
+### ⚠️ 注意事項
+- `application_types` (text[]) が主フィールド。`application_type` は後方互換で残しているが新規レコードは `application_types` を使う
+- `shift_report_group` の選択肢はこども・大人・管理部の3つのみ（`master_options` テーブルで管理）
+- ShiftReportsTab.tsx の `fetchLeaderAssignments` と `LeaderAssignment` 型は削除済み（groupベースに変更したため不要）
+
+### コミット
+- `{commit_hash}` feat: 勤務変更申請 複数種別・早出・グループフィルター・管理タブ改善
+
+---
+
+### 🔜 次回タスク（2026-06-18 最新）
 
 1. **連絡板 送信の取消・修正・完全削除**（本人＋管理者）
 2. **忘れん坊通知①②③**（send-push Edge Function 完成済み・呼び出し側を実装）
