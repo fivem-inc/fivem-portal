@@ -51,6 +51,7 @@ interface BoardMessage {
   answer_link: string | null;
   broadcast_recipients: { id: string; name: string }[] | null;
   profile: { name: string | null } | null;
+  outbox_hidden?: boolean;
 }
 
 type View = 'inbox' | 'outbox' | 'compose' | 'channel' | 'search' | 'favorites';
@@ -60,6 +61,7 @@ interface SimpleProfile {
   name: string | null;
   role_title: string | null;
   employment_type: string | null;
+  group_names: string[] | null;
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -130,6 +132,9 @@ const BoardPage: React.FC = () => {
   const [allProfiles, setAllProfiles] = useState<SimpleProfile[]>([]);
   const [dmDefaultPerms, setDmDefaultPerms] = useState<SendPermissions | null>(null);
   const [noticeSendRoles, setNoticeSendRoles] = useState<string[]>([]); // 空=全員OK
+  const [noticeCCUserIds, setNoticeCCUserIds] = useState<string[]>([]);  // 管理者・代表者自動CC
+  const [composeIncludeCC, setComposeIncludeCC] = useState(true);
+  const [channelDeleteConfirmId, setChannelDeleteConfirmId] = useState<string | null>(null);
 
   const [view,               setView]               = useState<View>('inbox');
   const [showSidebar,        setShowSidebar]         = useState(true);
@@ -154,10 +159,22 @@ const BoardPage: React.FC = () => {
   const [archiveBulkDeleting,     setArchiveBulkDeleting]     = useState(false);
 
   // 送信トレイ
-  const [outboxMessages,   setOutboxMessages]   = useState<BoardMessage[]>([]);
-  const [outboxTab,        setOutboxTab]        = useState<'sent' | 'scheduled' | 'draft'>('sent');
+  const [outboxMessages,         setOutboxMessages]         = useState<BoardMessage[]>([]);
+  const [outboxArchivedMessages, setOutboxArchivedMessages] = useState<BoardMessage[]>([]);
+  const [outboxTab,              setOutboxTab]              = useState<'sent' | 'scheduled' | 'draft' | 'archive'>('sent');
+  const [outboxArchiveConfirmId, setOutboxArchiveConfirmId] = useState<string | null>(null);
+  const [outboxArchiveSelected,  setOutboxArchiveSelected]  = useState<Set<string>>(new Set());
+  const [outboxArchiveDelConfirm, setOutboxArchiveDelConfirm] = useState(false);
+  const [inboxArchiveSelected,   setInboxArchiveSelected]   = useState<Set<string>>(new Set());
+  const [inboxArchiveDelConfirm,  setInboxArchiveDelConfirm]  = useState(false);
   const [outboxDetailId,   setOutboxDetailId]   = useState<string | null>(null);
   const [showAllOutboxRecipients, setShowAllOutboxRecipients] = useState(false);
+  // 送信メッセージ修正・削除
+  const [editingNoticeId,    setEditingNoticeId]    = useState<string | null>(null);
+  const [editingNoticeSubj,  setEditingNoticeSubj]  = useState('');
+  const [editingNoticeBody,  setEditingNoticeBody]  = useState('');
+  const [deleteConfirmId,    setDeleteConfirmId]    = useState<string | null>(null);
+  const [noticeActionBanner, setNoticeActionBanner] = useState<'saved' | 'deleted' | null>(null);
 
   // グループ/DM 折りたたみ
   const [expandGroups,     setExpandGroups]     = useState(false);
@@ -258,18 +275,20 @@ const BoardPage: React.FC = () => {
       setChannels([]); setMessages([]); setLoadingData(false); return;
     }
 
-    const [chRes, memRes, msgRes, lsRes, profRes, settingsRes, dmSettingsRes, noticeSendRes] = await Promise.all([
+    const [chRes, memRes, msgRes, lsRes, profRes, settingsRes, dmSettingsRes, noticeSendRes, ccSettingsRes] = await Promise.all([
       supabase.from('board_channels').select('id, type, name, created_by, created_at, send_permissions, show_read_detail').in('id', cids),
       supabase.from('board_channel_members').select('channel_id, user_id').in('channel_id', cids),
       supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, answer_prompt, answer_location, answer_link, broadcast_recipients').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
       supabase.from('board_channel_last_seen').select('channel_id, last_seen_at').eq('user_id', user.id),
-      supabase.from('profiles').select('id, name, role_title, employment_type').eq('is_active', true).order('name'),
+      supabase.from('profiles').select('id, name, role_title, employment_type, group_names').eq('is_active', true).order('name'),
       supabase.from('master_options').select('value').eq('category', 'board_show_read_detail').limit(1),
       supabase.from('app_settings').select('value').eq('key', 'dm_default_send_permissions').maybeSingle(),
       supabase.from('app_settings').select('value').eq('key', 'board_notice_send_roles').maybeSingle(),
+      supabase.from('app_settings').select('value').eq('key', 'board_notice_cc_user_ids').maybeSingle(),
     ]);
     if (dmSettingsRes.data?.value) setDmDefaultPerms(dmSettingsRes.data.value as SendPermissions);
     if (noticeSendRes.data?.value) setNoticeSendRoles(noticeSendRes.data.value as string[]);
+    if (ccSettingsRes?.data?.value) setNoticeCCUserIds(ccSettingsRes.data.value as string[]);
 
     setChannels((chRes.data || []) as Channel[]);
     setMembers((memRes.data || []).map((m: any) => ({ channel_id: m.channel_id, user_id: m.user_id, profile: null })));
@@ -548,14 +567,26 @@ const BoardPage: React.FC = () => {
 
   const loadOutbox = useCallback(async () => {
     if (!user) return;
-    const { data } = await supabase
-      .from('board_messages')
-      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
-      .eq('user_id', user.id)
-      .is('channel_id', null)
-      .is('parent_id', null)
-      .order('created_at', { ascending: false });
-    setOutboxMessages((data || []).map((m: any) => ({ ...m, broadcast_recipients: null, profile: null })));
+    const SEL = 'id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link, outbox_hidden, cc_user_ids';
+    const [{ data }, { data: archData }, { data: ccData }] = await Promise.all([
+      supabase.from('board_messages').select(SEL)
+        .eq('user_id', user.id).is('channel_id', null).is('parent_id', null)
+        .or('outbox_hidden.is.null,outbox_hidden.eq.false')
+        .order('created_at', { ascending: false }),
+      supabase.from('board_messages').select(SEL)
+        .eq('user_id', user.id).is('channel_id', null).is('parent_id', null)
+        .eq('outbox_hidden', true)
+        .order('created_at', { ascending: false }),
+      supabase.from('board_messages').select(SEL)
+        .contains('cc_user_ids', [user.id]).is('channel_id', null).is('parent_id', null)
+        .or('outbox_hidden.is.null,outbox_hidden.eq.false')
+        .order('created_at', { ascending: false }),
+    ]);
+    const ownIds = new Set((data || []).map((m: any) => m.id));
+    const ccOnly = (ccData || []).filter((m: any) => !ownIds.has(m.id));
+    const allSent = [...(data || []), ...ccOnly].sort((a: any, b: any) => b.created_at.localeCompare(a.created_at));
+    setOutboxMessages(allSent.map((m: any) => ({ ...m, broadcast_recipients: null, profile: null })));
+    setOutboxArchivedMessages((archData || []).map((m: any) => ({ ...m, broadcast_recipients: null, profile: null })));
 
     // recipients を取得
     const ids = (data || []).map((m: any) => m.id);
@@ -794,9 +825,66 @@ const BoardPage: React.FC = () => {
   };
 
   const deleteMessage = async (id: string) => {
-    if (!window.confirm('このメッセージを削除しますか？')) return;
     const { error } = await supabase.from('board_messages').delete().eq('id', id);
     if (!error) setMessages(prev => prev.filter(m => m.id !== id && m.parent_id !== id));
+    setChannelDeleteConfirmId(null);
+  };
+
+  // お知らせの修正（送信者・管理者）
+  const saveNoticeEdit = async (msgId: string) => {
+    if (!editingNoticeBody.trim() || !editingNoticeSubj.trim()) return;
+    const { error } = await supabase
+      .from('board_messages')
+      .update({ subject: editingNoticeSubj.trim(), body: editingNoticeBody.trim(), edited_at: new Date().toISOString() })
+      .eq('id', msgId);
+    if (!error) {
+      setOutboxMessages(prev => prev.map(m => m.id === msgId ? { ...m, subject: editingNoticeSubj.trim(), body: editingNoticeBody.trim(), edited_at: new Date().toISOString() } : m));
+      setInboxMessages(prev => prev.map(m => m.id === msgId ? { ...m, subject: editingNoticeSubj.trim(), body: editingNoticeBody.trim(), edited_at: new Date().toISOString() } : m));
+      setEditingNoticeId(null);
+      setNoticeActionBanner('saved');
+      setTimeout(() => setNoticeActionBanner(null), 3000);
+    }
+  };
+
+  // お知らせの完全削除（送信者・管理者）
+  const deleteNotice = async (msgId: string) => {
+    await supabase.from('board_confirmations').delete().eq('message_id', msgId);
+    await supabase.from('board_reads').delete().eq('message_id', msgId);
+    await supabase.from('board_message_recipients').delete().eq('message_id', msgId);
+    await supabase.from('board_messages').delete().eq('id', msgId);
+    setOutboxMessages(prev => prev.filter(m => m.id !== msgId));
+    setOutboxArchivedMessages(prev => prev.filter(m => m.id !== msgId));
+    setInboxMessages(prev => prev.filter(m => m.id !== msgId));
+    setArchivedMessages(prev => prev.filter(m => m.id !== msgId));
+    setDeleteConfirmId(null);
+    if (outboxDetailId === msgId) { setOutboxDetailId(null); setShowAllOutboxRecipients(false); }
+    if (inboxDetailId === msgId) setInboxDetailId(null);
+    setNoticeActionBanner('deleted');
+    setTimeout(() => setNoticeActionBanner(null), 3000);
+  };
+
+  const archiveOutboxMsg = async (msgId: string) => {
+    await supabase.from('board_messages').update({ outbox_hidden: true }).eq('id', msgId);
+    const msg = outboxMessages.find(m => m.id === msgId);
+    setOutboxMessages(prev => prev.filter(m => m.id !== msgId));
+    if (msg) setOutboxArchivedMessages(prev => [{ ...msg, outbox_hidden: true }, ...prev]);
+    setOutboxArchiveConfirmId(null);
+    if (outboxDetailId === msgId) { setOutboxDetailId(null); setShowAllOutboxRecipients(false); }
+  };
+
+  const bulkDeleteOutboxArchived = async (cutoff: Date | null) => {
+    const targets = cutoff
+      ? outboxArchivedMessages.filter(m => new Date(m.created_at) < cutoff)
+      : outboxArchivedMessages;
+    if (targets.length === 0) return;
+    for (const m of targets) {
+      await supabase.from('board_confirmations').delete().eq('message_id', m.id);
+      await supabase.from('board_reads').delete().eq('message_id', m.id);
+      await supabase.from('board_message_recipients').delete().eq('message_id', m.id);
+      await supabase.from('board_messages').delete().eq('id', m.id);
+    }
+    const targetIds = new Set(targets.map(m => m.id));
+    setOutboxArchivedMessages(prev => prev.filter(m => !targetIds.has(m.id)));
   };
 
   const startDM = async (targetId: string) => {
@@ -935,10 +1023,16 @@ const BoardPage: React.FC = () => {
 
     const { data, error } = await supabase.from('board_messages').insert(insertData).select('id').single();
     if (!error && data) {
+      // CC: 受信トレイには入らず送信トレイ（cc_user_ids）にのみ追加
+      const ccIds = composeIncludeCC
+        ? noticeCCUserIds.filter(uid => uid !== user.id && !composeRecipientIds.includes(uid))
+        : [];
+      if (ccIds.length > 0) {
+        await supabase.from('board_messages').update({ cc_user_ids: ccIds }).eq('id', data.id);
+      }
       const recs = composeRecipientIds.map(uid => ({ message_id: data.id, user_id: uid }));
       await supabase.from('board_message_recipients').insert(recs);
 
-      // 予約送信の場合は通知しない（Edge Functionが予約時刻に送信）
       if (!isScheduled) {
         const senderName = profileName || '誰か';
         const preview = (composeSubject.trim() || composeBody.trim()).slice(0, 40);
@@ -1021,11 +1115,8 @@ const BoardPage: React.FC = () => {
                 style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, padding: '2px 3px', color: favMessageIds.has(msg.id) ? '#f59e0b' : (isDark ? '#888' : '#bbb') }}>
                 {favMessageIds.has(msg.id) ? '★' : '☆'}
               </button>
-              {canEdit && (
-                <>
-                  <button type="button" onClick={() => { setEditingId(msg.id); setEditBody(msg.body); }} style={{ background: 'none', border: 'none', color: subColor, cursor: 'pointer', fontSize: 13, padding: '2px 4px' }}>✏️</button>
-                  <button type="button" onClick={() => deleteMessage(msg.id)} style={{ background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 13, padding: '2px 4px' }}>🗑️</button>
-                </>
+              {canEdit && msg.channel_id && (
+                <button type="button" onClick={() => setChannelDeleteConfirmId(channelDeleteConfirmId === msg.id ? null : msg.id)} style={{ background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 13, padding: '2px 4px' }}>🗑️</button>
               )}
             </div>
           </div>
@@ -1106,25 +1197,20 @@ const BoardPage: React.FC = () => {
               </div>
             );
           })()}
-          {editingId === msg.id ? (
-            <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-              <input
-                value={editBody}
-                onChange={e => setEditBody(e.target.value)}
-                autoFocus
-                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit(msg.id); }}}
-                style={{ flex: 1, padding: '6px 8px', borderRadius: 6, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13 }}
-              />
-              <button type="button" onClick={() => saveEdit(msg.id)} style={{ padding: '6px 10px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>保存</button>
-              <button type="button" onClick={() => setEditingId(null)} style={{ padding: '6px 8px', background: '#6c757d', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>✕</button>
-            </div>
-          ) : (
-            <div style={{ fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5, textAlign: 'left' }}>{msg.body}</div>
-          )}
+          <div style={{ fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5, textAlign: 'left' }}>{msg.body}</div>
           {/* 送信メールチャンネルの宛先表示 */}
           {msg.broadcast_recipients && msg.broadcast_recipients.length > 0 && (
             <div style={{ marginTop: 6, padding: '4px 8px', background: isDark ? '#1e2d1e' : '#f0fdf4', borderRadius: 6, fontSize: 12, color: isDark ? '#86efac' : '#166534' }}>
               宛先: {msg.broadcast_recipients.map(r => r.name).join('、')}
+            </div>
+          )}
+
+          {/* チャンネルメッセージ削除インライン確認 */}
+          {canEdit && msg.channel_id && channelDeleteConfirmId === msg.id && (
+            <div style={{ marginTop: 8, padding: '8px 12px', background: isDark ? '#2d1515' : '#fff5f5', border: '1.5px solid #dc3545', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 13, color: '#dc3545', flex: 1 }}>このメッセージをチャンネル内から削除しますか？</span>
+              <button type="button" onClick={() => deleteMessage(msg.id)} style={{ padding: '4px 14px', background: '#dc3545', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>削除</button>
+              <button type="button" onClick={() => setChannelDeleteConfirmId(null)} style={{ padding: '4px 10px', background: 'none', border: `1px solid ${border}`, color: subColor, borderRadius: 6, cursor: 'pointer', fontSize: 13 }}>✕</button>
             </div>
           )}
 
@@ -1895,7 +1981,56 @@ const BoardPage: React.FC = () => {
                 </div>
               );
             })()}
-            {renderMsg(inboxDetail)}
+            {/* 修正モード（受信トレイ側・送信者 or 管理者） */}
+            {(inboxDetail.user_id === user?.id || isAdmin) && editingNoticeId === inboxDetail.id ? (
+              <div style={{ marginTop: 16, padding: '14px', background: isDark ? '#1e2a1e' : '#f0fdf4', border: `1px solid ${isDark ? '#166534' : '#86efac'}`, borderRadius: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: isDark ? '#86efac' : '#166534', marginBottom: 10 }}>✏️ お知らせを修正</div>
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, color: subColor, marginBottom: 4 }}>件名</div>
+                  <input value={editingNoticeSubj} onChange={e => setEditingNoticeSubj(e.target.value)}
+                    style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, boxSizing: 'border-box' }} />
+                </div>
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, color: subColor, marginBottom: 4 }}>本文</div>
+                  <textarea value={editingNoticeBody} onChange={e => setEditingNoticeBody(e.target.value)} rows={5}
+                    style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="button" onClick={() => setEditingNoticeId(null)}
+                    style={{ flex: 1, padding: '8px 0', background: 'none', border: `1px solid ${border}`, color: subColor, borderRadius: 8, cursor: 'pointer', fontSize: 13 }}>キャンセル</button>
+                  <button type="button" onClick={() => saveNoticeEdit(inboxDetail.id)}
+                    disabled={!editingNoticeSubj.trim() || !editingNoticeBody.trim()}
+                    style={{ flex: 1, padding: '8px 0', background: '#28a745', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, opacity: (!editingNoticeSubj.trim() || !editingNoticeBody.trim()) ? 0.5 : 1 }}>保存する</button>
+                </div>
+              </div>
+            ) : renderMsg(inboxDetail)}
+            {/* 削除確認（受信トレイ側） */}
+            {(inboxDetail.user_id === user?.id || isAdmin) && deleteConfirmId === inboxDetail.id && (
+              <div style={{ marginTop: 16, padding: '12px 14px', background: isDark ? '#2d1a1a' : '#fff5f5', border: `1px solid ${isDark ? '#7f1d1d' : '#fca5a5'}`, borderRadius: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#dc2626', marginBottom: 8 }}>本当に削除しますか？</div>
+                <div style={{ fontSize: 12, color: subColor, marginBottom: 12 }}>受信者全員の受信トレイからも削除されます。この操作は元に戻せません。</div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="button" onClick={() => setDeleteConfirmId(null)}
+                    style={{ flex: 1, padding: '8px 0', background: 'none', border: `1px solid ${border}`, color: subColor, borderRadius: 8, cursor: 'pointer', fontSize: 13 }}>キャンセル</button>
+                  <button type="button" onClick={() => deleteNotice(inboxDetail.id)}
+                    style={{ flex: 1, padding: '8px 0', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>削除する</button>
+                </div>
+              </div>
+            )}
+            {/* 送信者・管理者アクションボタン（受信トレイ詳細） */}
+            {(inboxDetail.user_id === user?.id || isAdmin) && editingNoticeId !== inboxDetail.id && deleteConfirmId !== inboxDetail.id && (
+              <div style={{ marginTop: 12, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button type="button"
+                  onClick={() => { setEditingNoticeId(inboxDetail.id); setEditingNoticeSubj(inboxDetail.subject || inboxDetail.title || ''); setEditingNoticeBody(inboxDetail.body); }}
+                  style={{ padding: '7px 14px', background: 'none', border: `1.5px solid ${isDark ? '#4ade80' : '#16a34a'}`, color: isDark ? '#4ade80' : '#16a34a', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+                  ✏️ 修正する
+                </button>
+                <button type="button" onClick={() => setDeleteConfirmId(inboxDetail.id)}
+                  style={{ padding: '7px 14px', background: 'none', border: '1.5px solid #dc3545', color: '#dc3545', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+                  🗑️ 取消・削除
+                </button>
+              </div>
+            )}
             {/* リマインド（送信者 or 管理者かつ確認系メッセージのみ） */}
             {(inboxDetail.user_id === user?.id || isAdmin) && (inboxDetail.requires_confirmation || inboxDetail.deadline_type) && inboxDetailRecipients.length > 0 && (
               <div style={{ marginTop: 16, padding: '12px 14px', background: isDark ? '#2a1f00' : '#fffbeb', border: `1px solid ${isDark ? '#5a3e00' : '#fcd34d'}`, borderRadius: 10 }}>
@@ -2024,37 +2159,70 @@ const BoardPage: React.FC = () => {
           </div>
           {/* アーカイブ一括削除UI */}
           {inboxFilter === 'archived' && (
-            <div style={{ padding: '8px 12px', background: isDark ? '#2a1a1a' : '#fff5f5', borderBottom: `1px solid ${border}`, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 12, color: subColor, flexShrink: 0 }}>🗑️ 一括削除：</span>
-              {([['1m', '1ヶ月以上前'], ['3m', '3ヶ月以上前'], ['1y', '1年以上前'], ['all', 'すべて']] as const).map(([key, label]) => (
-                <button key={key} type="button" onClick={() => setArchiveBulkPeriod(archiveBulkPeriod === key ? '' : key)}
-                  style={{ padding: '4px 10px', borderRadius: 20, border: `1.5px solid ${archiveBulkPeriod === key ? '#dc3545' : border}`, background: archiveBulkPeriod === key ? '#dc3545' : 'none', color: archiveBulkPeriod === key ? '#fff' : subColor, cursor: 'pointer', fontSize: 12, fontWeight: archiveBulkPeriod === key ? 700 : 400 }}>
-                  {label}
-                </button>
-              ))}
-              {archiveBulkPeriod && (
-                <button type="button" disabled={archiveBulkDeleting} onClick={async () => {
-                  const now = new Date();
-                  let cutoff: Date | null = null;
-                  if (archiveBulkPeriod === '1m') cutoff = new Date(now.setMonth(now.getMonth() - 1));
-                  else if (archiveBulkPeriod === '3m') cutoff = new Date(now.setMonth(now.getMonth() - 3));
-                  else if (archiveBulkPeriod === '1y') cutoff = new Date(now.setFullYear(now.getFullYear() - 1));
-                  const targets = cutoff
-                    ? archivedMessages.filter(m => new Date(m.created_at) < cutoff!)
-                    : archivedMessages;
-                  if (targets.length === 0) { alert('削除対象がありません'); return; }
-                  if (!window.confirm(`${targets.length}件のアーカイブを完全に削除しますか？\n元に戻せません。`)) return;
-                  setArchiveBulkDeleting(true);
-                  const ids = targets.map(m => m.id);
-                  await supabase.from('board_message_recipients').delete().in('message_id', ids).eq('user_id', user!.id);
-                  setArchivedMessages(prev => prev.filter(m => !ids.includes(m.id)));
-                  setArchiveBulkPeriod('');
-                  setArchiveBulkDeleting(false);
-                  setSaveBanner(true);
-                  setTimeout(() => setSaveBanner(false), 3000);
-                }} style={{ padding: '4px 14px', borderRadius: 20, border: 'none', background: '#dc3545', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700, opacity: archiveBulkDeleting ? 0.6 : 1 }}>
-                  {archiveBulkDeleting ? '削除中...' : '削除実行'}
-                </button>
+            <div style={{ borderBottom: `1px solid ${border}` }}>
+              {/* 期間指定一括削除 */}
+              <div style={{ padding: '8px 12px', background: isDark ? '#2a1a1a' : '#fff5f5', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12, color: subColor, flexShrink: 0 }}>🗑️ 一括削除：</span>
+                {([['1m', '1ヶ月以上前'], ['3m', '3ヶ月以上前'], ['1y', '1年以上前'], ['all', 'すべて']] as const).map(([key, label]) => (
+                  <button key={key} type="button" onClick={() => setArchiveBulkPeriod(archiveBulkPeriod === key ? '' : key)}
+                    style={{ padding: '4px 10px', borderRadius: 20, border: `1.5px solid ${archiveBulkPeriod === key ? '#dc3545' : border}`, background: archiveBulkPeriod === key ? '#dc3545' : 'none', color: archiveBulkPeriod === key ? '#fff' : subColor, cursor: 'pointer', fontSize: 12, fontWeight: archiveBulkPeriod === key ? 700 : 400 }}>
+                    {label}
+                  </button>
+                ))}
+                {archiveBulkPeriod && (
+                  <button type="button" disabled={archiveBulkDeleting} onClick={async () => {
+                    const now = new Date();
+                    let cutoff: Date | null = null;
+                    if (archiveBulkPeriod === '1m') cutoff = new Date(now.setMonth(now.getMonth() - 1));
+                    else if (archiveBulkPeriod === '3m') cutoff = new Date(now.setMonth(now.getMonth() - 3));
+                    else if (archiveBulkPeriod === '1y') cutoff = new Date(now.setFullYear(now.getFullYear() - 1));
+                    const targets = cutoff ? archivedMessages.filter(m => new Date(m.created_at) < cutoff!) : archivedMessages;
+                    if (targets.length === 0) return;
+                    setInboxArchiveDelConfirm(true);
+                    setInboxArchiveSelected(new Set(targets.map(m => m.id)));
+                  }} style={{ padding: '4px 14px', borderRadius: 20, border: 'none', background: '#dc3545', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
+                    削除実行
+                  </button>
+                )}
+              </div>
+              {/* チェックボックス選択バー */}
+              <div style={{ padding: '6px 12px', background: isDark ? '#1a1a2a' : '#f0f4ff', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer', color: textColor }}>
+                  <input type="checkbox"
+                    checked={inboxArchiveSelected.size === archivedMessages.length && archivedMessages.length > 0}
+                    onChange={e => setInboxArchiveSelected(e.target.checked ? new Set(archivedMessages.map(m => m.id)) : new Set())} />
+                  全て選択
+                </label>
+                {inboxArchiveSelected.size > 0 && (
+                  <button type="button" onClick={() => setInboxArchiveDelConfirm(true)}
+                    style={{ padding: '3px 12px', borderRadius: 14, border: 'none', background: '#dc3545', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+                    選択した {inboxArchiveSelected.size} 件を削除
+                  </button>
+                )}
+                {inboxArchiveSelected.size > 0 && (
+                  <button type="button" onClick={() => setInboxArchiveSelected(new Set())}
+                    style={{ padding: '3px 8px', borderRadius: 14, border: `1px solid ${border}`, background: 'none', color: subColor, cursor: 'pointer', fontSize: 12 }}>
+                    外す
+                  </button>
+                )}
+              </div>
+              {/* 削除確認パネル */}
+              {inboxArchiveDelConfirm && (
+                <div style={{ padding: '10px 12px', background: isDark ? '#2d1a1a' : '#fff5f5', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 13, color: '#dc3545', flex: 1 }}>
+                    {inboxArchiveSelected.size}件を完全に削除します。元に戻せません。
+                  </span>
+                  <button type="button" onClick={() => setInboxArchiveDelConfirm(false)}
+                    style={{ padding: '4px 12px', border: `1px solid ${border}`, borderRadius: 6, background: 'none', color: subColor, cursor: 'pointer', fontSize: 12 }}>キャンセル</button>
+                  <button type="button" onClick={async () => {
+                    const ids = [...inboxArchiveSelected];
+                    await supabase.from('board_message_recipients').delete().in('message_id', ids).eq('user_id', user!.id);
+                    setArchivedMessages(prev => prev.filter(m => !ids.includes(m.id)));
+                    setInboxArchiveSelected(new Set());
+                    setInboxArchiveDelConfirm(false);
+                    setArchiveBulkPeriod('');
+                  }} style={{ padding: '4px 14px', border: 'none', borderRadius: 6, background: '#dc3545', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>削除する</button>
+                </div>
               )}
             </div>
           )}
@@ -2072,12 +2240,19 @@ const BoardPage: React.FC = () => {
               const isArchived = inboxFilter === 'archived';
               const accentColor = isOverdue ? '#dc2626' : '#1d4ed8';
               const typeText = dtConfig ? dtConfig.label.replace(/^\S+\s/, '') : '';
+              const inboxSel = inboxArchiveSelected.has(msg.id);
               return (
                 <div key={msg.id}
-                  style={{ background: cardBg, border: confirmed ? '1.5px solid #22c55e' : `1px solid ${border}`, borderRadius: 10, padding: '10px 12px', marginBottom: 6, position: 'relative', borderLeft: !inboxReadIds.has(msg.id) && !confirmed ? '3px solid #4a90d9' : undefined }}>
+                  style={{ background: cardBg, border: isArchived && inboxSel ? '1.5px solid #3b82f6' : confirmed ? '1.5px solid #22c55e' : `1px solid ${border}`, borderRadius: 10, padding: '10px 12px', marginBottom: 6, position: 'relative', borderLeft: !inboxReadIds.has(msg.id) && !confirmed ? '3px solid #4a90d9' : undefined }}>
                   {/* ヘッダー行：送信者 + 時刻 + ★ + 📦 */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {isArchived && (
+                        <input type="checkbox" checked={inboxSel}
+                          onChange={e => { e.stopPropagation(); setInboxArchiveSelected(prev => { const s = new Set(prev); e.target.checked ? s.add(msg.id) : s.delete(msg.id); return s; }); }}
+                          onClick={e => e.stopPropagation()}
+                          style={{ width: 15, height: 15, flexShrink: 0, cursor: 'pointer', accentColor: '#3b82f6' }} />
+                      )}
                       <div style={{ width: 22, height: 22, borderRadius: '50%', background: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 10, fontWeight: 'bold', flexShrink: 0 }}>
                         {avatarLetter(senderName)}
                       </div>
@@ -2134,10 +2309,27 @@ const BoardPage: React.FC = () => {
   );
 
   // ── 送信フロー（Compose） ─────────────────────────────────────────
-  const activeOthersForCompose = allProfiles.filter(p => p.id !== user?.id);
+  const activeOthersForCompose = allProfiles; // 自分も含む
   const composeFiltered = activeOthersForCompose.filter(p => !composeQuery || (p.name || '').includes(composeQuery));
   const composeEmpTypes = ([...new Set(activeOthersForCompose.map(p => p.employment_type || 'その他'))] as string[])
     .sort((a, b) => { const o = EMP_ORDER; const ai = o.indexOf(a), bi = o.indexOf(b); if (ai === -1 && bi === -1) return a > b ? 1 : -1; if (ai === -1) return 1; if (bi === -1) return -1; return ai - bi; });
+
+  // グループタグ設定（こども/大人/管理部のみ表示）
+  const COMPOSE_GTAG = [
+    { name: 'こども', bg: isDark ? '#1e3a5f' : '#dbeafe', color: isDark ? '#93c5fd' : '#1d4ed8' },
+    { name: '大人',   bg: isDark ? '#14532d' : '#dcfce7', color: isDark ? '#86efac' : '#15803d' },
+    { name: '管理部', bg: isDark ? '#451a03' : '#fef3c7', color: isDark ? '#fcd34d' : '#b45309' },
+  ];
+
+  // 一括ボタン定義（固定順序）
+  const COMPOSE_QUICK_BTNS = [
+    { label: '正社員',               getIds: () => composeFiltered.filter(p => p.employment_type === '正社員').map(p => p.id) },
+    { label: 'パート',               getIds: () => composeFiltered.filter(p => p.employment_type === 'パート').map(p => p.id) },
+    { label: 'マネージャー・リーダー', getIds: () => composeFiltered.filter(p => (p.group_names || []).includes('マネージャー・リーダー')).map(p => p.id) },
+    { label: 'こども',               getIds: () => composeFiltered.filter(p => (p.group_names || []).includes('こども')).map(p => p.id) },
+    { label: '大人',                 getIds: () => composeFiltered.filter(p => (p.group_names || []).includes('大人')).map(p => p.id) },
+    { label: '管理部',               getIds: () => composeFiltered.filter(p => (p.group_names || []).includes('管理部')).map(p => p.id) },
+  ];
 
   const composePanel = (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: bg }}>
@@ -2147,20 +2339,30 @@ const BoardPage: React.FC = () => {
           <div style={{ fontSize: 12, fontWeight: 700, color: subColor, marginBottom: 6, marginTop: 8 }}>宛先を選択 <span style={{ color: '#dc3545', fontSize: 11 }}>*必須</span></div>
           <input value={composeQuery} onChange={e => setComposeQuery(e.target.value)} placeholder="名前で検索..."
             style={{ width: '100%', padding: '7px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, boxSizing: 'border-box', marginBottom: 6 }} />
-          {/* 一括ボタン */}
+          {/* 一括ボタン（全員→各グループ→全解除の固定順） */}
           <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 6 }}>
-            {composeEmpTypes.map(et => {
-              const ids = composeFiltered.filter(p => (p.employment_type || 'その他') === et).map(p => p.id);
-              const allSel = ids.length > 0 && ids.every(id => composeRecipientIds.includes(id));
+            <button type="button" onClick={() => setComposeRecipientIds(composeFiltered.map(p => p.id))}
+              style={{ padding: '3px 8px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 11, background: isDark ? '#495057' : '#e9ecef', color: isDark ? '#fff' : '#333' }}>全員</button>
+            {COMPOSE_QUICK_BTNS.map(btn => {
+              const ids = btn.getIds();
+              const allInSel = ids.length > 0 && ids.every(id => composeRecipientIds.includes(id));
+              const allSel = allInSel && composeRecipientIds.length === ids.length;
               return (
-                <button key={et} type="button" onClick={() => setComposeRecipientIds(prev => allSel ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])])}
-                  style={{ padding: '3px 8px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 11, background: allSel ? '#007bff' : (isDark ? '#495057' : '#e9ecef'), color: allSel ? '#fff' : (isDark ? '#fff' : '#333') }}>
-                  {et}
+                <button key={btn.label} type="button"
+                  onClick={() => {
+                    if (allInSel && composeRecipientIds.length === ids.length) {
+                      setComposeRecipientIds([]);
+                    } else if (allInSel) {
+                      setComposeRecipientIds(ids);
+                    } else {
+                      setComposeRecipientIds(prev => [...new Set([...prev, ...ids])]);
+                    }
+                  }}
+                  style={{ padding: '3px 8px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 11, background: allInSel ? '#007bff' : (isDark ? '#495057' : '#e9ecef'), color: allInSel ? '#fff' : (isDark ? '#fff' : '#333'), opacity: allSel ? 1 : allInSel ? 0.75 : 1 }}>
+                  {btn.label}
                 </button>
               );
             })}
-            <button type="button" onClick={() => setComposeRecipientIds(composeFiltered.map(p => p.id))}
-              style={{ padding: '3px 8px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 11, background: isDark ? '#495057' : '#e9ecef', color: isDark ? '#fff' : '#333' }}>全員</button>
             <button type="button" onClick={() => setComposeRecipientIds([])}
               style={{ padding: '3px 8px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 11, background: isDark ? '#495057' : '#e9ecef', color: isDark ? '#fff' : '#333' }}>全解除</button>
           </div>
@@ -2186,13 +2388,22 @@ const BoardPage: React.FC = () => {
                               onChange={() => { const ids = roleProfiles.map(p => p.id); setComposeRecipientIds(prev => allRoleSel ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])]); }} />
                             <span style={{ fontSize: 10, fontWeight: 'bold', color: isDark ? '#adb5bd' : '#555' }}>{role}</span>
                           </label>
-                          {roleProfiles.map(p => (
-                            <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '2px 0', cursor: 'pointer', fontSize: 12, color: textColor }}>
-                              <input type="checkbox" checked={composeRecipientIds.includes(p.id)}
-                                onChange={e => setComposeRecipientIds(prev => e.target.checked ? [...prev, p.id] : prev.filter(id => id !== p.id))} />
-                              {p.name}
-                            </label>
-                          ))}
+                          {roleProfiles.map(p => {
+                            const gTags = COMPOSE_GTAG.filter(g => (p.group_names || []).includes(g.name));
+                            return (
+                              <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 0', cursor: 'pointer', fontSize: 12, color: textColor, flexWrap: 'wrap' }}>
+                                <input type="checkbox" checked={composeRecipientIds.includes(p.id)}
+                                  onChange={e => setComposeRecipientIds(prev => e.target.checked ? [...prev, p.id] : prev.filter(id => id !== p.id))} />
+                                <span style={{ flexShrink: 0 }}>
+                                  {p.name}
+                                  {p.id === user?.id && <span style={{ fontSize: 10, color: subColor }}> (自分)</span>}
+                                </span>
+                                {gTags.map(g => (
+                                  <span key={g.name} style={{ fontSize: 9, padding: '1px 4px', borderRadius: 3, background: g.bg, color: g.color, whiteSpace: 'nowrap', flexShrink: 0 }}>{g.name}</span>
+                                ))}
+                              </label>
+                            );
+                          })}
                         </div>
                       );
                     })}
@@ -2267,6 +2478,12 @@ const BoardPage: React.FC = () => {
                   style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, flex: 1 }} />
                 {composeScheduledAt && <button type="button" onClick={() => setComposeScheduledAt('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
               </div>
+              {noticeCCUserIds.length > 0 && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12, color: textColor }}>
+                  <input type="checkbox" checked={composeIncludeCC} onChange={e => setComposeIncludeCC(e.target.checked)} style={{ accentColor: '#22c55e' }} />
+                  <span>他の代表者の送信履歴に加える</span>
+                </label>
+              )}
             </div>
           )}
         </div>
@@ -2321,63 +2538,221 @@ const BoardPage: React.FC = () => {
                 </div>
               );
             })()}
-            {renderMsg(outboxDetail)}
-            {/* 削除ボタン */}
-            <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
-              <button type="button" onClick={async () => {
-                if (!window.confirm('このお知らせを取り消し（削除）しますか？\n受信者の受信トレイからも削除されます。')) return;
-                await supabase.from('board_message_recipients').delete().eq('message_id', outboxDetail.id);
-                await supabase.from('board_messages').delete().eq('id', outboxDetail.id);
-                setOutboxMessages(prev => prev.filter(m => m.id !== outboxDetail.id));
-                setOutboxDetailId(null);
-                setShowAllOutboxRecipients(false);
-              }} style={{ padding: '8px 18px', background: 'none', border: '1.5px solid #dc3545', color: '#dc3545', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
-                🗑️ 送信を取り消す
-              </button>
-            </div>
+            {/* 修正モード */}
+            {editingNoticeId === outboxDetail.id ? (
+              <div style={{ marginTop: 16, padding: '14px', background: isDark ? '#1e2a1e' : '#f0fdf4', border: `1px solid ${isDark ? '#166534' : '#86efac'}`, borderRadius: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: isDark ? '#86efac' : '#166534', marginBottom: 10 }}>✏️ お知らせを修正</div>
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, color: subColor, marginBottom: 4 }}>件名</div>
+                  <input value={editingNoticeSubj} onChange={e => setEditingNoticeSubj(e.target.value)}
+                    style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, boxSizing: 'border-box' }} />
+                </div>
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, color: subColor, marginBottom: 4 }}>本文</div>
+                  <textarea value={editingNoticeBody} onChange={e => setEditingNoticeBody(e.target.value)} rows={5}
+                    style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="button" onClick={() => setEditingNoticeId(null)}
+                    style={{ flex: 1, padding: '8px 0', background: 'none', border: `1px solid ${border}`, color: subColor, borderRadius: 8, cursor: 'pointer', fontSize: 13 }}>キャンセル</button>
+                  <button type="button" onClick={() => saveNoticeEdit(outboxDetail.id)}
+                    disabled={!editingNoticeSubj.trim() || !editingNoticeBody.trim()}
+                    style={{ flex: 1, padding: '8px 0', background: '#28a745', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, opacity: (!editingNoticeSubj.trim() || !editingNoticeBody.trim()) ? 0.5 : 1 }}>保存する</button>
+                </div>
+              </div>
+            ) : renderMsg(outboxDetail)}
+            {/* 削除確認 */}
+            {deleteConfirmId === outboxDetail.id ? (
+              <div style={{ marginTop: 16, padding: '12px 14px', background: isDark ? '#2d1a1a' : '#fff5f5', border: `1px solid ${isDark ? '#7f1d1d' : '#fca5a5'}`, borderRadius: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#dc2626', marginBottom: 6 }}>受信者からも完全削除しますか？</div>
+                <div style={{ fontSize: 12, color: subColor, marginBottom: 12 }}>受信者全員の受信トレイからも削除されます。この操作は元に戻せません。</div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="button" onClick={() => setDeleteConfirmId(null)}
+                    style={{ flex: 1, padding: '8px 0', background: 'none', border: `1px solid ${border}`, color: subColor, borderRadius: 8, cursor: 'pointer', fontSize: 13 }}>キャンセル</button>
+                  <button type="button" onClick={() => deleteNotice(outboxDetail.id)}
+                    style={{ flex: 1, padding: '8px 0', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>完全削除する</button>
+                </div>
+              </div>
+            ) : editingNoticeId !== outboxDetail.id && (
+              <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button type="button"
+                  onClick={() => { setEditingNoticeId(outboxDetail.id); setEditingNoticeSubj(outboxDetail.subject || outboxDetail.title || ''); setEditingNoticeBody(outboxDetail.body); }}
+                  style={{ padding: '8px 16px', background: 'none', border: `1.5px solid ${isDark ? '#4ade80' : '#16a34a'}`, color: isDark ? '#4ade80' : '#16a34a', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                  ✏️ 修正する
+                </button>
+                {!outboxDetail.outbox_hidden && (
+                  <button type="button" onClick={() => archiveOutboxMsg(outboxDetail.id)}
+                    style={{ padding: '8px 16px', background: 'none', border: `1.5px solid ${isDark ? '#fd7e14' : '#e67e22'}`, color: isDark ? '#fd7e14' : '#e67e22', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                    📦 アーカイブ
+                  </button>
+                )}
+                <button type="button" onClick={() => setDeleteConfirmId(outboxDetail.id)}
+                  style={{ padding: '8px 16px', background: 'none', border: '1.5px solid #dc3545', color: '#dc3545', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                  🗑️ 完全削除
+                </button>
+              </div>
+            )}
           </div>
         </div>
       ) : (
         <>
           <div style={{ paddingTop: 52, flexShrink: 0 }}>
             <div style={{ display: 'flex', borderBottom: `1px solid ${border}`, background: cardBg }}>
-              {([['sent', '送信済み'], ['scheduled', '📅 予約済み'], ['draft', '下書き']] as const).map(([tab, label]) => (
+              {([['sent', '送信済み'], ['scheduled', '📅 予約済み'], ['draft', '下書き'], ['archive', '📦 アーカイブ']] as const).map(([tab, label]) => (
                 <button key={tab} type="button" onClick={() => setOutboxTab(tab)}
-                  style={{ flex: 1, padding: '10px 0', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: outboxTab === tab ? 700 : 400, color: outboxTab === tab ? '#007bff' : subColor, borderBottom: outboxTab === tab ? '2px solid #007bff' : '2px solid transparent' }}>
+                  style={{ flex: 1, padding: '10px 0', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: outboxTab === tab ? 700 : 400, color: outboxTab === tab ? '#007bff' : subColor, borderBottom: outboxTab === tab ? '2px solid #007bff' : '2px solid transparent' }}>
                   {label}
                 </button>
               ))}
             </div>
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px' }}>
-            {outboxMessages.filter(m => outboxTab === 'sent' ? (m.status !== 'draft' && m.status !== 'scheduled') : m.status === outboxTab).length === 0 ? (
-              <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>
-                {outboxTab === 'sent' ? '送信済みのお知らせはありません' : outboxTab === 'scheduled' ? '予約済みのお知らせはありません' : '下書きはありません'}
-              </div>
-            ) : outboxMessages.filter(m => outboxTab === 'sent' ? (m.status !== 'draft' && m.status !== 'scheduled') : m.status === outboxTab).map(msg => {
-              const recipientIds = inboxRecipients[msg.id] || [];
-              const recipientNames = recipientIds.slice(0, 3).map(uid => allProfiles.find(p => p.id === uid)?.name || '不明');
-              return (
-                <div key={msg.id} onClick={() => { setOutboxDetailId(msg.id); setShowAllOutboxRecipients(false); }}
-                  style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: '10px 12px', marginBottom: 6, cursor: 'pointer', textAlign: 'left' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <span style={{ fontSize: 10, color: subColor }}>{fmtFull(msg.created_at)}</span>
-                    <span style={{ fontSize: 10, color: subColor }}>{recipientIds.length}人</span>
+            {outboxTab === 'archive' ? (
+              <>
+                {/* 一括削除・チェック操作バー */}
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '8px 0', background: isDark ? '#2d1a1a' : '#fff5f5', border: `1px solid ${isDark ? '#7f1d1d' : '#fca5a5'}`, borderRadius: 8, marginBottom: 6, paddingLeft: 10 }}>
+                    <span style={{ fontSize: 11, color: subColor, alignSelf: 'center', marginRight: 2 }}>🗑️ 一括：</span>
+                    {[{ label: '1ヶ月以上前', months: 1 }, { label: '3ヶ月以上前', months: 3 }, { label: '1年以上前', months: 12 }, { label: 'すべて', months: null }].map(({ label, months }) => {
+                      const cutoff = months ? new Date(Date.now() - months * 30 * 24 * 60 * 60 * 1000) : null;
+                      const targets = cutoff ? outboxArchivedMessages.filter(m => new Date(m.created_at) < cutoff) : outboxArchivedMessages;
+                      return (
+                        <button key={label} type="button" disabled={targets.length === 0}
+                          onClick={() => { setOutboxArchiveSelected(new Set(targets.map(m => m.id))); setOutboxArchiveDelConfirm(true); }}
+                          style={{ padding: '3px 10px', borderRadius: 20, border: `1px solid ${isDark ? '#7f1d1d' : '#fca5a5'}`, background: 'none', color: targets.length === 0 ? subColor : '#dc3545', cursor: targets.length === 0 ? 'default' : 'pointer', fontSize: 11, opacity: targets.length === 0 ? 0.5 : 1 }}>
+                          {label}（{targets.length}件）
+                        </button>
+                      );
+                    })}
                   </div>
-                  {(msg.subject || msg.title) && (
-                    <div style={{ fontSize: 13, fontWeight: 700, color: textColor, marginBottom: 4, paddingBottom: 4, borderBottom: `1px solid ${border}` }}>{msg.subject || msg.title}</div>
-                  )}
-                  <div style={{ fontSize: 12, color: subColor, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', wordBreak: 'break-word', marginBottom: recipientNames.length > 0 ? 4 : 0 }}>
-                    {msg.body}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer', color: textColor }}>
+                      <input type="checkbox"
+                        checked={outboxArchiveSelected.size === outboxArchivedMessages.length && outboxArchivedMessages.length > 0}
+                        onChange={e => setOutboxArchiveSelected(e.target.checked ? new Set(outboxArchivedMessages.map(m => m.id)) : new Set())} />
+                      全て選択
+                    </label>
+                    {outboxArchiveSelected.size > 0 && (
+                      <button type="button" onClick={() => setOutboxArchiveDelConfirm(true)}
+                        style={{ padding: '3px 12px', borderRadius: 14, border: 'none', background: '#dc3545', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+                        選択した {outboxArchiveSelected.size} 件を削除
+                      </button>
+                    )}
+                    {outboxArchiveSelected.size > 0 && (
+                      <button type="button" onClick={() => setOutboxArchiveSelected(new Set())}
+                        style={{ padding: '3px 8px', borderRadius: 14, border: `1px solid ${border}`, background: 'none', color: subColor, cursor: 'pointer', fontSize: 12 }}>
+                        外す
+                      </button>
+                    )}
                   </div>
-                  {recipientNames.length > 0 && (
-                    <div style={{ fontSize: 10, color: isDark ? '#93c5fd' : '#3b82f6' }}>
-                      宛先: {recipientNames.join('、')}{recipientIds.length > 3 ? ` 他${recipientIds.length - 3}人` : ''}
+                  {/* 削除確認パネル */}
+                  {outboxArchiveDelConfirm && (
+                    <div style={{ padding: '10px 12px', background: isDark ? '#2d1a1a' : '#fff5f5', border: `1px solid ${isDark ? '#7f1d1d' : '#fca5a5'}`, borderRadius: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
+                      <span style={{ fontSize: 13, color: '#dc3545', flex: 1 }}>
+                        {outboxArchiveSelected.size}件を完全削除します。受信者からも削除されます。元に戻せません。
+                      </span>
+                      <button type="button" onClick={() => setOutboxArchiveDelConfirm(false)}
+                        style={{ padding: '4px 12px', border: `1px solid ${border}`, borderRadius: 6, background: 'none', color: subColor, cursor: 'pointer', fontSize: 12 }}>キャンセル</button>
+                      <button type="button" onClick={async () => {
+                        const ids = [...outboxArchiveSelected];
+                        for (const id of ids) {
+                          await supabase.from('board_confirmations').delete().eq('message_id', id);
+                          await supabase.from('board_reads').delete().eq('message_id', id);
+                          await supabase.from('board_message_recipients').delete().eq('message_id', id);
+                          await supabase.from('board_messages').delete().eq('id', id);
+                        }
+                        setOutboxArchivedMessages(prev => prev.filter(m => !ids.includes(m.id)));
+                        setOutboxArchiveSelected(new Set());
+                        setOutboxArchiveDelConfirm(false);
+                      }} style={{ padding: '4px 14px', border: 'none', borderRadius: 6, background: '#dc3545', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>削除する</button>
                     </div>
                   )}
                 </div>
-              );
-            })}
+                {outboxArchivedMessages.length === 0 ? (
+                  <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 30 }}>アーカイブはありません</div>
+                ) : outboxArchivedMessages.map(msg => {
+                  const recipientIds = inboxRecipients[msg.id] || [];
+                  const recipientNames = recipientIds.slice(0, 3).map(uid => allProfiles.find(p => p.id === uid)?.name || '不明');
+                  const outSel = outboxArchiveSelected.has(msg.id);
+                  return (
+                    <div key={msg.id}
+                      style={{ background: cardBg, border: outSel ? '1.5px solid #3b82f6' : `1px solid ${border}`, borderRadius: 10, padding: '10px 12px', marginBottom: 6, opacity: 0.85 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <input type="checkbox" checked={outSel}
+                            onChange={e => setOutboxArchiveSelected(prev => { const s = new Set(prev); e.target.checked ? s.add(msg.id) : s.delete(msg.id); return s; })}
+                            onClick={e => e.stopPropagation()}
+                            style={{ width: 15, height: 15, cursor: 'pointer', accentColor: '#3b82f6' }} />
+                          <span style={{ fontSize: 10, color: subColor }}>{fmtFull(msg.created_at)}</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ fontSize: 10, color: subColor }}>{recipientIds.length}人</span>
+                          <button type="button" onClick={async e => {
+                            e.stopPropagation();
+                            await supabase.from('board_messages').update({ outbox_hidden: false }).eq('id', msg.id);
+                            setOutboxArchivedMessages(prev => prev.filter(m => m.id !== msg.id));
+                            setOutboxMessages(prev => [{ ...msg, outbox_hidden: false }, ...prev].sort((a, b) => b.created_at.localeCompare(a.created_at)));
+                          }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: '1px 3px', color: subColor }}>
+                            📤
+                          </button>
+                        </div>
+                      </div>
+                      <div onClick={() => { setOutboxDetailId(msg.id); setShowAllOutboxRecipients(false); }} style={{ cursor: 'pointer' }}>
+                        {(msg.subject || msg.title) && (
+                          <div style={{ fontSize: 13, fontWeight: 700, color: textColor, marginBottom: 4, paddingBottom: 4, borderBottom: `1px solid ${border}` }}>{msg.subject || msg.title}</div>
+                        )}
+                        <div style={{ fontSize: 12, color: subColor, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', wordBreak: 'break-word' }}>{msg.body}</div>
+                        {recipientNames.length > 0 && (
+                          <div style={{ fontSize: 10, color: isDark ? '#93c5fd' : '#3b82f6', marginTop: 4 }}>
+                            宛先: {recipientNames.join('、')}{recipientIds.length > 3 ? ` 他${recipientIds.length - 3}人` : ''}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
+            ) : (
+              <>
+                {outboxMessages.filter(m => outboxTab === 'sent' ? (m.status !== 'draft' && m.status !== 'scheduled') : m.status === outboxTab).length === 0 ? (
+                  <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>
+                    {outboxTab === 'sent' ? '送信済みのお知らせはありません' : outboxTab === 'scheduled' ? '予約済みのお知らせはありません' : '下書きはありません'}
+                  </div>
+                ) : outboxMessages.filter(m => outboxTab === 'sent' ? (m.status !== 'draft' && m.status !== 'scheduled') : m.status === outboxTab).map(msg => {
+                  const recipientIds = inboxRecipients[msg.id] || [];
+                  const recipientNames = recipientIds.slice(0, 3).map(uid => allProfiles.find(p => p.id === uid)?.name || '不明');
+                  return (
+                    <div key={msg.id}
+                      style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: '10px 12px', marginBottom: 6, textAlign: 'left' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}
+                        onClick={() => { setOutboxDetailId(msg.id); setShowAllOutboxRecipients(false); }}>
+                        <span style={{ fontSize: 10, color: subColor, cursor: 'pointer' }}>{fmtFull(msg.created_at)}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ fontSize: 10, color: subColor }}>{recipientIds.length}人</span>
+                          <button type="button"
+                            onClick={e => { e.stopPropagation(); archiveOutboxMsg(msg.id); }}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: '1px 3px', color: subColor }}
+                            title="アーカイブ">📦</button>
+                        </div>
+                      </div>
+                      <div onClick={() => { setOutboxDetailId(msg.id); setShowAllOutboxRecipients(false); }} style={{ cursor: 'pointer' }}>
+                        {(msg.subject || msg.title) && (
+                          <div style={{ fontSize: 13, fontWeight: 700, color: textColor, marginBottom: 4, paddingBottom: 4, borderBottom: `1px solid ${border}` }}>{msg.subject || msg.title}</div>
+                        )}
+                        <div style={{ fontSize: 12, color: subColor, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', wordBreak: 'break-word', marginBottom: recipientNames.length > 0 ? 4 : 0 }}>
+                          {msg.body}
+                        </div>
+                        {recipientNames.length > 0 && (
+                          <div style={{ fontSize: 10, color: isDark ? '#93c5fd' : '#3b82f6' }}>
+                            宛先: {recipientNames.join('、')}{recipientIds.length > 3 ? ` 他${recipientIds.length - 3}人` : ''}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
+            )}
           </div>
         </>
       )}
@@ -3130,6 +3505,17 @@ const BoardPage: React.FC = () => {
           <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>✓</div>
           <span style={{ fontSize: 15, fontWeight: 'bold', color: isDark ? '#4ade80' : '#166534' }}>{memberBanner ? 'メンバーを保存しました' : '保存しました'}</span>
           <button type="button" onClick={() => { setSaveBanner(false); setMemberBanner(false); }} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: isDark ? '#4ade80' : '#166534', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
+        </div>
+      )}
+      {noticeActionBanner && (
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: noticeActionBanner === 'deleted' ? (isDark ? '#2d1a1a' : '#fff5f5') : (isDark ? '#1a3a28' : '#f0fdf4'), border: `1px solid ${noticeActionBanner === 'deleted' ? '#dc2626' : (isDark ? '#16532a' : '#86efac')}`, borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 220 }}>
+          <div style={{ width: 36, height: 36, borderRadius: '50%', background: noticeActionBanner === 'deleted' ? '#dc2626' : '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>
+            {noticeActionBanner === 'deleted' ? '🗑️' : '✓'}
+          </div>
+          <span style={{ fontSize: 15, fontWeight: 'bold', color: noticeActionBanner === 'deleted' ? '#dc2626' : (isDark ? '#4ade80' : '#166534') }}>
+            {noticeActionBanner === 'deleted' ? '削除しました' : '修正を保存しました'}
+          </span>
+          <button type="button" onClick={() => setNoticeActionBanner(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: noticeActionBanner === 'deleted' ? '#dc2626' : (isDark ? '#4ade80' : '#166534'), cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
         </div>
       )}
     </div>
