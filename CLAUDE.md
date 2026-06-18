@@ -3735,7 +3735,7 @@ ALTER TABLE board_messages ADD COLUMN cc_user_ids text[] DEFAULT '{}';
   - 詳細画面のアーカイブボタン: SVGアイコン + テキスト
 
 ### コミット
-- `(このセッションのコミット後に記録)`
+- `c006445` feat: 連絡板 ツールチップ追加・アーカイブアイコンをSVGに変更
 
 ---
 
