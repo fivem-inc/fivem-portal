@@ -104,6 +104,19 @@ const DEADLINE_TYPES = [
 ] as const;
 
 // ────────────────────────────────────────────────────────────────
+// Icons
+// ────────────────────────────────────────────────────────────────
+
+const ArchiveIcon: React.FC<{ size?: number }> = ({ size = 14 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'block' }}>
+    <path d="M21 8v13H3V8" />
+    <rect x="1" y="3" width="22" height="5" rx="1" />
+    <polyline points="10 13 12 15 14 13" />
+    <line x1="12" y1="9" x2="12" y2="15" />
+  </svg>
+);
+
+// ────────────────────────────────────────────────────────────────
 // Component
 // ────────────────────────────────────────────────────────────────
 
@@ -1080,11 +1093,12 @@ const BoardPage: React.FC = () => {
             </div>
             <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
               <button type="button" onClick={e => toggleFavMessage(e, msg.id, msg)}
+                title={favMessageIds.has(msg.id) ? 'お気に入り解除' : 'お気に入りに追加'}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, padding: '2px 3px', color: favMessageIds.has(msg.id) ? '#f59e0b' : (isDark ? '#888' : '#bbb') }}>
                 {favMessageIds.has(msg.id) ? '★' : '☆'}
               </button>
               {canEdit && msg.channel_id && (
-                <button type="button" onClick={() => setChannelDeleteConfirmId(channelDeleteConfirmId === msg.id ? null : msg.id)} style={{ background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 13, padding: '2px 4px' }}>🗑️</button>
+                <button type="button" onClick={() => setChannelDeleteConfirmId(channelDeleteConfirmId === msg.id ? null : msg.id)} title="削除" style={{ background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 13, padding: '2px 4px' }}>🗑️</button>
               )}
             </div>
           </div>
@@ -1794,6 +1808,7 @@ const BoardPage: React.FC = () => {
               </button>
               {canDelete && (
                 <button type="button" onClick={e => deleteChannel(ch.id, e)}
+                  title="削除"
                   style={{ background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 13, padding: '0 2px', lineHeight: 1 }}>🗑️</button>
               )}
             </div>
@@ -1910,7 +1925,7 @@ const BoardPage: React.FC = () => {
     { key: 'answer',   label: '回答' },
     { key: 'submit',   label: '提出' },
     { key: 'approve',  label: '承認' },
-    { key: 'archived', label: '📦 アーカイブ' },
+    { key: 'archived', label: 'アーカイブ' },
   ] as const;
 
   const filteredInbox = inboxFilter === 'archived' ? archivedMessages : inboxMessages.filter(m => {
@@ -2119,8 +2134,8 @@ const BoardPage: React.FC = () => {
             <div style={{ display: 'flex', overflowX: 'auto', borderBottom: `1px solid ${border}`, background: cardBg, padding: '0 8px' }}>
               {INBOX_FILTERS.map(f => (
                 <button key={f.key} type="button" onClick={() => { setInboxFilter(f.key); if (f.key === 'archived') loadArchived(); }}
-                  style={{ padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: inboxFilter === f.key ? 700 : 400, color: inboxFilter === f.key ? '#007bff' : subColor, borderBottom: inboxFilter === f.key ? '2px solid #007bff' : '2px solid transparent', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                  {f.label}
+                  style={{ padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: inboxFilter === f.key ? 700 : 400, color: inboxFilter === f.key ? '#007bff' : subColor, borderBottom: inboxFilter === f.key ? '2px solid #007bff' : '2px solid transparent', whiteSpace: 'nowrap', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  {f.key === 'archived' ? <><ArchiveIcon size={13} /> アーカイブ</> : f.label}
                 </button>
               ))}
             </div>
@@ -2230,12 +2245,16 @@ const BoardPage: React.FC = () => {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                       <button type="button" onClick={e => toggleFavMessage(e, msg.id, msg)}
+                        title={favMessageIds.has(msg.id) ? 'お気に入り解除' : 'お気に入りに追加'}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: '1px 3px', color: favMessageIds.has(msg.id) ? '#f59e0b' : (isDark ? '#666' : '#ccc') }}>
                         {favMessageIds.has(msg.id) ? '★' : '☆'}
                       </button>
                       <button type="button" onClick={e => { e.stopPropagation(); archiveMessage(msg.id, !isArchived); }}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: '1px 3px', color: subColor }}>
-                        {isArchived ? '📥' : '📦'}
+                        title={isArchived ? '受信トレイに戻す' : 'アーカイブ'}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '1px 3px', color: subColor, display: 'flex', alignItems: 'center' }}>
+                        {isArchived
+                          ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'block' }}><path d="M21 8v13H3V8" /><rect x="1" y="3" width="22" height="5" rx="1" /><polyline points="10 11 12 9 14 11" /><line x1="12" y1="9" x2="12" y2="15" /></svg>
+                          : <ArchiveIcon size={14} />}
                       </button>
                     </div>
                   </div>
@@ -2550,8 +2569,9 @@ const BoardPage: React.FC = () => {
                 </button>
                 {!outboxDetail.outbox_hidden && (
                   <button type="button" onClick={() => archiveOutboxMsg(outboxDetail.id)}
-                    style={{ padding: '8px 16px', background: 'none', border: `1.5px solid ${isDark ? '#fd7e14' : '#e67e22'}`, color: isDark ? '#fd7e14' : '#e67e22', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
-                    📦 アーカイブ
+                    title="アーカイブ"
+                    style={{ padding: '8px 16px', background: 'none', border: `1.5px solid ${isDark ? '#fd7e14' : '#e67e22'}`, color: isDark ? '#fd7e14' : '#e67e22', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <ArchiveIcon size={14} /> アーカイブ
                   </button>
                 )}
                 <button type="button" onClick={() => setDeleteConfirmId(outboxDetail.id)}
@@ -2566,10 +2586,10 @@ const BoardPage: React.FC = () => {
         <>
           <div style={{ paddingTop: 52, flexShrink: 0 }}>
             <div style={{ display: 'flex', borderBottom: `1px solid ${border}`, background: cardBg }}>
-              {([['sent', '送信済み'], ['scheduled', '📅 予約済み'], ['draft', '下書き'], ['archive', '📦 アーカイブ']] as const).map(([tab, label]) => (
+              {([['sent', '送信済み'], ['scheduled', '📅 予約済み'], ['draft', '下書き'], ['archive', 'アーカイブ']] as const).map(([tab, label]) => (
                 <button key={tab} type="button" onClick={() => setOutboxTab(tab)}
-                  style={{ flex: 1, padding: '10px 0', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: outboxTab === tab ? 700 : 400, color: outboxTab === tab ? '#007bff' : subColor, borderBottom: outboxTab === tab ? '2px solid #007bff' : '2px solid transparent' }}>
-                  {label}
+                  style={{ flex: 1, padding: '10px 0', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: outboxTab === tab ? 700 : 400, color: outboxTab === tab ? '#007bff' : subColor, borderBottom: outboxTab === tab ? '2px solid #007bff' : '2px solid transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
+                  {tab === 'archive' ? <><ArchiveIcon size={12} /> {label}</> : label}
                 </button>
               ))}
             </div>
@@ -2699,8 +2719,8 @@ const BoardPage: React.FC = () => {
                           <span style={{ fontSize: 10, color: subColor }}>{recipientIds.length}人</span>
                           <button type="button"
                             onClick={e => { e.stopPropagation(); archiveOutboxMsg(msg.id); }}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: '1px 3px', color: subColor }}
-                            title="アーカイブ">📦</button>
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '1px 3px', color: subColor, display: 'flex', alignItems: 'center' }}
+                            title="アーカイブ"><ArchiveIcon size={14} /></button>
                         </div>
                       </div>
                       <div onClick={() => { setOutboxDetailId(msg.id); setShowAllOutboxRecipients(false); }} style={{ cursor: 'pointer' }}>
