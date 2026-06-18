@@ -156,13 +156,13 @@ const BoardPage: React.FC = () => {
   const [inboxDetailUnconfirmed,  setInboxDetailUnconfirmed]  = useState<string[]>([]);
   const [inboxRemindSending,      setInboxRemindSending]      = useState(false);
   const [archiveBulkPeriod,       setArchiveBulkPeriod]       = useState<'1m' | '3m' | '1y' | 'all' | ''>('');
-  const [archiveBulkDeleting,     setArchiveBulkDeleting]     = useState(false);
+  const [archiveBulkDeleting] = useState(false);
 
   // 送信トレイ
   const [outboxMessages,         setOutboxMessages]         = useState<BoardMessage[]>([]);
   const [outboxArchivedMessages, setOutboxArchivedMessages] = useState<BoardMessage[]>([]);
   const [outboxTab,              setOutboxTab]              = useState<'sent' | 'scheduled' | 'draft' | 'archive'>('sent');
-  const [outboxArchiveConfirmId, setOutboxArchiveConfirmId] = useState<string | null>(null);
+  const [, setOutboxArchiveConfirmId] = useState<string | null>(null);
   const [outboxArchiveSelected,  setOutboxArchiveSelected]  = useState<Set<string>>(new Set());
   const [outboxArchiveDelConfirm, setOutboxArchiveDelConfirm] = useState(false);
   const [inboxArchiveSelected,   setInboxArchiveSelected]   = useState<Set<string>>(new Set());
@@ -216,8 +216,6 @@ const BoardPage: React.FC = () => {
   const [newAnswerLocation,    setNewAnswerLocation]    = useState('');
   const [newAnswerLink,        setNewAnswerLink]        = useState('');
   const [replyBody,            setReplyBody]            = useState('');
-  const [editingId,   setEditingId]   = useState<string | null>(null);
-  const [editBody,         setEditBody]         = useState('');
   const [inboxReadIds,          setInboxReadIds]          = useState<Set<string>>(new Set());
   const [sending,               setSending]               = useState(false);
   const [showSendConfirm,       setShowSendConfirm]       = useState(false);
@@ -809,21 +807,6 @@ const BoardPage: React.FC = () => {
     setSending(false);
   };
 
-  const saveEdit = async (id: string) => {
-    if (!editBody.trim()) return;
-    const { error } = await supabase
-      .from('board_messages')
-      .update({ body: editBody.trim(), edited_at: new Date().toISOString() })
-      .eq('id', id)
-      .select('id');
-    if (!error) {
-      setMessages(prev => prev.map(m => m.id === id ? { ...m, body: editBody.trim(), edited_at: new Date().toISOString() } : m));
-      setSaveBanner(true);
-      setTimeout(() => setSaveBanner(false), 3000);
-    }
-    setEditingId(null);
-  };
-
   const deleteMessage = async (id: string) => {
     const { error } = await supabase.from('board_messages').delete().eq('id', id);
     if (!error) setMessages(prev => prev.filter(m => m.id !== id && m.parent_id !== id));
@@ -870,21 +853,6 @@ const BoardPage: React.FC = () => {
     if (msg) setOutboxArchivedMessages(prev => [{ ...msg, outbox_hidden: true }, ...prev]);
     setOutboxArchiveConfirmId(null);
     if (outboxDetailId === msgId) { setOutboxDetailId(null); setShowAllOutboxRecipients(false); }
-  };
-
-  const bulkDeleteOutboxArchived = async (cutoff: Date | null) => {
-    const targets = cutoff
-      ? outboxArchivedMessages.filter(m => new Date(m.created_at) < cutoff)
-      : outboxArchivedMessages;
-    if (targets.length === 0) return;
-    for (const m of targets) {
-      await supabase.from('board_confirmations').delete().eq('message_id', m.id);
-      await supabase.from('board_reads').delete().eq('message_id', m.id);
-      await supabase.from('board_message_recipients').delete().eq('message_id', m.id);
-      await supabase.from('board_messages').delete().eq('id', m.id);
-    }
-    const targetIds = new Set(targets.map(m => m.id));
-    setOutboxArchivedMessages(prev => prev.filter(m => !targetIds.has(m.id)));
   };
 
   const startDM = async (targetId: string) => {
