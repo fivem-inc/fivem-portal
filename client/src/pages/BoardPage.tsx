@@ -159,7 +159,7 @@ const BoardPage: React.FC = () => {
 
   // 受信トレイ
   const [inboxMessages,    setInboxMessages]    = useState<BoardMessage[]>([]);
-  const [inboxFilter,      setInboxFilter]      = useState<'all' | 'pending' | 'read' | 'answer' | 'submit' | 'approve' | 'archived'>('all');
+  const [inboxFilter,      setInboxFilter]      = useState<'all' | 'unread' | 'pending' | 'read' | 'answer' | 'submit' | 'approve' | 'archived'>('all');
   const [inboxDetailId,    setInboxDetailId]    = useState<string | null>(null);
   const [inboxRecipients,  setInboxRecipients]  = useState<Record<string, string[]>>({});
   const [archivedMessages, setArchivedMessages] = useState<BoardMessage[]>([]);
@@ -1865,7 +1865,7 @@ const BoardPage: React.FC = () => {
       <div ref={channelListRef} style={{ overflowY: 'auto', flex: 1, minHeight: 0, paddingTop: showSearch ? 96 : 56 }}>
         {/* ── 受信・送信・お気に入り ── */}
         {[
-          { key: 'inbox'  as const, icon: '📨', label: '受信トレイ', bg: isDark ? '#1e3a5f' : '#dbeafe', badge: inboxUnread, onClick: () => { setView('inbox'); setShowSidebar(false); setInboxDetailId(null); } },
+          { key: 'inbox'  as const, icon: '📨', label: '受信トレイ', bg: isDark ? '#1e3a5f' : '#dbeafe', badge: inboxUnread, onClick: () => { setView('inbox'); setInboxFilter('all'); setShowSidebar(false); setInboxDetailId(null); } },
           { key: 'outbox' as const, icon: '📤', label: '送信トレイ',   bg: isDark ? '#1e3a2a' : '#dcfce7', badge: 0,           onClick: () => { setView('outbox'); setShowSidebar(false); setOutboxDetailId(null); } },
         ].map(item => {
           const isActive = view === item.key && !showSidebar;
@@ -1878,7 +1878,10 @@ const BoardPage: React.FC = () => {
               <div style={{ width: 38, height: 38, borderRadius: 10, background: item.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>{item.icon}</div>
               <span style={{ flex: 1, fontSize: 14, fontWeight: isActive ? 700 : 500, color: textColor, textAlign: 'left' }}>{item.label}</span>
               {item.badge > 0 && (
-                <span style={{ background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 11, minWidth: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px', fontWeight: 'bold', flexShrink: 0 }}>{item.badge}</span>
+                <span
+                  onClick={item.key === 'inbox' ? (e => { e.stopPropagation(); setView('inbox'); setInboxFilter('unread'); setShowSidebar(false); setInboxDetailId(null); }) : undefined}
+                  title={item.key === 'inbox' ? '未読だけ表示' : undefined}
+                  style={{ background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 11, minWidth: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px', fontWeight: 'bold', flexShrink: 0, cursor: item.key === 'inbox' ? 'pointer' : 'inherit' }}>{item.badge}</span>
               )}
             </div>
           );
@@ -1953,6 +1956,7 @@ const BoardPage: React.FC = () => {
   // ── 受信トレイ ────────────────────────────────────────────────
   const INBOX_FILTERS = [
     { key: 'all',      label: 'すべて' },
+    { key: 'unread',   label: '未読' },
     { key: 'pending',  label: '未対応' },
     { key: 'read',     label: '読了' },
     { key: 'answer',   label: '回答' },
@@ -1963,6 +1967,7 @@ const BoardPage: React.FC = () => {
 
   const filteredInbox = inboxFilter === 'archived' ? archivedMessages : inboxMessages.filter(m => {
     if (inboxFilter === 'all') return true;
+    if (inboxFilter === 'unread') return !inboxReadIds.has(m.id);
     if (inboxFilter === 'pending') {
       const confirmed = (confirmations[m.id] || []).some(c => c.user_id === user?.id);
       return (m.requires_confirmation || m.deadline_type) && !confirmed;
@@ -2245,7 +2250,7 @@ const BoardPage: React.FC = () => {
           <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px' }}>
             {filteredInbox.length === 0 ? (
               <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>
-                {inboxFilter === 'all' ? 'お知らせはありません' : '該当するお知らせはありません'}
+                {inboxFilter === 'all' ? 'お知らせはありません' : inboxFilter === 'unread' ? '未読のお知らせはありません' : '該当するお知らせはありません'}
               </div>
             ) : filteredInbox.map(msg => {
               const senderName = allProfiles.find(p => p.id === msg.user_id)?.name || '不明';
