@@ -3739,6 +3739,59 @@ ALTER TABLE board_messages ADD COLUMN cc_user_ids text[] DEFAULT '{}';
 
 ---
 
+## ✅ 2026-06-22 連絡板 DM作成403修正・UI改善・グループ/DM送信ボタン 完了
+
+### 🔥 最重要：DM作成が社長だけ403で失敗していた問題（根本原因と修正）
+
+**症状**: 管理者はDM作成できるのに、社長など非管理者は「DM開始」を押しても作成できず403 Forbidden。
+
+**根本原因**: DM作成は ①board_channels にINSERT → ②board_channel_members にメンバー追加、の2ステップ。
+クライアントは①を `?select=*` 付きで実行するため、PostgRESTが挿入直後にその行を **SELECTで読み返す**。
+しかし②のメンバー登録はまだ完了しておらず、`board_channels_select` ポリシー
+（`id IN (自分がメンバーのchannel) OR admin`）に弾かれて403。管理者は `OR admin` の抜け道で通っていた。
+
+**修正（適用済みSQL）**: SELECTポリシーに「自分が作成したチャンネルは読める」を追加。
+```sql
+-- 20260622010000_fix_board_channels_select_creator.sql（Supabaseダッシュボードで適用済み）
+DROP POLICY IF EXISTS board_channels_select ON public.board_channels;
+CREATE POLICY board_channels_select ON public.board_channels FOR SELECT TO authenticated
+USING (
+  id IN (SELECT channel_id FROM public.board_channel_members WHERE user_id = auth.uid())
+  OR created_by = auth.uid()
+  OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'
+);
+```
+- 併せて `20260622000000_force_board_channels_created_by.sql`（created_byをauth.uid()で強制するトリガー・適用済み）も追加したが、本命は上記SELECTポリシー修正。
+- ⚠️ 教訓: PostgRESTの `INSERT ?select=*` は **INSERT(WITH CHECK)とSELECT(USING)の両方** を通過する必要がある。
+  作成直後にまだ閲覧権限が無い行は読み返しで403になる → 作成者は created_by で常に読めるようにする。
+
+### BoardPage.tsx 変更
+- **リプライボタンを受信/送信トレイで非表示**: `renderMsg` は連絡板とお知らせ共通描画のため、
+  リプライUIがお知らせにも漏れていた。`msg.channel_id` がある（=チャンネル/DM）時のみ表示に修正。
+- **DM作成の自動リトライ**: `insertBoardChannel` ヘルパー追加（403時に refreshSession して1回リトライ）。
+  startDM/sendBroadcast に適用。失敗時は赤枠エラー表示・ボタンは「作成中...」でロック。
+- **ヘッダー高さ揃え**: 左「連絡板」と右チャンネルヘッダーを両方 `height: 56` 固定（右の2行テキストは
+  `lineHeight: 1.2`）。下のコンテンツ余白も52→56に統一。
+- **border/borderLeft 混在の警告解消**: 受信トレイカードを4辺個別指定に変更。
+- **ボタン文言・権限表示**:
+  - 上部「＋送信」→「＋お知らせ送信」（通知設定は🔔アイコン化してPC2段折返し解消）
+  - グループ欄に「＋グループ作成」ボタン（管理者 ＋ 設定で選ばれた人 ＋ 未設定ならCC代表者）
+  - DM欄「＋」→「＋DM送信」ボタン（DM送信権限を持つ人に表示）
+
+### BoardSettingsTab.tsx 変更
+- 「👥 グループを作成できる人」設定セクションを新設（CC代表者設定と同じチェックボックスUI）。
+  - 保存先: `app_settings` の `board_group_create_user_ids`（特定ユーザーIDの配列）
+  - 未設定の場合は「お知らせ自動CCの代表者」と同じ人がグループ作成可（BoardPage側でフォールバック）
+
+### DMの仕様メモ（確認事項）
+- DM送信モーダルは複数選択可。**1人＝1対1のDM、複数＝一斉送信**（選んだ人それぞれに個別DMを配信。グループDMではない）。
+- 選択UIは既に「名前検索＋雇用形態別の一覧チェックボックス」になっている。
+
+### コミット
+- `(このセッションのコミット後に記録)`
+
+---
+
 ### 🔜 次回タスク（2026-06-18 最新）
 
 1. **忘れん坊通知①②③**（send-push Edge Function 完成済み・呼び出し側を実装）

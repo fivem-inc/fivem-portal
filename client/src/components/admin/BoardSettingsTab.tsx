@@ -57,6 +57,12 @@ const BoardSettingsTab: React.FC = () => {
   const [editingCC, setEditingCC] = useState(false);
   const [pendingCCIds, setPendingCCIds] = useState<string[]>([]);
 
+  // グループ作成できる人設定
+  const GROUP_CREATE_KEY = 'board_group_create_user_ids';
+  const [groupCreateUserIds, setGroupCreateUserIds] = useState<string[]>([]);
+  const [editingGroupCreate, setEditingGroupCreate] = useState(false);
+  const [pendingGroupCreateIds, setPendingGroupCreateIds] = useState<string[]>([]);
+
   // グループチャンネル作成
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newChannelName, setNewChannelName] = useState('');
@@ -74,7 +80,7 @@ const BoardSettingsTab: React.FC = () => {
 
   useEffect(() => {
     (async () => {
-      const [chRes, profRes, memRes, dmSettingsRes, readDetailRes, noticeSendRes, ccRes] = await Promise.all([
+      const [chRes, profRes, memRes, dmSettingsRes, readDetailRes, noticeSendRes, ccRes, groupCreateRes] = await Promise.all([
         supabase.from('board_channels').select('id, name, type, send_permissions, show_read_detail').order('type').order('created_at'),
         supabase.from('profiles').select('id, name, employment_type, role_title').eq('is_active', true),
         supabase.from('board_channel_members').select('channel_id, user_id'),
@@ -82,6 +88,7 @@ const BoardSettingsTab: React.FC = () => {
         supabase.from('master_options').select('value').eq('category', 'board_show_read_detail').limit(1),
         supabase.from('app_settings').select('value').eq('key', 'board_notice_send_roles').maybeSingle(),
         supabase.from('app_settings').select('value').eq('key', 'board_notice_cc_user_ids').maybeSingle(),
+        supabase.from('app_settings').select('value').eq('key', GROUP_CREATE_KEY).maybeSingle(),
       ]);
       const profiles: Profile[] = profRes.data || [];
       setAllProfiles(profiles);
@@ -109,6 +116,9 @@ const BoardSettingsTab: React.FC = () => {
       }
       if (ccRes?.data?.value) {
         setNoticeCCUserIds(ccRes.data.value as string[]);
+      }
+      if (groupCreateRes?.data?.value) {
+        setGroupCreateUserIds(groupCreateRes.data.value as string[]);
       }
 
       const ets = [...new Set(profiles.map((p: Profile) => p.employment_type).filter(Boolean))] as string[];
@@ -486,6 +496,90 @@ const BoardSettingsTab: React.FC = () => {
                 showBanner();
               }} style={{ padding: '5px 18px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>
                 保存（{pendingCCIds.length}人）
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── グループ作成できる人設定 ── */}
+      <div style={{ marginBottom: 20, padding: '12px 14px', background: rowBg, borderRadius: 8, border: `1px solid ${border}` }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 'bold', color: text }}>👥 グループを作成できる人</div>
+            <div style={{ fontSize: 12, color: sub, marginTop: 2 }}>
+              {groupCreateUserIds.length === 0
+                ? '未設定（管理者＋お知らせ自動CCの代表者が作成可）'
+                : `管理者・${groupCreateUserIds.map(id => allProfiles.find(p => p.id === id)?.name || '不明').join('・')} が作成可`}
+            </div>
+          </div>
+          <button type="button" onClick={() => { setEditingGroupCreate(v => !v); setPendingGroupCreateIds([...groupCreateUserIds]); }}
+            style={{ padding: '5px 12px', borderRadius: 6, border: `1px solid ${border}`, background: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 12, fontWeight: 'bold', flexShrink: 0 }}>
+            {editingGroupCreate ? 'キャンセル' : '設定'}
+          </button>
+        </div>
+        {editingGroupCreate && (
+          <div>
+            <div style={{ fontSize: 12, color: sub, marginBottom: 6 }}>
+              選択した人は連絡板で「＋グループ作成」ボタンが表示され、グループを作成できます（管理者は常に作成可）。誰も選ばない場合は「お知らせ自動CCの代表者」と同じ人が作成できます。
+            </div>
+            <div style={{ maxHeight: 260, overflowY: 'auto', border: `1px solid ${border}`, borderRadius: 8, marginBottom: 10 }}>
+              {EMP_ORDER.concat(
+                [...new Set(allProfiles.map(p => p.employment_type || 'その他'))].filter(et => !EMP_ORDER.includes(et))
+              ).map((et, gi) => {
+                const etProfiles = allProfiles.filter(p => (p.employment_type || 'その他') === et);
+                if (etProfiles.length === 0) return null;
+                const roles = [...new Set(etProfiles.map(p => p.role_title || 'その他'))].sort((a, b) => {
+                  const ai = roleTitles.indexOf(a), bi = roleTitles.indexOf(b);
+                  if (ai === -1 && bi === -1) return a > b ? 1 : -1;
+                  if (ai === -1) return 1; if (bi === -1) return -1;
+                  return ai - bi;
+                });
+                return (
+                  <div key={et}>
+                    <div style={{ padding: '4px 10px', background: isDark ? '#2d3136' : '#e9ecef', borderTop: gi > 0 ? `2px solid ${isDark ? '#6c757d' : '#bbb'}` : undefined }}>
+                      <span style={{ fontSize: 11, fontWeight: 'bold', color: isDark ? '#adb5bd' : '#444' }}>{et}</span>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap' }}>
+                      {roles.map((role, ri) => {
+                        const roleProfiles = etProfiles.filter(p => (p.role_title || 'その他') === role).sort((a, b) => (a.name || '') > (b.name || '') ? 1 : -1);
+                        const allRoleSel = roleProfiles.length > 0 && roleProfiles.every(p => pendingGroupCreateIds.includes(p.id));
+                        return (
+                          <div key={role} style={{ flex: '1 1 120px', borderLeft: ri > 0 ? `1px solid ${isDark ? '#3d4349' : '#e0e0e0'}` : undefined, padding: '5px 8px' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 3, cursor: 'pointer' }}>
+                              <input type="checkbox" checked={allRoleSel} onChange={() => {
+                                const ids = roleProfiles.map(p => p.id);
+                                setPendingGroupCreateIds(prev => allRoleSel ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])]);
+                              }} />
+                              <span style={{ fontSize: 10, fontWeight: 'bold', color: isDark ? '#adb5bd' : '#555' }}>{role}</span>
+                            </label>
+                            {roleProfiles.map(p => {
+                              const on = pendingGroupCreateIds.includes(p.id);
+                              return (
+                                <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 0', cursor: 'pointer', fontSize: 12, color: on ? (isDark ? '#93c5fd' : '#1d4ed8') : text, fontWeight: on ? 'bold' : 'normal' }}>
+                                  <input type="checkbox" checked={on} onChange={e => setPendingGroupCreateIds(prev => e.target.checked ? [...prev, p.id] : prev.filter(id => id !== p.id))} />
+                                  {p.name || '不明'}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" onClick={() => setPendingGroupCreateIds([])}
+                style={{ padding: '5px 12px', background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: sub, cursor: 'pointer', fontSize: 12 }}>全解除</button>
+              <button type="button" onClick={async () => {
+                await supabase.from('app_settings').upsert({ key: GROUP_CREATE_KEY, value: pendingGroupCreateIds }, { onConflict: 'key' });
+                setGroupCreateUserIds([...pendingGroupCreateIds]);
+                setEditingGroupCreate(false);
+                showBanner();
+              }} style={{ padding: '5px 18px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>
+                保存（{pendingGroupCreateIds.length}人）
               </button>
             </div>
           </div>

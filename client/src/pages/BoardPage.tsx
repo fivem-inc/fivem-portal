@@ -146,6 +146,7 @@ const BoardPage: React.FC = () => {
   const [dmDefaultPerms, setDmDefaultPerms] = useState<SendPermissions | null>(null);
   const [noticeSendRoles, setNoticeSendRoles] = useState<string[]>([]); // 空=全員OK
   const [noticeCCUserIds, setNoticeCCUserIds] = useState<string[]>([]);  // 管理者・代表者自動CC
+  const [groupCreateUserIds, setGroupCreateUserIds] = useState<string[]>([]); // グループ作成できる人（管理者は常に可）
   const [composeIncludeCC, setComposeIncludeCC] = useState(true);
   const [channelDeleteConfirmId, setChannelDeleteConfirmId] = useState<string | null>(null);
 
@@ -246,6 +247,8 @@ const BoardPage: React.FC = () => {
   const [showDMSearch,     setShowDMSearch]     = useState(false);
   const [dmQuery,          setDmQuery]          = useState('');
   const [dmSelectedIds,    setDmSelectedIds]    = useState<string[]>([]);
+  const [dmError,          setDmError]          = useState('');
+  const [dmCreating,       setDmCreating]       = useState(false);
   const [broadcastMessage, setBroadcastMessage] = useState('');
   const [loadingData,      setLoadingData]      = useState(true);
   const [readDetailMsgId,  setReadDetailMsgId]  = useState<string | null>(null);
@@ -286,7 +289,7 @@ const BoardPage: React.FC = () => {
       setChannels([]); setMessages([]); setLoadingData(false); return;
     }
 
-    const [chRes, memRes, msgRes, lsRes, profRes, settingsRes, dmSettingsRes, noticeSendRes, ccSettingsRes] = await Promise.all([
+    const [chRes, memRes, msgRes, lsRes, profRes, settingsRes, dmSettingsRes, noticeSendRes, ccSettingsRes, groupCreateRes] = await Promise.all([
       supabase.from('board_channels').select('id, type, name, created_by, created_at, send_permissions, show_read_detail').in('id', cids),
       supabase.from('board_channel_members').select('channel_id, user_id').in('channel_id', cids),
       supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, answer_prompt, answer_location, answer_link, broadcast_recipients').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
@@ -296,10 +299,12 @@ const BoardPage: React.FC = () => {
       supabase.from('app_settings').select('value').eq('key', 'dm_default_send_permissions').maybeSingle(),
       supabase.from('app_settings').select('value').eq('key', 'board_notice_send_roles').maybeSingle(),
       supabase.from('app_settings').select('value').eq('key', 'board_notice_cc_user_ids').maybeSingle(),
+      supabase.from('app_settings').select('value').eq('key', 'board_group_create_user_ids').maybeSingle(),
     ]);
     if (dmSettingsRes.data?.value) setDmDefaultPerms(dmSettingsRes.data.value as SendPermissions);
     if (noticeSendRes.data?.value) setNoticeSendRoles(noticeSendRes.data.value as string[]);
     if (ccSettingsRes?.data?.value) setNoticeCCUserIds(ccSettingsRes.data.value as string[]);
+    if (groupCreateRes?.data?.value) setGroupCreateUserIds(groupCreateRes.data.value as string[]);
 
     setChannels((chRes.data || []) as Channel[]);
     setMembers((memRes.data || []).map((m: any) => ({ channel_id: m.channel_id, user_id: m.user_id, profile: null })));
@@ -765,6 +770,22 @@ const BoardPage: React.FC = () => {
     return employment_types.includes(myProfile.employment_type || '') || role_titles.includes(myProfile.role_title || '');
   };
 
+  // DM送信権限（管理者は常に可・未設定なら全員可）
+  const canStartDM = (() => {
+    if (isAdmin) return true;
+    if (!dmDefaultPerms) return true;
+    const { employment_types, role_titles } = dmDefaultPerms;
+    if (employment_types.length === 0 && role_titles.length === 0) return true;
+    const myProfile = allProfiles.find(p => p.id === user?.id);
+    if (!myProfile) return false;
+    return employment_types.includes(myProfile.employment_type || '') || role_titles.includes(myProfile.role_title || '');
+  })();
+
+  // グループ作成権限（管理者は常に可・設定で選ばれた人・未設定ならCC代表者と同じ人）
+  const canCreateGroup = isAdmin
+    || groupCreateUserIds.includes(user?.id ?? '')
+    || (groupCreateUserIds.length === 0 && noticeCCUserIds.includes(user?.id ?? ''));
+
   const sendMessage = async (parentId?: string) => {
     if (!selectedChannelId || !user) return;
     const body = parentId ? replyBody : newBody;
@@ -868,6 +889,16 @@ const BoardPage: React.FC = () => {
     if (outboxDetailId === msgId) { setOutboxDetailId(null); setShowAllOutboxRecipients(false); }
   };
 
+  // チャンネル作成（トークン更新直後の403は1回だけセッション再取得してリトライ）
+  const insertBoardChannel = async (payload: { type: 'dm' | 'group' | 'sent_mail'; created_by: string }) => {
+    let { data, error } = await supabase.from('board_channels').insert(payload).select().single();
+    if (error) {
+      await supabase.auth.refreshSession();
+      ({ data, error } = await supabase.from('board_channels').insert(payload).select().single());
+    }
+    return { data, error };
+  };
+
   const startDM = async (targetId: string) => {
     if (!user) return;
     // 既存DMを探す
@@ -877,11 +908,9 @@ const BoardPage: React.FC = () => {
         selectChannel(ch.id); setShowDMSearch(false); return;
       }
     }
-    // 新規DM作成
-    const { data: ch } = await supabase
-      .from('board_channels')
-      .insert({ type: 'dm', created_by: user.id })
-      .select().single();
+    setDmError('');
+    setDmCreating(true);
+    const { data: ch } = await insertBoardChannel({ type: 'dm', created_by: user.id });
     if (ch) {
       await supabase.from('board_channel_members').insert([
         { channel_id: ch.id, user_id: user.id },
@@ -889,8 +918,11 @@ const BoardPage: React.FC = () => {
       ]);
       await loadAll();
       selectChannel(ch.id);
+      setShowDMSearch(false); setDmQuery('');
+    } else {
+      setDmError('DMの作成に失敗しました。もう一度お試しください（直らない場合はページを再読み込みしてください）');
     }
-    setShowDMSearch(false); setDmQuery('');
+    setDmCreating(false);
   };
 
   const sendBroadcast = async () => {
@@ -900,10 +932,7 @@ const BoardPage: React.FC = () => {
     // 送信メールチャンネルを取得or作成
     let sentMailCh = channels.find(c => c.type === 'sent_mail' && c.created_by === user.id);
     if (!sentMailCh) {
-      const { data: newCh } = await supabase
-        .from('board_channels')
-        .insert({ type: 'sent_mail', created_by: user.id })
-        .select().single();
+      const { data: newCh } = await insertBoardChannel({ type: 'sent_mail', created_by: user.id });
       if (newCh) {
         await supabase.from('board_channel_members').insert({ channel_id: newCh.id, user_id: user.id });
         sentMailCh = newCh as Channel;
@@ -918,10 +947,7 @@ const BoardPage: React.FC = () => {
         return mems.some(m => m.user_id === targetId) && mems.some(m => m.user_id === user.id);
       });
       if (!dmCh) {
-        const { data: newDm } = await supabase
-          .from('board_channels')
-          .insert({ type: 'dm', created_by: user.id })
-          .select().single();
+        const { data: newDm } = await insertBoardChannel({ type: 'dm', created_by: user.id });
         if (newDm) {
           await supabase.from('board_channel_members').insert([
             { channel_id: newDm.id, user_id: user.id },
@@ -1277,8 +1303,8 @@ const BoardPage: React.FC = () => {
           {/* Footer (parent only) */}
           {!isReply && (
             <div style={{ marginTop: 6 }}>
-              {/* 最新リプライのプレビュー */}
-              {replyCount > 0 && (() => {
+              {/* 最新リプライのプレビュー（チャンネル/DMのみ。お知らせには出さない） */}
+              {!!msg.channel_id && replyCount > 0 && (() => {
                 const latestReply = replies[replies.length - 1];
                 const replierName = allProfiles.find(p => p.id === latestReply.user_id)?.name || '不明';
                 const myLastSeen = lastSeen[msg.channel_id ?? ''] || '';
@@ -1300,7 +1326,7 @@ const BoardPage: React.FC = () => {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
               <button type="button" onClick={() => setThreadMsgId(msg.id)}
                 style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 12, padding: 0 }}>
-                {replyCount === 0 ? '💬 リプライ' : null}
+                {msg.channel_id && replyCount === 0 ? '💬 リプライ' : null}
               </button>
               {(() => {
                 const chMemberCount = msg.channel_id
@@ -1758,13 +1784,18 @@ const BoardPage: React.FC = () => {
               style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, marginTop: 8, boxSizing: 'border-box', resize: 'vertical' }}
             />
           )}
+          {dmError && (
+            <div style={{ marginTop: 8, padding: '8px 10px', background: isDark ? '#2d1a1a' : '#fff5f5', border: `1px solid ${isDark ? '#7f1d1d' : '#fca5a5'}`, borderRadius: 6, color: '#dc2626', fontSize: 12 }}>
+              {dmError}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-            <button type="button" onClick={() => { setShowDMSearch(false); setDmQuery(''); setDmSelectedIds([]); setBroadcastMessage(''); }}
+            <button type="button" onClick={() => { setShowDMSearch(false); setDmQuery(''); setDmSelectedIds([]); setBroadcastMessage(''); setDmError(''); }}
               style={{ flex: 1, padding: 10, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
             {isSingle && (
-              <button type="button" onClick={() => startDM(dmSelectedIds[0])}
-                style={{ flex: 1, padding: 10, background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>
-                DMを開始
+              <button type="button" onClick={() => startDM(dmSelectedIds[0])} disabled={dmCreating}
+                style={{ flex: 1, padding: 10, background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, opacity: dmCreating ? 0.6 : 1 }}>
+                {dmCreating ? '作成中...' : 'DMを開始'}
               </button>
             )}
             {isMulti && (
@@ -1831,7 +1862,7 @@ const BoardPage: React.FC = () => {
 
   const channelListPanel = (
     <div style={{ width: isMobile ? '100%' : 280, background: sidebarBg, borderRight: isMobile ? 'none' : `1px solid ${border}`, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, flexShrink: 0 }}>
-      <div ref={channelListRef} style={{ overflowY: 'auto', flex: 1, minHeight: 0, paddingTop: showSearch ? 92 : 52 }}>
+      <div ref={channelListRef} style={{ overflowY: 'auto', flex: 1, minHeight: 0, paddingTop: showSearch ? 96 : 56 }}>
         {/* ── 受信・送信・お気に入り ── */}
         {[
           { key: 'inbox'  as const, icon: '📨', label: '受信トレイ', bg: isDark ? '#1e3a5f' : '#dbeafe', badge: inboxUnread, onClick: () => { setView('inbox'); setShowSidebar(false); setInboxDetailId(null); } },
@@ -1879,9 +1910,9 @@ const BoardPage: React.FC = () => {
           <>
             <div style={{ padding: '8px 14px 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: subColor, letterSpacing: 0.5 }}>👥 グループ</span>
-              {isAdmin && (
+              {canCreateGroup && (
                 <button type="button" onClick={() => setShowGroupModal(true)}
-                  style={{ background: 'none', border: 'none', color: '#6f42c1', cursor: 'pointer', fontSize: 18, padding: 0, lineHeight: 1 }} title="グループ作成">＋</button>
+                  style={{ background: '#6f42c1', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 11, padding: '4px 9px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 3, lineHeight: 1 }} title="グループ作成">＋グループ作成</button>
               )}
             </div>
             {groupChannels.slice(0, expandGroups ? undefined : 3).map(renderChannelRow)}
@@ -1898,8 +1929,10 @@ const BoardPage: React.FC = () => {
             {/* ── DM ── */}
             <div style={{ padding: '10px 16px 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: subColor, letterSpacing: 1 }}>💬 DM</span>
-              <button type="button" onClick={() => setShowDMSearch(true)}
-                style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 16, padding: 0, lineHeight: 1 }} title="DM開始">＋</button>
+              {canStartDM && (
+                <button type="button" onClick={() => setShowDMSearch(true)}
+                  style={{ background: '#4a90d9', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 11, padding: '4px 9px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 3, lineHeight: 1 }} title="DM送信">＋DM送信</button>
+              )}
             </div>
             {dmChannels.slice(0, expandDMs ? undefined : 3).map(renderChannelRow)}
             {dmChannels.length > 3 && (
@@ -2129,7 +2162,7 @@ const BoardPage: React.FC = () => {
       ) : (
         /* 一覧ビュー */
         <>
-          <div style={{ paddingTop: 52, flexShrink: 0 }}>
+          <div style={{ paddingTop: 56, flexShrink: 0 }}>
             {/* フィルタータブ */}
             <div style={{ display: 'flex', overflowX: 'auto', borderBottom: `1px solid ${border}`, background: cardBg, padding: '0 8px' }}>
               {INBOX_FILTERS.map(f => (
@@ -2224,9 +2257,11 @@ const BoardPage: React.FC = () => {
               const accentColor = isOverdue ? '#dc2626' : '#1d4ed8';
               const typeText = dtConfig ? dtConfig.label.replace(/^\S+\s/, '') : '';
               const inboxSel = inboxArchiveSelected.has(msg.id);
+              const cardBorder = isArchived && inboxSel ? '1.5px solid #3b82f6' : confirmed ? '1.5px solid #22c55e' : `1px solid ${border}`;
+              const cardLeftBorder = !inboxReadIds.has(msg.id) && !confirmed ? '3px solid #4a90d9' : cardBorder;
               return (
                 <div key={msg.id}
-                  style={{ background: cardBg, border: isArchived && inboxSel ? '1.5px solid #3b82f6' : confirmed ? '1.5px solid #22c55e' : `1px solid ${border}`, borderRadius: 10, padding: '10px 12px', marginBottom: 6, position: 'relative', borderLeft: !inboxReadIds.has(msg.id) && !confirmed ? '3px solid #4a90d9' : undefined }}>
+                  style={{ background: cardBg, borderTop: cardBorder, borderRight: cardBorder, borderBottom: cardBorder, borderLeft: cardLeftBorder, borderRadius: 10, padding: '10px 12px', marginBottom: 6, position: 'relative' }}>
                   {/* ヘッダー行：送信者 + 時刻 + ★ + 📦 */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -2584,7 +2619,7 @@ const BoardPage: React.FC = () => {
         </div>
       ) : (
         <>
-          <div style={{ paddingTop: 52, flexShrink: 0 }}>
+          <div style={{ paddingTop: 56, flexShrink: 0 }}>
             <div style={{ display: 'flex', borderBottom: `1px solid ${border}`, background: cardBg }}>
               {([['sent', '送信済み'], ['scheduled', '📅 予約済み'], ['draft', '下書き'], ['archive', 'アーカイブ']] as const).map(([tab, label]) => (
                 <button key={tab} type="button" onClick={() => setOutboxTab(tab)}
@@ -3096,18 +3131,18 @@ const BoardPage: React.FC = () => {
     <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column', background: bg, overflow: 'hidden', paddingTop: 60, boxSizing: 'border-box' } as React.CSSProperties}>
       {/* サイドバーヘッダー */}
       {(showSidebar || !isMobile) && (
-        <div style={{ position: 'fixed', top: 'var(--topbar-height, 60px)' as string, left: 0, zIndex: 50, background: cardBg, borderBottom: `1px solid ${border}`, width: isMobile ? '100%' : 280, boxSizing: 'border-box' }}>
-          <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>💬 連絡板</span>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button type="button" onClick={() => { setShowSearch(s => !s); setSearchText(''); setSearchResults([]); if (view === 'search') setView('inbox'); }}
-                style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '4px 8px', lineHeight: 1 }}>🔍</button>
+        <div style={{ position: 'fixed', top: 'var(--topbar-height, 60px)' as string, left: 0, zIndex: 50, background: cardBg, width: isMobile ? '100%' : 280, boxSizing: 'border-box' }}>
+          <div style={{ padding: '8px 12px', height: 56, boxSizing: 'border-box', borderBottom: `1px solid ${border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor, flexShrink: 0 }}>💬 連絡板</span>
+            <div style={{ display: 'flex', gap: 5, flexWrap: 'nowrap', flexShrink: 0 }}>
+              <button type="button" title="検索" onClick={() => { setShowSearch(s => !s); setSearchText(''); setSearchResults([]); if (view === 'search') setView('inbox'); }}
+                style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '5px 7px', lineHeight: 1, flexShrink: 0 }}>🔍</button>
               {(isAdmin || noticeSendRoles.length === 0 || noticeSendRoles.includes(roleTitle)) && (
                 <button type="button" onClick={() => { resetCompose(); setView('compose'); setShowSidebar(false); }}
-                  style={{ background: '#007bff', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 13, padding: '5px 12px', fontWeight: 'bold' }}>＋送信</button>
+                  style={{ background: '#007bff', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, padding: '5px 10px', fontWeight: 'bold', whiteSpace: 'nowrap', flexShrink: 0 }}>＋お知らせ送信</button>
               )}
-              <button type="button" onClick={() => navigate('/notification-settings')}
-                style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px' }}>通知設定</button>
+              <button type="button" title="通知設定" onClick={() => navigate('/notification-settings')}
+                style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '5px 7px', lineHeight: 1, flexShrink: 0 }}>🔔</button>
             </div>
           </div>
           {showSearch && (
@@ -3125,7 +3160,7 @@ const BoardPage: React.FC = () => {
       )}
       {/* コンテンツヘッダー（モバイル: サイドバー非表示時、デスクトップ: 常時） */}
       {(!showSidebar || !isMobile) && (
-        <div style={{ position: 'fixed', top: 'var(--topbar-height, 60px)' as string, left: isMobile ? 0 : 280, right: 0, zIndex: 50, padding: '10px 14px', minHeight: 48, boxSizing: 'border-box', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ position: 'fixed', top: 'var(--topbar-height, 60px)' as string, left: isMobile ? 0 : 280, right: 0, zIndex: 50, padding: '8px 14px', height: 56, boxSizing: 'border-box', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', gap: 8 }}>
           {isMobile && (
             <button type="button" onClick={() => {
               if (inboxDetailId) { setInboxDetailId(null); return; }
@@ -3141,8 +3176,8 @@ const BoardPage: React.FC = () => {
                 {selectedChannel.type === 'group' ? '👥' : avatarLetter(channelDisplayName(selectedChannel))}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 'bold', color: textColor }}>{channelDisplayName(selectedChannel)}</div>
-                <div style={{ fontSize: 11, color: subColor }}>{currentMembers.length}人</div>
+                <div style={{ fontSize: 14, fontWeight: 'bold', color: textColor, lineHeight: 1.2 }}>{channelDisplayName(selectedChannel)}</div>
+                <div style={{ fontSize: 11, color: subColor, lineHeight: 1.2 }}>{currentMembers.length}人</div>
               </div>
               <button type="button" onClick={openMemberModal} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px', flexShrink: 0 }}>👥 メンバー</button>
             </>
