@@ -36,6 +36,12 @@ const FeaturePermissionsTab: React.FC = () => {
   const [roles, setRoles] = useState<Role[]>([]);
   const [perms, setPerms] = useState<Record<string, Record<string, boolean>>>({});
   const [savedPerms, setSavedPerms] = useState<Record<string, Record<string, boolean>>>({});
+  // 機能の公開/非公開（値が無いキーは公開扱い）
+  const [published, setPublished] = useState<Record<string, boolean>>({});
+  const [savedPublished, setSavedPublished] = useState<Record<string, boolean>>({});
+  // リーダー以上公開（値が無いキーは false）
+  const [publishedLeader, setPublishedLeader] = useState<Record<string, boolean>>({});
+  const [savedPublishedLeader, setSavedPublishedLeader] = useState<Record<string, boolean>>({});
   const [isEditMode, setIsEditMode] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -66,10 +72,19 @@ const FeaturePermissionsTab: React.FC = () => {
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    const [{ data: rolesData }, { data: permsData }] = await Promise.all([
+    const [{ data: rolesData }, { data: permsData }, pubRes, pubLeaderRes] = await Promise.all([
       supabase.from('roles').select('*').order('sort_order'),
       supabase.from('feature_permissions').select('role_id, feature_key, enabled'),
+      supabase.from('app_settings').select('value').eq('key', 'feature_published').maybeSingle(),
+      supabase.from('app_settings').select('value').eq('key', 'feature_published_leader').maybeSingle(),
     ]);
+
+    const pubMap = (pubRes?.data?.value as Record<string, boolean>) || {};
+    setPublished(pubMap);
+    setSavedPublished({ ...pubMap });
+    const pubLeaderMap = (pubLeaderRes?.data?.value as Record<string, boolean>) || {};
+    setPublishedLeader(pubLeaderMap);
+    setSavedPublishedLeader({ ...pubLeaderMap });
 
     const rolesList: Role[] = (rolesData as Role[]) || [];
     setRoles(rolesList);
@@ -108,6 +123,22 @@ const FeaturePermissionsTab: React.FC = () => {
     setIsDirty(true);
   };
 
+  const togglePublish = (featureKey: string) => {
+    setPublished(prev => ({
+      ...prev,
+      [featureKey]: !(prev[featureKey] !== false), // 値なし=公開なので、押すと非公開に
+    }));
+    setIsDirty(true);
+  };
+
+  const togglePublishLeader = (featureKey: string) => {
+    setPublishedLeader(prev => ({
+      ...prev,
+      [featureKey]: !(prev[featureKey] === true), // 値なし=OFFなので、押すとON
+    }));
+    setIsDirty(true);
+  };
+
   const handleSavePerms = async () => {
     setSaving(true);
     const upserts = roles.flatMap(role =>
@@ -118,12 +149,16 @@ const FeaturePermissionsTab: React.FC = () => {
         updated_at:  new Date().toISOString(),
       }))
     );
-    const { error } = await supabase
-      .from('feature_permissions')
-      .upsert(upserts, { onConflict: 'role_id,feature_key' });
+    const [{ error }, { error: pubError }, { error: pubLeaderError }] = await Promise.all([
+      supabase.from('feature_permissions').upsert(upserts, { onConflict: 'role_id,feature_key' }),
+      supabase.from('app_settings').upsert({ key: 'feature_published', value: published, updated_at: new Date().toISOString() }, { onConflict: 'key' }),
+      supabase.from('app_settings').upsert({ key: 'feature_published_leader', value: publishedLeader, updated_at: new Date().toISOString() }, { onConflict: 'key' }),
+    ]);
     setSaving(false);
-    if (error) { alert('保存に失敗しました: ' + error.message); return; }
+    if (error || pubError || pubLeaderError) { alert('保存に失敗しました: ' + (error?.message || pubError?.message || pubLeaderError?.message)); return; }
     setSavedPerms(JSON.parse(JSON.stringify(perms)));
+    setSavedPublished({ ...published });
+    setSavedPublishedLeader({ ...publishedLeader });
     setIsDirty(false);
     setIsEditMode(false);
     setSuccessMsg('権限設定を保存しました');
@@ -498,7 +533,7 @@ const FeaturePermissionsTab: React.FC = () => {
               ) : (
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button
-                    onClick={() => { setPerms(JSON.parse(JSON.stringify(savedPerms))); setIsDirty(false); setIsEditMode(false); }}
+                    onClick={() => { setPerms(JSON.parse(JSON.stringify(savedPerms))); setPublished({ ...savedPublished }); setPublishedLeader({ ...savedPublishedLeader }); setIsDirty(false); setIsEditMode(false); }}
                     style={{ ...btnBase, padding: '5px 12px', fontSize: 12 }}
                   >
                     キャンセル
@@ -530,6 +565,14 @@ const FeaturePermissionsTab: React.FC = () => {
                   <th style={{ fontSize: 12, color: subText, padding: '10px 14px', textAlign: 'left', background: isDarkMode ? '#2d3136' : '#fafafa', borderBottom: `1px solid ${border}`, minWidth: 140 }}>
                     機能
                   </th>
+                  <th style={{ fontSize: 11, color: text, padding: '10px 6px', textAlign: 'center', background: isDarkMode ? '#1a2e1a' : '#f0fff4', borderBottom: `1px solid ${border}`, whiteSpace: 'nowrap', minWidth: 64 }}>
+                    全公開
+                    <div style={{ fontSize: 9, color: subText, fontWeight: 'normal', marginTop: 1 }}>全員に表示</div>
+                  </th>
+                  <th style={{ fontSize: 11, color: text, padding: '10px 6px', textAlign: 'center', background: isDarkMode ? '#1a2030' : '#eef4ff', borderBottom: `1px solid ${border}`, borderRight: `2px solid ${border}`, whiteSpace: 'nowrap', minWidth: 72 }}>
+                    リーダー以上
+                    <div style={{ fontSize: 9, color: subText, fontWeight: 'normal', marginTop: 1 }}>先行公開</div>
+                  </th>
                   {roles.map(role => (
                     <th key={role.id} style={{ fontSize: 11, color: subText, padding: '10px 6px', textAlign: 'center', background: isDarkMode ? '#2d3136' : '#fafafa', borderBottom: `1px solid ${border}`, whiteSpace: 'nowrap', minWidth: 68 }}>
                       {role.name}
@@ -545,6 +588,62 @@ const FeaturePermissionsTab: React.FC = () => {
                       {feat.label}
                       {feat.note && <div style={{ fontSize: 10, color: subText, marginTop: 2 }}>{feat.note}</div>}
                     </td>
+                    {/* 全公開トグル（非公開なら管理者以外には非表示） */}
+                    {(() => {
+                      const pub = published[feat.key] !== false; // 値なし=公開
+                      return (
+                        <td style={{ textAlign: 'center', padding: '8px 6px', borderBottom: `1px solid ${border}`, background: isDarkMode ? '#1a2e1a55' : '#f0fff488' }}>
+                          <button
+                            onClick={() => { if (isEditMode) togglePublish(feat.key); }}
+                            disabled={!isEditMode}
+                            title={!isEditMode ? '「変更する」を押して編集モードに入ってください' : pub ? '全公開中（押すと非公開）' : '非公開（押すと全員に公開）'}
+                            style={{
+                              width: 36, height: 20, borderRadius: 10, border: 'none', padding: 0,
+                              position: 'relative',
+                              cursor: !isEditMode ? 'default' : 'pointer',
+                              background: pub ? '#22c55e' : (isDarkMode ? '#555' : '#ccc'),
+                              opacity: !isEditMode ? 0.7 : 1,
+                              transition: 'background .15s, opacity .15s',
+                            }}
+                          >
+                            <span style={{
+                              position: 'absolute', top: 3,
+                              left: pub ? 19 : 3,
+                              width: 14, height: 14, borderRadius: '50%',
+                              background: '#fff', transition: 'left .15s', display: 'block',
+                            }} />
+                          </button>
+                        </td>
+                      );
+                    })()}
+                    {/* リーダー以上 先行公開トグル */}
+                    {(() => {
+                      const pubL = publishedLeader[feat.key] === true; // 値なし=OFF
+                      return (
+                        <td style={{ textAlign: 'center', padding: '8px 6px', borderBottom: `1px solid ${border}`, borderRight: `2px solid ${border}`, background: isDarkMode ? '#1a203055' : '#eef4ff88' }}>
+                          <button
+                            onClick={() => { if (isEditMode) togglePublishLeader(feat.key); }}
+                            disabled={!isEditMode}
+                            title={!isEditMode ? '「変更する」を押して編集モードに入ってください' : pubL ? 'リーダー以上に公開中（押すとOFF）' : 'OFF（押すとリーダー以上に先行公開）'}
+                            style={{
+                              width: 36, height: 20, borderRadius: 10, border: 'none', padding: 0,
+                              position: 'relative',
+                              cursor: !isEditMode ? 'default' : 'pointer',
+                              background: pubL ? '#3b82f6' : (isDarkMode ? '#555' : '#ccc'),
+                              opacity: !isEditMode ? 0.7 : 1,
+                              transition: 'background .15s, opacity .15s',
+                            }}
+                          >
+                            <span style={{
+                              position: 'absolute', top: 3,
+                              left: pubL ? 19 : 3,
+                              width: 14, height: 14, borderRadius: '50%',
+                              background: '#fff', transition: 'left .15s', display: 'block',
+                            }} />
+                          </button>
+                        </td>
+                      );
+                    })()}
                     {roles.map(role => {
                       const isFixed = role.is_fixed;
                       const on = isFixed ? true : (perms[role.id]?.[feat.key] ?? false);
@@ -579,8 +678,12 @@ const FeaturePermissionsTab: React.FC = () => {
             </table>
           </div>
 
-          <div style={{ padding: '8px 14px', fontSize: 11, color: subText }}>
-            🔵 管理者は常にすべての機能を利用できます（変更不可）
+          <div style={{ padding: '8px 14px', fontSize: 11, color: subText, lineHeight: 1.7 }}>
+            🟢 <strong>全公開</strong>ON … 全員に表示／ 🔵 <strong>リーダー以上</strong>ON … リーダー・マネージャー・フロア責任者・社長に先行表示。<br />
+            ・全公開ON → 全員に表示（リーダー以上の設定は無視）<br />
+            ・全公開OFF＋リーダー以上ON → <strong>リーダー以上だけ</strong>に表示（一般・パートには非表示）<br />
+            ・両方OFF → <strong>管理者のみ</strong>（公開前の準備状態）<br />
+            🔵 管理者は常にすべての機能を利用できます（変更不可）。各役職のトグルは表示される機能の中での可否です。
           </div>
 
         </div>

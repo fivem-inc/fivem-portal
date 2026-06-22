@@ -1,9 +1,32 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 
 const TripReportsTab: React.FC = () => {
   const ctx = useAdminPanel();
   const { isDarkMode, tripReports, loadingTripReports, expandedTripYearMonths, setExpandedTripYearMonths, tripReportFilter, setTripReportFilter, setShowLocationEditor, fetchTripReports, fetchLocationEditor, supabase } = ctx;
+
+  // 区分・報告者・場所での絞り込み
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [reporterFilter, setReporterFilter] = useState<string>('all');
+  const [locationFilter, setLocationFilter] = useState<string>('all');
+
+  // ドロップダウン用の一覧（重複なし）
+  const categoryOptions = Array.from(new Set(
+    tripReports.map(r => r.category).filter(Boolean)
+  )).sort();
+  const reporterOptions = Array.from(new Set(
+    tripReports.map(r => r.profiles?.name || r.profiles?.email || '不明')
+  )).sort();
+  const locationOptions = Array.from(new Set(
+    tripReports.map(r => r.location).filter(Boolean)
+  )).sort();
+
+  const selectStyle: React.CSSProperties = {
+    padding: '6px 10px', borderRadius: 8,
+    border: isDarkMode ? '1px solid #666' : '1px solid #ccc',
+    background: isDarkMode ? '#343a40' : '#fff',
+    color: isDarkMode ? '#fff' : '#333', fontSize: 13, cursor: 'pointer',
+  };
 
   return (
           <div>
@@ -21,7 +44,7 @@ const TripReportsTab: React.FC = () => {
             </div>
 
             {/* フィルターボタン */}
-            <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
               {(['all', '到着', '終了'] as const).map((f) => {
                 const label = f === 'all' ? 'すべて' : f;
                 const isActive = tripReportFilter === f;
@@ -41,15 +64,50 @@ const TripReportsTab: React.FC = () => {
               })}
             </div>
 
+            {/* 区分・報告者・場所での絞り込み */}
+            <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 13, color: isDarkMode ? '#adb5bd' : '#555' }}>🏷️ 区分</span>
+                <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} style={selectStyle}>
+                  <option value="all">すべて</option>
+                  {categoryOptions.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                </select>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 13, color: isDarkMode ? '#adb5bd' : '#555' }}>👤 報告者</span>
+                <select value={reporterFilter} onChange={e => setReporterFilter(e.target.value)} style={selectStyle}>
+                  <option value="all">すべて</option>
+                  {reporterOptions.map(name => <option key={name} value={name}>{name}</option>)}
+                </select>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 13, color: isDarkMode ? '#adb5bd' : '#555' }}>📍 場所</span>
+                <select value={locationFilter} onChange={e => setLocationFilter(e.target.value)} style={selectStyle}>
+                  <option value="all">すべて</option>
+                  {locationOptions.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                </select>
+              </div>
+              {(categoryFilter !== 'all' || reporterFilter !== 'all' || locationFilter !== 'all') && (
+                <button onClick={() => { setCategoryFilter('all'); setReporterFilter('all'); setLocationFilter('all'); }}
+                  style={{ padding: '5px 12px', borderRadius: 8, border: isDarkMode ? '1px solid #666' : '1px solid #ccc', background: 'none', color: isDarkMode ? '#adb5bd' : '#666', cursor: 'pointer', fontSize: 12 }}>
+                  絞り込み解除
+                </button>
+              )}
+            </div>
+
             {loadingTripReports ? (
               <p style={{ textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>読み込み中...</p>
             ) : tripReports.length === 0 ? (
               <p style={{ textAlign: 'center', color: isDarkMode ? '#aaa' : '#666' }}>出張報告はありません</p>
             ) : (() => {
-              // フィルタリング
-              const filtered = tripReportFilter === 'all'
-                ? tripReports
-                : tripReports.filter(r => r.report_type === tripReportFilter);
+              // フィルタリング（種別 + 区分 + 報告者 + 場所）
+              const filtered = tripReports.filter(r => {
+                if (tripReportFilter !== 'all' && r.report_type !== tripReportFilter) return false;
+                if (categoryFilter !== 'all' && r.category !== categoryFilter) return false;
+                if (reporterFilter !== 'all' && (r.profiles?.name || r.profiles?.email || '不明') !== reporterFilter) return false;
+                if (locationFilter !== 'all' && r.location !== locationFilter) return false;
+                return true;
+              });
 
               if (filtered.length === 0) return (
                 <p style={{ textAlign: 'center', color: isDarkMode ? '#aaa' : '#666' }}>該当する報告はありません</p>

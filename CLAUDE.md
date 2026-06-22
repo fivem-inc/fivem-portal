@@ -3807,6 +3807,47 @@ USING (
 
 ---
 
+## ✅ 2026-06-22 出張報告 削除修正・絞り込み / 機能の公開段階リリース 完了
+
+### 1. 出張報告が削除できない問題の修正（RLS）
+- 症状: 管理画面で出張報告の「削除」を押しても消えない（エラーも出ない）。
+- 原因: `business_trip_reports` に **DELETEポリシーが1つも無かった**。
+  RLSは「許可ポリシーの無い操作は全拒否」のため、DELETEは0行削除で成功扱い→再取得で残る。
+- 修正(適用済みSQL): 管理者のみ削除できるDELETEポリシーを追加（本人削除は不可の方針）。
+  ```sql
+  CREATE POLICY "Admins can delete all reports" ON public.business_trip_reports
+    FOR DELETE TO authenticated
+    USING (((auth.jwt() -> 'app_metadata'::text) ->> 'role'::text) = 'admin'::text);
+  ```
+  migration: 20260622020000_add_trip_reports_delete_policy.sql
+- ⚠️ DM作成403と同じ「RLSポリシー欠落」系。削除/更新が無反応のときはまずRLSのcmd別ポリシーを疑う。
+
+### 2. 出張報告一覧に絞り込み追加（TripReportsTab.tsx）
+- 種別ボタン（すべて/到着/終了）に加え、ドロップダウン3つを追加:
+  🏷️ 区分（category）/ 👤 報告者（profiles.name）/ 📍 場所（location）
+- 4条件を組み合わせて絞り込み可。「絞り込み解除」ボタンあり。
+
+### 3. 機能の段階リリース（公開/非公開 + リーダー以上 先行公開）
+管理画面「機能別 表示権限」に列を2つ追加し、メニュー表示を制御。
+- 🟢 全公開: ON=全員表示 / OFF=管理者以外に非表示
+- 🔵 リーダー以上: ON=リーダー以上だけに先行表示（全公開OFF時に有効）
+- 表示判定: `isAdmin || 全公開!==false || (リーダー以上===true && ユーザーがリーダー以上)`
+  - リーダー以上 = リーダー・マネージャー・フロア責任者・社長・管理者（LEADER_PLUS_ROLES）
+- 保存先(app_settings): `feature_published` / `feature_published_leader`（どちらも {feature_key: bool}）
+  - 値が無いキー: 全公開=true扱い / リーダー以上=false扱い
+- 新規フック: client/src/hooks/useFeaturePublished.ts（NavBarで使用）
+- NavBar(App.tsx)の各メニュー（交通費/出張報告/休暇/カレンダー/勤務変更/連絡板）を isPub() で出し分け
+
+#### 運用（7月リリース予定）
+- 7/1: 交通費・出張報告を全公開ON（他は非公開のまま）
+- 7/16: 残り（休暇・カレンダー・勤務変更・連絡板）を全公開ON
+- 手動切替（日付自動化なし）。先行確認したい機能はリーダー以上ONにする。
+
+### コミット
+- `(このセッションのコミット後に記録)`
+
+---
+
 ### 🔜 次回タスク（2026-06-18 最新）
 
 1. **忘れん坊通知①②③**（send-push Edge Function 完成済み・呼び出し側を実装）

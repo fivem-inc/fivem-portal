@@ -25,6 +25,7 @@ const PageLoader: React.FC = () => (
 );
 import { AuthProvider, AuthContext } from './contexts/AuthContext.tsx';
 import { useAuth } from './hooks/useAuth';
+import { useFeaturePublished } from './hooks/useFeaturePublished';
 import { supabase } from './lib/supabaseClient';
 import { useExpenses } from './hooks/useExpenses';
 import type { Expense, Submission } from './types';
@@ -230,11 +231,21 @@ const useBoardUnread = (userId: string | undefined, pathname: string) => {
   return { total: channelCount + inboxCount, channelOnly: channelCount };
 };
 
-const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean; canShiftReport?: boolean; canCalendar?: boolean; roleTitle?: string; userId?: string }> = ({ isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove, canShiftReport, canCalendar, roleTitle: _roleTitle, userId }) => {
+const LEADER_PLUS_ROLES = ['リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者'];
+
+const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean; canShiftReport?: boolean; canCalendar?: boolean; roleTitle?: string; userId?: string }> = ({ isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove, canShiftReport, canCalendar, roleTitle, userId }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { previewRole, setPreviewRole, user: ctxUser } = useContext(AuthContext);
   const realIsAdmin = ctxUser?.app_metadata?.role === 'admin';
+  // 機能の公開/非公開（管理者は常に表示）
+  // 全公開ON → 全員 / 全公開OFF+リーダー以上ON → リーダー以上のみ / 両方OFF → 管理者のみ
+  const { published, publishedLeader } = useFeaturePublished();
+  const isLeaderPlus = isAdmin || LEADER_PLUS_ROLES.includes(roleTitle ?? '');
+  const isPub = (key: string) =>
+    isAdmin
+    || published[key] !== false
+    || (publishedLeader[key] === true && isLeaderPlus);
   const navTo = (path: string) => {
     if (location.pathname === path) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -281,27 +292,32 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
               {isMobile ? <><span style={{ fontSize: 20 }}>⚙️</span><span>管理</span></> : '⚙️ 管理'}
             </button>
           )}
-          <button onClick={() => navTo('/')} style={btnStyle(location.pathname === '/')}>
-            {isMobile ? <><span style={{ fontSize: 20 }}>🏠</span><span>交通費</span></> : '🏠 交通費'}
-          </button>
-          <button onClick={() => navTo('/trip-report')} style={btnStyle(location.pathname === '/trip-report')}>
-            {isMobile ? <><span style={{ fontSize: 20 }}>📍</span><span>出張報告</span></> : '📍 出張報告'}
-          </button>
-          {canLeave && (
+          {isPub('expense') && (
+            <button onClick={() => navTo('/')} style={btnStyle(location.pathname === '/')}>
+              {isMobile ? <><span style={{ fontSize: 20 }}>🏠</span><span>交通費</span></> : '🏠 交通費'}
+            </button>
+          )}
+          {isPub('trip_report') && (
+            <button onClick={() => navTo('/trip-report')} style={btnStyle(location.pathname === '/trip-report')}>
+              {isMobile ? <><span style={{ fontSize: 20 }}>📍</span><span>出張報告</span></> : '📍 出張報告'}
+            </button>
+          )}
+          {canLeave && isPub('leave_request') && (
             <button onClick={() => navTo('/leave')} style={btnStyle(location.pathname === '/leave', '#28a745')}>
               {isMobile ? <><span style={{ fontSize: 20 }}>🌿</span><span>休暇申請</span></> : '🌿 休暇申請'}
             </button>
           )}
-          {(isAdmin || canCalendar) && (
+          {(isAdmin || canCalendar) && isPub('leave_calendar') && (
             <button onClick={() => navTo('/calendar')} style={btnStyle(location.pathname === '/calendar', '#4a90d9')}>
               {isMobile ? <><span style={{ fontSize: 20 }}>📅</span><span>休暇</span></> : '📅 休暇'}
             </button>
           )}
-          {canShiftReport && (
+          {canShiftReport && isPub('shift_report') && (
             <button onClick={() => navTo('/shift-report')} style={btnStyle(location.pathname === '/shift-report', '#c0392b')}>
               {isMobile ? <><span style={{ fontSize: 20 }}>⏰</span><span>勤務変更</span></> : '⏰ 勤務変更'}
             </button>
           )}
+          {isPub('board') && (
           <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
             <button onClick={() => navTo('/board')} style={btnStyle(location.pathname === '/board', '#e67e22')}>
               {isMobile ? <><span style={{ fontSize: 20 }}>💬</span><span>連絡板</span></> : '💬 連絡板'}
@@ -312,6 +328,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
               </span>
             )}
           </div>
+          )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, paddingLeft: 6 }}>
           {realIsAdmin && (
