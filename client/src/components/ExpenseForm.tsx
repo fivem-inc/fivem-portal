@@ -494,7 +494,12 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
           borderRadius: '6px',
           color: '#856404'
         }}>
-          <strong>⚠️</strong> 定期券の申請と他の申請（単発・出張）は混ぜないでください。別々に申請してください。
+          <div style={{ textAlign: 'center', fontSize: '18px', marginBottom: '6px' }}>⚠️</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', lineHeight: 1.6, textAlign: 'left' }}>
+            <div>●定期券の申請と他の申請（単発・出張）は混ぜないでください。別々に申請してください。</div>
+            <div>●定期券は原則6か月定期で申請してください。（入社6か月未満の方は3か月定期）</div>
+            <div>●磁気定期の方は、IC定期へ切り替えてください。</div>
+          </div>
         </div>
       </div>
       

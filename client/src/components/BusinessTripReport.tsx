@@ -113,7 +113,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
   const topRef = useRef<HTMLDivElement>(null);
 
   // 区分リスト・場所プリセット（DBから取得）
-  const [categories, setCategories] = useState<string[]>(['出張', '園指導', '試合', '下見', 'その他']);
+  const [categories, setCategories] = useState<string[]>(['出張', '園指導', '試合', 'イベント（下見）', 'その他']);
   const [locationPresets, setLocationPresets] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
@@ -430,6 +430,10 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
             <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 8 }}>
               次回（次月）予定 <span style={{ fontWeight: 'normal', fontSize: 13, color: isDark ? '#adb5bd' : '#6c757d' }}>（任意・複数選択可）</span>
             </label>
+            <div style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#6c757d', marginBottom: 10, lineHeight: 1.6 }}>
+              ※当日決まった予定がある場合は選択してください。<br />
+              あわせて、Googleカレンダーにも入力してください。
+            </div>
             <div style={{ background: isDark ? '#2c3136' : '#f8f9fa', borderRadius: 8, padding: 12, border: isDark ? '1px solid #555' : '1px solid #dee2e6' }}>
               <DateCalendar selected={nextDates} onToggle={toggleNextDate} isDark={isDark} />
               {nextDates.length > 0 && (
@@ -445,8 +449,15 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
         {reportType === '終了' && (
           <div style={{ borderTop: isDark ? '1px solid #555' : '1px solid #dee2e6', paddingTop: 20 }}>
             <div style={{ fontWeight: 'bold', marginBottom: 4, fontSize: 15 }}>📢 Slack送信先チャンネル</div>
-            <div style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#6c757d', marginBottom: 12 }}>
-              ※ 選択しない場合は送信されません
+            <div style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#6c757d', marginBottom: 8 }}>
+              （選択しない場合、Slackには送信されません。）
+            </div>
+            <div style={{ fontSize: 13, lineHeight: 1.7, marginBottom: 12, padding: '10px 12px', borderRadius: 8, background: isDark ? '#2c3136' : '#fff8e1', border: isDark ? '1px solid #555' : '1px solid #ffe082', color: isDark ? '#e9ecef' : '#5d4037' }}>
+              <div style={{ fontWeight: 'bold', marginBottom: 4 }}>●終了報告</div>
+              責任者の方のみ、Slack送信をしてください。<br />
+              送信先：出張後に向かう校<br />
+              （直帰の場合は、所属チーム）<br />
+              <span style={{ color: isDark ? '#adb5bd' : '#6c757d' }}>※責任者以外の方は、Slack送信不要。終了報告のみ。</span>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16 }}>
