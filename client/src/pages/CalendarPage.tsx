@@ -672,7 +672,9 @@ const SpCalendar: React.FC<{
               const isToday = cell.date === todayStr;
               const events = cell.date ? (eventsByDate[cell.date] || []) : [];
               const absences = cell.date ? (absencesByDate[cell.date] || []) : [];
-              const hasPending = events.some(e => e.status === 'pending' || e.status === 'step2_pending');
+              const hasRed = events.length > 0 || absences.some(a => a.type === 'absent');
+              const hasOrange = absences.some(a => a.type === 'late' || a.type === 'early_leave');
+              const hasGreen = absences.some(a => a.type === 'late_start' || a.type === 'early_end');
               return (
                 <td key={ci}
                   onClick={() => cell.date && onDateTap?.(cell.date)}
@@ -681,10 +683,11 @@ const SpCalendar: React.FC<{
                     <span style={{ fontSize: 13, fontWeight: isToday ? 'bold' : 'normal', color: isSat ? '#4a90d9' : isSun ? '#e74c3c' : cell.day ? textColor : (isDark ? '#555' : '#ccc') }}>
                       {cell.day ?? ''}
                     </span>
-                    {(events.length > 0 || absences.length > 0) && (
+                    {(hasRed || hasOrange || hasGreen) && (
                       <div style={{ display: 'flex', gap: 2, marginTop: 1 }}>
-                        {events.length > 0 && <div style={{ width: 5, height: 5, borderRadius: '50%', background: hasPending ? '#f39c12' : '#27ae60' }} />}
-                        {absences.length > 0 && <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#dc3545' }} />}
+                        {hasRed && <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#dc3545' }} />}
+                        {hasOrange && <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#ff9800' }} />}
+                        {hasGreen && <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#43a047' }} />}
                       </div>
                     )}
                   </div>

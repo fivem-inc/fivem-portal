@@ -3911,6 +3911,33 @@ USING (
 
 ---
 
+## ✅ 2026-06-23 休暇カレンダー（スマホ版）丸印の色分け改善 完了
+
+### 背景
+- スマホ版休暇カレンダー（`/calendar`）の日付下の丸印が、全欠勤・遅刻・早退・遅出調整・早退調整すべて同じ赤1色で表示され、種類が見分けられなかった
+- ユーザーと相談し、3色で意味を分ける案（案A）を採用
+
+### 変更内容（`client/src/pages/CalendarPage.tsx` の `SpCalendar` コンポーネントのみ）
+- 🔴 赤＝全欠勤・休暇（申請中／受理済みの区別は廃止しシンプルに統一）
+- 🟠 オレンジ＝遅刻・早退
+- 🟢 緑＝遅出（調整）・早退（調整）
+- **PC版（`PcCalendar`）は対象外・変更なし**（名前＋種類別ラベル表示は従来通り）
+
+### 実装ロジック（L673-690付近）
+```ts
+const hasRed = events.length > 0 || absences.some(a => a.type === 'absent');
+const hasOrange = absences.some(a => a.type === 'late' || a.type === 'early_leave');
+const hasGreen = absences.some(a => a.type === 'late_start' || a.type === 'early_end');
+```
+
+### 確認内容
+- `npx tsc --noEmit` エラーなし
+- `npm run build` 成功（本番ビルド確認済み）
+- ⚠️ fivem-portalはClaude Codeのプライマリ作業ディレクトリ外にあるため、`preview_start`（ブラウザ自動確認ツール）では起動できなかった。今後ブラウザでの実機確認が必要な変更の場合は、ユーザーに `npm run dev` でのローカル確認を依頼すること。
+- コミット: 本コミットに含む
+
+---
+
 ### 🔜 次回タスク（2026-06-23 最新）
 
 1. **忘れん坊通知①②③**（send-push Edge Function 完成済み・呼び出し側を実装）
