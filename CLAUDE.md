@@ -3874,13 +3874,54 @@ USING (
 
 ---
 
-### 🔜 次回タスク（2026-06-18 最新）
+## ✅ 2026-06-23 依存パッケージの脆弱性対応・GitHub Dependabot有効化 完了
+
+### 背景
+- `git push` 時にGitHubから「16 vulnerabilities（high8/moderate8）」の警告が表示されるようになっていた
+- 7/1の本番公開を控えており、ユーザーから「気になるので今すぐ対応して」と依頼
+
+### 1. npm audit で依存パッケージを更新
+- **root**: `npm audit fix` で7件解消（express/body-parser/qs/minimatch/picomatch/path-to-regexp/brace-expansion）
+- **client**: `npm audit fix` で1件解消（@babel/core）
+  - 残り1件（esbuild、low severity・Windows開発サーバーのみに影響・本番には無関係）は
+    **Vite 7→8のメジャーアップグレードが必要**と判明
+- ユーザー確認の上、Vite 7→8・`@vitejs/plugin-react` 4→6 にアップグレード
+  - `npm run build`（本番ビルド）・`npm run dev`（開発サーバー起動＋HTTP 200確認）の両方で動作確認済み
+  - root/client ともに `npm audit` で **0 vulnerabilities** に
+- コミット: `8e456bb`
+
+### 2. 不要な `backup_temp` フォルダを削除
+- 約1年前（2025-07-12）、別のバックアップから一時的にコピーされて消し忘れられていたフォルダが
+  Gitに紛れ込んでいた（`backup_temp/client/...`）
+- 中の古い `package-lock.json` がGitHubの脆弱性カウントに加算されていた一因と判明
+- 削除前に確認した安全性:
+  - `vite.config.ts` / `tsconfig.json` / `client/vercel.json` のどこからも参照されていない
+  - 中の `.env` はSupabaseのローカル開発用デモキー（公開情報・実害なし）
+  - 経緯は `.claude.json`（Claude Codeの過去作業ログ）に記録あり（ログイン画面不具合調査で一時コピーしたもの）
+- 削除後も `npm run build` が正常に通ることを確認
+- コミット: `ab75724`
+
+### 3. GitHub Dependabot を有効化（ユーザー操作）
+- 原因判明: リポジトリの **Dependabot alerts機能自体が無効（inactive）** だったため、
+  上記の修正がGitHub側の表示に反映されていなかった（push時の「16件」は古いキャッシュ表示）
+- Settings → Code security → **Dependency graph を Enable**（読み取り専用の依存解析。コードの変更権限は付与しない）
+- 続けて **Dependabot alerts も Enable**
+- 結果: Security and quality ページで **「0 Open / 16 Closed」** に更新（過去の16件はすべて解決済みとして記録）
+- ⚠️ 今後また新しい脆弱性が見つかった場合は、このDependabotが自動でPRやアラートで知らせてくれる状態になった
+
+---
+
+### 🔜 次回タスク（2026-06-23 最新）
 
 1. **忘れん坊通知①②③**（send-push Edge Function 完成済み・呼び出し側を実装）
    - ① 未回答リマインド: お知らせの期限1日前・当日に未回答者へ send-push
    - ② 定期リマインド: 毎月〇日に指定グループへ自動通知（Supabase Cron + send-push）
    - ③ 確認ボタン: 重要連絡に「確認しました」ボタン → 未確認者を管理者が把握・一括リマインド
 2. **gcal-sync 失敗時リトライキュー**（低優先）
+3. ★7月リリースの公開操作（手動：管理画面→機能別 表示権限）
+   - 7/1 : 交通費・出張報告を「全公開」ON
+   - 7/16: 残り（休暇・カレンダー・勤務変更・連絡板）を「全公開」ON
+   - 先行確認したい機能は「リーダー以上」ONにする
 
 ### ⚠️ 作業ルール（必読）
 - **デプロイ（git push）はユーザーの指示があってから**
