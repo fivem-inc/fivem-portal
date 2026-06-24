@@ -437,7 +437,8 @@ const BoardSettingsTab: React.FC = () => {
         {editingCC && (
           <div>
             <div style={{ fontSize: 12, color: sub, marginBottom: 6 }}>
-              選択した人は「お知らせ送信」のたびに自動でCC受信者に追加されます（送信者がオプションでOFFにすることも可能）。
+              選択した人は「お知らせ送信」のたびに自動でCC受信者に追加されます。<br />
+              ※「他の代表者の送信履歴に加える」のON/OFFチェックボックスは、<b>送信する本人がこのリストに含まれている場合のみ</b>お知らせ作成画面に表示されます（代表者以外には表示されません）。
             </div>
             <div style={{ maxHeight: 260, overflowY: 'auto', border: `1px solid ${border}`, borderRadius: 8, marginBottom: 10 }}>
               {EMP_ORDER.concat(

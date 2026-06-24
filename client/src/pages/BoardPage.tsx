@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo, useContext } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { insertNotification } from '../lib/notifications';
 import { useAuth } from '../hooks/useAuth';
 import { useDarkMode } from '../hooks/useDarkMode';
+import { AuthContext } from '../contexts/AuthContext.tsx';
 
 // ────────────────────────────────────────────────────────────────
 // Types
@@ -92,6 +93,12 @@ const fmtFull = (ts: string) => {
   });
 };
 // (fmtNotif は App.tsx の通知ベルで使用)
+// 送信予約input の min用：toISOString()はUTC基準になり、JST(UTC+9)では実際の現在より9時間前がminになってしまうため、ローカル時刻で組み立てる
+const localDatetimeMin = (offsetMs = 60000) => {
+  const d = new Date(Date.now() + offsetMs);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
 
 const avatarLetter = (name: string | null | undefined) => (name || '?')[0];
 
@@ -121,7 +128,8 @@ const ArchiveIcon: React.FC<{ size?: number }> = ({ size = 14 }) => (
 // ────────────────────────────────────────────────────────────────
 
 const BoardPage: React.FC = () => {
-  const { user, isAdmin, profileName, roleTitle } = useAuth();
+  const { user, isAdmin, profileName, roleTitle, employmentType } = useAuth();
+  const { previewRole } = useContext(AuthContext);
   const isDark = useDarkMode();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -765,9 +773,7 @@ const BoardPage: React.FC = () => {
     if (!perms) return true;
     const { employment_types, role_titles } = perms;
     if (employment_types.length === 0 && role_titles.length === 0) return true;
-    const myProfile = allProfiles.find(p => p.id === user?.id);
-    if (!myProfile) return false;
-    return employment_types.includes(myProfile.employment_type || '') || role_titles.includes(myProfile.role_title || '');
+    return employment_types.includes(employmentType) || role_titles.includes(roleTitle);
   };
 
   // DM送信権限（管理者は常に可・未設定なら全員可）
@@ -776,9 +782,7 @@ const BoardPage: React.FC = () => {
     if (!dmDefaultPerms) return true;
     const { employment_types, role_titles } = dmDefaultPerms;
     if (employment_types.length === 0 && role_titles.length === 0) return true;
-    const myProfile = allProfiles.find(p => p.id === user?.id);
-    if (!myProfile) return false;
-    return employment_types.includes(myProfile.employment_type || '') || role_titles.includes(myProfile.role_title || '');
+    return employment_types.includes(employmentType) || role_titles.includes(roleTitle);
   })();
 
   // グループ作成権限（管理者は常に可・設定で選ばれた人・未設定ならCC代表者と同じ人）
@@ -2501,11 +2505,11 @@ const BoardPage: React.FC = () => {
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 12, color: subColor, flexShrink: 0 }}>🕐 送信予約</span>
-                <input type="datetime-local" value={composeScheduledAt} onChange={e => setComposeScheduledAt(e.target.value)} min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
+                <input type="datetime-local" value={composeScheduledAt} onChange={e => setComposeScheduledAt(e.target.value)} min={localDatetimeMin()}
                   style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, flex: 1 }} />
                 {composeScheduledAt && <button type="button" onClick={() => setComposeScheduledAt('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
               </div>
-              {noticeCCUserIds.length > 0 && (
+              {!previewRole && noticeCCUserIds.length > 0 && noticeCCUserIds.includes(user?.id ?? '') && (
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12, color: textColor }}>
                   <input type="checkbox" checked={composeIncludeCC} onChange={e => setComposeIncludeCC(e.target.checked)} style={{ accentColor: '#22c55e' }} />
                   <span>他の代表者の送信履歴に加える</span>
@@ -2754,7 +2758,19 @@ const BoardPage: React.FC = () => {
                       style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: '10px 12px', marginBottom: 6, textAlign: 'left' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}
                         onClick={() => { setOutboxDetailId(msg.id); setShowAllOutboxRecipients(false); }}>
-                        <span style={{ fontSize: 10, color: subColor, cursor: 'pointer' }}>{fmtFull(msg.created_at)}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                          <span style={{ fontSize: 10, color: subColor }}>{fmtFull(msg.created_at)}</span>
+                          {outboxTab === 'sent' && msg.scheduled_at && (
+                            <span style={{ fontSize: 10, fontWeight: 700, color: '#3b82f6', background: isDark ? '#1e3a5f' : '#dbeafe', borderRadius: 10, padding: '1px 6px' }}>
+                              📅予約送信済み
+                            </span>
+                          )}
+                          {outboxTab === 'scheduled' && msg.scheduled_at && (
+                            <span style={{ fontSize: 10, color: '#3b82f6' }}>
+                              → {fmtFull(msg.scheduled_at)}に送信
+                            </span>
+                          )}
+                        </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span style={{ fontSize: 10, color: subColor }}>{recipientIds.length}人</span>
                           <button type="button"
@@ -2902,7 +2918,7 @@ const BoardPage: React.FC = () => {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 12, color: textColor, fontWeight: 600, flexShrink: 0 }}>🕐 送信予約</span>
                 <input type="datetime-local" value={newScheduledAt} onChange={e => setNewScheduledAt(e.target.value)}
-                  min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
+                  min={localDatetimeMin()}
                   style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, cursor: 'pointer', flex: 1 }} />
                 {newScheduledAt && <button type="button" onClick={() => setNewScheduledAt('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
               </div>

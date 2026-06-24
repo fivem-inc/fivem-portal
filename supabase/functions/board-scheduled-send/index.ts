@@ -16,12 +16,14 @@ serve(async (req) => {
 
   const now = new Date().toISOString();
 
-  // scheduled_at <= now かつ status='scheduled' のメッセージを取得
+  // scheduled_at <= now かつ status='scheduled' のメッセージを取得しつつ同時に status='sent' へ更新（1クエリでatomicに行う）
+  // → cronが多重起動しても、2回目以降のUPDATEはWHERE条件に一致する行が無くなっているため二重通知されない
   const { data: messages, error } = await supabase
     .from('board_messages')
-    .select('id, user_id, subject, body')
+    .update({ status: 'sent' })
     .eq('status', 'scheduled')
-    .lte('scheduled_at', now);
+    .lte('scheduled_at', now)
+    .select('id, user_id, subject, body');
 
   if (error || !messages || messages.length === 0) {
     return new Response(JSON.stringify({ processed: 0 }), {
@@ -31,12 +33,6 @@ serve(async (req) => {
 
   let processed = 0;
   for (const msg of messages) {
-    // status を 'sent' に更新
-    await supabase
-      .from('board_messages')
-      .update({ status: 'sent' })
-      .eq('id', msg.id);
-
     // 受信者を取得
     const { data: recipients } = await supabase
       .from('board_message_recipients')

@@ -346,7 +346,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
             >
               <option value="">👁 確認</option>
               <option value="パート">パート</option>
-              <option value="一般">一般</option>
+              <option value="一般">正社員（一般）</option>
               <option value="リーダー">リーダー</option>
               <option value="マネージャー">マネージャー</option>
               <option value="フロア責任者">フロア責任者</option>

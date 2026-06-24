@@ -3938,14 +3938,48 @@ const hasGreen = absences.some(a => a.type === 'late_start' || a.type === 'early
 
 ---
 
-### 🔜 次回タスク（2026-06-23 最新）
+## ✅ 2026-06-24 連絡板予約送信の不具合修正・役職データ整理・新規登録の承認制 完了
 
-1. **忘れん坊通知①②③**（send-push Edge Function 完成済み・呼び出し側を実装）
+### 1. 連絡板「予約送信」の不具合修正
+- `board-scheduled-send` Edge Function を atomic UPDATE に変更（cron多重起動時の二重通知を防止）
+- 送信トレイ：送信済みタブに「📅予約送信済み」バッジ、予約済みタブに予約時刻を表示
+- 送信予約の日時ピッカーの `min` 属性が UTC基準になっていたバグを修正（JSTでは実際より9時間前まで過去日時が選べてしまっていた）→ `localDatetimeMin()` ヘルパーを追加
+- pg_cronで `board-scheduled-send` を5分間隔実行するSQL追加（`20260624000000_schedule_board_scheduled_send_cron.sql`、Vaultの`service_role_key`必須）
+- 「他の代表者の送信履歴に加える」チェックボックスは、送信者本人が代表者リストに含まれる場合のみ表示・役職プレビュー中は非表示に変更
+
+### 2. 役職プレビュー機能のバグ修正
+- プレビュー中でも `canSendInChannel`/`canStartDM` がログイン中の本物の管理者の役職を見て判定していたため、どの役職をプレビューしても「送信できる」になってしまっていた → `roleTitle`/`employmentType`（プレビュー反映済みの値）を使うように修正
+
+### 3. 役職データの整理（重要・本番DB変更）
+- `roles`テーブル（機能別表示権限のマスタ）の「正社員」という行は、元々「一般」だったものの誤表記だったため `一般` に統一
+- `profiles.role_title` が「正社員」になっていた11人を `一般` に統一（雇用形態と役職が同じ文字列で重複していたミス）。「パート」×「パート」の21人はパート専用の権限tierとして意図された設計のため変更なし
+- `master_options`（ユーザー管理画面の役職セレクトの選択肢マスタ）に「パート」が登録されていなかったため追加（フロア責任者は登録済み）
+- `UsersTab.tsx`の雇用形態・役職セレクトに「選択肢にない値が保存されている場合は赤枠で警告表示」を追加（同種のズレの再発に気づけるように）
+
+### 4. セキュリティ：新規登録の承認制を実装
+- **発見した問題**：ログイン画面の「新規登録」フォームが、誰でもメール+パスワード+名前だけでアカウントを作成でき、即座に`is_active=true`でフルアクセスできる状態だった（実際に身元不明の「peach」というアカウントが作成されていた）
+- `profiles`に`approval_status`列追加（既存ユーザーは`approved`のまま）
+- `handle_new_user`トリガーを変更：新規登録時は`is_active=false`・`approval_status='pending'`で作成し、`new-signup-notify` Edge Functionをpg_net経由で呼び出す
+- `new-signup-notify`（新規）：管理者へベル通知＋経理Slackへの通知を送信
+- ログイン画面：承認待ち中は「ご登録ありがとうございます。管理者の承認をお待ちください。」と表示してログインをブロック
+- ユーザー管理画面：「🆕 承認待ちの新規登録」パネルを追加。雇用形態・役職をその場で設定して承認、または拒否ができる
+- **peachさんのアカウントは今回未対応のまま**（ユーザー判断待ち。退職処理または削除を検討）
+
+### マイグレーション・Edge Function
+- `supabase/migrations/20260624000000_schedule_board_scheduled_send_cron.sql`
+- `supabase/migrations/20260624100000_add_signup_approval.sql`
+- `supabase/functions/new-signup-notify/index.ts`（デプロイ済み）
+- `supabase/functions/board-scheduled-send/index.ts`（atomic化、再デプロイ要）
+
+### 🔜 次回タスク（2026-06-24 最新）
+
+1. **peachさんアカウントの処置を決める**（退職にする／削除する）
+2. **忘れん坊通知①②③**（send-push Edge Function 完成済み・呼び出し側を実装）
    - ① 未回答リマインド: お知らせの期限1日前・当日に未回答者へ send-push
    - ② 定期リマインド: 毎月〇日に指定グループへ自動通知（Supabase Cron + send-push）
    - ③ 確認ボタン: 重要連絡に「確認しました」ボタン → 未確認者を管理者が把握・一括リマインド
-2. **gcal-sync 失敗時リトライキュー**（低優先）
-3. ★7月リリースの公開操作（手動：管理画面→機能別 表示権限）
+3. **gcal-sync 失敗時リトライキュー**（低優先）
+4. ★7月リリースの公開操作（手動：管理画面→機能別 表示権限）
    - 7/1 : 交通費・出張報告を「全公開」ON
    - 7/16: 残り（休暇・カレンダー・勤務変更・連絡板）を「全公開」ON
    - 先行確認したい機能は「リーダー以上」ONにする
@@ -3956,3 +3990,5 @@ const hasGreen = absences.some(a => a.type === 'late_start' || a.type === 'early
 - **`alert()` 禁止** → 成功時は緑カード（BannerSuccess / setSuccessMsg）を使用
 - **`window.confirm()` 禁止** → インライン確認パネル（赤枠）を使用
 - **Supabase クエリの `.catch()` 禁止** → `.then(null, () => {})` を使用（Supabase JS v2はnative Promiseではないため）
+- **役職（role_title）と雇用形態（employment_type）は別軸** → 役職欄に雇用形態と同じ文字を入れない（「正社員」を役職に使わない。役職が無い人は必ず「一般」）
+- **`master_options`（UsersTab選択肢）と`roles`テーブル（機能別表示権限）は別テーブル** → 役職を新設・変更する時は両方に反映する必要がある

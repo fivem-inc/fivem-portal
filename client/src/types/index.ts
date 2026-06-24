@@ -119,6 +119,7 @@ export interface AdminUserProfile {
   email?: string;
   name?: string | null;
   is_active?: boolean;
+  approval_status?: string;
   sort_order?: number | null;
   registered_at?: string | null;
   employment_type?: string;

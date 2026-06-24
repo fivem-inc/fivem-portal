@@ -67,6 +67,7 @@ export interface AdminPanelContextType {
   users: AdminUserProfile[]; setUsers: React.Dispatch<React.SetStateAction<AdminUserProfile[]>>;
   loadingUsers: boolean;
   sortedUsers: AdminUserProfile[];
+  pendingUsers: AdminUserProfile[];
   editingUser: string | null; setEditingUser: React.Dispatch<React.SetStateAction<string | null>>;
   editName: string; setEditName: React.Dispatch<React.SetStateAction<string>>;
   showRetired: 'active' | 'retired' | 'all'; setShowRetired: React.Dispatch<React.SetStateAction<'active' | 'retired' | 'all'>>;
@@ -87,6 +88,8 @@ export interface AdminPanelContextType {
   handleCancelUserEdit: () => void;
   handleToggleActive: (userId: string, currentIsActive: boolean) => Promise<void>;
   handleDeleteUser: (userId: string, userName: string) => Promise<void>;
+  handleApprovePendingUser: (userId: string, employmentType: string, roleTitle: string) => Promise<void>;
+  handleRejectPendingUser: (userId: string) => Promise<void>;
 
   // Groups
   selectedGroup: string | null; setSelectedGroup: React.Dispatch<React.SetStateAction<string | null>>;
@@ -414,7 +417,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, email, name, is_active, sort_order, registered_at, employment_type, role_title, group_names, leave_request_enabled, last_sign_in_at')
+        .select('id, email, name, is_active, approval_status, sort_order, registered_at, employment_type, role_title, group_names, leave_request_enabled, last_sign_in_at')
         .order('sort_order', { ascending: true, nullsFirst: false });
       if (error) {
         console.error('ユーザー取得エラー:', error);
@@ -429,8 +432,11 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     setLoadingUsers(false);
   }, []);
 
+  const pendingUsers = useMemo(() => users.filter(u => u.approval_status === 'pending'), [users]);
+
   const sortedUsers = useMemo(() => {
-    const filtered = showRetired === 'all' ? users : showRetired === 'retired' ? users.filter(u => u.is_active === false) : users.filter(u => u.is_active !== false);
+    const nonPending = users.filter(u => u.approval_status !== 'pending');
+    const filtered = showRetired === 'all' ? nonPending : showRetired === 'retired' ? nonPending.filter(u => u.is_active === false) : nonPending.filter(u => u.is_active !== false);
     return [...filtered].sort((a, b) => {
       let aVal, bVal;
       if (userSortKey === 'sort_order') {
@@ -511,6 +517,18 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     if (!window.confirm(`「${userName}」を完全に削除します。この操作は取り消せません。よろしいですか？`)) return;
     const { error } = await supabase.from('profiles').delete().eq('id', userId);
     if (error) { alert('削除に失敗しました: ' + error.message); } else { setSuccessMsg('削除しました'); fetchUsers(); }
+  }, [fetchUsers]);
+
+  const handleApprovePendingUser = useCallback(async (userId: string, employmentType: string, roleTitle: string) => {
+    const { error } = await supabase.from('profiles')
+      .update({ is_active: true, approval_status: 'approved', employment_type: employmentType, role_title: roleTitle })
+      .eq('id', userId);
+    if (!error) { setSuccessMsg('承認しました'); fetchUsers(); }
+  }, [fetchUsers]);
+
+  const handleRejectPendingUser = useCallback(async (userId: string) => {
+    const { error } = await supabase.from('profiles').update({ approval_status: 'rejected' }).eq('id', userId);
+    if (!error) { setSuccessMsg('登録を拒否しました'); fetchUsers(); }
   }, [fetchUsers]);
 
   const fetchReportStats = useCallback(async () => {
@@ -1045,7 +1063,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       typeFilter, setTypeFilter, statusFilter, setStatusFilter,
       expandedAdminYears, expandedMonths, toggleYearExpansion, toggleMonthExpansion,
       filteredPending, groupedSubmissions,
-      users, setUsers, loadingUsers, sortedUsers,
+      users, setUsers, loadingUsers, sortedUsers, pendingUsers,
       editingUser, setEditingUser, editName, setEditName,
       showRetired, setShowRetired, userSortKey, userSortAsc,
       editingSortOrder, setEditingSortOrder, editSortOrderValue, setEditSortOrderValue,
@@ -1053,6 +1071,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       confirmChange, setConfirmChange,
       fetchUsers, fetchMasterOptions, handleUserSort, handleSaveSortOrder,
       handleEditName, handleSaveName, handleCancelUserEdit, handleToggleActive, handleDeleteUser,
+      handleApprovePendingUser, handleRejectPendingUser,
       selectedGroup, setSelectedGroup, editingGroupName, setEditingGroupName,
       editGroupNameValue, setEditGroupNameValue, newGroupName, setNewGroupName,
       showAddGroup, setShowAddGroup,

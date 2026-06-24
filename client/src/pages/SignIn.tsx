@@ -49,15 +49,19 @@ export default function SignIn() {
       }
       setError(errorMessage);
     } else if (data.user) {
-      // 退職者チェック
+      // 退職者・承認待ちチェック
       const { data: profile } = await supabase
         .from('profiles')
-        .select('is_active')
+        .select('is_active, approval_status')
         .eq('id', data.user.id)
         .single();
       if (profile && profile.is_active === false) {
         await supabase.auth.signOut();
-        setError('このアカウントは無効です。管理者にお問い合わせください。');
+        if (profile.approval_status === 'pending') {
+          setError('ご登録ありがとうございます。管理者の承認をお待ちください。');
+        } else {
+          setError('このアカウントは無効です。管理者にお問い合わせください。');
+        }
       }
     }
     setLoading(false);

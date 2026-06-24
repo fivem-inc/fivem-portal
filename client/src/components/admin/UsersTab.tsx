@@ -307,9 +307,56 @@ const SendEmailModal: React.FC<{
   );
 };
 
+// 承認待ちユーザー1件分の行（雇用形態・役職をその場で設定して承認）
+const PendingUserRow: React.FC<{
+  isDarkMode: boolean;
+  pendingUser: { id: string; name?: string | null; email?: string; registered_at?: string | null };
+  masterOptions: { employment_type: string[]; role_title: string[] };
+  onApprove: (userId: string, employmentType: string, roleTitle: string) => Promise<void>;
+  onReject: (userId: string) => Promise<void>;
+}> = ({ isDarkMode, pendingUser, masterOptions, onApprove, onReject }) => {
+  const [employmentType, setEmploymentType] = useState(masterOptions.employment_type[0] || '正社員');
+  const [roleTitle, setRoleTitle] = useState(masterOptions.role_title.includes('一般') ? '一般' : (masterOptions.role_title[0] || '一般'));
+  const [showRejectConfirm, setShowRejectConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <div style={{ background: isDarkMode ? '#3a2f0d' : '#fff8e1', border: `1px solid ${isDarkMode ? '#7a5c00' : '#ffe082'}`, borderRadius: 8, padding: '10px 14px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      <div style={{ minWidth: 140 }}>
+        <div style={{ fontWeight: 'bold', color: isDarkMode ? '#fff' : '#000', fontSize: 14 }}>{pendingUser.name || '（名前未設定）'}</div>
+        <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#666' }}>{pendingUser.email}</div>
+      </div>
+      <select value={employmentType} onChange={e => setEmploymentType(e.target.value)} disabled={busy}
+        style={{ padding: '4px 6px', fontSize: 12, borderRadius: 4, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000' }}>
+        {masterOptions.employment_type.map(v => <option key={v}>{v}</option>)}
+      </select>
+      <select value={roleTitle} onChange={e => setRoleTitle(e.target.value)} disabled={busy}
+        style={{ padding: '4px 6px', fontSize: 12, borderRadius: 4, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000' }}>
+        {masterOptions.role_title.map(v => <option key={v}>{v}</option>)}
+      </select>
+      {showRejectConfirm ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', background: isDarkMode ? '#3a1f1f' : '#fff5f5', border: `1px solid ${isDarkMode ? '#7f1d1d' : '#fca5a5'}`, borderRadius: 6 }}>
+          <span style={{ fontSize: 12, color: '#dc3545' }}>この登録を拒否しますか？</span>
+          <button disabled={busy} onClick={async () => { setBusy(true); await onReject(pendingUser.id); setBusy(false); }}
+            style={{ padding: '4px 10px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>拒否する</button>
+          <button disabled={busy} onClick={() => setShowRejectConfirm(false)}
+            style={{ padding: '4px 10px', background: 'none', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, color: isDarkMode ? '#fff' : '#000', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>キャンセル</button>
+        </div>
+      ) : (
+        <>
+          <button disabled={busy} onClick={async () => { setBusy(true); await onApprove(pendingUser.id, employmentType, roleTitle); setBusy(false); }}
+            style={{ padding: '6px 16px', background: '#28a745', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 'bold' }}>承認する</button>
+          <button disabled={busy} onClick={() => setShowRejectConfirm(true)}
+            style={{ padding: '6px 16px', background: 'none', border: '1px solid #dc3545', color: '#dc3545', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}>拒否</button>
+        </>
+      )}
+    </div>
+  );
+};
+
 const UsersTab: React.FC = () => {
   const ctx = useAdminPanel();
-  const { isDarkMode, users, loadingUsers, sortedUsers, userSortKey, userSortAsc, handleUserSort, editingUser, editName, setEditName, handleEditName, handleSaveName, handleCancelUserEdit, showRetired, setShowRetired, editingSortOrder, setEditingSortOrder, editSortOrderValue, setEditSortOrderValue, handleSaveSortOrder, masterOptions, isUserEditMode, setIsUserEditMode, confirmChange, setConfirmChange, fetchUsers, handleToggleActive, handleDeleteUser, setActiveTab } = ctx;
+  const { isDarkMode, users, loadingUsers, sortedUsers, pendingUsers, userSortKey, userSortAsc, handleUserSort, editingUser, editName, setEditName, handleEditName, handleSaveName, handleCancelUserEdit, showRetired, setShowRetired, editingSortOrder, setEditingSortOrder, editSortOrderValue, setEditSortOrderValue, handleSaveSortOrder, masterOptions, isUserEditMode, setIsUserEditMode, confirmChange, setConfirmChange, fetchUsers, handleToggleActive, handleDeleteUser, handleApprovePendingUser, handleRejectPendingUser, setActiveTab } = ctx;
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedForEmail, setSelectedForEmail] = useState<Set<string>>(new Set());
@@ -351,6 +398,24 @@ const UsersTab: React.FC = () => {
                     onClose={() => setShowAddModal(false)}
                     onSuccess={() => { fetchUsers(); }}
                   />
+                )}
+                {pendingUsers.length > 0 && (
+                  <div style={{ marginBottom: 24 }}>
+                    <h4 style={{ color: '#fd7e14', fontSize: 15, marginBottom: 8 }}>🆕 承認待ちの新規登録（{pendingUsers.length}件）</h4>
+                    {pendingUsers.map(pu => (
+                      <PendingUserRow
+                        key={pu.id}
+                        isDarkMode={isDarkMode}
+                        pendingUser={pu}
+                        masterOptions={{
+                          employment_type: masterOptions.employment_type.length > 0 ? masterOptions.employment_type : ['正社員', 'パート'],
+                          role_title: masterOptions.role_title.length > 0 ? masterOptions.role_title : ['一般', 'リーダー', 'マネージャー', '管理者', '社長'],
+                        }}
+                        onApprove={handleApprovePendingUser}
+                        onReject={handleRejectPendingUser}
+                      />
+                    ))}
+                  </div>
                 )}
                 {showEmailModal && (
                   <SendEmailModal
@@ -564,28 +629,44 @@ const UsersTab: React.FC = () => {
                             </td>
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', color: isDarkMode ? '#adb5bd' : '#555', fontSize: 11, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={user.email}>{user.email}</td>
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center' }}>
-                              <select
-                                value={user.employment_type || '正社員'}
-                                disabled={!isUserEditMode}
-                                onChange={(e) => {
-                                  setConfirmChange({ userId: user.id, field: 'employment_type', label: `${user.name || user.email} の雇用形態`, oldVal: user.employment_type || '正社員', newVal: e.target.value });
-                                }}
-                                style={{ padding: '2px 2px', fontSize: 11, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, width: '100%', opacity: isUserEditMode ? 1 : 0.7, cursor: isUserEditMode ? 'pointer' : 'default', appearance: isUserEditMode ? 'auto' : 'none' as any }}
-                              >
-                                {masterOptions.employment_type.map(v => <option key={v}>{v}</option>)}
-                              </select>
+                              {(() => {
+                                const empVal = user.employment_type || '正社員';
+                                const empUnknown = !masterOptions.employment_type.includes(empVal);
+                                return (
+                                  <select
+                                    value={empVal}
+                                    disabled={!isUserEditMode}
+                                    onChange={(e) => {
+                                      setConfirmChange({ userId: user.id, field: 'employment_type', label: `${user.name || user.email} の雇用形態`, oldVal: empVal, newVal: e.target.value });
+                                    }}
+                                    title={empUnknown ? `選択肢にない値「${empVal}」が保存されています。選び直して保存してください。` : undefined}
+                                    style={{ padding: '2px 2px', fontSize: 11, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: empUnknown ? '2px solid #dc3545' : `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, width: '100%', opacity: isUserEditMode ? 1 : 0.7, cursor: isUserEditMode ? 'pointer' : 'default', appearance: isUserEditMode ? 'auto' : 'none' as any }}
+                                  >
+                                    {empUnknown && <option value={empVal}>⚠️ {empVal}（未登録の値）</option>}
+                                    {masterOptions.employment_type.map(v => <option key={v}>{v}</option>)}
+                                  </select>
+                                );
+                              })()}
                             </td>
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center' }}>
-                              <select
-                                value={user.role_title || '一般'}
-                                disabled={!isUserEditMode}
-                                onChange={(e) => {
-                                  setConfirmChange({ userId: user.id, field: 'role_title', label: `${user.name || user.email} の役職`, oldVal: user.role_title || '一般', newVal: e.target.value });
-                                }}
-                                style={{ padding: '2px 2px', fontSize: 11, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, width: '100%', opacity: isUserEditMode ? 1 : 0.7, cursor: isUserEditMode ? 'pointer' : 'default', appearance: isUserEditMode ? 'auto' : 'none' as any }}
-                              >
-                                {masterOptions.role_title.map(v => <option key={v}>{v}</option>)}
-                              </select>
+                              {(() => {
+                                const roleVal = user.role_title || '一般';
+                                const roleUnknown = !masterOptions.role_title.includes(roleVal);
+                                return (
+                                  <select
+                                    value={roleVal}
+                                    disabled={!isUserEditMode}
+                                    onChange={(e) => {
+                                      setConfirmChange({ userId: user.id, field: 'role_title', label: `${user.name || user.email} の役職`, oldVal: roleVal, newVal: e.target.value });
+                                    }}
+                                    title={roleUnknown ? `選択肢にない値「${roleVal}」が保存されています。選び直して保存してください。` : undefined}
+                                    style={{ padding: '2px 2px', fontSize: 11, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: roleUnknown ? '2px solid #dc3545' : `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, width: '100%', opacity: isUserEditMode ? 1 : 0.7, cursor: isUserEditMode ? 'pointer' : 'default', appearance: isUserEditMode ? 'auto' : 'none' as any }}
+                                  >
+                                    {roleUnknown && <option value={roleVal}>⚠️ {roleVal}（未登録の値）</option>}
+                                    {masterOptions.role_title.map(v => <option key={v}>{v}</option>)}
+                                  </select>
+                                );
+                              })()}
                             </td>
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 11 }}>
                               {user.group_names && user.group_names.length > 0 ? user.group_names.join('・') : '-'}
