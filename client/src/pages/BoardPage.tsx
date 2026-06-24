@@ -533,10 +533,10 @@ const BoardPage: React.FC = () => {
       supabase.from('board_reads').select('message_id').in('message_id', msgIds),
     ]);
 
-    const now = new Date().toISOString();
-    // React 18 の自動バッチングにより、連続した setState は1回のレンダリングにまとめられる
+    // status='scheduled'（未送信）は受信トレイに出さない。cronがstatus='sent'に切り替えるまで非表示
+    // ※クライアント時計とscheduled_atの比較ではなく、DBが確定させたstatusで判定する（送信時刻の表示崩れ・表示タイミングのズレを防ぐ）
     setInboxMessages((msgData || [])
-      .filter((m: any) => !m.scheduled_at || m.scheduled_at <= now)
+      .filter((m: any) => m.status !== 'scheduled')
       .map((m: any) => ({ ...m, broadcast_recipients: null, profile: null })));
     setInboxReadIds(new Set((readData || []).map((r: any) => r.message_id)));
     const rc: Record<string, number> = {};

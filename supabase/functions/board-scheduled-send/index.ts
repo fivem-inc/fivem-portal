@@ -52,14 +52,16 @@ serve(async (req) => {
     const preview = (msg.subject || msg.body || '').slice(0, 40);
 
     // 受信者全員に通知
+    // notificationsテーブルの実列名は user_id/message/sub_message/source_type/reference_id/read
+    // （以前は body/type/is_read という存在しない列名で insert していたため、通知が一件も作成されていなかった）
     const notifications = recipients.map((r: { user_id: string }) => ({
       user_id: r.user_id,
       message: `${senderName}からお知らせが届きました`,
-      body: preview,
-      type: 'board',
-      is_read: false,
+      sub_message: preview,
+      reference_id: msg.id,
     }));
-    await supabase.from('notifications').insert(notifications);
+    const { error: notifyError } = await supabase.from('notifications').insert(notifications);
+    if (notifyError) console.error('notification insert error:', notifyError);
 
     processed++;
   }
