@@ -4036,3 +4036,11 @@ const hasGreen = absences.some(a => a.type === 'late_start' || a.type === 'early
 ### 注意事項
 - Vercel CLIのログインセッションが切れている（`vercel whoami` → Not authorized）。本番デプロイはGitHub push経由のVercel自動デプロイに依存している。CLIで直接デプロイしたい場合は事前に`vercel login`が必要
 - `.claude/launch.json`を追加（preview_start用のdevサーバー起動設定）。Gitには含めない
+
+### 4. 予約送信メッセージのベル通知が来ない不具合・受信時刻の表示崩れを修正（追加対応）
+- **発見した問題①**：`board-scheduled-send` Edge Functionが`notifications`テーブルに**存在しない列名**（`body`/`type`/`is_read`）でinsertしていたため、cronが処理しても通知が一件も作成されていなかった
+  - 実際の列名（`user_id`/`message`/`sub_message`/`read`/`source_type`/`reference_id`）に修正し再デプロイ済み
+- **発見した問題②**：受信トレイの表示判定が「ブラウザの現在時刻 ≧ 予約時刻(`scheduled_at`)」というクライアント時計基準だったため、cronがDBを実際に更新する前に表示されてしまうことがあり、その場合`sent_at`が未確定で作成時刻（予約した時刻）にフォールバック表示されていた
+  - 判定をDB側の`status`（cronが原子的に確定させた値）基準に変更（`m.status !== 'scheduled'`で受信トレイに出すかを判定）。これにより表示タイミングと`sent_at`の確定が必ず一致するようになった
+- 変更ファイル：`client/src/pages/BoardPage.tsx`（`loadInbox`のフィルタ変更）、`supabase/functions/board-scheduled-send/index.ts`（通知insertの列名修正・デプロイ済み）
+- コミット：`030d9e9`
