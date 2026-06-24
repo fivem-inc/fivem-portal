@@ -3971,6 +3971,14 @@ const hasGreen = absences.some(a => a.type === 'late_start' || a.type === 'early
 - `supabase/functions/new-signup-notify/index.ts`（デプロイ済み）
 - `supabase/functions/board-scheduled-send/index.ts`（atomic化、再デプロイ要）
 
+### 5. 削除済みユーザーがログイン可能だった不具合の修正（追加対応）
+- **発見した問題**：ユーザー管理の「完全に削除」ボタンが`profiles`テーブルのみ削除しており、`auth.users`（ログイン認証の元データ）が残っていたため、削除後もログインできてしまっていた
+- `delete-user` Edge Function新規作成（管理者チェック付き、`auth.admin.deleteUser()`で削除。`profiles`はON DELETE CASCADEで連動削除）→ デプロイ済み
+- `AdminPanelContext.tsx`の`handleDeleteUser`をこのEdge Function経由に変更
+- 過去にテストで`profiles`だけ削除され孤立していた`auth.users`（nisijin68@yahoo.co.jp）をSupabaseダッシュボードから削除済み
+- **おまけ対応**：Supabase Authダッシュボードの「Display name」欄が全員「-」だった件 → `create-user` Edge Functionで`user_metadata: { full_name: name }`を渡すよう修正（デプロイ済み）。既存ユーザーは`profiles.name`から一括反映するSQLを実行済み
+- peachさんのアカウントは今回も**未対応のまま**（ユーザー判断待ち）
+
 ### 🔜 次回タスク（2026-06-24 最新）
 
 1. **peachさんアカウントの処置を決める**（退職にする／削除する）

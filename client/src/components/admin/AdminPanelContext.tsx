@@ -514,9 +514,9 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   }, [fetchUsers]);
 
   const handleDeleteUser = useCallback(async (userId: string, userName: string) => {
-    if (!window.confirm(`「${userName}」を完全に削除します。この操作は取り消せません。よろしいですか？`)) return;
-    const { error } = await supabase.from('profiles').delete().eq('id', userId);
-    if (error) { alert('削除に失敗しました: ' + error.message); } else { setSuccessMsg('削除しました'); fetchUsers(); }
+    if (!window.confirm(`「${userName}」を完全に削除します。ログイン情報も含めて削除され、この操作は取り消せません。よろしいですか？`)) return;
+    const { data, error } = await supabase.functions.invoke('delete-user', { body: { userId } });
+    if (error || data?.error) { alert('削除に失敗しました: ' + (data?.error || error?.message)); } else { setSuccessMsg('削除しました'); fetchUsers(); }
   }, [fetchUsers]);
 
   const handleApprovePendingUser = useCallback(async (userId: string, employmentType: string, roleTitle: string) => {

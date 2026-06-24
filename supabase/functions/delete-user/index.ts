@@ -28,7 +28,6 @@ serve(async (req) => {
     });
   }
 
-  // ユーザーJWTでログイン確認
   const supabaseUser = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
     Deno.env.get('SUPABASE_ANON_KEY') ?? '',
@@ -59,79 +58,30 @@ serve(async (req) => {
   }
 
   try {
-    const { email, password, name, employment_type, role_title } = await req.json();
-
-    if (!email || !password) {
-      return new Response(JSON.stringify({ error: 'email と password は必須です' }), {
+    const { userId } = await req.json();
+    if (!userId) {
+      return new Response(JSON.stringify({ error: 'userId は必須です' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // マスターキーを使った管理者クライアント（サーバー側のみ）
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
       { auth: { autoRefreshToken: false, persistSession: false } }
     );
 
-    // 1. Supabase Auth にユーザー作成
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: { full_name: name },
-    });
-
-    if (authError) {
-      return new Response(JSON.stringify({ error: authError.message }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const userId = authData.user?.id;
-    if (!userId) {
-      return new Response(JSON.stringify({ error: 'ユーザーIDの取得に失敗しました' }), {
+    // auth.users を削除（profiles は外部キーのON DELETE CASCADEで自動削除される）
+    const { error: deleteError } = await supabaseAdmin.auth.admin.deleteUser(userId);
+    if (deleteError) {
+      return new Response(JSON.stringify({ error: deleteError.message }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // 2. 現在の最大 sort_order を取得して +1 をセット
-    const { data: maxData } = await supabaseAdmin
-      .from('profiles')
-      .select('sort_order')
-      .not('sort_order', 'is', null)
-      .order('sort_order', { ascending: false })
-      .limit(1)
-      .single();
-    const nextSortOrder = (maxData?.sort_order ?? 0) + 1;
-
-    // 3. profiles テーブルに追加情報を登録
-    const { error: profileError } = await supabaseAdmin
-      .from('profiles')
-      .upsert({
-        id: userId,
-        email,
-        name: name || '',
-        employment_type: employment_type || '正社員',
-        role_title: role_title || '一般',
-        is_active: true,
-        registered_at: new Date().toISOString(),
-        sort_order: nextSortOrder,
-      });
-
-    if (profileError) {
-      // Auth ユーザーは作れたが profiles 登録失敗 → Auth ユーザーも削除してロールバック
-      await supabaseAdmin.auth.admin.deleteUser(userId);
-      return new Response(JSON.stringify({ error: 'プロフィール登録に失敗しました: ' + profileError.message }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    return new Response(JSON.stringify({ success: true, userId }), {
+    return new Response(JSON.stringify({ success: true }), {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
