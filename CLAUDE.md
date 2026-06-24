@@ -4007,3 +4007,32 @@ const hasGreen = absences.some(a => a.type === 'late_start' || a.type === 'early
 - **Supabase クエリの `.catch()` 禁止** → `.then(null, () => {})` を使用（Supabase JS v2はnative Promiseではないため）
 - **役職（role_title）と雇用形態（employment_type）は別軸** → 役職欄に雇用形態と同じ文字を入れない（「正社員」を役職に使わない。役職が無い人は必ず「一般」）
 - **`master_options`（UsersTab選択肢）と`roles`テーブル（機能別表示権限）は別テーブル** → 役職を新設・変更する時は両方に反映する必要がある
+
+---
+
+## ✅ 2026-06-24（続き）連絡板の予約送信バグ修正・管理画面バッジ追加 完了
+
+### 1. ビルドエラー修正
+- 前回作業で発生していたTS6133（未使用変数）エラーを修正し、Vercelビルドが通るように対応
+- `archiveBulkDeleting`セッター・`outboxArchiveConfirmId`・`editingId`/`editBody`・`saveEdit`関数・`bulkDeleteOutboxArchived`関数（いずれも死んだコード）を削除
+
+### 2. 管理画面タブに承認待ちバッジを追加
+- 休暇申請タブに承認待ち件数（status が `approved`/`rejected` 以外）の赤丸バッジを追加（交通費タブには追加しないよう指示あり）
+- `AdminPanelContext.tsx`で`pendingLeaveRequests`を新規追加、初回マウント時に取得（タブを開かなくても件数がわかる）
+- 2段目タブ行の`overflowX: 'auto'`がCSS仕様上`overflowY`も自動でクリップしてしまい、ユーザータブの承認待ちバッジ（数字）が上端で欠けて見えていた不具合を修正 → `paddingTop`+`marginTop`の相殺で解消
+
+### 3. 連絡板「予約送信」が送信済みタブに移動しない不具合の根本原因を特定・修正
+- **発見した問題**：`board-scheduled-send`を呼ぶcronジョブ（jobid 8）が既に存在していたが、Authorizationヘッダーの値が`<eyJhbGci...>`のように**山括弧がプレースホルダーのまま残っており**、毎分実行されては認証エラーで失敗し続けていた
+- 正しい設定でjobid 9（5分間隔、Vaultのservice_role_keyを正しく参照）を新規登録し、壊れていたjobid 8は`cron.unschedule('board-scheduled-send')`で削除済み
+- `board_messages`に`sent_at`列を追加（実際に送信された時刻）。即時送信時はフロント側でセット、予約送信は`board-scheduled-send`が実行時にセット
+- 送信トレイ（送信者視点）：ヘッダーに「予約 6/24 8:00 → 送信 6/24 8:03」のように予約時刻と実際の送信時刻を両方表示
+- 受信トレイ（受信者視点）：予約情報は表示せず、実際に届いた時刻（`sent_at`、無ければ`created_at`）のみ表示するよう`renderMsg`に`isOutboxView`引数を追加して分岐
+
+### マイグレーション・Edge Function（すべて適用・デプロイ済み）
+- `supabase/migrations/20260624200000_add_board_messages_sent_at.sql`（SQL Editorで実行済み）
+- `supabase/functions/board-scheduled-send/index.ts`（`sent_at`セット追加、再デプロイ済み）
+- pg_cron: jobid 9 `board-scheduled-send-every-5-min`が稼働中（壊れていたjobid 8は削除済み）
+
+### 注意事項
+- Vercel CLIのログインセッションが切れている（`vercel whoami` → Not authorized）。本番デプロイはGitHub push経由のVercel自動デプロイに依存している。CLIで直接デプロイしたい場合は事前に`vercel login`が必要
+- `.claude/launch.json`を追加（preview_start用のdevサーバー起動設定）。Gitには含めない

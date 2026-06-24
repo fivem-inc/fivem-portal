@@ -43,6 +43,7 @@ interface BoardMessage {
   deadline_type: string | null;
   requires_confirmation: boolean;
   scheduled_at: string | null;
+  sent_at: string | null;
   title: string | null;
   subject: string | null;
   status: string | null;
@@ -300,7 +301,7 @@ const BoardPage: React.FC = () => {
     const [chRes, memRes, msgRes, lsRes, profRes, settingsRes, dmSettingsRes, noticeSendRes, ccSettingsRes, groupCreateRes] = await Promise.all([
       supabase.from('board_channels').select('id, type, name, created_by, created_at, send_permissions, show_read_detail').in('id', cids),
       supabase.from('board_channel_members').select('channel_id, user_id').in('channel_id', cids),
-      supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, answer_prompt, answer_location, answer_link, broadcast_recipients').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
+      supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, answer_prompt, answer_location, answer_link, broadcast_recipients').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
       supabase.from('board_channel_last_seen').select('channel_id, last_seen_at').eq('user_id', user.id),
       supabase.from('profiles').select('id, name, role_title, employment_type, group_names').eq('is_active', true).order('name'),
       supabase.from('master_options').select('value').eq('category', 'board_show_read_detail').limit(1),
@@ -370,7 +371,7 @@ const BoardPage: React.FC = () => {
       const [msgsRes, readsRes] = await Promise.all([
         supabase
           .from('board_messages')
-          .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+          .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
           .in('id', [...msgIds])
           .order('created_at', { ascending: false }),
         supabase
@@ -471,7 +472,7 @@ const BoardPage: React.FC = () => {
       const channelQuery = cids.length > 0
         ? supabase
             .from('board_messages')
-            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
             .in('channel_id', cids)
             .or(`body.ilike.${q},subject.ilike.${q}`)
             .order('created_at', { ascending: false })
@@ -482,7 +483,7 @@ const BoardPage: React.FC = () => {
       const inboxQuery = inboxIds.length > 0
         ? supabase
             .from('board_messages')
-            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
             .in('id', inboxIds)
             .or(`body.ilike.${q},subject.ilike.${q}`)
             .order('created_at', { ascending: false })
@@ -524,7 +525,7 @@ const BoardPage: React.FC = () => {
     const [{ data: msgData }, { data: readData }, { data: rcData }] = await Promise.all([
       supabase
         .from('board_messages')
-        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
         .in('id', msgIds)
         .is('parent_id', null)
         .order('created_at', { ascending: false }),
@@ -566,7 +567,7 @@ const BoardPage: React.FC = () => {
     if (msgIds.length === 0) { setArchivedMessages([]); return; }
     const { data: msgData } = await supabase
       .from('board_messages')
-      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
       .in('id', msgIds)
       .is('parent_id', null)
       .order('created_at', { ascending: false });
@@ -591,7 +592,7 @@ const BoardPage: React.FC = () => {
 
   const loadOutbox = useCallback(async () => {
     if (!user) return;
-    const SEL = 'id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link, outbox_hidden, cc_user_ids';
+    const SEL = 'id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link, outbox_hidden, cc_user_ids';
     const [{ data }, { data: archData }, { data: ccData }] = await Promise.all([
       supabase.from('board_messages').select(SEL)
         .eq('user_id', user.id).is('channel_id', null).is('parent_id', null)
@@ -818,7 +819,7 @@ const BoardPage: React.FC = () => {
     const { data, error } = await supabase
       .from('board_messages')
       .insert(insertData)
-      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, answer_prompt, answer_location, answer_link')
+      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, answer_prompt, answer_location, answer_link')
       .single();
 
     if (!error && data) {
@@ -1024,6 +1025,7 @@ const BoardPage: React.FC = () => {
       body: composeBody.trim(),
       status: isScheduled ? 'scheduled' : 'sent',
     };
+    if (!isScheduled) insertData.sent_at = new Date().toISOString();
     if (composeSubject.trim())         insertData.subject         = composeSubject.trim();
     if (composeDeadlineType)           { insertData.deadline_type = composeDeadlineType; insertData.requires_confirmation = true; }
     if (composeDeadline)               insertData.deadline        = composeDeadline;
@@ -1091,7 +1093,7 @@ const BoardPage: React.FC = () => {
 
   // ── Message render ───────────────────────────────────────────────
 
-  const renderMsg = (msg: BoardMessage, isReply = false) => {
+  const renderMsg = (msg: BoardMessage, isReply = false, isOutboxView = false) => {
     const isOwn = msg.user_id === user?.id;
     const canEdit = isOwn || isAdmin;
     const replies = isReply ? [] : threadReplies(msg.id);
@@ -1118,7 +1120,14 @@ const BoardPage: React.FC = () => {
                 {avatarLetter(senderName)}
               </div>
               <span style={{ fontSize: 13, fontWeight: 'bold', color: textColor }}>{senderName}</span>
-              <span style={{ fontSize: 11, color: subColor }}>{fmtFull(msg.created_at)}</span>
+              {isOutboxView && msg.scheduled_at ? (
+                <span style={{ fontSize: 11, color: subColor }}>
+                  予約 {fmtFull(msg.scheduled_at)}
+                  {msg.sent_at ? <> → 送信 {fmtFull(msg.sent_at)}</> : <span style={{ color: '#3b82f6' }}> （送信待ち）</span>}
+                </span>
+              ) : (
+                <span style={{ fontSize: 11, color: subColor }}>{fmtFull(msg.sent_at || msg.created_at)}</span>
+              )}
               {msg.edited_at && <span style={{ fontSize: 10, color: subColor }}>(編集済み)</span>}
             </div>
             <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
@@ -2097,7 +2106,7 @@ const BoardPage: React.FC = () => {
                     if (!isOpen && !inboxComments[inboxDetail.id]) {
                       const { data } = await supabase
                         .from('board_messages')
-                        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+                        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
                         .eq('parent_id', inboxDetail.id)
                         .order('created_at', { ascending: true });
                       setInboxComments(prev => ({ ...prev, [inboxDetail.id]: (data || []).map((m: any) => ({ ...m, broadcast_recipients: null, profile: null })) }));
@@ -2150,7 +2159,7 @@ const BoardPage: React.FC = () => {
                           const { data } = await supabase
                             .from('board_messages')
                             .insert({ parent_id: inboxDetail.id, user_id: user.id, body })
-                            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+                            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
                             .single();
                           if (data) {
                             const newComment: BoardMessage = { ...data, broadcast_recipients: null, profile: null };
@@ -2591,7 +2600,7 @@ const BoardPage: React.FC = () => {
                     style={{ flex: 1, padding: '8px 0', background: '#28a745', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, opacity: (!editingNoticeSubj.trim() || !editingNoticeBody.trim()) ? 0.5 : 1 }}>保存する</button>
                 </div>
               </div>
-            ) : renderMsg(outboxDetail)}
+            ) : renderMsg(outboxDetail, false, true)}
             {/* 削除確認 */}
             {deleteConfirmId === outboxDetail.id ? (
               <div style={{ marginTop: 16, padding: '12px 14px', background: isDark ? '#2d1a1a' : '#fff5f5', border: `1px solid ${isDark ? '#7f1d1d' : '#fca5a5'}`, borderRadius: 10 }}>
@@ -3163,7 +3172,7 @@ const BoardPage: React.FC = () => {
                   style={{ background: '#007bff', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, padding: '5px 10px', fontWeight: 'bold', whiteSpace: 'nowrap', flexShrink: 0 }}>＋お知らせ送信</button>
               )}
               <button type="button" title="通知設定" onClick={() => navigate('/notification-settings')}
-                style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '5px 7px', lineHeight: 1, flexShrink: 0 }}>🔔</button>
+                style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: isDark ? '#6b7280' : '#9ca3af', cursor: 'pointer', fontSize: 11, padding: '5px 8px', lineHeight: 1, flexShrink: 0, whiteSpace: 'nowrap' }}>通知設定</button>
             </div>
           </div>
           {showSearch && (

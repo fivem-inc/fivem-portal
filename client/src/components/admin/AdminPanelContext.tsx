@@ -68,6 +68,7 @@ export interface AdminPanelContextType {
   loadingUsers: boolean;
   sortedUsers: AdminUserProfile[];
   pendingUsers: AdminUserProfile[];
+  pendingLeaveRequests: AdminLeaveRequest[];
   editingUser: string | null; setEditingUser: React.Dispatch<React.SetStateAction<string | null>>;
   editName: string; setEditName: React.Dispatch<React.SetStateAction<string>>;
   showRetired: 'active' | 'retired' | 'all'; setShowRetired: React.Dispatch<React.SetStateAction<'active' | 'retired' | 'all'>>;
@@ -433,6 +434,8 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   }, []);
 
   const pendingUsers = useMemo(() => users.filter(u => u.approval_status === 'pending'), [users]);
+
+  const pendingLeaveRequests = useMemo(() => leaveRequests.filter(l => !['approved', 'rejected'].includes(l.status)), [leaveRequests]);
 
   const sortedUsers = useMemo(() => {
     const nonPending = users.filter(u => u.approval_status !== 'pending');
@@ -812,6 +815,9 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     }
   }, []);
 
+  // 承認待ちバッジ用：タブを開かなくても件数が分かるよう、初回マウント時に一度だけ取得
+  useEffect(() => { fetchUsers(); fetchLeaveRequests(); }, [fetchUsers, fetchLeaveRequests]);
+
   useEffect(() => {
     if (activeTab === 'users') { fetchUsers(); fetchMasterOptions(); }
     if (activeTab === 'groups') { fetchUsers(); fetchMasterOptions(); }
@@ -1063,7 +1069,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       typeFilter, setTypeFilter, statusFilter, setStatusFilter,
       expandedAdminYears, expandedMonths, toggleYearExpansion, toggleMonthExpansion,
       filteredPending, groupedSubmissions,
-      users, setUsers, loadingUsers, sortedUsers, pendingUsers,
+      users, setUsers, loadingUsers, sortedUsers, pendingUsers, pendingLeaveRequests,
       editingUser, setEditingUser, editName, setEditName,
       showRetired, setShowRetired, userSortKey, userSortAsc,
       editingSortOrder, setEditingSortOrder, editSortOrderValue, setEditSortOrderValue,

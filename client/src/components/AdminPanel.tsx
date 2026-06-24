@@ -38,6 +38,7 @@ const AdminPanelContent: React.FC = () => {
     customExpenseTypes, newExpenseTypeName, setNewExpenseTypeName, handleAddExpenseType, handleDeleteExpenseType,
     expenseTypeLabels, renamingExpenseTypeLabelId, setRenamingExpenseTypeLabelId, renamingExpenseTypeLabelValue, setRenamingExpenseTypeLabelValue, handleRenameExpenseTypeLabel,
     successMsg, setSuccessMsg,
+    pendingUsers, pendingLeaveRequests,
   } = useAdminPanel();
 
   return (    <div style={{ marginTop: 0, paddingTop: 0 }}>
@@ -453,24 +454,39 @@ const AdminPanelContent: React.FC = () => {
           display: 'flex', justifyContent: 'center', flexWrap: 'nowrap',
           marginBottom: row === 1 ? 2 : 0,
           overflowX: row === 2 ? 'auto' : undefined,
+          // overflowX: 'auto' を指定すると overflowY も自動でクリップされるため、
+          // バッジ（top: -6 で枠外に飛び出す）が切れないよう上に余白を確保し、見た目の位置は marginTop で打ち消す
+          paddingTop: row === 2 ? 8 : undefined,
+          marginTop: row === 2 ? -8 : undefined,
         });
+        const Badge = ({ count }: { count: number }) => (
+          <span style={{ position: 'absolute', top: -6, right: -6, background: '#dc3545', color: '#fff', borderRadius: '50%', minWidth: 18, height: 18, padding: '0 4px', fontSize: 11, fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>
+            {count}
+          </span>
+        );
         return (
           <>
             {/* PC: 2段タブ */}
             <div className="admin-tabs-pc">
               <div style={rowStyle(1)}>
                 {ROW1.map(t => (
-                  <button key={t.key} style={tabStyle(activeTab === t.key)}
+                  <button key={t.key} style={{ ...tabStyle(activeTab === t.key), position: 'relative' }}
                           onClick={() => handleTabChange(t.key)}>
                     {t.icon} {t.label}
+                    {t.key === 'leave_requests' && pendingLeaveRequests.length > 0 && (
+                      <Badge count={pendingLeaveRequests.length} />
+                    )}
                   </button>
                 ))}
               </div>
               <div style={rowStyle(2)}>
                 {ROW2.map(t => (
-                  <button key={t.key} style={tabStyle(activeTab === t.key)}
+                  <button key={t.key} style={{ ...tabStyle(activeTab === t.key), position: 'relative' }}
                           onClick={() => handleTabChange(t.key)}>
                     {t.icon} {t.label}
+                    {t.key === 'users' && pendingUsers.length > 0 && (
+                      <Badge count={pendingUsers.length} />
+                    )}
                   </button>
                 ))}
               </div>
@@ -494,6 +510,8 @@ const AdminPanelContent: React.FC = () => {
                   <option key={t.key} value={t.key}
                     style={{ background: isDarkMode ? '#343a40' : 'white', color: isDarkMode ? '#fff' : '#333' }}>
                     {t.icon} {t.label}
+                    {t.key === 'users' && pendingUsers.length > 0 ? `（承認待ち${pendingUsers.length}件）` : ''}
+                    {t.key === 'leave_requests' && pendingLeaveRequests.length > 0 ? `（承認待ち${pendingLeaveRequests.length}件）` : ''}
                   </option>
                 ))}
               </select>

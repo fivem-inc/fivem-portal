@@ -20,7 +20,7 @@ serve(async (req) => {
   // → cronが多重起動しても、2回目以降のUPDATEはWHERE条件に一致する行が無くなっているため二重通知されない
   const { data: messages, error } = await supabase
     .from('board_messages')
-    .update({ status: 'sent' })
+    .update({ status: 'sent', sent_at: now })
     .eq('status', 'scheduled')
     .lte('scheduled_at', now)
     .select('id, user_id, subject, body');
