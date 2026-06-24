@@ -15,13 +15,13 @@ export default function SignIn() {
   const [isResettingPassword, setIsResettingPassword] = useState(false); // パスワードリセットモードかどうかの状態
   const [showPassword, setShowPassword] = useState(false); // パスワード表示切り替え
   const [showConfirmPassword, setShowConfirmPassword] = useState(false); // 確認用パスワード表示切り替え
-  const { user } = useContext(AuthContext);
+  const { user, blockedMessage, clearBlockedMessage } = useContext(AuthContext);
   const { isAdmin } = useAuth();
 
   // 認証フロー処理（簡素化 - パスワードリセットは専用ページで処理）
   useEffect(() => {
     console.log('=== SignIn 認証フロー初期化 ===');
-    
+
     // 基本的な認証イベント監視
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       console.log('🔥 SignIn 認証イベント:', event, '| セッション:', !!session);
@@ -32,14 +32,23 @@ export default function SignIn() {
     };
   }, []);
 
+  // is_active=false（退職済み・承認待ち）の判定はAuthContext側で一元的に行われる。
+  // ここではそのブロック理由（メッセージ）を受け取って表示するだけにする。
+  useEffect(() => {
+    if (blockedMessage) {
+      setError(blockedMessage);
+      setLoading(false);
+      clearBlockedMessage();
+    }
+  }, [blockedMessage, clearBlockedMessage]);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
-    
-    // シンプルなログイン処理
-    
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
+    // シンプルなログイン処理（is_active判定はAuthContextが行う）
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
       let errorMessage = error.message;
       if (error.message.includes('Invalid login credentials')) {
@@ -48,23 +57,9 @@ export default function SignIn() {
         errorMessage = 'メールアドレスが確認されていません。メールを確認してください。';
       }
       setError(errorMessage);
-    } else if (data.user) {
-      // 退職者・承認待ちチェック
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('is_active, approval_status')
-        .eq('id', data.user.id)
-        .single();
-      if (profile && profile.is_active === false) {
-        await supabase.auth.signOut();
-        if (profile.approval_status === 'pending') {
-          setError('ご登録ありがとうございます。管理者の承認をお待ちください。');
-        } else {
-          setError('このアカウントは無効です。管理者にお問い合わせください。');
-        }
-      }
+      setLoading(false);
     }
-    setLoading(false);
+    // 成功時のloading解除はAuthContextのapplySessionUser完了後（blockedMessage or 通常ログイン）に任せる
   };
 
   const handleSignUp = async (e: React.FormEvent) => {

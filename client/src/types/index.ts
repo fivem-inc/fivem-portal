@@ -68,6 +68,8 @@ export interface AuthContextType {
   user: AuthUser | null;
   previewRole: string | null;
   setPreviewRole: (role: string | null) => void;
+  blockedMessage: string | null;
+  clearBlockedMessage: () => void;
 }
 
 export interface LeaveRequest {
