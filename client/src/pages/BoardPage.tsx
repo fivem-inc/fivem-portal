@@ -1122,8 +1122,10 @@ const BoardPage: React.FC = () => {
               <span style={{ fontSize: 13, fontWeight: 'bold', color: textColor }}>{senderName}</span>
               {isOutboxView && msg.scheduled_at ? (
                 <span style={{ fontSize: 11, color: subColor }}>
-                  予約 {fmtFull(msg.scheduled_at)}
-                  {msg.sent_at ? <> → 送信 {fmtFull(msg.sent_at)}</> : <span style={{ color: '#3b82f6' }}> （送信待ち）</span>}
+                  予約作成 {fmtFull(msg.created_at)}
+                  {msg.sent_at
+                    ? <> → 送信済 {fmtFull(msg.sent_at)}</>
+                    : <span style={{ color: '#3b82f6' }}> → {fmtFull(msg.scheduled_at)}に送信予定</span>}
                 </span>
               ) : (
                 <span style={{ fontSize: 11, color: subColor }}>{fmtFull(msg.sent_at || msg.created_at)}</span>
@@ -2293,7 +2295,7 @@ const BoardPage: React.FC = () => {
                         {avatarLetter(senderName)}
                       </div>
                       <span style={{ fontSize: 12, fontWeight: 'bold', color: textColor }}>{senderName}</span>
-                      <span style={{ fontSize: 10, color: subColor }}>{fmtFull(msg.created_at)}</span>
+                      <span style={{ fontSize: 10, color: subColor }}>{fmtFull(msg.sent_at || msg.created_at)}</span>
                       {confirmed && !isArchived && <span style={{ fontSize: 10, color: '#22c55e', fontWeight: 700 }}>✓ 完了</span>}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -2724,7 +2726,7 @@ const BoardPage: React.FC = () => {
                             onChange={e => setOutboxArchiveSelected(prev => { const s = new Set(prev); e.target.checked ? s.add(msg.id) : s.delete(msg.id); return s; })}
                             onClick={e => e.stopPropagation()}
                             style={{ width: 15, height: 15, cursor: 'pointer', accentColor: '#3b82f6' }} />
-                          <span style={{ fontSize: 10, color: subColor }}>{fmtFull(msg.created_at)}</span>
+                          <span style={{ fontSize: 10, color: subColor }}>{fmtFull(msg.sent_at || msg.created_at)}</span>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span style={{ fontSize: 10, color: subColor }}>{recipientIds.length}人</span>
@@ -2768,7 +2770,7 @@ const BoardPage: React.FC = () => {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}
                         onClick={() => { setOutboxDetailId(msg.id); setShowAllOutboxRecipients(false); }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                          <span style={{ fontSize: 10, color: subColor }}>{fmtFull(msg.created_at)}</span>
+                          <span style={{ fontSize: 10, color: subColor }}>{fmtFull(outboxTab === 'sent' ? (msg.sent_at || msg.created_at) : msg.created_at)}</span>
                           {outboxTab === 'sent' && msg.scheduled_at && (
                             <span style={{ fontSize: 10, fontWeight: 700, color: '#3b82f6', background: isDark ? '#1e3a5f' : '#dbeafe', borderRadius: 10, padding: '1px 6px' }}>
                               📅予約送信済み
