@@ -6,7 +6,7 @@ import type { AuthUser } from '../types';
 // ────────────────────────────────────────────────────────────────
 // Types
 // ────────────────────────────────────────────────────────────────
-type ApplicationType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start';
+type ApplicationType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start' | 'location_change';
 
 interface ShiftReport {
   id: string;
@@ -96,9 +96,10 @@ const TYPE_INFO: Record<ApplicationType, { label: string; color: string; emoji: 
   tardiness:    { label: '遅刻',     color: '#7b1fa2', emoji: '⏱️' },
   absence:      { label: '欠勤',     color: '#c62828', emoji: '❌' },
   early_start:  { label: '早出',     color: '#0891b2', emoji: '🌅' },
+  location_change: { label: '勤務地変更', color: '#6d28d9', emoji: '📍' },
 };
 
-const TYPE_PRIORITY: ApplicationType[] = ['absence', 'holiday_work', 'overtime', 'early_start', 'tardiness', 'early_leave'];
+const TYPE_PRIORITY: ApplicationType[] = ['absence', 'holiday_work', 'overtime', 'early_start', 'tardiness', 'early_leave', 'location_change'];
 function primaryType(types: ApplicationType[]): ApplicationType {
   return TYPE_PRIORITY.find(t => types.includes(t)) ?? types[0] ?? 'overtime';
 }
@@ -114,6 +115,8 @@ function isBlockedWith(current: ApplicationType[], t: ApplicationType): boolean 
   if (t === 'early_start' && current.includes('tardiness'))   return true;
   if (t === 'early_leave' && current.includes('overtime'))    return true;
   if (t === 'overtime'    && current.includes('early_leave')) return true;
+  if (t === 'holiday_work'     && current.includes('location_change')) return true;
+  if (t === 'location_change'  && current.includes('holiday_work'))    return true;
   return false;
 }
 function blockReason(current: ApplicationType[], t: ApplicationType): string {
@@ -123,6 +126,8 @@ function blockReason(current: ApplicationType[], t: ApplicationType): string {
   if (t === 'early_start' && current.includes('tardiness'))   return '遅刻と早出は同時に選べません';
   if (t === 'early_leave' && current.includes('overtime'))    return '残業と早退は同時に選べません';
   if (t === 'overtime'    && current.includes('early_leave')) return '早退と残業は同時に選べません';
+  if (t === 'holiday_work'    && current.includes('location_change')) return '休日出勤と勤務地変更は同時に選べません';
+  if (t === 'location_change' && current.includes('holiday_work'))    return '勤務地変更と休日出勤は同時に選べません';
   return '';
 }
 const STATUS_INFO: Record<string, { label: string; color: string; bg: string }> = {
@@ -249,7 +254,7 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
           <CRow label="確認依頼先" value={data.reviewerName} textColor={text} />
           {data.isSelfReview && (
             <div style={{ background: isDark ? '#1e3d2f' : '#d1fae5', borderRadius: 8, padding: '8px 12px', marginTop: 4 }}>
-              <span style={{ fontSize: 12, fontWeight: 'bold', color: '#065f46' }}>✓ 申請と同時に受理済みになります</span>
+              <span style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#4ade80' : '#065f46' }}>✓ 申請と同時に受理済みになります</span>
             </div>
           )}
           <button onClick={onSubmit} disabled={saving}
@@ -445,7 +450,7 @@ const ShiftReportForm: React.FC<{
   const borderCol = isDark ? '#6c757d' : '#ddd';
 
   const reviewerName = reviewers.find(r => r.id === reviewerId)?.name ?? '';
-  const f: React.CSSProperties = { width: '100%', padding: '9px 12px', borderRadius: 8, border: `1px solid ${borderCol}`, fontSize: 14, boxSizing: 'border-box', background: isDark ? '#495057' : 'white', color: textColor };
+  const f: React.CSSProperties = { width: '100%', padding: '9px 12px', borderRadius: 8, border: `1px solid ${borderCol}`, fontSize: 14, boxSizing: 'border-box', background: isDark ? '#495057' : 'white', color: textColor, colorScheme: isDark ? 'dark' : 'light' };
   const L: React.CSSProperties = { fontSize: 12, color: subColor, marginBottom: 4, display: 'block' };
   const Req = <span style={{ color: '#dc3545' }}>*</span>;
 
@@ -493,6 +498,21 @@ const ShiftReportForm: React.FC<{
                   );
                 })}
               </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8, marginBottom: 8 }}>
+                {(['location_change'] as ApplicationType[]).map(t => {
+                  const sel = types.includes(t);
+                  const blk = isBlockedWith(types, t) && !sel;
+                  const locColor = isDark ? '#c4b5fd' : TYPE_INFO[t].color;
+                  return (
+                    <button key={t} onClick={() => toggleType(t)} disabled={blk}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 12px', borderRadius: 10, border: `2px solid ${sel ? locColor : '#e5e7eb'}`, background: sel ? (isDark ? '#3b2f57' : '#f5f3ff') : (isDark ? '#495057' : 'white'), cursor: blk ? 'not-allowed' : 'pointer', opacity: blk ? 0.35 : 1, transition: 'all 0.15s', textAlign: 'left' as const }}>
+                      <div style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${sel ? locColor : '#d1d5db'}`, background: sel ? locColor : 'transparent', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: isDark ? '#1a1a2e' : 'white', fontSize: 11, fontWeight: 'bold' }}>{sel ? '✓' : ''}</div>
+                      <span style={{ fontSize: 14 }}>{TYPE_INFO[t].emoji}</span>
+                      <span style={{ fontSize: 13, fontWeight: sel ? 'bold' : 'normal', color: sel ? locColor : textColor }}>{TYPE_INFO[t].label}</span>
+                    </button>
+                  );
+                })}
+              </div>
               {/* 2段目：出勤時 */}
               <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', letterSpacing: '0.06em', marginBottom: 6 }}>🌅 出勤時</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
@@ -529,7 +549,7 @@ const ShiftReportForm: React.FC<{
               {blockMsg ? (
                 <div style={{ marginTop: 8, fontSize: 12, color: '#f97316', fontWeight: 500 }}>⚠️ {blockMsg}</div>
               ) : types.length > 0 ? (
-                <div style={{ marginTop: 8, padding: '6px 12px', background: isDark ? '#1e3d2f' : '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, fontSize: 12, color: '#065f46', fontWeight: 600 }}>
+                <div style={{ marginTop: 8, padding: '6px 12px', background: isDark ? '#1e3d2f' : '#f0fdf4', border: `1px solid ${isDark ? '#166534' : '#bbf7d0'}`, borderRadius: 8, fontSize: 12, color: isDark ? '#4ade80' : '#065f46', fontWeight: 600 }}>
                   ✓ {typesLabel(types)}
                 </div>
               ) : null}
@@ -609,7 +629,7 @@ const ShiftReportForm: React.FC<{
                 </div>
                 {actStart && actEnd && laborMin > 0 && (
                   <div style={{ background: isDark ? '#1e3d2f' : '#dcfce7', borderRadius: 8, padding: '8px 12px' }}>
-                    <div style={{ fontSize: 12, color: '#166534' }}>🕐 休憩 {breakMin}分　／　実労働 {formatMin(laborMin)}</div>
+                    <div style={{ fontSize: 12, color: isDark ? '#4ade80' : '#166534' }}>🕐 休憩 {breakMin}分　／　実労働 {formatMin(laborMin)}</div>
                     {!origDayOff && !hasHoliday && origMin > 0 && (
                       <div style={{ marginTop: 4 }}>
                         {types.includes('overtime') && diffMin > 0 && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#1565c0' }}>⏰ 時間外労働：{formatMin(Math.max(0, diffMin))}</div>}
@@ -968,7 +988,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                     : null
                 }
                 {r.actual_start && (
-                  <div style={{ fontSize: 12, color: '#166534', marginBottom: 4 }}>
+                  <div style={{ fontSize: 12, color: isDark ? '#4ade80' : '#166534', marginBottom: 4 }}>
                     ✅ {r.actual_location} {r.actual_start.slice(0, 5)}〜{r.actual_end?.slice(0, 5)}　実労働 {r.labor_minutes ? formatMin(r.labor_minutes) : '-'}
                     {dMin != null && oMin > 0 && (
                       <span style={{ marginLeft: 6, color: r.application_type === 'overtime' ? '#1565c0' : '#c2410c', fontWeight: 'bold' }}>

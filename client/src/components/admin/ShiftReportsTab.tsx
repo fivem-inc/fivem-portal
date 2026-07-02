@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 
-type AppType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start';
+type AppType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start' | 'location_change';
 
 interface ShiftReport {
   id: string;
@@ -46,6 +46,7 @@ const TYPE_INFO: Record<AppType, { label: string; color: string; emoji: string }
   tardiness:    { label: '遅刻',     color: '#7b1fa2', emoji: '⏱️' },
   absence:      { label: '欠勤',     color: '#c62828', emoji: '❌' },
   early_start:  { label: '早出',     color: '#0891b2', emoji: '🌅' },
+  location_change: { label: '勤務地変更', color: '#6d28d9', emoji: '📍' },
 };
 function getTypes(r: ShiftReport): AppType[] {
   return r.application_types?.length ? r.application_types : [r.application_type];
