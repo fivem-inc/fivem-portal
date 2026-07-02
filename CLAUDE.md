@@ -4076,3 +4076,80 @@ const hasGreen = absences.some(a => a.type === 'late_start' || a.type === 'early
 - 認証・アクセス制御は画面個別でなく必ず`AuthContext`のような一元的な場所に実装する（`onAuthStateChange`は複数経路で発火するため、個別画面のチェックだけだと抜け道が残る）
 - 役職（`role_title`）と雇用形態（`employment_type`）は別軸。役職に雇用形態と同じ文字を入れない（無役職者は必ず「一般」）
 - `master_options`（UsersTab選択肢）と`roles`テーブル（機能別表示権限）は別テーブル → 役職を新設・変更する時は両方に反映が必要
+
+---
+
+## ✅ 2026-07-02 Vault動作確認・GitHub秘密情報漏洩の緊急対応・通知バグ2件修正 完了
+
+### 1. Vault修正後の動作確認（前回タスク1・完了）
+- `board-scheduled-send`（5分毎cron）：直近の実行ログを`net._http_response`で確認 → 全て`status_code 200`、401エラー無し。正常稼働を確認
+- `new-signup-notify`（新規登録通知）：`handle_new_user`トリガーの定義を確認 → Vaultの`service_role_key`を正しく参照する設定になっていた（実際の新規登録が無かったため実行ログでは未確認だが設定は正常）
+- **ついでに発見**：`encouragement-notify-daily`・`remind-unread-daily`（別の毎日0時cron、「忘れん坊通知」機能用）が401/失敗していた。原因はVaultとは無関係で、呼び出し先URLが`<YOUR_PROJECT_REF>`というテンプレートのプレースホルダーのまま／古い認証方式のまま放置されていたため。次回タスク「忘れん坊通知①②③の呼び出し側実装」が未完了である証拠として記録
+
+### 2. 連絡板：上部📨アイコンのバッジが予約中(未送信)メッセージもカウントしていた不具合を修正
+- **原因**：`App.tsx`の`inboxUnread`集計が`board_message_recipients`テーブルの件数だけを見ており、`board_messages.status`（`scheduled`=未送信 / `sent`=送信済み）を見ていなかった。受信者レコード自体は「予約作成した瞬間」に作られるため、まだ送信されていない予約メッセージの分までバッジにカウントされていた
+- 修正：`status='sent'`のメッセージだけを未読カウント対象にするようフィルタ追加
+- 変更ファイル：`client/src/App.tsx`（L210-218）
+- コミット：`da08995`
+
+### 3. 🚨 重大セキュリティ対応：GitHub履歴に認証トークンが約1年間公開されていた問題
+- **発見の経緯**：上記2の修正後、Vercelの自動デプロイが動かなくなっていることに気づき調査 → Vercel Hobbyプランは「組織所有のPrivateリポジトリ」からの自動デプロイに非対応と判明（7/1にfivem-portal他3リポジトリをPrivate化したことが原因）
+- **調査の過程で発覚した本題**：リポジトリ内に`.claude/.credentials.json`（Claude CodeのOAuthアクセストークン・リフレッシュトークン）と`.local/share/com.vercel.cli/auth.json`（Vercel CLIの認証トークン）が**2025年7月12日から誤ってgit管理下にコミットされており、Privateにする前日(2026/7/1)まで約1年間Publicリポジトリとして世界中に公開されていた**
+  - 他に`.claude.json`・`.cache/`・`.npm/`（53MBの巨大キャッシュ含む）・`.nvm/`も同様に誤って追跡されていた（ホームディレクトリでの`git add -A`等が原因と推測）
+  - `client/.env`系のSupabase anon key・VAPID public keyは元々クライアントに公開される想定の鍵のため実害なしと判断
+- **対応した内容**：
+  1. ユーザー自身がPC上でClaude Codeをログアウト→再ログイン（漏洩トークンの無効化）
+  2. `.gitignore`に`.claude/` `.claude.json` `.vercel` `.cache/` `.local/` `.nvm/` `.npm/`を追加、`git rm --cached`で追跡解除
+  3. `git filter-branch --index-filter`で全523コミットの履歴から該当ファイルを完全削除（2回に分けて実施：`.claude`系→後から発覚した`.local`/`.cache`/`.npm`/`.nvm`系）
+  4. `git push --force`でGitHub側の履歴を上書き（`.git`容量 236MB→2.7MBに削減）
+  5. Vercel CLIトークンはVercelダッシュボードのTokens一覧で確認したところ、CLIトークンは短期間で自動失効・再発行される仕様のため、漏洩当時のものは既に自然失効済みと判断（個別Revokeは不要と判断）
+- **再発防止策（このPC = `C:\Users\kohei`に導入済み・重要）**：
+  - グローバル`.gitignore`：`C:\Users\kohei\.gitignore_global`（`git config --global core.excludesfile`で登録）。`.claude/` `.vercel` `.env` `.cache/` `.local/` `.nvm/` `.npm/` `*.pem` `*.key` `.ssh/` `.aws/`等を**全リポジトリ共通で**除外
+  - グローバル pre-commit フック：`C:\Users\kohei\.git-hooks\pre-commit`（`git config --global core.hooksPath`で登録）。上記パターンに一致するファイルを含むコミットを自動ブロック（動作確認済み）
+  - **⚠️ 自宅PC等、別のパソコンには反映されていない**（パソコン単位のローカル設定のため）。新しいPCで作業する前に必ず同じ設定を入れること
+- **リポジトリ最終状態**：セキュリティ対応完了後、ユーザー判断で**Publicに戻した**（履歴クリーン化＋pre-commitフック導入済みのため許容。「危険なのはコードが見えることではなく秘密情報が漏れること」という方針）
+- 自宅PC側の対応（次回自宅PCを開いたら最初に必須）：
+  ```
+  git fetch origin
+  git reset --hard origin/master
+  ```
+  （履歴を書き換えたため、通常の`git pull`ではなくこの2行が必要。自宅PC側に未コミットの変更が無いことは確認済み）
+
+### 4. Vercel自動デプロイの復旧
+- 原因は上記3のPrivate化によるVercel Hobbyプラン制限だったため、Publicに戻した後、Vercelプロジェクト設定→Git→一度Disconnect→再Connectで復旧（単にPublicに戻すだけでは既存の壊れた連携は直らず、再接続が必要だった）
+- 復旧確認：空コミットをpushしてDeploymentsタブに反映されることを確認済み
+
+### 5. 通知関連バグ2件を修正
+- **① ベル🔔通知一覧：✕で消してもリロードすると復活する不具合**
+  - 原因：`fetchNotifs`が既読・未読を問わず全件（最大30件）を毎回取得し直す実装だったため、✕（実体は`read=true`への更新）を押しても、リロード後の再取得で同じ項目が再表示されていた
+  - 修正：クエリに`.eq('read', false)`を追加し、未読のみ取得するよう変更
+  - 変更ファイル：`client/src/App.tsx`（L68）
+- **② ホーム画面の通知バナーからお知らせを開くと、受信トレイの未読バッジが消えない不具合**
+  - 原因：URLパラメータ`openInboxId`経由でお知らせ詳細を自動展開する処理が、`inboxDetailId`をセットするだけで`board_reads`テーブルへの既読登録をしていなかった（受信トレイ一覧から直接クリックした場合は既読登録される実装と処理が分岐していた）
+  - 修正：`openInboxId`のuseEffect内にも同じ既読登録処理（`board_reads.upsert`）を追加
+  - 変更ファイル：`client/src/pages/BoardPage.tsx`（L642-656）
+- コミット：`bafe6eb`
+
+### 🔜 次回タスク（2026-07-02 セッション終了時点・最新）
+1. **忘れん坊通知①②③の呼び出し側実装**（上記1で判明：`encouragement-notify-daily`・`remind-unread-daily`のURL/認証設定が未完了のまま放置されている。プレースホルダーURLの修正＋Vault方式への統一が必要）
+   - ① 未回答リマインド: お知らせの期限1日前・当日に未回答者へ send-push
+   - ② 定期リマインド: 毎月〇日に指定グループへ自動通知（Supabase Cron + send-push）
+   - ③ 確認ボタン: 重要連絡に「確認しました」ボタン → 未確認者を管理者が把握・一括リマインド
+2. **peachさんアカウント（pongketkorn15@gmail.com）の処置**：削除済み（対応完了）
+3. **gcal-sync 失敗時リトライキュー**（低優先）
+4. ★7月リリースの公開操作（手動：管理画面→機能別 表示権限）
+   - 7/1 : 交通費・出張報告を「全公開」ON → 済
+   - 7/16: 残り（休暇・カレンダー・勤務変更・連絡板）を「全公開」ON
+5. **自宅PCへのセキュリティ設定導入**（グローバル`.gitignore`＋pre-commitフック。上記3参照）
+6. **npm不要ファイル・大容量キャッシュの整理**：force push時にGitHubから「53MBの`.npm`キャッシュファイルが大きすぎる」警告が出た。今回は追跡解除・履歴削除済みだが、他のリポジトリでも同様の混入がないか確認すると安心
+
+### ⚠️ 作業ルール（必読・再掲・更新）
+- デプロイ（git push）はユーザーの指示があってから。ローカル確認後にデプロイ指示を待つ
+- `alert()` 禁止 → 成功時は緑カード（setSuccessMsg）
+- `window.confirm()` 禁止 → インライン確認パネル（赤枠）
+- Supabase クエリの `.catch()` 禁止 → `.then(null, () => {})` を使用
+- 認証・アクセス制御は画面個別でなく必ず`AuthContext`のような一元的な場所に実装する
+- 役職（`role_title`）と雇用形態（`employment_type`）は別軸。無役職者は必ず「一般」
+- `master_options`（UsersTab選択肢）と`roles`テーブル（機能別表示権限）は別テーブル → 役職を新設・変更する時は両方に反映が必要
+- **新規プロジェクト開始前・新しいPCで作業開始前は、必ず「秘密情報漏洩防止の設定（グローバル`.gitignore`＋pre-commitフック）」が入っているか確認する**（今回`.claude`/`.vercel`のトークンが1年間公開されていた事故の再発防止）
+- **`git add .` / `git add -A` の前は必ず`git status`で中身を目視確認する**（ホームディレクトリの設定フォルダが紛れ込んでいないか）
