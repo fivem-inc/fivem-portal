@@ -229,7 +229,7 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
           <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>📋 通常シフト（もともとの予定）</div>
           {data.origDayOff
             ? <CRow label="" value="休みの日" textColor={text} />
-            : <CRow label="" value={`${data.origLoc || '—'}　${data.origStart}〜${data.origEnd}（${formatMin(origMin)}）`} textColor={text} />
+            : <CRow label="" value={`${data.origLoc || '—'}　${data.origStart}〜${data.origEnd}`} textColor={text} />
           }
           {!hasAbsence && (
             <>
@@ -597,9 +597,6 @@ const ShiftReportForm: React.FC<{
                     <span style={{ color: '#888', flexShrink: 0 }}>〜</span>
                     <input type="time" value={origEnd} onChange={e => setOrigEnd(e.target.value)} style={{ ...f, flex: 1 }} />
                   </div>
-                  {origStart && origEnd && origMin > 0 && (
-                    <div style={{ fontSize: 11, color: '#888', marginTop: 6 }}>シフト時間：{formatMin(origMin)}</div>
-                  )}
                 </>
               )}
             </div>
@@ -982,7 +979,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                   </span>
                 </div>
                 {r.original_start
-                  ? <div style={{ fontSize: 12, color: '#555', marginBottom: 2 }}>📋 {r.original_location} {r.original_start.slice(0, 5)}〜{r.original_end?.slice(0, 5)}（{formatMin(oMin)}）</div>
+                  ? <div style={{ fontSize: 12, color: '#555', marginBottom: 2 }}>📋 {r.original_location} {r.original_start.slice(0, 5)}〜{r.original_end?.slice(0, 5)}</div>
                   : r.application_type !== 'holiday_work'
                     ? <div style={{ fontSize: 12, color: '#aaa', marginBottom: 2 }}>📋 もともと休みの日</div>
                     : null
