@@ -93,6 +93,14 @@ const fmtFull = (ts: string) => {
     hour: '2-digit', minute: '2-digit',
   });
 };
+// 確認・回答日時表示用：今日でも省略せず常に年月日時分を出す
+const fmtConfirmDate = (ts: string) => {
+  const d = new Date(ts);
+  return d.toLocaleString('ja-JP', {
+    timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  });
+};
 // (fmtNotif は App.tsx の通知ベルで使用)
 // 送信予約input の min用：toISOString()はUTC基準になり、JST(UTC+9)では実際の現在より9時間前がminになってしまうため、ローカル時刻で組み立てる
 const localDatetimeMin = (offsetMs = 60000) => {
@@ -229,7 +237,7 @@ const BoardPage: React.FC = () => {
   const [newDeadlineType,      setNewDeadlineType]      = useState('');
   const [newScheduledAt,       setNewScheduledAt]       = useState('');
   const [showOptionsExpanded,  setShowOptionsExpanded]  = useState(false);
-  const [confirmations,        setConfirmations]        = useState<Record<string, {user_id: string; comment: string | null}[]>>({});
+  const [confirmations,        setConfirmations]        = useState<Record<string, {user_id: string; comment: string | null; confirmed_at?: string}[]>>({});
   const [myConfirmTimes,       setMyConfirmTimes]       = useState<Record<string, string>>({});
   const [unconfirmedMsgId,     setUnconfirmedMsgId]     = useState<string | null>(null);
   const [answerInputId,        setAnswerInputId]        = useState<string | null>(null);
@@ -323,11 +331,11 @@ const BoardPage: React.FC = () => {
     // requires_confirmation / deadline_type ありの投稿の確認者を取得
     const confirmMsgIds = (msgRes.data || []).filter((m: any) => m.requires_confirmation || m.deadline_type).map((m: any) => m.id);
     if (confirmMsgIds.length > 0) {
-      const { data: confData } = await supabase.from('board_confirmations').select('message_id, user_id, comment').in('message_id', confirmMsgIds);
-      const confMap: Record<string, {user_id: string; comment: string | null}[]> = {};
-      (confData || []).forEach((c: { message_id: string; user_id: string; comment: string | null }) => {
+      const { data: confData } = await supabase.from('board_confirmations').select('message_id, user_id, comment, confirmed_at').in('message_id', confirmMsgIds);
+      const confMap: Record<string, {user_id: string; comment: string | null; confirmed_at?: string}[]> = {};
+      (confData || []).forEach((c: { message_id: string; user_id: string; comment: string | null; confirmed_at: string }) => {
         if (!confMap[c.message_id]) confMap[c.message_id] = [];
-        confMap[c.message_id].push({ user_id: c.user_id, comment: c.comment });
+        confMap[c.message_id].push({ user_id: c.user_id, comment: c.comment, confirmed_at: c.confirmed_at });
       });
       setConfirmations(confMap);
     }
@@ -546,11 +554,11 @@ const BoardPage: React.FC = () => {
     // confirmations を読む（deadline_type / requires_confirmation があるもの）
     const confirmMsgIds = (msgData || []).filter((m: any) => m.requires_confirmation || m.deadline_type).map((m: any) => m.id);
     if (confirmMsgIds.length > 0) {
-      const { data: confData } = await supabase.from('board_confirmations').select('message_id, user_id, comment').in('message_id', confirmMsgIds);
-      const confMap: Record<string, {user_id: string; comment: string | null}[]> = {};
+      const { data: confData } = await supabase.from('board_confirmations').select('message_id, user_id, comment, confirmed_at').in('message_id', confirmMsgIds);
+      const confMap: Record<string, {user_id: string; comment: string | null; confirmed_at?: string}[]> = {};
       (confData || []).forEach((c: any) => {
         if (!confMap[c.message_id]) confMap[c.message_id] = [];
-        confMap[c.message_id].push({ user_id: c.user_id, comment: c.comment });
+        confMap[c.message_id].push({ user_id: c.user_id, comment: c.comment, confirmed_at: c.confirmed_at });
       });
       setConfirmations(prev => ({ ...prev, ...confMap }));
     }
@@ -632,6 +640,18 @@ const BoardPage: React.FC = () => {
       const rc: Record<string, number> = {};
       (rcData || []).forEach((r: any) => { rc[r.message_id] = (rc[r.message_id] || 0) + 1; });
       setReadCounts(prev => ({ ...prev, ...rc }));
+
+      // confirmations を読む（deadline_type / requires_confirmation があるもの。送信トレイの対応状況表示に必要）
+      const confirmMsgIds = (data || []).filter((m: any) => m.requires_confirmation || m.deadline_type).map((m: any) => m.id);
+      if (confirmMsgIds.length > 0) {
+        const { data: confData } = await supabase.from('board_confirmations').select('message_id, user_id, comment, confirmed_at').in('message_id', confirmMsgIds);
+        const confMap: Record<string, {user_id: string; comment: string | null; confirmed_at?: string}[]> = {};
+        (confData || []).forEach((c: any) => {
+          if (!confMap[c.message_id]) confMap[c.message_id] = [];
+          confMap[c.message_id].push({ user_id: c.user_id, comment: c.comment, confirmed_at: c.confirmed_at });
+        });
+        setConfirmations(prev => ({ ...prev, ...confMap }));
+      }
     }
   }, [user]);
 
@@ -1154,9 +1174,14 @@ const BoardPage: React.FC = () => {
             const today = new Date().toISOString().slice(0, 10);
             const isOverdue = msg.deadline ? msg.deadline < today : false;
             const isToday = msg.deadline ? msg.deadline === today : false;
+            const badgeMemberIds = msg.channel_id
+              ? members.filter(m => m.channel_id === msg.channel_id).map(m => m.user_id)
+              : (inboxRecipients[msg.id] || []);
+            const allRecipientsConfirmed = badgeMemberIds.length > 0 && badgeMemberIds.every(id => confirmedIdsTop.includes(id));
+            const isConfirmedByMe = confirmedIdsTop.includes(user?.id || '') || (isOwn && allRecipientsConfirmed);
             const dtConfig = DEADLINE_TYPES.find(d => d.value === msg.deadline_type);
             const typeText = dtConfig ? dtConfig.label.replace(/^\S+\s/, '') : '確認';
-            const accentColor = isOverdue ? '#dc2626' : isToday ? '#d97706' : '#1d4ed8';
+            const accentColor = !isConfirmedByMe && isOverdue ? '#dc2626' : isToday ? '#d97706' : '#1d4ed8';
             const dateLabel = msg.deadline ? (() => {
               const [y, m, d] = msg.deadline.split('-');
               return `${y}/${parseInt(m)}/${parseInt(d)}まで`;
@@ -1170,10 +1195,14 @@ const BoardPage: React.FC = () => {
                     <span style={{ fontSize: 17, fontWeight: 700, color: textColor }}>{typeText === '確認' ? typeText : `${typeText}確認`}</span>
                   </div>
                   {msg.deadline && (
-                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 0, borderRadius: 20, overflow: 'hidden', border: `1.5px solid ${accentColor}` }}>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: '#fff', background: accentColor, padding: '2px 9px' }}>{badgeLeftText}</span>
-                      <span style={{ fontSize: 11, color: accentColor, padding: '2px 9px' }}>{dateLabel}</span>
-                    </div>
+                    isConfirmedByMe && isOverdue ? (
+                      <span style={{ fontSize: 12, color: subColor }}>{dateLabel}</span>
+                    ) : (
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 0, borderRadius: 20, overflow: 'hidden', border: `1.5px solid ${accentColor}` }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: '#fff', background: accentColor, padding: '2px 9px' }}>{badgeLeftText}</span>
+                        <span style={{ fontSize: 11, color: accentColor, padding: '2px 9px' }}>{dateLabel}</span>
+                      </div>
+                    )
                   )}
                 </div>
               </div>
@@ -1207,9 +1236,10 @@ const BoardPage: React.FC = () => {
               )}
             </div>
           )}
-          {/* 回答一覧（回答タイプで送信済みのもの） */}
+          {/* 回答一覧（回答タイプで送信済みのもの）：受信者は自分の回答のみ、送信者(送信トレイ)は全員分 */}
           {msg.deadline_type && !msg.parent_id && (() => {
-            const answers = (confirmations[msg.id] || []).filter(c => c.comment);
+            const allAnswers = (confirmations[msg.id] || []).filter(c => c.comment);
+            const answers = isOutboxView ? allAnswers : allAnswers.filter(c => c.user_id === user?.id);
             if (answers.length === 0) return null;
             return (
               <div style={{ margin: '6px 0 8px', padding: '8px 10px', background: isDark ? '#1a3a28' : '#f0fdf4', borderRadius: 8, border: `1px solid ${isDark ? '#16532a' : '#86efac'}` }}>
@@ -1218,7 +1248,12 @@ const BoardPage: React.FC = () => {
                   const name = allProfiles.find(p => p.id === c.user_id)?.name || '不明';
                   return (
                     <div key={c.user_id} style={{ fontSize: 13, color: textColor, padding: '4px 0', borderBottom: `1px solid ${isDark ? '#16532a' : '#bbf7d0'}` }}>
-                      <span style={{ fontWeight: 500, color: isDark ? '#4ade80' : '#166534' }}>{name}：</span>{c.comment}
+                      <div>
+                        <span style={{ fontWeight: 500, color: isDark ? '#4ade80' : '#166534' }}>{name}：</span>{c.comment}
+                      </div>
+                      {c.confirmed_at && (
+                        <div style={{ fontSize: 10, color: subColor, marginTop: 2 }}>{fmtConfirmDate(c.confirmed_at)}</div>
+                      )}
                     </div>
                   );
                 })}
@@ -1247,7 +1282,7 @@ const BoardPage: React.FC = () => {
             const confirmedObjs = confirmations[msg.id] || [];
             const confirmedIds = confirmedObjs.map(c => c.user_id);
             const alreadyConfirmed = confirmedIds.includes(user?.id ?? '');
-            const myConfirmTime = myConfirmTimes[msg.id];
+            const myConfirmTime = myConfirmTimes[msg.id] || confirmedObjs.find(c => c.user_id === user?.id)?.confirmed_at;
             const channelMemberIds = msg.channel_id
               ? members.filter(m => m.channel_id === msg.channel_id).map(m => m.user_id)
               : (inboxRecipients[msg.id] || []);
@@ -1259,7 +1294,9 @@ const BoardPage: React.FC = () => {
             return (
               <div style={{ marginTop: 10 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-                  {!alreadyConfirmed ? (
+                  {isOutboxView ? (
+                    <span />
+                  ) : !alreadyConfirmed ? (
                     <button type="button" onClick={() => {
                       setAnswerInputId(answerInputId === msg.id ? null : msg.id);
                       setAnswerText('');
@@ -1268,7 +1305,7 @@ const BoardPage: React.FC = () => {
                     </button>
                   ) : (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', background: '#22c55e', border: '1.5px solid #22c55e', borderRadius: 20, fontSize: 13, fontWeight: 500, color: '#fff' }}>
-                      <span style={{ fontSize: 15, lineHeight: 1 }}>✓</span> {doneLabel}（{myConfirmTime ? fmtFull(myConfirmTime) : '済み'}）
+                      <span style={{ fontSize: 15, lineHeight: 1 }}>✓</span> {doneLabel}（{myConfirmTime ? fmtConfirmDate(myConfirmTime) : '済み'}）
                     </span>
                   )}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1302,7 +1339,7 @@ const BoardPage: React.FC = () => {
                           { message_id: msg.id, user_id: user.id, comment: answerText.trim() || null },
                           { onConflict: 'message_id,user_id' }
                         );
-                        setConfirmations(prev => ({ ...prev, [msg.id]: [...(prev[msg.id] || []).filter(c => c.user_id !== user.id), { user_id: user.id, comment: answerText.trim() || null }] }));
+                        setConfirmations(prev => ({ ...prev, [msg.id]: [...(prev[msg.id] || []).filter(c => c.user_id !== user.id), { user_id: user.id, comment: answerText.trim() || null, confirmed_at: now }] }));
                         setMyConfirmTimes(prev => ({ ...prev, [msg.id]: now }));
                         setAnswerInputId(null);
                         setAnswerText('');
@@ -2333,7 +2370,16 @@ const BoardPage: React.FC = () => {
                         <div style={{ width: 3, height: 16, background: accentColor, borderRadius: 2, flexShrink: 0 }} />
                         <span style={{ fontSize: 13, fontWeight: 700, color: textColor }}>{typeText === '確認' ? typeText : `${typeText}確認`}</span>
                         {msg.deadline && (
-                          <span style={{ fontSize: 10, color: isOverdue ? '#dc2626' : '#d97706', fontWeight: 600 }}>{isOverdue ? '期限切れ' : `${msg.deadline}まで`}</span>
+                          confirmed ? (
+                            <span style={{ fontSize: 10, color: subColor }}>{msg.deadline}まで</span>
+                          ) : isOverdue ? (
+                            <span style={{ fontSize: 10, display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <span style={{ color: '#dc2626', fontWeight: 600 }}>期限切れ</span>
+                              <span style={{ color: subColor }}>{msg.deadline}まで</span>
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: 10, color: '#d97706', fontWeight: 600 }}>{msg.deadline}まで</span>
+                          )
                         )}
                       </div>
                     )}
@@ -2513,11 +2559,16 @@ const BoardPage: React.FC = () => {
                   </div>
                 );
               })()}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 12, color: subColor, flexShrink: 0 }}>⏰ 期限日</span>
-                <input type="date" value={composeDeadline} onChange={e => setComposeDeadline(e.target.value)} min={new Date().toISOString().slice(0, 10)}
-                  style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, flex: 1 }} />
-                {composeDeadline && <button type="button" onClick={() => setComposeDeadline('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 12, color: subColor, flexShrink: 0 }}>⏰ 期限日{composeDeadlineType && <span style={{ color: '#dc3545' }}> *必須</span>}</span>
+                  <input type="date" value={composeDeadline} onChange={e => setComposeDeadline(e.target.value)} min={new Date().toISOString().slice(0, 10)}
+                    style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1.5px solid ${composeDeadlineType && !composeDeadline ? '#dc3545' : border}`, background: 'transparent', color: textColor, flex: 1 }} />
+                  {composeDeadline && <button type="button" onClick={() => setComposeDeadline('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
+                </div>
+                {composeDeadlineType && !composeDeadline && (
+                  <div style={{ fontSize: 11, color: '#dc3545', marginTop: 3 }}>種別を選んだ場合、期限日の入力が必要です</div>
+                )}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 12, color: subColor, flexShrink: 0 }}>🕐 送信予約</span>
@@ -2541,11 +2592,11 @@ const BoardPage: React.FC = () => {
       <div style={{ padding: '10px 14px', borderTop: `1px solid ${border}`, background: cardBg, flexShrink: 0, display: 'flex', gap: 8, alignItems: 'flex-end' }}>
         <textarea value={composeBody} onChange={e => setComposeBody(e.target.value)} placeholder="本文を入力... *必須 (Ctrl+Enterで送信)"
           rows={2}
-          onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0) setShowComposeSendConfirm(true); }}}
+          onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0 && (!composeDeadlineType || composeDeadline)) setShowComposeSendConfirm(true); }}}
           style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, resize: 'none', fontFamily: 'inherit', lineHeight: 1.4 }} />
-        <button type="button" onClick={() => { if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0) setShowComposeSendConfirm(true); }}
-          disabled={!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || sending}
-          style={{ padding: '10px 18px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, alignSelf: 'flex-end', opacity: (!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || sending) ? 0.5 : 1, whiteSpace: 'nowrap' }}>
+        <button type="button" onClick={() => { if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0 && (!composeDeadlineType || composeDeadline)) setShowComposeSendConfirm(true); }}
+          disabled={!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || (!!composeDeadlineType && !composeDeadline) || sending}
+          style={{ padding: '10px 18px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, alignSelf: 'flex-end', opacity: (!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || (!!composeDeadlineType && !composeDeadline) || sending) ? 0.5 : 1, whiteSpace: 'nowrap' }}>
           {sending ? '送信中...' : `送信（${composeRecipientIds.length}人）`}
         </button>
       </div>
@@ -2769,6 +2820,13 @@ const BoardPage: React.FC = () => {
                 ) : outboxMessages.filter(m => outboxTab === 'sent' ? (m.status !== 'draft' && m.status !== 'scheduled') : m.status === outboxTab).map(msg => {
                   const recipientIds = inboxRecipients[msg.id] || [];
                   const recipientNames = recipientIds.slice(0, 3).map(uid => allProfiles.find(p => p.id === uid)?.name || '不明');
+                  const today = new Date().toISOString().slice(0, 10);
+                  const isOverdue = msg.deadline ? msg.deadline < today : false;
+                  const dtConfig = DEADLINE_TYPES.find(d => d.value === msg.deadline_type);
+                  const typeText = dtConfig ? dtConfig.label.replace(/^\S+\s/, '') : '';
+                  const confirmedIdsOutbox = (confirmations[msg.id] || []).map(c => c.user_id);
+                  const allConfirmed = recipientIds.length > 0 && recipientIds.every(id => confirmedIdsOutbox.includes(id));
+                  const accentColor = isOverdue ? '#dc2626' : '#1d4ed8';
                   return (
                     <div key={msg.id}
                       style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: '10px 12px', marginBottom: 6, textAlign: 'left' }}>
@@ -2786,6 +2844,7 @@ const BoardPage: React.FC = () => {
                               → {fmtFull(msg.scheduled_at)}に送信
                             </span>
                           )}
+                          {dtConfig && allConfirmed && <span style={{ fontSize: 10, color: '#22c55e', fontWeight: 700 }}>✓ 完了</span>}
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span style={{ fontSize: 10, color: subColor }}>{recipientIds.length}人</span>
@@ -2796,6 +2855,24 @@ const BoardPage: React.FC = () => {
                         </div>
                       </div>
                       <div onClick={() => { setOutboxDetailId(msg.id); setShowAllOutboxRecipients(false); }} style={{ cursor: 'pointer' }}>
+                        {dtConfig && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                            <div style={{ width: 3, height: 16, background: accentColor, borderRadius: 2, flexShrink: 0 }} />
+                            <span style={{ fontSize: 12, fontWeight: 700, color: textColor }}>{typeText === '確認' ? typeText : `${typeText}確認`}</span>
+                            {msg.deadline && (
+                              allConfirmed ? (
+                                <span style={{ fontSize: 10, color: subColor }}>{msg.deadline}まで</span>
+                              ) : isOverdue ? (
+                                <span style={{ fontSize: 10, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                  <span style={{ color: '#dc2626', fontWeight: 600 }}>期限切れ</span>
+                                  <span style={{ color: subColor }}>{msg.deadline}まで</span>
+                                </span>
+                              ) : (
+                                <span style={{ fontSize: 10, color: '#d97706', fontWeight: 600 }}>{msg.deadline}まで</span>
+                              )
+                            )}
+                          </div>
+                        )}
                         {(msg.subject || msg.title) && (
                           <div style={{ fontSize: 13, fontWeight: 700, color: textColor, marginBottom: 4, paddingBottom: 4, borderBottom: `1px solid ${border}` }}>{msg.subject || msg.title}</div>
                         )}
@@ -2923,12 +3000,17 @@ const BoardPage: React.FC = () => {
                 </>
               )}
               {/* 期限日 */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 12, color: textColor, fontWeight: 600, flexShrink: 0 }}>⏰ 期限日</span>
-                <input type="date" value={newDeadline} onChange={e => setNewDeadline(e.target.value)}
-                  min={new Date().toISOString().slice(0, 10)}
-                  style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, cursor: 'pointer', flex: 1 }} />
-                {newDeadline && <button type="button" onClick={() => setNewDeadline('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 12, color: textColor, fontWeight: 600, flexShrink: 0 }}>⏰ 期限日{newDeadlineType && <span style={{ color: '#dc3545' }}> *必須</span>}</span>
+                  <input type="date" value={newDeadline} onChange={e => setNewDeadline(e.target.value)}
+                    min={new Date().toISOString().slice(0, 10)}
+                    style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1.5px solid ${newDeadlineType && !newDeadline ? '#dc3545' : border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, cursor: 'pointer', flex: 1 }} />
+                  {newDeadline && <button type="button" onClick={() => setNewDeadline('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
+                </div>
+                {newDeadlineType && !newDeadline && (
+                  <div style={{ fontSize: 11, color: '#dc3545', marginTop: 3 }}>種別を選んだ場合、期限日の入力が必要です</div>
+                )}
               </div>
               {/* 送信予約 */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2947,14 +3029,14 @@ const BoardPage: React.FC = () => {
             onChange={e => setNewBody(e.target.value)}
             placeholder="メッセージを入力... (Ctrl+Enterで送信)"
             rows={2}
-            onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (newBody.trim()) setShowSendConfirm(true); }}}
+            onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (newBody.trim() && (!newDeadlineType || newDeadline)) setShowSendConfirm(true); }}}
             style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, resize: 'none', fontFamily: 'inherit', lineHeight: 1.4 }}
           />
           <button
             type="button"
-            onClick={() => { if (newBody.trim()) setShowSendConfirm(true); }}
-            disabled={sending || !newBody.trim()}
-            style={{ padding: '10px 18px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, alignSelf: 'flex-end', opacity: sending || !newBody.trim() ? 0.5 : 1 }}
+            onClick={() => { if (newBody.trim() && (!newDeadlineType || newDeadline)) setShowSendConfirm(true); }}
+            disabled={sending || !newBody.trim() || (!!newDeadlineType && !newDeadline)}
+            style={{ padding: '10px 18px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, alignSelf: 'flex-end', opacity: sending || !newBody.trim() || (!!newDeadlineType && !newDeadline) ? 0.5 : 1 }}
           >
             {sending ? '送信中' : '送信'}
           </button>
