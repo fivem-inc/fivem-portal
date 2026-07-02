@@ -31,6 +31,17 @@ serve(async (req) => {
     });
   }
 
+  // メール通知設定（お知らせ受信時・email）を一度だけ取得
+  const { data: emailSetting } = await supabase
+    .from('notification_settings')
+    .select('enabled, subject, template')
+    .eq('event_key', 'board:notice')
+    .eq('channel', 'email')
+    .maybeSingle();
+
+  const applyVars = (text: string, vars: Record<string, string>) =>
+    text.replace(/\{\{(.+?)\}\}/g, (_, k) => vars[k.trim()] ?? `{{${k.trim()}}}`);
+
   let processed = 0;
   for (const msg of messages) {
     // 受信者を取得
@@ -62,6 +73,23 @@ serve(async (req) => {
     }));
     const { error: notifyError } = await supabase.from('notifications').insert(notifications);
     if (notifyError) console.error('notification insert error:', notifyError);
+
+    // メール通知（管理画面の通知設定でON時のみ送信）
+    if (emailSetting?.enabled && emailSetting.template) {
+      const link = `https://fivem-portal.vercel.app/board?openInboxId=${msg.id}`;
+      const vars = { '送信者名': senderName, '件名': msg.subject || '', 'リンク': link };
+      const subject = applyVars(emailSetting.subject || '', vars);
+      const text = applyVars(emailSetting.template, vars);
+      const { data: recipientProfiles } = await supabase
+        .from('profiles')
+        .select('email')
+        .in('id', recipients.map((r: { user_id: string }) => r.user_id));
+      const emails = (recipientProfiles ?? []).map((p: { email: string | null }) => p.email).filter(Boolean) as string[];
+      if (emails.length > 0) {
+        const { error: emailError } = await supabase.functions.invoke('send-email', { body: { to: emails, subject, text } });
+        if (emailError) console.error('send-email error:', emailError);
+      }
+    }
 
     processed++;
   }

@@ -60,6 +60,16 @@ const EVENT_GROUPS = [
       { key: 'time_adjustment:registered', label: '登録時' },
     ],
   },
+  {
+    label: '連絡板',
+    icon: '📝',
+    headerBg: '#FCE4EC', headerBorder: '#AD1457', headerText: '#880E4F',
+    events: [
+      { key: 'board:notice',        label: 'お知らせ受信時' },
+      { key: 'board:dm_message',    label: '個人DM受信時' },
+      { key: 'board:group_message', label: 'グループメッセージ受信時' },
+    ],
+  },
 ];
 
 const CHANNEL_LABELS: Record<ChannelType, string> = {
@@ -83,6 +93,9 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
   'expense:new_request':         ['{{申請者名}}', '{{申請日}}', '{{申請内容}}', '{{項目数}}'],
   'trip:report_end':             ['{{申請者名}}', '{{申請日}}'],
   'time_adjustment:registered':  ['{{登録者名}}', '{{種別}}', '{{日付}}', '{{理由}}'],
+  'board:notice':                ['{{送信者名}}', '{{件名}}', '{{リンク}}'],
+  'board:dm_message':            ['{{送信者名}}', '{{リンク}}'],
+  'board:group_message':         ['{{送信者名}}', '{{グループ名}}', '{{リンク}}'],
 };
 
 // 時間調整イベント用: Slackチャンネル選択肢
@@ -182,6 +195,15 @@ const TEMPLATE_VAR_GROUPS: { label: string; color: string; vars: { v: string; de
       { v: '{{種別}}',     desc: '調整遅出 または 調整早退' },
       { v: '{{日付}}',     desc: '対象日（例：6/13）' },
       { v: '{{理由}}',     desc: '登録理由' },
+    ],
+  },
+  {
+    label: '連絡板', color: '#AD1457',
+    vars: [
+      { v: '{{送信者名}}',  desc: 'メッセージ・お知らせを送った人の名前' },
+      { v: '{{件名}}',      desc: 'お知らせの件名' },
+      { v: '{{グループ名}}', desc: '送信先グループの名前' },
+      { v: '{{リンク}}',    desc: '連絡板を開くリンク' },
     ],
   },
 ];
@@ -292,10 +314,9 @@ const NotificationsTab: React.FC = () => {
 
   const getBadges = (eventKey: string) => {
     const channels: ChannelType[] = ['slack', 'email', 'site'];
-    return channels.map(ch => {
-      const s = getSetting(eventKey, ch);
-      return { channel: ch, enabled: s?.enabled ?? false };
-    });
+    return channels
+      .filter(ch => getSetting(eventKey, ch))
+      .map(ch => ({ channel: ch, enabled: getSetting(eventKey, ch)!.enabled }));
   };
 
   const channelBadgeStyle = (enabled: boolean, channel: ChannelType): React.CSSProperties => {
@@ -717,10 +738,12 @@ const NotificationsTab: React.FC = () => {
 
                           {s.enabled && (
                             <div style={{ borderTop: `0.5px solid ${borderColor}`, paddingTop: 10 }}>
-                              <div style={{ fontSize: 12, color: subText, marginBottom: 4 }}>
-                                {channel === 'slack' ? '送信先チャンネル' : '宛先'}
-                              </div>
-                              {channel === 'slack' && event.key === 'leave:new_request' ? (
+                              {!event.key.startsWith('board:') && (
+                                <div style={{ fontSize: 12, color: subText, marginBottom: 4 }}>
+                                  {channel === 'slack' ? '送信先チャンネル' : '宛先'}
+                                </div>
+                              )}
+                              {event.key.startsWith('board:') ? null : channel === 'slack' && event.key === 'leave:new_request' ? (
                                 <div style={{
                                   fontSize: 12, padding: '6px 10px', marginBottom: 10,
                                   border: `0.5px solid ${borderColor}`, borderRadius: 8,

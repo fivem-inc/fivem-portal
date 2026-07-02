@@ -2,6 +2,9 @@ import React, { useState, useEffect, useCallback, useRef, useMemo, useContext } 
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { insertNotification } from '../lib/notifications';
+import { dispatchBoardEmail } from '../lib/notificationDispatch';
+
+const BOARD_LINK = 'https://fivem-portal.vercel.app/board';
 import { useAuth } from '../hooks/useAuth';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { AuthContext } from '../contexts/AuthContext.tsx';
@@ -866,6 +869,21 @@ const BoardPage: React.FC = () => {
           insertNotification(uid, `${senderName}がスレッドにリプライしました`, `${chName}: ${body.trim().slice(0, 40)}`, 'board')
         ));
       }
+
+      // メール通知（管理画面の通知設定でON時のみ送信、OFFなら何もしない）
+      if (selectedChannel && (selectedChannel.type === 'group' || selectedChannel.type === 'dm')) {
+        const recipientIds = members
+          .filter(m => m.channel_id === selectedChannelId && m.user_id !== user.id)
+          .map(m => m.user_id);
+        if (recipientIds.length > 0) {
+          const senderName = profileName || '誰か';
+          if (selectedChannel.type === 'group') {
+            dispatchBoardEmail('board:group_message', { '送信者名': senderName, 'グループ名': selectedChannel.name || 'グループ', 'リンク': BOARD_LINK }, recipientIds);
+          } else {
+            dispatchBoardEmail('board:dm_message', { '送信者名': senderName, 'リンク': BOARD_LINK }, recipientIds);
+          }
+        }
+      }
     }
     if (parentId) setReplyBody(''); else { setNewBody(''); setNewDeadline(''); setNewDeadlineType(''); setNewScheduledAt(''); setNewTitle(''); setNewAnswerPrompt(''); setNewAnswerLocation(''); setNewAnswerLink(''); setShowOptionsExpanded(false); }
     setSending(false);
@@ -1074,9 +1092,15 @@ const BoardPage: React.FC = () => {
       if (!isScheduled) {
         const senderName = profileName || '誰か';
         const preview = (composeSubject.trim() || composeBody.trim()).slice(0, 40);
-        await Promise.all(composeRecipientIds.filter(uid => uid !== user.id).map(uid =>
+        const recipientIds = composeRecipientIds.filter(uid => uid !== user.id);
+        await Promise.all(recipientIds.map(uid =>
           insertNotification(uid, `${senderName}からお知らせが届きました`, preview, undefined, data.id)
         ));
+        dispatchBoardEmail('board:notice', {
+          '送信者名': senderName,
+          '件名': composeSubject.trim(),
+          'リンク': `${BOARD_LINK}?openInboxId=${data.id}`,
+        }, recipientIds);
       }
 
       resetCompose();

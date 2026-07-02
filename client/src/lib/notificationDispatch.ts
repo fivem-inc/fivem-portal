@@ -114,3 +114,19 @@ export async function getNotificationTemplate(
     subject: s.subject ? applyTemplate(s.subject, vars) : '',
   };
 }
+
+// 連絡板イベント用: 宛先が申請者/承認者などの固定ロールではなく実際のメッセージ受信者そのものなので専用関数にする
+export async function dispatchBoardEmail(
+  eventKey: 'board:notice' | 'board:dm_message' | 'board:group_message',
+  vars: Record<string, string>,
+  recipientUserIds: string[]
+): Promise<void> {
+  const tpl = await getNotificationTemplate(eventKey, 'email', vars);
+  if (!tpl) return;
+  await Promise.all(recipientUserIds.map(async userId => {
+    const to = await getUserEmail(userId);
+    if (!to) return;
+    const { error } = await supabase.functions.invoke('send-email', { body: { to, subject: tpl.subject, text: tpl.template } });
+    if (error) console.error('[dispatchBoardEmail] 送信失敗', { userId, error });
+  }));
+}

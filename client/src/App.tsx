@@ -25,7 +25,7 @@ const PageLoader: React.FC = () => (
 );
 import { AuthProvider, AuthContext } from './contexts/AuthContext.tsx';
 import { useAuth } from './hooks/useAuth';
-import { useFeaturePublished } from './hooks/useFeaturePublished';
+import { useFeaturePublished, isFeaturePublished } from './hooks/useFeaturePublished';
 import { supabase } from './lib/supabaseClient';
 import { useExpenses } from './hooks/useExpenses';
 import type { Expense, Submission } from './types';
@@ -233,8 +233,6 @@ const useBoardUnread = (userId: string | undefined, pathname: string) => {
   return { total: channelCount + inboxCount, channelOnly: channelCount };
 };
 
-const LEADER_PLUS_ROLES = ['リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者'];
-
 const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean; canShiftReport?: boolean; canCalendar?: boolean; roleTitle?: string; userId?: string }> = ({ isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove, canShiftReport, canCalendar, roleTitle, userId }) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -242,12 +240,8 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   const realIsAdmin = ctxUser?.app_metadata?.role === 'admin';
   // 機能の公開/非公開（管理者は常に表示）
   // 全公開ON → 全員 / 全公開OFF+リーダー以上ON → リーダー以上のみ / 両方OFF → 管理者のみ
-  const { published, publishedLeader } = useFeaturePublished();
-  const isLeaderPlus = isAdmin || LEADER_PLUS_ROLES.includes(roleTitle ?? '');
-  const isPub = (key: string) =>
-    isAdmin
-    || published[key] !== false
-    || (publishedLeader[key] === true && isLeaderPlus);
+  const featurePublishState = useFeaturePublished();
+  const isPub = (key: string) => isFeaturePublished(key, featurePublishState, isAdmin, roleTitle);
   const navTo = (path: string) => {
     if (location.pathname === path) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -939,7 +933,9 @@ const AdminPage: React.FC = () => {
 // 連絡板ページ（/board）
 const BoardPageWrapper: React.FC = () => {
   const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, handleLogout, loading } = useAuth();
+  const featurePublishState = useFeaturePublished();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
+  if (!isFeaturePublished('board', featurePublishState, isAdmin, roleTitle)) return <Navigate to="/" />;
   return (
     <>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} roleTitle={roleTitle} userId={user.id} />
