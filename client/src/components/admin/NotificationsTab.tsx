@@ -1024,6 +1024,7 @@ export const ScheduledRemindersPanel: React.FC = () => {
   });
   const [saving, setSaving] = useState(false);
   const [monthlyDaysInput, setMonthlyDaysInput] = useState('1');
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const bg = isDarkMode ? '#2c2c3e' : '#fff';
   const text = isDarkMode ? '#fff' : '#1a1a2e';
@@ -1046,25 +1047,56 @@ export const ScheduledRemindersPanel: React.FC = () => {
     setForm(f => ({ ...f, days: f.days.includes(d) ? f.days.filter(x => x !== d) : [...f.days, d].sort((a, b) => a - b) }));
   };
 
+  const resetForm = () => {
+    setForm({ channel_id: '', frequency: 'monthly', days: [1], title: '', body: '', send_hour: 9, send_minute: 0 });
+    setMonthlyDaysInput('1');
+    setEditingId(null);
+  };
+
+  const handleEditStart = (r: ScheduledReminder) => {
+    setEditingId(r.id);
+    setForm({
+      channel_id: r.channel_id ?? '',
+      frequency: r.frequency,
+      days: r.frequency === 'weekly' ? r.days : [1],
+      title: r.title,
+      body: r.body,
+      send_hour: r.send_hour,
+      send_minute: r.send_minute,
+    });
+    setMonthlyDaysInput(r.frequency === 'monthly' ? [...r.days].sort((a, b) => a - b).join(', ') : '1');
+  };
+
   const handleSave = async () => {
     const days = form.frequency === 'monthly'
       ? monthlyDaysInput.split(',').map(s => Number(s.trim())).filter(n => Number.isInteger(n) && n >= 1 && n <= 31)
       : form.days;
     if (!form.title.trim() || !form.body.trim() || days.length === 0) return;
     setSaving(true);
-    const { data: { user } } = await supabase.auth.getUser();
-    await supabase.from('board_scheduled_reminders').insert({
-      created_by: user!.id,
-      channel_id: form.channel_id || null,
-      frequency: form.frequency,
-      days,
-      title: form.title.trim(),
-      body: form.body.trim(),
-      send_hour: form.send_hour,
-      send_minute: form.send_minute,
-    });
-    setForm({ channel_id: '', frequency: 'monthly', days: [1], title: '', body: '', send_hour: 9, send_minute: 0 });
-    setMonthlyDaysInput('1');
+    if (editingId) {
+      await supabase.from('board_scheduled_reminders').update({
+        channel_id: form.channel_id || null,
+        frequency: form.frequency,
+        days,
+        title: form.title.trim(),
+        body: form.body.trim(),
+        send_hour: form.send_hour,
+        send_minute: form.send_minute,
+      }).eq('id', editingId);
+    } else {
+      const { data: { user } } = await supabase.auth.getUser();
+      await supabase.from('board_scheduled_reminders').insert({
+        created_by: user!.id,
+        channel_id: form.channel_id || null,
+        frequency: form.frequency,
+        days,
+        title: form.title.trim(),
+        body: form.body.trim(),
+        send_hour: form.send_hour,
+        send_minute: form.send_minute,
+      });
+    }
+    resetForm();
     await fetch();
     setSaving(false);
   };
@@ -1089,9 +1121,9 @@ export const ScheduledRemindersPanel: React.FC = () => {
     <div style={{ padding: 16 }}>
       <h3 style={{ color: text, margin: '0 0 16px', fontSize: 16 }}>📅 定期リマインド設定</h3>
 
-      {/* 新規追加フォーム */}
-      <div style={{ background: bg, border: `1px solid ${border}`, borderRadius: 12, padding: 16, marginBottom: 20 }}>
-        <p style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 'bold', color: text }}>新しいリマインドを追加</p>
+      {/* 新規追加／編集フォーム */}
+      <div style={{ background: bg, border: `1px solid ${editingId ? '#007bff' : border}`, borderRadius: 12, padding: 16, marginBottom: 20 }}>
+        <p style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 'bold', color: text }}>{editingId ? '✏️ リマインドを編集' : '新しいリマインドを追加'}</p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div>
             <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>頻度</p>
@@ -1158,10 +1190,18 @@ export const ScheduledRemindersPanel: React.FC = () => {
               onChange={e => setForm(f => ({ ...f, body: e.target.value }))}
               style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
           </div>
-          <button onClick={handleSave} disabled={saving || !form.title.trim() || !form.body.trim()}
-            style={{ padding: '10px 0', background: saving ? '#6c757d' : '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold', opacity: !form.title.trim() || !form.body.trim() ? 0.5 : 1 }}>
-            {saving ? '保存中...' : '追加する'}
-          </button>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button onClick={handleSave} disabled={saving || !form.title.trim() || !form.body.trim()}
+              style={{ flex: 1, padding: '10px 0', background: saving ? '#6c757d' : '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold', opacity: !form.title.trim() || !form.body.trim() ? 0.5 : 1 }}>
+              {saving ? '保存中...' : editingId ? '更新する' : '追加する'}
+            </button>
+            {editingId && (
+              <button onClick={resetForm} type="button"
+                style={{ padding: '10px 16px', background: 'none', border: `1px solid ${border}`, borderRadius: 8, color: sub, cursor: 'pointer', fontSize: 14 }}>
+                キャンセル
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1181,6 +1221,10 @@ export const ScheduledRemindersPanel: React.FC = () => {
               </p>
             </div>
             <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+              <button onClick={() => handleEditStart(r)}
+                style={{ padding: '4px 10px', borderRadius: 6, border: `1px solid ${border}`, background: 'none', color: '#007bff', cursor: 'pointer', fontSize: 12 }}>
+                編集
+              </button>
               <button onClick={() => handleToggle(r.id, !r.is_active)}
                 style={{ padding: '4px 10px', borderRadius: 6, border: `1px solid ${border}`, background: 'none', color: r.is_active ? '#28a745' : sub, cursor: 'pointer', fontSize: 12 }}>
                 {r.is_active ? 'ON' : 'OFF'}
