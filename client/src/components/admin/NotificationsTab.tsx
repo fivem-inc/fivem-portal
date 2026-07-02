@@ -70,6 +70,16 @@ const EVENT_GROUPS = [
       { key: 'board:group_message', label: 'グループメッセージ受信時' },
     ],
   },
+  {
+    label: 'リマインド',
+    icon: '⏰',
+    headerBg: '#FFF9C4', headerBorder: '#F57F17', headerText: '#E65100',
+    events: [
+      { key: 'reminder:encouragement', label: '有給奨励日 未回答リマインド' },
+      { key: 'reminder:scheduled',     label: '定期リマインド' },
+      { key: 'reminder:unread',        label: '連絡板 締切未読リマインド' },
+    ],
+  },
 ];
 
 const CHANNEL_LABELS: Record<ChannelType, string> = {
@@ -96,6 +106,9 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
   'board:notice':                ['{{送信者名}}', '{{件名}}', '{{リンク}}'],
   'board:dm_message':            ['{{送信者名}}', '{{リンク}}'],
   'board:group_message':         ['{{送信者名}}', '{{グループ名}}', '{{リンク}}'],
+  'reminder:encouragement':      ['{{対象日}}', '{{期限}}'],
+  'reminder:scheduled':          ['{{タイトル}}', '{{本文}}'],
+  'reminder:unread':             ['{{件名}}', '{{リンク}}'],
 };
 
 // 時間調整イベント用: Slackチャンネル選択肢
@@ -738,12 +751,12 @@ const NotificationsTab: React.FC = () => {
 
                           {s.enabled && (
                             <div style={{ borderTop: `0.5px solid ${borderColor}`, paddingTop: 10 }}>
-                              {!event.key.startsWith('board:') && (
+                              {!event.key.startsWith('board:') && !event.key.startsWith('reminder:') && (
                                 <div style={{ fontSize: 12, color: subText, marginBottom: 4 }}>
                                   {channel === 'slack' ? '送信先チャンネル' : '宛先'}
                                 </div>
                               )}
-                              {event.key.startsWith('board:') ? null : channel === 'slack' && event.key === 'leave:new_request' ? (
+                              {event.key.startsWith('board:') || event.key.startsWith('reminder:') ? null : channel === 'slack' && event.key === 'leave:new_request' ? (
                                 <div style={{
                                   fontSize: 12, padding: '6px 10px', marginBottom: 10,
                                   border: `0.5px solid ${borderColor}`, borderRadius: 8,
@@ -978,10 +991,13 @@ const NotificationsTab: React.FC = () => {
 interface ScheduledReminder {
   id: string;
   channel_id: string | null;
-  day_of_month: number;
+  frequency: 'monthly' | 'weekly';
+  days: number[];
   title: string;
   body: string;
   is_active: boolean;
+  send_hour: number;
+  send_minute: number;
 }
 
 interface BoardChannel {
@@ -989,12 +1005,25 @@ interface BoardChannel {
   name: string;
 }
 
+const REMINDER_MINUTE_OPTIONS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
+const WEEKDAY_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
+
+const formatReminderDays = (r: ScheduledReminder): string => {
+  const sorted = [...r.days].sort((a, b) => a - b);
+  return r.frequency === 'weekly'
+    ? `毎週${sorted.map(d => WEEKDAY_LABELS[d]).join('・')}曜`
+    : `毎月${sorted.join('・')}日`;
+};
+
 export const ScheduledRemindersPanel: React.FC = () => {
   const { isDarkMode } = useAdminPanel();
   const [reminders, setReminders] = useState<ScheduledReminder[]>([]);
   const [channels, setChannels] = useState<BoardChannel[]>([]);
-  const [form, setForm] = useState({ channel_id: '', day_of_month: 1, title: '', body: '' });
+  const [form, setForm] = useState<{ channel_id: string; frequency: 'monthly' | 'weekly'; days: number[]; title: string; body: string; send_hour: number; send_minute: number }>({
+    channel_id: '', frequency: 'monthly', days: [1], title: '', body: '', send_hour: 9, send_minute: 0,
+  });
   const [saving, setSaving] = useState(false);
+  const [monthlyDaysInput, setMonthlyDaysInput] = useState('1');
 
   const bg = isDarkMode ? '#2c2c3e' : '#fff';
   const text = isDarkMode ? '#fff' : '#1a1a2e';
@@ -1004,7 +1033,7 @@ export const ScheduledRemindersPanel: React.FC = () => {
 
   const fetch = useCallback(async () => {
     const [{ data: r }, { data: c }] = await Promise.all([
-      supabase.from('board_scheduled_reminders').select('*').order('day_of_month'),
+      supabase.from('board_scheduled_reminders').select('*'),
       supabase.from('board_channels').select('id, name').order('name'),
     ]);
     if (r) setReminders(r);
@@ -1013,18 +1042,29 @@ export const ScheduledRemindersPanel: React.FC = () => {
 
   useEffect(() => { fetch(); }, [fetch]);
 
+  const toggleWeekday = (d: number) => {
+    setForm(f => ({ ...f, days: f.days.includes(d) ? f.days.filter(x => x !== d) : [...f.days, d].sort((a, b) => a - b) }));
+  };
+
   const handleSave = async () => {
-    if (!form.title.trim() || !form.body.trim()) return;
+    const days = form.frequency === 'monthly'
+      ? monthlyDaysInput.split(',').map(s => Number(s.trim())).filter(n => Number.isInteger(n) && n >= 1 && n <= 31)
+      : form.days;
+    if (!form.title.trim() || !form.body.trim() || days.length === 0) return;
     setSaving(true);
     const { data: { user } } = await supabase.auth.getUser();
     await supabase.from('board_scheduled_reminders').insert({
       created_by: user!.id,
       channel_id: form.channel_id || null,
-      day_of_month: form.day_of_month,
+      frequency: form.frequency,
+      days,
       title: form.title.trim(),
       body: form.body.trim(),
+      send_hour: form.send_hour,
+      send_minute: form.send_minute,
     });
-    setForm({ channel_id: '', day_of_month: 1, title: '', body: '' });
+    setForm({ channel_id: '', frequency: 'monthly', days: [1], title: '', body: '', send_hour: 9, send_minute: 0 });
+    setMonthlyDaysInput('1');
     await fetch();
     setSaving(false);
   };
@@ -1053,19 +1093,57 @@ export const ScheduledRemindersPanel: React.FC = () => {
       <div style={{ background: bg, border: `1px solid ${border}`, borderRadius: 12, padding: 16, marginBottom: 20 }}>
         <p style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 'bold', color: text }}>新しいリマインドを追加</p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <div style={{ flex: 1 }}>
-              <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>毎月◯日</p>
-              <input type="number" min={1} max={31} value={form.day_of_month}
-                onChange={e => setForm(f => ({ ...f, day_of_month: Number(e.target.value) }))}
-                style={{ ...inputStyle, width: 80 }} />
+          <div>
+            <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>頻度</p>
+            <div style={{ display: 'flex', gap: 16 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: text, cursor: 'pointer' }}>
+                <input type="radio" checked={form.frequency === 'monthly'} onChange={() => setForm(f => ({ ...f, frequency: 'monthly' }))} />
+                毎月
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: text, cursor: 'pointer' }}>
+                <input type="radio" checked={form.frequency === 'weekly'} onChange={() => setForm(f => ({ ...f, frequency: 'weekly' }))} />
+                毎週
+              </label>
             </div>
-            <div style={{ flex: 2 }}>
-              <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>送り先グループ（空欄＝全員）</p>
-              <select value={form.channel_id} onChange={e => setForm(f => ({ ...f, channel_id: e.target.value }))}
-                style={inputStyle}>
-                <option value="">全スタッフ</option>
-                {channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </div>
+          {form.frequency === 'monthly' ? (
+            <div>
+              <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>日付（カンマ区切りで複数可・1〜31）</p>
+              <input type="text" value={monthlyDaysInput} placeholder="例: 1, 15"
+                onChange={e => setMonthlyDaysInput(e.target.value)}
+                style={{ ...inputStyle, width: 200 }} />
+            </div>
+          ) : (
+            <div>
+              <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>曜日（複数選択可）</p>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {WEEKDAY_LABELS.map((label, d) => (
+                  <button key={d} type="button" onClick={() => toggleWeekday(d)}
+                    style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${border}`, cursor: 'pointer', fontSize: 13, background: form.days.includes(d) ? '#007bff' : inputBg, color: form.days.includes(d) ? '#fff' : text }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div>
+            <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>送り先グループ（空欄＝全員）</p>
+            <select value={form.channel_id} onChange={e => setForm(f => ({ ...f, channel_id: e.target.value }))}
+              style={inputStyle}>
+              <option value="">全スタッフ</option>
+              {channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>送信時刻（日本時間）</p>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <select value={form.send_hour} onChange={e => setForm(f => ({ ...f, send_hour: Number(e.target.value) }))}
+                style={{ ...inputStyle, width: 90 }}>
+                {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{h}時</option>)}
+              </select>
+              <select value={form.send_minute} onChange={e => setForm(f => ({ ...f, send_minute: Number(e.target.value) }))}
+                style={{ ...inputStyle, width: 90 }}>
+                {REMINDER_MINUTE_OPTIONS.map(m => <option key={m} value={m}>{m}分</option>)}
               </select>
             </div>
           </div>
@@ -1095,7 +1173,7 @@ export const ScheduledRemindersPanel: React.FC = () => {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
             <div style={{ flex: 1 }}>
               <p style={{ margin: '0 0 2px', fontSize: 14, fontWeight: 'bold', color: text }}>
-                毎月{r.day_of_month}日 — {r.title}
+                {formatReminderDays(r)} {r.send_hour}時{r.send_minute}分 — {r.title}
               </p>
               <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>{r.body}</p>
               <p style={{ margin: 0, fontSize: 11, color: sub }}>
@@ -1122,18 +1200,22 @@ export const ScheduledRemindersPanel: React.FC = () => {
 // ── リマインド「何日前に送るか」設定 ─────────────────────────────────
 interface ReminderDaysSetting {
   event_key: string;
-  days_before: number[];
+  days_before: number[] | null;
+  send_hour: number;
+  send_minute: number;
 }
 
 const REMINDER_DAYS_EVENTS = [
-  { key: 'encouragement_notify', label: '🌿 有給奨励日の未回答リマインド', help: '有給奨励日の回答期限の何日前に、未回答者へ知らせるか（0=当日）' },
-  { key: 'remind_unread',        label: '📝 連絡板の締切未読リマインド',   help: '連絡板の投稿の締切の何日前に、未読者へ知らせるか（0=当日）' },
+  { key: 'encouragement_notify', label: '🌿 有給奨励日の未回答リマインド', help: '有給奨励日の回答期限の何日前に、未回答者へ知らせるか（0=当日）', hasDays: true },
+  { key: 'remind_unread',        label: '📝 連絡板の締切未読リマインド',   help: '連絡板の投稿の締切の何日前に、未読者へ知らせるか（0=当日）', hasDays: true },
 ];
+
+const MINUTE_OPTIONS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
 
 export const ReminderDaysSettingsPanel: React.FC = () => {
   const { isDarkMode } = useAdminPanel();
-  const [settings, setSettings] = useState<Record<string, number[]>>({});
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [settings, setSettings] = useState<Record<string, { days_before: number[] | null; send_hour: number; send_minute: number }>>({});
+  const [drafts, setDrafts] = useState<Record<string, { days: string; hour: number; minute: number }>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
 
@@ -1144,29 +1226,37 @@ export const ReminderDaysSettingsPanel: React.FC = () => {
   const inputBg = isDarkMode ? '#3d3d55' : '#f8f9fa';
 
   const fetchSettings = useCallback(async () => {
-    const { data } = await supabase.from('reminder_days_settings').select('event_key, days_before');
+    const { data } = await supabase.from('reminder_days_settings').select('event_key, days_before, send_hour, send_minute');
     if (data) {
-      const map: Record<string, number[]> = {};
-      (data as ReminderDaysSetting[]).forEach(d => { map[d.event_key] = d.days_before; });
+      const map: Record<string, { days_before: number[] | null; send_hour: number; send_minute: number }> = {};
+      (data as ReminderDaysSetting[]).forEach(d => { map[d.event_key] = { days_before: d.days_before, send_hour: d.send_hour, send_minute: d.send_minute }; });
       setSettings(map);
-      const draftMap: Record<string, string> = {};
-      Object.entries(map).forEach(([k, v]) => { draftMap[k] = v.join(', '); });
+      const draftMap: Record<string, { days: string; hour: number; minute: number }> = {};
+      Object.entries(map).forEach(([k, v]) => {
+        draftMap[k] = { days: (v.days_before ?? []).join(', '), hour: v.send_hour, minute: v.send_minute };
+      });
       setDrafts(draftMap);
     }
   }, []);
 
   useEffect(() => { fetchSettings(); }, [fetchSettings]);
 
-  const handleSave = async (eventKey: string) => {
-    const parsed = (drafts[eventKey] ?? '')
-      .split(',')
-      .map(s => Number(s.trim()))
-      .filter(n => Number.isInteger(n) && n >= 0);
-    if (parsed.length === 0) return;
+  const handleSave = async (eventKey: string, hasDays: boolean) => {
+    const draft = drafts[eventKey];
+    if (!draft) return;
+    const patch: { send_hour: number; send_minute: number; updated_at: string; days_before?: number[] } = {
+      send_hour: draft.hour,
+      send_minute: draft.minute,
+      updated_at: new Date().toISOString(),
+    };
+    if (hasDays) {
+      const parsed = draft.days.split(',').map(s => Number(s.trim())).filter(n => Number.isInteger(n) && n >= 0);
+      if (parsed.length === 0) return;
+      patch.days_before = parsed;
+    }
     setSaving(eventKey);
-    await supabase.from('reminder_days_settings').update({ days_before: parsed, updated_at: new Date().toISOString() }).eq('event_key', eventKey);
-    setSettings(prev => ({ ...prev, [eventKey]: parsed }));
-    setDrafts(prev => ({ ...prev, [eventKey]: parsed.join(', ') }));
+    await supabase.from('reminder_days_settings').update(patch).eq('event_key', eventKey);
+    setSettings(prev => ({ ...prev, [eventKey]: { days_before: hasDays ? patch.days_before! : prev[eventKey]?.days_before ?? null, send_hour: draft.hour, send_minute: draft.minute } }));
     setSaving(null);
     setSavedMsg(eventKey);
     setTimeout(() => setSavedMsg(null), 2000);
@@ -1175,23 +1265,51 @@ export const ReminderDaysSettingsPanel: React.FC = () => {
   return (
     <div style={{ padding: 16 }}>
       <h3 style={{ color: text, margin: '0 0 16px', fontSize: 16 }}>⏰ リマインド送信タイミング設定</h3>
-      {REMINDER_DAYS_EVENTS.map(ev => (
-        <div key={ev.key} style={{ background: bg, border: `1px solid ${border}`, borderRadius: 12, padding: 16, marginBottom: 12 }}>
-          <p style={{ margin: '0 0 4px', fontSize: 14, fontWeight: 'bold', color: text }}>{ev.label}</p>
-          <p style={{ margin: '0 0 10px', fontSize: 12, color: sub }}>{ev.help}</p>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input type="text" value={drafts[ev.key] ?? ''} placeholder="例: 3, 0"
-              onChange={e => setDrafts(prev => ({ ...prev, [ev.key]: e.target.value }))}
-              style={{ flex: 1, padding: '8px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: text, fontSize: 14, boxSizing: 'border-box' }} />
-            <button onClick={() => handleSave(ev.key)} disabled={saving === ev.key}
-              style={{ padding: '8px 14px', background: saving === ev.key ? '#6c757d' : '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 'bold', flexShrink: 0 }}>
-              {saving === ev.key ? '保存中...' : '保存'}
-            </button>
+      {REMINDER_DAYS_EVENTS.map(ev => {
+        const draft = drafts[ev.key];
+        const s = settings[ev.key];
+        return (
+          <div key={ev.key} style={{ background: bg, border: `1px solid ${border}`, borderRadius: 12, padding: 16, marginBottom: 12 }}>
+            <p style={{ margin: '0 0 4px', fontSize: 14, fontWeight: 'bold', color: text }}>{ev.label}</p>
+            <p style={{ margin: '0 0 10px', fontSize: 12, color: sub }}>{ev.help}</p>
+
+            {ev.hasDays && (
+              <div style={{ marginBottom: 10 }}>
+                <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>何日前（カンマ区切り）</p>
+                <input type="text" value={draft?.days ?? ''} placeholder="例: 3, 0"
+                  onChange={e => setDrafts(prev => ({ ...prev, [ev.key]: { ...prev[ev.key], days: e.target.value } }))}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: text, fontSize: 14, boxSizing: 'border-box' }} />
+              </div>
+            )}
+
+            <div style={{ marginBottom: 10 }}>
+              <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>送信時刻（日本時間）</p>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <select value={draft?.hour ?? 9}
+                  onChange={e => setDrafts(prev => ({ ...prev, [ev.key]: { ...prev[ev.key], hour: Number(e.target.value) } }))}
+                  style={{ padding: '8px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: text, fontSize: 14 }}>
+                  {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{h}時</option>)}
+                </select>
+                <select value={draft?.minute ?? 0}
+                  onChange={e => setDrafts(prev => ({ ...prev, [ev.key]: { ...prev[ev.key], minute: Number(e.target.value) } }))}
+                  style={{ padding: '8px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: text, fontSize: 14 }}>
+                  {MINUTE_OPTIONS.map(m => <option key={m} value={m}>{m}分</option>)}
+                </select>
+                <button onClick={() => handleSave(ev.key, ev.hasDays)} disabled={saving === ev.key}
+                  style={{ padding: '8px 14px', background: saving === ev.key ? '#6c757d' : '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 'bold', flexShrink: 0 }}>
+                  {saving === ev.key ? '保存中...' : '保存'}
+                </button>
+              </div>
+            </div>
+
+            {savedMsg === ev.key && <p style={{ margin: '0 0 4px', fontSize: 12, color: '#28a745' }}>✅ 保存しました</p>}
+            <p style={{ margin: 0, fontSize: 11, color: sub }}>
+              現在の設定: {ev.hasDays ? `${(s?.days_before ?? []).join('日前, ')}${s?.days_before?.length ? '日前・' : ''}` : ''}
+              毎日{s?.send_hour ?? 9}時{s?.send_minute ?? 0}分
+            </p>
           </div>
-          {savedMsg === ev.key && <p style={{ margin: '8px 0 0', fontSize: 12, color: '#28a745' }}>✅ 保存しました</p>}
-          <p style={{ margin: '8px 0 0', fontSize: 11, color: sub }}>現在の設定: {(settings[ev.key] ?? []).join('日前, ')}{settings[ev.key]?.length ? '日前' : ''}</p>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 };

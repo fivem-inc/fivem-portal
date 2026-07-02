@@ -1,20 +1,31 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+const applyVars = (text: string, vars: Record<string, string>) =>
+  text.replace(/\{\{(.+?)\}\}/g, (_, k) => vars[k.trim()] ?? `{{${k.trim()}}}`);
+
 serve(async () => {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
   const { data: daysSetting } = await supabase
     .from("reminder_days_settings")
-    .select("days_before")
+    .select("days_before, send_hour, send_minute")
     .eq("event_key", "remind_unread")
     .maybeSingle();
   const daysBefore: number[] = daysSetting?.days_before ?? [1, 0];
+
+  // 設定された送信時刻(JST)でなければ何もしない（cronは5分おきに呼ばれる）
+  const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const sendHour = daysSetting?.send_hour ?? 9;
+  const sendMinute = daysSetting?.send_minute ?? 0;
+  if (jstNow.getUTCHours() !== sendHour || jstNow.getUTCMinutes() !== sendMinute) {
+    return new Response(JSON.stringify({ checked: 0, skipped: "not send time" }), { status: 200 });
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
   const targetDates = daysBefore.map((n) => {
     const d = new Date(today);
@@ -32,6 +43,13 @@ serve(async () => {
   if (error || !messages || messages.length === 0) {
     return new Response(JSON.stringify({ checked: 0 }), { status: 200 });
   }
+
+  const { data: emailSetting } = await supabase
+    .from("notification_settings")
+    .select("enabled, subject, template")
+    .eq("event_key", "reminder:unread")
+    .eq("channel", "email")
+    .maybeSingle();
 
   let totalSent = 0;
 
@@ -77,6 +95,23 @@ serve(async () => {
         tag: `remind-${msg.id}`,
       },
     });
+
+    await supabase.from("notifications").insert(
+      unreadUserIds.map((uid: string) => ({ user_id: uid, message: title, sub_message: body, reference_id: msg.id }))
+    );
+
+    if (emailSetting?.enabled && emailSetting.template) {
+      const link = `https://fivem-portal.vercel.app/board`;
+      const vars = { "件名": title, "リンク": link };
+      const subject = applyVars(emailSetting.subject || "", vars);
+      const text = applyVars(emailSetting.template, vars);
+      const { data: profiles } = await supabase.from("profiles").select("email").in("id", unreadUserIds);
+      const emails = (profiles ?? []).map((p: { email: string | null }) => p.email).filter(Boolean) as string[];
+      if (emails.length > 0) {
+        const { error: emailError } = await supabase.functions.invoke("send-email", { body: { to: emails, subject, text } });
+        if (emailError) console.error("[remind-unread] send-email error:", emailError);
+      }
+    }
 
     totalSent += unreadUserIds.length;
   }

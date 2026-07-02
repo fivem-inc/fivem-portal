@@ -4278,3 +4278,70 @@ const hasGreen = absences.some(a => a.type === 'late_start' || a.type === 'early
 - `client/src/App.tsx`
 
 ### コミット: `2f6ea50`
+
+---
+
+## ✅ 2026-07-03 忘れん坊通知①②③ 自動化・柔軟化 完了
+
+### 背景
+- `encouragement-notify`（有給奨励日未回答リマインド）・`remind-scheduled`（定期リマインド）・
+  `remind-unread`（連絡板締切未読リマインド）の3つはロジックは完成していたが、
+  自動で呼び出す仕組み（pg_cron等）が未設定のまま放置されていた
+- 手動の「🔔 ○人にリマインドを送る」ボタン（BoardPage.tsx）は別途実装済みのため対象外
+
+### 実装内容（段階的に対応）
+
+#### 1. pg_cronで毎日自動呼び出し
+- 3つのEdge Functionを毎日09:00(JST)にpg_cronで自動呼び出すよう設定
+- Vaultのservice_role_key・pg_netを使い、`board-scheduled-send`と同じ方式
+
+#### 2. 「何日前に送るか」を管理画面から編集可能に
+- `reminder_days_settings`テーブルを新規作成（`encouragement_notify`・`remind_unread`）
+- これまでコードにハードコードされていた閾値（3日前/当日、前日/当日）を可変化
+- 管理画面「通知設定」タブに「⏰ リマインド送信タイミング設定」パネル追加
+
+#### 3. 送信時刻も管理画面から編集可能に（毎日固定09:00→可変）
+- pg_cronを「毎日1回固定時刻」→「5分おきに実行し、Edge Function内でJST現在時刻と
+  設定時刻(send_hour/send_minute)が一致するかチェック」方式に変更
+- 管理画面から時刻を変更するだけで反映され、cronの再設定が不要に
+
+#### 4. 定期リマインドを「1件ごとに」時刻・頻度・複数日を持てるように再設計
+- `board_scheduled_reminders`テーブルを再設計：
+  `day_of_month`（単一値）→ `frequency`('monthly'|'weekly') + `days`(int[]) + `send_hour`/`send_minute`
+- 管理画面「📅 定期リマインド設定」の新規追加フォームに「頻度」（毎月/毎週）・
+  日付複数指定（カンマ区切り）・曜日複数選択（チェックボタン）・時刻選択を追加
+- これにより「1件は毎月1日9時」「別の1件は毎週月曜17時」のように個別設定可能に
+- ③(remind_scheduled)は個別時刻を持つため、共通1時刻の`reminder_days_settings`行は削除
+
+#### 5. ①②③すべてにベル通知＋メールON/OFFを追加
+- これまで②③は「プッシュ通知のみ」（通知許可していない人には届かない）だったため、
+  ①と同様に`notifications`テーブルへのinsert（🔔ベル通知）を追加
+- `notification_settings`に`reminder:encouragement`・`reminder:scheduled`・`reminder:unread`
+  （channel='email'）を追加し、管理画面「通知設定」タブに「⏰ リマインド」グループを新設
+  （件名・本文編集、ON/OFF切り替え、デフォルトはOFF）
+- リマインド系イベントは「宛先」欄（申請者本人/リーダー等のロール選択）が不要なため、
+  `board:`と同様に`reminder:`プレフィックスも宛先UIを非表示にする条件分岐を追加
+
+### マイグレーション（実行順）
+1. `20260703000000_schedule_reminder_crons.sql`
+2. `20260703100000_create_reminder_days_settings.sql`
+3. `20260703200000_add_send_time_to_reminder_settings.sql`
+4. `20260703210000_change_reminder_crons_to_5min.sql`
+5. `20260703300000_per_reminder_send_time.sql`（board_scheduled_remindersの列を`day_of_month`→`frequency`+`days`に変更、破壊的変更だが登録データが無い時点で実施）
+6. `20260703400000_add_reminder_email_settings.sql`
+
+### 再デプロイしたEdge Function
+- `encouragement-notify`・`remind-unread`・`remind-scheduled`（計3回、途中の設計変更のたびに複数回デプロイ）
+
+### 確認内容
+- `npx tsc --noEmit`：エラーなし（都度確認）
+- Supabase SQL Editorで各migration実行・`select * from cron.job`等で動作確認済み
+- 管理画面の見た目確認済み（頻度切り替え・時刻プルダウン・メール設定パネル）
+
+### ⚠️ 注意事項・今後の確認事項
+- 実際に朝9時（または設定した時刻）にリマインドが届くか、翌日以降に実運用で確認すること
+- pg_cronは5分おきに全リマインダーをチェックする方式に変わったため、Edge Function呼び出し回数が
+  増えている（1日あたり288回×3関数）。Supabaseの無料枠等で問題にならないか一応留意
+- メール通知はデフォルトOFF。運用しながら必要に応じて管理画面でONにする
+- `board_scheduled_reminders`の`day_of_month`列は削除済み（`frequency`+`days`に統合）。
+  もし他の場所で`day_of_month`を参照しているコードが残っていたら要修正

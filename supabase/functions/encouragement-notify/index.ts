@@ -6,6 +6,9 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+const applyVars = (text: string, vars: Record<string, string>) =>
+  text.replace(/\{\{(.+?)\}\}/g, (_, k) => vars[k.trim()] ?? `{{${k.trim()}}}`)
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
 
@@ -14,6 +17,21 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     )
+
+    const { data: daysSetting } = await supabase
+      .from('reminder_days_settings')
+      .select('days_before, send_hour, send_minute')
+      .eq('event_key', 'encouragement_notify')
+      .maybeSingle()
+    const daysBefore: number[] = daysSetting?.days_before ?? [3, 0]
+
+    // 設定された送信時刻(JST)でなければ何もしない（cronは5分おきに呼ばれる）
+    const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000)
+    const sendHour = daysSetting?.send_hour ?? 9
+    const sendMinute = daysSetting?.send_minute ?? 0
+    if (jstNow.getUTCHours() !== sendHour || jstNow.getUTCMinutes() !== sendMinute) {
+      return new Response(JSON.stringify({ ok: true, skipped: 'not send time' }), { headers: CORS_HEADERS })
+    }
 
     const today = new Date().toISOString().slice(0, 10)
     const todayDate = new Date(today + 'T00:00:00Z')
@@ -28,13 +46,6 @@ serve(async (req) => {
       return new Response(JSON.stringify({ ok: true, notified: 0 }), { headers: CORS_HEADERS })
     }
 
-    const { data: daysSetting } = await supabase
-      .from('reminder_days_settings')
-      .select('days_before')
-      .eq('event_key', 'encouragement_notify')
-      .maybeSingle()
-    const daysBefore: number[] = daysSetting?.days_before ?? [3, 0]
-
     const targetDays = (days as { id: string; target_date: string; deadline: string }[]).filter(d => {
       const deadlineDate = new Date(d.deadline + 'T00:00:00Z')
       const diff = Math.round((deadlineDate.getTime() - todayDate.getTime()) / 86400000)
@@ -44,6 +55,14 @@ serve(async (req) => {
     if (targetDays.length === 0) {
       return new Response(JSON.stringify({ ok: true, notified: 0 }), { headers: CORS_HEADERS })
     }
+
+    // メール通知設定（管理画面の「リマインド」グループでON/OFF）を一度だけ取得
+    const { data: emailSetting } = await supabase
+      .from('notification_settings')
+      .select('enabled, subject, template')
+      .eq('event_key', 'reminder:encouragement')
+      .eq('channel', 'email')
+      .maybeSingle()
 
     let totalNotified = 0
 
@@ -81,6 +100,19 @@ serve(async (req) => {
       await supabase.from('notifications').insert(
         unansweredIds.map((uid: string) => ({ user_id: uid, message: msg }))
       )
+
+      if (emailSetting?.enabled && emailSetting.template) {
+        const vars = { '対象日': day.target_date, '期限': dateLabel }
+        const subject = applyVars(emailSetting.subject || '', vars)
+        const text = applyVars(emailSetting.template, vars)
+        const { data: profiles } = await supabase.from('profiles').select('email').in('id', unansweredIds)
+        const emails = (profiles ?? []).map((p: { email: string | null }) => p.email).filter(Boolean) as string[]
+        if (emails.length > 0) {
+          const { error: emailError } = await supabase.functions.invoke('send-email', { body: { to: emails, subject, text } })
+          if (emailError) console.error('[encouragement-notify] send-email error:', emailError)
+        }
+      }
+
       totalNotified += unansweredIds.length
     }
 
