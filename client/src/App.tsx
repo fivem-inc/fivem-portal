@@ -81,14 +81,6 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
 
   const unread = notifs.filter(n => !n.read).length;
 
-  const markAllRead = async () => {
-    const ids = notifs.filter(n => !n.read).map(n => n.id);
-    if (ids.length > 0) {
-      await supabase.from('notifications').update({ read: true }).in('id', ids);
-      setNotifs(prev => prev.map(n => ({ ...n, read: true })));
-    }
-  };
-
   const dismissOne = async (id: string) => {
     console.log('[notification] dismiss clicked', id);
     const { error } = await supabase.from('notifications').update({ read: true }).eq('id', id);
@@ -103,7 +95,6 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
   const handleOpen = () => {
     if (!open && btnRef.current) setDropRect(btnRef.current.getBoundingClientRect());
     setOpen(o => !o);
-    if (!open) markAllRead();
   };
 
   return (
