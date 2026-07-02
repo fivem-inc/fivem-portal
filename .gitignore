@@ -2,3 +2,7 @@
 .claude/
 .claude.json
 .claude.json.backup
+.cache/
+.local/
+.nvm/
+.npm/
