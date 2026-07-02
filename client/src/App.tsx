@@ -65,7 +65,7 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
   const portalRef = useRef<HTMLDivElement>(null);
 
   const fetchNotifs = useCallback(async () => {
-    const { data } = await supabase.from('notifications').select('id, message, sub_message, read, created_at, source_type, reference_id').eq('user_id', userId).or('source_type.is.null,source_type.neq.board').order('created_at', { ascending: false }).limit(30);
+    const { data } = await supabase.from('notifications').select('id, message, sub_message, read, created_at, source_type, reference_id').eq('user_id', userId).eq('read', false).or('source_type.is.null,source_type.neq.board').order('created_at', { ascending: false }).limit(30);
     if (data) setNotifs(data);
   }, [userId]);
 

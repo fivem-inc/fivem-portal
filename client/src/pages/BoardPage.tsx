@@ -649,6 +649,11 @@ const BoardPage: React.FC = () => {
     setShowSidebar(false);
     setInboxDetailId(openId);
     window.history.replaceState({}, '', '/board');
+    if (!inboxReadIds.has(openId) && user) {
+      supabase.from('board_reads').upsert({ message_id: openId, user_id: user.id }, { onConflict: 'message_id,user_id', ignoreDuplicates: true })
+        .then(() => setInboxReadIds(prev => new Set([...prev, openId])));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, inboxMessages]);
 
   // 受信トレイ詳細を開いた時、送信者 or 管理者なら受信者＋未対応者を取得
