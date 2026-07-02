@@ -207,13 +207,15 @@ const useBoardUnread = (userId: string | undefined, pathname: string) => {
       }
     }
 
-    // 受信トレイ未読
+    // 受信トレイ未読（予約中(status='scheduled')はまだ送信されていないためカウントしない）
     let inboxUnread = 0;
     if (inboxRes.data && inboxRes.data.length > 0) {
       const inboxMsgIds = inboxRes.data.map((r: any) => r.message_id);
-      const { data: reads } = await supabase.from('board_reads').select('message_id').eq('user_id', userId).in('message_id', inboxMsgIds);
+      const { data: sentMsgs } = await supabase.from('board_messages').select('id').in('id', inboxMsgIds).eq('status', 'sent');
+      const sentMsgIds = (sentMsgs || []).map((m: any) => m.id);
+      const { data: reads } = await supabase.from('board_reads').select('message_id').eq('user_id', userId).in('message_id', sentMsgIds);
       const readSet = new Set((reads || []).map((r: any) => r.message_id));
-      inboxUnread = inboxMsgIds.filter((id: string) => !readSet.has(id)).length;
+      inboxUnread = sentMsgIds.filter((id: string) => !readSet.has(id)).length;
     }
 
     setChannelCount(channelUnread);
