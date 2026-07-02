@@ -1119,4 +1119,81 @@ export const ScheduledRemindersPanel: React.FC = () => {
   );
 };
 
+// ── リマインド「何日前に送るか」設定 ─────────────────────────────────
+interface ReminderDaysSetting {
+  event_key: string;
+  days_before: number[];
+}
+
+const REMINDER_DAYS_EVENTS = [
+  { key: 'encouragement_notify', label: '🌿 有給奨励日の未回答リマインド', help: '有給奨励日の回答期限の何日前に、未回答者へ知らせるか（0=当日）' },
+  { key: 'remind_unread',        label: '📝 連絡板の締切未読リマインド',   help: '連絡板の投稿の締切の何日前に、未読者へ知らせるか（0=当日）' },
+];
+
+export const ReminderDaysSettingsPanel: React.FC = () => {
+  const { isDarkMode } = useAdminPanel();
+  const [settings, setSettings] = useState<Record<string, number[]>>({});
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState<string | null>(null);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  const bg = isDarkMode ? '#2c2c3e' : '#fff';
+  const text = isDarkMode ? '#fff' : '#1a1a2e';
+  const sub = isDarkMode ? '#adb5bd' : '#6c757d';
+  const border = isDarkMode ? '#3d3d55' : '#dee2e6';
+  const inputBg = isDarkMode ? '#3d3d55' : '#f8f9fa';
+
+  const fetchSettings = useCallback(async () => {
+    const { data } = await supabase.from('reminder_days_settings').select('event_key, days_before');
+    if (data) {
+      const map: Record<string, number[]> = {};
+      (data as ReminderDaysSetting[]).forEach(d => { map[d.event_key] = d.days_before; });
+      setSettings(map);
+      const draftMap: Record<string, string> = {};
+      Object.entries(map).forEach(([k, v]) => { draftMap[k] = v.join(', '); });
+      setDrafts(draftMap);
+    }
+  }, []);
+
+  useEffect(() => { fetchSettings(); }, [fetchSettings]);
+
+  const handleSave = async (eventKey: string) => {
+    const parsed = (drafts[eventKey] ?? '')
+      .split(',')
+      .map(s => Number(s.trim()))
+      .filter(n => Number.isInteger(n) && n >= 0);
+    if (parsed.length === 0) return;
+    setSaving(eventKey);
+    await supabase.from('reminder_days_settings').update({ days_before: parsed, updated_at: new Date().toISOString() }).eq('event_key', eventKey);
+    setSettings(prev => ({ ...prev, [eventKey]: parsed }));
+    setDrafts(prev => ({ ...prev, [eventKey]: parsed.join(', ') }));
+    setSaving(null);
+    setSavedMsg(eventKey);
+    setTimeout(() => setSavedMsg(null), 2000);
+  };
+
+  return (
+    <div style={{ padding: 16 }}>
+      <h3 style={{ color: text, margin: '0 0 16px', fontSize: 16 }}>⏰ リマインド送信タイミング設定</h3>
+      {REMINDER_DAYS_EVENTS.map(ev => (
+        <div key={ev.key} style={{ background: bg, border: `1px solid ${border}`, borderRadius: 12, padding: 16, marginBottom: 12 }}>
+          <p style={{ margin: '0 0 4px', fontSize: 14, fontWeight: 'bold', color: text }}>{ev.label}</p>
+          <p style={{ margin: '0 0 10px', fontSize: 12, color: sub }}>{ev.help}</p>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input type="text" value={drafts[ev.key] ?? ''} placeholder="例: 3, 0"
+              onChange={e => setDrafts(prev => ({ ...prev, [ev.key]: e.target.value }))}
+              style={{ flex: 1, padding: '8px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: text, fontSize: 14, boxSizing: 'border-box' }} />
+            <button onClick={() => handleSave(ev.key)} disabled={saving === ev.key}
+              style={{ padding: '8px 14px', background: saving === ev.key ? '#6c757d' : '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 'bold', flexShrink: 0 }}>
+              {saving === ev.key ? '保存中...' : '保存'}
+            </button>
+          </div>
+          {savedMsg === ev.key && <p style={{ margin: '8px 0 0', fontSize: 12, color: '#28a745' }}>✅ 保存しました</p>}
+          <p style={{ margin: '8px 0 0', fontSize: 11, color: sub }}>現在の設定: {(settings[ev.key] ?? []).join('日前, ')}{settings[ev.key]?.length ? '日前' : ''}</p>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 export default NotificationsTab;

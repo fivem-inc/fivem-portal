@@ -8,17 +8,25 @@ serve(async () => {
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
 
-  const todayStr = today.toISOString().slice(0, 10);
-  const tomorrowStr = tomorrow.toISOString().slice(0, 10);
+  const { data: daysSetting } = await supabase
+    .from("reminder_days_settings")
+    .select("days_before")
+    .eq("event_key", "remind_unread")
+    .maybeSingle();
+  const daysBefore: number[] = daysSetting?.days_before ?? [1, 0];
 
-  // 期限が今日または明日の投稿を取得（親投稿のみ）
+  const targetDates = daysBefore.map((n) => {
+    const d = new Date(today);
+    d.setDate(d.getDate() + n);
+    return d.toISOString().slice(0, 10);
+  });
+
+  // 締切が対象日（今日+N日）の投稿を取得（親投稿のみ）
   const { data: messages, error } = await supabase
     .from("board_messages")
     .select("id, channel_id, body, deadline")
-    .in("deadline", [todayStr, tomorrowStr])
+    .in("deadline", targetDates)
     .is("parent_id", null);
 
   if (error || !messages || messages.length === 0) {
@@ -51,8 +59,13 @@ serve(async () => {
 
     if (unreadUserIds.length === 0) continue;
 
-    const isToday = msg.deadline === todayStr;
-    const title = isToday ? "⏰ 本日期限の連絡があります" : "📅 明日期限の連絡があります";
+    const deadlineDate = new Date(msg.deadline + "T00:00:00Z");
+    const diffDays = Math.round((deadlineDate.getTime() - today.getTime()) / 86400000);
+    const title = diffDays === 0
+      ? "⏰ 本日期限の連絡があります"
+      : diffDays === 1
+        ? "📅 明日期限の連絡があります"
+        : `📅 ${diffDays}日後期限の連絡があります`;
     const body = msg.body.length > 50 ? msg.body.slice(0, 50) + "…" : msg.body;
 
     await supabase.functions.invoke("send-push", {

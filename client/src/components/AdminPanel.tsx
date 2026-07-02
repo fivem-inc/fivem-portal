@@ -8,7 +8,7 @@ import TripReportsTab from './admin/TripReportsTab';
 import ReportsTab from './admin/ReportsTab';
 import LeaveRequestsTab from './admin/LeaveRequestsTab';
 import LeaderAssignmentsTab from './admin/LeaderAssignmentsTab';
-import NotificationsTab, { ScheduledRemindersPanel } from './admin/NotificationsTab';
+import NotificationsTab, { ScheduledRemindersPanel, ReminderDaysSettingsPanel } from './admin/NotificationsTab';
 import BoardSettingsTab from './admin/BoardSettingsTab';
 import ShiftReportsTab from './admin/ShiftReportsTab';
 import FeaturePermissionsTab from './admin/FeaturePermissionsTab';
@@ -536,6 +536,7 @@ const AdminPanelContent: React.FC = () => {
           <>
             <NotificationsTab />
             <ScheduledRemindersPanel />
+            <ReminderDaysSettingsPanel />
           </>
         )}
       </div>

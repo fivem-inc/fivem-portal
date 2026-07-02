@@ -28,10 +28,17 @@ serve(async (req) => {
       return new Response(JSON.stringify({ ok: true, notified: 0 }), { headers: CORS_HEADERS })
     }
 
+    const { data: daysSetting } = await supabase
+      .from('reminder_days_settings')
+      .select('days_before')
+      .eq('event_key', 'encouragement_notify')
+      .maybeSingle()
+    const daysBefore: number[] = daysSetting?.days_before ?? [3, 0]
+
     const targetDays = (days as { id: string; target_date: string; deadline: string }[]).filter(d => {
       const deadlineDate = new Date(d.deadline + 'T00:00:00Z')
       const diff = Math.round((deadlineDate.getTime() - todayDate.getTime()) / 86400000)
-      return diff === 3 || diff === 0
+      return daysBefore.includes(diff)
     })
 
     if (targetDays.length === 0) {
