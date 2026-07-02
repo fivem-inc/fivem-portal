@@ -1,1 +1,4 @@
 .vercel
+.claude/
+.claude.json
+.claude.json.backup
