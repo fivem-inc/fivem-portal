@@ -4576,3 +4576,35 @@ alter table notifications add column if not exists banner_dismissed boolean defa
 - `npx tsc --noEmit`：エラーなし
 - ⚠️ 実機動作確認（連絡板を直接開いて既読にした後、ホームでバナーが消えているか）は
   次回ローカルでの確認を推奨
+
+---
+
+## ✅ 2026-07-04（続報3） 連絡板バナー自動非表示が動いていなかったバグ修正 完了
+
+### 症状
+- 直前の対応（本体既読→バナー自動非表示）を入れたのに、実際に受信トレイでお知らせを
+  開いて確認してもTOPバナーが消えなかった
+
+### 原因
+- 連絡板系の通知は`insertNotification()`で`sourceType`引数を渡さずに作成しているため、
+  実際のDB上の`source_type`は常に`null`（`'inbox'`という値は使われていなかった）
+- 自動非表示の判定条件を`source_type === 'inbox'`にしていたため、常に不一致で
+  何も自動非表示にならなかった（表示側の`NotifItem`はメッセージ文言で`isBoard`判定して
+  いたのに、新設した判定だけ`source_type`を見ていて表示側とロジックが噛み合っていなかった）
+- 加えて、DM送信時の通知（`BoardPage.tsx`のtargetId宛メッセージ）は`reference_id`（送信した
+  メッセージのid）を渡していなかったため、本体既読と突き合わせる手がかりが無かった
+
+### 修正内容
+- `App.tsx`の`NotificationBanner`：判定を`source_type === 'inbox'`→表示側と同じ
+  メッセージ文言判定（`お知らせ`/`メッセージが届き`/`リマインド`を含むか）に統一
+- `BoardPage.tsx`のDM送信箇所：`board_messages`のinsert結果からメッセージidを取得し、
+  `insertNotification`の`referenceId`に渡すよう修正（`.select('id').single()`を追加）
+
+### 変更ファイル
+- `client/src/App.tsx`
+- `client/src/pages/BoardPage.tsx`
+
+### 確認内容
+- `npx tsc --noEmit`：エラーなし
+- ⚠️ 実機動作確認（受信トレイでお知らせ本文を開いた後、ホームでバナーが消えるか）は
+  次回ローカル・本番での確認を推奨

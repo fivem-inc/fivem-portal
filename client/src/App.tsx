@@ -446,13 +446,15 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
     if (!data) return;
 
     // 連絡板メッセージは、本体を既に読んでいたら(board_reads)バナーも自動で消す
-    const boardMsgIds = [...new Set(data.filter(n => n.source_type === 'inbox' && n.reference_id).map(n => n.reference_id as string))];
+    // （連絡板の通知は source_type が null で保存されるため、表示側と同じくメッセージ文言で判定する）
+    const isBoardNotif = (n: typeof data[number]) => n.source_type === 'inbox' || n.message.includes('お知らせ') || n.message.includes('メッセージが届き') || n.message.includes('リマインド');
+    const boardMsgIds = [...new Set(data.filter(n => isBoardNotif(n) && n.reference_id).map(n => n.reference_id as string))];
     let alreadyRead = new Set<string>();
     if (boardMsgIds.length > 0) {
       const { data: reads } = await supabase.from('board_reads').select('message_id').eq('user_id', userId).in('message_id', boardMsgIds);
       alreadyRead = new Set((reads || []).map(r => r.message_id));
     }
-    const isAlreadyReadInBoard = (n: typeof data[number]) => n.source_type === 'inbox' && !!n.reference_id && alreadyRead.has(n.reference_id);
+    const isAlreadyReadInBoard = (n: typeof data[number]) => isBoardNotif(n) && !!n.reference_id && alreadyRead.has(n.reference_id);
 
     const toAutoDismiss = data.filter(isAlreadyReadInBoard);
     if (toAutoDismiss.length > 0) {

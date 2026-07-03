@@ -1005,8 +1005,8 @@ const BoardPage: React.FC = () => {
         }
       }
       if (dmCh) {
-        await supabase.from('board_messages').insert({ channel_id: dmCh.id, user_id: user.id, body: broadcastMessage.trim() });
-        await insertNotification(targetId, `${profileName || '誰か'}からメッセージが届きました`, broadcastMessage.trim().slice(0, 40));
+        const { data: dmMsg } = await supabase.from('board_messages').insert({ channel_id: dmCh.id, user_id: user.id, body: broadcastMessage.trim() }).select('id').single();
+        await insertNotification(targetId, `${profileName || '誰か'}からメッセージが届きました`, broadcastMessage.trim().slice(0, 40), undefined, dmMsg?.id);
       }
     }
 
