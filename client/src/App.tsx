@@ -443,7 +443,22 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
       .not('message', 'like', '%有給奨励日%')
       .or('source_type.is.null,source_type.neq.board')
       .order('created_at', { ascending: false });
-    if (data) setNotifs(data);
+    if (!data) return;
+
+    // 連絡板メッセージは、本体を既に読んでいたら(board_reads)バナーも自動で消す
+    const boardMsgIds = [...new Set(data.filter(n => n.source_type === 'inbox' && n.reference_id).map(n => n.reference_id as string))];
+    let alreadyRead = new Set<string>();
+    if (boardMsgIds.length > 0) {
+      const { data: reads } = await supabase.from('board_reads').select('message_id').eq('user_id', userId).in('message_id', boardMsgIds);
+      alreadyRead = new Set((reads || []).map(r => r.message_id));
+    }
+    const isAlreadyReadInBoard = (n: typeof data[number]) => n.source_type === 'inbox' && !!n.reference_id && alreadyRead.has(n.reference_id);
+
+    const toAutoDismiss = data.filter(isAlreadyReadInBoard);
+    if (toAutoDismiss.length > 0) {
+      supabase.from('notifications').update({ read: true, banner_dismissed: true }).in('id', toAutoDismiss.map(n => n.id)).then(null, () => {});
+    }
+    setNotifs(data.filter(n => !isAlreadyReadInBoard(n)));
   }, [userId]);
 
   useEffect(() => { fetchNotifs(); }, [fetchNotifs]);
