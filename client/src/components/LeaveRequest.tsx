@@ -371,7 +371,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         const reapplyNote = `【再申請】元申請ID: ${reapplySourceId}`;
         reasonValue = reasonValue ? `${reasonValue}　${reapplyNote}` : reapplyNote;
       }
-      const { error } = await supabase.from('leave_requests').insert({
+      const { data: newRequest, error } = await supabase.from('leave_requests').insert({
         user_id: user.id,
         leave_type: leaveType,
         leave_type_other: leaveType === 'その他' ? leaveTypeOther : null,
@@ -383,7 +383,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         status: 'pending',
         current_approver: 'first',
         approver_id: selectedApproverId,
-      });
+      }).select('id').single();
       if (error) throw error;
       // 再申請の場合、元申請を取消済みにする
       if (reapplySourceId) {
@@ -399,7 +399,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       const vars = { 申請者名: profileName || user.email || '', 休暇種別: leaveType, 申請日数: String(selectedDates.length) };
       const applicantEmail = user.email || '';
       const leaderEmail = selectedApprover ? (await getUserEmail(selectedApprover.id) ?? '') : '';
-      await dispatchSiteNotification('leave:new_request', vars, { applicant: user.id, leader: selectedApprover?.id }, insertNotification);
+      // leave:new_request は承認者(要対応)のみが対象（申請者向け変数が無いため、宛先設定にapplicantは無い）
+      await dispatchSiteNotification('leave:new_request', vars, { applicant: user.id, leader: selectedApprover?.id }, insertNotification, 'leave_request:pending_approval', newRequest?.id);
       await dispatchEmail('leave:new_request', vars, { applicant: applicantEmail, leader: leaderEmail, approver: leaderEmail });
       // TODO: 申請フォーム送信後の追加処理（例：奨励日との照合・連携）をここに追加
       setSubmitted(true);

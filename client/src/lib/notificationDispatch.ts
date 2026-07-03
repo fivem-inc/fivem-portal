@@ -80,11 +80,14 @@ export async function dispatchEmail(
 }
 
 // 宛先キーをもとにuser_idを解決してサイト通知を送信する
+// sourceType/referenceId は省略可能（省略した場合は従来通りタップしても詳細画面に飛べない通知になる）
 export async function dispatchSiteNotification(
   eventKey: string,
   vars: Record<string, string>,
   userIds: { applicant?: string; leader?: string; manager?: string; approver?: string },
-  insertFn: (userId: string, message: string, subject?: string) => Promise<void>
+  insertFn: (userId: string, message: string, subject?: string, sourceType?: string, referenceId?: string) => Promise<void>,
+  sourceType?: string,
+  referenceId?: string
 ): Promise<void> {
   const settings = await getSettings();
   const s = settings.find(s => s.event_key === eventKey && s.channel === 'site');
@@ -97,7 +100,7 @@ export async function dispatchSiteNotification(
     const userId = userIds[key as keyof typeof userIds];
     if (!userId || seen.has(userId)) continue;
     seen.add(userId);
-    await insertFn(userId, message, subject);
+    await insertFn(userId, message, subject, sourceType, referenceId);
   }
 }
 

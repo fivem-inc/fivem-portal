@@ -390,42 +390,64 @@ const PreviewBodyOffset: React.FC = () => {
 // 通知バナー（notifications テーブルから未読を表示）
 const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: string | null; read: boolean; source_type: string | null; reference_id: string | null }; onDismiss: (id: string) => void }> = ({ n, onDismiss }) => {
   const navigate = useNavigate();
-  const isReject = n.message.includes('差し戻し') || n.message.includes('差し戻され');
-  const isCancel = n.message.includes('取り消され');
   const isEnc = n.message.includes('有給奨励日');
-  const isBoard = n.source_type === 'inbox' || n.message.includes('お知らせ') || n.message.includes('メッセージが届き') || n.message.includes('リマインド');
+  const isUnconfirmedReminder = n.message.includes('への対応がまだ完了していません');
+  const isBoard = !isUnconfirmedReminder && (n.source_type === 'inbox' || n.message.includes('お知らせ') || n.message.includes('メッセージが届き') || n.message.includes('リマインド'));
 
-  const bgColor    = isReject ? '#fff5f5' : isCancel ? '#fff8ee' : isBoard ? '#f0fdf4' : '#f0fdf4';
-  const borderMain = isReject ? '#dc3545' : isCancel ? '#fd7e14' : isBoard ? '#28a745' : '#28a745';
-  const borderSub  = isReject ? '#f5b8bb' : isCancel ? '#fcd5a0' : isBoard ? '#b7e4cc' : '#b7e4cc';
-  const textColor  = isReject ? '#721c24' : isCancel ? '#7a3c00' : isBoard ? '#155724' : '#155724';
-  const subColor   = isReject ? '#a03030' : isCancel ? '#9a5200' : isBoard ? '#3a7d52' : '#3a7d52';
+  // source_typeで種別を判定（休暇申請・勤務変更申請）。文言ではなくsource_typeを正とする
+  const isLeavePendingApproval = n.source_type === 'leave_request:pending_approval'; // 承認者：要対応
+  const isLeavePendingResubmit = n.source_type === 'leave_request:pending_resubmit'; // 申請者：再提出/取消待ち
+  const isLeaveResult          = n.source_type === 'leave_request';                  // 申請者：結果報告のみ
+  const isShiftPendingApproval = n.source_type === 'shift_report:pending_approval';  // レビュアー：要対応
+  const isShiftPendingResubmit = n.source_type === 'shift_report:pending_resubmit';  // 申請者：再提出/取消待ち
+  const isShiftResult          = n.source_type === 'shift_report';                   // 申請者：結果報告のみ
+  const isTimeAdjustment       = n.source_type === 'time_adjustment';                // 上長：FYI（対応不要）
+  const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit;
+  const isResultOnly = isLeaveResult || isShiftResult || isTimeAdjustment;
+  // 旧来のフォールバック（source_typeが無い通知向け）
+  const isLegacyReject = !isPendingAction && !isResultOnly && (n.message.includes('差し戻し') || n.message.includes('差し戻され'));
 
+  const isGreenTone = isBoard || isPendingAction || isResultOnly || isUnconfirmedReminder;
+
+  const bgColor    = isLegacyReject ? '#fff5f5' : isGreenTone ? '#f0fdf4' : '#f0fdf4';
+  const borderMain = isLegacyReject ? '#dc3545' : isGreenTone ? '#28a745' : '#28a745';
+  const borderSub  = isLegacyReject ? '#f5b8bb' : isGreenTone ? '#b7e4cc' : '#b7e4cc';
+  const textColor  = isLegacyReject ? '#721c24' : isGreenTone ? '#155724' : '#155724';
+  const subColor   = isLegacyReject ? '#a03030' : isGreenTone ? '#3a7d52' : '#3a7d52';
+
+  // タップ＝詳細画面への移動。結果報告のみ（A分類）はタップで閉じる。要対応（B分類）は対応完了まで残る。
   const handleTap = () => {
-    onDismiss(n.id);
     if (isEnc) { navigate('/leave'); return; }
-    if (isBoard) {
+    if (isBoard || isUnconfirmedReminder) {
       if (n.reference_id) { navigate(`/board?openInboxId=${n.reference_id}`); } else { navigate('/board'); }
       return;
     }
-    if (isReject || isCancel) { navigate('/leave'); return; }
+    if (isLeavePendingApproval) { navigate('/leave-approvals'); return; }
+    if (isLeavePendingResubmit) { navigate('/leave?tab=history'); return; }
+    if (isLeaveResult) { navigate('/leave?tab=history'); onDismiss(n.id); return; }
+    if (isShiftPendingApproval) { navigate('/shift-report?view=confirm'); return; }
+    if (isShiftPendingResubmit) { navigate('/shift-report?tab=history'); return; }
+    if (isShiftResult) { navigate('/shift-report?tab=history'); onDismiss(n.id); return; }
+    if (isTimeAdjustment) { onDismiss(n.id); return; }
+    if (isLegacyReject) { navigate('/leave'); return; }
   };
 
   return (
-    <div onClick={handleTap}
-      style={{
-        background: bgColor, border: `1px solid ${borderSub}`,
-        borderLeft: `4px solid ${borderMain}`,
-        borderRadius: '0 10px 10px 0',
-        padding: '12px 16px', marginBottom: 10,
-        display: 'flex', alignItems: 'center', gap: 10,
-        cursor: 'pointer',
-      }}>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontWeight: 500, fontSize: 14, color: textColor }}>{n.message}</div>
-        {n.sub_message && <div style={{ fontSize: 12, color: subColor }}>{n.sub_message}</div>}
+    <div style={{
+      background: bgColor, border: `1px solid ${borderSub}`,
+      borderLeft: `4px solid ${borderMain}`,
+      borderRadius: '0 10px 10px 0',
+      padding: '12px 16px', marginBottom: 10,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+        <div onClick={handleTap} style={{ flex: 1, cursor: 'pointer' }}>
+          <div style={{ fontWeight: 500, fontSize: 14, color: textColor }}>{n.message}</div>
+          {n.sub_message && <div style={{ fontSize: 12, color: subColor }}>{n.sub_message}</div>}
+        </div>
+        <div onClick={handleTap} style={{ fontSize: 12, color: subColor, whiteSpace: 'nowrap', flexShrink: 0, cursor: 'pointer', marginTop: 2 }}>タップして確認 →</div>
+        <button onClick={() => onDismiss(n.id)} title="このお知らせを閉じる"
+          style={{ background: 'none', border: 'none', color: subColor, cursor: 'pointer', fontSize: 15, padding: '0 2px', flexShrink: 0, lineHeight: 1 }}>✕</button>
       </div>
-      <div style={{ fontSize: 12, color: subColor, whiteSpace: 'nowrap', flexShrink: 0 }}>タップして確認 →</div>
     </div>
   );
 };
@@ -441,26 +463,87 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
       .eq('user_id', userId)
       .eq('banner_dismissed', false)
       .not('message', 'like', '%有給奨励日%')
+      // 「要対応」の承認待ちは専用の集計バナー(LeaveApprovalBanner/ShiftReportApprovalBanner)が別途出るため、ここでは重複表示しない
+      .not('source_type', 'in', '(leave_request:pending_approval,shift_report:pending_approval)')
       .or('source_type.is.null,source_type.neq.board')
       .order('created_at', { ascending: false });
     if (!data) return;
 
     // 連絡板メッセージは、本体を既に読んでいたら(board_reads)バナーも自動で消す
     // （連絡板の通知は source_type が null で保存されるため、表示側と同じくメッセージ文言で判定する）
-    const isBoardNotif = (n: typeof data[number]) => n.source_type === 'inbox' || n.message.includes('お知らせ') || n.message.includes('メッセージが届き') || n.message.includes('リマインド');
+    // ただし「未対応の催促リマインド」は"読んだだけ"では対応完了にならないため、board_confirmations（回答済みか）で別判定する
+    const isUnconfirmedReminder = (n: typeof data[number]) => n.message.includes('への対応がまだ完了していません');
+    const isBoardNotif = (n: typeof data[number]) => !isUnconfirmedReminder(n) && (n.source_type === 'inbox' || n.message.includes('お知らせ') || n.message.includes('メッセージが届き') || n.message.includes('リマインド'));
+
     const boardMsgIds = [...new Set(data.filter(n => isBoardNotif(n) && n.reference_id).map(n => n.reference_id as string))];
+    const confirmMsgIds = [...new Set(data.filter(n => isUnconfirmedReminder(n) && n.reference_id).map(n => n.reference_id as string))];
+
     let alreadyRead = new Set<string>();
     if (boardMsgIds.length > 0) {
       const { data: reads } = await supabase.from('board_reads').select('message_id').eq('user_id', userId).in('message_id', boardMsgIds);
       alreadyRead = new Set((reads || []).map(r => r.message_id));
     }
-    const isAlreadyReadInBoard = (n: typeof data[number]) => isBoardNotif(n) && !!n.reference_id && alreadyRead.has(n.reference_id);
+    let alreadyConfirmed = new Set<string>();
+    if (confirmMsgIds.length > 0) {
+      const { data: confs } = await supabase.from('board_confirmations').select('message_id').eq('user_id', userId).in('message_id', confirmMsgIds);
+      alreadyConfirmed = new Set((confs || []).map(c => c.message_id));
+    }
 
-    const toAutoDismiss = data.filter(isAlreadyReadInBoard);
+    // 休暇申請・勤務変更申請の「要対応」通知は、対象レコードのステータスが進んだら自動で消す
+    // （N+1を避けるため、休暇申請・勤務変更申請それぞれ1回のクエリにまとめて取得する）
+    const leaveIds = [...new Set(data.filter(n => (n.source_type === 'leave_request:pending_approval' || n.source_type === 'leave_request:pending_resubmit') && n.reference_id).map(n => n.reference_id as string))];
+    const shiftIds = [...new Set(data.filter(n => (n.source_type === 'shift_report:pending_approval' || n.source_type === 'shift_report:pending_resubmit') && n.reference_id).map(n => n.reference_id as string))];
+
+    const leaveMap = new Map<string, { status: string; user_id: string; approver_id: string | null; approver2_id: string | null }>();
+    if (leaveIds.length > 0) {
+      const { data: rows } = await supabase.from('leave_requests').select('id, status, user_id, approver_id, approver2_id').in('id', leaveIds);
+      (rows || []).forEach((r: any) => leaveMap.set(r.id, r));
+    }
+    const shiftMap = new Map<string, { status: string; applicant_id: string; reviewer_id: string | null }>();
+    if (shiftIds.length > 0) {
+      const { data: rows } = await supabase.from('shift_reports').select('id, status, applicant_id, reviewer_id').in('id', shiftIds);
+      (rows || []).forEach((r: any) => shiftMap.set(r.id, r));
+    }
+
+    // データが取れない場合（RLS等）は安全側に倒して「まだ対応中」扱いにし、消さない
+    const isResolvedPending = (n: typeof data[number]): boolean => {
+      if (!n.reference_id) return false;
+      if (n.source_type === 'leave_request:pending_approval') {
+        const r = leaveMap.get(n.reference_id);
+        if (!r) return false;
+        const stillPending = (r.status === 'pending' && r.approver_id === userId) || (r.status === 'step2_pending' && r.approver2_id === userId);
+        return !stillPending;
+      }
+      if (n.source_type === 'leave_request:pending_resubmit') {
+        const r = leaveMap.get(n.reference_id);
+        if (!r) return false;
+        return !(r.status === 'rejected' && r.user_id === userId);
+      }
+      if (n.source_type === 'shift_report:pending_approval') {
+        const r = shiftMap.get(n.reference_id);
+        if (!r) return false;
+        const stillPending = r.reviewer_id === userId && (r.status === 'pending' || r.status === 'resubmitted');
+        return !stillPending;
+      }
+      if (n.source_type === 'shift_report:pending_resubmit') {
+        const r = shiftMap.get(n.reference_id);
+        if (!r) return false;
+        return !(r.status === 'returned' && r.applicant_id === userId);
+      }
+      return false;
+    };
+
+    const isAlreadyReadInBoard = (n: typeof data[number]) =>
+      (isBoardNotif(n) && !!n.reference_id && alreadyRead.has(n.reference_id)) ||
+      (isUnconfirmedReminder(n) && !!n.reference_id && alreadyConfirmed.has(n.reference_id));
+
+    const shouldAutoDismiss = (n: typeof data[number]) => isAlreadyReadInBoard(n) || isResolvedPending(n);
+
+    const toAutoDismiss = data.filter(shouldAutoDismiss);
     if (toAutoDismiss.length > 0) {
       supabase.from('notifications').update({ read: true, banner_dismissed: true }).in('id', toAutoDismiss.map(n => n.id)).then(null, () => {});
     }
-    setNotifs(data.filter(n => !isAlreadyReadInBoard(n)));
+    setNotifs(data.filter(n => !shouldAutoDismiss(n)));
   }, [userId]);
 
   useEffect(() => { fetchNotifs(); }, [fetchNotifs]);
@@ -628,7 +711,7 @@ const ShiftReportApprovalBanner: React.FC<{ userId: string; roleTitle: string; i
 
   return (
     <div
-      onClick={() => navigate('/shift-report')}
+      onClick={() => navigate('/shift-report?view=confirm')}
       style={{
         margin: '0 0 16px 0',
         padding: '12px 16px',

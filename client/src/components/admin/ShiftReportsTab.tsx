@@ -90,6 +90,7 @@ const ShiftReportsTab: React.FC = () => {
   const [confirming, setConfirming]     = useState<string | null>(null);
   const [expandedHistory, setExpandedHistory] = useState<Set<string>>(new Set());
   const [historyData, setHistoryData]   = useState<Record<string, HistoryRec[]>>({});
+  const [historyExistIds, setHistoryExistIds] = useState<Set<string>>(new Set());
   const [returnTarget, setReturnTarget] = useState<ShiftReport | null>(null);
   const [returnComment, setReturnComment] = useState('');
   const [returning, setReturning]       = useState(false);
@@ -136,6 +137,10 @@ const ShiftReportsTab: React.FC = () => {
       confirmerName:  r.confirmed_by ? (nm[r.confirmed_by] ?? '—') : '—',
       submitterName:  r.submitted_by && r.submitted_by !== r.applicant_id ? (nm[r.submitted_by] ?? '不明') : undefined,
     })));
+    // 修正履歴ボタンの色分け用：履歴が実際に存在するreport_idだけをまとめて取得
+    const reportIds = data.map((r: ShiftReport) => r.id);
+    const { data: histRows } = await supabase.from('shift_report_history').select('report_id').in('report_id', reportIds);
+    setHistoryExistIds(new Set((histRows || []).map((h: { report_id: string }) => h.report_id)));
     setLoading(false);
   }, [supabase]);
 
@@ -179,6 +184,16 @@ const ShiftReportsTab: React.FC = () => {
       sub_message: `${getTypes(r).map(t => TYPE_INFO[t]?.label ?? t).join('＋')}　${r.work_date}`,
       source_type: 'shift_report', reference_id: r.id, read: false,
     }).then(null, () => {});
+    // 通知：同グループの該当役職者へ一斉通知（管理画面「勤務変更申請」設定に従う）
+    supabase.functions.invoke('shift-report-confirmed-notify', {
+      body: {
+        user_id: r.applicant_id,
+        user_name: r.applicantName ?? '',
+        date: r.work_date,
+        types: getTypes(r),
+        location: r.actual_location ?? r.original_location ?? '',
+      },
+    }).then(null, () => {});
     setConfirming(null);
     setSuccessMsg('受理しました');
     fetchReports();
@@ -198,7 +213,7 @@ const ShiftReportsTab: React.FC = () => {
     await supabase.from('notifications').insert({
       user_id: r.applicant_id, message: '勤務変更申請が差戻されました',
       sub_message: `${getTypes(r).map(t => TYPE_INFO[t]?.label ?? t).join('＋')}　${r.work_date}${comment ? `\n理由：${comment}` : ''}`,
-      source_type: 'shift_report', reference_id: r.id, read: false,
+      source_type: 'shift_report:pending_resubmit', reference_id: r.id, read: false,
     }).then(null, () => {});
     setReturning(false); setReturnTarget(null); setReturnComment('');
     setSuccessMsg('差戻しました');
@@ -276,16 +291,19 @@ const ShiftReportsTab: React.FC = () => {
       const s = v == null ? '' : String(v);
       return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const headers = ['申請日', '申請者', '代行者', '種別', '勤務日', '勤務地', '開始時刻', '終了時刻', '労働時間(分)', '休憩時間(分)', '理由', '確認者', 'ステータス'];
+    const headers = ['申請日', '申請者', '代行者', '種別', '勤務日', '変更前勤務地', '変更前開始', '変更前終了', '変更後勤務地', '変更後開始', '変更後終了', '労働時間(分)', '休憩時間(分)', '理由', '確認者', 'ステータス'];
     const rows = (data as ShiftReport[]).map(r => [
       r.created_at.slice(0, 10),
       nm[r.applicant_id] ?? '不明',
       r.submitted_by && r.submitted_by !== r.applicant_id ? (nm[r.submitted_by] ?? '') : '',
       getTypes(r).map(t => TYPE_INFO[t]?.label ?? t).join('＋'),
       r.work_date,
-      r.actual_location ?? r.original_location ?? '',
-      r.actual_start ?? r.original_start ?? '',
-      r.actual_end   ?? r.original_end   ?? '',
+      r.original_location ?? '',
+      r.original_start ?? '',
+      r.original_end ?? '',
+      r.actual_location ?? '',
+      r.actual_start ?? '',
+      r.actual_end ?? '',
       r.labor_minutes ?? '',
       r.break_minutes ?? '',
       r.reason,
@@ -397,8 +415,8 @@ const ShiftReportsTab: React.FC = () => {
                   { label: '申請日',   w: 70 },
                   { label: '申請者',   w: 70 },
                   { label: '種別',     w: 70 },
-                  { label: '勤務日',   w: 100 },
-                  { label: '勤務地',   w: 70 },
+                  { label: '変更前',   w: 100 },
+                  { label: '変更後',   w: 100 },
                   { label: '理由・備考', w: 120 },
                   { label: '確認状況', w: 90 },
                   { label: '操作',     w: 110 },
@@ -427,11 +445,11 @@ const ShiftReportsTab: React.FC = () => {
                       </td>
                       {/* 申請者 */}
                       <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'center', fontSize: 12 }}>
-                        {(r.applicantName ?? '不明').split(/[\s　]/).map((s, j) => <div key={j}>{s}</div>)}
+                        <div>{r.applicantName ?? '不明'}</div>
                         {r.submitterName && (
                           <div style={{ marginTop: 2 }}>
                             <span style={{ fontSize: 9, background: '#6f42c1', color: '#fff', borderRadius: 3, padding: '1px 4px' }}>
-                              代行：{r.submitterName.split(/[\s　]/)[0]}
+                              代行：{r.submitterName}
                             </span>
                           </div>
                         )}
@@ -443,19 +461,36 @@ const ShiftReportsTab: React.FC = () => {
                           return <div key={t} style={{ fontSize: 11, fontWeight: 'bold', color: inf.color, lineHeight: 1.4 }}>{inf.emoji} {inf.label}</div>;
                         })}
                       </td>
-                      {/* 勤務日 */}
+                      {/* 変更前 */}
                       <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'center', fontSize: 12 }}>
                         <div>{r.work_date.slice(5).replace('-', '/')}（{dow(r.work_date)}）</div>
-                        {r.actual_start && (
-                          <div style={{ fontSize: 11, color: sub }}>{r.actual_start.slice(0, 5)}〜{r.actual_end?.slice(0, 5)}</div>
+                        {r.original_location && (
+                          <div style={{ fontSize: 11, color: sub }}>{r.original_location}</div>
                         )}
-                        {r.labor_minutes != null && r.labor_minutes > 0 && (
-                          <div style={{ fontSize: 11, color: '#166534' }}>{fmtMin(r.labor_minutes)}</div>
+                        {r.original_start && (
+                          <div style={{ fontSize: 11, color: sub }}>{r.original_start.slice(0, 5)}〜{r.original_end?.slice(0, 5)}</div>
+                        )}
+                        {!r.original_location && !r.original_start && (
+                          <div style={{ fontSize: 11, color: sub }}>—</div>
                         )}
                       </td>
-                      {/* 勤務地 */}
+                      {/* 変更後 */}
                       <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'center', fontSize: 12 }}>
-                        {r.actual_location ?? r.original_location ?? '—'}
+                        {r.actual_location && (
+                          <div style={{ fontSize: 11, color: '#166534', fontWeight: 'bold' }}>{r.actual_location}</div>
+                        )}
+                        {r.actual_start && (
+                          <div style={{ fontSize: 11, color: '#166534', fontWeight: 'bold' }}>{r.actual_start.slice(0, 5)}〜{r.actual_end?.slice(0, 5)}</div>
+                        )}
+                        {r.actual_start && (
+                          <div style={{ fontSize: 11, color: '#166534' }}>休憩 {r.break_minutes ?? 0}分</div>
+                        )}
+                        {r.labor_minutes != null && r.labor_minutes > 0 && (
+                          <div style={{ fontSize: 11, color: '#166534' }}>実労働 {fmtMin(r.labor_minutes)}</div>
+                        )}
+                        {!r.actual_location && !r.actual_start && (
+                          <div style={{ fontSize: 11, color: sub }}>—</div>
+                        )}
                       </td>
                       {/* 理由・バッジ */}
                       <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'left', fontSize: 12, wordBreak: 'break-word' }}>
@@ -473,9 +508,9 @@ const ShiftReportsTab: React.FC = () => {
                               {hasHist ? '▼ 差戻し' : '▶ 差戻し'}
                             </button>
                           )}
-                          {!isReSub && !isRet && r.status !== 'pending' && (
+                          {!isReSub && !isRet && r.status !== 'pending' && historyExistIds.has(r.id) && (
                             <button onClick={() => toggleHistory(r.id)}
-                              style={{ ...btnBase, background: isDarkMode ? '#495057' : '#e9ecef', color: text, borderRadius: 4, padding: '2px 6px', fontSize: 10 }}>
+                              style={{ ...btnBase, background: '#007bff', color: '#fff', borderRadius: 4, padding: '2px 6px', fontSize: 10 }}>
                               {hasHist ? '▼ 修正履歴' : '▶ 修正履歴'}
                             </button>
                           )}

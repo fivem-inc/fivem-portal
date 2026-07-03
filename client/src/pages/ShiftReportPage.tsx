@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import type { AuthUser } from '../types';
@@ -225,14 +226,14 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
           <CRow label="日付"       value={`${data.date}（${dow(data.date)}）`} textColor={text} />
           <CRow label="種別"       value={typesLabel(data.types)} textColor={text} />
           <CRow label="理由"       value={data.reason} textColor={text} />
-          <Sep isDark={isDark} />
-          <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>📋 通常シフト（もともとの予定）</div>
-          {data.origDayOff
-            ? <CRow label="" value="休みの日" textColor={text} />
-            : <CRow label="" value={`${data.origLoc || '—'}　${data.origStart}〜${data.origEnd}`} textColor={text} />
-          }
           {!hasAbsence && (
             <>
+              <Sep isDark={isDark} />
+              <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>📋 通常シフト（もともとの予定）</div>
+              {data.origDayOff
+                ? <CRow label="" value="休みの日" textColor={text} />
+                : <CRow label="" value={`${data.origLoc || '—'}　${data.origStart}〜${data.origEnd}`} textColor={text} />
+              }
               <Sep isDark={isDark} />
               <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>✅ 実際に勤務した時間</div>
               <CRow label="勤務地"  value={data.actLoc || '—'} textColor={text} />
@@ -242,7 +243,6 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
               {data.actNotes && <CRow label="備考" value={data.actNotes} textColor={text} />}
               {!data.origDayOff && origMin > 0 && diffMin !== 0 && (
                 <div style={{ background: isDark ? '#1e3a5f' : '#eff6ff', borderRadius: 8, padding: '8px 12px', marginTop: 4 }}>
-                  {data.types.includes('overtime') && diffMin > 0 && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#60a5fa' }}>⏰ 時間外労働：{formatMin(Math.max(0, diffMin))}</div>}
                   {data.types.includes('early_start') && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#22d3ee' }}>🌅 早出：{formatMin(Math.max(0, toMin(data.origStart) - toMin(data.actStart)))}</div>}
                   {data.types.includes('tardiness') && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#c084fc' }}>⏱️ 遅刻：{formatMin(Math.max(0, toMin(data.actStart) - toMin(data.origStart)))}</div>}
                   {data.types.includes('early_leave') && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#fb923c' }}>🏃 早退：{formatMin(Math.max(0, toMin(data.origEnd) - toMin(data.actEnd)))}</div>}
@@ -366,9 +366,9 @@ const ShiftReportForm: React.FC<{
     if (!date)          return '日付を選択してください';
     if (types.length === 0) return '種別を選択してください';
     if (!reason.trim()) return '理由を入力してください';
-    if (!origDayOff && !hasHoliday && (!origStart || !origEnd)) return '通常シフトの時間を入力してください';
-    if (!origDayOff && !hasHoliday && origStart && origEnd && origStart === origEnd) return '通常シフトの開始・終了が同じ時間です。正しい時間を入力してください';
-    if (!origDayOff && !hasHoliday && origLoc === 'その他' && !origLocCustom.trim()) return '通常シフトの場所を入力してください';
+    if (!origDayOff && !hasHoliday && !hasAbsence && (!origStart || !origEnd)) return '通常シフトの時間を入力してください';
+    if (!origDayOff && !hasHoliday && !hasAbsence && origStart && origEnd && origStart === origEnd) return '通常シフトの開始・終了が同じ時間です。正しい時間を入力してください';
+    if (!origDayOff && !hasHoliday && !hasAbsence && origLoc === 'その他' && !origLocCustom.trim()) return '通常シフトの場所を入力してください';
     if (!hasAbsence && (!actStart || !actEnd)) return '実際の時間を入力してください';
     if (!hasAbsence && actStart && actEnd && actStart === actEnd) return '開始時間と終了時間が同じです。正しい時間を入力してください';
     if (!hasAbsence && actLoc === 'その他' && !actLocCustom.trim()) return '実際の勤務場所を入力してください';
@@ -396,9 +396,9 @@ const ShiftReportForm: React.FC<{
         application_type:  pType,
         application_types: types,
         reason:            reason.trim() + (actNotes.trim() ? `\n備考：${actNotes.trim()}` : ''),
-        original_location: (origDayOff || hasHoliday) ? null : (finalOrigLoc || null),
-        original_start:    (origDayOff || hasHoliday) ? null : (origStart || null),
-        original_end:      (origDayOff || hasHoliday) ? null : (origEnd || null),
+        original_location: (origDayOff || hasHoliday || hasAbsence) ? null : (finalOrigLoc || null),
+        original_start:    (origDayOff || hasHoliday || hasAbsence) ? null : (origStart || null),
+        original_end:      (origDayOff || hasHoliday || hasAbsence) ? null : (origEnd || null),
         actual_location:   !hasAbsence ? (finalActLoc || null) : null,
         actual_start:      !hasAbsence ? (actStart || null) : null,
         actual_end:        !hasAbsence ? (actEnd || null) : null,
@@ -413,21 +413,33 @@ const ShiftReportForm: React.FC<{
         await supabase.from('shift_report_history').insert({ report_id: editTarget.id, changed_by: user.id, change_summary: changeSummary.trim(), snapshot: editTarget });
         await supabase.from('shift_reports').update(record).eq('id', editTarget.id);
       } else {
-        const { error: err } = await supabase.from('shift_reports').insert(record);
+        const { data: newReport, error: err } = await supabase.from('shift_reports').insert(record).select('id').single();
         if (err) {
           console.error('[insert shift_reports] error:', err);
           setError(err.code === '23505' ? '同じ日付の申請がすでにあります' : err.message);
           setSaving(false); setShowConfirm(false);
           return;
         }
-        // 通知：レビュアーへ（自己受理以外）
         if (!isSelfReview) {
+          // 通知：レビュアーへ
           supabase.from('notifications').insert({
             user_id: reviewerId,
             message: `${profileName ?? ''}さんから勤務変更申請が届きました`,
             sub_message: `${types.map(t => TYPE_INFO[t].label).join('＋')}　${date}`,
-            source_type: 'shift_report',
+            source_type: 'shift_report:pending_approval',
+            reference_id: newReport?.id,
             read: false,
+          }).then(null, () => {});
+        } else {
+          // 自己受理の場合は即confirmedになるため、同グループの該当役職者へ一斉通知
+          supabase.functions.invoke('shift-report-confirmed-notify', {
+            body: {
+              user_id: applicantId,
+              user_name: applicantId === user.id ? (profileName ?? '') : (staffList.find(s => s.id === applicantId)?.name ?? ''),
+              date,
+              types,
+              location: hasAbsence ? '' : (finalActLoc || finalOrigLoc || ''),
+            },
           }).then(null, () => {});
         }
       }
@@ -568,8 +580,8 @@ const ShiftReportForm: React.FC<{
               </div>
             </div>
 
-            {/* 通常シフト（休日出勤のみ選択時は非表示） */}
-            {!hasHoliday && (
+            {/* 通常シフト（休日出勤・欠勤選択時は非表示） */}
+            {!hasHoliday && !hasAbsence && (
             <div style={{ background: cardBg, borderRadius: 10, padding: '12px 14px', marginBottom: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 'bold', color: subColor, marginBottom: 10 }}>📋 通常シフト（もともとの予定）</div>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: textColor, marginBottom: 10, cursor: 'pointer' }}>
@@ -629,7 +641,6 @@ const ShiftReportForm: React.FC<{
                     <div style={{ fontSize: 12, color: isDark ? '#4ade80' : '#166534' }}>🕐 休憩 {breakMin}分　／　実労働 {formatMin(laborMin)}</div>
                     {!origDayOff && !hasHoliday && origMin > 0 && (
                       <div style={{ marginTop: 4 }}>
-                        {types.includes('overtime') && diffMin > 0 && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#1565c0' }}>⏰ 時間外労働：{formatMin(Math.max(0, diffMin))}</div>}
                         {types.includes('early_start') && toMin(origStart) > toMin(actStart) && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#0891b2' }}>🌅 早出：{formatMin(toMin(origStart) - toMin(actStart))}</div>}
                         {types.includes('tardiness') && toMin(actStart) > toMin(origStart) && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#7b1fa2' }}>⏱️ 遅刻：{formatMin(toMin(actStart) - toMin(origStart))}</div>}
                         {types.includes('early_leave') && toMin(origEnd) > toMin(actEnd) && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#c2410c' }}>🏃 早退：{formatMin(toMin(origEnd) - toMin(actEnd))}</div>}
@@ -740,11 +751,12 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const isApprover = IS_APPROVER(roleTitle, isAdmin);
   const canSeeAll  = isAdmin || ['リーダー', 'マネージャー', '管理者'].includes(roleTitle);
 
-  const [tab, setTab]                   = useState<'apply' | 'history'>('apply');
+  const [searchParams] = useSearchParams();
+  const [tab, setTab]                   = useState<'apply' | 'history'>(searchParams.get('tab') === 'history' ? 'history' : 'apply');
   const [formKey, setFormKey]           = useState(0);
   const [cancelTarget, setCancelTarget] = useState<ShiftReport | null>(null);
   const [cancelReason, setCancelReason] = useState('');
-  const [confirmView, setConfirmView]   = useState(false);
+  const [confirmView, setConfirmView]   = useState(searchParams.get('view') === 'confirm');
   const [showForm, setShowForm]         = useState(false);
   const [editTarget, setEditTarget]     = useState<ShiftReport | null>(null);
   const [myReports, setMyReports]       = useState<ShiftReport[]>([]);
@@ -876,6 +888,16 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       reference_id: report.id,
       read: false,
     }).then(null, () => {});
+    // 通知：同グループの該当役職者へ一斉通知（管理画面「勤務変更申請」設定に従う）
+    supabase.functions.invoke('shift-report-confirmed-notify', {
+      body: {
+        user_id: report.applicant_id,
+        user_name: report.applicant?.name ?? '',
+        date: report.work_date,
+        types: report.application_types?.length ? report.application_types : [report.application_type],
+        location: report.actual_location ?? report.original_location ?? '',
+      },
+    }).then(null, () => {});
     setConfirmingId(null);
     setSuccessMsg('受理しました ✓');
     fetchPending(); fetchMyReports();
@@ -914,7 +936,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     await supabase.from('notifications').insert({
       user_id: r.applicant_id, message: '勤務変更申請が差戻されました',
       sub_message: `${TYPE_INFO[r.application_type].label}　${r.work_date}${comment ? `\n理由：${comment}` : ''}`,
-      source_type: 'shift_report', reference_id: r.id, read: false,
+      source_type: 'shift_report:pending_resubmit', reference_id: r.id, read: false,
     }).then(null, () => {});
     setReturningId(null); setReturnTarget(null); setReturnComment('');
     fetchPending(); fetchReviewedReports(); fetchAllReports();
@@ -979,21 +1001,14 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                   </span>
                 </div>
                 {r.original_start
-                  ? <div style={{ fontSize: 12, color: '#555', marginBottom: 2 }}>📋 {r.original_location} {r.original_start.slice(0, 5)}〜{r.original_end?.slice(0, 5)}</div>
-                  : r.application_type !== 'holiday_work'
-                    ? <div style={{ fontSize: 12, color: '#aaa', marginBottom: 2 }}>📋 もともと休みの日</div>
+                  ? <div style={{ fontSize: 12, color: '#555', marginBottom: 2 }}>変更前：{r.original_location} {r.original_start.slice(0, 5)}〜{r.original_end?.slice(0, 5)}</div>
+                  : (r.application_type !== 'holiday_work' && r.application_type !== 'absence')
+                    ? <div style={{ fontSize: 12, color: '#aaa', marginBottom: 2 }}>変更前：もともと休みの日</div>
                     : null
                 }
                 {r.actual_start && (
                   <div style={{ fontSize: 12, color: isDark ? '#4ade80' : '#166534', marginBottom: 4 }}>
-                    ✅ {r.actual_location} {r.actual_start.slice(0, 5)}〜{r.actual_end?.slice(0, 5)}　実労働 {r.labor_minutes ? formatMin(r.labor_minutes) : '-'}
-                    {dMin != null && oMin > 0 && (
-                      <span style={{ marginLeft: 6, color: r.application_type === 'overtime' ? '#1565c0' : '#c2410c', fontWeight: 'bold' }}>
-                        （{r.application_type === 'overtime'
-                          ? `時間外 ${formatMin(Math.max(0, dMin))}`
-                          : `短縮 ${formatMin(Math.abs(Math.min(0, dMin)))}`}）
-                      </span>
-                    )}
+                    変更後：{r.actual_location} {r.actual_start.slice(0, 5)}〜{r.actual_end?.slice(0, 5)}　休憩 {r.break_minutes ?? 0}分　実労働 {r.labor_minutes ? formatMin(r.labor_minutes) : '-'}
                   </div>
                 )}
                 <div style={{ fontSize: 12, color: '#888', marginBottom: 10 }}>{r.reason}</div>
@@ -1202,21 +1217,17 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                               {(r.application_types?.length ? r.application_types : [r.application_type]).map(t => `${TYPE_INFO[t].emoji} ${TYPE_INFO[t].label}`).join(' ＋ ')}
                             </div>
                             {r.original_start
-                              ? <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#888' }}>📋 {r.original_location} {r.original_start.slice(0, 5)}〜{r.original_end?.slice(0, 5)}</div>
-                              : r.application_type !== 'holiday_work'
-                                ? <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#bbb' }}>📋 もともと休みの日</div>
+                              ? <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#888' }}>変更前：{r.original_location} {r.original_start.slice(0, 5)}〜{r.original_end?.slice(0, 5)}</div>
+                              : (r.application_type !== 'holiday_work' && r.application_type !== 'absence')
+                                ? <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#bbb' }}>変更前：もともと休みの日</div>
                                 : null
                             }
                             {r.actual_start && (
                               <div style={{ fontSize: 11, color: isDark ? '#4ade80' : '#166534' }}>
-                                ✅ {r.actual_start.slice(0, 5)}〜{r.actual_end?.slice(0, 5)}　実労働 {r.labor_minutes ? formatMin(r.labor_minutes) : '-'}
-                                {dMin != null && oMin > 0 && (
-                                  <span style={{ marginLeft: 4, color: r.application_type === 'overtime' ? (isDark ? '#93c5fd' : '#1565c0') : r.application_type === 'tardiness' ? (isDark ? '#c084fc' : '#7b1fa2') : (isDark ? '#fb923c' : '#c2410c'), fontWeight: 'bold' }}>
-                                    ／{r.application_type === 'overtime'
-                                      ? `時間外 ${formatMin(Math.max(0, dMin))}`
-                                      : r.application_type === 'tardiness'
-                                      ? `遅刻 ${formatMin(Math.abs(Math.min(0, dMin)))}`
-                                      : `短縮 ${formatMin(Math.abs(Math.min(0, dMin)))}`}
+                                変更後：{r.actual_location ? `${r.actual_location}　` : ''}{r.actual_start.slice(0, 5)}〜{r.actual_end?.slice(0, 5)}　休憩 {r.break_minutes ?? 0}分　実労働 {r.labor_minutes ? formatMin(r.labor_minutes) : '-'}
+                                {dMin != null && oMin > 0 && r.application_type === 'tardiness' && (
+                                  <span style={{ marginLeft: 4, color: isDark ? '#c084fc' : '#7b1fa2', fontWeight: 'bold' }}>
+                                    ／遅刻 {formatMin(Math.abs(Math.min(0, dMin)))}
                                   </span>
                                 )}
                               </div>

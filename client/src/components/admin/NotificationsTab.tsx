@@ -61,6 +61,14 @@ const EVENT_GROUPS = [
     ],
   },
   {
+    label: '勤務変更申請（パート・アルバイト）',
+    icon: '⏰',
+    headerBg: '#FFEBEE', headerBorder: '#C62828', headerText: '#B71C1C',
+    events: [
+      { key: 'shift_report:confirmed', label: '受理時' },
+    ],
+  },
+  {
     label: '連絡板',
     icon: '📝',
     headerBg: '#FCE4EC', headerBorder: '#AD1457', headerText: '#880E4F',
@@ -103,6 +111,7 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
   'expense:new_request':         ['{{申請者名}}', '{{申請日}}', '{{申請内容}}', '{{項目数}}'],
   'trip:report_end':             ['{{申請者名}}', '{{申請日}}'],
   'time_adjustment:registered':  ['{{登録者名}}', '{{種別}}', '{{日付}}', '{{理由}}'],
+  'shift_report:confirmed':      ['{{申請者名}}', '{{種別}}', '{{日付}}', '{{勤務地}}'],
   'board:notice':                ['{{送信者名}}', '{{件名}}', '{{リンク}}'],
   'board:dm_message':            ['{{送信者名}}', '{{リンク}}'],
   'board:group_message':         ['{{送信者名}}', '{{グループ名}}', '{{リンク}}'],
@@ -111,7 +120,10 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
   'reminder:unread':             ['{{件名}}', '{{リンク}}'],
 };
 
-// 時間調整イベント用: Slackチャンネル選択肢
+// 役職＋グループ絞り込みで一斉配信するイベント（時間調整・勤務変更受理など、UIとロジックを共有する）
+const ROLE_GROUP_BROADCAST_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed'];
+
+// 役職＋グループ配信イベント用: Slackチャンネル選択肢
 const TIME_ADJ_SLACK_OPTIONS = [
   { value: 'leader',     label: '#01リーダー回覧' },
   { value: 'manager',    label: '#01マネージャー回覧' },
@@ -119,7 +131,7 @@ const TIME_ADJ_SLACK_OPTIONS = [
   { value: 'president',  label: '#03晃平先生へ' },
 ];
 
-// 時間調整イベント用: 役職選択肢（メール・サイト通知）
+// 役職＋グループ配信イベント用: 役職選択肢（メール・サイト通知）
 const TIME_ADJ_ROLE_OPTIONS = ['申請者本人', 'リーダー', 'マネージャー', '管理者', '社長'];
 
 // 時間調整用 recipient JSON パーサー
@@ -675,7 +687,7 @@ const NotificationsTab: React.FC = () => {
                       }
 
                       // 時間調整: Slackチャンネル複数選択UI
-                      if (event.key === 'time_adjustment:registered' && channel === 'slack') {
+                      if (ROLE_GROUP_BROADCAST_EVENTS.includes(event.key) && channel === 'slack') {
                         const s = getSetting(event.key, channel);
                         if (!s) return null;
                         const selectedChannels = parseSlackChannels(s.recipient);
@@ -766,7 +778,7 @@ const NotificationsTab: React.FC = () => {
                                   <div style={{ marginTop: 4 }}>申請先がマネージャーの場合 → <strong style={{ color: text }}>#01マネージャー回覧</strong></div>
                                   <div style={{ marginTop: 6, fontSize: 11, color: subText }}>※ 申請先の役職に応じて自動で振り分けられます</div>
                                 </div>
-                              ) : event.key === 'time_adjustment:registered' && channel !== 'slack' ? (
+                              ) : ROLE_GROUP_BROADCAST_EVENTS.includes(event.key) && channel !== 'slack' ? (
                                 // 時間調整: 役職チェックボックス + グループ絞り込み
                                 (() => {
                                   const { roles, groupFilter } = parseRoleRecipient(s.recipient);

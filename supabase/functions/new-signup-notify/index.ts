@@ -27,9 +27,7 @@ serve(async (req) => {
       const notifications = admins.map((a: { id: string }) => ({
         user_id: a.id,
         message: `新規登録：${displayName}さんが承認待ちです`,
-        body: email || '',
-        type: 'signup_pending',
-        is_read: false,
+        sub_message: email || '',
       }));
       await supabase.from('notifications').insert(notifications);
     }

@@ -4708,3 +4708,101 @@ where channel = 'email' and template like '%\n%';
 ### ⚠️ 教訓
 - 今後、通知テンプレート等でDBに複数行の初期値をSQLでinsertする時は、改行を含む場合
   必ず`E'...'`構文（またはダラー引用符での実改行）を使うこと。通常の`'...'`はNG
+
+---
+
+## ✅ 2026-07-04〜05 忘れん坊cron修正・勤務変更受理の一斉通知・勤務変更申請の表示改善 完了
+
+### 1. 忘れん坊通知cron未反映バグ修正
+- `20260703210000_change_reminder_crons_to_5min.sql`（①②③のcronを5分おきに変更するSQL）が
+  実は未実行だったと判明（`select * from cron.job`で確認したら3つとも`0 0 * * *`固定のまま）
+- `cron.alter_job`で3ジョブとも`*/5 * * * *`に変更・実行済み
+
+### 2. メールテンプレートの改行文字化けバグ修正
+- 通常の`'...'`文字列内の`\n`はPostgreSQLでエスケープされず、メール本文に
+  バックスラッシュ+nがそのまま表示されるバグを発見・修正
+- 影響：`board:notice`・`board:dm_message`・`board:group_message`・
+  `reminder:encouragement`・`reminder:unread`（計5件）
+- 既存データはUPDATE文で修正済み、マイグレーションファイルも`E'...'`に修正
+
+### 3. 勤務変更申請「受理時」の一斉通知（新機能）
+- 時間調整（`time_adjustment:registered`）と同じ「役職＋グループ絞り込み」方式を導入
+- 新規Edge Function：`shift-report-confirmed-notify`（`time-adjustment-notify`とほぼ同一ロジック）
+- 管理画面「勤務変更申請」カテゴリを新設（時間調整と同じUIコンポーネントを共有するよう
+  `ROLE_GROUP_BROADCAST_EVENTS`配列で汎用化）
+- デフォルト設定：サイト通知ON（リーダー・マネージャー・管理者・社長、同グループのみ）、
+  Slack・メールは要設定
+- 呼び出し箇所3つ：ShiftReportPage.tsx（通常受理・自己受理）、ShiftReportsTab.tsx（管理者受理）
+- 申請者本人には別途届く既存の「受理されました」通知と重複しないよう、
+  `resolveTargetIds`で申請者自身を除外
+
+### 4. 新規登録通知バグ修正（調査中に発見）
+- `new-signup-notify`が`body`/`type`/`is_read`という存在しない列名でinsertしており、
+  管理者へのベル通知が一件も作成されていなかった（過去に`board-scheduled-send`にあった
+  のと同じバグパターン）→ 正しい列名（`sub_message`）に修正
+
+### 5. TOPバナー・ベルの通知設計を全面整理
+- 休暇申請・勤務変更申請の通知に`reference_id`と`source_type`を新規付与
+  - `leave_request:pending_approval` / `leave_request:pending_resubmit` / `leave_request`（結果）
+  - `shift_report:pending_approval` / `shift_report:pending_resubmit` / `shift_report`（結果）
+  - `time_adjustment`
+- `dispatchSiteNotification`にsourceType/referenceIdを渡せるよう拡張（後方互換）
+- TOPバナー（`NotifItem`）のタップ挙動を種別ごとに正しく振り分け
+  - 要対応（pending_approval/pending_resubmit）：タップしても消えない、`/leave-approvals`等へ遷移
+  - 結果報告のみ：タップで閉じる、履歴タブへ遷移
+  - 「要対応」の承認待ちは既存の集計バナー（LeaveApprovalBanner/ShiftReportApprovalBanner）と
+    重複するため、TOPバナー側からは除外（`.not('source_type', 'in', ...)`）
+- 対応完了の自動消去：`leave_requests`/`shift_reports`のステータスをそれぞれ1回のクエリに
+  まとめて取得しN+1を回避、RLSで読めない場合は安全側で残す
+- `ShiftReportApprovalBanner`のタップ先を`/shift-report`→`/shift-report?view=confirm`に修正
+  （今まで確認ページに直接飛ばないバグだった）
+- `ShiftReportPage.tsx`に`?tab=`・`?view=confirm`クエリパラメータ対応を追加
+- 連絡板「リマインド未対応の催促」の自動消去判定を`board_reads`（既読）→
+  `board_confirmations`（実際に回答したか）に修正（開いただけで消えるのはおかしいため）
+
+### 6. 勤務変更申請フォーム・表示の改善
+- 欠勤（`hasAbsence`）選択時、「通常シフト（もともとの予定）」欄を丸ごと非表示・入力不要に
+  （欠勤なのに時間入力を求められる不具合を解消）。確認画面・履歴表示も統一
+- 履歴一覧・管理画面：「短縮」表示を削除（休憩基準が揃っていないため不正確だった）
+- 履歴一覧・管理画面：さらに「時間外」表示も全箇所削除（同じ理由、フォーム入力中・
+  確認画面も含め計6箇所）
+- 実際の勤務地（`actual_location`）を履歴一覧に追加表示（今まで元の勤務地しか出ていなかった）
+- 履歴一覧・管理画面の表記を絵文字（📋/✅）→「変更前：」「変更後：」の明示テキストに統一
+- 管理画面テーブル：「勤務日」「勤務地」の2列→「変更前」「変更後」の2列に再編、
+  休憩時間も追加表示
+- CSV出力も「変更前/変更後」で別列に分割（今まで実際の値優先の1列にまとめていた）
+- 管理画面：「代行：」の姓のみ表示→フルネーム表示に修正、申請者名も改行せず一行表示に統一
+  （休暇申請一覧の申請者・申請先も同様に修正、計6箇所）
+- 修正履歴ボタン：履歴が実際にある申請だけボタンを表示（無ければ非表示）、色も青に変更
+  （一覧読み込み時に`shift_report_history`をまとめて1回のクエリで存在確認、N+1回避）
+
+### デプロイ済みEdge Function（4本）
+- `new-signup-notify`・`remind-scheduled`・`time-adjustment-notify`・
+  `shift-report-confirmed-notify`（新規）
+
+### 実行済みSQL
+- `select cron.alter_job(...)` × 3（cron 5分おき化）
+- `update notification_settings set template = replace(...)`（改行修正）
+- `20260704000000_add_dismissed_to_notifications.sql`
+- `20260704100000_add_banner_dismissed_to_notifications.sql`
+- `20260704200000_drop_comment_enabled.sql`
+- `20260704300000_fix_literal_newline_in_email_templates.sql`
+- `20260705000000_add_shift_report_confirmed_notification.sql`
+
+### 削除した未使用機能
+- 連絡板「お知らせのコメント欄」（`comment_enabled`列、送信フォームにONにする手段が
+  無く一度も使われていなかったため）
+
+### ⚠️ 注意事項・保留事項
+- 休憩時間の計算基準統一（「実労働＝休憩後」「通常シフト＝休憩前」で基準が不揃いという
+  根本問題）は、「時間外」表示を削除する形で対応（数字を出さないことで誤解を防いだ）。
+  根本的な計算ロジックの統一は依然未対応・保留
+- `canSeeAll`（勤務変更申請「全スタッフ」タブ表示権限）に「社長」が含まれていない点を
+  指摘したが、対応は保留（意図的か確認が必要）
+- 新設した`shift_report:confirmed`イベントは、Slack・メールがデフォルトOFF。
+  必要に応じて管理画面「勤務変更申請」から設定すること
+
+### 確認内容
+- `npx tsc --noEmit`：エラーなし（都度確認）
+- ⚠️ 実機動作確認（TOPバナーのタップ遷移・自動消去、勤務変更受理の一斉通知が実際に
+  届くか、欠勤フォームの表示等）は次回ローカル・本番での確認を推奨

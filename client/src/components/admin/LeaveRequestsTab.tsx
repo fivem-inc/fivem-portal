@@ -1232,10 +1232,10 @@ const LeaveRequestsTab: React.FC = () => {
                               <div>{jstY}/{jstM}/{jstD}</div><div>{jstH}:{jstMin}</div>
                             </td>
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12 }}>
-                              {(req.profile?.name || '-').split(/[\s　]/).map((s: string, j: number) => <div key={j}>{s}</div>)}
+                              {req.profile?.name || '-'}
                             </td>
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12 }}>
-                              {(req.approver?.name || '-').split(/[\s　]/).map((s: string, j: number) => <div key={j}>{s}</div>)}
+                              {req.approver?.name || '-'}
                             </td>
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12, wordBreak: 'break-word' }}>{req.leave_type === 'その他' ? req.leave_type_other : req.leave_type}</td>
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 11 }}>{dateDisplay}</td>
@@ -1341,7 +1341,7 @@ const LeaveRequestsTab: React.FC = () => {
                                           const vars = { 休暇種別: typeName, 申請日数: daysCount };
                                           if (await shouldSend('leave:manager_approved', 'site')) {
                                             const t = await getNotificationTemplate('leave:manager_approved', 'site', vars);
-                                            await insertNotification(req.user_id, t?.template ?? `休暇申請がマネージャーに受理されました`, t?.subject || `種別：${typeName}`);
+                                            await insertNotification(req.user_id, t?.template ?? `休暇申請がマネージャーに受理されました`, t?.subject || `種別：${typeName}`, 'leave_request', req.id);
                                           }
                                           if (await shouldSend('leave:manager_approved', 'slack')) {
                                             await sendLeaveSlack('manager_approved', '管理者', 'マネージャー');
@@ -1415,10 +1415,10 @@ const LeaveRequestsTab: React.FC = () => {
                                   <div>{pJstY}/{pJstM}/{pJstD}</div><div>{pJstH}:{pJstMin}</div>
                                 </td>
                                 <td style={{ padding: '6px 4px', borderBottom: `2px solid #28a745`, textAlign: 'center', fontSize: 11, color: isDarkMode ? '#adb5bd' : '#555' }}>
-                                  {(parent.profile?.name || '-').split(/[\s　]/).map((s: string, j: number) => <div key={j}>{s}</div>)}
+                                  {parent.profile?.name || '-'}
                                 </td>
                                 <td style={{ padding: '6px 4px', borderBottom: `2px solid #28a745`, textAlign: 'center', fontSize: 11, color: isDarkMode ? '#adb5bd' : '#555' }}>
-                                  {(parent.approver?.name || '-').split(/[\s　]/).map((s: string, j: number) => <div key={j}>{s}</div>)}
+                                  {parent.approver?.name || '-'}
                                 </td>
                                 <td style={{ padding: '6px 4px', borderBottom: `2px solid #28a745`, textAlign: 'center', fontSize: 11, color: isDarkMode ? '#adb5bd' : '#555' }}>{parent.leave_type === 'その他' ? parent.leave_type_other : parent.leave_type}</td>
                                 <td style={{ padding: '6px 4px', borderBottom: `2px solid #28a745`, textAlign: 'center', fontSize: 10, color: isDarkMode ? '#adb5bd' : '#555' }}>{pDateDisplay}</td>
@@ -1543,7 +1543,7 @@ const LeaveRequestsTab: React.FC = () => {
                             await supabase.from('leave_requests').update({ leave_type: rejectNewType, status: 'approved', reason: rejectReason ? `${rejectReason}　${autoNote}` : autoNote, modified_by: authUser?.id ?? null, modified_at: new Date().toISOString() }).eq('id', rejectModal.id);
                             if (await shouldSend('leave:rejected_type_changed', 'site')) {
                               const t = await getNotificationTemplate('leave:rejected_type_changed', 'site', { 元種別: origType, 新種別: rejectNewType });
-                              await insertNotification(rejectModal.user_id, t?.template ?? `「${origType}」が「${rejectNewType}」に変更され、受理されました`);
+                              await insertNotification(rejectModal.user_id, t?.template ?? `「${origType}」が「${rejectNewType}」に変更され、受理されました`, undefined, 'leave_request', rejectModal.id);
                             }
                             // 種別変更して受理 → カレンダーを新種別でupsert
                             try {
@@ -1601,12 +1601,12 @@ const LeaveRequestsTab: React.FC = () => {
                             }
                             if (await shouldSend('leave:rejected_reapplied', 'site')) {
                               const t = await getNotificationTemplate('leave:rejected_reapplied', 'site', { 元種別: origType, 新種別: rejectNewType });
-                              await insertNotification(rejectModal.user_id, t?.template ?? `${origType}が差し戻され、${rejectNewType}で再申請・受理済みです`);
+                              await insertNotification(rejectModal.user_id, t?.template ?? `${origType}が差し戻され、${rejectNewType}で再申請・受理済みです`, undefined, 'leave_request', newReq?.id);
                             }
                           } else {
                             if (await shouldSend('leave:rejected', 'site')) {
                               const t = await getNotificationTemplate('leave:rejected', 'site', { 申請者名: '', 休暇種別: rejectModal.leave_type, 差し戻し理由: rejectReason || '' });
-                              await insertNotification(rejectModal.user_id, t?.template ?? `休暇申請が差し戻されました`, t?.subject || rejectReason || undefined);
+                              await insertNotification(rejectModal.user_id, t?.template ?? `休暇申請が差し戻されました`, t?.subject || rejectReason || undefined, 'leave_request:pending_resubmit', rejectModal.id);
                             }
                             if (await shouldSend('leave:rejected', 'slack')) {
                               const targetChannel = await getNotificationRecipient('leave:rejected', 'slack');
@@ -1639,7 +1639,7 @@ const LeaveRequestsTab: React.FC = () => {
                           } catch (e) { console.error('[gcal-sync] 削除失敗:', e); }
                           // 申請者に通知
                           if (await shouldSend('leave:cancelled', 'site')) {
-                            await insertNotification(rejectModal.user_id, `休暇申請（${rejectModal.leave_type}）の受理が取り消されました${rejectReason ? `。理由：${rejectReason}` : ''}`);
+                            await insertNotification(rejectModal.user_id, `休暇申請（${rejectModal.leave_type}）の受理が取り消されました${rejectReason ? `。理由：${rejectReason}` : ''}`, undefined, 'leave_request', rejectModal.id);
                           }
                           setRejectModal(null); setRejectReason(''); setRejectNewType('');
                           fetchLeaveRequests();

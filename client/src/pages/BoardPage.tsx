@@ -866,6 +866,23 @@ const BoardPage: React.FC = () => {
         ));
       }
 
+      // グループ・DMへの新規投稿（スレッド返信ではない）：ベル通知
+      if (!parentId && selectedChannel && (selectedChannel.type === 'group' || selectedChannel.type === 'dm')) {
+        const recipientIds = members
+          .filter(m => m.channel_id === selectedChannelId && m.user_id !== user.id)
+          .map(m => m.user_id);
+        if (recipientIds.length > 0) {
+          const senderName = profileName || '誰か';
+          const preview = body.trim().slice(0, 40);
+          const bellMessage = selectedChannel.type === 'group'
+            ? `${selectedChannel.name || 'グループ'}に${senderName}からメッセージが届きました`
+            : `${senderName}からメッセージが届きました`;
+          await Promise.all(recipientIds.map(uid =>
+            insertNotification(uid, bellMessage, preview, undefined, data.id)
+          ));
+        }
+      }
+
       // メール通知（管理画面の通知設定でON時のみ送信、OFFなら何もしない）
       if (selectedChannel && (selectedChannel.type === 'group' || selectedChannel.type === 'dm')) {
         const recipientIds = members

@@ -72,8 +72,10 @@ serve(async () => {
       },
     });
 
+    // reference_id は付けない：reminder.id は board_scheduled_reminders のIDであり、
+    // board_messages のIDではないため、連絡板の詳細画面へのリンクとしては使えない
     await supabase.from("notifications").insert(
-      userIds.map((uid: string) => ({ user_id: uid, message: reminder.title, sub_message: reminder.body, reference_id: reminder.id }))
+      userIds.map((uid: string) => ({ user_id: uid, message: reminder.title, sub_message: reminder.body }))
     );
 
     if (emailSetting?.enabled && emailSetting.template) {

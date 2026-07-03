@@ -216,7 +216,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
       // サイト内通知
       if (await shouldSend('leave:manager_approved', 'site')) {
         const t = await getNotificationTemplate('leave:manager_approved', 'site', vars);
-        await insertNotification(req.user_id, t?.template ?? `休暇申請がマネージャーに受理されました`, t?.subject || `種別：${typeName}`);
+        await insertNotification(req.user_id, t?.template ?? `休暇申請がマネージャーに受理されました`, t?.subject || `種別：${typeName}`, 'leave_request', req.id);
       }
       // Slack通知
       if (await shouldSend('leave:manager_approved', 'slack')) {
@@ -251,7 +251,9 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     const leaderVars = { 休暇種別: selectingManagerFor.leave_type === 'その他' ? (selectingManagerFor.leave_type_other || 'その他') : selectingManagerFor.leave_type, 申請日数: leaderDays };
     const applicantEmail = await getUserEmail(selectingManagerFor.user_id) ?? '';
     const managerEmail = await getUserEmail(selectedManagerId) ?? '';
-    await dispatchSiteNotification('leave:leader_approved', leaderVars, { applicant: selectingManagerFor.user_id, manager: selectedManagerId }, insertNotification);
+    // 同じイベントでも宛先によって役割が違う（マネージャーは要対応、申請者はFYI）ため、source_typeを分けて別々に送る
+    await dispatchSiteNotification('leave:leader_approved', leaderVars, { manager: selectedManagerId }, insertNotification, 'leave_request:pending_approval', selectingManagerFor.id);
+    await dispatchSiteNotification('leave:leader_approved', leaderVars, { applicant: selectingManagerFor.user_id }, insertNotification, 'leave_request', selectingManagerFor.id);
     await dispatchEmail('leave:leader_approved', leaderVars, { applicant: applicantEmail, manager: managerEmail });
 
     setSelectingManagerFor(null);

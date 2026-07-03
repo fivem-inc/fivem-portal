@@ -7,8 +7,13 @@ const CORS_HEADERS = {
 }
 
 const TYPE_LABEL: Record<string, string> = {
-  late_start: '調整遅出',
-  early_end:  '調整早退',
+  overtime: '残業',
+  holiday_work: '休日出勤',
+  early_leave: '早退',
+  tardiness: '遅刻',
+  absence: '欠勤',
+  early_start: '早出',
+  location_change: '勤務地変更',
 }
 
 const SLACK_WEBHOOK_KEYS: Record<string, string> = {
@@ -26,7 +31,7 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
 
   try {
-    const { user_id, user_name, date, types, reason } = await req.json()
+    const { user_id, user_name, date, types, location } = await req.json()
     if (!user_id || !date || !types?.length) {
       return new Response(JSON.stringify({ error: 'missing params' }), { status: 400, headers: CORS_HEADERS })
     }
@@ -39,28 +44,28 @@ serve(async (req) => {
     const typeLabels = (types as string[]).map((t: string) => TYPE_LABEL[t] ?? t).join('・')
     const dateLabel = `${date.slice(5, 7)}月${parseInt(date.slice(8, 10))}日`
     const vars: Record<string, string> = {
-      '登録者名': user_name ?? '',
+      '申請者名': user_name ?? '',
       '種別': typeLabels,
       '日付': dateLabel,
-      '理由': reason ?? '',
+      '勤務地': location ?? '',
     }
 
     // notification_settings を取得
     const { data: settingsData } = await supabase
       .from('notification_settings')
       .select('channel, enabled, recipient, subject, template')
-      .eq('event_key', 'time_adjustment:registered')
+      .eq('event_key', 'shift_report:confirmed')
 
     const settings = (settingsData ?? []) as { channel: string; enabled: boolean; recipient: string | null; subject: string | null; template: string | null }[]
     const getSetting = (ch: string) => settings.find(s => s.channel === ch)
 
     // 申請者のグループを取得
-    const { data: senderProfile } = await supabase
+    const { data: applicantProfile } = await supabase
       .from('profiles')
       .select('group_names')
       .eq('id', user_id)
       .single()
-    const senderGroups: string[] = (senderProfile as { group_names?: string[] } | null)?.group_names ?? []
+    const applicantGroups: string[] = (applicantProfile as { group_names?: string[] } | null)?.group_names ?? []
 
     // 役職+グループフィルタで通知対象user_idを解決
     async function resolveTargetIds(recipient: string | null): Promise<string[]> {
@@ -78,14 +83,14 @@ serve(async (req) => {
       let ids: string[] = []
       if (queryRoles.length > 0) {
         let query = supabase.from('profiles').select('id').in('role_title', queryRoles).eq('is_active', true)
-        if (groupFilter === 'same' && senderGroups.length > 0) {
-          query = query.overlaps('group_names', senderGroups)
+        if (groupFilter === 'same' && applicantGroups.length > 0) {
+          query = query.overlaps('group_names', applicantGroups)
         }
         const { data } = await query
         ids = ((data ?? []) as { id: string }[]).map(d => d.id)
       }
       if (includeApplicant) ids = [...new Set([...ids, user_id])]
-      return ids
+      return ids.filter(id => id !== user_id) // 申請者本人には既に別途「受理されました」通知が届くため二重送信を避ける
     }
 
     async function resolveTargetEmails(recipient: string | null): Promise<string[]> {
@@ -99,29 +104,14 @@ serve(async (req) => {
 
     // サイト通知
     const siteSetting = getSetting('site')
-    if (siteSetting?.enabled) {
-      const template = siteSetting.template ?? '⏰ {{登録者名}}さんが{{日付}}に{{種別}}を登録しました。理由：{{理由}}'
-      const message = applyTemplate(template, vars)
+    if (siteSetting?.enabled && siteSetting.template) {
+      const message = applyTemplate(siteSetting.template, vars)
       const targetIds = await resolveTargetIds(siteSetting.recipient)
       if (targetIds.length > 0) {
         await supabase.from('notifications').insert(
-          targetIds.map(id => ({ user_id: id, message, sub_message: null, source_type: 'time_adjustment' }))
+          targetIds.map(id => ({ user_id: id, message, sub_message: null, source_type: 'shift_report' }))
         )
         notifiedSite = targetIds.length
-      }
-    } else if (!siteSetting) {
-      // DB未設定のフォールバック（後方互換）
-      const { data: targets } = senderGroups.length > 0
-        ? await supabase.from('profiles').select('id').in('role_title', ['リーダー', 'マネージャー']).eq('is_active', true).overlaps('group_names', senderGroups)
-        : await supabase.from('profiles').select('id').in('role_title', ['マネージャー', '管理者']).eq('is_active', true)
-      const fallbackIds = ((targets ?? []) as { id: string }[]).map(d => d.id)
-      if (fallbackIds.length > 0) {
-        const message = `⏰ 時間調整が登録されました`
-        const subMessage = `${user_name}さんが ${dateLabel} に ${typeLabels} を登録しました。理由：${reason}`
-        await supabase.from('notifications').insert(
-          fallbackIds.map(id => ({ user_id: id, message, sub_message: subMessage, source_type: 'time_adjustment' }))
-        )
-        notifiedSite = fallbackIds.length
       }
     }
 
@@ -130,7 +120,9 @@ serve(async (req) => {
     if (slackSetting?.enabled) {
       let channels: string[] = []
       try { channels = JSON.parse(slackSetting.recipient ?? '{}').channels ?? [] } catch { /* ignore */ }
-      const slackMsg = `⏰ *時間調整が登録されました*\n\n*登録者：* ${user_name}\n*日付：* ${dateLabel}\n*種別：* ${typeLabels}`
+      const slackMsg = slackSetting.template
+        ? applyTemplate(slackSetting.template, vars)
+        : `⏰ *勤務変更申請が受理されました*\n\n*申請者：* ${user_name}\n*種別：* ${typeLabels}\n*日付：* ${dateLabel}`
       for (const ch of channels) {
         const url = Deno.env.get(SLACK_WEBHOOK_KEYS[ch] ?? '')
         if (!url) continue
@@ -146,7 +138,7 @@ serve(async (req) => {
     // メール通知
     const emailSetting = getSetting('email')
     if (emailSetting?.enabled && emailSetting.template) {
-      const subject = emailSetting.subject ? applyTemplate(emailSetting.subject, vars) : '時間調整が登録されました'
+      const subject = emailSetting.subject ? applyTemplate(emailSetting.subject, vars) : '勤務変更申請が受理されました'
       const text = applyTemplate(emailSetting.template, vars)
       const emails = await resolveTargetEmails(emailSetting.recipient)
       for (const to of emails) {
