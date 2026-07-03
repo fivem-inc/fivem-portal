@@ -351,7 +351,6 @@ const ShiftReportForm: React.FC<{
   const laborMin = actStart && actEnd && !hasAbsence
     ? Math.max(0, (toMin(actEnd) - toMin(actStart)) - breakMin) : 0;
   const origMin  = (origDayOff || hasHoliday) ? 0 : origDuration(origStart, origEnd);
-  const diffMin  = !hasAbsence ? laborMin - origMin : -origMin;
 
   useEffect(() => {
     if (!canProxy) return;
@@ -989,8 +988,6 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
           {pendingReports.length === 0 ? (
             <div style={{ textAlign: 'center', color: '#aaa', padding: 48, fontSize: 14 }}>確認待ちの申請はありません</div>
           ) : pendingReports.map(r => {
-            const oMin = origDuration(r.original_start?.slice(0, 5) ?? null, r.original_end?.slice(0, 5) ?? null);
-            const dMin = r.labor_minutes != null ? r.labor_minutes - oMin : null;
             return (
               <div key={r.id} style={{ background: bg, borderRadius: 10, border: `1px solid ${borderCol}`, marginBottom: 10, padding: '14px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
