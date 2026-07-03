@@ -28,6 +28,11 @@ body {
   overflow-x: hidden;
 }
 
+/* NavBarのモバイル横スワイプ用: スクロールバーを見せない（見た目上のスワイプ操作にする） */
+.navbar-scroll::-webkit-scrollbar {
+  display: none;
+}
+
 h1 {
   font-size: 3.2em;
   line-height: 1.1;

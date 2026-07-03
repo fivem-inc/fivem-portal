@@ -261,6 +261,24 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   }, []);
   const { total: boardUnread } = useBoardUnread(userId, location.pathname);
 
+  // モバイルでボタンが画面幅に収まらない時の横スワイプ対応：
+  // 端までスクロールできることを示すフェードの表示/非表示を判定
+  const navScrollRef = useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+  const updateScrollFade = useCallback(() => {
+    const el = navScrollRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 2);
+    setCanScrollRight(el.scrollWidth - el.clientWidth - el.scrollLeft > 2);
+  }, []);
+  useEffect(() => {
+    updateScrollFade();
+    window.addEventListener('resize', updateScrollFade);
+    return () => window.removeEventListener('resize', updateScrollFade);
+    // isPub の判定材料（featurePublishState等）が非同期で確定してボタン数が変わった時にも再計算する
+  }, [updateScrollFade, isMobile, featurePublishState, isAdmin, canLeave, canShiftReport, canCalendar]);
+
   const btnStyle = (active: boolean, activeColor = '#007bff') => isMobile ? ({
     width: 44, height: 44, borderRadius: 8, border: 'none', cursor: 'pointer',
     background: active ? activeColor : '#444',
@@ -283,7 +301,17 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
         justifyContent: 'space-between', alignItems: 'center',
         overflow: 'hidden', boxSizing: 'border-box',
       }}>
-        <div style={{ display: 'flex', gap: 4, flexWrap: isMobile ? 'nowrap' : 'wrap', alignItems: 'center', flex: 1 }}>
+        <div style={{ position: 'relative', flex: 1, minWidth: 0, alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>
+        <div
+          ref={navScrollRef}
+          onScroll={updateScrollFade}
+          className={isMobile ? 'navbar-scroll' : undefined}
+          style={{
+            display: 'flex', gap: 4, flexWrap: isMobile ? 'nowrap' : 'wrap', alignItems: 'center',
+            flex: 1, minWidth: 0, overflowX: isMobile ? 'auto' : 'visible',
+            scrollbarWidth: 'none', padding: isMobile ? '6px 4px' : 0, boxSizing: 'border-box',
+          }}
+        >
           {isAdmin && (
             <button onClick={() => navTo('/admin')} style={btnStyle(location.pathname === '/admin', '#6f42c1')}>
               {isMobile ? <><span style={{ fontSize: 20 }}>⚙️</span><span>管理</span></> : '⚙️ 管理'}
@@ -326,6 +354,13 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
             )}
           </div>
           )}
+        </div>
+        {isMobile && canScrollLeft && (
+          <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 20, background: 'linear-gradient(to right, #1a1a2e, transparent)', pointerEvents: 'none' }} />
+        )}
+        {isMobile && canScrollRight && (
+          <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 20, background: 'linear-gradient(to left, #1a1a2e, transparent)', pointerEvents: 'none' }} />
+        )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, paddingLeft: 6 }}>
           {realIsAdmin && (

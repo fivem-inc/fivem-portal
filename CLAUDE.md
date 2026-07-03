@@ -5101,3 +5101,58 @@ alter table public.shift_reports
   - 連絡板：受信トレイ詳細・送信トレイ詳細・チャンネル・スレッドから戻るボタンで
     1段階ずつ正しく戻れる
   - 勤務変更申請：確認ページから戻るボタンでTOP（申請/履歴タブ）に戻れる
+
+---
+
+## ✅ 2026-07-07（続き3） NavBarモバイル：ボタン横スワイプスクロール対応 完了
+
+### 背景
+- ユーザーから「スマホで見るとナビバー上部のアイコンが全部表示されない」と報告
+- 調査の結果、管理者は最大7ボタン（管理・交通費・出張報告・休暇申請・休暇・
+  勤務変更・連絡板）が並び、(44px+gap4px)×7≒336px に加え右側要素
+  （👁確認セレクト・ベル・アバター≒124px）で必要幅が約470pxとなり、
+  390px前後のスマホ画面に収まらないことが判明
+  - 親コンテナ（`App.tsx`のNavBar）が`overflow: hidden`ではみ出しをクリップし、
+    ボタン群コンテナも`overflowX`未設定でスクロールもできず、単に「見えない」
+    状態になっていた
+  - 2026-06-15に52px→44pxへ縮小して一度対応したが、その後「勤務変更」ボタンが
+    増えて再びあふれた。これ以上の縮小はタップ性を損なうため却下し、
+    ユーザーと相談の上「横スワイプスクロール」方式に決定
+    （2段折り返し／「その他」メニュー集約は不採用）
+
+### 実装内容
+- `client/src/App.tsx`のNavBar：ボタン群コンテナに`overflowX: 'auto'`
+  （モバイルのみ）を追加。右側要素（確認セレクト・ベル・アバター）は
+  `flexShrink: 0`のまま常時固定表示を維持
+  - スクロールバー自体は`.navbar-scroll`クラス（`::-webkit-scrollbar { display: none }`）
+    で非表示にし、見た目上はスワイプ操作のみに統一（Firefox用に`scrollbarWidth: 'none'`も設定）
+  - まだスクロールできる方向を示す半透明フェード（黒グラデーション、幅20px、
+    `pointerEvents: none`）を左右に表示。`useRef`で取得したスクロール要素の
+    `scrollLeft`/`scrollWidth`/`clientWidth`を`onScroll`・`resize`イベントで
+    判定し`canScrollLeft`/`canScrollRight`のstateを更新
+  - 連絡板の未読バッジ（ボタン右上に`-4px`はみ出す）が切れないよう、
+    スクロールコンテナに`padding: 6px 4px`を確保
+- `client/src/index.css`：`.navbar-scroll::-webkit-scrollbar { display: none; }`を追加
+
+### ⚠️ 注意事項（今後同様のスクロール可能な横並びUIを作る時の指針）
+- flexアイテムに`overflowX: auto`を効かせるには**`minWidth: 0`が必須**
+  （デフォルトの`min-width: auto`だとコンテンツ幅ぶん親を押し広げてしまい、
+  スクロールにならず単純にレイアウトが崩れる）。今回はボタン群コンテナ本体と、
+  それを包む`position: relative`のフェード表示用ラッパーの両方に設定した
+- フェードの表示判定は「ボタンの数が変わる可能性のある値」
+  （`featurePublishState`・`isAdmin`・`canLeave`・`canShiftReport`・`canCalendar`）を
+  useEffectの依存配列に含めること。これらは非同期に確定するため、初回マウント時の
+  1回だけの判定だと機能公開設定によってはフェードの出現状態がズレる
+- PC表示（`!isMobile`）は影響を受けないよう、`overflowX`は`isMobile`時のみ`'auto'`
+  （それ以外は`'visible'`）にしている
+
+### 変更ファイル
+- `client/src/App.tsx`
+- `client/src/index.css`
+
+### 確認内容
+- `npx tsc -b`・`npx vite build`：両方成功
+- fivem-portalはプライマリ作業ディレクトリ外のため`preview_start`が使えず、
+  ビルド確認のみ。ユーザーが実機（ローカル`npm run dev`、スマホ幅）で
+  7ボタン全てへの横スワイプ到達・フェード表示・未読バッジ表示・
+  右側要素の固定表示・PC幅での非影響を確認済み
