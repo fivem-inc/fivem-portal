@@ -989,6 +989,12 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
           </div>
         )}
 
+        {isMobile && (
+          <div style={{ fontSize: 12, color: '#888', marginBottom: 12, padding: '6px 10px', background: isDark ? '#2d2d3e' : '#f3f4f6', borderRadius: 6 }}>
+            💡 スマホを横向きにすると名前が表示されます
+          </div>
+        )}
+
         {isMobile ? (
           <SpCalendar year={year} month={month} eventsByDate={eventsByDate} absencesByDate={absencesByDate} isDark={isDark} onDateTap={canInput ? d => setAbsenceSheet(d) : undefined} />
         ) : (
