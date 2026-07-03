@@ -439,7 +439,7 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
       .from('notifications')
       .select('id, message, sub_message, read, source_type, reference_id')
       .eq('user_id', userId)
-      .eq('read', false)
+      .eq('banner_dismissed', false)
       .not('message', 'like', '%有給奨励日%')
       .or('source_type.is.null,source_type.neq.board')
       .order('created_at', { ascending: false });
@@ -449,7 +449,7 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
   useEffect(() => { fetchNotifs(); }, [fetchNotifs]);
 
   const dismiss = useCallback(async (id: string) => {
-    await supabase.from('notifications').update({ read: true }).eq('id', id);
+    await supabase.from('notifications').update({ read: true, banner_dismissed: true }).eq('id', id);
     setNotifs(prev => prev.filter(n => n.id !== id));
   }, []);
 

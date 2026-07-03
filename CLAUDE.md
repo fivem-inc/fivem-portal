@@ -4514,3 +4514,39 @@ select cron.schedule(
 - `NotificationBanner`（ページ上部の帯バナー、有給奨励日などの案内）は今回変更していない。
   引き続き`read=false`を条件に表示しているため、ベルを開いて既読になった通知は
   次回フェッチ時にバナーからも消える（意図した挙動：ベルで見た＝バナーで再度案内不要）
+  → **2026-07-04追記：この挙動が不都合と判明したため、直後に別対応で分離した（下記参照）**
+
+---
+
+## ✅ 2026-07-04（続報） 上部お知らせバナーをベルの既読と分離 完了
+
+### 背景
+- 直前の対応で「ベルを開く→既読(read=true)」にした結果、上部お知らせバナーも
+  `read=false`を条件にしていたため、ベルを開いただけで上部バナーまで消えてしまう
+  問題が発覚（ベルは見ただけで確認していないのに、TOPのお知らせが消えるのは困る）
+
+### 変更内容
+- `notifications`テーブルに`banner_dismissed`列を追加
+- `NotificationBanner`（上部帯バナー）の表示条件：`read=false`→`banner_dismissed=false`に変更
+- `NotificationBanner`の確認（タップ）時：`read=true`に加えて`banner_dismissed=true`もセット
+
+### 現在の3つの独立フラグの役割（最終形）
+| フラグ | 役割 | trueにするタイミング |
+|---|---|---|
+| `read` | ベルのバッジ数に使う | ベルを開いた瞬間／上部バナーを確認した瞬間 |
+| `dismissed` | ベル一覧にまだ表示するか | ベル内の✕を押した瞬間 |
+| `banner_dismissed` | 上部バナーにまだ表示するか | 上部バナーを確認（タップ）した瞬間 |
+
+### Supabase SQL（実行済み）
+```sql
+alter table notifications add column if not exists banner_dismissed boolean default false;
+```
+
+### 変更ファイル
+- `client/src/App.tsx`（NotificationBannerコンポーネント）
+- `supabase/migrations/20260704100000_add_banner_dismissed_to_notifications.sql`
+
+### 確認内容
+- `npx tsc --noEmit`：エラーなし
+- ⚠️ 実機動作確認（ベルを開いても上部バナーが残る／上部バナーを確認するとそれだけ消える）は
+  次回ローカルでの確認を推奨
