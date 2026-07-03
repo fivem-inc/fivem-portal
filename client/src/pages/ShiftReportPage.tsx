@@ -638,7 +638,7 @@ const ShiftReportForm: React.FC<{
                   <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: textColor, cursor: 'pointer' }}>
                     <input type="checkbox" checked={origOutingOn} onChange={e => setOrigOutingOn(e.target.checked)}
                       style={{ width: 16, height: 16, accentColor: '#28a745', cursor: 'pointer' }} />
-                    外出・戻りを記録する
+                    外出・戻りを入力する
                   </label>
                   {origOutingOn && (
                     <div style={{ marginTop: 8 }}>
@@ -680,7 +680,7 @@ const ShiftReportForm: React.FC<{
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: textColor, cursor: 'pointer', marginBottom: 8 }}>
                   <input type="checkbox" checked={actOutingOn} onChange={e => setActOutingOn(e.target.checked)}
                     style={{ width: 16, height: 16, accentColor: '#28a745', cursor: 'pointer' }} />
-                  外出・戻りを記録する
+                  外出・戻りを入力する
                 </label>
                 {actOutingOn && (
                   <div style={{ marginBottom: 8 }}>
@@ -821,7 +821,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const [successMsg, setSuccessMsg]     = useState('');
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [showReviewerGuide, setShowReviewerGuide] = useState(false);
-  const [showBreakRules, setShowBreakRules] = useState(false);
+  const [showBreakRules, setShowBreakRules] = useState(true);
   const [showAllBreakRules, setShowAllBreakRules] = useState(false);
   const [reviewers, setReviewers]       = useState<Reviewer[]>([]);
   const [workplaces, setWorkplaces]     = useState<string[]>([]);
