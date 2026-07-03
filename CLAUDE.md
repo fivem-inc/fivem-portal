@@ -4643,3 +4643,68 @@ alter table public.board_messages drop column if exists comment_enabled;
 - 削除前に他機能（スレッド返信・対応状況・お知らせ本体）との依存が無いことを
   grepで確認済み（`comment_enabled`はこの機能専用でのみ参照されていた）
 - `npx tsc --noEmit`：エラーなし
+
+---
+
+## ✅ 2026-07-03（追加調査） 忘れん坊リマインドcron未反映バグ発見・修正
+
+### 経緯
+- 定期リマインド（③remind-scheduled）をテストしたが届かず調査
+- 7/3に作成したマイグレーション`20260703210000_change_reminder_crons_to_5min.sql`
+  （忘れん坊通知①②③のcronを「1日1回固定」→「5分おき」に変更するSQL）が、
+  SQL実行を案内し忘れており**DBに反映されていなかった**（同日の`send_hour`/`send_minute`
+  列追加SQL忘れと全く同じパターンの再発）
+- `select jobid, jobname, schedule from cron.job`で確認したところ、
+  `encouragement-notify-daily`・`remind-unread-daily`・`remind-scheduled-daily`の
+  3つとも`0 0 * * *`（UTC0:00=JST9:00固定）のままだった
+
+### 対応
+- 以下のSQLを実行してもらい解決（3ジョブとも`*/5 * * * *`に変更済み）
+```sql
+select cron.alter_job((select jobid from cron.job where jobname = 'encouragement-notify-daily'), schedule := '*/5 * * * *');
+select cron.alter_job((select jobid from cron.job where jobname = 'remind-scheduled-daily'), schedule := '*/5 * * * *');
+select cron.alter_job((select jobid from cron.job where jobname = 'remind-unread-daily'), schedule := '*/5 * * * *');
+```
+
+### ⚠️ 教訓（再掲・強化）
+- 「マイグレーションファイルを作った」≠「DBに反映された」。特に`cron.schedule`/
+  `cron.alter_job`のようにテーブル変更を伴わないSQLは、`git status`や通常の動作確認
+  だけでは気づけないため、**cron系の変更は毎回`select * from cron.job`で反映結果を
+  実際に確認する**ことを徹底する
+
+---
+
+## ✅ 2026-07-03（追加調査2） メールテンプレートの改行が「\n」と文字化けするバグ修正
+
+### 症状
+- 連絡板お知らせのメール通知本文が「〜届きました。\n下記のリンクから...」のように
+  `\n`が改行されず文字としてそのまま表示されていた
+
+### 原因
+- メールテンプレートの初期値をDBに登録したマイグレーションSQLで、通常の
+  シングルクォート文字列内に`\n`と書いていた
+- PostgreSQLは`standard_conforming_strings`がデフォルトONのため、通常の`'...'`内の
+  `\n`はエスケープとして解釈されず、バックスラッシュ+nの2文字がそのままDBに
+  保存されていた（改行させるには`E'...'`のエスケープ文字列構文が必要だった）
+- 影響していたテンプレート：`board:notice`・`board:dm_message`・`board:group_message`・
+  `reminder:encouragement`・`reminder:unread`（計5件、email channel）
+
+### 対応
+- 既存データを修正するSQLを実行してもらい解決
+```sql
+update notification_settings
+set template = replace(template, '\n', chr(10))
+where channel = 'email' and template like '%\n%';
+```
+- 該当マイグレーションファイル（`20260702000000_add_board_email_notifications.sql`・
+  `20260703400000_add_reminder_email_settings.sql`）も`E'...'`構文に修正し、
+  今後新規環境を構築した場合に同じ不具合が再発しないようにした
+
+### 変更ファイル
+- `supabase/migrations/20260702000000_add_board_email_notifications.sql`
+- `supabase/migrations/20260703400000_add_reminder_email_settings.sql`
+- `supabase/migrations/20260704300000_fix_literal_newline_in_email_templates.sql`（新規）
+
+### ⚠️ 教訓
+- 今後、通知テンプレート等でDBに複数行の初期値をSQLでinsertする時は、改行を含む場合
+  必ず`E'...'`構文（またはダラー引用符での実改行）を使うこと。通常の`'...'`はNG
