@@ -4806,3 +4806,49 @@ where channel = 'email' and template like '%\n%';
 - `npx tsc --noEmit`：エラーなし（都度確認）
 - ⚠️ 実機動作確認（TOPバナーのタップ遷移・自動消去、勤務変更受理の一斉通知が実際に
   届くか、欠勤フォームの表示等）は次回ローカル・本番での確認を推奨
+
+---
+
+## ✅ 2026-07-06 勤務変更申請：休憩時間ルール表示・外出/戻り記録機能 完了
+
+### 1. 休憩時間ルールの折りたたみ表示を追加
+- 注意事項パネル（勤務校リーダー・マネージャー一覧の下）に「▼ 休憩時間ルールを表示」
+  ボタンを追加、押すと休憩時間の算出ルール（5段階の時間帯別ルール）を表示
+- `showBreakRules` stateで開閉制御（既存の`showReviewerGuide`と同じパターン）
+
+### 2. 外出・戻り記録機能（新機能）
+- 背景：現状は出勤〜退勤の1区間のみ記録可能だったが、勤務中に一時外出するケースに
+  対応できるよう、通常シフト・実際の勤務どちらにも「外出・戻り」を任意で記録できるようにした
+- 実装前にvisualizeツールでイメージ画像を作成し、実際のフォームの見た目（時間入力の
+  スタイル）に合わせて確認してから実装
+- DB：`shift_reports`に`original_outing_start/end`・`actual_outing_start/end`（time型）を追加
+- フォーム：「外出・戻りを記録する」チェックボックス（通常シフト・実際の勤務それぞれに
+  独立して設置）→ チェックすると出勤〜退勤と同じデザインの時間入力行が出現
+- 計算：外出時間は休憩時間と同様に労働時間から差し引く
+  - 実労働 = (退勤−出勤) − 休憩 − 外出時間
+  - 通常シフトの予定時間も同様に外出分を差し引く
+- バリデーション：外出・戻りON時は開始・終了の入力必須、同時刻はエラー
+- 反映箇所：確認画面（外出・戻り行を追加）、履歴（自分の申請／全スタッフ、
+  変更前後の表示に「（外出 14:00〜15:00）」を追記）、管理画面テーブル（変更前/変更後
+  列に外出行を追加）、CSV出力（変更前外出/変更前戻り/変更後外出/変更後戻りの列を追加）
+- 修正履歴（▶修正履歴ボタンで展開する変更ログ）は自由記述テキストのみの仕様のため対応不要
+
+### Supabase SQL（実行済み）
+```sql
+alter table public.shift_reports
+  add column if not exists original_outing_start time,
+  add column if not exists original_outing_end   time,
+  add column if not exists actual_outing_start   time,
+  add column if not exists actual_outing_end     time;
+```
+
+### 変更ファイル
+- `client/src/pages/ShiftReportPage.tsx`
+- `client/src/components/admin/ShiftReportsTab.tsx`
+- `supabase/migrations/20260706000000_add_outing_time_to_shift_reports.sql`
+
+### 確認内容
+- `npx tsc -b`・`npx vite build`：両方成功（Vercelビルドエラーの教訓を踏まえ、
+  今回から`tsc --noEmit`だけでなく実際のビルドコマンドで確認）
+- ⚠️ 実機動作確認（外出・戻りチェックボックスの表示、労働時間の計算、履歴・管理画面
+  への反映）は次回ローカル・本番での確認を推奨

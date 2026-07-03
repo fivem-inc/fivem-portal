@@ -21,9 +21,13 @@ interface ShiftReport {
   original_location: string | null;
   original_start: string | null;
   original_end: string | null;
+  original_outing_start: string | null;
+  original_outing_end: string | null;
   actual_location: string | null;
   actual_start: string | null;
   actual_end: string | null;
+  actual_outing_start: string | null;
+  actual_outing_end: string | null;
   break_minutes: number | null;
   labor_minutes: number | null;
   reviewer_id: string | null;
@@ -196,7 +200,10 @@ const SingleDatePicker: React.FC<{ value: string; onChange: (d: string) => void;
 interface ConfirmData {
   date: string; types: ApplicationType[]; reason: string;
   origLoc: string; origStart: string; origEnd: string; origDayOff: boolean;
-  actLoc: string; actStart: string; actEnd: string; actNotes: string;
+  origOutingOn: boolean; origOutingStart: string; origOutingEnd: string;
+  actLoc: string; actStart: string; actEnd: string;
+  actOutingOn: boolean; actOutingStart: string; actOutingEnd: string;
+  actNotes: string;
   breakMin: number; laborMin: number; reviewerName: string; isSelfReview: boolean;
   applicantName: string; isProxy: boolean;
 }
@@ -234,10 +241,16 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
                 ? <CRow label="" value="休みの日" textColor={text} />
                 : <CRow label="" value={`${data.origLoc || '—'}　${data.origStart}〜${data.origEnd}`} textColor={text} />
               }
+              {!data.origDayOff && data.origOutingOn && (
+                <CRow label="外出・戻り" value={`${data.origOutingStart}〜${data.origOutingEnd}`} textColor={text} />
+              )}
               <Sep isDark={isDark} />
               <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>✅ 実際に勤務した時間</div>
               <CRow label="勤務地"  value={data.actLoc || '—'} textColor={text} />
               <CRow label="時間"    value={`${data.actStart}〜${data.actEnd}`} textColor={text} />
+              {data.actOutingOn && (
+                <CRow label="外出・戻り" value={`${data.actOutingStart}〜${data.actOutingEnd}`} textColor={text} />
+              )}
               <CRow label="休憩"    value={`${data.breakMin}分`} textColor={text} />
               <CRow label="実労働"  value={formatMin(data.laborMin)} textColor={text} />
               {data.actNotes && <CRow label="備考" value={data.actNotes} textColor={text} />}
@@ -320,6 +333,12 @@ const ShiftReportForm: React.FC<{
   const [origEnd, setOrigEnd]         = useState(editTarget?.original_end?.slice(0, 5) ?? '12:00');
   const [actStart, setActStart]       = useState(editTarget?.actual_start?.slice(0, 5) ?? '12:00');
   const [actEnd, setActEnd]           = useState(editTarget?.actual_end?.slice(0, 5) ?? '12:00');
+  const [origOutingOn, setOrigOutingOn] = useState(!!(editTarget?.original_outing_start));
+  const [origOutingStart, setOrigOutingStart] = useState(editTarget?.original_outing_start?.slice(0, 5) ?? '14:00');
+  const [origOutingEnd, setOrigOutingEnd]     = useState(editTarget?.original_outing_end?.slice(0, 5) ?? '15:00');
+  const [actOutingOn, setActOutingOn]   = useState(!!(editTarget?.actual_outing_start));
+  const [actOutingStart, setActOutingStart]   = useState(editTarget?.actual_outing_start?.slice(0, 5) ?? '14:00');
+  const [actOutingEnd, setActOutingEnd]       = useState(editTarget?.actual_outing_end?.slice(0, 5) ?? '15:00');
   const [reviewerId, setReviewerId]   = useState(editTarget?.reviewer_id ?? '');
   const [actNotes, setActNotes]       = useState('');
   const [changeSummary, setChangeSummary] = useState('');
@@ -348,9 +367,11 @@ const ShiftReportForm: React.FC<{
   };
 
   const breakMin = actStart && actEnd && !hasAbsence ? calcBreakMinutes(actStart, actEnd) : 0;
+  const actOutingMin = actOutingOn && actOutingStart && actOutingEnd ? Math.max(0, toMin(actOutingEnd) - toMin(actOutingStart)) : 0;
   const laborMin = actStart && actEnd && !hasAbsence
-    ? Math.max(0, (toMin(actEnd) - toMin(actStart)) - breakMin) : 0;
-  const origMin  = (origDayOff || hasHoliday) ? 0 : origDuration(origStart, origEnd);
+    ? Math.max(0, (toMin(actEnd) - toMin(actStart)) - breakMin - actOutingMin) : 0;
+  const origOutingMin = origOutingOn && origOutingStart && origOutingEnd ? Math.max(0, toMin(origOutingEnd) - toMin(origOutingStart)) : 0;
+  const origMin  = (origDayOff || hasHoliday) ? 0 : Math.max(0, origDuration(origStart, origEnd) - origOutingMin);
 
   useEffect(() => {
     if (!canProxy) return;
@@ -368,9 +389,11 @@ const ShiftReportForm: React.FC<{
     if (!origDayOff && !hasHoliday && !hasAbsence && (!origStart || !origEnd)) return '通常シフトの時間を入力してください';
     if (!origDayOff && !hasHoliday && !hasAbsence && origStart && origEnd && origStart === origEnd) return '通常シフトの開始・終了が同じ時間です。正しい時間を入力してください';
     if (!origDayOff && !hasHoliday && !hasAbsence && origLoc === 'その他' && !origLocCustom.trim()) return '通常シフトの場所を入力してください';
+    if (!origDayOff && !hasHoliday && !hasAbsence && origOutingOn && (!origOutingStart || !origOutingEnd || origOutingStart === origOutingEnd)) return '通常シフトの外出・戻り時間を正しく入力してください';
     if (!hasAbsence && (!actStart || !actEnd)) return '実際の時間を入力してください';
     if (!hasAbsence && actStart && actEnd && actStart === actEnd) return '開始時間と終了時間が同じです。正しい時間を入力してください';
     if (!hasAbsence && actLoc === 'その他' && !actLocCustom.trim()) return '実際の勤務場所を入力してください';
+    if (!hasAbsence && actOutingOn && (!actOutingStart || !actOutingEnd || actOutingStart === actOutingEnd)) return '実際の外出・戻り時間を正しく入力してください';
     if (!reviewerId)    return '確認依頼先を選択してください';
     if (editTarget && !changeSummary.trim()) return '修正内容を入力してください';
     return '';
@@ -398,9 +421,13 @@ const ShiftReportForm: React.FC<{
         original_location: (origDayOff || hasHoliday || hasAbsence) ? null : (finalOrigLoc || null),
         original_start:    (origDayOff || hasHoliday || hasAbsence) ? null : (origStart || null),
         original_end:      (origDayOff || hasHoliday || hasAbsence) ? null : (origEnd || null),
+        original_outing_start: (origDayOff || hasHoliday || hasAbsence || !origOutingOn) ? null : (origOutingStart || null),
+        original_outing_end:   (origDayOff || hasHoliday || hasAbsence || !origOutingOn) ? null : (origOutingEnd || null),
         actual_location:   !hasAbsence ? (finalActLoc || null) : null,
         actual_start:      !hasAbsence ? (actStart || null) : null,
         actual_end:        !hasAbsence ? (actEnd || null) : null,
+        actual_outing_start: (!hasAbsence && actOutingOn) ? (actOutingStart || null) : null,
+        actual_outing_end:   (!hasAbsence && actOutingOn) ? (actOutingEnd || null) : null,
         break_minutes:     !hasAbsence && actStart && actEnd ? breakMin : null,
         labor_minutes:     !hasAbsence && actStart && actEnd ? laborMin : null,
         reviewer_id:       reviewerId,
@@ -603,11 +630,26 @@ const ShiftReportForm: React.FC<{
                     )}
                   </div>
                   <label style={L}>時間 {Req}</label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                     <input type="time" value={origStart} onChange={e => setOrigStart(e.target.value)} style={{ ...f, flex: 1 }} />
                     <span style={{ color: '#888', flexShrink: 0 }}>〜</span>
                     <input type="time" value={origEnd} onChange={e => setOrigEnd(e.target.value)} style={{ ...f, flex: 1 }} />
                   </div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: textColor, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={origOutingOn} onChange={e => setOrigOutingOn(e.target.checked)}
+                      style={{ width: 16, height: 16, accentColor: '#28a745', cursor: 'pointer' }} />
+                    外出・戻りを記録する
+                  </label>
+                  {origOutingOn && (
+                    <div style={{ marginTop: 8 }}>
+                      <label style={L}>外出・戻り</label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <input type="time" value={origOutingStart} onChange={e => setOrigOutingStart(e.target.value)} style={{ ...f, flex: 1 }} />
+                        <span style={{ color: '#888', flexShrink: 0 }}>〜</span>
+                        <input type="time" value={origOutingEnd} onChange={e => setOrigOutingEnd(e.target.value)} style={{ ...f, flex: 1 }} />
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -630,14 +672,29 @@ const ShiftReportForm: React.FC<{
                   )}
                 </div>
                 <label style={L}>時間 {Req}</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                   <input type="time" value={actStart} onChange={e => setActStart(e.target.value)} style={{ ...f, flex: 1 }} />
                   <span style={{ color: '#888', flexShrink: 0 }}>〜</span>
                   <input type="time" value={actEnd} onChange={e => setActEnd(e.target.value)} style={{ ...f, flex: 1 }} />
                 </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: textColor, cursor: 'pointer', marginBottom: 8 }}>
+                  <input type="checkbox" checked={actOutingOn} onChange={e => setActOutingOn(e.target.checked)}
+                    style={{ width: 16, height: 16, accentColor: '#28a745', cursor: 'pointer' }} />
+                  外出・戻りを記録する
+                </label>
+                {actOutingOn && (
+                  <div style={{ marginBottom: 8 }}>
+                    <label style={L}>外出・戻り</label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input type="time" value={actOutingStart} onChange={e => setActOutingStart(e.target.value)} style={{ ...f, flex: 1 }} />
+                      <span style={{ color: '#888', flexShrink: 0 }}>〜</span>
+                      <input type="time" value={actOutingEnd} onChange={e => setActOutingEnd(e.target.value)} style={{ ...f, flex: 1 }} />
+                    </div>
+                  </div>
+                )}
                 {actStart && actEnd && laborMin > 0 && (
                   <div style={{ background: isDark ? '#1e3d2f' : '#dcfce7', borderRadius: 8, padding: '8px 12px' }}>
-                    <div style={{ fontSize: 12, color: isDark ? '#4ade80' : '#166534' }}>🕐 休憩 {breakMin}分　／　実労働 {formatMin(laborMin)}</div>
+                    <div style={{ fontSize: 12, color: isDark ? '#4ade80' : '#166534' }}>🕐 休憩 {breakMin}分{actOutingMin > 0 ? `　＋　外出 ${formatMin(actOutingMin)}` : ''}　／　実労働 {formatMin(laborMin)}</div>
                     {!origDayOff && !hasHoliday && origMin > 0 && (
                       <div style={{ marginTop: 4 }}>
                         {types.includes('early_start') && toMin(origStart) > toMin(actStart) && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#0891b2' }}>🌅 早出：{formatMin(toMin(origStart) - toMin(actStart))}</div>}
@@ -698,7 +755,7 @@ const ShiftReportForm: React.FC<{
 
   const confirmModal = showConfirm ? (
     <ConfirmModal
-      data={{ date, types, reason, origLoc: finalOrigLoc, origStart, origEnd, origDayOff: origDayOff || hasHoliday, actLoc: finalActLoc, actStart, actEnd, actNotes, breakMin, laborMin, reviewerName, isSelfReview: reviewerId === user.id, applicantName: applicantId === user.id ? (profileName ?? '') : (staffList.find(s => s.id === applicantId)?.name ?? ''), isProxy: applicantId !== user.id }}
+      data={{ date, types, reason, origLoc: finalOrigLoc, origStart, origEnd, origDayOff: origDayOff || hasHoliday, origOutingOn, origOutingStart, origOutingEnd, actLoc: finalActLoc, actStart, actEnd, actOutingOn, actOutingStart, actOutingEnd, actNotes, breakMin, laborMin, reviewerName, isSelfReview: reviewerId === user.id, applicantName: applicantId === user.id ? (profileName ?? '') : (staffList.find(s => s.id === applicantId)?.name ?? ''), isProxy: applicantId !== user.id }}
       onBack={() => setShowConfirm(false)}
       onSubmit={handleSubmit}
       saving={saving}
@@ -764,6 +821,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const [successMsg, setSuccessMsg]     = useState('');
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [showReviewerGuide, setShowReviewerGuide] = useState(false);
+  const [showBreakRules, setShowBreakRules] = useState(false);
   const [reviewers, setReviewers]       = useState<Reviewer[]>([]);
   const [workplaces, setWorkplaces]     = useState<string[]>([]);
   const [leaderAssignments, setLeaderAssignments] = useState<LeaderAssignment[]>([]);
@@ -998,14 +1056,14 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                   </span>
                 </div>
                 {r.original_start
-                  ? <div style={{ fontSize: 12, color: '#555', marginBottom: 2 }}>変更前：{r.original_location} {r.original_start.slice(0, 5)}〜{r.original_end?.slice(0, 5)}</div>
+                  ? <div style={{ fontSize: 12, color: '#555', marginBottom: 2 }}>変更前：{r.original_location} {r.original_start.slice(0, 5)}〜{r.original_end?.slice(0, 5)}{r.original_outing_start && `（外出 ${r.original_outing_start.slice(0, 5)}〜${r.original_outing_end?.slice(0, 5)}）`}</div>
                   : (r.application_type !== 'holiday_work' && r.application_type !== 'absence')
                     ? <div style={{ fontSize: 12, color: '#aaa', marginBottom: 2 }}>変更前：もともと休みの日</div>
                     : null
                 }
                 {r.actual_start && (
                   <div style={{ fontSize: 12, color: isDark ? '#4ade80' : '#166534', marginBottom: 4 }}>
-                    変更後：{r.actual_location} {r.actual_start.slice(0, 5)}〜{r.actual_end?.slice(0, 5)}　休憩 {r.break_minutes ?? 0}分　実労働 {r.labor_minutes ? formatMin(r.labor_minutes) : '-'}
+                    変更後：{r.actual_location} {r.actual_start.slice(0, 5)}〜{r.actual_end?.slice(0, 5)}{r.actual_outing_start && `（外出 ${r.actual_outing_start.slice(0, 5)}〜${r.actual_outing_end?.slice(0, 5)}）`}　休憩 {r.break_minutes ?? 0}分　実労働 {r.labor_minutes ? formatMin(r.labor_minutes) : '-'}
                   </div>
                 )}
                 <div style={{ fontSize: 12, color: '#888', marginBottom: 10 }}>{r.reason}</div>
@@ -1126,6 +1184,24 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                   })()}
                 </div>
               )}
+
+              <button type="button" onClick={() => setShowBreakRules(v => !v)}
+                style={{ marginTop: 8, padding: '6px 12px', fontSize: 12, fontWeight: 'bold', background: noteBtn, color: noteTitleColor, border: 'none', borderRadius: 6, cursor: 'pointer' }}>
+                {showBreakRules ? '▲ 休憩時間ルールを閉じる' : '▼ 休憩時間ルールを表示'}
+              </button>
+
+              {showBreakRules && (
+                <div style={{ marginTop: 10, padding: '12px 14px', borderRadius: 8, background: bg, border: `1px solid ${noteBorder}`, fontSize: 12, lineHeight: 1.9, color: noteText }}>
+                  <p style={{ margin: '0 0 6px', fontWeight: 'bold', color: noteTitleColor }}>《 休憩時間ルール 》</p>
+                  <ul style={{ margin: 0, paddingLeft: 18 }}>
+                    <li>昼休憩をはさむ（12:59までに出勤する）場合は、休憩時間の最低時間単位は0:30</li>
+                    <li>（13:00以降に出勤する場合に限り）勤務時間が5:45を超え、6:15までの場合は0:15</li>
+                    <li>勤務時間が6:15を超え、6:30までの場合は0:30</li>
+                    <li>勤務時間が6:30を超え、8:45までの場合は0:45</li>
+                    <li>勤務時間が8:45を超える場合は1:00</li>
+                  </ul>
+                </div>
+              )}
             </div>
 
             {/* インライン申請フォーム（key で申請後リセット） */}
@@ -1214,14 +1290,14 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                               {(r.application_types?.length ? r.application_types : [r.application_type]).map(t => `${TYPE_INFO[t].emoji} ${TYPE_INFO[t].label}`).join(' ＋ ')}
                             </div>
                             {r.original_start
-                              ? <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#888' }}>変更前：{r.original_location} {r.original_start.slice(0, 5)}〜{r.original_end?.slice(0, 5)}</div>
+                              ? <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#888' }}>変更前：{r.original_location} {r.original_start.slice(0, 5)}〜{r.original_end?.slice(0, 5)}{r.original_outing_start && `（外出 ${r.original_outing_start.slice(0, 5)}〜${r.original_outing_end?.slice(0, 5)}）`}</div>
                               : (r.application_type !== 'holiday_work' && r.application_type !== 'absence')
                                 ? <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#bbb' }}>変更前：もともと休みの日</div>
                                 : null
                             }
                             {r.actual_start && (
                               <div style={{ fontSize: 11, color: isDark ? '#4ade80' : '#166534' }}>
-                                変更後：{r.actual_location ? `${r.actual_location}　` : ''}{r.actual_start.slice(0, 5)}〜{r.actual_end?.slice(0, 5)}　休憩 {r.break_minutes ?? 0}分　実労働 {r.labor_minutes ? formatMin(r.labor_minutes) : '-'}
+                                変更後：{r.actual_location ? `${r.actual_location}　` : ''}{r.actual_start.slice(0, 5)}〜{r.actual_end?.slice(0, 5)}{r.actual_outing_start && `（外出 ${r.actual_outing_start.slice(0, 5)}〜${r.actual_outing_end?.slice(0, 5)}）`}　休憩 {r.break_minutes ?? 0}分　実労働 {r.labor_minutes ? formatMin(r.labor_minutes) : '-'}
                                 {dMin != null && oMin > 0 && r.application_type === 'tardiness' && (
                                   <span style={{ marginLeft: 4, color: isDark ? '#c084fc' : '#7b1fa2', fontWeight: 'bold' }}>
                                     ／遅刻 {formatMin(Math.abs(Math.min(0, dMin)))}

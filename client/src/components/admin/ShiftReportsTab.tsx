@@ -15,9 +15,13 @@ interface ShiftReport {
   original_location: string | null;
   original_start: string | null;
   original_end: string | null;
+  original_outing_start: string | null;
+  original_outing_end: string | null;
   actual_location: string | null;
   actual_start: string | null;
   actual_end: string | null;
+  actual_outing_start: string | null;
+  actual_outing_end: string | null;
   break_minutes: number | null;
   labor_minutes: number | null;
   reviewer_id: string | null;
@@ -291,7 +295,7 @@ const ShiftReportsTab: React.FC = () => {
       const s = v == null ? '' : String(v);
       return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const headers = ['申請日', '申請者', '代行者', '種別', '勤務日', '変更前勤務地', '変更前開始', '変更前終了', '変更後勤務地', '変更後開始', '変更後終了', '労働時間(分)', '休憩時間(分)', '理由', '確認者', 'ステータス'];
+    const headers = ['申請日', '申請者', '代行者', '種別', '勤務日', '変更前勤務地', '変更前開始', '変更前終了', '変更前外出', '変更前戻り', '変更後勤務地', '変更後開始', '変更後終了', '変更後外出', '変更後戻り', '労働時間(分)', '休憩時間(分)', '理由', '確認者', 'ステータス'];
     const rows = (data as ShiftReport[]).map(r => [
       r.created_at.slice(0, 10),
       nm[r.applicant_id] ?? '不明',
@@ -301,9 +305,13 @@ const ShiftReportsTab: React.FC = () => {
       r.original_location ?? '',
       r.original_start ?? '',
       r.original_end ?? '',
+      r.original_outing_start ?? '',
+      r.original_outing_end ?? '',
       r.actual_location ?? '',
       r.actual_start ?? '',
       r.actual_end ?? '',
+      r.actual_outing_start ?? '',
+      r.actual_outing_end ?? '',
       r.labor_minutes ?? '',
       r.break_minutes ?? '',
       r.reason,
@@ -470,6 +478,9 @@ const ShiftReportsTab: React.FC = () => {
                         {r.original_start && (
                           <div style={{ fontSize: 11, color: sub }}>{r.original_start.slice(0, 5)}〜{r.original_end?.slice(0, 5)}</div>
                         )}
+                        {r.original_outing_start && (
+                          <div style={{ fontSize: 11, color: sub }}>外出 {r.original_outing_start.slice(0, 5)}〜{r.original_outing_end?.slice(0, 5)}</div>
+                        )}
                         {!r.original_location && !r.original_start && (
                           <div style={{ fontSize: 11, color: sub }}>—</div>
                         )}
@@ -481,6 +492,9 @@ const ShiftReportsTab: React.FC = () => {
                         )}
                         {r.actual_start && (
                           <div style={{ fontSize: 11, color: '#166534', fontWeight: 'bold' }}>{r.actual_start.slice(0, 5)}〜{r.actual_end?.slice(0, 5)}</div>
+                        )}
+                        {r.actual_outing_start && (
+                          <div style={{ fontSize: 11, color: '#166534' }}>外出 {r.actual_outing_start.slice(0, 5)}〜{r.actual_outing_end?.slice(0, 5)}</div>
                         )}
                         {r.actual_start && (
                           <div style={{ fontSize: 11, color: '#166534' }}>休憩 {r.break_minutes ?? 0}分</div>
