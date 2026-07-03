@@ -103,19 +103,19 @@ const CHANNEL_ICONS: Record<ChannelType, string> = {
 };
 
 const VARIABLES_BY_EVENT: Record<string, string[]> = {
-  'leave:new_request':           ['{{承認者名}}', '{{承認者役職}}'],
-  'leave:leader_approved':       ['{{承認者名}}', '{{承認者役職}}', '{{次承認者名}}'],
-  'leave:manager_approved':      ['{{承認者名}}', '{{休暇種別}}'],
-  'leave:rejected':              ['{{申請者名}}', '{{休暇種別}}', '{{差し戻し理由}}'],
+  'leave:new_request':           ['{{承認者名}}', '{{承認者役職}}', '{{リンク}}'],
+  'leave:leader_approved':       ['{{承認者名}}', '{{承認者役職}}', '{{次承認者名}}', '{{リンク}}'],
+  'leave:manager_approved':      ['{{承認者名}}', '{{休暇種別}}', '{{リンク}}'],
+  'leave:rejected':              ['{{申請者名}}', '{{休暇種別}}', '{{差し戻し理由}}', '{{リンク}}'],
   'leave:cancelled':             ['{{申請者名}}', '{{休暇種別}}', '{{取り消し理由}}'],
   'expense:new_request':         ['{{申請者名}}', '{{申請日}}', '{{申請内容}}', '{{項目数}}'],
   'trip:report_end':             ['{{申請者名}}', '{{申請日}}'],
-  'time_adjustment:registered':  ['{{登録者名}}', '{{種別}}', '{{日付}}', '{{理由}}'],
-  'shift_report:confirmed':      ['{{申請者名}}', '{{種別}}', '{{日付}}', '{{勤務地}}'],
+  'time_adjustment:registered':  ['{{登録者名}}', '{{種別}}', '{{日付}}', '{{理由}}', '{{リンク}}'],
+  'shift_report:confirmed':      ['{{申請者名}}', '{{種別}}', '{{日付}}', '{{勤務地}}', '{{リンク}}'],
   'board:notice':                ['{{送信者名}}', '{{件名}}', '{{リンク}}'],
   'board:dm_message':            ['{{送信者名}}', '{{リンク}}'],
   'board:group_message':         ['{{送信者名}}', '{{グループ名}}', '{{リンク}}'],
-  'reminder:encouragement':      ['{{対象日}}', '{{期限}}'],
+  'reminder:encouragement':      ['{{対象日}}', '{{期限}}', '{{リンク}}'],
   'reminder:scheduled':          ['{{タイトル}}', '{{本文}}'],
   'reminder:unread':             ['{{件名}}', '{{リンク}}'],
 };

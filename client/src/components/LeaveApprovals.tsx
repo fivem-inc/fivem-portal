@@ -211,7 +211,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
 
     if (req.status === 'step2_pending') {
       const daysCount = req.leave_dates ? (() => { try { return String(JSON.parse(req.leave_dates!).length); } catch { return ''; } })() : '';
-      const vars = { 休暇種別: typeName, 申請日数: daysCount };
+      const vars = { 休暇種別: typeName, 申請日数: daysCount, リンク: 'https://fivem-portal.vercel.app/leave?tab=history' };
       const applicantEmail = await getUserEmail(req.user_id) ?? '';
       // サイト内通知
       if (await shouldSend('leave:manager_approved', 'site')) {
@@ -248,13 +248,14 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     }
     // サイト通知・メール
     const leaderDays = selectingManagerFor.leave_dates ? (() => { try { return String(JSON.parse(selectingManagerFor.leave_dates!).length); } catch { return ''; } })() : '';
-    const leaderVars = { 休暇種別: selectingManagerFor.leave_type === 'その他' ? (selectingManagerFor.leave_type_other || 'その他') : selectingManagerFor.leave_type, 申請日数: leaderDays };
+    const leaderVars = { 休暇種別: selectingManagerFor.leave_type === 'その他' ? (selectingManagerFor.leave_type_other || 'その他') : selectingManagerFor.leave_type, 申請日数: leaderDays, リンク: 'https://fivem-portal.vercel.app/leave-approvals' };
     const applicantEmail = await getUserEmail(selectingManagerFor.user_id) ?? '';
     const managerEmail = await getUserEmail(selectedManagerId) ?? '';
     // 同じイベントでも宛先によって役割が違う（マネージャーは要対応、申請者はFYI）ため、source_typeを分けて別々に送る
     await dispatchSiteNotification('leave:leader_approved', leaderVars, { manager: selectedManagerId }, insertNotification, 'leave_request:pending_approval', selectingManagerFor.id);
     await dispatchSiteNotification('leave:leader_approved', leaderVars, { applicant: selectingManagerFor.user_id }, insertNotification, 'leave_request', selectingManagerFor.id);
-    await dispatchEmail('leave:leader_approved', leaderVars, { applicant: applicantEmail, manager: managerEmail });
+    // recipient設定が'approver'の場合も解決できるよう、manager宛のメールアドレスをapproverキーにも渡す
+    await dispatchEmail('leave:leader_approved', leaderVars, { applicant: applicantEmail, manager: managerEmail, approver: managerEmail });
 
     setSelectingManagerFor(null);
     fetchRequests();

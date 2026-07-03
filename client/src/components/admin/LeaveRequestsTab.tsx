@@ -1354,7 +1354,7 @@ const LeaveRequestsTab: React.FC = () => {
                                         const typeName = req.leave_type === 'その他' ? (req.leave_type_other || 'その他') : req.leave_type;
                                         if (req.status === 'step2_pending') {
                                           const daysCount = req.leave_dates ? (() => { try { return String(JSON.parse(req.leave_dates).length); } catch { return ''; } })() : '';
-                                          const vars = { 休暇種別: typeName, 申請日数: daysCount };
+                                          const vars = { 休暇種別: typeName, 申請日数: daysCount, リンク: 'https://fivem-portal.vercel.app/leave?tab=history' };
                                           if (await shouldSend('leave:manager_approved', 'site')) {
                                             const t = await getNotificationTemplate('leave:manager_approved', 'site', vars);
                                             await insertNotification(req.user_id, t?.template ?? `休暇申請がマネージャーに受理されました`, t?.subject || `種別：${typeName}`, 'leave_request', req.id);
@@ -1629,7 +1629,7 @@ const LeaveRequestsTab: React.FC = () => {
                               await sendLeaveSlack('rejected', '管理者', '管理者', undefined, undefined, targetChannel ?? 'leader');
                             }
                             const rejectedEmail = await getUserEmail(rejectModal.user_id) ?? '';
-                            await dispatchEmail('leave:rejected', { 申請者名: '', 休暇種別: rejectModal.leave_type, 差し戻し理由: rejectReason || '' }, { applicant: rejectedEmail });
+                            await dispatchEmail('leave:rejected', { 申請者名: '', 休暇種別: rejectModal.leave_type, 差し戻し理由: rejectReason || '', リンク: 'https://fivem-portal.vercel.app/leave?tab=history' }, { applicant: rejectedEmail });
                           }
                           setRejectModal(null); setRejectReason(''); setRejectNewType('');
                           fetchLeaveRequests();

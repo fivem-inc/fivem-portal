@@ -102,7 +102,7 @@ serve(async (req) => {
       )
 
       if (emailSetting?.enabled && emailSetting.template) {
-        const vars = { '対象日': day.target_date, '期限': dateLabel }
+        const vars = { '対象日': day.target_date, '期限': dateLabel, 'リンク': 'https://fivem-portal.vercel.app/leave' }
         const subject = applyVars(emailSetting.subject || '', vars)
         const text = applyVars(emailSetting.template, vars)
         const { data: profiles } = await supabase.from('profiles').select('email').in('id', unansweredIds)

@@ -4960,3 +4960,78 @@ alter table public.shift_reports
 - ⚠️ 実機動作確認（Toアドレス漏洩修正後の実際のメール受信、定期リマインドの個別選択・
   月末日ボタンの動作、リマインド設定タブの表示、勤務変更申請の勤務地必須バリデーション）
   は次回ローカル・本番での確認を推奨
+
+---
+
+## ✅ 2026-07-07（続き）通知メールへのリンク追加・勤務変更申請の勤務地必須化 完了
+
+### 1. 通知メールにリンクが無い問題を調査・カテゴリごとに対応方針を決定
+- ユーザーが「勤務変更申請が受理されました」メールにリンクが無いことを指摘
+- 調査の結果、リンクがあるのは連絡板系（お知らせ・DM・グループメッセージ・未読リマインド）
+  のみで、それ以外のほとんどの通知カテゴリにリンクが無いことが判明
+- ユーザーと相談の上、以下の方針で確定
+  - リンクを追加：勤務変更申請の受理／時間調整の登録／有給奨励日の未回答リマインド／
+    休暇申請（新規・受理・差し戻し）
+  - リンクなしのまま：定期リマインド、出張報告
+  - 経費申請（`expense:new_request`）：申請者本人への受付確認メール（経理へは別途
+    Slackで通知済み）と判明し、次の操作が無いためリンク不要と判断
+
+### 2. 各通知にリンク変数を追加
+- `shift-report-confirmed-notify`：`{{リンク}}` → `/shift-report?tab=history`
+- `time-adjustment-notify`：`{{リンク}}` → `/leave?tab=history`
+- `encouragement-notify`：`{{リンク}}` → `/leave`
+- `leave:new_request`（承認者宛）：`{{リンク}}` → `/leave-approvals`
+- `leave:leader_approved`（次承認者＝マネージャー宛）：`{{リンク}}` → `/leave-approvals`
+- `leave:manager_approved`（申請者宛）：`{{リンク}}` → `/leave?tab=history`
+- `leave:rejected`（申請者宛）：`{{リンク}}` → `/leave?tab=history`
+- `NotificationsTab.tsx`の変数チップ一覧にも`{{リンク}}`を追加（管理画面での再編集用）
+
+### 3. 副次的に発見したバグ修正：`leave:leader_approved`メールが実際は送信されていなかった
+- `notification_settings`の`recipient`が`'approver'`と設定されているのに、
+  `LeaveApprovals.tsx`の`dispatchEmail`呼び出しが`applicant`/`manager`キーしか
+  渡しておらず、`approver`キーが未解決のまま`continue`されメールが送られていなかった
+- `leave:new_request`と同様に`approver`キーにもマネージャーのメールアドレスを
+  渡すよう修正（宛先設定が`approver`でも`manager`でも解決できるようになった）
+
+### 4. 勤務変更申請フォーム：時間入力時は勤務地も必須に
+- 「通常シフト」「実際に勤務した時間」どちらも、時間を入力する場合は勤務地
+  （`origLoc`・`actLoc`）の選択も必須になるようバリデーションを追加（今まで「その他」
+  選択時の自由入力のみ必須で、勤務地自体は未選択のまま送信できてしまっていた）。
+  ラベルにも赤い`*`を追加し、他の必須項目と見た目を統一（`ShiftReportPage.tsx`）
+
+### デプロイ済みEdge Function（3本）
+- `shift-report-confirmed-notify`・`time-adjustment-notify`・`encouragement-notify`
+
+### 実行済みSQL
+- `20260707100000_add_link_to_email_templates.sql`
+  （`supabase db query --linked`で直接適用。対象7イベントのメールテンプレート末尾に
+  「下記のリンクからご確認ください。{{リンク}}」を追記・反映確認済み）
+
+### 変更ファイル
+- `client/src/components/LeaveApprovals.tsx`
+- `client/src/components/LeaveRequest.tsx`
+- `client/src/components/admin/LeaveRequestsTab.tsx`
+- `client/src/components/admin/NotificationsTab.tsx`
+- `client/src/pages/ShiftReportPage.tsx`（勤務地必須化）
+- `supabase/functions/encouragement-notify/index.ts`
+- `supabase/functions/shift-report-confirmed-notify/index.ts`
+- `supabase/functions/time-adjustment-notify/index.ts`
+- `supabase/migrations/20260707100000_add_link_to_email_templates.sql`
+
+### ⚠️ 注意事項・保留事項
+- リンク追加は本番DBのテンプレート更新＋Edge Functionデプロイまで完了済みだが、
+  休暇申請系（`leave:new_request`/`leave:leader_approved`/`leave:manager_approved`/
+  `leave:rejected`）のリンクはクライアント側コードでvarsに渡す仕組みのため、
+  **今回のgit push（Vercel自動デプロイ）が完了するまで本番では反映されない**
+  （それまでは休暇申請系メールの本文に`{{リンク}}`がそのまま表示される）
+- 新しい通知カテゴリを追加する時は、リンクが必要かどうかを都度検討し、必要なら
+  Edge Function側／dispatchEmail呼び出し側のvarsに`'リンク'`キーを追加し、
+  `notification_settings`のテンプレートにも`{{リンク}}`を含めること
+
+### 確認内容
+- `npx tsc -b`・`npx vite build`：両方成功
+- SQLの反映は`select event_key, template from notification_settings ...`で
+  全7件に`{{リンク}}`が追加されていることを確認済み
+- Edge Function 3本は`supabase functions deploy`でデプロイ済み
+- ⚠️ 実機動作確認（休暇申請系メールのリンク反映はpush後、勤務変更申請の
+  勤務地必須バリデーション）は次回ローカル・本番での確認を推奨

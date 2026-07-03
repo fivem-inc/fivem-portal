@@ -396,7 +396,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         await sendLeaveSlack('new_request', selectedApprover.name, selectedApprover.role_title);
       }
       // サイト通知・メール（申請者 or 承認者）
-      const vars = { 申請者名: profileName || user.email || '', 休暇種別: leaveType, 申請日数: String(selectedDates.length) };
+      const vars = { 申請者名: profileName || user.email || '', 休暇種別: leaveType, 申請日数: String(selectedDates.length), リンク: 'https://fivem-portal.vercel.app/leave-approvals' };
       const applicantEmail = user.email || '';
       const leaderEmail = selectedApprover ? (await getUserEmail(selectedApprover.id) ?? '') : '';
       // leave:new_request は承認者(要対応)のみが対象（申請者向け変数が無いため、宛先設定にapplicantは無い）

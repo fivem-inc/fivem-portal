@@ -43,6 +43,7 @@ serve(async (req) => {
       '種別': typeLabels,
       '日付': dateLabel,
       '理由': reason ?? '',
+      'リンク': 'https://fivem-portal.vercel.app/leave?tab=history',
     }
 
     // notification_settings を取得

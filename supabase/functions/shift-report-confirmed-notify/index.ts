@@ -48,6 +48,7 @@ serve(async (req) => {
       '種別': typeLabels,
       '日付': dateLabel,
       '勤務地': location ?? '',
+      'リンク': 'https://fivem-portal.vercel.app/shift-report?tab=history',
     }
 
     // notification_settings を取得
