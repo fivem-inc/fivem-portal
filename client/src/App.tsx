@@ -65,7 +65,7 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
   const portalRef = useRef<HTMLDivElement>(null);
 
   const fetchNotifs = useCallback(async () => {
-    const { data } = await supabase.from('notifications').select('id, message, sub_message, read, created_at, source_type, reference_id').eq('user_id', userId).eq('read', false).or('source_type.is.null,source_type.neq.board').order('created_at', { ascending: false }).limit(30);
+    const { data } = await supabase.from('notifications').select('id, message, sub_message, read, created_at, source_type, reference_id').eq('user_id', userId).eq('dismissed', false).or('source_type.is.null,source_type.neq.board').order('created_at', { ascending: false }).limit(30);
     if (data) setNotifs(data);
   }, [userId]);
 
@@ -83,7 +83,7 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
 
   const dismissOne = async (id: string) => {
     console.log('[notification] dismiss clicked', id);
-    const { error } = await supabase.from('notifications').update({ read: true }).eq('id', id);
+    const { error } = await supabase.from('notifications').update({ dismissed: true }).eq('id', id);
     if (error) { console.error('[notification] dismiss error', error); return; }
     console.log('[notification] dismiss success', id);
     setNotifs(prev => prev.filter(n => n.id !== id));
@@ -94,7 +94,17 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
 
   const handleOpen = () => {
     if (!open && btnRef.current) setDropRect(btnRef.current.getBoundingClientRect());
-    setOpen(o => !o);
+    setOpen(o => {
+      const opening = !o;
+      if (opening) {
+        const unreadIds = notifs.filter(n => !n.read).map(n => n.id);
+        if (unreadIds.length > 0) {
+          setNotifs(prev => prev.map(n => unreadIds.includes(n.id) ? { ...n, read: true } : n));
+          supabase.from('notifications').update({ read: true, read_at: new Date().toISOString() }).in('id', unreadIds).then(null, () => {});
+        }
+      }
+      return opening;
+    });
   };
 
   return (

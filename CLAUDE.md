@@ -4466,3 +4466,51 @@ const hasGreen = absences.some(a => a.type === 'late_start' || a.type === 'early
 6. 自宅PCへのセキュリティ設定導入（グローバル.gitignore＋pre-commitフック）
 7. テスト用データの削除可否確認（「あああ」メッセージへの管理者自身の確認データ）
 8. npm不要ファイル・大容量キャッシュの整理
+
+---
+
+## ✅ 2026-07-04 ベル通知：バッジと表示を分離（既読≠非表示化） 完了
+
+### 背景
+- 7/3の修正で「ベルを開いただけでは既読にならない」状態にしたが、そうすると
+  「メッセージを確認した（既読にした）のにベルの数字バッジが残り続ける」という
+  別の違和感が発生した
+- 「read」という1つの列で『バッジを消す』と『リストから消す』を兼用していたのが原因
+
+### 変更内容
+- `notifications`テーブルに列を追加：`dismissed`（✕を押したか）・`read_at`（既読にした日時）
+- 挙動を分離：
+  - ベルを**開いた瞬間** → 未読を`read=true, read_at=now()`に一括更新 → バッジの数字が即0になる
+  - ✕を押した時 → `dismissed=true`に更新 → その通知だけリストから消える
+  - ベル一覧の取得条件を`read=false`→`dismissed=false`に変更（既読でも✕を押すまでは表示され続ける）
+- 自動削除cron（`delete-old-notifications`, jobid=13）を`created_at`基準→`read_at`基準に変更
+  （「既読にしてから30日」で自動削除。期間は30日のまま据え置き）
+
+### Supabase SQL（実行済み）
+```sql
+alter table notifications add column if not exists dismissed boolean default false;
+alter table notifications add column if not exists read_at timestamptz;
+update notifications set read_at = created_at where read = true and read_at is null;
+
+select cron.unschedule('delete-old-notifications');
+select cron.schedule(
+  'delete-old-notifications',
+  '0 18 * * *',
+  $$ delete from notifications where read = true and read_at < now() - interval '30 days'; $$
+);
+```
+
+### 変更ファイル
+- `client/src/App.tsx`（BellIconコンポーネント）
+- `supabase/migrations/20260704000000_add_dismissed_to_notifications.sql`
+
+### 確認内容
+- `npx tsc --noEmit`：エラーなし
+- cronジョブ再登録後の内容をSQLで確認済み（jobid=13、read_at基準）
+- ⚠️ ブラウザでの実機動作確認（ベルを開いてバッジが消える／✕を押すとリストから消える／
+  リロードしても✕を押していない通知は残る）は次回ローカルでの確認を推奨
+
+### 注意事項
+- `NotificationBanner`（ページ上部の帯バナー、有給奨励日などの案内）は今回変更していない。
+  引き続き`read=false`を条件に表示しているため、ベルを開いて既読になった通知は
+  次回フェッチ時にバナーからも消える（意図した挙動：ベルで見た＝バナーで再度案内不要）
