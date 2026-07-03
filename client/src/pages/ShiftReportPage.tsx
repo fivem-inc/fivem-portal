@@ -822,6 +822,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [showReviewerGuide, setShowReviewerGuide] = useState(false);
   const [showBreakRules, setShowBreakRules] = useState(false);
+  const [showAllBreakRules, setShowAllBreakRules] = useState(false);
   const [reviewers, setReviewers]       = useState<Reviewer[]>([]);
   const [workplaces, setWorkplaces]     = useState<string[]>([]);
   const [leaderAssignments, setLeaderAssignments] = useState<LeaderAssignment[]>([]);
@@ -1195,11 +1196,19 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                   <p style={{ margin: '0 0 6px', fontWeight: 'bold', color: noteTitleColor }}>《 休憩時間ルール 》</p>
                   <ul style={{ margin: 0, paddingLeft: 18 }}>
                     <li>昼休憩をはさむ（12:59までに出勤する）場合は、休憩時間の最低時間単位は0:30</li>
-                    <li>（13:00以降に出勤する場合に限り）勤務時間が5:45を超え、6:15までの場合は0:15</li>
-                    <li>勤務時間が6:15を超え、6:30までの場合は0:30</li>
-                    <li>勤務時間が6:30を超え、8:45までの場合は0:45</li>
-                    <li>勤務時間が8:45を超える場合は1:00</li>
+                    {showAllBreakRules && (
+                      <>
+                        <li>（13:00以降に出勤する場合に限り）勤務時間が5:45を超え、6:15までの場合は0:15</li>
+                        <li>勤務時間が6:15を超え、6:30までの場合は0:30</li>
+                        <li>勤務時間が6:30を超え、8:45までの場合は0:45</li>
+                        <li>勤務時間が8:45を超える場合は1:00</li>
+                      </>
+                    )}
                   </ul>
+                  <button type="button" onClick={() => setShowAllBreakRules(v => !v)}
+                    style={{ marginTop: 6, padding: 0, fontSize: 12, fontWeight: 'bold', background: 'none', color: noteTitleColor, border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+                    {showAllBreakRules ? '▲ 閉じる' : '▼ 休憩時間ルールを全て表示'}
+                  </button>
                 </div>
               )}
             </div>
