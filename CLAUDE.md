@@ -4852,3 +4852,111 @@ alter table public.shift_reports
   今回から`tsc --noEmit`だけでなく実際のビルドコマンドで確認）
 - ⚠️ 実機動作確認（外出・戻りチェックボックスの表示、労働時間の計算、履歴・管理画面
   への反映）は次回ローカル・本番での確認を推奨
+
+---
+
+## ✅ 2026-07-07 メール一斉送信のTo漏洩バグ修正・定期リマインド機能拡張 完了
+
+### 1. メール一斉送信でTo欄に全員のアドレスが見えるバグを修正（重要・プライバシー問題）
+- ユーザーがGmailで受信したリマインドメールのTo欄に受信者全員のアドレスが並んでいるのを発見・報告
+- 原因：Resend APIの`to`に複数アドレスを配列でまとめて渡していたため、受信者全員が
+  お互いのメールアドレスを見える状態になっていた
+- 該当4箇所（UI/UXデザイナー・シニアエンジニアのサブエージェント2体でレビュー後、方針決定）
+  - `encouragement-notify`・`remind-unread`・`remind-scheduled`：1人ずつループ送信＋
+    送信失敗件数をログ出力する方式に変更（既存の`time-adjustment-notify`等と同じパターン）
+  - `board-scheduled-send`（全社員30〜40人規模になりうる）：Resendの**バッチ送信API**
+    （`POST /emails/batch`、宛先ごとに個別の`to`を持つメールを1回のAPIコールでまとめて送る）
+    を直接呼ぶ専用ロジックに変更。`send-email`関数自体は「単一宛先」の契約のまま維持
+    （バッチ対応させると他の呼び出し元への影響範囲が広がるため）
+- 追加のセキュリティ強化（エンジニアレビューで指摘）
+  - `send-email`に呼び出し元認証が無く外部から悪用され得た問題 → `supabase/config.toml`で
+    `verify_jwt = true`に変更・デプロイ済み
+  - それに伴い`UsersTab.tsx`の招待メール送信（認証ヘッダーなしの生fetch）を
+    `supabase.functions.invoke()`に変更（自動でセッションJWTが付与される）
+  - `send-email`に宛先件数の上限（5件）バリデーションを追加（誤操作による大量送信対策）
+
+### 2. 「三役」連絡板チャンネルに管理者が紛れ込んでいた件（調査のみ・対応なし）
+- 定期リマインドのテスト送信で、グループ管理画面上は3人のグループなのに実際は
+  管理者を含む4人にメールが届いた件を調査
+- 原因：連絡板の「グループチャンネル」作成時（`BoardSettingsTab.tsx`の`createChannel`）は
+  作成者を自動で`board_channel_members`に追加する仕様のため。今回の「三役」チャンネルは
+  過去に管理者自身が作成したため、選んだメンバーとは別に管理者も含まれていた
+- ユーザー判断：**仕様のままでよい**（管理者を含めたままにする）→ コード変更なし
+
+### 3. 有給奨励日パネルの開閉UI変更
+- 管理画面「休暇申請」タブの📅有給奨励日一覧を、常時展開表示→**デフォルト全部閉じる、
+  クリックで開くと進捗バー＋確認ボタンが表示**される方式に変更（`LeaveRequestsTab.tsx`）
+
+### 4. 勤務変更申請フォーム：休憩時間ルール表示の開閉ボタンを削除
+- 前回セッションで追加した「▲休憩時間ルールを閉じる」の開閉トグルボタンを削除し、
+  常時展開表示に変更（内側の「▼休憩時間ルールを全て表示」だけ残す）。未使用になった
+  `showBreakRules` stateも削除（`ShiftReportPage.tsx`）
+
+### 5. 定期リマインドの送り先に「個別選択」を追加
+- 今まで「グループ（連絡板チャンネル）」か「全員」しか選べなかった送り先に、
+  スタッフを個別に複数選択できるモードを追加（`NotificationsTab.tsx`の`ScheduledRemindersPanel`）
+- UIは「全員／グループ／個別選択」の3択ボタン。個別選択時は名前検索＋チェックボックスで選択
+- DB：`board_scheduled_reminders`に`user_ids uuid[]`列を追加（設定されていれば
+  グループ・全員より優先。`remind-scheduled`側で対応）
+
+### 6. 定期リマインドの日付選択をボタングリッド化＋「月末日」オプション追加
+- 「毎月」の日付指定を、カンマ区切りテキスト入力→**1〜31のボタングリッド（複数選択可）**に変更
+- 別枠で「月末日」ボタンを追加（値`32`を特別値として使用）。「31日」とは意味を分離し、
+  2月は28日（うるう年29日）、4/6/9/11月は30日など、月によって最終日が変わる月でも
+  正しく毎月末に届くようにした（`remind-scheduled`側で「翌日のUTC日付が1日に戻る＝
+  今日が月末」と判定）
+
+### 7. 管理画面「リマインド設定」タブを独立
+- 今まで「🔔通知設定」タブに同居していた「📅定期リマインド設定」「リマインドの
+  何日前設定」を、新しい独立タブ「📅リマインド設定」に分離（`AdminPanel.tsx`・
+  `AdminPanelContext.tsx`の`AdminTab`型に`scheduled_reminders`を追加）
+
+### 8. 勤務変更申請フォーム：時間入力時は勤務地も必須に
+- 「通常シフト」「実際に勤務した時間」どちらも、時間を入力した場合は勤務地（`origLoc`・
+  `actLoc`）の選択も必須になるようバリデーションを追加（今まで「その他」選択時の
+  自由入力のみ必須で、勤務地自体は未選択のまま送信できてしまっていた）。ラベルにも
+  赤い`*`を追加し、他の必須項目と見た目を統一（`ShiftReportPage.tsx`）
+
+### デプロイ済みEdge Function（5本）
+- `encouragement-notify`・`remind-unread`・`remind-scheduled`・`board-scheduled-send`・
+  `send-email`（`supabase functions deploy`でデプロイ済み、`send-email`は
+  `verify_jwt: true`反映済みを確認済み）
+
+### 実行済みSQL
+- `20260707000000_add_user_ids_to_scheduled_reminders.sql`
+  （`supabase db query --linked`で直接適用・列追加を確認済み）
+
+### 変更ファイル
+- `client/src/components/admin/LeaveRequestsTab.tsx`
+- `client/src/components/admin/NotificationsTab.tsx`
+- `client/src/components/admin/UsersTab.tsx`
+- `client/src/components/AdminPanel.tsx`
+- `client/src/components/admin/AdminPanelContext.tsx`
+- `client/src/pages/ShiftReportPage.tsx`
+- `supabase/config.toml`
+- `supabase/functions/encouragement-notify/index.ts`
+- `supabase/functions/remind-scheduled/index.ts`
+- `supabase/functions/remind-unread/index.ts`
+- `supabase/functions/board-scheduled-send/index.ts`
+- `supabase/functions/send-email/index.ts`
+- `supabase/migrations/20260707000000_add_user_ids_to_scheduled_reminders.sql`
+
+### ⚠️ 注意事項・保留事項
+- `send-email`の`verify_jwt = true`化により、今後この関数を新しい場所から呼ぶ時は
+  必ず`supabase.functions.invoke()`（またはセッションJWT付きのfetch）を使うこと。
+  認証ヘッダーなしの生fetchでは401になる
+- 一斉メール送信を新規実装する時は、少人数ならループで1人ずつ`send-email`を呼び、
+  全社員規模になりうる場合はResendのバッチ送信API（`/emails/batch`）を使うこと。
+  `to`に複数アドレスを配列でそのまま渡さない（今回のバグの再発防止）
+- 定期リマインドの「月末日」は値`32`を特別値として使っているため、`days`列に
+  32が入っていても異常ではない
+- 「三役」連絡板チャンネルへの管理者混入は意図的に対応しない方針で確定（他のグループ
+  チャンネルにも同様の混入がある可能性はあるが、今回は指摘のみで未調査）
+
+### 確認内容
+- `npx tsc -b`・`npx vite build`：全変更を通して複数回実行し毎回成功を確認
+- Edge Function側はDeno CLIがローカルに無いため目視レビューのみ（デプロイ後の
+  ステータスは`supabase functions list`で`ACTIVE`・`verify_jwt`設定を確認済み）
+- ⚠️ 実機動作確認（Toアドレス漏洩修正後の実際のメール受信、定期リマインドの個別選択・
+  月末日ボタンの動作、リマインド設定タブの表示、勤務変更申請の勤務地必須バリデーション）
+  は次回ローカル・本番での確認を推奨

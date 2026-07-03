@@ -33,6 +33,15 @@ serve(async (req) => {
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const toList = Array.isArray(to) ? to : [to];
+
+    const MAX_RECIPIENTS = 5;
+    if (toList.length > MAX_RECIPIENTS) {
+      return new Response(JSON.stringify({ error: `一度に送信できる宛先は${MAX_RECIPIENTS}件までです（複数人への一斉送信は1人ずつ個別に送信してください）` }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const invalidEmails = toList.filter((addr: string) => !emailRegex.test(addr));
     if (invalidEmails.length > 0) {
       return new Response(JSON.stringify({ error: `メールアドレスの形式が正しくありません: ${invalidEmails.join(', ')}` }), {

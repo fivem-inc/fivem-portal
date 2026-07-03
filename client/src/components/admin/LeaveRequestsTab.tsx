@@ -146,6 +146,7 @@ const LeaveRequestsTab: React.FC = () => {
   const [filterType, setFilterType] = useState<string>('all');
   const [encDays, setEncDays] = useState<EncDay[]>([]);
   const [encLoading, setEncLoading] = useState(false);
+  const [expandedEncDays, setExpandedEncDays] = useState<Set<string>>(new Set());
   const [encFY, setEncFY] = useState<string>('__current__');
   const [showEncCreate, setShowEncCreate] = useState(false);
   const [encCreateDate, setEncCreateDate] = useState('');
@@ -270,7 +271,8 @@ const LeaveRequestsTab: React.FC = () => {
     (targets || []).forEach((t: { encouragement_day_id: string }) => { tgtCounts[t.encouragement_day_id] = (tgtCounts[t.encouragement_day_id] || 0) + 1; });
     const resCounts: Record<string, number> = {};
     (responses || []).forEach((r: { encouragement_day_id: string }) => { resCounts[r.encouragement_day_id] = (resCounts[r.encouragement_day_id] || 0) + 1; });
-    setEncDays(days.map((d: EncDay) => ({ ...d, targetCount: tgtCounts[d.id] || 0, responseCount: resCounts[d.id] || 0 })));
+    const merged = days.map((d: EncDay) => ({ ...d, targetCount: tgtCounts[d.id] || 0, responseCount: resCounts[d.id] || 0 }));
+    setEncDays(merged);
     setEncLoading(false);
   }, [supabase]);
 
@@ -1004,9 +1006,16 @@ const LeaveRequestsTab: React.FC = () => {
                       const pct = d.targetCount > 0 ? Math.round((d.responseCount / d.targetCount) * 100) : 0;
                       const today = new Date().toISOString().slice(0, 10);
                       const isPast = d.deadline < today;
+                      const isExpanded = expandedEncDays.has(d.id);
                       return (
                         <div key={d.id} style={{ background: isDarkMode ? '#495057' : '#fff', borderRadius: 8, padding: '8px 12px', border: `1px solid ${isDarkMode ? '#6c757d' : '#e0e0e0'}` }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                          <div
+                            onClick={() => setExpandedEncDays(prev => {
+                              const next = new Set(prev);
+                              if (next.has(d.id)) next.delete(d.id); else next.add(d.id);
+                              return next;
+                            })}
+                            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isExpanded ? 4 : 0, cursor: 'pointer' }}>
                             <div>
                               <span style={{ fontWeight: 'bold', fontSize: 13, color: isDarkMode ? '#fff' : '#333' }}>{fmtEncDow(d.target_date)}</span>
                               <span style={{ fontSize: 11, color: isPast ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), marginLeft: 8 }}>
@@ -1015,13 +1024,20 @@ const LeaveRequestsTab: React.FC = () => {
                             </div>
                             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                               <span style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#666' }}>{d.responseCount}/{d.targetCount}人</span>
-                              <button onClick={() => { setShowEncDetail(d.id); fetchEncDetail(d.id); }}
-                                style={{ padding: '3px 10px', background: '#17a2b8', color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>確認</button>
+                              <span style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#888' }}>{isExpanded ? '▲' : '▼'}</span>
                             </div>
                           </div>
-                          <div style={{ height: 6, borderRadius: 3, background: isDarkMode ? '#6c757d' : '#e9ecef', overflow: 'hidden' }}>
-                            <div style={{ height: '100%', borderRadius: 3, background: pct === 100 ? '#28a745' : '#007bff', width: `${pct}%`, transition: 'width 0.3s' }} />
-                          </div>
+                          {isExpanded && (
+                            <>
+                              <div style={{ height: 6, borderRadius: 3, background: isDarkMode ? '#6c757d' : '#e9ecef', overflow: 'hidden' }}>
+                                <div style={{ height: '100%', borderRadius: 3, background: pct === 100 ? '#28a745' : '#007bff', width: `${pct}%`, transition: 'width 0.3s' }} />
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
+                                <button onClick={() => { setShowEncDetail(d.id); fetchEncDetail(d.id); }}
+                                  style={{ padding: '3px 10px', background: '#17a2b8', color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>確認</button>
+                              </div>
+                            </>
+                          )}
                         </div>
                       );
                     })}

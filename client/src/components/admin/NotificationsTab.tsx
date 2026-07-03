@@ -1003,6 +1003,7 @@ const NotificationsTab: React.FC = () => {
 interface ScheduledReminder {
   id: string;
   channel_id: string | null;
+  user_ids: string[] | null;
   frequency: 'monthly' | 'weekly';
   days: number[];
   title: string;
@@ -1017,25 +1018,36 @@ interface BoardChannel {
   name: string;
 }
 
+interface ReminderProfile {
+  id: string;
+  name: string | null;
+  email: string | null;
+}
+
 const REMINDER_MINUTE_OPTIONS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
 const WEEKDAY_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
+const MONTH_END_DAY = 32; // 「月末日」を表す特別値（各月の最終日にマッチさせる）
 
 const formatReminderDays = (r: ScheduledReminder): string => {
   const sorted = [...r.days].sort((a, b) => a - b);
-  return r.frequency === 'weekly'
-    ? `毎週${sorted.map(d => WEEKDAY_LABELS[d]).join('・')}曜`
-    : `毎月${sorted.join('・')}日`;
+  if (r.frequency === 'weekly') return `毎週${sorted.map(d => WEEKDAY_LABELS[d]).join('・')}曜`;
+  const labels = sorted.map(d => d === MONTH_END_DAY ? '月末日' : `${d}日`);
+  return `毎月${labels.join('・')}`;
 };
+
+type RecipientMode = 'all' | 'channel' | 'individual';
 
 export const ScheduledRemindersPanel: React.FC = () => {
   const { isDarkMode } = useAdminPanel();
   const [reminders, setReminders] = useState<ScheduledReminder[]>([]);
   const [channels, setChannels] = useState<BoardChannel[]>([]);
-  const [form, setForm] = useState<{ channel_id: string; frequency: 'monthly' | 'weekly'; days: number[]; title: string; body: string; send_hour: number; send_minute: number }>({
-    channel_id: '', frequency: 'monthly', days: [1], title: '', body: '', send_hour: 9, send_minute: 0,
+  const [profiles, setProfiles] = useState<ReminderProfile[]>([]);
+  const [profileQuery, setProfileQuery] = useState('');
+  const [recipientMode, setRecipientMode] = useState<RecipientMode>('all');
+  const [form, setForm] = useState<{ channel_id: string; user_ids: string[]; frequency: 'monthly' | 'weekly'; days: number[]; title: string; body: string; send_hour: number; send_minute: number }>({
+    channel_id: '', user_ids: [], frequency: 'monthly', days: [1], title: '', body: '', send_hour: 9, send_minute: 0,
   });
   const [saving, setSaving] = useState(false);
-  const [monthlyDaysInput, setMonthlyDaysInput] = useState('1');
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const bg = isDarkMode ? '#2c2c3e' : '#fff';
@@ -1045,23 +1057,26 @@ export const ScheduledRemindersPanel: React.FC = () => {
   const inputBg = isDarkMode ? '#3d3d55' : '#f8f9fa';
 
   const fetch = useCallback(async () => {
-    const [{ data: r }, { data: c }] = await Promise.all([
+    const [{ data: r }, { data: c }, { data: p }] = await Promise.all([
       supabase.from('board_scheduled_reminders').select('*'),
       supabase.from('board_channels').select('id, name').order('name'),
+      supabase.from('profiles').select('id, name, email').eq('is_active', true).order('name'),
     ]);
     if (r) setReminders(r);
     if (c) setChannels(c);
+    if (p) setProfiles(p);
   }, []);
 
   useEffect(() => { fetch(); }, [fetch]);
 
-  const toggleWeekday = (d: number) => {
+  const toggleDay = (d: number) => {
     setForm(f => ({ ...f, days: f.days.includes(d) ? f.days.filter(x => x !== d) : [...f.days, d].sort((a, b) => a - b) }));
   };
 
   const resetForm = () => {
-    setForm({ channel_id: '', frequency: 'monthly', days: [1], title: '', body: '', send_hour: 9, send_minute: 0 });
-    setMonthlyDaysInput('1');
+    setForm({ channel_id: '', user_ids: [], frequency: 'monthly', days: [1], title: '', body: '', send_hour: 9, send_minute: 0 });
+    setRecipientMode('all');
+    setProfileQuery('');
     setEditingId(null);
   };
 
@@ -1069,44 +1084,41 @@ export const ScheduledRemindersPanel: React.FC = () => {
     setEditingId(r.id);
     setForm({
       channel_id: r.channel_id ?? '',
+      user_ids: r.user_ids ?? [],
       frequency: r.frequency,
-      days: r.frequency === 'weekly' ? r.days : [1],
+      days: r.days,
       title: r.title,
       body: r.body,
       send_hour: r.send_hour,
       send_minute: r.send_minute,
     });
-    setMonthlyDaysInput(r.frequency === 'monthly' ? [...r.days].sort((a, b) => a - b).join(', ') : '1');
+    setRecipientMode(r.user_ids && r.user_ids.length > 0 ? 'individual' : r.channel_id ? 'channel' : 'all');
+    setProfileQuery('');
+  };
+
+  const toggleProfile = (id: string) => {
+    setForm(f => ({ ...f, user_ids: f.user_ids.includes(id) ? f.user_ids.filter(x => x !== id) : [...f.user_ids, id] }));
   };
 
   const handleSave = async () => {
-    const days = form.frequency === 'monthly'
-      ? monthlyDaysInput.split(',').map(s => Number(s.trim())).filter(n => Number.isInteger(n) && n >= 1 && n <= 31)
-      : form.days;
-    if (!form.title.trim() || !form.body.trim() || days.length === 0) return;
+    if (!form.title.trim() || !form.body.trim() || form.days.length === 0) return;
+    if (recipientMode === 'individual' && form.user_ids.length === 0) return;
     setSaving(true);
+    const payload = {
+      channel_id: recipientMode === 'channel' ? (form.channel_id || null) : null,
+      user_ids: recipientMode === 'individual' ? form.user_ids : null,
+      frequency: form.frequency,
+      days: form.days,
+      title: form.title.trim(),
+      body: form.body.trim(),
+      send_hour: form.send_hour,
+      send_minute: form.send_minute,
+    };
     if (editingId) {
-      await supabase.from('board_scheduled_reminders').update({
-        channel_id: form.channel_id || null,
-        frequency: form.frequency,
-        days,
-        title: form.title.trim(),
-        body: form.body.trim(),
-        send_hour: form.send_hour,
-        send_minute: form.send_minute,
-      }).eq('id', editingId);
+      await supabase.from('board_scheduled_reminders').update(payload).eq('id', editingId);
     } else {
       const { data: { user } } = await supabase.auth.getUser();
-      await supabase.from('board_scheduled_reminders').insert({
-        created_by: user!.id,
-        channel_id: form.channel_id || null,
-        frequency: form.frequency,
-        days,
-        title: form.title.trim(),
-        body: form.body.trim(),
-        send_hour: form.send_hour,
-        send_minute: form.send_minute,
-      });
+      await supabase.from('board_scheduled_reminders').insert({ ...payload, created_by: user!.id });
     }
     resetForm();
     await fetch();
@@ -1141,28 +1153,37 @@ export const ScheduledRemindersPanel: React.FC = () => {
             <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>頻度</p>
             <div style={{ display: 'flex', gap: 16 }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: text, cursor: 'pointer' }}>
-                <input type="radio" checked={form.frequency === 'monthly'} onChange={() => setForm(f => ({ ...f, frequency: 'monthly' }))} />
+                <input type="radio" checked={form.frequency === 'monthly'} onChange={() => setForm(f => ({ ...f, frequency: 'monthly', days: [1] }))} />
                 毎月
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: text, cursor: 'pointer' }}>
-                <input type="radio" checked={form.frequency === 'weekly'} onChange={() => setForm(f => ({ ...f, frequency: 'weekly' }))} />
+                <input type="radio" checked={form.frequency === 'weekly'} onChange={() => setForm(f => ({ ...f, frequency: 'weekly', days: [1] }))} />
                 毎週
               </label>
             </div>
           </div>
           {form.frequency === 'monthly' ? (
             <div>
-              <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>日付（カンマ区切りで複数可・1〜31）</p>
-              <input type="text" value={monthlyDaysInput} placeholder="例: 1, 15"
-                onChange={e => setMonthlyDaysInput(e.target.value)}
-                style={{ ...inputStyle, width: 200 }} />
+              <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>日付（複数選択可）</p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4, maxWidth: 280 }}>
+                {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
+                  <button key={d} type="button" onClick={() => toggleDay(d)}
+                    style={{ padding: '6px 0', borderRadius: 6, border: `1px solid ${border}`, cursor: 'pointer', fontSize: 12, background: form.days.includes(d) ? '#007bff' : inputBg, color: form.days.includes(d) ? '#fff' : text }}>
+                    {d}
+                  </button>
+                ))}
+              </div>
+              <button type="button" onClick={() => toggleDay(MONTH_END_DAY)}
+                style={{ marginTop: 6, padding: '6px 14px', borderRadius: 6, border: `1px solid ${border}`, cursor: 'pointer', fontSize: 12, fontWeight: 'bold', background: form.days.includes(MONTH_END_DAY) ? '#007bff' : inputBg, color: form.days.includes(MONTH_END_DAY) ? '#fff' : text }}>
+                月末日（2/28・4/30など、その月の最終日）
+              </button>
             </div>
           ) : (
             <div>
               <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>曜日（複数選択可）</p>
               <div style={{ display: 'flex', gap: 6 }}>
                 {WEEKDAY_LABELS.map((label, d) => (
-                  <button key={d} type="button" onClick={() => toggleWeekday(d)}
+                  <button key={d} type="button" onClick={() => toggleDay(d)}
                     style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${border}`, cursor: 'pointer', fontSize: 13, background: form.days.includes(d) ? '#007bff' : inputBg, color: form.days.includes(d) ? '#fff' : text }}>
                     {label}
                   </button>
@@ -1171,12 +1192,37 @@ export const ScheduledRemindersPanel: React.FC = () => {
             </div>
           )}
           <div>
-            <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>送り先グループ（空欄＝全員）</p>
-            <select value={form.channel_id} onChange={e => setForm(f => ({ ...f, channel_id: e.target.value }))}
-              style={inputStyle}>
-              <option value="">全スタッフ</option>
-              {channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>送り先</p>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+              {([['all', '全員'], ['channel', 'グループ'], ['individual', '個別選択']] as [RecipientMode, string][]).map(([mode, label]) => (
+                <button key={mode} type="button" onClick={() => setRecipientMode(mode)}
+                  style={{ padding: '5px 12px', borderRadius: 8, border: `1px solid ${border}`, cursor: 'pointer', fontSize: 12, fontWeight: 'bold', background: recipientMode === mode ? '#007bff' : inputBg, color: recipientMode === mode ? '#fff' : text }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {recipientMode === 'channel' && (
+              <select value={form.channel_id} onChange={e => setForm(f => ({ ...f, channel_id: e.target.value }))}
+                style={inputStyle}>
+                <option value="">グループを選択</option>
+                {channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            )}
+            {recipientMode === 'individual' && (
+              <div>
+                <input value={profileQuery} onChange={e => setProfileQuery(e.target.value)} placeholder="名前で検索..."
+                  style={{ ...inputStyle, marginBottom: 6 }} />
+                <p style={{ margin: '0 0 6px', fontSize: 11, color: sub }}>{form.user_ids.length}人選択中</p>
+                <div style={{ maxHeight: 180, overflowY: 'auto', border: `1px solid ${border}`, borderRadius: 8, padding: 8 }}>
+                  {profiles.filter(p => !profileQuery || (p.name || '').includes(profileQuery)).map(p => (
+                    <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 2px', cursor: 'pointer', fontSize: 13, color: text }}>
+                      <input type="checkbox" checked={form.user_ids.includes(p.id)} onChange={() => toggleProfile(p.id)} />
+                      {p.name || p.email}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           <div>
             <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>送信時刻（日本時間）</p>
@@ -1229,7 +1275,9 @@ export const ScheduledRemindersPanel: React.FC = () => {
               </p>
               <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>{r.body}</p>
               <p style={{ margin: 0, fontSize: 11, color: sub }}>
-                送り先: {r.channel_id ? (channels.find(c => c.id === r.channel_id)?.name ?? 'グループ') : '全スタッフ'}
+                送り先: {r.user_ids && r.user_ids.length > 0
+                  ? `個別選択（${r.user_ids.length}人）`
+                  : r.channel_id ? (channels.find(c => c.id === r.channel_id)?.name ?? 'グループ') : '全スタッフ'}
               </p>
             </div>
             <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>

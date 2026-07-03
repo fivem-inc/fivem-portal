@@ -442,6 +442,7 @@ const AdminPanelContent: React.FC = () => {
           { key: 'leader_assignments', label: 'リーダー',      icon: '📋' },
           { key: 'reports',            label: 'レポート',      icon: '📊' },
           { key: 'notifications',      label: '通知設定',      icon: '🔔' },
+          { key: 'scheduled_reminders', label: 'リマインド設定', icon: '📅' },
           { key: 'board_settings',     label: '連絡板設定',    icon: '📨' },
           { key: 'feature_permissions',label: '権限管理',      icon: '🔐' },
         ] as const;
@@ -532,9 +533,9 @@ const AdminPanelContent: React.FC = () => {
         {activeTab === 'leader_assignments' && <LeaderAssignmentsTab />}
         {activeTab === 'board_settings' && <BoardSettingsTab />}
         {activeTab === 'feature_permissions' && <FeaturePermissionsTab />}
-        {activeTab === 'notifications' && (
+        {activeTab === 'notifications' && <NotificationsTab />}
+        {activeTab === 'scheduled_reminders' && (
           <>
-            <NotificationsTab />
             <ScheduledRemindersPanel />
             <ReminderDaysSettingsPanel />
           </>

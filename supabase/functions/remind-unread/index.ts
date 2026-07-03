@@ -107,10 +107,13 @@ serve(async () => {
       const text = applyVars(emailSetting.template, vars);
       const { data: profiles } = await supabase.from("profiles").select("email").in("id", unreadUserIds);
       const emails = (profiles ?? []).map((p: { email: string | null }) => p.email).filter(Boolean) as string[];
-      if (emails.length > 0) {
-        const { error: emailError } = await supabase.functions.invoke("send-email", { body: { to: emails, subject, text } });
-        if (emailError) console.error("[remind-unread] send-email error:", emailError);
+      let emailFailed = 0;
+      for (const to of emails) {
+        const { error: emailError } = await supabase.functions.invoke("send-email", { body: { to, subject, text } });
+        if (emailError) { emailFailed++; console.error("[remind-unread] send-email error:", emailError); }
+        await new Promise((r) => setTimeout(r, 80));
       }
+      if (emailFailed > 0) console.error(`[remind-unread] ${emailFailed}/${emails.length}件のメール送信に失敗`);
     }
 
     totalSent += unreadUserIds.length;

@@ -1,5 +1,5 @@
 [functions.send-email]
-verify_jwt = false
+verify_jwt = true
 
 [functions.create-user]
 verify_jwt = false

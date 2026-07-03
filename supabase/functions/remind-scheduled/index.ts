@@ -4,6 +4,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const applyVars = (text: string, vars: Record<string, string>) =>
   text.replace(/\{\{(.+?)\}\}/g, (_, k) => vars[k.trim()] ?? `{{${k.trim()}}}`);
 
+const MONTH_END_DAY = 32; // 管理画面の「月末日」ボタンが表す特別値
+
 serve(async () => {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
   const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -16,16 +18,20 @@ serve(async () => {
   const dayOfWeek = jstNow.getUTCDay(); // 0=日〜6=土
   const hour = jstNow.getUTCHours();
   const minute = jstNow.getUTCMinutes();
+  // その月の最終日かどうか（「月末日」設定の判定に使う。翌日のUTC日付が1日になれば今日が月末）
+  const isLastDayOfMonth = new Date(jstNow.getTime() + 24 * 60 * 60 * 1000).getUTCDate() === 1;
 
   const { data: candidates, error } = await supabase
     .from("board_scheduled_reminders")
-    .select("id, channel_id, title, body, frequency, days")
+    .select("id, channel_id, user_ids, title, body, frequency, days")
     .eq("send_hour", hour)
     .eq("send_minute", minute)
     .eq("is_active", true);
 
   const reminders = (candidates || []).filter((r: { frequency: string; days: number[] }) =>
-    r.frequency === "weekly" ? r.days.includes(dayOfWeek) : r.days.includes(dayOfMonth)
+    r.frequency === "weekly"
+      ? r.days.includes(dayOfWeek)
+      : r.days.includes(dayOfMonth) || (isLastDayOfMonth && r.days.includes(MONTH_END_DAY))
   );
 
   if (error || reminders.length === 0) {
@@ -44,7 +50,10 @@ serve(async () => {
   for (const reminder of reminders) {
     let userIds: string[] = [];
 
-    if (reminder.channel_id) {
+    if (reminder.user_ids && reminder.user_ids.length > 0) {
+      // 個別選択されたスタッフに送る
+      userIds = reminder.user_ids;
+    } else if (reminder.channel_id) {
       // チャンネルメンバーに送る
       const { data: members } = await supabase
         .from("board_channel_members")
@@ -84,10 +93,13 @@ serve(async () => {
       const text = applyVars(emailSetting.template, vars);
       const { data: profiles } = await supabase.from("profiles").select("email").in("id", userIds);
       const emails = (profiles ?? []).map((p: { email: string | null }) => p.email).filter(Boolean) as string[];
-      if (emails.length > 0) {
-        const { error: emailError } = await supabase.functions.invoke("send-email", { body: { to: emails, subject, text } });
-        if (emailError) console.error("[remind-scheduled] send-email error:", emailError);
+      let emailFailed = 0;
+      for (const to of emails) {
+        const { error: emailError } = await supabase.functions.invoke("send-email", { body: { to, subject, text } });
+        if (emailError) { emailFailed++; console.error("[remind-scheduled] send-email error:", emailError); }
+        await new Promise((r) => setTimeout(r, 80));
       }
+      if (emailFailed > 0) console.error(`[remind-scheduled] ${emailFailed}/${emails.length}件のメール送信に失敗`);
     }
 
     totalSent += userIds.length;

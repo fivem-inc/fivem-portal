@@ -188,11 +188,8 @@ const SendEmailModal: React.FC<{
         const personalBody = body.replace(/\{\{name\}\}/g, t.name || t.email);
         const html = personalBody.replace(/\n/g, '<br>');
         try {
-          const response = await fetch(
-            `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-email`,
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: t.email, subject, html }) }
-          );
-          if (!response.ok) { failed.push({ name: t.name || t.email, email: t.email }); } else { success++; }
+          const { error } = await supabase.functions.invoke('send-email', { body: { to: t.email, subject, html } });
+          if (error) { failed.push({ name: t.name || t.email, email: t.email }); } else { success++; }
         } catch { failed.push({ name: t.name || t.email, email: t.email }); }
         done++;
         setProgress(Math.round((done / sendTargets.length) * 100));

@@ -388,10 +388,12 @@ const ShiftReportForm: React.FC<{
     if (!reason.trim()) return '理由を入力してください';
     if (!origDayOff && !hasHoliday && !hasAbsence && (!origStart || !origEnd)) return '通常シフトの時間を入力してください';
     if (!origDayOff && !hasHoliday && !hasAbsence && origStart && origEnd && origStart === origEnd) return '通常シフトの開始・終了が同じ時間です。正しい時間を入力してください';
+    if (!origDayOff && !hasHoliday && !hasAbsence && !origLoc) return '通常シフトの勤務地を選択してください';
     if (!origDayOff && !hasHoliday && !hasAbsence && origLoc === 'その他' && !origLocCustom.trim()) return '通常シフトの場所を入力してください';
     if (!origDayOff && !hasHoliday && !hasAbsence && origOutingOn && (!origOutingStart || !origOutingEnd || origOutingStart === origOutingEnd)) return '通常シフトの外出・戻り時間を正しく入力してください';
     if (!hasAbsence && (!actStart || !actEnd)) return '実際の時間を入力してください';
     if (!hasAbsence && actStart && actEnd && actStart === actEnd) return '開始時間と終了時間が同じです。正しい時間を入力してください';
+    if (!hasAbsence && !actLoc) return '実際の勤務地を選択してください';
     if (!hasAbsence && actLoc === 'その他' && !actLocCustom.trim()) return '実際の勤務場所を入力してください';
     if (!hasAbsence && actOutingOn && (!actOutingStart || !actOutingEnd || actOutingStart === actOutingEnd)) return '実際の外出・戻り時間を正しく入力してください';
     if (!reviewerId)    return '確認依頼先を選択してください';
@@ -618,7 +620,7 @@ const ShiftReportForm: React.FC<{
               {!origDayOff && (
                 <>
                   <div style={{ marginBottom: 8 }}>
-                    <label style={L}>勤務地</label>
+                    <label style={L}>勤務地 {Req}</label>
                     <select value={origLoc} onChange={e => setOrigLoc(e.target.value)} style={f}>
                       <option value="">選択してください</option>
                       {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
@@ -660,7 +662,7 @@ const ShiftReportForm: React.FC<{
               <div style={{ background: cardBg2, borderRadius: 10, padding: '12px 14px', marginBottom: 12 }}>
                 <div style={{ fontSize: 12, fontWeight: 'bold', color: subColor, marginBottom: 10 }}>✅ 実際に勤務した時間</div>
                 <div style={{ marginBottom: 8 }}>
-                  <label style={L}>勤務地・場所</label>
+                  <label style={L}>勤務地・場所 {Req}</label>
                   <select value={actLoc} onChange={e => setActLoc(e.target.value)} style={f}>
                     <option value="">選択してください</option>
                     {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
@@ -821,7 +823,6 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const [successMsg, setSuccessMsg]     = useState('');
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [showReviewerGuide, setShowReviewerGuide] = useState(false);
-  const [showBreakRules, setShowBreakRules] = useState(true);
   const [showAllBreakRules, setShowAllBreakRules] = useState(false);
   const [reviewers, setReviewers]       = useState<Reviewer[]>([]);
   const [workplaces, setWorkplaces]     = useState<string[]>([]);
@@ -1186,31 +1187,24 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                 </div>
               )}
 
-              <button type="button" onClick={() => setShowBreakRules(v => !v)}
-                style={{ marginTop: 8, padding: '6px 12px', fontSize: 12, fontWeight: 'bold', background: noteBtn, color: noteTitleColor, border: 'none', borderRadius: 6, cursor: 'pointer' }}>
-                {showBreakRules ? '▲ 休憩時間ルールを閉じる' : '▼ 休憩時間ルールを表示'}
-              </button>
-
-              {showBreakRules && (
-                <div style={{ marginTop: 10, padding: '12px 14px', borderRadius: 8, background: bg, border: `1px solid ${noteBorder}`, fontSize: 12, lineHeight: 1.9, color: noteText }}>
-                  <p style={{ margin: '0 0 6px', fontWeight: 'bold', color: noteTitleColor }}>《 休憩時間ルール 》</p>
-                  <ul style={{ margin: 0, paddingLeft: 18 }}>
-                    <li>昼休憩をはさむ（12:59までに出勤する）場合は、休憩時間の最低時間単位は0:30</li>
-                    {showAllBreakRules && (
-                      <>
-                        <li>（13:00以降に出勤する場合に限り）勤務時間が5:45を超え、6:15までの場合は0:15</li>
-                        <li>勤務時間が6:15を超え、6:30までの場合は0:30</li>
-                        <li>勤務時間が6:30を超え、8:45までの場合は0:45</li>
-                        <li>勤務時間が8:45を超える場合は1:00</li>
-                      </>
-                    )}
-                  </ul>
-                  <button type="button" onClick={() => setShowAllBreakRules(v => !v)}
-                    style={{ marginTop: 6, padding: 0, fontSize: 12, fontWeight: 'bold', background: 'none', color: noteTitleColor, border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
-                    {showAllBreakRules ? '▲ 閉じる' : '▼ 休憩時間ルールを全て表示'}
-                  </button>
-                </div>
-              )}
+              <div style={{ marginTop: 10, padding: '12px 14px', borderRadius: 8, background: bg, border: `1px solid ${noteBorder}`, fontSize: 12, lineHeight: 1.9, color: noteText }}>
+                <p style={{ margin: '0 0 6px', fontWeight: 'bold', color: noteTitleColor }}>《 休憩時間ルール 》</p>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  <li>昼休憩をはさむ（12:59までに出勤する）場合は、休憩時間の最低時間単位は0:30</li>
+                  {showAllBreakRules && (
+                    <>
+                      <li>（13:00以降に出勤する場合に限り）勤務時間が5:45を超え、6:15までの場合は0:15</li>
+                      <li>勤務時間が6:15を超え、6:30までの場合は0:30</li>
+                      <li>勤務時間が6:30を超え、8:45までの場合は0:45</li>
+                      <li>勤務時間が8:45を超える場合は1:00</li>
+                    </>
+                  )}
+                </ul>
+                <button type="button" onClick={() => setShowAllBreakRules(v => !v)}
+                  style={{ marginTop: 6, padding: 0, fontSize: 12, fontWeight: 'bold', background: 'none', color: noteTitleColor, border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+                  {showAllBreakRules ? '▲ 閉じる' : '▼ 休憩時間ルールを全て表示'}
+                </button>
+              </div>
             </div>
 
             {/* インライン申請フォーム（key で申請後リセット） */}

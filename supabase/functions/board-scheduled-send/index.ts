@@ -6,6 +6,37 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+const FROM_ADDRESS = 'noreply@five-m.com';
+const FROM_NAME = 'ファイブM管理者';
+
+// Resendのバッチ送信API（宛先ごとに個別のtoを持つメールを1リクエストでまとめて送る。1リクエスト最大100件）
+// 全員に同一内容だが宛先だけ別々にすることで、他の受信者のメールアドレスが見えるのを防ぐ
+async function sendBatchEmails(emails: string[], subject: string, text: string): Promise<number> {
+  const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
+  if (!RESEND_API_KEY) { console.error('[board-scheduled-send] RESEND_API_KEY が設定されていません'); return emails.length; }
+
+  let failed = 0;
+  for (let i = 0; i < emails.length; i += 100) {
+    const chunk = emails.slice(i, i + 100);
+    const payload = chunk.map(to => ({
+      from: `${FROM_NAME} <${FROM_ADDRESS}>`,
+      to: [to],
+      subject,
+      text,
+    }));
+    const res = await fetch('https://api.resend.com/emails/batch', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      failed += chunk.length;
+      console.error('[board-scheduled-send] Resendバッチ送信失敗:', res.status, await res.text());
+    }
+  }
+  return failed;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
@@ -86,8 +117,8 @@ serve(async (req) => {
         .in('id', recipients.map((r: { user_id: string }) => r.user_id));
       const emails = (recipientProfiles ?? []).map((p: { email: string | null }) => p.email).filter(Boolean) as string[];
       if (emails.length > 0) {
-        const { error: emailError } = await supabase.functions.invoke('send-email', { body: { to: emails, subject, text } });
-        if (emailError) console.error('send-email error:', emailError);
+        const failed = await sendBatchEmails(emails, subject, text);
+        if (failed > 0) console.error(`[board-scheduled-send] ${failed}/${emails.length}件のメール送信に失敗`);
       }
     }
 
