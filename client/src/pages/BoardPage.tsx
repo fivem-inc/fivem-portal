@@ -143,7 +143,7 @@ const BoardPage: React.FC = () => {
   const { previewRole } = useContext(AuthContext);
   const isDark = useDarkMode();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const bg        = isDark ? '#1a1a2e' : '#f0f2f5';
   const sidebarBg = isDark ? '#16213e' : '#f8f9fa';
@@ -169,17 +169,53 @@ const BoardPage: React.FC = () => {
   const [composeIncludeCC, setComposeIncludeCC] = useState(true);
   const [channelDeleteConfirmId, setChannelDeleteConfirmId] = useState<string | null>(null);
 
-  const [view,               setView]               = useState<View>('inbox');
-  const [showSidebar,        setShowSidebar]         = useState(true);
-  const [selectedChannelId,  setSelectedChannelId]  = useState<string | null>(null);
-  const [threadMsgId,        setThreadMsgId]        = useState<string | null>(null);
+  // ── URL連動の画面状態 ─────────────────────────────────────────────
+  // スマホの戻るボタンで受信トレイ詳細→一覧のように1段階ずつ戻れるよう、
+  // 画面の深さをURLパラメータ(bv/bsb/bch/bin/bout/bth)に反映する。
+  // 同一イベント内での複数setステートはマイクロタスクでまとめて1回のpush/replaceに合成する
+  // （1タップで履歴が複数積まれて戻るボタンが効かなくなるのを防ぐため）。
+  const boardPatchRef = useRef<Record<string, string | null> | null>(null);
+  const boardPatchReplaceRef = useRef(false);
+  const boardFlushScheduledRef = useRef(false);
+  const patchBoardParams = useCallback((patch: Record<string, string | null>, opts?: { replace?: boolean }) => {
+    boardPatchRef.current = { ...(boardPatchRef.current || {}), ...patch };
+    if (opts?.replace) boardPatchReplaceRef.current = true;
+    if (!boardFlushScheduledRef.current) {
+      boardFlushScheduledRef.current = true;
+      queueMicrotask(() => {
+        boardFlushScheduledRef.current = false;
+        const p = boardPatchRef.current;
+        const replace = boardPatchReplaceRef.current;
+        boardPatchRef.current = null;
+        boardPatchReplaceRef.current = false;
+        if (!p) return;
+        setSearchParams(prev => {
+          const next = new URLSearchParams(prev);
+          Object.entries(p).forEach(([k, v]) => { if (v === null) next.delete(k); else next.set(k, v); });
+          return next;
+        }, { replace });
+      });
+    }
+  }, [setSearchParams]);
+  // メッセージ削除等の副作用でstateを補正するだけの場合はreplaceで履歴を汚さない
+  const silentClearBoardParam = useCallback((key: string) => patchBoardParams({ [key]: null }, { replace: true }), [patchBoardParams]);
+
+  const view              = (searchParams.get('bv') as View) || 'inbox';
+  const showSidebar       = searchParams.get('bsb') !== '0';
+  const selectedChannelId = searchParams.get('bch');
+  const threadMsgId       = searchParams.get('bth');
+  const setView              = useCallback((v: View) => patchBoardParams({ bv: v === 'inbox' ? null : v }), [patchBoardParams]);
+  const setShowSidebar       = useCallback((v: boolean) => patchBoardParams({ bsb: v ? null : '0' }), [patchBoardParams]);
+  const setSelectedChannelId = useCallback((v: string | null) => patchBoardParams({ bch: v }), [patchBoardParams]);
+  const setThreadMsgId       = useCallback((v: string | null) => patchBoardParams({ bth: v }), [patchBoardParams]);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [showChannelList,    setShowChannelList]     = useState(true);
 
   // 受信トレイ
   const [inboxMessages,    setInboxMessages]    = useState<BoardMessage[]>([]);
   const [inboxFilter,      setInboxFilter]      = useState<'all' | 'unread' | 'pending' | 'read' | 'answer' | 'submit' | 'approve' | 'archived'>('all');
-  const [inboxDetailId,    setInboxDetailId]    = useState<string | null>(null);
+  const inboxDetailId = searchParams.get('bin');
+  const setInboxDetailId = useCallback((v: string | null) => patchBoardParams({ bin: v }), [patchBoardParams]);
   const [inboxRecipients,  setInboxRecipients]  = useState<Record<string, string[]>>({});
   const [archivedMessages, setArchivedMessages] = useState<BoardMessage[]>([]);
   const [inboxDetailRecipients,   setInboxDetailRecipients]   = useState<string[]>([]);
@@ -197,7 +233,8 @@ const BoardPage: React.FC = () => {
   const [outboxArchiveDelConfirm, setOutboxArchiveDelConfirm] = useState(false);
   const [inboxArchiveSelected,   setInboxArchiveSelected]   = useState<Set<string>>(new Set());
   const [inboxArchiveDelConfirm,  setInboxArchiveDelConfirm]  = useState(false);
-  const [outboxDetailId,   setOutboxDetailId]   = useState<string | null>(null);
+  const outboxDetailId = searchParams.get('bout');
+  const setOutboxDetailId = useCallback((v: string | null) => patchBoardParams({ bout: v }), [patchBoardParams]);
   const [showAllOutboxRecipients, setShowAllOutboxRecipients] = useState(false);
   // 送信メッセージ修正・削除
   const [editingNoticeId,    setEditingNoticeId]    = useState<string | null>(null);
@@ -429,16 +466,17 @@ const BoardPage: React.FC = () => {
 
   // 連絡板ボタン再タップ → サイドバーTOPにリセット
   const resetToTop = useCallback(() => {
-    setView('inbox');
-    setShowSidebar(true);
-    setSelectedChannelId(null);
-    setInboxDetailId(null);
-    setOutboxDetailId(null);
-    setThreadMsgId(null);
+    // タブ再タップでのTOPリセットは「1段階戻る」ではなく根本へのジャンプなので
+    // pushではなくreplaceでURLパラメータを一括クリアする
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      ['bv', 'bsb', 'bch', 'bin', 'bout', 'bth'].forEach(k => next.delete(k));
+      return next;
+    }, { replace: true });
     setShowSearch(false);
     setSearchText('');
     setSearchResults([]);
-  }, []);
+  }, [setSearchParams]);
 
   useEffect(() => {
     window.addEventListener('board-reset', resetToTop);
@@ -450,7 +488,7 @@ const BoardPage: React.FC = () => {
   useEffect(() => {
     if (!searchText.trim() || searchText.trim().length < 2) {
       setSearchResults([]);
-      if (view === 'search') setView('inbox');
+      if (view === 'search') navigate(-1);
       return;
     }
     const timer = setTimeout(async () => {
@@ -590,7 +628,7 @@ const BoardPage: React.FC = () => {
       .eq('user_id', user.id);
     if (archive) {
       setInboxMessages(prev => prev.filter(m => m.id !== msgId));
-      if (inboxDetailId === msgId) setInboxDetailId(null);
+      if (inboxDetailId === msgId) silentClearBoardParam('bin');
     } else {
       setArchivedMessages(prev => prev.filter(m => m.id !== msgId));
       await loadInbox();
@@ -664,10 +702,19 @@ const BoardPage: React.FC = () => {
     if (!openId || inboxMessages.length === 0) return;
     const msg = inboxMessages.find(m => m.id === openId);
     if (!msg) return;
-    setView('inbox');
-    setShowSidebar(false);
-    setInboxDetailId(openId);
-    window.history.replaceState({}, '', '/board');
+    // まず現在のエントリを受信トレイ一覧のベース状態に置き換え（replace）、
+    // その上で詳細エントリをpush → 戻るボタンで一覧に戻れるようにする
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      ['openInboxId', 'bv', 'bin', 'bch', 'bout', 'bth'].forEach(k => next.delete(k));
+      next.set('bsb', '0');
+      return next;
+    }, { replace: true });
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.set('bin', openId);
+      return next;
+    }, { replace: false });
     if (!inboxReadIds.has(openId) && user) {
       supabase.from('board_reads').upsert({ message_id: openId, user_id: user.id }, { onConflict: 'message_id,user_id', ignoreDuplicates: true })
         .then(() => setInboxReadIds(prev => new Set([...prev, openId])));
@@ -935,8 +982,8 @@ const BoardPage: React.FC = () => {
     setInboxMessages(prev => prev.filter(m => m.id !== msgId));
     setArchivedMessages(prev => prev.filter(m => m.id !== msgId));
     setDeleteConfirmId(null);
-    if (outboxDetailId === msgId) { setOutboxDetailId(null); setShowAllOutboxRecipients(false); }
-    if (inboxDetailId === msgId) setInboxDetailId(null);
+    if (outboxDetailId === msgId) { silentClearBoardParam('bout'); setShowAllOutboxRecipients(false); }
+    if (inboxDetailId === msgId) silentClearBoardParam('bin');
     setNoticeActionBanner('deleted');
     setTimeout(() => setNoticeActionBanner(null), 3000);
   };
@@ -947,7 +994,7 @@ const BoardPage: React.FC = () => {
     setOutboxMessages(prev => prev.filter(m => m.id !== msgId));
     if (msg) setOutboxArchivedMessages(prev => [{ ...msg, outbox_hidden: true }, ...prev]);
     setOutboxArchiveConfirmId(null);
-    if (outboxDetailId === msgId) { setOutboxDetailId(null); setShowAllOutboxRecipients(false); }
+    if (outboxDetailId === msgId) { silentClearBoardParam('bout'); setShowAllOutboxRecipients(false); }
   };
 
   // チャンネル作成（トークン更新直後の403は1回だけセッション再取得してリトライ）
@@ -1132,7 +1179,7 @@ const BoardPage: React.FC = () => {
     await supabase.from('board_channel_members').delete().eq('channel_id', chId);
     await supabase.from('board_messages').delete().eq('channel_id', chId);
     await supabase.from('board_channels').delete().eq('id', chId);
-    if (selectedChannelId === chId) { setSelectedChannelId(null); setShowChannelList(true); }
+    if (selectedChannelId === chId) { silentClearBoardParam('bch'); setShowChannelList(true); }
     await loadAll();
   };
 
@@ -1471,7 +1518,7 @@ const BoardPage: React.FC = () => {
       <div style={{ position: 'fixed', top: 'var(--topbar-height, 60px)' as string, left: 0, right: 0, bottom: 0, zIndex: 200, background: bg, display: 'flex', flexDirection: 'column' }}>
         {/* Thread header */}
         <div style={{ padding: '10px 14px', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, position: 'sticky', top: 0, zIndex: 10 }}>
-          <button type="button" onClick={() => { setThreadMsgId(null); setReplyBody(''); }}
+          <button type="button" onClick={() => { navigate(-1); setReplyBody(''); }}
             style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 22, padding: '0 6px', fontWeight: 'bold' }}>←</button>
           <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>スレッド</span>
         </div>
@@ -3213,7 +3260,7 @@ const BoardPage: React.FC = () => {
           <div style={{ padding: '8px 12px', height: 56, boxSizing: 'border-box', borderBottom: `1px solid ${border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
             <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor, flexShrink: 0 }}>💬 連絡板</span>
             <div style={{ display: 'flex', gap: 5, flexWrap: 'nowrap', flexShrink: 0 }}>
-              <button type="button" title="検索" onClick={() => { setShowSearch(s => !s); setSearchText(''); setSearchResults([]); if (view === 'search') setView('inbox'); }}
+              <button type="button" title="検索" onClick={() => { setShowSearch(s => !s); setSearchText(''); setSearchResults([]); if (view === 'search') navigate(-1); }}
                 style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '5px 7px', lineHeight: 1, flexShrink: 0 }}>🔍</button>
               {(isAdmin || noticeSendRoles.length === 0 || noticeSendRoles.includes(roleTitle)) && (
                 <button type="button" onClick={() => { resetCompose(); setView('compose'); setShowSidebar(false); }}
@@ -3240,12 +3287,7 @@ const BoardPage: React.FC = () => {
       {(!showSidebar || !isMobile) && (
         <div style={{ position: 'fixed', top: 'var(--topbar-height, 60px)' as string, left: isMobile ? 0 : 280, right: 0, zIndex: 50, padding: '8px 14px', height: 56, boxSizing: 'border-box', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', gap: 8 }}>
           {isMobile && (
-            <button type="button" onClick={() => {
-              if (inboxDetailId) { setInboxDetailId(null); return; }
-              if (outboxDetailId) { setOutboxDetailId(null); return; }
-              setShowSidebar(true);
-              if (view === 'channel') { setSelectedChannelId(null); setShowChannelList(true); }
-            }}
+            <button type="button" onClick={() => navigate(-1)}
               style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 22, padding: '0 6px', lineHeight: 1, fontWeight: 'bold' }}>←</button>
           )}
           {view === 'channel' && selectedChannel ? (

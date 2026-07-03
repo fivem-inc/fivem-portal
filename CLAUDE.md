@@ -5035,3 +5035,69 @@ alter table public.shift_reports
 - Edge Function 3本は`supabase functions deploy`でデプロイ済み
 - ⚠️ 実機動作確認（休暇申請系メールのリンク反映はpush後、勤務変更申請の
   勤務地必須バリデーション）は次回ローカル・本番での確認を推奨
+
+---
+
+## ✅ 2026-07-07（続き2） スマホ戻るボタン対応（連絡板・勤務変更申請）完了
+
+### 背景・経緯
+- ユーザーから「連絡板で受信トレイのメッセージを見ていて戻るボタンを押すと、
+  交通費申請など別ページに飛んでしまい、1つ前の受信トレイ一覧に戻らない」と報告
+- 過去（2026-06-15〜16）に連絡板の戻るボタン対応は5回も方式を変えて実装が
+  試みられ（pushStateセンチネル→go(1)→useBlocker→replaceState→navigate(replace)）、
+  最終的に「ログアウト・通知復旧優先」として**全て無効化されたまま放置されていた**
+  ことをgit log調査で判明（コミット`c57fc89`で削除）。CLAUDE.md 3375行目付近の
+  記載は削除前の古い情報だった
+- 過去の失敗はいずれも「独自にhistory.pushState/replaceStateやpopstateリスナーを
+  操作し、ログアウト・通知遷移と衝突する」ことが原因と分析。今回はReact Router
+  標準の`navigate()`/`useSearchParams()`だけで完結させ、ブラウザの戻る操作自体には
+  一切介入しない設計に変更した
+
+### 実装方式（今後同様の画面を作る時の指針）
+1. 画面の深さ（詳細表示・チャンネル選択・確認ページ等）を**URLパラメータに反映**する
+   （BoardPageは`bv`/`bsb`/`bch`/`bin`/`bout`/`bth`、ShiftReportPageは`view=confirm`）
+2. 「進む」操作（メッセージを開く等）は`setSearchParams`で**push**（履歴に積む）
+3. 「戻る」操作（← ボタン・閉じるボタン）は`setSearchParams`で新しい状態をpushする
+   のではなく**`navigate(-1)`で1段階ポップする**
+   → in-appの戻るボタンと物理戻るボタンが完全に同じ挙動になり、
+     「pushState蓄積で何度も戻るボタンを押さないと抜けられない」問題を回避できる
+4. メッセージ削除など**ユーザー操作ではない自動補正**は`replace: true`で
+   履歴を汚さずにURLだけ直す（例：表示中のメッセージが削除された時にdetail idをクリア）
+5. 1つのクリックハンドラ内で複数のstateを同時に変更する箇所が多いため、
+   BoardPageでは`queueMicrotask`で同一イベント内の変更を1回のpush/replaceに
+   まとめる仕組み（`patchBoardParams`）を実装。これが無いと1タップで履歴が
+   複数積まれ、結局「戻るボタンを何度も押さないといけない」バグが再発する
+6. 通知メール等の外部リンクで深い状態（例：`?openInboxId=xxx`, `?view=confirm`）
+   にいきなり着地するケースは、そのままpushすると「戻る」でアプリの外
+   （通知一覧やホーム）に出てしまう。**着地時に「TOPの状態にreplace」→
+   「深い状態をpush」の2段階**にすることで、戻るボタンで必ずアプリ内のTOPに
+   戻れるようにした（BoardPageの`openInboxId`処理、ShiftReportPageの
+   `view=confirm`直接遷移処理）
+
+### 変更ファイル
+- `client/src/pages/BoardPage.tsx`
+  - view/showSidebar/selectedChannelId/inboxDetailId/outboxDetailId/threadMsgId
+    をすべてuseStateからURLパラメータ連動に変更
+  - 各種「←」「✕」戻る系ボタンを`navigate(-1)`に統一
+  - `resetToTop`（連絡板アイコン再タップ）は1段階戻るのではなく根本へのジャンプ
+    なので`replace: true`で一括クリア
+- `client/src/pages/ShiftReportPage.tsx`
+  - `confirmView`（確認ページ表示）をuseStateからURLパラメータ（`view=confirm`）
+    連動に変更、「‹」戻るボタンを`navigate(-1)`に変更
+  - 通知メールから`?view=confirm`付きで直接遷移してきた場合のTOP経由化を追加
+
+### ⚠️ 注意事項・保留事項
+- 今回のURLパラメータ方式は、BoardPage・ShiftReportPage以外の画面
+  （休暇申請・出張報告・交通費申請等）にはまだ適用していない。同様の
+  「詳細を開いたまま戻るとページごと離脱する」報告があれば同じ方式で対応する
+- BoardPageの`showChannelList`state・`window.confirm`（`deleteChannel`内）・
+  `alert`（送信失敗時）は今回のスコープ外として温存（既存の別課題）
+- **未デプロイ・未push**（このセッションでpush予定）
+
+### 確認内容
+- `npx tsc -b`・`npx vite build`：両方成功（BoardPage 140.75KB、ShiftReportPage 57.63KB）
+- fivem-portalはClaude Codeのプライマリ作業ディレクトリ外のため`preview_start`が
+  使えず、ビルド確認のみ。ユーザーが実機（ローカル`npm run dev`）で以下を確認済み：
+  - 連絡板：受信トレイ詳細・送信トレイ詳細・チャンネル・スレッドから戻るボタンで
+    1段階ずつ正しく戻れる
+  - 勤務変更申請：確認ページから戻るボタンでTOP（申請/履歴タブ）に戻れる

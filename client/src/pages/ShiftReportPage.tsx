@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import type { AuthUser } from '../types';
@@ -809,12 +809,39 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const isApprover = IS_APPROVER(roleTitle, isAdmin);
   const canSeeAll  = isAdmin || ['リーダー', 'マネージャー', '管理者'].includes(roleTitle);
 
-  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab]                   = useState<'apply' | 'history'>(searchParams.get('tab') === 'history' ? 'history' : 'apply');
   const [formKey, setFormKey]           = useState(0);
   const [cancelTarget, setCancelTarget] = useState<ShiftReport | null>(null);
   const [cancelReason, setCancelReason] = useState('');
-  const [confirmView, setConfirmView]   = useState(searchParams.get('view') === 'confirm');
+  // 確認ページはURLパラメータ(view=confirm)と連動させ、戻るボタンでTOPに戻れるようにする
+  const confirmView = searchParams.get('view') === 'confirm';
+  const setConfirmView = useCallback((v: boolean) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      if (v) next.set('view', 'confirm'); else next.delete('view');
+      return next;
+    }, { replace: false });
+  }, [setSearchParams]);
+  // 通知リンク等でview=confirmを持ったままこのページに直接遷移してきた場合、
+  // その手前にTOP（申請/履歴タブ）のエントリが無いと戻るボタンで離脱してしまう。
+  // 現エントリをTOPにreplaceしてから確認ページをpushし直し、戻れるようにする
+  useEffect(() => {
+    if (searchParams.get('view') === 'confirm') {
+      setSearchParams(prev => {
+        const next = new URLSearchParams(prev);
+        next.delete('view');
+        return next;
+      }, { replace: true });
+      setSearchParams(prev => {
+        const next = new URLSearchParams(prev);
+        next.set('view', 'confirm');
+        return next;
+      }, { replace: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [showForm, setShowForm]         = useState(false);
   const [editTarget, setEditTarget]     = useState<ShiftReport | null>(null);
   const [myReports, setMyReports]       = useState<ShiftReport[]>([]);
@@ -1039,7 +1066,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
         {successMsg && <BannerSuccess message={successMsg} onClose={() => setSuccessMsg('')} />}
         <div style={{ padding: '16px 16px 0' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-            <button onClick={() => setConfirmView(false)} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: text }}>‹</button>
+            <button onClick={() => navigate(-1)} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: text }}>‹</button>
             <span style={{ fontWeight: 'bold', fontSize: 16, color: text }}>確認ページ</span>
             {pendingReports.length > 0 && (
               <span style={{ background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 11, padding: '2px 8px', fontWeight: 'bold' }}>{pendingReports.length}件</span>
