@@ -983,15 +983,10 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
           ))}
         </div>
 
-        {canInput && (
+        {(canInput || isMobile) && (
           <div style={{ fontSize: 12, color: '#4a90d9', marginBottom: 12, padding: '6px 10px', background: isDark ? '#1a3a5c' : '#e8f4fd', borderRadius: 6 }}>
-            📅 日付をタップして欠勤入力できます
-          </div>
-        )}
-
-        {isMobile && (
-          <div style={{ fontSize: 12, color: '#888', marginBottom: 12, padding: '6px 10px', background: isDark ? '#2d2d3e' : '#f3f4f6', borderRadius: 6 }}>
-            💡 スマホを横向きにすると名前が表示されます
+            {canInput && <div>📅 日付をタップして欠勤入力できます</div>}
+            {isMobile && <div style={canInput ? { marginTop: 4 } : undefined}>💡 スマホを横向きにすると名前が表示されます</div>}
           </div>
         )}
 
