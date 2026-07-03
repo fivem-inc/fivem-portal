@@ -50,7 +50,6 @@ interface BoardMessage {
   title: string | null;
   subject: string | null;
   status: string | null;
-  comment_enabled: boolean;
   answer_prompt: string | null;
   answer_location: string | null;
   answer_link: string | null;
@@ -183,9 +182,6 @@ const BoardPage: React.FC = () => {
   const [inboxDetailId,    setInboxDetailId]    = useState<string | null>(null);
   const [inboxRecipients,  setInboxRecipients]  = useState<Record<string, string[]>>({});
   const [archivedMessages, setArchivedMessages] = useState<BoardMessage[]>([]);
-  const [inboxCommentOpen, setInboxCommentOpen] = useState<Record<string, boolean>>({});
-  const [inboxComments,    setInboxComments]    = useState<Record<string, BoardMessage[]>>({});
-  const [inboxCommentBody, setInboxCommentBody] = useState<Record<string, string>>({});
   const [inboxDetailRecipients,   setInboxDetailRecipients]   = useState<string[]>([]);
   const [inboxDetailUnconfirmed,  setInboxDetailUnconfirmed]  = useState<string[]>([]);
   const [inboxRemindSending,      setInboxRemindSending]      = useState(false);
@@ -382,7 +378,7 @@ const BoardPage: React.FC = () => {
       const [msgsRes, readsRes] = await Promise.all([
         supabase
           .from('board_messages')
-          .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+          .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link')
           .in('id', [...msgIds])
           .order('created_at', { ascending: false }),
         supabase
@@ -483,7 +479,7 @@ const BoardPage: React.FC = () => {
       const channelQuery = cids.length > 0
         ? supabase
             .from('board_messages')
-            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link')
             .in('channel_id', cids)
             .or(`body.ilike.${q},subject.ilike.${q}`)
             .order('created_at', { ascending: false })
@@ -494,7 +490,7 @@ const BoardPage: React.FC = () => {
       const inboxQuery = inboxIds.length > 0
         ? supabase
             .from('board_messages')
-            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link')
             .in('id', inboxIds)
             .or(`body.ilike.${q},subject.ilike.${q}`)
             .order('created_at', { ascending: false })
@@ -536,7 +532,7 @@ const BoardPage: React.FC = () => {
     const [{ data: msgData }, { data: readData }, { data: rcData }] = await Promise.all([
       supabase
         .from('board_messages')
-        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link')
         .in('id', msgIds)
         .is('parent_id', null)
         .order('created_at', { ascending: false }),
@@ -578,7 +574,7 @@ const BoardPage: React.FC = () => {
     if (msgIds.length === 0) { setArchivedMessages([]); return; }
     const { data: msgData } = await supabase
       .from('board_messages')
-      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
+      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link')
       .in('id', msgIds)
       .is('parent_id', null)
       .order('created_at', { ascending: false });
@@ -603,7 +599,7 @@ const BoardPage: React.FC = () => {
 
   const loadOutbox = useCallback(async () => {
     if (!user) return;
-    const SEL = 'id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link, outbox_hidden, cc_user_ids';
+    const SEL = 'id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, outbox_hidden, cc_user_ids';
     const [{ data }, { data: archData }, { data: ccData }] = await Promise.all([
       supabase.from('board_messages').select(SEL)
         .eq('user_id', user.id).is('channel_id', null).is('parent_id', null)
@@ -851,7 +847,7 @@ const BoardPage: React.FC = () => {
       .single();
 
     if (!error && data) {
-      const msg: BoardMessage = { ...data, subject: null, status: 'sent', comment_enabled: false, broadcast_recipients: null, profile: { name: profileName || null } };
+      const msg: BoardMessage = { ...data, subject: null, status: 'sent', broadcast_recipients: null, profile: { name: profileName || null } };
       setMessages(prev => [...prev, msg]);
       await supabase.from('board_reads').upsert({ message_id: data.id, user_id: user.id }, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
       setReadCounts(prev => ({ ...prev, [data.id]: 1 }));
@@ -2162,84 +2158,6 @@ const BoardPage: React.FC = () => {
                   </>
                 ) : (
                   <div style={{ fontSize: 13, color: '#22c55e', fontWeight: 600 }}>✅ 全員対応済みです</div>
-                )}
-              </div>
-            )}
-            {/* コメント折りたたみ（comment_enabled=true の場合のみ） */}
-            {inboxDetail.comment_enabled && (
-              <div style={{ marginTop: 16 }}>
-                <button type="button"
-                  onClick={async () => {
-                    const isOpen = !!inboxCommentOpen[inboxDetail.id];
-                    if (!isOpen && !inboxComments[inboxDetail.id]) {
-                      const { data } = await supabase
-                        .from('board_messages')
-                        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
-                        .eq('parent_id', inboxDetail.id)
-                        .order('created_at', { ascending: true });
-                      setInboxComments(prev => ({ ...prev, [inboxDetail.id]: (data || []).map((m: any) => ({ ...m, broadcast_recipients: null, profile: null })) }));
-                    }
-                    setInboxCommentOpen(prev => ({ ...prev, [inboxDetail.id]: !isOpen }));
-                  }}
-                  style={{ width: '100%', padding: '10px 14px', background: isDark ? '#2d2d3e' : '#f3f4f6', border: `1px solid ${border}`, borderRadius: 8, cursor: 'pointer', color: textColor, fontSize: 13, fontWeight: 600, textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: 44 }}>
-                  <span>💬 コメント</span>
-                  <span style={{ fontSize: 13, color: inboxCommentOpen[inboxDetail.id] ? '#ef4444' : '#3b82f6', fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: inboxCommentOpen[inboxDetail.id] ? (isDark ? '#3f1a1a' : '#fee2e2') : (isDark ? '#1a2a3f' : '#dbeafe') }}>
-                    {inboxCommentOpen[inboxDetail.id] ? '✕ 閉じる' : '▼ 開く'}
-                  </span>
-                </button>
-                {inboxCommentOpen[inboxDetail.id] && (
-                  <div style={{ marginTop: 8, padding: '10px 12px', background: cardBg, border: `1px solid ${border}`, borderRadius: 8 }}>
-                    {(inboxComments[inboxDetail.id] || []).length === 0 ? (
-                      <div style={{ fontSize: 13, color: subColor, textAlign: 'center', padding: '8px 0' }}>コメントはまだありません</div>
-                    ) : (
-                      (inboxComments[inboxDetail.id] || []).map(c => {
-                        const cName = allProfiles.find(p => p.id === c.user_id)?.name || '不明';
-                        return (
-                          <div key={c.id} style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-                            <div style={{ width: 26, height: 26, borderRadius: '50%', background: '#28a745', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 11, fontWeight: 'bold', flexShrink: 0 }}>
-                              {avatarLetter(cName)}
-                            </div>
-                            <div style={{ flex: 1 }}>
-                              <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 2 }}>
-                                <span style={{ fontSize: 12, fontWeight: 700, color: textColor }}>{cName}</span>
-                                <span style={{ fontSize: 11, color: subColor }}>{fmtFull(c.created_at)}</span>
-                              </div>
-                              <div style={{ fontSize: 13, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5 }}>{c.body}</div>
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                    {/* コメント入力 */}
-                    <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                      <textarea
-                        value={inboxCommentBody[inboxDetail.id] || ''}
-                        onChange={e => setInboxCommentBody(prev => ({ ...prev, [inboxDetail.id]: e.target.value }))}
-                        placeholder="コメントを入力..."
-                        rows={2}
-                        style={{ flex: 1, padding: '6px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, resize: 'none', fontFamily: 'inherit' }}
-                      />
-                      <button type="button"
-                        disabled={!(inboxCommentBody[inboxDetail.id] || '').trim()}
-                        onClick={async () => {
-                          const body = (inboxCommentBody[inboxDetail.id] || '').trim();
-                          if (!body || !user) return;
-                          const { data } = await supabase
-                            .from('board_messages')
-                            .insert({ parent_id: inboxDetail.id, user_id: user.id, body })
-                            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, comment_enabled, answer_prompt, answer_location, answer_link')
-                            .single();
-                          if (data) {
-                            const newComment: BoardMessage = { ...data, broadcast_recipients: null, profile: null };
-                            setInboxComments(prev => ({ ...prev, [inboxDetail.id]: [...(prev[inboxDetail.id] || []), newComment] }));
-                            setInboxCommentBody(prev => ({ ...prev, [inboxDetail.id]: '' }));
-                          }
-                        }}
-                        style={{ padding: '6px 12px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, alignSelf: 'flex-end', opacity: !(inboxCommentBody[inboxDetail.id] || '').trim() ? 0.5 : 1 }}>
-                        送信
-                      </button>
-                    </div>
-                  </div>
                 )}
               </div>
             )}

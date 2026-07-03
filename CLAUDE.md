@@ -4608,3 +4608,38 @@ alter table notifications add column if not exists banner_dismissed boolean defa
 - `npx tsc --noEmit`：エラーなし
 - ⚠️ 実機動作確認（受信トレイでお知らせ本文を開いた後、ホームでバナーが消えるか）は
   次回ローカル・本番での確認を推奨
+
+---
+
+## ✅ 2026-07-04（続報4） 未使用機能「お知らせのコメント欄」を削除 完了
+
+### 背景
+- 通知バナーの調査中に発見：「お知らせ」詳細画面に`comment_enabled=true`の時だけ
+  表示されるコメント欄が実装されていた（2026-06-16 Phase実装、CLAUDE.md L3351）
+- しかし送信フォーム側に`comment_enabled`をONにするUIが存在せず、常にfalseで
+  insertされるため、実際には一度も表示されたことがない死んだコードだった
+- 対応状況（確認・回答／deadline_type・requires_confirmation）機能で代替済みのため、
+  ユーザー判断で削除することにした
+
+### 削除内容
+- `BoardPage.tsx`：
+  - `BoardMessage`型の`comment_enabled`フィールド
+  - state 3つ（`inboxCommentOpen`・`inboxComments`・`inboxCommentBody`）
+  - コメント欄UIブロック全体（開閉ボタン・一覧・入力欄）
+  - 6箇所の`select`文にあった`comment_enabled`列指定
+  - メッセージ送信時のハードコード`comment_enabled: false`
+- DB：`board_messages.comment_enabled`列を削除
+
+### Supabase SQL（実行済み）
+```sql
+alter table public.board_messages drop column if exists comment_enabled;
+```
+
+### 変更ファイル
+- `client/src/pages/BoardPage.tsx`
+- `supabase/migrations/20260704200000_drop_comment_enabled.sql`
+
+### 確認内容
+- 削除前に他機能（スレッド返信・対応状況・お知らせ本体）との依存が無いことを
+  grepで確認済み（`comment_enabled`はこの機能専用でのみ参照されていた）
+- `npx tsc --noEmit`：エラーなし
