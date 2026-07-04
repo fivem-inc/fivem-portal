@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { AuthUser } from '../types';
 import { formatAmount, parseAmount } from '../utils';
 import { supabase } from '../lib/supabaseClient';
@@ -46,8 +46,20 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
   const [quantity, setQuantity] = useState('');
   const [storeName, setStoreName] = useState('');
   const [purpose, setPurpose] = useState('');
-  const [instructedBy, setInstructedBy] = useState('');
+  const [instructedBySelect, setInstructedBySelect] = useState('');
+  const [instructedByCustom, setInstructedByCustom] = useState('');
   const [notes, setNotes] = useState('');
+  const [instructors, setInstructors] = useState<{ name: string; role_title: string }[]>([]);
+
+  useEffect(() => {
+    supabase.from('profiles').select('name, role_title').eq('is_active', true)
+      .in('role_title', ['リーダー', 'マネージャー']).order('role_title').order('name').then(
+        ({ data }) => setInstructors((data ?? []) as { name: string; role_title: string }[]),
+        () => {}
+      );
+  }, []);
+
+  const instructedBy = instructedBySelect === 'その他' ? instructedByCustom.trim() : instructedBySelect;
 
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -56,7 +68,7 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
   const resetForm = () => {
     setItemName(''); setAmount(''); setPurchasedAt(new Date().toISOString().slice(0, 10));
     setPaymentMethod(''); setReceipt(emptyReceipt); setShowDetails(false);
-    setQuantity(''); setStoreName(''); setPurpose(''); setInstructedBy(''); setNotes('');
+    setQuantity(''); setStoreName(''); setPurpose(''); setInstructedBySelect(''); setInstructedByCustom(''); setNotes('');
   };
 
   const handleSubmit = async () => {
@@ -199,10 +211,20 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
             </div>
             <div>
               <label style={labelStyle}>指示者（誰からの依頼か）</label>
-              <input list="instructed-by-list" type="text" value={instructedBy} onChange={e => setInstructedBy(e.target.value)} placeholder="例：総務部、〇〇マネージャー" style={inputStyle} />
-              <datalist id="instructed-by-list">
-                <option value="総務部" />
-              </datalist>
+              <select value={instructedBySelect} onChange={e => setInstructedBySelect(e.target.value)} style={inputStyle}>
+                <option value="">選択してください（任意）</option>
+                <option value="総務部">総務部</option>
+                {instructors.map(p => (
+                  <option key={p.name} value={`${p.name}（${p.role_title}）`}>{p.name}（{p.role_title}）</option>
+                ))}
+                <option value="その他">その他（自由記述）</option>
+              </select>
+              {instructedBySelect === 'その他' && (
+                <input
+                  type="text" value={instructedByCustom} onChange={e => setInstructedByCustom(e.target.value)}
+                  placeholder="指示者名を入力してください" style={{ ...inputStyle, marginTop: 8 }}
+                />
+              )}
             </div>
             <div>
               <label style={labelStyle}>備考</label>
