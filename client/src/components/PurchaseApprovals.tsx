@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { insertNotification } from '../lib/notifications';
-import { dispatchSiteNotification, getNotificationTemplate } from '../lib/notificationDispatch';
+import { dispatchSiteNotification, dispatchEmail, getNotificationTemplate, getUserEmail } from '../lib/notificationDispatch';
+import { sendPurchaseSlackForEvent } from '../lib/purchaseSlack';
 
 type Route = 'leader' | 'manager' | 'board';
 type OpinionValue = 'approve' | 'deny' | 'undecided' | 'other';
@@ -152,8 +153,13 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
     const { error } = await supabase.from('purchase_requests').update(update).eq('id', req.id);
 
     if (!error) {
-      const vars = { '品目名': req.item_name };
+      const vars = { '申請者名': names[req.user_id] ?? '', '品目名': req.item_name, '金額': req.amount.toLocaleString() };
       await dispatchSiteNotification(eventKey, vars, { applicant: req.user_id }, insertNotification, 'purchase_request', req.id);
+      sendPurchaseSlackForEvent(eventKey, 'approved', req.route, names[req.user_id] ?? '不明', req.item_name, req.amount).then(null, () => {});
+      (async () => {
+        const applicantEmail = await getUserEmail(req.user_id);
+        if (applicantEmail) await dispatchEmail(eventKey, vars, { applicant: applicantEmail });
+      })().then(null, () => {});
       setRequests(prev => prev.filter(r => r.id !== req.id));
     } else {
       setErrors(prev => ({ ...prev, [req.id]: '最終決定に失敗しました: ' + error.message }));
@@ -173,8 +179,13 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
     }).eq('id', returningId);
 
     if (!error) {
-      const vars = { '品目名': req.item_name };
+      const vars = { '申請者名': names[req.user_id] ?? '', '品目名': req.item_name, '金額': req.amount.toLocaleString() };
       await dispatchSiteNotification('purchase_request:returned', vars, { applicant: req.user_id }, insertNotification, 'purchase_request', req.id);
+      sendPurchaseSlackForEvent('purchase_request:returned', 'returned', req.route, names[req.user_id] ?? '不明', req.item_name, req.amount, returnReason.trim()).then(null, () => {});
+      (async () => {
+        const applicantEmail = await getUserEmail(req.user_id);
+        if (applicantEmail) await dispatchEmail('purchase_request:returned', vars, { applicant: applicantEmail });
+      })().then(null, () => {});
       setRequests(prev => prev.filter(r => r.id !== returningId));
       setReturningId(null);
       setReturnReason('');
@@ -262,6 +273,12 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
       setAllApprovedBanner('これで全員承認が完了しました');
       const tpl = await getNotificationTemplate('purchase_request:board_all_approved', 'site', vars);
       if (tpl) await insertNotification(req.user_id, tpl.template, tpl.subject || undefined, 'purchase_request', req.id);
+      sendPurchaseSlackForEvent('purchase_request:board_all_approved', 'board_all_approved', 'board', names[req.user_id] ?? '不明', req.item_name, req.amount).then(null, () => {});
+      (async () => {
+        const emailVars = { '申請者名': names[req.user_id] ?? '', '品目名': req.item_name, '金額': req.amount.toLocaleString() };
+        const applicantEmail = await getUserEmail(req.user_id);
+        if (applicantEmail) await dispatchEmail('purchase_request:board_all_approved', emailVars, { applicant: applicantEmail });
+      })().then(null, () => {});
       setRequests(prev => prev.filter(r => r.id !== req.id));
     } else {
       const tpl = await getNotificationTemplate('purchase_request:board_opinion_submitted', 'site', vars);

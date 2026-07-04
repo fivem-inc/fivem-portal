@@ -88,6 +88,21 @@ const EVENT_GROUPS = [
       { key: 'reminder:unread',        label: '連絡板 締切未読リマインド' },
     ],
   },
+  {
+    label: '備品購入申請',
+    icon: '🛒',
+    headerBg: '#F1F8E9', headerBorder: '#558B2F', headerText: '#33691E',
+    events: [
+      { key: 'purchase_request:submitted',            label: '申請時（リーダー承認ルート）' },
+      { key: 'purchase_request:submitted_manager',     label: '申請時（マネージャー審議ルート）' },
+      { key: 'purchase_request:submitted_board',       label: '申請時（全員承認ルート）' },
+      { key: 'purchase_request:self_judgment_shared',  label: '自己判断・共有時' },
+      { key: 'purchase_request:leader_approved',       label: 'リーダー最終承認時' },
+      { key: 'purchase_request:manager_approved',      label: 'マネージャー最終承認時' },
+      { key: 'purchase_request:board_all_approved',    label: '全員承認・自動確定時' },
+      { key: 'purchase_request:returned',              label: '差し戻し時' },
+    ],
+  },
 ];
 
 const CHANNEL_LABELS: Record<ChannelType, string> = {
@@ -118,6 +133,14 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
   'reminder:encouragement':      ['{{対象日}}', '{{期限}}', '{{リンク}}'],
   'reminder:scheduled':          ['{{タイトル}}', '{{本文}}'],
   'reminder:unread':             ['{{件名}}', '{{リンク}}'],
+  'purchase_request:submitted':            ['{{申請者名}}', '{{品目名}}', '{{金額}}'],
+  'purchase_request:submitted_manager':    ['{{申請者名}}', '{{品目名}}', '{{金額}}'],
+  'purchase_request:submitted_board':      ['{{申請者名}}', '{{品目名}}', '{{金額}}'],
+  'purchase_request:self_judgment_shared': ['{{申請者名}}', '{{品目名}}', '{{金額}}'],
+  'purchase_request:leader_approved':      ['{{申請者名}}', '{{品目名}}', '{{金額}}'],
+  'purchase_request:manager_approved':     ['{{申請者名}}', '{{品目名}}', '{{金額}}'],
+  'purchase_request:board_all_approved':   ['{{申請者名}}', '{{品目名}}', '{{金額}}'],
+  'purchase_request:returned':             ['{{申請者名}}', '{{品目名}}', '{{金額}}'],
 };
 
 // 役職＋グループ絞り込みで一斉配信するイベント（時間調整・勤務変更受理など、UIとロジックを共有する）
@@ -184,6 +207,14 @@ const SLACK_CHANNEL_OPTIONS_BY_EVENT: Record<string, { value: string; label: str
   'leave:cancelled':        [{ value: 'leader', label: '#01リーダー回覧' }, { value: 'manager', label: '#01マネージャー回覧' }, { value: 'accounting', label: '#07_3閲覧禁止-経理専用' }],
   'expense:new_request':    [{ value: 'expense',    label: '#07_3閲覧禁止-経理専用' }],
   'trip:report_end':        TRIP_SLACK_CHANNELS,
+  'purchase_request:submitted':            TIME_ADJ_SLACK_OPTIONS,
+  'purchase_request:submitted_manager':    TIME_ADJ_SLACK_OPTIONS,
+  'purchase_request:submitted_board':      TIME_ADJ_SLACK_OPTIONS,
+  'purchase_request:self_judgment_shared': TIME_ADJ_SLACK_OPTIONS,
+  'purchase_request:leader_approved':      TIME_ADJ_SLACK_OPTIONS,
+  'purchase_request:manager_approved':     TIME_ADJ_SLACK_OPTIONS,
+  'purchase_request:board_all_approved':   TIME_ADJ_SLACK_OPTIONS,
+  'purchase_request:returned':             TIME_ADJ_SLACK_OPTIONS,
 };
 
 // テンプレートライブラリで使える全変数（カテゴリ別）

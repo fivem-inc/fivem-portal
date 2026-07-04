@@ -4,7 +4,8 @@ import { formatAmount, parseAmount } from '../utils';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { insertNotification } from '../lib/notifications';
-import { dispatchSiteNotification, getNotificationTemplate } from '../lib/notificationDispatch';
+import { dispatchSiteNotification, dispatchEmail, getNotificationTemplate, getUserEmail, shouldSend } from '../lib/notificationDispatch';
+import { sendPurchaseSlackForEvent } from '../lib/purchaseSlack';
 import QuoteFileUploader from './QuoteFileUploader';
 
 const LEADER_LIMIT = 10000;
@@ -225,6 +226,25 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
 
     const vars = { '申請者名': user.user_metadata?.name ?? '', '品目名': itemName.trim(), '金額': parsedAmount.toLocaleString() };
 
+    const applicantName = user.user_metadata?.name ?? '';
+
+    // 複数宛先イベント向け: 対象者リストへメール送信する（サイト通知と同じ手動ループパターン）
+    const notifyEmailToMany = async (eventKey: string, userIds: string[]) => {
+      try {
+        if (!(await shouldSend(eventKey, 'email'))) return;
+        const tpl = await getNotificationTemplate(eventKey, 'email', vars);
+        if (!tpl) return;
+        await Promise.all(userIds.map(async id => {
+          const to = await getUserEmail(id);
+          if (!to) return;
+          const { error } = await supabase.functions.invoke('send-email', { body: { to, subject: tpl.subject, text: tpl.template } });
+          if (error) console.error('[notify email] 送信失敗', { id, error });
+        }));
+      } catch (e) {
+        console.error('[notify email] 失敗', e);
+      }
+    };
+
     const notify = async (recordId: string) => {
       if (tier === 'board' && presidentSelfJudge) {
         // 社長の自己判断（共有のみ）は全マネージャーへ共有通知
@@ -232,23 +252,36 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
         if (tpl) {
           await Promise.all(managers.map(m => insertNotification(m.id, tpl.template, tpl.subject || undefined, 'purchase_request', recordId)));
         }
+        sendPurchaseSlackForEvent('purchase_request:self_judgment_shared', 'submitted', 'self_judgment', applicantName, itemName.trim(), parsedAmount).then(null, () => {});
+        notifyEmailToMany('purchase_request:self_judgment_shared', managers.map(m => m.id)).then(null, () => {});
       } else if (tier === 'board') {
         const tpl = await getNotificationTemplate('purchase_request:submitted_board', 'site', vars);
         if (tpl) {
           await Promise.all(boardApprovers.map(a => insertNotification(a.id, tpl.template, tpl.subject || undefined, 'purchase_request:pending_approval', recordId)));
         }
+        sendPurchaseSlackForEvent('purchase_request:submitted_board', 'submitted', 'board', applicantName, itemName.trim(), parsedAmount).then(null, () => {});
+        notifyEmailToMany('purchase_request:submitted_board', boardApprovers.map(a => a.id)).then(null, () => {});
       } else if (isSelfJudgment) {
         const tpl = await getNotificationTemplate('purchase_request:self_judgment_shared', 'site', vars);
         if (tpl) {
           await Promise.all(sharedManagerIds.map(id => insertNotification(id, tpl.template, tpl.subject || undefined, 'purchase_request', recordId)));
         }
+        sendPurchaseSlackForEvent('purchase_request:self_judgment_shared', 'submitted', 'self_judgment', applicantName, itemName.trim(), parsedAmount).then(null, () => {});
+        notifyEmailToMany('purchase_request:self_judgment_shared', sharedManagerIds).then(null, () => {});
       } else if (tier === 'leader') {
         await dispatchSiteNotification('purchase_request:submitted', vars, { leader: leaderId }, insertNotification, 'purchase_request:pending_approval', recordId);
+        sendPurchaseSlackForEvent('purchase_request:submitted', 'submitted', 'leader', applicantName, itemName.trim(), parsedAmount).then(null, () => {});
+        (async () => {
+          const leaderEmail = await getUserEmail(leaderId);
+          if (leaderEmail) await dispatchEmail('purchase_request:submitted', vars, { leader: leaderEmail });
+        })().then(null, () => {});
       } else {
         const tpl = await getNotificationTemplate('purchase_request:submitted_manager', 'site', vars);
         if (tpl) {
           await Promise.all(requestedManagerIds.map(id => insertNotification(id, tpl.template, tpl.subject || undefined, 'purchase_request:pending_approval', recordId)));
         }
+        sendPurchaseSlackForEvent('purchase_request:submitted_manager', 'submitted', 'manager', applicantName, itemName.trim(), parsedAmount).then(null, () => {});
+        notifyEmailToMany('purchase_request:submitted_manager', requestedManagerIds).then(null, () => {});
       }
     };
 

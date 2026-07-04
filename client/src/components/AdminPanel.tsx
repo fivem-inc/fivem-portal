@@ -12,6 +12,7 @@ import NotificationsTab, { ScheduledRemindersPanel, ReminderDaysSettingsPanel } 
 import BoardSettingsTab from './admin/BoardSettingsTab';
 import ShiftReportsTab from './admin/ShiftReportsTab';
 import FeaturePermissionsTab from './admin/FeaturePermissionsTab';
+import PurchaseRequestsTab from './admin/PurchaseRequestsTab';
 
 interface AdminPanelProps {
   pendingApprovals: PendingApproval[];
@@ -435,6 +436,7 @@ const AdminPanelContent: React.FC = () => {
           { key: 'trip_reports',       label: '出張報告',      icon: '📍' },
           { key: 'leave_requests',     label: '休暇申請',      icon: '🌿' },
           { key: 'shift_reports',      label: '勤務変更',      icon: '⏰' },
+          { key: 'purchase_requests',  label: '購入申請',      icon: '🧾' },
         ] as const;
         const ROW2 = [
           { key: 'users',              label: 'ユーザー',      icon: '👤' },
@@ -530,6 +532,7 @@ const AdminPanelContent: React.FC = () => {
         {activeTab === 'reports' && <ReportsTab />}
         {activeTab === 'leave_requests' && <LeaveRequestsTab />}
         {activeTab === 'shift_reports' && <ShiftReportsTab />}
+        {activeTab === 'purchase_requests' && <PurchaseRequestsTab />}
         {activeTab === 'leader_assignments' && <LeaderAssignmentsTab />}
         {activeTab === 'board_settings' && <BoardSettingsTab />}
         {activeTab === 'feature_permissions' && <FeaturePermissionsTab />}

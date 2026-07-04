@@ -1,11 +1,12 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react';
 import type { PendingApproval, Submission, Expense, AdminUserProfile, AdminLeaveRequest, ReportStats, BusinessTripReport } from '../../types';
-import { groupSubmissionsByYearAndMonth, generateCSVData, downloadCSV, formatAmount } from '../../utils';
+import { groupSubmissionsByYearAndMonth, generateCSVData, generatePurchaseRequestCSVData, downloadCSV, formatAmount } from '../../utils';
+import type { PurchaseRequestCSVRow } from '../../utils';
 import { supabase } from '../../lib/supabaseClient';
 import { sendLeaveSlack } from '../../lib/leaveSlack';
 import { useDarkMode } from '../../hooks/useDarkMode';
 
-export type AdminTab = 'approvals' | 'users' | 'groups' | 'reports' | 'trip_reports' | 'leave_requests' | 'shift_reports' | 'leader_assignments' | 'notifications' | 'scheduled_reminders' | 'board_settings' | 'feature_permissions';
+export type AdminTab = 'approvals' | 'users' | 'groups' | 'reports' | 'trip_reports' | 'leave_requests' | 'shift_reports' | 'leader_assignments' | 'notifications' | 'scheduled_reminders' | 'board_settings' | 'feature_permissions' | 'purchase_requests';
 
 interface PrintVoucher {
   submissionId: string;
@@ -142,6 +143,13 @@ export interface AdminPanelContextType {
   handleDeleteSubmission: (id: string) => Promise<void>;
   handleExportCsv: () => Promise<void>;
 
+  // 購入申請CSV出力
+  purchaseCsvStartDate: string; setPurchaseCsvStartDate: React.Dispatch<React.SetStateAction<string>>;
+  purchaseCsvEndDate: string; setPurchaseCsvEndDate: React.Dispatch<React.SetStateAction<string>>;
+  purchaseCsvDateType: 'created' | 'decided'; setPurchaseCsvDateType: React.Dispatch<React.SetStateAction<'created' | 'decided'>>;
+  handleExportPurchaseCsv: () => Promise<void>;
+  purchaseCsvError: string | null;
+
   // Trip reports
   tripReports: BusinessTripReport[];
   loadingTripReports: boolean;
@@ -216,6 +224,10 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const [csvStartDate, setCsvStartDate] = useState<string>('');
   const [csvEndDate, setCsvEndDate] = useState<string>('');
   const [csvDateType, setCsvDateType] = useState<'created' | 'approved'>('approved');
+  const [purchaseCsvStartDate, setPurchaseCsvStartDate] = useState<string>('');
+  const [purchaseCsvEndDate, setPurchaseCsvEndDate] = useState<string>('');
+  const [purchaseCsvDateType, setPurchaseCsvDateType] = useState<'created' | 'decided'>('created');
+  const [purchaseCsvError, setPurchaseCsvError] = useState<string | null>(null);
   const [expandedAdminYears, setExpandedAdminYears] = useState<Set<string>>(new Set());
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
 
@@ -281,6 +293,10 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   useEffect(() => {
     if (successMsg) { const t = setTimeout(() => setSuccessMsg(null), 3000); return () => clearTimeout(t); }
   }, [successMsg]);
+
+  useEffect(() => {
+    if (purchaseCsvError) { const t = setTimeout(() => setPurchaseCsvError(null), 5000); return () => clearTimeout(t); }
+  }, [purchaseCsvError]);
 
   const [editingSubmissionId, setEditingSubmissionId] = useState<string | null>(null);
   const [editingExpenses, setEditingExpenses] = useState<Expense[]>([]);
@@ -1032,6 +1048,50 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     setSuccessMsg('CSVを出力しました');
   }, [csvStartDate, csvEndDate, csvDateType]);
 
+  const handleExportPurchaseCsv = useCallback(async () => {
+    setPurchaseCsvError(null);
+    // 全ステータス対象のためstatusフィルタなしで全件取得する
+    const { data, error } = await supabase.from('purchase_requests').select('*').order('created_at', { ascending: true });
+    if (error) { setPurchaseCsvError('CSV出力に失敗しました: ' + error.message); return; }
+    let rows = (data ?? []) as PurchaseRequestCSVRow[];
+
+    if (purchaseCsvStartDate || purchaseCsvEndDate) {
+      const start = purchaseCsvStartDate ? new Date(`${purchaseCsvStartDate}T00:00:00`) : null;
+      const end = purchaseCsvEndDate ? new Date(`${purchaseCsvEndDate}T23:59:59`) : null;
+      rows = rows.filter(row => {
+        const dateStr = purchaseCsvDateType === 'created'
+          ? row.created_at
+          : (row.leader_approved_at || row.manager_approved_at || row.board_approved_at || null);
+        if (!dateStr) return false;
+        const d = new Date(dateStr);
+        if (start && d < start) return false;
+        if (end && d > end) return false;
+        return true;
+      });
+    }
+
+    if (rows.length === 0) { setPurchaseCsvError('対象の申請がありません。'); return; }
+
+    // 関係する全user_idを集めてprofilesから一括解決する（PurchaseApprovals.tsxのload()と同じパターン）
+    const userIds = new Set<string>();
+    rows.forEach(row => {
+      userIds.add(row.user_id);
+      if (row.leader_id) userIds.add(row.leader_id);
+      (row.requested_manager_ids ?? []).forEach(id => userIds.add(id));
+      (row.shared_manager_ids ?? []).forEach(id => userIds.add(id));
+      (row.board_approver_ids ?? []).forEach(id => userIds.add(id));
+    });
+    const namesMap: Record<string, string> = {};
+    if (userIds.size > 0) {
+      const { data: profs } = await supabase.from('profiles').select('id, name').in('id', [...userIds]);
+      (profs ?? []).forEach((p: { id: string; name: string }) => { namesMap[p.id] = p.name; });
+    }
+    const nameOf = (userId: string | null | undefined) => (userId ? (namesMap[userId] ?? '不明') : '');
+
+    downloadCSV(generatePurchaseRequestCSVData(rows, nameOf), 'purchase_requests.csv');
+    setSuccessMsg('CSVを出力しました');
+  }, [purchaseCsvStartDate, purchaseCsvEndDate, purchaseCsvDateType]);
+
   const toggleYearExpansion = useCallback((year: string) => {
     setExpandedAdminYears(prev => { const newSet = new Set(prev); if (newSet.has(year)) newSet.delete(year); else newSet.add(year); return newSet; });
   }, []);
@@ -1093,6 +1153,8 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       editingSubmissionId, editingExpenses,
       handleStartEdit, handleCancelEdit, handleSaveEdit, handleUpdateEditingExpense,
       handleDeleteSubmission, handleExportCsv,
+      purchaseCsvStartDate, setPurchaseCsvStartDate, purchaseCsvEndDate, setPurchaseCsvEndDate,
+      purchaseCsvDateType, setPurchaseCsvDateType, handleExportPurchaseCsv, purchaseCsvError,
       tripReports, loadingTripReports, expandedTripYearMonths, setExpandedTripYearMonths,
       tripReportFilter, setTripReportFilter, showLocationEditor, setShowLocationEditor,
       tripCategories, locationOptions, newLocationByCategory, setNewLocationByCategory,
