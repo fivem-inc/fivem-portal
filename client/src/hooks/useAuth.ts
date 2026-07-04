@@ -16,6 +16,7 @@ interface UseAuthReturn {
   canLeave: boolean;
   canShiftReport: boolean;
   canCalendar: boolean;
+  canPurchaseRequest: boolean;
   leaveRequestEnabled: boolean;
   handleLogout: () => Promise<void>;
 }
@@ -122,6 +123,7 @@ export const useAuth = (): UseAuthReturn => {
   const canLeave      = realIsAdmin && !previewRole ? true : (effectivePerms.leave_request   ?? false);
   const canShiftReport = realIsAdmin && !previewRole ? true : (effectivePerms.shift_report    ?? false);
   const canCalendar   = realIsAdmin && !previewRole ? true : (effectivePerms.leave_calendar  ?? false);
+  const canPurchaseRequest = realIsAdmin && !previewRole ? true : (effectivePerms.purchase_request ?? false);
 
   const handleLogout = useCallback(async () => {
     console.log('[logout] clicked');
@@ -149,6 +151,7 @@ export const useAuth = (): UseAuthReturn => {
     canLeave,
     canShiftReport,
     canCalendar,
+    canPurchaseRequest,
     leaveRequestEnabled,
     handleLogout,
   };

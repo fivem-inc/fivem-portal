@@ -925,7 +925,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
   return (
     <div style={{ maxWidth: 900, margin: '0 auto' }}>
 
-      <h1 style={{ margin: '0 0 16px', fontSize: 20, fontWeight: 800, color: textColor, letterSpacing: '0.04em', lineHeight: 1.2 }}>📅 休暇カレンダー</h1>
+      <h1 style={{ margin: '28px 0 16px', fontSize: 20, fontWeight: 800, color: textColor, letterSpacing: '0.04em', lineHeight: 1.2 }}>📅 休暇カレンダー</h1>
 
       {/* 直近6ヶ月サマリー */}
       <div style={{ background: bg, borderRadius: 12, boxShadow: '0 2px 12px rgba(0,0,0,0.08)', padding: isMobile ? 14 : 20, marginBottom: 16 }}>

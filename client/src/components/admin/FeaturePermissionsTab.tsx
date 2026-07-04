@@ -28,6 +28,7 @@ const FEATURES = [
   { key: 'expense',         icon: '🚃', label: '交通費申請',     note: '' },
   { key: 'trip_report',     icon: '📍', label: '出張報告',       note: '' },
   { key: 'board',           icon: '💬', label: '連絡板',         note: '' },
+  { key: 'purchase_request', icon: '🧾', label: '備品購入申請・経費精算', note: 'パートも精算のみ利用可' },
 ] as const;
 
 const FeaturePermissionsTab: React.FC = () => {
