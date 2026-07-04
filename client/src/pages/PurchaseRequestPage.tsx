@@ -31,7 +31,7 @@ interface PurchaseRecord {
   receipt_missing_reason: string | null;
   returned_reason: string | null;
   leader_id: string | null;
-  manager_id: string | null;
+  requested_manager_ids: string[] | null;
   shared_manager_ids: string[] | null;
   is_self_judgment: boolean;
   notes: string | null;
@@ -52,9 +52,13 @@ const STATUS_LABEL: Record<string, { label: string; color: string }> = {
   returned:             { label: '差し戻し', color: '#dc3545' },
 };
 
+interface OpinionRow { purchase_request_id: string; manager_id: string; opinion: 'approve' | 'deny' | 'undecided' | 'other'; comment: string | null }
+const OPINION_LABEL: Record<string, string> = { approve: '承認', deny: '否認', undecided: '判断できない', other: 'その他' };
+
 const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; userId: string; onResubmit: (record: ResubmitRecord) => void }> = ({ isDarkMode, isManagerPlus, userId, onResubmit }) => {
   const [records, setRecords] = useState<PurchaseRecord[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
+  const [opinions, setOpinions] = useState<Record<string, OpinionRow[]>>({});
   const [loading, setLoading] = useState(true);
 
   const cardBg = isDarkMode ? '#2d2d3e' : '#ffffff';
@@ -66,22 +70,34 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; userI
     setLoading(true);
     const { data } = await supabase
       .from('purchase_requests')
-      .select('id, user_id, request_type, status, item_name, quantity, amount, purchased_at, requested_purchase_date, store_name, purpose, instructed_by, payment_method, receipt_type, receipt_missing_reason, returned_reason, leader_id, manager_id, shared_manager_ids, is_self_judgment, notes, quotes, quote_file_path, created_at')
+      .select('id, user_id, request_type, status, item_name, quantity, amount, purchased_at, requested_purchase_date, store_name, purpose, instructed_by, payment_method, receipt_type, receipt_missing_reason, returned_reason, leader_id, requested_manager_ids, shared_manager_ids, is_self_judgment, notes, quotes, quote_file_path, created_at')
       .order('created_at', { ascending: false });
     const rows = (data ?? []) as PurchaseRecord[];
     setRecords(rows);
 
-    if (isManagerPlus) {
-      const userIds = [...new Set(rows.map(r => r.user_id))];
-      if (userIds.length > 0) {
-        const { data: profs } = await supabase.from('profiles').select('id, name').in('id', userIds);
-        const map: Record<string, string> = {};
-        (profs ?? []).forEach((p: { id: string; name: string }) => { map[p.id] = p.name; });
-        setNames(map);
-      }
+    const namesToFetch = new Set<string>();
+    if (isManagerPlus) rows.forEach(r => namesToFetch.add(r.user_id));
+
+    // マネージャー承認ルートの自分の申請には、共有可の意見（RLSでvisible_to_applicant=trueのみ返る）を表示する
+    const managerRouteIds = rows.filter(r => r.user_id === userId && r.requested_manager_ids?.length).map(r => r.id);
+    if (managerRouteIds.length > 0) {
+      const { data: ops } = await supabase
+        .from('purchase_request_manager_opinions')
+        .select('purchase_request_id, manager_id, opinion, comment')
+        .in('purchase_request_id', managerRouteIds);
+      const grouped: Record<string, OpinionRow[]> = {};
+      (ops ?? []).forEach((o: OpinionRow) => { (grouped[o.purchase_request_id] ??= []).push(o); namesToFetch.add(o.manager_id); });
+      setOpinions(grouped);
+    }
+
+    if (namesToFetch.size > 0) {
+      const { data: profs } = await supabase.from('profiles').select('id, name').in('id', [...namesToFetch]);
+      const map: Record<string, string> = {};
+      (profs ?? []).forEach((p: { id: string; name: string }) => { map[p.id] = p.name; });
+      setNames(map);
     }
     setLoading(false);
-  }, [isManagerPlus]);
+  }, [isManagerPlus, userId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -127,6 +143,11 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; userI
               {r.quote_file_path && '　📎見積書あり'}
             </div>
           )}
+          {opinions[r.id] && opinions[r.id].length > 0 && (
+            <div style={{ fontSize: 12, color: subText, marginTop: 6, padding: '6px 8px', background: isDarkMode ? '#20304a' : '#eef6ff', borderRadius: 6 }}>
+              共有された意見：{opinions[r.id].map(o => `${names[o.manager_id] ?? '不明'}（${OPINION_LABEL[o.opinion]}${o.comment ? '：' + o.comment : ''}）`).join('　')}
+            </div>
+          )}
           {r.status === 'returned' && r.returned_reason && (
             <div style={{ fontSize: 12, color: '#dc3545', marginTop: 6 }}>差し戻し理由：{r.returned_reason}</div>
           )}
@@ -137,7 +158,7 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; userI
                 id: r.id, item_name: r.item_name, quantity: r.quantity, amount: r.amount,
                 requested_purchase_date: r.requested_purchase_date, store_name: r.store_name,
                 purpose: r.purpose, notes: r.notes, leader_id: r.leader_id, returned_reason: r.returned_reason,
-                manager_id: r.manager_id, shared_manager_ids: r.shared_manager_ids, is_self_judgment: r.is_self_judgment,
+                requested_manager_ids: r.requested_manager_ids, shared_manager_ids: r.shared_manager_ids, is_self_judgment: r.is_self_judgment,
                 quotes: r.quotes, quote_file_path: r.quote_file_path,
               })}
               style={{ marginTop: 8, width: '100%', padding: '8px', borderRadius: 8, border: 'none', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}
@@ -198,7 +219,7 @@ const PurchaseRequestPage: React.FC<PurchaseRequestPageProps> = ({ user, roleTit
       {tab === 'reimbursement' && <ReimbursementForm user={user} roleTitle={roleTitle} />}
       {tab === 'request' && (
         <PurchaseRequestForm
-          user={user} roleTitle={roleTitle}
+          user={user} roleTitle={roleTitle} isAdmin={isAdmin}
           resubmitRecord={resubmitRecord}
           onDoneResubmit={() => { setResubmitRecord(null); setTab('history'); }}
         />

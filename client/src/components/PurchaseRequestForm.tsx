@@ -50,7 +50,7 @@ export interface ResubmitRecord {
   purpose: string | null;
   notes: string | null;
   leader_id: string | null;
-  manager_id: string | null;
+  requested_manager_ids: string[] | null;
   shared_manager_ids: string[] | null;
   is_self_judgment: boolean;
   returned_reason: string | null;
@@ -61,11 +61,12 @@ export interface ResubmitRecord {
 interface PurchaseRequestFormProps {
   user: AuthUser;
   roleTitle: string;
+  isAdmin: boolean;
   resubmitRecord?: ResubmitRecord | null;
   onDoneResubmit?: () => void;
 }
 
-const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTitle, resubmitRecord, onDoneResubmit }) => {
+const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTitle, isAdmin, resubmitRecord, onDoneResubmit }) => {
   const isDarkMode = useDarkMode();
   const navigate = useNavigate();
   const cardBg = isDarkMode ? '#2d2d3e' : '#ffffff';
@@ -88,8 +89,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
   const [purpose, setPurpose] = useState(resubmitRecord?.purpose ?? '');
   const [notes, setNotes] = useState(resubmitRecord?.notes ?? '');
   const [leaderId, setLeaderId] = useState(resubmitRecord?.leader_id ?? '');
-  const [approvalMode, setApprovalMode] = useState<'approval' | 'self_judgment'>(resubmitRecord?.is_self_judgment ? 'self_judgment' : 'approval');
-  const [managerId, setManagerId] = useState(resubmitRecord?.manager_id ?? '');
+  const [requestedManagerIds, setRequestedManagerIds] = useState<string[]>(resubmitRecord?.requested_manager_ids ?? []);
   const [sharedManagerIds, setSharedManagerIds] = useState<string[]>(resubmitRecord?.shared_manager_ids ?? []);
   const [leaders, setLeaders] = useState<{ id: string; name: string; role_title: string }[]>([]);
   const [managers, setManagers] = useState<{ id: string; name: string }[]>([]);
@@ -123,13 +123,19 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
   const tier = tierOf(parsedAmount);
   const quotesRequired = !isNaN(parsedAmount) && parsedAmount >= QUOTES_REQUIRED_THRESHOLD;
 
+  // 自己判断（承認不要・共有のみ）が使えるかは申請者自身の役職の決裁権限で自動的に決まる
+  // （ユーザーが選ぶラジオボタンではない）。リーダー以上は1万円まで、マネージャー以上は3万円まで自己判断可
+  const isLeaderPlus = isAdmin || ['リーダー', 'マネージャー', '社長'].includes(roleTitle);
+  const isManagerPlus = isAdmin || ['マネージャー', '社長'].includes(roleTitle);
+  const canSelfJudge = tier === 'leader' ? isLeaderPlus : tier === 'manager' ? isManagerPlus : false;
+
   // 金額帯(tier)が変わったら承認ルート関連の入力だけをリセットし、変化に気づけるようバナーを出す
   // （品目名・数量・購入予定日・購入先・用途・備考・相見積もりは保持する）
   const prevTierRef = useRef<Tier | null>(null);
   useEffect(() => {
     if (prevTierRef.current !== null && prevTierRef.current !== tier && tier !== 'none') {
       setTierBanner(`${TIER_LABEL[tier]}の金額になったため、承認に関する入力項目が変わりました`);
-      setLeaderId(''); setManagerId(''); setSharedManagerIds([]); setApprovalMode('approval');
+      setLeaderId(''); setRequestedManagerIds([]); setSharedManagerIds([]);
     }
     prevTierRef.current = tier;
   }, [tier]);
@@ -145,10 +151,13 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
   const toggleSharedManager = (id: string) => {
     setSharedManagerIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   };
+  const toggleRequestedManager = (id: string) => {
+    setRequestedManagerIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
 
   const resetForm = () => {
     setItemName(''); setQuantity(''); setAmount(''); setRequestedDate(new Date().toISOString().slice(0, 10));
-    setStoreName(''); setPurpose(''); setNotes(''); setLeaderId(''); setManagerId(''); setSharedManagerIds([]); setApprovalMode('approval'); setShowDetails(false);
+    setStoreName(''); setPurpose(''); setNotes(''); setLeaderId(''); setRequestedManagerIds([]); setSharedManagerIds([]); setShowDetails(false);
     setQuoteRows([emptyQuoteRow(), emptyQuoteRow()]); setQuoteFilePath(null);
   };
 
@@ -158,20 +167,20 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
     if (!amount.trim() || isNaN(parsedAmount)) { setFormError('金額を正しく入力してください。'); return; }
     if (tier === 'over') { setFormError('現在3万円を超える申請フローは対応していません。連絡板で総務部にご相談ください。'); return; }
     if (!requestedDate) { setFormError('購入予定日を入力してください。'); return; }
-    if (tier === 'leader' && !leaderId) { setFormError('承認を依頼するリーダーを選択してください。'); return; }
-    if (tier === 'manager' && approvalMode === 'approval' && !managerId) { setFormError('承認を依頼するマネージャーを選択してください。'); return; }
-    if (tier === 'manager' && approvalMode === 'self_judgment' && sharedManagerIds.length === 0) { setFormError('共有先のマネージャーを1名以上選択してください。'); return; }
+    if (tier === 'leader' && !canSelfJudge && !leaderId) { setFormError('承認を依頼するリーダーを選択してください。'); return; }
+    if (tier === 'manager' && !canSelfJudge && requestedManagerIds.length === 0) { setFormError('承認を依頼するマネージャーを1名以上選択してください。'); return; }
+    if (canSelfJudge && sharedManagerIds.length === 0) { setFormError('共有先のマネージャーを1名以上選択してください。'); return; }
     if (quotesRequired && filledQuoteRows.length < 2) { setFormError('1万円以上の申請は相見積もり（2社以上）の入力が必須です。'); return; }
 
     const quotesPayload = filledQuoteRows.length > 0
       ? filledQuoteRows.map(q => ({ vendor: q.vendor.trim(), amount: parseInt(parseAmount(q.amount), 10) }))
       : null;
 
-    const isSelfJudgment = tier === 'manager' && approvalMode === 'self_judgment';
-    const status = tier === 'leader' ? 'pending_leader' : isSelfJudgment ? 'self_judgment_shared' : 'pending_manager';
+    const isSelfJudgment = canSelfJudge;
+    const status = isSelfJudgment ? 'self_judgment_shared' : tier === 'leader' ? 'pending_leader' : 'pending_manager';
     const routeFields = {
-      leader_id: tier === 'leader' ? leaderId : null,
-      manager_id: tier === 'manager' && !isSelfJudgment ? managerId : null,
+      leader_id: tier === 'leader' && !isSelfJudgment ? leaderId : null,
+      requested_manager_ids: tier === 'manager' && !isSelfJudgment ? requestedManagerIds : null,
       shared_manager_ids: isSelfJudgment ? sharedManagerIds : null,
       is_self_judgment: isSelfJudgment,
     };
@@ -195,15 +204,18 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
     const vars = { '申請者名': user.user_metadata?.name ?? '', '品目名': itemName.trim(), '金額': parsedAmount.toLocaleString() };
 
     const notify = async (recordId: string) => {
-      if (tier === 'leader') {
-        await dispatchSiteNotification('purchase_request:submitted', vars, { leader: leaderId }, insertNotification, 'purchase_request:pending_approval', recordId);
-      } else if (isSelfJudgment) {
+      if (isSelfJudgment) {
         const tpl = await getNotificationTemplate('purchase_request:self_judgment_shared', 'site', vars);
         if (tpl) {
           await Promise.all(sharedManagerIds.map(id => insertNotification(id, tpl.template, tpl.subject || undefined, 'purchase_request', recordId)));
         }
+      } else if (tier === 'leader') {
+        await dispatchSiteNotification('purchase_request:submitted', vars, { leader: leaderId }, insertNotification, 'purchase_request:pending_approval', recordId);
       } else {
-        await dispatchSiteNotification('purchase_request:submitted_manager', vars, { manager: managerId }, insertNotification, 'purchase_request:pending_approval', recordId);
+        const tpl = await getNotificationTemplate('purchase_request:submitted_manager', 'site', vars);
+        if (tpl) {
+          await Promise.all(requestedManagerIds.map(id => insertNotification(id, tpl.template, tpl.subject || undefined, 'purchase_request:pending_approval', recordId)));
+        }
       }
     };
 
@@ -262,7 +274,11 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
       )}
 
       <div style={{ marginBottom: 14, padding: '10px 12px', background: isDarkMode ? '#20304a' : '#eef6ff', border: `1px solid ${isDarkMode ? '#2e4a70' : '#cfe4ff'}`, borderRadius: 8, fontSize: 12, color: isDarkMode ? '#9cc6ff' : '#004085' }}>
-        ℹ️ まだ購入していないものの購入前承認はこちら。すでに購入済みの実費精算は「💰精算」タブをご利用ください。
+        <div style={{ marginBottom: 6 }}>ℹ️ まだ購入していないものの購入前承認はこちら。すでに購入済みの実費精算は「💰精算」タブをご利用ください。</div>
+        <div style={{ fontWeight: 'bold', marginBottom: 2 }}>承認ルール（金額の目安）</div>
+        <div>・1万円以下：リーダー以上は決裁権限内のため自己判断（共有のみ）／一般スタッフはリーダーかマネージャーの承認が必要</div>
+        <div>・1万円超〜3万円：マネージャー以上は決裁権限内のため自己判断（共有のみ）／それ以外はマネージャーの承認が必要（相見積もりも必須）</div>
+        <div>・3万円超：現在対応していません（連絡板で総務部にご相談ください）</div>
       </div>
 
       {tierBanner && (
@@ -352,7 +368,27 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
         </div>
         )}
 
-        {tier === 'leader' && (
+        {tier !== 'over' && canSelfJudge && (
+          <div style={{ padding: '10px 12px', background: warnBg, border: `1px solid ${warnBorder}`, borderRadius: 8 }}>
+            <div style={{ fontSize: 12, color: warnText, marginBottom: 8 }}>
+              ℹ️ あなたの役職（{roleTitle}）はこの金額の決裁権限内のため、承認は不要です。共有先を選んでください。
+            </div>
+            <label style={{ fontSize: 13, fontWeight: 'bold', color: text, marginBottom: 6, display: 'block' }}>
+              共有先マネージャー <span style={{ color: '#dc3545' }}>*</span>
+              <span style={{ fontWeight: 'normal', color: subText }}>（{sharedManagerIds.length}名選択中）</span>
+            </label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {managers.map(m => (
+                <label key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: text, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={sharedManagerIds.includes(m.id)} onChange={() => toggleSharedManager(m.id)} />
+                  {m.name}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {tier === 'leader' && !canSelfJudge && (
           <div>
             <label style={labelStyle}>承認を依頼するリーダー <span style={{ color: '#dc3545' }}>*</span></label>
             <select value={leaderId} onChange={e => setLeaderId(e.target.value)} style={{ ...inputStyle, border: `2px solid ${leaderId ? '#28a745' : border}` }}>
@@ -364,49 +400,23 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
           </div>
         )}
 
-        {tier === 'manager' && (
+        {tier === 'manager' && !canSelfJudge && (
           <div>
-            <label style={labelStyle}>承認の進め方 <span style={{ color: '#dc3545' }}>*</span></label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 8, border: `2px solid ${approvalMode === 'approval' ? '#28a745' : border}`, cursor: 'pointer' }}>
-                <input type="radio" checked={approvalMode === 'approval'} onChange={() => setApprovalMode('approval')} />
-                <span style={{ fontSize: 13, color: text }}>承認を依頼する</span>
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 8, border: `2px solid ${approvalMode === 'self_judgment' ? '#e0a800' : border}`, cursor: 'pointer' }}>
-                <input type="radio" checked={approvalMode === 'self_judgment'} onChange={() => setApprovalMode('self_judgment')} />
-                <span style={{ fontSize: 13, color: text }}>自己判断で購入し、共有のみ行う</span>
-              </label>
+            <label style={labelStyle}>
+              承認を依頼するマネージャー <span style={{ color: '#dc3545' }}>*</span>
+              <span style={{ fontWeight: 'normal', color: subText }}>（{requestedManagerIds.length}名選択中）</span>
+            </label>
+            <div style={{ fontSize: 12, color: subText, marginBottom: 8 }}>
+              複数選択できます。依頼した全員の回答（承認・否認・判断できない・その他）が揃うまで最終決定はできません。全員一致でなくても、意見が揃った後は依頼したどなたか1名が最終決定できます。
             </div>
-
-            {approvalMode === 'approval' ? (
-              <div style={{ marginTop: 10 }}>
-                <label style={labelStyle}>承認を依頼するマネージャー <span style={{ color: '#dc3545' }}>*</span></label>
-                <select value={managerId} onChange={e => setManagerId(e.target.value)} style={{ ...inputStyle, border: `2px solid ${managerId ? '#28a745' : border}` }}>
-                  <option value="">選択してください</option>
-                  {managers.map(m => (
-                    <option key={m.id} value={m.id}>{m.name}</option>
-                  ))}
-                </select>
-              </div>
-            ) : (
-              <div style={{ marginTop: 10, padding: '10px 12px', background: warnBg, border: `1px solid ${warnBorder}`, borderRadius: 8 }}>
-                <div style={{ fontSize: 12, color: warnText, marginBottom: 8 }}>
-                  ⚠️ 承認は不要になり、選択したマネージャーへの通知のみになります。
-                </div>
-                <label style={{ fontSize: 13, fontWeight: 'bold', color: text, marginBottom: 6, display: 'block' }}>
-                  共有先マネージャー <span style={{ color: '#dc3545' }}>*</span>
-                  <span style={{ fontWeight: 'normal', color: subText }}>（{sharedManagerIds.length}名選択中）</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {managers.map(m => (
+                <label key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: text, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={requestedManagerIds.includes(m.id)} onChange={() => toggleRequestedManager(m.id)} />
+                  {m.name}
                 </label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {managers.map(m => (
-                    <label key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: text, cursor: 'pointer' }}>
-                      <input type="checkbox" checked={sharedManagerIds.includes(m.id)} onChange={() => toggleSharedManager(m.id)} />
-                      {m.name}
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
+              ))}
+            </div>
           </div>
         )}
 
@@ -457,7 +467,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
           disabled={submitting}
           style={{ width: '100%', padding: '14px', borderRadius: 10, border: 'none', background: submitting ? subText : '#28a745', color: '#fff', fontSize: 15, fontWeight: 'bold', cursor: submitting ? 'default' : 'pointer' }}
         >
-          {submitting ? '送信しています...' : isResubmit ? '修正して再申請する' : approvalMode === 'self_judgment' && tier === 'manager' ? '共有する' : '申請する'}
+          {submitting ? '送信しています...' : isResubmit ? '修正して再申請する' : canSelfJudge ? '共有する' : '申請する'}
         </button>
         )}
       </div>
