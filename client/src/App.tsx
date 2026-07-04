@@ -443,8 +443,10 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
   const isShiftPendingResubmit = n.source_type === 'shift_report:pending_resubmit';  // 申請者：再提出/取消待ち
   const isShiftResult          = n.source_type === 'shift_report';                   // 申請者：結果報告のみ
   const isTimeAdjustment       = n.source_type === 'time_adjustment';                // 上長：FYI（対応不要）
-  const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit;
-  const isResultOnly = isLeaveResult || isShiftResult || isTimeAdjustment;
+  const isPurchasePendingApproval = n.source_type === 'purchase_request:pending_approval'; // リーダー：要対応
+  const isPurchaseResult          = n.source_type === 'purchase_request';                  // 申請者：結果報告のみ
+  const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit || isPurchasePendingApproval;
+  const isResultOnly = isLeaveResult || isShiftResult || isTimeAdjustment || isPurchaseResult;
   // 旧来のフォールバック（source_typeが無い通知向け）
   const isLegacyReject = !isPendingAction && !isResultOnly && (n.message.includes('差し戻し') || n.message.includes('差し戻され'));
 
@@ -470,6 +472,8 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
     if (isShiftPendingResubmit) { navigate('/shift-report?tab=history'); return; }
     if (isShiftResult) { navigate('/shift-report?tab=history'); onDismiss(n.id); return; }
     if (isTimeAdjustment) { onDismiss(n.id); return; }
+    if (isPurchasePendingApproval) { navigate('/purchase?tab=approvals'); return; }
+    if (isPurchaseResult) { navigate('/purchase?tab=history'); onDismiss(n.id); return; }
     if (isLegacyReject) { navigate('/leave'); return; }
   };
 
