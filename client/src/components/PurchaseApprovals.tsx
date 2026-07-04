@@ -4,11 +4,27 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { insertNotification } from '../lib/notifications';
 import { dispatchSiteNotification, getNotificationTemplate } from '../lib/notificationDispatch';
 
-type Route = 'leader' | 'manager';
+type Route = 'leader' | 'manager' | 'board';
 type OpinionValue = 'approve' | 'deny' | 'undecided' | 'other';
 
 const OPINION_LABEL: Record<OpinionValue, string> = { approve: '承認', deny: '否認', undecided: '判断できない', other: 'その他' };
 const OPINION_OPTIONS: OpinionValue[] = ['approve', 'deny', 'undecided', 'other'];
+
+// 自分の意見提出をもって全員承認が揃った場合に、明示的なフィードバックとして表示するバナー
+const BoardAllApprovedBanner: React.FC<{ message: string; onClose: () => void }> = ({ message, onClose }) => {
+  React.useEffect(() => { const t = setTimeout(onClose, 4000); return () => clearTimeout(t); }, [onClose]);
+  return (
+    <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999 }}>
+      <div style={{ background: '#f0fdf4', border: '1.5px solid #b7e4cc', borderRadius: 18, padding: '24px 28px', minWidth: 220, maxWidth: 300, textAlign: 'center', position: 'relative' }}>
+        <button onClick={onClose} style={{ position: 'absolute', top: 10, right: 10, background: 'rgba(21,87,36,0.1)', border: 'none', color: '#155724', borderRadius: '50%', width: 26, height: 26, cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+        <div style={{ width: 60, height: 60, borderRadius: '50%', background: '#d4edda', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>
+          <span style={{ fontSize: 26, color: '#28a745' }}>✓</span>
+        </div>
+        <div style={{ fontSize: 15, fontWeight: 500, color: '#155724' }}>{message}</div>
+      </div>
+    </div>
+  );
+};
 
 interface PendingRequest {
   id: string;
@@ -25,6 +41,8 @@ interface PendingRequest {
   created_at: string;
   route: Route;
   requested_manager_ids: string[] | null;
+  board_approver_ids: string[] | null;
+  approval_round: number;
 }
 
 interface OpinionRow {
@@ -33,13 +51,14 @@ interface OpinionRow {
   opinion: OpinionValue;
   comment: string | null;
   visible_to_applicant: boolean;
+  approval_round: number;
 }
 
 interface Props {
   userId: string;
 }
 
-const SELECT_COLUMNS = 'id, user_id, item_name, quantity, amount, requested_purchase_date, store_name, purpose, notes, quotes, quote_file_path, created_at, requested_manager_ids';
+const SELECT_COLUMNS = 'id, user_id, item_name, quantity, amount, requested_purchase_date, store_name, purpose, notes, quotes, quote_file_path, created_at, requested_manager_ids, board_approver_ids, approval_round';
 
 const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
   const isDarkMode = useDarkMode();
@@ -52,6 +71,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, { opinion: OpinionValue | ''; comment: string; visibleToApplicant: boolean }>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [allApprovedBanner, setAllApprovedBanner] = useState<string | null>(null);
 
   const cardBg = isDarkMode ? '#2d2d3e' : '#ffffff';
   const border = isDarkMode ? '#3a3a5c' : '#e0e0e0';
@@ -64,26 +84,31 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
 
   const load = useCallback(async () => {
     setLoading(true);
-    // リーダー承認待ち・マネージャー承認待ちは別々にクエリしてマージする
+    // リーダー承認待ち・マネージャー承認待ち・全員承認待ちは別々にクエリしてマージする
     // （配列列と単数列が混在するため.or()で無理に一本化せず可読性を優先）
-    const [leaderRes, managerRes] = await Promise.all([
+    const [leaderRes, managerRes, boardRes] = await Promise.all([
       supabase.from('purchase_requests').select(SELECT_COLUMNS).eq('leader_id', userId).eq('status', 'pending_leader'),
       supabase.from('purchase_requests').select(SELECT_COLUMNS).contains('requested_manager_ids', [userId]).eq('status', 'pending_manager'),
+      supabase.from('purchase_requests').select(SELECT_COLUMNS).contains('board_approver_ids', [userId]).eq('status', 'pending_board'),
     ]);
     const rows: PendingRequest[] = [
       ...((leaderRes.data ?? []) as Omit<PendingRequest, 'route'>[]).map(r => ({ ...r, route: 'leader' as const })),
       ...((managerRes.data ?? []) as Omit<PendingRequest, 'route'>[]).map(r => ({ ...r, route: 'manager' as const })),
+      ...((boardRes.data ?? []) as Omit<PendingRequest, 'route'>[]).map(r => ({ ...r, route: 'board' as const })),
     ].sort((a, b) => a.created_at.localeCompare(b.created_at));
     setRequests(rows);
 
-    const managerRouteIds = rows.filter(r => r.route === 'manager').map(r => r.id);
+    const opinionTargetIds = rows.filter(r => r.route === 'manager' || r.route === 'board').map(r => r.id);
     let opinionRows: OpinionRow[] = [];
-    if (managerRouteIds.length > 0) {
+    if (opinionTargetIds.length > 0) {
+      const roundById: Record<string, number> = {};
+      rows.forEach(r => { roundById[r.id] = r.approval_round; });
       const { data: ops } = await supabase
         .from('purchase_request_manager_opinions')
-        .select('purchase_request_id, manager_id, opinion, comment, visible_to_applicant')
-        .in('purchase_request_id', managerRouteIds);
-      opinionRows = (ops ?? []) as OpinionRow[];
+        .select('purchase_request_id, manager_id, opinion, comment, visible_to_applicant, approval_round')
+        .in('purchase_request_id', opinionTargetIds);
+      // 過去ラウンドの意見は「回答状況」に含めない。現在のapproval_roundの意見のみを対象にする
+      opinionRows = ((ops ?? []) as OpinionRow[]).filter(o => o.approval_round === roundById[o.purchase_request_id]);
       const grouped: Record<string, OpinionRow[]> = {};
       opinionRows.forEach(o => { (grouped[o.purchase_request_id] ??= []).push(o); });
       setOpinions(grouped);
@@ -91,7 +116,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
       // 自分の既存意見をドラフトに反映（編集可能にする）
       setDrafts(prev => {
         const next = { ...prev };
-        for (const id of managerRouteIds) {
+        for (const id of opinionTargetIds) {
           const mine = opinionRows.find(o => o.purchase_request_id === id && o.manager_id === userId);
           if (mine && !next[id]) {
             next[id] = { opinion: mine.opinion, comment: mine.comment ?? '', visibleToApplicant: mine.visible_to_applicant };
@@ -105,6 +130,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
 
     const userIds = new Set(rows.map(r => r.user_id));
     rows.forEach(r => (r.requested_manager_ids ?? []).forEach(id => userIds.add(id)));
+    rows.forEach(r => (r.board_approver_ids ?? []).forEach(id => userIds.add(id)));
     opinionRows.forEach(o => userIds.add(o.manager_id));
     if (userIds.size > 0) {
       const { data: profs } = await supabase.from('profiles').select('id, name').in('id', [...userIds]);
@@ -169,7 +195,8 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
       opinion: draft.opinion,
       comment: draft.comment.trim() || null,
       visible_to_applicant: draft.visibleToApplicant,
-    }, { onConflict: 'purchase_request_id,manager_id' });
+      approval_round: req.approval_round,
+    }, { onConflict: 'purchase_request_id,manager_id,approval_round' });
 
     if (error) {
       setErrors(prev => ({ ...prev, [req.id]: '意見の送信に失敗しました: ' + error.message }));
@@ -180,8 +207,9 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
 
     const { data: ops } = await supabase
       .from('purchase_request_manager_opinions')
-      .select('purchase_request_id, manager_id, opinion, comment, visible_to_applicant')
-      .eq('purchase_request_id', req.id);
+      .select('purchase_request_id, manager_id, opinion, comment, visible_to_applicant, approval_round')
+      .eq('purchase_request_id', req.id)
+      .eq('approval_round', req.approval_round);
     const rows = (ops ?? []) as OpinionRow[];
     setOpinions(prev => ({ ...prev, [req.id]: rows }));
 
@@ -197,16 +225,80 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
     setProcessingId(null);
   };
 
+  // 全員承認ルート専用: submit_board_opinion RPCを呼び出す。
+  // 全員が承認で揃った場合、RPCがtrueを返しDB側でboard_approvedへ自動確定される。
+  // Phase3の既存submitOpinion（直接upsert）はboardルートでは使わない。
+  const submitBoardOpinion = async (req: PendingRequest) => {
+    const draft = drafts[req.id];
+    if (!draft?.opinion) return;
+    setProcessingId(req.id);
+
+    const { data: allApproved, error } = await supabase.rpc('submit_board_opinion', {
+      p_purchase_request_id: req.id,
+      p_opinion: draft.opinion,
+      p_comment: draft.comment.trim() || null,
+      p_visible_to_applicant: draft.visibleToApplicant,
+    });
+
+    if (error) {
+      setErrors(prev => ({ ...prev, [req.id]: '意見の送信に失敗しました: ' + error.message }));
+      setProcessingId(null);
+      return;
+    }
+    setErrors(prev => { const next = { ...prev }; delete next[req.id]; return next; });
+
+    const { data: ops } = await supabase
+      .from('purchase_request_manager_opinions')
+      .select('purchase_request_id, manager_id, opinion, comment, visible_to_applicant, approval_round')
+      .eq('purchase_request_id', req.id)
+      .eq('approval_round', req.approval_round);
+    const rows = (ops ?? []) as OpinionRow[];
+    setOpinions(prev => ({ ...prev, [req.id]: rows }));
+
+    const others = (req.board_approver_ids ?? []).filter(id => id !== userId);
+    const vars = { '回答者名': names[userId] ?? '', '品目名': req.item_name };
+
+    if (allApproved) {
+      setAllApprovedBanner('これで全員承認が完了しました');
+      const tpl = await getNotificationTemplate('purchase_request:board_all_approved', 'site', vars);
+      if (tpl) await insertNotification(req.user_id, tpl.template, tpl.subject || undefined, 'purchase_request', req.id);
+      setRequests(prev => prev.filter(r => r.id !== req.id));
+    } else {
+      const tpl = await getNotificationTemplate('purchase_request:board_opinion_submitted', 'site', vars);
+      if (tpl && others.length > 0) {
+        await Promise.all(others.map(id => insertNotification(id, tpl.template, tpl.subject || undefined, 'purchase_request:pending_approval', req.id)));
+      }
+      // 初めて否認が出た時点（1回のみ）で全員へ通知する
+      const hasDenial = rows.some(o => o.opinion === 'deny');
+      const isFirstDenial = draft.opinion === 'deny' && !rows.some(o => o.manager_id !== userId && o.opinion === 'deny');
+      if (hasDenial && isFirstDenial) {
+        const denialTpl = await getNotificationTemplate('purchase_request:board_denial_present', 'site', vars);
+        if (denialTpl) {
+          await Promise.all((req.board_approver_ids ?? []).map(id => insertNotification(id, denialTpl.template, denialTpl.subject || undefined, 'purchase_request:pending_approval', req.id)));
+        }
+      }
+    }
+
+    setProcessingId(null);
+  };
+
   if (loading) return <div style={{ padding: 20, textAlign: 'center', color: subText }}>読み込み中...</div>;
   if (requests.length === 0) return <div style={{ padding: 20, textAlign: 'center', color: subText }}>承認待ちの申請はありません</div>;
 
+  const ROUTE_LABEL: Record<Route, string> = { leader: 'リーダー', manager: 'マネージャー', board: '全員承認' };
+  const ROUTE_COLOR: Record<Route, string> = { leader: '#4a90d9', manager: '#8a5cd9', board: '#d98a4a' };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {allApprovedBanner && (
+        <BoardAllApprovedBanner message={allApprovedBanner} onClose={() => setAllApprovedBanner(null)} />
+      )}
       {requests.map(r => {
         const requestOpinions = opinions[r.id] ?? [];
-        const requestedIds = r.requested_manager_ids ?? [];
+        const requestedIds = r.route === 'board' ? (r.board_approver_ids ?? []) : (r.requested_manager_ids ?? []);
         const unanswered = requestedIds.filter(id => !requestOpinions.some(o => o.manager_id === id));
         const allAnswered = r.route === 'leader' || unanswered.length === 0;
+        const hasDenial = requestOpinions.some(o => o.opinion === 'deny');
         const draft = drafts[r.id] ?? { opinion: '', comment: '', visibleToApplicant: false };
 
         return (
@@ -216,8 +308,8 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
             <span style={{ fontSize: 15, fontWeight: 'bold', color: text, whiteSpace: 'nowrap' }}>¥{r.amount.toLocaleString()}</span>
           </div>
           <div style={{ fontSize: 12, color: subText, display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 6 }}>
-            <span style={{ color: '#fff', background: r.route === 'leader' ? '#4a90d9' : '#8a5cd9', borderRadius: 4, padding: '1px 6px' }}>
-              あなたの承認が必要（{r.route === 'leader' ? 'リーダー' : 'マネージャー'}）
+            <span style={{ color: '#fff', background: ROUTE_COLOR[r.route], borderRadius: 4, padding: '1px 6px' }}>
+              あなたの承認が必要（{ROUTE_LABEL[r.route]}）
             </span>
             <span>👤 {names[r.user_id] ?? '不明'}</span>
             {r.requested_purchase_date && <span>📅 購入予定：{r.requested_purchase_date}</span>}
@@ -237,9 +329,11 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
             </div>
           )}
 
-          {r.route === 'manager' && (
+          {(r.route === 'manager' || r.route === 'board') && (
             <div style={{ marginBottom: 10, padding: '10px 12px', background: isDarkMode ? '#20304a' : '#eef6ff', border: `1px solid ${isDarkMode ? '#2e4a70' : '#cfe4ff'}`, borderRadius: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: 'bold', color: text, marginBottom: 6 }}>依頼された{requestedIds.length}名の意見</div>
+              <div style={{ fontSize: 12, fontWeight: 'bold', color: text, marginBottom: 6 }}>
+                {r.route === 'board' ? `${requestedIds.length}名中${requestOpinions.length}名回答済み` : `依頼された${requestedIds.length}名の意見`}
+              </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 10 }}>
                 {requestedIds.map(id => {
                   const o = requestOpinions.find(x => x.manager_id === id);
@@ -282,7 +376,9 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
                 申請者にもこの意見を共有する
               </label>
               <button
-                type="button" onClick={() => submitOpinion(r)} disabled={!draft.opinion || processingId === r.id}
+                type="button"
+                onClick={() => (r.route === 'board' ? submitBoardOpinion(r) : submitOpinion(r))}
+                disabled={!draft.opinion || processingId === r.id}
                 style={{ width: '100%', padding: '8px', borderRadius: 8, border: 'none', background: draft.opinion ? '#4a90d9' : subText, color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: draft.opinion ? 'pointer' : 'default' }}
               >
                 意見を送る
@@ -308,6 +404,17 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
             </div>
           )}
 
+          {r.route === 'board' && !allAnswered && (
+            <div style={{ marginBottom: 10, padding: '8px 10px', background: warnBg, border: `1px solid ${warnBorder}`, borderRadius: 8, fontSize: 12, color: warnText }}>
+              あと{unanswered.length}名（{unanswered.map(id => names[id] ?? '不明').join('・')}）の回答待ちです。全員が承認すると自動で確定します。
+            </div>
+          )}
+          {r.route === 'board' && allAnswered && hasDenial && (
+            <div style={{ marginBottom: 10, padding: '8px 10px', background: '#fff5f5', border: '1px solid #f5c2c7', borderRadius: 8, fontSize: 12, color: '#842029' }}>
+              否認意見があります。差し戻すか、話し合いのうえで判断してください。
+            </div>
+          )}
+
           {returningId === r.id ? (
             <div style={{ marginTop: 8 }}>
               <textarea
@@ -329,6 +436,17 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
                   最終決定：差し戻す
                 </button>
               </div>
+            </div>
+          ) : r.route === 'board' ? (
+            // 全員承認ルートは全員が承認で揃うと自動確定するため、手動の承認ボタンは出さない。
+            // 否認が混ざっている場合のみ差し戻すボタンを活性化する
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button" onClick={() => setReturningId(r.id)} disabled={!allAnswered || !hasDenial}
+                style={{ flex: 1, padding: '10px', borderRadius: 8, border: `1px solid ${border}`, background: 'transparent', color: (allAnswered && hasDenial) ? text : subText, fontSize: 13, cursor: (allAnswered && hasDenial) ? 'pointer' : 'default' }}
+              >
+                最終決定：差し戻す
+              </button>
             </div>
           ) : (
             <div style={{ display: 'flex', gap: 8 }}>

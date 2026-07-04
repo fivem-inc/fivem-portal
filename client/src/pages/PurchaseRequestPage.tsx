@@ -17,7 +17,7 @@ interface PurchaseRecord {
   id: string;
   user_id: string;
   request_type: 'reimbursement' | 'purchase_request';
-  status: 'recorded' | 'pending_leader' | 'leader_approved' | 'pending_manager' | 'manager_approved' | 'self_judgment_shared' | 'returned';
+  status: 'recorded' | 'pending_leader' | 'leader_approved' | 'pending_manager' | 'manager_approved' | 'self_judgment_shared' | 'pending_board' | 'board_approved' | 'returned';
   item_name: string;
   quantity: number | null;
   amount: number;
@@ -34,10 +34,13 @@ interface PurchaseRecord {
   requested_manager_ids: string[] | null;
   shared_manager_ids: string[] | null;
   is_self_judgment: boolean;
+  president_self_judgment: boolean;
+  board_approver_ids: string[] | null;
   notes: string | null;
   quotes: { vendor: string; amount: number }[] | null;
   quote_file_path: string | null;
   created_at: string;
+  approval_round: number;
 }
 
 const PAYMENT_LABEL: Record<string, string> = { cash: '立替（返金あり）', company_card: '会社カード（返金なし）' };
@@ -49,16 +52,19 @@ const STATUS_LABEL: Record<string, { label: string; color: string }> = {
   pending_manager:      { label: '承認待ち（マネージャー）', color: '#e0a800' },
   manager_approved:     { label: '承認済み', color: '#28a745' },
   self_judgment_shared: { label: '共有済み（自己判断）', color: '#6c757d' },
+  pending_board:        { label: '承認待ち（全員承認）', color: '#e0a800' },
+  board_approved:       { label: '承認済み（全員承認）', color: '#28a745' },
   returned:             { label: '差し戻し', color: '#dc3545' },
 };
 
-interface OpinionRow { purchase_request_id: string; manager_id: string; opinion: 'approve' | 'deny' | 'undecided' | 'other'; comment: string | null }
+interface OpinionRow { purchase_request_id: string; manager_id: string; opinion: 'approve' | 'deny' | 'undecided' | 'other'; comment: string | null; approval_round: number }
 const OPINION_LABEL: Record<string, string> = { approve: '承認', deny: '否認', undecided: '判断できない', other: 'その他' };
 
 const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; userId: string; onResubmit: (record: ResubmitRecord) => void }> = ({ isDarkMode, isManagerPlus, userId, onResubmit }) => {
   const [records, setRecords] = useState<PurchaseRecord[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
   const [opinions, setOpinions] = useState<Record<string, OpinionRow[]>>({});
+  const [boardProgress, setBoardProgress] = useState<Record<string, { answered: number; required: number }>>({});
   const [loading, setLoading] = useState(true);
 
   const cardBg = isDarkMode ? '#2d2d3e' : '#ffffff';
@@ -70,7 +76,7 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; userI
     setLoading(true);
     const { data } = await supabase
       .from('purchase_requests')
-      .select('id, user_id, request_type, status, item_name, quantity, amount, purchased_at, requested_purchase_date, store_name, purpose, instructed_by, payment_method, receipt_type, receipt_missing_reason, returned_reason, leader_id, requested_manager_ids, shared_manager_ids, is_self_judgment, notes, quotes, quote_file_path, created_at')
+      .select('id, user_id, request_type, status, item_name, quantity, amount, purchased_at, requested_purchase_date, store_name, purpose, instructed_by, payment_method, receipt_type, receipt_missing_reason, returned_reason, leader_id, requested_manager_ids, shared_manager_ids, is_self_judgment, president_self_judgment, board_approver_ids, notes, quotes, quote_file_path, created_at, approval_round')
       .order('created_at', { ascending: false });
     const rows = (data ?? []) as PurchaseRecord[];
     setRecords(rows);
@@ -78,16 +84,35 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; userI
     const namesToFetch = new Set<string>();
     if (isManagerPlus) rows.forEach(r => namesToFetch.add(r.user_id));
 
-    // マネージャー承認ルートの自分の申請には、共有可の意見（RLSでvisible_to_applicant=trueのみ返る）を表示する
+    // マネージャー承認ルート・全員承認ルートいずれも、自分の申請には
+    // 共有可の意見（RLSでvisible_to_applicant=trueのみ返る）を表示する
     const managerRouteIds = rows.filter(r => r.user_id === userId && r.requested_manager_ids?.length).map(r => r.id);
-    if (managerRouteIds.length > 0) {
+    const boardRouteIds = rows.filter(r => r.user_id === userId && r.board_approver_ids?.length).map(r => r.id);
+    const opinionTargetIds = [...new Set([...managerRouteIds, ...boardRouteIds])];
+    if (opinionTargetIds.length > 0) {
       const { data: ops } = await supabase
         .from('purchase_request_manager_opinions')
-        .select('purchase_request_id, manager_id, opinion, comment')
-        .in('purchase_request_id', managerRouteIds);
+        .select('purchase_request_id, manager_id, opinion, comment, approval_round')
+        .in('purchase_request_id', opinionTargetIds);
+      const roundById: Record<string, number> = {};
+      rows.forEach(r => { roundById[r.id] = r.approval_round; });
       const grouped: Record<string, OpinionRow[]> = {};
-      (ops ?? []).forEach((o: OpinionRow) => { (grouped[o.purchase_request_id] ??= []).push(o); namesToFetch.add(o.manager_id); });
+      // 過去ラウンドの意見は今回は表示しない。対象purchase_requestの現在のapproval_roundと
+      // 一致する意見のみを「現在の意見」として扱う
+      (ops ?? []).forEach((o: OpinionRow) => {
+        if (o.approval_round !== roundById[o.purchase_request_id]) return;
+        (grouped[o.purchase_request_id] ??= []).push(o);
+        namesToFetch.add(o.manager_id);
+      });
       setOpinions(grouped);
+
+      // 全員承認ルートは「◯名中◯名回答済み」の進捗をさりげなく表示するため件数だけ計算する
+      const progress: Record<string, { answered: number; required: number }> = {};
+      boardRouteIds.forEach(id => {
+        const req = rows.find(r => r.id === id);
+        progress[id] = { answered: (grouped[id] ?? []).length, required: req?.board_approver_ids?.length ?? 0 };
+      });
+      setBoardProgress(progress);
     }
 
     if (namesToFetch.size > 0) {
@@ -148,6 +173,11 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; userI
               共有された意見：{opinions[r.id].map(o => `${names[o.manager_id] ?? '不明'}（${OPINION_LABEL[o.opinion]}${o.comment ? '：' + o.comment : ''}）`).join('　')}
             </div>
           )}
+          {(r.status === 'pending_board' || r.status === 'board_approved') && boardProgress[r.id] && (
+            <div style={{ fontSize: 12, color: subText, marginTop: 6 }}>
+              全員承認の進み具合：{boardProgress[r.id].required}名中{boardProgress[r.id].answered}名回答済み
+            </div>
+          )}
           {r.status === 'returned' && r.returned_reason && (
             <div style={{ fontSize: 12, color: '#dc3545', marginTop: 6 }}>差し戻し理由：{r.returned_reason}</div>
           )}
@@ -159,7 +189,8 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; userI
                 requested_purchase_date: r.requested_purchase_date, store_name: r.store_name,
                 purpose: r.purpose, notes: r.notes, leader_id: r.leader_id, returned_reason: r.returned_reason,
                 requested_manager_ids: r.requested_manager_ids, shared_manager_ids: r.shared_manager_ids, is_self_judgment: r.is_self_judgment,
-                quotes: r.quotes, quote_file_path: r.quote_file_path,
+                president_self_judgment: r.president_self_judgment,
+                quotes: r.quotes, quote_file_path: r.quote_file_path, approval_round: r.approval_round,
               })}
               style={{ marginTop: 8, width: '100%', padding: '8px', borderRadius: 8, border: 'none', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}
             >
