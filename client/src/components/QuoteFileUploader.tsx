@@ -25,8 +25,14 @@ const QuoteFileUploader: React.FC<QuoteFileUploaderProps> = ({ isDarkMode, userI
     setUploadError('');
     try {
       const isPdf = file.type === 'application/pdf';
-      // compressImageFile はPDF等canvas非対応形式では元ファイルをそのまま返すフォールバックを持つため流用できる
-      const uploadBlob = isPdf ? file : await compressImageFile(file);
+      let uploadBlob: Blob;
+      if (isPdf) {
+        // pdfjs-dist/pdf-libは容量が大きいため、PDFが実際に選択された時だけ動的読み込みする
+        const { compressPdfFile } = await import('../lib/pdfCompress');
+        uploadBlob = await compressPdfFile(file);
+      } else {
+        uploadBlob = await compressImageFile(file);
+      }
       const ext = isPdf ? 'pdf' : 'jpg';
       const contentType = isPdf ? 'application/pdf' : 'image/jpeg';
       const path = `${userId}/${draftId}/${Date.now()}_quote.${ext}`;
@@ -36,9 +42,10 @@ const QuoteFileUploader: React.FC<QuoteFileUploaderProps> = ({ isDarkMode, userI
       if (error) throw error;
       onChange(path);
     } catch (e) {
+      const isPdfTooLarge = e instanceof Error && e.name === 'PdfTooLargeError';
       setUploadError(
-        e instanceof ImageTooLargeError
-          ? e.message
+        e instanceof ImageTooLargeError || isPdfTooLarge
+          ? (e as Error).message
           : 'アップロードに失敗しました。もう一度お試しください。'
       );
     } finally {

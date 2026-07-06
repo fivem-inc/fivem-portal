@@ -5660,3 +5660,41 @@ CSV・フォーム再申請時の初期化すべてでこの関数を共通利�
 4. 複数商品対応の明細テーブルへの過去データバックフィルは意図的に見送っている。将来的に
    本体列（item_name/quantity/amount/store_name/quotes）のフォールバック表示コードを
    廃止するかどうかの判断が必要になったら検討する
+
+## 2026-07-19頃（続き：見積書PDF圧縮・管理画面「購入申請」タブに申請一覧を追加）
+
+### 見積書PDFの圧縮（`QuoteFileUploader.tsx`）
+- 従来はPDFを無圧縮のままアップロードしていた（画像のみ`compressImageFile`で圧縮）。
+  ユーザーからのフィードバックで「PDFも圧縮してほしい」と要望があり対応
+- 新規`client/src/lib/pdfCompress.ts`：PDFの各ページを`pdfjs-dist`でcanvasにラスタライズし、
+  画像圧縮と同じ基準（長辺1600px・JPEG品質80%、`imageCompress.ts`の定数を共通利用）で
+  再圧縮した上で、`pdf-lib`で1ページ1画像のPDFとして作り直す方式
+- 新規npm依存：`pdfjs-dist`・`pdf-lib`。**重要**：`QuoteFileUploader.tsx`側では
+  `import('../lib/pdfCompress')`による動的importを使い、PDFが実際に選択された時だけ
+  読み込む設計にしている（静的importにすると`PurchaseRequestPage`の遅延読み込みチャンクに
+  重い依存が常時バンドルされてしまい、通常ページの初回表示が遅くなるため。動的import化前は
+  該当チャンクが76KB→922KBに肥大化することを確認した上で修正した）
+- 30MB超の元PDFはエラーで拒否（画像は20MB上限、圧縮せず素通しのPDFは元は5MB上限にする案も
+  検討したが、最終的に「常に圧縮する」方式に変更したため上限は緩め）
+- 暗号化PDF等、pdfjsが処理できない場合は元ファイルのままアップロードするフォールバックあり
+
+### 管理画面「購入申請」タブに申請一覧を追加
+- 従来はCSV出力機能のみで、申請内容を画面上で確認する手段がなかった
+  （ユーザーから「申請された内容が見えない」と指摘）
+- `AdminPanelContext.tsx`に`fetchPurchaseRequestsList`を新設し、`purchase_requests`全件
+  （明細・相見積もり・関係者名前も含む）を新しい順に取得。タブが`purchase_requests`に
+  なった時に読み込む（既存の`users`/`trip_reports`等と同じ`useEffect`パターン）
+- `PurchaseRequestsTab.tsx`に一覧UIを追加：全て/承認待ち/承認済み/差し戻しのフィルタタブ、
+  各カードに申請者名・商品明細（`PurchaseItemsSummary`を再利用）・金額・ステータスバッジ・
+  差し戻し理由を表示。既存の`PurchaseApprovals.tsx`/`PurchaseRequestPage.tsx`の
+  カードデザインに準拠
+
+### 未確認・要検証
+- 実際にPDFをアップロードしてファイルサイズが縮小されているか、複数ページPDFの内容が
+  正しく保持されるか（実機未確認）
+- 管理画面の一覧・フィルタ表示が正しく動くか（実機未確認）
+- ビルド確認は`tsc -b`・`vite build`とも成功済み
+
+### 経理担当者への確認依頼（今後の運用）
+- 上記の管理画面「購入申請」タブは経理担当者にも使ってもらう想定。ページ構成の説明と
+  確認依頼文書を別途作成する予定

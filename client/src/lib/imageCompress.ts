@@ -1,8 +1,8 @@
 // レシート写真をアップロード前にブラウザ側でリサイズ・圧縮する（新規npm依存なし）
 // ユーザーには見えない裏側処理として扱うこと（画面上に圧縮の説明は出さない）
 
-const MAX_LONG_EDGE = 1600;
-const JPEG_QUALITY = 0.8;
+export const MAX_LONG_EDGE = 1600;
+export const JPEG_QUALITY = 0.8;
 const MAX_SOURCE_FILE_BYTES = 20 * 1024 * 1024; // 20MB超の元ファイルは圧縮前に拒否
 
 export class ImageTooLargeError extends Error {}

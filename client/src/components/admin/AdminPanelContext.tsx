@@ -151,6 +151,11 @@ export interface AdminPanelContextType {
   handleExportPurchaseCsv: () => Promise<void>;
   purchaseCsvError: string | null;
 
+  // 購入申請一覧（管理画面「購入申請」タブ）
+  purchaseRequestsList: PurchaseRequestCSVRow[];
+  purchaseRequestsListLoading: boolean;
+  purchaseRequestNames: Record<string, string>;
+
   // Trip reports
   tripReports: BusinessTripReport[];
   loadingTripReports: boolean;
@@ -229,6 +234,9 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const [purchaseCsvEndDate, setPurchaseCsvEndDate] = useState<string>('');
   const [purchaseCsvDateType, setPurchaseCsvDateType] = useState<'created' | 'decided'>('created');
   const [purchaseCsvError, setPurchaseCsvError] = useState<string | null>(null);
+  const [purchaseRequestsList, setPurchaseRequestsList] = useState<PurchaseRequestCSVRow[]>([]);
+  const [purchaseRequestsListLoading, setPurchaseRequestsListLoading] = useState(false);
+  const [purchaseRequestNames, setPurchaseRequestNames] = useState<Record<string, string>>({});
   const [expandedAdminYears, setExpandedAdminYears] = useState<Set<string>>(new Set());
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
 
@@ -1131,6 +1139,71 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     setSuccessMsg('CSVを出力しました');
   }, [purchaseCsvStartDate, purchaseCsvEndDate, purchaseCsvDateType]);
 
+  // 購入申請一覧（管理画面「購入申請」タブでの表示用。CSV出力とは別に全件を新しい順に読み込む）
+  const fetchPurchaseRequestsList = useCallback(async () => {
+    setPurchaseRequestsListLoading(true);
+    const { data, error } = await supabase.from('purchase_requests').select('*').order('created_at', { ascending: false });
+    if (error) { setPurchaseRequestsListLoading(false); return; }
+    const rows = (data ?? []) as PurchaseRequestCSVRow[];
+
+    const requestIds = rows.map(r => r.id);
+    const itemsByRequest: Record<string, PurchaseRequestItem[]> = {};
+    if (requestIds.length > 0) {
+      const { data: itemRows } = await supabase
+        .from('purchase_request_items')
+        .select('id, purchase_request_id, sort_order, item_name, quantity, amount, amount_manually_overridden, store_name')
+        .in('purchase_request_id', requestIds);
+      const items = (itemRows ?? []) as (PurchaseRequestItem & { purchase_request_id: string })[];
+
+      const itemIds = items.map(it => it.id).filter((id): id is string => !!id);
+      let quotes: (PurchaseRequestItemQuote & { purchase_request_item_id: string })[] = [];
+      if (itemIds.length > 0) {
+        const { data: quoteRows } = await supabase
+          .from('purchase_request_item_quotes')
+          .select('id, purchase_request_item_id, vendor, unit_amount, note, quote_file_path, is_selected, sort_order')
+          .in('purchase_request_item_id', itemIds);
+        quotes = (quoteRows ?? []) as (PurchaseRequestItemQuote & { purchase_request_item_id: string })[];
+      }
+
+      items
+        .sort((a, b) => a.sort_order - b.sort_order)
+        .forEach(it => {
+          const itemQuotes = quotes
+            .filter(q => q.purchase_request_item_id === it.id)
+            .sort((a, b) => a.sort_order - b.sort_order)
+            .map(({ purchase_request_item_id: _purchase_request_item_id, ...q }) => q);
+          (itemsByRequest[it.purchase_request_id] ??= []).push({ ...it, quotes: itemQuotes });
+        });
+    }
+
+    const rowsWithItems = rows.map(row => ({
+      ...row,
+      items: resolveItems(row, itemsByRequest[row.id] ?? []),
+    }));
+
+    const userIds = new Set<string>();
+    rows.forEach(row => {
+      userIds.add(row.user_id);
+      if (row.leader_id) userIds.add(row.leader_id);
+      (row.requested_manager_ids ?? []).forEach(id => userIds.add(id));
+      (row.shared_manager_ids ?? []).forEach(id => userIds.add(id));
+      (row.board_approver_ids ?? []).forEach(id => userIds.add(id));
+    });
+    if (userIds.size > 0) {
+      const { data: profs } = await supabase.from('profiles').select('id, name').in('id', [...userIds]);
+      const namesMap: Record<string, string> = {};
+      (profs ?? []).forEach((p: { id: string; name: string }) => { namesMap[p.id] = p.name; });
+      setPurchaseRequestNames(namesMap);
+    }
+
+    setPurchaseRequestsList(rowsWithItems);
+    setPurchaseRequestsListLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'purchase_requests') fetchPurchaseRequestsList();
+  }, [activeTab, fetchPurchaseRequestsList]);
+
   const toggleYearExpansion = useCallback((year: string) => {
     setExpandedAdminYears(prev => { const newSet = new Set(prev); if (newSet.has(year)) newSet.delete(year); else newSet.add(year); return newSet; });
   }, []);
@@ -1194,6 +1267,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       handleDeleteSubmission, handleExportCsv,
       purchaseCsvStartDate, setPurchaseCsvStartDate, purchaseCsvEndDate, setPurchaseCsvEndDate,
       purchaseCsvDateType, setPurchaseCsvDateType, handleExportPurchaseCsv, purchaseCsvError,
+      purchaseRequestsList, purchaseRequestsListLoading, purchaseRequestNames,
       tripReports, loadingTripReports, expandedTripYearMonths, setExpandedTripYearMonths,
       tripReportFilter, setTripReportFilter, showLocationEditor, setShowLocationEditor,
       tripCategories, locationOptions, newLocationByCategory, setNewLocationByCategory,
