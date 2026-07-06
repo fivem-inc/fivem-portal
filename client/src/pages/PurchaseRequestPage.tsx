@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import type { AuthUser } from '../types';
+import type { AuthUser, PurchaseRequestItem, PurchaseRequestItemQuote } from '../types';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import ReimbursementForm from '../components/ReimbursementForm';
 import PurchaseRequestForm, { type ResubmitRecord } from '../components/PurchaseRequestForm';
 import PurchaseApprovals from '../components/PurchaseApprovals';
+import { resolveItems } from '../lib/purchaseItemsFallback';
+import PurchaseItemsSummary from '../components/PurchaseItemsSummary';
 
 interface PurchaseRequestPageProps {
   user: AuthUser;
@@ -41,6 +43,10 @@ interface PurchaseRecord {
   quote_file_path: string | null;
   created_at: string;
   approval_round: number;
+  items_subtotal: number | null;
+  amount_diff_reason: string | null;
+  amount_diff_flag: boolean | null;
+  location: string | null;
 }
 
 const PAYMENT_LABEL: Record<string, string> = { cash: '立替（返金あり）', company_card: '会社カード（返金なし）' };
@@ -66,20 +72,58 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; userI
   const [opinions, setOpinions] = useState<Record<string, OpinionRow[]>>({});
   const [boardProgress, setBoardProgress] = useState<Record<string, { answered: number; required: number }>>({});
   const [loading, setLoading] = useState(true);
+  const [itemsByRequest, setItemsByRequest] = useState<Record<string, PurchaseRequestItem[]>>({});
 
   const cardBg = isDarkMode ? '#2d2d3e' : '#ffffff';
   const border = isDarkMode ? '#3a3a5c' : '#e0e0e0';
   const text = isDarkMode ? '#eeeeee' : '#222222';
   const subText = isDarkMode ? '#aaaaaa' : '#666666';
+  const warnBg = isDarkMode ? '#3a3220' : '#fff8e1';
+  const warnBorder = isDarkMode ? '#5c5430' : '#ffe082';
+  const warnText = isDarkMode ? '#ffe082' : '#8a6d00';
 
   const load = useCallback(async () => {
     setLoading(true);
     const { data } = await supabase
       .from('purchase_requests')
-      .select('id, user_id, request_type, status, item_name, quantity, amount, purchased_at, requested_purchase_date, store_name, purpose, instructed_by, payment_method, receipt_type, receipt_missing_reason, returned_reason, leader_id, requested_manager_ids, shared_manager_ids, is_self_judgment, president_self_judgment, board_approver_ids, notes, quotes, quote_file_path, created_at, approval_round')
+      .select('id, user_id, request_type, status, item_name, quantity, amount, purchased_at, requested_purchase_date, store_name, purpose, instructed_by, payment_method, receipt_type, receipt_missing_reason, returned_reason, leader_id, requested_manager_ids, shared_manager_ids, is_self_judgment, president_self_judgment, board_approver_ids, notes, quotes, quote_file_path, created_at, approval_round, items_subtotal, amount_diff_reason, amount_diff_flag, location')
       .order('created_at', { ascending: false });
     const rows = (data ?? []) as PurchaseRecord[];
     setRecords(rows);
+
+    // 明細（複数商品）と商品ごとの相見積もりをまとめて取得し、request_idごとにグルーピングする
+    const requestIds = rows.map(r => r.id);
+    if (requestIds.length > 0) {
+      const { data: itemRows } = await supabase
+        .from('purchase_request_items')
+        .select('id, purchase_request_id, sort_order, item_name, quantity, amount, amount_manually_overridden, store_name')
+        .in('purchase_request_id', requestIds);
+      const items = (itemRows ?? []) as (PurchaseRequestItem & { purchase_request_id: string })[];
+
+      const itemIds = items.map(it => it.id).filter((id): id is string => !!id);
+      let quotes: (PurchaseRequestItemQuote & { purchase_request_item_id: string })[] = [];
+      if (itemIds.length > 0) {
+        const { data: quoteRows } = await supabase
+          .from('purchase_request_item_quotes')
+          .select('id, purchase_request_item_id, vendor, unit_amount, note, quote_file_path, is_selected, sort_order')
+          .in('purchase_request_item_id', itemIds);
+        quotes = (quoteRows ?? []) as (PurchaseRequestItemQuote & { purchase_request_item_id: string })[];
+      }
+
+      const grouped: Record<string, PurchaseRequestItem[]> = {};
+      items
+        .sort((a, b) => a.sort_order - b.sort_order)
+        .forEach(it => {
+          const itemQuotes = quotes
+            .filter(q => q.purchase_request_item_id === it.id)
+            .sort((a, b) => a.sort_order - b.sort_order)
+            .map(({ purchase_request_item_id: _purchase_request_item_id, ...q }) => q);
+          (grouped[it.purchase_request_id] ??= []).push({ ...it, quotes: itemQuotes });
+        });
+      setItemsByRequest(grouped);
+    } else {
+      setItemsByRequest({});
+    }
 
     const namesToFetch = new Set<string>();
     if (isManagerPlus) rows.forEach(r => namesToFetch.add(r.user_id));
@@ -133,8 +177,15 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; userI
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {records.map(r => {
         const statusInfo = STATUS_LABEL[r.status];
+        const resolvedItems = resolveItems(r, itemsByRequest[r.id] ?? []);
         return (
         <div key={r.id} style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: 14 }}>
+          {r.amount_diff_flag && (
+            <div style={{ marginBottom: 10, padding: '8px 10px', background: warnBg, border: `1px solid ${warnBorder}`, borderRadius: 8, fontSize: 12, color: warnText }}>
+              ⚠️ 明細合計（¥{(r.items_subtotal ?? 0).toLocaleString()}）と申請金額（¥{r.amount.toLocaleString()}）に差があります
+              {r.amount_diff_reason && `：理由「${r.amount_diff_reason}」`}
+            </div>
+          )}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6, gap: 8 }}>
             <span style={{ fontSize: 15, fontWeight: 'bold', color: text }}>{r.item_name}</span>
             <span style={{ fontSize: 15, fontWeight: 'bold', color: text, whiteSpace: 'nowrap' }}>¥{r.amount.toLocaleString()}</span>
@@ -151,23 +202,21 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; userI
             {r.receipt_type && <span>🧾 {RECEIPT_LABEL[r.receipt_type]}</span>}
             {isManagerPlus && r.user_id !== userId && <span>👤 {names[r.user_id] ?? '不明'}</span>}
           </div>
-          {(r.store_name || r.purpose || r.instructed_by) && (
+          {(r.store_name || r.purpose || r.instructed_by || r.location) && (
             <div style={{ fontSize: 12, color: subText, marginTop: 4 }}>
               {r.store_name && <span>購入先：{r.store_name}　</span>}
               {r.purpose && <span>用途：{r.purpose}　</span>}
-              {r.instructed_by && <span>指示者：{r.instructed_by}</span>}
+              {r.instructed_by && <span>指示者：{r.instructed_by}　</span>}
+              {r.location && <span>使用先：{r.location}</span>}
             </div>
           )}
           {r.receipt_type === 'none' && r.receipt_missing_reason && (
             <div style={{ fontSize: 12, color: subText, marginTop: 4 }}>レシートなし理由：{r.receipt_missing_reason}</div>
           )}
           {r.notes && <div style={{ fontSize: 12, color: subText, marginTop: 4 }}>備考：{r.notes}</div>}
-          {r.quotes && r.quotes.length > 0 && (
-            <div style={{ fontSize: 12, color: subText, marginTop: 4 }}>
-              相見積もり：{r.quotes.map(q => `${q.vendor}（¥${q.amount.toLocaleString()}）`).join('　')}
-              {r.quote_file_path && '　📎見積書あり'}
-            </div>
-          )}
+          <div style={{ marginTop: 8 }}>
+            <PurchaseItemsSummary items={resolvedItems} isDarkMode={isDarkMode} />
+          </div>
           {opinions[r.id] && opinions[r.id].length > 0 && (
             <div style={{ fontSize: 12, color: subText, marginTop: 6, padding: '6px 8px', background: isDarkMode ? '#20304a' : '#eef6ff', borderRadius: 6 }}>
               共有された意見：{opinions[r.id].map(o => `${names[o.manager_id] ?? '不明'}（${OPINION_LABEL[o.opinion]}${o.comment ? '：' + o.comment : ''}）`).join('　')}
@@ -191,6 +240,7 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; userI
                 requested_manager_ids: r.requested_manager_ids, shared_manager_ids: r.shared_manager_ids, is_self_judgment: r.is_self_judgment,
                 president_self_judgment: r.president_self_judgment,
                 quotes: r.quotes, quote_file_path: r.quote_file_path, approval_round: r.approval_round,
+                items: resolveItems(r, itemsByRequest[r.id] ?? []),
               })}
               style={{ marginTop: 8, width: '100%', padding: '8px', borderRadius: 8, border: 'none', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}
             >

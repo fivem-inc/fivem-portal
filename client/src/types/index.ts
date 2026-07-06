@@ -1,3 +1,25 @@
+// 備品購入申請 複数商品対応
+export interface PurchaseRequestItemQuote {
+  id?: string;
+  vendor: string;
+  unit_amount: number;
+  note: string | null;
+  quote_file_path: string | null;
+  is_selected: boolean;
+  sort_order: number;
+}
+
+export interface PurchaseRequestItem {
+  id?: string;
+  sort_order: number;
+  item_name: string;
+  quantity: number | null;
+  amount: number;
+  amount_manually_overridden: boolean;
+  store_name: string | null;
+  quotes: PurchaseRequestItemQuote[];
+}
+
 export interface Expense {
   type: 'regular' | 'business_trip' | 'one_time' | 'other';
   type_other?: string;

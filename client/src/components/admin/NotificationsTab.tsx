@@ -146,6 +146,15 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
 // 役職＋グループ絞り込みで一斉配信するイベント（時間調整・勤務変更受理など、UIとロジックを共有する）
 const ROLE_GROUP_BROADCAST_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed'];
 
+// 備品購入申請: 依頼された全マネージャー・社長など、宛先がその都度動的に決まるイベント。
+// サイト通知・メールの宛先はコード側で自動計算しており、この画面のチェックボックスでは
+// 制御できないため、チェックボックスの代わりに説明文を表示する（Slackチャンネル選択は対象外）
+const AUTO_RECIPIENT_EMAIL_SITE_EVENTS = [
+  'purchase_request:submitted_manager',
+  'purchase_request:submitted_board',
+  'purchase_request:self_judgment_shared',
+];
+
 // 役職＋グループ配信イベント用: Slackチャンネル選択肢
 const TIME_ADJ_SLACK_OPTIONS = [
   { value: 'leader',     label: '#01リーダー回覧' },
@@ -794,12 +803,20 @@ const NotificationsTab: React.FC = () => {
 
                           {s.enabled && (
                             <div style={{ borderTop: `0.5px solid ${borderColor}`, paddingTop: 10 }}>
-                              {!event.key.startsWith('board:') && !event.key.startsWith('reminder:') && (
+                              {!event.key.startsWith('board:') && !event.key.startsWith('reminder:') && !(channel !== 'slack' && AUTO_RECIPIENT_EMAIL_SITE_EVENTS.includes(event.key)) && (
                                 <div style={{ fontSize: 12, color: subText, marginBottom: 4 }}>
                                   {channel === 'slack' ? '送信先チャンネル' : '宛先'}
                                 </div>
                               )}
-                              {event.key.startsWith('board:') || event.key.startsWith('reminder:') ? null : channel === 'slack' && event.key === 'leave:new_request' ? (
+                              {channel !== 'slack' && AUTO_RECIPIENT_EMAIL_SITE_EVENTS.includes(event.key) ? (
+                                <div style={{
+                                  fontSize: 12, padding: '6px 10px', marginBottom: 10,
+                                  border: `0.5px solid ${borderColor}`, borderRadius: 8,
+                                  background: sectionBg, color: subText,
+                                }}>
+                                  宛先は依頼された全マネージャー・社長など、申請内容に応じて自動的に決まります（この画面では選択できません）。
+                                </div>
+                              ) : event.key.startsWith('board:') || event.key.startsWith('reminder:') ? null : channel === 'slack' && event.key === 'leave:new_request' ? (
                                 <div style={{
                                   fontSize: 12, padding: '6px 10px', marginBottom: 10,
                                   border: `0.5px solid ${borderColor}`, borderRadius: 8,

@@ -1,10 +1,11 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react';
-import type { PendingApproval, Submission, Expense, AdminUserProfile, AdminLeaveRequest, ReportStats, BusinessTripReport } from '../../types';
+import type { PendingApproval, Submission, Expense, AdminUserProfile, AdminLeaveRequest, ReportStats, BusinessTripReport, PurchaseRequestItem, PurchaseRequestItemQuote } from '../../types';
 import { groupSubmissionsByYearAndMonth, generateCSVData, generatePurchaseRequestCSVData, downloadCSV, formatAmount } from '../../utils';
 import type { PurchaseRequestCSVRow } from '../../utils';
 import { supabase } from '../../lib/supabaseClient';
 import { sendLeaveSlack } from '../../lib/leaveSlack';
 import { useDarkMode } from '../../hooks/useDarkMode';
+import { resolveItems } from '../../lib/purchaseItemsFallback';
 
 export type AdminTab = 'approvals' | 'users' | 'groups' | 'reports' | 'trip_reports' | 'leave_requests' | 'shift_reports' | 'leader_assignments' | 'notifications' | 'scheduled_reminders' | 'board_settings' | 'feature_permissions' | 'purchase_requests';
 
@@ -1072,6 +1073,44 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
 
     if (rows.length === 0) { setPurchaseCsvError('対象の申請がありません。'); return; }
 
+    // 明細（複数商品）と商品ごとの相見積もりをまとめて取得し、request_idごとにグルーピングする
+    // （PurchaseApprovals.tsx/PurchaseRequestPage.tsxのload()と同じパターン）
+    const requestIds = rows.map(r => r.id);
+    const itemsByRequest: Record<string, PurchaseRequestItem[]> = {};
+    if (requestIds.length > 0) {
+      const { data: itemRows } = await supabase
+        .from('purchase_request_items')
+        .select('id, purchase_request_id, sort_order, item_name, quantity, amount, amount_manually_overridden, store_name')
+        .in('purchase_request_id', requestIds);
+      const items = (itemRows ?? []) as (PurchaseRequestItem & { purchase_request_id: string })[];
+
+      const itemIds = items.map(it => it.id).filter((id): id is string => !!id);
+      let quotes: (PurchaseRequestItemQuote & { purchase_request_item_id: string })[] = [];
+      if (itemIds.length > 0) {
+        const { data: quoteRows } = await supabase
+          .from('purchase_request_item_quotes')
+          .select('id, purchase_request_item_id, vendor, unit_amount, note, quote_file_path, is_selected, sort_order')
+          .in('purchase_request_item_id', itemIds);
+        quotes = (quoteRows ?? []) as (PurchaseRequestItemQuote & { purchase_request_item_id: string })[];
+      }
+
+      items
+        .sort((a, b) => a.sort_order - b.sort_order)
+        .forEach(it => {
+          const itemQuotes = quotes
+            .filter(q => q.purchase_request_item_id === it.id)
+            .sort((a, b) => a.sort_order - b.sort_order)
+            .map(({ purchase_request_item_id: _purchase_request_item_id, ...q }) => q);
+          (itemsByRequest[it.purchase_request_id] ??= []).push({ ...it, quotes: itemQuotes });
+        });
+    }
+
+    // 明細0件（過去データ）の申請はresolveItems()で本体列から1商品分を合成する
+    const rowsWithItems = rows.map(row => ({
+      ...row,
+      items: resolveItems(row, itemsByRequest[row.id] ?? []),
+    }));
+
     // 関係する全user_idを集めてprofilesから一括解決する（PurchaseApprovals.tsxのload()と同じパターン）
     const userIds = new Set<string>();
     rows.forEach(row => {
@@ -1088,7 +1127,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     }
     const nameOf = (userId: string | null | undefined) => (userId ? (namesMap[userId] ?? '不明') : '');
 
-    downloadCSV(generatePurchaseRequestCSVData(rows, nameOf), 'purchase_requests.csv');
+    downloadCSV(generatePurchaseRequestCSVData(rowsWithItems, nameOf), 'purchase_requests.csv');
     setSuccessMsg('CSVを出力しました');
   }, [purchaseCsvStartDate, purchaseCsvEndDate, purchaseCsvDateType]);
 

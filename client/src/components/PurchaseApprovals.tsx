@@ -4,6 +4,9 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { insertNotification } from '../lib/notifications';
 import { dispatchSiteNotification, dispatchEmail, getNotificationTemplate, getUserEmail } from '../lib/notificationDispatch';
 import { sendPurchaseSlackForEvent } from '../lib/purchaseSlack';
+import { resolveItems } from '../lib/purchaseItemsFallback';
+import PurchaseItemsSummary from './PurchaseItemsSummary';
+import type { PurchaseRequestItem, PurchaseRequestItemQuote } from '../types';
 
 type Route = 'leader' | 'manager' | 'board';
 type OpinionValue = 'approve' | 'deny' | 'undecided' | 'other';
@@ -37,13 +40,17 @@ interface PendingRequest {
   store_name: string | null;
   purpose: string | null;
   notes: string | null;
-  quotes: { vendor: string; amount: number }[] | null;
+  quotes: { vendor: string; amount: number; note?: string }[] | null;
   quote_file_path: string | null;
   created_at: string;
   route: Route;
   requested_manager_ids: string[] | null;
   board_approver_ids: string[] | null;
   approval_round: number;
+  items_subtotal: number | null;
+  amount_diff_reason: string | null;
+  amount_diff_flag: boolean | null;
+  location: string | null;
 }
 
 interface OpinionRow {
@@ -59,7 +66,7 @@ interface Props {
   userId: string;
 }
 
-const SELECT_COLUMNS = 'id, user_id, item_name, quantity, amount, requested_purchase_date, store_name, purpose, notes, quotes, quote_file_path, created_at, requested_manager_ids, board_approver_ids, approval_round';
+const SELECT_COLUMNS = 'id, user_id, item_name, quantity, amount, requested_purchase_date, store_name, purpose, notes, quotes, quote_file_path, created_at, requested_manager_ids, board_approver_ids, approval_round, items_subtotal, amount_diff_reason, amount_diff_flag, location';
 
 const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
   const isDarkMode = useDarkMode();
@@ -73,6 +80,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
   const [drafts, setDrafts] = useState<Record<string, { opinion: OpinionValue | ''; comment: string; visibleToApplicant: boolean }>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [allApprovedBanner, setAllApprovedBanner] = useState<string | null>(null);
+  const [itemsByRequest, setItemsByRequest] = useState<Record<string, PurchaseRequestItem[]>>({});
 
   const cardBg = isDarkMode ? '#2d2d3e' : '#ffffff';
   const border = isDarkMode ? '#3a3a5c' : '#e0e0e0';
@@ -98,6 +106,40 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
       ...((boardRes.data ?? []) as Omit<PendingRequest, 'route'>[]).map(r => ({ ...r, route: 'board' as const })),
     ].sort((a, b) => a.created_at.localeCompare(b.created_at));
     setRequests(rows);
+
+    // 明細（複数商品）と商品ごとの相見積もりをまとめて取得し、request_idごとにグルーピングする
+    const requestIds = rows.map(r => r.id);
+    if (requestIds.length > 0) {
+      const { data: itemRows } = await supabase
+        .from('purchase_request_items')
+        .select('id, purchase_request_id, sort_order, item_name, quantity, amount, amount_manually_overridden, store_name')
+        .in('purchase_request_id', requestIds);
+      const items = (itemRows ?? []) as (PurchaseRequestItem & { purchase_request_id: string })[];
+
+      const itemIds = items.map(it => it.id).filter((id): id is string => !!id);
+      let quotes: (PurchaseRequestItemQuote & { purchase_request_item_id: string })[] = [];
+      if (itemIds.length > 0) {
+        const { data: quoteRows } = await supabase
+          .from('purchase_request_item_quotes')
+          .select('id, purchase_request_item_id, vendor, unit_amount, note, quote_file_path, is_selected, sort_order')
+          .in('purchase_request_item_id', itemIds);
+        quotes = (quoteRows ?? []) as (PurchaseRequestItemQuote & { purchase_request_item_id: string })[];
+      }
+
+      const grouped: Record<string, PurchaseRequestItem[]> = {};
+      items
+        .sort((a, b) => a.sort_order - b.sort_order)
+        .forEach(it => {
+          const itemQuotes = quotes
+            .filter(q => q.purchase_request_item_id === it.id)
+            .sort((a, b) => a.sort_order - b.sort_order)
+            .map(({ purchase_request_item_id: _purchase_request_item_id, ...q }) => q);
+          (grouped[it.purchase_request_id] ??= []).push({ ...it, quotes: itemQuotes });
+        });
+      setItemsByRequest(grouped);
+    } else {
+      setItemsByRequest({});
+    }
 
     const opinionTargetIds = rows.filter(r => r.route === 'manager' || r.route === 'board').map(r => r.id);
     let opinionRows: OpinionRow[] = [];
@@ -144,6 +186,13 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
 
   useEffect(() => { load(); }, [load]);
 
+  // 通知文言用の品目名サマリー（複数商品の場合は「1件目（他N件）」形式にする）
+  const itemNameSummary = (req: PendingRequest): string => {
+    const resolvedItems = resolveItems(req, itemsByRequest[req.id] ?? []);
+    const first = resolvedItems[0]?.item_name ?? req.item_name;
+    return resolvedItems.length > 1 ? `${first}（他${resolvedItems.length - 1}件）` : first;
+  };
+
   const handleApprove = async (req: PendingRequest) => {
     setProcessingId(req.id);
     const update = req.route === 'leader'
@@ -153,9 +202,9 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
     const { error } = await supabase.from('purchase_requests').update(update).eq('id', req.id);
 
     if (!error) {
-      const vars = { '申請者名': names[req.user_id] ?? '', '品目名': req.item_name, '金額': req.amount.toLocaleString() };
+      const vars = { '申請者名': names[req.user_id] ?? '', '品目名': itemNameSummary(req), '金額': req.amount.toLocaleString() };
       await dispatchSiteNotification(eventKey, vars, { applicant: req.user_id }, insertNotification, 'purchase_request', req.id);
-      sendPurchaseSlackForEvent(eventKey, 'approved', req.route, names[req.user_id] ?? '不明', req.item_name, req.amount).then(null, () => {});
+      sendPurchaseSlackForEvent(eventKey, 'approved', req.route, names[req.user_id] ?? '不明', itemNameSummary(req), req.amount).then(null, () => {});
       (async () => {
         const applicantEmail = await getUserEmail(req.user_id);
         if (applicantEmail) await dispatchEmail(eventKey, vars, { applicant: applicantEmail });
@@ -179,9 +228,9 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
     }).eq('id', returningId);
 
     if (!error) {
-      const vars = { '申請者名': names[req.user_id] ?? '', '品目名': req.item_name, '金額': req.amount.toLocaleString() };
+      const vars = { '申請者名': names[req.user_id] ?? '', '品目名': itemNameSummary(req), '金額': req.amount.toLocaleString() };
       await dispatchSiteNotification('purchase_request:returned', vars, { applicant: req.user_id }, insertNotification, 'purchase_request', req.id);
-      sendPurchaseSlackForEvent('purchase_request:returned', 'returned', req.route, names[req.user_id] ?? '不明', req.item_name, req.amount, returnReason.trim()).then(null, () => {});
+      sendPurchaseSlackForEvent('purchase_request:returned', 'returned', req.route, names[req.user_id] ?? '不明', itemNameSummary(req), req.amount, returnReason.trim()).then(null, () => {});
       (async () => {
         const applicantEmail = await getUserEmail(req.user_id);
         if (applicantEmail) await dispatchEmail('purchase_request:returned', vars, { applicant: applicantEmail });
@@ -225,7 +274,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
     setOpinions(prev => ({ ...prev, [req.id]: rows }));
 
     const others = (req.requested_manager_ids ?? []).filter(id => id !== userId);
-    const vars = { '回答者名': names[userId] ?? '', '品目名': req.item_name };
+    const vars = { '回答者名': names[userId] ?? '', '品目名': itemNameSummary(req) };
     const allAnswered = rows.length >= (req.requested_manager_ids?.length ?? 0);
     const eventKey = allAnswered ? 'purchase_request:manager_opinions_ready' : 'purchase_request:manager_opinion_submitted';
     const tpl = await getNotificationTemplate(eventKey, 'site', vars);
@@ -267,15 +316,15 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
     setOpinions(prev => ({ ...prev, [req.id]: rows }));
 
     const others = (req.board_approver_ids ?? []).filter(id => id !== userId);
-    const vars = { '回答者名': names[userId] ?? '', '品目名': req.item_name };
+    const vars = { '回答者名': names[userId] ?? '', '品目名': itemNameSummary(req) };
 
     if (allApproved) {
       setAllApprovedBanner('これで全員承認が完了しました');
       const tpl = await getNotificationTemplate('purchase_request:board_all_approved', 'site', vars);
       if (tpl) await insertNotification(req.user_id, tpl.template, tpl.subject || undefined, 'purchase_request', req.id);
-      sendPurchaseSlackForEvent('purchase_request:board_all_approved', 'board_all_approved', 'board', names[req.user_id] ?? '不明', req.item_name, req.amount).then(null, () => {});
+      sendPurchaseSlackForEvent('purchase_request:board_all_approved', 'board_all_approved', 'board', names[req.user_id] ?? '不明', itemNameSummary(req), req.amount).then(null, () => {});
       (async () => {
-        const emailVars = { '申請者名': names[req.user_id] ?? '', '品目名': req.item_name, '金額': req.amount.toLocaleString() };
+        const emailVars = { '申請者名': names[req.user_id] ?? '', '品目名': itemNameSummary(req), '金額': req.amount.toLocaleString() };
         const applicantEmail = await getUserEmail(req.user_id);
         if (applicantEmail) await dispatchEmail('purchase_request:board_all_approved', emailVars, { applicant: applicantEmail });
       })().then(null, () => {});
@@ -317,9 +366,16 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
         const allAnswered = r.route === 'leader' || unanswered.length === 0;
         const hasDenial = requestOpinions.some(o => o.opinion === 'deny');
         const draft = drafts[r.id] ?? { opinion: '', comment: '', visibleToApplicant: false };
+        const resolvedItems = resolveItems(r, itemsByRequest[r.id] ?? []);
 
         return (
         <div key={r.id} style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: 14 }}>
+          {r.amount_diff_flag && (
+            <div style={{ marginBottom: 10, padding: '8px 10px', background: warnBg, border: `1px solid ${warnBorder}`, borderRadius: 8, fontSize: 12, color: warnText }}>
+              ⚠️ 明細合計（¥{(r.items_subtotal ?? 0).toLocaleString()}）と申請金額（¥{r.amount.toLocaleString()}）に差があります
+              {r.amount_diff_reason && `：理由「${r.amount_diff_reason}」`}
+            </div>
+          )}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6, gap: 8 }}>
             <span style={{ fontSize: 15, fontWeight: 'bold', color: text }}>{r.item_name}</span>
             <span style={{ fontSize: 15, fontWeight: 'bold', color: text, whiteSpace: 'nowrap' }}>¥{r.amount.toLocaleString()}</span>
@@ -332,19 +388,17 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
             {r.requested_purchase_date && <span>📅 購入予定：{r.requested_purchase_date}</span>}
             {r.quantity != null && <span>数量：{r.quantity}</span>}
           </div>
-          {(r.store_name || r.purpose) && (
+          {(r.store_name || r.purpose || r.location) && (
             <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>
               {r.store_name && <span>購入先：{r.store_name}　</span>}
-              {r.purpose && <span>用途：{r.purpose}</span>}
+              {r.purpose && <span>用途：{r.purpose}　</span>}
+              {r.location && <span>使用先：{r.location}</span>}
             </div>
           )}
           {r.notes && <div style={{ fontSize: 12, color: subText, marginBottom: 8 }}>備考：{r.notes}</div>}
-          {r.quotes && r.quotes.length > 0 && (
-            <div style={{ fontSize: 12, color: subText, marginBottom: 8 }}>
-              相見積もり：{r.quotes.map(q => `${q.vendor}（¥${q.amount.toLocaleString()}）`).join('　')}
-              {r.quote_file_path && '　📎見積書あり'}
-            </div>
-          )}
+          <div style={{ marginBottom: 8 }}>
+            <PurchaseItemsSummary items={resolvedItems} isDarkMode={isDarkMode} />
+          </div>
 
           {(r.route === 'manager' || r.route === 'board') && (
             <div style={{ marginBottom: 10, padding: '10px 12px', background: isDarkMode ? '#20304a' : '#eef6ff', border: `1px solid ${isDarkMode ? '#2e4a70' : '#cfe4ff'}`, borderRadius: 8 }}>

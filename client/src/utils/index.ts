@@ -1,4 +1,4 @@
-import type { Submission, GroupedSubmissions } from '../types';
+import type { Submission, GroupedSubmissions, PurchaseRequestItem } from '../types';
 
 // 金額をカンマ区切りにするヘルパー関数
 export const formatAmount = (value: string): string => {
@@ -104,6 +104,13 @@ export interface PurchaseRequestCSVRow {
   board_approved_at: string | null;
   returned_reason: string | null;
   approval_round: number;
+  location: string | null;
+  items_subtotal: number | null;
+  amount_diff_reason: string | null;
+  amount_diff_flag: boolean | null;
+  // 明細（複数商品）。呼び出し側でpurchase_request_items・purchase_request_item_quotesを
+  // まとめて取得し、resolveItems()でフォールバック解決した配列を渡す
+  items: PurchaseRequestItem[];
 }
 
 const PURCHASE_STATUS_LABEL: Record<string, string> = {
@@ -134,18 +141,20 @@ const purchaseRouteType = (row: PurchaseRequestCSVRow): string => {
 };
 
 // 備品購入申請CSV出力用のデータ生成（全ステータス対象）
+// 1申請につき明細（商品）の数だけ行を展開する。申請共通列は各行で繰り返し、「商品連番」列で1,2,3...を振る。
 // nameOf: user_idから氏名を解決するMap（呼び出し側でprofilesをまとめて取得して渡す）
 export const generatePurchaseRequestCSVData = (
   rows: PurchaseRequestCSVRow[],
   nameOf: (userId: string | null | undefined) => string
 ): string => {
   const headers = [
-    '申請ID', '申請者名', '申請時役職', '申請区分', '金額帯',
-    '品目名', '数量', '金額', '購入予定日', '購入日',
-    '指示者', '購入先', '用途', '支払方法', '備考',
-    'ステータス', '承認ルート種別', '承認依頼先氏名',
-    '自己判断フラグ', '共有先氏名一覧', '相見積もり内容', '申請日',
-    '承認確定日', '差し戻し理由', '差し戻しラウンド',
+    '申請ID', '商品連番', '申請者名', '申請時役職', '申請区分', '金額帯',
+    '品目名', '数量', '店舗名', '商品金額', '商品金額手動上書き有無',
+    '選択業者名', '選択業者単価', '相見積もり件数', '相見積もり内容(全業者;区切り)',
+    '商品数', '明細合計金額', '申請金額', '金額乖離フラグ', '金額乖離理由',
+    '使用先', '購入予定日', '購入日', '指示者', '用途', '支払方法', '備考',
+    'ステータス', '承認ルート種別', '承認依頼先氏名', '自己判断フラグ', '共有先氏名一覧',
+    '申請日', '承認確定日', '差し戻し理由', '差し戻しラウンド',
   ];
 
   let csvContent = headers.join(',') + '\r\n';
@@ -159,37 +168,53 @@ export const generatePurchaseRequestCSVData = (
       return '';
     })();
 
-    const quotesText = (row.quotes ?? []).map(q => `${q.vendor}:${q.amount}`).join(';');
     const approvedAt = row.leader_approved_at || row.manager_approved_at || row.board_approved_at || '';
+    const itemCount = row.items.length;
 
-    const rowData = [
-      row.id,
-      nameOf(row.user_id),
-      row.applicant_role_title,
-      row.request_type === 'reimbursement' ? '精算' : '申請',
-      purchaseAmountBand(row),
-      row.item_name,
-      row.quantity ?? '',
-      row.amount,
-      row.requested_purchase_date || '',
-      row.purchased_at || '',
-      row.instructed_by || '',
-      row.store_name || '',
-      row.purpose || '',
-      row.payment_method === 'cash' ? '立替（返金あり）' : row.payment_method === 'company_card' ? '会社カード（返金なし）' : '',
-      row.notes || '',
-      PURCHASE_STATUS_LABEL[row.status] || row.status,
-      purchaseRouteType(row),
-      approverNames,
-      row.is_self_judgment || row.president_self_judgment ? 'はい' : 'いいえ',
-      (row.shared_manager_ids ?? []).map(id => nameOf(id)).join('・'),
-      quotesText,
-      new Date(row.created_at).toLocaleString(),
-      approvedAt ? new Date(approvedAt).toLocaleString() : '',
-      row.returned_reason || '',
-      row.approval_round,
-    ];
-    csvContent += rowData.map(item => `"${String(item).replace(/"/g, '""')}"`).join(',') + '\r\n';
+    row.items.forEach((item, index) => {
+      const selectedQuote = item.quotes.find(q => q.is_selected) ?? null;
+      const quotesText = item.quotes.map(q => `${q.vendor}:${q.unit_amount}`).join(';');
+
+      const rowData = [
+        row.id,
+        index + 1,
+        nameOf(row.user_id),
+        row.applicant_role_title,
+        row.request_type === 'reimbursement' ? '精算' : '申請',
+        purchaseAmountBand(row),
+        item.item_name,
+        item.quantity ?? '',
+        item.store_name || '',
+        item.amount,
+        item.amount_manually_overridden ? 'はい' : 'いいえ',
+        selectedQuote?.vendor || '',
+        selectedQuote?.unit_amount ?? '',
+        item.quotes.length,
+        quotesText,
+        itemCount,
+        row.items_subtotal ?? '',
+        row.amount,
+        row.amount_diff_flag ? 'はい' : 'いいえ',
+        row.amount_diff_reason || '',
+        row.location || '',
+        row.requested_purchase_date || '',
+        row.purchased_at || '',
+        row.instructed_by || '',
+        row.purpose || '',
+        row.payment_method === 'cash' ? '立替（返金あり）' : row.payment_method === 'company_card' ? '会社カード（返金なし）' : '',
+        row.notes || '',
+        PURCHASE_STATUS_LABEL[row.status] || row.status,
+        purchaseRouteType(row),
+        approverNames,
+        row.is_self_judgment || row.president_self_judgment ? 'はい' : 'いいえ',
+        (row.shared_manager_ids ?? []).map(id => nameOf(id)).join('・'),
+        new Date(row.created_at).toLocaleString(),
+        approvedAt ? new Date(approvedAt).toLocaleString() : '',
+        row.returned_reason || '',
+        row.approval_round,
+      ];
+      csvContent += rowData.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',') + '\r\n';
+    });
   });
 
   return csvContent;
