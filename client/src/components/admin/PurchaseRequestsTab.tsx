@@ -219,7 +219,7 @@ const PurchaseRequestsTab: React.FC = () => {
                 <>
                   <ReceiptViewButton path={r.receipt_storage_path} isDarkMode={isDarkMode} onDownloaded={fetchPurchaseRequestsList} />
                   {purchaseRequestLastDownload[r.id] && (
-                    <div style={{ marginTop: 4, fontSize: 11, color: subText }}>
+                    <div style={{ marginTop: 4, fontSize: 11, color: '#e0a800' }}>
                       最終ダウンロード：{new Date(purchaseRequestLastDownload[r.id].downloadedAt).toLocaleString('ja-JP')}（{purchaseRequestLastDownload[r.id].downloadedByName}）
                     </div>
                   )}
