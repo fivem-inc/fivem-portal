@@ -2,8 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { insertNotification } from '../lib/notifications';
-import { dispatchSiteNotification, dispatchEmail, getNotificationTemplate, getUserEmail } from '../lib/notificationDispatch';
+import { dispatchEmail, getNotificationTemplate, getUserEmail } from '../lib/notificationDispatch';
 import { sendPurchaseSlackForEvent } from '../lib/purchaseSlack';
+import { approvePurchaseRequestAction, returnPurchaseRequestAction } from '../lib/purchaseApprovalActions';
 import { resolveItems } from '../lib/purchaseItemsFallback';
 import PurchaseItemsSummary from './PurchaseItemsSummary';
 import type { PurchaseRequestItem, PurchaseRequestItemQuote } from '../types';
@@ -195,23 +196,17 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
 
   const handleApprove = async (req: PendingRequest) => {
     setProcessingId(req.id);
-    const update = req.route === 'leader'
-      ? { status: 'leader_approved', leader_approved_at: new Date().toISOString() }
-      : { status: 'manager_approved', manager_approved_at: new Date().toISOString() };
-    const eventKey = req.route === 'leader' ? 'purchase_request:leader_approved' : 'purchase_request:manager_approved';
-    const { error } = await supabase.from('purchase_requests').update(update).eq('id', req.id);
+    const fromStatus = req.route === 'leader' ? 'pending_leader' : 'pending_manager';
+    const errorMessage = await approvePurchaseRequestAction({
+      id: req.id, route: req.route, fromStatus,
+      applicantUserId: req.user_id, applicantName: names[req.user_id] ?? '',
+      itemNameSummary: itemNameSummary(req), amount: req.amount,
+    });
 
-    if (!error) {
-      const vars = { '申請者名': names[req.user_id] ?? '', '品目名': itemNameSummary(req), '金額': req.amount.toLocaleString() };
-      await dispatchSiteNotification(eventKey, vars, { applicant: req.user_id }, insertNotification, 'purchase_request', req.id);
-      sendPurchaseSlackForEvent(eventKey, 'approved', req.route, names[req.user_id] ?? '不明', itemNameSummary(req), req.amount).then(null, () => {});
-      (async () => {
-        const applicantEmail = await getUserEmail(req.user_id);
-        if (applicantEmail) await dispatchEmail(eventKey, vars, { applicant: applicantEmail });
-      })().then(null, () => {});
+    if (!errorMessage) {
       setRequests(prev => prev.filter(r => r.id !== req.id));
     } else {
-      setErrors(prev => ({ ...prev, [req.id]: '最終決定に失敗しました: ' + error.message }));
+      setErrors(prev => ({ ...prev, [req.id]: errorMessage }));
     }
     setProcessingId(null);
   };
@@ -222,24 +217,19 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
     if (!req) return;
 
     setProcessingId(returningId);
-    const { error } = await supabase.from('purchase_requests').update({
-      status: 'returned',
-      returned_reason: returnReason.trim(),
-    }).eq('id', returningId);
+    const fromStatus = req.route === 'leader' ? 'pending_leader' : req.route === 'manager' ? 'pending_manager' : 'pending_board';
+    const errorMessage = await returnPurchaseRequestAction({
+      id: req.id, route: req.route, fromStatus,
+      applicantUserId: req.user_id, applicantName: names[req.user_id] ?? '',
+      itemNameSummary: itemNameSummary(req), amount: req.amount, reason: returnReason.trim(),
+    });
 
-    if (!error) {
-      const vars = { '申請者名': names[req.user_id] ?? '', '品目名': itemNameSummary(req), '金額': req.amount.toLocaleString() };
-      await dispatchSiteNotification('purchase_request:returned', vars, { applicant: req.user_id }, insertNotification, 'purchase_request', req.id);
-      sendPurchaseSlackForEvent('purchase_request:returned', 'returned', req.route, names[req.user_id] ?? '不明', itemNameSummary(req), req.amount, returnReason.trim()).then(null, () => {});
-      (async () => {
-        const applicantEmail = await getUserEmail(req.user_id);
-        if (applicantEmail) await dispatchEmail('purchase_request:returned', vars, { applicant: applicantEmail });
-      })().then(null, () => {});
+    if (!errorMessage) {
       setRequests(prev => prev.filter(r => r.id !== returningId));
       setReturningId(null);
       setReturnReason('');
     } else {
-      setErrors(prev => ({ ...prev, [returningId]: '差し戻しに失敗しました: ' + error.message }));
+      setErrors(prev => ({ ...prev, [returningId]: errorMessage }));
     }
     setProcessingId(null);
   };

@@ -159,6 +159,7 @@ export interface AdminPanelContextType {
   purchaseRequestsListLoading: boolean;
   purchaseRequestNames: Record<string, string>;
   purchaseRequestLastDownload: Record<string, { downloadedAt: string; downloadedByName: string }>;
+  purchaseRequestEditLogCounts: Record<string, number>;
   fetchPurchaseRequestsList: () => Promise<void>;
 
   // Trip reports
@@ -255,6 +256,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const [purchaseRequestsListLoading, setPurchaseRequestsListLoading] = useState(false);
   const [purchaseRequestNames, setPurchaseRequestNames] = useState<Record<string, string>>({});
   const [purchaseRequestLastDownload, setPurchaseRequestLastDownload] = useState<Record<string, { downloadedAt: string; downloadedByName: string }>>({});
+  const [purchaseRequestEditLogCounts, setPurchaseRequestEditLogCounts] = useState<Record<string, number>>({});
   const [expandedAdminYears, setExpandedAdminYears] = useState<Set<string>>(new Set());
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
 
@@ -1243,6 +1245,19 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     });
     setPurchaseRequestLastDownload(lastDownloadMap);
 
+    // 修正履歴ボタンの表示要否判定用（件数のみでよいため行データを軽量取得しクライアント側で集計する）
+    if (requestIds.length > 0) {
+      const { data: editLogRows } = await supabase
+        .from('purchase_request_edit_log')
+        .select('purchase_request_id')
+        .in('purchase_request_id', requestIds);
+      const counts: Record<string, number> = {};
+      (editLogRows ?? []).forEach((row: { purchase_request_id: string }) => {
+        counts[row.purchase_request_id] = (counts[row.purchase_request_id] ?? 0) + 1;
+      });
+      setPurchaseRequestEditLogCounts(counts);
+    }
+
     setPurchaseRequestsList(rowsWithItems);
     setPurchaseRequestsListLoading(false);
   }, []);
@@ -1314,7 +1329,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       handleDeleteSubmission, handleExportCsv,
       purchaseCsvStartDate, setPurchaseCsvStartDate, purchaseCsvEndDate, setPurchaseCsvEndDate,
       purchaseCsvDateType, setPurchaseCsvDateType, handleExportPurchaseCsv, purchaseCsvError,
-      purchaseRequestsList, purchaseRequestsListLoading, purchaseRequestNames, purchaseRequestLastDownload, fetchPurchaseRequestsList,
+      purchaseRequestsList, purchaseRequestsListLoading, purchaseRequestNames, purchaseRequestLastDownload, purchaseRequestEditLogCounts, fetchPurchaseRequestsList,
       tripReports, loadingTripReports, expandedTripYearMonths, setExpandedTripYearMonths,
       tripReportFilter, setTripReportFilter, showLocationEditor, setShowLocationEditor,
       tripCategories, locationOptions, newLocationByCategory, setNewLocationByCategory,

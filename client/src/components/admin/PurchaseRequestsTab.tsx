@@ -1,37 +1,44 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { resolveItems } from '../../lib/purchaseItemsFallback';
 import { supabase } from '../../lib/supabaseClient';
 import type { PurchaseRequestCSVRow } from '../../utils';
+import { approvePurchaseRequestAction, returnPurchaseRequestAction, cancelReturnedPurchaseRequest, type PurchaseApprovalRoute } from '../../lib/purchaseApprovalActions';
+import { downloadReceiptsAsZip } from '../../lib/purchaseReceiptBulkDownload';
 import PurchaseItemsSummary from '../PurchaseItemsSummary';
 import ReceiptViewButton from '../ReceiptViewButton';
+import SearchableSelect from '../common/SearchableSelect';
 import PurchaseRequestEditModal from './PurchaseRequestEditModal';
 import PurchaseRequestEditHistoryModal from './PurchaseRequestEditHistoryModal';
 
-const STATUS_LABEL: Record<string, { label: string; color: string }> = {
-  recorded:             { label: '精算記録', color: '#6c757d' },
-  pending_leader:       { label: '承認待ち（リーダー）', color: '#e0a800' },
-  leader_approved:      { label: '承認済み', color: '#28a745' },
-  pending_manager:      { label: '承認待ち（マネージャー）', color: '#e0a800' },
-  manager_approved:     { label: '承認済み', color: '#28a745' },
-  self_judgment_shared: { label: '共有済み（自己判断）', color: '#6c757d' },
-  pending_board:        { label: '承認待ち（全員承認）', color: '#e0a800' },
-  board_approved:       { label: '承認済み（全員承認）', color: '#28a745' },
-  returned:             { label: '差し戻し', color: '#dc3545' },
-};
-const STATUS_FILTERS: { key: string; label: string }[] = [
-  { key: 'all', label: '全て' },
-  { key: 'pending', label: '承認待ち' },
-  { key: 'approved', label: '承認済み' },
-  { key: 'returned', label: '差し戻し' },
-];
+interface OpinionRow { purchase_request_id: string; manager_id: string; opinion: 'approve' | 'deny' | 'undecided' | 'other'; approval_round: number }
+
 const REQUEST_TYPE_FILTERS: { key: 'all' | 'purchase_request' | 'reimbursement'; label: string }[] = [
-  { key: 'all', label: '全て' },
+  { key: 'all', label: 'すべて' },
   { key: 'purchase_request', label: '申請' },
   { key: 'reimbursement', label: '精算' },
 ];
+const STATUS_FILTERS: { key: string; label: string }[] = [
+  { key: 'all', label: 'すべて' },
+  { key: 'pending', label: '確認待ち' },
+  { key: 'approved', label: '受理済み' },
+  { key: 'returned', label: '差し戻し' },
+];
 const PENDING_STATUSES = ['pending_leader', 'pending_manager', 'pending_board'];
 const APPROVED_STATUSES = ['leader_approved', 'manager_approved', 'board_approved', 'self_judgment_shared', 'recorded'];
+
+const routeForStatus = (status: string): PurchaseApprovalRoute | null => {
+  if (status === 'pending_leader') return 'leader';
+  if (status === 'pending_manager') return 'manager';
+  if (status === 'pending_board') return 'board';
+  return null;
+};
+
+const toFiscalYear = (dateStr: string) => {
+  const d = new Date(dateStr);
+  return d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1;
+};
+const nowFY = (() => { const n = new Date(); return n.getMonth() >= 3 ? n.getFullYear() : n.getFullYear() - 1; })();
 
 const PurchaseRequestsTab: React.FC = () => {
   const ctx = useAdminPanel();
@@ -42,15 +49,58 @@ const PurchaseRequestsTab: React.FC = () => {
     purchaseCsvDateType, setPurchaseCsvDateType,
     handleExportPurchaseCsv, purchaseCsvError,
     purchaseRequestsList, purchaseRequestsListLoading, purchaseRequestNames,
-    purchaseRequestLastDownload, fetchPurchaseRequestsList,
+    purchaseRequestLastDownload, purchaseRequestEditLogCounts, fetchPurchaseRequestsList,
   } = ctx;
   const [statusFilter, setStatusFilter] = useState('all');
   const [requestTypeFilter, setRequestTypeFilter] = useState<'all' | 'purchase_request' | 'reimbursement'>('all');
+  const [fyFilter, setFyFilter] = useState('__current__');
+  const [applicantFilter, setApplicantFilter] = useState('all');
+  const [locationFilter, setLocationFilter] = useState('all');
+
   const [editingRecord, setEditingRecord] = useState<PurchaseRequestCSVRow | null>(null);
   const [historyRequestId, setHistoryRequestId] = useState<string | null>(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+
+  const [opinionsByRequest, setOpinionsByRequest] = useState<Record<string, OpinionRow[]>>({});
+  const [processingId, setProcessingId] = useState<string | null>(null);
+  const [returningId, setReturningId] = useState<string | null>(null);
+  const [returnReason, setReturnReason] = useState('');
+  const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
+
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDownloading, setBulkDownloading] = useState(false);
+  const [bulkDownloadError, setBulkDownloadError] = useState('');
+
+  const cardBg = isDarkMode ? '#2d2d3e' : '#ffffff';
+  const border = isDarkMode ? '#3a3a5c' : '#e0e0e0';
+  const text = isDarkMode ? '#eeeeee' : '#222222';
+  const subText = isDarkMode ? '#aaaaaa' : '#666666';
+  const warnBg = isDarkMode ? '#3a3220' : '#fff8e1';
+  const warnBorder = isDarkMode ? '#5c5430' : '#ffe082';
+  const warnText = isDarkMode ? '#ffe082' : '#8a6d00';
+
+  // マネージャー/全員承認ルートの回答状況（badge表示・全員回答済み判定に必要）
+  useEffect(() => {
+    const targetIds = purchaseRequestsList
+      .filter(r => r.status === 'pending_manager' || r.status === 'pending_board')
+      .map(r => r.id);
+    if (targetIds.length === 0) { setOpinionsByRequest({}); return; }
+    (async () => {
+      const { data } = await supabase
+        .from('purchase_request_manager_opinions')
+        .select('purchase_request_id, manager_id, opinion, approval_round')
+        .in('purchase_request_id', targetIds);
+      const roundById: Record<string, number> = {};
+      purchaseRequestsList.forEach(r => { roundById[r.id] = r.approval_round; });
+      const grouped: Record<string, OpinionRow[]> = {};
+      ((data ?? []) as OpinionRow[])
+        .filter(o => o.approval_round === roundById[o.purchase_request_id])
+        .forEach(o => { (grouped[o.purchase_request_id] ??= []).push(o); });
+      setOpinionsByRequest(grouped);
+    })();
+  }, [purchaseRequestsList]);
 
   const handleDelete = async (id: string) => {
     setDeleting(true);
@@ -65,115 +115,184 @@ const PurchaseRequestsTab: React.FC = () => {
     fetchPurchaseRequestsList();
   };
 
-  const cardBg = isDarkMode ? '#2d2d3e' : '#ffffff';
-  const border = isDarkMode ? '#3a3a5c' : '#e0e0e0';
-  const text = isDarkMode ? '#eeeeee' : '#222222';
-  const subText = isDarkMode ? '#aaaaaa' : '#666666';
+  const itemNameSummaryOf = (r: PurchaseRequestCSVRow) => {
+    const resolvedItems = resolveItems(r, r.items ?? []);
+    const first = resolvedItems[0]?.item_name ?? r.item_name;
+    return resolvedItems.length > 1 ? `${first}（他${resolvedItems.length - 1}件）` : first;
+  };
+
+  const handleApprove = useCallback(async (r: PurchaseRequestCSVRow) => {
+    const route = routeForStatus(r.status);
+    if (!route || route === 'board') return;
+    setProcessingId(r.id);
+    const errorMessage = await approvePurchaseRequestAction({
+      id: r.id, route, fromStatus: r.status,
+      applicantUserId: r.user_id, applicantName: purchaseRequestNames[r.user_id] ?? '',
+      itemNameSummary: itemNameSummaryOf(r), amount: r.amount,
+    });
+    setProcessingId(null);
+    if (errorMessage) {
+      setActionErrors(prev => ({ ...prev, [r.id]: errorMessage }));
+    } else {
+      setActionErrors(prev => { const next = { ...prev }; delete next[r.id]; return next; });
+      fetchPurchaseRequestsList();
+    }
+  }, [purchaseRequestNames, fetchPurchaseRequestsList]);
+
+  const handleReturnSubmit = useCallback(async (r: PurchaseRequestCSVRow) => {
+    const route = routeForStatus(r.status);
+    if (!route || !returnReason.trim()) return;
+    setProcessingId(r.id);
+    const errorMessage = await returnPurchaseRequestAction({
+      id: r.id, route, fromStatus: r.status,
+      applicantUserId: r.user_id, applicantName: purchaseRequestNames[r.user_id] ?? '',
+      itemNameSummary: itemNameSummaryOf(r), amount: r.amount, reason: returnReason.trim(),
+    });
+    setProcessingId(null);
+    if (errorMessage) {
+      setActionErrors(prev => ({ ...prev, [r.id]: errorMessage }));
+    } else {
+      setActionErrors(prev => { const next = { ...prev }; delete next[r.id]; return next; });
+      setReturningId(null);
+      setReturnReason('');
+      fetchPurchaseRequestsList();
+    }
+  }, [purchaseRequestNames, returnReason, fetchPurchaseRequestsList]);
+
+  const handleCancelReturn = useCallback(async (r: PurchaseRequestCSVRow) => {
+    setProcessingId(r.id);
+    const errorMessage = await cancelReturnedPurchaseRequest({
+      id: r.id, amount: r.amount, is_self_judgment: false,
+      president_self_judgment: false, approval_round: r.approval_round,
+    });
+    setProcessingId(null);
+    if (errorMessage) {
+      setActionErrors(prev => ({ ...prev, [r.id]: errorMessage }));
+    } else {
+      setActionErrors(prev => { const next = { ...prev }; delete next[r.id]; return next; });
+      fetchPurchaseRequestsList();
+    }
+  }, [fetchPurchaseRequestsList]);
+
+  // 年度・申請者・使用先の選択肢
+  const fyOptions = [...new Set(purchaseRequestsList.map(r => toFiscalYear(r.created_at)))].sort((a, b) => b - a);
+  if (!fyOptions.includes(nowFY)) fyOptions.unshift(nowFY);
+  const applicantOptions: [string, string][] = [...new Set(purchaseRequestsList.map(r => r.user_id))]
+    .map(id => [id, purchaseRequestNames[id] ?? '不明'] as [string, string])
+    .sort((a, b) => a[1].localeCompare(b[1], 'ja'));
+  const locationOptions = [...new Set(purchaseRequestsList.map(r => r.location).filter((l): l is string => !!l))].sort((a, b) => a.localeCompare(b, 'ja'));
+
+  const isIncomplete = (r: PurchaseRequestCSVRow) => PENDING_STATUSES.includes(r.status);
 
   const filteredList = purchaseRequestsList.filter(r => {
     if (requestTypeFilter !== 'all' && r.request_type !== requestTypeFilter) return false;
-    if (statusFilter === 'all') return true;
-    if (statusFilter === 'pending') return PENDING_STATUSES.includes(r.status);
-    if (statusFilter === 'approved') return APPROVED_STATUSES.includes(r.status);
-    if (statusFilter === 'returned') return r.status === 'returned';
+    if (statusFilter === 'pending' && !PENDING_STATUSES.includes(r.status)) return false;
+    if (statusFilter === 'approved' && !APPROVED_STATUSES.includes(r.status)) return false;
+    if (statusFilter === 'returned' && r.status !== 'returned') return false;
+    if (applicantFilter !== 'all' && r.user_id !== applicantFilter) return false;
+    if (locationFilter !== 'all' && r.location !== locationFilter) return false;
+    if (isIncomplete(r)) return true;
+    const activeFY = fyFilter === '__current__' ? nowFY : (fyFilter === 'all' ? null : Number(fyFilter));
+    if (activeFY !== null && toFiscalYear(r.created_at) !== activeFY) return false;
     return true;
   });
 
+  const filtersAreDefault = statusFilter === 'all' && requestTypeFilter === 'all' && fyFilter === '__current__' && applicantFilter === 'all' && locationFilter === 'all';
+  const resetFilters = () => {
+    setStatusFilter('all'); setRequestTypeFilter('all'); setFyFilter('__current__');
+    setApplicantFilter('all'); setLocationFilter('all');
+  };
+
+  const downloadableList = filteredList.filter(r => r.receipt_type === 'photo' && r.receipt_storage_path);
+  const selectedDownloadableCount = downloadableList.filter(r => selectedIds.has(r.id)).length;
+  const selectedNonDownloadableCount = selectedIds.size - selectedDownloadableCount;
+
+  const toggleSelectAll = (checked: boolean) => {
+    setSelectedIds(checked ? new Set(filteredList.map(r => r.id)) : new Set());
+  };
+  const toggleSelectOne = (id: string, checked: boolean) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (checked) next.add(id); else next.delete(id);
+      return next;
+    });
+  };
+
+  const handleBulkDownload = async () => {
+    const paths = filteredList
+      .filter(r => selectedIds.has(r.id) && r.receipt_type === 'photo' && r.receipt_storage_path)
+      .map(r => r.receipt_storage_path as string);
+    if (paths.length === 0) { setBulkDownloadError('画像のある申請が選択されていません。'); return; }
+    setBulkDownloading(true);
+    setBulkDownloadError('');
+    const errorMessage = await downloadReceiptsAsZip(paths);
+    setBulkDownloading(false);
+    if (errorMessage) {
+      setBulkDownloadError(errorMessage);
+    } else {
+      fetchPurchaseRequestsList();
+    }
+  };
+
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, margin: '0 0 20px' }}>
-        <h3 style={{ margin: 0, color: isDarkMode ? '#fff' : '#000' }}>🧾 購入申請</h3>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, margin: '0 0 14px' }}>
+        <h3 style={{ margin: 0, fontSize: 16, color: isDarkMode ? '#fff' : '#000' }}>🧾 購入申請</h3>
         <button
           type="button"
           onClick={() => fetchPurchaseRequestsList()}
           disabled={purchaseRequestsListLoading}
-          style={{ padding: '4px 10px', borderRadius: 6, fontSize: 12, border: `1px solid ${border}`, background: 'transparent', color: text, cursor: purchaseRequestsListLoading ? 'default' : 'pointer' }}
+          style={{ padding: '3px 8px', borderRadius: 6, fontSize: 11, border: `1px solid ${border}`, background: 'transparent', color: text, cursor: purchaseRequestsListLoading ? 'default' : 'pointer' }}
         >
           🔄 更新
         </button>
       </div>
 
       {purchaseCsvError && (
-        <div style={{ maxWidth: 500, margin: '0 auto 16px', padding: '10px 12px', background: '#fff5f5', border: '1px solid #f5c2c7', borderRadius: 8, color: '#842029', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span>{purchaseCsvError}</span>
+        <div style={{ maxWidth: 500, margin: '0 auto 12px', padding: '8px 10px', background: '#fff5f5', border: '1px solid #f5c2c7', borderRadius: 8, color: '#842029', fontSize: 12 }}>
+          {purchaseCsvError}
         </div>
       )}
 
       {/* CSV出力セクション */}
-      <div style={{ textAlign: 'center', marginBottom: 20 }}>
-        <div style={{ marginBottom: 10, color: isDarkMode ? '#adb5bd' : '#6c757d', fontSize: 13 }}>
-          全ステータス（申請中・差し戻しも含む）の申請・精算記録をCSV出力します。
+      <div style={{ textAlign: 'center', marginBottom: 14 }}>
+        <div style={{ marginBottom: 6, color: isDarkMode ? '#adb5bd' : '#6c757d', fontSize: 12 }}>
+          全ステータスの申請・精算記録をCSV出力します。
         </div>
-        {/* 日付種別選択（ラジオボタン） */}
-        <div style={{ marginBottom: 15 }}>
-          <label style={{ color: isDarkMode ? '#fff' : '#000', fontWeight: 'bold', marginRight: 20 }}>抽出基準:</label>
-          <label style={{ marginRight: 20, color: isDarkMode ? '#fff' : '#000', cursor: 'pointer' }}>
-            <input
-              type="radio"
-              name="purchaseCsvDateType"
-              value="created"
-              checked={purchaseCsvDateType === 'created'}
-              onChange={(e) => setPurchaseCsvDateType(e.target.value as 'created' | 'decided')}
-              style={{ marginRight: 5 }}
-            />
+        <div style={{ marginBottom: 8, fontSize: 12 }}>
+          <label style={{ color: isDarkMode ? '#fff' : '#000', fontWeight: 'bold', marginRight: 12 }}>抽出基準:</label>
+          <label style={{ marginRight: 12, color: isDarkMode ? '#fff' : '#000', cursor: 'pointer' }}>
+            <input type="radio" name="purchaseCsvDateType" value="created" checked={purchaseCsvDateType === 'created'}
+              onChange={(e) => setPurchaseCsvDateType(e.target.value as 'created' | 'decided')} style={{ marginRight: 4 }} />
             申請日
           </label>
           <label style={{ color: isDarkMode ? '#fff' : '#000', cursor: 'pointer' }}>
-            <input
-              type="radio"
-              name="purchaseCsvDateType"
-              value="decided"
-              checked={purchaseCsvDateType === 'decided'}
-              onChange={(e) => setPurchaseCsvDateType(e.target.value as 'created' | 'decided')}
-              style={{ marginRight: 5 }}
-            />
+            <input type="radio" name="purchaseCsvDateType" value="decided" checked={purchaseCsvDateType === 'decided'}
+              onChange={(e) => setPurchaseCsvDateType(e.target.value as 'created' | 'decided')} style={{ marginRight: 4 }} />
             承認確定日
           </label>
         </div>
-        <div style={{ marginBottom: 10 }}>
-          <label htmlFor="purchaseCsvStartDate" style={{ color: isDarkMode ? '#fff' : '#000' }}>開始日:</label>
-          <input
-            type="date"
-            id="purchaseCsvStartDate"
-            value={purchaseCsvStartDate}
-            onChange={(e) => setPurchaseCsvStartDate(e.target.value)}
-            style={{
-              marginRight: 10,
-              padding: 5,
-              backgroundColor: isDarkMode ? '#495057' : 'white',
-              color: isDarkMode ? '#fff' : '#000',
-              border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`
-            }}
-          />
-          <label htmlFor="purchaseCsvEndDate" style={{ color: isDarkMode ? '#fff' : '#000' }}>終了日:</label>
-          <input
-            type="date"
-            id="purchaseCsvEndDate"
-            value={purchaseCsvEndDate}
-            onChange={(e) => setPurchaseCsvEndDate(e.target.value)}
-            style={{
-              padding: 5,
-              backgroundColor: isDarkMode ? '#495057' : 'white',
-              color: isDarkMode ? '#fff' : '#000',
-              border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`
-            }}
-          />
+        <div style={{ marginBottom: 8 }}>
+          <label htmlFor="purchaseCsvStartDate" style={{ color: isDarkMode ? '#fff' : '#000', fontSize: 12 }}>開始日:</label>
+          <input type="date" id="purchaseCsvStartDate" value={purchaseCsvStartDate} onChange={(e) => setPurchaseCsvStartDate(e.target.value)}
+            style={{ marginRight: 8, padding: 4, fontSize: 12, backgroundColor: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}` }} />
+          <label htmlFor="purchaseCsvEndDate" style={{ color: isDarkMode ? '#fff' : '#000', fontSize: 12 }}>終了日:</label>
+          <input type="date" id="purchaseCsvEndDate" value={purchaseCsvEndDate} onChange={(e) => setPurchaseCsvEndDate(e.target.value)}
+            style={{ padding: 4, fontSize: 12, backgroundColor: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}` }} />
         </div>
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
-          <button onClick={() => handleExportPurchaseCsv('all')}>CSV出力（全て）</button>
-          <button onClick={() => handleExportPurchaseCsv('purchase_request')}>CSV出力（申請のみ）</button>
-          <button onClick={() => handleExportPurchaseCsv('reimbursement')}>CSV出力（精算のみ）</button>
+        <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <button onClick={() => handleExportPurchaseCsv('all')} style={{ fontSize: 12 }}>CSV出力（全て）</button>
+          <button onClick={() => handleExportPurchaseCsv('purchase_request')} style={{ fontSize: 12 }}>CSV出力（申請のみ）</button>
+          <button onClick={() => handleExportPurchaseCsv('reimbursement')} style={{ fontSize: 12 }}>CSV出力（精算のみ）</button>
         </div>
       </div>
 
-      {/* 申請一覧 */}
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
+      {/* 申請/精算タブ */}
+      <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
         {REQUEST_TYPE_FILTERS.map(f => (
-          <button
-            key={f.key}
-            onClick={() => setRequestTypeFilter(f.key)}
+          <button key={f.key} onClick={() => setRequestTypeFilter(f.key)}
             style={{
-              padding: '6px 14px', borderRadius: 20, cursor: 'pointer', fontSize: 13,
+              padding: '4px 10px', borderRadius: 16, cursor: 'pointer', fontSize: 11,
               border: `1px solid ${requestTypeFilter === f.key ? '#28a745' : border}`,
               background: requestTypeFilter === f.key ? '#28a745' : 'transparent',
               color: requestTypeFilter === f.key ? '#fff' : text,
@@ -183,15 +302,14 @@ const PurchaseRequestsTab: React.FC = () => {
           </button>
         ))}
       </div>
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+      {/* ステータスタブ */}
+      <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
         {STATUS_FILTERS.map(f => (
-          <button
-            key={f.key}
-            onClick={() => setStatusFilter(f.key)}
+          <button key={f.key} onClick={() => setStatusFilter(f.key)}
             style={{
-              padding: '6px 14px', borderRadius: 20, cursor: 'pointer', fontSize: 13,
-              border: `1px solid ${statusFilter === f.key ? '#4a90d9' : border}`,
-              background: statusFilter === f.key ? '#4a90d9' : 'transparent',
+              padding: '5px 12px', borderRadius: 16, cursor: 'pointer', fontSize: 12,
+              border: `1px solid ${statusFilter === f.key ? '#007bff' : border}`,
+              background: statusFilter === f.key ? '#007bff' : 'transparent',
               color: statusFilter === f.key ? '#fff' : text,
             }}
           >
@@ -200,135 +318,240 @@ const PurchaseRequestsTab: React.FC = () => {
         ))}
       </div>
 
+      {/* 年度・申請者・使用先フィルタ */}
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <select value={fyFilter} onChange={e => setFyFilter(e.target.value)} style={{ fontSize: 12, padding: '4px 8px' }}>
+          <option value="__current__">{nowFY}年度</option>
+          {fyOptions.filter(fy => fy !== nowFY).map(fy => <option key={fy} value={String(fy)}>{fy}年度</option>)}
+          <option value="all">全年度</option>
+        </select>
+        <SearchableSelect value={applicantFilter} options={applicantOptions} allLabel="申請者：全員" onChange={setApplicantFilter} isDarkMode={isDarkMode} />
+        <select value={locationFilter} onChange={e => setLocationFilter(e.target.value)} style={{ fontSize: 12, padding: '4px 8px' }}>
+          <option value="all">使用先：すべて</option>
+          {locationOptions.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+        </select>
+        {!filtersAreDefault && (
+          <button type="button" onClick={resetFilters} style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, border: `1px solid ${border}`, background: 'transparent', color: subText, cursor: 'pointer' }}>
+            リセット
+          </button>
+        )}
+      </div>
+      <div style={{ textAlign: 'center', fontSize: 11, color: subText, marginBottom: 10 }}>
+        ※ 確認待ちの申請は年度に関わらず常に表示されます（申請者名で絞れます）
+      </div>
+
+      {/* 一括選択・一括ダウンロード */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: isDarkMode ? '#22222e' : '#f5f5f5', borderRadius: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: text, margin: 0, cursor: 'pointer' }}>
+          <input type="checkbox" checked={filteredList.length > 0 && selectedIds.size === filteredList.length}
+            onChange={e => toggleSelectAll(e.target.checked)} style={{ width: 'auto' }} />
+          全選択
+        </label>
+        <span style={{ fontSize: 12, color: subText }}>{selectedIds.size > 0 ? `${selectedIds.size}件選択中${selectedNonDownloadableCount > 0 ? `（うち画像なし${selectedNonDownloadableCount}件）` : ''}` : '選択なし'}</span>
+        <button
+          type="button" onClick={handleBulkDownload} disabled={bulkDownloading || selectedDownloadableCount === 0}
+          style={{ marginLeft: 'auto', padding: '6px 12px', borderRadius: 6, fontSize: 12, fontWeight: 'bold', border: 'none', background: selectedDownloadableCount === 0 ? subText : '#4a90d9', color: '#fff', cursor: selectedDownloadableCount === 0 ? 'default' : 'pointer' }}
+        >
+          {bulkDownloading ? 'zip作成中...' : `⬇ 選択した画像をダウンロード（zip）${selectedDownloadableCount > 0 ? `（${selectedDownloadableCount}件）` : ''}`}
+        </button>
+      </div>
+      {bulkDownloadError && (
+        <div style={{ maxWidth: 500, margin: '0 auto 12px', padding: '8px 10px', background: '#fff5f5', border: '1px solid #f5c2c7', borderRadius: 8, color: '#842029', fontSize: 12 }}>
+          {bulkDownloadError}
+        </div>
+      )}
+
       {purchaseRequestsListLoading && (
-        <div style={{ padding: 20, textAlign: 'center', color: subText }}>読み込み中...</div>
+        <div style={{ padding: 16, textAlign: 'center', color: subText, fontSize: 13 }}>読み込み中...</div>
       )}
       {!purchaseRequestsListLoading && filteredList.length === 0 && (
-        <div style={{ padding: 20, textAlign: 'center', color: subText }}>該当する申請はありません</div>
+        <div style={{ padding: 16, textAlign: 'center', color: subText, fontSize: 13 }}>該当する申請はありません</div>
       )}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 700, margin: '0 auto' }}>
-        {filteredList.map(r => {
-          const statusInfo = STATUS_LABEL[r.status];
-          const resolvedItems = resolveItems(r, r.items ?? []);
-          return (
-            <div key={r.id} style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: 14 }}>
-              {r.amount_diff_flag && (
-                <div style={{ marginBottom: 10, padding: '8px 10px', background: isDarkMode ? '#3a3220' : '#fff8e1', border: `1px solid ${isDarkMode ? '#5c5430' : '#ffe082'}`, borderRadius: 8, fontSize: 12, color: isDarkMode ? '#ffe082' : '#8a6d00' }}>
-                  ⚠️ 明細合計（¥{(r.items_subtotal ?? 0).toLocaleString()}）と申請金額（¥{r.amount.toLocaleString()}）に差があります
-                  {r.amount_diff_reason && `：理由「${r.amount_diff_reason}」`}
-                </div>
-              )}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6, gap: 8 }}>
-                <span style={{ fontSize: 15, fontWeight: 'bold', color: text }}>{resolvedItems[0]?.item_name ?? r.item_name}{resolvedItems.length > 1 && `（他${resolvedItems.length - 1}件）`}</span>
-                <span style={{ fontSize: 15, fontWeight: 'bold', color: text, whiteSpace: 'nowrap' }}>¥{r.amount.toLocaleString()}</span>
-              </div>
-              <div style={{ fontSize: 12, color: subText, display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 6 }}>
-                <span style={{ color: '#fff', background: r.request_type === 'reimbursement' ? '#6c757d' : '#4a90d9', borderRadius: 4, padding: '1px 6px' }}>
-                  {r.request_type === 'reimbursement' ? '精算' : '申請'}
-                </span>
-                {statusInfo && r.request_type === 'purchase_request' && (
-                  <span style={{ color: '#fff', background: statusInfo.color, borderRadius: 4, padding: '1px 6px' }}>{statusInfo.label}</span>
-                )}
-                <span>👤 {purchaseRequestNames[r.user_id] ?? '不明'}</span>
-                <span>📅 {r.purchased_at ?? r.requested_purchase_date ?? r.created_at.slice(0, 10)}</span>
-                {r.location && <span>使用先：{r.location}</span>}
-              </div>
-              {r.status === 'returned' && r.returned_reason && (
-                <div style={{ fontSize: 12, color: '#dc3545', marginBottom: 6 }}>差し戻し理由：{r.returned_reason}</div>
-              )}
-              <PurchaseItemsSummary items={resolvedItems} isDarkMode={isDarkMode} />
 
-              {confirmingDeleteId === r.id ? (
-                <div style={{ marginTop: 10, padding: 10, background: '#fff5f5', border: '1px solid #f5c2c7', borderRadius: 8 }}>
-                  <div style={{ fontSize: 13, color: '#842029', marginBottom: 8 }}>この申請を完全に削除します。元に戻せません。よろしいですか？</div>
-                  {deleteError && <div style={{ fontSize: 12, color: '#842029', marginBottom: 8 }}>{deleteError}</div>}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                    <button
-                      type="button"
-                      onClick={() => { setConfirmingDeleteId(null); setDeleteError(''); }}
-                      disabled={deleting}
-                      style={{ padding: '8px', borderRadius: 8, border: '1px solid #f5c2c7', background: '#fff', color: '#842029', fontSize: 12, fontWeight: 'bold', cursor: deleting ? 'default' : 'pointer' }}
-                    >
-                      キャンセル
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(r.id)}
-                      disabled={deleting}
-                      style={{ padding: '8px', borderRadius: 8, border: 'none', background: '#dc3545', color: '#fff', fontSize: 12, fontWeight: 'bold', cursor: deleting ? 'default' : 'pointer' }}
-                    >
-                      {deleting ? '削除中...' : '完全に削除する'}
-                    </button>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 700, margin: '0 auto' }}>
+        {filteredList.map(r => {
+          const resolvedItems = resolveItems(r, r.items ?? []);
+          const route = routeForStatus(r.status);
+          const opinions = opinionsByRequest[r.id] ?? [];
+          const requestedIds = r.status === 'pending_board' ? (r.board_approver_ids ?? []) : (r.requested_manager_ids ?? []);
+          const unanswered = requestedIds.filter(id => !opinions.some(o => o.manager_id === id));
+          const allAnswered = route === 'leader' || unanswered.length === 0;
+          const hasDenial = opinions.some(o => o.opinion === 'deny');
+
+          return (
+            <div key={r.id} style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: 10 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                <input type="checkbox" checked={selectedIds.has(r.id)} onChange={e => toggleSelectOne(r.id, e.target.checked)} style={{ width: 'auto', marginTop: 4 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {r.amount_diff_flag && (
+                    <div style={{ marginBottom: 6, padding: '6px 8px', background: warnBg, border: `1px solid ${warnBorder}`, borderRadius: 8, fontSize: 11, color: warnText }}>
+                      ⚠️ 明細合計（¥{(r.items_subtotal ?? 0).toLocaleString()}）と申請金額（¥{r.amount.toLocaleString()}）に差があります
+                      {r.amount_diff_reason && `：理由「${r.amount_diff_reason}」`}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4, gap: 8 }}>
+                    <span style={{ fontSize: 14, fontWeight: 'bold', color: text }}>{resolvedItems[0]?.item_name ?? r.item_name}{resolvedItems.length > 1 && `（他${resolvedItems.length - 1}件）`}</span>
+                    <span style={{ fontSize: 14, fontWeight: 'bold', color: text, whiteSpace: 'nowrap' }}>¥{r.amount.toLocaleString()}</span>
                   </div>
-                </div>
-              ) : (
-                <>
-                  {r.receipt_type === 'photo' && r.receipt_storage_path ? (
-                    <ReceiptViewButton
-                      path={r.receipt_storage_path}
-                      isDarkMode={isDarkMode}
-                      canDownload
-                      onDownloaded={fetchPurchaseRequestsList}
-                      extraActions={
-                        <ActionButtons
-                          text={text}
-                          border={border}
-                          onEdit={() => setEditingRecord(r)}
-                          onHistory={() => setHistoryRequestId(r.id)}
-                          onDeleteRequest={() => setConfirmingDeleteId(r.id)}
-                        />
-                      }
-                    />
+                  <div style={{ fontSize: 11, color: subText, display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 4 }}>
+                    <span style={{ color: '#fff', background: r.request_type === 'reimbursement' ? '#6c757d' : '#4a90d9', borderRadius: 4, padding: '1px 6px' }}>
+                      {r.request_type === 'reimbursement' ? '精算' : '申請'}
+                    </span>
+                    <span>👤 {purchaseRequestNames[r.user_id] ?? '不明'}</span>
+                    <span>📅 {r.purchased_at ?? r.requested_purchase_date ?? r.created_at.slice(0, 10)}</span>
+                    {r.location && <span>使用先：{r.location}</span>}
+                  </div>
+
+                  {/* 確認状況バッジ */}
+                  {r.request_type === 'reimbursement' && (
+                    <div style={{ fontSize: 11, color: subText, marginBottom: 4 }}>精算記録のため承認操作はありません</div>
+                  )}
+                  {r.request_type === 'purchase_request' && r.status === 'self_judgment_shared' && (
+                    <div style={{ fontSize: 11, color: subText, marginBottom: 4 }}>自己判断（共有のみ）のため承認操作はありません</div>
+                  )}
+                  {r.request_type === 'purchase_request' && APPROVED_STATUSES.includes(r.status) && r.status !== 'self_judgment_shared' && (
+                    <div style={{ display: 'inline-block', padding: '3px 8px', borderRadius: 6, background: '#28a745', color: '#fff', fontSize: 11, fontWeight: 'bold', marginBottom: 4 }}>受理済み</div>
+                  )}
+                  {r.status === 'returned' && (
+                    <div style={{ padding: '4px 8px', borderRadius: 6, background: '#f8d7da', color: '#842029', fontSize: 11, marginBottom: 4 }}>
+                      差し戻し{r.returned_reason && `：${r.returned_reason}`}
+                    </div>
+                  )}
+                  {r.status === 'pending_leader' && (
+                    <div style={{ display: 'inline-block', padding: '3px 8px', borderRadius: 6, background: warnBg, border: `1px solid ${warnBorder}`, color: warnText, fontSize: 11, marginBottom: 4 }}>
+                      ① {purchaseRequestNames[r.leader_id ?? ''] ?? '不明'}さん確認待ち
+                    </div>
+                  )}
+                  {r.status === 'pending_manager' && (
+                    <div style={{ padding: '4px 8px', borderRadius: 6, background: warnBg, border: `1px solid ${warnBorder}`, color: warnText, fontSize: 11, marginBottom: 4 }}>
+                      {unanswered.length === 0
+                        ? '② マネージャー全員回答済み・最終決定待ち'
+                        : `② マネージャー確認待ち（残${unanswered.length}名：${unanswered.map(id => purchaseRequestNames[id] ?? '不明').join('・')}）`}
+                    </div>
+                  )}
+                  {r.status === 'pending_board' && (
+                    <div style={{ padding: '4px 8px', borderRadius: 6, background: warnBg, border: `1px solid ${warnBorder}`, color: warnText, fontSize: 11, marginBottom: 4 }}>
+                      {unanswered.length === 0
+                        ? (hasDenial ? '全員承認（全員回答済み・否認あり）' : '全員承認により自動確定待ちです')
+                        : `全員承認待ち（残${unanswered.length}名：${unanswered.map(id => purchaseRequestNames[id] ?? '不明').join('・')}）`}
+                    </div>
+                  )}
+
+                  <PurchaseItemsSummary items={resolvedItems} isDarkMode={isDarkMode} />
+
+                  {confirmingDeleteId === r.id ? (
+                    <div style={{ marginTop: 8, padding: 8, background: '#fff5f5', border: '1px solid #f5c2c7', borderRadius: 8 }}>
+                      <div style={{ fontSize: 12, color: '#842029', marginBottom: 6 }}>この申請を完全に削除します。元に戻せません。よろしいですか？</div>
+                      {deleteError && <div style={{ fontSize: 11, color: '#842029', marginBottom: 6 }}>{deleteError}</div>}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                        <button type="button" onClick={() => { setConfirmingDeleteId(null); setDeleteError(''); }} disabled={deleting}
+                          style={{ padding: '6px', borderRadius: 6, border: '1px solid #f5c2c7', background: '#fff', color: '#842029', fontSize: 11, fontWeight: 'bold', cursor: deleting ? 'default' : 'pointer' }}>
+                          キャンセル
+                        </button>
+                        <button type="button" onClick={() => handleDelete(r.id)} disabled={deleting}
+                          style={{ padding: '6px', borderRadius: 6, border: 'none', background: '#dc3545', color: '#fff', fontSize: 11, fontWeight: 'bold', cursor: deleting ? 'default' : 'pointer' }}>
+                          {deleting ? '削除中...' : '完全に削除する'}
+                        </button>
+                      </div>
+                    </div>
                   ) : (
-                    <div style={{ marginTop: 4 }}>
-                      <ActionButtons
-                        text={text}
-                        border={border}
-                        onEdit={() => setEditingRecord(r)}
-                        onHistory={() => setHistoryRequestId(r.id)}
-                        onDeleteRequest={() => setConfirmingDeleteId(r.id)}
-                      />
+                    <>
+                      {r.receipt_type === 'photo' && r.receipt_storage_path ? (
+                        <ReceiptViewButton
+                          path={r.receipt_storage_path} isDarkMode={isDarkMode} canDownload onDownloaded={fetchPurchaseRequestsList}
+                          extraActions={
+                            <ActionButtons text={text} border={border} hasHistory={(purchaseRequestEditLogCounts[r.id] ?? 0) > 0}
+                              onEdit={() => setEditingRecord(r)} onHistory={() => setHistoryRequestId(r.id)} onDeleteRequest={() => setConfirmingDeleteId(r.id)} />
+                          }
+                        />
+                      ) : (
+                        <div style={{ marginTop: 4, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                          <ActionButtons text={text} border={border} hasHistory={(purchaseRequestEditLogCounts[r.id] ?? 0) > 0}
+                            onEdit={() => setEditingRecord(r)} onHistory={() => setHistoryRequestId(r.id)} onDeleteRequest={() => setConfirmingDeleteId(r.id)} />
+                        </div>
+                      )}
+                      {r.receipt_type === 'photo' && r.receipt_storage_path && purchaseRequestLastDownload[r.id] && (
+                        <div style={{ marginTop: 4, fontSize: 10, color: '#e0a800' }}>
+                          最終ダウンロード：{new Date(purchaseRequestLastDownload[r.id].downloadedAt).toLocaleString('ja-JP')}（{purchaseRequestLastDownload[r.id].downloadedByName}）
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {actionErrors[r.id] && (
+                    <div style={{ marginTop: 6, padding: '6px 8px', background: '#fff5f5', border: '1px solid #f5c2c7', borderRadius: 6, color: '#842029', fontSize: 11 }}>
+                      {actionErrors[r.id]}
                     </div>
                   )}
-                  {r.receipt_type === 'photo' && r.receipt_storage_path && purchaseRequestLastDownload[r.id] && (
-                    <div style={{ marginTop: 4, fontSize: 11, color: '#e0a800' }}>
-                      最終ダウンロード：{new Date(purchaseRequestLastDownload[r.id].downloadedAt).toLocaleString('ja-JP')}（{purchaseRequestLastDownload[r.id].downloadedByName}）
+
+                  {/* 管理者代行の承認/差し戻し操作 */}
+                  {route && confirmingDeleteId !== r.id && (
+                    returningId === r.id ? (
+                      <div style={{ marginTop: 6 }}>
+                        <textarea value={returnReason} onChange={e => setReturnReason(e.target.value)} placeholder="差し戻し理由を入力してください" rows={2}
+                          style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', borderRadius: 6, border: `1px solid ${border}`, background: isDarkMode ? '#3a3a5c' : '#f8f9fa', color: text, fontSize: 12, resize: 'vertical' as const, marginBottom: 6 }} />
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button type="button" onClick={() => { setReturningId(null); setReturnReason(''); }}
+                            style={{ padding: '4px 8px', background: '#6c757d', color: '#fff', border: '2px solid #545b62', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}>
+                            キャンセル
+                          </button>
+                          <button type="button" onClick={() => handleReturnSubmit(r)} disabled={!returnReason.trim() || processingId === r.id}
+                            style={{ padding: '4px 8px', background: '#dc3545', color: '#fff', border: '2px solid #bd2130', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}>
+                            差し戻す
+                          </button>
+                        </div>
+                      </div>
+                    ) : route === 'board' ? (
+                      <div style={{ marginTop: 6 }}>
+                        <button type="button" onClick={() => setReturningId(r.id)} disabled={!allAnswered || !hasDenial}
+                          style={{ padding: '4px 8px', background: (allAnswered && hasDenial) ? '#dc3545' : subText, color: '#fff', border: `2px solid ${(allAnswered && hasDenial) ? '#bd2130' : subText}`, borderRadius: 4, cursor: (allAnswered && hasDenial) ? 'pointer' : 'default', fontSize: 11, fontWeight: 'bold' }}>
+                          差し戻す
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ marginTop: 6, display: 'flex', gap: 6 }}>
+                        <button type="button" onClick={() => handleApprove(r)} disabled={!allAnswered || processingId === r.id}
+                          style={{ padding: '4px 8px', background: allAnswered ? '#28a745' : subText, color: '#fff', border: `2px solid ${allAnswered ? '#1e7e34' : subText}`, borderRadius: 4, cursor: allAnswered ? 'pointer' : 'default', fontSize: 11, fontWeight: 'bold' }}>
+                          {processingId === r.id ? '処理中...' : '承認して進める'}
+                        </button>
+                        <button type="button" onClick={() => setReturningId(r.id)} disabled={!allAnswered}
+                          style={{ padding: '4px 8px', background: allAnswered ? '#dc3545' : subText, color: '#fff', border: `2px solid ${allAnswered ? '#bd2130' : subText}`, borderRadius: 4, cursor: allAnswered ? 'pointer' : 'default', fontSize: 11, fontWeight: 'bold' }}>
+                          差し戻す
+                        </button>
+                      </div>
+                    )
+                  )}
+                  {r.status === 'returned' && confirmingDeleteId !== r.id && (
+                    <div style={{ marginTop: 6 }}>
+                      <button type="button" onClick={() => handleCancelReturn(r)} disabled={processingId === r.id}
+                        style={{ padding: '4px 8px', background: '#6c757d', color: '#fff', border: '2px solid #545b62', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}>
+                        {processingId === r.id ? '処理中...' : '↩ 取り消し'}
+                      </button>
                     </div>
                   )}
-                </>
-              )}
+                </div>
+              </div>
             </div>
           );
         })}
       </div>
 
       {editingRecord && (
-        <PurchaseRequestEditModal
-          record={editingRecord}
-          isDarkMode={isDarkMode}
-          onClose={() => setEditingRecord(null)}
-          onSaved={() => {
-            setEditingRecord(null);
-            fetchPurchaseRequestsList();
-          }}
-        />
+        <PurchaseRequestEditModal record={editingRecord} isDarkMode={isDarkMode} onClose={() => setEditingRecord(null)}
+          onSaved={() => { setEditingRecord(null); fetchPurchaseRequestsList(); }} />
       )}
 
       {historyRequestId && (
-        <PurchaseRequestEditHistoryModal
-          purchaseRequestId={historyRequestId}
-          isDarkMode={isDarkMode}
-          onClose={() => setHistoryRequestId(null)}
-        />
+        <PurchaseRequestEditHistoryModal purchaseRequestId={historyRequestId} isDarkMode={isDarkMode} onClose={() => setHistoryRequestId(null)} />
       )}
     </div>
   );
 };
 
 const ActionButtons: React.FC<{
-  text: string; border: string;
+  text: string; border: string; hasHistory: boolean;
   onEdit: () => void; onHistory: () => void; onDeleteRequest: () => void;
-}> = ({ text, border, onEdit, onHistory, onDeleteRequest }) => {
+}> = ({ text, border, hasHistory, onEdit, onHistory, onDeleteRequest }) => {
   const smallBtnStyle: React.CSSProperties = {
     padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 'bold',
     border: `1px solid ${border}`, background: 'transparent', color: text, cursor: 'pointer',
@@ -336,7 +559,9 @@ const ActionButtons: React.FC<{
   return (
     <>
       <button type="button" onClick={onEdit} style={smallBtnStyle}>✏️ 修正</button>
-      <button type="button" onClick={onHistory} style={smallBtnStyle}>🕘 履歴</button>
+      {hasHistory && (
+        <button type="button" onClick={onHistory} style={{ ...smallBtnStyle, border: '1px solid #4a90d9', color: '#4a90d9' }}>🕘 履歴</button>
+      )}
       <button type="button" onClick={onDeleteRequest} style={{ ...smallBtnStyle, border: '1px solid #dc3545', color: '#dc3545' }}>🗑 削除</button>
     </>
   );
