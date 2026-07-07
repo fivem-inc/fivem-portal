@@ -241,16 +241,32 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
       return;
     }
 
-    const scale = Math.min(1, MAX_CAMERA_EDGE / Math.max(video.videoWidth, video.videoHeight));
+    // プレビューはobject-fit: coverで画面いっぱいに表示しているため、
+    // 撮影結果もプレビューで見えている範囲だけを切り出す（見た目通りに撮れるように）
+    const rect = video.getBoundingClientRect();
+    const containerAspect = rect.width / rect.height;
+    const videoAspect = video.videoWidth / video.videoHeight;
+    let sx = 0, sy = 0, sWidth = video.videoWidth, sHeight = video.videoHeight;
+    if (videoAspect > containerAspect) {
+      sHeight = video.videoHeight;
+      sWidth = sHeight * containerAspect;
+      sx = (video.videoWidth - sWidth) / 2;
+    } else {
+      sWidth = video.videoWidth;
+      sHeight = sWidth / containerAspect;
+      sy = (video.videoHeight - sHeight) / 2;
+    }
+
+    const scale = Math.min(1, MAX_CAMERA_EDGE / Math.max(sWidth, sHeight));
     const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
-    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+    canvas.width = Math.max(1, Math.round(sWidth * scale));
+    canvas.height = Math.max(1, Math.round(sHeight * scale));
     const ctx = canvas.getContext('2d');
     if (!ctx) {
       setCameraError('このブラウザでは撮影画像を処理できません。下のボタンからお試しください。');
       return;
     }
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvas.width, canvas.height);
 
     const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY));
     if (!blob) {
@@ -420,7 +436,7 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
           </div>
           <div style={{ flex: 1, minHeight: 0, background: '#000', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             {/* videoは常にマウントしておく（起動中に外すとvideoRefがnullになりストリームを接続できない） */}
-            <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+            <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             {cameraStarting && (
               <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, background: '#000' }}>
                 カメラを起動しています...
