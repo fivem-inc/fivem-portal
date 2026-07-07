@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type { PendingApproval, Submission, Expense, AdminUserProfile, AdminLeaveRequest, ReportStats, BusinessTripReport, PurchaseRequestItem, PurchaseRequestItemQuote } from '../../types';
 import { groupSubmissionsByYearAndMonth, generateCSVData, generatePurchaseRequestCSVData, downloadCSV, formatAmount } from '../../utils';
 import type { PurchaseRequestCSVRow } from '../../utils';
@@ -8,6 +9,8 @@ import { useDarkMode } from '../../hooks/useDarkMode';
 import { resolveItems } from '../../lib/purchaseItemsFallback';
 
 export type AdminTab = 'approvals' | 'users' | 'groups' | 'reports' | 'trip_reports' | 'leave_requests' | 'shift_reports' | 'leader_assignments' | 'notifications' | 'scheduled_reminders' | 'board_settings' | 'feature_permissions' | 'purchase_requests';
+
+const ADMIN_TABS: AdminTab[] = ['approvals', 'users', 'groups', 'reports', 'trip_reports', 'leave_requests', 'shift_reports', 'leader_assignments', 'notifications', 'scheduled_reminders', 'board_settings', 'feature_permissions', 'purchase_requests'];
 
 interface PrintVoucher {
   submissionId: string;
@@ -41,7 +44,7 @@ export interface AdminPanelContextType {
 
   // Tab
   activeTab: AdminTab;
-  setActiveTab: React.Dispatch<React.SetStateAction<AdminTab>>;
+  setActiveTab: (tab: AdminTab) => void;
 
   // Dark mode & styles
   isDarkMode: boolean;
@@ -155,6 +158,7 @@ export interface AdminPanelContextType {
   purchaseRequestsList: PurchaseRequestCSVRow[];
   purchaseRequestsListLoading: boolean;
   purchaseRequestNames: Record<string, string>;
+  purchaseRequestLastDownload: Record<string, { downloadedAt: string; downloadedByName: string }>;
   fetchPurchaseRequestsList: () => Promise<void>;
 
   // Trip reports
@@ -227,7 +231,19 @@ interface AdminPanelProviderProps {
 export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   pendingApprovals, submissions, isLoading, onRefresh, children
 }) => {
-  const [activeTab, setActiveTab] = useState<AdminTab>('approvals');
+  // タブの状態をURLの?tabに保存し、再読み込みしても同じタブに留まれるようにする
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabFromUrl = searchParams.get('tab');
+  const initialTab = (tabFromUrl && ADMIN_TABS.includes(tabFromUrl as AdminTab)) ? (tabFromUrl as AdminTab) : 'approvals';
+  const [activeTab, setActiveTabState] = useState<AdminTab>(initialTab);
+  const setActiveTab = useCallback((tab: AdminTab) => {
+    setActiveTabState(tab);
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.set('tab', tab);
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
   const [csvStartDate, setCsvStartDate] = useState<string>('');
   const [csvEndDate, setCsvEndDate] = useState<string>('');
   const [csvDateType, setCsvDateType] = useState<'created' | 'approved'>('approved');
@@ -238,6 +254,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const [purchaseRequestsList, setPurchaseRequestsList] = useState<PurchaseRequestCSVRow[]>([]);
   const [purchaseRequestsListLoading, setPurchaseRequestsListLoading] = useState(false);
   const [purchaseRequestNames, setPurchaseRequestNames] = useState<Record<string, string>>({});
+  const [purchaseRequestLastDownload, setPurchaseRequestLastDownload] = useState<Record<string, { downloadedAt: string; downloadedByName: string }>>({});
   const [expandedAdminYears, setExpandedAdminYears] = useState<Set<string>>(new Set());
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
 
@@ -1187,6 +1204,21 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       items: resolveItems(row, itemsByRequest[row.id] ?? []),
     }));
 
+    // レシートのダウンロード履歴（申請ごとの最新1件のみ表示）
+    let downloadRows: { purchase_request_id: string; downloaded_by: string; downloaded_at: string }[] = [];
+    if (requestIds.length > 0) {
+      const { data: dlData } = await supabase
+        .from('receipt_download_log')
+        .select('purchase_request_id, downloaded_by, downloaded_at')
+        .in('purchase_request_id', requestIds)
+        .order('downloaded_at', { ascending: false });
+      downloadRows = (dlData ?? []) as typeof downloadRows;
+    }
+    const latestDownloadByRequest: Record<string, { downloaded_by: string; downloaded_at: string }> = {};
+    downloadRows.forEach(d => {
+      if (!latestDownloadByRequest[d.purchase_request_id]) latestDownloadByRequest[d.purchase_request_id] = d;
+    });
+
     const userIds = new Set<string>();
     rows.forEach(row => {
       userIds.add(row.user_id);
@@ -1195,12 +1227,21 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       (row.shared_manager_ids ?? []).forEach(id => userIds.add(id));
       (row.board_approver_ids ?? []).forEach(id => userIds.add(id));
     });
+    Object.values(latestDownloadByRequest).forEach(d => userIds.add(d.downloaded_by));
+
+    let namesMap: Record<string, string> = {};
     if (userIds.size > 0) {
       const { data: profs } = await supabase.from('profiles').select('id, name').in('id', [...userIds]);
-      const namesMap: Record<string, string> = {};
+      namesMap = {};
       (profs ?? []).forEach((p: { id: string; name: string }) => { namesMap[p.id] = p.name; });
       setPurchaseRequestNames(namesMap);
     }
+
+    const lastDownloadMap: Record<string, { downloadedAt: string; downloadedByName: string }> = {};
+    Object.entries(latestDownloadByRequest).forEach(([requestId, d]) => {
+      lastDownloadMap[requestId] = { downloadedAt: d.downloaded_at, downloadedByName: namesMap[d.downloaded_by] ?? '不明' };
+    });
+    setPurchaseRequestLastDownload(lastDownloadMap);
 
     setPurchaseRequestsList(rowsWithItems);
     setPurchaseRequestsListLoading(false);
@@ -1273,7 +1314,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       handleDeleteSubmission, handleExportCsv,
       purchaseCsvStartDate, setPurchaseCsvStartDate, purchaseCsvEndDate, setPurchaseCsvEndDate,
       purchaseCsvDateType, setPurchaseCsvDateType, handleExportPurchaseCsv, purchaseCsvError,
-      purchaseRequestsList, purchaseRequestsListLoading, purchaseRequestNames, fetchPurchaseRequestsList,
+      purchaseRequestsList, purchaseRequestsListLoading, purchaseRequestNames, purchaseRequestLastDownload, fetchPurchaseRequestsList,
       tripReports, loadingTripReports, expandedTripYearMonths, setExpandedTripYearMonths,
       tripReportFilter, setTripReportFilter, showLocationEditor, setShowLocationEditor,
       tripCategories, locationOptions, newLocationByCategory, setNewLocationByCategory,

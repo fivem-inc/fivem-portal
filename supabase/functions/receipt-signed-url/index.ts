@@ -90,6 +90,16 @@ serve(async (req) => {
       });
     }
 
+    if (download) {
+      // パス規約 {user_id}/{request_id}/{timestamp}_receipt.jpg から申請IDを取り出して記録する
+      const requestId = path.split('/')[1] ?? null;
+      await supabaseAdmin.from('receipt_download_log').insert({
+        purchase_request_id: requestId,
+        storage_path: path,
+        downloaded_by: user.id,
+      });
+    }
+
     return new Response(JSON.stringify({ signedUrl: data.signedUrl }), {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

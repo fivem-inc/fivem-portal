@@ -38,7 +38,7 @@ const PurchaseRequestsTab: React.FC = () => {
     purchaseCsvDateType, setPurchaseCsvDateType,
     handleExportPurchaseCsv, purchaseCsvError,
     purchaseRequestsList, purchaseRequestsListLoading, purchaseRequestNames,
-    fetchPurchaseRequestsList,
+    purchaseRequestLastDownload, fetchPurchaseRequestsList,
   } = ctx;
   const [statusFilter, setStatusFilter] = useState('all');
   const [requestTypeFilter, setRequestTypeFilter] = useState<'all' | 'purchase_request' | 'reimbursement'>('all');
@@ -216,7 +216,14 @@ const PurchaseRequestsTab: React.FC = () => {
               )}
               <PurchaseItemsSummary items={resolvedItems} isDarkMode={isDarkMode} />
               {r.receipt_type === 'photo' && r.receipt_storage_path && (
-                <ReceiptViewButton path={r.receipt_storage_path} isDarkMode={isDarkMode} />
+                <>
+                  <ReceiptViewButton path={r.receipt_storage_path} isDarkMode={isDarkMode} onDownloaded={fetchPurchaseRequestsList} />
+                  {purchaseRequestLastDownload[r.id] && (
+                    <div style={{ marginTop: 4, fontSize: 11, color: subText }}>
+                      最終ダウンロード：{new Date(purchaseRequestLastDownload[r.id].downloadedAt).toLocaleString('ja-JP')}（{purchaseRequestLastDownload[r.id].downloadedByName}）
+                    </div>
+                  )}
+                </>
               )}
             </div>
           );

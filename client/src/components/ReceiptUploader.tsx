@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { compressImageFile, ImageTooLargeError } from '../lib/imageCompress';
+import { estimateBlurScore, BLUR_WARNING_THRESHOLD } from '../lib/blurDetect';
 
 export type ReceiptType = 'photo' | 'physical' | 'none';
 
@@ -38,6 +39,7 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraStarting, setCameraStarting] = useState(false);
   const [cameraError, setCameraError] = useState('');
+  const [capturedPhoto, setCapturedPhoto] = useState<{ blob: Blob; url: string; blurWarning: boolean } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraFallbackInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -62,7 +64,14 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
     if (videoRef.current) videoRef.current.srcObject = null;
   };
 
-  useEffect(() => () => stopCamera(), []);
+  const discardCapturedPhoto = () => {
+    setCapturedPhoto(prev => {
+      if (prev) URL.revokeObjectURL(prev.url);
+      return null;
+    });
+  };
+
+  useEffect(() => () => { stopCamera(); discardCapturedPhoto(); }, []);
 
   const handleSelectType = (type: ReceiptType) => {
     setUploadError('');
@@ -70,6 +79,7 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
     if (type !== 'photo') {
       setCameraOpen(false);
       stopCamera();
+      discardCapturedPhoto();
     }
   };
 
@@ -232,6 +242,7 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
     setCameraOpen(false);
     setCameraError('');
     stopCamera();
+    discardCapturedPhoto();
   };
 
   const captureCameraPhoto = async () => {
@@ -274,9 +285,24 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
       return;
     }
 
-    // 撮影が済んだらカメラは不要なので、アップロード前に停止してメモリを解放する
+    // 撮影直後は必ず確認画面を挟み、本人が写真を見てから送るかどうかを判断できるようにする。
+    // ぼやけ具合の自動判定はあくまでヒントとして警告表示するだけで、送信のブロックはしない
+    const blurWarning = estimateBlurScore(canvas) < BLUR_WARNING_THRESHOLD;
     stopCamera();
+    setCapturedPhoto({ blob, url: URL.createObjectURL(blob), blurWarning });
+  };
+
+  const confirmCapturedPhoto = async () => {
+    if (!capturedPhoto) return;
+    const { blob, url } = capturedPhoto;
+    setCapturedPhoto(null);
     await uploadReceiptBlob(blob, 'camera', 'camera_receipt.jpg');
+    URL.revokeObjectURL(url);
+  };
+
+  const retakePhoto = () => {
+    discardCapturedPhoto();
+    openCamera();
   };
 
   const uploadChoicePanel = (
@@ -429,27 +455,55 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
       {cameraOpen && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 10000, background: '#000', display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: '#fff', padding: '12px 16px' }}>
-            <div style={{ fontSize: 16, fontWeight: 'bold' }}>レシートを撮影</div>
+            <div style={{ fontSize: 16, fontWeight: 'bold' }}>{capturedPhoto ? '撮影内容を確認' : 'レシートを撮影'}</div>
             <button type="button" onClick={closeCamera} style={{ border: 'none', background: 'rgba(255,255,255,0.16)', color: '#fff', borderRadius: 20, width: 36, height: 36, fontSize: 18 }}>
               ✕
             </button>
           </div>
           <div style={{ flex: 1, minHeight: 0, background: '#000', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            {/* videoは常にマウントしておく（起動中に外すとvideoRefがnullになりストリームを接続できない） */}
-            <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            {cameraStarting && (
+            {capturedPhoto ? (
+              <img src={capturedPhoto.url} alt="撮影したレシート" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+            ) : (
+              // videoは常にマウントしておく（起動中に外すとvideoRefがnullになりストリームを接続できない）
+              <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            )}
+            {!capturedPhoto && cameraStarting && (
               <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, background: '#000' }}>
                 カメラを起動しています...
               </div>
             )}
-            {cameraError && (
+            {!capturedPhoto && cameraError && (
               <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, padding: 18, textAlign: 'center', lineHeight: 1.7, background: '#000', boxSizing: 'border-box' }}>
                 {cameraError}
               </div>
             )}
+            {capturedPhoto?.blurWarning && (
+              <div style={{ position: 'absolute', top: 10, left: 10, right: 10, padding: '10px 12px', background: 'rgba(224,168,0,0.92)', color: '#000', borderRadius: 8, fontSize: 13, lineHeight: 1.5 }}>
+                ⚠️ 画像がぼやけている可能性があります。文字が読み取れるか確認し、必要なら撮り直してください。
+              </div>
+            )}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 16px 20px' }}>
-            {cameraError ? (
+            {capturedPhoto ? (
+              <>
+                <button
+                  type="button"
+                  onClick={confirmCapturedPhoto}
+                  disabled={uploading}
+                  style={{ width: '100%', padding: '15px', borderRadius: 12, border: 'none', background: uploading ? '#777' : '#28a745', color: '#fff', fontSize: 16, fontWeight: 'bold' }}
+                >
+                  {uploading ? 'アップロード中...' : 'この写真を使う'}
+                </button>
+                <button
+                  type="button"
+                  onClick={retakePhoto}
+                  disabled={uploading}
+                  style={{ width: '100%', padding: '13px', borderRadius: 12, border: '1px solid rgba(255,255,255,0.28)', background: 'rgba(255,255,255,0.08)', color: '#fff', fontSize: 14, fontWeight: 'bold' }}
+                >
+                  撮り直す
+                </button>
+              </>
+            ) : cameraError ? (
               <button
                 type="button"
                 onClick={openCameraFallback}
@@ -461,22 +515,24 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
               <button
                 type="button"
                 onClick={captureCameraPhoto}
-                disabled={cameraStarting || uploading}
-                style={{ width: '100%', padding: '15px', borderRadius: 12, border: 'none', background: cameraStarting || uploading ? '#777' : '#28a745', color: '#fff', fontSize: 16, fontWeight: 'bold' }}
+                disabled={cameraStarting}
+                style={{ width: '100%', padding: '15px', borderRadius: 12, border: 'none', background: cameraStarting ? '#777' : '#28a745', color: '#fff', fontSize: 16, fontWeight: 'bold' }}
               >
-                {uploading ? 'アップロード中...' : 'この写真を使う'}
+                撮影する
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => {
-                closeCamera();
-                fileInputRef.current?.click();
-              }}
-              style={{ width: '100%', padding: '13px', borderRadius: 12, border: '1px solid rgba(255,255,255,0.28)', background: 'rgba(255,255,255,0.08)', color: '#fff', fontSize: 14, fontWeight: 'bold' }}
-            >
-              写真フォルダから選ぶ
-            </button>
+            {!capturedPhoto && (
+              <button
+                type="button"
+                onClick={() => {
+                  closeCamera();
+                  fileInputRef.current?.click();
+                }}
+                style={{ width: '100%', padding: '13px', borderRadius: 12, border: '1px solid rgba(255,255,255,0.28)', background: 'rgba(255,255,255,0.08)', color: '#fff', fontSize: 14, fontWeight: 'bold' }}
+              >
+                写真フォルダから選ぶ
+              </button>
+            )}
           </div>
         </div>
       )}

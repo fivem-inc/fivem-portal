@@ -4,9 +4,10 @@ import { openReceiptImage } from '../lib/receiptView';
 interface ReceiptViewButtonProps {
   path: string;
   isDarkMode: boolean;
+  onDownloaded?: () => void;
 }
 
-const ReceiptViewButton: React.FC<ReceiptViewButtonProps> = ({ path, isDarkMode }) => {
+const ReceiptViewButton: React.FC<ReceiptViewButtonProps> = ({ path, isDarkMode, onDownloaded }) => {
   const [loadingMode, setLoadingMode] = useState<'view' | 'download' | null>(null);
   const [error, setError] = useState('');
 
@@ -15,6 +16,7 @@ const ReceiptViewButton: React.FC<ReceiptViewButtonProps> = ({ path, isDarkMode 
     setError('');
     const errorMessage = await openReceiptImage(path, download);
     if (errorMessage) setError(errorMessage);
+    else if (download) onDownloaded?.();
     setLoadingMode(null);
   };
 
