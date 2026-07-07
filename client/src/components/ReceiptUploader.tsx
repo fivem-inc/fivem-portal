@@ -142,11 +142,22 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
         audio: false,
       });
       cameraStreamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+      const video = videoRef.current;
+      if (!video) throw new Error('video element not mounted');
+      video.srcObject = stream;
+      // iOS Safariでは映像サイズが確定する前に撮影すると空画像になるため、metadata確定を待つ
+      if (!video.videoWidth) {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('camera metadata timeout')), 8000);
+          video.onloadedmetadata = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+        });
       }
+      await video.play();
     } catch {
+      stopCamera();
       setCameraError('カメラを起動できませんでした。写真フォルダから選ぶか、ブラウザのカメラ許可を確認してください。');
     } finally {
       setCameraStarting(false);
@@ -339,13 +350,18 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
               x
             </button>
           </div>
-          <div style={{ flex: 1, minHeight: 0, borderRadius: 12, overflow: 'hidden', background: '#111', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            {cameraStarting ? (
-              <div style={{ color: '#fff', fontSize: 14 }}>カメラを起動しています...</div>
-            ) : cameraError ? (
-              <div style={{ color: '#fff', fontSize: 14, padding: 18, textAlign: 'center', lineHeight: 1.7 }}>{cameraError}</div>
-            ) : (
-              <video ref={videoRef} playsInline muted style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+          <div style={{ flex: 1, minHeight: 0, borderRadius: 12, overflow: 'hidden', background: '#111', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {/* videoは常にマウントしておく（起動中に外すとvideoRefがnullになりストリームを接続できない） */}
+            <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+            {cameraStarting && (
+              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, background: '#111' }}>
+                カメラを起動しています...
+              </div>
+            )}
+            {cameraError && (
+              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, padding: 18, textAlign: 'center', lineHeight: 1.7, background: '#111', boxSizing: 'border-box' }}>
+                {cameraError}
+              </div>
             )}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
