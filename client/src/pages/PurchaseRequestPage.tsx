@@ -68,7 +68,7 @@ const STATUS_LABEL: Record<string, { label: string; color: string }> = {
 interface OpinionRow { purchase_request_id: string; manager_id: string; opinion: 'approve' | 'deny' | 'undecided' | 'other'; comment: string | null; approval_round: number }
 const OPINION_LABEL: Record<string, string> = { approve: '承認', deny: '否認', undecided: '判断できない', other: 'その他' };
 
-const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; userId: string; onResubmit: (record: ResubmitRecord) => void }> = ({ isDarkMode, isManagerPlus, userId, onResubmit }) => {
+const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdmin: boolean; userId: string; onResubmit: (record: ResubmitRecord) => void }> = ({ isDarkMode, isManagerPlus, isAdmin, userId, onResubmit }) => {
   const [records, setRecords] = useState<PurchaseRecord[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
   const [opinions, setOpinions] = useState<Record<string, OpinionRow[]>>({});
@@ -219,7 +219,7 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; userI
           <div style={{ marginTop: 8 }}>
             <PurchaseItemsSummary items={resolvedItems} isDarkMode={isDarkMode} />
           </div>
-          {r.receipt_type === 'photo' && r.receipt_storage_path && (
+          {r.receipt_type === 'photo' && r.receipt_storage_path && (r.user_id === userId || isAdmin) && (
             <ReceiptViewButton path={r.receipt_storage_path} isDarkMode={isDarkMode} />
           )}
           {opinions[r.id] && opinions[r.id].length > 0 && (
@@ -312,7 +312,7 @@ const PurchaseRequestPage: React.FC<PurchaseRequestPageProps> = ({ user, roleTit
       )}
       {tab === 'history' && (
         <HistoryList
-          isDarkMode={isDarkMode} isManagerPlus={isManagerPlus} userId={user.id}
+          isDarkMode={isDarkMode} isManagerPlus={isManagerPlus} isAdmin={isAdmin} userId={user.id}
           onResubmit={record => { setResubmitRecord(record); setTab('request'); }}
         />
       )}
