@@ -16,6 +16,7 @@ interface ReceiptUploaderProps {
   draftId: string;
   value: ReceiptValue;
   onChange: (patch: Partial<ReceiptValue>) => void;
+  onUploadingChange?: (uploading: boolean) => void;
 }
 
 const OPTIONS: { key: ReceiptType; icon: string; label: string }[] = [
@@ -24,7 +25,7 @@ const OPTIONS: { key: ReceiptType; icon: string; label: string }[] = [
   { key: 'none', icon: '✏️', label: 'レシートがない（理由を記入）' },
 ];
 
-const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, draftId, value, onChange }) => {
+const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, draftId, value, onChange, onUploadingChange }) => {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -37,13 +38,18 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
   const subText = isDarkMode ? '#aaaaaa' : '#666666';
   const inputBg = isDarkMode ? '#3a3a5c' : '#f8f9fa';
 
+  const setUploadState = (next: boolean) => {
+    setUploading(next);
+    onUploadingChange?.(next);
+  };
+
   const handleSelectType = (type: ReceiptType) => {
     setUploadError('');
     onChange({ receiptType: type, receiptStoragePath: null, receiptMissingReason: '' });
   };
 
   const handleFileSelected = async (file: File) => {
-    setUploading(true);
+    setUploadState(true);
     setUploadError('');
     try {
       const compressed = await compressImageFile(file);
@@ -57,10 +63,12 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
       setUploadError(
         e instanceof ImageTooLargeError
           ? e.message
-          : '画像のアップロードに失敗しました。もう一度お試しください。'
+          : e instanceof Error && e.message
+            ? `画像のアップロードに失敗しました: ${e.message}`
+            : '画像のアップロードに失敗しました。もう一度お試しください。'
       );
     } finally {
-      setUploading(false);
+      setUploadState(false);
     }
   };
 
@@ -137,7 +145,7 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
           )}
           {uploading && (
             <div style={{ padding: 12, textAlign: 'center', color: subText, fontSize: 13 }}>
-              アップロード中...
+              アップロード中...このままお待ちください
             </div>
           )}
           {value.receiptStoragePath && !uploading && (

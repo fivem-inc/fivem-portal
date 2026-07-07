@@ -38,18 +38,22 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
 
   const [draftId, setDraftId] = useState(() => crypto.randomUUID());
   const [itemName, setItemName] = useState('');
+  const [quantity, setQuantity] = useState('1');
   const [amount, setAmount] = useState('');
   const [purchasedAt, setPurchasedAt] = useState(() => new Date().toISOString().slice(0, 10));
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'company_card' | ''>('');
-  const [receipt, setReceipt] = useState<ReceiptValue>(emptyReceipt);
-  const [showDetails, setShowDetails] = useState(false);
-  const [quantity, setQuantity] = useState('');
   const [storeName, setStoreName] = useState('');
+  const [location, setLocation] = useState('');
   const [purpose, setPurpose] = useState('');
+  const [purposeDetail, setPurposeDetail] = useState('');
   const [instructedBySelect, setInstructedBySelect] = useState('');
   const [instructedByCustom, setInstructedByCustom] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'company_card' | ''>('');
+  const [receipt, setReceipt] = useState<ReceiptValue>(emptyReceipt);
+  const [receiptUploading, setReceiptUploading] = useState(false);
   const [notes, setNotes] = useState('');
   const [instructors, setInstructors] = useState<{ name: string; role_title: string }[]>([]);
+  const [workplaceOptions, setWorkplaceOptions] = useState<string[]>([]);
+  const [purposeOptions, setPurposeOptions] = useState<string[]>([]);
   const draftStorageKey = `reimbursement-draft:${user.id}`;
   const [draftReady, setDraftReady] = useState(false);
 
@@ -60,16 +64,17 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
         const draft = JSON.parse(saved);
         if (typeof draft.draftId === 'string') setDraftId(draft.draftId);
         if (typeof draft.itemName === 'string') setItemName(draft.itemName);
+        if (typeof draft.quantity === 'string') setQuantity(draft.quantity);
         if (typeof draft.amount === 'string') setAmount(draft.amount);
         if (typeof draft.purchasedAt === 'string') setPurchasedAt(draft.purchasedAt);
-        if (draft.paymentMethod === 'cash' || draft.paymentMethod === 'company_card' || draft.paymentMethod === '') setPaymentMethod(draft.paymentMethod);
-        if (draft.receipt && typeof draft.receipt === 'object') setReceipt({ ...emptyReceipt, ...draft.receipt });
-        if (typeof draft.showDetails === 'boolean') setShowDetails(draft.showDetails);
-        if (typeof draft.quantity === 'string') setQuantity(draft.quantity);
         if (typeof draft.storeName === 'string') setStoreName(draft.storeName);
+        if (typeof draft.location === 'string') setLocation(draft.location);
         if (typeof draft.purpose === 'string') setPurpose(draft.purpose);
+        if (typeof draft.purposeDetail === 'string') setPurposeDetail(draft.purposeDetail);
         if (typeof draft.instructedBySelect === 'string') setInstructedBySelect(draft.instructedBySelect);
         if (typeof draft.instructedByCustom === 'string') setInstructedByCustom(draft.instructedByCustom);
+        if (draft.paymentMethod === 'cash' || draft.paymentMethod === 'company_card' || draft.paymentMethod === '') setPaymentMethod(draft.paymentMethod);
+        if (draft.receipt && typeof draft.receipt === 'object') setReceipt({ ...emptyReceipt, ...draft.receipt });
         if (typeof draft.notes === 'string') setNotes(draft.notes);
       }
     } catch {
@@ -82,18 +87,18 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
   useEffect(() => {
     if (!draftReady) return;
     const hasDraft = Boolean(
-      itemName.trim() || amount.trim() || paymentMethod || receipt.receiptType ||
-      quantity.trim() || storeName.trim() || purpose.trim() || instructedBySelect || instructedByCustom.trim() || notes.trim()
+      itemName.trim() || amount.trim() || storeName.trim() || location.trim() || purpose.trim() || purposeDetail.trim() ||
+      instructedBySelect || instructedByCustom.trim() || paymentMethod || receipt.receiptType || notes.trim() || quantity !== '1'
     );
     if (!hasDraft) {
       sessionStorage.removeItem(draftStorageKey);
       return;
     }
     sessionStorage.setItem(draftStorageKey, JSON.stringify({
-      draftId, itemName, amount, purchasedAt, paymentMethod, receipt, showDetails,
-      quantity, storeName, purpose, instructedBySelect, instructedByCustom, notes,
+      draftId, itemName, quantity, amount, purchasedAt, storeName, location, purpose, purposeDetail,
+      instructedBySelect, instructedByCustom, paymentMethod, receipt, notes,
     }));
-  }, [draftReady, draftStorageKey, draftId, itemName, amount, purchasedAt, paymentMethod, receipt, showDetails, quantity, storeName, purpose, instructedBySelect, instructedByCustom, notes]);
+  }, [draftReady, draftStorageKey, draftId, itemName, quantity, amount, purchasedAt, storeName, location, purpose, purposeDetail, instructedBySelect, instructedByCustom, paymentMethod, receipt, notes]);
 
   useEffect(() => {
     supabase.from('profiles').select('name, role_title').eq('is_active', true)
@@ -101,30 +106,48 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
         ({ data }) => setInstructors((data ?? []) as { name: string; role_title: string }[]),
         () => {}
       );
+
+    supabase.from('master_options').select('category, value, sort_order').order('sort_order').then(
+      ({ data }) => {
+        const rows = (data ?? []) as { category: string; value: string; sort_order: number }[];
+        setWorkplaceOptions(rows.filter(r => r.category === 'workplace').map(r => r.value));
+        setPurposeOptions(rows.filter(r => r.category === 'purchase_purpose').map(r => r.value));
+      },
+      () => {}
+    );
   }, []);
 
   const instructedBy = instructedBySelect === 'その他' ? instructedByCustom.trim() : instructedBySelect;
+  const finalPurpose = purposeOptions.includes(purpose) && purposeDetail.trim()
+    ? `${purpose}（${purposeDetail.trim()}）`
+    : purpose;
 
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [successBanner, setSuccessBanner] = useState(false);
 
   const resetForm = () => {
-    setItemName(''); setAmount(''); setPurchasedAt(new Date().toISOString().slice(0, 10));
-    setPaymentMethod(''); setReceipt(emptyReceipt); setShowDetails(false);
+    setItemName(''); setQuantity('1'); setAmount(''); setPurchasedAt(new Date().toISOString().slice(0, 10));
+    setStoreName(''); setLocation(''); setPurpose(''); setPurposeDetail(''); setInstructedBySelect(''); setInstructedByCustom('');
+    setPaymentMethod(''); setReceipt(emptyReceipt); setReceiptUploading(false); setNotes('');
     setDraftId(crypto.randomUUID());
     sessionStorage.removeItem(draftStorageKey);
-    setQuantity(''); setStoreName(''); setPurpose(''); setInstructedBySelect(''); setInstructedByCustom(''); setNotes('');
   };
 
   const handleSubmit = async () => {
     setFormError('');
     if (!itemName.trim()) { setFormError('品目名を入力してください。'); return; }
+    const parsedQuantity = parseInt(quantity, 10);
+    if (!quantity.trim() || isNaN(parsedQuantity) || parsedQuantity < 1) { setFormError('購入点数を1以上で入力してください。'); return; }
     const parsedAmount = parseInt(parseAmount(amount), 10);
     if (!amount.trim() || isNaN(parsedAmount)) { setFormError('金額を正しく入力してください。'); return; }
     if (!purchasedAt) { setFormError('購入日を入力してください。'); return; }
+    if (!storeName.trim()) { setFormError('購入先を入力してください。'); return; }
+    if (!location.trim()) { setFormError('使用先を入力してください。'); return; }
+    if (!finalPurpose.trim()) { setFormError('用途を入力してください。'); return; }
     if (!paymentMethod) { setFormError('支払方法を選択してください。'); return; }
     if (!receipt.receiptType) { setFormError('レシートの提出方法を選択してください。'); return; }
+    if (receiptUploading) { setFormError('レシート写真をアップロード中です。完了までお待ちください。'); return; }
     if (receipt.receiptType === 'photo' && !receipt.receiptStoragePath) { setFormError('レシート写真のアップロードを完了してください。'); return; }
     if (receipt.receiptType === 'none' && !receipt.receiptMissingReason.trim()) { setFormError('レシートがない理由を入力してください。'); return; }
 
@@ -135,12 +158,13 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
       applicant_role_title: roleTitle,
       request_type: 'reimbursement',
       item_name: itemName.trim(),
-      quantity: quantity.trim() ? parseInt(quantity, 10) : null,
+      quantity: parsedQuantity,
       amount: parsedAmount,
       purchased_at: purchasedAt,
       instructed_by: instructedBy.trim() || null,
-      store_name: storeName.trim() || null,
-      purpose: purpose.trim() || null,
+      store_name: storeName.trim(),
+      purpose: finalPurpose.trim(),
+      location: location.trim(),
       payment_method: paymentMethod,
       notes: notes.trim() || null,
       receipt_type: receipt.receiptType,
@@ -151,7 +175,7 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
     setSubmitting(false);
 
     if (error) {
-      setFormError('登録に失敗しました: ' + error.message);
+      setFormError('送信に失敗しました: ' + error.message);
       return;
     }
 
@@ -165,12 +189,13 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
 
   const labelStyle: React.CSSProperties = { fontSize: 13, fontWeight: 'bold', color: text, marginBottom: 6, display: 'block' };
   const inputStyle: React.CSSProperties = { width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: text, fontSize: 14 };
+  const required = <span style={{ color: '#dc3545' }}>*</span>;
 
   return (
     <div>
       {successBanner && (
         <BannerSuccess
-          message="精算を記録しました"
+          message="精算を送信しました"
           sub="内容は履歴タブから確認できます"
           onClose={() => setSuccessBanner(false)}
         />
@@ -178,12 +203,17 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
 
       <div style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 12, padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div>
-          <label style={labelStyle}>品目名 <span style={{ color: '#dc3545' }}>*</span></label>
+          <label style={labelStyle}>品目名 {required}</label>
           <input type="text" value={itemName} onChange={e => setItemName(e.target.value)} placeholder="例：トイレットペーパー" style={inputStyle} />
         </div>
 
         <div>
-          <label style={labelStyle}>金額 <span style={{ color: '#dc3545' }}>*</span></label>
+          <label style={labelStyle}>購入点数 {required}</label>
+          <input type="number" min="1" value={quantity} onChange={e => setQuantity(e.target.value)} style={inputStyle} />
+        </div>
+
+        <div>
+          <label style={labelStyle}>金額 {required}</label>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ color: text, fontSize: 14 }}>¥</span>
             <input
@@ -195,12 +225,90 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
         </div>
 
         <div>
-          <label style={labelStyle}>購入日 <span style={{ color: '#dc3545' }}>*</span></label>
+          <label style={labelStyle}>購入日 {required}</label>
           <input type="date" value={purchasedAt} onChange={e => setPurchasedAt(e.target.value)} style={inputStyle} />
         </div>
 
         <div>
-          <label style={labelStyle}>この支出はどちらで払いましたか？ <span style={{ color: '#dc3545' }}>*</span></label>
+          <label style={labelStyle}>購入先 {required}</label>
+          <input type="text" value={storeName} onChange={e => setStoreName(e.target.value)} placeholder="例：〇〇ホームセンター" style={inputStyle} />
+        </div>
+
+        <div>
+          <label style={labelStyle}>使用先 {required}</label>
+          {workplaceOptions.length > 0 ? (
+            <>
+              <select
+                value={workplaceOptions.includes(location) ? location : (location ? 'その他' : '')}
+                onChange={e => setLocation(e.target.value === 'その他' ? '' : e.target.value)}
+                style={inputStyle}
+              >
+                <option value="">選択してください</option>
+                {workplaceOptions.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                <option value="その他">その他</option>
+              </select>
+              {!workplaceOptions.includes(location) && (
+                <input
+                  type="text" value={location} onChange={e => setLocation(e.target.value)}
+                  placeholder="使用先を入力" style={{ ...inputStyle, marginTop: 6 }}
+                />
+              )}
+            </>
+          ) : (
+            <input type="text" value={location} onChange={e => setLocation(e.target.value)} placeholder="使用先を入力" style={inputStyle} />
+          )}
+        </div>
+
+        <div>
+          <label style={labelStyle}>用途 {required}</label>
+          {purposeOptions.length > 0 ? (
+            <>
+              <select
+                value={purposeOptions.includes(purpose) ? purpose : (purpose ? 'その他' : '')}
+                onChange={e => setPurpose(e.target.value === 'その他' ? '' : e.target.value)}
+                style={inputStyle}
+              >
+                <option value="">選択してください</option>
+                {purposeOptions.filter(p => p !== 'その他').map(p => <option key={p} value={p}>{p}</option>)}
+                <option value="その他">その他</option>
+              </select>
+              {!purposeOptions.includes(purpose) ? (
+                <input
+                  type="text" value={purpose} onChange={e => setPurpose(e.target.value)}
+                  placeholder="用途を入力" style={{ ...inputStyle, marginTop: 6 }}
+                />
+              ) : (
+                <input
+                  type="text" value={purposeDetail} onChange={e => setPurposeDetail(e.target.value)}
+                  placeholder="詳細（任意）" style={{ ...inputStyle, marginTop: 6 }}
+                />
+              )}
+            </>
+          ) : (
+            <input type="text" value={purpose} onChange={e => setPurpose(e.target.value)} placeholder="用途を入力" style={inputStyle} />
+          )}
+        </div>
+
+        <div>
+          <label style={labelStyle}>指示者（誰からの依頼か）</label>
+          <select value={instructedBySelect} onChange={e => setInstructedBySelect(e.target.value)} style={inputStyle}>
+            <option value="">選択してください（任意）</option>
+            <option value="総務部">総務部</option>
+            {instructors.map(p => (
+              <option key={p.name} value={`${p.name}（${p.role_title}）`}>{p.name}（{p.role_title}）</option>
+            ))}
+            <option value="その他">その他（自由記述）</option>
+          </select>
+          {instructedBySelect === 'その他' && (
+            <input
+              type="text" value={instructedByCustom} onChange={e => setInstructedByCustom(e.target.value)}
+              placeholder="指示者名を入力してください" style={{ ...inputStyle, marginTop: 8 }}
+            />
+          )}
+        </div>
+
+        <div>
+          <label style={labelStyle}>この支出はどちらで払いましたか？ {required}</label>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {[
               { key: 'cash' as const, label: '① 自分で立替えた（後日返金されます）' },
@@ -224,60 +332,28 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
           </div>
           {paymentMethod === 'company_card' && (
             <div style={{ marginTop: 8, padding: '8px 12px', background: isDarkMode ? '#3a3a20' : '#fff8e1', border: `1px solid ${isDarkMode ? '#5c5430' : '#ffe082'}`, borderRadius: 8, fontSize: 12, color: isDarkMode ? '#ffe082' : '#8a6d00' }}>
-              ℹ️ 会社カード払いのため、この記録に返金は発生しません。
+              会社カード払いのため、この記録に返金は発生しません。
             </div>
           )}
         </div>
 
-        <ReceiptUploader isDarkMode={isDarkMode} userId={user.id} draftId={draftId} value={receipt} onChange={patch => setReceipt(prev => ({ ...prev, ...patch }))} />
+        <ReceiptUploader
+          isDarkMode={isDarkMode}
+          userId={user.id}
+          draftId={draftId}
+          value={receipt}
+          onChange={patch => setReceipt(prev => ({ ...prev, ...patch }))}
+          onUploadingChange={setReceiptUploading}
+        />
 
-        <div>
-          <button
-            type="button"
-            onClick={() => setShowDetails(s => !s)}
-            style={{ background: 'none', border: 'none', color: '#4a90d9', fontSize: 13, cursor: 'pointer', padding: 0 }}
-          >
-            {showDetails ? '▲ 詳しい入力を閉じる' : '▼ 詳しく入力する（数量・購入先・用途など）'}
-          </button>
+        <div style={{ padding: '8px 12px', background: isDarkMode ? '#243447' : '#eef6ff', border: `1px solid ${isDarkMode ? '#375a7f' : '#b6dcff'}`, borderRadius: 8, fontSize: 12, color: isDarkMode ? '#d6ecff' : '#174a7c' }}>
+          原本確認が必要になる場合があります。紙のレシートは少なくとも3か月は保管してください。
         </div>
 
-        {showDetails && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, paddingTop: 4 }}>
-            <div>
-              <label style={labelStyle}>数量</label>
-              <input type="number" min="0" value={quantity} onChange={e => setQuantity(e.target.value)} style={inputStyle} />
-            </div>
-            <div>
-              <label style={labelStyle}>購入先（店舗名）</label>
-              <input type="text" value={storeName} onChange={e => setStoreName(e.target.value)} placeholder="例：〇〇ホームセンター" style={inputStyle} />
-            </div>
-            <div>
-              <label style={labelStyle}>用途・使用先</label>
-              <input type="text" value={purpose} onChange={e => setPurpose(e.target.value)} placeholder="例：〇〇教室のトイレ用" style={inputStyle} />
-            </div>
-            <div>
-              <label style={labelStyle}>指示者（誰からの依頼か）</label>
-              <select value={instructedBySelect} onChange={e => setInstructedBySelect(e.target.value)} style={inputStyle}>
-                <option value="">選択してください（任意）</option>
-                <option value="総務部">総務部</option>
-                {instructors.map(p => (
-                  <option key={p.name} value={`${p.name}（${p.role_title}）`}>{p.name}（{p.role_title}）</option>
-                ))}
-                <option value="その他">その他（自由記述）</option>
-              </select>
-              {instructedBySelect === 'その他' && (
-                <input
-                  type="text" value={instructedByCustom} onChange={e => setInstructedByCustom(e.target.value)}
-                  placeholder="指示者名を入力してください" style={{ ...inputStyle, marginTop: 8 }}
-                />
-              )}
-            </div>
-            <div>
-              <label style={labelStyle}>備考</label>
-              <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} style={{ ...inputStyle, resize: 'vertical' as const }} />
-            </div>
-          </div>
-        )}
+        <div>
+          <label style={labelStyle}>備考</label>
+          <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} style={{ ...inputStyle, resize: 'vertical' as const }} />
+        </div>
 
         {formError && (
           <div style={{ padding: '10px 12px', background: '#fff5f5', border: '1px solid #f5c2c7', borderRadius: 8, color: '#842029', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -289,10 +365,10 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
         <button
           type="button"
           onClick={handleSubmit}
-          disabled={submitting}
-          style={{ width: '100%', padding: '14px', borderRadius: 10, border: 'none', background: submitting ? subText : '#28a745', color: '#fff', fontSize: 15, fontWeight: 'bold', cursor: submitting ? 'default' : 'pointer' }}
+          disabled={submitting || receiptUploading}
+          style={{ width: '100%', padding: '14px', borderRadius: 10, border: 'none', background: submitting || receiptUploading ? subText : '#28a745', color: '#fff', fontSize: 15, fontWeight: 'bold', cursor: submitting || receiptUploading ? 'default' : 'pointer' }}
         >
-          {submitting ? '記録しています...' : '記録する'}
+          {submitting ? '送信しています...' : receiptUploading ? 'レシートをアップロード中...' : '送信する'}
         </button>
       </div>
     </div>
