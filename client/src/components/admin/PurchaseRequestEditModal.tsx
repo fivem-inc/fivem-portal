@@ -48,8 +48,7 @@ const PurchaseRequestEditModal: React.FC<PurchaseRequestEditModalProps> = ({ rec
     if (isNaN(parsedQuantity) || parsedQuantity < 1) { setError('数量を正しく入力してください。'); return; }
     if (isNaN(parsedAmount)) { setError('金額を正しく入力してください。'); return; }
 
-    setSaving(true);
-    const { error: updateError } = await supabase.from('purchase_requests').update({
+    const nextValues: Record<string, string | number | null> = {
       item_name: itemName.trim(),
       quantity: parsedQuantity,
       amount: parsedAmount,
@@ -60,13 +59,47 @@ const PurchaseRequestEditModal: React.FC<PurchaseRequestEditModalProps> = ({ rec
       instructed_by: instructedBy.trim() || null,
       payment_method: paymentMethod || null,
       notes: notes.trim() || null,
-    }).eq('id', record.id);
-    setSaving(false);
+    };
+    const prevValues: Record<string, string | number | null> = {
+      item_name: record.item_name,
+      quantity: record.quantity,
+      amount: record.amount,
+      purchased_at: record.purchased_at ?? record.requested_purchase_date ?? null,
+      store_name: record.store_name,
+      purpose: record.purpose,
+      location: record.location,
+      instructed_by: record.instructed_by,
+      payment_method: record.payment_method,
+      notes: record.notes,
+    };
+    const changes: Record<string, { old: string | number | null; new: string | number | null }> = {};
+    Object.keys(nextValues).forEach(key => {
+      if (String(prevValues[key] ?? '') !== String(nextValues[key] ?? '')) {
+        changes[key] = { old: prevValues[key], new: nextValues[key] };
+      }
+    });
 
+    if (Object.keys(changes).length === 0) {
+      onSaved();
+      return;
+    }
+
+    setSaving(true);
+    const { error: updateError } = await supabase.from('purchase_requests').update(nextValues).eq('id', record.id);
     if (updateError) {
+      setSaving(false);
       setError('保存に失敗しました: ' + updateError.message);
       return;
     }
+
+    const { data: { user } } = await supabase.auth.getUser();
+    await supabase.from('purchase_request_edit_log').insert({
+      purchase_request_id: record.id,
+      edited_by: user?.id ?? null,
+      changes,
+    });
+
+    setSaving(false);
     onSaved();
   };
 

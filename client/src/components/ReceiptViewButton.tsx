@@ -6,9 +6,10 @@ interface ReceiptViewButtonProps {
   isDarkMode: boolean;
   canDownload?: boolean;
   onDownloaded?: () => void;
+  extraActions?: React.ReactNode;
 }
 
-const ReceiptViewButton: React.FC<ReceiptViewButtonProps> = ({ path, isDarkMode, canDownload = false, onDownloaded }) => {
+const ReceiptViewButton: React.FC<ReceiptViewButtonProps> = ({ path, isDarkMode, canDownload = false, onDownloaded, extraActions }) => {
   const [loadingMode, setLoadingMode] = useState<'view' | 'download' | null>(null);
   const [error, setError] = useState('');
 
@@ -28,7 +29,7 @@ const ReceiptViewButton: React.FC<ReceiptViewButtonProps> = ({ path, isDarkMode,
   };
 
   return (
-    <div style={{ marginTop: 4, display: 'flex', gap: 8 }}>
+    <div style={{ marginTop: 4, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
       <button
         type="button"
         onClick={() => handleClick(false)}
@@ -47,6 +48,7 @@ const ReceiptViewButton: React.FC<ReceiptViewButtonProps> = ({ path, isDarkMode,
           {loadingMode === 'download' ? '取得中...' : '⬇ ダウンロード'}
         </button>
       )}
+      {extraActions}
       {error && <div style={{ marginTop: 4, fontSize: 12, color: '#842029', flexBasis: '100%' }}>{error}</div>}
     </div>
   );

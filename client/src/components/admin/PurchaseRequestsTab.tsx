@@ -6,6 +6,7 @@ import type { PurchaseRequestCSVRow } from '../../utils';
 import PurchaseItemsSummary from '../PurchaseItemsSummary';
 import ReceiptViewButton from '../ReceiptViewButton';
 import PurchaseRequestEditModal from './PurchaseRequestEditModal';
+import PurchaseRequestEditHistoryModal from './PurchaseRequestEditHistoryModal';
 
 const STATUS_LABEL: Record<string, { label: string; color: string }> = {
   recorded:             { label: '精算記録', color: '#6c757d' },
@@ -46,6 +47,7 @@ const PurchaseRequestsTab: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [requestTypeFilter, setRequestTypeFilter] = useState<'all' | 'purchase_request' | 'reimbursement'>('all');
   const [editingRecord, setEditingRecord] = useState<PurchaseRequestCSVRow | null>(null);
+  const [historyRequestId, setHistoryRequestId] = useState<string | null>(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
@@ -235,16 +237,6 @@ const PurchaseRequestsTab: React.FC = () => {
                 <div style={{ fontSize: 12, color: '#dc3545', marginBottom: 6 }}>差し戻し理由：{r.returned_reason}</div>
               )}
               <PurchaseItemsSummary items={resolvedItems} isDarkMode={isDarkMode} />
-              {r.receipt_type === 'photo' && r.receipt_storage_path && (
-                <>
-                  <ReceiptViewButton path={r.receipt_storage_path} isDarkMode={isDarkMode} canDownload onDownloaded={fetchPurchaseRequestsList} />
-                  {purchaseRequestLastDownload[r.id] && (
-                    <div style={{ marginTop: 4, fontSize: 11, color: '#e0a800' }}>
-                      最終ダウンロード：{new Date(purchaseRequestLastDownload[r.id].downloadedAt).toLocaleString('ja-JP')}（{purchaseRequestLastDownload[r.id].downloadedByName}）
-                    </div>
-                  )}
-                </>
-              )}
 
               {confirmingDeleteId === r.id ? (
                 <div style={{ marginTop: 10, padding: 10, background: '#fff5f5', border: '1px solid #f5c2c7', borderRadius: 8 }}>
@@ -270,22 +262,40 @@ const PurchaseRequestsTab: React.FC = () => {
                   </div>
                 </div>
               ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
-                  <button
-                    type="button"
-                    onClick={() => setEditingRecord(r)}
-                    style={{ padding: '8px', borderRadius: 8, border: `1px solid ${border}`, background: 'transparent', color: text, fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}
-                  >
-                    ✏️ 修正
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmingDeleteId(r.id)}
-                    style={{ padding: '8px', borderRadius: 8, border: '1px solid #dc3545', background: 'transparent', color: '#dc3545', fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}
-                  >
-                    🗑 削除
-                  </button>
-                </div>
+                <>
+                  {r.receipt_type === 'photo' && r.receipt_storage_path ? (
+                    <ReceiptViewButton
+                      path={r.receipt_storage_path}
+                      isDarkMode={isDarkMode}
+                      canDownload
+                      onDownloaded={fetchPurchaseRequestsList}
+                      extraActions={
+                        <ActionButtons
+                          text={text}
+                          border={border}
+                          onEdit={() => setEditingRecord(r)}
+                          onHistory={() => setHistoryRequestId(r.id)}
+                          onDeleteRequest={() => setConfirmingDeleteId(r.id)}
+                        />
+                      }
+                    />
+                  ) : (
+                    <div style={{ marginTop: 4 }}>
+                      <ActionButtons
+                        text={text}
+                        border={border}
+                        onEdit={() => setEditingRecord(r)}
+                        onHistory={() => setHistoryRequestId(r.id)}
+                        onDeleteRequest={() => setConfirmingDeleteId(r.id)}
+                      />
+                    </div>
+                  )}
+                  {r.receipt_type === 'photo' && r.receipt_storage_path && purchaseRequestLastDownload[r.id] && (
+                    <div style={{ marginTop: 4, fontSize: 11, color: '#e0a800' }}>
+                      最終ダウンロード：{new Date(purchaseRequestLastDownload[r.id].downloadedAt).toLocaleString('ja-JP')}（{purchaseRequestLastDownload[r.id].downloadedByName}）
+                    </div>
+                  )}
+                </>
               )}
             </div>
           );
@@ -303,7 +313,32 @@ const PurchaseRequestsTab: React.FC = () => {
           }}
         />
       )}
+
+      {historyRequestId && (
+        <PurchaseRequestEditHistoryModal
+          purchaseRequestId={historyRequestId}
+          isDarkMode={isDarkMode}
+          onClose={() => setHistoryRequestId(null)}
+        />
+      )}
     </div>
+  );
+};
+
+const ActionButtons: React.FC<{
+  text: string; border: string;
+  onEdit: () => void; onHistory: () => void; onDeleteRequest: () => void;
+}> = ({ text, border, onEdit, onHistory, onDeleteRequest }) => {
+  const smallBtnStyle: React.CSSProperties = {
+    padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 'bold',
+    border: `1px solid ${border}`, background: 'transparent', color: text, cursor: 'pointer',
+  };
+  return (
+    <>
+      <button type="button" onClick={onEdit} style={smallBtnStyle}>✏️ 修正</button>
+      <button type="button" onClick={onHistory} style={smallBtnStyle}>🕘 履歴</button>
+      <button type="button" onClick={onDeleteRequest} style={{ ...smallBtnStyle, border: '1px solid #dc3545', color: '#dc3545' }}>🗑 削除</button>
+    </>
   );
 };
 
