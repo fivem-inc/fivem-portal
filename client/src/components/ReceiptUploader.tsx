@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { compressImageFile, ImageTooLargeError } from '../lib/imageCompress';
 
@@ -25,11 +25,15 @@ const OPTIONS: { key: ReceiptType; icon: string; label: string }[] = [
   { key: 'none', icon: '✏️', label: 'レシートがない（理由を記入）' },
 ];
 
+// カメラアプリから戻る途中でページが再読み込みされたかを検知するためのフラグ
+const CAMERA_PENDING_KEY = 'receipt_camera_pending';
+
 const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, draftId, value, onChange, onUploadingChange }) => {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const processingRef = useRef(false);
 
   const cardBg = isDarkMode ? '#2d2d3e' : '#ffffff';
   const border = isDarkMode ? '#3a3a5c' : '#e0e0e0';
@@ -64,6 +68,9 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
   };
 
   const handleFileSelected = async (file: File) => {
+    if (processingRef.current) return;
+    processingRef.current = true;
+    sessionStorage.removeItem(CAMERA_PENDING_KEY);
     setUploadState(true);
     setUploadError('');
     onChange({ receiptType: 'photo', receiptStoragePath: null, receiptMissingReason: '' });
@@ -86,7 +93,55 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
       );
     } finally {
       setUploadState(false);
+      processingRef.current = false;
     }
+  };
+
+  // Android Chromeではカメラアプリが前面にいる間にページが一時破棄されることがあり、
+  // 復帰時にfile inputのchangeイベントが失われる場合がある。
+  // 画面に戻ったタイミングでinputに残っているファイルを拾い直す保険。
+  useEffect(() => {
+    const pickPendingFile = () => {
+      if (document.visibilityState !== 'visible') return;
+      const input = cameraInputRef.current?.files?.length
+        ? cameraInputRef.current
+        : fileInputRef.current?.files?.length
+          ? fileInputRef.current
+          : null;
+      const file = input?.files?.[0];
+      if (!file || !input) {
+        // キャンセルして戻ってきた場合はフラグを掃除する（changeイベント到着の猶予をとる）
+        setTimeout(() => {
+          if (!processingRef.current) sessionStorage.removeItem(CAMERA_PENDING_KEY);
+        }, 2500);
+        return;
+      }
+      input.value = '';
+      handleFileSelected(file);
+    };
+    window.addEventListener('focus', pickPendingFile);
+    document.addEventListener('visibilitychange', pickPendingFile);
+    return () => {
+      window.removeEventListener('focus', pickPendingFile);
+      document.removeEventListener('visibilitychange', pickPendingFile);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // カメラ起動フラグが残ったまま再マウントされた＝撮影中にページが再読み込みされ写真が失われた
+  useEffect(() => {
+    if (sessionStorage.getItem(CAMERA_PENDING_KEY)) {
+      sessionStorage.removeItem(CAMERA_PENDING_KEY);
+      if (!value.receiptStoragePath) {
+        setUploadError('撮影中にページが再読み込みされ、写真を受け取れませんでした。カメラアプリで撮影した写真を端末に保存してから「写真フォルダから選ぶ」でアップロードしてください。');
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const openCameraInput = () => {
+    sessionStorage.setItem(CAMERA_PENDING_KEY, '1');
+    cameraInputRef.current?.click();
   };
 
   const uploadChoicePanel = (
@@ -102,7 +157,7 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
         </button>
         <button
           type="button"
-          onClick={() => cameraInputRef.current?.click()}
+          onClick={openCameraInput}
           disabled={uploading}
           style={{ width: '100%', padding: '14px', borderRadius: 10, border: `1px solid ${border}`, background: cardBg, color: text, fontSize: 15, fontWeight: 'bold', cursor: uploading ? 'default' : 'pointer' }}
         >
@@ -190,7 +245,7 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
                 </button>
                 <button
                   type="button"
-                  onClick={() => cameraInputRef.current?.click()}
+                  onClick={openCameraInput}
                   style={{ padding: '10px 8px', borderRadius: 8, border: `1px solid ${border}`, background: cardBg, color: '#4a90d9', fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}
                 >
                   撮り直す
@@ -198,27 +253,29 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
               </div>
             </div>
           )}
-          {uploadError && (
-            <div style={{ marginTop: 8, padding: 10, background: '#fff5f5', border: '1px solid #f5c2c7', borderRadius: 8, color: '#842029', fontSize: 13 }}>
-              {uploadError}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  style={{ padding: '9px 8px', borderRadius: 8, border: '1px solid #f5c2c7', background: '#fff', color: '#842029', cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}
-                >
-                  フォルダから選ぶ
-                </button>
-                <button
-                  type="button"
-                  onClick={() => cameraInputRef.current?.click()}
-                  style={{ padding: '9px 8px', borderRadius: 8, border: '1px solid #f5c2c7', background: '#fff', color: '#842029', cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}
-                >
-                  撮り直す
-                </button>
-              </div>
-            </div>
-          )}
+        </div>
+      )}
+
+      {/* 撮影中のページ再読み込み検知メッセージは種別未選択状態でも見せる必要があるため、photoブロックの外に置く */}
+      {uploadError && (
+        <div style={{ marginTop: 8, padding: 10, background: '#fff5f5', border: '1px solid #f5c2c7', borderRadius: 8, color: '#842029', fontSize: 13 }}>
+          {uploadError}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              style={{ padding: '9px 8px', borderRadius: 8, border: '1px solid #f5c2c7', background: '#fff', color: '#842029', cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}
+            >
+              フォルダから選ぶ
+            </button>
+            <button
+              type="button"
+              onClick={openCameraInput}
+              style={{ padding: '9px 8px', borderRadius: 8, border: '1px solid #f5c2c7', background: '#fff', color: '#842029', cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}
+            >
+              撮り直す
+            </button>
+          </div>
         </div>
       )}
 
