@@ -90,17 +90,22 @@ serve(async (req) => {
       });
     }
 
+    let logError: string | null = null;
     if (download) {
       // パス規約 {user_id}/{request_id}/{timestamp}_receipt.jpg から申請IDを取り出して記録する
       const requestId = path.split('/')[1] ?? null;
-      await supabaseAdmin.from('receipt_download_log').insert({
+      const { error: insertError } = await supabaseAdmin.from('receipt_download_log').insert({
         purchase_request_id: requestId,
         storage_path: path,
         downloaded_by: user.id,
       });
+      if (insertError) {
+        console.error('receipt_download_log insert failed:', insertError.message, { path, requestId, userId: user.id });
+        logError = insertError.message;
+      }
     }
 
-    return new Response(JSON.stringify({ signedUrl: data.signedUrl }), {
+    return new Response(JSON.stringify({ signedUrl: data.signedUrl, logError }), {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
