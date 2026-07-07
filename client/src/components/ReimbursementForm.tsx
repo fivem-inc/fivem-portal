@@ -36,7 +36,7 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
   const subText = isDarkMode ? '#aaaaaa' : '#666666';
   const inputBg = isDarkMode ? '#3a3a5c' : '#f8f9fa';
 
-  const [draftId] = useState(() => crypto.randomUUID());
+  const [draftId, setDraftId] = useState(() => crypto.randomUUID());
   const [itemName, setItemName] = useState('');
   const [amount, setAmount] = useState('');
   const [purchasedAt, setPurchasedAt] = useState(() => new Date().toISOString().slice(0, 10));
@@ -50,6 +50,50 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
   const [instructedByCustom, setInstructedByCustom] = useState('');
   const [notes, setNotes] = useState('');
   const [instructors, setInstructors] = useState<{ name: string; role_title: string }[]>([]);
+  const draftStorageKey = `reimbursement-draft:${user.id}`;
+  const [draftReady, setDraftReady] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem(draftStorageKey);
+      if (saved) {
+        const draft = JSON.parse(saved);
+        if (typeof draft.draftId === 'string') setDraftId(draft.draftId);
+        if (typeof draft.itemName === 'string') setItemName(draft.itemName);
+        if (typeof draft.amount === 'string') setAmount(draft.amount);
+        if (typeof draft.purchasedAt === 'string') setPurchasedAt(draft.purchasedAt);
+        if (draft.paymentMethod === 'cash' || draft.paymentMethod === 'company_card' || draft.paymentMethod === '') setPaymentMethod(draft.paymentMethod);
+        if (draft.receipt && typeof draft.receipt === 'object') setReceipt({ ...emptyReceipt, ...draft.receipt });
+        if (typeof draft.showDetails === 'boolean') setShowDetails(draft.showDetails);
+        if (typeof draft.quantity === 'string') setQuantity(draft.quantity);
+        if (typeof draft.storeName === 'string') setStoreName(draft.storeName);
+        if (typeof draft.purpose === 'string') setPurpose(draft.purpose);
+        if (typeof draft.instructedBySelect === 'string') setInstructedBySelect(draft.instructedBySelect);
+        if (typeof draft.instructedByCustom === 'string') setInstructedByCustom(draft.instructedByCustom);
+        if (typeof draft.notes === 'string') setNotes(draft.notes);
+      }
+    } catch {
+      sessionStorage.removeItem(draftStorageKey);
+    } finally {
+      setDraftReady(true);
+    }
+  }, [draftStorageKey]);
+
+  useEffect(() => {
+    if (!draftReady) return;
+    const hasDraft = Boolean(
+      itemName.trim() || amount.trim() || paymentMethod || receipt.receiptType ||
+      quantity.trim() || storeName.trim() || purpose.trim() || instructedBySelect || instructedByCustom.trim() || notes.trim()
+    );
+    if (!hasDraft) {
+      sessionStorage.removeItem(draftStorageKey);
+      return;
+    }
+    sessionStorage.setItem(draftStorageKey, JSON.stringify({
+      draftId, itemName, amount, purchasedAt, paymentMethod, receipt, showDetails,
+      quantity, storeName, purpose, instructedBySelect, instructedByCustom, notes,
+    }));
+  }, [draftReady, draftStorageKey, draftId, itemName, amount, purchasedAt, paymentMethod, receipt, showDetails, quantity, storeName, purpose, instructedBySelect, instructedByCustom, notes]);
 
   useEffect(() => {
     supabase.from('profiles').select('name, role_title').eq('is_active', true)
@@ -68,6 +112,8 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
   const resetForm = () => {
     setItemName(''); setAmount(''); setPurchasedAt(new Date().toISOString().slice(0, 10));
     setPaymentMethod(''); setReceipt(emptyReceipt); setShowDetails(false);
+    setDraftId(crypto.randomUUID());
+    sessionStorage.removeItem(draftStorageKey);
     setQuantity(''); setStoreName(''); setPurpose(''); setInstructedBySelect(''); setInstructedByCustom(''); setNotes('');
   };
 

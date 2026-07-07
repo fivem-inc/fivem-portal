@@ -28,6 +28,7 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const cardBg = isDarkMode ? '#2d2d3e' : '#ffffff';
   const border = isDarkMode ? '#3a3a5c' : '#e0e0e0';
@@ -97,6 +98,17 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
             ref={fileInputRef}
             type="file"
             accept="image/*"
+            style={{ display: 'none' }}
+            onChange={e => {
+              const file = e.target.files?.[0];
+              if (file) handleFileSelected(file);
+              e.target.value = '';
+            }}
+          />
+          <input
+            ref={cameraInputRef}
+            type="file"
+            accept="image/*"
             capture="environment"
             style={{ display: 'none' }}
             onChange={e => {
@@ -106,13 +118,22 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
             }}
           />
           {!value.receiptStoragePath && !uploading && (
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              style={{ width: '100%', padding: '14px', borderRadius: 10, border: 'none', background: '#28a745', color: '#fff', fontSize: 15, fontWeight: 'bold', cursor: 'pointer' }}
-            >
-              📷 撮影する・選択する
-            </button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                style={{ width: '100%', padding: '14px', borderRadius: 10, border: 'none', background: '#28a745', color: '#fff', fontSize: 15, fontWeight: 'bold', cursor: 'pointer' }}
+              >
+                写真フォルダから選ぶ
+              </button>
+              <button
+                type="button"
+                onClick={() => cameraInputRef.current?.click()}
+                style={{ width: '100%', padding: '12px', borderRadius: 10, border: `1px solid ${border}`, background: cardBg, color: text, fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}
+              >
+                カメラで撮影する
+              </button>
+            </div>
           )}
           {uploading && (
             <div style={{ padding: 12, textAlign: 'center', color: subText, fontSize: 13 }}>
@@ -128,7 +149,7 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
                 onClick={() => fileInputRef.current?.click()}
                 style={{ background: 'none', border: 'none', color: '#4a90d9', fontSize: 12, cursor: 'pointer' }}
               >
-                撮り直す
+                差し替える
               </button>
             </div>
           )}
