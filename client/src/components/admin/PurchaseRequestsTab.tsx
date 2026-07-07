@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { resolveItems } from '../../lib/purchaseItemsFallback';
 import PurchaseItemsSummary from '../PurchaseItemsSummary';
+import ReceiptViewButton from '../ReceiptViewButton';
 
 const STATUS_LABEL: Record<string, { label: string; color: string }> = {
   recorded:             { label: '精算記録', color: '#6c757d' },
@@ -176,6 +177,9 @@ const PurchaseRequestsTab: React.FC = () => {
                 <div style={{ fontSize: 12, color: '#dc3545', marginBottom: 6 }}>差し戻し理由：{r.returned_reason}</div>
               )}
               <PurchaseItemsSummary items={resolvedItems} isDarkMode={isDarkMode} />
+              {r.receipt_type === 'photo' && r.receipt_storage_path && (
+                <ReceiptViewButton path={r.receipt_storage_path} isDarkMode={isDarkMode} />
+              )}
             </div>
           );
         })}

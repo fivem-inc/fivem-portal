@@ -108,6 +108,8 @@ export interface PurchaseRequestCSVRow {
   items_subtotal: number | null;
   amount_diff_reason: string | null;
   amount_diff_flag: boolean | null;
+  receipt_type: 'photo' | 'physical' | 'none' | null;
+  receipt_storage_path: string | null;
   // 明細（複数商品）。呼び出し側でpurchase_request_items・purchase_request_item_quotesを
   // まとめて取得し、resolveItems()でフォールバック解決した配列を渡す
   items: PurchaseRequestItem[];

@@ -8,6 +8,7 @@ import PurchaseRequestForm, { type ResubmitRecord } from '../components/Purchase
 import PurchaseApprovals from '../components/PurchaseApprovals';
 import { resolveItems } from '../lib/purchaseItemsFallback';
 import PurchaseItemsSummary from '../components/PurchaseItemsSummary';
+import ReceiptViewButton from '../components/ReceiptViewButton';
 
 interface PurchaseRequestPageProps {
   user: AuthUser;
@@ -31,6 +32,7 @@ interface PurchaseRecord {
   payment_method: 'cash' | 'company_card' | null;
   receipt_type: 'photo' | 'physical' | 'none' | null;
   receipt_missing_reason: string | null;
+  receipt_storage_path: string | null;
   returned_reason: string | null;
   leader_id: string | null;
   requested_manager_ids: string[] | null;
@@ -86,7 +88,7 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; userI
     setLoading(true);
     const { data } = await supabase
       .from('purchase_requests')
-      .select('id, user_id, request_type, status, item_name, quantity, amount, purchased_at, requested_purchase_date, store_name, purpose, instructed_by, payment_method, receipt_type, receipt_missing_reason, returned_reason, leader_id, requested_manager_ids, shared_manager_ids, is_self_judgment, president_self_judgment, board_approver_ids, notes, quotes, quote_file_path, created_at, approval_round, items_subtotal, amount_diff_reason, amount_diff_flag, location')
+      .select('id, user_id, request_type, status, item_name, quantity, amount, purchased_at, requested_purchase_date, store_name, purpose, instructed_by, payment_method, receipt_type, receipt_missing_reason, receipt_storage_path, returned_reason, leader_id, requested_manager_ids, shared_manager_ids, is_self_judgment, president_self_judgment, board_approver_ids, notes, quotes, quote_file_path, created_at, approval_round, items_subtotal, amount_diff_reason, amount_diff_flag, location')
       .order('created_at', { ascending: false });
     const rows = (data ?? []) as PurchaseRecord[];
     setRecords(rows);
@@ -217,6 +219,9 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; userI
           <div style={{ marginTop: 8 }}>
             <PurchaseItemsSummary items={resolvedItems} isDarkMode={isDarkMode} />
           </div>
+          {r.receipt_type === 'photo' && r.receipt_storage_path && (
+            <ReceiptViewButton path={r.receipt_storage_path} isDarkMode={isDarkMode} />
+          )}
           {opinions[r.id] && opinions[r.id].length > 0 && (
             <div style={{ fontSize: 12, color: subText, marginTop: 6, padding: '6px 8px', background: isDarkMode ? '#20304a' : '#eef6ff', borderRadius: 6 }}>
               共有された意見：{opinions[r.id].map(o => `${names[o.manager_id] ?? '不明'}（${OPINION_LABEL[o.opinion]}${o.comment ? '：' + o.comment : ''}）`).join('　')}
