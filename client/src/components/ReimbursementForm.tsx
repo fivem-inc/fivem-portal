@@ -148,7 +148,7 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
     if (!paymentMethod) { setFormError('支払方法を選択してください。'); return; }
     if (!receipt.receiptType) { setFormError('レシートの提出方法を選択してください。'); return; }
     if (receiptUploading) { setFormError('レシート写真をアップロード中です。完了までお待ちください。'); return; }
-    if (receipt.receiptType === 'photo' && !receipt.receiptStoragePath) { setFormError('レシート写真のアップロードを完了してください。'); return; }
+    if (receipt.receiptType === 'photo' && !receipt.receiptStoragePath) { setFormError('レシート写真のアップロードがまだ完了していません。レシート欄に『レシートを添付しました』と表示されてから送信してください。'); return; }
     if (receipt.receiptType === 'none' && !receipt.receiptMissingReason.trim()) { setFormError('レシートがない理由を入力してください。'); return; }
 
     setSubmitting(true);
