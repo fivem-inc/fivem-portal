@@ -197,10 +197,12 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
     stopCamera();
 
     try {
-      // 解像度を細かく指定すると機種によっては切り抜き（ズームしたような狭い画角）の
-      // 映像モードが選ばれるため、背面カメラ指定＋大まかな理想値のみ渡す
+      // widthだけ指定すると機種が動画撮影用の縦長プリセット（9:16等）を選ぶことがあり、
+      // width+heightを固定すると逆にズームした狭い画角になる機種がある。
+      // aspectRatioで「レシート写真として自然な縦横比（4:3寄り）」だけ緩く指定し、
+      // 実際の解像度は機種のカメラが最適なものを選べるようにする
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 } },
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1600 }, aspectRatio: { ideal: 3 / 4 } },
         audio: false,
       });
       cameraStreamRef.current = stream;
