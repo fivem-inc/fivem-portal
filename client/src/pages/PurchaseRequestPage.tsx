@@ -220,7 +220,7 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
             <PurchaseItemsSummary items={resolvedItems} isDarkMode={isDarkMode} />
           </div>
           {r.receipt_type === 'photo' && r.receipt_storage_path && (r.user_id === userId || isAdmin) && (
-            <ReceiptViewButton path={r.receipt_storage_path} isDarkMode={isDarkMode} />
+            <ReceiptViewButton path={r.receipt_storage_path} isDarkMode={isDarkMode} canDownload={isAdmin} />
           )}
           {opinions[r.id] && opinions[r.id].length > 0 && (
             <div style={{ fontSize: 12, color: subText, marginTop: 6, padding: '6px 8px', background: isDarkMode ? '#20304a' : '#eef6ff', borderRadius: 6 }}>

@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { resolveItems } from '../../lib/purchaseItemsFallback';
+import { supabase } from '../../lib/supabaseClient';
+import type { PurchaseRequestCSVRow } from '../../utils';
 import PurchaseItemsSummary from '../PurchaseItemsSummary';
 import ReceiptViewButton from '../ReceiptViewButton';
+import PurchaseRequestEditModal from './PurchaseRequestEditModal';
 
 const STATUS_LABEL: Record<string, { label: string; color: string }> = {
   recorded:             { label: '精算記録', color: '#6c757d' },
@@ -42,6 +45,23 @@ const PurchaseRequestsTab: React.FC = () => {
   } = ctx;
   const [statusFilter, setStatusFilter] = useState('all');
   const [requestTypeFilter, setRequestTypeFilter] = useState<'all' | 'purchase_request' | 'reimbursement'>('all');
+  const [editingRecord, setEditingRecord] = useState<PurchaseRequestCSVRow | null>(null);
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+
+  const handleDelete = async (id: string) => {
+    setDeleting(true);
+    setDeleteError('');
+    const { error } = await supabase.from('purchase_requests').delete().eq('id', id);
+    setDeleting(false);
+    if (error) {
+      setDeleteError('削除に失敗しました: ' + error.message);
+      return;
+    }
+    setConfirmingDeleteId(null);
+    fetchPurchaseRequestsList();
+  };
 
   const cardBg = isDarkMode ? '#2d2d3e' : '#ffffff';
   const border = isDarkMode ? '#3a3a5c' : '#e0e0e0';
@@ -217,7 +237,7 @@ const PurchaseRequestsTab: React.FC = () => {
               <PurchaseItemsSummary items={resolvedItems} isDarkMode={isDarkMode} />
               {r.receipt_type === 'photo' && r.receipt_storage_path && (
                 <>
-                  <ReceiptViewButton path={r.receipt_storage_path} isDarkMode={isDarkMode} onDownloaded={fetchPurchaseRequestsList} />
+                  <ReceiptViewButton path={r.receipt_storage_path} isDarkMode={isDarkMode} canDownload onDownloaded={fetchPurchaseRequestsList} />
                   {purchaseRequestLastDownload[r.id] && (
                     <div style={{ marginTop: 4, fontSize: 11, color: '#e0a800' }}>
                       最終ダウンロード：{new Date(purchaseRequestLastDownload[r.id].downloadedAt).toLocaleString('ja-JP')}（{purchaseRequestLastDownload[r.id].downloadedByName}）
@@ -225,10 +245,64 @@ const PurchaseRequestsTab: React.FC = () => {
                   )}
                 </>
               )}
+
+              {confirmingDeleteId === r.id ? (
+                <div style={{ marginTop: 10, padding: 10, background: '#fff5f5', border: '1px solid #f5c2c7', borderRadius: 8 }}>
+                  <div style={{ fontSize: 13, color: '#842029', marginBottom: 8 }}>この申請を完全に削除します。元に戻せません。よろしいですか？</div>
+                  {deleteError && <div style={{ fontSize: 12, color: '#842029', marginBottom: 8 }}>{deleteError}</div>}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                    <button
+                      type="button"
+                      onClick={() => { setConfirmingDeleteId(null); setDeleteError(''); }}
+                      disabled={deleting}
+                      style={{ padding: '8px', borderRadius: 8, border: '1px solid #f5c2c7', background: '#fff', color: '#842029', fontSize: 12, fontWeight: 'bold', cursor: deleting ? 'default' : 'pointer' }}
+                    >
+                      キャンセル
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(r.id)}
+                      disabled={deleting}
+                      style={{ padding: '8px', borderRadius: 8, border: 'none', background: '#dc3545', color: '#fff', fontSize: 12, fontWeight: 'bold', cursor: deleting ? 'default' : 'pointer' }}
+                    >
+                      {deleting ? '削除中...' : '完全に削除する'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
+                  <button
+                    type="button"
+                    onClick={() => setEditingRecord(r)}
+                    style={{ padding: '8px', borderRadius: 8, border: `1px solid ${border}`, background: 'transparent', color: text, fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}
+                  >
+                    ✏️ 修正
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingDeleteId(r.id)}
+                    style={{ padding: '8px', borderRadius: 8, border: '1px solid #dc3545', background: 'transparent', color: '#dc3545', fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}
+                  >
+                    🗑 削除
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
       </div>
+
+      {editingRecord && (
+        <PurchaseRequestEditModal
+          record={editingRecord}
+          isDarkMode={isDarkMode}
+          onClose={() => setEditingRecord(null)}
+          onSaved={() => {
+            setEditingRecord(null);
+            fetchPurchaseRequestsList();
+          }}
+        />
+      )}
     </div>
   );
 };

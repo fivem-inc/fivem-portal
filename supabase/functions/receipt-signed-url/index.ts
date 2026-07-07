@@ -53,12 +53,12 @@ serve(async (req) => {
     }
 
     // パス規約は {user_id}/{request_id}/{timestamp}_receipt.jpg。
-    // 本人の写真ならStorage RLS（select_own）で見られるため、ここでは
-    // 「本人以外が見たい場合はマネージャー以上のロールが必要」という追加チェックのみ行う
+    // 閲覧（download=false）は本人または管理者、ダウンロード保存は本人であっても管理者のみ許可する
     const ownerId = path.split('/')[0];
     const isOwner = ownerId === user.id;
 
-    if (!isOwner) {
+    const needsRoleCheck = download ? true : !isOwner;
+    if (needsRoleCheck) {
       const { data: profile } = await supabaseUser
         .from('profiles')
         .select('role_title')
@@ -66,7 +66,7 @@ serve(async (req) => {
         .single();
 
       if (!profile || !VIEW_ROLES.includes(profile.role_title)) {
-        return new Response(JSON.stringify({ error: 'Forbidden: 閲覧権限がありません' }), {
+        return new Response(JSON.stringify({ error: download ? 'Forbidden: ダウンロードは管理者のみ可能です' : 'Forbidden: 閲覧権限がありません' }), {
           status: 403,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
