@@ -7,32 +7,42 @@ interface ReceiptViewButtonProps {
 }
 
 const ReceiptViewButton: React.FC<ReceiptViewButtonProps> = ({ path, isDarkMode }) => {
-  const [loading, setLoading] = useState(false);
+  const [loadingMode, setLoadingMode] = useState<'view' | 'download' | null>(null);
   const [error, setError] = useState('');
 
-  const handleClick = async () => {
-    setLoading(true);
+  const handleClick = async (download: boolean) => {
+    setLoadingMode(download ? 'download' : 'view');
     setError('');
-    const errorMessage = await openReceiptImage(path);
+    const errorMessage = await openReceiptImage(path, download);
     if (errorMessage) setError(errorMessage);
-    setLoading(false);
+    setLoadingMode(null);
+  };
+
+  const border = isDarkMode ? '#3a3a5c' : '#e0e0e0';
+  const btnStyle: React.CSSProperties = {
+    padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 'bold',
+    border: `1px solid ${border}`, background: 'transparent', color: '#4a90d9',
   };
 
   return (
-    <div style={{ marginTop: 4 }}>
+    <div style={{ marginTop: 4, display: 'flex', gap: 8 }}>
       <button
         type="button"
-        onClick={handleClick}
-        disabled={loading}
-        style={{
-          padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 'bold', cursor: loading ? 'default' : 'pointer',
-          border: `1px solid ${isDarkMode ? '#3a3a5c' : '#e0e0e0'}`,
-          background: 'transparent', color: '#4a90d9',
-        }}
+        onClick={() => handleClick(false)}
+        disabled={loadingMode !== null}
+        style={{ ...btnStyle, cursor: loadingMode ? 'default' : 'pointer' }}
       >
-        {loading ? 'レシート画像を取得中...' : '🧾 レシート画像を見る'}
+        {loadingMode === 'view' ? '取得中...' : '🧾 レシート画像を見る'}
       </button>
-      {error && <div style={{ marginTop: 4, fontSize: 12, color: '#842029' }}>{error}</div>}
+      <button
+        type="button"
+        onClick={() => handleClick(true)}
+        disabled={loadingMode !== null}
+        style={{ ...btnStyle, cursor: loadingMode ? 'default' : 'pointer' }}
+      >
+        {loadingMode === 'download' ? '取得中...' : '⬇ ダウンロード'}
+      </button>
+      {error && <div style={{ marginTop: 4, fontSize: 12, color: '#842029', flexBasis: '100%' }}>{error}</div>}
     </div>
   );
 };

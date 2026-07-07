@@ -148,13 +148,14 @@ export interface AdminPanelContextType {
   purchaseCsvStartDate: string; setPurchaseCsvStartDate: React.Dispatch<React.SetStateAction<string>>;
   purchaseCsvEndDate: string; setPurchaseCsvEndDate: React.Dispatch<React.SetStateAction<string>>;
   purchaseCsvDateType: 'created' | 'decided'; setPurchaseCsvDateType: React.Dispatch<React.SetStateAction<'created' | 'decided'>>;
-  handleExportPurchaseCsv: () => Promise<void>;
+  handleExportPurchaseCsv: (requestTypeFilter?: 'all' | 'purchase_request' | 'reimbursement') => Promise<void>;
   purchaseCsvError: string | null;
 
   // 購入申請一覧（管理画面「購入申請」タブ）
   purchaseRequestsList: PurchaseRequestCSVRow[];
   purchaseRequestsListLoading: boolean;
   purchaseRequestNames: Record<string, string>;
+  fetchPurchaseRequestsList: () => Promise<void>;
 
   // Trip reports
   tripReports: BusinessTripReport[];
@@ -1057,12 +1058,16 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     setSuccessMsg('CSVを出力しました');
   }, [csvStartDate, csvEndDate, csvDateType]);
 
-  const handleExportPurchaseCsv = useCallback(async () => {
+  const handleExportPurchaseCsv = useCallback(async (requestTypeFilter: 'all' | 'purchase_request' | 'reimbursement' = 'all') => {
     setPurchaseCsvError(null);
     // 全ステータス対象のためstatusフィルタなしで全件取得する
     const { data, error } = await supabase.from('purchase_requests').select('*').order('created_at', { ascending: true });
     if (error) { setPurchaseCsvError('CSV出力に失敗しました: ' + error.message); return; }
     let rows = (data ?? []) as PurchaseRequestCSVRow[];
+
+    if (requestTypeFilter !== 'all') {
+      rows = rows.filter(row => row.request_type === requestTypeFilter);
+    }
 
     if (purchaseCsvStartDate || purchaseCsvEndDate) {
       const start = purchaseCsvStartDate ? new Date(`${purchaseCsvStartDate}T00:00:00`) : null;
@@ -1135,7 +1140,8 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     }
     const nameOf = (userId: string | null | undefined) => (userId ? (namesMap[userId] ?? '不明') : '');
 
-    downloadCSV(generatePurchaseRequestCSVData(rowsWithItems, nameOf), 'purchase_requests.csv');
+    const fileSuffix = requestTypeFilter === 'purchase_request' ? '_申請' : requestTypeFilter === 'reimbursement' ? '_精算' : '';
+    downloadCSV(generatePurchaseRequestCSVData(rowsWithItems, nameOf), `purchase_requests${fileSuffix}.csv`);
     setSuccessMsg('CSVを出力しました');
   }, [purchaseCsvStartDate, purchaseCsvEndDate, purchaseCsvDateType]);
 
@@ -1267,7 +1273,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       handleDeleteSubmission, handleExportCsv,
       purchaseCsvStartDate, setPurchaseCsvStartDate, purchaseCsvEndDate, setPurchaseCsvEndDate,
       purchaseCsvDateType, setPurchaseCsvDateType, handleExportPurchaseCsv, purchaseCsvError,
-      purchaseRequestsList, purchaseRequestsListLoading, purchaseRequestNames,
+      purchaseRequestsList, purchaseRequestsListLoading, purchaseRequestNames, fetchPurchaseRequestsList,
       tripReports, loadingTripReports, expandedTripYearMonths, setExpandedTripYearMonths,
       tripReportFilter, setTripReportFilter, showLocationEditor, setShowLocationEditor,
       tripCategories, locationOptions, newLocationByCategory, setNewLocationByCategory,

@@ -44,7 +44,7 @@ serve(async (req) => {
   }
 
   try {
-    const { path } = await req.json();
+    const { path, download } = await req.json();
     if (!path || typeof path !== 'string') {
       return new Response(JSON.stringify({ error: 'path は必須です' }), {
         status: 400,
@@ -81,7 +81,7 @@ serve(async (req) => {
 
     const { data, error } = await supabaseAdmin.storage
       .from('purchase-receipts')
-      .createSignedUrl(path, SIGNED_URL_EXPIRES_SECONDS);
+      .createSignedUrl(path, SIGNED_URL_EXPIRES_SECONDS, download ? { download: true } : undefined);
 
     if (error || !data) {
       return new Response(JSON.stringify({ error: error?.message ?? 'URL発行に失敗しました' }), {

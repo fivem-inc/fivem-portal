@@ -21,6 +21,11 @@ const STATUS_FILTERS: { key: string; label: string }[] = [
   { key: 'approved', label: '承認済み' },
   { key: 'returned', label: '差し戻し' },
 ];
+const REQUEST_TYPE_FILTERS: { key: 'all' | 'purchase_request' | 'reimbursement'; label: string }[] = [
+  { key: 'all', label: '全て' },
+  { key: 'purchase_request', label: '申請' },
+  { key: 'reimbursement', label: '精算' },
+];
 const PENDING_STATUSES = ['pending_leader', 'pending_manager', 'pending_board'];
 const APPROVED_STATUSES = ['leader_approved', 'manager_approved', 'board_approved', 'self_judgment_shared', 'recorded'];
 
@@ -33,8 +38,10 @@ const PurchaseRequestsTab: React.FC = () => {
     purchaseCsvDateType, setPurchaseCsvDateType,
     handleExportPurchaseCsv, purchaseCsvError,
     purchaseRequestsList, purchaseRequestsListLoading, purchaseRequestNames,
+    fetchPurchaseRequestsList,
   } = ctx;
   const [statusFilter, setStatusFilter] = useState('all');
+  const [requestTypeFilter, setRequestTypeFilter] = useState<'all' | 'purchase_request' | 'reimbursement'>('all');
 
   const cardBg = isDarkMode ? '#2d2d3e' : '#ffffff';
   const border = isDarkMode ? '#3a3a5c' : '#e0e0e0';
@@ -42,6 +49,7 @@ const PurchaseRequestsTab: React.FC = () => {
   const subText = isDarkMode ? '#aaaaaa' : '#666666';
 
   const filteredList = purchaseRequestsList.filter(r => {
+    if (requestTypeFilter !== 'all' && r.request_type !== requestTypeFilter) return false;
     if (statusFilter === 'all') return true;
     if (statusFilter === 'pending') return PENDING_STATUSES.includes(r.status);
     if (statusFilter === 'approved') return APPROVED_STATUSES.includes(r.status);
@@ -51,7 +59,17 @@ const PurchaseRequestsTab: React.FC = () => {
 
   return (
     <div>
-      <h3 style={{ textAlign: 'center', margin: '0 0 20px', color: isDarkMode ? '#fff' : '#000' }}>🧾 購入申請</h3>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, margin: '0 0 20px' }}>
+        <h3 style={{ margin: 0, color: isDarkMode ? '#fff' : '#000' }}>🧾 購入申請</h3>
+        <button
+          type="button"
+          onClick={() => fetchPurchaseRequestsList()}
+          disabled={purchaseRequestsListLoading}
+          style={{ padding: '4px 10px', borderRadius: 6, fontSize: 12, border: `1px solid ${border}`, background: 'transparent', color: text, cursor: purchaseRequestsListLoading ? 'default' : 'pointer' }}
+        >
+          🔄 更新
+        </button>
+      </div>
 
       {purchaseCsvError && (
         <div style={{ maxWidth: 500, margin: '0 auto 16px', padding: '10px 12px', background: '#fff5f5', border: '1px solid #f5c2c7', borderRadius: 8, color: '#842029', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -119,10 +137,30 @@ const PurchaseRequestsTab: React.FC = () => {
             }}
           />
         </div>
-        <button onClick={handleExportPurchaseCsv}>CSV出力（全ステータス）</button>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <button onClick={() => handleExportPurchaseCsv('all')}>CSV出力（全て）</button>
+          <button onClick={() => handleExportPurchaseCsv('purchase_request')}>CSV出力（申請のみ）</button>
+          <button onClick={() => handleExportPurchaseCsv('reimbursement')}>CSV出力（精算のみ）</button>
+        </div>
       </div>
 
       {/* 申請一覧 */}
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
+        {REQUEST_TYPE_FILTERS.map(f => (
+          <button
+            key={f.key}
+            onClick={() => setRequestTypeFilter(f.key)}
+            style={{
+              padding: '6px 14px', borderRadius: 20, cursor: 'pointer', fontSize: 13,
+              border: `1px solid ${requestTypeFilter === f.key ? '#28a745' : border}`,
+              background: requestTypeFilter === f.key ? '#28a745' : 'transparent',
+              color: requestTypeFilter === f.key ? '#fff' : text,
+            }}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
       <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
         {STATUS_FILTERS.map(f => (
           <button
