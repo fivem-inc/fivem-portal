@@ -29,9 +29,26 @@ const drawToCanvas = (source: CanvasImageSource, width: number, height: number) 
   return canvas;
 };
 
+// 最新スマホは4800万画素超の写真を撮ることがあり、フル解像度のまま一度メモリに展開すると
+// 端末によってはタブごとメモリ不足でクラッシュする。先に小さいプローブでアスペクト比だけ取得し、
+// 本番デコードは resizeWidth/resizeHeight を指定してブラウザに縮小デコードさせることで
+// フル解像度のピクセルバッファを一切確保しないようにする。
 const compressWithBitmap = async (file: File): Promise<Blob> => {
   if (typeof createImageBitmap !== 'function') throw new Error('createImageBitmap未対応のブラウザです');
-  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+
+  const probe = await createImageBitmap(file, { imageOrientation: 'from-image', resizeWidth: 256 });
+  const aspect = probe.height / probe.width;
+  probe.close?.();
+
+  const targetW = aspect <= 1 ? MAX_LONG_EDGE : Math.max(1, Math.round(MAX_LONG_EDGE / aspect));
+  const targetH = aspect <= 1 ? Math.max(1, Math.round(MAX_LONG_EDGE * aspect)) : MAX_LONG_EDGE;
+
+  const bitmap = await createImageBitmap(file, {
+    imageOrientation: 'from-image',
+    resizeWidth: targetW,
+    resizeHeight: targetH,
+    resizeQuality: 'medium',
+  });
   try {
     return await canvasToJpegBlob(drawToCanvas(bitmap, bitmap.width, bitmap.height));
   } finally {
