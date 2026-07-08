@@ -153,6 +153,9 @@ export interface AdminUserProfile {
   leave_enabled_by?: string | null;
   submission_count?: number;
   last_sign_in_at?: string | null;
+  signup_ip?: string | null;
+  signup_country?: string | null;
+  signup_city?: string | null;
 }
 
 export interface AdminLeaveRequest {

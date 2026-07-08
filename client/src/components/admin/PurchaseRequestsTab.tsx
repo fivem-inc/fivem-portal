@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabaseClient';
 import type { PurchaseRequestCSVRow } from '../../utils';
 import { approvePurchaseRequestAction, returnPurchaseRequestAction, cancelReturnedPurchaseRequest, type PurchaseApprovalRoute } from '../../lib/purchaseApprovalActions';
 import { downloadReceiptsAsZip } from '../../lib/purchaseReceiptBulkDownload';
+import { openReceiptImage } from '../../lib/receiptView';
 import PurchaseItemsSummary from '../PurchaseItemsSummary';
 import ReceiptViewButton from '../ReceiptViewButton';
 import SearchableSelect from '../common/SearchableSelect';
@@ -488,7 +489,7 @@ const PurchaseRequestsTab: React.FC = () => {
                     </div>
                   )}
 
-                  <PurchaseItemsSummary items={resolvedItems} isDarkMode={isDarkMode} />
+                  <PurchaseItemsSummary items={resolvedItems} isDarkMode={isDarkMode} onViewFile={path => { openReceiptImage(path, false); }} />
 
                   {confirmingDeleteId === r.id ? (
                     <div style={{ marginTop: 8, padding: 8, background: '#fff5f5', border: '1px solid #f5c2c7', borderRadius: 8 }}>

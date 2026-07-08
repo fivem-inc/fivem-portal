@@ -4,9 +4,10 @@ import type { PurchaseRequestItem } from '../types';
 interface PurchaseItemsSummaryProps {
   items: PurchaseRequestItem[];
   isDarkMode: boolean;
+  onViewFile?: (path: string) => void;
 }
 
-const PurchaseItemsSummary: React.FC<PurchaseItemsSummaryProps> = ({ items, isDarkMode }) => {
+const PurchaseItemsSummary: React.FC<PurchaseItemsSummaryProps> = ({ items, isDarkMode, onViewFile }) => {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
 
   const border = isDarkMode ? '#3a3a5c' : '#e0e0e0';
@@ -40,7 +41,20 @@ const PurchaseItemsSummary: React.FC<PurchaseItemsSummaryProps> = ({ items, isDa
                   <span style={{ color: '#fff', background: '#28a745', borderRadius: 4, padding: '1px 6px', fontSize: 11 }}>購入予定</span>
                 )}
                 {q.note && <span style={{ color: subText }}>{q.note}</span>}
-                {q.quote_file_path && <span title="見積書あり">📎</span>}
+                {q.quote_file_path && (
+                  onViewFile ? (
+                    <button
+                      type="button"
+                      onClick={() => onViewFile(q.quote_file_path!)}
+                      title="見積書を見る"
+                      style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 12, padding: 0, textDecoration: 'underline' }}
+                    >
+                      📎 見積書
+                    </button>
+                  ) : (
+                    <span title="見積書あり">📎</span>
+                  )
+                )}
               </div>
             ))}
           </div>
@@ -78,7 +92,20 @@ const PurchaseItemsSummary: React.FC<PurchaseItemsSummaryProps> = ({ items, isDa
                       <span style={{ color: '#fff', background: '#28a745', borderRadius: 4, padding: '1px 6px', fontSize: 11 }}>購入予定</span>
                     )}
                     {q.note && <span style={{ color: subText }}>{q.note}</span>}
-                    {q.quote_file_path && <span title="見積書あり">📎</span>}
+                    {q.quote_file_path && (
+                  onViewFile ? (
+                    <button
+                      type="button"
+                      onClick={() => onViewFile(q.quote_file_path!)}
+                      title="見積書を見る"
+                      style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 12, padding: 0, textDecoration: 'underline' }}
+                    >
+                      📎 見積書
+                    </button>
+                  ) : (
+                    <span title="見積書あり">📎</span>
+                  )
+                )}
                   </div>
                 ))}
               </div>

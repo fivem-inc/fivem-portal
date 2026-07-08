@@ -5871,3 +5871,39 @@ CSV・フォーム再申請時の初期化すべてでこの関数を共通利�
 - 修正後は必ず `cd client` → `npm run build`（`tsc -b` + `vite build`）を実行する。
 - pushはユーザーの明示指示があるまで行わない。
 - 大規模な機能追加はUI/UXデザイナー・シニアエンジニアのサブエージェント2体でプランレビューしてから実装する。
+
+---
+
+## ✅ 2026-07-08 追加作業メモ: 新規登録の接続元IP表示・見積書ファイルの管理画面プレビュー機能
+
+### 背景
+- 管理画面のユーザー管理に、身元不明の新規登録（test@gmail.com／Test1）が来ていることに気づいた
+- Supabaseの生ログ（`auth.audit_log_entries`は空だったため、Logsダッシュボードの「Auth」ログから`remote_addr`を取得）を手動で調査し、IPアドレス（210.56.151.14）とその国（オーストラリア・パース、ip-api.comで逆引き）を特定
+- この手動調査を毎回やらずに済むよう、登録時に自動でIP・国を記録して管理画面に表示する機能を追加することにした
+
+### 実装内容（新規登録IP表示）
+- `profiles`テーブルに`signup_ip`・`signup_country`・`signup_city`列を追加（マイグレーション`20260719300000_add_signup_ip_to_profiles.sql`、適用済み）
+- 新規Edge Function`record-signup-ip`（`verify_jwt = false`）を作成・デプロイ済み
+  - リクエストヘッダーの`x-forwarded-for`先頭値を接続元IPとして取得
+  - `ip-api.com`（無料・APIキー不要）へサーバーサイドで問い合わせ、国・都市を取得
+  - `profiles`に`signup_ip`/`signup_country`/`signup_city`をservice role権限で書き込み
+  - ⚠️ IPアドレスを外部サービス（ip-api.com）へ自動送信する設計のため、実装前にユーザーへ明示確認を取った（自動送信を許可する方針で承認済み）
+- `SignIn.tsx`の`handleSignUp`：`signUp()`成功直後にこのEdge Functionをベストエフォートで呼び出し（`.then(null, () => {})`、失敗しても登録フロー自体はブロックしない）
+- ユーザー管理画面の「🆕 承認待ちの新規登録」カード（`UsersTab.tsx`の`PendingUserRow`）に、IPアドレスと国・都市を小さい灰色文字で追加表示
+- `AdminPanelContext.tsx`の`fetchUsers`クエリに`signup_ip, signup_country, signup_city`を追加
+
+### 実装内容（見積書ファイルの管理画面プレビュー、副次対応）
+- 上記調査の過程で、備品購入申請の相見積もり見積書ファイルが実際にはStorageに正しく保存されているにもかかわらず（DB・Storageとも実体確認済み）、承認/管理画面には「📎あり」を示す静的アイコンがあるだけでクリックして実際に開く手段がなかったことが判明
+- `PurchaseItemsSummary.tsx`に`onViewFile`コールバックpropを追加。渡された場合のみ📎を「クリックして見積書を開くリンク」に変更（渡されない画面では従来通り静的アイコンのまま）
+- 管理画面`PurchaseRequestsTab.tsx`にのみ配線（既存のレシート表示の仕組み`receiptView.ts`の`openReceiptImage()`・Edge Function`receipt-signed-url`を流用し、署名付きURLを新しいタブで開く）
+- **あえてマネージャー承認画面（`PurchaseApprovals.tsx`）には配線していない**：`receipt-signed-url`の閲覧権限が現状`VIEW_ROLES = ['管理者']`のみのため、そのまま承認者向けに配線するとForbiddenエラーになる。承認者にも見積書を見せたい場合は、別途この権限モデルを拡張する必要がある（次回の検討事項として残す）
+
+### デプロイ状況
+- DBマイグレーション・Edge Function（`record-signup-ip`）とも本番適用・デプロイ済み
+- クライアントコードはpush済み
+- `tsc -b`・`vite build`とも成功確認済み
+
+### 今後の検討事項
+1. 承認者（リーダー・マネージャー・全員承認）にも見積書ファイルを見せたい場合、`receipt-signed-url`の`VIEW_ROLES`を拡張するか、その申請の承認対象者かどうかで判定するロジックを追加する
+2. 新規登録のIP表示機能を実際にテスト登録で確認する（次回の新規登録時にIP・国が正しく表示されるか）
+3. 既存予定タスク（2026-07-08時点、上記参照）は変更なし

@@ -307,7 +307,7 @@ const SendEmailModal: React.FC<{
 // 承認待ちユーザー1件分の行（雇用形態・役職をその場で設定して承認）
 const PendingUserRow: React.FC<{
   isDarkMode: boolean;
-  pendingUser: { id: string; name?: string | null; email?: string; registered_at?: string | null };
+  pendingUser: { id: string; name?: string | null; email?: string; registered_at?: string | null; signup_ip?: string | null; signup_country?: string | null; signup_city?: string | null };
   masterOptions: { employment_type: string[]; role_title: string[] };
   onApprove: (userId: string, employmentType: string, roleTitle: string) => Promise<void>;
   onReject: (userId: string) => Promise<void>;
@@ -317,11 +317,18 @@ const PendingUserRow: React.FC<{
   const [showRejectConfirm, setShowRejectConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  const location = [pendingUser.signup_country, pendingUser.signup_city].filter(Boolean).join('・');
+
   return (
     <div style={{ background: isDarkMode ? '#3a2f0d' : '#fff8e1', border: `1px solid ${isDarkMode ? '#7a5c00' : '#ffe082'}`, borderRadius: 8, padding: '10px 14px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
       <div style={{ minWidth: 140 }}>
         <div style={{ fontWeight: 'bold', color: isDarkMode ? '#fff' : '#000', fontSize: 14 }}>{pendingUser.name || '（名前未設定）'}</div>
         <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#666' }}>{pendingUser.email}</div>
+        {pendingUser.signup_ip && (
+          <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#666' }}>
+            📍 {pendingUser.signup_ip}{location && `（${location}）`}
+          </div>
+        )}
       </div>
       <select value={employmentType} onChange={e => setEmploymentType(e.target.value)} disabled={busy}
         style={{ padding: '4px 6px', fontSize: 12, borderRadius: 4, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000' }}>

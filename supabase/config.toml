@@ -7,6 +7,9 @@ verify_jwt = false
 [functions.delete-user]
 verify_jwt = false
 
+[functions.record-signup-ip]
+verify_jwt = false
+
 [functions.gcal-sync]
 enabled = true
 verify_jwt = false

@@ -79,17 +79,22 @@ export default function SignIn() {
       return;
     }
 
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        data: { 
+        data: {
           name: name.trim(),
           display_name: name.trim(),
           full_name: name.trim()
         }
       }
     });
+
+    if (!error && data.user) {
+      // 承認待ちの新規登録を管理画面で確認する際の参考情報として、接続元IP・国を記録する（ベストエフォート）
+      supabase.functions.invoke('record-signup-ip', { body: { user_id: data.user.id } }).then(null, () => {});
+    }
 
     if (error) {
       // エラーメッセージを日本語化
