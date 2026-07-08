@@ -3,6 +3,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 const ALLOWED_ORIGINS = ['https://fivem-portal.vercel.app', 'http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'];
 const VIEW_ROLES = ['管理者'];
+// 備品購入申請の相見積もり見積書は、経費精算レシートより機微度が低く、承認者が判断のために見る必要があるため
+// 閲覧のみ（ダウンロードは対象外）承認者ロールにも開放する
+const QUOTE_VIEW_ROLES = ['リーダー', 'マネージャー', '社長', '管理者'];
 const SIGNED_URL_EXPIRES_SECONDS = 300; // 5分。表示のたびに都度発行する使い切りURL（ダウンロード保存目的ではない）
 
 function getCorsHeaders(req: Request) {
@@ -52,10 +55,12 @@ serve(async (req) => {
       });
     }
 
-    // パス規約は {user_id}/{request_id}/{timestamp}_receipt.jpg。
+    // パス規約は {user_id}/{request_id}/{timestamp}_receipt.jpg（見積書は {user_id}/{request_id}-{item}-{quote}/{timestamp}_quote.ext）。
     // 閲覧（download=false）は本人または管理者、ダウンロード保存は本人であっても管理者のみ許可する
+    // ただし見積書ファイルの閲覧のみ、承認者ロール（リーダー/マネージャー/社長）にも開放する
     const ownerId = path.split('/')[0];
     const isOwner = ownerId === user.id;
+    const isQuoteFile = path.includes('_quote.');
 
     const needsRoleCheck = download ? true : !isOwner;
     if (needsRoleCheck) {
@@ -65,7 +70,8 @@ serve(async (req) => {
         .eq('id', user.id)
         .single();
 
-      if (!profile || !VIEW_ROLES.includes(profile.role_title)) {
+      const allowedRoles = (!download && isQuoteFile) ? QUOTE_VIEW_ROLES : VIEW_ROLES;
+      if (!profile || !allowedRoles.includes(profile.role_title)) {
         return new Response(JSON.stringify({ error: download ? 'Forbidden: ダウンロードは管理者のみ可能です' : 'Forbidden: 閲覧権限がありません' }), {
           status: 403,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
