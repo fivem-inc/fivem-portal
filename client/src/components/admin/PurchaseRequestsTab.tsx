@@ -56,6 +56,7 @@ const PurchaseRequestsTab: React.FC = () => {
   const [fyFilter, setFyFilter] = useState('__current__');
   const [applicantFilter, setApplicantFilter] = useState('all');
   const [locationFilter, setLocationFilter] = useState('all');
+  const [unreimbursedOnly, setUnreimbursedOnly] = useState(false);
 
   const [editingRecord, setEditingRecord] = useState<PurchaseRequestCSVRow | null>(null);
   const [historyRequestId, setHistoryRequestId] = useState<string | null>(null);
@@ -72,6 +73,10 @@ const PurchaseRequestsTab: React.FC = () => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDownloading, setBulkDownloading] = useState(false);
   const [bulkDownloadError, setBulkDownloadError] = useState('');
+
+  const [reimbursingId, setReimbursingId] = useState<string | null>(null);
+  const [editingReimbursedId, setEditingReimbursedId] = useState<string | null>(null);
+  const [reimbursedDraftDate, setReimbursedDraftDate] = useState('');
 
   const cardBg = isDarkMode ? '#2d2d3e' : '#ffffff';
   const border = isDarkMode ? '#3a3a5c' : '#e0e0e0';
@@ -114,6 +119,31 @@ const PurchaseRequestsTab: React.FC = () => {
     setConfirmingDeleteId(null);
     fetchPurchaseRequestsList();
   };
+
+  const startEditReimbursed = (r: PurchaseRequestCSVRow) => {
+    setEditingReimbursedId(r.id);
+    setReimbursedDraftDate(r.reimbursed_at ? r.reimbursed_at.slice(0, 10) : new Date().toISOString().slice(0, 10));
+  };
+  const cancelEditReimbursed = () => setEditingReimbursedId(null);
+
+  const confirmReimbursed = useCallback(async (r: PurchaseRequestCSVRow) => {
+    if (!reimbursedDraftDate) return;
+    setReimbursingId(r.id);
+    const { error } = await supabase.from('purchase_requests')
+      .update({ reimbursed_at: new Date(`${reimbursedDraftDate}T00:00:00`).toISOString() })
+      .eq('id', r.id);
+    setReimbursingId(null);
+    setEditingReimbursedId(null);
+    if (!error) fetchPurchaseRequestsList();
+  }, [reimbursedDraftDate, fetchPurchaseRequestsList]);
+
+  const unmarkReimbursed = useCallback(async (r: PurchaseRequestCSVRow) => {
+    setReimbursingId(r.id);
+    const { error } = await supabase.from('purchase_requests').update({ reimbursed_at: null }).eq('id', r.id);
+    setReimbursingId(null);
+    setEditingReimbursedId(null);
+    if (!error) fetchPurchaseRequestsList();
+  }, [fetchPurchaseRequestsList]);
 
   const itemNameSummaryOf = (r: PurchaseRequestCSVRow) => {
     const resolvedItems = resolveItems(r, r.items ?? []);
@@ -191,16 +221,17 @@ const PurchaseRequestsTab: React.FC = () => {
     if (statusFilter === 'returned' && r.status !== 'returned') return false;
     if (applicantFilter !== 'all' && r.user_id !== applicantFilter) return false;
     if (locationFilter !== 'all' && r.location !== locationFilter) return false;
+    if (unreimbursedOnly && !(r.payment_method === 'cash' && !r.reimbursed_at)) return false;
     if (isIncomplete(r)) return true;
     const activeFY = fyFilter === '__current__' ? nowFY : (fyFilter === 'all' ? null : Number(fyFilter));
     if (activeFY !== null && toFiscalYear(r.created_at) !== activeFY) return false;
     return true;
   });
 
-  const filtersAreDefault = statusFilter === 'all' && requestTypeFilter === 'all' && fyFilter === '__current__' && applicantFilter === 'all' && locationFilter === 'all';
+  const filtersAreDefault = statusFilter === 'all' && requestTypeFilter === 'all' && fyFilter === '__current__' && applicantFilter === 'all' && locationFilter === 'all' && !unreimbursedOnly;
   const resetFilters = () => {
     setStatusFilter('all'); setRequestTypeFilter('all'); setFyFilter('__current__');
-    setApplicantFilter('all'); setLocationFilter('all');
+    setApplicantFilter('all'); setLocationFilter('all'); setUnreimbursedOnly(false);
   };
 
   const downloadableList = filteredList.filter(r => r.receipt_type === 'photo' && r.receipt_storage_path);
@@ -330,6 +361,10 @@ const PurchaseRequestsTab: React.FC = () => {
           <option value="all">使用先：すべて</option>
           {locationOptions.map(loc => <option key={loc} value={loc}>{loc}</option>)}
         </select>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: text, margin: 0, cursor: 'pointer' }}>
+          <input type="checkbox" checked={unreimbursedOnly} onChange={e => setUnreimbursedOnly(e.target.checked)} style={{ width: 'auto' }} />
+          💳 未返金のみ
+        </label>
         {!filtersAreDefault && (
           <button type="button" onClick={resetFilters} style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, border: `1px solid ${border}`, background: 'transparent', color: subText, cursor: 'pointer' }}>
             リセット
@@ -391,7 +426,18 @@ const PurchaseRequestsTab: React.FC = () => {
                   )}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4, gap: 8 }}>
                     <span style={{ fontSize: 14, fontWeight: 'bold', color: text }}>{resolvedItems[0]?.item_name ?? r.item_name}{resolvedItems.length > 1 && `（他${resolvedItems.length - 1}件）`}</span>
-                    <span style={{ fontSize: 14, fontWeight: 'bold', color: text, whiteSpace: 'nowrap' }}>¥{r.amount.toLocaleString()}</span>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                      {r.payment_method && (
+                        <PaymentBadge
+                          record={r} isDarkMode={isDarkMode} reimbursingId={reimbursingId}
+                          isEditing={editingReimbursedId === r.id}
+                          draftDate={reimbursedDraftDate} onDraftDateChange={setReimbursedDraftDate}
+                          onStartEdit={startEditReimbursed} onConfirm={confirmReimbursed}
+                          onCancel={cancelEditReimbursed} onUnmark={unmarkReimbursed}
+                        />
+                      )}
+                      <span style={{ fontSize: 14, fontWeight: 'bold', color: text, whiteSpace: 'nowrap' }}>¥{r.amount.toLocaleString()}</span>
+                    </div>
                   </div>
                   <div style={{ fontSize: 11, color: subText, display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 4 }}>
                     <span style={{ color: '#fff', background: r.request_type === 'reimbursement' ? '#6c757d' : '#4a90d9', borderRadius: 4, padding: '1px 6px' }}>
@@ -400,7 +446,11 @@ const PurchaseRequestsTab: React.FC = () => {
                     <span>👤 {purchaseRequestNames[r.user_id] ?? '不明'}</span>
                     <span>📅 {r.purchased_at ?? r.requested_purchase_date ?? r.created_at.slice(0, 10)}</span>
                     {r.location && <span>使用先：{r.location}</span>}
+                    {r.store_name && <span>購入先：{r.store_name}</span>}
+                    {r.purpose && <span>用途：{r.purpose}</span>}
+                    {r.instructed_by && <span>指示者：{r.instructed_by}</span>}
                   </div>
+                  {r.notes && <div style={{ fontSize: 11, color: subText, marginBottom: 4 }}>備考：{r.notes}</div>}
 
                   {/* 確認状況バッジ */}
                   {r.request_type === 'reimbursement' && (
@@ -564,6 +614,66 @@ const ActionButtons: React.FC<{
       )}
       <button type="button" onClick={onDeleteRequest} style={{ ...smallBtnStyle, border: '1px solid #dc3545', color: '#dc3545' }}>🗑 削除</button>
     </>
+  );
+};
+
+const PaymentBadge: React.FC<{
+  record: PurchaseRequestCSVRow; isDarkMode: boolean; reimbursingId: string | null;
+  isEditing: boolean; draftDate: string; onDraftDateChange: (v: string) => void;
+  onStartEdit: (r: PurchaseRequestCSVRow) => void; onConfirm: (r: PurchaseRequestCSVRow) => void;
+  onCancel: () => void; onUnmark: (r: PurchaseRequestCSVRow) => void;
+}> = ({ record, isDarkMode, reimbursingId, isEditing, draftDate, onDraftDateChange, onStartEdit, onConfirm, onCancel, onUnmark }) => {
+  if (record.payment_method === 'company_card') {
+    return (
+      <span style={{ fontSize: 12, fontWeight: 'bold', color: isDarkMode ? '#aaaaaa' : '#666666', whiteSpace: 'nowrap' }}>
+        💳 会社カード（返金なし）
+      </span>
+    );
+  }
+  if (record.payment_method !== 'cash') return null;
+
+  const reimbursed = Boolean(record.reimbursed_at);
+  const loading = reimbursingId === record.id;
+
+  if (isEditing) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <input
+          type="date" value={draftDate} onChange={e => onDraftDateChange(e.target.value)}
+          style={{ fontSize: 11, padding: '2px 4px', width: 130 }}
+        />
+        <button type="button" onClick={() => onConfirm(record)} disabled={loading || !draftDate}
+          style={{ fontSize: 11, fontWeight: 'bold', padding: '2px 6px', border: 'none', borderRadius: 4, background: '#28a745', color: '#fff', cursor: loading ? 'default' : 'pointer' }}>
+          確定
+        </button>
+        {reimbursed && (
+          <button type="button" onClick={() => onUnmark(record)} disabled={loading}
+            style={{ fontSize: 11, padding: '2px 6px', border: 'none', borderRadius: 4, background: '#dc3545', color: '#fff', cursor: loading ? 'default' : 'pointer' }}>
+            未返金に戻す
+          </button>
+        )}
+        <button type="button" onClick={onCancel} disabled={loading}
+          style={{ fontSize: 11, padding: '2px 6px', border: `1px solid ${isDarkMode ? '#3a3a5c' : '#e0e0e0'}`, borderRadius: 4, background: 'transparent', color: isDarkMode ? '#eee' : '#222', cursor: loading ? 'default' : 'pointer' }}>
+          キャンセル
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => onStartEdit(record)}
+      disabled={loading}
+      title={reimbursed ? 'クリックで返金日を修正・未返金に戻す' : 'クリックで返金日を記録する'}
+      style={{
+        fontSize: 12, fontWeight: 'bold', whiteSpace: 'nowrap', cursor: loading ? 'default' : 'pointer',
+        border: 'none', background: 'transparent', padding: 0,
+        color: reimbursed ? '#28a745' : '#dc3545',
+      }}
+    >
+      💳 {reimbursed ? `返金済み：${new Date(record.reimbursed_at as string).toLocaleDateString('ja-JP')}` : '立替（未返金）'}
+    </button>
   );
 };
 
