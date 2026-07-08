@@ -5924,3 +5924,19 @@ CSV・フォーム再申請時の初期化すべてでこの関数を共通利�
 - Edge Function（`receipt-signed-url`）再デプロイ済み
 - クライアントコードpush済み
 - `tsc -b`・`vite build`とも成功確認済み
+
+---
+
+## ✅ 2026-07-08 追加作業メモ: 履歴タブの見積書リンク配線漏れ・意見送信ボタンのフィードバック不足を修正
+
+### 背景（実機確認で発覚）
+- マネージャーとして実機確認したところ、承認画面（`PurchaseApprovals.tsx`）では見積書が見れるようになったが、`/purchase`ページの「履歴」タブ（`PurchaseRequestPage.tsx`内`HistoryList`）では見積書が見れないままだった
+- 意見（承認/否認等）を送信しても画面に変化がなく、送信できたのか分からず何度もボタンを押せてしまう、との指摘
+
+### 修正内容
+- `PurchaseRequestPage.tsx`の`HistoryList`にも`onViewFile`を配線（`PurchaseRequestsTab.tsx`・`PurchaseApprovals.tsx`と同じ`openReceiptImage`を使用）。マネージャー以上は他人の履歴も見られる画面のため、見積書の閲覧権限は前回追加した`QUOTE_VIEW_ROLES`（リーダー・マネージャー・社長・管理者）にすでにカバーされている
+- `PurchaseApprovals.tsx`：意見送信成功後3秒間、送信ボタンが緑色＋「✅ 送信しました」表示に変わるフィードバックを追加（`justSubmittedId`ステート）。連打自体はupsertのため実害はなかったが、完了が分からずUXが悪かった
+
+### デプロイ状況
+- フロントのみの変更（DBマイグレーション・Edge Functionの変更なし）
+- `tsc -b`・`vite build`とも成功確認済み

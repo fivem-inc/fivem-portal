@@ -80,6 +80,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
   const [returningId, setReturningId] = useState<string | null>(null);
   const [returnReason, setReturnReason] = useState('');
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [justSubmittedId, setJustSubmittedId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, { opinion: OpinionValue | ''; comment: string; visibleToApplicant: boolean }>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [allApprovedBanner, setAllApprovedBanner] = useState<string | null>(null);
@@ -275,6 +276,8 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
     }
 
     setProcessingId(null);
+    setJustSubmittedId(req.id);
+    setTimeout(() => setJustSubmittedId(prev => prev === req.id ? null : prev), 3000);
   };
 
   // 全員承認ルート専用: submit_board_opinion RPCを呼び出す。
@@ -335,6 +338,8 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
           await Promise.all((req.board_approver_ids ?? []).map(id => insertNotification(id, denialTpl.template, denialTpl.subject || undefined, 'purchase_request:pending_approval', req.id)));
         }
       }
+      setJustSubmittedId(req.id);
+      setTimeout(() => setJustSubmittedId(prev => prev === req.id ? null : prev), 3000);
     }
 
     setProcessingId(null);
@@ -447,9 +452,9 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
                 type="button"
                 onClick={() => (r.route === 'board' ? submitBoardOpinion(r) : submitOpinion(r))}
                 disabled={!draft.opinion || processingId === r.id}
-                style={{ width: '100%', padding: '8px', borderRadius: 8, border: 'none', background: draft.opinion ? '#4a90d9' : subText, color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: draft.opinion ? 'pointer' : 'default' }}
+                style={{ width: '100%', padding: '8px', borderRadius: 8, border: 'none', background: justSubmittedId === r.id ? '#28a745' : (draft.opinion ? '#4a90d9' : subText), color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: draft.opinion ? 'pointer' : 'default' }}
               >
-                {processingId === r.id ? '送信中...' : '意見を送信'}
+                {processingId === r.id ? '送信中...' : justSubmittedId === r.id ? '✅ 送信しました' : '意見を送信'}
               </button>
             </div>
           )}
