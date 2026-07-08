@@ -1,6 +1,7 @@
-import React, { useState, useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { compressImageFile, ImageTooLargeError } from '../lib/imageCompress';
+import CameraCaptureModal, { type CameraCaptureHandle } from './CameraCaptureModal';
 
 interface QuoteFileUploaderProps {
   isDarkMode: boolean;
@@ -14,31 +15,29 @@ const QuoteFileUploader: React.FC<QuoteFileUploaderProps> = ({ isDarkMode, userI
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraFallbackInputRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<CameraCaptureHandle>(null);
 
   const border = isDarkMode ? '#3a3a5c' : '#e0e0e0';
   const text = isDarkMode ? '#eeeeee' : '#222222';
   const subText = isDarkMode ? '#aaaaaa' : '#666666';
   const inputBg = isDarkMode ? '#3a3a5c' : '#f8f9fa';
 
-  const handleFileSelected = async (file: File) => {
+  const uploadBlob = async (blob: Blob, isPdf: boolean) => {
     setUploading(true);
     setUploadError('');
     try {
-      const isPdf = file.type === 'application/pdf';
-      let uploadBlob: Blob;
-      if (isPdf) {
-        // pdfjs-dist/pdf-libは容量が大きいため、PDFが実際に選択された時だけ動的読み込みする
-        const { compressPdfFile } = await import('../lib/pdfCompress');
-        uploadBlob = await compressPdfFile(file);
-      } else {
-        uploadBlob = await compressImageFile(file);
-      }
+      const finalBlob = isPdf
+        ? blob
+        : blob instanceof File
+          ? await compressImageFile(blob)
+          : blob; // カメラ撮影blobは既に圧縮済み
       const ext = isPdf ? 'pdf' : 'jpg';
       const contentType = isPdf ? 'application/pdf' : 'image/jpeg';
       const path = `${userId}/${draftId}/${Date.now()}_quote.${ext}`;
       const { error } = await supabase.storage
         .from('purchase-receipts')
-        .upload(path, uploadBlob, { contentType, upsert: false });
+        .upload(path, finalBlob, { contentType, upsert: false });
       if (error) throw error;
       onChange(path);
     } catch (e) {
@@ -51,6 +50,36 @@ const QuoteFileUploader: React.FC<QuoteFileUploaderProps> = ({ isDarkMode, userI
     } finally {
       setUploading(false);
     }
+  };
+
+  const handleFileSelected = async (file: File) => {
+    const isPdf = file.type === 'application/pdf';
+    if (isPdf) {
+      setUploading(true);
+      setUploadError('');
+      try {
+        // pdfjs-dist/pdf-libは容量が大きいため、PDFが実際に選択された時だけ動的読み込みする
+        const { compressPdfFile } = await import('../lib/pdfCompress');
+        const compressed = await compressPdfFile(file);
+        await uploadBlob(compressed, true);
+      } catch (e) {
+        const isPdfTooLarge = e instanceof Error && e.name === 'PdfTooLargeError';
+        setUploadError(isPdfTooLarge ? (e as Error).message : 'アップロードに失敗しました。もう一度お試しください。');
+        setUploading(false);
+      }
+      return;
+    }
+    await uploadBlob(file, false);
+  };
+
+  const handleCameraCapture = async (blob: Blob) => {
+    await uploadBlob(blob, false);
+  };
+
+  const openCameraFallback = () => cameraFallbackInputRef.current?.click();
+  const openCamera = () => {
+    setUploadError('');
+    cameraRef.current?.open();
   };
 
   return (
@@ -67,14 +96,36 @@ const QuoteFileUploader: React.FC<QuoteFileUploaderProps> = ({ isDarkMode, userI
           e.target.value = '';
         }}
       />
+      <input
+        ref={cameraFallbackInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        style={{ display: 'none' }}
+        onChange={e => {
+          const file = e.target.files?.[0];
+          if (file) handleFileSelected(file);
+          e.target.value = '';
+        }}
+      />
+
       {!value && !uploading && (
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          style={{ width: '100%', padding: '10px', borderRadius: 8, border: `1px dashed ${border}`, background: 'transparent', color: subText, fontSize: 13, cursor: 'pointer' }}
-        >
-          📎 見積書を添付する（写真 / PDF）
-        </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            style={{ width: '100%', padding: '10px', borderRadius: 8, border: `1px dashed ${border}`, background: 'transparent', color: subText, fontSize: 13, cursor: 'pointer' }}
+          >
+            📎 フォルダから選ぶ（写真 / PDF）
+          </button>
+          <button
+            type="button"
+            onClick={openCamera}
+            style={{ width: '100%', padding: '10px', borderRadius: 8, border: `1px dashed ${border}`, background: 'transparent', color: subText, fontSize: 13, cursor: 'pointer' }}
+          >
+            📷 カメラで撮影する
+          </button>
+        </div>
       )}
       {uploading && <div style={{ padding: 10, textAlign: 'center', color: subText, fontSize: 13 }}>アップロード中...</div>}
       {value && !uploading && (
@@ -94,6 +145,15 @@ const QuoteFileUploader: React.FC<QuoteFileUploaderProps> = ({ isDarkMode, userI
           {uploadError}
         </div>
       )}
+
+      <CameraCaptureModal
+        ref={cameraRef}
+        title="見積書を撮影"
+        uploading={uploading}
+        onCapture={handleCameraCapture}
+        onOpenFolderPicker={() => fileInputRef.current?.click()}
+        onUseStandardCamera={openCameraFallback}
+      />
     </div>
   );
 };

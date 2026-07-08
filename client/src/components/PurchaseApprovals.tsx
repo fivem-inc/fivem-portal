@@ -40,6 +40,7 @@ interface PendingRequest {
   requested_purchase_date: string | null;
   store_name: string | null;
   purpose: string | null;
+  reason: string | null;
   notes: string | null;
   quotes: { vendor: string; amount: number; note?: string }[] | null;
   quote_file_path: string | null;
@@ -67,7 +68,7 @@ interface Props {
   userId: string;
 }
 
-const SELECT_COLUMNS = 'id, user_id, item_name, quantity, amount, requested_purchase_date, store_name, purpose, notes, quotes, quote_file_path, created_at, requested_manager_ids, board_approver_ids, approval_round, items_subtotal, amount_diff_reason, amount_diff_flag, location';
+const SELECT_COLUMNS = 'id, user_id, item_name, quantity, amount, requested_purchase_date, store_name, purpose, reason, notes, quotes, quote_file_path, created_at, requested_manager_ids, board_approver_ids, approval_round, items_subtotal, amount_diff_reason, amount_diff_flag, location';
 
 const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
   const isDarkMode = useDarkMode();
@@ -378,6 +379,11 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
             {r.requested_purchase_date && <span>📅 購入予定：{r.requested_purchase_date}</span>}
             {r.quantity != null && <span>数量：{r.quantity}</span>}
           </div>
+          {r.reason && (
+            <div style={{ marginBottom: 8, padding: '8px 10px', background: isDarkMode ? '#20304a' : '#eef6ff', border: `1px solid ${isDarkMode ? '#2e4a70' : '#cfe4ff'}`, borderRadius: 8, fontSize: 13, color: text }}>
+              <span style={{ fontWeight: 'bold' }}>申請理由：</span>{r.reason}
+            </div>
+          )}
           {(r.store_name || r.purpose || r.location) && (
             <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>
               {r.store_name && <span>購入先：{r.store_name}　</span>}

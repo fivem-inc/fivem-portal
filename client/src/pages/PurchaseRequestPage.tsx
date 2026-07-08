@@ -28,6 +28,7 @@ interface PurchaseRecord {
   requested_purchase_date: string | null;
   store_name: string | null;
   purpose: string | null;
+  reason: string | null;
   instructed_by: string | null;
   payment_method: 'cash' | 'company_card' | null;
   receipt_type: 'photo' | 'physical' | 'none' | null;
@@ -88,7 +89,7 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
     setLoading(true);
     const { data } = await supabase
       .from('purchase_requests')
-      .select('id, user_id, request_type, status, item_name, quantity, amount, purchased_at, requested_purchase_date, store_name, purpose, instructed_by, payment_method, receipt_type, receipt_missing_reason, receipt_storage_path, returned_reason, leader_id, requested_manager_ids, shared_manager_ids, is_self_judgment, president_self_judgment, board_approver_ids, notes, quotes, quote_file_path, created_at, approval_round, items_subtotal, amount_diff_reason, amount_diff_flag, location')
+      .select('id, user_id, request_type, status, item_name, quantity, amount, purchased_at, requested_purchase_date, store_name, purpose, reason, instructed_by, payment_method, receipt_type, receipt_missing_reason, receipt_storage_path, returned_reason, leader_id, requested_manager_ids, shared_manager_ids, is_self_judgment, president_self_judgment, board_approver_ids, notes, quotes, quote_file_path, created_at, approval_round, items_subtotal, amount_diff_reason, amount_diff_flag, location')
       .order('created_at', { ascending: false });
     const rows = (data ?? []) as PurchaseRecord[];
     setRecords(rows);
@@ -212,6 +213,7 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
               {r.location && <span>使用先：{r.location}</span>}
             </div>
           )}
+          {r.reason && <div style={{ fontSize: 12, color: subText, marginTop: 4 }}>申請理由：{r.reason}</div>}
           {r.receipt_type === 'none' && r.receipt_missing_reason && (
             <div style={{ fontSize: 12, color: subText, marginTop: 4 }}>レシートなし理由：{r.receipt_missing_reason}</div>
           )}
@@ -241,7 +243,7 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
               onClick={() => onResubmit({
                 id: r.id, item_name: r.item_name, quantity: r.quantity, amount: r.amount,
                 requested_purchase_date: r.requested_purchase_date, store_name: r.store_name,
-                purpose: r.purpose, notes: r.notes, leader_id: r.leader_id, returned_reason: r.returned_reason,
+                purpose: r.purpose, reason: r.reason, notes: r.notes, leader_id: r.leader_id, returned_reason: r.returned_reason,
                 requested_manager_ids: r.requested_manager_ids, shared_manager_ids: r.shared_manager_ids, is_self_judgment: r.is_self_judgment,
                 president_self_judgment: r.president_self_judgment,
                 quotes: r.quotes, quote_file_path: r.quote_file_path, approval_round: r.approval_round,

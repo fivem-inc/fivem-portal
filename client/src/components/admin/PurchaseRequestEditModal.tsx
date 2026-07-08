@@ -21,6 +21,7 @@ const PurchaseRequestEditModal: React.FC<PurchaseRequestEditModalProps> = ({ rec
   const [purchasedAt, setPurchasedAt] = useState(record.purchased_at ?? record.requested_purchase_date ?? '');
   const [storeName, setStoreName] = useState(record.store_name ?? '');
   const [purpose, setPurpose] = useState(record.purpose ?? '');
+  const [reason, setReason] = useState(record.reason ?? '');
   const [location, setLocation] = useState(record.location ?? '');
   const [instructedBy, setInstructedBy] = useState(record.instructed_by ?? '');
   const [paymentMethod, setPaymentMethod] = useState(record.payment_method ?? '');
@@ -55,6 +56,7 @@ const PurchaseRequestEditModal: React.FC<PurchaseRequestEditModalProps> = ({ rec
       purchased_at: purchasedAt || null,
       store_name: storeName.trim() || null,
       purpose: purpose.trim() || null,
+      reason: reason.trim() || null,
       location: location.trim() || null,
       instructed_by: instructedBy.trim() || null,
       payment_method: paymentMethod || null,
@@ -67,6 +69,7 @@ const PurchaseRequestEditModal: React.FC<PurchaseRequestEditModalProps> = ({ rec
       purchased_at: record.purchased_at ?? record.requested_purchase_date ?? null,
       store_name: record.store_name,
       purpose: record.purpose,
+      reason: record.reason,
       location: record.location,
       instructed_by: record.instructed_by,
       payment_method: record.payment_method,
@@ -140,6 +143,10 @@ const PurchaseRequestEditModal: React.FC<PurchaseRequestEditModalProps> = ({ rec
           <div>
             <label style={labelStyle}>用途</label>
             <input style={inputStyle} value={purpose} onChange={e => setPurpose(e.target.value)} />
+          </div>
+          <div>
+            <label style={labelStyle}>申請理由（なぜ必要か）</label>
+            <textarea style={{ ...inputStyle, minHeight: 50, resize: 'vertical' }} value={reason} onChange={e => setReason(e.target.value)} />
           </div>
           <div>
             <label style={labelStyle}>使用先</label>

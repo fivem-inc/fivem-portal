@@ -111,6 +111,7 @@ export interface PurchaseRequestCSVRow {
   receipt_type: 'photo' | 'physical' | 'none' | null;
   receipt_storage_path: string | null;
   reimbursed_at: string | null;
+  reason: string | null;
   // 明細（複数商品）。呼び出し側でpurchase_request_items・purchase_request_item_quotesを
   // まとめて取得し、resolveItems()でフォールバック解決した配列を渡す
   items: PurchaseRequestItem[];
@@ -155,7 +156,7 @@ export const generatePurchaseRequestCSVData = (
     '品目名', '数量', '店舗名', '商品金額', '商品金額手動上書き有無',
     '選択業者名', '選択業者単価', '相見積もり件数', '相見積もり内容(全業者;区切り)',
     '商品数', '明細合計金額', '申請金額', '金額乖離フラグ', '金額乖離理由',
-    '使用先', '購入予定日', '購入日', '指示者', '用途', '支払方法', '備考',
+    '使用先', '購入予定日', '購入日', '指示者', '用途', '申請理由', '支払方法', '返金日', '備考',
     'ステータス', '承認ルート種別', '承認依頼先氏名', '自己判断フラグ', '共有先氏名一覧',
     '申請日', '承認確定日', '差し戻し理由', '差し戻しラウンド',
   ];
@@ -204,7 +205,9 @@ export const generatePurchaseRequestCSVData = (
         row.purchased_at || '',
         row.instructed_by || '',
         row.purpose || '',
+        row.reason || '',
         row.payment_method === 'cash' ? '立替（返金あり）' : row.payment_method === 'company_card' ? '会社カード（返金なし）' : '',
+        row.reimbursed_at ? new Date(row.reimbursed_at).toLocaleDateString() : '',
         row.notes || '',
         PURCHASE_STATUS_LABEL[row.status] || row.status,
         purchaseRouteType(row),

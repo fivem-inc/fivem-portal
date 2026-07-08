@@ -450,6 +450,7 @@ const PurchaseRequestsTab: React.FC = () => {
                     {r.purpose && <span>用途：{r.purpose}</span>}
                     {r.instructed_by && <span>指示者：{r.instructed_by}</span>}
                   </div>
+                  {r.reason && <div style={{ fontSize: 11, color: text, marginBottom: 4 }}><span style={{ fontWeight: 'bold' }}>申請理由：</span>{r.reason}</div>}
                   {r.notes && <div style={{ fontSize: 11, color: subText, marginBottom: 4 }}>備考：{r.notes}</div>}
 
                   {/* 確認状況バッジ */}

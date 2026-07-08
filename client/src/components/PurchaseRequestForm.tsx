@@ -95,6 +95,7 @@ export interface ResubmitRecord {
   requested_purchase_date: string | null;
   store_name: string | null;
   purpose: string | null;
+  reason: string | null;
   notes: string | null;
   leader_id: string | null;
   requested_manager_ids: string[] | null;
@@ -150,6 +151,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
   const [purpose, setPurpose] = useState(resubmitRecord?.purpose ?? '');
   // 用途を選択肢から選んだ場合でも、補足の詳細を書けるようにする任意欄
   const [purposeDetail, setPurposeDetail] = useState('');
+  const [reason, setReason] = useState(resubmitRecord?.reason ?? '');
   const [notes, setNotes] = useState(resubmitRecord?.notes ?? '');
   const [location, setLocation] = useState('');
   const [workplaceOptions, setWorkplaceOptions] = useState<string[]>([]);
@@ -373,7 +375,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
   const resetForm = () => {
     setItems([emptyItemDraft()]);
     setRequestedDate(new Date().toISOString().slice(0, 10));
-    setPurpose(''); setPurposeDetail(''); setNotes(''); setLocation('');
+    setPurpose(''); setPurposeDetail(''); setReason(''); setNotes(''); setLocation('');
     setLeaderId(''); setRequestedManagerIds([]); setSharedManagerIds([]);
     setPresidentSelfJudgment(false); setSelfJudgeConfirmFirst(false);
     setManualTotalOverride(''); setTotalManuallyOverridden(false); setAmountDiffReason('');
@@ -390,6 +392,9 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
     }
     if (!amount.trim() || isNaN(parsedAmount)) { setFormError('金額を正しく入力してください。'); return; }
     if (!requestedDate) { setFormError('購入予定日を入力してください。'); return; }
+    if (!location.trim()) { setFormError('使用先を入力してください。'); return; }
+    if (!purpose.trim()) { setFormError('用途を選択または入力してください。'); return; }
+    if (!reason.trim()) { setFormError('申請理由を入力してください。'); return; }
     if (tier === 'leader' && !isSelfJudgment && !leaderId) { setFormError('確認を依頼するリーダー・マネージャーを選択してください。'); return; }
     if (tier === 'manager' && !isSelfJudgment && requestedManagerIds.length === 0) { setFormError('承認を依頼するマネージャーを1名以上選択してください。'); return; }
     if (isSelfJudgment && sharedManagerIds.length === 0) { setFormError('共有先のマネージャーを1名以上選択してください。'); return; }
@@ -400,7 +405,6 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
         if (filled.length < 2) { setFormError('1万円以上の申請は、各商品につき価格比較（2社以上）の入力が必須です。'); return; }
       }
     }
-
     const presidentSelfJudge = tier === 'board' && isPresident && presidentSelfJudgment;
     const status = tier === 'board'
       ? (presidentSelfJudge ? 'self_judgment_shared' : 'pending_board')
@@ -495,6 +499,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
       requested_purchase_date: requestedDate,
       store_name: effectiveStoreName(items[0]),
       purpose: finalPurpose.trim() || null,
+      reason: reason.trim() || null,
       location: location.trim() || null,
       notes: notes.trim() || null,
       amount_diff_reason: amountDiffReason.trim() || null,
@@ -585,7 +590,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
 
       <div style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 12, padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div>
-          <label style={labelStyle}>使用先</label>
+          <label style={labelStyle}>使用先 <span style={{ color: '#dc3545' }}>*</span></label>
           {locationOptions.length > 0 ? (
             <>
               <select
@@ -610,7 +615,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
         </div>
 
         <div>
-          <label style={labelStyle}>用途</label>
+          <label style={labelStyle}>用途 <span style={{ color: '#dc3545' }}>*</span></label>
           {purposeOptions.length > 0 ? (
             <>
               <select
@@ -637,6 +642,18 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
           ) : (
             <input type="text" value={purpose} onChange={e => setPurpose(e.target.value)} placeholder="上記のどれにも当てはまらない場合は入力してください" style={inputStyle} />
           )}
+        </div>
+
+        <div>
+          <label style={labelStyle}>申請理由 <span style={{ color: '#dc3545' }}>*</span></label>
+          <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>
+            組織として必要なコストか承認者が判断できるよう記入してください。
+          </div>
+          <textarea
+            value={reason} onChange={e => setReason(e.target.value)} rows={2}
+            placeholder="例：現在のマットが老朽化し安全に使用できなくなったため、同等品に交換する必要がある"
+            style={{ ...inputStyle, resize: 'vertical' as const }}
+          />
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
