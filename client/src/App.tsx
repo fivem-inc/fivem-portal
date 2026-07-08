@@ -235,6 +235,40 @@ const useBoardUnread = (userId: string | undefined, pathname: string) => {
   return { total: channelCount + inboxCount, channelOnly: channelCount };
 };
 
+// 備品購入申請：自分がまだ対応していない承認待ち件数（リーダー承認 + マネージャー/全員承認のうち自分が未回答のもの）
+const usePurchasePendingCount = (userId: string | undefined, canPurchaseRequest: boolean | undefined) => {
+  const [pendingCount, setPendingCount] = useState(0);
+
+  const fetchPending = useCallback(async () => {
+    if (!userId || !canPurchaseRequest) { setPendingCount(0); return; }
+
+    const [leaderRes, managerRes, boardRes] = await Promise.all([
+      supabase.from('purchase_requests').select('id').eq('leader_id', userId).eq('status', 'pending_leader'),
+      supabase.from('purchase_requests').select('id, approval_round').contains('requested_manager_ids', [userId]).eq('status', 'pending_manager'),
+      supabase.from('purchase_requests').select('id, approval_round').contains('board_approver_ids', [userId]).eq('status', 'pending_board'),
+    ]);
+    const opinionTargets = [...(managerRes.data ?? []), ...(boardRes.data ?? [])] as { id: string; approval_round: number }[];
+
+    let answeredCount = 0;
+    if (opinionTargets.length > 0) {
+      const { data: ops } = await supabase
+        .from('purchase_request_manager_opinions')
+        .select('purchase_request_id, approval_round')
+        .eq('manager_id', userId)
+        .in('purchase_request_id', opinionTargets.map(t => t.id));
+      const roundById: Record<string, number> = {};
+      opinionTargets.forEach(t => { roundById[t.id] = t.approval_round; });
+      const answeredIds = new Set((ops ?? []).filter(o => o.approval_round === roundById[o.purchase_request_id]).map(o => o.purchase_request_id));
+      answeredCount = opinionTargets.filter(t => answeredIds.has(t.id)).length;
+    }
+
+    setPendingCount((leaderRes.data?.length ?? 0) + opinionTargets.length - answeredCount);
+  }, [userId, canPurchaseRequest]);
+
+  useEffect(() => { fetchPending(); }, [fetchPending]);
+  return { pendingCount, refetch: fetchPending };
+};
+
 const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean; canShiftReport?: boolean; canCalendar?: boolean; canPurchaseRequest?: boolean; roleTitle?: string; userId?: string }> = ({ isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove, canShiftReport, canCalendar, canPurchaseRequest, roleTitle, userId }) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -261,6 +295,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     return () => window.removeEventListener('resize', check);
   }, []);
   const { total: boardUnread } = useBoardUnread(userId, location.pathname);
+  const { pendingCount: purchasePending } = usePurchasePendingCount(userId, canPurchaseRequest);
 
   // モバイルでボタンが画面幅に収まらない時の横スワイプ対応：
   // 端までスクロールできることを示すフェードの表示/非表示を判定
@@ -344,9 +379,16 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
             </button>
           )}
           {canPurchaseRequest && isPub('purchase_request') && (
-            <button onClick={() => navTo('/purchase')} style={btnStyle(location.pathname === '/purchase', '#17a2b8')}>
-              {isMobile ? <><span style={{ fontSize: 20 }}>🧾</span><span>備品精算</span></> : '🧾 備品精算'}
-            </button>
+            <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
+              <button onClick={() => navTo('/purchase')} style={btnStyle(location.pathname === '/purchase', '#17a2b8')}>
+                {isMobile ? <><span style={{ fontSize: 20 }}>🧾</span><span>備品精算</span></> : '🧾 備品精算'}
+              </button>
+              {purchasePending > 0 && location.pathname !== '/purchase' && (
+                <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
+                  {purchasePending > 99 ? '99+' : purchasePending}
+                </span>
+              )}
+            </div>
           )}
           {isPub('board') && (
           <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
@@ -508,8 +550,8 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
       .eq('user_id', userId)
       .eq('banner_dismissed', false)
       .not('message', 'like', '%有給奨励日%')
-      // 「要対応」の承認待ちは専用の集計バナー(LeaveApprovalBanner/ShiftReportApprovalBanner)が別途出るため、ここでは重複表示しない
-      .not('source_type', 'in', '(leave_request:pending_approval,shift_report:pending_approval)')
+      // 「要対応」の承認待ちは専用の集計バナー(LeaveApprovalBanner/ShiftReportApprovalBanner/PurchaseApprovalBanner)が別途出るため、ここでは重複表示しない
+      .not('source_type', 'in', '(leave_request:pending_approval,shift_report:pending_approval,purchase_request:pending_approval)')
       .or('source_type.is.null,source_type.neq.board')
       .order('created_at', { ascending: false });
     if (!data) return;
@@ -779,6 +821,38 @@ const ShiftReportApprovalBanner: React.FC<{ userId: string; roleTitle: string; i
   );
 };
 
+// 備品購入申請の承認待ち通知バナー（消せない・自分が回答すると自動で消える）
+const PurchaseApprovalBanner: React.FC<{ userId: string; canPurchaseRequest: boolean }> = ({ userId, canPurchaseRequest }) => {
+  const navigate = useNavigate();
+  const { pendingCount } = usePurchasePendingCount(userId, canPurchaseRequest);
+
+  if (pendingCount === 0) return null;
+
+  return (
+    <div
+      onClick={() => navigate('/purchase?tab=approvals')}
+      style={{
+        margin: '0 0 16px 0',
+        padding: '12px 16px',
+        background: '#fff3cd',
+        border: '2px solid #ffc107',
+        borderRadius: 10,
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        fontSize: 15,
+        color: '#856404',
+        fontWeight: 'bold',
+      }}
+    >
+      <span style={{ fontSize: 22 }}>🧾</span>
+      <span>備品購入申請の承認依頼が {pendingCount}件 あります</span>
+      <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 'normal' }}>タップして確認 →</span>
+    </div>
+  );
+};
+
 // メインのDashboardコンポーネント
 const Dashboard: React.FC = () => {
   // 通常のダッシュボード処理（パスワードリセットは専用ページで処理）
@@ -936,6 +1010,9 @@ const Dashboard: React.FC = () => {
 
       {/* ④-2 勤務変更申請確認バナー（承認者のみ） */}
       <ShiftReportApprovalBanner userId={user.id} roleTitle={roleTitle} isAdmin={isAdmin} canShiftReport={canShiftReport} />
+
+      {/* ④-3 備品購入申請承認バナー（承認者のみ） */}
+      <PurchaseApprovalBanner userId={user.id} canPurchaseRequest={canPurchaseRequest} />
 
       {/* ⑤ 有給申請バナー（パート向け） */}
       {leaveRequestEnabled && !leaveSubmitted && (

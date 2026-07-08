@@ -448,7 +448,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
                 disabled={!draft.opinion || processingId === r.id}
                 style={{ width: '100%', padding: '8px', borderRadius: 8, border: 'none', background: draft.opinion ? '#4a90d9' : subText, color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: draft.opinion ? 'pointer' : 'default' }}
               >
-                意見を送る
+                {processingId === r.id ? '送信中...' : '意見を送信'}
               </button>
             </div>
           )}

@@ -24,9 +24,27 @@ const PurchaseItemsSummary: React.FC<PurchaseItemsSummaryProps> = ({ items, isDa
   );
 
   if (items.length === 1) {
+    const item = items[0];
     return (
-      <div style={{ fontSize: 13, color: text }}>
-        {summaryLine(items[0])}
+      <div>
+        <div style={{ fontSize: 13, color: text }}>
+          {summaryLine(item)}
+        </div>
+        {item.quotes.length > 0 && (
+          <div style={{ marginTop: 6, padding: '8px 10px', borderRadius: 8, background: quoteBg, border: `1px solid ${quoteBorder}`, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {item.quotes.map((q, qi) => (
+              <div key={qi} style={{ fontSize: 12, color: text, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, border: `1px solid ${quoteBorder}`, borderRadius: 6, padding: '4px 8px' }}>
+                <span>{q.vendor}</span>
+                <span style={{ fontWeight: 'bold' }}>¥{q.unit_amount.toLocaleString()}</span>
+                {q.is_selected && (
+                  <span style={{ color: '#fff', background: '#28a745', borderRadius: 4, padding: '1px 6px', fontSize: 11 }}>購入予定</span>
+                )}
+                {q.note && <span style={{ color: subText }}>{q.note}</span>}
+                {q.quote_file_path && <span title="見積書あり">📎</span>}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
