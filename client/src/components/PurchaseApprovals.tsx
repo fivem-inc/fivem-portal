@@ -80,7 +80,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
   const [returningId, setReturningId] = useState<string | null>(null);
   const [returnReason, setReturnReason] = useState('');
   const [processingId, setProcessingId] = useState<string | null>(null);
-  const [justSubmittedId, setJustSubmittedId] = useState<string | null>(null);
+  const [editingIds, setEditingIds] = useState<Set<string>>(new Set());
   const [drafts, setDrafts] = useState<Record<string, { opinion: OpinionValue | ''; comment: string; visibleToApplicant: boolean }>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [allApprovedBanner, setAllApprovedBanner] = useState<string | null>(null);
@@ -276,8 +276,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
     }
 
     setProcessingId(null);
-    setJustSubmittedId(req.id);
-    setTimeout(() => setJustSubmittedId(prev => prev === req.id ? null : prev), 3000);
+    setEditingIds(prev => { const next = new Set(prev); next.delete(req.id); return next; });
   };
 
   // 全員承認ルート専用: submit_board_opinion RPCを呼び出す。
@@ -338,8 +337,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
           await Promise.all((req.board_approver_ids ?? []).map(id => insertNotification(id, denialTpl.template, denialTpl.subject || undefined, 'purchase_request:pending_approval', req.id)));
         }
       }
-      setJustSubmittedId(req.id);
-      setTimeout(() => setJustSubmittedId(prev => prev === req.id ? null : prev), 3000);
+      setEditingIds(prev => { const next = new Set(prev); next.delete(req.id); return next; });
     }
 
     setProcessingId(null);
@@ -423,39 +421,62 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
                 })}
               </div>
 
-              <div style={{ fontSize: 12, fontWeight: 'bold', color: text, marginBottom: 6 }}>あなたの意見</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-                {OPINION_OPTIONS.map(opt => (
-                  <label key={opt} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: text, cursor: 'pointer' }}>
-                    <input
-                      type="radio" checked={draft.opinion === opt}
-                      onChange={() => setDrafts(prev => ({ ...prev, [r.id]: { ...draft, opinion: opt } }))}
+              {(() => {
+                const myOpinion = requestOpinions.find(o => o.manager_id === userId);
+                const isEditing = editingIds.has(r.id);
+                const isLocked = !!myOpinion && !isEditing;
+                return (
+                  <>
+                    {isLocked && (
+                      <div style={{ marginBottom: 8, padding: '6px 8px', background: isDarkMode ? '#1f3a24' : '#eaf7ee', border: '1px solid #28a745', borderRadius: 6, fontSize: 12, color: text, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span>✅ 送信しました：{OPINION_LABEL[myOpinion!.opinion]}{myOpinion!.comment ? `（${myOpinion!.comment}）` : ''}</span>
+                        <button
+                          type="button"
+                          onClick={() => setEditingIds(prev => new Set(prev).add(r.id))}
+                          style={{ marginLeft: 'auto', background: 'none', border: '1px solid #28a745', color: '#28a745', borderRadius: 6, padding: '2px 10px', fontSize: 12, cursor: 'pointer' }}
+                        >
+                          ✏️ 修正する
+                        </button>
+                      </div>
+                    )}
+                    <div style={{ fontSize: 12, fontWeight: 'bold', color: text, marginBottom: 6 }}>あなたの意見</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8, opacity: isLocked ? 0.6 : 1 }}>
+                      {OPINION_OPTIONS.map(opt => (
+                        <label key={opt} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: text, cursor: isLocked ? 'default' : 'pointer' }}>
+                          <input
+                            type="radio" checked={draft.opinion === opt} disabled={isLocked}
+                            onChange={() => setDrafts(prev => ({ ...prev, [r.id]: { ...draft, opinion: opt } }))}
+                          />
+                          {OPINION_LABEL[opt]}
+                        </label>
+                      ))}
+                    </div>
+                    <textarea
+                      value={draft.comment} disabled={isLocked}
+                      onChange={e => setDrafts(prev => ({ ...prev, [r.id]: { ...draft, comment: e.target.value } }))}
+                      placeholder="コメント（任意）" rows={2}
+                      style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 8, border: `1px solid ${border}`, background: isLocked ? border : inputBg, color: text, fontSize: 12, resize: 'vertical' as const, marginBottom: 8, opacity: isLocked ? 0.6 : 1 }}
                     />
-                    {OPINION_LABEL[opt]}
-                  </label>
-                ))}
-              </div>
-              <textarea
-                value={draft.comment}
-                onChange={e => setDrafts(prev => ({ ...prev, [r.id]: { ...draft, comment: e.target.value } }))}
-                placeholder="コメント（任意）" rows={2}
-                style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: text, fontSize: 12, resize: 'vertical' as const, marginBottom: 8 }}
-              />
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: subText, marginBottom: 8, cursor: 'pointer' }}>
-                <input
-                  type="checkbox" checked={draft.visibleToApplicant}
-                  onChange={e => setDrafts(prev => ({ ...prev, [r.id]: { ...draft, visibleToApplicant: e.target.checked } }))}
-                />
-                申請者にもこの意見を共有する
-              </label>
-              <button
-                type="button"
-                onClick={() => (r.route === 'board' ? submitBoardOpinion(r) : submitOpinion(r))}
-                disabled={!draft.opinion || processingId === r.id}
-                style={{ width: '100%', padding: '8px', borderRadius: 8, border: 'none', background: justSubmittedId === r.id ? '#28a745' : (draft.opinion ? '#4a90d9' : subText), color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: draft.opinion ? 'pointer' : 'default' }}
-              >
-                {processingId === r.id ? '送信中...' : justSubmittedId === r.id ? '✅ 送信しました' : '意見を送信'}
-              </button>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: subText, marginBottom: 8, cursor: isLocked ? 'default' : 'pointer', opacity: isLocked ? 0.6 : 1 }}>
+                      <input
+                        type="checkbox" checked={draft.visibleToApplicant} disabled={isLocked}
+                        onChange={e => setDrafts(prev => ({ ...prev, [r.id]: { ...draft, visibleToApplicant: e.target.checked } }))}
+                      />
+                      申請者にもこの意見を共有する
+                    </label>
+                    {!isLocked && (
+                      <button
+                        type="button"
+                        onClick={() => (r.route === 'board' ? submitBoardOpinion(r) : submitOpinion(r))}
+                        disabled={!draft.opinion || processingId === r.id}
+                        style={{ width: '100%', padding: '8px', borderRadius: 8, border: 'none', background: draft.opinion ? '#4a90d9' : subText, color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: draft.opinion ? 'pointer' : 'default' }}
+                      >
+                        {processingId === r.id ? '送信中...' : isEditing ? '変更を送信' : '意見を送信'}
+                      </button>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           )}
 
