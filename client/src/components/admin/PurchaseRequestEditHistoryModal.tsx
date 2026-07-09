@@ -5,13 +5,14 @@ const FIELD_LABELS: Record<string, string> = {
   item_name: '品目名', quantity: '数量', amount: '金額', purchased_at: '購入日',
   store_name: '購入先', purpose: '用途', location: '使用先', instructed_by: '指示者',
   payment_method: '支払方法', notes: '備考',
+  board_approver_ids: '承認者（全員承認）', requested_manager_ids: '承認者（マネージャー）',
 };
 
 interface EditLogRow {
   id: string;
   edited_by: string | null;
   edited_at: string;
-  changes: Record<string, { old: string | number | null; new: string | number | null }>;
+  changes: Record<string, { old: string | number | null; new: string | number | null; reason?: string }>;
 }
 
 interface PurchaseRequestEditHistoryModalProps {
@@ -78,6 +79,9 @@ const PurchaseRequestEditHistoryModal: React.FC<PurchaseRequestEditHistoryModalP
                   <span style={{ color: '#dc3545' }}>{formatValue(diff.old)}</span>
                   {' → '}
                   <span style={{ color: '#28a745' }}>{formatValue(diff.new)}</span>
+                  {diff.reason && (
+                    <div style={{ marginTop: 2, color: subText }}>理由：{diff.reason}</div>
+                  )}
                 </div>
               ))}
             </div>

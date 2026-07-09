@@ -11,6 +11,7 @@ import ReceiptViewButton from '../ReceiptViewButton';
 import SearchableSelect from '../common/SearchableSelect';
 import PurchaseRequestEditModal from './PurchaseRequestEditModal';
 import PurchaseRequestEditHistoryModal from './PurchaseRequestEditHistoryModal';
+import PurchaseApproverEditModal from './PurchaseApproverEditModal';
 
 interface OpinionRow { purchase_request_id: string; manager_id: string; opinion: 'approve' | 'deny' | 'undecided' | 'other'; approval_round: number }
 
@@ -60,6 +61,7 @@ const PurchaseRequestsTab: React.FC = () => {
   const [unreimbursedOnly, setUnreimbursedOnly] = useState(false);
 
   const [editingRecord, setEditingRecord] = useState<PurchaseRequestCSVRow | null>(null);
+  const [editingApproversRecord, setEditingApproversRecord] = useState<PurchaseRequestCSVRow | null>(null);
   const [historyRequestId, setHistoryRequestId] = useState<string | null>(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -475,17 +477,29 @@ const PurchaseRequestsTab: React.FC = () => {
                     </div>
                   )}
                   {r.status === 'pending_manager' && (
-                    <div style={{ padding: '4px 8px', borderRadius: 6, background: warnBg, border: `1px solid ${warnBorder}`, color: warnText, fontSize: 11, marginBottom: 4 }}>
-                      {unanswered.length === 0
-                        ? '② マネージャー全員回答済み・最終決定待ち'
-                        : `② マネージャー確認待ち（残${unanswered.length}名：${unanswered.map(id => purchaseRequestNames[id] ?? '不明').join('・')}）`}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', borderRadius: 6, background: warnBg, border: `1px solid ${warnBorder}`, color: warnText, fontSize: 11, marginBottom: 4 }}>
+                      <span style={{ flex: 1 }}>
+                        {unanswered.length === 0
+                          ? '② マネージャー全員回答済み・最終決定待ち'
+                          : `② マネージャー確認待ち（残${unanswered.length}名：${unanswered.map(id => purchaseRequestNames[id] ?? '不明').join('・')}）`}
+                      </span>
+                      <button type="button" onClick={() => setEditingApproversRecord(r)}
+                        style={{ padding: '2px 6px', borderRadius: 4, border: `1px solid ${warnText}`, background: 'transparent', color: warnText, fontSize: 10, fontWeight: 'bold', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                        👤 メンバー編集
+                      </button>
                     </div>
                   )}
                   {r.status === 'pending_board' && (
-                    <div style={{ padding: '4px 8px', borderRadius: 6, background: warnBg, border: `1px solid ${warnBorder}`, color: warnText, fontSize: 11, marginBottom: 4 }}>
-                      {unanswered.length === 0
-                        ? (hasDenial ? '全員承認（全員回答済み・否認あり）' : '全員承認により自動確定待ちです')
-                        : `全員承認待ち（残${unanswered.length}名：${unanswered.map(id => purchaseRequestNames[id] ?? '不明').join('・')}）`}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', borderRadius: 6, background: warnBg, border: `1px solid ${warnBorder}`, color: warnText, fontSize: 11, marginBottom: 4 }}>
+                      <span style={{ flex: 1 }}>
+                        {unanswered.length === 0
+                          ? (hasDenial ? '全員承認（全員回答済み・否認あり）' : '全員承認により自動確定待ちです')
+                          : `全員承認待ち（残${unanswered.length}名：${unanswered.map(id => purchaseRequestNames[id] ?? '不明').join('・')}）`}
+                      </span>
+                      <button type="button" onClick={() => setEditingApproversRecord(r)}
+                        style={{ padding: '2px 6px', borderRadius: 4, border: `1px solid ${warnText}`, background: 'transparent', color: warnText, fontSize: 10, fontWeight: 'bold', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                        👤 メンバー編集
+                      </button>
                     </div>
                   )}
 
@@ -591,6 +605,12 @@ const PurchaseRequestsTab: React.FC = () => {
       {editingRecord && (
         <PurchaseRequestEditModal record={editingRecord} isDarkMode={isDarkMode} onClose={() => setEditingRecord(null)}
           onSaved={() => { setEditingRecord(null); fetchPurchaseRequestsList(); }} />
+      )}
+
+      {editingApproversRecord && (
+        <PurchaseApproverEditModal record={editingApproversRecord} isDarkMode={isDarkMode} names={purchaseRequestNames}
+          onClose={() => setEditingApproversRecord(null)}
+          onChanged={fetchPurchaseRequestsList} />
       )}
 
       {historyRequestId && (
