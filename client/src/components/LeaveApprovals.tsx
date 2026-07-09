@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { sendLeaveSlack } from '../lib/leaveSlack';
 import { insertNotification } from '../lib/notifications';
-import { shouldSend, getNotificationTemplate, dispatchEmail, dispatchSiteNotification, getUserEmail } from '../lib/notificationDispatch';
+import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatchEmail, dispatchSiteNotification, getUserEmail } from '../lib/notificationDispatch';
 import { useDarkMode } from '../hooks/useDarkMode';
 import type { AuthUser, AdminLeaveRequest } from '../types';
 
@@ -278,6 +278,20 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     } catch (e) {
       console.error('[gcal-sync] 削除失敗:', e);
     }
+
+    // 申請者へ差し戻し通知（サイト内通知・Slack・メール）
+    const rejectTypeName = rejectingReq.leave_type === 'その他' ? (rejectingReq.leave_type_other || 'その他') : rejectingReq.leave_type;
+    const rejectVars = { 申請者名: rejectingReq.requester?.name || '', 休暇種別: rejectTypeName, 差し戻し理由: rejectReason || '', リンク: 'https://fivem-portal.vercel.app/leave?tab=history' };
+    if (await shouldSend('leave:rejected', 'site')) {
+      const t = await getNotificationTemplate('leave:rejected', 'site', rejectVars);
+      await insertNotification(rejectingReq.user_id, t?.template ?? `休暇申請が差し戻されました`, t?.subject || rejectReason || undefined, 'leave_request:pending_resubmit', rejectingReq.id);
+    }
+    if (await shouldSend('leave:rejected', 'slack')) {
+      const targetChannel = await getNotificationRecipient('leave:rejected', 'slack');
+      await sendLeaveSlack('rejected', profileName || '承認者', roleTitle || '承認者', undefined, undefined, targetChannel ?? 'leader');
+    }
+    const rejectedEmail = await getUserEmail(rejectingReq.user_id) ?? '';
+    await dispatchEmail('leave:rejected', rejectVars, { applicant: rejectedEmail });
 
     setRejectingReq(null);
     setRejectReason('');
