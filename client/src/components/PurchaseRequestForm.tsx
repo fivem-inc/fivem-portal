@@ -573,7 +573,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
         </div>
       )}
 
-      <div style={{ marginBottom: 14, padding: '10px 12px', background: isDarkMode ? '#20304a' : '#eef6ff', border: `1px solid ${isDarkMode ? '#2e4a70' : '#cfe4ff'}`, borderRadius: 8, fontSize: 12, color: isDarkMode ? '#9cc6ff' : '#004085' }}>
+      <div style={{ marginBottom: 14, padding: '10px 12px', background: isDarkMode ? '#20304a' : '#eef6ff', border: `1px solid ${isDarkMode ? '#2e4a70' : '#cfe4ff'}`, borderRadius: 8, fontSize: 12, color: isDarkMode ? '#fff' : '#004085' }}>
         <div style={{ marginBottom: 6 }}>ℹ️ まだ購入していないものの購入前承認はこちら。すでに購入済みの実費精算は「💰精算」タブをご利用ください。</div>
         <div style={{ fontWeight: 'bold', marginBottom: 2 }}>承認ルール（金額の目安）</div>
         <div>・1万円以下：リーダー以上は決裁権限内のため自己判断（共有のみ）／一般スタッフはリーダーかマネージャーの承認が必要</div>

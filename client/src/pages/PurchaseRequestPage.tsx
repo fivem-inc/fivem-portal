@@ -8,6 +8,7 @@ import PurchaseRequestForm, { type ResubmitRecord } from '../components/Purchase
 import PurchaseApprovals from '../components/PurchaseApprovals';
 import { resolveItems } from '../lib/purchaseItemsFallback';
 import PurchaseItemsSummary from '../components/PurchaseItemsSummary';
+import { paymentMethodLabel } from '../utils';
 import ReceiptViewButton from '../components/ReceiptViewButton';
 import { openReceiptImage } from '../lib/receiptView';
 
@@ -31,7 +32,9 @@ interface PurchaseRecord {
   purpose: string | null;
   reason: string | null;
   instructed_by: string | null;
-  payment_method: 'cash' | 'company_card' | null;
+  payment_method: 'cash' | 'company_paid' | null;
+  payment_method_detail: 'company_card' | 'bank_transfer' | 'cash_on_delivery' | 'other' | null;
+  payment_method_other: string | null;
   receipt_type: 'photo' | 'physical' | 'none' | null;
   receipt_missing_reason: string | null;
   receipt_storage_path: string | null;
@@ -53,7 +56,6 @@ interface PurchaseRecord {
   location: string | null;
 }
 
-const PAYMENT_LABEL: Record<string, string> = { cash: '立替（返金あり）', company_card: '会社カード（返金なし）' };
 const RECEIPT_LABEL: Record<string, string> = { photo: '写真あり', physical: '直接提出', none: 'なし' };
 const STATUS_LABEL: Record<string, { label: string; color: string }> = {
   recorded:             { label: '精算記録', color: '#6c757d' },
@@ -90,7 +92,7 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
     setLoading(true);
     const { data } = await supabase
       .from('purchase_requests')
-      .select('id, user_id, request_type, status, item_name, quantity, amount, purchased_at, requested_purchase_date, store_name, purpose, reason, instructed_by, payment_method, receipt_type, receipt_missing_reason, receipt_storage_path, returned_reason, leader_id, requested_manager_ids, shared_manager_ids, is_self_judgment, president_self_judgment, board_approver_ids, notes, quotes, quote_file_path, created_at, approval_round, items_subtotal, amount_diff_reason, amount_diff_flag, location')
+      .select('id, user_id, request_type, status, item_name, quantity, amount, purchased_at, requested_purchase_date, store_name, purpose, reason, instructed_by, payment_method, payment_method_detail, payment_method_other, receipt_type, receipt_missing_reason, receipt_storage_path, returned_reason, leader_id, requested_manager_ids, shared_manager_ids, is_self_judgment, president_self_judgment, board_approver_ids, notes, quotes, quote_file_path, created_at, approval_round, items_subtotal, amount_diff_reason, amount_diff_flag, location')
       .order('created_at', { ascending: false });
     const rows = (data ?? []) as PurchaseRecord[];
     setRecords(rows);
@@ -202,7 +204,7 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
               <span style={{ color: '#fff', background: statusInfo.color, borderRadius: 4, padding: '1px 6px' }}>{statusInfo.label}</span>
             )}
             <span>📅 {r.purchased_at ?? r.requested_purchase_date}</span>
-            {r.payment_method && <span>💳 {PAYMENT_LABEL[r.payment_method]}</span>}
+            {r.payment_method && r.request_type === 'reimbursement' && <span>💳 {paymentMethodLabel(r)}</span>}
             {r.receipt_type && <span>🧾 {RECEIPT_LABEL[r.receipt_type]}</span>}
             {isManagerPlus && r.user_id !== userId && <span>👤 {names[r.user_id] ?? '不明'}</span>}
           </div>

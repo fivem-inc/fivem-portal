@@ -8,11 +8,13 @@ const FIELD_LABELS: Record<string, string> = {
   board_approver_ids: '承認者（全員承認）', requested_manager_ids: '承認者（マネージャー）',
 };
 
+type LogValue = string | number | string[] | null;
+
 interface EditLogRow {
   id: string;
   edited_by: string | null;
   edited_at: string;
-  changes: Record<string, { old: string | number | null; new: string | number | null; reason?: string }>;
+  changes: Record<string, { old: LogValue; new: LogValue; reason?: string }>;
 }
 
 interface PurchaseRequestEditHistoryModalProps {
@@ -21,12 +23,21 @@ interface PurchaseRequestEditHistoryModalProps {
   onClose: () => void;
 }
 
-const formatValue = (v: string | number | null) => (v === null || v === '' ? '(空)' : String(v));
+const APPROVER_FIELDS = ['board_approver_ids', 'requested_manager_ids'];
 
 const PurchaseRequestEditHistoryModal: React.FC<PurchaseRequestEditHistoryModalProps> = ({ purchaseRequestId, isDarkMode, onClose }) => {
   const [logs, setLogs] = useState<EditLogRow[]>([]);
-  const [editorNames, setEditorNames] = useState<Record<string, string>>({});
+  const [peopleNames, setPeopleNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+
+  const formatValue = (field: string, v: LogValue) => {
+    if (v === null || v === '') return '(空)';
+    if (Array.isArray(v)) {
+      if (v.length === 0) return '(なし)';
+      return APPROVER_FIELDS.includes(field) ? v.map(id => peopleNames[id] ?? id).join('・') : v.join('・');
+    }
+    return String(v);
+  };
 
   useEffect(() => {
     (async () => {
@@ -38,12 +49,20 @@ const PurchaseRequestEditHistoryModal: React.FC<PurchaseRequestEditHistoryModalP
       const rows = (data ?? []) as EditLogRow[];
       setLogs(rows);
 
-      const editorIds = [...new Set(rows.map(r => r.edited_by).filter((id): id is string => !!id))];
-      if (editorIds.length > 0) {
-        const { data: profs } = await supabase.from('profiles').select('id, name').in('id', editorIds);
+      const peopleIds = new Set<string>();
+      rows.forEach(r => { if (r.edited_by) peopleIds.add(r.edited_by); });
+      rows.forEach(r => {
+        Object.entries(r.changes).forEach(([field, diff]) => {
+          if (!APPROVER_FIELDS.includes(field)) return;
+          if (Array.isArray(diff.old)) diff.old.forEach(id => peopleIds.add(id));
+          if (Array.isArray(diff.new)) diff.new.forEach(id => peopleIds.add(id));
+        });
+      });
+      if (peopleIds.size > 0) {
+        const { data: profs } = await supabase.from('profiles').select('id, name').in('id', [...peopleIds]);
         const namesMap: Record<string, string> = {};
         (profs ?? []).forEach((p: { id: string; name: string }) => { namesMap[p.id] = p.name; });
-        setEditorNames(namesMap);
+        setPeopleNames(namesMap);
       }
 
       setLoading(false);
@@ -71,14 +90,14 @@ const PurchaseRequestEditHistoryModal: React.FC<PurchaseRequestEditHistoryModalP
           {logs.map(log => (
             <div key={log.id} style={{ padding: 10, background: inputBg, borderRadius: 8 }}>
               <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>
-                {new Date(log.edited_at).toLocaleString('ja-JP')}（{editorNames[log.edited_by ?? ''] ?? '不明'}）
+                {new Date(log.edited_at).toLocaleString('ja-JP')}（{peopleNames[log.edited_by ?? ''] ?? '不明'}）
               </div>
               {Object.entries(log.changes).map(([field, diff]) => (
                 <div key={field} style={{ fontSize: 12, color: text, marginBottom: 2 }}>
                   <span style={{ fontWeight: 'bold' }}>{FIELD_LABELS[field] ?? field}</span>：
-                  <span style={{ color: '#dc3545' }}>{formatValue(diff.old)}</span>
+                  <span style={{ color: '#dc3545' }}>{formatValue(field, diff.old)}</span>
                   {' → '}
-                  <span style={{ color: '#28a745' }}>{formatValue(diff.new)}</span>
+                  <span style={{ color: '#28a745' }}>{formatValue(field, diff.new)}</span>
                   {diff.reason && (
                     <div style={{ marginTop: 2, color: subText }}>理由：{diff.reason}</div>
                   )}

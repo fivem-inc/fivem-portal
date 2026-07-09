@@ -4,7 +4,13 @@ import type { PurchaseRequestCSVRow } from '../../utils';
 
 const PAYMENT_OPTIONS: { value: string; label: string }[] = [
   { value: 'cash', label: '立替（返金あり）' },
-  { value: 'company_card', label: '会社カード（返金なし）' },
+  { value: 'company_paid', label: '会社支払（返金なし）' },
+];
+const PAYMENT_DETAIL_OPTIONS: { value: string; label: string }[] = [
+  { value: 'company_card', label: '会社カード' },
+  { value: 'bank_transfer', label: '振込' },
+  { value: 'cash_on_delivery', label: '代引き' },
+  { value: 'other', label: 'その他' },
 ];
 
 interface PurchaseRequestEditModalProps {
@@ -25,6 +31,9 @@ const PurchaseRequestEditModal: React.FC<PurchaseRequestEditModalProps> = ({ rec
   const [location, setLocation] = useState(record.location ?? '');
   const [instructedBy, setInstructedBy] = useState(record.instructed_by ?? '');
   const [paymentMethod, setPaymentMethod] = useState(record.payment_method ?? '');
+  const [paymentMethodDetail, setPaymentMethodDetail] = useState(record.payment_method_detail ?? '');
+  const [paymentMethodOther, setPaymentMethodOther] = useState(record.payment_method_other ?? '');
+  const isReimbursement = record.request_type === 'reimbursement';
   const [notes, setNotes] = useState(record.notes ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -60,6 +69,8 @@ const PurchaseRequestEditModal: React.FC<PurchaseRequestEditModalProps> = ({ rec
       location: location.trim() || null,
       instructed_by: instructedBy.trim() || null,
       payment_method: paymentMethod || null,
+      payment_method_detail: paymentMethod === 'company_paid' ? (paymentMethodDetail || null) : null,
+      payment_method_other: paymentMethodDetail === 'other' ? (paymentMethodOther.trim() || null) : null,
       notes: notes.trim() || null,
     };
     const prevValues: Record<string, string | number | null> = {
@@ -73,6 +84,8 @@ const PurchaseRequestEditModal: React.FC<PurchaseRequestEditModalProps> = ({ rec
       location: record.location,
       instructed_by: record.instructed_by,
       payment_method: record.payment_method,
+      payment_method_detail: record.payment_method_detail,
+      payment_method_other: record.payment_method_other,
       notes: record.notes,
     };
     const changes: Record<string, { old: string | number | null; new: string | number | null }> = {};
@@ -156,13 +169,27 @@ const PurchaseRequestEditModal: React.FC<PurchaseRequestEditModalProps> = ({ rec
             <label style={labelStyle}>指示者</label>
             <input style={inputStyle} value={instructedBy} onChange={e => setInstructedBy(e.target.value)} />
           </div>
-          <div>
-            <label style={labelStyle}>支払方法</label>
-            <select style={inputStyle} value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}>
-              <option value="">選択してください</option>
-              {PAYMENT_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-            </select>
-          </div>
+          {isReimbursement && (
+            <div>
+              <label style={labelStyle}>支払方法</label>
+              <select style={inputStyle} value={paymentMethod} onChange={e => { setPaymentMethod(e.target.value); if (e.target.value !== 'company_paid') { setPaymentMethodDetail(''); setPaymentMethodOther(''); } }}>
+                <option value="">選択してください</option>
+                {PAYMENT_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+              </select>
+              {paymentMethod === 'company_paid' && (
+                <div style={{ marginTop: 8 }}>
+                  <label style={labelStyle}>内訳</label>
+                  <select style={inputStyle} value={paymentMethodDetail} onChange={e => setPaymentMethodDetail(e.target.value)}>
+                    <option value="">選択してください</option>
+                    {PAYMENT_DETAIL_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                  </select>
+                  {paymentMethodDetail === 'other' && (
+                    <input style={{ ...inputStyle, marginTop: 8 }} value={paymentMethodOther} onChange={e => setPaymentMethodOther(e.target.value)} placeholder="支払方法を入力してください" />
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           <div>
             <label style={labelStyle}>備考</label>
             <textarea style={{ ...inputStyle, minHeight: 60, resize: 'vertical' }} value={notes} onChange={e => setNotes(e.target.value)} />

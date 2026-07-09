@@ -3,6 +3,7 @@ import { useAdminPanel } from './AdminPanelContext';
 import { resolveItems } from '../../lib/purchaseItemsFallback';
 import { supabase } from '../../lib/supabaseClient';
 import type { PurchaseRequestCSVRow } from '../../utils';
+import { PAYMENT_DETAIL_LABEL } from '../../utils';
 import { approvePurchaseRequestAction, returnPurchaseRequestAction, cancelReturnedPurchaseRequest, type PurchaseApprovalRoute } from '../../lib/purchaseApprovalActions';
 import { downloadReceiptsAsZip } from '../../lib/purchaseReceiptBulkDownload';
 import { openReceiptImage } from '../../lib/receiptView';
@@ -13,7 +14,8 @@ import PurchaseRequestEditModal from './PurchaseRequestEditModal';
 import PurchaseRequestEditHistoryModal from './PurchaseRequestEditHistoryModal';
 import PurchaseApproverEditModal from './PurchaseApproverEditModal';
 
-interface OpinionRow { purchase_request_id: string; manager_id: string; opinion: 'approve' | 'deny' | 'undecided' | 'other'; approval_round: number }
+interface OpinionRow { purchase_request_id: string; manager_id: string; opinion: 'approve' | 'deny' | 'undecided' | 'other'; comment: string | null; approval_round: number }
+const OPINION_LABEL: Record<string, string> = { approve: '承認', deny: '否認', undecided: '判断できない', other: 'その他' };
 
 const REQUEST_TYPE_FILTERS: { key: 'all' | 'purchase_request' | 'reimbursement'; label: string }[] = [
   { key: 'all', label: 'すべて' },
@@ -51,7 +53,7 @@ const PurchaseRequestsTab: React.FC = () => {
     purchaseCsvDateType, setPurchaseCsvDateType,
     handleExportPurchaseCsv, purchaseCsvError,
     purchaseRequestsList, purchaseRequestsListLoading, purchaseRequestNames,
-    purchaseRequestLastDownload, purchaseRequestEditLogCounts, fetchPurchaseRequestsList,
+    purchaseRequestLastDownload, purchaseRequestEditLogCounts, purchaseRequestRemovedApprovers, fetchPurchaseRequestsList,
   } = ctx;
   const [statusFilter, setStatusFilter] = useState('all');
   const [requestTypeFilter, setRequestTypeFilter] = useState<'all' | 'purchase_request' | 'reimbursement'>('all');
@@ -98,7 +100,7 @@ const PurchaseRequestsTab: React.FC = () => {
     (async () => {
       const { data } = await supabase
         .from('purchase_request_manager_opinions')
-        .select('purchase_request_id, manager_id, opinion, approval_round')
+        .select('purchase_request_id, manager_id, opinion, comment, approval_round')
         .in('purchase_request_id', targetIds);
       const roundById: Record<string, number> = {};
       purchaseRequestsList.forEach(r => { roundById[r.id] = r.approval_round; });
@@ -430,7 +432,7 @@ const PurchaseRequestsTab: React.FC = () => {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4, gap: 8 }}>
                     <span style={{ fontSize: 14, fontWeight: 'bold', color: text }}>{resolvedItems[0]?.item_name ?? r.item_name}{resolvedItems.length > 1 && `（他${resolvedItems.length - 1}件）`}</span>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                      {r.payment_method && (
+                      {r.payment_method && r.request_type === 'reimbursement' && (
                         <PaymentBadge
                           record={r} isDarkMode={isDarkMode} reimbursingId={reimbursingId}
                           isEditing={editingReimbursedId === r.id}
@@ -500,6 +502,34 @@ const PurchaseRequestsTab: React.FC = () => {
                         style={{ padding: '2px 6px', borderRadius: 4, border: `1px solid ${warnText}`, background: 'transparent', color: warnText, fontSize: 10, fontWeight: 'bold', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                         👤 メンバー編集
                       </button>
+                    </div>
+                  )}
+
+                  {(r.status === 'pending_manager' || r.status === 'pending_board') && opinions.length > 0 && (
+                    <div style={{ marginBottom: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      {[...opinions]
+                        .sort((a, b) => requestedIds.indexOf(a.manager_id) - requestedIds.indexOf(b.manager_id))
+                        .map(o => {
+                          const color = o.opinion === 'approve' ? '#28a745' : o.opinion === 'deny' ? '#dc3545' : subText;
+                          return (
+                            <div key={o.manager_id} style={{ fontSize: 10, display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                              <span style={{ color, fontWeight: 'bold', whiteSpace: 'nowrap' }}>
+                                {purchaseRequestNames[o.manager_id] ?? '不明'}（{OPINION_LABEL[o.opinion]}）
+                              </span>
+                              {o.comment && <span style={{ color: subText }}>{o.comment}</span>}
+                            </div>
+                          );
+                        })}
+                    </div>
+                  )}
+
+                  {(purchaseRequestRemovedApprovers[r.id]?.length ?? 0) > 0 && (
+                    <div style={{ marginBottom: 4 }}>
+                      {purchaseRequestRemovedApprovers[r.id].map(entry => (
+                        <div key={entry.id} style={{ fontSize: 10, color: subText }}>
+                          外したメンバー：{purchaseRequestNames[entry.id] ?? '不明'}{entry.reason && `（理由：${entry.reason}）`}
+                        </div>
+                      ))}
                     </div>
                   )}
 
@@ -645,10 +675,13 @@ const PaymentBadge: React.FC<{
   onStartEdit: (r: PurchaseRequestCSVRow) => void; onConfirm: (r: PurchaseRequestCSVRow) => void;
   onCancel: () => void; onUnmark: (r: PurchaseRequestCSVRow) => void;
 }> = ({ record, isDarkMode, reimbursingId, isEditing, draftDate, onDraftDateChange, onStartEdit, onConfirm, onCancel, onUnmark }) => {
-  if (record.payment_method === 'company_card') {
+  if (record.payment_method === 'company_paid') {
+    const detail = record.payment_method_detail === 'other'
+      ? (record.payment_method_other || 'その他')
+      : PAYMENT_DETAIL_LABEL[record.payment_method_detail ?? ''] ?? '';
     return (
       <span style={{ fontSize: 12, fontWeight: 'bold', color: isDarkMode ? '#aaaaaa' : '#666666', whiteSpace: 'nowrap' }}>
-        💳 会社カード（返金なし）
+        💳 会社支払（返金なし）{detail && `：${detail}`}
       </span>
     );
   }

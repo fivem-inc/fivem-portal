@@ -160,6 +160,7 @@ export interface AdminPanelContextType {
   purchaseRequestNames: Record<string, string>;
   purchaseRequestLastDownload: Record<string, { downloadedAt: string; downloadedByName: string }>;
   purchaseRequestEditLogCounts: Record<string, number>;
+  purchaseRequestRemovedApprovers: Record<string, { id: string; reason: string; editedAt: string }[]>;
   fetchPurchaseRequestsList: () => Promise<void>;
 
   // Trip reports
@@ -257,6 +258,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const [purchaseRequestNames, setPurchaseRequestNames] = useState<Record<string, string>>({});
   const [purchaseRequestLastDownload, setPurchaseRequestLastDownload] = useState<Record<string, { downloadedAt: string; downloadedByName: string }>>({});
   const [purchaseRequestEditLogCounts, setPurchaseRequestEditLogCounts] = useState<Record<string, number>>({});
+  const [purchaseRequestRemovedApprovers, setPurchaseRequestRemovedApprovers] = useState<Record<string, { id: string; reason: string; editedAt: string }[]>>({});
   const [expandedAdminYears, setExpandedAdminYears] = useState<Set<string>>(new Set());
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
 
@@ -1245,17 +1247,39 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     });
     setPurchaseRequestLastDownload(lastDownloadMap);
 
-    // 修正履歴ボタンの表示要否判定用（件数のみでよいため行データを軽量取得しクライアント側で集計する）
+    // 修正履歴ボタンの表示要否判定用の件数と、承認者の「外した記録」を集計
     if (requestIds.length > 0) {
       const { data: editLogRows } = await supabase
         .from('purchase_request_edit_log')
-        .select('purchase_request_id')
-        .in('purchase_request_id', requestIds);
+        .select('purchase_request_id, changes, edited_at')
+        .in('purchase_request_id', requestIds)
+        .order('edited_at', { ascending: true });
       const counts: Record<string, number> = {};
-      (editLogRows ?? []).forEach((row: { purchase_request_id: string }) => {
+      const removedByRequest: Record<string, Record<string, { id: string; reason: string; editedAt: string }>> = {};
+      const APPROVER_FIELDS = ['board_approver_ids', 'requested_manager_ids'] as const;
+      (editLogRows ?? []).forEach((row: { purchase_request_id: string; changes: Record<string, { old?: unknown; new?: unknown; reason?: string }>; edited_at: string }) => {
         counts[row.purchase_request_id] = (counts[row.purchase_request_id] ?? 0) + 1;
+        APPROVER_FIELDS.forEach(field => {
+          const diff = row.changes[field];
+          if (!diff || !Array.isArray(diff.old) || !Array.isArray(diff.new)) return;
+          const oldIds = diff.old as string[];
+          const newIds = diff.new as string[];
+          const removed = oldIds.filter(id => !newIds.includes(id));
+          const restored = newIds.filter(id => !oldIds.includes(id));
+          const bucket = (removedByRequest[row.purchase_request_id] ??= {});
+          removed.forEach(id => { bucket[id] = { id, reason: diff.reason ?? '', editedAt: row.edited_at }; });
+          restored.forEach(id => { delete bucket[id]; });
+        });
+      });
+      const currentApproversByRequest: Record<string, string[]> = {};
+      rows.forEach(r => { currentApproversByRequest[r.id] = [...(r.board_approver_ids ?? []), ...(r.requested_manager_ids ?? [])]; });
+      const removedResult: Record<string, { id: string; reason: string; editedAt: string }[]> = {};
+      Object.entries(removedByRequest).forEach(([requestId, bucket]) => {
+        const current = currentApproversByRequest[requestId] ?? [];
+        removedResult[requestId] = Object.values(bucket).filter(e => !current.includes(e.id));
       });
       setPurchaseRequestEditLogCounts(counts);
+      setPurchaseRequestRemovedApprovers(removedResult);
     }
 
     setPurchaseRequestsList(rowsWithItems);
@@ -1329,7 +1353,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       handleDeleteSubmission, handleExportCsv,
       purchaseCsvStartDate, setPurchaseCsvStartDate, purchaseCsvEndDate, setPurchaseCsvEndDate,
       purchaseCsvDateType, setPurchaseCsvDateType, handleExportPurchaseCsv, purchaseCsvError,
-      purchaseRequestsList, purchaseRequestsListLoading, purchaseRequestNames, purchaseRequestLastDownload, purchaseRequestEditLogCounts, fetchPurchaseRequestsList,
+      purchaseRequestsList, purchaseRequestsListLoading, purchaseRequestNames, purchaseRequestLastDownload, purchaseRequestEditLogCounts, purchaseRequestRemovedApprovers, fetchPurchaseRequestsList,
       tripReports, loadingTripReports, expandedTripYearMonths, setExpandedTripYearMonths,
       tripReportFilter, setTripReportFilter, showLocationEditor, setShowLocationEditor,
       tripCategories, locationOptions, newLocationByCategory, setNewLocationByCategory,

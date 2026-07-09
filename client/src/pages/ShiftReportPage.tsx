@@ -802,8 +802,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const inactiveBg = isDark ? '#495057' : '#f8f9fa';
   const noteBg    = isDark ? '#1a2e3a' : '#e8f4fd';
   const noteBorder = isDark ? '#2d5a6e' : '#bee5eb';
-  const noteText  = isDark ? '#90cdf4' : '#2c5f6e';
-  const noteTitleColor = isDark ? '#90cdf4' : '#1a4a5a';
+  const noteText  = isDark ? '#fff' : '#2c5f6e';
+  const noteTitleColor = isDark ? '#fff' : '#1a4a5a';
   const noteBtn   = isDark ? '#2d5a6e' : '#bee5eb';
 
   const isApprover = IS_APPROVER(roleTitle, isAdmin);

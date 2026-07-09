@@ -47,7 +47,9 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
   const [purposeDetail, setPurposeDetail] = useState('');
   const [instructedBySelect, setInstructedBySelect] = useState('');
   const [instructedByCustom, setInstructedByCustom] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'company_card' | ''>('');
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'company_paid' | ''>('');
+  const [paymentMethodDetail, setPaymentMethodDetail] = useState<'company_card' | 'bank_transfer' | 'cash_on_delivery' | 'other' | ''>('');
+  const [paymentMethodOther, setPaymentMethodOther] = useState('');
   const [receipt, setReceipt] = useState<ReceiptValue>(emptyReceipt);
   const [receiptUploading, setReceiptUploading] = useState(false);
   const [notes, setNotes] = useState('');
@@ -73,7 +75,9 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
         if (typeof draft.purposeDetail === 'string') setPurposeDetail(draft.purposeDetail);
         if (typeof draft.instructedBySelect === 'string') setInstructedBySelect(draft.instructedBySelect);
         if (typeof draft.instructedByCustom === 'string') setInstructedByCustom(draft.instructedByCustom);
-        if (draft.paymentMethod === 'cash' || draft.paymentMethod === 'company_card' || draft.paymentMethod === '') setPaymentMethod(draft.paymentMethod);
+        if (draft.paymentMethod === 'cash' || draft.paymentMethod === 'company_paid' || draft.paymentMethod === '') setPaymentMethod(draft.paymentMethod);
+        if (['company_card', 'bank_transfer', 'cash_on_delivery', 'other', ''].includes(draft.paymentMethodDetail)) setPaymentMethodDetail(draft.paymentMethodDetail);
+        if (typeof draft.paymentMethodOther === 'string') setPaymentMethodOther(draft.paymentMethodOther);
         if (draft.receipt && typeof draft.receipt === 'object') setReceipt({ ...emptyReceipt, ...draft.receipt });
         if (typeof draft.notes === 'string') setNotes(draft.notes);
       }
@@ -96,9 +100,9 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
     }
     sessionStorage.setItem(draftStorageKey, JSON.stringify({
       draftId, itemName, quantity, amount, purchasedAt, storeName, location, purpose, purposeDetail,
-      instructedBySelect, instructedByCustom, paymentMethod, receipt, notes,
+      instructedBySelect, instructedByCustom, paymentMethod, paymentMethodDetail, paymentMethodOther, receipt, notes,
     }));
-  }, [draftReady, draftStorageKey, draftId, itemName, quantity, amount, purchasedAt, storeName, location, purpose, purposeDetail, instructedBySelect, instructedByCustom, paymentMethod, receipt, notes]);
+  }, [draftReady, draftStorageKey, draftId, itemName, quantity, amount, purchasedAt, storeName, location, purpose, purposeDetail, instructedBySelect, instructedByCustom, paymentMethod, paymentMethodDetail, paymentMethodOther, receipt, notes]);
 
   useEffect(() => {
     supabase.from('profiles').select('name, role_title').eq('is_active', true)
@@ -129,7 +133,7 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
   const resetForm = () => {
     setItemName(''); setQuantity('1'); setAmount(''); setPurchasedAt(new Date().toISOString().slice(0, 10));
     setStoreName(''); setLocation(''); setPurpose(''); setPurposeDetail(''); setInstructedBySelect(''); setInstructedByCustom('');
-    setPaymentMethod(''); setReceipt(emptyReceipt); setReceiptUploading(false); setNotes('');
+    setPaymentMethod(''); setPaymentMethodDetail(''); setPaymentMethodOther(''); setReceipt(emptyReceipt); setReceiptUploading(false); setNotes('');
     setDraftId(crypto.randomUUID());
     sessionStorage.removeItem(draftStorageKey);
   };
@@ -146,6 +150,8 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
     if (!location.trim()) { setFormError('使用先を入力してください。'); return; }
     if (!finalPurpose.trim()) { setFormError('用途を入力してください。'); return; }
     if (!paymentMethod) { setFormError('支払方法を選択してください。'); return; }
+    if (paymentMethod === 'company_paid' && !paymentMethodDetail) { setFormError('会社支払の内訳を選択してください。'); return; }
+    if (paymentMethodDetail === 'other' && !paymentMethodOther.trim()) { setFormError('支払方法の「その他」の内容を入力してください。'); return; }
     if (!receipt.receiptType) { setFormError('レシートの提出方法を選択してください。'); return; }
     if (receiptUploading) { setFormError('レシート写真をアップロード中です。完了までお待ちください。'); return; }
     if (receipt.receiptType === 'photo' && !receipt.receiptStoragePath) { setFormError('レシート写真のアップロードがまだ完了していません。レシート欄に『レシートを添付しました』と表示されてから送信してください。'); return; }
@@ -166,6 +172,8 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
       purpose: finalPurpose.trim(),
       location: location.trim(),
       payment_method: paymentMethod,
+      payment_method_detail: paymentMethod === 'company_paid' ? paymentMethodDetail : null,
+      payment_method_other: paymentMethodDetail === 'other' ? paymentMethodOther.trim() : null,
       notes: notes.trim() || null,
       receipt_type: receipt.receiptType,
       receipt_missing_reason: receipt.receiptType === 'none' ? receipt.receiptMissingReason.trim() : null,
@@ -312,12 +320,13 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {[
               { key: 'cash' as const, label: '① 自分で立替えた（後日返金されます）' },
-              { key: 'company_card' as const, label: '② 会社カードで払った（記録のみ・返金なし）' },
+              { key: 'company_paid' as const, label: '② 会社支払（記録のみ・返金なし）' },
             ].map(opt => {
               const active = paymentMethod === opt.key;
               return (
                 <button
-                  key={opt.key} type="button" onClick={() => setPaymentMethod(opt.key)}
+                  key={opt.key} type="button"
+                  onClick={() => { setPaymentMethod(opt.key); if (opt.key === 'cash') { setPaymentMethodDetail(''); setPaymentMethodOther(''); } }}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderRadius: 10,
                     cursor: 'pointer', background: cardBg, border: `2px solid ${active ? '#28a745' : border}`,
@@ -330,9 +339,41 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
               );
             })}
           </div>
-          {paymentMethod === 'company_card' && (
-            <div style={{ marginTop: 8, padding: '8px 12px', background: isDarkMode ? '#3a3a20' : '#fff8e1', border: `1px solid ${isDarkMode ? '#5c5430' : '#ffe082'}`, borderRadius: 8, fontSize: 12, color: isDarkMode ? '#ffe082' : '#8a6d00' }}>
-              会社カード払いのため、この記録に返金は発生しません。
+          {paymentMethod === 'company_paid' && (
+            <div style={{ marginTop: 10 }}>
+              <label style={labelStyle}>内訳 {required}</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {[
+                  { key: 'company_card' as const, label: '会社カード' },
+                  { key: 'bank_transfer' as const, label: '振込' },
+                  { key: 'cash_on_delivery' as const, label: '代引き' },
+                  { key: 'other' as const, label: 'その他' },
+                ].map(opt => {
+                  const active = paymentMethodDetail === opt.key;
+                  return (
+                    <button
+                      key={opt.key} type="button" onClick={() => setPaymentMethodDetail(opt.key)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 10,
+                        cursor: 'pointer', background: cardBg, border: `2px solid ${active ? '#28a745' : border}`,
+                        textAlign: 'left', width: '100%', boxSizing: 'border-box',
+                      }}
+                    >
+                      <span style={{ fontSize: 13, color: text, fontWeight: active ? 'bold' : 'normal' }}>{opt.label}</span>
+                      {active && <span style={{ marginLeft: 'auto', color: '#28a745', fontSize: 16 }}>✓</span>}
+                    </button>
+                  );
+                })}
+              </div>
+              {paymentMethodDetail === 'other' && (
+                <input
+                  type="text" value={paymentMethodOther} onChange={e => setPaymentMethodOther(e.target.value)}
+                  placeholder="支払方法を入力してください" style={{ ...inputStyle, marginTop: 8 }}
+                />
+              )}
+              <div style={{ marginTop: 8, padding: '8px 12px', background: isDarkMode ? '#3a3a20' : '#fff8e1', border: `1px solid ${isDarkMode ? '#5c5430' : '#ffe082'}`, borderRadius: 8, fontSize: 12, color: isDarkMode ? '#fff' : '#8a6d00' }}>
+                会社支払のため、この記録に返金は発生しません。
+              </div>
             </div>
           )}
         </div>

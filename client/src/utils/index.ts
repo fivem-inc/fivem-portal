@@ -88,7 +88,9 @@ export interface PurchaseRequestCSVRow {
   store_name: string | null;
   purpose: string | null;
   instructed_by: string | null;
-  payment_method: 'cash' | 'company_card' | null;
+  payment_method: 'cash' | 'company_paid' | null;
+  payment_method_detail: 'company_card' | 'bank_transfer' | 'cash_on_delivery' | 'other' | null;
+  payment_method_other: string | null;
   notes: string | null;
   status: string;
   leader_id: string | null;
@@ -127,6 +129,21 @@ const PURCHASE_STATUS_LABEL: Record<string, string> = {
   pending_board: '承認待ち（全員承認）',
   board_approved: '承認済み（全員承認）',
   returned: '差し戻し',
+};
+
+export const PAYMENT_DETAIL_LABEL: Record<string, string> = {
+  company_card: '会社カード', bank_transfer: '振込', cash_on_delivery: '代引き', other: 'その他',
+};
+
+export const paymentMethodLabel = (row: Pick<PurchaseRequestCSVRow, 'payment_method' | 'payment_method_detail' | 'payment_method_other'>): string => {
+  if (row.payment_method === 'cash') return '立替（返金あり）';
+  if (row.payment_method === 'company_paid') {
+    const detail = row.payment_method_detail === 'other'
+      ? (row.payment_method_other || 'その他')
+      : PAYMENT_DETAIL_LABEL[row.payment_method_detail ?? ''] ?? '';
+    return `会社支払（返金なし）${detail ? `：${detail}` : ''}`;
+  }
+  return '';
 };
 
 const purchaseAmountBand = (row: PurchaseRequestCSVRow): string => {
@@ -206,7 +223,7 @@ export const generatePurchaseRequestCSVData = (
         row.instructed_by || '',
         row.purpose || '',
         row.reason || '',
-        row.payment_method === 'cash' ? '立替（返金あり）' : row.payment_method === 'company_card' ? '会社カード（返金なし）' : '',
+        paymentMethodLabel(row),
         row.reimbursed_at ? new Date(row.reimbursed_at).toLocaleDateString() : '',
         row.notes || '',
         PURCHASE_STATUS_LABEL[row.status] || row.status,
