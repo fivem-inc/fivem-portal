@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { supabase } from '../../lib/supabaseClient';
 
@@ -366,6 +366,13 @@ const UsersTab: React.FC = () => {
   const [selectedForEmail, setSelectedForEmail] = useState<Set<string>>(new Set());
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [emailTarget, setEmailTarget] = useState<{ id: string; name: string; email: string }[]>([]);
+  const [storageUsageMb, setStorageUsageMb] = useState<number | null>(null);
+
+  useEffect(() => {
+    supabase.rpc('get_storage_usage_mb').then(({ data }) => {
+      if (typeof data === 'number') setStorageUsageMb(data);
+    }, () => {});
+  }, []);
 
   const toggleEmailSelect = (id: string) => {
     setSelectedForEmail(prev => {
@@ -433,6 +440,11 @@ const UsersTab: React.FC = () => {
                   <p style={{ color: isDarkMode ? '#fff' : '#000' }}>
                     現役: {users.filter(u => u.is_active !== false).length}人 ／ 退職済み: {users.filter(u => u.is_active === false).length}人
                   </p>
+                  {storageUsageMb !== null && (
+                    <p style={{ color: storageUsageMb >= 700 ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#666'), fontSize: 13, margin: '4px 0 0' }}>
+                      📦 ストレージ使用量: {storageUsageMb}MB / 1024MB（無料枠）
+                    </p>
+                  )}
                   <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: 8 }}>
                     <button
                       onClick={() => setShowAddModal(true)}

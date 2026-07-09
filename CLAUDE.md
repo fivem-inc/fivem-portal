@@ -5959,3 +5959,30 @@ CSV・フォーム再申請時の初期化すべてでこの関数を共通利�
 ### デプロイ状況
 - フロントのみの変更（DBマイグレーション・Edge Functionの変更なし）
 - `tsc -b`・`vite build`とも成功確認済み
+
+---
+
+## ✅ 2026-07-09 追加作業メモ: ストレージ容量の定期確認機能を追加
+
+### 背景
+- 「画像保存（レシート・見積書アップロード）の容量は大丈夫か」との質問を受け、`storage.objects`を直接SQLで調査
+  → その時点でpurchase-receiptsバケット20ファイル・合計3.3MB（無料枠1GBの0.3%）と判明、当面問題なしと回答
+- 「定期的に確認できるようにしたい」との要望を受け、自動アラート機能を作ろうとしたところ、
+  外部Slack連携を伴う新規自動化パイプラインのため実装前にユーザーへ方針確認（結果：自動アラート＋管理画面表示の両方を作ることで合意）
+
+### 実装内容
+- SQL関数`public.get_storage_usage_mb()`を新規作成（`storage.objects`の合計サイズをMB単位で返す、`authenticated`ロールに実行権限付与）
+- 管理画面ユーザー管理タブに「📦 ストレージ使用量: X MB / 1024MB（無料枠）」を表示（700MB以上で赤字警告）
+- 新規Edge Function`storage-usage-check`：`get_storage_usage_mb()`を呼び出し、700MB（無料枠1GBの約7割）を超えたら
+  - 管理者へサイト内通知
+  - 経理Slack（`SLACK_WEBHOOK_ACCOUNTING`、未設定ならスキップ）に警告メッセージを送信
+- pg_cronで毎月1日 9:00（JST）に`storage-usage-check`を自動実行するよう設定（jobid=14、`service_role_key`はVault経由）
+
+### デプロイ状況
+- マイグレーション（`20260719400000_add_storage_usage_check.sql`）・Edge Function（`storage-usage-check`）とも本番適用・デプロイ済み
+- 動作確認：`get_storage_usage_mb()`実行結果 3.2MB（想定通り、閾値700MB未満のため現時点でアラートは発火しない）
+- `tsc -b`・`vite build`とも成功確認済み
+
+### 今後の検討事項
+- 次回1日9:00のcron実行時に、実際にストレージ使用量が返ってくるか（Edge Function側のログ）を確認する
+- 閾値（700MB）や頻度（毎月）は運用してみて調整可能

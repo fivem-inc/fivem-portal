@@ -10,6 +10,9 @@ verify_jwt = false
 [functions.record-signup-ip]
 verify_jwt = false
 
+[functions.storage-usage-check]
+verify_jwt = false
+
 [functions.gcal-sync]
 enabled = true
 verify_jwt = false
