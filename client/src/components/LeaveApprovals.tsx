@@ -230,6 +230,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
       }
     }
 
+    window.dispatchEvent(new CustomEvent('leave-pending-changed'));
     fetchRequests();
   };
 
@@ -258,6 +259,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     await dispatchEmail('leave:leader_approved', leaderVars, { applicant: applicantEmail, manager: managerEmail, approver: managerEmail });
 
     setSelectingManagerFor(null);
+    window.dispatchEvent(new CustomEvent('leave-pending-changed'));
     fetchRequests();
   };
 
@@ -296,6 +298,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     setRejectingReq(null);
     setRejectReason('');
     setRejectNewType('');
+    window.dispatchEvent(new CustomEvent('leave-pending-changed'));
     fetchRequests();
   };
 
@@ -471,6 +474,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                           // 自分が一人目か二人目かでステータスを分ける
                           const backStatus = req.approver2_id === user.id ? 'step2_pending' : 'pending';
                           await supabase.from('leave_requests').update({ status: backStatus, rejected_reason: null }).eq('id', req.id);
+                          window.dispatchEvent(new CustomEvent('leave-pending-changed'));
                           fetchRequests();
                         }}
                         style={{ width: '100%', padding: '8px', background: '#6c757d', color: 'white', border: '2px solid #545b62', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}

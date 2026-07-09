@@ -266,7 +266,55 @@ const usePurchasePendingCount = (userId: string | undefined, canPurchaseRequest:
   }, [userId, canPurchaseRequest]);
 
   useEffect(() => { fetchPending(); }, [fetchPending]);
+  useEffect(() => {
+    window.addEventListener('purchase-pending-changed', fetchPending);
+    return () => window.removeEventListener('purchase-pending-changed', fetchPending);
+  }, [fetchPending]);
   return { pendingCount, refetch: fetchPending };
+};
+
+// 休暇申請：自分の番の承認待ち件数（LeaveApprovalBannerと同じ判定ロジック）
+const useLeavePendingCount = (userId: string | undefined, roleTitle: string | undefined, isAdmin: boolean) => {
+  const [pendingCount, setPendingCount] = useState(0);
+
+  const fetchPending = useCallback(async () => {
+    if (!userId) { setPendingCount(0); return; }
+    if (!isAdmin && !['リーダー', 'マネージャー', '社長', '管理者'].includes(roleTitle ?? '')) { setPendingCount(0); return; }
+
+    const { data: d1 } = await supabase.from('leave_requests').select('id').eq('status', 'pending').eq('approver_id', userId);
+    const { data: d2 } = await supabase.from('leave_requests').select('id').eq('status', 'step2_pending').eq('approver2_id', userId);
+    const { data: d3 } = roleTitle === '社長'
+      ? await supabase.from('leave_requests').select('id').eq('status', 'admin_approved')
+      : { data: [] };
+    setPendingCount((d1?.length ?? 0) + (d2?.length ?? 0) + (d3?.length ?? 0));
+  }, [userId, roleTitle, isAdmin]);
+
+  useEffect(() => { fetchPending(); const t = setInterval(fetchPending, 30000); return () => clearInterval(t); }, [fetchPending]);
+  useEffect(() => {
+    window.addEventListener('leave-pending-changed', fetchPending);
+    return () => window.removeEventListener('leave-pending-changed', fetchPending);
+  }, [fetchPending]);
+  return { pendingCount };
+};
+
+// 勤務変更申請：自分の番の確認待ち件数（ShiftReportApprovalBannerと同じ判定ロジック）
+const useShiftPendingCount = (userId: string | undefined, roleTitle: string | undefined, isAdmin: boolean, canShiftReport: boolean | undefined) => {
+  const [pendingCount, setPendingCount] = useState(0);
+
+  const fetchPending = useCallback(async () => {
+    if (!userId || !canShiftReport) { setPendingCount(0); return; }
+    if (!isAdmin && !['リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者'].includes(roleTitle ?? '')) { setPendingCount(0); return; }
+
+    const { data } = await supabase.from('shift_reports').select('id').eq('reviewer_id', userId).in('status', ['pending', 'resubmitted']);
+    setPendingCount(data?.length ?? 0);
+  }, [userId, roleTitle, isAdmin, canShiftReport]);
+
+  useEffect(() => { fetchPending(); const t = setInterval(fetchPending, 30000); return () => clearInterval(t); }, [fetchPending]);
+  useEffect(() => {
+    window.addEventListener('shift-pending-changed', fetchPending);
+    return () => window.removeEventListener('shift-pending-changed', fetchPending);
+  }, [fetchPending]);
+  return { pendingCount };
 };
 
 const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean; canShiftReport?: boolean; canCalendar?: boolean; canPurchaseRequest?: boolean; roleTitle?: string; userId?: string }> = ({ isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove, canShiftReport, canCalendar, canPurchaseRequest, roleTitle, userId }) => {
@@ -296,6 +344,8 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   }, []);
   const { total: boardUnread } = useBoardUnread(userId, location.pathname);
   const { pendingCount: purchasePending } = usePurchasePendingCount(userId, canPurchaseRequest);
+  const { pendingCount: leavePending } = useLeavePendingCount(userId, roleTitle, isAdmin);
+  const { pendingCount: shiftPending } = useShiftPendingCount(userId, roleTitle, isAdmin, canShiftReport);
 
   // モバイルでボタンが画面幅に収まらない時の横スワイプ対応：
   // 端までスクロールできることを示すフェードの表示/非表示を判定
@@ -364,9 +414,16 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
             </button>
           )}
           {canLeave && isPub('leave_request') && (
-            <button onClick={() => navTo('/leave')} style={btnStyle(location.pathname === '/leave', '#28a745')}>
-              {isMobile ? <><span style={{ fontSize: 20 }}>🌿</span><span>休暇申請</span></> : '🌿 休暇申請'}
-            </button>
+            <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
+              <button onClick={() => navTo('/leave')} style={btnStyle(location.pathname === '/leave', '#28a745')}>
+                {isMobile ? <><span style={{ fontSize: 20 }}>🌿</span><span>休暇申請</span></> : '🌿 休暇申請'}
+              </button>
+              {leavePending > 0 && (
+                <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
+                  {leavePending > 99 ? '99+' : leavePending}
+                </span>
+              )}
+            </div>
           )}
           {(isAdmin || canCalendar) && isPub('leave_calendar') && (
             <button onClick={() => navTo('/calendar')} style={btnStyle(location.pathname === '/calendar', '#4a90d9')}>
@@ -374,16 +431,23 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
             </button>
           )}
           {canShiftReport && isPub('shift_report') && (
-            <button onClick={() => navTo('/shift-report')} style={btnStyle(location.pathname === '/shift-report', '#c0392b')}>
-              {isMobile ? <><span style={{ fontSize: 20 }}>⏰</span><span>勤務変更</span></> : '⏰ 勤務変更'}
-            </button>
+            <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
+              <button onClick={() => navTo('/shift-report')} style={btnStyle(location.pathname === '/shift-report', '#c0392b')}>
+                {isMobile ? <><span style={{ fontSize: 20 }}>⏰</span><span>勤務変更</span></> : '⏰ 勤務変更'}
+              </button>
+              {shiftPending > 0 && (
+                <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
+                  {shiftPending > 99 ? '99+' : shiftPending}
+                </span>
+              )}
+            </div>
           )}
           {canPurchaseRequest && isPub('purchase_request') && (
             <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
               <button onClick={() => navTo('/purchase')} style={btnStyle(location.pathname === '/purchase', '#17a2b8')}>
                 {isMobile ? <><span style={{ fontSize: 20 }}>🧾</span><span>備品精算</span></> : '🧾 備品精算'}
               </button>
-              {purchasePending > 0 && location.pathname !== '/purchase' && (
+              {purchasePending > 0 && (
                 <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
                   {purchasePending > 99 ? '99+' : purchasePending}
                 </span>

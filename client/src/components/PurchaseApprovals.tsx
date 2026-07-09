@@ -208,6 +208,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
 
     if (!errorMessage) {
       setRequests(prev => prev.filter(r => r.id !== req.id));
+      window.dispatchEvent(new CustomEvent('purchase-pending-changed'));
     } else {
       setErrors(prev => ({ ...prev, [req.id]: errorMessage }));
     }
@@ -231,6 +232,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
       setRequests(prev => prev.filter(r => r.id !== returningId));
       setReturningId(null);
       setReturnReason('');
+      window.dispatchEvent(new CustomEvent('purchase-pending-changed'));
     } else {
       setErrors(prev => ({ ...prev, [returningId]: errorMessage }));
     }
@@ -277,6 +279,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
 
     setProcessingId(null);
     setEditingIds(prev => { const next = new Set(prev); next.delete(req.id); return next; });
+    window.dispatchEvent(new CustomEvent('purchase-pending-changed'));
   };
 
   // 全員承認ルート専用: submit_board_opinion RPCを呼び出す。
@@ -341,6 +344,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
     }
 
     setProcessingId(null);
+    window.dispatchEvent(new CustomEvent('purchase-pending-changed'));
   };
 
   if (loading) return <div style={{ padding: 20, textAlign: 'center', color: subText }}>読み込み中...</div>;

@@ -986,6 +986,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     }).then(null, () => {});
     setConfirmingId(null);
     setSuccessMsg('受理しました ✓');
+    window.dispatchEvent(new CustomEvent('shift-pending-changed'));
     fetchPending(); fetchMyReports();
   };
 
@@ -1005,6 +1006,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       }).then(null, () => {});
     }
     setCancelTarget(null); setCancelReason('');
+    window.dispatchEvent(new CustomEvent('shift-pending-changed'));
     fetchMyReports(); fetchPending(); fetchReviewedReports(); fetchProxyReports(); fetchAllReports();
     setSuccessMsg('取り消しました');
   };
@@ -1025,6 +1027,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       source_type: 'shift_report:pending_resubmit', reference_id: r.id, read: false,
     }).then(null, () => {});
     setReturningId(null); setReturnTarget(null); setReturnComment('');
+    window.dispatchEvent(new CustomEvent('shift-pending-changed'));
     fetchPending(); fetchReviewedReports(); fetchAllReports();
     setSuccessMsg('差戻しました');
   };

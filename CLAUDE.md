@@ -6059,3 +6059,45 @@ CSV・フォーム再申請時の初期化すべてでこの関数を共通利�
 
 ### 今後の確認事項
 - 次回月曜9:00の自動実行が正常に動くか確認（閾値未満なら発火しないはず）
+
+---
+
+## ✅ 2026-07-09 追加作業メモ: 休暇申請・勤務変更申請のナビバッジ追加
+
+### 背景
+- 備品精算タブに未回答件数の赤丸バッジがあるのを見て、ユーザーから「休暇申請・勤務変更にもバッジがあった方がいい」との提案（交通費は承認フローが別画面のため対象外と回答）
+
+### 実装内容
+- `App.tsx`に`useLeavePendingCount`・`useShiftPendingCount`フックを新規追加（`usePurchasePendingCount`と同じ構成）
+  - 休暇申請：既存の`LeaveApprovalBanner`と同じ判定ロジック（`status=pending`かつ`approver_id=自分`／`status=step2_pending`かつ`approver2_id=自分`／社長は`admin_approved`も対象）を流用
+  - 勤務変更：既存の`ShiftReportApprovalBanner`と同じ判定ロジック（`reviewer_id=自分`かつ`status in (pending, resubmitted)`）を流用
+  - どちらも30秒ごとにポーリング（`useBoardUnread`と同じ方式。`usePurchasePendingCount`には無い定期更新だが、新規追加分は最初から入れておいた）
+- NavBarの🌿休暇申請・⏰勤務変更ボタンに、🧾備品精算と同じ赤丸バッジUIを追加
+  - 初版では休暇申請バッジは`/leave-approvals`を、勤務変更バッジは`/shift-report`を開いている時は非表示にしていたが、実機確認で「休暇申請だけ自分のページ（`/leave`）にいてもバッジが消えない」という不整合が発覚
+    → 原因は、備品精算・勤務変更は申請/承認が同一URL内のタブ切り替えなのに対し、休暇申請だけ申請ページ（`/leave`）と受理ページ（`/leave-approvals`）のURLが分かれており、「/leave」を開いている時の非表示条件を書き忘れていたため
+    → ユーザーと相談の上、「休暇申請だけ揃える」のではなく「3つとも自分のページにいても常にバッジを表示する」方式に統一することに決定（対応中の画面でも残り件数が常にナビバーで分かる方を優先。ページ内の「あと◯件」表示との重複は許容）
+  - 最終的に3箇所（休暇申請・勤務変更・備品精算）とも`location.pathname !== '...'`という非表示条件を撤廃し、件数が1件以上ある限り常にバッジを表示する仕様に統一
+
+### デプロイ状況（1回目：常時表示化）
+- フロントのみの変更（`client/src/App.tsx`のみ、DBマイグレーション・Edge Functionの変更なし）
+- `tsc -b`・`vite build`とも成功確認済み
+- fivem-portalはClaude Codeのプライマリ作業ディレクトリ外のためpreview_startが使えず、実機でのバッジ表示確認はユーザーに依頼
+
+### 追加対応：操作直後にバッジを即時更新（同セッション内）
+- ユーザーから「30秒ごとのポーリングだと、承認した直後もバッジがすぐ減らないのでは」との指摘
+- 30秒ごとの定期ポーリングは維持しつつ、承認・差し戻し・意見送信などの操作が完了した直後にも追加で1回再取得するよう変更
+- 実装方式：`window.dispatchEvent(new CustomEvent('leave-pending-changed'))`（休暇申請）／`'shift-pending-changed'`（勤務変更）／`'purchase-pending-changed'`（備品精算）というカスタムイベントを、各操作完了時に発火。`App.tsx`側の各pendingCountフックはこのイベントをリッスンしてその場で再取得する（`board-reset`カスタムイベントの既存パターンを踏襲）
+- 発火箇所：
+  - `LeaveApprovals.tsx`：`handleApprove`・`handleApproveWithManager`・`handleReject`・「差し戻しを取り消す」ボタン
+  - `ShiftReportPage.tsx`：`handleConfirm`・`handleReturn`・`executeCancelReport`
+  - `PurchaseApprovals.tsx`：`handleApprove`・`handleReturn`・`submitOpinion`・`submitBoardOpinion`
+- 連絡板（`useBoardUnread`）は対象外・現状維持（開いている間に既読処理で未読数が実際に減っていく仕組みのため、自分のページでは非表示のままで問題ないとユーザーと合意）
+- 通信量への影響：既存の30秒ポーリングに対し、操作時にもう1回id一覧を取得するだけの軽いクエリが追加される程度で、ごく僅か
+
+### デプロイ状況（2回目：即時更新）
+- フロントのみの変更（`App.tsx`・`LeaveApprovals.tsx`・`ShiftReportPage.tsx`・`PurchaseApprovals.tsx`、DBマイグレーション・Edge Functionの変更なし）
+- `tsc -b`・`vite build`とも成功確認済み
+
+### 今後の確認事項
+- 実機で、休暇申請・勤務変更・備品精算それぞれ、自分のページを開いている時もバッジが表示され続けるか確認
+- 実機で、承認・差し戻し・意見送信の操作をした直後にバッジの数字がその場で減るか確認
