@@ -5972,17 +5972,37 @@ CSV・フォーム再申請時の初期化すべてでこの関数を共通利�
 
 ### 実装内容
 - SQL関数`public.get_storage_usage_mb()`を新規作成（`storage.objects`の合計サイズをMB単位で返す、`authenticated`ロールに実行権限付与）
-- 管理画面ユーザー管理タブに「📦 ストレージ使用量: X MB / 1024MB（無料枠）」を表示（700MB以上で赤字警告）
-- 新規Edge Function`storage-usage-check`：`get_storage_usage_mb()`を呼び出し、700MB（無料枠1GBの約7割）を超えたら
+- 管理画面ユーザー管理タブに「📦 ストレージ使用量: X MB / 1024MB（無料枠）」を表示（初版時点では700MB以上で赤字警告。**直後の追加対応で変更あり、下記参照**）
+- 新規Edge Function`storage-usage-check`：`get_storage_usage_mb()`を呼び出し、閾値を超えたら
   - 管理者へサイト内通知
   - 経理Slack（`SLACK_WEBHOOK_ACCOUNTING`、未設定ならスキップ）に警告メッセージを送信
 - pg_cronで毎月1日 9:00（JST）に`storage-usage-check`を自動実行するよう設定（jobid=14、`service_role_key`はVault経由）
 
 ### デプロイ状況
 - マイグレーション（`20260719400000_add_storage_usage_check.sql`）・Edge Function（`storage-usage-check`）とも本番適用・デプロイ済み
-- 動作確認：`get_storage_usage_mb()`実行結果 3.2MB（想定通り、閾値700MB未満のため現時点でアラートは発火しない）
+- 動作確認：`get_storage_usage_mb()`実行結果 3.2MB
 - `tsc -b`・`vite build`とも成功確認済み
 
+---
+
+## ✅ 2026-07-09 追加作業メモ: ストレージ使用量バッジの配置変更・Slack通知先追加
+
+### 背景
+- ユーザー管理タブ内の表示だと目立ちすぎる（「醜い」とのフィードバック）ため配置を再検討
+- 「残り2割を切ったら赤色でアラート」という基準の希望あり
+- Slack通知に社長チャンネルも追加してほしいとの要望あり
+
+### 修正内容
+- 表示場所を**ユーザー管理タブ内→「管理画面」タイトルの右上（`AdminPanel.tsx`）**に変更。全タブ共通ヘッダーのため、どのタブを開いていても常に見える
+- 表示を2行に変更：1行目「📦 ストレージ使用量」、2行目「X MB / 1024MB（無料枠）」
+- 警告の閾値を「700MB」→「819MB（無料枠1024MBの8割＝残り2割を切ったら）」に統一。バッジの赤字化条件とEdge Function側のアラート閾値（`ALERT_THRESHOLD_MB`）両方に反映
+- Slack通知先に`SLACK_WEBHOOK_PRESIDENT`（`#03晃平先生へ`）を追加。既存の`SLACK_WEBHOOK_ACCOUNTING`（`#07_3閲覧禁止-経理専用`）と両方に送信するよう変更
+
+### デプロイ状況
+- `storage-usage-check` Edge Functionを2回再デプロイ済み（閾値変更→Slack追加の順）
+- `tsc -b`・`vite build`とも成功確認済み
+- DBマイグレーションの変更なし（SQL関数・cronジョブは前回のものをそのまま使用）
+
 ### 今後の検討事項
-- 次回1日9:00のcron実行時に、実際にストレージ使用量が返ってくるか（Edge Function側のログ）を確認する
-- 閾値（700MB）や頻度（毎月）は運用してみて調整可能
+- 次回1日9:00のcron実行時に、実際にアラートが正しく動くか（閾値未満なら発火しない）を確認する
+- 閾値（819MB）や頻度（毎月）は運用してみて調整可能

@@ -4,7 +4,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // Supabase Freeプランのストレージ上限は1GB（=1024MB）。
 // 閾値を超えたら経理Slack＋管理者へのサイト内通知でアラートする（pg_cronから毎月1回呼び出される想定）
 const FREE_TIER_LIMIT_MB = 1024;
-const ALERT_THRESHOLD_MB = 700; // 全体の約7割で早めに気づけるように
+const ALERT_THRESHOLD_MB = 819; // 残り2割（無料枠の8割）を切ったら警告。管理画面のバッジ表示と閾値を統一
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': 'https://fivem-portal.vercel.app',
@@ -35,16 +35,16 @@ serve(async (req) => {
         await supabase.from('notifications').insert(notifications);
       }
 
-      const webhookUrl = Deno.env.get('SLACK_WEBHOOK_ACCOUNTING') || '';
-      if (webhookUrl) {
-        await fetch(webhookUrl, {
+      const text = `⚠️ *【ストレージ容量警告】*\n現在の使用量：${totalMb}MB / ${FREE_TIER_LIMIT_MB}MB（無料枠）\n管理画面から不要ファイルの整理、または有料プランへの切り替えを検討してください。`;
+      const webhookUrls = [Deno.env.get('SLACK_WEBHOOK_ACCOUNTING'), Deno.env.get('SLACK_WEBHOOK_PRESIDENT')]
+        .filter((url): url is string => !!url);
+      await Promise.all(webhookUrls.map(url =>
+        fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            text: `⚠️ *【ストレージ容量警告】*\n現在の使用量：${totalMb}MB / ${FREE_TIER_LIMIT_MB}MB（無料枠）\n管理画面から不要ファイルの整理、または有料プランへの切り替えを検討してください。`,
-          }),
-        });
-      }
+          body: JSON.stringify({ text }),
+        })
+      ));
     }
 
     return new Response(JSON.stringify({ success: true, totalMb, alerted: totalMb >= ALERT_THRESHOLD_MB }), {

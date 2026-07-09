@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import type { PendingApproval, Submission } from '../types';
 import { AdminPanelProvider, useAdminPanel } from './admin/AdminPanelContext';
 import ApprovalsTab from './admin/ApprovalsTab';
@@ -42,7 +42,26 @@ const AdminPanelContent: React.FC = () => {
     pendingUsers, pendingLeaveRequests,
   } = useAdminPanel();
 
-  return (    <div style={{ marginTop: 0, paddingTop: 0 }}>
+  const [storageUsageMb, setStorageUsageMb] = useState<number | null>(null);
+  useEffect(() => {
+    supabase.rpc('get_storage_usage_mb').then(({ data }: { data: number | null }) => {
+      if (typeof data === 'number') setStorageUsageMb(data);
+    }, () => {});
+  }, [supabase]);
+  const STORAGE_LIMIT_MB = 1024;
+  const isStorageLow = storageUsageMb !== null && storageUsageMb / STORAGE_LIMIT_MB >= 0.8; // 残り2割を切ったら警告
+
+  return (    <div style={{ marginTop: 0, paddingTop: 0, position: 'relative' }}>
+      {storageUsageMb !== null && (
+        <div style={{
+          position: 'absolute', top: 0, right: 0, fontSize: 11, textAlign: 'right', lineHeight: 1.5,
+          color: isStorageLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'),
+          fontWeight: isStorageLow ? 'bold' : 'normal',
+        }}>
+          <div>{isStorageLow && '⚠️ '}📦 ストレージ使用量</div>
+          <div>{storageUsageMb}MB / {STORAGE_LIMIT_MB}MB（無料枠）</div>
+        </div>
+      )}
       {successMsg && (
         <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 240 }}>
           <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>✓</div>
