@@ -94,15 +94,24 @@ function origDuration(start: string | null, end: string | null): number {
   return toMin(end) - toMin(start);
 }
 
-const TYPE_INFO: Record<ApplicationType, { label: string; color: string; emoji: string }> = {
-  overtime:     { label: '残業',     color: '#1565c0', emoji: '⏰' },
-  holiday_work: { label: '休日出勤', color: '#0f766e', emoji: '🏢' },
-  early_leave:  { label: '早退',     color: '#e65100', emoji: '🏃' },
-  tardiness:    { label: '遅刻',     color: '#7b1fa2', emoji: '⏱️' },
-  absence:      { label: '欠勤',     color: '#c62828', emoji: '❌' },
-  early_start:  { label: '早出',     color: '#0891b2', emoji: '🌅' },
-  location_change: { label: '勤務地変更', color: '#6d28d9', emoji: '📍' },
+const TYPE_INFO: Record<ApplicationType, { label: string; color: string; darkBg: string; emoji: string }> = {
+  overtime:     { label: '残業',     color: '#1565c0', darkBg: '#1e3a5f', emoji: '⏰' },
+  holiday_work: { label: '休日出勤', color: '#0f766e', darkBg: '#123a35', emoji: '🏢' },
+  early_leave:  { label: '早退',     color: '#e65100', darkBg: '#4a2c0a', emoji: '🏃' },
+  tardiness:    { label: '遅刻',     color: '#7b1fa2', darkBg: '#3a1f4d', emoji: '⏱️' },
+  absence:      { label: '欠勤',     color: '#c62828', darkBg: '#4a1515', emoji: '❌' },
+  early_start:  { label: '早出',     color: '#0891b2', darkBg: '#123a42', emoji: '🌅' },
+  location_change: { label: '勤務地変更', color: '#6d28d9', darkBg: '#2e1a5c', emoji: '📍' },
 };
+
+function typeBadgeStyle(color: string, darkBg: string, isDark: boolean): React.CSSProperties {
+  return {
+    fontSize: 11, fontWeight: 'bold', padding: '2px 8px', borderRadius: 10,
+    border: `1px solid ${color}`,
+    background: isDark ? darkBg : `${color}1a`,
+    color: isDark ? '#fff' : color,
+  };
+}
 
 const TYPE_PRIORITY: ApplicationType[] = ['absence', 'holiday_work', 'overtime', 'early_start', 'tardiness', 'early_leave', 'location_change'];
 function primaryType(types: ApplicationType[]): ApplicationType {
@@ -1083,7 +1092,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                   <span style={{ fontSize: 13, fontWeight: 'bold', color: text }}>{(r.applicant as { name: string | null } | null)?.name ?? '不明'}</span>
                   <span style={{ fontSize: 11, color: '#888' }}>{r.work_date.slice(5).replace('-', '/')}（{dow(r.work_date)}）</span>
-                  <span style={{ fontSize: 11, fontWeight: 'bold', color: TYPE_INFO[r.application_type].color, marginLeft: 'auto' }}>
+                  <span style={{ ...typeBadgeStyle(TYPE_INFO[r.application_type].color, TYPE_INFO[r.application_type].darkBg, isDark), marginLeft: 'auto' }}>
                     {(r.application_types?.length ? r.application_types : [r.application_type]).map(t => `${TYPE_INFO[t].emoji} ${TYPE_INFO[t].label}`).join(' ＋ ')}
                   </span>
                 </div>
@@ -1319,8 +1328,10 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                                 {(r.applicant as { name: string | null } | null)?.name ?? '不明'}
                               </div>
                             )}
-                            <div style={{ fontSize: 11, fontWeight: 'bold', color: TYPE_INFO[r.application_type].color, marginBottom: 2 }}>
-                              {(r.application_types?.length ? r.application_types : [r.application_type]).map(t => `${TYPE_INFO[t].emoji} ${TYPE_INFO[t].label}`).join(' ＋ ')}
+                            <div style={{ marginBottom: 4 }}>
+                              <span style={typeBadgeStyle(TYPE_INFO[r.application_type].color, TYPE_INFO[r.application_type].darkBg, isDark)}>
+                                {(r.application_types?.length ? r.application_types : [r.application_type]).map(t => `${TYPE_INFO[t].emoji} ${TYPE_INFO[t].label}`).join(' ＋ ')}
+                              </span>
                             </div>
                             {r.original_start
                               ? <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#888' }}>変更前：{r.original_location} {r.original_start.slice(0, 5)}〜{r.original_end?.slice(0, 5)}{r.original_outing_start && `（外出 ${r.original_outing_start.slice(0, 5)}〜${r.original_outing_end?.slice(0, 5)}）`}</div>
