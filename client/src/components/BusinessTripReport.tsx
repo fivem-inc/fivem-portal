@@ -325,6 +325,41 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
           </div>
         </div>
 
+        {/* 到着報告の注意事項 */}
+        {reportType === '到着' && (
+          <div style={{
+            background: isDark ? '#1a2e3a' : '#e8f4fd',
+            border: `1px solid ${isDark ? '#2d5a6e' : '#bee5eb'}`,
+            borderRadius: 8, padding: '12px 14px', marginBottom: 20, textAlign: 'left',
+          }}>
+            <p style={{ fontSize: 13, fontWeight: 'bold', color: isDark ? '#fff' : '#1a4a5a', marginBottom: 8, marginTop: 0 }}>【注意事項】</p>
+            <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: isDark ? '#fff' : '#2c5f6e', lineHeight: 1.8 }}>
+              <li>現地・集合場所に到着したら、区分・場所・GPS位置情報を選択して到着報告をしてください。</li>
+              <li>GPS位置情報は電波状況などで取得できないことがありますが、その場合は「取得できませんでした」を選択すれば送信できます。</li>
+            </ol>
+          </div>
+        )}
+
+        {/* 終了報告の注意事項 */}
+        {reportType === '終了' && (
+          <div style={{
+            background: isDark ? '#1a2e3a' : '#e8f4fd',
+            border: `1px solid ${isDark ? '#2d5a6e' : '#bee5eb'}`,
+            borderRadius: 8, padding: '12px 14px', marginBottom: 20, textAlign: 'left',
+          }}>
+            <p style={{ fontSize: 13, fontWeight: 'bold', color: isDark ? '#fff' : '#1a4a5a', marginBottom: 8, marginTop: 0 }}>【注意事項】</p>
+            <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: isDark ? '#fff' : '#2c5f6e', lineHeight: 1.8 }}>
+              <li>終了したら、区分・場所・GPS位置情報を選択して終了報告をしてください。</li>
+            </ol>
+            <div style={{ marginTop: 10, fontSize: 12, color: isDark ? '#fff' : '#2c5f6e', lineHeight: 1.8 }}>
+              <div>▷ 担当者（複数の場合は責任者）の報告</div>
+              <div style={{ paddingLeft: 16 }}>→ 終了報告時にSlackへ転載を選択してください。</div>
+              <div style={{ marginTop: 6 }}>▷ 担当者（責任者を除く）の報告</div>
+              <div style={{ paddingLeft: 16 }}>→ 終了報告のみで、Slackの選択は不要です。</div>
+            </div>
+          </div>
+        )}
+
         {/* 区分 */}
         <div style={{ marginBottom: 20 }}>
           <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 8 }}>区分</label>
@@ -455,8 +490,10 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
             <div style={{ fontSize: 13, lineHeight: 1.7, marginBottom: 12, padding: '10px 12px', borderRadius: 8, background: isDark ? '#2c3136' : '#fff8e1', border: isDark ? '1px solid #555' : '1px solid #ffe082', color: isDark ? '#e9ecef' : '#5d4037' }}>
               <div style={{ fontWeight: 'bold', marginBottom: 4 }}>●終了報告</div>
               責任者の方のみ、Slack送信をしてください。<br />
-              送信先：出張後に向かう校<br />
-              （直帰の場合は、所属チーム）<br />
+              <br />
+              【送信先】<br />
+              出張：出張後に向かう校<br />
+              直帰・イベント終了時：所属チーム（こどもの場合は本校）<br />
               <span style={{ color: isDark ? '#adb5bd' : '#6c757d' }}>※責任者以外の方は、Slack送信不要。終了報告のみ。</span>
             </div>
 

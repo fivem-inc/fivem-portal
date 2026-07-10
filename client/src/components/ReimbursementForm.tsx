@@ -30,11 +30,11 @@ const emptyReceipt: ReceiptValue = { receiptType: '', receiptStoragePath: null, 
 
 const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }) => {
   const isDarkMode = useDarkMode();
-  const cardBg = isDarkMode ? '#2d2d3e' : '#ffffff';
-  const border = isDarkMode ? '#3a3a5c' : '#e0e0e0';
+  const cardBg = isDarkMode ? '#343a40' : '#ffffff';
+  const border = isDarkMode ? '#495057' : '#e0e0e0';
   const text = isDarkMode ? '#eeeeee' : '#222222';
   const subText = isDarkMode ? '#aaaaaa' : '#666666';
-  const inputBg = isDarkMode ? '#3a3a5c' : '#f8f9fa';
+  const inputBg = isDarkMode ? '#495057' : '#f8f9fa';
 
   const [draftId, setDraftId] = useState(() => crypto.randomUUID());
   const [itemName, setItemName] = useState('');

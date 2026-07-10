@@ -119,11 +119,11 @@ interface PurchaseRequestFormProps {
 
 const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTitle, isAdmin, resubmitRecord, onDoneResubmit }) => {
   const isDarkMode = useDarkMode();
-  const cardBg = isDarkMode ? '#2d2d3e' : '#ffffff';
-  const border = isDarkMode ? '#3a3a5c' : '#e0e0e0';
+  const cardBg = isDarkMode ? '#343a40' : '#ffffff';
+  const border = isDarkMode ? '#495057' : '#e0e0e0';
   const text = isDarkMode ? '#eeeeee' : '#222222';
   const subText = isDarkMode ? '#aaaaaa' : '#666666';
-  const inputBg = isDarkMode ? '#3a3a5c' : '#f8f9fa';
+  const inputBg = isDarkMode ? '#495057' : '#f8f9fa';
   const warnBg = isDarkMode ? '#3a3220' : '#fff8e1';
   const warnBorder = isDarkMode ? '#5c5430' : '#ffe082';
   const warnText = isDarkMode ? '#ffe082' : '#8a6d00';
@@ -905,7 +905,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
             ) : (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {boardApprovers.map(a => (
-                  <span key={a.id} style={{ fontSize: 12, color: text, background: isDarkMode ? '#3a3a5c' : '#f8f9fa', border: `1px solid ${border}`, borderRadius: 6, padding: '2px 8px' }}>
+                  <span key={a.id} style={{ fontSize: 12, color: text, background: isDarkMode ? '#495057' : '#f8f9fa', border: `1px solid ${border}`, borderRadius: 6, padding: '2px 8px' }}>
                     {a.name}（{a.role_title}）
                   </span>
                 ))}

@@ -80,8 +80,8 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
   const [loading, setLoading] = useState(true);
   const [itemsByRequest, setItemsByRequest] = useState<Record<string, PurchaseRequestItem[]>>({});
 
-  const cardBg = isDarkMode ? '#2d2d3e' : '#ffffff';
-  const border = isDarkMode ? '#3a3a5c' : '#e0e0e0';
+  const cardBg = isDarkMode ? '#343a40' : '#ffffff';
+  const border = isDarkMode ? '#495057' : '#e0e0e0';
   const text = isDarkMode ? '#eeeeee' : '#222222';
   const subText = isDarkMode ? '#aaaaaa' : '#666666';
   const warnBg = isDarkMode ? '#3a3220' : '#fff8e1';
@@ -276,9 +276,9 @@ const PurchaseRequestPage: React.FC<PurchaseRequestPageProps> = ({ user, roleTit
   const isManagerPlus = isAdmin || ['マネージャー', '社長'].includes(roleTitle);
   const canApprovePurchase = isAdmin || ['リーダー', 'マネージャー', '社長'].includes(roleTitle);
 
-  const bg = isDarkMode ? '#1a1a2e' : '#f0f2f5';
-  const cardBg = isDarkMode ? '#2d2d3e' : '#ffffff';
-  const border = isDarkMode ? '#3a3a5c' : '#e0e0e0';
+  const bg = isDarkMode ? '#212529' : '#f0f2f5';
+  const cardBg = isDarkMode ? '#343a40' : '#ffffff';
+  const border = isDarkMode ? '#495057' : '#e0e0e0';
   const text = isDarkMode ? '#eeeeee' : '#222222';
 
   const tabDefs: { key: Tab; label: string }[] = [
