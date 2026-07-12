@@ -17,21 +17,46 @@ function getCorsHeaders(req: Request) {
   };
 }
 
-// VAPID署名を生成してプッシュ通知を送信する
-async function sendWebPush(
-  subscription: { endpoint: string; p256dh: string; auth: string },
-  payload: { title: string; body: string; url?: string; tag?: string },
+function b64urlDecode(str: string): Uint8Array {
+  const padding = "=".repeat((4 - (str.length % 4)) % 4);
+  const base64 = (str + padding).replace(/-/g, "+").replace(/_/g, "/");
+  return Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+}
+
+function b64urlEncode(data: Uint8Array | ArrayBuffer): string {
+  const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
+  let str = "";
+  for (const b of bytes) str += String.fromCharCode(b);
+  return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
+
+async function hkdf(
+  salt: Uint8Array,
+  ikm: Uint8Array,
+  info: Uint8Array,
+  bits: number
+): Promise<Uint8Array> {
+  const key = await crypto.subtle.importKey("raw", ikm, { name: "HKDF" }, false, [
+    "deriveBits",
+  ]);
+  const derived = await crypto.subtle.deriveBits(
+    { name: "HKDF", hash: "SHA-256", salt, info },
+    key,
+    bits
+  );
+  return new Uint8Array(derived);
+}
+
+// VAPID JWT（署名付きトークン）を生成する
+// 秘密鍵はweb-push等で生成される「生32バイトのbase64url」形式を想定し、
+// 公開鍵からx/yを取り出してJWK形式で読み込む（旧実装のpkcs8読み込みは
+// 形式不一致で例外になり、全送信が失敗していた）
+async function createVapidJwt(
+  endpoint: string,
   vapidPrivateKey: string,
   vapidPublicKey: string,
   vapidSubject: string
-) {
-  const { endpoint, p256dh, auth } = subscription;
-
-  // payloadをJSONにエンコード
-  const payloadStr = JSON.stringify(payload);
-  const payloadBytes = new TextEncoder().encode(payloadStr);
-
-  // VAPID JWTを生成
+): Promise<string> {
   const url = new URL(endpoint);
   const audience = `${url.protocol}//${url.host}`;
   const expiration = Math.floor(Date.now() / 1000) + 12 * 3600;
@@ -39,26 +64,20 @@ async function sendWebPush(
   const header = { typ: "JWT", alg: "ES256" };
   const claims = { aud: audience, exp: expiration, sub: vapidSubject };
 
-  const base64url = (data: Uint8Array | string) => {
-    const str =
-      typeof data === "string"
-        ? data
-        : String.fromCharCode(...new Uint8Array(data instanceof ArrayBuffer ? data : data));
-    return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-  };
-
-  const headerB64 = base64url(JSON.stringify(header));
-  const claimsB64 = base64url(JSON.stringify(claims));
+  const headerB64 = b64urlEncode(new TextEncoder().encode(JSON.stringify(header)));
+  const claimsB64 = b64urlEncode(new TextEncoder().encode(JSON.stringify(claims)));
   const signingInput = `${headerB64}.${claimsB64}`;
 
-  // 秘密鍵をインポート
-  const privateKeyBytes = Uint8Array.from(
-    atob(vapidPrivateKey.replace(/-/g, "+").replace(/_/g, "/")),
-    (c) => c.charCodeAt(0)
-  );
+  const publicKeyBytes = b64urlDecode(vapidPublicKey);
+  if (publicKeyBytes.length !== 65 || publicKeyBytes[0] !== 4) {
+    throw new Error("VAPID公開鍵の形式が不正です（65バイトの非圧縮ポイントではない）");
+  }
+  const x = b64urlEncode(publicKeyBytes.slice(1, 33));
+  const y = b64urlEncode(publicKeyBytes.slice(33, 65));
+
   const privateKey = await crypto.subtle.importKey(
-    "pkcs8",
-    privateKeyBytes,
+    "jwk",
+    { kty: "EC", crv: "P-256", d: vapidPrivateKey, x, y, ext: true },
     { name: "ECDSA", namedCurve: "P-256" },
     false,
     ["sign"]
@@ -69,26 +88,31 @@ async function sendWebPush(
     privateKey,
     new TextEncoder().encode(signingInput)
   );
-  const jwt = `${signingInput}.${base64url(new Uint8Array(sigBytes))}`;
+  return `${signingInput}.${b64urlEncode(sigBytes)}`;
+}
 
-  // 受信者の公開鍵・authをデコード
-  const recipientPublicKeyBytes = Uint8Array.from(
-    atob(p256dh.replace(/-/g, "+").replace(/_/g, "/")),
-    (c) => c.charCodeAt(0)
-  );
-  const authBytes = Uint8Array.from(
-    atob(auth.replace(/-/g, "+").replace(/_/g, "/")),
-    (c) => c.charCodeAt(0)
-  );
+// RFC 8291 (aes128gcm) でペイロードを暗号化してプッシュ通知を送信する
+// （旧実装のaesgcm方式はApple(iPhone)のプッシュサーバーが受け付けない）
+async function sendWebPush(
+  subscription: { endpoint: string; p256dh: string; auth: string },
+  payload: { title: string; body: string; url?: string; tag?: string },
+  vapidPrivateKey: string,
+  vapidPublicKey: string,
+  vapidSubject: string
+): Promise<Response> {
+  const { endpoint, p256dh, auth } = subscription;
 
-  // ECDH鍵ペアを生成
+  const jwt = await createVapidJwt(endpoint, vapidPrivateKey, vapidPublicKey, vapidSubject);
+
+  const recipientPublicKeyBytes = b64urlDecode(p256dh);
+  const authBytes = b64urlDecode(auth);
+
+  // 送信側のECDH鍵ペアを生成し、受信者公開鍵と共有シークレットを導出
   const serverKeyPair = await crypto.subtle.generateKey(
     { name: "ECDH", namedCurve: "P-256" },
     true,
     ["deriveBits"]
   );
-
-  // 受信者公開鍵をインポート
   const recipientKey = await crypto.subtle.importKey(
     "raw",
     recipientPublicKeyBytes,
@@ -96,122 +120,70 @@ async function sendWebPush(
     false,
     []
   );
-
-  // 共有シークレットを導出
-  const sharedSecret = await crypto.subtle.deriveBits(
-    { name: "ECDH", public: recipientKey },
-    serverKeyPair.privateKey,
-    256
+  const sharedSecret = new Uint8Array(
+    await crypto.subtle.deriveBits(
+      { name: "ECDH", public: recipientKey },
+      serverKeyPair.privateKey,
+      256
+    )
+  );
+  const serverPublicKeyRaw = new Uint8Array(
+    await crypto.subtle.exportKey("raw", serverKeyPair.publicKey)
   );
 
-  // サーバー公開鍵をエクスポート
-  const serverPublicKeyRaw = await crypto.subtle.exportKey(
-    "raw",
-    serverKeyPair.publicKey
-  );
-
-  // HKDF でコンテンツ暗号化鍵とnonceを導出
-  const prk = await crypto.subtle.importKey(
-    "raw",
-    new Uint8Array(sharedSecret),
-    { name: "HKDF" },
-    false,
-    ["deriveBits"]
-  );
+  // RFC 8291: IKM = HKDF(salt=auth, ikm=ecdh_secret, info="WebPush: info"||0x00||ua_pub||as_pub)
+  const keyInfo = new Uint8Array([
+    ...new TextEncoder().encode("WebPush: info\0"),
+    ...recipientPublicKeyBytes,
+    ...serverPublicKeyRaw,
+  ]);
+  const ikm = await hkdf(authBytes, sharedSecret, keyInfo, 256);
 
   const salt = crypto.getRandomValues(new Uint8Array(16));
-
-  // authシークレット
-  const authInfo = new TextEncoder().encode("Content-Encoding: auth\0");
-  const authSecret = await crypto.subtle.deriveBits(
-    {
-      name: "HKDF",
-      hash: "SHA-256",
-      salt: authBytes,
-      info: authInfo,
-    },
-    prk,
-    256
-  );
-
-  const context = new Uint8Array([
-    ...new TextEncoder().encode("P-256\0"),
-    0,
-    65,
-    ...recipientPublicKeyBytes,
-    0,
-    65,
-    ...new Uint8Array(serverPublicKeyRaw),
-  ]);
-
-  const cekInfo = new Uint8Array([
-    ...new TextEncoder().encode("Content-Encoding: aesgcm\0"),
-    ...context,
-  ]);
-  const nonceInfo = new Uint8Array([
-    ...new TextEncoder().encode("Content-Encoding: nonce\0"),
-    ...context,
-  ]);
-
-  const authKey = await crypto.subtle.importKey(
-    "raw",
-    authSecret,
-    { name: "HKDF" },
-    false,
-    ["deriveBits"]
-  );
-
-  const cekBits = await crypto.subtle.deriveBits(
-    { name: "HKDF", hash: "SHA-256", salt, info: cekInfo },
-    authKey,
+  const cekBytes = await hkdf(
+    salt,
+    ikm,
+    new TextEncoder().encode("Content-Encoding: aes128gcm\0"),
     128
   );
-  const nonceBits = await crypto.subtle.deriveBits(
-    { name: "HKDF", hash: "SHA-256", salt, info: nonceInfo },
-    authKey,
+  const nonce = await hkdf(
+    salt,
+    ikm,
+    new TextEncoder().encode("Content-Encoding: nonce\0"),
     96
   );
 
-  const cek = await crypto.subtle.importKey(
-    "raw",
-    cekBits,
-    { name: "AES-GCM" },
-    false,
-    ["encrypt"]
+  const cek = await crypto.subtle.importKey("raw", cekBytes, { name: "AES-GCM" }, false, [
+    "encrypt",
+  ]);
+
+  // 末尾に0x02（最終レコードの区切りバイト）を付けて暗号化
+  const payloadBytes = new TextEncoder().encode(JSON.stringify(payload));
+  const padded = new Uint8Array([...payloadBytes, 2]);
+  const encrypted = new Uint8Array(
+    await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, cek, padded)
   );
 
-  // パディング（先頭2バイトはパディング長）
-  const padded = new Uint8Array([0, 0, ...payloadBytes]);
-  const encrypted = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv: nonceBits },
-    cek,
-    padded
-  );
+  // aes128gcmのボディヘッダー: salt(16) + recordSize(4) + keyIdLen(1) + serverPublicKey(65)
+  const recordSize = 4096;
+  const body = new Uint8Array(16 + 4 + 1 + 65 + encrypted.length);
+  body.set(salt, 0);
+  new DataView(body.buffer).setUint32(16, recordSize);
+  body[20] = 65;
+  body.set(serverPublicKeyRaw, 21);
+  body.set(encrypted, 86);
 
-  // Crypto-Key ヘッダー用のVAPID公開鍵
-  const vapidPublicKeyBytes = Uint8Array.from(
-    atob(vapidPublicKey.replace(/-/g, "+").replace(/_/g, "/")),
-    (c) => c.charCodeAt(0)
-  );
-
-  const b64urlServer = base64url(new Uint8Array(serverPublicKeyRaw));
-  const b64urlSalt = base64url(salt);
-  const b64urlVapid = base64url(vapidPublicKeyBytes);
-
-  const response = await fetch(endpoint, {
+  return await fetch(endpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/octet-stream",
-      "Content-Encoding": "aesgcm",
-      Authorization: `vapid t=${jwt},k=${b64urlVapid}`,
-      Encryption: `salt=${b64urlSalt}`,
-      "Crypto-Key": `dh=${b64urlServer};p256ecdsa=${b64urlVapid}`,
+      "Content-Encoding": "aes128gcm",
+      Authorization: `vapid t=${jwt}, k=${vapidPublicKey}`,
       TTL: "86400",
+      Urgency: "normal",
     },
-    body: encrypted,
+    body,
   });
-
-  return response;
 }
 
 serve(async (req) => {
@@ -272,17 +244,29 @@ serve(async (req) => {
       )
     );
 
-    const sent = results.filter((r) => r.status === "fulfilled").length;
-    const failed = results.filter((r) => r.status === "rejected").length;
-
-    // 410 Gone（購読期限切れ）の場合はDBから削除
+    let sent = 0;
+    const errors: string[] = [];
     const expiredEndpoints: string[] = [];
+
     for (let i = 0; i < results.length; i++) {
       const r = results[i];
-      if (r.status === "fulfilled" && (r.value as Response).status === 410) {
-        expiredEndpoints.push(subscriptions[i].endpoint);
+      if (r.status === "rejected") {
+        errors.push(`endpoint[${i}]: ${String(r.reason)}`);
+        continue;
+      }
+      const res = r.value as Response;
+      if (res.ok) {
+        sent++;
+      } else {
+        const text = await res.text().catch(() => "");
+        errors.push(`endpoint[${i}]: HTTP ${res.status} ${text.slice(0, 200)}`);
+        // 購読期限切れ・無効はDBから削除
+        if (res.status === 404 || res.status === 410) {
+          expiredEndpoints.push(subscriptions[i].endpoint);
+        }
       }
     }
+
     if (expiredEndpoints.length > 0) {
       await supabase
         .from("push_subscriptions")
@@ -290,8 +274,10 @@ serve(async (req) => {
         .in("endpoint", expiredEndpoints);
     }
 
+    console.log(`[send-push] sent=${sent} failed=${errors.length}`, errors);
+
     return new Response(
-      JSON.stringify({ sent, failed }),
+      JSON.stringify({ sent, failed: errors.length, errors, removed: expiredEndpoints.length }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {

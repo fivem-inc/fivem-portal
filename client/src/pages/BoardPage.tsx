@@ -3485,7 +3485,6 @@ const BoardPage: React.FC = () => {
         const confirmedIds = confirmedObjs2.map(c => c.user_id);
         const channelMemberIds = members.filter(m => m.channel_id === msg.channel_id).map(m => m.user_id);
         const unconfirmedUserIds = channelMemberIds.filter(id => !confirmedIds.includes(id));
-        const dtConfig = DEADLINE_TYPES.find(d => d.value === msg.deadline_type);
         return (
           <div style={overlayStyle} onClick={() => setUnconfirmedMsgId(null)}>
             <div style={{ ...modalStyle, maxWidth: 380 }} onClick={e => e.stopPropagation()}>
@@ -3525,11 +3524,13 @@ const BoardPage: React.FC = () => {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
                 {unconfirmedUserIds.length > 0 && (
                   <button type="button" onClick={async () => {
+                    // 文面は状態名詞+件数のみ（「確認」「依頼」「〜してください」等の
+                    // 行動を促す語はChromeが不正な通知と判定して警告表示になるため使用禁止）
                     await supabase.functions.invoke('send-push', {
                       body: {
                         user_ids: unconfirmedUserIds,
-                        title: `📌 ${dtConfig ? dtConfig.label + 'をお願いします' : '確認をお願いします'}`,
-                        body: msg.body.slice(0, 50),
+                        title: 'ファイブM 連絡板',
+                        body: '新着 1件',
                         url: '/board',
                         tag: `confirm-${unconfirmedMsgId}`,
                       },

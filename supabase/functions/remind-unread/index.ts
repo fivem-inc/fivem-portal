@@ -86,11 +86,19 @@ serve(async () => {
         : `📅 ${diffDays}日後期限の連絡があります`;
     const body = msg.body.length > 50 ? msg.body.slice(0, 50) + "…" : msg.body;
 
+    // プッシュ通知のみ固定の安全文面（状態名詞+件数）を使う。
+    // 「確認」「〜があります」等の行動を促す語・文章形は、Chromeが
+    // 不正な通知と判定して警告表示になるため使用禁止（2026-07-11実機テスト済み）
+    const pushBody = diffDays === 0
+      ? "本日期限 1件"
+      : diffDays === 1
+        ? "明日期限 1件"
+        : `${diffDays}日後期限 1件`;
     await supabase.functions.invoke("send-push", {
       body: {
         user_ids: unreadUserIds,
-        title,
-        body,
+        title: "ファイブM 連絡板",
+        body: pushBody,
         url: "/board",
         tag: `remind-${msg.id}`,
       },

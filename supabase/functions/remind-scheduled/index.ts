@@ -71,11 +71,15 @@ serve(async () => {
 
     if (userIds.length === 0) continue;
 
+    // プッシュ通知のみ固定の安全文面を使う（管理者の自由文をそのまま送ると、
+    // 「確認」「〜してください」等を含む場合にChromeが不正な通知と判定して
+    // 警告表示になるため。2026-07-11実機テスト済み）。
+    // 実際のリマインド内容はサイト内のベル通知・メールで届く
     await supabase.functions.invoke("send-push", {
       body: {
         user_ids: userIds,
-        title: reminder.title,
-        body: reminder.body,
+        title: "ファイブM リマインド",
+        body: "新着 1件",
         url: "/board",
         tag: `scheduled-${reminder.id}`,
       },
