@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { supabase } from '../../lib/supabaseClient';
 
@@ -366,6 +366,14 @@ const UsersTab: React.FC = () => {
   const [selectedForEmail, setSelectedForEmail] = useState<Set<string>>(new Set());
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [emailTarget, setEmailTarget] = useState<{ id: string; name: string; email: string }[]>([]);
+  // プッシュ通知を許可している（購読情報が登録済みの）ユーザーID一覧
+  const [pushUserIds, setPushUserIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    supabase.from('push_subscriptions').select('user_id').then(({ data }) => {
+      if (data) setPushUserIds(new Set(data.map(r => r.user_id as string)));
+    });
+  }, []);
 
   const toggleEmailSelect = (id: string) => {
     setSelectedForEmail(prev => {
@@ -567,6 +575,7 @@ const UsersTab: React.FC = () => {
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 90 }}>役職</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 120 }}>グループ</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 85 }}>最終アクセス</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 55 }} title="プッシュ通知を許可しているか（アカウント設定で本人が設定）">プッシュ</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 55 }}>状態</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 140 }}>操作</th>
                       </tr>
@@ -683,6 +692,12 @@ const UsersTab: React.FC = () => {
                                     return <>{`${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`}<br />{`${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`}</>;
                                   })()
                                 : <span style={{ color: '#adb5bd' }}>未ログイン</span>
+                              }
+                            </td>
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center' }}>
+                              {pushUserIds.has(user.id)
+                                ? <span title="プッシュ通知 許可中" style={{ fontSize: 14 }}>🔔</span>
+                                : <span title="プッシュ通知 未設定" style={{ color: isDarkMode ? '#6c757d' : '#adb5bd', fontSize: 12 }}>－</span>
                               }
                             </td>
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px' }}>
