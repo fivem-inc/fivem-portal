@@ -6647,3 +6647,30 @@ notifications INSERT
 - 起動時に真っ白が消え、スプラッシュ→骨組み→アプリが滑らかに繋がるか
 - アバターにメール頭文字「N」が出ず最初から名前が出るか、濱口さんのナビボタン欠けが再発しないか
 - 各ページ（設定系lazy化分含む）が正常に開くか
+
+---
+
+## ✅ 2026-07-14（続き2）RLS棚卸し監査 実施＝全テーブル安全を確認（コード変更なし）
+
+キャッシュ改善(canXをlocalStorageに持つ)の安全性前提「実データはRLSで守られる」を、本番DBに直接問い合わせて全公開テーブルを監査。結果オールクリア。
+
+### 監査方法
+- `pg_class.relrowsecurity` と `pg_policies` で全public tableのRLS有効化・ポリシー数を確認
+- 個人データ系(leave_requests/shift_reports/attendance_exceptions/expenses/business_trip_reports/notifications)のSELECTポリシーの `qual` を実DBで確認
+
+### 結果
+- **全public tableでRLS有効**（rls_enabled=true）。鍵の外れた棚は無し
+- 個人データ系のSELECTは全て `auth.uid()`（本人）または役職（profiles.role_title/JWT admin）で制限。`using(true)`のような全開放は無し
+  - leave_requests: 本人 or approver/approver2 or admin/社長 or リーダー〜管理者
+  - shift_reports: 本人(applicant_id) or リーダー〜管理者
+  - attendance_exceptions/expenses/business_trip_reports/notifications: 本人 or 管理職/admin
+- gcal_events・push_queue は「RLS有効＋ポリシー0件」＝クライアント完全遮断・service_roleのみ（サーバー専用テーブルとして正しい）
+- **結論**：canX（ナビ表示可否）は実データの認可に使われておらず、キャッシュ改ざんで見えるのはボタンだけ・実データはサーバーが毎回RLSで再判定＝**キャッシュ改善は完全に安全と確定**。コード変更不要
+
+### 軽微な所見（対応不要）
+- expensesの管理者ALLポリシーは役職クレームではなく管理者メール(fivem.kyoto@gmail.com)直書き。動作はするが他テーブルと不整合。実害なし
+- INSERTポリシーのUSINGはnull（INSERTはWITH CHECK側で制御、読み取り漏洩とは無関係）
+
+### 第2弾の判断（ユーザーと確認済み）
+- profiles二重フェッチ解消(②)は**見送り**。通信量は数百バイト×往復1回増で無料枠(月5GB)に対し誤差レベル＝コスト問題ではない。効果は0.1秒程度＋コード整理のみで、ログイン心臓部を触るリスクに見合わないため。ちらつきは既にスケルトン＋遅延初期化で解決済み
+- Service Workerプリキャッシュ(①)も見送り（効果大だが更新時の古アセット配信リスク運用が必要、後日単独で慎重に）
