@@ -3,12 +3,14 @@ import ReactDOM from 'react-dom';
 import { Routes, Route, Navigate, Outlet, BrowserRouter, useNavigate, useLocation } from 'react-router-dom';
 import SignIn from './pages/SignIn';
 import ResetPassword from './pages/ResetPassword';
-import ChangeEmail from './pages/ChangeEmail';
-import ChangePassword from './pages/ChangePassword';
-import AccountSettings from './pages/AccountSettings';
-import NotificationSettings from './pages/NotificationSettings';
-import SupabaseSettingsCheck from './pages/SupabaseSettingsCheck';
 import ExpenseForm from './components/ExpenseForm';
+
+// 設定系ページは起動直後のランディング（ホーム）に不要なので遅延読込にして初期バンドルを軽くする
+const ChangeEmail = React.lazy(() => import('./pages/ChangeEmail'));
+const ChangePassword = React.lazy(() => import('./pages/ChangePassword'));
+const AccountSettings = React.lazy(() => import('./pages/AccountSettings'));
+const NotificationSettings = React.lazy(() => import('./pages/NotificationSettings'));
+const SupabaseSettingsCheck = React.lazy(() => import('./pages/SupabaseSettingsCheck'));
 
 const AdminPanel = React.lazy(() => import('./components/AdminPanel'));
 const HistoryView = React.lazy(() => import('./components/HistoryView'));
@@ -1280,11 +1282,11 @@ function App() {
             <Route path="/leave-approvals" element={<LeaveApprovalsPage />} />
             <Route path="/calendar" element={<TeamCalendarPage />} />
             <Route path="/admin" element={<AdminPage />} />
-            <Route path="/account" element={<AccountSettings />} />
-            <Route path="/notification-settings" element={<NotificationSettings />} />
-            <Route path="/change-email" element={<ChangeEmail />} />
-            <Route path="/change-password" element={<ChangePassword />} />
-            <Route path="/settings-check" element={<SupabaseSettingsCheck />} />
+            <Route path="/account" element={<Suspense fallback={<PageLoader />}><AccountSettings /></Suspense>} />
+            <Route path="/notification-settings" element={<Suspense fallback={<PageLoader />}><NotificationSettings /></Suspense>} />
+            <Route path="/change-email" element={<Suspense fallback={<PageLoader />}><ChangeEmail /></Suspense>} />
+            <Route path="/change-password" element={<Suspense fallback={<PageLoader />}><ChangePassword /></Suspense>} />
+            <Route path="/settings-check" element={<Suspense fallback={<PageLoader />}><SupabaseSettingsCheck /></Suspense>} />
             <Route path="/board" element={<BoardPageWrapper />} />
             <Route path="/shift-report" element={<ShiftReportPageWrapper />} />
             <Route path="/purchase" element={<PurchaseRequestPageWrapper />} />

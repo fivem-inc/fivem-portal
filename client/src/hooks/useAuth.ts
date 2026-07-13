@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useContext } from 'react';
+import { useState, useEffect, useCallback, useContext, useRef } from 'react';
 import type { AuthUser } from '../types';
 import { supabase } from '../lib/supabaseClient';
 import { AuthContext } from '../contexts/AuthContext.tsx';
@@ -23,6 +23,31 @@ interface UseAuthReturn {
 
 const PREVIEW_ROLES = ['パート', '一般', 'リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者'] as const;
 export { PREVIEW_ROLES };
+
+// 前回読み込んだ名前・役職・権限を端末に保存しておき、次回起動時に即表示するためのキャッシュ。
+// これで「名前・権限がまだ読めていない一瞬」に、名前なし（メール頭文字）や
+// ナビボタンが減った状態が表示される問題を防ぐ（最新は裏で取り直して上書き）。
+// 権限は表示用で、実データへのアクセスはサーバー側RLSで守られるため安全。
+const AUTH_CACHE_PREFIX = 'fivem_auth_cache_';
+const AUTH_CACHE_VERSION = 1; // 保存形式を変えたら上げる（旧キャッシュは破棄される）
+interface AuthCache {
+  v: number;
+  name: string; roleTitle: string; employmentType: string;
+  leaveRequestEnabled: boolean; perms: Record<string, boolean>;
+}
+function readAuthCache(userId: string): AuthCache | null {
+  try {
+    const raw = localStorage.getItem(AUTH_CACHE_PREFIX + userId);
+    if (!raw) return null;
+    const c = JSON.parse(raw) as AuthCache;
+    // バージョン不一致・形式破損は破棄（perms欠落での白画面を防ぐ）
+    if (c.v !== AUTH_CACHE_VERSION || typeof c.perms !== 'object' || c.perms === null) return null;
+    return c;
+  } catch { return null; }
+}
+function writeAuthCache(userId: string, cache: Omit<AuthCache, 'v'>): void {
+  try { localStorage.setItem(AUTH_CACHE_PREFIX + userId, JSON.stringify({ v: AUTH_CACHE_VERSION, ...cache })); } catch { /* 容量超過等は無視 */ }
+}
 
 // 役職名からDB権限マップを取得する共通処理。
 // 取得に失敗した場合は null を返す（呼び出し側で「既存の権限を保持」させ、
@@ -50,13 +75,18 @@ async function fetchPermsForRole(roleName: string): Promise<Record<string, boole
 export const useAuth = (): UseAuthReturn => {
   const { user, previewRole } = useContext(AuthContext);
   const [loading, setLoading] = useState(true);
-  const [profileName, setProfileName] = useState('');
-  const [roleTitle, setRoleTitle] = useState('');
-  const [employmentType, setEmploymentType] = useState('');
-  const [leaveRequestEnabled, setLeaveRequestEnabled] = useState(false);
+  // 初期値をキャッシュから同期的に読む（遅延初期化）。AuthProviderが認証確認中は
+  // スケルトンでchildrenを遅らせるため、この時点でuserは確定しており、最初の描画から
+  // 正しい名前・役職・権限が出せる（＝メール頭文字や減ナビのちらつきが出ない）。
+  // 名前はキャッシュ→トークン内の名前(user_metadata.name)→空 の順でフォールバック
+  const [initCache] = useState(() => user ? readAuthCache(user.id) : null);
+  const [profileName, setProfileName] = useState(initCache?.name || user?.user_metadata?.name || '');
+  const [roleTitle, setRoleTitle] = useState(initCache?.roleTitle ?? '');
+  const [employmentType, setEmploymentType] = useState(initCache?.employmentType ?? '');
+  const [leaveRequestEnabled, setLeaveRequestEnabled] = useState(initCache?.leaveRequestEnabled ?? false);
 
   // 実際の役職の権限
-  const [featurePerms, setFeaturePerms] = useState<Record<string, boolean>>({});
+  const [featurePerms, setFeaturePerms] = useState<Record<string, boolean>>(initCache?.perms ?? {});
   // プレビュー役職の権限
   const [previewPerms, setPreviewPerms] = useState<Record<string, boolean>>({});
 
@@ -89,6 +119,15 @@ export const useAuth = (): UseAuthReturn => {
         const perms = await fetchPermsForRole(role);
         if (perms) setFeaturePerms(perms);
 
+        // 次回起動時に即表示できるよう名前・役職・権限をキャッシュ保存
+        writeAuthCache(user.id, {
+          name: data.name || '',
+          roleTitle: role,
+          employmentType: empType,
+          leaveRequestEnabled: !!data.leave_request_enabled,
+          perms: perms ?? {},
+        });
+
         supabase.from('profiles')
           .update({ last_sign_in_at: new Date().toISOString() })
           .eq('id', user.id)
@@ -108,12 +147,22 @@ export const useAuth = (): UseAuthReturn => {
     setLoading(false);
   }, [user]);
 
-  // ユーザーが切り替わったら、前のアカウントの名前をアバターに残さないよう即クリア。
-  // （役職・権限は消すとナビボタンが一瞬消えるため、あえてクリアせず取得完了時に上書き）
+  // アカウントが切り替わった時（初回マウントは遅延初期化で対応済み）に、
+  // そのユーザーの前回キャッシュを即反映。無ければトークン内の名前にフォールバックし、
+  // 前のアカウントの名前が残らないようにする（別アカウント切替時の誤表示防止）。
+  const prevUserId = useRef(user?.id);
   useEffect(() => {
-    setProfileName('');
-    setEmploymentType('');
-  }, [user?.id]);
+    if (!user?.id || user.id === prevUserId.current) { prevUserId.current = user?.id; return; }
+    prevUserId.current = user.id;
+    const c = readAuthCache(user.id);
+    setProfileName(c?.name || user.user_metadata?.name || '');
+    setEmploymentType(c?.employmentType ?? '');
+    if (c) {
+      setRoleTitle(c.roleTitle);
+      setLeaveRequestEnabled(c.leaveRequestEnabled);
+      setFeaturePerms(c.perms);
+    }
+  }, [user?.id, user?.user_metadata?.name]);
 
   useEffect(() => { fetchProfileName(); }, [fetchProfileName]);
 

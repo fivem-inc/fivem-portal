@@ -6616,3 +6616,34 @@ notifications INSERT
 - 修正：`user?.id`が変わったらprofileName・employmentTypeを即クリア（取得完了時に上書き）。役職・権限はクリアするとナビボタンが一瞬消える別バグが再発するためあえて保持
 - フロントのみ、`tsc -b`・`vite build`成功
 - **補足（PWA起動速度の質問への回答）**：ホーム画面アプリの起動時スプラッシュ(約1秒)は正常範囲。内訳はJS読込＋起動時のログイン確認(サーバー1往復)。大きく速くする方法は「ログイン確認を待たず画面表示」だが退職者・承認待ち画面が一瞬見えるためセキュリティ上非推奨。安全な追加分割は0.1〜0.3秒程度で体感差なし。icon-512.png(198KB)はOS側にキャッシュされ2回目以降の起動に影響しないため圧縮しても効果なし。結論：1秒前後は現状維持でよい
+
+---
+
+## ✅ 2026-07-14（続き）起動体感の改善（スケルトン・preconnect・ちらつき根治・lazy化）
+
+サブエージェント2体（UI/UXデザイナー＋シニアエンジニア）レビューを経て第1弾を実装。
+レビュー結論：不満の本質は「1秒という時間」ではなく「真っ白で壊れて見える不安」。白をスケルトンに置き換えるのが最小コスト最大効果。実速度はpreconnectとSWキャッシュが主戦場。ちらつきの真因は「画面が先に描画され、後から名前・権限が届く」こと。
+
+### 実装（すべてフロントのみ・DB/Edge Function変更なし）
+1. **index.htmlに起動スケルトン**（`#root`直下にインラインHTML/CSS）：空の`#root`がJS読込完了まで真っ白だったのを、スプラッシュと同じ背景色#1a1a2e＋ロゴ＋プログレスバーで即表示。JS/認証を待たず描画され、OSスプラッシュから滑らかに繋がる。Reactマウントで自動置換
+2. **AuthProviderのloading中をスケルトン表示に**（`{loading ? <BootSkeleton/> : children}`）：認証確認中の「第2の白画面」を消す。index.htmlと見た目統一。枠のみで個人情報を含まずis_active判定前でも安全
+3. **index.htmlにSupabase preconnect**（`<link rel=preconnect>`）：起動時最初のサーバー通信のTLS確立をJS読込と並行化、初回往復を50-150ms短縮。費用対効果1位
+4. **ちらつき根治**（useAuth.ts）：AuthProviderがスケルトンでchildrenを遅らせる→useAuth起動時にuser確定済み→`useState`遅延初期化でキャッシュから同期的に名前・役職・権限を読む（`useEffect`後追いをやめ、最初の描画から正しい表示）。名前はキャッシュ→トークン内user_metadata.name→空の順にフォールバック（初回端末でも実名）。キャッシュに`v:`バージョンキー追加＋`perms`形式検証（破損時破棄で白画面防止）。アカウント切替時のみuseRefで前user.idと比較して再反映
+5. **設定系ページのlazy化**（AccountSettings/NotificationSettings/ChangeEmail/ChangePassword/SupabaseSettingsCheck）：起動ランディングに不要なので遅延読込。ExpenseForm/SignInはeager据え置き。効果は軽微（ページが小さかった）だが害なし
+- `tsc -b`・`vite build`成功、ローカルでログイン画面表示・コンソールエラーなし確認
+
+### セキュリティ判定（シニアエンジニアがRLS実コードで裏取り済み）
+- feature_permissions（canX=ナビ表示可否）は`select using(true)`で全認証ユーザー参照可＋変更はadminのみ。実データRLSは`auth.uid()`と`profiles.role_title`で判定し**feature_permissionsを一切参照しない**（例：purchase_requests）。→ **canXは認可に使われず、localStorageキャッシュ改ざんで見えるのはナビボタンだけ。実データはサーバーが毎回再判定するため取得不可＝安全**
+- 前提条件：全データテーブルにRLSが張られていること（purchase_requests/roles/feature_permissions確認済み。leave_requests/shift_reports/board_*は同型パターンだが**次回に棚卸し推奨**、特にクライアントガードの無い/leave・/shift-report）
+
+### 今後のタスク（第2弾・保留・次回検討）
+- **Service Workerでアプリシェル・JS/CSSをプリキャッシュ**（vite-plugin-pwa injectManifestで既存push処理を温存）：2回目以降の起動を200-500ms短縮。更新時の古いアセット配信リスクの運用設計が必要なため次回。費用対効果2位
+- **profiles二重フェッチ解消**：AuthContextのis_activeチェックSELECTに表示カラム(name/role_title等)を足しContextで配布、useAuthの重複SELECT削減（往復-1・DB負荷半減）。認証はAuthContextに一元化する方針とも整合（[[feedback_deploy_and_work_start]]）。今回は遅延初期化＋スケルトンでちらつきは根治済みのため、これは最適化として次回
+- vendorチャンク分割（SW導入とセットで相乗）
+- 全データテーブルのRLS棚卸し（canX非依存で守れているか、特に/leave・/shift-report）
+- AuthContext.tsx:75のalert()をトースト化（作業ルールのalert禁止に抵触・触るついでに）
+
+### 実機確認事項
+- 起動時に真っ白が消え、スプラッシュ→骨組み→アプリが滑らかに繋がるか
+- アバターにメール頭文字「N」が出ず最初から名前が出るか、濱口さんのナビボタン欠けが再発しないか
+- 各ページ（設定系lazy化分含む）が正常に開くか

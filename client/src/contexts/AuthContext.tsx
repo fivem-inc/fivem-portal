@@ -6,6 +6,18 @@ import { supabase } from '../lib/supabaseClient';
 // eslint-disable-next-line react-refresh/only-export-components
 export const AuthContext = createContext<AuthContextType>({ user: null, previewRole: null, setPreviewRole: () => {}, blockedMessage: null, clearBlockedMessage: () => {} });
 
+// 認証確認中に表示する起動スケルトン。index.htmlの静的スケルトンと見た目を揃え、
+// 「真っ白」を挟まずにスプラッシュ→骨組み→アプリを滑らかに繋ぐ。個人情報は含まない
+const BootSkeleton: React.FC = () => (
+  <div style={{ position: 'fixed', inset: 0, background: '#1a1a2e', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 22 }}>
+    <img src="/icon-192.png" width={72} height={72} alt="" style={{ borderRadius: 16, opacity: 0.95 }} />
+    <div style={{ width: 120, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.15)', overflow: 'hidden', position: 'relative' }}>
+      <div style={{ position: 'absolute', top: 0, height: '100%', width: '40%', background: 'rgba(255,255,255,0.55)', borderRadius: 2, animation: 'boot-slide 1.1s ease-in-out infinite' }} />
+    </div>
+    <style>{`@keyframes boot-slide { 0% { left: -40%; } 100% { left: 100%; } }`}</style>
+  </div>
+);
+
 // AuthProviderコンポーネント
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -107,7 +119,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   return (
     <AuthContext.Provider value={{ user, previewRole, setPreviewRole, blockedMessage, clearBlockedMessage: () => setBlockedMessage(null) }}>
-      {!loading && children}
+      {loading ? <BootSkeleton /> : children}
     </AuthContext.Provider>
   );
 };

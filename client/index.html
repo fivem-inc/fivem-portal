@@ -5,12 +5,40 @@
     <link rel="icon" href="/favicon.ico" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.json" />
+    <!-- 起動時の最初のSupabase通信のTLS確立をJS読込と並行させ、初回表示を早める -->
+    <link rel="preconnect" href="https://xaeynaxctiiyqxjyuzfi.supabase.co" crossorigin />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#1a1a2e" />
     <title>ファイブM スタッフサイト</title>
+    <style>
+      /* 起動スケルトン：JS読込前でも即表示され「真っ白」を消す。
+         背景色はmanifestのbackground_color(#1a1a2e)と一致させ、OSスプラッシュから滑らかに繋げる。
+         Reactがマウントすると#rootの中身ごと置き換わり自動で消える。 */
+      #boot-skeleton {
+        position: fixed; inset: 0; background: #1a1a2e;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 22px;
+      }
+      #boot-skeleton img { width: 72px; height: 72px; border-radius: 16px; opacity: 0.95; }
+      #boot-skeleton .bar {
+        width: 120px; height: 4px; border-radius: 2px;
+        background: rgba(255,255,255,0.15); overflow: hidden; position: relative;
+      }
+      #boot-skeleton .bar::after {
+        content: ''; position: absolute; left: -40%; top: 0; height: 100%; width: 40%;
+        background: rgba(255,255,255,0.55); border-radius: 2px;
+        animation: boot-slide 1.1s ease-in-out infinite;
+      }
+      @keyframes boot-slide { 0% { left: -40%; } 100% { left: 100%; } }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot-skeleton">
+        <img src="/icon-192.png" width="72" height="72" alt="" />
+        <div class="bar"></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
