@@ -108,6 +108,13 @@ export const useAuth = (): UseAuthReturn => {
     setLoading(false);
   }, [user]);
 
+  // ユーザーが切り替わったら、前のアカウントの名前をアバターに残さないよう即クリア。
+  // （役職・権限は消すとナビボタンが一瞬消えるため、あえてクリアせず取得完了時に上書き）
+  useEffect(() => {
+    setProfileName('');
+    setEmploymentType('');
+  }, [user?.id]);
+
   useEffect(() => { fetchProfileName(); }, [fetchProfileName]);
 
   // プレビュー役職が変わったらその役職の権限を取得（失敗時は既存を保持）
