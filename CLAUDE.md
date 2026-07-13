@@ -6495,3 +6495,54 @@ vercel.app + 日本語という組み合わせで特に厳しい。
 - **プッシュ通知の文面は「状態を表す漢字名詞+件数」のみ**（新着◯件・本日期限◯件・差戻◯件・未承認◯件は実機テスト済みOK）。「確認」「依頼」「〜待ち」「差し戻し」・文章形・絵文字入り呼びかけ・短時間の連続送信はChromeが不正な通知と判定するため禁止。将来プッシュ通知を新機能に広げる時もこのルールに従い、新しい単語は実機テストしてから使う
 - **Bashツールからcurlで日本語ボディを送る時は、printfでUTF-8ファイルに書き出して`--data-binary @file`で送る**（コマンド文字列への直接埋め込みやheredocスクリプト内の日本語はCP932化けする）
 - git pushが2分でタイムアウトすることがある→run_in_background(バックグラウンド実行)で再試行すれば成功する
+
+---
+
+## ✅ 2026-07-13 ベル通知→スマホプッシュ通知の自動連動パイプラインを実装（本番動作確認済み）
+
+### 背景・きっかけ
+- 「サイト内ベル通知とプッシュは連動しているのか」というユーザーの問いから、連動していない（プッシュは連絡板系3箇所のみ個別配線）ことが判明
+- ユーザー案「既存の通知設定のプッシュ列を足せばいい」を採用。プロUI/UXデザイナー＋シニアエンジニアのサブエージェント2体でプランレビュー後に実装
+- レビュー結論：全ベル通知の一律連動はNG（通知疲れ・source_type未付与の誤分類）、「要対応イベントに絞る＋キュー方式」を推奨
+
+### アーキテクチャ（案A'：トリガー→キュー→cronワーカー）
+```
+notifications INSERT
+ → AFTER INSERTトリガー enqueue_push_notification（EXCEPTION捕捉・SECURITY DEFINER）
+   が push_queue に積むだけ（購読者かつevent_key有り、同一user×event×refの重複は積まない）
+ → pg_cron（1分毎）→ push-dispatch Edge Function
+   が pending を user×event_key で集約し「ファイブM ○○／状態名詞 n件」で送信 → status更新
+```
+- **トリガーから直接pg_netを叩かない**：過去のVault事故（失敗が不可視）を踏まえ、キューに「見える形」で残す。プッシュ側が全滅してもベル通知本体は無傷（トリガーは必ずRETURN NEW）
+- 集約により Chrome連続送信判定も回避、30行INSERT→30通問題も解消
+
+### 実装ファイル
+- Migration `20260720000000_create_push_pipeline.sql`：notifications.event_key列、push_queueテーブル（RLSポリシー無し＝クライアント遮断）、トリガー
+- Migration `20260720100000_schedule_push_dispatch_and_seed_settings.sql`：push-dispatch cron（1分毎）、notification_settingsに'push'チャンネル行を19イベント分シード
+- 新Edge Function `push-dispatch`：EVENT_MAP（event_key→アプリ名・状態語・URL）、notification_settings(channel='push')でON/OFF判定、集約送信、リトライ3回、7日超の掃除
+- `send-push`：service_role認可チェック追加（🚨一般社員が任意文面を全社員に送れる穴を封鎖。token一致 or JWTのrole=service_role）
+- 全発生源にevent_keyラベル付け：クライアント（notifications.ts/notificationDispatch.tsにeventKey引数追加、BoardPage・各承認画面・LeaveRequestsTab）、Edge Function（remind-unread/remind-scheduled/board-scheduled-send/encouragement-notify）
+- **二重送信排除**：remind-unread/remind-scheduledの直接send-push呼び出しを削除しパイプライン一本化。BoardPage催促ボタンもinsertNotification経由に変更
+- `NotificationsTab.tsx`：pushチャンネル列（📱ON/OFFトグルのみ、文面はシステム固定の説明付き）、shift_report:new_request/returned・board:confirm_request・purchase_request:manager_opinions_readyをイベント一覧に追加
+
+### プッシュ対象イベント（EVENT_MAP・状態名詞は実機テスト済みの安全語のみ）
+- 休暇：申請/受理系→「未承認 n件」、差戻→「差戻 n件」
+- 勤務変更：申請→「未承認」、差戻→「差戻」
+- 備品：申請各ルート・意見出揃い→「未承認」、差戻→「差戻」
+- 交通費申請→「新着」、連絡板（notice/dm/group/confirm）→「新着」
+- リマインド：本日期限→「本日期限」、明日期限→「明日期限」、それ以外→「新着」
+
+### デプロイ・動作確認
+- Migration 2本適用済み、Edge Function 6本デプロイ済み（push-dispatch新規・send-push・remind-unread・remind-scheduled・board-scheduled-send・encouragement-notify）
+- cron `push-dispatch-every-min` 登録・active確認済み
+- **本番E2Eテスト成功**：notifications INSERT→push_queue pending→cron→sent→林晃平の実機に「ファイブM 連絡板／新着 1件」着信を確認
+- send-pushの認可：anon keyでの直接呼び出しが403になることを確認（穴が塞がった）
+- `tsc -b`・`vite build`成功
+- **途中のハマり**：cronからの呼び出しがVault保存のservice_role_key（JWT形式）でtoken完全一致にならず403全滅→JWTのrole=service_roleも許可する二段構えに修正して解決
+
+### 今後の確認事項・残タスク
+- 各イベント種別のプッシュが実運用で正しく届くか（現状board:noticeのみ実機確認済み。休暇/勤務変更/備品の承認系は未確認）
+- 管理画面「通知設定」タブのプッシュ列トグルが保存・反映されるか実機確認
+- iPhoneユーザー（長岡・曽川）への到達確認
+- 通知タップ後のカテゴリ別URL遷移（/leave-approvals等）が正しいか確認
+- （デザイナー提案の将来分）結果系の集約配信・quiet hours・iPhone購読導線ガイドは未実装

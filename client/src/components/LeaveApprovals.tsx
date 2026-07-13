@@ -286,7 +286,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     const rejectVars = { 申請者名: rejectingReq.requester?.name || '', 休暇種別: rejectTypeName, 差し戻し理由: rejectReason || '', リンク: 'https://fivem-portal.vercel.app/leave?tab=history' };
     if (await shouldSend('leave:rejected', 'site')) {
       const t = await getNotificationTemplate('leave:rejected', 'site', rejectVars);
-      await insertNotification(rejectingReq.user_id, t?.template ?? `休暇申請が差し戻されました`, t?.subject || rejectReason || undefined, 'leave_request:pending_resubmit', rejectingReq.id);
+      await insertNotification(rejectingReq.user_id, t?.template ?? `休暇申請が差し戻されました`, t?.subject || rejectReason || undefined, 'leave_request:pending_resubmit', rejectingReq.id, 'leave:rejected');
     }
     if (await shouldSend('leave:rejected', 'slack')) {
       const targetChannel = await getNotificationRecipient('leave:rejected', 'slack');

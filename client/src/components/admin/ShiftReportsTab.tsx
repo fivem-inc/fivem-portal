@@ -217,7 +217,7 @@ const ShiftReportsTab: React.FC = () => {
     await supabase.from('notifications').insert({
       user_id: r.applicant_id, message: '勤務変更申請が差戻されました',
       sub_message: `${getTypes(r).map(t => TYPE_INFO[t]?.label ?? t).join('＋')}　${r.work_date}${comment ? `\n理由：${comment}` : ''}`,
-      source_type: 'shift_report:pending_resubmit', reference_id: r.id, read: false,
+      source_type: 'shift_report:pending_resubmit', reference_id: r.id, event_key: 'shift_report:returned', read: false,
     }).then(null, () => {});
     setReturning(false); setReturnTarget(null); setReturnComment('');
     setSuccessMsg('差戻しました');

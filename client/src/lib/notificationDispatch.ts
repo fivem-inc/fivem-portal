@@ -85,7 +85,7 @@ export async function dispatchSiteNotification(
   eventKey: string,
   vars: Record<string, string>,
   userIds: { applicant?: string; leader?: string; manager?: string; approver?: string },
-  insertFn: (userId: string, message: string, subject?: string, sourceType?: string, referenceId?: string) => Promise<void>,
+  insertFn: (userId: string, message: string, subject?: string, sourceType?: string, referenceId?: string, eventKey?: string) => Promise<void>,
   sourceType?: string,
   referenceId?: string
 ): Promise<void> {
@@ -100,7 +100,8 @@ export async function dispatchSiteNotification(
     const userId = userIds[key as keyof typeof userIds];
     if (!userId || seen.has(userId)) continue;
     seen.add(userId);
-    await insertFn(userId, message, subject, sourceType, referenceId);
+    // event_keyも通知本体に記録する（プッシュ通知パイプラインの判定に使う）
+    await insertFn(userId, message, subject, sourceType, referenceId, eventKey);
   }
 }
 

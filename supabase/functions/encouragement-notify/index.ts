@@ -98,7 +98,7 @@ serve(async (req) => {
       if (unansweredIds.length === 0) continue
 
       await supabase.from('notifications').insert(
-        unansweredIds.map((uid: string) => ({ user_id: uid, message: msg }))
+        unansweredIds.map((uid: string) => ({ user_id: uid, message: msg, event_key: 'reminder:encouragement' }))
       )
 
       if (emailSetting?.enabled && emailSetting.template) {

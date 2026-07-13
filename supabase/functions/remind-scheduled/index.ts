@@ -71,24 +71,13 @@ serve(async () => {
 
     if (userIds.length === 0) continue;
 
-    // プッシュ通知のみ固定の安全文面を使う（管理者の自由文をそのまま送ると、
-    // 「確認」「〜してください」等を含む場合にChromeが不正な通知と判定して
-    // 警告表示になるため。2026-07-11実機テスト済み）。
-    // 実際のリマインド内容はサイト内のベル通知・メールで届く
-    await supabase.functions.invoke("send-push", {
-      body: {
-        user_ids: userIds,
-        title: "ファイブM リマインド",
-        body: "新着 1件",
-        url: "/board",
-        tag: `scheduled-${reminder.id}`,
-      },
-    });
+    // プッシュ通知はベル通知のINSERT→push_queueトリガー→push-dispatchワーカー経由で送られる
+    // （管理者の自由文はプッシュに載せず、ワーカーが固定の安全文面を使う）
 
     // reference_id は付けない：reminder.id は board_scheduled_reminders のIDであり、
     // board_messages のIDではないため、連絡板の詳細画面へのリンクとしては使えない
     await supabase.from("notifications").insert(
-      userIds.map((uid: string) => ({ user_id: uid, message: reminder.title, sub_message: reminder.body }))
+      userIds.map((uid: string) => ({ user_id: uid, message: reminder.title, sub_message: reminder.body, event_key: 'reminder:scheduled' }))
     );
 
     if (emailSetting?.enabled && emailSetting.template) {

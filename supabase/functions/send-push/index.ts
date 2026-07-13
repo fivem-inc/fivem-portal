@@ -200,6 +200,27 @@ serve(async (req) => {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
+    // 認可チェック：サーバー間呼び出し（service_role）のみ許可。
+    // verify_jwtだけでは「ログイン済みの誰でも」通ってしまい、任意の社員が
+    // 任意の文面で全社員にプッシュを送れる穴になるため、関数内で検証する。
+    // 署名の正当性はゲートウェイ（verify_jwt）が検証済みのため、ここでは
+    // roleクレームの確認で足りる（一般ユーザーのroleは'authenticated'）
+    const authHeader = req.headers.get("Authorization") || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "");
+    let isServiceRole = token === SUPABASE_SERVICE_ROLE_KEY;
+    if (!isServiceRole) {
+      try {
+        const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+        isServiceRole = payload.role === "service_role";
+      } catch { /* JWTでない場合はfalseのまま */ }
+    }
+    if (!isServiceRole) {
+      return new Response(
+        JSON.stringify({ error: "権限がありません" }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     const { user_ids, title, body, url, tag } = await req.json();
 
     if (!user_ids || !title || !body) {

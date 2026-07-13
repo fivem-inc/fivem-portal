@@ -101,6 +101,7 @@ serve(async (req) => {
       message: `${senderName}からお知らせが届きました`,
       sub_message: preview,
       reference_id: msg.id,
+      event_key: 'board:notice',
     }));
     const { error: notifyError } = await supabase.from('notifications').insert(notifications);
     if (notifyError) console.error('notification insert error:', notifyError);

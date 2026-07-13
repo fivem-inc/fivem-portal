@@ -465,6 +465,7 @@ const ShiftReportForm: React.FC<{
             sub_message: `${types.map(t => TYPE_INFO[t].label).join('＋')}　${date}`,
             source_type: 'shift_report:pending_approval',
             reference_id: newReport?.id,
+            event_key: 'shift_report:new_request',
             read: false,
           }).then(null, () => {});
         } else {
@@ -1033,7 +1034,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     await supabase.from('notifications').insert({
       user_id: r.applicant_id, message: '勤務変更申請が差戻されました',
       sub_message: `${TYPE_INFO[r.application_type].label}　${r.work_date}${comment ? `\n理由：${comment}` : ''}`,
-      source_type: 'shift_report:pending_resubmit', reference_id: r.id, read: false,
+      source_type: 'shift_report:pending_resubmit', reference_id: r.id, event_key: 'shift_report:returned', read: false,
     }).then(null, () => {});
     setReturningId(null); setReturnTarget(null); setReturnComment('');
     window.dispatchEvent(new CustomEvent('shift-pending-changed'));

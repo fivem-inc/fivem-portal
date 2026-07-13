@@ -454,7 +454,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
       } else if (tier === 'board') {
         const tpl = await getNotificationTemplate('purchase_request:submitted_board', 'site', vars);
         if (tpl) {
-          await Promise.all(boardApprovers.map(a => insertNotification(a.id, tpl.template, tpl.subject || undefined, 'purchase_request:pending_approval', recordId)));
+          await Promise.all(boardApprovers.map(a => insertNotification(a.id, tpl.template, tpl.subject || undefined, 'purchase_request:pending_approval', recordId, 'purchase_request:submitted_board')));
         }
         sendPurchaseSlackForEvent('purchase_request:submitted_board', 'submitted', 'board', applicantName, itemNameVar, parsedAmount).then(null, () => {});
         notifyEmailToMany('purchase_request:submitted_board', boardApprovers.map(a => a.id)).then(null, () => {});
@@ -475,7 +475,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
       } else {
         const tpl = await getNotificationTemplate('purchase_request:submitted_manager', 'site', vars);
         if (tpl) {
-          await Promise.all(requestedManagerIds.map(id => insertNotification(id, tpl.template, tpl.subject || undefined, 'purchase_request:pending_approval', recordId)));
+          await Promise.all(requestedManagerIds.map(id => insertNotification(id, tpl.template, tpl.subject || undefined, 'purchase_request:pending_approval', recordId, 'purchase_request:submitted_manager')));
         }
         sendPurchaseSlackForEvent('purchase_request:submitted_manager', 'submitted', 'manager', applicantName, itemNameVar, parsedAmount).then(null, () => {});
         notifyEmailToMany('purchase_request:submitted_manager', requestedManagerIds).then(null, () => {});

@@ -21,7 +21,7 @@ interface EmailTemplate {
   created_at: string;
 }
 
-type ChannelType = 'slack' | 'email' | 'site';
+type ChannelType = 'slack' | 'email' | 'site' | 'push';
 
 const EVENT_GROUPS = [
   {
@@ -65,7 +65,9 @@ const EVENT_GROUPS = [
     icon: '⏰',
     headerBg: '#FFEBEE', headerBorder: '#C62828', headerText: '#B71C1C',
     events: [
-      { key: 'shift_report:confirmed', label: '受理時' },
+      { key: 'shift_report:new_request', label: '申請時（プッシュのみ）' },
+      { key: 'shift_report:returned',    label: '差し戻し時（プッシュのみ）' },
+      { key: 'shift_report:confirmed',   label: '受理時' },
     ],
   },
   {
@@ -73,9 +75,10 @@ const EVENT_GROUPS = [
     icon: '📝',
     headerBg: '#FCE4EC', headerBorder: '#AD1457', headerText: '#880E4F',
     events: [
-      { key: 'board:notice',        label: 'お知らせ受信時' },
-      { key: 'board:dm_message',    label: '個人DM受信時' },
-      { key: 'board:group_message', label: 'グループメッセージ受信時' },
+      { key: 'board:notice',          label: 'お知らせ受信時' },
+      { key: 'board:dm_message',      label: '個人DM受信時' },
+      { key: 'board:group_message',   label: 'グループメッセージ受信時' },
+      { key: 'board:confirm_request', label: '確認リマインド送信時（プッシュのみ）' },
     ],
   },
   {
@@ -96,6 +99,7 @@ const EVENT_GROUPS = [
       { key: 'purchase_request:submitted',            label: '申請時（リーダー承認ルート）' },
       { key: 'purchase_request:submitted_manager',     label: '申請時（マネージャー審議ルート）' },
       { key: 'purchase_request:submitted_board',       label: '申請時（全員承認ルート）' },
+      { key: 'purchase_request:manager_opinions_ready', label: '意見出揃い時（プッシュのみ）' },
       { key: 'purchase_request:self_judgment_shared',  label: '自己判断・共有時' },
       { key: 'purchase_request:leader_approved',       label: 'リーダー最終承認時' },
       { key: 'purchase_request:manager_approved',      label: 'マネージャー最終承認時' },
@@ -109,12 +113,14 @@ const CHANNEL_LABELS: Record<ChannelType, string> = {
   slack: 'Slack',
   email: 'メール',
   site: 'サイト通知',
+  push: 'プッシュ',
 };
 
 const CHANNEL_ICONS: Record<ChannelType, string> = {
   slack: '💬',
   email: '📧',
   site: '🔔',
+  push: '📱',
 };
 
 const VARIABLES_BY_EVENT: Record<string, string[]> = {
@@ -378,7 +384,7 @@ const NotificationsTab: React.FC = () => {
   };
 
   const getBadges = (eventKey: string) => {
-    const channels: ChannelType[] = ['slack', 'email', 'site'];
+    const channels: ChannelType[] = ['slack', 'email', 'site', 'push'];
     return channels
       .filter(ch => getSetting(eventKey, ch))
       .map(ch => ({ channel: ch, enabled: getSetting(eventKey, ch)!.enabled }));
@@ -394,6 +400,7 @@ const NotificationsTab: React.FC = () => {
       slack: { bg: '#E1F5FE', color: '#0277BD' },
       email: { bg: '#E8F5E9', color: '#2E7D32' },
       site:  { bg: '#EDE7F6', color: '#4527A0' },
+      push:  { bg: '#FFF3E0', color: '#E65100' },
     };
     return { fontSize: 11, padding: '2px 8px', borderRadius: 20, ...colors[channel] };
   };
@@ -712,7 +719,31 @@ const NotificationsTab: React.FC = () => {
 
                 {isOpen && (
                   <div style={{ borderTop: `0.5px solid ${borderColor}`, padding: 16, background: sectionBg }}>
-                    {(<>{(['slack', 'email', 'site'] as ChannelType[]).map(channel => {
+                    {(<>{(['slack', 'email', 'site', 'push'] as ChannelType[]).map(channel => {
+                      // プッシュ：ON/OFFのみ（文面はシステム固定のためテンプレート編集なし）
+                      if (channel === 'push') {
+                        const s = getSetting(event.key, channel);
+                        if (!s) return null; // プッシュ対象外のイベントは行自体が無い
+                        return (
+                          <div key={channel} style={{ background: bg, border: `0.5px solid ${borderColor}`, borderRadius: 8, padding: '12px 14px', marginBottom: 8 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              <span style={{ fontSize: 14 }}>📱</span>
+                              <span style={{ fontSize: 13, fontWeight: 500, color: text, flex: 1 }}>プッシュ通知</span>
+                              <div onClick={() => updateLocal(event.key, channel, { enabled: !s.enabled })} style={{
+                                width: 36, height: 20, borderRadius: 10, cursor: 'pointer',
+                                background: s.enabled ? '#FB8C00' : (isDarkMode ? '#6c757d' : '#ccc'),
+                                position: 'relative', flexShrink: 0, transition: 'background 0.15s',
+                              }}>
+                                <div style={{ width: 16, height: 16, borderRadius: '50%', background: 'white', position: 'absolute', top: 2, transition: 'left 0.15s', left: s.enabled ? 18 : 2 }} />
+                              </div>
+                            </div>
+                            <div style={{ fontSize: 11, color: subText, marginTop: 8, lineHeight: 1.6 }}>
+                              ※ 文面はシステム固定（例：「ファイブM 休暇申請／未承認 1件」）。アカウント設定でプッシュ通知を許可している人にのみ届きます
+                            </div>
+                          </div>
+                        );
+                      }
+
                       if (event.key === 'trip:report_end' && channel === 'slack') {
                         return (
                           <div key={channel} style={{

@@ -519,7 +519,7 @@ const LeaveRequestsTab: React.FC = () => {
                       );
                       const dl2 = `${d2.getMonth()+1}月${d2.getDate()}日`;
                       await supabase.from('notifications').insert(
-                        encCreateTargets.map(uid => ({ user_id: uid, message: `📅 有給奨励日の回答をお願いします（${dl2}、期限：${encCreateDeadline}）` }))
+                        encCreateTargets.map(uid => ({ user_id: uid, message: `📅 有給奨励日の回答をお願いします（${dl2}、期限：${encCreateDeadline}）`, event_key: 'reminder:encouragement' }))
                       );
                       setEncCreating(false);
                       setShowEncConfirm(false); setShowAllEncTargets(false);
@@ -781,7 +781,7 @@ const LeaveRequestsTab: React.FC = () => {
                                       if (d) {
                                         const dateLabel = `${Number(d.target_date.slice(5,7))}月${Number(d.target_date.slice(8,10))}日`;
                                         await supabase.from('notifications').insert(
-                                          encAddTargetIds.map(uid => ({ user_id: uid, message: `📅 有給奨励日の回答をお願いします（${dateLabel}、期限：${d.deadline}）` }))
+                                          encAddTargetIds.map(uid => ({ user_id: uid, message: `📅 有給奨励日の回答をお願いします（${dateLabel}、期限：${d.deadline}）`, event_key: 'reminder:encouragement' }))
                                         );
                                       }
                                       setEncAddingTargets(false);
@@ -1558,7 +1558,7 @@ const LeaveRequestsTab: React.FC = () => {
                           } else {
                             if (await shouldSend('leave:rejected', 'site')) {
                               const t = await getNotificationTemplate('leave:rejected', 'site', { 申請者名: '', 休暇種別: rejectModal.leave_type, 差し戻し理由: rejectReason || '' });
-                              await insertNotification(rejectModal.user_id, t?.template ?? `休暇申請が差し戻されました`, t?.subject || rejectReason || undefined, 'leave_request:pending_resubmit', rejectModal.id);
+                              await insertNotification(rejectModal.user_id, t?.template ?? `休暇申請が差し戻されました`, t?.subject || rejectReason || undefined, 'leave_request:pending_resubmit', rejectModal.id, 'leave:rejected');
                             }
                             if (await shouldSend('leave:rejected', 'slack')) {
                               const targetChannel = await getNotificationRecipient('leave:rejected', 'slack');
