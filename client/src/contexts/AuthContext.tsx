@@ -79,6 +79,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (event === 'SIGNED_IN') {
         setLoading(true);
         applySessionUser(session?.user as AuthUser ?? null).finally(() => setLoading(false));
+      } else if (event === 'TOKEN_REFRESHED') {
+        // トークン更新はSupabaseライブラリ内部でセッションが維持されるため、
+        // ここでユーザーを作り直さない。作り直すと役職・権限の再取得が毎回走り、
+        // モバイルの不安定回線で一瞬空データを掴むとナビボタンが消える不具合の原因になる。
+        // （同一ユーザーのトークン差し替えだけなのでアプリ側の状態更新は不要）
       } else {
         applySessionUser(session?.user as AuthUser ?? null);
       }

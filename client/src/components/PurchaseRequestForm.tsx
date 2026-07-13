@@ -117,6 +117,9 @@ interface PurchaseRequestFormProps {
   onDoneResubmit?: () => void;
 }
 
+// 申請フォームの入力内容を一時保存するlocalStorageキー
+const DRAFT_STORAGE_KEY = 'fivem_purchase_request_draft';
+
 const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTitle, isAdmin, resubmitRecord, onDoneResubmit }) => {
   const isDarkMode = useDarkMode();
   const cardBg = isDarkMode ? '#343a40' : '#ffffff';
@@ -131,8 +134,30 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
   const isResubmit = !!resubmitRecord;
   const [draftId] = useState(() => resubmitRecord?.id ?? crypto.randomUUID());
 
+  // スマホで参考リンクを探しに別アプリへ移動するとページが破棄され入力が消える問題への対策。
+  // 入力内容をlocalStorageへ自動保存し、戻ってきたら復元する（再申請時は使わない）
+  interface FormDraft {
+    items: ItemDraft[];
+    requestedDate: string; purpose: string; purposeDetail: string; reason: string;
+    notes: string; location: string; leaderId: string;
+    requestedManagerIds: string[]; sharedManagerIds: string[];
+    presidentSelfJudgment: boolean; selfJudgeConfirmFirst: boolean;
+    manualTotalOverride: string; totalManuallyOverridden: boolean; amountDiffReason: string;
+  }
+  const [savedDraft] = useState<Partial<FormDraft> | null>(() => {
+    if (resubmitRecord) return null;
+    try {
+      const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
+      return raw ? (JSON.parse(raw) as Partial<FormDraft>) : null;
+    } catch { return null; }
+  });
+  const [draftRestored, setDraftRestored] = useState(!!savedDraft);
+
   const initialItems = (): ItemDraft[] => {
-    if (!resubmitRecord) return [emptyItemDraft()];
+    if (!resubmitRecord) {
+      if (savedDraft?.items && savedDraft.items.length > 0) return savedDraft.items;
+      return [emptyItemDraft()];
+    }
     const items = resolveItems(
       {
         item_name: resubmitRecord.item_name,
@@ -147,32 +172,44 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
   };
 
   const [items, setItems] = useState<ItemDraft[]>(initialItems);
-  const [requestedDate, setRequestedDate] = useState(resubmitRecord?.requested_purchase_date ?? new Date().toISOString().slice(0, 10));
-  const [purpose, setPurpose] = useState(resubmitRecord?.purpose ?? '');
+  const [requestedDate, setRequestedDate] = useState(resubmitRecord?.requested_purchase_date ?? savedDraft?.requestedDate ?? new Date().toISOString().slice(0, 10));
+  const [purpose, setPurpose] = useState(resubmitRecord?.purpose ?? savedDraft?.purpose ?? '');
   // 用途を選択肢から選んだ場合でも、補足の詳細を書けるようにする任意欄
-  const [purposeDetail, setPurposeDetail] = useState('');
-  const [reason, setReason] = useState(resubmitRecord?.reason ?? '');
-  const [notes, setNotes] = useState(resubmitRecord?.notes ?? '');
-  const [location, setLocation] = useState('');
+  const [purposeDetail, setPurposeDetail] = useState(savedDraft?.purposeDetail ?? '');
+  const [reason, setReason] = useState(resubmitRecord?.reason ?? savedDraft?.reason ?? '');
+  const [notes, setNotes] = useState(resubmitRecord?.notes ?? savedDraft?.notes ?? '');
+  const [location, setLocation] = useState(savedDraft?.location ?? '');
   const [workplaceOptions, setWorkplaceOptions] = useState<string[]>([]);
   const [purposeOptions, setPurposeOptions] = useState<string[]>([]);
-  const [leaderId, setLeaderId] = useState(resubmitRecord?.leader_id ?? '');
-  const [requestedManagerIds, setRequestedManagerIds] = useState<string[]>(resubmitRecord?.requested_manager_ids ?? []);
-  const [sharedManagerIds, setSharedManagerIds] = useState<string[]>(resubmitRecord?.shared_manager_ids ?? []);
-  const [presidentSelfJudgment, setPresidentSelfJudgment] = useState<boolean>(resubmitRecord?.president_self_judgment ?? false);
+  const [leaderId, setLeaderId] = useState(resubmitRecord?.leader_id ?? savedDraft?.leaderId ?? '');
+  const [requestedManagerIds, setRequestedManagerIds] = useState<string[]>(resubmitRecord?.requested_manager_ids ?? savedDraft?.requestedManagerIds ?? []);
+  const [sharedManagerIds, setSharedManagerIds] = useState<string[]>(resubmitRecord?.shared_manager_ids ?? savedDraft?.sharedManagerIds ?? []);
+  const [presidentSelfJudgment, setPresidentSelfJudgment] = useState<boolean>(resubmitRecord?.president_self_judgment ?? savedDraft?.presidentSelfJudgment ?? false);
   // 決裁権限内（自己判断可能）でも、購入前に確認してもらいたい場合に選べる（デフォルトは従来通り共有のみ）
   // 再申請時は前回選んだ進め方（is_self_judgmentがfalseなら「事前確認」を選んでいた）を引き継ぐ
   const [selfJudgeConfirmFirst, setSelfJudgeConfirmFirst] = useState<boolean>(
-    resubmitRecord ? !resubmitRecord.is_self_judgment : false
+    resubmitRecord ? !resubmitRecord.is_self_judgment : (savedDraft?.selfJudgeConfirmFirst ?? false)
   );
   const [leaders, setLeaders] = useState<{ id: string; name: string; role_title: string }[]>([]);
   const [managers, setManagers] = useState<{ id: string; name: string }[]>([]);
   const [shareCandidates, setShareCandidates] = useState<{ id: string; name: string; role_title: string }[]>([]);
   const [boardApprovers, setBoardApprovers] = useState<{ id: string; name: string; role_title: string }[]>([]);
 
-  const [manualTotalOverride, setManualTotalOverride] = useState('');
-  const [totalManuallyOverridden, setTotalManuallyOverridden] = useState(false);
-  const [amountDiffReason, setAmountDiffReason] = useState('');
+  const [manualTotalOverride, setManualTotalOverride] = useState(savedDraft?.manualTotalOverride ?? '');
+  const [totalManuallyOverridden, setTotalManuallyOverridden] = useState(savedDraft?.totalManuallyOverridden ?? false);
+  const [amountDiffReason, setAmountDiffReason] = useState(savedDraft?.amountDiffReason ?? '');
+
+  // 入力内容をlocalStorageへ自動保存（再申請時は保存しない）
+  useEffect(() => {
+    if (isResubmit) return;
+    try {
+      localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({
+        items, requestedDate, purpose, purposeDetail, reason, notes, location,
+        leaderId, requestedManagerIds, sharedManagerIds, presidentSelfJudgment,
+        selfJudgeConfirmFirst, manualTotalOverride, totalManuallyOverridden, amountDiffReason,
+      }));
+    } catch { /* 保存容量超過などは無視 */ }
+  }, [isResubmit, items, requestedDate, purpose, purposeDetail, reason, notes, location, leaderId, requestedManagerIds, sharedManagerIds, presidentSelfJudgment, selfJudgeConfirmFirst, manualTotalOverride, totalManuallyOverridden, amountDiffReason]);
 
   useEffect(() => {
     supabase.from('profiles').select('id, name, role_title').eq('is_active', true)
@@ -379,6 +416,8 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
     setLeaderId(''); setRequestedManagerIds([]); setSharedManagerIds([]);
     setPresidentSelfJudgment(false); setSelfJudgeConfirmFirst(false);
     setManualTotalOverride(''); setTotalManuallyOverridden(false); setAmountDiffReason('');
+    setDraftRestored(false);
+    try { localStorage.removeItem(DRAFT_STORAGE_KEY); } catch { /* ignore */ }
   };
 
   const handleSubmit = async () => {
@@ -447,7 +486,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
         // 社長の自己判断（共有のみ）は全マネージャーへ共有通知
         const tpl = await getNotificationTemplate('purchase_request:self_judgment_shared', 'site', vars);
         if (tpl) {
-          await Promise.all(managers.map(m => insertNotification(m.id, tpl.template, tpl.subject || undefined, 'purchase_request', recordId)));
+          await Promise.all(managers.map(m => insertNotification(m.id, tpl.template, tpl.subject || undefined, 'purchase_request', recordId, 'purchase_request:self_judgment_shared')));
         }
         sendPurchaseSlackForEvent('purchase_request:self_judgment_shared', 'submitted', 'self_judgment', applicantName, itemNameVar, parsedAmount).then(null, () => {});
         notifyEmailToMany('purchase_request:self_judgment_shared', managers.map(m => m.id)).then(null, () => {});
@@ -461,7 +500,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
       } else if (isSelfJudgment) {
         const tpl = await getNotificationTemplate('purchase_request:self_judgment_shared', 'site', vars);
         if (tpl) {
-          await Promise.all(sharedManagerIds.map(id => insertNotification(id, tpl.template, tpl.subject || undefined, 'purchase_request', recordId)));
+          await Promise.all(sharedManagerIds.map(id => insertNotification(id, tpl.template, tpl.subject || undefined, 'purchase_request', recordId, 'purchase_request:self_judgment_shared')));
         }
         sendPurchaseSlackForEvent('purchase_request:self_judgment_shared', 'submitted', 'self_judgment', applicantName, itemNameVar, parsedAmount).then(null, () => {});
         notifyEmailToMany('purchase_request:self_judgment_shared', sharedManagerIds).then(null, () => {});
@@ -565,6 +604,14 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
           sub="内容は履歴タブから確認できます"
           onClose={() => setSuccessBanner(false)}
         />
+      )}
+
+      {draftRestored && !isResubmit && (
+        <div style={{ marginBottom: 14, padding: '10px 12px', background: isDarkMode ? '#1e3a2a' : '#e8f5e9', border: `1px solid ${isDarkMode ? '#2e5a40' : '#a5d6a7'}`, borderRadius: 8, fontSize: 13, color: isDarkMode ? '#a5e0b5' : '#1b5e20', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+          <span style={{ flex: 1, minWidth: 180 }}>前回の入力内容を復元しました。</span>
+          <button type="button" onClick={resetForm} style={{ padding: '5px 12px', borderRadius: 6, border: 'none', background: '#dc3545', color: '#fff', fontSize: 12, cursor: 'pointer' }}>新しく入力し直す</button>
+          <button type="button" onClick={() => setDraftRestored(false)} style={{ padding: '5px 12px', borderRadius: 6, border: `1px solid ${border}`, background: 'none', color: text, fontSize: 12, cursor: 'pointer' }}>閉じる</button>
+        </div>
       )}
 
       {isResubmit && resubmitRecord?.returned_reason && (

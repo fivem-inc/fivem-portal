@@ -126,6 +126,21 @@ serve(async (req) => {
       }
     }
 
+    // プッシュ通知（サイト通知とは別に役職を選択できる。文面はシステム固定）
+    const pushSetting = getSetting('push')
+    if (pushSetting?.enabled) {
+      const pushTargetIds = await resolveTargetIds(pushSetting.recipient)
+      if (pushTargetIds.length > 0) {
+        const { data: subs } = await supabase.from('push_subscriptions').select('user_id').in('user_id', pushTargetIds)
+        const pushIds = [...new Set(((subs ?? []) as { user_id: string }[]).map(s => s.user_id))]
+        if (pushIds.length > 0) {
+          await supabase.functions.invoke('send-push', {
+            body: { user_ids: pushIds, title: 'ファイブM 時間調整', body: '新着 1件', url: '/leave', tag: 'time_adjustment' },
+          })
+        }
+      }
+    }
+
     // Slack通知
     const slackSetting = getSetting('slack')
     if (slackSetting?.enabled) {

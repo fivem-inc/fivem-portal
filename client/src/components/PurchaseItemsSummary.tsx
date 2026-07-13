@@ -24,6 +24,24 @@ const PurchaseItemsSummary: React.FC<PurchaseItemsSummaryProps> = ({ items, isDa
     </>
   );
 
+  // 備考がURLの場合はクリックできるリンクにし、長くてもはみ出さず折り返す
+  const renderNote = (note: string) => {
+    const isUrl = /^https?:\/\//i.test(note.trim());
+    if (isUrl) {
+      return (
+        <a
+          href={note.trim()}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ flexBasis: '100%', minWidth: 0, color: '#4a90d9', textDecoration: 'underline', wordBreak: 'break-all', fontSize: 12 }}
+        >
+          🔗 参考リンクを開く
+        </a>
+      );
+    }
+    return <span style={{ flexBasis: '100%', minWidth: 0, color: subText, wordBreak: 'break-all' }}>{note}</span>;
+  };
+
   if (items.length === 1) {
     const item = items[0];
     return (
@@ -40,7 +58,7 @@ const PurchaseItemsSummary: React.FC<PurchaseItemsSummaryProps> = ({ items, isDa
                 {q.is_selected && (
                   <span style={{ color: '#fff', background: '#28a745', borderRadius: 4, padding: '1px 6px', fontSize: 11 }}>購入予定</span>
                 )}
-                {q.note && <span style={{ color: subText }}>{q.note}</span>}
+                {q.note && renderNote(q.note)}
                 {q.quote_file_path && (
                   onViewFile ? (
                     <button
@@ -91,7 +109,7 @@ const PurchaseItemsSummary: React.FC<PurchaseItemsSummaryProps> = ({ items, isDa
                     {q.is_selected && (
                       <span style={{ color: '#fff', background: '#28a745', borderRadius: 4, padding: '1px 6px', fontSize: 11 }}>購入予定</span>
                     )}
-                    {q.note && <span style={{ color: subText }}>{q.note}</span>}
+                    {q.note && renderNote(q.note)}
                     {q.quote_file_path && (
                   onViewFile ? (
                     <button

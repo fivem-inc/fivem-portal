@@ -318,7 +318,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
     if (allApproved) {
       setAllApprovedBanner('これで全員承認が完了しました');
       const tpl = await getNotificationTemplate('purchase_request:board_all_approved', 'site', vars);
-      if (tpl) await insertNotification(req.user_id, tpl.template, tpl.subject || undefined, 'purchase_request', req.id);
+      if (tpl) await insertNotification(req.user_id, tpl.template, tpl.subject || undefined, 'purchase_request', req.id, 'purchase_request:board_all_approved');
       sendPurchaseSlackForEvent('purchase_request:board_all_approved', 'board_all_approved', 'board', names[req.user_id] ?? '不明', itemNameSummary(req), req.amount).then(null, () => {});
       (async () => {
         const emailVars = { '申請者名': names[req.user_id] ?? '', '品目名': itemNameSummary(req), '金額': req.amount.toLocaleString() };

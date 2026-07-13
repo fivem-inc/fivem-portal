@@ -65,6 +65,28 @@ serve(async (req) => {
       }
     }
 
+    // プッシュ通知（サイト通知とは別に役職を選択できる。文面はシステム固定）
+    const pushSetting = settings.find(s => s.channel === 'push')
+    if (pushSetting?.enabled) {
+      let pushRoles: string[] = ['社長']
+      try {
+        const p = JSON.parse(pushSetting.recipient ?? '{}')
+        if (Array.isArray(p.roles)) pushRoles = p.roles
+      } catch { /* use defaults */ }
+      const { data: pushProfiles } = await supabase
+        .from('profiles').select('id').in('role_title', pushRoles).eq('is_active', true)
+      const pushTargetIds = ((pushProfiles ?? []) as { id: string }[]).map(d => d.id).filter(id => id !== user_id)
+      if (pushTargetIds.length > 0) {
+        const { data: subs } = await supabase.from('push_subscriptions').select('user_id').in('user_id', pushTargetIds)
+        const pushIds = [...new Set(((subs ?? []) as { user_id: string }[]).map(s => s.user_id))]
+        if (pushIds.length > 0) {
+          await supabase.functions.invoke('send-push', {
+            body: { user_ids: pushIds, title: 'ファイブM 備品精算', body: '新着 1件', url: '/purchase', tag: 'reimbursement_recorded' },
+          })
+        }
+      }
+    }
+
     return new Response(JSON.stringify({ ok: true, notifiedSite }), {
       headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
     })

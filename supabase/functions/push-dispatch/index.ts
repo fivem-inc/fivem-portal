@@ -28,6 +28,11 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string }> = {
   "purchase_request:submitted_board":       { app: "備品精算", word: "未承認", url: "/purchase" },
   "purchase_request:manager_opinions_ready": { app: "備品精算", word: "未承認", url: "/purchase" },
   "purchase_request:returned":              { app: "備品精算", word: "差戻", url: "/purchase" },
+  // 結果報告系（申請者・共有先へ）
+  "purchase_request:leader_approved":       { app: "備品精算", word: "承認", url: "/purchase" },
+  "purchase_request:manager_approved":      { app: "備品精算", word: "承認", url: "/purchase" },
+  "purchase_request:board_all_approved":    { app: "備品精算", word: "承認", url: "/purchase" },
+  "purchase_request:self_judgment_shared":  { app: "備品精算", word: "新着", url: "/purchase" },
   // 交通費申請（経理の要対応）
   "expense:new_request":     { app: "交通費", word: "新着", url: "/admin" },
   // 連絡板
@@ -88,19 +93,27 @@ serve(async (req) => {
       });
     }
 
-    // イベント別ON/OFF設定（notification_settingsのchannel='push'）を取得
+    // イベント別ON/OFF設定・追加送信先役職（notification_settingsのchannel='push'）を取得
     const { data: settings } = await supabase
       .from("notification_settings")
-      .select("event_key, enabled")
+      .select("event_key, enabled, recipient")
       .eq("channel", "push");
-    const pushEnabled = new Map<string, boolean>(
-      (settings ?? []).map((s: { event_key: string; enabled: boolean }) => [s.event_key, s.enabled])
-    );
+    const pushEnabled = new Map<string, boolean>();
+    const ccRolesByEvent = new Map<string, string[]>();
+    for (const s of (settings ?? []) as { event_key: string; enabled: boolean; recipient: string | null }[]) {
+      pushEnabled.set(s.event_key, s.enabled);
+      try {
+        const p = JSON.parse(s.recipient ?? "{}");
+        if (Array.isArray(p.ccRoles) && p.ccRoles.length > 0) ccRolesByEvent.set(s.event_key, p.ccRoles);
+      } catch { /* recipientが役職設定でない場合は無視 */ }
+    }
 
     // ユーザー×(アプリ名×状態語×URL) で集約
     type Group = { userId: string; app: string; word: string; url: string; ids: string[]; tagKey: string };
     const groups = new Map<string, Group>();
     const skippedIds: string[] = [];
+    // 追加送信（CC）用：base event_key → その本来の宛先user_id集合（二重送信を防ぐため）
+    const primaryUsersByEvent = new Map<string, Set<string>>();
 
     for (const row of pending) {
       const map = EVENT_MAP[row.event_key];
@@ -118,6 +131,8 @@ serve(async (req) => {
       } else {
         groups.set(gKey, { userId: row.user_id, app: map.app, word: map.word, url: map.url, ids: [row.id], tagKey: base });
       }
+      if (!primaryUsersByEvent.has(base)) primaryUsersByEvent.set(base, new Set());
+      primaryUsersByEvent.get(base)!.add(row.user_id);
     }
 
     if (skippedIds.length > 0) {
@@ -161,14 +176,53 @@ serve(async (req) => {
       }
     }
 
+    // 追加送信（CC）：管理画面で「追加でプッシュする役職」を設定したイベントは、
+    // 本来の宛先に加えてその役職の人にも同じプッシュを送る（設定が空なら何もしない）。
+    // CC送信の成否はpush_queueのstatusには影響させない（本来の宛先送信が主）。
+    let ccSent = 0;
+    for (const [base, roles] of ccRolesByEvent.entries()) {
+      const map = EVENT_MAP[base];
+      if (!map || pushEnabled.get(base) === false) continue;
+      // このバッチにそのイベントが無ければCCも送らない
+      const primaryUsers = primaryUsersByEvent.get(base);
+      if (!primaryUsers || primaryUsers.size === 0) continue;
+
+      const { data: roleProfiles } = await supabase
+        .from("profiles").select("id").in("role_title", roles).eq("is_active", true);
+      const roleIds = ((roleProfiles ?? []) as { id: string }[]).map(p => p.id);
+      // 本来の宛先と重複する人は除く（二重送信防止）
+      const ccIds = roleIds.filter(id => !primaryUsers.has(id));
+      if (ccIds.length === 0) continue;
+
+      // 購読者だけに絞る
+      const { data: subs } = await supabase
+        .from("push_subscriptions").select("user_id").in("user_id", ccIds);
+      const ccPushIds = [...new Set(((subs ?? []) as { user_id: string }[]).map(s => s.user_id))];
+      if (ccPushIds.length === 0) continue;
+
+      const count = primaryUsers.size;
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+        body: JSON.stringify({
+          user_ids: ccPushIds,
+          title: `ファイブM ${map.app}`,
+          body: `${map.word} ${count}件`,
+          url: map.url,
+          tag: `cc-${base}`,
+        }),
+      });
+      if (res.ok) ccSent += ccPushIds.length;
+    }
+
     // 7日より古い処理済み行を掃除
     await supabase.from("push_queue")
       .delete()
       .in("status", ["sent", "skipped"])
       .lt("created_at", new Date(Date.now() - 7 * 86400000).toISOString());
 
-    console.log(`[push-dispatch] sent=${sent} skipped=${skippedIds.length} failed=${failed}`);
-    return new Response(JSON.stringify({ sent, skipped: skippedIds.length, failed }), {
+    console.log(`[push-dispatch] sent=${sent} cc=${ccSent} skipped=${skippedIds.length} failed=${failed}`);
+    return new Response(JSON.stringify({ sent, cc: ccSent, skipped: skippedIds.length, failed }), {
       headers: { "Content-Type": "application/json" },
     });
   } catch (err) {

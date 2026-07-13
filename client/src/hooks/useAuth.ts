@@ -24,18 +24,22 @@ interface UseAuthReturn {
 const PREVIEW_ROLES = ['パート', '一般', 'リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者'] as const;
 export { PREVIEW_ROLES };
 
-// 役職名からDB権限マップを取得する共通処理
-async function fetchPermsForRole(roleName: string): Promise<Record<string, boolean>> {
-  const { data: roleData } = await supabase
+// 役職名からDB権限マップを取得する共通処理。
+// 取得に失敗した場合は null を返す（呼び出し側で「既存の権限を保持」させ、
+// モバイルの不安定回線でトークン更新のたびに空データで上書きされ、
+// ナビボタンが消える不具合を防ぐため）
+async function fetchPermsForRole(roleName: string): Promise<Record<string, boolean> | null> {
+  const { data: roleData, error: roleErr } = await supabase
     .from('roles')
     .select('id')
     .eq('name', roleName)
     .single();
-  if (!roleData) return {};
-  const { data } = await supabase
+  if (roleErr || !roleData) return null;
+  const { data, error } = await supabase
     .from('feature_permissions')
     .select('feature_key, enabled')
     .eq('role_id', roleData.id);
+  if (error) return null;
   const map: Record<string, boolean> = {};
   (data || []).forEach((p: { feature_key: string; enabled: boolean }) => {
     map[p.feature_key] = p.enabled;
@@ -81,9 +85,9 @@ export const useAuth = (): UseAuthReturn => {
         setEmploymentType(empType);
         setLeaveRequestEnabled(!!data.leave_request_enabled);
 
-        // DBから権限を取得
+        // DBから権限を取得（失敗時nullは無視して既存の権限を保持）
         const perms = await fetchPermsForRole(role);
-        setFeaturePerms(perms);
+        if (perms) setFeaturePerms(perms);
 
         supabase.from('profiles')
           .update({ last_sign_in_at: new Date().toISOString() })
@@ -106,10 +110,10 @@ export const useAuth = (): UseAuthReturn => {
 
   useEffect(() => { fetchProfileName(); }, [fetchProfileName]);
 
-  // プレビュー役職が変わったらその役職の権限を取得
+  // プレビュー役職が変わったらその役職の権限を取得（失敗時は既存を保持）
   useEffect(() => {
     if (!previewRole) { setPreviewPerms({}); return; }
-    fetchPermsForRole(previewRole).then(setPreviewPerms);
+    fetchPermsForRole(previewRole).then(p => { if (p) setPreviewPerms(p); });
   }, [previewRole]);
 
   // 実効権限（プレビュー中はプレビュー役職の権限を使う）

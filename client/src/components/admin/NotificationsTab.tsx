@@ -105,6 +105,7 @@ const EVENT_GROUPS = [
       { key: 'purchase_request:manager_approved',      label: 'マネージャー最終承認時' },
       { key: 'purchase_request:board_all_approved',    label: '全員承認・自動確定時' },
       { key: 'purchase_request:returned',              label: '差し戻し時' },
+      { key: 'purchase:reimbursement_recorded',        label: '立替精算 記録時' },
     ],
   },
 ];
@@ -121,6 +122,33 @@ const CHANNEL_ICONS: Record<ChannelType, string> = {
   email: '📧',
   site: '🔔',
   push: '📱',
+};
+
+// プッシュ通知の送信先（誰のスマホに届くか）をイベント別に説明する文言
+const PUSH_RECIPIENT_BY_EVENT: Record<string, string> = {
+  'leave:new_request':       '申請の確認担当リーダー',
+  'leave:leader_approved':   '申請者本人',
+  'leave:manager_approved':  '申請者本人',
+  'leave:rejected':          '申請者本人',
+  'shift_report:new_request': '申請の確認依頼先（勤務校のリーダー・マネージャー）',
+  'shift_report:returned':    '申請者本人',
+  'purchase_request:submitted':             '承認担当リーダー',
+  'purchase_request:submitted_manager':     '審議を依頼されたマネージャー',
+  'purchase_request:submitted_board':       '全マネージャーと社長',
+  'purchase_request:manager_opinions_ready': '最終決定するマネージャー',
+  'purchase_request:returned':              '申請者本人',
+  'purchase_request:leader_approved':       '申請者本人',
+  'purchase_request:manager_approved':      '申請者本人',
+  'purchase_request:board_all_approved':    '申請者本人',
+  'purchase_request:self_judgment_shared':  '共有先のマネージャー',
+  'expense:new_request':     '経理担当（承認者）',
+  'board:notice':           'お知らせの受信者',
+  'board:dm_message':       'メッセージの相手',
+  'board:group_message':    'グループのメンバー',
+  'board:confirm_request':  'まだ確認していない受信者',
+  'reminder:unread':        '締切のある連絡板の未読者',
+  'reminder:scheduled':     'リマインドの送信対象者',
+  'reminder:encouragement': '有給奨励日に未回答の対象者',
 };
 
 const VARIABLES_BY_EVENT: Record<string, string[]> = {
@@ -151,6 +179,8 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
 
 // 役職＋グループ絞り込みで一斉配信するイベント（時間調整・勤務変更受理など、UIとロジックを共有する）
 const ROLE_GROUP_BROADCAST_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed'];
+// プッシュ通知で役職を選択できるイベント（一斉通知系。宛先が自動で決まらないもの）
+const PUSH_ROLE_SELECT_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'purchase:reimbursement_recorded'];
 
 // 備品購入申請: 依頼された全マネージャー・社長など、宛先がその都度動的に決まるイベント。
 // サイト通知・メールの宛先はコード側で自動計算しており、この画面のチェックボックスでは
@@ -173,6 +203,16 @@ const TIME_ADJ_SLACK_OPTIONS = [
 const TIME_ADJ_ROLE_OPTIONS = ['申請者本人', 'リーダー', 'マネージャー', '管理者', '社長'];
 
 // 時間調整用 recipient JSON パーサー
+// 承認フロー系プッシュの「追加送信先の役職」（任意・設定のみ）を読み取る
+const parseCcRoles = (recipient: string | null): string[] => {
+  try {
+    const p = JSON.parse(recipient ?? '{}');
+    return Array.isArray(p.ccRoles) ? p.ccRoles : [];
+  } catch {
+    return [];
+  }
+};
+
 const parseRoleRecipient = (recipient: string | null): { roles: string[]; groupFilter: string } => {
   try {
     const p = JSON.parse(recipient ?? '{}');
@@ -720,13 +760,17 @@ const NotificationsTab: React.FC = () => {
                 {isOpen && (
                   <div style={{ borderTop: `0.5px solid ${borderColor}`, padding: 16, background: sectionBg }}>
                     {(<>{(['slack', 'email', 'site', 'push'] as ChannelType[]).map(channel => {
-                      // プッシュ：ON/OFFのみ（文面はシステム固定のためテンプレート編集なし）
+                      // プッシュ：ON/OFF＋（一斉通知系は役職選択）。文面はシステム固定
                       if (channel === 'push') {
                         const s = getSetting(event.key, channel);
                         if (!s) return null; // プッシュ対象外のイベントは行自体が無い
+                        // 役職を選べるイベント（サイト通知と同様に宛先を選択できる）
+                        const roleSelectable = PUSH_ROLE_SELECT_EVENTS.includes(event.key);
+                        const withGroupFilter = ROLE_GROUP_BROADCAST_EVENTS.includes(event.key);
+                        const { roles, groupFilter } = parseRoleRecipient(s.recipient);
                         return (
                           <div key={channel} style={{ background: bg, border: `0.5px solid ${borderColor}`, borderRadius: 8, padding: '12px 14px', marginBottom: 8 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: s.enabled ? 12 : 0 }}>
                               <span style={{ fontSize: 14 }}>📱</span>
                               <span style={{ fontSize: 13, fontWeight: 500, color: text, flex: 1 }}>プッシュ通知</span>
                               <div onClick={() => updateLocal(event.key, channel, { enabled: !s.enabled })} style={{
@@ -737,8 +781,81 @@ const NotificationsTab: React.FC = () => {
                                 <div style={{ width: 16, height: 16, borderRadius: '50%', background: 'white', position: 'absolute', top: 2, transition: 'left 0.15s', left: s.enabled ? 18 : 2 }} />
                               </div>
                             </div>
+                            {s.enabled && roleSelectable && (
+                              <div style={{ borderTop: `0.5px solid ${borderColor}`, paddingTop: 12, marginBottom: 4 }}>
+                                <div style={{ fontSize: 12, color: subText, marginBottom: 8 }}>プッシュ送信先の役職（複数選択可）</div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: withGroupFilter ? 12 : 0 }}>
+                                  {TIME_ADJ_ROLE_OPTIONS.filter(r => r !== '申請者本人').map(role => (
+                                    <label key={role} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', color: text }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={roles.includes(role)}
+                                        onChange={e => {
+                                          const newRoles = e.target.checked ? [...roles, role] : roles.filter(r => r !== role);
+                                          updateLocal(event.key, channel, { recipient: JSON.stringify({ roles: newRoles, groupFilter }) });
+                                        }}
+                                      />
+                                      {role}
+                                    </label>
+                                  ))}
+                                </div>
+                                {withGroupFilter && (
+                                  <>
+                                    <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>グループ絞り込み</div>
+                                    <div style={{ display: 'flex', gap: 16 }}>
+                                      {[
+                                        { value: 'same', label: '同グループのみ' },
+                                        { value: 'all',  label: 'グループに関係なく全員' },
+                                      ].map(opt => (
+                                        <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', color: text }}>
+                                          <input
+                                            type="radio"
+                                            name={`pushGroupFilter_${event.key}`}
+                                            checked={groupFilter === opt.value}
+                                            onChange={() => updateLocal(event.key, channel, { recipient: JSON.stringify({ roles, groupFilter: opt.value }) })}
+                                          />
+                                          {opt.label}
+                                        </label>
+                                      ))}
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            )}
+                            {!roleSelectable && (
+                              <div style={{ fontSize: 12, color: text, marginTop: 10, padding: '8px 10px', background: sectionBg, borderRadius: 6, lineHeight: 1.6 }}>
+                                📮 送信先：<span style={{ fontWeight: 600 }}>{PUSH_RECIPIENT_BY_EVENT[event.key] ?? '—'}</span>
+                              </div>
+                            )}
+                            {/* 追加でプッシュする役職（任意・設定のみ・現在は送信されません） */}
+                            {!roleSelectable && s.enabled && (() => {
+                              const cc = parseCcRoles(s.recipient);
+                              return (
+                                <div style={{ marginTop: 10, borderTop: `0.5px solid ${borderColor}`, paddingTop: 10 }}>
+                                  <div style={{ fontSize: 12, color: subText, marginBottom: 8 }}>
+                                    ＋ 追加でプッシュする役職（任意）
+                                    <span style={{ color: subText, marginLeft: 6 }}>※選ぶと本来の宛先に加えてその役職の人にも届きます（空欄なら追加送信なし）</span>
+                                  </div>
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                                    {TIME_ADJ_ROLE_OPTIONS.filter(r => r !== '申請者本人').map(role => (
+                                      <label key={role} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', color: text }}>
+                                        <input
+                                          type="checkbox"
+                                          checked={cc.includes(role)}
+                                          onChange={e => {
+                                            const newCc = e.target.checked ? [...cc, role] : cc.filter(r => r !== role);
+                                            updateLocal(event.key, channel, { recipient: JSON.stringify({ ccRoles: newCc }) });
+                                          }}
+                                        />
+                                        {role}
+                                      </label>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })()}
                             <div style={{ fontSize: 11, color: subText, marginTop: 8, lineHeight: 1.6 }}>
-                              ※ 文面はシステム固定（例：「ファイブM 休暇申請／未承認 1件」）。アカウント設定でプッシュ通知を許可している人にのみ届きます
+                              ※ 文面はシステム固定（例：「ファイブM 休暇申請／未承認 1件」）。上記のうち、アカウント設定でプッシュ通知を許可している人にのみ届きます
                             </div>
                           </div>
                         );
