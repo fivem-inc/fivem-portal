@@ -24,22 +24,31 @@ const PurchaseItemsSummary: React.FC<PurchaseItemsSummaryProps> = ({ items, isDa
     </>
   );
 
-  // 備考がURLの場合はクリックできるリンクにし、長くてもはみ出さず折り返す
+  // 備考（コメント＋リンクが混在しうる）を、文中のURL部分だけクリックできるリンクにして表示。
+  // コメントはそのまま文字表示、URLは折り返す（はみ出さない）
   const renderNote = (note: string) => {
-    const isUrl = /^https?:\/\//i.test(note.trim());
-    if (isUrl) {
-      return (
-        <a
-          href={note.trim()}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ flexBasis: '100%', minWidth: 0, color: '#4a90d9', textDecoration: 'underline', wordBreak: 'break-all', fontSize: 12 }}
-        >
-          🔗 参考リンクを開く
-        </a>
-      );
-    }
-    return <span style={{ flexBasis: '100%', minWidth: 0, color: subText, wordBreak: 'break-all' }}>{note}</span>;
+    // http/httpsで始まるURLを検出（末尾の句読点・閉じ括弧は含めない）
+    const urlRegex = /(https?:\/\/[^\s　、。）」]+)/g;
+    const parts = note.split(urlRegex);
+    return (
+      <span style={{ flexBasis: '100%', minWidth: 0, color: subText, wordBreak: 'break-all', fontSize: 12 }}>
+        {parts.map((part, i) =>
+          /^https?:\/\//i.test(part) ? (
+            <a
+              key={i}
+              href={part}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: '#4a90d9', textDecoration: 'underline' }}
+            >
+              🔗 リンク
+            </a>
+          ) : (
+            <React.Fragment key={i}>{part}</React.Fragment>
+          )
+        )}
+      </span>
+    );
   };
 
   if (items.length === 1) {
