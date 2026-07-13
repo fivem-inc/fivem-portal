@@ -13,14 +13,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [previewRole, setPreviewRole] = useState<string | null>(null);
   const [blockedMessage, setBlockedMessage] = useState<string | null>(null);
 
-  // is_active=false（退職済み・承認待ち）のユーザーは、ログイン状態として扱う前に弾く
+  // is_active=false（退職済み・承認待ち）・プロフィール削除済みのユーザーは、
+  // ログイン状態として扱う前に弾く
   const applySessionUser = async (sessionUser: AuthUser | null) => {
     if (!sessionUser) { setUser(null); return; }
-    const { data: profile } = await supabase
+    const { data: profile, error } = await supabase
       .from('profiles')
       .select('is_active, approval_status')
       .eq('id', sessionUser.id)
       .single();
+
+    // プロフィールが存在しない（PGRST116 = 行なし＝削除済みアカウント）→ 弾く。
+    // ネットワーク等の一時的な取得失敗（別エラーでdataもnull）は、正常ユーザーを
+    // 誤ってログアウトさせないため弾かず既存の挙動を維持する
+    if (error?.code === 'PGRST116') {
+      await supabase.auth.signOut();
+      setUser(null);
+      setBlockedMessage('このアカウントは無効です。管理者にお問い合わせください。');
+      return;
+    }
     if (profile && profile.is_active === false) {
       await supabase.auth.signOut();
       setUser(null);
