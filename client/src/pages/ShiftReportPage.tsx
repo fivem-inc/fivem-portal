@@ -1178,6 +1178,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
           <div style={{ padding: 24, background: bg, borderRadius: '0 0 12px 12px', boxShadow: cardShadow, boxSizing: 'border-box' }}>
             {/* 注意事項（常時表示） */}
             <div style={{ background: noteBg, border: `1px solid ${noteBorder}`, borderRadius: 8, padding: '12px 14px', marginBottom: 20, textAlign: 'left' }}>
+              <p style={{ fontSize: 14, fontWeight: 'bold', color: noteTitleColor, margin: '0 0 4px' }}>パート・アルバイトスタッフの「休日出勤・残業・早退・遅刻・欠勤」が発生したときに報告するページです。</p>
+              <p style={{ fontSize: 12, color: noteText, lineHeight: 1.8, margin: '0 0 12px' }}>（これまでの残業申請表の代わりです。）</p>
               <p style={{ fontSize: 13, fontWeight: 'bold', color: noteTitleColor, marginBottom: 8, marginTop: 0 }}>【注意事項】</p>
               <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: noteText, lineHeight: 1.8 }}>
                 <li>残業・早退・遅刻・欠勤が発生した場合に申請してください。</li>

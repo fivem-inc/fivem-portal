@@ -927,6 +927,26 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
 
       <h1 style={{ margin: '28px 0 16px', fontSize: 20, fontWeight: 800, color: textColor, letterSpacing: '0.04em', lineHeight: 1.2 }}>📅 休暇カレンダー</h1>
 
+      {/* このページの説明 */}
+      <div style={{
+        background: isDark ? '#2c3e50' : '#e8f4fd',
+        border: `1px solid ${isDark ? '#3d5a73' : '#bee5eb'}`,
+        borderRadius: 8, padding: '12px 14px', marginBottom: 16, textAlign: 'left',
+      }}>
+        <p style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#90c9f5' : '#0c5460', textAlign: 'center', margin: '0 0 10px' }}>【リーダー・マネージャー専用】</p>
+        {[
+          'スタッフの休みを一覧で確認できます',
+          '欠勤・遅刻・早退の入力ができます',
+        ].map((text, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 6px' }}>
+            <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
+            <span style={{ fontSize: 14, fontWeight: 'bold', color: isDark ? '#fff' : '#1a4a5a' }}>{text}</span>
+          </div>
+        ))}
+        <p style={{ fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8, margin: '8px 0 0' }}>※Googleカレンダーに自動登録されます。</p>
+        <p style={{ fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8, margin: 0 }}>※有給の申請はできません。</p>
+      </div>
+
       {/* 直近6ヶ月サマリー */}
       <div style={{ background: bg, borderRadius: 12, boxShadow: '0 2px 12px rgba(0,0,0,0.08)', padding: isMobile ? 14 : 20, marginBottom: 16 }}>
         <div style={{ fontSize: 13, fontWeight: 'bold', color: subColor, marginBottom: 12 }}>直近6ヶ月の休暇・欠勤日数</div>

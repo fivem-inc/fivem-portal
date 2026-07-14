@@ -904,13 +904,13 @@ const LeaveRequestsTab: React.FC = () => {
 
               {/* パートへ有給申請フォーム送信 */}
               <div style={{ background: isDarkMode ? '#2d3136' : '#f8f9fa', border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, borderRadius: 10, padding: '12px 16px', marginBottom: 20, maxWidth: 500, marginLeft: 'auto', marginRight: 'auto' }}>
-                <p style={{ fontWeight: 'bold', fontSize: 13, color: isDarkMode ? '#fff' : '#333', marginBottom: 8 }}>📨 パートへ有給申請フォームを送信</p>
+                <p style={{ fontWeight: 'bold', fontSize: 13, color: isDarkMode ? '#fff' : '#333', marginBottom: 8 }}>📨 パート・アルバイトへ休暇申請フォームを送信</p>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <select
                     id="part-leave-target"
                     style={{ flex: 1, minWidth: 160, padding: '6px 8px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', fontSize: 13 }}
                   >
-                    <option value="">-- パートを選択 --</option>
+                    <option value="">-- パート・アルバイトを選択 --</option>
                     {partUsers.map(u => (
                       <option key={u.id} value={u.id}>{u.name || u.email}</option>
                     ))}

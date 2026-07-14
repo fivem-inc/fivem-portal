@@ -603,6 +603,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             border: `1px solid ${isDark ? '#3d5a73' : '#bee5eb'}`,
             borderRadius: 8, padding: '12px 14px', marginBottom: 20, textAlign: 'left',
           }}>
+            <p style={{ fontSize: 14, fontWeight: 'bold', color: isDark ? '#fff' : '#1a4a5a', margin: '0 0 4px' }}>有給・慶弔休・調整休などを申請するページです。</p>
+            <p style={{ fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8, margin: '0 0 12px' }}>※申請が受理されると、Googleカレンダーに自動登録されます。</p>
             <p style={{ fontSize: 13, fontWeight: 'bold', color: isDark ? '#fff' : '#1a4a5a', marginBottom: 8 }}>【注意事項】</p>
             <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8, textAlign: 'left' }}>
               <li>休暇申請は、できるだけ休暇予定日の<strong>2週間前まで</strong>に行ってください。</li>
