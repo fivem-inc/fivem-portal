@@ -13,6 +13,7 @@ import BoardSettingsTab from './admin/BoardSettingsTab';
 import ShiftReportsTab from './admin/ShiftReportsTab';
 import FeaturePermissionsTab from './admin/FeaturePermissionsTab';
 import PurchaseRequestsTab from './admin/PurchaseRequestsTab';
+import AnnouncementsTab from './admin/AnnouncementsTab';
 
 interface AdminPanelProps {
   pendingApprovals: PendingApproval[];
@@ -465,6 +466,7 @@ const AdminPanelContent: React.FC = () => {
           { key: 'notifications',      label: '通知設定',      icon: '🔔' },
           { key: 'scheduled_reminders', label: 'リマインド設定', icon: '📅' },
           { key: 'board_settings',     label: '連絡板設定',    icon: '📨' },
+          { key: 'announcements',      label: 'お知らせ',      icon: '📢' },
           { key: 'feature_permissions',label: '権限管理',      icon: '🔐' },
         ] as const;
         const ALL_TABS = [...ROW1, ...ROW2];
@@ -554,6 +556,7 @@ const AdminPanelContent: React.FC = () => {
         {activeTab === 'purchase_requests' && <PurchaseRequestsTab />}
         {activeTab === 'leader_assignments' && <LeaderAssignmentsTab />}
         {activeTab === 'board_settings' && <BoardSettingsTab />}
+        {activeTab === 'announcements' && <AnnouncementsTab />}
         {activeTab === 'feature_permissions' && <FeaturePermissionsTab />}
         {activeTab === 'notifications' && <NotificationsTab />}
         {activeTab === 'scheduled_reminders' && (

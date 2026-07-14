@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { supabase } from '../../lib/supabaseClient';
 import { invalidateNotificationCache } from '../../lib/notificationDispatch';
+import PushBannerSettingsSection from './PushBannerSettingsSection';
 
 interface NotificationSetting {
   id: string;
@@ -697,6 +698,8 @@ const NotificationsTab: React.FC = () => {
     <div style={{ maxWidth: 720, margin: '0 auto', padding: '16px 0' }}>
       {libraryModal}
       {previewModal}
+
+      <PushBannerSettingsSection />
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
         <button onClick={() => { setShowLibrary(true); setLibrarySelectFor(null); }}

@@ -29,6 +29,8 @@ const PageLoader: React.FC = () => (
 import { AuthProvider, AuthContext } from './contexts/AuthContext.tsx';
 import { useAuth } from './hooks/useAuth';
 import { requestPushPermission, getPushPermissionStatus } from './utils/pushNotification';
+import { fetchPushBannerConfig, DEFAULT_PUSH_BANNER_MESSAGE, DEFAULT_PUSH_BANNER_TITLE, DEFAULT_PUSH_BANNER_ENABLE_LABEL, DEFAULT_PUSH_BANNER_LATER_LABEL, type PushBannerConfig } from './lib/pushBannerConfig';
+import { fetchActiveAnnouncements, type Announcement } from './lib/announcements';
 import { useFeaturePublished, isFeaturePublished } from './hooks/useFeaturePublished';
 import { supabase } from './lib/supabaseClient';
 import { useExpenses } from './hooks/useExpenses';
@@ -55,6 +57,8 @@ const PushEnableBanner: React.FC = () => {
   const [status, setStatus] = useState<'granted' | 'denied' | 'default' | 'unsupported' | 'loading'>('loading');
   const [hidden, setHidden] = useState(false);
   const [working, setWorking] = useState(false);
+  // 管理画面（通知設定タブ）の設定。null=読み込み中（読み込み完了までバナーを出さない＝一瞬表示→消えるちらつき防止）
+  const [config, setConfig] = useState<PushBannerConfig | null>(null);
 
   const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent);
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches
@@ -62,14 +66,16 @@ const PushEnableBanner: React.FC = () => {
 
   useEffect(() => {
     getPushPermissionStatus().then((s) => setStatus(s as typeof status));
+    fetchPushBannerConfig().then(setConfig);
     try {
       const until = Number(localStorage.getItem(PUSH_BANNER_DISMISS_KEY) || 0);
       if (until > Date.now()) setHidden(true);
     } catch { /* ignore */ }
   }, []);
 
-  // 既にON・拒否済み・読み込み中・「後で」で閉じた場合は出さない
+  // 既にON・拒否済み・読み込み中・「後で」で閉じた場合・管理画面でOFFの場合は出さない
   if (hidden || status === 'loading' || status === 'granted' || status === 'denied') return null;
+  if (!config || !config.enabled) return null;
 
   // iPhone(Safari)でホーム画面未追加 → プッシュ非対応なので追加手順を案内
   const iosNeedsInstall = isIOS && !isStandalone && status === 'unsupported';
@@ -77,7 +83,7 @@ const PushEnableBanner: React.FC = () => {
   if (status === 'unsupported' && !iosNeedsInstall) return null;
 
   const dismiss = () => {
-    try { localStorage.setItem(PUSH_BANNER_DISMISS_KEY, String(Date.now() + 7 * 86400000)); } catch { /* ignore */ }
+    try { localStorage.setItem(PUSH_BANNER_DISMISS_KEY, String(Date.now() + config.redisplayDays * 86400000)); } catch { /* ignore */ }
     setHidden(true);
   };
   const enable = async () => {
@@ -92,7 +98,7 @@ const PushEnableBanner: React.FC = () => {
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
         <span style={{ fontSize: 20, flexShrink: 0 }}>🔔</span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 'bold', color: '#1b5e20', marginBottom: 2 }}>スマホに通知を届けませんか？</div>
+          <div style={{ fontSize: 14, fontWeight: 'bold', color: '#1b5e20', marginBottom: 2 }}>{config.title.trim() || DEFAULT_PUSH_BANNER_TITLE}</div>
           {iosNeedsInstall ? (
             <div style={{ fontSize: 12.5, color: '#33691e', lineHeight: 1.8 }}>
               iPhoneで通知を受け取るには、ひと手間必要です：<br />
@@ -102,25 +108,75 @@ const PushEnableBanner: React.FC = () => {
               ④ 右上のアイコン →「アカウント設定」→「許可する」
             </div>
           ) : (
-            <div style={{ fontSize: 12.5, color: '#33691e', lineHeight: 1.7 }}>
-              連絡板の新着や申請のお知らせが、アプリを開かなくてもスマホに届きます。
+            <div style={{ fontSize: 12.5, color: '#33691e', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
+              {config.message.trim() || DEFAULT_PUSH_BANNER_MESSAGE}
             </div>
           )}
           <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
             {!iosNeedsInstall && (
               <button onClick={enable} disabled={working}
                 style={{ padding: '7px 18px', borderRadius: 20, border: 'none', background: '#4CAF50', color: '#fff', fontSize: 13, fontWeight: 600, cursor: working ? 'default' : 'pointer', opacity: working ? 0.6 : 1 }}>
-                {working ? '...' : '許可する'}
+                {working ? '...' : (config.enableLabel.trim() || DEFAULT_PUSH_BANNER_ENABLE_LABEL)}
               </button>
             )}
             <button onClick={dismiss}
               style={{ padding: '7px 16px', borderRadius: 20, border: '1px solid #b7e0b7', background: 'transparent', color: '#558b2f', fontSize: 13, cursor: 'pointer' }}>
-              後で
+              {config.laterLabel.trim() || DEFAULT_PUSH_BANNER_LATER_LABEL}
             </button>
           </div>
         </div>
       </div>
     </div>
+  );
+};
+
+// 社内お知らせバナー（管理者が出した「表示中」のお知らせを全スタッフのホーム上部に表示）。
+// スタッフは右上の ✕ で個別に閉じられる（localStorage に閉じたIDを保存）。
+const ANNOUNCEMENT_DISMISS_KEY = 'announcement_dismissed_ids';
+
+const readDismissedAnnouncements = (): string[] => {
+  try {
+    const raw = localStorage.getItem(ANNOUNCEMENT_DISMISS_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.filter((v): v is string => typeof v === 'string') : [];
+  } catch { return []; }
+};
+
+const AnnouncementBanner: React.FC = () => {
+  const [items, setItems] = useState<Announcement[]>([]);
+  const [dismissed, setDismissed] = useState<string[]>(() => readDismissedAnnouncements());
+
+  useEffect(() => {
+    fetchActiveAnnouncements().then(setItems);
+  }, []);
+
+  const dismiss = (id: string) => {
+    setDismissed(prev => {
+      const next = prev.includes(id) ? prev : [...prev, id];
+      try { localStorage.setItem(ANNOUNCEMENT_DISMISS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  };
+
+  const visible = items.filter(a => !dismissed.includes(a.id));
+  if (visible.length === 0) return null;
+
+  return (
+    <>
+      {visible.map(a => (
+        <div key={a.id} style={{ background: '#e7f1fb', border: '1px solid #b6d4f2', borderRadius: 10, padding: '12px 14px', marginBottom: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+            <span style={{ fontSize: 20, flexShrink: 0 }}>📢</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 14, fontWeight: 'bold', color: '#0d47a1', marginBottom: 2 }}>{a.title}</div>
+              <div style={{ fontSize: 12.5, color: '#1565c0', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{a.body}</div>
+            </div>
+            <button onClick={() => dismiss(a.id)} aria-label="閉じる"
+              style={{ background: 'none', border: 'none', fontSize: 16, color: '#5a8bc0', cursor: 'pointer', flexShrink: 0, lineHeight: 1, padding: 0 }}>✕</button>
+          </div>
+        </div>
+      ))}
+    </>
   );
 };
 
@@ -1136,6 +1192,9 @@ const Dashboard: React.FC = () => {
 
       {/* ⓪ プッシュ通知の有効化を促すバナー（未ONの人にのみ表示） */}
       <PushEnableBanner />
+
+      {/* ⓪-2 社内お知らせバナー（管理者が出したお知らせ・全員表示・個別に閉じられる） */}
+      <AnnouncementBanner />
 
       {/* ① お知らせ通知バナー（申請者向け） */}
       {!isAdmin && <NotificationBanner userId={user.id} />}

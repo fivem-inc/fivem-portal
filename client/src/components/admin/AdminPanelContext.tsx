@@ -8,9 +8,9 @@ import { sendLeaveSlack } from '../../lib/leaveSlack';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import { resolveItems } from '../../lib/purchaseItemsFallback';
 
-export type AdminTab = 'approvals' | 'users' | 'groups' | 'reports' | 'trip_reports' | 'leave_requests' | 'shift_reports' | 'leader_assignments' | 'notifications' | 'scheduled_reminders' | 'board_settings' | 'feature_permissions' | 'purchase_requests';
+export type AdminTab = 'approvals' | 'users' | 'groups' | 'reports' | 'trip_reports' | 'leave_requests' | 'shift_reports' | 'leader_assignments' | 'notifications' | 'scheduled_reminders' | 'board_settings' | 'feature_permissions' | 'purchase_requests' | 'announcements';
 
-const ADMIN_TABS: AdminTab[] = ['approvals', 'users', 'groups', 'reports', 'trip_reports', 'leave_requests', 'shift_reports', 'leader_assignments', 'notifications', 'scheduled_reminders', 'board_settings', 'feature_permissions', 'purchase_requests'];
+const ADMIN_TABS: AdminTab[] = ['approvals', 'users', 'groups', 'reports', 'trip_reports', 'leave_requests', 'shift_reports', 'leader_assignments', 'notifications', 'scheduled_reminders', 'board_settings', 'feature_permissions', 'purchase_requests', 'announcements'];
 
 interface PrintVoucher {
   submissionId: string;
