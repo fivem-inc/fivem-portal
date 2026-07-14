@@ -6827,3 +6827,38 @@ notifications INSERT
 
 ### 次回やること
 - 【実機確認】プッシュ通知を OFF→更新 で OFF のままか（Android/iPhone）。ON→更新 で ON のままか。
+
+---
+
+## ✅ 2026-07-15（続き9）休暇まわり4件（奨励日削除・社長宛先・カレンダー本番切替）＝本番反映済み
+
+フロントは1コミット、`gcal-sync` は関数デプロイ済み。本番DBの変更・マイグレーションは無し。
+
+### ① 有給奨励日の「日ごと削除」機能（LeaveRequestsTab.tsx）
+- 一覧を展開 →「削除」ボタン＋インライン確認（confirm禁止順守）
+- 既存の「個人ごとの✕（対象から削除）」を全員に行うのと同じ順序で削除：
+  回答 → 対象者 → その日の自動作成された承認済み有給申請 → 奨励日本体
+- RLSで拒否された場合（error無しで0件）も検知して警告表示。※実機で削除できることは確認済み
+
+### ② マネージャー受理時（leave:manager_approved）の宛先に「社長」追加
+### ③ 取り消し時（leave:cancelled）の宛先に「社長」追加
+- 通知設定タブの メール／サイト通知 の宛先チェックに「社長」を追加（②③のイベントだけに表示）
+- 送信側で `role_title='社長'`（在籍者・複数可）を解決して届ける
+- サイト通知は申請者本人を従来どおり送信＋社長を追加（無回帰）。メールも申請者＋社長
+- `notificationDispatch.ts` の dispatchEmail/dispatchSiteNotification を president キー・配列宛先に対応。二重送信防止つき
+- 変更: NotificationsTab.tsx（getRecipientOptions で president を出し分け）／LeaveApprovals.tsx（受理）／LeaveRequestsTab.tsx（取り消し）／notificationDispatch.ts
+- **注意：管理画面で「社長」にチェックを入れないと届かない（既定OFF）**
+
+### ④ 休暇カレンダーの本番/テスト ワンクリック切替
+- **背景**：書き込み先カレンダーは gcal-sync の env で固定だった。テスト（休暇（テスト））で運用中→本番（ファイブM共有）へ移行したい
+- **Secrets**：`GCAL_CALENDAR_ID`（既存＝テスト）はそのまま、`GCAL_CALENDAR_ID_PROD=office@five-m.com`（本番＝ファイブM共有のカレンダーID）を新規追加済み
+- **gcal-sync**：`app_settings` の `gcal_calendar_mode`（{mode:'production'|'test'}）を読み、本番なら `GCAL_CALENDAR_ID_PROD`、それ以外/未設定/失敗時は `GCAL_CALENDAR_ID`（テスト）
+- **管理画面**：通知設定タブ上部「🗓 休暇カレンダーの連携先」→ [本番]/[テスト] ワンクリック切替（`GcalCalendarSection.tsx` / `lib/gcalCalendarConfig.ts`）
+- 既定はテスト。**管理画面で[本番]を押した瞬間に本番カレンダーへ移行**。以降はアプリ内トグルだけで切替可（Secrets編集不要）
+- サービスアカウント `fivem-portal-gcal@chromium-358109.iam.gserviceaccount.com` を「ファイブM共有」に「予定の変更」で共有済み
+
+### 次回やること
+1. 【要操作】管理 → 通知設定 → 「🗓 休暇カレンダーの連携先」で **[本番] を押して本番へ移行** → 休暇1件受理して「ファイブM共有」に予定が出るか確認
+2. 【設定】通知設定で ②マネージャー受理時／③取り消し時 の「社長」チェックを入れる → 社長にメール/サイト通知が届くか
+3. 【実機確認】①有給奨励日の削除（本番）
+- 補足：テスト時に作った休暇を本番切替後に取消/変更すると、本番カレンダーに対象イベントが無く削除失敗しうる（新規は正常）

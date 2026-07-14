@@ -3,7 +3,7 @@ import { useAdminPanel } from './AdminPanelContext';
 import { useAuth } from '../../hooks/useAuth';
 import type { AdminLeaveRequest } from '../../types';
 import { insertNotification } from '../../lib/notifications';
-import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatchEmail, getUserEmail } from '../../lib/notificationDispatch';
+import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatchEmail, dispatchSiteNotification, getUserEmail } from '../../lib/notificationDispatch';
 import SearchableSelect from '../common/SearchableSelect';
 
 interface AbsenceRec {
@@ -83,6 +83,8 @@ const LeaveRequestsTab: React.FC = () => {
   const [encDays, setEncDays] = useState<EncDay[]>([]);
   const [encLoading, setEncLoading] = useState(false);
   const [expandedEncDays, setExpandedEncDays] = useState<Set<string>>(new Set());
+  const [encDeleteId, setEncDeleteId] = useState<string | null>(null);
+  const [encDeleting, setEncDeleting] = useState(false);
   const [encFY, setEncFY] = useState<string>('__current__');
   const [showEncCreate, setShowEncCreate] = useState(false);
   const [encCreateDate, setEncCreateDate] = useState('');
@@ -240,6 +242,37 @@ const LeaveRequestsTab: React.FC = () => {
   }, [supabase, encDays]);
 
   useEffect(() => { fetchEncDays(); }, [fetchEncDays]);
+
+  // 有給奨励日を「日ごと削除」する。
+  // 既存の「個人ごとの✕（対象から削除）」を全員に行うのと同じ挙動：
+  // 回答 → 対象者 → その日に自動作成された承認済み有給申請 → 奨励日本体 の順に削除。
+  const handleDeleteEncDay = useCallback(async (day: EncDay) => {
+    setEncDeleting(true);
+    const child = await Promise.all([
+      supabase.from('paid_leave_encouragement_responses').delete().eq('encouragement_day_id', day.id),
+      supabase.from('paid_leave_encouragement_targets').delete().eq('encouragement_day_id', day.id),
+      supabase.from('leave_requests').delete()
+        .eq('start_date', day.target_date).eq('reason', '【有給奨励日】').eq('status', 'approved'),
+    ]);
+    const childErr = child.find(r => r.error)?.error;
+    if (childErr) {
+      setEncDeleting(false); setEncDeleteId(null);
+      setSuccessMsg(`⚠ 削除に失敗しました：${childErr.message}`);
+      return;
+    }
+    // 奨励日本体。RLSで拒否されると error なしで0件になることがあるため .select() で実削除を確認
+    const { data: deleted, error: dayErr } = await supabase
+      .from('paid_leave_encouragement_days').delete().eq('id', day.id).select('id');
+    setEncDeleting(false); setEncDeleteId(null);
+    if (dayErr) { setSuccessMsg(`⚠ 削除に失敗しました：${dayErr.message}`); return; }
+    if (!deleted || deleted.length === 0) {
+      setSuccessMsg('⚠ 奨励日を削除できませんでした（権限/RLSの可能性）。管理者権限をご確認ください。');
+      fetchEncDays();
+      return;
+    }
+    setSuccessMsg(`奨励日（${fmtEncDow(day.target_date)}）を削除しました`);
+    fetchEncDays();
+  }, [supabase, fetchEncDays, setSuccessMsg]);
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
@@ -968,9 +1001,24 @@ const LeaveRequestsTab: React.FC = () => {
                               <div style={{ height: 6, borderRadius: 3, background: isDarkMode ? '#6c757d' : '#e9ecef', overflow: 'hidden' }}>
                                 <div style={{ height: '100%', borderRadius: 3, background: pct === 100 ? '#28a745' : '#007bff', width: `${pct}%`, transition: 'width 0.3s' }} />
                               </div>
-                              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
-                                <button onClick={() => { setShowEncDetail(d.id); fetchEncDetail(d.id); }}
-                                  style={{ padding: '3px 10px', background: '#17a2b8', color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>確認</button>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                                {encDeleteId === d.id ? (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', flex: 1 }}>
+                                    <span style={{ fontSize: 11, color: '#dc3545', fontWeight: 'bold' }}>削除しますか？対象者・回答・承認済みの有給申請もすべて消えます（元に戻せません）</span>
+                                    <button onClick={() => handleDeleteEncDay(d)} disabled={encDeleting}
+                                      style={{ padding: '3px 10px', background: '#dc3545', color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, cursor: encDeleting ? 'default' : 'pointer', fontWeight: 'bold' }}>
+                                      {encDeleting ? '削除中...' : '削除する'}</button>
+                                    <button onClick={() => setEncDeleteId(null)} disabled={encDeleting}
+                                      style={{ padding: '3px 10px', background: 'none', color: isDarkMode ? '#fff' : '#333', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>やめる</button>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <button onClick={() => setEncDeleteId(d.id)}
+                                      style={{ padding: '3px 10px', background: 'none', color: '#dc3545', border: '1px solid #dc3545', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>削除</button>
+                                    <button onClick={() => { setShowEncDetail(d.id); fetchEncDetail(d.id); }}
+                                      style={{ padding: '3px 10px', background: '#17a2b8', color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}>確認</button>
+                                  </>
+                                )}
                               </div>
                             </>
                           )}
@@ -1589,10 +1637,20 @@ const LeaveRequestsTab: React.FC = () => {
                               body: { action: 'delete', source_type: 'leave', source_id: rejectModal.id },
                             });
                           } catch (e) { console.error('[gcal-sync] 削除失敗:', e); }
-                          // 申請者に通知
+                          // 社長（宛先で「社長」を選んだ場合の届け先。複数人いても全員に届ける）
+                          const cancelType = rejectModal.leave_type === 'その他' ? (rejectModal.leave_type_other || 'その他') : rejectModal.leave_type;
+                          const cancelVars = { 申請者名: rejectModal.profile?.name ?? '', 休暇種別: cancelType, 取り消し理由: rejectReason || '' };
+                          const { data: cancelPres } = await supabase
+                            .from('profiles').select('id, email').eq('role_title', '社長').eq('is_active', true);
+                          const cancelPresIds = (cancelPres ?? []).map((p: { id: string }) => p.id);
+                          const cancelPresEmails = (cancelPres ?? []).map((p: { email: string | null }) => p.email).filter((e): e is string => !!e);
+                          // 申請者に通知（従来どおり直接送信）
                           if (await shouldSend('leave:cancelled', 'site')) {
                             await insertNotification(rejectModal.user_id, `休暇申請（${rejectModal.leave_type}）の受理が取り消されました${rejectReason ? `。理由：${rejectReason}` : ''}`, undefined, 'leave_request', rejectModal.id);
                           }
+                          // 宛先で「社長」を選んでいれば、社長にもサイト通知＋メール（applicantは上で送信済み）
+                          await dispatchSiteNotification('leave:cancelled', cancelVars, { president: cancelPresIds }, insertNotification, 'leave_request', rejectModal.id);
+                          await dispatchEmail('leave:cancelled', cancelVars, { president: cancelPresEmails });
                           setRejectModal(null); setRejectReason(''); setRejectNewType('');
                           fetchLeaveRequests();
                         }} style={{ flex: 1, padding: '14px 8px', background: '#fd7e14', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 'bold', cursor: 'pointer', lineHeight: 1.4 }}>

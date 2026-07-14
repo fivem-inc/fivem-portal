@@ -59,11 +59,24 @@ function parseRecipientKeys(recipient: string | null): string[] {
   return [recipient];
 }
 
-// 宛先キー（'applicant'/'leader'/'manager'/'approver'）をもとにメールアドレスを解決して送信する
+// 宛先キーごとの実アドレス/ID。社長(president)など複数人になりうる宛先は配列も受け取る。
+type RecipientMap = {
+  applicant?: string | string[];
+  leader?: string | string[];
+  manager?: string | string[];
+  approver?: string | string[];
+  president?: string | string[];
+};
+
+// 宛先マップの値（string | string[] | undefined）を配列に正規化
+const toList = (v: string | string[] | undefined): string[] =>
+  Array.isArray(v) ? v.filter(Boolean) : (v ? [v] : []);
+
+// 宛先キー（'applicant'/'leader'/'manager'/'approver'/'president'）をもとにメールアドレスを解決して送信する
 export async function dispatchEmail(
   eventKey: string,
   vars: Record<string, string>,
-  emails: { applicant?: string; leader?: string; manager?: string; approver?: string }
+  emails: RecipientMap
 ): Promise<void> {
   const settings = await getSettings();
   const s = settings.find(s => s.event_key === eventKey && s.channel === 'email');
@@ -71,11 +84,14 @@ export async function dispatchEmail(
   const keys = parseRecipientKeys(s.recipient);
   const text = applyTemplate(s.template, vars);
   const subject = s.subject ? applyTemplate(s.subject, vars) : eventKey;
+  const sent = new Set<string>();
   for (const key of keys) {
-    const to = emails[key as keyof typeof emails];
-    if (!to) continue;
-    const { error } = await supabase.functions.invoke('send-email', { body: { to, subject, text } });
-    if (error) console.error('[dispatchEmail] 送信失敗', { key, error });
+    for (const to of toList(emails[key as keyof RecipientMap])) {
+      if (sent.has(to)) continue; // 同一アドレスへの二重送信を防ぐ
+      sent.add(to);
+      const { error } = await supabase.functions.invoke('send-email', { body: { to, subject, text } });
+      if (error) console.error('[dispatchEmail] 送信失敗', { key, error });
+    }
   }
 }
 
@@ -84,7 +100,7 @@ export async function dispatchEmail(
 export async function dispatchSiteNotification(
   eventKey: string,
   vars: Record<string, string>,
-  userIds: { applicant?: string; leader?: string; manager?: string; approver?: string },
+  userIds: RecipientMap,
   insertFn: (userId: string, message: string, subject?: string, sourceType?: string, referenceId?: string, eventKey?: string) => Promise<void>,
   sourceType?: string,
   referenceId?: string
@@ -97,11 +113,12 @@ export async function dispatchSiteNotification(
   const subject = s.subject ? applyTemplate(s.subject, vars) : undefined;
   const seen = new Set<string>();
   for (const key of keys) {
-    const userId = userIds[key as keyof typeof userIds];
-    if (!userId || seen.has(userId)) continue;
-    seen.add(userId);
-    // event_keyも通知本体に記録する（プッシュ通知パイプラインの判定に使う）
-    await insertFn(userId, message, subject, sourceType, referenceId, eventKey);
+    for (const userId of toList(userIds[key as keyof RecipientMap])) {
+      if (seen.has(userId)) continue;
+      seen.add(userId);
+      // event_keyも通知本体に記録する（プッシュ通知パイプラインの判定に使う）
+      await insertFn(userId, message, subject, sourceType, referenceId, eventKey);
+    }
   }
 }
 

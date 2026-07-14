@@ -164,11 +164,23 @@ serve(async (req) => {
 
   try {
     const serviceAccountJson = Deno.env.get('GCAL_SERVICE_ACCOUNT_JSON')!
-    const calendarId = Deno.env.get('GCAL_CALENDAR_ID')!
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
     const supabase = createClient(supabaseUrl, supabaseKey)
+
+    // 書き込み先カレンダーを app_settings のモードで切り替える（管理画面のワンクリックトグル）。
+    // mode='production' → GCAL_CALENDAR_ID_PROD（本番）、それ以外/未設定/失敗時 → GCAL_CALENDAR_ID（テスト・現行維持）。
+    let calendarId = Deno.env.get('GCAL_CALENDAR_ID')!
+    try {
+      const { data: modeRow } = await supabase
+        .from('app_settings').select('value').eq('key', 'gcal_calendar_mode').maybeSingle()
+      const mode = (modeRow?.value as { mode?: string } | null)?.mode
+      if (mode === 'production') calendarId = Deno.env.get('GCAL_CALENDAR_ID_PROD') ?? calendarId
+    } catch (e) {
+      console.error('[gcal-sync] カレンダーモード取得失敗、テストカレンダーを使用:', e)
+    }
+
     const token = await getAccessToken(serviceAccountJson)
 
     const body = await req.json()

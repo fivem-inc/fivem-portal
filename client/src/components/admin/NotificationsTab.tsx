@@ -3,6 +3,7 @@ import { useAdminPanel } from './AdminPanelContext';
 import { supabase } from '../../lib/supabaseClient';
 import { invalidateNotificationCache } from '../../lib/notificationDispatch';
 import PushBannerSettingsSection from './PushBannerSettingsSection';
+import GcalCalendarSection from './GcalCalendarSection';
 
 interface NotificationSetting {
   id: string;
@@ -334,6 +335,17 @@ const RECIPIENT_OPTIONS: Record<string, { value: string; label: string }[]> = {
     { value: 'leader',    label: 'リーダー' },
     { value: 'manager',   label: 'マネージャー' },
   ],
+};
+
+// 「社長」を宛先に選べるイベント（マネージャー受理時・取り消し時）。他イベントには出さない。
+// 送信側で role_title='社長' を解決して届ける。
+const PRESIDENT_RECIPIENT_EVENTS = ['leave:manager_approved', 'leave:cancelled'];
+const getRecipientOptions = (channel: string, eventKey: string): { value: string; label: string }[] => {
+  const base = RECIPIENT_OPTIONS[channel] ?? [];
+  if (PRESIDENT_RECIPIENT_EVENTS.includes(eventKey) && (channel === 'email' || channel === 'site')) {
+    return [...base, { value: 'president', label: '社長' }];
+  }
+  return base;
 };
 
 const NotificationsTab: React.FC = () => {
@@ -701,6 +713,8 @@ const NotificationsTab: React.FC = () => {
 
       <PushBannerSettingsSection />
 
+      <GcalCalendarSection />
+
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
         <button onClick={() => { setShowLibrary(true); setLibrarySelectFor(null); }}
           style={{ fontSize: 12, padding: '6px 16px', border: `0.5px solid #0277BD`, borderRadius: 8, background: 'none', color: '#0277BD', cursor: 'pointer' }}>
@@ -1052,7 +1066,7 @@ const NotificationsTab: React.FC = () => {
                               ) : (
                                 // メール・サイト通知: 宛先チェックボックス（複数選択）
                                 (() => {
-                                  const recipientOptions = RECIPIENT_OPTIONS[channel] ?? [];
+                                  const recipientOptions = getRecipientOptions(channel, event.key);
                                   const selectedRecipients = parseEmailSiteRecipients(s.recipient);
                                   return (
                                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
