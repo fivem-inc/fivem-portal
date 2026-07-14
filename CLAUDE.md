@@ -6771,3 +6771,34 @@ notifications INSERT
 1. 【実機確認】プッシュ案内バナー：文言（タイトル・本文・ボタン）を変えて保存→実バナーに反映されるか（Android/iPhone）
 2. 【実機確認】社内お知らせ：作成→全スタッフのホームに表示→✕で閉じる／履歴の停止・再開・削除（まず「📱イメージを見る」で見た目確認→本番作成は「テスト」と明記し即削除）
 3. 【相談・スコープ外】スタッフ側で過去のお知らせを見返す一覧ページ
+
+---
+
+## ✅ 2026-07-14（続き7）お知らせに「表示期間・リマインド・作成時通知」を追加＝本番反映済み
+
+コミット `cf5cf21`（+Vercel発火用の空コミット `718a836`）。本番DB・Edge Function・cron すべて反映済み。
+実装前に UI/UXデザイナー＋シニアエンジニアのサブエージェント2体にレビューさせ、指摘（プッシュ全skip・二重送信・NULL後方互換・JST丸め・実効ステータス・編集導線など）を反映済み。
+
+### 機能
+- **表示期間（開始日〜終了日）**：期間外は自動で非表示。終了日は JST 23:59:59 まで表示（朝に消えるオフバイワン防止）。履歴に実効ステータス（表示予定/表示中/終了/停止中）を表示
+- **編集機能**：タイトル・本文・期間・通知を後から変更（期限延長も可）
+- **作成時通知**（Edge Function `announcement-notify`・管理者のみ・認証あり）：投稿した瞬間に全員へプッシュ／メール
+- **期限リマインド**（Edge Function `announcement-remind`／cron `announcement-remind-daily` 毎日09:00 JST）：終了日前に アプリ内再表示／プッシュ／メール。回数=1回 or 毎日を選択可。`reference_id` と `remind_last_sent_on` で二重送信防止
+- **メールは全員宛て**（件名`【お知らせ】タイトル`／本文）→ 通知OFFの人にも届く
+- `push-dispatch` の EVENT_MAP に `announcement:new` / `announcement:remind` 追加（文面は安全語「新着」固定）
+
+### 主なファイル
+- client: `lib/announcements.ts` / `lib/announcementDates.ts`(新) / `components/admin/AnnouncementsTab.tsx` / `App.tsx`(AnnouncementBanner)
+- supabase: `functions/announcement-notify`(新) / `announcement-remind`(新) / `push-dispatch`(更新) / `migrations/20260721000000`(列追加・冪等) / `20260721010000`(cron記録)
+
+### デプロイ手順の記録（今回の学び）
+- 本番DB列追加：ダッシュボード SQL Editor で手動実行（`db push` は使わず）。列追加のみで既存データ非破壊
+- Edge Function：`supabase functions deploy announcement-notify announcement-remind push-dispatch`（Docker不要・APIバンドル）
+- cron：ダッシュボードで `cron.schedule('announcement-remind-daily','0 0 * * *', …)` を手動登録（Vault の service_role_key 使用）
+- **Vercel：`cf5cf21` の自動デプロイが webhook 不発 → 空コミット `718a836` を push して発火**（同様の事象が起きたらこの手で対処）
+
+### 次回やること
+1. 【実機確認】📢お知らせタブの新UI：詳細設定・表示期間・作成時通知（メール/プッシュ）・リマインド・編集
+   - 作成時メール/プッシュが届くか、期間外は非表示か、編集で期限延長できるか
+   - 安全手順：まず「📱イメージを見る」→ 本番作成は「テスト」明記で即削除
+2. 【任意】リマインドのプッシュ/メールは毎日09:00自動。急ぎ確認は ダッシュボード Edge Functions → `announcement-remind` を手動 Invoke
