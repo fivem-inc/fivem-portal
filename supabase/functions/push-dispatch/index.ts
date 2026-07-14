@@ -46,6 +46,10 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string }> = {
   "reminder:unread:later":    { app: "連絡板", word: "新着", url: "/board" },
   "reminder:scheduled":       { app: "リマインド", word: "新着", url: "/board" },
   "reminder:encouragement":   { app: "休暇申請", word: "新着", url: "/leave" },
+  // 社内お知らせ（作成時の連絡・終了日が近づいたリマインド）
+  // word は安全語ホワイトリスト（新着）のみ。自由文は Android で警告表示に化けるため不可。
+  "announcement:new":         { app: "お知らせ", word: "新着", url: "/" },
+  "announcement:remind":      { app: "お知らせ", word: "新着", url: "/" },
 };
 
 // notification_settingsの参照キー（'reminder:unread:today'→'reminder:unread'）

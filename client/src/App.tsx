@@ -31,6 +31,7 @@ import { useAuth } from './hooks/useAuth';
 import { requestPushPermission, getPushPermissionStatus } from './utils/pushNotification';
 import { fetchPushBannerConfig, DEFAULT_PUSH_BANNER_MESSAGE, DEFAULT_PUSH_BANNER_TITLE, DEFAULT_PUSH_BANNER_ENABLE_LABEL, DEFAULT_PUSH_BANNER_LATER_LABEL, type PushBannerConfig } from './lib/pushBannerConfig';
 import { fetchActiveAnnouncements, type Announcement } from './lib/announcements';
+import { isInRemindWindow } from './lib/announcementDates';
 import { useFeaturePublished, isFeaturePublished } from './hooks/useFeaturePublished';
 import { supabase } from './lib/supabaseClient';
 import { useExpenses } from './hooks/useExpenses';
@@ -132,50 +133,94 @@ const PushEnableBanner: React.FC = () => {
 
 // 社内お知らせバナー（管理者が出した「表示中」のお知らせを全スタッフのホーム上部に表示）。
 // スタッフは右上の ✕ で個別に閉じられる（localStorage に閉じたIDを保存）。
+//
+// リマインド再表示: お知らせが「アプリ内リマインド期間」に入ると、通常フェーズで
+// 一度閉じた人にももう一度だけ表示する。閉じるフェーズ（通常／リマインド）ごとに
+// 別キーで閉じたIDを持つことで、「閉じた→期限が近づいて再表示→また閉じたら終わり」を実現する。
 const ANNOUNCEMENT_DISMISS_KEY = 'announcement_dismissed_ids';
+const ANNOUNCEMENT_REMIND_DISMISS_KEY = 'announcement_remind_dismissed_ids';
 
-const readDismissedAnnouncements = (): string[] => {
+const readDismissedIds = (key: string): string[] => {
   try {
-    const raw = localStorage.getItem(ANNOUNCEMENT_DISMISS_KEY);
+    const raw = localStorage.getItem(key);
     const arr = raw ? JSON.parse(raw) : [];
     return Array.isArray(arr) ? arr.filter((v): v is string => typeof v === 'string') : [];
   } catch { return []; }
 };
 
+const writeDismissedIds = (key: string, ids: string[]) => {
+  try { localStorage.setItem(key, JSON.stringify(ids)); } catch { /* ignore */ }
+};
+
 const AnnouncementBanner: React.FC = () => {
   const [items, setItems] = useState<Announcement[]>([]);
-  const [dismissed, setDismissed] = useState<string[]>(() => readDismissedAnnouncements());
+  const [dismissed, setDismissed] = useState<string[]>(() => readDismissedIds(ANNOUNCEMENT_DISMISS_KEY));
+  const [remindDismissed, setRemindDismissed] = useState<string[]>(() => readDismissedIds(ANNOUNCEMENT_REMIND_DISMISS_KEY));
 
   useEffect(() => {
-    fetchActiveAnnouncements().then(setItems);
+    fetchActiveAnnouncements().then(list => {
+      setItems(list);
+      // 表示対象でなくなったID（削除・期間切れ）を両キーから剪定してゴミが溜まらないようにする
+      const liveIds = new Set(list.map(a => a.id));
+      setDismissed(prev => {
+        const next = prev.filter(id => liveIds.has(id));
+        if (next.length !== prev.length) writeDismissedIds(ANNOUNCEMENT_DISMISS_KEY, next);
+        return next;
+      });
+      setRemindDismissed(prev => {
+        const next = prev.filter(id => liveIds.has(id));
+        if (next.length !== prev.length) writeDismissedIds(ANNOUNCEMENT_REMIND_DISMISS_KEY, next);
+        return next;
+      });
+    });
   }, []);
 
-  const dismiss = (id: string) => {
-    setDismissed(prev => {
-      const next = prev.includes(id) ? prev : [...prev, id];
-      try { localStorage.setItem(ANNOUNCEMENT_DISMISS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
-      return next;
-    });
+  const dismiss = (a: Announcement) => {
+    // リマインド期間中に閉じたらリマインド用キーへ、それ以外は通常キーへ
+    if (isInRemindWindow(a)) {
+      setRemindDismissed(prev => {
+        const next = prev.includes(a.id) ? prev : [...prev, a.id];
+        writeDismissedIds(ANNOUNCEMENT_REMIND_DISMISS_KEY, next);
+        return next;
+      });
+    } else {
+      setDismissed(prev => {
+        const next = prev.includes(a.id) ? prev : [...prev, a.id];
+        writeDismissedIds(ANNOUNCEMENT_DISMISS_KEY, next);
+        return next;
+      });
+    }
   };
 
-  const visible = items.filter(a => !dismissed.includes(a.id));
+  const visible = items.filter(a => {
+    const remindPhase = isInRemindWindow(a);
+    // リマインド期間中は通常フェーズで閉じたかどうかを無視し、リマインド用キーだけで判定
+    // （＝一度閉じた人にも再表示する）。それ以外は通常キーで判定。
+    return remindPhase ? !remindDismissed.includes(a.id) : !dismissed.includes(a.id);
+  });
   if (visible.length === 0) return null;
 
   return (
     <>
-      {visible.map(a => (
+      {visible.map(a => {
+        const remindPhase = isInRemindWindow(a);
+        return (
         <div key={a.id} style={{ background: '#e7f1fb', border: '1px solid #b6d4f2', borderRadius: 10, padding: '12px 14px', marginBottom: 10 }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
             <span style={{ fontSize: 20, flexShrink: 0 }}>📢</span>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14, fontWeight: 'bold', color: '#0d47a1', marginBottom: 2 }}>{a.title}</div>
+              <div style={{ fontSize: 14, fontWeight: 'bold', color: '#0d47a1', marginBottom: 2 }}>
+                {remindPhase && <span style={{ fontSize: 11, fontWeight: 700, color: '#c62828', marginRight: 6 }}>【再掲・もうすぐ期限】</span>}
+                {a.title}
+              </div>
               <div style={{ fontSize: 12.5, color: '#1565c0', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{a.body}</div>
             </div>
-            <button onClick={() => dismiss(a.id)} aria-label="閉じる"
+            <button onClick={() => dismiss(a)} aria-label="閉じる"
               style={{ background: 'none', border: 'none', fontSize: 16, color: '#5a8bc0', cursor: 'pointer', flexShrink: 0, lineHeight: 1, padding: 0 }}>✕</button>
           </div>
         </div>
-      ))}
+        );
+      })}
     </>
   );
 };
