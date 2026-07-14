@@ -62,5 +62,19 @@ export async function unsubscribePush(): Promise<void> {
 
 export async function getPushPermissionStatus(): Promise<NotificationPermission | 'unsupported'> {
   if (!('Notification' in window)) return 'unsupported';
-  return Notification.permission;
+  const perm = Notification.permission;
+  // 「OFFにする」を押すと購読(push_subscription)は消えるが、ブラウザの通知許可は
+  // granted のまま残る（許可の取り消しはユーザーがブラウザ設定でしか行えない）。
+  // そのため permission だけで判定すると、OFFにしても更新でONに戻って見える。
+  // 実際に購読しているかどうか（PushManager の購読の有無）で ON/OFF を判定する。
+  if (perm === 'granted' && 'serviceWorker' in navigator && 'PushManager' in window) {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      return sub ? 'granted' : 'default'; // 購読が無ければ OFF(default) 扱い
+    } catch {
+      return 'granted'; // 判定できないときは従来通り granted
+    }
+  }
+  return perm;
 }
