@@ -6712,3 +6712,43 @@ notifications INSERT
 - Android実機：ホームにバナーが出て「許可する」でその場でON→バナー消える→プッシュ届く
 - iPhone実機：バナーに「ホーム画面に追加」手順が出る／PWAで開くと「許可する」が出る
 - 既にONの人・「後で」を押した人にバナーが出ないこと
+
+---
+
+## ✅ 2026-07-14（続き5）プッシュ案内バナー文言編集＋社内お知らせ機能＝デプロイ完了（コミット5ab738b）
+
+**本番反映済み**（tsc -b・vite build成功／push origin master／announcementsテーブルも本番DB適用済み）。
+
+### 機能A：プッシュ案内バナーを管理画面から編集可能に（拡張）
+- 通知設定タブ先頭の設定セクション（`PushBannerSettingsSection.tsx`）＋設定ロジック（`lib/pushBannerConfig.ts`）
+- 当初は「案内文（本文）」のみ編集可だったが、**ユーザー要望でタイトル・「ONにする」ボタン・「後で」ボタンの文言も編集可能に拡張**
+- 各欄が空欄なら初期文にフォールバック（DEFAULT定数）：タイトル`通知設定のお願い`／本文`大切なお知らせを見逃さないよう、特別な理由がなければ通知はONでお願いします。`／ON`通知をONにする`／後で`後で`
+- `App.tsx`の`PushEnableBanner`が`config.title/message/enableLabel/laterLabel`を反映。iPhoneのホーム画面追加手順のみ固定文（編集対象外）
+- 保存先：`app_settings` key='push_banner_config'（jsonb：enabled/title/message/enableLabel/laterLabel/redisplayDays）。保存自体はDB棚(app_settings)が既存のため本番DB変更不要
+
+### 機能B：社内お知らせ（新機能）
+- 管理者が全スタッフのホーム上部にお知らせバナーを出す＋履歴管理
+- **DB**：`announcements`テーブル（id/title/body/active/created_by/created_at/updated_at）。RLS＝全員select・`role_title='管理者'`のみwrite。マイグレーション`supabase/migrations/20260714120000_create_announcements.sql`
+  - ⚠️このマイグレーションは日付が既存適用済み分（20260720...）より**古い**ため、`supabase db push`ではなく`supabase db query --linked -f <file>`で直接適用した（冪等=if not existsなので再実行安全）
+- `lib/announcements.ts`：fetchActive/fetchAll/create/setActive/delete
+- 管理画面「📢お知らせ」タブ（`AnnouncementsTab.tsx`）：作成フォーム＋「📱イメージを見る」プレビュー＋履歴一覧（表示中/停止トグル・削除）。**削除はconfirm禁止→インライン確認UI**
+- `AdminPanel.tsx`配線（import・ROW2タブ追加・描画分岐）＋`AdminPanelContext.tsx`のAdminTab型に`announcements`追加
+- `App.tsx`の`AnnouncementBanner`：`fetchActiveAnnouncements`取得、青系#e7f1fb・📢、全員表示、localStorage`announcement_dismissed_ids`で個別に閉じる。PushEnableBanner直後に配置
+- ※お知らせ作成はプッシュ通知を飛ばさない（アプリ内バナー表示のみ）
+
+### 実機確認事項（次回・本番URLで）
+- プッシュ案内バナー：通知設定タブで文言（タイトル・本文・ボタン）を変えて保存→実バナーに反映されるか（Android/iPhone）
+- 社内お知らせ：作成→全スタッフのホームに表示→✕で閉じる／履歴の停止・再開・削除
+- ※安全にテストするなら、まず「📱イメージを見る」プレビュー（DB保存なし・他人に見えない）で見た目確認→本番作成は中身を「テスト」と明記しすぐ削除
+
+### 今後の相談（今回スコープ外）
+- スタッフ側で過去のお知らせを見返す一覧ページ（要相談）
+
+### 作業ルール（再掲・厳守）
+- 作業フォルダ`C:\Users\[ユーザー名]\fivem-portal`。開始時：git pull→git status→CLAUDE.md「次回やること」確認
+- 修正後：`cd client && npx tsc -b && npx vite build`（Vercelと同手順で確認）
+- UIの文言・配色・新機能はいきなり実装せず**案を提示→承認後に実装**。見た目確認はvisualizeモックアップ or 画面内プレビュー
+- **alert()・window.confirm()・.catch()禁止**（削除確認等はインライン確認UI）
+- 認証はAuthContextに一元化。再取得結果で上書きする箇所は「失敗・空・切替時に前/誤った値を見せない」
+- 本番DB操作（`supabase db query --linked`）は「進めて」だけでは通さず、**本番DBを対象と明示した許可**を得てから実行
+- push/コミットは指示待ち。git add前に必ずgit status目視。`AGENTS.md`は未追跡のままコミットに含めない
