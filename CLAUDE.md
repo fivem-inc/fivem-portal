@@ -6802,3 +6802,28 @@ notifications INSERT
    - 作成時メール/プッシュが届くか、期間外は非表示か、編集で期限延長できるか
    - 安全手順：まず「📱イメージを見る」→ 本番作成は「テスト」明記で即削除
 2. 【任意】リマインドのプッシュ/メールは毎日09:00自動。急ぎ確認は ダッシュボード Edge Functions → `announcement-remind` を手動 Invoke
+
+---
+
+## ✅ 2026-07-14（続き8）プッシュ通知OFFが更新でONに戻る不具合を修正＝本番反映済み
+
+コミット `16dcf55`。フロントのみ（`client/src/utils/pushNotification.ts`）。
+
+### 症状
+アカウント設定／通知設定ページで「プッシュ通知」を **OFFにしても、ページ更新するとONに戻って見える**。
+
+### 原因
+`getPushPermissionStatus()` が `Notification.permission`（ブラウザの通知許可）だけで ON/OFF を判定していた。
+「OFFにする」を押すと購読（`push_subscriptions`）は消えるが、**ブラウザの通知許可は `granted` のまま残る**（許可の取り消しはユーザーがブラウザ設定でしか行えない仕様）。そのため更新時に `granted`＝ON と表示されていた。
+
+### 修正
+`getPushPermissionStatus()` を、許可が granted のときは **実際の購読の有無**（`PushManager.getSubscription()`）で判定するよう変更。購読が無ければ `default`（OFF）を返す。
+- 使用箇所3つ（`App.tsx` の案内バナー／`AccountSettings.tsx`／`NotificationSettings.tsx`）すべてに反映される
+- 副作用：これまでバグでON表示だった（実際はOFF）人には、ホームの「通知をONに」案内バナーが再表示される（＝正しい挙動。「後で」で7日消せる）
+
+### 注意事項（今後の教訓）
+- **ブラウザの通知許可(permission)と、実際のプッシュ購読(subscription)は別物**。ON/OFF表示は購読の有無で判定すること。permission は「拒否(denied)」判定にのみ使う。
+- 端末とDBの購読状態がズレる可能性（ブラウザに購読があるがDB行が無い等）は今回未対応。必要になれば `push_subscriptions` の行も併せて確認する。
+
+### 次回やること
+- 【実機確認】プッシュ通知を OFF→更新 で OFF のままか（Android/iPhone）。ON→更新 で ON のままか。
