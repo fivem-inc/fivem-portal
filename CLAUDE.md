@@ -6687,3 +6687,28 @@ notifications INSERT
 
 ### 起動体感 第1弾の実機確認結果（ユーザーOK）
 - 起動時の真っ白解消・アバターのメール頭文字N改善を確認（「少し早くなった」「Nの表示は改善された」）
+
+---
+
+## ✅ 2026-07-14（続き4）プッシュ通知ON促進：案内文＋アプリ内バナー
+
+ユーザー要望「基本的に全員プッシュ通知をONにしてほしい・こちらからお知らせを出したい」に対応。
+**制約**：プッシュは各自がブラウザで「許可」しないとONにできず、こちらから強制ONは不可。iPhoneは「ホーム画面に追加」してPWAで開かないと設定欄すら出ない。
+
+### ① 案内文（連絡板の全員宛て投稿 or メール一斉送信用・ユーザーに提供済み）
+- Android(Chrome)：右上アイコン→アカウント設定→プッシュ通知「許可する」→確認で許可
+- iPhone(Safari)：Safariで開く→共有ボタン(□↑)→ホーム画面に追加→そのアイコンから開き直す→アカウント設定→許可する
+- OFF：アカウント設定→プッシュ通知「OFFにする」
+- ※プッシュ自体でお知らせしても未ONの人に届かないので、連絡板/メールで出すのが正解
+
+### ② アプリ内バナー（`App.tsx` の `PushEnableBanner`）
+- Dashboard(ホーム=ログイン後の着地)トップに、まだONにしていない人にだけ表示（既にON/拒否済み/「後で」で閉じた場合は非表示）
+- `getPushPermissionStatus()`で判定：'default'→その場で押せる「許可する」ボタン（requestPushPermission呼び出し）／iPhone(Safari・ホーム画面未追加=unsupported+isIOS+非standalone)→「ホーム画面に追加」の手順を出し分け
+- iOS判定：`/iP(hone|ad|od)/.test(userAgent)`、standalone判定：`matchMedia('(display-mode: standalone)')` or `navigator.standalone`
+- 「後で」で7日間非表示（localStorage `push_banner_dismissed_until`）。'denied'は本人が拒否済みなので出さない（AccountSettings側に再設定手順あり）
+- フロントのみ、`tsc -b`・`vite build`成功、ローカルでコンソールエラーなし確認（バナー本体はログイン後表示のため実機確認は次回）
+
+### 実機確認事項
+- Android実機：ホームにバナーが出て「許可する」でその場でON→バナー消える→プッシュ届く
+- iPhone実機：バナーに「ホーム画面に追加」手順が出る／PWAで開くと「許可する」が出る
+- 既にONの人・「後で」を押した人にバナーが出ないこと

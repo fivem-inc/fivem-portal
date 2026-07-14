@@ -28,6 +28,7 @@ const PageLoader: React.FC = () => (
 );
 import { AuthProvider, AuthContext } from './contexts/AuthContext.tsx';
 import { useAuth } from './hooks/useAuth';
+import { requestPushPermission, getPushPermissionStatus } from './utils/pushNotification';
 import { useFeaturePublished, isFeaturePublished } from './hooks/useFeaturePublished';
 import { supabase } from './lib/supabaseClient';
 import { useExpenses } from './hooks/useExpenses';
@@ -44,6 +45,83 @@ const ScrollToTop: React.FC = () => {
     document.body.scrollTop = 0;
   }, [pathname]);
   return null;
+};
+
+// プッシュ通知の有効化を促すバナー（まだONにしていない人にだけ表示）。
+// iPhone(Safari・ホーム画面未追加)はプッシュ非対応なので「ホーム画面に追加」手順を、
+// それ以外(Android等)はその場で押せる「許可する」ボタンを出し分ける。
+const PUSH_BANNER_DISMISS_KEY = 'push_banner_dismissed_until';
+const PushEnableBanner: React.FC = () => {
+  const [status, setStatus] = useState<'granted' | 'denied' | 'default' | 'unsupported' | 'loading'>('loading');
+  const [hidden, setHidden] = useState(false);
+  const [working, setWorking] = useState(false);
+
+  const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent);
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+    || (navigator as unknown as { standalone?: boolean }).standalone === true;
+
+  useEffect(() => {
+    getPushPermissionStatus().then((s) => setStatus(s as typeof status));
+    try {
+      const until = Number(localStorage.getItem(PUSH_BANNER_DISMISS_KEY) || 0);
+      if (until > Date.now()) setHidden(true);
+    } catch { /* ignore */ }
+  }, []);
+
+  // 既にON・拒否済み・読み込み中・「後で」で閉じた場合は出さない
+  if (hidden || status === 'loading' || status === 'granted' || status === 'denied') return null;
+
+  // iPhone(Safari)でホーム画面未追加 → プッシュ非対応なので追加手順を案内
+  const iosNeedsInstall = isIOS && !isStandalone && status === 'unsupported';
+  // 非対応かつiOSでもない（古いブラウザ等）は案内しても無意味なので出さない
+  if (status === 'unsupported' && !iosNeedsInstall) return null;
+
+  const dismiss = () => {
+    try { localStorage.setItem(PUSH_BANNER_DISMISS_KEY, String(Date.now() + 7 * 86400000)); } catch { /* ignore */ }
+    setHidden(true);
+  };
+  const enable = async () => {
+    setWorking(true);
+    const r = await requestPushPermission();
+    setStatus(r);
+    setWorking(false);
+  };
+
+  return (
+    <div style={{ background: '#eef7ee', border: '1px solid #b7e0b7', borderRadius: 10, padding: '12px 14px', marginBottom: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+        <span style={{ fontSize: 20, flexShrink: 0 }}>🔔</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 'bold', color: '#1b5e20', marginBottom: 2 }}>スマホに通知を届けませんか？</div>
+          {iosNeedsInstall ? (
+            <div style={{ fontSize: 12.5, color: '#33691e', lineHeight: 1.8 }}>
+              iPhoneで通知を受け取るには、ひと手間必要です：<br />
+              ① 下の共有ボタン（□に↑）をタップ<br />
+              ② 「ホーム画面に追加」をタップ<br />
+              ③ 追加されたアイコンから開き直す<br />
+              ④ 右上のアイコン →「アカウント設定」→「許可する」
+            </div>
+          ) : (
+            <div style={{ fontSize: 12.5, color: '#33691e', lineHeight: 1.7 }}>
+              連絡板の新着や申請のお知らせが、アプリを開かなくてもスマホに届きます。
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+            {!iosNeedsInstall && (
+              <button onClick={enable} disabled={working}
+                style={{ padding: '7px 18px', borderRadius: 20, border: 'none', background: '#4CAF50', color: '#fff', fontSize: 13, fontWeight: 600, cursor: working ? 'default' : 'pointer', opacity: working ? 0.6 : 1 }}>
+                {working ? '...' : '許可する'}
+              </button>
+            )}
+            <button onClick={dismiss}
+              style={{ padding: '7px 16px', borderRadius: 20, border: '1px solid #b7e0b7', background: 'transparent', color: '#558b2f', fontSize: 13, cursor: 'pointer' }}>
+              後で
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 // 保護されたルートのためのレイアウト
@@ -1055,6 +1133,9 @@ const Dashboard: React.FC = () => {
         </div>
       )}
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} roleTitle={roleTitle} userId={user.id} />
+
+      {/* ⓪ プッシュ通知の有効化を促すバナー（未ONの人にのみ表示） */}
+      <PushEnableBanner />
 
       {/* ① お知らせ通知バナー（申請者向け） */}
       {!isAdmin && <NotificationBanner userId={user.id} />}
