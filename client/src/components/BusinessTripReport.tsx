@@ -296,7 +296,25 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
   return (
     <div style={{ maxWidth: 600, margin: '0 auto', padding: '16px 16px 40px' }}>
       <div ref={topRef} />
-      <h2 style={{ textAlign: 'center', margin: '12px 0 24px', fontSize: 20, fontWeight: 'bold', color: isDark ? '#fff' : '#333' }}>📍 出張報告</h2>
+      <h2 style={{ textAlign: 'center', margin: '12px 0 16px', fontSize: 20, fontWeight: 'bold', color: isDark ? '#fff' : '#333' }}>📍 出張報告</h2>
+
+      {/* このページの説明 */}
+      <div style={{
+        background: '#fff3cd',
+        border: '1px solid #ffe0a3',
+        borderRadius: 8, padding: '12px 14px', marginBottom: 16, textAlign: 'left',
+      }}>
+        <p style={{ fontSize: 13, fontWeight: 'bold', color: '#856404', textAlign: 'center', margin: '0 0 10px' }}>【全スタッフ】</p>
+        {[
+          '出張・園指導・イベント・試合などの勤怠を報告できます',
+          '到着時と終了時に送信してください',
+        ].map((text, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '0 0 6px' }}>
+            <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
+            <span style={{ fontSize: 14, fontWeight: 'bold', color: '#664d03', lineHeight: '22px' }}>{text}</span>
+          </div>
+        ))}
+      </div>
 
       {submitted && (
         <BannerSuccess message="報告を送信しました！" onClose={() => setSubmitted(false)} />
@@ -328,12 +346,12 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
         {/* 到着報告の注意事項 */}
         {reportType === '到着' && (
           <div style={{
-            background: isDark ? '#1a2e3a' : '#e8f4fd',
-            border: `1px solid ${isDark ? '#2d5a6e' : '#bee5eb'}`,
+            background: isDark ? '#2c3e50' : '#e8f4fd',
+            border: `1px solid ${isDark ? '#3d5a73' : '#bee5eb'}`,
             borderRadius: 8, padding: '12px 14px', marginBottom: 20, textAlign: 'left',
           }}>
             <p style={{ fontSize: 13, fontWeight: 'bold', color: isDark ? '#fff' : '#1a4a5a', marginBottom: 8, marginTop: 0 }}>【注意事項】</p>
-            <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: isDark ? '#fff' : '#2c5f6e', lineHeight: 1.8 }}>
+            <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8 }}>
               <li>現地・集合場所に到着したら、区分・場所・GPS位置情報を選択して到着報告をしてください。</li>
               <li>GPS位置情報は電波状況などで取得できないことがありますが、その場合は「取得できませんでした」を選択すれば送信できます。</li>
             </ol>
@@ -343,15 +361,15 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
         {/* 終了報告の注意事項 */}
         {reportType === '終了' && (
           <div style={{
-            background: isDark ? '#1a2e3a' : '#e8f4fd',
-            border: `1px solid ${isDark ? '#2d5a6e' : '#bee5eb'}`,
+            background: isDark ? '#2c3e50' : '#e8f4fd',
+            border: `1px solid ${isDark ? '#3d5a73' : '#bee5eb'}`,
             borderRadius: 8, padding: '12px 14px', marginBottom: 20, textAlign: 'left',
           }}>
             <p style={{ fontSize: 13, fontWeight: 'bold', color: isDark ? '#fff' : '#1a4a5a', marginBottom: 8, marginTop: 0 }}>【注意事項】</p>
-            <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: isDark ? '#fff' : '#2c5f6e', lineHeight: 1.8 }}>
+            <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8 }}>
               <li>終了したら、区分・場所・GPS位置情報を選択して終了報告をしてください。</li>
             </ol>
-            <div style={{ marginTop: 10, fontSize: 12, color: isDark ? '#fff' : '#2c5f6e', lineHeight: 1.8 }}>
+            <div style={{ marginTop: 10, fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8 }}>
               <div>▷ 担当者（複数の場合は責任者）の報告</div>
               <div style={{ paddingLeft: 16 }}>→ 終了報告時にSlackへ転載を選択してください。</div>
               <div style={{ marginTop: 6 }}>▷ 担当者（責任者を除く）の報告</div>

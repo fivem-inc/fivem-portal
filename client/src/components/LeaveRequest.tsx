@@ -546,6 +546,20 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         <h1 style={{ fontSize: 20, fontWeight: 'bold', color: text, margin: 0 }}>🌿 休暇申請</h1>
       </div>
 
+      {/* このページの説明 */}
+      <div style={{
+        background: '#fff3cd',
+        border: '1px solid #ffe0a3',
+        borderRadius: 8, padding: '12px 14px', marginBottom: 16, textAlign: 'left',
+      }}>
+        <p style={{ fontSize: 13, fontWeight: 'bold', color: '#856404', textAlign: 'center', margin: '0 0 10px' }}>【全スタッフ】</p>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '0 0 8px' }}>
+          <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>1</span>
+          <span style={{ fontSize: 14, fontWeight: 'bold', color: '#664d03', lineHeight: '22px' }}>有給・慶弔休・調整休などを申請できます</span>
+        </div>
+        <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※申請が受理されると、Googleカレンダーに自動登録されます。</p>
+      </div>
+
       {/* タブ切替 */}
       <div style={{ display: 'flex', marginBottom: 0, borderRadius: '10px 10px 0 0', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
         <button
@@ -603,8 +617,6 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             border: `1px solid ${isDark ? '#3d5a73' : '#bee5eb'}`,
             borderRadius: 8, padding: '12px 14px', marginBottom: 20, textAlign: 'left',
           }}>
-            <p style={{ fontSize: 14, fontWeight: 'bold', color: isDark ? '#fff' : '#1a4a5a', margin: '0 0 4px' }}>有給・慶弔休・調整休などを申請するページです。</p>
-            <p style={{ fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8, margin: '0 0 12px' }}>※申請が受理されると、Googleカレンダーに自動登録されます。</p>
             <p style={{ fontSize: 13, fontWeight: 'bold', color: isDark ? '#fff' : '#1a4a5a', marginBottom: 8 }}>【注意事項】</p>
             <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8, textAlign: 'left' }}>
               <li>休暇申請は、できるだけ休暇予定日の<strong>2週間前まで</strong>に行ってください。</li>

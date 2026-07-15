@@ -810,11 +810,11 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const borderCol = isDark ? '#495057' : '#dee2e6';
   const cardShadow = isDark ? '0 2px 12px rgba(0,0,0,0.4)' : '0 2px 12px rgba(0,0,0,0.1)';
   const inactiveBg = isDark ? '#495057' : '#f8f9fa';
-  const noteBg    = isDark ? '#1a2e3a' : '#e8f4fd';
-  const noteBorder = isDark ? '#2d5a6e' : '#bee5eb';
-  const noteText  = isDark ? '#fff' : '#2c5f6e';
+  const noteBg    = isDark ? '#2c3e50' : '#e8f4fd';
+  const noteBorder = isDark ? '#3d5a73' : '#bee5eb';
+  const noteText  = isDark ? '#d0dde8' : '#2c5f6e';
   const noteTitleColor = isDark ? '#fff' : '#1a4a5a';
-  const noteBtn   = isDark ? '#2d5a6e' : '#bee5eb';
+  const noteBtn   = isDark ? '#3d5a73' : '#bee5eb';
 
   const isApprover = IS_APPROVER(roleTitle, isAdmin);
   const canSeeAll  = isAdmin || ['リーダー', 'マネージャー', '管理者'].includes(roleTitle);
@@ -1150,6 +1150,20 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       </div>
 
       <div style={{ padding: '0 16px' }}>
+        {/* このページの説明 */}
+        <div style={{
+          background: '#fff3cd',
+          border: '1px solid #ffe0a3',
+          borderRadius: 8, padding: '12px 14px', marginBottom: 16, textAlign: 'left',
+        }}>
+          <p style={{ fontSize: 13, fontWeight: 'bold', color: '#856404', textAlign: 'center', margin: '0 0 10px' }}>【パート・アルバイトスタッフ専用】</p>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '0 0 8px' }}>
+            <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>1</span>
+            <span style={{ fontSize: 14, fontWeight: 'bold', color: '#664d03', lineHeight: '22px' }}>「休日出勤・残業・早退・遅刻・欠勤」を報告できます</span>
+          </div>
+          <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>（これまでの残業申請表の代わりです。）</p>
+        </div>
+
         {/* タブ（休暇申請と同スタイル） */}
         <div style={{ display: 'flex', marginBottom: 0, borderRadius: '10px 10px 0 0', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
           <button onClick={() => setTab('apply')}
@@ -1178,8 +1192,6 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
           <div style={{ padding: 24, background: bg, borderRadius: '0 0 12px 12px', boxShadow: cardShadow, boxSizing: 'border-box' }}>
             {/* 注意事項（常時表示） */}
             <div style={{ background: noteBg, border: `1px solid ${noteBorder}`, borderRadius: 8, padding: '12px 14px', marginBottom: 20, textAlign: 'left' }}>
-              <p style={{ fontSize: 14, fontWeight: 'bold', color: noteTitleColor, margin: '0 0 4px' }}>パート・アルバイトスタッフの「休日出勤・残業・早退・遅刻・欠勤」が発生したときに報告するページです。</p>
-              <p style={{ fontSize: 12, color: noteText, lineHeight: 1.8, margin: '0 0 12px' }}>（これまでの残業申請表の代わりです。）</p>
               <p style={{ fontSize: 13, fontWeight: 'bold', color: noteTitleColor, marginBottom: 8, marginTop: 0 }}>【注意事項】</p>
               <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: noteText, lineHeight: 1.8 }}>
                 <li>残業・早退・遅刻・欠勤が発生した場合に申請してください。</li>

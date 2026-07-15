@@ -474,33 +474,33 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       </div>
 
       
-      <div style={{ 
-        backgroundColor: '#f8f9fa', 
-        border: '1px solid #dee2e6', 
-        borderRadius: '8px', 
-        padding: '16px', 
-        margin: '16px 0',
-        fontSize: '14px',
-        lineHeight: '1.6'
+      {/* このページの説明 */}
+      <div style={{
+        background: '#fff3cd',
+        border: '1px solid #ffe0a3',
+        borderRadius: 8, padding: '12px 14px', margin: '16px 0', textAlign: 'left',
       }}>
-        <div style={{ marginBottom: '8px', color: '#000' }}>
-          📋 申請は「まとめて申請」 ・ 「都度申請」どちらでも大丈夫です。<br />
-          申請履歴をテンプレートとして使用できます。
+        <p style={{ fontSize: 13, fontWeight: 'bold', color: '#856404', textAlign: 'center', margin: '0 0 10px' }}>【全スタッフ】</p>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '0 0 8px' }}>
+          <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>1</span>
+          <span style={{ fontSize: 14, fontWeight: 'bold', color: '#664d03', lineHeight: '22px' }}>通勤・出張などの交通費を申請できます</span>
         </div>
-        <div style={{ 
-          padding: '12px', 
-          backgroundColor: '#fff3cd', 
-          border: '1px solid #ffeaa7', 
-          borderRadius: '6px',
-          color: '#856404'
-        }}>
-          <div style={{ textAlign: 'center', fontSize: '18px', marginBottom: '6px' }}>⚠️</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', lineHeight: 1.6, textAlign: 'left' }}>
-            <div>●定期券の申請と他の申請（単発・出張）は混ぜないでください。別々に申請してください。</div>
-            <div>●定期券は原則6か月定期で申請してください。（入社6か月未満の方は3か月定期）</div>
-            <div>●磁気定期の方は、IC定期へ切り替えてください。</div>
-          </div>
-        </div>
+        <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※申請は「まとめて」「都度」のどちらでもできます。</p>
+        <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※申請履歴をテンプレートとして使えます。</p>
+      </div>
+
+      {/* 注意事項 */}
+      <div style={{
+        background: isDarkMode ? '#2c3e50' : '#e8f4fd',
+        border: `1px solid ${isDarkMode ? '#3d5a73' : '#bee5eb'}`,
+        borderRadius: 8, padding: '12px 14px', margin: '0 0 16px', textAlign: 'left',
+      }}>
+        <p style={{ fontSize: 13, fontWeight: 'bold', color: isDarkMode ? '#fff' : '#1a4a5a', margin: '0 0 8px' }}>【注意事項】</p>
+        <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: isDarkMode ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8 }}>
+          <li>定期券の申請と他の申請（単発・出張）は混ぜないでください。別々に申請してください。</li>
+          <li>定期券は原則6か月定期で申請してください。（入社6か月未満の方は3か月定期）</li>
+          <li>磁気定期の方は、IC定期へ切り替えてください。</li>
+        </ol>
       </div>
       
       {/* よく使う経路テンプレート */}

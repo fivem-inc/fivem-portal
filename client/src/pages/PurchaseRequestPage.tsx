@@ -276,7 +276,6 @@ const PurchaseRequestPage: React.FC<PurchaseRequestPageProps> = ({ user, roleTit
   const isManagerPlus = isAdmin || ['マネージャー', '社長'].includes(roleTitle);
   const canApprovePurchase = isAdmin || ['リーダー', 'マネージャー', '社長'].includes(roleTitle);
 
-  const bg = isDarkMode ? '#212529' : '#f0f2f5';
   const cardBg = isDarkMode ? '#343a40' : '#ffffff';
   const border = isDarkMode ? '#495057' : '#e0e0e0';
   const text = isDarkMode ? '#eeeeee' : '#222222';
@@ -289,10 +288,28 @@ const PurchaseRequestPage: React.FC<PurchaseRequestPageProps> = ({ user, roleTit
   ];
 
   return (
-    <div style={{ minHeight: '100vh', background: bg }}>
+    <div style={{ minHeight: '100vh' }}>
       <div style={{ maxWidth: 600, margin: '0 auto', padding: '70px 16px 40px' }}>
       <div style={{ textAlign: 'center', padding: '28px 0 12px' }}>
         <h1 style={{ fontSize: 20, fontWeight: 'bold', color: text, margin: 0 }}>🧾 備品精算</h1>
+      </div>
+
+      {/* このページの説明 */}
+      <div style={{
+        background: '#fff3cd',
+        border: '1px solid #ffe0a3',
+        borderRadius: 8, padding: '12px 14px', marginBottom: 14, textAlign: 'left',
+      }}>
+        <p style={{ fontSize: 13, fontWeight: 'bold', color: '#856404', textAlign: 'center', margin: '0 0 10px' }}>【全スタッフ】</p>
+        {[
+          '立て替えた備品の精算ができます',
+          '備品購入の申請ができます',
+        ].map((label, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '0 0 6px' }}>
+            <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
+            <span style={{ fontSize: 14, fontWeight: 'bold', color: '#664d03', lineHeight: '22px' }}>{label}</span>
+          </div>
+        ))}
       </div>
 
       <div style={{ display: 'flex', background: cardBg, border: `1px solid ${border}`, borderRadius: 10, overflow: 'hidden', marginBottom: 14 }}>
