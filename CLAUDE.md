@@ -7007,3 +7007,32 @@ notifications INSERT
 - 【要操作】上記メールテンプレートの手動更新（管理→通知設定）
 - 【任意】`ShiftReportPage`/`ShiftReportsTab` に残る `window.confirm`（hardDelete等）をインラインUI化（作業ルール違反の解消）
 - 【実機確認】欠勤パネル（ライト/ダーク）・削除の実挙動・「報告」表記の通し確認
+
+---
+
+## ✅ 2026-07-15（続き13）休暇カレンダー欠勤入力の通知機能を新設＝本番反映
+
+休暇カレンダー（リーダー・マネージャー専用）で欠勤・遅刻・早退を登録しても**通知が一切飛んでいなかった**ため、`time-adjustment-notify` と同じ「役職＋グループ配信」パターンで通知機能を新設。
+
+### 実装
+- **新Edge Function `attendance-notify`**（`time-adjustment-notify` のクローン。**デプロイ済み**）
+  - event_key `attendance:registered`。notification_settings を読み、サイト通知/プッシュ/メール/Slack を設定に従い配信
+  - 宛先解決：リーダー・マネージャーは `groupFilter='same'` のとき同グループのみ。**社長・管理者(`ORG_WIDE_ROLES`)はグループ絞り込みを無視して常に対象**（「同グループ既定だと社長に届かない」トラップ回避）。`申請者本人` チェック時は該当スタッフ本人も対象
+  - vars：`{{対象者名}}`（=該当スタッフ）`{{種別}}` `{{日付}}` `{{リンク}}`（/calendar）。複数日欠勤は「◯月◯日 他N日」表記
+- **`NotificationsTab.tsx`**：カテゴリ「🔴 欠勤・遅刻・早退（休暇カレンダー登録）」追加。`attendance:registered` を `ROLE_GROUP_BROADCAST_EVENTS`/`PUSH_ROLE_SELECT_EVENTS` に追加＋`VARIABLES_BY_EVENT`/`PUSH_RECIPIENT_BY_EVENT` 追加。本人ラベルは `roleLabel()` でこのイベントのみ「本人（該当スタッフ）」表示（内部値は共通の `申請者本人` のまま）
+- **`CalendarPage.tsx`**：欠勤入力の保存後（gcal同期の後）に `attendance-notify` を invoke（`user_id`=該当スタッフ, `dates`, `types` を渡す）
+
+### seed SQL（本番で要実行。新イベントは行が無いと通知設定画面に出ない）
+```sql
+insert into public.notification_settings (event_key, channel, enabled, recipient, subject, template) values
+  ('attendance:registered','site', true,'{"roles":["リーダー","マネージャー","社長","管理者"],"groupFilter":"same"}',null,'🔴 {{対象者名}}さんの{{種別}}が登録されました（{{日付}}）'),
+  ('attendance:registered','push', true,'{"roles":["リーダー","マネージャー","社長","管理者"],"groupFilter":"same"}',null,null),
+  ('attendance:registered','email',false,'{"roles":["リーダー","マネージャー","社長","管理者"],"groupFilter":"same"}','欠勤・遅刻・早退が登録されました','{{対象者名}}さんの{{種別}}が {{日付}} に登録されました。'),
+  ('attendance:registered','slack',false,'{"channels":[]}',null,null)
+on conflict (event_key, channel) do nothing;
+```
+- 既定：サイト＋プッシュON／メール・SlackはOFF／宛先リーダー以上／同グループ。本人は既定OFF（サイト・メールで選択可。プッシュは既存仕様上リスト非表示）
+
+### 次回やること
+- 【要操作】上記 seed SQL を本番で実行（未実行ならまず実行）
+- 【実機確認】休暇カレンダーで欠勤入力→リーダー等にサイト通知/プッシュが届くか。管理→通知設定に新カテゴリが出て宛先変更できるか

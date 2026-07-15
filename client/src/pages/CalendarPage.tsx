@@ -412,6 +412,14 @@ const AbsenceInputSheet: React.FC<{
         });
       } catch (e) { console.error('[gcal-sync] 欠勤書き込み失敗:', e); }
     }
+    // リーダー以上・本人へ通知（通知設定 attendance:registered に従う）
+    try {
+      const uniqueTypes = [...new Set(records.map(r => r.type))];
+      const uniqueDates = [...new Set(records.map(r => r.date))];
+      await supabase.functions.invoke('attendance-notify', {
+        body: { user_id: userId, user_name: name, dates: uniqueDates, types: uniqueTypes },
+      });
+    } catch (e) { console.error('[attendance-notify] 通知失敗:', e); }
     onSaving(); // バナー表示
     onClose();  // モーダル・シートを閉じる
     onSaved();  // カレンダーを再取得
