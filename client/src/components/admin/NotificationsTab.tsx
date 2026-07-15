@@ -63,11 +63,11 @@ const EVENT_GROUPS = [
     ],
   },
   {
-    label: '勤務変更申請（パート・アルバイト）',
+    label: '勤務変更報告（パート・アルバイト）',
     icon: '⏰',
     headerBg: '#FFEBEE', headerBorder: '#C62828', headerText: '#B71C1C',
     events: [
-      { key: 'shift_report:new_request', label: '申請時（プッシュのみ）' },
+      { key: 'shift_report:new_request', label: '報告時（プッシュのみ）' },
       { key: 'shift_report:returned',    label: '差し戻し時（プッシュのみ）' },
       { key: 'shift_report:confirmed',   label: '受理時' },
     ],

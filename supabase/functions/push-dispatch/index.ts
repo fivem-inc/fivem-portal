@@ -20,8 +20,8 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string }> = {
   // 休暇申請（申請者の要対応）
   "leave:rejected":          { app: "休暇申請", word: "差戻", url: "/leave" },
   // 勤務変更申請
-  "shift_report:new_request": { app: "勤務変更申請", word: "未承認", url: "/shift-report" },
-  "shift_report:returned":    { app: "勤務変更申請", word: "差戻", url: "/shift-report" },
+  "shift_report:new_request": { app: "勤務変更報告", word: "未承認", url: "/shift-report" },
+  "shift_report:returned":    { app: "勤務変更報告", word: "差戻", url: "/shift-report" },
   // 備品精算（購入申請）
   "purchase_request:submitted":             { app: "備品精算", word: "未承認", url: "/purchase" },
   "purchase_request:submitted_manager":     { app: "備品精算", word: "未承認", url: "/purchase" },

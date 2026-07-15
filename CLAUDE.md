@@ -6959,3 +6959,51 @@ notifications INSERT
 - 本番DB操作・本番設定変更・push/コミットは「明示の指示」を得てから
 - git add 前に必ず `git status` 目視。`AGENTS.md`（未追跡）はコミットに含めない
 - デプロイ＝push。Vercel webhook 不発時は空コミット push で発火
+
+---
+
+## ✅ 2026-07-15（続き12）勤務変更ページ：事後報告化・欠勤の連絡確認・削除バグ修正＝本番反映
+
+パート・アルバイトの勤務変更ページで「欠勤を事前申請と誤解して上長へ連絡しない」リスクへの対応と、用語統一・削除バグ修正をまとめて実施。
+
+### ① 黄色説明枠に「事後報告」を明記（`ShiftReportPage.tsx`）
+- 「① 発生した『休日出勤・残業・早退・遅刻・欠勤』を**事後報告**できます」
+- 「※このページは事後報告用です。事前の申請・お休みの連絡はできません。」
+- 「※欠勤・遅刻・早退の連絡は、これまで通りリーダー・マネージャーへ直接連絡してください。」
+
+### ② 欠勤タップ時のインライン確認パネル（`ShiftReportPage.tsx`）
+- 種別「❌ 欠勤」を**新規選択**するとき（本人・新規のみ／編集・代行はスキップ）、即選択せず確認パネルを表示（`toggleType` で `absencePrompt: 'none'|'confirm'|'declined'` を制御）
+- 「連絡済みです（報告をつづける）」で選択実行／「まだ連絡していない」で連絡方法を案内（前日まで／当日朝／営業時間内＋`tel:0755854018` リンク＋受付時間＋「もう一度欠勤を押す」導線）
+- 位置は**押した欠勤ボタンの直下**（1段目グリッド直下）。表示時に `scrollIntoView({block:'center'})` で自動スクロール
+- 配色は**ライト/ダーク共通の明るいアンバー**（背景`#fff8e1`/枠`#f59e0b`/見出し`#b45309`/本文`#92400e`）。※一度ダーク用に暗い茶にしたら「くすんで醜い」となり、黄色枠と同じく共通固定色に変更
+
+### ③「申請」→「報告」に一括変更＋ステータス「確認待ち」
+- `ShiftReportPage.tsx`：見出し「勤務変更報告」／タブ「✏️ 報告」／送信「✓ この内容で報告する」／成功「報告を送信しました」／通知文・履歴・取消など全て。ステータス表示「申請中」→「**確認待ち**」
+- `App.tsx`：バナー「勤務変更報告の確認依頼が…」
+- `admin/ShiftReportsTab.tsx`：一覧見出し・CSVヘッダー(報告日/報告者)・ファイル名(勤務変更報告_…)・ソート・「再報告」・ステータス（確認待ち/確認待ち(再)）
+- `admin/NotificationsTab.tsx`：カテゴリ「勤務変更報告（パート・アルバイト）」・「報告時（プッシュのみ）」
+- `admin/FeaturePermissionsTab.tsx`：ラベル「勤務変更報告」
+- Edge Functions：`push-dispatch`（app名）／`shift-report-confirmed-notify`（プッシュtitle・Slack本文・メール件名フォールバック）→ **両方 `supabase functions deploy` 済み**
+- **変更しない**：DBカラム・`source_type`・`event_key`・機能権限key `shift_report`・管理タブkey `shift_reports`・テンプレート変数`{{申請者名}}`・役職リテラル`'申請者本人'`・URL `/shift-report`・他機能の「申請」（休暇/交通費/備品）・「残業申請表」（旧帳票名）・説明文の「事前の申請」
+
+### ④ 完全削除バグ修正（RLS）
+- **原因**：`shift_reports`/`shift_report_history` に **DELETE ポリシーが無く**、RLSで全削除が無言拒否（0件・エラー無し）→ 画面は「削除しました」と嘘表示で消えない
+- **本番DB（適用済み・範囲A＝リーダー以上＋管理者）**：
+  ```sql
+  drop policy if exists "approver_delete" on public.shift_reports;
+  create policy "approver_delete" on public.shift_reports for delete using (
+    (auth.jwt() ->> 'role') = 'admin'
+    or exists (select 1 from profiles where id = auth.uid()
+      and role_title in ('リーダー','マネージャー','フロア責任者','社長','管理者')));
+  ```
+  （履歴は `on delete cascade` で親削除時に自動削除。DELETEポリシー不要）
+- **フロント**（`admin/ShiftReportsTab.tsx`）：`handleDelete` を `.select()` で削除件数/エラー検知に変更。成功時のみ「削除しました」、拒否/0件は赤帯で「削除できませんでした（権限不足）」。冗長な履歴の明示削除は撤去（cascade任せ）
+- 補足：完全削除で報告本体・変更履歴はDBから消える（cascade）。gcal/欠勤カレンダーには非連携。過去に送信した通知レコードのみ残る
+
+### デプロイ後の手動作業（要対応）
+- **メール件名・本文は管理画面「通知設定」のDB保存テンプレートが優先**。コードのフォールバックのみ変更したので、実際に届くメールは旧「勤務変更申請〜」のまま。管理→通知設定→「勤務変更報告（パート・アルバイト）」の各テンプレの「申請」を「報告」に手動更新が必要
+
+### 次回やること
+- 【要操作】上記メールテンプレートの手動更新（管理→通知設定）
+- 【任意】`ShiftReportPage`/`ShiftReportsTab` に残る `window.confirm`（hardDelete等）をインラインUI化（作業ルール違反の解消）
+- 【実機確認】欠勤パネル（ライト/ダーク）・削除の実挙動・「報告」表記の通し確認

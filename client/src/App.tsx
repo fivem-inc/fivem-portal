@@ -1060,7 +1060,7 @@ const ShiftReportApprovalBanner: React.FC<{ userId: string; roleTitle: string; i
       }}
     >
       <span style={{ fontSize: 22 }}>⏰</span>
-      <span>勤務変更申請の確認依頼が {pendingCount}件 あります</span>
+      <span>勤務変更報告の確認依頼が {pendingCount}件 あります</span>
       <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 'normal' }}>タップして確認 →</span>
     </div>
   );

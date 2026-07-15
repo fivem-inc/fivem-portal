@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
@@ -145,8 +145,8 @@ function blockReason(current: ApplicationType[], t: ApplicationType): string {
   return '';
 }
 const STATUS_INFO: Record<string, { label: string; color: string; bg: string }> = {
-  pending:     { label: '申請中',   color: '#856404', bg: '#fff3cd' },
-  resubmitted: { label: '申請中',   color: '#856404', bg: '#fff3cd' },
+  pending:     { label: '確認待ち',   color: '#856404', bg: '#fff3cd' },
+  resubmitted: { label: '確認待ち',   color: '#856404', bg: '#fff3cd' },
   confirmed:   { label: '受理済み', color: '#065f46', bg: '#d1fae5' },
   cancelled:   { label: '取消済み', color: '#6c757d', bg: '#e9ecef' },
   returned:    { label: '差戻し',   color: '#9d174d', bg: '#fce7f3' },
@@ -230,15 +230,15 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
       <div style={{ background: bg, width: '100%', maxHeight: '90vh', borderRadius: '16px 16px 0 0', overflowY: 'auto', paddingBottom: 32 }}>
         <div style={{ position: 'sticky', top: 0, background: bg, padding: '16px 16px 12px', borderBottom: `1px solid ${border}`, display: 'flex', alignItems: 'center', gap: 12 }}>
           <button onClick={onBack} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: text }}>‹</button>
-          <span style={{ fontWeight: 'bold', fontSize: 16, color: text }}>申請内容を確認</span>
+          <span style={{ fontWeight: 'bold', fontSize: 16, color: text }}>報告内容を確認</span>
         </div>
         <div style={{ padding: '16px 20px' }}>
           {data.isProxy && (
             <div style={{ background: isDark ? '#1a2e4a' : '#e0f2fe', border: '1px solid #38bdf8', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 13, color: isDark ? '#7dd3fc' : '#0369a1', fontWeight: 500 }}>
-              👤 代行申請：<b>{data.applicantName}</b> さんの申請
+              👤 代行報告：<b>{data.applicantName}</b> さんの報告
             </div>
           )}
-          <CRow label="申請者"     value={data.applicantName} textColor={text} />
+          <CRow label="報告者"     value={data.applicantName} textColor={text} />
           <CRow label="日付"       value={`${data.date}（${dow(data.date)}）`} textColor={text} />
           <CRow label="種別"       value={typesLabel(data.types)} textColor={text} />
           <CRow label="理由"       value={data.reason} textColor={text} />
@@ -276,12 +276,12 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
           <CRow label="確認依頼先" value={data.reviewerName} textColor={text} />
           {data.isSelfReview && (
             <div style={{ background: isDark ? '#1e3d2f' : '#d1fae5', borderRadius: 8, padding: '8px 12px', marginTop: 4 }}>
-              <span style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#4ade80' : '#065f46' }}>✓ 申請と同時に受理済みになります</span>
+              <span style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#4ade80' : '#065f46' }}>✓ 報告と同時に受理済みになります</span>
             </div>
           )}
           <button onClick={onSubmit} disabled={saving}
             style={{ width: '100%', padding: 14, marginTop: 20, background: saving ? '#6c757d' : '#28a745', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: saving ? 'default' : 'pointer' }}>
-            {saving ? '送信中...' : '✓ この内容で申請する'}
+            {saving ? '送信中...' : '✓ この内容で報告する'}
           </button>
         </div>
       </div>
@@ -324,6 +324,8 @@ const ShiftReportForm: React.FC<{
     : []
   );
   const [blockMsg, setBlockMsg]       = useState('');
+  const [absencePrompt, setAbsencePrompt] = useState<'none' | 'confirm' | 'declined'>('none');
+  const absencePanelRef = useRef<HTMLDivElement>(null);
   const [reason, setReason]           = useState(editTarget?.reason ?? '');
   const [origDayOff, setOrigDayOff]   = useState(false);
 
@@ -362,6 +364,12 @@ const ShiftReportForm: React.FC<{
       setTimeout(() => setBlockMsg(''), 2200);
       return;
     }
+    // 欠勤を新規に選ぶとき（本人・新規報告のみ）は「連絡済みか」の事前確認を挟む
+    if (t === 'absence' && !types.includes('absence') && !editTarget && !canProxy) {
+      setAbsencePrompt('confirm');
+      return;
+    }
+    setAbsencePrompt('none');
     setTypes(prev => {
       if (t === 'absence') return prev.includes('absence') ? [] : ['absence'];
       const without = prev.filter(x => x !== 'absence');
@@ -381,6 +389,12 @@ const ShiftReportForm: React.FC<{
     ? Math.max(0, (toMin(actEnd) - toMin(actStart)) - breakMin - actOutingMin) : 0;
   const origOutingMin = origOutingOn && origOutingStart && origOutingEnd ? Math.max(0, toMin(origOutingEnd) - toMin(origOutingStart)) : 0;
   const origMin  = (origDayOff || hasHoliday) ? 0 : Math.max(0, origDuration(origStart, origEnd) - origOutingMin);
+
+  useEffect(() => {
+    if (absencePrompt !== 'none') {
+      absencePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [absencePrompt]);
 
   useEffect(() => {
     if (!canProxy) return;
@@ -453,7 +467,7 @@ const ShiftReportForm: React.FC<{
         const { data: newReport, error: err } = await supabase.from('shift_reports').insert(record).select('id').single();
         if (err) {
           console.error('[insert shift_reports] error:', err);
-          setError(err.code === '23505' ? '同じ日付の申請がすでにあります' : err.message);
+          setError(err.code === '23505' ? '同じ日付の報告がすでにあります' : err.message);
           setSaving(false); setShowConfirm(false);
           return;
         }
@@ -461,7 +475,7 @@ const ShiftReportForm: React.FC<{
           // 通知：レビュアーへ
           supabase.from('notifications').insert({
             user_id: reviewerId,
-            message: `${profileName ?? ''}さんから勤務変更申請が届きました`,
+            message: `${profileName ?? ''}さんから勤務変更報告が届きました`,
             sub_message: `${types.map(t => TYPE_INFO[t].label).join('＋')}　${date}`,
             source_type: 'shift_report:pending_approval',
             reference_id: newReport?.id,
@@ -509,7 +523,7 @@ const ShiftReportForm: React.FC<{
             {/* 代行バナー */}
             {canProxy && applicantId !== user.id && (
               <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, padding: '10px 14px', marginBottom: 12, fontSize: 13, color: '#1e40af' }}>
-                👤 <b>{staffList.find(s => s.id === applicantId)?.name}</b> さんの代わりに申請中
+                👤 <b>{staffList.find(s => s.id === applicantId)?.name}</b> さんの代わりに報告中
               </div>
             )}
             {/* 代行選択 */}
@@ -547,6 +561,38 @@ const ShiftReportForm: React.FC<{
                     </button>
                   );
                 })}
+              </div>
+              {/* 欠勤：連絡確認／連絡方法（押した欠勤ボタンの直下に表示。ライト/ダーク共通の明るいアンバー） */}
+              <div ref={absencePanelRef}>
+                {absencePrompt === 'confirm' && (
+                  <div role="group" aria-live="polite" style={{ marginBottom: 8, padding: '12px 14px', background: '#fff8e1', border: '2px solid #f59e0b', borderRadius: 10 }}>
+                    <div style={{ fontSize: 14, fontWeight: 'bold', color: '#b45309', marginBottom: 6 }}>⚠️ 欠勤の連絡はお済みですか？</div>
+                    <div style={{ fontSize: 12, color: '#92400e', lineHeight: 1.7, marginBottom: 10 }}>このページは事後報告用です。連絡がまだの場合は、先にリーダー・マネージャーへ連絡をお願いします。</div>
+                    <button type="button" onClick={() => { setTypes(['absence']); setAbsencePrompt('none'); }}
+                      style={{ display: 'block', width: '100%', padding: '12px', marginBottom: 8, background: '#fff', border: '1.5px solid #b45309', borderRadius: 8, color: '#b45309', fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}>
+                      連絡済みです（報告をつづける）
+                    </button>
+                    <button type="button" onClick={() => setAbsencePrompt('declined')}
+                      style={{ display: 'block', width: '100%', padding: '12px', background: '#f59e0b', border: 'none', borderRadius: 8, color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}>
+                      まだ連絡していない
+                    </button>
+                  </div>
+                )}
+                {absencePrompt === 'declined' && (
+                  <div role="group" aria-live="polite" style={{ marginBottom: 8, padding: '12px 14px', background: '#fff8e1', border: '2px solid #f59e0b', borderRadius: 10 }}>
+                    <div style={{ fontSize: 14, fontWeight: 'bold', color: '#b45309', marginBottom: 8 }}>📞 欠勤の連絡方法</div>
+                    <div style={{ fontSize: 12, color: '#92400e', lineHeight: 1.9 }}>
+                      ・前日まで：リーダー・マネージャーへ連絡<br />
+                      ・当日の朝：チームマネージャーへなるべく電話（7:30までに）<br />
+                      ・営業時間内：下記へ電話
+                    </div>
+                    <a href="tel:0755854018" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', padding: '12px', margin: '8px 0 4px', background: '#b45309', border: 'none', borderRadius: 8, color: '#fff', fontSize: 14, fontWeight: 'bold', textDecoration: 'none', boxSizing: 'border-box' }}>📞 075-585-4018 に電話する</a>
+                    <div style={{ fontSize: 11, color: '#a16207', marginBottom: 8 }}>受付：平日 9:30-20:00／土 9:30-18:00／日 9:30-16:00</div>
+                    <div style={{ fontSize: 12, color: '#92400e', lineHeight: 1.7 }}>連絡が済んだら、もう一度「❌ 欠勤」を押してください。</div>
+                    <button type="button" onClick={() => setAbsencePrompt('none')}
+                      style={{ marginTop: 8, padding: '6px 14px', background: 'transparent', border: '1px solid #f0c675', borderRadius: 8, color: '#b45309', fontSize: 12, cursor: 'pointer' }}>閉じる</button>
+                  </div>
+                )}
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8, marginBottom: 8 }}>
                 {(['location_change'] as ApplicationType[]).map(t => {
@@ -733,7 +779,7 @@ const ShiftReportForm: React.FC<{
                 {/* 自分が承認者の場合は最上部に表示 */}
                 {reviewers.find(r => r.id === user.id) && (
                   <option value={user.id}>
-                    ✓ {reviewers.find(r => r.id === user.id)!.name}（自分）※申請と同時に受理されます
+                    ✓ {reviewers.find(r => r.id === user.id)!.name}（自分）※報告と同時に受理されます
                   </option>
                 )}
                 {[...reviewers.filter(r => r.id !== user.id && r.role_title !== '管理者' && r.role_title !== '社長')]
@@ -760,7 +806,7 @@ const ShiftReportForm: React.FC<{
             {error && <div style={{ color: '#dc3545', fontSize: 13, marginBottom: 12 }}>⚠️ {error}</div>}
             <button type="button" onClick={handleConfirmOpen}
               style={{ width: '100%', padding: 14, background: '#28a745', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: 'pointer' }}>
-              申請内容を確認する
+              報告内容を確認する
             </button>
     </div>
   );
@@ -789,7 +835,7 @@ const ShiftReportForm: React.FC<{
         <div style={{ background: modalBg, width: '100%', maxHeight: '92vh', borderRadius: '16px 16px 0 0', overflowY: 'auto', paddingBottom: 32 }}>
           <div style={{ position: 'sticky', top: 0, background: modalBg, padding: '16px 16px 12px', borderBottom: `1px solid ${borderCol}`, display: 'flex', alignItems: 'center', gap: 12, zIndex: 1 }}>
             <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: textColor, lineHeight: 1 }}>✕</button>
-            <span style={{ fontWeight: 'bold', fontSize: 16, color: textColor }}>{editTarget ? '申請を修正' : '勤務変更申請'}</span>
+            <span style={{ fontWeight: 'bold', fontSize: 16, color: textColor }}>{editTarget ? '報告を修正' : '勤務変更報告'}</span>
           </div>
           {formBody}
         </div>
@@ -965,7 +1011,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const handleSaved = () => {
     setShowForm(false); setEditTarget(null);
     setFormKey(k => k + 1);
-    setSuccessMsg('申請を送信しました ✓');
+    setSuccessMsg('報告を送信しました ✓');
     fetchMyReports(); fetchPending(); fetchReviewedReports(); fetchProxyReports(); fetchAllReports();
     setTab('history');
   };
@@ -978,7 +1024,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     // 通知：申請者へ受理を通知
     await supabase.from('notifications').insert({
       user_id: report.applicant_id,
-      message: `勤務変更申請が受理されました`,
+      message: `勤務変更報告が受理されました`,
       sub_message: `${TYPE_INFO[report.application_type].label}　${report.work_date}`,
       source_type: 'shift_report',
       reference_id: report.id,
@@ -1003,14 +1049,14 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const executeCancelReport = async () => {
     if (!cancelTarget) return;
     const r = cancelTarget;
-    const summary = cancelReason.trim() ? `申請を取り消しました\n取り消し理由：${cancelReason.trim()}` : '申請を取り消しました';
+    const summary = cancelReason.trim() ? `報告を取り消しました\n取り消し理由：${cancelReason.trim()}` : '報告を取り消しました';
     const { error } = await supabase.from('shift_reports').update({ status: 'cancelled' }).eq('id', r.id);
     if (error) { console.error('[cancelReport]', error); setCancelTarget(null); setCancelReason(''); return; }
     await supabase.from('shift_report_history').insert({ report_id: r.id, changed_by: user.id, change_summary: summary, snapshot: r }).then(null, () => {});
     // レビュアーが取り消した場合は申請者に通知
     if (r.applicant_id !== user.id) {
       await supabase.from('notifications').insert({
-        user_id: r.applicant_id, message: '勤務変更申請が取り消されました',
+        user_id: r.applicant_id, message: '勤務変更報告が取り消されました',
         sub_message: `${TYPE_INFO[r.application_type].label}　${r.work_date}`,
         source_type: 'shift_report', reference_id: r.id, read: false,
       }).then(null, () => {});
@@ -1032,7 +1078,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       change_summary: comment ? `差戻し：${comment}` : '差戻しました', snapshot: r,
     }).then(null, () => {});
     await supabase.from('notifications').insert({
-      user_id: r.applicant_id, message: '勤務変更申請が差戻されました',
+      user_id: r.applicant_id, message: '勤務変更報告が差戻されました',
       sub_message: `${TYPE_INFO[r.application_type].label}　${r.work_date}${comment ? `\n理由：${comment}` : ''}`,
       source_type: 'shift_report:pending_resubmit', reference_id: r.id, event_key: 'shift_report:returned', read: false,
     }).then(null, () => {});
@@ -1086,7 +1132,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
             )}
           </div>
           {pendingReports.length === 0 ? (
-            <div style={{ textAlign: 'center', color: '#aaa', padding: 48, fontSize: 14 }}>確認待ちの申請はありません</div>
+            <div style={{ textAlign: 'center', color: '#aaa', padding: 48, fontSize: 14 }}>確認待ちの報告はありません</div>
           ) : pendingReports.map(r => {
             return (
               <div key={r.id} style={{ background: bg, borderRadius: 10, border: `1px solid ${borderCol}`, marginBottom: 10, padding: '14px' }}>
@@ -1146,7 +1192,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       {/* ページタイトル */}
       <div style={{ textAlign: 'center', padding: '16px 0 16px' }}>
         <div style={{ fontSize: 13, color: subText, fontWeight: 'bold', marginBottom: 4 }}>パート・アルバイト</div>
-        <h1 style={{ fontSize: 20, fontWeight: 'bold', color: text, margin: 0 }}>⏰ 勤務変更申請</h1>
+        <h1 style={{ fontSize: 20, fontWeight: 'bold', color: text, margin: 0 }}>⏰ 勤務変更報告</h1>
       </div>
 
       <div style={{ padding: '0 16px' }}>
@@ -1159,16 +1205,18 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
           <p style={{ fontSize: 13, fontWeight: 'bold', color: '#856404', textAlign: 'center', margin: '0 0 10px' }}>【パート・アルバイトスタッフ専用】</p>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '0 0 8px' }}>
             <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>1</span>
-            <span style={{ fontSize: 14, fontWeight: 'bold', color: '#664d03', lineHeight: '22px' }}>「休日出勤・残業・早退・遅刻・欠勤」を報告できます</span>
+            <span style={{ fontSize: 14, fontWeight: 'bold', color: '#664d03', lineHeight: '22px' }}>発生した「休日出勤・残業・早退・遅刻・欠勤」を事後報告できます</span>
           </div>
-          <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>（これまでの残業申請表の代わりです。）</p>
+          <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: '0 0 8px' }}>（これまでの残業申請表の代わりです。）</p>
+          <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※このページは事後報告用です。事前の申請・お休みの連絡はできません。</p>
+          <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※欠勤・遅刻・早退の連絡は、これまで通りリーダー・マネージャーへ直接連絡してください。</p>
         </div>
 
         {/* タブ（休暇申請と同スタイル） */}
         <div style={{ display: 'flex', marginBottom: 0, borderRadius: '10px 10px 0 0', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
           <button onClick={() => setTab('apply')}
             style={{ flex: 1, padding: '12px', background: tab === 'apply' ? '#28a745' : inactiveBg, color: tab === 'apply' ? '#fff' : text, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: tab === 'apply' ? 'bold' : 'normal' }}>
-            ✏️ 申請
+            ✏️ 報告
           </button>
           <button onClick={() => setTab('history')}
             style={{ flex: 1, padding: '12px', background: tab === 'history' ? '#28a745' : inactiveBg, color: tab === 'history' ? '#fff' : text, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: tab === 'history' ? 'bold' : 'normal', borderLeft: `1px solid ${borderCol}` }}>
@@ -1194,8 +1242,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
             <div style={{ background: noteBg, border: `1px solid ${noteBorder}`, borderRadius: 8, padding: '12px 14px', marginBottom: 20, textAlign: 'left' }}>
               <p style={{ fontSize: 13, fontWeight: 'bold', color: noteTitleColor, marginBottom: 8, marginTop: 0 }}>【注意事項】</p>
               <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: noteText, lineHeight: 1.8 }}>
-                <li>残業・早退・遅刻・欠勤が発生した場合に申請してください。</li>
-                <li>申請先は、出勤する校の担当のリーダー・マネージャー（フロア責任者）を選択してください。</li>
+                <li>残業・早退・遅刻・欠勤が発生した場合に報告してください。</li>
+                <li>報告先は、出勤する校の担当のリーダー・マネージャー（フロア責任者）を選択してください。</li>
                 <li>受理されると「受理済み」に変わります。</li>
                 <li>間違えた場合は、担当のリーダー・マネージャーにお知らせください。</li>
               </ol>
@@ -1284,9 +1332,9 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
             {isApprover && (
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
                 {([
-                  ['own',      '自分の申請'],
-                  ['reviewed', '確認した申請'],
-                  ['proxy',    '代行した申請'],
+                  ['own',      '自分の報告'],
+                  ['reviewed', '確認した報告'],
+                  ['proxy',    '代行した報告'],
                   ...(canSeeAll ? [['all', '全スタッフ']] : []),
                 ] as [typeof histMode, string][]).map(([key, label]) => (
                   <button key={key} onClick={() => setHistMode(key)}
@@ -1310,7 +1358,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                 <select value={histStatusFilter} onChange={e => setHistStatusFilter(e.target.value)}
                   style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: `1px solid ${borderCol}`, background: isDark ? '#495057' : '#fff', color: text }}>
                   <option value="all">全ステータス</option>
-                  <option value="pending">申請中</option>
+                  <option value="pending">確認待ち</option>
                   <option value="confirmed">受理済み</option>
                   <option value="returned">差戻し</option>
                   <option value="cancelled">取消済み</option>
@@ -1397,7 +1445,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
               </div>
             ))}
             {Object.keys(histGrouped).length === 0 && (
-              <div style={{ textAlign: 'center', color: '#aaa', padding: 48, fontSize: 14 }}>申請履歴がありません</div>
+              <div style={{ textAlign: 'center', color: '#aaa', padding: 48, fontSize: 14 }}>報告履歴がありません</div>
             )}
           </div>
         )}
@@ -1408,7 +1456,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px' }}>
           <div style={{ background: isDark ? '#343a40' : '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 340, boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
             <div style={{ fontSize: 15, fontWeight: 'bold', color: isDark ? '#fff' : '#1a1a2e', marginBottom: 6 }}>
-              申請を取り消す
+              報告を取り消す
             </div>
             <div style={{ fontSize: 13, color: isDark ? '#adb5bd' : '#555', marginBottom: 16 }}>
               {(cancelTarget.application_types?.length ? cancelTarget.application_types : [cancelTarget.application_type]).map(t => `${TYPE_INFO[t].emoji} ${TYPE_INFO[t].label}`).join(' ＋ ')}　{cancelTarget.work_date.slice(5).replace('-', '/')}

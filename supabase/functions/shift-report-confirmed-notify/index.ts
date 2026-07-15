@@ -125,7 +125,7 @@ serve(async (req) => {
         const pushIds = [...new Set(((subs ?? []) as { user_id: string }[]).map(s => s.user_id))]
         if (pushIds.length > 0) {
           await supabase.functions.invoke('send-push', {
-            body: { user_ids: pushIds, title: 'ファイブM 勤務変更申請', body: '新着 1件', url: '/shift-report', tag: 'shift_report_confirmed' },
+            body: { user_ids: pushIds, title: 'ファイブM 勤務変更報告', body: '新着 1件', url: '/shift-report', tag: 'shift_report_confirmed' },
           })
         }
       }
@@ -138,7 +138,7 @@ serve(async (req) => {
       try { channels = JSON.parse(slackSetting.recipient ?? '{}').channels ?? [] } catch { /* ignore */ }
       const slackMsg = slackSetting.template
         ? applyTemplate(slackSetting.template, vars)
-        : `⏰ *勤務変更申請が受理されました*\n\n*申請者：* ${user_name}\n*種別：* ${typeLabels}\n*日付：* ${dateLabel}`
+        : `⏰ *勤務変更報告が受理されました*\n\n*報告者：* ${user_name}\n*種別：* ${typeLabels}\n*日付：* ${dateLabel}`
       for (const ch of channels) {
         const url = Deno.env.get(SLACK_WEBHOOK_KEYS[ch] ?? '')
         if (!url) continue
@@ -154,7 +154,7 @@ serve(async (req) => {
     // メール通知
     const emailSetting = getSetting('email')
     if (emailSetting?.enabled && emailSetting.template) {
-      const subject = emailSetting.subject ? applyTemplate(emailSetting.subject, vars) : '勤務変更申請が受理されました'
+      const subject = emailSetting.subject ? applyTemplate(emailSetting.subject, vars) : '勤務変更報告が受理されました'
       const text = applyTemplate(emailSetting.template, vars)
       const emails = await resolveTargetEmails(emailSetting.recipient)
       for (const to of emails) {

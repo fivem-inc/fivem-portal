@@ -57,8 +57,8 @@ function getTypes(r: ShiftReport): AppType[] {
 }
 
 const STATUS_INFO: Record<string, { label: string; color: string }> = {
-  pending:     { label: '申請中',   color: '#856404' },
-  resubmitted: { label: '再申請中', color: '#856404' },
+  pending:     { label: '確認待ち',     color: '#856404' },
+  resubmitted: { label: '確認待ち(再)', color: '#856404' },
   confirmed:   { label: '受理済み', color: '#065f46' },
   cancelled:   { label: '取消済み', color: '#6c757d' },
   returned:    { label: '差戻し',   color: '#9d174d' },
@@ -92,6 +92,7 @@ const ShiftReportsTab: React.FC = () => {
   const [groupOptions, setGroupOptions] = useState<string[]>([]);
   const [groupMap, setGroupMap]         = useState<Record<string, string[]>>({});
   const [confirming, setConfirming]     = useState<string | null>(null);
+  const [deleteError, setDeleteError]   = useState('');
   const [expandedHistory, setExpandedHistory] = useState<Set<string>>(new Set());
   const [historyData, setHistoryData]   = useState<Record<string, HistoryRec[]>>({});
   const [historyExistIds, setHistoryExistIds] = useState<Set<string>>(new Set());
@@ -178,13 +179,13 @@ const ShiftReportsTab: React.FC = () => {
   };
 
   const handleConfirm = async (r: ShiftReport) => {
-    if (!window.confirm(`「${r.applicantName}」の申請を受理しますか？`)) return;
+    if (!window.confirm(`「${r.applicantName}」の報告を受理しますか？`)) return;
     setConfirming(r.id);
     const { data: { user } } = await supabase.auth.getUser();
     await supabase.from('shift_reports').update({ status: 'confirmed', confirmed_by: user?.id, confirmed_at: new Date().toISOString() }).eq('id', r.id);
     await supabase.from('shift_report_history').insert({ report_id: r.id, changed_by: user?.id, change_summary: '管理者が受理しました', snapshot: r }).then(null, () => {});
     await supabase.from('notifications').insert({
-      user_id: r.applicant_id, message: '勤務変更申請が受理されました',
+      user_id: r.applicant_id, message: '勤務変更報告が受理されました',
       sub_message: `${getTypes(r).map(t => TYPE_INFO[t]?.label ?? t).join('＋')}　${r.work_date}`,
       source_type: 'shift_report', reference_id: r.id, read: false,
     }).then(null, () => {});
@@ -215,7 +216,7 @@ const ShiftReportsTab: React.FC = () => {
       change_summary: comment ? `差戻し：${comment}` : '差戻しました', snapshot: r,
     }).then(null, () => {});
     await supabase.from('notifications').insert({
-      user_id: r.applicant_id, message: '勤務変更申請が差戻されました',
+      user_id: r.applicant_id, message: '勤務変更報告が差戻されました',
       sub_message: `${getTypes(r).map(t => TYPE_INFO[t]?.label ?? t).join('＋')}　${r.work_date}${comment ? `\n理由：${comment}` : ''}`,
       source_type: 'shift_report:pending_resubmit', reference_id: r.id, event_key: 'shift_report:returned', read: false,
     }).then(null, () => {});
@@ -225,9 +226,15 @@ const ShiftReportsTab: React.FC = () => {
   };
 
   const handleDelete = async (r: ShiftReport) => {
-    if (!window.confirm(`「${r.applicantName}」の申請を完全削除しますか？`)) return;
-    await supabase.from('shift_report_history').delete().eq('report_id', r.id);
-    await supabase.from('shift_reports').delete().eq('id', r.id);
+    if (!window.confirm(`「${r.applicantName}」の報告を完全削除しますか？`)) return;
+    setDeleteError('');
+    // 履歴は shift_reports の削除で on delete cascade により自動削除される
+    const { data: deleted, error } = await supabase.from('shift_reports').delete().eq('id', r.id).select('id');
+    if (error) { setDeleteError(`削除に失敗しました：${error.message}`); return; }
+    if (!deleted || deleted.length === 0) {
+      setDeleteError('削除できませんでした（権限が不足しているか、すでに削除済みです）');
+      return;
+    }
     setSuccessMsg('削除しました');
     fetchReports();
   };
@@ -295,7 +302,7 @@ const ShiftReportsTab: React.FC = () => {
       const s = v == null ? '' : String(v);
       return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const headers = ['申請日', '申請者', '代行者', '種別', '勤務日', '変更前勤務地', '変更前開始', '変更前終了', '変更前外出', '変更前戻り', '変更後勤務地', '変更後開始', '変更後終了', '変更後外出', '変更後戻り', '労働時間(分)', '休憩時間(分)', '理由', '確認者', 'ステータス'];
+    const headers = ['報告日', '報告者', '代行者', '種別', '勤務日', '変更前勤務地', '変更前開始', '変更前終了', '変更前外出', '変更前戻り', '変更後勤務地', '変更後開始', '変更後終了', '変更後外出', '変更後戻り', '労働時間(分)', '休憩時間(分)', '理由', '確認者', 'ステータス'];
     const rows = (data as ShiftReport[]).map(r => [
       r.created_at.slice(0, 10),
       nm[r.applicant_id] ?? '不明',
@@ -324,7 +331,7 @@ const ShiftReportsTab: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     const label = csvMode === 'payperiod' ? payPeriodLabel(csvPayPeriod) : `${csvFrom}〜${csvTo}`;
-    a.href = url; a.download = `勤務変更申請_${label}.csv`; a.click();
+    a.href = url; a.download = `勤務変更報告_${label}.csv`; a.click();
     URL.revokeObjectURL(url);
     setCsvExporting(false); setShowCsvModal(false);
   };
@@ -338,8 +345,14 @@ const ShiftReportsTab: React.FC = () => {
 
   return (
     <div style={{ background: bg, minHeight: '60vh', padding: '0 0 40px' }}>
-      <h3 style={{ textAlign: 'center', marginBottom: 6, color: text }}>⏰ 勤務変更申請一覧</h3>
-      <p style={{ textAlign: 'center', fontSize: 13, color: sub, marginBottom: 8 }}>パートスタッフの残業・早退・遅刻・欠勤の申請を管理します。</p>
+      <h3 style={{ textAlign: 'center', marginBottom: 6, color: text }}>⏰ 勤務変更報告一覧</h3>
+      <p style={{ textAlign: 'center', fontSize: 13, color: sub, marginBottom: 8 }}>パートスタッフの残業・早退・遅刻・欠勤の報告を管理します。</p>
+      {deleteError && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, maxWidth: 560, margin: '0 auto 10px', padding: '10px 14px', background: isDarkMode ? '#4a1515' : '#fdecea', border: `1px solid ${isDarkMode ? '#7f1d1d' : '#f5c6cb'}`, borderRadius: 8 }}>
+          <span style={{ fontSize: 13, color: isDarkMode ? '#fca5a5' : '#b71c1c', fontWeight: 'bold', flex: 1 }}>⚠️ {deleteError}</span>
+          <button onClick={() => setDeleteError('')} style={{ background: 'none', border: 'none', color: isDarkMode ? '#fca5a5' : '#b71c1c', fontSize: 16, cursor: 'pointer', lineHeight: 1 }}>✕</button>
+        </div>
+      )}
       <div style={{ display: 'flex', justifyContent: 'flex-end', paddingRight: 16, marginBottom: 8 }}>
         <button onClick={() => setShowCsvModal(true)}
           style={{ ...btnBase, padding: '5px 12px', fontSize: 12, background: '#28a745', color: '#fff', border: 'none' }}>
@@ -395,9 +408,9 @@ const ShiftReportsTab: React.FC = () => {
         <span style={{ fontSize: 12, color: sub }}>並び順：</span>
         <select value={sortKey} onChange={e => setSortKey(e.target.value as typeof sortKey)}
           style={{ padding: '4px 8px', borderRadius: 8, border: `1px solid ${border}`, background: selBg, color: text, fontSize: 12 }}>
-          <option value="created_at">申請日</option>
+          <option value="created_at">報告日</option>
           <option value="work_date">勤務日</option>
-          <option value="applicantName">申請者</option>
+          <option value="applicantName">報告者</option>
         </select>
         <button onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
           style={{ ...btnBase, padding: '4px 10px', fontSize: 12, background: isDarkMode ? '#495057' : '#e9ecef', color: text }}>
@@ -413,15 +426,15 @@ const ShiftReportsTab: React.FC = () => {
       {loading ? (
         <p style={{ textAlign: 'center', color: sub }}>読み込み中...</p>
       ) : filtered.length === 0 ? (
-        <p style={{ textAlign: 'center', color: sub, marginTop: 40 }}>該当する申請はありません</p>
+        <p style={{ textAlign: 'center', color: sub, marginTop: 40 }}>該当する報告はありません</p>
       ) : (
         <div style={{ overflowX: 'auto', padding: '0 8px' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', color: text, fontSize: 13 }}>
             <thead>
               <tr style={{ background: isDarkMode ? '#495057' : '#f8f9fa' }}>
                 {[
-                  { label: '申請日',   w: 70 },
-                  { label: '申請者',   w: 70 },
+                  { label: '報告日',   w: 70 },
+                  { label: '報告者',   w: 70 },
                   { label: '種別',     w: 70 },
                   { label: '変更前',   w: 100 },
                   { label: '変更後',   w: 100 },
@@ -513,7 +526,7 @@ const ShiftReportsTab: React.FC = () => {
                           {isReSub && (
                             <button onClick={() => toggleHistory(r.id)}
                               style={{ ...btnBase, background: '#007bff', color: '#fff', borderRadius: 4, padding: '2px 6px', fontSize: 10 }}>
-                              {hasHist ? '▼ 再申請' : '▶ 再申請'}
+                              {hasHist ? '▼ 再報告' : '▶ 再報告'}
                             </button>
                           )}
                           {isRet && (
@@ -596,7 +609,7 @@ const ShiftReportsTab: React.FC = () => {
       {showCsvModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px' }}>
           <div style={{ background: isDarkMode ? '#343a40' : '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 360 }}>
-            <div style={{ fontSize: 15, fontWeight: 'bold', color: text, marginBottom: 16 }}>📥 CSV出力 — 勤務変更申請</div>
+            <div style={{ fontSize: 15, fontWeight: 'bold', color: text, marginBottom: 16 }}>📥 CSV出力 — 勤務変更報告</div>
 
             {/* モード切替 */}
             <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
