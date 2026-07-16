@@ -7072,3 +7072,49 @@ on conflict (event_key, channel) do nothing;
 - 本番DB操作・本番設定変更・push/コミットは「明示の指示」を得てから
 - git add 前に必ず `git status` 目視。`AGENTS.md`（未追跡）はコミットに含めない
 - デプロイ＝push。Vercel webhook 不発時は空コミット push で発火。Edge Function は `supabase functions deploy <name>` が別途必要（Docker不要）
+
+---
+
+## 📌 セッション終了メモ（2026-07-16／勤務変更報告「差し戻し時」の4チャンネル化）
+
+### やったこと（本番反映済み：マイグレーション適用＋Edge Functionデプロイ完了）
+ユーザー要望：管理→通知設定の「⏰ 勤務変更報告（パート・アルバイト）」の**差し戻し時**を、
+受理時と同じく **Slack／メール／サイト通知／プッシュ** の4つとも選べるようにする。
+
+**なぜ「プッシュのみ」だったか（原因）**
+- 受理時は Edge Function `shift-report-confirmed-notify` を経由し、設定を読んで4チャンネル出し分けしていた
+- 差し戻し時は画面から `notifications` に直接1行INSERTしていただけ（ベル→トリガー→プッシュが流れるので結果的にプッシュのみ）
+- **通知設定画面は notification_settings に行がある channel だけ表示する**。行が無い＝その欄自体が出ない
+
+**実装（休暇の差し戻し `leave:rejected` と同じ作りに揃えた）**
+- **新Edge Function `shift-report-returned-notify`（デプロイ済）**：Slack専用。
+  Webhook URLはサーバー側の秘密のため関数経由。送信先チャンネル・文面は notification_settings から関数側で読む
+- **新 `client/src/lib/shiftReportReturnedNotify.ts`**：差し戻し通知の送信処理を集約（site＋Slack invoke＋email）。
+  **差し戻しは管理画面(ShiftReportsTab)と申請画面(ShiftReportPage)の2か所から実行できる**ため、
+  両方からこのヘルパーを呼ぶ（配線漏れ防止）。直INSERTは廃止
+- **プッシュはヘルパーで送らない**：site通知INSERTにevent_keyを付けるとトリガー→push-dispatchで自動送信されるため、
+  ここで送ると二重送信になる
+- **NotificationsTab.tsx**：ラベル「差し戻し時（プッシュのみ）」→「差し戻し時」、
+  `SLACK_CHANNEL_OPTIONS_BY_EVENT` に `shift_report:returned`（TIME_ADJ_SLACK_OPTIONS＝リーダー/マネージャー/経理/晃平先生）、
+  `VARIABLES_BY_EVENT` に `{{申請者名}}{{種別}}{{日付}}{{差し戻し理由}}{{リンク}}`、
+  `APPLICANT_ONLY_RECIPIENT_EVENTS`（新設）で メール・サイトの宛先は「申請者本人」のみ表示
+- **マイグレーション `20260722000000_add_shift_report_returned_channels.sql`（本番適用済）**：
+  site/slack/email の3行を追加（push行は既存）。既定は **site=ON（従来挙動維持）／slack・email=OFF**
+  site の subject は null のまま＝画面側が「種別　日付（＋理由）」を自動生成（従来のベル2行目と同じ表示）
+
+### 🚨 注意事項（今回わかった仕様・重要）
+- **「サイト通知」＝ `notifications` の1行**。これが **🔔ベル一覧（App.tsx の NotificationBell）と
+  ホーム上部のバナー（App.tsx の NotificationBanner）の両方**に出る。別物ではない。
+  ホームのバナーを×で消すと `banner_dismissed` が立ちバナーだけ消える（ベルには残る）
+  ※ホームにある「プッシュ通知をONに」の `PushEnableBanner` は通知設定とは無関係の別物
+- **サイト通知OFF＝プッシュも止まる**（プッシュはベル通知INSERTのトリガーが入口のため）。
+  この注記を**サイト通知欄に表示するようにした**（`pushFollowsSite()` で判定）。
+  ただし **PUSH_ROLE_SELECT_EVENTS の4件（時間調整・勤務変更受理・欠勤登録・立替精算）は
+  専用Edge Functionがプッシュを直接送るのでこの結合は無い**＝注記を出さない（出すと嘘になる）
+- 新イベント/新チャンネルを増やすときは **必ず notification_settings に行をseed** しないと画面に出ない
+
+### 次回やること（実機確認）
+1. 管理→通知設定→勤務変更報告→差し戻し時 に4欄が出るか。Slackのチャンネル選択・メールON→本人に届くか
+2. 差し戻しを **管理画面と申請画面の両方**から実行し、ベル/ホームバナー/プッシュが従来どおり届くか
+   （文面「差戻」はChrome警告にならない実機テスト済み語）
+3. サイト通知欄の注記が、受理時・時間調整・欠勤登録・立替精算には**出ていない**ことの確認

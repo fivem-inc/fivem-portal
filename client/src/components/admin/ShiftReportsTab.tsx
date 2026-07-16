@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
+import { notifyShiftReportReturned } from '../../lib/shiftReportReturnedNotify';
 
 type AppType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start' | 'location_change';
 
@@ -215,11 +216,14 @@ const ShiftReportsTab: React.FC = () => {
       report_id: r.id, changed_by: user?.id,
       change_summary: comment ? `差戻し：${comment}` : '差戻しました', snapshot: r,
     }).then(null, () => {});
-    await supabase.from('notifications').insert({
-      user_id: r.applicant_id, message: '勤務変更報告が差戻されました',
-      sub_message: `${getTypes(r).map(t => TYPE_INFO[t]?.label ?? t).join('＋')}　${r.work_date}${comment ? `\n理由：${comment}` : ''}`,
-      source_type: 'shift_report:pending_resubmit', reference_id: r.id, event_key: 'shift_report:returned', read: false,
-    }).then(null, () => {});
+    await notifyShiftReportReturned({
+      reportId: r.id,
+      applicantId: r.applicant_id,
+      applicantName: r.applicantName ?? '',
+      typeLabels: getTypes(r).map(t => TYPE_INFO[t]?.label ?? t).join('＋'),
+      workDate: r.work_date,
+      reason: comment,
+    });
     setReturning(false); setReturnTarget(null); setReturnComment('');
     setSuccessMsg('差戻しました');
     fetchReports();

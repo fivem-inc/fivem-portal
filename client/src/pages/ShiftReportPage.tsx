@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import { notifyShiftReportReturned } from '../lib/shiftReportReturnedNotify';
 import { useDarkMode } from '../hooks/useDarkMode';
 import type { AuthUser } from '../types';
 
@@ -1077,11 +1078,14 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       report_id: r.id, changed_by: user.id,
       change_summary: comment ? `差戻し：${comment}` : '差戻しました', snapshot: r,
     }).then(null, () => {});
-    await supabase.from('notifications').insert({
-      user_id: r.applicant_id, message: '勤務変更報告が差戻されました',
-      sub_message: `${TYPE_INFO[r.application_type].label}　${r.work_date}${comment ? `\n理由：${comment}` : ''}`,
-      source_type: 'shift_report:pending_resubmit', reference_id: r.id, event_key: 'shift_report:returned', read: false,
-    }).then(null, () => {});
+    await notifyShiftReportReturned({
+      reportId: r.id,
+      applicantId: r.applicant_id,
+      applicantName: (r.applicant as { name: string | null } | null)?.name ?? '',
+      typeLabels: (r.application_types?.length ? r.application_types : [r.application_type]).map(t => TYPE_INFO[t]?.label ?? t).join('＋'),
+      workDate: r.work_date,
+      reason: comment,
+    });
     setReturningId(null); setReturnTarget(null); setReturnComment('');
     window.dispatchEvent(new CustomEvent('shift-pending-changed'));
     fetchPending(); fetchReviewedReports(); fetchAllReports();

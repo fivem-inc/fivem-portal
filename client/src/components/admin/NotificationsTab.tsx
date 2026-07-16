@@ -76,7 +76,7 @@ const EVENT_GROUPS = [
     headerBg: '#FFEBEE', headerBorder: '#C62828', headerText: '#B71C1C',
     events: [
       { key: 'shift_report:new_request', label: '報告時（プッシュのみ）' },
-      { key: 'shift_report:returned',    label: '差し戻し時（プッシュのみ）' },
+      { key: 'shift_report:returned',    label: '差し戻し時' },
       { key: 'shift_report:confirmed',   label: '受理時' },
     ],
   },
@@ -172,6 +172,7 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
   'trip:report_end':             ['{{申請者名}}', '{{申請日}}'],
   'time_adjustment:registered':  ['{{登録者名}}', '{{種別}}', '{{日付}}', '{{理由}}', '{{リンク}}'],
   'attendance:registered':       ['{{対象者名}}', '{{種別}}', '{{日付}}', '{{リンク}}'],
+  'shift_report:returned':       ['{{申請者名}}', '{{種別}}', '{{日付}}', '{{差し戻し理由}}', '{{リンク}}'],
   'shift_report:confirmed':      ['{{申請者名}}', '{{種別}}', '{{日付}}', '{{勤務地}}', '{{リンク}}'],
   'board:notice':                ['{{送信者名}}', '{{件名}}', '{{リンク}}'],
   'board:dm_message':            ['{{送信者名}}', '{{リンク}}'],
@@ -277,6 +278,7 @@ const SLACK_CHANNEL_OPTIONS_BY_EVENT: Record<string, { value: string; label: str
   'leave:rejected':         [{ value: 'leader', label: '#01リーダー回覧' }, { value: 'manager', label: '#01マネージャー回覧' }, { value: 'accounting', label: '#07_3閲覧禁止-経理専用' }],
   'leave:cancelled':        [{ value: 'leader', label: '#01リーダー回覧' }, { value: 'manager', label: '#01マネージャー回覧' }, { value: 'accounting', label: '#07_3閲覧禁止-経理専用' }],
   'expense:new_request':    [{ value: 'expense',    label: '#07_3閲覧禁止-経理専用' }],
+  'shift_report:returned':  TIME_ADJ_SLACK_OPTIONS,
   'trip:report_end':        TRIP_SLACK_CHANNELS,
   'purchase_request:submitted':            TIME_ADJ_SLACK_OPTIONS,
   'purchase_request:submitted_manager':    TIME_ADJ_SLACK_OPTIONS,
@@ -354,7 +356,12 @@ const RECIPIENT_OPTIONS: Record<string, { value: string; label: string }[]> = {
 // 「社長」を宛先に選べるイベント（マネージャー受理時・取り消し時）。他イベントには出さない。
 // 送信側で role_title='社長' を解決して届ける。
 const PRESIDENT_RECIPIENT_EVENTS = ['leave:manager_approved', 'leave:cancelled'];
+// 申請者本人だけに届くイベント（差し戻し）。他の宛先は送信側で解決しないため選択肢に出さない。
+const APPLICANT_ONLY_RECIPIENT_EVENTS = ['shift_report:returned'];
 const getRecipientOptions = (channel: string, eventKey: string): { value: string; label: string }[] => {
+  if (APPLICANT_ONLY_RECIPIENT_EVENTS.includes(eventKey)) {
+    return [{ value: 'applicant', label: '申請者本人' }];
+  }
   const base = RECIPIENT_OPTIONS[channel] ?? [];
   if (PRESIDENT_RECIPIENT_EVENTS.includes(eventKey) && (channel === 'email' || channel === 'site')) {
     return [...base, { value: 'president', label: '社長' }];
@@ -449,6 +456,12 @@ const NotificationsTab: React.FC = () => {
     const current = (field === 'template' ? s.template : s.subject) ?? '';
     updateLocal(eventKey, channel, { [field]: current + variable });
   };
+
+  // プッシュがサイト通知（＝ベル通知）を入口にして送られるイベントか。
+  // これらはサイト通知をOFFにするとプッシュも止まるため、その旨をサイト通知欄に注記する。
+  // PUSH_ROLE_SELECT_EVENTS の4件は専用のEdge Functionがプッシュを直接送るので対象外。
+  const pushFollowsSite = (eventKey: string): boolean =>
+    !!getSetting(eventKey, 'push') && !!getSetting(eventKey, 'site') && !PUSH_ROLE_SELECT_EVENTS.includes(eventKey);
 
   const getBadges = (eventKey: string) => {
     const channels: ChannelType[] = ['slack', 'email', 'site', 'push'];
@@ -1102,6 +1115,12 @@ const NotificationsTab: React.FC = () => {
                                     </div>
                                   );
                                 })()
+                              )}
+
+                              {channel === 'site' && pushFollowsSite(event.key) && (
+                                <div style={{ fontSize: 11, color: subText, lineHeight: 1.6, padding: '8px 10px', marginBottom: 10, background: sectionBg, borderRadius: 6 }}>
+                                  ※ サイト通知をOFFにすると、🔔ベル・ホームのバナー・プッシュ通知のすべてが届かなくなります（プッシュはこの通知をもとに送られるため）
+                                </div>
                               )}
 
                               {channel !== 'slack' && (
