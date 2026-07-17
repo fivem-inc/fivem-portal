@@ -834,7 +834,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: text }}>申請先 <span style={{ color: '#dc3545' }}>*</span></label>
             {approvers.length === 0 ? (
               <div style={{ padding: '10px 14px', background: '#fff3cd', borderRadius: 8, color: '#856404', fontSize: 14 }}>
-                承認者が登録されていません
+                受理者が登録されていません
               </div>
             ) : (
               <select
@@ -1154,8 +1154,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             <div style={{ background: isDark ? '#1a3a4a' : '#e8f4fd', border: `1px solid ${isDark ? '#2a6a8a' : '#bee5eb'}`, borderRadius: 10, padding: '12px 14px', marginBottom: 14 }}>
               <div style={{ fontWeight: 'bold', fontSize: 13, color: isDark ? '#90d0f0' : '#0c4a6e', marginBottom: 6 }}>自己登録（申請不要）</div>
               <div style={{ fontSize: 12, color: isDark ? '#a8cfe8' : '#0e5a8a', lineHeight: 1.7 }}>
-                時間調整は承認フローがありません。登録するとGoogleカレンダーにも反映されます。<br />
-                <span style={{ opacity: 0.85 }}>※ 有給休暇などの休暇申請とは異なり、承認待ちにはなりません。</span><br />
+                時間調整は受理フローがありません。登録するとGoogleカレンダーにも反映されます。<br />
+                <span style={{ opacity: 0.85 }}>※ 有給休暇などの休暇申請とは異なり、受理待ちにはなりません。</span><br />
                 <span style={{ opacity: 0.85 }}>※ 登録の取り消しはリーダー・マネージャーまたは経理担当者へご連絡ください。</span>
               </div>
             </div>

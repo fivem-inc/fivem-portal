@@ -65,10 +65,12 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
 
   const LEAVE_TYPES = ['有給休暇', 'BD休暇', '慶弔休', '調整休', 'その他', '病欠'];
 
-  // 一人目承認 → マネージャー選択モーダル
+  // 一人目受理 → マネージャー選択モーダル
   const [selectingManagerFor, setSelectingManagerFor] = useState<LeaveReq | null>(null);
   const [managers, setManagers] = useState<Approver[]>([]);
   const [selectedManagerId, setSelectedManagerId] = useState('');
+  // マネージャー本人が申請先の場合の受理方法：'self'=自分が受理して経理へ／'other'=別マネージャーに依頼
+  const [approveMode, setApproveMode] = useState<'self' | 'other'>('self');
 
   // パートへフォーム送信
   const [partUsers, setPartUsers] = useState<any[]>([]);
@@ -167,8 +169,9 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   // 承認ボタンを押したときの処理
   const handleApproveClick = (req: LeaveReq) => {
     if (req.status === 'pending') {
-      // 一人目承認 → マネージャー選択モーダルを出す
+      // 一人目受理 → マネージャー選択モーダルを出す
       setSelectingManagerFor(req);
+      setApproveMode('self'); // 申請先がマネージャー本人なら「自分が受理して経理へ」を既定に
       if (managers.length > 0) setSelectedManagerId(managers[0].id);
     } else {
       // それ以外は直接次へ進める
@@ -176,7 +179,42 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     }
   };
 
-  // 承認実行（一人目以外）
+  // マネージャー受理が確定したときの副作用（Googleカレンダー書き込み＋通知一式）。
+  // 通常の二人目受理（handleApprove）と、申請先マネージャー本人が一人で受理する経路（handleApproveAsSelf）で共有する。
+  const emitManagerApproved = async (req: LeaveReq) => {
+    // Googleカレンダーへ書き込む
+    try {
+      const dates: string[] = req.leave_dates ? JSON.parse(req.leave_dates) : [];
+      let locations: Record<string, string> | undefined;
+      try { locations = req.leave_locations ? JSON.parse(req.leave_locations) : undefined; } catch { locations = undefined; }
+      if (dates.length > 0) {
+        await supabase.functions.invoke('gcal-sync', {
+          body: { action: 'upsert', source_type: 'leave', source_id: req.id, dates, name: req.requester?.name ?? '', leave_type: req.leave_type === 'その他' ? 'その他' : req.leave_type, locations },
+        });
+      }
+    } catch (e) { console.error('[gcal-sync] 書き込み失敗:', e); }
+
+    // 申請者へ「受理されました」通知（＋宛先で社長を選んでいれば社長にも）
+    const typeName = req.leave_type === 'その他' ? (req.leave_type_other || 'その他') : req.leave_type;
+    const daysCount = req.leave_dates ? (() => { try { return String(JSON.parse(req.leave_dates!).length); } catch { return ''; } })() : '';
+    const vars = { 休暇種別: typeName, 申請日数: daysCount, リンク: 'https://fivem-portal.vercel.app/leave?tab=history' };
+    const applicantEmail = await getUserEmail(req.user_id) ?? '';
+    const { data: presidents } = await supabase
+      .from('profiles').select('id, email').eq('role_title', '社長').eq('is_active', true);
+    const presidentIds = (presidents ?? []).map((p: { id: string }) => p.id);
+    const presidentEmails = (presidents ?? []).map((p: { email: string | null }) => p.email).filter((e): e is string => !!e);
+    if (await shouldSend('leave:manager_approved', 'site')) {
+      const t = await getNotificationTemplate('leave:manager_approved', 'site', vars);
+      await insertNotification(req.user_id, t?.template ?? `休暇申請がマネージャーに受理されました`, t?.subject || `種別：${typeName}`, 'leave_request', req.id);
+    }
+    await dispatchSiteNotification('leave:manager_approved', vars, { president: presidentIds }, insertNotification, 'leave_request', req.id);
+    if (await shouldSend('leave:manager_approved', 'slack')) {
+      await sendLeaveSlack('manager_approved', profileName || '受理者', 'マネージャー');
+    }
+    await dispatchEmail('leave:manager_approved', vars, { applicant: applicantEmail, president: presidentEmails });
+  };
+
+  // 受理実行（一人目以外）
   const handleApprove = async (req: LeaveReq) => {
     // 調整給はマネージャー受理で完了（経理・社長ステップをスキップ）
     const isChosei = req.leave_type === '調整休';
@@ -190,62 +228,30 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     if (!window.confirm(`${label}しますか？`)) return;
     await supabase.from('leave_requests').update({ status: next }).eq('id', req.id);
 
-    // マネージャー受理時（step2_pending → manager_approved）にGoogleカレンダーへ書き込む
-    // 調整休はstep2_pending → approvedのためそのままapprovedも対象
-    if (next === 'manager_approved' || next === 'approved') {
-      try {
-        const dates: string[] = req.leave_dates ? JSON.parse(req.leave_dates) : [];
-        // 日付→校の対応表（校なしの旧申請はundefined→従来どおり校なしタイトル）
-        let locations: Record<string, string> | undefined;
-        try { locations = req.leave_locations ? JSON.parse(req.leave_locations) : undefined; } catch { locations = undefined; }
-        if (dates.length > 0) {
-          await supabase.functions.invoke('gcal-sync', {
-            body: {
-              action: 'upsert',
-              source_type: 'leave',
-              source_id: req.id,
-              dates,
-              name: req.requester?.name ?? '',
-              leave_type: req.leave_type === 'その他' ? 'その他' : req.leave_type,
-              locations,
-            },
-          });
-        }
-      } catch (e) {
-        console.error('[gcal-sync] 書き込み失敗:', e);
-      }
-    }
-
-    const typeName = req.leave_type === 'その他' ? (req.leave_type_other || 'その他') : req.leave_type;
-
     if (req.status === 'step2_pending') {
-      const daysCount = req.leave_dates ? (() => { try { return String(JSON.parse(req.leave_dates!).length); } catch { return ''; } })() : '';
-      const vars = { 休暇種別: typeName, 申請日数: daysCount, リンク: 'https://fivem-portal.vercel.app/leave?tab=history' };
-      const applicantEmail = await getUserEmail(req.user_id) ?? '';
-      // 社長（宛先で「社長」を選んだ場合の届け先。複数人いても全員に届ける）
-      const { data: presidents } = await supabase
-        .from('profiles').select('id, email').eq('role_title', '社長').eq('is_active', true);
-      const presidentIds = (presidents ?? []).map((p: { id: string }) => p.id);
-      const presidentEmails = (presidents ?? []).map((p: { email: string | null }) => p.email).filter((e): e is string => !!e);
-      // サイト内通知（申請者本人は従来どおり直接送信）
-      if (await shouldSend('leave:manager_approved', 'site')) {
-        const t = await getNotificationTemplate('leave:manager_approved', 'site', vars);
-        await insertNotification(req.user_id, t?.template ?? `休暇申請がマネージャーに受理されました`, t?.subject || `種別：${typeName}`, 'leave_request', req.id);
-      }
-      // 宛先で「社長」を選んでいれば、社長にもサイト通知（applicantは上で送信済みのため重複しない）
-      await dispatchSiteNotification('leave:manager_approved', vars, { president: presidentIds }, insertNotification, 'leave_request', req.id);
-      // Slack通知
-      if (await shouldSend('leave:manager_approved', 'slack')) {
-        await sendLeaveSlack('manager_approved', profileName || '承認者', 'マネージャー');
-      }
-      // メール（申請者本人＋「社長」を選んでいれば社長にも）
-      await dispatchEmail('leave:manager_approved', vars, { applicant: applicantEmail, president: presidentEmails });
+      // マネージャー受理確定：カレンダー書き込み＋受理通知（共通処理）
+      await emitManagerApproved(req);
     } else if (req.status === 'manager_approved') {
       if (await shouldSend('leave:manager_approved', 'slack')) {
         await sendLeaveSlack('accounting_approved', profileName || '経理担当者', '管理者');
       }
     }
 
+    window.dispatchEvent(new CustomEvent('leave-pending-changed'));
+    fetchRequests();
+  };
+
+  // 申請先がマネージャー本人の一人目受理で、二人目も自分が兼ねて経理へ一気に進める（調整休は完了まで）。
+  // 二度手間（自分を二人目に選び直してもう一度受理）を無くす経路。
+  const handleApproveAsSelf = async () => {
+    if (!selectingManagerFor) return;
+    const req = selectingManagerFor;
+    const isChosei = req.leave_type === '調整休';
+    const next = isChosei ? 'approved' : 'manager_approved';
+    // 二人目受理者として本人を記録（CSV・履歴で誰が受理したか追えるように）
+    await supabase.from('leave_requests').update({ status: next, approver2_id: user.id }).eq('id', req.id);
+    await emitManagerApproved(req); // leader_approved通知は送らない（次のマネージャーがいないため）
+    setSelectingManagerFor(null);
     window.dispatchEvent(new CustomEvent('leave-pending-changed'));
     fetchRequests();
   };
@@ -306,7 +312,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     }
     if (await shouldSend('leave:rejected', 'slack')) {
       const targetChannel = await getNotificationRecipient('leave:rejected', 'slack');
-      await sendLeaveSlack('rejected', profileName || '承認者', roleTitle || '承認者', undefined, undefined, targetChannel ?? 'leader');
+      await sendLeaveSlack('rejected', profileName || '受理者', roleTitle || '受理者', undefined, undefined, targetChannel ?? 'leader');
     }
     const rejectedEmail = await getUserEmail(rejectingReq.user_id) ?? '';
     await dispatchEmail('leave:rejected', rejectVars, { applicant: rejectedEmail });
@@ -432,7 +438,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
         ) : requests.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '40px 0' }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
-            <p style={{ color: subText }}>承認待ちの申請はありません</p>
+            <p style={{ color: subText }}>受理待ちの申請はありません</p>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -545,7 +551,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                     </div>
                   ) : (
                     <div style={{ padding: '8px 12px', background: isDark ? '#343a40' : '#e9ecef', borderRadius: 6, fontSize: 13, color: subText, textAlign: 'center' }}>
-                      別の承認者の順番です
+                      別の受理者の順番です
                     </div>
                   )}
                 </div>
@@ -555,45 +561,87 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
         )}
       </div>
 
-      {/* 一人目承認 → マネージャー選択モーダル */}
-      {selectingManagerFor && (
+      {/* 一人目受理 → マネージャー選択モーダル */}
+      {selectingManagerFor && (() => {
+        const isManager = roleTitle === 'マネージャー';
+        const isChosei = selectingManagerFor.leave_type === '調整休';
+        const selfLabel = isChosei ? '自分が受理して完了する' : '自分が受理して経理へ進める';
+        const selfBtnLabel = isChosei ? '受理して完了' : '経理へ進める';
+        return (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-          <div style={{ background: isDark ? '#343a40' : 'white', borderRadius: 12, padding: 24, maxWidth: 380, width: '100%' }}>
-            <h3 style={{ marginBottom: 8, color: text }}>次の承認者（マネージャー）を選択</h3>
-            <p style={{ marginBottom: 16, fontSize: 13, color: subText }}>
-              承認後、選んだマネージャーに申請が送られます
-            </p>
-            {managers.length === 0 ? (
-              <p style={{ color: '#dc3545', fontSize: 14 }}>マネージャーが登録されていません</p>
+          <div style={{ background: isDark ? '#343a40' : 'white', borderRadius: 12, padding: 24, maxWidth: 400, width: '100%' }}>
+            {isManager ? (
+              <>
+                <h3 style={{ marginBottom: 4, color: text }}>受理方法を選んでください</h3>
+                <p style={{ marginBottom: 16, fontSize: 12, color: subText }}>
+                  申請者：{selectingManagerFor.requester?.name || '不明'} ／ {selectingManagerFor.leave_type === 'その他' ? (selectingManagerFor.leave_type_other || 'その他') : selectingManagerFor.leave_type}
+                </p>
+                {/* 選択肢A：自分が受理して経理へ（調整休は完了まで） */}
+                <label onClick={() => setApproveMode('self')} style={{ display: 'block', border: `2px solid ${approveMode === 'self' ? '#28a745' : borderColor}`, borderRadius: 10, padding: 12, marginBottom: 10, cursor: 'pointer', background: approveMode === 'self' ? (isDark ? '#1b3d24' : '#f0fff4') : 'transparent' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 'bold', fontSize: 14, color: text }}>
+                    <span style={{ color: approveMode === 'self' ? '#28a745' : subText }}>{approveMode === 'self' ? '◉' : '○'}</span>{selfLabel}
+                  </div>
+                </label>
+                {/* 選択肢B：別のマネージャーに受理を依頼 */}
+                <label onClick={() => setApproveMode('other')} style={{ display: 'block', border: `2px solid ${approveMode === 'other' ? '#28a745' : borderColor}`, borderRadius: 10, padding: 12, marginBottom: 16, cursor: 'pointer' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 'bold', fontSize: 14, color: text }}>
+                    <span style={{ color: approveMode === 'other' ? '#28a745' : subText }}>{approveMode === 'other' ? '◉' : '○'}</span>別のマネージャーに受理を依頼する
+                  </div>
+                  {approveMode === 'other' && (
+                    managers.length === 0 ? (
+                      <p style={{ color: '#dc3545', fontSize: 13, marginTop: 8, marginLeft: 22 }}>マネージャーが登録されていません</p>
+                    ) : (
+                      <select value={selectedManagerId} onChange={e => setSelectedManagerId(e.target.value)}
+                        onClick={e => e.stopPropagation()}
+                        style={{ width: 'calc(100% - 22px)', marginLeft: 22, marginTop: 8, padding: '10px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 14, background: inputBg, color: text }}>
+                        {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                      </select>
+                    )
+                  )}
+                </label>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button onClick={() => setSelectingManagerFor(null)}
+                    style={{ flex: 1, padding: '10px', background: isDark ? '#495057' : '#f8f9fa', border: `1px solid ${borderColor}`, borderRadius: 8, cursor: 'pointer', color: text }}>
+                    キャンセル
+                  </button>
+                  <button
+                    onClick={approveMode === 'self' ? handleApproveAsSelf : handleApproveWithManager}
+                    disabled={approveMode === 'other' && (!selectedManagerId || managers.length === 0)}
+                    style={{ flex: 2, padding: '10px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold' }}>
+                    {approveMode === 'self' ? selfBtnLabel : '受理して送る'}
+                  </button>
+                </div>
+              </>
             ) : (
-              <select
-                value={selectedManagerId}
-                onChange={e => setSelectedManagerId(e.target.value)}
-                style={{ width: '100%', padding: '10px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 15, background: inputBg, color: text, marginBottom: 16 }}
-              >
-                {managers.map(m => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </select>
+              <>
+                <h3 style={{ marginBottom: 8, color: text }}>次の受理者（マネージャー）を選択</h3>
+                <p style={{ marginBottom: 16, fontSize: 13, color: subText }}>
+                  受理後、選んだマネージャーに申請が送られます
+                </p>
+                {managers.length === 0 ? (
+                  <p style={{ color: '#dc3545', fontSize: 14 }}>マネージャーが登録されていません</p>
+                ) : (
+                  <select value={selectedManagerId} onChange={e => setSelectedManagerId(e.target.value)}
+                    style={{ width: '100%', padding: '10px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 15, background: inputBg, color: text, marginBottom: 16 }}>
+                    {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
+                )}
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button onClick={() => setSelectingManagerFor(null)}
+                    style={{ flex: 1, padding: '10px', background: isDark ? '#495057' : '#f8f9fa', border: `1px solid ${borderColor}`, borderRadius: 8, cursor: 'pointer', color: text }}>
+                    キャンセル
+                  </button>
+                  <button onClick={handleApproveWithManager} disabled={!selectedManagerId || managers.length === 0}
+                    style={{ flex: 1, padding: '10px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold' }}>
+                    受理して送る
+                  </button>
+                </div>
+              </>
             )}
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button
-                onClick={() => setSelectingManagerFor(null)}
-                style={{ flex: 1, padding: '10px', background: isDark ? '#495057' : '#f8f9fa', border: `1px solid ${borderColor}`, borderRadius: 8, cursor: 'pointer', color: text }}
-              >
-                キャンセル
-              </button>
-              <button
-                onClick={handleApproveWithManager}
-                disabled={!selectedManagerId || managers.length === 0}
-                style={{ flex: 1, padding: '10px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold' }}
-              >
-                受理して送る
-              </button>
-            </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* 差し戻しモーダル */}
       {rejectingReq && (

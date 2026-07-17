@@ -7283,3 +7283,34 @@ on conflict (event_key, channel) do nothing;
   あるのが分かりにくかったため、ボタンを2行に：1行目「✅ 受理ページへ」＋2行目（小）「パートへの申請フォーム送信」
 - 出張報告のクリアボタンは既に「報告種別」見出しの右横で希望どおり＝変更なし
 - フロントのみ（LeaveRequest.tsx の1ファイル）。DB・Edge Function変更なし
+
+---
+
+## 📌 追記（2026-07-18／マネージャー受理の二度手間解消・「承認」→「受理」文言統一）
+UI/UXデザイナー＋シニアエンジニアのサブエージェント2体でレビュー後に実装。
+
+### 1. マネージャーが申請先の休暇受理を1回で完了できるように（LeaveApprovals.tsx）
+- 従来：マネージャーを申請先に選んだ申請は、一人目受理→二人目に自分を選び直して再受理、で**同じ人が2回受理**する二度手間
+- 改善：一人目受理のモーダルを、受理者本人がマネージャー（roleTitle==='マネージャー'）のとき2択に：
+  - ◉ 自分が受理して経理へ進める（既定）… step2_pendingをスキップし直接manager_approvedへ。approver2_id=本人を記録
+  - ○ 別のマネージャーに受理を依頼する … 従来どおりstep2_pending
+- **調整休は完了まで**：調整休はmanager承認で完了する特殊フローのため、行き先を `isChosei ? 'approved' : 'manager_approved'`、
+  ボタン文言も「受理して完了」に自動切替（レビューで指摘された最重要の落とし穴）
+- 受理確定の副作用（gcal-sync書き込み＋申請者/社長サイト通知＋Slack＋メール）を **emitManagerApproved()** に共通化し、
+  handleApprove(step2_pending時) と新 handleApproveAsSelf の両方から呼ぶ（コードのdrift防止）
+- 新経路では leader_approved 通知は送らない（次のマネージャーがいないため）。manager_approved通知は必ず送る
+- リーダーが受理する場合は従来どおり（roleTitleで分岐）。管理画面(LeaveRequestsTab)は変更なし（管理者は手動強制進行できる）
+
+### 2. 「承認」→「受理」の文言統一（CLAUDE.mdルール:379行「承認→受理」に準拠）
+- LeaveApprovals：受理待ちの申請はありません／別の受理者の順番です／次の受理者（マネージャー）を選択／
+  受理後、選んだマネージャーに…／Slackフォールバック'受理者'
+- LeaveRequest：受理者が登録されていません／時間調整は受理フローがありません・受理待ちにはなりません
+
+### 注意事項
+- source_type や通知イベントキー（leave:manager_approved 等）は内部識別子なので変更しない（表示テキストのみ統一）
+- 役職判定は roleTitle（ログイン中の受理者本人の役職）。pending受理はcanApproveでapprover_id===user.id担保済み＝申請先本人
+- フロントのみ（DB・Edge Function変更なし）
+
+### 今後の任意タスク（レビューで挙がった改善余地）
+- manager_approved通知が LeaveRequestsTab では社長宛が欠落（LeaveApprovalsは送る）→ 整合させる価値あり
+- 承認フローの status を3ファイルで個別switchしている→将来「ステップ定義＋単一advance関数」への線形化リファクタ余地
