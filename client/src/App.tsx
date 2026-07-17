@@ -730,10 +730,11 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
   const isShiftPendingResubmit = n.source_type === 'shift_report:pending_resubmit';  // 申請者：再提出/取消待ち
   const isShiftResult          = n.source_type === 'shift_report';                   // 申請者：結果報告のみ
   const isTimeAdjustment       = n.source_type === 'time_adjustment';                // 上長：FYI（対応不要）
+  const isAttendance           = n.source_type === 'attendance';                     // 上長・本人：欠勤登録のFYI（対応不要）
   const isPurchasePendingApproval = n.source_type === 'purchase_request:pending_approval'; // リーダー：要対応
   const isPurchaseResult          = n.source_type === 'purchase_request';                  // 申請者：結果報告のみ
   const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit || isPurchasePendingApproval;
-  const isResultOnly = isLeaveResult || isShiftResult || isTimeAdjustment || isPurchaseResult;
+  const isResultOnly = isLeaveResult || isShiftResult || isTimeAdjustment || isAttendance || isPurchaseResult;
   // 旧来のフォールバック（source_typeが無い通知向け）
   const isLegacyReject = !isPendingAction && !isResultOnly && (n.message.includes('差し戻し') || n.message.includes('差し戻され'));
 
@@ -758,10 +759,13 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
     if (isShiftPendingApproval) { navigate('/shift-report?view=confirm'); return; }
     if (isShiftPendingResubmit) { navigate('/shift-report?tab=history'); return; }
     if (isShiftResult) { navigate('/shift-report?tab=history'); onDismiss(n.id); return; }
-    if (isTimeAdjustment) { onDismiss(n.id); return; }
+    // 時間調整・欠勤登録はチームカレンダーで内容を確認できる（FYIなのでタップで閉じる）
+    if (isTimeAdjustment || isAttendance) { navigate('/calendar'); onDismiss(n.id); return; }
     if (isPurchasePendingApproval) { navigate('/purchase?tab=approvals'); return; }
     if (isPurchaseResult) { navigate('/purchase?tab=history'); onDismiss(n.id); return; }
     if (isLegacyReject) { navigate('/leave'); return; }
+    // どの種別にも当てはまらない通知（古いデータ等）はタップで閉じる（無反応にしない保険）
+    onDismiss(n.id);
   };
 
   return (

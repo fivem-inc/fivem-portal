@@ -1120,9 +1120,12 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
                 const c = getEventColor(ev);
                 // 理由の2行目：調整休のみ「振替休日：〇〇のため」形式で表示。
                 // 他の休暇の事由はプライバシー配慮で全スタッフ向けのこの一覧には出さない（管理画面では見られる）
+                // ただし有給奨励日由来の申請（reason='【有給奨励日】'）は会社が指定した日なので明示する
                 const choseiNote = ev.leave_type === '調整休'
                   ? `${ev.reason?.startsWith('振替休日') ? '振替休日' : '時間外調整休'}${ev.purpose ? `：${ev.purpose}` : ''}`
-                  : null;
+                  : (ev.reason?.includes('【有給奨励日】') || ev.purpose === '有給奨励日')
+                    ? '📅 有給奨励日'
+                    : null;
                 return (
                   <div key={`l-${ev.id}-${row.date}-${i}`} style={{ borderBottom: `1px solid ${borderColor}` }}>
                     <div style={{ display: 'grid', gridTemplateColumns: gridCols, gap: 6, padding: '7px 8px', fontSize: isMobile ? 13 : 14, alignItems: 'center' }}>

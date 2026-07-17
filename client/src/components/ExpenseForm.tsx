@@ -249,6 +249,34 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     });
   }, [setExpenses]);
 
+  // 追加済みリストの並び順（表示のみ。送信データの順序は変えない）。
+  // 最後に選んだ並び順を端末に記憶し、次回も同じ並びで表示する。
+  type ListSort = 'added_asc' | 'added_desc' | 'date_asc' | 'date_desc';
+  const LIST_SORT_KEY = 'expense_list_sort';
+  const [listSort, setListSort] = useState<ListSort>(() => {
+    const saved = localStorage.getItem(LIST_SORT_KEY);
+    return (['added_asc', 'added_desc', 'date_asc', 'date_desc'] as const).includes(saved as ListSort) ? (saved as ListSort) : 'added_asc';
+  });
+  const changeListSort = (v: ListSort) => {
+    setListSort(v);
+    localStorage.setItem(LIST_SORT_KEY, v);
+  };
+  // 並び替え後も削除ボタンが正しい行に効くよう、元の配列位置（origIndex）を持ち回る
+  const sortedExpenseRows = useMemo(() => {
+    const rows = expenses.map((expense, origIndex) => ({ expense, origIndex }));
+    if (listSort === 'added_desc') return [...rows].reverse();
+    if (listSort === 'date_asc' || listSort === 'date_desc') {
+      // 利用日（定期は開始日）で並べる。日付未入力は末尾。同日は登録順を維持（安定ソート）
+      return [...rows].sort((a, b) => {
+        const ad = a.expense.start_date || '9999-12-31';
+        const bd = b.expense.start_date || '9999-12-31';
+        const cmp = ad.localeCompare(bd);
+        return listSort === 'date_asc' ? cmp : -cmp;
+      });
+    }
+    return rows; // added_asc（登録順・新しいのが下）
+  }, [expenses, listSort]);
+
   // 保存済みexpenseをドラフト形式に変換（transportationやworkplaceがマージされている場合を戻す）
   const toDraft = useCallback((item: Expense): Expense => {
     const t = item.transportation || '';
@@ -779,17 +807,30 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
         {expenses.length > 0 && (
           <>
             <hr style={{ border: 'none', borderTop: `1px dashed ${isDarkMode ? '#555' : '#ccc'}`, margin: '16px 0' }} />
-            <div style={{ marginBottom: 8 }}>
+            <div style={{ marginBottom: 4 }}>
               <div style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888' }}>✅ 追加済み（{expenses.length}件）</div>
               <div style={{ fontSize: 11, color: isDarkMode ? '#6c757d' : '#aaa' }}>複製を押すと上の入力欄に追加されます</div>
+              {/* 並び順（表示のみ。最後に選んだ順を端末に記憶）。1件目の枠のすぐ上・右寄せ */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginTop: 4 }}>
+                <select
+                  value={listSort}
+                  onChange={e => changeListSort(e.target.value as ListSort)}
+                  style={{ fontSize: 12, padding: '4px 6px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#555' : '#ddd'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#adb5bd' : '#666' }}
+                >
+                  <option value="added_asc">登録順 ↓</option>
+                  <option value="added_desc">登録順 ↑</option>
+                  <option value="date_asc">日付順 ↓</option>
+                  <option value="date_desc">日付順 ↑</option>
+                </select>
+              </div>
             </div>
-            {expenses.map((expense, index) => {
+            {sortedExpenseRows.map(({ expense, origIndex }, index) => {
               const typeLabel = expense.type === 'regular' ? '定期' : expense.type === 'business_trip' ? '出張（園指導等）' : expense.type === 'other' ? (expense.type_other || 'その他') : '通勤（単発）';
               const dateLabel = expense.type === 'regular' ? `${withDay(expense.start_date || '', true)} 〜 ${withDay(expense.end_date || '', true)}` : withDay(expense.start_date || '', true);
               const transportLabel = (expense.transportation || '').split('・').map(p => p === 'その他' ? (expense.transportation_other || 'その他') : p).filter(Boolean).join('・');
               const isTeiki = expense.type === 'regular';
               return (
-                <div key={index} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: isDarkMode ? (isTeiki ? '#1e3d2a' : '#2c3e50') : (isTeiki ? '#f6fff8' : '#f8fbff'), border: `1px solid ${isDarkMode ? (isTeiki ? '#2d5a3d' : '#344a5e') : (isTeiki ? '#d4edda' : '#cfe2ff')}`, borderLeft: `3px solid ${isTeiki ? '#198754' : '#0d6efd'}`, borderRadius: 6, marginBottom: 6, fontSize: 13 }}>
+                <div key={origIndex} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: isDarkMode ? (isTeiki ? '#1e3d2a' : '#2c3e50') : (isTeiki ? '#f6fff8' : '#f8fbff'), border: `1px solid ${isDarkMode ? (isTeiki ? '#2d5a3d' : '#344a5e') : (isTeiki ? '#d4edda' : '#cfe2ff')}`, borderLeft: `3px solid ${isTeiki ? '#198754' : '#0d6efd'}`, borderRadius: 6, marginBottom: 6, fontSize: 13 }}>
                   <span style={{ background: isDarkMode ? '#444' : '#e9ecef', borderRadius: 4, padding: '3px 8px', fontWeight: 'bold', fontSize: 12, flexShrink: 0 }}>{index + 1}</span>
                   <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
                     <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#6c757d' }}>{typeLabel}　{transportLabel}　{dateLabel}{expense.workplace === 'その他' ? `　${expense.workplace_other}` : expense.workplace ? `　${expense.workplace}` : ''}</div>
@@ -797,7 +838,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                   </div>
                   <div style={{ fontWeight: 'bold', color: isDarkMode ? '#4a9eff' : '#0d6efd', flexShrink: 0 }}>¥{parseInt(expense.amount || '0').toLocaleString()}</div>
                   <button type="button" onClick={() => { setDraftExpense(toDraft(expense)); setTemplateSource('copy'); setTimeout(() => setHighlightFields(new Set(['start_date'])), 0); }} style={{ background: '#6c757d', color: 'white', border: 'none', borderRadius: 4, padding: '4px 8px', fontSize: 11, cursor: 'pointer', flexShrink: 0 }}>複製</button>
-                  <button type="button" onClick={() => handleRemoveRow(index)} style={{ background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, padding: '4px 8px', fontSize: 11, cursor: 'pointer', flexShrink: 0 }}>削除</button>
+                  <button type="button" onClick={() => handleRemoveRow(origIndex)} style={{ background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, padding: '4px 8px', fontSize: 11, cursor: 'pointer', flexShrink: 0 }}>削除</button>
                 </div>
               );
             })}
