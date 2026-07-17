@@ -6,6 +6,11 @@ import { insertNotification } from '../../lib/notifications';
 import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatchEmail, dispatchSiteNotification, getUserEmail } from '../../lib/notificationDispatch';
 import SearchableSelect from '../common/SearchableSelect';
 
+// leave_locations（日付→校のJSON文字列）をパース。null・破損はundefined（校なし）扱い
+const parseLeaveLocations = (s?: string | null): Record<string, string> | undefined => {
+  try { return s ? JSON.parse(s) : undefined; } catch { return undefined; }
+};
+
 interface AbsenceRec {
   id: string;
   user_id: string;
@@ -13,6 +18,7 @@ interface AbsenceRec {
   type: 'absent' | 'late' | 'early_leave' | 'late_start' | 'early_end';
   actual_time: string | null;
   notes: string | null;
+  location: string | null; // 校（過去データはnull）
   created_at: string;
   created_by: string | null;
   targetName: string;
@@ -149,22 +155,33 @@ const LeaveRequestsTab: React.FC = () => {
       const s = v == null ? '' : String(v);
       return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const headers = ['申請日', '申請者', '種別', '休暇日', '日数', '理由・目的', '第一承認者', '第二承認者', 'ステータス'];
-    const rows = (data as AdminLeaveRequest[]).map(r => {
-      const leaveDates = r.leave_dates ?? (r.start_date && r.end_date ? `${r.start_date}〜${r.end_date}` : r.start_date ?? '');
-      const daysArr = (r.leave_dates ?? '').split(',').map(s => s.trim()).filter(Boolean);
-      const days = daysArr.length > 0 ? daysArr.length : (r.start_date && r.end_date ? '' : '');
-      return [
-        r.created_at.slice(0, 10),
-        nm[r.user_id] ?? '不明',
-        r.leave_type_other ? `${r.leave_type}（${r.leave_type_other}）` : r.leave_type,
-        leaveDates,
-        days,
-        r.purpose ?? r.reason ?? '',
-        r.approver_id ? (nm[r.approver_id] ?? '') : '',
-        r.approver2_id ? (nm[r.approver2_id] ?? '') : '',
-        STATUS_LABEL[r.status] ?? r.status,
-      ].map(esc).join(',');
+    // 1申請=1行ではなく「1日=1行」で出力する（複数日の申請は日数分の行に分解）
+    const headers = ['申請日', '申請者', '種別', '休暇日', '校', '申請日数', '理由・目的', '第一承認者', '第二承認者', 'ステータス'];
+    const rows = (data as AdminLeaveRequest[]).flatMap(r => {
+      // 休暇日リスト（leave_datesはJSON配列の文字列。旧データはstart/endから展開）
+      let dates: string[] = [];
+      try { if (r.leave_dates) dates = JSON.parse(r.leave_dates); } catch { /* 旧形式は下のフォールバックへ */ }
+      if (dates.length === 0 && r.start_date) {
+        const s = new Date(r.start_date), e = new Date(r.end_date || r.start_date);
+        for (const d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) dates.push(d.toISOString().slice(0, 10));
+      }
+      if (dates.length === 0) dates = [''];
+      const locs = parseLeaveLocations(r.leave_locations) ?? {};
+      const common = {
+        created: r.created_at.slice(0, 10),
+        name: nm[r.user_id] ?? '不明',
+        type: r.leave_type_other ? `${r.leave_type}（${r.leave_type_other}）` : r.leave_type,
+        days: dates.filter(Boolean).length || '',
+        reason: r.purpose ?? r.reason ?? '',
+        ap1: r.approver_id ? (nm[r.approver_id] ?? '') : '',
+        ap2: r.approver2_id ? (nm[r.approver2_id] ?? '') : '',
+        status: STATUS_LABEL[r.status] ?? r.status,
+      };
+      return dates.map(d => [
+        common.created, common.name, common.type,
+        d, d ? (locs[d] ?? '') : '',
+        common.days, common.reason, common.ap1, common.ap2, common.status,
+      ].map(esc).join(','));
     });
     const csv = '﻿' + [headers.join(','), ...rows].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -180,7 +197,7 @@ const LeaveRequestsTab: React.FC = () => {
     setAbsenceLoading(true);
     const { data } = await supabase
       .from('attendance_exceptions')
-      .select('id, user_id, date, type, actual_time, notes, created_at, created_by')
+      .select('id, user_id, date, type, actual_time, notes, location, created_at, created_by')
       .order('date', { ascending: false });
     if (!data || data.length === 0) { setAbsenceRecs([]); setAbsenceLoading(false); return; }
     const ids = [...new Set([...data.map((r: { user_id: string }) => r.user_id), ...data.map((r: { created_by: string | null }) => r.created_by).filter(Boolean)])] as string[];
@@ -1117,6 +1134,32 @@ const LeaveRequestsTab: React.FC = () => {
                           リセット
                         </button>
                       )}
+                      {/* 欠勤・遅刻・早退CSV（表示中の絞り込み結果を1日1行で出力） */}
+                      <button onClick={() => {
+                        if (filteredAbsRecs.length === 0) return;
+                        const esc = (v: string | number | null | undefined) => {
+                          const s = v == null ? '' : String(v);
+                          return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+                        };
+                        const headers = ['日付', '対象者', '種別', '時間', '校', '備考', '追加者', '追加日'];
+                        const rows = [...filteredAbsRecs]
+                          .sort((a, b) => a.date.localeCompare(b.date))
+                          .map(r => [
+                            r.date, r.targetName, ABSENCE_LABEL[r.type],
+                            r.actual_time ? r.actual_time.slice(0, 5) : '',
+                            r.location ?? '', r.notes ?? '', r.creatorName,
+                            r.created_at.slice(0, 10),
+                          ].map(esc).join(','));
+                        const csv = '﻿' + [headers.join(','), ...rows].join('\n');
+                        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                        const a = document.createElement('a');
+                        a.href = URL.createObjectURL(blob);
+                        a.download = `欠勤遅刻早退_${absFilterFY === 'all' ? '全年度' : `${activeFY}年度`}.csv`;
+                        a.click();
+                        URL.revokeObjectURL(a.href);
+                      }} style={{ padding: '4px 12px', borderRadius: 8, border: 'none', background: '#28a745', color: '#fff', fontSize: 11, fontWeight: 'bold', cursor: 'pointer' }}>
+                        📥 CSV出力
+                      </button>
                     </div>
                     {absenceLoading ? (
                       <p style={{ textAlign: 'center', color: isDarkMode ? '#fff' : '#000' }}>読み込み中...</p>
@@ -1134,6 +1177,7 @@ const LeaveRequestsTab: React.FC = () => {
                             { label: '種別' },
                             { label: '日付', sortKey: 'date' as const },
                             { label: '時間' },
+                            { label: '校' },
                             { label: '備考' },
                             { label: '操作' },
                           ].map(col => (
@@ -1165,6 +1209,7 @@ const LeaveRequestsTab: React.FC = () => {
                               </td>
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 12 }}>{rec.date}</td>
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 12 }}>{rec.actual_time ? rec.actual_time.slice(0, 5) : '—'}</td>
+                              <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 12 }}>{rec.location || '—'}</td>
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'left', fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>{rec.notes || '—'}</td>
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center' }}>
                                 <button onClick={() => setDeleteTarget(rec)} style={{ padding: '3px 10px', background: 'transparent', border: '1px solid #dc3545', color: '#dc3545', borderRadius: 6, cursor: 'pointer', fontSize: 11 }}>取消</button>
@@ -1327,6 +1372,7 @@ const LeaveRequestsTab: React.FC = () => {
                                                   dates,
                                                   name: req.profile?.name ?? '',
                                                   leave_type: req.leave_type,
+                                                  locations: parseLeaveLocations(req.leave_locations),
                                                 },
                                               });
                                             }
@@ -1550,7 +1596,7 @@ const LeaveRequestsTab: React.FC = () => {
                               const dates: string[] = rejectModal.leave_dates ? JSON.parse(rejectModal.leave_dates) : [];
                               if (dates.length > 0) {
                                 await supabase.functions.invoke('gcal-sync', {
-                                  body: { action: 'upsert', source_type: 'leave', source_id: rejectModal.id, dates, name: rejectModal.profile?.name ?? '', leave_type: rejectNewType },
+                                  body: { action: 'upsert', source_type: 'leave', source_id: rejectModal.id, dates, name: rejectModal.profile?.name ?? '', leave_type: rejectNewType, locations: parseLeaveLocations(rejectModal.leave_locations) },
                                 });
                               }
                             } catch (e) { console.error('[gcal-sync] upsert失敗:', e); }
@@ -1581,6 +1627,7 @@ const LeaveRequestsTab: React.FC = () => {
                               user_id: rejectModal.user_id,
                               leave_type: rejectNewType,
                               leave_dates: rejectModal.leave_dates,
+                              leave_locations: rejectModal.leave_locations, // 校の引き継ぎ
                               start_date: rejectModal.start_date,
                               end_date: rejectModal.end_date,
                               reason: autoNote,
@@ -1594,7 +1641,7 @@ const LeaveRequestsTab: React.FC = () => {
                                 const dates: string[] = rejectModal.leave_dates ? JSON.parse(rejectModal.leave_dates) : [];
                                 if (dates.length > 0) {
                                   await supabase.functions.invoke('gcal-sync', {
-                                    body: { action: 'upsert', source_type: 'leave', source_id: newReq.id, dates, name: rejectModal.profile?.name ?? '', leave_type: rejectNewType },
+                                    body: { action: 'upsert', source_type: 'leave', source_id: newReq.id, dates, name: rejectModal.profile?.name ?? '', leave_type: rejectNewType, locations: parseLeaveLocations(rejectModal.leave_locations) },
                                   });
                                 }
                               } catch (e) { console.error('[gcal-sync] upsert失敗:', e); }

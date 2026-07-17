@@ -164,6 +164,7 @@ export interface AdminLeaveRequest {
   leave_type: string;
   leave_type_other?: string;
   leave_dates?: string;
+  leave_locations?: string | null; // 日付→校のJSON（旧申請はnull）
   purpose?: string;
   start_date?: string;
   end_date?: string;

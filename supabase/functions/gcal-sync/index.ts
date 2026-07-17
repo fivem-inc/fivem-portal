@@ -184,7 +184,11 @@ serve(async (req) => {
     const token = await getAccessToken(serviceAccountJson)
 
     const body = await req.json()
-    const { action, source_type, source_id, dates, name, leave_type, absence_type, time } = body
+    const { action, source_type, source_id, dates, name, leave_type, absence_type, time, locations } = body
+    // タイトル用の名前は姓名間の全角スペースを半角に正規化（DBのprofiles.nameは変更しない）
+    const normName = String(name ?? '').replace(/　/g, ' ')
+    // locations: 日付→校 の対応表（省略可。無ければ従来どおり校なしタイトル）
+    const locationByDate = (locations ?? {}) as Record<string, string>
 
     // action: 'upsert' | 'delete'
     if (action === 'delete') {
@@ -212,10 +216,10 @@ serve(async (req) => {
     }
 
     // action: 'upsert' — 日付ごとにイベントを作成or更新
-    const summary =
+    const baseSummary =
       source_type === 'leave'
-        ? `${name}｜${LEAVE_CONFIG[leave_type]?.label ?? '休み'}`
-        : buildAbsenceTitle(absence_type, name, time)
+        ? `${normName}｜${LEAVE_CONFIG[leave_type]?.label ?? '休み'}`
+        : buildAbsenceTitle(absence_type, normName, time)
 
     const colorId =
       source_type === 'leave'
@@ -223,6 +227,9 @@ serve(async (req) => {
         : absenceColorId(absence_type)
 
     for (const date of dates as string[]) {
+      // 校が指定されている日は末尾に［校名］を付ける（例：椿原 凜大｜休み［四条本校］）
+      const loc = locationByDate[date]
+      const summary = loc ? `${baseSummary}［${loc}］` : baseSummary
       const { data: existing } = await supabase
         .from('gcal_events')
         .select('id, event_id')

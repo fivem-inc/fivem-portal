@@ -195,6 +195,64 @@ const formatSelectedDates = (dates: string[]): string => {
   return `${dates[0]} ～ ${dates[dates.length - 1]}（${dates.length}日選択）`;
 };
 
+// 日付の短い表示（7/2（木））
+const shortDateLabel = (d: string): string =>
+  `${parseInt(d.slice(5, 7))}/${parseInt(d.slice(8, 10))}（${'日月火水木金土'[new Date(d + 'T00:00:00').getDay()]}）`;
+
+// 日付ごとの校選択リスト（1日1行）。休暇日と振替元の勤務日で共用。
+// 選択済み日付の一覧表示を兼ねる（緑の「選択中の日付」枠の置き換え）。
+const DateLocationPicker: React.FC<{
+  dates: string[];
+  locations: Record<string, string>;
+  workplaces: string[];
+  bulk: string;
+  onBulk: (v: string) => void;
+  onSelect: (date: string, v: string) => void;
+  isDark: boolean;
+}> = ({ dates, locations, workplaces, bulk, onBulk, onSelect, isDark }) => {
+  const text = isDark ? '#fff' : '#333';
+  const subText = isDark ? '#adb5bd' : '#666';
+  const inputBg = isDark ? '#495057' : 'white';
+  const borderColor = isDark ? '#6c757d' : '#ddd';
+  if (dates.length === 0) return null;
+  const sorted = [...dates].sort();
+  return (
+    <div style={{ marginTop: 8 }}>
+      {dates.length > 1 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, padding: '8px 12px', background: isDark ? '#3d4349' : '#f4f7fb', borderRadius: 8 }}>
+          <span style={{ fontSize: 13, color: subText, flexShrink: 0 }}>すべて同じ校にする：</span>
+          <select
+            value={bulk}
+            onChange={e => onBulk(e.target.value)}
+            style={{ flex: 1, padding: '8px 10px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 14, background: inputBg, color: text }}
+          >
+            <option value="">選択してください</option>
+            {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+          </select>
+        </div>
+      )}
+      <div style={{ border: `1px solid ${borderColor}`, borderRadius: 8, overflow: 'hidden' }}>
+        {sorted.map((d, i) => {
+          const missing = !locations[d];
+          return (
+            <div key={d} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderTop: i > 0 ? `1px solid ${borderColor}` : 'none', background: missing ? (isDark ? '#4a2b30' : '#fff5f5') : 'transparent' }}>
+              <span style={{ fontSize: 13, color: text, flexShrink: 0, minWidth: 74 }}>{shortDateLabel(d)}</span>
+              <select
+                value={locations[d] ?? ''}
+                onChange={e => onSelect(d, e.target.value)}
+                style={{ flex: 1, padding: '8px 10px', border: `1px solid ${missing ? '#e78a95' : borderColor}`, borderRadius: 8, fontSize: 14, background: inputBg, color: text }}
+              >
+                <option value="">選択してください</option>
+                {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+              </select>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 // ---- メインコンポーネント ----
 const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _roleTitle = '', leaveRequestEnabled, onSubmitSuccess }) => {
   const navigate = useNavigate();
@@ -204,6 +262,14 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const [leaveType, setLeaveType] = useState<LeaveType>('有給休暇');
   const [leaveTypeOther, setLeaveTypeOther] = useState('');
   const [selectedDates, setSelectedDates] = useState<string[]>([]);
+  // 校（勤務校）：日付ごとに選択。カレンダーのタイトルに［校名］で表示される
+  const [workplaces, setWorkplaces] = useState<string[]>([]);
+  const [dateLocations, setDateLocations] = useState<Record<string, string>>({});
+  const [bulkLocation, setBulkLocation] = useState('');
+  const [locError, setLocError] = useState(''); // 校未選択のインラインエラー（alertは使わない）
+  // 振替元の勤務日の校（調整休・振替休日のみ。日付→校）
+  const [originLocations, setOriginLocations] = useState<Record<string, string>>({});
+  const [originBulkLocation, setOriginBulkLocation] = useState('');
   const [purpose, setPurpose] = useState('');
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -228,6 +294,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const [adjSubmitting, setAdjSubmitting] = useState(false);
   const [adjBanner, setAdjBanner] = useState(false);
   const [adjError, setAdjError] = useState('');
+  const [adjLocation, setAdjLocation] = useState(''); // 時間調整の校（必須）
   const [adjCalYear, setAdjCalYear] = useState(() => new Date().getFullYear());
   const [adjCalMonth, setAdjCalMonth] = useState(() => new Date().getMonth());
   // 調整休専用
@@ -273,6 +340,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         if (!error && data) setLeaderAssignments(data);
         setLoadingAssignments(false);
       });
+    // 校（勤務地マスタ。勤務変更報告と同じ選択肢）
+    supabase.from('master_options').select('value').eq('category', 'workplace').order('sort_order')
+      .then(({ data }) => { if (data) setWorkplaces(data.map((r: { value: string }) => r.value)); });
   }, []);
 
   const [history, setHistory] = useState<LeaveRecord[]>([]);
@@ -376,6 +446,11 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         leave_type: leaveType,
         leave_type_other: leaveType === 'その他' ? leaveTypeOther : null,
         leave_dates: JSON.stringify(selectedDates),
+        leave_locations: JSON.stringify(Object.fromEntries(selectedDates.map(d => [d, dateLocations[d]]))),
+        // 振替元の勤務日の校（調整休・振替休日のみ。日付はreasonの文章、校はこの列と役割を分ける）
+        chosei_origin_locations: (leaveType === '調整休' && choseiSubType === 'furikae' && choseiOriginDates.length > 0)
+          ? JSON.stringify(Object.fromEntries(choseiOriginDates.map(d => [d, originLocations[d]])))
+          : null,
         start_date: startDate,
         end_date: endDate,
         purpose: purpose,
@@ -416,6 +491,11 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     setLeaveType('有給休暇');
     setLeaveTypeOther('');
     setSelectedDates([]);
+    setDateLocations({});
+    setBulkLocation('');
+    setOriginLocations({});
+    setOriginBulkLocation('');
+    setLocError('');
     setPurpose('');
     setNotes('');
     setSubmitted(false);
@@ -756,12 +836,36 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                     </label>
                     <MultiDatePicker
                       selectedDates={choseiOriginDates}
-                      onChange={setChoseiOriginDates}
+                      onChange={dates => {
+                        setChoseiOriginDates(dates);
+                        // 選択解除された日付の校情報を削除
+                        setOriginLocations(prev => Object.fromEntries(dates.filter(d => prev[d]).map(d => [d, prev[d]])));
+                      }}
                       isDark={isDark}
                     />
+                    {/* 振替元の日付ごとの校選択（選択日の一覧を兼ねる・1日1行） */}
                     {choseiOriginDates.length > 0 && (
-                      <div style={{ marginTop: 8, padding: '8px 12px', background: isDark ? '#1b4d1b' : '#d4edda', borderRadius: 6, fontSize: 13, color: isDark ? '#75d475' : '#155724' }}>
-                        選択中の日付：{choseiOriginDates.join('、')}
+                      <div style={{ marginTop: 10 }}>
+                        <label style={{ display: 'block', fontSize: 14, fontWeight: 'bold', marginBottom: 2, color: text }}>
+                          振替元の勤務校 <span style={{ color: '#dc3545' }}>*</span>
+                          <span style={{ fontSize: 12, fontWeight: 'normal', color: subText, marginLeft: 6 }}>（日付ごとに選択）</span>
+                        </label>
+                        <DateLocationPicker
+                          dates={choseiOriginDates}
+                          locations={originLocations}
+                          workplaces={workplaces}
+                          bulk={originBulkLocation}
+                          onBulk={v => {
+                            setOriginBulkLocation(v);
+                            if (v) { setOriginLocations(Object.fromEntries(choseiOriginDates.map(d => [d, v]))); setLocError(''); }
+                          }}
+                          onSelect={(d, v) => {
+                            setOriginLocations(prev => ({ ...prev, [d]: v }));
+                            setOriginBulkLocation('');
+                            if (v) setLocError('');
+                          }}
+                          isDark={isDark}
+                        />
                       </div>
                     )}
                     <label style={{ display: 'block', fontSize: 14, fontWeight: 'bold', marginTop: 12, marginBottom: 6, color: text }}>
@@ -815,12 +919,36 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             </label>
             <MultiDatePicker
               selectedDates={selectedDates}
-              onChange={setSelectedDates}
+              onChange={dates => {
+                setSelectedDates(dates);
+                // 選択解除された日付の校情報を削除（残すと送信データにゴミが混ざる）
+                setDateLocations(prev => Object.fromEntries(dates.filter(d => prev[d]).map(d => [d, prev[d]])));
+              }}
               isDark={isDark}
             />
+            {/* 日付ごとの校選択（選択日の一覧を兼ねる・1日1行） */}
             {selectedDates.length > 0 && (
-              <div style={{ marginTop: 8, padding: '8px 12px', background: isDark ? '#1b4d1b' : '#d4edda', borderRadius: 6, fontSize: 13, color: isDark ? '#75d475' : '#155724' }}>
-                選択中の日付：{selectedDates.join('、')}
+              <div style={{ marginTop: 10 }}>
+                <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 2, color: text, fontSize: 14 }}>
+                  勤務校 <span style={{ color: '#dc3545' }}>*</span>
+                  <span style={{ fontSize: 12, fontWeight: 'normal', color: subText, marginLeft: 6 }}>（日付ごとに選択）</span>
+                </label>
+                <DateLocationPicker
+                  dates={selectedDates}
+                  locations={dateLocations}
+                  workplaces={workplaces}
+                  bulk={bulkLocation}
+                  onBulk={v => {
+                    setBulkLocation(v);
+                    if (v) { setDateLocations(Object.fromEntries(selectedDates.map(d => [d, v]))); setLocError(''); }
+                  }}
+                  onSelect={(d, v) => {
+                    setDateLocations(prev => ({ ...prev, [d]: v }));
+                    setBulkLocation(''); // 個別に変えたら「一括」表示は解除
+                    if (v) setLocError('');
+                  }}
+                  isDark={isDark}
+                />
               </div>
             )}
           </div>
@@ -853,6 +981,11 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             />
           </div>
 
+          {locError && (
+            <div style={{ color: '#dc3545', fontSize: 13, marginBottom: 12, padding: '8px 12px', background: isDark ? '#4a2b30' : '#fff5f5', borderRadius: 6 }}>
+              ⚠️ {locError}
+            </div>
+          )}
           <button
             onClick={() => {
               if (!selectedApproverId) { alert('申請先を選んでください'); return; }
@@ -862,6 +995,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               if (!purpose.trim() && leaveType !== '調整休') { alert('事由を入力してください'); return; }
               if (leaveType === '調整休' && !purpose.trim()) { alert('理由を入力してください'); return; }
               if (leaveType === 'その他' && !leaveTypeOther) { alert('種別を入力してください'); return; }
+              if (selectedDates.some(d => !dateLocations[d])) { setLocError('すべての日付で勤務校を選択してください'); return; }
+              if (leaveType === '調整休' && choseiSubType === 'furikae' && choseiOriginDates.some(d => !originLocations[d])) { setLocError('振替元のすべての日付で勤務校を選択してください'); return; }
+              setLocError('');
               setShowConfirm(true);
             }}
             style={{ width: '100%', padding: '12px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, fontSize: 16, fontWeight: 'bold', cursor: 'pointer' }}
@@ -894,6 +1030,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           }
           if (adjLateStart && !adjLateTime) { setAdjError('調整遅出の出勤時刻を選択してください'); return; }
           if (adjEarlyEnd && !adjEarlyTime) { setAdjError('調整早退の退勤時刻を選択してください'); return; }
+          if (!adjLocation) { setAdjError('校を選択してください'); return; }
           if (!adjReason.trim()) { setAdjError('理由を入力してください'); return; }
           setAdjSubmitting(true);
           try {
@@ -901,9 +1038,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               ? (approvers.find(a => a.id === adjApproverSelectedId)?.name ?? '')
               : adjApproverFree.trim();
             const notesVal = approverName ? `【了承者】${approverName}　${adjReason.trim()}` : adjReason.trim();
-            const records: { user_id: string; date: string; type: string; actual_time: string; notes: string; created_by: string }[] = [];
-            if (adjLateStart) records.push({ user_id: user.id, date: adjDate, type: 'late_start', actual_time: adjLateTime, notes: notesVal, created_by: user.id });
-            if (adjEarlyEnd)  records.push({ user_id: user.id, date: adjDate, type: 'early_end',  actual_time: adjEarlyTime, notes: notesVal, created_by: user.id });
+            const records: { user_id: string; date: string; type: string; actual_time: string; notes: string; created_by: string; location: string }[] = [];
+            if (adjLateStart) records.push({ user_id: user.id, date: adjDate, type: 'late_start', actual_time: adjLateTime, notes: notesVal, created_by: user.id, location: adjLocation });
+            if (adjEarlyEnd)  records.push({ user_id: user.id, date: adjDate, type: 'early_end',  actual_time: adjEarlyTime, notes: notesVal, created_by: user.id, location: adjLocation });
             const { data: inserted, error: err } = await supabase.from('attendance_exceptions').insert(records).select('id, type, date, actual_time');
             if (err) {
               if (err.code === '23505') { setAdjError('この日付・種別はすでに登録済みです'); }
@@ -915,7 +1052,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             for (const rec of inserted ?? []) {
               try {
                 await supabase.functions.invoke('gcal-sync', {
-                  body: { action: 'upsert', source_type: 'absence', source_id: rec.id, dates: [rec.date], name: profileName ?? '', absence_type: rec.type, time: rec.actual_time ? rec.actual_time.slice(0, 5) : undefined },
+                  body: { action: 'upsert', source_type: 'absence', source_id: rec.id, dates: [rec.date], name: profileName ?? '', absence_type: rec.type, time: rec.actual_time ? rec.actual_time.slice(0, 5) : undefined, locations: { [rec.date]: adjLocation } },
                 });
               } catch (e) { console.error('[gcal-sync] 時間調整書き込み失敗:', e); }
             }
@@ -928,6 +1065,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             // リセット＆バナー
             setAdjLateStart(false); setAdjEarlyEnd(false);
             setAdjDate(''); setAdjLateTime(''); setAdjEarlyTime('');
+            setAdjLocation('');
             setAdjReason(''); setAdjApproverSelectedId(''); setAdjApproverFree('');
             setAdjBanner(true);
           } finally {
@@ -1084,6 +1222,16 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                   placeholder="了承者名を入力（任意）"
                   style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 14, background: inputBg, color: text, boxSizing: 'border-box' }} />
               )}
+            </div>
+
+            {/* 校（カレンダーのタイトルに［校名］で表示される） */}
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 8, color: text, fontSize: 14 }}>勤務校 <span style={{ color: '#dc3545' }}>*</span></label>
+              <select value={adjLocation} onChange={e => setAdjLocation(e.target.value)}
+                style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 14, background: inputBg, color: text, boxSizing: 'border-box' }}>
+                <option value="">選択してください</option>
+                {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+              </select>
             </div>
 
             {/* 理由 */}
@@ -1500,13 +1648,26 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                 <tr><td style={{ padding: '8px 0', color: subText, verticalAlign: 'top' }}>休暇種別</td><td style={{ padding: '8px 0', fontWeight: 'bold', color: text }}>{leaveType === 'その他' ? leaveTypeOther : leaveType}</td></tr>
                 <tr>
                   <td style={{ padding: '8px 0', color: subText, verticalAlign: 'top' }}>休暇日</td>
-                  <td style={{ padding: '8px 0', fontWeight: 'bold', color: '#007bff' }}>
-                    {formatSelectedDates(selectedDates)}
-                    <div style={{ marginTop: 4, fontSize: 12, color: subText, fontWeight: 'normal' }}>
-                      {selectedDates.slice(0, 10).join('、')}{selectedDates.length > 10 ? `…他${selectedDates.length - 10}日` : ''}
-                    </div>
+                  <td style={{ padding: '8px 0', color: text }}>
+                    <div style={{ fontWeight: 'bold', color: '#007bff', marginBottom: 4 }}>{formatSelectedDates(selectedDates)}</div>
+                    {/* 1日1行：日付＋校 */}
+                    {[...selectedDates].sort().slice(0, 10).map(d => (
+                      <div key={d} style={{ fontSize: 13, padding: '2px 0' }}>{shortDateLabel(d)}　{dateLocations[d] ?? '—'}</div>
+                    ))}
+                    {selectedDates.length > 10 && <div style={{ fontSize: 12, color: subText }}>…他{selectedDates.length - 10}日</div>}
                   </td>
                 </tr>
+                {leaveType === '調整休' && choseiSubType === 'furikae' && choseiOriginDates.length > 0 && (
+                  <tr>
+                    <td style={{ padding: '8px 0', color: subText, verticalAlign: 'top' }}>振替元</td>
+                    <td style={{ padding: '8px 0', color: text }}>
+                      {[...choseiOriginDates].sort().slice(0, 10).map(d => (
+                        <div key={d} style={{ fontSize: 13, padding: '2px 0' }}>{shortDateLabel(d)}　{originLocations[d] ?? '—'}</div>
+                      ))}
+                      {choseiOriginDates.length > 10 && <div style={{ fontSize: 12, color: subText }}>…他{choseiOriginDates.length - 10}日</div>}
+                    </td>
+                  </tr>
+                )}
                 <tr><td style={{ padding: '8px 0', color: subText, verticalAlign: 'top' }}>事由</td><td style={{ padding: '8px 0', color: text }}>{purpose}</td></tr>
                 {notes && <tr><td style={{ padding: '8px 0', color: subText, verticalAlign: 'top' }}>備考</td><td style={{ padding: '8px 0', color: text }}>{notes}</td></tr>}
               </tbody>

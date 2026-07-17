@@ -35,6 +35,9 @@ interface LeaveEvent {
   leave_type_other: string | null;
   dates: string[];
   status: string;
+  locations?: Record<string, string>; // 日付→校（leave_locations列。無い申請はundefined）
+  purpose?: string | null; // 事由（一覧の理由表示は調整休のみ使用。他の休暇はプライバシー配慮で出さない）
+  reason?: string | null;  // 備考（調整休の種類「振替休日／時間外調整休」の判定に使用）
 }
 
 interface AbsenceEvent {
@@ -45,6 +48,7 @@ interface AbsenceEvent {
   type: 'late' | 'early_leave' | 'absent' | 'late_start' | 'early_end';
   actual_time: string | null;
   notes: string | null;
+  location: string | null; // 校（過去データはnull）
 }
 
 const LEAVE_TYPE_COLOR: Record<string, { bg: string; text: string }> = {
@@ -281,11 +285,7 @@ const MultiDatePicker: React.FC<{
           ))}
         </tbody>
       </table>
-      {selectedDates.size > 0 && (
-        <div style={{ padding: '6px 10px', background: '#fff5f5', fontSize: 12, color: '#c0392b', borderTop: '1px solid #f0c0c0' }}>
-          選択中: {[...selectedDates].sort().map(d => `${parseInt(d.slice(5, 7))}/${parseInt(d.slice(8))}`).join('、')}
-        </div>
-      )}
+      {/* 選択中の日付一覧は「校（必須）」の日付ごとの選択リストが兼ねるため、ここには出さない */}
     </div>
   );
 };
@@ -295,11 +295,15 @@ const AbsenceInputSheet: React.FC<{
   date: string;
   profiles: ProfileEntry[];
   currentUserId: string;
+  workplaces: string[];
   onClose: () => void;
   onSaved: () => void;
   onSaving: () => void;
-}> = ({ date, profiles, currentUserId, onClose, onSaved, onSaving }) => {
+}> = ({ date, profiles, currentUserId, workplaces, onClose, onSaved, onSaving }) => {
   const [userId, setUserId] = useState('');
+  // 校（必須）。日付ごとに選択できる（全欠勤の複数日は日別、遅刻・早退はその日1件）
+  const [locations, setLocations] = useState<Record<string, string>>({});
+  const [bulkLocation, setBulkLocation] = useState('');
   const [isAbsent, setIsAbsent] = useState(false);
   const [absentDates, setAbsentDates] = useState<Set<string>>(() => new Set([date]));
   const [isLate, setIsLate] = useState(false);
@@ -369,6 +373,9 @@ const AbsenceInputSheet: React.FC<{
     if (!isAbsent && !isLate && !isLateStart && !isEarlyLeave && !isEarlyEnd) { setError('種別を選択してください'); return; }
     if ((isLate || isLateStart) && !lateTime) { setError('出勤時間を入力してください'); return; }
     if ((isEarlyLeave || isEarlyEnd) && !earlyTime) { setError('退勤時間を入力してください'); return; }
+    // 対象となる全日付で校が選ばれているか（全欠勤は選択日すべて、遅刻・早退はこの日）
+    const targetDates = isAbsent ? [...absentDates] : [date];
+    if (targetDates.some(d => !locations[d])) { setError('すべての日付で校を選択してください'); return; }
     confirmingRef.current = true;
     setConfirming(true);
   };
@@ -377,16 +384,16 @@ const AbsenceInputSheet: React.FC<{
     if (savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
-    const records: { user_id: string; date: string; type: string; actual_time: string | null; notes: string; created_by: string }[] = [];
+    const records: { user_id: string; date: string; type: string; actual_time: string | null; notes: string; created_by: string; location: string }[] = [];
     if (isAbsent) {
       for (const d of [...absentDates].sort()) {
-        records.push({ user_id: userId, date: d, type: 'absent', actual_time: null, notes, created_by: currentUserId });
+        records.push({ user_id: userId, date: d, type: 'absent', actual_time: null, notes, created_by: currentUserId, location: locations[d] ?? '' });
       }
     }
-    if (isLate)       records.push({ user_id: userId, date, type: 'late',        actual_time: lateTime,  notes, created_by: currentUserId });
-    if (isLateStart)  records.push({ user_id: userId, date, type: 'late_start',  actual_time: lateTime,  notes, created_by: currentUserId });
-    if (isEarlyLeave) records.push({ user_id: userId, date, type: 'early_leave', actual_time: earlyTime, notes, created_by: currentUserId });
-    if (isEarlyEnd)   records.push({ user_id: userId, date, type: 'early_end',   actual_time: earlyTime, notes, created_by: currentUserId });
+    if (isLate)       records.push({ user_id: userId, date, type: 'late',        actual_time: lateTime,  notes, created_by: currentUserId, location: locations[date] ?? '' });
+    if (isLateStart)  records.push({ user_id: userId, date, type: 'late_start',  actual_time: lateTime,  notes, created_by: currentUserId, location: locations[date] ?? '' });
+    if (isEarlyLeave) records.push({ user_id: userId, date, type: 'early_leave', actual_time: earlyTime, notes, created_by: currentUserId, location: locations[date] ?? '' });
+    if (isEarlyEnd)   records.push({ user_id: userId, date, type: 'early_end',   actual_time: earlyTime, notes, created_by: currentUserId, location: locations[date] ?? '' });
 
     const { data: inserted, error: err } = await supabase.from('attendance_exceptions').insert(records).select('id, type, date, actual_time');
     if (err) {
@@ -408,6 +415,7 @@ const AbsenceInputSheet: React.FC<{
             name,
             absence_type: rec.type,
             time: rec.actual_time ? rec.actual_time.slice(0, 5) : undefined,
+            locations: { [rec.date]: locations[rec.date] ?? '' },
           },
         });
       } catch (e) { console.error('[gcal-sync] 欠勤書き込み失敗:', e); }
@@ -501,6 +509,56 @@ const AbsenceInputSheet: React.FC<{
           </div>
         </div>
 
+        {/* 校（必須・日付ごとに選択）。カレンダーのタイトルに［校名］で表示される */}
+        {(() => {
+          const targetDates = isAbsent ? [...absentDates].sort() : [date];
+          return (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>校（必須{targetDates.length > 1 ? '・日付ごとに選択' : ''}）</div>
+              {targetDates.length > 1 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, padding: '8px 10px', background: '#f4f7fb', borderRadius: 8 }}>
+                  <span style={{ fontSize: 12, color: '#666', flexShrink: 0 }}>すべて同じ校にする：</span>
+                  <select
+                    value={bulkLocation}
+                    onChange={e => {
+                      const v = e.target.value;
+                      setBulkLocation(v);
+                      if (v) setLocations(Object.fromEntries(targetDates.map(d => [d, v])));
+                    }}
+                    style={{ flex: 1, padding: '8px', borderRadius: 8, border: '1px solid #ccc', fontSize: 14, background: '#fff', color: '#333' }}
+                  >
+                    <option value="">選択してください</option>
+                    {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+                  </select>
+                </div>
+              )}
+              <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, overflow: 'hidden' }}>
+                {targetDates.map((d, i) => {
+                  const missing = !locations[d];
+                  return (
+                    <div key={d} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderTop: i > 0 ? '1px solid #e0e0e0' : 'none', background: missing ? '#fff5f5' : 'transparent' }}>
+                      <span style={{ fontSize: 13, color: '#333', flexShrink: 0, minWidth: 74 }}>
+                        {parseInt(d.slice(5, 7))}/{parseInt(d.slice(8, 10))}（{'日月火水木金土'[new Date(d + 'T00:00:00').getDay()]}）
+                      </span>
+                      <select
+                        value={locations[d] ?? ''}
+                        onChange={e => {
+                          setLocations(prev => ({ ...prev, [d]: e.target.value }));
+                          setBulkLocation(''); // 個別に変えたら「一括」表示は解除
+                        }}
+                        style={{ flex: 1, padding: '8px', borderRadius: 8, border: `1px solid ${missing ? '#f0a0a0' : '#ccc'}`, fontSize: 14, background: '#fff', color: '#333' }}
+                      >
+                        <option value="">選択してください</option>
+                        {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* 備考 */}
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>備考（任意）</div>
@@ -525,12 +583,13 @@ const AbsenceInputSheet: React.FC<{
 
         {confirming && (() => {
           const personName = profiles.find(p => p.id === userId)?.name ?? '';
+          // 各行の末尾に校を付ける（日付ごとに選択された校）
           const lines: string[] = [];
-          if (isAbsent) [...absentDates].sort().forEach(d => lines.push(`${d}　全欠勤`));
-          if (isLate)       lines.push(`${date}　遅刻　出勤 ${lateTime}`);
-          if (isLateStart)  lines.push(`${date}　遅出（残業調整）　出勤 ${lateTime}`);
-          if (isEarlyLeave) lines.push(`${date}　早退　退勤 ${earlyTime}`);
-          if (isEarlyEnd)   lines.push(`${date}　早退（残業調整）　退勤 ${earlyTime}`);
+          if (isAbsent) [...absentDates].sort().forEach(d => lines.push(`${d}　全欠勤　${locations[d] ?? ''}`));
+          if (isLate)       lines.push(`${date}　遅刻　出勤 ${lateTime}　${locations[date] ?? ''}`);
+          if (isLateStart)  lines.push(`${date}　遅出（残業調整）　出勤 ${lateTime}　${locations[date] ?? ''}`);
+          if (isEarlyLeave) lines.push(`${date}　早退　退勤 ${earlyTime}　${locations[date] ?? ''}`);
+          if (isEarlyEnd)   lines.push(`${date}　早退（残業調整）　退勤 ${earlyTime}　${locations[date] ?? ''}`);
           return (
             <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, pointerEvents: saving ? 'none' : 'auto' }}>
               <div style={{ background: '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 360 }}>
@@ -613,19 +672,20 @@ const PcCalendar: React.FC<{
                       {events.map(ev => {
                         const c = getEventColor(ev);
                         const isPending = ev.status === 'pending' || ev.status === 'step2_pending';
+                        const loc = cell.date ? ev.locations?.[cell.date] : undefined;
                         return (
-                          <div key={ev.id + cell.date} title={`${ev.name}｜${shortType(ev)}`}
+                          <div key={ev.id + cell.date} title={`${ev.name}｜${shortType(ev)}${loc ? `［${loc}］` : ''}`}
                             style={{ fontSize: 11, borderRadius: 4, padding: '2px 4px', marginBottom: 2, background: c.bg, color: c.text, border: isPending ? `1px dashed ${'border' in c ? c.border : c.text}` : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {ev.name}
+                            {ev.name}{loc && <span style={{ fontSize: 9, opacity: 0.75, marginLeft: 2 }}>{loc}</span>}
                           </div>
                         );
                       })}
                       {absences.map(ab => {
                         const c = ABSENCE_COLOR[ab.type];
                         return (
-                          <div key={ab.id} title={`${ab.name}｜${ABSENCE_LABEL[ab.type]}`}
+                          <div key={ab.id} title={`${ab.name}｜${ABSENCE_LABEL[ab.type]}${ab.location ? `［${ab.location}］` : ''}`}
                             style={{ fontSize: 11, borderRadius: 4, padding: '2px 4px', marginBottom: 2, background: c.bg, color: c.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {ab.name}
+                            {ab.name}{ab.location && <span style={{ fontSize: 9, opacity: 0.75, marginLeft: 2 }}>{ab.location}</span>}
                           </div>
                         );
                       })}
@@ -731,6 +791,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
   const [profiles, setProfiles] = useState<ProfileEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [absenceSheet, setAbsenceSheet] = useState<string | null>(null);
+  const [workplaces, setWorkplaces] = useState<string[]>([]);
   const [absenceSaved, setAbsenceSaved] = useState(false);
   const [absenceDeleted, setAbsenceDeleted] = useState(false);
   const [monthSummary, setMonthSummary] = useState<{ year: number; month: number; days: number }[]>([]);
@@ -811,7 +872,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
 
       const { data: leaves } = await supabase
         .from('leave_requests')
-        .select('id, user_id, leave_type, leave_type_other, leave_dates, start_date, end_date, status')
+        .select('id, user_id, leave_type, leave_type_other, leave_dates, leave_locations, start_date, end_date, status, purpose, reason')
         .not('status', 'in', '("rejected","cancelled")')
         .or(`and(start_date.lte.${endStr},end_date.gte.${startStr})`);
 
@@ -837,8 +898,11 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
           }
         }
         dates = dates.filter(d => d >= startStr && d <= endStr);
+        // 日付→校の対応表（校なしの既存申請・JSON破損はundefinedのまま）
+        let locations: Record<string, string> | undefined;
+        try { if (l.leave_locations) locations = JSON.parse(l.leave_locations); } catch { locations = undefined; }
         if (dates.length > 0) {
-          result.push({ id: l.id, user_id: l.user_id, name, leave_type: l.leave_type, leave_type_other: l.leave_type_other, dates, status: l.status });
+          result.push({ id: l.id, user_id: l.user_id, name, leave_type: l.leave_type, leave_type_other: l.leave_type_other, dates, status: l.status, locations, purpose: l.purpose, reason: l.reason });
         }
       }
       setEvents(result);
@@ -854,7 +918,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
 
     const { data } = await supabase
       .from('attendance_exceptions')
-      .select('id, user_id, date, type, actual_time, notes')
+      .select('id, user_id, date, type, actual_time, notes, location')
       .gte('date', startStr)
       .lte('date', endStr)
       .order('date');
@@ -866,7 +930,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
     const profileMap: Record<string, string> = {};
     (profs || []).forEach((p: { id: string; name: string }) => { profileMap[p.id] = p.name; });
 
-    setAbsences(data.map((a: { id: string; user_id: string; date: string; type: 'late' | 'early_leave' | 'absent' | 'late_start' | 'early_end'; actual_time: string | null; notes: string | null }) => ({
+    setAbsences(data.map((a: { id: string; user_id: string; date: string; type: 'late' | 'early_leave' | 'absent' | 'late_start' | 'early_end'; actual_time: string | null; notes: string | null; location: string | null }) => ({
       ...a, name: profileMap[a.user_id] || '不明',
     })));
   }, [year, month]);
@@ -881,6 +945,9 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
         group_names: Array.isArray(p.group_names) ? p.group_names : (typeof p.group_names === 'string' ? JSON.parse(p.group_names) : []),
       })));
     });
+    // 欠勤入力の校ドロップダウン用（勤務変更報告と同じ勤務地マスタ）
+    supabase.from('master_options').select('value').eq('category', 'workplace').order('sort_order')
+      .then(({ data }) => { if (data) setWorkplaces(data.map((r: { value: string }) => r.value)); });
   }, [isApprover, isAdmin]);
 
   const eventsByDate: Record<string, LeaveEvent[]> = {};
@@ -1038,30 +1105,43 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
           <div>
             <div style={{
               display: 'grid',
-              gridTemplateColumns: isMobile ? '72px 1fr 56px 56px 44px' : '100px 1fr 80px 80px 60px',
+              gridTemplateColumns: isMobile ? '64px 1fr 52px 44px 56px 42px' : '100px 1fr 80px 70px 90px 60px',
               gap: 6, padding: '6px 8px', fontSize: 11, color: subColor,
               borderBottom: `1px solid ${borderColor}`, marginBottom: 4,
             }}>
-              <span>日付</span><span>名前</span><span>種別</span><span>時間</span><span style={{ textAlign: 'right' }}>状態</span>
+              <span>日付</span><span>名前</span><span>種別</span><span>時間</span><span style={{ textAlign: 'center' }}>校</span><span style={{ textAlign: 'right' }}>状態</span>
             </div>
             {monthListRows.map((row, i) => {
               const d = parseInt(row.date.split('-')[2]);
-              const gridCols = isMobile ? '72px 1fr 56px 56px 44px' : '100px 1fr 80px 80px 60px';
+              const gridCols = isMobile ? '64px 1fr 52px 44px 56px 42px' : '100px 1fr 80px 70px 90px 60px';
               if (row.kind === 'leave') {
                 const { ev } = row;
                 const isPending = ev.status === 'pending' || ev.status === 'step2_pending';
                 const c = getEventColor(ev);
+                // 理由の2行目：調整休のみ「振替休日：〇〇のため」形式で表示。
+                // 他の休暇の事由はプライバシー配慮で全スタッフ向けのこの一覧には出さない（管理画面では見られる）
+                const choseiNote = ev.leave_type === '調整休'
+                  ? `${ev.reason?.startsWith('振替休日') ? '振替休日' : '時間外調整休'}${ev.purpose ? `：${ev.purpose}` : ''}`
+                  : null;
                 return (
-                  <div key={`l-${ev.id}-${row.date}-${i}`} style={{ display: 'grid', gridTemplateColumns: gridCols, gap: 6, padding: '7px 8px', fontSize: isMobile ? 13 : 14, borderBottom: `1px solid ${borderColor}`, alignItems: 'center' }}>
-                    <span style={{ color: subColor, fontSize: isMobile ? 11 : 13 }}>{month + 1}/{d}（{dow(row.date)}）</span>
-                    <span style={{ fontWeight: 'bold', color: textColor }}>{ev.name}</span>
-                    <span style={{ fontSize: 11, padding: '2px 5px', borderRadius: 4, background: c.bg, color: c.text, border: isPending ? `1px dashed ${'border' in c ? c.border : c.text}` : 'none', textAlign: 'center' }}>
-                      {shortType(ev)}
-                    </span>
-                    <span style={{ fontSize: 12, color: subColor, textAlign: 'center' }}>—</span>
-                    <span style={{ fontSize: 11, textAlign: 'right', color: isPending ? '#b7770d' : '#1e8449', fontWeight: 'bold' }}>
-                      {STATUS_LABEL[ev.status] || ev.status}
-                    </span>
+                  <div key={`l-${ev.id}-${row.date}-${i}`} style={{ borderBottom: `1px solid ${borderColor}` }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: gridCols, gap: 6, padding: '7px 8px', fontSize: isMobile ? 13 : 14, alignItems: 'center' }}>
+                      <span style={{ color: subColor, fontSize: isMobile ? 11 : 13 }}>{month + 1}/{d}（{dow(row.date)}）</span>
+                      <span style={{ fontWeight: 'bold', color: textColor }}>{ev.name}</span>
+                      <span style={{ fontSize: 11, padding: '2px 5px', borderRadius: 4, background: c.bg, color: c.text, border: isPending ? `1px dashed ${'border' in c ? c.border : c.text}` : 'none', textAlign: 'center' }}>
+                        {shortType(ev)}
+                      </span>
+                      <span style={{ fontSize: 12, color: subColor, textAlign: 'center' }}>—</span>
+                      <span style={{ fontSize: 11, color: subColor, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {ev.locations?.[row.date] ?? '—'}
+                      </span>
+                      <span style={{ fontSize: 11, textAlign: 'right', color: isPending ? '#b7770d' : '#1e8449', fontWeight: 'bold' }}>
+                        {STATUS_LABEL[ev.status] || ev.status}
+                      </span>
+                    </div>
+                    {choseiNote && (
+                      <div style={{ padding: '0 8px 7px', fontSize: 11, color: subColor, lineHeight: 1.5 }}>{choseiNote}</div>
+                    )}
                   </div>
                 );
               } else {
@@ -1069,22 +1149,31 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
                 const c = ABSENCE_COLOR[ab.type];
                 const timeLabel = ab.actual_time ? ab.actual_time.slice(0, 5) : '—';
                 return (
-                  <div key={`a-${ab.id}-${i}`} style={{ display: 'grid', gridTemplateColumns: gridCols, gap: 6, padding: '7px 8px', fontSize: isMobile ? 13 : 14, borderBottom: `1px solid ${borderColor}`, alignItems: 'center' }}>
-                    <span style={{ color: subColor, fontSize: isMobile ? 11 : 13 }}>{month + 1}/{d}（{dow(row.date)}）</span>
-                    <span style={{ fontWeight: 'bold', color: textColor }}>{ab.name}</span>
-                    <span style={{ fontSize: 11, padding: '2px 5px', borderRadius: 4, background: c.bg, color: c.text, textAlign: 'center' }}>
-                      {ABSENCE_LABEL[ab.type]}
-                    </span>
-                    <span style={{ fontSize: 12, color: textColor, textAlign: 'center', fontWeight: ab.actual_time ? 'bold' : 'normal' }}>
-                      {timeLabel}
-                    </span>
-                    <span style={{ fontSize: 11, textAlign: 'right', color: subColor }}>
-                      {canInput && (
-                        <button onClick={() => setDeleteTarget(ab)} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, border: '1px solid #dc3545', background: 'transparent', color: '#dc3545', cursor: 'pointer' }}>
-                          取消
-                        </button>
-                      )}
-                    </span>
+                  <div key={`a-${ab.id}-${i}`} style={{ borderBottom: `1px solid ${borderColor}` }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: gridCols, gap: 6, padding: '7px 8px', fontSize: isMobile ? 13 : 14, alignItems: 'center' }}>
+                      <span style={{ color: subColor, fontSize: isMobile ? 11 : 13 }}>{month + 1}/{d}（{dow(row.date)}）</span>
+                      <span style={{ fontWeight: 'bold', color: textColor }}>{ab.name}</span>
+                      <span style={{ fontSize: 11, padding: '2px 5px', borderRadius: 4, background: c.bg, color: c.text, textAlign: 'center' }}>
+                        {ABSENCE_LABEL[ab.type]}
+                      </span>
+                      <span style={{ fontSize: 12, color: textColor, textAlign: 'center', fontWeight: ab.actual_time ? 'bold' : 'normal' }}>
+                        {timeLabel}
+                      </span>
+                      <span style={{ fontSize: 11, color: subColor, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {ab.location ?? '—'}
+                      </span>
+                      <span style={{ fontSize: 11, textAlign: 'right', color: subColor }}>
+                        {canInput && (
+                          <button onClick={() => setDeleteTarget(ab)} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, border: '1px solid #dc3545', background: 'transparent', color: '#dc3545', cursor: 'pointer' }}>
+                            取消
+                          </button>
+                        )}
+                      </span>
+                    </div>
+                    {/* 備考（欠勤入力・時間調整の備考。了承者名を含む）。入力がある場合のみ */}
+                    {ab.notes && (
+                      <div style={{ padding: '0 8px 7px', fontSize: 11, color: subColor, lineHeight: 1.5 }}>理由：{ab.notes}</div>
+                    )}
                   </div>
                 );
               }
@@ -1128,6 +1217,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
           date={absenceSheet}
           profiles={profiles}
           currentUserId={user.id}
+          workplaces={workplaces}
           onClose={() => setAbsenceSheet(null)}
           onSaving={() => { setAbsenceSaved(true); }}
           onSaved={() => { fetchAbsences(); }}

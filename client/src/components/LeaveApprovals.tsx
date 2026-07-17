@@ -20,6 +20,8 @@ interface LeaveReq {
   leave_type: string;
   leave_type_other: string | null;
   leave_dates?: string | null;
+  leave_locations?: string | null; // 日付→校のJSON（旧申請はnull）
+  chosei_origin_locations?: string | null; // 振替元の日付→校のJSON（調整休・振替休日のみ）
   start_date: string;
   end_date: string;
   reason: string | null;
@@ -190,6 +192,9 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     if (next === 'manager_approved' || next === 'approved') {
       try {
         const dates: string[] = req.leave_dates ? JSON.parse(req.leave_dates) : [];
+        // 日付→校の対応表（校なしの旧申請はundefined→従来どおり校なしタイトル）
+        let locations: Record<string, string> | undefined;
+        try { locations = req.leave_locations ? JSON.parse(req.leave_locations) : undefined; } catch { locations = undefined; }
         if (dates.length > 0) {
           await supabase.functions.invoke('gcal-sync', {
             body: {
@@ -199,6 +204,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
               dates,
               name: req.requester?.name ?? '',
               leave_type: req.leave_type === 'その他' ? 'その他' : req.leave_type,
+              locations,
             },
           });
         }
@@ -452,6 +458,36 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                   <div style={{ color: subText, fontSize: 14, marginBottom: 6 }}>
                     {req.start_date} ～ {req.end_date}（{days}日間）
                   </div>
+                  {/* 勤務校（日付ごと・1日1行。校なしの旧申請は非表示） */}
+                  {(() => {
+                    const parseLocs = (s?: string | null): Record<string, string> | undefined => {
+                      try { return s ? JSON.parse(s) : undefined; } catch { return undefined; }
+                    };
+                    const renderLocs = (label: string, locs?: Record<string, string>) => {
+                      if (!locs || Object.keys(locs).length === 0) return null;
+                      const entries = Object.keys(locs).sort();
+                      const uniq = [...new Set(Object.values(locs).filter(Boolean))];
+                      return (
+                        <div style={{ color: subText, fontSize: 13, marginBottom: 6 }}>
+                          {label}: {entries.length === 1 || uniq.length === 1 ? (
+                            <span>{uniq[0] ?? '—'}{entries.length > 1 ? '（全日）' : ''}</span>
+                          ) : (
+                            entries.map(d => (
+                              <div key={d} style={{ paddingLeft: 8 }}>
+                                {parseInt(d.slice(5, 7))}/{parseInt(d.slice(8, 10))}（{'日月火水木金土'[new Date(d + 'T00:00:00').getDay()]}）　{locs[d] || '—'}
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      );
+                    };
+                    return (
+                      <>
+                        {renderLocs('校', parseLocs(req.leave_locations))}
+                        {renderLocs('振替元校', parseLocs(req.chosei_origin_locations))}
+                      </>
+                    );
+                  })()}
                   {req.reason && (
                     <div style={{ color: subText, fontSize: 13, marginBottom: 8 }}>
                       {(() => {
