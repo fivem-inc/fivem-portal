@@ -123,8 +123,9 @@ serve(async (req) => {
       const message = applyTemplate(template, vars)
       const targetIds = await resolveTargetIds(siteSetting.recipient)
       if (targetIds.length > 0) {
+        // reference_id に対象日（先頭日・YYYY-MM-DD）を入れ、バナーから正しい月へジャンプ＋該当行を強調できるようにする
         await supabase.from('notifications').insert(
-          targetIds.map(id => ({ user_id: id, message, sub_message: null, source_type: 'attendance' }))
+          targetIds.map(id => ({ user_id: id, message, sub_message: null, source_type: 'attendance', reference_id: first }))
         )
         notifiedSite = targetIds.length
       }

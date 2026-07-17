@@ -20,6 +20,7 @@ import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { shouldSend, dispatchEmail, dispatchSiteNotification } from '../lib/notificationDispatch';
 import { insertNotification } from '../lib/notifications';
+import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 
 // タップで即確定するカスタム日付ピッカー
 const SingleDatePicker: React.FC<{
@@ -144,7 +145,23 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
     return `${d}${day}`;
   };
   const emptyDraft: Expense = { type: 'one_time', from_station: '', to_station: '', amount: '', start_date: '', end_date: '', transportation: '', workplace: '', trip_category: '', type_other: '', transportation_other: '', workplace_other: '', notes: '' };
-  const [draftExpense, setDraftExpense] = useState<Expense>(emptyDraft);
+  // 入力中の下書きを端末に自動保存し、開き直したら復元する（別アプリへ調べに行って戻っても消えない）
+  const [savedExpenseDraft] = useState(() => loadDraft<{ draft?: Expense; list?: Expense[] }>(DRAFT_KEYS.expense));
+  const [draftExpense, setDraftExpense] = useState<Expense>(() => savedExpenseDraft?.draft ?? emptyDraft);
+  // 追加済みリストの復元は初回マウント時に一度だけ（親のexpensesが空のときのみ）
+  const restoredListRef = useRef(false);
+  useEffect(() => {
+    if (restoredListRef.current) return;
+    restoredListRef.current = true;
+    if (savedExpenseDraft?.list && savedExpenseDraft.list.length > 0) {
+      setExpenses(prev => (prev.length === 0 ? savedExpenseDraft.list! : prev));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // 入力中・追加済みリストを自動保存
+  useEffect(() => {
+    saveDraft(DRAFT_KEYS.expense, { draft: draftExpense, list: expenses });
+  }, [draftExpense, expenses]);
   const [draftDatePicker, setDraftDatePicker] = useState<string | null>(null);
   const [showTransportPicker, setShowTransportPicker] = useState(false);
   const [templateQueue, setTemplateQueue] = useState<Expense[]>([]);
@@ -488,6 +505,8 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       setFormError('');
       setTemplateSource(null);
       setExpenses([]);
+      setDraftExpense(emptyDraft);
+      clearDraft(DRAFT_KEYS.expense); // 送信成功で下書きを消す
       onSubmissionComplete();
 
       setIsSubmitting(false);
@@ -607,6 +626,13 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
           const clearHL = (field: string) => setHighlightFields(prev => { const s = new Set(prev); s.delete(field); return s; });
           return (
             <div style={{ background: isDarkMode ? '#2c3e50' : '#fff', border: '2px solid #0d6efd', borderRadius: 8, padding: 16, marginBottom: 8, boxShadow: isDarkMode ? 'none' : '0 2px 8px rgba(0,0,0,0.06)' }}>
+              {/* 入力内容クリア（この入力枠の内容だけを空にする。追加済みリストは消えない） */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                <button type="button" onClick={() => { setDraftExpense(emptyDraft); setHighlightFields(new Set()); setFormError(''); setTemplateSource(null); }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: isDarkMode ? '#adb5bd' : '#8a939c', background: 'none', border: `1px solid ${isDarkMode ? '#555' : '#d5dae0'}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
+                  🗑 クリア
+                </button>
+              </div>
               {/* 区分 */}
               <div style={{ marginBottom: 8 }}>
                 <div style={{ display: 'flex', alignItems: 'center', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4 }}>
@@ -787,9 +813,6 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                     ⇄ 往復で申請リストに追加
                   </button>
                 )}
-                <button type="button" onClick={() => { setDraftExpense(emptyDraft); setHighlightFields(new Set()); setFormError(''); setTemplateSource(null); }} style={{ padding: '10px 12px', background: '#6c757d', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer', flexShrink: 0 }}>
-                  クリア
-                </button>
               </div>
             </div>
           );

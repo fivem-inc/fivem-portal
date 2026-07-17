@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { insertNotification } from '../lib/notifications';
 import { dispatchBoardEmail } from '../lib/notificationDispatch';
+import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 
 const BOARD_LINK = 'https://fivem-portal.vercel.app/board';
 import { useAuth } from '../hooks/useAuth';
@@ -247,19 +248,24 @@ const BoardPage: React.FC = () => {
   const [expandGroups,     setExpandGroups]     = useState(false);
   const [expandDMs,        setExpandDMs]        = useState(false);
 
-  // 送信フロー（compose）
-  const [composeSubject,       setComposeSubject]       = useState('');
-  const [composeBody,          setComposeBody]          = useState('');
-  const [composeRecipientIds,  setComposeRecipientIds]  = useState<string[]>([]);
-  const [composeDeadlineType,  setComposeDeadlineType]  = useState('');
-  const [composeDeadline,      setComposeDeadline]      = useState('');
-  const [composeScheduledAt,   setComposeScheduledAt]   = useState('');
+  // 送信フロー（compose）。入力中の下書きを端末に自動保存し、開き直したら復元する
+  interface ComposeDraft {
+    subject: string; body: string; recipientIds: string[]; deadlineType: string;
+    deadline: string; scheduledAt: string; answerPrompt: string; answerLocation: string; answerLink: string;
+  }
+  const [cd] = useState(() => loadDraft<ComposeDraft>(DRAFT_KEYS.boardCompose));
+  const [composeSubject,       setComposeSubject]       = useState(cd?.subject ?? '');
+  const [composeBody,          setComposeBody]          = useState(cd?.body ?? '');
+  const [composeRecipientIds,  setComposeRecipientIds]  = useState<string[]>(cd?.recipientIds ?? []);
+  const [composeDeadlineType,  setComposeDeadlineType]  = useState(cd?.deadlineType ?? '');
+  const [composeDeadline,      setComposeDeadline]      = useState(cd?.deadline ?? '');
+  const [composeScheduledAt,   setComposeScheduledAt]   = useState(cd?.scheduledAt ?? '');
   const [composeOptions,        setComposeOptions]        = useState(true);
   const [_composeDraftId,       setComposeDraftId]        = useState<string | null>(null);
   const [composeQuery,          setComposeQuery]          = useState('');
-  const [composeAnswerPrompt,   setComposeAnswerPrompt]   = useState('');
-  const [composeAnswerLocation, setComposeAnswerLocation] = useState('');
-  const [composeAnswerLink,     setComposeAnswerLink]     = useState('');
+  const [composeAnswerPrompt,   setComposeAnswerPrompt]   = useState(cd?.answerPrompt ?? '');
+  const [composeAnswerLocation, setComposeAnswerLocation] = useState(cd?.answerLocation ?? '');
+  const [composeAnswerLink,     setComposeAnswerLink]     = useState(cd?.answerLink ?? '');
   const [showComposeSendConfirm, setShowComposeSendConfirm] = useState(false);
   const [showAllRecipients, setShowAllRecipients] = useState(false);
   const [showSearch,  setShowSearch]  = useState(false);
@@ -744,6 +750,23 @@ const BoardPage: React.FC = () => {
     if (selectedChannelId) messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
   }, [messages.length, selectedChannelId]);
 
+  // お知らせ作成フォームの下書きを自動保存（別アプリへ調べに行って戻っても消えない）。
+  // 全項目が空なら下書きを残さない（送信・クリア後に空の下書きが復活するのを防ぐ）。
+  useEffect(() => {
+    const hasContent = composeSubject || composeBody || composeRecipientIds.length > 0 ||
+      composeDeadlineType || composeDeadline || composeScheduledAt ||
+      composeAnswerPrompt || composeAnswerLocation || composeAnswerLink;
+    if (hasContent) {
+      saveDraft(DRAFT_KEYS.boardCompose, {
+        subject: composeSubject, body: composeBody, recipientIds: composeRecipientIds,
+        deadlineType: composeDeadlineType, deadline: composeDeadline, scheduledAt: composeScheduledAt,
+        answerPrompt: composeAnswerPrompt, answerLocation: composeAnswerLocation, answerLink: composeAnswerLink,
+      });
+    } else {
+      clearDraft(DRAFT_KEYS.boardCompose);
+    }
+  }, [composeSubject, composeBody, composeRecipientIds, composeDeadlineType, composeDeadline, composeScheduledAt, composeAnswerPrompt, composeAnswerLocation, composeAnswerLink]);
+
   // 既読状況ポップアップを開いたとき、受信者が未取得なら取得する
   useEffect(() => {
     if (!readDetailMsgId || !user) return;
@@ -1118,6 +1141,15 @@ const BoardPage: React.FC = () => {
     setComposeDeadlineType(''); setComposeDeadline(''); setComposeScheduledAt('');
     setComposeOptions(true); setComposeDraftId(null); setComposeQuery('');
     setComposeAnswerPrompt(''); setComposeAnswerLocation(''); setComposeAnswerLink('');
+    clearDraft(DRAFT_KEYS.boardCompose); // 送信成功・🗑クリアで下書きを消す
+  };
+
+  // 作成画面を開く。書きかけの下書きがあれば消さずに保持したまま開く（別アプリ移動対策）。
+  // 無ければ初期化して開く。
+  const openCompose = () => {
+    if (!loadDraft(DRAFT_KEYS.boardCompose)) resetCompose();
+    else { setComposeOptions(true); setComposeQuery(''); setComposeDraftId(null); }
+    setView('compose'); setShowSidebar(false);
   };
 
   const sendNotice = async () => {
@@ -2434,6 +2466,13 @@ const BoardPage: React.FC = () => {
   const composePanel = (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: bg }}>
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 16px', paddingTop: 58 }}>
+        {/* 入力内容クリア */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
+          <button type="button" onClick={resetCompose}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: subColor, background: 'none', border: `1px solid ${border}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
+            🗑 クリア
+          </button>
+        </div>
         {/* 宛先 */}
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: subColor, marginBottom: 6, marginTop: 8 }}>宛先を選択 <span style={{ color: '#dc3545', fontSize: 11 }}>*必須</span></div>
@@ -3264,7 +3303,7 @@ const BoardPage: React.FC = () => {
               <button type="button" title="検索" onClick={() => { setShowSearch(s => !s); setSearchText(''); setSearchResults([]); if (view === 'search') navigate(-1); }}
                 style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '5px 7px', lineHeight: 1, flexShrink: 0 }}>🔍</button>
               {(isAdmin || noticeSendRoles.length === 0 || noticeSendRoles.includes(roleTitle)) && (
-                <button type="button" onClick={() => { resetCompose(); setView('compose'); setShowSidebar(false); }}
+                <button type="button" onClick={openCompose}
                   style={{ background: '#007bff', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, padding: '5px 10px', fontWeight: 'bold', whiteSpace: 'nowrap', flexShrink: 0 }}>＋お知らせ送信</button>
               )}
               <button type="button" title="通知設定" onClick={() => navigate('/notification-settings')}

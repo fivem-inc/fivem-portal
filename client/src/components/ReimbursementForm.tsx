@@ -61,7 +61,7 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
 
   useEffect(() => {
     try {
-      const saved = sessionStorage.getItem(draftStorageKey);
+      const saved = localStorage.getItem(draftStorageKey);
       if (saved) {
         const draft = JSON.parse(saved);
         if (typeof draft.draftId === 'string') setDraftId(draft.draftId);
@@ -82,7 +82,7 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
         if (typeof draft.notes === 'string') setNotes(draft.notes);
       }
     } catch {
-      sessionStorage.removeItem(draftStorageKey);
+      localStorage.removeItem(draftStorageKey);
     } finally {
       setDraftReady(true);
     }
@@ -95,10 +95,10 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
       instructedBySelect || instructedByCustom.trim() || paymentMethod || receipt.receiptType || notes.trim() || quantity !== '1'
     );
     if (!hasDraft) {
-      sessionStorage.removeItem(draftStorageKey);
+      localStorage.removeItem(draftStorageKey);
       return;
     }
-    sessionStorage.setItem(draftStorageKey, JSON.stringify({
+    localStorage.setItem(draftStorageKey, JSON.stringify({
       draftId, itemName, quantity, amount, purchasedAt, storeName, location, purpose, purposeDetail,
       instructedBySelect, instructedByCustom, paymentMethod, paymentMethodDetail, paymentMethodOther, receipt, notes,
     }));
@@ -135,7 +135,7 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
     setStoreName(''); setLocation(''); setPurpose(''); setPurposeDetail(''); setInstructedBySelect(''); setInstructedByCustom('');
     setPaymentMethod(''); setPaymentMethodDetail(''); setPaymentMethodOther(''); setReceipt(emptyReceipt); setReceiptUploading(false); setNotes('');
     setDraftId(crypto.randomUUID());
-    sessionStorage.removeItem(draftStorageKey);
+    localStorage.removeItem(draftStorageKey);
   };
 
   const handleSubmit = async () => {
@@ -210,6 +210,12 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
       )}
 
       <div style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 12, padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: -6 }}>
+          <button type="button" onClick={resetForm}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: subText, background: 'none', border: `1px solid ${border}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
+            🗑 クリア
+          </button>
+        </div>
         <div>
           <label style={labelStyle}>品目名 {required}</label>
           <input type="text" value={itemName} onChange={e => setItemName(e.target.value)} placeholder="例：トイレットペーパー" style={inputStyle} />

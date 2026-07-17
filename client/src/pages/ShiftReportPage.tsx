@@ -3,6 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { notifyShiftReportReturned } from '../lib/shiftReportReturnedNotify';
 import { useDarkMode } from '../hooks/useDarkMode';
+import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import type { AuthUser } from '../types';
 
 // ────────────────────────────────────────────────────────────────
@@ -317,43 +318,64 @@ const ShiftReportForm: React.FC<{
   const [saving, setSaving]           = useState(false);
   const [error, setError]             = useState('');
 
-  const [applicantId, setApplicantId] = useState(editTarget?.applicant_id ?? user.id);
-  const [date, setDate]               = useState(editTarget?.work_date ?? todayStr());
+  // 入力中の下書きを端末に自動保存し、開き直したら復元する（新規報告のみ。修正モードは対象外）
+  interface ShiftDraft {
+    applicantId: string; date: string; types: ApplicationType[]; reason: string; origDayOff: boolean;
+    origLoc: string; origLocCustom: string; actLoc: string; actLocCustom: string;
+    origStart: string; origEnd: string; actStart: string; actEnd: string;
+    origOutingOn: boolean; origOutingStart: string; origOutingEnd: string;
+    actOutingOn: boolean; actOutingStart: string; actOutingEnd: string;
+    reviewerId: string; actNotes: string;
+  }
+  const [sd] = useState(() => (editTarget ? null : loadDraft<ShiftDraft>(DRAFT_KEYS.shiftReport)));
+
+  const [applicantId, setApplicantId] = useState(editTarget?.applicant_id ?? sd?.applicantId ?? user.id);
+  const [date, setDate]               = useState(editTarget?.work_date ?? sd?.date ?? todayStr());
   const [types, setTypes]             = useState<ApplicationType[]>(
     editTarget?.application_types?.length ? editTarget.application_types
     : editTarget?.application_type        ? [editTarget.application_type]
-    : []
+    : sd?.types ?? []
   );
   const [blockMsg, setBlockMsg]       = useState('');
   const [absencePrompt, setAbsencePrompt] = useState<'none' | 'confirm' | 'declined'>('none');
   const absencePanelRef = useRef<HTMLDivElement>(null);
-  const [reason, setReason]           = useState(editTarget?.reason ?? '');
-  const [origDayOff, setOrigDayOff]   = useState(false);
+  const [reason, setReason]           = useState(editTarget?.reason ?? sd?.reason ?? '');
+  const [origDayOff, setOrigDayOff]   = useState(sd?.origDayOff ?? false);
 
   // 勤務地：ドロップダウン値（「その他」選択時はカスタム入力を使う）
   const savedOrigLoc = editTarget?.original_location ?? '';
   const savedActLoc  = editTarget?.actual_location ?? '';
-  const [origLoc, setOrigLoc]           = useState(workplaces.includes(savedOrigLoc) || savedOrigLoc === '' ? savedOrigLoc : 'その他');
-  const [origLocCustom, setOrigLocCustom] = useState(workplaces.includes(savedOrigLoc) ? '' : savedOrigLoc);
-  const [actLoc, setActLoc]             = useState(workplaces.includes(savedActLoc) || savedActLoc === '' ? savedActLoc : 'その他');
-  const [actLocCustom, setActLocCustom]   = useState(workplaces.includes(savedActLoc) ? '' : savedActLoc);
+  const [origLoc, setOrigLoc]           = useState(sd?.origLoc ?? (workplaces.includes(savedOrigLoc) || savedOrigLoc === '' ? savedOrigLoc : 'その他'));
+  const [origLocCustom, setOrigLocCustom] = useState(sd?.origLocCustom ?? (workplaces.includes(savedOrigLoc) ? '' : savedOrigLoc));
+  const [actLoc, setActLoc]             = useState(sd?.actLoc ?? (workplaces.includes(savedActLoc) || savedActLoc === '' ? savedActLoc : 'その他'));
+  const [actLocCustom, setActLocCustom]   = useState(sd?.actLocCustom ?? (workplaces.includes(savedActLoc) ? '' : savedActLoc));
 
   const finalOrigLoc = origLoc === 'その他' ? origLocCustom : origLoc;
   const finalActLoc  = actLoc  === 'その他' ? actLocCustom  : actLoc;
 
-  const [origStart, setOrigStart]     = useState(editTarget?.original_start?.slice(0, 5) ?? '12:00');
-  const [origEnd, setOrigEnd]         = useState(editTarget?.original_end?.slice(0, 5) ?? '12:00');
-  const [actStart, setActStart]       = useState(editTarget?.actual_start?.slice(0, 5) ?? '12:00');
-  const [actEnd, setActEnd]           = useState(editTarget?.actual_end?.slice(0, 5) ?? '12:00');
-  const [origOutingOn, setOrigOutingOn] = useState(!!(editTarget?.original_outing_start));
-  const [origOutingStart, setOrigOutingStart] = useState(editTarget?.original_outing_start?.slice(0, 5) ?? '14:00');
-  const [origOutingEnd, setOrigOutingEnd]     = useState(editTarget?.original_outing_end?.slice(0, 5) ?? '15:00');
-  const [actOutingOn, setActOutingOn]   = useState(!!(editTarget?.actual_outing_start));
-  const [actOutingStart, setActOutingStart]   = useState(editTarget?.actual_outing_start?.slice(0, 5) ?? '14:00');
-  const [actOutingEnd, setActOutingEnd]       = useState(editTarget?.actual_outing_end?.slice(0, 5) ?? '15:00');
-  const [reviewerId, setReviewerId]   = useState(editTarget?.reviewer_id ?? '');
-  const [actNotes, setActNotes]       = useState('');
+  const [origStart, setOrigStart]     = useState(editTarget?.original_start?.slice(0, 5) ?? sd?.origStart ?? '12:00');
+  const [origEnd, setOrigEnd]         = useState(editTarget?.original_end?.slice(0, 5) ?? sd?.origEnd ?? '12:00');
+  const [actStart, setActStart]       = useState(editTarget?.actual_start?.slice(0, 5) ?? sd?.actStart ?? '12:00');
+  const [actEnd, setActEnd]           = useState(editTarget?.actual_end?.slice(0, 5) ?? sd?.actEnd ?? '12:00');
+  const [origOutingOn, setOrigOutingOn] = useState(editTarget ? !!(editTarget.original_outing_start) : (sd?.origOutingOn ?? false));
+  const [origOutingStart, setOrigOutingStart] = useState(editTarget?.original_outing_start?.slice(0, 5) ?? sd?.origOutingStart ?? '14:00');
+  const [origOutingEnd, setOrigOutingEnd]     = useState(editTarget?.original_outing_end?.slice(0, 5) ?? sd?.origOutingEnd ?? '15:00');
+  const [actOutingOn, setActOutingOn]   = useState(editTarget ? !!(editTarget.actual_outing_start) : (sd?.actOutingOn ?? false));
+  const [actOutingStart, setActOutingStart]   = useState(editTarget?.actual_outing_start?.slice(0, 5) ?? sd?.actOutingStart ?? '14:00');
+  const [actOutingEnd, setActOutingEnd]       = useState(editTarget?.actual_outing_end?.slice(0, 5) ?? sd?.actOutingEnd ?? '15:00');
+  const [reviewerId, setReviewerId]   = useState(editTarget?.reviewer_id ?? sd?.reviewerId ?? '');
+  const [actNotes, setActNotes]       = useState(sd?.actNotes ?? '');
   const [changeSummary, setChangeSummary] = useState('');
+
+  // 入力中の下書きを自動保存（新規報告のみ）
+  useEffect(() => {
+    if (editTarget) return;
+    saveDraft(DRAFT_KEYS.shiftReport, {
+      applicantId, date, types, reason, origDayOff, origLoc, origLocCustom, actLoc, actLocCustom,
+      origStart, origEnd, actStart, actEnd, origOutingOn, origOutingStart, origOutingEnd,
+      actOutingOn, actOutingStart, actOutingEnd, reviewerId, actNotes,
+    });
+  }, [editTarget, applicantId, date, types, reason, origDayOff, origLoc, origLocCustom, actLoc, actLocCustom, origStart, origEnd, actStart, actEnd, origOutingOn, origOutingStart, origOutingEnd, actOutingOn, actOutingStart, actOutingEnd, reviewerId, actNotes]);
 
   const hasAbsence    = types.includes('absence');
   const hasHoliday    = types.includes('holiday_work');
@@ -496,6 +518,7 @@ const ShiftReportForm: React.FC<{
           }).then(null, () => {});
         }
       }
+      if (!editTarget) clearDraft(DRAFT_KEYS.shiftReport); // 送信成功で下書きを消す（新規のみ）
       setSaving(false);
       onSaved();
     } catch (e) {
@@ -519,8 +542,28 @@ const ShiftReportForm: React.FC<{
   const L: React.CSSProperties = { fontSize: 12, color: subColor, marginBottom: 4, display: 'block' };
   const Req = <span style={{ color: '#dc3545' }}>*</span>;
 
+  // 入力内容クリア（新規報告のみ。入力欄を初期状態に戻して下書きも消す）
+  const clearShiftForm = () => {
+    setApplicantId(user.id); setDate(todayStr()); setTypes([]); setReason(''); setOrigDayOff(false);
+    setOrigLoc(''); setOrigLocCustom(''); setActLoc(''); setActLocCustom('');
+    setOrigStart('12:00'); setOrigEnd('12:00'); setActStart('12:00'); setActEnd('12:00');
+    setOrigOutingOn(false); setOrigOutingStart('14:00'); setOrigOutingEnd('15:00');
+    setActOutingOn(false); setActOutingStart('14:00'); setActOutingEnd('15:00');
+    setReviewerId(''); setActNotes(''); setError('');
+    clearDraft(DRAFT_KEYS.shiftReport);
+  };
+
   const formBody = (
     <div style={{ padding: inline ? '12px 0 0' : '16px 16px 0' }}>
+            {/* 入力内容クリア（修正モードでは非表示） */}
+            {!editTarget && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                <button type="button" onClick={clearShiftForm}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: subColor, background: 'none', border: `1px solid ${borderCol}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
+                  🗑 クリア
+                </button>
+              </div>
+            )}
             {/* 代行バナー */}
             {canProxy && applicantId !== user.id && (
               <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, padding: '10px 14px', marginBottom: 12, fontSize: 13, color: '#1e40af' }}>

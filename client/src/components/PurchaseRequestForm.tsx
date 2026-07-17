@@ -151,7 +151,6 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
       return raw ? (JSON.parse(raw) as Partial<FormDraft>) : null;
     } catch { return null; }
   });
-  const [draftRestored, setDraftRestored] = useState(!!savedDraft);
 
   const initialItems = (): ItemDraft[] => {
     if (!resubmitRecord) {
@@ -416,7 +415,6 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
     setLeaderId(''); setRequestedManagerIds([]); setSharedManagerIds([]);
     setPresidentSelfJudgment(false); setSelfJudgeConfirmFirst(false);
     setManualTotalOverride(''); setTotalManuallyOverridden(false); setAmountDiffReason('');
-    setDraftRestored(false);
     try { localStorage.removeItem(DRAFT_STORAGE_KEY); } catch { /* ignore */ }
   };
 
@@ -606,14 +604,6 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
         />
       )}
 
-      {draftRestored && !isResubmit && (
-        <div style={{ marginBottom: 14, padding: '10px 12px', background: isDarkMode ? '#1e3a2a' : '#e8f5e9', border: `1px solid ${isDarkMode ? '#2e5a40' : '#a5d6a7'}`, borderRadius: 8, fontSize: 13, color: isDarkMode ? '#a5e0b5' : '#1b5e20', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-          <span style={{ flex: 1, minWidth: 180 }}>前回の入力内容を復元しました。</span>
-          <button type="button" onClick={resetForm} style={{ padding: '5px 12px', borderRadius: 6, border: 'none', background: '#dc3545', color: '#fff', fontSize: 12, cursor: 'pointer' }}>新しく入力し直す</button>
-          <button type="button" onClick={() => setDraftRestored(false)} style={{ padding: '5px 12px', borderRadius: 6, border: `1px solid ${border}`, background: 'none', color: text, fontSize: 12, cursor: 'pointer' }}>閉じる</button>
-        </div>
-      )}
-
       {isResubmit && resubmitRecord?.returned_reason && (
         <div style={{ marginBottom: 14, padding: '10px 12px', background: isDarkMode ? '#3a2020' : '#fff5f5', border: `1px solid ${isDarkMode ? '#5c3030' : '#f5c2c7'}`, borderRadius: 8, fontSize: 13, color: isDarkMode ? '#f5b8bb' : '#842029' }}>
           差し戻し理由：{resubmitRecord.returned_reason}
@@ -636,6 +626,14 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
       )}
 
       <div style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 12, padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {!isResubmit && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: -6 }}>
+            <button type="button" onClick={resetForm}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: subText, background: 'none', border: `1px solid ${border}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
+              🗑 クリア
+            </button>
+          </div>
+        )}
         <div>
           <label style={labelStyle}>使用先 <span style={{ color: '#dc3545' }}>*</span></label>
           {locationOptions.length > 0 ? (

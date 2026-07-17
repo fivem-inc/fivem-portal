@@ -7118,3 +7118,72 @@ on conflict (event_key, channel) do nothing;
 2. 差し戻しを **管理画面と申請画面の両方**から実行し、ベル/ホームバナー/プッシュが従来どおり届くか
    （文面「差戻」はChrome警告にならない実機テスト済み語）
 3. サイト通知欄の注記が、受理時・時間調整・欠勤登録・立替精算には**出ていない**ことの確認
+
+---
+
+## 📌 セッション終了メモ（2026-07-17／入力下書きの自動保存を全申請フォームに統一）
+
+### やったこと（本番反映は未・ユーザー確認後にpush予定）
+スマホで参考情報を別アプリに調べに行って戻ると入力が消える問題への対策。
+備品精算と同じ「入力中は端末に自動保存・送信成功で消える」方式を全フォームに統一。
+
+**共通ヘルパー新設 `client/src/lib/draftStorage.ts`**
+- `DRAFT_KEYS`（fivem_draft_* で統一）、`loadDraft/saveDraft/clearDraft`、連絡板チャット用 `loadChatDraft/saveChatDraft`
+- 仕様：localStorage無期限・自動保存・自動復元（復元バナーなし）・**消えるのは送信成功と🗑クリアのみ**
+
+**適用した画面（各フォームの最初の入力枠の右上に「🗑 クリア」ピル型ボタン）**
+- 交通費 ExpenseForm：入力中＋**追加済みリスト**を保存。下部の旧クリアボタンは廃止し右上に移設。送信成功でclear
+- 備品 PurchaseRequestForm：既存の独自localStorage実装はそのまま。**復元バナーを廃止**し🗑クリアに統一
+- 出張 BusinessTripReport：GPS・住所は一時情報なので保存しない。送信成功でclear
+- 休暇申請 LeaveRequest：休暇フォーム＋時間調整フォームを別キーで保存（`leave`/`leaveAdjustment`）。それぞれ🗑クリア。再申請モードは対象外
+- 休暇カレンダー CalendarPage の欠勤入力シート：`attendance`キー。開いていた日付ごとに保存し、
+  更新・別アプリ移動でシートが閉じても**マウント時にsetAbsenceSheet(draft.date)でシートを開き直す**。
+  キャンセル/背景タップ=破棄（handleDismissでclear）、登録成功でclear
+- 勤務変更 ShiftReportPage：新規報告のみ保存（修正モードは対象外）。送信成功でclear。🗑クリアは!editTarget時のみ
+- 連絡板 BoardPage：**お知らせ作成フォームのみ**実装（`boardCompose`キー）。
+  ・「＋お知らせ送信」ボタンは `openCompose()`：下書きがあれば消さず保持して開く／無ければresetCompose
+  ・auto-save effectは**全項目が空ならclearDraft**（送信・クリア後に空下書きが復活するのを防ぐ重要ガード）
+  ・resetCompose（送信成功・🗑クリア）でclear
+  ・**チャット入力（グループ/DM/リプライのreplyBody）は今回未実装**（リアルタイム・チャンネル切替が絡みリスク高・短文で価値低のため見送り）。必要なら別途
+
+### 注意事項・設計判断
+- 連絡板は既に「送信トレイ→下書きタブ」のDB下書き機能あり（お知らせ作成の手動保存）。今回の自動保存はそれとは別の"事故防止の安全網"
+- クリアボタン文言は「🗑 クリア」で全画面統一（ゴミ箱アイコン＋最短文字）
+- **空下書きの罠**：clearDraft後にauto-save effectが再実行され空オブジェクトを保存し直すと、
+  loadDraftがtruthyを返して誤動作する。openCompose等loadDraftの真偽で分岐する箇所は空判定ガード必須
+- ページ遷移（アプリ内）では消えない＝要件どおり。更新・アプリ完全終了では消える（localStorageなので実際は残るが、
+  送信するまで残す仕様＝ユーザー要望「送信したら消えるのみ」に合致）
+
+### 次回やること（実機確認）
+1. 各フォームで入力途中に別アプリへ→戻る（または更新）→入力が復元されるか
+2. 送信成功後に下書きが消えているか（再度開くと空か）
+3. 🗑クリアで入力が空になるか。交通費は追加済みリストは残り入力枠だけ消えるか
+4. 欠勤入力：入力途中で更新→シートが自動で開き直り復元されるか。キャンセルで破棄されるか
+5. 連絡板お知らせ：作成途中で別画面→「＋お知らせ送信」で戻ると下書きが残っているか。送信後は空か
+6. 勤務変更・休暇の修正モードでは下書きが誤発動しないか（新規のみ対象）
+
+---
+
+## 📌 追記（2026-07-17／欠勤登録バナーのタップ改善＋精算フォームの下書き）
+
+### 欠勤登録バナー：タップで正しい月へ飛んで該当行を強調
+問題：欠勤登録バナー（source_type='attendance'）をタップすると今月の`/calendar`に飛ぶだけで、
+別月の登録でも今月に飛ぶ＆一覧が多いとどれが追加分か分からなかった。
+
+対応：
+- `attendance-notify`：通知の**reference_idに対象日(先頭日・YYYY-MM-DD)**を入れる（**要デプロイ**）
+- `App.tsx` バナー(isAttendance)：reference_idが日付形式なら`/calendar?focus=YYYY-MM-DD`へ遷移
+- `CalendarPage.tsx`：URLの`?focus=`を読み、**その月を開き**（year/month初期化）、
+  一覧の該当行を**黄色ハイライト＋自動スクロール**、6秒後にhighlightDateをnullにしてフェード
+- 制約：日付が入るのは改修後の新しい通知のみ。過去分はreference_idが無く従来どおり今月へ（エラーなし）
+
+### 精算フォーム（ReimbursementForm）の下書きを他と統一
+- もともと**sessionStorage**で保存していた（ブラウザ完全終了で消える）→ **localStorageに変更**（他フォームと同じ無期限）
+- レシートは画像そのものでなくstorage_path(文字列)なのでlocalStorageで安全
+- 🗑クリアボタンを最初の入力枠の右上に追加（resetFormを呼ぶ）
+- 承認タブ(PurchaseApprovals)・履歴タブは入力フォームでないため下書き不要
+
+### デプロイ対象
+- フロント：git push（Vercel自動）
+- Edge Function：`supabase functions deploy attendance-notify`（reference_id追加のため必須）
+- gcal-sync/shift-report-returned-notify等は今回変更なし

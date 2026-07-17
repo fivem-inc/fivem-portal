@@ -3,7 +3,15 @@ import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { dispatchEmail, dispatchSiteNotification } from '../lib/notificationDispatch';
 import { insertNotification } from '../lib/notifications';
+import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import type { AuthUser, BusinessTripReport } from '../types';
+
+// 出張報告の下書き（GPS・住所は一時情報なので保存しない）
+interface TripDraft {
+  reportType: '到着' | '終了'; category: string; categoryOther: string;
+  location: string; locationCustom: string; useCustomLocation: boolean;
+  notes: string; nextDates: string[]; slackComment: string; selectedChannels: string[];
+}
 
 const BannerSuccess: React.FC<{ message: string; icon?: 'check' | 'send'; onClose: () => void }> = ({ message, icon = 'check', onClose }) => {
   useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, [onClose]);
@@ -136,16 +144,18 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
     });
   }, []);
 
-  const [reportType, setReportType] = useState<'到着' | '終了'>('到着');
-  const [category, setCategory] = useState<string>('出張');
-  const [categoryOther, setCategoryOther] = useState('');
-  const [location, setLocation] = useState('');
-  const [locationCustom, setLocationCustom] = useState(''); // 直接入力
-  const [useCustomLocation, setUseCustomLocation] = useState(false);
-  const [notes, setNotes] = useState('');
-  const [nextDates, setNextDates] = useState<string[]>([]);
-  const [slackComment, setSlackComment] = useState('');
-  const [selectedChannels, setSelectedChannels] = useState<string[]>([]);
+  // 入力中の下書きを端末に自動保存し、開き直したら復元する
+  const [td] = useState(() => loadDraft<TripDraft>(DRAFT_KEYS.trip));
+  const [reportType, setReportType] = useState<'到着' | '終了'>(td?.reportType ?? '到着');
+  const [category, setCategory] = useState<string>(td?.category ?? '出張');
+  const [categoryOther, setCategoryOther] = useState(td?.categoryOther ?? '');
+  const [location, setLocation] = useState(td?.location ?? '');
+  const [locationCustom, setLocationCustom] = useState(td?.locationCustom ?? ''); // 直接入力
+  const [useCustomLocation, setUseCustomLocation] = useState(td?.useCustomLocation ?? false);
+  const [notes, setNotes] = useState(td?.notes ?? '');
+  const [nextDates, setNextDates] = useState<string[]>(td?.nextDates ?? []);
+  const [slackComment, setSlackComment] = useState(td?.slackComment ?? '');
+  const [selectedChannels, setSelectedChannels] = useState<string[]>(td?.selectedChannels ?? []);
   const [gps, setGps] = useState<{ lat: number; lng: number; accuracy: number } | null>(null);
   const [address, setAddress] = useState<string | null>(null);
   const [gpsLoading, setGpsLoading] = useState(false);
@@ -158,6 +168,20 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
   const presets = locationPresets[category] ?? [];
   const showNextDates = reportType === '終了' && (category === '出張' || category === '園指導');
   const effectiveLocation = useCustomLocation ? locationCustom : location;
+
+  // 入力中の下書きを自動保存
+  useEffect(() => {
+    saveDraft(DRAFT_KEYS.trip, { reportType, category, categoryOther, location, locationCustom, useCustomLocation, notes, nextDates, slackComment, selectedChannels });
+  }, [reportType, category, categoryOther, location, locationCustom, useCustomLocation, notes, nextDates, slackComment, selectedChannels]);
+
+  // 入力内容をすべて空にする（🗑クリア。GPS等の一時情報も含めリセット）
+  const clearTripForm = () => {
+    setReportType('到着'); setCategory('出張'); setCategoryOther('');
+    setLocation(''); setLocationCustom(''); setUseCustomLocation(false);
+    setNotes(''); setNextDates([]); setSlackComment(''); setSelectedChannels([]);
+    setGps(null); setAddress(null); setGpsAttempted(false); setGpsUnavailable(false);
+    clearDraft(DRAFT_KEYS.trip);
+  };
 
   const toggleNextDate = (dateStr: string) => {
     setNextDates(prev => prev.includes(dateStr) ? prev.filter(d => d !== dateStr) : [...prev, dateStr]);
@@ -278,6 +302,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
       setNotes(''); setNextDates([]); setSlackComment('');
       setSelectedChannels([]); setGps(null); setAddress(null);
       setGpsAttempted(false); setGpsUnavailable(false);
+      clearDraft(DRAFT_KEYS.trip); // 送信成功で下書きを消す
     } catch {
       alert('送信に失敗しました。もう一度試してください。');
     } finally {
@@ -323,9 +348,15 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
 
       <div style={{ background: isDark ? '#343a40' : 'white', borderRadius: 12, padding: 24, boxShadow: '0 2px 8px rgba(0,0,0,0.1)', color: isDark ? '#fff' : '#333' }}>
 
-        {/* 報告種別 */}
+        {/* 報告種別（見出しの右横に入力内容クリア） */}
         <div style={{ marginBottom: 20 }}>
-          <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 8 }}>報告種別</label>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <label style={{ fontWeight: 'bold' }}>報告種別</label>
+            <button type="button" onClick={clearTripForm}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: isDark ? '#adb5bd' : '#8a939c', background: 'none', border: `1px solid ${isDark ? '#555' : '#d5dae0'}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
+              🗑 クリア
+            </button>
+          </div>
           <div style={{ display: 'flex', gap: 0, borderRadius: 8, overflow: 'hidden', border: `1px solid ${isDark ? '#6c757d' : '#dee2e6'}` }}>
             {(['到着', '終了'] as const).map((type) => (
               <button

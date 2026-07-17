@@ -20,7 +20,22 @@ import { sendLeaveSlack } from '../lib/leaveSlack';
 import { shouldSend, dispatchEmail, dispatchSiteNotification, getUserEmail } from '../lib/notificationDispatch';
 import { insertNotification } from '../lib/notifications';
 import { useDarkMode } from '../hooks/useDarkMode';
+import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import type { AuthUser, AdminLeaveRequest } from '../types';
+
+// 休暇申請フォームの下書き
+interface LeaveDraft {
+  leaveType: LeaveType; leaveTypeOther: string; selectedDates: string[];
+  dateLocations: Record<string, string>; purpose: string; notes: string;
+  choseiSubType: 'furikae' | 'zangyou'; choseiOriginDates: string[];
+  originLocations: Record<string, string>; selectedApproverId: string;
+}
+// 時間調整フォームの下書き
+interface AdjDraft {
+  adjLateStart: boolean; adjEarlyEnd: boolean; adjDate: string;
+  adjLateTime: string; adjEarlyTime: string; adjReason: string; adjLocation: string;
+  adjApproverMode: 'select' | 'free'; adjApproverSelectedId: string; adjApproverFree: string;
+}
 
 interface Props {
   user: AuthUser;
@@ -259,47 +274,50 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<'form' | 'history' | 'adjustment'>(searchParams.get('tab') === 'history' ? 'history' : 'form');
 
-  const [leaveType, setLeaveType] = useState<LeaveType>('有給休暇');
-  const [leaveTypeOther, setLeaveTypeOther] = useState('');
-  const [selectedDates, setSelectedDates] = useState<string[]>([]);
+  // 入力中の下書きを端末に自動保存し、開き直したら復元する
+  const [ld] = useState(() => loadDraft<LeaveDraft>(DRAFT_KEYS.leave));
+  const [ad] = useState(() => loadDraft<AdjDraft>(DRAFT_KEYS.leaveAdjustment));
+  const [leaveType, setLeaveType] = useState<LeaveType>(ld?.leaveType ?? '有給休暇');
+  const [leaveTypeOther, setLeaveTypeOther] = useState(ld?.leaveTypeOther ?? '');
+  const [selectedDates, setSelectedDates] = useState<string[]>(ld?.selectedDates ?? []);
   // 校（勤務校）：日付ごとに選択。カレンダーのタイトルに［校名］で表示される
   const [workplaces, setWorkplaces] = useState<string[]>([]);
-  const [dateLocations, setDateLocations] = useState<Record<string, string>>({});
+  const [dateLocations, setDateLocations] = useState<Record<string, string>>(ld?.dateLocations ?? {});
   const [bulkLocation, setBulkLocation] = useState('');
   const [locError, setLocError] = useState(''); // 校未選択のインラインエラー（alertは使わない）
   // 振替元の勤務日の校（調整休・振替休日のみ。日付→校）
-  const [originLocations, setOriginLocations] = useState<Record<string, string>>({});
+  const [originLocations, setOriginLocations] = useState<Record<string, string>>(ld?.originLocations ?? {});
   const [originBulkLocation, setOriginBulkLocation] = useState('');
-  const [purpose, setPurpose] = useState('');
-  const [notes, setNotes] = useState('');
+  const [purpose, setPurpose] = useState(ld?.purpose ?? '');
+  const [notes, setNotes] = useState(ld?.notes ?? '');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [approvers, setApprovers] = useState<Approver[]>([]);
-  const [selectedApproverId, setSelectedApproverId] = useState('');
+  const [selectedApproverId, setSelectedApproverId] = useState(ld?.selectedApproverId ?? '');
   const [showApproverGuide, setShowApproverGuide] = useState(false);
   const [leaderAssignments, setLeaderAssignments] = useState<{ id: string; course: string; school: string; leader: string; manager: string }[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(true);
   const [reapplySourceId, setReapplySourceId] = useState<string | null>(null);
   // 時間調整フォーム用
-  const [adjLateStart, setAdjLateStart] = useState(false);
-  const [adjEarlyEnd, setAdjEarlyEnd] = useState(false);
-  const [adjDate, setAdjDate] = useState<string>('');
-  const [adjLateTime, setAdjLateTime] = useState('');
-  const [adjEarlyTime, setAdjEarlyTime] = useState('');
-  const [adjReason, setAdjReason] = useState('');
-  const [adjApproverMode, setAdjApproverMode] = useState<'select' | 'free'>('select');
-  const [adjApproverSelectedId, setAdjApproverSelectedId] = useState('');
-  const [adjApproverFree, setAdjApproverFree] = useState('');
+  const [adjLateStart, setAdjLateStart] = useState(ad?.adjLateStart ?? false);
+  const [adjEarlyEnd, setAdjEarlyEnd] = useState(ad?.adjEarlyEnd ?? false);
+  const [adjDate, setAdjDate] = useState<string>(ad?.adjDate ?? '');
+  const [adjLateTime, setAdjLateTime] = useState(ad?.adjLateTime ?? '');
+  const [adjEarlyTime, setAdjEarlyTime] = useState(ad?.adjEarlyTime ?? '');
+  const [adjReason, setAdjReason] = useState(ad?.adjReason ?? '');
+  const [adjApproverMode, setAdjApproverMode] = useState<'select' | 'free'>(ad?.adjApproverMode ?? 'select');
+  const [adjApproverSelectedId, setAdjApproverSelectedId] = useState(ad?.adjApproverSelectedId ?? '');
+  const [adjApproverFree, setAdjApproverFree] = useState(ad?.adjApproverFree ?? '');
   const [adjSubmitting, setAdjSubmitting] = useState(false);
   const [adjBanner, setAdjBanner] = useState(false);
   const [adjError, setAdjError] = useState('');
-  const [adjLocation, setAdjLocation] = useState(''); // 時間調整の校（必須）
+  const [adjLocation, setAdjLocation] = useState(ad?.adjLocation ?? ''); // 時間調整の校（必須）
   const [adjCalYear, setAdjCalYear] = useState(() => new Date().getFullYear());
   const [adjCalMonth, setAdjCalMonth] = useState(() => new Date().getMonth());
   // 調整休専用
-  const [choseiSubType, setChoseiSubType] = useState<'furikae' | 'zangyou'>('furikae');
-  const [choseiOriginDates, setChoseiOriginDates] = useState<string[]>([]);
+  const [choseiSubType, setChoseiSubType] = useState<'furikae' | 'zangyou'>(ld?.choseiSubType ?? 'furikae');
+  const [choseiOriginDates, setChoseiOriginDates] = useState<string[]>(ld?.choseiOriginDates ?? []);
   const [encPending, setEncPending] = useState<{ id: string; target_date: string; deadline: string }[]>([]);
   const [encAnsweringId, setEncAnsweringId] = useState<string | null>(null);
   const [encAnswerChoice, setEncAnswerChoice] = useState<number | null>(null);
@@ -330,6 +348,15 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   };
 
   useEffect(() => { fetchEncPending(); }, [user.id]);
+
+  // 休暇申請フォームの下書きを自動保存
+  useEffect(() => {
+    saveDraft(DRAFT_KEYS.leave, { leaveType, leaveTypeOther, selectedDates, dateLocations, purpose, notes, choseiSubType, choseiOriginDates, originLocations, selectedApproverId });
+  }, [leaveType, leaveTypeOther, selectedDates, dateLocations, purpose, notes, choseiSubType, choseiOriginDates, originLocations, selectedApproverId]);
+  // 時間調整フォームの下書きを自動保存
+  useEffect(() => {
+    saveDraft(DRAFT_KEYS.leaveAdjustment, { adjLateStart, adjEarlyEnd, adjDate, adjLateTime, adjEarlyTime, adjReason, adjLocation, adjApproverMode, adjApproverSelectedId, adjApproverFree });
+  }, [adjLateStart, adjEarlyEnd, adjDate, adjLateTime, adjEarlyTime, adjReason, adjLocation, adjApproverMode, adjApproverSelectedId, adjApproverFree]);
 
   useEffect(() => {
     supabase
@@ -480,6 +507,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       // TODO: 申請フォーム送信後の追加処理（例：奨励日との照合・連携）をここに追加
       setSubmitted(true);
       setShowConfirm(false);
+      clearDraft(DRAFT_KEYS.leave); // 送信成功で下書きを消す
     } catch (err: unknown) {
       alert('送信に失敗しました。\n' + (err instanceof Error ? err.message : JSON.stringify(err)));
     } finally {
@@ -503,6 +531,22 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     setChoseiOriginDates([]);
     setReapplySourceId(null);
     // 初期選択なし（ユーザーに明示的に選ばせる）
+  };
+
+  // 休暇申請フォームの🗑クリア（入力内容をすべて空にして下書きも消す）
+  const clearLeaveForm = () => {
+    handleReset();
+    setSelectedApproverId('');
+    clearDraft(DRAFT_KEYS.leave);
+  };
+  // 時間調整フォームの🗑クリア
+  const clearAdjForm = () => {
+    setAdjLateStart(false); setAdjEarlyEnd(false);
+    setAdjDate(''); setAdjLateTime(''); setAdjEarlyTime('');
+    setAdjLocation(''); setAdjReason('');
+    setAdjApproverMode('select'); setAdjApproverSelectedId(''); setAdjApproverFree('');
+    setAdjError('');
+    clearDraft(DRAFT_KEYS.leaveAdjustment);
   };
 
   const isDark = useDarkMode();
@@ -678,6 +722,15 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       {/* 申請フォーム */}
       {tab === 'form' && (
         <div style={{ padding: 24, background: bg, borderRadius: '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
+          {/* 入力内容クリア（再申請モード中は元データを消さないよう非表示） */}
+          {!reapplySourceId && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+              <button type="button" onClick={clearLeaveForm}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: subText, background: 'none', border: `1px solid ${borderColor}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
+                🗑 クリア
+              </button>
+            </div>
+          )}
           {/* 再申請バナー */}
           {reapplySourceId && (
             <div style={{ background: isDark ? '#0d3a5e' : '#cce5ff', border: `1px solid ${isDark ? '#1a6fa8' : '#b8daff'}`, borderRadius: 8, padding: '10px 14px', marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1067,6 +1120,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             setAdjDate(''); setAdjLateTime(''); setAdjEarlyTime('');
             setAdjLocation('');
             setAdjReason(''); setAdjApproverSelectedId(''); setAdjApproverFree('');
+            clearDraft(DRAFT_KEYS.leaveAdjustment); // 送信成功で下書きを消す
             setAdjBanner(true);
           } finally {
             setAdjSubmitting(false);
@@ -1083,6 +1137,14 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             {adjBanner && (
               <BannerSuccess message="登録しました" onClose={() => setAdjBanner(false)} />
             )}
+
+            {/* 入力内容クリア */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+              <button type="button" onClick={clearAdjForm}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: subText, background: 'none', border: `1px solid ${borderColor}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
+                🗑 クリア
+              </button>
+            </div>
 
             {/* info-box */}
             <div style={{ background: isDark ? '#1a3a4a' : '#e8f4fd', border: `1px solid ${isDark ? '#2a6a8a' : '#bee5eb'}`, borderRadius: 10, padding: '12px 14px', marginBottom: 14 }}>

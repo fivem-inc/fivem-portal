@@ -759,8 +759,13 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
     if (isShiftPendingApproval) { navigate('/shift-report?view=confirm'); return; }
     if (isShiftPendingResubmit) { navigate('/shift-report?tab=history'); return; }
     if (isShiftResult) { navigate('/shift-report?tab=history'); onDismiss(n.id); return; }
-    // 時間調整・欠勤登録はチームカレンダーで内容を確認できる（FYIなのでタップで閉じる）
-    if (isTimeAdjustment || isAttendance) { navigate('/calendar'); onDismiss(n.id); return; }
+    // 欠勤登録：reference_idに対象日(YYYY-MM-DD)があれば、その月へジャンプして該当行を強調する
+    if (isAttendance) {
+      const focus = n.reference_id && /^\d{4}-\d{2}-\d{2}$/.test(n.reference_id) ? `?focus=${n.reference_id}` : '';
+      navigate(`/calendar${focus}`); onDismiss(n.id); return;
+    }
+    // 時間調整はFYI。チームカレンダーで確認できる（タップで閉じる）
+    if (isTimeAdjustment) { navigate('/calendar'); onDismiss(n.id); return; }
     if (isPurchasePendingApproval) { navigate('/purchase?tab=approvals'); return; }
     if (isPurchaseResult) { navigate('/purchase?tab=history'); onDismiss(n.id); return; }
     if (isLegacyReject) { navigate('/leave'); return; }

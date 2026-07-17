@@ -1,7 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
+import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import type { AuthUser } from '../types';
+
+// 欠勤入力シートの下書き（開いていた日付ごと・シート再表示で復元）
+interface AbsenceDraft {
+  date: string; userId: string; isAbsent: boolean; absentDates: string[];
+  isLate: boolean; isLateStart: boolean; isEarlyLeave: boolean; isEarlyEnd: boolean;
+  lateTime: string; earlyTime: string; notes: string;
+  locations: Record<string, string>;
+}
 
 const CalendarResultModal: React.FC<{ type: 'save' | 'delete'; onClose: () => void }> = ({ type, onClose }) => {
   useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, [onClose]);
@@ -300,25 +309,30 @@ const AbsenceInputSheet: React.FC<{
   onSaved: () => void;
   onSaving: () => void;
 }> = ({ date, profiles, currentUserId, workplaces, onClose, onSaved, onSaving }) => {
-  const [userId, setUserId] = useState('');
+  // 入力中の下書きを端末に保存し、開いていた日付に戻ったとき復元する
+  const [absDraft] = useState(() => {
+    const d = loadDraft<AbsenceDraft>(DRAFT_KEYS.attendance);
+    return d && d.date === date ? d : null;
+  });
+  const [userId, setUserId] = useState(absDraft?.userId ?? '');
   // 校（必須）。日付ごとに選択できる（全欠勤の複数日は日別、遅刻・早退はその日1件）
-  const [locations, setLocations] = useState<Record<string, string>>({});
+  const [locations, setLocations] = useState<Record<string, string>>(absDraft?.locations ?? {});
   const [bulkLocation, setBulkLocation] = useState('');
-  const [isAbsent, setIsAbsent] = useState(false);
-  const [absentDates, setAbsentDates] = useState<Set<string>>(() => new Set([date]));
-  const [isLate, setIsLate] = useState(false);
-  const [isLateStart, setIsLateStart] = useState(false);
-  const [isEarlyLeave, setIsEarlyLeave] = useState(false);
-  const [isEarlyEnd, setIsEarlyEnd] = useState(false);
-  const [lateTime, setLateTime] = useState('');
-  const [earlyTime, setEarlyTime] = useState('');
+  const [isAbsent, setIsAbsent] = useState(absDraft?.isAbsent ?? false);
+  const [absentDates, setAbsentDates] = useState<Set<string>>(() => new Set(absDraft?.absentDates ?? [date]));
+  const [isLate, setIsLate] = useState(absDraft?.isLate ?? false);
+  const [isLateStart, setIsLateStart] = useState(absDraft?.isLateStart ?? false);
+  const [isEarlyLeave, setIsEarlyLeave] = useState(absDraft?.isEarlyLeave ?? false);
+  const [isEarlyEnd, setIsEarlyEnd] = useState(absDraft?.isEarlyEnd ?? false);
+  const [lateTime, setLateTime] = useState(absDraft?.lateTime ?? '');
+  const [earlyTime, setEarlyTime] = useState(absDraft?.earlyTime ?? '');
   const _MINUTES_5 = Array.from({ length: 12 }, (_, i) => i * 5); void _MINUTES_5;
   const _HOURS_24 = Array.from({ length: 24 }, (_, i) => i); void _HOURS_24;
   const _timeH = (t: string) => t ? parseInt(t.split(':')[0], 10) : 8; void _timeH;
   const _timeM = (t: string) => t ? parseInt(t.split(':')[1], 10) : 0; void _timeM;
   const _toTimeStr = (h: number, m: number) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`; void _toTimeStr;
   const selStyle: React.CSSProperties = { padding: '4px 4px', borderRadius: 6, border: '1px solid #ccc', fontSize: 14 };
-  const [notes, setNotes] = useState('');
+  const [notes, setNotes] = useState(absDraft?.notes ?? '');
   const [saving, setSaving] = useState(false);
   const savingRef = React.useRef(false);
   const confirmingRef = React.useRef(false);
@@ -327,6 +341,14 @@ const AbsenceInputSheet: React.FC<{
 
   const dateLabel = `${date.slice(5, 7)}月${date.slice(8, 10)}日（${dow(date)}）`;
   const grouped = buildProfileGroups(profiles);
+
+  // 入力中の下書きを自動保存
+  useEffect(() => {
+    saveDraft(DRAFT_KEYS.attendance, {
+      date, userId, isAbsent, absentDates: [...absentDates],
+      isLate, isLateStart, isEarlyLeave, isEarlyEnd, lateTime, earlyTime, notes, locations,
+    });
+  }, [date, userId, isAbsent, absentDates, isLate, isLateStart, isEarlyLeave, isEarlyEnd, lateTime, earlyTime, notes, locations]);
 
   const toggleAbsent = (checked: boolean) => {
     setIsAbsent(checked);
@@ -428,23 +450,44 @@ const AbsenceInputSheet: React.FC<{
         body: { user_id: userId, user_name: name, dates: uniqueDates, types: uniqueTypes },
       });
     } catch (e) { console.error('[attendance-notify] 通知失敗:', e); }
+    clearDraft(DRAFT_KEYS.attendance); // 登録成功で下書きを消す
     onSaving(); // バナー表示
     onClose();  // モーダル・シートを閉じる
     onSaved();  // カレンダーを再取得
   };
 
+  // キャンセル/背景タップは「破棄」＝下書きを消して閉じる（送信以外で明示的に閉じた場合）。
+  // 一方、更新や別アプリ移動でシートが消えた場合は下書きが残り、次回開いたとき復元される。
+  const handleDismiss = () => { clearDraft(DRAFT_KEYS.attendance); onClose(); };
+
+  // 🗑クリア：入力内容を空に戻す（シートは閉じない）。下書きも消す。
+  const clearAbsenceForm = () => {
+    setUserId(''); setLocations({}); setBulkLocation('');
+    setIsAbsent(false); setAbsentDates(new Set([date]));
+    setIsLate(false); setIsLateStart(false); setIsEarlyLeave(false); setIsEarlyEnd(false);
+    setLateTime(''); setEarlyTime(''); setNotes(''); setError('');
+    clearDraft(DRAFT_KEYS.attendance);
+  };
+
   return (
     <div
       style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
-      onClick={onClose}
+      onClick={handleDismiss}
     >
       <div
         onClick={e => e.stopPropagation()}
         style={{ background: '#fff', borderRadius: '16px 16px 0 0', padding: '24px 20px', width: '100%', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto' }}
       >
-        <h3 style={{ margin: '0 0 20px', fontSize: 16, textAlign: 'center', color: '#333' }}>
+        <h3 style={{ margin: '0 0 8px', fontSize: 16, textAlign: 'center', color: '#333' }}>
           🔴 欠勤入力　{dateLabel}
         </h3>
+        {/* 入力内容クリア */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+          <button type="button" onClick={clearAbsenceForm}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#8a939c', background: 'none', border: '1px solid #d5dae0', borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
+            🗑 クリア
+          </button>
+        </div>
 
         {/* 対象者 */}
         <div style={{ marginBottom: 16 }}>
@@ -573,7 +616,7 @@ const AbsenceInputSheet: React.FC<{
         )}
 
         <div style={{ display: 'flex', gap: 10 }}>
-          <button onClick={onClose} style={{ flex: 1, padding: 12, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, cursor: 'pointer' }}>
+          <button onClick={handleDismiss} style={{ flex: 1, padding: 12, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, cursor: 'pointer' }}>
             キャンセル
           </button>
           <button onClick={handleConfirm} disabled={confirming || saving} style={{ flex: 2, padding: 12, background: '#dc3545', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: (confirming || saving) ? 'not-allowed' : 'pointer', opacity: (confirming || saving) ? 0.7 : 1 }}>
@@ -781,8 +824,15 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
   const CALENDAR_GROUPS = ['こども', '大人', '管理部'];
 
   const today = new Date();
-  const [year, setYear] = useState(today.getFullYear());
-  const [month, setMonth] = useState(today.getMonth());
+  // バナー等から ?focus=YYYY-MM-DD で来たら、その月を開き該当行を強調する
+  const focusDate = (() => {
+    const p = new URLSearchParams(window.location.search).get('focus');
+    return p && /^\d{4}-\d{2}-\d{2}$/.test(p) ? p : null;
+  })();
+  const [year, setYear] = useState(focusDate ? Number(focusDate.slice(0, 4)) : today.getFullYear());
+  const [month, setMonth] = useState(focusDate ? Number(focusDate.slice(5, 7)) - 1 : today.getMonth());
+  const [highlightDate, setHighlightDate] = useState<string | null>(focusDate);
+  const focusRowRef = React.useRef<HTMLDivElement | null>(null);
   const [groupMode, setGroupMode] = useState<string>(defaultGroup);
   const [events, setEvents] = useState<LeaveEvent[]>([]);
   const [absences, setAbsences] = useState<AbsenceEvent[]>([]);
@@ -937,6 +987,14 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
 
   useEffect(() => { fetchEvents(); fetchAbsences(); }, [fetchEvents, fetchAbsences]);
 
+  // ?focus= で来たとき：一覧の該当行までスクロールし、数秒後にハイライトを消す
+  useEffect(() => {
+    if (!highlightDate || loading) return;
+    const t1 = setTimeout(() => focusRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300);
+    const t2 = setTimeout(() => setHighlightDate(null), 6000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [highlightDate, loading, absences, events]);
+
   useEffect(() => {
     if (!isApprover && !isAdmin) return;
     supabase.from('profiles').select('id, name, role_title, employment_type, group_names').eq('is_active', true).neq('role_title', '管理者').then(({ data }) => {
@@ -948,6 +1006,9 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
     // 欠勤入力の校ドロップダウン用（勤務変更報告と同じ勤務地マスタ）
     supabase.from('master_options').select('value').eq('category', 'workplace').order('sort_order')
       .then(({ data }) => { if (data) setWorkplaces(data.map((r: { value: string }) => r.value)); });
+    // 更新・別アプリ移動でシートが閉じても、入力途中の下書きがあればシートを開き直す
+    const absDraft = loadDraft<AbsenceDraft>(DRAFT_KEYS.attendance);
+    if (absDraft?.date) setAbsenceSheet(absDraft.date);
   }, [isApprover, isAdmin]);
 
   const eventsByDate: Record<string, LeaveEvent[]> = {};
@@ -1126,8 +1187,9 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
                   : (ev.reason?.includes('【有給奨励日】') || ev.purpose === '有給奨励日')
                     ? '📅 有給奨励日'
                     : null;
+                const isFocused = highlightDate === row.date;
                 return (
-                  <div key={`l-${ev.id}-${row.date}-${i}`} style={{ borderBottom: `1px solid ${borderColor}` }}>
+                  <div key={`l-${ev.id}-${row.date}-${i}`} ref={isFocused ? focusRowRef : undefined} style={{ borderBottom: `1px solid ${borderColor}`, background: isFocused ? (isDark ? '#4a4423' : '#fff9c4') : 'transparent', transition: 'background 0.6s' }}>
                     <div style={{ display: 'grid', gridTemplateColumns: gridCols, gap: 6, padding: '7px 8px', fontSize: isMobile ? 13 : 14, alignItems: 'center' }}>
                       <span style={{ color: subColor, fontSize: isMobile ? 11 : 13 }}>{month + 1}/{d}（{dow(row.date)}）</span>
                       <span style={{ fontWeight: 'bold', color: textColor }}>{ev.name}</span>
@@ -1151,8 +1213,9 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
                 const { ab } = row;
                 const c = ABSENCE_COLOR[ab.type];
                 const timeLabel = ab.actual_time ? ab.actual_time.slice(0, 5) : '—';
+                const isFocused = highlightDate === row.date;
                 return (
-                  <div key={`a-${ab.id}-${i}`} style={{ borderBottom: `1px solid ${borderColor}` }}>
+                  <div key={`a-${ab.id}-${i}`} ref={isFocused ? focusRowRef : undefined} style={{ borderBottom: `1px solid ${borderColor}`, background: isFocused ? (isDark ? '#4a4423' : '#fff9c4') : 'transparent', transition: 'background 0.6s' }}>
                     <div style={{ display: 'grid', gridTemplateColumns: gridCols, gap: 6, padding: '7px 8px', fontSize: isMobile ? 13 : 14, alignItems: 'center' }}>
                       <span style={{ color: subColor, fontSize: isMobile ? 11 : 13 }}>{month + 1}/{d}（{dow(row.date)}）</span>
                       <span style={{ fontWeight: 'bold', color: textColor }}>{ab.name}</span>
