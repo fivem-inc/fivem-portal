@@ -716,9 +716,10 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       {isApprover && (
         <button
           onClick={() => navigate('/leave-approvals')}
-          style={{ width: '100%', padding: '10px', background: '#fd7e14', color: 'white', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', marginTop: 8, borderRadius: 8 }}
+          style={{ width: '100%', padding: '9px', background: '#fd7e14', color: 'white', border: 'none', cursor: 'pointer', marginTop: 8, borderRadius: 8, lineHeight: 1.4 }}
         >
-          ✅ 受理ページへ
+          <div style={{ fontSize: 14, fontWeight: 'bold' }}>✅ 受理ページへ</div>
+          <div style={{ fontSize: 11, opacity: 0.95, marginTop: 1 }}>パートへの申請フォーム送信</div>
         </button>
       )}
 
