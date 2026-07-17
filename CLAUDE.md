@@ -7187,3 +7187,59 @@ on conflict (event_key, channel) do nothing;
 - フロント：git push（Vercel自動）
 - Edge Function：`supabase functions deploy attendance-notify`（reference_id追加のため必須）
 - gcal-sync/shift-report-returned-notify等は今回変更なし
+
+---
+
+# 📌📌 セッション終了サマリー（2026-07-17／次回はここから）
+
+## 今日やったこと（すべて本番反映済み：push＋Edge Functionデプロイ＋DB適用まで完了）
+
+### 1. 勤務変更報告「差し戻し時」の4チャンネル化（コミット ac72dc4）
+- 差し戻し時をSlack/メール/サイト通知/プッシュで出し分け可能に（受理時と同じ作り）
+- 新Edge Function `shift-report-returned-notify`（Slack専用・デプロイ済）、lib/shiftReportReturnedNotify.ts に送信集約
+- 管理画面・申請画面の両方から差し戻せるので両方から同ヘルパーを呼ぶ
+- notification_settings に site/slack/email 3行追加（site=ON、slack/email=OFF）
+
+### 2. 全体仕様書を最新化（コミット aa25b19）
+- docs/仕様書_Notion用.md を2026-07-16版に更新（備品精算モジュール・プッシュパイプライン・管理14タブ等）
+
+### 3. 欠勤・休暇・時間調整に「校（勤務校）」を追加（コミット 26d8583）
+- DB列追加（本番適用済）：`attendance_exceptions.location`、`leave_requests.leave_locations`、`leave_requests.chosei_origin_locations`
+- gcal-sync（デプロイ済）：locations受け取りでタイトルを `椿原 凜大｜休み［四条本校］` に。姓名間の全角スペース→半角に正規化
+- 欠勤入力・休暇申請・時間調整・振替元勤務日に**日付ごとの校選択**（必須・一括選択あり・1日1行表示）
+- チームカレンダー：PCセルに校を小表示、一覧に校列＋理由の2行目（欠勤備考・調整休のみ／有給奨励日は「📅有給奨励日」表示）
+- 承認画面・管理受理/種別変更でも校をGCalへ引き継ぎ。休暇申請CSVを1日1行化＋校列、欠勤CSVを新規追加
+
+### 4. バナータップ修正・有給奨励日表示・交通費リスト並び替え（コミット 0691b0e）
+- 欠勤登録バナーがタップ無反応だった不具合を修正
+- 交通費の追加済みリストに並び替え（登録順/日付順・↓↑・端末に記憶）
+
+### 5. 入力下書きの自動保存を全フォームに統一＋欠勤バナーの飛び先改善（コミット f6ad6b5）
+- 共通 lib/draftStorage.ts。入力中は自動保存・**送信成功と🗑クリアでのみ消える**（localStorage無期限）
+- 対象：交通費/出張/休暇+時間調整/欠勤入力/勤務変更/備品申請/備品精算/連絡板お知らせ作成
+- 各フォーム最初の入力枠の右上に「🗑クリア」統一。修正/再申請モードは対象外
+- **欠勤登録バナー**：attendance-notify の reference_id に対象日追加（デプロイ済）→タップで正しい月へジャンプ＋該当行を黄色ハイライト＋自動スクロール（6秒でフェード）
+
+## 次回の予定タスク（実機確認・優先順）
+1. 【最優先・実機】入力下書き：各フォームで入力途中→別アプリ/更新→復元されるか。送信後は空か。🗑クリアで空になるか
+   （交通費は追加済みリストが残り入力枠だけ消える／欠勤入力は更新でシート自動再表示・キャンセルで破棄）
+2. 【実機】欠勤バナー：新規欠勤登録→バナータップ→正しい月で該当行が光るか（過去の通知は日付なしで今月へ＝仕様）
+3. 【実機】校選択：欠勤・休暇・時間調整で校を選び登録→GCalタイトルが `姓 名｜内容［校］`（半角スペース）になるか
+4. 【実機】勤務変更差し戻しの4チャンネル、有給奨励日の一覧表示、交通費の並び替え記憶
+5. 【保留・未実装】連絡板のチャット入力（グループ/DM/リプライ）の下書き
+   → リアルタイム・チャンネル切替が絡みリスク高・短文で価値低のため今回見送り。やるなら別途慎重に
+6. 【継続】storage-usage-check cron（毎週月曜9:00）が正常実行されているか確認
+7. 【保留】プッシュ案内バナーの管理画面設定機能（C案）※以前からの未着手タスク
+
+## 作業ルール（厳守・毎回）
+- 作業フォルダ `C:\Users\kohei\fivem-portal`。開始時：git pull → git status → CLAUDE.mdの本サマリー確認
+- 修正後：`cd client && npx tsc -b && npx vite build`（Vercelと同手順）
+- UI文言・配色・新機能は「案を提示→承認後に実装」。いきなり実装しない。配色/レイアウトはvisualizeでモック提示
+- 専門用語は新卒でも分かるよう都度解説する
+- `alert()`／`window.confirm()`／`.catch()` 禁止（確認はインラインUI・成功は緑カード）。認証はAuthContextに一元化
+- 本番DB操作・本番設定変更・push/コミットは「明示の指示」を得てから。git add 前に必ず `git status` 目視
+- `AGENTS.md`（未追跡）はコミットに含めない
+- DBマイグレーション：`supabase db query --linked --file <SQL>`。Edge Function：`supabase functions deploy <名前>`（Docker不要）
+- git push が2分でタイムアウト→run_in_backgroundで再試行
+- プッシュ文面は「状態を表す漢字名詞＋件数」のみ（実機テスト済み語）
+- 下書き実装の落とし穴：clearDraft後にauto-save effectが空データを再保存し得る→loadDraftの真偽で分岐する箇所は空判定ガード必須
