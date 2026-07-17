@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
+import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { insertNotification } from '../lib/notifications';
 import { dispatchEmail, getNotificationTemplate, getUserEmail } from '../lib/notificationDispatch';
 import { sendPurchaseSlackForEvent } from '../lib/purchaseSlack';
@@ -74,6 +75,8 @@ const SELECT_COLUMNS = 'id, user_id, item_name, quantity, amount, requested_purc
 const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
   const isDarkMode = useDarkMode();
   const [requests, setRequests] = useState<PendingRequest[]>([]);
+  // 通知バナーから ?focus=<申請ID> で来たとき該当カードを強調
+  const { highlightId, focusRef } = useFocusHighlight(requests);
   const [names, setNames] = useState<Record<string, string>>({});
   const [opinions, setOpinions] = useState<Record<string, OpinionRow[]>>({});
   const [loading, setLoading] = useState(true);
@@ -367,8 +370,9 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
         const draft = drafts[r.id] ?? { opinion: '', comment: '', visibleToApplicant: false };
         const resolvedItems = resolveItems(r, itemsByRequest[r.id] ?? []);
 
+        const isFocused = highlightId === r.id;
         return (
-        <div key={r.id} style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: 14 }}>
+        <div key={r.id} ref={el => { if (el && isFocused) focusRef.current = el; }} style={{ background: isFocused ? (isDarkMode ? '#4a4423' : '#fff9c4') : cardBg, border: `1px solid ${isFocused ? '#f0c000' : border}`, borderRadius: 10, padding: 14, transition: 'background 0.6s, border-color 0.6s' }}>
           {r.amount_diff_flag && (
             <div style={{ marginBottom: 10, padding: '8px 10px', background: warnBg, border: `1px solid ${warnBorder}`, borderRadius: 8, fontSize: 12, color: warnText }}>
               ⚠️ 明細合計（¥{(r.items_subtotal ?? 0).toLocaleString()}）と申請金額（¥{r.amount.toLocaleString()}）に差があります

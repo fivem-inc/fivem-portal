@@ -5,6 +5,7 @@ import { sendLeaveSlack } from '../lib/leaveSlack';
 import { insertNotification } from '../lib/notifications';
 import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatchEmail, dispatchSiteNotification, getUserEmail } from '../lib/notificationDispatch';
 import { useDarkMode } from '../hooks/useDarkMode';
+import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import type { AuthUser, AdminLeaveRequest } from '../types';
 
 interface Props {
@@ -53,6 +54,8 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   const isPresident = roleTitle === '社長';
   const navigate = useNavigate();
   const [requests, setRequests] = useState<LeaveReq[]>([]);
+  // 通知バナーから ?focus=<申請ID> で来たとき該当カードを強調
+  const { highlightId, focusRef } = useFocusHighlight(requests);
   const [loading, setLoading] = useState(false);
 
   // 差し戻しモーダル
@@ -436,10 +439,12 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
             {requests.map(req => {
               const days = calcDays(req.start_date, req.end_date);
               const approvable = canApprove(req);
+              const isFocused = highlightId === req.id;
               return (
                 <div
                   key={req.id}
-                  style={{ padding: 16, borderRadius: 10, border: `1px solid ${borderColor}`, background: isDark ? '#495057' : '#fafafa' }}
+                  ref={el => { if (el && isFocused) focusRef.current = el; }}
+                  style={{ padding: 16, borderRadius: 10, border: `1px solid ${isFocused ? '#f0c000' : borderColor}`, background: isFocused ? (isDark ? '#4a4423' : '#fff9c4') : (isDark ? '#495057' : '#fafafa'), transition: 'background 0.6s, border-color 0.6s' }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10, flexWrap: 'wrap', gap: 6 }}>
                     <div>

@@ -115,9 +115,9 @@ function shortType(ev: LeaveEvent) {
   return LEAVE_TYPE_SHORT[ev.leave_type] || ev.leave_type;
 }
 
-const WEEKDAYS = ['月', '火', '水', '木', '金', '土', '日'];
+const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土']; // 日曜始まり
 function dow(dateStr: string) {
-  return WEEKDAYS[(new Date(dateStr).getDay() + 6) % 7];
+  return WEEKDAYS[new Date(dateStr).getDay()];
 }
 
 interface ProfileEntry {
@@ -245,7 +245,7 @@ const MultiDatePicker: React.FC<{
   const [calMonth, setCalMonth] = useState(today.getMonth());
 
   const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
-  const firstDow = (new Date(calYear, calMonth, 1).getDay() + 6) % 7;
+  const firstDow = new Date(calYear, calMonth, 1).getDay(); // 日曜=0始まり
   const cells: (string | null)[] = [];
   for (let i = 0; i < firstDow; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(fmt(calYear, calMonth, d));
@@ -268,7 +268,7 @@ const MultiDatePicker: React.FC<{
         <thead>
           <tr>
             {WEEKDAYS.map((w, i) => (
-              <th key={w} style={{ fontSize: 11, padding: '4px 0', color: i === 5 ? '#4a90d9' : i === 6 ? '#e74c3c' : '#888', fontWeight: 'normal', textAlign: 'center' }}>{w}</th>
+              <th key={w} style={{ fontSize: 11, padding: '4px 0', color: i === 0 ? '#e74c3c' : i === 6 ? '#4a90d9' : '#888', fontWeight: 'normal', textAlign: 'center' }}>{w}</th>
             ))}
           </tr>
         </thead>
@@ -277,7 +277,7 @@ const MultiDatePicker: React.FC<{
             <tr key={ri}>
               {row.map((date, ci) => {
                 const selected = date ? selectedDates.has(date) : false;
-                const isSat = ci === 5, isSun = ci === 6;
+                const isSun = ci === 0, isSat = ci === 6;
                 const day = date ? parseInt(date.slice(8)) : null;
                 return (
                   <td key={ci} onClick={() => date && onToggle(date)}
@@ -673,7 +673,7 @@ const PcCalendar: React.FC<{
   const subColor = isDark ? '#adb5bd' : '#888';
 
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const firstDow = (new Date(year, month, 1).getDay() + 6) % 7;
+  const firstDow = new Date(year, month, 1).getDay(); // 日曜=0始まり
   const cells: { date: string | null; day: number | null; dow: number }[] = [];
   for (let i = 0; i < firstDow; i++) cells.push({ date: null, day: null, dow: i });
   for (let d = 1; d <= daysInMonth; d++) cells.push({ date: fmt(year, month, d), day: d, dow: (firstDow + d - 1) % 7 });
@@ -689,7 +689,7 @@ const PcCalendar: React.FC<{
       <thead>
         <tr>
           {WEEKDAYS.map((w, i) => (
-            <th key={w} style={{ padding: '6px 0', fontSize: 12, color: i === 5 ? '#4a90d9' : i === 6 ? '#e74c3c' : subColor, borderBottom: `2px solid ${border}`, fontWeight: 'normal' }}>{w}</th>
+            <th key={w} style={{ padding: '6px 0', fontSize: 12, color: i === 0 ? '#e74c3c' : i === 6 ? '#4a90d9' : subColor, borderBottom: `2px solid ${border}`, fontWeight: 'normal' }}>{w}</th>
           ))}
         </tr>
       </thead>
@@ -697,7 +697,7 @@ const PcCalendar: React.FC<{
         {rows.map((row, ri) => (
           <tr key={ri}>
             {row.map((cell, ci) => {
-              const isSat = ci === 5, isSun = ci === 6;
+              const isSun = ci === 0, isSat = ci === 6;
               const isToday = cell.date === todayStr;
               const events = cell.date ? (eventsByDate[cell.date] || []) : [];
               const absences = cell.date ? (absencesByDate[cell.date] || []) : [];
@@ -758,7 +758,7 @@ const SpCalendar: React.FC<{
   const textColor = isDark ? '#fff' : '#333';
 
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const firstDow = (new Date(year, month, 1).getDay() + 6) % 7;
+  const firstDow = new Date(year, month, 1).getDay(); // 日曜=0始まり
   const cells: { date: string | null; day: number | null; dow: number }[] = [];
   for (let i = 0; i < firstDow; i++) cells.push({ date: null, day: null, dow: i });
   for (let d = 1; d <= daysInMonth; d++) cells.push({ date: fmt(year, month, d), day: d, dow: (firstDow + d - 1) % 7 });
@@ -771,7 +771,7 @@ const SpCalendar: React.FC<{
       <thead>
         <tr>
           {WEEKDAYS.map((w, i) => (
-            <th key={w} style={{ textAlign: 'center', fontSize: 11, padding: '4px 0', color: i === 5 ? '#4a90d9' : i === 6 ? '#e74c3c' : subColor, fontWeight: 'normal' }}>{w}</th>
+            <th key={w} style={{ textAlign: 'center', fontSize: 11, padding: '4px 0', color: i === 0 ? '#e74c3c' : i === 6 ? '#4a90d9' : subColor, fontWeight: 'normal' }}>{w}</th>
           ))}
         </tr>
       </thead>
@@ -779,7 +779,7 @@ const SpCalendar: React.FC<{
         {rows.map((row, ri) => (
           <tr key={ri}>
             {row.map((cell, ci) => {
-              const isSat = ci === 5, isSun = ci === 6;
+              const isSun = ci === 0, isSat = ci === 6;
               const isToday = cell.date === todayStr;
               const events = cell.date ? (eventsByDate[cell.date] || []) : [];
               const absences = cell.date ? (absencesByDate[cell.date] || []) : [];

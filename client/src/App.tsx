@@ -156,6 +156,8 @@ const AnnouncementBanner: React.FC = () => {
   const [items, setItems] = useState<Announcement[]>([]);
   const [dismissed, setDismissed] = useState<string[]>(() => readDismissedIds(ANNOUNCEMENT_DISMISS_KEY));
   const [remindDismissed, setRemindDismissed] = useState<string[]>(() => readDismissedIds(ANNOUNCEMENT_REMIND_DISMISS_KEY));
+  const [expanded, setExpanded] = useState<string[]>([]); // 初期は全て閉じた状態
+  const toggle = (id: string) => setExpanded(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
 
   useEffect(() => {
     fetchActiveAnnouncements().then(list => {
@@ -204,16 +206,23 @@ const AnnouncementBanner: React.FC = () => {
     <>
       {visible.map(a => {
         const remindPhase = isInRemindWindow(a);
+        const isOpen = expanded.includes(a.id);
         return (
-        <div key={a.id} style={{ background: '#e7f1fb', border: '1px solid #b6d4f2', borderRadius: 10, padding: '12px 14px', marginBottom: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-            <span style={{ fontSize: 20, flexShrink: 0 }}>📢</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14, fontWeight: 'bold', color: '#0d47a1', marginBottom: 2 }}>
-                {remindPhase && <span style={{ fontSize: 11, fontWeight: 700, color: '#c62828', marginRight: 6 }}>【再掲・もうすぐ期限】</span>}
-                {a.title}
+        <div key={a.id} style={{ background: '#e7f1fb', border: '1px solid #b6d4f2', borderRadius: 10, padding: isOpen ? '12px 14px' : '10px 14px', marginBottom: 10 }}>
+          <div style={{ display: 'flex', alignItems: isOpen ? 'flex-start' : 'center', gap: 10 }}>
+            <span style={{ fontSize: isOpen ? 20 : 18, flexShrink: 0 }}>📢</span>
+            {/* タイトル部＝タップで開閉。普段はタイトル1行だけのコンパクト表示 */}
+            <div onClick={() => toggle(a.id)} style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}>
+              <div style={{ fontSize: 14, fontWeight: 'bold', color: '#0d47a1', marginBottom: isOpen ? 4 : 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ flex: 1, overflow: isOpen ? 'visible' : 'hidden', textOverflow: 'ellipsis', whiteSpace: isOpen ? 'normal' : 'nowrap' }}>
+                  {remindPhase && <span style={{ fontSize: 11, fontWeight: 700, color: '#c62828', marginRight: 6 }}>【再掲・もうすぐ期限】</span>}
+                  {a.title}
+                </span>
+                <span style={{ fontSize: 12, fontWeight: 400, color: '#5a8bc0', flexShrink: 0 }}>{isOpen ? '▲ 閉じる' : '▼ 開く'}</span>
               </div>
-              <div style={{ fontSize: 12.5, color: '#1565c0', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{a.body}</div>
+              {isOpen && (
+                <div style={{ fontSize: 12.5, color: '#1565c0', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{a.body}</div>
+              )}
             </div>
             <button onClick={() => dismiss(a)} aria-label="閉じる"
               style={{ background: 'none', border: 'none', fontSize: 16, color: '#5a8bc0', cursor: 'pointer', flexShrink: 0, lineHeight: 1, padding: 0 }}>✕</button>
@@ -753,12 +762,14 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
       if (n.reference_id) { navigate(`/board?openInboxId=${n.reference_id}`); } else { navigate('/board'); }
       return;
     }
-    if (isLeavePendingApproval) { navigate('/leave-approvals'); return; }
-    if (isLeavePendingResubmit) { navigate('/leave?tab=history'); return; }
-    if (isLeaveResult) { navigate('/leave?tab=history'); onDismiss(n.id); return; }
-    if (isShiftPendingApproval) { navigate('/shift-report?view=confirm'); return; }
-    if (isShiftPendingResubmit) { navigate('/shift-report?tab=history'); return; }
-    if (isShiftResult) { navigate('/shift-report?tab=history'); onDismiss(n.id); return; }
+    // reference_id（申請ID）があれば ?focus= を付け、飛び先で該当申請を強調する
+    const fq = n.reference_id ? `focus=${n.reference_id}` : '';
+    if (isLeavePendingApproval) { navigate(`/leave-approvals${fq ? `?${fq}` : ''}`); return; }
+    if (isLeavePendingResubmit) { navigate(`/leave?tab=history${fq ? `&${fq}` : ''}`); return; }
+    if (isLeaveResult) { navigate(`/leave?tab=history${fq ? `&${fq}` : ''}`); onDismiss(n.id); return; }
+    if (isShiftPendingApproval) { navigate(`/shift-report?view=confirm${fq ? `&${fq}` : ''}`); return; }
+    if (isShiftPendingResubmit) { navigate(`/shift-report?tab=history${fq ? `&${fq}` : ''}`); return; }
+    if (isShiftResult) { navigate(`/shift-report?tab=history${fq ? `&${fq}` : ''}`); onDismiss(n.id); return; }
     // 欠勤登録：reference_idに対象日(YYYY-MM-DD)があれば、その月へジャンプして該当行を強調する
     if (isAttendance) {
       const focus = n.reference_id && /^\d{4}-\d{2}-\d{2}$/.test(n.reference_id) ? `?focus=${n.reference_id}` : '';
@@ -766,8 +777,8 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
     }
     // 時間調整はFYI。チームカレンダーで確認できる（タップで閉じる）
     if (isTimeAdjustment) { navigate('/calendar'); onDismiss(n.id); return; }
-    if (isPurchasePendingApproval) { navigate('/purchase?tab=approvals'); return; }
-    if (isPurchaseResult) { navigate('/purchase?tab=history'); onDismiss(n.id); return; }
+    if (isPurchasePendingApproval) { navigate(`/purchase?tab=approvals${fq ? `&${fq}` : ''}`); return; }
+    if (isPurchaseResult) { navigate(`/purchase?tab=history${fq ? `&${fq}` : ''}`); onDismiss(n.id); return; }
     if (isLegacyReject) { navigate('/leave'); return; }
     // どの種別にも当てはまらない通知（古いデータ等）はタップで閉じる（無反応にしない保険）
     onDismiss(n.id);

@@ -7,38 +7,41 @@ import type { Announcement } from './announcements';
 
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
 
-// 'YYYY-MM-DD' → 表示開始 ISO（その日の JST 00:00:00）。空文字なら null。
-export const dateInputToStartIso = (dateStr: string): string | null => {
-  if (!dateStr) return null;
-  const d = new Date(`${dateStr}T00:00:00+09:00`);
+// <input type="datetime-local"> の値 'YYYY-MM-DDTHH:mm'（時刻なしの旧 'YYYY-MM-DD' も許容）→ 表示開始 ISO。
+// 時刻が無ければその日の JST 00:00:00 とみなす。空文字なら null。
+export const dateInputToStartIso = (str: string): string | null => {
+  if (!str) return null;
+  const withTime = str.includes('T') ? `${str}:00` : `${str}T00:00:00`;
+  const d = new Date(`${withTime}+09:00`);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 };
 
-// 'YYYY-MM-DD' → 表示終了 ISO（その日の JST 23:59:59）。空文字なら null。
-// 終了日いっぱい表示させるため 23:59:59 まで含める（朝に消えるオフバイワン防止）。
-export const dateInputToEndIso = (dateStr: string): string | null => {
-  if (!dateStr) return null;
-  const d = new Date(`${dateStr}T23:59:59+09:00`);
+// datetime-local 値 → 表示終了 ISO。時刻が無ければその日の JST 23:59:59（終了日いっぱい表示）。空文字なら null。
+export const dateInputToEndIso = (str: string): string | null => {
+  if (!str) return null;
+  const withTime = str.includes('T') ? `${str}:59` : `${str}T23:59:59`;
+  const d = new Date(`${withTime}+09:00`);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 };
 
-// ISO → <input type="date"> 用の 'YYYY-MM-DD'（JST基準）。null/不正なら空文字。
+// ISO → <input type="datetime-local"> 用の 'YYYY-MM-DDTHH:mm'（JST基準）。null/不正なら空文字。
 export const isoToDateInput = (iso: string | null): string => {
   if (!iso) return '';
   const t = new Date(iso).getTime();
   if (Number.isNaN(t)) return '';
   const j = new Date(t + JST_OFFSET_MS);
   const p = (n: number) => String(n).padStart(2, '0');
-  return `${j.getUTCFullYear()}-${p(j.getUTCMonth() + 1)}-${p(j.getUTCDate())}`;
+  return `${j.getUTCFullYear()}-${p(j.getUTCMonth() + 1)}-${p(j.getUTCDate())}T${p(j.getUTCHours())}:${p(j.getUTCMinutes())}`;
 };
 
-// ISO → 'M/D'（JST基準・履歴カードの期間表示用）。null なら空文字。
+// ISO → 'M/D HH:mm'（JST基準・履歴カードの期間表示用）。null なら空文字。
 export const isoToShortDate = (iso: string | null): string => {
   if (!iso) return '';
   const t = new Date(iso).getTime();
   if (Number.isNaN(t)) return '';
   const j = new Date(t + JST_OFFSET_MS);
-  return `${j.getUTCMonth() + 1}/${j.getUTCDate()}`;
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${j.getUTCMonth() + 1}/${j.getUTCDate()} ${p(j.getUTCHours())}:${p(j.getUTCMinutes())}`;
 };
 
 // JST基準の「通し日番号」（1970-01-01 JST からの日数）。日付単位の比較に使う。

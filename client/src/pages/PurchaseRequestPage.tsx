@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import type { AuthUser, PurchaseRequestItem, PurchaseRequestItemQuote } from '../types';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
+import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import ReimbursementForm from '../components/ReimbursementForm';
 import PurchaseRequestForm, { type ResubmitRecord } from '../components/PurchaseRequestForm';
 import PurchaseApprovals from '../components/PurchaseApprovals';
@@ -74,6 +75,8 @@ const OPINION_LABEL: Record<string, string> = { approve: '承認', deny: '否認
 
 const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdmin: boolean; userId: string; onResubmit: (record: ResubmitRecord) => void }> = ({ isDarkMode, isManagerPlus, isAdmin, userId, onResubmit }) => {
   const [records, setRecords] = useState<PurchaseRecord[]>([]);
+  // 通知バナーから ?focus=<申請ID> で来たとき履歴の該当カードを強調
+  const { highlightId, focusRef } = useFocusHighlight(records);
   const [names, setNames] = useState<Record<string, string>>({});
   const [opinions, setOpinions] = useState<Record<string, OpinionRow[]>>({});
   const [boardProgress, setBoardProgress] = useState<Record<string, { answered: number; required: number }>>({});
@@ -184,8 +187,9 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
       {records.map(r => {
         const statusInfo = STATUS_LABEL[r.status];
         const resolvedItems = resolveItems(r, itemsByRequest[r.id] ?? []);
+        const isFocused = highlightId === r.id;
         return (
-        <div key={r.id} style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: 14 }}>
+        <div key={r.id} ref={el => { if (el && isFocused) focusRef.current = el; }} style={{ background: isFocused ? (isDarkMode ? '#4a4423' : '#fff9c4') : cardBg, border: `1px solid ${isFocused ? '#f0c000' : border}`, borderRadius: 10, padding: 14, transition: 'background 0.6s, border-color 0.6s' }}>
           {r.amount_diff_flag && (
             <div style={{ marginBottom: 10, padding: '8px 10px', background: warnBg, border: `1px solid ${warnBorder}`, borderRadius: 8, fontSize: 12, color: warnText }}>
               ⚠️ 明細合計（¥{(r.items_subtotal ?? 0).toLocaleString()}）と申請金額（¥{r.amount.toLocaleString()}）に差があります

@@ -3,6 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { notifyShiftReportReturned } from '../lib/shiftReportReturnedNotify';
 import { useDarkMode } from '../hooks/useDarkMode';
+import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import type { AuthUser } from '../types';
 
@@ -970,6 +971,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const [reviewedReports, setReviewedReports] = useState<ShiftReport[]>([]);
   const [proxyReports, setProxyReports]       = useState<ShiftReport[]>([]);
   const [allReports, setAllReports]           = useState<ShiftReport[]>([]);
+  // 通知バナーから ?focus=<報告ID> で来たとき確認ビュー/履歴の該当カードを強調
+  const { highlightId, focusRef } = useFocusHighlight(pendingReports.length + reviewedReports.length + allReports.length);
   const [histGroupFilter, setHistGroupFilter] = useState('all');
   const [histStatusFilter, setHistStatusFilter] = useState('all');
   const [groupOptions, setGroupOptions] = useState<string[]>([]);
@@ -1161,6 +1164,13 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     return acc;
   }, {});
 
+  // 強調対象が古い期間（折りたたみ中）にある場合はその期間を自動で開く
+  useEffect(() => {
+    if (!highlightId) return;
+    const target = histReports.find(r => r.id === highlightId);
+    if (target) setOpenPeriods(prev => prev.has(target.pay_period_start) ? prev : new Set(prev).add(target.pay_period_start));
+  }, [highlightId, histReports]);
+
   const togglePeriod = (key: string) => {
     setOpenPeriods(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
   };
@@ -1181,8 +1191,9 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
           {pendingReports.length === 0 ? (
             <div style={{ textAlign: 'center', color: '#aaa', padding: 48, fontSize: 14 }}>確認待ちの報告はありません</div>
           ) : pendingReports.map(r => {
+            const isFocused = highlightId === r.id;
             return (
-              <div key={r.id} style={{ background: bg, borderRadius: 10, border: `1px solid ${borderCol}`, marginBottom: 10, padding: '14px' }}>
+              <div key={r.id} ref={el => { if (el && isFocused) focusRef.current = el; }} style={{ background: isFocused ? (isDark ? '#4a4423' : '#fff9c4') : bg, borderRadius: 10, border: `1px solid ${isFocused ? '#f0c000' : borderCol}`, marginBottom: 10, padding: '14px', transition: 'background 0.6s, border-color 0.6s' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                   <span style={{ fontSize: 13, fontWeight: 'bold', color: text }}>{(r.applicant as { name: string | null } | null)?.name ?? '不明'}</span>
                   <span style={{ fontSize: 11, color: '#888' }}>{r.work_date.slice(5).replace('-', '/')}（{dow(r.work_date)}）</span>
@@ -1427,8 +1438,9 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                     {histGrouped[period].map(r => {
                       const oMin = origDuration(r.original_start?.slice(0, 5) ?? null, r.original_end?.slice(0, 5) ?? null);
                       const dMin = r.labor_minutes != null ? r.labor_minutes - oMin : null;
+                      const isFocused = highlightId === r.id;
                       return (
-                        <div key={r.id} style={{ padding: '10px 14px', borderBottom: `1px solid ${isDark ? '#495057' : '#f5f5f5'}`, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                        <div key={r.id} ref={el => { if (el && isFocused) focusRef.current = el; }} style={{ padding: '10px 14px', borderBottom: `1px solid ${isDark ? '#495057' : '#f5f5f5'}`, background: isFocused ? (isDark ? '#4a4423' : '#fff9c4') : 'transparent', display: 'flex', alignItems: 'flex-start', gap: 10, transition: 'background 0.6s' }}>
                           <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#555', minWidth: 52, flexShrink: 0, marginTop: 2 }}>
                             {r.work_date.slice(5).replace('-', '/')}（{dow(r.work_date)}）
                           </div>

@@ -20,6 +20,7 @@ import { sendLeaveSlack } from '../lib/leaveSlack';
 import { shouldSend, dispatchEmail, dispatchSiteNotification, getUserEmail } from '../lib/notificationDispatch';
 import { insertNotification } from '../lib/notifications';
 import { useDarkMode } from '../hooks/useDarkMode';
+import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import type { AuthUser, AdminLeaveRequest } from '../types';
 
@@ -373,6 +374,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   }, []);
 
   const [history, setHistory] = useState<LeaveRecord[]>([]);
+  // 通知バナーから ?focus=<申請ID> で来たとき履歴の該当カードを強調
+  const { highlightId, focusRef } = useFocusHighlight(history);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [adjHistory, setAdjHistory] = useState<{ id: string; date: string; type: string; actual_time: string | null; notes: string | null; created_at: string }[]>([]);
   const [historySubTab, setHistorySubTab] = useState<'leave' | 'adjustment'>('leave');
@@ -1619,14 +1622,16 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                 const isApproved = req.status === 'approved';
                 const isRejected = req.status === 'rejected';
                 const isCancelled = req.status === 'cancelled';
+                const isFocused = highlightId === req.id;
                 return (
                   <div
                     key={req.id}
+                    ref={el => { if (el && isFocused) focusRef.current = el; }}
                     style={{
                       padding: '10px 12px', borderRadius: 8,
-                      border: `2px solid ${isApproved ? '#28a745' : isRejected ? '#dc3545' : isCancelled ? '#6c757d' : borderColor}`,
-                      background: isApproved ? (isDark ? '#1b4d1b' : '#f0fff4') : isRejected ? (isDark ? '#5a1a1a' : '#fff5f5') : isCancelled ? (isDark ? '#343a40' : '#f8f9fa') : (isDark ? '#495057' : '#fafafa'),
-                      boxSizing: 'border-box',
+                      border: `2px solid ${isFocused ? '#f0c000' : isApproved ? '#28a745' : isRejected ? '#dc3545' : isCancelled ? '#6c757d' : borderColor}`,
+                      background: isFocused ? (isDark ? '#4a4423' : '#fff9c4') : isApproved ? (isDark ? '#1b4d1b' : '#f0fff4') : isRejected ? (isDark ? '#5a1a1a' : '#fff5f5') : isCancelled ? (isDark ? '#343a40' : '#f8f9fa') : (isDark ? '#495057' : '#fafafa'),
+                      boxSizing: 'border-box', transition: 'background 0.6s, border-color 0.6s',
                     }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4, flexWrap: 'wrap', gap: 4 }}>

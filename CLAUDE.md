@@ -7243,3 +7243,35 @@ on conflict (event_key, channel) do nothing;
 - git push が2分でタイムアウト→run_in_backgroundで再試行
 - プッシュ文面は「状態を表す漢字名詞＋件数」のみ（実機テスト済み語）
 - 下書き実装の落とし穴：clearDraft後にauto-save effectが空データを再保存し得る→loadDraftの真偽で分岐する箇所は空判定ガード必須
+
+---
+
+## 📌 追記（2026-07-17 続き／カレンダー日曜始まり・通知バナーの該当ハイライト・お知らせ改善）
+
+### 1. チームカレンダーを日曜始まりに（CalendarPage）
+- 休暇申請フォームは元から日曜始まり、チームカレンダーだけ月曜始まりだったので統一
+- WEEKDAYS=['日'..'土']、firstDow=getDay()（+6%7を撤廃）、土日色：日曜=赤(i===0)・土曜=青(i===6)
+- 3つのカレンダー（MultiDatePicker/PcCalendar/SpCalendar）すべて修正
+
+### 2. 承認依頼・結果通知バナーのタップで該当申請を強調（休暇・勤務変更・備品すべて）
+- 共通フック **`hooks/useFocusHighlight.ts`** 新設：URLの`?focus=<ID>`を読み、該当カードにref＋黄色ハイライト＋スクロール、6秒でフェード
+- App.tsx バナー：reference_id（申請ID）があれば飛び先URLに`focus=`を付与
+- 適用6画面：LeaveApprovals（受理）/LeaveRequest履歴/ShiftReportPage確認ビュー＋履歴/PurchaseApprovals/PurchaseRequestPage履歴
+- 勤務変更履歴は対象が古い期間（折りたたみ）にある場合、その期間を自動で開くeffectを追加
+- 休暇・勤務変更・備品の通知はいずれもreference_idに申請IDが入っている（確認済）ので日付より正確に1件を特定
+
+### 3. お知らせバナーの折りたたみ（App.tsx AnnouncementBanner）
+- 普段はタイトル1行のコンパクト表示（「▼開く」）、タップで本文展開（「▲閉じる」）、初期は閉じた状態
+- ✕での閉じる（dismissed）動作は従来どおり。expanded stateで開閉管理
+
+### 4. お知らせの表示期間に時刻を追加（AnnouncementsTab / announcementDates.ts）
+- 入力を `type="date"` → `type="datetime-local"` に。DBは元からタイムスタンプ（starts_at/ends_at）なのでDB変更不要
+- ヘルパー改修：dateInputToStartIso/EndIso は 'YYYY-MM-DDTHH:mm'（時刻なし旧形式も許容）、isoToDateInput は datetime-local形式、isoToShortDate は 'M/D HH:mm'
+- 既存の時刻なしお知らせも編集・表示OK（開始0:00・終了23:59扱い）
+
+### デプロイ
+- すべてフロントのみ（DB変更なし・Edge Functionデプロイ不要）。git push（Vercel自動）で完了
+
+### 社内お知らせ文（提供済み）
+- 一般向け：入力自動保存・交通費並べ替えの2点（フォーマル・シンプル）
+- 幹部向け：上記＋校選択/GCal表記/通知バナー改善/差し戻し通知設定/お知らせ機能改善/CSV改善（全9項目）

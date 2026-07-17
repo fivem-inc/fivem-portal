@@ -262,22 +262,22 @@ const AnnouncementsTab: React.FC = () => {
                 <div style={{ padding: 12, background: isDarkMode ? '#2d3136' : '#f8fafc', border: `0.5px solid ${borderColor}`, borderRadius: 10, marginBottom: 12 }}>
                   <div style={{ fontSize: 12, color: isDarkMode ? '#90caf9' : '#0D47A1', fontWeight: 500, marginBottom: 8 }}>🗓 表示する期間（任意）</div>
                   <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                    <div style={{ flex: 1, minWidth: 130 }}>
-                      <label htmlFor="ann-start" style={{ display: 'block', fontSize: 11, color: subText, marginBottom: 4 }}>開始日</label>
-                      <input id="ann-start" type="date" value={startDate} max={endDate || undefined}
+                    <div style={{ flex: 1, minWidth: 180 }}>
+                      <label htmlFor="ann-start" style={{ display: 'block', fontSize: 11, color: subText, marginBottom: 4 }}>開始日時</label>
+                      <input id="ann-start" type="datetime-local" value={startDate} max={endDate || undefined}
                         onChange={e => setStartDate(e.target.value)} style={{ ...inputStyle, colorScheme }} />
                     </div>
-                    <div style={{ flex: 1, minWidth: 130 }}>
-                      <label htmlFor="ann-end" style={{ display: 'block', fontSize: 11, color: subText, marginBottom: 4 }}>終了日（＝期限）</label>
-                      <input id="ann-end" type="date" value={endDate} min={startDate || undefined}
+                    <div style={{ flex: 1, minWidth: 180 }}>
+                      <label htmlFor="ann-end" style={{ display: 'block', fontSize: 11, color: subText, marginBottom: 4 }}>終了日時（＝期限）</label>
+                      <input id="ann-end" type="datetime-local" value={endDate} min={startDate || undefined}
                         onChange={e => setEndDate(e.target.value)} style={{ ...inputStyle, colorScheme }} />
                     </div>
                   </div>
                   <div style={{ fontSize: 11, color: subText, marginTop: 6, lineHeight: 1.6 }}>
-                    開始日を空にすると<strong>今すぐ</strong>表示、終了日を空にすると<strong>期限なし</strong>（手動停止まで）。
+                    開始日時を空にすると<strong>今すぐ</strong>表示、終了日時を空にすると<strong>期限なし</strong>（手動停止まで）。
                   </div>
                   {dateOrderError && (
-                    <div style={{ fontSize: 12, color: '#dc3545', fontWeight: 600, marginTop: 6 }}>⚠ 開始日は終了日より前にしてください。</div>
+                    <div style={{ fontSize: 12, color: '#dc3545', fontWeight: 600, marginTop: 6 }}>⚠ 開始日時は終了日時より前にしてください。</div>
                   )}
                 </div>
 
