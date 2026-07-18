@@ -1385,15 +1385,22 @@ const LeaveRequestsTab: React.FC = () => {
                                         if (req.status === 'step2_pending') {
                                           const daysCount = req.leave_dates ? (() => { try { return String(JSON.parse(req.leave_dates).length); } catch { return ''; } })() : '';
                                           const vars = { 休暇種別: typeName, 申請日数: daysCount, リンク: 'https://fivem-portal.vercel.app/leave?tab=history' };
+                                          // 社長（宛先で「社長」を選んだ場合の届け先。承認者画面と揃える）
+                                          const { data: presidents } = await supabase
+                                            .from('profiles').select('id, email').eq('role_title', '社長').eq('is_active', true);
+                                          const presidentIds = (presidents ?? []).map((p: { id: string }) => p.id);
+                                          const presidentEmails = (presidents ?? []).map((p: { email: string | null }) => p.email).filter((e): e is string => !!e);
                                           if (await shouldSend('leave:manager_approved', 'site')) {
                                             const t = await getNotificationTemplate('leave:manager_approved', 'site', vars);
                                             await insertNotification(req.user_id, t?.template ?? `休暇申請がマネージャーに受理されました`, t?.subject || `種別：${typeName}`, 'leave_request', req.id);
                                           }
+                                          // 宛先で「社長」を選んでいれば社長にもサイト通知
+                                          await dispatchSiteNotification('leave:manager_approved', vars, { president: presidentIds }, insertNotification, 'leave_request', req.id);
                                           if (await shouldSend('leave:manager_approved', 'slack')) {
                                             await sendLeaveSlack('manager_approved', '管理者', 'マネージャー');
                                           }
                                           const applicantEmail = await getUserEmail(req.user_id) ?? '';
-                                          await dispatchEmail('leave:manager_approved', vars, { applicant: applicantEmail });
+                                          await dispatchEmail('leave:manager_approved', vars, { applicant: applicantEmail, president: presidentEmails });
                                         }
                                         if (req.status === 'manager_approved' && await shouldSend('leave:manager_approved', 'slack')) {
                                           await sendLeaveSlack('accounting_approved', '経理担当者', '管理者');
