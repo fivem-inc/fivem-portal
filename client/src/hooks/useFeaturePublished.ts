@@ -6,7 +6,9 @@ export interface FeaturePublishState {
   publishedLeader: Record<string, boolean>; // リーダー以上公開（値が無いキーは false）
 }
 
-const LEADER_PLUS_ROLES = ['リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者'];
+// 役職序列：社長＞マネージャー＞リーダー＞フロア責任者＞一般・パート
+// フロア責任者はリーダーより下位のため「リーダー以上」先行公開に含めない（2026-07-19ユーザー決定）
+const LEADER_PLUS_ROLES = ['リーダー', 'マネージャー', '社長', '管理者'];
 
 // キーが公開されているか判定（管理者は常にtrue）
 // 全公開ON → 全員 / 全公開OFF+リーダー以上ON → リーダー以上のみ / 両方OFF → 管理者のみ

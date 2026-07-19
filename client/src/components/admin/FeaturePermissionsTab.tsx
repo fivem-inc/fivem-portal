@@ -680,7 +680,7 @@ const FeaturePermissionsTab: React.FC = () => {
           </div>
 
           <div style={{ padding: '8px 14px', fontSize: 11, color: subText, lineHeight: 1.7 }}>
-            🟢 <strong>全公開</strong>ON … 全員に表示／ 🔵 <strong>リーダー以上</strong>ON … リーダー・マネージャー・フロア責任者・社長に先行表示。<br />
+            🟢 <strong>全公開</strong>ON … 全員に表示／ 🔵 <strong>リーダー以上</strong>ON … リーダー・マネージャー・社長に先行表示（フロア責任者は含みません）。<br />
             ・全公開ON → 全員に表示（リーダー以上の設定は無視）<br />
             ・全公開OFF＋リーダー以上ON → <strong>リーダー以上だけ</strong>に表示（一般・パートには非表示）<br />
             ・両方OFF → <strong>管理者のみ</strong>（公開前の準備状態）<br />
