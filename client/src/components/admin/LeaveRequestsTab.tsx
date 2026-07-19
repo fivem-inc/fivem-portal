@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { useAuth } from '../../hooks/useAuth';
 import type { AdminLeaveRequest } from '../../types';
-import { insertNotification } from '../../lib/notifications';
+import { insertNotification, formatLeaveDateSummary } from '../../lib/notifications';
 import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatchEmail, dispatchSiteNotification, getUserEmail } from '../../lib/notificationDispatch';
 import SearchableSelect from '../common/SearchableSelect';
 
@@ -1660,7 +1660,9 @@ const LeaveRequestsTab: React.FC = () => {
                           } else {
                             if (await shouldSend('leave:rejected', 'site')) {
                               const t = await getNotificationTemplate('leave:rejected', 'site', { 申請者名: '', 休暇種別: rejectModal.leave_type, 差し戻し理由: rejectReason || '' });
-                              await insertNotification(rejectModal.user_id, t?.template ?? `休暇申請が差し戻されました`, t?.subject || rejectReason || undefined, 'leave_request:pending_resubmit', rejectModal.id, 'leave:rejected');
+                              // バナー2行目にはどの申請か分かるよう休暇日を表示（例：7/26 有給休暇（1日））。差し戻し理由はタップ先の申請履歴で確認できる
+                              const dateSummary = formatLeaveDateSummary(rejectModal.leave_dates, rejectModal.start_date, rejectModal.end_date, origType);
+                              await insertNotification(rejectModal.user_id, t?.template ?? `休暇申請が差し戻されました`, dateSummary, 'leave_request:pending_resubmit', rejectModal.id, 'leave:rejected');
                             }
                             if (await shouldSend('leave:rejected', 'slack')) {
                               const targetChannel = await getNotificationRecipient('leave:rejected', 'slack');

@@ -847,13 +847,18 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
     const shiftIds = [...new Set(data.filter(n => (n.source_type === 'shift_report:pending_approval' || n.source_type === 'shift_report:pending_resubmit') && n.reference_id).map(n => n.reference_id as string))];
 
     const leaveMap = new Map<string, { status: string; user_id: string; approver_id: string | null; approver2_id: string | null }>();
+    // 取得成功したかを記録：成功したのにレコードが無い＝削除済み、失敗（通信エラー等）＝不明、で扱いを分ける
+    let leaveFetchOk = true;
     if (leaveIds.length > 0) {
-      const { data: rows } = await supabase.from('leave_requests').select('id, status, user_id, approver_id, approver2_id').in('id', leaveIds);
+      const { data: rows, error } = await supabase.from('leave_requests').select('id, status, user_id, approver_id, approver2_id').in('id', leaveIds);
+      if (error) leaveFetchOk = false;
       (rows || []).forEach((r: any) => leaveMap.set(r.id, r));
     }
     const shiftMap = new Map<string, { status: string; applicant_id: string; reviewer_id: string | null }>();
+    let shiftFetchOk = true;
     if (shiftIds.length > 0) {
-      const { data: rows } = await supabase.from('shift_reports').select('id, status, applicant_id, reviewer_id').in('id', shiftIds);
+      const { data: rows, error } = await supabase.from('shift_reports').select('id, status, applicant_id, reviewer_id').in('id', shiftIds);
+      if (error) shiftFetchOk = false;
       (rows || []).forEach((r: any) => shiftMap.set(r.id, r));
     }
 
@@ -868,7 +873,8 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
       }
       if (n.source_type === 'leave_request:pending_resubmit') {
         const r = leaveMap.get(n.reference_id);
-        if (!r) return false;
+        // 取得成功したのに申請が無い＝対象申請が削除済み → 古いバナーなので消す。取得失敗時は安全側で残す
+        if (!r) return leaveFetchOk;
         return !(r.status === 'rejected' && r.user_id === userId);
       }
       if (n.source_type === 'shift_report:pending_approval') {
@@ -879,7 +885,8 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
       }
       if (n.source_type === 'shift_report:pending_resubmit') {
         const r = shiftMap.get(n.reference_id);
-        if (!r) return false;
+        // 取得成功したのに報告が無い＝対象報告が削除済み → 古いバナーなので消す。取得失敗時は安全側で残す
+        if (!r) return shiftFetchOk;
         return !(r.status === 'returned' && r.applicant_id === userId);
       }
       return false;

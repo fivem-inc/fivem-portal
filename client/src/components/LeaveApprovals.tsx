@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { sendLeaveSlack } from '../lib/leaveSlack';
-import { insertNotification } from '../lib/notifications';
+import { insertNotification, formatLeaveDateSummary } from '../lib/notifications';
 import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatchEmail, dispatchSiteNotification, getUserEmail } from '../lib/notificationDispatch';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
@@ -308,7 +308,9 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     const rejectVars = { 申請者名: rejectingReq.requester?.name || '', 休暇種別: rejectTypeName, 差し戻し理由: rejectReason || '', リンク: 'https://fivem-portal.vercel.app/leave?tab=history' };
     if (await shouldSend('leave:rejected', 'site')) {
       const t = await getNotificationTemplate('leave:rejected', 'site', rejectVars);
-      await insertNotification(rejectingReq.user_id, t?.template ?? `休暇申請が差し戻されました`, t?.subject || rejectReason || undefined, 'leave_request:pending_resubmit', rejectingReq.id, 'leave:rejected');
+      // バナー2行目にはどの申請か分かるよう休暇日を表示（例：7/26 有給休暇（1日））。差し戻し理由はタップ先の申請履歴で確認できる
+      const dateSummary = formatLeaveDateSummary(rejectingReq.leave_dates, rejectingReq.start_date, rejectingReq.end_date, rejectTypeName);
+      await insertNotification(rejectingReq.user_id, t?.template ?? `休暇申請が差し戻されました`, dateSummary, 'leave_request:pending_resubmit', rejectingReq.id, 'leave:rejected');
     }
     if (await shouldSend('leave:rejected', 'slack')) {
       const targetChannel = await getNotificationRecipient('leave:rejected', 'slack');

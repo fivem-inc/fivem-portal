@@ -279,7 +279,7 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
           <CRow label="確認依頼先" value={data.reviewerName} textColor={text} />
           {data.isSelfReview && (
             <div style={{ background: isDark ? '#1e3d2f' : '#d1fae5', borderRadius: 8, padding: '8px 12px', marginTop: 4 }}>
-              <span style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#4ade80' : '#065f46' }}>✓ 報告と同時に受理済みになります</span>
+              <span style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#4ade80' : '#065f46' }}>✓ 報告と同時に受理されます</span>
             </div>
           )}
           <button onClick={onSubmit} disabled={saving}
@@ -908,7 +908,9 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const noteBtn   = isDark ? '#3d5a73' : '#bee5eb';
 
   const isApprover = IS_APPROVER(roleTitle, isAdmin);
-  const canSeeAll  = isAdmin || ['リーダー', 'マネージャー', '管理者'].includes(roleTitle);
+  // RLS（approver_select）で全件閲覧可の役職と揃える。社長・フロア責任者はレビュー担当にならないため、
+  // ここに含めないと通知バナーのタップ先（履歴）で何も表示されない
+  const canSeeAll  = isAdmin || ['リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者'].includes(roleTitle);
 
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -965,7 +967,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   // 履歴タブ モード
   const [histMode, setHistMode] = useState<'own' | 'reviewed' | 'proxy' | 'all'>(
     () => !IS_APPROVER(roleTitle, isAdmin) ? 'own'
-        : (isAdmin || ['リーダー', 'マネージャー', '管理者'].includes(roleTitle)) ? 'all'
+        : (isAdmin || ['リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者'].includes(roleTitle)) ? 'all'
         : 'reviewed'
   );
   const [reviewedReports, setReviewedReports] = useState<ShiftReport[]>([]);

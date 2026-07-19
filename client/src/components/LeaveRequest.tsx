@@ -392,13 +392,14 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     supabase
       .from('profiles')
       .select('id, name, role_title')
-      .in('role_title', ['リーダー', 'マネージャー'])
+      .in('role_title', ['リーダー', 'マネージャー', 'フロア責任者'])
       .eq('is_active', true)
-      .order('role_title', { ascending: false })
       .order('name')
       .then(({ data, error }) => {
         if (!error && data) {
-          setApprovers(data);
+          // リーダー→マネージャー→フロア責任者の順（ShiftReportPageの報告先と同じ並び）
+          const ord: Record<string, number> = { 'リーダー': 0, 'マネージャー': 1, 'フロア責任者': 2 };
+          setApprovers([...data].sort((a, b) => (ord[a.role_title] ?? 9) - (ord[b.role_title] ?? 9) || a.name.localeCompare(b.name, 'ja')));
           // 初期選択なし（ユーザーに明示的に選ばせる）
         }
       });
@@ -454,6 +455,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     fetchHistory();
   }, [tab, user.id]);
 
+  // 休暇申請の「申請先」はリーダー・マネージャーのみ（フロア責任者は時間調整の了承者としてのみ選択可）
+  const leaveApprovers = approvers.filter(a => a.role_title !== 'フロア責任者');
   const selectedApprover = approvers.find(a => a.id === selectedApproverId);
 
   const handleSubmit = async () => {
@@ -832,7 +835,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           {/* 申請先 */}
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: text }}>申請先 <span style={{ color: '#dc3545' }}>*</span></label>
-            {approvers.length === 0 ? (
+            {leaveApprovers.length === 0 ? (
               <div style={{ padding: '10px 14px', background: '#fff3cd', borderRadius: 8, color: '#856404', fontSize: 14 }}>
                 受理者が登録されていません
               </div>
@@ -843,7 +846,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                 style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 15, background: inputBg, color: selectedApproverId ? text : subText }}
               >
                 <option value="" disabled>申請先を選択してください</option>
-                {approvers.map(a => (
+                {leaveApprovers.map(a => (
                   <option key={a.id} value={a.id}>{a.name}（{a.role_title}）</option>
                 ))}
               </select>
