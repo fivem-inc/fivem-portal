@@ -437,56 +437,79 @@ const OvertimeAdminTab: React.FC = () => {
           ) : otReports.length === 0 ? (
             <p style={{ color: subText, fontSize: 13 }}>記録はありません</p>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {otReports.map(r => {
-                const st = otStatusMap[r.id];
-                const stInfo = OT_STATUS_LABEL[st] ?? { label: st, color: '#6c757d' };
-                const actualSegs = r.segments.filter(s => s.phase === (r.segments.some(x => x.phase === 'actual') ? 'actual' : 'planned')).sort((a, b) => a.seg_no - b.seg_no);
-                const segText = actualSegs.length ? actualSegs.map(s => `${minToTime(s.start_min)}〜${minToTime(s.end_min)}`).join('、') : '(なし)';
-                const isOpen = otHistoryOpen.has(r.id);
-                return (
-                  <div key={r.id} style={{ border: `1px solid ${borderColor}`, borderRadius: 10, padding: 12, background: cardBg }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
-                      <div style={{ fontSize: 13, color: text }}>
-                        <span style={{ fontWeight: 'bold', fontSize: 14 }}>{r.applicantName}</span>
-                        <span style={{ marginLeft: 8, color: subText }}>{r.work_date}</span>
-                        <span style={{ marginLeft: 8, padding: '2px 8px', borderRadius: 8, background: stInfo.color, color: '#fff', fontSize: 11, fontWeight: 'bold' }}>{stInfo.label}</span>
-                      </div>
-                      <div style={{ fontSize: 13, color: text }}>差分 <strong>{formatSignedMin(r.diff_minutes ?? 0)}</strong></div>
-                    </div>
-                    <div style={{ fontSize: 12, color: subText, marginTop: 4 }}>{segText}　休憩{r.break_minutes ?? 0}分　実労働{formatMin(r.labor_minutes ?? 0)}　{r.location || '校未設定'}</div>
-                    {r.reason && <div style={{ fontSize: 12, color: subText, marginTop: 2 }}>理由：{r.reason}</div>}
-                    <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-                      <button onClick={() => setEditingOt(r)} style={{ padding: '5px 12px', borderRadius: 8, border: '2px solid #d96b0c', background: '#fd7e14', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>🖊 修正</button>
-                      {st !== 'returned' && st !== 'cancelled' && (
-                        <button onClick={() => { setOtReturnTarget(r); setOtReturnComment(''); }} style={{ padding: '5px 12px', borderRadius: 8, border: '2px solid #bd2130', background: '#dc3545', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>↩ 差戻</button>
-                      )}
-                      <button onClick={() => setOtDeleteTarget(r)} style={{ padding: '5px 12px', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, cursor: 'pointer', fontSize: 12 }}>削除</button>
-                      <button onClick={() => { if (!isOpen) loadOtHistory(r.id); setOtHistoryOpen(prev => { const n = new Set(prev); isOpen ? n.delete(r.id) : n.add(r.id); return n; }); }} style={{ padding: '5px 12px', borderRadius: 8, border: '1px solid #fd7e14', background: 'transparent', color: '#fd7e14', cursor: 'pointer', fontSize: 12 }}>{isOpen ? '▼ 修正履歴' : '▶ 修正履歴'}</button>
-                    </div>
-                    {isOpen && (
-                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
-                        {!otHistory[r.id] ? <p style={{ fontSize: 12, color: subText, margin: 0 }}>読み込み中...</p>
-                          : otHistory[r.id].length === 0 ? <p style={{ fontSize: 12, color: subText, margin: 0 }}>履歴なし</p>
-                          : (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                              {otHistory[r.id].map(h => (
-                                <div key={h.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                                  {h.change_kind && <HistoryBadge kind={h.change_kind} isDarkMode={isDarkMode} labelOverride={OT_KIND_LABELS} />}
-                                  <div style={{ fontSize: 12 }}>
-                                    <div style={{ color: subText }}>{new Date(h.changed_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}　{h.changerName}</div>
-                                    {h.changes ? <DiffList changes={h.changes} fieldLabels={OT_FIELD_LABELS} isDarkMode={isDarkMode} /> : <span style={{ color: text }}>{h.change_summary}</span>}
-                                    {h.change_reason && <div style={{ color: subText, marginTop: 2 }}>理由：{h.change_reason}</div>}
-                                  </div>
-                                </div>
-                              ))}
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', color: text, fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: isDarkMode ? '#495057' : '#f8f9fa' }}>
+                    {[
+                      { label: '申請者', w: 70 }, { label: '勤務日', w: 78 }, { label: '時間帯', w: 150 },
+                      { label: '休憩/実労働', w: 90 }, { label: '校', w: 60 }, { label: '差分', w: 55 },
+                      { label: '状況', w: 70 }, { label: '操作', w: 150 },
+                    ].map(col => (
+                      <th key={col.label} style={{ padding: '8px 4px', textAlign: 'center', borderBottom: `1px solid ${borderColor}`, width: col.w, fontSize: 12 }}>{col.label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {otReports.map(r => {
+                    const st = otStatusMap[r.id];
+                    const stInfo = OT_STATUS_LABEL[st] ?? { label: st, color: '#6c757d' };
+                    const actualSegs = r.segments.filter(s => s.phase === (r.segments.some(x => x.phase === 'actual') ? 'actual' : 'planned')).sort((a, b) => a.seg_no - b.seg_no);
+                    const segText = actualSegs.length ? actualSegs.map(s => `${minToTime(s.start_min)}〜${minToTime(s.end_min)}`).join('、') : '(なし)';
+                    const isOpen = otHistoryOpen.has(r.id);
+                    const cell: React.CSSProperties = { padding: '7px 4px', borderBottom: `1px solid ${borderColor}`, textAlign: 'center', verticalAlign: 'top' };
+                    return (
+                      <React.Fragment key={r.id}>
+                        <tr>
+                          <td style={{ ...cell, fontWeight: 'bold', textAlign: 'left' }}>{r.applicantName}</td>
+                          <td style={{ ...cell, whiteSpace: 'nowrap' }}>{r.work_date}</td>
+                          <td style={{ ...cell, textAlign: 'left', fontSize: 12 }}>
+                            {segText}
+                            {r.reason && <div style={{ color: subText, fontSize: 11, marginTop: 2 }}>{r.reason}</div>}
+                          </td>
+                          <td style={{ ...cell, fontSize: 12, whiteSpace: 'nowrap' }}>休{r.break_minutes ?? 0}分<br />{formatMin(r.labor_minutes ?? 0)}</td>
+                          <td style={{ ...cell, fontSize: 12 }}>{r.location || '—'}</td>
+                          <td style={{ ...cell, fontWeight: 'bold', whiteSpace: 'nowrap' }}>{formatSignedMin(r.diff_minutes ?? 0)}</td>
+                          <td style={cell}><span style={{ padding: '2px 6px', borderRadius: 6, background: stInfo.color, color: '#fff', fontSize: 10, fontWeight: 'bold', whiteSpace: 'nowrap' }}>{stInfo.label}</span></td>
+                          <td style={cell}>
+                            <div style={{ display: 'flex', gap: 3, justifyContent: 'center', flexWrap: 'wrap' }}>
+                              <button onClick={() => setEditingOt(r)} style={{ padding: '3px 8px', borderRadius: 6, border: 'none', background: '#fd7e14', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}>🖊修正</button>
+                              {st !== 'returned' && st !== 'cancelled' && (
+                                <button onClick={() => { setOtReturnTarget(r); setOtReturnComment(''); }} style={{ padding: '3px 8px', borderRadius: 6, border: 'none', background: '#dc3545', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}>差戻</button>
+                              )}
+                              <button onClick={() => setOtDeleteTarget(r)} style={{ padding: '3px 8px', borderRadius: 6, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, cursor: 'pointer', fontSize: 11 }}>削除</button>
+                              <button onClick={() => { if (!isOpen) loadOtHistory(r.id); setOtHistoryOpen(prev => { const n = new Set(prev); isOpen ? n.delete(r.id) : n.add(r.id); return n; }); }} style={{ padding: '3px 8px', borderRadius: 6, border: '1px solid #fd7e14', background: 'transparent', color: '#fd7e14', cursor: 'pointer', fontSize: 11 }}>{isOpen ? '▼履歴' : '▶履歴'}</button>
                             </div>
-                          )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+                          </td>
+                        </tr>
+                        {isOpen && (
+                          <tr>
+                            <td colSpan={8} style={{ padding: '8px 12px', background: isDarkMode ? '#2a1e00' : '#fff8f0', borderBottom: `2px solid #fd7e14`, borderLeft: '4px solid #fd7e14' }}>
+                              <div style={{ fontSize: 12, fontWeight: 'bold', color: isDarkMode ? '#ffe082' : '#7c4d00', marginBottom: 6 }}>修正履歴</div>
+                              {!otHistory[r.id] ? <p style={{ fontSize: 12, color: subText, margin: 0 }}>読み込み中...</p>
+                                : otHistory[r.id].length === 0 ? <p style={{ fontSize: 12, color: subText, margin: 0 }}>履歴なし</p>
+                                : (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                    {otHistory[r.id].map(h => (
+                                      <div key={h.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                                        {h.change_kind && <HistoryBadge kind={h.change_kind} isDarkMode={isDarkMode} labelOverride={OT_KIND_LABELS} />}
+                                        <div style={{ fontSize: 12 }}>
+                                          <div style={{ color: subText }}>{new Date(h.changed_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}　{h.changerName}</div>
+                                          {h.changes ? <DiffList changes={h.changes} fieldLabels={OT_FIELD_LABELS} isDarkMode={isDarkMode} /> : <span style={{ color: text }}>{h.change_summary}</span>}
+                                          {h.change_reason && <div style={{ color: subText, marginTop: 2 }}>理由：{h.change_reason}</div>}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
 
