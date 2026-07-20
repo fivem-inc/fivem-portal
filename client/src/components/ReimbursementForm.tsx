@@ -4,6 +4,7 @@ import { formatAmount, parseAmount } from '../utils';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import ReceiptUploader, { type ReceiptValue } from './ReceiptUploader';
+import { todayJstStr } from '../lib/breakCalc';
 
 const BannerSuccess: React.FC<{ message: string; sub?: string; onClose: () => void }> = ({ message, sub, onClose }) => {
   React.useEffect(() => { const t = setTimeout(onClose, 4000); return () => clearTimeout(t); }, [onClose]);
@@ -40,7 +41,7 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
   const [itemName, setItemName] = useState('');
   const [quantity, setQuantity] = useState('1');
   const [amount, setAmount] = useState('');
-  const [purchasedAt, setPurchasedAt] = useState(() => new Date().toISOString().slice(0, 10));
+  const [purchasedAt, setPurchasedAt] = useState(() => todayJstStr());
   const [storeName, setStoreName] = useState('');
   const [location, setLocation] = useState('');
   const [purpose, setPurpose] = useState('');
@@ -131,7 +132,7 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
   const [successBanner, setSuccessBanner] = useState(false);
 
   const resetForm = () => {
-    setItemName(''); setQuantity('1'); setAmount(''); setPurchasedAt(new Date().toISOString().slice(0, 10));
+    setItemName(''); setQuantity('1'); setAmount(''); setPurchasedAt(todayJstStr());
     setStoreName(''); setLocation(''); setPurpose(''); setPurposeDetail(''); setInstructedBySelect(''); setInstructedByCustom('');
     setPaymentMethod(''); setPaymentMethodDetail(''); setPaymentMethodOther(''); setReceipt(emptyReceipt); setReceiptUploading(false); setNotes('');
     setDraftId(crypto.randomUUID());

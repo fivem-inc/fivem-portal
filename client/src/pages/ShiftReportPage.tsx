@@ -90,7 +90,11 @@ function payPeriodLabel(startStr: string): string {
   const m = ((nm - 1) % 12) + 1;
   return `${y}年${m}月給与分`;
 }
-function todayStr(): string { return new Date().toISOString().slice(0, 10); }
+// toISOString()はUTC基準のためJST深夜0:00〜8:59に前日を返す。必ずローカル(JST)で組み立てる
+function todayStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 function dow(dateStr: string): string { return DOW[new Date(dateStr + 'T00:00:00').getDay()]; }
 function origDuration(start: string | null, end: string | null): number {
   if (!start || !end) return 0;
@@ -917,6 +921,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const [tab, setTab]                   = useState<'apply' | 'history'>(searchParams.get('tab') === 'history' ? 'history' : 'apply');
   const [formKey, setFormKey]           = useState(0);
   const [cancelTarget, setCancelTarget] = useState<ShiftReport | null>(null);
+  const [hardDeleteTargetId, setHardDeleteTargetId] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState('');
   // 確認ページはURLパラメータ(view=confirm)と連動させ、戻るボタンでTOPに戻れるようにする
   const confirmView = searchParams.get('view') === 'confirm';
@@ -1140,10 +1145,11 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     setSuccessMsg('差戻しました');
   };
 
+  // 完全削除はアプリ規約によりwindow.confirmを使わず、ボタンの2段階インライン確認で行う
   const hardDeleteReport = async (r: ShiftReport) => {
-    if (!window.confirm(`「${TYPE_INFO[r.application_type].label}」を完全削除しますか？この操作は取り消せません。`)) return;
     await supabase.from('shift_report_history').delete().eq('report_id', r.id);
     await supabase.from('shift_reports').delete().eq('id', r.id);
+    setHardDeleteTargetId(null);
     fetchMyReports(); fetchPending();
     setSuccessMsg('削除しました');
   };
@@ -1492,10 +1498,23 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                               </button>
                             )}
                             {isAdmin && (
-                              <button onClick={() => hardDeleteReport(r)}
-                                style={{ fontSize: 11, color: '#6c757d', background: 'none', border: '1px solid #6c757d', borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}>
-                                完全削除
-                              </button>
+                              hardDeleteTargetId === r.id ? (
+                                <>
+                                  <button onClick={() => hardDeleteReport(r)}
+                                    style={{ fontSize: 11, color: '#fff', background: '#dc3545', border: '1px solid #dc3545', borderRadius: 6, padding: '2px 8px', cursor: 'pointer', fontWeight: 'bold' }}>
+                                    完全削除する（取り消せません）
+                                  </button>
+                                  <button onClick={() => setHardDeleteTargetId(null)}
+                                    style={{ fontSize: 11, color: '#6c757d', background: 'none', border: '1px solid #6c757d', borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}>
+                                    やめる
+                                  </button>
+                                </>
+                              ) : (
+                                <button onClick={() => setHardDeleteTargetId(r.id)}
+                                  style={{ fontSize: 11, color: '#6c757d', background: 'none', border: '1px solid #6c757d', borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}>
+                                  完全削除
+                                </button>
+                              )
                             )}
                           </div>
                         </div>

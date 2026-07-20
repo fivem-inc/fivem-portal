@@ -4,6 +4,7 @@ import { formatAmount, parseAmount } from '../utils';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { insertNotification } from '../lib/notifications';
+import { todayJstStr } from '../lib/breakCalc';
 import { dispatchSiteNotification, dispatchEmail, getNotificationTemplate, getUserEmail, shouldSend } from '../lib/notificationDispatch';
 import { sendPurchaseSlackForEvent } from '../lib/purchaseSlack';
 import { resolveItems } from '../lib/purchaseItemsFallback';
@@ -171,7 +172,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
   };
 
   const [items, setItems] = useState<ItemDraft[]>(initialItems);
-  const [requestedDate, setRequestedDate] = useState(resubmitRecord?.requested_purchase_date ?? savedDraft?.requestedDate ?? new Date().toISOString().slice(0, 10));
+  const [requestedDate, setRequestedDate] = useState(resubmitRecord?.requested_purchase_date ?? savedDraft?.requestedDate ?? todayJstStr());
   const [purpose, setPurpose] = useState(resubmitRecord?.purpose ?? savedDraft?.purpose ?? '');
   // 用途を選択肢から選んだ場合でも、補足の詳細を書けるようにする任意欄
   const [purposeDetail, setPurposeDetail] = useState(savedDraft?.purposeDetail ?? '');
@@ -410,7 +411,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
 
   const resetForm = () => {
     setItems([emptyItemDraft()]);
-    setRequestedDate(new Date().toISOString().slice(0, 10));
+    setRequestedDate(todayJstStr());
     setPurpose(''); setPurposeDetail(''); setReason(''); setNotes(''); setLocation('');
     setLeaderId(''); setRequestedManagerIds([]); setSharedManagerIds([]);
     setPresidentSelfJudgment(false); setSelfJudgeConfirmFirst(false);

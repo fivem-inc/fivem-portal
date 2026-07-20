@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { resolveItems } from '../../lib/purchaseItemsFallback';
 import { supabase } from '../../lib/supabaseClient';
+import { todayJstStr } from '../../lib/breakCalc';
 import type { PurchaseRequestCSVRow } from '../../utils';
 import { PAYMENT_DETAIL_LABEL } from '../../utils';
 import { approvePurchaseRequestAction, returnPurchaseRequestAction, cancelReturnedPurchaseRequest, type PurchaseApprovalRoute } from '../../lib/purchaseApprovalActions';
@@ -127,7 +128,7 @@ const PurchaseRequestsTab: React.FC = () => {
 
   const startEditReimbursed = (r: PurchaseRequestCSVRow) => {
     setEditingReimbursedId(r.id);
-    setReimbursedDraftDate(r.reimbursed_at ? r.reimbursed_at.slice(0, 10) : new Date().toISOString().slice(0, 10));
+    setReimbursedDraftDate(r.reimbursed_at ? r.reimbursed_at.slice(0, 10) : todayJstStr());
   };
   const cancelEditReimbursed = () => setEditingReimbursedId(null);
 

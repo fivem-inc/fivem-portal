@@ -4,6 +4,7 @@ import { Routes, Route, Navigate, Outlet, BrowserRouter, useNavigate, useLocatio
 import SignIn from './pages/SignIn';
 import ResetPassword from './pages/ResetPassword';
 import ExpenseForm from './components/ExpenseForm';
+import { todayJstStr } from './lib/breakCalc';
 
 // 設定系ページは起動直後のランディング（ホーム）に不要なので遅延読込にして初期バンドルを軽くする
 const ChangeEmail = React.lazy(() => import('./pages/ChangeEmail'));
@@ -21,6 +22,7 @@ const LeaveApprovals = React.lazy(() => import('./components/LeaveApprovals'));
 const CalendarPage     = React.lazy(() => import('./pages/CalendarPage'));
 const BoardPage        = React.lazy(() => import('./pages/BoardPage'));
 const ShiftReportPage  = React.lazy(() => import('./pages/ShiftReportPage'));
+const OvertimePage     = React.lazy(() => import('./pages/OvertimePage'));
 const PurchaseRequestPage = React.lazy(() => import('./pages/PurchaseRequestPage'));
 
 const PageLoader: React.FC = () => (
@@ -507,7 +509,29 @@ const useShiftPendingCount = (userId: string | undefined, roleTitle: string | un
   return { pendingCount };
 };
 
-const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean; canShiftReport?: boolean; canCalendar?: boolean; canPurchaseRequest?: boolean; roleTitle?: string; userId?: string }> = ({ isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove, canShiftReport, canCalendar, canPurchaseRequest, roleTitle, userId }) => {
+// 残業・時間管理：自分宛の確認待ち件数
+const useOvertimePendingCount = (userId: string | undefined, canOvertime: boolean | undefined) => {
+  const [pendingCount, setPendingCount] = useState(0);
+
+  const fetchPending = useCallback(async () => {
+    if (!userId || !canOvertime) { setPendingCount(0); return; }
+    const { data } = await supabase.from('overtime_reports')
+      .select('id')
+      .eq('reviewer_id', userId)
+      .eq('entry_type', 'manual')
+      .in('status', ['requested', 'reported']);
+    setPendingCount(data?.length ?? 0);
+  }, [userId, canOvertime]);
+
+  useEffect(() => { fetchPending(); const t = setInterval(fetchPending, 30000); return () => clearInterval(t); }, [fetchPending]);
+  useEffect(() => {
+    window.addEventListener('overtime-pending-changed', fetchPending);
+    return () => window.removeEventListener('overtime-pending-changed', fetchPending);
+  }, [fetchPending]);
+  return { pendingCount };
+};
+
+const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean; canShiftReport?: boolean; canCalendar?: boolean; canPurchaseRequest?: boolean; canOvertime?: boolean; roleTitle?: string; userId?: string }> = ({ isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, roleTitle, userId }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { previewRole, setPreviewRole, user: ctxUser } = useContext(AuthContext);
@@ -536,6 +560,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   const { pendingCount: purchasePending } = usePurchasePendingCount(userId, canPurchaseRequest);
   const { pendingCount: leavePending } = useLeavePendingCount(userId, roleTitle, isAdmin);
   const { pendingCount: shiftPending } = useShiftPendingCount(userId, roleTitle, isAdmin, canShiftReport);
+  const { pendingCount: overtimePending } = useOvertimePendingCount(userId, canOvertime);
 
   // モバイルでボタンが画面幅に収まらない時の横スワイプ対応：
   // 端までスクロールできることを示すフェードの表示/非表示を判定
@@ -628,6 +653,18 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
               {shiftPending > 0 && (
                 <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
                   {shiftPending > 99 ? '99+' : shiftPending}
+                </span>
+              )}
+            </div>
+          )}
+          {canOvertime && isPub('overtime') && (
+            <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
+              <button onClick={() => navTo('/overtime')} style={btnStyle(location.pathname === '/overtime', '#1565c0')}>
+                {isMobile ? <><span style={{ fontSize: 20 }}>⏱</span><span>残業</span></> : '⏱ 残業・時間'}
+              </button>
+              {overtimePending > 0 && (
+                <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
+                  {overtimePending > 99 ? '99+' : overtimePending}
                 </span>
               )}
             </div>
@@ -742,8 +779,11 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
   const isAttendance           = n.source_type === 'attendance';                     // 上長・本人：欠勤登録のFYI（対応不要）
   const isPurchasePendingApproval = n.source_type === 'purchase_request:pending_approval'; // リーダー：要対応
   const isPurchaseResult          = n.source_type === 'purchase_request';                  // 申請者：結果報告のみ
-  const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit || isPurchasePendingApproval;
-  const isResultOnly = isLeaveResult || isShiftResult || isTimeAdjustment || isAttendance || isPurchaseResult;
+  const isOvertimePendingApproval = n.source_type === 'overtime_request:pending_approval'; // 確認者：要対応
+  const isOvertimePendingResubmit = n.source_type === 'overtime_request:pending_resubmit'; // 申請者：再提出待ち
+  const isOvertimeResult          = n.source_type === 'overtime_request';                  // 申請者：結果報告のみ
+  const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit || isPurchasePendingApproval || isOvertimePendingApproval || isOvertimePendingResubmit;
+  const isResultOnly = isLeaveResult || isShiftResult || isTimeAdjustment || isAttendance || isPurchaseResult || isOvertimeResult;
   // 旧来のフォールバック（source_typeが無い通知向け）
   const isLegacyReject = !isPendingAction && !isResultOnly && (n.message.includes('差し戻し') || n.message.includes('差し戻され'));
 
@@ -779,6 +819,9 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
     if (isTimeAdjustment) { navigate('/calendar'); onDismiss(n.id); return; }
     if (isPurchasePendingApproval) { navigate(`/purchase?tab=approvals${fq ? `&${fq}` : ''}`); return; }
     if (isPurchaseResult) { navigate(`/purchase?tab=history${fq ? `&${fq}` : ''}`); onDismiss(n.id); return; }
+    if (isOvertimePendingApproval) { navigate(`/overtime?view=confirm${fq ? `&${fq}` : ''}`); return; }
+    if (isOvertimePendingResubmit) { navigate(`/overtime?tab=history${fq ? `&${fq}` : ''}`); return; }
+    if (isOvertimeResult) { navigate(`/overtime?tab=history${fq ? `&${fq}` : ''}`); onDismiss(n.id); return; }
     if (isLegacyReject) { navigate('/leave'); return; }
     // どの種別にも当てはまらない通知（古いデータ等）はタップで閉じる（無反応にしない保険）
     onDismiss(n.id);
@@ -816,7 +859,7 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
       .eq('banner_dismissed', false)
       .not('message', 'like', '%有給奨励日%')
       // 「要対応」の承認待ちは専用の集計バナー(LeaveApprovalBanner/ShiftReportApprovalBanner/PurchaseApprovalBanner)が別途出るため、ここでは重複表示しない
-      .not('source_type', 'in', '(leave_request:pending_approval,shift_report:pending_approval,purchase_request:pending_approval)')
+      .not('source_type', 'in', '(leave_request:pending_approval,shift_report:pending_approval,purchase_request:pending_approval,overtime_request:pending_approval)')
       .or('source_type.is.null,source_type.neq.board')
       .order('created_at', { ascending: false });
     if (!data) return;
@@ -861,6 +904,14 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
       if (error) shiftFetchOk = false;
       (rows || []).forEach((r: any) => shiftMap.set(r.id, r));
     }
+    const overtimeIds = [...new Set(data.filter(n => (n.source_type === 'overtime_request:pending_approval' || n.source_type === 'overtime_request:pending_resubmit') && n.reference_id).map(n => n.reference_id as string))];
+    const overtimeMap = new Map<string, { status: string; applicant_id: string; reviewer_id: string | null }>();
+    let overtimeFetchOk = true;
+    if (overtimeIds.length > 0) {
+      const { data: rows, error } = await supabase.from('overtime_reports').select('id, status, applicant_id, reviewer_id').in('id', overtimeIds);
+      if (error) overtimeFetchOk = false;
+      (rows || []).forEach((r: any) => overtimeMap.set(r.id, r));
+    }
 
     // データが取れない場合（RLS等）は安全側に倒して「まだ対応中」扱いにし、消さない
     const isResolvedPending = (n: typeof data[number]): boolean => {
@@ -887,6 +938,18 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
         const r = shiftMap.get(n.reference_id);
         // 取得成功したのに報告が無い＝対象報告が削除済み → 古いバナーなので消す。取得失敗時は安全側で残す
         if (!r) return shiftFetchOk;
+        return !(r.status === 'returned' && r.applicant_id === userId);
+      }
+      if (n.source_type === 'overtime_request:pending_approval') {
+        const r = overtimeMap.get(n.reference_id);
+        if (!r) return false;
+        const stillPending = r.reviewer_id === userId && (r.status === 'requested' || r.status === 'reported');
+        return !stillPending;
+      }
+      if (n.source_type === 'overtime_request:pending_resubmit') {
+        const r = overtimeMap.get(n.reference_id);
+        // 取得成功したのに申請が無い＝対象申請が削除済み → 古いバナーなので消す。取得失敗時は安全側で残す
+        if (!r) return overtimeFetchOk;
         return !(r.status === 'returned' && r.applicant_id === userId);
       }
       return false;
@@ -961,7 +1024,7 @@ const EncouragementBanner: React.FC<{ userId: string; refreshKey: number; onAnsw
   return (
     <>
       {pending.map(d => {
-        const today = new Date().toISOString().slice(0, 10);
+        const today = todayJstStr();
         const diff = Math.round((new Date(d.deadline + 'T00:00:00Z').getTime() - new Date(today + 'T00:00:00Z').getTime()) / 86400000);
         const dateLabel = `${Number(d.deadline.slice(5,7))}月${Number(d.deadline.slice(8,10))}日`;
         let msg: string;
@@ -1125,6 +1188,153 @@ const PurchaseApprovalBanner: React.FC<{ userId: string; canPurchaseRequest: boo
   );
 };
 
+// 残業・時間調整の確認待ち集計バナー（確認者のみ・対応すると自動で消える）
+const OvertimeApprovalBanner: React.FC<{ userId: string; canOvertime: boolean }> = ({ userId, canOvertime }) => {
+  const navigate = useNavigate();
+  const { pendingCount } = useOvertimePendingCount(userId, canOvertime);
+
+  if (pendingCount === 0) return null;
+
+  return (
+    <div
+      onClick={() => navigate('/overtime?view=confirm')}
+      style={{
+        margin: '0 0 16px 0',
+        padding: '12px 16px',
+        background: '#fff3cd',
+        border: '2px solid #ffc107',
+        borderRadius: 10,
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        fontSize: 15,
+        color: '#856404',
+        fontWeight: 'bold',
+      }}
+    >
+      <span style={{ fontSize: 22 }}>⏱</span>
+      <span>残業・時間調整の確認依頼が {pendingCount}件 あります</span>
+      <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 'normal' }}>タップして確認 →</span>
+    </div>
+  );
+};
+
+// 残業超過FYIバナー（本人＋リーダー(自チーム)＋マネージャー以上。タップ/✕で閉じる・調整提案は任意）
+const OvertimeThresholdBanner: React.FC<{ userId: string; roleTitle: string; isAdmin: boolean; canOvertime: boolean }> = ({ userId, roleTitle, isAdmin, canOvertime }) => {
+  const navigate = useNavigate();
+  const [items, setItems] = useState<{ targetId: string; name: string | null; total: number; isSelf: boolean }[]>([]);
+  const [threshold, setThreshold] = useState(600);
+  const [periodStart, setPeriodStart] = useState('');
+
+  useEffect(() => {
+    if (!canOvertime && !isAdmin) return;
+    (async () => {
+      // JSTの今日から今期（16日〜翌15日）を求める
+      const now = new Date();
+      const y = now.getFullYear(); const m = now.getMonth() + 1; const d = now.getDate();
+      const ps = d >= 16
+        ? `${y}-${String(m).padStart(2, '0')}-16`
+        : `${m === 1 ? y - 1 : y}-${String(m === 1 ? 12 : m - 1).padStart(2, '0')}-16`;
+      setPeriodStart(ps);
+
+      const [setRes, repRes, dismissRes, permRes] = await Promise.all([
+        supabase.from('overtime_settings').select('threshold_minutes, banner_group_names').eq('id', 1).maybeSingle(),
+        supabase.from('overtime_reports').select('applicant_id, diff_minutes').eq('pay_period_start', ps).eq('status', 'confirmed').gt('diff_minutes', 0),
+        supabase.from('overtime_banner_dismissals').select('target_user_id').eq('user_id', userId).eq('pay_period_start', ps),
+        supabase.rpc('has_feature_permission', { p_feature: 'overtime_summary' }),
+      ]);
+      const th = (setRes.data?.threshold_minutes as number | undefined) ?? 600;
+      setThreshold(th);
+      const whitelist: string[] = (setRes.data?.banner_group_names as string[] | null) ?? [];
+      const dismissed = new Set(((dismissRes.data as { target_user_id: string }[] | null) ?? []).map(r => r.target_user_id));
+      const canSummary = isAdmin || permRes.data === true;
+
+      // 残業（プラス分のみ）を人別に合算
+      const totals = new Map<string, number>();
+      for (const r of (repRes.data as { applicant_id: string; diff_minutes: number | null }[] | null) ?? []) {
+        totals.set(r.applicant_id, (totals.get(r.applicant_id) ?? 0) + (r.diff_minutes ?? 0));
+      }
+      const overIds = [...totals.entries()].filter(([, v]) => v > th).map(([id]) => id);
+      if (overIds.length === 0) { setItems([]); return; }
+
+      // 名前・グループ（リーダーは自チームのみ）
+      const { data: profs } = await supabase.from('profiles').select('id, name, group_names').in('id', [...new Set([...overIds, userId])]);
+      const profMap = new Map(((profs as { id: string; name: string | null; group_names: string[] | null }[] | null) ?? []).map(p => [p.id, p]));
+      const myGroups = new Set(((profMap.get(userId)?.group_names ?? []) as string[]).filter(g => whitelist.includes(g)));
+      const isManagerPlus = isAdmin || ['マネージャー', '社長', '管理者'].includes(roleTitle);
+      const isLeader = roleTitle === 'リーダー';
+
+      const result: { targetId: string; name: string | null; total: number; isSelf: boolean }[] = [];
+      for (const id of overIds) {
+        if (dismissed.has(id)) continue;
+        const isSelf = id === userId;
+        if (isSelf) { result.push({ targetId: id, name: null, total: totals.get(id)!, isSelf: true }); continue; }
+        if (!canSummary) continue;
+        if (isManagerPlus) { result.push({ targetId: id, name: profMap.get(id)?.name ?? '', total: totals.get(id)!, isSelf: false }); continue; }
+        if (isLeader) {
+          const targetGroups = (profMap.get(id)?.group_names ?? []) as string[];
+          if (targetGroups.some(g => myGroups.has(g))) {
+            result.push({ targetId: id, name: profMap.get(id)?.name ?? '', total: totals.get(id)!, isSelf: false });
+          }
+        }
+      }
+      result.sort((a, b) => (a.isSelf === b.isSelf) ? b.total - a.total : (a.isSelf ? -1 : 1));
+      setItems(result);
+    })();
+  }, [userId, roleTitle, isAdmin, canOvertime]);
+
+  if (items.length === 0) return null;
+
+  const fmtH = (min: number) => {
+    const h = Math.floor(min / 60); const m2 = min % 60;
+    return m2 > 0 ? `${h}時間${m2}分` : `${h}時間`;
+  };
+  const fmtSigned = (min: number) => `＋${Math.floor(min / 60)}:${String(min % 60).padStart(2, '0')}`;
+  const periodLabel = (() => {
+    if (!periodStart) return '';
+    const [, m2] = periodStart.split('-').map(Number);
+    const nm = m2 === 12 ? 1 : m2 + 1;
+    return `${m2}/16〜${nm}/15`;
+  })();
+
+  const dismiss = async (targetId: string) => {
+    setItems(prev => prev.filter(i => i.targetId !== targetId));
+    await supabase.from('overtime_banner_dismissals')
+      .upsert({ user_id: userId, target_user_id: targetId, pay_period_start: periodStart })
+      .then(null, () => {});
+  };
+
+  return (
+    <>
+      {items.map(item => (
+        <div key={item.targetId} style={{
+          margin: '0 0 10px 0', padding: '12px 16px',
+          background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10,
+          display: 'flex', alignItems: 'flex-start', gap: 10,
+        }}>
+          <span style={{ fontSize: 20, flexShrink: 0 }}>⏱</span>
+          <div onClick={() => { navigate('/overtime?tab=history'); }} style={{ flex: 1, cursor: 'pointer' }}>
+            {item.isSelf ? (
+              <div style={{ fontSize: 13.5, color: '#1e40af', lineHeight: 1.7 }}>
+                <span style={{ fontWeight: 'bold' }}>今月（{periodLabel}）の残業が{fmtH(threshold)}を超えました。</span><br />
+                時間調整をお願いします。調整する日がわからない場合はリーダー・マネージャーにご相談ください。
+              </div>
+            ) : (
+              <div style={{ fontSize: 13.5, color: '#1e40af', lineHeight: 1.7 }}>
+                <span style={{ fontWeight: 'bold' }}>{item.name}さんの今月（{periodLabel}）の残業が{fmtH(threshold)}を超えています（現在 {fmtSigned(item.total)}）。</span><br />
+                必要に応じて時間調整の相談をご検討ください。
+              </div>
+            )}
+          </div>
+          <button onClick={() => dismiss(item.targetId)} title="このお知らせを閉じる"
+            style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: 15, padding: '0 2px', flexShrink: 0, lineHeight: 1 }}>✕</button>
+        </div>
+      ))}
+    </>
+  );
+};
+
 // メインのDashboardコンポーネント
 const Dashboard: React.FC = () => {
   // 通常のダッシュボード処理（パスワードリセットは専用ページで処理）
@@ -1139,6 +1349,7 @@ const Dashboard: React.FC = () => {
     canShiftReport,
     canCalendar,
     canPurchaseRequest,
+    canOvertime,
     leaveRequestEnabled,
     handleLogout
   } = useAuth();
@@ -1260,7 +1471,7 @@ const Dashboard: React.FC = () => {
           <div style={{ fontSize: 15, fontWeight: 'bold', color: '#155724' }}>回答を送信しました</div>
         </div>
       )}
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} roleTitle={roleTitle} userId={user.id} />
 
       {/* ⓪ プッシュ通知の有効化を促すバナー（未ONの人にのみ表示） */}
       <PushEnableBanner />
@@ -1291,6 +1502,12 @@ const Dashboard: React.FC = () => {
 
       {/* ④-3 備品購入申請承認バナー（承認者のみ） */}
       <PurchaseApprovalBanner userId={user.id} canPurchaseRequest={canPurchaseRequest} />
+
+      {/* ④-4 残業・時間調整の確認待ちバナー（確認者のみ） */}
+      <OvertimeApprovalBanner userId={user.id} canOvertime={canOvertime} />
+
+      {/* ④-5 残業超過FYIバナー（本人・リーダー自チーム・マネージャー以上。閉じられる） */}
+      <OvertimeThresholdBanner userId={user.id} roleTitle={roleTitle} isAdmin={isAdmin} canOvertime={canOvertime} />
 
       {/* ⑤ 有給申請バナー（パート向け） */}
       {leaveRequestEnabled && !leaveSubmitted && (
@@ -1355,11 +1572,11 @@ const Dashboard: React.FC = () => {
 
 // 出張報告ページ
 const TripReportPage: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, handleLogout } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, handleLogout } = useAuth();
   if (!user) return <div>読み込んでいます...</div>;
   return (
     <div style={{ padding: '70px 16px 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <BusinessTripReportForm user={user} profileName={profileName} />
       </Suspense>
@@ -1369,11 +1586,11 @@ const TripReportPage: React.FC = () => {
 
 // 休暇申請ページ
 const LeaveRequestPage: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, leaveRequestEnabled, handleLogout } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, leaveRequestEnabled, handleLogout } = useAuth();
   if (!user) return <div>読み込んでいます...</div>;
   return (
     <div style={{ padding: '70px 16px 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <LeaveRequestForm user={user} profileName={profileName} roleTitle={roleTitle} leaveRequestEnabled={leaveRequestEnabled} />
       </Suspense>
@@ -1383,12 +1600,12 @@ const LeaveRequestPage: React.FC = () => {
 
 // 休暇申請承認ページ（リーダー・マネージャー・管理者用）
 const LeaveApprovalsPage: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, handleLogout, loading } = useAuth();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   if (roleTitle && !isApprover) return <Navigate to="/" />;
   return (
     <div style={{ padding: '110px 16px 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <LeaveApprovals user={user} profileName={profileName} isAdmin={isAdmin} roleTitle={roleTitle} />
       </Suspense>
@@ -1398,12 +1615,12 @@ const LeaveApprovalsPage: React.FC = () => {
 
 // チームカレンダーページ
 const TeamCalendarPage: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, handleLogout, loading } = useAuth();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   if (!isAdmin && !canCalendar) return <Navigate to="/" />;
   return (
     <div style={{ padding: '70px 16px 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <CalendarPage user={user} roleTitle={roleTitle} isAdmin={isAdmin} isApprover={isApprover} />
       </Suspense>
@@ -1413,13 +1630,13 @@ const TeamCalendarPage: React.FC = () => {
 
 // 管理画面ページ（/admin）
 const AdminPage: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, handleLogout, loading } = useAuth();
   const { submissions, pendingApprovals, isLoading, fetchExpenses } = useExpenses(user, isAdmin);
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   if (!isAdmin) return <Navigate to="/" />;
   return (
     <div style={{ padding: '110px 16px 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} roleTitle={roleTitle} userId={user.id} />
 <Suspense fallback={<PageLoader />}>
         <AdminPanel
           pendingApprovals={pendingApprovals}
@@ -1434,13 +1651,13 @@ const AdminPage: React.FC = () => {
 
 // 連絡板ページ（/board）
 const BoardPageWrapper: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, handleLogout, loading } = useAuth();
   const featurePublishState = useFeaturePublished();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   if (!isFeaturePublished('board', featurePublishState, isAdmin, roleTitle)) return <Navigate to="/" />;
   return (
     <>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <BoardPage />
       </Suspense>
@@ -1450,11 +1667,11 @@ const BoardPageWrapper: React.FC = () => {
 
 // シフト実績申請ページ（/shift-report）
 const ShiftReportPageWrapper: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, handleLogout, loading } = useAuth();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   return (
     <>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <ShiftReportPage user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin} />
       </Suspense>
@@ -1462,14 +1679,31 @@ const ShiftReportPageWrapper: React.FC = () => {
   );
 };
 
+// 残業・時間管理ページ（/overtime・正社員用）
+const OvertimePageWrapper: React.FC = () => {
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, handleLogout, loading } = useAuth();
+  const featurePublishState = useFeaturePublished();
+  if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
+  if (!isFeaturePublished('overtime', featurePublishState, isAdmin, roleTitle)) return <Navigate to="/" />;
+  if (!isAdmin && !canOvertime) return <Navigate to="/" />;
+  return (
+    <div style={{ padding: '70px 0 0' }}>
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} roleTitle={roleTitle} userId={user.id} />
+      <Suspense fallback={<PageLoader />}>
+        <OvertimePage user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin} />
+      </Suspense>
+    </div>
+  );
+};
+
 // 備品精算ページ（/purchase）
 const PurchaseRequestPageWrapper: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, handleLogout, loading } = useAuth();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   if (!isAdmin && !canPurchaseRequest) return <Navigate to="/" />;
   return (
     <>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <PurchaseRequestPage user={user} roleTitle={roleTitle} isAdmin={isAdmin} />
       </Suspense>
@@ -1501,6 +1735,7 @@ function App() {
             <Route path="/settings-check" element={<Suspense fallback={<PageLoader />}><SupabaseSettingsCheck /></Suspense>} />
             <Route path="/board" element={<BoardPageWrapper />} />
             <Route path="/shift-report" element={<ShiftReportPageWrapper />} />
+            <Route path="/overtime" element={<OvertimePageWrapper />} />
             <Route path="/purchase" element={<PurchaseRequestPageWrapper />} />
           </Route>
         </Routes>

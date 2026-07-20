@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient';
+import { todayJstStr } from './breakCalc';
 
 // 選択されたレシート画像をzip1ファイルにまとめてダウンロードする。
 // Edge Function側でzip化するため、クライアントは1回のダウンロードで済む
@@ -33,7 +34,7 @@ export async function downloadReceiptsAsZip(paths: string[]): Promise<string | n
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `receipts_${new Date().toISOString().slice(0, 10)}.zip`;
+  a.download = `receipts_${todayJstStr()}.zip`;
   document.body.appendChild(a);
   a.click();
   a.remove();

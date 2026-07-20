@@ -16,6 +16,7 @@ export const DRAFT_KEYS = {
   leaveAdjustment: 'fivem_draft_leave_adjustment', // 時間調整
   attendance: 'fivem_draft_attendance',  // 休暇カレンダーの欠勤入力
   shiftReport: 'fivem_draft_shift_report', // 勤務変更報告
+  overtime: 'fivem_draft_overtime',      // 残業・時間管理（正社員）
   boardCompose: 'fivem_draft_board_compose', // 連絡板お知らせ作成
   boardChat: 'fivem_draft_board_chat',   // 連絡板グループ/DM/リプライ（キー配下にIDで細分化）
 } as const;

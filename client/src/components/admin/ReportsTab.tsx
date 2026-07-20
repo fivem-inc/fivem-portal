@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { formatAmount } from '../../utils';
 import { useAdminPanel } from './AdminPanelContext';
 import { supabase } from '../../lib/supabaseClient';
+import { toJstDateStr } from '../../lib/breakCalc';
 
 const thStyle = (isDarkMode: boolean): React.CSSProperties => ({
   border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`,
@@ -65,7 +66,7 @@ const ReportsTab: React.FC = () => {
     const fiscalEnd = `${Number(y) + 1}-03-31`;
     const from = leaveMonth ? `${y}-${leaveMonth}-01` : fiscalStart;
     const toDate = leaveMonth
-      ? new Date(Number(y), Number(leaveMonth), 0).toISOString().split('T')[0]
+      ? toJstDateStr(new Date(Number(y), Number(leaveMonth), 0))
       : fiscalEnd;
     const { data } = await supabase
       .from('attendance_exceptions')

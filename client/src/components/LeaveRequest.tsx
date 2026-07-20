@@ -21,6 +21,7 @@ import { shouldSend, dispatchEmail, dispatchSiteNotification, getUserEmail } fro
 import { insertNotification } from '../lib/notifications';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
+import { todayJstStr } from '../lib/breakCalc';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import type { AuthUser, AdminLeaveRequest } from '../types';
 
@@ -571,7 +572,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const encAnsweringDay = encPending.find(d => d.id === encAnsweringId) || null;
 
   const encBannerList = encPending.map(d => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayJstStr();
     const deadlineDate = new Date(d.deadline + 'Z');
     const todayDate = new Date(today + 'T00:00:00Z');
     const diffDays = Math.round((deadlineDate.getTime() - todayDate.getTime()) / 86400000);

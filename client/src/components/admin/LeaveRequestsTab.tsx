@@ -3,6 +3,7 @@ import { useAdminPanel } from './AdminPanelContext';
 import { useAuth } from '../../hooks/useAuth';
 import type { AdminLeaveRequest } from '../../types';
 import { insertNotification, formatLeaveDateSummary } from '../../lib/notifications';
+import { todayJstStr } from '../../lib/breakCalc';
 import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatchEmail, dispatchSiteNotification, getUserEmail } from '../../lib/notificationDispatch';
 import SearchableSelect from '../common/SearchableSelect';
 
@@ -990,7 +991,7 @@ const LeaveRequestsTab: React.FC = () => {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {filteredEncDays.map(d => {
                       const pct = d.targetCount > 0 ? Math.round((d.responseCount / d.targetCount) * 100) : 0;
-                      const today = new Date().toISOString().slice(0, 10);
+                      const today = todayJstStr();
                       const isPast = d.deadline < today;
                       const isExpanded = expandedEncDays.has(d.id);
                       return (

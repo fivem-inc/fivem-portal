@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabaseClient';
 import { insertNotification } from '../lib/notifications';
 import { dispatchBoardEmail } from '../lib/notificationDispatch';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
+import { todayJstStr } from '../lib/breakCalc';
 
 const BOARD_LINK = 'https://fivem-portal.vercel.app/board';
 import { useAuth } from '../hooks/useAuth';
@@ -1288,7 +1289,7 @@ const BoardPage: React.FC = () => {
 
           {/* 種別ラベル＋期限バッジ */}
           {msg.deadline_type && !msg.parent_id && (() => {
-            const today = new Date().toISOString().slice(0, 10);
+            const today = todayJstStr();
             const isOverdue = msg.deadline ? msg.deadline < today : false;
             const isToday = msg.deadline ? msg.deadline === today : false;
             const badgeMemberIds = msg.channel_id
@@ -2351,7 +2352,7 @@ const BoardPage: React.FC = () => {
             ) : filteredInbox.map(msg => {
               const senderName = allProfiles.find(p => p.id === msg.user_id)?.name || '不明';
               const confirmed = (confirmations[msg.id] || []).some(c => c.user_id === user?.id);
-              const today = new Date().toISOString().slice(0, 10);
+              const today = todayJstStr();
               const isOverdue = msg.deadline ? msg.deadline < today : false;
               const dtConfig = DEADLINE_TYPES.find(d => d.value === msg.deadline_type);
               const isArchived = inboxFilter === 'archived';
@@ -2608,7 +2609,7 @@ const BoardPage: React.FC = () => {
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ fontSize: 12, color: subColor, flexShrink: 0 }}>⏰ 期限日{composeDeadlineType && <span style={{ color: '#dc3545' }}> *必須</span>}</span>
-                  <input type="date" value={composeDeadline} onChange={e => setComposeDeadline(e.target.value)} min={new Date().toISOString().slice(0, 10)}
+                  <input type="date" value={composeDeadline} onChange={e => setComposeDeadline(e.target.value)} min={todayJstStr()}
                     style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1.5px solid ${composeDeadlineType && !composeDeadline ? '#dc3545' : border}`, background: 'transparent', color: textColor, flex: 1 }} />
                   {composeDeadline && <button type="button" onClick={() => setComposeDeadline('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
                 </div>
@@ -2866,7 +2867,7 @@ const BoardPage: React.FC = () => {
                 ) : outboxMessages.filter(m => outboxTab === 'sent' ? (m.status !== 'draft' && m.status !== 'scheduled') : m.status === outboxTab).map(msg => {
                   const recipientIds = inboxRecipients[msg.id] || [];
                   const recipientNames = recipientIds.slice(0, 3).map(uid => allProfiles.find(p => p.id === uid)?.name || '不明');
-                  const today = new Date().toISOString().slice(0, 10);
+                  const today = todayJstStr();
                   const isOverdue = msg.deadline ? msg.deadline < today : false;
                   const dtConfig = DEADLINE_TYPES.find(d => d.value === msg.deadline_type);
                   const typeText = dtConfig ? dtConfig.label.replace(/^\S+\s/, '') : '';
@@ -3050,7 +3051,7 @@ const BoardPage: React.FC = () => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ fontSize: 12, color: textColor, fontWeight: 600, flexShrink: 0 }}>⏰ 期限日{newDeadlineType && <span style={{ color: '#dc3545' }}> *必須</span>}</span>
                   <input type="date" value={newDeadline} onChange={e => setNewDeadline(e.target.value)}
-                    min={new Date().toISOString().slice(0, 10)}
+                    min={todayJstStr()}
                     style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1.5px solid ${newDeadlineType && !newDeadline ? '#dc3545' : border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, cursor: 'pointer', flex: 1 }} />
                   {newDeadline && <button type="button" onClick={() => setNewDeadline('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
                 </div>
@@ -3427,7 +3428,7 @@ const BoardPage: React.FC = () => {
       {/* 送信確認モーダル */}
       {showSendConfirm && (() => {
         const dtConfig = DEADLINE_TYPES.find(d => d.value === newDeadlineType);
-        const today = new Date().toISOString().slice(0, 10);
+        const today = todayJstStr();
         const isOverdue = newDeadline ? newDeadline < today : false;
         const isToday   = newDeadline ? newDeadline === today : false;
         const accentColor = isOverdue ? '#dc2626' : isToday ? '#d97706' : '#1d4ed8';
@@ -3587,7 +3588,7 @@ const BoardPage: React.FC = () => {
       {/* お知らせ送信確認モーダル */}
       {showComposeSendConfirm && (() => {
         const dtConfig = DEADLINE_TYPES.find(d => d.value === composeDeadlineType);
-        const today = new Date().toISOString().slice(0, 10);
+        const today = todayJstStr();
         const isOverdue = composeDeadline ? composeDeadline < today : false;
         const isToday   = composeDeadline ? composeDeadline === today : false;
         const accentColor = isOverdue ? '#dc2626' : isToday ? '#d97706' : '#1d4ed8';

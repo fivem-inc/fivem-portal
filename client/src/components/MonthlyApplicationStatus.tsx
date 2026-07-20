@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import type { Submission, AuthUser, Expense } from '../types';
+import { toJstDateStr } from '../lib/breakCalc';
 
 interface ApplicationInfo {
   day: number;
@@ -62,7 +63,7 @@ const MonthlyApplicationStatus: React.FC<MonthlyApplicationStatusProps> = ({
           const applicationInfo = {
             day,
             dayOfWeek,
-            date: targetDate.toISOString().split('T')[0],
+            date: toJstDateStr(targetDate),
             submissionDate: targetDate,
             expense: expense
           };
