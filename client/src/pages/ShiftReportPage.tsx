@@ -5,6 +5,7 @@ import { notifyShiftReportReturned } from '../lib/shiftReportReturnedNotify';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
+import { calcShiftBreakMinutes } from '../lib/shiftCalc';
 import type { AuthUser } from '../types';
 
 // ────────────────────────────────────────────────────────────────
@@ -62,16 +63,7 @@ function toMin(hhmm: string): number {
   const [h, m] = hhmm.split(':').map(Number);
   return h * 60 + m;
 }
-function calcBreakMinutes(start: string, end: string): number {
-  const s = toMin(start), d = toMin(end) - s;
-  if (d <= 0)               return 0;
-  if (d < 255)              return 0;
-  if (s >= 780 && d <= 345) return 0;
-  if (s >= 780 && d <= 375) return 15;
-  if (d <= 390)             return 30;
-  if (d <= 525)             return 45;
-  return 60;
-}
+const calcBreakMinutes = calcShiftBreakMinutes;
 function formatMin(min: number): string {
   const h = Math.floor(Math.abs(min) / 60), m = Math.abs(min) % 60;
   return `${h}時間${m > 0 ? m + '分' : ''}`;

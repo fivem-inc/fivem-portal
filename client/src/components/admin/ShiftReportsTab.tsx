@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { notifyShiftReportReturned } from '../../lib/shiftReportReturnedNotify';
+import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
+import ShiftEditModal from './ShiftEditModal';
 
 type AppType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start' | 'location_change';
 
@@ -40,8 +42,13 @@ interface HistoryRec {
   id: string;
   changed_at: string;
   change_summary: string;
+  change_kind?: ChangeKind | null;
+  change_reason?: string | null;
+  changes?: Record<string, { old: unknown; new: unknown }> | null;
   changerName?: string;
 }
+const SHIFT_FIELD_LABELS: Record<string, string> = { types: '種別', work_date: '勤務日', actual_location: '勤務地', actual_time: '実務時間', reason: '理由' };
+const SHIFT_KIND_LABELS: Partial<Record<ChangeKind, string>> = { resubmit: '本人が再報告' };
 
 
 const TYPE_INFO: Record<AppType, { label: string; color: string; emoji: string }> = {
@@ -98,6 +105,7 @@ const ShiftReportsTab: React.FC = () => {
   const [historyData, setHistoryData]   = useState<Record<string, HistoryRec[]>>({});
   const [historyExistIds, setHistoryExistIds] = useState<Set<string>>(new Set());
   const [returnTarget, setReturnTarget] = useState<ShiftReport | null>(null);
+  const [editingShift, setEditingShift] = useState<ShiftReport | null>(null);
   const [returnComment, setReturnComment] = useState('');
   const [returning, setReturning]       = useState(false);
   const [sortKey, setSortKey]           = useState<'created_at' | 'work_date' | 'applicantName'>('created_at');
@@ -156,18 +164,19 @@ const ShiftReportsTab: React.FC = () => {
       .then(({ data }) => { if (data) setGroupOptions(data.map((r: { value: string }) => r.value)); });
   }, [fetchReports]);
 
-  const loadHistory = useCallback(async (reportId: string) => {
-    if (historyData[reportId]) return;
-    const { data } = await supabase.from('shift_report_history').select('id, changed_at, change_summary, changed_by').eq('report_id', reportId).order('changed_at', { ascending: false });
+  const loadHistory = useCallback(async (reportId: string, force = false) => {
+    if (!force && historyData[reportId]) return;
+    const { data } = await supabase.from('shift_report_history').select('id, changed_at, change_summary, change_kind, change_reason, changes, changed_by').eq('report_id', reportId).order('changed_at', { ascending: false });
     if (!data || data.length === 0) { setHistoryData(prev => ({ ...prev, [reportId]: [] })); return; }
     const ids = [...new Set(data.map((h: { changed_by: string }) => h.changed_by))];
     const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
     const nm = Object.fromEntries((profs || []).map((p: { id: string; name: string }) => [p.id, p.name]));
     setHistoryData(prev => ({
       ...prev,
-      [reportId]: data.map((h: { id: string; changed_at: string; change_summary: string; changed_by: string }) => ({
+      [reportId]: (data as HistoryRec[] & { changed_by: string }[]).map((h) => ({
         id: h.id, changed_at: h.changed_at, change_summary: h.change_summary,
-        changerName: nm[h.changed_by] ?? '不明',
+        change_kind: h.change_kind ?? null, change_reason: h.change_reason ?? null, changes: h.changes ?? null,
+        changerName: nm[(h as unknown as { changed_by: string }).changed_by] ?? '不明',
       })),
     }));
   }, [supabase, historyData]);
@@ -539,9 +548,9 @@ const ShiftReportsTab: React.FC = () => {
                               {hasHist ? '▼ 差戻し' : '▶ 差戻し'}
                             </button>
                           )}
-                          {!isReSub && !isRet && r.status !== 'pending' && historyExistIds.has(r.id) && (
+                          {!isReSub && !isRet && historyExistIds.has(r.id) && (
                             <button onClick={() => toggleHistory(r.id)}
-                              style={{ ...btnBase, background: '#007bff', color: '#fff', borderRadius: 4, padding: '2px 6px', fontSize: 10 }}>
+                              style={{ ...btnBase, background: '#fd7e14', color: '#fff', borderRadius: 4, padding: '2px 6px', fontSize: 10 }}>
                               {hasHist ? '▼ 修正履歴' : '▶ 修正履歴'}
                             </button>
                           )}
@@ -561,6 +570,12 @@ const ShiftReportsTab: React.FC = () => {
                             <button disabled={confirming === r.id} onClick={() => handleConfirm(r)}
                               style={{ ...btnBase, background: confirming === r.id ? '#6c757d' : '#28a745', color: '#fff', border: '2px solid ' + (confirming === r.id ? '#545b62' : '#1e7e34') }}>
                               {confirming === r.id ? '...' : '受理'}
+                            </button>
+                          )}
+                          {r.status !== 'cancelled' && (
+                            <button onClick={() => setEditingShift(r)}
+                              style={{ ...btnBase, background: '#fd7e14', color: '#fff', border: '2px solid #d96b0c' }}>
+                              🖊 修正
                             </button>
                           )}
                           {!['cancelled', 'returned'].includes(r.status) && (
@@ -589,10 +604,13 @@ const ShiftReportsTab: React.FC = () => {
                               {historyData[r.id].map(h => {
                                 const { date: hd, time: ht } = fmtDateTime(h.changed_at);
                                 return (
-                                  <div key={h.id} style={{ display: 'flex', gap: 10, fontSize: 12 }}>
-                                    <span style={{ color: sub, whiteSpace: 'nowrap' }}>{hd} {ht}</span>
-                                    <span style={{ fontWeight: 'bold', color: text }}>{h.changerName}</span>
-                                    <span style={{ color: text }}>{h.change_summary}</span>
+                                  <div key={h.id} style={{ display: 'flex', gap: 10, fontSize: 12, alignItems: 'flex-start' }}>
+                                    {h.change_kind && <HistoryBadge kind={h.change_kind} isDarkMode={isDarkMode} labelOverride={SHIFT_KIND_LABELS} />}
+                                    <div>
+                                      <div><span style={{ color: sub, whiteSpace: 'nowrap' }}>{hd} {ht}</span> <span style={{ fontWeight: 'bold', color: text }}>{h.changerName}</span></div>
+                                      {h.changes ? <DiffList changes={h.changes} fieldLabels={SHIFT_FIELD_LABELS} isDarkMode={isDarkMode} /> : <span style={{ color: text }}>{h.change_summary}</span>}
+                                      {h.change_reason && <div style={{ color: sub, marginTop: 2 }}>理由：{h.change_reason}</div>}
+                                    </div>
                                   </div>
                                 );
                               })}
@@ -660,6 +678,24 @@ const ShiftReportsTab: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* 管理者による内容修正モーダル */}
+      {editingShift && (
+        <ShiftEditModal
+          record={editingShift}
+          isDarkMode={isDarkMode}
+          onClose={() => setEditingShift(null)}
+          onSaved={() => {
+            const id = editingShift.id;
+            setEditingShift(null);
+            setSuccessMsg('勤務変更報告を修正し、本人へ通知しました');
+            fetchReports();
+            setHistoryExistIds(prev => new Set(prev).add(id));
+            setExpandedHistory(prev => new Set(prev).add(id));
+            loadHistory(id, true);
+          }}
+        />
       )}
 
       {/* 差戻しモーダル */}

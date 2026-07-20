@@ -2,11 +2,35 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import OvertimeShiftImport from './OvertimeShiftImport';
 import {
-  calcPatternFields, timeToMin, formatMin, todayJstStr,
+  calcPatternFields, timeToMin, minToTime, formatMin, formatSignedMin, todayJstStr,
   DAY_KIND_LABELS, CALENDAR_KIND_LABELS,
 } from '../../lib/breakCalc';
 import type { DayKind, CalendarKind } from '../../lib/breakCalc';
 import { DEFAULT_LOCATION } from '../../lib/shiftExcelImport';
+import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
+import OvertimeEditModal, { type OvertimeRecord } from './OvertimeEditModal';
+
+const OT_STATUS_LABEL: Record<string, { label: string; color: string }> = {
+  requested:         { label: '事前申請', color: '#f59e0b' },
+  request_confirmed: { label: '事前受理済み', color: '#2e7d32' },
+  reported:          { label: '実績報告', color: '#f59e0b' },
+  confirmed:         { label: '確認済み', color: '#1565c0' },
+  returned:          { label: '差し戻し', color: '#dc3545' },
+  cancelled:         { label: '取消済み', color: '#6c757d' },
+};
+const OT_FIELD_LABELS: Record<string, string> = { work_date: '勤務日', segments: '時間帯', break_minutes: '休憩', diff_minutes: '差分時間', location: '校', reason: '理由' };
+const OT_KIND_LABELS: Partial<Record<ChangeKind, string>> = { resubmit: '本人が再提出' };
+
+interface OtHistoryRow {
+  id: string;
+  change_kind: ChangeKind | null;
+  change_summary: string | null;
+  change_reason: string | null;
+  changes: Record<string, { old: unknown; new: unknown }> | null;
+  changed_by: string | null;
+  changed_at: string;
+  changerName?: string;
+}
 
 // 残業・時間管理の管理タブ：曜日パターン／会社カレンダー／設定
 
@@ -52,7 +76,93 @@ const OvertimeAdminTab: React.FC = () => {
   const ctx = useAdminPanel();
   const { isDarkMode, supabase } = ctx;
 
-  const [section, setSection] = useState<'patterns' | 'calendar' | 'settings'>('patterns');
+  const [section, setSection] = useState<'reports' | 'patterns' | 'calendar' | 'settings'>('patterns');
+
+  // ─────────── 受理済み一覧（残業レコードの管理） ───────────
+  const [otReports, setOtReports] = useState<OvertimeRecord[]>([]);
+  const [otStatusMap, setOtStatusMap] = useState<Record<string, string>>({});
+  const [otLoading, setOtLoading] = useState(false);
+  const [otMsg, setOtMsg] = useState('');
+  const [otErr, setOtErr] = useState('');
+  const [editingOt, setEditingOt] = useState<OvertimeRecord | null>(null);
+  const [otHistoryOpen, setOtHistoryOpen] = useState<Set<string>>(new Set());
+  const [otHistory, setOtHistory] = useState<Record<string, OtHistoryRow[]>>({});
+  const [otReturnTarget, setOtReturnTarget] = useState<OvertimeRecord | null>(null);
+  const [otReturnComment, setOtReturnComment] = useState('');
+  const [otDeleteTarget, setOtDeleteTarget] = useState<OvertimeRecord | null>(null);
+  const [otActing, setOtActing] = useState(false);
+
+  const fetchOtReports = useCallback(async () => {
+    setOtLoading(true); setOtErr('');
+    const { data, error } = await supabase.from('overtime_reports')
+      .select('id, applicant_id, work_date, entry_type, status, normal_shift, break_minutes, break_manual, labor_minutes, diff_minutes, reason, location')
+      .eq('entry_type', 'manual')
+      .order('work_date', { ascending: false }).limit(300);
+    if (error) { setOtErr('読み込みに失敗しました：' + error.message); setOtLoading(false); return; }
+    const rows = data || [];
+    const ids = rows.map((r: { id: string }) => r.id);
+    const applicantIds = [...new Set(rows.map((r: { applicant_id: string }) => r.applicant_id))];
+    const [{ data: segs }, { data: profs }] = await Promise.all([
+      ids.length ? supabase.from('overtime_report_segments').select('report_id, phase, seg_no, start_min, end_min').in('report_id', ids) : Promise.resolve({ data: [] }),
+      applicantIds.length ? supabase.from('profiles').select('id, name').in('id', applicantIds) : Promise.resolve({ data: [] }),
+    ]);
+    const nameMap = Object.fromEntries((profs || []).map((p: { id: string; name: string }) => [p.id, p.name]));
+    const segMap: Record<string, { phase: 'planned' | 'actual'; seg_no: number; start_min: number; end_min: number }[]> = {};
+    (segs || []).forEach((s: { report_id: string; phase: 'planned' | 'actual'; seg_no: number; start_min: number; end_min: number }) => {
+      (segMap[s.report_id] = segMap[s.report_id] || []).push(s);
+    });
+    const statusMap: Record<string, string> = {};
+    setOtReports(rows.map((r: { id: string; applicant_id: string; work_date: string; entry_type: string; status: string; normal_shift: OvertimeRecord['normal_shift']; break_minutes: number | null; break_manual: boolean; labor_minutes: number | null; diff_minutes: number | null; reason: string | null; location: string | null }) => {
+      statusMap[r.id] = r.status;
+      return { id: r.id, applicant_id: r.applicant_id, applicantName: nameMap[r.applicant_id] || '不明', work_date: r.work_date, entry_type: r.entry_type, normal_shift: r.normal_shift, break_minutes: r.break_minutes, break_manual: r.break_manual, labor_minutes: r.labor_minutes, diff_minutes: r.diff_minutes, reason: r.reason, location: r.location, segments: segMap[r.id] || [] };
+    }));
+    setOtStatusMap(statusMap);
+    setOtLoading(false);
+  }, [supabase]);
+
+  useEffect(() => { if (section === 'reports') fetchOtReports(); }, [section, fetchOtReports]);
+
+  const loadOtHistory = useCallback(async (reportId: string, force = false) => {
+    if (!force && otHistory[reportId]) return;
+    const { data } = await supabase.from('overtime_report_history')
+      .select('id, change_kind, change_summary, change_reason, changes, changed_by, changed_at')
+      .eq('report_id', reportId).order('changed_at', { ascending: false });
+    const rows = (data || []) as OtHistoryRow[];
+    const ids = [...new Set(rows.map(r => r.changed_by).filter(Boolean))] as string[];
+    let nm: Record<string, string> = {};
+    if (ids.length) { const { data: p } = await supabase.from('profiles').select('id, name').in('id', ids); nm = Object.fromEntries((p || []).map((x: { id: string; name: string }) => [x.id, x.name])); }
+    setOtHistory(prev => ({ ...prev, [reportId]: rows.map(r => ({ ...r, changerName: r.changed_by ? (nm[r.changed_by] || '不明') : '管理者' })) }));
+  }, [supabase, otHistory]);
+
+  const doOtReturn = async () => {
+    if (!otReturnTarget || !otReturnComment.trim()) return;
+    setOtActing(true);
+    const r = otReturnTarget;
+    await supabase.from('overtime_report_history').insert({
+      report_id: r.id, changed_by: (await supabase.auth.getUser()).data.user?.id, change_kind: 'rejected',
+      change_summary: `差し戻し：${otReturnComment.trim()}`, change_reason: otReturnComment.trim(),
+      snapshot: r as unknown as Record<string, unknown>,
+    }).then(null, () => {});
+    const { error } = await supabase.from('overtime_reports').update({ status: 'returned', return_comment: otReturnComment.trim() }).eq('id', r.id);
+    if (error) { setOtErr('差し戻しに失敗しました：' + error.message); setOtActing(false); return; }
+    await supabase.from('notifications').insert({
+      user_id: r.applicant_id, message: '残業・時間調整の申請が差し戻されました',
+      sub_message: `${r.work_date}　理由：${otReturnComment.trim()}`, source_type: 'overtime_request:pending_resubmit',
+      reference_id: r.id, event_key: 'overtime:returned', read: false,
+    }).then(null, () => {});
+    setOtReturnTarget(null); setOtReturnComment(''); setOtActing(false);
+    setOtMsg('差し戻しました'); fetchOtReports();
+  };
+
+  const doOtDelete = async () => {
+    if (!otDeleteTarget) return;
+    setOtActing(true);
+    const { data: deleted, error } = await supabase.from('overtime_reports').delete().eq('id', otDeleteTarget.id).select('id');
+    if (error) { setOtErr('削除に失敗しました：' + error.message); setOtActing(false); return; }
+    if (!deleted || deleted.length === 0) { setOtErr('削除できませんでした（権限/RLSの可能性）。'); setOtActing(false); return; }
+    setOtDeleteTarget(null); setOtActing(false);
+    setOtMsg('削除しました'); fetchOtReports();
+  };
 
   const text = isDarkMode ? '#f8f9fa' : '#212529';
   const subText = isDarkMode ? '#adb5bd' : '#6c757d';
@@ -307,11 +417,127 @@ const OvertimeAdminTab: React.FC = () => {
         通常シフトの曜日パターン・会社カレンダー・超過バナーの設定を管理します
       </p>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        {sectionBtn('reports', '受理済み一覧')}
         {sectionBtn('patterns', '曜日パターン')}
         {sectionBtn('calendar', '会社カレンダー')}
         {sectionBtn('settings', '設定')}
       </div>
+
+      {/* ─── 受理済み一覧（修正／差戻／削除／履歴） ─── */}
+      {section === 'reports' && (
+        <div>
+          <p style={{ fontSize: 12, color: subText, margin: '0 0 10px' }}>
+            正社員の残業・時間調整の記録一覧です。受理済みも含めて修正・差し戻し・削除ができます（自動計上分は対象外）。
+          </p>
+          {otMsg && <div style={{ padding: 10, background: isDarkMode ? '#0f2e1a' : '#e8f5e9', border: '1px solid #28a745', borderRadius: 8, color: isDarkMode ? '#7ee2a8' : '#1b5e20', fontSize: 13, marginBottom: 10 }}>{otMsg}</div>}
+          {otErr && <div style={{ padding: 10, background: isDarkMode ? '#3a1414' : '#fff5f5', border: '1px solid #f5c2c7', borderRadius: 8, color: isDarkMode ? '#fca5a5' : '#842029', fontSize: 13, marginBottom: 10 }}>{otErr}</div>}
+          {otLoading ? (
+            <p style={{ color: subText, fontSize: 13 }}>読み込み中...</p>
+          ) : otReports.length === 0 ? (
+            <p style={{ color: subText, fontSize: 13 }}>記録はありません</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {otReports.map(r => {
+                const st = otStatusMap[r.id];
+                const stInfo = OT_STATUS_LABEL[st] ?? { label: st, color: '#6c757d' };
+                const actualSegs = r.segments.filter(s => s.phase === (r.segments.some(x => x.phase === 'actual') ? 'actual' : 'planned')).sort((a, b) => a.seg_no - b.seg_no);
+                const segText = actualSegs.length ? actualSegs.map(s => `${minToTime(s.start_min)}〜${minToTime(s.end_min)}`).join('、') : '(なし)';
+                const isOpen = otHistoryOpen.has(r.id);
+                return (
+                  <div key={r.id} style={{ border: `1px solid ${borderColor}`, borderRadius: 10, padding: 12, background: cardBg }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
+                      <div style={{ fontSize: 13, color: text }}>
+                        <span style={{ fontWeight: 'bold', fontSize: 14 }}>{r.applicantName}</span>
+                        <span style={{ marginLeft: 8, color: subText }}>{r.work_date}</span>
+                        <span style={{ marginLeft: 8, padding: '2px 8px', borderRadius: 8, background: stInfo.color, color: '#fff', fontSize: 11, fontWeight: 'bold' }}>{stInfo.label}</span>
+                      </div>
+                      <div style={{ fontSize: 13, color: text }}>差分 <strong>{formatSignedMin(r.diff_minutes ?? 0)}</strong></div>
+                    </div>
+                    <div style={{ fontSize: 12, color: subText, marginTop: 4 }}>{segText}　休憩{r.break_minutes ?? 0}分　実労働{formatMin(r.labor_minutes ?? 0)}　{r.location || '校未設定'}</div>
+                    {r.reason && <div style={{ fontSize: 12, color: subText, marginTop: 2 }}>理由：{r.reason}</div>}
+                    <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                      <button onClick={() => setEditingOt(r)} style={{ padding: '5px 12px', borderRadius: 8, border: '2px solid #d96b0c', background: '#fd7e14', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>🖊 修正</button>
+                      {st !== 'returned' && st !== 'cancelled' && (
+                        <button onClick={() => { setOtReturnTarget(r); setOtReturnComment(''); }} style={{ padding: '5px 12px', borderRadius: 8, border: '2px solid #bd2130', background: '#dc3545', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>↩ 差戻</button>
+                      )}
+                      <button onClick={() => setOtDeleteTarget(r)} style={{ padding: '5px 12px', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, cursor: 'pointer', fontSize: 12 }}>削除</button>
+                      <button onClick={() => { if (!isOpen) loadOtHistory(r.id); setOtHistoryOpen(prev => { const n = new Set(prev); isOpen ? n.delete(r.id) : n.add(r.id); return n; }); }} style={{ padding: '5px 12px', borderRadius: 8, border: '1px solid #fd7e14', background: 'transparent', color: '#fd7e14', cursor: 'pointer', fontSize: 12 }}>{isOpen ? '▼ 修正履歴' : '▶ 修正履歴'}</button>
+                    </div>
+                    {isOpen && (
+                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${borderColor}` }}>
+                        {!otHistory[r.id] ? <p style={{ fontSize: 12, color: subText, margin: 0 }}>読み込み中...</p>
+                          : otHistory[r.id].length === 0 ? <p style={{ fontSize: 12, color: subText, margin: 0 }}>履歴なし</p>
+                          : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              {otHistory[r.id].map(h => (
+                                <div key={h.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                                  {h.change_kind && <HistoryBadge kind={h.change_kind} isDarkMode={isDarkMode} labelOverride={OT_KIND_LABELS} />}
+                                  <div style={{ fontSize: 12 }}>
+                                    <div style={{ color: subText }}>{new Date(h.changed_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}　{h.changerName}</div>
+                                    {h.changes ? <DiffList changes={h.changes} fieldLabels={OT_FIELD_LABELS} isDarkMode={isDarkMode} /> : <span style={{ color: text }}>{h.change_summary}</span>}
+                                    {h.change_reason && <div style={{ color: subText, marginTop: 2 }}>理由：{h.change_reason}</div>}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* 修正モーダル */}
+          {editingOt && (
+            <OvertimeEditModal
+              record={editingOt}
+              isDarkMode={isDarkMode}
+              onClose={() => setEditingOt(null)}
+              onSaved={() => {
+                const id = editingOt.id;
+                setEditingOt(null);
+                setOtMsg('残業・時間調整を修正し、本人へ通知しました');
+                fetchOtReports();
+                setOtHistoryOpen(prev => new Set(prev).add(id));
+                loadOtHistory(id, true);
+              }}
+            />
+          )}
+
+          {/* 差戻し確認 */}
+          {otReturnTarget && (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+              <div style={{ background: cardBg, borderRadius: 14, padding: 22, width: '100%', maxWidth: 380 }}>
+                <div style={{ fontSize: 15, fontWeight: 'bold', color: text, marginBottom: 6 }}>差し戻し</div>
+                <div style={{ fontSize: 13, color: subText, marginBottom: 12 }}>{otReturnTarget.applicantName}　{otReturnTarget.work_date}</div>
+                <textarea value={otReturnComment} onChange={e => setOtReturnComment(e.target.value)} placeholder="差し戻し理由（本人へ通知）" rows={3} style={{ width: '100%', boxSizing: 'border-box', padding: 10, borderRadius: 8, border: `1px solid ${borderColor}`, background: isDarkMode ? '#495057' : '#fff', color: text, fontSize: 13, marginBottom: 12 }} />
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={() => { setOtReturnTarget(null); setOtReturnComment(''); }} disabled={otActing} style={{ flex: 1, padding: 10, borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: text, cursor: 'pointer', fontSize: 14 }}>やめる</button>
+                  <button onClick={doOtReturn} disabled={otActing || !otReturnComment.trim()} style={{ flex: 2, padding: 10, borderRadius: 8, border: 'none', background: !otReturnComment.trim() ? '#6c757d' : '#dc3545', color: '#fff', fontWeight: 'bold', cursor: 'pointer', fontSize: 14 }}>{otActing ? '処理中...' : '差し戻す'}</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 削除確認 */}
+          {otDeleteTarget && (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+              <div style={{ background: cardBg, borderRadius: 14, padding: 22, width: '100%', maxWidth: 360 }}>
+                <div style={{ fontSize: 15, fontWeight: 'bold', color: '#dc3545', marginBottom: 12 }}>削除の確認</div>
+                <div style={{ fontSize: 13, color: text, marginBottom: 6 }}>{otDeleteTarget.applicantName}　{otDeleteTarget.work_date}　差分{formatSignedMin(otDeleteTarget.diff_minutes ?? 0)}</div>
+                <div style={{ fontSize: 12, color: subText, marginBottom: 16 }}>このレコードを完全に削除します。元に戻せません。</div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={() => setOtDeleteTarget(null)} disabled={otActing} style={{ flex: 1, padding: 10, borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: text, cursor: 'pointer', fontSize: 14 }}>戻る</button>
+                  <button onClick={doOtDelete} disabled={otActing} style={{ flex: 2, padding: 10, borderRadius: 8, border: 'none', background: '#dc3545', color: '#fff', fontWeight: 'bold', cursor: 'pointer', fontSize: 14 }}>{otActing ? '削除中...' : '削除する'}</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ─── 曜日パターン ─── */}
       {section === 'patterns' && (

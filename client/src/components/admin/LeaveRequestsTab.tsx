@@ -6,6 +6,22 @@ import { insertNotification, formatLeaveDateSummary } from '../../lib/notificati
 import { todayJstStr } from '../../lib/breakCalc';
 import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatchEmail, dispatchSiteNotification, getUserEmail } from '../../lib/notificationDispatch';
 import SearchableSelect from '../common/SearchableSelect';
+import LeaveEditModal from './LeaveEditModal';
+import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
+
+// 休暇の履歴行（leave_request_history）
+interface LeaveHistoryRow {
+  id: string;
+  change_kind: ChangeKind;
+  change_summary: string | null;
+  change_reason: string | null;
+  changes: Record<string, { old: unknown; new: unknown }> | null;
+  changed_by: string | null;
+  changed_at: string;
+  changerName?: string;
+}
+const LEAVE_FIELD_LABELS: Record<string, string> = { leave_type: '種別', leave_dates: '休暇日', leave_locations: '校', purpose: '用途', reason: '理由' };
+const LEAVE_KIND_LABELS: Partial<Record<ChangeKind, string>> = { resubmit: '本人が再申請' };
 
 // leave_locations（日付→校のJSON文字列）をパース。null・破損はundefined（校なし）扱い
 const parseLeaveLocations = (s?: string | null): Record<string, string> | undefined => {
@@ -86,6 +102,9 @@ const LeaveRequestsTab: React.FC = () => {
   const [deleting, setDeleting] = useState(false);
   const [expandedReapply, setExpandedReapply] = useState<string | null>(null);
   const [expandedModify, setExpandedModify] = useState<Set<string>>(new Set());
+  const [editingLeave, setEditingLeave] = useState<AdminLeaveRequest | null>(null);
+  const [leaveHistory, setLeaveHistory] = useState<Record<string, LeaveHistoryRow[]>>({});
+  const [historyReqIds, setHistoryReqIds] = useState<Set<string>>(new Set());
   const [filterType, setFilterType] = useState<string>('all');
   const [encDays, setEncDays] = useState<EncDay[]>([]);
   const [encLoading, setEncLoading] = useState(false);
@@ -210,6 +229,29 @@ const LeaveRequestsTab: React.FC = () => {
   }, [supabase]);
 
   useEffect(() => { if (absenceView) fetchAbsences(); }, [absenceView, fetchAbsences]);
+
+  // 履歴が存在する申請ID一覧（「修正履歴」インジケーター表示用）
+  useEffect(() => {
+    const ids = leaveRequests.map(r => r.id);
+    if (ids.length === 0) { setHistoryReqIds(new Set()); return; }
+    supabase.from('leave_request_history').select('leave_request_id').in('leave_request_id', ids)
+      .then(({ data }) => { setHistoryReqIds(new Set((data || []).map((r: { leave_request_id: string }) => r.leave_request_id))); });
+  }, [leaveRequests, supabase]);
+
+  // 個別申請の履歴を読み込む（展開時）
+  const loadLeaveHistory = useCallback(async (reqId: string) => {
+    const { data } = await supabase.from('leave_request_history')
+      .select('id, change_kind, change_summary, change_reason, changes, changed_by, changed_at')
+      .eq('leave_request_id', reqId).order('changed_at', { ascending: false });
+    const rows = (data || []) as LeaveHistoryRow[];
+    const changerIds = [...new Set(rows.map(r => r.changed_by).filter(Boolean))] as string[];
+    let nameMap: Record<string, string> = {};
+    if (changerIds.length > 0) {
+      const { data: profs } = await supabase.from('profiles').select('id, name').in('id', changerIds);
+      nameMap = Object.fromEntries((profs || []).map((p: { id: string; name: string }) => [p.id, p.name]));
+    }
+    setLeaveHistory(prev => ({ ...prev, [reqId]: rows.map(r => ({ ...r, changerName: r.changed_by ? (nameMap[r.changed_by] || '不明') : '管理者' })) }));
+  }, [supabase]);
 
   const fetchEncDays = useCallback(async () => {
     setEncLoading(true);
@@ -1306,19 +1348,19 @@ const LeaveRequestsTab: React.FC = () => {
                                       );
                                       void parentId;
                                     })()}
-                                    {isModified && (() => {
+                                    {(isModified || historyReqIds.has(req.id)) && (() => {
                                       const isOpen = expandedModify.has(req.id);
                                       return (
-                                        <button onClick={() => setExpandedModify(prev => { const next = new Set(prev); isOpen ? next.delete(req.id) : next.add(req.id); return next; })}
+                                        <button onClick={() => { if (!isOpen && !leaveHistory[req.id]) loadLeaveHistory(req.id); setExpandedModify(prev => { const next = new Set(prev); isOpen ? next.delete(req.id) : next.add(req.id); return next; }); }}
                                           style={{ fontSize: 10, background: '#fd7e14', color: '#fff', borderRadius: 4, padding: '2px 6px', marginTop: 3, marginLeft: 3, display: 'inline-block', border: 'none', cursor: 'pointer' }}>
-                                          {isOpen ? '▼ 修正' : '▶ 修正'}
+                                          {isOpen ? '▼ 修正履歴' : '▶ 修正履歴'}
                                         </button>
                                       );
                                     })()}
                                   </>
                                 );
                               })()}
-                              {!req.purpose && !req.reason && !req.modified_by && <span>-</span>}
+                              {!req.purpose && !req.reason && !req.modified_by && !historyReqIds.has(req.id) && <span>-</span>}
                             </td>
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center' }}>
                               <div style={{ display: 'inline-block', padding: '3px 8px', borderRadius: 8, background: st.color, color: 'white', textAlign: 'center', lineHeight: 1.4 }}>
@@ -1328,6 +1370,12 @@ const LeaveRequestsTab: React.FC = () => {
                             </td>
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center' }}>
                               <div style={{ display: 'flex', gap: 4, justifyContent: 'center', alignItems: 'center' }}>
+                              {req.status !== 'cancelled' && (
+                                <button
+                                  onClick={() => setEditingLeave(req)}
+                                  style={{ padding: '4px 8px', background: '#fd7e14', color: 'white', border: '2px solid #d96b0c', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}
+                                >🖊 修正</button>
+                              )}
                               {req.status === 'rejected' && (
                                 <button
                                   onClick={async () => {
@@ -1493,34 +1541,38 @@ const LeaveRequestsTab: React.FC = () => {
                           })()}
                           {/* 修正展開行 */}
                           {expandedModify.has(req.id) && (() => {
+                            const rows = leaveHistory[req.id];
+                            // 旧データ（履歴テーブルが無い時代の種別変更）フォールバック
                             const matchChange = req.reason?.match(/【管理者が種別変更】(.+?) → (.+?)（変更して受理）/);
                             const modifiedAtJst = req.modified_at ? new Date(req.modified_at) : null;
-                            const isCancelled = req.status === 'cancelled';
-                            const cancelReason = req.rejected_reason;
+                            const fmtDt = (s: string) => new Date(s).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
                             return (
                               <tr key={`modify-${req.id}`} style={{ background: isDarkMode ? '#2a1e00' : '#fff8f0' }}>
-                                <td colSpan={9} style={{ padding: '7px 12px', borderBottom: `2px solid #fd7e14`, borderLeft: '4px solid #fd7e14', fontSize: 11, color: isDarkMode ? '#ffe082' : '#7c4d00' }}>
-                                  {matchChange && (
-                                    <div>
-                                      <span style={{ fontSize: 10, color: '#fd7e14', fontWeight: 'bold', marginRight: 8 }}>🖊 種別変更</span>
-                                      <strong>{req.modifier?.name ?? '管理者'}</strong>
-                                      {modifiedAtJst && <span style={{ marginLeft: 8 }}>{modifiedAtJst.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>}
-                                      <span style={{ marginLeft: 8 }}>「{matchChange[1]}」→「{matchChange[2]}」に変更して受理</span>
-                                    </div>
-                                  )}
-                                  {!matchChange && modifiedAtJst && !isCancelled && (
-                                    <div>
-                                      <span style={{ fontSize: 10, color: '#fd7e14', fontWeight: 'bold', marginRight: 8 }}>🖊 修正</span>
-                                      <strong>{req.modifier?.name ?? '管理者'}</strong>
-                                      <span style={{ marginLeft: 8 }}>{modifiedAtJst.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
-                                    </div>
-                                  )}
-                                  {isCancelled && (
-                                    <div style={{ marginTop: matchChange ? 4 : 0 }}>
-                                      <span style={{ fontSize: 10, color: '#fd7e14', fontWeight: 'bold', marginRight: 8 }}>🚫 取り消し</span>
-                                      <strong>{req.modifier?.name ?? '管理者'}</strong>
-                                      {modifiedAtJst && <span style={{ marginLeft: 8 }}>{modifiedAtJst.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>}
-                                      {cancelReason && <span style={{ marginLeft: 8 }}>{cancelReason}</span>}
+                                <td colSpan={9} style={{ padding: '8px 12px', borderBottom: `2px solid #fd7e14`, borderLeft: '4px solid #fd7e14' }}>
+                                  <div style={{ fontSize: 12, fontWeight: 'bold', color: isDarkMode ? '#ffe082' : '#7c4d00', marginBottom: 6 }}>修正履歴</div>
+                                  {!rows ? (
+                                    <div style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>読み込み中...</div>
+                                  ) : rows.length === 0 ? (
+                                    matchChange ? (
+                                      <div style={{ fontSize: 12, color: isDarkMode ? '#eee' : '#333' }}>
+                                        <HistoryBadge kind="type_change" isDarkMode={isDarkMode} labelOverride={LEAVE_KIND_LABELS} />
+                                        <span style={{ marginLeft: 8 }}>{req.modifier?.name ?? '管理者'}</span>
+                                        {modifiedAtJst && <span style={{ marginLeft: 8, color: isDarkMode ? '#adb5bd' : '#666' }}>{modifiedAtJst.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>}
+                                        <span style={{ marginLeft: 8 }}>「{matchChange[1]}」→「{matchChange[2]}」に変更して受理</span>
+                                      </div>
+                                    ) : <div style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>履歴なし</div>
+                                  ) : (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                      {rows.map(h => (
+                                        <div key={h.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                                          <HistoryBadge kind={h.change_kind} isDarkMode={isDarkMode} labelOverride={LEAVE_KIND_LABELS} />
+                                          <div style={{ fontSize: 12 }}>
+                                            <div style={{ color: isDarkMode ? '#adb5bd' : '#666' }}>{fmtDt(h.changed_at)}　{h.changerName}</div>
+                                            {h.changes && <DiffList changes={h.changes} fieldLabels={LEAVE_FIELD_LABELS} isDarkMode={isDarkMode} />}
+                                            {h.change_reason && <div style={{ color: isDarkMode ? '#adb5bd' : '#666', marginTop: 2 }}>理由：{h.change_reason}</div>}
+                                          </div>
+                                        </div>
+                                      ))}
                                     </div>
                                   )}
                                 </td>
@@ -1533,6 +1585,24 @@ const LeaveRequestsTab: React.FC = () => {
                     </tbody>
                   </table>
                 </div>
+              )}
+
+              {/* 管理者による内容修正モーダル */}
+              {editingLeave && (
+                <LeaveEditModal
+                  record={editingLeave}
+                  isDarkMode={isDarkMode}
+                  onClose={() => setEditingLeave(null)}
+                  onSaved={() => {
+                    const id = editingLeave.id;
+                    setEditingLeave(null);
+                    setSuccessMsg('申請内容を修正し、本人へ通知しました');
+                    fetchLeaveRequests();
+                    setHistoryReqIds(prev => new Set(prev).add(id));
+                    loadLeaveHistory(id);
+                    setExpandedModify(prev => new Set(prev).add(id));
+                  }}
+                />
               )}
 
               {/* 取消確認モーダル */}

@@ -25,7 +25,8 @@ interface LeaveReq {
   chosei_origin_locations?: string | null; // 振替元の日付→校のJSON（調整休・振替休日のみ）
   start_date: string;
   end_date: string;
-  reason: string | null;
+  purpose: string | null; // 必須の「事由」（フォームでpurposeに保存される）
+  reason: string | null;  // 任意の「備考」
   status: string;
   created_at: string;
   rejected_reason: string | null;
@@ -153,6 +154,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
         leave_type_other: r.leave_type_other ?? null,
         start_date: r.start_date ?? '',
         end_date: r.end_date ?? '',
+        purpose: (r as unknown as { purpose?: string | null }).purpose ?? null,
         reason: (r as unknown as { reason?: string | null }).reason ?? null,
         rejected_reason: r.rejected_reason ?? null,
         approver_id: r.approver_id ?? null,
@@ -501,6 +503,11 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                       </>
                     );
                   })()}
+                  {req.purpose && req.purpose.trim() && (
+                    <div style={{ color: text, fontSize: 14, marginBottom: 6, fontWeight: 500 }}>
+                      事由: {req.purpose}
+                    </div>
+                  )}
                   {req.reason && (
                     <div style={{ color: subText, fontSize: 13, marginBottom: 8 }}>
                       {(() => {
@@ -508,7 +515,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                         const isReapply = req.reason.includes('【再申請】');
                         return (
                           <>
-                            {displayReason && <>理由: {displayReason}</>}
+                            {displayReason && <>備考: {displayReason}</>}
                             {isReapply && <span style={{ marginLeft: 6, fontSize: 11, background: '#007bff', color: '#fff', borderRadius: 4, padding: '1px 6px' }}>再申請</span>}
                           </>
                         );
