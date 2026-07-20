@@ -76,7 +76,7 @@ const OvertimeAdminTab: React.FC = () => {
   const ctx = useAdminPanel();
   const { isDarkMode, supabase } = ctx;
 
-  const [section, setSection] = useState<'reports' | 'patterns' | 'calendar' | 'settings'>('patterns');
+  const [section, setSection] = useState<'reports' | 'patterns' | 'calendar' | 'settings'>('reports');
 
   // ─────────── 受理済み一覧（残業レコードの管理） ───────────
   const [otReports, setOtReports] = useState<OvertimeRecord[]>([]);
@@ -162,6 +162,31 @@ const OvertimeAdminTab: React.FC = () => {
     if (!deleted || deleted.length === 0) { setOtErr('削除できませんでした（権限/RLSの可能性）。'); setOtActing(false); return; }
     setOtDeleteTarget(null); setOtActing(false);
     setOtMsg('削除しました'); fetchOtReports();
+  };
+
+  // CSV出力：元の勤務時間（通常シフト）と、実際の時間帯・差分を並べて「どう変わったか」を可視化する
+  const exportOtCsv = () => {
+    const esc = (v: string | number) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const fmtT = (t: unknown) => (typeof t === 'string' && t ? t.slice(0, 5) : '');
+    const headers = ['申請者', '勤務日', '状況', '通常シフト開始', '通常シフト終了', '通常シフト実労働', '実際の勤務時間帯', '休憩(分)', '実労働', '差分(元→実績)', '校', '理由'];
+    const rows = otReports.map(r => {
+      const ns = (r.normal_shift ?? {}) as Record<string, unknown>;
+      const actualSegs = r.segments.filter(s => s.phase === (r.segments.some(x => x.phase === 'actual') ? 'actual' : 'planned')).sort((a, b) => a.seg_no - b.seg_no);
+      const segText = actualSegs.length ? actualSegs.map(s => `${minToTime(s.start_min)}〜${minToTime(s.end_min)}`).join('、') : '';
+      const normLabor = typeof ns.labor_minutes === 'number' ? formatMin(ns.labor_minutes) : '';
+      return [
+        r.applicantName ?? '', r.work_date, OT_STATUS_LABEL[otStatusMap[r.id]]?.label ?? otStatusMap[r.id] ?? '',
+        fmtT(ns.start_time), fmtT(ns.end_time), normLabor,
+        segText, r.break_minutes ?? 0, formatMin(r.labor_minutes ?? 0), formatSignedMin(r.diff_minutes ?? 0),
+        r.location ?? '', r.reason ?? '',
+      ].map(esc).join(',');
+    });
+    const csv = '﻿' + [headers.map(esc).join(','), ...rows].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `残業_受理済み一覧_${todayJstStr()}.csv`;
+    a.click(); URL.revokeObjectURL(url);
   };
 
   const text = isDarkMode ? '#f8f9fa' : '#212529';
@@ -427,9 +452,15 @@ const OvertimeAdminTab: React.FC = () => {
       {/* ─── 受理済み一覧（修正／差戻／削除／履歴） ─── */}
       {section === 'reports' && (
         <div>
-          <p style={{ fontSize: 12, color: subText, margin: '0 0 10px' }}>
-            正社員の残業・時間調整の記録一覧です。受理済みも含めて修正・差し戻し・削除ができます（自動計上分は対象外）。
-          </p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+            <p style={{ fontSize: 12, color: subText, margin: 0, flex: 1, minWidth: 200 }}>
+              正社員の残業・時間調整の記録一覧です。受理済みも含めて修正・差し戻し・削除ができます（自動計上分は対象外）。
+            </p>
+            <button onClick={exportOtCsv} disabled={otReports.length === 0}
+              style={{ flexShrink: 0, padding: '6px 14px', borderRadius: 8, border: 'none', background: otReports.length === 0 ? '#6c757d' : '#28a745', color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: otReports.length === 0 ? 'default' : 'pointer' }}>
+              📥 CSV出力
+            </button>
+          </div>
           {otMsg && <div style={{ padding: 10, background: isDarkMode ? '#0f2e1a' : '#e8f5e9', border: '1px solid #28a745', borderRadius: 8, color: isDarkMode ? '#7ee2a8' : '#1b5e20', fontSize: 13, marginBottom: 10 }}>{otMsg}</div>}
           {otErr && <div style={{ padding: 10, background: isDarkMode ? '#3a1414' : '#fff5f5', border: '1px solid #f5c2c7', borderRadius: 8, color: isDarkMode ? '#fca5a5' : '#842029', fontSize: 13, marginBottom: 10 }}>{otErr}</div>}
           {otLoading ? (
