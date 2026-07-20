@@ -87,6 +87,7 @@ const OvertimeAdminTab: React.FC = () => {
   const [editingOt, setEditingOt] = useState<OvertimeRecord | null>(null);
   const [otHistoryOpen, setOtHistoryOpen] = useState<Set<string>>(new Set());
   const [otHistory, setOtHistory] = useState<Record<string, OtHistoryRow[]>>({});
+  const [otHistoryExistIds, setOtHistoryExistIds] = useState<Set<string>>(new Set());
   const [otReturnTarget, setOtReturnTarget] = useState<OvertimeRecord | null>(null);
   const [otReturnComment, setOtReturnComment] = useState('');
   const [otDeleteTarget, setOtDeleteTarget] = useState<OvertimeRecord | null>(null);
@@ -102,10 +103,12 @@ const OvertimeAdminTab: React.FC = () => {
     const rows = data || [];
     const ids = rows.map((r: { id: string }) => r.id);
     const applicantIds = [...new Set(rows.map((r: { applicant_id: string }) => r.applicant_id))];
-    const [{ data: segs }, { data: profs }] = await Promise.all([
+    const [{ data: segs }, { data: profs }, { data: histIds }] = await Promise.all([
       ids.length ? supabase.from('overtime_report_segments').select('report_id, phase, seg_no, start_min, end_min').in('report_id', ids) : Promise.resolve({ data: [] }),
       applicantIds.length ? supabase.from('profiles').select('id, name').in('id', applicantIds) : Promise.resolve({ data: [] }),
+      ids.length ? supabase.from('overtime_report_history').select('report_id').in('report_id', ids) : Promise.resolve({ data: [] }),
     ]);
+    setOtHistoryExistIds(new Set((histIds || []).map((h: { report_id: string }) => h.report_id)));
     const nameMap = Object.fromEntries((profs || []).map((p: { id: string; name: string }) => [p.id, p.name]));
     const segMap: Record<string, { phase: 'planned' | 'actual'; seg_no: number; start_min: number; end_min: number }[]> = {};
     (segs || []).forEach((s: { report_id: string; phase: 'planned' | 'actual'; seg_no: number; start_min: number; end_min: number }) => {
@@ -509,7 +512,9 @@ const OvertimeAdminTab: React.FC = () => {
                                 <button onClick={() => { setOtReturnTarget(r); setOtReturnComment(''); }} style={{ padding: '3px 8px', borderRadius: 6, border: 'none', background: '#dc3545', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}>差戻</button>
                               )}
                               <button onClick={() => setOtDeleteTarget(r)} style={{ padding: '3px 8px', borderRadius: 6, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, cursor: 'pointer', fontSize: 11 }}>削除</button>
-                              <button onClick={() => { if (!isOpen) loadOtHistory(r.id); setOtHistoryOpen(prev => { const n = new Set(prev); isOpen ? n.delete(r.id) : n.add(r.id); return n; }); }} style={{ padding: '3px 8px', borderRadius: 6, border: '1px solid #fd7e14', background: 'transparent', color: '#fd7e14', cursor: 'pointer', fontSize: 11 }}>{isOpen ? '▼履歴' : '▶履歴'}</button>
+                              {otHistoryExistIds.has(r.id) && (
+                                <button onClick={() => { if (!isOpen) loadOtHistory(r.id); setOtHistoryOpen(prev => { const n = new Set(prev); isOpen ? n.delete(r.id) : n.add(r.id); return n; }); }} style={{ padding: '3px 8px', borderRadius: 6, border: '1px solid #fd7e14', background: 'transparent', color: '#fd7e14', cursor: 'pointer', fontSize: 11 }}>{isOpen ? '▼履歴' : '▶履歴'}</button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -555,6 +560,7 @@ const OvertimeAdminTab: React.FC = () => {
                 setEditingOt(null);
                 setOtMsg('残業・時間調整を修正し、本人へ通知しました');
                 fetchOtReports();
+                setOtHistoryExistIds(prev => new Set(prev).add(id));
                 setOtHistoryOpen(prev => new Set(prev).add(id));
                 loadOtHistory(id, true);
               }}
