@@ -106,6 +106,8 @@ const ShiftReportsTab: React.FC = () => {
   const [historyExistIds, setHistoryExistIds] = useState<Set<string>>(new Set());
   const [returnTarget, setReturnTarget] = useState<ShiftReport | null>(null);
   const [editingShift, setEditingShift] = useState<ShiftReport | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<ShiftReport | null>(null);
+  const [canceling, setCanceling] = useState(false);
   const [returnComment, setReturnComment] = useState('');
   const [returning, setReturning]       = useState(false);
   const [sortKey, setSortKey]           = useState<'created_at' | 'work_date' | 'applicantName'>('created_at');
@@ -249,6 +251,19 @@ const ShiftReportsTab: React.FC = () => {
       return;
     }
     setSuccessMsg('削除しました');
+    fetchReports();
+  };
+
+  // 論理取消（判子）。status='cancelled' にすると、紐づくopen依頼はトリガーが自動で対応済みにし本人へ通知する。
+  const doCancel = async () => {
+    if (!cancelTarget) return;
+    setCanceling(true);
+    const { data: updated, error } = await supabase.from('shift_reports').update({ status: 'cancelled' }).eq('id', cancelTarget.id).select('id');
+    setCanceling(false);
+    if (error) { setDeleteError(`取消に失敗しました：${error.message}`); return; }
+    if (!updated || updated.length === 0) { setDeleteError('取消できませんでした（権限が不足しているか、すでに取消済みです）'); return; }
+    setCancelTarget(null);
+    setSuccessMsg('取り消しました');
     fetchReports();
   };
 
@@ -584,6 +599,12 @@ const ShiftReportsTab: React.FC = () => {
                               差戻
                             </button>
                           )}
+                          {r.status !== 'cancelled' && (
+                            <button onClick={() => setCancelTarget(r)}
+                              style={{ ...btnBase, background: 'transparent', color: sub, border: `1px solid #6c757d` }}>
+                              取消
+                            </button>
+                          )}
                           <button onClick={() => handleDelete(r)}
                             style={{ ...btnBase, background: isDarkMode ? '#495057' : '#e9ecef', color: sub, border: `1px solid ${border}` }}>
                             削除
@@ -719,6 +740,30 @@ const ShiftReportsTab: React.FC = () => {
               <button onClick={handleReturn} disabled={returning}
                 style={{ flex: 1, padding: 10, borderRadius: 8, border: 'none', background: returning ? '#6c757d' : '#dc3545', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
                 {returning ? '処理中...' : '差戻す'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 取消確認（判子。記録は残る。取消依頼への対応にも使う） */}
+      {cancelTarget && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px' }}>
+          <div style={{ background: isDarkMode ? '#343a40' : '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 340 }}>
+            <div style={{ fontSize: 15, fontWeight: 'bold', color: text, marginBottom: 6 }}>取消の確認</div>
+            <div style={{ fontSize: 13, color: sub, marginBottom: 10 }}>
+              {TYPE_INFO[cancelTarget.application_type]?.emoji} {TYPE_INFO[cancelTarget.application_type]?.label}　{cancelTarget.work_date}
+              <br /><span style={{ fontSize: 12 }}>（{cancelTarget.applicantName}）</span>
+            </div>
+            <div style={{ fontSize: 12, color: sub, marginBottom: 16 }}>「取消済み」にします（記録は残ります）。この申請への修正/取消依頼があれば、自動で対応済みになり本人へ通知されます。</div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setCancelTarget(null)} disabled={canceling}
+                style={{ flex: 1, padding: 10, borderRadius: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#ddd'}`, background: 'none', color: sub, fontSize: 14, cursor: 'pointer' }}>
+                戻る
+              </button>
+              <button onClick={doCancel} disabled={canceling}
+                style={{ flex: 1, padding: 10, borderRadius: 8, border: 'none', background: '#6c757d', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
+                {canceling ? '取消中...' : '取り消す'}
               </button>
             </div>
           </div>

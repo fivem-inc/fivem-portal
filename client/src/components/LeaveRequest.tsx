@@ -17,6 +17,9 @@ const BannerSuccess: React.FC<{ message: string; onClose: () => void }> = ({ mes
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { sendLeaveSlack } from '../lib/leaveSlack';
+import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
+import type { CorrectionRequestRow } from '../lib/correctionRequest';
+import CorrectionBadgeAndButton from './CorrectionBadgeAndButton';
 import { shouldSend, dispatchEmail, dispatchSiteNotification, getUserEmail } from '../lib/notificationDispatch';
 import { insertNotification } from '../lib/notifications';
 import { useDarkMode } from '../hooks/useDarkMode';
@@ -58,6 +61,7 @@ interface LeaveRecord {
   leave_type: string;
   leave_type_other: string | null;
   leave_dates: string | null;
+  leave_locations: string | null;
   start_date: string;
   end_date: string;
   purpose: string | null;
@@ -301,6 +305,11 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const [leaderAssignments, setLeaderAssignments] = useState<{ id: string; course: string; school: string; leader: string; manager: string }[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(true);
   const [reapplySourceId, setReapplySourceId] = useState<string | null>(null);
+  // 未承認(pending)の自分の申請を本人が編集中：対象ID。insertでなくedit_own_leave RPCで更新する
+  const [editLeaveId, setEditLeaveId] = useState<string | null>(null);
+  // 本人取消のインライン確認（window.confirm禁止のためカード内で確認）
+  const [cancelConfirmId, setCancelConfirmId] = useState<string | null>(null);
+  const [cancelingId, setCancelingId] = useState<string | null>(null);
   // 時間調整フォーム用
   const [adjLateStart, setAdjLateStart] = useState(ad?.adjLateStart ?? false);
   const [adjEarlyEnd, setAdjEarlyEnd] = useState(ad?.adjEarlyEnd ?? false);
@@ -442,6 +451,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           ...r,
           leave_type_other: r.leave_type_other ?? null,
           leave_dates: r.leave_dates ?? null,
+          leave_locations: (r as { leave_locations?: string | null }).leave_locations ?? null,
           start_date: r.start_date ?? '',
           end_date: r.end_date ?? '',
           purpose: r.purpose ?? null,
@@ -455,6 +465,40 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     };
     fetchHistory();
   }, [tab, user.id]);
+
+  // 各申請に紐づく最新の修正依頼（修正依頼中/対応済みバッジ用）
+  const [corrections, setCorrections] = useState<Map<string, CorrectionRequestRow>>(new Map());
+  const reloadCorrections = React.useCallback(() => {
+    const ids = history.map(h => h.id);
+    if (ids.length === 0) { setCorrections(new Map()); return; }
+    fetchLatestCorrectionByTarget('leave', ids).then(setCorrections);
+  }, [history]);
+  useEffect(() => { reloadCorrections(); }, [reloadCorrections]);
+
+  // 本人が未承認/差戻しの自分の申請を取り消す（承認前のみDB側で保証）
+  const doCancelLeave = async (id: string) => {
+    setCancelingId(id);
+    const { error } = await supabase.rpc('cancel_own_leave', { p_id: id });
+    setCancelingId(null);
+    setCancelConfirmId(null);
+    if (error) { console.error('[cancel_own_leave]', error); return; }
+    setHistory(h => h.map(r => r.id === id ? { ...r, status: 'cancelled' } : r));
+  };
+
+  // 未承認の自分の申請をフォームに読み込んで編集モードにする
+  const startEditLeave = (req: LeaveRecord) => {
+    setLeaveType((req.leave_type as LeaveType) || '有給休暇');
+    setLeaveTypeOther(req.leave_type_other || '');
+    try { setSelectedDates(req.leave_dates ? JSON.parse(req.leave_dates) : []); } catch { setSelectedDates([]); }
+    try { if (req.leave_locations) setDateLocations(JSON.parse(req.leave_locations)); } catch { /* 校の復元失敗は無視 */ }
+    setPurpose(req.purpose || '');
+    setNotes(req.reason || '');
+    if (req.approver_id) setSelectedApproverId(req.approver_id);
+    setReapplySourceId(null);
+    setEditLeaveId(req.id);
+    setTab('form');
+    window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
+  };
 
   // 休暇申請の「申請先」はリーダー・マネージャーのみ（フロア責任者は時間調整の了承者としてのみ選択可）
   const leaveApprovers = approvers.filter(a => a.role_title !== 'フロア責任者');
@@ -474,6 +518,27 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       if (reapplySourceId) {
         const reapplyNote = `【再申請】元申請ID: ${reapplySourceId}`;
         reasonValue = reasonValue ? `${reasonValue}　${reapplyNote}` : reapplyNote;
+      }
+      // 未承認の自分の申請を編集：insertでなくRPCで更新（承認前のみDB側で保証）
+      if (editLeaveId) {
+        const { error: editErr } = await supabase.rpc('edit_own_leave', {
+          p_id: editLeaveId,
+          p_leave_type: leaveType,
+          p_leave_type_other: leaveType === 'その他' ? leaveTypeOther : null,
+          p_leave_dates: JSON.stringify(selectedDates),
+          p_leave_locations: JSON.stringify(Object.fromEntries(selectedDates.map(d => [d, dateLocations[d]]))),
+          p_purpose: purpose,
+          p_reason: reasonValue,
+          p_start_date: startDate,
+          p_end_date: endDate,
+        });
+        if (editErr) throw editErr;
+        setEditLeaveId(null);
+        setSubmitted(true);
+        setShowConfirm(false);
+        clearDraft(DRAFT_KEYS.leave);
+        setIsSubmitting(false);
+        return;
       }
       const { data: newRequest, error } = await supabase.from('leave_requests').insert({
         user_id: user.id,
@@ -1673,30 +1738,94 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                         差し戻し理由: {req.rejected_reason}
                       </div>
                     )}
+                    {/* 未承認(pending)：本人が自分で編集・取消できる（承認が入ったら下の依頼へ） */}
+                    {req.status === 'pending' && (
+                      cancelConfirmId === req.id ? (
+                        <div style={{ marginTop: 8, background: isDark ? '#3a1f1f' : '#fff5f5', border: '1px solid #dc3545', borderRadius: 8, padding: 10 }}>
+                          <div style={{ fontSize: 12, color: isDark ? '#f5c6cb' : '#721c24', marginBottom: 8 }}>この申請を取り消しますか？</div>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            <button onClick={() => doCancelLeave(req.id)} disabled={cancelingId === req.id}
+                              style={{ flex: 1, padding: '6px 0', background: '#dc3545', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
+                              {cancelingId === req.id ? '取消中…' : '取り消す'}
+                            </button>
+                            <button onClick={() => setCancelConfirmId(null)}
+                              style={{ flex: 1, padding: '6px 0', background: 'none', color: subText, border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 12, cursor: 'pointer' }}>
+                              やめる
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ marginTop: 8 }}>
+                          <div style={{ fontSize: 11, color: subText, marginBottom: 4 }}>まだ承認前なので、自分で直せます</div>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            <button onClick={() => startEditLeave(req)}
+                              style={{ flex: 1, padding: '6px 0', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
+                              編集
+                            </button>
+                            <button onClick={() => setCancelConfirmId(req.id)}
+                              style={{ flex: 1, padding: '6px 0', background: '#6c757d', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
+                              取消
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    )}
+                    {/* 差戻し：取消（インライン確認）＋再申請 */}
                     {isRejected && (
-                      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                        <button onClick={async () => {
-                          if (!window.confirm('この申請を取り消しますか？')) return;
-                          await supabase.from('leave_requests').update({ status: 'cancelled' }).eq('id', req.id);
-                          setHistory(h => h.map(r => r.id === req.id ? { ...r, status: 'cancelled' } : r));
-                        }} style={{ flex: 1, padding: '6px 0', background: '#6c757d', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
-                          取消
-                        </button>
-                        <button onClick={() => {
-                          // フォームに元申請の内容をセットしてフォームタブへ
-                          setLeaveType((req.leave_type as LeaveType) || '有給休暇');
-                          setLeaveTypeOther(req.leave_type_other || '');
-                          try { setSelectedDates(req.leave_dates ? JSON.parse(req.leave_dates) : []); } catch { setSelectedDates([]); }
-                          setPurpose(req.purpose || '');
-                          if (req.approver_id) setSelectedApproverId(req.approver_id);
-                          // 再申請元のIDを備考に埋め込む（送信時に追記）
-                          setReapplySourceId(req.id);
-                          setTab('form');
-                          window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
-                        }} style={{ flex: 1, padding: '6px 0', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
-                          再申請
-                        </button>
-                      </div>
+                      cancelConfirmId === req.id ? (
+                        <div style={{ marginTop: 8, background: isDark ? '#3a1f1f' : '#fff5f5', border: '1px solid #dc3545', borderRadius: 8, padding: 10 }}>
+                          <div style={{ fontSize: 12, color: isDark ? '#f5c6cb' : '#721c24', marginBottom: 8 }}>この申請を取り消しますか？</div>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            <button onClick={() => doCancelLeave(req.id)} disabled={cancelingId === req.id}
+                              style={{ flex: 1, padding: '6px 0', background: '#dc3545', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
+                              {cancelingId === req.id ? '取消中…' : '取り消す'}
+                            </button>
+                            <button onClick={() => setCancelConfirmId(null)}
+                              style={{ flex: 1, padding: '6px 0', background: 'none', color: subText, border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 12, cursor: 'pointer' }}>
+                              やめる
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                          <button onClick={() => setCancelConfirmId(req.id)}
+                            style={{ flex: 1, padding: '6px 0', background: '#6c757d', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
+                            取消
+                          </button>
+                          <button onClick={() => {
+                            setLeaveType((req.leave_type as LeaveType) || '有給休暇');
+                            setLeaveTypeOther(req.leave_type_other || '');
+                            try { setSelectedDates(req.leave_dates ? JSON.parse(req.leave_dates) : []); } catch { setSelectedDates([]); }
+                            setPurpose(req.purpose || '');
+                            if (req.approver_id) setSelectedApproverId(req.approver_id);
+                            setReapplySourceId(req.id);
+                            setTab('form');
+                            window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
+                          }} style={{ flex: 1, padding: '6px 0', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
+                            再申請
+                          </button>
+                        </div>
+                      )
+                    )}
+                    {/* 1人でも承認〜受理済み：本人は触れず、修正/取消を依頼 */}
+                    {['step2_pending', 'manager_approved', 'admin_approved', 'approved'].includes(req.status) && (
+                      <>
+                        <div style={{ fontSize: 11, color: subText, marginTop: 8 }}>受理手続き中／受理済みのため、変更は管理者へ依頼します</div>
+                        <CorrectionBadgeAndButton
+                          targetType="leave"
+                          targetId={req.id}
+                          targetLabel={`休暇 ${dateDisplay}`}
+                          fields={[
+                            { key: 'dates', label: '日付', current: dateDisplay },
+                            { key: 'type', label: '種別', current: req.leave_type === 'その他' ? (req.leave_type_other || 'その他') : req.leave_type },
+                          ]}
+                          requesterName={profileName || user.email || 'スタッフ'}
+                          isDark={isDark}
+                          latest={corrections.get(req.id) ?? null}
+                          canRequest
+                          onSubmitted={reloadCorrections}
+                        />
+                      </>
                     )}
                   </div>
                 );

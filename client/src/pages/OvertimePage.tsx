@@ -11,6 +11,9 @@ import {
 } from '../lib/breakCalc';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import type { AuthUser } from '../types';
+import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
+import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
+import type { CorrectionRequestRow } from '../lib/correctionRequest';
 
 // ────────────────────────────────────────────────────────────────
 // Types
@@ -1204,6 +1207,16 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
   // ────────────────────────────────────────────
   const ownHistory = reports.filter(r => r.entry_type === 'manual' || r.entry_type === 'leave_auto');
 
+  // 受理済みの残業に紐づく最新の修正依頼（修正依頼中/対応済みバッジ用）
+  const [corrections, setCorrections] = useState<Map<string, CorrectionRequestRow>>(new Map());
+  const reloadCorrections = useCallback(() => {
+    const ids = ownHistory.filter(r => r.status === 'confirmed' && r.entry_type === 'manual').map(r => r.id);
+    if (ids.length === 0) { setCorrections(new Map()); return; }
+    fetchLatestCorrectionByTarget('overtime', ids).then(setCorrections);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reports]);
+  useEffect(() => { reloadCorrections(); }, [reloadCorrections]);
+
   return (
     <div style={{ maxWidth: 600, margin: '0 auto', padding: '16px 16px 40px' }}>
       <div>
@@ -1402,6 +1415,24 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                               )
                             )}
                           </div>
+                        )}
+
+                        {!isAuto && r.status === 'confirmed' && (
+                          <CorrectionBadgeAndButton
+                            targetType="overtime"
+                            targetId={r.id}
+                            targetLabel={`残業 ${r.work_date.slice(5).replace('-', '/')}（${dowLabel(r.work_date)}）`}
+                            fields={[
+                              { key: 'date', label: '日付', current: r.work_date, inputType: 'date' },
+                              { key: 'time', label: '時間', current: segs.length > 0 ? segmentsLabel(segs) : '' },
+                              { key: 'location', label: '校', current: r.location ?? '' },
+                            ]}
+                            requesterName={profileName || user.email || 'スタッフ'}
+                            isDark={isDark}
+                            latest={corrections.get(r.id) ?? null}
+                            canRequest
+                            onSubmitted={reloadCorrections}
+                          />
                         )}
                       </div>
                     );

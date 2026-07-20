@@ -23,7 +23,7 @@ export interface ParsedDay {
 
 export const DEFAULT_LOCATION = '四条本校';
 
-// 校名の略称→正式名。掃除列の記載（例「本校大10～14:30→上桂」）から校を抽出するのに使う。
+// 校名の略称→正式名。出勤列2段目の記載（例「本校大10～14:30→上桂」）から校を抽出するのに使う。
 const SCHOOL_ALIASES: [RegExp, string][] = [
   [/四条本校|本校/, '四条本校'],
   [/西陣/,   '西陣校'],
@@ -32,7 +32,7 @@ const SCHOOL_ALIASES: [RegExp, string][] = [
   [/南草津/, '南草津校'],
 ];
 
-// 掃除列セルから校を解析する。
+// 出勤列2段目のセルから校を解析する。
 // 「→」があれば移動とみなし「四条本校→上桂校」のように前後の校をつなぐ（案1）。
 // 「大10」等のコース・時刻表記は校ではないので無視。校が1つも見つからなければ四条本校。
 export function parseSchoolCell(raw: unknown): string {
@@ -134,13 +134,6 @@ export async function parseShiftSheet(buf: ArrayBuffer, sheetName: string): Prom
       const name = cleanName(rawName);
       if (!name) continue;
 
-      // 掃除列を特定（校はここの2段目に入る）。見つからなければ 曜日列+7 で代替
-      let sojiCol = -1;
-      for (let hc = c; hc <= c + 9; hc++) {
-        if (String(cellVal(r, hc) ?? '').trim() === '掃除') { sojiCol = hc; break; }
-      }
-      if (sojiCol < 0) sojiCol = c + 7;
-
       const days = {} as Record<ImportDayKind, ParsedDay>;
       for (const k of IMPORT_DAYS) days[k] = { startMin: null, endMin: null, startMin2: null, endMin2: null, location: DEFAULT_LOCATION };
       let foundDays = 0;
@@ -151,13 +144,14 @@ export async function parseShiftSheet(buf: ArrayBuffer, sheetName: string): Prom
         if (!kind) continue;
         const start = toMin(cellVal(dr, c + 1));
         const end = toMin(cellVal(dr, c + 2));
-        // 2段目（次の物理行）：出勤・退勤が時刻なら第2時間帯、掃除列の文字列は校
+        // 2段目（次の物理行）の出勤列：時刻なら第2時間帯（外出/戻り）、文字列なら校（勤務地・移動）。
+        // ★校は掃除列ではなく出勤列の2段目に入る。掃除列は掃除当番の校/受付で別物。
         const row2 = dr + 1;
-        const start2 = toMin(cellVal(row2, c + 1));
+        const band2Raw = cellVal(row2, c + 1);
+        const start2 = toMin(band2Raw);
         const end2 = toMin(cellVal(row2, c + 2));
         const hasBand2 = start2 != null && end2 != null && end2 > start2;
-        const locRaw = cellVal(row2, sojiCol);
-        const location = parseSchoolCell(locRaw);
+        const location = parseSchoolCell(typeof band2Raw === 'string' ? band2Raw : undefined);
         const hasBand1 = start != null && end != null && end > start;
         days[kind] = {
           startMin: hasBand1 ? start : null,

@@ -15,6 +15,7 @@ import OvertimeAdminTab from './admin/OvertimeAdminTab';
 import FeaturePermissionsTab from './admin/FeaturePermissionsTab';
 import PurchaseRequestsTab from './admin/PurchaseRequestsTab';
 import AnnouncementsTab from './admin/AnnouncementsTab';
+import CorrectionRequestsTab from './admin/CorrectionRequestsTab';
 
 interface AdminPanelProps {
   pendingApprovals: PendingApproval[];
@@ -52,6 +53,18 @@ const AdminPanelContent: React.FC = () => {
   }, [supabase]);
   const STORAGE_LIMIT_MB = 1024;
   const isStorageLow = storageUsageMb !== null && storageUsageMb / STORAGE_LIMIT_MB >= 0.8; // 残り2割を切ったら警告
+
+  // 修正依頼の未対応件数（タブの赤バッジ用）。correction-pending-changed で再取得。
+  const [openCorrectionCount, setOpenCorrectionCount] = useState(0);
+  useEffect(() => {
+    const fetchCount = () => {
+      supabase.from('correction_requests').select('id', { count: 'exact', head: true }).eq('status', 'open')
+        .then(({ count }: { count: number | null }) => setOpenCorrectionCount(count ?? 0), () => {});
+    };
+    fetchCount();
+    window.addEventListener('correction-pending-changed', fetchCount);
+    return () => window.removeEventListener('correction-pending-changed', fetchCount);
+  }, [supabase]);
 
   return (    <div style={{ marginTop: 0, paddingTop: 0, position: 'relative' }}>
       {storageUsageMb !== null && (
@@ -459,6 +472,7 @@ const AdminPanelContent: React.FC = () => {
           { key: 'shift_reports',      label: '勤務変更',      icon: '⏰' },
           { key: 'overtime_admin',     label: '残業管理',      icon: '⏱' },
           { key: 'purchase_requests',  label: '購入申請',      icon: '🧾' },
+          { key: 'corrections',        label: '修正依頼',      icon: '📩' },
         ] as const;
         const ROW2 = [
           { key: 'users',              label: 'ユーザー',      icon: '👤' },
@@ -502,6 +516,9 @@ const AdminPanelContent: React.FC = () => {
                     {t.key === 'leave_requests' && pendingLeaveRequests.length > 0 && (
                       <Badge count={pendingLeaveRequests.length} />
                     )}
+                    {t.key === 'corrections' && openCorrectionCount > 0 && (
+                      <Badge count={openCorrectionCount} />
+                    )}
                   </button>
                 ))}
               </div>
@@ -538,6 +555,7 @@ const AdminPanelContent: React.FC = () => {
                     {t.icon} {t.label}
                     {t.key === 'users' && pendingUsers.length > 0 ? `（承認待ち${pendingUsers.length}件）` : ''}
                     {t.key === 'leave_requests' && pendingLeaveRequests.length > 0 ? `（承認待ち${pendingLeaveRequests.length}件）` : ''}
+                    {t.key === 'corrections' && openCorrectionCount > 0 ? `（未対応${openCorrectionCount}件）` : ''}
                   </option>
                 ))}
               </select>
@@ -556,6 +574,7 @@ const AdminPanelContent: React.FC = () => {
         {activeTab === 'leave_requests' && <LeaveRequestsTab />}
         {activeTab === 'shift_reports' && <ShiftReportsTab />}
         {activeTab === 'overtime_admin' && <OvertimeAdminTab />}
+        {activeTab === 'corrections' && <CorrectionRequestsTab />}
         {activeTab === 'purchase_requests' && <PurchaseRequestsTab />}
         {activeTab === 'leader_assignments' && <LeaderAssignmentsTab />}
         {activeTab === 'board_settings' && <BoardSettingsTab />}

@@ -91,6 +91,7 @@ const OvertimeAdminTab: React.FC = () => {
   const [otReturnTarget, setOtReturnTarget] = useState<OvertimeRecord | null>(null);
   const [otReturnComment, setOtReturnComment] = useState('');
   const [otDeleteTarget, setOtDeleteTarget] = useState<OvertimeRecord | null>(null);
+  const [otCancelTarget, setOtCancelTarget] = useState<OvertimeRecord | null>(null);
   const [otActing, setOtActing] = useState(false);
 
   const fetchOtReports = useCallback(async () => {
@@ -165,6 +166,17 @@ const OvertimeAdminTab: React.FC = () => {
     if (!deleted || deleted.length === 0) { setOtErr('削除できませんでした（権限/RLSの可能性）。'); setOtActing(false); return; }
     setOtDeleteTarget(null); setOtActing(false);
     setOtMsg('削除しました'); fetchOtReports();
+  };
+
+  // 論理取消（判子）。status='cancelled' にすると、紐づくopen依頼はトリガーが自動で対応済みにし本人へ通知する。
+  const doOtCancel = async () => {
+    if (!otCancelTarget) return;
+    setOtActing(true);
+    const { data: updated, error } = await supabase.from('overtime_reports').update({ status: 'cancelled' }).eq('id', otCancelTarget.id).select('id');
+    if (error) { setOtErr('取消に失敗しました：' + error.message); setOtActing(false); return; }
+    if (!updated || updated.length === 0) { setOtErr('取消できませんでした（権限/RLSの可能性）。'); setOtActing(false); return; }
+    setOtCancelTarget(null); setOtActing(false);
+    setOtMsg('取り消しました'); fetchOtReports();
   };
 
   // CSV出力：元の勤務時間（通常シフト）と、実際の時間帯・差分を並べて「どう変わったか」を可視化する
@@ -519,6 +531,9 @@ const OvertimeAdminTab: React.FC = () => {
                               {st !== 'returned' && st !== 'cancelled' && (
                                 <button onClick={() => { setOtReturnTarget(r); setOtReturnComment(''); }} style={{ padding: '3px 8px', borderRadius: 6, border: 'none', background: '#dc3545', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}>差戻</button>
                               )}
+                              {st !== 'cancelled' && r.entry_type === 'manual' && (
+                                <button onClick={() => setOtCancelTarget(r)} style={{ padding: '3px 8px', borderRadius: 6, border: '1px solid #6c757d', background: 'transparent', color: subText, cursor: 'pointer', fontSize: 11 }}>取消</button>
+                              )}
                               <button onClick={() => setOtDeleteTarget(r)} style={{ padding: '3px 8px', borderRadius: 6, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, cursor: 'pointer', fontSize: 11 }}>削除</button>
                               {otHistoryExistIds.has(r.id) && (
                                 <button onClick={() => { if (!isOpen) loadOtHistory(r.id); setOtHistoryOpen(prev => { const n = new Set(prev); isOpen ? n.delete(r.id) : n.add(r.id); return n; }); }} style={{ padding: '3px 8px', borderRadius: 6, border: '1px solid #fd7e14', background: 'transparent', color: '#fd7e14', cursor: 'pointer', fontSize: 11 }}>{isOpen ? '▼履歴' : '▶履歴'}</button>
@@ -600,6 +615,21 @@ const OvertimeAdminTab: React.FC = () => {
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button onClick={() => setOtDeleteTarget(null)} disabled={otActing} style={{ flex: 1, padding: 10, borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: text, cursor: 'pointer', fontSize: 14 }}>戻る</button>
                   <button onClick={doOtDelete} disabled={otActing} style={{ flex: 2, padding: 10, borderRadius: 8, border: 'none', background: '#dc3545', color: '#fff', fontWeight: 'bold', cursor: 'pointer', fontSize: 14 }}>{otActing ? '削除中...' : '削除する'}</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 取消確認（判子。記録は残る。取消依頼への対応にも使う） */}
+          {otCancelTarget && (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+              <div style={{ background: cardBg, borderRadius: 14, padding: 22, width: '100%', maxWidth: 360 }}>
+                <div style={{ fontSize: 15, fontWeight: 'bold', color: '#6c757d', marginBottom: 12 }}>取消の確認</div>
+                <div style={{ fontSize: 13, color: text, marginBottom: 6 }}>{otCancelTarget.applicantName}　{otCancelTarget.work_date}　差分{formatSignedMin(otCancelTarget.diff_minutes ?? 0)}</div>
+                <div style={{ fontSize: 12, color: subText, marginBottom: 16 }}>「取消済み」にします（記録は残ります）。この申請への修正/取消依頼があれば、自動で対応済みになり本人へ通知されます。</div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={() => setOtCancelTarget(null)} disabled={otActing} style={{ flex: 1, padding: 10, borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: text, cursor: 'pointer', fontSize: 14 }}>戻る</button>
+                  <button onClick={doOtCancel} disabled={otActing} style={{ flex: 2, padding: 10, borderRadius: 8, border: 'none', background: '#6c757d', color: '#fff', fontWeight: 'bold', cursor: 'pointer', fontSize: 14 }}>{otActing ? '取消中...' : '取り消す'}</button>
                 </div>
               </div>
             </div>

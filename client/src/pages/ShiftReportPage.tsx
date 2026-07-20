@@ -7,6 +7,9 @@ import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import { calcShiftBreakMinutes } from '../lib/shiftCalc';
 import type { AuthUser } from '../types';
+import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
+import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
+import type { CorrectionRequestRow } from '../lib/correctionRequest';
 
 // ────────────────────────────────────────────────────────────────
 // Types
@@ -1004,6 +1007,15 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const [reviewedReports, setReviewedReports] = useState<ShiftReport[]>([]);
   const [proxyReports, setProxyReports]       = useState<ShiftReport[]>([]);
   const [allReports, setAllReports]           = useState<ShiftReport[]>([]);
+
+  // 受理済み(confirmed)の自分の報告に紐づく最新の修正/取消依頼（バッジ用）
+  const [corrections, setCorrections] = useState<Map<string, CorrectionRequestRow>>(new Map());
+  const reloadCorrections = useCallback(() => {
+    const ids = myReports.filter(r => r.status === 'confirmed').map(r => r.id);
+    if (ids.length === 0) { setCorrections(new Map()); return; }
+    fetchLatestCorrectionByTarget('shift', ids).then(setCorrections);
+  }, [myReports]);
+  useEffect(() => { reloadCorrections(); }, [reloadCorrections]);
   // 通知バナーから ?focus=<報告ID> で来たとき確認ビュー/履歴の該当カードを強調
   const { highlightId, focusRef } = useFocusHighlight(pendingReports.length + reviewedReports.length + allReports.length);
   const [histGroupFilter, setHistGroupFilter] = useState('all');
@@ -1473,6 +1485,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                       const oMin = origDuration(r.original_start?.slice(0, 5) ?? null, r.original_end?.slice(0, 5) ?? null);
                       const dMin = r.labor_minutes != null ? r.labor_minutes - oMin : null;
                       const isFocused = highlightId === r.id;
+                      // 本人が自分で直せる/取り消せるのは「未承認（承認前）」のときだけ。受理済みは修正/取消依頼へ。
+                      const canSelfEdit = r.applicant_id === user.id && ['pending', 'resubmitted', 'returned'].includes(r.status);
                       return (
                         <div key={r.id} ref={el => { if (el && isFocused) focusRef.current = el; }} style={{ padding: '10px 14px', borderBottom: `1px solid ${isDark ? '#495057' : '#f5f5f5'}`, background: isFocused ? (isDark ? '#4a4423' : '#fff9c4') : 'transparent', display: 'flex', alignItems: 'flex-start', gap: 10, transition: 'background 0.6s' }}>
                           <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#555', minWidth: 52, flexShrink: 0, marginTop: 2 }}>
@@ -1506,18 +1520,35 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                               </div>
                             )}
                             <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#888', marginTop: 2 }}>{r.reason}</div>
+                            {r.applicant_id === user.id && r.status === 'confirmed' && (
+                              <CorrectionBadgeAndButton
+                                targetType="shift"
+                                targetId={r.id}
+                                targetLabel={`勤務変更 ${r.work_date.slice(5).replace('-', '/')}（${dow(r.work_date)}）`}
+                                fields={[
+                                  { key: 'date', label: '日付', current: r.work_date, inputType: 'date' },
+                                  { key: 'time', label: '時間', current: r.actual_start ? `${r.actual_start.slice(0,5)}〜${r.actual_end?.slice(0,5) ?? ''}` : '' },
+                                  { key: 'location', label: '校', current: r.actual_location ?? '' },
+                                ]}
+                                requesterName={profileName || user.email || 'スタッフ'}
+                                isDark={isDark}
+                                latest={corrections.get(r.id) ?? null}
+                                canRequest
+                                onSubmitted={reloadCorrections}
+                              />
+                            )}
                           </div>
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
                             <span style={{ fontSize: 10, fontWeight: 'bold', color: (STATUS_INFO[r.status] ?? STATUS_INFO['pending']).color, background: (STATUS_INFO[r.status] ?? STATUS_INFO['pending']).bg, borderRadius: 10, padding: '2px 8px', whiteSpace: 'nowrap' }}>
                               {(STATUS_INFO[r.status] ?? STATUS_INFO['pending']).label}
                             </span>
-                            {!['cancelled'].includes(r.status) && (
+                            {canSelfEdit && (
                               <button onClick={() => { setEditTarget(r); setShowForm(true); }}
                                 style={{ fontSize: 11, color: '#28a745', background: 'none', border: '1px solid #28a745', borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}>
                                 修正
                               </button>
                             )}
-                            {!['cancelled'].includes(r.status) && (
+                            {canSelfEdit && (
                               <button onClick={() => { setCancelTarget(r); setCancelReason(''); }}
                                 style={{ fontSize: 11, color: '#dc3545', background: 'none', border: '1px solid #dc3545', borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}>
                                 取消
