@@ -476,8 +476,8 @@ const OvertimeAdminTab: React.FC = () => {
                 <thead>
                   <tr style={{ background: isDarkMode ? '#495057' : '#f8f9fa' }}>
                     {[
-                      { label: '申請者', w: 70 }, { label: '勤務日', w: 78 }, { label: '時間帯', w: 150 },
-                      { label: '休憩/実労働', w: 90 }, { label: '校', w: 60 }, { label: '差分', w: 55 },
+                      { label: '申請者', w: 70 }, { label: '勤務日', w: 78 }, { label: '勤務時間（元/実）', w: 160 },
+                      { label: '休憩/実労働', w: 90 }, { label: '校（元→実）', w: 72 }, { label: '差分', w: 55 },
                       { label: '状況', w: 70 }, { label: '操作', w: 150 },
                     ].map(col => (
                       <th key={col.label} style={{ padding: '8px 4px', textAlign: 'center', borderBottom: `1px solid ${borderColor}`, width: col.w, fontSize: 12 }}>{col.label}</th>
@@ -490,6 +490,9 @@ const OvertimeAdminTab: React.FC = () => {
                     const stInfo = OT_STATUS_LABEL[st] ?? { label: st, color: '#6c757d' };
                     const actualSegs = r.segments.filter(s => s.phase === (r.segments.some(x => x.phase === 'actual') ? 'actual' : 'planned')).sort((a, b) => a.seg_no - b.seg_no);
                     const segText = actualSegs.length ? actualSegs.map(s => `${minToTime(s.start_min)}〜${minToTime(s.end_min)}`).join('、') : '(なし)';
+                    const ns = (r.normal_shift ?? {}) as { start_time?: string | null; end_time?: string | null; location?: string | null };
+                    const nsTime = ns.start_time ? `${String(ns.start_time).slice(0, 5)}〜${ns.end_time ? String(ns.end_time).slice(0, 5) : ''}` : '休み';
+                    const nsLoc = ns.location || '';
                     const isOpen = otHistoryOpen.has(r.id);
                     const cell: React.CSSProperties = { padding: '7px 4px', borderBottom: `1px solid ${borderColor}`, textAlign: 'center', verticalAlign: 'top' };
                     return (
@@ -498,11 +501,16 @@ const OvertimeAdminTab: React.FC = () => {
                           <td style={{ ...cell, fontWeight: 'bold', textAlign: 'left' }}>{r.applicantName}</td>
                           <td style={{ ...cell, whiteSpace: 'nowrap' }}>{r.work_date}</td>
                           <td style={{ ...cell, textAlign: 'left', fontSize: 12 }}>
-                            {segText}
+                            <div style={{ color: subText, fontSize: 11 }}>元 {nsTime}</div>
+                            <div>実 {segText}</div>
                             {r.reason && <div style={{ color: subText, fontSize: 11, marginTop: 2 }}>{r.reason}</div>}
                           </td>
                           <td style={{ ...cell, fontSize: 12, whiteSpace: 'nowrap' }}>休{r.break_minutes ?? 0}分<br />{formatMin(r.labor_minutes ?? 0)}</td>
-                          <td style={{ ...cell, fontSize: 12 }}>{r.location || '—'}</td>
+                          <td style={{ ...cell, fontSize: 12 }}>
+                            {nsLoc && nsLoc !== (r.location || '') ? (
+                              <><span style={{ color: subText, fontSize: 11 }}>{nsLoc}</span><br /><span>↓</span><br />{r.location || '—'}</>
+                            ) : (r.location || nsLoc || '—')}
+                          </td>
                           <td style={{ ...cell, fontWeight: 'bold', whiteSpace: 'nowrap' }}>{formatSignedMin(r.diff_minutes ?? 0)}</td>
                           <td style={cell}><span style={{ padding: '2px 6px', borderRadius: 6, background: stInfo.color, color: '#fff', fontSize: 10, fontWeight: 'bold', whiteSpace: 'nowrap' }}>{stInfo.label}</span></td>
                           <td style={cell}>

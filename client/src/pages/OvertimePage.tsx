@@ -159,11 +159,17 @@ function resolveNormalShift(
   patterns: PatternRow[], dateStr: string, calendarKind: CalendarKind | null
 ): NormalShiftSnapshot {
   const dayKind = resolveDayKind(dateStr, calendarKind);
-  const row = patterns.find(p =>
-    p.day_kind === dayKind
-    && p.valid_from <= dateStr
+  const sameKind = patterns.filter(p => p.day_kind === dayKind);
+  let row = sameKind.find(p =>
+    p.valid_from <= dateStr
     && (p.valid_to === null || p.valid_to >= dateStr)
   );
+  // 事後報告などで、パターン登録日(valid_from)より前の過去日を選ぶと該当レンジが無く「休み」に
+  // なってしまう。その曜日のパターンがある場合は最も近いもの（過去日なら最古／それ以外は最新）で代用する。
+  if (!row && sameKind.length > 0) {
+    const sorted = [...sameKind].sort((a, b) => (a.valid_from < b.valid_from ? -1 : 1));
+    row = dateStr < sorted[0].valid_from ? sorted[0] : sorted[sorted.length - 1];
+  }
   return {
     day_kind: dayKind,
     calendar_kind: calendarKind,
@@ -239,13 +245,22 @@ const OvertimeForm: React.FC<{
   const [reason, setReason] = useState(() => editTarget?.reason ?? draft?.reason ?? '');
   // 勤務地：登録済みの校以外の値（自由入力）は「その他」＋カスタム欄に復元する
   const [location, setLocation] = useState(() => {
-    if (editTarget?.location) return workplaces.includes(editTarget.location) ? editTarget.location : 'その他';
+    const loc = editTarget?.location ?? '';
+    if (loc.includes('→')) return '移動あり';
+    if (loc) return workplaces.includes(loc) ? loc : 'その他';
     return draft?.location ?? '';
   });
   const [locationCustom, setLocationCustom] = useState(() => {
-    if (editTarget?.location && !workplaces.includes(editTarget.location)) return editTarget.location;
+    const loc = editTarget?.location ?? '';
+    if (loc && !loc.includes('→') && !workplaces.includes(loc)) return loc;
     return draft?.locationCustom ?? '';
   });
+  // 勤務地変更（移動）：開始校→移動先校。effectiveLocation で「A→B」に合成する
+  const [locMoveStart, setLocMoveStart] = useState(() => { const l = editTarget?.location ?? ''; return l.includes('→') ? l.split('→')[0] : ''; });
+  const [locMoveEnd, setLocMoveEnd] = useState(() => { const l = editTarget?.location ?? ''; return l.includes('→') ? (l.split('→')[1] ?? '') : ''; });
+  // 理由履歴（自分が過去に入力した理由）
+  const [pastReasons, setPastReasons] = useState<string[]>([]);
+  const [showAllReasons, setShowAllReasons] = useState(false);
   const [reviewerId, setReviewerId] = useState(() => editTarget?.reviewer_id ?? draft?.reviewerId ?? '');
   const [normOverride, setNormOverride] = useState(() => editTarget?.normal_shift?.manual_override ?? draft?.normOverride ?? false);
   const [normStart, setNormStart] = useState(() => fmtTime(editTarget?.normal_shift?.start_time) !== '-' ? fmtTime(editTarget?.normal_shift?.start_time) : (draft?.normStart ?? ''));
@@ -297,10 +312,50 @@ const OvertimeForm: React.FC<{
     if (editTarget || location) return;
     const loc = normalShift.location;
     if (!loc) return;
-    if (workplaces.includes(loc)) setLocation(loc);
+    if (loc.includes('→')) { setLocation('移動あり'); setLocMoveStart(loc.split('→')[0]); setLocMoveEnd(loc.split('→')[1] ?? ''); }
+    else if (workplaces.includes(loc)) setLocation(loc);
     else { setLocation('その他'); setLocationCustom(loc); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [normalShift.location]);
+
+  // 通常シフトの時間帯（band1＋band2）を {start,end} の配列にしたもの
+  const normalSegs = useMemo(() => {
+    const segs: { start: string; end: string }[] = [];
+    if (normalShift.start_time) segs.push({ start: fmtTime(normalShift.start_time), end: fmtTime(normalShift.end_time) });
+    if (normalShift.start_time2) segs.push({ start: fmtTime(normalShift.start_time2), end: fmtTime(normalShift.end_time2) });
+    return segs;
+  }, [normalShift.start_time, normalShift.end_time, normalShift.start_time2, normalShift.end_time2]);
+
+  // 日付を選ぶと、時間帯が空のときだけ通常シフトの時間を自動入力（新規のみ）。
+  // 利用者はここから残業・早退などの差分に直して送信する。
+  useEffect(() => {
+    if (editTarget) return;
+    if (normalSegs.length === 0) return;
+    const allEmpty = segments.every(s => !s.start && !s.end);
+    if (!allEmpty) return;
+    setSegments(normalSegs.map(s => ({ ...s })));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [normalSegs, date]);
+
+  // 勤務地の実効値（保存・検証に使う）。移動あり＝「開始校→移動先校」
+  const effectiveLocation =
+    location === 'その他' ? locationCustom.trim()
+    : location === '移動あり' ? (locMoveStart && locMoveEnd ? `${locMoveStart}→${locMoveEnd}` : '')
+    : location;
+
+  // 自分が過去に入力した理由（重複除去・新しい順）を取得
+  useEffect(() => {
+    supabase.from('overtime_reports').select('reason, created_at').eq('applicant_id', user.id)
+      .not('reason', 'is', null).order('created_at', { ascending: false }).limit(50)
+      .then(({ data }) => {
+        const seen = new Set<string>(); const list: string[] = [];
+        for (const r of (data ?? []) as { reason: string | null }[]) {
+          const t = (r.reason ?? '').trim();
+          if (t && !seen.has(t)) { seen.add(t); list.push(t); }
+        }
+        setPastReasons(list.slice(0, 12));
+      }, () => {});
+  }, [user.id]);
 
   // 実務時間帯（分）
   const workSegments: WorkSegment[] = useMemo(() =>
@@ -353,8 +408,15 @@ const OvertimeForm: React.FC<{
     }
     if (!location) return '勤務地を選択してください';
     if (location === 'その他' && !locationCustom.trim()) return '勤務地を入力してください';
+    if (location === '移動あり' && (!locMoveStart || !locMoveEnd)) return '移動元・移動先の校を選択してください';
     if (!reason.trim()) return '理由を入力してください';
     if (!reviewerId) return '申請先を選択してください';
+    // 通常シフトと全く同じ内容（時間帯・休憩・勤務地に変更なし）では送信不可
+    const sameSegs = segments.length === normalSegs.length
+      && segments.every((s, i) => s.start === normalSegs[i].start && s.end === normalSegs[i].end);
+    if (sameSegs && !breakManual && effectiveLocation === (normalShift.location ?? '')) {
+      return '通常シフトと同じ内容です。残業・早退・調整など、変更した点を入力してください';
+    }
     return '';
   };
 
@@ -384,7 +446,7 @@ const OvertimeForm: React.FC<{
         diff_minutes: diffMin,
         legal_warning: !legal.ok,
         reason: reason.trim(),
-        location: location === 'その他' ? locationCustom.trim() : location,
+        location: effectiveLocation,
         reviewer_id: isSelfReview ? user.id : reviewerId,
         ...(isSelfReview ? { confirmed_by: user.id, confirmed_at: new Date().toISOString() } : {}),
         ...(isResubmit ? { return_comment: null } : {}),
@@ -467,6 +529,15 @@ const OvertimeForm: React.FC<{
     ? `${fmtTime(normalShift.start_time)}〜${fmtTime(normalShift.end_time)}${normalBand2}${normalLoc}（休憩${formatMin(normalShift.break_minutes)}・労働${formatMin(normalShift.labor_minutes)}）`
     : '休み';
 
+  // 入力内容をすべてクリア（新規フォームのみ）
+  const handleClear = () => {
+    setDate(''); setSegments([{ ...EMPTY_SEG }]); setBreakManual(false); setBreakManualMin('');
+    setReason(''); setLocation(''); setLocationCustom(''); setLocMoveStart(''); setLocMoveEnd('');
+    setReviewerId(''); setNormOverride(false); setNormStart(''); setNormEnd('');
+    setError(''); setShowConfirm(false);
+    clearDraft(DRAFT_KEYS.overtime);
+  };
+
   return (
     <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, padding: '16px 16px 20px', marginBottom: 16 }}>
       {editTarget && (
@@ -523,6 +594,16 @@ const OvertimeForm: React.FC<{
               </ul>
             </div>
           )}
+        </div>
+      )}
+
+      {/* クリア（入力欄の先頭に配置） */}
+      {!editTarget && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+          <button type="button" onClick={handleClear}
+            style={{ background: isDark ? '#495057' : '#f1f3f5', border: `1px solid ${isDark ? '#6c757d' : '#ced4da'}`, borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 'bold', color: isDark ? '#e9ecef' : '#495057', padding: '5px 14px' }}>
+            🗑 クリア
+          </button>
         </div>
       )}
 
@@ -612,7 +693,7 @@ const OvertimeForm: React.FC<{
         ))}
         {segments.length < 3 && (
           <button onClick={() => setSegments(prev => [...prev, { ...EMPTY_SEG }])}
-            style={{ background: 'none', border: `1px dashed ${borderColor}`, borderRadius: 8, cursor: 'pointer', padding: '7px 14px', fontSize: 13, color: '#0d6efd', width: '100%' }}>
+            style={{ background: isDark ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDark ? '#4a90d9' : '#90caf9'}`, borderRadius: 8, cursor: 'pointer', padding: '6px 12px', fontSize: 12.5, color: isDark ? '#fff' : '#1565c0', width: '100%' }}>
             ＋ 時間帯を追加（外出・戻りがある場合）
           </button>
         )}
@@ -680,6 +761,7 @@ const OvertimeForm: React.FC<{
         <select value={location} onChange={e => setLocation(e.target.value)} style={fieldStyle}>
           <option value="">選択してください</option>
           {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+          <option value="移動あり">移動あり（校が変わる）</option>
           <option value="その他">その他（自由入力）</option>
         </select>
         {location === 'その他' && (
@@ -687,14 +769,55 @@ const OvertimeForm: React.FC<{
             placeholder="勤務地を入力してください"
             style={{ ...fieldStyle, marginTop: 6 }} />
         )}
+        {location === '移動あり' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
+            <select value={locMoveStart} onChange={e => setLocMoveStart(e.target.value)} style={{ ...fieldStyle, flex: 1 }}>
+              <option value="">移動元の校</option>
+              {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+            </select>
+            <span style={{ color: subText, fontWeight: 'bold' }}>→</span>
+            <select value={locMoveEnd} onChange={e => setLocMoveEnd(e.target.value)} style={{ ...fieldStyle, flex: 1 }}>
+              <option value="">移動先の校</option>
+              {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* 理由 */}
       <div style={{ marginBottom: 12 }}>
         <span style={labelStyle}>理由{req}</span>
         <textarea value={reason} onChange={e => setReason(e.target.value)} rows={2}
-          placeholder="例：全体ミーティング準備のため"
+          placeholder="例：お客様対応のため"
           style={{ ...fieldStyle, resize: 'vertical' }} />
+        {/* 文例ボタン（2つ） */}
+        <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+          {['お客様対応のため', '〇〇準備のため'].map(ex => (
+            <button key={ex} type="button" onClick={() => setReason(ex)}
+              style={{ padding: '5px 12px', borderRadius: 6, border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, background: isDark ? '#2c3e50' : '#e8f4fd', color: isDark ? '#fff' : '#1565c0', fontSize: 11.5, fontWeight: 'bold', cursor: 'pointer' }}>
+              文例 ー「{ex}」
+            </button>
+          ))}
+        </div>
+        {/* 理由履歴（過去に自分が入力した理由・押すと入力） */}
+        {pastReasons.length > 0 && (
+          <div style={{ background: isDark ? '#243447' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, borderRadius: 8, padding: '8px 10px', marginTop: 8 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 'bold', color: isDark ? '#fff' : '#1565c0', marginBottom: 6 }}>📋 過去に入力した理由</div>
+            {(showAllReasons ? pastReasons : pastReasons.slice(0, 3)).map((rz, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', background: isDark ? '#2c3e50' : '#fff', border: `1px solid ${isDark ? '#3d5166' : '#bbdefb'}`, borderRadius: 5, marginBottom: 5 }}>
+                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: isDark ? '#fff' : '#333' }}>{rz}</span>
+                <button type="button" onClick={() => setReason(rz)}
+                  style={{ flexShrink: 0, background: '#1976d2', color: '#fff', fontSize: 11, fontWeight: 'bold', padding: '4px 12px', border: 'none', borderRadius: 4, cursor: 'pointer' }}>入力</button>
+              </div>
+            ))}
+            {pastReasons.length > 3 && (
+              <button type="button" onClick={() => setShowAllReasons(v => !v)}
+                style={{ width: '100%', padding: '4px', background: 'none', border: `1px dashed ${isDark ? '#5a6b7d' : '#90caf9'}`, borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 'bold', color: isDark ? '#e9ecef' : '#1565c0', marginTop: 2 }}>
+                {showAllReasons ? '▲ 閉じる' : `▼ もっと見る（あと${pastReasons.length - 3}件）`}
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* 申請先 */}
@@ -1094,8 +1217,11 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
             <span style={{ fontSize: 14, fontWeight: 'bold', color: '#664d03', lineHeight: '22px' }}>シフトと違う勤務（残業・早退・調整）を事前申請・事後報告できます</span>
           </div>
           <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: '0 0 8px' }}>（これまでの残業申請表の代わりです。）</p>
-          <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※事前申請が理想ですが、急な場合は事後報告だけでもOKです。</p>
-          <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※今期：{payMonthLabel(currentPeriod)}（{payPeriodLabel(currentPeriod)}）</p>
+          <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※シフトと違う勤務は必ず事前申請してください。急なお客様対応などは事後報告でも大丈夫です。</p>
+          <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: '0 0 8px' }}>※今期：{payMonthLabel(currentPeriod)}（{payPeriodLabel(currentPeriod)}）</p>
+          {/* 通常シフト（曜日パターン）確認：この案内枠の中に配置。押したら開く。
+              枠は常に黄色（ダークでも #fff3cd）なので、中身はライト配色固定で読めるようにする */}
+          <MyPatternToggle isDark={false} patterns={patterns} />
         </div>
 
         {/* 送信完了バナー */}
@@ -1306,7 +1432,7 @@ const MyPatternToggle: React.FC<{ isDark: boolean; patterns: PatternRow[] }> = (
       <div style={{ textAlign: 'right' }}>
         <button onClick={() => setOpen(o => !o)}
           style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#0d6efd', textDecoration: 'underline' }}>
-          あなたの通常シフト（曜日パターン）を{open ? '閉じる' : '確認'}
+          自分の通常シフトを{open ? '閉じる' : '確認'}
         </button>
       </div>
       {open && (
@@ -1323,7 +1449,14 @@ const MyPatternToggle: React.FC<{ isDark: boolean; patterns: PatternRow[] }> = (
                       <tr key={k}>
                         <td style={{ padding: '3px 0', color: subText, width: 130 }}>{DAY_KIND_LABELS[k]}</td>
                         <td style={{ padding: '3px 0' }}>
-                          {p.start_time ? `${fmtTime(p.start_time)}〜${fmtTime(p.end_time)}（労働${formatMin(p.labor_minutes)}）` : '休み'}
+                          {p.start_time ? (
+                            <>
+                              {fmtTime(p.start_time)}〜{fmtTime(p.end_time)}
+                              {p.start_time2 && `　＋　${fmtTime(p.start_time2)}〜${fmtTime(p.end_time2)}`}
+                              （休憩{formatMin(p.break_minutes)}・労働{formatMin(p.labor_minutes)}）
+                              {p.location && <span style={{ color: subText }}>　／　{p.location}</span>}
+                            </>
+                          ) : '休み'}
                         </td>
                       </tr>
                     );

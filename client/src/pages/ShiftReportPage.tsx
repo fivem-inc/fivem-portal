@@ -338,6 +338,21 @@ const ShiftReportForm: React.FC<{
   const absencePanelRef = useRef<HTMLDivElement>(null);
   const [reason, setReason]           = useState(editTarget?.reason ?? sd?.reason ?? '');
   const [origDayOff, setOrigDayOff]   = useState(sd?.origDayOff ?? false);
+  // 理由履歴（自分が過去に入力した理由）
+  const [pastReasons, setPastReasons] = useState<string[]>([]);
+  const [showAllReasons, setShowAllReasons] = useState(false);
+  useEffect(() => {
+    supabase.from('shift_reports').select('reason, created_at').eq('applicant_id', applicantId)
+      .not('reason', 'is', null).order('created_at', { ascending: false }).limit(50)
+      .then(({ data }) => {
+        const seen = new Set<string>(); const list: string[] = [];
+        for (const r of (data ?? []) as { reason: string | null }[]) {
+          const t = (r.reason ?? '').trim();
+          if (t && !seen.has(t)) { seen.add(t); list.push(t); }
+        }
+        setPastReasons(list.slice(0, 12));
+      }, () => {});
+  }, [applicantId]);
 
   // 勤務地：ドロップダウン値（「その他」選択時はカスタム入力を使う）
   const savedOrigLoc = editTarget?.original_location ?? '';
@@ -686,7 +701,7 @@ const ShiftReportForm: React.FC<{
               {blockMsg ? (
                 <div style={{ marginTop: 8, fontSize: 12, color: '#f97316', fontWeight: 500 }}>⚠️ {blockMsg}</div>
               ) : types.length > 0 ? (
-                <div style={{ marginTop: 8, padding: '6px 12px', background: isDark ? '#1e3d2f' : '#f0fdf4', border: `1px solid ${isDark ? '#166534' : '#bbf7d0'}`, borderRadius: 8, fontSize: 12, color: isDark ? '#4ade80' : '#065f46', fontWeight: 600 }}>
+                <div style={{ marginTop: 8, padding: '6px 12px', background: isDark ? '#1e7e34' : '#f0fdf4', border: `1px solid ${isDark ? '#166534' : '#bbf7d0'}`, borderRadius: 8, fontSize: 12, color: isDark ? '#fff' : '#065f46', fontWeight: 600 }}>
                   ✓ {typesLabel(types)}
                 </div>
               ) : null}
@@ -698,11 +713,30 @@ const ShiftReportForm: React.FC<{
               <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
                 {(['保護者対応のため', 'レッスン応援要請のため'] as const).map(ex => (
                   <button key={ex} type="button" onClick={() => setReason(ex)}
-                    style={{ fontSize: 12, padding: '4px 10px', border: `1px solid #29b6f6`, borderRadius: 6, background: isDark ? '#0d3a5e' : '#e1f5fe', color: isDark ? '#90caf9' : '#0277bd', cursor: 'pointer' }}>
+                    style={{ fontSize: 12, fontWeight: 'bold', padding: '5px 12px', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, borderRadius: 6, background: isDark ? '#2c3e50' : '#e8f4fd', color: isDark ? '#fff' : '#1565c0', cursor: 'pointer' }}>
                     文例 ー「{ex}」
                   </button>
                 ))}
               </div>
+              {/* 理由履歴（過去に自分が入力した理由・押すと入力） */}
+              {pastReasons.length > 0 && (
+                <div style={{ background: isDark ? '#243447' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, borderRadius: 8, padding: '8px 10px', marginTop: 8 }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 'bold', color: isDark ? '#fff' : '#1565c0', marginBottom: 6 }}>📋 過去に入力した理由</div>
+                  {(showAllReasons ? pastReasons : pastReasons.slice(0, 3)).map((rz, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', background: isDark ? '#2c3e50' : '#fff', border: `1px solid ${isDark ? '#3d5166' : '#bbdefb'}`, borderRadius: 5, marginBottom: 5 }}>
+                      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: isDark ? '#fff' : '#333' }}>{rz}</span>
+                      <button type="button" onClick={() => setReason(rz)}
+                        style={{ flexShrink: 0, background: '#1976d2', color: '#fff', fontSize: 11, fontWeight: 'bold', padding: '4px 12px', border: 'none', borderRadius: 4, cursor: 'pointer' }}>入力</button>
+                    </div>
+                  ))}
+                  {pastReasons.length > 3 && (
+                    <button type="button" onClick={() => setShowAllReasons(v => !v)}
+                      style={{ width: '100%', padding: '4px', background: 'none', border: `1px dashed ${isDark ? '#5a6b7d' : '#90caf9'}`, borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 'bold', color: isDark ? '#e9ecef' : '#1565c0', marginTop: 2 }}>
+                      {showAllReasons ? '▲ 閉じる' : `▼ もっと見る（あと${pastReasons.length - 3}件）`}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* 通常シフト（休日出勤・欠勤選択時は非表示） */}

@@ -13,7 +13,7 @@ export interface OvertimeRecord {
   applicantName?: string;
   work_date: string;
   entry_type: string;
-  normal_shift: { labor_minutes: number; [k: string]: unknown } | null;
+  normal_shift: { labor_minutes: number; start_time?: string | null; end_time?: string | null; location?: string | null; [k: string]: unknown } | null;
   break_minutes: number | null;
   break_manual: boolean;
   labor_minutes: number | null;
@@ -44,7 +44,9 @@ const OvertimeEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSav
   const [breakManual, setBreakManual] = useState(record.break_manual);
   const [breakManualMin, setBreakManualMin] = useState(String(record.break_minutes ?? 0));
   const [reason, setReason] = useState(record.reason ?? '');
-  const [location, setLocation] = useState(record.location ?? '');
+  const [locMode, setLocMode] = useState<'select' | 'other'>('select');
+  const [location, setLocation] = useState(record.location ?? '');   // select時に選んだ校
+  const [locationOther, setLocationOther] = useState('');            // その他（自由記載）
   const [workDate, setWorkDate] = useState(record.work_date);
   const [changeReason, setChangeReason] = useState('');
   const [workplaces, setWorkplaces] = useState<string[]>([]);
@@ -54,8 +56,17 @@ const OvertimeEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSav
 
   useEffect(() => {
     supabase.from('master_options').select('value').eq('category', 'workplace').order('sort_order')
-      .then(({ data }) => { if (data) setWorkplaces(data.map((r: { value: string }) => r.value)); });
+      .then(({ data }) => {
+        const list = data ? data.map((r: { value: string }) => r.value) : [];
+        setWorkplaces(list);
+        // 既存の校がマスタに無い＝自由記載だった → その他モードに寄せる
+        if (record.location && list.length && !list.includes(record.location)) {
+          setLocMode('other'); setLocationOther(record.location); setLocation('');
+        }
+      });
   }, []);
+
+  const effectiveLocation = locMode === 'other' ? locationOther.trim() : location;
 
   const cardBg = isDarkMode ? '#2d2d3e' : '#fff';
   const border = isDarkMode ? '#3a3a5c' : '#e0e0e0';
@@ -91,11 +102,11 @@ const OvertimeEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSav
     if (segLabel(oldSegs) !== segLabel(workSegments)) c.segments = { old: segLabel(oldSegs), new: segLabel(workSegments) };
     if ((record.break_minutes ?? 0) !== breakMin) c.break_minutes = { old: `${record.break_minutes ?? 0}分`, new: `${breakMin}分` };
     if ((record.diff_minutes ?? 0) !== diffMin) c.diff_minutes = { old: formatSignedMin(record.diff_minutes ?? 0), new: formatSignedMin(diffMin) };
-    if ((record.location ?? '') !== location) c.location = { old: record.location ?? '', new: location };
+    if ((record.location ?? '') !== effectiveLocation) c.location = { old: record.location ?? '', new: effectiveLocation };
     if ((record.reason ?? '') !== reason) c.reason = { old: record.reason ?? '', new: reason };
     return c;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [record, workDate, workSegments, breakMin, diffMin, location, reason]);
+  }, [record, workDate, workSegments, breakMin, diffMin, effectiveLocation, reason]);
 
   const changedCount = Object.keys(changes).length;
   const FIELD_LABELS: Record<string, string> = { work_date: '勤務日', segments: '時間帯', break_minutes: '休憩', diff_minutes: '差分時間', location: '校', reason: '理由' };
@@ -110,7 +121,7 @@ const OvertimeEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSav
     if (workSegments.length === 0) { setError('勤務時間帯を入力してください。'); return; }
     const sorted = [...workSegments].sort((a, b) => a.startMin - b.startMin);
     for (let i = 1; i < sorted.length; i++) if (sorted[i].startMin < sorted[i - 1].endMin) { setError('時間帯が重なっています。'); return; }
-    if (!location) { setError('校を選択してください。'); return; }
+    if (!effectiveLocation) { setError('校を選択してください（その他の場合は入力してください）。'); return; }
     if (!reason.trim()) { setError('理由を入力してください。'); return; }
     if (changedCount === 0) { setError('変更された項目がありません。'); return; }
     if (!changeReason.trim()) { setError('修正理由を入力してください（本人へ通知されます）。'); return; }
@@ -130,7 +141,7 @@ const OvertimeEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSav
       p_diff_minutes: diffMin,
       p_legal_warning: !legal.ok,
       p_reason: reason.trim(),
-      p_location: location,
+      p_location: effectiveLocation,
       p_phase: phase,
       p_segments: segPayload,
       p_changes: changes,
@@ -192,11 +203,15 @@ const OvertimeEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSav
             <div style={{ fontSize: 12, color: sub }}>実労働 {formatMin(laborMin)}　差分 {formatSignedMin(diffMin)}{!legal.ok && <span style={{ color: '#dc3545', marginLeft: 8 }}>⚠ 休憩が法定基準に不足</span>}</div>
             <div>
               <label style={labelStyle}>校</label>
-              <select style={{ ...inputStyle, width: '100%' }} value={location} onChange={e => setLocation(e.target.value)}>
+              <select style={{ ...inputStyle, width: '100%' }} value={locMode === 'other' ? 'その他' : location}
+                onChange={e => { const v = e.target.value; if (v === 'その他') { setLocMode('other'); } else { setLocMode('select'); setLocation(v); } }}>
                 <option value="">校を選択</option>
                 {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
-                {location && !workplaces.includes(location) && <option value={location}>{location}</option>}
+                <option value="その他">その他（自由記載）</option>
               </select>
+              {locMode === 'other' && (
+                <input style={{ ...inputStyle, width: '100%', marginTop: 8 }} value={locationOther} onChange={e => setLocationOther(e.target.value)} placeholder="校名を入力（例：上桂校）" />
+              )}
             </div>
             <div>
               <label style={labelStyle}>理由</label>

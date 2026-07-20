@@ -730,15 +730,6 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       {/* 申請フォーム */}
       {tab === 'form' && (
         <div style={{ padding: 24, background: bg, borderRadius: '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
-          {/* 入力内容クリア（再申請モード中は元データを消さないよう非表示） */}
-          {!reapplySourceId && (
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-              <button type="button" onClick={clearLeaveForm}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: subText, background: 'none', border: `1px solid ${borderColor}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
-                🗑 クリア
-              </button>
-            </div>
-          )}
           {/* 再申請バナー */}
           {reapplySourceId && (
             <div style={{ background: isDark ? '#0d3a5e' : '#cce5ff', border: `1px solid ${isDark ? '#1a6fa8' : '#b8daff'}`, borderRadius: 8, padding: '10px 14px', marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -824,6 +815,16 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               </div>
             )}
           </div>
+
+          {/* 入力内容クリア（注意事項の下・入力欄の直前に配置。再申請モード中は非表示） */}
+          {!reapplySourceId && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+              <button type="button" onClick={clearLeaveForm}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: subText, background: 'none', border: `1px solid ${borderColor}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
+                🗑 クリア
+              </button>
+            </div>
+          )}
 
           {/* 申請者 */}
           <div style={{ marginBottom: 16 }}>

@@ -23,6 +23,32 @@ export interface ParsedDay {
 
 export const DEFAULT_LOCATION = '四条本校';
 
+// 校名の略称→正式名。掃除列の記載（例「本校大10～14:30→上桂」）から校を抽出するのに使う。
+const SCHOOL_ALIASES: [RegExp, string][] = [
+  [/四条本校|本校/, '四条本校'],
+  [/西陣/,   '西陣校'],
+  [/上桂/,   '上桂校'],
+  [/洛西口/, '洛西口校'],
+  [/南草津/, '南草津校'],
+];
+
+// 掃除列セルから校を解析する。
+// 「→」があれば移動とみなし「四条本校→上桂校」のように前後の校をつなぐ（案1）。
+// 「大10」等のコース・時刻表記は校ではないので無視。校が1つも見つからなければ四条本校。
+export function parseSchoolCell(raw: unknown): string {
+  if (typeof raw !== 'string' || !raw.trim()) return DEFAULT_LOCATION;
+  const parts = raw.split(/[→⇒>]/).map(s => s.trim()).filter(Boolean);
+  const schools: string[] = [];
+  for (const part of parts) {
+    for (const [re, full] of SCHOOL_ALIASES) {
+      if (re.test(part)) { schools.push(full); break; }
+    }
+  }
+  if (schools.length === 0) return DEFAULT_LOCATION;
+  const uniq = schools.filter((s, i) => i === 0 || s !== schools[i - 1]); // 連続重複を除去
+  return uniq.join('→');
+}
+
 export interface ParsedPerson {
   rawName: string;        // Excelの表記そのまま（「東　日菜  1/17～」等）
   name: string;           // 注記を除いた名前
@@ -131,8 +157,7 @@ export async function parseShiftSheet(buf: ArrayBuffer, sheetName: string): Prom
         const end2 = toMin(cellVal(row2, c + 2));
         const hasBand2 = start2 != null && end2 != null && end2 > start2;
         const locRaw = cellVal(row2, sojiCol);
-        const location = (typeof locRaw === 'string' && locRaw.includes('校'))
-          ? locRaw.replace(/[\s　]/g, '') : DEFAULT_LOCATION;
+        const location = parseSchoolCell(locRaw);
         const hasBand1 = start != null && end != null && end > start;
         days[kind] = {
           startMin: hasBand1 ? start : null,
