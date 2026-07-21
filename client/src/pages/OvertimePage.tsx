@@ -2221,6 +2221,19 @@ const SummaryView: React.FC<{
         <p style={{ margin: '16px 0', fontSize: 13, color: subText, textAlign: 'center' }}>該当する記録はありません</p>
       ) : (
         <>
+          <div style={{ background: innerBg, borderRadius: 8, padding: '10px 12px', marginBottom: 12, fontSize: 14, fontWeight: 'bold', color: text }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>総合計（確定）</span>
+              <span style={{ color: diffColor(total, isDark) }}>{formatSignedMin(total)}</span>
+            </div>
+            {plannedTotal !== total && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 'normal', color: subText, marginTop: 2 }}>
+                <span>見込み合計</span>
+                <span>{formatSignedMin(plannedTotal)}</span>
+              </div>
+            )}
+          </div>
+          <p style={{ margin: '0 0 12px', fontSize: 11.5, color: subText }}>名前をタップすると個人の申請履歴を確認できます。確定＝給与に効く数字です。</p>
           {groupOrder.map(g => {
             const grows = visibleRows.filter(r => r.group === g);
             const sub = grows.reduce((s, r) => s + r.total, 0);
@@ -2259,19 +2272,6 @@ const SummaryView: React.FC<{
               </div>
             );
           })}
-          <div style={{ background: innerBg, borderRadius: 8, padding: '10px 12px', fontSize: 14, fontWeight: 'bold', color: text }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span>総合計（確定）</span>
-              <span style={{ color: diffColor(total, isDark) }}>{formatSignedMin(total)}</span>
-            </div>
-            {plannedTotal !== total && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 'normal', color: subText, marginTop: 2 }}>
-                <span>見込み合計</span>
-                <span>{formatSignedMin(plannedTotal)}</span>
-              </div>
-            )}
-          </div>
-          <p style={{ margin: '8px 0 0', fontSize: 11.5, color: subText }}>名前をタップすると個人の申請履歴を確認できます。確定＝給与に効く数字です。</p>
         </>
       )}
     </div>
