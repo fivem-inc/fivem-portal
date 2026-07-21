@@ -202,6 +202,84 @@ function resolveNormalShift(
   };
 }
 
+// 単一日付のタップ即確定カレンダー（スマホで「設定」を押させないため native input を置換）。
+// min/max で選べる範囲を制限（事前申請=当日以降・事後報告=当日以前）。
+const SingleDatePicker: React.FC<{
+  value: string;
+  onChange: (date: string) => void;
+  isDark: boolean;
+  minDate?: string;
+  maxDate?: string;
+}> = ({ value, onChange, isDark, minDate, maxDate }) => {
+  const text = isDark ? '#f8f9fa' : '#212529';
+  const borderColor = isDark ? '#6c757d' : '#dee2e6';
+  const base = value ? new Date(value + 'T00:00:00') : new Date();
+  const [viewYear, setViewYear] = useState(base.getFullYear());
+  const [viewMonth, setViewMonth] = useState(base.getMonth());
+  // 選択中の日付にビューを追従（モード切替で当日にジャンプ等）
+  useEffect(() => {
+    if (!value) return;
+    const d = new Date(value + 'T00:00:00');
+    setViewYear(d.getFullYear()); setViewMonth(d.getMonth());
+  }, [value]);
+
+  const fmt = (y: number, m: number, d: number) => `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const firstDay = new Date(viewYear, viewMonth, 1).getDay();
+  const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
+  const t = new Date();
+  const todayStr = fmt(t.getFullYear(), t.getMonth(), t.getDate());
+  const prevMonth = () => { if (viewMonth === 0) { setViewYear(y => y - 1); setViewMonth(11); } else setViewMonth(m => m - 1); };
+  const nextMonth = () => { if (viewMonth === 11) { setViewYear(y => y + 1); setViewMonth(0); } else setViewMonth(m => m + 1); };
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  return (
+    <div style={{ background: isDark ? '#495057' : '#f8f9fa', borderRadius: 10, padding: 12, border: `1px solid ${borderColor}` }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <button type="button" onClick={prevMonth} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: text, padding: '0 10px', lineHeight: 1 }}>‹</button>
+        <span style={{ fontWeight: 'bold', color: text, fontSize: 15 }}>{viewYear}年 {viewMonth + 1}月</span>
+        <button type="button" onClick={nextMonth} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: text, padding: '0 10px', lineHeight: 1 }}>›</button>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, marginBottom: 4 }}>
+        {dayNames.map((d, i) => (
+          <div key={d} style={{ textAlign: 'center', fontSize: 11, fontWeight: 'bold', color: i === 0 ? '#e74c3c' : i === 6 ? '#3498db' : text, padding: '3px 0' }}>{d}</div>
+        ))}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
+        {cells.map((day, i) => {
+          if (!day) return <div key={`e-${i}`} />;
+          const dateStr = fmt(viewYear, viewMonth, day);
+          const isSelected = dateStr === value;
+          const dow = (firstDay + day - 1) % 7;
+          const isToday = dateStr === todayStr;
+          const disabled = (!!minDate && dateStr < minDate) || (!!maxDate && dateStr > maxDate);
+          return (
+            <button key={dateStr} type="button" disabled={disabled}
+              onClick={() => onChange(dateStr)}
+              style={{
+                padding: '10px 2px', minHeight: 40, borderRadius: 6,
+                border: isToday ? '2px solid #007bff' : '1px solid transparent',
+                background: isSelected ? '#28a745' : 'transparent',
+                color: disabled ? (isDark ? '#5c636a' : '#c4c9cf') : isSelected ? 'white' : dow === 0 ? '#e74c3c' : dow === 6 ? '#3498db' : text,
+                cursor: disabled ? 'default' : 'pointer', fontSize: 13,
+                fontWeight: isSelected ? 'bold' : 'normal', textAlign: 'center',
+              }}>
+              {day}
+            </button>
+          );
+        })}
+      </div>
+      {value && (
+        <p style={{ margin: '10px 0 0', fontSize: 13, color: '#28a745', fontWeight: 'bold' }}>
+          ✓ {parseInt(value.slice(5, 7))}/{parseInt(value.slice(8, 10))}（{dayNames[new Date(value + 'T00:00:00').getDay()]}）を選択中
+        </p>
+      )}
+    </div>
+  );
+};
+
 // ────────────────────────────────────────────────────────────────
 // 申請・報告フォーム
 // ────────────────────────────────────────────────────────────────
@@ -456,6 +534,14 @@ const OvertimeForm: React.FC<{
   const isSelfReview = reviewerId === SELF_REVIEW_VALUE;
 
   const today = todayJstStr();
+
+  // モード切替で選択日が範囲外になったらクリア（無効な日が選択済みに見えるのを防ぐ・新規のみ）
+  useEffect(() => {
+    if (editTarget || !date) return;
+    if (mode === 'advance' && date < today) setDate('');
+    if (mode === 'posthoc' && date > today) setDate('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   const validate = (): string => {
     if (!date) return '日付を選択してください';
@@ -718,12 +804,19 @@ const OvertimeForm: React.FC<{
 
       {/* 日付 */}
       <div style={{ marginBottom: 12 }}>
-        <span style={labelStyle}>日付{req}</span>
-        <input type="date" value={date} onChange={e => setDate(e.target.value)}
-          disabled={!!editTarget}
-          min={mode === 'advance' && !editTarget ? today : undefined}
-          max={mode === 'posthoc' ? today : undefined}
-          style={fieldStyle} />
+        <span style={labelStyle}>日付{req}
+          {!editTarget && <span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（日付をタップして選択・{mode === 'advance' ? '当日以降' : '当日以前'}のみ）</span>}
+        </span>
+        {editTarget ? (
+          // 実績報告・再提出は勤務日固定。誤操作防止のため表示のみ
+          <div style={{ ...fieldStyle, background: isDark ? '#3a3f44' : '#f1f3f5', color: subText }}>
+            {date}（{dowLabel(date)}）
+          </div>
+        ) : (
+          <SingleDatePicker value={date} onChange={setDate} isDark={isDark}
+            minDate={mode === 'advance' ? today : undefined}
+            maxDate={mode === 'posthoc' ? today : undefined} />
+        )}
       </div>
 
       {/* 通常シフト自動表示 */}
