@@ -162,10 +162,72 @@ function diffColor(min: number, isDark: boolean): string {
   return isDark ? '#adb5bd' : '#6c757d';
 }
 
+// 見込み(予定込み)合計に加算する未確定ステータス。
+// request_confirmed（事前受理済み・実績待ち）を含めないと受理済みの時間が消えるため必ず含める。
+// returned（差し戻し中）・cancelled（取消済み）は合計に入れない（cancelledは同日再申請で行が残存＝足すと二重計上）。
+const PLANNED_STATUSES: OvertimeStatus[] = ['requested', 'request_confirmed', 'reported'];
+
+export interface BalanceSummary {
+  total: number;         // 確定合計 = Σ diff_minutes（confirmed）。給与に効く数字
+  plannedDelta: number;  // 見込みの増分 = Σ diff_minutes（未確定ステータス）
+  plannedTotal: number;  // 見込み合計 = total + plannedDelta
+  plus: number;          // 残業（確定・プラス分）
+  choseiMinus: number;   // 調整休（確定・マイナス分）
+  otherMinus: number;    // 早退・調整（確定・マイナス分）
+  minus: number;
+  absenceDays: number;   // 欠勤（確定・日数別枠。時間には入れない）
+  absencePending: number;// 欠勤（申請中）
+  pendingCount: number;  // 確認待ち件数（requested/reported）
+}
+
+// 合計時間数の内訳を計算する純関数。本人カード・部門集計・個人詳細で共用する。
+// allRows: 任意ユーザーの overtime_reports（複数期間を含んでよい）。period で対象期を絞る。
+export function computeBalance(allRows: OvertimeReport[], period: string): BalanceSummary {
+  const inPeriod = allRows.filter(r => r.pay_period_start === period);
+  const confirmed = inPeriod.filter(r => r.status === 'confirmed');
+
+  // 二重減算防止: 同日に確定済みの leave_auto（休暇由来の自動マイナス行）がある場合、
+  // 同日の手動 chosei_off は計上しない（leave_auto を正とする）。両者は別々の部分ユニークで共存し得る。
+  const autoDates = new Set(confirmed.filter(r => r.entry_type === 'leave_auto').map(r => r.work_date));
+  const isDupChosei = (r: OvertimeReport) =>
+    r.entry_type === 'manual' && (r.application_types ?? []).includes('chosei_off') && autoDates.has(r.work_date);
+  const counted = confirmed.filter(r => !isDupChosei(r));
+
+  const isChosei = (r: OvertimeReport) => r.entry_type === 'leave_auto' || (r.application_types ?? []).includes('chosei_off');
+  const total = counted.reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
+  const plus = counted.filter(r => (r.diff_minutes ?? 0) > 0).reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
+  const choseiMinus = counted.filter(r => (r.diff_minutes ?? 0) < 0 && isChosei(r)).reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
+  const otherMinus = counted.filter(r => (r.diff_minutes ?? 0) < 0 && !isChosei(r)).reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
+  const minus = choseiMinus + otherMinus;
+
+  // 見込み: 未確定ステータスの diff を加算（終日欠勤は diff=0 のため時間には影響しない）
+  const plannedDelta = inPeriod.filter(r => PLANNED_STATUSES.includes(r.status)).reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
+  const plannedTotal = total + plannedDelta;
+
+  // 欠勤は時間に入れず日数で別枠カウント
+  const absenceDays = counted.filter(r => (r.application_types ?? []).includes('absence')).length;
+  const absencePending = inPeriod.filter(r => r.status === 'requested' && (r.application_types ?? []).includes('absence')).length;
+  const pendingCount = inPeriod.filter(r => r.status === 'requested' || r.status === 'reported').length;
+
+  return { total, plannedDelta, plannedTotal, plus, choseiMinus, otherMinus, minus, absenceDays, absencePending, pendingCount };
+}
+
+// 部門集計の一覧行（1人分）。total=確定合計 / plannedTotal=見込み合計 / absenceDays=欠勤日数（別枠）
+interface SummaryRow { userId: string; name: string; group: string; total: number; plannedTotal: number; absenceDays: number; }
+type ProfLite = { id: string; name: string; group_names: string[] | null };
+
 /** "HH:MM(:SS)" → "HH:MM" 表示用 */
 function fmtTime(t: string | null | undefined): string {
   if (!t) return '-';
   return t.slice(0, 5);
+}
+
+/** 分 → <input type="time"> 用の "HH:MM"（時を必ずゼロ埋め・翌日印は除去）。
+ * minToTime は表示用で時をゼロ埋めしないため（例 "9:15"）、そのまま value に入れると
+ * time入力が不正値扱いで空表示になる。入力欄へ渡すときはこの関数で "09:15" に整える。 */
+function toTimeInputValue(min: number): string {
+  const [h, m] = minToTime(min).replace('翌', '').split(':');
+  return `${h.padStart(2, '0')}:${m}`;
 }
 
 /** 時間帯配列（分）→「10:00〜17:20 / 18:00〜19:00」表示 */
@@ -340,7 +402,7 @@ const OvertimeForm: React.FC<{
       const rows = (editTarget.segments ?? []).filter(s => s.phase === phase).sort((a, b) => a.seg_no - b.seg_no);
       const fallback = (editTarget.segments ?? []).filter(s => s.phase === 'planned').sort((a, b) => a.seg_no - b.seg_no);
       const use = rows.length > 0 ? rows : fallback;
-      if (use.length > 0) return use.map(s => ({ start: minToTime(s.start_min).replace('翌', ''), end: minToTime(s.end_min).replace('翌', '') }));
+      if (use.length > 0) return use.map(s => ({ start: toTimeInputValue(s.start_min), end: toTimeInputValue(s.end_min) }));
       return [{ ...EMPTY_SEG }];
     }
     return draft?.segments?.length ? draft.segments : [{ ...EMPTY_SEG }];
@@ -1315,13 +1377,18 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
   const [editTarget, setEditTarget] = useState<OvertimeReport | null>(null);
   const [savedBanner, setSavedBanner] = useState(false);
   const [cancelTargetId, setCancelTargetId] = useState<string | null>(null);
-  const [historyMode, setHistoryMode] = useState<'own' | 'summary'>('own');
+  const [historyMode, setHistoryMode] = useState<'own' | 'summary'>(searchParams.get('staff') ? 'summary' : 'own');
   const [canSummary, setCanSummary] = useState(false);
 
   // 集計モード用
   const [summaryPeriod, setSummaryPeriod] = useState(() => calcPayPeriodStartJst(todayJstStr()));
-  const [summaryRows, setSummaryRows] = useState<{ userId: string; name: string; group: string; total: number }[]>([]);
+  const [summaryRows, setSummaryRows] = useState<SummaryRow[]>([]);
   const [summaryGroups, setSummaryGroups] = useState<string[]>([]);
+  const [myGroups, setMyGroups] = useState<string[]>([]);           // 閲覧者自身の部門（初期スコープ用）
+  const [summaryShowAll, setSummaryShowAll] = useState(false);       // 全部門を表示するトグル（初期は自部門のみ）
+  const [summaryNameQuery, setSummaryNameQuery] = useState('');      // 名前検索
+  const [summaryFilterOpen, setSummaryFilterOpen] = useState(false); // 「絞り込み」折りたたみ
+  const [selectedStaffId, setSelectedStaffId] = useState<string | null>(searchParams.get('staff')); // 個人詳細で選択中の対象者
 
   // 受理画面用
   const [returnTargetId, setReturnTargetId] = useState<string | null>(null);
@@ -1370,67 +1437,87 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const [, , revRes, wpRes, patRes, permRes] = await Promise.all([
+      const [, , revRes, wpRes, patRes, permRes, myProfRes] = await Promise.all([
         fetchOwn(),
         fetchPendingForMe(),
         supabase.from('profiles').select('id, name, role_title').in('role_title', REVIEWER_ROLES).eq('is_active', true).order('role_title').order('name'),
         supabase.from('master_options').select('value').eq('category', 'workplace').order('sort_order'),
         supabase.from('weekly_shift_patterns').select('*').eq('user_id', user.id),
         supabase.rpc('has_feature_permission', { p_feature: 'overtime_summary' }),
+        supabase.from('profiles').select('group_names').eq('id', user.id).maybeSingle(),
       ]);
       setReviewers((revRes.data as Reviewer[] | null) ?? []);
       setWorkplaces(((wpRes.data as { value: string }[] | null) ?? []).map(w => w.value));
       setPatterns((patRes.data as PatternRow[] | null) ?? []);
       setCanSummary(isAdmin || permRes.data === true);
+      setMyGroups(((myProfRes.data as { group_names: string[] | null } | null)?.group_names) ?? []);
       setLoading(false);
     })();
   }, [fetchOwn, fetchPendingForMe, user.id, isAdmin]);
 
-  // 集計モードのデータ取得
+  // 集計モードのデータ取得。確定・見込みの2値を出すため全ステータスを取得（集約のみ・segmentsは詳細で遅延取得）。
   useEffect(() => {
     if (historyMode !== 'summary' || !canSummary) return;
     (async () => {
-      const [repRes, profRes, setRes] = await Promise.all([
+      const [repRes, setRes] = await Promise.all([
         supabase.from('overtime_reports')
-          .select('applicant_id, diff_minutes, status')
-          .eq('pay_period_start', summaryPeriod)
-          .eq('status', 'confirmed'),
-        supabase.from('profiles').select('id, name, group_names, employment_type').eq('is_active', true),
+          .select('applicant_id, work_date, pay_period_start, entry_type, status, diff_minutes, application_types')
+          .eq('pay_period_start', summaryPeriod),
         supabase.from('overtime_settings').select('banner_group_names').eq('id', 1).maybeSingle(),
       ]);
       const whitelist: string[] = (setRes.data?.banner_group_names as string[] | null) ?? [];
       setSummaryGroups(whitelist);
-      const totals = new Map<string, number>();
-      for (const r of (repRes.data as { applicant_id: string; diff_minutes: number | null }[] | null) ?? []) {
-        totals.set(r.applicant_id, (totals.get(r.applicant_id) ?? 0) + (r.diff_minutes ?? 0));
+
+      const repRows = (repRes.data as OvertimeReport[] | null) ?? [];
+      const ids = [...new Set(repRows.map(r => r.applicant_id))];
+
+      // 名簿の解決:
+      //  - 追跡部門(whitelist group)所属のアクティブ社員 → 未申請でも 0:00 で一覧に出す
+      //  - その期に行を持つ applicant（退職者・その他部門を含む）→ id で解決（is_active で絞らない）
+      const [rosterRes, rowProfRes] = await Promise.all([
+        whitelist.length > 0
+          ? supabase.from('profiles').select('id, name, group_names').eq('is_active', true).neq('employment_type', 'パート').overlaps('group_names', whitelist)
+          : Promise.resolve({ data: [] as ProfLite[] }),
+        ids.length > 0
+          ? supabase.from('profiles').select('id, name, group_names').in('id', ids)
+          : Promise.resolve({ data: [] as ProfLite[] }),
+      ]);
+      const rosterProfs = (rosterRes.data as ProfLite[] | null) ?? [];
+      const profMap = new Map<string, ProfLite>();
+      for (const p of [...rosterProfs, ...((rowProfRes.data as ProfLite[] | null) ?? [])]) profMap.set(p.id, p);
+
+      const byUser = new Map<string, OvertimeReport[]>();
+      for (const r of repRows) {
+        const arr = byUser.get(r.applicant_id) ?? [];
+        arr.push(r);
+        byUser.set(r.applicant_id, arr);
       }
-      const profs = (profRes.data as { id: string; name: string; group_names: string[] | null; employment_type: string | null }[] | null) ?? [];
-      const rows = [...totals.entries()].map(([userId, total]) => {
-        const p = profs.find(x => x.id === userId);
+      // 名簿（追跡部門メンバー）＋ 行を持つ人 の和集合。未申請者は 0:00 で並ぶ。
+      const memberIds = [...new Set([...rosterProfs.map(p => p.id), ...ids])];
+      const rows: SummaryRow[] = memberIds.map(userId => {
+        const p = profMap.get(userId);
         const group = whitelist.find(g => (p?.group_names ?? []).includes(g)) ?? 'その他';
-        return { userId, name: p?.name ?? '不明', group, total };
+        const b = computeBalance(byUser.get(userId) ?? [], summaryPeriod);
+        return { userId, name: p?.name ?? '不明', group, total: b.total, plannedTotal: b.plannedTotal, absenceDays: b.absenceDays };
       });
       rows.sort((a, b) => a.group === b.group ? a.name.localeCompare(b.name, 'ja') : a.group.localeCompare(b.group, 'ja'));
       setSummaryRows(rows);
     })();
   }, [historyMode, canSummary, summaryPeriod]);
 
-  // ---- 合計時間数（今期通算） ----
-  const balance = useMemo(() => {
-    const rows = reports.filter(r => r.pay_period_start === currentPeriod && r.status === 'confirmed');
-    const total = rows.reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
-    const plus = rows.filter(r => (r.diff_minutes ?? 0) > 0).reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
-    // マイナスの内訳: 調整休（休暇由来の自動計上＋残業ページの時間外調整休）と、その他（早退・調整早退など）
-    const isChosei = (r: OvertimeReport) => r.entry_type === 'leave_auto' || (r.application_types ?? []).includes('chosei_off');
-    const choseiMinus = rows.filter(r => (r.diff_minutes ?? 0) < 0 && isChosei(r)).reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
-    const otherMinus = rows.filter(r => (r.diff_minutes ?? 0) < 0 && !isChosei(r)).reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
-    const minus = choseiMinus + otherMinus;
-    // 欠勤は合計時間数に入れず日数で別枠カウント
-    const absenceDays = rows.filter(r => (r.application_types ?? []).includes('absence')).length;
-    const absencePending = reports.filter(r => r.pay_period_start === currentPeriod && r.status === 'requested' && (r.application_types ?? []).includes('absence')).length;
-    const pendingCount = reports.filter(r => r.pay_period_start === currentPeriod && ['requested', 'reported'].includes(r.status)).length;
-    return { total, plus, minus, choseiMinus, otherMinus, absenceDays, absencePending, pendingCount };
-  }, [reports, currentPeriod]);
+  // 個人詳細の選択/解除。ブラウザ戻る対応のため ?staff= を URL に載せる（他のクエリは保持）。
+  const selectStaff = useCallback((id: string) => {
+    setSelectedStaffId(id);
+    setSearchParams(prev => { const n = new URLSearchParams(prev); n.set('staff', id); return n; });
+    window.scrollTo({ top: 0 });
+  }, [setSearchParams]);
+  const clearSelectedStaff = useCallback(() => {
+    setSelectedStaffId(null);
+    setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('staff'); return n; });
+  }, [setSearchParams]);
+
+  // ---- 合計時間数（今期通算） ---- 本人カード・部門集計・個人詳細で共通の computeBalance を使う
+  const balance = useMemo(() => computeBalance(reports, currentPeriod), [reports, currentPeriod]);
 
   const prevPeriodBalance = useMemo(() => {
     const [y, m] = currentPeriod.split('-').map(Number);
@@ -1525,7 +1612,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
       <div style={{ maxWidth: 600, margin: '0 auto', padding: '16px 16px 40px' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-            <button onClick={() => setSearchParams({})}
+            <button onClick={() => { setSearchParams({}); window.scrollTo({ top: 0 }); }}
               style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: text }}>←</button>
             <h2 style={{ margin: 0, fontSize: 17, color: text }}>✅ 残業・時間調整の確認</h2>
             {pendingForMe.length > 0 && (
@@ -1751,7 +1838,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
 
         {/* 確認ページへ（確認者・集計閲覧者のみ・タブ直下） */}
         {(canSummary || pendingForMe.length > 0) && (
-          <button onClick={() => setSearchParams({ view: 'confirm' })}
+          <button onClick={() => { setSearchParams({ view: 'confirm' }); window.scrollTo({ top: 0 }); }}
             style={{ width: '100%', padding: '10px', background: '#fd7e14', color: 'white', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', marginTop: 8, marginBottom: 8, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, boxSizing: 'border-box' }}>
             <span>✅ 確認ページへ</span>
             {pendingForMe.length > 0 && (
@@ -1781,7 +1868,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
               {canSummary && (
                 <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
                   {(['own', 'summary'] as const).map(m => (
-                    <button key={m} onClick={() => setHistoryMode(m)}
+                    <button key={m} onClick={() => { setHistoryMode(m); if (m === 'own') clearSelectedStaff(); }}
                       style={{
                         flex: 1, padding: '8px 0', borderRadius: 8, cursor: 'pointer', fontSize: 13,
                         fontWeight: historyMode === m ? 'bold' : 'normal',
@@ -1796,18 +1883,37 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
               )}
 
               {historyMode === 'summary' && canSummary ? (
-                <SummaryView
-                  isDark={isDark} rows={summaryRows} groups={summaryGroups}
-                  period={summaryPeriod} onChangePeriod={setSummaryPeriod}
-                />
+                selectedStaffId ? (
+                  <MemberDetailView
+                    isDark={isDark}
+                    userId={selectedStaffId}
+                    name={summaryRows.find(r => r.userId === selectedStaffId)?.name ?? ''}
+                    period={summaryPeriod}
+                    onBack={clearSelectedStaff}
+                  />
+                ) : (
+                  <SummaryView
+                    isDark={isDark} rows={summaryRows} groups={summaryGroups}
+                    period={summaryPeriod} onChangePeriod={setSummaryPeriod}
+                    myGroups={myGroups} showAll={summaryShowAll} onToggleShowAll={setSummaryShowAll}
+                    nameQuery={summaryNameQuery} onChangeName={setSummaryNameQuery}
+                    filterOpen={summaryFilterOpen} onToggleFilter={() => setSummaryFilterOpen(o => !o)}
+                    onSelect={selectStaff}
+                  />
+                )
               ) : (
                 <>
                   {/* 合計時間数カード */}
                   <div style={{ background: innerBg, borderRadius: 12, padding: '14px 16px', marginBottom: 8 }}>
                     <p style={{ margin: 0, fontSize: 12.5, color: subText }}>今期の合計時間数（{payPeriodLabel(currentPeriod)}・{payMonthLabel(currentPeriod)}）</p>
-                    <p style={{ margin: '4px 0 6px', fontSize: 26, fontWeight: 'bold', color: diffColor(balance.total, isDark) }}>
+                    <p style={{ margin: '4px 0 2px', fontSize: 26, fontWeight: 'bold', color: diffColor(balance.total, isDark) }}>
                       {formatSignedMin(balance.total)}
                     </p>
+                    {balance.plannedDelta !== 0 && (
+                      <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText }}>
+                        見込み {formatSignedMin(balance.plannedTotal)}（確認待ち反映後）
+                      </p>
+                    )}
                     <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4, fontSize: 12.5, color: subText, borderTop: `1px solid ${borderColor}`, paddingTop: 8 }}>
                       <span>残業 {formatSignedMin(balance.plus)}</span>
                       <span>調整休 {formatSignedMin(balance.choseiMinus)}</span>
@@ -2014,54 +2120,94 @@ const MyPatternToggle: React.FC<{ isDark: boolean; patterns: PatternRow[] }> = (
   );
 };
 
+// 期間の選択肢（今期から過去6期分）
+function recentPeriods(count = 6): string[] {
+  const opts: string[] = [];
+  let p = calcPayPeriodStartJst(todayJstStr());
+  for (let i = 0; i < count; i++) {
+    opts.push(p);
+    const [y, m] = p.split('-').map(Number);
+    const py = m === 1 ? y - 1 : y;
+    const pm = m === 1 ? 12 : m - 1;
+    p = `${py}-${String(pm).padStart(2, '0')}-16`;
+  }
+  return opts;
+}
+
 // ────────────────────────────────────────────────────────────────
-// 部門集計ビュー（リーダー以上）
+// 部門集計ビュー（リーダー以上）。行タップで個人詳細へ。合計は確定を主・見込みを併記。
 // ────────────────────────────────────────────────────────────────
 const SummaryView: React.FC<{
   isDark: boolean;
-  rows: { userId: string; name: string; group: string; total: number }[];
+  rows: SummaryRow[];
   groups: string[];
   period: string;
   onChangePeriod: (p: string) => void;
-}> = ({ isDark, rows, groups, period, onChangePeriod }) => {
+  myGroups: string[];
+  showAll: boolean;
+  onToggleShowAll: (v: boolean) => void;
+  nameQuery: string;
+  onChangeName: (v: string) => void;
+  filterOpen: boolean;
+  onToggleFilter: () => void;
+  onSelect: (userId: string) => void;
+}> = ({ isDark, rows, groups, period, onChangePeriod, myGroups, showAll, onToggleShowAll, nameQuery, onChangeName, filterOpen, onToggleFilter, onSelect }) => {
   const text = isDark ? '#f8f9fa' : '#212529';
   const subText = isDark ? '#adb5bd' : '#6c757d';
   const borderColor = isDark ? '#495057' : '#dee2e6';
   const innerBg = isDark ? '#2b3035' : '#f8f9fa';
+  const inputBg = isDark ? '#495057' : '#fff';
 
-  // 期間の選択肢（今期から過去6期分）
-  const periodOptions = useMemo(() => {
-    const opts: string[] = [];
-    let p = calcPayPeriodStartJst(todayJstStr());
-    for (let i = 0; i < 6; i++) {
-      opts.push(p);
-      const [y, m] = p.split('-').map(Number);
-      const py = m === 1 ? y - 1 : y;
-      const pm = m === 1 ? 12 : m - 1;
-      p = `${py}-${String(pm).padStart(2, '0')}-16`;
-    }
-    return opts;
-  }, []);
+  const periodOptions = useMemo(() => recentPeriods(6), []);
 
-  const groupOrder = [...groups, 'その他'].filter(g => rows.some(r => r.group === g));
-  const total = rows.reduce((s, r) => s + r.total, 0);
+  // 閲覧者自身の部門（whitelist上の区分）。初期はこの部門だけ表示し、トグルで全部門へ。
+  const myScopeGroup = groups.find(g => myGroups.includes(g));
+  const scoped = !showAll && !!myScopeGroup;
+
+  const visibleRows = rows.filter(r => {
+    if (nameQuery.trim() && !r.name.includes(nameQuery.trim())) return false;
+    if (scoped && r.group !== myScopeGroup) return false;
+    return true;
+  });
+  const groupOrder = [...groups, 'その他'].filter(g => visibleRows.some(r => r.group === g));
+  const total = visibleRows.reduce((s, r) => s + r.total, 0);
+  const plannedTotal = visibleRows.reduce((s, r) => s + r.plannedTotal, 0);
+
+  const selectStyle: React.CSSProperties = { padding: '6px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: inputBg, color: text, fontSize: 13 };
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 8, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 14, fontWeight: 'bold', color: text }}>📊 月次集計</span>
-        <select value={period} onChange={e => onChangePeriod(e.target.value)}
-          style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: isDark ? '#495057' : '#fff', color: text, fontSize: 13 }}>
+        <select value={period} onChange={e => onChangePeriod(e.target.value)} style={selectStyle}>
           {periodOptions.map(p => <option key={p} value={p}>{payMonthLabel(p)}（{payPeriodLabel(p)}）</option>)}
         </select>
       </div>
 
-      {rows.length === 0 ? (
-        <p style={{ margin: '16px 0', fontSize: 13, color: subText, textAlign: 'center' }}>この期間の確定データはまだありません</p>
+      {/* 常時: 名前検索。部門は自部門/全部門トグル。状態などの詳細は折りたたみ。 */}
+      <input value={nameQuery} onChange={e => onChangeName(e.target.value)} placeholder="名前で絞り込み"
+        style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: inputBg, color: text, fontSize: 13, marginBottom: 8 }} />
+      {myScopeGroup && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: subText, marginBottom: 4, cursor: 'pointer' }}>
+          <input type="checkbox" checked={showAll} onChange={e => onToggleShowAll(e.target.checked)} />
+          全部門を表示（オフのときは自部門「{myScopeGroup}」のみ）
+        </label>
+      )}
+      <button onClick={onToggleFilter} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#0d6efd', padding: 0, marginBottom: 10 }}>
+        絞り込み{filterOpen ? ' ▲' : ' ▼'}
+      </button>
+      {filterOpen && (
+        <div style={{ border: `1px solid ${borderColor}`, borderRadius: 10, padding: '10px 12px', marginBottom: 10, fontSize: 12.5, color: subText }}>
+          <p style={{ margin: 0 }}>合計は<strong style={{ color: text }}>確定</strong>を主に表示し、<strong style={{ color: text }}>見込</strong>（申請中・受理済み・報告待ちを反映）を下に併記します。差し戻し・取消は合計に含みません。</p>
+        </div>
+      )}
+
+      {visibleRows.length === 0 ? (
+        <p style={{ margin: '16px 0', fontSize: 13, color: subText, textAlign: 'center' }}>該当する記録はありません</p>
       ) : (
         <>
           {groupOrder.map(g => {
-            const grows = rows.filter(r => r.group === g);
+            const grows = visibleRows.filter(r => r.group === g);
             const sub = grows.reduce((s, r) => s + r.total, 0);
             return (
               <div key={g} style={{ marginBottom: 14 }}>
@@ -2069,27 +2215,169 @@ const SummaryView: React.FC<{
                 <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse', color: text }}>
                   <tbody>
                     {grows.map(r => (
-                      <tr key={r.userId}>
-                        <td style={{ padding: '5px 0', borderBottom: `1px solid ${borderColor}` }}>{r.name}</td>
-                        <td style={{ padding: '5px 0', borderBottom: `1px solid ${borderColor}`, textAlign: 'right', color: diffColor(r.total, isDark), fontWeight: 'bold' }}>
-                          {formatSignedMin(r.total)}
+                      <tr key={r.userId} onClick={() => onSelect(r.userId)} style={{ cursor: 'pointer' }}>
+                        <td style={{ padding: '7px 0', borderBottom: `1px solid ${borderColor}` }}>
+                          {r.name}
+                          {r.absenceDays > 0 && <span style={{ marginLeft: 6, fontSize: 11, color: subText }}>欠{r.absenceDays}日</span>}
                         </td>
+                        <td style={{ padding: '7px 0', borderBottom: `1px solid ${borderColor}`, textAlign: 'right' }}>
+                          <span style={{ color: diffColor(r.total, isDark), fontWeight: 'bold' }}>{formatSignedMin(r.total)}</span>
+                          {r.plannedTotal !== r.total && (
+                            <span style={{ display: 'block', fontSize: 11, color: subText }}>見込 {formatSignedMin(r.plannedTotal)}</span>
+                          )}
+                        </td>
+                        <td style={{ padding: '7px 0 7px 8px', borderBottom: `1px solid ${borderColor}`, textAlign: 'right', color: subText, width: 14 }}>›</td>
                       </tr>
                     ))}
                     <tr>
                       <td style={{ padding: '5px 0', fontWeight: 'bold' }}>小計</td>
                       <td style={{ padding: '5px 0', textAlign: 'right', fontWeight: 'bold', color: diffColor(sub, isDark) }}>{formatSignedMin(sub)}</td>
+                      <td />
                     </tr>
                   </tbody>
                 </table>
               </div>
             );
           })}
-          <div style={{ background: innerBg, borderRadius: 8, padding: '10px 12px', display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 'bold', color: text }}>
-            <span>総合計</span>
-            <span style={{ color: diffColor(total, isDark) }}>{formatSignedMin(total)}</span>
+          <div style={{ background: innerBg, borderRadius: 8, padding: '10px 12px', fontSize: 14, fontWeight: 'bold', color: text }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>総合計（確定）</span>
+              <span style={{ color: diffColor(total, isDark) }}>{formatSignedMin(total)}</span>
+            </div>
+            {plannedTotal !== total && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 'normal', color: subText, marginTop: 2 }}>
+                <span>見込み合計</span>
+                <span>{formatSignedMin(plannedTotal)}</span>
+              </div>
+            )}
           </div>
-          <p style={{ margin: '8px 0 0', fontSize: 11.5, color: subText }}>確認済み（確定）分のみを集計しています</p>
+          <p style={{ margin: '8px 0 0', fontSize: 11.5, color: subText }}>名前をタップすると個人の申請履歴を確認できます。確定＝給与に効く数字です。</p>
+        </>
+      )}
+    </div>
+  );
+};
+
+// ────────────────────────────────────────────────────────────────
+// 個人詳細ビュー（部門集計から名前タップで遷移。閲覧専用・その人の当期の全履歴）
+// ────────────────────────────────────────────────────────────────
+const MemberDetailView: React.FC<{
+  isDark: boolean;
+  userId: string;
+  name: string;
+  period: string;
+  onBack: () => void;
+}> = ({ isDark, userId, name, period, onBack }) => {
+  const text = isDark ? '#f8f9fa' : '#212529';
+  const subText = isDark ? '#adb5bd' : '#6c757d';
+  const borderColor = isDark ? '#495057' : '#dee2e6';
+  const innerBg = isDark ? '#2b3035' : '#f8f9fa';
+  const cardBg = isDark ? '#343a40' : '#fff';
+
+  const [rows, setRows] = useState<OvertimeReport[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    (async () => {
+      const { data, error } = await supabase.from('overtime_reports')
+        .select('*, applicant:profiles!overtime_reports_applicant_profiles_fkey(name), reviewer:profiles!overtime_reports_reviewer_profiles_fkey(name), segments:overtime_report_segments(*)')
+        .eq('applicant_id', userId)
+        .eq('pay_period_start', period)
+        .order('work_date', { ascending: false });
+      if (!alive) return;
+      if (error) { setLoadError('履歴の読み込みに失敗しました：' + error.message); setLoading(false); return; }
+      setLoadError('');
+      setRows((data as OvertimeReport[] | null) ?? []);
+      setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [userId, period]);
+
+  const b = useMemo(() => computeBalance(rows, period), [rows, period]);
+  // 取消済みは表示しない。差し戻しは表示する。
+  const visible = rows.filter(r => r.status !== 'cancelled');
+
+  return (
+    <div>
+      {/* パンくず＋戻る */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+        <button onClick={onBack} style={{ background: 'none', border: `1px solid ${borderColor}`, borderRadius: 8, cursor: 'pointer', fontSize: 12.5, color: subText, padding: '5px 10px' }}>← 一覧へ戻る</button>
+        <span style={{ fontSize: 12.5, color: subText }}>部門集計 › <span style={{ color: text, fontWeight: 'bold' }}>{name || '個人'}</span></span>
+      </div>
+
+      {/* 合計時間数カード（確定・見込み・内訳） */}
+      <div style={{ background: innerBg, borderRadius: 12, padding: '14px 16px', marginBottom: 10 }}>
+        <p style={{ margin: 0, fontSize: 12.5, color: subText }}>{payMonthLabel(period)}（{payPeriodLabel(period)}）の合計時間数</p>
+        <p style={{ margin: '4px 0 2px', fontSize: 24, fontWeight: 'bold', color: diffColor(b.total, isDark) }}>{formatSignedMin(b.total)}</p>
+        {b.plannedDelta !== 0 && (
+          <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText }}>見込み {formatSignedMin(b.plannedTotal)}（確認待ち反映後）</p>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4, fontSize: 12.5, color: subText, borderTop: `1px solid ${borderColor}`, paddingTop: 8 }}>
+          <span>残業 {formatSignedMin(b.plus)}</span>
+          <span>調整休 {formatSignedMin(b.choseiMinus)}</span>
+          <span>早退・調整 {formatSignedMin(b.otherMinus)}</span>
+        </div>
+        {b.absenceDays + b.absencePending > 0 && (
+          <p style={{ margin: '6px 0 0', fontSize: 12, color: subText }}>
+            欠勤 {b.absenceDays}日{b.absencePending > 0 && `（確認待ち${b.absencePending}件）`}
+          </p>
+        )}
+      </div>
+
+      {loadError && <p style={{ margin: '8px 0', fontSize: 12.5, color: isDark ? '#f5b5ba' : '#c62828' }}>{loadError}</p>}
+      {loading ? (
+        <p style={{ margin: '16px 0', fontSize: 13, color: subText, textAlign: 'center' }}>読み込み中…</p>
+      ) : visible.length === 0 ? (
+        <p style={{ margin: '16px 0', fontSize: 13, color: subText, textAlign: 'center' }}>この期間の申請・報告はありません</p>
+      ) : (
+        visible.map(r => <ReadonlyReportCard key={r.id} r={r} isDark={isDark} cardBg={cardBg} borderColor={borderColor} text={text} subText={subText} />)
+      )}
+    </div>
+  );
+};
+
+// 個人詳細の1申請カード（閲覧専用。アクションボタンは持たない）
+const ReadonlyReportCard: React.FC<{
+  r: OvertimeReport; isDark: boolean; cardBg: string; borderColor: string; text: string; subText: string;
+}> = ({ r, isDark, cardBg, borderColor, text, subText }) => {
+  const isAuto = r.entry_type === 'leave_auto';
+  const isFullDay = isFullDayReport(r.application_types);
+  const actual = (r.segments ?? []).filter(s => s.phase === 'actual').sort((a, b) => a.seg_no - b.seg_no);
+  const planned = (r.segments ?? []).filter(s => s.phase === 'planned').sort((a, b) => a.seg_no - b.seg_no);
+  const segs = actual.length > 0 ? actual : planned;
+  return (
+    <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, padding: '12px 14px', marginBottom: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4, gap: 6, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 14, fontWeight: 'bold', color: text }}>
+          {r.work_date.slice(5).replace('-', '/')}（{dowLabel(r.work_date)}）
+          <span style={{ color: diffColor(r.diff_minutes ?? 0, isDark), marginLeft: 6 }}>{formatSignedMin(r.diff_minutes ?? 0)}</span>
+        </span>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {isAuto && <span style={badgeStyle(AUTO_BADGE.color, AUTO_BADGE.darkBg, isDark)}>自動計上</span>}
+          {!isAuto && r.is_post_hoc && <span style={badgeStyle(POSTHOC_BADGE.color, POSTHOC_BADGE.darkBg, isDark)}>事後報告</span>}
+          {!isAuto && <span style={badgeStyle(STATUS_INFO[r.status].color, STATUS_INFO[r.status].darkBg, isDark)}>{STATUS_INFO[r.status].label}</span>}
+        </div>
+      </div>
+      {isAuto ? (
+        <p style={{ margin: 0, fontSize: 12.5, color: subText }}>🌿 休暇申請（時間外調整休）の受理により自動計上</p>
+      ) : (
+        <>
+          {(r.application_types ?? []).length > 0 && (
+            <div style={{ margin: '2px 0 4px' }}><TypeChips types={r.application_types} isDark={isDark} /></div>
+          )}
+          <p style={{ margin: 0, fontSize: 12.5, color: subText }}>
+            {isFullDay && '終日　'}
+            {isFullDay && r.furikae_origin_date && `振替元：${r.furikae_origin_date.slice(5).replace('-', '/')}（${dowLabel(r.furikae_origin_date)}）${r.furikae_origin_location ? '・' + r.furikae_origin_location : ''}　`}
+            {!isFullDay && segs.length > 0 && `${actual.length > 0 ? '実績' : '予定'}：${segmentsLabel(segs)}　`}
+            {!isFullDay && r.location && `校：${r.location}　`}
+            {r.reviewer?.name && `申請先：${r.reviewer.name}さん`}
+          </p>
+          {r.status === 'returned' && r.return_comment && (
+            <p style={{ margin: '4px 0 0', fontSize: 12.5, color: isDark ? '#f5b5ba' : '#c62828' }}>差し戻し理由：{r.return_comment}</p>
+          )}
         </>
       )}
     </div>
