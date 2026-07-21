@@ -9,6 +9,7 @@ import type { DayKind, CalendarKind } from '../../lib/breakCalc';
 import { DEFAULT_LOCATION } from '../../lib/shiftExcelImport';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
 import OvertimeEditModal, { type OvertimeRecord } from './OvertimeEditModal';
+import { OT_TYPE_INFO, isOvertimeType } from '../../lib/overtimeTypes';
 
 const OT_STATUS_LABEL: Record<string, { label: string; color: string }> = {
   requested:         { label: '事前申請', color: '#f59e0b' },
@@ -97,7 +98,7 @@ const OvertimeAdminTab: React.FC = () => {
   const fetchOtReports = useCallback(async () => {
     setOtLoading(true); setOtErr('');
     const { data, error } = await supabase.from('overtime_reports')
-      .select('id, applicant_id, work_date, entry_type, status, normal_shift, break_minutes, break_manual, labor_minutes, diff_minutes, reason, location')
+      .select('id, applicant_id, work_date, entry_type, status, normal_shift, break_minutes, break_manual, labor_minutes, diff_minutes, reason, location, application_types')
       .eq('entry_type', 'manual')
       .order('work_date', { ascending: false }).limit(300);
     if (error) { setOtErr('読み込みに失敗しました：' + error.message); setOtLoading(false); return; }
@@ -116,9 +117,9 @@ const OvertimeAdminTab: React.FC = () => {
       (segMap[s.report_id] = segMap[s.report_id] || []).push(s);
     });
     const statusMap: Record<string, string> = {};
-    setOtReports(rows.map((r: { id: string; applicant_id: string; work_date: string; entry_type: string; status: string; normal_shift: OvertimeRecord['normal_shift']; break_minutes: number | null; break_manual: boolean; labor_minutes: number | null; diff_minutes: number | null; reason: string | null; location: string | null }) => {
+    setOtReports(rows.map((r: { id: string; applicant_id: string; work_date: string; entry_type: string; status: string; normal_shift: OvertimeRecord['normal_shift']; break_minutes: number | null; break_manual: boolean; labor_minutes: number | null; diff_minutes: number | null; reason: string | null; location: string | null; application_types: string[] | null }) => {
       statusMap[r.id] = r.status;
-      return { id: r.id, applicant_id: r.applicant_id, applicantName: nameMap[r.applicant_id] || '不明', work_date: r.work_date, entry_type: r.entry_type, normal_shift: r.normal_shift, break_minutes: r.break_minutes, break_manual: r.break_manual, labor_minutes: r.labor_minutes, diff_minutes: r.diff_minutes, reason: r.reason, location: r.location, segments: segMap[r.id] || [] };
+      return { id: r.id, applicant_id: r.applicant_id, applicantName: nameMap[r.applicant_id] || '不明', work_date: r.work_date, entry_type: r.entry_type, normal_shift: r.normal_shift, break_minutes: r.break_minutes, break_manual: r.break_manual, labor_minutes: r.labor_minutes, diff_minutes: r.diff_minutes, reason: r.reason, location: r.location, application_types: r.application_types, segments: segMap[r.id] || [] };
     }));
     setOtStatusMap(statusMap);
     setOtLoading(false);
@@ -138,6 +139,16 @@ const OvertimeAdminTab: React.FC = () => {
     setOtHistory(prev => ({ ...prev, [reportId]: rows.map(r => ({ ...r, changerName: r.changed_by ? (nm[r.changed_by] || '不明') : '管理者' })) }));
   }, [supabase, otHistory]);
 
+  // GCal同期の再計算（受理後の修正・差戻し・取消・削除でカレンダーの整合を保つ）。
+  // 失敗しても操作自体は完了しているため、警告として表示する。
+  const syncOvertimeGcal = async (reportId: string): Promise<boolean> => {
+    const { data, error } = await supabase.functions.invoke('gcal-sync', {
+      body: { action: 'sync', source_type: 'overtime', source_id: reportId },
+    });
+    const res = data as { success?: boolean } | null;
+    return !error && res?.success !== false;
+  };
+
   const doOtReturn = async () => {
     if (!otReturnTarget || !otReturnComment.trim()) return;
     setOtActing(true);
@@ -154,18 +165,26 @@ const OvertimeAdminTab: React.FC = () => {
       sub_message: `${r.work_date}　理由：${otReturnComment.trim()}`, source_type: 'overtime_request:pending_resubmit',
       reference_id: r.id, event_key: 'overtime:returned', read: false,
     }).then(null, () => {});
+    const gcalOk = await syncOvertimeGcal(r.id);
     setOtReturnTarget(null); setOtReturnComment(''); setOtActing(false);
-    setOtMsg('差し戻しました'); fetchOtReports();
+    setOtMsg('差し戻しました');
+    if (!gcalOk) setOtErr('差し戻しは完了しましたが、Googleカレンダーへの反映に失敗しました。');
+    fetchOtReports();
   };
 
   const doOtDelete = async () => {
     if (!otDeleteTarget) return;
     setOtActing(true);
-    const { data: deleted, error } = await supabase.from('overtime_reports').delete().eq('id', otDeleteTarget.id).select('id');
+    const targetId = otDeleteTarget.id;
+    const { data: deleted, error } = await supabase.from('overtime_reports').delete().eq('id', targetId).select('id');
     if (error) { setOtErr('削除に失敗しました：' + error.message); setOtActing(false); return; }
     if (!deleted || deleted.length === 0) { setOtErr('削除できませんでした（権限/RLSの可能性）。'); setOtActing(false); return; }
+    // 削除後に同期→レコード無しとしてカレンダーイベントも削除される
+    const gcalOk = await syncOvertimeGcal(targetId);
     setOtDeleteTarget(null); setOtActing(false);
-    setOtMsg('削除しました'); fetchOtReports();
+    setOtMsg('削除しました');
+    if (!gcalOk) setOtErr('削除は完了しましたが、Googleカレンダーへの反映に失敗しました。');
+    fetchOtReports();
   };
 
   // 論理取消（判子）。status='cancelled' にすると、紐づくopen依頼はトリガーが自動で対応済みにし本人へ通知する。
@@ -175,8 +194,11 @@ const OvertimeAdminTab: React.FC = () => {
     const { data: updated, error } = await supabase.from('overtime_reports').update({ status: 'cancelled' }).eq('id', otCancelTarget.id).select('id');
     if (error) { setOtErr('取消に失敗しました：' + error.message); setOtActing(false); return; }
     if (!updated || updated.length === 0) { setOtErr('取消できませんでした（権限/RLSの可能性）。'); setOtActing(false); return; }
+    const gcalOk = await syncOvertimeGcal(otCancelTarget.id);
     setOtCancelTarget(null); setOtActing(false);
-    setOtMsg('取り消しました'); fetchOtReports();
+    setOtMsg('取り消しました');
+    if (!gcalOk) setOtErr('取消は完了しましたが、Googleカレンダーへの反映に失敗しました。');
+    fetchOtReports();
   };
 
   // CSV出力：元の勤務時間（通常シフト）と、実際の時間帯・差分を並べて「どう変わったか」を可視化する
@@ -515,6 +537,15 @@ const OvertimeAdminTab: React.FC = () => {
                           <td style={{ ...cell, textAlign: 'left', fontSize: 12 }}>
                             <div style={{ color: subText, fontSize: 11 }}>元 {nsTime}</div>
                             <div>実 {segText}</div>
+                            {(r.application_types ?? []).filter(isOvertimeType).length > 0 && (
+                              <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginTop: 2 }}>
+                                {(r.application_types ?? []).filter(isOvertimeType).map(t => (
+                                  <span key={t} style={{ padding: '1px 6px', borderRadius: 6, border: `1px solid ${OT_TYPE_INFO[t].color}`, color: isDarkMode ? '#fff' : OT_TYPE_INFO[t].color, background: isDarkMode ? OT_TYPE_INFO[t].darkBg : `${OT_TYPE_INFO[t].color}1a`, fontSize: 10, fontWeight: 'bold', whiteSpace: 'nowrap' }}>
+                                    {OT_TYPE_INFO[t].label}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                             {r.reason && <div style={{ color: subText, fontSize: 11, marginTop: 2 }}>{r.reason}</div>}
                           </td>
                           <td style={{ ...cell, fontSize: 12, whiteSpace: 'nowrap' }}>休{r.break_minutes ?? 0}分<br />{formatMin(r.labor_minutes ?? 0)}</td>

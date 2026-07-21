@@ -31,6 +31,28 @@ function absenceColorId(type: string): string {
   return ['late', 'late_start', 'early_leave', 'early_end'].includes(type) ? '2' : '4'
 }
 
+// 残業種別 → ラベル・色・同期可否・優先度（source_type='overtime' 用）
+// sync=false の種別（当日の遅刻・早退）はカレンダーに出さない。
+// 色: 残業/早出=9(濃青)・休日出勤=10(濃緑)・勤務地変更=3(紫)・調整系=2(既存の調整色)
+const OVERTIME_TYPES: Record<string, { label: string; colorId: string; sync: boolean; priority: number }> = {
+  holiday_work:    { label: '休日出勤',    colorId: '10', sync: true,  priority: 1 },
+  overtime:        { label: '残業',        colorId: '9',  sync: true,  priority: 2 },
+  early_start:     { label: '早出',        colorId: '9',  sync: true,  priority: 3 },
+  late_start_adj:  { label: '遅出(調整)',  colorId: '2',  sync: true,  priority: 4 },
+  early_end_adj:   { label: '早退(調整)',  colorId: '2',  sync: true,  priority: 5 },
+  location_change: { label: '勤務地変更',  colorId: '3',  sync: true,  priority: 6 },
+  tardiness:       { label: '遅刻',        colorId: '2',  sync: false, priority: 7 },
+  early_leave:     { label: '早退',        colorId: '2',  sync: false, priority: 8 },
+}
+
+/** 分 → "HH:MM"（1440以上は翌日表記） */
+function otMinToTime(min: number): string {
+  const m = ((min % 1440) + 1440) % 1440
+  const hh = String(Math.floor(m / 60)).padStart(2, '0')
+  const mm = String(m % 60).padStart(2, '0')
+  return min >= 1440 ? `翌${hh}:${mm}` : `${hh}:${mm}`
+}
+
 async function getAccessToken(serviceAccountJson: string): Promise<string> {
   const sa = JSON.parse(serviceAccountJson)
   const now = Math.floor(Date.now() / 1000)
@@ -189,6 +211,80 @@ serve(async (req) => {
     const normName = String(name ?? '').replace(/　/g, ' ')
     // locations: 日付→校 の対応表（省略可。無ければ従来どおり校なしタイトル）
     const locationByDate = (locations ?? {}) as Record<string, string>
+
+    // action: 'sync'（source_type='overtime'）— overtime_reports の現在状態から同期先を再計算する冪等処理。
+    // 受理/自己受理/実績報告/取消/差戻し/管理者修正/削除、どこから呼んでも「あるべき状態」に揃える。
+    if (action === 'sync' && source_type === 'overtime') {
+      const { data: report } = await supabase
+        .from('overtime_reports')
+        .select('id, applicant_id, work_date, entry_type, is_post_hoc, status, location, application_types, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
+        .eq('id', source_id)
+        .maybeSingle()
+
+      // 同期対象になる条件：手動行・受理後（事前確定/実績確認待ち/実績確定）・事後報告でない・同期可の種別が1つ以上
+      // ※reported を含めるのは、事前受理でカレンダーに出た予定が実績報告の瞬間に消えるのを防ぐため
+      const syncTypes: string[] = (report?.application_types ?? [])
+        .filter((t: string) => OVERTIME_TYPES[t]?.sync)
+        .sort((a: string, b: string) => OVERTIME_TYPES[a].priority - OVERTIME_TYPES[b].priority)
+      const shouldExist = !!report
+        && report.entry_type === 'manual'
+        && ['request_confirmed', 'reported', 'confirmed'].includes(report.status)
+        && !report.is_post_hoc
+        && syncTypes.length > 0
+
+      const { data: existing } = await supabase
+        .from('gcal_events')
+        .select('id, event_id, date')
+        .eq('source_type', 'overtime')
+        .eq('source_id', source_id)
+
+      if (!shouldExist) {
+        for (const row of existing ?? []) await deleteEvent(token, calendarId, row.event_id)
+        await supabase.from('gcal_events').delete().eq('source_type', 'overtime').eq('source_id', source_id)
+        return new Response(JSON.stringify({ success: true, synced: false }),
+          { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } })
+      }
+
+      // タイトル生成：名前｜種別(最大2つ)｜時刻［校］。実績があれば実績、なければ予定の時間帯を使う。
+      const { data: prof } = await supabase.from('profiles').select('name').eq('id', report.applicant_id).maybeSingle()
+      const otName = String(prof?.name ?? '').replace(/　/g, ' ')
+      const segs = (report.segments ?? []) as { phase: string; seg_no: number; start_min: number; end_min: number }[]
+      const actual = segs.filter(s => s.phase === 'actual').sort((a, b) => a.seg_no - b.seg_no)
+      const planned = segs.filter(s => s.phase === 'planned').sort((a, b) => a.seg_no - b.seg_no)
+      const use = actual.length > 0 ? actual : planned
+      const firstStart = use.length > 0 ? use[0].start_min : null
+      const lastEnd = use.length > 0 ? use[use.length - 1].end_min : null
+
+      const labels = syncTypes.slice(0, 2).map(t => OVERTIME_TYPES[t].label).join('＋')
+      const primary = syncTypes[0]
+      let timeStr = ''
+      if (firstStart != null && lastEnd != null) {
+        if (syncTypes.length >= 2 || primary === 'holiday_work') timeStr = `${otMinToTime(firstStart)}〜${otMinToTime(lastEnd)}`
+        else if (primary === 'overtime' || primary === 'early_end_adj') timeStr = `〜${otMinToTime(lastEnd)}`
+        else if (primary === 'early_start' || primary === 'late_start_adj') timeStr = `${otMinToTime(firstStart)}〜`
+      }
+      let summary = `${otName}｜${labels}`
+      if (timeStr && primary !== 'location_change') summary += `｜${timeStr}`
+      if (report.location) summary += `［${report.location}］`
+      const otColorId = OVERTIME_TYPES[primary].colorId
+
+      // 日付が変わった場合の旧イベントを掃除しつつ、work_date に1件だけ立てる（色反映のため削除→再作成）
+      for (const row of existing ?? []) {
+        await deleteEvent(token, calendarId, row.event_id)
+        await supabase.from('gcal_events').delete().eq('id', row.id)
+      }
+      const newEventId = await createEvent(token, calendarId, summary, report.work_date, otColorId)
+      await supabase.from('gcal_events').insert({
+        source_type: 'overtime',
+        source_id,
+        calendar_id: calendarId,
+        event_id: newEventId,
+        date: report.work_date,
+      })
+
+      return new Response(JSON.stringify({ success: true, synced: true, summary }),
+        { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } })
+    }
 
     // action: 'upsert' | 'delete'
     if (action === 'delete') {

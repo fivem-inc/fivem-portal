@@ -20,6 +20,7 @@ export interface OvertimeRecord {
   diff_minutes: number | null;
   reason: string | null;
   location: string | null;
+  application_types?: string[] | null;
   segments: Seg[];
 }
 
@@ -159,6 +160,17 @@ const OvertimeEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSav
       event_key: 'overtime:admin_edited',
       read: false,
     }).then(null, () => {});
+
+    // 受理後修正でカレンダーが古い日付・時刻のまま残らないよう再同期（冪等な再計算）
+    const { data: syncRes, error: syncErr } = await supabase.functions.invoke('gcal-sync', {
+      body: { action: 'sync', source_type: 'overtime', source_id: record.id },
+    });
+    const sr = syncRes as { success?: boolean } | null;
+    if (syncErr || sr?.success === false) {
+      setError('修正は保存されましたが、Googleカレンダーへの反映に失敗しました。時間をおいて再度保存するか、管理者にご連絡ください。');
+      setSaving(false);
+      return;
+    }
 
     setSaving(false);
     onSaved();

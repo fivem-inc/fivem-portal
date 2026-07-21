@@ -12,6 +12,8 @@ import {
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import type { AuthUser } from '../types';
 import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
+import { OT_TYPE_INFO, isOvertimeType } from '../lib/overtimeTypes';
+import type { OvertimeType } from '../lib/overtimeTypes';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
 import type { CorrectionRequestRow } from '../lib/correctionRequest';
 
@@ -59,6 +61,7 @@ interface OvertimeReport {
   legal_warning: boolean;
   reason: string | null;
   location: string | null;
+  application_types: string[] | null;
   reviewer_id: string | null;
   confirmed_by: string | null;
   confirmed_at: string | null;
@@ -126,6 +129,19 @@ function badgeStyle(color: string, darkBg: string, isDark: boolean): React.CSSPr
     whiteSpace: 'nowrap',
   };
 }
+
+/** 種別チップ列（履歴カード・確認カード・確認ダイアログで共通利用） */
+const TypeChips: React.FC<{ types: string[] | null | undefined; isDark: boolean }> = ({ types, isDark }) => {
+  const list = (types ?? []).filter(isOvertimeType);
+  if (list.length === 0) return null;
+  return (
+    <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap', verticalAlign: 'middle' }}>
+      {list.map(t => (
+        <span key={t} style={badgeStyle(OT_TYPE_INFO[t].color, OT_TYPE_INFO[t].darkBg, isDark)}>{OT_TYPE_INFO[t].label}</span>
+      ))}
+    </span>
+  );
+};
 
 // 事後報告バッジ（ティール系。グレーは取消済みと衝突するため不可）
 const POSTHOC_BADGE = { color: '#0f766e', darkBg: '#123a35' };
@@ -216,7 +232,7 @@ const OvertimeForm: React.FC<{
   patterns: PatternRow[];
   /** 実績報告・再提出の対象（新規はnull） */
   editTarget: OvertimeReport | null;
-  onSaved: () => void;
+  onSaved: (gcalWarning?: string) => void;
   onClose: () => void;
 }> = ({ user, profileName, roleTitle, isAdmin, reviewers, workplaces, patterns, editTarget, onSaved, onClose }) => {
   const isDark = useDarkMode();
@@ -380,6 +396,46 @@ const OvertimeForm: React.FC<{
   const legal = checkLegalBreak(workSegments, breakMin);
   const hasInput = workSegments.length > 0;
 
+  // ---- 種別の自動判定 ----
+  // 時刻・勤務地の入力からシステムが種別を提案する。迷いやすい「調整か遅刻/早退か」だけ2択バナーで確定。
+  const [lateChoice, setLateChoice] = useState<'adj' | 'tardiness'>(() =>
+    (editTarget?.application_types ?? []).includes('tardiness') ? 'tardiness' : 'adj');
+  const [earlyChoice, setEarlyChoice] = useState<'adj' | 'early_leave'>(() =>
+    (editTarget?.application_types ?? []).includes('early_leave') ? 'early_leave' : 'adj');
+
+  const typeDetect = useMemo(() => {
+    if (!hasInput || !date) return { fixed: [] as OvertimeType[], lateQ: false, earlyQ: false };
+    const fixed: OvertimeType[] = [];
+    let lateQ = false, earlyQ = false;
+    const sorted = [...workSegments].sort((a, b) => a.startMin - b.startMin);
+    const firstStart = sorted[0].startMin;
+    const lastEnd = sorted[sorted.length - 1].endMin;
+    if (!normalShift.start_time) {
+      fixed.push('holiday_work');
+    } else {
+      const ns = timeToMin(fmtTime(normalShift.start_time)) ?? 0;
+      let ne = timeToMin(fmtTime(normalShift.end_time)) ?? ns;
+      if (ne <= ns) ne += 1440; // 深夜跨ぎシフト
+      if (lastEnd > ne) fixed.push('overtime');
+      if (firstStart < ns) fixed.push('early_start');
+      if (firstStart > ns) lateQ = true;
+      if (lastEnd < ne) earlyQ = true;
+    }
+    // 勤務地がシフトの校と違う／移動あり → 勤務地変更
+    const normLoc = normalShift.location ?? '';
+    if (effectiveLocation && (effectiveLocation.includes('→') || (normLoc && effectiveLocation !== normLoc))) {
+      fixed.push('location_change');
+    }
+    return { fixed, lateQ, earlyQ };
+  }, [hasInput, date, workSegments, normalShift.start_time, normalShift.end_time, normalShift.location, effectiveLocation]);
+
+  const applicationTypes: OvertimeType[] = useMemo(() => {
+    const t = [...typeDetect.fixed];
+    if (typeDetect.lateQ) t.push(lateChoice === 'adj' ? 'late_start_adj' : 'tardiness');
+    if (typeDetect.earlyQ) t.push(earlyChoice === 'adj' ? 'early_end_adj' : 'early_leave');
+    return t;
+  }, [typeDetect, lateChoice, earlyChoice]);
+
   // 時間帯変更時：手修正中なら注意表示
   useEffect(() => {
     if (breakManual && hasInput) setBreakRecalcNote(true);
@@ -450,6 +506,7 @@ const OvertimeForm: React.FC<{
         legal_warning: !legal.ok,
         reason: reason.trim(),
         location: effectiveLocation,
+        application_types: applicationTypes,
         reviewer_id: isSelfReview ? user.id : reviewerId,
         ...(isSelfReview ? { confirmed_by: user.id, confirmed_at: new Date().toISOString() } : {}),
         ...(isResubmit ? { return_comment: null } : {}),
@@ -500,9 +557,22 @@ const OvertimeForm: React.FC<{
         }).then(null, () => {});
       }
 
+      // カレンダー同期：自己受理（送信＝受理）と、既存申請の実績報告・再提出はイベントに影響するため同期する。
+      // gcal-sync の action:'sync' は現在状態から再計算する冪等処理（未受理なら何もしない）。
+      let gcalWarn: string | undefined;
+      if (isSelfReview || editTarget) {
+        const { data: syncRes, error: syncErr } = await supabase.functions.invoke('gcal-sync', {
+          body: { action: 'sync', source_type: 'overtime', source_id: reportId },
+        });
+        const sr = syncRes as { success?: boolean; error?: string } | null;
+        if (syncErr || sr?.success === false) {
+          gcalWarn = '送信は完了しましたが、Googleカレンダーへの反映に失敗しました。時間をおいて再同期してください。';
+        }
+      }
+
       if (!editTarget) clearDraft(DRAFT_KEYS.overtime);
       setSaving(false);
-      onSaved();
+      onSaved(gcalWarn);
     } catch {
       setSaving(false);
       setShowConfirm(false);
@@ -745,6 +815,52 @@ const OvertimeForm: React.FC<{
               {diffMin > 0 ? '（残業）' : diffMin < 0 ? '（早退・調整）' : ''}
             </span>
           </div>
+          {applicationTypes.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', borderTop: `1px solid ${borderColor}`, marginTop: 6, paddingTop: 8 }}>
+              <span style={{ fontSize: 12.5, color: subText }}>種別：</span>
+              <TypeChips types={applicationTypes} isDark={isDark} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 種別の2択バナー（調整か遅刻/早退かだけ本人に確認） */}
+      {hasInput && typeDetect.lateQ && (
+        <div style={{ marginBottom: 12 }}>
+          <span style={{ fontSize: 13, color: subText, display: 'block', marginBottom: 6 }}>開始が遅い理由は？</span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {([['adj', '事前の調整 → 調整遅出'], ['tardiness', '遅刻 → 遅刻']] as const).map(([v, label]) => (
+              <button key={v} type="button" onClick={() => setLateChoice(v)}
+                style={{
+                  flex: 1, padding: '11px 4px', borderRadius: 10, cursor: 'pointer', fontSize: 13,
+                  fontWeight: lateChoice === v ? 'bold' : 'normal',
+                  border: lateChoice === v ? '2px solid #28a745' : `1px solid ${borderColor}`,
+                  background: lateChoice === v ? (isDark ? '#1b3a1e' : '#eaf6ec') : 'transparent',
+                  color: lateChoice === v ? (isDark ? '#8fd19e' : '#2e7d32') : subText,
+                }}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {hasInput && typeDetect.earlyQ && (
+        <div style={{ marginBottom: 12 }}>
+          <span style={{ fontSize: 13, color: subText, display: 'block', marginBottom: 6 }}>早く終わる理由は？</span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {([['adj', '事前の調整 → 調整早退'], ['early_leave', '当日の事情 → 早退']] as const).map(([v, label]) => (
+              <button key={v} type="button" onClick={() => setEarlyChoice(v)}
+                style={{
+                  flex: 1, padding: '11px 4px', borderRadius: 10, cursor: 'pointer', fontSize: 13,
+                  fontWeight: earlyChoice === v ? 'bold' : 'normal',
+                  border: earlyChoice === v ? '2px solid #28a745' : `1px solid ${borderColor}`,
+                  background: earlyChoice === v ? (isDark ? '#1b3a1e' : '#eaf6ec') : 'transparent',
+                  color: earlyChoice === v ? (isDark ? '#8fd19e' : '#2e7d32') : subText,
+                }}>
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -850,11 +966,17 @@ const OvertimeForm: React.FC<{
       ) : (
         <div style={{ background: innerBg, borderRadius: 10, padding: '12px 14px' }}>
           <p style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 'bold', color: text }}>この内容で送信しますか？</p>
-          <p style={{ margin: '0 0 10px', fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
+          <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
             {date}（{dowLabel(date)}）　{segmentsLabel(workSegments)}<br />
             休憩{formatMin(breakMin)}・労働{formatMin(laborMin)}・差分 {formatSignedMin(diffMin)}<br />
             {isSelfReview ? '自己受理のため、送信と同時に受理されます' : `申請先：${reviewers.find(r => r.id === reviewerId)?.name ?? ''}さん`}
           </p>
+          {applicationTypes.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', margin: '0 0 10px' }}>
+              <span style={{ fontSize: 12.5, color: subText }}>種別：</span>
+              <TypeChips types={applicationTypes} isDark={isDark} />
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={doSubmit} disabled={saving}
               style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', background: '#28a745', color: '#fff', opacity: saving ? 0.6 : 1 }}>
@@ -902,6 +1024,12 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
   const [returnComment, setReturnComment] = useState('');
   const [actingId, setActingId] = useState<string | null>(null);
 
+  // 読み込み・操作のエラー／カレンダー同期の警告（.catch禁止ルール：握りつぶさずインライン表示）
+  const [loadError, setLoadError] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [gcalWarning, setGcalWarning] = useState<{ message: string; reportId: string | null } | null>(null);
+  const [retrying, setRetrying] = useState(false);
+
   const currentPeriod = calcPayPeriodStartJst(todayJstStr());
 
   const text = isDark ? '#f8f9fa' : '#212529';
@@ -911,22 +1039,27 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
   const borderColor = isDark ? '#495057' : '#dee2e6';
 
   // ---- data fetch ----
+  // profiles への embed は auth.users 向きの既存FKでは解決できないため、
+  // 20260727 マイグレーションで追加した profiles 向き named FK を使う。
   const fetchOwn = useCallback(async () => {
-    const { data } = await supabase.from('overtime_reports')
-      .select('*, applicant:profiles!overtime_reports_applicant_id_fkey(name), reviewer:profiles!overtime_reports_reviewer_id_fkey(name), segments:overtime_report_segments(*)')
+    const { data, error } = await supabase.from('overtime_reports')
+      .select('*, applicant:profiles!overtime_reports_applicant_profiles_fkey(name), reviewer:profiles!overtime_reports_reviewer_profiles_fkey(name), segments:overtime_report_segments(*)')
       .eq('applicant_id', user.id)
       .order('work_date', { ascending: false })
       .limit(100);
+    if (error) { setLoadError('履歴の読み込みに失敗しました：' + error.message); return; }
+    setLoadError('');
     setReports((data as OvertimeReport[] | null) ?? []);
   }, [user.id]);
 
   const fetchPendingForMe = useCallback(async () => {
-    const { data } = await supabase.from('overtime_reports')
-      .select('*, applicant:profiles!overtime_reports_applicant_id_fkey(name), segments:overtime_report_segments(*)')
+    const { data, error } = await supabase.from('overtime_reports')
+      .select('*, applicant:profiles!overtime_reports_applicant_profiles_fkey(name), segments:overtime_report_segments(*)')
       .eq('reviewer_id', user.id)
       .eq('entry_type', 'manual')
       .in('status', ['requested', 'reported'])
       .order('work_date', { ascending: true });
+    if (error) { setLoadError('確認待ちの読み込みに失敗しました：' + error.message); return; }
     setPendingForMe((data as OvertimeReport[] | null) ?? []);
   }, [user.id]);
 
@@ -1002,77 +1135,55 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
     reports.filter(r => r.status === 'request_confirmed' && r.work_date < todayJstStr()),
   [reports]);
 
-  // ---- 取消 ----
+  // ---- 受理・差し戻し・取消（Edge Function overtime-approve に集約） ----
+  // ステータス更新・通知・GCal同期をサーバー側で直列実行し、同期失敗を握りつぶさず表示する。
+  const callApproveFunction = async (
+    reportId: string, action: 'approve' | 'return' | 'cancel', comment?: string,
+  ): Promise<{ ok: boolean; error?: string; gcalOk?: boolean }> => {
+    const { data, error } = await supabase.functions.invoke('overtime-approve', {
+      body: { report_id: reportId, action, comment },
+    });
+    const res = data as { success?: boolean; error?: string; gcal_ok?: boolean } | null;
+    if (error || !res?.success) return { ok: false, error: res?.error ?? error?.message ?? '通信エラー' };
+    return { ok: true, gcalOk: res.gcal_ok !== false };
+  };
+
+  // GCal同期の再試行（警告カードのボタンから）
+  const retryGcalSync = async () => {
+    if (!gcalWarning?.reportId) { setGcalWarning(null); return; }
+    setRetrying(true);
+    const { data, error } = await supabase.functions.invoke('gcal-sync', {
+      body: { action: 'sync', source_type: 'overtime', source_id: gcalWarning.reportId },
+    });
+    const res = data as { success?: boolean } | null;
+    if (!error && res?.success !== false) setGcalWarning(null);
+    setRetrying(false);
+  };
+
+  // ---- 取消（本人） ----
   const doCancel = async (r: OvertimeReport) => {
     setActingId(r.id);
-    await supabase.from('overtime_report_history').insert({
-      report_id: r.id, changed_by: user.id, change_summary: '取消', snapshot: r as unknown as Record<string, unknown>,
-    }).then(null, () => {});
-    const { error } = await supabase.from('overtime_reports').update({ status: 'cancelled' }).eq('id', r.id);
-    if (!error && r.reviewer_id && r.reviewer_id !== user.id && ['requested', 'request_confirmed', 'reported'].includes(r.status)) {
-      supabase.from('notifications').insert({
-        user_id: r.reviewer_id,
-        message: `${profileName ?? ''}さんが残業・時間調整の申請を取り消しました`,
-        sub_message: `${r.work_date}（${dowLabel(r.work_date)}）`,
-        source_type: 'overtime_request',
-        reference_id: r.id,
-        event_key: 'overtime:cancelled',
-        read: false,
-      }).then(null, () => {});
+    setActionError('');
+    const res = await callApproveFunction(r.id, 'cancel');
+    if (!res.ok) {
+      setActionError('取消に失敗しました：' + (res.error ?? ''));
+    } else if (res.gcalOk === false) {
+      setGcalWarning({ message: '取消は完了しましたが、Googleカレンダーからの削除に失敗しました。', reportId: r.id });
     }
     setCancelTargetId(null);
     setActingId(null);
     fetchOwn();
   };
 
-  // ---- 受理・差し戻し（確認者） ----
+  // ---- 受理（確認者）。旧 attendance_exceptions 連携は gcal-sync(action:'sync') に置き換え済み ----
   const doApprove = async (r: OvertimeReport) => {
     setActingId(r.id);
-    const isAdvance = r.status === 'requested';
-    const next: Partial<OvertimeReport> = isAdvance
-      ? { status: 'request_confirmed' }
-      : { status: 'confirmed', confirmed_by: user.id, confirmed_at: new Date().toISOString() };
-    const { error } = await supabase.from('overtime_reports').update(next).eq('id', r.id).eq('status', r.status);
-    if (!error) {
-      // 申請者へ結果通知
-      supabase.from('notifications').insert({
-        user_id: r.applicant_id,
-        message: isAdvance ? '事前申請が受理されました' : '残業・時間調整の実績が確認されました',
-        sub_message: `${r.work_date}（${dowLabel(r.work_date)}）　${formatSignedMin(r.diff_minutes ?? 0)}`,
-        source_type: 'overtime_request',
-        reference_id: r.id,
-        event_key: isAdvance ? 'overtime:request_confirmed' : 'overtime:confirmed',
-        read: false,
-      }).then(null, () => {});
-
-      // 事前受理時：遅出・早退方向はカレンダー周知（attendance_exceptions＋gcal-sync）を再利用
-      if (isAdvance && r.normal_shift?.start_time) {
-        const planned = (r.segments ?? []).filter(s => s.phase === 'planned').sort((a, b) => a.seg_no - b.seg_no);
-        if (planned.length > 0) {
-          const normStartMin = timeToMin(r.normal_shift.start_time) ?? 0;
-          const normEndMin = timeToMin(r.normal_shift.end_time) ?? 0;
-          const firstStart = planned[0].start_min;
-          const lastEnd = planned[planned.length - 1].end_min;
-          const excRecords: { user_id: string; date: string; type: string; actual_time: string; notes: string; created_by: string; location: string }[] = [];
-          const noteBase = `【残業・時間管理より自動連携】${r.reason ?? ''}`;
-          if (firstStart > normStartMin) {
-            excRecords.push({ user_id: r.applicant_id, date: r.work_date, type: 'late_start', actual_time: minToTime(firstStart).replace('翌', ''), notes: noteBase, created_by: user.id, location: r.location ?? '' });
-          }
-          if (lastEnd < normEndMin) {
-            excRecords.push({ user_id: r.applicant_id, date: r.work_date, type: 'early_end', actual_time: minToTime(lastEnd).replace('翌', ''), notes: noteBase, created_by: user.id, location: r.location ?? '' });
-          }
-          if (excRecords.length > 0) {
-            supabase.from('attendance_exceptions').insert(excRecords).select('id, type, date, actual_time')
-              .then(({ data: inserted }) => {
-                for (const rec of inserted ?? []) {
-                  supabase.functions.invoke('gcal-sync', {
-                    body: { action: 'upsert', source_type: 'absence', source_id: rec.id, dates: [rec.date], name: r.applicant?.name ?? '', absence_type: rec.type, time: rec.actual_time ? String(rec.actual_time).slice(0, 5) : undefined, locations: { [rec.date]: r.location ?? '' } },
-                  }).then(null, () => {});
-                }
-              }, () => {});
-          }
-        }
-      }
+    setActionError('');
+    const res = await callApproveFunction(r.id, 'approve');
+    if (!res.ok) {
+      setActionError('受理に失敗しました：' + (res.error ?? ''));
+    } else if (res.gcalOk === false) {
+      setGcalWarning({ message: '受理は完了しましたが、Googleカレンダーへの反映に失敗しました。', reportId: r.id });
     }
     setActingId(null);
     fetchPendingForMe();
@@ -1082,19 +1193,12 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
   const doReturn = async (r: OvertimeReport) => {
     if (!returnComment.trim()) return;
     setActingId(r.id);
-    const { error } = await supabase.from('overtime_reports')
-      .update({ status: 'returned', return_comment: returnComment.trim() })
-      .eq('id', r.id).eq('status', r.status);
-    if (!error) {
-      supabase.from('notifications').insert({
-        user_id: r.applicant_id,
-        message: '残業・時間調整の申請が差し戻されました',
-        sub_message: `${r.work_date}（${dowLabel(r.work_date)}）　理由：${returnComment.trim()}`,
-        source_type: 'overtime_request:pending_resubmit',
-        reference_id: r.id,
-        event_key: 'overtime:returned',
-        read: false,
-      }).then(null, () => {});
+    setActionError('');
+    const res = await callApproveFunction(r.id, 'return', returnComment.trim());
+    if (!res.ok) {
+      setActionError('差し戻しに失敗しました：' + (res.error ?? ''));
+    } else if (res.gcalOk === false) {
+      setGcalWarning({ message: '差し戻しは完了しましたが、Googleカレンダーからの削除に失敗しました。', reportId: r.id });
     }
     setReturnTargetId(null);
     setReturnComment('');
@@ -1117,6 +1221,31 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
               <span style={badgeStyle('#c62828', '#4a1515', isDark)}>{pendingForMe.length}件</span>
             )}
           </div>
+
+          {loadError && (
+            <div style={{ background: isDark ? '#4a1515' : '#f8d7da', border: '1px solid #dc3545', borderRadius: 10, padding: '10px 12px', marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+              <p style={{ margin: 0, fontSize: 13, color: isDark ? '#f5b5ba' : '#842029' }}>{loadError}</p>
+              <button onClick={() => { fetchOwn(); fetchPendingForMe(); }}
+                style={{ flexShrink: 0, padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 'bold', background: '#dc3545', color: '#fff' }}>再読み込み</button>
+            </div>
+          )}
+          {actionError && (
+            <div style={{ background: isDark ? '#4a1515' : '#f8d7da', border: '1px solid #dc3545', borderRadius: 10, padding: '10px 12px', marginBottom: 12 }}>
+              <p style={{ margin: 0, fontSize: 13, color: isDark ? '#f5b5ba' : '#842029' }}>{actionError}</p>
+            </div>
+          )}
+          {gcalWarning && (
+            <div style={{ background: isDark ? '#4a3a10' : '#fff8e1', border: '1px solid #f59e0b', borderRadius: 10, padding: '10px 12px', marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+              <p style={{ margin: 0, fontSize: 12.5, color: isDark ? '#ffd54f' : '#856404' }}>⚠️ {gcalWarning.message}</p>
+              {gcalWarning.reportId && (
+                <button onClick={retryGcalSync} disabled={retrying}
+                  style={{ flexShrink: 0, padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 'bold', background: '#f59e0b', color: '#fff', opacity: retrying ? 0.6 : 1 }}>
+                  {retrying ? '再同期中…' : 'カレンダー再同期'}
+                </button>
+              )}
+              <button onClick={() => setGcalWarning(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: subText }}>✕</button>
+            </div>
+          )}
 
           {pendingForMe.length === 0 && (
             <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, padding: '24px 16px', textAlign: 'center' }}>
@@ -1164,6 +1293,11 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                   </div>
                 )}
 
+                {(r.application_types ?? []).length > 0 && (
+                  <div style={{ margin: '0 0 8px' }}>
+                    <TypeChips types={r.application_types} isDark={isDark} />
+                  </div>
+                )}
                 <p style={{ margin: '0 0 10px', fontSize: 12.5, color: subText }}>理由：{r.reason}　／　勤務地：{r.location ?? '-'}</p>
 
                 {returnTargetId === r.id ? (
@@ -1237,6 +1371,31 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
           <MyPatternToggle isDark={false} patterns={patterns} />
         </div>
 
+        {loadError && (
+          <div style={{ background: isDark ? '#4a1515' : '#f8d7da', border: '1px solid #dc3545', borderRadius: 10, padding: '10px 12px', marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+            <p style={{ margin: 0, fontSize: 13, color: isDark ? '#f5b5ba' : '#842029' }}>{loadError}</p>
+            <button onClick={() => { fetchOwn(); fetchPendingForMe(); }}
+              style={{ flexShrink: 0, padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 'bold', background: '#dc3545', color: '#fff' }}>再読み込み</button>
+          </div>
+        )}
+        {actionError && (
+          <div style={{ background: isDark ? '#4a1515' : '#f8d7da', border: '1px solid #dc3545', borderRadius: 10, padding: '10px 12px', marginBottom: 14 }}>
+            <p style={{ margin: 0, fontSize: 13, color: isDark ? '#f5b5ba' : '#842029' }}>{actionError}</p>
+          </div>
+        )}
+        {gcalWarning && (
+          <div style={{ background: isDark ? '#4a3a10' : '#fff8e1', border: '1px solid #f59e0b', borderRadius: 10, padding: '10px 12px', marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+            <p style={{ margin: 0, fontSize: 12.5, color: isDark ? '#ffd54f' : '#856404' }}>⚠️ {gcalWarning.message}</p>
+            {gcalWarning.reportId && (
+              <button onClick={retryGcalSync} disabled={retrying}
+                style={{ flexShrink: 0, padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 'bold', background: '#f59e0b', color: '#fff', opacity: retrying ? 0.6 : 1 }}>
+                {retrying ? '再同期中…' : 'カレンダー再同期'}
+              </button>
+            )}
+            <button onClick={() => setGcalWarning(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: subText }}>✕</button>
+          </div>
+        )}
+
         {/* 送信完了バナー */}
         {savedBanner && (
           <div style={{ background: isDark ? '#1b3a1e' : '#d1e7dd', border: '1px solid #28a745', borderRadius: 10, padding: '10px 14px', marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1279,7 +1438,11 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
               user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin}
               reviewers={reviewers} workplaces={workplaces} patterns={patterns}
               editTarget={editTarget}
-              onSaved={() => { setSavedBanner(true); setEditTarget(null); setTab('history'); fetchOwn(); window.scrollTo({ top: 0 }); }}
+              onSaved={(gcalWarn) => {
+                setSavedBanner(true);
+                if (gcalWarn) setGcalWarning({ message: gcalWarn, reportId: editTarget?.id ?? null });
+                setEditTarget(null); setTab('history'); fetchOwn(); window.scrollTo({ top: 0 });
+              }}
               onClose={() => setEditTarget(null)}
             />
           ) : (
@@ -1371,6 +1534,11 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                           </p>
                         ) : (
                           <>
+                            {(r.application_types ?? []).length > 0 && (
+                              <div style={{ margin: '2px 0 4px' }}>
+                                <TypeChips types={r.application_types} isDark={isDark} />
+                              </div>
+                            )}
                             <p style={{ margin: 0, fontSize: 12.5, color: subText }}>
                               {segs.length > 0 && `${actual.length > 0 ? '実績' : '予定'}：${segmentsLabel(segs)}　`}
                               {r.reviewer?.name && `申請先：${r.reviewer.name}さん`}
