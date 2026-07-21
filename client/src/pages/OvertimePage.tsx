@@ -213,8 +213,8 @@ export function computeBalance(allRows: OvertimeReport[], period: string): Balan
 }
 
 // 部門集計の一覧行（1人分）。total=確定合計 / plannedTotal=見込み合計 / absenceDays=欠勤日数（別枠）
-interface SummaryRow { userId: string; name: string; group: string; total: number; plannedTotal: number; absenceDays: number; }
-type ProfLite = { id: string; name: string; group_names: string[] | null };
+interface SummaryRow { userId: string; name: string; group: string; role: string; total: number; plannedTotal: number; absenceDays: number; }
+type ProfLite = { id: string; name: string; group_names: string[] | null; role_title: string | null };
 
 /** "HH:MM(:SS)" → "HH:MM" 表示用 */
 function fmtTime(t: string | null | undefined): string {
@@ -1475,9 +1475,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
       //    部門を設定すれば group で自動的に部門分けされる。
       //  - その期に行を持つ applicant（退職者を含む）→ id で解決（is_active で絞らない＝退職者も名前が出る）
       const [rosterRes, rowProfRes] = await Promise.all([
-        supabase.from('profiles').select('id, name, group_names').eq('is_active', true).neq('employment_type', 'パート'),
+        supabase.from('profiles').select('id, name, group_names, role_title').eq('is_active', true).neq('employment_type', 'パート'),
         ids.length > 0
-          ? supabase.from('profiles').select('id, name, group_names').in('id', ids)
+          ? supabase.from('profiles').select('id, name, group_names, role_title').in('id', ids)
           : Promise.resolve({ data: [] as ProfLite[] }),
       ]);
       const rosterProfs = (rosterRes.data as ProfLite[] | null) ?? [];
@@ -1494,11 +1494,11 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
       const memberIds = [...new Set([...rosterProfs.map(p => p.id), ...ids])];
       const rows: SummaryRow[] = memberIds.map(userId => {
         const p = profMap.get(userId);
-        // 部門(チーム)は実際の group_names を採用。banner_group_names が設定されていればそれを優先、
-        // なければ本人の先頭グループ（例「こども」）。未所属は「未所属」。
-        const group = whitelist.find(g => (p?.group_names ?? []).includes(g)) ?? (p?.group_names?.[0] ?? '未所属');
+        // 部門(チーム)は「部門ホワイトリスト(banner_group_names)」に一致する group のみ採用する。
+        // group_names には権限・配信グループも混在するため、勝手に先頭を拾わない。未登録は「未所属」。
+        const group = whitelist.find(g => (p?.group_names ?? []).includes(g)) ?? '未所属';
         const b = computeBalance(byUser.get(userId) ?? [], summaryPeriod);
-        return { userId, name: p?.name ?? '不明', group, total: b.total, plannedTotal: b.plannedTotal, absenceDays: b.absenceDays };
+        return { userId, name: p?.name ?? '不明', group, role: p?.role_title ?? '', total: b.total, plannedTotal: b.plannedTotal, absenceDays: b.absenceDays };
       });
       rows.sort((a, b) => a.group === b.group ? a.name.localeCompare(b.name, 'ja') : a.group.localeCompare(b.group, 'ja'));
       setSummaryRows(rows);
@@ -2225,6 +2225,11 @@ const SummaryView: React.FC<{
                         <td style={{ padding: '7px 0', borderBottom: `1px solid ${borderColor}` }}>
                           {r.name}
                           {r.absenceDays > 0 && <span style={{ marginLeft: 6, fontSize: 11, color: subText }}>欠{r.absenceDays}日</span>}
+                          {(r.group !== '未所属' || r.role) && (
+                            <span style={{ display: 'block', fontSize: 11, color: subText }}>
+                              {[r.group !== '未所属' ? r.group : null, r.role || null].filter(Boolean).join('・')}
+                            </span>
+                          )}
                         </td>
                         <td style={{ padding: '7px 0', borderBottom: `1px solid ${borderColor}`, textAlign: 'right' }}>
                           <span style={{ color: diffColor(r.total, isDark), fontWeight: 'bold' }}>{formatSignedMin(r.total)}</span>
