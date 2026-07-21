@@ -398,10 +398,19 @@ const OvertimeForm: React.FC<{
 
   // ---- 種別の自動判定 ----
   // 時刻・勤務地の入力からシステムが種別を提案する。迷いやすい「調整か遅刻/早退か」だけ2択バナーで確定。
-  const [lateChoice, setLateChoice] = useState<'adj' | 'tardiness'>(() =>
-    (editTarget?.application_types ?? []).includes('tardiness') ? 'tardiness' : 'adj');
-  const [earlyChoice, setEarlyChoice] = useState<'adj' | 'early_leave'>(() =>
-    (editTarget?.application_types ?? []).includes('early_leave') ? 'early_leave' : 'adj');
+  // デフォルトは未選択(null)。本人が押さないと送信できない（validateでブロック）。
+  const [lateChoice, setLateChoice] = useState<'adj' | 'tardiness' | null>(() => {
+    const t = editTarget?.application_types ?? [];
+    if (t.includes('tardiness')) return 'tardiness';
+    if (t.includes('late_start_adj')) return 'adj';
+    return null;
+  });
+  const [earlyChoice, setEarlyChoice] = useState<'adj' | 'early_leave' | null>(() => {
+    const t = editTarget?.application_types ?? [];
+    if (t.includes('early_leave')) return 'early_leave';
+    if (t.includes('early_end_adj')) return 'adj';
+    return null;
+  });
 
   const typeDetect = useMemo(() => {
     if (!hasInput || !date) return { fixed: [] as OvertimeType[], lateQ: false, earlyQ: false };
@@ -431,8 +440,8 @@ const OvertimeForm: React.FC<{
 
   const applicationTypes: OvertimeType[] = useMemo(() => {
     const t = [...typeDetect.fixed];
-    if (typeDetect.lateQ) t.push(lateChoice === 'adj' ? 'late_start_adj' : 'tardiness');
-    if (typeDetect.earlyQ) t.push(earlyChoice === 'adj' ? 'early_end_adj' : 'early_leave');
+    if (typeDetect.lateQ && lateChoice) t.push(lateChoice === 'adj' ? 'late_start_adj' : 'tardiness');
+    if (typeDetect.earlyQ && earlyChoice) t.push(earlyChoice === 'adj' ? 'early_end_adj' : 'early_leave');
     return t;
   }, [typeDetect, lateChoice, earlyChoice]);
 
@@ -476,6 +485,9 @@ const OvertimeForm: React.FC<{
     if (sameSegs && !breakManual && effectiveLocation === (normalShift.location ?? '')) {
       return '通常シフトと同じ内容です。残業・早退・調整など、変更した点を入力してください';
     }
+    // 種別の2択（開始が遅い／早く終わる）は本人が選ぶまで送信不可
+    if (typeDetect.lateQ && !lateChoice) return '「開始が遅い理由は？」を選択してください';
+    if (typeDetect.earlyQ && !earlyChoice) return '「早く終わる理由は？」を選択してください';
     return '';
   };
 
