@@ -1604,6 +1604,20 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
     fetchPendingForMe();
   };
 
+  // 履歴・修正依頼系の派生値とフックは、?view=confirm の早期returnより前に置くこと。
+  // 早期returnの後ろに Hook があると、通常ビュー⇄確認ビューの切替で Hook 数が変わり React がクラッシュ
+  // （確認ページが真っ白になる）。Rules of Hooks 順守のため必ずここで宣言する。
+  const ownHistory = reports.filter(r => r.entry_type === 'manual' || r.entry_type === 'leave_auto');
+  // 受理済みの残業に紐づく最新の修正依頼（修正依頼中/対応済みバッジ用）
+  const [corrections, setCorrections] = useState<Map<string, CorrectionRequestRow>>(new Map());
+  const reloadCorrections = useCallback(() => {
+    const ids = ownHistory.filter(r => r.status === 'confirmed' && r.entry_type === 'manual').map(r => r.id);
+    if (ids.length === 0) { setCorrections(new Map()); return; }
+    fetchLatestCorrectionByTarget('overtime', ids).then(setCorrections);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reports]);
+  useEffect(() => { reloadCorrections(); }, [reloadCorrections]);
+
   // ────────────────────────────────────────────
   // 確認者ビュー（?view=confirm）
   // ────────────────────────────────────────────
@@ -1756,18 +1770,6 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
   // ────────────────────────────────────────────
   // 通常ビュー
   // ────────────────────────────────────────────
-  const ownHistory = reports.filter(r => r.entry_type === 'manual' || r.entry_type === 'leave_auto');
-
-  // 受理済みの残業に紐づく最新の修正依頼（修正依頼中/対応済みバッジ用）
-  const [corrections, setCorrections] = useState<Map<string, CorrectionRequestRow>>(new Map());
-  const reloadCorrections = useCallback(() => {
-    const ids = ownHistory.filter(r => r.status === 'confirmed' && r.entry_type === 'manual').map(r => r.id);
-    if (ids.length === 0) { setCorrections(new Map()); return; }
-    fetchLatestCorrectionByTarget('overtime', ids).then(setCorrections);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reports]);
-  useEffect(() => { reloadCorrections(); }, [reloadCorrections]);
-
   return (
     <div style={{ maxWidth: 600, margin: '0 auto', padding: '16px 16px 40px' }}>
       <div>
