@@ -7741,3 +7741,41 @@ grill-me→モック承認→サブエージェント2体レビュー（UI/UX＋
 - RLS管理者判定は必ず `(auth.jwt()->'app_metadata'->>'role')='admin'`。
 - UI文言/配色/新機能/設計判断は案提示→承認後に実装。大規模改修はUI/UX＋シニアEng 2体レビュー。
 - git add 前に git status 目視。AGENTS.md はコミットに含めない。DBマイグレーションはSQL Editorに全文貼付→Run。
+
+## ▶ 次セッション 引き継ぎ（2026-07-22 終了時点・ここから開始）
+
+### 状態
+- C:\Users\kohei\fivem-portal（master）。最新コミット **72185a0**（+このdocsコミット）。push・Vercelデプロイ着地確認済み。
+- 今セッションの変更は全て `client/src/pages/OvertimePage.tsx` のフロントのみ（**DBマイグレーションなし**）。ただし `overtime_settings.banner_group_names` をSQLで設定済み（下記）。
+- 未追跡は AGENTS.md のみ（触らない・コミットに含めない）。
+- **git: fivem-kyoto アカウントに固定済み**。remote URL=`https://fivem-kyoto@github.com/fivem-inc/fivem-portal.git`（ユーザー名のみ・トークン無し）＋GCM設定。push時の「Select an account」ダイアログが出なくなった。切れたら fivem-kyoto で一度ログイン。
+
+### 今日やったこと（残業「履歴・通算」→「部門集計」の拡張。すべて本番反映。詳細は自動メモリ [overtime-member-history-spec]）
+1. **個人別申請履歴の閲覧を新設**（合意仕様v2・UI/UX＋シニアEng 2体レビュー反映）。名前タップで個人詳細（当期の全履歴・時間帯/勤務地/勤務校/理由/通常シフト・状態バッジ）へ。`?staff=` でブラウザ戻る対応。
+2. **合計を「確定＋見込み」の2値表示**。`computeBalance` 純関数に一本化（本人カード/部門集計/個人詳細で共用）。見込み=confirmed+requested+request_confirmed+reported、returned/cancelled除外。
+3. **未申請者も0:00で表示**（全アクティブ正社員=`employment_type!='パート'`）。`banner_group_names=["大人","こども","管理部"]`（SQLで設定済み）でチーム分け。フィルタ=チーム(ドロップダウン・デフォルト自所属)＋名前検索。チーム内は役職順(ROLE_RANK)。一覧は 名前/チーム・役職/時間 を列揃え。総合計を一覧の上部に配置。
+4. **既存バグ4件修正**: ①退職者が集計から脱落→対象idで解決 ②調整休の二重減算防止（同日leave_auto優先） ③実績報告の開始時刻が空表示（minToTime非ゼロ埋め→`toTimeInputValue`） ④確認ページが真っ白（`?view=confirm` 早期returnより後ろに修正依頼Hookがあり Rules of Hooks 違反→Hookを前へ移動）。
+
+### 次回やること（優先順）
+1. **役職階層の閲覧制御**（ユーザー要望・未実装・設計提示済み）: リーダーはマネージャー以上を見せない／マネージャーは社長を見せない／社長・管理者は全員。ルール=「対象者のrank ≥ 自分のrank」（ROLE_RANK: 社長1・管理者1・マネージャー2・リーダー3・フロア責任者4・一般5）。**要判断: ①画面フィルタのみ / ②RLSまで厳密に**（②は overtime_select_summary・segments_select に役職ランク条件＝マイグレーション、2体レビュー）。
+2. **通知の土台づくり（残業をカスタマイズ可能に）**: 現状は Edge Function `overtime-approve` 内にアプリ内通知(notifications insert)がハードコードのみ。汎用 `notification_settings`(メール)・push設定に残業イベント未登録。event_key seed＋dispatch配線が必要（DB＋Edge Function改修、2体レビュー級）。
+3. **今日ぶんの実機確認**: 部門集計の個人詳細/2値/チーム分け/役職順/列揃え/未申請0:00/退職者表示、確認ページの空白解消、実績報告の開始時刻表示。
+4. 前回残: Excel校移動の実機確認／修正依頼機能の実機テスト／終日機能＋振替元の実機確認（続き4ぶん）。
+5. （任意）依存脆弱性 high 1件（dependabot・作業と無関係）。
+
+### 注意事項（設計上の要点）
+- OvertimePage は `if (isConfirmView)` の早期returnがある。**Hook は必ずその前**で宣言する（後ろに足すと通常⇄確認ビュー切替で確認ページが真っ白になる）。
+- `<input type="time">` の value はゼロ埋め必須。分→入力値は `toTimeInputValue()` を使う（`minToTime` は表示用で時が非ゼロ埋め "9:15"）。
+- 部門(チーム)は `banner_group_names` に登録された group のみ採用（group_names には権限/配信グループ=マネージャー・リーダー等が混在。勝手に拾わない）。管理は管理画面「残業管理タブ→設定」。
+- 合計時間数の計算は `computeBalance(rows, period)` に集約（欠勤別枠・調整休の二重減算防止・見込み状態WL）。本人カード/集計/個人詳細で共用。用語は「合計時間数」。
+- 役職ランクは OvertimePage の `ROLE_RANK`（社長・管理者=1…一般=5）。序列は自動メモリ [org-hierarchy]。
+
+### 作業ルール（厳守・毎回。続き4と同一＋git固定）
+- 開始時 git pull → git status → 本サマリー確認。作業開始・push は指示待ち。
+- 修正後 `cd client && npx tsc -b && npx vite build`。push後は `git ls-remote origin` で origin HEAD を必ず突き合わせる（exit 0でも未送信・タイムアウトのことがある）。
+- ★**デプロイもClaudeがやる**（DBマイグレーション/データ変更のSQL提示→ユーザーがSQL Editorで実行、Edge Functionデプロイ・commit・pushはClaude）。git push は fivem-kyoto 固定済みで通る。GCM認証が切れた時のみユーザーのターミナルでブラウザ再ログイン。
+- Vercelが push を拾い損ねる→空コミットで再トリガー。デプロイ確認は本番JSに固有文字列（ラベル等）が載ったか curl で検証（lazyチャンクは index-*.js から OvertimePage-*.js を辿る）。
+- alert/window.confirm/.catch 禁止（インライン確認・緑カード成功）。認証はAuthContext一元化。文言「承認→受理」「却下→差し戻し」。
+- RLS管理者判定は必ず `(auth.jwt()->'app_metadata'->>'role')='admin'`。
+- UI文言/配色/新機能/設計判断は案提示→承認後に実装。大規模改修はUI/UX＋シニアEng 2体レビュー。
+- git add 前に git status 目視。AGENTS.md はコミットに含めない。DBマイグレーションはSQL Editorに全文貼付→Run。
