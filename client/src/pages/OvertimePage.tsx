@@ -103,6 +103,9 @@ interface Props {
 // Constants & Utilities
 // ────────────────────────────────────────────────────────────────
 const REVIEWER_ROLES = ['リーダー', 'マネージャー'];
+// 役職の序列（社長・管理者＞マネージャー＞リーダー＞フロア責任者＞一般）。数字が小さいほど上位。部門集計の並びに使う。
+const ROLE_RANK: Record<string, number> = { '社長': 1, '管理者': 1, 'マネージャー': 2, 'リーダー': 3, 'フロア責任者': 4, '一般': 5 };
+const roleRank = (role: string) => ROLE_RANK[role] ?? 99;
 // 自己受理はマネージャー以上（2026-07-21ユーザー確定。リーダーは毎回マネージャー以上に申請）
 const SELF_REVIEW_ROLES = ['マネージャー', '社長', '管理者'];
 // 欠勤の受理者はマネージャー以上のみ（リーダー不可）
@@ -1500,7 +1503,11 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
         const b = computeBalance(byUser.get(userId) ?? [], summaryPeriod);
         return { userId, name: p?.name ?? '不明', group, role: p?.role_title ?? '', total: b.total, plannedTotal: b.plannedTotal, absenceDays: b.absenceDays };
       });
-      rows.sort((a, b) => a.group === b.group ? a.name.localeCompare(b.name, 'ja') : a.group.localeCompare(b.group, 'ja'));
+      // チーム内は役職の序列順（上位→下位）、同役職は名前順。チーム自体は名前順のまま。
+      rows.sort((a, b) => {
+        if (a.group !== b.group) return a.group.localeCompare(b.group, 'ja');
+        return roleRank(a.role) - roleRank(b.role) || a.name.localeCompare(b.name, 'ja');
+      });
       setSummaryRows(rows);
     })();
   }, [historyMode, canSummary, summaryPeriod]);
