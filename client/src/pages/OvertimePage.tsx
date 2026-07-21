@@ -2246,12 +2246,12 @@ const SummaryView: React.FC<{
                       <tr key={r.userId} onClick={() => onSelect(r.userId)} style={{ cursor: 'pointer' }}>
                         <td style={{ padding: '7px 0', borderBottom: `1px solid ${borderColor}` }}>
                           {r.name}
-                          {r.absenceDays > 0 && <span style={{ marginLeft: 6, fontSize: 11, color: subText }}>欠{r.absenceDays}日</span>}
                           {(r.group !== '未所属' || r.role) && (
-                            <span style={{ display: 'block', fontSize: 11, color: subText }}>
+                            <span style={{ marginLeft: 8, fontSize: 11, color: subText }}>
                               {[r.group !== '未所属' ? r.group : null, r.role || null].filter(Boolean).join('・')}
                             </span>
                           )}
+                          {r.absenceDays > 0 && <span style={{ marginLeft: 8, fontSize: 11, color: subText }}>欠{r.absenceDays}日</span>}
                         </td>
                         <td style={{ padding: '7px 0', borderBottom: `1px solid ${borderColor}`, textAlign: 'right' }}>
                           <span style={{ color: diffColor(r.total, isDark), fontWeight: 'bold' }}>{formatSignedMin(r.total)}</span>
@@ -2388,12 +2388,15 @@ const ReadonlyReportCard: React.FC<{
           {(r.application_types ?? []).length > 0 && (
             <div style={{ margin: '2px 0 4px' }}><TypeChips types={r.application_types} isDark={isDark} /></div>
           )}
-          <p style={{ margin: 0, fontSize: 12.5, color: subText }}>
-            {isFullDay && '終日　'}
-            {isFullDay && r.furikae_origin_date && `振替元：${r.furikae_origin_date.slice(5).replace('-', '/')}（${dowLabel(r.furikae_origin_date)}）${r.furikae_origin_location ? '・' + r.furikae_origin_location : ''}　`}
-            {!isFullDay && segs.length > 0 && `${actual.length > 0 ? '実績' : '予定'}：${segmentsLabel(segs)}　`}
-            {!isFullDay && r.location && `勤務地：${r.location}　`}
-            {r.reviewer?.name && `申請先：${r.reviewer.name}さん`}
+          <p style={{ margin: 0, fontSize: 12.5, color: subText, lineHeight: 1.9 }}>
+            {r.normal_shift?.start_time
+              ? <>通常シフト：{fmtTime(r.normal_shift.start_time)}〜{fmtTime(r.normal_shift.end_time)}（労働{formatMin(r.normal_shift.labor_minutes)}）<br /></>
+              : (!isFullDay ? <>通常シフト：休み<br /></> : null)}
+            {isFullDay && <>終日{r.furikae_origin_date ? `　振替元：${r.furikae_origin_date.slice(5).replace('-', '/')}（${dowLabel(r.furikae_origin_date)}）${r.furikae_origin_location ? '・' + r.furikae_origin_location : ''}` : ''}<br /></>}
+            {!isFullDay && segs.length > 0 && <>{actual.length > 0 ? '実績' : '予定'}：{segmentsLabel(segs)}{r.location ? `　勤務地：${r.location}` : ''}<br /></>}
+            {!isFullDay && segs.length === 0 && r.location && <>勤務地：{r.location}<br /></>}
+            {r.reason && <>理由：{r.reason}<br /></>}
+            {r.reviewer?.name && <>申請先：{r.reviewer.name}さん</>}
           </p>
           {r.status === 'returned' && r.return_comment && (
             <p style={{ margin: '4px 0 0', fontSize: 12.5, color: isDark ? '#f5b5ba' : '#c62828' }}>差し戻し理由：{r.return_comment}</p>
