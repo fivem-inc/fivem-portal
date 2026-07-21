@@ -62,6 +62,8 @@ interface OvertimeReport {
   reason: string | null;
   location: string | null;
   application_types: string[] | null;
+  furikae_origin_date: string | null;
+  furikae_origin_location: string | null;
   reviewer_id: string | null;
   confirmed_by: string | null;
   confirmed_at: string | null;
@@ -301,6 +303,8 @@ interface FormDraft {
   normEnd: string;
   fullDay?: boolean;
   fullDayType?: string;
+  furikaeOriginDate?: string;
+  furikaeOriginLocation?: string;
 }
 
 const EMPTY_SEG = { start: '', end: '' };
@@ -382,6 +386,9 @@ const OvertimeForm: React.FC<{
     return d && isOvertimeType(d) && FULL_DAY_TYPES.includes(d) ? d : null;
   });
   const [fullDayError, setFullDayError] = useState('');
+  // 振替休日の振替元（実際に出勤した日＋その日の勤務校）
+  const [furikaeOriginDate, setFurikaeOriginDate] = useState<string>(() => editTarget?.furikae_origin_date ?? draft?.furikaeOriginDate ?? '');
+  const [furikaeOriginLocation, setFurikaeOriginLocation] = useState<string>(() => editTarget?.furikae_origin_location ?? draft?.furikaeOriginLocation ?? '');
 
   const [calendarKind, setCalendarKind] = useState<CalendarKind | null>(editTarget?.normal_shift?.calendar_kind ?? null);
   const [error, setError] = useState('');
@@ -396,8 +403,9 @@ const OvertimeForm: React.FC<{
     saveDraft(DRAFT_KEYS.overtime, {
       mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId,
       normOverride, normStart, normEnd, fullDay, fullDayType: fullDayType ?? undefined,
+      furikaeOriginDate, furikaeOriginLocation,
     } satisfies FormDraft);
-  }, [editTarget, mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId, normOverride, normStart, normEnd, fullDay, fullDayType]);
+  }, [editTarget, mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId, normOverride, normStart, normEnd, fullDay, fullDayType, furikaeOriginDate, furikaeOriginLocation]);
 
   // 日付変更→会社カレンダー取得
   useEffect(() => {
@@ -551,6 +559,17 @@ const OvertimeForm: React.FC<{
   // 終日の勤務地はシフトの校を自動使用（シフトに校が無い日だけ手動選択）
   const fdLocation = normalShift.location ?? effectiveLocation;
 
+  // 振替元の勤務日を選ぶと、その日のシフト（曜日パターン）から勤務校を自動取得（間違っていれば手修正）
+  const furikaeFilledRef = useRef<string>(editTarget?.furikae_origin_date ?? '');
+  useEffect(() => {
+    if (!furikaeOriginDate) return;
+    if (furikaeFilledRef.current === furikaeOriginDate) return;
+    furikaeFilledRef.current = furikaeOriginDate;
+    const loc = resolveNormalShift(patterns, furikaeOriginDate, null).location;
+    setFurikaeOriginLocation(loc ?? '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [furikaeOriginDate, patterns]);
+
   // 時間帯変更時：手修正中なら注意表示
   useEffect(() => {
     if (breakManual && hasInput) setBreakRecalcNote(true);
@@ -580,6 +599,10 @@ const OvertimeForm: React.FC<{
       if (!normalShift.start_time) return 'この日はシフトが休みです。出勤予定日のみ登録できます';
       if (!fullDayType) return '種別（時間外調整休・振替休日・欠勤）を選択してください';
       if (!fdLocation) return '勤務地を選択してください';
+      if (fullDayType === 'furikae_off') {
+        if (!furikaeOriginDate) return '振替元の勤務日を選択してください';
+        if (!furikaeOriginLocation) return '振替元の勤務校を選択してください';
+      }
       if (!reason.trim()) return '理由を入力してください';
       if (!reviewerId) return '申請先を選択してください';
       if (fullDayType === 'absence' && isSelfReview) return '欠勤は本人以外の受理が必要です';
@@ -657,6 +680,9 @@ const OvertimeForm: React.FC<{
         reason: reason.trim(),
         location: fullDayMode ? fdLocation : effectiveLocation,
         application_types: applicationTypes,
+        // 振替休日のみ振替元を保存（他種別ではnullで上書き＝再提出で種別が変わった場合の掃除）
+        furikae_origin_date: (fullDayMode && fullDayType === 'furikae_off') ? furikaeOriginDate : null,
+        furikae_origin_location: (fullDayMode && fullDayType === 'furikae_off') ? furikaeOriginLocation : null,
         reviewer_id: isSelfReview ? user.id : reviewerId,
         ...(isSelfReview ? { confirmed_by: user.id, confirmed_at: new Date().toISOString() } : {}),
         ...(isResubmit ? { return_comment: null } : {}),
@@ -761,6 +787,7 @@ const OvertimeForm: React.FC<{
     setReason(''); setLocation(''); setLocationCustom(''); setLocMoveStart(''); setLocMoveEnd('');
     setReviewerId(''); setNormOverride(false); setNormStart(''); setNormEnd('');
     setFullDay(false); setFullDayType(null); setFullDayError('');
+    setFurikaeOriginDate(''); setFurikaeOriginLocation('');
     setError(''); setShowConfirm(false);
     clearDraft(DRAFT_KEYS.overtime);
   };
@@ -962,14 +989,36 @@ const OvertimeForm: React.FC<{
                 ))}
               </div>
 
-              {/* 残高への影響（本人が一番不安な点を1行で明示） */}
+              {/* この申請が合計時間数にどう効くか（本人が一番不安な点を1行で明示） */}
               {fullDayType && (
                 <div style={{ background: isDark ? '#1b3a1e' : '#d1e7dd', border: '1px solid #28a745', borderRadius: 8, padding: '8px 12px', marginTop: 8 }}>
                   <p style={{ margin: 0, fontSize: 12.5, color: isDark ? '#8fd19e' : '#0f5132' }}>
-                    {fullDayType === 'chosei_off' && `シフト労働分 ${formatSignedMin(-normalShift.labor_minutes)} を残高から差し引きます`}
-                    {fullDayType === 'furikae_off' && '残高は変わりません（記録のみ）'}
-                    {fullDayType === 'absence' && '欠勤1日として記録されます（残高には入りません）'}
+                    {fullDayType === 'chosei_off' && `シフト労働分 ${formatSignedMin(-normalShift.labor_minutes)} を合計時間数から差し引きます`}
+                    {fullDayType === 'furikae_off' && '休日出勤の振替として記録します'}
+                    {fullDayType === 'absence' && '欠勤1日として記録します'}
                   </p>
+                </div>
+              )}
+
+              {/* 振替休日：振替元（実際に出勤した日）＋その日の勤務校（シフトから自動・修正可） */}
+              {fullDayType === 'furikae_off' && (
+                <div style={{ marginTop: 10 }}>
+                  <span style={{ ...labelStyle, marginBottom: 4 }}>振替元の勤務日{req}
+                    <span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（実際に出勤した日をタップ）</span>
+                  </span>
+                  <SingleDatePicker value={furikaeOriginDate} onChange={setFurikaeOriginDate} isDark={isDark} />
+                  <div style={{ marginTop: 8 }}>
+                    <span style={{ ...labelStyle, marginBottom: 4 }}>振替元の勤務校{req}
+                      <span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（シフトから自動・違えば修正）</span>
+                    </span>
+                    <select value={furikaeOriginLocation} onChange={e => setFurikaeOriginLocation(e.target.value)} style={fieldStyle}>
+                      <option value="">選択してください</option>
+                      {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+                      {furikaeOriginLocation && !workplaces.includes(furikaeOriginLocation) && (
+                        <option value={furikaeOriginLocation}>{furikaeOriginLocation}</option>
+                      )}
+                    </select>
+                  </div>
                 </div>
               )}
 
@@ -1213,9 +1262,10 @@ const OvertimeForm: React.FC<{
           {fullDayMode ? (
             <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
               {date}（{dowLabel(date)}）　終日：{fullDayType ? OT_TYPE_INFO[fullDayType].label : ''}<br />
-              {fullDayType === 'chosei_off' && <>シフト労働分 {formatSignedMin(fdDiffMin)} を残高から差し引きます<br /></>}
-              {fullDayType === 'furikae_off' && <>残高は変わりません（記録のみ）<br /></>}
-              {fullDayType === 'absence' && <>欠勤1日として記録されます（残高には入りません）<br /></>}
+              {fullDayType === 'furikae_off' && furikaeOriginDate && <>振替元：{furikaeOriginDate.slice(5).replace('-', '/')}（{dowLabel(furikaeOriginDate)}）{furikaeOriginLocation && `・${furikaeOriginLocation}`}<br /></>}
+              {fullDayType === 'chosei_off' && <>シフト労働分 {formatSignedMin(fdDiffMin)} を合計時間数から差し引きます<br /></>}
+              {fullDayType === 'furikae_off' && <>休日出勤の振替として記録します<br /></>}
+              {fullDayType === 'absence' && <>欠勤1日として記録します<br /></>}
               {isSelfReview ? '自己受理のため、送信と同時に確定します' : `申請先：${reviewers.find(r => r.id === reviewerId)?.name ?? ''}さん（受理で確定します）`}
             </p>
           ) : (
@@ -1365,7 +1415,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
     })();
   }, [historyMode, canSummary, summaryPeriod]);
 
-  // ---- 残高（今期通算） ----
+  // ---- 合計時間数（今期通算） ----
   const balance = useMemo(() => {
     const rows = reports.filter(r => r.pay_period_start === currentPeriod && r.status === 'confirmed');
     const total = rows.reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
@@ -1375,7 +1425,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
     const choseiMinus = rows.filter(r => (r.diff_minutes ?? 0) < 0 && isChosei(r)).reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
     const otherMinus = rows.filter(r => (r.diff_minutes ?? 0) < 0 && !isChosei(r)).reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
     const minus = choseiMinus + otherMinus;
-    // 欠勤は残高に入れず日数で別枠カウント
+    // 欠勤は合計時間数に入れず日数で別枠カウント
     const absenceDays = rows.filter(r => (r.application_types ?? []).includes('absence')).length;
     const absencePending = reports.filter(r => r.pay_period_start === currentPeriod && r.status === 'requested' && (r.application_types ?? []).includes('absence')).length;
     const pendingCount = reports.filter(r => r.pay_period_start === currentPeriod && ['requested', 'reported'].includes(r.status)).length;
@@ -1542,10 +1592,13 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                     <>
                       <span style={{ color: subText }}>申請内容　：</span>
                       <span style={{ fontWeight: 'bold' }}>終日　{fdType ? OT_TYPE_INFO[fdType].label : ''}</span><br />
+                      {r.furikae_origin_date && (
+                        <><span style={{ color: subText }}>振替元　　：</span>{r.furikae_origin_date.slice(5).replace('-', '/')}（{dowLabel(r.furikae_origin_date)}）{r.furikae_origin_location ? `・${r.furikae_origin_location}` : ''}<br /></>
+                      )}
                       <span style={{ color: subText }}>
-                        {fdType === 'chosei_off' && <>残高への影響 <span style={{ fontWeight: 'bold', color: diffColor(r.diff_minutes ?? 0, isDark) }}>{formatSignedMin(r.diff_minutes ?? 0)}</span>（受理で確定します）</>}
-                        {fdType === 'furikae_off' && '残高への影響なし（記録のみ・受理で確定します）'}
-                        {fdType === 'absence' && '欠勤1日として記録（残高には入りません・受理で確定します）'}
+                        {fdType === 'chosei_off' && <>合計時間数 <span style={{ fontWeight: 'bold', color: diffColor(r.diff_minutes ?? 0, isDark) }}>{formatSignedMin(r.diff_minutes ?? 0)}</span>（受理で確定します）</>}
+                        {fdType === 'furikae_off' && '休日出勤の振替として記録（受理で確定します）'}
+                        {fdType === 'absence' && '欠勤1日として記録（受理で確定します）'}
                       </span>
                     </>
                   ) : (
@@ -1749,9 +1802,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                 />
               ) : (
                 <>
-                  {/* 残高カード */}
+                  {/* 合計時間数カード */}
                   <div style={{ background: innerBg, borderRadius: 12, padding: '14px 16px', marginBottom: 8 }}>
-                    <p style={{ margin: 0, fontSize: 12.5, color: subText }}>今期の通算（{payPeriodLabel(currentPeriod)}・{payMonthLabel(currentPeriod)}）</p>
+                    <p style={{ margin: 0, fontSize: 12.5, color: subText }}>今期の合計時間数（{payPeriodLabel(currentPeriod)}・{payMonthLabel(currentPeriod)}）</p>
                     <p style={{ margin: '4px 0 6px', fontSize: 26, fontWeight: 'bold', color: diffColor(balance.total, isDark) }}>
                       {formatSignedMin(balance.total)}
                     </p>
@@ -1762,7 +1815,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                     </div>
                     {balance.absenceDays + balance.absencePending > 0 && (
                       <p style={{ margin: '6px 0 0', fontSize: 12, color: subText }}>
-                        欠勤 {balance.absenceDays}日{balance.absencePending > 0 && `（確認待ち${balance.absencePending}件）`}・残高には含まれません
+                        欠勤 {balance.absenceDays}日{balance.absencePending > 0 && `（確認待ち${balance.absencePending}件）`}
                       </p>
                     )}
                     <p style={{ margin: '8px 0 0', fontSize: 11.5, color: subText }}>
@@ -1825,6 +1878,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                             )}
                             <p style={{ margin: 0, fontSize: 12.5, color: subText }}>
                               {isFullDay && '終日　'}
+                              {isFullDay && r.furikae_origin_date && `振替元：${r.furikae_origin_date.slice(5).replace('-', '/')}（${dowLabel(r.furikae_origin_date)}）${r.furikae_origin_location ? '・' + r.furikae_origin_location : ''}　`}
                               {!isFullDay && segs.length > 0 && `${actual.length > 0 ? '実績' : '予定'}：${segmentsLabel(segs)}　`}
                               {r.reviewer?.name && `申請先：${r.reviewer.name}さん`}
                             </p>
@@ -1927,20 +1981,24 @@ const MyPatternToggle: React.FC<{ isDark: boolean; patterns: PatternRow[] }> = (
             <>
               <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse', color: text }}>
                 <tbody>
-                  {order.filter(k => active.some(p => p.day_kind === k)).map(k => {
+                  {order.filter(k => active.some(p => p.day_kind === k)).map((k, i) => {
                     const p = active.find(x => x.day_kind === k)!;
+                    const rowStyle: React.CSSProperties = { borderTop: i > 0 ? `1px solid ${borderColor}` : 'none' };
+                    const cell: React.CSSProperties = { padding: '6px 0', verticalAlign: 'top' };
                     return (
-                      <tr key={k}>
-                        <td style={{ padding: '3px 0', color: subText, width: 130 }}>{DAY_KIND_LABELS[k]}</td>
-                        <td style={{ padding: '3px 0' }}>
+                      <tr key={k} style={rowStyle}>
+                        <td style={{ ...cell, color: subText, whiteSpace: 'nowrap', paddingRight: 10, fontWeight: 'bold', width: 44 }}>{DAY_KIND_LABELS[k]}</td>
+                        <td style={cell}>
                           {p.start_time ? (
                             <>
-                              {fmtTime(p.start_time)}〜{fmtTime(p.end_time)}
-                              {p.start_time2 && `　＋　${fmtTime(p.start_time2)}〜${fmtTime(p.end_time2)}`}
-                              （休憩{formatMin(p.break_minutes)}・労働{formatMin(p.labor_minutes)}）
-                              {p.location && <span style={{ color: subText }}>　／　{p.location}</span>}
+                              <span style={{ whiteSpace: 'nowrap' }}>{fmtTime(p.start_time)}〜{fmtTime(p.end_time)}</span>
+                              {p.start_time2 && <span style={{ whiteSpace: 'nowrap' }}>　＋　{fmtTime(p.start_time2)}〜{fmtTime(p.end_time2)}</span>}
+                              <span style={{ display: 'block', fontSize: 11, color: subText, marginTop: 1 }}>休憩{formatMin(p.break_minutes)}・労働{formatMin(p.labor_minutes)}</span>
                             </>
-                          ) : '休み'}
+                          ) : <span style={{ color: subText }}>休み</span>}
+                        </td>
+                        <td style={{ ...cell, color: subText, textAlign: 'right', whiteSpace: 'nowrap', paddingLeft: 8 }}>
+                          {p.start_time ? (p.location ?? '') : ''}
                         </td>
                       </tr>
                     );
