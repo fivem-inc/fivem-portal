@@ -9,7 +9,7 @@ import type { DayKind, CalendarKind } from '../../lib/breakCalc';
 import { DEFAULT_LOCATION } from '../../lib/shiftExcelImport';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
 import OvertimeEditModal, { type OvertimeRecord } from './OvertimeEditModal';
-import { OT_TYPE_INFO, isOvertimeType } from '../../lib/overtimeTypes';
+import { OT_TYPE_INFO, isOvertimeType, isFullDayReport } from '../../lib/overtimeTypes';
 
 const OT_STATUS_LABEL: Record<string, { label: string; color: string }> = {
   requested:         { label: '事前申請', color: '#f59e0b' },
@@ -209,7 +209,11 @@ const OvertimeAdminTab: React.FC = () => {
     const rows = otReports.map(r => {
       const ns = (r.normal_shift ?? {}) as Record<string, unknown>;
       const actualSegs = r.segments.filter(s => s.phase === (r.segments.some(x => x.phase === 'actual') ? 'actual' : 'planned')).sort((a, b) => a.seg_no - b.seg_no);
-      const segText = actualSegs.length ? actualSegs.map(s => `${minToTime(s.start_min)}〜${minToTime(s.end_min)}`).join('、') : '';
+      const segText = actualSegs.length
+        ? actualSegs.map(s => `${minToTime(s.start_min)}〜${minToTime(s.end_min)}`).join('、')
+        : isFullDayReport(r.application_types)
+          ? `終日（${(r.application_types ?? []).filter(isOvertimeType).map(t => OT_TYPE_INFO[t].label).join('・')}）`
+          : '';
       const normLabor = typeof ns.labor_minutes === 'number' ? formatMin(ns.labor_minutes) : '';
       return [
         r.applicantName ?? '', r.work_date, OT_STATUS_LABEL[otStatusMap[r.id]]?.label ?? otStatusMap[r.id] ?? '',
@@ -523,7 +527,8 @@ const OvertimeAdminTab: React.FC = () => {
                     const st = otStatusMap[r.id];
                     const stInfo = OT_STATUS_LABEL[st] ?? { label: st, color: '#6c757d' };
                     const actualSegs = r.segments.filter(s => s.phase === (r.segments.some(x => x.phase === 'actual') ? 'actual' : 'planned')).sort((a, b) => a.seg_no - b.seg_no);
-                    const segText = actualSegs.length ? actualSegs.map(s => `${minToTime(s.start_min)}〜${minToTime(s.end_min)}`).join('、') : '(なし)';
+                    const rowFullDay = isFullDayReport(r.application_types);
+                    const segText = actualSegs.length ? actualSegs.map(s => `${minToTime(s.start_min)}〜${minToTime(s.end_min)}`).join('、') : rowFullDay ? '終日' : '(なし)';
                     const ns = (r.normal_shift ?? {}) as { start_time?: string | null; end_time?: string | null; location?: string | null };
                     const nsTime = ns.start_time ? `${String(ns.start_time).slice(0, 5)}〜${ns.end_time ? String(ns.end_time).slice(0, 5) : ''}` : '休み';
                     const nsLoc = ns.location || '';
@@ -558,7 +563,10 @@ const OvertimeAdminTab: React.FC = () => {
                           <td style={cell}><span style={{ padding: '2px 6px', borderRadius: 6, background: stInfo.color, color: '#fff', fontSize: 10, fontWeight: 'bold', whiteSpace: 'nowrap' }}>{stInfo.label}</span></td>
                           <td style={cell}>
                             <div style={{ display: 'flex', gap: 3, justifyContent: 'center', flexWrap: 'wrap' }}>
-                              <button onClick={() => setEditingOt(r)} style={{ padding: '3px 8px', borderRadius: 6, border: 'none', background: '#fd7e14', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}>🖊修正</button>
+                              {/* 終日行（調整休・欠勤）は修正モーダル非対応（segments前提の再計算で差分が壊れるため。種別変更UIは公開準備時に対応） */}
+                              {!rowFullDay && (
+                                <button onClick={() => setEditingOt(r)} style={{ padding: '3px 8px', borderRadius: 6, border: 'none', background: '#fd7e14', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}>🖊修正</button>
+                              )}
                               {st !== 'returned' && st !== 'cancelled' && (
                                 <button onClick={() => { setOtReturnTarget(r); setOtReturnComment(''); }} style={{ padding: '3px 8px', borderRadius: 6, border: 'none', background: '#dc3545', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}>差戻</button>
                               )}

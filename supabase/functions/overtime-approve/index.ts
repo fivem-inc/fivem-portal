@@ -56,11 +56,18 @@ serve(async (req) => {
     const db = createClient(supabaseUrl, serviceKey)
     const { data: r, error: loadErr } = await db
       .from('overtime_reports')
-      .select('id, applicant_id, reviewer_id, work_date, status, entry_type, diff_minutes')
+      .select('id, applicant_id, reviewer_id, work_date, status, entry_type, diff_minutes, application_types')
       .eq('id', report_id)
       .maybeSingle()
     if (loadErr || !r) return json({ success: false, error: '対象の申請が見つかりません' }, 404)
     if (r.entry_type !== 'manual') return json({ success: false, error: '自動計上分は操作できません' }, 400)
+
+    // 終日種別（調整休・振替休日・欠勤）：実績報告の概念がないため受理で confirmed 直行
+    const FULL_DAY = ['chosei_off', 'furikae_off', 'absence']
+    const types: string[] = r.application_types ?? []
+    const isFullDay = types.some(t => FULL_DAY.includes(t))
+    const FULL_DAY_LABEL: Record<string, string> = { chosei_off: '時間外調整休', furikae_off: '振替休日', absence: '欠勤' }
+    const fullDayLabel = types.map(t => FULL_DAY_LABEL[t]).filter(Boolean).join('・')
 
     // 申請者名（通知・GCalタイトル用）
     const { data: prof } = await db.from('profiles').select('name').eq('id', r.applicant_id).maybeSingle()
@@ -70,20 +77,25 @@ serve(async (req) => {
 
     if (action === 'approve') {
       if (!(isAdmin || caller.id === r.reviewer_id)) return json({ success: false, error: '権限がありません' }, 403)
+      // 欠勤は本人受理禁止（管理者でも本人なら不可。DB CHECK制約と合わせた3層ガード）
+      if (types.includes('absence') && caller.id === r.applicant_id) {
+        return json({ success: false, error: '欠勤は本人以外の受理が必要です' }, 403)
+      }
       if (!['requested', 'reported'].includes(r.status)) return json({ success: false, error: 'この状態では受理できません' }, 409)
       const isAdvance = r.status === 'requested'
-      const next = isAdvance
+      // 終日は実績報告が無いため、事前申請の受理でも confirmed 直行
+      const next = (isAdvance && !isFullDay)
         ? { status: 'request_confirmed' }
         : { status: 'confirmed', confirmed_by: caller.id, confirmed_at: new Date().toISOString() }
       const { error } = await db.from('overtime_reports').update(next).eq('id', r.id).eq('status', r.status)
       if (error) return json({ success: false, error: '更新に失敗しました: ' + error.message }, 500)
       notification = {
         user_id: r.applicant_id,
-        message: isAdvance ? '事前申請が受理されました' : '残業・時間調整の実績が確認されました',
-        sub_message: `${r.work_date}（${dowLabel(r.work_date)}）　${formatSignedMin(r.diff_minutes ?? 0)}`,
+        message: isFullDay ? `${fullDayLabel}の申請が受理されました` : (isAdvance ? '事前申請が受理されました' : '残業・時間調整の実績が確認されました'),
+        sub_message: `${r.work_date}（${dowLabel(r.work_date)}）${isFullDay ? `　${fullDayLabel}` : `　${formatSignedMin(r.diff_minutes ?? 0)}`}`,
         source_type: 'overtime_request',
         reference_id: r.id,
-        event_key: isAdvance ? 'overtime:request_confirmed' : 'overtime:confirmed',
+        event_key: (isAdvance && !isFullDay) ? 'overtime:request_confirmed' : 'overtime:confirmed',
         read: false,
       }
     } else if (action === 'return') {

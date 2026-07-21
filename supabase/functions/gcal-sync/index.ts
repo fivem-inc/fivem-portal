@@ -43,7 +43,14 @@ const OVERTIME_TYPES: Record<string, { label: string; colorId: string; sync: boo
   location_change: { label: '勤務地変更',  colorId: '3',  sync: true,  priority: 6 },
   tardiness:       { label: '遅刻',        colorId: '2',  sync: false, priority: 7 },
   early_leave:     { label: '早退',        colorId: '2',  sync: false, priority: 8 },
+  // 終日種別（単独付与・時刻なしタイトル）。現状の休暇/欠勤の見た目を維持: 調整休=「調整休」・欠勤=「休み」・colorId 4
+  chosei_off:      { label: '調整休',      colorId: '4',  sync: true,  priority: 9 },
+  furikae_off:     { label: '調整休',      colorId: '4',  sync: true,  priority: 10 },
+  absence:         { label: '休み',        colorId: '4',  sync: true,  priority: 11 },
 }
+
+// 終日種別は事後報告でもカレンダーに出す（「誰が休んだか」は事後でも周知価値があるため）
+const OVERTIME_FULL_DAY = ['chosei_off', 'furikae_off', 'absence']
 
 /** 分 → "HH:MM"（1440以上は翌日表記） */
 function otMinToTime(min: number): string {
@@ -221,15 +228,17 @@ serve(async (req) => {
         .eq('id', source_id)
         .maybeSingle()
 
-      // 同期対象になる条件：手動行・受理後（事前確定/実績確認待ち/実績確定）・事後報告でない・同期可の種別が1つ以上
+      // 同期対象になる条件：手動行・受理後（事前確定/実績確認待ち/実績確定）・同期可の種別が1つ以上。
+      // 事後報告は原則出さないが、終日種別（調整休・振替・欠勤）だけは事後でも出す。
       // ※reported を含めるのは、事前受理でカレンダーに出た予定が実績報告の瞬間に消えるのを防ぐため
       const syncTypes: string[] = (report?.application_types ?? [])
         .filter((t: string) => OVERTIME_TYPES[t]?.sync)
         .sort((a: string, b: string) => OVERTIME_TYPES[a].priority - OVERTIME_TYPES[b].priority)
+      const otIsFullDay = (report?.application_types ?? []).some((t: string) => OVERTIME_FULL_DAY.includes(t))
       const shouldExist = !!report
         && report.entry_type === 'manual'
         && ['request_confirmed', 'reported', 'confirmed'].includes(report.status)
-        && !report.is_post_hoc
+        && (!report.is_post_hoc || otIsFullDay)
         && syncTypes.length > 0
 
       const { data: existing } = await supabase

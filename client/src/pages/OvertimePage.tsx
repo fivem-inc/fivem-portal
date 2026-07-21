@@ -12,7 +12,7 @@ import {
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import type { AuthUser } from '../types';
 import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
-import { OT_TYPE_INFO, isOvertimeType } from '../lib/overtimeTypes';
+import { OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport } from '../lib/overtimeTypes';
 import type { OvertimeType } from '../lib/overtimeTypes';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
 import type { CorrectionRequestRow } from '../lib/correctionRequest';
@@ -101,7 +101,10 @@ interface Props {
 // Constants & Utilities
 // ────────────────────────────────────────────────────────────────
 const REVIEWER_ROLES = ['リーダー', 'マネージャー'];
-const SELF_REVIEW_ROLES = ['リーダー', 'マネージャー', '社長', '管理者'];
+// 自己受理はマネージャー以上（2026-07-21ユーザー確定。リーダーは毎回マネージャー以上に申請）
+const SELF_REVIEW_ROLES = ['マネージャー', '社長', '管理者'];
+// 欠勤の受理者はマネージャー以上のみ（リーダー不可）
+const ABSENCE_REVIEWER_ROLES = ['マネージャー'];
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 const SELF_REVIEW_VALUE = '__self__';
 
@@ -296,6 +299,8 @@ interface FormDraft {
   normOverride: boolean;
   normStart: string;
   normEnd: string;
+  fullDay?: boolean;
+  fullDayType?: string;
 }
 
 const EMPTY_SEG = { start: '', end: '' };
@@ -363,6 +368,21 @@ const OvertimeForm: React.FC<{
   const [normStart, setNormStart] = useState(() => fmtTime(editTarget?.normal_shift?.start_time) !== '-' ? fmtTime(editTarget?.normal_shift?.start_time) : (draft?.normStart ?? ''));
   const [normEnd, setNormEnd] = useState(() => fmtTime(editTarget?.normal_shift?.end_time) !== '-' ? fmtTime(editTarget?.normal_shift?.end_time) : (draft?.normEnd ?? ''));
 
+  // 終日（調整休・欠勤）モード。時刻入力の代わりに種別3択（時間外調整休/振替休日/欠勤）で申請する
+  const [fullDay, setFullDay] = useState<boolean>(() => {
+    if (editTarget) return isFullDayReport(editTarget.application_types);
+    return draft?.fullDay ?? false;
+  });
+  const [fullDayType, setFullDayType] = useState<OvertimeType | null>(() => {
+    if (editTarget) {
+      const t = (editTarget.application_types ?? []).find(x => (FULL_DAY_TYPES as string[]).includes(x));
+      return t ? (t as OvertimeType) : null;
+    }
+    const d = draft?.fullDayType;
+    return d && isOvertimeType(d) && FULL_DAY_TYPES.includes(d) ? d : null;
+  });
+  const [fullDayError, setFullDayError] = useState('');
+
   const [calendarKind, setCalendarKind] = useState<CalendarKind | null>(editTarget?.normal_shift?.calendar_kind ?? null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -375,9 +395,9 @@ const OvertimeForm: React.FC<{
     if (editTarget) return;
     saveDraft(DRAFT_KEYS.overtime, {
       mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId,
-      normOverride, normStart, normEnd,
+      normOverride, normStart, normEnd, fullDay, fullDayType: fullDayType ?? undefined,
     } satisfies FormDraft);
-  }, [editTarget, mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId, normOverride, normStart, normEnd]);
+  }, [editTarget, mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId, normOverride, normStart, normEnd, fullDay, fullDayType]);
 
   // 日付変更→会社カレンダー取得
   useEffect(() => {
@@ -518,11 +538,18 @@ const OvertimeForm: React.FC<{
   }, [hasInput, date, workSegments, normalShift.start_time, normalShift.end_time, normalShift.location, effectiveLocation]);
 
   const applicationTypes: OvertimeType[] = useMemo(() => {
+    if (fullDay && fullDayType) return [fullDayType]; // 終日は単独付与（DB制約と対応）
     const t = [...typeDetect.fixed];
     if (typeDetect.lateQ && lateChoice) t.push(lateChoice === 'adj' ? 'late_start_adj' : 'tardiness');
     if (typeDetect.earlyQ && earlyChoice) t.push(earlyChoice === 'adj' ? 'early_end_adj' : 'early_leave');
     return t;
-  }, [typeDetect, lateChoice, earlyChoice]);
+  }, [typeDetect, lateChoice, earlyChoice, fullDay, fullDayType]);
+
+  // 終日モードの派生値
+  const fullDayMode = fullDay && !!fullDayType;
+  const fdDiffMin = fullDayType === 'chosei_off' ? -normalShift.labor_minutes : 0;
+  // 終日の勤務地はシフトの校を自動使用（シフトに校が無い日だけ手動選択）
+  const fdLocation = normalShift.location ?? effectiveLocation;
 
   // 時間帯変更時：手修正中なら注意表示
   useEffect(() => {
@@ -548,6 +575,16 @@ const OvertimeForm: React.FC<{
     if (!date) return '日付を選択してください';
     if (mode === 'advance' && !editTarget && date < today) return '事前申請は当日以降の日付を選択してください';
     if (mode === 'posthoc' && date > today) return '事後報告は当日以前の日付を選択してください';
+    // 終日（調整休・欠勤）は時刻・休憩・勤務地の検証をスキップし、専用の検証のみ行う
+    if (fullDay) {
+      if (!normalShift.start_time) return 'この日はシフトが休みです。出勤予定日のみ登録できます';
+      if (!fullDayType) return '種別（時間外調整休・振替休日・欠勤）を選択してください';
+      if (!fdLocation) return '勤務地を選択してください';
+      if (!reason.trim()) return '理由を入力してください';
+      if (!reviewerId) return '申請先を選択してください';
+      if (fullDayType === 'absence' && isSelfReview) return '欠勤は本人以外の受理が必要です';
+      return '';
+    }
     if (workSegments.length === 0) return '勤務時間帯を入力してください';
     for (let i = 0; i < segments.length; i++) {
       const s = segments[i];
@@ -590,21 +627,35 @@ const OvertimeForm: React.FC<{
     try {
       const phase: 'planned' | 'actual' = (mode === 'posthoc' || isReportPhase || (isResubmit && editTarget?.is_post_hoc) || (isResubmit && (editTarget?.segments ?? []).some(s => s.phase === 'actual')))
         ? 'actual' : 'planned';
+
+      // 二重計上防止：休暇申請の時間外調整休（自動計上）が同日に既にある場合はブロック
+      if (fullDayMode && fullDayType === 'chosei_off' && !editTarget) {
+        const { data: dup } = await supabase.from('overtime_reports')
+          .select('id').eq('applicant_id', user.id).eq('work_date', date).eq('entry_type', 'leave_auto').limit(1);
+        if ((dup ?? []).length > 0) {
+          setError('この日は休暇申請の時間外調整休がすでに計上されています');
+          setSaving(false); setShowConfirm(false); return;
+        }
+      }
+
       const record = {
         work_date: date,
         pay_period_start: calcPayPeriodStartJst(date),
         is_post_hoc: mode === 'posthoc',
-        status: (phase === 'actual'
-          ? (isSelfReview ? 'confirmed' : 'reported')
-          : (isSelfReview ? 'request_confirmed' : 'requested')) as OvertimeStatus,
+        // 終日は実績報告の概念がないため、自己受理=確定・他者宛=申請（受理でconfirmed直行）
+        status: (fullDayMode
+          ? (isSelfReview ? 'confirmed' : 'requested')
+          : (phase === 'actual'
+            ? (isSelfReview ? 'confirmed' : 'reported')
+            : (isSelfReview ? 'request_confirmed' : 'requested'))) as OvertimeStatus,
         normal_shift: normalShift,
-        break_minutes: breakMin,
-        break_manual: breakManual,
-        labor_minutes: laborMin,
-        diff_minutes: diffMin,
-        legal_warning: !legal.ok,
+        break_minutes: fullDayMode ? 0 : breakMin,
+        break_manual: fullDayMode ? false : breakManual,
+        labor_minutes: fullDayMode ? 0 : laborMin,
+        diff_minutes: fullDayMode ? fdDiffMin : diffMin,
+        legal_warning: fullDayMode ? false : !legal.ok,
         reason: reason.trim(),
-        location: effectiveLocation,
+        location: fullDayMode ? fdLocation : effectiveLocation,
         application_types: applicationTypes,
         reviewer_id: isSelfReview ? user.id : reviewerId,
         ...(isSelfReview ? { confirmed_by: user.id, confirmed_at: new Date().toISOString() } : {}),
@@ -636,11 +687,14 @@ const OvertimeForm: React.FC<{
         reportId = inserted.id;
       }
 
-      const segRows = workSegments.map((s, i) => ({
+      // 終日（調整休・欠勤）は時間帯を持たない
+      const segRows = fullDayMode ? [] : workSegments.map((s, i) => ({
         report_id: reportId, phase, seg_no: i + 1, start_min: s.startMin, end_min: s.endMin,
       }));
-      const { error: segErr } = await supabase.from('overtime_report_segments').insert(segRows);
-      if (segErr) { setError('時間帯の保存に失敗しました: ' + segErr.message); setSaving(false); setShowConfirm(false); return; }
+      if (segRows.length > 0) {
+        const { error: segErr } = await supabase.from('overtime_report_segments').insert(segRows);
+        if (segErr) { setError('時間帯の保存に失敗しました: ' + segErr.message); setSaving(false); setShowConfirm(false); return; }
+      }
 
       // 通知
       if (!isSelfReview && reviewerId) {
@@ -706,6 +760,7 @@ const OvertimeForm: React.FC<{
     setDate(''); setSegments([{ ...EMPTY_SEG }]); setBreakManual(false); setBreakManualMin('');
     setReason(''); setLocation(''); setLocationCustom(''); setLocMoveStart(''); setLocMoveEnd('');
     setReviewerId(''); setNormOverride(false); setNormStart(''); setNormEnd('');
+    setFullDay(false); setFullDayType(null); setFullDayError('');
     setError(''); setShowConfirm(false);
     clearDraft(DRAFT_KEYS.overtime);
   };
@@ -736,6 +791,7 @@ const OvertimeForm: React.FC<{
             <li>休憩は自動計算されます。突発的な残業などで自動計算どおりに取れなかった場合は、休憩の「修正」から実際の時間に直してください（休憩後は1分以上業務をしてから退勤してください）。</li>
             <li>時間は1分単位で入力できます。外出・戻りのあるシフトは「＋時間帯を追加」で入力してください。</li>
             <li>正社員の方は、残業分を別日で調整（時間調整・調整休）していただくようお願いします。</li>
+            <li>調整休・欠勤（終日）は受理された時点で完了します（実績報告は不要です）。</li>
           </ol>
 
           <button type="button" onClick={() => setShowRules(v => !v)}
@@ -854,7 +910,80 @@ const OvertimeForm: React.FC<{
         </div>
       )}
 
+      {/* 終日（調整休・欠勤）トグル。日付選択後に意味を持つためシフト表示カードの直後に配置 */}
+      {date && (!editTarget || fullDay) && (
+        <div style={{ marginBottom: 12 }}>
+          {!editTarget && (
+            <button type="button"
+              onClick={() => {
+                if (!normalShift.start_time) { setFullDayError('この日はシフトが休みです。出勤予定日のみ登録できます'); return; }
+                setFullDayError('');
+                setFullDay(v => !v);
+              }}
+              style={{
+                width: '100%', padding: '10px 0', borderRadius: 10, cursor: 'pointer', fontSize: 13.5,
+                fontWeight: fullDay ? 'bold' : 'normal',
+                border: fullDay ? '2px solid #d4537e' : `1px dashed ${borderColor}`,
+                background: fullDay ? (isDark ? '#4b1528' : '#fbeaf0') : 'transparent',
+                color: fullDay ? (isDark ? '#f4c0d1' : '#993556') : subText,
+              }}>
+              {fullDay ? '✓ 調整休・欠勤（終日）で申請中 ─ 押すと時間の申請に戻ります' : '🌙 調整休・欠勤（終日）はこちら'}
+            </button>
+          )}
+          {fullDayError && (
+            <div style={{ background: isDark ? '#4a1515' : '#f8d7da', border: '1px solid #dc3545', borderRadius: 8, padding: '8px 12px', marginTop: 6 }}>
+              <p style={{ margin: 0, fontSize: 13, color: isDark ? '#f5b5ba' : '#842029' }}>{fullDayError}</p>
+            </div>
+          )}
+
+          {/* 種別3択（説明付き・休暇側と同一文言） */}
+          {fullDay && (
+            <div style={{ marginTop: 10 }}>
+              <span style={labelStyle}>種別{req}</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {([
+                  ['chosei_off', '時間外調整休', '勤務調整のため取得'],
+                  ['furikae_off', '振替休日', '休日出勤・特定日の振替'],
+                  ['absence', '欠勤', '出勤予定日に休んだ場合'],
+                ] as const).map(([v, label, desc]) => (
+                  <button key={v} type="button"
+                    onClick={() => {
+                      setFullDayType(v);
+                      if (v === 'absence' && reviewerId === SELF_REVIEW_VALUE) setReviewerId('');
+                    }}
+                    style={{
+                      padding: '10px 12px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
+                      border: fullDayType === v ? '2px solid #28a745' : `1px solid ${borderColor}`,
+                      background: fullDayType === v ? (isDark ? '#1b3a1e' : '#eaf6ec') : 'transparent',
+                    }}>
+                    <span style={{ display: 'block', fontSize: 13.5, fontWeight: fullDayType === v ? 'bold' : 'normal', color: fullDayType === v ? (isDark ? '#8fd19e' : '#2e7d32') : text }}>{label}</span>
+                    <span style={{ display: 'block', fontSize: 11.5, color: subText, marginTop: 2 }}>{desc}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* 残高への影響（本人が一番不安な点を1行で明示） */}
+              {fullDayType && (
+                <div style={{ background: isDark ? '#1b3a1e' : '#d1e7dd', border: '1px solid #28a745', borderRadius: 8, padding: '8px 12px', marginTop: 8 }}>
+                  <p style={{ margin: 0, fontSize: 12.5, color: isDark ? '#8fd19e' : '#0f5132' }}>
+                    {fullDayType === 'chosei_off' && `シフト労働分 ${formatSignedMin(-normalShift.labor_minutes)} を残高から差し引きます`}
+                    {fullDayType === 'furikae_off' && '残高は変わりません（記録のみ）'}
+                    {fullDayType === 'absence' && '欠勤1日として記録されます（残高には入りません）'}
+                  </p>
+                </div>
+              )}
+
+              {/* 勤務地はシフトから自動（校が取れない日だけ下の勤務地欄で選択） */}
+              {normalShift.location && (
+                <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>勤務地：{normalShift.location}（シフトから自動）</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* 実務の勤務時間帯 */}
+      {!fullDay && (
       <div style={{ marginBottom: 12 }}>
         <span style={labelStyle}>{mode === 'advance' && !isReportPhase && !(editTarget && isResubmit && (editTarget.segments ?? []).some(s => s.phase === 'actual')) ? '予定の勤務時間' : '実務の勤務時間'}{req}</span>
         {segments.map((s, i) => (
@@ -878,9 +1007,10 @@ const OvertimeForm: React.FC<{
         )}
         <p style={{ fontSize: 11.5, color: subText, margin: '6px 0 0' }}>終了が深夜0時を越える場合は、終了時刻をそのまま入力してください（翌日として計算します）</p>
       </div>
+      )}
 
       {/* 休憩・労働時間・差分 */}
-      {hasInput && (
+      {!fullDay && hasInput && (
         <div style={{ background: innerBg, borderRadius: 10, padding: '10px 12px', marginBottom: 12 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, marginBottom: 4 }}>
             <span style={{ color: subText }}>休憩{breakManual ? '（手修正）' : '（自動計算）'}</span>
@@ -931,7 +1061,7 @@ const OvertimeForm: React.FC<{
       )}
 
       {/* 種別の2択バナー（調整か遅刻/早退かだけ本人に確認） */}
-      {hasInput && typeDetect.lateQ && (
+      {!fullDay && hasInput && typeDetect.lateQ && (
         <div style={{ marginBottom: 12 }}>
           <span style={{ fontSize: 13, color: subText, display: 'block', marginBottom: 6 }}>開始が遅い理由は？</span>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -950,7 +1080,7 @@ const OvertimeForm: React.FC<{
           </div>
         </div>
       )}
-      {hasInput && typeDetect.earlyQ && (
+      {!fullDay && hasInput && typeDetect.earlyQ && (
         <div style={{ marginBottom: 12 }}>
           <span style={{ fontSize: 13, color: subText, display: 'block', marginBottom: 6 }}>早く終わる理由は？</span>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -971,7 +1101,7 @@ const OvertimeForm: React.FC<{
       )}
 
       {/* 法定チェック警告（本人側にも表示） */}
-      {hasInput && !legal.ok && (
+      {!fullDay && hasInput && !legal.ok && (
         <div style={{ background: isDark ? '#4a3a10' : '#fff8e1', border: '1px solid #f59e0b', borderRadius: 10, padding: '10px 12px', marginBottom: 12 }}>
           <p style={{ margin: 0, fontSize: 12.5, color: isDark ? '#ffd54f' : '#856404', lineHeight: 1.7 }}>
             ⚠️ この日は労働{laborMin > 480 ? '8時間' : '6時間'}超のため、法律上{legal.requiredMinutes}分以上の休憩が必要です
@@ -980,7 +1110,8 @@ const OvertimeForm: React.FC<{
         </div>
       )}
 
-      {/* 勤務地（勤務変更報告と同様に自由入力あり） */}
+      {/* 勤務地（勤務変更報告と同様に自由入力あり）。終日でシフトに校がある日は自動使用のため非表示 */}
+      {!(fullDay && normalShift.location) && (
       <div style={{ marginBottom: 12 }}>
         <span style={labelStyle}>勤務地{req}</span>
         <select value={location} onChange={e => setLocation(e.target.value)} style={fieldStyle}>
@@ -1008,6 +1139,7 @@ const OvertimeForm: React.FC<{
           </div>
         )}
       </div>
+      )}
 
       {/* 理由 */}
       <div style={{ marginBottom: 12 }}>
@@ -1017,7 +1149,7 @@ const OvertimeForm: React.FC<{
           style={{ ...fieldStyle, resize: 'vertical' }} />
         {/* 文例ボタン（2つ） */}
         <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
-          {['お客様対応のため', '〇〇準備のため'].map(ex => (
+          {(fullDay ? ['勤務時間調整のため', '体調不良のため'] : ['お客様対応のため', '〇〇準備のため']).map(ex => (
             <button key={ex} type="button" onClick={() => setReason(ex)}
               style={{ padding: '5px 12px', borderRadius: 6, border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, background: isDark ? '#2c3e50' : '#e8f4fd', color: isDark ? '#fff' : '#1565c0', fontSize: 11.5, fontWeight: 'bold', cursor: 'pointer' }}>
               文例 ー「{ex}」
@@ -1050,11 +1182,17 @@ const OvertimeForm: React.FC<{
         <span style={labelStyle}>申請先{req}</span>
         <select value={reviewerId} onChange={e => setReviewerId(e.target.value)} style={fieldStyle}>
           <option value="">選択してください</option>
-          {reviewers.filter(r => r.id !== user.id).map(r => (
-            <option key={r.id} value={r.id}>{r.name}（{r.role_title}）</option>
-          ))}
-          {canSelfReview && <option value={SELF_REVIEW_VALUE}>自己受理（自分で確認する）</option>}
+          {reviewers
+            .filter(r => r.id !== user.id)
+            .filter(r => !(fullDay && fullDayType === 'absence') || ABSENCE_REVIEWER_ROLES.includes(r.role_title))
+            .map(r => (
+              <option key={r.id} value={r.id}>{r.name}（{r.role_title}）</option>
+            ))}
+          {canSelfReview && !(fullDay && fullDayType === 'absence') && <option value={SELF_REVIEW_VALUE}>自己受理（自分で確認する）</option>}
         </select>
+        {fullDay && fullDayType === 'absence' && (
+          <p style={{ margin: '6px 0 0', fontSize: 12, color: subText }}>欠勤はマネージャー以上の受理が必要です（自己受理はできません）</p>
+        )}
       </div>
 
       {error && (
@@ -1072,11 +1210,21 @@ const OvertimeForm: React.FC<{
       ) : (
         <div style={{ background: innerBg, borderRadius: 10, padding: '12px 14px' }}>
           <p style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 'bold', color: text }}>この内容で送信しますか？</p>
+          {fullDayMode ? (
+            <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
+              {date}（{dowLabel(date)}）　終日：{fullDayType ? OT_TYPE_INFO[fullDayType].label : ''}<br />
+              {fullDayType === 'chosei_off' && <>シフト労働分 {formatSignedMin(fdDiffMin)} を残高から差し引きます<br /></>}
+              {fullDayType === 'furikae_off' && <>残高は変わりません（記録のみ）<br /></>}
+              {fullDayType === 'absence' && <>欠勤1日として記録されます（残高には入りません）<br /></>}
+              {isSelfReview ? '自己受理のため、送信と同時に確定します' : `申請先：${reviewers.find(r => r.id === reviewerId)?.name ?? ''}さん（受理で確定します）`}
+            </p>
+          ) : (
           <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
             {date}（{dowLabel(date)}）　{segmentsLabel(workSegments)}<br />
             休憩{formatMin(breakMin)}・労働{formatMin(laborMin)}・差分 {formatSignedMin(diffMin)}<br />
             {isSelfReview ? '自己受理のため、送信と同時に受理されます' : `申請先：${reviewers.find(r => r.id === reviewerId)?.name ?? ''}さん`}
           </p>
+          )}
           {applicationTypes.length > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', margin: '0 0 10px' }}>
               <span style={{ fontSize: 12.5, color: subText }}>種別：</span>
@@ -1222,9 +1370,16 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
     const rows = reports.filter(r => r.pay_period_start === currentPeriod && r.status === 'confirmed');
     const total = rows.reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
     const plus = rows.filter(r => (r.diff_minutes ?? 0) > 0).reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
-    const minus = rows.filter(r => (r.diff_minutes ?? 0) < 0).reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
+    // マイナスの内訳: 調整休（休暇由来の自動計上＋残業ページの時間外調整休）と、その他（早退・調整早退など）
+    const isChosei = (r: OvertimeReport) => r.entry_type === 'leave_auto' || (r.application_types ?? []).includes('chosei_off');
+    const choseiMinus = rows.filter(r => (r.diff_minutes ?? 0) < 0 && isChosei(r)).reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
+    const otherMinus = rows.filter(r => (r.diff_minutes ?? 0) < 0 && !isChosei(r)).reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
+    const minus = choseiMinus + otherMinus;
+    // 欠勤は残高に入れず日数で別枠カウント
+    const absenceDays = rows.filter(r => (r.application_types ?? []).includes('absence')).length;
+    const absencePending = reports.filter(r => r.pay_period_start === currentPeriod && r.status === 'requested' && (r.application_types ?? []).includes('absence')).length;
     const pendingCount = reports.filter(r => r.pay_period_start === currentPeriod && ['requested', 'reported'].includes(r.status)).length;
-    return { total, plus, minus, pendingCount };
+    return { total, plus, minus, choseiMinus, otherMinus, absenceDays, absencePending, pendingCount };
   }, [reports, currentPeriod]);
 
   const prevPeriodBalance = useMemo(() => {
@@ -1236,9 +1391,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
       .reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
   }, [reports, currentPeriod]);
 
-  // 実績未報告の受理済み事前申請（勤務日を過ぎたもの）
+  // 実績未報告の受理済み事前申請（勤務日を過ぎたもの）。終日（調整休・欠勤）は実績報告の概念がないため除外
   const unreportedRequests = useMemo(() =>
-    reports.filter(r => r.status === 'request_confirmed' && r.work_date < todayJstStr()),
+    reports.filter(r => r.status === 'request_confirmed' && r.work_date < todayJstStr() && !isFullDayReport(r.application_types)),
   [reports]);
 
   // ---- 受理・差し戻し・取消（Edge Function overtime-approve に集約） ----
@@ -1363,6 +1518,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
             const planned = (r.segments ?? []).filter(s => s.phase === 'planned').sort((a, b) => a.seg_no - b.seg_no);
             const actual = (r.segments ?? []).filter(s => s.phase === 'actual').sort((a, b) => a.seg_no - b.seg_no);
             const isAdvance = r.status === 'requested';
+            const isFullDay = isFullDayReport(r.application_types);
+            const fdType = (r.application_types ?? []).find(isOvertimeType);
             const legal = r.legal_warning;
             return (
               <div key={r.id} style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, padding: '14px 16px', marginBottom: 12 }}>
@@ -1381,14 +1538,28 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                   {r.normal_shift?.start_time ? `${fmtTime(r.normal_shift.start_time)}〜${fmtTime(r.normal_shift.end_time)}（労働${formatMin(r.normal_shift.labor_minutes)}）` : '休み'}
                   {r.normal_shift?.manual_override && <span style={{ color: '#e65100' }}>（本人修正）</span>}
                   <br />
-                  {planned.length > 0 && (
-                    <><span style={{ color: subText }}>事前申請　：</span>{segmentsLabel(planned)}<br /></>
+                  {isFullDay ? (
+                    <>
+                      <span style={{ color: subText }}>申請内容　：</span>
+                      <span style={{ fontWeight: 'bold' }}>終日　{fdType ? OT_TYPE_INFO[fdType].label : ''}</span><br />
+                      <span style={{ color: subText }}>
+                        {fdType === 'chosei_off' && <>残高への影響 <span style={{ fontWeight: 'bold', color: diffColor(r.diff_minutes ?? 0, isDark) }}>{formatSignedMin(r.diff_minutes ?? 0)}</span>（受理で確定します）</>}
+                        {fdType === 'furikae_off' && '残高への影響なし（記録のみ・受理で確定します）'}
+                        {fdType === 'absence' && '欠勤1日として記録（残高には入りません・受理で確定します）'}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      {planned.length > 0 && (
+                        <><span style={{ color: subText }}>事前申請　：</span>{segmentsLabel(planned)}<br /></>
+                      )}
+                      {actual.length > 0 && (
+                        <><span style={{ color: subText }}>実績　　　：</span><span style={{ fontWeight: 'bold' }}>{segmentsLabel(actual)}</span><br /></>
+                      )}
+                      <span style={{ color: subText }}>休憩{formatMin(r.break_minutes ?? 0)}{r.break_manual ? '（手修正）' : ''}・労働{formatMin(r.labor_minutes ?? 0)}・差分 </span>
+                      <span style={{ fontWeight: 'bold', color: diffColor(r.diff_minutes ?? 0, isDark) }}>{formatSignedMin(r.diff_minutes ?? 0)}</span>
+                    </>
                   )}
-                  {actual.length > 0 && (
-                    <><span style={{ color: subText }}>実績　　　：</span><span style={{ fontWeight: 'bold' }}>{segmentsLabel(actual)}</span><br /></>
-                  )}
-                  <span style={{ color: subText }}>休憩{formatMin(r.break_minutes ?? 0)}{r.break_manual ? '（手修正）' : ''}・労働{formatMin(r.labor_minutes ?? 0)}・差分 </span>
-                  <span style={{ fontWeight: 'bold', color: diffColor(r.diff_minutes ?? 0, isDark) }}>{formatSignedMin(r.diff_minutes ?? 0)}</span>
                 </div>
 
                 {legal && (
@@ -1584,10 +1755,16 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                     <p style={{ margin: '4px 0 6px', fontSize: 26, fontWeight: 'bold', color: diffColor(balance.total, isDark) }}>
                       {formatSignedMin(balance.total)}
                     </p>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, color: subText, borderTop: `1px solid ${borderColor}`, paddingTop: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4, fontSize: 12.5, color: subText, borderTop: `1px solid ${borderColor}`, paddingTop: 8 }}>
                       <span>残業 {formatSignedMin(balance.plus)}</span>
-                      <span>調整・早退 {formatSignedMin(balance.minus)}</span>
+                      <span>調整休 {formatSignedMin(balance.choseiMinus)}</span>
+                      <span>早退・調整 {formatSignedMin(balance.otherMinus)}</span>
                     </div>
+                    {balance.absenceDays + balance.absencePending > 0 && (
+                      <p style={{ margin: '6px 0 0', fontSize: 12, color: subText }}>
+                        欠勤 {balance.absenceDays}日{balance.absencePending > 0 && `（確認待ち${balance.absencePending}件）`}・残高には含まれません
+                      </p>
+                    )}
                     <p style={{ margin: '8px 0 0', fontSize: 11.5, color: subText }}>
                       期ごとの過不足管理（毎期リセット・繰り越しなし）・前期確定 {formatSignedMin(prevPeriodBalance)}
                       {balance.pendingCount > 0 && `・確認待ち${balance.pendingCount}件は未計上`}
@@ -1614,7 +1791,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                   )}
                   {ownHistory.map(r => {
                     const isAuto = r.entry_type === 'leave_auto';
-                    const canReport = r.status === 'request_confirmed';
+                    const isFullDay = isFullDayReport(r.application_types);
+                    const canReport = r.status === 'request_confirmed' && !isFullDay;
                     const canResubmit = r.status === 'returned';
                     const canCancel = ['requested', 'request_confirmed', 'reported', 'returned'].includes(r.status) && !isAuto;
                     const actual = (r.segments ?? []).filter(s => s.phase === 'actual').sort((a, b) => a.seg_no - b.seg_no);
@@ -1646,7 +1824,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                               </div>
                             )}
                             <p style={{ margin: 0, fontSize: 12.5, color: subText }}>
-                              {segs.length > 0 && `${actual.length > 0 ? '実績' : '予定'}：${segmentsLabel(segs)}　`}
+                              {isFullDay && '終日　'}
+                              {!isFullDay && segs.length > 0 && `${actual.length > 0 ? '実績' : '予定'}：${segmentsLabel(segs)}　`}
                               {r.reviewer?.name && `申請先：${r.reviewer.name}さん`}
                             </p>
                             {r.status === 'returned' && r.return_comment && (
