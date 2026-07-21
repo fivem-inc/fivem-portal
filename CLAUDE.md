@@ -7625,3 +7625,40 @@ grill-me→モック承認→サブエージェント2体レビュー（UI/UX＋
 - 事前申請＋自己受理は status='request_confirmed' で止まり、実績報告して confirmed にするまで「今期の通算」には計上されない（仕様）。カレンダーには request_confirmed でも出す。
 
 ### 作業ルール（前回と同じ・厳守）… 前々ブロックのルールを参照
+
+## ▶ 次セッション 引き継ぎ（2026-07-21 続き2 終了時点・ここから開始）
+
+### 状態
+- C:\Users\kohei\fivem-portal（master）。最新コミット **125740c**（push・Vercelデプロイ着地確認済み）。
+- DBマイグレーション `20260727000000` 適用済み。Edge Function `gcal-sync`(更新)・`overtime-approve`(新規) デプロイ済み。
+- 未追跡は AGENTS.md のみ（触らない・コミットに含めない）。
+
+### 今日やったこと（すべて本番反映済み）
+残業・時間管理の機能追加＋UI改善。詳細は自動メモリ [overtime-feature-spec] 参照。
+1. **バグ修正**：残業ページの本人履歴が常に0件（profiles向けFK欠如で embed 失敗）→ FK追加＋クエリ差替。実機で解消確認済み。
+2. **種別 application_types 追加**（残業/早出/遅刻/早退/休日出勤/勤務地変更/調整遅出/調整早退）。時刻・勤務地から自動判定、迷う「遅出/早退」だけタップ式2択バナー。**デフォルト未選択・押さないと送信不可**。
+3. **GCalカレンダー同期を新設**（gcal-sync `action:'sync'` + `source_type:'overtime'`、冪等）。受理時点で反映、当日遅刻早退/事後/調整休自動計上は除外。色: 残業早出=9濃青/休日出勤=10濃緑/勤務地変更=3紫/調整遅刻早退=2。
+4. **受理/差戻し/取消を Edge Function `overtime-approve` に集約**（同期失敗は⚠️＋再同期ボタン）。管理者修正/取消/削除でも再同期。
+5. **日付入力をタップ即確定のカスタムカレンダー(SingleDatePicker)に置換**（スマホの「設定」不要）。
+6. **日付変更で「予定の勤務時間」がその日の通常シフトに連動**（日付ごとに1回埋め直し、休日は空欄）。
+7. **ナビ「休暇」→「カレンダー」に改名**。スマホナビのラベルは5文字以上で自動縮小(navLabel)。
+
+### 次回やること（優先順）
+1. **残業の実機確認**：①自己受理→カレンダーに残業イベント ②2択バナー未選択で送信エラー ③実績報告で時刻更新→カレンダー更新 ④取消でイベント消滅 ⑤管理者修正/取消で整合 ⑥日付変更で予定時間が連動 ⑦ダークモード配色。※カレンダーは `gcal_calendar_mode='production'` でなければテストカレンダーに出る。
+2. （継続）残業の先行公開→全体公開の判断／正社員「時間調整」タブの残業への統合（scope大・切替日未定・フラグ切替想定）。
+3. 前回残：Excel校移動の実機確認／修正依頼機能の実機テスト。
+4. （任意）休暇の完全DBロック（承認RPC化）／依存脆弱性 high 1件（dependabot・作業と無関係）。
+
+### 注意事項（設計上の要点）
+- 種別のラベル/色は `client/src/lib/overtimeTypes.ts` と `supabase/functions/gcal-sync/index.ts` の `OVERTIME_TYPES` の**2箇所管理**（両方直す）。
+- カレンダーイベントの所有者は1ソース行に限定（overtime は `source_type='overtime'`）。attendance_exceptions('absence') と二重に出さない。
+- 事前申請＋自己受理は request_confirmed 止まり→実績報告で confirmed になるまで通算に入らない（仕様）。カレンダーは request_confirmed でも出す。
+
+### 作業ルール（厳守）
+- 開始時 git pull → git status → 本サマリー確認。作業開始・push は指示待ち。
+- 修正後 `cd client && npx tsc -b && npx vite build`。**push後は `git ls-remote origin` で origin HEAD を必ず突き合わせる**（exit 0 でも未送信のことがある）。
+- **Vercelが push を拾い損ねることがある→空コミットで再トリガー**。デプロイ確認は本番JSに固有文字列（=変数名でなくラベル等）が載ったか curl で検証。
+- alert/window.confirm/.catch 禁止（確認はインラインUI・成功は緑カード）。認証は AuthContext 一元化。文言「承認→受理」「却下→差し戻し」。
+- RLS管理者判定は必ず `(auth.jwt()->'app_metadata'->>'role')='admin'`。
+- UI文言/配色/新機能/設計判断は案提示→承認後に実装（配色は visualize モック）。大規模改修は UI/UX＋シニアEng 2体レビュー。
+- git add 前に git status 目視。AGENTS.md はコミットに含めない。DBマイグレーションは SQL Editor に全文貼付→Run。
