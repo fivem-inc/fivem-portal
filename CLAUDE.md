@@ -7561,9 +7561,11 @@ grill-me→モック承認→サブエージェント2体レビュー（UI/UX＋
 ## ▶ 次セッション 引き継ぎ（2026-07-21 終了時点・ここから開始）
 
 ### 状態
-- C:\Users\kohei\fivem-portal（master）。本日分は commit＆push 済み（Vercel自動デプロイ）。
+- C:\Users\kohei\fivem-portal（master）。最新コミット **e2529b5**（push・Vercelデプロイ成功済み）。
 - **DBマイグレーション4本 適用済み**（Supabase本番 SQL Editor で実行）。**Edge Function `send-correction-slack` デプロイ済み**。
+- **依存脆弱性 high 3件 解消済み（npm audit = 0）**。
 - 未追跡は AGENTS.md のみ（触らない・コミットに含めない）。
+- ※push は GCMブラウザ認証のため**本人のターミナルで実行**（Claudeは認証代行不可）。ログイン期限切れ時は再ログインで復帰。
 
 ### 今日やったこと（すべて本番反映）
 1. **Excelシフト取込の校移動バグ修正**（`client/src/lib/shiftExcelImport.ts`）：校（勤務地・校移動）は掃除列ではなく「**出勤列の2段目**」に入る。読む列を修正。サンプル`2026年勤務表サンプル.xlsx`シート`2026.7.16`で45人・移動6件を検証。→ 実機で対象者を再取込して要確認（次回タスク）。詳細は自動メモリ [シフト取込の校の列]。
@@ -7575,6 +7577,8 @@ grill-me→モック承認→サブエージェント2体レビュー（UI/UX＋
    - 残業：受理済みは依頼。管理タブ(OvertimeAdminTab)に「取消（論理）」ボタン追加（自動計上 entry_type=leave_auto は非表示）。
    - 依頼の取り下げ／管理者の対応済み・対応不可／申請が取消されたら open依頼を自動で対応済み化＋本人通知（トリガー）。
    - DB：`correction_requests`＋RLS、RPC群（submit/withdraw/resolve/decline）、孤児削除・自動resolveトリガー。管理者判定は `is_admin()`＝`app_metadata.role='admin'`。
+
+3. **依存ライブラリの脆弱性 high 3件を解消**（`npm audit` = 0）：dev依存(brace-expansion, js-yaml)を更新、**xlsx を SheetJS公式 0.20.3 へ入替**（npm版は修正未提供のためCDN版 `npm i https://cdn.sheetjs.com/xlsx-latest/xlsx-latest.tgz`）。Excel取込は再検証済み（45人・移動6件）。
 
 ### 重要な設計判断・残る穴（必ず把握）
 - **休暇のRLSはコードでなくSupabaseダッシュボード管理**。`update_admin`(role_title=リーダー以上)が「承認」と「本人更新」で共用のため触っていない。本人制御は「UI出し分け＋SECURITY DEFINER RPC」で実現。→ **リーダー以上は理論上、直接APIで受理済みも更新可（今と同じ・信頼前提）**。完全ロックは「承認処理のRPC化」＝別案件。
