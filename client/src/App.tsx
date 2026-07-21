@@ -642,7 +642,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
           )}
           {(isAdmin || canCalendar) && isPub('leave_calendar') && (
             <button onClick={() => navTo('/calendar')} style={btnStyle(location.pathname === '/calendar', '#4a90d9')}>
-              {isMobile ? <><span style={{ fontSize: 20 }}>📅</span><span>休暇</span></> : '📅 休暇'}
+              {isMobile ? <><span style={{ fontSize: 20 }}>📅</span><span>カレンダー</span></> : '📅 カレンダー'}
             </button>
           )}
           {canShiftReport && isPub('shift_report') && (
