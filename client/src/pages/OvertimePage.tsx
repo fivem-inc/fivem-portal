@@ -1472,12 +1472,12 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
       const ids = [...new Set(repRows.map(r => r.applicant_id))];
 
       // 名簿の解決:
-      //  - 追跡部門(whitelist group)所属のアクティブ社員 → 未申請でも 0:00 で一覧に出す
-      //  - その期に行を持つ applicant（退職者・その他部門を含む）→ id で解決（is_active で絞らない）
+      //  - 全アクティブ正社員(employment_type != 'パート') → 未申請でも 0:00 で一覧に出す。
+      //    追跡部門(banner_group_names)が未設定でも全員が「その他」に並ぶよう、部門所属では絞らない。
+      //    部門を設定すれば group で自動的に部門分けされる。
+      //  - その期に行を持つ applicant（退職者を含む）→ id で解決（is_active で絞らない＝退職者も名前が出る）
       const [rosterRes, rowProfRes] = await Promise.all([
-        whitelist.length > 0
-          ? supabase.from('profiles').select('id, name, group_names').eq('is_active', true).neq('employment_type', 'パート').overlaps('group_names', whitelist)
-          : Promise.resolve({ data: [] as ProfLite[] }),
+        supabase.from('profiles').select('id, name, group_names').eq('is_active', true).neq('employment_type', 'パート'),
         ids.length > 0
           ? supabase.from('profiles').select('id, name, group_names').in('id', ids)
           : Promise.resolve({ data: [] as ProfLite[] }),
