@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
@@ -423,16 +423,17 @@ const OvertimeForm: React.FC<{
     return segs;
   }, [normalShift.start_time, normalShift.end_time, normalShift.start_time2, normalShift.end_time2]);
 
-  // 日付を選ぶと、時間帯が空のときだけ通常シフトの時間を自動入力（新規のみ）。
-  // 利用者はここから残業・早退などの差分に直して送信する。
+  // 日付を選ぶ／変えると、その日の通常シフトで「予定の勤務時間」を埋め直す（新規のみ・日付ごとに1回）。
+  // 利用者はここから残業・早退などの差分に直して送信する。日付を変えれば新しい日のシフトに連動する。
+  // 下書き復元時・同一日付での再計算（休憩手修正など）では上書きしない（filledForDateRefで制御）。
+  const filledForDateRef = useRef<string | null>(editTarget?.work_date ?? draft?.date ?? null);
   useEffect(() => {
-    if (editTarget) return;
-    if (normalSegs.length === 0) return;
-    const allEmpty = segments.every(s => !s.start && !s.end);
-    if (!allEmpty) return;
-    setSegments(normalSegs.map(s => ({ ...s })));
+    if (editTarget || !date) return;
+    if (filledForDateRef.current === date) return;
+    filledForDateRef.current = date;
+    setSegments(normalSegs.length > 0 ? normalSegs.map(s => ({ ...s })) : [{ ...EMPTY_SEG }]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [normalSegs, date]);
+  }, [date, normalSegs]);
 
   // 勤務地の実効値（保存・検証に使う）。移動あり＝「開始校→移動先校」
   const effectiveLocation =
