@@ -1383,9 +1383,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
   // 集計モード用
   const [summaryPeriod, setSummaryPeriod] = useState(() => calcPayPeriodStartJst(todayJstStr()));
   const [summaryRows, setSummaryRows] = useState<SummaryRow[]>([]);
-  const [summaryGroups, setSummaryGroups] = useState<string[]>([]);
   const [myGroups, setMyGroups] = useState<string[]>([]);           // 閲覧者自身の部門（初期スコープ用）
-  const [summaryShowAll, setSummaryShowAll] = useState(false);       // 全部門を表示するトグル（初期は自部門のみ）
+  const [summaryDept, setSummaryDept] = useState('');               // 部門(チーム)フィルタ。''=自所属を初期選択 / '__all__'=全チーム
   const [summaryNameQuery, setSummaryNameQuery] = useState('');      // 名前検索
   const [summaryFilterOpen, setSummaryFilterOpen] = useState(false); // 「絞り込み」折りたたみ
   const [selectedStaffId, setSelectedStaffId] = useState<string | null>(searchParams.get('staff')); // 個人詳細で選択中の対象者
@@ -1466,7 +1465,6 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
         supabase.from('overtime_settings').select('banner_group_names').eq('id', 1).maybeSingle(),
       ]);
       const whitelist: string[] = (setRes.data?.banner_group_names as string[] | null) ?? [];
-      setSummaryGroups(whitelist);
 
       const repRows = (repRes.data as OvertimeReport[] | null) ?? [];
       const ids = [...new Set(repRows.map(r => r.applicant_id))];
@@ -1496,7 +1494,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
       const memberIds = [...new Set([...rosterProfs.map(p => p.id), ...ids])];
       const rows: SummaryRow[] = memberIds.map(userId => {
         const p = profMap.get(userId);
-        const group = whitelist.find(g => (p?.group_names ?? []).includes(g)) ?? 'その他';
+        // 部門(チーム)は実際の group_names を採用。banner_group_names が設定されていればそれを優先、
+        // なければ本人の先頭グループ（例「こども」）。未所属は「未所属」。
+        const group = whitelist.find(g => (p?.group_names ?? []).includes(g)) ?? (p?.group_names?.[0] ?? '未所属');
         const b = computeBalance(byUser.get(userId) ?? [], summaryPeriod);
         return { userId, name: p?.name ?? '不明', group, total: b.total, plannedTotal: b.plannedTotal, absenceDays: b.absenceDays };
       });
@@ -1893,9 +1893,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                   />
                 ) : (
                   <SummaryView
-                    isDark={isDark} rows={summaryRows} groups={summaryGroups}
+                    isDark={isDark} rows={summaryRows}
                     period={summaryPeriod} onChangePeriod={setSummaryPeriod}
-                    myGroups={myGroups} showAll={summaryShowAll} onToggleShowAll={setSummaryShowAll}
+                    myGroups={myGroups} dept={summaryDept} onChangeDept={setSummaryDept}
                     nameQuery={summaryNameQuery} onChangeName={setSummaryNameQuery}
                     filterOpen={summaryFilterOpen} onToggleFilter={() => setSummaryFilterOpen(o => !o)}
                     onSelect={selectStaff}
@@ -2140,18 +2140,17 @@ function recentPeriods(count = 6): string[] {
 const SummaryView: React.FC<{
   isDark: boolean;
   rows: SummaryRow[];
-  groups: string[];
   period: string;
   onChangePeriod: (p: string) => void;
   myGroups: string[];
-  showAll: boolean;
-  onToggleShowAll: (v: boolean) => void;
+  dept: string;
+  onChangeDept: (v: string) => void;
   nameQuery: string;
   onChangeName: (v: string) => void;
   filterOpen: boolean;
   onToggleFilter: () => void;
   onSelect: (userId: string) => void;
-}> = ({ isDark, rows, groups, period, onChangePeriod, myGroups, showAll, onToggleShowAll, nameQuery, onChangeName, filterOpen, onToggleFilter, onSelect }) => {
+}> = ({ isDark, rows, period, onChangePeriod, myGroups, dept, onChangeDept, nameQuery, onChangeName, filterOpen, onToggleFilter, onSelect }) => {
   const text = isDark ? '#f8f9fa' : '#212529';
   const subText = isDark ? '#adb5bd' : '#6c757d';
   const borderColor = isDark ? '#495057' : '#dee2e6';
@@ -2160,16 +2159,23 @@ const SummaryView: React.FC<{
 
   const periodOptions = useMemo(() => recentPeriods(6), []);
 
-  // 閲覧者自身の部門（whitelist上の区分）。初期はこの部門だけ表示し、トグルで全部門へ。
-  const myScopeGroup = groups.find(g => myGroups.includes(g));
-  const scoped = !showAll && !!myScopeGroup;
+  // 部門(チーム)の選択肢は実際のメンバーの group から作る。未所属/その他は末尾。
+  const deptOptions = useMemo(() => {
+    const set = new Set(rows.map(r => r.group));
+    const list = [...set].sort((a, b) => a.localeCompare(b, 'ja'));
+    const tail = ['未所属', 'その他'];
+    return [...list.filter(g => !tail.includes(g)), ...list.filter(g => tail.includes(g))];
+  }, [rows]);
+
+  // 実効の部門フィルタ。dept='' なら自所属を初期選択（無ければ全チーム）。'__all__'=全チーム。
+  const activeDept = dept !== '' ? dept : (myGroups.find(g => deptOptions.includes(g)) ?? '__all__');
 
   const visibleRows = rows.filter(r => {
     if (nameQuery.trim() && !r.name.includes(nameQuery.trim())) return false;
-    if (scoped && r.group !== myScopeGroup) return false;
+    if (activeDept !== '__all__' && r.group !== activeDept) return false;
     return true;
   });
-  const groupOrder = [...groups, 'その他'].filter(g => visibleRows.some(r => r.group === g));
+  const groupOrder = deptOptions.filter(g => visibleRows.some(r => r.group === g));
   const total = visibleRows.reduce((s, r) => s + r.total, 0);
   const plannedTotal = visibleRows.reduce((s, r) => s + r.plannedTotal, 0);
 
@@ -2184,15 +2190,15 @@ const SummaryView: React.FC<{
         </select>
       </div>
 
-      {/* 常時: 名前検索。部門は自部門/全部門トグル。状態などの詳細は折りたたみ。 */}
-      <input value={nameQuery} onChange={e => onChangeName(e.target.value)} placeholder="名前で絞り込み"
-        style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: inputBg, color: text, fontSize: 13, marginBottom: 8 }} />
-      {myScopeGroup && (
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: subText, marginBottom: 4, cursor: 'pointer' }}>
-          <input type="checkbox" checked={showAll} onChange={e => onToggleShowAll(e.target.checked)} />
-          全部門を表示（オフのときは自部門「{myScopeGroup}」のみ）
-        </label>
-      )}
+      {/* 常時: 部門(チーム)フィルタ＋名前検索。初期は自所属チーム。 */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+        <select value={activeDept} onChange={e => onChangeDept(e.target.value)} style={{ ...selectStyle, flex: '0 0 auto' }}>
+          <option value="__all__">すべてのチーム</option>
+          {deptOptions.map(g => <option key={g} value={g}>{g}</option>)}
+        </select>
+        <input value={nameQuery} onChange={e => onChangeName(e.target.value)} placeholder="名前で絞り込み"
+          style={{ flex: 1, minWidth: 120, boxSizing: 'border-box', padding: '8px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: inputBg, color: text, fontSize: 13 }} />
+      </div>
       <button onClick={onToggleFilter} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#0d6efd', padding: 0, marginBottom: 10 }}>
         絞り込み{filterOpen ? ' ▲' : ' ▼'}
       </button>
@@ -2372,7 +2378,7 @@ const ReadonlyReportCard: React.FC<{
             {isFullDay && '終日　'}
             {isFullDay && r.furikae_origin_date && `振替元：${r.furikae_origin_date.slice(5).replace('-', '/')}（${dowLabel(r.furikae_origin_date)}）${r.furikae_origin_location ? '・' + r.furikae_origin_location : ''}　`}
             {!isFullDay && segs.length > 0 && `${actual.length > 0 ? '実績' : '予定'}：${segmentsLabel(segs)}　`}
-            {!isFullDay && r.location && `校：${r.location}　`}
+            {!isFullDay && r.location && `勤務地：${r.location}　`}
             {r.reviewer?.name && `申請先：${r.reviewer.name}さん`}
           </p>
           {r.status === 'returned' && r.return_comment && (
