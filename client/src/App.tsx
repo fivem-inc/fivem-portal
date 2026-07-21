@@ -590,6 +590,11 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     background: active ? activeColor : '#444', color: 'white', fontSize: 14, whiteSpace: 'nowrap' as const,
   });
 
+  // モバイルナビのラベル。44px固定幅に対し4文字までは9px、5文字以上は縮小して改行を防ぐ
+  const navLabel = (t: string) => (
+    <span style={{ fontSize: t.length >= 5 ? 8 : 9, whiteSpace: 'nowrap' as const, lineHeight: 1 }}>{t}</span>
+  );
+
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, zIndex: 300,
@@ -615,23 +620,23 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
         >
           {isAdmin && (
             <button onClick={() => navTo('/admin')} style={btnStyle(location.pathname === '/admin', '#6f42c1')}>
-              {isMobile ? <><span style={{ fontSize: 20 }}>⚙️</span><span>管理</span></> : '⚙️ 管理'}
+              {isMobile ? <><span style={{ fontSize: 20 }}>⚙️</span>{navLabel('管理')}</> : '⚙️ 管理'}
             </button>
           )}
           {isPub('expense') && (
             <button onClick={() => navTo('/')} style={btnStyle(location.pathname === '/')}>
-              {isMobile ? <><span style={{ fontSize: 20 }}>🏠</span><span>交通費</span></> : '🏠 交通費'}
+              {isMobile ? <><span style={{ fontSize: 20 }}>🏠</span>{navLabel('交通費')}</> : '🏠 交通費'}
             </button>
           )}
           {isPub('trip_report') && (
             <button onClick={() => navTo('/trip-report')} style={btnStyle(location.pathname === '/trip-report')}>
-              {isMobile ? <><span style={{ fontSize: 20 }}>📍</span><span>出張報告</span></> : '📍 出張報告'}
+              {isMobile ? <><span style={{ fontSize: 20 }}>📍</span>{navLabel('出張報告')}</> : '📍 出張報告'}
             </button>
           )}
           {canLeave && isPub('leave_request') && (
             <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
               <button onClick={() => navTo('/leave')} style={btnStyle(location.pathname === '/leave', '#28a745')}>
-                {isMobile ? <><span style={{ fontSize: 20 }}>🌿</span><span>休暇申請</span></> : '🌿 休暇申請'}
+                {isMobile ? <><span style={{ fontSize: 20 }}>🌿</span>{navLabel('休暇申請')}</> : '🌿 休暇申請'}
               </button>
               {leavePending > 0 && (
                 <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
@@ -642,13 +647,13 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
           )}
           {(isAdmin || canCalendar) && isPub('leave_calendar') && (
             <button onClick={() => navTo('/calendar')} style={btnStyle(location.pathname === '/calendar', '#4a90d9')}>
-              {isMobile ? <><span style={{ fontSize: 20 }}>📅</span><span>カレンダー</span></> : '📅 カレンダー'}
+              {isMobile ? <><span style={{ fontSize: 20 }}>📅</span>{navLabel('カレンダー')}</> : '📅 カレンダー'}
             </button>
           )}
           {canShiftReport && isPub('shift_report') && (
             <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
               <button onClick={() => navTo('/shift-report')} style={btnStyle(location.pathname === '/shift-report', '#c0392b')}>
-                {isMobile ? <><span style={{ fontSize: 20 }}>⏰</span><span>勤務変更</span></> : '⏰ 勤務変更'}
+                {isMobile ? <><span style={{ fontSize: 20 }}>⏰</span>{navLabel('勤務変更')}</> : '⏰ 勤務変更'}
               </button>
               {shiftPending > 0 && (
                 <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
@@ -660,7 +665,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
           {canOvertime && isPub('overtime') && (
             <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
               <button onClick={() => navTo('/overtime')} style={btnStyle(location.pathname === '/overtime', '#1565c0')}>
-                {isMobile ? <><span style={{ fontSize: 20 }}>⏱</span><span>残業</span></> : '⏱ 残業・時間'}
+                {isMobile ? <><span style={{ fontSize: 20 }}>⏱</span>{navLabel('残業')}</> : '⏱ 残業・時間'}
               </button>
               {overtimePending > 0 && (
                 <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
@@ -672,7 +677,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
           {canPurchaseRequest && isPub('purchase_request') && (
             <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
               <button onClick={() => navTo('/purchase')} style={btnStyle(location.pathname === '/purchase', '#17a2b8')}>
-                {isMobile ? <><span style={{ fontSize: 20 }}>🧾</span><span>備品精算</span></> : '🧾 備品精算'}
+                {isMobile ? <><span style={{ fontSize: 20 }}>🧾</span>{navLabel('備品精算')}</> : '🧾 備品精算'}
               </button>
               {purchasePending > 0 && (
                 <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
@@ -684,7 +689,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
           {isPub('board') && (
           <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
             <button onClick={() => navTo('/board')} style={btnStyle(location.pathname === '/board', '#e67e22')}>
-              {isMobile ? <><span style={{ fontSize: 20 }}>💬</span><span>連絡板</span></> : '💬 連絡板'}
+              {isMobile ? <><span style={{ fontSize: 20 }}>💬</span>{navLabel('連絡板')}</> : '💬 連絡板'}
             </button>
             {boardUnread > 0 && location.pathname !== '/board' && (
               <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
