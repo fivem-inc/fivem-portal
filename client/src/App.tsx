@@ -23,6 +23,7 @@ const CalendarPage     = React.lazy(() => import('./pages/CalendarPage'));
 const BoardPage        = React.lazy(() => import('./pages/BoardPage'));
 const ShiftReportPage  = React.lazy(() => import('./pages/ShiftReportPage'));
 const OvertimePage     = React.lazy(() => import('./pages/OvertimePage'));
+const ShiftDirectoryPage = React.lazy(() => import('./pages/ShiftDirectoryPage'));
 const PurchaseRequestPage = React.lazy(() => import('./pages/PurchaseRequestPage'));
 
 const PageLoader: React.FC = () => (
@@ -1701,6 +1702,20 @@ const OvertimePageWrapper: React.FC = () => {
   );
 };
 
+// 全員のシフト予定 閲覧ページ（/shift-patterns・リーダー以上）
+const ShiftDirectoryPageWrapper: React.FC = () => {
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, handleLogout, loading } = useAuth();
+  if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
+  return (
+    <div style={{ padding: '70px 0 0' }}>
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} roleTitle={roleTitle} userId={user.id} />
+      <Suspense fallback={<PageLoader />}>
+        <ShiftDirectoryPage user={user} roleTitle={roleTitle} isAdmin={isAdmin} />
+      </Suspense>
+    </div>
+  );
+};
+
 // 備品精算ページ（/purchase）
 const PurchaseRequestPageWrapper: React.FC = () => {
   const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, handleLogout, loading } = useAuth();
@@ -1741,6 +1756,7 @@ function App() {
             <Route path="/board" element={<BoardPageWrapper />} />
             <Route path="/shift-report" element={<ShiftReportPageWrapper />} />
             <Route path="/overtime" element={<OvertimePageWrapper />} />
+            <Route path="/shift-patterns" element={<ShiftDirectoryPageWrapper />} />
             <Route path="/purchase" element={<PurchaseRequestPageWrapper />} />
           </Route>
         </Routes>

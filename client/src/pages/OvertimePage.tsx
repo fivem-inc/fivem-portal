@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
@@ -1382,6 +1382,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
   const [cancelTargetId, setCancelTargetId] = useState<string | null>(null);
   const [historyMode, setHistoryMode] = useState<'own' | 'summary'>(searchParams.get('staff') ? 'summary' : 'own');
   const [canSummary, setCanSummary] = useState(false);
+  const [canShiftDirectory, setCanShiftDirectory] = useState(false); // 全員のシフト予定ページへの導線表示
+  const navigate = useNavigate();
 
   // 集計モード用
   const [summaryPeriod, setSummaryPeriod] = useState(() => calcPayPeriodStartJst(todayJstStr()));
@@ -1439,7 +1441,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const [, , revRes, wpRes, patRes, permRes, myProfRes] = await Promise.all([
+      const [, , revRes, wpRes, patRes, permRes, myProfRes, dirRes] = await Promise.all([
         fetchOwn(),
         fetchPendingForMe(),
         supabase.from('profiles').select('id, name, role_title').in('role_title', REVIEWER_ROLES).eq('is_active', true).order('role_title').order('name'),
@@ -1447,11 +1449,13 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
         supabase.from('weekly_shift_patterns').select('*').eq('user_id', user.id),
         supabase.rpc('has_feature_permission', { p_feature: 'overtime_summary' }),
         supabase.from('profiles').select('group_names').eq('id', user.id).maybeSingle(),
+        supabase.rpc('has_feature_permission', { p_feature: 'shift_pattern_directory' }),
       ]);
       setReviewers((revRes.data as Reviewer[] | null) ?? []);
       setWorkplaces(((wpRes.data as { value: string }[] | null) ?? []).map(w => w.value));
       setPatterns((patRes.data as PatternRow[] | null) ?? []);
       setCanSummary(isAdmin || permRes.data === true);
+      setCanShiftDirectory(isAdmin || dirRes.data === true);
       setMyGroups(((myProfRes.data as { group_names: string[] | null } | null)?.group_names) ?? []);
       setLoading(false);
     })();
@@ -1477,8 +1481,10 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
       //    追跡部門(banner_group_names)が未設定でも全員が「その他」に並ぶよう、部門所属では絞らない。
       //    部門を設定すれば group で自動的に部門分けされる。
       //  - その期に行を持つ applicant（退職者を含む）→ id で解決（is_active で絞らない＝退職者も名前が出る）
+      // 名簿は overtime_visible_roster() RPC で取得（役職階層フィルタと役職解決を DB に一本化）。
+      // 「自分と同格・下位のみ」が DB 側で適用されるため、上位者は名簿からも消える（RLSと判定がズレない）。
       const [rosterRes, rowProfRes] = await Promise.all([
-        supabase.from('profiles').select('id, name, group_names, role_title').eq('is_active', true).neq('employment_type', 'パート'),
+        supabase.rpc('overtime_visible_roster'),
         ids.length > 0
           ? supabase.from('profiles').select('id, name, group_names, role_title').in('id', ids)
           : Promise.resolve({ data: [] as ProfLite[] }),
@@ -1873,6 +1879,15 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
             />
           ) : (
             <>
+              {/* 全員のシフト予定ページへの導線（権限者のみ・履歴タブの両モードで表示） */}
+              {canShiftDirectory && (
+                <div style={{ textAlign: 'right', marginBottom: 10 }}>
+                  <button onClick={() => navigate('/shift-patterns')}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#0d6efd', textDecoration: 'underline' }}>
+                    🗓 全員のシフト予定を見る
+                  </button>
+                </div>
+              )}
               {/* 集計モード切替（権限者のみ） */}
               {canSummary && (
                 <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
@@ -1893,11 +1908,15 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
 
               {historyMode === 'summary' && canSummary ? (
                 selectedStaffId ? (
+                  // 権限判定は「役職rank比較」で行う（データ有無や当該期の申請有無に依存させない）。
+                  // 上位者への ?staff= 直アクセスは MemberDetailView 内で権限エラーを出す。
                   <MemberDetailView
                     isDark={isDark}
                     userId={selectedStaffId}
                     name={summaryRows.find(r => r.userId === selectedStaffId)?.name ?? ''}
                     period={summaryPeriod}
+                    viewerRank={roleRank(roleTitle)}
+                    isAdmin={isAdmin}
                     onBack={clearSelectedStaff}
                   />
                 ) : (
@@ -1939,7 +1958,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                     </p>
                   </div>
 
-                  {/* 曜日パターン確認 */}
+                  {/* 曜日パターン確認（全員のシフト予定への導線は履歴タブ上部に集約済み） */}
                   <div style={{ textAlign: 'right', marginBottom: 12 }}>
                     <MyPatternToggle isDark={isDark} patterns={patterns} />
                   </div>
@@ -2209,8 +2228,13 @@ const SummaryView: React.FC<{
           style={{ flex: 1, minWidth: 120, boxSizing: 'border-box', padding: '8px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: inputBg, color: text, fontSize: 13 }} />
       </div>
       <button onClick={onToggleFilter} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#0d6efd', padding: 0, marginBottom: 10 }}>
-        絞り込み{filterOpen ? ' ▲' : ' ▼'}
+        数字の見かた{filterOpen ? ' ▲' : ' ▼'}
       </button>
+      {/* 役職階層の可視性ルールを常設で明示（人が黙って消えることによる誤解＝バグ/集計漏れ/隠蔽の誤認を防ぐ）。囲みで視認性を上げる。 */}
+      <div style={{ background: innerBg, borderRadius: 8, padding: '8px 10px', margin: '0 0 10px', fontSize: 11.5, color: subText, lineHeight: 1.5, display: 'flex', gap: 6 }}>
+        <span aria-hidden>ℹ️</span>
+        <span>この一覧には、<strong style={{ color: text }}>あなたと同じ役職か、それより下の役職</strong>の方だけが表示されます（上の役職の方は表示されません）。合計も、表示中の方だけの集計です。</span>
+      </div>
       {filterOpen && (
         <div style={{ border: `1px solid ${borderColor}`, borderRadius: 10, padding: '10px 12px', marginBottom: 10, fontSize: 12.5, color: subText }}>
           <p style={{ margin: 0 }}>合計は<strong style={{ color: text }}>確定</strong>を主に表示し、<strong style={{ color: text }}>見込</strong>（申請中・受理済み・報告待ちを反映）を下に併記します。差し戻し・取消は合計に含みません。</p>
@@ -2218,12 +2242,16 @@ const SummaryView: React.FC<{
       )}
 
       {visibleRows.length === 0 ? (
-        <p style={{ margin: '16px 0', fontSize: 13, color: subText, textAlign: 'center' }}>該当する記録はありません</p>
+        <p style={{ margin: '16px 0', fontSize: 13, color: subText, textAlign: 'center', lineHeight: 1.6 }}>
+          {rows.length === 0
+            ? '表示できる方がいません。この一覧には、あなたと同じ役職か、それより下の役職の方だけが表示されます。'
+            : '該当する方がいません'}
+        </p>
       ) : (
         <>
           <div style={{ background: innerBg, borderRadius: 8, padding: '10px 12px', marginBottom: 12, fontSize: 14, fontWeight: 'bold', color: text }}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span>総合計（確定）</span>
+              <span>表示中の合計（確定）</span>
               <span style={{ color: diffColor(total, isDark) }}>{formatSignedMin(total)}</span>
             </div>
             {plannedTotal !== total && (
@@ -2282,8 +2310,10 @@ const MemberDetailView: React.FC<{
   userId: string;
   name: string;
   period: string;
+  viewerRank: number;   // 閲覧者の役職rank（roleRank）。権限判定に使用
+  isAdmin: boolean;
   onBack: () => void;
-}> = ({ isDark, userId, name, period, onBack }) => {
+}> = ({ isDark, userId, name, period, viewerRank, isAdmin, onBack }) => {
   const text = isDark ? '#f8f9fa' : '#212529';
   const subText = isDark ? '#adb5bd' : '#6c757d';
   const borderColor = isDark ? '#495057' : '#dee2e6';
@@ -2293,6 +2323,22 @@ const MemberDetailView: React.FC<{
   const [rows, setRows] = useState<OvertimeReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [denied, setDenied] = useState(false);
+
+  // 権限判定は役職rankの比較で行う（当該期のデータ有無に左右されない）。
+  // 対象者が自分より上位（rankが小さい）なら閲覧不可。役職不明の対象者は最上位(1)扱い＝
+  // DBの overtime_role_rank_target と同じ fail-closed。
+  useEffect(() => {
+    if (isAdmin) { setDenied(false); return; }
+    let alive = true;
+    (async () => {
+      const { data } = await supabase.from('profiles').select('role_title').eq('id', userId).maybeSingle();
+      if (!alive) return;
+      const targetRank = ROLE_RANK[(data as { role_title: string | null } | null)?.role_title ?? ''] ?? 1;
+      setDenied(targetRank < viewerRank);
+    })();
+    return () => { alive = false; };
+  }, [userId, viewerRank, isAdmin]);
 
   useEffect(() => {
     let alive = true;
@@ -2324,6 +2370,12 @@ const MemberDetailView: React.FC<{
         <span style={{ fontSize: 12.5, color: subText }}>部門集計 › <span style={{ color: text, fontWeight: 'bold' }}>{name || '個人'}</span></span>
       </div>
 
+      {denied ? (
+        <p style={{ margin: '24px 0', fontSize: 13, color: subText, textAlign: 'center', lineHeight: 1.7 }}>
+          この方の記録を表示する権限がありません。<br />部門集計では、あなたと同じか、下の役職の方だけを閲覧できます。
+        </p>
+      ) : (
+      <>
       {/* 合計時間数カード（確定・見込み・内訳） */}
       <div style={{ background: innerBg, borderRadius: 12, padding: '14px 16px', marginBottom: 10 }}>
         <p style={{ margin: 0, fontSize: 12.5, color: subText }}>{payMonthLabel(period)}（{payPeriodLabel(period)}）の合計時間数</p>
@@ -2350,6 +2402,8 @@ const MemberDetailView: React.FC<{
         <p style={{ margin: '16px 0', fontSize: 13, color: subText, textAlign: 'center' }}>この期間の申請・報告はありません</p>
       ) : (
         visible.map(r => <ReadonlyReportCard key={r.id} r={r} isDark={isDark} cardBg={cardBg} borderColor={borderColor} text={text} subText={subText} />)
+      )}
+      </>
       )}
     </div>
   );
