@@ -84,6 +84,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 自動デプロイはしない
 - **実装完了時・セッション終了前に必ず `git status` で未コミットがないか確認すること**
   - 未コミットがあればユーザーに伝えてからpushする
+- **コマンド実行不可（安全判定サービス停止）時の対処**：`auto mode cannot determine the safety` で Bash/PowerShell が全滅することがある（プラットフォーム側の一時障害・回避不能。読み取り/ファイル編集は可）。2026-07-22 の休暇FYIデプロイ時に発生。対処＝①同一即リトライは1〜2回まで（連発してターンを浪費しない）②落ちている間は CLAUDE.md 更新等の classifier 不要作業を先行③ユーザーへ Run ボタン用の**単一コマンド bash ブロック**（deploy / add対象明示 / commit / push / ls-remote 突合）をフォールバック提示④復帰確認は `echo ok` 等の極小コマンドで先に試す（断続的なので単発ずつ）。
 
 ### 🔥 本番だけ動かないとき（トラブル時に確認）
 - `.env` と `.env.production` の `VITE_SUPABASE_URL` が一致しているか確認
