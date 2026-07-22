@@ -100,6 +100,7 @@ const EVENT_GROUPS = [
       { key: 'reminder:encouragement', label: '有給奨励日 未回答リマインド' },
       { key: 'reminder:scheduled',     label: '定期リマインド' },
       { key: 'reminder:unread',        label: '連絡板 締切未読リマインド' },
+      { key: 'overtime:unreported',    label: '残業 実績未報告リマインド（本人）' },
     ],
   },
   {
@@ -159,6 +160,7 @@ const PUSH_RECIPIENT_BY_EVENT: Record<string, string> = {
   'board:group_message':    'グループのメンバー',
   'board:confirm_request':  'まだ確認していない受信者',
   'reminder:unread':        '締切のある連絡板の未読者',
+  'overtime:unreported':    '実績が未報告の申請者本人',
   'reminder:scheduled':     'リマインドの送信対象者',
   'reminder:encouragement': '有給奨励日に未回答の対象者',
 };
@@ -182,6 +184,7 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
   'reminder:encouragement':      ['{{対象日}}', '{{期限}}', '{{リンク}}'],
   'reminder:scheduled':          ['{{タイトル}}', '{{本文}}'],
   'reminder:unread':             ['{{件名}}', '{{リンク}}'],
+  'overtime:unreported':         ['{{件数}}', '{{日付}}', '{{リンク}}'],
   'purchase_request:submitted':            ['{{申請者名}}', '{{品目名}}', '{{金額}}'],
   'purchase_request:submitted_manager':    ['{{申請者名}}', '{{品目名}}', '{{金額}}'],
   'purchase_request:submitted_board':      ['{{申請者名}}', '{{品目名}}', '{{金額}}'],
@@ -997,7 +1000,7 @@ const NotificationsTab: React.FC = () => {
 
                           {s.enabled && (
                             <div style={{ borderTop: `0.5px solid ${borderColor}`, paddingTop: 10 }}>
-                              {!event.key.startsWith('board:') && !event.key.startsWith('reminder:') && !(channel !== 'slack' && AUTO_RECIPIENT_EMAIL_SITE_EVENTS.includes(event.key)) && (
+                              {!event.key.startsWith('board:') && !event.key.startsWith('reminder:') && event.key !== 'overtime:unreported' && !(channel !== 'slack' && AUTO_RECIPIENT_EMAIL_SITE_EVENTS.includes(event.key)) && (
                                 <div style={{ fontSize: 12, color: subText, marginBottom: 4 }}>
                                   {channel === 'slack' ? '送信先チャンネル' : '宛先'}
                                 </div>
@@ -1010,7 +1013,7 @@ const NotificationsTab: React.FC = () => {
                                 }}>
                                   宛先は依頼された全マネージャー・社長など、申請内容に応じて自動的に決まります（この画面では選択できません）。
                                 </div>
-                              ) : event.key.startsWith('board:') || event.key.startsWith('reminder:') ? null : channel === 'slack' && event.key === 'leave:new_request' ? (
+                              ) : event.key.startsWith('board:') || event.key.startsWith('reminder:') || event.key === 'overtime:unreported' ? null : channel === 'slack' && event.key === 'leave:new_request' ? (
                                 <div style={{
                                   fontSize: 12, padding: '6px 10px', marginBottom: 10,
                                   border: `0.5px solid ${borderColor}`, borderRadius: 8,

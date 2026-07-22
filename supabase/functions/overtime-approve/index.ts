@@ -56,7 +56,7 @@ serve(async (req) => {
     const db = createClient(supabaseUrl, serviceKey)
     const { data: r, error: loadErr } = await db
       .from('overtime_reports')
-      .select('id, applicant_id, reviewer_id, work_date, status, entry_type, diff_minutes, application_types')
+      .select('id, applicant_id, reviewer_id, work_date, status, entry_type, diff_minutes, application_types, pay_period_start')
       .eq('id', report_id)
       .maybeSingle()
     if (loadErr || !r) return json({ success: false, error: '対象の申請が見つかりません' }, 404)
@@ -120,12 +120,38 @@ serve(async (req) => {
       if (!['requested', 'request_confirmed', 'reported', 'returned'].includes(r.status)) {
         return json({ success: false, error: 'この状態では取消できません' }, 409)
       }
+      // 本人取消の制限（管理者は対象外）：reported(実績報告済＝実態あり)は不可／支給月20日を過ぎたら不可。
+      // 締め後(その期の16〜20日)の本人取消は管理者へアラート。期間＝16日〜翌15日（15締め25支給）。
+      let notifyAfterClose = false
+      if (!isAdmin) {
+        if (r.status === 'reported') {
+          return json({ success: false, error: '実績報告済みのため取り消せません。申請先の担当者に取り下げ（差し戻し）を依頼してください' }, 403)
+        }
+        const [ppy, ppm] = String(r.pay_period_start ?? '').split('-').map(Number)
+        if (ppy && ppm) {
+          const payY = ppm === 12 ? ppy + 1 : ppy
+          const payM = ppm === 12 ? 1 : ppm + 1
+          const mm = String(payM).padStart(2, '0')
+          const cutoff20 = `${payY}-${mm}-20`, periodEnd = `${payY}-${mm}-15`
+          const jst = new Date(Date.now() + 9 * 60 * 60 * 1000)
+          const todayStr = `${jst.getUTCFullYear()}-${String(jst.getUTCMonth() + 1).padStart(2, '0')}-${String(jst.getUTCDate()).padStart(2, '0')}`
+          if (todayStr > cutoff20) {
+            return json({ success: false, error: '給与計算が始まっているため（毎月20日以降）取り消せません。管理者に依頼してください' }, 403)
+          }
+          if (todayStr > periodEnd) notifyAfterClose = true
+        }
+      }
       const { data: snapshot } = await db.from('overtime_reports').select('*').eq('id', r.id).maybeSingle()
+      // 楽観ロック：ロード時の status と一致する時だけ取消（別確認者が confirmed 等へ遷移させた確定レコードを踏み潰さない）
+      const { data: updated, error } = await db.from('overtime_reports')
+        .update({ status: 'cancelled' }).eq('id', r.id).eq('status', r.status).select('id')
+      if (error) return json({ success: false, error: '更新に失敗しました: ' + error.message }, 500)
+      if (!updated || updated.length === 0) {
+        return json({ success: false, error: 'この申請の状態が変わったため取り消せませんでした。画面を更新してください' }, 409)
+      }
       await db.from('overtime_report_history').insert({
         report_id: r.id, changed_by: caller.id, change_kind: 'cancelled', change_summary: '取消', snapshot,
       })
-      const { error } = await db.from('overtime_reports').update({ status: 'cancelled' }).eq('id', r.id)
-      if (error) return json({ success: false, error: '更新に失敗しました: ' + error.message }, 500)
       if (r.reviewer_id && r.reviewer_id !== caller.id && ['requested', 'request_confirmed', 'reported'].includes(r.status)) {
         notification = {
           user_id: r.reviewer_id,
@@ -135,6 +161,26 @@ serve(async (req) => {
           reference_id: r.id,
           event_key: 'overtime:cancelled',
           read: false,
+        }
+      }
+      // 締め後(16〜20日)の本人取消 → 管理者・社長へアラート（情報通知・タップは閉じるのみ）
+      if (notifyAfterClose) {
+        const { data: admins } = await db.from('profiles').select('id').in('role_title', ['管理者', '社長'])
+        const rows = (admins ?? [])
+          .filter((a: { id: string }) => a.id !== caller.id)
+          .map((a: { id: string }) => ({
+            user_id: a.id,
+            message: `⚠️ ${applicantName}さんが給与締め後に残業申請を取り消しました（${String(r.work_date).slice(5).replace('-', '/')}）`,
+            sub_message: null,
+            source_type: null,
+            reference_id: null,
+            read: false,
+          }))
+        if (rows.length) {
+          const { error: aErr } = await db.from('notifications').insert(rows)
+          if (aErr) console.error('[overtime-approve] 締め後アラート作成失敗:', aErr.message)
+        } else {
+          console.warn('[overtime-approve] 締め後アラートの宛先(role_title=管理者/社長)が0件。役職名の実値を確認')
         }
       }
     }

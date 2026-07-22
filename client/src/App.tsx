@@ -37,6 +37,7 @@ import { fetchActiveAnnouncements, type Announcement } from './lib/announcements
 import { isInRemindWindow } from './lib/announcementDates';
 import { useFeaturePublished, isFeaturePublished } from './hooks/useFeaturePublished';
 import { supabase } from './lib/supabaseClient';
+import { isFullDayReport } from './lib/overtimeTypes';
 import { useExpenses } from './hooks/useExpenses';
 import type { Expense, Submission } from './types';
 
@@ -532,6 +533,31 @@ const useOvertimePendingCount = (userId: string | undefined, canOvertime: boolea
   return { pendingCount };
 };
 
+// 自分の「実績が未報告の事前申請」（受理済み request_confirmed で勤務日を過ぎた・終日除く）件数。
+// 本人へのリマインド（ホームバナー＋タブバッジ）に使う。
+const useOvertimeUnreportedCount = (userId: string | undefined, canOvertime: boolean | undefined) => {
+  const [count, setCount] = useState(0);
+  const [dates, setDates] = useState<string[]>([]);
+  const fetchUnreported = useCallback(async () => {
+    if (!userId || !canOvertime) { setCount(0); setDates([]); return; }
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tokyo' }); // YYYY-MM-DD(JST)
+    const { data } = await supabase.from('overtime_reports')
+      .select('id, work_date, application_types')
+      .eq('applicant_id', userId)
+      .eq('status', 'request_confirmed');
+    const list = ((data ?? []) as { work_date: string; application_types: string[] | null }[])
+      .filter(r => r.work_date < today && !isFullDayReport(r.application_types))
+      .map(r => r.work_date).sort();
+    setCount(list.length); setDates(list);
+  }, [userId, canOvertime]);
+  useEffect(() => { fetchUnreported(); const t = setInterval(fetchUnreported, 30000); return () => clearInterval(t); }, [fetchUnreported]);
+  useEffect(() => {
+    window.addEventListener('overtime-pending-changed', fetchUnreported);
+    return () => window.removeEventListener('overtime-pending-changed', fetchUnreported);
+  }, [fetchUnreported]);
+  return { count, dates };
+};
+
 const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean; canShiftReport?: boolean; canCalendar?: boolean; canPurchaseRequest?: boolean; canOvertime?: boolean; roleTitle?: string; userId?: string }> = ({ isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, roleTitle, userId }) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -562,6 +588,8 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   const { pendingCount: leavePending } = useLeavePendingCount(userId, roleTitle, isAdmin);
   const { pendingCount: shiftPending } = useShiftPendingCount(userId, roleTitle, isAdmin, canShiftReport);
   const { pendingCount: overtimePending } = useOvertimePendingCount(userId, canOvertime);
+  const { count: overtimeUnreported } = useOvertimeUnreportedCount(userId, canOvertime);
+  const overtimeBadge = overtimePending + overtimeUnreported; // 確認依頼＋自分の実績未報告
 
   // モバイルでボタンが画面幅に収まらない時の横スワイプ対応：
   // 端までスクロールできることを示すフェードの表示/非表示を判定
@@ -668,9 +696,9 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
               <button onClick={() => navTo('/overtime')} style={btnStyle(location.pathname === '/overtime', '#1565c0')}>
                 {isMobile ? <><span style={{ fontSize: 20 }}>⏱</span>{navLabel('残業')}</> : '⏱ 残業・時間'}
               </button>
-              {overtimePending > 0 && (
+              {overtimeBadge > 0 && (
                 <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
-                  {overtimePending > 99 ? '99+' : overtimePending}
+                  {overtimeBadge > 99 ? '99+' : overtimeBadge}
                 </span>
               )}
             </div>
@@ -791,8 +819,9 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
   const isOvertimeResult          = n.source_type === 'overtime_request';                  // 申請者：結果報告のみ
   const isOtProposalReceived      = n.source_type === 'overtime_proposal:received';         // 相手：残業調整の提案が届いた（任意・催促しない）
   const isOtProposalResponded     = n.source_type === 'overtime_proposal:responded';        // 提案者：相手が回答した
+  const isOvertimeUnreported      = n.source_type === 'overtime:unreported';                // 本人：実績未報告リマインド
   const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit || isPurchasePendingApproval || isOvertimePendingApproval || isOvertimePendingResubmit;
-  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isAttendance || isPurchaseResult || isOvertimeResult || isOtProposalReceived || isOtProposalResponded;
+  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isAttendance || isPurchaseResult || isOvertimeResult || isOtProposalReceived || isOtProposalResponded || isOvertimeUnreported;
   // 旧来のフォールバック（source_typeが無い通知向け）
   const isLegacyReject = !isPendingAction && !isResultOnly && (n.message.includes('差し戻し') || n.message.includes('差し戻され'));
 
@@ -840,6 +869,8 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
     if (isOtProposalReceived || isOtProposalResponded) {
       navigate(n.reference_id ? `/overtime?proposal=${n.reference_id}` : '/overtime'); onDismiss(n.id); return;
     }
+    // 実績未報告リマインド → 履歴（実績を報告する場所）へ
+    if (isOvertimeUnreported) { navigate('/overtime?tab=history'); onDismiss(n.id); return; }
     if (isLegacyReject) { navigate('/leave'); return; }
     // どの種別にも当てはまらない通知（古いデータ等）はタップで閉じる（無反応にしない保険）
     onDismiss(n.id);
@@ -1238,6 +1269,24 @@ const OvertimeApprovalBanner: React.FC<{ userId: string; canOvertime: boolean }>
   );
 };
 
+// 自分の「実績未報告」リマインドバナー（ホーム）。タップで /overtime（自分の履歴）へ飛び、実績報告できる。
+const OvertimeUnreportedBanner: React.FC<{ userId: string; canOvertime: boolean }> = ({ userId, canOvertime }) => {
+  const navigate = useNavigate();
+  const { count, dates } = useOvertimeUnreportedCount(userId, canOvertime);
+  if (count === 0) return null;
+  const label = dates.map(d => d.slice(5).replace('-', '/')).join('・');
+  return (
+    <div
+      onClick={() => navigate('/overtime')}
+      style={{ margin: '0 0 16px 0', padding: '12px 16px', background: '#fff3cd', border: '2px solid #f59e0b', borderRadius: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, fontSize: 15, color: '#856404', fontWeight: 'bold' }}
+    >
+      <span style={{ fontSize: 22 }}>🔔</span>
+      <span>実績が未報告の事前申請が {count}件 あります（{label}）</span>
+      <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 'normal', whiteSpace: 'nowrap' }}>タップして報告 →</span>
+    </div>
+  );
+};
+
 // 残業超過FYIバナー（本人＋リーダー(自チーム)＋マネージャー以上。タップ/✕で閉じる・調整提案は任意）
 const OvertimeThresholdBanner: React.FC<{ userId: string; roleTitle: string; isAdmin: boolean; canOvertime: boolean }> = ({ userId, roleTitle, isAdmin, canOvertime }) => {
   const navigate = useNavigate();
@@ -1523,6 +1572,7 @@ const Dashboard: React.FC = () => {
 
       {/* ④-4 残業・時間調整の確認待ちバナー（確認者のみ） */}
       <OvertimeApprovalBanner userId={user.id} canOvertime={canOvertime} />
+      <OvertimeUnreportedBanner userId={user.id} canOvertime={canOvertime} />
 
       {/* ④-5 残業超過FYIバナー（本人・リーダー自チーム・マネージャー以上。閉じられる） */}
       <OvertimeThresholdBanner userId={user.id} roleTitle={roleTitle} isAdmin={isAdmin} canOvertime={canOvertime} />

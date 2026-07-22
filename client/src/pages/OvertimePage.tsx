@@ -830,7 +830,7 @@ const OvertimeForm: React.FC<{
           <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8 }}>
             <li>残業・時間調整の申請と報告は、このページで行ってください（タイムカードの打刻＋このページの申請の2つセット。Slackへの個人の残業申請入力は不要です）。</li>
             <li>突発的な残業（急なお客様対応など）を除き、残業は事前に申請してください。申請がない場合は通常のシフト時間での勤務となります。</li>
-            <li>事前申請が受理されると、「履歴・通算」タブのその日のカードに「実績を報告する」ボタンが表示されます。業務のあと、変更がなければそのまま送信（内容は入力済みです）、時間が変わった場合は直してから送信してください。</li>
+            <li>事前申請が受理されると、「履歴・実績報告」タブのその日のカードに「実績を報告する」ボタンが表示されます。業務のあと、変更がなければそのまま送信（内容は入力済みです）、時間が変わった場合は直してから送信してください。</li>
             <li>休憩は自動計算されます。突発的な残業などで自動計算どおりに取れなかった場合は、休憩の「修正」から実際の時間に直してください（休憩後は1分以上業務をしてから退勤してください）。</li>
             <li>時間は1分単位で入力できます。外出・戻りのあるシフトは「＋時間帯を追加」で入力してください。</li>
             <li>正社員の方は、残業分を別日で調整（時間調整・調整休）していただくようお願いします。</li>
@@ -1571,7 +1571,18 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
   // 履歴・修正依頼系の派生値とフックは、?view=confirm の早期returnより前に置くこと。
   // 早期returnの後ろに Hook があると、通常ビュー⇄確認ビューの切替で Hook 数が変わり React がクラッシュ
   // （確認ページが真っ白になる）。Rules of Hooks 順守のため必ずここで宣言する。
-  const ownHistory = reports.filter(r => r.entry_type === 'manual' || r.entry_type === 'leave_auto');
+  const otTodayStr = todayJstStr();
+  const ownHistoryAll = reports.filter(r => r.entry_type === 'manual' || r.entry_type === 'leave_auto');
+  // 本人の履歴は「前期＋今期」まで常に表示（それより古い期は非表示）。管理者は全件。給与明細照合のため直近1期は残す。
+  const [curPY, curPM] = currentPeriod.split('-').map(Number);
+  const prevPeriodStart = `${curPM === 1 ? curPY - 1 : curPY}-${String(curPM === 1 ? 12 : curPM - 1).padStart(2, '0')}-16`;
+  const ownHistory = isAdmin ? ownHistoryAll : ownHistoryAll.filter(r => !r.pay_period_start || r.pay_period_start >= prevPeriodStart);
+  // 「あなたの対応待ち」（要報告＝受理済み・勤務日超過・終日以外／差し戻し）を上にピン留め。残りは記入順のまま。
+  const isOtActionRow = (r: OvertimeReport) =>
+    r.status === 'returned' ||
+    (r.status === 'request_confirmed' && r.work_date < otTodayStr && !isFullDayReport(r.application_types));
+  const ownActionRows = ownHistory.filter(isOtActionRow);
+  const ownRestRows = ownHistory.filter(r => !isOtActionRow(r));
   // 受理済みの残業に紐づく最新の修正依頼（修正依頼中/対応済みバッジ用）
   const [corrections, setCorrections] = useState<Map<string, CorrectionRequestRow>>(new Map());
   const reloadCorrections = useCallback(() => {
@@ -1799,7 +1810,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
         {/* 送信完了バナー */}
         {savedBanner && (
           <div style={{ background: isDark ? '#1b3a1e' : '#d1e7dd', border: '1px solid #28a745', borderRadius: 10, padding: '10px 14px', marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <p style={{ margin: 0, fontSize: 13, fontWeight: 'bold', color: isDark ? '#8fd19e' : '#0f5132' }}>✅ 送信しました。履歴・通算タブで状況を確認できます</p>
+            <p style={{ margin: 0, fontSize: 13, fontWeight: 'bold', color: isDark ? '#8fd19e' : '#0f5132' }}>✅ 送信しました。履歴・実績報告タブで状況を確認できます</p>
             <button onClick={() => setSavedBanner(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: subText }}>✕</button>
           </div>
         )}
@@ -1809,12 +1820,19 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
           {(['form', 'history'] as const).map(t => (
             <button key={t} onClick={() => { setTab(t); setEditTarget(null); }}
               style={{
-                flex: 1, padding: '12px 0', border: 'none', cursor: 'pointer', fontSize: 15,
+                flex: 1, padding: '12px 4px', border: 'none', cursor: 'pointer', fontSize: 13.5,
                 fontWeight: tab === t ? 'bold' : 'normal',
                 background: tab === t ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'),
                 color: tab === t ? '#fff' : text,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, lineHeight: 1.3,
               }}>
-              {t === 'form' ? '申請・報告' : '履歴・通算'}
+              {t === 'form' ? '事前申請・事後報告' : '履歴・実績報告'}
+              {/* 履歴タブに「実績未報告（要報告）」件数を表示。開いた瞬間どこに何件あるか分かる */}
+              {t === 'history' && unreportedRequests.length > 0 && (
+                <span style={{ background: '#dc3545', color: '#fff', borderRadius: 10, minWidth: 18, height: 18, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 'bold', padding: '0 5px' }}>
+                  {unreportedRequests.length}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -1936,7 +1954,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                   {/* 実績未報告リマインド */}
                   {unreportedRequests.length > 0 && (
                     <div style={{ background: isDark ? '#4a3a10' : '#fff8e1', border: '1px solid #f59e0b', borderRadius: 10, padding: '10px 12px', marginBottom: 12 }}>
-                      <p style={{ margin: 0, fontSize: 12.5, fontWeight: 'bold', color: isDark ? '#ffd54f' : '#856404' }}>
+                      <p style={{ margin: 0, fontSize: 12.5, fontWeight: 'bold', color: isDark ? '#ffffff' : '#856404' }}>
                         🔔 実績が未報告の事前申請が{unreportedRequests.length}件あります（{unreportedRequests.map(r => r.work_date.slice(5).replace('-', '/')).join('・')}）
                       </p>
                     </div>
@@ -1946,17 +1964,30 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                   {ownHistory.length === 0 && (
                     <p style={{ margin: '16px 0', fontSize: 13, color: subText, textAlign: 'center' }}>まだ申請・報告はありません</p>
                   )}
-                  {ownHistory.map(r => {
+                  {(() => {
+                  const renderOwnCard = (r: OvertimeReport) => {
                     const isAuto = r.entry_type === 'leave_auto';
                     const isFullDay = isFullDayReport(r.application_types);
-                    const canReport = r.status === 'request_confirmed' && !isFullDay;
+                    const isOverdue = r.status === 'request_confirmed' && !isFullDay && r.work_date < otTodayStr;
+                    const isFuturePlanned = r.status === 'request_confirmed' && !isFullDay && r.work_date >= otTodayStr;
+                    const canReport = isOverdue; // 実績報告ボタンは勤務日を過ぎた分だけ（未来は勤務後に案内）
                     const canResubmit = r.status === 'returned';
-                    const canCancel = ['requested', 'request_confirmed', 'reported', 'returned'].includes(r.status) && !isAuto;
+                    // 取消ルール：reported(実績報告済＝実態あり)は本人不可（上長が差し戻す/管理者）。
+                    // 本人可は事前段階(requested/request_confirmed)＋差し戻し(returned)のみ。期間は支給月20日まで、以降は管理者のみ。確定は不可（既存）。
+                    const [ppYear, ppMonth] = r.pay_period_start.split('-').map(Number);
+                    const payYear = ppMonth === 12 ? ppYear + 1 : ppYear;
+                    const payMonth = ppMonth === 12 ? 1 : ppMonth + 1;
+                    const cancelCutoff = `${payYear}-${String(payMonth).padStart(2, '0')}-20`; // 支給月の20日
+                    const cancelLockedByPeriod = !isAdmin && otTodayStr > cancelCutoff;
+                    const isReportedLock = !isAdmin && r.status === 'reported' && !isAuto;
+                    const selfCancelStatus = ['requested', 'request_confirmed', 'returned'].includes(r.status) && !isAuto;
+                    const adminCancelStatus = ['requested', 'request_confirmed', 'reported', 'returned'].includes(r.status) && !isAuto;
+                    const canCancel = isAdmin ? adminCancelStatus : (selfCancelStatus && !cancelLockedByPeriod);
                     const actual = (r.segments ?? []).filter(s => s.phase === 'actual').sort((a, b) => a.seg_no - b.seg_no);
                     const planned = (r.segments ?? []).filter(s => s.phase === 'planned').sort((a, b) => a.seg_no - b.seg_no);
                     const segs = actual.length > 0 ? actual : planned;
                     return (
-                      <div key={r.id} style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, padding: '12px 14px', marginBottom: 10 }}>
+                      <div key={r.id} style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, borderLeft: (isOverdue || r.status === 'returned') ? '4px solid #f59e0b' : `1px solid ${borderColor}`, padding: '12px 14px', marginBottom: 10 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4, gap: 6, flexWrap: 'wrap' }}>
                           <span style={{ fontSize: 14, fontWeight: 'bold', color: text }}>
                             {r.work_date.slice(5).replace('-', '/')}（{dowLabel(r.work_date)}）
@@ -1965,7 +1996,10 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                           <div style={{ display: 'flex', gap: 4 }}>
                             {isAuto && <span style={badgeStyle(AUTO_BADGE.color, AUTO_BADGE.darkBg, isDark)}>自動計上</span>}
                             {!isAuto && r.is_post_hoc && <span style={badgeStyle(POSTHOC_BADGE.color, POSTHOC_BADGE.darkBg, isDark)}>事後報告</span>}
-                            {!isAuto && <span style={badgeStyle(STATUS_INFO[r.status].color, STATUS_INFO[r.status].darkBg, isDark)}>{STATUS_INFO[r.status].label}</span>}
+                            {!isAuto && (isOverdue
+                              ? <span style={badgeStyle('#e65100', '#4a2c0a', isDark)}>⚠️ 要報告</span>
+                              : <span style={badgeStyle(STATUS_INFO[r.status].color, STATUS_INFO[r.status].darkBg, isDark)}>{STATUS_INFO[r.status].label}</span>
+                            )}
                           </div>
                         </div>
 
@@ -1992,6 +2026,15 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                           </>
                         )}
 
+                        {isFuturePlanned && (
+                          <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>🗓 勤務後に「実績を報告する」ボタンが出ます</p>
+                        )}
+                        {isReportedLock && (
+                          <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>🔒 実績報告済みのため取消できません。申請先の担当者に取り下げ（差し戻し）を依頼してください</p>
+                        )}
+                        {selfCancelStatus && cancelLockedByPeriod && (
+                          <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>🔒 給与計算が始まっているため（毎月20日以降）、取消は管理者に依頼してください</p>
+                        )}
                         {(canReport || canResubmit || canCancel) && (
                           <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
                             {canReport && (
@@ -2047,7 +2090,24 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                         )}
                       </div>
                     );
-                  })}
+                  };
+                  return (
+                    <>
+                      {ownActionRows.length > 0 && (
+                        <div style={{ fontSize: 12.5, fontWeight: 'bold', color: isDark ? '#ffcf8f' : '#b7770d', margin: '4px 0 8px' }}>⚠️ あなたの対応待ち（{ownActionRows.length}）</div>
+                      )}
+                      {ownActionRows.map(renderOwnCard)}
+                      {ownActionRows.length > 0 && ownRestRows.length > 0 && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '14px 0 8px' }}>
+                          <div style={{ flex: 1, height: 1, background: borderColor }} />
+                          <span style={{ fontSize: 11.5, color: subText, whiteSpace: 'nowrap' }}>これまでの申請・報告</span>
+                          <div style={{ flex: 1, height: 1, background: borderColor }} />
+                        </div>
+                      )}
+                      {ownRestRows.map(renderOwnCard)}
+                    </>
+                  );
+                  })()}
                 </>
               )}
             </>
