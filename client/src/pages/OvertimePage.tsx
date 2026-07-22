@@ -1,15 +1,19 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import OvertimeProposalSheet, { type DraftCandidate } from '../components/OvertimeProposalSheet';
+import OvertimeProposalResponse from '../components/OvertimeProposalResponse';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import {
   calcTotalBreak, calcLaborMinutes, calcSegmentBreak, checkLegalBreak,
   timeToMin, minToTime, formatSignedMin, formatMin,
   todayJstStr, calcPayPeriodStartJst, payPeriodLabel, payMonthLabel,
-  resolveDayKind, DAY_KIND_LABELS,
+  DAY_KIND_LABELS,
 } from '../lib/breakCalc';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
+import { resolveNormalShift } from '../lib/overtimeShift';
+import type { PatternRow, NormalShiftSnapshot } from '../lib/overtimeShift';
 import type { AuthUser } from '../types';
 import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
 import { OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport } from '../lib/overtimeTypes';
@@ -22,18 +26,7 @@ import type { CorrectionRequestRow } from '../lib/correctionRequest';
 // ────────────────────────────────────────────────────────────────
 type OvertimeStatus = 'requested' | 'request_confirmed' | 'reported' | 'confirmed' | 'returned' | 'cancelled';
 
-interface NormalShiftSnapshot {
-  day_kind: DayKind;
-  calendar_kind: CalendarKind | null;
-  start_time: string | null;   // "HH:MM:SS" or "HH:MM"
-  end_time: string | null;
-  start_time2?: string | null; // 2つ目の時間帯（外出・戻り・テレワーク）
-  end_time2?: string | null;
-  location?: string | null;    // 校
-  break_minutes: number;
-  labor_minutes: number;
-  manual_override?: boolean;   // 申請時に本人が修正した場合true
-}
+// NormalShiftSnapshot / PatternRow / resolveNormalShift は lib/overtimeShift.ts に集約（受諾処理と共用）
 
 interface SegmentRow {
   id?: string;
@@ -73,21 +66,6 @@ interface OvertimeReport {
   applicant?: { name: string | null } | null;
   reviewer?: { name: string | null } | null;
   segments?: SegmentRow[];
-}
-
-interface PatternRow {
-  id: string;
-  user_id: string;
-  day_kind: DayKind;
-  start_time: string | null;
-  end_time: string | null;
-  start_time2: string | null;
-  end_time2: string | null;
-  location: string | null;
-  break_minutes: number;
-  labor_minutes: number;
-  valid_from: string;
-  valid_to: string | null;
 }
 
 interface Reviewer { id: string; name: string; role_title: string; }
@@ -243,34 +221,7 @@ function segmentsLabel(segs: SegmentRow[] | WorkSegment[]): string {
   return list.join(' / ');
 }
 
-/** 曜日パターンから該当日の通常シフトを解決 */
-function resolveNormalShift(
-  patterns: PatternRow[], dateStr: string, calendarKind: CalendarKind | null
-): NormalShiftSnapshot {
-  const dayKind = resolveDayKind(dateStr, calendarKind);
-  const sameKind = patterns.filter(p => p.day_kind === dayKind);
-  let row = sameKind.find(p =>
-    p.valid_from <= dateStr
-    && (p.valid_to === null || p.valid_to >= dateStr)
-  );
-  // 事後報告などで、パターン登録日(valid_from)より前の過去日を選ぶと該当レンジが無く「休み」に
-  // なってしまう。その曜日のパターンがある場合は最も近いもの（過去日なら最古／それ以外は最新）で代用する。
-  if (!row && sameKind.length > 0) {
-    const sorted = [...sameKind].sort((a, b) => (a.valid_from < b.valid_from ? -1 : 1));
-    row = dateStr < sorted[0].valid_from ? sorted[0] : sorted[sorted.length - 1];
-  }
-  return {
-    day_kind: dayKind,
-    calendar_kind: calendarKind,
-    start_time: row?.start_time ?? null,
-    end_time: row?.end_time ?? null,
-    start_time2: row?.start_time2 ?? null,
-    end_time2: row?.end_time2 ?? null,
-    location: row?.location ?? null,
-    break_minutes: row?.break_minutes ?? 0,
-    labor_minutes: row?.labor_minutes ?? 0,
-  };
-}
+// resolveNormalShift は lib/overtimeShift.ts へ移設（受諾処理と共用・計算の単一化）
 
 // 単一日付のタップ即確定カレンダー（スマホで「設定」を押させないため native input を置換）。
 // min/max で選べる範囲を制限（事前申請=当日以降・事後報告=当日以前）。
@@ -1392,7 +1343,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
   const [summaryDept, setSummaryDept] = useState('');               // 部門(チーム)フィルタ。''=自所属を初期選択 / '__all__'=全チーム
   const [summaryNameQuery, setSummaryNameQuery] = useState('');      // 名前検索
   const [summaryFilterOpen, setSummaryFilterOpen] = useState(false); // 「絞り込み」折りたたみ
-  const [selectedStaffId, setSelectedStaffId] = useState<string | null>(searchParams.get('staff')); // 個人詳細で選択中の対象者
+  // 個人詳細で選択中の対象者。?staff= を単一の真実として派生させる（別stateにしない）。
+  // これによりブラウザ/スマホの「戻る」でURLから staff が消えたとき、自動的に一覧表示へ戻る。
+  const selectedStaffId = searchParams.get('staff');
 
   // 受理画面用
   const [returnTargetId, setReturnTargetId] = useState<string | null>(null);
@@ -1520,12 +1473,10 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
 
   // 個人詳細の選択/解除。ブラウザ戻る対応のため ?staff= を URL に載せる（他のクエリは保持）。
   const selectStaff = useCallback((id: string) => {
-    setSelectedStaffId(id);
     setSearchParams(prev => { const n = new URLSearchParams(prev); n.set('staff', id); return n; });
     window.scrollTo({ top: 0 });
   }, [setSearchParams]);
   const clearSelectedStaff = useCallback(() => {
-    setSelectedStaffId(null);
     setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('staff'); return n; });
   }, [setSearchParams]);
 
@@ -1630,6 +1581,23 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reports]);
   useEffect(() => { reloadCorrections(); }, [reloadCorrections]);
+
+  // ────────────────────────────────────────────
+  // 残業調整 提案の回答/閲覧ビュー（?proposal=<id>）
+  // ────────────────────────────────────────────
+  const proposalIdParam = searchParams.get('proposal');
+  if (proposalIdParam) {
+    return (
+      <div style={{ maxWidth: 600, margin: '0 auto', padding: '16px 16px 40px' }}>
+        <OvertimeProposalResponse
+          proposalId={proposalIdParam}
+          currentUserId={user.id}
+          isDark={isDark}
+          onClose={() => setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('proposal'); return n; })}
+        />
+      </div>
+    );
+  }
 
   // ────────────────────────────────────────────
   // 確認者ビュー（?view=confirm）
@@ -1917,6 +1885,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                     period={summaryPeriod}
                     viewerRank={roleRank(roleTitle)}
                     isAdmin={isAdmin}
+                    proposerId={user.id}
+                    proposerName={profileName ?? ''}
                     onBack={clearSelectedStaff}
                   />
                 ) : (
@@ -2312,8 +2282,10 @@ const MemberDetailView: React.FC<{
   period: string;
   viewerRank: number;   // 閲覧者の役職rank（roleRank）。権限判定に使用
   isAdmin: boolean;
+  proposerId: string;   // 閲覧者＝提案者の user.id
+  proposerName: string; // 閲覧者の氏名（提案通知の差出人名）
   onBack: () => void;
-}> = ({ isDark, userId, name, period, viewerRank, isAdmin, onBack }) => {
+}> = ({ isDark, userId, name, period, viewerRank, isAdmin, proposerId, proposerName, onBack }) => {
   const text = isDark ? '#f8f9fa' : '#212529';
   const subText = isDark ? '#adb5bd' : '#6c757d';
   const borderColor = isDark ? '#495057' : '#dee2e6';
@@ -2324,6 +2296,12 @@ const MemberDetailView: React.FC<{
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [denied, setDenied] = useState(false);
+  const [showPropose, setShowPropose] = useState(false);
+  const [proposeSent, setProposeSent] = useState(false);
+  const [templateDraft, setTemplateDraft] = useState<DraftCandidate[] | undefined>(undefined);
+  const [templateRemarks, setTemplateRemarks] = useState('');
+  interface HistOption { kind: string; work_date: string; adjust_time: string | null; location: string | null; note: string | null; selection: string }
+  const [proposalHistory, setProposalHistory] = useState<{ id: string; created_at: string; status: string; remarks: string | null; options: HistOption[] }[]>([]);
 
   // 権限判定は役職rankの比較で行う（当該期のデータ有無に左右されない）。
   // 対象者が自分より上位（rankが小さい）なら閲覧不可。役職不明の対象者は最上位(1)扱い＝
@@ -2362,6 +2340,17 @@ const MemberDetailView: React.FC<{
   // 取消済みは表示しない。差し戻しは表示する。
   const visible = rows.filter(r => r.status !== 'cancelled');
 
+  // 提案者向け：この相手への提案履歴（テンプレ複製・状況把握）。RLSで閲覧可能なぶんのみ返る。
+  useEffect(() => {
+    if (userId === proposerId) return;
+    let alive = true;
+    supabase.from('overtime_adjustment_proposals')
+      .select('id, created_at, status, remarks, options:overtime_adjustment_proposal_options(kind, work_date, adjust_time, location, note, selection)')
+      .eq('recipient_id', userId).order('created_at', { ascending: false })
+      .then(({ data }) => { if (alive) setProposalHistory((data as { id: string; created_at: string; status: string; remarks: string | null; options: HistOption[] }[] | null) ?? []); });
+    return () => { alive = false; };
+  }, [userId, proposerId, proposeSent]);
+
   return (
     <div>
       {/* パンくず＋戻る */}
@@ -2394,6 +2383,50 @@ const MemberDetailView: React.FC<{
           </p>
         )}
       </div>
+
+      {/* 残業調整の提案。自分自身には出さない */}
+      {userId !== proposerId && (
+        <div style={{ marginBottom: 10 }}>
+          <button onClick={() => { setTemplateDraft(undefined); setTemplateRemarks(''); setProposeSent(false); setShowPropose(true); }}
+            style={{ width: '100%', padding: 11, borderRadius: 10, border: 'none', background: '#1565c0', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
+            🕐 調整を提案する
+          </button>
+          {proposeSent && (
+            <div style={{ marginTop: 8, padding: '10px 12px', background: isDark ? '#1b4d1b' : '#f0fff4', border: `1px solid ${isDark ? '#2d5a2d' : '#c3e6cb'}`, borderRadius: 8, fontSize: 12.5, color: isDark ? '#a3d9a3' : '#1e7e34' }}>
+              ✓ 提案を送りました。相手のお返事をお待ちください。
+            </div>
+          )}
+          {/* 提案履歴（テンプレ複製・状況把握） */}
+          {proposalHistory.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 'bold', color: subText, marginBottom: 6 }}>これまでの提案</div>
+              {proposalHistory.map(p => (
+                <div key={p.id} style={{ border: `1px solid ${borderColor}`, borderRadius: 8, padding: '8px 10px', marginBottom: 6, fontSize: 12, color: text }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6, flexWrap: 'wrap' }}>
+                    <span>{p.created_at.slice(0, 10)}　候補{p.options.length}件</span>
+                    <span style={{ color: p.status === 'responded' ? '#1e8449' : subText }}>{p.status === 'open' ? '未回答' : p.status === 'responded' ? '回答あり' : '取り下げ'}</span>
+                  </div>
+                  <button onClick={() => {
+                    setTemplateDraft(p.options.map(o => ({ kind: o.kind as DraftCandidate['kind'], date: o.work_date, time: (o.adjust_time ?? '').slice(0, 5), location: o.location ?? '', note: o.note ?? '' })));
+                    setTemplateRemarks(p.remarks ?? '');
+                    setProposeSent(false); setShowPropose(true);
+                  }} style={{ marginTop: 6, fontSize: 11.5, color: '#1565c0', background: 'none', border: `1px solid ${borderColor}`, borderRadius: 6, padding: '3px 10px', cursor: 'pointer' }}>これをもとに新規作成</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {showPropose && (
+        <OvertimeProposalSheet
+          proposerId={proposerId} proposerName={proposerName}
+          recipientId={userId} recipientName={name}
+          period={period} currentOvertimeMinutes={b.total} isDark={isDark}
+          initialCandidates={templateDraft} initialRemarks={templateRemarks}
+          onClose={() => setShowPropose(false)}
+          onSubmitted={() => setProposeSent(true)}
+        />
+      )}
 
       {loadError && <p style={{ margin: '8px 0', fontSize: 12.5, color: isDark ? '#f5b5ba' : '#c62828' }}>{loadError}</p>}
       {loading ? (

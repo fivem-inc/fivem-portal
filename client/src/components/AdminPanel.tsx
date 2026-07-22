@@ -12,6 +12,7 @@ import NotificationsTab, { ScheduledRemindersPanel, ReminderDaysSettingsPanel } 
 import BoardSettingsTab from './admin/BoardSettingsTab';
 import ShiftReportsTab from './admin/ShiftReportsTab';
 import OvertimeAdminTab from './admin/OvertimeAdminTab';
+import OvertimeProposalsTab from './admin/OvertimeProposalsTab';
 import FeaturePermissionsTab from './admin/FeaturePermissionsTab';
 import PurchaseRequestsTab from './admin/PurchaseRequestsTab';
 import AnnouncementsTab from './admin/AnnouncementsTab';
@@ -471,6 +472,7 @@ const AdminPanelContent: React.FC = () => {
           { key: 'leave_requests',     label: '休暇申請',      icon: '🌿' },
           { key: 'shift_reports',      label: '勤務変更',      icon: '⏰' },
           { key: 'overtime_admin',     label: '残業管理',      icon: '⏱' },
+          { key: 'overtime_proposals', label: '調整提案',      icon: '🤝' },
           { key: 'purchase_requests',  label: '購入申請',      icon: '🧾' },
           { key: 'corrections',        label: '修正依頼',      icon: '📩' },
         ] as const;
@@ -574,6 +576,7 @@ const AdminPanelContent: React.FC = () => {
         {activeTab === 'leave_requests' && <LeaveRequestsTab />}
         {activeTab === 'shift_reports' && <ShiftReportsTab />}
         {activeTab === 'overtime_admin' && <OvertimeAdminTab />}
+        {activeTab === 'overtime_proposals' && <OvertimeProposalsTab />}
         {activeTab === 'corrections' && <CorrectionRequestsTab />}
         {activeTab === 'purchase_requests' && <PurchaseRequestsTab />}
         {activeTab === 'leader_assignments' && <LeaderAssignmentsTab />}

@@ -789,8 +789,10 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
   const isOvertimePendingApproval = n.source_type === 'overtime_request:pending_approval'; // 確認者：要対応
   const isOvertimePendingResubmit = n.source_type === 'overtime_request:pending_resubmit'; // 申請者：再提出待ち
   const isOvertimeResult          = n.source_type === 'overtime_request';                  // 申請者：結果報告のみ
+  const isOtProposalReceived      = n.source_type === 'overtime_proposal:received';         // 相手：残業調整の提案が届いた（任意・催促しない）
+  const isOtProposalResponded     = n.source_type === 'overtime_proposal:responded';        // 提案者：相手が回答した
   const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit || isPurchasePendingApproval || isOvertimePendingApproval || isOvertimePendingResubmit;
-  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isAttendance || isPurchaseResult || isOvertimeResult;
+  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isAttendance || isPurchaseResult || isOvertimeResult || isOtProposalReceived || isOtProposalResponded;
   // 旧来のフォールバック（source_typeが無い通知向け）
   const isLegacyReject = !isPendingAction && !isResultOnly && (n.message.includes('差し戻し') || n.message.includes('差し戻され'));
 
@@ -834,6 +836,10 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
     if (isOvertimePendingApproval) { navigate(`/overtime?view=confirm${fq ? `&${fq}` : ''}`); return; }
     if (isOvertimePendingResubmit) { navigate(`/overtime?tab=history${fq ? `&${fq}` : ''}`); return; }
     if (isOvertimeResult) { navigate(`/overtime?tab=history${fq ? `&${fq}` : ''}`); onDismiss(n.id); return; }
+    // 残業調整の提案（相手＝受信／提案者＝回答通知）。どちらも催促しない＝タップで開いて閉じる。
+    if (isOtProposalReceived || isOtProposalResponded) {
+      navigate(n.reference_id ? `/overtime?proposal=${n.reference_id}` : '/overtime'); onDismiss(n.id); return;
+    }
     if (isLegacyReject) { navigate('/leave'); return; }
     // どの種別にも当てはまらない通知（古いデータ等）はタップで閉じる（無反応にしない保険）
     onDismiss(n.id);

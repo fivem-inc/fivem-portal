@@ -50,6 +50,9 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string }> = {
   // word は安全語ホワイトリスト（新着）のみ。自由文は Android で警告表示に化けるため不可。
   "announcement:new":         { app: "お知らせ", word: "新着", url: "/" },
   "announcement:remind":      { app: "お知らせ", word: "新着", url: "/" },
+  // 残業調整の提案（相手＝受信／提案者＝回答通知）。安全語「新着」のみ・催促しない。
+  "overtime_proposal:received":  { app: "残業調整", word: "新着", url: "/overtime" },
+  "overtime_proposal:responded": { app: "残業調整", word: "新着", url: "/overtime" },
 };
 
 // notification_settingsの参照キー（'reminder:unread:today'→'reminder:unread'）
