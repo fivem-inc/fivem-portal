@@ -1434,22 +1434,26 @@ const LeaveRequestsTab: React.FC = () => {
                                         if (req.status === 'step2_pending') {
                                           const daysCount = req.leave_dates ? (() => { try { return String(JSON.parse(req.leave_dates).length); } catch { return ''; } })() : '';
                                           const vars = { 休暇種別: typeName, 申請日数: daysCount, リンク: 'https://fivem-portal.vercel.app/leave?tab=history' };
-                                          // 社長（宛先で「社長」を選んだ場合の届け先。承認者画面と揃える）
-                                          const { data: presidents } = await supabase
-                                            .from('profiles').select('id, email').eq('role_title', '社長').eq('is_active', true);
-                                          const presidentIds = (presidents ?? []).map((p: { id: string }) => p.id);
-                                          const presidentEmails = (presidents ?? []).map((p: { email: string | null }) => p.email).filter((e): e is string => !!e);
                                           if (await shouldSend('leave:manager_approved', 'site')) {
                                             const t = await getNotificationTemplate('leave:manager_approved', 'site', vars);
                                             await insertNotification(req.user_id, t?.template ?? `休暇申請がマネージャーに受理されました`, t?.subject || `種別：${typeName}`, 'leave_request', req.id);
                                           }
-                                          // 宛先で「社長」を選んでいれば社長にもサイト通知
-                                          await dispatchSiteNotification('leave:manager_approved', vars, { president: presidentIds }, insertNotification, 'leave_request', req.id);
+                                          // リーダー・マネージャー・社長へ FYI（誰がいつ休むか共有／カレンダー着地）。範囲は通知設定 leave:approved_fyi に従う
+                                          try {
+                                            let fyiDates: string[] = [];
+                                            try { if (req.leave_dates) fyiDates = JSON.parse(req.leave_dates); } catch { /* leave_datesなし→start_dateで補完 */ }
+                                            if (fyiDates.length === 0 && req.start_date) fyiDates = [req.start_date];
+                                            if (fyiDates.length > 0) {
+                                              await supabase.functions.invoke('leave-approved-notify', {
+                                                body: { applicant_id: req.user_id, applicant_name: req.profile?.name ?? '', leave_dates: fyiDates, leave_type: typeName },
+                                              });
+                                            }
+                                          } catch (e) { console.error('[leave-approved-notify] FYI通知失敗:', e); }
                                           if (await shouldSend('leave:manager_approved', 'slack')) {
                                             await sendLeaveSlack('manager_approved', '管理者', 'マネージャー');
                                           }
                                           const applicantEmail = await getUserEmail(req.user_id) ?? '';
-                                          await dispatchEmail('leave:manager_approved', vars, { applicant: applicantEmail, president: presidentEmails });
+                                          await dispatchEmail('leave:manager_approved', vars, { applicant: applicantEmail });
                                         }
                                         if (req.status === 'manager_approved' && await shouldSend('leave:manager_approved', 'slack')) {
                                           await sendLeaveSlack('accounting_approved', '経理担当者', '管理者');

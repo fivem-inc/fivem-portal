@@ -778,6 +778,7 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
   const isLeavePendingApproval = n.source_type === 'leave_request:pending_approval'; // 承認者：要対応
   const isLeavePendingResubmit = n.source_type === 'leave_request:pending_resubmit'; // 申請者：再提出/取消待ち
   const isLeaveResult          = n.source_type === 'leave_request';                  // 申請者：結果報告のみ
+  const isLeaveFyi             = n.source_type === 'leave_request:fyi';              // 上長：FYI（誰がいつ休むか共有・カレンダー着地）
   const isShiftPendingApproval = n.source_type === 'shift_report:pending_approval';  // レビュアー：要対応
   const isShiftPendingResubmit = n.source_type === 'shift_report:pending_resubmit';  // 申請者：再提出/取消待ち
   const isShiftResult          = n.source_type === 'shift_report';                   // 申請者：結果報告のみ
@@ -789,7 +790,7 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
   const isOvertimePendingResubmit = n.source_type === 'overtime_request:pending_resubmit'; // 申請者：再提出待ち
   const isOvertimeResult          = n.source_type === 'overtime_request';                  // 申請者：結果報告のみ
   const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit || isPurchasePendingApproval || isOvertimePendingApproval || isOvertimePendingResubmit;
-  const isResultOnly = isLeaveResult || isShiftResult || isTimeAdjustment || isAttendance || isPurchaseResult || isOvertimeResult;
+  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isAttendance || isPurchaseResult || isOvertimeResult;
   // 旧来のフォールバック（source_typeが無い通知向け）
   const isLegacyReject = !isPendingAction && !isResultOnly && (n.message.includes('差し戻し') || n.message.includes('差し戻され'));
 
@@ -813,6 +814,11 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
     if (isLeavePendingApproval) { navigate(`/leave-approvals${fq ? `?${fq}` : ''}`); return; }
     if (isLeavePendingResubmit) { navigate(`/leave?tab=history${fq ? `&${fq}` : ''}`); return; }
     if (isLeaveResult) { navigate(`/leave?tab=history${fq ? `&${fq}` : ''}`); onDismiss(n.id); return; }
+    // 受理FYI（上長向け・誰がいつ休むか）はカレンダーの該当日へ。view=fyi のときだけ全チーム表示に切替（一般スタッフの欠勤動線には影響しない）
+    if (isLeaveFyi) {
+      const focus = n.reference_id && /^\d{4}-\d{2}-\d{2}$/.test(n.reference_id) ? `focus=${n.reference_id}&` : '';
+      navigate(`/calendar?${focus}view=fyi`); onDismiss(n.id); return;
+    }
     if (isShiftPendingApproval) { navigate(`/shift-report?view=confirm${fq ? `&${fq}` : ''}`); return; }
     if (isShiftPendingResubmit) { navigate(`/shift-report?tab=history${fq ? `&${fq}` : ''}`); return; }
     if (isShiftResult) { navigate(`/shift-report?tab=history${fq ? `&${fq}` : ''}`); onDismiss(n.id); return; }

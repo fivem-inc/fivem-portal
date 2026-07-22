@@ -4,7 +4,34 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
-## ▶ 最新セッション引き継ぎ（2026-07-22 終了時点・ここから読む）
+## ▶ 最新セッション引き継ぎ（2026-07-22・休暇「受理」通知FYI改修・ここから読む）
+
+### 今日やったこと（休暇「受理」通知を上長FYI化。コード実装＋SQL適用＋Edgeデプロイ＋push 済み）
+**背景**: 社長が「休暇がマネージャーに受理されました」ベルをタップ→空の履歴に着地する不具合。調査で3つの食い違いが判明：①サイト通知の宛先設定でリーダー/マネージャーを選べる（実際に選択済み）のにコードが社長IDしか渡さず届いていない ②社長のタップ先が自分の空履歴（`/leave?tab=history`） ③ベルとプッシュで文面/遷移が不一致（プッシュは`ccRoles`で別配信・「未承認/leave-approvals」）。UI/UXデザイナー＋シニアエンジニアの2体レビュー実施済み。
+
+**方針（確定）**: 「マネージャー受理」を上長向けFYI（誰がいつ休むか把握）として リーダー・マネージャー・社長 に配信し、タップ先は休暇カレンダーの該当日ハイライト。受信範囲は通知設定で「全社/自チーム」切替可（初期=全社）。申請者本人は従来どおり自分の履歴に着地（回帰なし）。メール・プッシュも対象。
+
+**実装（新イベント方式 `leave:approved_fyi`）**:
+- **新Edge Function `leave-approved-notify`**（attendance-notify型）: 役職＋groupFilterで宛先解決し**申請者を除外**、サイト(`source_type='leave_request:fyi'`／`reference_id=休暇初日YYYY-MM-DD`)＋メール＋プッシュ(直接send-push・文面固定「新着 1件」・push_queue非経由)を配信。
+- **LeaveApprovals.tsx / admin/LeaveRequestsTab.tsx**: 旧「社長dispatch」→FYI Edge呼び出しに差替。本人の結果通知(`leave:manager_approved`)は温存。
+- **App.tsx**: `isLeaveFyi`(source_type==='leave_request:fyi')を3箇所（変数/isResultOnly/handleTap）追加→タップで `/calendar?focus=日付&view=fyi`。
+- **CalendarPage.tsx**: `view=fyi` のときだけ初期を全チーム表示（一般スタッフの欠勤動線=`mine`は不変＝プライバシー保護）。
+- **admin/NotificationsTab.tsx**: 「受理お知らせ（FYI）」を役職＋「全社/自チーム」UIで追加（ROLE_GROUP_BROADCAST_EVENTS / PUSH_ROLE_SELECT_EVENTS / VARIABLES_BY_EVENT に登録）。
+- **SQL適用済み**: `leave:approved_fyi`(site/email/push)をseed(roles=リーダー/マネージャー/社長, groupFilter=all)／`leave:manager_approved`のsite宛先を`{applicant}`に整理＋pushの`ccRoles`を空に（二重プッシュ停止）／DBの旧社長ベルを`event_key`で本人ぶん(NULL)と分離しFYIに変換。
+
+**注意事項・既知の挙動**:
+- 旧社長ベル（変換ぶん）は `reference_id` がUUIDのためタップでカレンダーには飛ぶが該当日ハイライトなし（新規FYIは日付付きで正常）。実害なし・✕で消せる。
+- `notifications.reference_id` の実列は **text**（マイグレ 20260726000000 の `uuid` 宣言は未適用の空文＝**将来の新規DB構築時に attendance/FYI を壊す時限爆弾。別途 text へ訂正すべき**）。
+- **通知設定ミスマッチ（監査結果）**: 宛先UI(`getRecipientOptions`)は全イベントで applicant/approver/leader/manager を出すが、各送信側は一部キーしか渡さない「押せるが届かない死に設定」が多数（leave:new_request/leader_approved/rejected/cancelled、expense/trip/purchase 等）。今回は休暇FYIのみ修正。恒久対策は別PR。
+
+### 次回やること（優先順）
+1. **休暇FYIの実機確認**（デプロイ済）：マネージャー受理を実行→リーダー/マネージャー/社長のベル・プッシュ・メールが届くか、タップでカレンダー該当日がハイライトされるか、範囲トグル（全社/自チーム）の反映、本人は従来どおり履歴着地か。
+2. **通知設定ミスマッチの恒久対策（別PR）**：`getRecipientOptions` をイベント別に「実際に届くキーだけ」返す等。expense/trip/purchase の送信元は未裏取り→要確認。`notifications.reference_id` の uuid宣言マイグレも text へ訂正。
+3. 前回からの繰越（下記「前回」参照）：残業階層/shift-patterns の実機確認、調整休の提案機能、通知土台、Excel校移動/修正依頼/終日+振替元 の実機確認。
+
+---
+
+## ▶ 前回セッション引き継ぎ（2026-07-22・残業階層＋シフト予定）
 
 ### 今日やったこと（master 5b77701・push＆SQL適用済み・Vercelデプロイ済み）
 - **A: 残業「部門集計」に役職階層の閲覧制御を追加**

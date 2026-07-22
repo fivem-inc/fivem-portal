@@ -820,7 +820,9 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
   const subColor = isDark ? '#adb5bd' : '#888';
   const borderColor = isDark ? '#495057' : '#eee';
 
-  const defaultGroup = (isAdmin || roleTitle === '社長') ? 'all' : 'mine';
+  const viewParam = new URLSearchParams(window.location.search).get('view');
+  // 受理FYIのバナー（view=fyi）から来た上長は、該当スタッフを確実に表示するため全チーム表示にする
+  const defaultGroup = (viewParam === 'fyi' || isAdmin || roleTitle === '社長') ? 'all' : 'mine';
   const CALENDAR_GROUPS = ['こども', '大人', '管理部'];
 
   const today = new Date();

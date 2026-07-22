@@ -34,6 +34,7 @@ const EVENT_GROUPS = [
       { key: 'leave:new_request',      label: '申請時' },
       { key: 'leave:leader_approved',  label: 'リーダー受理時' },
       { key: 'leave:manager_approved', label: 'マネージャー受理時' },
+      { key: 'leave:approved_fyi',     label: '受理お知らせ（FYI・上長へ共有）' },
       { key: 'leave:rejected',         label: '差し戻し時' },
       { key: 'leave:cancelled',        label: '取り消し時' },
     ],
@@ -166,6 +167,7 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
   'leave:new_request':           ['{{承認者名}}', '{{承認者役職}}', '{{リンク}}'],
   'leave:leader_approved':       ['{{承認者名}}', '{{承認者役職}}', '{{次承認者名}}', '{{リンク}}'],
   'leave:manager_approved':      ['{{承認者名}}', '{{休暇種別}}', '{{リンク}}'],
+  'leave:approved_fyi':          ['{{申請者名}}', '{{日付}}', '{{休暇種別}}', '{{リンク}}'],
   'leave:rejected':              ['{{申請者名}}', '{{休暇種別}}', '{{差し戻し理由}}', '{{リンク}}'],
   'leave:cancelled':             ['{{申請者名}}', '{{休暇種別}}', '{{取り消し理由}}'],
   'expense:new_request':         ['{{申請者名}}', '{{申請日}}', '{{申請内容}}', '{{項目数}}'],
@@ -191,9 +193,9 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
 };
 
 // 役職＋グループ絞り込みで一斉配信するイベント（時間調整・勤務変更受理など、UIとロジックを共有する）
-const ROLE_GROUP_BROADCAST_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'attendance:registered'];
+const ROLE_GROUP_BROADCAST_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'attendance:registered', 'leave:approved_fyi'];
 // プッシュ通知で役職を選択できるイベント（一斉通知系。宛先が自動で決まらないもの）
-const PUSH_ROLE_SELECT_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'purchase:reimbursement_recorded', 'attendance:registered'];
+const PUSH_ROLE_SELECT_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'purchase:reimbursement_recorded', 'attendance:registered', 'leave:approved_fyi'];
 
 // 備品購入申請: 依頼された全マネージャー・社長など、宛先がその都度動的に決まるイベント。
 // サイト通知・メールの宛先はコード側で自動計算しており、この画面のチェックボックスでは
