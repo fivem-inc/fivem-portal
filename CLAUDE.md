@@ -2,6 +2,46 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+---
+
+## ▶ 最新セッション引き継ぎ（2026-07-22 終了時点・ここから読む）
+
+### 今日やったこと（master 5b77701・push＆SQL適用済み・Vercelデプロイ済み）
+- **A: 残業「部門集計」に役職階層の閲覧制御を追加**
+  - ルール=「申請者rank >= 自分rank」の人だけ閲覧可（同格は見える／上位は不可／社長・管理者=全員）。
+    順位: 社長1・管理者1・マネージャー2・リーダー3・フロア責任者4・一般5・パート6（フロントROLE_RANKが正。DB roles.sort_orderは実態とズレるので使わない）。
+  - SQL(20260729000000): `overtime_role_rank`(自分・不明99) と `overtime_role_rank_target`(対象・不明1=fail-closed) を分離。
+    overtime_reports / overtime_report_segments / overtime_report_history のRLSにrank条件を追加（別テーブルからの復元を封鎖）。
+    名簿は `overtime_visible_roster()` RPC に一本化（フロントとDBの役職解決ズレを根絶・adminバイパスあり）。
+  - フロント(OvertimePage.tsx): 名簿をRPC化／個人詳細(MemberDetailView)は「役職rank比較」で権限判定（データ有無に非依存。上位者への `?staff=` 直アクセスは「権限がありません」表示）／総合計を「表示中の合計」に変更＋ℹ️常設注記／権限で0人の専用空状態。
+- **B: 全員のシフト予定 閲覧ページ（/shift-patterns）新設**
+  - feature_permission `shift_pattern_directory`（初期ON=リーダー以上。管理画面の権限タブでON/OFF可）。SQL(20260730000000)。
+  - weekly_shift_patterns に `patterns_select_directory` RLS 追加（directory権限者は全員分read）。
+  - ShiftDirectoryPage.tsx: パート含む全員を名前検索＋チームフィルタで一覧→人選択で曜日別の通常シフト表示。
+    導線「🗓 全員のシフト予定を見る」は履歴タブ上部（両モードで表示・権限者のみ）。
+  - 実装は2体レビュー（プラン＋実コード）を実施し指摘反映済み。
+
+### 次回やること（優先順）
+1. **今日ぶんの実機確認**：リーダーで部門集計の階層フィルタ／個人詳細の権限エラー／`/shift-patterns`（検索・フィルタ・シフト未登録バッジ）／管理タブの新トグル出し分け（リーダー等でログインして検証）。
+2. **調整休の提案機能**（次の新機能・要 /grill-me・ユーザーが詳細を後日送付）：
+   リーダー以上が「自分より下位・同等の役職の人」に調整休を提案→通知→押すと開く→複数案を提案でき、相手が選択→申請→受理の流れ。
+3. 前回残：役職階層の“閲覧制御”はA完了。通知の土台づくり（notification_settings/push へ event_key seed＋dispatch配線）は未着手。
+4. さらに前の残：Excel校移動／修正依頼／終日+振替元 の各実機確認。
+
+### 見送った軽微レビュー指摘（実害小・必要なら対応）
+- RPCの SECURITY DEFINER は現状のprofiles RLS(using true)では必須でない／weekly_shift_patterns取得のさらなる最適化。
+
+### 作業ルール（厳守・毎回）
+- 開始時に本引き継ぎ確認。**作業開始・commit・push はユーザー指示があってから**。自動デプロイしない。
+- 修正後は `cd client && npx tsc -b && npx vite build`。push後は `git ls-remote` でlocal/remote突き合わせ。
+- デプロイもClaudeが実施：**SQLは全文提示→ユーザーがSupabase SQL Editorで実行**、commit/push/Edge FunctionはClaude。push先は fivem-kyoto 固定。
+- `git add` 前に `git status` 目視。**AGENTS.md はコミットに含めない**。
+- alert/confirm/.catch 禁止（インライン確認・緑カード）。認証はAuthContext一元化。文言「承認→受理」「却下→差し戻し」。RLS管理者判定は `app_metadata->>'role'='admin'`。
+- UI文言/配色/新機能/設計判断は案提示→承認後。大規模改修は2体レビュー（UI/UX＋シニアエンジニア）。
+- 専門用語は都度かみ砕いて説明する。
+
+---
+
 ## 🚀 毎回の開発開始手順
 
 ### ⚠️ 作業開始前に必ず確認すること
