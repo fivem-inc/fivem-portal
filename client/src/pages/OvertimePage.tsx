@@ -182,7 +182,8 @@ export function computeBalance(allRows: OvertimeReport[], period: string): Balan
   const minus = choseiMinus + otherMinus;
 
   // 見込み: 未確定ステータスの diff を加算（終日欠勤は diff=0 のため時間には影響しない）
-  const plannedDelta = inPeriod.filter(r => PLANNED_STATUSES.includes(r.status)).reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
+  // 確定合計と同じ二重減算防止を適用: 同日に確定 leave_auto がある未確定の手動 chosei_off は見込みに入れない
+  const plannedDelta = inPeriod.filter(r => PLANNED_STATUSES.includes(r.status) && !isDupChosei(r)).reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
   const plannedTotal = total + plannedDelta;
 
   // 欠勤は時間に入れず日数で別枠カウント
