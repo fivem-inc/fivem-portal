@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { notifyShiftReportReturned } from '../lib/shiftReportReturnedNotify';
@@ -344,6 +344,19 @@ const ShiftReportForm: React.FC<{
   // 理由履歴（自分が過去に入力した理由）
   const [pastReasons, setPastReasons] = useState<string[]>([]);
   const [showAllReasons, setShowAllReasons] = useState(false);
+  // 履歴は過去の報告から自動抽出するため、✕は「候補として今後出さない」（端末に記憶）
+  const hiddenReasonsKey = `fivem_hidden_reasons_shift_${applicantId}`;
+  const [hiddenReasons, setHiddenReasons] = useState<string[]>(() => {
+    try { const v = JSON.parse(localStorage.getItem(hiddenReasonsKey) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
+  });
+  const hideReason = (r: string) => {
+    setHiddenReasons(prev => {
+      const next = prev.includes(r) ? prev : [...prev, r];
+      try { localStorage.setItem(hiddenReasonsKey, JSON.stringify(next)); } catch { /* 保存できなくても表示は消す */ }
+      return next;
+    });
+  };
+  const visiblePastReasons = useMemo(() => pastReasons.filter(r => !hiddenReasons.includes(r)), [pastReasons, hiddenReasons]);
   useEffect(() => {
     supabase.from('shift_reports').select('reason, created_at').eq('applicant_id', applicantId)
       .not('reason', 'is', null).order('created_at', { ascending: false }).limit(50)
@@ -612,11 +625,11 @@ const ShiftReportForm: React.FC<{
                   const blk = isBlockedWith(types, t) && !sel;
                   return (
                     <button key={t} onClick={() => toggleType(t)} disabled={blk}
-                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 12px', borderRadius: 10, border: `2px solid ${sel ? TYPE_INFO[t].color : t === 'absence' ? '#fecaca' : '#e5e7eb'}`, background: sel ? (isDark ? '#1a2e2a' : '#f0fdf4') : t === 'absence' ? (isDark ? '#2d1215' : '#fff8f8') : (isDark ? '#495057' : 'white'), cursor: blk ? 'not-allowed' : 'pointer', opacity: blk ? 0.35 : 1, transition: 'all 0.15s', textAlign: 'left' as const }}>
-                      <div style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${sel ? TYPE_INFO[t].color : '#d1d5db'}`, background: sel ? TYPE_INFO[t].color : 'transparent', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 11, fontWeight: 'bold' }}>{sel ? '✓' : ''}</div>
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 12px', borderRadius: 10, border: `2px solid ${sel ? TYPE_INFO[t].color : t === 'absence' ? '#fecaca' : (isDark ? '#6c757d' : '#e5e7eb')}`, background: sel ? '#f0fdf4' : t === 'absence' ? (isDark ? '#2d1215' : '#fff8f8') : (isDark ? '#495057' : 'white'), cursor: blk ? 'not-allowed' : 'pointer', opacity: blk ? 0.5 : 1, transition: 'all 0.15s', textAlign: 'left' as const }}>
+                      <div style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${sel ? TYPE_INFO[t].color : (isDark ? '#adb5bd' : '#d1d5db')}`, background: sel ? TYPE_INFO[t].color : 'transparent', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 11, fontWeight: 'bold' }}>{sel ? '✓' : ''}</div>
                       <span style={{ fontSize: 14 }}>{TYPE_INFO[t].emoji}</span>
-                      <span style={{ fontSize: 13, fontWeight: sel ? 'bold' : 'normal', color: sel ? TYPE_INFO[t].color : (t === 'absence' ? '#991b1b' : textColor) }}>{TYPE_INFO[t].label}</span>
-                      {t === 'absence' && <span style={{ fontSize: 10, color: sel ? TYPE_INFO[t].color : '#f87171', border: `1px solid ${sel ? TYPE_INFO[t].color : '#fecaca'}`, borderRadius: 4, padding: '1px 5px', marginLeft: 'auto', background: sel ? '#fee2e2' : '#fff5f5', fontWeight: 600 }}>単独</span>}
+                      <span style={{ fontSize: 13, fontWeight: sel ? 'bold' : 'normal', color: sel ? TYPE_INFO[t].color : (t === 'absence' ? (isDark ? '#ff8a80' : '#991b1b') : textColor) }}>{TYPE_INFO[t].label}</span>
+                      {t === 'absence' && <span style={{ fontSize: 10, color: sel ? TYPE_INFO[t].color : (isDark ? '#ffb4a9' : '#f87171'), border: `1px solid ${sel ? TYPE_INFO[t].color : (isDark ? '#8a4040' : '#fecaca')}`, borderRadius: 4, padding: '1px 5px', marginLeft: 'auto', background: sel ? '#fee2e2' : (isDark ? '#5a2a2a' : '#fff5f5'), fontWeight: 600 }}>単独</span>}
                     </button>
                   );
                 })}
@@ -657,11 +670,11 @@ const ShiftReportForm: React.FC<{
                 {(['location_change'] as ApplicationType[]).map(t => {
                   const sel = types.includes(t);
                   const blk = isBlockedWith(types, t) && !sel;
-                  const locColor = isDark ? '#c4b5fd' : TYPE_INFO[t].color;
+                  const locColor = TYPE_INFO[t].color;
                   return (
                     <button key={t} onClick={() => toggleType(t)} disabled={blk}
-                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 12px', borderRadius: 10, border: `2px solid ${sel ? locColor : '#e5e7eb'}`, background: sel ? (isDark ? '#3b2f57' : '#f5f3ff') : (isDark ? '#495057' : 'white'), cursor: blk ? 'not-allowed' : 'pointer', opacity: blk ? 0.35 : 1, transition: 'all 0.15s', textAlign: 'left' as const }}>
-                      <div style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${sel ? locColor : '#d1d5db'}`, background: sel ? locColor : 'transparent', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: isDark ? '#1a1a2e' : 'white', fontSize: 11, fontWeight: 'bold' }}>{sel ? '✓' : ''}</div>
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 12px', borderRadius: 10, border: `2px solid ${sel ? locColor : (isDark ? '#6c757d' : '#e5e7eb')}`, background: sel ? '#f5f3ff' : (isDark ? '#495057' : 'white'), cursor: blk ? 'not-allowed' : 'pointer', opacity: blk ? 0.5 : 1, transition: 'all 0.15s', textAlign: 'left' as const }}>
+                      <div style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${sel ? locColor : (isDark ? '#adb5bd' : '#d1d5db')}`, background: sel ? locColor : 'transparent', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: isDark ? '#1a1a2e' : 'white', fontSize: 11, fontWeight: 'bold' }}>{sel ? '✓' : ''}</div>
                       <span style={{ fontSize: 14 }}>{TYPE_INFO[t].emoji}</span>
                       <span style={{ fontSize: 13, fontWeight: sel ? 'bold' : 'normal', color: sel ? locColor : textColor }}>{TYPE_INFO[t].label}</span>
                     </button>
@@ -676,8 +689,8 @@ const ShiftReportForm: React.FC<{
                   const blk = isBlockedWith(types, t) && !sel;
                   return (
                     <button key={t} onClick={() => toggleType(t)} disabled={blk}
-                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 12px', borderRadius: 10, border: `2px solid ${sel ? TYPE_INFO[t].color : '#e5e7eb'}`, background: sel ? (isDark ? '#1a2e3a' : '#f0f9ff') : (isDark ? '#495057' : 'white'), cursor: blk ? 'not-allowed' : 'pointer', opacity: blk ? 0.35 : 1, transition: 'all 0.15s', textAlign: 'left' as const }}>
-                      <div style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${sel ? TYPE_INFO[t].color : '#d1d5db'}`, background: sel ? TYPE_INFO[t].color : 'transparent', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 11, fontWeight: 'bold' }}>{sel ? '✓' : ''}</div>
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 12px', borderRadius: 10, border: `2px solid ${sel ? TYPE_INFO[t].color : (isDark ? '#6c757d' : '#e5e7eb')}`, background: sel ? '#f0f9ff' : (isDark ? '#495057' : 'white'), cursor: blk ? 'not-allowed' : 'pointer', opacity: blk ? 0.5 : 1, transition: 'all 0.15s', textAlign: 'left' as const }}>
+                      <div style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${sel ? TYPE_INFO[t].color : (isDark ? '#adb5bd' : '#d1d5db')}`, background: sel ? TYPE_INFO[t].color : 'transparent', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 11, fontWeight: 'bold' }}>{sel ? '✓' : ''}</div>
                       <span style={{ fontSize: 14 }}>{TYPE_INFO[t].emoji}</span>
                       <span style={{ fontSize: 13, fontWeight: sel ? 'bold' : 'normal', color: sel ? TYPE_INFO[t].color : textColor }}>{TYPE_INFO[t].label}</span>
                     </button>
@@ -692,8 +705,8 @@ const ShiftReportForm: React.FC<{
                   const blk = isBlockedWith(types, t) && !sel;
                   return (
                     <button key={t} onClick={() => toggleType(t)} disabled={blk}
-                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 12px', borderRadius: 10, border: `2px solid ${sel ? TYPE_INFO[t].color : '#e5e7eb'}`, background: sel ? (isDark ? '#1a2e3a' : '#f0f9ff') : (isDark ? '#495057' : 'white'), cursor: blk ? 'not-allowed' : 'pointer', opacity: blk ? 0.35 : 1, transition: 'all 0.15s', textAlign: 'left' as const }}>
-                      <div style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${sel ? TYPE_INFO[t].color : '#d1d5db'}`, background: sel ? TYPE_INFO[t].color : 'transparent', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 11, fontWeight: 'bold' }}>{sel ? '✓' : ''}</div>
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 12px', borderRadius: 10, border: `2px solid ${sel ? TYPE_INFO[t].color : (isDark ? '#6c757d' : '#e5e7eb')}`, background: sel ? '#f0f9ff' : (isDark ? '#495057' : 'white'), cursor: blk ? 'not-allowed' : 'pointer', opacity: blk ? 0.5 : 1, transition: 'all 0.15s', textAlign: 'left' as const }}>
+                      <div style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${sel ? TYPE_INFO[t].color : (isDark ? '#adb5bd' : '#d1d5db')}`, background: sel ? TYPE_INFO[t].color : 'transparent', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 11, fontWeight: 'bold' }}>{sel ? '✓' : ''}</div>
                       <span style={{ fontSize: 14 }}>{TYPE_INFO[t].emoji}</span>
                       <span style={{ fontSize: 13, fontWeight: sel ? 'bold' : 'normal', color: sel ? TYPE_INFO[t].color : textColor }}>{TYPE_INFO[t].label}</span>
                     </button>
@@ -704,7 +717,7 @@ const ShiftReportForm: React.FC<{
               {blockMsg ? (
                 <div style={{ marginTop: 8, fontSize: 12, color: '#f97316', fontWeight: 500 }}>⚠️ {blockMsg}</div>
               ) : types.length > 0 ? (
-                <div style={{ marginTop: 8, padding: '6px 12px', background: isDark ? '#1e7e34' : '#f0fdf4', border: `1px solid ${isDark ? '#166534' : '#bbf7d0'}`, borderRadius: 8, fontSize: 12, color: isDark ? '#fff' : '#065f46', fontWeight: 600 }}>
+                <div style={{ marginTop: 8, padding: '6px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, fontSize: 12, color: '#065f46', fontWeight: 600 }}>
                   ✓ {typesLabel(types)}
                 </div>
               ) : null}
@@ -722,20 +735,22 @@ const ShiftReportForm: React.FC<{
                 ))}
               </div>
               {/* 理由履歴（過去に自分が入力した理由・押すと入力） */}
-              {pastReasons.length > 0 && (
+              {visiblePastReasons.length > 0 && (
                 <div style={{ background: isDark ? '#243447' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, borderRadius: 8, padding: '8px 10px', marginTop: 8 }}>
                   <div style={{ fontSize: 11.5, fontWeight: 'bold', color: isDark ? '#fff' : '#1565c0', marginBottom: 6 }}>📋 過去に入力した理由</div>
-                  {(showAllReasons ? pastReasons : pastReasons.slice(0, 3)).map((rz, i) => (
+                  {(showAllReasons ? visiblePastReasons : visiblePastReasons.slice(0, 3)).map((rz, i) => (
                     <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', background: isDark ? '#2c3e50' : '#fff', border: `1px solid ${isDark ? '#3d5166' : '#bbdefb'}`, borderRadius: 5, marginBottom: 5 }}>
                       <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: isDark ? '#fff' : '#333' }}>{rz}</span>
                       <button type="button" onClick={() => setReason(rz)}
                         style={{ flexShrink: 0, background: '#1976d2', color: '#fff', fontSize: 11, fontWeight: 'bold', padding: '4px 12px', border: 'none', borderRadius: 4, cursor: 'pointer' }}>入力</button>
+                      <button type="button" onClick={() => hideReason(rz)} title="この候補を消す"
+                        style={{ flexShrink: 0, background: 'none', border: 'none', color: isDark ? '#adb5bd' : '#90a4ae', fontSize: 14, lineHeight: 1, padding: '2px 4px', cursor: 'pointer' }}>✕</button>
                     </div>
                   ))}
-                  {pastReasons.length > 3 && (
+                  {visiblePastReasons.length > 3 && (
                     <button type="button" onClick={() => setShowAllReasons(v => !v)}
                       style={{ width: '100%', padding: '4px', background: 'none', border: `1px dashed ${isDark ? '#5a6b7d' : '#90caf9'}`, borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 'bold', color: isDark ? '#e9ecef' : '#1565c0', marginTop: 2 }}>
-                      {showAllReasons ? '▲ 閉じる' : `▼ もっと見る（あと${pastReasons.length - 3}件）`}
+                      {showAllReasons ? '▲ 閉じる' : `▼ もっと見る（あと${visiblePastReasons.length - 3}件）`}
                     </button>
                   )}
                 </div>

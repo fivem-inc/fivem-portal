@@ -134,6 +134,21 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
   const [confirmedExpenses, setConfirmedExpenses] = useState<typeof expenses>([]);
   const [recentTemplates, setRecentTemplates] = useState<Expense[]>([]);
   const [showAllTemplates, setShowAllTemplates] = useState(false);
+  // 候補は過去の申請から自動抽出するため、✕は「候補として今後出さない」（端末に記憶）
+  const routeKey = (t: Expense) => `${t.type}|${t.transportation}|${t.from_station}|${t.to_station}|${t.amount}`;
+  const hiddenRoutesKey = 'fivem_hidden_routes_expense';
+  const [hiddenRoutes, setHiddenRoutes] = useState<string[]>(() => {
+    try { const v = JSON.parse(localStorage.getItem(hiddenRoutesKey) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
+  });
+  const hideRoute = (t: Expense) => {
+    const k = routeKey(t);
+    setHiddenRoutes(prev => {
+      const next = prev.includes(k) ? prev : [...prev, k];
+      try { localStorage.setItem(hiddenRoutesKey, JSON.stringify(next)); } catch { /* 保存できなくても表示は消す */ }
+      return next;
+    });
+  };
+  const visibleTemplates = useMemo(() => recentTemplates.filter(t => !hiddenRoutes.includes(routeKey(t))), [recentTemplates, hiddenRoutes]);
   const [templateSource, setTemplateSource] = useState<'route' | 'copy' | null>(null);
   const [highlightFields, setHighlightFields] = useState<Set<string>>(new Set());
   const withDay = (d: string, short = false) => {
@@ -551,7 +566,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       </div>
       
       {/* よく使う経路テンプレート */}
-      {recentTemplates.length > 0 && (
+      {visibleTemplates.length > 0 && (
         <div style={{
           background: isDarkMode ? '#1e2a38' : '#e8f4fd',
           border: `1px solid ${isDarkMode ? '#2d4a6a' : '#90caf9'}`,
@@ -560,7 +575,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
           <div style={{ fontSize: 12, fontWeight: 'bold', color: isDarkMode ? '#7fb3d3' : '#1565c0', marginBottom: 8 }}>
             📋 よく使う経路
           </div>
-          {(showAllTemplates ? recentTemplates : recentTemplates.slice(0, 3)).map((tpl, i) => {
+          {(showAllTemplates ? visibleTemplates : visibleTemplates.slice(0, 3)).map((tpl, i) => {
             const typeLabels: Record<string, string> = { one_time: '通勤（単発）', regular: '定期', business_trip: '出張（園指導等）', other: tpl.type_other || 'その他' };
             const typeLabel = typeLabels[tpl.type] || tpl.type;
             return (
@@ -585,16 +600,24 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                 >
                   入力
                 </button>
+                <button
+                  type="button"
+                  onClick={() => hideRoute(tpl)}
+                  title="この候補を消す"
+                  style={{ background: 'none', border: 'none', color: isDarkMode ? '#adb5bd' : '#90a4ae', fontSize: 14, lineHeight: 1, padding: '2px 4px', cursor: 'pointer', flexShrink: 0 }}
+                >
+                  ✕
+                </button>
               </div>
             );
           })}
-          {recentTemplates.length > 3 && (
+          {visibleTemplates.length > 3 && (
             <button
               type="button"
               onClick={() => setShowAllTemplates(prev => !prev)}
               style={{ width: '100%', padding: '5px', background: 'none', border: `1px dashed ${isDarkMode ? '#4a7aaa' : '#90caf9'}`, borderRadius: 4, cursor: 'pointer', fontSize: 11, color: isDarkMode ? '#7fb3d3' : '#1565c0', marginTop: 2 }}
             >
-              {showAllTemplates ? '▲ 閉じる' : `▼ もっと見る（あと${recentTemplates.length - 3}件）`}
+              {showAllTemplates ? '▲ 閉じる' : `▼ もっと見る（あと${visibleTemplates.length - 3}件）`}
             </button>
           )}
         </div>

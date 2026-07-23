@@ -19,7 +19,6 @@ interface Props {
 }
 
 const PURPLE = '#534AB7';
-const RED = '#A32D2D';
 
 const CorrectionBadgeAndButton: React.FC<Props> = ({
   targetType, targetId, targetLabel, fields, requesterName, isDark, latest, canRequest, onSubmitted,
@@ -60,7 +59,7 @@ const CorrectionBadgeAndButton: React.FC<Props> = ({
       {/* open中：取り下げのみ（他の依頼に出し直したいとき用） */}
       {isOpenReq && (
         <button type="button" onClick={handleWithdraw} disabled={withdrawing}
-          style={{ fontSize: 12, padding: '5px 10px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ced4da'}`, background: 'transparent', color: isDark ? '#adb5bd' : '#6c757d', cursor: withdrawing ? 'default' : 'pointer' }}>
+          style={{ fontSize: 12, padding: '6px 16px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ced4da'}`, background: 'transparent', color: isDark ? '#adb5bd' : '#6c757d', cursor: withdrawing ? 'default' : 'pointer' }}>
           {withdrawing ? '取り下げ中…' : '依頼を取り下げる'}
         </button>
       )}
@@ -69,11 +68,11 @@ const CorrectionBadgeAndButton: React.FC<Props> = ({
       {canReRequest && (
         <>
           <button type="button" onClick={() => setModalKind('edit')}
-            style={{ fontSize: 12, padding: '6px 12px', borderRadius: 8, border: `1px solid ${PURPLE}`, background: 'transparent', color: PURPLE, fontWeight: 'bold', cursor: 'pointer' }}>
+            style={{ fontSize: 12, padding: '6px 12px', borderRadius: 8, border: `2px solid ${PURPLE}`, background: '#ede9fe', color: PURPLE, fontWeight: 'bold', cursor: 'pointer' }}>
             📩 {latest ? 'もう一度 修正を依頼' : '管理者に修正を依頼'}
           </button>
           <button type="button" onClick={() => setModalKind('cancel')}
-            style={{ fontSize: 12, padding: '6px 10px', borderRadius: 8, border: 'none', background: 'transparent', color: RED, textDecoration: 'underline', cursor: 'pointer' }}>
+            style={{ fontSize: 12, padding: '6px 16px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ced4da'}`, background: 'transparent', color: isDark ? '#adb5bd' : '#6c757d', cursor: 'pointer' }}>
             取消を依頼
           </button>
         </>

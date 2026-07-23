@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import SearchableSelect from '../common/SearchableSelect';
 import { useAdminPanel } from './AdminPanelContext';
 import OvertimeShiftImport from './OvertimeShiftImport';
 import {
@@ -94,6 +95,13 @@ const OvertimeAdminTab: React.FC = () => {
   const [otDeleteTarget, setOtDeleteTarget] = useState<OvertimeRecord | null>(null);
   const [otCancelTarget, setOtCancelTarget] = useState<OvertimeRecord | null>(null);
   const [otActing, setOtActing] = useState(false);
+  // 絞り込み・並べ替え（休暇申請タブと同じ操作感）
+  const [otFilterStatus, setOtFilterStatus] = useState<'all' | 'pending' | 'done' | 'returned' | 'cancelled'>('all');
+  const [otFilterPeriod, setOtFilterPeriod] = useState('all');
+  const [otFilterPerson, setOtFilterPerson] = useState('all');
+  const [otFilterType, setOtFilterType] = useState('all');
+  const [otSortKey, setOtSortKey] = useState<'work_date' | 'name' | 'diff'>('work_date');
+  const [otSortAsc, setOtSortAsc] = useState(false);
 
   const fetchOtReports = useCallback(async () => {
     setOtLoading(true); setOtErr('');
@@ -201,12 +209,62 @@ const OvertimeAdminTab: React.FC = () => {
     fetchOtReports();
   };
 
+  // 給与期間（16日〜翌15日）を勤務日から求める。締めの単位で絞り込めるようにするため。
+  const payPeriodOf = (workDate: string) => {
+    const [y, m, d] = workDate.split('-').map(Number);
+    let py = y, pm = m;
+    if (d < 16) { pm = m - 1; if (pm === 0) { pm = 12; py = y - 1; } }
+    return `${py}-${String(pm).padStart(2, '0')}-16`;
+  };
+  const payPeriodLabel = (start: string) => {
+    const [y, m] = start.split('-').map(Number);
+    const py = m === 12 ? y + 1 : y;
+    const pm = m === 12 ? 1 : m + 1;
+    return `${py}年${pm}月給与分（${m}/16〜${pm}/15）`;
+  };
+  const otPeriodOptions = useMemo(
+    () => [...new Set(otReports.map(r => payPeriodOf(r.work_date)))].sort((a, b) => b.localeCompare(a)),
+    [otReports],
+  );
+  const otPersonOptions = useMemo(() => {
+    const m = new Map<string, string>();
+    otReports.forEach(r => m.set(r.applicant_id, r.applicantName || '不明'));
+    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1], 'ja')) as [string, string][];
+  }, [otReports]);
+  const otTypeOptions = useMemo(
+    () => [...new Set(otReports.flatMap(r => (r.application_types ?? []).filter(isOvertimeType)))],
+    [otReports],
+  );
+  const otFilterActive = otFilterStatus !== 'all' || otFilterPeriod !== 'all' || otFilterPerson !== 'all' || otFilterType !== 'all' || otSortKey !== 'work_date' || otSortAsc;
+  const visibleOtReports = useMemo(() => {
+    const statusGroup: Record<string, string[]> = {
+      pending: ['requested', 'reported'],
+      done: ['request_confirmed', 'confirmed'],
+      returned: ['returned'],
+      cancelled: ['cancelled'],
+    };
+    const rows = otReports.filter(r => {
+      const st = otStatusMap[r.id];
+      if (otFilterStatus !== 'all' && !(statusGroup[otFilterStatus] ?? []).includes(st)) return false;
+      if (otFilterPeriod !== 'all' && payPeriodOf(r.work_date) !== otFilterPeriod) return false;
+      if (otFilterPerson !== 'all' && r.applicant_id !== otFilterPerson) return false;
+      if (otFilterType !== 'all' && !(r.application_types ?? []).includes(otFilterType)) return false;
+      return true;
+    });
+    const dir = otSortAsc ? 1 : -1;
+    return rows.sort((a, b) => {
+      if (otSortKey === 'name') return (a.applicantName || '').localeCompare(b.applicantName || '', 'ja') * dir;
+      if (otSortKey === 'diff') return ((a.diff_minutes ?? 0) - (b.diff_minutes ?? 0)) * dir;
+      return a.work_date.localeCompare(b.work_date) * dir;
+    });
+  }, [otReports, otStatusMap, otFilterStatus, otFilterPeriod, otFilterPerson, otFilterType, otSortKey, otSortAsc]);
+
   // CSV出力：元の勤務時間（通常シフト）と、実際の時間帯・差分を並べて「どう変わったか」を可視化する
   const exportOtCsv = () => {
     const esc = (v: string | number) => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const fmtT = (t: unknown) => (typeof t === 'string' && t ? t.slice(0, 5) : '');
     const headers = ['申請者', '勤務日', '状況', '通常シフト開始', '通常シフト終了', '通常シフト実労働', '実際の勤務時間帯', '休憩(分)', '実労働', '差分(元→実績)', '校', '理由'];
-    const rows = otReports.map(r => {
+    const rows = visibleOtReports.map(r => {
       const ns = (r.normal_shift ?? {}) as Record<string, unknown>;
       const actualSegs = r.segments.filter(s => s.phase === (r.segments.some(x => x.phase === 'actual') ? 'actual' : 'planned')).sort((a, b) => a.seg_no - b.seg_no);
       const segText = actualSegs.length
@@ -497,10 +555,59 @@ const OvertimeAdminTab: React.FC = () => {
             <p style={{ fontSize: 12, color: subText, margin: 0, flex: 1, minWidth: 200 }}>
               正社員の残業・時間調整の記録一覧です。受理済みも含めて修正・差し戻し・削除ができます（自動計上分は対象外）。
             </p>
-            <button onClick={exportOtCsv} disabled={otReports.length === 0}
-              style={{ flexShrink: 0, padding: '6px 14px', borderRadius: 8, border: 'none', background: otReports.length === 0 ? '#6c757d' : '#28a745', color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: otReports.length === 0 ? 'default' : 'pointer' }}>
+            <button onClick={exportOtCsv} disabled={visibleOtReports.length === 0}
+              style={{ flexShrink: 0, padding: '6px 14px', borderRadius: 8, border: 'none', background: visibleOtReports.length === 0 ? '#6c757d' : '#28a745', color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: visibleOtReports.length === 0 ? 'default' : 'pointer' }}>
               📥 CSV出力
             </button>
+          </div>
+          {/* 状況フィルター（休暇申請タブと同じピル型） */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10, justifyContent: 'center', alignItems: 'center' }}>
+            {([
+              { key: 'all', label: 'すべて' },
+              { key: 'pending', label: '確認待ち' },
+              { key: 'done', label: '受理済み' },
+              { key: 'returned', label: '差し戻し' },
+              { key: 'cancelled', label: '取消済み' },
+            ] as const).map(f => (
+              <button key={f.key} onClick={() => setOtFilterStatus(f.key)}
+                style={{
+                  padding: '5px 12px', borderRadius: 16, border: 'none', cursor: 'pointer', fontSize: 12,
+                  background: otFilterStatus === f.key ? '#007bff' : (isDarkMode ? '#495057' : '#e9ecef'),
+                  color: otFilterStatus === f.key ? '#fff' : (isDarkMode ? '#fff' : '#333'),
+                  fontWeight: otFilterStatus === f.key ? 'bold' : 'normal',
+                }}>{f.label}</button>
+            ))}
+          </div>
+          {/* 絞り込み・並べ替え */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center', justifyContent: 'center' }}>
+            <select value={otFilterPeriod} onChange={e => setOtFilterPeriod(e.target.value)}
+              style={{ padding: '5px 10px', borderRadius: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', fontSize: 12 }}>
+              <option value="all">全期間</option>
+              {otPeriodOptions.map(p => <option key={p} value={p}>{payPeriodLabel(p)}</option>)}
+            </select>
+            <SearchableSelect value={otFilterPerson} options={otPersonOptions} onChange={setOtFilterPerson} isDarkMode={isDarkMode} />
+            <select value={otFilterType} onChange={e => setOtFilterType(e.target.value)}
+              style={{ padding: '5px 10px', borderRadius: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', fontSize: 12 }}>
+              <option value="all">全種別</option>
+              {otTypeOptions.map(t => <option key={t} value={t}>{OT_TYPE_INFO[t].label}</option>)}
+            </select>
+            <select value={otSortKey} onChange={e => setOtSortKey(e.target.value as 'work_date' | 'name' | 'diff')}
+              style={{ padding: '5px 10px', borderRadius: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', fontSize: 12 }}>
+              <option value="work_date">勤務日順</option>
+              <option value="name">申請者名順</option>
+              <option value="diff">差分順</option>
+            </select>
+            <button onClick={() => setOtSortAsc(v => !v)}
+              style={{ padding: '5px 12px', borderRadius: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', fontSize: 12, cursor: 'pointer' }}>
+              {otSortAsc ? '↑ 昇順' : '↓ 降順'}
+            </button>
+            {otFilterActive && (
+              <button onClick={() => { setOtFilterStatus('all'); setOtFilterPeriod('all'); setOtFilterPerson('all'); setOtFilterType('all'); setOtSortKey('work_date'); setOtSortAsc(false); }}
+                style={{ padding: '5px 12px', borderRadius: 8, border: '1px solid #dc3545', background: 'transparent', color: '#dc3545', fontSize: 12, cursor: 'pointer' }}>
+                ✕ クリア
+              </button>
+            )}
+            <span style={{ fontSize: 12, color: subText }}>{visibleOtReports.length}件</span>
           </div>
           {otMsg && <div style={{ padding: 10, background: isDarkMode ? '#0f2e1a' : '#e8f5e9', border: '1px solid #28a745', borderRadius: 8, color: isDarkMode ? '#7ee2a8' : '#1b5e20', fontSize: 13, marginBottom: 10 }}>{otMsg}</div>}
           {otErr && <div style={{ padding: 10, background: isDarkMode ? '#3a1414' : '#fff5f5', border: '1px solid #f5c2c7', borderRadius: 8, color: isDarkMode ? '#fca5a5' : '#842029', fontSize: 13, marginBottom: 10 }}>{otErr}</div>}
@@ -523,7 +630,7 @@ const OvertimeAdminTab: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {otReports.map(r => {
+                  {visibleOtReports.map(r => {
                     const st = otStatusMap[r.id];
                     const stInfo = OT_STATUS_LABEL[st] ?? { label: st, color: '#6c757d' };
                     const actualSegs = r.segments.filter(s => s.phase === (r.segments.some(x => x.phase === 'actual') ? 'actual' : 'planned')).sort((a, b) => a.seg_no - b.seg_no);

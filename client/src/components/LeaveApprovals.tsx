@@ -428,7 +428,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
               >送信</button>
             </div>
             {partSendError && (
-              <div style={{ marginTop: 8, fontSize: 12, color: '#dc3545', background: isDark ? '#4a2b30' : '#fff5f5', border: `1px solid ${isDark ? '#a3474c' : '#f5b5b5'}`, borderRadius: 6, padding: '6px 10px' }}>⚠️ {partSendError}</div>
+              <div style={{ marginTop: 8, fontSize: 12, color: '#dc3545', background: '#fff5f5', border: `1px solid ${'#f5b5b5'}`, borderRadius: 6, padding: '6px 10px' }}>⚠️ {partSendError}</div>
             )}
             {partConfirmId && (() => {
               const t = partUsers.find(u => u.id === partConfirmId);
@@ -591,7 +591,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
 
                   {req.status === 'rejected' ? (
                     <div>
-                      <div style={{ padding: '6px 10px', background: isDark ? '#5a1a1a' : '#f8d7da', borderRadius: 6, color: isDark ? '#f5c6cb' : '#721c24', fontSize: 13, marginBottom: 8 }}>
+                      <div style={{ padding: '6px 10px', background: '#f8d7da', borderRadius: 6, color: '#721c24', fontSize: 13, marginBottom: 8 }}>
                         差し戻し済み{req.rejected_reason ? `：${req.rejected_reason}` : ''}
                       </div>
                       <button

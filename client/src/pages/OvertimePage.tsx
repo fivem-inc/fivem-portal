@@ -384,6 +384,19 @@ const OvertimeForm: React.FC<{
   const [locMoveEnd, setLocMoveEnd] = useState(() => { const l = editTarget?.location ?? ''; return l.includes('→') ? (l.split('→')[1] ?? '') : ''; });
   // 理由履歴（自分が過去に入力した理由）
   const [pastReasons, setPastReasons] = useState<string[]>([]);
+  // 履歴は過去の申請から自動抽出するため、✕は「候補として今後出さない」（端末に記憶）
+  const hiddenReasonsKey = `fivem_hidden_reasons_overtime_${user.id}`;
+  const [hiddenReasons, setHiddenReasons] = useState<string[]>(() => {
+    try { const v = JSON.parse(localStorage.getItem(hiddenReasonsKey) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
+  });
+  const hideReason = (r: string) => {
+    setHiddenReasons(prev => {
+      const next = prev.includes(r) ? prev : [...prev, r];
+      try { localStorage.setItem(hiddenReasonsKey, JSON.stringify(next)); } catch { /* 保存できなくても表示は消す */ }
+      return next;
+    });
+  };
+  const visiblePastReasons = useMemo(() => pastReasons.filter(r => !hiddenReasons.includes(r)), [pastReasons, hiddenReasons]);
   const [showAllReasons, setShowAllReasons] = useState(false);
   const [reviewerId, setReviewerId] = useState(() => editTarget?.reviewer_id ?? draft?.reviewerId ?? '');
   const [normOverride, setNormOverride] = useState(() => editTarget?.normal_shift?.manual_override ?? draft?.normOverride ?? false);
@@ -572,6 +585,30 @@ const OvertimeForm: React.FC<{
   }, [typeDetect, lateChoice, earlyChoice, fullDay, fullDayType]);
 
   // 終日モードの派生値
+  // 理由の文例は「いま検知している種別」に合わせて出す（残業前提の固定文だと早退・遅刻等で使えないため）。
+  // 複数該当時は 早退/遅刻 ＞ 残業/早出/休日出勤 ＞ 勤務地変更 の順で選ぶ。
+  const reasonExamples = useMemo<string[]>(() => {
+    if (fullDay) {
+      if (fullDayType === 'chosei_off') return ['〇〇イベント準備により時間外労働が発生したため', '勤務時間調整のため'];
+      if (fullDayType === 'furikae_off') return ['休日出勤の振替のため'];
+      if (fullDayType === 'absence') return ['体調不良のため', '私用のため'];
+      return ['勤務時間調整のため', '体調不良のため'];
+    }
+    const byType: Partial<Record<OvertimeType, string[]>> = {
+      early_leave: ['体調不良のため', '通院のため'],
+      tardiness: ['電車遅延のため', '私用のため'],
+      early_end_adj: ['勤務時間調整のため', '残業が多いため時間調整'],
+      late_start_adj: ['勤務時間調整のため', '残業が多いため時間調整'],
+      holiday_work: ['イベント対応のため', '試合対応のため'],
+      overtime: ['保護者対応のため', '翌日のレッスン準備のため'],
+      early_start: ['朝のレッスン準備のため', '保護者対応のため'],
+      location_change: ['〇〇校の応援のため', 'レッスン応援要請のため'],
+    };
+    const order: OvertimeType[] = ['early_leave', 'tardiness', 'early_end_adj', 'late_start_adj', 'holiday_work', 'overtime', 'early_start', 'location_change'];
+    const hit = order.find(t => applicationTypes.includes(t));
+    return (hit && byType[hit]) || ['保護者対応のため', '翌日のレッスン準備のため'];
+  }, [fullDay, fullDayType, applicationTypes]);
+
   const fullDayMode = fullDay && !!fullDayType;
   const fdDiffMin = fullDayType === 'chosei_off' ? -normalShift.labor_minutes : 0;
   // 終日の勤務地はシフトの校を自動使用（シフトに校が無い日だけ手動選択）
@@ -973,11 +1010,10 @@ const OvertimeForm: React.FC<{
             {(['advance', 'posthoc'] as const).map(m => (
               <button key={m} onClick={() => setMode(m)}
                 style={{
-                  flex: 1, padding: '10px 0', borderRadius: 10, cursor: 'pointer', fontSize: 13.5,
-                  fontWeight: mode === m ? 'bold' : 'normal',
-                  border: mode === m ? '2px solid #28a745' : `1px solid ${borderColor}`,
-                  background: mode === m ? (isDark ? '#1b3a1e' : '#eaf6ec') : 'transparent',
-                  color: mode === m ? (isDark ? '#8fd19e' : '#2e7d32') : subText,
+                  flex: 1, padding: '10px 0', borderRadius: 10, cursor: 'pointer', fontSize: 13.5, fontWeight: 'bold',
+                  border: mode === m ? '2px solid #1565c0' : '2px solid #90caf9',
+                  background: mode === m ? '#1976d2' : '#e3f2fd',
+                  color: mode === m ? '#fff' : '#1565c0',
                 }}>
                 {m === 'advance' ? '事前申請' : '事後報告'}
               </button>
@@ -1061,8 +1097,8 @@ const OvertimeForm: React.FC<{
             </button>
           )}
           {fullDayError && (
-            <div style={{ background: isDark ? '#4a1515' : '#f8d7da', border: '1px solid #dc3545', borderRadius: 8, padding: '8px 12px', marginTop: 6 }}>
-              <p style={{ margin: 0, fontSize: 13, color: isDark ? '#f5b5ba' : '#842029' }}>{fullDayError}</p>
+            <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '8px 12px', marginTop: 6 }}>
+              <p style={{ margin: 0, fontSize: 13, color: '#842029' }}>{fullDayError}</p>
             </div>
           )}
 
@@ -1083,11 +1119,11 @@ const OvertimeForm: React.FC<{
                     }}
                     style={{
                       padding: '10px 12px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
-                      border: fullDayType === v ? '2px solid #28a745' : `1px solid ${borderColor}`,
-                      background: fullDayType === v ? (isDark ? '#1b3a1e' : '#eaf6ec') : 'transparent',
+                      border: fullDayType === v ? '2px solid #1565c0' : '2px solid #90caf9',
+                      background: fullDayType === v ? '#1976d2' : '#e3f2fd',
                     }}>
-                    <span style={{ display: 'block', fontSize: 13.5, fontWeight: fullDayType === v ? 'bold' : 'normal', color: fullDayType === v ? (isDark ? '#8fd19e' : '#2e7d32') : text }}>{label}</span>
-                    <span style={{ display: 'block', fontSize: 11.5, color: subText, marginTop: 2 }}>{desc}</span>
+                    <span style={{ display: 'block', fontSize: 13.5, fontWeight: 'bold', color: fullDayType === v ? '#fff' : '#1565c0' }}>{label}</span>
+                    <span style={{ display: 'block', fontSize: 11.5, color: fullDayType === v ? '#e3f2fd' : '#1976d2', marginTop: 2 }}>{desc}</span>
                   </button>
                 ))}
               </div>
@@ -1218,16 +1254,15 @@ const OvertimeForm: React.FC<{
       {/* 種別の2択バナー（調整か遅刻/早退かだけ本人に確認） */}
       {!fullDay && hasInput && typeDetect.lateQ && (
         <div style={{ marginBottom: 12 }}>
-          <span style={{ fontSize: 13, color: subText, display: 'block', marginBottom: 6 }}>開始が遅い理由は？</span>
+          <span style={{ fontSize: 13, color: subText, display: 'block', marginBottom: 6 }}>開始が遅い理由は？{req}</span>
           <div style={{ display: 'flex', gap: 8 }}>
-            {([['adj', '事前の調整 → 調整遅出'], ['tardiness', '遅刻 → 遅刻']] as const).map(([v, label]) => (
+            {([['adj', '時間調整で遅く出勤'], ['tardiness', '寝坊・私用などで遅刻']] as const).map(([v, label]) => (
               <button key={v} type="button" onClick={() => setLateChoice(v)}
                 style={{
-                  flex: 1, padding: '11px 4px', borderRadius: 10, cursor: 'pointer', fontSize: 13,
-                  fontWeight: lateChoice === v ? 'bold' : 'normal',
-                  border: lateChoice === v ? '2px solid #28a745' : `1px solid ${borderColor}`,
-                  background: lateChoice === v ? (isDark ? '#1b3a1e' : '#eaf6ec') : 'transparent',
-                  color: lateChoice === v ? (isDark ? '#8fd19e' : '#2e7d32') : subText,
+                  flex: 1, padding: '11px 4px', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 'bold',
+                  border: lateChoice === v ? '2px solid #1565c0' : '2px solid #90caf9',
+                  background: lateChoice === v ? '#1976d2' : '#e3f2fd',
+                  color: lateChoice === v ? '#fff' : '#1565c0',
                 }}>
                 {label}
               </button>
@@ -1237,16 +1272,15 @@ const OvertimeForm: React.FC<{
       )}
       {!fullDay && hasInput && typeDetect.earlyQ && (
         <div style={{ marginBottom: 12 }}>
-          <span style={{ fontSize: 13, color: subText, display: 'block', marginBottom: 6 }}>早く終わる理由は？</span>
+          <span style={{ fontSize: 13, color: subText, display: 'block', marginBottom: 6 }}>早く終わる理由は？{req}</span>
           <div style={{ display: 'flex', gap: 8 }}>
-            {([['adj', '事前の調整 → 調整早退'], ['early_leave', '当日の事情 → 早退']] as const).map(([v, label]) => (
+            {([['adj', '時間調整で早退'], ['early_leave', '体調・私用などで早退']] as const).map(([v, label]) => (
               <button key={v} type="button" onClick={() => setEarlyChoice(v)}
                 style={{
-                  flex: 1, padding: '11px 4px', borderRadius: 10, cursor: 'pointer', fontSize: 13,
-                  fontWeight: earlyChoice === v ? 'bold' : 'normal',
-                  border: earlyChoice === v ? '2px solid #28a745' : `1px solid ${borderColor}`,
-                  background: earlyChoice === v ? (isDark ? '#1b3a1e' : '#eaf6ec') : 'transparent',
-                  color: earlyChoice === v ? (isDark ? '#8fd19e' : '#2e7d32') : subText,
+                  flex: 1, padding: '11px 4px', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 'bold',
+                  border: earlyChoice === v ? '2px solid #1565c0' : '2px solid #90caf9',
+                  background: earlyChoice === v ? '#1976d2' : '#e3f2fd',
+                  color: earlyChoice === v ? '#fff' : '#1565c0',
                 }}>
                 {label}
               </button>
@@ -1310,11 +1344,11 @@ const OvertimeForm: React.FC<{
           <div style={{ ...fieldStyle, background: innerBg, color: text, minHeight: 22, whiteSpace: 'pre-wrap', textAlign: 'center' }}>{reason || '—'}</div>
         ) : (<>
         <textarea value={reason} onChange={e => setReason(e.target.value)} rows={2}
-          placeholder="例：お客様対応のため"
+          placeholder={`例：${reasonExamples[0]}`}
           style={{ ...fieldStyle, resize: 'vertical' }} />
-        {/* 文例ボタン（2つ） */}
+        {/* 文例ボタン（種別に応じて中身が変わる） */}
         <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
-          {(fullDay ? ['勤務時間調整のため', '体調不良のため'] : ['お客様対応のため', '〇〇準備のため']).map(ex => (
+          {reasonExamples.map(ex => (
             <button key={ex} type="button" onClick={() => setReason(ex)}
               style={{ padding: '5px 12px', borderRadius: 6, border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, background: isDark ? '#2c3e50' : '#e8f4fd', color: isDark ? '#fff' : '#1565c0', fontSize: 11.5, fontWeight: 'bold', cursor: 'pointer' }}>
               文例 ー「{ex}」
@@ -1322,20 +1356,22 @@ const OvertimeForm: React.FC<{
           ))}
         </div>
         {/* 理由履歴（過去に自分が入力した理由・押すと入力） */}
-        {pastReasons.length > 0 && (
+        {visiblePastReasons.length > 0 && (
           <div style={{ background: isDark ? '#243447' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, borderRadius: 8, padding: '8px 10px', marginTop: 8 }}>
             <div style={{ fontSize: 11.5, fontWeight: 'bold', color: isDark ? '#fff' : '#1565c0', marginBottom: 6 }}>📋 過去に入力した理由</div>
-            {(showAllReasons ? pastReasons : pastReasons.slice(0, 3)).map((rz, i) => (
+            {(showAllReasons ? visiblePastReasons : visiblePastReasons.slice(0, 3)).map((rz, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', background: isDark ? '#2c3e50' : '#fff', border: `1px solid ${isDark ? '#3d5166' : '#bbdefb'}`, borderRadius: 5, marginBottom: 5 }}>
                 <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: isDark ? '#fff' : '#333' }}>{rz}</span>
                 <button type="button" onClick={() => setReason(rz)}
                   style={{ flexShrink: 0, background: '#1976d2', color: '#fff', fontSize: 11, fontWeight: 'bold', padding: '4px 12px', border: 'none', borderRadius: 4, cursor: 'pointer' }}>入力</button>
+                <button type="button" onClick={() => hideReason(rz)} title="この候補を消す"
+                  style={{ flexShrink: 0, background: 'none', border: 'none', color: isDark ? '#adb5bd' : '#90a4ae', fontSize: 14, lineHeight: 1, padding: '2px 4px', cursor: 'pointer' }}>✕</button>
               </div>
             ))}
-            {pastReasons.length > 3 && (
+            {visiblePastReasons.length > 3 && (
               <button type="button" onClick={() => setShowAllReasons(v => !v)}
                 style={{ width: '100%', padding: '4px', background: 'none', border: `1px dashed ${isDark ? '#5a6b7d' : '#90caf9'}`, borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 'bold', color: isDark ? '#e9ecef' : '#1565c0', marginTop: 2 }}>
-                {showAllReasons ? '▲ 閉じる' : `▼ もっと見る（あと${pastReasons.length - 3}件）`}
+                {showAllReasons ? '▲ 閉じる' : `▼ もっと見る（あと${visiblePastReasons.length - 3}件）`}
               </button>
             )}
           </div>
@@ -1381,8 +1417,8 @@ const OvertimeForm: React.FC<{
       </div>
 
       {error && (
-        <div style={{ background: isDark ? '#4a1515' : '#f8d7da', border: '1px solid #dc3545', borderRadius: 8, padding: '8px 12px', marginBottom: 12 }}>
-          <p style={{ margin: 0, fontSize: 13, color: isDark ? '#f5b5ba' : '#842029' }}>{error}</p>
+        <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '8px 12px', marginBottom: 12 }}>
+          <p style={{ margin: 0, fontSize: 13, color: '#842029' }}>{error}</p>
         </div>
       )}
 
@@ -1450,6 +1486,12 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
   const [loading, setLoading] = useState(true);
   const [editTarget, setEditTarget] = useState<OvertimeReport | null>(null);
   const [savedBanner, setSavedBanner] = useState(false);
+  // 送信完了バナーは数秒で自動消去（アプリ標準の成功フィードバックに合わせる）
+  useEffect(() => {
+    if (!savedBanner) return;
+    const t = setTimeout(() => setSavedBanner(false), 4000);
+    return () => clearTimeout(t);
+  }, [savedBanner]);
   const [cancelTargetId, setCancelTargetId] = useState<string | null>(null);
   const [historyMode, setHistoryMode] = useState<'own' | 'summary'>(searchParams.get('staff') ? 'summary' : 'own');
   const [canSummary, setCanSummary] = useState(false);
@@ -1778,15 +1820,15 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
           </div>
 
           {loadError && (
-            <div style={{ background: isDark ? '#4a1515' : '#f8d7da', border: '1px solid #dc3545', borderRadius: 10, padding: '10px 12px', marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-              <p style={{ margin: 0, fontSize: 13, color: isDark ? '#f5b5ba' : '#842029' }}>{loadError}</p>
+            <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 10, padding: '10px 12px', marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+              <p style={{ margin: 0, fontSize: 13, color: '#842029' }}>{loadError}</p>
               <button onClick={() => { fetchOwn(); fetchPendingForMe(); }}
                 style={{ flexShrink: 0, padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 'bold', background: '#dc3545', color: '#fff' }}>再読み込み</button>
             </div>
           )}
           {actionError && (
-            <div style={{ background: isDark ? '#4a1515' : '#f8d7da', border: '1px solid #dc3545', borderRadius: 10, padding: '10px 12px', marginBottom: 12 }}>
-              <p style={{ margin: 0, fontSize: 13, color: isDark ? '#f5b5ba' : '#842029' }}>{actionError}</p>
+            <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 10, padding: '10px 12px', marginBottom: 12 }}>
+              <p style={{ margin: 0, fontSize: 13, color: '#842029' }}>{actionError}</p>
             </div>
           )}
           {gcalWarning && (
@@ -1942,15 +1984,15 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
         </div>
 
         {loadError && (
-          <div style={{ background: isDark ? '#4a1515' : '#f8d7da', border: '1px solid #dc3545', borderRadius: 10, padding: '10px 12px', marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-            <p style={{ margin: 0, fontSize: 13, color: isDark ? '#f5b5ba' : '#842029' }}>{loadError}</p>
+          <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 10, padding: '10px 12px', marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+            <p style={{ margin: 0, fontSize: 13, color: '#842029' }}>{loadError}</p>
             <button onClick={() => { fetchOwn(); fetchPendingForMe(); }}
               style={{ flexShrink: 0, padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 'bold', background: '#dc3545', color: '#fff' }}>再読み込み</button>
           </div>
         )}
         {actionError && (
-          <div style={{ background: isDark ? '#4a1515' : '#f8d7da', border: '1px solid #dc3545', borderRadius: 10, padding: '10px 12px', marginBottom: 14 }}>
-            <p style={{ margin: 0, fontSize: 13, color: isDark ? '#f5b5ba' : '#842029' }}>{actionError}</p>
+          <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 10, padding: '10px 12px', marginBottom: 14 }}>
+            <p style={{ margin: 0, fontSize: 13, color: '#842029' }}>{actionError}</p>
           </div>
         )}
         {gcalWarning && (
@@ -1968,9 +2010,13 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
 
         {/* 送信完了バナー */}
         {savedBanner && (
-          <div style={{ background: isDark ? '#1b3a1e' : '#d1e7dd', border: '1px solid #28a745', borderRadius: 10, padding: '10px 14px', marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <p style={{ margin: 0, fontSize: 13, fontWeight: 'bold', color: isDark ? '#8fd19e' : '#0f5132' }}>✅ 送信しました。履歴・実績報告タブで状況を確認できます</p>
-            <button onClick={() => setSavedBanner(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: subText }}>✕</button>
+          <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '14px 18px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>✓</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ margin: 0, fontSize: 15, fontWeight: 'bold', color: '#166534' }}>送信しました</p>
+              <p style={{ margin: '2px 0 0', fontSize: 12.5, color: '#15803d' }}>履歴・実績報告タブで状況を確認できます</p>
+            </div>
+            <button onClick={() => setSavedBanner(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#166534', flexShrink: 0 }}>✕</button>
           </div>
         )}
 
@@ -2024,6 +2070,27 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
             />
           ) : (
             <>
+              {/* 履歴タブの説明＋変更・取消ルール（申請タブの注意事項と同じ見た目） */}
+              <div style={{
+                background: isDark ? '#2c3e50' : '#e8f4fd',
+                border: `1px solid ${isDark ? '#3d5a73' : '#bee5eb'}`,
+                borderRadius: 8, padding: '12px 14px', marginBottom: 14, textAlign: 'left',
+              }}>
+                <p style={{ fontSize: 13, fontWeight: 'bold', color: isDark ? '#fff' : '#1a4a5a', margin: '0 0 8px' }}>【注意事項】</p>
+                <p style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#fff' : '#1a4a5a', margin: '0 0 4px' }}>■ このページでできること</p>
+                <ol style={{ margin: '0 0 10px', paddingLeft: 20, fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8 }}>
+                  <li>申請・報告した内容と、今期の合計時間数を確認できます。</li>
+                  <li>事前申請が受理された日は「実績を報告する」から実績を送信します（<b>残業が無かった日も「残業なし」で報告できます</b>）。</li>
+                  <li>差し戻された申請は、内容を直して再提出できます。</li>
+                </ol>
+                <p style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#fff' : '#1a4a5a', margin: '0 0 4px' }}>■ 変更・取消のルール</p>
+                <ul style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8 }}>
+                  <li><b>申請中／事前申請 受理済み／差し戻し</b>は、自分で「この申請を取消する」から取消できます。内容を直したいときは、取消の確認画面にある「<b>取消して、この内容で作り直す</b>」が便利です。</li>
+                  <li><b>実績報告済み・確認済み</b>は自分では変更・取消できません。「<b>📩 管理者に修正を依頼</b>」または「<b>取消を依頼</b>」から依頼してください（依頼はあとから取り下げられます）。</li>
+                  <li>自分で取消できるのは<b>支給月の20日まで</b>です。それ以降は管理者へご依頼ください。</li>
+                  <li>調整休の受理により自動で計上された記録は、変更・取消の対象外です（もとの休暇申請を取り消してください）。</li>
+                </ul>
+              </div>
               {/* 全員のシフト予定ページへの導線（権限者のみ・履歴タブの両モードで表示） */}
               {canShiftDirectory && (
                 <div style={{ textAlign: 'right', marginBottom: 10 }}>
@@ -2039,11 +2106,10 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                   {(['own', 'summary'] as const).map(m => (
                     <button key={m} onClick={() => { setHistoryMode(m); if (m === 'own') clearSelectedStaff(); }}
                       style={{
-                        flex: 1, padding: '8px 0', borderRadius: 8, cursor: 'pointer', fontSize: 13,
-                        fontWeight: historyMode === m ? 'bold' : 'normal',
-                        border: historyMode === m ? '2px solid #28a745' : `1px solid ${borderColor}`,
-                        background: historyMode === m ? (isDark ? '#1b3a1e' : '#eaf6ec') : 'transparent',
-                        color: historyMode === m ? (isDark ? '#8fd19e' : '#2e7d32') : subText,
+                        flex: 1, padding: '8px 0', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 'bold',
+                        border: historyMode === m ? '2px solid #1565c0' : '2px solid #90caf9',
+                        background: historyMode === m ? '#1976d2' : '#e3f2fd',
+                        color: historyMode === m ? '#fff' : '#1565c0',
                       }}>
                       {m === 'own' ? '自分の履歴' : '部門集計'}
                     </button>
@@ -2239,21 +2305,13 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                                   </button>
                                 </div>
                               ) : (
-                                canReport ? (
-                                  // 要報告カードでは取消を控えめに（中央・小さめ）。主役は実績報告。
-                                  <div style={{ textAlign: 'center', marginTop: 10 }}>
-                                    <button onClick={() => setCancelTargetId(r.id)}
-                                      style={{ padding: '6px 16px', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12, background: 'transparent', color: subText }}>
-                                      この申請を取消する
-                                    </button>
-                                  </div>
-                                ) : (
-                                  // 未来分・未受理：取消が唯一の操作なので通常の押しやすいボタン
+                                // 取消は常に控えめ（中央・小さめ・同じ文言）。主役は実績報告・内容の確認。
+                                <div style={{ textAlign: 'center', marginTop: 10 }}>
                                   <button onClick={() => setCancelTargetId(r.id)}
-                                    style={{ width: '100%', marginTop: 10, padding: '9px 0', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 13, background: 'transparent', color: subText }}>
-                                    取消
+                                    style={{ padding: '6px 16px', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12, background: 'transparent', color: subText }}>
+                                    この申請を取消する
                                   </button>
-                                )
+                                </div>
                               )
                             )}
                           </div>

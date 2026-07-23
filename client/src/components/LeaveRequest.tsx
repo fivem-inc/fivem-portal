@@ -198,7 +198,7 @@ const MultiDatePicker: React.FC<{
         })}
       </div>
       {rangeError && (
-        <div style={{ marginTop: 8, fontSize: 12, color: '#dc3545', background: isDark ? '#4a2b30' : '#fff5f5', border: `1px solid ${isDark ? '#a3474c' : '#f5b5b5'}`, borderRadius: 6, padding: '6px 10px' }}>⚠️ {rangeError}</div>
+        <div style={{ marginTop: 8, fontSize: 12, color: '#dc3545', background: '#fff5f5', border: `1px solid ${'#f5b5b5'}`, borderRadius: 6, padding: '6px 10px' }}>⚠️ {rangeError}</div>
       )}
       {/* 選択中表示 */}
       {selectedDates.length > 0 && (
@@ -261,12 +261,12 @@ const DateLocationPicker: React.FC<{
         {sorted.map((d, i) => {
           const missing = !locations[d];
           return (
-            <div key={d} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderTop: i > 0 ? `1px solid ${borderColor}` : 'none', background: missing ? (isDark ? '#4a2b30' : '#fff5f5') : 'transparent' }}>
-              <span style={{ fontSize: 13, color: text, flexShrink: 0, minWidth: 74 }}>{shortDateLabel(d)}</span>
+            <div key={d} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderTop: i > 0 ? `1px solid ${borderColor}` : 'none', background: missing ? (isDark ? '#4a2b30' : '#fdecea') : 'transparent' }}>
+              <span style={{ fontSize: 13, color: text, fontWeight: missing ? 'bold' : 'normal', flexShrink: 0, minWidth: 74 }}>{shortDateLabel(d)}</span>
               <select
                 value={locations[d] ?? ''}
                 onChange={e => onSelect(d, e.target.value)}
-                style={{ flex: 1, padding: '8px 10px', border: `1px solid ${missing ? '#e78a95' : borderColor}`, borderRadius: 8, fontSize: 14, background: inputBg, color: text }}
+                style={{ flex: 1, padding: '8px 10px', border: `1px solid ${missing ? '#e24b4a' : borderColor}`, borderRadius: 8, fontSize: 14, background: inputBg, color: text }}
               >
                 <option value="">選択してください</option>
                 {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
@@ -966,7 +966,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
 
                 {choseiSubType === 'furikae' && (
                   <div style={{ marginTop: 12 }}>
-                    <label style={{ display: 'block', fontSize: 14, fontWeight: 'bold', marginBottom: 6, color: text }}>
+                    <label style={{ display: 'block', fontSize: 14, fontWeight: 'bold', marginBottom: 6, color: errFields.has('originDates') ? '#dc3545' : text }}>
                       振替元の勤務日 <span style={{ color: '#dc3545' }}>*</span> <span style={{ fontSize: 12, fontWeight: 'normal', color: subText }}>（日付をタップして選択・解除）</span>
                     </label>
                     <MultiDatePicker
@@ -981,7 +981,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                     {/* 振替元の日付ごとの校選択（選択日の一覧を兼ねる・1日1行） */}
                     {choseiOriginDates.length > 0 && (
                       <div style={{ marginTop: 10 }}>
-                        <label style={{ display: 'block', fontSize: 14, fontWeight: 'bold', marginBottom: 2, color: text }}>
+                        <label style={{ display: 'block', fontSize: 14, fontWeight: 'bold', marginBottom: 2, color: errFields.has('originLocations') ? '#dc3545' : text }}>
                           振替元の勤務校 <span style={{ color: '#dc3545' }}>*</span>
                           <span style={{ fontSize: 12, fontWeight: 'normal', color: subText, marginLeft: 6 }}>（日付ごとに選択）</span>
                         </label>
@@ -1065,7 +1065,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             {/* 日付ごとの校選択（選択日の一覧を兼ねる・1日1行） */}
             {selectedDates.length > 0 && (
               <div style={{ marginTop: 10 }}>
-                <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 2, color: text, fontSize: 14 }}>
+                <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 2, color: errFields.has('locations') ? '#dc3545' : text, fontSize: 14 }}>
                   勤務校 <span style={{ color: '#dc3545' }}>*</span>
                   <span style={{ fontSize: 12, fontWeight: 'normal', color: subText, marginLeft: 6 }}>（日付ごとに選択）</span>
                 </label>
@@ -1091,15 +1091,15 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
 
           {/* 事由（必須）調整休は専用欄を使うため非表示 */}
           {leaveType !== '調整休' && <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: text }}>
+            <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: errFields.has('purpose') ? '#dc3545' : text }}>
               事由 <span style={{ color: '#dc3545' }}>*</span>
             </label>
             <textarea
               value={purpose}
-              onChange={e => setPurpose(e.target.value)}
+              onChange={e => { setPurpose(e.target.value); if (e.target.value.trim()) setErrFields(prev => { const n = new Set(prev); n.delete('purpose'); return n; }); }}
               placeholder="休暇取得の理由を入力してください"
               rows={3}
-              style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 15, boxSizing: 'border-box', resize: 'vertical', background: inputBg, color: text }}
+              style={{ width: '100%', padding: '10px 14px', border: `1px solid ${errFields.has('purpose') ? '#e24b4a' : borderColor}`, borderRadius: 8, fontSize: 15, boxSizing: 'border-box', resize: 'vertical', background: inputBg, color: text }}
             />
           </div>}
 
@@ -1118,7 +1118,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           </div>
 
           {locError && (
-            <div style={{ color: '#dc3545', fontSize: 13, marginBottom: 12, padding: '10px 12px', background: isDark ? '#4a2b30' : '#fff5f5', border: `1px solid ${isDark ? '#a3474c' : '#f5b5b5'}`, borderRadius: 6 }}>
+            <div style={{ color: '#dc3545', fontSize: 13, marginBottom: 12, padding: '10px 12px', background: '#fff5f5', border: `1px solid ${'#f5b5b5'}`, borderRadius: 6 }}>
               {locError.split('\n').map((line, i) => (
                 <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginTop: i === 0 ? 0 : 5 }}>
                   <span style={{ flexShrink: 0 }}>⚠️</span><span>{line}</span>
@@ -1134,13 +1134,13 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               const isFurikae = leaveType === '調整休' && choseiSubType === 'furikae';
               if (!selectedApproverId) { errs.push('申請先を選んでください'); bad.add('approver'); }
               if (selectedDates.length === 0) { errs.push('休暇日を選択してください'); bad.add('dates'); }
-              if (isFurikae && choseiOriginDates.length === 0) { errs.push('振替元の勤務日を選択してください'); }
-              if (isFurikae && choseiOriginDates.length > 0 && choseiOriginDates.length !== selectedDates.length) { errs.push(`振替元の勤務日（${choseiOriginDates.length}日）と休暇日（${selectedDates.length}日）の日数が一致していません`); }
-              if (!purpose.trim() && leaveType !== '調整休') { errs.push('事由を入力してください'); }
-              if (leaveType === '調整休' && !purpose.trim()) { errs.push('理由を入力してください'); }
+              if (isFurikae && choseiOriginDates.length === 0) { errs.push('振替元の勤務日を選択してください'); bad.add('originDates'); }
+              if (isFurikae && choseiOriginDates.length > 0 && choseiOriginDates.length !== selectedDates.length) { errs.push(`振替元の勤務日（${choseiOriginDates.length}日）と休暇日（${selectedDates.length}日）の日数が一致していません`); bad.add('originDates'); }
+              if (!purpose.trim() && leaveType !== '調整休') { errs.push('事由を入力してください'); bad.add('purpose'); }
+              if (leaveType === '調整休' && !purpose.trim()) { errs.push('理由を入力してください'); bad.add('purpose'); }
               if (leaveType === 'その他' && !leaveTypeOther) { errs.push('種別を入力してください'); bad.add('type'); }
-              if (selectedDates.some(d => !dateLocations[d])) { errs.push('すべての日付で勤務校を選択してください'); }
-              if (isFurikae && choseiOriginDates.some(d => !originLocations[d])) { errs.push('振替元のすべての日付で勤務校を選択してください'); }
+              if (selectedDates.some(d => !dateLocations[d])) { errs.push('すべての日付で勤務校を選択してください'); bad.add('locations'); }
+              if (isFurikae && choseiOriginDates.some(d => !originLocations[d])) { errs.push('振替元のすべての日付で勤務校を選択してください'); bad.add('originLocations'); }
               if (errs.length > 0) { setLocError(errs.join('\n')); setErrFields(bad); return; }
               setLocError(''); setErrFields(new Set());
               setShowConfirm(true);
@@ -1260,18 +1260,18 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                 {/* 調整遅出 */}
                 <div
                   onClick={() => setAdjLateStart(v => !v)}
-                  style={{ border: adjLateStart ? '2px solid #28a745' : `1px solid ${borderColor}`, borderRadius: 10, padding: 12, cursor: 'pointer', background: adjLateStart ? (isDark ? '#1b4d1b' : '#f0fff4') : bg }}
+                  style={{ border: adjLateStart ? '2px solid #1565c0' : '2px solid #90caf9', borderRadius: 10, padding: 12, cursor: 'pointer', background: adjLateStart ? '#1976d2' : '#e3f2fd' }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: adjLateStart ? 10 : 0 }}>
-                    <div style={{ width: 16, height: 16, borderRadius: 4, border: adjLateStart ? 'none' : `1.5px solid ${borderColor}`, background: adjLateStart ? '#28a745' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      {adjLateStart && <span style={{ color: '#fff', fontSize: 11, lineHeight: 1 }}>✓</span>}
+                    <div style={{ width: 16, height: 16, borderRadius: 4, border: adjLateStart ? 'none' : '1.5px solid #1976d2', background: adjLateStart ? '#fff' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      {adjLateStart && <span style={{ color: '#1976d2', fontSize: 11, lineHeight: 1, fontWeight: 'bold' }}>✓</span>}
                     </div>
                     <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#4caf50', flexShrink: 0, display: 'inline-block' }} />
-                    <span style={{ fontSize: 14, fontWeight: 'bold', color: text }}>調整遅出</span>
+                    <span style={{ fontSize: 14, fontWeight: 'bold', color: adjLateStart ? '#fff' : '#1565c0' }}>調整遅出</span>
                   </div>
                   {adjLateStart && (
                     <div onClick={e => e.stopPropagation()}>
-                      <label style={{ fontSize: 12, color: subText, marginBottom: 4, display: 'block' }}>出勤時刻 <span style={{ color: '#dc3545' }}>*</span></label>
+                      <label style={{ fontSize: 12, color: '#e3f2fd', marginBottom: 4, display: 'block' }}>出勤時刻 <span style={{ color: '#ffcdd2' }}>*</span></label>
                       <input type="time" value={adjLateTime} onChange={e => setAdjLateTime(e.target.value)}
                         style={{ width: '100%', padding: '8px', borderRadius: 6, border: `1px solid ${!adjLateTime ? '#dc3545' : borderColor}`, fontSize: 14, background: inputBg, color: text, boxSizing: 'border-box' }} />
                     </div>
@@ -1280,18 +1280,18 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                 {/* 調整早退 */}
                 <div
                   onClick={() => setAdjEarlyEnd(v => !v)}
-                  style={{ border: adjEarlyEnd ? '2px solid #28a745' : `1px solid ${borderColor}`, borderRadius: 10, padding: 12, cursor: 'pointer', background: adjEarlyEnd ? (isDark ? '#1b4d1b' : '#f0fff4') : bg }}
+                  style={{ border: adjEarlyEnd ? '2px solid #1565c0' : '2px solid #90caf9', borderRadius: 10, padding: 12, cursor: 'pointer', background: adjEarlyEnd ? '#1976d2' : '#e3f2fd' }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: adjEarlyEnd ? 10 : 0 }}>
-                    <div style={{ width: 16, height: 16, borderRadius: 4, border: adjEarlyEnd ? 'none' : `1.5px solid ${borderColor}`, background: adjEarlyEnd ? '#28a745' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      {adjEarlyEnd && <span style={{ color: '#fff', fontSize: 11, lineHeight: 1 }}>✓</span>}
+                    <div style={{ width: 16, height: 16, borderRadius: 4, border: adjEarlyEnd ? 'none' : '1.5px solid #1976d2', background: adjEarlyEnd ? '#fff' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      {adjEarlyEnd && <span style={{ color: '#1976d2', fontSize: 11, lineHeight: 1, fontWeight: 'bold' }}>✓</span>}
                     </div>
                     <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#9c27b0', flexShrink: 0, display: 'inline-block' }} />
-                    <span style={{ fontSize: 14, fontWeight: 'bold', color: text }}>調整早退</span>
+                    <span style={{ fontSize: 14, fontWeight: 'bold', color: adjEarlyEnd ? '#fff' : '#1565c0' }}>調整早退</span>
                   </div>
                   {adjEarlyEnd && (
                     <div onClick={e => e.stopPropagation()}>
-                      <label style={{ fontSize: 12, color: subText, marginBottom: 4, display: 'block' }}>退勤時刻 <span style={{ color: '#dc3545' }}>*</span></label>
+                      <label style={{ fontSize: 12, color: '#e3f2fd', marginBottom: 4, display: 'block' }}>退勤時刻 <span style={{ color: '#ffcdd2' }}>*</span></label>
                       <input type="time" value={adjEarlyTime} onChange={e => setAdjEarlyTime(e.target.value)}
                         style={{ width: '100%', padding: '8px', borderRadius: 6, border: `1px solid ${!adjEarlyTime ? '#dc3545' : borderColor}`, fontSize: 14, background: inputBg, color: text, boxSizing: 'border-box' }} />
                     </div>
@@ -1405,7 +1405,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             </div>
 
             {adjError && (
-              <div style={{ marginBottom: 12, padding: '10px 14px', background: isDark ? '#5a1a1a' : '#f8d7da', borderRadius: 8, color: isDark ? '#f5c6cb' : '#721c24', fontSize: 13 }}>
+              <div style={{ marginBottom: 12, padding: '10px 14px', background: '#f8d7da', borderRadius: 8, color: '#721c24', fontSize: 13 }}>
                 {adjError}
               </div>
             )}
@@ -1752,22 +1752,22 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                       <div style={{ color: subText, fontSize: 12, marginTop: 1, textAlign: 'left' }}>備考: {req.reason}</div>
                     )}
                     {isRejected && req.rejected_reason && (
-                      <div style={{ marginTop: 4, padding: '4px 8px', background: isDark ? '#721c24' : '#f8d7da', borderRadius: 6, color: isDark ? '#f5c6cb' : '#721c24', fontSize: 12, textAlign: 'left' }}>
+                      <div style={{ marginTop: 4, padding: '4px 8px', background: '#f8d7da', borderRadius: 6, color: '#721c24', fontSize: 12, textAlign: 'left' }}>
                         差し戻し理由: {req.rejected_reason}
                       </div>
                     )}
                     {/* 未承認(pending)：本人が自分で編集・取消できる（承認が入ったら下の依頼へ） */}
                     {req.status === 'pending' && (
                       cancelConfirmId === req.id ? (
-                        <div style={{ marginTop: 8, background: isDark ? '#3a1f1f' : '#fff5f5', border: '1px solid #dc3545', borderRadius: 8, padding: 10 }}>
-                          <div style={{ fontSize: 12, color: isDark ? '#f5c6cb' : '#721c24', marginBottom: 8 }}>この申請を取り消しますか？</div>
+                        <div style={{ marginTop: 8, background: '#fff5f5', border: '1px solid #dc3545', borderRadius: 8, padding: 10 }}>
+                          <div style={{ fontSize: 12, color: '#721c24', marginBottom: 8 }}>この申請を取り消しますか？</div>
                           <div style={{ display: 'flex', gap: 8 }}>
                             <button onClick={() => doCancelLeave(req.id)} disabled={cancelingId === req.id}
                               style={{ flex: 1, padding: '6px 0', background: '#dc3545', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
                               {cancelingId === req.id ? '取消中…' : '取り消す'}
                             </button>
                             <button onClick={() => setCancelConfirmId(null)}
-                              style={{ flex: 1, padding: '6px 0', background: 'none', color: subText, border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 12, cursor: 'pointer' }}>
+                              style={{ flex: 1, padding: '6px 0', background: '#fff', color: '#721c24', border: '1px solid #f5b5b5', borderRadius: 8, fontSize: 12, cursor: 'pointer' }}>
                               やめる
                             </button>
                           </div>
@@ -1791,15 +1791,15 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                     {/* 差戻し：取消（インライン確認）＋再申請 */}
                     {isRejected && (
                       cancelConfirmId === req.id ? (
-                        <div style={{ marginTop: 8, background: isDark ? '#3a1f1f' : '#fff5f5', border: '1px solid #dc3545', borderRadius: 8, padding: 10 }}>
-                          <div style={{ fontSize: 12, color: isDark ? '#f5c6cb' : '#721c24', marginBottom: 8 }}>この申請を取り消しますか？</div>
+                        <div style={{ marginTop: 8, background: '#fff5f5', border: '1px solid #dc3545', borderRadius: 8, padding: 10 }}>
+                          <div style={{ fontSize: 12, color: '#721c24', marginBottom: 8 }}>この申請を取り消しますか？</div>
                           <div style={{ display: 'flex', gap: 8 }}>
                             <button onClick={() => doCancelLeave(req.id)} disabled={cancelingId === req.id}
                               style={{ flex: 1, padding: '6px 0', background: '#dc3545', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
                               {cancelingId === req.id ? '取消中…' : '取り消す'}
                             </button>
                             <button onClick={() => setCancelConfirmId(null)}
-                              style={{ flex: 1, padding: '6px 0', background: 'none', color: subText, border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 12, cursor: 'pointer' }}>
+                              style={{ flex: 1, padding: '6px 0', background: '#fff', color: '#721c24', border: '1px solid #f5b5b5', borderRadius: 8, fontSize: 12, cursor: 'pointer' }}>
                               やめる
                             </button>
                           </div>
@@ -1893,7 +1893,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               </tbody>
             </table>
             {submitError && (
-              <div style={{ marginBottom: 12, fontSize: 13, color: '#dc3545', background: isDark ? '#4a2b30' : '#fff5f5', border: `1px solid ${isDark ? '#a3474c' : '#f5b5b5'}`, borderRadius: 6, padding: '8px 12px' }}>⚠️ {submitError}</div>
+              <div style={{ marginBottom: 12, fontSize: 13, color: '#dc3545', background: '#fff5f5', border: `1px solid ${'#f5b5b5'}`, borderRadius: 6, padding: '8px 12px' }}>⚠️ {submitError}</div>
             )}
             <div style={{ display: 'flex', gap: 12 }}>
               <button

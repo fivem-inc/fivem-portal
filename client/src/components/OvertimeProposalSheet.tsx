@@ -291,7 +291,7 @@ const OvertimeProposalSheet: React.FC<Props> = ({
           <DateField value={dueDate} onChange={setDueDate} isDark={isDark} placeholder="日付を選ぶ（任意）" />
         </div>
 
-        {error && <div style={{ color: '#dc3545', fontSize: 13, marginBottom: 12, padding: '8px 12px', background: isDark ? '#3a2626' : '#fff5f5', borderRadius: 6 }}>⚠️ {error}</div>}
+        {error && <div style={{ color: '#842029', fontSize: 13, marginBottom: 12, padding: '8px 12px', background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 6 }}>⚠️ {error}</div>}
 
         <div style={{ display: 'flex', gap: 10 }}>
           <button onClick={onClose} style={{ flex: 1, padding: 12, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, cursor: 'pointer' }}>キャンセル</button>

@@ -1365,13 +1365,13 @@ const BoardPage: React.FC = () => {
             if (answers.length === 0) return null;
             return (
               <div style={{ margin: '6px 0 8px', padding: '8px 10px', background: isDark ? '#1a3a28' : '#f0fdf4', borderRadius: 8, border: `1px solid ${isDark ? '#16532a' : '#86efac'}` }}>
-                <div style={{ fontSize: 11, fontWeight: 'bold', color: isDark ? '#4ade80' : '#166534', marginBottom: 4 }}>📝 回答</div>
+                <div style={{ fontSize: 11, fontWeight: 'bold', color: '#166534', marginBottom: 4 }}>📝 回答</div>
                 {answers.map(c => {
                   const name = allProfiles.find(p => p.id === c.user_id)?.name || '不明';
                   return (
                     <div key={c.user_id} style={{ fontSize: 13, color: textColor, padding: '4px 0', borderBottom: `1px solid ${isDark ? '#16532a' : '#bbf7d0'}` }}>
                       <div>
-                        <span style={{ fontWeight: 500, color: isDark ? '#4ade80' : '#166534' }}>{name}：</span>{c.comment}
+                        <span style={{ fontWeight: 500, color: '#166534' }}>{name}：</span>{c.comment}
                       </div>
                       {c.confirmed_at && (
                         <div style={{ fontSize: 10, color: subColor, marginTop: 2 }}>{fmtConfirmDate(c.confirmed_at)}</div>
@@ -1422,7 +1422,7 @@ const BoardPage: React.FC = () => {
                     <button type="button" onClick={() => {
                       setAnswerInputId(answerInputId === msg.id ? null : msg.id);
                       setAnswerText('');
-                    }} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', background: cardBg, border: '1.5px solid #22c55e', borderRadius: 20, cursor: 'pointer', fontSize: 13, fontWeight: 500, color: isDark ? '#4ade80' : '#166534' }}>
+                    }} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', background: cardBg, border: '1.5px solid #22c55e', borderRadius: 20, cursor: 'pointer', fontSize: 13, fontWeight: 500, color: '#166534' }}>
                       <span style={{ fontSize: 15, lineHeight: 1 }}>○</span> {reportLabel}
                     </button>
                   ) : (
@@ -3702,21 +3702,21 @@ const BoardPage: React.FC = () => {
       })()}
 
       {(saveBanner || memberBanner) && (
-        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: isDark ? '#1a3a28' : '#f0fdf4', border: `1px solid ${isDark ? '#16532a' : '#86efac'}`, borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 220 }}>
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 220 }}>
           <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>✓</div>
-          <span style={{ fontSize: 15, fontWeight: 'bold', color: isDark ? '#4ade80' : '#166534' }}>{memberBanner ? 'メンバーを保存しました' : '保存しました'}</span>
-          <button type="button" onClick={() => { setSaveBanner(false); setMemberBanner(false); }} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: isDark ? '#4ade80' : '#166534', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
+          <span style={{ fontSize: 15, fontWeight: 'bold', color: '#166534' }}>{memberBanner ? 'メンバーを保存しました' : '保存しました'}</span>
+          <button type="button" onClick={() => { setSaveBanner(false); setMemberBanner(false); }} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#166534', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
         </div>
       )}
       {noticeActionBanner && (
-        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: noticeActionBanner === 'deleted' ? (isDark ? '#2d1a1a' : '#fff5f5') : (isDark ? '#1a3a28' : '#f0fdf4'), border: `1px solid ${noticeActionBanner === 'deleted' ? '#dc2626' : (isDark ? '#16532a' : '#86efac')}`, borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 220 }}>
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: noticeActionBanner === 'deleted' ? '#fff5f5' : '#f0fdf4', border: `1px solid ${noticeActionBanner === 'deleted' ? '#dc2626' : '#86efac'}`, borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 220 }}>
           <div style={{ width: 36, height: 36, borderRadius: '50%', background: noticeActionBanner === 'deleted' ? '#dc2626' : '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>
             {noticeActionBanner === 'deleted' ? '🗑️' : '✓'}
           </div>
-          <span style={{ fontSize: 15, fontWeight: 'bold', color: noticeActionBanner === 'deleted' ? '#dc2626' : (isDark ? '#4ade80' : '#166534') }}>
+          <span style={{ fontSize: 15, fontWeight: 'bold', color: noticeActionBanner === 'deleted' ? '#dc2626' : '#166534' }}>
             {noticeActionBanner === 'deleted' ? '削除しました' : '修正を保存しました'}
           </span>
-          <button type="button" onClick={() => setNoticeActionBanner(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: noticeActionBanner === 'deleted' ? '#dc2626' : (isDark ? '#4ade80' : '#166534'), cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
+          <button type="button" onClick={() => setNoticeActionBanner(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: noticeActionBanner === 'deleted' ? '#dc2626' : '#166534', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
         </div>
       )}
     </div>

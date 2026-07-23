@@ -765,9 +765,9 @@ const BoardSettingsTab: React.FC = () => {
       </div>
 
       {banner && (
-        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 9999, background: isDark ? '#1a3a28' : '#f0fdf4', border: `1px solid ${isDark ? '#16532a' : '#86efac'}`, borderRadius: 12, padding: '16px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 9999, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '16px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontSize: 18 }}>✓</span>
-          <span style={{ fontSize: 14, fontWeight: 'bold', color: isDark ? '#4ade80' : '#166534' }}>保存しました</span>
+          <span style={{ fontSize: 14, fontWeight: 'bold', color: '#166534' }}>保存しました</span>
         </div>
       )}
     </div>
