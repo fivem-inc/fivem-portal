@@ -295,7 +295,7 @@ const PurchaseRequestPage: React.FC<PurchaseRequestPageProps> = ({ user, roleTit
     <div style={{ minHeight: '100vh' }}>
       <div style={{ maxWidth: 600, margin: '0 auto', padding: '70px 16px 40px' }}>
       <div style={{ textAlign: 'center', padding: '28px 0 12px' }}>
-        <h1 style={{ fontSize: 20, fontWeight: 'bold', color: text, margin: 0 }}>🧾 備品精算</h1>
+        <h1 style={{ fontSize: 20, fontWeight: 'bold', color: text, margin: 0 }}>📦 備品精算</h1>
       </div>
 
       {/* このページの説明 */}

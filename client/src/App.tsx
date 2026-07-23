@@ -694,7 +694,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
           {canOvertime && isPub('overtime') && (
             <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
               <button onClick={() => navTo('/overtime')} style={btnStyle(location.pathname === '/overtime', '#1565c0')}>
-                {isMobile ? <><span style={{ fontSize: 20 }}>⏱</span>{navLabel('残業')}</> : '⏱ 残業・時間'}
+                {isMobile ? <><span style={{ fontSize: 20 }}>🕐</span>{navLabel('残業')}</> : '🕐 残業・時間'}
               </button>
               {overtimeBadge > 0 && (
                 <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
@@ -706,7 +706,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
           {canPurchaseRequest && isPub('purchase_request') && (
             <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
               <button onClick={() => navTo('/purchase')} style={btnStyle(location.pathname === '/purchase', '#17a2b8')}>
-                {isMobile ? <><span style={{ fontSize: 20 }}>🧾</span>{navLabel('備品精算')}</> : '🧾 備品精算'}
+                {isMobile ? <><span style={{ fontSize: 20 }}>📦</span>{navLabel('備品精算')}</> : '📦 備品精算'}
               </button>
               {purchasePending > 0 && (
                 <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
@@ -1230,7 +1230,7 @@ const PurchaseApprovalBanner: React.FC<{ userId: string; canPurchaseRequest: boo
         fontWeight: 'bold',
       }}
     >
-      <span style={{ fontSize: 22 }}>🧾</span>
+      <span style={{ fontSize: 22 }}>📦</span>
       <span>備品購入申請の確認依頼が {pendingCount}件 あります</span>
       <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 'normal' }}>タップして確認 →</span>
     </div>
@@ -1262,7 +1262,7 @@ const OvertimeApprovalBanner: React.FC<{ userId: string; canOvertime: boolean }>
         fontWeight: 'bold',
       }}
     >
-      <span style={{ fontSize: 22 }}>⏱</span>
+      <span style={{ fontSize: 22 }}>🕐</span>
       <span>残業・時間調整の確認依頼が {pendingCount}件 あります</span>
       <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 'normal' }}>タップして確認 →</span>
     </div>
@@ -1380,7 +1380,7 @@ const OvertimeThresholdBanner: React.FC<{ userId: string; roleTitle: string; isA
           background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10,
           display: 'flex', alignItems: 'flex-start', gap: 10,
         }}>
-          <span style={{ fontSize: 20, flexShrink: 0 }}>⏱</span>
+          <span style={{ fontSize: 20, flexShrink: 0 }}>🕐</span>
           <div onClick={() => { navigate('/overtime?tab=history'); }} style={{ flex: 1, cursor: 'pointer' }}>
             {item.isSelf ? (
               <div style={{ fontSize: 13.5, color: '#1e40af', lineHeight: 1.7 }}>

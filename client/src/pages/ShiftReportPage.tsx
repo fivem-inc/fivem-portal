@@ -1312,7 +1312,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
             <span style={{ fontSize: 14, fontWeight: 'bold', color: '#664d03', lineHeight: '22px' }}>発生した「休日出勤・残業・早退・遅刻・欠勤」を事後報告できます</span>
           </div>
           <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: '0 0 8px' }}>（これまでの残業申請表の代わりです。）</p>
-          <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※このページは事後報告用です。事前の申請・お休みの連絡はできません。</p>
+          <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※このページは「報告」用です。ここから休暇・お休みの申請はできません。</p>
+          <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>（リーダー・マネージャーに連絡済みの「欠勤・勤務時間の変更」は、事前に入力できます。）</p>
           <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※欠勤・遅刻・早退の連絡は、これまで通りリーダー・マネージャーへ直接連絡してください。</p>
         </div>
 

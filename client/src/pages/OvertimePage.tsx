@@ -53,6 +53,7 @@ interface OvertimeReport {
   diff_minutes: number | null;
   legal_warning: boolean;
   reason: string | null;
+  change_reason?: string | null;
   location: string | null;
   application_types: string[] | null;
   furikae_origin_date: string | null;
@@ -599,6 +600,48 @@ const OvertimeForm: React.FC<{
 
   const today = todayJstStr();
 
+  // ── 実績報告フェーズの「予定→実績」差分検知（案A）──
+  // editTarget は update 前なので本体値＝予定値。planned セグメント＋本体値をベースラインにする。
+  const [changeReason, setChangeReason] = useState('');
+  const [showPlanDetail, setShowPlanDetail] = useState(false);
+  const plannedBaseline = useMemo(() => {
+    if (!isReportPhase || !editTarget) return null;
+    const pseg = (editTarget.segments ?? []).filter(s => s.phase === 'planned').sort((a, b) => a.seg_no - b.seg_no).map(s => ({ s: s.start_min, e: s.end_min }));
+    return { segs: pseg, breakMin: editTarget.break_minutes ?? 0, location: editTarget.location ?? '', types: [...(editTarget.application_types ?? [])].sort() };
+  }, [isReportPhase, editTarget]);
+  // 差分検知の基準は「開いた直後の実績入力（＝予定プリフィル）」を一度だけスナップショットする。
+  // 保存値と再計算値を比べると計算差で誤検知するため、再計算値どうし（初期live vs 現在live）で比べる。
+  const [diffBase, setDiffBase] = useState<{ segs: { s: number; e: number }[]; breakMin: number; location: string; types: string[] } | null>(null);
+  useEffect(() => {
+    if (!isReportPhase || fullDay || diffBase) return;
+    setDiffBase({
+      segs: [...workSegments].sort((a, b) => a.startMin - b.startMin).map(s => ({ s: s.startMin, e: s.endMin })),
+      breakMin, location: effectiveLocation, types: [...applicationTypes].sort(),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isReportPhase, fullDay, workSegments, breakMin, effectiveLocation, applicationTypes, diffBase]);
+  const changedAxes = useMemo(() => {
+    if (!diffBase || fullDay) return [] as string[];
+    const live = [...workSegments].sort((a, b) => a.startMin - b.startMin).map(s => ({ s: s.startMin, e: s.endMin }));
+    const base = [...diffBase.segs].sort((a, b) => a.s - b.s);
+    const ax: string[] = [];
+    if (live.length !== base.length || live.some((x, i) => x.s !== base[i].s || x.e !== base[i].e)) ax.push('時間帯');
+    if (breakMin !== diffBase.breakMin) ax.push('休憩');
+    if (effectiveLocation !== diffBase.location) ax.push('勤務地');
+    if (JSON.stringify([...applicationTypes].sort()) !== JSON.stringify(diffBase.types)) ax.push('種別');
+    return ax;
+  }, [diffBase, fullDay, workSegments, breakMin, effectiveLocation, applicationTypes]);
+  const hasChanges = changedAxes.length > 0;
+  // 残業なし（実際は通常どおり）＝労働が通常シフトと同じ・種別なし。差分0は承認者確認をスキップ（自己確定）。
+  const isPureZero = isReportPhase && !fullDay && diffMin === 0 && applicationTypes.length === 0;
+  // 「残業なし（通常どおり）」ワンタップ：時間帯を通常シフトに、勤務地を通常校に、休憩自動・種別なしにリセット。
+  const applyNoOvertime = () => {
+    setSegments(normalSegs.length > 0 ? normalSegs.map(s => ({ ...s })) : [{ ...EMPTY_SEG }]);
+    setBreakManual(false);
+    if (normalShift.location) { setLocation(normalShift.location); setLocMoveStart(''); setLocMoveEnd(''); setLocationCustom(''); }
+    setLateChoice(null); setEarlyChoice(null);
+  };
+
   // モード切替で選択日が範囲外になったらクリア（無効な日が選択済みに見えるのを防ぐ・新規のみ）
   useEffect(() => {
     if (editTarget || !date) return;
@@ -643,11 +686,18 @@ const OvertimeForm: React.FC<{
     if (location === '移動あり' && (!locMoveStart || !locMoveEnd)) return '移動元・移動先の校を選択してください';
     if (!reason.trim()) return '理由を入力してください';
     if (!reviewerId) return '申請先を選択してください';
-    // 通常シフトと全く同じ内容（時間帯・休憩・勤務地に変更なし）では送信不可
-    const sameSegs = segments.length === normalSegs.length
-      && segments.every((s, i) => s.start === normalSegs[i].start && s.end === normalSegs[i].end);
-    if (sameSegs && !breakManual && effectiveLocation === (normalShift.location ?? '')) {
-      return '通常シフトと同じ内容です。残業・早退・調整など、変更した点を入力してください';
+    // 通常シフトと全く同じ内容（時間帯・休憩・勤務地に変更なし）では送信不可。
+    // ※実績報告は除外＝「事前申請では残業予定だったが実際は通常どおりだった（残業ゼロ）」も正当に報告できるようにする。
+    if (!isReportPhase) {
+      const sameSegs = segments.length === normalSegs.length
+        && segments.every((s, i) => s.start === normalSegs[i].start && s.end === normalSegs[i].end);
+      if (sameSegs && !breakManual && effectiveLocation === (normalShift.location ?? '')) {
+        return '通常シフトと同じ内容です。残業・早退・調整など、変更した点を入力してください';
+      }
+    }
+    // 実績報告で予定から変わっている場合は変更理由が必須（ただし「残業なし＝通常どおり」は理由不要）
+    if (isReportPhase && !fullDay && hasChanges && !isPureZero && !changeReason.trim()) {
+      return '予定から変わった理由を入力してください';
     }
     // 種別の2択（開始が遅い／早く終わる）は本人が選ぶまで送信不可
     if (typeDetect.lateQ && !lateChoice) return '「開始が遅い理由は？」を選択してください';
@@ -686,7 +736,7 @@ const OvertimeForm: React.FC<{
         status: (fullDayMode
           ? (isSelfReview ? 'confirmed' : 'requested')
           : (phase === 'actual'
-            ? (isSelfReview ? 'confirmed' : 'reported')
+            ? ((isSelfReview || isPureZero) ? 'confirmed' : 'reported')
             : (isSelfReview ? 'request_confirmed' : 'requested'))) as OvertimeStatus,
         normal_shift: normalShift,
         break_minutes: fullDayMode ? 0 : breakMin,
@@ -695,13 +745,15 @@ const OvertimeForm: React.FC<{
         diff_minutes: fullDayMode ? fdDiffMin : diffMin,
         legal_warning: fullDayMode ? false : !legal.ok,
         reason: reason.trim(),
+        // 予定から変わった理由（実績報告で変更ありのときだけ・承認者/履歴で表示）。予定どおり・残業なし・新規はnullで上書き
+        change_reason: (isReportPhase && hasChanges && !isPureZero) ? changeReason.trim() : null,
         location: fullDayMode ? fdLocation : effectiveLocation,
         application_types: applicationTypes,
         // 振替休日のみ振替元を保存（他種別ではnullで上書き＝再提出で種別が変わった場合の掃除）
         furikae_origin_date: (fullDayMode && fullDayType === 'furikae_off') ? furikaeOriginDate : null,
         furikae_origin_location: (fullDayMode && fullDayType === 'furikae_off') ? furikaeOriginLocation : null,
         reviewer_id: isSelfReview ? user.id : reviewerId,
-        ...(isSelfReview ? { confirmed_by: user.id, confirmed_at: new Date().toISOString() } : {}),
+        ...((isSelfReview || isPureZero) ? { confirmed_by: user.id, confirmed_at: new Date().toISOString() } : {}),
         ...(isResubmit ? { return_comment: null } : {}),
       };
 
@@ -711,7 +763,8 @@ const OvertimeForm: React.FC<{
         await supabase.from('overtime_report_history').insert({
           report_id: editTarget.id,
           changed_by: user.id,
-          change_summary: isReportPhase ? '実績報告' : '再提出',
+          change_summary: isReportPhase ? (isPureZero ? '残業なし（通常どおり）で報告' : hasChanges ? `実績報告（変更あり：${changedAxes.join('・')}）` : '実績報告（予定どおり）') : '再提出',
+          change_reason: (isReportPhase && hasChanges) ? changeReason.trim() : null,
           snapshot: editTarget as unknown as Record<string, unknown>,
         }).then(null, () => {});
         const { error: err } = await supabase.from('overtime_reports').update(record).eq('id', editTarget.id);
@@ -817,6 +870,39 @@ const OvertimeForm: React.FC<{
             {isReportPhase ? '📝 実績を報告する' : '再提出'}（{editTarget.work_date}）
           </span>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: subText }}>✕</button>
+        </div>
+      )}
+
+      {/* 事前申請の内容（受理済み・変更不可）。実績報告フェーズのみ折りたたみ表示 */}
+      {isReportPhase && !fullDay && plannedBaseline && (
+        <div style={{ background: innerBg, borderRadius: 10, padding: '10px 12px', marginBottom: 12, border: `1px solid ${borderColor}` }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 'bold', color: subText }}>📋 事前申請の内容（受理済み・変更できません）</span>
+            <button type="button" onClick={() => setShowPlanDetail(v => !v)} style={{ background: 'none', border: 'none', color: subText, cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>詳細 {showPlanDetail ? '▲' : '▼'}</button>
+          </div>
+          <div style={{ fontSize: 12.5, color: text, marginTop: 6, lineHeight: 1.6 }}>
+            {editTarget.work_date.slice(5).replace('-', '/')}（{dowLabel(editTarget.work_date)}）｜予定 {segmentsLabel((editTarget.segments ?? []).filter(s => s.phase === 'planned'))}{plannedBaseline.location ? `［${plannedBaseline.location}］` : ''}
+          </div>
+          <div style={{ marginTop: 4 }}><TypeChips types={editTarget.application_types} isDark={isDark} /></div>
+          {showPlanDetail && (
+            <div style={{ fontSize: 12, color: subText, marginTop: 6, lineHeight: 1.7, borderTop: `1px solid ${borderColor}`, paddingTop: 6 }}>
+              休憩 {plannedBaseline.breakMin}分　労働 {Math.floor((editTarget.labor_minutes ?? 0) / 60)}時間{(editTarget.labor_minutes ?? 0) % 60}分<br />
+              {editTarget.reason && <>理由：{editTarget.reason}</>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 残業なし（通常どおり）ワンタップ。押すと時間帯を通常シフトに戻す＝残業ゼロで報告できる */}
+      {isReportPhase && !fullDay && !isPureZero && (
+        <button type="button" onClick={applyNoOvertime}
+          style={{ width: '100%', padding: '12px', marginBottom: 12, borderRadius: 10, border: '1.5px solid #64b5f6', background: '#e3f2fd', color: '#1565c0', fontSize: 13.5, fontWeight: 'bold', cursor: 'pointer' }}>
+          🚫 残業なし（通常どおりにする）
+        </button>
+      )}
+      {isReportPhase && !fullDay && isPureZero && (
+        <div style={{ marginBottom: 12, padding: '9px 12px', borderRadius: 8, background: isDark ? '#1b3a1e' : '#eaf6ec', border: `1px solid ${isDark ? '#2d5a2d' : '#c3e6cb'}`, fontSize: 12.5, color: isDark ? '#8fd19e' : '#1e7e34', textAlign: 'center', lineHeight: 1.6 }}>
+          ✓ 残業なし（通常どおり）で報告します。承認者の確認は不要です。
         </div>
       )}
 
@@ -1051,7 +1137,10 @@ const OvertimeForm: React.FC<{
       {/* 実務の勤務時間帯 */}
       {!fullDay && (
       <div style={{ marginBottom: 12 }}>
-        <span style={labelStyle}>{mode === 'advance' && !isReportPhase && !(editTarget && isResubmit && (editTarget.segments ?? []).some(s => s.phase === 'actual')) ? '予定の勤務時間' : '実務の勤務時間'}{req}</span>
+        <span style={labelStyle}>{isReportPhase ? '実際に勤務した時間' : (mode === 'advance' && !(editTarget && isResubmit && (editTarget.segments ?? []).some(s => s.phase === 'actual')) ? '予定の勤務時間' : '実務の勤務時間')}{req}</span>
+        {isReportPhase && (
+          <p style={{ margin: '2px 0 8px', fontSize: 11.5, color: subText, lineHeight: 1.6 }}>予定が入っています。実際と違う場合は直してください。</p>
+        )}
         {segments.map((s, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
             <span style={{ fontSize: 12, color: subText, minWidth: 44 }}>時間帯{i + 1}</span>
@@ -1176,8 +1265,15 @@ const OvertimeForm: React.FC<{
         </div>
       )}
 
+      {/* 勤務地。実績報告フェーズは事前申請どおりで固定（読み取り専用） */}
+      {isReportPhase && !fullDay && (
+        <div style={{ marginBottom: 12 }}>
+          <span style={labelStyle}>勤務地</span>
+          <div style={{ ...fieldStyle, background: innerBg, color: text, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 22 }}>{effectiveLocation || '—'}</div>
+        </div>
+      )}
       {/* 勤務地（勤務変更報告と同様に自由入力あり）。終日でシフトに校がある日は自動使用のため非表示 */}
-      {!(fullDay && normalShift.location) && (
+      {!(fullDay && normalShift.location) && !isReportPhase && (
       <div style={{ marginBottom: 12 }}>
         <span style={labelStyle}>勤務地{req}</span>
         <select value={location} onChange={e => setLocation(e.target.value)} style={fieldStyle}>
@@ -1209,7 +1305,10 @@ const OvertimeForm: React.FC<{
 
       {/* 理由 */}
       <div style={{ marginBottom: 12 }}>
-        <span style={labelStyle}>理由{req}</span>
+        <span style={labelStyle}>理由{isReportPhase ? '' : req}</span>
+        {isReportPhase && !fullDay ? (
+          <div style={{ ...fieldStyle, background: innerBg, color: text, minHeight: 22, whiteSpace: 'pre-wrap', textAlign: 'center' }}>{reason || '—'}</div>
+        ) : (<>
         <textarea value={reason} onChange={e => setReason(e.target.value)} rows={2}
           placeholder="例：お客様対応のため"
           style={{ ...fieldStyle, resize: 'vertical' }} />
@@ -1241,11 +1340,30 @@ const OvertimeForm: React.FC<{
             )}
           </div>
         )}
+        </>)}
       </div>
+
+      {/* 予定から変わった理由（実績報告フェーズで差分がある時だけ必須。残業なし＝通常どおりは理由不要） */}
+      {isReportPhase && !fullDay && hasChanges && !isPureZero && (
+        <div style={{ marginBottom: 12, background: isDark ? '#3a2c12' : '#fff8e1', border: `1px solid ${isDark ? '#7a5a1e' : '#ffe0a3'}`, borderRadius: 8, padding: '10px 12px' }}>
+          <div style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#ffcf87' : '#8a6d1a', marginBottom: 6 }}>
+            予定から変わっています（{changedAxes.join('・')}）
+          </div>
+          <span style={{ ...labelStyle, color: isDark ? '#ffcf87' : '#8a6d1a' }}>予定から変わった理由 <span style={{ color: '#dc3545' }}>*必須</span></span>
+          <textarea value={changeReason} onChange={e => setChangeReason(e.target.value)} rows={2}
+            placeholder="例：お客様対応が長引いたため"
+            style={{ ...fieldStyle, resize: 'vertical' }} />
+        </div>
+      )}
 
       {/* 申請先 */}
       <div style={{ marginBottom: 16 }}>
-        <span style={labelStyle}>申請先{req}</span>
+        <span style={labelStyle}>申請先{isReportPhase ? '' : req}</span>
+        {isReportPhase && !fullDay ? (
+          <div style={{ ...fieldStyle, background: innerBg, color: text, minHeight: 22, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {reviewerId === SELF_REVIEW_VALUE ? '自己受理（自分で確認）' : (editTarget?.reviewer?.name ?? reviewers.find(rv => rv.id === reviewerId)?.name ?? '')}
+          </div>
+        ) : (
         <select value={reviewerId} onChange={e => setReviewerId(e.target.value)} style={fieldStyle}>
           <option value="">選択してください</option>
           {reviewers
@@ -1256,6 +1374,7 @@ const OvertimeForm: React.FC<{
             ))}
           {canSelfReview && !(fullDay && fullDayType === 'absence') && <option value={SELF_REVIEW_VALUE}>自己受理（自分で確認する）</option>}
         </select>
+        )}
         {fullDay && fullDayType === 'absence' && (
           <p style={{ margin: '6px 0 0', fontSize: 12, color: subText }}>欠勤はマネージャー以上の受理が必要です（自己受理はできません）</p>
         )}
@@ -1271,7 +1390,7 @@ const OvertimeForm: React.FC<{
       {!showConfirm ? (
         <button onClick={handleSubmit} disabled={saving}
           style={{ width: '100%', padding: '12px 0', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 'bold', background: '#28a745', color: '#fff' }}>
-          {isReportPhase ? '実績を報告する' : isResubmit ? '再提出する' : mode === 'advance' ? '事前申請する' : '報告する'}
+          {isReportPhase ? (isPureZero ? '残業なしで報告する（確定）' : hasChanges ? '実績を報告する（変更あり）' : '実績を報告する（予定どおり）') : isResubmit ? '再提出する' : mode === 'advance' ? '事前申請する' : '報告する'}
         </button>
       ) : (
         <div style={{ background: innerBg, borderRadius: 10, padding: '12px 14px' }}>
@@ -1538,6 +1657,37 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
     fetchOwn();
   };
 
+  // 取消して、その内容を下書きにコピー→新規フォームを開く（間違えて出した申請を作り直す動線）
+  const cancelAndCopy = async (r: OvertimeReport) => {
+    setActingId(r.id);
+    setActionError('');
+    const res = await callApproveFunction(r.id, 'cancel');
+    if (!res.ok) { setActionError('取消に失敗しました：' + (res.error ?? '')); setActingId(null); return; }
+    const segPhase = (r.segments ?? []).some(s => s.phase === 'actual') ? 'actual' : 'planned';
+    const segs = (r.segments ?? []).filter(s => s.phase === segPhase).sort((a, b) => a.seg_no - b.seg_no);
+    const draftCopy: FormDraft = {
+      mode: r.is_post_hoc ? 'posthoc' : 'advance',
+      date: r.work_date,
+      segments: segs.length > 0 ? segs.map(s => ({ start: toTimeInputValue(s.start_min), end: toTimeInputValue(s.end_min) })) : [{ start: '', end: '' }],
+      breakManual: r.break_manual ?? false,
+      breakManualMin: (r.break_manual && r.break_minutes != null) ? String(r.break_minutes) : '',
+      reason: r.reason ?? '',
+      location: (r.location && !r.location.includes('→')) ? r.location : '',
+      locationCustom: '',
+      reviewerId: (r.reviewer_id && r.reviewer_id !== user.id) ? r.reviewer_id : '',
+      normOverride: r.normal_shift?.manual_override ?? false,
+      normStart: r.normal_shift?.start_time ? fmtTime(r.normal_shift.start_time) : '',
+      normEnd: r.normal_shift?.end_time ? fmtTime(r.normal_shift.end_time) : '',
+    };
+    saveDraft(DRAFT_KEYS.overtime, draftCopy);
+    setCancelTargetId(null);
+    setActingId(null);
+    setEditTarget(null);
+    setTab('form');
+    window.scrollTo({ top: 0 });
+    fetchOwn();
+  };
+
   // ---- 受理（確認者）。旧 attendance_exceptions 連携は gcal-sync(action:'sync') に置き換え済み ----
   const doApprove = async (r: OvertimeReport) => {
     setActingId(r.id);
@@ -1709,6 +1859,14 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                   )}
                 </div>
 
+                {r.change_reason && (
+                  <div style={{ background: isDark ? '#3a2c12' : '#fff8e1', border: `1px solid ${isDark ? '#7a5a1e' : '#ffe0a3'}`, borderRadius: 8, padding: '8px 10px', marginBottom: 8 }}>
+                    <p style={{ margin: 0, fontSize: 12.5, color: isDark ? '#ffcf87' : '#8a6d1a', lineHeight: 1.7 }}>
+                      <b>予定から変わった理由：</b>{r.change_reason}
+                    </p>
+                  </div>
+                )}
+
                 {legal && (
                   <div style={{ background: isDark ? '#4a3a10' : '#fff8e1', border: '1px solid #f59e0b', borderRadius: 8, padding: '8px 10px', marginBottom: 8 }}>
                     <p style={{ margin: 0, fontSize: 12, color: isDark ? '#ffd54f' : '#856404', lineHeight: 1.7 }}>
@@ -1766,7 +1924,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
   return (
     <div style={{ maxWidth: 600, margin: '0 auto', padding: '16px 16px 40px' }}>
       <div>
-        <h2 style={{ textAlign: 'center', margin: '12px 0 16px', fontSize: 20, fontWeight: 'bold', color: isDark ? '#fff' : '#333' }}>⏱ 残業・時間管理</h2>
+        <h2 style={{ textAlign: 'center', margin: '12px 0 16px', fontSize: 20, fontWeight: 'bold', color: isDark ? '#fff' : '#333' }}>🕐 残業・時間管理</h2>
 
         {/* このページの説明（他ページと同様式） */}
         <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '12px 14px', marginBottom: 16, textAlign: 'left' }}>
@@ -2019,10 +2177,13 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                               {isFullDay && '終日　'}
                               {isFullDay && r.furikae_origin_date && `振替元：${r.furikae_origin_date.slice(5).replace('-', '/')}（${dowLabel(r.furikae_origin_date)}）${r.furikae_origin_location ? '・' + r.furikae_origin_location : ''}　`}
                               {!isFullDay && segs.length > 0 && `${actual.length > 0 ? '実績' : '予定'}：${segmentsLabel(segs)}　`}
-                              {r.reviewer?.name && `申請先：${r.reviewer.name}さん`}
+                              {r.reviewer?.name && `申請先：${r.reviewer.name}`}
                             </p>
                             {r.status === 'returned' && r.return_comment && (
                               <p style={{ margin: '4px 0 0', fontSize: 12.5, color: isDark ? '#f5b5ba' : '#c62828' }}>差し戻し理由：{r.return_comment}</p>
+                            )}
+                            {r.change_reason && (
+                              <p style={{ margin: '4px 0 0', fontSize: 12.5, color: isDark ? '#ffcf87' : '#8a6d1a' }}>予定から変わった理由：{r.change_reason}</p>
                             )}
                           </>
                         )}
@@ -2037,36 +2198,62 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                           <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>🔒 給与計算が始まっているため（毎月20日以降）、取消は管理者に依頼してください</p>
                         )}
                         {(canReport || canResubmit || canCancel) && (
-                          <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                          <div style={{ marginTop: 10 }}>
+                            {/* 要報告：実績を報告するを主役に。残業ゼロも報告できる旨を案内 */}
                             {canReport && (
-                              <button onClick={() => { setEditTarget(r); setTab('form'); window.scrollTo({ top: 0 }); }}
-                                style={{ flex: 2, minWidth: 160, padding: '9px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 'bold', background: '#28a745', color: '#fff' }}>
-                                実績を報告する
-                              </button>
+                              <>
+                                <button onClick={() => { setEditTarget(r); setTab('form'); window.scrollTo({ top: 0 }); }}
+                                  style={{ width: '100%', padding: '12px 0', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', background: '#28a745', color: '#fff' }}>
+                                  実績を報告する
+                                </button>
+                                <p style={{ margin: '6px 0 0', fontSize: 11.5, color: subText, textAlign: 'center', lineHeight: 1.6 }}>
+                                  残業が無かった日も、こちらから「残業なし」で報告できます
+                                </p>
+                              </>
                             )}
                             {canResubmit && (
                               <button onClick={() => { setEditTarget(r); setTab('form'); window.scrollTo({ top: 0 }); }}
-                                style={{ flex: 2, minWidth: 120, padding: '9px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>
+                                style={{ width: '100%', padding: '11px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>
                                 修正して再提出
                               </button>
                             )}
                             {canCancel && (
                               cancelTargetId === r.id ? (
-                                <div style={{ flex: 1, display: 'flex', gap: 6, minWidth: 180 }}>
-                                  <button onClick={() => doCancel(r)} disabled={actingId === r.id}
-                                    style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', background: '#dc3545', color: '#fff' }}>
-                                    取消を確定
-                                  </button>
-                                  <button onClick={() => setCancelTargetId(null)}
-                                    style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12.5, background: 'transparent', color: subText }}>
-                                    やめる
+                                <div style={{ marginTop: 10 }}>
+                                  <p style={{ margin: '0 0 8px', fontSize: 11.5, color: subText, background: innerBg, borderRadius: 8, padding: '8px 10px', lineHeight: 1.7 }}>
+                                    その日は<b style={{ color: text }}>出勤しませんでしたか？</b> 残業が無かっただけなら「実績を報告する」へ（残業ゼロで報告できます）。間違えて出した申請もこちらで取消できます。
+                                  </p>
+                                  <div style={{ display: 'flex', gap: 6 }}>
+                                    <button onClick={() => doCancel(r)} disabled={actingId === r.id}
+                                      style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', background: '#dc3545', color: '#fff' }}>
+                                      取消を確定
+                                    </button>
+                                    <button onClick={() => setCancelTargetId(null)}
+                                      style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12.5, background: 'transparent', color: subText }}>
+                                      やめる
+                                    </button>
+                                  </div>
+                                  <button onClick={() => cancelAndCopy(r)} disabled={actingId === r.id}
+                                    style={{ width: '100%', marginTop: 6, padding: '9px 0', borderRadius: 8, border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', background: isDark ? '#243447' : '#e8f4fd', color: isDark ? '#90caf9' : '#1565c0' }}>
+                                    取消して、この内容で作り直す
                                   </button>
                                 </div>
                               ) : (
-                                <button onClick={() => setCancelTargetId(r.id)}
-                                  style={{ flex: 1, minWidth: 70, padding: '9px 0', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 13, background: 'transparent', color: subText }}>
-                                  取消
-                                </button>
+                                canReport ? (
+                                  // 要報告カードでは取消を控えめに（中央・小さめ）。主役は実績報告。
+                                  <div style={{ textAlign: 'center', marginTop: 10 }}>
+                                    <button onClick={() => setCancelTargetId(r.id)}
+                                      style={{ padding: '6px 16px', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12, background: 'transparent', color: subText }}>
+                                      この申請を取消する
+                                    </button>
+                                  </div>
+                                ) : (
+                                  // 未来分・未受理：取消が唯一の操作なので通常の押しやすいボタン
+                                  <button onClick={() => setCancelTargetId(r.id)}
+                                    style={{ width: '100%', marginTop: 10, padding: '9px 0', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 13, background: 'transparent', color: subText }}>
+                                    取消
+                                  </button>
+                                )
                               )
                             )}
                           </div>
@@ -2543,12 +2730,15 @@ const ReadonlyReportCard: React.FC<{
               <>
                 {r.reason && `理由：${r.reason}`}
                 {r.reason && r.reviewer?.name && '　／　'}
-                {r.reviewer?.name && `申請先：${r.reviewer.name}さん`}
+                {r.reviewer?.name && `申請先：${r.reviewer.name}`}
               </>
             )}
           </p>
           {r.status === 'returned' && r.return_comment && (
             <p style={{ margin: '4px 0 0', fontSize: 12.5, color: isDark ? '#f5b5ba' : '#c62828' }}>差し戻し理由：{r.return_comment}</p>
+          )}
+          {r.change_reason && (
+            <p style={{ margin: '4px 0 0', fontSize: 12.5, color: isDark ? '#ffcf87' : '#8a6d1a' }}>予定から変わった理由：{r.change_reason}</p>
           )}
         </>
       )}
