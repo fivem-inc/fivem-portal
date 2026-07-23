@@ -7979,3 +7979,40 @@ grill-me→モック承認→サブエージェント2体レビュー（UI/UX＋
 - git add前に git status 目視。AGENTS.md はコミットに含めない。
 - alert/confirm/.catch 禁止（インライン確認・緑カード）。認証はAuthContext一元化。文言「承認→受理」「却下→差し戻し」。RLS管理者判定は `(auth.jwt()->'app_metadata'->>'role')='admin'`。
 - UI文言/配色/新機能/設計判断は案提示→承認後。大規模改修はUI/UX＋シニアEng 2体レビュー。専門用語は都度かみ砕いて説明。
+
+---
+
+## ✅ 2026-07-23（続き）休暇・残業・勤務変更・カレンダー連携レビュー＋ブラウザダイアログ全廃
+
+### 経緯
+ユーザー依頼で「休暇・残業・勤務変更・カレンダー表示の連携/表示/フロー」を UI/UXデザイナー＋シニアEng の2体サブエージェントでレビュー。指摘を一問一答で確認しながら順に修正。その後「他ファイルの alert/confirm も直す」→最終的に**コードベース全体の `alert()`/`window.confirm()`/`prompt()` を全廃**。
+
+### Part 1：レビュー指摘の修正（本番反映は①のみ、他はpush待ち）
+1. **① gcal-sync に認証ゲート追加（本番デプロイ済）**：`config.toml` を `verify_jwt=true`、関数先頭で「サービスキー or ログイン済みユーザー」以外を401拒否。無認証の外部からのカレンダー注入/削除を封鎖（真実源泉テーブルはRLSで無事、被害はカレンダー汚染のみだった）。curl で401を確認済み。クライアントは全て `supabase.functions.invoke`（ユーザートークン自動付与）、サーバー間は overtime-approve がサービスキー Bearer で通過。
+2. **③ 管理画面の調整休受理フロー統一**（`admin/LeaveRequestsTab.tsx`）：受理ページは調整休を step2_pending→approved で完了させるのに、管理画面は経理・社長を余分に通していた。`isChosei` 分岐を追加し受理ページと一致。
+3. **④ 休暇受理に二重受理防止（楽観ロック）**（`LeaveApprovals.tsx`×3経路＋`LeaveRequestsTab.tsx`）：`update(...).eq('status', 前状態).select('id')` で0件なら中断（受理ページはアンバーバナー、管理画面は⚠️`setSuccessMsg`）。同時受理・二度押しの通知/メール/Slack重複を防止。
+4. **⑤ 残業「見込み合計」の調整休二重マイナス修正**（`OvertimePage.tsx` computeBalance）：`plannedDelta` に確定合計と同じ `!isDupChosei` を適用。確定合計は元から正しく無影響。
+5. **⑦ 承認系文言の統一**（ユーザー確定）：ホームバナーは全て「確認依頼」に統一（休暇・備品「承認依頼」→「確認依頼」）、管理画面の休暇説明は「承認→受理」。＝「承認」の語を排除。勤務変更/残業/注意事項の一部はユーザー指示で現状維持。
+6. **⑧ 休暇申請フォームの入力チェックをインライン化**（`LeaveRequest.tsx`）：送信時7つのalertを廃止し、足りない項目をまとめて赤バナーで一覧表示＋申請先select・種別input・休暇日ラベルを赤ハイライト（入力で解除）。実装前に visualize でBefore/Afterモック提示→承認。
+- **②⑥ 保留**：時間外調整休/振替休日/調整遅出・早退の入口が休暇ページと残業ページに二重に存在（＝同日カレンダー2件も同根）。残業の全体公開時に「休暇側を正社員に非表示にする一本化」でまとめて解消する既存ロードマップ項目。今回は触らず。
+
+### Part 2：alert/confirm/prompt 全廃（70ヶ所・16ファイル）
+既存の「alert/confirm禁止」ルールに従い、コードベース全体を掃除。ファイルごとにビルド確認しながら段階コミット。
+- **共通パターン**：確認系＝コンポーネント/Provider内に `confirmDialog` state（`{message, onConfirm}`）＋fixedオーバーレイの「はい/キャンセル」ダイアログを1つ用意し使い回す。エラー/情報＝赤バナー・fixedトースト・管理系は `setSuccessMsg('⚠ …')`（3秒自動消え）。成功＝緑カード。
+- **入力系(prompt)**：`AdminPanelContext` に `promptDialog` state（`{message, placeholder, confirmLabel, requireValue, onSubmit}`）＋テキスト入力ダイアログ。`requireValue` 一致時のみボタン有効（削除の「削除」型入力確認を再現）。却下理由入力にも使用。
+- **対象**：休暇3ファイル（LeaveApprovals/LeaveRequest/admin/LeaveRequestsTab）、NotificationsTab、BoardSettingsTab、App(Dashboard)、SignIn、GroupsTab、TripReportsTab、BoardPage、ShiftReportsTab、FeaturePermissionsTab、LeaderAssignmentsTab、BusinessTripReport、**AdminPanelContext（alert27+confirm10+prompt2＝39）**、AuthContext（メール変更完了→緑トースト）、useExpenses（却下通知→`rejectionNotice` を返しApp側でモーダル表示）。
+- **⚠️ハマり所（重要）**：`AdminPanelContext` の handler を「confirmをラップして非async化」すると、Context型が `=> Promise<void>` 宣言のため `void` 不一致でtscエラーになる。→ **外側関数に `async` を戻して型を合わせた**（実処理は onConfirm 内なので動作同じ）。同様の変換をする時は型定義側 or async維持のどちらかで揃えること。
+- `alert(` → `setSuccessMsg(` の27件一括はテキスト置換で対応（`confirm(` は別トークンなので無影響）。※Python不可の環境だったため sed/Edit を使用。
+
+### 現在の状態・注意
+- **本番反映済みは①（gcal-sync エッジファンクション）のみ**。他は全てローカルコミット→**本セッションのpushで初めて本番反映**（Vercel自動デプロイ）。
+- **実機確認は未実施**（このClaude環境は fivem-portal のプレビュー起動不可）。push後 or ローカル `npm run dev` で要確認。
+- 共通ダイアログはコンポーネントごとにローカル定義（意図的に共通コンポーネント化していない）。今後トーン変更時は各ファイル。
+
+### 次回やること（優先順）
+1. **実機確認（最優先）**：①各画面の削除/受理/承認/差し戻し/取消の確認ダイアログ・エラー表示・トーストがブラウザダイアログなしで正しく出るか（特に AdminPanel: ユーザー削除/退職・一括承認/却下・申請削除の「削除」入力・master options CRUD）。②休暇の二重受理防止（同時/二度押しでバナー）。③管理画面の調整休受理が1回で完了。④残業の見込み合計。⑤休暇フォームの赤バナー＋ハイライト。⑥gcal-sync が正規操作で従来通り動くか（受理でカレンダー反映）。
+2. **②⑥ 一本化**（残業全体公開とセット・保留中）：休暇ページの調整休種別＋時間調整タブを正社員に非表示にする。
+3. 前回からの繰越：残業本体/終日/振替元の実機確認、Excel校移動の再取込確認、修正依頼機能の実機テスト等（本節より前の引き継ぎ参照）。
+
+### 本セッションのコミット（14件・masterローカル）
+cfe97c1(①gcal認証) / 9350055(③) / 18ec75d(④) / 4aae44d(⑤) / 5164e9c(⑦) / 02cdb1c(⑧) / 144d563・19a0656(休暇alert/confirm) / dbd862f・be5160b・87d8c04(各タブ) / d0c52a3(AdminPanelContext39) / 2c848fb(AuthContext・useExpenses) / 35439d6(prompt2) ＋本docsコミット。
