@@ -76,6 +76,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   // パートへフォーム送信
   const [partUsers, setPartUsers] = useState<any[]>([]);
   const [partSendSuccess, setPartSendSuccess] = useState<string | null>(null);
+  const [staleMsg, setStaleMsg] = useState<string | null>(null);
 
   const isDark = useDarkMode();
   const bg = isDark ? '#343a40' : 'white';
@@ -234,7 +235,9 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     const next = nextMap[req.status] || 'manager_approved';
     const label = next === 'approved' ? '最終受理（完了）' : '受理';
     if (!window.confirm(`${label}しますか？`)) return;
-    await supabase.from('leave_requests').update({ status: next }).eq('id', req.id);
+    // 二重受理防止（楽観ロック）：自分が見た状態と一致する時だけ更新。ズレていたら中断して最新化。
+    const { data: locked } = await supabase.from('leave_requests').update({ status: next }).eq('id', req.id).eq('status', req.status).select('id');
+    if (!locked || locked.length === 0) { setStaleMsg('この申請は他の受理者が先に処理したため、最新の状態に更新しました。'); fetchRequests(); return; }
 
     if (req.status === 'step2_pending') {
       // マネージャー受理確定：カレンダー書き込み＋受理通知（共通処理）
@@ -257,7 +260,9 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     const isChosei = req.leave_type === '調整休';
     const next = isChosei ? 'approved' : 'manager_approved';
     // 二人目受理者として本人を記録（CSV・履歴で誰が受理したか追えるように）
-    await supabase.from('leave_requests').update({ status: next, approver2_id: user.id }).eq('id', req.id);
+    // 二重受理防止（楽観ロック）
+    const { data: locked } = await supabase.from('leave_requests').update({ status: next, approver2_id: user.id }).eq('id', req.id).eq('status', req.status).select('id');
+    if (!locked || locked.length === 0) { setStaleMsg('この申請は他の受理者が先に処理したため、最新の状態に更新しました。'); setSelectingManagerFor(null); fetchRequests(); return; }
     await emitManagerApproved(req); // leader_approved通知は送らない（次のマネージャーがいないため）
     setSelectingManagerFor(null);
     window.dispatchEvent(new CustomEvent('leave-pending-changed'));
@@ -267,10 +272,12 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   // 一人目承認 + マネージャー指定
   const handleApproveWithManager = async () => {
     if (!selectingManagerFor || !selectedManagerId) return;
-    await supabase.from('leave_requests').update({
+    // 二重受理防止（楽観ロック）
+    const { data: locked } = await supabase.from('leave_requests').update({
       status: 'step2_pending',
       approver2_id: selectedManagerId,
-    }).eq('id', selectingManagerFor.id);
+    }).eq('id', selectingManagerFor.id).eq('status', selectingManagerFor.status).select('id');
+    if (!locked || locked.length === 0) { setStaleMsg('この申請は他の受理者が先に処理したため、最新の状態に更新しました。'); setSelectingManagerFor(null); fetchRequests(); return; }
 
     // Slack通知（リーダーが受理 → マネージャーへ）
     if (await shouldSend('leave:leader_approved', 'slack')) {
@@ -364,6 +371,14 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
           <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>✓</div>
           <span style={{ fontSize: 15, fontWeight: 'bold', color: '#166534' }}>{partSendSuccess}</span>
           <button type="button" onClick={() => setPartSendSuccess(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#166534', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
+        </div>
+      )}
+
+      {staleMsg && (
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 240, maxWidth: 320 }}>
+          <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#f59e0b', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>!</div>
+          <span style={{ fontSize: 14, fontWeight: 'bold', color: '#92400e' }}>{staleMsg}</span>
+          <button type="button" onClick={() => setStaleMsg(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#92400e', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
         </div>
       )}
 

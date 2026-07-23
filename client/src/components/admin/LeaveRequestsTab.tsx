@@ -1408,7 +1408,9 @@ const LeaveRequestsTab: React.FC = () => {
                                         const isChosei = req.leave_type === '調整休';
                                         const nextStatus: Record<string, string> = { step2_pending: isChosei ? 'approved' : 'manager_approved', manager_approved: 'admin_approved', admin_approved: 'approved' };
                                         const nextSt = nextStatus[req.status] || 'approved';
-                                        await supabase.from('leave_requests').update({ status: nextSt }).eq('id', req.id);
+                                        // 二重受理防止（楽観ロック）：自分が見た状態と一致する時だけ更新
+                                        const { data: locked } = await supabase.from('leave_requests').update({ status: nextSt }).eq('id', req.id).eq('status', req.status).select('id');
+                                        if (!locked || locked.length === 0) { setSuccessMsg('⚠ この申請は他の受理者が先に処理したため、最新の状態に更新しました'); fetchLeaveRequests(); return; }
 
                                         // マネージャー受理時にGoogleカレンダーへ書き込む
                                         if (nextSt === 'manager_approved' || nextSt === 'approved') {
