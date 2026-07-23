@@ -1423,7 +1423,7 @@ const Dashboard: React.FC = () => {
 
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const { submissions, isLoading, fetchExpenses } = useExpenses(user, isAdmin);
+  const { submissions, isLoading, fetchExpenses, rejectionNotice, clearRejectionNotice } = useExpenses(user, isAdmin);
 
   const [expenses, setExpensesState] = useState<Expense[]>([]);
   const [templateQueue, setTemplateQueue] = useState<Expense[]>([]);
@@ -1538,6 +1538,16 @@ const Dashboard: React.FC = () => {
           <span style={{ fontSize: 18 }}>⚠️</span>
           <span style={{ fontSize: 14, fontWeight: 'bold', color: '#92400e' }}>{templateMsg}</span>
           <button type="button" onClick={() => setTemplateMsg(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#92400e', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
+        </div>
+      )}
+      {rejectionNotice && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={clearRejectionNotice}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#fff5f5', border: '1px solid #f5b5b5', borderRadius: 12, padding: '20px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)', maxWidth: 360, width: '100%' }}>
+            <p style={{ fontSize: 14, color: '#a32d2d', margin: '0 0 16px', lineHeight: 1.7, whiteSpace: 'pre-line' }}>{rejectionNotice}</p>
+            <div style={{ textAlign: 'right' }}>
+              <button type="button" onClick={clearRejectionNotice} style={{ padding: '8px 18px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>閉じる</button>
+            </div>
+          </div>
         </div>
       )}
       {encAnswerModal}

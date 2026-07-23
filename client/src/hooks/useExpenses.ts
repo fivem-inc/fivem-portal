@@ -7,12 +7,15 @@ interface UseExpensesReturn {
   pendingApprovals: PendingApproval[];
   isLoading: boolean;
   fetchExpenses: () => Promise<void>;
+  rejectionNotice: string | null;      // 却下通知（alert廃止・消費側でトースト表示）
+  clearRejectionNotice: () => void;
 }
 
 export const useExpenses = (user: AuthUser | null, isAdmin: boolean): UseExpensesReturn => {
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [rejectionNotice, setRejectionNotice] = useState<string | null>(null);
 
   const fetchExpenses = useCallback(async () => {
     if (!user) return;
@@ -74,7 +77,7 @@ export const useExpenses = (user: AuthUser | null, isAdmin: boolean): UseExpense
               return `申請日: ${new Date(submission.created_at).toLocaleDateString('ja-JP')}\n却下日: ${rejectedDate}\n却下理由: ${reason}`;
             });
             
-            alert(`交通費申請が却下されました\n\n${messages.join('\n\n---\n\n')}\n\n詳細は申請履歴で確認できます。`);
+            setRejectionNotice(`交通費申請が却下されました\n\n${messages.join('\n\n---\n\n')}\n\n詳細は申請履歴で確認できます。`);
             
             // チェック時刻を更新
             const lastCheckKey = `lastRejectionCheck_${user.id}`;
@@ -99,6 +102,8 @@ export const useExpenses = (user: AuthUser | null, isAdmin: boolean): UseExpense
     submissions,
     pendingApprovals,
     isLoading,
-    fetchExpenses
+    fetchExpenses,
+    rejectionNotice,
+    clearRejectionNotice: () => setRejectionNotice(null)
   };
 };

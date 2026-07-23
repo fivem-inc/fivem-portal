@@ -24,6 +24,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const [previewRole, setPreviewRole] = useState<string | null>(null);
   const [blockedMessage, setBlockedMessage] = useState<string | null>(null);
+  const [emailChangeMsg, setEmailChangeMsg] = useState<string | null>(null); // メール変更完了のインライン通知（alert廃止）
 
   // is_active=false（退職済み・承認待ち）・プロフィール削除済みのユーザーは、
   // ログイン状態として扱う前に弾く
@@ -84,7 +85,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (currentUser && newUser && currentUser.email !== newUser.email) {
           // メールアドレスが変更された場合のみ処理
           console.log('📧 メールアドレス変更検知:', currentUser.email, '→', newUser.email);
-          alert('メールアドレスの変更が完了しました！新しいメールアドレスでログインし直してください。');
+          setEmailChangeMsg('メールアドレスの変更が完了しました。新しいメールアドレスでログインし直してください。');
           
           // 3秒後にログアウトしてサインイン画面に移動
           setTimeout(async () => {
@@ -119,6 +120,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   return (
     <AuthContext.Provider value={{ user, previewRole, setPreviewRole, blockedMessage, clearBlockedMessage: () => setBlockedMessage(null) }}>
+      {emailChangeMsg && (
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 100000, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '20px 26px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)', maxWidth: 340, textAlign: 'center' }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>✅</div>
+          <p style={{ fontSize: 14, fontWeight: 'bold', color: '#166534', margin: 0, lineHeight: 1.6 }}>{emailChangeMsg}</p>
+        </div>
+      )}
       {loading ? <BootSkeleton /> : children}
     </AuthContext.Provider>
   );
