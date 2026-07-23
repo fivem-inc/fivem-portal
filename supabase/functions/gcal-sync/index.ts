@@ -45,7 +45,7 @@ const OVERTIME_TYPES: Record<string, { label: string; colorId: string; sync: boo
   early_leave:     { label: '早退',        colorId: '2',  sync: false, priority: 8 },
   // 終日種別（単独付与・時刻なしタイトル）。現状の休暇/欠勤の見た目を維持: 調整休=「調整休」・欠勤=「休み」・colorId 4
   chosei_off:      { label: '調整休',      colorId: '4',  sync: true,  priority: 9 },
-  furikae_off:     { label: '調整休',      colorId: '4',  sync: true,  priority: 10 },
+  furikae_off:     { label: '振休',        colorId: '4',  sync: true,  priority: 10 },
   absence:         { label: '休み',        colorId: '4',  sync: true,  priority: 11 },
 }
 
