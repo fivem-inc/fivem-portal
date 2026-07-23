@@ -320,6 +320,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const [renamingExpenseTypeLabelId, setRenamingExpenseTypeLabelId] = useState<number | null>(null);
   const [renamingExpenseTypeLabelValue, setRenamingExpenseTypeLabelValue] = useState('');
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null); // 共通インライン確認（window.confirm廃止）
 
   useEffect(() => {
     if (successMsg) { const t = setTimeout(() => setSuccessMsg(null), 3000); return () => clearTimeout(t); }
@@ -354,28 +355,29 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const handleAddWorkplace = async () => {
     const name = newWorkplaceName.trim();
     if (!name) return;
-    if (workplaceOptions.some(w => w.value === name)) { alert('同じ名前の行き先がすでに存在します'); return; }
+    if (workplaceOptions.some(w => w.value === name)) { setSuccessMsg('同じ名前の行き先がすでに存在します'); return; }
     const maxOrder = workplaceOptions.reduce((m, w) => Math.max(m, w.sort_order), 0);
     const { error } = await supabase.from('master_options').insert({ category: 'workplace', value: name, sort_order: maxOrder + 1 });
-    if (error) { alert('追加に失敗しました: ' + error.message); return; }
+    if (error) { setSuccessMsg('追加に失敗しました: ' + error.message); return; }
     setNewWorkplaceName('');
     await fetchLocationEditor();
   };
 
   const handleDeleteWorkplace = async (id: number) => {
-    if (!window.confirm('この行き先を削除しますか？')) return;
-    const { error } = await supabase.from('master_options').delete().eq('id', id);
-    if (error) { alert('削除に失敗しました: ' + error.message); return; }
-    await fetchLocationEditor();
+    setConfirmDialog({ message: 'この行き先を削除しますか？', onConfirm: async () => {
+      const { error } = await supabase.from('master_options').delete().eq('id', id);
+      if (error) { setSuccessMsg('削除に失敗しました: ' + error.message); return; }
+      await fetchLocationEditor();
+    } });
   };
 
   const handleAddExpenseType = async () => {
     const name = newExpenseTypeName.trim();
     if (!name) return;
-    if (customExpenseTypes.some(t => t.value === name)) { alert('同じ名前の区分がすでに存在します'); return; }
+    if (customExpenseTypes.some(t => t.value === name)) { setSuccessMsg('同じ名前の区分がすでに存在します'); return; }
     const maxOrder = customExpenseTypes.reduce((m, t) => Math.max(m, t.sort_order), 0);
     const { error } = await supabase.from('master_options').insert({ category: 'expense_type', value: name, sort_order: maxOrder + 1 });
-    if (error) { alert('追加に失敗しました: ' + error.message); return; }
+    if (error) { setSuccessMsg('追加に失敗しました: ' + error.message); return; }
     setNewExpenseTypeName('');
     await fetchLocationEditor();
   };
@@ -384,41 +386,43 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     const newLabel = renamingExpenseTypeLabelValue.trim();
     if (!newLabel) { setRenamingExpenseTypeLabelId(null); return; }
     const { error } = await supabase.from('master_options').update({ value: newLabel }).eq('id', id);
-    if (error) { alert('更新に失敗しました: ' + error.message); return; }
+    if (error) { setSuccessMsg('更新に失敗しました: ' + error.message); return; }
     setRenamingExpenseTypeLabelId(null);
     setRenamingExpenseTypeLabelValue('');
     await fetchLocationEditor();
   };
 
   const handleDeleteExpenseType = async (id: number) => {
-    if (!window.confirm('この区分を削除しますか？')) return;
-    const { error } = await supabase.from('master_options').delete().eq('id', id);
-    if (error) { alert('削除に失敗しました: ' + error.message); return; }
-    await fetchLocationEditor();
+    setConfirmDialog({ message: 'この区分を削除しますか？', onConfirm: async () => {
+      const { error } = await supabase.from('master_options').delete().eq('id', id);
+      if (error) { setSuccessMsg('削除に失敗しました: ' + error.message); return; }
+      await fetchLocationEditor();
+    } });
   };
 
   const handleAddCategory = async () => {
     const name = newCategoryName.trim();
     if (!name) return;
-    if (tripCategories.some(c => c.value === name)) { alert('同じ名前の区分がすでに存在します'); return; }
+    if (tripCategories.some(c => c.value === name)) { setSuccessMsg('同じ名前の区分がすでに存在します'); return; }
     const maxOrder = tripCategories.reduce((m, c) => Math.max(m, c.sort_order), 0);
     const { error } = await supabase.from('master_options').insert({ category: 'trip_category', value: name, sort_order: maxOrder + 1 });
-    if (error) { alert('追加に失敗しました: ' + error.message); return; }
+    if (error) { setSuccessMsg('追加に失敗しました: ' + error.message); return; }
     setNewCategoryName('');
     await fetchLocationEditor();
   };
 
   const handleDeleteCategory = async (id: number, name: string) => {
-    if (!window.confirm(`区分「${name}」と、その場所リストをすべて削除しますか？`)) return;
-    await supabase.from('master_options').delete().eq('id', id);
-    await supabase.from('master_options').delete().eq('category', `trip_location_${name}`);
-    await fetchLocationEditor();
+    setConfirmDialog({ message: `区分「${name}」と、その場所リストをすべて削除しますか？`, onConfirm: async () => {
+      await supabase.from('master_options').delete().eq('id', id);
+      await supabase.from('master_options').delete().eq('category', `trip_location_${name}`);
+      await fetchLocationEditor();
+    } });
   };
 
   const handleRenameCategory = async (id: number, oldName: string) => {
     const newName = renamingCategoryValue.trim();
     if (!newName || newName === oldName) { setRenamingCategoryId(null); return; }
-    if (tripCategories.some(c => c.value === newName && c.id !== id)) { alert('同じ名前の区分がすでに存在します'); return; }
+    if (tripCategories.some(c => c.value === newName && c.id !== id)) { setSuccessMsg('同じ名前の区分がすでに存在します'); return; }
     await supabase.from('master_options').update({ value: newName }).eq('id', id);
     await supabase.from('master_options').update({ category: `trip_location_${newName}` }).eq('category', `trip_location_${oldName}`);
     setRenamingCategoryId(null);
@@ -432,16 +436,17 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     const cat = `trip_location_${categoryName}`;
     const maxOrder = locationOptions.filter(o => o.category === cat).reduce((m, o) => Math.max(m, o.sort_order), 0);
     const { error } = await supabase.from('master_options').insert({ category: cat, value, sort_order: maxOrder + 1 });
-    if (error) { alert('追加に失敗しました: ' + error.message); return; }
+    if (error) { setSuccessMsg('追加に失敗しました: ' + error.message); return; }
     setNewLocationByCategory(prev => ({ ...prev, [categoryName]: '' }));
     await fetchLocationEditor();
   };
 
   const handleDeleteLocation = async (id: number) => {
-    if (!window.confirm('この場所を削除しますか？')) return;
-    const { error } = await supabase.from('master_options').delete().eq('id', id);
-    if (error) { alert('削除に失敗しました: ' + error.message); return; }
-    await fetchLocationEditor();
+    setConfirmDialog({ message: 'この場所を削除しますか？', onConfirm: async () => {
+      const { error } = await supabase.from('master_options').delete().eq('id', id);
+      if (error) { setSuccessMsg('削除に失敗しました: ' + error.message); return; }
+      await fetchLocationEditor();
+    } });
   };
 
   // フィルタリング関数
@@ -469,13 +474,13 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
         .order('sort_order', { ascending: true, nullsFirst: false });
       if (error) {
         console.error('ユーザー取得エラー:', error);
-        alert('ユーザー情報の取得に失敗しました: ' + error.message);
+        setSuccessMsg('ユーザー情報の取得に失敗しました: ' + error.message);
       } else {
         setUsers(data || []);
       }
     } catch (error) {
       console.error('ユーザー取得エラー:', error);
-      alert('ユーザー情報の取得中にエラーが発生しました');
+      setSuccessMsg('ユーザー情報の取得中にエラーが発生しました');
     }
     setLoadingUsers(false);
   }, []);
@@ -536,7 +541,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     try {
       const { error: profileError } = await supabase.from('profiles').update({ name: editName.trim() || null }).eq('id', userId);
       if (profileError) {
-        alert('名前の更新に失敗しました: ' + profileError.message);
+        setSuccessMsg('名前の更新に失敗しました: ' + profileError.message);
       } else {
         try {
           await supabase.rpc('update_user_metadata', {
@@ -550,7 +555,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
         fetchUsers();
       }
     } catch (error) {
-      alert('名前の更新中にエラーが発生しました: ' + error);
+      setSuccessMsg('名前の更新中にエラーが発生しました: ' + error);
     }
   }, [editName, fetchUsers]);
 
@@ -558,15 +563,17 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
 
   const handleToggleActive = useCallback(async (userId: string, currentIsActive: boolean) => {
     const action = currentIsActive ? '退職済みにします' : '現役に戻します';
-    if (!window.confirm(`このユーザーを${action}。よろしいですか？`)) return;
-    const { error } = await supabase.from('profiles').update({ is_active: !currentIsActive }).eq('id', userId);
-    if (error) { alert('更新に失敗しました: ' + error.message); } else { fetchUsers(); }
+    setConfirmDialog({ message: `このユーザーを${action}。よろしいですか？`, onConfirm: async () => {
+      const { error } = await supabase.from('profiles').update({ is_active: !currentIsActive }).eq('id', userId);
+      if (error) { setSuccessMsg('更新に失敗しました: ' + error.message); } else { fetchUsers(); }
+    } });
   }, [fetchUsers]);
 
   const handleDeleteUser = useCallback(async (userId: string, userName: string) => {
-    if (!window.confirm(`「${userName}」を完全に削除します。ログイン情報も含めて削除され、この操作は取り消せません。よろしいですか？`)) return;
-    const { data, error } = await supabase.functions.invoke('delete-user', { body: { userId } });
-    if (error || data?.error) { alert('削除に失敗しました: ' + (data?.error || error?.message)); } else { setSuccessMsg('削除しました'); fetchUsers(); }
+    setConfirmDialog({ message: `「${userName}」を完全に削除します。ログイン情報も含めて削除され、この操作は取り消せません。よろしいですか？`, onConfirm: async () => {
+      const { data, error } = await supabase.functions.invoke('delete-user', { body: { userId } });
+      if (error || data?.error) { setSuccessMsg('削除に失敗しました: ' + (data?.error || error?.message)); } else { setSuccessMsg('削除しました'); fetchUsers(); }
+    } });
   }, [fetchUsers]);
 
   const handleApprovePendingUser = useCallback(async (userId: string, employmentType: string, roleTitle: string) => {
@@ -883,29 +890,30 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     else if (newStatus === 'rejected') { updateData.rejected_at = new Date().toISOString(); updateData.approved_at = null; updateData.rejected_reason = reason || null; }
     else { updateData.approved_at = null; updateData.rejected_at = null; updateData.rejected_reason = null; }
     const { error } = await supabase.from('expenses').update(updateData).eq('id', id);
-    if (error) { alert('更新に失敗しました: ' + error.message); }
+    if (error) { setSuccessMsg('更新に失敗しました: ' + error.message); }
     else { setSuccessMsg(`ステータスを「${newStatus === 'pending' ? '申請中' : newStatus === 'approved' ? '承認' : '却下'}」に更新しました`); onRefresh(); }
   }, [onRefresh]);
 
   const handleBulkApproval = useCallback(async (newStatus: 'approved' | 'rejected') => {
-    if (filteredPending.length === 0) { alert('承認待ちの申請がありません。'); return; }
+    if (filteredPending.length === 0) { setSuccessMsg('承認待ちの申請がありません。'); return; }
     const confirmMessage = newStatus === 'approved' ? `${filteredPending.length}件の申請をすべて承認しますか？` : `${filteredPending.length}件の申請をすべて却下しますか？`;
-    if (!window.confirm(confirmMessage)) return;
-    let reason = '';
-    if (newStatus === 'rejected') reason = prompt('却下理由を入力してください:') || '';
-    let successCount = 0, errorCount = 0;
-    for (const approval of filteredPending) {
-      try {
-        const updateData: { status: string; approved_at?: string | null; rejected_at?: string | null; rejected_reason?: string | null } = { status: newStatus };
-        if (newStatus === 'approved') { updateData.approved_at = new Date().toISOString(); updateData.rejected_at = null; updateData.rejected_reason = null; }
-        else { updateData.rejected_at = new Date().toISOString(); updateData.approved_at = null; updateData.rejected_reason = reason || null; }
-        const { error } = await supabase.from('expenses').update(updateData).eq('id', approval.id);
-        if (error) errorCount++; else successCount++;
-      } catch { errorCount++; }
-    }
-    const statusText = newStatus === 'approved' ? '承認' : '却下';
-    setSuccessMsg(errorCount > 0 ? `${successCount}件の申請を${statusText}しました（${errorCount}件エラー）` : `${successCount}件の申請をすべて${statusText}しました`);
-    onRefresh();
+    setConfirmDialog({ message: confirmMessage, onConfirm: async () => {
+      let reason = '';
+      if (newStatus === 'rejected') reason = prompt('却下理由を入力してください:') || '';
+      let successCount = 0, errorCount = 0;
+      for (const approval of filteredPending) {
+        try {
+          const updateData: { status: string; approved_at?: string | null; rejected_at?: string | null; rejected_reason?: string | null } = { status: newStatus };
+          if (newStatus === 'approved') { updateData.approved_at = new Date().toISOString(); updateData.rejected_at = null; updateData.rejected_reason = null; }
+          else { updateData.rejected_at = new Date().toISOString(); updateData.approved_at = null; updateData.rejected_reason = reason || null; }
+          const { error } = await supabase.from('expenses').update(updateData).eq('id', approval.id);
+          if (error) errorCount++; else successCount++;
+        } catch { errorCount++; }
+      }
+      const statusText = newStatus === 'approved' ? '承認' : '却下';
+      setSuccessMsg(errorCount > 0 ? `${successCount}件の申請を${statusText}しました（${errorCount}件エラー）` : `${successCount}件の申請をすべて${statusText}しました`);
+      onRefresh();
+    } });
   }, [filteredPending, onRefresh]);
 
   const handleApprovalSelect = useCallback((id: string, checked: boolean) => {
@@ -918,16 +926,17 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   }, [filteredPending]);
 
   const handleApproveSelected = useCallback(async () => {
-    if (selectedForApproval.size === 0) { alert('承認する申請を選択してください。'); return; }
-    if (!window.confirm(`選択した${selectedForApproval.size}件を承認しますか？`)) return;
-    let successCount = 0, errorCount = 0;
-    for (const id of selectedForApproval) {
-      const { error } = await supabase.from('expenses').update({ status: 'approved', approved_at: new Date().toISOString(), rejected_at: null, rejected_reason: null }).eq('id', id);
-      if (error) errorCount++; else successCount++;
-    }
-    setSuccessMsg(errorCount > 0 ? `${successCount}件を承認しました（${errorCount}件エラー）` : `${successCount}件を承認しました`);
-    setSelectedForApproval(new Set());
-    onRefresh();
+    if (selectedForApproval.size === 0) { setSuccessMsg('承認する申請を選択してください。'); return; }
+    setConfirmDialog({ message: `選択した${selectedForApproval.size}件を承認しますか？`, onConfirm: async () => {
+      let successCount = 0, errorCount = 0;
+      for (const id of selectedForApproval) {
+        const { error } = await supabase.from('expenses').update({ status: 'approved', approved_at: new Date().toISOString(), rejected_at: null, rejected_reason: null }).eq('id', id);
+        if (error) errorCount++; else successCount++;
+      }
+      setSuccessMsg(errorCount > 0 ? `${successCount}件を承認しました（${errorCount}件エラー）` : `${successCount}件を承認しました`);
+      setSelectedForApproval(new Set());
+      onRefresh();
+    } });
   }, [selectedForApproval, onRefresh]);
 
   const handleIndividualReject = useCallback((id: string) => {
@@ -985,7 +994,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   }, [getVouchersForPrint]);
 
   const handlePrintPreview = useCallback(() => {
-    if (selectedForPrint.size === 0) { alert('印刷する申請を選択してください'); return; }
+    if (selectedForPrint.size === 0) { setSuccessMsg('印刷する申請を選択してください'); return; }
     setPrintData(getPaginatedVouchers());
     setShowPrintPreview(true);
   }, [selectedForPrint, getPaginatedVouchers]);
@@ -998,7 +1007,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       ));
     }
     const printWindow = window.open('', '_blank', 'width=800,height=600');
-    if (!printWindow) { alert('ポップアップがブロックされました。ポップアップを許可してから再試行してください。'); return; }
+    if (!printWindow) { setSuccessMsg('ポップアップがブロックされました。ポップアップを許可してから再試行してください。'); return; }
     const printHTML = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>交通費請求明細書</title><style>@page{size:A4 portrait;margin:5mm}*{-webkit-print-color-adjust:exact!important;color-adjust:exact!important}body{font-family:"MS Gothic","Yu Gothic",monospace;margin:0;padding:0}.print-page{page-break-before:auto;page-break-inside:avoid;page-break-after:always;width:100%;height:287mm;display:flex;flex-direction:column;justify-content:flex-start;align-items:center;padding:0;margin:0;overflow:hidden}.print-page:last-child{page-break-after:avoid}.print-voucher-grid{display:flex!important;justify-content:center;align-items:flex-start;width:100%;height:100%;margin:0;padding:2mm 0}.print-voucher{width:180mm!important;height:280mm!important;max-height:280mm!important;margin:0!important;overflow:hidden!important;border:1px solid #000!important;padding:2mm!important;page-break-inside:avoid!important;page-break-after:avoid!important;display:flex!important;flex-direction:column!important;font-family:"MS Gothic","Yu Gothic",monospace!important;color:#000!important;background:white!important;box-sizing:border-box!important}.print-voucher-header{text-align:center;font-weight:bold;margin-bottom:2mm;border-bottom:2px solid #000;padding-bottom:1mm;color:#000!important;white-space:nowrap;font-size:18pt}.print-voucher-content{display:flex;flex-direction:column}.print-voucher-row{display:flex;justify-content:space-between;margin-bottom:2mm;font-size:16pt;font-weight:bold;color:#000!important}.print-expense-list{margin:1mm 0 0 0}.print-expense-item{display:grid;grid-template-columns:12mm 30mm 1fr 30mm;gap:1mm;margin-bottom:.3mm;align-items:flex-start;font-size:12pt;min-height:8mm;color:#000!important}.print-expense-number{text-align:center;font-weight:bold;border:2px solid #000;padding:.5mm;color:#000!important;background:white;font-size:12pt}.print-expense-type{text-align:center;padding:.5mm;border:2px solid #000;color:#000!important;font-size:11pt;font-weight:bold}.print-expense-detail{padding:1mm;border:2px solid #000;color:#000!important;font-size:10pt;line-height:1.3;min-height:8mm;display:flex;flex-direction:column;justify-content:flex-start;font-weight:500}.print-expense-amount{text-align:right;padding:.5mm;border:2px solid #000;color:#000!important;font-size:14pt;font-weight:bold}.print-voucher-amount{text-align:center;font-size:20pt;font-weight:bold;margin:2mm 0 0 0;padding:3mm;border:3px solid #000;color:#000!important;background:#f0f0f0}.print-voucher-footer{display:grid;grid-template-columns:1fr 1fr;gap:8mm;font-size:14pt;font-weight:bold;margin:2mm 0 0 0;padding:2mm 0;color:#000!important}.print-voucher-footer-item{display:flex;align-items:center;gap:5mm}.print-voucher-footer-space{border-bottom:2px solid #000;height:8mm;flex:1}</style></head><body>${printData.map((page) => `<div class="print-page"><div class="print-voucher-grid">${page.vouchers.map((voucher) => `<div class="print-voucher"><div class="print-voucher-header">[交通費請求明細書] ${voucher.voucherNumber} ${voucher.pageInfo || ''}</div><div class="print-voucher-content"><div class="print-voucher-row"><span>申請者: ${voucher.submitterName}</span><span>申請日: ${voucher.submittedDate}</span></div><div class="print-expense-list">${Array.from({ length: 12 }, (_, i) => { const expense = voucher.expenses[i]; return `<div class="print-expense-item"><div class="print-expense-number">${expense ? i + 1 : ''}</div><div class="print-expense-type">${expense ? (expense.type === 'regular' ? '定期' : expense.type === 'business_trip' ? '出張（園指導等）' : '通勤（単発）') : ''}</div><div class="print-expense-detail">${expense ? `<div>${expense.type === 'regular' && expense.start_date && expense.end_date ? `期間:${new Date(expense.start_date).toLocaleDateString('ja-JP',{year:'numeric',month:'2-digit',day:'2-digit'})}~${new Date(expense.end_date).toLocaleDateString('ja-JP',{year:'numeric',month:'2-digit',day:'2-digit'})}` : expense.start_date ? `利用日:${new Date(expense.start_date).toLocaleDateString('ja-JP',{year:'numeric',month:'2-digit',day:'2-digit'})}` : ''}${expense.workplace ? ` 行き先:${expense.workplace}` : ''}</div><div>${expense.transportation || ''} ${expense.from_station}→${expense.to_station}</div><div>${expense.notes || ''}</div>` : ''}</div><div class="print-expense-amount">${expense ? `¥${parseInt(expense.amount || '0').toLocaleString()}` : ''}</div></div>`; }).join('')}</div><div class="print-voucher-amount">${voucher.isLastPage ? `申請合計: ¥${voucher.submissionTotal.toLocaleString()}` : `ページ小計: ¥${voucher.total.toLocaleString()}`}</div>${voucher.isLastPage && voucher.totalPages > 1 ? `<div style="font-size:12pt;text-align:center;margin-top:2mm;padding:1mm;border:1px solid #000;background:#e0e0e0;">(このページ: ¥${voucher.total.toLocaleString()})</div>` : ''}<div class="print-voucher-footer"><div class="print-voucher-footer-item"><span>承認印:</span><div class="print-voucher-footer-space"></div></div><div class="print-voucher-footer-item"><span>受付日:</span><div class="print-voucher-footer-space"></div></div></div></div></div>`).join('')}</div></div>`).join('')}</body></html>`;
     printWindow.document.write(printHTML);
     printWindow.document.close();
@@ -1046,13 +1055,14 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const handleCancelEdit = useCallback(() => { setEditingSubmissionId(null); setEditingExpenses([]); }, []);
 
   const handleSaveEdit = useCallback(async (submissionId: string) => {
-    if (!window.confirm('申請内容を更新しますか？')) return;
-    const { data: currentData } = await supabase.from('expenses').select('edit_count').eq('id', submissionId).single();
-    const currentEditCount = currentData?.edit_count || 0;
-    const updateData = { expenses_data: editingExpenses, last_edited_at: new Date().toISOString(), last_edited_by: '管理者', edit_count: currentEditCount + 1 };
-    const { error } = await supabase.from('expenses').update(updateData).eq('id', submissionId);
-    if (error) { alert('更新に失敗しました: ' + error.message); }
-    else { setSuccessMsg('申請内容を更新しました'); setEditingSubmissionId(null); setEditingExpenses([]); onRefresh(); }
+    setConfirmDialog({ message: '申請内容を更新しますか？', onConfirm: async () => {
+      const { data: currentData } = await supabase.from('expenses').select('edit_count').eq('id', submissionId).single();
+      const currentEditCount = currentData?.edit_count || 0;
+      const updateData = { expenses_data: editingExpenses, last_edited_at: new Date().toISOString(), last_edited_by: '管理者', edit_count: currentEditCount + 1 };
+      const { error } = await supabase.from('expenses').update(updateData).eq('id', submissionId);
+      if (error) { setSuccessMsg('更新に失敗しました: ' + error.message); }
+      else { setSuccessMsg('申請内容を更新しました'); setEditingSubmissionId(null); setEditingExpenses([]); onRefresh(); }
+    } });
   }, [editingExpenses, onRefresh]);
 
   const handleUpdateEditingExpense = useCallback((index: number, field: string, value: string) => {
@@ -1060,11 +1070,12 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   }, []);
 
   const handleDeleteSubmission = useCallback(async (id: string) => {
-    if (!window.confirm('本当にこの申請を削除しますか？')) return;
-    const confirmationText = prompt('削除を確定するには「削除」と入力してください。');
-    if (confirmationText !== '削除') return;
-    const { error } = await supabase.from('expenses').delete().eq('id', id);
-    if (error) { alert('削除に失敗しました: ' + error.message); } else { setSuccessMsg('申請を削除しました'); onRefresh(); }
+    setConfirmDialog({ message: '本当にこの申請を削除しますか？', onConfirm: async () => {
+      const confirmationText = prompt('削除を確定するには「削除」と入力してください。');
+      if (confirmationText !== '削除') return;
+      const { error } = await supabase.from('expenses').delete().eq('id', id);
+      if (error) { setSuccessMsg('削除に失敗しました: ' + error.message); } else { setSuccessMsg('申請を削除しました'); onRefresh(); }
+    } });
   }, [onRefresh]);
 
   const handleExportCsv = useCallback(async () => {
@@ -1073,8 +1084,8 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     if (csvStartDate) query = query.gte(dateField, `${csvStartDate}T00:00:00Z`);
     if (csvEndDate) query = query.lte(dateField, `${csvEndDate}T23:59:59Z`);
     const { data, error } = await query.order(dateField, { ascending: true });
-    if (error) { alert('CSV出力に失敗しました。'); return; }
-    if (!data || data.length === 0) { alert('承認済みの交通費がありません。'); return; }
+    if (error) { setSuccessMsg('CSV出力に失敗しました。'); return; }
+    if (!data || data.length === 0) { setSuccessMsg('承認済みの交通費がありません。'); return; }
     downloadCSV(generateCSVData(data));
     setSuccessMsg('CSVを出力しました');
   }, [csvStartDate, csvEndDate, csvDateType]);
@@ -1371,6 +1382,17 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       successMsg, setSuccessMsg,
       formatAmount, supabase, sendLeaveSlack,
     }}>
+      {confirmDialog && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 6000, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setConfirmDialog(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: isDarkMode ? '#343a40' : 'white', borderRadius: 12, padding: '22px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.25)', maxWidth: 380, width: '100%' }}>
+            <p style={{ fontSize: 15, fontWeight: 'bold', color: isDarkMode ? '#fff' : '#333', margin: '0 0 18px', lineHeight: 1.6, whiteSpace: 'pre-line' }}>{confirmDialog.message}</p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setConfirmDialog(null)} style={{ padding: '8px 18px', background: 'transparent', color: isDarkMode ? '#adb5bd' : '#666', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
+              <button onClick={() => { const cb = confirmDialog.onConfirm; setConfirmDialog(null); cb(); }} style={{ padding: '8px 18px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>実行する</button>
+            </div>
+          </div>
+        </div>
+      )}
       {children}
     </AdminPanelContext.Provider>
   );
