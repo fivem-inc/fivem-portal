@@ -56,7 +56,7 @@ export const generateCSVData = (submissions: Submission[]): string => {
         new Date(submission.created_at).toLocaleString(),
         submission.status === 'pending' ? '申請中' : submission.status === 'approved' ? '承認' : '却下',
         expense.type === 'regular' ? '定期' : expense.type === 'business_trip' ? '出張（園指導等）' : '通勤（単発）',
-        (expense.type === 'one_time' || expense.type === 'business_trip') ? (expense.start_date || '') : '',
+        expense.type !== 'regular' ? (expense.start_date || '') : '',
         expense.type === 'regular' ? `${expense.start_date || ''} ~ ${expense.end_date || ''}` : '',
         expense.transportation || '',
         expense.from_station,

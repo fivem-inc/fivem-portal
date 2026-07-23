@@ -7879,3 +7879,37 @@ grill-me→モック承認→サブエージェント2体レビュー（UI/UX＋
 - RLS管理者判定は必ず `(auth.jwt()->'app_metadata'->>'role')='admin'`。
 - UI文言/配色/新機能/設計判断は案提示→承認後に実装。大規模改修はUI/UX＋シニアEng 2体レビュー。
 - git add 前に git status 目視。AGENTS.md はコミットに含めない。DBマイグレーションはSQL Editorに全文貼付→Run。
+
+---
+
+## ✅ 2026-07-23 交通費CSVで区分「その他」の利用日が空になる不具合を修正
+
+### 症状（社内スタッフからの報告）
+- 管理画面から交通費申請をCSV出力すると、一部の行だけ「利用日」列が空になっていた。
+- 報告者は「JRを利用した日だけ日付が消える」「JR選択時のバグかも」と推測。清水先生・阿部先生の例。
+
+### 真因（データで確定）
+- 交通機関のJRは無関係。**区分＝「その他」（`type='other'`）の明細だけ**CSVの利用日が落ちていた。
+- お二人ともJR遠征（栗東体育館・上級栗東練習会などの試合）を**区分「その他」**で申請していたため、JRが共通点に見えていただけ。データ自体はすべて正常。
+- SQLで裏取り済み：`清水 治彦` のJR明細は `type='other'`、他スタッフのJRは `one_time`（＝日付が正常に出る）。
+
+### 原因コード
+- `client/src/utils/index.ts` の `generateCSVData()`（交通費CSV。呼び出しは `AdminPanelContext.tsx:1078`）。
+- 「利用日」列が `type === 'one_time' || 'business_trip'` の**厳密一致に依存**していたため、`other` が対象から漏れて空になっていた。
+- 一方、種別ラベル列（`:58`）は else フォールバックで「通勤（単発）」と表示、画面詳細（`ApprovalsTab.tsx:389-390`）は「`regular`以外は日付表示」。この不整合で「画面には日付があるのにCSVだけ空・でも通勤（単発）と表示」という症状になっていた。
+
+### 修正（1行・フロントのみ・DB変更なし）
+```
+変更前:  (expense.type === 'one_time' || expense.type === 'business_trip') ? (expense.start_date || '') : '',
+変更後:  expense.type !== 'regular' ? (expense.start_date || '') : '',
+```
+- 画面表示（ApprovalsTab）と同じ「定期以外はすべて `start_date` を出す」ロジックに統一。`other`・`business_trip`・`one_time` すべて利用日が入る。将来種別が増えても漏れない。
+- 既存データは**再申請・修正不要**。次回のCSV出力から正しく出る。
+- `npx tsc -b && npx vite build` 成功確認済み。
+
+### 注意事項・教訓
+- 交通費の区分（`expense.type`）は `one_time`（通勤・単発）/ `regular`（定期）/ `business_trip`（出張）/ `other`（その他）の4種。`other` を見落とすと同種の欠落が起きる。CSV・集計・表示で種別分岐を書くときは4種すべてを意識する（`regular` だけ別扱い＝定期期間列、それ以外は利用日、が安全）。
+- 交通費CSVの生成は `generateCSVData`（utils/index.ts）の1箇所のみ（ReportsTab等に重複なし）。
+
+### 今後のタスク（変更なし・前回2026-07-22引き継ぎを継続）
+- 残業まわりの本日ぶん実機確認（調整休提案／実績未報告）、役職名の実値確認、連絡板「安否確認機能」の要件詰め（要 /grill-me）等は前回引き継ぎのとおり。
