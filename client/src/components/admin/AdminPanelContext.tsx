@@ -321,6 +321,8 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const [renamingExpenseTypeLabelValue, setRenamingExpenseTypeLabelValue] = useState('');
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null); // 共通インライン確認（window.confirm廃止）
+  const [promptDialog, setPromptDialog] = useState<{ message: string; placeholder?: string; confirmLabel?: string; requireValue?: string; onSubmit: (value: string) => void } | null>(null); // 入力ダイアログ（window.prompt廃止）
+  const [promptValue, setPromptValue] = useState('');
 
   useEffect(() => {
     if (successMsg) { const t = setTimeout(() => setSuccessMsg(null), 3000); return () => clearTimeout(t); }
@@ -896,10 +898,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
 
   const handleBulkApproval = useCallback(async (newStatus: 'approved' | 'rejected') => {
     if (filteredPending.length === 0) { setSuccessMsg('承認待ちの申請がありません。'); return; }
-    const confirmMessage = newStatus === 'approved' ? `${filteredPending.length}件の申請をすべて承認しますか？` : `${filteredPending.length}件の申請をすべて却下しますか？`;
-    setConfirmDialog({ message: confirmMessage, onConfirm: async () => {
-      let reason = '';
-      if (newStatus === 'rejected') reason = prompt('却下理由を入力してください:') || '';
+    const runBulk = async (reason: string) => {
       let successCount = 0, errorCount = 0;
       for (const approval of filteredPending) {
         try {
@@ -913,7 +912,13 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       const statusText = newStatus === 'approved' ? '承認' : '却下';
       setSuccessMsg(errorCount > 0 ? `${successCount}件の申請を${statusText}しました（${errorCount}件エラー）` : `${successCount}件の申請をすべて${statusText}しました`);
       onRefresh();
-    } });
+    };
+    if (newStatus === 'approved') {
+      setConfirmDialog({ message: `${filteredPending.length}件の申請をすべて承認しますか？`, onConfirm: () => runBulk('') });
+    } else {
+      setPromptValue('');
+      setPromptDialog({ message: `${filteredPending.length}件の申請をすべて却下します。却下理由を入力してください（任意）。`, placeholder: '却下理由（任意）', confirmLabel: '却下する', onSubmit: (reason) => runBulk(reason) });
+    }
   }, [filteredPending, onRefresh]);
 
   const handleApprovalSelect = useCallback((id: string, checked: boolean) => {
@@ -1070,9 +1075,8 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   }, []);
 
   const handleDeleteSubmission = useCallback(async (id: string) => {
-    setConfirmDialog({ message: '本当にこの申請を削除しますか？', onConfirm: async () => {
-      const confirmationText = prompt('削除を確定するには「削除」と入力してください。');
-      if (confirmationText !== '削除') return;
+    setPromptValue('');
+    setPromptDialog({ message: '本当にこの申請を削除しますか？\n削除するには「削除」と入力してください。', placeholder: '削除', requireValue: '削除', confirmLabel: '削除する', onSubmit: async () => {
       const { error } = await supabase.from('expenses').delete().eq('id', id);
       if (error) { setSuccessMsg('削除に失敗しました: ' + error.message); } else { setSuccessMsg('申請を削除しました'); onRefresh(); }
     } });
@@ -1389,6 +1393,28 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <button onClick={() => setConfirmDialog(null)} style={{ padding: '8px 18px', background: 'transparent', color: isDarkMode ? '#adb5bd' : '#666', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
               <button onClick={() => { const cb = confirmDialog.onConfirm; setConfirmDialog(null); cb(); }} style={{ padding: '8px 18px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>実行する</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {promptDialog && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 6000, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setPromptDialog(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: isDarkMode ? '#343a40' : 'white', borderRadius: 12, padding: '22px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.25)', maxWidth: 380, width: '100%' }}>
+            <p style={{ fontSize: 15, fontWeight: 'bold', color: isDarkMode ? '#fff' : '#333', margin: '0 0 14px', lineHeight: 1.6, whiteSpace: 'pre-line' }}>{promptDialog.message}</p>
+            <input
+              autoFocus
+              value={promptValue}
+              onChange={e => setPromptValue(e.target.value)}
+              placeholder={promptDialog.placeholder ?? ''}
+              style={{ width: '100%', padding: '9px 12px', boxSizing: 'border-box', marginBottom: 18, borderRadius: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', fontSize: 14 }}
+            />
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setPromptDialog(null)} style={{ padding: '8px 18px', background: 'transparent', color: isDarkMode ? '#adb5bd' : '#666', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
+              <button
+                disabled={!!promptDialog.requireValue && promptValue !== promptDialog.requireValue}
+                onClick={() => { const cb = promptDialog.onSubmit; const val = promptValue; setPromptDialog(null); cb(val); }}
+                style={{ padding: '8px 18px', background: (!!promptDialog.requireValue && promptValue !== promptDialog.requireValue) ? '#adb5bd' : '#dc3545', color: 'white', border: 'none', borderRadius: 8, cursor: (!!promptDialog.requireValue && promptValue !== promptDialog.requireValue) ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: 14 }}
+              >{promptDialog.confirmLabel ?? 'OK'}</button>
             </div>
           </div>
         </div>
