@@ -96,6 +96,7 @@ const MultiDatePicker: React.FC<{
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
+  const [rangeError, setRangeError] = useState(''); // 2か月超選択のインラインエラー（alert廃止）
 
   const text = isDark ? '#fff' : '#333';
   const borderColor = isDark ? '#6c757d' : '#ddd';
@@ -106,6 +107,7 @@ const MultiDatePicker: React.FC<{
     `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 
   const toggleDate = (dateStr: string) => {
+    setRangeError('');
     let newDates: string[];
     if (selectedDates.includes(dateStr)) {
       newDates = selectedDates.filter(d => d !== dateStr);
@@ -120,7 +122,7 @@ const MultiDatePicker: React.FC<{
           (last.getFullYear() - first.getFullYear()) * 12 +
           last.getMonth() - first.getMonth();
         if (diff > 1) {
-          alert('2か月を超える期間は選択できません（例：5月と7月の同時選択は不可）');
+          setRangeError('2か月を超える期間は選択できません（例：5月と7月の同時選択は不可）');
           return;
         }
       }
@@ -195,6 +197,9 @@ const MultiDatePicker: React.FC<{
           );
         })}
       </div>
+      {rangeError && (
+        <div style={{ marginTop: 8, fontSize: 12, color: '#dc3545', background: isDark ? '#4a2b30' : '#fff5f5', border: `1px solid ${isDark ? '#a3474c' : '#f5b5b5'}`, borderRadius: 6, padding: '6px 10px' }}>⚠️ {rangeError}</div>
+      )}
       {/* 選択中表示 */}
       {selectedDates.length > 0 && (
         <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -298,6 +303,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const [purpose, setPurpose] = useState(ld?.purpose ?? '');
   const [notes, setNotes] = useState(ld?.notes ?? '');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null); // 送信失敗のモーダル内インラインエラー（alert廃止）
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [approvers, setApprovers] = useState<Approver[]>([]);
@@ -506,6 +512,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const selectedApprover = approvers.find(a => a.id === selectedApproverId);
 
   const handleSubmit = async () => {
+    setSubmitError(null);
     setIsSubmitting(true);
     try {
       const startDate = selectedDates[0] || '';
@@ -582,7 +589,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       setShowConfirm(false);
       clearDraft(DRAFT_KEYS.leave); // 送信成功で下書きを消す
     } catch (err: unknown) {
-      alert('送信に失敗しました。\n' + (err instanceof Error ? err.message : JSON.stringify(err)));
+      setSubmitError('送信に失敗しました。' + (err instanceof Error ? err.message : JSON.stringify(err)));
     } finally {
       setIsSubmitting(false);
     }
@@ -1885,6 +1892,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                 {notes && <tr><td style={{ padding: '8px 0', color: subText, verticalAlign: 'top' }}>備考</td><td style={{ padding: '8px 0', color: text }}>{notes}</td></tr>}
               </tbody>
             </table>
+            {submitError && (
+              <div style={{ marginBottom: 12, fontSize: 13, color: '#dc3545', background: isDark ? '#4a2b30' : '#fff5f5', border: `1px solid ${isDark ? '#a3474c' : '#f5b5b5'}`, borderRadius: 6, padding: '8px 12px' }}>⚠️ {submitError}</div>
+            )}
             <div style={{ display: 'flex', gap: 12 }}>
               <button
                 onClick={() => setShowConfirm(false)}

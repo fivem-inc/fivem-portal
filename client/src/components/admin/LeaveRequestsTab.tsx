@@ -88,6 +88,7 @@ const LeaveRequestsTab: React.FC = () => {
   const [rejectModal, setRejectModal] = useState<AdminLeaveRequest | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [rejectNewType, setRejectNewType] = useState('');
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null); // 共通インライン確認（window.confirm廃止）
   const LEAVE_TYPES = ['有給休暇', 'BD休暇', '慶弔休', '調整休', 'その他', '病欠'];
   const [filterFY, setFilterFY] = useState<string>('__current__'); // 'all' | '__current__' | '2026' ...
   const [filterPerson, setFilterPerson] = useState<string>('all');
@@ -163,7 +164,7 @@ const LeaveRequestsTab: React.FC = () => {
       if (leaveCsvTo)   query = query.lte('created_at', leaveCsvTo + 'T23:59:59');
     }
     const { data } = await query;
-    if (!data || data.length === 0) { setLeaveCsvExporting(false); alert('データがありません'); return; }
+    if (!data || data.length === 0) { setLeaveCsvExporting(false); setSuccessMsg('⚠ データがありません'); return; }
     const ids = [...new Set([
       ...data.map((r: AdminLeaveRequest) => r.user_id),
       ...data.map((r: AdminLeaveRequest) => r.approver_id).filter(Boolean),
@@ -606,7 +607,7 @@ const LeaveRequestsTab: React.FC = () => {
                         .from('paid_leave_encouragement_days')
                         .insert({ fiscal_year: fy, target_date: encCreateDate, deadline: encCreateDeadline, created_by: authUser?.id })
                         .select('id').single();
-                      if (error || !newDay) { alert('作成に失敗しました: ' + error?.message); setEncCreating(false); return; }
+                      if (error || !newDay) { setSuccessMsg('⚠ 作成に失敗しました: ' + error?.message); setEncCreating(false); return; }
                       await supabase.from('paid_leave_encouragement_targets').insert(
                         encCreateTargets.map(uid => ({ encouragement_day_id: newDay.id, user_id: uid }))
                       );
@@ -696,19 +697,20 @@ const LeaveRequestsTab: React.FC = () => {
                               setEncEditNote(r.note || '');
                             }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: isDarkMode ? '#adb5bd' : '#999', fontSize: 13, padding: '0 2px', lineHeight: 1, flexShrink: 0 }}
                               title="編集">✏️</button>
-                            <button onClick={async () => {
-                              if (!confirm(`「${r.userName}」を対象から削除しますか？`)) return;
-                              await supabase.from('paid_leave_encouragement_responses').delete().eq('encouragement_day_id', showEncDetail).eq('user_id', r.user_id);
-                              await supabase.from('paid_leave_encouragement_targets').delete().eq('encouragement_day_id', showEncDetail).eq('user_id', r.user_id);
-                              if (encDetailDay) {
-                                await supabase.from('leave_requests').delete()
-                                  .eq('user_id', r.user_id)
-                                  .eq('start_date', encDetailDay.target_date)
-                                  .eq('reason', '【有給奨励日】')
-                                  .eq('status', 'approved');
-                              }
-                              fetchEncDetail(showEncDetail!);
-                              fetchEncDays();
+                            <button onClick={() => {
+                              setConfirmDialog({ message: `「${r.userName}」を対象から削除しますか？`, onConfirm: async () => {
+                                await supabase.from('paid_leave_encouragement_responses').delete().eq('encouragement_day_id', showEncDetail).eq('user_id', r.user_id);
+                                await supabase.from('paid_leave_encouragement_targets').delete().eq('encouragement_day_id', showEncDetail).eq('user_id', r.user_id);
+                                if (encDetailDay) {
+                                  await supabase.from('leave_requests').delete()
+                                    .eq('user_id', r.user_id)
+                                    .eq('start_date', encDetailDay.target_date)
+                                    .eq('reason', '【有給奨励日】')
+                                    .eq('status', 'approved');
+                                }
+                                fetchEncDetail(showEncDetail!);
+                                fetchEncDays();
+                              } });
                             }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: isDarkMode ? '#6c757d' : '#ccc', fontSize: 14, padding: '0 2px', lineHeight: 1, flexShrink: 0 }}
                               title="対象から削除">✕</button>
                           </div>
@@ -919,21 +921,22 @@ const LeaveRequestsTab: React.FC = () => {
                       </button>
                       <button disabled={encSendingMail} onClick={async () => {
                         const unanswered = encResponses.filter(r => !r.choice);
-                        if (unanswered.length === 0) { alert('未回答者はいません'); return; }
-                        if (!confirm(`未回答の${unanswered.length}人にメールを送信しますか？`)) return;
-                        setEncSendingMail(true);
-                        const { data: profiles } = await supabase.from('profiles').select('id, email').in('id', unanswered.map(r => r.user_id));
-                        const emailMap: Record<string, string> = {};
-                        (profiles || []).forEach((p: { id: string; email: string }) => { emailMap[p.id] = p.email; });
-                        for (const r of unanswered) {
-                          const email = emailMap[r.user_id];
-                          if (!email) continue;
-                          await supabase.functions.invoke('send-email', {
-                            body: { to: email, subject: '有給奨励日の回答をお願いします', text: `${r.userName}さん\n\n有給奨励日（${encDetailDay?.target_date}）の回答期限（${encDetailDay?.deadline}）が近づいています。\nサイトよりご回答ください。` },
-                          });
-                        }
-                        setEncSendingMail(false);
-                        setSuccessMsg(`${unanswered.length}人にメールを送信しました`);
+                        if (unanswered.length === 0) { setSuccessMsg('未回答者はいません'); return; }
+                        setConfirmDialog({ message: `未回答の${unanswered.length}人にメールを送信しますか？`, onConfirm: async () => {
+                          setEncSendingMail(true);
+                          const { data: profiles } = await supabase.from('profiles').select('id, email').in('id', unanswered.map(r => r.user_id));
+                          const emailMap: Record<string, string> = {};
+                          (profiles || []).forEach((p: { id: string; email: string }) => { emailMap[p.id] = p.email; });
+                          for (const r of unanswered) {
+                            const email = emailMap[r.user_id];
+                            if (!email) continue;
+                            await supabase.functions.invoke('send-email', {
+                              body: { to: email, subject: '有給奨励日の回答をお願いします', text: `${r.userName}さん\n\n有給奨励日（${encDetailDay?.target_date}）の回答期限（${encDetailDay?.deadline}）が近づいています。\nサイトよりご回答ください。` },
+                            });
+                          }
+                          setEncSendingMail(false);
+                          setSuccessMsg(`${unanswered.length}人にメールを送信しました`);
+                        } });
                       }} style={{ padding: '8px 16px', background: encSendingMail ? '#6c757d' : '#fd7e14', color: '#fff', border: 'none', borderRadius: 8, cursor: encSendingMail ? 'default' : 'pointer', fontSize: 12, fontWeight: 'bold' }}>
                         {encSendingMail ? '送信中...' : `未回答者（${encResponses.filter(r => !r.choice).length}人）にメール`}
                       </button>
@@ -946,8 +949,21 @@ const LeaveRequestsTab: React.FC = () => {
 
           const partUsers = users.filter(u => u.is_active !== false && u.employment_type === 'パート');
 
+          const confirmDialogModal = confirmDialog ? (
+            <div style={{ position: 'fixed', inset: 0, zIndex: 5000, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setConfirmDialog(null)}>
+              <div onClick={e => e.stopPropagation()} style={{ background: isDarkMode ? '#343a40' : 'white', borderRadius: 12, padding: '22px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.25)', maxWidth: 360, width: '100%' }}>
+                <p style={{ fontSize: 15, fontWeight: 'bold', color: isDarkMode ? '#fff' : '#333', margin: '0 0 18px', lineHeight: 1.6, whiteSpace: 'pre-line' }}>{confirmDialog.message}</p>
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                  <button onClick={() => setConfirmDialog(null)} style={{ padding: '8px 18px', background: 'transparent', color: isDarkMode ? '#adb5bd' : '#666', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
+                  <button onClick={() => { const cb = confirmDialog.onConfirm; setConfirmDialog(null); cb(); }} style={{ padding: '8px 18px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>はい</button>
+                </div>
+              </div>
+            </div>
+          ) : null;
+
           return (
             <div>
+              {confirmDialogModal}
               {encCreateModal}
               {encConfirmModal}
               {encDetailModal}
@@ -976,17 +992,18 @@ const LeaveRequestsTab: React.FC = () => {
                     ))}
                   </select>
                   <button
-                    onClick={async () => {
+                    onClick={() => {
                       const sel = document.getElementById('part-leave-target') as HTMLSelectElement;
                       const userId = sel?.value;
-                      if (!userId) { alert('パートを選択してください'); return; }
+                      if (!userId) { setSuccessMsg('⚠ パートを選択してください'); return; }
                       const target = partUsers.find(u => u.id === userId);
                       if (!target) return;
-                      if (!window.confirm(`「${target.name || target.email}」さんに有給申請フォームを送信しますか？`)) return;
-                      const { error } = await supabase.from('profiles').update({ leave_request_enabled: true, leave_enabled_by: (await supabase.auth.getUser()).data.user?.id }).eq('id', userId);
-                      if (error) { alert('送信に失敗しました: ' + error.message); return; }
-                      await fetchUsers();
-                      setSuccessMsg(`「${target.name || target.email}」さんに送信しました`);
+                      setConfirmDialog({ message: `「${target.name || target.email}」さんに有給申請フォームを送信しますか？`, onConfirm: async () => {
+                        const { error } = await supabase.from('profiles').update({ leave_request_enabled: true, leave_enabled_by: (await supabase.auth.getUser()).data.user?.id }).eq('id', userId);
+                        if (error) { setSuccessMsg('⚠ 送信に失敗しました: ' + error.message); return; }
+                        await fetchUsers();
+                        setSuccessMsg(`「${target.name || target.email}」さんに送信しました`);
+                      } });
                     }}
                     style={{ padding: '6px 16px', background: '#28a745', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 13, whiteSpace: 'nowrap' }}
                   >送信</button>
@@ -1378,10 +1395,11 @@ const LeaveRequestsTab: React.FC = () => {
                               )}
                               {req.status === 'rejected' && (
                                 <button
-                                  onClick={async () => {
-                                    if (!window.confirm('差し戻しを取り消して最初に戻しますか？')) return;
-                                    await supabase.from('leave_requests').update({ status: 'pending', rejected_reason: null }).eq('id', req.id);
-                                    fetchLeaveRequests();
+                                  onClick={() => {
+                                    setConfirmDialog({ message: '差し戻しを取り消して最初に戻しますか？', onConfirm: async () => {
+                                      await supabase.from('leave_requests').update({ status: 'pending', rejected_reason: null }).eq('id', req.id);
+                                      fetchLeaveRequests();
+                                    } });
                                   }}
                                   style={{ padding: '4px 8px', background: '#6c757d', color: 'white', border: '2px solid #545b62', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}
                                 >↩ 取り消し</button>
@@ -1403,7 +1421,7 @@ const LeaveRequestsTab: React.FC = () => {
                                         setAdminSelectedManagerId(mgrs && mgrs.length > 0 ? mgrs[0].id : '');
                                         setAdminSelectingManagerFor(req);
                                       } else {
-                                        if (!window.confirm('受理しますか？')) return;
+                                        setConfirmDialog({ message: '受理しますか？', onConfirm: async () => {
                                         // 調整休はマネージャー受理で完了（経理・社長ステップをスキップ）。受理ページ(LeaveApprovals)と挙動を揃える
                                         const isChosei = req.leave_type === '調整休';
                                         const nextStatus: Record<string, string> = { step2_pending: isChosei ? 'approved' : 'manager_approved', manager_approved: 'admin_approved', admin_approved: 'approved' };
@@ -1463,6 +1481,7 @@ const LeaveRequestsTab: React.FC = () => {
                                           await sendLeaveSlack('accounting_approved', '経理担当者', '管理者');
                                         }
                                         fetchLeaveRequests();
+                                        } });
                                       }
                                     }}
                                     style={{ padding: '4px 8px', background: '#28a745', color: 'white', border: '2px solid #1e7e34', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}
@@ -1474,18 +1493,18 @@ const LeaveRequestsTab: React.FC = () => {
                                 </div>
                               )}
                               <button
-                                onClick={async () => {
-                                  if (!window.confirm('この申請を削除しますか？')) return;
-                                  if (!window.confirm('本当に削除します。この操作は取り消せません。')) return;
-                                  const { error } = await supabase.from('leave_requests').delete().eq('id', req.id);
-                                  if (error) { alert('削除に失敗しました: ' + error.message); return; }
-                                  // カレンダーからも削除
-                                  try {
-                                    await supabase.functions.invoke('gcal-sync', {
-                                      body: { action: 'delete', source_type: 'leave', source_id: req.id },
-                                    });
-                                  } catch (e) { console.error('[gcal-sync] 削除失敗:', e); }
-                                  fetchLeaveRequests();
+                                onClick={() => {
+                                  setConfirmDialog({ message: 'この申請を削除します。\n本当に削除しますか？この操作は取り消せません。', onConfirm: async () => {
+                                    const { error } = await supabase.from('leave_requests').delete().eq('id', req.id);
+                                    if (error) { setSuccessMsg('⚠ 削除に失敗しました: ' + error.message); return; }
+                                    // カレンダーからも削除
+                                    try {
+                                      await supabase.functions.invoke('gcal-sync', {
+                                        body: { action: 'delete', source_type: 'leave', source_id: req.id },
+                                      });
+                                    } catch (e) { console.error('[gcal-sync] 削除失敗:', e); }
+                                    fetchLeaveRequests();
+                                  } });
                                 }}
                                 style={{ padding: '4px 3px', background: 'transparent', color: isDarkMode ? '#888' : '#aaa', border: `1px solid ${isDarkMode ? '#555' : '#ddd'}`, borderRadius: 4, cursor: 'pointer', fontSize: 9, writingMode: 'vertical-rl', letterSpacing: 1 }}
                               >削除</button>
@@ -1758,8 +1777,8 @@ const LeaveRequestsTab: React.FC = () => {
                             : '差し戻す'
                           }
                         </button>
-                        <button onClick={async () => {
-                          if (!confirm(`「${rejectModal.leave_type}」の受理を取り消しますか？\n申請者への通知を送り、カレンダーのイベントを削除します。\n（申請記録は残ります）`)) return;
+                        <button onClick={() => {
+                          setConfirmDialog({ message: `「${rejectModal.leave_type}」の受理を取り消しますか？\n申請者への通知を送り、カレンダーのイベントを削除します。\n（申請記録は残ります）`, onConfirm: async () => {
                           await supabase.from('leave_requests').update({
                             status: 'cancelled',
                             rejected_reason: rejectReason || '管理者が受理を取り消しました',
@@ -1788,6 +1807,7 @@ const LeaveRequestsTab: React.FC = () => {
                           await dispatchEmail('leave:cancelled', cancelVars, { president: cancelPresEmails });
                           setRejectModal(null); setRejectReason(''); setRejectNewType('');
                           fetchLeaveRequests();
+                          } });
                         }} style={{ flex: 1, padding: '14px 8px', background: '#fd7e14', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 'bold', cursor: 'pointer', lineHeight: 1.4 }}>
                           取り消し
                         </button>
