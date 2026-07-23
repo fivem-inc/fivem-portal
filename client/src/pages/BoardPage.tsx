@@ -292,6 +292,8 @@ const BoardPage: React.FC = () => {
   const [replyBody,            setReplyBody]            = useState('');
   const [inboxReadIds,          setInboxReadIds]          = useState<Set<string>>(new Set());
   const [sending,               setSending]               = useState(false);
+  const [sendError,             setSendError]             = useState<string | null>(null); // 送信失敗のインライントースト（alert廃止）
+  const [confirmDialog,         setConfirmDialog]         = useState<{ message: string; onConfirm: () => void } | null>(null); // 共通インライン確認（confirm廃止）
   const [showSendConfirm,       setShowSendConfirm]       = useState(false);
   const [showReplySendConfirm,  setShowReplySendConfirm]  = useState(false);
 
@@ -1202,19 +1204,21 @@ const BoardPage: React.FC = () => {
       setView('outbox');
       setShowSidebar(false);
     } else {
-      alert('送信に失敗しました。\n' + (error?.message || '不明なエラー'));
+      setSendError('送信に失敗しました。' + (error?.message || '不明なエラー'));
+      setTimeout(() => setSendError(null), 4000);
     }
     setSending(false);
   };
 
-  const deleteChannel = async (chId: string, e: React.MouseEvent) => {
+  const deleteChannel = (chId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm('このチャンネルを削除しますか？\nメッセージもすべて削除されます。')) return;
-    await supabase.from('board_channel_members').delete().eq('channel_id', chId);
-    await supabase.from('board_messages').delete().eq('channel_id', chId);
-    await supabase.from('board_channels').delete().eq('id', chId);
-    if (selectedChannelId === chId) { silentClearBoardParam('bch'); setShowChannelList(true); }
-    await loadAll();
+    setConfirmDialog({ message: 'このチャンネルを削除しますか？\nメッセージもすべて削除されます。', onConfirm: async () => {
+      await supabase.from('board_channel_members').delete().eq('channel_id', chId);
+      await supabase.from('board_messages').delete().eq('channel_id', chId);
+      await supabase.from('board_channels').delete().eq('id', chId);
+      if (selectedChannelId === chId) { silentClearBoardParam('bch'); setShowChannelList(true); }
+      await loadAll();
+    } });
   };
 
   const saveMemberChanges = async () => {
@@ -3295,6 +3299,24 @@ const BoardPage: React.FC = () => {
 
   return (
     <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column', background: bg, overflow: 'hidden', paddingTop: 60, boxSizing: 'border-box' } as React.CSSProperties}>
+      {sendError && (
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: '#fff5f5', border: '1px solid #f5b5b5', borderRadius: 12, padding: '16px 22px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 10, maxWidth: 320 }}>
+          <span style={{ fontSize: 18 }}>⚠️</span>
+          <span style={{ fontSize: 14, fontWeight: 'bold', color: '#dc3545' }}>{sendError}</span>
+          <button type="button" onClick={() => setSendError(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
+        </div>
+      )}
+      {confirmDialog && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setConfirmDialog(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 12, padding: '22px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.25)', maxWidth: 360, width: '100%' }}>
+            <p style={{ fontSize: 15, fontWeight: 'bold', color: textColor, margin: '0 0 18px', lineHeight: 1.6, whiteSpace: 'pre-line' }}>{confirmDialog.message}</p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setConfirmDialog(null)} style={{ padding: '8px 18px', background: 'transparent', color: subColor, border: `1px solid ${border}`, borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
+              <button onClick={() => { const cb = confirmDialog.onConfirm; setConfirmDialog(null); cb(); }} style={{ padding: '8px 18px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>削除する</button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* サイドバーヘッダー */}
       {(showSidebar || !isMobile) && (
         <div style={{ position: 'fixed', top: 'var(--topbar-height, 60px)' as string, left: 0, zIndex: 50, background: cardBg, width: isMobile ? '100%' : 280, boxSizing: 'border-box' }}>

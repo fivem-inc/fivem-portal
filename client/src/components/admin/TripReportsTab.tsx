@@ -3,7 +3,8 @@ import { useAdminPanel } from './AdminPanelContext';
 
 const TripReportsTab: React.FC = () => {
   const ctx = useAdminPanel();
-  const { isDarkMode, tripReports, loadingTripReports, expandedTripYearMonths, setExpandedTripYearMonths, tripReportFilter, setTripReportFilter, setShowLocationEditor, fetchTripReports, fetchLocationEditor, supabase } = ctx;
+  const { isDarkMode, tripReports, loadingTripReports, expandedTripYearMonths, setExpandedTripYearMonths, tripReportFilter, setTripReportFilter, setShowLocationEditor, fetchTripReports, fetchLocationEditor, supabase, setSuccessMsg } = ctx;
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null); // 共通インライン確認（confirm廃止）
 
   // 区分・報告者・場所での絞り込み
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
@@ -30,6 +31,17 @@ const TripReportsTab: React.FC = () => {
 
   return (
           <div>
+            {confirmDialog && (
+              <div style={{ position: 'fixed', inset: 0, zIndex: 5000, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setConfirmDialog(null)}>
+                <div onClick={e => e.stopPropagation()} style={{ background: isDarkMode ? '#343a40' : 'white', borderRadius: 12, padding: '22px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.25)', maxWidth: 360, width: '100%' }}>
+                  <p style={{ fontSize: 15, fontWeight: 'bold', color: isDarkMode ? '#fff' : '#333', margin: '0 0 18px', lineHeight: 1.6, whiteSpace: 'pre-line' }}>{confirmDialog.message}</p>
+                  <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                    <button onClick={() => setConfirmDialog(null)} style={{ padding: '8px 18px', background: 'transparent', color: isDarkMode ? '#adb5bd' : '#666', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
+                    <button onClick={() => { const cb = confirmDialog.onConfirm; setConfirmDialog(null); cb(); }} style={{ padding: '8px 18px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>削除する</button>
+                  </div>
+                </div>
+              </div>
+            )}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 30 }}>
               <div style={{ flex: 1 }} />
               <h3 style={{ margin: 0, color: isDarkMode ? '#fff' : '#000', textAlign: 'center' }}>📍 出張報告一覧</h3>
@@ -209,19 +221,20 @@ const TripReportsTab: React.FC = () => {
                                           </td>
                                           <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, fontSize: 13 }}>
                                             <button
-                                              onClick={async () => {
+                                              onClick={() => {
                                                 const reporter = report.profiles?.name || report.profiles?.email || '不明';
                                                 const dateStr = new Date(report.created_at).toLocaleString('ja-JP');
-                                                if (!window.confirm(`以下の出張報告を削除しますか？\n\n報告者: ${reporter}\n日時: ${dateStr}\n場所: ${report.location}\n\nこの操作は取り消せません。`)) return;
-                                                const { error } = await supabase
-                                                  .from('business_trip_reports')
-                                                  .delete()
-                                                  .eq('id', report.id);
-                                                if (error) {
-                                                  alert('削除に失敗しました: ' + error.message);
-                                                } else {
-                                                  fetchTripReports();
-                                                }
+                                                setConfirmDialog({ message: `以下の出張報告を削除しますか？\n\n報告者: ${reporter}\n日時: ${dateStr}\n場所: ${report.location}\n\nこの操作は取り消せません。`, onConfirm: async () => {
+                                                  const { error } = await supabase
+                                                    .from('business_trip_reports')
+                                                    .delete()
+                                                    .eq('id', report.id);
+                                                  if (error) {
+                                                    setSuccessMsg('⚠ 削除に失敗しました: ' + error.message);
+                                                  } else {
+                                                    fetchTripReports();
+                                                  }
+                                                } });
                                               }}
                                               style={{
                                                 padding: '3px 10px',

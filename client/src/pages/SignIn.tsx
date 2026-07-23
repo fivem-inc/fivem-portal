@@ -11,6 +11,7 @@ export default function SignIn() {
   const [name, setName] = useState(''); // 新規追加: 名前
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null); // 成功・案内メッセージ（alert廃止・緑表示）
   const [isSignUp, setIsSignUp] = useState(false); // 新規登録モードかどうかの状態
   const [isResettingPassword, setIsResettingPassword] = useState(false); // パスワードリセットモードかどうかの状態
   const [showPassword, setShowPassword] = useState(false); // パスワード表示切り替え
@@ -111,7 +112,8 @@ export default function SignIn() {
       setError(errorMessage);
     } else {
       // トリガーで自動作成されるため、コード側での作成は不要
-      alert('登録が完了しました。メールを確認してアカウントを有効にしてください。');
+      setError(null);
+      setInfo('登録が完了しました。メールを確認してアカウントを有効にしてください。');
       setIsSignUp(false); // 登録後、ログインフォームに戻る
     }
     setLoading(false);
@@ -146,7 +148,8 @@ export default function SignIn() {
         }
         setError(errorMessage);
       } else {
-        alert('パスワードリセットメールを送信しました。メールを確認して新しいパスワードを設定してください。');
+        setError(null);
+        setInfo('パスワードリセットメールを送信しました。メールを確認して新しいパスワードを設定してください。');
         setIsResettingPassword(false);
       }
     } catch (error) {
@@ -258,6 +261,7 @@ export default function SignIn() {
             {loading ? (isSignUp ? '登録中...' : 'ログイン中...') : (isSignUp ? '新規登録' : 'ログイン')}
           </button>
           {error && <p style={{ color: 'red', marginTop: '10px' }}>{error}</p>}
+          {info && <p style={{ color: '#1e7e34', marginTop: '10px' }}>{info}</p>}
         </form>
       ) : (
         <form onSubmit={handlePasswordReset}>
@@ -285,6 +289,7 @@ export default function SignIn() {
             {loading ? '送信中...' : 'パスワードリセットメールを送信'}
           </button>
           {error && <p style={{ color: 'red', marginTop: '10px' }}>{error}</p>}
+          {info && <p style={{ color: '#1e7e34', marginTop: '10px' }}>{info}</p>}
         </form>
       )}
       {!isResettingPassword && (

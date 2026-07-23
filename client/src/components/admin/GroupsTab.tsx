@@ -1,12 +1,24 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 
 const GroupsTab: React.FC = () => {
   const ctx = useAdminPanel();
-  const { isDarkMode, selectedGroup, setSelectedGroup, editingGroupName, setEditingGroupName, editGroupNameValue, setEditGroupNameValue, newGroupName, setNewGroupName, showAddGroup, setShowAddGroup, masterOptions, users, setUsers, isUserEditMode, setIsUserEditMode, fetchMasterOptions, fetchUsers, supabase } = ctx;
+  const { isDarkMode, selectedGroup, setSelectedGroup, editingGroupName, setEditingGroupName, editGroupNameValue, setEditGroupNameValue, newGroupName, setNewGroupName, showAddGroup, setShowAddGroup, masterOptions, users, setUsers, isUserEditMode, setIsUserEditMode, fetchMasterOptions, fetchUsers, supabase, setSuccessMsg } = ctx;
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null); // 共通インライン確認（confirm廃止）
 
   return (
           <div>
+          {confirmDialog && (
+            <div style={{ position: 'fixed', inset: 0, zIndex: 5000, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setConfirmDialog(null)}>
+              <div onClick={e => e.stopPropagation()} style={{ background: isDarkMode ? '#343a40' : 'white', borderRadius: 12, padding: '22px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.25)', maxWidth: 360, width: '100%' }}>
+                <p style={{ fontSize: 15, fontWeight: 'bold', color: isDarkMode ? '#fff' : '#333', margin: '0 0 18px', lineHeight: 1.6, whiteSpace: 'pre-line' }}>{confirmDialog.message}</p>
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                  <button onClick={() => setConfirmDialog(null)} style={{ padding: '8px 18px', background: 'transparent', color: isDarkMode ? '#adb5bd' : '#666', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
+                  <button onClick={() => { const cb = confirmDialog.onConfirm; setConfirmDialog(null); cb(); }} style={{ padding: '8px 18px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>削除する</button>
+                </div>
+              </div>
+            </div>
+          )}
             <h3 style={{ textAlign: 'center', marginBottom: 20, color: isDarkMode ? '#fff' : '#000' }}>
               {selectedGroup ? (
                 <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
@@ -74,7 +86,7 @@ const GroupsTab: React.FC = () => {
                         if (!newGroupName.trim()) return;
                         const maxOrder = masterOptions.group.length + 1;
                         const { error } = await supabase.from('master_options').insert({ category: 'group', value: newGroupName.trim(), sort_order: maxOrder });
-                        if (error) { alert('グループの追加に失敗しました。\n' + error.message); return; }
+                        if (error) { setSuccessMsg('⚠ グループの追加に失敗しました。' + error.message); return; }
                         await fetchMasterOptions();
                         setNewGroupName('');
                         setShowAddGroup(false);
@@ -140,18 +152,19 @@ const GroupsTab: React.FC = () => {
                 {/* グループ削除 */}
                 {isUserEditMode && (
                   <div style={{ marginTop: 32, textAlign: 'center' }}>
-                    <button onClick={async () => {
-                      if (!window.confirm(`「${selectedGroup}」を削除しますか？\nメンバーのグループ設定からも削除されます。`)) return;
-                      await supabase.from('master_options').delete().eq('category', 'group').eq('value', selectedGroup);
-                      const affected = users.filter(u => (u.group_names || []).includes(selectedGroup));
-                      for (const u of affected) {
-                        const next = (u.group_names || []).filter((g: string) => g !== selectedGroup);
-                        await supabase.from('profiles').update({ group_names: next }).eq('id', u.id);
-                      }
-                      await fetchMasterOptions();
-                      await fetchUsers();
-                      setSelectedGroup(null);
-                      setIsUserEditMode(false);
+                    <button onClick={() => {
+                      setConfirmDialog({ message: `「${selectedGroup}」を削除しますか？\nメンバーのグループ設定からも削除されます。`, onConfirm: async () => {
+                        await supabase.from('master_options').delete().eq('category', 'group').eq('value', selectedGroup);
+                        const affected = users.filter(u => (u.group_names || []).includes(selectedGroup));
+                        for (const u of affected) {
+                          const next = (u.group_names || []).filter((g: string) => g !== selectedGroup);
+                          await supabase.from('profiles').update({ group_names: next }).eq('id', u.id);
+                        }
+                        await fetchMasterOptions();
+                        await fetchUsers();
+                        setSelectedGroup(null);
+                        setIsUserEditMode(false);
+                      } });
                     }} style={{ padding: '8px 20px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}>
                       🗑 このグループを削除
                     </button>
