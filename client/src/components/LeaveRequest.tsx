@@ -290,7 +290,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const [workplaces, setWorkplaces] = useState<string[]>([]);
   const [dateLocations, setDateLocations] = useState<Record<string, string>>(ld?.dateLocations ?? {});
   const [bulkLocation, setBulkLocation] = useState('');
-  const [locError, setLocError] = useState(''); // 校未選択のインラインエラー（alertは使わない）
+  const [locError, setLocError] = useState(''); // 入力エラーのインライン表示（複数行を\n区切りで保持・alertは使わない）
+  const [errFields, setErrFields] = useState<Set<string>>(new Set()); // 赤ハイライトする入力欄のキー集合
   // 振替元の勤務日の校（調整休・振替休日のみ。日付→校）
   const [originLocations, setOriginLocations] = useState<Record<string, string>>(ld?.originLocations ?? {});
   const [originBulkLocation, setOriginBulkLocation] = useState('');
@@ -909,8 +910,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             ) : (
               <select
                 value={selectedApproverId}
-                onChange={e => setSelectedApproverId(e.target.value)}
-                style={{ width: '100%', padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 15, background: inputBg, color: selectedApproverId ? text : subText }}
+                onChange={e => { setSelectedApproverId(e.target.value); if (e.target.value) setErrFields(prev => { const n = new Set(prev); n.delete('approver'); return n; }); }}
+                style={{ width: '100%', padding: '10px 14px', border: `1px solid ${errFields.has('approver') ? '#e24b4a' : borderColor}`, borderRadius: 8, fontSize: 15, background: errFields.has('approver') ? (isDark ? '#4a2b30' : '#fdecea') : inputBg, color: selectedApproverId ? text : subText }}
               >
                 <option value="" disabled>申請先を選択してください</option>
                 {leaveApprovers.map(a => (
@@ -939,9 +940,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               <input
                 type="text"
                 value={leaveTypeOther}
-                onChange={e => setLeaveTypeOther(e.target.value)}
+                onChange={e => { setLeaveTypeOther(e.target.value); if (e.target.value) setErrFields(prev => { const n = new Set(prev); n.delete('type'); return n; }); }}
                 placeholder="種別を入力"
-                style={{ width: '100%', marginTop: 8, padding: '10px 14px', border: `1px solid ${borderColor}`, borderRadius: 8, fontSize: 15, boxSizing: 'border-box', background: inputBg, color: text }}
+                style={{ width: '100%', marginTop: 8, padding: '10px 14px', border: `1px solid ${errFields.has('type') ? '#e24b4a' : borderColor}`, borderRadius: 8, fontSize: 15, boxSizing: 'border-box', background: errFields.has('type') ? (isDark ? '#4a2b30' : '#fdecea') : inputBg, color: text }}
               />
             )}
             {leaveType === '調整休' && (
@@ -1041,13 +1042,14 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
 
           {/* 休暇日 カレンダー */}
           <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: text }}>
+            <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: errFields.has('dates') ? '#dc3545' : text }}>
               休暇日 <span style={{ color: '#dc3545' }}>*</span> <span style={{ fontSize: 12, fontWeight: 'normal', color: subText }}>（日付をタップして選択・解除）</span>
             </label>
             <MultiDatePicker
               selectedDates={selectedDates}
               onChange={dates => {
                 setSelectedDates(dates);
+                if (dates.length > 0) setErrFields(prev => { const n = new Set(prev); n.delete('dates'); return n; });
                 // 選択解除された日付の校情報を削除（残すと送信データにゴミが混ざる）
                 setDateLocations(prev => Object.fromEntries(dates.filter(d => prev[d]).map(d => [d, prev[d]])));
               }}
@@ -1109,22 +1111,31 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           </div>
 
           {locError && (
-            <div style={{ color: '#dc3545', fontSize: 13, marginBottom: 12, padding: '8px 12px', background: isDark ? '#4a2b30' : '#fff5f5', borderRadius: 6 }}>
-              ⚠️ {locError}
+            <div style={{ color: '#dc3545', fontSize: 13, marginBottom: 12, padding: '10px 12px', background: isDark ? '#4a2b30' : '#fff5f5', border: `1px solid ${isDark ? '#a3474c' : '#f5b5b5'}`, borderRadius: 6 }}>
+              {locError.split('\n').map((line, i) => (
+                <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginTop: i === 0 ? 0 : 5 }}>
+                  <span style={{ flexShrink: 0 }}>⚠️</span><span>{line}</span>
+                </div>
+              ))}
             </div>
           )}
           <button
             onClick={() => {
-              if (!selectedApproverId) { alert('申請先を選んでください'); return; }
-              if (selectedDates.length === 0) { alert('休暇日を選択してください'); return; }
-              if (leaveType === '調整休' && choseiSubType === 'furikae' && choseiOriginDates.length === 0) { alert('振替元の勤務日を選択してください'); return; }
-              if (leaveType === '調整休' && choseiSubType === 'furikae' && choseiOriginDates.length !== selectedDates.length) { alert(`振替元の勤務日（${choseiOriginDates.length}日）と休暇日（${selectedDates.length}日）の日数が一致していません`); return; }
-              if (!purpose.trim() && leaveType !== '調整休') { alert('事由を入力してください'); return; }
-              if (leaveType === '調整休' && !purpose.trim()) { alert('理由を入力してください'); return; }
-              if (leaveType === 'その他' && !leaveTypeOther) { alert('種別を入力してください'); return; }
-              if (selectedDates.some(d => !dateLocations[d])) { setLocError('すべての日付で勤務校を選択してください'); return; }
-              if (leaveType === '調整休' && choseiSubType === 'furikae' && choseiOriginDates.some(d => !originLocations[d])) { setLocError('振替元のすべての日付で勤務校を選択してください'); return; }
-              setLocError('');
+              // 入力チェックを1回で全部集め、足りない項目をまとめてバナー表示＋該当欄を赤ハイライト（alertは使わない）
+              const errs: string[] = [];
+              const bad = new Set<string>();
+              const isFurikae = leaveType === '調整休' && choseiSubType === 'furikae';
+              if (!selectedApproverId) { errs.push('申請先を選んでください'); bad.add('approver'); }
+              if (selectedDates.length === 0) { errs.push('休暇日を選択してください'); bad.add('dates'); }
+              if (isFurikae && choseiOriginDates.length === 0) { errs.push('振替元の勤務日を選択してください'); }
+              if (isFurikae && choseiOriginDates.length > 0 && choseiOriginDates.length !== selectedDates.length) { errs.push(`振替元の勤務日（${choseiOriginDates.length}日）と休暇日（${selectedDates.length}日）の日数が一致していません`); }
+              if (!purpose.trim() && leaveType !== '調整休') { errs.push('事由を入力してください'); }
+              if (leaveType === '調整休' && !purpose.trim()) { errs.push('理由を入力してください'); }
+              if (leaveType === 'その他' && !leaveTypeOther) { errs.push('種別を入力してください'); bad.add('type'); }
+              if (selectedDates.some(d => !dateLocations[d])) { errs.push('すべての日付で勤務校を選択してください'); }
+              if (isFurikae && choseiOriginDates.some(d => !originLocations[d])) { errs.push('振替元のすべての日付で勤務校を選択してください'); }
+              if (errs.length > 0) { setLocError(errs.join('\n')); setErrFields(bad); return; }
+              setLocError(''); setErrFields(new Set());
               setShowConfirm(true);
             }}
             style={{ width: '100%', padding: '12px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, fontSize: 16, fontWeight: 'bold', cursor: 'pointer' }}
