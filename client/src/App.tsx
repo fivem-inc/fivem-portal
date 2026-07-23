@@ -1152,7 +1152,7 @@ const LeaveApprovalBanner: React.FC<{ userId: string; roleTitle: string; isAdmin
       }}
     >
       <span style={{ fontSize: 22 }}>🌿</span>
-      <span>休暇申請の承認依頼が {pendingCount}件 あります</span>
+      <span>休暇申請の確認依頼が {pendingCount}件 あります</span>
       <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 'normal' }}>タップして確認 →</span>
     </div>
   );
@@ -1231,7 +1231,7 @@ const PurchaseApprovalBanner: React.FC<{ userId: string; canPurchaseRequest: boo
       }}
     >
       <span style={{ fontSize: 22 }}>🧾</span>
-      <span>備品購入申請の承認依頼が {pendingCount}件 あります</span>
+      <span>備品購入申請の確認依頼が {pendingCount}件 あります</span>
       <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 'normal' }}>タップして確認 →</span>
     </div>
   );

@@ -953,7 +953,7 @@ const LeaveRequestsTab: React.FC = () => {
               {encDetailModal}
               <h3 style={{ textAlign: 'center', marginBottom: 8, color: isDarkMode ? '#fff' : '#000' }}>🌿 休暇申請一覧</h3>
               <p style={{ textAlign: 'center', fontSize: 13, color: isDarkMode ? '#adb5bd' : '#666', marginBottom: 4 }}>
-                管理者として全ての申請を確認・承認できます。承認が止まっている場合は強制的に次のステップへ進められます。
+                管理者として全ての申請を確認・受理できます。受理が止まっている場合は強制的に次のステップへ進められます。
               </p>
               <div style={{ display: 'flex', justifyContent: 'flex-end', paddingRight: 16, marginBottom: 8 }}>
                 <button onClick={() => { setLeaveCsvFy(String(nowFyStatic)); setShowLeaveCsvModal(true); }}
