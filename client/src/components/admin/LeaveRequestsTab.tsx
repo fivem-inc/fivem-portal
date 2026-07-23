@@ -1404,7 +1404,9 @@ const LeaveRequestsTab: React.FC = () => {
                                         setAdminSelectingManagerFor(req);
                                       } else {
                                         if (!window.confirm('受理しますか？')) return;
-                                        const nextStatus: Record<string, string> = { step2_pending: 'manager_approved', manager_approved: 'admin_approved', admin_approved: 'approved' };
+                                        // 調整休はマネージャー受理で完了（経理・社長ステップをスキップ）。受理ページ(LeaveApprovals)と挙動を揃える
+                                        const isChosei = req.leave_type === '調整休';
+                                        const nextStatus: Record<string, string> = { step2_pending: isChosei ? 'approved' : 'manager_approved', manager_approved: 'admin_approved', admin_approved: 'approved' };
                                         const nextSt = nextStatus[req.status] || 'approved';
                                         await supabase.from('leave_requests').update({ status: nextSt }).eq('id', req.id);
 
