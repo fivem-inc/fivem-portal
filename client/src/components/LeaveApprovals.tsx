@@ -76,7 +76,10 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   // パートへフォーム送信
   const [partUsers, setPartUsers] = useState<any[]>([]);
   const [partSendSuccess, setPartSendSuccess] = useState<string | null>(null);
+  const [partSendError, setPartSendError] = useState<string | null>(null); // パート送信のインラインエラー（alert廃止）
+  const [partConfirmId, setPartConfirmId] = useState<string | null>(null); // パート送信のインライン確認（confirm廃止）
   const [staleMsg, setStaleMsg] = useState<string | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null); // 共通インライン確認（window.confirm廃止）
 
   const isDark = useDarkMode();
   const bg = isDark ? '#343a40' : 'white';
@@ -234,22 +237,23 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     };
     const next = nextMap[req.status] || 'manager_approved';
     const label = next === 'approved' ? '最終受理（完了）' : '受理';
-    if (!window.confirm(`${label}しますか？`)) return;
-    // 二重受理防止（楽観ロック）：自分が見た状態と一致する時だけ更新。ズレていたら中断して最新化。
-    const { data: locked } = await supabase.from('leave_requests').update({ status: next }).eq('id', req.id).eq('status', req.status).select('id');
-    if (!locked || locked.length === 0) { setStaleMsg('この申請は他の受理者が先に処理したため、最新の状態に更新しました。'); fetchRequests(); return; }
+    setConfirmDialog({ message: `${label}しますか？`, onConfirm: async () => {
+      // 二重受理防止（楽観ロック）：自分が見た状態と一致する時だけ更新。ズレていたら中断して最新化。
+      const { data: locked } = await supabase.from('leave_requests').update({ status: next }).eq('id', req.id).eq('status', req.status).select('id');
+      if (!locked || locked.length === 0) { setStaleMsg('この申請は他の受理者が先に処理したため、最新の状態に更新しました。'); fetchRequests(); return; }
 
-    if (req.status === 'step2_pending') {
-      // マネージャー受理確定：カレンダー書き込み＋受理通知（共通処理）
-      await emitManagerApproved(req);
-    } else if (req.status === 'manager_approved') {
-      if (await shouldSend('leave:manager_approved', 'slack')) {
-        await sendLeaveSlack('accounting_approved', profileName || '経理担当者', '管理者');
+      if (req.status === 'step2_pending') {
+        // マネージャー受理確定：カレンダー書き込み＋受理通知（共通処理）
+        await emitManagerApproved(req);
+      } else if (req.status === 'manager_approved') {
+        if (await shouldSend('leave:manager_approved', 'slack')) {
+          await sendLeaveSlack('accounting_approved', profileName || '経理担当者', '管理者');
+        }
       }
-    }
 
-    window.dispatchEvent(new CustomEvent('leave-pending-changed'));
-    fetchRequests();
+      window.dispatchEvent(new CustomEvent('leave-pending-changed'));
+      fetchRequests();
+    } });
   };
 
   // 申請先がマネージャー本人の一人目受理で、二人目も自分が兼ねて経理へ一気に進める（調整休は完了まで）。
@@ -382,6 +386,18 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
         </div>
       )}
 
+      {confirmDialog && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setConfirmDialog(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: isDark ? '#343a40' : 'white', borderRadius: 12, padding: '22px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.25)', maxWidth: 340, width: '100%' }}>
+            <p style={{ fontSize: 15, fontWeight: 'bold', color: isDark ? '#fff' : '#333', margin: '0 0 18px', lineHeight: 1.6 }}>{confirmDialog.message}</p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setConfirmDialog(null)} style={{ padding: '8px 18px', background: 'transparent', color: isDark ? '#adb5bd' : '#666', border: `1px solid ${isDark ? '#6c757d' : '#ccc'}`, borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
+              <button onClick={() => { const cb = confirmDialog.onConfirm; setConfirmDialog(null); cb(); }} style={{ padding: '8px 18px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>はい</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* パートへ申請フォーム送信 */}
       {(() => {
         const canSeeAll = isAdmin || roleTitle === 'マネージャー' || roleTitle === '社長' || roleTitle === '管理者';
@@ -401,22 +417,48 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                 ))}
               </select>
               <button
-                onClick={async () => {
+                onClick={() => {
                   const sel = document.getElementById('part-leave-target-approvals') as HTMLSelectElement;
                   const userId = sel?.value;
-                  if (!userId) { alert('パートを選択してください'); return; }
-                  const target = partUsers.find(u => u.id === userId);
-                  if (!target) return;
-                  if (!window.confirm(`「${target.name || target.email}」さんに申請フォームを送信しますか？`)) return;
-                  const { error } = await supabase.from('profiles').update({ leave_request_enabled: true, leave_enabled_by: user.id }).eq('id', userId);
-                  if (error) { alert('送信に失敗しました: ' + error.message); return; }
-                  setPartUsers(prev => prev.map(u => u.id === userId ? { ...u, leave_request_enabled: true, leave_enabled_by: user.id } : u));
-                  setPartSendSuccess(`「${target.name || target.email}」さんに送信しました`);
-                  setTimeout(() => setPartSendSuccess(null), 3000);
+                  setPartSendError(null);
+                  if (!userId) { setPartSendError('パートを選択してください'); return; }
+                  setPartConfirmId(userId);
                 }}
                 style={{ padding: '6px 16px', background: '#28a745', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 13, whiteSpace: 'nowrap' }}
               >送信</button>
             </div>
+            {partSendError && (
+              <div style={{ marginTop: 8, fontSize: 12, color: '#dc3545', background: isDark ? '#4a2b30' : '#fff5f5', border: `1px solid ${isDark ? '#a3474c' : '#f5b5b5'}`, borderRadius: 6, padding: '6px 10px' }}>⚠️ {partSendError}</div>
+            )}
+            {partConfirmId && (() => {
+              const t = partUsers.find(u => u.id === partConfirmId);
+              return (
+                <div style={{ marginTop: 8, background: isDark ? '#3a2e1a' : '#fff8e1', border: '1px solid #f0ad4e', borderRadius: 6, padding: '10px 12px' }}>
+                  <p style={{ fontSize: 13, color: isDark ? '#fff' : '#333', margin: '0 0 8px' }}>「{t?.name || t?.email}」さんに申請フォームを送信しますか？</p>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      onClick={async () => {
+                        const userId = partConfirmId;
+                        setPartConfirmId(null);
+                        setPartSendError(null);
+                        const target = partUsers.find(u => u.id === userId);
+                        if (!target) return;
+                        const { error } = await supabase.from('profiles').update({ leave_request_enabled: true, leave_enabled_by: user.id }).eq('id', userId);
+                        if (error) { setPartSendError('送信に失敗しました: ' + error.message); return; }
+                        setPartUsers(prev => prev.map(u => u.id === userId ? { ...u, leave_request_enabled: true, leave_enabled_by: user.id } : u));
+                        setPartSendSuccess(`「${target.name || target.email}」さんに送信しました`);
+                        setTimeout(() => setPartSendSuccess(null), 3000);
+                      }}
+                      style={{ padding: '6px 16px', background: '#28a745', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}
+                    >送信する</button>
+                    <button
+                      onClick={() => setPartConfirmId(null)}
+                      style={{ padding: '6px 16px', background: 'transparent', color: isDark ? '#adb5bd' : '#666', border: `1px solid ${isDark ? '#6c757d' : '#ccc'}`, borderRadius: 6, cursor: 'pointer', fontSize: 13 }}
+                    >キャンセル</button>
+                  </div>
+                </div>
+              );
+            })()}
             {visibleEnabled.length > 0 && (
               <div style={{ marginTop: 10 }}>
                 <p style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#666', marginBottom: 4 }}>
@@ -553,13 +595,14 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                         差し戻し済み{req.rejected_reason ? `：${req.rejected_reason}` : ''}
                       </div>
                       <button
-                        onClick={async () => {
-                          if (!window.confirm('差し戻しを取り消して自分の確認待ちに戻しますか？')) return;
-                          // 自分が一人目か二人目かでステータスを分ける
-                          const backStatus = req.approver2_id === user.id ? 'step2_pending' : 'pending';
-                          await supabase.from('leave_requests').update({ status: backStatus, rejected_reason: null }).eq('id', req.id);
-                          window.dispatchEvent(new CustomEvent('leave-pending-changed'));
-                          fetchRequests();
+                        onClick={() => {
+                          setConfirmDialog({ message: '差し戻しを取り消して自分の確認待ちに戻しますか？', onConfirm: async () => {
+                            // 自分が一人目か二人目かでステータスを分ける
+                            const backStatus = req.approver2_id === user.id ? 'step2_pending' : 'pending';
+                            await supabase.from('leave_requests').update({ status: backStatus, rejected_reason: null }).eq('id', req.id);
+                            window.dispatchEvent(new CustomEvent('leave-pending-changed'));
+                            fetchRequests();
+                          } });
                         }}
                         style={{ width: '100%', padding: '8px', background: '#6c757d', color: 'white', border: '2px solid #545b62', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}
                       >↩ 差し戻しを取り消す</button>
