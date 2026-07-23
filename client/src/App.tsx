@@ -1435,6 +1435,7 @@ const Dashboard: React.FC = () => {
   const [encAnswerSuccess, setEncAnswerSuccess] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [leaveSubmitted, setLeaveSubmitted] = useState(false);
+  const [templateMsg, setTemplateMsg] = useState<string | null>(null); // テンプレ適用時のインライン通知（alert廃止）
   const { channelOnly: boardChannelUnread } = useBoardUnread(user?.id, pathname);
 
   const setExpenses = useCallback((value: React.SetStateAction<Expense[]>) => {
@@ -1445,7 +1446,8 @@ const Dashboard: React.FC = () => {
     const items = (submission.expenses_data || [])
       .map(e => ({ ...e, start_date: '', end_date: '' }));
     if (items.length === 0) {
-      alert('適用できるテンプレートデータがありません。');
+      setTemplateMsg('適用できるテンプレートデータがありません。');
+      setTimeout(() => setTemplateMsg(null), 3000);
       return;
     }
     setTemplateQueue(items);
@@ -1531,6 +1533,13 @@ const Dashboard: React.FC = () => {
 
   return (
     <div style={{ maxWidth: 800, margin: '0 auto', position: 'relative', padding: '70px 16px 0', boxSizing: 'border-box' as const, width: '100%' }}>
+      {templateMsg && (
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 12, padding: '18px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 10, maxWidth: 320 }}>
+          <span style={{ fontSize: 18 }}>⚠️</span>
+          <span style={{ fontSize: 14, fontWeight: 'bold', color: '#92400e' }}>{templateMsg}</span>
+          <button type="button" onClick={() => setTemplateMsg(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#92400e', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
+        </div>
+      )}
       {encAnswerModal}
       {encAnswerSuccess && (
         <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 4000, background: '#f0fdf4', border: '1.5px solid #b7e4cc', borderRadius: 18, padding: '24px 32px', textAlign: 'center', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>

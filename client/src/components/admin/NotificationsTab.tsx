@@ -382,6 +382,7 @@ const NotificationsTab: React.FC = () => {
   const [openEvent, setOpenEvent] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null); // 共通インライン確認（confirm廃止）
 
   // テンプレートライブラリ
   const [templates, setTemplates] = useState<EmailTemplate[]>([]);
@@ -522,10 +523,11 @@ const NotificationsTab: React.FC = () => {
     setTplSaving(false);
   };
 
-  const handleDeleteTpl = async (id: string) => {
-    if (!confirm('このテンプレートを削除しますか？')) return;
-    await supabase.from('email_templates').delete().eq('id', id);
-    await fetchTemplates();
+  const handleDeleteTpl = (id: string) => {
+    setConfirmDialog({ message: 'このテンプレートを削除しますか？', onConfirm: async () => {
+      await supabase.from('email_templates').delete().eq('id', id);
+      await fetchTemplates();
+    } });
   };
 
   // {{変数}} を抽出
@@ -740,6 +742,17 @@ const NotificationsTab: React.FC = () => {
 
   return (
     <div style={{ maxWidth: 720, margin: '0 auto', padding: '16px 0' }}>
+      {confirmDialog && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 5000, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setConfirmDialog(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: bg, borderRadius: 12, padding: '22px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.25)', maxWidth: 360, width: '100%' }}>
+            <p style={{ fontSize: 15, fontWeight: 'bold', color: text, margin: '0 0 18px', lineHeight: 1.6, whiteSpace: 'pre-line' }}>{confirmDialog.message}</p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setConfirmDialog(null)} style={{ padding: '8px 18px', background: 'transparent', color: subText, border: `1px solid ${borderColor}`, borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
+              <button onClick={() => { const cb = confirmDialog.onConfirm; setConfirmDialog(null); cb(); }} style={{ padding: '8px 18px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>削除する</button>
+            </div>
+          </div>
+        </div>
+      )}
       {libraryModal}
       {previewModal}
 

@@ -42,6 +42,7 @@ const BoardSettingsTab: React.FC = () => {
 
   // DMデフォルト権限
   const [dmPerms, setDmPerms] = useState<SendPermissions>({ employment_types: [], role_titles: [] });
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null); // 共通インライン確認（confirm廃止）
   const [editingDm, setEditingDm] = useState(false);
   const [pendingDmPerms, setPendingDmPerms] = useState<SendPermissions>({ employment_types: [], role_titles: [] });
 
@@ -195,13 +196,14 @@ const BoardSettingsTab: React.FC = () => {
     showBanner();
   };
 
-  const deleteChannel = async (chId: string, chName: string) => {
-    if (!window.confirm(`「${chName}」を削除しますか？\nメッセージ・メンバー情報もすべて削除されます。`)) return;
-    await supabase.from('board_channel_members').delete().eq('channel_id', chId);
-    await supabase.from('board_messages').delete().eq('channel_id', chId);
-    await supabase.from('board_channels').delete().eq('id', chId);
-    setChannels(prev => prev.filter(ch => ch.id !== chId));
-    showBanner();
+  const deleteChannel = (chId: string, chName: string) => {
+    setConfirmDialog({ message: `「${chName}」を削除しますか？\nメッセージ・メンバー情報もすべて削除されます。`, onConfirm: async () => {
+      await supabase.from('board_channel_members').delete().eq('channel_id', chId);
+      await supabase.from('board_messages').delete().eq('channel_id', chId);
+      await supabase.from('board_channels').delete().eq('id', chId);
+      setChannels(prev => prev.filter(ch => ch.id !== chId));
+      showBanner();
+    } });
   };
 
   const showBanner = () => {
@@ -357,6 +359,17 @@ const BoardSettingsTab: React.FC = () => {
 
   return (
     <div style={{ color: text }}>
+      {confirmDialog && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 5000, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setConfirmDialog(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: isDark ? '#343a40' : 'white', borderRadius: 12, padding: '22px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.25)', maxWidth: 360, width: '100%' }}>
+            <p style={{ fontSize: 15, fontWeight: 'bold', color: text, margin: '0 0 18px', lineHeight: 1.6, whiteSpace: 'pre-line' }}>{confirmDialog.message}</p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setConfirmDialog(null)} style={{ padding: '8px 18px', background: 'transparent', color: sub, border: `1px solid ${border}`, borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
+              <button onClick={() => { const cb = confirmDialog.onConfirm; setConfirmDialog(null); cb(); }} style={{ padding: '8px 18px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>削除する</button>
+            </div>
+          </div>
+        </div>
+      )}
       <div style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 16 }}>📨 連絡板 送信権限設定</div>
       <p style={{ fontSize: 13, color: sub, marginBottom: 20 }}>
         チャンネルごとに「誰が送信できるか」を設定します。
