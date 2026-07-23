@@ -15,7 +15,7 @@ verify_jwt = false
 
 [functions.gcal-sync]
 enabled = true
-verify_jwt = false
+verify_jwt = true
 import_map = "./functions/gcal-sync/deno.json"
 # Uncomment to specify a custom file path to the entrypoint.
 # Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx

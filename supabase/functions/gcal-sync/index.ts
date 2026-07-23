@@ -198,6 +198,22 @@ serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseKey)
 
+    // 認可ゲート：サービスキー（overtime-approve等のサーバー間呼び出し）か、
+    // ログイン済みの本物のユーザーのみ許可。未ログイン・公開anonキーだけの直接呼び出しは 401 で拒否。
+    // （config.toml の verify_jwt=true でも公開anonキーは通るため、ここで role を確認する二重の守り）
+    const authToken = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '')
+    let authorized = !!authToken && authToken === supabaseKey
+    if (!authorized && authToken) {
+      const { data: { user } } = await supabase.auth.getUser(authToken)
+      authorized = !!user
+    }
+    if (!authorized) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'unauthorized' }),
+        { status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
+      )
+    }
+
     // 書き込み先カレンダーを app_settings のモードで切り替える（管理画面のワンクリックトグル）。
     // mode='production' → GCAL_CALENDAR_ID_PROD（本番）、それ以外/未設定/失敗時 → GCAL_CALENDAR_ID（テスト・現行維持）。
     let calendarId = Deno.env.get('GCAL_CALENDAR_ID')!
