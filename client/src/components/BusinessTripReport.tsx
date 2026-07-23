@@ -146,6 +146,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
 
   // 入力中の下書きを端末に自動保存し、開き直したら復元する
   const [td] = useState(() => loadDraft<TripDraft>(DRAFT_KEYS.trip));
+  const [formError, setFormError] = useState<string | null>(null); // 入力エラー・失敗のインライントースト（alert廃止）
   const [reportType, setReportType] = useState<'到着' | '終了'>(td?.reportType ?? '到着');
   const [category, setCategory] = useState<string>(td?.category ?? '出張');
   const [categoryOther, setCategoryOther] = useState(td?.categoryOther ?? '');
@@ -199,7 +200,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
   };
 
   const handleGetGps = () => {
-    if (!navigator.geolocation) { alert('このブラウザはGPSに対応していません'); return; }
+    if (!navigator.geolocation) { setFormError('このブラウザはGPSに対応していません'); return; }
     setGpsLoading(true);
     setGpsAttempted(true);
     setGpsUnavailable(false);
@@ -252,9 +253,9 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
   };
 
   const handleSubmitConfirm = () => {
-    if (!effectiveLocation.trim()) { alert('場所を入力してください'); return; }
-    if (category === 'その他' && !categoryOther.trim()) { alert('区分（その他）の内容を入力してください'); return; }
-    if (!gps && !gpsUnavailable) { alert('📍 現在地を取得してください。\n取得できない場合は「取得できませんでした」にチェックしてください。'); return; }
+    if (!effectiveLocation.trim()) { setFormError('場所を入力してください'); return; }
+    if (category === 'その他' && !categoryOther.trim()) { setFormError('区分（その他）の内容を入力してください'); return; }
+    if (!gps && !gpsUnavailable) { setFormError('📍 現在地を取得してください。取得できない場合は「取得できませんでした」にチェックしてください。'); return; }
     setShowConfirm(true);
   };
 
@@ -304,7 +305,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
       setGpsAttempted(false); setGpsUnavailable(false);
       clearDraft(DRAFT_KEYS.trip); // 送信成功で下書きを消す
     } catch {
-      alert('送信に失敗しました。もう一度試してください。');
+      setFormError('送信に失敗しました。もう一度試してください。');
     } finally {
       setIsSubmitting(false);
     }
@@ -320,6 +321,13 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
 
   return (
     <div style={{ maxWidth: 600, margin: '0 auto', padding: '16px 16px 40px' }}>
+      {formError && (
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: '#fff5f5', border: '1px solid #f5b5b5', borderRadius: 12, padding: '16px 22px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 10, maxWidth: 320 }}>
+          <span style={{ fontSize: 18, flexShrink: 0 }}>⚠️</span>
+          <span style={{ fontSize: 14, fontWeight: 'bold', color: '#dc3545' }}>{formError}</span>
+          <button type="button" onClick={() => setFormError(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 16, padding: '0 4px', flexShrink: 0 }}>✕</button>
+        </div>
+      )}
       <div ref={topRef} />
       <h2 style={{ textAlign: 'center', margin: '12px 0 16px', fontSize: 20, fontWeight: 'bold', color: isDark ? '#fff' : '#333' }}>📍 出張報告</h2>
 

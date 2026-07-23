@@ -20,6 +20,7 @@ const LeaderAssignmentsTab: React.FC = () => {
   const [form, setForm] = useState(emptyForm);
   const [showAddForm, setShowAddForm] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null); // 共通インライン確認（confirm廃止）
 
   const text = isDarkMode ? '#fff' : '#000';
   const subText = isDarkMode ? '#adb5bd' : '#666';
@@ -50,7 +51,7 @@ const LeaderAssignmentsTab: React.FC = () => {
   const saveEdit = async () => {
     if (isProcessing) return;
     if (!form.course.trim() || !form.school.trim() || !form.leader.trim() || !form.manager.trim()) {
-      alert('すべての項目を入力してください');
+      setSuccessMsg('⚠ すべての項目を入力してください');
       return;
     }
     setIsProcessing(true);
@@ -60,12 +61,12 @@ const LeaderAssignmentsTab: React.FC = () => {
           course: form.course, school: form.school, leader: form.leader, manager: form.manager, display_order: form.display_order,
           updated_at: new Date().toISOString(),
         }).eq('id', editingId);
-        if (error) { alert('更新に失敗しました: ' + error.message); return; }
+        if (error) { setSuccessMsg('⚠ 更新に失敗しました: ' + error.message); return; }
       } else {
         const { error } = await supabase.from('leader_assignments').insert({
           course: form.course, school: form.school, leader: form.leader, manager: form.manager, display_order: form.display_order,
         });
-        if (error) { alert('追加に失敗しました: ' + error.message); return; }
+        if (error) { setSuccessMsg('⚠ 追加に失敗しました: ' + error.message); return; }
       }
       cancelEdit();
       fetchItems();
@@ -75,18 +76,19 @@ const LeaderAssignmentsTab: React.FC = () => {
     }
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = (id: string) => {
     if (isProcessing) return;
-    if (!window.confirm('この項目を削除しますか？')) return;
+    setConfirmDialog({ message: 'この項目を削除しますか？', onConfirm: async () => {
     setIsProcessing(true);
     try {
       const { error } = await supabase.from('leader_assignments').delete().eq('id', id);
-      if (error) { alert('削除に失敗しました: ' + error.message); return; }
+      if (error) { setSuccessMsg('⚠ 削除に失敗しました: ' + error.message); return; }
       fetchItems();
       setSuccessMsg('削除しました');
     } finally {
       setIsProcessing(false);
     }
+    } });
   };
 
   const inputStyle: React.CSSProperties = {
@@ -134,6 +136,17 @@ const LeaderAssignmentsTab: React.FC = () => {
 
   return (
     <div>
+      {confirmDialog && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 5000, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setConfirmDialog(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: isDarkMode ? '#343a40' : 'white', borderRadius: 12, padding: '22px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.25)', maxWidth: 360, width: '100%' }}>
+            <p style={{ fontSize: 15, fontWeight: 'bold', color: text, margin: '0 0 18px', lineHeight: 1.6, whiteSpace: 'pre-line' }}>{confirmDialog.message}</p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setConfirmDialog(null)} style={{ padding: '8px 18px', background: 'transparent', color: subText, border: `1px solid ${borderColor}`, borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
+              <button onClick={() => { const cb = confirmDialog.onConfirm; setConfirmDialog(null); cb(); }} style={{ padding: '8px 18px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>削除する</button>
+            </div>
+          </div>
+        </div>
+      )}
       <h3 style={{ textAlign: 'center', marginBottom: 8, color: text }}>📋 勤務校リーダー・マネージャー管理</h3>
       <p style={{ textAlign: 'center', fontSize: 13, color: subText, marginBottom: 16 }}>
         休暇申請ページに表示される「勤務校リーダー・マネージャー一覧」をここから編集できます。

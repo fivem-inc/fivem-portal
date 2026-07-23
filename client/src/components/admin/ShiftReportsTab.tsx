@@ -92,6 +92,7 @@ const ShiftReportsTab: React.FC = () => {
 
   const [reports, setReports]           = useState<ShiftReport[]>([]);
   const [loading, setLoading]           = useState(true);
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null); // 共通インライン確認（confirm廃止）
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [personFilter, setPersonFilter] = useState('all');
   const [groupFilter, setGroupFilter]   = useState('all');
@@ -190,8 +191,8 @@ const ShiftReportsTab: React.FC = () => {
     setExpandedHistory(next);
   };
 
-  const handleConfirm = async (r: ShiftReport) => {
-    if (!window.confirm(`「${r.applicantName}」の報告を受理しますか？`)) return;
+  const handleConfirm = (r: ShiftReport) => {
+    setConfirmDialog({ message: `「${r.applicantName}」の報告を受理しますか？`, onConfirm: async () => {
     setConfirming(r.id);
     const { data: { user } } = await supabase.auth.getUser();
     await supabase.from('shift_reports').update({ status: 'confirmed', confirmed_by: user?.id, confirmed_at: new Date().toISOString() }).eq('id', r.id);
@@ -214,6 +215,7 @@ const ShiftReportsTab: React.FC = () => {
     setConfirming(null);
     setSuccessMsg('受理しました');
     fetchReports();
+    } });
   };
 
   const handleReturn = async () => {
@@ -240,18 +242,19 @@ const ShiftReportsTab: React.FC = () => {
     fetchReports();
   };
 
-  const handleDelete = async (r: ShiftReport) => {
-    if (!window.confirm(`「${r.applicantName}」の報告を完全削除しますか？`)) return;
-    setDeleteError('');
-    // 履歴は shift_reports の削除で on delete cascade により自動削除される
-    const { data: deleted, error } = await supabase.from('shift_reports').delete().eq('id', r.id).select('id');
-    if (error) { setDeleteError(`削除に失敗しました：${error.message}`); return; }
-    if (!deleted || deleted.length === 0) {
-      setDeleteError('削除できませんでした（権限が不足しているか、すでに削除済みです）');
-      return;
-    }
-    setSuccessMsg('削除しました');
-    fetchReports();
+  const handleDelete = (r: ShiftReport) => {
+    setConfirmDialog({ message: `「${r.applicantName}」の報告を完全削除しますか？`, onConfirm: async () => {
+      setDeleteError('');
+      // 履歴は shift_reports の削除で on delete cascade により自動削除される
+      const { data: deleted, error } = await supabase.from('shift_reports').delete().eq('id', r.id).select('id');
+      if (error) { setDeleteError(`削除に失敗しました：${error.message}`); return; }
+      if (!deleted || deleted.length === 0) {
+        setDeleteError('削除できませんでした（権限が不足しているか、すでに削除済みです）');
+        return;
+      }
+      setSuccessMsg('削除しました');
+      fetchReports();
+    } });
   };
 
   // 論理取消（判子）。status='cancelled' にすると、紐づくopen依頼はトリガーが自動で対応済みにし本人へ通知する。
@@ -316,7 +319,7 @@ const ShiftReportsTab: React.FC = () => {
       if (csvTo)   query = query.lte('work_date', csvTo);
     }
     const { data } = await query.order('work_date', { ascending: true });
-    if (!data || data.length === 0) { setCsvExporting(false); alert('データがありません'); return; }
+    if (!data || data.length === 0) { setCsvExporting(false); setSuccessMsg('⚠ データがありません'); return; }
 
     const ids = [...new Set([
       ...data.map((r: ShiftReport) => r.applicant_id),
@@ -373,6 +376,17 @@ const ShiftReportsTab: React.FC = () => {
 
   return (
     <div style={{ background: bg, minHeight: '60vh', padding: '0 0 40px' }}>
+      {confirmDialog && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 5000, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setConfirmDialog(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: isDarkMode ? '#343a40' : 'white', borderRadius: 12, padding: '22px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.25)', maxWidth: 360, width: '100%' }}>
+            <p style={{ fontSize: 15, fontWeight: 'bold', color: text, margin: '0 0 18px', lineHeight: 1.6, whiteSpace: 'pre-line' }}>{confirmDialog.message}</p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setConfirmDialog(null)} style={{ padding: '8px 18px', background: 'transparent', color: sub, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
+              <button onClick={() => { const cb = confirmDialog.onConfirm; setConfirmDialog(null); cb(); }} style={{ padding: '8px 18px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>はい</button>
+            </div>
+          </div>
+        </div>
+      )}
       <h3 style={{ textAlign: 'center', marginBottom: 6, color: text }}>⏰ 勤務変更報告一覧</h3>
       <p style={{ textAlign: 'center', fontSize: 13, color: sub, marginBottom: 8 }}>パートスタッフの残業・早退・遅刻・欠勤の報告を管理します。</p>
       {deleteError && (
