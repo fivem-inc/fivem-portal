@@ -334,6 +334,7 @@ interface FormDraft {
   fullDayType?: string;
   furikaeOriginDate?: string;
   furikaeOriginLocation?: string;
+  furikaeOriginLocationCustom?: string;
   furikaeOriginStart?: string;
   furikaeOriginEnd?: string;
 }
@@ -432,7 +433,17 @@ const OvertimeForm: React.FC<{
   const [fullDayError, setFullDayError] = useState('');
   // 振替休日の振替元（実際に出勤した日＋その日の勤務校＋出退勤時刻）。時刻から労働時間を出し、差分＝振替元労働−対象日労働。
   const [furikaeOriginDate, setFurikaeOriginDate] = useState<string>(() => editTarget?.furikae_origin_date ?? draft?.furikaeOriginDate ?? '');
-  const [furikaeOriginLocation, setFurikaeOriginLocation] = useState<string>(() => editTarget?.furikae_origin_location ?? draft?.furikaeOriginLocation ?? '');
+  // 勤務校：登録済みの校以外（その他イベント会場等）は「その他」＋自由入力欄に復元する（勤務地欄と同じパターン）
+  const [furikaeOriginLocation, setFurikaeOriginLocation] = useState<string>(() => {
+    const loc = editTarget?.furikae_origin_location ?? '';
+    if (loc) return workplaces.includes(loc) ? loc : 'その他';
+    return draft?.furikaeOriginLocation ?? '';
+  });
+  const [furikaeOriginLocationCustom, setFurikaeOriginLocationCustom] = useState<string>(() => {
+    const loc = editTarget?.furikae_origin_location ?? '';
+    if (loc && !workplaces.includes(loc)) return loc;
+    return draft?.furikaeOriginLocationCustom ?? '';
+  });
   const [furikaeOriginStart, setFurikaeOriginStart] = useState<string>(() => (editTarget?.furikae_origin_start ? editTarget.furikae_origin_start.slice(0, 5) : draft?.furikaeOriginStart ?? ''));
   const [furikaeOriginEnd, setFurikaeOriginEnd] = useState<string>(() => (editTarget?.furikae_origin_end ? editTarget.furikae_origin_end.slice(0, 5) : draft?.furikaeOriginEnd ?? ''));
 
@@ -456,9 +467,9 @@ const OvertimeForm: React.FC<{
     saveDraft(DRAFT_KEYS.overtime, {
       mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId,
       normOverride, normStart, normEnd, fullDay, fullDayType: fullDayType ?? undefined,
-      furikaeOriginDate, furikaeOriginLocation, furikaeOriginStart, furikaeOriginEnd,
+      furikaeOriginDate, furikaeOriginLocation, furikaeOriginLocationCustom, furikaeOriginStart, furikaeOriginEnd,
     } satisfies FormDraft);
-  }, [editTarget, mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId, normOverride, normStart, normEnd, fullDay, fullDayType, furikaeOriginDate, furikaeOriginLocation, furikaeOriginStart, furikaeOriginEnd]);
+  }, [editTarget, mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId, normOverride, normStart, normEnd, fullDay, fullDayType, furikaeOriginDate, furikaeOriginLocation, furikaeOriginLocationCustom, furikaeOriginStart, furikaeOriginEnd]);
 
   // 日付変更→会社カレンダー取得
   useEffect(() => {
@@ -644,6 +655,8 @@ const OvertimeForm: React.FC<{
   const furikaeOriginBreak = useMemo(() => calcTotalBreak(furikaeOriginSegs), [furikaeOriginSegs]);
   const furikaeOriginLabor = useMemo(() => (furikaeOriginSegs.length ? calcLaborMinutes(furikaeOriginSegs, furikaeOriginBreak) : 0), [furikaeOriginSegs, furikaeOriginBreak]);
   const furikaeHasTime = furikaeOriginSegs.length > 0;
+  // 振替元の勤務校の実効値（「その他」選択時は自由入力欄の値を使う。休日出勤は登録校以外の場所もあり得るため）
+  const effectiveFurikaeOriginLocation = furikaeOriginLocation === 'その他' ? furikaeOriginLocationCustom.trim() : furikaeOriginLocation;
 
   // 終日の合計時間数への効き（差分）。
   //  時間外調整休 = −対象日の通常シフト労働／振替休日 = 振替元労働 − 対象日の通常シフト労働（自己完結）／欠勤 = 0
@@ -669,7 +682,9 @@ const OvertimeForm: React.FC<{
     if (furikaeFilledRef.current === furikaeOriginDate) return;
     furikaeFilledRef.current = furikaeOriginDate;
     const ns = resolveNormalShift(patterns, furikaeOriginDate, null);
-    setFurikaeOriginLocation(ns.location ?? '');
+    const loc = ns.location ?? '';
+    if (loc && !workplaces.includes(loc)) { setFurikaeOriginLocation('その他'); setFurikaeOriginLocationCustom(loc); }
+    else { setFurikaeOriginLocation(loc); setFurikaeOriginLocationCustom(''); }
     // 振替元がシフト上「出勤日」なら初期値としてその時刻を入れる（休みの日＝時刻なしなら空のまま本人が入力）
     if (ns.start_time && ns.end_time) {
       setFurikaeOriginStart(fmtTime(ns.start_time));
@@ -753,6 +768,7 @@ const OvertimeForm: React.FC<{
       if (fullDayType === 'furikae_off') {
         if (!furikaeOriginDate) return '振替元の勤務日を選択してください';
         if (!furikaeOriginLocation) return '振替元の勤務校を選択してください';
+        if (furikaeOriginLocation === 'その他' && !furikaeOriginLocationCustom.trim()) return '振替元の勤務校を入力してください';
         if (!furikaeOriginStart || !furikaeOriginEnd) return '振替元の出勤・退勤の時刻を入力してください';
         if (!furikaeHasTime) return '振替元の時刻が正しくありません（開始・終了を確認してください）';
       }
@@ -844,7 +860,7 @@ const OvertimeForm: React.FC<{
         application_types: applicationTypes,
         // 振替休日のみ振替元（日付・校・出退勤時刻・休憩・労働）を保存（他種別ではnullで上書き＝再提出で種別が変わった場合の掃除）
         furikae_origin_date: (fullDayMode && fullDayType === 'furikae_off') ? furikaeOriginDate : null,
-        furikae_origin_location: (fullDayMode && fullDayType === 'furikae_off') ? furikaeOriginLocation : null,
+        furikae_origin_location: (fullDayMode && fullDayType === 'furikae_off') ? effectiveFurikaeOriginLocation : null,
         furikae_origin_start: (fullDayMode && fullDayType === 'furikae_off' && furikaeHasTime) ? furikaeOriginStart : null,
         furikae_origin_end: (fullDayMode && fullDayType === 'furikae_off' && furikaeHasTime) ? furikaeOriginEnd : null,
         furikae_origin_break_minutes: (fullDayMode && fullDayType === 'furikae_off' && furikaeHasTime) ? furikaeOriginBreak : null,
@@ -1247,15 +1263,18 @@ const OvertimeForm: React.FC<{
                   <SingleDatePicker value={furikaeOriginDate} onChange={setFurikaeOriginDate} isDark={isDark} />
                   <div style={{ marginTop: 8 }}>
                     <span style={{ ...labelStyle, marginBottom: 4 }}>振替元の勤務校{req}
-                      <span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（シフトから自動・違えば修正）</span>
+                      <span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（シフトから自動・違えば修正。休日出勤で普段と違う場所なら「その他」）</span>
                     </span>
                     <select value={furikaeOriginLocation} onChange={e => setFurikaeOriginLocation(e.target.value)} style={fieldStyle}>
                       <option value="">選択してください</option>
                       {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
-                      {furikaeOriginLocation && !workplaces.includes(furikaeOriginLocation) && (
-                        <option value={furikaeOriginLocation}>{furikaeOriginLocation}</option>
-                      )}
+                      <option value="その他">その他（自由入力）</option>
                     </select>
+                    {furikaeOriginLocation === 'その他' && (
+                      <input type="text" value={furikaeOriginLocationCustom} onChange={e => setFurikaeOriginLocationCustom(e.target.value)}
+                        placeholder="勤務校・場所を入力してください"
+                        style={{ ...fieldStyle, marginTop: 6 }} />
+                    )}
                   </div>
                   {/* 振替元の出退勤時刻（自動休憩） */}
                   <div style={{ marginTop: 10 }}>
@@ -1562,7 +1581,7 @@ const OvertimeForm: React.FC<{
           {fullDayMode ? (
             <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
               {date}（{dowLabel(date)}）　終日：{fullDayType ? OT_TYPE_INFO[fullDayType].label : ''}<br />
-              {fullDayType === 'furikae_off' && furikaeOriginDate && <>振替元：{furikaeOriginDate.slice(5).replace('-', '/')}（{dowLabel(furikaeOriginDate)}）{furikaeOriginLocation && `・${furikaeOriginLocation}`}{furikaeHasTime && `・${furikaeOriginStart}〜${furikaeOriginEnd}（労働${formatMin(furikaeOriginLabor)}）`}<br /></>}
+              {fullDayType === 'furikae_off' && furikaeOriginDate && <>振替元：{furikaeOriginDate.slice(5).replace('-', '/')}（{dowLabel(furikaeOriginDate)}）{effectiveFurikaeOriginLocation && `・${effectiveFurikaeOriginLocation}`}{furikaeHasTime && `・${furikaeOriginStart}〜${furikaeOriginEnd}（労働${formatMin(furikaeOriginLabor)}）`}<br /></>}
               {fullDayType === 'chosei_off' && <>シフト労働分 {formatSignedMin(fdDiffMin)} を合計時間数から差し引きます<br /></>}
               {fullDayType === 'furikae_off' && <>振替元の労働 {formatMin(furikaeOriginLabor)} − 休む日の労働 {formatMin(normalShift.labor_minutes)} ＝ 合計時間数 {formatSignedMin(fdDiffMin)}<br /></>}
               {fullDayType === 'absence' && <>欠勤1日として記録します<br /></>}
