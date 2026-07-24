@@ -22,6 +22,10 @@ export interface OvertimeRecord {
   reason: string | null;
   location: string | null;
   application_types?: string[] | null;
+  furikae_origin_date?: string | null;
+  furikae_origin_location?: string | null;
+  created_at?: string | null;
+  confirmed_at?: string | null;
   segments: Seg[];
 }
 

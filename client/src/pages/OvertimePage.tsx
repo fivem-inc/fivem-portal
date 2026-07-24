@@ -9,6 +9,7 @@ import {
   calcTotalBreak, calcLaborMinutes, calcSegmentBreak, checkLegalBreak,
   timeToMin, minToTime, formatSignedMin, formatMin,
   todayJstStr, calcPayPeriodStartJst, payPeriodLabel, payMonthLabel,
+  payMonthPeriodLabel, payPeriodCloseCutoff, isPayPeriodClosed,
   DAY_KIND_LABELS,
 } from '../lib/breakCalc';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
@@ -59,6 +60,10 @@ interface OvertimeReport {
   application_types: string[] | null;
   furikae_origin_date: string | null;
   furikae_origin_location: string | null;
+  furikae_origin_start: string | null;
+  furikae_origin_end: string | null;
+  furikae_origin_break_minutes: number | null;
+  furikae_origin_labor_minutes: number | null;
   reviewer_id: string | null;
   confirmed_by: string | null;
   confirmed_at: string | null;
@@ -176,7 +181,12 @@ export function computeBalance(allRows: OvertimeReport[], period: string): Balan
     r.entry_type === 'manual' && (r.application_types ?? []).includes('chosei_off') && autoDates.has(r.work_date);
   const counted = confirmed.filter(r => !isDupChosei(r));
 
-  const isChosei = (r: OvertimeReport) => r.entry_type === 'leave_auto' || (r.application_types ?? []).includes('chosei_off');
+  // 調整休系（休みによる貸借）= 時間外調整休 / 休暇由来の自動計上 / 振替休日。
+  // 振替休日の差分は net（振替元労働 − 対象日労働）で ± どちらもあり得るが、負のときは
+  // 「早退・調整」ではなく「調整休」バケットに入れる（休みによる調整のため）。
+  const isChosei = (r: OvertimeReport) => r.entry_type === 'leave_auto'
+    || (r.application_types ?? []).includes('chosei_off')
+    || (r.application_types ?? []).includes('furikae_off');
   const total = counted.reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
   const plus = counted.filter(r => (r.diff_minutes ?? 0) > 0).reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
   const choseiMinus = counted.filter(r => (r.diff_minutes ?? 0) < 0 && isChosei(r)).reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
@@ -324,6 +334,8 @@ interface FormDraft {
   fullDayType?: string;
   furikaeOriginDate?: string;
   furikaeOriginLocation?: string;
+  furikaeOriginStart?: string;
+  furikaeOriginEnd?: string;
 }
 
 const EMPTY_SEG = { start: '', end: '' };
@@ -418,9 +430,18 @@ const OvertimeForm: React.FC<{
     return d && isOvertimeType(d) && FULL_DAY_TYPES.includes(d) ? d : null;
   });
   const [fullDayError, setFullDayError] = useState('');
-  // 振替休日の振替元（実際に出勤した日＋その日の勤務校）
+  // 振替休日の振替元（実際に出勤した日＋その日の勤務校＋出退勤時刻）。時刻から労働時間を出し、差分＝振替元労働−対象日労働。
   const [furikaeOriginDate, setFurikaeOriginDate] = useState<string>(() => editTarget?.furikae_origin_date ?? draft?.furikaeOriginDate ?? '');
   const [furikaeOriginLocation, setFurikaeOriginLocation] = useState<string>(() => editTarget?.furikae_origin_location ?? draft?.furikaeOriginLocation ?? '');
+  const [furikaeOriginStart, setFurikaeOriginStart] = useState<string>(() => (editTarget?.furikae_origin_start ? editTarget.furikae_origin_start.slice(0, 5) : draft?.furikaeOriginStart ?? ''));
+  const [furikaeOriginEnd, setFurikaeOriginEnd] = useState<string>(() => (editTarget?.furikae_origin_end ? editTarget.furikae_origin_end.slice(0, 5) : draft?.furikaeOriginEnd ?? ''));
+
+  // 経理から締め後申請を許可された給与期間（pay_period_start の集合）。締めロックの救済に使う。
+  const [grantedPeriods, setGrantedPeriods] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    supabase.from('overtime_submission_grants').select('pay_period_start').eq('user_id', user.id).is('revoked_at', null)
+      .then(({ data }) => setGrantedPeriods(new Set((data ?? []).map((g: { pay_period_start: string }) => g.pay_period_start))), () => {});
+  }, [user.id]);
 
   const [calendarKind, setCalendarKind] = useState<CalendarKind | null>(editTarget?.normal_shift?.calendar_kind ?? null);
   const [error, setError] = useState('');
@@ -435,9 +456,9 @@ const OvertimeForm: React.FC<{
     saveDraft(DRAFT_KEYS.overtime, {
       mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId,
       normOverride, normStart, normEnd, fullDay, fullDayType: fullDayType ?? undefined,
-      furikaeOriginDate, furikaeOriginLocation,
+      furikaeOriginDate, furikaeOriginLocation, furikaeOriginStart, furikaeOriginEnd,
     } satisfies FormDraft);
-  }, [editTarget, mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId, normOverride, normStart, normEnd, fullDay, fullDayType, furikaeOriginDate, furikaeOriginLocation]);
+  }, [editTarget, mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId, normOverride, normStart, normEnd, fullDay, fullDayType, furikaeOriginDate, furikaeOriginLocation, furikaeOriginStart, furikaeOriginEnd]);
 
   // 日付変更→会社カレンダー取得
   useEffect(() => {
@@ -611,18 +632,49 @@ const OvertimeForm: React.FC<{
   }, [fullDay, fullDayType, applicationTypes]);
 
   const fullDayMode = fullDay && !!fullDayType;
-  const fdDiffMin = fullDayType === 'chosei_off' ? -normalShift.labor_minutes : 0;
+
+  // 振替元の勤務時間（自動休憩・労働）。振替休日の差分＝振替元労働−対象日（休む日）の通常シフト労働。
+  const furikaeOriginSegs: WorkSegment[] = useMemo(() => {
+    const st = timeToMin(furikaeOriginStart);
+    let en = timeToMin(furikaeOriginEnd);
+    if (st == null || en == null) return [];
+    if (en <= st) en += 1440;
+    return [{ startMin: st, endMin: en }];
+  }, [furikaeOriginStart, furikaeOriginEnd]);
+  const furikaeOriginBreak = useMemo(() => calcTotalBreak(furikaeOriginSegs), [furikaeOriginSegs]);
+  const furikaeOriginLabor = useMemo(() => (furikaeOriginSegs.length ? calcLaborMinutes(furikaeOriginSegs, furikaeOriginBreak) : 0), [furikaeOriginSegs, furikaeOriginBreak]);
+  const furikaeHasTime = furikaeOriginSegs.length > 0;
+
+  // 終日の合計時間数への効き（差分）。
+  //  時間外調整休 = −対象日の通常シフト労働／振替休日 = 振替元労働 − 対象日の通常シフト労働（自己完結）／欠勤 = 0
+  const fdDiffMin =
+    fullDayType === 'chosei_off' ? -normalShift.labor_minutes
+    : fullDayType === 'furikae_off' ? (furikaeOriginLabor - normalShift.labor_minutes)
+    : 0;
   // 終日の勤務地はシフトの校を自動使用（シフトに校が無い日だけ手動選択）
   const fdLocation = normalShift.location ?? effectiveLocation;
+  // 振替元の日付が過去（すでに出勤済み）＝事後の振替（ブロックせず注意表示）
+  const furikaeIsPostHoc = fullDayType === 'furikae_off' && !!furikaeOriginDate && furikaeOriginDate < todayJstStr();
 
-  // 振替元の勤務日を選ぶと、その日のシフト（曜日パターン）から勤務校を自動取得（間違っていれば手修正）
+  // 締めロック：新規申請のみ。対象日の給与期間が締め（支給月17日）を過ぎ、経理の許可窓が無いとき送信不可。
+  const targetPeriodStart = date ? calcPayPeriodStartJst(date) : '';
+  const closeLockedRaw = !editTarget && !!date && isPayPeriodClosed(date, todayJstStr());
+  const hasGrantForTarget = targetPeriodStart ? grantedPeriods.has(targetPeriodStart) : false;
+  const closeLocked = closeLockedRaw && !hasGrantForTarget;
+
+  // 振替元の勤務日を選ぶと、その日のシフト（曜日パターン）から勤務校＋勤務時刻を自動取得（間違っていれば手修正）
   const furikaeFilledRef = useRef<string>(editTarget?.furikae_origin_date ?? '');
   useEffect(() => {
     if (!furikaeOriginDate) return;
     if (furikaeFilledRef.current === furikaeOriginDate) return;
     furikaeFilledRef.current = furikaeOriginDate;
-    const loc = resolveNormalShift(patterns, furikaeOriginDate, null).location;
-    setFurikaeOriginLocation(loc ?? '');
+    const ns = resolveNormalShift(patterns, furikaeOriginDate, null);
+    setFurikaeOriginLocation(ns.location ?? '');
+    // 振替元がシフト上「出勤日」なら初期値としてその時刻を入れる（休みの日＝時刻なしなら空のまま本人が入力）
+    if (ns.start_time && ns.end_time) {
+      setFurikaeOriginStart(fmtTime(ns.start_time));
+      setFurikaeOriginEnd(fmtTime(ns.end_time));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [furikaeOriginDate, patterns]);
 
@@ -692,6 +744,7 @@ const OvertimeForm: React.FC<{
     if (!date) return '日付を選択してください';
     if (mode === 'advance' && !editTarget && date < today) return '事前申請は当日以降の日付を選択してください';
     if (mode === 'posthoc' && date > today) return '事後報告は当日以前の日付を選択してください';
+    if (closeLocked) return `この対象日は【${payMonthPeriodLabel(targetPeriodStart)}】の申請です。締め切り（${payPeriodCloseCutoff(targetPeriodStart).replace(/-/g, '/')}）を過ぎているため申請できません。経理に申請の許可を依頼してください。`;
     // 終日（調整休・欠勤）は時刻・休憩・勤務地の検証をスキップし、専用の検証のみ行う
     if (fullDay) {
       if (!normalShift.start_time) return 'この日はシフトが休みです。出勤予定日のみ登録できます';
@@ -700,6 +753,8 @@ const OvertimeForm: React.FC<{
       if (fullDayType === 'furikae_off') {
         if (!furikaeOriginDate) return '振替元の勤務日を選択してください';
         if (!furikaeOriginLocation) return '振替元の勤務校を選択してください';
+        if (!furikaeOriginStart || !furikaeOriginEnd) return '振替元の出勤・退勤の時刻を入力してください';
+        if (!furikaeHasTime) return '振替元の時刻が正しくありません（開始・終了を確認してください）';
       }
       if (!reason.trim()) return '理由を入力してください';
       if (!reviewerId) return '申請先を選択してください';
@@ -787,12 +842,25 @@ const OvertimeForm: React.FC<{
         change_reason: (isReportPhase && hasChanges && !isPureZero) ? changeReason.trim() : null,
         location: fullDayMode ? fdLocation : effectiveLocation,
         application_types: applicationTypes,
-        // 振替休日のみ振替元を保存（他種別ではnullで上書き＝再提出で種別が変わった場合の掃除）
+        // 振替休日のみ振替元（日付・校・出退勤時刻・休憩・労働）を保存（他種別ではnullで上書き＝再提出で種別が変わった場合の掃除）
         furikae_origin_date: (fullDayMode && fullDayType === 'furikae_off') ? furikaeOriginDate : null,
         furikae_origin_location: (fullDayMode && fullDayType === 'furikae_off') ? furikaeOriginLocation : null,
+        furikae_origin_start: (fullDayMode && fullDayType === 'furikae_off' && furikaeHasTime) ? furikaeOriginStart : null,
+        furikae_origin_end: (fullDayMode && fullDayType === 'furikae_off' && furikaeHasTime) ? furikaeOriginEnd : null,
+        furikae_origin_break_minutes: (fullDayMode && fullDayType === 'furikae_off' && furikaeHasTime) ? furikaeOriginBreak : null,
+        furikae_origin_labor_minutes: (fullDayMode && fullDayType === 'furikae_off' && furikaeHasTime) ? furikaeOriginLabor : null,
         reviewer_id: isSelfReview ? user.id : reviewerId,
         ...((isSelfReview || isPureZero) ? { confirmed_by: user.id, confirmed_at: new Date().toISOString() } : {}),
         ...(isResubmit ? { return_comment: null } : {}),
+      };
+
+      // DBトリガー由来のエラーを分かりやすい日本語に変換（締めロック・振替の二重計上防止）
+      const friendlyDbError = (msg: string, code?: string): string => {
+        if (msg.includes('OVERTIME_CLOSED')) return 'この対象日の給与期間は締め切りを過ぎています。経理に申請の許可を依頼してください。';
+        if (msg.includes('FURIKAE_DUP_ORIGIN')) return '振替元の日には別の申請があります。振替休日は振替元の勤務時間を含むため、その日を別途「休日出勤」等で申請しないでください。';
+        if (msg.includes('FURIKAE_DUP_WORKDATE')) return 'この日は振替休日の振替元として申請済みです。二重計上になるため、この日は別途申請できません。';
+        if (code === '23505') return '同じ日付の申請がすでにあります（取消済みを除く）';
+        return '保存に失敗しました: ' + msg;
       };
 
       let reportId: string;
@@ -806,7 +874,7 @@ const OvertimeForm: React.FC<{
           snapshot: editTarget as unknown as Record<string, unknown>,
         }).then(null, () => {});
         const { error: err } = await supabase.from('overtime_reports').update(record).eq('id', editTarget.id);
-        if (err) { setError('保存に失敗しました: ' + err.message); setSaving(false); setShowConfirm(false); return; }
+        if (err) { setError(friendlyDbError(err.message, err.code)); setSaving(false); setShowConfirm(false); return; }
         reportId = editTarget.id;
         // 対象phaseの時間帯を入れ替え
         await supabase.from('overtime_report_segments').delete().eq('report_id', reportId).eq('phase', phase);
@@ -815,7 +883,7 @@ const OvertimeForm: React.FC<{
           .insert({ applicant_id: user.id, submitted_by: user.id, entry_type: 'manual', ...record })
           .select('id').single();
         if (err) {
-          setError(err.code === '23505' ? '同じ日付の申請がすでにあります（取消済みを除く）' : '保存に失敗しました: ' + err.message);
+          setError(friendlyDbError(err.message, err.code));
           setSaving(false); setShowConfirm(false); return;
         }
         reportId = inserted.id;
@@ -1043,6 +1111,26 @@ const OvertimeForm: React.FC<{
         )}
       </div>
 
+      {/* 締めロック予告：締め切りを過ぎた期の新規申請は送信できない（送信前に気づけるよう日付選択時に表示） */}
+      {closeLocked && (
+        <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 10, padding: '10px 12px', marginBottom: 14 }}>
+          <p style={{ margin: 0, fontSize: 12.5, fontWeight: 'bold', color: '#842029' }}>
+            🔒 この対象日は【{payMonthPeriodLabel(targetPeriodStart)}】の申請です
+          </p>
+          <p style={{ margin: '4px 0 0', fontSize: 12, color: '#842029', lineHeight: 1.6 }}>
+            締め切り（{payPeriodCloseCutoff(targetPeriodStart).replace(/-/g, '/')}）を過ぎているため申請できません。この期の申請が必要な場合は、経理に申請の許可を依頼してください。
+          </p>
+        </div>
+      )}
+      {/* 経理から締め後申請を許可された期の案内 */}
+      {!editTarget && date && closeLockedRaw && hasGrantForTarget && (
+        <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 10, padding: '10px 12px', marginBottom: 14 }}>
+          <p style={{ margin: 0, fontSize: 12.5, color: '#166534', lineHeight: 1.6 }}>
+            ✓ 経理から【{payMonthPeriodLabel(targetPeriodStart)}】の締め後申請が許可されています。この期の申請ができます。
+          </p>
+        </div>
+      )}
+
       {/* 通常シフト自動表示 */}
       {date && (
         <div style={{ background: innerBg, borderRadius: 10, padding: '10px 12px', marginBottom: 14 }}>
@@ -1089,12 +1177,12 @@ const OvertimeForm: React.FC<{
               }}
               style={{
                 width: '100%', padding: '10px 0', borderRadius: 10, cursor: 'pointer', fontSize: 13.5,
-                fontWeight: fullDay ? 'bold' : 'normal',
-                border: fullDay ? '2px solid #d4537e' : `1px dashed ${borderColor}`,
-                background: fullDay ? (isDark ? '#4b1528' : '#fbeaf0') : 'transparent',
-                color: fullDay ? (isDark ? '#f4c0d1' : '#993556') : subText,
+                fontWeight: 'bold',
+                border: `2px solid ${text}`,
+                background: 'transparent',
+                color: text,
               }}>
-              {fullDay ? '✓ 調整休・欠勤（終日）で申請中 ─ 押すと時間の申請に戻ります' : '🌙 調整休・欠勤（終日）はこちら'}
+              {fullDay ? '✓ 調整休・欠勤（終日）で申請中 ─ 押すと時間の申請に戻ります' : '🌙 調整休・欠勤（終日）の場合はこちらを押す'}
             </button>
           )}
           {fullDayError && (
@@ -1134,15 +1222,24 @@ const OvertimeForm: React.FC<{
                 <div style={{ background: isDark ? '#1b3a1e' : '#d1e7dd', border: '1px solid #28a745', borderRadius: 8, padding: '8px 12px', marginTop: 8 }}>
                   <p style={{ margin: 0, fontSize: 12.5, color: isDark ? '#8fd19e' : '#0f5132' }}>
                     {fullDayType === 'chosei_off' && `シフト労働分 ${formatSignedMin(-normalShift.labor_minutes)} を合計時間数から差し引きます`}
-                    {fullDayType === 'furikae_off' && '休日出勤の振替として記録します'}
+                    {fullDayType === 'furikae_off' && (furikaeHasTime
+                      ? `振替元の労働 ${formatMin(furikaeOriginLabor)} − 休む日の労働 ${formatMin(normalShift.labor_minutes)} ＝ 合計時間数 ${formatSignedMin(fdDiffMin)}`
+                      : '下で振替元の出勤時刻を入れると、合計時間数への反映（差分）が計算されます')}
                     {fullDayType === 'absence' && '欠勤1日として記録します'}
                   </p>
                 </div>
               )}
 
-              {/* 振替休日：振替元（実際に出勤した日）＋その日の勤務校（シフトから自動・修正可） */}
+              {/* 振替休日：① 振替元（実際に出勤した日・校・出退勤時刻）／② 休む日（対象日）。差分を自己完結で計算 */}
               {fullDayType === 'furikae_off' && (
-                <div style={{ marginTop: 10 }}>
+                <div style={{ marginTop: 12, border: `1px solid ${borderColor}`, borderRadius: 10, padding: '12px 12px 14px' }}>
+                  <p style={{ margin: '0 0 8px', fontSize: 12.5, fontWeight: 'bold', color: text }}>① 実際に出勤した日（振替元）</p>
+                  {/* 二重計上防止の案内（入力欄のすぐ上に常設） */}
+                  <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '7px 10px', marginBottom: 10 }}>
+                    <p style={{ margin: 0, fontSize: 11.5, color: '#856404', lineHeight: 1.6 }}>
+                      ※ 出勤した日（振替元）は、ここに時刻を入れて記録します。<b>別途「休日出勤」として申請しないでください</b>（二重計上になります）。
+                    </p>
+                  </div>
                   <span style={{ ...labelStyle, marginBottom: 4 }}>振替元の勤務日{req}
                     <span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（実際に出勤した日をタップ）</span>
                   </span>
@@ -1159,11 +1256,40 @@ const OvertimeForm: React.FC<{
                       )}
                     </select>
                   </div>
+                  {/* 振替元の出退勤時刻（自動休憩） */}
+                  <div style={{ marginTop: 10 }}>
+                    <span style={{ ...labelStyle, marginBottom: 4 }}>振替元の勤務時間{req}
+                      <span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（出勤〜退勤）</span>
+                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input type="time" value={furikaeOriginStart} onChange={e => setFurikaeOriginStart(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
+                      <span style={{ color: subText }}>〜</span>
+                      <input type="time" value={furikaeOriginEnd} onChange={e => setFurikaeOriginEnd(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
+                    </div>
+                    {furikaeHasTime && (
+                      <p style={{ margin: '6px 0 0', fontSize: 12, color: subText }}>
+                        休憩 {formatMin(furikaeOriginBreak)}（自動）・労働 {formatMin(furikaeOriginLabor)}
+                      </p>
+                    )}
+                  </div>
+                  {/* 事後の振替（振替元が過去日）＝注意表示（ブロックはしない） */}
+                  {furikaeIsPostHoc && (
+                    <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '7px 10px', marginTop: 10 }}>
+                      <p style={{ margin: 0, fontSize: 11.5, color: '#856404', lineHeight: 1.6 }}>
+                        振替休日は、休日に出勤する前の申請が原則です。今後は事前にお願いします。
+                      </p>
+                    </div>
+                  )}
+                  <div style={{ borderTop: `1px dashed ${borderColor}`, margin: '12px 0 8px' }} />
+                  <p style={{ margin: 0, fontSize: 12.5, fontWeight: 'bold', color: text }}>
+                    ② 休む日（振替休日）：{date ? `${date.slice(5).replace('-', '/')}（${dowLabel(date)}）` : '上のカレンダーで選択'}
+                    {normalShift.start_time && <span style={{ fontWeight: 'normal', color: subText }}>　通常シフト労働 {formatMin(normalShift.labor_minutes)}</span>}
+                  </p>
                 </div>
               )}
 
-              {/* 勤務地はシフトから自動（校が取れない日だけ下の勤務地欄で選択） */}
-              {normalShift.location && (
+              {/* 勤務地はシフトから自動（校が取れない日だけ下の勤務地欄で選択）。振替休日は振替元に専用の勤務校欄があるため対象外 */}
+              {fullDayType !== 'furikae_off' && normalShift.location && (
                 <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>勤務地：{normalShift.location}（シフトから自動）</p>
               )}
             </div>
@@ -1435,9 +1561,9 @@ const OvertimeForm: React.FC<{
           {fullDayMode ? (
             <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
               {date}（{dowLabel(date)}）　終日：{fullDayType ? OT_TYPE_INFO[fullDayType].label : ''}<br />
-              {fullDayType === 'furikae_off' && furikaeOriginDate && <>振替元：{furikaeOriginDate.slice(5).replace('-', '/')}（{dowLabel(furikaeOriginDate)}）{furikaeOriginLocation && `・${furikaeOriginLocation}`}<br /></>}
+              {fullDayType === 'furikae_off' && furikaeOriginDate && <>振替元：{furikaeOriginDate.slice(5).replace('-', '/')}（{dowLabel(furikaeOriginDate)}）{furikaeOriginLocation && `・${furikaeOriginLocation}`}{furikaeHasTime && `・${furikaeOriginStart}〜${furikaeOriginEnd}（労働${formatMin(furikaeOriginLabor)}）`}<br /></>}
               {fullDayType === 'chosei_off' && <>シフト労働分 {formatSignedMin(fdDiffMin)} を合計時間数から差し引きます<br /></>}
-              {fullDayType === 'furikae_off' && <>休日出勤の振替として記録します<br /></>}
+              {fullDayType === 'furikae_off' && <>振替元の労働 {formatMin(furikaeOriginLabor)} − 休む日の労働 {formatMin(normalShift.labor_minutes)} ＝ 合計時間数 {formatSignedMin(fdDiffMin)}<br /></>}
               {fullDayType === 'absence' && <>欠勤1日として記録します<br /></>}
               {isSelfReview ? '自己受理のため、送信と同時に確定します' : `申請先：${reviewers.find(r => r.id === reviewerId)?.name ?? ''}さん（受理で確定します）`}
             </p>
@@ -2088,7 +2214,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                 <ul style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8 }}>
                   <li><b>申請中／事前申請 受理済み／差し戻し</b>は、自分で「この申請を取消する」から取消できます。内容を直したいときは、取消の確認画面にある「<b>取消して、この内容で作り直す</b>」が便利です。</li>
                   <li><b>実績報告済み・確認済み</b>は自分では変更・取消できません。「<b>📩 管理者に修正を依頼</b>」または「<b>取消を依頼</b>」から依頼してください（依頼はあとから取り下げられます）。</li>
-                  <li>自分で取消できるのは<b>支給月の20日まで</b>です。それ以降は管理者へご依頼ください。</li>
+                  <li>自分で取消できるのは<b>支給月の17日まで</b>です。それ以降は管理者へご依頼ください。</li>
                   <li>調整休の受理により自動で計上された記録は、変更・取消の対象外です（もとの休暇申請を取り消してください）。</li>
                 </ul>
               </div>
@@ -2199,12 +2325,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                     const canReport = isOverdue; // 実績報告ボタンは勤務日を過ぎた分だけ（未来は勤務後に案内）
                     const canResubmit = r.status === 'returned';
                     // 取消ルール：reported(実績報告済＝実態あり)は本人不可（上長が差し戻す/管理者）。
-                    // 本人可は事前段階(requested/request_confirmed)＋差し戻し(returned)のみ。期間は支給月20日まで、以降は管理者のみ。確定は不可（既存）。
-                    const [ppYear, ppMonth] = r.pay_period_start.split('-').map(Number);
-                    const payYear = ppMonth === 12 ? ppYear + 1 : ppYear;
-                    const payMonth = ppMonth === 12 ? 1 : ppMonth + 1;
-                    const cancelCutoff = `${payYear}-${String(payMonth).padStart(2, '0')}-20`; // 支給月の20日
-                    const cancelLockedByPeriod = !isAdmin && otTodayStr > cancelCutoff;
+                    // 本人可は事前段階(requested/request_confirmed)＋差し戻し(returned)のみ。期間は支給月17日まで、以降は管理者のみ。確定は不可（既存）。
+                    const cancelLockedByPeriod = !isAdmin && otTodayStr > payPeriodCloseCutoff(r.pay_period_start);
                     const isReportedLock = !isAdmin && r.status === 'reported' && !isAuto;
                     const selfCancelStatus = ['requested', 'request_confirmed', 'returned'].includes(r.status) && !isAuto;
                     const adminCancelStatus = ['requested', 'request_confirmed', 'reported', 'returned'].includes(r.status) && !isAuto;
@@ -2242,7 +2364,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                             )}
                             <p style={{ margin: 0, fontSize: 12.5, color: subText }}>
                               {isFullDay && '終日　'}
-                              {isFullDay && r.furikae_origin_date && `振替元：${r.furikae_origin_date.slice(5).replace('-', '/')}（${dowLabel(r.furikae_origin_date)}）${r.furikae_origin_location ? '・' + r.furikae_origin_location : ''}　`}
+                              {isFullDay && r.furikae_origin_date && `振替元：${r.furikae_origin_date.slice(5).replace('-', '/')}（${dowLabel(r.furikae_origin_date)}）${r.furikae_origin_location ? '・' + r.furikae_origin_location : ''}${r.furikae_origin_start ? `・${r.furikae_origin_start.slice(0, 5)}〜${(r.furikae_origin_end ?? '').slice(0, 5)}（労働${formatMin(r.furikae_origin_labor_minutes ?? 0)}）` : ''}　`}
                               {!isFullDay && segs.length > 0 && `${actual.length > 0 ? '実績' : '予定'}：${segmentsLabel(segs)}　`}
                               {r.reviewer?.name && `申請先：${r.reviewer.name}`}
                             </p>
@@ -2262,7 +2384,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                           <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>🔒 実績報告済みのため取消できません。申請先の担当者に取り下げ（差し戻し）を依頼してください</p>
                         )}
                         {selfCancelStatus && cancelLockedByPeriod && (
-                          <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>🔒 給与計算が始まっているため（毎月20日以降）、取消は管理者に依頼してください</p>
+                          <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>🔒 給与計算が始まっているため（毎月17日以降）、取消は管理者に依頼してください</p>
                         )}
                         {(canReport || canResubmit || canCancel) && (
                           <div style={{ marginTop: 10 }}>
@@ -2782,7 +2904,7 @@ const ReadonlyReportCard: React.FC<{
             {r.normal_shift?.start_time
               ? <>通常シフト：{fmtTime(r.normal_shift.start_time)}〜{fmtTime(r.normal_shift.end_time)}（労働{formatMin(r.normal_shift.labor_minutes)}）{r.normal_shift.location ? `　${r.normal_shift.location}` : ''}<br /></>
               : (!isFullDay ? <>通常シフト：休み<br /></> : null)}
-            {isFullDay && <>終日{r.furikae_origin_date ? `　振替元：${r.furikae_origin_date.slice(5).replace('-', '/')}（${dowLabel(r.furikae_origin_date)}）${r.furikae_origin_location ? '・' + r.furikae_origin_location : ''}` : ''}<br /></>}
+            {isFullDay && <>終日{r.furikae_origin_date ? `　振替元：${r.furikae_origin_date.slice(5).replace('-', '/')}（${dowLabel(r.furikae_origin_date)}）${r.furikae_origin_location ? '・' + r.furikae_origin_location : ''}${r.furikae_origin_start ? `・${r.furikae_origin_start.slice(0, 5)}〜${(r.furikae_origin_end ?? '').slice(0, 5)}（労働${formatMin(r.furikae_origin_labor_minutes ?? 0)}）` : ''}` : ''}{('furikae_off' === (r.application_types ?? [])[0] || (r.application_types ?? []).includes('furikae_off')) && r.diff_minutes != null ? `　合計時間数 ${formatSignedMin(r.diff_minutes)}` : ''}<br /></>}
             {!isFullDay && segs.length > 0 && <>{actual.length > 0 ? '実績' : '予定'}：{segmentsLabel(segs)}{r.location ? `　勤務地：${r.location}` : ''}<br /></>}
             {!isFullDay && segs.length === 0 && r.location && <>勤務地：{r.location}<br /></>}
             {(r.reason || r.reviewer?.name) && (

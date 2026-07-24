@@ -107,6 +107,32 @@ export async function notifyOvertimeAdminCancelled(info: {
   }
 }
 
+/** 経理が締め後申請を許可した時 → 許可された本人へ（本人がホーム・残業ページで見落とさないよう、ベル通知で確実に伝える） */
+export async function notifyOvertimeGrant(info: {
+  applicantId: string;
+  periodLabel: string; // 例：8月給与分（7/16〜8/15）
+}): Promise<void> {
+  const { applicantId, periodLabel } = info;
+  if (await shouldSendWithDefault('overtime:grant', 'site', true)) {
+    await insertNotification(
+      applicantId,
+      `締め後の残業・時間調整申請が許可されました`,
+      `${periodLabel}の新規申請ができます`,
+      'overtime_request',
+      undefined,
+      'overtime:grant',
+    );
+  }
+  const email = await getUserEmail(applicantId);
+  if (email) {
+    await dispatchEmail(
+      'overtime:grant',
+      { 給与期間: periodLabel, 日付: '', 種別: '', 時間: '', 申請者名: '', 差し戻し理由: '', リンク: 'https://fivem-portal.vercel.app/overtime' },
+      { applicant: email },
+    );
+  }
+}
+
 /** 管理者が内容を修正した時 → 修正された本人へ */
 export async function notifyOvertimeAdminEdited(info: {
   reportId: string;

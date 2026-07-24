@@ -129,8 +129,9 @@ serve(async (req) => {
       if (!['requested', 'request_confirmed', 'reported', 'returned'].includes(r.status)) {
         return json({ success: false, error: 'この状態では取消できません' }, 409)
       }
-      // 本人取消の制限（管理者は対象外）：reported(実績報告済＝実態あり)は不可／支給月20日を過ぎたら不可。
-      // 締め後(その期の16〜20日)の本人取消は管理者へアラート。期間＝16日〜翌15日（15締め25支給）。
+      // 本人取消の制限（管理者は対象外）：reported(実績報告済＝実態あり)は不可／支給月17日を過ぎたら不可。
+      // 締め後(その期の16〜17日)の本人取消は管理者へアラート。期間＝16日〜翌15日（15締め25支給）。
+      // ※新規申請の締めロック（DBトリガー enforce_overtime_submission_window）と同じ17日で統一。
       let notifyAfterClose = false
       if (!isAdmin) {
         if (r.status === 'reported') {
@@ -141,11 +142,11 @@ serve(async (req) => {
           const payY = ppm === 12 ? ppy + 1 : ppy
           const payM = ppm === 12 ? 1 : ppm + 1
           const mm = String(payM).padStart(2, '0')
-          const cutoff20 = `${payY}-${mm}-20`, periodEnd = `${payY}-${mm}-15`
+          const cutoff17 = `${payY}-${mm}-17`, periodEnd = `${payY}-${mm}-15`
           const jst = new Date(Date.now() + 9 * 60 * 60 * 1000)
           const todayStr = `${jst.getUTCFullYear()}-${String(jst.getUTCMonth() + 1).padStart(2, '0')}-${String(jst.getUTCDate()).padStart(2, '0')}`
-          if (todayStr > cutoff20) {
-            return json({ success: false, error: '給与計算が始まっているため（毎月20日以降）取り消せません。管理者に依頼してください' }, 403)
+          if (todayStr > cutoff17) {
+            return json({ success: false, error: '給与計算が始まっているため（毎月17日以降）取り消せません。管理者に依頼してください' }, 403)
           }
           if (todayStr > periodEnd) notifyAfterClose = true
         }

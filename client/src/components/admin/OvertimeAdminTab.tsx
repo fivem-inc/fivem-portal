@@ -4,14 +4,14 @@ import { useAdminPanel } from './AdminPanelContext';
 import OvertimeShiftImport from './OvertimeShiftImport';
 import {
   calcPatternFields, timeToMin, minToTime, formatMin, formatSignedMin, todayJstStr,
-  DAY_KIND_LABELS, CALENDAR_KIND_LABELS,
+  DAY_KIND_LABELS, CALENDAR_KIND_LABELS, payMonthPeriodLabel,
 } from '../../lib/breakCalc';
 import type { DayKind, CalendarKind } from '../../lib/breakCalc';
 import { DEFAULT_LOCATION } from '../../lib/shiftExcelImport';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
 import OvertimeEditModal, { type OvertimeRecord } from './OvertimeEditModal';
 import { OT_TYPE_INFO, isOvertimeType, isFullDayReport } from '../../lib/overtimeTypes';
-import { notifyOvertimeReturned, notifyOvertimeAdminCancelled } from '../../lib/overtimeNotify';
+import { notifyOvertimeReturned, notifyOvertimeAdminCancelled, notifyOvertimeGrant } from '../../lib/overtimeNotify';
 
 const OT_STATUS_LABEL: Record<string, { label: string; color: string }> = {
   requested:         { label: '事前申請', color: '#f59e0b' },
@@ -21,7 +21,7 @@ const OT_STATUS_LABEL: Record<string, { label: string; color: string }> = {
   returned:          { label: '差し戻し', color: '#dc3545' },
   cancelled:         { label: '取消済み', color: '#6c757d' },
 };
-const OT_FIELD_LABELS: Record<string, string> = { work_date: '勤務日', segments: '時間帯', break_minutes: '休憩', diff_minutes: '差分時間', location: '校', reason: '理由' };
+const OT_FIELD_LABELS: Record<string, string> = { work_date: '対象日', segments: '時間帯', break_minutes: '休憩', diff_minutes: '差分時間', location: '校', reason: '理由' };
 const OT_KIND_LABELS: Partial<Record<ChangeKind, string>> = { resubmit: '本人が再提出' };
 
 interface OtHistoryRow {
@@ -75,11 +75,17 @@ const ROLE_RANK: Record<string, number> = {
 };
 const ROLE_GROUP_ORDER = ['社長', '管理者', 'マネージャー', 'リーダー', 'フロア責任者', '一般'];
 
+const DOW = ['日', '月', '火', '水', '木', '金', '土'];
+function dowLabelOt(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return DOW[new Date(y, m - 1, d).getDay()];
+}
+
 const OvertimeAdminTab: React.FC = () => {
   const ctx = useAdminPanel();
   const { isDarkMode, supabase } = ctx;
 
-  const [section, setSection] = useState<'reports' | 'patterns' | 'calendar' | 'settings'>('reports');
+  const [section, setSection] = useState<'reports' | 'patterns' | 'calendar' | 'settings' | 'grants'>('reports');
 
   // ─────────── 受理済み一覧（残業レコードの管理） ───────────
   const [otReports, setOtReports] = useState<OvertimeRecord[]>([]);
@@ -107,7 +113,7 @@ const OvertimeAdminTab: React.FC = () => {
   const fetchOtReports = useCallback(async () => {
     setOtLoading(true); setOtErr('');
     const { data, error } = await supabase.from('overtime_reports')
-      .select('id, applicant_id, work_date, entry_type, status, normal_shift, break_minutes, break_manual, labor_minutes, diff_minutes, reason, location, application_types')
+      .select('id, applicant_id, work_date, entry_type, status, normal_shift, break_minutes, break_manual, labor_minutes, diff_minutes, reason, location, application_types, furikae_origin_date, furikae_origin_location, created_at, confirmed_at')
       .eq('entry_type', 'manual')
       .order('work_date', { ascending: false }).limit(300);
     if (error) { setOtErr('読み込みに失敗しました：' + error.message); setOtLoading(false); return; }
@@ -126,9 +132,9 @@ const OvertimeAdminTab: React.FC = () => {
       (segMap[s.report_id] = segMap[s.report_id] || []).push(s);
     });
     const statusMap: Record<string, string> = {};
-    setOtReports(rows.map((r: { id: string; applicant_id: string; work_date: string; entry_type: string; status: string; normal_shift: OvertimeRecord['normal_shift']; break_minutes: number | null; break_manual: boolean; labor_minutes: number | null; diff_minutes: number | null; reason: string | null; location: string | null; application_types: string[] | null }) => {
+    setOtReports(rows.map((r: { id: string; applicant_id: string; work_date: string; entry_type: string; status: string; normal_shift: OvertimeRecord['normal_shift']; break_minutes: number | null; break_manual: boolean; labor_minutes: number | null; diff_minutes: number | null; reason: string | null; location: string | null; application_types: string[] | null; furikae_origin_date: string | null; furikae_origin_location: string | null; created_at: string | null; confirmed_at: string | null }) => {
       statusMap[r.id] = r.status;
-      return { id: r.id, applicant_id: r.applicant_id, applicantName: nameMap[r.applicant_id] || '不明', work_date: r.work_date, entry_type: r.entry_type, normal_shift: r.normal_shift, break_minutes: r.break_minutes, break_manual: r.break_manual, labor_minutes: r.labor_minutes, diff_minutes: r.diff_minutes, reason: r.reason, location: r.location, application_types: r.application_types, segments: segMap[r.id] || [] };
+      return { id: r.id, applicant_id: r.applicant_id, applicantName: nameMap[r.applicant_id] || '不明', work_date: r.work_date, entry_type: r.entry_type, normal_shift: r.normal_shift, break_minutes: r.break_minutes, break_manual: r.break_manual, labor_minutes: r.labor_minutes, diff_minutes: r.diff_minutes, reason: r.reason, location: r.location, application_types: r.application_types, furikae_origin_date: r.furikae_origin_date, furikae_origin_location: r.furikae_origin_location, created_at: r.created_at, confirmed_at: r.confirmed_at, segments: segMap[r.id] || [] };
     }));
     setOtStatusMap(statusMap);
     setOtLoading(false);
@@ -268,7 +274,14 @@ const OvertimeAdminTab: React.FC = () => {
   const exportOtCsv = () => {
     const esc = (v: string | number) => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const fmtT = (t: unknown) => (typeof t === 'string' && t ? t.slice(0, 5) : '');
-    const headers = ['申請者', '勤務日', '状況', '通常シフト開始', '通常シフト終了', '通常シフト実労働', '実際の勤務時間帯', '休憩(分)', '実労働', '差分(元→実績)', '校', '理由'];
+    // 差分をExcelの [h]:mm で集計できる時間シリアル値（分／1440）にする。マイナスは "-h:mm" 表記で併記
+    const diffSerial = (min: number | null | undefined) => (min ?? 0) / 1440;
+    const fmtHmm = (min: number | null | undefined) => {
+      const m = min ?? 0; const sign = m < 0 ? '-' : ''; const a = Math.abs(m);
+      return `${sign}${Math.floor(a / 60)}:${String(a % 60).padStart(2, '0')}`;
+    };
+    const fmtSubmitted = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
+    const headers = ['申請者', '対象日', '状況', '通常シフト開始', '通常シフト終了', '通常シフト休憩(分)', '通常シフト実労働', '実際の勤務時間帯', '休憩(分)', '実労働', '差分(元→実績)', '差分[h]:mm', '校', '振替元の勤務日', '振替元の勤務校', '理由', '提出日時', '確認日時'];
     const rows = visibleOtReports.map(r => {
       const ns = (r.normal_shift ?? {}) as Record<string, unknown>;
       const actualSegs = r.segments.filter(s => s.phase === (r.segments.some(x => x.phase === 'actual') ? 'actual' : 'planned')).sort((a, b) => a.seg_no - b.seg_no);
@@ -278,12 +291,19 @@ const OvertimeAdminTab: React.FC = () => {
           ? `終日（${(r.application_types ?? []).filter(isOvertimeType).map(t => OT_TYPE_INFO[t].label).join('・')}）`
           : '';
       const normLabor = typeof ns.labor_minutes === 'number' ? formatMin(ns.labor_minutes) : '';
+      const normBreak = typeof ns.break_minutes === 'number' ? ns.break_minutes : '';
+      const isFurikae = (r.application_types ?? []).includes('furikae_off');
       return [
-        r.applicantName ?? '', r.work_date, OT_STATUS_LABEL[otStatusMap[r.id]]?.label ?? otStatusMap[r.id] ?? '',
-        fmtT(ns.start_time), fmtT(ns.end_time), normLabor,
-        segText, r.break_minutes ?? 0, formatMin(r.labor_minutes ?? 0), formatSignedMin(r.diff_minutes ?? 0),
-        r.location ?? '', r.reason ?? '',
-      ].map(esc).join(',');
+        esc(r.applicantName ?? ''), esc(r.work_date), esc(OT_STATUS_LABEL[otStatusMap[r.id]]?.label ?? otStatusMap[r.id] ?? ''),
+        esc(fmtT(ns.start_time)), esc(fmtT(ns.end_time)), esc(normBreak), esc(normLabor),
+        esc(segText), esc(r.break_minutes ?? 0), esc(formatMin(r.labor_minutes ?? 0)), esc(formatSignedMin(r.diff_minutes ?? 0)),
+        // [h]:mm 列は数値（時間シリアル）で出力＝Excelの [h]:mm 書式でそのまま集計可能。ただしマイナスはExcelの時間書式で表示できないため負値のみテキスト併記
+        (r.diff_minutes ?? 0) < 0 ? esc(fmtHmm(r.diff_minutes)) : diffSerial(r.diff_minutes),
+        esc(r.location ?? ''),
+        esc(isFurikae ? (r.furikae_origin_date ?? '') : ''), esc(isFurikae ? (r.furikae_origin_location ?? '') : ''),
+        esc(r.reason ?? ''),
+        esc(fmtSubmitted(r.created_at)), esc(fmtSubmitted(r.confirmed_at)),
+      ].join(',');
     });
     const csv = '﻿' + [headers.map(esc).join(','), ...rows].join('\r\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -525,6 +545,71 @@ const OvertimeAdminTab: React.FC = () => {
     setSettingsMsg('設定を保存しました');
   };
 
+  // ─────────── 締め後申請の許可（B） ───────────
+  interface GrantRow { id: string; user_id: string; pay_period_start: string; granted_by: string; note: string | null; created_at: string; grantedByName?: string; }
+  const [grantStaffId, setGrantStaffId] = useState('');
+  const [grantPeriod, setGrantPeriod] = useState('');
+  const [grantNote, setGrantNote] = useState('');
+  const [grants, setGrants] = useState<GrantRow[]>([]);
+  const [grantMsg, setGrantMsg] = useState('');
+  const [grantErr, setGrantErr] = useState('');
+  const [savingGrant, setSavingGrant] = useState(false);
+  const [revokeTarget, setRevokeTarget] = useState<GrantRow | null>(null);
+
+  // 選べる給与期間の候補（先々月〜先月＝締めを過ぎて許可が必要になりうる期間）
+  const grantPeriodOptions = useMemo(() => {
+    const list: string[] = [];
+    const now = new Date();
+    for (let i = 3; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 16);
+      list.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-16`);
+    }
+    return list;
+  }, []);
+
+  const fetchGrants = useCallback(async () => {
+    const { data, error } = await supabase.from('overtime_submission_grants')
+      .select('id, user_id, pay_period_start, granted_by, note, created_at')
+      .is('revoked_at', null)
+      .order('created_at', { ascending: false });
+    if (error) { setGrantErr('読み込みに失敗しました：' + error.message); return; }
+    const rows = (data as GrantRow[] | null) ?? [];
+    const nameMap = Object.fromEntries(staff.map(s => [s.id, s.name]));
+    setGrants(rows.map(r => ({ ...r, grantedByName: nameMap[r.granted_by] })));
+  }, [supabase, staff]);
+
+  useEffect(() => { if (section === 'grants' && staff.length > 0) fetchGrants(); }, [section, staff, fetchGrants]);
+
+  const saveGrant = async () => {
+    setGrantErr(''); setGrantMsg('');
+    if (!grantStaffId) { setGrantErr('対象者を選択してください'); return; }
+    if (!grantPeriod) { setGrantErr('給与期間を選択してください'); return; }
+    setSavingGrant(true);
+    const { data: authData } = await supabase.auth.getUser();
+    const { error } = await supabase.from('overtime_submission_grants')
+      .upsert({
+        user_id: grantStaffId, pay_period_start: grantPeriod, granted_by: authData.user?.id,
+        note: grantNote.trim() || null, revoked_at: null, revoked_by: null,
+      }, { onConflict: 'user_id,pay_period_start' });
+    setSavingGrant(false);
+    if (error) { setGrantErr('保存に失敗しました: ' + error.message); return; }
+    setGrantMsg('締め後申請を許可し、本人へ通知しました');
+    notifyOvertimeGrant({ applicantId: grantStaffId, periodLabel: payMonthPeriodLabel(grantPeriod) }).then(null, () => {});
+    setGrantStaffId(''); setGrantPeriod(''); setGrantNote('');
+    fetchGrants();
+  };
+
+  const doRevokeGrant = async () => {
+    if (!revokeTarget) return;
+    const { data: authData } = await supabase.auth.getUser();
+    await supabase.from('overtime_submission_grants')
+      .update({ revoked_at: new Date().toISOString(), revoked_by: authData.user?.id })
+      .eq('id', revokeTarget.id);
+    setRevokeTarget(null);
+    setGrantMsg('許可を取り消しました');
+    fetchGrants();
+  };
+
   // ─────────── render ───────────
   const sectionBtn = (key: typeof section, label: string) => (
     <button key={key} onClick={() => setSection(key)}
@@ -548,6 +633,7 @@ const OvertimeAdminTab: React.FC = () => {
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
         {sectionBtn('reports', '受理済み一覧')}
+        {sectionBtn('grants', '締め後申請の許可')}
         {sectionBtn('patterns', '曜日パターン')}
         {sectionBtn('calendar', '会社カレンダー')}
         {sectionBtn('settings', '設定')}
@@ -626,7 +712,7 @@ const OvertimeAdminTab: React.FC = () => {
                 <thead>
                   <tr style={{ background: isDarkMode ? '#495057' : '#f8f9fa' }}>
                     {[
-                      { label: '申請者', w: 70 }, { label: '勤務日', w: 78 }, { label: '勤務時間（元/実）', w: 160 },
+                      { label: '申請者', w: 70 }, { label: '対象日', w: 78 }, { label: '勤務時間（元/実）', w: 160 },
                       { label: '休憩/実労働', w: 90 }, { label: '校（元→実）', w: 72 }, { label: '差分', w: 55 },
                       { label: '状況', w: 70 }, { label: '操作', w: 150 },
                     ].map(col => (
@@ -661,6 +747,11 @@ const OvertimeAdminTab: React.FC = () => {
                                     {OT_TYPE_INFO[t].label}
                                   </span>
                                 ))}
+                              </div>
+                            )}
+                            {(r.application_types ?? []).includes('furikae_off') && r.furikae_origin_date && (
+                              <div style={{ color: subText, fontSize: 11, marginTop: 2 }}>
+                                振替元：{r.furikae_origin_date.slice(5).replace('-', '/')}（{dowLabelOt(r.furikae_origin_date)}）{r.furikae_origin_location ? `・${r.furikae_origin_location}` : ''}
                               </div>
                             )}
                             {r.reason && <div style={{ color: subText, fontSize: 11, marginTop: 2 }}>{r.reason}</div>}
@@ -781,6 +872,79 @@ const OvertimeAdminTab: React.FC = () => {
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button onClick={() => setOtCancelTarget(null)} disabled={otActing} style={{ flex: 1, padding: 10, borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: text, cursor: 'pointer', fontSize: 14 }}>戻る</button>
                   <button onClick={doOtCancel} disabled={otActing} style={{ flex: 2, padding: 10, borderRadius: 8, border: 'none', background: '#6c757d', color: '#fff', fontWeight: 'bold', cursor: 'pointer', fontSize: 14 }}>{otActing ? '取消中...' : '取り消す'}</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─── 締め後申請の許可（経理から。B） ─── */}
+      {section === 'grants' && (
+        <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, padding: '14px 16px' }}>
+          <p style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 'bold', color: text }}>締め後申請を許可する</p>
+          <p style={{ margin: '0 0 12px', fontSize: 12, color: subText, lineHeight: 1.7 }}>
+            申請の締め切り（支給月17日）を過ぎた給与期間について、対象者を選んで新規申請を許可します。許可した本人には、ホーム・残業ページ・ベル通知でお知らせします。
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+            <select value={grantStaffId} onChange={e => setGrantStaffId(e.target.value)} style={{ ...inputStyle, minWidth: 160, flex: 1 }}>
+              <option value="">対象者を選択</option>
+              {staff.filter(s => s.employment_type !== 'パート').map(s => <option key={s.id} value={s.id}>{s.name}（{s.role_title}）</option>)}
+            </select>
+            <select value={grantPeriod} onChange={e => setGrantPeriod(e.target.value)} style={{ ...inputStyle, minWidth: 160 }}>
+              <option value="">給与期間を選択</option>
+              {grantPeriodOptions.map(p => <option key={p} value={p}>{payMonthPeriodLabel(p)}</option>)}
+            </select>
+          </div>
+          <input type="text" value={grantNote} onChange={e => setGrantNote(e.target.value)} placeholder="メモ（任意）"
+            style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', marginBottom: 10 }} />
+          {grantErr && <p style={{ margin: '0 0 8px', fontSize: 13, color: '#dc3545' }}>{grantErr}</p>}
+          {grantMsg && (
+            <div style={{ background: isDarkMode ? '#1b3a1e' : '#d1e7dd', border: '1px solid #28a745', borderRadius: 8, padding: '8px 12px', marginBottom: 8 }}>
+              <p style={{ margin: 0, fontSize: 13, color: isDarkMode ? '#8fd19e' : '#0f5132' }}>✅ {grantMsg}</p>
+            </div>
+          )}
+          <button onClick={saveGrant} disabled={savingGrant}
+            style={{ padding: '10px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', background: '#007bff', color: '#fff', opacity: savingGrant ? 0.6 : 1 }}>
+            {savingGrant ? '許可中...' : '許可する'}
+          </button>
+
+          <p style={{ margin: '20px 0 8px', fontSize: 13.5, fontWeight: 'bold', color: text }}>許可済み一覧</p>
+          {grants.length === 0 ? (
+            <p style={{ margin: 0, fontSize: 13, color: subText }}>許可はありません</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {grants.map(g => {
+                const name = staff.find(s => s.id === g.user_id)?.name ?? '不明';
+                return (
+                  <div key={g.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', border: `1px solid ${borderColor}`, borderRadius: 8, flexWrap: 'wrap' }}>
+                    <div>
+                      <span style={{ fontSize: 13, fontWeight: 'bold', color: text }}>{name}</span>
+                      <span style={{ fontSize: 12.5, color: subText, marginLeft: 8 }}>{payMonthPeriodLabel(g.pay_period_start)}</span>
+                      {g.note && <span style={{ fontSize: 12, color: subText, marginLeft: 8 }}>（{g.note}）</span>}
+                      {g.grantedByName && <span style={{ fontSize: 11.5, color: subText, marginLeft: 8 }}>付与：{g.grantedByName}</span>}
+                    </div>
+                    <button onClick={() => setRevokeTarget(g)}
+                      style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #dc3545', background: 'transparent', color: '#dc3545', cursor: 'pointer', fontSize: 12 }}>
+                      取消
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* 取消確認 */}
+          {revokeTarget && (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+              <div style={{ background: cardBg, borderRadius: 14, padding: 22, width: '100%', maxWidth: 360 }}>
+                <div style={{ fontSize: 15, fontWeight: 'bold', color: '#dc3545', marginBottom: 12 }}>許可の取消</div>
+                <div style={{ fontSize: 13, color: text, marginBottom: 16 }}>
+                  {staff.find(s => s.id === revokeTarget.user_id)?.name ?? '不明'}　{payMonthPeriodLabel(revokeTarget.pay_period_start)}　の締め後申請の許可を取り消します。
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={() => setRevokeTarget(null)} style={{ flex: 1, padding: 10, borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: text, cursor: 'pointer', fontSize: 14 }}>戻る</button>
+                  <button onClick={doRevokeGrant} style={{ flex: 2, padding: 10, borderRadius: 8, border: 'none', background: '#dc3545', color: '#fff', fontWeight: 'bold', cursor: 'pointer', fontSize: 14 }}>取り消す</button>
                 </div>
               </div>
             </div>

@@ -175,6 +175,28 @@ export function payMonthLabel(periodStart: string): string {
   return `${em}月給与分`;
 }
 
+/** 給与期間の統一ラベル「8月給与分（7/16〜8/15）」。A/B/C/D 全機能でこれを使う */
+export function payMonthPeriodLabel(periodStart: string): string {
+  return `${payMonthLabel(periodStart)}（${payPeriodLabel(periodStart)}）`;
+}
+
+/**
+ * 給与期間の申請・取消の締め切り日（支給月の17日）"YYYY-MM-DD"。
+ * この日を過ぎたら本人の新規申請・取消は不可（経理の許可があれば通す）。
+ * SQL側トリガー・Edge の締め判定と同一基準。支給月 = 締め終了日の月 = 開始月+1。
+ */
+export function payPeriodCloseCutoff(periodStart: string): string {
+  const [y, m] = periodStart.split('-').map(Number);
+  const cy = m === 12 ? y + 1 : y;
+  const cm = m === 12 ? 1 : m + 1;
+  return `${cy}-${String(cm).padStart(2, '0')}-17`;
+}
+
+/** 対象日が「締め済み（新規申請・取消の締め切りを過ぎた）」か。todayStr は JST の今日 "YYYY-MM-DD" */
+export function isPayPeriodClosed(workDate: string, todayStr: string): boolean {
+  return todayStr > payPeriodCloseCutoff(calcPayPeriodStartJst(workDate));
+}
+
 // ---------- 曜日パターン・会社カレンダー解決 ----------
 
 export type DayKind = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun' | 'holiday' | 'work_on_closed';
