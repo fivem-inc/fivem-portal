@@ -25,7 +25,9 @@ export function formatLeaveDateSummary(leaveDates: string | null | undefined, st
 
 export async function insertNotification(userId: string, message: string, subMessage?: string, sourceType?: string, referenceId?: string, eventKey?: string) {
   try {
-    await supabase.from('notifications').insert({ user_id: userId, message, sub_message: subMessage ?? null, source_type: sourceType ?? null, reference_id: referenceId ?? null, event_key: eventKey ?? null });
+    // supabase-js は失敗を throw せず error で返すため、error を見ないとRLS拒否等を握りつぶしてしまう
+    const { error } = await supabase.from('notifications').insert({ user_id: userId, message, sub_message: subMessage ?? null, source_type: sourceType ?? null, reference_id: referenceId ?? null, event_key: eventKey ?? null });
+    if (error) console.error('通知挿入エラー:', error.message);
   } catch (e) {
     console.error('通知挿入エラー:', e);
   }

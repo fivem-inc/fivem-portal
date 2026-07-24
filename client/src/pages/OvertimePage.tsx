@@ -19,6 +19,7 @@ import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
 import { OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport } from '../lib/overtimeTypes';
 import type { OvertimeType } from '../lib/overtimeTypes';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
+import { notifyOvertimeNewRequest } from '../lib/overtimeNotify';
 import type { CorrectionRequestRow } from '../lib/correctionRequest';
 
 // ────────────────────────────────────────────────────────────────
@@ -829,17 +830,17 @@ const OvertimeForm: React.FC<{
         if (segErr) { setError('時間帯の保存に失敗しました: ' + segErr.message); setSaving(false); setShowConfirm(false); return; }
       }
 
-      // 通知
-      if (!isSelfReview && reviewerId) {
-        const phaseLabel = phase === 'actual' ? '実績報告' : '事前申請';
-        supabase.from('notifications').insert({
-          user_id: reviewerId,
-          message: `${profileName ?? ''}さんから残業・時間調整の${phaseLabel}が届きました`,
-          sub_message: `${date}（${dowLabel(date)}）　${formatSignedMin(diffMin)}`,
-          source_type: 'overtime_request:pending_approval',
-          reference_id: reportId,
-          event_key: 'overtime:new_request',
-          read: false,
+      // 通知（管理画面「通知設定」の overtime:new_request に従う）
+      // isPureZero（残業なし＝差分0の実績報告）は自己確定するため確認者のキューに入らない。
+      // 通知すると「押しても該当申請が無い」空振りになるので送らない。
+      if (!isSelfReview && !isPureZero && reviewerId) {
+        notifyOvertimeNewRequest({
+          reportId,
+          reviewerId,
+          applicantName: profileName ?? '',
+          phaseLabel: phase === 'actual' ? '実績報告' : '事前申請',
+          dateLabel: `${date}（${dowLabel(date)}）`,
+          timeLabel: formatSignedMin(diffMin),
         }).then(null, () => {});
       }
 

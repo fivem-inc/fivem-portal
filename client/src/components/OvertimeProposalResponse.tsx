@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { insertNotification } from '../lib/notifications';
-import { timeToMin, calcPayPeriodStartJst } from '../lib/breakCalc';
+import { timeToMin, calcPayPeriodStartJst, formatSignedMin } from '../lib/breakCalc';
+import { notifyOvertimeNewRequest } from '../lib/overtimeNotify';
 import type { CalendarKind } from '../lib/breakCalc';
 import { buildTimeAdjustReport, resolveNormalShift } from '../lib/overtimeShift';
 import type { PatternRow } from '../lib/overtimeShift';
@@ -143,6 +144,12 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
       if (rErr) { setError('回答の記録に失敗しました：' + rErr.message); setSubmitting(false); return; }
       if (claimed === false) { setError('この提案は既に回答済みです'); setSubmitting(false); setDone('accepted'); return; }
 
+      // 回答者名（提案者への通知に使う）。profiles を正とし、取れなければ従来どおりのフォールバック
+      const { data: meProf } = await supabase.from('profiles').select('name').eq('id', currentUserId).maybeSingle();
+      const responderName = (meProf as { name?: string } | null)?.name
+        ?? (await supabase.auth.getUser()).data.user?.user_metadata?.name
+        ?? 'スタッフ';
+
       // 2) 受諾ぶんを作成。時間調整＝overtime_reports（既存計算）／調整休＝leave_requests(pending)。
       for (const o of chosen) {
         const pk = picks[o.id];
@@ -181,9 +188,19 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
           })
         );
         await supabase.from('overtime_adjustment_proposal_options').update({ result_type: 'overtime_report', result_id: reportId }).eq('id', o.id);
+        // 提案者＝この申請の確認依頼先。通常の申請と同じく「申請が届きました」を送る
+        // （提案への回答通知だけでは、確認待ちが1件増えたことが伝わらないため）
+        await notifyOvertimeNewRequest({
+          reportId,
+          reviewerId: proposal.proposer_id,
+          applicantName: responderName,
+          phaseLabel: '事前申請',
+          dateLabel: pk.date,
+          timeLabel: formatSignedMin(b.diff_minutes),
+        }).then(null, () => {});
       }
       // 3) 提案者へ回答通知
-      await insertNotification(proposal.proposer_id, `${(await supabase.auth.getUser()).data.user?.user_metadata?.name ?? 'スタッフ'}さんが調整の提案に回答しました`, `採用${chosen.length}件`, 'overtime_proposal:responded', proposal.id, 'overtime_proposal:responded');
+      await insertNotification(proposal.proposer_id, `${responderName}さんが調整の提案に回答しました`, `採用${chosen.length}件`, 'overtime_proposal:responded', proposal.id, 'overtime_proposal:responded');
       setDone('accepted');
     } catch (e) {
       setError('送信に失敗しました：' + String(e));

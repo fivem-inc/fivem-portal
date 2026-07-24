@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { calcTotalBreak, calcLaborMinutes, checkLegalBreak, timeToMin, minToTime, formatSignedMin, formatMin, type WorkSegment } from '../../lib/breakCalc';
+import { notifyOvertimeAdminEdited } from '../../lib/overtimeNotify';
 
 // 管理者が残業レコードの内容を直接修正するモーダル。
 // 休憩・実労働・差分・法定警告は申請フォームと同じ breakCalc で再計算（エンジン二重化を回避）。
@@ -151,14 +152,12 @@ const OvertimeEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSav
     });
     if (rpcErr) { setSaving(false); setError('保存に失敗しました: ' + rpcErr.message); return; }
 
-    await supabase.from('notifications').insert({
-      user_id: record.applicant_id,
-      message: '管理者が残業・時間調整の内容を修正しました',
-      sub_message: `${summary}　理由：${changeReason.trim()}`,
-      source_type: 'overtime_request',
-      reference_id: record.id,
-      event_key: 'overtime:admin_edited',
-      read: false,
+    await notifyOvertimeAdminEdited({
+      reportId: record.id,
+      applicantId: record.applicant_id,
+      dateLabel: record.work_date,
+      summary,
+      reason: changeReason.trim(),
     }).then(null, () => {});
 
     // 受理後修正でカレンダーが古い日付・時刻のまま残らないよう再同期（冪等な再計算）

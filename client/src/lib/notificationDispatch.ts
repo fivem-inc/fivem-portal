@@ -37,6 +37,15 @@ export async function shouldSend(eventKey: string, channel: string): Promise<boo
   return s?.enabled ?? false;
 }
 
+// 設定行が無いときの既定値を指定できる版。
+// shouldSend() は fail-closed（行が無ければ送らない）だが、それだと seed 漏れやRLS失敗のときに
+// 静かに無通知になる。差し戻しのように「届かないと業務が止まる」通知は fallback=true で使う。
+export async function shouldSendWithDefault(eventKey: string, channel: string, fallback: boolean): Promise<boolean> {
+  const settings = await getSettings();
+  const s = settings.find(s => s.event_key === eventKey && s.channel === channel);
+  return s ? s.enabled : fallback;
+}
+
 export async function getNotificationRecipient(eventKey: string, channel: string): Promise<string | null> {
   const settings = await getSettings();
   const s = settings.find(s => s.event_key === eventKey && s.channel === channel);

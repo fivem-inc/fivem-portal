@@ -55,6 +55,16 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string }> = {
   "overtime_proposal:responded": { app: "残業調整", word: "新着", url: "/overtime" },
   // 残業の実績未報告リマインド（本人へ日次・安全語「新着」）
   "overtime:unreported":         { app: "残業", word: "新着", url: "/overtime" },
+  // 残業・時間管理の承認フロー系。
+  // word は実機テスト済みの安全語のみ（未承認／差戻／新着）。「承認」「受理」は未検証のため使わない。
+  // 受理・取消・修正の結果報告は区別せず「新着」に寄せる（詳細はベル・画面で見る前提）。
+  "overtime:new_request":        { app: "残業", word: "未承認", url: "/overtime?view=confirm" },
+  "overtime:request_confirmed":  { app: "残業", word: "新着",   url: "/overtime?tab=history" },
+  "overtime:confirmed":          { app: "残業", word: "新着",   url: "/overtime?tab=history" },
+  "overtime:returned":           { app: "残業", word: "差戻",   url: "/overtime?tab=history" },
+  "overtime:cancelled":          { app: "残業", word: "新着",   url: "/overtime?view=confirm" },
+  "overtime:admin_cancelled":    { app: "残業", word: "新着",   url: "/overtime?tab=history" },
+  "overtime:admin_edited":       { app: "残業", word: "新着",   url: "/overtime?tab=history" },
 };
 
 // notification_settingsの参照キー（'reminder:unread:today'→'reminder:unread'）

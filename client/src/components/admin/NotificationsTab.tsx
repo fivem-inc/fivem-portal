@@ -82,6 +82,24 @@ const EVENT_GROUPS = [
     ],
   },
   {
+    // 残業は宛先の向き（本人へ／確認する人へ）が混在するため、ラベルを2行にして宛先を明示する
+    label: '残業・時間管理（正社員）',
+    icon: '🕒',
+    headerBg: '#E0F2F1', headerBorder: '#00695C', headerText: '#004D40',
+    note: '「実績未報告リマインド」の設定は、下の「⏰ リマインド」にあります。',
+    events: [
+      { key: 'overtime:new_request',       label: '申請・実績報告が届いた時', to: '→ 確認をお願いする人へ' },
+      { key: 'overtime:request_confirmed', label: '事前申請を受理した時',     to: '→ 申請した本人へ' },
+      { key: 'overtime:confirmed',         label: '実績を確認した時',         to: '→ 報告した本人へ' },
+      { key: 'overtime:returned',          label: '差し戻した時',             to: '→ 申請した本人へ' },
+      { key: 'overtime:cancelled',         label: '本人が取り消した時',       to: '→ 確認をお願いする人へ' },
+      { key: 'overtime:admin_cancelled',   label: '管理者が取り消した時',     to: '→ 申請した本人へ' },
+      { key: 'overtime:admin_edited',      label: '管理者が内容を修正した時', to: '→ 修正された本人へ' },
+      { key: 'overtime_proposal:received',  label: '時間調整の提案が届いた時', to: '→ 提案された相手へ' },
+      { key: 'overtime_proposal:responded', label: '提案に回答があった時',     to: '→ 提案した人へ' },
+    ],
+  },
+  {
     label: '連絡板',
     icon: '📝',
     headerBg: '#FCE4EC', headerBorder: '#AD1457', headerText: '#880E4F',
@@ -163,6 +181,29 @@ const PUSH_RECIPIENT_BY_EVENT: Record<string, string> = {
   'overtime:unreported':    '実績が未報告の申請者本人',
   'reminder:scheduled':     'リマインドの送信対象者',
   'reminder:encouragement': '有給奨励日に未回答の対象者',
+  'overtime:new_request':       '申請の確認をお願いされた人',
+  'overtime:request_confirmed': '申請した本人',
+  'overtime:confirmed':         '報告した本人',
+  'overtime:returned':          '申請した本人',
+  'overtime:cancelled':         '申請の確認をお願いされていた人',
+  'overtime:admin_cancelled':   '申請した本人',
+  'overtime:admin_edited':      '修正された本人',
+  'overtime_proposal:received':  '提案された相手',
+  'overtime_proposal:responded': '提案した人',
+};
+
+// 残業：宛先はコード側が自動で決めるため、チェックボックスではなく読み取り専用の説明を出す。
+// （選択肢が1つだけのチェックボックスにすると、外して「ONなのに誰にも届かない」状態を作れてしまうため）
+const FIXED_RECIPIENT_NOTE_BY_EVENT: Record<string, string> = {
+  'overtime:new_request':       '宛先：申請した本人が選んだ「確認をお願いする人」（自動で決まります）',
+  'overtime:request_confirmed': '宛先：申請した本人（固定）',
+  'overtime:confirmed':         '宛先：報告した本人（固定）',
+  'overtime:returned':          '宛先：申請した本人（固定）',
+  'overtime:cancelled':         '宛先：その申請の「確認をお願いする人」（自動で決まります）',
+  'overtime:admin_cancelled':   '宛先：申請した本人（固定）',
+  'overtime:admin_edited':      '宛先：修正された本人（固定）',
+  'overtime_proposal:received':  '宛先：提案された相手（固定）',
+  'overtime_proposal:responded': '宛先：提案した人（固定）',
 };
 
 const VARIABLES_BY_EVENT: Record<string, string[]> = {
@@ -185,6 +226,13 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
   'reminder:scheduled':          ['{{タイトル}}', '{{本文}}'],
   'reminder:unread':             ['{{件名}}', '{{リンク}}'],
   'overtime:unreported':         ['{{件数}}', '{{日付}}', '{{リンク}}'],
+  'overtime:new_request':        ['{{申請者名}}', '{{日付}}', '{{時間}}', '{{リンク}}'],
+  'overtime:request_confirmed':  ['{{日付}}', '{{時間}}', '{{リンク}}'],
+  'overtime:confirmed':          ['{{日付}}', '{{時間}}', '{{リンク}}'],
+  'overtime:returned':           ['{{日付}}', '{{差し戻し理由}}', '{{リンク}}'],
+  'overtime:cancelled':          ['{{申請者名}}', '{{日付}}', '{{リンク}}'],
+  'overtime:admin_cancelled':    ['{{日付}}', '{{リンク}}'],
+  'overtime:admin_edited':       ['{{日付}}', '{{種別}}', '{{リンク}}'],
   'purchase_request:submitted':            ['{{申請者名}}', '{{品目名}}', '{{金額}}'],
   'purchase_request:submitted_manager':    ['{{申請者名}}', '{{品目名}}', '{{金額}}'],
   'purchase_request:submitted_board':      ['{{申請者名}}', '{{品目名}}', '{{金額}}'],
@@ -332,6 +380,16 @@ const TEMPLATE_VAR_GROUPS: { label: string; color: string; vars: { v: string; de
     ],
   },
   {
+    label: '残業・時間管理', color: '#00695C',
+    vars: [
+      { v: '{{日付}}',        desc: '対象の勤務日（例：2026-07-25（金））' },
+      { v: '{{時間}}',        desc: '増減した時間（例：+1:30）' },
+      { v: '{{種別}}',        desc: '残業・時間調整／時間外調整休など' },
+      { v: '{{差し戻し理由}}', desc: '差し戻し時のコメント' },
+      { v: '{{リンク}}',      desc: '残業・時間管理ページを開くリンク' },
+    ],
+  },
+  {
     label: '連絡板', color: '#AD1457',
     vars: [
       { v: '{{送信者名}}',  desc: 'メッセージ・お知らせを送った人の名前' },
@@ -473,7 +531,12 @@ const NotificationsTab: React.FC = () => {
     const channels: ChannelType[] = ['slack', 'email', 'site', 'push'];
     return channels
       .filter(ch => getSetting(eventKey, ch))
-      .map(ch => ({ channel: ch, enabled: getSetting(eventKey, ch)!.enabled }));
+      .map(ch => {
+        // サイト通知を入口にしてプッシュが送られるイベントは、サイト通知がOFFならプッシュも届かない。
+        // バッジだけ「有効」に見えると原因が分からなくなるので、OFF表示に揃える
+        const blockedBySite = ch === 'push' && pushFollowsSite(eventKey) && !getSetting(eventKey, 'site')!.enabled;
+        return { channel: ch, enabled: getSetting(eventKey, ch)!.enabled && !blockedBySite };
+      });
   };
 
   const channelBadgeStyle = (enabled: boolean, channel: ChannelType): React.CSSProperties => {
@@ -780,6 +843,9 @@ const NotificationsTab: React.FC = () => {
           }}>
             {group.icon} {group.label}
           </div>
+          {'note' in group && group.note && (
+            <div style={{ fontSize: 11, color: subText, margin: '-4px 0 8px 12px' }}>※ {group.note}</div>
+          )}
 
           {group.events.map(event => {
             const isOpen = openEvent === event.key;
@@ -808,7 +874,12 @@ const NotificationsTab: React.FC = () => {
                   onMouseEnter={e => (e.currentTarget.style.background = isDarkMode ? '#3d4349' : '#f8f9fa')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                 >
-                  <span style={{ fontSize: 14, fontWeight: 500, color: text }}>{event.label}</span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 500, color: text }}>{event.label}</div>
+                    {'to' in event && event.to && (
+                      <div style={{ fontSize: 11, color: subText, marginTop: 2 }}>{event.to}</div>
+                    )}
+                  </div>
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                     {badges.map(b => (
                       <span key={b.channel} style={channelBadgeStyle(b.enabled, b.channel)}>
@@ -1013,12 +1084,20 @@ const NotificationsTab: React.FC = () => {
 
                           {s.enabled && (
                             <div style={{ borderTop: `0.5px solid ${borderColor}`, paddingTop: 10 }}>
-                              {!event.key.startsWith('board:') && !event.key.startsWith('reminder:') && event.key !== 'overtime:unreported' && !(channel !== 'slack' && AUTO_RECIPIENT_EMAIL_SITE_EVENTS.includes(event.key)) && (
+                              {!event.key.startsWith('board:') && !event.key.startsWith('reminder:') && event.key !== 'overtime:unreported' && !(channel !== 'slack' && FIXED_RECIPIENT_NOTE_BY_EVENT[event.key]) && !(channel !== 'slack' && AUTO_RECIPIENT_EMAIL_SITE_EVENTS.includes(event.key)) && (
                                 <div style={{ fontSize: 12, color: subText, marginBottom: 4 }}>
                                   {channel === 'slack' ? '送信先チャンネル' : '宛先'}
                                 </div>
                               )}
-                              {channel !== 'slack' && AUTO_RECIPIENT_EMAIL_SITE_EVENTS.includes(event.key) ? (
+                              {channel !== 'slack' && FIXED_RECIPIENT_NOTE_BY_EVENT[event.key] ? (
+                                <div style={{
+                                  fontSize: 12, padding: '6px 10px', marginBottom: 10,
+                                  border: `0.5px solid ${borderColor}`, borderRadius: 8,
+                                  background: sectionBg, color: subText,
+                                }}>
+                                  {FIXED_RECIPIENT_NOTE_BY_EVENT[event.key]}
+                                </div>
+                              ) : channel !== 'slack' && AUTO_RECIPIENT_EMAIL_SITE_EVENTS.includes(event.key) ? (
                                 <div style={{
                                   fontSize: 12, padding: '6px 10px', marginBottom: 10,
                                   border: `0.5px solid ${borderColor}`, borderRadius: 8,
@@ -1141,7 +1220,14 @@ const NotificationsTab: React.FC = () => {
                                 </div>
                               )}
 
-                              {channel !== 'slack' && (
+                              {/* 残業のベル通知は本文がシステム固定（差分時間や差し戻し理由を組み立てるため）。
+                                  編集欄を出すと「直せるのに反映されない」設定になるので、注記だけにする */}
+                              {channel === 'site' && event.key.startsWith('overtime') && (
+                                <div style={{ fontSize: 11, color: subText, padding: '6px 0' }}>
+                                  ※ ベル通知の文面はシステムで自動生成されます（ここではON/OFFのみ設定できます）
+                                </div>
+                              )}
+                              {channel !== 'slack' && !(channel === 'site' && event.key.startsWith('overtime')) && (
                                 <>
                                   {channel === 'email' && (
                                     <>

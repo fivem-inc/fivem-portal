@@ -21,6 +21,15 @@ function formatSignedMin(min: number): string {
   return `${sign}${Math.floor(abs / 60)}:${String(abs % 60).padStart(2, '0')}`
 }
 
+// 管理画面「通知設定」(notification_settings) の1行。
+// ⚠️ 行が無いときは「送る」(fail-open)。差し戻し等の通知が欠落すると業務が止まる（本人が再提出しない）ため、
+//    seed漏れやRLS失敗で静かに無通知になるより送る側に倒す。クライアント側 shouldSend() は fail-closed なので挙動が違う点に注意。
+type NotifSetting = { enabled: boolean; recipient: string | null; subject: string | null; template: string | null }
+
+function applyTemplate(template: string, vars: Record<string, string>): string {
+  return template.replace(/\{\{(.+?)\}\}/g, (_, key) => vars[String(key).trim()] ?? `{{${String(key).trim()}}}`)
+}
+
 function json(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -185,9 +194,62 @@ serve(async (req) => {
       }
     }
 
+    // 通知（管理画面「通知設定」に従う）。
+    // ・サイト通知(site) … ベル。event_key を付けて入れると、DBトリガー経由でプッシュも自動で流れる
+    //                      （＝サイト通知OFFにするとプッシュも止まる。管理画面にその旨を注記済み）
+    // ・プッシュ(push)  … ここでは何もしない（送ると二重送信になる）
+    // ・メール(email)   … 宛先はサイト通知と同じ人（本人 or 確認をお願いする人）
+    // ※ 下の「締め後アラート」は給与計算に直結するガバナンス通知のため、この設定の対象外（常時送る）
     if (notification) {
-      const { error: nErr } = await db.from('notifications').insert(notification)
-      if (nErr) console.error('[overtime-approve] 通知作成失敗:', nErr.message)
+      const eventKey = String(notification.event_key)
+      const { data: settingRows } = await db
+        .from('notification_settings')
+        .select('channel, enabled, recipient, subject, template')
+        .eq('event_key', eventKey)
+        .in('channel', ['site', 'email'])
+      const settings = new Map<string, NotifSetting>()
+      for (const s of (settingRows ?? []) as (NotifSetting & { channel: string })[]) {
+        settings.set(s.channel, s)
+      }
+      const siteSetting = settings.get('site')
+      const emailSetting = settings.get('email')
+
+      if (siteSetting?.enabled ?? true) {
+        const { error: nErr } = await db.from('notifications').insert(notification)
+        if (nErr) console.error('[overtime-approve] 通知作成失敗:', nErr.message)
+      }
+
+      if (emailSetting?.enabled && emailSetting.template) {
+        const targetId = String(notification.user_id)
+        const isToApplicant = targetId === r.applicant_id
+        const vars: Record<string, string> = {
+          申請者名: applicantName,
+          日付: `${r.work_date}（${dowLabel(r.work_date)}）`,
+          種別: isFullDay ? fullDayLabel : '残業・時間調整',
+          時間: isFullDay ? fullDayLabel : formatSignedMin(r.diff_minutes ?? 0),
+          差し戻し理由: String(comment ?? '').trim() || '（記載なし）',
+          リンク: `https://fivem-portal.vercel.app/overtime${isToApplicant ? '?tab=history' : '?view=confirm'}`,
+        }
+        const { data: targetProf } = await db.from('profiles').select('email').eq('id', targetId).maybeSingle()
+        const to = (targetProf as { email?: string } | null)?.email
+        if (to) {
+          // メール送信の失敗で受理・差し戻しそのものを失敗扱いにはしない（ログのみ）
+          try {
+            const res = await fetch(`${supabaseUrl}/functions/v1/send-email`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                to,
+                subject: emailSetting.subject ? applyTemplate(emailSetting.subject, vars) : eventKey,
+                text: applyTemplate(emailSetting.template, vars),
+              }),
+            })
+            if (!res.ok) console.error('[overtime-approve] メール送信失敗: status=', res.status)
+          } catch (e) {
+            console.error('[overtime-approve] メール送信失敗:', e instanceof Error ? e.message : String(e))
+          }
+        }
+      }
     }
 
     // GCal同期（冪等な再計算）。失敗はエラーにせず結果として返す→クライアントがインライン表示＋再試行。

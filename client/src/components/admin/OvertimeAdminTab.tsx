@@ -11,6 +11,7 @@ import { DEFAULT_LOCATION } from '../../lib/shiftExcelImport';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
 import OvertimeEditModal, { type OvertimeRecord } from './OvertimeEditModal';
 import { OT_TYPE_INFO, isOvertimeType, isFullDayReport } from '../../lib/overtimeTypes';
+import { notifyOvertimeReturned, notifyOvertimeAdminCancelled } from '../../lib/overtimeNotify';
 
 const OT_STATUS_LABEL: Record<string, { label: string; color: string }> = {
   requested:         { label: '事前申請', color: '#f59e0b' },
@@ -168,10 +169,9 @@ const OvertimeAdminTab: React.FC = () => {
     }).then(null, () => {});
     const { error } = await supabase.from('overtime_reports').update({ status: 'returned', return_comment: otReturnComment.trim() }).eq('id', r.id);
     if (error) { setOtErr('差し戻しに失敗しました：' + error.message); setOtActing(false); return; }
-    await supabase.from('notifications').insert({
-      user_id: r.applicant_id, message: '残業・時間調整の申請が差し戻されました',
-      sub_message: `${r.work_date}　理由：${otReturnComment.trim()}`, source_type: 'overtime_request:pending_resubmit',
-      reference_id: r.id, event_key: 'overtime:returned', read: false,
+    await notifyOvertimeReturned({
+      reportId: r.id, applicantId: r.applicant_id,
+      dateLabel: r.work_date, reason: otReturnComment.trim(),
     }).then(null, () => {});
     const gcalOk = await syncOvertimeGcal(r.id);
     setOtReturnTarget(null); setOtReturnComment(''); setOtActing(false);
@@ -202,6 +202,11 @@ const OvertimeAdminTab: React.FC = () => {
     const { data: updated, error } = await supabase.from('overtime_reports').update({ status: 'cancelled' }).eq('id', otCancelTarget.id).select('id');
     if (error) { setOtErr('取消に失敗しました：' + error.message); setOtActing(false); return; }
     if (!updated || updated.length === 0) { setOtErr('取消できませんでした（権限/RLSの可能性）。'); setOtActing(false); return; }
+    // 本人へ通知（管理者の取消は本人の操作ではないため、知らせないと気づけない）
+    await notifyOvertimeAdminCancelled({
+      reportId: otCancelTarget.id, applicantId: otCancelTarget.applicant_id,
+      dateLabel: otCancelTarget.work_date,
+    }).then(null, () => {});
     const gcalOk = await syncOvertimeGcal(otCancelTarget.id);
     setOtCancelTarget(null); setOtActing(false);
     setOtMsg('取り消しました');
