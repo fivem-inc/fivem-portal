@@ -18,11 +18,14 @@
 | `AGENTS.md` | プロジェクト直下 | 意図的にgit管理していない作業メモ |
 | Claude Codeのこのプロジェクト用メモリ | `C:\Users\kohei\.claude\projects\C--Users-kohei-fivem-portal\memory` | 引き継ぎ情報の蓄積フォルダ。git管理外 |
 
+このドキュメント自体も**毎日NASへ`復旧手順.md`としてコピーされる**ため、PC・GitHubのどちらにもアクセスできない状況でも、NASの保存先フォルダを直接開けば読める（本文はgitの`docs/DISASTER-RECOVERY.md`にもあるが、そちらが読めない事態を想定した二重化）。
+
 ## 2. 自動バックアップの仕組み
 
 - スクリプト: `scripts/backup-to-nas.ps1`（このリポジトリに含まれる）
 - 保存先（NAS）:
   `\\NAS-SIJYO\Public\四条本校マイドキュメント\10_パソコン設定\Claud重要バックアップデータ\社内サイト`
+- コピーされるファイル: `.env` / `.env.production` / `AGENTS.md` / `claude_memory`フォルダ一式 / **`復旧手順.md`（この手順書自体）**
 - 実行タイミング（Windowsタスクスケジューラ・タスク名 `BackupFivemPortalToNAS`）:
   - PCへのログオン時
   - 毎日 12:00

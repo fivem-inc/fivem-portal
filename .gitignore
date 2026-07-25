@@ -1,4 +1,5 @@
 .vercel
+node_modules
 .claude/
 .claude.json
 .claude.json.backup

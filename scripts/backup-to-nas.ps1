@@ -31,7 +31,8 @@ try {
 $targets = @(
     @{ Src = 'C:\Users\kohei\fivem-portal\client\.env'; DstName = '.env' },
     @{ Src = 'C:\Users\kohei\fivem-portal\client\.env.production'; DstName = '.env.production' },
-    @{ Src = 'C:\Users\kohei\fivem-portal\AGENTS.md'; DstName = 'AGENTS.md' }
+    @{ Src = 'C:\Users\kohei\fivem-portal\AGENTS.md'; DstName = 'AGENTS.md' },
+    @{ Src = 'C:\Users\kohei\fivem-portal\docs\DISASTER-RECOVERY.md'; DstName = '復旧手順.md' }
 )
 
 foreach ($t in $targets) {
