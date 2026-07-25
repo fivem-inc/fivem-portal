@@ -1269,14 +1269,14 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                 {/* 調整遅出 */}
                 <div
                   onClick={() => setAdjLateStart(v => !v)}
-                  style={{ border: adjLateStart ? '2px solid #1565c0' : '2px solid #90caf9', borderRadius: 10, padding: 12, cursor: 'pointer', background: adjLateStart ? '#1976d2' : '#e3f2fd' }}
+                  style={{ border: 'none', borderRadius: 10, padding: 12, cursor: 'pointer', background: adjLateStart ? '#1976d2' : (isDark ? '#495057' : '#e9ecef') }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: adjLateStart ? 10 : 0 }}>
                     <div style={{ width: 16, height: 16, borderRadius: 4, border: adjLateStart ? 'none' : '1.5px solid #1976d2', background: adjLateStart ? '#fff' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       {adjLateStart && <span style={{ color: '#1976d2', fontSize: 11, lineHeight: 1, fontWeight: 'bold' }}>✓</span>}
                     </div>
                     <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#4caf50', flexShrink: 0, display: 'inline-block' }} />
-                    <span style={{ fontSize: 14, fontWeight: 'bold', color: adjLateStart ? '#fff' : '#1565c0' }}>調整遅出</span>
+                    <span style={{ fontSize: 14, fontWeight: 'bold', color: adjLateStart ? '#fff' : text }}>調整遅出</span>
                   </div>
                   {adjLateStart && (
                     <div onClick={e => e.stopPropagation()}>
@@ -1289,14 +1289,14 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                 {/* 調整早退 */}
                 <div
                   onClick={() => setAdjEarlyEnd(v => !v)}
-                  style={{ border: adjEarlyEnd ? '2px solid #1565c0' : '2px solid #90caf9', borderRadius: 10, padding: 12, cursor: 'pointer', background: adjEarlyEnd ? '#1976d2' : '#e3f2fd' }}
+                  style={{ border: 'none', borderRadius: 10, padding: 12, cursor: 'pointer', background: adjEarlyEnd ? '#1976d2' : (isDark ? '#495057' : '#e9ecef') }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: adjEarlyEnd ? 10 : 0 }}>
                     <div style={{ width: 16, height: 16, borderRadius: 4, border: adjEarlyEnd ? 'none' : '1.5px solid #1976d2', background: adjEarlyEnd ? '#fff' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       {adjEarlyEnd && <span style={{ color: '#1976d2', fontSize: 11, lineHeight: 1, fontWeight: 'bold' }}>✓</span>}
                     </div>
                     <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#9c27b0', flexShrink: 0, display: 'inline-block' }} />
-                    <span style={{ fontSize: 14, fontWeight: 'bold', color: adjEarlyEnd ? '#fff' : '#1565c0' }}>調整早退</span>
+                    <span style={{ fontSize: 14, fontWeight: 'bold', color: adjEarlyEnd ? '#fff' : text }}>調整早退</span>
                   </div>
                   {adjEarlyEnd && (
                     <div onClick={e => e.stopPropagation()}>
