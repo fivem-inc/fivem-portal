@@ -7,7 +7,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 💾 PC故障時バックアップ（2026-07-25設定）
 
 このPCにしかない重要ファイル（`client/.env`・`client/.env.production`・`AGENTS.md`・Claude Codeのこのプロジェクト用メモリ）を、Windowsタスク `BackupFivemPortalToNAS`（ログオン時＋毎日12:00・上書き方式）で自動的にNAS（`\\NAS-SIJYO\Public\四条本校マイドキュメント\10_パソコン設定\Claud重要バックアップデータ\社内サイト`）へバックアップしている。
-復旧手順は [docs/DISASTER-RECOVERY.md](docs/DISASTER-RECOVERY.md) を参照。スクリプトは `scripts/backup-to-nas.ps1` / `scripts/setup-backup-task.ps1`。
+復旧手順は [docs/DISASTER-RECOVERY.md](docs/DISASTER-RECOVERY.md) を参照（Notionにも同内容のマークダウンを保管済み）。この手順書自体もNASへ`復旧手順.md`として毎日同期されるため、git/PCどちらにもアクセスできない状況でもNAS単体で読める。スクリプトは `scripts/backup-to-nas.ps1` / `scripts/setup-backup-task.ps1`。動作確認はNAS側ファイルの**CreationTime**（作成日時）で判定すること（LastWriteTimeはコピー元の日時が引き継がれるため判定に使えない）。
+
+---
+
+## ✅ 2026-07-25 依存関係の脆弱性対応・不要な旧Slackプロキシ削除
+
+### やったこと（本番反映済み）
+- ルート直下の未使用ファイル `proxy-server.js` / `package.json` / `package-lock.json`（1年以上前の旧Slack通知プロキシ`expense-app-proxy`。現在はSupabase Edge Functions経由に完全移行済みで一切参照なしと確認）を削除
+- ついでに、誤って追跡されていたルートの`node_modules`（946ファイル）もgit管理から除外し、`.gitignore`に`node_modules`を追加（再発防止）
+- `client/` で `npm audit fix` を実行 → `react-router-dom` 7.6.3→7.18.1、PostCSS も最新化（いずれもメジャーバージョン変更なし・破壊的変更なし）。`tsc -b && vite build` で正常ビルド確認済み
+
+### 対応不要と判断したもの（今後の参考）
+- `react-router-dom`の欠陥1件（GHSA-qwww-vcr4-c8h2）：**最新版まで上げても未修正**（開発元がまだパッチを出していない）。「RSCモード（サーバー側で画面を組み立てる特殊な動かし方）」でのみ悪用可能な欠陥で、このアプリはRSCモードを使わない通常のSPA（ブラウザ内完結型）のため実害なし。修正版が出るまで様子見でよい
+- `eslint`関連4件：**開発者専用ツール（ESLint＝コードの書き方チェック）の中だけ**で使われる部品。本番アプリのコードには一切含まれず、直すにはESLintの大きなバージョンアップ（設定書き換えを伴う）が必要なので見送り
+
+### 教訓
+- GitHubの「push直後のDependabot件数メッセージ」は再スキャン前のキャッシュ表示。実際の解消確認は少し時間を置いてから [Security → Dependabot](https://github.com/fivem-inc/fivem-portal/security/dependabot) タブで見る
+- ルートに`package.json`がある構成（今回の旧プロキシのような）は、`.gitignore`に`node_modules`を書き忘れると丸ごと追跡されるリスクがある。新しくpackage.jsonを置く場所には毎回`.gitignore`の`node_modules`有無を確認する
 
 ---
 
