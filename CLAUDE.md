@@ -4,6 +4,44 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
+## 🗒️ 2026-07-25セッション 簡潔引き継ぎ（次回はここだけ読めばOK）
+
+### 今日やったこと（すべて本番反映済み）
+- 締め後申請の許可を「給与期間まるごと」→「対象日1日ごと」に変更
+- 本人→経理の依頼機能を新規追加（複数日まとめて依頼／経理が許可 or 見送り／見送り理由あり）
+- 依頼できる期間＝締め切り18日〜給与データ確定日（支給日25日、土日祝なら前営業日まで自動で遡る）
+- 経理へ依頼通知（新規Edge Function）、通知タップで管理タブの該当箇所へ直接遷移
+- 休暇「受理ページへ」ボタンに承認待ち件数バッジ追加
+- 残業「履歴・実績報告」に状態フィルタ・種別複数選択フィルタ・並び替え（日付順↑↓）を追加、条件は端末に記憶
+- 残業の合計時間数カードに「前期⇄今期」切り替え（‹ ›）を追加、下の申請一覧も選択期間に連動
+- 配色を「未選択=グレー・選択=青ベタ」に統一（複数箇所）
+
+### デプロイ状況
+- DB migration: `20260734000000_overtime_grant_requests.sql`（実行済み）
+- Edge Function: `overtime-grant-request-notify`（新規）・`push-dispatch`（更新）→デプロイ済み
+- 全commit push済み、local/remote突合確認済み（最新: `1665ee1`）
+
+### 次回の予定タスク（優先順）
+1. 【最優先・実機確認】締め後申請の依頼機能一式（依頼送信→経理へ通知→許可/見送り→本人へ通知、18〜25日の範囲チェック、重複防止）
+2. 【実機確認】合計時間数カードの前期/今期切り替えと申請一覧の連動
+3. 【実機確認】休暇バッジ、残業履歴のフィルタ・並び替え（次回開いても条件が保持されるか）
+4. 繰越：締めロック・振替休日の差分計算・CSV出力・注意事項表示（2026-07-24分、締め後許可は今回作り直したので統合確認）
+5. さらに繰越：調整休提案の実機確認、実績未報告の履歴表示、連絡板「安否確認機能」要件詰め、残業タブの赤い印、休暇FYI・残業階層・`/shift-patterns`
+
+### 作業ルール（毎回厳守）
+- 開始時：git pull → git status → CLAUDE.mdの最新引き継ぎ確認
+- 修正後：`cd client && npx tsc -b && npx vite build`
+- デプロイもClaudeが実施：DB変更はSQL全文提示→ユーザーがSupabase SQL Editorで実行、Edge Functionは `npx supabase functions deploy <名前> --project-ref xaeynaxctiiyqxjyuzfi`、commit/pushはClaude
+- push後は `git ls-remote origin master` で local/remote突合を必ず確認
+- git add前に必ず `git status` 目視。AGENTS.md（未追跡）はコミットに含めない
+- alert/confirm/.catch禁止（インライン確認・緑カード）。認証はAuthContext一元化
+- RLS/RPCの管理者判定は必ず `(auth.jwt()->'app_metadata'->>'role')='admin'`（`profiles.role_title`はUI表示ラベル用途のみ）
+- UI文言/配色/新機能/設計判断は案提示→承認後に実装。大規模改修はUI/UX＋シニアエンジニアの2体サブエージェントレビュー
+- 集計・期間選択が絡む機能はlimit付きクエリを流用せず、都度サーバーフェッチにする（データ欠落防止）
+- 合計値と内訳一覧など関連する表示は同じ条件（期間・フィルタ）に連動させる
+
+---
+
 ## 📌 セッション引き継ぎメモ（2026-07-25 最終・次回はここから読む）
 
 ### 今日やったこと（すべて本番反映済み・commit順）
