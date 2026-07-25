@@ -2553,7 +2553,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
               {canShiftDirectory && (
                 <div style={{ textAlign: 'right', marginBottom: 10 }}>
                   <button onClick={() => navigate('/shift-patterns')}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#0d6efd', textDecoration: 'underline' }}>
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: isDark ? '#64b5f6' : '#0d6efd', textDecoration: 'underline' }}>
                     🗓 全員のシフト予定を見る
                   </button>
                 </div>
@@ -2564,10 +2564,10 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                   {(['own', 'summary'] as const).map(m => (
                     <button key={m} onClick={() => { setHistoryMode(m); if (m === 'own') clearSelectedStaff(); }}
                       style={{
-                        flex: 1, padding: '8px 0', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 'bold',
-                        border: historyMode === m ? '2px solid #1565c0' : '2px solid #90caf9',
-                        background: historyMode === m ? '#1976d2' : '#e3f2fd',
-                        color: historyMode === m ? '#fff' : '#1565c0',
+                        flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13,
+                        fontWeight: historyMode === m ? 'bold' : 'normal',
+                        background: historyMode === m ? '#1976d2' : (isDark ? '#495057' : '#e9ecef'),
+                        color: historyMode === m ? '#fff' : text,
                       }}>
                       {m === 'own' ? '自分の履歴' : '部門集計'}
                     </button>
@@ -2893,7 +2893,7 @@ const MyPatternToggle: React.FC<{ isDark: boolean; patterns: PatternRow[] }> = (
     <div style={{ textAlign: 'left' }}>
       <div style={{ textAlign: 'right' }}>
         <button onClick={() => setOpen(o => !o)}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#0d6efd', textDecoration: 'underline' }}>
+          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: isDark ? '#64b5f6' : '#0d6efd', textDecoration: 'underline' }}>
           自分の通常シフトを{open ? '閉じる' : '確認'}
         </button>
       </div>
