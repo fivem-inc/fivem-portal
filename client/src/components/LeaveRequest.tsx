@@ -793,20 +793,20 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       </div>
 
       {isApprover && (
-        <div style={{ position: 'relative' }}>
-          <button
-            onClick={() => navigate('/leave-approvals')}
-            style={{ width: '100%', padding: '9px', background: '#fd7e14', color: 'white', border: 'none', cursor: 'pointer', marginTop: 8, borderRadius: 8, lineHeight: 1.4 }}
-          >
-            <div style={{ fontSize: 14, fontWeight: 'bold' }}>✅ 受理ページへ</div>
-            <div style={{ fontSize: 11, opacity: 0.95, marginTop: 1 }}>パートへの申請フォーム送信</div>
-          </button>
-          {approvalPendingCount > 0 && (
-            <span style={{ position: 'absolute', top: 2, right: 4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 11, minWidth: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 4px', border: `2px solid ${bg}`, pointerEvents: 'none' }}>
-              {approvalPendingCount > 99 ? '99+' : approvalPendingCount}
-            </span>
-          )}
-        </div>
+        <button
+          onClick={() => navigate('/leave-approvals')}
+          style={{ width: '100%', padding: '9px', background: '#fd7e14', color: 'white', border: 'none', cursor: 'pointer', marginTop: 8, borderRadius: 8, lineHeight: 1.4 }}
+        >
+          <div style={{ fontSize: 14, fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+            ✅ 受理ページへ
+            {approvalPendingCount > 0 && (
+              <span style={{ background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 11, minWidth: 19, height: 19, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 4px' }}>
+                {approvalPendingCount > 99 ? '99+' : approvalPendingCount}
+              </span>
+            )}
+          </div>
+          <div style={{ fontSize: 11, opacity: 0.95, marginTop: 1 }}>パートへの申請フォーム送信</div>
+        </button>
       )}
 
       {/* 申請フォーム */}
