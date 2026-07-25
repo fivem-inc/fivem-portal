@@ -4,6 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
+## 💾 PC故障時バックアップ（2026-07-25設定）
+
+このPCにしかない重要ファイル（`client/.env`・`client/.env.production`・`AGENTS.md`・Claude Codeのこのプロジェクト用メモリ）を、Windowsタスク `BackupFivemPortalToNAS`（ログオン時＋毎日12:00・上書き方式）で自動的にNAS（`\\NAS-SIJYO\Public\四条本校マイドキュメント\10_パソコン設定\Claud重要バックアップデータ\社内サイト`）へバックアップしている。
+復旧手順は [docs/DISASTER-RECOVERY.md](docs/DISASTER-RECOVERY.md) を参照。スクリプトは `scripts/backup-to-nas.ps1` / `scripts/setup-backup-task.ps1`。
+
+---
+
 ## 🗒️ 2026-07-25セッション 簡潔引き継ぎ（次回はここだけ読めばOK）
 
 ### 今日やったこと（すべて本番反映済み）
