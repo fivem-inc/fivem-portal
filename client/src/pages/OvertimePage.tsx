@@ -2203,7 +2203,13 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
   // 本人の履歴は「前期＋今期」まで常に表示（それより古い期は非表示）。管理者は全件。給与明細照合のため直近1期は残す。
   const [curPY, curPM] = currentPeriod.split('-').map(Number);
   const prevPeriodStart = `${curPM === 1 ? curPY - 1 : curPY}-${String(curPM === 1 ? 12 : curPM - 1).padStart(2, '0')}-16`;
-  const ownHistoryPeriod = isAdmin ? ownHistoryAll : ownHistoryAll.filter(r => !r.pay_period_start || r.pay_period_start >= prevPeriodStart);
+  // 合計時間数カードで前期を選んでいるときは、下の申請一覧もその期だけに絞り込む（数字と内訳がズレないように）
+  const ownCardIsThisPeriod = ownCardPeriod === currentPeriod;
+  const ownHistoryPeriod = isAdmin
+    ? ownHistoryAll
+    : ownCardIsThisPeriod
+      ? ownHistoryAll.filter(r => !r.pay_period_start || r.pay_period_start >= prevPeriodStart)
+      : ownHistoryAll.filter(r => r.pay_period_start === ownCardPeriod);
 
   // 本人履歴のフィルタ・並び替え（端末に記憶。次回開いたときも同じ条件になる）
   interface OwnHistoryFilter { status: 'all' | 'pending' | 'done' | 'returned'; types: OvertimeType[]; sortAsc: boolean; showCancelled: boolean; }
