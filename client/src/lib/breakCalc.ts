@@ -175,6 +175,13 @@ export function payMonthLabel(periodStart: string): string {
   return `${em}月給与分`;
 }
 
+/** 給与期間開始日（16日始まり）を1期分前後にずらす。direction: -1=前の期／1=次の期 */
+export function shiftPayPeriod(periodStart: string, direction: -1 | 1): string {
+  const [y, m] = periodStart.split('-').map(Number);
+  const d = new Date(y, m - 1 + direction, 16);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-16`;
+}
+
 /** 給与期間の統一ラベル「8月給与分（7/16〜8/15）」。A/B/C/D 全機能でこれを使う */
 export function payMonthPeriodLabel(periodStart: string): string {
   return `${payMonthLabel(periodStart)}（${payPeriodLabel(periodStart)}）`;

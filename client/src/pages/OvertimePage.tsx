@@ -9,7 +9,7 @@ import {
   calcTotalBreak, calcLaborMinutes, calcSegmentBreak, checkLegalBreak,
   timeToMin, minToTime, formatSignedMin, formatMin,
   todayJstStr, calcPayPeriodStartJst, payPeriodLabel, payMonthLabel,
-  payMonthPeriodLabel, payPeriodCloseCutoff, isPayPeriodClosed, isPayPeriodPayoutPassed,
+  payMonthPeriodLabel, payPeriodCloseCutoff, isPayPeriodClosed, isPayPeriodPayoutPassed, shiftPayPeriod,
   DAY_KIND_LABELS,
 } from '../lib/breakCalc';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
@@ -2066,17 +2066,27 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
     setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('staff'); return n; });
   }, [setSearchParams]);
 
-  // ---- 合計時間数（今期通算） ---- 本人カード・部門集計・個人詳細で共通の computeBalance を使う
-  const balance = useMemo(() => computeBalance(reports, currentPeriod), [reports, currentPeriod]);
-
-  const prevPeriodBalance = useMemo(() => {
-    const [y, m] = currentPeriod.split('-').map(Number);
-    const py = m === 1 ? y - 1 : y;
-    const pm = m === 1 ? 12 : m - 1;
-    const prev = `${py}-${String(pm).padStart(2, '0')}-16`;
-    return reports.filter(r => r.pay_period_start === prev && r.status === 'confirmed')
-      .reduce((s, r) => s + (r.diff_minutes ?? 0), 0);
-  }, [reports, currentPeriod]);
+  // ---- 合計時間数カード：表示中の期間を ‹ › で切り替えられる（今期〜前期のみ。範囲は下の履歴一覧と揃える） ----
+  const ownCardPrevLimit = shiftPayPeriod(currentPeriod, -1); // これより前には戻れない
+  const [ownCardPeriod, setOwnCardPeriod] = useState(currentPeriod);
+  const [ownCardRows, setOwnCardRows] = useState<OvertimeReport[]>([]);
+  const [ownCardLoading, setOwnCardLoading] = useState(false);
+  const ownCardReqRef = useRef(0);
+  useEffect(() => {
+    const reqId = ++ownCardReqRef.current;
+    setOwnCardLoading(true);
+    supabase.from('overtime_reports')
+      .select('applicant_id, work_date, pay_period_start, entry_type, status, diff_minutes, application_types')
+      .eq('applicant_id', user.id)
+      .eq('pay_period_start', ownCardPeriod)
+      .then(({ data }) => {
+        if (reqId !== ownCardReqRef.current) return; // 古いレスポンスは無視（連打対策）
+        setOwnCardRows((data as OvertimeReport[] | null) ?? []);
+        setOwnCardLoading(false);
+      }, () => { if (reqId === ownCardReqRef.current) setOwnCardLoading(false); });
+  }, [ownCardPeriod, user.id]);
+  // 本人・部門集計・個人詳細で共通の computeBalance を使う
+  const ownCardBalance = useMemo(() => computeBalance(ownCardRows, ownCardPeriod), [ownCardRows, ownCardPeriod]);
 
   // 実績未報告の受理済み事前申請（勤務日を過ぎたもの）。終日（調整休・欠勤）は実績報告の概念がないため除外
   const unreportedRequests = useMemo(() =>
@@ -2601,32 +2611,60 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                 )
               ) : (
                 <>
-                  {/* 合計時間数カード */}
-                  <div style={{ background: innerBg, borderRadius: 12, padding: '14px 16px', marginBottom: 8 }}>
-                    <p style={{ margin: 0, fontSize: 12.5, color: subText }}>今期の合計時間数（{payPeriodLabel(currentPeriod)}・{payMonthLabel(currentPeriod)}）</p>
-                    <p style={{ margin: '4px 0 2px', fontSize: 26, fontWeight: 'bold', color: diffColor(balance.total, isDark) }}>
-                      {formatSignedMin(balance.total)}
-                    </p>
-                    {balance.plannedDelta !== 0 && (
-                      <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText }}>
-                        見込み {formatSignedMin(balance.plannedTotal)}（確認待ち反映後）
-                      </p>
-                    )}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4, fontSize: 12.5, color: subText, borderTop: `1px solid ${borderColor}`, paddingTop: 8 }}>
-                      <span>残業 {formatSignedMin(balance.plus)}</span>
-                      <span>調整休 {formatSignedMin(balance.choseiMinus)}</span>
-                      <span>早退・調整 {formatSignedMin(balance.otherMinus)}</span>
-                    </div>
-                    {balance.absenceDays + balance.absencePending > 0 && (
-                      <p style={{ margin: '6px 0 0', fontSize: 12, color: subText }}>
-                        欠勤 {balance.absenceDays}日{balance.absencePending > 0 && `（確認待ち${balance.absencePending}件）`}
-                      </p>
-                    )}
-                    <p style={{ margin: '8px 0 0', fontSize: 11.5, color: subText }}>
-                      期ごとの過不足管理（毎期リセット・繰り越しなし）・前期確定 {formatSignedMin(prevPeriodBalance)}
-                      {balance.pendingCount > 0 && `・確認待ち${balance.pendingCount}件は未計上`}
-                    </p>
-                  </div>
+                  {/* 合計時間数カード（‹ › で今期〜前期を切り替え可能） */}
+                  {(() => {
+                    const isThisPeriod = ownCardPeriod === currentPeriod;
+                    const canGoPrev = ownCardPeriod > ownCardPrevLimit;
+                    const canGoNext = ownCardPeriod < currentPeriod;
+                    const arrowStyle = (enabled: boolean): React.CSSProperties => ({
+                      background: 'none', border: 'none', fontSize: 20, lineHeight: 1, padding: '6px 10px',
+                      cursor: enabled ? 'pointer' : 'default',
+                      color: enabled ? text : (isDark ? '#495057' : '#ced4da'),
+                    });
+                    return (
+                      <div style={{ background: innerBg, borderRadius: 12, padding: '14px 16px', marginBottom: 8, opacity: ownCardLoading ? 0.6 : 1, transition: 'opacity 0.15s' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                          <button type="button" aria-label="前の期間へ" disabled={!canGoPrev}
+                            onClick={() => setOwnCardPeriod(p => shiftPayPeriod(p, -1))} style={arrowStyle(canGoPrev)}>‹</button>
+                          <p style={{ margin: 0, fontSize: 12.5, color: subText, textAlign: 'center' }}>
+                            {isThisPeriod ? '今期の合計時間数' : '合計時間数'}（{payPeriodLabel(ownCardPeriod)}・{payMonthLabel(ownCardPeriod)}）
+                          </p>
+                          <button type="button" aria-label="次の期間へ" disabled={!canGoNext}
+                            onClick={() => setOwnCardPeriod(p => shiftPayPeriod(p, 1))} style={arrowStyle(canGoNext)}>›</button>
+                        </div>
+                        {!isThisPeriod && (
+                          <p style={{ margin: '0 0 4px', textAlign: 'center' }}>
+                            <button type="button" onClick={() => setOwnCardPeriod(currentPeriod)}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11.5, color: isDark ? '#64b5f6' : '#0d6efd', textDecoration: 'underline', padding: 0 }}>
+                              今期に戻る
+                            </button>
+                          </p>
+                        )}
+                        <p style={{ margin: '4px 0 2px', fontSize: 26, fontWeight: 'bold', color: diffColor(ownCardBalance.total, isDark), textAlign: 'center' }}>
+                          {formatSignedMin(ownCardBalance.total)}
+                        </p>
+                        {isThisPeriod && ownCardBalance.plannedDelta !== 0 && (
+                          <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText, textAlign: 'center' }}>
+                            見込み {formatSignedMin(ownCardBalance.plannedTotal)}（確認待ち反映後）
+                          </p>
+                        )}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4, fontSize: 12.5, color: subText, borderTop: `1px solid ${borderColor}`, paddingTop: 8 }}>
+                          <span>残業 {formatSignedMin(ownCardBalance.plus)}</span>
+                          <span>調整休 {formatSignedMin(ownCardBalance.choseiMinus)}</span>
+                          <span>早退・調整 {formatSignedMin(ownCardBalance.otherMinus)}</span>
+                        </div>
+                        {ownCardBalance.absenceDays + ownCardBalance.absencePending > 0 && (
+                          <p style={{ margin: '6px 0 0', fontSize: 12, color: subText }}>
+                            欠勤 {ownCardBalance.absenceDays}日{ownCardBalance.absencePending > 0 && `（確認待ち${ownCardBalance.absencePending}件）`}
+                          </p>
+                        )}
+                        <p style={{ margin: '8px 0 0', fontSize: 11.5, color: subText }}>
+                          期ごとの過不足管理（毎期リセット・繰り越しなし）
+                          {ownCardBalance.pendingCount > 0 && `・確認待ち${ownCardBalance.pendingCount}件は未計上`}
+                        </p>
+                      </div>
+                    );
+                  })()}
 
                   {/* 曜日パターン確認（全員のシフト予定への導線は履歴タブ上部に集約済み） */}
                   <div style={{ textAlign: 'right', marginBottom: 12 }}>
