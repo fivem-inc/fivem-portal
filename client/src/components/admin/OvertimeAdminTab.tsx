@@ -1,17 +1,18 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import SearchableSelect from '../common/SearchableSelect';
 import { useAdminPanel } from './AdminPanelContext';
 import OvertimeShiftImport from './OvertimeShiftImport';
 import {
   calcPatternFields, timeToMin, minToTime, formatMin, formatSignedMin, todayJstStr,
-  DAY_KIND_LABELS, CALENDAR_KIND_LABELS, payMonthPeriodLabel,
+  DAY_KIND_LABELS, CALENDAR_KIND_LABELS,
 } from '../../lib/breakCalc';
 import type { DayKind, CalendarKind } from '../../lib/breakCalc';
 import { DEFAULT_LOCATION } from '../../lib/shiftExcelImport';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
 import OvertimeEditModal, { type OvertimeRecord } from './OvertimeEditModal';
 import { OT_TYPE_INFO, isOvertimeType, isFullDayReport } from '../../lib/overtimeTypes';
-import { notifyOvertimeReturned, notifyOvertimeAdminCancelled, notifyOvertimeGrant } from '../../lib/overtimeNotify';
+import { notifyOvertimeReturned, notifyOvertimeAdminCancelled, notifyOvertimeGrant, notifyOvertimeGrantDeclined } from '../../lib/overtimeNotify';
 
 const OT_STATUS_LABEL: Record<string, { label: string; color: string }> = {
   requested:         { label: '事前申請', color: '#f59e0b' },
@@ -85,7 +86,11 @@ const OvertimeAdminTab: React.FC = () => {
   const ctx = useAdminPanel();
   const { isDarkMode, supabase } = ctx;
 
-  const [section, setSection] = useState<'reports' | 'patterns' | 'calendar' | 'settings' | 'grants'>('reports');
+  const [searchParams] = useSearchParams();
+  const sectionFromUrl = searchParams.get('section');
+  const [section, setSection] = useState<'reports' | 'patterns' | 'calendar' | 'settings' | 'grants'>(
+    sectionFromUrl === 'grants' ? 'grants' : 'reports'
+  );
 
   // ─────────── 受理済み一覧（残業レコードの管理） ───────────
   const [otReports, setOtReports] = useState<OvertimeRecord[]>([]);
@@ -545,10 +550,10 @@ const OvertimeAdminTab: React.FC = () => {
     setSettingsMsg('設定を保存しました');
   };
 
-  // ─────────── 締め後申請の許可（B） ───────────
-  interface GrantRow { id: string; user_id: string; pay_period_start: string; granted_by: string; note: string | null; created_at: string; grantedByName?: string; }
+  // ─────────── 締め後申請の許可（B）：対象日ごとの許可＋本人からの依頼 ───────────
+  interface GrantRow { id: string; user_id: string; work_date: string; granted_by: string; note: string | null; created_at: string; grantedByName?: string; }
   const [grantStaffId, setGrantStaffId] = useState('');
-  const [grantPeriod, setGrantPeriod] = useState('');
+  const [grantWorkDate, setGrantWorkDate] = useState('');
   const [grantNote, setGrantNote] = useState('');
   const [grants, setGrants] = useState<GrantRow[]>([]);
   const [grantMsg, setGrantMsg] = useState('');
@@ -556,20 +561,9 @@ const OvertimeAdminTab: React.FC = () => {
   const [savingGrant, setSavingGrant] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<GrantRow | null>(null);
 
-  // 選べる給与期間の候補（先々月〜先月＝締めを過ぎて許可が必要になりうる期間）
-  const grantPeriodOptions = useMemo(() => {
-    const list: string[] = [];
-    const now = new Date();
-    for (let i = 3; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 16);
-      list.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-16`);
-    }
-    return list;
-  }, []);
-
   const fetchGrants = useCallback(async () => {
     const { data, error } = await supabase.from('overtime_submission_grants')
-      .select('id, user_id, pay_period_start, granted_by, note, created_at')
+      .select('id, user_id, work_date, granted_by, note, created_at')
       .is('revoked_at', null)
       .order('created_at', { ascending: false });
     if (error) { setGrantErr('読み込みに失敗しました：' + error.message); return; }
@@ -583,19 +577,20 @@ const OvertimeAdminTab: React.FC = () => {
   const saveGrant = async () => {
     setGrantErr(''); setGrantMsg('');
     if (!grantStaffId) { setGrantErr('対象者を選択してください'); return; }
-    if (!grantPeriod) { setGrantErr('給与期間を選択してください'); return; }
+    if (!grantWorkDate) { setGrantErr('対象日を選択してください'); return; }
     setSavingGrant(true);
     const { data: authData } = await supabase.auth.getUser();
     const { error } = await supabase.from('overtime_submission_grants')
       .upsert({
-        user_id: grantStaffId, pay_period_start: grantPeriod, granted_by: authData.user?.id,
+        user_id: grantStaffId, work_date: grantWorkDate, granted_by: authData.user?.id,
         note: grantNote.trim() || null, revoked_at: null, revoked_by: null,
-      }, { onConflict: 'user_id,pay_period_start' });
+      }, { onConflict: 'user_id,work_date' });
     setSavingGrant(false);
     if (error) { setGrantErr('保存に失敗しました: ' + error.message); return; }
     setGrantMsg('締め後申請を許可し、本人へ通知しました');
-    notifyOvertimeGrant({ applicantId: grantStaffId, periodLabel: payMonthPeriodLabel(grantPeriod) }).then(null, () => {});
-    setGrantStaffId(''); setGrantPeriod(''); setGrantNote('');
+    const dateLabel = `${parseInt(grantWorkDate.slice(5, 7))}/${parseInt(grantWorkDate.slice(8, 10))}`;
+    notifyOvertimeGrant({ applicantId: grantStaffId, workDatesLabel: dateLabel }).then(null, () => {});
+    setGrantStaffId(''); setGrantWorkDate(''); setGrantNote('');
     fetchGrants();
   };
 
@@ -608,6 +603,56 @@ const OvertimeAdminTab: React.FC = () => {
     setRevokeTarget(null);
     setGrantMsg('許可を取り消しました');
     fetchGrants();
+  };
+
+  // ─────────── 締め後申請の許可依頼（本人→経理） ───────────
+  interface GrantRequestRow { id: string; user_id: string; work_dates: string[]; status: 'open' | 'resolved' | 'declined' | 'withdrawn'; created_at: string; }
+  const [grantRequests, setGrantRequests] = useState<GrantRequestRow[]>([]);
+  const [grantRequestErr, setGrantRequestErr] = useState('');
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [declineTarget, setDeclineTarget] = useState<GrantRequestRow | null>(null);
+  const [declineNote, setDeclineNote] = useState('');
+
+  const fetchGrantRequests = useCallback(async () => {
+    const { data, error } = await supabase.from('overtime_submission_grant_requests')
+      .select('id, user_id, work_dates, status, created_at')
+      .eq('status', 'open')
+      .order('created_at', { ascending: true });
+    if (error) { setGrantRequestErr('読み込みに失敗しました：' + error.message); return; }
+    setGrantRequests((data as GrantRequestRow[] | null) ?? []);
+  }, [supabase]);
+
+  useEffect(() => { if (section === 'grants' && staff.length > 0) fetchGrantRequests(); }, [section, staff, fetchGrantRequests]);
+
+  const formatWorkDates = (dates: string[]): string => {
+    const sorted = [...dates].sort();
+    const short = (d: string) => `${parseInt(d.slice(5, 7))}/${parseInt(d.slice(8, 10))}`;
+    if (sorted.length <= 3) return sorted.map(short).join('・');
+    return `${sorted.slice(0, 2).map(short).join('・')} 他${sorted.length - 2}件`;
+  };
+
+  const approveGrantRequest = async (row: GrantRequestRow) => {
+    setResolvingId(row.id);
+    setGrantRequestErr('');
+    const { error } = await supabase.rpc('resolve_overtime_grant_request', { p_request_id: row.id, p_approve: true, p_resolve_note: null });
+    setResolvingId(null);
+    if (error) { setGrantRequestErr('許可の処理に失敗しました: ' + error.message); return; }
+    setGrantMsg('依頼を許可し、本人へ通知しました');
+    fetchGrantRequests();
+    fetchGrants();
+  };
+
+  const declineGrantRequest = async () => {
+    if (!declineTarget) return;
+    setResolvingId(declineTarget.id);
+    setGrantRequestErr('');
+    const { error } = await supabase.rpc('resolve_overtime_grant_request', { p_request_id: declineTarget.id, p_approve: false, p_resolve_note: declineNote.trim() || null });
+    setResolvingId(null);
+    if (error) { setGrantRequestErr('見送りの処理に失敗しました: ' + error.message); setDeclineTarget(null); return; }
+    notifyOvertimeGrantDeclined({ applicantId: declineTarget.user_id, workDatesLabel: formatWorkDates(declineTarget.work_dates), reason: declineNote.trim() }).then(null, () => {});
+    setDeclineTarget(null); setDeclineNote('');
+    setGrantMsg('依頼を見送りました');
+    fetchGrantRequests();
   };
 
   // ─────────── render ───────────
@@ -881,70 +926,132 @@ const OvertimeAdminTab: React.FC = () => {
 
       {/* ─── 締め後申請の許可（経理から。B） ─── */}
       {section === 'grants' && (
-        <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, padding: '14px 16px' }}>
-          <p style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 'bold', color: text }}>締め後申請を許可する</p>
-          <p style={{ margin: '0 0 12px', fontSize: 12, color: subText, lineHeight: 1.7 }}>
-            申請の締め切り（支給月17日）を過ぎた給与期間について、対象者を選んで新規申請を許可します。許可した本人には、ホーム・残業ページ・ベル通知でお知らせします。
-          </p>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
-            <select value={grantStaffId} onChange={e => setGrantStaffId(e.target.value)} style={{ ...inputStyle, minWidth: 160, flex: 1 }}>
-              <option value="">対象者を選択</option>
-              {staff.filter(s => s.employment_type !== 'パート').map(s => <option key={s.id} value={s.id}>{s.name}（{s.role_title}）</option>)}
-            </select>
-            <select value={grantPeriod} onChange={e => setGrantPeriod(e.target.value)} style={{ ...inputStyle, minWidth: 160 }}>
-              <option value="">給与期間を選択</option>
-              {grantPeriodOptions.map(p => <option key={p} value={p}>{payMonthPeriodLabel(p)}</option>)}
-            </select>
-          </div>
-          <input type="text" value={grantNote} onChange={e => setGrantNote(e.target.value)} placeholder="メモ（任意）"
-            style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', marginBottom: 10 }} />
-          {grantErr && <p style={{ margin: '0 0 8px', fontSize: 13, color: '#dc3545' }}>{grantErr}</p>}
-          {grantMsg && (
-            <div style={{ background: isDarkMode ? '#1b3a1e' : '#d1e7dd', border: '1px solid #28a745', borderRadius: 8, padding: '8px 12px', marginBottom: 8 }}>
-              <p style={{ margin: 0, fontSize: 13, color: isDarkMode ? '#8fd19e' : '#0f5132' }}>✅ {grantMsg}</p>
-            </div>
-          )}
-          <button onClick={saveGrant} disabled={savingGrant}
-            style={{ padding: '10px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', background: '#007bff', color: '#fff', opacity: savingGrant ? 0.6 : 1 }}>
-            {savingGrant ? '許可中...' : '許可する'}
-          </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-          <p style={{ margin: '20px 0 8px', fontSize: 13.5, fontWeight: 'bold', color: text }}>許可済み一覧</p>
-          {grants.length === 0 ? (
-            <p style={{ margin: 0, fontSize: 13, color: subText }}>許可はありません</p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {grants.map(g => {
-                const name = staff.find(s => s.id === g.user_id)?.name ?? '不明';
-                return (
-                  <div key={g.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', border: `1px solid ${borderColor}`, borderRadius: 8, flexWrap: 'wrap' }}>
-                    <div>
-                      <span style={{ fontSize: 13, fontWeight: 'bold', color: text }}>{name}</span>
-                      <span style={{ fontSize: 12.5, color: subText, marginLeft: 8 }}>{payMonthPeriodLabel(g.pay_period_start)}</span>
-                      {g.note && <span style={{ fontSize: 12, color: subText, marginLeft: 8 }}>（{g.note}）</span>}
-                      {g.grantedByName && <span style={{ fontSize: 11.5, color: subText, marginLeft: 8 }}>付与：{g.grantedByName}</span>}
+          {/* 依頼一覧（本人→経理） */}
+          <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, padding: '14px 16px' }}>
+            <p style={{ margin: '0 0 10px', fontSize: 13.5, fontWeight: 'bold', color: text }}>
+              📩 依頼一覧（未対応{grantRequests.length}件）
+            </p>
+            {grantRequestErr && <p style={{ margin: '0 0 8px', fontSize: 13, color: '#dc3545' }}>{grantRequestErr}</p>}
+            {grantRequests.length === 0 ? (
+              <p style={{ margin: 0, fontSize: 13, color: subText }}>依頼はありません</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {grantRequests.map(r => {
+                  const name = staff.find(s => s.id === r.user_id)?.name ?? '不明';
+                  return (
+                    <div key={r.id} style={{ padding: '10px 12px', border: '1px solid #f5c2c7', background: isDarkMode ? '#3a2020' : '#fff8f8', borderRadius: 8 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8 }}>
+                        <div>
+                          <span style={{ fontSize: 13, fontWeight: 'bold', color: text }}>{name}</span>
+                          <span style={{ fontSize: 12.5, color: subText, marginLeft: 8 }}>対象日：{formatWorkDates(r.work_dates)}</span>
+                          <div style={{ fontSize: 11.5, color: subText, marginTop: 2 }}>
+                            {new Date(r.created_at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}に依頼
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                          <button onClick={() => approveGrantRequest(r)} disabled={resolvingId === r.id}
+                            style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: '#28a745', color: '#fff', cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', opacity: resolvingId === r.id ? 0.6 : 1 }}>
+                            許可する
+                          </button>
+                          <button onClick={() => { setDeclineTarget(r); setDeclineNote(''); }} disabled={resolvingId === r.id}
+                            style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #dc3545', background: 'transparent', color: '#dc3545', cursor: 'pointer', fontSize: 12.5 }}>
+                            見送る
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                    <button onClick={() => setRevokeTarget(g)}
-                      style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #dc3545', background: 'transparent', color: '#dc3545', cursor: 'pointer', fontSize: 12 }}>
-                      取消
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
-          {/* 取消確認 */}
-          {revokeTarget && (
-            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-              <div style={{ background: cardBg, borderRadius: 14, padding: 22, width: '100%', maxWidth: 360 }}>
-                <div style={{ fontSize: 15, fontWeight: 'bold', color: '#dc3545', marginBottom: 12 }}>許可の取消</div>
-                <div style={{ fontSize: 13, color: text, marginBottom: 16 }}>
-                  {staff.find(s => s.id === revokeTarget.user_id)?.name ?? '不明'}　{payMonthPeriodLabel(revokeTarget.pay_period_start)}　の締め後申請の許可を取り消します。
+          {/* 手動で許可する（依頼が無くても付与できる） */}
+          <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, padding: '14px 16px' }}>
+            <p style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 'bold', color: text }}>締め後申請を許可する（手動）</p>
+            <p style={{ margin: '0 0 12px', fontSize: 12, color: subText, lineHeight: 1.7 }}>
+              申請の締め切り（支給月17日）を過ぎた対象日について、対象者を選んで新規申請を許可します。許可した本人には、ホーム・残業ページ・ベル通知でお知らせします。
+            </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+              <select value={grantStaffId} onChange={e => setGrantStaffId(e.target.value)} style={{ ...inputStyle, minWidth: 160, flex: 1 }}>
+                <option value="">対象者を選択</option>
+                {staff.filter(s => s.employment_type !== 'パート').map(s => <option key={s.id} value={s.id}>{s.name}（{s.role_title}）</option>)}
+              </select>
+              <input type="date" value={grantWorkDate} onChange={e => setGrantWorkDate(e.target.value)} style={{ ...inputStyle, minWidth: 160 }} />
+            </div>
+            <input type="text" value={grantNote} onChange={e => setGrantNote(e.target.value)} placeholder="メモ（任意）"
+              style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', marginBottom: 10 }} />
+            {grantErr && <p style={{ margin: '0 0 8px', fontSize: 13, color: '#dc3545' }}>{grantErr}</p>}
+            {grantMsg && (
+              <div style={{ background: isDarkMode ? '#1b3a1e' : '#d1e7dd', border: '1px solid #28a745', borderRadius: 8, padding: '8px 12px', marginBottom: 8 }}>
+                <p style={{ margin: 0, fontSize: 13, color: isDarkMode ? '#8fd19e' : '#0f5132' }}>✅ {grantMsg}</p>
+              </div>
+            )}
+            <button onClick={saveGrant} disabled={savingGrant}
+              style={{ padding: '10px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', background: '#007bff', color: '#fff', opacity: savingGrant ? 0.6 : 1 }}>
+              {savingGrant ? '許可中...' : '許可する'}
+            </button>
+
+            <p style={{ margin: '20px 0 8px', fontSize: 13.5, fontWeight: 'bold', color: text }}>許可済み一覧</p>
+            {grants.length === 0 ? (
+              <p style={{ margin: 0, fontSize: 13, color: subText }}>許可はありません</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {grants.map(g => {
+                  const name = staff.find(s => s.id === g.user_id)?.name ?? '不明';
+                  return (
+                    <div key={g.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', border: `1px solid ${borderColor}`, borderRadius: 8, flexWrap: 'wrap' }}>
+                      <div>
+                        <span style={{ fontSize: 13, fontWeight: 'bold', color: text }}>{name}</span>
+                        <span style={{ fontSize: 12.5, color: subText, marginLeft: 8 }}>{parseInt(g.work_date.slice(5, 7))}/{parseInt(g.work_date.slice(8, 10))}</span>
+                        {g.note && <span style={{ fontSize: 12, color: subText, marginLeft: 8 }}>（{g.note}）</span>}
+                        {g.grantedByName && <span style={{ fontSize: 11.5, color: subText, marginLeft: 8 }}>付与：{g.grantedByName}</span>}
+                      </div>
+                      <button onClick={() => setRevokeTarget(g)}
+                        style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #dc3545', background: 'transparent', color: '#dc3545', cursor: 'pointer', fontSize: 12 }}>
+                        取消
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* 取消確認 */}
+            {revokeTarget && (
+              <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+                <div style={{ background: cardBg, borderRadius: 14, padding: 22, width: '100%', maxWidth: 360 }}>
+                  <div style={{ fontSize: 15, fontWeight: 'bold', color: '#dc3545', marginBottom: 12 }}>許可の取消</div>
+                  <div style={{ fontSize: 13, color: text, marginBottom: 16 }}>
+                    {staff.find(s => s.id === revokeTarget.user_id)?.name ?? '不明'}　{parseInt(revokeTarget.work_date.slice(5, 7))}/{parseInt(revokeTarget.work_date.slice(8, 10))}　の締め後申請の許可を取り消します。
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={() => setRevokeTarget(null)} style={{ flex: 1, padding: 10, borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: text, cursor: 'pointer', fontSize: 14 }}>戻る</button>
+                    <button onClick={doRevokeGrant} style={{ flex: 2, padding: 10, borderRadius: 8, border: 'none', background: '#dc3545', color: '#fff', fontWeight: 'bold', cursor: 'pointer', fontSize: 14 }}>取り消す</button>
+                  </div>
                 </div>
+              </div>
+            )}
+          </div>
+
+          {/* 見送り確認（理由入力） */}
+          {declineTarget && (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+              <div style={{ background: cardBg, borderRadius: 14, padding: 22, width: '100%', maxWidth: 380 }}>
+                <div style={{ fontSize: 15, fontWeight: 'bold', color: '#dc3545', marginBottom: 12 }}>依頼を見送る</div>
+                <div style={{ fontSize: 13, color: text, marginBottom: 10 }}>
+                  {staff.find(s => s.id === declineTarget.user_id)?.name ?? '不明'}　対象日：{formatWorkDates(declineTarget.work_dates)}
+                </div>
+                <textarea value={declineNote} onChange={e => setDeclineNote(e.target.value)} placeholder="見送る理由（本人に伝わります・任意）" rows={3}
+                  style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', marginBottom: 14, resize: 'vertical' }} />
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={() => setRevokeTarget(null)} style={{ flex: 1, padding: 10, borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: text, cursor: 'pointer', fontSize: 14 }}>戻る</button>
-                  <button onClick={doRevokeGrant} style={{ flex: 2, padding: 10, borderRadius: 8, border: 'none', background: '#dc3545', color: '#fff', fontWeight: 'bold', cursor: 'pointer', fontSize: 14 }}>取り消す</button>
+                  <button onClick={() => setDeclineTarget(null)} style={{ flex: 1, padding: 10, borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: text, cursor: 'pointer', fontSize: 14 }}>戻る</button>
+                  <button onClick={declineGrantRequest} disabled={resolvingId === declineTarget.id}
+                    style={{ flex: 2, padding: 10, borderRadius: 8, border: 'none', background: '#dc3545', color: '#fff', fontWeight: 'bold', cursor: 'pointer', fontSize: 14, opacity: resolvingId === declineTarget.id ? 0.6 : 1 }}>
+                    見送る
+                  </button>
                 </div>
               </div>
             </div>

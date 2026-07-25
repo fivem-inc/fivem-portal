@@ -66,6 +66,7 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string }> = {
   "overtime:admin_cancelled":    { app: "残業", word: "新着",   url: "/overtime?tab=history" },
   "overtime:admin_edited":       { app: "残業", word: "新着",   url: "/overtime?tab=history" },
   "overtime:grant":              { app: "残業", word: "新着",   url: "/overtime" },
+  "overtime:grant_declined":     { app: "残業", word: "新着",   url: "/overtime" },
 };
 
 // notification_settingsの参照キー（'reminder:unread:today'→'reminder:unread'）

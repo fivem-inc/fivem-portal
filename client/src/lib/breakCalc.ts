@@ -197,6 +197,32 @@ export function isPayPeriodClosed(workDate: string, todayStr: string): boolean {
   return todayStr > payPeriodCloseCutoff(calcPayPeriodStartJst(workDate));
 }
 
+/**
+ * 締め後申請の依頼ができる期限（給与データ確定日）"YYYY-MM-DD"。
+ * 支給日（支給月25日）の前日を基準に、土日・会社カレンダーの休館日(closed_all)なら前営業日まで遡る。
+ * SQL側 overtime_grant_deadline() と同一ロジック。closedDates は company_calendar の closed_all 日付集合。
+ */
+export function payPeriodGrantDeadline(periodStart: string, closedDates: Set<string>): string {
+  const [y, m] = periodStart.split('-').map(Number);
+  const cy = m === 12 ? y + 1 : y;
+  const cm = m === 12 ? 1 : m + 1;
+  const d = new Date(cy, cm - 1, 25); // 25日
+  d.setDate(d.getDate() - 1); // 前日から開始
+  const fmt = (dt: Date) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  for (let i = 0; i < 31; i++) {
+    const dow = d.getDay();
+    const ds = fmt(d);
+    if (dow !== 0 && dow !== 6 && !closedDates.has(ds)) return ds;
+    d.setDate(d.getDate() - 1);
+  }
+  return fmt(d);
+}
+
+/** 対象日の給与期間が「依頼の期限（給与データ確定日）を過ぎた」か。todayStr は JST の今日 "YYYY-MM-DD" */
+export function isPayPeriodPayoutPassed(workDate: string, todayStr: string, closedDates: Set<string>): boolean {
+  return todayStr > payPeriodGrantDeadline(calcPayPeriodStartJst(workDate), closedDates);
+}
+
 // ---------- 曜日パターン・会社カレンダー解決 ----------
 
 export type DayKind = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun' | 'holiday' | 'work_on_closed';

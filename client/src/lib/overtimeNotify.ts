@@ -1,5 +1,6 @@
 import { insertNotification } from './notifications';
 import { dispatchEmail, getUserEmail, shouldSendWithDefault } from './notificationDispatch';
+import { supabase } from './supabaseClient';
 
 // 残業・時間管理の通知送信（管理画面「通知設定」の overtime:* に従う）
 //
@@ -110,14 +111,14 @@ export async function notifyOvertimeAdminCancelled(info: {
 /** 経理が締め後申請を許可した時 → 許可された本人へ（本人がホーム・残業ページで見落とさないよう、ベル通知で確実に伝える） */
 export async function notifyOvertimeGrant(info: {
   applicantId: string;
-  periodLabel: string; // 例：8月給与分（7/16〜8/15）
+  workDatesLabel: string; // 例：7/18・7/19
 }): Promise<void> {
-  const { applicantId, periodLabel } = info;
+  const { applicantId, workDatesLabel } = info;
   if (await shouldSendWithDefault('overtime:grant', 'site', true)) {
     await insertNotification(
       applicantId,
       `締め後の残業・時間調整申請が許可されました`,
-      `${periodLabel}の新規申請ができます`,
+      `${workDatesLabel}の新規申請ができます`,
       'overtime_request',
       undefined,
       'overtime:grant',
@@ -127,10 +128,48 @@ export async function notifyOvertimeGrant(info: {
   if (email) {
     await dispatchEmail(
       'overtime:grant',
-      { 給与期間: periodLabel, 日付: '', 種別: '', 時間: '', 申請者名: '', 差し戻し理由: '', リンク: 'https://fivem-portal.vercel.app/overtime' },
+      { 対象日: workDatesLabel, 日付: '', 種別: '', 時間: '', 申請者名: '', 差し戻し理由: '', リンク: 'https://fivem-portal.vercel.app/overtime' },
       { applicant: email },
     );
   }
+}
+
+/** 経理が締め後申請の依頼を見送った時 → 依頼した本人へ */
+export async function notifyOvertimeGrantDeclined(info: {
+  applicantId: string;
+  workDatesLabel: string;
+  reason: string;
+}): Promise<void> {
+  const { applicantId, workDatesLabel, reason } = info;
+  if (await shouldSendWithDefault('overtime:grant_declined', 'site', true)) {
+    await insertNotification(
+      applicantId,
+      '締め後申請の依頼は見送られました',
+      reason ? `${workDatesLabel}　理由：${reason}` : workDatesLabel,
+      'overtime_request',
+      undefined,
+      'overtime:grant_declined',
+    );
+  }
+  const email = await getUserEmail(applicantId);
+  if (email) {
+    await dispatchEmail(
+      'overtime:grant_declined',
+      { 対象日: workDatesLabel, 差し戻し理由: reason || '（記載なし）', 日付: '', 種別: '', 時間: '', 申請者名: '', リンク: 'https://fivem-portal.vercel.app/overtime' },
+      { applicant: email },
+    );
+  }
+}
+
+/** 本人が締め後申請の許可を依頼した時 → 経理（役職＝管理者）全員へ */
+export async function notifyOvertimeGrantRequest(info: {
+  requestId: string;
+  applicantName: string;
+  workDatesLabel: string;
+}): Promise<void> {
+  await supabase.functions.invoke('overtime-grant-request-notify', {
+    body: { applicant_name: info.applicantName, work_dates_label: info.workDatesLabel, request_id: info.requestId },
+  }).then(null, () => {});
 }
 
 /** 管理者が内容を修正した時 → 修正された本人へ */

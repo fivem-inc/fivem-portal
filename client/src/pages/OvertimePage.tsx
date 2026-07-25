@@ -9,7 +9,7 @@ import {
   calcTotalBreak, calcLaborMinutes, calcSegmentBreak, checkLegalBreak,
   timeToMin, minToTime, formatSignedMin, formatMin,
   todayJstStr, calcPayPeriodStartJst, payPeriodLabel, payMonthLabel,
-  payMonthPeriodLabel, payPeriodCloseCutoff, isPayPeriodClosed,
+  payMonthPeriodLabel, payPeriodCloseCutoff, isPayPeriodClosed, isPayPeriodPayoutPassed,
   DAY_KIND_LABELS,
 } from '../lib/breakCalc';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
@@ -20,7 +20,7 @@ import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
 import { OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport } from '../lib/overtimeTypes';
 import type { OvertimeType } from '../lib/overtimeTypes';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
-import { notifyOvertimeNewRequest } from '../lib/overtimeNotify';
+import { notifyOvertimeNewRequest, notifyOvertimeGrantRequest } from '../lib/overtimeNotify';
 import type { CorrectionRequestRow } from '../lib/correctionRequest';
 
 // ────────────────────────────────────────────────────────────────
@@ -101,6 +101,14 @@ const SELF_REVIEW_VALUE = '__self__';
 function dowLabel(dateStr: string): string {
   const [y, m, d] = dateStr.split('-').map(Number);
   return DOW[new Date(y, m - 1, d).getDay()];
+}
+
+// 複数の対象日を「7/18・7/19」のように短く整形（4件超は「他N件」に省略）
+function formatGrantDates(dates: string[]): string {
+  const sorted = [...dates].sort();
+  const short = (d: string) => `${parseInt(d.slice(5, 7))}/${parseInt(d.slice(8, 10))}`;
+  if (sorted.length <= 3) return sorted.map(short).join('・');
+  return `${sorted.slice(0, 2).map(short).join('・')} 他${sorted.length - 2}件`;
 }
 
 // ステータス表示（既存STATUS_INFOの配色規約に合わせる。グレー=取消済みのため事後報告はティール）
@@ -314,6 +322,82 @@ const SingleDatePicker: React.FC<{
   );
 };
 
+// 複数日選択カレンダー（締め後申請の許可依頼用）。SingleDatePicker と同じ見た目でトグル選択に対応
+const GrantDatePicker: React.FC<{
+  selectedDates: string[];
+  onChange: (dates: string[]) => void;
+  isDark: boolean;
+  minDate?: string;
+  maxDate?: string;
+}> = ({ selectedDates, onChange, isDark, minDate, maxDate }) => {
+  const text = isDark ? '#f8f9fa' : '#212529';
+  const borderColor = isDark ? '#6c757d' : '#dee2e6';
+  const base = selectedDates[0] ? new Date(selectedDates[0] + 'T00:00:00') : (minDate ? new Date(minDate + 'T00:00:00') : new Date());
+  const [viewYear, setViewYear] = useState(base.getFullYear());
+  const [viewMonth, setViewMonth] = useState(base.getMonth());
+
+  const fmt = (y: number, m: number, d: number) => `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const firstDay = new Date(viewYear, viewMonth, 1).getDay();
+  const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
+  const t = new Date();
+  const todayStr = fmt(t.getFullYear(), t.getMonth(), t.getDate());
+  const prevMonth = () => { if (viewMonth === 0) { setViewYear(y => y - 1); setViewMonth(11); } else setViewMonth(m => m - 1); };
+  const nextMonth = () => { if (viewMonth === 11) { setViewYear(y => y + 1); setViewMonth(0); } else setViewMonth(m => m + 1); };
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  const toggle = (dateStr: string) => {
+    if (selectedDates.includes(dateStr)) onChange(selectedDates.filter(d => d !== dateStr));
+    else onChange([...selectedDates, dateStr].sort());
+  };
+
+  return (
+    <div style={{ background: isDark ? '#495057' : '#f8f9fa', borderRadius: 10, padding: 12, border: `1px solid ${borderColor}` }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <button type="button" onClick={prevMonth} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: text, padding: '0 10px', lineHeight: 1 }}>‹</button>
+        <span style={{ fontWeight: 'bold', color: text, fontSize: 15 }}>{viewYear}年 {viewMonth + 1}月</span>
+        <button type="button" onClick={nextMonth} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: text, padding: '0 10px', lineHeight: 1 }}>›</button>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, marginBottom: 4 }}>
+        {dayNames.map((d, i) => (
+          <div key={d} style={{ textAlign: 'center', fontSize: 11, fontWeight: 'bold', color: i === 0 ? '#e74c3c' : i === 6 ? '#3498db' : text, padding: '3px 0' }}>{d}</div>
+        ))}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
+        {cells.map((day, i) => {
+          if (!day) return <div key={`e-${i}`} />;
+          const dateStr = fmt(viewYear, viewMonth, day);
+          const isSelected = selectedDates.includes(dateStr);
+          const dow = (firstDay + day - 1) % 7;
+          const isToday = dateStr === todayStr;
+          const disabled = (!!minDate && dateStr < minDate) || (!!maxDate && dateStr > maxDate);
+          return (
+            <button key={dateStr} type="button" disabled={disabled}
+              onClick={() => toggle(dateStr)}
+              style={{
+                padding: '10px 2px', minHeight: 40, borderRadius: 6,
+                border: isToday ? '2px solid #007bff' : '1px solid transparent',
+                background: isSelected ? '#28a745' : 'transparent',
+                color: disabled ? (isDark ? '#5c636a' : '#c4c9cf') : isSelected ? 'white' : dow === 0 ? '#e74c3c' : dow === 6 ? '#3498db' : text,
+                cursor: disabled ? 'default' : 'pointer', fontSize: 13,
+                fontWeight: isSelected ? 'bold' : 'normal', textAlign: 'center',
+              }}>
+              {day}
+            </button>
+          );
+        })}
+      </div>
+      {selectedDates.length > 0 && (
+        <p style={{ margin: '10px 0 0', fontSize: 13, color: '#28a745', fontWeight: 'bold' }}>
+          ✓ {selectedDates.length}日選択中
+        </p>
+      )}
+    </div>
+  );
+};
+
 // ────────────────────────────────────────────────────────────────
 // 申請・報告フォーム
 // ────────────────────────────────────────────────────────────────
@@ -447,12 +531,23 @@ const OvertimeForm: React.FC<{
   const [furikaeOriginStart, setFurikaeOriginStart] = useState<string>(() => (editTarget?.furikae_origin_start ? editTarget.furikae_origin_start.slice(0, 5) : draft?.furikaeOriginStart ?? ''));
   const [furikaeOriginEnd, setFurikaeOriginEnd] = useState<string>(() => (editTarget?.furikae_origin_end ? editTarget.furikae_origin_end.slice(0, 5) : draft?.furikaeOriginEnd ?? ''));
 
-  // 経理から締め後申請を許可された給与期間（pay_period_start の集合）。締めロックの救済に使う。
-  const [grantedPeriods, setGrantedPeriods] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    supabase.from('overtime_submission_grants').select('pay_period_start').eq('user_id', user.id).is('revoked_at', null)
-      .then(({ data }) => setGrantedPeriods(new Set((data ?? []).map((g: { pay_period_start: string }) => g.pay_period_start))), () => {});
+  // 経理から締め後申請を許可された対象日（work_date の集合）。締めロックの救済に使う。
+  const [grantedWorkDates, setGrantedWorkDates] = useState<Set<string>>(new Set());
+  const fetchGrantedWorkDates = useCallback(() => {
+    supabase.from('overtime_submission_grants').select('work_date').eq('user_id', user.id).is('revoked_at', null)
+      .then(({ data }) => setGrantedWorkDates(new Set((data ?? []).map((g: { work_date: string }) => g.work_date))), () => {});
   }, [user.id]);
+  useEffect(() => { fetchGrantedWorkDates(); }, [fetchGrantedWorkDates]);
+
+  // 締め後申請の許可依頼（本人分・自分のopen/declined一覧）
+  interface GrantRequestRow { id: string; work_dates: string[]; status: 'open' | 'resolved' | 'declined' | 'withdrawn'; created_at: string; resolve_note: string | null; }
+  const [myGrantRequests, setMyGrantRequests] = useState<GrantRequestRow[]>([]);
+  const fetchMyGrantRequests = useCallback(() => {
+    supabase.from('overtime_submission_grant_requests').select('id, work_dates, status, created_at, resolve_note')
+      .eq('user_id', user.id).in('status', ['open', 'declined']).order('created_at', { ascending: false })
+      .then(({ data }) => setMyGrantRequests((data as GrantRequestRow[] | null) ?? []), () => {});
+  }, [user.id]);
+  useEffect(() => { fetchMyGrantRequests(); }, [fetchMyGrantRequests]);
 
   const [calendarKind, setCalendarKind] = useState<CalendarKind | null>(editTarget?.normal_shift?.calendar_kind ?? null);
   const [error, setError] = useState('');
@@ -479,6 +574,15 @@ const OvertimeForm: React.FC<{
       .then(({ data }) => { if (alive) setCalendarKind((data?.kind as CalendarKind) ?? null); }, () => {});
     return () => { alive = false; };
   }, [date]);
+
+  // 締め後申請の依頼期限計算用：会社カレンダーの休館日一覧（過去半年分、前営業日の遡り判定に使う）
+  const [closedDates, setClosedDates] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const from = new Date(); from.setMonth(from.getMonth() - 6);
+    const fromStr = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, '0')}-${String(from.getDate()).padStart(2, '0')}`;
+    supabase.from('company_calendar').select('date').eq('kind', 'closed_all').gte('date', fromStr)
+      .then(({ data }) => setClosedDates(new Set((data ?? []).map((d: { date: string }) => d.date))), () => {});
+  }, []);
 
   // 通常シフト解決（スナップショット元）
   const normalShift: NormalShiftSnapshot = useMemo(() => {
@@ -669,11 +773,69 @@ const OvertimeForm: React.FC<{
   // 振替元の日付が過去（すでに出勤済み）＝事後の振替（ブロックせず注意表示）
   const furikaeIsPostHoc = fullDayType === 'furikae_off' && !!furikaeOriginDate && furikaeOriginDate < todayJstStr();
 
-  // 締めロック：新規申請のみ。対象日の給与期間が締め（支給月17日）を過ぎ、経理の許可窓が無いとき送信不可。
+  // 締めロック：新規申請のみ。対象日の給与期間が締め（支給月17日）を過ぎ、経理の許可（対象日そのもの）が無いとき送信不可。
   const targetPeriodStart = date ? calcPayPeriodStartJst(date) : '';
   const closeLockedRaw = !editTarget && !!date && isPayPeriodClosed(date, todayJstStr());
-  const hasGrantForTarget = targetPeriodStart ? grantedPeriods.has(targetPeriodStart) : false;
+  const hasGrantForTarget = date ? grantedWorkDates.has(date) : false;
   const closeLocked = closeLockedRaw && !hasGrantForTarget;
+  // 給与データ確定日（支給日25日の前営業日）を過ぎたら依頼自体できない
+  const payoutPassed = !!date && isPayPeriodPayoutPassed(date, todayJstStr(), closedDates);
+  const myOpenGrantRequest = date ? myGrantRequests.find(r => r.status === 'open' && r.work_dates.includes(date)) : undefined;
+  const myDeclinedGrantRequest = date && !myOpenGrantRequest ? myGrantRequests.find(r => r.status === 'declined' && r.work_dates.includes(date)) : undefined;
+
+  // 締め後申請の許可依頼フォーム
+  const [grantFormOpen, setGrantFormOpen] = useState(false);
+  const [grantDates, setGrantDates] = useState<string[]>([]);
+  const [grantConfirming, setGrantConfirming] = useState(false);
+  const [grantSaving, setGrantSaving] = useState(false);
+  const [grantError, setGrantError] = useState('');
+  const [grantJustSent, setGrantJustSent] = useState(false);
+  const [withdrawConfirmId, setWithdrawConfirmId] = useState<string | null>(null);
+  const [withdrawing, setWithdrawing] = useState(false);
+
+  const openGrantForm = () => {
+    setGrantDates(date ? [date] : []);
+    setGrantFormOpen(true);
+    setGrantConfirming(false);
+    setGrantError('');
+  };
+
+  const submitGrantRequest = async () => {
+    setGrantError('');
+    if (grantDates.length === 0) { setGrantError('対象日を選択してください'); return; }
+    setGrantSaving(true);
+    const { data, error } = await supabase.from('overtime_submission_grant_requests')
+      .insert({ user_id: user.id, work_dates: grantDates })
+      .select('id')
+      .single();
+    setGrantSaving(false);
+    if (error) {
+      const msg = error.message || '';
+      let friendly = '依頼の送信に失敗しました';
+      if (msg.includes('NOT_LOCKED')) friendly = 'まだ締め切り前の日が含まれています。締め切りを過ぎた日のみ選択してください';
+      else if (msg.includes('PAYOUT_PASSED')) friendly = '給与データが確定済みの日が含まれています。管理者にご相談ください';
+      else if (msg.includes('ALREADY_GRANTED')) friendly = '既に許可されている日が含まれています';
+      else if (msg.includes('DUPLICATE_REQUEST')) friendly = '既に依頼中の日が含まれています';
+      setGrantError(friendly);
+      return;
+    }
+    const label = formatGrantDates(grantDates);
+    setGrantFormOpen(false);
+    setGrantConfirming(false);
+    setGrantJustSent(true);
+    setTimeout(() => setGrantJustSent(false), 4000);
+    fetchMyGrantRequests();
+    notifyOvertimeGrantRequest({ requestId: data?.id ?? '', applicantName: profileName ?? '', workDatesLabel: label }).then(null, () => {});
+  };
+
+  const doWithdrawGrantRequest = async () => {
+    if (!withdrawConfirmId) return;
+    setWithdrawing(true);
+    await supabase.from('overtime_submission_grant_requests').update({ status: 'withdrawn' }).eq('id', withdrawConfirmId);
+    setWithdrawing(false);
+    setWithdrawConfirmId(null);
+    fetchMyGrantRequests();
+  };
 
   // 振替元の勤務日を選ぶと、その日のシフト（曜日パターン）から勤務校＋勤務時刻を自動取得（間違っていれば手修正）
   const furikaeFilledRef = useRef<string>(editTarget?.furikae_origin_date ?? '');
@@ -1135,10 +1297,121 @@ const OvertimeForm: React.FC<{
             🔒 この対象日は【{payMonthPeriodLabel(targetPeriodStart)}】の申請です
           </p>
           <p style={{ margin: '4px 0 0', fontSize: 12, color: '#842029', lineHeight: 1.6 }}>
-            締め切り（{payPeriodCloseCutoff(targetPeriodStart).replace(/-/g, '/')}）を過ぎているため申請できません。この期の申請が必要な場合は、経理に申請の許可を依頼してください。
+            締め切り（{payPeriodCloseCutoff(targetPeriodStart).replace(/-/g, '/')}）を過ぎているため申請できません。
           </p>
         </div>
       )}
+
+      {/* 締め後申請の許可依頼（本人→経理）。状態：依頼可能／依頼中／見送られた／給与データ確定済み */}
+      {closeLocked && (
+        <div style={{ marginBottom: 14 }}>
+          {payoutPassed ? (
+            <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 10, padding: '10px 12px' }}>
+              <p style={{ margin: 0, fontSize: 12.5, color: '#842029', lineHeight: 1.6 }}>
+                この給与期間は給与データが確定済みのため依頼できません。管理者にご相談ください。
+              </p>
+            </div>
+          ) : myOpenGrantRequest ? (
+            <div style={{ background: isDark ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDark ? '#4a90d9' : '#90caf9'}`, borderRadius: 10, padding: '10px 12px' }}>
+              <p style={{ margin: 0, fontSize: 12.5, fontWeight: 'bold', color: isDark ? '#fff' : '#1565c0' }}>
+                📩 経理に依頼済み（対象日：{formatGrantDates(myOpenGrantRequest.work_dates)}）
+              </p>
+              <p style={{ margin: '2px 0 8px', fontSize: 11.5, color: subText }}>
+                {new Date(myOpenGrantRequest.created_at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}に依頼
+              </p>
+              {withdrawConfirmId === myOpenGrantRequest.id ? (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={doWithdrawGrantRequest} disabled={withdrawing}
+                    style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', background: '#dc3545', color: '#fff', fontSize: 12.5, fontWeight: 'bold', cursor: 'pointer' }}>
+                    {withdrawing ? '取り下げ中…' : '取り下げる'}
+                  </button>
+                  <button onClick={() => setWithdrawConfirmId(null)} disabled={withdrawing}
+                    style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, fontSize: 12.5, cursor: 'pointer' }}>
+                    やめる
+                  </button>
+                </div>
+              ) : (
+                <button onClick={() => setWithdrawConfirmId(myOpenGrantRequest.id)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 12, color: subText, textDecoration: 'underline' }}>
+                  取り下げる
+                </button>
+              )}
+            </div>
+          ) : myDeclinedGrantRequest ? (
+            <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 10, padding: '10px 12px' }}>
+              <p style={{ margin: 0, fontSize: 12.5, fontWeight: 'bold', color: '#842029' }}>
+                依頼は見送られました（対象日：{formatGrantDates(myDeclinedGrantRequest.work_dates)}）
+              </p>
+              {myDeclinedGrantRequest.resolve_note && (
+                <p style={{ margin: '4px 0 0', fontSize: 12, color: '#842029' }}>理由：{myDeclinedGrantRequest.resolve_note}</p>
+              )}
+              <button onClick={() => { setGrantDates(myDeclinedGrantRequest.work_dates); setGrantFormOpen(true); setGrantConfirming(false); setGrantError(''); }}
+                style={{ marginTop: 8, padding: '8px 14px', borderRadius: 8, border: 'none', background: '#1976d2', color: '#fff', fontSize: 12.5, fontWeight: 'bold', cursor: 'pointer' }}>
+                もう一度依頼する
+              </button>
+            </div>
+          ) : grantFormOpen ? (
+            <div style={{ background: innerBg, borderRadius: 10, padding: '12px 14px' }}>
+              {!grantConfirming ? (
+                <>
+                  <p style={{ margin: '0 0 8px', fontSize: 12.5, fontWeight: 'bold', color: text }}>
+                    許可してほしい日を選んでください（複数選択可）
+                  </p>
+                  <GrantDatePicker selectedDates={grantDates} onChange={setGrantDates} isDark={isDark} />
+                  {grantError && (
+                    <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '8px 12px', marginTop: 10 }}>
+                      <p style={{ margin: 0, fontSize: 12.5, color: '#842029' }}>{grantError}</p>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                    <button onClick={() => { if (grantDates.length === 0) { setGrantError('対象日を選択してください'); return; } setGrantError(''); setGrantConfirming(true); }}
+                      style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', background: '#1976d2', color: '#fff', fontSize: 13.5, fontWeight: 'bold', cursor: 'pointer' }}>
+                      次へ（確認）
+                    </button>
+                    <button onClick={() => setGrantFormOpen(false)}
+                      style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, fontSize: 13.5, cursor: 'pointer' }}>
+                      キャンセル
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p style={{ margin: '0 0 8px', fontSize: 13.5, fontWeight: 'bold', color: text }}>この内容で依頼しますか？</p>
+                  <p style={{ margin: '0 0 10px', fontSize: 12.5, color: subText }}>
+                    対象日：{formatGrantDates(grantDates)}（{grantDates.length}日）
+                  </p>
+                  {grantError && (
+                    <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '8px 12px', marginBottom: 10 }}>
+                      <p style={{ margin: 0, fontSize: 12.5, color: '#842029' }}>{grantError}</p>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={submitGrantRequest} disabled={grantSaving}
+                      style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', background: '#28a745', color: '#fff', fontSize: 13.5, fontWeight: 'bold', cursor: 'pointer', opacity: grantSaving ? 0.6 : 1 }}>
+                      {grantSaving ? '送信中…' : '依頼する'}
+                    </button>
+                    <button onClick={() => setGrantConfirming(false)} disabled={grantSaving}
+                      style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, fontSize: 13.5, cursor: 'pointer' }}>
+                      戻る
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          ) : (
+            <button onClick={openGrantForm}
+              style={{ width: '100%', padding: '10px 0', borderRadius: 10, cursor: 'pointer', fontSize: 13.5, fontWeight: 'bold', border: 'none', background: '#1976d2', color: '#fff' }}>
+              📩 経理に許可を依頼する
+            </button>
+          )}
+        </div>
+      )}
+      {grantJustSent && (
+        <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 10, padding: '10px 12px', marginBottom: 14 }}>
+          <p style={{ margin: 0, fontSize: 12.5, color: '#166534' }}>✓ 依頼を送信しました。経理からの返答をお待ちください。</p>
+        </div>
+      )}
+
       {/* 経理から締め後申請を許可された期の案内 */}
       {!editTarget && date && closeLockedRaw && hasGrantForTarget && (
         <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 10, padding: '10px 12px', marginBottom: 14 }}>
@@ -1148,6 +1421,9 @@ const OvertimeForm: React.FC<{
         </div>
       )}
 
+      {/* 締めロック中は、これ以降のフォーム本体（通常シフト表示〜送信ボタン）を表示しない */}
+      {!closeLocked && (
+      <>
       {/* 通常シフト自動表示 */}
       {date && (
         <div style={{ background: innerBg, borderRadius: 10, padding: '10px 12px', marginBottom: 14 }}>
@@ -1193,11 +1469,11 @@ const OvertimeForm: React.FC<{
                 setFullDay(v => !v);
               }}
               style={{
-                width: '100%', padding: '10px 0', borderRadius: 10, cursor: 'pointer', fontSize: 13.5,
+                width: '100%', padding: '10px 0', borderRadius: 8, cursor: 'pointer', fontSize: 13.5,
                 fontWeight: 'bold',
-                border: `2px solid ${text}`,
-                background: 'transparent',
-                color: text,
+                border: `1px solid ${isDark ? '#4a90d9' : '#90caf9'}`,
+                background: isDark ? '#2c3e50' : '#e8f4fd',
+                color: isDark ? '#fff' : '#1565c0',
               }}>
               {fullDay ? '✓ 調整休・欠勤（終日）で申請中 ─ 押すと時間の申請に戻ります' : '🌙 調整休・欠勤（終日）の場合はこちらを押す'}
             </button>
@@ -1611,6 +1887,8 @@ const OvertimeForm: React.FC<{
             </button>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );
