@@ -24,6 +24,7 @@ import { shouldSend, dispatchEmail, dispatchSiteNotification, getUserEmail } fro
 import { insertNotification } from '../lib/notifications';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
+import { useLeavePendingCount } from '../hooks/useLeavePendingCount';
 import { todayJstStr } from '../lib/breakCalc';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import type { AuthUser, AdminLeaveRequest } from '../types';
@@ -641,6 +642,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   }
 
   const isApprover = ['リーダー', 'マネージャー', '社長', '管理者'].includes(_roleTitle);
+  const { pendingCount: approvalPendingCount } = useLeavePendingCount(user.id, _roleTitle, false);
 
   const encAnsweringDay = encPending.find(d => d.id === encAnsweringId) || null;
 
@@ -791,13 +793,20 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       </div>
 
       {isApprover && (
-        <button
-          onClick={() => navigate('/leave-approvals')}
-          style={{ width: '100%', padding: '9px', background: '#fd7e14', color: 'white', border: 'none', cursor: 'pointer', marginTop: 8, borderRadius: 8, lineHeight: 1.4 }}
-        >
-          <div style={{ fontSize: 14, fontWeight: 'bold' }}>✅ 受理ページへ</div>
-          <div style={{ fontSize: 11, opacity: 0.95, marginTop: 1 }}>パートへの申請フォーム送信</div>
-        </button>
+        <div style={{ position: 'relative' }}>
+          <button
+            onClick={() => navigate('/leave-approvals')}
+            style={{ width: '100%', padding: '9px', background: '#fd7e14', color: 'white', border: 'none', cursor: 'pointer', marginTop: 8, borderRadius: 8, lineHeight: 1.4 }}
+          >
+            <div style={{ fontSize: 14, fontWeight: 'bold' }}>✅ 受理ページへ</div>
+            <div style={{ fontSize: 11, opacity: 0.95, marginTop: 1 }}>パートへの申請フォーム送信</div>
+          </button>
+          {approvalPendingCount > 0 && (
+            <span style={{ position: 'absolute', top: 2, right: 4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 11, minWidth: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 4px', border: `2px solid ${bg}`, pointerEvents: 'none' }}>
+              {approvalPendingCount > 99 ? '99+' : approvalPendingCount}
+            </span>
+          )}
+        </div>
       )}
 
       {/* 申請フォーム */}

@@ -2194,7 +2194,39 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
   // 本人の履歴は「前期＋今期」まで常に表示（それより古い期は非表示）。管理者は全件。給与明細照合のため直近1期は残す。
   const [curPY, curPM] = currentPeriod.split('-').map(Number);
   const prevPeriodStart = `${curPM === 1 ? curPY - 1 : curPY}-${String(curPM === 1 ? 12 : curPM - 1).padStart(2, '0')}-16`;
-  const ownHistory = isAdmin ? ownHistoryAll : ownHistoryAll.filter(r => !r.pay_period_start || r.pay_period_start >= prevPeriodStart);
+  const ownHistoryPeriod = isAdmin ? ownHistoryAll : ownHistoryAll.filter(r => !r.pay_period_start || r.pay_period_start >= prevPeriodStart);
+
+  // 本人履歴のフィルタ・並び替え（端末に記憶。次回開いたときも同じ条件になる）
+  interface OwnHistoryFilter { status: 'all' | 'pending' | 'done' | 'returned'; types: OvertimeType[]; sortAsc: boolean; showCancelled: boolean; }
+  const OWN_HISTORY_FILTER_KEY = 'overtime_own_history_filter_v1';
+  const [ownHistoryFilter, setOwnHistoryFilter] = useState<OwnHistoryFilter>(() => {
+    try {
+      const saved = localStorage.getItem(OWN_HISTORY_FILTER_KEY);
+      if (saved) return { status: 'all', types: [], sortAsc: false, showCancelled: false, ...JSON.parse(saved) };
+    } catch { /* ignore */ }
+    return { status: 'all', types: [], sortAsc: false, showCancelled: false };
+  });
+  useEffect(() => {
+    try { localStorage.setItem(OWN_HISTORY_FILTER_KEY, JSON.stringify(ownHistoryFilter)); } catch { /* ignore */ }
+  }, [ownHistoryFilter]);
+
+  const ownHistory = useMemo(() => {
+    const statusGroup: Record<string, string[]> = {
+      pending: ['requested', 'reported'],
+      done: ['request_confirmed', 'confirmed'],
+      returned: ['returned'],
+    };
+    const filtered = ownHistoryPeriod.filter(r => {
+      if (!ownHistoryFilter.showCancelled && r.status === 'cancelled') return false;
+      if (ownHistoryFilter.status !== 'all' && !(statusGroup[ownHistoryFilter.status] ?? []).includes(r.status)) return false;
+      if (ownHistoryFilter.types.length > 0 && !(r.application_types ?? []).some(t => ownHistoryFilter.types.includes(t as OvertimeType))) return false;
+      return true;
+    });
+    const dir = ownHistoryFilter.sortAsc ? 1 : -1;
+    return [...filtered].sort((a, b) => a.work_date.localeCompare(b.work_date) * dir || a.created_at.localeCompare(b.created_at) * dir);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ownHistoryPeriod, ownHistoryFilter]);
+
   // 「あなたの対応待ち」（要報告＝受理済み・勤務日超過・終日以外／差し戻し）を上にピン留め。残りは記入順のまま。
   const isOtActionRow = (r: OvertimeReport) =>
     r.status === 'returned' ||
@@ -2761,6 +2793,60 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                   };
                   return (
                     <>
+                      {/* 状態フィルタ・並び替え・取消済み表示 */}
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+                        {([
+                          { key: 'all', label: 'すべて' },
+                          { key: 'pending', label: '確認待ち' },
+                          { key: 'done', label: '受理済み' },
+                          { key: 'returned', label: '差し戻し' },
+                        ] as const).map(f => (
+                          <button key={f.key} onClick={() => setOwnHistoryFilter(v => ({ ...v, status: f.key }))}
+                            style={{
+                              padding: '5px 12px', borderRadius: 14, border: 'none', cursor: 'pointer', fontSize: 12,
+                              background: ownHistoryFilter.status === f.key ? '#1976d2' : (isDark ? '#495057' : '#e9ecef'),
+                              color: ownHistoryFilter.status === f.key ? '#fff' : (isDark ? '#fff' : '#333'),
+                              fontWeight: ownHistoryFilter.status === f.key ? 'bold' : 'normal',
+                            }}>
+                            {f.label}
+                          </button>
+                        ))}
+                        <button onClick={() => setOwnHistoryFilter(v => ({ ...v, showCancelled: !v.showCancelled }))}
+                          style={{
+                            padding: '5px 12px', borderRadius: 14, cursor: 'pointer', fontSize: 12,
+                            border: `1px solid ${ownHistoryFilter.showCancelled ? '#6c757d' : borderColor}`,
+                            background: ownHistoryFilter.showCancelled ? '#6c757d' : 'transparent',
+                            color: ownHistoryFilter.showCancelled ? '#fff' : subText,
+                          }}>
+                          {ownHistoryFilter.showCancelled ? '✓ 取消済みも表示中' : '取消済みを表示'}
+                        </button>
+                        <button onClick={() => setOwnHistoryFilter(v => ({ ...v, sortAsc: !v.sortAsc }))}
+                          style={{ marginLeft: 'auto', padding: '5px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
+                          {ownHistoryFilter.sortAsc ? '古い順 ↑' : '新しい順 ↓'}
+                        </button>
+                      </div>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+                        {(Object.keys(OT_TYPE_INFO) as OvertimeType[]).map(t => {
+                          const active = ownHistoryFilter.types.includes(t);
+                          const info = OT_TYPE_INFO[t];
+                          return (
+                            <button key={t}
+                              onClick={() => setOwnHistoryFilter(v => ({ ...v, types: active ? v.types.filter(x => x !== t) : [...v.types, t] }))}
+                              style={{
+                                padding: '4px 10px', borderRadius: 12, cursor: 'pointer', fontSize: 11.5,
+                                border: `1px solid ${info.color}`,
+                                background: active ? info.color : 'transparent',
+                                color: active ? '#fff' : info.color,
+                                fontWeight: active ? 'bold' : 'normal',
+                              }}>
+                              {info.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {ownHistory.length === 0 && (
+                        <p style={{ margin: '0 0 12px', fontSize: 13, color: subText, textAlign: 'center' }}>条件に一致する履歴はありません</p>
+                      )}
                       {ownActionRows.length > 0 && (
                         <div style={{ fontSize: 12.5, fontWeight: 'bold', color: isDark ? '#ffcf8f' : '#b7770d', margin: '4px 0 8px' }}>⚠️ あなたの対応待ち（{ownActionRows.length}）</div>
                       )}
