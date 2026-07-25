@@ -2822,10 +2822,10 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                         </button>
                         <button onClick={() => setOwnHistoryFilter(v => ({ ...v, sortAsc: !v.sortAsc }))}
                           style={{ marginLeft: 'auto', padding: '5px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
-                          {ownHistoryFilter.sortAsc ? '古い順 ↑' : '新しい順 ↓'}
+                          {ownHistoryFilter.sortAsc ? '日付順 ↑' : '日付順 ↓'}
                         </button>
                       </div>
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
                         {(Object.keys(OT_TYPE_INFO) as OvertimeType[]).map(t => {
                           const active = ownHistoryFilter.types.includes(t);
                           const info = OT_TYPE_INFO[t];
@@ -2835,14 +2835,20 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
                               style={{
                                 padding: '4px 10px', borderRadius: 12, cursor: 'pointer', fontSize: 11.5,
                                 border: `1px solid ${info.color}`,
-                                background: active ? info.color : 'transparent',
-                                color: active ? '#fff' : info.color,
+                                background: active ? info.color : (isDark ? info.darkBg : `${info.color}1a`),
+                                color: active ? '#fff' : (isDark ? '#fff' : info.color),
                                 fontWeight: active ? 'bold' : 'normal',
                               }}>
                               {info.label}
                             </button>
                           );
                         })}
+                        {ownHistoryFilter.types.length > 0 && (
+                          <button onClick={() => setOwnHistoryFilter(v => ({ ...v, types: [] }))}
+                            style={{ padding: '4px 10px', borderRadius: 12, cursor: 'pointer', fontSize: 11.5, border: `1px solid ${borderColor}`, background: 'transparent', color: subText }}>
+                            選択をクリア
+                          </button>
+                        )}
                       </div>
                       {ownHistory.length === 0 && (
                         <p style={{ margin: '0 0 12px', fontSize: 13, color: subText, textAlign: 'center' }}>条件に一致する履歴はありません</p>
