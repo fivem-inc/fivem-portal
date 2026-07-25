@@ -1258,10 +1258,10 @@ const OvertimeForm: React.FC<{
             {(['advance', 'posthoc'] as const).map(m => (
               <button key={m} onClick={() => setMode(m)}
                 style={{
-                  flex: 1, padding: '10px 0', borderRadius: 10, cursor: 'pointer', fontSize: 13.5, fontWeight: 'bold',
-                  border: mode === m ? '2px solid #1565c0' : '2px solid #90caf9',
-                  background: mode === m ? '#1976d2' : '#e3f2fd',
-                  color: mode === m ? '#fff' : '#1565c0',
+                  flex: 1, padding: '10px 0', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 13.5,
+                  fontWeight: mode === m ? 'bold' : 'normal',
+                  background: mode === m ? '#1976d2' : (isDark ? '#495057' : '#e9ecef'),
+                  color: mode === m ? '#fff' : text,
                 }}>
                 {m === 'advance' ? '事前申請' : '事後報告'}
               </button>
@@ -1500,12 +1500,11 @@ const OvertimeForm: React.FC<{
                       if (v === 'absence' && reviewerId === SELF_REVIEW_VALUE) setReviewerId('');
                     }}
                     style={{
-                      padding: '10px 12px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
-                      border: fullDayType === v ? '2px solid #1565c0' : '2px solid #90caf9',
-                      background: fullDayType === v ? '#1976d2' : '#e3f2fd',
+                      padding: '10px 12px', borderRadius: 10, border: 'none', cursor: 'pointer', textAlign: 'left',
+                      background: fullDayType === v ? '#1976d2' : (isDark ? '#495057' : '#e9ecef'),
                     }}>
-                    <span style={{ display: 'block', fontSize: 13.5, fontWeight: 'bold', color: fullDayType === v ? '#fff' : '#1565c0' }}>{label}</span>
-                    <span style={{ display: 'block', fontSize: 11.5, color: fullDayType === v ? '#e3f2fd' : '#1976d2', marginTop: 2 }}>{desc}</span>
+                    <span style={{ display: 'block', fontSize: 13.5, fontWeight: 'bold', color: fullDayType === v ? '#fff' : text }}>{label}</span>
+                    <span style={{ display: 'block', fontSize: 11.5, color: fullDayType === v ? '#e3f2fd' : subText, marginTop: 2 }}>{desc}</span>
                   </button>
                 ))}
               </div>
@@ -1682,10 +1681,10 @@ const OvertimeForm: React.FC<{
             {([['adj', '時間調整で遅く出勤'], ['tardiness', '寝坊・私用などで遅刻']] as const).map(([v, label]) => (
               <button key={v} type="button" onClick={() => setLateChoice(v)}
                 style={{
-                  flex: 1, padding: '11px 4px', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 'bold',
-                  border: lateChoice === v ? '2px solid #1565c0' : '2px solid #90caf9',
-                  background: lateChoice === v ? '#1976d2' : '#e3f2fd',
-                  color: lateChoice === v ? '#fff' : '#1565c0',
+                  flex: 1, padding: '11px 4px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 13,
+                  fontWeight: lateChoice === v ? 'bold' : 'normal',
+                  background: lateChoice === v ? '#1976d2' : (isDark ? '#495057' : '#e9ecef'),
+                  color: lateChoice === v ? '#fff' : text,
                 }}>
                 {label}
               </button>
@@ -1700,10 +1699,10 @@ const OvertimeForm: React.FC<{
             {([['adj', '時間調整で早退'], ['early_leave', '体調・私用などで早退']] as const).map(([v, label]) => (
               <button key={v} type="button" onClick={() => setEarlyChoice(v)}
                 style={{
-                  flex: 1, padding: '11px 4px', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 'bold',
-                  border: earlyChoice === v ? '2px solid #1565c0' : '2px solid #90caf9',
-                  background: earlyChoice === v ? '#1976d2' : '#e3f2fd',
-                  color: earlyChoice === v ? '#fff' : '#1565c0',
+                  flex: 1, padding: '11px 4px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 13,
+                  fontWeight: earlyChoice === v ? 'bold' : 'normal',
+                  background: earlyChoice === v ? '#1976d2' : (isDark ? '#495057' : '#e9ecef'),
+                  color: earlyChoice === v ? '#fff' : text,
                 }}>
                 {label}
               </button>
