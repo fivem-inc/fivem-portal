@@ -50,8 +50,8 @@ export const parseSegments = (raw: unknown): WorkSegment[] => {
   );
 };
 
-/** 'HH:MM:SS' も 'HH:MM' も 'HH:MM' に揃える */
-const hhmm = (t: string): string => (t || '').slice(0, 5);
+/** 'HH:MM:SS' も 'HH:MM' も表示用の 'H:MM' に揃える（先頭の0は付けない。例: 06:30 → 6:30） */
+export const hhmm = (t: string): string => (t || '').slice(0, 5).replace(/^0/, '');
 
 /**
  * 時間帯の一覧表記。確認パネル・月別リストの2行目・Googleカレンダーのタイトルで共用する。

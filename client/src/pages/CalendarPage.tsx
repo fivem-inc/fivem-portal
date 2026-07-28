@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import {
-  absenceLabel, absenceColor, formatSegments, joinSegmentLocations, parseSegments,
+  absenceLabel, absenceColor, formatSegments, joinSegmentLocations, parseSegments, hhmm,
   type AttendanceType, type WorkSegment,
 } from '../lib/attendanceTypes';
 import type { AuthUser } from '../types';
@@ -388,10 +388,12 @@ const AbsenceInputSheet: React.FC<{
     if (checked) { setIsLate(false); setIsLateStart(false); setIsEarlyLeave(false); setIsEarlyEnd(false); setIsLocationChange(false); setHasLocationMove(false); }
   };
 
-  // 勤務地変更は遅刻・早退と同時に選べる（洛西口校で勤務、しかも遅刻、はあり得るため）
+  // 勤務地変更は遅刻・早退と同時に選べる（洛西口校で勤務、しかも遅刻、はあり得るため）。
+  // 校が変わると勤務時間も変わるので、選ぶと時間帯の入力が出る（下の useSegments）
   const toggleLocationChange = (checked: boolean) => {
     if (isAbsent || isHolidayWork) return;
     setIsLocationChange(checked);
+    if (checked) setHasLocationMove(false); // 時間帯の入力自体が出るので、移動チェックは不要
   };
 
   const toggleLate = (checked: boolean) => {
@@ -431,7 +433,7 @@ const AbsenceInputSheet: React.FC<{
   };
 
   // 時間帯の編集（休日出勤・校の移動で共用）
-  const useSegments = isHolidayWork || hasLocationMove;
+  const useSegments = isHolidayWork || isLocationChange || hasLocationMove;
   const updateSegment = (i: number, patch: Partial<WorkSegment>) =>
     setSegments(prev => prev.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
   const addSegment = () => {
@@ -723,7 +725,7 @@ const AbsenceInputSheet: React.FC<{
                 style={{ width: '100%', marginTop: 5, padding: '8px', borderRadius: 8, border: `1px solid ${!originalLocationCustom.trim() ? '#f0a0a0' : '#ccc'}`, fontSize: 14, boxSizing: 'border-box' }} />
             )}
             <div style={{ fontSize: 11, color: '#888', marginTop: 5, lineHeight: 1.6 }}>
-              ※ 下の「校」が実際に勤務する変更後の校です。
+              ※ 下の「勤務時間と校」が、変更後に実際に勤務する時間と校です。
             </div>
           </div>
         )}
@@ -850,7 +852,7 @@ const AbsenceInputSheet: React.FC<{
         })()}
 
         {/* 移動ありに切り替えた場合も、チェックを外せば元の校の入力に戻せる */}
-        {hasLocationMove && !isHolidayWork && (
+        {hasLocationMove && !isHolidayWork && !isLocationChange && (
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: -8, marginBottom: 16, padding: '9px 10px', background: '#f4f7fb', borderRadius: 8, cursor: 'pointer' }}>
             <input type="checkbox" checked={hasLocationMove} onChange={e => toggleLocationMove(e.target.checked)}
               style={{ width: 17, height: 17, accentColor: '#1976d2', flexShrink: 0 }} />
@@ -888,10 +890,10 @@ const AbsenceInputSheet: React.FC<{
           const locSuffix = useSegments ? '' : `　${effectiveLocation(date)}`;
           // main = 1行目、subs = 時間帯の内訳（休日出勤・校の移動があるとき）
           const lines: { main: string; subs?: string[] }[] = [];
-          const segSubs = segs.map(s => `${s.start}〜${s.end}　${s.location}`);
+          const segSubs = segs.map(s => `${hhmm(s.start)}〜${hhmm(s.end)}　${s.location}`);
           if (isAbsent) [...absentDates].sort().forEach(d => lines.push({ main: `${dLabel(d)}　全欠勤　${effectiveLocation(d)}` }));
           if (isHolidayWork) lines.push({ main: `${dLabel(date)}　休日出勤`, subs: segSubs });
-          if (isLocationChange) lines.push({ main: `${dLabel(date)}　勤務地変更　${effectiveOriginalLocation()} → ${useSegments ? joinSegmentLocations(effectiveSegments()) : effectiveLocation(date)}`, subs: segSubs });
+          if (isLocationChange) lines.push({ main: `${dLabel(date)}　勤務地変更　${effectiveOriginalLocation()} → ${joinSegmentLocations(segs)}`, subs: segSubs });
           if (isLate)       lines.push({ main: `${dLabel(date)}　遅刻　出勤 ${lateTime}${locSuffix}`, subs: segSubs });
           if (isLateStart)  lines.push({ main: `${dLabel(date)}　遅出（残業調整）　出勤 ${lateTime}${locSuffix}`, subs: segSubs });
           if (isEarlyLeave) lines.push({ main: `${dLabel(date)}　早退　退勤 ${earlyTime}${locSuffix}`, subs: segSubs });
@@ -1501,8 +1503,8 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
                 // 全体は下の行（勤務：09:00〜12:00［四条本校］/ …）に出す
                 const segs = ab.work_segments;
                 const timeLabel = segs.length > 0
-                  ? segs[0].start.slice(0, 5)
-                  : (ab.actual_time ? ab.actual_time.slice(0, 5) : '—');
+                  ? hhmm(segs[0].start)
+                  : (ab.actual_time ? hhmm(ab.actual_time) : '—');
                 const locLabel = segs.length > 1
                   ? `${new Set(segs.map(s => s.location).filter(Boolean)).size}校`
                   : (ab.location ?? '—');
