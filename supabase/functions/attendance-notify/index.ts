@@ -7,11 +7,13 @@ const CORS_HEADERS = {
 }
 
 const TYPE_LABEL: Record<string, string> = {
-  absent:      '全欠勤',
-  late:        '遅刻',
-  early_leave: '早退',
-  late_start:  '遅出(調整)',
-  early_end:   '早退(調整)',
+  absent:       '全欠勤',
+  late:         '遅刻',
+  early_leave:  '早退',
+  late_start:   '遅出(調整)',
+  early_end:    '早退(調整)',
+  holiday_work: '休日出勤',
+  location_change: '勤務地変更',
 }
 
 // グループ絞り込みを無視して常に届く役職（組織全体を見る立場）
@@ -151,7 +153,7 @@ serve(async (req) => {
     if (slackSetting?.enabled) {
       let channels: string[] = []
       try { channels = JSON.parse(slackSetting.recipient ?? '{}').channels ?? [] } catch { /* ignore */ }
-      const slackMsg = `🔴 *欠勤・遅刻・早退が登録されました*\n\n*対象者：* ${user_name}\n*日付：* ${dateLabel}\n*種別：* ${typeLabels}`
+      const slackMsg = `📝 *勤怠が登録されました*\n\n*対象者：* ${user_name}\n*日付：* ${dateLabel}\n*種別：* ${typeLabels}`
       for (const ch of channels) {
         const url = Deno.env.get(SLACK_WEBHOOK_KEYS[ch] ?? '')
         if (!url) continue

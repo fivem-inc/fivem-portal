@@ -22,7 +22,7 @@ interface StaffMember {
 
 const FEATURES = [
   { key: 'leave_request',   icon: '🌿', label: '休暇申請',       note: 'パートは別フロー' },
-  { key: 'leave_calendar',  icon: '📅', label: '休暇カレンダー', note: '' },
+  { key: 'leave_calendar',  icon: '📅', label: '勤怠カレンダー', note: '' },
   { key: 'leave_approvals', icon: '✅', label: '休暇承認',       note: '承認者向けページ' },
   { key: 'shift_report',    icon: '⏰', label: '勤務変更報告',   note: '' },
   { key: 'expense',         icon: '🚃', label: '交通費申請',     note: '' },

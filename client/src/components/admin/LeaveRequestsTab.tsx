@@ -8,6 +8,10 @@ import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatch
 import SearchableSelect from '../common/SearchableSelect';
 import LeaveEditModal from './LeaveEditModal';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
+import {
+  ABSENCE_LABEL, absenceLabel, absenceColor, formatSegments, parseSegments,
+  type AttendanceType, type WorkSegment,
+} from '../../lib/attendanceTypes';
 
 // 休暇の履歴行（leave_request_history）
 interface LeaveHistoryRow {
@@ -32,10 +36,12 @@ interface AbsenceRec {
   id: string;
   user_id: string;
   date: string;
-  type: 'absent' | 'late' | 'early_leave' | 'late_start' | 'early_end';
+  type: AttendanceType;
   actual_time: string | null;
   notes: string | null;
-  location: string | null; // 校（過去データはnull）
+  location: string | null; // 校（過去データはnull）。移動がある場合は '四条本校→洛西口校'
+  work_segments: WorkSegment[]; // 勤務時間帯。無い場合は空配列
+  original_location: string | null; // 勤務地変更の「変更前の校」
   created_at: string;
   created_by: string | null;
   targetName: string;
@@ -65,14 +71,8 @@ const ENC_CHOICE_LABEL: Record<number, string> = { 1: '有給休暇', 2: '欠勤
 const ENC_DOW = ['日', '月', '火', '水', '木', '金', '土'];
 const fmtEncDow = (dateStr: string) => { const d = new Date(dateStr + 'T00:00:00Z'); return `${d.getUTCFullYear()}年${d.getUTCMonth()+1}月${d.getUTCDate()}日(${ENC_DOW[d.getUTCDay()]})`; };
 
-const ABSENCE_LABEL: Record<string, string> = { absent: '全欠勤', late: '遅刻', early_leave: '早退', late_start: '遅出', early_end: '早退(残業調整)' };
-const ABSENCE_COLOR: Record<string, { bg: string; text: string }> = {
-  absent:      { bg: '#fde8e8', text: '#c0392b' },
-  late:        { bg: '#ff9800', text: '#fff' },
-  early_leave: { bg: '#e3f2fd', text: '#1565c0' },
-  late_start:  { bg: '#8bc34a', text: '#fff' },
-  early_end:   { bg: '#e1bee7', text: '#6a1b9a' },
-};
+// 種別のラベル・配色は lib/attendanceTypes.ts に集約（休暇カレンダーと共用）。
+// 以前はこのファイルにも別の表があり、ラベルがずれていた（遅出 / 遅出(調整)）。
 
 const LeaveRequestsTab: React.FC = () => {
   const ctx = useAdminPanel();
@@ -218,14 +218,19 @@ const LeaveRequestsTab: React.FC = () => {
     setAbsenceLoading(true);
     const { data } = await supabase
       .from('attendance_exceptions')
-      .select('id, user_id, date, type, actual_time, notes, location, created_at, created_by')
+      .select('id, user_id, date, type, actual_time, notes, location, work_segments, original_location, created_at, created_by')
       .order('date', { ascending: false });
     if (!data || data.length === 0) { setAbsenceRecs([]); setAbsenceLoading(false); return; }
     const ids = [...new Set([...data.map((r: { user_id: string }) => r.user_id), ...data.map((r: { created_by: string | null }) => r.created_by).filter(Boolean)])] as string[];
     const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
     const map: Record<string, string> = {};
     (profs || []).forEach((p: { id: string; name: string }) => { map[p.id] = p.name; });
-    setAbsenceRecs((data as AbsenceRec[]).map(r => ({ ...r, targetName: map[r.user_id] || '不明', creatorName: r.created_by ? (map[r.created_by] || '不明') : '不明' })));
+    setAbsenceRecs((data as (AbsenceRec & { work_segments: unknown })[]).map(r => ({
+      ...r,
+      work_segments: parseSegments(r.work_segments),
+      targetName: map[r.user_id] || '不明',
+      creatorName: r.created_by ? (map[r.created_by] || '不明') : '不明',
+    })));
     setAbsenceLoading(false);
   }, [supabase]);
 
@@ -339,12 +344,15 @@ const LeaveRequestsTab: React.FC = () => {
     if (!deleteTarget) return;
     setDeleting(true);
     await supabase.from('attendance_exceptions').delete().eq('id', deleteTarget.id);
-    // Googleカレンダーからも削除
-    try {
-      await supabase.functions.invoke('gcal-sync', {
-        body: { action: 'delete', source_type: 'absence', source_id: deleteTarget.id },
-      });
-    } catch (e) { console.error('[gcal-sync] 欠勤削除失敗:', e); }
+    // Googleカレンダーからも削除。invoke は 4xx/5xx でも throw しないので error を必ず見る
+    const { data: syncRes, error: syncErr } = await supabase.functions.invoke('gcal-sync', {
+      body: { action: 'delete', source_type: 'absence', source_id: deleteTarget.id },
+    });
+    const sr = syncRes as { success?: boolean } | null;
+    if (syncErr || sr?.success === false) {
+      console.error('[gcal-sync] 勤怠の削除失敗:', syncErr);
+      setSuccessMsg('⚠ 取消しましたが、Googleカレンダーからの削除に失敗しました。カレンダーを確認してください。');
+    }
     setDeleting(false);
     setDeleteTarget(null);
     fetchAbsences();
@@ -1201,13 +1209,15 @@ const LeaveRequestsTab: React.FC = () => {
                           const s = v == null ? '' : String(v);
                           return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
                         };
-                        const headers = ['日付', '対象者', '種別', '時間', '校', '備考', '追加者', '追加日'];
+                        const headers = ['日付', '対象者', '種別', '時間', '校', '勤務時間帯', '備考', '追加者', '追加日'];
                         const rows = [...filteredAbsRecs]
                           .sort((a, b) => a.date.localeCompare(b.date))
                           .map(r => [
-                            r.date, r.targetName, ABSENCE_LABEL[r.type],
+                            r.date, r.targetName, absenceLabel(r.type),
                             r.actual_time ? r.actual_time.slice(0, 5) : '',
-                            r.location ?? '', r.notes ?? '', r.creatorName,
+                            r.original_location ? `${r.original_location}→${r.location ?? ''}` : (r.location ?? ''),
+                            r.work_segments.length > 0 ? formatSegments(r.work_segments) : '',
+                            r.notes ?? '', r.creatorName,
                             r.created_at.slice(0, 10),
                           ].map(esc).join(','));
                         const csv = '﻿' + [headers.join(','), ...rows].join('\n');
@@ -1254,8 +1264,11 @@ const LeaveRequestsTab: React.FC = () => {
                       </thead>
                       <tbody>
                         {filteredAbsRecs.map((rec, i) => {
-                          const c = ABSENCE_COLOR[rec.type];
+                          const c = absenceColor(rec.type);
                           const addedDate = new Date(rec.created_at);
+                          // 時間帯がある場合（休日出勤・校の移動）は時刻・校の欄をその内訳で置き換える
+                          const segs = rec.work_segments;
+                          const timeCell = segs.length > 0 ? formatSegments(segs) : (rec.actual_time ? rec.actual_time.slice(0, 5) : '—');
                           return (
                             <tr key={rec.id} style={{ background: i % 2 === 0 ? (isDarkMode ? '#343a40' : 'white') : (isDarkMode ? '#3d4349' : '#fdf8f8') }}>
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 11, color: isDarkMode ? '#adb5bd' : '#666' }}>
@@ -1265,11 +1278,13 @@ const LeaveRequestsTab: React.FC = () => {
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 12 }}>{rec.creatorName}</td>
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 12, fontWeight: 'bold' }}>{rec.targetName}</td>
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center' }}>
-                                <span style={{ padding: '2px 8px', borderRadius: 6, background: c.bg, color: c.text, fontSize: 11, fontWeight: 'bold' }}>{ABSENCE_LABEL[rec.type]}</span>
+                                <span style={{ padding: '2px 8px', borderRadius: 6, background: c.bg, color: c.text, fontSize: 11, fontWeight: 'bold' }}>{absenceLabel(rec.type)}</span>
                               </td>
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 12 }}>{rec.date}</td>
-                              <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 12 }}>{rec.actual_time ? rec.actual_time.slice(0, 5) : '—'}</td>
-                              <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 12 }}>{rec.location || '—'}</td>
+                              <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 12, whiteSpace: segs.length > 0 ? 'normal' : 'nowrap' }}>{timeCell}</td>
+                              <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center', fontSize: 12 }}>
+                                {rec.original_location ? `${rec.original_location}→${rec.location || ''}` : (rec.location || '—')}
+                              </td>
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'left', fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>{rec.notes || '—'}</td>
                               <td style={{ padding: '8px 6px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#f0d0d0'}`, textAlign: 'center' }}>
                                 <button onClick={() => setDeleteTarget(rec)} style={{ padding: '3px 10px', background: 'transparent', border: '1px solid #dc3545', color: '#dc3545', borderRadius: 6, cursor: 'pointer', fontSize: 11 }}>取消</button>
@@ -1639,7 +1654,10 @@ const LeaveRequestsTab: React.FC = () => {
                     <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 16, color: '#dc3545' }}>取消の確認</div>
                     <div style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#e0e0e0'}`, borderRadius: 8, padding: 12, marginBottom: 20, fontSize: 14, color: isDarkMode ? '#fff' : '#333' }}>
                       <div><strong>{deleteTarget.targetName}</strong></div>
-                      <div style={{ marginTop: 4 }}>{deleteTarget.date}　{ABSENCE_LABEL[deleteTarget.type]}{deleteTarget.actual_time ? `　${deleteTarget.actual_time.slice(0, 5)}` : ''}</div>
+                      <div style={{ marginTop: 4 }}>{deleteTarget.date}　{absenceLabel(deleteTarget.type)}{deleteTarget.actual_time ? `　${deleteTarget.actual_time.slice(0, 5)}` : ''}</div>
+                      {deleteTarget.work_segments.length > 0 && (
+                        <div style={{ marginTop: 4, fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>勤務：{formatSegments(deleteTarget.work_segments)}</div>
+                      )}
                       <div style={{ marginTop: 4, fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>追加者：{deleteTarget.creatorName}</div>
                       {deleteTarget.notes && <div style={{ marginTop: 4, fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>備考：{deleteTarget.notes}</div>}
                     </div>

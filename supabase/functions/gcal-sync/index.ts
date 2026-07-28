@@ -15,20 +15,50 @@ const LEAVE_CONFIG: Record<string, { label: string; colorId: string }> = {
   'その他':             { label: '休み',  colorId: '4' },
 }
 
+// 勤怠の時間帯（[{start,end,location}]）→ '09:00〜12:00［四条本校］/ 14:00〜18:00［洛西口校］'
+// client/src/lib/attendanceTypes.ts の formatSegments と同じ書式（両方直すこと）
+function formatWorkSegments(segments: unknown): string {
+  if (!Array.isArray(segments)) return ''
+  return segments
+    .filter((s) => s && typeof s === 'object' && s.start && s.end)
+    .map((s) => {
+      const st = String(s.start).slice(0, 5)
+      const en = String(s.end).slice(0, 5)
+      return `${st}〜${en}${s.location ? `［${s.location}］` : ''}`
+    })
+    .join(' / ')
+}
+
 // 欠勤種別 → タイトル生成・色
-function buildAbsenceTitle(type: string, name: string, time?: string): string {
+function buildAbsenceTitle(type: string, name: string, time?: string, segments?: unknown): string {
   switch (type) {
     case 'absent':      return `${name}｜休み`
     case 'late':        return `${name}｜遅刻｜${time}〜`
     case 'late_start':  return `${name}｜遅出(調整)｜${time}〜`
     case 'early_leave': return `${name}｜早退｜〜${time}`
     case 'early_end':   return `${name}｜早退(調整)｜〜${time}`
+    case 'holiday_work': {
+      // 例: 椿原 凜大｜休日出勤｜09:00〜12:00［四条本校］/ 14:00〜18:00［洛西口校］
+      const segLabel = formatWorkSegments(segments)
+      return segLabel ? `${name}｜休日出勤｜${segLabel}` : `${name}｜休日出勤`
+    }
+    // 勤務地変更は「どこに行くか」だけ分かればよいので、変更前の校は出さない。
+    // 校は呼び出し側が渡す locations（＝変更後）を末尾に付ける（例: 椿原 凜大｜勤務地変更［洛西口校］）
+    case 'location_change': return `${name}｜勤務地変更`
     default:            return `${name}｜欠勤`
   }
 }
 
+// 残業ページと色を揃える：休日出勤=濃緑(10)・勤務地変更=紫(3)。遅刻・早退系は調整色(2)、その他は休み色(4)。
 function absenceColorId(type: string): string {
+  if (type === 'holiday_work') return '10'
+  if (type === 'location_change') return '3'
   return ['late', 'late_start', 'early_leave', 'early_end'].includes(type) ? '2' : '4'
+}
+
+// 休日出勤はタイトルに時間帯ごとの［校］を埋め込むため、末尾への［校］後付けをしない
+function skipLocationSuffix(type: string): boolean {
+  return type === 'holiday_work'
 }
 
 // 残業種別 → ラベル・色・同期可否・優先度（source_type='overtime' 用）
@@ -229,7 +259,7 @@ serve(async (req) => {
     const token = await getAccessToken(serviceAccountJson)
 
     const body = await req.json()
-    const { action, source_type, source_id, dates, name, leave_type, absence_type, time, locations } = body
+    const { action, source_type, source_id, dates, name, leave_type, absence_type, time, locations, work_segments } = body
     // タイトル用の名前は姓名間の全角スペースを半角に正規化（DBのprofiles.nameは変更しない）
     const normName = String(name ?? '').replace(/　/g, ' ')
     // locations: 日付→校 の対応表（省略可。無ければ従来どおり校なしタイトル）
@@ -340,7 +370,7 @@ serve(async (req) => {
     const baseSummary =
       source_type === 'leave'
         ? `${normName}｜${LEAVE_CONFIG[leave_type]?.label ?? '休み'}`
-        : buildAbsenceTitle(absence_type, normName, time)
+        : buildAbsenceTitle(absence_type, normName, time, work_segments)
 
     const colorId =
       source_type === 'leave'
@@ -349,8 +379,11 @@ serve(async (req) => {
 
     for (const date of dates as string[]) {
       // 校が指定されている日は末尾に［校名］を付ける（例：椿原 凜大｜休み［四条本校］）
+      // 休日出勤は時間帯ごとに［校］がタイトルへ入っているので後付けしない
       const loc = locationByDate[date]
-      const summary = loc ? `${baseSummary}［${loc}］` : baseSummary
+      const summary = (loc && !(source_type !== 'leave' && skipLocationSuffix(absence_type)))
+        ? `${baseSummary}［${loc}］`
+        : baseSummary
       const { data: existing } = await supabase
         .from('gcal_events')
         .select('id, event_id')

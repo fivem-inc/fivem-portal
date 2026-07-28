@@ -39,7 +39,7 @@ const GcalCalendarSection: React.FC = () => {
         background: '#E3F2FD', borderLeft: '3px solid #1565C0', borderRadius: '0 6px 6px 0',
         padding: '8px 12px', fontSize: 13, fontWeight: 500, color: '#0D47A1', marginBottom: 8,
       }}>
-        🗓 休暇カレンダーの連携先
+        🗓 勤怠カレンダーの連携先
       </div>
 
       <div style={{ background: bg, border: `0.5px solid ${borderColor}`, borderRadius: 12, padding: '14px 16px' }}>

@@ -64,7 +64,7 @@ const EVENT_GROUPS = [
     ],
   },
   {
-    label: '欠勤・遅刻・早退（休暇カレンダー登録）',
+    label: '欠勤・遅刻・早退・休日出勤（勤怠カレンダー登録）',
     icon: '🔴',
     headerBg: '#FDECEA', headerBorder: '#D32F2F', headerText: '#B71C1C',
     events: [
