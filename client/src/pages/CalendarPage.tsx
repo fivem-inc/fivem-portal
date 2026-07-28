@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import {
-  absenceLabel, absenceColor, formatSegments, joinSegmentLocations, parseSegments, hhmm,
+  absenceLabel, absenceColor, absenceEmoji, formatSegments, joinSegmentLocations, parseSegments, hhmm,
   type AttendanceType, type WorkSegment,
 } from '../lib/attendanceTypes';
 import type { AuthUser } from '../types';
@@ -888,31 +888,43 @@ const AbsenceInputSheet: React.FC<{
           // 日付は入力欄と同じ「7/28（火）」で出す（生の2026-07-28だと確認しづらいため）
           const dLabel = (d: string) => `${parseInt(d.slice(5, 7))}/${parseInt(d.slice(8, 10))}（${'日月火水木金土'[new Date(d + 'T00:00:00').getDay()]}）`;
           const locSuffix = useSegments ? '' : `　${effectiveLocation(date)}`;
-          // main = 1行目、subs = 時間帯の内訳（休日出勤・校の移動があるとき）
-          const lines: { main: string; subs?: string[] }[] = [];
+          // 種別バッジ＋日付＋詳細の1行と、時間帯の内訳（subs）
+          const lines: { type: string; date: string; detail: string; subs?: string[] }[] = [];
           const segSubs = segs.map(s => `${hhmm(s.start)}〜${hhmm(s.end)}　${s.location}`);
-          if (isAbsent) [...absentDates].sort().forEach(d => lines.push({ main: `${dLabel(d)}　全欠勤　${effectiveLocation(d)}` }));
-          if (isHolidayWork) lines.push({ main: `${dLabel(date)}　休日出勤`, subs: segSubs });
-          if (isLocationChange) lines.push({ main: `${dLabel(date)}　勤務地変更　${effectiveOriginalLocation()} → ${joinSegmentLocations(segs)}`, subs: segSubs });
-          if (isLate)       lines.push({ main: `${dLabel(date)}　遅刻　出勤 ${lateTime}${locSuffix}`, subs: segSubs });
-          if (isLateStart)  lines.push({ main: `${dLabel(date)}　遅出（残業調整）　出勤 ${lateTime}${locSuffix}`, subs: segSubs });
-          if (isEarlyLeave) lines.push({ main: `${dLabel(date)}　早退　退勤 ${earlyTime}${locSuffix}`, subs: segSubs });
-          if (isEarlyEnd)   lines.push({ main: `${dLabel(date)}　早退（残業調整）　退勤 ${earlyTime}${locSuffix}`, subs: segSubs });
+          if (isAbsent) [...absentDates].sort().forEach(d => lines.push({ type: 'absent', date: dLabel(d), detail: effectiveLocation(d) }));
+          if (isHolidayWork)    lines.push({ type: 'holiday_work',    date: dLabel(date), detail: '', subs: segSubs });
+          if (isLocationChange) lines.push({ type: 'location_change', date: dLabel(date), detail: `${effectiveOriginalLocation()} → ${joinSegmentLocations(segs)}`, subs: segSubs });
+          if (isLate)       lines.push({ type: 'late',        date: dLabel(date), detail: `出勤 ${hhmm(lateTime)}${locSuffix}`,  subs: segSubs });
+          if (isLateStart)  lines.push({ type: 'late_start',  date: dLabel(date), detail: `出勤 ${hhmm(lateTime)}${locSuffix}`,  subs: segSubs });
+          if (isEarlyLeave) lines.push({ type: 'early_leave', date: dLabel(date), detail: `退勤 ${hhmm(earlyTime)}${locSuffix}`, subs: segSubs });
+          if (isEarlyEnd)   lines.push({ type: 'early_end',   date: dLabel(date), detail: `退勤 ${hhmm(earlyTime)}${locSuffix}`, subs: segSubs });
           return (
             <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, pointerEvents: saving ? 'none' : 'auto' }}>
               <div style={{ background: '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 400 }}>
                 <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 16 }}>登録内容の確認</div>
                 <div style={{ fontSize: 14, color: '#333', marginBottom: 4 }}>対象者：<strong>{personName}</strong></div>
-                <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 12, marginBottom: 16 }}>
-                  {lines.map((l, i) => (
-                    <div key={i} style={{ padding: '4px 0', borderBottom: i < lines.length - 1 ? '1px solid #f0f0f0' : 'none' }}>
-                      <div style={{ fontSize: 14 }}>{l.main}</div>
-                      {(l.subs ?? []).map((s, j) => (
-                        <div key={j} style={{ fontSize: 13, color: '#555', paddingLeft: 14, marginTop: 2 }}>{s}</div>
-                      ))}
-                    </div>
-                  ))}
-                  {notes && <div style={{ fontSize: 13, color: '#666', marginTop: 8 }}>備考：{notes}</div>}
+                <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+                  {lines.map((l, i) => {
+                    const c = absenceColor(l.type);
+                    return (
+                      <div key={i} style={{ padding: '6px 0', borderBottom: i < lines.length - 1 ? '1px solid #f0f0f0' : 'none' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 11, fontWeight: 'bold', padding: '2px 8px', borderRadius: 5, background: c.bg, color: c.text, flexShrink: 0 }}>
+                            {absenceEmoji(l.type)} {absenceLabel(l.type)}
+                          </span>
+                          <span style={{ fontSize: 13.5, color: '#333' }}>{l.date}</span>
+                          {l.detail && <span style={{ fontSize: 13.5, color: '#333' }}>{l.detail}</span>}
+                        </div>
+                        {(l.subs ?? []).map((s, j) => (
+                          <div key={j} style={{ fontSize: 13, color: '#555', paddingLeft: 4, marginTop: 3 }}>{s}</div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                  {notes && <div style={{ fontSize: 13, color: '#666', marginTop: 8, paddingTop: 8, borderTop: '1px solid #f0f0f0' }}>備考：{notes}</div>}
+                </div>
+                <div style={{ fontSize: 11.5, color: '#666', background: '#f4f7fb', borderRadius: 8, padding: '8px 11px', marginBottom: 16, lineHeight: 1.6 }}>
+                  📅 登録するとGoogleカレンダーに反映されます（一覧の「取消」で取り消せます）
                 </div>
                 <div style={{ display: 'flex', gap: 10 }}>
                   <button onClick={() => { confirmingRef.current = false; setConfirming(false); }} disabled={saving} style={{ flex: 1, padding: 12, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, cursor: 'pointer' }}>

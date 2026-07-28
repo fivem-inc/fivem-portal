@@ -35,8 +35,20 @@ export const ABSENCE_COLOR: Record<string, { bg: string; text: string }> = {
   location_change: { bg: '#6d28d9', text: '#fff' },
 };
 
+// 入力シートのチェックボックスと同じ絵文字（確認画面・一覧で見分けやすくするため）
+export const ABSENCE_EMOJI: Record<string, string> = {
+  absent:          '🔴',
+  late:            '🟠',
+  early_leave:     '🔵',
+  late_start:      '🟢',
+  early_end:       '🟣',
+  holiday_work:    '🏢',
+  location_change: '📍',
+};
+
 /** 種別が未知でも画面を落とさないためのフォールバック付き取得 */
 export const absenceLabel = (type: string): string => ABSENCE_LABEL[type] ?? type;
+export const absenceEmoji = (type: string): string => ABSENCE_EMOJI[type] ?? '';
 export const absenceColor = (type: string): { bg: string; text: string } =>
   ABSENCE_COLOR[type] ?? { bg: '#e9ecef', text: '#495057' };
 

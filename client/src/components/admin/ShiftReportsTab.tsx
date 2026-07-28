@@ -210,6 +210,7 @@ const ShiftReportsTab: React.FC = () => {
         date: r.work_date,
         types: getTypes(r),
         location: r.actual_location ?? r.original_location ?? '',
+        report_id: r.id, // 通知タップで該当行をハイライトするため
       },
     }).then(null, () => {});
     setConfirming(null);

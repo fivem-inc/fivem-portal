@@ -242,7 +242,17 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
           )}
           <CRow label="報告者"     value={data.applicantName} textColor={text} />
           <CRow label="日付"       value={`${data.date}（${dow(data.date)}）`} textColor={text} />
-          <CRow label="種別"       value={typesLabel(data.types)} textColor={text} />
+          {/* 種別は入力画面と同じ色のバッジで出す（文字だけだと見分けにくいため） */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '5px 0' }}>
+            <span style={{ fontSize: 13, color: '#8a929a', flexShrink: 0 }}>種別</span>
+            <span style={{ display: 'flex', gap: 5, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {data.types.map(t => (
+                <span key={t} style={typeBadgeStyle(TYPE_INFO[t].color, TYPE_INFO[t].darkBg, isDark)}>
+                  {TYPE_INFO[t].emoji} {TYPE_INFO[t].label}
+                </span>
+              ))}
+            </span>
+          </div>
           <CRow label="理由"       value={data.reason} textColor={text} />
           {!hasAbsence && (
             <>
@@ -542,6 +552,7 @@ const ShiftReportForm: React.FC<{
               date,
               types,
               location: hasAbsence ? '' : (finalActLoc || finalOrigLoc || ''),
+              report_id: newReport?.id, // 通知タップで該当行をハイライトするため
             },
           }).then(null, () => {});
         }
@@ -1145,6 +1156,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
         date: report.work_date,
         types: report.application_types?.length ? report.application_types : [report.application_type],
         location: report.actual_location ?? report.original_location ?? '',
+        report_id: report.id, // 通知タップで該当行をハイライトするため
       },
     }).then(null, () => {});
     setConfirmingId(null);

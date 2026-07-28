@@ -31,7 +31,7 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
 
   try {
-    const { user_id, user_name, date, types, location } = await req.json()
+    const { user_id, user_name, date, types, location, report_id } = await req.json()
     if (!user_id || !date || !types?.length) {
       return new Response(JSON.stringify({ error: 'missing params' }), { status: 400, headers: CORS_HEADERS })
     }
@@ -109,8 +109,14 @@ serve(async (req) => {
       const message = applyTemplate(siteSetting.template, vars)
       const targetIds = await resolveTargetIds(siteSetting.recipient)
       if (targetIds.length > 0) {
+        // reference_id に報告IDを入れると、受け取った人がタップしたときに
+        // 履歴でその報告の給与期間が自動で開き、該当行がハイライトされる
         await supabase.from('notifications').insert(
-          targetIds.map(id => ({ user_id: id, message, sub_message: null, source_type: 'shift_report' }))
+          targetIds.map(id => ({
+            user_id: id, message, sub_message: null,
+            source_type: 'shift_report',
+            reference_id: report_id ?? null,
+          }))
         )
         notifiedSite = targetIds.length
       }
