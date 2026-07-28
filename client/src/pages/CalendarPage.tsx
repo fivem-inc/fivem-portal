@@ -527,7 +527,11 @@ const AbsenceInputSheet: React.FC<{
     if (err) {
       setSaving(false);
       savingRef.current = false;
-      setError('保存に失敗しました: ' + err.message);
+      confirmingRef.current = false;
+      setConfirming(false);
+      // 同じ日に矛盾する勤怠がある場合はDB側のトリガーが日本語のメッセージを返すので、そのまま出す
+      const isConflict = err.message.includes('同じ日にすでに');
+      setError(isConflict ? err.message : '保存に失敗しました: ' + err.message);
       return;
     }
     // Googleカレンダーに書き込む。
