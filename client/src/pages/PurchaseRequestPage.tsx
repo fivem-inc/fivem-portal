@@ -40,6 +40,7 @@ interface PurchaseRecord {
   receipt_missing_reason: string | null;
   receipt_storage_path: string | null;
   returned_reason: string | null;
+  approval_comment: string | null;
   leader_id: string | null;
   requested_manager_ids: string[] | null;
   shared_manager_ids: string[] | null;
@@ -79,7 +80,12 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
   const { highlightId, focusRef } = useFocusHighlight(records);
   const [names, setNames] = useState<Record<string, string>>({});
   const [opinions, setOpinions] = useState<Record<string, OpinionRow[]>>({});
-  const [boardProgress, setBoardProgress] = useState<Record<string, { answered: number; required: number; pendingIds: string[] }>>({});
+  // answers は「誰がどう答えたか」（コメントは含まない）。名前を見せてよい相手でなければ
+  // pendingIds・answers はDB関数側で空配列にされ、件数だけが返る
+  const [boardProgress, setBoardProgress] = useState<Record<string, {
+    answered: number; required: number; pendingIds: string[];
+    answers: { manager_id: string; opinion: string }[];
+  }>>({});
   const [loading, setLoading] = useState(true);
   const [itemsByRequest, setItemsByRequest] = useState<Record<string, PurchaseRequestItem[]>>({});
 
@@ -95,7 +101,7 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
     setLoading(true);
     const { data } = await supabase
       .from('purchase_requests')
-      .select('id, user_id, request_type, status, item_name, quantity, amount, purchased_at, requested_purchase_date, store_name, purpose, reason, instructed_by, payment_method, payment_method_detail, payment_method_other, receipt_type, receipt_missing_reason, receipt_storage_path, returned_reason, leader_id, requested_manager_ids, shared_manager_ids, is_self_judgment, president_self_judgment, board_approver_ids, notes, quotes, quote_file_path, created_at, approval_round, items_subtotal, amount_diff_reason, amount_diff_flag, location')
+      .select('id, user_id, request_type, status, item_name, quantity, amount, purchased_at, requested_purchase_date, store_name, purpose, reason, instructed_by, payment_method, payment_method_detail, payment_method_other, receipt_type, receipt_missing_reason, receipt_storage_path, returned_reason, approval_comment, leader_id, requested_manager_ids, shared_manager_ids, is_self_judgment, president_self_judgment, board_approver_ids, notes, quotes, quote_file_path, created_at, approval_round, items_subtotal, amount_diff_reason, amount_diff_flag, location')
       .order('created_at', { ascending: false });
     const rows = (data ?? []) as PurchaseRecord[];
     setRecords(rows);
@@ -168,11 +174,13 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
         if (progError) {
           console.error('[purchase] 承認の進み具合の取得に失敗', progError);
         } else {
-          const progress: Record<string, { answered: number; required: number; pendingIds: string[] }> = {};
-          (prog ?? []).forEach((p: { purchase_request_id: string; answered: number; required: number; pending_ids: string[] | null }) => {
+          const progress: Record<string, { answered: number; required: number; pendingIds: string[]; answers: { manager_id: string; opinion: string }[] }> = {};
+          (prog ?? []).forEach((p: { purchase_request_id: string; answered: number; required: number; pending_ids: string[] | null; answers: { manager_id: string; opinion: string }[] | null }) => {
             const pendingIds = p.pending_ids ?? [];
-            progress[p.purchase_request_id] = { answered: p.answered, required: p.required, pendingIds };
+            const answers = p.answers ?? [];
+            progress[p.purchase_request_id] = { answered: p.answered, required: p.required, pendingIds, answers };
             pendingIds.forEach(id => namesToFetch.add(id));
+            answers.forEach(x => namesToFetch.add(x.manager_id));
           });
           setBoardProgress(progress);
         }
@@ -247,17 +255,51 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
               共有された意見：{opinions[r.id].map(o => `${names[o.manager_id] ?? '不明'}（${OPINION_LABEL[o.opinion]}${o.comment ? '：' + o.comment : ''}）`).join('　')}
             </div>
           )}
-          {(r.status === 'pending_board' || r.status === 'board_approved') && boardProgress[r.id] && (
-            <div style={{ fontSize: 12, color: subText, marginTop: 6 }}>
-              全員承認の進み具合：{boardProgress[r.id].required}名中{boardProgress[r.id].answered}名回答済み
-              {/* 誰の回答を待っているかが分からないと確認を依頼できないため、残っている人の名前まで出す（管理画面と同じ情報） */}
-              {boardProgress[r.id].pendingIds.length > 0 && (
-                <>（残り{boardProgress[r.id].pendingIds.length}名：{boardProgress[r.id].pendingIds.map(id => names[id] ?? '不明').join('、')}）</>
-              )}
-            </div>
-          )}
+          {/* 全員承認ルートの進み具合。
+              ・「全員の承認が必要」ではない（全員の回答がそろってから審議して決める）ので文言に注意
+              ・名前を見せてよい相手（マネージャー以上の申請者・承認者・管理者）にだけ内訳を出す。
+                それ以外は件数だけ（DB関数が名前を空で返すので、ここは受け取った内容をそのまま描くだけ） */}
+          {(r.status === 'pending_board' || r.status === 'board_approved') && boardProgress[r.id] && (() => {
+            const p = boardProgress[r.id];
+            const remaining = Math.max(p.required - p.answered, 0);
+            const canSeeNames = p.answers.length > 0 || p.pendingIds.length > 0;
+            const nameList = (ids: string[]) => ids.map(id => names[id] ?? '不明').join('、');
+            const idsOf = (...ops: string[]) => p.answers.filter(x => ops.includes(x.opinion)).map(x => x.manager_id);
+            const approved = idsOf('approve');
+            const denied = idsOf('deny');
+            const held = idsOf('undecided', 'other');
+            const rowStyle: React.CSSProperties = { fontSize: 12, color: subText, marginTop: 2, paddingLeft: 10 };
+            return (
+              <div style={{ fontSize: 12, color: subText, marginTop: 6 }}>
+                {r.status === 'board_approved' ? (
+                  <div>{p.required}名全員が承認しました</div>
+                ) : remaining === 0 ? (
+                  <div>全員の回答が揃いました。審議中です（{p.required}名中{p.answered}名回答済み）</div>
+                ) : (
+                  <div>
+                    全員の回答がそろってから決定します：{p.required}名中{p.answered}名回答済み
+                    {!canSeeNames && <>（残り{remaining}名）</>}
+                  </div>
+                )}
+                {canSeeNames && (
+                  <>
+                    {approved.length > 0 && <div style={rowStyle}>承認（{approved.length}名）：{nameList(approved)}</div>}
+                    {denied.length > 0 && <div style={rowStyle}>否認（{denied.length}名）：{nameList(denied)}</div>}
+                    {held.length > 0 && <div style={rowStyle}>判断できない・その他（{held.length}名）：{nameList(held)}</div>}
+                    {p.pendingIds.length > 0 && <div style={rowStyle}>未回答（{p.pendingIds.length}名）：{nameList(p.pendingIds)}</div>}
+                  </>
+                )}
+              </div>
+            );
+          })()}
           {r.status === 'returned' && r.returned_reason && (
             <div style={{ fontSize: 12, color: '#dc3545', marginTop: 6 }}>差し戻し理由：{r.returned_reason}</div>
+          )}
+          {/* 承認時のひとこと（任意）。差し戻し理由と同じ場所に並べる */}
+          {r.approval_comment && (
+            <div style={{ fontSize: 12, color: subText, marginTop: 6, padding: '6px 8px', background: isDarkMode ? '#20304a' : '#eef6ff', borderRadius: 6 }}>
+              承認時のひとこと：{r.approval_comment}
+            </div>
           )}
           {r.status === 'returned' && r.user_id === userId && (
             <button

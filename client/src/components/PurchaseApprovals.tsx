@@ -87,6 +87,8 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
   const [drafts, setDrafts] = useState<Record<string, { opinion: OpinionValue | ''; comment: string; visibleToApplicant: boolean }>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [allApprovedBanner, setAllApprovedBanner] = useState<string | null>(null);
+  // 承認時のひとこと（任意）。差し戻し理由と違い必須ではない
+  const [approvalComments, setApprovalComments] = useState<Record<string, string>>({});
   const [itemsByRequest, setItemsByRequest] = useState<Record<string, PurchaseRequestItem[]>>({});
 
   const cardBg = isDarkMode ? '#343a40' : '#ffffff';
@@ -207,9 +209,11 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
       id: req.id, route: req.route, fromStatus,
       applicantUserId: req.user_id, applicantName: names[req.user_id] ?? '',
       itemNameSummary: itemNameSummary(req), amount: req.amount,
+      comment: approvalComments[req.id],
     });
 
     if (!errorMessage) {
+      setApprovalComments(prev => { const next = { ...prev }; delete next[req.id]; return next; });
       setRequests(prev => prev.filter(r => r.id !== req.id));
       window.dispatchEvent(new CustomEvent('purchase-pending-changed'));
     } else {
@@ -465,12 +469,23 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
                       placeholder="コメント（任意）" rows={2}
                       style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 8, border: `1px solid ${border}`, background: isLocked ? border : inputBg, color: text, fontSize: 12, resize: 'vertical' as const, marginBottom: 8, opacity: isLocked ? 0.6 : 1 }}
                     />
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: subText, marginBottom: 8, cursor: isLocked ? 'default' : 'pointer', opacity: isLocked ? 0.6 : 1 }}>
+                    {/* このチェックが効くのは「マネージャー未満の申請者」に対してだけ。
+                        マネージャー以上の申請者にはRLSで常に全件（名前・承認/否認・コメント）が見える。
+                        マネージャー未満の申請者は、チェックが無ければ回答した人数しか分からない。
+                        文言を具体的に書かないと「外せば誰にも見えない」と誤解される */}
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: 12, color: subText, marginBottom: 8, cursor: isLocked ? 'default' : 'pointer', opacity: isLocked ? 0.6 : 1 }}>
                       <input
                         type="checkbox" checked={draft.visibleToApplicant} disabled={isLocked}
                         onChange={e => setDrafts(prev => ({ ...prev, [r.id]: { ...draft, visibleToApplicant: e.target.checked } }))}
+                        style={{ marginTop: 2, flexShrink: 0 }}
                       />
-                      申請者にもこの意見を共有する
+                      <span>
+                        この意見をマネージャー以外の申請者にも共有する
+                        <span style={{ display: 'block', fontSize: 11, opacity: 0.85 }}>
+                          申請者がマネージャー以上の場合は、チェックの有無に関係なく共有されます。
+                          外すと、マネージャー以外の申請者には回答した人数だけが伝わります。
+                        </span>
+                      </span>
                     </label>
                     {!isLocked && (
                       <button
@@ -551,6 +566,19 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
               </button>
             </div>
           ) : (
+            <>
+            {/* 承認時のひとこと（任意）。差し戻しには理由があるのに承認には何も残せなかったため追加 */}
+            <div style={{ marginBottom: 8 }}>
+              <label style={{ fontSize: 12, color: subText, display: 'block', marginBottom: 4 }}>
+                承認するときのひとこと（任意・申請者にも見えます）
+              </label>
+              <textarea
+                value={approvalComments[r.id] ?? ''} rows={2}
+                onChange={e => setApprovalComments(prev => ({ ...prev, [r.id]: e.target.value }))}
+                placeholder="例：今回は認めます。次回は事前にご相談ください。"
+                style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', borderRadius: 6, border: `1px solid ${border}`, background: isDarkMode ? '#495057' : '#fff', color: text, fontSize: 13, resize: 'vertical' }}
+              />
+            </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button
                 type="button" onClick={() => setReturningId(r.id)} disabled={!allAnswered}
@@ -565,6 +593,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
                 {processingId === r.id ? '処理中...' : '最終決定：承認する'}
               </button>
             </div>
+            </>
           )}
         </div>
         );

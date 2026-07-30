@@ -19,14 +19,16 @@ interface ActionParams {
 // 管理画面からの代行実行でも同一の通知・Slack・メール送信を行う。
 // .eq('status', fromStatus)を必ず付けて、他の操作者が先にステータスを変えていた場合は
 // 0件更新（何も起きない）になるようにする（同時実行時の事故防止）
-export async function approvePurchaseRequestAction(params: ActionParams): Promise<string | null> {
-  const { id, route, fromStatus, applicantUserId, applicantName, itemNameSummary, amount } = params;
+export async function approvePurchaseRequestAction(params: ActionParams & { comment?: string }): Promise<string | null> {
+  const { id, route, fromStatus, applicantUserId, applicantName, itemNameSummary, amount, comment } = params;
   if (route !== 'leader' && route !== 'manager') {
     return '全員承認ルートは自動確定のため、この操作では承認できません。';
   }
+  // 承認時のひとこと（任意）。差し戻し理由と違い必須ではないので、空なら列を触らない
+  const approvalComment = comment?.trim() ? { approval_comment: comment.trim() } : {};
   const update = route === 'leader'
-    ? { status: 'leader_approved', leader_approved_at: new Date().toISOString() }
-    : { status: 'manager_approved', manager_approved_at: new Date().toISOString() };
+    ? { status: 'leader_approved', leader_approved_at: new Date().toISOString(), ...approvalComment }
+    : { status: 'manager_approved', manager_approved_at: new Date().toISOString(), ...approvalComment };
   const eventKey = route === 'leader' ? 'purchase_request:leader_approved' : 'purchase_request:manager_approved';
 
   const { data, error } = await supabase.from('purchase_requests').update(update).eq('id', id).eq('status', fromStatus).select('id');

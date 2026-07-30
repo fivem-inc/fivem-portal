@@ -74,6 +74,8 @@ const PurchaseRequestsTab: React.FC = () => {
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [returningId, setReturningId] = useState<string | null>(null);
   const [returnReason, setReturnReason] = useState('');
+  // 承認時のひとこと（任意）。申請者にも見える
+  const [approvalComments, setApprovalComments] = useState<Record<string, string>>({});
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -165,15 +167,17 @@ const PurchaseRequestsTab: React.FC = () => {
       id: r.id, route, fromStatus: r.status,
       applicantUserId: r.user_id, applicantName: purchaseRequestNames[r.user_id] ?? '',
       itemNameSummary: itemNameSummaryOf(r), amount: r.amount,
+      comment: approvalComments[r.id],
     });
     setProcessingId(null);
     if (errorMessage) {
       setActionErrors(prev => ({ ...prev, [r.id]: errorMessage }));
     } else {
       setActionErrors(prev => { const next = { ...prev }; delete next[r.id]; return next; });
+      setApprovalComments(prev => { const next = { ...prev }; delete next[r.id]; return next; });
       fetchPurchaseRequestsList();
     }
-  }, [purchaseRequestNames, fetchPurchaseRequestsList]);
+  }, [purchaseRequestNames, fetchPurchaseRequestsList, approvalComments]);
 
   const handleReturnSubmit = useCallback(async (r: PurchaseRequestCSVRow) => {
     const route = routeForStatus(r.status);
@@ -474,6 +478,12 @@ const PurchaseRequestsTab: React.FC = () => {
                       差し戻し{r.returned_reason && `：${r.returned_reason}`}
                     </div>
                   )}
+                  {/* 承認時のひとこと（任意・申請者にも見えている内容） */}
+                  {r.approval_comment && (
+                    <div style={{ padding: '4px 8px', borderRadius: 6, background: isDarkMode ? '#20304a' : '#eef6ff', color: subText, fontSize: 11, marginBottom: 4 }}>
+                      承認時のひとこと：{r.approval_comment}
+                    </div>
+                  )}
                   {r.status === 'pending_leader' && (
                     <div style={{ display: 'inline-block', padding: '3px 8px', borderRadius: 6, background: warnBg, border: `1px solid ${warnBorder}`, color: warnText, fontSize: 11, marginBottom: 4 }}>
                       ① {purchaseRequestNames[r.leader_id ?? ''] ?? '不明'}さん確認待ち
@@ -606,7 +616,15 @@ const PurchaseRequestsTab: React.FC = () => {
                         </button>
                       </div>
                     ) : (
-                      <div style={{ marginTop: 6, display: 'flex', gap: 6 }}>
+                      <div style={{ marginTop: 6 }}>
+                        {/* 承認時のひとこと（任意・申請者にも見える） */}
+                        <textarea
+                          value={approvalComments[r.id] ?? ''} rows={2}
+                          onChange={e => setApprovalComments(prev => ({ ...prev, [r.id]: e.target.value }))}
+                          placeholder="承認するときのひとこと（任意・申請者にも見えます）"
+                          style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', borderRadius: 6, border: `1px solid ${border}`, background: isDarkMode ? '#3a3a5c' : '#f8f9fa', color: text, fontSize: 12, resize: 'vertical' as const, marginBottom: 6 }}
+                        />
+                        <div style={{ display: 'flex', gap: 6 }}>
                         <button type="button" onClick={() => handleApprove(r)} disabled={!allAnswered || processingId === r.id}
                           style={{ padding: '4px 8px', background: allAnswered ? '#28a745' : subText, color: '#fff', border: `2px solid ${allAnswered ? '#1e7e34' : subText}`, borderRadius: 4, cursor: allAnswered ? 'pointer' : 'default', fontSize: 11, fontWeight: 'bold' }}>
                           {processingId === r.id ? '処理中...' : '承認して進める'}
@@ -615,6 +633,7 @@ const PurchaseRequestsTab: React.FC = () => {
                           style={{ padding: '4px 8px', background: allAnswered ? '#dc3545' : subText, color: '#fff', border: `2px solid ${allAnswered ? '#bd2130' : subText}`, borderRadius: 4, cursor: allAnswered ? 'pointer' : 'default', fontSize: 11, fontWeight: 'bold' }}>
                           差し戻す
                         </button>
+                        </div>
                       </div>
                     )
                   )}

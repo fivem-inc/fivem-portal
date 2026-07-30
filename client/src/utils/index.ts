@@ -105,6 +105,7 @@ export interface PurchaseRequestCSVRow {
   manager_approved_at: string | null;
   board_approved_at: string | null;
   returned_reason: string | null;
+  approval_comment: string | null;
   approval_round: number;
   location: string | null;
   items_subtotal: number | null;
@@ -175,7 +176,7 @@ export const generatePurchaseRequestCSVData = (
     '商品数', '明細合計金額', '申請金額', '金額乖離フラグ', '金額乖離理由',
     '使用先', '購入予定日', '購入日', '指示者', '用途', '申請理由', '支払方法', '返金日', '備考',
     'ステータス', '承認ルート種別', '承認依頼先氏名', '自己判断フラグ', '共有先氏名一覧',
-    '申請日', '承認確定日', '差し戻し理由', '差し戻しラウンド',
+    '申請日', '承認確定日', '差し戻し理由', '承認時のひとこと', '差し戻しラウンド',
   ];
 
   let csvContent = headers.join(',') + '\r\n';
@@ -234,6 +235,7 @@ export const generatePurchaseRequestCSVData = (
         new Date(row.created_at).toLocaleString(),
         approvedAt ? new Date(approvedAt).toLocaleString() : '',
         row.returned_reason || '',
+        row.approval_comment || '',
         row.approval_round,
       ];
       csvContent += rowData.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',') + '\r\n';
