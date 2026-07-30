@@ -324,6 +324,11 @@ const ShiftReportForm: React.FC<{
   onClose: () => void; onSaved: () => void;
 }> = ({ user, profileName, roleTitle, isAdmin, editTarget, reviewers, workplaces, leaderAssignments: _leaderAssignments, inline = false, onClose, onSaved }) => {
   const canProxy = IS_APPROVER(roleTitle, isAdmin);
+  // 確認者が他人の報告を修正するときは、確認依頼先を変えられない。
+  // DBのRLS（reviewer_confirm）が「自分が確認者である報告」しか更新を許さないため、
+  // 変えて保存すると必ず失敗する。選べないようにしたうえで、差戻しで行う旨を案内する。
+  // 本人が自分の未承認の報告を直すときと、管理者は従来どおり変更できる。
+  const lockReviewer = !!editTarget && !isAdmin && editTarget.applicant_id !== user.id;
   const [staffList, setStaffList]     = useState<Staff[]>([]);
   const [showConfirm, setShowConfirm] = useState(false);
   const [saving, setSaving]           = useState(false);
@@ -896,9 +901,23 @@ const ShiftReportForm: React.FC<{
               </div>
             )}
 
-            {/* 確認依頼先 */}
+            {/* 確認依頼先。
+                確認者が他人の報告を修正するときは変更できない（DBのRLS reviewer_confirm が
+                「自分が確認者である報告」しか更新を許さないため、変えると保存自体が失敗する）。
+                本人が自分の未承認の報告を直すときと、管理者は変更できる。 */}
             <div style={{ marginBottom: 14 }}>
-              <label style={L}>確認依頼先 {Req}</label>
+              <label style={L}>確認依頼先 {!lockReviewer && Req}</label>
+              {lockReviewer ? (
+                <>
+                  <div style={{ ...f, background: isDark ? '#2c3136' : '#f1f3f5', color: isDark ? '#adb5bd' : '#555', display: 'flex', alignItems: 'center' }}>
+                    {reviewers.find(r => r.id === reviewerId)?.name ?? '—'}
+                  </div>
+                  <div style={{ marginTop: 6, background: isDark ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5a73' : '#bee5eb'}`, borderRadius: 8, padding: '9px 11px', fontSize: 12, lineHeight: 1.7, color: isDark ? '#d0dde8' : '#2c5f6e' }}>
+                    確認依頼先は、この画面では変更できません。<br />
+                    他の方に確認を依頼する場合は、この画面を閉じ、確認ページの「差戻」から本人に差し戻してください。差し戻された報告は、本人が確認依頼先を選び直して再提出できます。
+                  </div>
+                </>
+              ) : (
               <select data-err-field="reviewer" value={reviewerId} onChange={e => { setReviewerId(e.target.value); clearErr('reviewer'); }} style={ef('reviewer')}>
                 <option value="">選択してください</option>
                 {/* 自分が承認者の場合は最上部に表示 */}
@@ -916,6 +935,7 @@ const ShiftReportForm: React.FC<{
                   })
                   .map(r => <option key={r.id} value={r.id}>{r.name}（{r.role_title}）</option>)}
               </select>
+              )}
             </div>
 
             {/* 修正コメント（編集時） */}
