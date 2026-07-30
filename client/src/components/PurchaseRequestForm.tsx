@@ -8,6 +8,7 @@ import { todayJstStr } from '../lib/breakCalc';
 import { dispatchSiteNotification, dispatchEmail, getNotificationTemplate, getUserEmail, shouldSend } from '../lib/notificationDispatch';
 import { sendPurchaseSlackForEvent } from '../lib/purchaseSlack';
 import { resolveItems } from '../lib/purchaseItemsFallback';
+import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import QuoteFileUploader from './QuoteFileUploader';
 // 金額帯の定義は lib/purchaseTiers.ts に集約（管理画面の修正モーダルからも同じ値を使う）
 import { QUOTES_REQUIRED_THRESHOLD, TIER_LABEL, tierOf } from '../lib/purchaseTiers';
@@ -237,6 +238,8 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
   }, [user.id]);
 
   const [formError, setFormError] = useState('');
+  // 入力漏れの欄を薄赤にするためのキー集合（lib/formHighlight.ts の共通色を使う）
+  const [errFields, setErrFields] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
   const [successBanner, setSuccessBanner] = useState(false);
   const [tierBanner, setTierBanner] = useState<string | null>(null);
@@ -411,37 +414,50 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
 
   const handleSubmit = async () => {
     setFormError('');
-    for (const item of items) {
-      if (!item.itemName.trim()) { setFormError('すべての商品の品目名を入力してください。'); return; }
+    // 足りない項目をまとめて集め、赤バナー＋該当欄のハイライト＋最初の欄へスクロールで知らせる
+    // （1件ずつ返す作りだと「どこが原因か分からない」と実機で指摘された。数量の入力漏れが典型）
+    const missing: { key: string; label: string }[] = [];
+    const label = (i: number, name: string) => items.length > 1 ? `商品${i + 1}の${name}` : name;
+
+    items.forEach((item, i) => {
+      if (!item.itemName.trim()) missing.push({ key: `itemName-${i}`, label: label(i, '品目名') });
       const itemQty = item.quantity.trim() ? parseInt(item.quantity, 10) : NaN;
-      if (!item.quantity.trim() || isNaN(itemQty) || itemQty < 1) { setFormError('すべての商品の数量を1以上で入力してください。'); return; }
+      if (!item.quantity.trim() || isNaN(itemQty) || itemQty < 1) missing.push({ key: `quantity-${i}`, label: label(i, '数量（1以上）') });
       const itemAmt = item.amount.trim() ? parseInt(parseAmount(item.amount), 10) : NaN;
-      if (!item.amount.trim() || isNaN(itemAmt)) { setFormError('すべての商品の金額を正しく入力してください。'); return; }
       // 0円を許すと、金額で決まる承認ルートがいちばん緩いリーダー承認に落ちてしまう（相見積もりの必須判定も外れる）
-      if (itemAmt < 1) { setFormError('金額は1円以上で入力してください。承認する人が金額で決まるため、0円では申請できません。金額が未確定の場合は概算を入れてください。'); return; }
+      if (!item.amount.trim() || isNaN(itemAmt) || itemAmt < 1) missing.push({ key: `amount-${i}`, label: label(i, '金額（1円以上）') });
       // 業者を選んで購入する場合、その単価が0円だと商品の金額も0円になるため単価も1円以上を必須にする
-      for (const q of item.quotes) {
-        if (!q.vendor.trim() && !q.unitAmount.trim()) continue;
+      item.quotes.forEach((q, qi) => {
+        if (!q.vendor.trim() && !q.unitAmount.trim()) return;
         const unit = q.unitAmount.trim() ? parseInt(parseAmount(q.unitAmount), 10) : NaN;
-        if (q.unitAmount.trim() && (isNaN(unit) || unit < 1)) { setFormError('価格比較の単価は1円以上で入力してください。'); return; }
+        if (q.unitAmount.trim() && (isNaN(unit) || unit < 1)) missing.push({ key: `quote-${i}-${qi}`, label: label(i, '価格比較の単価（1円以上）') });
+      });
+      // 1万円以上は各商品につき2社以上の価格比較が必須
+      if (quotesRequired && item.quotes.filter(q => q.vendor.trim() && q.unitAmount.trim()).length < 2) {
+        missing.push({ key: `quote-${i}-0`, label: label(i, '価格比較（2社以上）') });
       }
+    });
+
+    if (items.length > 1 && (!amount.trim() || isNaN(parsedAmount) || parsedAmount < 1)) missing.push({ key: 'total', label: '合計金額（1円以上）' });
+    if (!requestedDate) missing.push({ key: 'requestedDate', label: '購入予定日' });
+    if (!location.trim()) missing.push({ key: 'location', label: '使用先' });
+    if (!purpose.trim()) missing.push({ key: 'purpose', label: '用途' });
+    if (!reason.trim()) missing.push({ key: 'reason', label: '申請理由' });
+    if (tier === 'leader' && !isSelfJudgment && !leaderId) missing.push({ key: 'leader', label: '確認を依頼するリーダー・マネージャー' });
+    if (tier === 'manager' && !isSelfJudgment && requestedManagerIds.length === 0) missing.push({ key: 'managers', label: '承認を依頼するマネージャー（1名以上）' });
+    if (isSelfJudgment && sharedManagerIds.length === 0) missing.push({ key: 'sharedManagers', label: '共有先のマネージャー（1名以上）' });
+
+    if (missing.length > 0) {
+      setErrFields(new Set(missing.map(m => m.key)));
+      setFormError(`次の項目を入力してください：${missing.map(m => m.label).join('、')}`);
+      scrollToFirstError(missing.map(m => m.key));
+      return;
     }
-    if (!amount.trim() || isNaN(parsedAmount)) { setFormError('金額を正しく入力してください。'); return; }
-    if (parsedAmount < 1) { setFormError('合計金額は1円以上で入力してください。承認する人が金額で決まるため、0円では申請できません。'); return; }
-    if (!requestedDate) { setFormError('購入予定日を入力してください。'); return; }
-    if (!location.trim()) { setFormError('使用先を入力してください。'); return; }
-    if (!purpose.trim()) { setFormError('用途を選択または入力してください。'); return; }
-    if (!reason.trim()) { setFormError('申請理由を入力してください。'); return; }
-    if (tier === 'leader' && !isSelfJudgment && !leaderId) { setFormError('確認を依頼するリーダー・マネージャーを選択してください。'); return; }
-    if (tier === 'manager' && !isSelfJudgment && requestedManagerIds.length === 0) { setFormError('承認を依頼するマネージャーを1名以上選択してください。'); return; }
-    if (isSelfJudgment && sharedManagerIds.length === 0) { setFormError('共有先のマネージャーを1名以上選択してください。'); return; }
+    setErrFields(new Set());
+
+    // 入力漏れではないので、ハイライトではなくメッセージだけで止める
+    if (!amount.trim() || isNaN(parsedAmount) || parsedAmount < 1) { setFormError('金額を正しく入力してください（1円以上）。'); return; }
     if (tier === 'board' && !isPresident && boardApprovers.length === 0) { setFormError('承認対象者（マネージャー・社長）が現在0名のため、申請できません。管理者にご連絡ください。'); return; }
-    if (quotesRequired) {
-      for (const item of items) {
-        const filled = item.quotes.filter(q => q.vendor.trim() && q.unitAmount.trim());
-        if (filled.length < 2) { setFormError('1万円以上の申請は、各商品につき価格比較（2社以上）の入力が必須です。'); return; }
-      }
-    }
     const presidentSelfJudge = tier === 'board' && isPresident && presidentSelfJudgment;
     const status = tier === 'board'
       ? (presidentSelfJudge ? 'self_judgment_shared' : 'pending_board')
@@ -592,6 +608,12 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
 
   const labelStyle: React.CSSProperties = { fontSize: 13, fontWeight: 'bold', color: text, marginBottom: 6, display: 'block' };
   const inputStyle: React.CSSProperties = { width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: text, fontSize: 14 };
+  // エラーの欄だけ薄赤にする。入力し直したらその欄のハイライトを消す
+  const errStyle = (key: string): React.CSSProperties => ({ ...inputStyle, ...errorStyle(errFields.has(key), isDarkMode) });
+  const clearErr = (key: string) => setErrFields(prev => {
+    if (!prev.has(key)) return prev;
+    const next = new Set(prev); next.delete(key); return next;
+  });
   const locationOptions = workplaceOptions;
 
   return (
@@ -695,7 +717,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
             組織として必要なコストか承認者が判断できるよう記入してください。
           </div>
           <textarea
-            value={reason} onChange={e => setReason(e.target.value)} rows={2}
+            data-err-field="reason" value={reason} onChange={e => { setReason(e.target.value); clearErr('reason'); }} rows={2}
             placeholder="例：現在のマットが老朽化し安全に使用できなくなったため、同等品に交換する必要がある"
             style={{ ...inputStyle, resize: 'vertical' as const }}
           />
@@ -724,17 +746,19 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
                     <div>
                       <label style={labelStyle}>品目名 <span style={{ color: '#dc3545' }}>*</span></label>
                       <input
-                        type="text" value={item.itemName} onChange={e => updateItem(itemIndex, { itemName: e.target.value })}
-                        placeholder="具体的な品名を入力してください" style={inputStyle}
+                        data-err-field={`itemName-${itemIndex}`}
+                        type="text" value={item.itemName} onChange={e => { updateItem(itemIndex, { itemName: e.target.value }); clearErr(`itemName-${itemIndex}`); }}
+                        placeholder="具体的な品名を入力してください" style={errStyle(`itemName-${itemIndex}`)}
                       />
                     </div>
 
                     <div>
                       <label style={labelStyle}>数量 <span style={{ color: '#dc3545' }}>*</span></label>
                       <input
+                        data-err-field={`quantity-${itemIndex}`}
                         type="number" min="1" value={item.quantity}
-                        onChange={e => updateItem(itemIndex, recalcItemAmount({ ...item, quantity: e.target.value }))}
-                        style={inputStyle}
+                        onChange={e => { updateItem(itemIndex, recalcItemAmount({ ...item, quantity: e.target.value })); clearErr(`quantity-${itemIndex}`); }}
+                        style={errStyle(`quantity-${itemIndex}`)}
                       />
                     </div>
 
@@ -825,18 +849,20 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span style={{ color: text, fontSize: 14 }}>¥</span>
                           <input
+                            data-err-field={`amount-${itemIndex}`}
                             type="text" inputMode="numeric" value={item.amount}
-                            onChange={e => updateItem(itemIndex, { amount: formatAmount(parseAmount(e.target.value)) })}
-                            placeholder="0" style={inputStyle}
+                            onChange={e => { updateItem(itemIndex, { amount: formatAmount(parseAmount(e.target.value)) }); clearErr(`amount-${itemIndex}`); }}
+                            placeholder="0" style={errStyle(`amount-${itemIndex}`)}
                           />
                         </div>
                       ) : item.amountManuallyOverridden ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span style={{ color: text, fontSize: 14 }}>¥</span>
                           <input
+                            data-err-field={`amount-${itemIndex}`}
                             type="text" inputMode="numeric" value={item.amount}
-                            onChange={e => updateItem(itemIndex, { amount: formatAmount(parseAmount(e.target.value)) })}
-                            placeholder="0" style={inputStyle}
+                            onChange={e => { updateItem(itemIndex, { amount: formatAmount(parseAmount(e.target.value)) }); clearErr(`amount-${itemIndex}`); }}
+                            placeholder="0" style={errStyle(`amount-${itemIndex}`)}
                           />
                         </div>
                       ) : (
@@ -979,7 +1005,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
 
         <div>
           <label style={labelStyle}>購入予定日 <span style={{ color: '#dc3545' }}>*</span></label>
-          <input type="date" value={requestedDate} onChange={e => setRequestedDate(e.target.value)} style={inputStyle} />
+          <input data-err-field="requestedDate" type="date" value={requestedDate} onChange={e => { setRequestedDate(e.target.value); clearErr('requestedDate'); }} style={errStyle('requestedDate')} />
         </div>
 
         {tier !== 'board' && canSelfJudge && (

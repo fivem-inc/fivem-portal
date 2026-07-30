@@ -4,6 +4,7 @@ import type { AuthUser, PurchaseRequestItem, PurchaseRequestItemQuote } from '..
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
+import { usePurchasePendingCount } from '../hooks/usePurchasePendingCount';
 import ReimbursementForm from '../components/ReimbursementForm';
 import PurchaseRequestForm, { type ResubmitRecord } from '../components/PurchaseRequestForm';
 import PurchaseApprovals from '../components/PurchaseApprovals';
@@ -336,6 +337,8 @@ const PurchaseRequestPage: React.FC<PurchaseRequestPageProps> = ({ user, roleTit
   const [resubmitRecord, setResubmitRecord] = useState<ResubmitRecord | null>(null);
   const isManagerPlus = isAdmin || ['マネージャー', '社長'].includes(roleTitle);
   const canApprovePurchase = isAdmin || ['リーダー', 'マネージャー', '社長'].includes(roleTitle);
+  // 「✅ 承認」タブに出す件数バッジ（ナビバーの赤バッジと同じ数え方・同じ共通フック）
+  const { pendingCount: purchasePending } = usePurchasePendingCount(user.id, canApprovePurchase);
 
   const cardBg = isDarkMode ? '#343a40' : '#ffffff';
   const border = isDarkMode ? '#495057' : '#e0e0e0';
@@ -378,9 +381,20 @@ const PurchaseRequestPage: React.FC<PurchaseRequestPageProps> = ({ user, roleTit
           <button
             key={key}
             type="button" onClick={() => { setResubmitRecord(null); setTab(key); }}
-            style={{ flex: 1, padding: '10px 4px', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: tab === key ? 'bold' : 'normal', background: tab === key ? '#28a745' : 'transparent', color: tab === key ? '#fff' : text }}
+            style={{ position: 'relative', flex: 1, padding: '10px 4px', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: tab === key ? 'bold' : 'normal', background: tab === key ? '#28a745' : 'transparent', color: tab === key ? '#fff' : text }}
           >
             {label}
+            {/* 自分の回答・承認を待っている件数。ナビバーの赤バッジと同じ数え方（共通フック） */}
+            {key === 'approvals' && purchasePending > 0 && (
+              <span style={{
+                position: 'absolute', top: 4, right: 4,
+                minWidth: 16, height: 16, padding: '0 4px', borderRadius: 8,
+                background: '#dc3545', color: '#fff', fontSize: 10, fontWeight: 'bold',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1,
+              }}>
+                {purchasePending > 99 ? '99+' : purchasePending}
+              </span>
+            )}
           </button>
         ))}
       </div>

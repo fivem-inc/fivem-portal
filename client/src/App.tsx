@@ -40,6 +40,7 @@ import { supabase } from './lib/supabaseClient';
 import { isFullDayReport } from './lib/overtimeTypes';
 import { useExpenses } from './hooks/useExpenses';
 import { useLeavePendingCount } from './hooks/useLeavePendingCount';
+import { usePurchasePendingCount } from './hooks/usePurchasePendingCount';
 import type { Expense, Submission } from './types';
 
 // ページ遷移のたびにスクロールをトップへ戻す
@@ -428,44 +429,6 @@ const useBoardUnread = (userId: string | undefined, pathname: string) => {
 
   useEffect(() => { fetchCount(); const t = setInterval(fetchCount, 30000); return () => clearInterval(t); }, [fetchCount]);
   return { total: channelCount + inboxCount, channelOnly: channelCount };
-};
-
-// 備品購入申請：自分がまだ対応していない承認待ち件数（リーダー承認 + マネージャー/全員承認のうち自分が未回答のもの）
-const usePurchasePendingCount = (userId: string | undefined, canPurchaseRequest: boolean | undefined) => {
-  const [pendingCount, setPendingCount] = useState(0);
-
-  const fetchPending = useCallback(async () => {
-    if (!userId || !canPurchaseRequest) { setPendingCount(0); return; }
-
-    const [leaderRes, managerRes, boardRes] = await Promise.all([
-      supabase.from('purchase_requests').select('id').eq('leader_id', userId).eq('status', 'pending_leader'),
-      supabase.from('purchase_requests').select('id, approval_round').contains('requested_manager_ids', [userId]).eq('status', 'pending_manager'),
-      supabase.from('purchase_requests').select('id, approval_round').contains('board_approver_ids', [userId]).eq('status', 'pending_board'),
-    ]);
-    const opinionTargets = [...(managerRes.data ?? []), ...(boardRes.data ?? [])] as { id: string; approval_round: number }[];
-
-    let answeredCount = 0;
-    if (opinionTargets.length > 0) {
-      const { data: ops } = await supabase
-        .from('purchase_request_manager_opinions')
-        .select('purchase_request_id, approval_round')
-        .eq('manager_id', userId)
-        .in('purchase_request_id', opinionTargets.map(t => t.id));
-      const roundById: Record<string, number> = {};
-      opinionTargets.forEach(t => { roundById[t.id] = t.approval_round; });
-      const answeredIds = new Set((ops ?? []).filter(o => o.approval_round === roundById[o.purchase_request_id]).map(o => o.purchase_request_id));
-      answeredCount = opinionTargets.filter(t => answeredIds.has(t.id)).length;
-    }
-
-    setPendingCount((leaderRes.data?.length ?? 0) + opinionTargets.length - answeredCount);
-  }, [userId, canPurchaseRequest]);
-
-  useEffect(() => { fetchPending(); }, [fetchPending]);
-  useEffect(() => {
-    window.addEventListener('purchase-pending-changed', fetchPending);
-    return () => window.removeEventListener('purchase-pending-changed', fetchPending);
-  }, [fetchPending]);
-  return { pendingCount, refetch: fetchPending };
 };
 
 // 勤務変更申請：自分の番の確認待ち件数（ShiftReportApprovalBannerと同じ判定ロジック）

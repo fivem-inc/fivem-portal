@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import ReceiptUploader, { type ReceiptValue } from './ReceiptUploader';
 import { todayJstStr } from '../lib/breakCalc';
+import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 
 const BannerSuccess: React.FC<{ message: string; sub?: string; onClose: () => void }> = ({ message, sub, onClose }) => {
   React.useEffect(() => { const t = setTimeout(onClose, 4000); return () => clearTimeout(t); }, [onClose]);
@@ -128,6 +129,8 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
     : purpose;
 
   const [formError, setFormError] = useState('');
+  // 入力漏れの欄を薄赤にするためのキー集合（lib/formHighlight.ts の共通色を使う）
+  const [errFields, setErrFields] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
   const [successBanner, setSuccessBanner] = useState(false);
 
@@ -141,23 +144,36 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
 
   const handleSubmit = async () => {
     setFormError('');
-    if (!itemName.trim()) { setFormError('品目名を入力してください。'); return; }
+    // 足りない項目をまとめて集め、赤バナー＋該当欄のハイライト＋最初の欄へスクロールで知らせる
+    // （1件ずつ返す作りだと「どこが原因か分からない」と実機で指摘された）
+    const missing: { key: string; label: string }[] = [];
     const parsedQuantity = parseInt(quantity, 10);
-    if (!quantity.trim() || isNaN(parsedQuantity) || parsedQuantity < 1) { setFormError('購入点数を1以上で入力してください。'); return; }
     const parsedAmount = parseInt(parseAmount(amount), 10);
-    if (!amount.trim() || isNaN(parsedAmount)) { setFormError('金額を正しく入力してください。'); return; }
-    if (parsedAmount < 1) { setFormError('金額は1円以上で入力してください。'); return; }
-    if (!purchasedAt) { setFormError('購入日を入力してください。'); return; }
-    if (!storeName.trim()) { setFormError('購入先を入力してください。'); return; }
-    if (!location.trim()) { setFormError('使用先を入力してください。'); return; }
-    if (!finalPurpose.trim()) { setFormError('用途を入力してください。'); return; }
-    if (!paymentMethod) { setFormError('支払方法を選択してください。'); return; }
-    if (paymentMethod === 'company_paid' && !paymentMethodDetail) { setFormError('会社支払の内訳を選択してください。'); return; }
-    if (paymentMethodDetail === 'other' && !paymentMethodOther.trim()) { setFormError('支払方法の「その他」の内容を入力してください。'); return; }
-    if (!receipt.receiptType) { setFormError('レシートの提出方法を選択してください。'); return; }
+
+    if (!itemName.trim()) missing.push({ key: 'itemName', label: '品目名' });
+    if (!quantity.trim() || isNaN(parsedQuantity) || parsedQuantity < 1) missing.push({ key: 'quantity', label: '購入点数（1以上）' });
+    if (!amount.trim() || isNaN(parsedAmount) || parsedAmount < 1) missing.push({ key: 'amount', label: '金額（1円以上）' });
+    if (!purchasedAt) missing.push({ key: 'purchasedAt', label: '購入日' });
+    if (!storeName.trim()) missing.push({ key: 'storeName', label: '購入先' });
+    if (!location.trim()) missing.push({ key: 'location', label: '使用先' });
+    if (!finalPurpose.trim()) missing.push({ key: 'purpose', label: '用途' });
+    if (!paymentMethod) missing.push({ key: 'paymentMethod', label: '支払方法' });
+    if (paymentMethod === 'company_paid' && !paymentMethodDetail) missing.push({ key: 'paymentMethodDetail', label: '会社支払の内訳' });
+    if (paymentMethodDetail === 'other' && !paymentMethodOther.trim()) missing.push({ key: 'paymentMethodOther', label: '支払方法（その他）の内容' });
+    if (!receipt.receiptType) missing.push({ key: 'receiptType', label: 'レシートの提出方法' });
+    if (receipt.receiptType === 'none' && !receipt.receiptMissingReason.trim()) missing.push({ key: 'receiptMissingReason', label: 'レシートがない理由' });
+
+    if (missing.length > 0) {
+      setErrFields(new Set(missing.map(m => m.key)));
+      setFormError(`次の項目を入力してください：${missing.map(m => m.label).join('、')}`);
+      scrollToFirstError(missing.map(m => m.key));
+      return;
+    }
+    setErrFields(new Set());
+
+    // アップロード中・未完了は入力漏れではないので、ハイライトではなくメッセージだけで止める
     if (receiptUploading) { setFormError('レシート写真をアップロード中です。完了までお待ちください。'); return; }
     if (receipt.receiptType === 'photo' && !receipt.receiptStoragePath) { setFormError('レシート写真のアップロードがまだ完了していません。レシート欄に『レシートを添付しました』と表示されてから送信してください。'); return; }
-    if (receipt.receiptType === 'none' && !receipt.receiptMissingReason.trim()) { setFormError('レシートがない理由を入力してください。'); return; }
 
     setSubmitting(true);
     const { error } = await supabase.from('purchase_requests').insert({
@@ -199,6 +215,12 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
 
   const labelStyle: React.CSSProperties = { fontSize: 13, fontWeight: 'bold', color: text, marginBottom: 6, display: 'block' };
   const inputStyle: React.CSSProperties = { width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: text, fontSize: 14 };
+  // エラーの欄だけ薄赤にする。入力し直したらその欄のハイライトを消す
+  const errStyle = (key: string): React.CSSProperties => ({ ...inputStyle, ...errorStyle(errFields.has(key), isDarkMode) });
+  const clearErr = (key: string) => setErrFields(prev => {
+    if (!prev.has(key)) return prev;
+    const next = new Set(prev); next.delete(key); return next;
+  });
   const required = <span style={{ color: '#dc3545' }}>*</span>;
 
   return (
@@ -220,12 +242,12 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
         </div>
         <div>
           <label style={labelStyle}>品目名 {required}</label>
-          <input type="text" value={itemName} onChange={e => setItemName(e.target.value)} placeholder="例：トイレットペーパー" style={inputStyle} />
+          <input data-err-field="itemName" type="text" value={itemName} onChange={e => { setItemName(e.target.value); clearErr('itemName'); }} placeholder="例：トイレットペーパー" style={errStyle('itemName')} />
         </div>
 
         <div>
           <label style={labelStyle}>購入点数 {required}</label>
-          <input type="number" min="1" value={quantity} onChange={e => setQuantity(e.target.value)} style={inputStyle} />
+          <input data-err-field="quantity" type="number" min="1" value={quantity} onChange={e => { setQuantity(e.target.value); clearErr('quantity'); }} style={errStyle('quantity')} />
         </div>
 
         <div>
@@ -234,20 +256,20 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
             <span style={{ color: text, fontSize: 14 }}>¥</span>
             <input
               type="text" inputMode="numeric" value={amount}
-              onChange={e => setAmount(formatAmount(parseAmount(e.target.value)))}
-              placeholder="0" style={inputStyle}
+              onChange={e => { setAmount(formatAmount(parseAmount(e.target.value))); clearErr('amount'); }}
+              placeholder="0" style={errStyle('amount')} data-err-field="amount"
             />
           </div>
         </div>
 
         <div>
           <label style={labelStyle}>購入日 {required}</label>
-          <input type="date" value={purchasedAt} onChange={e => setPurchasedAt(e.target.value)} style={inputStyle} />
+          <input data-err-field="purchasedAt" type="date" value={purchasedAt} onChange={e => { setPurchasedAt(e.target.value); clearErr('purchasedAt'); }} style={errStyle('purchasedAt')} />
         </div>
 
         <div>
           <label style={labelStyle}>購入先 {required}</label>
-          <input type="text" value={storeName} onChange={e => setStoreName(e.target.value)} placeholder="例：〇〇ホームセンター" style={inputStyle} />
+          <input data-err-field="storeName" type="text" value={storeName} onChange={e => { setStoreName(e.target.value); clearErr('storeName'); }} placeholder="例：〇〇ホームセンター" style={errStyle('storeName')} />
         </div>
 
         <div>
@@ -256,8 +278,8 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
             <>
               <select
                 value={workplaceOptions.includes(location) ? location : (location ? 'その他' : '')}
-                onChange={e => setLocation(e.target.value === 'その他' ? '' : e.target.value)}
-                style={inputStyle}
+                onChange={e => { setLocation(e.target.value === 'その他' ? '' : e.target.value); clearErr('location'); }}
+                style={errStyle('location')} data-err-field="location"
               >
                 <option value="">選択してください</option>
                 {workplaceOptions.map(loc => <option key={loc} value={loc}>{loc}</option>)}
@@ -280,9 +302,10 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
           {purposeOptions.length > 0 ? (
             <>
               <select
+                data-err-field="purpose"
                 value={purposeOptions.includes(purpose) ? purpose : (purpose ? 'その他' : '')}
-                onChange={e => setPurpose(e.target.value === 'その他' ? '' : e.target.value)}
-                style={inputStyle}
+                onChange={e => { setPurpose(e.target.value === 'その他' ? '' : e.target.value); clearErr('purpose'); }}
+                style={errStyle('purpose')}
               >
                 <option value="">選択してください</option>
                 {purposeOptions.filter(p => p !== 'その他').map(p => <option key={p} value={p}>{p}</option>)}

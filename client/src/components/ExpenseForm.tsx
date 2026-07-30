@@ -645,7 +645,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
           const typeSelectValue = isCustomType ? `custom:${draftExpense.type_other}` : draftExpense.type;
           const getLabel = (sortOrder: number, fallback: string) => expenseTypeLabels.find(l => l.sort_order === sortOrder)?.value ?? fallback;
           const inp = { background: isDarkMode ? '#495057' : undefined, color: isDarkMode ? '#fff' : undefined, borderColor: isDarkMode ? '#6c757d' : undefined };
-          const hl = (field: string) => highlightFields.has(field) ? { ...inp, background: isDarkMode ? '#4a2030' : '#ffe4e8', borderColor: '#f06292' } : inp;
+          const hl = (field: string) => highlightFields.has(field) ? { ...inp, background: isDarkMode ? '#4a2b30' : '#fdecea', borderColor: '#e24b4a' } : inp;
           const clearHL = (field: string) => setHighlightFields(prev => { const s = new Set(prev); s.delete(field); return s; });
           return (
             <div style={{ background: isDarkMode ? '#2c3e50' : '#fff', border: '2px solid #0d6efd', borderRadius: 8, padding: 16, marginBottom: 8, boxShadow: isDarkMode ? 'none' : '0 2px 8px rgba(0,0,0,0.06)' }}>
@@ -677,7 +677,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
               {draftExpense.type !== 'regular' ? (
                 <div style={{ marginBottom: 8 }}>
                   <div style={{ position: 'relative' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', border: `1px solid ${highlightFields.has('start_date') ? '#f06292' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, background: highlightFields.has('start_date') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : 'transparent' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', border: `1px solid ${highlightFields.has('start_date') ? '#e24b4a' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, background: highlightFields.has('start_date') ? (isDarkMode ? '#4a2b30' : '#fdecea') : 'transparent' }}>
                       <span style={{ background: isDarkMode ? '#6c757d' : '#9e9e9e', color: '#fff', fontSize: 12, padding: '0 8px', whiteSpace: 'nowrap', flexShrink: 0, borderRadius: '3px 0 0 3px', alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>利用日</span>
                       <button type="button" onClick={() => { setDraftDatePicker(draftDatePicker === 'start' ? null : 'start'); clearHL('start_date'); }} style={{ border: 'none', outline: 'none', flex: 1, padding: '7px 6px', fontSize: 14, background: 'transparent', color: draftExpense.start_date ? (isDarkMode ? '#fff' : '#333') : (isDarkMode ? '#adb5bd' : '#999'), textAlign: 'left', cursor: 'pointer' }}>
                         {draftExpense.start_date || '日付を選択'}
@@ -690,7 +690,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                 <div style={{ marginBottom: 8 }}>
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                     <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', border: `1px solid ${highlightFields.has('start_date') ? '#f06292' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, background: highlightFields.has('start_date') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : 'transparent' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', border: `1px solid ${highlightFields.has('start_date') ? '#e24b4a' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, background: highlightFields.has('start_date') ? (isDarkMode ? '#4a2b30' : '#fdecea') : 'transparent' }}>
                         <span style={{ background: isDarkMode ? '#6c757d' : '#9e9e9e', color: '#fff', fontSize: 12, padding: '0 8px', whiteSpace: 'nowrap', flexShrink: 0, borderRadius: '3px 0 0 3px', alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>開始日</span>
                         <button type="button" onClick={() => { setDraftDatePicker(draftDatePicker === 'start' ? null : 'start'); clearHL('start_date'); }} style={{ border: 'none', outline: 'none', flex: 1, padding: '7px 6px', fontSize: 14, background: 'transparent', color: draftExpense.start_date ? (isDarkMode ? '#fff' : '#333') : (isDarkMode ? '#adb5bd' : '#999'), textAlign: 'left', cursor: 'pointer', width: '100%' }}>
                           {draftExpense.start_date || '開始日'}
@@ -700,7 +700,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                     </div>
                     <span style={{ color: '#999', flexShrink: 0 }}>〜</span>
                     <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', border: `1px solid ${highlightFields.has('end_date') ? '#f06292' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, background: highlightFields.has('end_date') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : 'transparent' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', border: `1px solid ${highlightFields.has('end_date') ? '#e24b4a' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, background: highlightFields.has('end_date') ? (isDarkMode ? '#4a2b30' : '#fdecea') : 'transparent' }}>
                         <span style={{ background: isDarkMode ? '#6c757d' : '#9e9e9e', color: '#fff', fontSize: 12, padding: '0 8px', whiteSpace: 'nowrap', flexShrink: 0, borderRadius: '3px 0 0 3px', alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>終了日</span>
                         <button type="button" onClick={() => { setDraftDatePicker(draftDatePicker === 'end' ? null : 'end'); clearHL('end_date'); }} style={{ border: 'none', outline: 'none', flex: 1, padding: '7px 6px', fontSize: 14, background: 'transparent', color: draftExpense.end_date ? (isDarkMode ? '#fff' : '#333') : (isDarkMode ? '#adb5bd' : '#999'), textAlign: 'left', cursor: 'pointer', width: '100%' }}>
                           {draftExpense.end_date || '終了日'}
@@ -732,7 +732,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                 };
                 return (
                   <div style={{ marginBottom: 8, position: 'relative' }}>
-                    <div onClick={() => setShowTransportPicker(p => !p)} style={{ display: 'flex', alignItems: 'center', border: `1px solid ${highlightFields.has('transportation') ? '#f06292' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, cursor: 'pointer', minHeight: 36, background: highlightFields.has('transportation') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : 'transparent' }}>
+                    <div onClick={() => setShowTransportPicker(p => !p)} style={{ display: 'flex', alignItems: 'center', border: `1px solid ${highlightFields.has('transportation') ? '#e24b4a' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, cursor: 'pointer', minHeight: 36, background: highlightFields.has('transportation') ? (isDarkMode ? '#4a2b30' : '#fdecea') : 'transparent' }}>
                       <span style={{ background: isDarkMode ? '#6c757d' : '#9e9e9e', color: '#fff', fontSize: 12, padding: '0 8px', whiteSpace: 'nowrap', flexShrink: 0, borderRadius: '3px 0 0 3px', alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>交通機関</span>
                       <div style={{ flex: 1, padding: '4px 6px', display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center', minHeight: 30 }}>
                         {selectedTransports.length === 0
@@ -773,14 +773,14 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
               <div style={{ marginBottom: 10 }}>
                 <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                   {/* 出発 */}
-                  <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, border: `1px solid ${highlightFields.has('from_station') ? '#f06292' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, background: highlightFields.has('from_station') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : 'transparent' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, border: `1px solid ${highlightFields.has('from_station') ? '#e24b4a' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, background: highlightFields.has('from_station') ? (isDarkMode ? '#4a2b30' : '#fdecea') : 'transparent' }}>
                     <span style={{ background: isDarkMode ? '#6c757d' : '#9e9e9e', color: '#fff', fontSize: 12, padding: '0 8px', whiteSpace: 'nowrap', flexShrink: 0, borderRadius: '3px 0 0 3px', alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>出発</span>
                     <input type="text" placeholder="駅、バス停" value={draftExpense.from_station} onChange={(e) => { setDraftExpense(prev => ({ ...prev, from_station: e.target.value })); clearHL('from_station'); }} style={{ border: 'none', outline: 'none', flex: 1, minWidth: 0, padding: '7px 6px', fontSize: 14, background: 'transparent', color: isDarkMode ? '#fff' : '#333' }} />
                   </div>
                   {/* 反転ボタン */}
                   <button type="button" onClick={() => setDraftExpense(prev => ({ ...prev, from_station: prev.to_station, to_station: prev.from_station }))} style={{ flexShrink: 0, background: isDarkMode ? '#495057' : '#f0f0f0', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, padding: '6px 8px', cursor: 'pointer', fontSize: 16, color: isDarkMode ? '#fff' : '#555' }} title="出発・到着を入れ替え">⇄</button>
                   {/* 到着 */}
-                  <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, border: `1px solid ${highlightFields.has('to_station') ? '#f06292' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, background: highlightFields.has('to_station') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : 'transparent' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, border: `1px solid ${highlightFields.has('to_station') ? '#e24b4a' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, background: highlightFields.has('to_station') ? (isDarkMode ? '#4a2b30' : '#fdecea') : 'transparent' }}>
                     <span style={{ background: isDarkMode ? '#6c757d' : '#9e9e9e', color: '#fff', fontSize: 12, padding: '0 8px', whiteSpace: 'nowrap', flexShrink: 0, borderRadius: '3px 0 0 3px', alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>到着</span>
                     <input type="text" placeholder="駅、バス停" value={draftExpense.to_station} onChange={(e) => { setDraftExpense(prev => ({ ...prev, to_station: e.target.value })); clearHL('to_station'); }} style={{ border: 'none', outline: 'none', flex: 1, minWidth: 0, padding: '7px 6px', fontSize: 14, background: 'transparent', color: isDarkMode ? '#fff' : '#333' }} />
                   </div>
@@ -789,7 +789,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
 
               {/* 金額 */}
               <div style={{ marginBottom: 8, maxWidth: 160 }}>
-                <div style={{ display: 'flex', alignItems: 'center', border: `1px solid ${highlightFields.has('amount') ? '#f06292' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, background: highlightFields.has('amount') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : 'transparent' }}>
+                <div style={{ display: 'flex', alignItems: 'center', border: `1px solid ${highlightFields.has('amount') ? '#e24b4a' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, background: highlightFields.has('amount') ? (isDarkMode ? '#4a2b30' : '#fdecea') : 'transparent' }}>
                   <span style={{ background: isDarkMode ? '#6c757d' : '#9e9e9e', color: '#fff', fontSize: 12, padding: '0 8px', whiteSpace: 'nowrap', flexShrink: 0, borderRadius: '3px 0 0 3px', alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>金額</span>
                   <input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" value={formatAmount(draftExpense.amount)} onChange={(e) => { setDraftExpense(prev => ({ ...prev, amount: parseAmount(e.target.value) })); clearHL('amount'); }} style={{ border: 'none', outline: 'none', flex: 1, minWidth: 0, padding: '7px 6px', fontSize: 14, background: 'transparent', color: isDarkMode ? '#fff' : '#333' }} />
                 </div>
@@ -797,7 +797,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
 
               {/* 行き先（全幅） */}
               <div style={{ marginBottom: 10 }}>
-                <div style={{ display: 'flex', alignItems: 'center', border: `1px solid ${highlightFields.has('workplace') ? '#f06292' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, background: highlightFields.has('workplace') ? (isDarkMode ? '#4a2030' : '#ffe4e8') : 'transparent' }}>
+                <div style={{ display: 'flex', alignItems: 'center', border: `1px solid ${highlightFields.has('workplace') ? '#e24b4a' : (isDarkMode ? '#6c757d' : '#ccc')}`, borderRadius: 4, background: highlightFields.has('workplace') ? (isDarkMode ? '#4a2b30' : '#fdecea') : 'transparent' }}>
                   <span style={{ background: isDarkMode ? '#6c757d' : '#9e9e9e', color: '#fff', fontSize: 12, padding: '0 8px', whiteSpace: 'nowrap', flexShrink: 0, borderRadius: '3px 0 0 3px', alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>行き先</span>
                   {draftExpense.type === 'other' ? (
                     <input type="text" placeholder="行き先を入力" value={draftExpense.workplace || ''} onChange={(e) => { setDraftExpense(prev => ({ ...prev, workplace: e.target.value })); clearHL('workplace'); }} style={{ border: 'none', outline: 'none', flex: 1, minWidth: 0, padding: '7px 6px', fontSize: 14, background: 'transparent', color: isDarkMode ? '#fff' : '#333' }} />

@@ -20,19 +20,21 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string }> = {
   // 休暇申請（申請者の要対応）
   "leave:rejected":          { app: "休暇申請", word: "差戻", url: "/leave" },
   // 勤務変更申請
-  "shift_report:new_request": { app: "勤務変更報告", word: "未承認", url: "/shift-report" },
-  "shift_report:returned":    { app: "勤務変更報告", word: "差戻", url: "/shift-report" },
+  // ⚠️ タブ指定を省くと既定タブ（報告の入力）に着地して「何を見ればいいか分からない」になる
+  "shift_report:new_request": { app: "勤務変更報告", word: "未承認", url: "/shift-report?view=confirm" },
+  "shift_report:returned":    { app: "勤務変更報告", word: "差戻", url: "/shift-report?tab=history" },
   // 備品精算（購入申請）
-  "purchase_request:submitted":             { app: "備品精算", word: "未承認", url: "/purchase" },
-  "purchase_request:submitted_manager":     { app: "備品精算", word: "未承認", url: "/purchase" },
-  "purchase_request:submitted_board":       { app: "備品精算", word: "未承認", url: "/purchase" },
-  "purchase_request:manager_opinions_ready": { app: "備品精算", word: "未承認", url: "/purchase" },
-  "purchase_request:returned":              { app: "備品精算", word: "差戻", url: "/purchase" },
-  // 結果報告系（申請者・共有先へ）
-  "purchase_request:leader_approved":       { app: "備品精算", word: "承認", url: "/purchase" },
-  "purchase_request:manager_approved":      { app: "備品精算", word: "承認", url: "/purchase" },
-  "purchase_request:board_all_approved":    { app: "備品精算", word: "承認", url: "/purchase" },
-  "purchase_request:self_judgment_shared":  { app: "備品精算", word: "新着", url: "/purchase" },
+  // ⚠️ /purchase の既定タブは「💰 精算」なので、タブを指定しないと必ず精算入力に着地する
+  "purchase_request:submitted":             { app: "備品精算", word: "未承認", url: "/purchase?tab=approvals" },
+  "purchase_request:submitted_manager":     { app: "備品精算", word: "未承認", url: "/purchase?tab=approvals" },
+  "purchase_request:submitted_board":       { app: "備品精算", word: "未承認", url: "/purchase?tab=approvals" },
+  "purchase_request:manager_opinions_ready": { app: "備品精算", word: "未承認", url: "/purchase?tab=approvals" },
+  "purchase_request:returned":              { app: "備品精算", word: "差戻", url: "/purchase?tab=history" },
+  // 結果報告系（申請者・共有先へ）＝自分の申請の状況を見る画面へ
+  "purchase_request:leader_approved":       { app: "備品精算", word: "承認", url: "/purchase?tab=history" },
+  "purchase_request:manager_approved":      { app: "備品精算", word: "承認", url: "/purchase?tab=history" },
+  "purchase_request:board_all_approved":    { app: "備品精算", word: "承認", url: "/purchase?tab=history" },
+  "purchase_request:self_judgment_shared":  { app: "備品精算", word: "新着", url: "/purchase?tab=history" },
   // 交通費申請（経理の要対応）
   "expense:new_request":     { app: "交通費", word: "新着", url: "/admin" },
   // 連絡板
