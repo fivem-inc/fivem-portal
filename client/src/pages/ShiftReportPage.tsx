@@ -6,6 +6,7 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import { calcShiftBreakMinutes } from '../lib/shiftCalc';
+import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import type { AuthUser } from '../types';
 import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
@@ -327,6 +328,8 @@ const ShiftReportForm: React.FC<{
   const [showConfirm, setShowConfirm] = useState(false);
   const [saving, setSaving]           = useState(false);
   const [error, setError]             = useState('');
+  // 入力エラーの欄を薄赤にする（lib/formHighlight.ts の共通色）
+  const [errFields, setErrFields] = useState<Set<string>>(new Set());
 
   // 入力中の下書きを端末に自動保存し、開き直したら復元する（新規報告のみ。修正モードは対象外）
   interface ShiftDraft {
@@ -466,29 +469,37 @@ const ShiftReportForm: React.FC<{
       });
   }, [canProxy]);
 
-  const validate = () => {
-    if (!date)          return '日付を選択してください';
-    if (types.length === 0) return '種別を選択してください';
-    if (!reason.trim()) return '理由を入力してください';
-    if (!origDayOff && !hasHoliday && !hasAbsence && (!origStart || !origEnd)) return '通常シフトの時間を入力してください';
-    if (!origDayOff && !hasHoliday && !hasAbsence && origStart && origEnd && origStart === origEnd) return '通常シフトの開始・終了が同じ時間です。正しい時間を入力してください';
-    if (!origDayOff && !hasHoliday && !hasAbsence && !origLoc) return '通常シフトの勤務地を選択してください';
-    if (!origDayOff && !hasHoliday && !hasAbsence && origLoc === 'その他' && !origLocCustom.trim()) return '通常シフトの場所を入力してください';
-    if (!origDayOff && !hasHoliday && !hasAbsence && origOutingOn && (!origOutingStart || !origOutingEnd || origOutingStart === origOutingEnd)) return '通常シフトの外出・戻り時間を正しく入力してください';
-    if (!hasAbsence && (!actStart || !actEnd)) return '実際の時間を入力してください';
-    if (!hasAbsence && actStart && actEnd && actStart === actEnd) return '開始時間と終了時間が同じです。正しい時間を入力してください';
-    if (!hasAbsence && !actLoc) return '実際の勤務地を選択してください';
-    if (!hasAbsence && actLoc === 'その他' && !actLocCustom.trim()) return '実際の勤務場所を入力してください';
-    if (!hasAbsence && actOutingOn && (!actOutingStart || !actOutingEnd || actOutingStart === actOutingEnd)) return '実際の外出・戻り時間を正しく入力してください';
-    if (!reviewerId)    return '確認依頼先を選択してください';
-    if (editTarget && !changeSummary.trim()) return '修正内容を入力してください';
-    return '';
+  // メッセージだけでなく「どの欄が原因か」も返す。赤いメッセージが出ても
+  // 欄が分からないと直せないため（他ページと同じ薄赤ハイライトに使う）
+  const validate = (): { msg: string; field?: string } => {
+    const noShift = !origDayOff && !hasHoliday && !hasAbsence;
+    if (!date)          return { msg: '日付を選択してください', field: 'date' };
+    if (types.length === 0) return { msg: '種別を選択してください', field: 'types' };
+    if (!reason.trim()) return { msg: '理由を入力してください', field: 'reason' };
+    if (noShift && (!origStart || !origEnd)) return { msg: '通常シフトの時間を入力してください', field: 'origTime' };
+    if (noShift && origStart && origEnd && origStart === origEnd) return { msg: '通常シフトの開始・終了が同じ時間です。正しい時間を入力してください', field: 'origTime' };
+    if (noShift && !origLoc) return { msg: '通常シフトの勤務地を選択してください', field: 'origLoc' };
+    if (noShift && origLoc === 'その他' && !origLocCustom.trim()) return { msg: '通常シフトの場所を入力してください', field: 'origLocCustom' };
+    if (noShift && origOutingOn && (!origOutingStart || !origOutingEnd || origOutingStart === origOutingEnd)) return { msg: '通常シフトの外出・戻り時間を正しく入力してください', field: 'origOuting' };
+    if (!hasAbsence && (!actStart || !actEnd)) return { msg: '実際の時間を入力してください', field: 'actTime' };
+    if (!hasAbsence && actStart && actEnd && actStart === actEnd) return { msg: '開始時間と終了時間が同じです。正しい時間を入力してください', field: 'actTime' };
+    if (!hasAbsence && !actLoc) return { msg: '実際の勤務地を選択してください', field: 'actLoc' };
+    if (!hasAbsence && actLoc === 'その他' && !actLocCustom.trim()) return { msg: '実際の勤務場所を入力してください', field: 'actLocCustom' };
+    if (!hasAbsence && actOutingOn && (!actOutingStart || !actOutingEnd || actOutingStart === actOutingEnd)) return { msg: '実際の外出・戻り時間を正しく入力してください', field: 'actOuting' };
+    if (!reviewerId)    return { msg: '確認依頼先を選択してください', field: 'reviewer' };
+    if (editTarget && !changeSummary.trim()) return { msg: '修正内容を入力してください', field: 'changeSummary' };
+    return { msg: '' };
   };
 
   const handleConfirmOpen = () => {
-    const err = validate();
-    if (err) { setError(err); return; }
-    setError(''); setShowConfirm(true);
+    const { msg, field } = validate();
+    if (msg) {
+      setError(msg);
+      setErrFields(field ? new Set([field]) : new Set());
+      if (field) scrollToFirstError([field]);
+      return;
+    }
+    setError(''); setErrFields(new Set()); setShowConfirm(true);
   };
 
   const handleSubmit = async () => {
@@ -578,7 +589,9 @@ const ShiftReportForm: React.FC<{
 
   const reviewerName = reviewers.find(r => r.id === reviewerId)?.name ?? '';
   const f: React.CSSProperties = { width: '100%', padding: '9px 12px', borderRadius: 8, border: `1px solid ${borderCol}`, fontSize: 14, boxSizing: 'border-box', background: isDark ? '#495057' : 'white', color: textColor, colorScheme: isDark ? 'dark' : 'light' };
-  const L: React.CSSProperties = { fontSize: 12, color: subColor, marginBottom: 4, display: 'block' };
+
+  const ef = (key: string): React.CSSProperties => ({ ...f, ...errorStyle(errFields.has(key), isDark) });
+  const clearErr = (key: string) => setErrFields(prev => { if (!prev.has(key)) return prev; const n = new Set(prev); n.delete(key); return n; });  const L: React.CSSProperties = { fontSize: 12, color: subColor, marginBottom: 4, display: 'block' };
   const Req = <span style={{ color: '#dc3545' }}>*</span>;
 
   // 入力内容クリア（新規報告のみ。入力欄を初期状態に戻して下書きも消す）
@@ -736,7 +749,7 @@ const ShiftReportForm: React.FC<{
             {/* 理由 */}
             <div style={{ marginBottom: 14 }}>
               <label style={L}>理由 {Req}</label>
-              <textarea value={reason} onChange={e => setReason(e.target.value)} rows={2} placeholder="例：保護者対応のため、レッスン応援要請のため" style={{ ...f, resize: 'none' }} />
+              <textarea data-err-field="reason" value={reason} onChange={e => { setReason(e.target.value); clearErr('reason'); }} rows={2} placeholder="例：保護者対応のため、レッスン応援要請のため" style={{ ...ef('reason'), resize: 'none' }} />
               <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
                 {(['保護者対応のため', 'レッスン応援要請のため'] as const).map(ex => (
                   <button key={ex} type="button" onClick={() => setReason(ex)}
@@ -781,7 +794,7 @@ const ShiftReportForm: React.FC<{
                 <>
                   <div style={{ marginBottom: 8 }}>
                     <label style={L}>勤務地 {Req}</label>
-                    <select value={origLoc} onChange={e => setOrigLoc(e.target.value)} style={f}>
+                    <select data-err-field="origLoc" value={origLoc} onChange={e => { setOrigLoc(e.target.value); clearErr('origLoc'); }} style={ef('origLoc')}>
                       <option value="">選択してください</option>
                       {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
                       <option value="その他">その他（自由入力）</option>
@@ -823,7 +836,7 @@ const ShiftReportForm: React.FC<{
                 <div style={{ fontSize: 12, fontWeight: 'bold', color: subColor, marginBottom: 10 }}>✅ 実際に勤務した時間</div>
                 <div style={{ marginBottom: 8 }}>
                   <label style={L}>勤務地・場所 {Req}</label>
-                  <select value={actLoc} onChange={e => setActLoc(e.target.value)} style={f}>
+                  <select data-err-field="actLoc" value={actLoc} onChange={e => { setActLoc(e.target.value); clearErr('actLoc'); }} style={ef('actLoc')}>
                     <option value="">選択してください</option>
                     {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
                     <option value="その他">その他（自由入力）</option>
@@ -878,7 +891,7 @@ const ShiftReportForm: React.FC<{
             {/* 確認依頼先 */}
             <div style={{ marginBottom: 14 }}>
               <label style={L}>確認依頼先 {Req}</label>
-              <select value={reviewerId} onChange={e => setReviewerId(e.target.value)} style={f}>
+              <select data-err-field="reviewer" value={reviewerId} onChange={e => { setReviewerId(e.target.value); clearErr('reviewer'); }} style={ef('reviewer')}>
                 <option value="">選択してください</option>
                 {/* 自分が承認者の場合は最上部に表示 */}
                 {reviewers.find(r => r.id === user.id) && (
@@ -901,7 +914,7 @@ const ShiftReportForm: React.FC<{
             {editTarget && (
               <div style={{ marginBottom: 14 }}>
                 <label style={L}>修正内容 {Req}</label>
-                <textarea value={changeSummary} onChange={e => setChangeSummary(e.target.value)} rows={2}
+                <textarea data-err-field="changeSummary" value={changeSummary} onChange={e => { setChangeSummary(e.target.value); clearErr('changeSummary'); }} rows={2}
                   placeholder="例：退勤時刻を19:00→20:00に変更 理由：残業が延長したため"
                   style={{ ...f, resize: 'none' }} />
               </div>

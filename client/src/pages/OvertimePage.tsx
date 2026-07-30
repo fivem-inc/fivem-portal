@@ -14,6 +14,14 @@ import {
 } from '../lib/breakCalc';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import { resolveNormalShift } from '../lib/overtimeShift';
+import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
+
+// validate() は文言だけを返すので、文言と入力欄を突き合わせて薄赤ハイライトを付ける。
+// ここに無い文言は従来どおりメッセージだけ表示する（対応漏れでも壊れない）
+const ERR_FIELD_BY_MSG: Record<string, string> = {
+  '理由を入力してください': 'reason',
+  '申請先を選択してください': 'reviewer',
+};
 import type { PatternRow, NormalShiftSnapshot } from '../lib/overtimeShift';
 import type { AuthUser } from '../types';
 import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
@@ -551,6 +559,9 @@ const OvertimeForm: React.FC<{
 
   const [calendarKind, setCalendarKind] = useState<CalendarKind | null>(editTarget?.normal_shift?.calendar_kind ?? null);
   const [error, setError] = useState('');
+  // 入力エラーの欄を薄赤にする（lib/formHighlight.ts の共通色）
+  const [errFields, setErrFields] = useState<Set<string>>(new Set());
+  const clearErr = (key: string) => setErrFields(prev => { if (!prev.has(key)) return prev; const n = new Set(prev); n.delete(key); return n; });
   const [saving, setSaving] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [breakRecalcNote, setBreakRecalcNote] = useState(false);
@@ -979,7 +990,14 @@ const OvertimeForm: React.FC<{
   const handleSubmit = async () => {
     setError('');
     const v = validate();
-    if (v) { setError(v); return; }
+    if (v) {
+      setError(v);
+      const key = ERR_FIELD_BY_MSG[v];
+      setErrFields(key ? new Set([key]) : new Set());
+      if (key) scrollToFirstError([key]);
+      return;
+    }
+    setErrFields(new Set());
     setShowConfirm(true);
   };
 
@@ -1765,9 +1783,9 @@ const OvertimeForm: React.FC<{
         {isReportPhase && !fullDay ? (
           <div style={{ ...fieldStyle, background: innerBg, color: text, minHeight: 22, whiteSpace: 'pre-wrap', textAlign: 'center' }}>{reason || '—'}</div>
         ) : (<>
-        <textarea value={reason} onChange={e => setReason(e.target.value)} rows={2}
+        <textarea data-err-field="reason" value={reason} onChange={e => { setReason(e.target.value); clearErr('reason'); }} rows={2}
           placeholder={`例：${reasonExamples[0]}`}
-          style={{ ...fieldStyle, resize: 'vertical' }} />
+          style={{ ...fieldStyle, ...errorStyle(errFields.has('reason'), isDark), resize: 'vertical' }} />
         {/* 文例ボタン（種別に応じて中身が変わる） */}
         <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
           {reasonExamples.map(ex => (
@@ -1822,7 +1840,7 @@ const OvertimeForm: React.FC<{
             {reviewerId === SELF_REVIEW_VALUE ? '自己受理（自分で確認）' : (editTarget?.reviewer?.name ?? reviewers.find(rv => rv.id === reviewerId)?.name ?? '')}
           </div>
         ) : (
-        <select value={reviewerId} onChange={e => setReviewerId(e.target.value)} style={fieldStyle}>
+        <select data-err-field="reviewer" value={reviewerId} onChange={e => { setReviewerId(e.target.value); clearErr('reviewer'); }} style={{ ...fieldStyle, ...errorStyle(errFields.has('reviewer'), isDark) }}>
           <option value="">選択してください</option>
           {reviewers
             .filter(r => r.id !== user.id)

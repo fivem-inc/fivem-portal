@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { insertNotification } from '../lib/notifications';
 import { resolveNormalShift, buildTimeAdjustReport, fmtTime } from '../lib/overtimeShift';
+import { ERROR_BORDER, errorBg, scrollToFirstError } from '../lib/formHighlight';
 import type { PatternRow } from '../lib/overtimeShift';
 
 // 残業調整 提案作成シート（時間調整＝遅出/早退／調整休＝時間外調整休）。
@@ -121,6 +122,10 @@ const OvertimeProposalSheet: React.FC<Props> = ({
   const [existingDates, setExistingDates] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  // 入力が足りない候補カードを薄赤にする（lib/formHighlight.ts の共通色）
+  const [errIds, setErrIds] = useState<Set<string>>(new Set());
+  // 相手に通知が飛ぶため、送信前の確認画面を出す
+  const [showConfirm, setShowConfirm] = useState(false);
 
   useEffect(() => {
     supabase.from('master_options').select('value').eq('category', 'workplace').order('sort_order')
@@ -165,14 +170,31 @@ const OvertimeProposalSheet: React.FC<Props> = ({
     updateCandidate(id, patch);
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     setError('');
+    setErrIds(new Set());
     if (candidates.length === 0) { setError('候補を1つ以上追加してください'); return; }
+    // 足りない候補をまとめて薄赤にする（どの候補が原因か分からないと直せない）
+    const bad = new Set<string>();
     for (const c of candidates) {
       const needsTime = c.kind !== 'chosei_off';
-      if (!c.date || (needsTime && !c.time) || !c.location) { setError('各候補の日付・時刻・校を入力してください'); return; }
-      if (existingDates.has(c.date)) { setError(`${c.date} は既に残業記録があります。別の日を選んでください`); return; }
+      if (!c.date || (needsTime && !c.time) || !c.location) bad.add(c.tmpId);
     }
+    if (bad.size > 0) {
+      setError('各候補の日付・時刻・校を入力してください');
+      setErrIds(bad);
+      scrollToFirstError([...bad]);
+      return;
+    }
+    for (const c of candidates) {
+      if (existingDates.has(c.date)) { setError(`${c.date} は既に残業記録があります。別の日を選んでください`); setErrIds(new Set([c.tmpId])); scrollToFirstError([c.tmpId]); return; }
+    }
+    // 相手に通知が飛ぶので、送信前に内容を確認できるようにする
+    setShowConfirm(true);
+  };
+
+  const doSubmit = async () => {
+    setShowConfirm(false);
     setSubmitting(true);
     try {
       const { data: proposal, error: pErr } = await supabase.from('overtime_adjustment_proposals').insert({
@@ -226,7 +248,13 @@ const OvertimeProposalSheet: React.FC<Props> = ({
           const dup = c.date && existingDates.has(c.date);
           const isChosei = c.kind === 'chosei_off';
           return (
-            <div key={c.tmpId} style={{ border: `1px solid ${dup ? '#f0a0a0' : border}`, borderRadius: 10, padding: 12, marginBottom: 10, background: dup ? (isDark ? '#3a2626' : '#fff5f5') : 'transparent' }}>
+            <div
+              key={c.tmpId} data-err-field={c.tmpId}
+              style={{
+                border: `1px solid ${dup || errIds.has(c.tmpId) ? ERROR_BORDER : border}`, borderRadius: 10, padding: 12, marginBottom: 10,
+                background: dup || errIds.has(c.tmpId) ? errorBg(isDark) : 'transparent',
+              }}
+            >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                 <span style={{ fontSize: 13, fontWeight: 'bold', color: kindColor(c.kind) }}>{KIND_LABEL[c.kind]}</span>
                 <button onClick={() => removeCandidate(c.tmpId)} style={{ background: 'none', border: 'none', color: subText, cursor: 'pointer', fontSize: 16 }}>✕</button>
@@ -300,6 +328,54 @@ const OvertimeProposalSheet: React.FC<Props> = ({
           </button>
         </div>
       </div>
+
+      {/* 送信前の確認画面。相手（部下・同格）に通知が飛ぶ操作なので、内容を読み合わせてから送る */}
+      {showConfirm && (
+        <div
+          onClick={() => setShowConfirm(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+        >
+          <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 12, padding: 18, width: '100%', maxWidth: 420, maxHeight: '85vh', overflowY: 'auto' }}>
+            <div style={{ fontSize: 15, fontWeight: 'bold', color: text, marginBottom: 4, textAlign: 'center' }}>この内容で提案します</div>
+            <div style={{ fontSize: 12, color: subText, marginBottom: 12, textAlign: 'center' }}>
+              {recipientName}さんに通知が届きます（お返事は任意です）
+            </div>
+
+            <div style={{ border: `1px solid ${border}`, borderRadius: 8, padding: 10, marginBottom: 10 }}>
+              <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>候補（{candidates.length}件）</div>
+              {candidates.map(c => (
+                <div key={c.tmpId} style={{ fontSize: 13, color: text, marginBottom: 4 }}>
+                  <span style={{ color: kindColor(c.kind), fontWeight: 'bold' }}>{KIND_LABEL[c.kind]}</span>
+                  <div style={{ paddingLeft: 4 }}>
+                    {jpDate(c.date)}
+                    {c.kind !== 'chosei_off' && c.time && `　${c.time}`}
+                    {c.location && `　${c.location}`}
+                  </div>
+                  {c.note.trim() && <div style={{ fontSize: 12, color: subText, paddingLeft: 4 }}>{c.note}</div>}
+                </div>
+              ))}
+            </div>
+
+            {remarks.trim() && (
+              <div style={{ fontSize: 13, color: text, marginBottom: 8 }}>
+                <span style={{ color: subText }}>ひとこと：</span>{remarks}
+              </div>
+            )}
+            {dueDate && (
+              <div style={{ fontSize: 13, color: text, marginBottom: 8 }}>
+                <span style={{ color: subText }}>お返事の目安：</span>{jpDate(dueDate)}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+              <button onClick={() => setShowConfirm(false)} style={{ flex: 1, padding: 12, background: 'transparent', color: text, border: `1px solid ${border}`, borderRadius: 10, fontSize: 14, cursor: 'pointer' }}>修正する</button>
+              <button onClick={doSubmit} disabled={submitting} style={{ flex: 2, padding: 12, background: submitting ? '#9ec8f0' : '#1565c0', color: '#fff', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 'bold', cursor: submitting ? 'not-allowed' : 'pointer' }}>
+                {submitting ? '送信中...' : 'この内容で提案を送る'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

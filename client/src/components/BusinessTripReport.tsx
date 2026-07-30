@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { dispatchEmail, dispatchSiteNotification } from '../lib/notificationDispatch';
 import { insertNotification } from '../lib/notifications';
@@ -147,6 +148,8 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
   // 入力中の下書きを端末に自動保存し、開き直したら復元する
   const [td] = useState(() => loadDraft<TripDraft>(DRAFT_KEYS.trip));
   const [formError, setFormError] = useState<string | null>(null); // 入力エラー・失敗のインライントースト（alert廃止）
+  // 入力エラーの欄を薄赤にする（lib/formHighlight.ts の共通色）
+  const [errFields, setErrFields] = useState<Set<string>>(new Set());
   const [reportType, setReportType] = useState<'到着' | '終了'>(td?.reportType ?? '到着');
   const [category, setCategory] = useState<string>(td?.category ?? '出張');
   const [categoryOther, setCategoryOther] = useState(td?.categoryOther ?? '');
@@ -253,9 +256,9 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
   };
 
   const handleSubmitConfirm = () => {
-    if (!effectiveLocation.trim()) { setFormError('場所を入力してください'); return; }
-    if (category === 'その他' && !categoryOther.trim()) { setFormError('区分（その他）の内容を入力してください'); return; }
-    if (!gps && !gpsUnavailable) { setFormError('📍 現在地を取得してください。取得できない場合は「取得できませんでした」にチェックしてください。'); return; }
+    if (!effectiveLocation.trim()) { setFormError('場所を入力してください'); setErrFields(new Set(['location'])); scrollToFirstError(['location']); return; }
+    if (category === 'その他' && !categoryOther.trim()) { setFormError('区分（その他）の内容を入力してください'); setErrFields(new Set(['categoryOther'])); scrollToFirstError(['categoryOther']); return; }
+    if (!gps && !gpsUnavailable) { setFormError('📍 現在地を取得してください。取得できない場合は「取得できませんでした」にチェックしてください。'); setErrFields(new Set(['gps'])); scrollToFirstError(['gps']); return; }
     setShowConfirm(true);
   };
 
@@ -318,6 +321,9 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
     background: isDark ? '#495057' : 'white',
     color: isDark ? '#fff' : '#333',
   };
+  // エラーの欄だけ薄赤にする。入力し直したらその欄のハイライトを消す
+  const ef = (key: string): React.CSSProperties => ({ ...inputStyle, ...errorStyle(errFields.has(key), isDark) });
+  const clearErr = (key: string) => setErrFields(prev => { if (!prev.has(key)) return prev; const n = new Set(prev); n.delete(key); return n; });
 
   return (
     <div style={{ maxWidth: 600, margin: '0 auto', padding: '16px 16px 40px' }}>
@@ -426,9 +432,9 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
             ))}
           </select>
           {category === 'その他' && (
-            <input type="text" placeholder="内容を入力" value={categoryOther}
-              onChange={(e) => setCategoryOther(e.target.value)}
-              style={{ ...inputStyle, marginTop: 8 }} />
+            <input data-err-field="categoryOther" type="text" placeholder="内容を入力" value={categoryOther}
+              onChange={(e) => { setCategoryOther(e.target.value); clearErr('categoryOther'); }}
+              style={{ ...ef('categoryOther'), marginTop: 8 }} />
           )}
         </div>
 
@@ -464,9 +470,9 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
             </>
           ) : (
             <>
-              <input type="text" placeholder="出張先・園名など" value={useCustomLocation ? locationCustom : location}
-                onChange={(e) => useCustomLocation ? setLocationCustom(e.target.value) : setLocation(e.target.value)}
-                style={inputStyle} autoFocus={useCustomLocation} />
+              <input data-err-field="location" type="text" placeholder="出張先・園名など" value={useCustomLocation ? locationCustom : location}
+                onChange={(e) => { if (useCustomLocation) setLocationCustom(e.target.value); else setLocation(e.target.value); clearErr('location'); }}
+                style={ef('location')} autoFocus={useCustomLocation} />
               {presets.length > 0 && (
                 <button onClick={() => { setUseCustomLocation(false); setLocationCustom(''); }}
                   style={{ background: 'none', border: 'none', color: isDark ? '#80c8ff' : '#007bff', cursor: 'pointer', fontSize: 13, padding: 0, marginTop: 4, textDecoration: 'underline' }}>

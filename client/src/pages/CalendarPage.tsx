@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import { errorStyle, scrollToFirstError, ERROR_BORDER, errorBg } from '../lib/formHighlight';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import {
@@ -406,6 +407,9 @@ const AbsenceInputSheet: React.FC<{
   const savingRef = React.useRef(false);
   const confirmingRef = React.useRef(false);
   const [error, setError] = useState('');
+  // 入力エラーの欄を薄赤にする（lib/formHighlight.ts の共通色）
+  const [errFields, setErrFields] = useState<Set<string>>(new Set());
+  const clearErr = (key: string) => setErrFields(prev => { if (!prev.has(key)) return prev; const n = new Set(prev); n.delete(key); return n; });
   const [confirming, setConfirming] = useState(false);
 
   const dateLabel = `${date.slice(5, 7)}月${date.slice(8, 10)}日（${dow(date)}）`;
@@ -531,11 +535,11 @@ const AbsenceInputSheet: React.FC<{
   const handleConfirm = () => {
     if (confirmingRef.current) return;
     setError('');
-    if (!userId) { setError('対象者を選択してください'); return; }
+    if (!userId) { setError('対象者を選択してください'); setErrFields(new Set(['userId'])); scrollToFirstError(['userId']); return; }
     if (!isAbsent && !isHolidayWork && !isLocationChange && !isTimeChange && !isLate && !isLateStart && !isEarlyLeave && !isEarlyEnd) { setError('種別を選択してください'); return; }
-    if ((isLate || isLateStart) && !lateTime) { setError('出勤時間を入力してください'); return; }
-    if ((isEarlyLeave || isEarlyEnd) && !earlyTime) { setError('退勤時間を入力してください'); return; }
-    if (isLocationChange && !effectiveOriginalLocation()) { setError('変更前の校を選択してください'); return; }
+    if ((isLate || isLateStart) && !lateTime) { setError('出勤時間を入力してください'); setErrFields(new Set(['lateTime'])); scrollToFirstError(['lateTime']); return; }
+    if ((isEarlyLeave || isEarlyEnd) && !earlyTime) { setError('退勤時間を入力してください'); setErrFields(new Set(['earlyTime'])); scrollToFirstError(['earlyTime']); return; }
+    if (isLocationChange && !effectiveOriginalLocation()) { setError('変更前の校を選択してください'); setErrFields(new Set(['originalLocation'])); scrollToFirstError(['originalLocation']); return; }
 
     if (useSegments) {
       const segs = effectiveSegments();
@@ -689,8 +693,11 @@ const AbsenceInputSheet: React.FC<{
 
         {/* 対象者 */}
         <div style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>対象者</div>
-          <StaffPicker profiles={profiles} grouped={grouped} userId={userId} onSelect={setUserId} />
+          <div style={{ fontSize: 12, color: errFields.has('userId') ? '#dc3545' : '#666', marginBottom: 6 }}>対象者</div>
+          {/* 未選択で送信したときに薄赤で囲む（どこが原因か分かるように） */}
+          <div data-err-field="userId" style={errFields.has('userId') ? { border: `1px solid ${ERROR_BORDER}`, background: errorBg(false), borderRadius: 6, padding: 4 } : undefined}>
+            <StaffPicker profiles={profiles} grouped={grouped} userId={userId} onSelect={id => { setUserId(id); clearErr('userId'); }} />
+          </div>
         </div>
 
         {/* 種別 */}
@@ -754,7 +761,7 @@ const AbsenceInputSheet: React.FC<{
             {(isLate || isLateStart) && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 8 }} onClick={e => e.preventDefault()}>
                 <span style={{ fontSize: 12, color: '#666', whiteSpace: 'nowrap' }}>出勤時間</span>
-                <input type="time" value={lateTime} onChange={e => setLateTime(e.target.value)} onClick={e => e.stopPropagation()} style={{ ...selStyle, flex: 1 }} />
+                <input data-err-field="lateTime" type="time" value={lateTime} onChange={e => { setLateTime(e.target.value); clearErr('lateTime'); }} onClick={e => e.stopPropagation()} style={{ ...selStyle, ...errorStyle(errFields.has('lateTime'), false), flex: 1 }} />
               </div>
             )}
           </div>
@@ -774,7 +781,7 @@ const AbsenceInputSheet: React.FC<{
             {(isEarlyLeave || isEarlyEnd) && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 8 }} onClick={e => e.preventDefault()}>
                 <span style={{ fontSize: 12, color: '#666', whiteSpace: 'nowrap' }}>退勤時間</span>
-                <input type="time" value={earlyTime} onChange={e => setEarlyTime(e.target.value)} onClick={e => e.stopPropagation()} style={{ ...selStyle, flex: 1 }} />
+                <input data-err-field="earlyTime" type="time" value={earlyTime} onChange={e => { setEarlyTime(e.target.value); clearErr('earlyTime'); }} onClick={e => e.stopPropagation()} style={{ ...selStyle, ...errorStyle(errFields.has('earlyTime'), false), flex: 1 }} />
               </div>
             )}
           </div>
