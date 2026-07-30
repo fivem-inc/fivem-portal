@@ -70,6 +70,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **色は既存の全色と並べて、バッジとスマホの丸印の両方で比較してから決める**。バッジでは区別できても
   5pxの丸印では赤とローズ・橙とこはくが見分けられない
 
+### 作業ルール（毎回厳守）
+- 開始時：`git pull` → `git status` → CLAUDE.mdの最新引き継ぎ確認
+- 修正後：`cd client && npx tsc -b && npx vite build`
+- デプロイもClaudeが実施：DB変更はSQL全文提示→ユーザーが Supabase SQL Editor で実行、
+  Edge Function は `npx supabase functions deploy <名前> --project-ref xaeynaxctiiyqxjyuzfi`、
+  commit/push は Claude。push後は `git ls-remote origin master` で突合確認
+- **デプロイ順序：① DB migration → ② Edge Function → ③ クライアントpush**
+  （逆にするとフォールバックが働き、本番カレンダーに誤ったタイトル・色で書かれる）
+- **pushの許可は1回分**。以降の変更は都度確認する（勝手にpushしない）
+- `git add` 前に必ず `git status` 目視。`AGENTS.md`（未追跡）はコミットに含めない
+- `alert()` / `window.confirm()` / `.catch()` 禁止（インライン確認・成功は緑カード）
+- 認証は AuthContext 一元化。文言は「承認→受理」「却下→差し戻し」
+- RLS/RPCの管理者判定は必ず `(auth.jwt()->'app_metadata'->>'role')='admin'`
+- UI文言・配色・新機能・設計判断は**案提示→承認後に実装**。配色は visualize でモック提示。
+  大規模改修は UI/UXデザイナー＋シニアエンジニアの2体サブエージェントレビュー
+- 専門用語は新卒社会人でも分かるよう都度かみ砕いて説明する
+
 ---
 
 ## 📌 セッション引き継ぎ（2026-07-29・確認画面の改善／受理通知の配線漏れ修正）
