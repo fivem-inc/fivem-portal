@@ -121,6 +121,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - **リーダー以下には広げない**。申請者がリーダー以下なら「件数だけ」の出し分けは維持
 - migration `20260742000000_purchase_progress_visible_to_manager_plus.sql`
 
+### 🚨 10. RPC上書きで本番の申請送信を壊した（同日発生・同日修復。最重要の教訓）
+- **何が起きたか**：`20260741000000`（single_vendor_reason追加）で `submit_purchase_request` RPC を上書きした際、
+  ベースに**古い版（20260718700000）を使ってしまい**、後から入っていた2つの修正を消した：
+  ① reason（申請理由）の読み書き（20260708040000）② 配列引数の `jsonb_typeof` 防御（20260719200000）。
+  フォームは金額帯に応じて `requested_manager_ids` 等に **JSの null** を渡す。JSON null はスカラーなので
+  COALESCE では '[]' に置換されず、`jsonb_array_elements_text` が
+  「cannot extract elements from a scalar」で必ず失敗＝**実行後は全ての新規購入申請が送信不能だった**
+- 発見者はシニアエンジニアのサブエージェントレビュー（着手前の必須確認として指摘）。
+  `20260743000000_fix_submit_purchase_request_regression.sql` で修復（本番実行済み）
+- **教訓**：`CREATE OR REPLACE FUNCTION` は「差分」ではなく**全置換**。RPCを上書きするときは、
+  リポジトリのファイル名の並び（このプロジェクトは番号と時系列が一致していない）ではなく
+  **「実際に最後に適用された定義」**をベースにする。不安なら本番で
+  `select pg_get_functiondef('submit_purchase_request(uuid,boolean,jsonb,jsonb)'::regprocedure);` で実定義を確認してから書く
+- 同じRPCを次に触るとき（内訳breakdown追加予定）は **20260743 をベース**にすること
+
 ### ⚠️ 作業のしかたで踏んだ失敗（同じ手を使わないこと）
 **シェル経由の一括置換でファイルを壊した（2回）。** `node -e "..."` の中にJSのバックティック
 （テンプレート文字列）を書くと、**bashがコマンド置換として解釈して中身を消す**。
