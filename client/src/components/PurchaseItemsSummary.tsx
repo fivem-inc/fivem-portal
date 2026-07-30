@@ -23,6 +23,8 @@ const PurchaseItemsSummary: React.FC<PurchaseItemsSummaryProps> = ({ items, isDa
       <span style={{ fontWeight: 'bold' }}>　¥{item.amount.toLocaleString()}</span>
       {/* サイズ・色などの内訳メモ。承認の判断材料になるので品目名のすぐ下に出す */}
       {item.breakdown && <span style={{ display: 'block', fontSize: 12, color: subText }}>内訳・仕様：{item.breakdown}</span>}
+      {/* 単価×数量と違う金額にした理由（送料込み・値引き後など）。金額の根拠なので必ず見せる */}
+      {item.amount_override_note && <span style={{ display: 'block', fontSize: 12, color: subText }}>金額の内訳・調整：{item.amount_override_note}</span>}
     </>
   );
 

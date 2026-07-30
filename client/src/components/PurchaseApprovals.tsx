@@ -121,7 +121,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
     if (requestIds.length > 0) {
       const { data: itemRows } = await supabase
         .from('purchase_request_items')
-        .select('id, purchase_request_id, sort_order, item_name, quantity, amount, amount_manually_overridden, store_name, single_vendor_reason, breakdown')
+        .select('id, purchase_request_id, sort_order, item_name, quantity, amount, amount_manually_overridden, store_name, single_vendor_reason, breakdown, amount_override_note')
         .in('purchase_request_id', requestIds);
       const items = (itemRows ?? []) as (PurchaseRequestItem & { purchase_request_id: string })[];
 

@@ -20,6 +20,8 @@ export interface PurchaseRequestItem {
   single_vendor_reason?: string | null;
   // サイズ・色などの内訳メモ（金額に関係しない自由記述。金額が違う内訳は商品を分ける運用）
   breakdown?: string | null;
+  // 金額を手で上書きしたときの理由（送料込み・値引き後など）
+  amount_override_note?: string | null;
   store_name: string | null;
   quotes: PurchaseRequestItemQuote[];
 }

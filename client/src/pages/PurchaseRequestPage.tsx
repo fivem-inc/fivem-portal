@@ -112,7 +112,7 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
     if (requestIds.length > 0) {
       const { data: itemRows } = await supabase
         .from('purchase_request_items')
-        .select('id, purchase_request_id, sort_order, item_name, quantity, amount, amount_manually_overridden, store_name, single_vendor_reason, breakdown')
+        .select('id, purchase_request_id, sort_order, item_name, quantity, amount, amount_manually_overridden, store_name, single_vendor_reason, breakdown, amount_override_note')
         .in('purchase_request_id', requestIds);
       const items = (itemRows ?? []) as (PurchaseRequestItem & { purchase_request_id: string })[];
 
@@ -377,6 +377,11 @@ const PurchaseRequestPage: React.FC<PurchaseRequestPageProps> = ({ user, roleTit
             <span style={{ fontSize: 14, fontWeight: 'bold', color: '#664d03', lineHeight: '22px' }}>{label}</span>
           </div>
         ))}
+        {/* 普段の消耗品（発注管理表に載っているもの）は総務部が発注する運用のため、
+            このフォームの対象外であることを②の直下に明記する（2026-07-30ユーザー指示） */}
+        <p style={{ fontSize: 11.5, color: '#856404', margin: '0 0 0 30px', lineHeight: 1.6 }}>
+          普段の消耗品は、「発注管理表」を使用して、総務部が発注します。このフォームは普段購入していないものの申請に使います。
+        </p>
       </div>
 
       <div style={{ display: 'flex', background: cardBg, border: `1px solid ${border}`, borderRadius: 10, overflow: 'hidden', marginBottom: 14 }}>

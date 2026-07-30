@@ -39,12 +39,15 @@ interface ItemDraft {
   breakdown: string;
   // 1万円以上で価格比較が1社しか無いときの理由（1万円未満では使わない）
   singleVendorReason: string;
+  // 金額を手で上書きしたときの理由（送料込み・値引き後など）。
+  // 単価×数量と違う金額になった理由が承認者に分からないため
+  amountOverrideNote: string;
   collapsed: boolean;
 }
 // 業者カードは最低2枠を常に表示する（1枠目=購入先として必須・2枠目=比較を促すための空欄）
 const emptyItemDraft = (): ItemDraft => ({
   itemName: '', quantity: '', amount: '', amountManuallyOverridden: false, storeName: '',
-  quotes: [emptyQuoteDraft(), emptyQuoteDraft()], breakdown: '', singleVendorReason: '', collapsed: false,
+  quotes: [emptyQuoteDraft(), emptyQuoteDraft()], breakdown: '', singleVendorReason: '', amountOverrideNote: '', collapsed: false,
 });
 
 // 下書き（localStorage）や過去データを現在の形に揃える。
@@ -89,6 +92,7 @@ const itemDraftFromRecord = (item: PurchaseRequestItem): ItemDraft => {
     quotes,
     breakdown: item.breakdown ?? '',
     singleVendorReason: item.single_vendor_reason ?? '',
+    amountOverrideNote: item.amount_override_note ?? '',
     collapsed: false,
   };
 };
@@ -160,7 +164,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
   // 入力内容をlocalStorageへ自動保存し、戻ってきたら復元する（再申請時は使わない）
   interface FormDraft {
     items: ItemDraft[];
-    requestedDate: string; purpose: string; purposeDetail: string; reason: string;
+    requestedDate: string; purpose: string; reason: string;
     notes: string; location: string; leaderId: string;
     requestedManagerIds: string[]; sharedManagerIds: string[];
     presidentSelfJudgment: boolean; selfJudgeConfirmFirst: boolean;
@@ -196,8 +200,6 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
   const [items, setItems] = useState<ItemDraft[]>(initialItems);
   const [requestedDate, setRequestedDate] = useState(resubmitRecord?.requested_purchase_date ?? savedDraft?.requestedDate ?? todayJstStr());
   const [purpose, setPurpose] = useState(resubmitRecord?.purpose ?? savedDraft?.purpose ?? '');
-  // 用途を選択肢から選んだ場合でも、補足の詳細を書けるようにする任意欄
-  const [purposeDetail, setPurposeDetail] = useState(savedDraft?.purposeDetail ?? '');
   const [reason, setReason] = useState(resubmitRecord?.reason ?? savedDraft?.reason ?? '');
   const [notes, setNotes] = useState(resubmitRecord?.notes ?? savedDraft?.notes ?? '');
   const [location, setLocation] = useState(savedDraft?.location ?? '');
@@ -226,12 +228,12 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
     if (isResubmit) return;
     try {
       localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({
-        items, requestedDate, purpose, purposeDetail, reason, notes, location,
+        items, requestedDate, purpose, reason, notes, location,
         leaderId, requestedManagerIds, sharedManagerIds, presidentSelfJudgment,
         selfJudgeConfirmFirst, manualTotalOverride, totalManuallyOverridden, amountDiffReason,
       }));
     } catch { /* 保存容量超過などは無視 */ }
-  }, [isResubmit, items, requestedDate, purpose, purposeDetail, reason, notes, location, leaderId, requestedManagerIds, sharedManagerIds, presidentSelfJudgment, selfJudgeConfirmFirst, manualTotalOverride, totalManuallyOverridden, amountDiffReason]);
+  }, [isResubmit, items, requestedDate, purpose, reason, notes, location, leaderId, requestedManagerIds, sharedManagerIds, presidentSelfJudgment, selfJudgeConfirmFirst, manualTotalOverride, totalManuallyOverridden, amountDiffReason]);
 
   useEffect(() => {
     supabase.from('profiles').select('id, name, role_title').eq('is_active', true)
@@ -359,6 +361,10 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
   const updateItem = (index: number, patch: Partial<ItemDraft>) => {
     setItems(prev => prev.map((it, i) => i === index ? { ...it, ...patch } : it));
   };
+  // 商品が複数あるとき、開くカードは常に1つだけにする（縦に長くなって迷子になるのを防ぐ）
+  const openOnly = (index: number) => setItems(prev => prev.map((it, i) => ({ ...it, collapsed: i !== index })));
+  // コピー直後に品目名へカーソルを入れて全選択するための指定（同じ名前が並ぶのが混乱の主因なので、すぐ直せるようにする）
+  const [focusItemName, setFocusItemName] = useState<number | null>(null);
   const addItem = () => {
     setItems(prev => [...prev.map(it => ({ ...it, collapsed: true })), emptyItemDraft()]);
   };
@@ -375,8 +381,16 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
   const removeItem = (index: number) => {
     setItems(prev => prev.length <= 1 ? prev : prev.filter((_, i) => i !== index));
   };
+  // ヘッダー・目次からの開閉。開くときは他を閉じて1つだけにする
   const toggleItemCollapsed = (index: number) => {
-    setItems(prev => prev.map((it, i) => i === index ? { ...it, collapsed: !it.collapsed } : it));
+    setItems(prev => prev[index]?.collapsed
+      ? prev.map((it, i) => ({ ...it, collapsed: i !== index }))
+      : prev.map((it, i) => i === index ? { ...it, collapsed: true } : it));
+  };
+  // 目次（商品一覧）から該当カードを開いてスクロールする
+  const jumpToItem = (index: number) => {
+    openOnly(index);
+    requestAnimationFrame(() => itemRefs.current[index]?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   };
 
   // 商品ごとの単価×数量の自動計算。amountManuallyOverriddenがtrueなら自動計算は行わない
@@ -450,6 +464,8 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
         quotes: src.quotes.map(q => ({ ...q, quoteFilePath: null })),
         collapsed: false,
       };
+      // 追加した直後に品目名へカーソルを入れて全選択する（同じ名前が並ぶのを避ける）
+      setFocusItemName(prev.length);
       return [...prev.map(it => ({ ...it, collapsed: true })), copy];
     });
   };
@@ -457,7 +473,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
   const resetForm = () => {
     setItems([emptyItemDraft()]);
     setRequestedDate(todayJstStr());
-    setPurpose(''); setPurposeDetail(''); setReason(''); setNotes(''); setLocation('');
+    setPurpose(''); setReason(''); setNotes(''); setLocation('');
     setLeaderId(''); setRequestedManagerIds([]); setSharedManagerIds([]);
     setPresidentSelfJudgment(false); setSelfJudgeConfirmFirst(false);
     setManualTotalOverride(''); setTotalManuallyOverridden(false); setAmountDiffReason('');
@@ -470,6 +486,12 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
     // （1件ずつ返す作りだと「どこが原因か分からない」と実機で指摘された。数量の入力漏れが典型）
     const missing: { key: string; label: string }[] = [];
     const label = (i: number, name: string) => items.length > 1 ? `商品${i + 1}の${name}` : name;
+
+    // pushの順序は画面の並び（①使用先・用途 → ②商品 → ③申請理由 → ④承認）に合わせる。
+    // scrollToFirstError は missing[0] へスクロールするため、順序がズレると
+    // 画面上部の入力漏れを飛ばして中段へスクロールしてしまう
+    if (!location.trim()) missing.push({ key: 'location', label: '使用先' });
+    if (!purpose.trim()) missing.push({ key: 'purpose', label: '用途' });
 
     items.forEach((item, i) => {
       if (!item.itemName.trim()) missing.push({ key: `itemName-${i}`, label: label(i, '品目名') });
@@ -501,8 +523,6 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
 
     if (items.length > 1 && (!amount.trim() || isNaN(parsedAmount) || parsedAmount < 1)) missing.push({ key: 'total', label: '合計金額（1円以上）' });
     if (!requestedDate) missing.push({ key: 'requestedDate', label: '購入予定日' });
-    if (!location.trim()) missing.push({ key: 'location', label: '使用先' });
-    if (!purpose.trim()) missing.push({ key: 'purpose', label: '用途' });
     if (!reason.trim()) missing.push({ key: 'reason', label: '申請理由' });
     if (tier === 'leader' && !isSelfJudgment && !leaderId) missing.push({ key: 'leader', label: '確認を依頼するリーダー・マネージャー' });
     if (tier === 'manager' && !isSelfJudgment && requestedManagerIds.length === 0) missing.push({ key: 'managers', label: '承認を依頼するマネージャー（1名以上）' });
@@ -604,10 +624,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
       }
     };
 
-    // 用途を選択肢から選んだ場合は、補足の詳細（任意）があれば「区分（詳細）」の形にまとめて保存する
-    const finalPurpose = purposeOptions.includes(purpose) && purposeDetail.trim()
-      ? `${purpose}（${purposeDetail.trim()}）`
-      : purpose;
+    const finalPurpose = purpose;
 
     const p_header = {
       amount: parsedAmount,
@@ -636,6 +653,8 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
       amount_manually_overridden: item.amountManuallyOverridden,
       store_name: effectiveStoreName(item),
       breakdown: item.breakdown.trim(),
+      // 上書きしていないときは残さない（自動計算に戻したのに古い理由が残るのを防ぐ）
+      amount_override_note: item.amountManuallyOverridden ? item.amountOverrideNote.trim() : '',
       // 1万円以上で価格比較が1社しか無い場合のみ意味を持つ（それ以外は空で送る）
       single_vendor_reason: quotesRequired && validQuotes(item).length < 2 ? item.singleVendorReason.trim() : '',
       quotes: validQuotes(item)
@@ -730,11 +749,120 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
           </div>
         )}
 
-        {/* ① 購入するもの。初見の人は「何を買うか」から思考が始まるので、説明（②）より先に置く。
-            金額が先に決まることで、③の承認セクションが出る根拠（金額帯）も自然に伝わる */}
+        {/* 並び順は「目的（①②）→ 商品（③）→ 確認・承認（④）」（2026-07-30ユーザー決定）。
+            意図が不明確なまま業者を調べると調べる時間が無駄になるため、
+            使用先・用途・申請理由を商品の入力より先に置く。申請理由は金額に依存しないので前に書ける */}
         <div>
-          <div style={{ fontSize: 13, fontWeight: 'bold', color: text }}>① 購入するもの</div>
+          <div style={{ fontSize: 13, fontWeight: 'bold', color: text }}>① 何に使うか</div>
         </div>
+
+        <div>
+          <label style={labelStyle}>使用先 <span style={{ color: '#dc3545' }}>*</span></label>
+          {locationOptions.length > 0 ? (
+            <>
+              <select
+                data-err-field="location"
+                value={locationOptions.includes(location) ? location : (location ? 'その他' : '')}
+                onChange={e => { setLocation(e.target.value === 'その他' ? '' : e.target.value); clearErr('location'); }}
+                style={errStyle('location')}
+              >
+                <option value="">選択してください</option>
+                {locationOptions.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                <option value="その他">その他</option>
+              </select>
+              {(!locationOptions.includes(location)) && (
+                <input
+                  type="text" value={location} onChange={e => { setLocation(e.target.value); clearErr('location'); }}
+                  placeholder="使用先を入力" style={{ ...inputStyle, marginTop: 6 }}
+                />
+              )}
+            </>
+          ) : (
+            <input data-err-field="location" type="text" value={location} onChange={e => { setLocation(e.target.value); clearErr('location'); }} placeholder="使用先を入力" style={errStyle('location')} />
+          )}
+        </div>
+
+        <div>
+          <label style={labelStyle}>用途 <span style={{ color: '#dc3545' }}>*</span></label>
+          {purposeOptions.length > 0 ? (
+            <>
+              <select
+                data-err-field="purpose"
+                value={purposeOptions.includes(purpose) ? purpose : (purpose ? 'その他' : '')}
+                onChange={e => { setPurpose(e.target.value === 'その他' ? '' : e.target.value); clearErr('purpose'); }}
+                style={errStyle('purpose')}
+              >
+                <option value="">選択してください</option>
+                {purposeOptions.filter(p => p !== 'その他').map(p => <option key={p} value={p}>{p}</option>)}
+                <option value="その他">その他</option>
+              </select>
+              {/* プリセットを選んだときの「詳細（任意）」欄は廃止した。
+                  用途の直下に自由入力欄があると、そこに商品名を書きたくなり品目名と紛らわしい
+                  という実機の指摘（2026-07-30）。補足は「備考」に書く運用にする */}
+              {(!purposeOptions.includes(purpose)) && (
+                <input
+                  type="text" value={purpose} onChange={e => { setPurpose(e.target.value); clearErr('purpose'); }}
+                  placeholder="上記のどれにも当てはまらない場合は入力してください" style={{ ...inputStyle, marginTop: 6 }}
+                />
+              )}
+            </>
+          ) : (
+            <input data-err-field="purpose" type="text" value={purpose} onChange={e => { setPurpose(e.target.value); clearErr('purpose'); }} placeholder="上記のどれにも当てはまらない場合は入力してください" style={errStyle('purpose')} />
+          )}
+        </div>
+
+        <div style={{ borderTop: `1px solid ${border}`, paddingTop: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 'bold', color: text }}>② 何を買うか</div>
+          {/* 総額見積（一式）と品目ごとの購入で書き方が変わるため、入力の前に目安を示す。
+              仕組みは1つのまま「品目名を一式にするか、商品を分けるか」の判断に落としている */}
+          <div style={{ fontSize: 12, color: subText, marginTop: 6 }}>
+            ・業者に一式で見積を取った場合 → 商品は1件にして「〇〇一式」。業者ごとに総額と内訳を書きます<br />
+            ・品目ごとに買う場合 → 商品を分けて、それぞれに購入先と単価を書きます
+          </div>
+        </div>
+        {/* 商品が2件以上のときの目次。商品カードの「上」に置き、行をタップするとそのカードを開いて
+            そこまでスクロールする。以前は一番下にあり、コピーで増やすと何がどこにあるか分からなくなっていた */}
+        {items.length >= 2 && (
+          <div>
+            <label style={labelStyle}>商品一覧 <span style={{ color: subText, fontWeight: 'normal' }}>（タップで開く）</span></label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {items.map((it, i) => {
+                const isOpen = !it.collapsed;
+                // 商品ごとに選ぶ業者が違うことがあるので、目次で選択中の業者が分かるようにする
+                const selectedVendor = it.quotes.find(q => q.isSelected)?.vendor.trim();
+                return (
+                  <button
+                    key={i} type="button" onClick={() => jumpToItem(i)}
+                    style={{
+                      display: 'flex', alignItems: 'flex-start', gap: 8, width: '100%', textAlign: 'left',
+                      padding: '8px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: text,
+                      border: `${isOpen ? 2 : 1}px solid ${isOpen ? '#28a745' : border}`,
+                      background: isOpen ? (isDarkMode ? '#1e3a26' : '#f3fbf5') : 'transparent',
+                    }}
+                  >
+                    <span style={{ color: subText, flexShrink: 0 }}>{i + 1}</span>
+                    <span style={{ flex: 1 }}>
+                      {it.itemName || '(未入力)'}
+                      {it.quantity.trim() && <span style={{ color: subText }}>　×{it.quantity}</span>}
+                      {it.breakdown.trim() && (
+                        <span style={{ display: 'block', fontSize: 11, color: subText }}>{it.breakdown}</span>
+                      )}
+                      <span style={{ display: 'block', fontSize: 11, color: selectedVendor ? subText : '#dc3545' }}>
+                        {selectedVendor ? `購入予定先：${selectedVendor}` : '購入予定先が未選択'}
+                      </span>
+                    </span>
+                    <span style={{ whiteSpace: 'nowrap', fontWeight: 'bold' }}>¥{it.amount || '0'}</span>
+                    {isOpen && <span style={{ color: '#28a745', fontSize: 11, flexShrink: 0 }}>今ここ</span>}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ textAlign: 'right', fontSize: 12, color: subText, marginTop: 4 }}>
+              各商品の金額合計：¥{itemsSubtotal.toLocaleString()}
+            </div>
+          </div>
+        )}
+
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {items.map((item, itemIndex) => {
@@ -742,14 +870,27 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
             const itemQuotesRequired = quotesRequired;
 
             return (
-              <div key={itemIndex} ref={el => { itemRefs.current[itemIndex] = el; }} style={{ border: `1px solid ${border}`, borderRadius: 10, overflow: 'hidden', scrollMarginTop: 70 }}>
+              <div
+                key={itemIndex} ref={el => { itemRefs.current[itemIndex] = el; }}
+                style={{
+                  // 開いているカードの枠を緑にして「今どこを編集しているか」を分かるようにする
+                  border: `${showHeader && !item.collapsed ? 2 : 1}px solid ${showHeader && !item.collapsed ? '#28a745' : border}`,
+                  borderRadius: 10, overflow: 'hidden', scrollMarginTop: 70,
+                }}
+              >
                 {showHeader && (
                   <div
                     onClick={() => toggleItemCollapsed(itemIndex)}
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', background: inputBg, cursor: 'pointer', fontSize: 13, color: text, fontWeight: 'bold' }}
+                    style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 12px', background: inputBg, cursor: 'pointer', fontSize: 13, color: text, fontWeight: 'bold' }}
                   >
-                    <span>商品{itemIndex + 1}　{item.itemName || '(未入力)'}</span>
-                    <span style={{ marginLeft: 'auto' }}>¥{item.amount || '0'}</span>
+                    <span style={{ flex: 1 }}>
+                      商品{itemIndex + 1}　{item.itemName || '(未入力)'}
+                      {/* 同じ品目名が並んだときの見分けになるので内訳も出す */}
+                      {item.breakdown.trim() && (
+                        <span style={{ display: 'block', fontSize: 11, fontWeight: 'normal', color: subText }}>{item.breakdown}</span>
+                      )}
+                    </span>
+                    <span style={{ whiteSpace: 'nowrap' }}>¥{item.amount || '0'}</span>
                     <span style={{ color: subText, fontSize: 11 }}>{item.collapsed ? '▼' : '▲'}</span>
                   </div>
                 )}
@@ -758,10 +899,21 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
                   <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
                     <div>
                       <label style={labelStyle}>品目名 <span style={{ color: '#dc3545' }}>*</span></label>
+                      {/* 鉛筆・消しゴム等のまとめ買いで「何を書けばいいか分からない」への案内（2026-07-30） */}
+                      <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>
+                        まとめて買う場合は「事務用品」「〇〇一式」などでも構いません。
+                      </div>
                       <input
                         data-err-field={`itemName-${itemIndex}`}
+                        // コピー直後だけカーソルを入れて全選択する（「Sサイズ」等にすぐ直せるように）
+                        ref={el => {
+                          if (el && focusItemName === itemIndex) {
+                            el.focus(); el.select();
+                            setFocusItemName(null);
+                          }
+                        }}
                         type="text" value={item.itemName} onChange={e => { updateItem(itemIndex, { itemName: e.target.value }); clearErr(`itemName-${itemIndex}`); }}
-                        placeholder="具体的な品名を入力してください" style={errStyle(`itemName-${itemIndex}`)}
+                        placeholder="例：ミニハードル／ロイター板" style={errStyle(`itemName-${itemIndex}`)}
                       />
                     </div>
 
@@ -773,12 +925,15 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
                       <input
                         type="text" value={item.breakdown}
                         onChange={e => updateItem(itemIndex, { breakdown: e.target.value })}
-                        placeholder="例：Sサイズ×2、Mサイズ×1" style={inputStyle}
+                        placeholder="例：高さ30cm×10本／幅60cm" style={inputStyle}
                       />
                     </div>
 
                     <div>
                       <label style={labelStyle}>数量 <span style={{ color: '#dc3545' }}>*</span></label>
+                      <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>
+                        業者に一式で見積を取った場合は数量1にして、下の金額に見積総額を入れてください。
+                      </div>
                       <input
                         data-err-field={`quantity-${itemIndex}`}
                         type="number" min="1" value={item.quantity}
@@ -795,11 +950,16 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
                       <label style={labelStyle}>
                         購入先・価格比較 {itemQuotesRequired ? <span style={{ color: '#dc3545' }}>*（2社以上必須）</span> : <span style={{ color: '#dc3545' }}>*</span>}
                       </label>
-                      <div style={{ fontSize: 12, color: itemQuotesRequired ? '#dc3545' : subText, marginBottom: 4, fontWeight: itemQuotesRequired ? 'bold' : 'normal' }}>
-                        {itemQuotesRequired
-                          ? '⚠️ 申請合計が1万円以上のため、2社以上の価格比較が必要です。'
-                          : '1社目は購入先として必ず入力してください。2社目以降は任意ですが、価格を比べておくとコスト意識の共有に役立つのでご協力ください。'}
-                      </div>
+                      {/* 1万円以上は赤いバナーで「必須」を明示（2026-07-30ユーザー承認済みの文言・固定の明るい赤） */}
+                      {itemQuotesRequired ? (
+                        <div style={{ marginBottom: 6, padding: '8px 10px', background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, fontSize: 12, fontWeight: 'bold', color: '#842029' }}>
+                          申請合計が1万円以上のため、2社以上の価格比較が必須です
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 12, color: subText, marginBottom: 4 }}>
+                          1万円未満でも、複数の業者・店舗で価格を比べておくとコスト意識の共有に役立ちます。1社目は購入先として必ず入力してください（2社目以降は任意です）。
+                        </div>
+                      )}
                       {/* 商品ごとに業者を打ち直す手間は「この商品をコピーして追加」（カード下部）で解消するため、
                           旧「商品1の業者情報をコピー」ボタンは廃止した */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -808,6 +968,8 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
                             <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
                               <span style={{ fontSize: 12, fontWeight: 'bold', color: subText }}>
                                 業者 {qi + 1}{qi === 0 ? '（購入先）' : ''}
+                                {/* 1万円以上は2社目が必須になることを枠の見出しにも示す */}
+                                {qi === 1 && itemQuotesRequired && <span style={{ color: '#dc3545', marginLeft: 4 }}>（必須）</span>}
                                 {q.isSelected && <span style={{ color: '#28a745', marginLeft: 6 }}>購入予定</span>}
                               </span>
                               {item.quotes.length > 2 && (
@@ -828,12 +990,16 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
                               <input
                                 type="text" inputMode="numeric" value={q.unitAmount}
                                 onChange={e => { updateQuote(itemIndex, qi, { unitAmount: formatAmount(parseAmount(e.target.value)) }); clearErr(`quote-${itemIndex}-${qi}`); clearErr(`purchaseFrom-${itemIndex}`); }}
-                                placeholder="単価（税込み）" style={inputStyle}
+                                placeholder="金額（税込み）" style={inputStyle}
                               />
                             </div>
-                            <input
-                              type="text" value={q.note} onChange={e => updateQuote(itemIndex, qi, { note: e.target.value })}
-                              placeholder="コメント・参考リンク（任意）" style={{ ...inputStyle, marginTop: 6 }}
+                            {/* 業者に一式で見積を取った場合、機器構成・工事費・送料・値引きをここに書く。
+                                業者ごとに取扱いや構成が違っても、総額同士を比べられるようにするため複数行にした */}
+                            <textarea
+                              value={q.note} onChange={e => updateQuote(itemIndex, qi, { note: e.target.value })}
+                              rows={2}
+                              placeholder="内訳・条件（任意）　例：ミニハードル10本／収納袋付き／送料無料／値引き -3,000"
+                              style={{ ...inputStyle, marginTop: 6, resize: 'vertical' as const }}
                             />
                             <div style={{ marginTop: 6 }}>
                               <QuoteFileUploader
@@ -912,7 +1078,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
                             data-err-field={`singleVendor-${itemIndex}`}
                             type="text" value={item.singleVendorReason}
                             onChange={e => { updateItem(itemIndex, { singleVendorReason: e.target.value }); clearErr(`singleVendor-${itemIndex}`); }}
-                            placeholder="例：この機器は京都総合通信のみの取扱いのため"
+                            placeholder="例：同規格の取扱いがこの業者のみのため"
                             style={errStyle(`singleVendor-${itemIndex}`)}
                           />
                         </div>
@@ -922,15 +1088,24 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
                     <div>
                       <label style={labelStyle}>金額（見積り） <span style={{ color: '#dc3545' }}>*</span></label>
                       {item.amountManuallyOverridden ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ color: text, fontSize: 16 }}>¥</span>
+                        <>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ color: text, fontSize: 16 }}>¥</span>
+                            <input
+                              data-err-field={`amount-${itemIndex}`}
+                              type="text" inputMode="numeric" value={item.amount}
+                              onChange={e => { updateItem(itemIndex, { amount: formatAmount(parseAmount(e.target.value)) }); clearErr(`amount-${itemIndex}`); }}
+                              placeholder="0" style={errStyle(`amount-${itemIndex}`)}
+                            />
+                          </div>
+                          {/* 単価×数量と違う金額にした理由。書かないと承認者が金額の根拠を追えない */}
                           <input
-                            data-err-field={`amount-${itemIndex}`}
-                            type="text" inputMode="numeric" value={item.amount}
-                            onChange={e => { updateItem(itemIndex, { amount: formatAmount(parseAmount(e.target.value)) }); clearErr(`amount-${itemIndex}`); }}
-                            placeholder="0" style={errStyle(`amount-${itemIndex}`)}
+                            type="text" value={item.amountOverrideNote}
+                            onChange={e => updateItem(itemIndex, { amountOverrideNote: e.target.value })}
+                            placeholder="金額の内訳・調整理由（任意）　例：配送設置費込み／値引き後"
+                            style={{ ...inputStyle, marginTop: 6 }}
                           />
-                        </div>
+                        </>
                       ) : (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <div style={{ ...inputStyle, background: isDarkMode ? '#232336' : '#f0f0f0', color: subText, flex: 1 }}>
@@ -982,41 +1157,8 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
         </div>
 
         {items.length >= 2 && (
-          <div style={{ overflowX: 'auto' }}>
-            <label style={labelStyle}>商品一覧</label>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, color: text }}>
-              <thead>
-                <tr style={{ background: inputBg }}>
-                  <th style={{ textAlign: 'left', padding: '6px 8px', border: `1px solid ${border}` }}>品目名</th>
-                  <th style={{ textAlign: 'right', padding: '6px 8px', border: `1px solid ${border}` }}>数量</th>
-                  <th style={{ textAlign: 'right', padding: '6px 8px', border: `1px solid ${border}` }}>単価</th>
-                  <th style={{ textAlign: 'right', padding: '6px 8px', border: `1px solid ${border}` }}>金額</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((it, i) => {
-                  const selected = it.quotes.find(q => q.isSelected);
-                  const unitAmount = selected?.unitAmount.trim() ? `¥${selected.unitAmount}` : '';
-                  return (
-                    <tr key={i}>
-                      <td style={{ padding: '6px 8px', border: `1px solid ${border}` }}>
-                        {it.itemName || '(未入力)'}
-                        {it.breakdown.trim() && <div style={{ fontSize: 11, color: subText }}>{it.breakdown}</div>}
-                      </td>
-                      <td style={{ textAlign: 'right', padding: '6px 8px', border: `1px solid ${border}` }}>{it.quantity || ''}</td>
-                      <td style={{ textAlign: 'right', padding: '6px 8px', border: `1px solid ${border}` }}>{unitAmount}</td>
-                      <td style={{ textAlign: 'right', padding: '6px 8px', border: `1px solid ${border}` }}>¥{it.amount || '0'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {items.length >= 2 && (
           <div>
-            <label style={labelStyle}>合計金額 <span style={{ color: '#dc3545' }}>*</span></label>
+            <label style={labelStyle}>申請する合計金額 <span style={{ color: '#dc3545' }}>*</span></label>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ color: text, fontSize: 14 }}>¥</span>
               <input
@@ -1041,70 +1183,35 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
           </div>
         )}
 
+        {/* 承認ルートのチップ。金額を決める場所の近くで「今の金額だと誰の承認になるか」を常に見せる
+            （2026-07-30ユーザー承認）。色は固定＝leader緑/manager青/boardアンバー。赤はエラーと誤認するため使わない */}
+        {tier !== 'none' && (() => {
+          const selfJ = isSelfJudgment || (tier === 'board' && isPresident && presidentSelfJudgment);
+          const routeName = selfJ ? '自己判断（共有のみ）' : tier === 'leader' ? 'リーダー確認' : tier === 'manager' ? 'マネージャー承認' : '全員承認';
+          const c = tier === 'leader'
+            ? { bg: '#f0fdf4', bd: '#86efac', fg: '#166534' }
+            : tier === 'manager'
+              ? { bg: '#e3f2fd', bd: '#90caf9', fg: '#1565c0' }
+              : { bg: '#fff8e1', bd: '#ffe082', fg: '#8a6d00' };
+          return (
+            <div>
+              <span style={{ display: 'inline-block', padding: '4px 10px', borderRadius: 8, fontSize: 12, fontWeight: 'bold', background: c.bg, border: `1px solid ${c.bd}`, color: c.fg }}>
+                承認ルート：{routeName}（{TIER_LABEL[tier]}）
+              </span>
+            </div>
+          );
+        })()}
+
         <div>
           <label style={labelStyle}>購入予定日 <span style={{ color: '#dc3545' }}>*</span></label>
           <input data-err-field="requestedDate" type="date" value={requestedDate} onChange={e => { setRequestedDate(e.target.value); clearErr('requestedDate'); }} style={errStyle('requestedDate')} />
         </div>
 
-        {/* ② 購入の目的。「何を買うか」より先に説明を求められると書きあぐねる、という指摘を受け
-            商品の入力（①）より後ろに移動した */}
+        {/* ③ 申請理由。使用先・用途（①）は商品を選ぶ前に決まっているが、
+            申請理由は「何をいくらで買うか」が決まってから書いた方が具体的に書ける（2026-07-30ユーザー決定）。
+            用途の直下に自由入力欄を置くと品目名と紛らわしいという指摘への対応も兼ねる */}
         <div style={{ borderTop: `1px solid ${border}`, paddingTop: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 'bold', color: text }}>② 購入の目的</div>
-        </div>
-
-        <div>
-          <label style={labelStyle}>使用先 <span style={{ color: '#dc3545' }}>*</span></label>
-          {locationOptions.length > 0 ? (
-            <>
-              <select
-                value={locationOptions.includes(location) ? location : (location ? 'その他' : '')}
-                onChange={e => setLocation(e.target.value === 'その他' ? '' : e.target.value)}
-                style={inputStyle}
-              >
-                <option value="">選択してください</option>
-                {locationOptions.map(loc => <option key={loc} value={loc}>{loc}</option>)}
-                <option value="その他">その他</option>
-              </select>
-              {(!locationOptions.includes(location)) && (
-                <input
-                  type="text" value={location} onChange={e => setLocation(e.target.value)}
-                  placeholder="使用先を入力" style={{ ...inputStyle, marginTop: 6 }}
-                />
-              )}
-            </>
-          ) : (
-            <input type="text" value={location} onChange={e => setLocation(e.target.value)} placeholder="使用先を入力" style={inputStyle} />
-          )}
-        </div>
-
-        <div>
-          <label style={labelStyle}>用途 <span style={{ color: '#dc3545' }}>*</span></label>
-          {purposeOptions.length > 0 ? (
-            <>
-              <select
-                value={purposeOptions.includes(purpose) ? purpose : (purpose ? 'その他' : '')}
-                onChange={e => setPurpose(e.target.value === 'その他' ? '' : e.target.value)}
-                style={inputStyle}
-              >
-                <option value="">選択してください</option>
-                {purposeOptions.filter(p => p !== 'その他').map(p => <option key={p} value={p}>{p}</option>)}
-                <option value="その他">その他</option>
-              </select>
-              {(!purposeOptions.includes(purpose)) ? (
-                <input
-                  type="text" value={purpose} onChange={e => setPurpose(e.target.value)}
-                  placeholder="上記のどれにも当てはまらない場合は入力してください" style={{ ...inputStyle, marginTop: 6 }}
-                />
-              ) : (
-                <input
-                  type="text" value={purposeDetail} onChange={e => setPurposeDetail(e.target.value)}
-                  placeholder="詳細（任意）" style={{ ...inputStyle, marginTop: 6 }}
-                />
-              )}
-            </>
-          ) : (
-            <input type="text" value={purpose} onChange={e => setPurpose(e.target.value)} placeholder="上記のどれにも当てはまらない場合は入力してください" style={inputStyle} />
-          )}
+          <div style={{ fontSize: 13, fontWeight: 'bold', color: text }}>③ 購入の理由</div>
         </div>
 
         <div>
@@ -1114,23 +1221,23 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
           </div>
           <textarea
             data-err-field="reason" value={reason} onChange={e => { setReason(e.target.value); clearErr('reason'); }} rows={2}
-            placeholder="例：現在のマットが老朽化し安全に使用できなくなったため、同等品に交換する必要がある"
+            placeholder="例：ロイター板が割れて、踏み切り時の安全が確保できないため交換する"
             style={{ ...inputStyle, resize: 'vertical' as const }}
           />
         </div>
 
-        {/* 備考は目的セクションに置く。承認先を選んだあと（送信直前）に空の入力欄が現れると、
+        {/* 備考は理由セクションに置く。承認先を選んだあと（送信直前）に空の入力欄が現れると、
             任意欄なのに最後の関門のように見えるという指摘への対応 */}
         <div>
           <label style={labelStyle}>備考 <span style={{ color: subText, fontWeight: 'normal' }}>（任意）</span></label>
           <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} style={{ ...inputStyle, resize: 'vertical' as const }} />
         </div>
 
-        {/* ③ 確認・承認セクションの見出し。金額が決まるまで承認関連UIが一切描画されず
+        {/* ④ 確認・承認セクションの見出し。金額が決まるまで承認関連UIが一切描画されず
             「承認は誰に頼むのか」が画面上どこにも見えない、という指摘への対応。
             未入力のうちから枠と案内を出して、この先に承認の話があることを見せる */}
         <div style={{ borderTop: `1px solid ${border}`, paddingTop: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 'bold', color: text }}>③ 確認・承認</div>
+          <div style={{ fontSize: 13, fontWeight: 'bold', color: text }}>④ 確認・承認</div>
           {tier === 'none' && (
             <div style={{ fontSize: 12, color: subText, marginTop: 6, padding: '10px 12px', border: `1px dashed ${border}`, borderRadius: 8 }}>
               金額を入力すると、承認の依頼先がここに表示されます。
@@ -1329,9 +1436,11 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
                 </div>
               </div>
 
-              {row('購入予定日', requestedDate)}
+              {/* 行順は入力画面の並び（使用先→用途→購入予定日→申請理由→備考）に合わせる。
+                  入力順と確認順がズレると読み合わせで照合ミスが起きるため */}
               {row('使用先', location)}
-              {row('用途', purposeDetail.trim() ? `${purpose}（${purposeDetail.trim()}）` : purpose)}
+              {row('用途', purpose)}
+              {row('購入予定日', requestedDate)}
               {row('申請理由', reason)}
               {notes.trim() && row('備考', notes)}
 
