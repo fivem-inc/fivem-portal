@@ -509,7 +509,8 @@ const ShiftReportForm: React.FC<{
       const now = new Date().toISOString();
       const record = {
         applicant_id:      applicantId,
-        submitted_by:      user.id,
+        // 修正のときは「最初に出した人」を書き換えない（書き換えると代行表示が別人になってしまう）
+        submitted_by:      editTarget ? editTarget.submitted_by : user.id,
         work_date:         date,
         pay_period_start:  calcPayPeriodStart(date),
         application_type:  pType,
@@ -534,7 +535,14 @@ const ShiftReportForm: React.FC<{
       };
       if (editTarget) {
         await supabase.from('shift_report_history').insert({ report_id: editTarget.id, changed_by: user.id, change_summary: changeSummary.trim(), snapshot: editTarget });
-        await supabase.from('shift_reports').update(record).eq('id', editTarget.id);
+        // 更新できたか必ず確認する。権限が足りないと0件更新で静かに失敗し、直したつもりで直っていない事故になる
+        const { data: updated, error: updErr } = await supabase.from('shift_reports').update(record).eq('id', editTarget.id).select('id');
+        if (updErr || !updated || updated.length === 0) {
+          console.error('[update shift_reports] error:', updErr);
+          setError(updErr ? updErr.message : 'この報告を修正する権限がありません');
+          setSaving(false); setShowConfirm(false);
+          return;
+        }
       } else {
         const { data: newReport, error: err } = await supabase.from('shift_reports').insert(record).select('id').single();
         if (err) {
@@ -1261,6 +1269,90 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     setOpenPeriods(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
   };
 
+  // 取消・差戻し・修正フォームは「確認ページ」と「通常ページ」の両方から開く。
+  // ⚠️ 以前ここを通常ページ側だけに置いていたため、確認ページではボタンを押しても
+  //    何も出ない（＝効かない）状態だった。早期returnがあるので必ず両方に描画すること。
+  const modals = (
+    <>
+      {/* 取り消し理由モーダル */}
+      {cancelTarget && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px' }}>
+          <div style={{ background: isDark ? '#343a40' : '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 340, boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
+            <div style={{ fontSize: 15, fontWeight: 'bold', color: isDark ? '#fff' : '#1a1a2e', marginBottom: 6 }}>
+              報告を取り消す
+            </div>
+            <div style={{ fontSize: 13, color: isDark ? '#adb5bd' : '#555', marginBottom: 16 }}>
+              {(cancelTarget.application_types?.length ? cancelTarget.application_types : [cancelTarget.application_type]).map(t => `${TYPE_INFO[t].emoji} ${TYPE_INFO[t].label}`).join(' ＋ ')}　{cancelTarget.work_date.slice(5).replace('-', '/')}
+            </div>
+            <label style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#666', display: 'block', marginBottom: 6 }}>
+              取り消し理由（任意）
+            </label>
+            <textarea
+              value={cancelReason}
+              onChange={e => setCancelReason(e.target.value)}
+              rows={3}
+              placeholder="例：日程変更になったため"
+              style={{ width: '100%', padding: '9px 12px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ddd'}`, fontSize: 14, boxSizing: 'border-box', background: isDark ? '#495057' : '#fff', color: isDark ? '#fff' : '#333', resize: 'none' }}
+            />
+            <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+              <button type="button" onClick={() => { setCancelTarget(null); setCancelReason(''); }}
+                style={{ flex: 1, padding: '10px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ddd'}`, background: 'none', color: isDark ? '#adb5bd' : '#555', fontSize: 14, cursor: 'pointer' }}>
+                閉じる
+              </button>
+              <button type="button" onClick={executeCancelReport}
+                style={{ flex: 1, padding: '10px', borderRadius: 8, border: 'none', background: '#dc3545', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
+                取り消す
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 差戻しコメントモーダル */}
+      {returnTarget && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px' }}>
+          <div style={{ background: isDark ? '#343a40' : '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 340, boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
+            <div style={{ fontSize: 15, fontWeight: 'bold', color: isDark ? '#fff' : '#1a1a2e', marginBottom: 6 }}>差戻し</div>
+            <div style={{ fontSize: 13, color: isDark ? '#adb5bd' : '#555', marginBottom: 16 }}>
+              {(returnTarget.application_types?.length ? returnTarget.application_types : [returnTarget.application_type]).map(t => `${TYPE_INFO[t].emoji} ${TYPE_INFO[t].label}`).join(' ＋ ')}　{returnTarget.work_date.slice(5).replace('-', '/')}
+              <br /><span style={{ fontSize: 12 }}>（{(returnTarget.applicant as { name: string | null } | null)?.name ?? '不明'}）</span>
+            </div>
+            <label style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#666', display: 'block', marginBottom: 6 }}>差戻し理由（任意・本人に通知されます）</label>
+            <textarea
+              value={returnComment}
+              onChange={e => setReturnComment(e.target.value)}
+              rows={3}
+              placeholder="例：時間の記録を確認してください"
+              style={{ width: '100%', padding: '9px 12px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ddd'}`, fontSize: 14, boxSizing: 'border-box', background: isDark ? '#495057' : '#fff', color: isDark ? '#fff' : '#333', resize: 'none' }}
+            />
+            <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+              <button type="button" onClick={() => { setReturnTarget(null); setReturnComment(''); }}
+                style={{ flex: 1, padding: '10px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ddd'}`, background: 'none', color: isDark ? '#adb5bd' : '#555', fontSize: 14, cursor: 'pointer' }}>
+                閉じる
+              </button>
+              <button type="button" onClick={handleReturn} disabled={returningId === returnTarget.id}
+                style={{ flex: 1, padding: '10px', borderRadius: 8, border: 'none', background: returningId === returnTarget.id ? '#6c757d' : '#ffc107', color: '#856404', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
+                {returningId === returnTarget.id ? '処理中...' : '差戻す'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showForm && (
+        <ShiftReportForm
+          user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin}
+          editTarget={editTarget}
+          reviewers={reviewers}
+          workplaces={workplaces}
+          leaderAssignments={leaderAssignments}
+          onClose={() => { setShowForm(false); setEditTarget(null); }}
+          onSaved={handleSaved}
+        />
+      )}
+    </>
+  );
+
   // ─── 確認ページ（承認者専用ビュー）───
   if (confirmView) {
     return (
@@ -1324,6 +1416,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
             );
           })}
         </div>
+        {modals}
       </div>
     );
   }
@@ -1629,82 +1722,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
         )}
       </div>
 
-      {/* 取り消し理由モーダル */}
-      {cancelTarget && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px' }}>
-          <div style={{ background: isDark ? '#343a40' : '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 340, boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
-            <div style={{ fontSize: 15, fontWeight: 'bold', color: isDark ? '#fff' : '#1a1a2e', marginBottom: 6 }}>
-              報告を取り消す
-            </div>
-            <div style={{ fontSize: 13, color: isDark ? '#adb5bd' : '#555', marginBottom: 16 }}>
-              {(cancelTarget.application_types?.length ? cancelTarget.application_types : [cancelTarget.application_type]).map(t => `${TYPE_INFO[t].emoji} ${TYPE_INFO[t].label}`).join(' ＋ ')}　{cancelTarget.work_date.slice(5).replace('-', '/')}
-            </div>
-            <label style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#666', display: 'block', marginBottom: 6 }}>
-              取り消し理由（任意）
-            </label>
-            <textarea
-              value={cancelReason}
-              onChange={e => setCancelReason(e.target.value)}
-              rows={3}
-              placeholder="例：日程変更になったため"
-              style={{ width: '100%', padding: '9px 12px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ddd'}`, fontSize: 14, boxSizing: 'border-box', background: isDark ? '#495057' : '#fff', color: isDark ? '#fff' : '#333', resize: 'none' }}
-            />
-            <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
-              <button type="button" onClick={() => { setCancelTarget(null); setCancelReason(''); }}
-                style={{ flex: 1, padding: '10px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ddd'}`, background: 'none', color: isDark ? '#adb5bd' : '#555', fontSize: 14, cursor: 'pointer' }}>
-                閉じる
-              </button>
-              <button type="button" onClick={executeCancelReport}
-                style={{ flex: 1, padding: '10px', borderRadius: 8, border: 'none', background: '#dc3545', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
-                取り消す
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 差戻しコメントモーダル */}
-      {returnTarget && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px' }}>
-          <div style={{ background: isDark ? '#343a40' : '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 340, boxShadow: '0 4px 24px rgba(0,0,0,0.2)' }}>
-            <div style={{ fontSize: 15, fontWeight: 'bold', color: isDark ? '#fff' : '#1a1a2e', marginBottom: 6 }}>差戻し</div>
-            <div style={{ fontSize: 13, color: isDark ? '#adb5bd' : '#555', marginBottom: 16 }}>
-              {(returnTarget.application_types?.length ? returnTarget.application_types : [returnTarget.application_type]).map(t => `${TYPE_INFO[t].emoji} ${TYPE_INFO[t].label}`).join(' ＋ ')}　{returnTarget.work_date.slice(5).replace('-', '/')}
-              <br /><span style={{ fontSize: 12 }}>（{(returnTarget.applicant as { name: string | null } | null)?.name ?? '不明'}）</span>
-            </div>
-            <label style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#666', display: 'block', marginBottom: 6 }}>差戻し理由（任意・本人に通知されます）</label>
-            <textarea
-              value={returnComment}
-              onChange={e => setReturnComment(e.target.value)}
-              rows={3}
-              placeholder="例：時間の記録を確認してください"
-              style={{ width: '100%', padding: '9px 12px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ddd'}`, fontSize: 14, boxSizing: 'border-box', background: isDark ? '#495057' : '#fff', color: isDark ? '#fff' : '#333', resize: 'none' }}
-            />
-            <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
-              <button type="button" onClick={() => { setReturnTarget(null); setReturnComment(''); }}
-                style={{ flex: 1, padding: '10px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ddd'}`, background: 'none', color: isDark ? '#adb5bd' : '#555', fontSize: 14, cursor: 'pointer' }}>
-                閉じる
-              </button>
-              <button type="button" onClick={handleReturn} disabled={returningId === returnTarget.id}
-                style={{ flex: 1, padding: '10px', borderRadius: 8, border: 'none', background: returningId === returnTarget.id ? '#6c757d' : '#ffc107', color: '#856404', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
-                {returningId === returnTarget.id ? '処理中...' : '差戻す'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showForm && (
-        <ShiftReportForm
-          user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin}
-          editTarget={editTarget}
-          reviewers={reviewers}
-          workplaces={workplaces}
-          leaderAssignments={leaderAssignments}
-          onClose={() => { setShowForm(false); setEditTarget(null); }}
-          onSaved={handleSaved}
-        />
-      )}
+      {modals}
     </div>
   );
 };
