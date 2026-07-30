@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import type { AuthUser } from '../types';
-import { formatAmount, parseAmount } from '../utils';
+import { formatAmount, parseAmount, paymentMethodLabel } from '../utils';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import ReceiptUploader, { type ReceiptValue } from './ReceiptUploader';
@@ -131,6 +131,8 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
   const [formError, setFormError] = useState('');
   // 入力漏れの欄を薄赤にするためのキー集合（lib/formHighlight.ts の共通色を使う）
   const [errFields, setErrFields] = useState<Set<string>>(new Set());
+  // 送信前の確認画面
+  const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [successBanner, setSuccessBanner] = useState(false);
 
@@ -175,6 +177,14 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
     if (receiptUploading) { setFormError('レシート写真をアップロード中です。完了までお待ちください。'); return; }
     if (receipt.receiptType === 'photo' && !receipt.receiptStoragePath) { setFormError('レシート写真のアップロードがまだ完了していません。レシート欄に『レシートを添付しました』と表示されてから送信してください。'); return; }
 
+    // 送信前に内容を確認できるようにする（他の申請ページと同じ流れに揃えた）
+    setShowConfirm(true);
+  };
+
+  const doSubmit = async () => {
+    setShowConfirm(false);
+    const parsedQuantity = parseInt(quantity, 10);
+    const parsedAmount = parseInt(parseAmount(amount), 10);
     setSubmitting(true);
     const { error } = await supabase.from('purchase_requests').insert({
       id: draftId,
@@ -443,6 +453,61 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
           {submitting ? '送信しています...' : receiptUploading ? 'レシートをアップロード中...' : '送信する'}
         </button>
       </div>
+
+      {/* 送信前の確認画面。精算は承認ルートが無いので、内容の読み合わせだけ */}
+      {showConfirm && (() => {
+        const row = (label: string, value: React.ReactNode) => (
+          <div style={{ display: 'flex', gap: 8, fontSize: 13, color: text, marginBottom: 4 }}>
+            <span style={{ color: subText, flexShrink: 0, minWidth: 76 }}>{label}</span>
+            <span style={{ flex: 1, wordBreak: 'break-word' }}>{value}</span>
+          </div>
+        );
+        // 支払方法の表示は他画面と同じ共通関数に揃える（表記のズレを作らない）
+        const paymentText = paymentMethodLabel({
+          payment_method: paymentMethod || null,
+          payment_method_detail: paymentMethodDetail || null,
+          payment_method_other: paymentMethodOther.trim() || null,
+        });
+        const receiptText = receipt.receiptType === 'photo' ? '写真を添付'
+          : receipt.receiptType === 'physical' ? '直接提出する'
+          : `なし（${receipt.receiptMissingReason}）`;
+        return (
+          <div
+            onClick={() => setShowConfirm(false)}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+          >
+            <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 12, padding: 18, width: '100%', maxWidth: 440, maxHeight: '85vh', overflowY: 'auto' }}>
+              <div style={{ fontSize: 15, fontWeight: 'bold', color: text, marginBottom: 12, textAlign: 'center' }}>この内容で記録します</div>
+
+              {row('品目', `${itemName} × ${quantity}`)}
+              {row('金額', <span style={{ fontWeight: 'bold' }}>¥{amount}</span>)}
+              {row('購入日', purchasedAt)}
+              {row('購入先', storeName)}
+              {row('使用先', location)}
+              {row('用途', finalPurpose)}
+              {instructedBy && row('指示者', instructedBy)}
+              {row('支払方法', paymentText)}
+              {row('レシート', receiptText)}
+              {notes.trim() && row('備考', notes)}
+
+              <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+                <button
+                  type="button" onClick={() => setShowConfirm(false)}
+                  style={{ flex: 1, padding: '12px', borderRadius: 8, border: `1px solid ${border}`, background: 'transparent', color: text, fontSize: 14, cursor: 'pointer' }}
+                >
+                  修正する
+                </button>
+                <button
+                  type="button" onClick={doSubmit} disabled={submitting}
+                  style={{ flex: 1, padding: '12px', borderRadius: 8, border: 'none', background: submitting ? subText : '#28a745', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: submitting ? 'default' : 'pointer' }}
+                >
+                  {submitting ? '送信しています...' : 'この内容で記録する'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

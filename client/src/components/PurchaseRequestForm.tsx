@@ -243,6 +243,16 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
   const [formError, setFormError] = useState('');
   // 入力漏れの欄を薄赤にするためのキー集合（lib/formHighlight.ts の共通色を使う）
   const [errFields, setErrFields] = useState<Set<string>>(new Set());
+  // 送信前の確認画面。承認ルートと承認者名を見せるのが目的
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  // 相見積もりで業者を選択している場合は、その業者名を購入予定先として使う
+  // （確認画面と送信処理の両方で使うのでコンポーネント直下に置く）
+  const effectiveStoreName = (item: ItemDraft): string | null => {
+    if (item.useManualAmount) return item.storeName.trim() || null;
+    const selected = item.quotes.find(q => q.isSelected);
+    return selected?.vendor.trim() || null;
+  };
   const [submitting, setSubmitting] = useState(false);
   const [successBanner, setSuccessBanner] = useState(false);
   const [tierBanner, setTierBanner] = useState<string | null>(null);
@@ -467,6 +477,14 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
     // 入力漏れではないので、ハイライトではなくメッセージだけで止める
     if (!amount.trim() || isNaN(parsedAmount) || parsedAmount < 1) { setFormError('金額を正しく入力してください（1円以上）。'); return; }
     if (tier === 'board' && !isPresident && boardApprovers.length === 0) { setFormError('承認対象者（マネージャー・社長）が現在0名のため、申請できません。管理者にご連絡ください。'); return; }
+
+    // 送信前に確認画面を出す。金額によって承認ルートが変わるのに、
+    // これまでは誰に承認を依頼するのか送信するまで分からなかった（ケタ違いの金額にも気づけない）
+    setShowConfirm(true);
+  };
+
+  const doSubmit = async () => {
+    setShowConfirm(false);
     const presidentSelfJudge = tier === 'board' && isPresident && presidentSelfJudgment;
     const status = tier === 'board'
       ? (presidentSelfJudge ? 'self_judgment_shared' : 'pending_board')
@@ -542,13 +560,6 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
         sendPurchaseSlackForEvent('purchase_request:submitted_manager', 'submitted', 'manager', applicantName, itemNameVar, parsedAmount).then(null, () => {});
         notifyEmailToMany('purchase_request:submitted_manager', requestedManagerIds).then(null, () => {});
       }
-    };
-
-    // 相見積もりで業者を選択している場合は、その業者名を購入予定先として使う
-    const effectiveStoreName = (item: ItemDraft): string | null => {
-      if (item.useManualAmount) return item.storeName.trim() || null;
-      const selected = item.quotes.find(q => q.isSelected);
-      return selected?.vendor.trim() || null;
     };
 
     // 用途を選択肢から選んだ場合は、補足の詳細（任意）があれば「区分（詳細）」の形にまとめて保存する
@@ -1142,6 +1153,99 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
           {submitting ? '送信しています...' : isResubmit ? '修正して再申請する' : (isSelfJudgment || (tier === 'board' && isPresident && presidentSelfJudgment)) ? '共有する' : '申請する'}
         </button>
       </div>
+
+      {/* 送信前の確認画面。
+          金額によって承認ルート（誰が承認するか）が変わるのに、これまでは送信するまで
+          確認できなかった。ここで「3万円超のため全員承認になります」を見せることで、
+          金額のケタ違いや0円のような入力ミスにも気づける */}
+      {showConfirm && (() => {
+        const routeText = isSelfJudgment || (tier === 'board' && isPresident && presidentSelfJudgment)
+          ? '自己判断（共有のみ・承認は不要）'
+          : tier === 'leader' ? 'リーダー承認'
+          : tier === 'manager' ? 'マネージャー承認（依頼した全員の回答がそろってから決定）'
+          : '全員承認（全マネージャー＋社長の回答がそろってから決定）';
+        const approverNames = isSelfJudgment
+          ? shareCandidates.filter(m => sharedManagerIds.includes(m.id)).map(m => m.name)
+          : tier === 'leader' ? leaders.filter(l => l.id === leaderId).map(l => l.name)
+          : tier === 'manager' ? managers.filter(m => requestedManagerIds.includes(m.id)).map(m => m.name)
+          : (tier === 'board' && isPresident && presidentSelfJudgment) ? managers.map(m => m.name)
+          : boardApprovers.map(a => a.name);
+        const approverLabel = isSelfJudgment || (tier === 'board' && isPresident && presidentSelfJudgment)
+          ? '共有する人' : '承認をお願いする人';
+        const row = (label: string, value: React.ReactNode) => (
+          <div style={{ display: 'flex', gap: 8, fontSize: 13, color: text, marginBottom: 4 }}>
+            <span style={{ color: subText, flexShrink: 0, minWidth: 84 }}>{label}</span>
+            <span style={{ flex: 1, wordBreak: 'break-word' }}>{value}</span>
+          </div>
+        );
+        return (
+          <div
+            onClick={() => setShowConfirm(false)}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+          >
+            <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 12, padding: 18, width: '100%', maxWidth: 460, maxHeight: '85vh', overflowY: 'auto' }}>
+              <div style={{ fontSize: 15, fontWeight: 'bold', color: text, marginBottom: 12, textAlign: 'center' }}>
+                この内容で{isResubmit ? '再申請' : (isSelfJudgment || (tier === 'board' && isPresident && presidentSelfJudgment)) ? '共有' : '申請'}します
+              </div>
+
+              <div style={{ border: `1px solid ${border}`, borderRadius: 8, padding: 10, marginBottom: 10 }}>
+                <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>商品（{items.length}件）</div>
+                {items.map((item, i) => {
+                  const selected = item.useManualAmount ? null : item.quotes.find(q => q.isSelected);
+                  return (
+                    <div key={i} style={{ fontSize: 13, color: text, marginBottom: 6 }}>
+                      {items.length > 1 && <span style={{ color: subText }}>[{i + 1}] </span>}
+                      {item.itemName} × {item.quantity}
+                      <span style={{ fontWeight: 'bold', marginLeft: 6 }}>¥{item.amount || '0'}</span>
+                      <div style={{ fontSize: 12, color: subText, paddingLeft: items.length > 1 ? 16 : 0 }}>
+                        購入予定先：{effectiveStoreName(item) || '（未入力）'}
+                        {selected && `（相見積もり ${item.quotes.filter(q => q.vendor.trim() && q.unitAmount.trim()).length}社）`}
+                        {item.useManualAmount && quotesRequired && item.singleVendorReason.trim() && (
+                          <div style={{ color: '#8a6d00' }}>1社しか選べない理由：{item.singleVendorReason}</div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                <div style={{ textAlign: 'right', fontSize: 14, fontWeight: 'bold', color: text, borderTop: `1px solid ${border}`, paddingTop: 6 }}>
+                  合計 ¥{parsedAmount.toLocaleString()}
+                </div>
+              </div>
+
+              {row('購入予定日', requestedDate)}
+              {row('使用先', location)}
+              {row('用途', purposeDetail.trim() ? `${purpose}（${purposeDetail.trim()}）` : purpose)}
+              {row('申請理由', reason)}
+              {notes.trim() && row('備考', notes)}
+
+              {/* ここが確認画面の主目的 */}
+              <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: warnBg, border: `1px solid ${warnBorder}` }}>
+                <div style={{ fontSize: 13, fontWeight: 'bold', color: warnText, marginBottom: 4 }}>
+                  {TIER_LABEL[tier]}のため「{routeText}」になります
+                </div>
+                <div style={{ fontSize: 12, color: warnText }}>
+                  {approverLabel}（{approverNames.length}名）：{approverNames.length > 0 ? approverNames.join('、') : '（未選択）'}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+                <button
+                  type="button" onClick={() => setShowConfirm(false)}
+                  style={{ flex: 1, padding: '12px', borderRadius: 8, border: `1px solid ${border}`, background: 'transparent', color: text, fontSize: 14, cursor: 'pointer' }}
+                >
+                  修正する
+                </button>
+                <button
+                  type="button" onClick={doSubmit} disabled={submitting}
+                  style={{ flex: 1, padding: '12px', borderRadius: 8, border: 'none', background: submitting ? subText : '#28a745', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: submitting ? 'default' : 'pointer' }}
+                >
+                  {submitting ? '送信しています...' : `この内容で${isResubmit ? '再申請' : (isSelfJudgment || (tier === 'board' && isPresident && presidentSelfJudgment)) ? '共有' : '申請'}する`}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };
