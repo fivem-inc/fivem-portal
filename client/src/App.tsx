@@ -789,6 +789,7 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
   const isShiftResult          = n.source_type === 'shift_report';                   // 申請者：結果報告のみ
   const isTimeAdjustment       = n.source_type === 'time_adjustment';                // 上長：FYI（対応不要）
   const isAttendance           = n.source_type === 'attendance';                     // 上長・本人：欠勤登録のFYI（対応不要）
+  const isAttendanceCancelled  = n.source_type === 'attendance:cancelled';           // 上長・本人：勤怠の取消のお知らせ（飛び先の行はもう無い）
   const isPurchasePendingApproval = n.source_type === 'purchase_request:pending_approval'; // リーダー：要対応
   const isPurchaseResult          = n.source_type === 'purchase_request';                  // 申請者：結果報告のみ
   const isOvertimePendingApproval = n.source_type === 'overtime_request:pending_approval'; // 確認者：要対応
@@ -798,7 +799,7 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
   const isOtProposalResponded     = n.source_type === 'overtime_proposal:responded';        // 提案者：相手が回答した
   const isOvertimeUnreported      = n.source_type === 'overtime:unreported';                // 本人：実績未報告リマインド
   const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit || isPurchasePendingApproval || isOvertimePendingApproval || isOvertimePendingResubmit;
-  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isAttendance || isPurchaseResult || isOvertimeResult || isOtProposalReceived || isOtProposalResponded || isOvertimeUnreported;
+  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isAttendance || isAttendanceCancelled || isPurchaseResult || isOvertimeResult || isOtProposalReceived || isOtProposalResponded || isOvertimeUnreported;
   // 旧来のフォールバック（source_typeが無い通知向け）
   const isLegacyReject = !isPendingAction && !isResultOnly && (n.message.includes('差し戻し') || n.message.includes('差し戻され'));
 
@@ -830,6 +831,8 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
     if (isShiftPendingApproval) { navigate(`/shift-report?view=confirm${fq ? `&${fq}` : ''}`); return; }
     if (isShiftPendingResubmit) { navigate(`/shift-report?tab=history${fq ? `&${fq}` : ''}`); return; }
     if (isShiftResult) { navigate(`/shift-report?tab=history${fq ? `&${fq}` : ''}`); onDismiss(n.id); return; }
+    // 勤怠の取消：飛び先の予定はもう消えているため移動しない（その場で閉じるだけ）。誰が・何を・いつ は文面に入っている
+    if (isAttendanceCancelled) { onDismiss(n.id); return; }
     // 欠勤登録：reference_idに対象日(YYYY-MM-DD)があれば、その月へジャンプして該当行を強調する
     if (isAttendance) {
       const focus = n.reference_id && /^\d{4}-\d{2}-\d{2}$/.test(n.reference_id) ? `?focus=${n.reference_id}` : '';
@@ -865,7 +868,8 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
           <div style={{ fontWeight: 500, fontSize: 14, color: textColor }}>{n.message}</div>
           {n.sub_message && <div style={{ fontSize: 12, color: subColor }}>{n.sub_message}</div>}
         </div>
-        <div onClick={handleTap} style={{ fontSize: 12, color: subColor, whiteSpace: 'nowrap', flexShrink: 0, cursor: 'pointer', marginTop: 2 }}>タップして確認 →</div>
+        {/* 取消のお知らせは移動しない（その場で閉じるだけ）ので、動きに合わせて文言を変える */}
+        <div onClick={handleTap} style={{ fontSize: 12, color: subColor, whiteSpace: 'nowrap', flexShrink: 0, cursor: 'pointer', marginTop: 2 }}>{isAttendanceCancelled ? 'タップして閉じる' : 'タップして確認 →'}</div>
         <button onClick={() => onDismiss(n.id)} title="このお知らせを閉じる"
           style={{ background: 'none', border: 'none', color: subColor, cursor: 'pointer', fontSize: 15, padding: '0 2px', flexShrink: 0, lineHeight: 1 }}>✕</button>
       </div>

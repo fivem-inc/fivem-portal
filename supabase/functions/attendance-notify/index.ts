@@ -133,8 +133,15 @@ serve(async (req) => {
       const targetIds = await resolveTargetIds(siteSetting.recipient)
       if (targetIds.length > 0) {
         // reference_id に対象日（先頭日・YYYY-MM-DD）を入れ、バナーから正しい月へジャンプ＋該当行を強調できるようにする
+        // 取消は source_type を分ける：飛び先の行がもう無いため、バナー側で「移動せず閉じる」に出し分ける
         await supabase.from('notifications').insert(
-          targetIds.map(id => ({ user_id: id, message, sub_message: null, source_type: 'attendance', reference_id: first }))
+          targetIds.map(id => ({
+            user_id: id,
+            message,
+            sub_message: null,
+            source_type: isCancelled ? 'attendance:cancelled' : 'attendance',
+            reference_id: first,
+          }))
         )
         notifiedSite = targetIds.length
       }
