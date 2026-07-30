@@ -144,10 +144,13 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
     const namesToFetch = new Set<string>();
     if (isManagerPlus) rows.forEach(r => namesToFetch.add(r.user_id));
 
-    // マネージャー承認ルート・全員承認ルートいずれも、自分の申請には
-    // 共有可の意見（RLSでvisible_to_applicant=trueのみ返る）を表示する
-    const managerRouteIds = rows.filter(r => r.user_id === userId && r.requested_manager_ids?.length).map(r => r.id);
-    const boardRouteIds = rows.filter(r => r.user_id === userId && r.board_approver_ids?.length).map(r => r.id);
+    // 自分の申請だけでなく、履歴に出ているすべての申請の進み具合・意見を取りに行く。
+    // 承認する人は「誰がもう答えたか」を過去の申請も含めて見られないと判断できない
+    // （以前は自分の申請だけだったため、他人の申請では進捗が何も出ていなかった）。
+    // 実際に何を返すかはDB側で決まる：RLSと集計関数が「申請者・その申請の承認者・
+    // マネージャー以上・管理者」以外には返さない＝ここを広げても見えてよい範囲は変わらない
+    const managerRouteIds = rows.filter(r => r.requested_manager_ids?.length).map(r => r.id);
+    const boardRouteIds = rows.filter(r => r.board_approver_ids?.length).map(r => r.id);
     const opinionTargetIds = [...new Set([...managerRouteIds, ...boardRouteIds])];
     if (opinionTargetIds.length > 0) {
       const { data: ops } = await supabase
