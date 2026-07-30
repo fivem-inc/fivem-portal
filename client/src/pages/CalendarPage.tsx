@@ -16,7 +16,10 @@ const OTHER_LOCATION = 'その他';
 // ※ 項目を追加したら、読み出し側は必ず `??` で既定値を入れること。
 //    リリース前に保存された古い下書きが復元されると undefined になり画面が落ちるため。
 interface AbsenceDraft {
-  date: string; userId: string; isAbsent: boolean; absentDates: string[];
+  // targetDates … この入力を登録する日（全種別で複数日を選べる）。
+  // absentDates は「全欠勤だけ複数日だった」頃の古い下書き用。読み出し時に targetDates へ寄せる
+  // userIds … 対象者（複数選べる）。userId は1人しか選べなかった頃の古い下書き用
+  date: string; userIds: string[]; userId?: string; isAbsent: boolean; targetDates: string[]; absentDates?: string[];
   isLate: boolean; isLateStart: boolean; isEarlyLeave: boolean; isEarlyEnd: boolean;
   lateTime: string; earlyTime: string; notes: string;
   locations: Record<string, string>;
@@ -53,9 +56,9 @@ const absenceToDraft = (ab: AbsenceEvent, workplaces: string[]): AbsenceDraft =>
 
   return {
     date: ab.date,
-    userId: ab.user_id,
+    userIds: [ab.user_id],
     isAbsent: ab.type === 'absent',
-    absentDates: [ab.date],
+    targetDates: [ab.date],
     isLate: ab.type === 'late',
     isLateStart: ab.type === 'late_start',
     isEarlyLeave: ab.type === 'early_leave',
@@ -227,11 +230,13 @@ function buildProfileGroups(profiles: ProfileEntry[]) {
 const StaffPicker: React.FC<{
   profiles: ProfileEntry[];
   grouped: Record<string, Record<string, ProfileEntry[]>>;
-  userId: string;
-  onSelect: (id: string) => void;
-}> = ({ profiles, grouped, userId, onSelect }) => {
+  // 複数選択。同じ校・同じ時間の人をまとめて登録できるようにするため
+  selectedIds: Set<string>;
+  onToggle: (id: string) => void;
+  onClear: () => void;
+}> = ({ profiles, grouped, selectedIds, onToggle, onClear }) => {
   const [activeKey, setActiveKey] = useState<string | null>(null);
-  const selectedProfile = profiles.find(p => p.id === userId);
+  const selectedProfiles = profiles.filter(p => selectedIds.has(p.id));
   const ACCENT = '#4a90d9';
 
   const activeMembers = activeKey
@@ -245,12 +250,20 @@ const StaffPicker: React.FC<{
 
   return (
     <div>
-      {/* 選択済み表示 */}
-      {selectedProfile && (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: '#eaf4ff', border: `2px solid ${ACCENT}`, borderRadius: 8, marginBottom: 10 }}>
-          <span style={{ fontWeight: 'bold', fontSize: 15, color: '#1a5fa8' }}>✓ {selectedProfile.name}</span>
-          <button onClick={() => { onSelect(''); setActiveKey(null); }}
-            style={{ background: 'none', border: 'none', color: '#888', fontSize: 18, cursor: 'pointer', lineHeight: 1 }}>×</button>
+      {/* 選択済み表示（複数） */}
+      {selectedProfiles.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, padding: '8px 10px', background: '#eaf4ff', border: `2px solid ${ACCENT}`, borderRadius: 8, marginBottom: 10 }}>
+          {selectedProfiles.map(p => (
+            <span key={p.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#fff', border: `1px solid ${ACCENT}`, color: '#1a5fa8', borderRadius: 14, padding: '3px 9px', fontSize: 13, fontWeight: 'bold' }}>
+              {p.name}
+              <button type="button" onClick={() => onToggle(p.id)} title="この人を外す"
+                style={{ background: 'none', border: 'none', color: '#1a5fa8', fontSize: 12, cursor: 'pointer', padding: 0, lineHeight: 1 }}>✕</button>
+            </span>
+          ))}
+          {selectedProfiles.length > 1 && (
+            <button type="button" onClick={() => { onClear(); setActiveKey(null); }}
+              style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#6b7c8c', fontSize: 11.5, cursor: 'pointer' }}>すべて外す</button>
+          )}
         </div>
       )}
 
@@ -277,15 +290,19 @@ const StaffPicker: React.FC<{
         );
       })}
 
-      {/* 名前リスト（パートの下に展開、選択後に閉じる） */}
+      {/* 名前リスト（グループの下に展開）。複数選べるよう、選んでも閉じない */}
       {activeKey && (
         <div style={{ marginTop: 4, border: '1px solid #d0d0d0', borderRadius: 8, overflow: 'hidden' }}>
-          {activeMembers.map((p, i) => (
-            <div key={p.id} onClick={() => { onSelect(p.id); setActiveKey(null); }}
-              style={{ padding: '7px 14px', cursor: 'pointer', fontSize: 14, background: p.id === userId ? ACCENT : i % 2 === 0 ? '#fff' : '#fafafa', color: p.id === userId ? '#fff' : '#222', fontWeight: p.id === userId ? 'bold' : 'normal', borderBottom: '1px solid #ececec' }}>
-              {p.name}
-            </div>
-          ))}
+          {activeMembers.map((p, i) => {
+            const on = selectedIds.has(p.id);
+            return (
+              <div key={p.id} onClick={() => onToggle(p.id)}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 14px', cursor: 'pointer', fontSize: 14, background: on ? ACCENT : i % 2 === 0 ? '#fff' : '#fafafa', color: on ? '#fff' : '#222', fontWeight: on ? 'bold' : 'normal', borderBottom: '1px solid #ececec' }}>
+                <span style={{ width: 14, flexShrink: 0 }}>{on ? '✓' : ''}</span>
+                {p.name}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -297,9 +314,11 @@ const MultiDatePicker: React.FC<{
   selectedDates: Set<string>;
   onToggle: (date: string) => void;
 }> = ({ selectedDates, onToggle }) => {
-  const today = new Date();
-  const [calYear, setCalYear] = useState(today.getFullYear());
-  const [calMonth, setCalMonth] = useState(today.getMonth());
+  // 開いた日付の月を最初に表示する（今日の月にすると、翌月の日をタップしたときに前月が開いてしまう）
+  const firstSelected = [...selectedDates].sort()[0];
+  const base = firstSelected ? new Date(firstSelected + 'T00:00:00') : new Date();
+  const [calYear, setCalYear] = useState(base.getFullYear());
+  const [calMonth, setCalMonth] = useState(base.getMonth());
 
   const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
   const firstDow = new Date(calYear, calMonth, 1).getDay(); // 日曜=0始まり
@@ -356,6 +375,23 @@ const MultiDatePicker: React.FC<{
   );
 };
 
+/**
+ * 同じ日に同居できない種別かを判定する（DBのトリガー enforce_attendance_exclusive と同じルール）。
+ * まとめて登録するとき、すでに登録がある日を送信前に知らせるために使う。
+ * ※ ルールを変えるときは supabase/migrations/20260737000000_add_time_change_to_attendance.sql の
+ *    関数も必ず一緒に直す。画面とDBで判定がズレると「送信できたのに保存できない」事故になる。
+ */
+const conflictsWithExisting = (newType: string, existingType: string): boolean => {
+  if (newType === existingType) return true;                                   // 同じ種別（ユニーク制約）
+  if (newType === 'absent' || newType === 'holiday_work') return true;         // 単独種別はその日に他があれば不可
+  if (existingType === 'absent' || existingType === 'holiday_work') return true;
+  const both = (group: string[]) => group.includes(newType) && group.includes(existingType);
+  if (both(['late', 'late_start'])) return true;                 // 出勤側は一方のみ
+  if (both(['early_leave', 'early_end'])) return true;           // 退勤側は一方のみ
+  if (both(['location_change', 'time_change'])) return true;     // 勤務時間帯を持つ種別は一方のみ
+  return false;
+};
+
 // ===== 欠勤入力ボトムシート =====
 const AbsenceInputSheet: React.FC<{
   date: string;
@@ -371,7 +407,8 @@ const AbsenceInputSheet: React.FC<{
     const d = loadDraft<AbsenceDraft>(DRAFT_KEYS.attendance);
     return d && d.date === date ? d : null;
   });
-  const [userId, setUserId] = useState(absDraft?.userId ?? '');
+  // 対象者（複数）。同じ校・同じ時間の人はまとめて登録できる
+  const [userIds, setUserIds] = useState<Set<string>>(() => new Set(absDraft?.userIds ?? (absDraft?.userId ? [absDraft.userId] : [])));
   // 校（必須）。日付ごとに選択できる（全欠勤の複数日は日別、遅刻・早退はその日1件）
   const [locations, setLocations] = useState<Record<string, string>>(absDraft?.locations ?? {});
   // 校で「その他」を選んだときの自由入力（日付ごと）
@@ -389,7 +426,8 @@ const AbsenceInputSheet: React.FC<{
   // 勤務時間変更（校は普段どおり・勤務時間だけ違う）。勤務地変更とは一方しか選べない
   const [isTimeChange, setIsTimeChange] = useState(absDraft?.isTimeChange ?? false);
   const [isAbsent, setIsAbsent] = useState(absDraft?.isAbsent ?? false);
-  const [absentDates, setAbsentDates] = useState<Set<string>>(() => new Set(absDraft?.absentDates ?? [date]));
+  // 対象日（全種別共通）。同じ内容を選んだ日すべてに登録する。既定は開いた日の1日だけ
+  const [targetDates, setTargetDates] = useState<Set<string>>(() => new Set(absDraft?.targetDates ?? absDraft?.absentDates ?? [date]));
   const [isLate, setIsLate] = useState(absDraft?.isLate ?? false);
   const [isLateStart, setIsLateStart] = useState(absDraft?.isLateStart ?? false);
   const [isEarlyLeave, setIsEarlyLeave] = useState(absDraft?.isEarlyLeave ?? false);
@@ -411,19 +449,27 @@ const AbsenceInputSheet: React.FC<{
   const [errFields, setErrFields] = useState<Set<string>>(new Set());
   const clearErr = (key: string) => setErrFields(prev => { if (!prev.has(key)) return prev; const n = new Set(prev); n.delete(key); return n; });
   const [confirming, setConfirming] = useState(false);
+  // すでに登録があって、このままでは登録できない日（確認画面で赤く出し、外して登録できるようにする）
+  const [conflicts, setConflicts] = useState<{ userId: string; name: string; date: string; label: string }[]>([]);
+  const [checking, setChecking] = useState(false);
+  // 複数日はGoogleカレンダーへの書き込みが件数ぶん走るので、進み具合を出す（無反応に見えるのを防ぐ）
+  const [saveProgress, setSaveProgress] = useState({ done: 0, total: 0 });
 
-  const dateLabel = `${date.slice(5, 7)}月${date.slice(8, 10)}日（${dow(date)}）`;
+  // 見出しの日付。対象日から開いた日を外すこともできるので、いちばん早い対象日を出す
+  const headDate = [...targetDates].sort()[0] ?? date;
+  const dateLabel = `${headDate.slice(5, 7)}月${headDate.slice(8, 10)}日（${dow(headDate)}）`
+    + (targetDates.size > 1 ? ` 他${targetDates.size - 1}日` : '');
   const grouped = buildProfileGroups(profiles);
 
   // 入力中の下書きを自動保存
   useEffect(() => {
     saveDraft(DRAFT_KEYS.attendance, {
-      date, userId, isAbsent, absentDates: [...absentDates],
+      date, userIds: [...userIds], isAbsent, targetDates: [...targetDates],
       isLate, isLateStart, isEarlyLeave, isEarlyEnd, lateTime, earlyTime, notes, locations,
       locationCustoms, isHolidayWork, segments, segmentCustoms, hasLocationMove,
       isLocationChange, originalLocation, originalLocationCustom, isTimeChange,
     });
-  }, [date, userId, isAbsent, absentDates, isLate, isLateStart, isEarlyLeave, isEarlyEnd, lateTime, earlyTime, notes, locations, locationCustoms, isHolidayWork, segments, segmentCustoms, hasLocationMove, isLocationChange, originalLocation, originalLocationCustom, isTimeChange]);
+  }, [date, userIds, isAbsent, targetDates, isLate, isLateStart, isEarlyLeave, isEarlyEnd, lateTime, earlyTime, notes, locations, locationCustoms, isHolidayWork, segments, segmentCustoms, hasLocationMove, isLocationChange, originalLocation, originalLocationCustom, isTimeChange]);
 
   // 種別が排他で押せないときの理由（グレーにするだけだと「なぜ押せないのか」が分からないため）
   const blockedReason = isHolidayWork
@@ -523,19 +569,48 @@ const AbsenceInputSheet: React.FC<{
   const effectiveOriginalLocation = (): string =>
     originalLocation === OTHER_LOCATION ? originalLocationCustom.trim() : originalLocation;
 
-  const toggleAbsentDate = (d: string) => {
-    setAbsentDates(prev => {
+  // 対象者の追加・削除
+  const toggleUser = (id: string) => {
+    setUserIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+    clearErr('userId');
+    setConflicts([]); // 人を変えたら、前回の重複チェックの結果は無効
+  };
+
+  // 対象日の追加・削除。0日にはできない（最低1日は残す）
+  const toggleTargetDate = (d: string) => {
+    setTargetDates(prev => {
       const next = new Set(prev);
       if (next.has(d)) { if (next.size > 1) next.delete(d); }
       else next.add(d);
       return next;
     });
+    setConflicts([]); // 日を変えたら、前回の重複チェックの結果は無効
   };
 
-  const handleConfirm = () => {
+  const nameOf = (id: string) => profiles.find((p: ProfileEntry) => p.id === id)?.name ?? '';
+
+  /** いま選ばれている種別（記録として保存される type の一覧） */
+  const selectedTypes = (): string[] => {
+    const t: string[] = [];
+    if (isAbsent) t.push('absent');
+    if (isHolidayWork) t.push('holiday_work');
+    if (isLocationChange) t.push('location_change');
+    if (isTimeChange) t.push('time_change');
+    if (isLate) t.push('late');
+    if (isLateStart) t.push('late_start');
+    if (isEarlyLeave) t.push('early_leave');
+    if (isEarlyEnd) t.push('early_end');
+    return t;
+  };
+
+  const handleConfirm = async () => {
     if (confirmingRef.current) return;
     setError('');
-    if (!userId) { setError('対象者を選択してください'); setErrFields(new Set(['userId'])); scrollToFirstError(['userId']); return; }
+    if (userIds.size === 0) { setError('対象者を選択してください'); setErrFields(new Set(['userId'])); scrollToFirstError(['userId']); return; }
     if (!isAbsent && !isHolidayWork && !isLocationChange && !isTimeChange && !isLate && !isLateStart && !isEarlyLeave && !isEarlyEnd) { setError('種別を選択してください'); return; }
     if ((isLate || isLateStart) && !lateTime) { setError('出勤時間を入力してください'); setErrFields(new Set(['lateTime'])); scrollToFirstError(['lateTime']); return; }
     if ((isEarlyLeave || isEarlyEnd) && !earlyTime) { setError('退勤時間を入力してください'); setErrFields(new Set(['earlyTime'])); scrollToFirstError(['earlyTime']); return; }
@@ -557,15 +632,43 @@ const AbsenceInputSheet: React.FC<{
         if (sorted[i].start < sorted[i - 1].end) { setError('勤務時間が重なっています。時間帯を確認してください'); return; }
       }
     } else {
-      // 対象となる全日付で校が選ばれているか（全欠勤は選択日すべて、遅刻・早退はこの日）
-      const targetDates = isAbsent ? [...absentDates] : [date];
-      if (targetDates.some(d => !effectiveLocation(d))) { setError('すべての日付で校を選択してください'); return; }
+      // 対象日すべてで校が選ばれているか
+      if ([...targetDates].some(d => !effectiveLocation(d))) { setError('すべての日付で校を選択してください'); return; }
+    }
+
+    // すでに登録がある日を先に調べておく（確認画面で赤く出し、その日を外して登録できるようにする）。
+    // 取れなかった場合は素通しでよい（DBのトリガーが最後の砦として必ず弾く）
+    setChecking(true);
+    const dates = [...targetDates].sort();
+    const ids = [...userIds];
+    const types = selectedTypes();
+    const { data: existing, error: checkErr } = await supabase
+      .from('attendance_exceptions')
+      .select('user_id, date, type')
+      .in('user_id', ids)
+      .in('date', dates);
+    setChecking(false);
+    if (checkErr) {
+      console.error('[attendance] 重複チェックに失敗:', checkErr);
+      setConflicts([]);
+    } else {
+      type Row = { user_id: string; date: string; type: string };
+      const found: { userId: string; name: string; date: string; label: string }[] = [];
+      for (const uid of ids) {
+        for (const d of dates) {
+          const sameDay = (existing ?? []).filter((e: Row) => e.user_id === uid && e.date === d);
+          const hit = sameDay.find((e: Row) => types.some(t => conflictsWithExisting(t, e.type)));
+          if (hit) found.push({ userId: uid, name: nameOf(uid), date: d, label: absenceLabel(hit.type) });
+        }
+      }
+      setConflicts(found);
     }
     confirmingRef.current = true;
     setConfirming(true);
   };
 
-  const handleSave = async () => {
+  /** skipConflicts=true のとき、すでに登録がある日を外して残りだけ登録する */
+  const handleSave = async (skipConflicts = false) => {
     if (savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
@@ -578,22 +681,36 @@ const AbsenceInputSheet: React.FC<{
 
     const origLoc = isLocationChange ? effectiveOriginalLocation() : null;
 
-    const records: { user_id: string; date: string; type: string; actual_time: string | null; notes: string; created_by: string; location: string; work_segments: WorkSegment[] | null; original_location: string | null }[] = [];
-    if (isAbsent) {
-      for (const d of [...absentDates].sort()) {
-        records.push({ user_id: userId, date: d, type: 'absent', actual_time: null, notes, created_by: currentUserId, location: effectiveLocation(d), work_segments: null, original_location: null });
+    // 選んだ人 × 選んだ日 すべてに同じ内容を登録する。
+    // すでに登録がある組み合わせ（人と日）は、マネージャーが選んだときだけ外す
+    const conflictKeys = new Set(conflicts.map(c => `${c.userId}|${c.date}`));
+    const pairs: { uid: string; d: string }[] = [];
+    for (const uid of [...userIds]) {
+      for (const d of [...targetDates].sort()) {
+        if (skipConflicts && conflictKeys.has(`${uid}|${d}`)) continue;
+        pairs.push({ uid, d });
       }
     }
-    if (isHolidayWork)    records.push({ user_id: userId, date, type: 'holiday_work',    actual_time: segs[0]?.start ?? null, notes, created_by: currentUserId, location: segLoc,     work_segments: segCol, original_location: null });
-    if (isLocationChange) records.push({ user_id: userId, date, type: 'location_change', actual_time: null,                   notes, created_by: currentUserId, location: locOf(date), work_segments: segCol, original_location: origLoc });
-    // 勤務時間変更は校が普段どおりなので変更前の校は持たない（時間帯の校がそのまま勤務校）
-    if (isTimeChange)     records.push({ user_id: userId, date, type: 'time_change',     actual_time: segs[0]?.start ?? null, notes, created_by: currentUserId, location: segLoc,     work_segments: segCol, original_location: null });
-    if (isLate)        records.push({ user_id: userId, date, type: 'late',         actual_time: lateTime,  notes, created_by: currentUserId, location: locOf(date), work_segments: segCol, original_location: origLoc });
-    if (isLateStart)   records.push({ user_id: userId, date, type: 'late_start',   actual_time: lateTime,  notes, created_by: currentUserId, location: locOf(date), work_segments: segCol, original_location: origLoc });
-    if (isEarlyLeave)  records.push({ user_id: userId, date, type: 'early_leave',  actual_time: earlyTime, notes, created_by: currentUserId, location: locOf(date), work_segments: segCol, original_location: origLoc });
-    if (isEarlyEnd)    records.push({ user_id: userId, date, type: 'early_end',    actual_time: earlyTime, notes, created_by: currentUserId, location: locOf(date), work_segments: segCol, original_location: origLoc });
+    if (pairs.length === 0) {
+      setSaving(false); savingRef.current = false; confirmingRef.current = false; setConfirming(false);
+      setError('登録できる分がありません。対象者・日付を選び直してください');
+      return;
+    }
 
-    const { data: inserted, error: err } = await supabase.from('attendance_exceptions').insert(records).select('id, type, date, actual_time');
+    const records: { user_id: string; date: string; type: string; actual_time: string | null; notes: string; created_by: string; location: string; work_segments: WorkSegment[] | null; original_location: string | null }[] = [];
+    for (const { uid, d } of pairs) {
+      if (isAbsent)         records.push({ user_id: uid, date: d, type: 'absent',          actual_time: null,                   notes, created_by: currentUserId, location: effectiveLocation(d), work_segments: null,   original_location: null });
+      if (isHolidayWork)    records.push({ user_id: uid, date: d, type: 'holiday_work',    actual_time: segs[0]?.start ?? null, notes, created_by: currentUserId, location: segLoc,              work_segments: segCol, original_location: null });
+      if (isLocationChange) records.push({ user_id: uid, date: d, type: 'location_change', actual_time: null,                   notes, created_by: currentUserId, location: locOf(d),            work_segments: segCol, original_location: origLoc });
+      // 勤務時間変更は校が普段どおりなので変更前の校は持たない（時間帯の校がそのまま勤務校）
+      if (isTimeChange)     records.push({ user_id: uid, date: d, type: 'time_change',     actual_time: segs[0]?.start ?? null, notes, created_by: currentUserId, location: segLoc,              work_segments: segCol, original_location: null });
+      if (isLate)           records.push({ user_id: uid, date: d, type: 'late',            actual_time: lateTime,               notes, created_by: currentUserId, location: locOf(d),            work_segments: segCol, original_location: origLoc });
+      if (isLateStart)      records.push({ user_id: uid, date: d, type: 'late_start',      actual_time: lateTime,               notes, created_by: currentUserId, location: locOf(d),            work_segments: segCol, original_location: origLoc });
+      if (isEarlyLeave)     records.push({ user_id: uid, date: d, type: 'early_leave',     actual_time: earlyTime,              notes, created_by: currentUserId, location: locOf(d),            work_segments: segCol, original_location: origLoc });
+      if (isEarlyEnd)       records.push({ user_id: uid, date: d, type: 'early_end',       actual_time: earlyTime,              notes, created_by: currentUserId, location: locOf(d),            work_segments: segCol, original_location: origLoc });
+    }
+
+    const { data: inserted, error: err } = await supabase.from('attendance_exceptions').insert(records).select('id, user_id, type, date, actual_time');
     if (err) {
       setSaving(false);
       savingRef.current = false;
@@ -606,8 +723,8 @@ const AbsenceInputSheet: React.FC<{
     }
     // Googleカレンダーに書き込む。
     // invoke は 4xx/5xx でも throw しないため、必ず error と success を見る（見ないと失敗が誰にも見えない）
-    const name = profiles.find((p: ProfileEntry) => p.id === userId)?.name ?? '';
     let gcalFailed = false;
+    setSaveProgress({ done: 0, total: (inserted ?? []).length });
     for (const rec of inserted ?? []) {
       const { data: syncRes, error: syncErr } = await supabase.functions.invoke('gcal-sync', {
         body: {
@@ -615,7 +732,7 @@ const AbsenceInputSheet: React.FC<{
           source_type: 'absence',
           source_id: rec.id,
           dates: [rec.date],
-          name,
+          name: nameOf(rec.user_id), // カレンダーのタイトルはその記録の本人の名前にする
           absence_type: rec.type,
           time: rec.actual_time ? rec.actual_time.slice(0, 5) : undefined,
           locations: { [rec.date]: locOf(rec.date) },
@@ -627,6 +744,7 @@ const AbsenceInputSheet: React.FC<{
         gcalFailed = true;
         console.error('[gcal-sync] 勤怠の書き込み失敗:', syncErr);
       }
+      setSaveProgress(p => ({ ...p, done: p.done + 1 }));
     }
     if (gcalFailed) {
       setSaving(false);
@@ -638,9 +756,10 @@ const AbsenceInputSheet: React.FC<{
       return;
     }
     // リーダー以上・本人へ通知（通知設定 attendance:registered に従う）
+    // 何人・何日を登録しても、通知は1件にまとめる（人数分ベルが連なるのを防ぐ）
     const { error: notifyErr } = await supabase.functions.invoke('attendance-notify', {
       body: {
-        user_id: userId, user_name: name,
+        users: [...new Set(records.map(r => r.user_id))].map(id => ({ id, name: nameOf(id) })),
         dates: [...new Set(records.map(r => r.date))],
         types: [...new Set(records.map(r => r.type))],
       },
@@ -658,8 +777,8 @@ const AbsenceInputSheet: React.FC<{
 
   // 🗑クリア：入力内容を空に戻す（シートは閉じない）。下書きも消す。
   const clearAbsenceForm = () => {
-    setUserId(''); setLocations({}); setLocationCustoms({}); setBulkLocation('');
-    setIsAbsent(false); setAbsentDates(new Set([date]));
+    setUserIds(new Set()); setLocations({}); setLocationCustoms({}); setBulkLocation('');
+    setIsAbsent(false); setTargetDates(new Set([date])); setConflicts([]);
     setIsHolidayWork(false); setHasLocationMove(false);
     setIsLocationChange(false); setOriginalLocation(''); setOriginalLocationCustom(''); setIsTimeChange(false);
     setSegments([{ start: '', end: '', location: '' }]); setSegmentCustoms(['']);
@@ -693,10 +812,12 @@ const AbsenceInputSheet: React.FC<{
 
         {/* 対象者 */}
         <div style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 12, color: errFields.has('userId') ? '#dc3545' : '#666', marginBottom: 6 }}>対象者</div>
+          <div style={{ fontSize: 12, color: errFields.has('userId') ? '#dc3545' : '#666', marginBottom: 6 }}>
+            対象者（複数選べます）{userIds.size > 1 && <span style={{ color: '#1a5fa8', marginLeft: 6 }}>{userIds.size}人</span>}
+          </div>
           {/* 未選択で送信したときに薄赤で囲む（どこが原因か分かるように） */}
           <div data-err-field="userId" style={errFields.has('userId') ? { border: `1px solid ${ERROR_BORDER}`, background: errorBg(false), borderRadius: 6, padding: 4 } : undefined}>
-            <StaffPicker profiles={profiles} grouped={grouped} userId={userId} onSelect={id => { setUserId(id); clearErr('userId'); }} />
+            <StaffPicker profiles={profiles} grouped={grouped} selectedIds={userIds} onToggle={toggleUser} onClear={() => { setUserIds(new Set()); setConflicts([]); }} />
           </div>
         </div>
 
@@ -707,16 +828,8 @@ const AbsenceInputSheet: React.FC<{
           <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px', border: `2px solid ${isAbsent ? '#dc3545' : '#e0e0e0'}`, borderRadius: 10, marginBottom: 4, cursor: isHolidayWork ? 'default' : 'pointer', background: isAbsent ? '#fff5f5' : '#fff', opacity: isHolidayWork ? 0.4 : 1 }}>
             <input type="checkbox" checked={isAbsent} onChange={e => toggleAbsent(e.target.checked)} style={{ width: 20, height: 20, accentColor: '#dc3545' }} />
             <span style={{ fontSize: 15, fontWeight: 'bold', color: '#c0392b' }}>🔴 全欠勤</span>
-            {isAbsent
-              ? <span style={{ marginLeft: 'auto', fontSize: 11, color: '#c0392b' }}>複数日選択可</span>
-              : <span style={{ marginLeft: 'auto', fontSize: 10, color: '#c0392b', border: '1px solid #f1b0b7', borderRadius: 4, padding: '1px 5px' }}>単独</span>}
+            <span style={{ marginLeft: 'auto', fontSize: 10, color: '#c0392b', border: '1px solid #f1b0b7', borderRadius: 4, padding: '1px 5px' }}>単独</span>
           </label>
-
-          {isAbsent && (
-            <div style={{ marginBottom: 8, paddingLeft: 4 }}>
-              <MultiDatePicker selectedDates={absentDates} onToggle={toggleAbsentDate} />
-            </div>
-          )}
 
           {/* 休日出勤（本来休みの日に出勤する場合）。全欠勤と同じく単独で選ぶ */}
           <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px', border: `2px solid ${isHolidayWork ? '#0f766e' : '#e0e0e0'}`, borderRadius: 10, marginBottom: 8, cursor: isAbsent ? 'default' : 'pointer', background: isHolidayWork ? '#e6f5f2' : '#fff', opacity: isAbsent ? 0.4 : 1 }}>
@@ -794,6 +907,26 @@ const AbsenceInputSheet: React.FC<{
           )}
         </div>
 
+        {/* 対象日（全種別で共通）。同じ校・同じ時間の勤務なら、まとめて登録できる */}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>対象日（複数選べます）</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+            {[...targetDates].sort().map(d => (
+              <span key={d} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#e8f1fb', border: '1px solid #b7d3f0', color: '#1c5a96', borderRadius: 14, padding: '4px 10px', fontSize: 12.5 }}>
+                {`${parseInt(d.slice(5, 7))}/${parseInt(d.slice(8, 10))}（${dow(d)}）`}
+                {targetDates.size > 1 && (
+                  <button type="button" onClick={() => toggleTargetDate(d)} title="この日を外す"
+                    style={{ background: 'none', border: 'none', color: '#1c5a96', cursor: 'pointer', fontSize: 12, padding: 0, lineHeight: 1 }}>✕</button>
+                )}
+              </span>
+            ))}
+          </div>
+          <MultiDatePicker selectedDates={targetDates} onToggle={toggleTargetDate} />
+          <div style={{ fontSize: 11, color: '#888', marginTop: 2, lineHeight: 1.6 }}>
+            ※ 同じ校・同じ時間の勤務なら、日付をタップしてまとめて登録できます（選んだ日すべてに同じ内容で登録されます）。
+          </div>
+        </div>
+
         {/* 勤務地変更の「変更前の校（普段の校）」。下の「校（必須）」が変更後にあたる */}
         {isLocationChange && (
           <div style={{ marginBottom: 12 }}>
@@ -869,11 +1002,11 @@ const AbsenceInputSheet: React.FC<{
 
         {/* 校（必須・日付ごとに選択）。カレンダーのタイトルに［校名］で表示される */}
         {!useSegments && (() => {
-          const targetDates = isAbsent ? [...absentDates].sort() : [date];
+          const dates = [...targetDates].sort();
           return (
             <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>校（必須{targetDates.length > 1 ? '・日付ごとに選択' : ''}）</div>
-              {targetDates.length > 1 && (
+              <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>校（必須{dates.length > 1 ? '・日付ごとに選択' : ''}）</div>
+              {dates.length > 1 && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, padding: '8px 10px', background: '#f4f7fb', borderRadius: 8 }}>
                   <span style={{ fontSize: 12, color: '#666', flexShrink: 0 }}>すべて同じ校にする：</span>
                   <select
@@ -881,7 +1014,7 @@ const AbsenceInputSheet: React.FC<{
                     onChange={e => {
                       const v = e.target.value;
                       setBulkLocation(v);
-                      if (v) setLocations(Object.fromEntries(targetDates.map(d => [d, v])));
+                      if (v) setLocations(Object.fromEntries(dates.map(d => [d, v])));
                     }}
                     style={{ flex: 1, padding: '8px', borderRadius: 8, border: '1px solid #ccc', fontSize: 14, background: '#fff', color: '#333' }}
                   >
@@ -892,7 +1025,7 @@ const AbsenceInputSheet: React.FC<{
                 </div>
               )}
               <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, overflow: 'hidden' }}>
-                {targetDates.map((d, i) => {
+                {dates.map((d, i) => {
                   const isOther = locations[d] === OTHER_LOCATION;
                   const missing = !locations[d] || (isOther && !(locationCustoms[d] ?? '').trim());
                   return (
@@ -962,53 +1095,90 @@ const AbsenceInputSheet: React.FC<{
           <button onClick={handleDismiss} style={{ flex: 1, padding: 12, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, cursor: 'pointer' }}>
             キャンセル
           </button>
-          <button onClick={handleConfirm} disabled={confirming || saving} style={{ flex: 2, padding: 12, background: '#dc3545', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: (confirming || saving) ? 'not-allowed' : 'pointer', opacity: (confirming || saving) ? 0.7 : 1 }}>
-            {`登録する${isAbsent && absentDates.size > 1 ? `（${absentDates.size}日）` : ''}`}
+          <button onClick={handleConfirm} disabled={confirming || saving || checking} style={{ flex: 2, padding: 12, background: '#dc3545', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: (confirming || saving || checking) ? 'not-allowed' : 'pointer', opacity: (confirming || saving || checking) ? 0.7 : 1 }}>
+            {checking
+              ? '確認中...'
+              : `登録する${(userIds.size > 1 || targetDates.size > 1)
+                  ? `（${userIds.size > 1 ? `${userIds.size}人 × ` : ''}${targetDates.size}日）`
+                  : ''}`}
           </button>
         </div>
 
         {confirming && (() => {
-          const personName = profiles.find(p => p.id === userId)?.name ?? '';
           const segs = useSegments ? effectiveSegments() : [];
           // 日付は入力欄と同じ「7/28（火）」で出す（生の2026-07-28だと確認しづらいため）
           const dLabel = (d: string) => `${parseInt(d.slice(5, 7))}/${parseInt(d.slice(8, 10))}（${'日月火水木金土'[new Date(d + 'T00:00:00').getDay()]}）`;
-          const locSuffix = useSegments ? '' : `　${effectiveLocation(date)}`;
-          // 種別バッジ＋日付＋詳細の1行と、時間帯の内訳（subs）
-          const lines: { type: string; date: string; detail: string; subs?: string[] }[] = [];
+          // すでに登録がある「人と日」の組み合わせは外して、残りだけを確認画面に出す
+          const conflictKeys = new Set(conflicts.map(c => `${c.userId}|${c.date}`));
+          const allDates = [...targetDates].sort();
+          const okDatesOf = (uid: string) => allDates.filter(d => !conflictKeys.has(`${uid}|${d}`));
+          // 時間帯を使う種別は校が全日共通。それ以外は日付ごとに校が違いうるので日付の後ろに校を出す
+          const dateWithLoc = (d: string) => (useSegments ? dLabel(d) : `${dLabel(d)}　${effectiveLocation(d)}`);
+          const persons = [...userIds]
+            .map(uid => ({ uid, name: nameOf(uid), dates: okDatesOf(uid) }))
+            .filter(p => p.dates.length > 0);
+          const okPairCount = persons.reduce((n, p) => n + p.dates.length, 0);
+          const totalCount = okPairCount * selectedTypes().length;
+          // 種別ごとに「バッジ＋共通の詳細（時間帯など）＋対象者ごとの日付」を1ブロックで出す
           const segSubs = segs.map(s => `${hhmm(s.start)}〜${hhmm(s.end)}　${s.location}`);
-          if (isAbsent) [...absentDates].sort().forEach(d => lines.push({ type: 'absent', date: dLabel(d), detail: effectiveLocation(d) }));
-          if (isHolidayWork)    lines.push({ type: 'holiday_work',    date: dLabel(date), detail: '', subs: segSubs });
-          if (isLocationChange) lines.push({ type: 'location_change', date: dLabel(date), detail: `${effectiveOriginalLocation()} → ${joinSegmentLocations(segs)}`, subs: segSubs });
-          if (isTimeChange)     lines.push({ type: 'time_change',     date: dLabel(date), detail: '', subs: segSubs });
-          if (isLate)       lines.push({ type: 'late',        date: dLabel(date), detail: `出勤 ${hhmm(lateTime)}${locSuffix}`,  subs: segSubs });
-          if (isLateStart)  lines.push({ type: 'late_start',  date: dLabel(date), detail: `出勤 ${hhmm(lateTime)}${locSuffix}`,  subs: segSubs });
-          if (isEarlyLeave) lines.push({ type: 'early_leave', date: dLabel(date), detail: `退勤 ${hhmm(earlyTime)}${locSuffix}`, subs: segSubs });
-          if (isEarlyEnd)   lines.push({ type: 'early_end',   date: dLabel(date), detail: `退勤 ${hhmm(earlyTime)}${locSuffix}`, subs: segSubs });
+          const blocks: { type: string; detail: string; subs?: string[] }[] = [];
+          const add = (type: string, detail: string, subs?: string[]) => { if (persons.length > 0) blocks.push({ type, detail, subs }); };
+          if (isAbsent)         add('absent',          '');
+          if (isHolidayWork)    add('holiday_work',    '', segSubs);
+          if (isLocationChange) add('location_change', `${effectiveOriginalLocation()} → ${joinSegmentLocations(segs)}`, segSubs);
+          if (isTimeChange)     add('time_change',     '', segSubs);
+          if (isLate)           add('late',        `出勤 ${hhmm(lateTime)}`,  segSubs);
+          if (isLateStart)      add('late_start',  `出勤 ${hhmm(lateTime)}`,  segSubs);
+          if (isEarlyLeave)     add('early_leave', `退勤 ${hhmm(earlyTime)}`, segSubs);
+          if (isEarlyEnd)       add('early_end',   `退勤 ${hhmm(earlyTime)}`, segSubs);
           return (
             <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, pointerEvents: saving ? 'none' : 'auto' }}>
               <div style={{ background: '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 400 }}>
                 <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 16 }}>登録内容の確認</div>
-                <div style={{ fontSize: 14, color: '#333', marginBottom: 4 }}>対象者：<strong>{personName}</strong></div>
-                <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 12, marginBottom: 12 }}>
-                  {lines.map((l, i) => {
-                    const c = absenceColor(l.type);
+                <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 12, marginBottom: 12, maxHeight: '45vh', overflowY: 'auto' }}>
+                  {blocks.map((b, i) => {
+                    const c = absenceColor(b.type);
                     return (
-                      <div key={i} style={{ padding: '6px 0', borderBottom: i < lines.length - 1 ? '1px solid #f0f0f0' : 'none' }}>
+                      <div key={i} style={{ padding: '6px 0', borderBottom: i < blocks.length - 1 ? '1px solid #f0f0f0' : 'none' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                           <span style={{ fontSize: 11, fontWeight: 'bold', padding: '2px 8px', borderRadius: 5, background: c.bg, color: c.text, flexShrink: 0 }}>
-                            {absenceEmoji(l.type)} {absenceLabel(l.type)}
+                            {absenceEmoji(b.type)} {absenceLabel(b.type)}
                           </span>
-                          <span style={{ fontSize: 13.5, color: '#333' }}>{l.date}</span>
-                          {l.detail && <span style={{ fontSize: 13.5, color: '#333' }}>{l.detail}</span>}
+                          {b.detail && <span style={{ fontSize: 13.5, color: '#333' }}>{b.detail}</span>}
                         </div>
-                        {(l.subs ?? []).map((s, j) => (
+                        {(b.subs ?? []).map((s, j) => (
                           <div key={j} style={{ fontSize: 13, color: '#555', paddingLeft: 4, marginTop: 3 }}>{s}</div>
+                        ))}
+                        {/* 対象者ごとに、その人に登録される日を並べる */}
+                        {persons.map(p => (
+                          <div key={p.uid} style={{ fontSize: 13.5, color: '#333', marginTop: 4, paddingLeft: 4 }}>
+                            <strong>{p.name}</strong>　{p.dates.map(dateWithLoc).join('・')}
+                          </div>
                         ))}
                       </div>
                     );
                   })}
                   {notes && <div style={{ fontSize: 13, color: '#666', marginTop: 8, paddingTop: 8, borderTop: '1px solid #f0f0f0' }}>備考：{notes}</div>}
                 </div>
+                {totalCount > 1 && (
+                  <div style={{ fontSize: 12.5, color: '#555', marginBottom: 12 }}>合計 {totalCount}件を登録します</div>
+                )}
+                {/* すでに登録がある日は、その日だけ外して残りを登録できるようにする（黙って飛ばさない） */}
+                {conflicts.length > 0 && (
+                  <div style={{ background: '#fdecea', border: '1px solid #e24b4a', borderRadius: 8, padding: '10px 12px', marginBottom: 12, fontSize: 12.5, color: '#a32d2d', lineHeight: 1.7 }}>
+                    <div style={{ fontWeight: 'bold' }}>⚠️ すでに登録がある分は外します</div>
+                    {conflicts.map(c => (
+                      <div key={`${c.userId}|${c.date}`}>
+                        ・{userIds.size > 1 ? `${c.name}　` : ''}{dLabel(c.date)}　すでに「{c.label}」が登録されています
+                      </div>
+                    ))}
+                    <div style={{ marginTop: 4 }}>
+                      {okPairCount > 0
+                        ? `この${conflicts.length}件を外して、残り${totalCount}件を登録できます。上書きしたい場合は、先に一覧から取消してください。`
+                        : '登録できる分がありません。「戻る」で対象者・日付を選び直してください。'}
+                    </div>
+                  </div>
+                )}
                 <div style={{ fontSize: 11.5, color: '#666', background: '#f4f7fb', borderRadius: 8, padding: '8px 11px', marginBottom: 16, lineHeight: 1.6 }}>
                   📅 登録するとGoogleカレンダーに反映されます（一覧の「取消」で取り消せます）
                 </div>
@@ -1016,9 +1186,15 @@ const AbsenceInputSheet: React.FC<{
                   <button onClick={() => { confirmingRef.current = false; setConfirming(false); }} disabled={saving} style={{ flex: 1, padding: 12, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, cursor: 'pointer' }}>
                     戻る
                   </button>
-                  <button onClick={handleSave} disabled={saving} style={{ flex: 2, padding: 12, background: saving ? '#aaa' : '#dc3545', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: saving ? 'not-allowed' : 'pointer' }}>
-                    {saving ? '保存中...' : '確定する'}
-                  </button>
+                  {okPairCount > 0 && (
+                    <button onClick={() => handleSave(conflicts.length > 0)} disabled={saving} style={{ flex: 2, padding: 12, background: saving ? '#aaa' : '#dc3545', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: saving ? 'not-allowed' : 'pointer' }}>
+                      {saving
+                        ? `保存中...${saveProgress.total > 1 ? `（${saveProgress.done}/${saveProgress.total}）` : ''}`
+                        : conflicts.length > 0
+                          ? `重複を外して登録する（${totalCount}件）`
+                          : `確定する${totalCount > 1 ? `（${totalCount}件）` : ''}`}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

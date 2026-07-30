@@ -35,12 +35,19 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
 
   try {
-    // user_id = 欠勤等を登録された本人（該当スタッフ）。登録操作者ではない。
+    // users  = 欠勤等を登録された本人たち（該当スタッフ）。登録操作者ではない。
+    //          まとめて登録できるようになったため複数受け取る。[{ id, name }]
+    // user_id/user_name = 1人しか登録できなかった頃の呼び出し方（取消などから今も来る）
     // mode = 'registered'（登録した）/ 'cancelled'（取消した）。省略時は登録扱い。
-    const { user_id, user_name, dates, types, mode } = await req.json()
-    if (!user_id || !dates?.length || !types?.length) {
+    const { users, user_id, user_name, dates, types, mode } = await req.json()
+    const staffList: { id: string; name: string }[] = Array.isArray(users) && users.length > 0
+      ? users.filter((u: { id?: string }) => u?.id).map((u: { id: string; name?: string }) => ({ id: u.id, name: u.name ?? '' }))
+      : (user_id ? [{ id: user_id, name: user_name ?? '' }] : [])
+    if (staffList.length === 0 || !dates?.length || !types?.length) {
       return new Response(JSON.stringify({ error: 'missing params' }), { status: 400, headers: CORS_HEADERS })
     }
+    const staffIds = staffList.map(s => s.id)
+    const isMulti = staffList.length > 1
     const isCancelled = mode === 'cancelled'
     const eventKey = isCancelled ? 'attendance:cancelled' : 'attendance:registered'
 
@@ -54,8 +61,12 @@ serve(async (req) => {
     const first = sortedDates[0]
     const dateLabel = `${first.slice(5, 7)}月${parseInt(first.slice(8, 10))}日`
       + (sortedDates.length > 1 ? ` 他${sortedDates.length - 1}日` : '')
+    // 複数人のときは「大岡 佳奈恵さん 他2名」。1人のときは今までどおり名前だけ
+    const nameLabel = isMulti
+      ? `${staffList[0].name}さん 他${staffList.length - 1}名`
+      : (staffList[0].name ?? '')
     const vars: Record<string, string> = {
-      '対象者名': user_name ?? '',
+      '対象者名': nameLabel,
       '種別': typeLabels,
       '日付': dateLabel,
       'リンク': 'https://fivem-portal.vercel.app/calendar',
@@ -69,13 +80,14 @@ serve(async (req) => {
     const settings = (settingsData ?? []) as { channel: string; enabled: boolean; recipient: string | null; subject: string | null; template: string | null }[]
     const getSetting = (ch: string) => settings.find(s => s.channel === ch)
 
-    // 該当スタッフのグループ
-    const { data: staffProfile } = await supabase
+    // 該当スタッフのグループ（複数人のときは全員分をまとめる。誰か1人でも同じグループなら届く）
+    const { data: staffProfiles } = await supabase
       .from('profiles')
       .select('group_names')
-      .eq('id', user_id)
-      .single()
-    const staffGroups: string[] = (staffProfile as { group_names?: string[] } | null)?.group_names ?? []
+      .in('id', staffIds)
+    const staffGroups: string[] = [...new Set(
+      ((staffProfiles ?? []) as { group_names?: string[] }[]).flatMap(p => p.group_names ?? [])
+    )]
 
     // 役職＋グループフィルタで通知対象user_idを解決
     // ・リーダー/マネージャー … groupFilter=same のとき同グループのみ
@@ -109,7 +121,7 @@ serve(async (req) => {
         const { data } = await supabase.from('profiles').select('id').in('role_title', orgWideRoles).eq('is_active', true)
         for (const d of ((data ?? []) as { id: string }[])) ids.add(d.id)
       }
-      if (includeStaff) ids.add(user_id)
+      if (includeStaff) for (const id of staffIds) ids.add(id)
       return [...ids]
     }
 
@@ -129,7 +141,11 @@ serve(async (req) => {
         ?? (isCancelled
           ? '🔴 {{対象者名}}さんの{{種別}}が取消されました（{{日付}}）'
           : '🔴 {{対象者名}}さんの{{種別}}が登録されました（{{日付}}）')
-      const message = applyTemplate(template, vars)
+      // 1人のときは管理画面のテンプレートをそのまま使う（「◯◯さんの…」という書き方が前提）。
+      // 複数人のときは「◯◯さん 他2名さんの…」と日本語が崩れるので固定文で出す
+      const message = isMulti
+        ? `🔴 ${nameLabel}の${typeLabels}が${isCancelled ? '取消' : '登録'}されました（${dateLabel}）`
+        : applyTemplate(template, vars)
       const targetIds = await resolveTargetIds(siteSetting.recipient)
       if (targetIds.length > 0) {
         // reference_id に対象日（先頭日・YYYY-MM-DD）を入れ、バナーから正しい月へジャンプ＋該当行を強調できるようにする
@@ -175,7 +191,7 @@ serve(async (req) => {
       let channels: string[] = []
       try { channels = JSON.parse(slackSetting.recipient ?? '{}').channels ?? [] } catch { /* ignore */ }
       const slackHead = isCancelled ? '勤怠の登録が取消されました' : '勤怠が登録されました'
-      const slackMsg = `📝 *${slackHead}*\n\n*対象者：* ${user_name}\n*日付：* ${dateLabel}\n*種別：* ${typeLabels}`
+      const slackMsg = `📝 *${slackHead}*\n\n*対象者：* ${staffList.map(s => s.name).filter(Boolean).join('・')}\n*日付：* ${dateLabel}\n*種別：* ${typeLabels}`
       for (const ch of channels) {
         const url = Deno.env.get(SLACK_WEBHOOK_KEYS[ch] ?? '')
         if (!url) continue
@@ -194,7 +210,10 @@ serve(async (req) => {
       const subject = emailSetting.subject
         ? applyTemplate(emailSetting.subject, vars)
         : (isCancelled ? '勤怠の登録が取消されました' : '欠勤・遅刻・早退が登録されました')
-      const text = applyTemplate(emailSetting.template, vars)
+      // サイト通知と同じ理由で、複数人のときは固定文にする
+      const text = isMulti
+        ? `${nameLabel}の${typeLabels}が ${dateLabel} に${isCancelled ? '取消' : '登録'}されました。\n\n下記のリンクからご確認ください。\n${vars['リンク']}`
+        : applyTemplate(emailSetting.template, vars)
       const emails = await resolveTargetEmails(emailSetting.recipient)
       for (const to of emails) {
         await supabase.functions.invoke('send-email', { body: { to, subject, text } })
