@@ -58,6 +58,12 @@ const PurchaseItemsSummary: React.FC<PurchaseItemsSummaryProps> = ({ items, isDa
         <div style={{ fontSize: 13, color: text }}>
           {summaryLine(item)}
         </div>
+        {/* 1万円以上でも相見積もりを取らなかった場合の理由。承認の判断材料なので必ず見せる */}
+        {item.single_vendor_reason && (
+          <div style={{ marginTop: 6, padding: '6px 8px', borderRadius: 6, background: '#fff8e1', border: '1px solid #ffe082', color: '#8a6d00', fontSize: 12 }}>
+            1社しか選べない理由：{item.single_vendor_reason}
+          </div>
+        )}
         {item.quotes.length > 0 && (
           <div style={{ marginTop: 6, padding: '8px 10px', borderRadius: 8, background: quoteBg, border: `1px solid ${quoteBorder}`, display: 'flex', flexDirection: 'column', gap: 6 }}>
             {item.quotes.map((q, qi) => (
@@ -108,6 +114,12 @@ const PurchaseItemsSummary: React.FC<PurchaseItemsSummaryProps> = ({ items, isDa
               <span style={{ flex: 1 }}>{summaryLine(item)}</span>
               {hasQuotes && <span style={{ color: subText, fontSize: 11 }}>{isOpen ? '▲' : '▼'}</span>}
             </div>
+            {/* 1社しか選べない理由は承認の判断材料なので、折りたたまずに常に見せる */}
+            {item.single_vendor_reason && (
+              <div style={{ padding: '6px 10px', borderTop: `1px solid ${border}`, background: '#fff8e1', color: '#8a6d00', fontSize: 12 }}>
+                1社しか選べない理由：{item.single_vendor_reason}
+              </div>
+            )}
 
             {hasQuotes && isOpen && (
               <div style={{ padding: '8px 10px', borderTop: `1px solid ${border}`, background: quoteBg, display: 'flex', flexDirection: 'column', gap: 6 }}>

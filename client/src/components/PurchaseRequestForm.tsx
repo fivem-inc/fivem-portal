@@ -35,11 +35,13 @@ interface ItemDraft {
   storeName: string;
   quotes: QuoteDraft[];
   useManualAmount: boolean;
+  // 1万円以上で「1社しか選べない」を選んだときの理由（1万円未満では使わない）
+  singleVendorReason: string;
   collapsed: boolean;
 }
 const emptyItemDraft = (): ItemDraft => ({
   itemName: '', quantity: '', amount: '', amountManuallyOverridden: false, storeName: '',
-  quotes: [emptyQuoteDraft(), emptyQuoteDraft()], useManualAmount: true, collapsed: false,
+  quotes: [emptyQuoteDraft(), emptyQuoteDraft()], useManualAmount: true, singleVendorReason: '', collapsed: false,
 });
 
 const itemDraftFromRecord = (item: PurchaseRequestItem): ItemDraft => {
@@ -59,6 +61,7 @@ const itemDraftFromRecord = (item: PurchaseRequestItem): ItemDraft => {
     storeName: item.store_name ?? '',
     quotes,
     useManualAmount: !hasSelected,
+    singleVendorReason: item.single_vendor_reason ?? '',
     collapsed: false,
   };
 };
@@ -432,9 +435,15 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
         const unit = q.unitAmount.trim() ? parseInt(parseAmount(q.unitAmount), 10) : NaN;
         if (q.unitAmount.trim() && (isNaN(unit) || unit < 1)) missing.push({ key: `quote-${i}-${qi}`, label: label(i, '価格比較の単価（1円以上）') });
       });
-      // 1万円以上は各商品につき2社以上の価格比較が必須
-      if (quotesRequired && item.quotes.filter(q => q.vendor.trim() && q.unitAmount.trim()).length < 2) {
-        missing.push({ key: `quote-${i}-0`, label: label(i, '価格比較（2社以上）') });
+      // 1万円以上は各商品につき2社以上の価格比較が必須。
+      // ただし取扱いが1社だけ・緊急などで取れない実務があるため、
+      // 「1社しか選べない」を選んで理由を書けば通せる（理由は承認者にも見える）
+      if (quotesRequired) {
+        if (item.useManualAmount) {
+          if (!item.singleVendorReason.trim()) missing.push({ key: `singleVendor-${i}`, label: label(i, '1社しか選べない理由') });
+        } else if (item.quotes.filter(q => q.vendor.trim() && q.unitAmount.trim()).length < 2) {
+          missing.push({ key: `quote-${i}-0`, label: label(i, '価格比較（2社以上）') });
+        }
       }
     });
 
@@ -572,6 +581,8 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
       amount: parseInt(parseAmount(item.amount), 10),
       amount_manually_overridden: item.amountManuallyOverridden,
       store_name: effectiveStoreName(item),
+      // 1万円以上で1社しか選べない場合のみ意味を持つ（それ以外は空で送る）
+      single_vendor_reason: quotesRequired && item.useManualAmount ? item.singleVendorReason.trim() : '',
       quotes: item.useManualAmount ? [] : item.quotes
         .filter(q => q.vendor.trim() && q.unitAmount.trim())
         .map((q, qi) => ({
@@ -766,13 +777,13 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
                       <label style={labelStyle}>
                         価格比較 {itemQuotesRequired ? <span style={{ color: '#dc3545' }}>*（必須）</span> : <span style={{ color: subText, fontWeight: 'normal' }}>（任意）</span>}
                       </label>
-                      <div style={{ fontSize: 12, color: subText, marginBottom: 4 }}>
+                      <div style={{ fontSize: 12, color: itemQuotesRequired ? '#dc3545' : subText, marginBottom: 4, fontWeight: itemQuotesRequired ? 'bold' : 'normal' }}>
                         {itemQuotesRequired
-                          ? '1万円以上の申請は、2社以上の価格比較の入力が必須です。'
+                          ? '⚠️ 1万円以上のため、2社以上の価格比較が必要です。'
                           : '少額でも、複数の業者・店舗で価格比較しておくとコスト意識の共有に役立ちます。任意ですが、できるだけ入力にご協力ください。'}
                       </div>
                       <div style={{ fontSize: 12, color: subText, marginBottom: 8 }}>
-                        ◯を付けた業者から購入する前提で、金額欄に自動反映されます。
+                        業者名と単価を入れ、購入する業者に◯を付けてください（単価 × 数量が金額欄に自動反映されます）。
                       </div>
                       {itemIndex > 0 && (
                         <button
@@ -783,24 +794,6 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
                         </button>
                       )}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px', border: `1px solid ${item.useManualAmount ? '#28a745' : border}`, borderRadius: 8, cursor: 'pointer', fontSize: 13, color: text }}>
-                          <input
-                            type="radio" name={`quote-${itemIndex}`} checked={item.useManualAmount}
-                            onChange={() => selectManualAmount(itemIndex)}
-                          />
-                          金額を直接入力する（相見積もりを使わない）
-                        </label>
-
-                        {item.useManualAmount && (
-                          <div style={{ padding: '0 8px' }}>
-                            <label style={labelStyle}>購入予定先（店舗名）</label>
-                            <input
-                              type="text" value={item.storeName} onChange={e => updateItem(itemIndex, { storeName: e.target.value })}
-                              placeholder="例：〇〇ホームセンター" style={inputStyle}
-                            />
-                          </div>
-                        )}
-
                         {item.quotes.map((q, qi) => (
                           <div key={qi} style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px', border: `1px solid ${q.isSelected ? '#28a745' : border}`, borderRadius: 8 }}>
                             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -841,6 +834,48 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
                       >
                         + 見積もり業者を追加
                       </button>
+
+                      {/* 業者を入れたあとの選択肢。金額が決まって初めて2社必須かが分かるので、
+                          業者欄より下に置き、1万円以上のときはラベルと必要な入力を切り替える */}
+                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 10, padding: '8px', border: `1px solid ${item.useManualAmount ? '#28a745' : border}`, borderRadius: 8, cursor: 'pointer', fontSize: 13, color: text }}>
+                        <input
+                          type="radio" name={`quote-${itemIndex}`} checked={item.useManualAmount}
+                          onChange={() => selectManualAmount(itemIndex)}
+                          style={{ marginTop: 2, flexShrink: 0 }}
+                        />
+                        <span>
+                          {itemQuotesRequired ? '1社しか選べない（理由を書く）' : '金額を直接入力する（相見積もりを使わない）'}
+                          {itemQuotesRequired && (
+                            <span style={{ display: 'block', fontSize: 11, color: subText }}>
+                              取扱いが1社だけ・緊急で相見積もりを取れない場合はこちら。理由は承認する人にも見えます
+                            </span>
+                          )}
+                        </span>
+                      </label>
+
+                      {item.useManualAmount && (
+                        <div style={{ padding: '8px 8px 0' }}>
+                          <label style={labelStyle}>購入予定先（店舗名）</label>
+                          <input
+                            type="text" value={item.storeName} onChange={e => updateItem(itemIndex, { storeName: e.target.value })}
+                            placeholder="例：〇〇ホームセンター" style={inputStyle}
+                          />
+                          {itemQuotesRequired && (
+                            <div style={{ marginTop: 8 }}>
+                              <label style={{ ...labelStyle, color: errFields.has(`singleVendor-${itemIndex}`) ? '#dc3545' : text }}>
+                                1社しか選べない理由 <span style={{ color: '#dc3545' }}>*</span>
+                              </label>
+                              <input
+                                data-err-field={`singleVendor-${itemIndex}`}
+                                type="text" value={item.singleVendorReason}
+                                onChange={e => { updateItem(itemIndex, { singleVendorReason: e.target.value }); clearErr(`singleVendor-${itemIndex}`); }}
+                                placeholder="例：この機器は京都総合通信のみの取扱いのため"
+                                style={errStyle(`singleVendor-${itemIndex}`)}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     <div>
