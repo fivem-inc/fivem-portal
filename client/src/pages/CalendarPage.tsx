@@ -27,7 +27,58 @@ interface AbsenceDraft {
   isLocationChange?: boolean;
   originalLocation?: string;
   originalLocationCustom?: string;
+  isTimeChange?: boolean;
 }
+
+/**
+ * 登録済みの勤怠を入力シートの下書きに戻す（「取消してこの内容を利用して入力する」用）。
+ * 校は保存時に「その他」が実際の校名へ解決されているので、登録リストに無い値は
+ * 「その他（自由入力）」＋自由入力欄に振り分ける（交通費の toDraft と同じ考え方）。
+ */
+const absenceToDraft = (ab: AbsenceEvent, workplaces: string[]): AbsenceDraft => {
+  // 校名 → [selectの値, 自由入力の値]
+  const splitLoc = (loc: string | null): [string, string] => {
+    const v = (loc ?? '').trim();
+    if (!v) return ['', ''];
+    return workplaces.includes(v) ? [v, ''] : [OTHER_LOCATION, v];
+  };
+  const [locSel, locCustom] = splitLoc(ab.location);
+  const [origSel, origCustom] = splitLoc(ab.original_location);
+  const segs = ab.work_segments;
+  const segSplit = segs.map(s => splitLoc(s.location));
+  const time = ab.actual_time ? ab.actual_time.slice(0, 5) : '';
+  const isLateType = ab.type === 'late' || ab.type === 'late_start';
+  const isEarlyType = ab.type === 'early_leave' || ab.type === 'early_end';
+
+  return {
+    date: ab.date,
+    userId: ab.user_id,
+    isAbsent: ab.type === 'absent',
+    absentDates: [ab.date],
+    isLate: ab.type === 'late',
+    isLateStart: ab.type === 'late_start',
+    isEarlyLeave: ab.type === 'early_leave',
+    isEarlyEnd: ab.type === 'early_end',
+    lateTime: isLateType ? time : '',
+    earlyTime: isEarlyType ? time : '',
+    notes: ab.notes ?? '',
+    // 時間帯を持つ種別は「校（必須）」欄を使わないので、日付ごとの校は入れない
+    locations: segs.length > 0 ? {} : (locSel ? { [ab.date]: locSel } : {}),
+    locationCustoms: segs.length > 0 ? {} : (locCustom ? { [ab.date]: locCustom } : {}),
+    isHolidayWork: ab.type === 'holiday_work',
+    isLocationChange: ab.type === 'location_change',
+    isTimeChange: ab.type === 'time_change',
+    // <input type="time"> は 'HH:MM'（先頭0あり）でないと値が入らないので hhmm() は通さない
+    segments: segs.length > 0
+      ? segs.map((s, i) => ({ start: (s.start ?? '').slice(0, 5), end: (s.end ?? '').slice(0, 5), location: segSplit[i][0] }))
+      : [{ start: '', end: '', location: '' }],
+    segmentCustoms: segs.length > 0 ? segSplit.map(p => p[1]) : [''],
+    // 遅刻・早退で時間帯がある＝「途中で別の校に移動する」を使って登録したもの
+    hasLocationMove: segs.length > 0 && (isLateType || isEarlyType),
+    originalLocation: origSel,
+    originalLocationCustom: origCustom,
+  };
+};
 
 const CalendarResultModal: React.FC<{ type: 'save' | 'delete'; onClose: () => void }> = ({ type, onClose }) => {
   useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, [onClose]);
@@ -334,6 +385,8 @@ const AbsenceInputSheet: React.FC<{
   const [isLocationChange, setIsLocationChange] = useState(absDraft?.isLocationChange ?? false);
   const [originalLocation, setOriginalLocation] = useState(absDraft?.originalLocation ?? '');
   const [originalLocationCustom, setOriginalLocationCustom] = useState(absDraft?.originalLocationCustom ?? '');
+  // 勤務時間変更（校は普段どおり・勤務時間だけ違う）。勤務地変更とは一方しか選べない
+  const [isTimeChange, setIsTimeChange] = useState(absDraft?.isTimeChange ?? false);
   const [isAbsent, setIsAbsent] = useState(absDraft?.isAbsent ?? false);
   const [absentDates, setAbsentDates] = useState<Set<string>>(() => new Set(absDraft?.absentDates ?? [date]));
   const [isLate, setIsLate] = useState(absDraft?.isLate ?? false);
@@ -364,9 +417,9 @@ const AbsenceInputSheet: React.FC<{
       date, userId, isAbsent, absentDates: [...absentDates],
       isLate, isLateStart, isEarlyLeave, isEarlyEnd, lateTime, earlyTime, notes, locations,
       locationCustoms, isHolidayWork, segments, segmentCustoms, hasLocationMove,
-      isLocationChange, originalLocation, originalLocationCustom,
+      isLocationChange, originalLocation, originalLocationCustom, isTimeChange,
     });
-  }, [date, userId, isAbsent, absentDates, isLate, isLateStart, isEarlyLeave, isEarlyEnd, lateTime, earlyTime, notes, locations, locationCustoms, isHolidayWork, segments, segmentCustoms, hasLocationMove, isLocationChange, originalLocation, originalLocationCustom]);
+  }, [date, userId, isAbsent, absentDates, isLate, isLateStart, isEarlyLeave, isEarlyEnd, lateTime, earlyTime, notes, locations, locationCustoms, isHolidayWork, segments, segmentCustoms, hasLocationMove, isLocationChange, originalLocation, originalLocationCustom, isTimeChange]);
 
   // 種別が排他で押せないときの理由（グレーにするだけだと「なぜ押せないのか」が分からないため）
   const blockedReason = isHolidayWork
@@ -378,6 +431,7 @@ const AbsenceInputSheet: React.FC<{
     if (checked) {
       setIsAbsent(false); setIsLate(false); setIsLateStart(false); setIsEarlyLeave(false); setIsEarlyEnd(false);
       setIsLocationChange(false); // 休みの日の出勤なので「普段の勤務地からの変更」にはならない
+      setIsTimeChange(false);     // 同じ理由で「普段の勤務時間からの変更」にもならない
       setHasLocationMove(false);
     }
   };
@@ -385,15 +439,23 @@ const AbsenceInputSheet: React.FC<{
   const toggleAbsent = (checked: boolean) => {
     if (isHolidayWork) return;
     setIsAbsent(checked);
-    if (checked) { setIsLate(false); setIsLateStart(false); setIsEarlyLeave(false); setIsEarlyEnd(false); setIsLocationChange(false); setHasLocationMove(false); }
+    if (checked) { setIsLate(false); setIsLateStart(false); setIsEarlyLeave(false); setIsEarlyEnd(false); setIsLocationChange(false); setIsTimeChange(false); setHasLocationMove(false); }
   };
 
   // 勤務地変更は遅刻・早退と同時に選べる（洛西口校で勤務、しかも遅刻、はあり得るため）。
-  // 校が変わると勤務時間も変わるので、選ぶと時間帯の入力が出る（下の useSegments）
+  // 校が変わると勤務時間も変わるので、選ぶと時間帯の入力が出る（下の useSegments）。
+  // 勤務時間変更とは一方のみ（どちらも「実際に勤務する時間帯」を持つため、両方だと二重定義になる）
   const toggleLocationChange = (checked: boolean) => {
     if (isAbsent || isHolidayWork) return;
     setIsLocationChange(checked);
-    if (checked) setHasLocationMove(false); // 時間帯の入力自体が出るので、移動チェックは不要
+    if (checked) { setIsTimeChange(false); setHasLocationMove(false); } // 時間帯の入力自体が出るので、移動チェックは不要
+  };
+
+  // 勤務時間変更（校は普段どおり・時間だけ違う）。勤務地変更と同じく時間帯の入力が出る
+  const toggleTimeChange = (checked: boolean) => {
+    if (isAbsent || isHolidayWork) return;
+    setIsTimeChange(checked);
+    if (checked) { setIsLocationChange(false); setHasLocationMove(false); }
   };
 
   const toggleLate = (checked: boolean) => {
@@ -432,8 +494,8 @@ const AbsenceInputSheet: React.FC<{
     }
   };
 
-  // 時間帯の編集（休日出勤・校の移動で共用）
-  const useSegments = isHolidayWork || isLocationChange || hasLocationMove;
+  // 時間帯の編集（休日出勤・勤務地変更・勤務時間変更・校の移動で共用）
+  const useSegments = isHolidayWork || isLocationChange || isTimeChange || hasLocationMove;
   const updateSegment = (i: number, patch: Partial<WorkSegment>) =>
     setSegments(prev => prev.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
   const addSegment = () => {
@@ -470,7 +532,7 @@ const AbsenceInputSheet: React.FC<{
     if (confirmingRef.current) return;
     setError('');
     if (!userId) { setError('対象者を選択してください'); return; }
-    if (!isAbsent && !isHolidayWork && !isLocationChange && !isLate && !isLateStart && !isEarlyLeave && !isEarlyEnd) { setError('種別を選択してください'); return; }
+    if (!isAbsent && !isHolidayWork && !isLocationChange && !isTimeChange && !isLate && !isLateStart && !isEarlyLeave && !isEarlyEnd) { setError('種別を選択してください'); return; }
     if ((isLate || isLateStart) && !lateTime) { setError('出勤時間を入力してください'); return; }
     if ((isEarlyLeave || isEarlyEnd) && !earlyTime) { setError('退勤時間を入力してください'); return; }
     if (isLocationChange && !effectiveOriginalLocation()) { setError('変更前の校を選択してください'); return; }
@@ -520,6 +582,8 @@ const AbsenceInputSheet: React.FC<{
     }
     if (isHolidayWork)    records.push({ user_id: userId, date, type: 'holiday_work',    actual_time: segs[0]?.start ?? null, notes, created_by: currentUserId, location: segLoc,     work_segments: segCol, original_location: null });
     if (isLocationChange) records.push({ user_id: userId, date, type: 'location_change', actual_time: null,                   notes, created_by: currentUserId, location: locOf(date), work_segments: segCol, original_location: origLoc });
+    // 勤務時間変更は校が普段どおりなので変更前の校は持たない（時間帯の校がそのまま勤務校）
+    if (isTimeChange)     records.push({ user_id: userId, date, type: 'time_change',     actual_time: segs[0]?.start ?? null, notes, created_by: currentUserId, location: segLoc,     work_segments: segCol, original_location: null });
     if (isLate)        records.push({ user_id: userId, date, type: 'late',         actual_time: lateTime,  notes, created_by: currentUserId, location: locOf(date), work_segments: segCol, original_location: origLoc });
     if (isLateStart)   records.push({ user_id: userId, date, type: 'late_start',   actual_time: lateTime,  notes, created_by: currentUserId, location: locOf(date), work_segments: segCol, original_location: origLoc });
     if (isEarlyLeave)  records.push({ user_id: userId, date, type: 'early_leave',  actual_time: earlyTime, notes, created_by: currentUserId, location: locOf(date), work_segments: segCol, original_location: origLoc });
@@ -593,7 +657,7 @@ const AbsenceInputSheet: React.FC<{
     setUserId(''); setLocations({}); setLocationCustoms({}); setBulkLocation('');
     setIsAbsent(false); setAbsentDates(new Set([date]));
     setIsHolidayWork(false); setHasLocationMove(false);
-    setIsLocationChange(false); setOriginalLocation(''); setOriginalLocationCustom('');
+    setIsLocationChange(false); setOriginalLocation(''); setOriginalLocationCustom(''); setIsTimeChange(false);
     setSegments([{ start: '', end: '', location: '' }]); setSegmentCustoms(['']);
     setIsLate(false); setIsLateStart(false); setIsEarlyLeave(false); setIsEarlyEnd(false);
     setLateTime(''); setEarlyTime(''); setNotes(''); setError('');
@@ -660,6 +724,20 @@ const AbsenceInputSheet: React.FC<{
             <span style={{ fontSize: 15, fontWeight: 'bold', color: '#6d28d9' }}>📍 勤務地変更</span>
             <span style={{ marginLeft: 'auto', fontSize: 11, color: '#6d28d9' }}>普段と違う校</span>
           </label>
+
+          {/* 勤務時間変更（校は普段どおり・勤務時間だけ違う）。短期などで通常レッスンがない日に使う */}
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px', border: `2px solid ${isTimeChange ? '#374151' : '#e0e0e0'}`, borderRadius: 10, marginBottom: 8, cursor: (isAbsent || isHolidayWork) ? 'default' : 'pointer', background: isTimeChange ? '#eef0f3' : '#fff', opacity: (isAbsent || isHolidayWork) ? 0.4 : 1 }}>
+            <input type="checkbox" checked={isTimeChange} onChange={e => toggleTimeChange(e.target.checked)} disabled={isAbsent || isHolidayWork} style={{ width: 20, height: 20, accentColor: '#374151' }} />
+            <span style={{ fontSize: 15, fontWeight: 'bold', color: '#374151' }}>🕐 勤務時間変更</span>
+            <span style={{ marginLeft: 'auto', fontSize: 11, color: '#374151' }}>普段と違う時間</span>
+          </label>
+
+          {isTimeChange && (
+            <div style={{ fontSize: 11, color: '#888', margin: '-2px 0 8px', paddingLeft: 4, lineHeight: 1.6 }}>
+              ※ 校は普段どおりで、勤務時間だけが違う日に使います（短期などで通常レッスンがない日）。
+              校も変わる場合は「勤務地変更」を選んでください。
+            </div>
+          )}
 
           {/* 遅刻 / 調整遅出 行 */}
           <div style={{ marginBottom: 8, opacity: (isAbsent || isHolidayWork) ? 0.4 : 1 }}>
@@ -894,6 +972,7 @@ const AbsenceInputSheet: React.FC<{
           if (isAbsent) [...absentDates].sort().forEach(d => lines.push({ type: 'absent', date: dLabel(d), detail: effectiveLocation(d) }));
           if (isHolidayWork)    lines.push({ type: 'holiday_work',    date: dLabel(date), detail: '', subs: segSubs });
           if (isLocationChange) lines.push({ type: 'location_change', date: dLabel(date), detail: `${effectiveOriginalLocation()} → ${joinSegmentLocations(segs)}`, subs: segSubs });
+          if (isTimeChange)     lines.push({ type: 'time_change',     date: dLabel(date), detail: '', subs: segSubs });
           if (isLate)       lines.push({ type: 'late',        date: dLabel(date), detail: `出勤 ${hhmm(lateTime)}${locSuffix}`,  subs: segSubs });
           if (isLateStart)  lines.push({ type: 'late_start',  date: dLabel(date), detail: `出勤 ${hhmm(lateTime)}${locSuffix}`,  subs: segSubs });
           if (isEarlyLeave) lines.push({ type: 'early_leave', date: dLabel(date), detail: `退勤 ${hhmm(earlyTime)}${locSuffix}`, subs: segSubs });
@@ -1073,6 +1152,7 @@ const SpCalendar: React.FC<{
               // 休日出勤・勤務地変更は「出勤している」＝不在系と意味が違うので別色にする
               const hasTeal = absences.some(a => a.type === 'holiday_work');
               const hasPurple = absences.some(a => a.type === 'location_change');
+              const hasGraphite = absences.some(a => a.type === 'time_change');
               return (
                 <td key={ci}
                   onClick={() => cell.date && onDateTap?.(cell.date)}
@@ -1081,13 +1161,14 @@ const SpCalendar: React.FC<{
                     <span style={{ fontSize: 13, fontWeight: isToday ? 'bold' : 'normal', color: isSat ? '#4a90d9' : isSun ? '#e74c3c' : cell.day ? textColor : (isDark ? '#555' : '#ccc') }}>
                       {cell.day ?? ''}
                     </span>
-                    {(hasRed || hasOrange || hasGreen || hasTeal || hasPurple) && (
+                    {(hasRed || hasOrange || hasGreen || hasTeal || hasPurple || hasGraphite) && (
                       <div style={{ display: 'flex', gap: 1, marginTop: 1, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 28 }}>
                         {hasRed && <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#dc3545' }} />}
                         {hasOrange && <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#ff9800' }} />}
                         {hasGreen && <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#43a047' }} />}
                         {hasTeal && <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#0f766e' }} />}
                         {hasPurple && <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#6d28d9' }} />}
+                        {hasGraphite && <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#374151' }} />}
                       </div>
                     )}
                   </div>
@@ -1335,23 +1416,42 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
 
   const canInput = isApprover || isAdmin;
 
-  const handleDelete = async () => {
+  /**
+   * 勤怠の取消。
+   * reuse=true のときは、取消したうえで同じ内容を入力シートに引き継いで開く
+   * （＝「取消してこの内容を利用して入力する」）。DBは常に「登録か取消」の2状態だけになる。
+   */
+  const handleDelete = async (reuse = false) => {
     if (!deleteTarget) return;
+    const target = deleteTarget;
     setDeleting(true);
-    await supabase.from('attendance_exceptions').delete().eq('id', deleteTarget.id);
+    await supabase.from('attendance_exceptions').delete().eq('id', target.id);
     // invoke は 4xx/5xx でも throw しないので error を必ず見る（見ないと削除失敗が誰にも見えない）
     const { data: syncRes, error: syncErr } = await supabase.functions.invoke('gcal-sync', {
-      body: { action: 'delete', source_type: 'absence', source_id: deleteTarget.id },
+      body: { action: 'delete', source_type: 'absence', source_id: target.id },
     });
     const sr = syncRes as { success?: boolean } | null;
     if (syncErr || sr?.success === false) {
       console.error('[gcal-sync] 勤怠の削除失敗:', syncErr);
       setGcalDeleteFailed(true);
     }
+    // 取消したことをリーダー以上へ通知（通知設定 attendance:cancelled に従う）。
+    // 通知を出さないと、共有カレンダーから予定が黙って消えるだけで経緯が誰にも伝わらない
+    const { error: notifyErr } = await supabase.functions.invoke('attendance-notify', {
+      body: { user_id: target.user_id, user_name: target.name, dates: [target.date], types: [target.type], mode: 'cancelled' },
+    });
+    if (notifyErr) console.error('[attendance-notify] 取消通知の送信失敗:', notifyErr);
+
     setDeleting(false);
     setDeleteTarget(null);
     fetchAbsences();
-    setAbsenceDeleted(true);
+    if (reuse) {
+      // 入力シートは開いた日付の下書きを復元する作りなので、下書きに書いてから開く
+      saveDraft(DRAFT_KEYS.attendance, absenceToDraft(target, workplaces));
+      setAbsenceSheet(target.date);
+    } else {
+      setAbsenceDeleted(true);
+    }
   };
 
   return (
@@ -1430,6 +1530,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
             { label: '早退(調整)', bg: '#7b1fa2' },
             { label: '休日出勤', bg: '#0f766e' },
             { label: '勤務地変更', bg: '#6d28d9' },
+            { label: '勤務時間変更', bg: '#374151' },
           ].map(({ label, bg: cbg, border }) => (
             <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <div style={{ width: 12, height: 12, borderRadius: 3, background: cbg, border: border ? `1px dashed ${border}` : 'none' }} />
@@ -1570,19 +1671,33 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
             <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 16, color: '#dc3545' }}>取消の確認</div>
             <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 12, marginBottom: 20, fontSize: 14, color: '#333' }}>
               <div><strong>{deleteTarget.name}</strong></div>
-              <div style={{ marginTop: 4 }}>{deleteTarget.date}　{absenceLabel(deleteTarget.type)}{deleteTarget.actual_time ? `　${deleteTarget.actual_time.slice(0, 5)}` : ''}</div>
+              {/* 日付は入力画面と同じ「7/31（金）」で出す（生の2026-07-31だと確認しづらいため） */}
+              <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span>{parseInt(deleteTarget.date.slice(5, 7))}/{parseInt(deleteTarget.date.slice(8, 10))}（{dow(deleteTarget.date)}）</span>
+                <span style={{ fontSize: 11, fontWeight: 'bold', padding: '2px 8px', borderRadius: 5, background: absenceColor(deleteTarget.type).bg, color: absenceColor(deleteTarget.type).text }}>
+                  {absenceEmoji(deleteTarget.type)} {absenceLabel(deleteTarget.type)}
+                </span>
+                {deleteTarget.actual_time && <span>{hhmm(deleteTarget.actual_time)}</span>}
+              </div>
               {deleteTarget.work_segments.length > 0 && (
                 <div style={{ marginTop: 4, fontSize: 13, color: '#666' }}>勤務：{formatSegments(deleteTarget.work_segments)}</div>
               )}
               {deleteTarget.notes && <div style={{ marginTop: 4, fontSize: 13, color: '#666' }}>備考：{deleteTarget.notes}</div>}
             </div>
-            <div style={{ fontSize: 13, color: '#666', marginBottom: 16 }}>このレコードを削除します。元に戻せません。</div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button onClick={() => setDeleteTarget(null)} style={{ flex: 1, padding: 12, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, cursor: 'pointer' }}>
-                戻る
+            <div style={{ fontSize: 13, color: '#666', marginBottom: 16, lineHeight: 1.7 }}>
+              取消すとGoogleカレンダーからも消え、リーダー・マネージャーに取消の通知が届きます。<br />
+              内容を直したい場合は、下の「取消してこの内容を利用して入力する」を選ぶと、
+              入力画面に元の内容が入った状態で開きます。
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <button onClick={() => handleDelete(false)} disabled={deleting} style={{ width: '100%', padding: 12, background: '#dc3545', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: deleting ? 'not-allowed' : 'pointer', opacity: deleting ? 0.7 : 1 }}>
+                {deleting ? '処理中...' : '取消す'}
               </button>
-              <button onClick={handleDelete} disabled={deleting} style={{ flex: 2, padding: 12, background: '#dc3545', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: deleting ? 'not-allowed' : 'pointer', opacity: deleting ? 0.7 : 1 }}>
-                {deleting ? '削除中...' : '取消を確定する'}
+              <button onClick={() => handleDelete(true)} disabled={deleting} style={{ width: '100%', padding: 12, background: 'transparent', color: '#495057', border: '1px solid #adb5bd', borderRadius: 10, fontSize: 14, cursor: deleting ? 'not-allowed' : 'pointer', opacity: deleting ? 0.7 : 1, lineHeight: 1.5 }}>
+                取消してこの内容を利用して入力する
+              </button>
+              <button onClick={() => setDeleteTarget(null)} disabled={deleting} style={{ width: '100%', padding: 10, background: 'none', color: '#6c757d', border: 'none', fontSize: 14, cursor: 'pointer' }}>
+                キャンセル
               </button>
             </div>
           </div>

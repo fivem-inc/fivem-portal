@@ -5,7 +5,7 @@
 // undefined を参照して画面が真っ白になるため、ここを唯一の定義とする。
 
 export type AttendanceType =
-  | 'absent' | 'late' | 'early_leave' | 'late_start' | 'early_end' | 'holiday_work' | 'location_change';
+  | 'absent' | 'late' | 'early_leave' | 'late_start' | 'early_end' | 'holiday_work' | 'location_change' | 'time_change';
 
 /** 勤務時間帯（1日の中で校を移動する場合や、間に勤務しない時間がある場合に複数持つ） */
 export interface WorkSegment {
@@ -22,6 +22,7 @@ export const ABSENCE_LABEL: Record<string, string> = {
   early_end:       '早退(調整)',
   holiday_work:    '休日出勤',
   location_change: '勤務地変更',
+  time_change:     '勤務時間変更',
 };
 
 // 一覧・カレンダーのバッジ色。ダークな背景の上でも沈まないよう、ベタ塗り＋白文字を基本にする。
@@ -33,6 +34,9 @@ export const ABSENCE_COLOR: Record<string, { bg: string; text: string }> = {
   early_end:       { bg: '#7b1fa2', text: '#fff' },
   holiday_work:    { bg: '#0f766e', text: '#fff' },
   location_change: { bg: '#6d28d9', text: '#fff' },
+  // 勤務時間変更は濃いグレー。他6色（赤・橙・青・黄緑・紫・ティール）とぶつからず、
+  // スマホの小さい丸印でも見間違えにくい色を選んでいる
+  time_change:     { bg: '#374151', text: '#fff' },
 };
 
 // 入力シートのチェックボックスと同じ絵文字（確認画面・一覧で見分けやすくするため）
@@ -44,6 +48,7 @@ export const ABSENCE_EMOJI: Record<string, string> = {
   early_end:       '🟣',
   holiday_work:    '🏢',
   location_change: '📍',
+  time_change:     '🕐',
 };
 
 /** 種別が未知でも画面を落とさないためのフォールバック付き取得 */

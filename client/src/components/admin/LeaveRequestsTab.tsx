@@ -353,6 +353,15 @@ const LeaveRequestsTab: React.FC = () => {
       console.error('[gcal-sync] 勤怠の削除失敗:', syncErr);
       setSuccessMsg('⚠ 取消しましたが、Googleカレンダーからの削除に失敗しました。カレンダーを確認してください。');
     }
+    // 取消したことをリーダー以上へ通知（通知設定 attendance:cancelled に従う）。
+    // 勤怠カレンダー側の取消と同じ処理。片方だけに入れると「その画面から消したときは通知が来ない」ことになる
+    const { error: notifyErr } = await supabase.functions.invoke('attendance-notify', {
+      body: {
+        user_id: deleteTarget.user_id, user_name: deleteTarget.targetName,
+        dates: [deleteTarget.date], types: [deleteTarget.type], mode: 'cancelled',
+      },
+    });
+    if (notifyErr) console.error('[attendance-notify] 取消通知の送信失敗:', notifyErr);
     setDeleting(false);
     setDeleteTarget(null);
     fetchAbsences();

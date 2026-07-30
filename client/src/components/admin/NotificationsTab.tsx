@@ -64,11 +64,12 @@ const EVENT_GROUPS = [
     ],
   },
   {
-    label: '欠勤・遅刻・早退・休日出勤（勤怠カレンダー登録）',
+    label: '欠勤・遅刻・早退・休日出勤など（勤怠カレンダー）',
     icon: '🔴',
     headerBg: '#FDECEA', headerBorder: '#D32F2F', headerText: '#B71C1C',
     events: [
       { key: 'attendance:registered', label: '登録時' },
+      { key: 'attendance:cancelled', label: '取消時' },
     ],
   },
   {
@@ -162,6 +163,7 @@ const PUSH_RECIPIENT_BY_EVENT: Record<string, string> = {
   'leave:rejected':          '申請者本人',
   'shift_report:new_request': '申請の確認依頼先（勤務校のリーダー・マネージャー）',
   'attendance:registered':    '設定した宛先（本人・リーダー・マネージャー・管理者・社長）',
+  'attendance:cancelled':     '設定した宛先（本人・リーダー・マネージャー・管理者・社長）',
   'shift_report:returned':    '申請者本人',
   'purchase_request:submitted':             '承認担当リーダー',
   'purchase_request:submitted_manager':     '審議を依頼されたマネージャー',
@@ -217,6 +219,7 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
   'trip:report_end':             ['{{申請者名}}', '{{申請日}}'],
   'time_adjustment:registered':  ['{{登録者名}}', '{{種別}}', '{{日付}}', '{{理由}}', '{{リンク}}'],
   'attendance:registered':       ['{{対象者名}}', '{{種別}}', '{{日付}}', '{{リンク}}'],
+  'attendance:cancelled':        ['{{対象者名}}', '{{種別}}', '{{日付}}', '{{リンク}}'],
   'shift_report:returned':       ['{{申請者名}}', '{{種別}}', '{{日付}}', '{{差し戻し理由}}', '{{リンク}}'],
   'shift_report:confirmed':      ['{{申請者名}}', '{{種別}}', '{{日付}}', '{{勤務地}}', '{{リンク}}'],
   'board:notice':                ['{{送信者名}}', '{{件名}}', '{{リンク}}'],
@@ -244,9 +247,9 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
 };
 
 // 役職＋グループ絞り込みで一斉配信するイベント（時間調整・勤務変更受理など、UIとロジックを共有する）
-const ROLE_GROUP_BROADCAST_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'attendance:registered', 'leave:approved_fyi'];
+const ROLE_GROUP_BROADCAST_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi'];
 // プッシュ通知で役職を選択できるイベント（一斉通知系。宛先が自動で決まらないもの）
-const PUSH_ROLE_SELECT_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'purchase:reimbursement_recorded', 'attendance:registered', 'leave:approved_fyi'];
+const PUSH_ROLE_SELECT_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'purchase:reimbursement_recorded', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi'];
 
 // 備品購入申請: 依頼された全マネージャー・社長など、宛先がその都度動的に決まるイベント。
 // サイト通知・メールの宛先はコード側で自動計算しており、この画面のチェックボックスでは
@@ -270,7 +273,7 @@ const TIME_ADJ_ROLE_OPTIONS = ['申請者本人', 'リーダー', 'マネージ�
 
 // 役職チェックの表示ラベル（内部値は共通のまま、イベントごとに分かりやすい表示に）
 const roleLabel = (role: string, eventKey: string): string =>
-  role === '申請者本人' && eventKey === 'attendance:registered' ? '本人（該当スタッフ）' : role;
+  role === '申請者本人' && (eventKey === 'attendance:registered' || eventKey === 'attendance:cancelled') ? '本人（該当スタッフ）' : role;
 
 // 時間調整用 recipient JSON パーサー
 // 承認フロー系プッシュの「追加送信先の役職」（任意・設定のみ）を読み取る

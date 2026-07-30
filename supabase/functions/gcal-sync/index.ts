@@ -50,21 +50,29 @@ function buildAbsenceTitle(type: string, name: string, time?: string, segments?:
       const segLabel = formatWorkSegments(segments)
       return segLabel ? `${name}｜勤務地変更｜${segLabel}` : `${name}｜勤務地変更`
     }
+    // 勤務時間変更は校が普段どおりで、変わるのは時間だけ。校は時間帯ごとの［校］に含まれる
+    // 例: 椿原 凜大｜勤務時間変更｜12:45〜16:50［四条本校］
+    case 'time_change': {
+      const segLabel = formatWorkSegments(segments)
+      return segLabel ? `${name}｜勤務時間変更｜${segLabel}` : `${name}｜勤務時間変更`
+    }
     default:            return `${name}｜欠勤`
   }
 }
 
-// 残業ページと色を揃える：休日出勤=濃緑(10)・勤務地変更=紫(3)。遅刻・早退系は調整色(2)、その他は休み色(4)。
+// 残業ページと色を揃える：休日出勤=濃緑(10)・勤務地変更=紫(3)・勤務時間変更=グラファイト(8)。
+// 遅刻・早退系は調整色(2)、その他は休み色(4)。
 function absenceColorId(type: string): string {
   if (type === 'holiday_work') return '10'
   if (type === 'location_change') return '3'
+  if (type === 'time_change') return '8'
   return ['late', 'late_start', 'early_leave', 'early_end'].includes(type) ? '2' : '4'
 }
 
-// 休日出勤・勤務地変更はタイトルに時間帯ごとの［校］を埋め込むため、末尾への［校］後付けをしない
+// 休日出勤・勤務地変更・勤務時間変更はタイトルに時間帯ごとの［校］を埋め込むため、末尾への［校］後付けをしない
 // （時間帯が無い古いデータのみ、呼び出し側の locations から末尾に付ける）
 function skipLocationSuffix(type: string, segments?: unknown): boolean {
-  if (!['holiday_work', 'location_change'].includes(type)) return false
+  if (!['holiday_work', 'location_change', 'time_change'].includes(type)) return false
   return Array.isArray(segments) && segments.length > 0
 }
 

@@ -14,6 +14,7 @@ const TYPE_LABEL: Record<string, string> = {
   early_end:    '早退(調整)',
   holiday_work: '休日出勤',
   location_change: '勤務地変更',
+  time_change:  '勤務時間変更',
 }
 
 // グループ絞り込みを無視して常に届く役職（組織全体を見る立場）
@@ -35,10 +36,13 @@ serve(async (req) => {
 
   try {
     // user_id = 欠勤等を登録された本人（該当スタッフ）。登録操作者ではない。
-    const { user_id, user_name, dates, types } = await req.json()
+    // mode = 'registered'（登録した）/ 'cancelled'（取消した）。省略時は登録扱い。
+    const { user_id, user_name, dates, types, mode } = await req.json()
     if (!user_id || !dates?.length || !types?.length) {
       return new Response(JSON.stringify({ error: 'missing params' }), { status: 400, headers: CORS_HEADERS })
     }
+    const isCancelled = mode === 'cancelled'
+    const eventKey = isCancelled ? 'attendance:cancelled' : 'attendance:registered'
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -60,7 +64,7 @@ serve(async (req) => {
     const { data: settingsData } = await supabase
       .from('notification_settings')
       .select('channel, enabled, recipient, subject, template')
-      .eq('event_key', 'attendance:registered')
+      .eq('event_key', eventKey)
 
     const settings = (settingsData ?? []) as { channel: string; enabled: boolean; recipient: string | null; subject: string | null; template: string | null }[]
     const getSetting = (ch: string) => settings.find(s => s.channel === ch)
@@ -121,7 +125,10 @@ serve(async (req) => {
     // サイト通知
     const siteSetting = getSetting('site')
     if (siteSetting?.enabled) {
-      const template = siteSetting.template ?? '🔴 {{対象者名}}さんの{{種別}}が登録されました（{{日付}}）'
+      const template = siteSetting.template
+        ?? (isCancelled
+          ? '🔴 {{対象者名}}さんの{{種別}}が取消されました（{{日付}}）'
+          : '🔴 {{対象者名}}さんの{{種別}}が登録されました（{{日付}}）')
       const message = applyTemplate(template, vars)
       const targetIds = await resolveTargetIds(siteSetting.recipient)
       if (targetIds.length > 0) {
@@ -142,7 +149,14 @@ serve(async (req) => {
         const pushIds = [...new Set(((subs ?? []) as { user_id: string }[]).map(s => s.user_id))]
         if (pushIds.length > 0) {
           await supabase.functions.invoke('send-push', {
-            body: { user_ids: pushIds, title: 'ファイブM 欠勤・遅刻・早退', body: '新着 1件', url: '/calendar', tag: 'attendance' },
+            // 文面は「状態を表す漢字名詞＋件数」に限る（文章形や「確認」「依頼」はChromeが不正な通知と判定する）
+            body: {
+              user_ids: pushIds,
+              title: 'ファイブM 欠勤・遅刻・早退',
+              body: isCancelled ? '取消 1件' : '新着 1件',
+              url: '/calendar',
+              tag: isCancelled ? 'attendance-cancel' : 'attendance',
+            },
           })
         }
       }
@@ -153,7 +167,8 @@ serve(async (req) => {
     if (slackSetting?.enabled) {
       let channels: string[] = []
       try { channels = JSON.parse(slackSetting.recipient ?? '{}').channels ?? [] } catch { /* ignore */ }
-      const slackMsg = `📝 *勤怠が登録されました*\n\n*対象者：* ${user_name}\n*日付：* ${dateLabel}\n*種別：* ${typeLabels}`
+      const slackHead = isCancelled ? '勤怠の登録が取消されました' : '勤怠が登録されました'
+      const slackMsg = `📝 *${slackHead}*\n\n*対象者：* ${user_name}\n*日付：* ${dateLabel}\n*種別：* ${typeLabels}`
       for (const ch of channels) {
         const url = Deno.env.get(SLACK_WEBHOOK_KEYS[ch] ?? '')
         if (!url) continue
@@ -169,7 +184,9 @@ serve(async (req) => {
     // メール通知
     const emailSetting = getSetting('email')
     if (emailSetting?.enabled && emailSetting.template) {
-      const subject = emailSetting.subject ? applyTemplate(emailSetting.subject, vars) : '欠勤・遅刻・早退が登録されました'
+      const subject = emailSetting.subject
+        ? applyTemplate(emailSetting.subject, vars)
+        : (isCancelled ? '勤怠の登録が取消されました' : '欠勤・遅刻・早退が登録されました')
       const text = applyTemplate(emailSetting.template, vars)
       const emails = await resolveTargetEmails(emailSetting.recipient)
       for (const to of emails) {
