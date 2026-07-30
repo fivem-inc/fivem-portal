@@ -136,6 +136,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   `select pg_get_functiondef('submit_purchase_request(uuid,boolean,jsonb,jsonb)'::regprocedure);` で実定義を確認してから書く
 - 同じRPCを次に触るとき（内訳breakdown追加予定）は **20260743 をベース**にすること
 
+### 🚨 11. 承認の「最終決定」が必ず失敗する潜在バグ（曽川マネージャーが本番で最初に踏んだ）
+- **症状**：ビジネスフォン申請（全員承認・5人中の最後の1人）の意見送信がエラーになり、意見も保存されない
+  （トランザクションごとロールバック）。途中の4名は普通に成功していた
+- **原因**：PostgreSQLでは**集計関数（count等）と `FOR UPDATE` を同じSELECTに書けない**
+  （ERROR: FOR UPDATE is not allowed with aggregate functions）。7/4〜06セッションの排他制御強化で
+  `SELECT count(*) ... FOR UPDATE` にしてしまい、`enforce_board_opinions_complete`（全員承認の確定・差し戻し）と
+  `enforce_manager_opinions_complete`（マネージャー承認の最終決定）が**発火した瞬間に必ず失敗**する状態だった
+- **「最後の1人だけ失敗する」理由**：ゲートは status 更新時にしか発火しない。途中の意見送信はINSERTのみで
+  素通りし、最後の1人＝自動確定のUPDATEで初めて実行される。**トリガー・ゲート系は「発火する条件」まで
+  テストしないと、実装後ずっと動いていなかったことに気づけない**
+- 修復：`20260744000000_fix_opinion_gate_aggregate_for_update.sql`（本番実行済み）。
+  ロックと集計を分ける（`PERFORM 1 ... FOR UPDATE` → ロック句なしで count）。排他制御の意図は維持
+- **教訓**：PL/pgSQL関数は作成時に本文の構文が完全検証されない（実行時に初めて落ちる）。
+  行ロックが欲しいときは **PERFORM でロック→集計は別文** のパターンを使う
+
 ### ⚠️ 作業のしかたで踏んだ失敗（同じ手を使わないこと）
 **シェル経由の一括置換でファイルを壊した（2回）。** `node -e "..."` の中にJSのバックティック
 （テンプレート文字列）を書くと、**bashがコマンド置換として解釈して中身を消す**。
