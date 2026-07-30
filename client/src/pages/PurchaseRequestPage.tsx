@@ -79,7 +79,7 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
   const { highlightId, focusRef } = useFocusHighlight(records);
   const [names, setNames] = useState<Record<string, string>>({});
   const [opinions, setOpinions] = useState<Record<string, OpinionRow[]>>({});
-  const [boardProgress, setBoardProgress] = useState<Record<string, { answered: number; required: number }>>({});
+  const [boardProgress, setBoardProgress] = useState<Record<string, { answered: number; required: number; pendingIds: string[] }>>({});
   const [loading, setLoading] = useState(true);
   const [itemsByRequest, setItemsByRequest] = useState<Record<string, PurchaseRequestItem[]>>({});
 
@@ -159,13 +159,24 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
       });
       setOpinions(grouped);
 
-      // 全員承認ルートは「◯名中◯名回答済み」の進捗をさりげなく表示するため件数だけ計算する
-      const progress: Record<string, { answered: number; required: number }> = {};
-      boardRouteIds.forEach(id => {
-        const req = rows.find(r => r.id === id);
-        progress[id] = { answered: (grouped[id] ?? []).length, required: req?.board_approver_ids?.length ?? 0 };
-      });
-      setBoardProgress(progress);
+      // 進捗は grouped（=自分が読める意見）から数えてはいけない。RLSにより申請者には
+      // 「共有する」を選んだ意見しか返らないため、4名回答済みでも1名と表示されてしまう。
+      // 正しい件数と未回答者は集計用のDB関数（SECURITY DEFINER）から取得する
+      if (boardRouteIds.length > 0) {
+        const { data: prog, error: progError } = await supabase
+          .rpc('purchase_request_approval_progress', { p_ids: boardRouteIds });
+        if (progError) {
+          console.error('[purchase] 承認の進み具合の取得に失敗', progError);
+        } else {
+          const progress: Record<string, { answered: number; required: number; pendingIds: string[] }> = {};
+          (prog ?? []).forEach((p: { purchase_request_id: string; answered: number; required: number; pending_ids: string[] | null }) => {
+            const pendingIds = p.pending_ids ?? [];
+            progress[p.purchase_request_id] = { answered: p.answered, required: p.required, pendingIds };
+            pendingIds.forEach(id => namesToFetch.add(id));
+          });
+          setBoardProgress(progress);
+        }
+      }
     }
 
     if (namesToFetch.size > 0) {
@@ -239,6 +250,10 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
           {(r.status === 'pending_board' || r.status === 'board_approved') && boardProgress[r.id] && (
             <div style={{ fontSize: 12, color: subText, marginTop: 6 }}>
               全員承認の進み具合：{boardProgress[r.id].required}名中{boardProgress[r.id].answered}名回答済み
+              {/* 誰の回答を待っているかが分からないと確認を依頼できないため、残っている人の名前まで出す（管理画面と同じ情報） */}
+              {boardProgress[r.id].pendingIds.length > 0 && (
+                <>（残り{boardProgress[r.id].pendingIds.length}名：{boardProgress[r.id].pendingIds.map(id => names[id] ?? '不明').join('、')}）</>
+              )}
             </div>
           )}
           {r.status === 'returned' && r.returned_reason && (

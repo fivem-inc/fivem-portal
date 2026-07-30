@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import type { PurchaseRequestCSVRow } from '../../utils';
+// 金額帯の定義は申請フォームと共通（lib/purchaseTiers.ts）。片方だけ変えると承認ルートがずれる
+import { TIER_LABEL, TIER_ROUTE_LABEL, tierOf } from '../../lib/purchaseTiers';
 
 const PAYMENT_OPTIONS: { value: string; label: string }[] = [
   { value: 'cash', label: '立替（返金あり）' },
@@ -57,6 +59,20 @@ const PurchaseRequestEditModal: React.FC<PurchaseRequestEditModalProps> = ({ rec
     if (!itemName.trim()) { setError('品目名を入力してください。'); return; }
     if (isNaN(parsedQuantity) || parsedQuantity < 1) { setError('数量を正しく入力してください。'); return; }
     if (isNaN(parsedAmount)) { setError('金額を正しく入力してください。'); return; }
+    if (parsedAmount < 1) { setError('金額は1円以上で入力してください。'); return; }
+    // 金額帯（承認ルート）をまたぐ修正はDBの整合チェックで必ず弾かれる（金額だけ変えても
+    // 状態・承認者は付け替わらないため）。分かりにくいDBエラーになる前に、ここで理由を出して止める
+    if (record.request_type === 'purchase_request') {
+      const prevTier = tierOf(record.amount);
+      const nextTier = tierOf(parsedAmount);
+      if (prevTier !== nextTier) {
+        setError(
+          `この金額（${TIER_LABEL[nextTier]}）にすると承認ルートが「${TIER_ROUTE_LABEL[prevTier]}」から「${TIER_ROUTE_LABEL[nextTier]}」に変わるため、修正では保存できません。`
+          + 'この申請を取消して、正しい金額で申請しなおしてください。'
+        );
+        return;
+      }
+    }
 
     const nextValues: Record<string, string | number | null> = {
       item_name: itemName.trim(),

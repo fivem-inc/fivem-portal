@@ -146,6 +146,7 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
     if (!quantity.trim() || isNaN(parsedQuantity) || parsedQuantity < 1) { setFormError('購入点数を1以上で入力してください。'); return; }
     const parsedAmount = parseInt(parseAmount(amount), 10);
     if (!amount.trim() || isNaN(parsedAmount)) { setFormError('金額を正しく入力してください。'); return; }
+    if (parsedAmount < 1) { setFormError('金額は1円以上で入力してください。'); return; }
     if (!purchasedAt) { setFormError('購入日を入力してください。'); return; }
     if (!storeName.trim()) { setFormError('購入先を入力してください。'); return; }
     if (!location.trim()) { setFormError('使用先を入力してください。'); return; }

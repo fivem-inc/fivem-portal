@@ -9,19 +9,9 @@ import { dispatchSiteNotification, dispatchEmail, getNotificationTemplate, getUs
 import { sendPurchaseSlackForEvent } from '../lib/purchaseSlack';
 import { resolveItems } from '../lib/purchaseItemsFallback';
 import QuoteFileUploader from './QuoteFileUploader';
-
-const LEADER_LIMIT = 10000;
-const MANAGER_LIMIT = 30000;
-const QUOTES_REQUIRED_THRESHOLD = 10000;
-
-type Tier = 'none' | 'leader' | 'manager' | 'board';
-const tierOf = (amount: number): Tier => {
-  if (isNaN(amount)) return 'none';
-  if (amount <= LEADER_LIMIT) return 'leader';
-  if (amount <= MANAGER_LIMIT) return 'manager';
-  return 'board';
-};
-const TIER_LABEL: Record<Tier, string> = { none: '', leader: '1万円以下', manager: '1万円超〜3万円', board: '3万円超' };
+// 金額帯の定義は lib/purchaseTiers.ts に集約（管理画面の修正モーダルからも同じ値を使う）
+import { QUOTES_REQUIRED_THRESHOLD, TIER_LABEL, tierOf } from '../lib/purchaseTiers';
+import type { Tier } from '../lib/purchaseTiers';
 
 // 相見積もり1行分の下書き。isSelectedは商品内でラジオボタンにより排他選択される
 // （「金額を直接入力する」を選ぶとuseManualAmount=trueになり、どのquoteのisSelectedもfalseになる）
@@ -427,8 +417,17 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
       if (!item.quantity.trim() || isNaN(itemQty) || itemQty < 1) { setFormError('すべての商品の数量を1以上で入力してください。'); return; }
       const itemAmt = item.amount.trim() ? parseInt(parseAmount(item.amount), 10) : NaN;
       if (!item.amount.trim() || isNaN(itemAmt)) { setFormError('すべての商品の金額を正しく入力してください。'); return; }
+      // 0円を許すと、金額で決まる承認ルートがいちばん緩いリーダー承認に落ちてしまう（相見積もりの必須判定も外れる）
+      if (itemAmt < 1) { setFormError('金額は1円以上で入力してください。承認する人が金額で決まるため、0円では申請できません。金額が未確定の場合は概算を入れてください。'); return; }
+      // 業者を選んで購入する場合、その単価が0円だと商品の金額も0円になるため単価も1円以上を必須にする
+      for (const q of item.quotes) {
+        if (!q.vendor.trim() && !q.unitAmount.trim()) continue;
+        const unit = q.unitAmount.trim() ? parseInt(parseAmount(q.unitAmount), 10) : NaN;
+        if (q.unitAmount.trim() && (isNaN(unit) || unit < 1)) { setFormError('価格比較の単価は1円以上で入力してください。'); return; }
+      }
     }
     if (!amount.trim() || isNaN(parsedAmount)) { setFormError('金額を正しく入力してください。'); return; }
+    if (parsedAmount < 1) { setFormError('合計金額は1円以上で入力してください。承認する人が金額で決まるため、0円では申請できません。'); return; }
     if (!requestedDate) { setFormError('購入予定日を入力してください。'); return; }
     if (!location.trim()) { setFormError('使用先を入力してください。'); return; }
     if (!purpose.trim()) { setFormError('用途を選択または入力してください。'); return; }
