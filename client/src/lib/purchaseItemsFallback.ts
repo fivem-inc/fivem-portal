@@ -22,6 +22,9 @@ export function resolveItems(
     amount: request.amount,
     amount_manually_overridden: false,
     store_name: request.store_name,
+    // 明細テーブルより後に追加した列。旧データには存在しないので明示的にnullで埋める
+    single_vendor_reason: null,
+    breakdown: null,
     quotes: (request.quotes ?? []).map((q, i) => ({
       vendor: q.vendor,
       unit_amount: q.amount,

@@ -112,7 +112,7 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
     if (requestIds.length > 0) {
       const { data: itemRows } = await supabase
         .from('purchase_request_items')
-        .select('id, purchase_request_id, sort_order, item_name, quantity, amount, amount_manually_overridden, store_name, single_vendor_reason')
+        .select('id, purchase_request_id, sort_order, item_name, quantity, amount, amount_manually_overridden, store_name, single_vendor_reason, breakdown')
         .in('purchase_request_id', requestIds);
       const items = (itemRows ?? []) as (PurchaseRequestItem & { purchase_request_id: string })[];
 

@@ -21,6 +21,8 @@ const PurchaseItemsSummary: React.FC<PurchaseItemsSummaryProps> = ({ items, isDa
       {item.item_name}
       {item.quantity != null && <span style={{ color: subText }}>　数量:{item.quantity}</span>}
       <span style={{ fontWeight: 'bold' }}>　¥{item.amount.toLocaleString()}</span>
+      {/* サイズ・色などの内訳メモ。承認の判断材料になるので品目名のすぐ下に出す */}
+      {item.breakdown && <span style={{ display: 'block', fontSize: 12, color: subText }}>内訳・仕様：{item.breakdown}</span>}
     </>
   );
 

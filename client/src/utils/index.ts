@@ -171,8 +171,8 @@ export const generatePurchaseRequestCSVData = (
 ): string => {
   const headers = [
     '申請ID', '商品連番', '申請者名', '申請時役職', '申請区分', '金額帯',
-    '品目名', '数量', '店舗名', '商品金額', '商品金額手動上書き有無',
-    '選択業者名', '選択業者単価', '相見積もり件数', '相見積もり内容(全業者;区切り)',
+    '品目名', '内訳・仕様', '数量', '店舗名', '商品金額', '商品金額手動上書き有無',
+    '選択業者名', '選択業者単価', '相見積もり件数', '1社のみの理由', '相見積もり内容(全業者;区切り)',
     '商品数', '明細合計金額', '申請金額', '金額乖離フラグ', '金額乖離理由',
     '使用先', '購入予定日', '購入日', '指示者', '用途', '申請理由', '支払方法', '返金日', '備考',
     'ステータス', '承認ルート種別', '承認依頼先氏名', '自己判断フラグ', '共有先氏名一覧',
@@ -205,6 +205,7 @@ export const generatePurchaseRequestCSVData = (
         row.request_type === 'reimbursement' ? '精算' : '申請',
         purchaseAmountBand(row),
         item.item_name,
+        item.breakdown || '',
         item.quantity ?? '',
         item.store_name || '',
         item.amount,
@@ -212,6 +213,7 @@ export const generatePurchaseRequestCSVData = (
         selectedQuote?.vendor || '',
         selectedQuote?.unit_amount ?? '',
         item.quotes.length,
+        item.single_vendor_reason || '',
         quotesText,
         itemCount,
         row.items_subtotal ?? '',

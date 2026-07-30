@@ -18,6 +18,8 @@ export interface PurchaseRequestItem {
   amount_manually_overridden: boolean;
   // 1万円以上で「1社しか選べない」を選んだときの理由（相見積もり2社の代わり）
   single_vendor_reason?: string | null;
+  // サイズ・色などの内訳メモ（金額に関係しない自由記述。金額が違う内訳は商品を分ける運用）
+  breakdown?: string | null;
   store_name: string | null;
   quotes: PurchaseRequestItemQuote[];
 }
