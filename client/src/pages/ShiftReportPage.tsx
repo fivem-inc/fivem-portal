@@ -258,7 +258,9 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
           {!hasAbsence && (
             <>
               <Sep isDark={isDark} />
-              <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>📋 通常シフト（もともとの予定）</div>
+              <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>
+                {data.types.includes('holiday_work') && !data.origDayOff ? '📋 予定していた時間' : '📋 通常シフト（もともとの予定）'}
+              </div>
               {data.origDayOff
                 ? <CRow label="" value="休みの日" textColor={text} />
                 : <CRow label="" value={`${data.origLoc || '—'}　${data.origStart}〜${data.origEnd}`} textColor={text} />
@@ -358,7 +360,16 @@ const ShiftReportForm: React.FC<{
   const [absencePrompt, setAbsencePrompt] = useState<'none' | 'confirm' | 'declined'>('none');
   const absencePanelRef = useRef<HTMLDivElement>(null);
   const [reason, setReason]           = useState(editTarget?.reason ?? sd?.reason ?? '');
-  const [origDayOff, setOrigDayOff]   = useState(sd?.origDayOff ?? false);
+  // 修正で開いたときは元の報告から復元する。予定の時刻が無く、休日出勤でも欠勤でもない
+  // ＝「もともと休みの日」として登録された報告。復元しないと修正のたびに
+  // チェックが外れ、入力していない予定時刻が保存されてしまう
+  const [origDayOff, setOrigDayOff]   = useState(
+    editTarget
+      ? (!editTarget.original_start
+         && !editTarget.application_types?.includes('holiday_work')
+         && !editTarget.application_types?.includes('absence'))
+      : (sd?.origDayOff ?? false)
+  );
   // 理由履歴（自分が過去に入力した理由）
   const [pastReasons, setPastReasons] = useState<string[]>([]);
   const [showAllReasons, setShowAllReasons] = useState(false);
@@ -399,8 +410,10 @@ const ShiftReportForm: React.FC<{
   const finalOrigLoc = origLoc === 'その他' ? origLocCustom : origLoc;
   const finalActLoc  = actLoc  === 'その他' ? actLocCustom  : actLoc;
 
-  const [origStart, setOrigStart]     = useState(editTarget?.original_start?.slice(0, 5) ?? sd?.origStart ?? '12:00');
-  const [origEnd, setOrigEnd]         = useState(editTarget?.original_end?.slice(0, 5) ?? sd?.origEnd ?? '12:00');
+  // 修正で開いたときは空のままにする（既定の12:00を入れると、入力していない時刻が
+  // そのまま予定として保存され、静かにデータが化ける。空なら送信前に必ず弾かれる）
+  const [origStart, setOrigStart]     = useState(editTarget ? (editTarget.original_start?.slice(0, 5) ?? '') : (sd?.origStart ?? '12:00'));
+  const [origEnd, setOrigEnd]         = useState(editTarget ? (editTarget.original_end?.slice(0, 5) ?? '') : (sd?.origEnd ?? '12:00'));
   const [actStart, setActStart]       = useState(editTarget?.actual_start?.slice(0, 5) ?? sd?.actStart ?? '12:00');
   const [actEnd, setActEnd]           = useState(editTarget?.actual_end?.slice(0, 5) ?? sd?.actEnd ?? '12:00');
   const [origOutingOn, setOrigOutingOn] = useState(editTarget ? !!(editTarget.original_outing_start) : (sd?.origOutingOn ?? false));
@@ -425,6 +438,18 @@ const ShiftReportForm: React.FC<{
 
   const hasAbsence    = types.includes('absence');
   const hasHoliday    = types.includes('holiday_work');
+  // 「予定と比べて初めて意味が決まる」種別。休日出勤の日でも
+  // （イベントを9:00〜17:00で頼まれた等）予定より遅れた・延びたは起こるので、
+  // これらを選んだときは休日出勤でも「予定していた時間」を入力してもらう。
+  // 入力させないと「何時の予定に遅れたのか」がどこにも残らない。
+  const hasDiffType   = types.some(t => t === 'early_start' || t === 'tardiness' || t === 'early_leave' || t === 'overtime');
+  // 予定の時間そのものが無い状態＝欄を出さない・nullで保存・差分を出さない。
+  // ⚠️ 入力欄の表示条件／validate／保存／確認画面は必ずこの1つの判定に揃えること。
+  //    片方だけ直すと「入力できないのに必須」「送信できたのに予定が残らない」事故になる。
+  const noPlan        = hasAbsence || (hasHoliday ? !hasDiffType : origDayOff);
+  // 予定の入力セクション自体を出すか（origDayOff は欄の中のチェックなのでここには含めない）
+  const planVisible   = !hasAbsence && (!hasHoliday || hasDiffType);
+  const planWord      = hasHoliday ? '予定していた' : '通常シフトの';
   const pType         = primaryType(types);
 
   const toggleType = (t: ApplicationType) => {
@@ -457,7 +482,7 @@ const ShiftReportForm: React.FC<{
   const laborMin = actStart && actEnd && !hasAbsence
     ? Math.max(0, (toMin(actEnd) - toMin(actStart)) - breakMin - actOutingMin) : 0;
   const origOutingMin = origOutingOn && origOutingStart && origOutingEnd ? Math.max(0, toMin(origOutingEnd) - toMin(origOutingStart)) : 0;
-  const origMin  = (origDayOff || hasHoliday) ? 0 : Math.max(0, origDuration(origStart, origEnd) - origOutingMin);
+  const origMin  = noPlan ? 0 : Math.max(0, origDuration(origStart, origEnd) - origOutingMin);
 
   useEffect(() => {
     if (absencePrompt !== 'none') {
@@ -477,15 +502,16 @@ const ShiftReportForm: React.FC<{
   // メッセージだけでなく「どの欄が原因か」も返す。赤いメッセージが出ても
   // 欄が分からないと直せないため（他ページと同じ薄赤ハイライトに使う）
   const validate = (): { msg: string; field?: string } => {
-    const noShift = !origDayOff && !hasHoliday && !hasAbsence;
+    // 予定を持つ状態のときだけ、予定の入力を必須にする（noPlan と必ず対で判断する）
+    const noShift = !noPlan;
     if (!date)          return { msg: '日付を選択してください', field: 'date' };
     if (types.length === 0) return { msg: '種別を選択してください', field: 'types' };
     if (!reason.trim()) return { msg: '理由を入力してください', field: 'reason' };
-    if (noShift && (!origStart || !origEnd)) return { msg: '通常シフトの時間を入力してください', field: 'origTime' };
-    if (noShift && origStart && origEnd && origStart === origEnd) return { msg: '通常シフトの開始・終了が同じ時間です。正しい時間を入力してください', field: 'origTime' };
-    if (noShift && !origLoc) return { msg: '通常シフトの勤務地を選択してください', field: 'origLoc' };
-    if (noShift && origLoc === 'その他' && !origLocCustom.trim()) return { msg: '通常シフトの場所を入力してください', field: 'origLocCustom' };
-    if (noShift && origOutingOn && (!origOutingStart || !origOutingEnd || origOutingStart === origOutingEnd)) return { msg: '通常シフトの外出・戻り時間を正しく入力してください', field: 'origOuting' };
+    if (noShift && (!origStart || !origEnd)) return { msg: `${planWord}時間を入力してください`, field: 'origTime' };
+    if (noShift && origStart && origEnd && origStart === origEnd) return { msg: `${planWord}開始・終了が同じ時間です。正しい時間を入力してください`, field: 'origTime' };
+    if (noShift && !origLoc) return { msg: `${planWord}勤務地を選択してください`, field: 'origLoc' };
+    if (noShift && origLoc === 'その他' && !origLocCustom.trim()) return { msg: `${planWord}場所を入力してください`, field: 'origLocCustom' };
+    if (noShift && origOutingOn && (!origOutingStart || !origOutingEnd || origOutingStart === origOutingEnd)) return { msg: `${planWord}外出・戻り時間を正しく入力してください`, field: 'origOuting' };
     if (!hasAbsence && (!actStart || !actEnd)) return { msg: '実際の時間を入力してください', field: 'actTime' };
     if (!hasAbsence && actStart && actEnd && actStart === actEnd) return { msg: '開始時間と終了時間が同じです。正しい時間を入力してください', field: 'actTime' };
     if (!hasAbsence && !actLoc) return { msg: '実際の勤務地を選択してください', field: 'actLoc' };
@@ -521,11 +547,11 @@ const ShiftReportForm: React.FC<{
         application_type:  pType,
         application_types: types,
         reason:            reason.trim() + (actNotes.trim() ? `\n備考：${actNotes.trim()}` : ''),
-        original_location: (origDayOff || hasHoliday || hasAbsence) ? null : (finalOrigLoc || null),
-        original_start:    (origDayOff || hasHoliday || hasAbsence) ? null : (origStart || null),
-        original_end:      (origDayOff || hasHoliday || hasAbsence) ? null : (origEnd || null),
-        original_outing_start: (origDayOff || hasHoliday || hasAbsence || !origOutingOn) ? null : (origOutingStart || null),
-        original_outing_end:   (origDayOff || hasHoliday || hasAbsence || !origOutingOn) ? null : (origOutingEnd || null),
+        original_location: noPlan ? null : (finalOrigLoc || null),
+        original_start:    noPlan ? null : (origStart || null),
+        original_end:      noPlan ? null : (origEnd || null),
+        original_outing_start: (noPlan || !origOutingOn) ? null : (origOutingStart || null),
+        original_outing_end:   (noPlan || !origOutingOn) ? null : (origOutingEnd || null),
         actual_location:   !hasAbsence ? (finalActLoc || null) : null,
         actual_start:      !hasAbsence ? (actStart || null) : null,
         actual_end:        !hasAbsence ? (actEnd || null) : null,
@@ -794,16 +820,25 @@ const ShiftReportForm: React.FC<{
               )}
             </div>
 
-            {/* 通常シフト（休日出勤・欠勤選択時は非表示） */}
-            {!hasHoliday && !hasAbsence && (
+            {/* 予定していた時間（欠勤は非表示。休日出勤は早出・遅刻・早退・残業を選んだときだけ表示） */}
+            {planVisible && (
             <div style={{ background: cardBg, borderRadius: 10, padding: '12px 14px', marginBottom: 12 }}>
-              <div style={{ fontSize: 12, fontWeight: 'bold', color: subColor, marginBottom: 10 }}>📋 通常シフト（もともとの予定）</div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: textColor, marginBottom: 10, cursor: 'pointer' }}>
-                <input type="checkbox" checked={origDayOff} onChange={e => setOrigDayOff(e.target.checked)}
-                  style={{ width: 16, height: 16, accentColor: '#28a745', cursor: 'pointer' }} />
-                もともと休みの日
-              </label>
-              {!origDayOff && (
+              <div style={{ fontSize: 12, fontWeight: 'bold', color: subColor, marginBottom: hasHoliday ? 4 : 10 }}>
+                {hasHoliday ? '📋 予定していた時間' : '📋 通常シフト（もともとの予定）'}
+              </div>
+              {hasHoliday && (
+                <div style={{ fontSize: 11, color: subColor, marginBottom: 10, lineHeight: 1.6 }}>
+                  休日出勤で予定していた時間を入力してください。遅刻・早退などはこの時間と比べて記録されます。
+                </div>
+              )}
+              {!hasHoliday && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: textColor, marginBottom: 10, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={origDayOff} onChange={e => setOrigDayOff(e.target.checked)}
+                    style={{ width: 16, height: 16, accentColor: '#28a745', cursor: 'pointer' }} />
+                  もともと休みの日
+                </label>
+              )}
+              {!noPlan && (
                 <>
                   <div style={{ marginBottom: 8 }}>
                     <label style={L}>勤務地 {Req}</label>
@@ -883,7 +918,7 @@ const ShiftReportForm: React.FC<{
                 {actStart && actEnd && laborMin > 0 && (
                   <div style={{ background: isDark ? '#1e3d2f' : '#dcfce7', borderRadius: 8, padding: '8px 12px' }}>
                     <div style={{ fontSize: 12, color: isDark ? '#4ade80' : '#166534' }}>🕐 休憩 {breakMin}分{actOutingMin > 0 ? `　＋　外出 ${formatMin(actOutingMin)}` : ''}　／　実労働 {formatMin(laborMin)}</div>
-                    {!origDayOff && !hasHoliday && origMin > 0 && (
+                    {!noPlan && origMin > 0 && (
                       <div style={{ marginTop: 4 }}>
                         {types.includes('early_start') && toMin(origStart) > toMin(actStart) && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#0891b2' }}>🌅 早出：{formatMin(toMin(origStart) - toMin(actStart))}</div>}
                         {types.includes('tardiness') && toMin(actStart) > toMin(origStart) && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#7b1fa2' }}>⏱️ 遅刻：{formatMin(toMin(actStart) - toMin(origStart))}</div>}
@@ -958,7 +993,7 @@ const ShiftReportForm: React.FC<{
 
   const confirmModal = showConfirm ? (
     <ConfirmModal
-      data={{ date, types, reason, origLoc: finalOrigLoc, origStart, origEnd, origDayOff: origDayOff || hasHoliday, origOutingOn, origOutingStart, origOutingEnd, actLoc: finalActLoc, actStart, actEnd, actOutingOn, actOutingStart, actOutingEnd, actNotes, breakMin, laborMin, reviewerName, isSelfReview: reviewerId === user.id, applicantName: applicantId === user.id ? (profileName ?? '') : (staffList.find(s => s.id === applicantId)?.name ?? ''), isProxy: applicantId !== user.id }}
+      data={{ date, types, reason, origLoc: finalOrigLoc, origStart, origEnd, origDayOff: noPlan, origOutingOn, origOutingStart, origOutingEnd, actLoc: finalActLoc, actStart, actEnd, actOutingOn, actOutingStart, actOutingEnd, actNotes, breakMin, laborMin, reviewerName, isSelfReview: reviewerId === user.id, applicantName: applicantId === user.id ? (profileName ?? '') : (staffList.find(s => s.id === applicantId)?.name ?? ''), isProxy: applicantId !== user.id }}
       onBack={() => setShowConfirm(false)}
       onSubmit={handleSubmit}
       saving={saving}
