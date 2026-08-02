@@ -4,6 +4,71 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
+## 📌 セッション引き継ぎ（2026-08-03・通知まわりの実装漏れ4件をまとめて修正）
+
+### きっかけ
+「未実装の機能を実装」という依頼。CLAUDE.mdに「別PR候補」として記録されたまま放置されていた
+バグ・実装漏れを洗い出し（すべてコードで裏取りしてから提示）、うち4件をユーザー指名で一気に対応した。
+
+### 対応した4件（すべて本番反映済み。commit `6368331`）
+1. **修正依頼・取消依頼のプッシュ通知が1件も飛んでいなかった**
+   - RPC（submit/resolve/decline_correction_request）は event_key
+     `correction:new` / `correction:resolved` / `correction:declined` でベル通知を作るが、
+     `push-dispatch` の EVENT_MAP に未登録 → push_queue に積まれても全件 skipped だった
+   - EVENT_MAP に3キーを追加：new＝管理者の要対応 → `/admin?tab=corrections`（タブ直行）／
+     resolved・declined＝本人への結果 → `/`（詳細はベルで見る）
+   - ⚠️ **プッシュのタイトル「ファイブM 修正」の「修正」は実機未検証の新語**
+     （「依頼」「確認」はNG確定語なので避けた）。Chromeが警告表示に差し替えたら
+     app名を検証済み語に変えること（コードにもコメント済み）
+   - キルスイッチとして `notification_settings` に push 3行を seed
+     （`20260803000000_correction_push_settings.sql`・SQL Editor実行済み）。
+     このイベントは通知設定タブのカテゴリに**未登録**なので画面からはON/OFFできない。
+     止めるときは `update notification_settings set enabled=false where event_key like 'correction:%' and channel='push';`
+2. **push-dispatch のリトライ判定バグ**
+   - グループ（同一ユーザー×イベントで集約）内の1件が上限3回に達しただけで、
+     まだ再送できる残りの件まで一括で failed になっていた → **1件ずつ判定**に修正。
+     上限到達分だけ failed、他は各自の retry_count+1 で次回リトライ継続
+3. **調整休の提案受諾で作られる休暇申請が `leave:new_request` を発火していなかった**
+   - 提案者には「回答しました」通知しか届かず、承認待ちの休暇申請（leave_requests, pending）が
+     1件増えたことが伝わらなかった（残業側の受諾は notifyOvertimeNewRequest を送っており非対称だった）
+   - `OvertimeProposalResponse.tsx` の chosei_off 分岐に、通常の休暇申請（LeaveRequest.tsx）と
+     同じ配線を追加：Slack（shouldSend判定）＋サイト通知（source_type
+     `leave_request:pending_approval`＋reference_id＝ホームの要対応バナー・自動消し込み対応）＋メール。
+     通知失敗で受諾自体は失敗させない try/catch 付き
+4. **`notifications.reference_id` の uuid 宣言（時限爆弾）を text に訂正**
+   - `20260726000000_create_correction_requests.sql` が uuid で宣言していたが本番の実列は text
+     （attendance の通知は日付文字列 YYYY-MM-DD を入れる）。本番では if not exists で素通り＝無害だが、
+     新規DB構築時に uuid 列が作られ日付入りの通知が全滅するため、ファイルを text に修正
+     （**本番SQLの実行は不要**。将来の新規構築時のみ効く）
+
+### デプロイ済み
+- ① DB seed（`20260803000000`）→ ② Edge Function `push-dispatch`（**version 14・ACTIVE確認済み**）
+  → ③ クライアント push（commit `6368331`・`git ls-remote` 突合済み）の順で実施
+- ①②は実行時点から本番で有効。③（提案受諾の通知）は Vercel 自動デプロイで反映
+
+### 次回やること（この件の実機確認）
+1. 修正依頼を出す → 管理者のスマホに「ファイブM 修正／新着 1件」が届くか・
+   タップで管理画面の**修正依頼タブに直行**するか。**警告表示に化けていないか**（新語「修正」の検証）
+2. 管理者が「対応済み／対応不可」→ 依頼した本人にプッシュが届くか
+3. 調整休の提案を受諾 → 提案者に「休暇申請が届きました」のベル＋ホームの要対応バナー＋
+   プッシュ（休暇申請／未承認 1件）が届くか・受理して要対応バナーが自動で消えるか
+
+### 未対応で残っているもの（今回の洗い出し結果・次回の候補）
+- **まとめて取消**（勤怠カレンダー・【要判断】のまま）／**安否確認機能**（要 /grill-me）／
+  **スタッフ側の過去お知らせ一覧**（【相談】のまま）／**管理者の欠勤⇄時間外調整休 変更UI**／
+  **残業の一本化フラグ**（全体公開とセット）
+- **プレビューバナー余白ズレ**（連絡板60固定・勤務変更70固定）／
+  **通知設定の死に設定の恒久対策**（宛先UIに届かないキーが出る）
+
+### 設計上の学び（今日の追加分）
+- **「別PR候補」とメモした漏れは放置すると気づけない**。修正依頼のプッシュは EVENT_MAP 未登録のまま
+  数日間 skipped で捨てられ続けていた（エラーも出ない）。EVENT_MAP はホワイトリスト＝
+  **新しい event_key でベル通知を作ったら、push-dispatch への登録と seed をセットでやる**
+- **リトライのような「まとめて処理」の中の個別判定は、集約単位と判定単位を混ぜない**。
+  グループ単位の update に個別条件（retry_count）を載せると、最初の1件の値が全件に適用される
+
+---
+
 ## 📌 セッション引き継ぎ（2026-07-31 続き・休日出勤でも「予定していた時間」を入力できるようにした）
 
 ### きっかけ
