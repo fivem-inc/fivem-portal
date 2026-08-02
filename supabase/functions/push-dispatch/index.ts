@@ -69,6 +69,13 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string }> = {
   "overtime:admin_edited":       { app: "残業", word: "新着",   url: "/overtime?tab=history" },
   "overtime:grant":              { app: "残業", word: "新着",   url: "/overtime" },
   "overtime:grant_declined":     { app: "残業", word: "新着",   url: "/overtime" },
+  // 修正依頼・取消依頼（correction_requests のRPCがベル通知を作る）
+  // ⚠️ app名に「依頼」「確認」は使わない（Chromeが不正な通知と判定する実機テスト済みNG語）。
+  //    「修正」は未検証の新語＝実機で警告が出たら app を「お知らせ」等の検証済み語に変える。
+  // new=管理者の要対応→管理画面の修正依頼タブへ／resolved・declined=本人への結果→ホーム（ベルで詳細を見る）
+  "correction:new":      { app: "修正", word: "新着", url: "/admin?tab=corrections" },
+  "correction:resolved": { app: "修正", word: "新着", url: "/" },
+  "correction:declined": { app: "修正", word: "新着", url: "/" },
 };
 
 // notification_settingsの参照キー（'reminder:unread:today'→'reminder:unread'）
@@ -188,13 +195,27 @@ serve(async (req) => {
         sent += g.ids.length;
       } else {
         const errText = result ? JSON.stringify(result).slice(0, 300) : `HTTP ${res.status}`;
-        // 3回失敗したら諦める（failed）、それまではpendingのまま次回リトライ
-        const giveUp = pending.find(p => g.ids.includes(p.id) && p.retry_count >= 2);
-        await supabase.from("push_queue")
-          .update(giveUp
-            ? { status: "failed", error: errText }
-            : { error: errText, retry_count: (pending.find(p => p.id === g.ids[0])?.retry_count ?? 0) + 1 })
-          .in("id", g.ids);
+        // 3回失敗したら諦める（failed）、それまではpendingのまま次回リトライ。
+        // ⚠️ 判定は必ず「1件ずつ」行う。グループ一括で判定すると、グループ内の1件が
+        //    上限に達しただけで、まだ再送できる残りの件まで failed になる（実際に起きたバグ）。
+        const giveUpIds: string[] = [];
+        const retryRows: { id: string; retryCount: number }[] = [];
+        for (const id of g.ids) {
+          const rc = pending.find(p => p.id === id)?.retry_count ?? 0;
+          if (rc >= 2) giveUpIds.push(id);
+          else retryRows.push({ id, retryCount: rc + 1 });
+        }
+        if (giveUpIds.length > 0) {
+          await supabase.from("push_queue")
+            .update({ status: "failed", error: errText })
+            .in("id", giveUpIds);
+        }
+        // retry_count は行ごとに値が違うため1件ずつ更新する（グループは小さいので往復数は問題にならない）
+        for (const r of retryRows) {
+          await supabase.from("push_queue")
+            .update({ error: errText, retry_count: r.retryCount })
+            .eq("id", r.id);
+        }
         failed += g.ids.length;
       }
     }

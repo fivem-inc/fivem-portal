@@ -17,7 +17,11 @@ $$;
 
 -- notifications に参照列が無ければ足す（本番はSQL Editorで追加済みの場合あり＝冪等）。
 -- RPCのベル通知insertがこれらの列を使うため、欠けていると原子的insertが失敗する。
-alter table notifications add column if not exists reference_id uuid;
+-- ⚠️ reference_id は必ず text にする。本番の実列は text（2026-06-16 に db query で追加）で、
+--    attendance の通知は日付文字列（YYYY-MM-DD）を入れている。ここを uuid で書くと
+--    本番では if not exists で素通り（無害）だが、新規DB構築時に uuid 列が作られ、
+--    日付を入れる通知（attendance/FYI）が invalid input syntax で全滅する時限爆弾になる。
+alter table notifications add column if not exists reference_id text;
 alter table notifications add column if not exists event_key text;
 
 create table if not exists correction_requests (

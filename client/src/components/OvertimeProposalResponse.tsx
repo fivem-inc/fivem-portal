@@ -3,6 +3,8 @@ import { supabase } from '../lib/supabaseClient';
 import { insertNotification } from '../lib/notifications';
 import { timeToMin, calcPayPeriodStartJst, formatSignedMin } from '../lib/breakCalc';
 import { notifyOvertimeNewRequest } from '../lib/overtimeNotify';
+import { shouldSend, dispatchEmail, dispatchSiteNotification, getUserEmail } from '../lib/notificationDispatch';
+import { sendLeaveSlack } from '../lib/leaveSlack';
 import type { CalendarKind } from '../lib/breakCalc';
 import { buildTimeAdjustReport, resolveNormalShift } from '../lib/overtimeShift';
 import type { PatternRow } from '../lib/overtimeShift';
@@ -48,6 +50,7 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
   const [proposal, setProposal] = useState<ProposalRow | null>(null);
   const [options, setOptions] = useState<OptionRow[]>([]);
   const [proposerName, setProposerName] = useState('');
+  const [proposerRole, setProposerRole] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   // 相手の回答用ローカル状態（optionId→{chosen,date,time}）
@@ -73,8 +76,9 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
       const optRows = (opts as OptionRow[] | null) ?? [];
       setOptions(optRows);
       setPicks(Object.fromEntries(optRows.map(o => [o.id, { chosen: false, date: o.work_date, time: (o.adjust_time ?? '').slice(0, 5) }])));
-      const { data: prof } = await supabase.from('profiles').select('name').eq('id', prop.proposer_id).maybeSingle();
+      const { data: prof } = await supabase.from('profiles').select('name, role_title').eq('id', prop.proposer_id).maybeSingle();
       setProposerName((prof as { name: string } | null)?.name ?? '');
+      setProposerRole((prof as { role_title: string | null } | null)?.role_title ?? '');
       // 相手本人＆未回答のときだけ、受諾に必要なシフト等を取得
       if (prop.recipient_id === currentUserId && prop.status === 'open') {
         const { data: pat } = await supabase.from('weekly_shift_patterns').select('*').eq('user_id', prop.recipient_id);
@@ -167,6 +171,31 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
           }).select('id').single();
           if (lrErr || !lr) continue;
           await supabase.from('overtime_adjustment_proposal_options').update({ result_type: 'leave_request', result_id: (lr as { id: string }).id }).eq('id', o.id);
+          // 提案者（＝この休暇申請の承認者）へ leave:new_request を送る。
+          // 通常の休暇申請（LeaveRequest.tsx）と同じ配線：Slack＋サイト通知＋メール。
+          // これが無いと「回答しました」の通知だけで、承認待ちが1件増えたことが伝わらない
+          // （残業側の受諾は notifyOvertimeNewRequest を送っており、それと対になる）。
+          try {
+            const vars = {
+              申請者名: responderName,
+              休暇種別: '調整休',
+              申請日数: '1',
+              リンク: 'https://fivem-portal.vercel.app/leave-approvals',
+            };
+            if (await shouldSend('leave:new_request', 'slack')) {
+              await sendLeaveSlack('new_request', proposerName || 'スタッフ', proposerRole || 'リーダー');
+            }
+            await dispatchSiteNotification('leave:new_request', vars,
+              { applicant: currentUserId, leader: proposal.proposer_id },
+              insertNotification, 'leave_request:pending_approval', (lr as { id: string }).id);
+            const applicantEmail = (await getUserEmail(currentUserId)) ?? '';
+            const proposerEmail = (await getUserEmail(proposal.proposer_id)) ?? '';
+            await dispatchEmail('leave:new_request', vars,
+              { applicant: applicantEmail, leader: proposerEmail, approver: proposerEmail });
+          } catch (e) {
+            // 通知の失敗で受諾自体（申請の作成）は失敗させない
+            console.error('[proposal-accept] leave:new_request 通知の送信失敗:', e);
+          }
           continue;
         }
         const b = buildFor(o)!;
