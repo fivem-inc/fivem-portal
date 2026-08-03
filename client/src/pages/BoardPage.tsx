@@ -9,6 +9,7 @@ import { todayJstStr } from '../lib/breakCalc';
 const BOARD_LINK = 'https://fivem-portal.vercel.app/board';
 import { useAuth } from '../hooks/useAuth';
 import { useDarkMode } from '../hooks/useDarkMode';
+import { useSafetyPendingCount } from '../hooks/useSafetyPendingCount';
 import { AuthContext } from '../contexts/AuthContext.tsx';
 
 // ────────────────────────────────────────────────────────────────
@@ -146,6 +147,8 @@ const BoardPage: React.FC = () => {
   const isDark = useDarkMode();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  // 安否確認（進行中があればサイドバー最上部に赤く出す。平常時はお気に入りの下にグレーで常設）
+  const { pendingCount: safetyPending, activeChecks: safetyActiveChecks } = useSafetyPendingCount(user?.id);
 
   const bg        = isDark ? '#1a1a2e' : '#f0f2f5';
   const sidebarBg = isDark ? '#16213e' : '#f8f9fa';
@@ -2039,9 +2042,30 @@ const BoardPage: React.FC = () => {
   const dmChannels    = sortedChannels.filter(c => c.type === 'dm'    && (!searchText || channelDisplayName(c).toLowerCase().includes(searchLower)));
   const inboxUnread   = inboxMessages.filter(m => !inboxReadIds.has(m.id)).length;
 
+  // 🆘 安否・緊急連絡の入口。進行中（自分が未回答）なら赤く点灯して最上部、平常時はグレーでお気に入りの下。
+  const safetyRow = (
+    <div onClick={() => navigate(safetyPending > 0 && safetyActiveChecks[0] ? `/safety?check=${safetyActiveChecks[0].id}` : '/safety')}
+      style={{
+        padding: '10px 14px', cursor: 'pointer', borderBottom: `1px solid ${border}`,
+        background: safetyPending > 0 ? (isDark ? '#4a1f24' : '#f8d7da') : 'transparent',
+        display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left',
+      }}>
+      <div style={{ width: 38, height: 38, borderRadius: 10, background: safetyPending > 0 ? '#dc3545' : (isDark ? '#3a3a5c' : '#f1efe8'), display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>🆘</div>
+      <div style={{ flex: 1 }}>
+        <span style={{ display: 'block', fontSize: 14, fontWeight: safetyPending > 0 ? 700 : 500, color: safetyPending > 0 ? (isDark ? '#ffb3ba' : '#721c24') : subColor }}>安否・緊急連絡</span>
+        {safetyPending > 0 && <span style={{ display: 'block', fontSize: 11, color: isDark ? '#ffb3ba' : '#a32d2d' }}>安否確認が進行中です</span>}
+      </div>
+      {safetyPending > 0 && (
+        <span style={{ background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 11, minWidth: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px', fontWeight: 'bold', flexShrink: 0 }}>{safetyPending}</span>
+      )}
+    </div>
+  );
+
   const channelListPanel = (
     <div style={{ width: isMobile ? '100%' : 280, background: sidebarBg, borderRight: isMobile ? 'none' : `1px solid ${border}`, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, flexShrink: 0 }}>
       <div ref={channelListRef} style={{ overflowY: 'auto', flex: 1, minHeight: 0, paddingTop: showSearch ? 96 : 56 }}>
+        {/* ── 安否確認が進行中のときだけ最上部に出す ── */}
+        {safetyPending > 0 && safetyRow}
         {/* ── 受信・送信・お気に入り ── */}
         {[
           { key: 'inbox'  as const, icon: '📨', label: '受信トレイ', bg: isDark ? '#1e3a5f' : '#dbeafe', badge: inboxUnread, onClick: () => { setView('inbox'); setInboxFilter('all'); setShowSidebar(false); setInboxDetailId(null); } },
@@ -2083,6 +2107,9 @@ const BoardPage: React.FC = () => {
             </div>
           );
         })()}
+
+        {/* ── 安否・緊急連絡（平常時はここ。進行中のときは最上部へ移動する） ── */}
+        {safetyPending === 0 && safetyRow}
 
         {/* ── 区切り線 ── */}
         <div style={{ margin: '4px 0', borderBottom: `2px solid ${border}` }} />

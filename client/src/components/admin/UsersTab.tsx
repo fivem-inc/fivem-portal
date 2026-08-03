@@ -368,12 +368,49 @@ const UsersTab: React.FC = () => {
   const [emailTarget, setEmailTarget] = useState<{ id: string; name: string; email: string }[]>([]);
   // プッシュ通知を許可している（購読情報が登録済みの）ユーザーID一覧
   const [pushUserIds, setPushUserIds] = useState<Set<string>>(new Set());
+  // 緊急連絡先（安否確認用）。初期登録は管理者、以降は本人がアカウント設定から更新する
+  const [phones, setPhones] = useState<Record<string, string>>({});
+  const [editingPhoneId, setEditingPhoneId] = useState<string | null>(null);
+  const [phoneValue, setPhoneValue] = useState('');
+  const [phoneSaving, setPhoneSaving] = useState(false);
+  const [phoneError, setPhoneError] = useState('');
 
   useEffect(() => {
     supabase.from('push_subscriptions').select('user_id').then(({ data }) => {
       if (data) setPushUserIds(new Set(data.map(r => r.user_id as string)));
     });
+    supabase.from('staff_phone_numbers').select('user_id, phone').then(({ data }) => {
+      if (data) setPhones(Object.fromEntries(data.map(r => [r.user_id as string, r.phone as string])));
+    });
   }, []);
+
+  const startEditPhone = (userId: string) => {
+    setEditingPhoneId(userId);
+    setPhoneValue(phones[userId] || '');
+    setPhoneError('');
+  };
+
+  const savePhone = async (userId: string) => {
+    const v = phoneValue.trim();
+    setPhoneError('');
+    if (!v) {
+      // 空で保存＝登録を削除する
+      setPhoneSaving(true);
+      const { error } = await supabase.from('staff_phone_numbers').delete().eq('user_id', userId);
+      setPhoneSaving(false);
+      if (error) { setPhoneError('保存できませんでした'); return; }
+      setPhones(prev => { const next = { ...prev }; delete next[userId]; return next; });
+      setEditingPhoneId(null);
+      return;
+    }
+    setPhoneSaving(true);
+    const { error } = await supabase.from('staff_phone_numbers')
+      .upsert({ user_id: userId, phone: v }, { onConflict: 'user_id' });
+    setPhoneSaving(false);
+    if (error) { setPhoneError('保存できませんでした'); return; }
+    setPhones(prev => ({ ...prev, [userId]: v }));
+    setEditingPhoneId(null);
+  };
 
   const toggleEmailSelect = (id: string) => {
     setSelectedForEmail(prev => {
@@ -575,6 +612,7 @@ const UsersTab: React.FC = () => {
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 90 }}>役職</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 120 }}>グループ</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 85 }}>最終アクセス</th>
+                        <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 125 }} title="災害時の安否確認で使う緊急連絡先。初期登録は管理者が行い、以降は本人がアカウント設定から変更できます">緊急連絡先</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 55 }} title="プッシュ通知を許可しているか（アカウント設定で本人が設定）">プッシュ</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 55 }}>状態</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 140 }}>操作</th>
@@ -693,6 +731,40 @@ const UsersTab: React.FC = () => {
                                   })()
                                 : <span style={{ color: '#adb5bd' }}>未ログイン</span>
                               }
+                            </td>
+                            {/* 緊急連絡先（安否確認用）。クリックで編集、空で保存すると登録を削除 */}
+                            <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', fontSize: 11 }}>
+                              {editingPhoneId === user.id ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                  <input
+                                    type="tel"
+                                    value={phoneValue}
+                                    onChange={e => { setPhoneValue(e.target.value); setPhoneError(''); }}
+                                    placeholder="090-1234-5678"
+                                    autoFocus
+                                    style={{ width: '100%', padding: '3px 5px', fontSize: 11, borderRadius: 4, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#000' }}
+                                  />
+                                  <div style={{ display: 'flex', gap: 3, justifyContent: 'center' }}>
+                                    <button type="button" onClick={() => savePhone(user.id)} disabled={phoneSaving}
+                                      style={{ padding: '2px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: '#28a745', color: '#fff', cursor: phoneSaving ? 'default' : 'pointer' }}>
+                                      {phoneSaving ? '...' : '保存'}
+                                    </button>
+                                    <button type="button" onClick={() => { setEditingPhoneId(null); setPhoneError(''); }}
+                                      style={{ padding: '2px 8px', fontSize: 10, borderRadius: 4, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: 'none', color: isDarkMode ? '#adb5bd' : '#666', cursor: 'pointer' }}>
+                                      取消
+                                    </button>
+                                  </div>
+                                  {phoneError && <span style={{ color: '#dc3545', fontSize: 10 }}>{phoneError}</span>}
+                                </div>
+                              ) : (
+                                <span
+                                  onClick={() => startEditPhone(user.id)}
+                                  title="クリックで編集"
+                                  style={{ cursor: 'pointer', color: phones[user.id] ? (isDarkMode ? '#fff' : '#000') : '#dc3545', whiteSpace: 'nowrap' }}
+                                >
+                                  {phones[user.id] || '⚠️ 未登録'}
+                                </span>
+                              )}
                             </td>
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center' }}>
                               {pushUserIds.has(user.id)

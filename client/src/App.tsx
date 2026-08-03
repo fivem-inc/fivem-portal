@@ -25,6 +25,7 @@ const ShiftReportPage  = React.lazy(() => import('./pages/ShiftReportPage'));
 const OvertimePage     = React.lazy(() => import('./pages/OvertimePage'));
 const ShiftDirectoryPage = React.lazy(() => import('./pages/ShiftDirectoryPage'));
 const PurchaseRequestPage = React.lazy(() => import('./pages/PurchaseRequestPage'));
+const SafetyCheckPage = React.lazy(() => import('./pages/SafetyCheckPage'));
 
 const PageLoader: React.FC = () => (
   <div style={{ padding: 40, textAlign: 'center', color: '#888' }}>読み込んでいます...</div>
@@ -41,6 +42,7 @@ import { isFullDayReport } from './lib/overtimeTypes';
 import { useExpenses } from './hooks/useExpenses';
 import { useLeavePendingCount } from './hooks/useLeavePendingCount';
 import { usePurchasePendingCount } from './hooks/usePurchasePendingCount';
+import { useSafetyPendingCount } from './hooks/useSafetyPendingCount';
 import type { Expense, Submission } from './types';
 
 // ページ遷移のたびにスクロールをトップへ戻す
@@ -523,7 +525,9 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     window.addEventListener('resize', check);
     return () => window.removeEventListener('resize', check);
   }, []);
-  const { total: boardUnread } = useBoardUnread(userId, location.pathname);
+  const { total: boardUnreadRaw } = useBoardUnread(userId, location.pathname);
+  const { pendingCount: safetyPending } = useSafetyPendingCount(userId);
+  const boardUnread = boardUnreadRaw + safetyPending; // 連絡板の未読バッジに安否確認の未回答分も合算
   const { pendingCount: purchasePending } = usePurchasePendingCount(userId, canPurchaseRequest);
   const { pendingCount: leavePending } = useLeavePendingCount(userId, roleTitle, isAdmin);
   const { pendingCount: shiftPending } = useShiftPendingCount(userId, roleTitle, isAdmin, canShiftReport);
@@ -740,7 +744,8 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
   const navigate = useNavigate();
   const isEnc = n.message.includes('有給奨励日');
   const isUnconfirmedReminder = n.message.includes('への対応がまだ完了していません');
-  const isBoard = !isUnconfirmedReminder && (n.source_type === 'inbox' || n.message.includes('お知らせ') || n.message.includes('メッセージが届き') || n.message.includes('リマインド'));
+  const isSafety = n.source_type === 'safety_check' || n.source_type === 'safety_check_cancelled'; // 安否確認：isBoardの文言判定より先に見る
+  const isBoard = !isUnconfirmedReminder && !isSafety && (n.source_type === 'inbox' || n.message.includes('お知らせ') || n.message.includes('メッセージが届き') || n.message.includes('リマインド'));
 
   // source_typeで種別を判定（休暇申請・勤務変更申請）。文言ではなくsource_typeを正とする
   const isLeavePendingApproval = n.source_type === 'leave_request:pending_approval'; // 承認者：要対応
@@ -777,6 +782,12 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
   // タップ＝詳細画面への移動。結果報告のみ（A分類）はタップで閉じる。要対応（B分類）は対応完了まで残る。
   const handleTap = () => {
     if (isEnc) { navigate('/leave'); return; }
+    if (isSafety) {
+      navigate(n.reference_id ? `/safety?check=${n.reference_id}` : '/safety');
+      // 未回答のうちはSafetyCheckBannerが別途出続けるので、ここでは常に閉じてよい（対応済みならこのタップで完了）
+      onDismiss(n.id);
+      return;
+    }
     if (isBoard || isUnconfirmedReminder) {
       if (n.reference_id) { navigate(`/board?openInboxId=${n.reference_id}`); } else { navigate('/board'); }
       return;
@@ -852,7 +863,8 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
       .eq('banner_dismissed', false)
       .not('message', 'like', '%有給奨励日%')
       // 「要対応」の承認待ちは専用の集計バナー(LeaveApprovalBanner/ShiftReportApprovalBanner/PurchaseApprovalBanner)が別途出るため、ここでは重複表示しない
-      .not('source_type', 'in', '(leave_request:pending_approval,shift_report:pending_approval,purchase_request:pending_approval,overtime_request:pending_approval)')
+      // 安否確認も専用の赤バナー(SafetyCheckBanner)が別途出るため、ここでは重複表示しない
+      .not('source_type', 'in', '(leave_request:pending_approval,shift_report:pending_approval,purchase_request:pending_approval,overtime_request:pending_approval,safety_check,safety_check_cancelled)')
       .or('source_type.is.null,source_type.neq.board')
       .order('created_at', { ascending: false });
     if (!data) return;
@@ -1145,6 +1157,39 @@ const ShiftReportApprovalBanner: React.FC<{ userId: string; roleTitle: string; i
       <span style={{ fontSize: 22 }}>⏰</span>
       <span>勤務変更報告の確認依頼が {pendingCount}件 あります</span>
       <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 'normal' }}>タップして確認 →</span>
+    </div>
+  );
+};
+
+// 安否確認の未回答バナー（消せない・回答すると自動で消える。全スタッフ対象）
+const SafetyCheckBanner: React.FC<{ userId: string }> = ({ userId }) => {
+  const navigate = useNavigate();
+  const { pendingCount, activeChecks } = useSafetyPendingCount(userId);
+
+  if (pendingCount === 0) return null;
+  const first = activeChecks[0];
+
+  return (
+    <div
+      onClick={() => navigate(`/safety${first ? `?check=${first.id}` : ''}`)}
+      style={{
+        margin: '0 0 16px 0',
+        padding: '14px 16px',
+        background: '#f8d7da',
+        border: '2px solid #dc3545',
+        borderRadius: 10,
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+      }}
+    >
+      <span style={{ fontSize: 24 }}>🆘</span>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 15, fontWeight: 'bold', color: '#721c24' }}>安否確認に回答してください</div>
+        {first && <div style={{ fontSize: 12, color: '#842029', marginTop: 2 }}>{first.body}</div>}
+      </div>
+      <span style={{ fontSize: 13, fontWeight: 'bold', color: '#721c24', whiteSpace: 'nowrap' }}>タップして回答 →</span>
     </div>
   );
 };
@@ -1503,6 +1548,9 @@ const Dashboard: React.FC = () => {
       )}
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} roleTitle={roleTitle} userId={user.id} />
 
+      {/* ⓪-0 安否確認の未回答バナー（最優先。消せない） */}
+      <SafetyCheckBanner userId={user.id} />
+
       {/* ⓪ プッシュ通知の有効化を促すバナー（未ONの人にのみ表示） */}
       <PushEnableBanner />
 
@@ -1741,6 +1789,20 @@ const ShiftDirectoryPageWrapper: React.FC = () => {
   );
 };
 
+// 安否確認ページ（/safety・全員対象。機能公開の役職ガードは発信操作側だけで行う）
+const SafetyCheckPageWrapper: React.FC = () => {
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, handleLogout, loading } = useAuth();
+  if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
+  return (
+    <div style={{ padding: '70px 0 0' }}>
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} roleTitle={roleTitle} userId={user.id} />
+      <Suspense fallback={<PageLoader />}>
+        <SafetyCheckPage user={user} roleTitle={roleTitle} isAdmin={isAdmin} />
+      </Suspense>
+    </div>
+  );
+};
+
 // 備品精算ページ（/purchase）
 const PurchaseRequestPageWrapper: React.FC = () => {
   const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, handleLogout, loading } = useAuth();
@@ -1783,6 +1845,7 @@ function App() {
             <Route path="/overtime" element={<OvertimePageWrapper />} />
             <Route path="/shift-patterns" element={<ShiftDirectoryPageWrapper />} />
             <Route path="/purchase" element={<PurchaseRequestPageWrapper />} />
+            <Route path="/safety" element={<SafetyCheckPageWrapper />} />
           </Route>
         </Routes>
       </AuthProvider>
