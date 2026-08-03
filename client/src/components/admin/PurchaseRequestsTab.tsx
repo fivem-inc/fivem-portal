@@ -470,12 +470,40 @@ const PurchaseRequestsTab: React.FC = () => {
                   {r.request_type === 'purchase_request' && r.status === 'self_judgment_shared' && (
                     <div style={{ fontSize: 11, color: subText, marginBottom: 4 }}>自己判断（共有のみ）のため承認操作はありません</div>
                   )}
-                  {r.request_type === 'purchase_request' && APPROVED_STATUSES.includes(r.status) && r.status !== 'self_judgment_shared' && (
-                    <div style={{ display: 'inline-block', padding: '3px 8px', borderRadius: 6, background: '#28a745', color: '#fff', fontSize: 11, fontWeight: 'bold', marginBottom: 4 }}>受理済み</div>
-                  )}
+                  {/* 受理済み：誰が・いつ承認したかまで出す（結果だけだと経理が管理できないため） */}
+                  {r.request_type === 'purchase_request' && APPROVED_STATUSES.includes(r.status) && r.status !== 'self_judgment_shared' && (() => {
+                    const fmtAt = (s: string | null | undefined) => {
+                      if (!s) return '';
+                      const d = new Date(s.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(s) ? s : s + 'Z');
+                      return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+                    };
+                    // 承認ルートごとに「最終的に受理を確定させた人と日時」を出す
+                    const route =
+                      r.status === 'board_approved'
+                        ? { label: '全員承認', at: r.board_approved_at, who: (r.board_approver_ids ?? []).map(id => purchaseRequestNames[id] ?? '不明').join('・') }
+                        : r.status === 'manager_approved'
+                        ? { label: 'マネージャー承認', at: r.manager_approved_at, who: (r.requested_manager_ids ?? []).map(id => purchaseRequestNames[id] ?? '不明').join('・') }
+                        : { label: 'リーダー承認', at: r.leader_approved_at, who: purchaseRequestNames[r.leader_id ?? ''] ?? '' };
+                    return (
+                      <div style={{ marginBottom: 4 }}>
+                        <div style={{ display: 'inline-block', padding: '3px 8px', borderRadius: 6, background: '#28a745', color: '#fff', fontSize: 11, fontWeight: 'bold' }}>受理済み</div>
+                        <span style={{ fontSize: 11, color: subText, marginLeft: 8 }}>
+                          {route.label}
+                          {route.who && `：${route.who}`}
+                          {route.at && `（${fmtAt(route.at)}）`}
+                        </span>
+                      </div>
+                    );
+                  })()}
                   {r.status === 'returned' && (
                     <div style={{ padding: '4px 8px', borderRadius: 6, background: '#f8d7da', color: '#842029', fontSize: 11, marginBottom: 4 }}>
                       差し戻し{r.returned_reason && `：${r.returned_reason}`}
+                      {/* 差し戻しには専用の日時列が無いため、最後に更新された日時を使う */}
+                      {r.updated_at && (() => {
+                        const s = r.updated_at;
+                        const d = new Date(s.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(s) ? s : s + 'Z');
+                        return <span style={{ marginLeft: 6 }}>（{`${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`}）</span>;
+                      })()}
                     </div>
                   )}
                   {/* 承認時のひとこと（任意・申請者にも見えている内容） */}

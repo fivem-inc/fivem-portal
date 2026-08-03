@@ -101,6 +101,7 @@ export interface PurchaseRequestCSVRow {
   president_self_judgment: boolean;
   quotes: { vendor: string; amount: number }[] | null;
   created_at: string;
+  updated_at: string | null;   // 差し戻しの日時に使う（差し戻し専用の日時列が無いため）
   leader_approved_at: string | null;
   manager_approved_at: string | null;
   board_approved_at: string | null;
