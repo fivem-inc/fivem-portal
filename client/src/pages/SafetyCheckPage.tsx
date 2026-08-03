@@ -107,6 +107,24 @@ const COLOR_STYLE: Record<'green' | 'blue' | 'amber' | 'red', { bg: string; bord
   red:   { bg: '#f8d7da', border: '#dc3545', text: '#721c24' },
 };
 
+// 自動リマインドの間隔・回数の選択肢。
+//   停電・充電切れ・電波の輻輳で、連絡が取りづらい人ほど遅れて電源を入れる。
+//   短い設定だけだと「一番心配な人に届く前にリマインドが尽きる」ので長い間隔も選べるようにしている。
+//   例）6時間ごと×12回＝3日間 ／ 1日ごと×7回＝1週間
+const REMIND_INTERVALS = [15, 30, 60, 120, 180, 360, 720, 1440];
+const REMIND_COUNTS = [1, 2, 3, 4, 6, 8, 12, 24];
+
+const intervalLabel = (min: number): string =>
+  min >= 1440 ? `${min / 1440}日` : min >= 60 ? `${min / 60}時間` : `${min}分`;
+
+const durationLabel = (min: number): string => {
+  if (min >= 1440) {
+    const d = min / 1440;
+    return Number.isInteger(d) ? `${d}日` : `${Math.floor(d)}日${Math.round((d % 1) * 24)}時間`;
+  }
+  return min >= 60 ? `${Math.round(min / 60)}時間` : `${min}分`;
+};
+
 const PENDING_QUEUE_KEY = 'fivem_safety_pending_responses'; // { [checkId]: { choice, comment, clientKey, savedAt } }
 
 type PendingQueue = Record<string, { choice: string; comment: string; clientKey: string; savedAt: number }>;
@@ -560,6 +578,30 @@ const SendView: React.FC<{
 
   return (
     <div style={{ background: card, borderRadius: 12, padding: '18px 18px', border: `1px solid ${border}` }}>
+      {/* 選ぶ前は一覧、選んだ後は選んだものだけを表示する。
+          災害時に「いま何を送ろうとしているか」が他の文面に埋もれないようにするため */}
+      {selectedTemplateId ? (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <p style={{ fontSize: 12, color: sub, margin: 0, fontWeight: 700 }}>送る内容</p>
+            <button type="button" onClick={() => { setSelectedTemplateId(''); setShowConfirm(false); }}
+              style={{ fontSize: 12, color: '#1976d2', background: 'none', border: `1px solid #1976d2`, borderRadius: 14, padding: '3px 12px', cursor: 'pointer' }}>
+              選び直す
+            </button>
+          </div>
+          {(() => {
+            const t = templates.find(x => x.id === selectedTemplateId);
+            const g = PATTERN_GROUPS.find(gr => gr.patterns.includes(pattern) && (isTrainingTemplate(t?.title || '') === !!gr.training));
+            return (
+              <div style={{ border: '2px solid #1976d2', background: isDark ? '#1e3a5f' : '#e3f2fd', borderRadius: 8, padding: '10px 12px' }}>
+                <div style={{ fontSize: 11, color: isDark ? '#90caf9' : '#1565c0', marginBottom: 2 }}>{g?.heading}</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: isDark ? '#fff' : '#0c447c' }}>{t?.title}</div>
+              </div>
+            );
+          })()}
+        </div>
+      ) : (
+      <>
       <p style={{ fontSize: 12, color: sub, margin: '0 0 8px', fontWeight: 700 }}>何を送りますか？</p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
         {/* 種類ごとに見出しで区切って並べる（何を送るのか分かりやすくするため） */}
@@ -579,10 +621,9 @@ const SendView: React.FC<{
                   <button key={t.id} type="button" onClick={() => applyTemplate(t.id)}
                     style={{
                       textAlign: 'left', padding: '10px 12px', borderRadius: 8, cursor: 'pointer',
-                      border: selectedTemplateId === t.id ? '2px solid #1976d2' : `1px solid ${border}`,
-                      background: selectedTemplateId === t.id ? (isDark ? '#1e3a5f' : '#e3f2fd') : 'transparent',
+                      border: `1px solid ${border}`, background: 'transparent',
                     }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: selectedTemplateId === t.id ? '#1976d2' : text }}>{t.title}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: text }}>{t.title}</div>
                     <div style={{ fontSize: 11, color: sub, margin: '2px 0 6px' }}>{t.body}</div>
                     {/* 実際にスタッフの画面に出る回答ボタンを見せる（何を送るのか選ぶ前に分かるように） */}
                     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
@@ -622,6 +663,8 @@ const SendView: React.FC<{
           </div>
         )}
       </div>
+      </>
+      )}
 
       {selectedTemplateId && (
         <>
@@ -707,18 +750,25 @@ const SendView: React.FC<{
             <select value={remindMax} onChange={e => setRemindMax(Number(e.target.value))}
               style={{ padding: '5px 8px', fontSize: 12, borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#3d3d55' : '#fff', color: text }}>
               <option value={0}>送らない</option>
-              {[1, 2, 3, 4, 6, 8, 12].map(n => <option key={n} value={n}>最大{n}回</option>)}
+              {REMIND_COUNTS.map(n => <option key={n} value={n}>最大{n}回</option>)}
             </select>
             {remindMax > 0 && (
               <>
                 <select value={remindInterval} onChange={e => setRemindInterval(Number(e.target.value))}
                   style={{ padding: '5px 8px', fontSize: 12, borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#3d3d55' : '#fff', color: text }}>
-                  {[15, 30, 60, 120].map(n => <option key={n} value={n}>{n}分ごと</option>)}
+                  {REMIND_INTERVALS.map(n => <option key={n} value={n}>{intervalLabel(n)}ごと</option>)}
                 </select>
                 <span style={{ color: sub }}>未回答者にプッシュで再送します</span>
               </>
             )}
           </div>
+          {/* 「いつまで続くか」を出す。停電・充電切れで翌日以降に電源を入れる人がいるため、
+              長い災害では 6時間ごと×12回（3日間）のような設定を選べるようにしている */}
+          {remindMax > 0 && (
+            <p style={{ fontSize: 11, color: sub, margin: '-10px 0 16px' }}>
+              最後の再送まで約{durationLabel(remindInterval * remindMax)}（{intervalLabel(remindInterval)}ごとに{remindMax}回）
+            </p>
+          )}
 
           {err && <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '8px 10px', fontSize: 12, color: '#842029', marginBottom: 10 }}>{err}</div>}
 
