@@ -16,6 +16,7 @@ import OvertimeProposalsTab from './admin/OvertimeProposalsTab';
 import FeaturePermissionsTab from './admin/FeaturePermissionsTab';
 import PurchaseRequestsTab from './admin/PurchaseRequestsTab';
 import AnnouncementsTab from './admin/AnnouncementsTab';
+import SafetyChecksTab from './admin/SafetyChecksTab';
 import CorrectionRequestsTab from './admin/CorrectionRequestsTab';
 
 interface AdminPanelProps {
@@ -485,6 +486,7 @@ const AdminPanelContent: React.FC = () => {
           { key: 'scheduled_reminders', label: 'リマインド設定', icon: '📅' },
           { key: 'board_settings',     label: '連絡板設定',    icon: '📨' },
           { key: 'announcements',      label: 'お知らせ',      icon: '📢' },
+          { key: 'safety_checks',      label: '安否・緊急',    icon: '🆘' },
           { key: 'feature_permissions',label: '権限管理',      icon: '🔐' },
         ] as const;
         const ALL_TABS = [...ROW1, ...ROW2];
@@ -582,6 +584,7 @@ const AdminPanelContent: React.FC = () => {
         {activeTab === 'leader_assignments' && <LeaderAssignmentsTab />}
         {activeTab === 'board_settings' && <BoardSettingsTab />}
         {activeTab === 'announcements' && <AnnouncementsTab />}
+        {activeTab === 'safety_checks' && <SafetyChecksTab />}
         {activeTab === 'feature_permissions' && <FeaturePermissionsTab />}
         {activeTab === 'notifications' && <NotificationsTab />}
         {activeTab === 'scheduled_reminders' && (

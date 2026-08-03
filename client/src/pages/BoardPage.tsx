@@ -10,6 +10,7 @@ const BOARD_LINK = 'https://fivem-portal.vercel.app/board';
 import { useAuth } from '../hooks/useAuth';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useSafetyPendingCount } from '../hooks/useSafetyPendingCount';
+import { useFeaturePublished, isFeaturePublished } from '../hooks/useFeaturePublished';
 import { AuthContext } from '../contexts/AuthContext.tsx';
 
 // ────────────────────────────────────────────────────────────────
@@ -148,7 +149,10 @@ const BoardPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   // 安否確認（進行中があればサイドバー最上部に赤く出す。平常時はお気に入りの下にグレーで常設）
+  // 未公開の人には入口自体を出さない（ルート側にも同じガードあり）
   const { pendingCount: safetyPending, activeChecks: safetyActiveChecks } = useSafetyPendingCount(user?.id);
+  const featurePublishState = useFeaturePublished();
+  const safetyVisible = isFeaturePublished('safety_check', featurePublishState, isAdmin, roleTitle);
 
   const bg        = isDark ? '#1a1a2e' : '#f0f2f5';
   const sidebarBg = isDark ? '#16213e' : '#f8f9fa';
@@ -2065,7 +2069,7 @@ const BoardPage: React.FC = () => {
     <div style={{ width: isMobile ? '100%' : 280, background: sidebarBg, borderRight: isMobile ? 'none' : `1px solid ${border}`, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, flexShrink: 0 }}>
       <div ref={channelListRef} style={{ overflowY: 'auto', flex: 1, minHeight: 0, paddingTop: showSearch ? 96 : 56 }}>
         {/* ── 安否確認が進行中のときだけ最上部に出す ── */}
-        {safetyPending > 0 && safetyRow}
+        {safetyVisible && safetyPending > 0 && safetyRow}
         {/* ── 受信・送信・お気に入り ── */}
         {[
           { key: 'inbox'  as const, icon: '📨', label: '受信トレイ', bg: isDark ? '#1e3a5f' : '#dbeafe', badge: inboxUnread, onClick: () => { setView('inbox'); setInboxFilter('all'); setShowSidebar(false); setInboxDetailId(null); } },
@@ -2109,7 +2113,7 @@ const BoardPage: React.FC = () => {
         })()}
 
         {/* ── 安否・緊急連絡（平常時はここ。進行中のときは最上部へ移動する） ── */}
-        {safetyPending === 0 && safetyRow}
+        {safetyVisible && safetyPending === 0 && safetyRow}
 
         {/* ── 区切り線 ── */}
         <div style={{ margin: '4px 0', borderBottom: `2px solid ${border}` }} />

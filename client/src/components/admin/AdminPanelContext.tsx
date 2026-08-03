@@ -8,9 +8,9 @@ import { sendLeaveSlack } from '../../lib/leaveSlack';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import { resolveItems } from '../../lib/purchaseItemsFallback';
 
-export type AdminTab = 'approvals' | 'users' | 'groups' | 'reports' | 'trip_reports' | 'leave_requests' | 'shift_reports' | 'overtime_admin' | 'overtime_proposals' | 'leader_assignments' | 'notifications' | 'scheduled_reminders' | 'board_settings' | 'feature_permissions' | 'purchase_requests' | 'announcements' | 'corrections';
+export type AdminTab = 'approvals' | 'users' | 'groups' | 'reports' | 'trip_reports' | 'leave_requests' | 'shift_reports' | 'overtime_admin' | 'overtime_proposals' | 'leader_assignments' | 'notifications' | 'scheduled_reminders' | 'board_settings' | 'feature_permissions' | 'purchase_requests' | 'announcements' | 'corrections' | 'safety_checks';
 
-const ADMIN_TABS: AdminTab[] = ['approvals', 'users', 'groups', 'reports', 'trip_reports', 'leave_requests', 'shift_reports', 'overtime_admin', 'overtime_proposals', 'leader_assignments', 'notifications', 'scheduled_reminders', 'board_settings', 'feature_permissions', 'purchase_requests', 'announcements', 'corrections'];
+const ADMIN_TABS: AdminTab[] = ['approvals', 'users', 'groups', 'reports', 'trip_reports', 'leave_requests', 'shift_reports', 'overtime_admin', 'overtime_proposals', 'leader_assignments', 'notifications', 'scheduled_reminders', 'board_settings', 'feature_permissions', 'purchase_requests', 'announcements', 'corrections', 'safety_checks'];
 
 interface PrintVoucher {
   submissionId: string;

@@ -526,7 +526,8 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     return () => window.removeEventListener('resize', check);
   }, []);
   const { total: boardUnreadRaw } = useBoardUnread(userId, location.pathname);
-  const { pendingCount: safetyPending } = useSafetyPendingCount(userId);
+  const { pendingCount: safetyPendingRaw } = useSafetyPendingCount(userId);
+  const safetyPending = isPub('safety_check') ? safetyPendingRaw : 0;
   const boardUnread = boardUnreadRaw + safetyPending; // 連絡板の未読バッジに安否確認の未回答分も合算
   const { pendingCount: purchasePending } = usePurchasePendingCount(userId, canPurchaseRequest);
   const { pendingCount: leavePending } = useLeavePendingCount(userId, roleTitle, isAdmin);
@@ -1162,10 +1163,12 @@ const ShiftReportApprovalBanner: React.FC<{ userId: string; roleTitle: string; i
 };
 
 // 安否確認の未回答バナー（消せない・回答すると自動で消える。全スタッフ対象）
-const SafetyCheckBanner: React.FC<{ userId: string }> = ({ userId }) => {
+const SafetyCheckBanner: React.FC<{ userId: string; isAdmin: boolean; roleTitle: string }> = ({ userId, isAdmin, roleTitle }) => {
   const navigate = useNavigate();
   const { pendingCount, activeChecks } = useSafetyPendingCount(userId);
+  const featurePublishState = useFeaturePublished();
 
+  if (!isFeaturePublished('safety_check', featurePublishState, isAdmin, roleTitle)) return null;
   if (pendingCount === 0) return null;
   const first = activeChecks[0];
 
@@ -1549,7 +1552,7 @@ const Dashboard: React.FC = () => {
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} roleTitle={roleTitle} userId={user.id} />
 
       {/* ⓪-0 安否確認の未回答バナー（最優先。消せない） */}
-      <SafetyCheckBanner userId={user.id} />
+      <SafetyCheckBanner userId={user.id} isAdmin={isAdmin} roleTitle={roleTitle} />
 
       {/* ⓪ プッシュ通知の有効化を促すバナー（未ONの人にのみ表示） */}
       <PushEnableBanner />
@@ -1789,10 +1792,13 @@ const ShiftDirectoryPageWrapper: React.FC = () => {
   );
 };
 
-// 安否確認ページ（/safety・全員対象。機能公開の役職ガードは発信操作側だけで行う）
+// 安否確認ページ（/safety・回答は全員対象。発信操作の制限はページ内で役職を見て行う）
+//   ⚠️ ナビの出し分けだけでなくルート側にもガードを入れる（連絡板で抜けていた事故と同型）
 const SafetyCheckPageWrapper: React.FC = () => {
   const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, handleLogout, loading } = useAuth();
+  const featurePublishState = useFeaturePublished();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
+  if (!isFeaturePublished('safety_check', featurePublishState, isAdmin, roleTitle)) return <Navigate to="/" />;
   return (
     <div style={{ padding: '70px 0 0' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} roleTitle={roleTitle} userId={user.id} />

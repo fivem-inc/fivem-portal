@@ -32,6 +32,9 @@ const FEATURES = [
   { key: 'overtime',        icon: '⏱', label: '残業・時間管理（正社員）', note: 'パートは勤務変更報告を利用' },
   { key: 'overtime_summary', icon: '📊', label: '残業の集計・超過バナー閲覧', note: '全員分を見られる役職' },
   { key: 'shift_pattern_directory', icon: '🗓', label: '全員のシフト予定 閲覧', note: 'パート含む全員の通常シフトを見られる役職' },
+  // 安否確認は災害時に全員へ届く必要があるため、役職別のトグルは使わず公開/非公開だけで運用する
+  // （役職で絞ると、その役職の人に安否確認が届かなくなってしまう）
+  { key: 'safety_check',    icon: '🆘', label: '安否・緊急連絡',  note: '発信はマネージャー以上・回答は全員' },
 ] as const;
 
 const FeaturePermissionsTab: React.FC = () => {
