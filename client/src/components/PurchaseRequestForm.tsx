@@ -165,7 +165,9 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
   interface FormDraft {
     items: ItemDraft[];
     requestedDate: string; purpose: string; reason: string;
-    notes: string; location: string; leaderId: string;
+    notes: string; location: string;
+    leaderId?: string;      // 旧形式の下書き（単数）。読み込み時だけ使う
+    leaderIds: string[];
     requestedManagerIds: string[]; sharedManagerIds: string[];
     presidentSelfJudgment: boolean; selfJudgeConfirmFirst: boolean;
     manualTotalOverride: string; totalManuallyOverridden: boolean; amountDiffReason: string;
@@ -205,7 +207,14 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
   const [location, setLocation] = useState(savedDraft?.location ?? '');
   const [workplaceOptions, setWorkplaceOptions] = useState<string[]>([]);
   const [purposeOptions, setPurposeOptions] = useState<string[]>([]);
-  const [leaderId, setLeaderId] = useState(resubmitRecord?.leader_id ?? savedDraft?.leaderId ?? '');
+  // 確認の依頼先（複数選べる。1人なら従来どおり pending_leader、2人以上は全員の回答を待つ審議ルート）
+  // 再申請時：旧データは leader_id（単数）だが、複数依頼だった場合は requested_manager_ids に入っている
+  const [leaderIds, setLeaderIds] = useState<string[]>(
+    resubmitRecord?.leader_id ? [resubmitRecord.leader_id]
+      : (resubmitRecord?.requested_manager_ids && resubmitRecord.requested_manager_ids.length > 0 && (resubmitRecord.amount ?? 0) <= 10000)
+        ? resubmitRecord.requested_manager_ids
+        : (savedDraft?.leaderIds ?? (savedDraft?.leaderId ? [savedDraft.leaderId] : []))
+  );
   const [requestedManagerIds, setRequestedManagerIds] = useState<string[]>(resubmitRecord?.requested_manager_ids ?? savedDraft?.requestedManagerIds ?? []);
   const [sharedManagerIds, setSharedManagerIds] = useState<string[]>(resubmitRecord?.shared_manager_ids ?? savedDraft?.sharedManagerIds ?? []);
   const [presidentSelfJudgment, setPresidentSelfJudgment] = useState<boolean>(resubmitRecord?.president_self_judgment ?? savedDraft?.presidentSelfJudgment ?? false);
@@ -229,11 +238,11 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
     try {
       localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({
         items, requestedDate, purpose, reason, notes, location,
-        leaderId, requestedManagerIds, sharedManagerIds, presidentSelfJudgment,
+        leaderIds, requestedManagerIds, sharedManagerIds, presidentSelfJudgment,
         selfJudgeConfirmFirst, manualTotalOverride, totalManuallyOverridden, amountDiffReason,
       }));
     } catch { /* 保存容量超過などは無視 */ }
-  }, [isResubmit, items, requestedDate, purpose, reason, notes, location, leaderId, requestedManagerIds, sharedManagerIds, presidentSelfJudgment, selfJudgeConfirmFirst, manualTotalOverride, totalManuallyOverridden, amountDiffReason]);
+  }, [isResubmit, items, requestedDate, purpose, reason, notes, location, leaderIds, requestedManagerIds, sharedManagerIds, presidentSelfJudgment, selfJudgeConfirmFirst, manualTotalOverride, totalManuallyOverridden, amountDiffReason]);
 
   useEffect(() => {
     supabase.from('profiles').select('id, name, role_title').eq('is_active', true)
@@ -342,9 +351,9 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
     if (prevTierRef.current !== null && prevTierRef.current !== tier && tier !== 'none') {
       // 実際に承認関連の入力を消したときだけバナーを出す
       // （初めて金額を入れただけ＝リセット対象が無いのに毎回出すのはノイズになる）
-      const hadRouteInput = !!leaderId || requestedManagerIds.length > 0 || sharedManagerIds.length > 0 || presidentSelfJudgment || selfJudgeConfirmFirst;
+      const hadRouteInput = leaderIds.length > 0 || requestedManagerIds.length > 0 || sharedManagerIds.length > 0 || presidentSelfJudgment || selfJudgeConfirmFirst;
       if (hadRouteInput) setTierBanner(`${TIER_LABEL[tier]}の金額になったため、承認に関する入力項目が変わりました`);
-      setLeaderId(''); setRequestedManagerIds([]); setSharedManagerIds([]); setPresidentSelfJudgment(false); setSelfJudgeConfirmFirst(false);
+      setLeaderIds([]); setRequestedManagerIds([]); setSharedManagerIds([]); setPresidentSelfJudgment(false); setSelfJudgeConfirmFirst(false);
     }
     prevTierRef.current = tier;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -474,7 +483,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
     setItems([emptyItemDraft()]);
     setRequestedDate(todayJstStr());
     setPurpose(''); setReason(''); setNotes(''); setLocation('');
-    setLeaderId(''); setRequestedManagerIds([]); setSharedManagerIds([]);
+    setLeaderIds([]); setRequestedManagerIds([]); setSharedManagerIds([]);
     setPresidentSelfJudgment(false); setSelfJudgeConfirmFirst(false);
     setManualTotalOverride(''); setTotalManuallyOverridden(false); setAmountDiffReason('');
     try { localStorage.removeItem(DRAFT_STORAGE_KEY); } catch { /* ignore */ }
@@ -524,7 +533,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
     if (items.length > 1 && (!amount.trim() || isNaN(parsedAmount) || parsedAmount < 1)) missing.push({ key: 'total', label: '合計金額（1円以上）' });
     if (!requestedDate) missing.push({ key: 'requestedDate', label: '購入予定日' });
     if (!reason.trim()) missing.push({ key: 'reason', label: '申請理由' });
-    if (tier === 'leader' && !isSelfJudgment && !leaderId) missing.push({ key: 'leader', label: '確認を依頼するリーダー・マネージャー' });
+    if (tier === 'leader' && !isSelfJudgment && leaderIds.length === 0) missing.push({ key: 'leader', label: '確認を依頼するリーダー・マネージャー' });
     if (tier === 'manager' && !isSelfJudgment && requestedManagerIds.length === 0) missing.push({ key: 'managers', label: '承認を依頼するマネージャー（1名以上）' });
     if (isSelfJudgment && sharedManagerIds.length === 0) missing.push({ key: 'sharedManagers', label: '共有先のマネージャー（1名以上）' });
 
@@ -548,12 +557,18 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
   const doSubmit = async () => {
     setShowConfirm(false);
     const presidentSelfJudge = tier === 'board' && isPresident && presidentSelfJudgment;
+    // 1万円以下でも確認を複数人に依頼したときは、全員の回答を待つ審議ルート(pending_manager)に乗せる。
+    // 1人だけなら従来どおり pending_leader（そのまま承認で確定・シンプル）。
+    const leaderMulti = tier === 'leader' && !isSelfJudgment && leaderIds.length > 1;
     const status = tier === 'board'
       ? (presidentSelfJudge ? 'self_judgment_shared' : 'pending_board')
-      : isSelfJudgment ? 'self_judgment_shared' : tier === 'leader' ? 'pending_leader' : 'pending_manager';
+      : isSelfJudgment ? 'self_judgment_shared'
+      : tier === 'leader' ? (leaderMulti ? 'pending_manager' : 'pending_leader')
+      : 'pending_manager';
     const routeFields = {
-      leader_id: tier === 'leader' && !isSelfJudgment ? leaderId : null,
-      requested_manager_ids: tier === 'manager' && !isSelfJudgment ? requestedManagerIds : null,
+      leader_id: tier === 'leader' && !isSelfJudgment && !leaderMulti ? (leaderIds[0] ?? null) : null,
+      requested_manager_ids: leaderMulti ? leaderIds
+        : tier === 'manager' && !isSelfJudgment ? requestedManagerIds : null,
       shared_manager_ids: isSelfJudgment ? sharedManagerIds : null,
       is_self_judgment: isSelfJudgment,
       president_self_judgment: presidentSelfJudge,
@@ -607,13 +622,22 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
         }
         sendPurchaseSlackForEvent('purchase_request:self_judgment_shared', 'submitted', 'self_judgment', applicantName, itemNameVar, parsedAmount).then(null, () => {});
         notifyEmailToMany('purchase_request:self_judgment_shared', sharedManagerIds).then(null, () => {});
-      } else if (tier === 'leader') {
-        await dispatchSiteNotification('purchase_request:submitted', vars, { leader: leaderId }, insertNotification, 'purchase_request:pending_approval', recordId);
+      } else if (tier === 'leader' && !leaderMulti) {
+        // 1人だけに依頼した場合（従来どおり）
+        await dispatchSiteNotification('purchase_request:submitted', vars, { leader: leaderIds[0] }, insertNotification, 'purchase_request:pending_approval', recordId);
         sendPurchaseSlackForEvent('purchase_request:submitted', 'submitted', 'leader', applicantName, itemNameVar, parsedAmount).then(null, () => {});
         (async () => {
-          const leaderEmail = await getUserEmail(leaderId);
+          const leaderEmail = await getUserEmail(leaderIds[0]);
           if (leaderEmail) await dispatchEmail('purchase_request:submitted', vars, { leader: leaderEmail });
         })().then(null, () => {});
+      } else if (leaderMulti) {
+        // 複数人に依頼した場合は審議ルートに乗るので、そちらの通知を使う（全員に届ける）
+        const tpl = await getNotificationTemplate('purchase_request:submitted_manager', 'site', vars);
+        if (tpl) {
+          await Promise.all(leaderIds.map(id => insertNotification(id, tpl.template, tpl.subject || undefined, 'purchase_request:pending_approval', recordId, 'purchase_request:submitted_manager')));
+        }
+        sendPurchaseSlackForEvent('purchase_request:submitted_manager', 'submitted', 'manager', applicantName, itemNameVar, parsedAmount).then(null, () => {});
+        notifyEmailToMany('purchase_request:submitted_manager', leaderIds).then(null, () => {});
       } else {
         const tpl = await getNotificationTemplate('purchase_request:submitted_manager', 'site', vars);
         if (tpl) {
@@ -1295,7 +1319,9 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: text, cursor: 'pointer' }}>
                 <input type="radio" checked={selfJudgeConfirmFirst} onChange={() => setSelfJudgeConfirmFirst(true)} />
-                事前に確認してもらう（{tier === 'leader' ? 'リーダー' : 'マネージャー'}に依頼）
+                {/* 依頼先の選択肢は tier='leader' ならリーダー＋マネージャー、それ以外はマネージャー。
+                    ラベルと実際の選択肢を必ず一致させる（以前「リーダーに依頼」と書いていたが実際は両方選べた） */}
+                事前に確認してもらう（{tier === 'leader' ? 'リーダー・マネージャー' : 'マネージャー'}に依頼）
               </label>
             </div>
 
@@ -1330,14 +1356,23 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
         )}
 
         {tier === 'leader' && !isSelfJudgment && (
-          <div>
-            <label style={labelStyle}>確認を依頼するリーダー・マネージャー <span style={{ color: '#dc3545' }}>*</span></label>
-            <select value={leaderId} onChange={e => setLeaderId(e.target.value)} style={{ ...inputStyle, border: `2px solid ${leaderId ? '#28a745' : border}` }}>
-              <option value="">選択してください</option>
+          <div data-err-field="leader">
+            <label style={labelStyle}>
+              確認を依頼するリーダー・マネージャー <span style={{ color: '#dc3545' }}>*</span>
+              <span style={{ fontWeight: 'normal', color: subText }}>（{leaderIds.length}名選択中）</span>
+            </label>
+            <div style={{ fontSize: 12, color: subText, marginBottom: 8 }}>
+              複数選べます。2名以上に依頼した場合は、依頼した全員の回答が揃ってから決定します（金額は小さいが全員に見てほしいとき）。
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, border: `2px solid ${leaderIds.length > 0 ? '#28a745' : border}`, borderRadius: 8, padding: 10 }}>
               {leaders.map(l => (
-                <option key={l.id} value={l.id}>{l.name}（{l.role_title}）</option>
+                <label key={l.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: text, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={leaderIds.includes(l.id)}
+                    onChange={() => setLeaderIds(prev => prev.includes(l.id) ? prev.filter(x => x !== l.id) : [...prev, l.id])} />
+                  {l.name}（{l.role_title}）
+                </label>
               ))}
-            </select>
+            </div>
           </div>
         )}
 
@@ -1385,12 +1420,12 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
       {showConfirm && (() => {
         const routeText = isSelfJudgment || (tier === 'board' && isPresident && presidentSelfJudgment)
           ? '自己判断（共有のみ・承認は不要）'
-          : tier === 'leader' ? 'リーダー承認'
+          : tier === 'leader' ? (leaderIds.length > 1 ? '確認依頼（依頼した全員の回答がそろってから決定）' : 'リーダー承認')
           : tier === 'manager' ? 'マネージャー承認（依頼した全員の回答がそろってから決定）'
           : '全員承認（全マネージャー＋社長の回答がそろってから決定）';
         const approverNames = isSelfJudgment
           ? shareCandidates.filter(m => sharedManagerIds.includes(m.id)).map(m => m.name)
-          : tier === 'leader' ? leaders.filter(l => l.id === leaderId).map(l => l.name)
+          : tier === 'leader' ? leaders.filter(l => leaderIds.includes(l.id)).map(l => l.name)
           // 選択のチェックボックスは shareCandidates（マネージャー＋社長）を使っているので、
           // 名前の解決も同じ配列から行う（managers だけだと社長を選んだとき名前が消える）
           : tier === 'manager' ? shareCandidates.filter(m => requestedManagerIds.includes(m.id)).map(m => m.name)
