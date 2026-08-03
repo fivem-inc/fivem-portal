@@ -24,6 +24,14 @@ const PATTERN_LABEL: Record<Pattern, string> = {
   support: '応援要請（お願い・催促しない）',
 };
 
+// 回答内容の色（/safety の COLOR_STYLE と対応。ダークで沈まないよう暗い時用の色も持つ）
+const TONE: Record<string, { bg: string; border: string; text: string; darkBg: string; darkText: string }> = {
+  green: { bg: '#dcfce7', border: '#22c55e', text: '#166534', darkBg: '#1e3a2a', darkText: '#7bdca0' },
+  blue:  { bg: '#e3f2fd', border: '#1976d2', text: '#0c447c', darkBg: '#1e3a5f', darkText: '#90caf9' },
+  amber: { bg: '#fff3cd', border: '#ffc107', text: '#856404', darkBg: '#3a2f0d', darkText: '#ffd970' },
+  red:   { bg: '#f8d7da', border: '#dc3545', text: '#721c24', darkBg: '#4a2328', darkText: '#ff9aa2' },
+};
+
 interface Template {
   id: string;
   title: string;
@@ -46,6 +54,13 @@ interface SafetyCheckRow {
   remind_count: number;
 }
 
+// 所属チーム（こども・大人・管理部）だけを取り出す。
+// ⚠️ group_names には配信用グループ（マネージャー・リーダー／三役／正社員・契約社員 等）も
+//    混ざっているため、先頭を機械的に取ると「マネージャー・リーダー」等を拾ってしまう。
+//    チームの一覧は master_options の shift_report_group が正。
+const teamOf = (groups: string[] | null | undefined, teams: string[]): string =>
+  (groups ?? []).find(g => teams.includes(g)) ?? '';
+
 const fmt = (s: string | null): string => {
   if (!s) return '';
   const d = new Date(s.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(s) ? s : s + 'Z');
@@ -58,6 +73,7 @@ const SafetyChecksTab: React.FC = () => {
 
   const [templates, setTemplates] = useState<Template[]>([]);
   const [checks, setChecks] = useState<SafetyCheckRow[]>([]);
+  const [teams, setTeams] = useState<string[]>([]);   // こども・大人・管理部（所属チームの判定に使う）
   const [counts, setCounts] = useState<Record<string, { recipients: number; responses: number }>>({});
   const [loading, setLoading] = useState(true);
 
@@ -69,7 +85,7 @@ const SafetyChecksTab: React.FC = () => {
   // 発信履歴の展開（誰が回答したか・未回答は誰かを見る）
   const [expandedCheckId, setExpandedCheckId] = useState<string | null>(null);
   const [detail, setDetail] = useState<{
-    recipients: { id: string; name: string }[];
+    recipients: { id: string; name: string; role_title: string | null; group_names: string[] | null }[];
     responses: { user_id: string; choice: string; comment: string | null; is_proxy: boolean; proxy_by: string | null; answered_at: string }[];
     options: { key: string; label: string; color: string }[];
     phones: Record<string, string>;   // 代行入力のために電話番号も出す（管理者は元々閲覧できる）
@@ -100,11 +116,13 @@ const SafetyChecksTab: React.FC = () => {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [tplRes, checkRes] = await Promise.all([
+    const [tplRes, checkRes, teamRes] = await Promise.all([
       supabase.from('safety_check_templates').select('id, title, body, pattern, sort_order, active').order('sort_order'),
       supabase.from('safety_checks').select('id, title, pattern, is_test, status, cancelled, created_at, created_by, closed_at, remind_count').order('created_at', { ascending: false }).limit(30),
+      supabase.from('master_options').select('value').eq('category', 'shift_report_group').order('sort_order'),
     ]);
     setTemplates((tplRes.data ?? []) as Template[]);
+    setTeams(((teamRes.data ?? []) as { value: string }[]).map(r => r.value));
     const rows = (checkRes.data ?? []) as SafetyCheckRow[];
     setChecks(rows);
 
@@ -136,12 +154,12 @@ const SafetyChecksTab: React.FC = () => {
     const ids = (recipRes.data ?? []).map((r: { user_id: string }) => r.user_id);
     const [profRes, phoneRes] = ids.length > 0
       ? await Promise.all([
-          supabase.from('profiles').select('id, name').in('id', ids),
+          supabase.from('profiles').select('id, name, role_title, group_names').in('id', ids),
           supabase.from('staff_phone_numbers').select('user_id, phone').in('user_id', ids),
         ])
-      : [{ data: [] as { id: string; name: string }[] }, { data: [] as { user_id: string; phone: string }[] }];
+      : [{ data: [] as { id: string; name: string; role_title: string | null; group_names: string[] | null }[] }, { data: [] as { user_id: string; phone: string }[] }];
     setDetail({
-      recipients: (profRes.data ?? []) as { id: string; name: string }[],
+      recipients: (profRes.data ?? []) as NonNullable<typeof detail>['recipients'],
       responses: (respRes.data ?? []) as NonNullable<typeof detail>['responses'],
       options: (checkRes.data?.options ?? []) as { key: string; label: string; color: string }[],
       phones: Object.fromEntries(((phoneRes.data ?? []) as { user_id: string; phone: string }[]).map(p => [p.user_id, p.phone])),
@@ -442,7 +460,6 @@ const SafetyChecksTab: React.FC = () => {
                           ) : (() => {
                             const answered = new Set(detail.responses.map(r => r.user_id));
                             const unanswered = detail.recipients.filter(p => !answered.has(p.id));
-                            const label = (key: string) => detail.options.find(o => o.key === key)?.label ?? key;
                             const nameOf = (id: string) => detail.recipients.find(p => p.id === id)?.name ?? userName(id);
                             return (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -451,15 +468,43 @@ const SafetyChecksTab: React.FC = () => {
                                   {detail.responses.length === 0 ? (
                                     <span style={{ fontSize: 12, color: sub }}>まだ回答がありません</span>
                                   ) : (
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                                      {detail.responses.map(r => (
-                                        <div key={r.user_id} style={{ fontSize: 12, color: text }}>
-                                          <strong>{nameOf(r.user_id)}</strong>：{label(r.choice)}
-                                          <span style={{ color: sub, marginLeft: 6 }}>{fmt(r.answered_at)}</span>
-                                          {r.is_proxy && <span style={{ color: sub, marginLeft: 4 }}>（代行：{userName(r.proxy_by ?? '')}）</span>}
-                                          {r.comment && <div style={{ fontSize: 11, color: sub, paddingLeft: 12 }}>「{r.comment}」</div>}
-                                        </div>
-                                      ))}
+                                    /* 回答内容ごとにまとめ、対応が必要なもの（赤→橙→青→緑）から先に出す。
+                                       名前・所属・時刻を列で揃える（中央寄せだと名前の長さで位置がばらつくため） */
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                      {[...detail.options]
+                                        .sort((a, b) => ({ red: 0, amber: 1, blue: 2, green: 3 }[a.color] ?? 9) - ({ red: 0, amber: 1, blue: 2, green: 3 }[b.color] ?? 9))
+                                        .map(o => {
+                                          const group = detail.responses.filter(r => r.choice === o.key);
+                                          if (group.length === 0) return null;
+                                          const c = TONE[o.color] ?? TONE.green;
+                                          return (
+                                            <div key={o.key}>
+                                              <div style={{ fontSize: 11, fontWeight: 'bold', marginBottom: 3 }}>
+                                                <span style={{ padding: '2px 8px', borderRadius: 10, background: isDarkMode ? c.darkBg : c.bg, color: isDarkMode ? c.darkText : c.text, border: `1px solid ${c.border}` }}>
+                                                  {o.label}
+                                                </span>
+                                                <span style={{ color: sub, marginLeft: 6, fontWeight: 'normal' }}>{group.length}人</span>
+                                              </div>
+                                              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 4 }}>
+                                                {group.map(r => {
+                                                  const p = detail.recipients.find(x => x.id === r.user_id);
+                                                  const affiliation = [teamOf(p?.group_names, teams), p?.role_title].filter(Boolean).join('・');
+                                                  return (
+                                                    <div key={r.user_id} style={{ fontSize: 12, color: text }}>
+                                                      <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                                                        <span style={{ minWidth: 110, fontWeight: 'bold' }}>{nameOf(r.user_id)}</span>
+                                                        <span style={{ minWidth: 130, fontSize: 11, color: sub }}>{affiliation || '—'}</span>
+                                                        <span style={{ fontSize: 11, color: sub }}>{fmt(r.answered_at)}</span>
+                                                        {r.is_proxy && <span style={{ fontSize: 11, color: sub }}>（代行：{userName(r.proxy_by ?? '')}）</span>}
+                                                      </div>
+                                                      {r.comment && <div style={{ fontSize: 11, color: sub, paddingLeft: 8 }}>「{r.comment}」</div>}
+                                                    </div>
+                                                  );
+                                                })}
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
                                     </div>
                                   )}
                                 </div>
@@ -471,7 +516,8 @@ const SafetyChecksTab: React.FC = () => {
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                                       {unanswered.map(p => (
                                         <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, border: `1px solid ${border}`, borderRadius: 6, padding: '5px 8px' }}>
-                                          <span style={{ flex: 1, color: text }}>{p.name}</span>
+                                          <span style={{ minWidth: 110, color: text, fontWeight: 'bold' }}>{p.name}</span>
+                                          <span style={{ flex: 1, fontSize: 11, color: sub }}>{[teamOf(p.group_names, teams), p.role_title].filter(Boolean).join('・') || '—'}</span>
                                           {detail.phones[p.id] ? (
                                             <a href={`tel:${detail.phones[p.id]}`} style={{ color: isDarkMode ? '#90caf9' : '#1976d2', fontSize: 11, whiteSpace: 'nowrap' }}>📞 {detail.phones[p.id]}</a>
                                           ) : (

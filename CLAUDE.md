@@ -174,6 +174,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
     片方だけ直して食い違う心配はない（操作の重複を避ける原則より、災害時の可用性を優先）
 ・ダークモード：濃い青・濃い赤の文字が背景に沈んで読めなかった箇所を明るい色に
   （リンク＝#90caf9／危険＝#ff9aa2／成功＝#7bdca0。ライトは従来のまま）
+・**回答一覧を回答内容ごとのグループ表示に**（集計画面・管理画面の両方）。
+  対応が必要な順（赤→橙→青→緑）に並べ、名前・所属・時刻を**列で揃えた左寄せ**にする
+  （中央寄せだと名前の長さで位置がばらつき読みにくかった）
+・🚨 **所属チームの取り方**：`profiles.group_names` には所属チーム（こども/大人/管理部）と
+  **配信用グループ（マネージャー・リーダー／三役／正社員・契約社員 等）が混在**している。
+  先頭を機械的に取ると誤った所属が出る（例：太田恭子＝実際は管理部なのに
+  「マネージャー・リーダー」と表示された）。
+  **master_options の `shift_report_group`（こども/大人/管理部）と照合して選ぶこと**。
+  `teamOf(group_names, teams)` ヘルパーを SafetyCheckPage / SafetyChecksTab の両方に用意した
 
 【この機能を触るときの注意】
 ・回答ボタンの定義は client の PATTERN_OPTIONS と Edge の PRESET_OPTIONS の2か所管理（両方直す）
