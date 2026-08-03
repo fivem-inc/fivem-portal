@@ -4,7 +4,9 @@
 //   理由：Resendメールの無料枠は1日100通で、46人×6回リマインドをメールに乗せると即座に枠切れし、
 //   他の通知メールまで止まってしまうため。督促はホームの赤バナー（未回答の間ずっと出続ける）が担う。
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+// ⚠️ バージョンを固定する。'@2'（最新追従）だと配信元の最新版が壊れている時に
+//    「Module not found ... auth-js.mjs」でデプロイできなくなる（2026-08-03に実際に発生）
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 
 // 安否を聞くもの＝「安否」、出勤可否・応援のお願い＝「緊急」（safety-check-send と同じ出し分け）
 // ⚠️ どちらも実機テスト済みの語。新しい語を使うときは必ず実機で確認してから
@@ -24,16 +26,32 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, serviceKey);
 
   // service_role のみ（cron・サーバー間呼び出し専用。verify_jwt=false のためここで確認する）
+  // ⚠️ キーの文字列一致だけで判定すると、cronがVaultから渡すJWT形式のキーと一致せず401になる。
+  //    send-push・safety-check-send と同じく role クレームも見る二段構えにする。
   const authHeader = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '');
-  if (authHeader !== serviceKey) {
+  let isServiceRole = authHeader === serviceKey;
+  if (!isServiceRole && authHeader) {
+    try {
+      const payload = JSON.parse(atob(authHeader.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+      isServiceRole = payload.role === 'service_role';
+    } catch { /* JWTでない場合はfalseのまま */ }
+  }
+  if (!isServiceRole) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
   }
 
   const now = new Date().toISOString();
 
+  // 送る時間帯は発信ごとに決まっている（安否＝24時間／出勤確認・応援＝日中、が既定）。
+  // 時間帯の外なら claim されない＝送らずに待つ（回数を消費しないので朝また催促できる）。
+  const hourJst = new Date(Date.now() + 9 * 60 * 60 * 1000).getUTCHours();
+
   // atomic claim：次回リマインド時刻を過ぎた進行中のcheckを、リマインド回数を進めつつ取得する
   // （cronが多重起動しても、2回目以降のUPDATEはWHERE条件に一致する行が無くなるため二重送信されない）
-  const { data: claimed, error } = await supabase.rpc('claim_safety_check_reminders', { p_now: now });
+  const { data: claimed, error } = await supabase.rpc('claim_safety_check_reminders', {
+    p_now: now,
+    p_hour_jst: hourJst,
+  });
 
   if (error) {
     console.error('[safety-check-remind] claim error', error);

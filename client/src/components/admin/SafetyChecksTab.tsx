@@ -298,6 +298,7 @@ const SafetyChecksTab: React.FC = () => {
         </p>
       </div>
 
+
       {/* 定型メッセージ（既定で閉じる。見出しを枠付きのボタン風にして「押せる」ことを分かるようにする。
           文字だけの見出しだとクリックできると気づけなかったため） */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: showTemplates ? 8 : 24 }}>

@@ -183,10 +183,11 @@ serve(async (req) => {
     // 発信
     const {
       pattern, title, message, is_test, target_user_ids,
-      remind_interval_min, remind_max,
+      remind_interval_min, remind_max, remind_start_hour, remind_end_hour,
     } = body as {
       pattern: Pattern; title: string; message: string; is_test: boolean;
       target_user_ids: string[]; remind_interval_min?: number; remind_max?: number;
+      remind_start_hour?: number; remind_end_hour?: number;
     };
 
     if (!pattern || !PRESET_OPTIONS[pattern]) {
@@ -198,6 +199,10 @@ serve(async (req) => {
 
     const intervalMin = Math.max(15, remind_interval_min ?? 60);
     const maxCount = Math.max(0, Math.min(24, remind_max ?? 6));
+    // 送る時間帯。未指定なら安否＝24時間・出勤確認や応援＝日中（深夜に業務連絡で起こさないため）
+    const isSafety = pattern === 'safety3' || pattern === 'safety4';
+    const startHour = Math.max(0, Math.min(23, remind_start_hour ?? (isSafety ? 0 : 7)));
+    const endHour = Math.max(1, Math.min(24, remind_end_hour ?? (isSafety ? 24 : 22)));
 
     const { data: created, error: insertErr } = await supabase.from('safety_checks').insert({
       title: title || (is_test ? '【テスト】安否確認' : '安否確認'),
@@ -208,6 +213,9 @@ serve(async (req) => {
       created_by: callerId ?? target_user_ids[0],   // service_role呼び出し（将来の自動発信）では宛先の先頭を仮の発信者にする
       remind_interval_min: intervalMin,
       remind_max: maxCount,
+      // リマインドを送る時間帯（0〜24＝24時間いつでも）。発信画面で選ぶ
+      remind_start_hour: startHour,
+      remind_end_hour: endHour,
       next_remind_at: maxCount > 0 ? new Date(Date.now() + intervalMin * 60000).toISOString() : null,
     }).select('id').single();
 

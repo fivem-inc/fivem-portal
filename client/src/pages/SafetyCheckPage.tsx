@@ -517,6 +517,10 @@ const SendView: React.FC<{
   const [testSearch, setTestSearch] = useState('');
   const [remindInterval, setRemindInterval] = useState(60);
   const [remindMax, setRemindMax] = useState(6);
+  // 再送する時間帯。安否＝24時間、出勤確認・応援＝日中（発信時に変更できる）
+  const [allDay, setAllDay] = useState(true);
+  const [startHour, setStartHour] = useState(7);
+  const [endHour, setEndHour] = useState(22);
   const [showConfirm, setShowConfirm] = useState(false);
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState('');
@@ -542,6 +546,8 @@ const SendView: React.FC<{
       setPattern(t.pattern); setTitle(t.title); setBody(t.body);
       // 応援要請は「お願い」なので既定では催促しない。安否確認は既定6回（1時間ごと）
       setRemindMax(t.pattern === 'support' ? 0 : 6);
+      // 安否確認は災害なので24時間鳴らす。出勤確認・応援は業務連絡なので日中のみ（深夜に起こさない）
+      setAllDay(t.pattern === 'safety3' || t.pattern === 'safety4');
     }
   };
 
@@ -581,6 +587,8 @@ const SendView: React.FC<{
       body: {
         pattern, title, message: body, is_test: isTest, target_user_ids: finalTargetIds,
         remind_interval_min: remindInterval, remind_max: remindMax,
+        remind_start_hour: allDay ? 0 : startHour,
+        remind_end_hour: allDay ? 24 : endHour,
       },
     });
     setSending(false);
@@ -814,6 +822,38 @@ const SendView: React.FC<{
             <p style={{ fontSize: 11, color: sub, margin: '-10px 0 16px' }}>
               最後の再送まで約{durationLabel(remindInterval * remindMax)}（{intervalLabel(remindInterval)}ごとに{remindMax}回）
             </p>
+          )}
+
+          {/* リマインドを送る時間帯。既定は安否＝24時間／出勤確認・応援＝日中（深夜に業務連絡で起こさない）。
+              時間帯の外は「送らずに待つ」ので、回数を消費せず翌朝また催促できる */}
+          {remindMax > 0 && (
+            <>
+              <p style={{ fontSize: 12, color: sub, margin: '0 0 4px', fontWeight: 700 }}>再送する時間帯</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: text, cursor: 'pointer' }}>
+                  <input type="radio" checked={allDay} onChange={() => setAllDay(true)} />
+                  24時間いつでも（災害時）
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: text, cursor: 'pointer' }}>
+                  <input type="radio" checked={!allDay} onChange={() => setAllDay(false)} />
+                  日中のみ（深夜は鳴らさない）
+                </label>
+                {!allDay && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 24 }}>
+                    <select value={startHour} onChange={e => setStartHour(Number(e.target.value))}
+                      style={{ padding: '5px 8px', fontSize: 12, borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#3d3d55' : '#fff', color: text }}>
+                      {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{h}時</option>)}
+                    </select>
+                    <span style={{ fontSize: 12, color: sub }}>〜</span>
+                    <select value={endHour} onChange={e => setEndHour(Number(e.target.value))}
+                      style={{ padding: '5px 8px', fontSize: 12, borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#3d3d55' : '#fff', color: text }}>
+                      {Array.from({ length: 24 }, (_, h) => <option key={h + 1} value={h + 1}>{h + 1}時</option>)}
+                    </select>
+                    <span style={{ fontSize: 11, color: sub }}>この時間の外では送らず、時間になったら再開します</span>
+                  </div>
+                )}
+              </div>
+            </>
           )}
 
           {err && <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '8px 10px', fontSize: 12, color: '#842029', marginBottom: 10 }}>{err}</div>}
