@@ -129,10 +129,11 @@ const PENDING_QUEUE_KEY = 'fivem_safety_pending_responses'; // { [checkId]: { ch
 
 type PendingQueue = Record<string, { choice: string; comment: string; clientKey: string; savedAt: number }>;
 
+// 年まで出す（後から履歴を見たときに「いつの災害か」が分かるように）
 function fmtDateTime(s: string | null): string {
   if (!s) return '';
   const d = new Date(s.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(s) ? s : s + 'Z');
-  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
 const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAdmin }) => {
@@ -181,14 +182,18 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  // URLの ?check= が来たら集計ビューを直接開く（メール・プッシュ・バナー経由）
+  // URLの ?check= で開いたとき（プッシュ・メール・バナー経由）にどのタブを出すか。
+  // ⚠️ 自分がまだ回答していなければ必ず「回答」を優先する。
+  //    マネージャーも被災者の一人なので、集計を先に出すと自分の回答が置き去りになる。
+  //    回答済みで、かつ集計を見られる役職のときだけ集計を開く。
   useEffect(() => {
     const c = searchParams.get('check');
-    if (c) {
-      setSelectedSummaryId(c);
-      if (isManagerPlus || isLeader) setView('summary');
-    }
-  }, [searchParams, isManagerPlus, isLeader]);
+    if (!c || loading) return;
+    setSelectedSummaryId(c);
+    const iAnswered = !!myResponses[c];
+    if (!iAnswered) setView('answer');
+    else if (isManagerPlus || isLeader) setView('summary');
+  }, [searchParams, isManagerPlus, isLeader, loading, myResponses]);
 
   // ---- オフライン再送キュー ----
   const flushQueue = useCallback(async () => {
@@ -341,7 +346,7 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
             myResponses={myResponses}
             isManagerPlus={isManagerPlus}
             onOpenSummary={(id) => { setView('summary'); setSelectedSummaryId(id); setSearchParams({ check: id }); }}
-            card={card} text={text} sub={sub} border={border}
+            isDark={isDark} card={card} text={text} sub={sub} border={border}
           />
         )}
 
@@ -378,7 +383,7 @@ const AnswerView: React.FC<{
         const isEditing = editingCheckId === c.id || (!myRes && !pending);
         return (
           <div key={c.id} style={{ background: card, border: '2px solid #dc3545', borderRadius: 12, padding: '16px 18px' }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#721c24', marginBottom: 4 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: isDark ? '#ff9aa2' : '#721c24', marginBottom: 4 }}>
               {c.is_test && '【テスト】'}安否確認（{fmtDateTime(c.created_at)}）
             </div>
             <div style={{ fontSize: 14, color: text, marginBottom: 12, whiteSpace: 'pre-wrap' }}>{c.body}</div>
@@ -396,7 +401,7 @@ const AnswerView: React.FC<{
                   {myRes.is_proxy && <span style={{ fontWeight: 400 }}> ・代行入力</span>}
                 </div>
                 <button type="button" onClick={() => setEditingCheckId(c.id)}
-                  style={{ fontSize: 12, color: '#1976d2', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                  style={{ fontSize: 12, color: isDark ? '#90caf9' : '#1976d2', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
                   回答を変更する
                 </button>
               </div>
@@ -599,7 +604,7 @@ const SendView: React.FC<{
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
             <p style={{ fontSize: 12, color: sub, margin: 0, fontWeight: 700 }}>送る内容</p>
             <button type="button" onClick={() => { setSelectedTemplateId(''); setShowConfirm(false); }}
-              style={{ fontSize: 12, color: '#1976d2', background: 'none', border: `1px solid #1976d2`, borderRadius: 14, padding: '3px 12px', cursor: 'pointer' }}>
+              style={{ fontSize: 12, color: isDark ? '#90caf9' : '#1976d2', background: 'none', border: `1px solid #1976d2`, borderRadius: 14, padding: '3px 12px', cursor: 'pointer' }}>
               選び直す
             </button>
           </div>
@@ -657,7 +662,7 @@ const SendView: React.FC<{
         })}
         {!showTemplateEditor ? (
           <button type="button" onClick={() => setShowTemplateEditor(true)}
-            style={{ fontSize: 12, color: '#1976d2', background: 'none', border: 'none', cursor: 'pointer', padding: '6px 0', textAlign: 'left' }}>
+            style={{ fontSize: 12, color: isDark ? '#90caf9' : '#1976d2', background: 'none', border: 'none', cursor: 'pointer', padding: '6px 0', textAlign: 'left' }}>
             ＋ 定型メッセージを追加
           </button>
         ) : (
@@ -843,6 +848,10 @@ const SummaryView: React.FC<{
   isDark: boolean; card: string; text: string; sub: string; border: string;
 }> = ({ checks, selectedId, onSelect, isManagerPlus, onClosed, isDark, card, text, sub, border }) => {
   const check = checks.find(c => c.id === selectedId) || checks[0] || null;
+  // ダーク背景に濃い青・濃い赤の文字は沈んで読めないので、暗い時は明るい色にする
+  const linkColor = isDark ? '#90caf9' : '#1976d2';
+  const dangerText = isDark ? '#ff9aa2' : '#721c24';
+  const dangerBg = isDark ? '#4a2328' : '#f8d7da';
 
   const [recipients, setRecipients] = useState<{ id: string; name: string; role_title: string | null }[]>([]);
   const [responses, setResponses] = useState<SafetyResponse[]>([]);
@@ -926,19 +935,19 @@ const SummaryView: React.FC<{
           ))}
           <div style={{ flex: '1 1 80px', background: isDark ? '#1e1e2e' : '#f8f9fa', borderRadius: 8, padding: '8px', textAlign: 'center' }}>
             <p style={{ fontSize: 10, color: sub, margin: 0 }}>未回答</p>
-            <p style={{ fontSize: 18, fontWeight: 700, margin: 0, color: '#dc3545' }}>{unanswered.length}</p>
+            <p style={{ fontSize: 18, fontWeight: 700, margin: 0, color: isDark ? '#ff6b6b' : '#dc3545' }}>{unanswered.length}</p>
           </div>
         </div>
 
         {helpNeeded.length > 0 && (
-          <div style={{ background: '#f8d7da', border: '2px solid #dc3545', borderRadius: 8, padding: '10px 12px', marginBottom: 12 }}>
-            <p style={{ fontSize: 12, fontWeight: 700, color: '#721c24', margin: '0 0 6px' }}>⚠️ 助けが必要（{helpNeeded.length}人）</p>
+          <div style={{ background: dangerBg, border: '2px solid #dc3545', borderRadius: 8, padding: '10px 12px', marginBottom: 12 }}>
+            <p style={{ fontSize: 12, fontWeight: 700, color: dangerText, margin: '0 0 6px' }}>⚠️ 助けが必要（{helpNeeded.length}人）</p>
             {helpNeeded.map(r => {
               const prof = recipients.find(p => p.id === r.user_id);
               return (
-                <div key={r.user_id} style={{ fontSize: 12, color: '#721c24', marginBottom: 3 }}>
+                <div key={r.user_id} style={{ fontSize: 12, color: dangerText, marginBottom: 3 }}>
                   <strong>{prof?.name || r.user_id}</strong>
-                  {phones[r.user_id] && <> ・<a href={`tel:${phones[r.user_id]}`} style={{ color: '#721c24' }}>{phones[r.user_id]}</a></>}
+                  {phones[r.user_id] && <> ・<a href={`tel:${phones[r.user_id]}`} style={{ color: dangerText }}>{phones[r.user_id]}</a></>}
                   {r.comment && <div style={{ fontSize: 11 }}>「{r.comment}」</div>}
                 </div>
               );
@@ -946,7 +955,7 @@ const SummaryView: React.FC<{
           </div>
         )}
 
-        {check.all_answered_at && <p style={{ fontSize: 12, color: '#166534', fontWeight: 700, margin: '0 0 10px' }}>✓ 全員の回答が揃いました（{fmtDateTime(check.all_answered_at)}）</p>}
+        {check.all_answered_at && <p style={{ fontSize: 12, color: isDark ? '#7bdca0' : '#166534', fontWeight: 700, margin: '0 0 10px' }}>✓ 全員の回答が揃いました（{fmtDateTime(check.all_answered_at)}）</p>}
 
         {unanswered.length > 0 && (
           <div style={{ marginBottom: 12 }}>
@@ -956,7 +965,7 @@ const SummaryView: React.FC<{
                 <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, border: `1px solid ${border}`, borderRadius: 6, padding: '6px 8px' }}>
                   <span style={{ flex: 1, color: text }}>{p.name}{p.role_title ? `（${p.role_title}）` : ''}</span>
                   {phones[p.id] ? (
-                    <a href={`tel:${phones[p.id]}`} style={{ color: '#1976d2', fontSize: 11, whiteSpace: 'nowrap' }}>📞 {phones[p.id]}</a>
+                    <a href={`tel:${phones[p.id]}`} style={{ color: linkColor, fontSize: 11, whiteSpace: 'nowrap' }}>📞 {phones[p.id]}</a>
                   ) : (
                     <span style={{ color: sub, fontSize: 11 }}>番号なし</span>
                   )}
@@ -967,7 +976,7 @@ const SummaryView: React.FC<{
                   {canProxy && (
                     proxyForId === p.id ? null : (
                       <button type="button" onClick={() => setProxyForId(p.id)}
-                        style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, border: '1px solid #1976d2', background: 'transparent', color: '#1976d2', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                        style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, border: '1px solid #1976d2', background: 'transparent', color: linkColor, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                         代行入力
                       </button>
                     )
@@ -991,19 +1000,26 @@ const SummaryView: React.FC<{
           </div>
         )}
 
-        {responses.filter(r => r.comment).length > 0 && (
+        {/* 回答した人は全員出す（コメントを書いた人だけだと「無事なのは誰か」が分からないため） */}
+        {responses.length > 0 && (
           <div style={{ marginBottom: 12 }}>
-            <p style={{ fontSize: 12, fontWeight: 700, color: text, margin: '0 0 6px' }}>コメント付き回答</p>
-            {responses.filter(r => r.comment).map(r => {
-              const prof = recipients.find(p => p.id === r.user_id);
-              return (
-                <div key={r.user_id} style={{ fontSize: 12, color: text, marginBottom: 4, borderLeft: `2px solid ${border}`, paddingLeft: 8 }}>
-                  <strong>{prof?.name}</strong>：{check.options.find(o => o.key === r.choice)?.label}
-                  {r.is_proxy && <span style={{ color: sub }}> （代行）</span>}
-                  <div style={{ color: sub }}>「{r.comment}」</div>
-                </div>
-              );
-            })}
+            <p style={{ fontSize: 12, fontWeight: 700, color: text, margin: '0 0 6px' }}>回答した人（{responses.length}人）</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {responses.map(r => {
+                const prof = recipients.find(p => p.id === r.user_id);
+                const opt = check.options.find(o => o.key === r.choice);
+                const c = opt ? COLOR_STYLE[opt.color] : COLOR_STYLE.green;
+                return (
+                  <div key={r.user_id} style={{ fontSize: 12, color: text, borderLeft: `3px solid ${c.border}`, paddingLeft: 8 }}>
+                    <strong>{prof?.name ?? '不明'}</strong>
+                    <span style={{ marginLeft: 6, padding: '1px 8px', borderRadius: 10, fontSize: 11, background: c.bg, color: c.text, border: `1px solid ${c.border}` }}>{opt?.label ?? r.choice}</span>
+                    <span style={{ color: sub, marginLeft: 6 }}>{fmtDateTime(r.answered_at)}</span>
+                    {r.is_proxy && <span style={{ color: sub }}> （代行入力）</span>}
+                    {r.comment && <div style={{ color: sub }}>「{r.comment}」</div>}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -1011,7 +1027,7 @@ const SummaryView: React.FC<{
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 14 }}>
             {check.status === 'active' && unanswered.length > 0 && (
               <button type="button" disabled={busy} onClick={doResend}
-                style={{ flex: 1, minWidth: 140, padding: '9px', borderRadius: 8, border: '1px solid #1976d2', background: 'transparent', color: '#1976d2', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                style={{ flex: 1, minWidth: 140, padding: '9px', borderRadius: 8, border: '1px solid #1976d2', background: 'transparent', color: linkColor, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
                 未回答の{unanswered.length}人に再送
               </button>
             )}
@@ -1093,8 +1109,9 @@ const HistoryView: React.FC<{
   myResponses: Record<string, SafetyResponse>;
   isManagerPlus: boolean;
   onOpenSummary: (id: string) => void;
-  card: string; text: string; sub: string; border: string;
-}> = ({ checks, myResponses, isManagerPlus, onOpenSummary, card, text, sub, border }) => {
+  isDark: boolean; card: string; text: string; sub: string; border: string;
+}> = ({ checks, myResponses, isManagerPlus, onOpenSummary, isDark, card, text, sub, border }) => {
+  const dangerBg = isDark ? '#4a2328' : '#f8d7da';
   if (checks.length === 0) {
     return <div style={{ background: card, borderRadius: 12, padding: '32px 20px', textAlign: 'center', color: sub, fontSize: 14 }}>過去の安否確認はありません</div>;
   }
@@ -1107,11 +1124,11 @@ const HistoryView: React.FC<{
             style={{ background: card, borderRadius: 10, padding: '12px 14px', border: `1px solid ${border}`, cursor: isManagerPlus ? 'pointer' : 'default' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
               <span style={{ fontSize: 13, fontWeight: 700, color: text }}>{c.is_test && '【テスト】'}{c.title}</span>
-              {c.cancelled && <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8, background: '#f8d7da', color: '#842029' }}>取消済み</span>}
+              {c.cancelled && <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8, background: dangerBg, color: '#842029' }}>取消済み</span>}
             </div>
             <p style={{ fontSize: 11, color: sub, margin: 0 }}>{fmtDateTime(c.created_at)}発信</p>
             {myRes && !c.cancelled && (
-              <p style={{ fontSize: 12, color: '#166534', margin: '4px 0 0', fontWeight: 700 }}>あなたの回答：{c.options.find(o => o.key === myRes.choice)?.label}</p>
+              <p style={{ fontSize: 12, color: isDark ? '#7bdca0' : '#166534', margin: '4px 0 0', fontWeight: 700 }}>あなたの回答：{c.options.find(o => o.key === myRes.choice)?.label}</p>
             )}
           </div>
         );

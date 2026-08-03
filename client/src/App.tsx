@@ -42,7 +42,7 @@ import { isFullDayReport } from './lib/overtimeTypes';
 import { useExpenses } from './hooks/useExpenses';
 import { useLeavePendingCount } from './hooks/useLeavePendingCount';
 import { usePurchasePendingCount } from './hooks/usePurchasePendingCount';
-import { useSafetyPendingCount } from './hooks/useSafetyPendingCount';
+import { useSafetyPendingCount, safetyTone } from './hooks/useSafetyPendingCount';
 import type { Expense, Submission } from './types';
 
 // ページ遷移のたびにスクロールをトップへ戻す
@@ -1171,6 +1171,8 @@ const SafetyCheckBanner: React.FC<{ userId: string; isAdmin: boolean; roleTitle:
   if (!isFeaturePublished('safety_check', featurePublishState, isAdmin, roleTitle)) return null;
   if (pendingCount === 0) return null;
   const first = activeChecks[0];
+  // 種類ごとに色と文言を変える（応援のお願いまで赤くすると本当の災害時に流されるため）
+  const tone = safetyTone(first?.pattern);
 
   return (
     <div
@@ -1178,8 +1180,8 @@ const SafetyCheckBanner: React.FC<{ userId: string; isAdmin: boolean; roleTitle:
       style={{
         margin: '0 0 16px 0',
         padding: '14px 16px',
-        background: '#f8d7da',
-        border: '2px solid #dc3545',
+        background: tone.bg,
+        border: `2px solid ${tone.border}`,
         borderRadius: 10,
         cursor: 'pointer',
         display: 'flex',
@@ -1187,12 +1189,12 @@ const SafetyCheckBanner: React.FC<{ userId: string; isAdmin: boolean; roleTitle:
         gap: 10,
       }}
     >
-      <span style={{ fontSize: 24 }}>🆘</span>
+      <span style={{ fontSize: 24 }}>{tone.icon}</span>
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 15, fontWeight: 'bold', color: '#721c24' }}>安否確認に回答してください</div>
-        {first && <div style={{ fontSize: 12, color: '#842029', marginTop: 2 }}>{first.body}</div>}
+        <div style={{ fontSize: 15, fontWeight: 'bold', color: tone.text }}>{tone.label} — 回答してください</div>
+        {first && <div style={{ fontSize: 12, color: tone.text, marginTop: 2 }}>{first.body}</div>}
       </div>
-      <span style={{ fontSize: 13, fontWeight: 'bold', color: '#721c24', whiteSpace: 'nowrap' }}>タップして回答 →</span>
+      <span style={{ fontSize: 13, fontWeight: 'bold', color: tone.text, whiteSpace: 'nowrap' }}>タップして回答 →</span>
     </div>
   );
 };

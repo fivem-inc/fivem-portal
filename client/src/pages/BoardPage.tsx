@@ -9,7 +9,7 @@ import { todayJstStr } from '../lib/breakCalc';
 const BOARD_LINK = 'https://fivem-portal.vercel.app/board';
 import { useAuth } from '../hooks/useAuth';
 import { useDarkMode } from '../hooks/useDarkMode';
-import { useSafetyPendingCount } from '../hooks/useSafetyPendingCount';
+import { useSafetyPendingCount, safetyTone } from '../hooks/useSafetyPendingCount';
 import { useFeaturePublished, isFeaturePublished } from '../hooks/useFeaturePublished';
 import { AuthContext } from '../contexts/AuthContext.tsx';
 
@@ -2046,21 +2046,26 @@ const BoardPage: React.FC = () => {
   const dmChannels    = sortedChannels.filter(c => c.type === 'dm'    && (!searchText || channelDisplayName(c).toLowerCase().includes(searchLower)));
   const inboxUnread   = inboxMessages.filter(m => !inboxReadIds.has(m.id)).length;
 
-  // 🆘 安否・緊急連絡の入口。進行中（自分が未回答）なら赤く点灯して最上部、平常時はグレーでお気に入りの下。
+  // 🆘 安否・緊急連絡の入口。進行中（自分が未回答）なら点灯して最上部、平常時はグレーでお気に入りの下。
+  // 色と文言は種類ごとに変える（安否＝赤／出勤確認＝オレンジ／応援のお願い＝青）。
+  // 応援のお願いまで赤くすると、本当の災害時に見流されてしまうため。
+  const safetyTone_ = safetyTone(safetyActiveChecks[0]?.pattern);
   const safetyRow = (
     <div onClick={() => navigate(safetyPending > 0 && safetyActiveChecks[0] ? `/safety?check=${safetyActiveChecks[0].id}` : '/safety')}
       style={{
         padding: '10px 14px', cursor: 'pointer', borderBottom: `1px solid ${border}`,
-        background: safetyPending > 0 ? (isDark ? '#4a1f24' : '#f8d7da') : 'transparent',
+        background: safetyPending > 0 ? (isDark ? '#3a2a2e' : safetyTone_.bg) : 'transparent',
         display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left',
       }}>
-      <div style={{ width: 38, height: 38, borderRadius: 10, background: safetyPending > 0 ? '#dc3545' : (isDark ? '#3a3a5c' : '#f1efe8'), display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>🆘</div>
+      <div style={{ width: 38, height: 38, borderRadius: 10, background: safetyPending > 0 ? safetyTone_.border : (isDark ? '#3a3a5c' : '#f1efe8'), display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>
+        {safetyPending > 0 ? safetyTone_.icon : '🆘'}
+      </div>
       <div style={{ flex: 1 }}>
-        <span style={{ display: 'block', fontSize: 14, fontWeight: safetyPending > 0 ? 700 : 500, color: safetyPending > 0 ? (isDark ? '#ffb3ba' : '#721c24') : subColor }}>安否・緊急連絡</span>
-        {safetyPending > 0 && <span style={{ display: 'block', fontSize: 11, color: isDark ? '#ffb3ba' : '#a32d2d' }}>安否確認が進行中です</span>}
+        <span style={{ display: 'block', fontSize: 14, fontWeight: safetyPending > 0 ? 700 : 500, color: safetyPending > 0 ? (isDark ? '#fff' : safetyTone_.text) : subColor }}>安否・緊急連絡</span>
+        {safetyPending > 0 && <span style={{ display: 'block', fontSize: 11, color: isDark ? '#ddd' : safetyTone_.text }}>{safetyTone_.label}</span>}
       </div>
       {safetyPending > 0 && (
-        <span style={{ background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 11, minWidth: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px', fontWeight: 'bold', flexShrink: 0 }}>{safetyPending}</span>
+        <span style={{ background: safetyTone_.border, color: '#fff', borderRadius: 10, fontSize: 11, minWidth: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px', fontWeight: 'bold', flexShrink: 0 }}>{safetyPending}</span>
       )}
     </div>
   );
