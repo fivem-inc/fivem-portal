@@ -319,11 +319,27 @@ const PendingUserRow: React.FC<{
 
   const location = [pendingUser.signup_country, pendingUser.signup_city].filter(Boolean).join('・');
 
+  // 登録日時と、そこからの経過（放置されている登録に気づけるように）
+  const signupInfo = (() => {
+    if (!pendingUser.registered_at) return null;
+    const s = pendingUser.registered_at;
+    const d = new Date(s.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(s) ? s : s + 'Z');
+    const stamp = `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+    const ago = days >= 1 ? `${days}日前` : '今日';
+    return { stamp, ago, stale: days >= 3 };
+  })();
+
   return (
     <div style={{ background: isDarkMode ? '#3a2f0d' : '#fff8e1', border: `1px solid ${isDarkMode ? '#7a5c00' : '#ffe082'}`, borderRadius: 8, padding: '10px 14px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
       <div style={{ minWidth: 140 }}>
         <div style={{ fontWeight: 'bold', color: isDarkMode ? '#fff' : '#000', fontSize: 14 }}>{pendingUser.name || '（名前未設定）'}</div>
         <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#666' }}>{pendingUser.email}</div>
+        {signupInfo && (
+          <div style={{ fontSize: 11, color: signupInfo.stale ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#666'), fontWeight: signupInfo.stale ? 'bold' : 'normal' }}>
+            🕐 {signupInfo.stamp} 登録（{signupInfo.ago}）
+          </div>
+        )}
         {pendingUser.signup_ip && (
           <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#666' }}>
             📍 {pendingUser.signup_ip}{location && `（${location}）`}
