@@ -160,6 +160,81 @@ const writeDismissedIds = (key: string, ids: string[]) => {
   try { localStorage.setItem(key, JSON.stringify(ids)); } catch { /* ignore */ }
 };
 
+// 定期リマインド（毎月◯日の「月目標の記入をお願いします」等）のバナー。
+//   プッシュを見逃しても、アプリを開けば思い出せるようにするためのもの。
+//   ・「完了しました」＝そのリマインドはもう出さない（次の配信＝翌月まで）
+//   ・「後で」＝いったん消し、次の配信時刻（管理画面で設定した時刻）を過ぎたら再表示
+//   対応状況はDBに記録せず端末（localStorage）に持つ。誰が対応したかの管理は行わない方針。
+const REMINDER_STATE_KEY = 'fivem_reminder_banner_state'; // { [notifId]: { done?: true, snoozeUntil?: number } }
+
+type ReminderState = Record<string, { done?: boolean; snoozeUntil?: number }>;
+
+const ScheduledReminderBanner: React.FC<{ userId: string }> = ({ userId }) => {
+  const [items, setItems] = useState<{ id: string; message: string; sub_message: string | null }[]>([]);
+  const [state, setState] = useState<ReminderState>(() => {
+    try { return JSON.parse(localStorage.getItem(REMINDER_STATE_KEY) || '{}'); } catch { return {}; }
+  });
+
+  useEffect(() => {
+    if (!userId) return;
+    supabase.from('notifications')
+      .select('id, message, sub_message')
+      .eq('user_id', userId)
+      .eq('event_key', 'reminder:scheduled')
+      .order('created_at', { ascending: false })
+      .limit(5)
+      .then(({ data }) => setItems((data ?? []) as { id: string; message: string; sub_message: string | null }[]), () => {});
+  }, [userId]);
+
+  const save = (next: ReminderState) => {
+    setState(next);
+    try { localStorage.setItem(REMINDER_STATE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  };
+
+  // 翌朝9時（次に思い出すのに自然な時刻＝出勤してPCを開く頃）
+  const nextMorning = () => {
+    const d = new Date();
+    d.setHours(9, 0, 0, 0);
+    if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+    return d.getTime();
+  };
+
+  const visible = items.filter(n => {
+    const s = state[n.id];
+    if (!s) return true;
+    if (s.done) return false;
+    return !s.snoozeUntil || Date.now() >= s.snoozeUntil;
+  });
+
+  if (visible.length === 0) return null;
+
+  return (
+    <>
+      {visible.map(n => (
+        <div key={n.id} style={{ margin: '0 0 16px 0', padding: '12px 16px', background: '#fff3cd', border: '2px solid #ffc107', borderRadius: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+            <span style={{ fontSize: 22 }}>📋</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 15, fontWeight: 'bold', color: '#856404' }}>{n.message}</div>
+              {n.sub_message && <div style={{ fontSize: 13, color: '#856404', marginTop: 2, whiteSpace: 'pre-wrap' }}>{n.sub_message}</div>}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <button type="button" onClick={() => save({ ...state, [n.id]: { done: true } })}
+              style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: '#28a745', color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}>
+              ✅ 完了しました
+            </button>
+            <button type="button" onClick={() => save({ ...state, [n.id]: { snoozeUntil: nextMorning() } })}
+              style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid #856404', background: 'transparent', color: '#856404', fontSize: 13, cursor: 'pointer' }}>
+              🕐 後で（明日また表示）
+            </button>
+          </div>
+        </div>
+      ))}
+    </>
+  );
+};
+
 const AnnouncementBanner: React.FC = () => {
   const [items, setItems] = useState<Announcement[]>([]);
   const [dismissed, setDismissed] = useState<string[]>(() => readDismissedIds(ANNOUNCEMENT_DISMISS_KEY));
@@ -866,6 +941,8 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
       // 「要対応」の承認待ちは専用の集計バナー(LeaveApprovalBanner/ShiftReportApprovalBanner/PurchaseApprovalBanner)が別途出るため、ここでは重複表示しない
       // 安否確認も専用の赤バナー(SafetyCheckBanner)が別途出るため、ここでは重複表示しない
       .not('source_type', 'in', '(leave_request:pending_approval,shift_report:pending_approval,purchase_request:pending_approval,overtime_request:pending_approval,safety_check,safety_check_cancelled)')
+      // 定期リマインドも専用バナー(ScheduledReminderBanner・完了/後でボタン付き)が出すのでここでは出さない
+      .or('event_key.is.null,event_key.neq.reminder:scheduled')
       .or('source_type.is.null,source_type.neq.board')
       .order('created_at', { ascending: false });
     if (!data) return;
@@ -1561,6 +1638,9 @@ const Dashboard: React.FC = () => {
 
       {/* ⓪-2 社内お知らせバナー（管理者が出したお知らせ・全員表示・個別に閉じられる） */}
       <AnnouncementBanner />
+
+      {/* ⓪-3 定期リマインド（月目標の記入など）。完了 or 後で（翌朝再表示） */}
+      <ScheduledReminderBanner userId={user.id} />
 
       {/* ① お知らせ通知バナー（申請者向け） */}
       {!isAdmin && <NotificationBanner userId={user.id} />}

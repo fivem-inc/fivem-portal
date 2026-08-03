@@ -184,6 +184,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   **master_options の `shift_report_group`（こども/大人/管理部）と照合して選ぶこと**。
   `teamOf(group_names, teams)` ヘルパーを SafetyCheckPage / SafetyChecksTab の両方に用意した
 
+【定期リマインドにホームバナーを追加（2026-08-03）】
+・きっかけ：毎月3日9時の定期リマインド（月目標の記入）のプッシュをタップしたら
+  連絡板に飛んで何も無かった、という指摘。定期リマインドは特定のメッセージを指していないため
+  （reference_id が空）飛び先が無く、**プッシュを見逃したら終わり**だった
+・ホームに専用バナーを追加（`ScheduledReminderBanner`。event_key='reminder:scheduled' が目印）
+  - **完了しました** → そのリマインドはもう出さない（次の配信＝翌月まで）
+  - **後で** → いったん消し、**翌朝9時**に再表示（出勤してPCを開く時間に合わせた）
+・⚠️ **対応状況はDBに記録しない**（ユーザー判断）。localStorage `fivem_reminder_banner_state` に
+  端末ごとに持つだけ。「誰が未対応か」の管理が要るようになったら別途テーブルを作る
+・NotificationBanner 側は event_key で除外して二重表示を防いでいる
+  （定期リマインドは source_type が null なので source_type では除外できない）
+・あわせて文面から「テスト」を外した（本番DBの board_scheduled_reminders を直接更新）
+  タイトル「月目標の記入をお願いします」／本文「月目標記入確認！！　まだの方は、至急記入してください。」
+  配信設定（毎月3日・send_hour=18＝JST9時・全員）は変更していない
+
 【この機能を触るときの注意】
 ・回答ボタンの定義は client の PATTERN_OPTIONS と Edge の PRESET_OPTIONS の2か所管理（両方直す）
 ・ベル通知は event_key を必ず null（NOT NULLだとpush_queueに積まれ直送と二重になる）
