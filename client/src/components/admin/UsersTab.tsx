@@ -356,9 +356,9 @@ const PendingUserRow: React.FC<{
       </select>
       {showRejectConfirm ? (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', background: isDarkMode ? '#3a1f1f' : '#fff5f5', border: `1px solid ${isDarkMode ? '#7f1d1d' : '#fca5a5'}`, borderRadius: 6 }}>
-          <span style={{ fontSize: 12, color: '#dc3545' }}>この登録を拒否しますか？</span>
+          <span style={{ fontSize: 12, color: '#dc3545' }}>この登録を拒否し、アカウントを削除しますか？（元に戻せません）</span>
           <button disabled={busy} onClick={async () => { setBusy(true); await onReject(pendingUser.id); setBusy(false); }}
-            style={{ padding: '4px 10px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>拒否する</button>
+            style={{ padding: '4px 10px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>拒否して削除</button>
           <button disabled={busy} onClick={() => setShowRejectConfirm(false)}
             style={{ padding: '4px 10px', background: 'none', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, color: isDarkMode ? '#fff' : '#000', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>キャンセル</button>
         </div>

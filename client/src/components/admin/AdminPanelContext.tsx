@@ -585,9 +585,18 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     if (!error) { setSuccessMsg('承認しました'); fetchUsers(); }
   }, [fetchUsers]);
 
+  // 新規登録の「拒否」＝アカウントごと完全に削除する。
+  // ⚠️ 以前は approval_status='rejected' にするだけだったため、プロフィールが残り
+  //    is_active=false の条件で「退職者」一覧に紛れ込んでいた（そもそも社員ではないので誤り）。
+  //    身元不明の登録が退職者として残り続けるのを避けるため、ログイン情報ごと消す。
   const handleRejectPendingUser = useCallback(async (userId: string) => {
-    const { error } = await supabase.from('profiles').update({ approval_status: 'rejected' }).eq('id', userId);
-    if (!error) { setSuccessMsg('登録を拒否しました'); fetchUsers(); }
+    const { data, error } = await supabase.functions.invoke('delete-user', { body: { userId } });
+    if (error || data?.error) {
+      setSuccessMsg('⚠ 拒否できませんでした: ' + (data?.error || error?.message));
+      return;
+    }
+    setSuccessMsg('登録を拒否し、アカウントを削除しました');
+    fetchUsers();
   }, [fetchUsers]);
 
   const fetchReportStats = useCallback(async () => {

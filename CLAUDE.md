@@ -38,6 +38,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   既存の空データは auth.users.created_at で埋めた（migration 20260803500000・本番適用済み）
   ⚠️ handle_new_user 本体は書き換えず独立したトリガーを足す方式にした（他の処理への影響を避けるため）
 
+【同日の追加対応2】新規登録の「拒否」がアカウントを残していた不具合を修正
+・🚨 拒否＝approval_status='rejected' にするだけでプロフィールが残っており、
+  is_active=false の条件で**「退職者」一覧に紛れ込んでいた**。
+  そもそも社員ではない身元不明の登録が、実際に働いて辞めた人と混ざるのは誤り
+・拒否を既存の delete-user Edge Function に変更し、**ログイン情報ごと完全に削除**するようにした
+  ボタン「拒否する」→「拒否して削除」、確認文も「アカウントを削除しますか？（元に戻せません）」に変更
+・残っていた test（フランス）は本番DBから削除済み
+  （delete-user は管理者のログイン確認が要るためservice_roleキーでは通らず、
+   `delete from auth.users where id='...'` で削除。profiles は ON DELETE CASCADE で連動）
+・確認：拒否済みで残っている人 0人・承認待ち 0人
+
 【不審な新規登録について（2026-08-03 調査結果）】
 ・外部IPからの自己登録は「test / kurokarat@proton.me / フランス」の1件のみ（7/28登録・6日放置）
 ・以前の Test1（オーストラリア・削除済み）に続き2件目。連続攻撃ではなく単発の探索とみられる
@@ -48,7 +59,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   大量に来るようになったら「新規登録の受付自体を止める」（管理者がユーザーを作る運用に一本化）を検討
 
 【次回やること（優先順）】
-0.【要操作】承認待ちの「test（フランス・7/28登録）」を拒否で削除する
 1.【実機確認・最優先】テスト送信で一通り試す（🧪訓練グループの定型文・宛先は自分だけ）
    送信できるか／プッシュ「ファイブM 安否」／ホームの赤バナー／回答3択／回答でバナーが消えるか
    集計タブ：自分の回答・終了/取消ボタン・代行入力
