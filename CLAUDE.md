@@ -122,6 +122,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    管理者の欠勤⇄時間外調整休 変更UI／残業の一本化フラグ／プレビューバナー余白ズレ／
    通知設定の死に設定の恒久対策
 
+【🚨 Edge Function がデプロイできなくなる問題（2026-08-03 発生・要対応）】
+・症状：deploy が `Failed to bundle the function (reason: Module not found
+  "https://esm.sh/@supabase/auth-js@2.112.0/denonext/auth-js.mjs")` で400になる
+・原因：`import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'` の **@2＝最新追従**。
+  配信元(esm.sh)の最新版(2.112.0)の依存ファイルが404を返す状態になっており、巻き込まれた
+・対処：**バージョンを固定する**。`@2` → `@2.45.0`（到達確認済み。2.39.8も可）
+・⚠️ **全27関数が `@2` のまま**なので、次にどれかをデプロイしようとすると同じエラーが出る。
+  次回まとめて固定するのが望ましい（触る関数だけ都度直してもよい）
+
+【安否確認の発信でハマった点（2026-08-03・すべて修正済み）】
+・「送信できませんでした」→ 原因は2つ重なっていた
+  ① 認可判定の不備：`authToken === serviceKey` の文字列一致だけで判定しており弾かれていた。
+     send-push と同じく **JWTのroleクレームも見る**方式に変更して解決
+  ② CORS未許可：本番URLしか許可しておらず、ローカル開発(localhost:5173)から呼べなかった。
+     ALLOWED_ORIGINS方式（send-pushと同じ）に変更
+・エラー文が「送信できませんでした」だけで原因が分からなかった →
+  **invoke の error.context から本文を読んでサーバーの理由をそのまま表示**するようにした
+・テスト送信で「1人選んだつもりが3人」になっていた →
+  検索で絞ると選択済みの人が一覧から消えるため。**選択中の人をチップで常時表示**＋✕で外せるようにした
+
 【この機能を触るときの注意】
 ・回答ボタンの定義は client の PATTERN_OPTIONS と Edge の PRESET_OPTIONS の2か所管理（両方直す）
 ・ベル通知は event_key を必ず null（NOT NULLだとpush_queueに積まれ直送と二重になる）

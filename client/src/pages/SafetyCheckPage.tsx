@@ -569,7 +569,21 @@ const SendView: React.FC<{
       },
     });
     setSending(false);
-    if (error || !data || data.error) { setErr(data?.error || '送信できませんでした。時間をおいてお試しください'); return; }
+    if (error || !data || data.error) {
+      // 何が起きたか分かるようにサーバーからの理由をそのまま出す（原因不明のまま止まらないように）
+      let reason = data?.error as string | undefined;
+      if (!reason && error) {
+        // invoke は非2xxのとき本文をcontextに持つ。読めれば理由を取り出す
+        const ctx = (error as unknown as { context?: Response }).context;
+        if (ctx && typeof ctx.json === 'function') {
+          try { reason = (await ctx.json())?.error; } catch { /* 読めなければ既定文を使う */ }
+        }
+        if (!reason) reason = error.message;
+      }
+      setErr(reason || '送信できませんでした。時間をおいてお試しください');
+      console.error('[safety-check-send] failed', { error, data });
+      return;
+    }
     setShowConfirm(false);
     onSent(data.check_id);
   };
@@ -741,7 +755,24 @@ const SendView: React.FC<{
                   </label>
                 ))}
               </div>
-              <p style={{ fontSize: 12, color: text, margin: '8px 0 0', fontWeight: 700 }}>テスト対象：{testTargetIds.size}人</p>
+              {/* 選択中の人を必ず見せる。検索で絞ると選択済みの人が一覧から消え、
+                  「1人だけ選んだつもりが3人に送る」事故になるため */}
+              <div style={{ marginTop: 8 }}>
+                <p style={{ fontSize: 12, color: text, margin: '0 0 4px', fontWeight: 700 }}>テスト対象：{testTargetIds.size}人</p>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {[...testTargetIds].map(id => {
+                    const s = staff.find(x => x.id === id);
+                    return (
+                      <span key={id} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: '#fff3cd', color: '#856404', border: '1px solid #ffc107', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        {s?.name ?? '不明'}{id === userId && '（自分）'}
+                        <button type="button" onClick={() => toggleSet(testTargetIds, setTestTargetIds, id)}
+                          title="外す"
+                          style={{ background: 'none', border: 'none', color: '#856404', cursor: 'pointer', fontSize: 12, padding: 0, lineHeight: 1 }}>✕</button>
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           )}
 

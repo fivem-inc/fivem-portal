@@ -7,12 +7,26 @@
 //    呼び出し元のJWTから本人のprofilesを引き、role_titleが
 //    マネージャー/社長/管理者であることを確認する（gcal-syncと同じ二重の守り）。
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+// ⚠️ バージョンを固定する。'@2'（最新追従）にすると、配信元の最新版が壊れている時に
+//    「Module not found ... auth-js.mjs」でデプロイできなくなる（2026-08-03に実際に発生）
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': 'https://fivem-portal.vercel.app',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+// ローカル開発（npm run dev）からも呼べるようにする。
+// 許可リストに無いオリジンには 'null' を返して弾く（send-push と同じ方式）
+const ALLOWED_ORIGINS = [
+  'https://fivem-portal.vercel.app',
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:5175',
+];
+
+function getCorsHeaders(req: Request) {
+  const origin = req.headers.get('Origin') || '';
+  return {
+    'Access-Control-Allow-Origin': ALLOWED_ORIGINS.includes(origin) ? origin : 'null',
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  };
+}
 
 const FROM_ADDRESS = 'noreply@five-m.com';
 const FROM_NAME = 'ファイブM管理者';
@@ -97,6 +111,7 @@ async function sendPushDirect(supabaseUrl: string, serviceKey: string, userIds: 
 }
 
 serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req);
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
@@ -110,15 +125,25 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
+    // サーバー間呼び出しの判定は、キーの文字列一致だけに頼らずJWTのroleクレームも見る
+    // （send-push と同じ方式。キー文字列だけの比較は環境差で一致せず401になることがある）
+    let isServiceRole = authToken === serviceKey;
+    if (!isServiceRole) {
+      try {
+        const payload = JSON.parse(atob(authToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+        isServiceRole = payload.role === 'service_role';
+      } catch { /* JWTでない場合はfalseのまま */ }
+    }
+
     let callerId: string | null = null;
-    if (authToken === serviceKey) {
+    if (isServiceRole) {
       // サーバー間呼び出し（将来の自動発信用）。役職チェックは不要
       callerId = null;
     } else {
       const { data: userData, error: userErr } = await supabase.auth.getUser(authToken);
       if (userErr || !userData?.user) {
-        console.error('[safety-check-send] getUser failed', userErr);
-        return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        console.error('[safety-check-send] getUser failed', userErr?.message);
+        return new Response(JSON.stringify({ error: 'ログイン情報を確認できませんでした。一度ログインし直してからお試しください' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
       callerId = userData.user.id;
       const { data: profile } = await supabase.from('profiles').select('role_title, is_active').eq('id', callerId).single();
