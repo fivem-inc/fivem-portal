@@ -6,13 +6,14 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-// 応援のお願いは緊急ではないので通常の「連絡板」を使う（safety-check-send と同じ出し分け）
+// 安否を聞くもの＝「安否」、出勤可否・応援のお願い＝「緊急」（safety-check-send と同じ出し分け）
+// ⚠️ どちらも実機テスト済みの語。新しい語を使うときは必ず実機で確認してから
+const PUSH_TITLE_SAFETY = 'ファイブM 安否';
 const PUSH_TITLE_URGENT = 'ファイブM 緊急';
-const PUSH_TITLE_SUPPORT = 'ファイブM 連絡板';
 const PUSH_BODY = '新着 1件';
 
 function pushTitleFor(pattern: string): string {
-  return pattern === 'support' ? PUSH_TITLE_SUPPORT : PUSH_TITLE_URGENT;
+  return (pattern === 'safety3' || pattern === 'safety4') ? PUSH_TITLE_SAFETY : PUSH_TITLE_URGENT;
 }
 
 serve(async (req) => {

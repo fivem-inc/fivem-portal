@@ -21,15 +21,17 @@ const BOARD_LINK = 'https://fivem-portal.vercel.app/safety';
 // プッシュのタイトル・本文は「状態を表す漢字名詞＋件数」固定（Chrome不正通知判定対策）。
 // ⚠️ 新しい単語は必ず実機テストしてから使う。Chromeが「不正な疑いのある通知」に差し替えると
 //    災害時に通知が沈黙するため、未検証の語を安易に足さないこと。
-//   検証済み：「ファイブM 緊急」（2026-08-03・Android実機で警告化しないことを確認）
+//   検証済み：「ファイブM 安否」「ファイブM 緊急」（2026-08-03・Android実機で警告化しないことを確認）
 //            「ファイブM 連絡板」「新着/本日期限/明日期限/差戻/未承認/取消」
-// 安否・出勤確認＝緊急、応援のお願い＝緊急ではないので通常の「連絡板」を使う（過剰な緊急表示を避ける）
+//   NG確定：「確認」を含む語・「依頼」・「〜待ち」・文章形
+// 安否を聞くもの＝「安否」、出勤可否・応援のお願い＝「緊急」で見分けられるようにする
+const PUSH_TITLE_SAFETY = 'ファイブM 安否';
 const PUSH_TITLE_URGENT = 'ファイブM 緊急';
-const PUSH_TITLE_SUPPORT = 'ファイブM 連絡板';
 const PUSH_BODY = '新着 1件';
 
 function pushTitleFor(pattern: string): string {
-  return pattern === 'support' ? PUSH_TITLE_SUPPORT : PUSH_TITLE_URGENT;
+  // safety3/safety4＝安否を聞く／attendance2・support＝業務の急ぎの連絡
+  return (pattern === 'safety3' || pattern === 'safety4') ? PUSH_TITLE_SAFETY : PUSH_TITLE_URGENT;
 }
 
 type Pattern = 'safety3' | 'safety4' | 'attendance2' | 'support';
