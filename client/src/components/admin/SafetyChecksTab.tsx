@@ -96,7 +96,7 @@ const SafetyChecksTab: React.FC = () => {
   const [proxyComment, setProxyComment] = useState('');
   const [detailLoading, setDetailLoading] = useState(false);
   // 終了・取消の確認（インライン確認パネル。window.confirmは使わない）
-  const [actionConfirm, setActionConfirm] = useState<{ id: string; kind: 'close' | 'cancel' } | null>(null);
+  const [actionConfirm, setActionConfirm] = useState<{ id: string; kind: 'close' | 'cancel' | 'delete' } | null>(null);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<{ title: string; body: string; pattern: Pattern }>({ title: '', body: '', pattern: 'safety3' });
@@ -273,6 +273,18 @@ const SafetyChecksTab: React.FC = () => {
     setActionConfirm(null);
     if (error) { setSuccessMsg(`⚠ ${kind === 'close' ? '終了' : '取消'}できませんでした: ` + error.message); return; }
     setSuccessMsg(kind === 'close' ? '終了しました' : '取消しました（宛先全員に「誤送信でした」の通知を送りました）');
+    load();
+  };
+
+  // 完全削除（管理者のみ・訓練やテストの後片付け用）。
+  // 取消と違い記録ごと消える。宛先・回答・回答履歴・ベル通知もまとめて消える。
+  const doDeleteCheck = async (checkId: string) => {
+    setBusy(true);
+    const { error } = await supabase.rpc('delete_safety_check', { p_check_id: checkId });
+    setBusy(false);
+    setActionConfirm(null);
+    if (error) { setSuccessMsg('⚠ 削除できませんでした: ' + error.message); return; }
+    setSuccessMsg('削除しました');
     load();
   };
 
@@ -578,13 +590,18 @@ const SafetyChecksTab: React.FC = () => {
                                       取消（誤発信）
                                     </button>
                                   )}
+                                  {/* 完全削除（管理者のみ）。取消は記録が残るが、こちらは記録ごと消える */}
+                                  <button type="button" onClick={() => setActionConfirm({ id: c.id, kind: 'delete' })}
+                                    style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #dc3545', background: '#dc3545', color: '#fff', fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
+                                    削除
+                                  </button>
                                   <button type="button" onClick={() => navigate(`/safety?check=${c.id}`)}
                                     style={{ marginLeft: 'auto', padding: '6px 12px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: sub, fontSize: 12, cursor: 'pointer' }}>
                                     集計画面を開く →
                                   </button>
                                 </div>
 
-                                {actionConfirm?.id === c.id && (
+                                {actionConfirm?.id === c.id && actionConfirm.kind !== 'delete' && (
                                   <div style={{ border: `2px solid ${actionConfirm.kind === 'cancel' ? '#dc3545' : border}`, borderRadius: 8, padding: 10 }}>
                                     <p style={{ fontSize: 12, color: text, margin: '0 0 8px', fontWeight: 'bold' }}>
                                       {actionConfirm.kind === 'close'
@@ -592,9 +609,40 @@ const SafetyChecksTab: React.FC = () => {
                                         : 'この安否確認を取消しますか？ 宛先全員の画面から消え、「誤送信でした」の通知が送られます'}
                                     </p>
                                     <div style={{ display: 'flex', gap: 6 }}>
-                                      <button type="button" disabled={busy} onClick={() => doCloseOrCancel(c.id, actionConfirm.kind)}
+                                      <button type="button" disabled={busy} onClick={() => doCloseOrCancel(c.id, actionConfirm.kind as 'close' | 'cancel')}
                                         style={{ padding: '5px 14px', borderRadius: 6, border: 'none', background: actionConfirm.kind === 'cancel' ? '#dc3545' : '#856404', color: '#fff', fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
                                         {busy ? '処理中...' : 'はい'}
+                                      </button>
+                                      <button type="button" onClick={() => setActionConfirm(null)}
+                                        style={{ padding: '5px 14px', borderRadius: 6, border: `1px solid ${border}`, background: 'none', color: sub, fontSize: 12, cursor: 'pointer' }}>キャンセル</button>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* 完全削除の確認。元に戻せないので、何がどれだけ消えるかを具体的に出す */}
+                                {actionConfirm?.id === c.id && actionConfirm.kind === 'delete' && (
+                                  <div style={{ border: '2px solid #dc3545', borderRadius: 8, padding: 12 }}>
+                                    <p style={{ fontSize: 13, color: '#dc3545', margin: '0 0 8px', fontWeight: 'bold' }}>
+                                      この安否確認を完全に削除しますか？
+                                    </p>
+                                    <p style={{ fontSize: 12, color: text, margin: '0 0 8px', lineHeight: 1.8 }}>
+                                      「{c.title}」<br />
+                                      宛先 {detail.recipients.length}人 ／ 回答 {detail.responses.length}件
+                                    </p>
+                                    <p style={{ fontSize: 12, color: text, margin: '0 0 8px', lineHeight: 1.8 }}>
+                                      回答の内容・変更履歴・お知らせの通知も<strong>すべて消えます。元に戻せません。</strong><br />
+                                      （取消と違い、履歴にも残りません）
+                                    </p>
+                                    {c.status === 'active' && !c.cancelled && (
+                                      <p style={{ fontSize: 12, color: '#dc3545', margin: '0 0 8px', lineHeight: 1.8, fontWeight: 'bold' }}>
+                                        ⚠️ これは進行中です。削除すると全員の画面から黙って消えます（「誤送信でした」の通知は出ません）。<br />
+                                        本番の安否確認を消す場合は、先に「取消（誤発信）」をしてから削除してください。
+                                      </p>
+                                    )}
+                                    <div style={{ display: 'flex', gap: 6 }}>
+                                      <button type="button" disabled={busy} onClick={() => doDeleteCheck(c.id)}
+                                        style={{ padding: '5px 14px', borderRadius: 6, border: 'none', background: '#dc3545', color: '#fff', fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
+                                        {busy ? '削除中...' : '削除する'}
                                       </button>
                                       <button type="button" onClick={() => setActionConfirm(null)}
                                         style={{ padding: '5px 14px', borderRadius: 6, border: `1px solid ${border}`, background: 'none', color: sub, fontSize: 12, cursor: 'pointer' }}>キャンセル</button>
