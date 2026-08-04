@@ -386,6 +386,11 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
   //    マネージャー以上は他人あての分も閲覧できるため、絞らないと
   //    回答ボタンが出るのに押すと必ず失敗する（＝対象外なので送れない）ことになる。
   const myActiveChecks = activeChecks.filter(c => myRecipientIds.has(c.id));
+  // 集計タブは「いま対応するもの」だけに絞る。過去のものは履歴タブから開く。
+  // ⚠️ 災害の最中に、終わった訓練が混ざった一覧から正しいものを選ばせないため。
+  //    履歴から開いたときだけ、その1件を集計に出す（＋「履歴に戻る」を添える）。
+  const selectedPastCheck = historyChecks.find(c => c.id === selectedSummaryId) ?? null;
+  const summaryChecks = selectedPastCheck ? [selectedPastCheck] : activeChecks;
   // まだ答えていない（端末に保存した分も含めて答えていない）進行中があるか
   const hasUnanswered = myActiveChecks.some(c => !myResponses[c.id] && !pendingQueue[c.id]);
 
@@ -568,11 +573,13 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
 
         {view === 'summary' && (isManagerPlus || isLeader) && !isStale && (
           <SummaryView
-            checks={activeChecks.concat(historyChecks)}
+            checks={summaryChecks}
             selectedId={selectedSummaryId}
             onSelect={(id) => { setSelectedSummaryId(id); setSearchParams(id ? { check: id } : {}); }}
             isManagerPlus={isManagerPlus}
             onClosed={loadAll}
+            isPastCheck={!!selectedPastCheck}
+            onBackToHistory={() => { setSelectedSummaryId(null); setSearchParams({}); setView('history'); }}
             isDark={isDark} card={card} text={text} sub={sub} border={border}
           />
         )}
@@ -1177,8 +1184,10 @@ const SummaryView: React.FC<{
   onSelect: (id: string | null) => void;
   isManagerPlus: boolean;
   onClosed: () => void;
+  isPastCheck: boolean;          // 履歴タブから過去のものを開いているか
+  onBackToHistory: () => void;
   isDark: boolean; card: string; text: string; sub: string; border: string;
-}> = ({ checks, selectedId, onSelect, isManagerPlus, onClosed, isDark, card, text, sub, border }) => {
+}> = ({ checks, selectedId, onSelect, isManagerPlus, onClosed, isPastCheck, onBackToHistory, isDark, card, text, sub, border }) => {
   const check = checks.find(c => c.id === selectedId) || checks[0] || null;
   // ダーク背景に濃い青・濃い赤の文字は沈んで読めないので、暗い時は明るい色にする
   const linkColor = isDark ? '#90caf9' : '#1976d2';
@@ -1215,7 +1224,13 @@ const SummaryView: React.FC<{
       .then(({ data }) => setTeams(((data ?? []) as { value: string }[]).map(r => r.value)), () => {});
   }, []);
 
-  if (!check) return <div style={{ background: card, borderRadius: 12, padding: '32px 20px', textAlign: 'center', color: sub, fontSize: 14 }}>安否確認の履歴がありません</div>;
+  // 集計タブは進行中のものだけを扱う。過去のものは履歴タブから開く
+  if (!check) return (
+    <div style={{ background: card, borderRadius: 12, padding: '32px 20px', textAlign: 'center', color: sub, fontSize: 14, lineHeight: 2 }}>
+      進行中の安否確認はありません
+      <div style={{ fontSize: 12 }}>過去のものは「履歴」タブから見られます</div>
+    </div>
+  );
 
   const respondedIds = new Set(responses.map(r => r.user_id));
   const unanswered = recipients.filter(r => !respondedIds.has(r.id));
@@ -1249,10 +1264,18 @@ const SummaryView: React.FC<{
 
   return (
     <div>
+      {/* 履歴から開いたときは、戻り道をはっきり出す */}
+      {isPastCheck && (
+        <button type="button" onClick={onBackToHistory}
+          style={{ background: 'none', border: 'none', padding: 0, marginBottom: 10, fontSize: 13, fontWeight: 700, color: linkColor, cursor: 'pointer' }}>
+          ← 履歴に戻る
+        </button>
+      )}
+
       {checks.length > 1 && (
         <select value={check.id} onChange={e => onSelect(e.target.value)}
           style={{ width: '100%', padding: '8px 10px', fontSize: 13, borderRadius: 8, border: `1px solid ${border}`, background: isDark ? '#3d3d55' : '#fff', color: text, marginBottom: 12 }}>
-          {checks.map(c => <option key={c.id} value={c.id}>{c.is_test ? '【テスト】' : ''}{c.title}（{fmtDateTime(c.created_at)}）{c.status === 'closed' ? '・終了済み' : ''}</option>)}
+          {checks.map(c => <option key={c.id} value={c.id}>{c.is_test ? '【テスト】' : ''}{c.title}（{fmtDateTime(c.created_at)}）</option>)}
         </select>
       )}
 
@@ -1422,6 +1445,13 @@ const SummaryView: React.FC<{
           </div>
         )}
       </div>
+
+      {/* この画面が「いま進行中のもの」だけを扱うことを明示する */}
+      {!isPastCheck && (
+        <p style={{ fontSize: 12, color: sub, textAlign: 'center', margin: '12px 0 0' }}>
+          終了・取消したものは「履歴」タブから見られます
+        </p>
+      )}
     </div>
   );
 };
@@ -1472,16 +1502,18 @@ const HistoryView: React.FC<{
   isDark: boolean; card: string; text: string; sub: string; border: string;
 }> = ({ checks, myResponses, isManagerPlus, onOpenSummary, isDark, card, text, sub, border }) => {
   const dangerBg = isDark ? '#4a2328' : '#f8d7da';
+  const linkColor = isDark ? '#90caf9' : '#1976d2';
   if (checks.length === 0) {
     return <div style={{ background: card, borderRadius: 12, padding: '32px 20px', textAlign: 'center', color: sub, fontSize: 14 }}>過去の安否確認はありません</div>;
   }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <p style={{ fontSize: 13, fontWeight: 700, color: text, margin: '0 0 2px' }}>過去の安否確認（終了・取消）</p>
       {checks.map(c => {
         const myRes = myResponses[c.id];
         return (
-          <div key={c.id} onClick={() => isManagerPlus && onOpenSummary(c.id)}
-            style={{ background: card, borderRadius: 10, padding: '12px 14px', border: `1px solid ${border}`, cursor: isManagerPlus ? 'pointer' : 'default' }}>
+          <div key={c.id}
+            style={{ background: card, borderRadius: 10, padding: '12px 14px', border: `1px solid ${border}` }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
               <span style={{ fontSize: 13, fontWeight: 700, color: text }}>{c.is_test && '【テスト】'}{c.title}</span>
               {c.cancelled && <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8, background: dangerBg, color: '#842029' }}>取消済み</span>}
@@ -1489,6 +1521,13 @@ const HistoryView: React.FC<{
             <p style={{ fontSize: 11, color: sub, margin: 0 }}>{fmtDateTime(c.created_at)}発信</p>
             {myRes && !c.cancelled && (
               <p style={{ fontSize: 12, color: isDark ? '#7bdca0' : '#166534', margin: '4px 0 0', fontWeight: 700 }}>あなたの回答：{c.options.find(o => o.key === myRes.choice)?.label}</p>
+            )}
+            {/* ⚠️ カード全体を押せる作りだと「押せる」ことに気づけないので、ボタンで明示する */}
+            {isManagerPlus && (
+              <button type="button" onClick={() => onOpenSummary(c.id)}
+                style={{ marginTop: 8, padding: '5px 12px', borderRadius: 6, border: `1px solid ${linkColor}`, background: 'transparent', color: linkColor, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                回答状況を見る →
+              </button>
             )}
           </div>
         );
