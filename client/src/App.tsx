@@ -43,6 +43,8 @@ import { useExpenses } from './hooks/useExpenses';
 import { useLeavePendingCount } from './hooks/useLeavePendingCount';
 import { usePurchasePendingCount } from './hooks/usePurchasePendingCount';
 import { useSafetyPendingCount, safetyTone } from './hooks/useSafetyPendingCount';
+import { useSafetyQueueFlush } from './hooks/useSafetyQueueFlush';
+import { formatSnapshotAge } from './lib/safetyStorage';
 import type { Expense, Submission } from './types';
 
 // ページ遷移のたびにスクロールをトップへ戻す
@@ -602,6 +604,8 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   }, []);
   const { total: boardUnreadRaw } = useBoardUnread(userId, location.pathname);
   const { pendingCount: safetyPendingRaw } = useSafetyPendingCount(userId);
+  // 端末に保存した安否の回答を、どのページにいても電波が戻り次第送る（NavBarは全ページに出ている）
+  useSafetyQueueFlush(userId, location.pathname);
   const safetyPending = isPub('safety_check') ? safetyPendingRaw : 0;
   const boardUnread = boardUnreadRaw + safetyPending; // 連絡板の未読バッジに安否確認の未回答分も合算
   const { pendingCount: purchasePending } = usePurchasePendingCount(userId, canPurchaseRequest);
@@ -1242,10 +1246,34 @@ const ShiftReportApprovalBanner: React.FC<{ userId: string; roleTitle: string; i
 // 安否確認の未回答バナー（消せない・回答すると自動で消える。全スタッフ対象）
 const SafetyCheckBanner: React.FC<{ userId: string; isAdmin: boolean; roleTitle: string }> = ({ userId, isAdmin, roleTitle }) => {
   const navigate = useNavigate();
-  const { pendingCount, activeChecks } = useSafetyPendingCount(userId);
+  const { pendingCount, activeChecks, queuedCount, isStale, snapshotAt } = useSafetyPendingCount(userId);
   const featurePublishState = useFeaturePublished();
 
   if (!isFeaturePublished('safety_check', featurePublishState, isAdmin, roleTitle)) return null;
+
+  // 端末に保存済み（送信待ち）だけのときは、赤ではなくグレーで「保存できている」ことを伝える。
+  // 🚨 赤は「まだやることがある」の意味に固定しておく。
+  //    答えたのに赤が出続けると「またか」で見流されるようになり、本当の災害時に効かなくなる。
+  if (pendingCount === 0 && queuedCount > 0) {
+    return (
+      <div
+        onClick={() => navigate('/safety')}
+        style={{
+          margin: '0 0 16px 0', padding: '14px 16px',
+          background: '#f1f3f5', border: '2px solid #adb5bd', borderRadius: 10,
+          cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10,
+        }}
+      >
+        <span style={{ fontSize: 24 }}>⏳</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 15, fontWeight: 'bold', color: '#212529' }}>回答を端末に保存しました</div>
+          <div style={{ fontSize: 12, color: '#495057', marginTop: 2 }}>電波が戻ったときに送信します</div>
+        </div>
+        <span style={{ fontSize: 13, fontWeight: 'bold', color: '#495057', whiteSpace: 'nowrap' }}>タップして確認 →</span>
+      </div>
+    );
+  }
+
   if (pendingCount === 0) return null;
   const first = activeChecks[0];
   // 種類ごとに色と文言を変える（応援のお願いまで赤くすると本当の災害時に流されるため）
@@ -1268,8 +1296,20 @@ const SafetyCheckBanner: React.FC<{ userId: string; isAdmin: boolean; roleTitle:
     >
       <span style={{ fontSize: 24 }}>{tone.icon}</span>
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 15, fontWeight: 'bold', color: tone.text }}>{tone.label} — 回答してください</div>
+        <div style={{ fontSize: 15, fontWeight: 'bold', color: tone.text }}>
+          {/* 訓練は本番と同じ真っ赤なバナーになるため、ひと目で分かるよう先頭に出す */}
+          {first?.is_test && (
+            <span style={{ background: '#fff', border: '1px solid #adb5bd', borderRadius: 5, padding: '1px 6px', fontSize: 12, color: '#495057', marginRight: 6 }}>🧪 訓練</span>
+          )}
+          {tone.label} — 回答してください
+        </div>
         {first && <div style={{ fontSize: 12, color: tone.text, marginTop: 2 }}>{first.body}</div>}
+        {/* オフラインでも色は変えない（種類ごとの色分けが崩れるため）。1行だけ添えて古さを伝える */}
+        {isStale && snapshotAt && (
+          <div style={{ fontSize: 11, color: tone.text, opacity: 0.85, marginTop: 3 }}>
+            📴 {formatSnapshotAge(snapshotAt)}時点の情報（オフライン）
+          </div>
+        )}
       </div>
       <span style={{ fontSize: 13, fontWeight: 'bold', color: tone.text, whiteSpace: 'nowrap' }}>タップして回答 →</span>
     </div>

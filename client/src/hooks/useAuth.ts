@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useContext, useRef } from 'react';
 import type { AuthUser } from '../types';
 import { supabase } from '../lib/supabaseClient';
 import { AuthContext } from '../contexts/AuthContext.tsx';
+import { readRawPendingQueue, writeRawPendingQueue } from '../lib/safetyStorage';
 
 const APPROVER_ROLES = ['リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者'] as const;
 
@@ -193,8 +194,13 @@ export const useAuth = (): UseAuthReturn => {
       const { error } = await supabase.auth.signOut({ scope: 'local' });
       if (error) { console.error('[logout] signOut error', error); return; }
       console.log('[logout] signOut success');
+      // 🚨 未送信の安否確認の回答は、localStorage.clear() の巻き添えで消してはいけない。
+      //    安否の回答は「消えてよい下書き」ではないので、退避して書き戻す。
+      //    （誰の回答かは中に持たせてあるので、別の人がログインしても送り違えない）
+      const keepSafetyQueue = readRawPendingQueue();
       localStorage.clear();
       sessionStorage.clear();
+      writeRawPendingQueue(keepSafetyQueue);
       window.location.href = '/signin';
     } catch (error) {
       console.error('[logout] unexpected error:', error);

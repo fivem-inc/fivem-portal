@@ -1,10 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import type { AuthUser } from '../types';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
-import { useSafetyPendingCount } from '../hooks/useSafetyPendingCount';
-import { loadDraft, saveDraft } from '../lib/draftStorage';
+import { useSafetyPendingCount, safetyTone } from '../hooks/useSafetyPendingCount';
+import { isTransientFailure, timeoutSignal, SAFETY_TIMEOUT_MS } from '../lib/netFailure';
+import {
+  loadPendingQueue, savePendingQueue, loadSafetySnapshot, formatSnapshotAge, isSnapshotOld,
+  type PendingQueue, type SafetyCheckLite,
+} from '../lib/safetyStorage';
 
 interface SafetyCheckPageProps {
   user: AuthUser;
@@ -135,9 +139,27 @@ const durationLabel = (min: number): string => {
   return min >= 60 ? `${Math.round(min / 60)}時間` : `${min}分`;
 };
 
-const PENDING_QUEUE_KEY = 'fivem_safety_pending_responses'; // { [checkId]: { choice, comment, clientKey, savedAt } }
+// 何度も送信に失敗したら、電話という逃げ道を案内する回数
+const QUEUE_WARN_ATTEMPTS = 5;
+const OFFICE_TEL = '075-585-4018';
 
-type PendingQueue = Record<string, { choice: string; comment: string; clientKey: string; savedAt: number }>;
+// 端末の控え（回答画面に必要な分だけ）を、この画面で扱う形に戻す。
+// 控えには集計・リマインド関連の項目が無いので、使わない項目は空で埋める。
+const fromSnapshot = (c: SafetyCheckLite): SafetyCheck => ({
+  ...c,
+  created_by: '',
+  closed_by: null, closed_at: null, cancelled_at: null,
+  remind_interval_min: 0, remind_max: 0, remind_count: 0,
+  next_remind_at: null, all_answered_at: null,
+});
+
+// 送り直しても通らない失敗を、本人に分かる日本語にする。
+// 黙ってキューから消すと「答えたつもりなのに届いていない」状態になるため必ず知らせる。
+function friendlyQueueError(error: { code?: string; message?: string } | null): string {
+  if (error?.code === '42501') return 'この安否確認の対象ではないため、回答を送れませんでした';
+  if (error?.code === 'P0002') return 'この安否確認は取り消されました。回答は不要です';
+  return '保存していた回答を送れませんでした。お手数ですがもう一度回答してください';
+}
 
 // 年まで出す（後から履歴を見たときに「いつの災害か」が分かるように）
 function fmtDateTime(s: string | null): string {
@@ -170,24 +192,70 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
   const [errMsg, setErrMsg] = useState('');
   const [okMsg, setOkMsg] = useState('');
 
-  // ---- データ取得 ----
-  const loadAll = useCallback(async () => {
-    setLoading(true);
-    const { data: checks } = await supabase
-      .from('safety_checks')
-      .select('id, title, body, pattern, options, is_test, status, created_by, created_at, closed_by, closed_at, cancelled, cancelled_at, remind_interval_min, remind_max, remind_count, next_remind_at, all_answered_at')
-      .order('created_at', { ascending: false })
-      .limit(50);
-    setAllChecks((checks ?? []) as SafetyCheck[]);
+  const [showGuide, setShowGuide] = useState(false);       // 未回答があるときは説明枠を畳む
+  const [isStale, setIsStale] = useState(false);           // サーバーから取れず、端末の控えを表示している
+  const [snapshotAt, setSnapshotAt] = useState<number | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);     // 直近の取得に失敗した
+  const [pendingQueue, setPendingQueue] = useState<PendingQueue>(() => loadPendingQueue(user.id));
+  const [queueErrors, setQueueErrors] = useState<Record<string, string>>({}); // 送り直しても通らなかった理由
 
-    const { data: myRes } = await supabase
-      .from('safety_check_responses')
-      .select('check_id, user_id, choice, comment, is_proxy, proxy_by, answered_at')
-      .eq('user_id', user.id);
-    const map: Record<string, SafetyResponse> = {};
-    (myRes ?? []).forEach((r: SafetyResponse) => { map[r.check_id] = r; });
-    setMyResponses(map);
-    setLoading(false);
+  // 通信が遅いと古い応答が後から返り、新しい結果を上書きしてしまう。
+  // 番号を振っておき、最新の呼び出し以外の応答は捨てる。
+  const loadSeq = useRef(0);
+
+  const applyQueue = useCallback((next: PendingQueue) => {
+    savePendingQueue(user.id, next);
+    setPendingQueue({ ...next });
+  }, [user.id]);
+
+  // ---- データ取得 ----
+  // 🚨 取得に失敗したときに画面を空にしてはいけない。
+  //    空にすると「進行中の安否確認はありません」と嘘を断言してしまい、
+  //    読んだ人はそのままアプリを閉じる。失敗時は前回の表示か端末の控えを出す。
+  const loadAll = useCallback(async () => {
+    const my = ++loadSeq.current;
+    setLoading(true);
+    try {
+      const { data: checks, error: checksErr, status: checksStatus } = await supabase
+        .from('safety_checks')
+        .select('id, title, body, pattern, options, is_test, status, created_by, created_at, closed_by, closed_at, cancelled, cancelled_at, remind_interval_min, remind_max, remind_count, next_remind_at, all_answered_at')
+        .order('created_at', { ascending: false })
+        .limit(50)
+        .abortSignal(timeoutSignal(SAFETY_TIMEOUT_MS));
+      if (my !== loadSeq.current) return;
+
+      const { data: myRes, error: resErr, status: resStatus } = await supabase
+        .from('safety_check_responses')
+        .select('check_id, user_id, choice, comment, is_proxy, proxy_by, answered_at')
+        .eq('user_id', user.id)
+        .abortSignal(timeoutSignal(SAFETY_TIMEOUT_MS));
+      if (my !== loadSeq.current) return;
+
+      // ⚠️ 片方だけ成功した状態で表示すると「進行中は出るのに自分の回答済みが消える」
+      //    ＝二重に回答させてしまうので、両方そろったときだけ画面を入れ替える。
+      if (checksErr || resErr) {
+        const transient = isTransientFailure(checksStatus, checksErr) || isTransientFailure(resStatus, resErr);
+        const snap = transient ? loadSafetySnapshot(user.id) : null;
+        setIsStale(true);
+        setLoadFailed(true);
+        if (snap) {
+          setAllChecks(snap.checks.map(fromSnapshot));
+          setMyResponses(snap.myResponses);
+          setSnapshotAt(snap.savedAt);
+        }
+        return;
+      }
+
+      setAllChecks((checks ?? []) as SafetyCheck[]);
+      const map: Record<string, SafetyResponse> = {};
+      (myRes ?? []).forEach((r) => { map[(r as SafetyResponse).check_id] = r as SafetyResponse; });
+      setMyResponses(map);
+      setIsStale(false);
+      setSnapshotAt(null);
+      setLoadFailed(false);
+    } finally {
+      if (my === loadSeq.current) setLoading(false);
+    }
   }, [user.id]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
@@ -205,24 +273,43 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
     else if (isManagerPlus || isLeader) setView('summary');
   }, [searchParams, isManagerPlus, isLeader, loading, myResponses]);
 
-  // ---- オフライン再送キュー ----
+  // ---- 端末に保存した回答の再送 ----
   const flushQueue = useCallback(async () => {
-    const queue = loadDraft<PendingQueue>(PENDING_QUEUE_KEY) ?? {};
+    const queue = loadPendingQueue(user.id);
     const keys = Object.keys(queue);
     if (keys.length === 0) return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return; // 圏外なら試さない（電池対策）
+
+    const errors: Record<string, string> = {};
     for (const checkId of keys) {
       const item = queue[checkId];
-      const { error } = await supabase.rpc('submit_safety_response', {
-        p_check_id: checkId, p_choice: item.choice, p_comment: item.comment || null, p_client_key: item.clientKey,
-      });
+      const { data, error, status } = await supabase.rpc('submit_safety_response', {
+        p_check_id: checkId, p_choice: item.choice, p_comment: item.comment || null,
+        p_client_key: item.clientKey,
+        // 本人がボタンを押した時刻。これより新しい回答（電話での代行入力など）が
+        // すでにあれば、DB側で上書きしないようにするために渡す。
+        p_answered_at: new Date(item.savedAt).toISOString(),
+      }).abortSignal(timeoutSignal(SAFETY_TIMEOUT_MS));
+
       if (!error) {
         delete queue[checkId];
-        saveDraft(PENDING_QUEUE_KEY, queue);
+        if (data && (data as { applied?: boolean }).applied === false) {
+          errors[checkId] = 'あとから記録された新しい回答があるため、保存していた回答は反映されませんでした';
+        }
         window.dispatchEvent(new CustomEvent('safety-pending-changed'));
+      } else if (isTransientFailure(status, error)) {
+        // まだ送れる見込みがある失敗。回数だけ数えておき、何度も失敗するようなら本人に知らせる
+        queue[checkId] = { ...item, attempts: (item.attempts ?? 0) + 1 };
+      } else {
+        // 送り直しても通らない失敗。永久に再送し続けても届かないのでキューから外し、理由を出す
+        delete queue[checkId];
+        errors[checkId] = friendlyQueueError(error);
       }
     }
+    applyQueue(queue);
+    if (Object.keys(errors).length > 0) setQueueErrors(prev => ({ ...prev, ...errors }));
     loadAll();
-  }, [loadAll]);
+  }, [user.id, applyQueue, loadAll]);
 
   useEffect(() => {
     flushQueue();
@@ -232,27 +319,30 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
     return () => { window.removeEventListener('online', onOnline); clearInterval(interval); };
   }, [flushQueue]);
 
-  const pendingQueue = loadDraft<PendingQueue>(PENDING_QUEUE_KEY) ?? {};
-
   // ---- 回答 ----
   const submitAnswer = async (checkId: string, choice: string, comment: string) => {
     setErrMsg('');
+    setQueueErrors(prev => { const next = { ...prev }; delete next[checkId]; return next; });
     const clientKey = crypto.randomUUID();
     const { error } = await supabase.rpc('submit_safety_response', {
-      p_check_id: checkId, p_choice: choice, p_comment: comment || null, p_client_key: clientKey,
-    });
+      p_check_id: checkId, p_choice: choice, p_comment: comment || null,
+      p_client_key: clientKey, p_answered_at: new Date().toISOString(),
+    }).abortSignal(timeoutSignal(SAFETY_TIMEOUT_MS));
     if (error) {
-      // ネットワーク不調の可能性が高い場合は端末に保留し、回線復帰後に自動再送する
-      const isOffline = !navigator.onLine || /fetch|network/i.test(error.message || '');
-      if (isOffline) {
-        const queue = loadDraft<PendingQueue>(PENDING_QUEUE_KEY) ?? {};
-        queue[checkId] = { choice, comment, clientKey, savedAt: Date.now() };
-        saveDraft(PENDING_QUEUE_KEY, queue);
-        setOkMsg('送信を保留しました。電波が戻ると自動で送信されます');
-        setEditingCheckId(null);
-        return;
-      }
-      setErrMsg('送信できませんでした。時間をおいてお試しください');
+      // 🚨 失敗の理由を問わず、必ず端末に保存する。
+      //    以前は「電波が無いと分かったときだけ」保存していたが、
+      //      ・輻輳では navigator.onLine が true のまま
+      //      ・iPhone(Safari) の失敗メッセージは "Load failed" で文字列判定に一致しない
+      //    ため、災害時にいちばん起きる状況で回答が保存されず消えていた。
+      //    同じ回答が2回届く可能性はあるが、DB側で1人1回答に上書きされるので実害は無い。
+      //    「回答が消える」ことに比べれば桁違いに軽い。
+      const queue = loadPendingQueue(user.id);
+      queue[checkId] = { choice, comment, clientKey, savedAt: Date.now(), attempts: 0 };
+      applyQueue(queue);
+      setOkMsg('回答を端末に保存しました。電波が戻ったときに送信します');
+      setEditingCheckId(null);
+      setTimeout(() => setOkMsg(''), 5000);
+      window.dispatchEvent(new CustomEvent('safety-pending-changed'));
       return;
     }
     setOkMsg('回答を送信しました');
@@ -265,15 +355,76 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
 
   const activeChecks = allChecks.filter(c => c.status === 'active' && !c.cancelled);
   const historyChecks = allChecks.filter(c => c.status === 'closed' || c.cancelled);
+  // まだ答えていない（端末に保存した分も含めて答えていない）進行中があるか
+  const hasUnanswered = activeChecks.some(c => !myResponses[c.id] && !pendingQueue[c.id]);
 
-  if (loading) return <div style={{ padding: 40, textAlign: 'center', color: sub }}>読み込み中...</div>;
+  // 全画面の「読み込み中」は、まだ何も出せないときだけ。
+  // 一度でも中身があるなら、読み直し中でも前の内容を出したまま待つ（災害時に空白を見せない）
+  if (loading && allChecks.length === 0 && !loadFailed) {
+    return (
+      <div style={{ padding: 40, textAlign: 'center', color: sub, fontSize: 14, lineHeight: 1.8 }}>
+        読み込んでいます...<br />
+        <span style={{ fontSize: 12 }}>電波が弱いと時間がかかることがあります</span>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: 600, margin: '0 auto', padding: '16px 16px 40px' }}>
       <div>
         <h2 style={{ textAlign: 'center', margin: '12px 0 16px', fontSize: 20, fontWeight: 'bold', color: text }}>🆘 安否・緊急連絡</h2>
 
-        {/* このページの説明（他ページと同様式。枠は常に黄色なので中身はライト配色固定） */}
+        {/* オフライン（＝サーバーから取れなかった）ときの案内。
+            🚨 見出しを「電波がつながりません」にしない。「何もできない」と読まれてしまう。
+               実際には回答できるので、できることを先に伝える。
+            🚨 赤も使わない。安否確認カード自体が赤なので、どちらが本題か分からなくなる。
+            色はライト・ダーク共通の固定色（暗い文字が背景に沈まないように） */}
+        {isStale && (
+          <div style={{ background: '#f1f3f5', border: '1px solid #adb5bd', borderRadius: 8, padding: '12px 14px', marginBottom: 12, textAlign: 'left' }}>
+            {snapshotAt ? (
+              <>
+                <p style={{ fontSize: 14, fontWeight: 'bold', color: '#212529', margin: '0 0 6px' }}>
+                  📴 オフラインです（前に読み込んだ内容を表示しています）
+                </p>
+                <p style={{ fontSize: 13, color: '#495057', lineHeight: 1.8, margin: '0 0 6px' }}>
+                  このまま回答できます。回答は端末に保存され、電波が戻ってからアプリを開くと送信されます。
+                </p>
+                <p style={{ fontSize: 12, color: isSnapshotOld(snapshotAt) ? '#a94442' : '#6c757d', fontWeight: isSnapshotOld(snapshotAt) ? 700 : 400, margin: '0 0 8px' }}>
+                  表示中の内容：{formatSnapshotAge(snapshotAt)}時点
+                  {isSnapshotOld(snapshotAt) && ' ／ すでに終了している可能性があります'}
+                </p>
+                <button type="button" onClick={() => loadAll()}
+                  style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #adb5bd', background: '#fff', color: '#212529', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                  もう一度試す
+                </button>
+              </>
+            ) : (
+              <>
+                <p style={{ fontSize: 14, fontWeight: 'bold', color: '#212529', margin: '0 0 6px' }}>
+                  📴 いま電波がつながらないため、最新の状態を確認できませんでした
+                </p>
+                <p style={{ fontSize: 13, color: '#495057', lineHeight: 1.8, margin: '0 0 8px' }}>
+                  電波が戻ると自動で読み込みます。
+                </p>
+                <button type="button" onClick={() => loadAll()}
+                  style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #adb5bd', background: '#fff', color: '#212529', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                  もう一度試す
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* このページの説明（他ページと同様式。枠は常に黄色なので中身はライト配色固定）
+            ⚠️ まだ回答していない安否確認があるときは畳む。
+               説明が要るのは平常時で、災害時は1タップでも早く回答ボタンに届くほうが大事。
+               （説明が開いたままだと、小さい画面では回答ボタンが画面外に出てしまう） */}
+        {hasUnanswered && !showGuide ? (
+          <button type="button" onClick={() => setShowGuide(true)}
+            style={{ display: 'block', width: '100%', background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '8px 14px', marginBottom: 12, fontSize: 13, fontWeight: 'bold', color: '#856404', cursor: 'pointer', textAlign: 'left' }}>
+            ▼ このページについて
+          </button>
+        ) : (
         <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '12px 14px', marginBottom: 16, textAlign: 'left' }}>
           <p style={{ fontSize: 13, fontWeight: 'bold', color: '#856404', textAlign: 'center', margin: '0 0 10px' }}>【全スタッフ】</p>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '0 0 8px' }}>
@@ -286,8 +437,18 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
               <span style={{ fontSize: 14, fontWeight: 'bold', color: '#664d03', lineHeight: '22px' }}>安否確認を発信し、回答状況を確認できます</span>
             </div>
           )}
-          <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※ 電波が不安定でも、回答は端末に保存され、つながり次第きちんと送信されます。</p>
+          {/* オフライン案内バーと同じ話になるので、そのときは出さない（同じ内容が2か所にあると別の話に読める） */}
+          {!isStale && (
+            <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※ 電波が不安定でも、回答は端末に保存され、電波が戻ってからアプリを開くと送信されます。</p>
+          )}
+          {hasUnanswered && (
+            <button type="button" onClick={() => setShowGuide(false)}
+              style={{ marginTop: 8, background: 'none', border: 'none', padding: 0, fontSize: 12, fontWeight: 'bold', color: '#856404', cursor: 'pointer' }}>
+              ▲ 閉じる
+            </button>
+          )}
         </div>
+        )}
 
         {okMsg && (
           <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 10, padding: '10px 14px', marginBottom: 12, fontSize: 14, fontWeight: 700, color: '#166534' }}>
@@ -300,23 +461,30 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
           </div>
         )}
 
-        {/* タブ */}
+        {/* タブ。
+            ⚠️ オフラインで使えないタブは「押しても何も起きない」にしない。
+               押せないボタンは「壊れた」と受け取られる。押せるままにして中身で理由を説明する。
+               押す前にも分かるよう 📴 を付けておく。 */}
         <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
           {[
-            { key: 'answer' as const, label: '回答', show: true },
-            { key: 'send' as const, label: '🆘 発信', show: isManagerPlus },
-            { key: 'summary' as const, label: '集計', show: isManagerPlus || isLeader },
-            { key: 'history' as const, label: '履歴', show: true },
-          ].filter(t => t.show).map(t => (
-            <button key={t.key} type="button" onClick={() => { setView(t.key); setSearchParams({}); }}
-              style={{
-                padding: '7px 16px', borderRadius: 20, border: 'none', fontSize: 13, fontWeight: 700, cursor: 'pointer',
-                background: view === t.key ? '#dc3545' : (isDark ? '#3d3d55' : '#e9ecef'),
-                color: view === t.key ? '#fff' : sub,
-              }}>
-              {t.label}
-            </button>
-          ))}
+            { key: 'answer' as const, label: '回答', show: true, needsNetwork: false },
+            { key: 'send' as const, label: '🆘 発信', show: isManagerPlus, needsNetwork: true },
+            { key: 'summary' as const, label: '集計', show: isManagerPlus || isLeader, needsNetwork: true },
+            { key: 'history' as const, label: '履歴', show: true, needsNetwork: true },
+          ].filter(t => t.show).map(t => {
+            const blocked = isStale && t.needsNetwork;
+            return (
+              <button key={t.key} type="button" onClick={() => { setView(t.key); setSearchParams({}); }}
+                style={{
+                  padding: '7px 16px', borderRadius: 20, border: 'none', fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                  background: view === t.key ? '#dc3545' : (isDark ? '#3d3d55' : '#e9ecef'),
+                  color: view === t.key ? '#fff' : sub,
+                  opacity: blocked && view !== t.key ? 0.6 : 1,
+                }}>
+                {blocked ? '📴 ' : ''}{t.label}
+              </button>
+            );
+          })}
         </div>
 
         {view === 'answer' && (
@@ -327,8 +495,36 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
             setEditingCheckId={setEditingCheckId}
             onSubmit={submitAnswer}
             pendingQueue={pendingQueue}
+            queueErrors={queueErrors}
+            loadFailed={loadFailed}
+            onRetry={loadAll}
             isDark={isDark} card={card} text={text} sub={sub} border={border}
           />
+        )}
+
+        {/* ⚠️ 発信画面は差し替えない（入力中の内容が消えてしまうため）。
+               注意書きを上に出すだけにして、画面はそのまま残す。 */}
+        {view === 'send' && isManagerPlus && isStale && (
+          <div style={{ background: '#f1f3f5', border: '1px solid #adb5bd', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 13, fontWeight: 700, color: '#212529' }}>
+            📴 いまオフラインです。この状態では発信できません（入力した内容はそのまま残ります）
+          </div>
+        )}
+
+        {/* 集計・履歴はサーバーが無いと何も出せないので、理由と行き先に差し替える */}
+        {(view === 'summary' || view === 'history') && isStale && (
+          <div style={{ background: '#f1f3f5', border: '1px solid #adb5bd', borderRadius: 10, padding: '18px 16px' }}>
+            <p style={{ fontSize: 14, fontWeight: 'bold', color: '#212529', margin: '0 0 8px' }}>
+              📴 この画面は電波がつながると見られます
+            </p>
+            <p style={{ fontSize: 13, color: '#495057', lineHeight: 1.9, margin: '0 0 12px' }}>
+              他の人の回答や電話番号は、端末に保存していません。<br />
+              （端末をなくしたときに情報が漏れないようにするためです）
+            </p>
+            <button type="button" onClick={() => { setView('answer'); setSearchParams({}); }}
+              style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid #adb5bd', background: '#fff', color: '#212529', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+              回答タブへ
+            </button>
+          </div>
         )}
 
         {view === 'send' && isManagerPlus && (
@@ -339,7 +535,7 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
           />
         )}
 
-        {view === 'summary' && (isManagerPlus || isLeader) && (
+        {view === 'summary' && (isManagerPlus || isLeader) && !isStale && (
           <SummaryView
             checks={activeChecks.concat(historyChecks)}
             selectedId={selectedSummaryId}
@@ -350,7 +546,7 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
           />
         )}
 
-        {view === 'history' && (
+        {view === 'history' && !isStale && (
           <HistoryView
             checks={historyChecks}
             myResponses={myResponses}
@@ -379,9 +575,26 @@ const AnswerView: React.FC<{
   setEditingCheckId: (id: string | null) => void;
   onSubmit: (checkId: string, choice: string, comment: string) => void;
   pendingQueue: PendingQueue;
+  queueErrors: Record<string, string>;
+  loadFailed: boolean;
+  onRetry: () => void;
   isDark: boolean; card: string; text: string; sub: string; border: string;
-}> = ({ checks, myResponses, editingCheckId, setEditingCheckId, onSubmit, pendingQueue, isDark, card, text, sub, border }) => {
+}> = ({ checks, myResponses, editingCheckId, setEditingCheckId, onSubmit, pendingQueue, queueErrors, loadFailed, onRetry, isDark, card, text, sub, border }) => {
   if (checks.length === 0) {
+    // 🚨 取得できなかっただけなのに「ありません」と断言してはいけない。
+    //    読んだ人はそのままアプリを閉じてしまう。
+    if (loadFailed) {
+      return (
+        <div style={{ background: card, borderRadius: 12, padding: '28px 20px', textAlign: 'center', fontSize: 14, color: text, lineHeight: 1.9 }}>
+          いま電波がつながらないため、<br />安否確認が出ているか確認できませんでした。
+          <div style={{ fontSize: 12, color: sub, margin: '8px 0 14px' }}>電波が戻ると自動で読み込みます。</div>
+          <button type="button" onClick={onRetry}
+            style={{ padding: '8px 18px', borderRadius: 6, border: `1px solid ${border}`, background: 'none', color: text, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+            もう一度試す
+          </button>
+        </div>
+      );
+    }
     return <div style={{ background: card, borderRadius: 12, padding: '32px 20px', textAlign: 'center', color: sub, fontSize: 14 }}>現在、進行中の安否確認はありません</div>;
   }
 
@@ -391,16 +604,52 @@ const AnswerView: React.FC<{
         const myRes = myResponses[c.id];
         const pending = pendingQueue[c.id];
         const isEditing = editingCheckId === c.id || (!myRes && !pending);
+        // 種類ごとに色と見出しを変える（安否＝赤／出勤確認＝オレンジ／応援のお願い＝青）。
+        // 応援のお願いまで赤い「安否確認」として出すと、本当の災害時に見流される。
+        const tone = safetyTone(c.pattern);
+        const heading = c.pattern === 'attendance2' ? '出勤確認' : c.pattern === 'support' ? '応援のお願い' : '安否確認';
+        const attempts = pending?.attempts ?? 0;
+        const stuck = attempts >= QUEUE_WARN_ATTEMPTS;
         return (
-          <div key={c.id} style={{ background: card, border: '2px solid #dc3545', borderRadius: 12, padding: '16px 18px' }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: isDark ? '#ff9aa2' : '#721c24', marginBottom: 4 }}>
-              {c.is_test && '【テスト】'}安否確認（{fmtDateTime(c.created_at)}）
+          <div key={c.id} style={{ background: card, border: `2px solid ${tone.border}`, borderRadius: 12, padding: '16px 18px' }}>
+            {c.is_test && (
+              <div style={{ display: 'inline-block', background: '#e9ecef', border: '1px solid #adb5bd', borderRadius: 6, padding: '2px 8px', fontSize: 12, fontWeight: 700, color: '#495057', marginBottom: 6 }}>
+                🧪 訓練
+              </div>
+            )}
+            <div style={{ fontSize: 12, fontWeight: 700, color: tone.border, marginBottom: 4 }}>
+              {tone.icon} {heading}（{fmtDateTime(c.created_at)}）
             </div>
+            {c.title && <div style={{ fontSize: 15, fontWeight: 700, color: text, marginBottom: 4 }}>{c.title}</div>}
             <div style={{ fontSize: 14, color: text, marginBottom: 12, whiteSpace: 'pre-wrap' }}>{c.body}</div>
 
+            {queueErrors[c.id] && (
+              <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '10px 12px', marginBottom: 8, fontSize: 13, color: '#842029', fontWeight: 700 }}>
+                ⚠️ {queueErrors[c.id]}
+              </div>
+            )}
+
             {pending && !isEditing && (
-              <div style={{ background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 8, padding: '10px 12px', fontSize: 13, color: '#856404', fontWeight: 700 }}>
-                ⏳ 送信待ち：電波が戻ると自動で送信されます（{c.options.find(o => o.key === pending.choice)?.label}）
+              <div>
+                {/* 送信待ちはグレーで出す。選択肢のアンバー（被害あり）と紛らわしくならないように */}
+                <div style={{ background: '#f1f3f5', border: `1px dashed ${stuck ? '#dc3545' : '#adb5bd'}`, borderRadius: 8, padding: '10px 12px', fontSize: 13, color: '#212529', fontWeight: 700, marginBottom: 8 }}>
+                  ⏳ 端末に保存しました：{c.options.find(o => o.key === pending.choice)?.label}
+                  <div style={{ fontSize: 12, fontWeight: 400, color: '#495057', marginTop: 4 }}>
+                    {fmtDateTime(new Date(pending.savedAt).toISOString())} に保存
+                    {attempts > 0 && ` ・${attempts}回送信を試しました`}
+                  </div>
+                  <div style={{ fontSize: 12, fontWeight: 400, color: stuck ? '#a94442' : '#495057', marginTop: 4 }}>
+                    {stuck
+                      ? `まだ送信できていません。お急ぎの場合は電話でお知らせください　📞 ${OFFICE_TEL}`
+                      : '電波が戻ってからアプリを開くと送信されます'}
+                  </div>
+                </div>
+                {/* 🚨 送信待ちのまま変更できないと、状況が変わっても直せない
+                       （「無事です」で保存 → 後から被害に気付いた、が起こりうる） */}
+                <button type="button" onClick={() => setEditingCheckId(c.id)}
+                  style={{ fontSize: 12, color: isDark ? '#90caf9' : '#1976d2', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                  回答を変更する
+                </button>
               </div>
             )}
 
@@ -420,10 +669,10 @@ const AnswerView: React.FC<{
             {isEditing && (
               <AnswerForm
                 options={c.options}
-                initialChoice={myRes?.choice}
-                initialComment={myRes?.comment || ''}
+                initialChoice={pending?.choice ?? myRes?.choice}
+                initialComment={pending?.comment ?? myRes?.comment ?? ''}
                 onSubmit={(choice, comment) => onSubmit(c.id, choice, comment)}
-                onCancel={myRes ? () => setEditingCheckId(null) : undefined}
+                onCancel={(myRes || pending) ? () => setEditingCheckId(null) : undefined}
                 isDark={isDark} border={border} sub={sub} text={text}
               />
             )}

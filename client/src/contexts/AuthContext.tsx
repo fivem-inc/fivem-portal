@@ -1,6 +1,7 @@
 import React, { createContext, useState, useEffect } from 'react';
 import type { AuthContextType, AuthUser } from '../types';
 import { supabase } from '../lib/supabaseClient';
+import { timeoutSignal, withTimeout, AUTH_TIMEOUT_MS } from '../lib/netFailure';
 
 // AuthContextの作成
 // eslint-disable-next-line react-refresh/only-export-components
@@ -30,10 +31,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // ログイン状態として扱う前に弾く
   const applySessionUser = async (sessionUser: AuthUser | null) => {
     if (!sessionUser) { setUser(null); return; }
+    // 🚨 待ち時間の上限は必須。
+    //    災害時の輻輳（繋がりにくい状態）では応答が返らないことがあり、
+    //    上限が無いとこの await から戻れず setLoading(false) に到達しない＝
+    //    起動画面のまま永久に固まって安否確認に辿り着けない。
+    //    Supabase は通信に失敗しても例外を投げないので try/catch では防げない。
     const { data: profile, error } = await supabase
       .from('profiles')
       .select('is_active, approval_status')
       .eq('id', sessionUser.id)
+      .abortSignal(timeoutSignal(AUTH_TIMEOUT_MS))
       .single();
 
     // プロフィールが存在しない（PGRST116 = 行なし＝削除済みアカウント）→ 弾く。
@@ -61,11 +68,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const getSession = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        // getSession はトークンの期限が切れていると取り直しの通信をする。
+        // ここも輻輳で返らないことがあるため上限を設ける（時間切れならセッション無しとして先へ進む）。
+        const { data: { session } } = await withTimeout(
+          supabase.auth.getSession(),
+          AUTH_TIMEOUT_MS,
+          { data: { session: null } } as Awaited<ReturnType<typeof supabase.auth.getSession>>,
+        );
         await applySessionUser(session?.user as AuthUser ?? null);
-        setLoading(false);
       } catch (error) {
         console.error('Error getting session:', error);
+      } finally {
+        // 何があっても起動画面は必ず解除する
         setLoading(false);
       }
     };
