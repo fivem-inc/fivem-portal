@@ -7,6 +7,7 @@ import { useSafetyPendingCount, safetyTone } from '../hooks/useSafetyPendingCoun
 import { isTransientFailure, timeoutSignal, SAFETY_TIMEOUT_MS } from '../lib/netFailure';
 import {
   loadPendingQueue, savePendingQueue, loadSafetySnapshot, formatSnapshotAge, isSnapshotOld,
+  loadQueueErrors, saveQueueErrors,
   type PendingQueue, type SafetyCheckLite,
 } from '../lib/safetyStorage';
 
@@ -197,7 +198,12 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
   const [snapshotAt, setSnapshotAt] = useState<number | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);     // 直近の取得に失敗した
   const [pendingQueue, setPendingQueue] = useState<PendingQueue>(() => loadPendingQueue(user.id));
-  const [queueErrors, setQueueErrors] = useState<Record<string, string>>({}); // 送り直しても通らなかった理由
+  // 送り直しても通らなかった理由。ページを開き直しても消えないよう端末に残す
+  const [queueErrors, setQueueErrorsState] = useState<Record<string, string>>(() => loadQueueErrors(user.id));
+  // 自分が対象（宛先）になっている安否確認のid。
+  // 🚨 マネージャー以上は閲覧ルール上すべての安否確認が見えるので、
+  //    これで絞らないと「自分が対象でないのに回答ボタンが出て、押すと必ず失敗する」ことになる。
+  const [myRecipientIds, setMyRecipientIds] = useState<Set<string>>(new Set());
 
   // 通信が遅いと古い応答が後から返り、新しい結果を上書きしてしまう。
   // 番号を振っておき、最新の呼び出し以外の応答は捨てる。
@@ -206,6 +212,14 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
   const applyQueue = useCallback((next: PendingQueue) => {
     savePendingQueue(user.id, next);
     setPendingQueue({ ...next });
+  }, [user.id]);
+
+  const setQueueErrors = useCallback((updater: (prev: Record<string, string>) => Record<string, string>) => {
+    setQueueErrorsState(prev => {
+      const next = updater(prev);
+      saveQueueErrors(user.id, next);
+      return next;
+    });
   }, [user.id]);
 
   // ---- データ取得 ----
@@ -231,16 +245,28 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
         .abortSignal(timeoutSignal(SAFETY_TIMEOUT_MS));
       if (my !== loadSeq.current) return;
 
+      // 自分が宛先になっている安否確認（回答タブに出してよいもの）
+      const { data: myRecipient, error: recErr, status: recStatus } = await supabase
+        .from('safety_check_recipients')
+        .select('check_id')
+        .eq('user_id', user.id)
+        .abortSignal(timeoutSignal(SAFETY_TIMEOUT_MS));
+      if (my !== loadSeq.current) return;
+
       // ⚠️ 片方だけ成功した状態で表示すると「進行中は出るのに自分の回答済みが消える」
-      //    ＝二重に回答させてしまうので、両方そろったときだけ画面を入れ替える。
-      if (checksErr || resErr) {
-        const transient = isTransientFailure(checksStatus, checksErr) || isTransientFailure(resStatus, resErr);
+      //    ＝二重に回答させてしまうので、すべてそろったときだけ画面を入れ替える。
+      if (checksErr || resErr || recErr) {
+        const transient = isTransientFailure(checksStatus, checksErr)
+          || isTransientFailure(resStatus, resErr)
+          || isTransientFailure(recStatus, recErr);
         const snap = transient ? loadSafetySnapshot(user.id) : null;
         setIsStale(true);
         setLoadFailed(true);
         if (snap) {
+          // 控えには「自分が宛先の進行中」だけが入っている
           setAllChecks(snap.checks.map(fromSnapshot));
           setMyResponses(snap.myResponses);
+          setMyRecipientIds(new Set(snap.checks.map(c => c.id)));
           setSnapshotAt(snap.savedAt);
         }
         return;
@@ -250,6 +276,7 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
       const map: Record<string, SafetyResponse> = {};
       (myRes ?? []).forEach((r) => { map[(r as SafetyResponse).check_id] = r as SafetyResponse; });
       setMyResponses(map);
+      setMyRecipientIds(new Set((myRecipient ?? []).map(r => r.check_id as string)));
       setIsStale(false);
       setSnapshotAt(null);
       setLoadFailed(false);
@@ -355,8 +382,12 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
 
   const activeChecks = allChecks.filter(c => c.status === 'active' && !c.cancelled);
   const historyChecks = allChecks.filter(c => c.status === 'closed' || c.cancelled);
+  // 🚨 回答タブに出してよいのは「自分が宛先の安否確認」だけ。
+  //    マネージャー以上は他人あての分も閲覧できるため、絞らないと
+  //    回答ボタンが出るのに押すと必ず失敗する（＝対象外なので送れない）ことになる。
+  const myActiveChecks = activeChecks.filter(c => myRecipientIds.has(c.id));
   // まだ答えていない（端末に保存した分も含めて答えていない）進行中があるか
-  const hasUnanswered = activeChecks.some(c => !myResponses[c.id] && !pendingQueue[c.id]);
+  const hasUnanswered = myActiveChecks.some(c => !myResponses[c.id] && !pendingQueue[c.id]);
 
   // 全画面の「読み込み中」は、まだ何も出せないときだけ。
   // 一度でも中身があるなら、読み直し中でも前の内容を出したまま待つ（災害時に空白を見せない）
@@ -489,7 +520,7 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
 
         {view === 'answer' && (
           <AnswerView
-            checks={activeChecks}
+            checks={myActiveChecks}
             myResponses={myResponses}
             editingCheckId={editingCheckId}
             setEditingCheckId={setEditingCheckId}
@@ -595,7 +626,9 @@ const AnswerView: React.FC<{
         </div>
       );
     }
-    return <div style={{ background: card, borderRadius: 12, padding: '32px 20px', textAlign: 'center', color: sub, fontSize: 14 }}>現在、進行中の安否確認はありません</div>;
+    // マネージャー以上は他人あての安否確認も閲覧できるので、
+    // 「進行中はありません」ではなく「あなたが回答するものはありません」と書く
+    return <div style={{ background: card, borderRadius: 12, padding: '32px 20px', textAlign: 'center', color: sub, fontSize: 14 }}>現在、あなたが回答する安否確認はありません</div>;
   }
 
   return (

@@ -16,6 +16,12 @@ import type { SafetyPattern } from '../hooks/useSafetyPendingCount';
 
 const PENDING_KEY = 'fivem_safety_pending_responses'; // ⚠️ 既存の送信待ちを失わないためキー名は変えない
 const SNAPSHOT_KEY = 'fivem_safety_snapshot';
+const QUEUE_ERROR_KEY = 'fivem_safety_queue_errors';
+
+// 訓練（テスト送信）を控えに残す期限。
+// 訓練でもオフラインの動きを試せるようにするが、何日も画面に残ると
+// 本番の安否確認と紛らわしくなる（＝「またか」で見流される）ので1日で消す。
+const TEST_SNAPSHOT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 // 控えの形を変えたら必ず上げる。古い形の控えは読まずに捨てる。
 // （毎日デプロイしているので、形が変わったまま古い控えを読むと画面が真っ白になる）
@@ -133,7 +139,11 @@ export function loadSafetySnapshot(userId: string): SafetySnapshot | null {
     const snap = JSON.parse(raw) as SafetySnapshot;
     if (!snap || snap.v !== SNAPSHOT_VERSION) return null;   // 形が変わった＝読まずに捨てる
     if (snap.userId !== userId) return null;                 // 別の人の控えは出さない
-    const checks = (Array.isArray(snap.checks) ? snap.checks : []).filter(isValidCheck);
+    const now = Date.now();
+    const checks = (Array.isArray(snap.checks) ? snap.checks : [])
+      .filter(isValidCheck)
+      // 古い訓練は出さない（本番の安否確認と紛らわしくなるため）
+      .filter(c => !c.is_test || now - new Date(c.created_at).getTime() < TEST_SNAPSHOT_MAX_AGE_MS);
     if (checks.length === 0) return null;
     return { ...snap, checks, myResponses: snap.myResponses ?? {} };
   } catch {
@@ -148,10 +158,11 @@ export function saveSafetySnapshot(
   myResponses: Record<string, SafetyResponseLite>,
 ): boolean {
   try {
-    // 訓練（テスト送信）は控えに残さない。
-    // 残すとオフラインの間ずっと「【テスト】安否確認」が画面に居座り、
-    // 本番の安否確認と紛らわしくなるため（＝「またか」で見流される原因になる）。
-    const keep = checks.filter((c) => !c.is_test && c.status === 'active' && !c.cancelled).filter(isValidCheck);
+    // 訓練（テスト送信）も控えに残す。
+    // 訓練は「オフラインでもちゃんと使えるか」を試す時間でもあるので、
+    // ここだけ動かないと「壊れている」ことになってしまう。
+    // ただし何日も残らないよう、読み出すときに1日で切る（TEST_SNAPSHOT_MAX_AGE_MS）。
+    const keep = checks.filter((c) => c.status === 'active' && !c.cancelled).filter(isValidCheck);
     if (keep.length === 0) {
       localStorage.removeItem(SNAPSHOT_KEY);
       return true;
@@ -171,6 +182,29 @@ export function saveSafetySnapshot(
 
 export function clearSafetySnapshot(): void {
   try { localStorage.removeItem(SNAPSHOT_KEY); } catch { /* ignore */ }
+}
+
+// ---------------- 送れなかった理由 ----------------
+// 画面の状態として持つだけだと、ページを開き直したときに理由が消えてしまう。
+// 「答えたつもりなのに届いていない」に本人が気付けなくなるので端末に残す。
+
+export function loadQueueErrors(userId: string): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(QUEUE_ERROR_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as { userId?: string; errors?: Record<string, string> };
+    if (!parsed || parsed.userId !== userId) return {};
+    return parsed.errors ?? {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveQueueErrors(userId: string, errors: Record<string, string>): void {
+  try {
+    if (Object.keys(errors).length === 0) localStorage.removeItem(QUEUE_ERROR_KEY);
+    else localStorage.setItem(QUEUE_ERROR_KEY, JSON.stringify({ userId, errors }));
+  } catch { /* ignore */ }
 }
 
 // ---------------- 表示用 ----------------
