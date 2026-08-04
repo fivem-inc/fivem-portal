@@ -286,16 +286,62 @@ const parseCcRoles = (recipient: string | null): string[] => {
   }
 };
 
-const parseRoleRecipient = (recipient: string | null): { roles: string[]; groupFilter: string } => {
+// グループ絞り込みを無視して常に届く役職の既定値。
+// ⚠️ この値は Edge Function 側（attendance-notify / time-adjustment-notify /
+//    shift-report-confirmed-notify / leave-approved-notify の DEFAULT_ORG_WIDE_ROLES）と
+//    対になっている。変えるときは両方直すこと（設定が未保存の行はEdge側の既定で動く）
+const DEFAULT_ORG_WIDE_ROLES = ['社長', '管理者'];
+
+const parseRoleRecipient = (recipient: string | null): { roles: string[]; groupFilter: string; orgWideRoles: string[] } => {
   try {
     const p = JSON.parse(recipient ?? '{}');
     return {
       roles: Array.isArray(p.roles) ? p.roles : ['リーダー', 'マネージャー'],
       groupFilter: p.groupFilter ?? 'same',
+      orgWideRoles: Array.isArray(p.orgWideRoles) ? p.orgWideRoles : DEFAULT_ORG_WIDE_ROLES,
     };
   } catch {
-    return { roles: ['リーダー', 'マネージャー'], groupFilter: 'same' };
+    return { roles: ['リーダー', 'マネージャー'], groupFilter: 'same', orgWideRoles: DEFAULT_ORG_WIDE_ROLES };
   }
+};
+
+// 「絞り込みの対象外にする役職」の選択欄。
+// 同グループのみ を選んでいるときだけ意味があるので、そのときだけ表示する。
+// プッシュ欄とサイト通知・メール欄の2か所から使うため部品にしてある
+// （同じ作りを2か所に書くと片方だけ直す事故になるため）
+const OrgWideRolesPicker: React.FC<{
+  roles: string[];
+  orgWideRoles: string[];
+  onChange: (next: string[]) => void;
+  isDarkMode: boolean;
+}> = ({ roles, orgWideRoles, onChange, isDarkMode }) => {
+  const selectable = roles.filter(r => r !== '申請者本人');
+  if (selectable.length === 0) return null;
+  return (
+    <div style={{
+      marginTop: 12, padding: '10px 12px', borderRadius: 6,
+      background: isDarkMode ? '#2c3e50' : '#e8f4fd',
+      border: `1px solid ${isDarkMode ? '#3d5a73' : '#bee5eb'}`,
+    }}>
+      <div style={{ fontSize: 12, color: isDarkMode ? '#d0dde8' : '#2c5f6e', marginBottom: 8 }}>
+        絞り込みの対象外にする役職（この役職には全部届きます）
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+        {selectable.map(role => (
+          <label key={role} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', color: isDarkMode ? '#fff' : '#1a4a5a' }}>
+            <input
+              type="checkbox"
+              checked={orgWideRoles.includes(role)}
+              onChange={e => onChange(
+                e.target.checked ? [...orgWideRoles, role] : orgWideRoles.filter(r => r !== role)
+              )}
+            />
+            {role}
+          </label>
+        ))}
+      </div>
+    </div>
+  );
 };
 
 const parseSlackChannels = (recipient: string | null): string[] => {
@@ -903,7 +949,7 @@ const NotificationsTab: React.FC = () => {
                         // 役職を選べるイベント（サイト通知と同様に宛先を選択できる）
                         const roleSelectable = PUSH_ROLE_SELECT_EVENTS.includes(event.key);
                         const withGroupFilter = ROLE_GROUP_BROADCAST_EVENTS.includes(event.key);
-                        const { roles, groupFilter } = parseRoleRecipient(s.recipient);
+                        const { roles, groupFilter, orgWideRoles } = parseRoleRecipient(s.recipient);
                         return (
                           <div key={channel} style={{ background: bg, border: `0.5px solid ${borderColor}`, borderRadius: 8, padding: '12px 14px', marginBottom: 8 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: s.enabled ? 12 : 0 }}>
@@ -928,7 +974,9 @@ const NotificationsTab: React.FC = () => {
                                         checked={roles.includes(role)}
                                         onChange={e => {
                                           const newRoles = e.target.checked ? [...roles, role] : roles.filter(r => r !== role);
-                                          updateLocal(event.key, channel, { recipient: JSON.stringify({ roles: newRoles, groupFilter }) });
+                                          // 役職を外したら、絞り込み対象外リストからも一緒に外す（宛先に居ない役職が残らないように）
+                                          const newOrgWide = orgWideRoles.filter(r => newRoles.includes(r));
+                                          updateLocal(event.key, channel, { recipient: JSON.stringify({ roles: newRoles, groupFilter, orgWideRoles: newOrgWide }) });
                                         }}
                                       />
                                       {role}
@@ -948,12 +996,23 @@ const NotificationsTab: React.FC = () => {
                                             type="radio"
                                             name={`pushGroupFilter_${event.key}`}
                                             checked={groupFilter === opt.value}
-                                            onChange={() => updateLocal(event.key, channel, { recipient: JSON.stringify({ roles, groupFilter: opt.value }) })}
+                                            onChange={() => updateLocal(event.key, channel, { recipient: JSON.stringify({ roles, groupFilter: opt.value, orgWideRoles }) })}
                                           />
                                           {opt.label}
                                         </label>
                                       ))}
                                     </div>
+                                    <div style={{ fontSize: 11, color: subText, marginTop: 6 }}>
+                                      所属チーム（こども／大人／管理部）で判定します
+                                    </div>
+                                    {groupFilter === 'same' && (
+                                      <OrgWideRolesPicker
+                                        roles={roles}
+                                        orgWideRoles={orgWideRoles}
+                                        isDarkMode={isDarkMode}
+                                        onChange={next => updateLocal(event.key, channel, { recipient: JSON.stringify({ roles, groupFilter, orgWideRoles: next }) })}
+                                      />
+                                    )}
                                   </>
                                 )}
                               </div>
@@ -1121,9 +1180,16 @@ const NotificationsTab: React.FC = () => {
                               ) : ROLE_GROUP_BROADCAST_EVENTS.includes(event.key) && channel !== 'slack' ? (
                                 // 時間調整: 役職チェックボックス + グループ絞り込み
                                 (() => {
-                                  const { roles, groupFilter } = parseRoleRecipient(s.recipient);
-                                  const updateRoleRecipient = (newRoles: string[], newFilter: string) =>
-                                    updateLocal(event.key, channel, { recipient: JSON.stringify({ roles: newRoles, groupFilter: newFilter }) });
+                                  const { roles, groupFilter, orgWideRoles } = parseRoleRecipient(s.recipient);
+                                  const updateRoleRecipient = (newRoles: string[], newFilter: string, newOrgWide?: string[]) =>
+                                    updateLocal(event.key, channel, {
+                                      recipient: JSON.stringify({
+                                        roles: newRoles,
+                                        groupFilter: newFilter,
+                                        // 宛先から外した役職は絞り込み対象外リストにも残さない
+                                        orgWideRoles: (newOrgWide ?? orgWideRoles).filter(r => newRoles.includes(r)),
+                                      }),
+                                    });
                                   return (
                                     <div style={{ marginBottom: 12 }}>
                                       <div style={{ fontSize: 12, color: subText, marginBottom: 8 }}>通知先の役職（複数選択可）</div>
@@ -1162,6 +1228,17 @@ const NotificationsTab: React.FC = () => {
                                           </label>
                                         ))}
                                       </div>
+                                      <div style={{ fontSize: 11, color: subText, marginTop: 6 }}>
+                                        所属チーム（こども／大人／管理部）で判定します
+                                      </div>
+                                      {groupFilter === 'same' && (
+                                        <OrgWideRolesPicker
+                                          roles={roles}
+                                          orgWideRoles={orgWideRoles}
+                                          isDarkMode={isDarkMode}
+                                          onChange={next => updateRoleRecipient(roles, groupFilter, next)}
+                                        />
+                                      )}
                                     </div>
                                   );
                                 })()

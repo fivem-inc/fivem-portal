@@ -1,5 +1,5 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0'
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -15,6 +15,10 @@ const TYPE_LABEL: Record<string, string> = {
   early_start: '早出',
   location_change: '勤務地変更',
 }
+
+// グループ絞り込みを無視して常に届く役職の既定値。
+// 管理画面の「絞り込みの対象外にする役職」で上書きできる（recipient.orgWideRoles）。
+const DEFAULT_ORG_WIDE_ROLES = ['社長', '管理者']
 
 const SLACK_WEBHOOK_KEYS: Record<string, string> = {
   leader:     'SLACK_WEBHOOK_LEADER',
@@ -66,32 +70,54 @@ serve(async (req) => {
       .select('group_names')
       .eq('id', user_id)
       .single()
-    const applicantGroups: string[] = (applicantProfile as { group_names?: string[] } | null)?.group_names ?? []
+    const rawGroups: string[] = (applicantProfile as { group_names?: string[] } | null)?.group_names ?? []
+
+    // 🚨 絞り込みに使ってよいのは所属チーム（こども/大人/管理部）だけ。
+    // group_names には配信用グループ（正社員・契約社員 等）が混在しており、
+    // そのまま突き合わせると「同グループのみ」が実質「全員」になってしまう。
+    const { data: teamOptions } = await supabase
+      .from('master_options')
+      .select('value')
+      .eq('category', 'shift_report_group')
+    const teamMaster: string[] = ((teamOptions ?? []) as { value: string }[]).map(t => t.value)
+    // マスタが取れなかったときだけ従来どおり全グループで判定する（誰にも届かないより安全側）
+    const applicantGroups: string[] = teamMaster.length > 0
+      ? rawGroups.filter(g => teamMaster.includes(g))
+      : rawGroups
 
     // 役職+グループフィルタで通知対象user_idを解決
     async function resolveTargetIds(recipient: string | null): Promise<string[]> {
       let roles: string[] = ['リーダー', 'マネージャー']
       let groupFilter = 'same'
+      let orgWide: string[] = DEFAULT_ORG_WIDE_ROLES
       try {
         const p = JSON.parse(recipient ?? '{}')
         if (Array.isArray(p.roles)) roles = p.roles
         if (p.groupFilter) groupFilter = p.groupFilter
+        if (Array.isArray(p.orgWideRoles)) orgWide = p.orgWideRoles
       } catch { /* use defaults */ }
 
-      const includeApplicant = roles.includes('申請者本人')
       const queryRoles = roles.filter(r => r !== '申請者本人')
+      // 「絞り込みの対象外にする役職」はチームに関係なく全件受け取る
+      const groupRoles = queryRoles.filter(r => !orgWide.includes(r))
+      const orgWideRoles = queryRoles.filter(r => orgWide.includes(r))
 
-      let ids: string[] = []
-      if (queryRoles.length > 0) {
-        let query = supabase.from('profiles').select('id').in('role_title', queryRoles).eq('is_active', true)
+      const ids = new Set<string>()
+
+      if (groupRoles.length > 0) {
+        let query = supabase.from('profiles').select('id').in('role_title', groupRoles).eq('is_active', true)
         if (groupFilter === 'same' && applicantGroups.length > 0) {
           query = query.overlaps('group_names', applicantGroups)
         }
         const { data } = await query
-        ids = ((data ?? []) as { id: string }[]).map(d => d.id)
+        for (const d of ((data ?? []) as { id: string }[])) ids.add(d.id)
       }
-      if (includeApplicant) ids = [...new Set([...ids, user_id])]
-      return ids.filter(id => id !== user_id) // 申請者本人には既に別途「受理されました」通知が届くため二重送信を避ける
+      if (orgWideRoles.length > 0) {
+        const { data } = await supabase.from('profiles').select('id').in('role_title', orgWideRoles).eq('is_active', true)
+        for (const d of ((data ?? []) as { id: string }[])) ids.add(d.id)
+      }
+      ids.delete(user_id) // 申請者本人には既に別途「受理されました」通知が届くため二重送信を避ける
+      return [...ids]
     }
 
     async function resolveTargetEmails(recipient: string | null): Promise<string[]> {

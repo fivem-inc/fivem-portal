@@ -1,5 +1,5 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0'
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -17,8 +17,10 @@ const TYPE_LABEL: Record<string, string> = {
   time_change:  '勤務時間変更',
 }
 
-// グループ絞り込みを無視して常に届く役職（組織全体を見る立場）
-const ORG_WIDE_ROLES = ['社長', '管理者']
+// グループ絞り込みを無視して常に届く役職の既定値。
+// 管理画面の「絞り込みの対象外にする役職」で上書きできる（recipient.orgWideRoles）。
+// 設定が無い古い行はこの既定＝従来どおり社長・管理者だけが全件受け取る。
+const DEFAULT_ORG_WIDE_ROLES = ['社長', '管理者']
 
 const SLACK_WEBHOOK_KEYS: Record<string, string> = {
   leader:     'SLACK_WEBHOOK_LEADER',
@@ -80,32 +82,48 @@ serve(async (req) => {
     const settings = (settingsData ?? []) as { channel: string; enabled: boolean; recipient: string | null; subject: string | null; template: string | null }[]
     const getSetting = (ch: string) => settings.find(s => s.channel === ch)
 
-    // 該当スタッフのグループ（複数人のときは全員分をまとめる。誰か1人でも同じグループなら届く）
+    // 該当スタッフのグループ（複数人のときは全員分をまとめる。誰か1人でも同じチームなら届く）
     const { data: staffProfiles } = await supabase
       .from('profiles')
       .select('group_names')
       .in('id', staffIds)
-    const staffGroups: string[] = [...new Set(
+    const rawGroups: string[] = [...new Set(
       ((staffProfiles ?? []) as { group_names?: string[] }[]).flatMap(p => p.group_names ?? [])
     )]
 
+    // 🚨 絞り込みに使ってよいのは所属チーム（こども/大人/管理部）だけ。
+    // group_names には配信用グループ（正社員・契約社員／マネージャー・リーダー 等）が混在しており、
+    // リーダー・マネージャー全員が「正社員・契約社員」を持っているため、
+    // そのまま突き合わせると「同グループのみ」が実質「全員」になってしまう。
+    const { data: teamOptions } = await supabase
+      .from('master_options')
+      .select('value')
+      .eq('category', 'shift_report_group')
+    const teamMaster: string[] = ((teamOptions ?? []) as { value: string }[]).map(t => t.value)
+    // マスタが取れなかったときだけ従来どおり全グループで判定する（誰にも届かないより安全側）
+    const staffGroups: string[] = teamMaster.length > 0
+      ? rawGroups.filter(g => teamMaster.includes(g))
+      : rawGroups
+
     // 役職＋グループフィルタで通知対象user_idを解決
-    // ・リーダー/マネージャー … groupFilter=same のとき同グループのみ
-    // ・社長/管理者 … 組織全体を見る立場なのでグループ絞り込みを無視して常に対象
+    // ・groupFilter=same のとき、所属チームが重なる人だけに絞る
+    // ・「絞り込みの対象外にする役職」に入っている役職は、チームに関係なく常に対象
     // ・申請者本人(=該当スタッフ) … チェックされていれば本人も対象
     async function resolveTargetIds(recipient: string | null): Promise<string[]> {
       let roles: string[] = ['リーダー', 'マネージャー']
       let groupFilter = 'same'
+      let orgWide: string[] = DEFAULT_ORG_WIDE_ROLES
       try {
         const p = JSON.parse(recipient ?? '{}')
         if (Array.isArray(p.roles)) roles = p.roles
         if (p.groupFilter) groupFilter = p.groupFilter
+        if (Array.isArray(p.orgWideRoles)) orgWide = p.orgWideRoles
       } catch { /* use defaults */ }
 
       const includeStaff = roles.includes('申請者本人')
       const queryRoles = roles.filter(r => r !== '申請者本人')
-      const groupRoles = queryRoles.filter(r => !ORG_WIDE_ROLES.includes(r))
-      const orgWideRoles = queryRoles.filter(r => ORG_WIDE_ROLES.includes(r))
+      const groupRoles = queryRoles.filter(r => !orgWide.includes(r))
+      const orgWideRoles = queryRoles.filter(r => orgWide.includes(r))
 
       const ids = new Set<string>()
 
