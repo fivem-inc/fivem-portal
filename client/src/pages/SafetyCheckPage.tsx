@@ -154,6 +154,41 @@ const fromSnapshot = (c: SafetyCheckLite): SafetyCheck => ({
   next_remind_at: null, all_answered_at: null,
 });
 
+// ---- 対応記録（誰が担当して、電話の結果がどうだったか）----
+interface SupportLog {
+  id: string;
+  target_user_id: string;
+  author_id: string;
+  kind: 'claim' | 'note' | 'done' | 'release';
+  result: string | null;
+  body: string | null;
+  created_at: string;
+}
+
+const SUPPORT_RESULTS = ['つながった', 'つながらない', '留守電に入れた', '家族が出た', 'その他'];
+
+// 担当したまま結果が書かれていない状態を、これだけ過ぎたら目立たせる
+const SUPPORT_STALE_MS = 30 * 60 * 1000;
+
+/** その人について、いま誰が担当しているか。記録を古い順にたどって求める。 */
+function supportStateOf(logs: SupportLog[], targetId: string) {
+  const mine = logs.filter(l => l.target_user_id === targetId)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  let status: 'none' | 'claimed' | 'done' = 'none';
+  let authorId: string | null = null;
+  let since: string | null = null;
+  let notedAfterClaim = false;
+  for (const l of mine) {
+    if (l.kind === 'claim') { status = 'claimed'; authorId = l.author_id; since = l.created_at; notedAfterClaim = false; }
+    else if (l.kind === 'release') { status = 'none'; authorId = null; since = null; notedAfterClaim = false; }
+    else if (l.kind === 'done') { status = 'done'; }
+    else if (l.kind === 'note' && status === 'claimed') { notedAfterClaim = true; }
+  }
+  const stale = status === 'claimed' && !notedAfterClaim && !!since
+    && Date.now() - new Date(since).getTime() > SUPPORT_STALE_MS;
+  return { status, authorId, since, stale, history: mine.slice().reverse() };
+}
+
 // 送り直しても通らない失敗を、本人に分かる日本語にする。
 // 黙ってキューから消すと「答えたつもりなのに届いていない」状態になるため必ず知らせる。
 function friendlyQueueError(error: { code?: string; message?: string } | null): string {
@@ -599,6 +634,7 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
             onClosed={loadAll}
             isPastCheck={!!selectedPastCheck}
             onBackToHistory={() => { setSelectedSummaryId(null); setSearchParams({}); setView('history'); }}
+            currentUserId={user.id}
             isDark={isDark} card={card} text={text} sub={sub} border={border}
           />
         )}
@@ -618,6 +654,121 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
           ホームに戻る
         </button>
       </div>
+    </div>
+  );
+};
+
+// ============================================================
+// 対応記録パネル（助けが必要な人・未回答の人の両方で使う）
+//   誰が担当しているかを全員に見せ、電話の結果を時系列で残す。
+// ============================================================
+const fmtLogTime = (s: string): string => {
+  const d = new Date(s.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(s) ? s : s + 'Z');
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+const SupportPanel: React.FC<{
+  targetId: string;
+  phone?: string;
+  logs: SupportLog[];
+  nameOf: (id: string) => string;
+  canWrite: boolean;
+  busy: boolean;
+  noteOpen: boolean;
+  onOpenNote: (open: boolean) => void;
+  onAdd: (targetId: string, kind: SupportLog['kind'], result?: string, body?: string) => void;
+  isDark: boolean; text: string; sub: string; border: string;
+}> = ({ targetId, phone, logs, nameOf, canWrite, busy, noteOpen, onOpenNote, onAdd, isDark, text, sub, border }) => {
+  const [result, setResult] = useState('');
+  const [body, setBody] = useState('');
+  const st = supportStateOf(logs, targetId);
+  const linkColor = isDark ? '#90caf9' : '#1976d2';
+
+  const btn = (label: string, onClick: () => void, tone: 'plain' | 'primary' = 'plain') => (
+    <button type="button" disabled={busy} onClick={onClick}
+      style={{
+        fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', whiteSpace: 'nowrap',
+        border: tone === 'primary' ? 'none' : `1px solid ${border}`,
+        background: tone === 'primary' ? '#1976d2' : 'transparent',
+        color: tone === 'primary' ? '#fff' : sub,
+      }}>
+      {label}
+    </button>
+  );
+
+  const logLabel = (l: SupportLog): string => {
+    if (l.kind === 'claim') return '対応を開始しました';
+    if (l.kind === 'done') return '対応を終えました';
+    if (l.kind === 'release') return '担当を取り消しました';
+    return [l.result, l.body].filter(Boolean).join('・') || '記録';
+  };
+
+  return (
+    <div style={{ marginTop: 6 }}>
+      {/* いまの担当。🚨 これが全員に見えることで二重に電話をかけるのを防ぐ */}
+      {st.status === 'claimed' && (
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#856404', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 6, padding: '4px 8px', marginBottom: 4 }}>
+          🟡 {nameOf(st.authorId!)} が対応します（{st.since ? fmtLogTime(st.since) : ''}〜）
+          {st.stale && <span style={{ color: '#a94442' }}> ／ ⚠️ 30分以上、結果が書かれていません</span>}
+        </div>
+      )}
+      {st.status === 'done' && (
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#166534', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 6, padding: '4px 8px', marginBottom: 4 }}>
+          ✓ 対応済み
+        </div>
+      )}
+
+      {canWrite && (
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 4 }}>
+          {/* 押した瞬間に「担当します」が全員に見える。実際にかけたかは端末側の話なので分からない */}
+          {phone ? (
+            <a href={`tel:${phone}`} onClick={() => onAdd(targetId, 'claim')}
+              style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, border: 'none', background: '#1976d2', color: '#fff', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+              📞 電話する（担当になる）
+            </a>
+          ) : (
+            btn('自分が対応する', () => onAdd(targetId, 'claim'), 'primary')
+          )}
+          {btn('結果を書く', () => onOpenNote(!noteOpen))}
+          {st.status === 'claimed' && btn('対応を終える', () => onAdd(targetId, 'done'))}
+          {st.status === 'claimed' && btn('担当を取り消す', () => onAdd(targetId, 'release'))}
+        </div>
+      )}
+
+      {canWrite && noteOpen && (
+        <div style={{ border: `1px solid ${border}`, borderRadius: 6, padding: 8, marginBottom: 4 }}>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 6 }}>
+            {SUPPORT_RESULTS.map(r => (
+              <button key={r} type="button" onClick={() => setResult(r)}
+                style={{ fontSize: 11, padding: '4px 8px', borderRadius: 6, cursor: 'pointer', fontWeight: 700, border: `1px solid ${result === r ? '#1976d2' : border}`, background: result === r ? '#1976d2' : 'transparent', color: result === r ? '#fff' : sub }}>
+                {r}
+              </button>
+            ))}
+          </div>
+          <input value={body} onChange={e => setBody(e.target.value)} placeholder="例：自宅で無事。水が止まっているとのこと"
+            style={{ width: '100%', padding: '5px 8px', fontSize: 12, borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#3d3d55' : '#fff', color: text, marginBottom: 6, boxSizing: 'border-box' }} />
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button type="button" disabled={busy || (!result && !body.trim())}
+              onClick={() => { onAdd(targetId, 'note', result || undefined, body); setResult(''); setBody(''); }}
+              style={{ fontSize: 11, padding: '4px 12px', borderRadius: 6, border: 'none', background: (result || body.trim()) ? '#1976d2' : (isDark ? '#3d3d55' : '#e9ecef'), color: (result || body.trim()) ? '#fff' : sub, fontWeight: 700, cursor: 'pointer' }}>
+              記録する
+            </button>
+            {btn('キャンセル', () => { onOpenNote(false); setResult(''); setBody(''); })}
+          </div>
+        </div>
+      )}
+
+      {st.history.length > 0 && (
+        <div style={{ borderLeft: `2px solid ${border}`, paddingLeft: 8 }}>
+          {st.history.map(l => (
+            <div key={l.id} style={{ fontSize: 11, color: sub, marginBottom: 2 }}>
+              <span style={{ color: linkColor }}>{fmtLogTime(l.created_at)}</span>{' '}
+              <span style={{ fontWeight: 700, color: text }}>{nameOf(l.author_id)}</span>{' '}
+              {logLabel(l)}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
@@ -1205,8 +1356,9 @@ const SummaryView: React.FC<{
   onClosed: () => void;
   isPastCheck: boolean;          // 履歴タブから過去のものを開いているか
   onBackToHistory: () => void;
+  currentUserId: string;
   isDark: boolean; card: string; text: string; sub: string; border: string;
-}> = ({ checks, selectedId, onSelect, isManagerPlus, onClosed, isPastCheck, onBackToHistory, isDark, card, text, sub, border }) => {
+}> = ({ checks, selectedId, onSelect, isManagerPlus, onClosed, isPastCheck, onBackToHistory, currentUserId, isDark, card, text, sub, border }) => {
   const check = checks.find(c => c.id === selectedId) || checks[0] || null;
   // ダーク背景に濃い青・濃い赤の文字は沈んで読めないので、暗い時は明るい色にする
   const linkColor = isDark ? '#90caf9' : '#1976d2';
@@ -1220,7 +1372,12 @@ const SummaryView: React.FC<{
   const [confirmAction, setConfirmAction] = useState<'close' | 'cancel' | null>(null);
   const [proxyForId, setProxyForId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [attendingId, setAttendingId] = useState<string | null>(null); // 対応中マーク（このセッション内のみ）
+  // 対応記録。🚨 以前は画面の中だけの印だったため他の人に見えず、二重電話を防げていなかった。
+  //    いまはDBに保存し、集計を見ている全員に「誰が担当しているか」が見える。
+  const [supportLogs, setSupportLogs] = useState<SupportLog[]>([]);
+  const [authorNames, setAuthorNames] = useState<Record<string, string>>({});
+  const [noteFor, setNoteFor] = useState<string | null>(null);   // 結果を書く欄を開いている相手
+  const [supportErr, setSupportErr] = useState('');
 
   const load = useCallback(async () => {
     if (!check) return;
@@ -1233,6 +1390,23 @@ const SummaryView: React.FC<{
     setResponses((res ?? []) as SafetyResponse[]);
     const { data: ph } = await supabase.from('staff_phone_numbers').select('user_id, phone').in('user_id', ids);
     setPhones(Object.fromEntries((ph ?? []).map((p: { user_id: string; phone: string }) => [p.user_id, p.phone])));
+
+    // 対応記録（誰が担当・電話の結果）
+    const { data: logs } = await supabase
+      .from('safety_check_support_logs')
+      .select('id, target_user_id, author_id, kind, result, body, created_at')
+      .eq('check_id', check.id)
+      .order('created_at', { ascending: true });
+    const logRows = (logs ?? []) as SupportLog[];
+    setSupportLogs(logRows);
+    // 記録を書いた人の名前（宛先に入っていないマネージャーが書くこともあるので別途引く）
+    const authorIds = [...new Set(logRows.map(l => l.author_id))].filter(id => !ids.includes(id));
+    if (authorIds.length > 0) {
+      const { data: authors } = await supabase.from('profiles').select('id, name').in('id', authorIds);
+      setAuthorNames(Object.fromEntries((authors ?? []).map((a: { id: string; name: string }) => [a.id, a.name])));
+    } else {
+      setAuthorNames({});
+    }
   }, [check]);
 
   useEffect(() => { load(); }, [load]);
@@ -1281,6 +1455,26 @@ const SummaryView: React.FC<{
     onClosed();
   };
 
+  const nameOf = (id: string) => recipients.find(p => p.id === id)?.name || authorNames[id] || '—';
+
+  // 対応記録を1件足す（追記のみ。書き換え・削除はできない）
+  const addSupportLog = async (targetId: string, kind: SupportLog['kind'], result?: string, body?: string) => {
+    setBusy(true);
+    const { error } = await supabase.from('safety_check_support_logs').insert({
+      check_id: check.id,
+      target_user_id: targetId,
+      author_id: currentUserId,
+      kind,
+      result: result ?? null,
+      body: body?.trim() ? body.trim() : null,
+    });
+    setBusy(false);
+    if (error) { setSupportErr('記録できませんでした。電波の状態を確認してもう一度お試しください'); return; }
+    setSupportErr('');
+    setNoteFor(null);
+    load();
+  };
+
   return (
     <div>
       {/* 履歴から開いたときは、戻り道をはっきり出す */}
@@ -1307,6 +1501,12 @@ const SummaryView: React.FC<{
         </div>
         <p style={{ fontSize: 12, color: sub, margin: '0 0 12px' }}>{fmtDateTime(check.created_at)}発信</p>
 
+        {supportErr && (
+          <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 12, color: '#842029', fontWeight: 700 }}>
+            {supportErr}
+          </div>
+        )}
+
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
           {check.options.map(o => (
             <div key={o.key} style={{ flex: '1 1 80px', background: isDark ? '#1e1e2e' : '#f8f9fa', borderRadius: 8, padding: '8px', textAlign: 'center' }}>
@@ -1326,10 +1526,22 @@ const SummaryView: React.FC<{
             {helpNeeded.map(r => {
               const prof = recipients.find(p => p.id === r.user_id);
               return (
-                <div key={r.user_id} style={{ fontSize: 12, color: dangerText, marginBottom: 3 }}>
+                <div key={r.user_id} style={{ fontSize: 12, color: dangerText, marginBottom: 8, paddingBottom: 8, borderBottom: `1px solid ${dangerText}22` }}>
                   <strong>{prof?.name || r.user_id}</strong>
                   {phones[r.user_id] && <> ・<a href={`tel:${phones[r.user_id]}`} style={{ color: dangerText }}>{phones[r.user_id]}</a></>}
                   {r.comment && <div style={{ fontSize: 11 }}>「{r.comment}」</div>}
+                  <SupportPanel
+                    targetId={r.user_id}
+                    phone={phones[r.user_id]}
+                    logs={supportLogs}
+                    nameOf={nameOf}
+                    canWrite={canProxy}
+                    busy={busy}
+                    noteOpen={noteFor === r.user_id}
+                    onOpenNote={(open) => setNoteFor(open ? r.user_id : null)}
+                    onAdd={addSupportLog}
+                    isDark={isDark} text={text} sub={sub} border={border}
+                  />
                 </div>
               );
             })}
@@ -1343,18 +1555,15 @@ const SummaryView: React.FC<{
             <p style={{ fontSize: 12, fontWeight: 700, color: text, margin: '0 0 6px' }}>未回答（{unanswered.length}人）</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {unanswered.map(p => (
-                <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, border: `1px solid ${border}`, borderRadius: 6, padding: '6px 8px' }}>
+                <div key={p.id} style={{ fontSize: 12, border: `1px solid ${border}`, borderRadius: 6, padding: '6px 8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ minWidth: 100, color: text, fontWeight: 700 }}>{p.name}</span>
                   <span style={{ flex: 1, fontSize: 11, color: sub }}>{[teamOf(p.group_names, teams), p.role_title].filter(Boolean).join('・') || '—'}</span>
                   {phones[p.id] ? (
-                    <a href={`tel:${phones[p.id]}`} style={{ color: linkColor, fontSize: 11, whiteSpace: 'nowrap' }}>📞 {phones[p.id]}</a>
+                    <span style={{ color: sub, fontSize: 11, whiteSpace: 'nowrap' }}>{phones[p.id]}</span>
                   ) : (
                     <span style={{ color: sub, fontSize: 11 }}>番号なし</span>
                   )}
-                  <button type="button" onClick={() => setAttendingId(prev => prev === p.id ? null : p.id)}
-                    style={{ fontSize: 10, padding: '2px 6px', borderRadius: 10, border: attendingId === p.id ? '1px solid #856404' : `1px solid ${border}`, background: attendingId === p.id ? '#fff3cd' : 'transparent', color: attendingId === p.id ? '#856404' : sub, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                    {attendingId === p.id ? '対応中' : '対応中にする'}
-                  </button>
                   {canProxy && (
                     proxyForId === p.id ? null : (
                       <button type="button" onClick={() => setProxyForId(p.id)}
@@ -1363,6 +1572,19 @@ const SummaryView: React.FC<{
                       </button>
                     )
                   )}
+                </div>
+                <SupportPanel
+                  targetId={p.id}
+                  phone={phones[p.id]}
+                  logs={supportLogs}
+                  nameOf={nameOf}
+                  canWrite={canProxy}
+                  busy={busy}
+                  noteOpen={noteFor === p.id}
+                  onOpenNote={(open) => setNoteFor(open ? p.id : null)}
+                  onAdd={addSupportLog}
+                  isDark={isDark} text={text} sub={sub} border={border}
+                />
                 </div>
               ))}
             </div>
