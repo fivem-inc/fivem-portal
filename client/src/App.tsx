@@ -4,6 +4,7 @@ import { Routes, Route, Navigate, Outlet, BrowserRouter, useNavigate, useLocatio
 import SignIn from './pages/SignIn';
 import ResetPassword from './pages/ResetPassword';
 import ExpenseForm from './components/ExpenseForm';
+import OvertimeThresholdBanner from './components/OvertimeThresholdBanner';
 import { todayJstStr } from './lib/breakCalc';
 
 // 設定系ページは起動直後のランディング（ホーム）に不要なので遅延読込にして初期バンドルを軽くする
@@ -1405,120 +1406,6 @@ const OvertimeUnreportedBanner: React.FC<{ userId: string; canOvertime: boolean 
   );
 };
 
-// 残業超過FYIバナー（本人＋リーダー(自チーム)＋マネージャー以上。タップ/✕で閉じる・調整提案は任意）
-const OvertimeThresholdBanner: React.FC<{ userId: string; roleTitle: string; isAdmin: boolean; canOvertime: boolean }> = ({ userId, roleTitle, isAdmin, canOvertime }) => {
-  const navigate = useNavigate();
-  const [items, setItems] = useState<{ targetId: string; name: string | null; total: number; isSelf: boolean }[]>([]);
-  const [threshold, setThreshold] = useState(600);
-  const [periodStart, setPeriodStart] = useState('');
-
-  useEffect(() => {
-    if (!canOvertime && !isAdmin) return;
-    (async () => {
-      // JSTの今日から今期（16日〜翌15日）を求める
-      const now = new Date();
-      const y = now.getFullYear(); const m = now.getMonth() + 1; const d = now.getDate();
-      const ps = d >= 16
-        ? `${y}-${String(m).padStart(2, '0')}-16`
-        : `${m === 1 ? y - 1 : y}-${String(m === 1 ? 12 : m - 1).padStart(2, '0')}-16`;
-      setPeriodStart(ps);
-
-      const [setRes, repRes, dismissRes, permRes] = await Promise.all([
-        supabase.from('overtime_settings').select('threshold_minutes, banner_group_names').eq('id', 1).maybeSingle(),
-        supabase.from('overtime_reports').select('applicant_id, diff_minutes').eq('pay_period_start', ps).eq('status', 'confirmed').gt('diff_minutes', 0),
-        supabase.from('overtime_banner_dismissals').select('target_user_id').eq('user_id', userId).eq('pay_period_start', ps),
-        supabase.rpc('has_feature_permission', { p_feature: 'overtime_summary' }),
-      ]);
-      const th = (setRes.data?.threshold_minutes as number | undefined) ?? 600;
-      setThreshold(th);
-      const whitelist: string[] = (setRes.data?.banner_group_names as string[] | null) ?? [];
-      const dismissed = new Set(((dismissRes.data as { target_user_id: string }[] | null) ?? []).map(r => r.target_user_id));
-      const canSummary = isAdmin || permRes.data === true;
-
-      // 残業（プラス分のみ）を人別に合算
-      const totals = new Map<string, number>();
-      for (const r of (repRes.data as { applicant_id: string; diff_minutes: number | null }[] | null) ?? []) {
-        totals.set(r.applicant_id, (totals.get(r.applicant_id) ?? 0) + (r.diff_minutes ?? 0));
-      }
-      const overIds = [...totals.entries()].filter(([, v]) => v > th).map(([id]) => id);
-      if (overIds.length === 0) { setItems([]); return; }
-
-      // 名前・グループ（リーダーは自チームのみ）
-      const { data: profs } = await supabase.from('profiles').select('id, name, group_names').in('id', [...new Set([...overIds, userId])]);
-      const profMap = new Map(((profs as { id: string; name: string | null; group_names: string[] | null }[] | null) ?? []).map(p => [p.id, p]));
-      const myGroups = new Set(((profMap.get(userId)?.group_names ?? []) as string[]).filter(g => whitelist.includes(g)));
-      const isManagerPlus = isAdmin || ['マネージャー', '社長', '管理者'].includes(roleTitle);
-      const isLeader = roleTitle === 'リーダー';
-
-      const result: { targetId: string; name: string | null; total: number; isSelf: boolean }[] = [];
-      for (const id of overIds) {
-        if (dismissed.has(id)) continue;
-        const isSelf = id === userId;
-        if (isSelf) { result.push({ targetId: id, name: null, total: totals.get(id)!, isSelf: true }); continue; }
-        if (!canSummary) continue;
-        if (isManagerPlus) { result.push({ targetId: id, name: profMap.get(id)?.name ?? '', total: totals.get(id)!, isSelf: false }); continue; }
-        if (isLeader) {
-          const targetGroups = (profMap.get(id)?.group_names ?? []) as string[];
-          if (targetGroups.some(g => myGroups.has(g))) {
-            result.push({ targetId: id, name: profMap.get(id)?.name ?? '', total: totals.get(id)!, isSelf: false });
-          }
-        }
-      }
-      result.sort((a, b) => (a.isSelf === b.isSelf) ? b.total - a.total : (a.isSelf ? -1 : 1));
-      setItems(result);
-    })();
-  }, [userId, roleTitle, isAdmin, canOvertime]);
-
-  if (items.length === 0) return null;
-
-  const fmtH = (min: number) => {
-    const h = Math.floor(min / 60); const m2 = min % 60;
-    return m2 > 0 ? `${h}時間${m2}分` : `${h}時間`;
-  };
-  const fmtSigned = (min: number) => `＋${Math.floor(min / 60)}:${String(min % 60).padStart(2, '0')}`;
-  const periodLabel = (() => {
-    if (!periodStart) return '';
-    const [, m2] = periodStart.split('-').map(Number);
-    const nm = m2 === 12 ? 1 : m2 + 1;
-    return `${m2}/16〜${nm}/15`;
-  })();
-
-  const dismiss = async (targetId: string) => {
-    setItems(prev => prev.filter(i => i.targetId !== targetId));
-    await supabase.from('overtime_banner_dismissals')
-      .upsert({ user_id: userId, target_user_id: targetId, pay_period_start: periodStart })
-      .then(null, () => {});
-  };
-
-  return (
-    <>
-      {items.map(item => (
-        <div key={item.targetId} style={{
-          margin: '0 0 10px 0', padding: '12px 16px',
-          background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10,
-          display: 'flex', alignItems: 'flex-start', gap: 10,
-        }}>
-          <span style={{ fontSize: 20, flexShrink: 0 }}>🕐</span>
-          <div onClick={() => { navigate('/overtime?tab=history'); }} style={{ flex: 1, cursor: 'pointer' }}>
-            {item.isSelf ? (
-              <div style={{ fontSize: 13.5, color: '#1e40af', lineHeight: 1.7 }}>
-                <span style={{ fontWeight: 'bold' }}>今月（{periodLabel}）の残業が{fmtH(threshold)}を超えました。</span><br />
-                時間調整をお願いします。調整する日がわからない場合はリーダー・マネージャーにご相談ください。
-              </div>
-            ) : (
-              <div style={{ fontSize: 13.5, color: '#1e40af', lineHeight: 1.7 }}>
-                <span style={{ fontWeight: 'bold' }}>{item.name}さんの今月（{periodLabel}）の残業が{fmtH(threshold)}を超えています（現在 {fmtSigned(item.total)}）。</span><br />
-                必要に応じて時間調整の相談をご検討ください。
-              </div>
-            )}
-          </div>
-          <button onClick={() => dismiss(item.targetId)} title="このお知らせを閉じる"
-            style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: 15, padding: '0 2px', flexShrink: 0, lineHeight: 1 }}>✕</button>
-        </div>
-      ))}
-    </>
-  );
-};
 
 // メインのDashboardコンポーネント
 const Dashboard: React.FC = () => {
@@ -1718,7 +1605,7 @@ const Dashboard: React.FC = () => {
       <OvertimeUnreportedBanner userId={user.id} canOvertime={canOvertime} />
 
       {/* ④-5 残業超過FYIバナー（本人・リーダー自チーム・マネージャー以上。閉じられる） */}
-      <OvertimeThresholdBanner userId={user.id} roleTitle={roleTitle} isAdmin={isAdmin} canOvertime={canOvertime} />
+      <OvertimeThresholdBanner userId={user.id} isAdmin={isAdmin} canOvertime={canOvertime} />
 
       {/* ⑤ 有給申請バナー（パート向け） */}
       {leaveRequestEnabled && !leaveSubmitted && (

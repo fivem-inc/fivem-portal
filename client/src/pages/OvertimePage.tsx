@@ -1935,7 +1935,11 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
     return () => clearTimeout(t);
   }, [savedBanner]);
   const [cancelTargetId, setCancelTargetId] = useState<string | null>(null);
-  const [historyMode, setHistoryMode] = useState<'own' | 'summary'>(searchParams.get('staff') ? 'summary' : 'own');
+  // ?staff= で個人詳細に直行するほか、?mode=summary で部門集計を開ける
+  // （残業超過のお知らせバナーから飛んでくる。指定が無ければ従来どおり自分の履歴）
+  const [historyMode, setHistoryMode] = useState<'own' | 'summary'>(
+    searchParams.get('staff') || searchParams.get('mode') === 'summary' ? 'summary' : 'own'
+  );
   const [canSummary, setCanSummary] = useState(false);
   const [canShiftDirectory, setCanShiftDirectory] = useState(false); // 全員のシフト予定ページへの導線表示
   const navigate = useNavigate();

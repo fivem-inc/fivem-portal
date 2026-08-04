@@ -120,6 +120,7 @@ const EVENT_GROUPS = [
       { key: 'reminder:scheduled',     label: '定期リマインド' },
       { key: 'reminder:unread',        label: '連絡板 締切未読リマインド' },
       { key: 'overtime:unreported',    label: '残業 実績未報告リマインド（本人）' },
+      { key: 'overtime:threshold',     label: '残業が目安を超えたお知らせ（本人・上長）' },
     ],
   },
   {
@@ -229,6 +230,7 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
   'reminder:scheduled':          ['{{タイトル}}', '{{本文}}'],
   'reminder:unread':             ['{{件名}}', '{{リンク}}'],
   'overtime:unreported':         ['{{件数}}', '{{日付}}', '{{リンク}}'],
+  'overtime:threshold':          ['{{対象者名}}', '{{期間}}', '{{残業時間}}', '{{リンク}}'],
   'overtime:new_request':        ['{{申請者名}}', '{{日付}}', '{{時間}}', '{{リンク}}'],
   'overtime:request_confirmed':  ['{{日付}}', '{{時間}}', '{{リンク}}'],
   'overtime:confirmed':          ['{{日付}}', '{{時間}}', '{{リンク}}'],
@@ -247,9 +249,9 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
 };
 
 // 役職＋グループ絞り込みで一斉配信するイベント（時間調整・勤務変更受理など、UIとロジックを共有する）
-const ROLE_GROUP_BROADCAST_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi'];
+const ROLE_GROUP_BROADCAST_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi', 'overtime:threshold'];
 // プッシュ通知で役職を選択できるイベント（一斉通知系。宛先が自動で決まらないもの）
-const PUSH_ROLE_SELECT_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'purchase:reimbursement_recorded', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi'];
+const PUSH_ROLE_SELECT_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'purchase:reimbursement_recorded', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi', 'overtime:threshold'];
 
 // 備品購入申請: 依頼された全マネージャー・社長など、宛先がその都度動的に決まるイベント。
 // サイト通知・メールの宛先はコード側で自動計算しており、この画面のチェックボックスでは

@@ -63,6 +63,10 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string }> = {
   "overtime_proposal:responded": { app: "残業調整", word: "新着", url: "/overtime" },
   // 残業の実績未報告リマインド（本人へ日次・安全語「新着」）
   "overtime:unreported":         { app: "残業", word: "新着", url: "/overtime" },
+  // 残業がしきい値を超えたお知らせ。他人の残業申請が回ってきたのと区別できるよう
+  // アプリ名を「残業」と分けている。
+  // ⚠️「勤務時間」は実機未検証の語。Chromeが警告表示に化けたらここを "残業" に戻す
+  "overtime:threshold":          { app: "勤務時間", word: "新着", url: "/overtime?tab=history" },
   // 残業・時間管理の承認フロー系。
   // word は実機テスト済みの安全語のみ（未承認／差戻／新着）。「承認」「受理」は未検証のため使わない。
   // 受理・取消・修正の結果報告は区別せず「新着」に寄せる（詳細はベル・画面で見る前提）。

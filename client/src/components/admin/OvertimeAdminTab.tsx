@@ -66,6 +66,96 @@ interface StaffRow {
   employment_type: string | null;
 }
 
+// 役職ごと・個人ごとのしきい値を1件追加するフォーム。
+// 「対象外」を選ぶとその人（その役職）にはお知らせを出さない（みなし残業込みの給与の方など）
+const ROLE_CHOICES = ['一般', 'フロア責任者', 'リーダー', 'マネージャー', '社長'];
+
+const ThresholdRuleForm: React.FC<{
+  staff: StaffRow[];
+  isDarkMode: boolean;
+  text: string;
+  subText: string;
+  inputStyle: React.CSSProperties;
+  borderColor: string;
+  onSave: (target: { role_title: string } | { user_id: string }, minutes: number | null, excluded: boolean) => void;
+}> = ({ staff, isDarkMode, text, subText, inputStyle, borderColor, onSave }) => {
+  const [mode, setMode] = useState<'role' | 'user'>('role');
+  const [roleTitle, setRoleTitle] = useState(ROLE_CHOICES[0]);
+  const [userId, setUserId] = useState('');
+  const [hours, setHours] = useState('5');
+  const [mins, setMins] = useState('0');
+  const [excluded, setExcluded] = useState(false);
+
+  const toggleStyle = (on: boolean): React.CSSProperties => ({
+    fontSize: 13, padding: '6px 14px', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold',
+    background: on ? '#1976d2' : '#e3f2fd',
+    color: on ? '#fff' : '#1565c0',
+    border: `2px solid ${on ? '#1565c0' : '#90caf9'}`,
+  });
+
+  const submit = () => {
+    const h = parseInt(hours, 10), m = parseInt(mins, 10);
+    if (!excluded && (isNaN(h) || h < 0 || isNaN(m) || m < 0 || m > 59)) return;
+    if (mode === 'user' && !userId) return;
+    onSave(
+      mode === 'role' ? { role_title: roleTitle } : { user_id: userId },
+      excluded ? null : h * 60 + m,
+      excluded,
+    );
+    setUserId('');
+  };
+
+  return (
+    <div style={{ border: `1px solid ${borderColor}`, borderRadius: 8, padding: '10px 12px' }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+        <button type="button" style={toggleStyle(mode === 'role')} onClick={() => setMode('role')}>役職ごと</button>
+        <button type="button" style={toggleStyle(mode === 'user')} onClick={() => setMode('user')}>個人ごと</button>
+      </div>
+      {mode === 'role' ? (
+        <select value={roleTitle} onChange={e => setRoleTitle(e.target.value)}
+          style={{ ...inputStyle, marginBottom: 10, width: '100%', maxWidth: 240 }}>
+          {ROLE_CHOICES.map(r => <option key={r} value={r}>{r}</option>)}
+        </select>
+      ) : (
+        <div style={{ marginBottom: 10, maxWidth: 280 }}>
+          <SearchableSelect
+            value={userId}
+            onChange={setUserId}
+            options={staff.filter(s => s.employment_type !== 'パート')
+              .map(s => [s.id, `${s.name}（${s.role_title}）`] as [string, string])}
+            allLabel="選んでください"
+            isDarkMode={isDarkMode}
+          />
+        </div>
+      )}
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: text, marginBottom: 10, cursor: 'pointer' }}>
+        <input type="checkbox" checked={excluded} onChange={e => setExcluded(e.target.checked)} />
+        対象外にする（お知らせを出さない）
+      </label>
+      {!excluded && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+          <input type="number" inputMode="numeric" min={0} step={1} value={hours}
+            onChange={e => setHours(e.target.value)} style={{ ...inputStyle, width: 70, textAlign: 'right' }} />
+          <span style={{ fontSize: 13, color: text }}>時間</span>
+          <input type="number" inputMode="numeric" min={0} max={59} step={1} value={mins}
+            onChange={e => setMins(e.target.value)} style={{ ...inputStyle, width: 70, textAlign: 'right' }} />
+          <span style={{ fontSize: 13, color: text }}>分</span>
+        </div>
+      )}
+      <button type="button" onClick={submit}
+        style={{
+          fontSize: 13, padding: '7px 16px', borderRadius: 6, cursor: 'pointer',
+          background: '#1976d2', color: '#fff', border: 'none', fontWeight: 'bold',
+        }}>
+        追加する
+      </button>
+      <p style={{ margin: '8px 0 0', fontSize: 11.5, color: subText }}>
+        同じ役職・同じ人をもう一度追加すると、あとから追加した内容で上書きされます。
+      </p>
+    </div>
+  );
+};
+
 const DAY_ORDER: DayKind[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun', 'holiday', 'work_on_closed'];
 // 週の労働時間合計に含める曜日（祝・出は特別区分なので除く）
 const WEEK_DAYS: DayKind[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
@@ -521,16 +611,34 @@ const OvertimeAdminTab: React.FC = () => {
   const [settingsMsg, setSettingsMsg] = useState('');
   const [settingsErr, setSettingsErr] = useState('');
 
+  // お知らせを出すタイミング（超えたとき／毎月の指定日／毎朝）
+  const [notifyOnExceed, setNotifyOnExceed] = useState(true);
+  const [notifyDays, setNotifyDays] = useState<number[]>([25, 5]);
+  const [notifyDaily, setNotifyDaily] = useState(false);
+  // 役職ごと・個人ごとのしきい値と除外（優先順位：個人 > 役職 > 全員の既定）
+  interface ThresholdRule {
+    id: string; role_title: string | null; user_id: string | null;
+    threshold_minutes: number | null; excluded: boolean;
+  }
+  const [rules, setRules] = useState<ThresholdRule[]>([]);
+
   const fetchSettings = useCallback(async () => {
-    const [setRes, grpRes] = await Promise.all([
-      supabase.from('overtime_settings').select('threshold_minutes, banner_group_names').eq('id', 1).maybeSingle(),
+    const [setRes, grpRes, ruleRes] = await Promise.all([
+      supabase.from('overtime_settings')
+        .select('threshold_minutes, banner_group_names, notify_on_exceed, notify_days, notify_daily')
+        .eq('id', 1).maybeSingle(),
       supabase.from('master_options').select('value').eq('category', 'group').order('sort_order'),
+      supabase.from('overtime_threshold_rules').select('*'),
     ]);
     const th = (setRes.data?.threshold_minutes as number | undefined) ?? 600;
     setThresholdHours(String(Math.floor(th / 60)));
     setThresholdMins(String(th % 60));
     setBannerGroups((setRes.data?.banner_group_names as string[] | null) ?? []);
     setGroupOptions(((grpRes.data as { value: string }[] | null) ?? []).map(g => g.value));
+    setNotifyOnExceed(setRes.data?.notify_on_exceed !== false);
+    setNotifyDays((setRes.data?.notify_days as number[] | null) ?? [25, 5]);
+    setNotifyDaily(Boolean(setRes.data?.notify_daily));
+    setRules(((ruleRes.data as ThresholdRule[] | null) ?? []));
   }, [supabase]);
 
   useEffect(() => { if (section === 'settings') fetchSettings(); }, [section, fetchSettings]);
@@ -544,10 +652,38 @@ const OvertimeAdminTab: React.FC = () => {
       return;
     }
     const { error } = await supabase.from('overtime_settings')
-      .update({ threshold_minutes: h * 60 + m, banner_group_names: bannerGroups })
+      .update({
+        threshold_minutes: h * 60 + m,
+        banner_group_names: bannerGroups,
+        notify_on_exceed: notifyOnExceed,
+        notify_days: notifyDays,
+        notify_daily: notifyDaily,
+      })
       .eq('id', 1);
     if (error) { setSettingsErr('保存に失敗しました: ' + error.message); return; }
     setSettingsMsg('設定を保存しました');
+  };
+
+  /** 役職・個人ごとのしきい値を1件保存する（同じ対象があれば上書き） */
+  const saveRule = async (
+    target: { role_title: string } | { user_id: string },
+    minutes: number | null,
+    excluded: boolean,
+  ) => {
+    setSettingsErr(''); setSettingsMsg('');
+    const key = 'role_title' in target ? 'role_title' : 'user_id';
+    const { error } = await supabase.from('overtime_threshold_rules')
+      .upsert({ ...target, threshold_minutes: excluded ? null : minutes, excluded }, { onConflict: key });
+    if (error) { setSettingsErr('保存に失敗しました: ' + error.message); return; }
+    setSettingsMsg('設定を保存しました');
+    fetchSettings();
+  };
+
+  const deleteRule = async (id: string) => {
+    const { error } = await supabase.from('overtime_threshold_rules').delete().eq('id', id);
+    if (error) { setSettingsErr('削除に失敗しました: ' + error.message); return; }
+    setSettingsMsg('削除しました');
+    fetchSettings();
   };
 
   // ─────────── 締め後申請の許可（B）：対象日ごとの許可＋本人からの依頼 ───────────
@@ -1348,6 +1484,76 @@ const OvertimeAdminTab: React.FC = () => {
                 onChange={e => setThresholdMins(e.target.value)} style={{ ...inputStyle, width: 70, textAlign: 'right' }} />
               <span style={{ fontSize: 13, color: text }}>分</span>
             </div>
+          </div>
+
+          {/* お知らせのタイミング */}
+          <div style={{ marginBottom: 16 }}>
+            <p style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 'bold', color: text }}>お知らせのタイミング</p>
+            <p style={{ margin: '0 0 8px', fontSize: 12, color: subText, lineHeight: 1.7 }}>
+              この時間を超えたスタッフについて、次のタイミングでバナー・ベル・プッシュでお知らせします。<br />
+              給与期間は16日〜翌15日です。25日＝期の半ば、5日＝締めの10日前になります。
+            </p>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: text, marginBottom: 8, cursor: 'pointer' }}>
+              <input type="checkbox" checked={notifyOnExceed} onChange={e => setNotifyOnExceed(e.target.checked)} />
+              超えたとき（その期に1回だけ）
+            </label>
+            <p style={{ margin: '0 0 6px', fontSize: 12, color: subText }}>決まった日にもお知らせする（複数選べます）</p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10 }}>
+              {[...Array(31)].map((_, i) => i + 1).concat(32).map(d => {
+                const on = notifyDays.includes(d);
+                return (
+                  <button key={d} type="button"
+                    onClick={() => setNotifyDays(prev => on ? prev.filter(x => x !== d) : [...prev, d].sort((a, b) => a - b))}
+                    style={{
+                      fontSize: 12, padding: d === 32 ? '5px 10px' : '5px 9px', borderRadius: 6, cursor: 'pointer',
+                      background: on ? '#1976d2' : (isDarkMode ? '#495057' : 'white'),
+                      color: on ? '#fff' : text,
+                      border: `2px solid ${on ? '#1565c0' : (isDarkMode ? '#6c757d' : '#e5e7eb')}`,
+                      fontWeight: 'bold',
+                    }}>
+                    {d === 32 ? '月末日' : d}
+                  </button>
+                );
+              })}
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: text, cursor: 'pointer' }}>
+              <input type="checkbox" checked={notifyDaily} onChange={e => setNotifyDaily(e.target.checked)} />
+              超えている間は毎朝お知らせする
+            </label>
+          </div>
+
+          {/* 役職ごと・個人ごとのしきい値 */}
+          <div style={{ marginBottom: 16 }}>
+            <p style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 'bold', color: text }}>役職ごと・個人ごとのしきい値</p>
+            <p style={{ margin: '0 0 8px', fontSize: 12, color: subText, lineHeight: 1.7 }}>
+              上の時間と違う基準にしたい場合に設定します。<strong style={{ color: text }}>個人の設定が役職の設定より優先</strong>されます。<br />
+              みなし残業込みの給与の方など、お知らせが不要な人は「対象外」にしてください。
+            </p>
+            {rules.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                {rules.map(r => (
+                  <div key={r.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: text,
+                    padding: '6px 0', borderBottom: `1px solid ${borderColor}`,
+                  }}>
+                    <span style={{ flex: 1 }}>
+                      {r.role_title
+                        ? `役職：${r.role_title}`
+                        : `個人：${staff.find(s => s.id === r.user_id)?.name ?? '（退職などで不明）'}`}
+                    </span>
+                    <span style={{ color: r.excluded ? '#dc3545' : text }}>
+                      {r.excluded ? '対象外' : `${Math.floor((r.threshold_minutes ?? 0) / 60)}時間${(r.threshold_minutes ?? 0) % 60 > 0 ? `${(r.threshold_minutes ?? 0) % 60}分` : ''}`}
+                    </span>
+                    <button type="button" onClick={() => deleteRule(r.id)}
+                      style={{ background: 'none', border: 'none', color: subText, cursor: 'pointer', fontSize: 13 }}>削除</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <ThresholdRuleForm
+              staff={staff} isDarkMode={isDarkMode} text={text} subText={subText}
+              inputStyle={inputStyle} borderColor={borderColor} onSave={saveRule}
+            />
           </div>
 
           <div style={{ marginBottom: 16 }}>

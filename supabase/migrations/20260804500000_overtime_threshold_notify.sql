@@ -99,7 +99,7 @@ delete from public.overtime_banner_dismissals;
 -- 5) 集計：見込み合計（computeBalance と同じ計算）
 -- ───────────────────────────────────────────
 create or replace function public.overtime_planned_totals(p_period date)
-returns table (user_id uuid, planned_total integer)
+returns table (user_id uuid, planned_total integer, confirmed_total integer)
 language sql stable security definer set search_path = public
 as $$
   with auto_dates as (
@@ -111,7 +111,7 @@ as $$
       and entry_type = 'leave_auto'
   ),
   counted as (
-    select r.applicant_id, coalesce(r.diff_minutes, 0) as diff
+    select r.applicant_id, r.status, coalesce(r.diff_minutes, 0) as diff
     from overtime_reports r
     where r.pay_period_start = p_period
       and r.status in ('confirmed', 'requested', 'request_confirmed', 'reported')
@@ -125,7 +125,11 @@ as $$
         )
       )
   )
-  select applicant_id, sum(diff)::integer
+  -- planned = 確定＋未確定（見込み。しきい値の判定はこちらを使う）
+  -- confirmed = 確認済みのぶんだけ（バナーに併記する参考値）
+  select applicant_id,
+         sum(diff)::integer,
+         sum(diff) filter (where status = 'confirmed')::integer
   from counted
   group by applicant_id;
 $$;
@@ -171,10 +175,10 @@ $$;
 -- 7) 超過している人の一覧（在籍者のみ・パートは残業機能の対象外）
 -- ───────────────────────────────────────────
 create or replace function public.overtime_threshold_over(p_period date)
-returns table (user_id uuid, total_minutes integer, threshold_minutes integer)
+returns table (user_id uuid, total_minutes integer, confirmed_minutes integer, threshold_minutes integer)
 language sql stable security definer set search_path = public
 as $$
-  select t.user_id, t.planned_total, th.v
+  select t.user_id, t.planned_total, coalesce(t.confirmed_total, 0), th.v
   from overtime_planned_totals(p_period) t
   join profiles p on p.id = t.user_id
   cross join lateral (select overtime_threshold_for(t.user_id) as v) th
@@ -236,7 +240,10 @@ begin
     from overtime_threshold_notifications where pay_period_start = p_period;
 
   -- 自分の分
-  select jsonb_build_object('total', o.total_minutes, 'threshold', o.threshold_minutes)
+  select jsonb_build_object(
+           'total', o.total_minutes,
+           'confirmed', o.confirmed_minutes,
+           'threshold', o.threshold_minutes)
     into v_self
     from overtime_threshold_over(p_period) o
    where o.user_id = v_viewer
