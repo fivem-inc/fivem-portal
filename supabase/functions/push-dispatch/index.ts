@@ -19,6 +19,12 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string }> = {
   "leave:manager_approved":  { app: "休暇申請", word: "未承認", url: "/leave-approvals" },
   // 休暇申請（申請者の要対応）
   "leave:rejected":          { app: "休暇申請", word: "差戻", url: "/leave" },
+  // 安否確認：「助けが必要」の回答が入ったとき（発信者＋マネージャー以上へ）
+  // 「ヘルプ」は 2026-08-04 に実機テスト済み（Chromeの警告表示に化けないことを確認）。
+  // ⚠️ 化けるようになったら app を "安否"（検証済み）に戻すこと。ここ1行で切り替わる。
+  // ⚠️ 本文に名前や文章を入れない。文章形はNG確定で、画面ロック中に他人へ見えるため。
+  //    誰が助けを求めているかはタップ先の集計画面で確認する。
+  "safety:urgent":           { app: "ヘルプ", word: "新着", url: "/safety?open=summary" },
   // 勤務変更申請
   // ⚠️ タブ指定を省くと既定タブ（報告の入力）に着地して「何を見ればいいか分からない」になる
   "shift_report:new_request": { app: "勤務変更報告", word: "未承認", url: "/shift-report?view=confirm" },

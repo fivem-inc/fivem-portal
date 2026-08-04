@@ -293,8 +293,15 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
   //    回答済みで、かつ集計を見られる役職のときだけ集計を開く。
   useEffect(() => {
     const c = searchParams.get('check');
-    if (!c || loading) return;
-    setSelectedSummaryId(c);
+    const wantSummary = searchParams.get('open') === 'summary';
+    if (loading) return;
+    if (!c && !wantSummary) return;
+    if (c) setSelectedSummaryId(c);
+    // 「助けが必要」の知らせから来たときは、自分の回答状況にかかわらず集計を開く。
+    // （他人の緊急を伝える通知なので、回答画面を先に出すと肝心の相手に辿り着けない。
+    //   自分が未回答のときは集計の上に案内を出して取りこぼさないようにする）
+    if (wantSummary && (isManagerPlus || isLeader)) { setView('summary'); return; }
+    if (!c) return;
     const iAnswered = !!myResponses[c];
     if (!iAnswered) setView('answer');
     else if (isManagerPlus || isLeader) setView('summary');
@@ -569,6 +576,18 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
             onSent={(checkId) => { setOkMsg('送信しました'); setView('summary'); setSelectedSummaryId(checkId); setSearchParams({ check: checkId }); loadAll(); setTimeout(() => setOkMsg(''), 4000); }}
             isDark={isDark} card={card} text={text} sub={sub} border={border}
           />
+        )}
+
+        {/* 集計を見ている人自身が未回答のときは、自分の回答を置き去りにしないよう案内を出す
+            （マネージャーも被災者の一人。「助けが必要」の知らせから集計に直行したときに効く） */}
+        {view === 'summary' && (isManagerPlus || isLeader) && !isStale && hasUnanswered && (
+          <div style={{ background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 8, padding: '10px 14px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: '#856404', flex: 1 }}>あなたはまだ回答していません</span>
+            <button type="button" onClick={() => { setView('answer'); setSearchParams({}); }}
+              style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: '#856404', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              回答する
+            </button>
+          </div>
         )}
 
         {view === 'summary' && (isManagerPlus || isLeader) && !isStale && (

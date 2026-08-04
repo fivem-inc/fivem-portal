@@ -824,7 +824,9 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
   const navigate = useNavigate();
   const isEnc = n.message.includes('有給奨励日');
   const isUnconfirmedReminder = n.message.includes('への対応がまだ完了していません');
-  const isSafety = n.source_type === 'safety_check' || n.source_type === 'safety_check_cancelled'; // 安否確認：isBoardの文言判定より先に見る
+  // 安否確認：isBoardの文言判定より先に見る
+  const isSafetyUrgent = n.source_type === 'safety_check_urgent'; // 「助けが必要」の知らせ
+  const isSafety = n.source_type === 'safety_check' || n.source_type === 'safety_check_cancelled' || isSafetyUrgent;
   const isBoard = !isUnconfirmedReminder && !isSafety && (n.source_type === 'inbox' || n.message.includes('お知らせ') || n.message.includes('メッセージが届き') || n.message.includes('リマインド'));
 
   // source_typeで種別を判定（休暇申請・勤務変更申請）。文言ではなくsource_typeを正とする
@@ -863,7 +865,11 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
   const handleTap = () => {
     if (isEnc) { navigate('/leave'); return; }
     if (isSafety) {
-      navigate(n.reference_id ? `/safety?check=${n.reference_id}` : '/safety');
+      // 「助けが必要」の知らせは必ず集計画面を開く。
+      // 通常の安否確認は「自分が未回答なら回答画面を優先」だが、これは他人の緊急を
+      // 伝える通知なので、その規則のままだと肝心の「誰が助けを求めているか」に辿り着けない。
+      const openSummary = isSafetyUrgent ? '&open=summary' : '';
+      navigate(n.reference_id ? `/safety?check=${n.reference_id}${openSummary}` : '/safety?open=summary');
       // 未回答のうちはSafetyCheckBannerが別途出続けるので、ここでは常に閉じてよい（対応済みならこのタップで完了）
       onDismiss(n.id);
       return;
@@ -945,6 +951,7 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
       // 「要対応」の承認待ちは専用の集計バナー(LeaveApprovalBanner/ShiftReportApprovalBanner/PurchaseApprovalBanner)が別途出るため、ここでは重複表示しない
       // 安否確認も専用の赤バナー(SafetyCheckBanner)が別途出るため、ここでは重複表示しない
       .not('source_type', 'in', '(leave_request:pending_approval,shift_report:pending_approval,purchase_request:pending_approval,overtime_request:pending_approval,safety_check,safety_check_cancelled)')
+      // ⚠️ safety_check_urgent（助けが必要）だけは専用バナーが無いので、ここで出す
       // 定期リマインドも専用バナー(ScheduledReminderBanner・完了/後でボタン付き)が出すのでここでは出さない
       .or('event_key.is.null,event_key.neq.reminder:scheduled')
       .or('source_type.is.null,source_type.neq.board')
