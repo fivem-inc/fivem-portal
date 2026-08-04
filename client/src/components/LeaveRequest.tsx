@@ -540,6 +540,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           p_reason: reasonValue,
           p_start_date: startDate,
           p_end_date: endDate,
+          // 調整休の種類。これが 'zangyou' でないと受理時に残業台帳へマイナス行が作られない
+          p_chosei_sub_type: leaveType === '調整休' ? choseiSubType : null,
         });
         if (editErr) throw editErr;
         setEditLeaveId(null);
@@ -555,6 +557,12 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         leave_type_other: leaveType === 'その他' ? leaveTypeOther : null,
         leave_dates: JSON.stringify(selectedDates),
         leave_locations: JSON.stringify(Object.fromEntries(selectedDates.map(d => [d, dateLocations[d]]))),
+        // 🚨 調整休の種類は必ずこの列に入れる。
+        // 受理されたとき sync_overtime_from_leave トリガーが
+        // 「leave_type='調整休' かつ chosei_sub_type='zangyou'」で残業台帳にマイナス行を作る。
+        // 以前は reason の文章に「時間外調整休」と書くだけで列に入れておらず、
+        // 時間外調整休を取っても残業の合計時間数が1分も減らなかった
+        chosei_sub_type: leaveType === '調整休' ? choseiSubType : null,
         // 振替元の勤務日の校（調整休・振替休日のみ。日付はreasonの文章、校はこの列と役割を分ける）
         chosei_origin_locations: (leaveType === '調整休' && choseiSubType === 'furikae' && choseiOriginDates.length > 0)
           ? JSON.stringify(Object.fromEntries(choseiOriginDates.map(d => [d, originLocations[d]])))
