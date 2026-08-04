@@ -841,6 +841,10 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
   const isTimeAdjustment       = n.source_type === 'time_adjustment';                // 上長：FYI（対応不要）
   const isAttendance           = n.source_type === 'attendance';                     // 上長・本人：欠勤登録のFYI（対応不要）
   const isAttendanceCancelled  = n.source_type === 'attendance:cancelled';           // 上長・本人：勤怠の取消のお知らせ（飛び先の行はもう無い）
+  // 残業が目安を超えたお知らせ。専用のオレンジのバナー（OvertimeThresholdBanner）が
+  // ホームに出るので、こちらはベル一覧でタップしたときの飛び先だけを担当する
+  const isOvertimeThreshold        = n.source_type === 'overtime:threshold';           // 本人
+  const isOvertimeThresholdSummary = n.source_type === 'overtime:threshold_summary';   // 上長：部門のまとめ
   const isPurchasePendingApproval = n.source_type === 'purchase_request:pending_approval'; // リーダー：要対応
   const isPurchaseResult          = n.source_type === 'purchase_request';                  // 申請者：結果報告のみ
   const isOvertimePendingApproval = n.source_type === 'overtime_request:pending_approval'; // 確認者：要対応
@@ -850,7 +854,7 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
   const isOtProposalResponded     = n.source_type === 'overtime_proposal:responded';        // 提案者：相手が回答した
   const isOvertimeUnreported      = n.source_type === 'overtime:unreported';                // 本人：実績未報告リマインド
   const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit || isPurchasePendingApproval || isOvertimePendingApproval || isOvertimePendingResubmit;
-  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isAttendance || isAttendanceCancelled || isPurchaseResult || isOvertimeResult || isOtProposalReceived || isOtProposalResponded || isOvertimeUnreported;
+  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isAttendance || isAttendanceCancelled || isPurchaseResult || isOvertimeResult || isOtProposalReceived || isOtProposalResponded || isOvertimeUnreported || isOvertimeThreshold || isOvertimeThresholdSummary;
   // 旧来のフォールバック（source_typeが無い通知向け）
   const isLegacyReject = !isPendingAction && !isResultOnly && (n.message.includes('差し戻し') || n.message.includes('差し戻され'));
 
@@ -906,6 +910,9 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
     if (isOvertimePendingApproval) { navigate(`/overtime?view=confirm${fq ? `&${fq}` : ''}`); return; }
     if (isOvertimePendingResubmit) { navigate(`/overtime?tab=history${fq ? `&${fq}` : ''}`); return; }
     if (isOvertimeResult) { navigate(`/overtime?tab=history${fq ? `&${fq}` : ''}`); onDismiss(n.id); return; }
+    // 残業が目安を超えたお知らせ。本人は自分の履歴へ、上長は部門集計へ
+    if (isOvertimeThreshold) { navigate('/overtime?tab=history'); onDismiss(n.id); return; }
+    if (isOvertimeThresholdSummary) { navigate('/overtime?tab=history&mode=summary'); onDismiss(n.id); return; }
     // 残業調整の提案（相手＝受信／提案者＝回答通知）。どちらも催促しない＝タップで開いて閉じる。
     if (isOtProposalReceived || isOtProposalResponded) {
       navigate(n.reference_id ? `/overtime?proposal=${n.reference_id}` : '/overtime'); onDismiss(n.id); return;
@@ -951,7 +958,9 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
       .not('message', 'like', '%有給奨励日%')
       // 「要対応」の承認待ちは専用の集計バナー(LeaveApprovalBanner/ShiftReportApprovalBanner/PurchaseApprovalBanner)が別途出るため、ここでは重複表示しない
       // 安否確認も専用の赤バナー(SafetyCheckBanner)が別途出るため、ここでは重複表示しない
-      .not('source_type', 'in', '(leave_request:pending_approval,shift_report:pending_approval,purchase_request:pending_approval,overtime_request:pending_approval,safety_check,safety_check_cancelled)')
+      // 残業の超過は専用のオレンジのバナー（OvertimeThresholdBanner）が出すので、
+      // ここに出すと同じことが2枚並ぶ。ベル一覧には残る
+      .not('source_type', 'in', '(leave_request:pending_approval,shift_report:pending_approval,purchase_request:pending_approval,overtime_request:pending_approval,safety_check,safety_check_cancelled,overtime:threshold,overtime:threshold_summary)')
       // ⚠️ safety_check_urgent（助けが必要）だけは専用バナーが無いので、ここで出す
       // 定期リマインドも専用バナー(ScheduledReminderBanner・完了/後でボタン付き)が出すのでここでは出さない
       .or('event_key.is.null,event_key.neq.reminder:scheduled')
