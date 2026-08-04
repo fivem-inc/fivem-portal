@@ -5,7 +5,7 @@ import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { insertNotification } from '../lib/notifications';
 import { todayJstStr } from '../lib/breakCalc';
-import { dispatchSiteNotification, dispatchEmail, getNotificationTemplate, getUserEmail, shouldSend } from '../lib/notificationDispatch';
+import { dispatchSiteNotification, dispatchEmail, getNotificationTemplate, getUserEmail, getUserName, shouldSend } from '../lib/notificationDispatch';
 import { sendPurchaseSlackForEvent } from '../lib/purchaseSlack';
 import { resolveItems } from '../lib/purchaseItemsFallback';
 import { errorStyle, scrollToFirstError, ERROR_BORDER, errorBg } from '../lib/formHighlight';
@@ -578,9 +578,9 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
 
     const firstItemName = items[0].itemName.trim();
     const itemNameVar = items.length > 1 ? `${firstItemName}（他${items.length - 1}件）` : firstItemName;
-    const vars = { '申請者名': user.user_metadata?.name ?? '', '品目名': itemNameVar, '金額': parsedAmount.toLocaleString() };
-
-    const applicantName = user.user_metadata?.name ?? '';
+    // 氏名は profiles.name から取る（user_metadata は full_name で入っている人がいて空になる）
+    const applicantName = await getUserName(user.id);
+    const vars = { '申請者名': applicantName, '品目名': itemNameVar, '金額': parsedAmount.toLocaleString() };
 
     // 複数宛先イベント向け: 対象者リストへメール送信する（サイト通知と同じ手動ループパターン）
     const notifyEmailToMany = async (eventKey: string, userIds: string[]) => {

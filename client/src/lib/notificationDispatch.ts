@@ -58,6 +58,15 @@ export async function getUserEmail(userId: string): Promise<string | null> {
   return (data as { email?: string } | null)?.email ?? null;
 }
 
+// 氏名は profiles.name を正とする。
+// ⚠️ user.user_metadata.name を使わないこと。ユーザー作成時は full_name というキーで
+//    入れているため name が undefined になる人がいて、通知の申請者名が空になる。
+//    管理画面で名前を変えても user_metadata 側は更新されない（更新処理は存在しない）。
+export async function getUserName(userId: string): Promise<string> {
+  const { data } = await supabase.from('profiles').select('name').eq('id', userId).single();
+  return (data as { name?: string } | null)?.name ?? '';
+}
+
 // recipient フィールドを解析して宛先キーの配列を返す（新旧両形式対応）
 function parseRecipientKeys(recipient: string | null): string[] {
   if (!recipient) return ['applicant'];

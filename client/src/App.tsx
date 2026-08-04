@@ -853,8 +853,11 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
   const isOtProposalReceived      = n.source_type === 'overtime_proposal:received';         // 相手：残業調整の提案が届いた（任意・催促しない）
   const isOtProposalResponded     = n.source_type === 'overtime_proposal:responded';        // 提案者：相手が回答した
   const isOvertimeUnreported      = n.source_type === 'overtime:unreported';                // 本人：実績未報告リマインド
-  const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit || isPurchasePendingApproval || isOvertimePendingApproval || isOvertimePendingResubmit;
-  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isAttendance || isAttendanceCancelled || isPurchaseResult || isOvertimeResult || isOtProposalReceived || isOtProposalResponded || isOvertimeUnreported || isOvertimeThreshold || isOvertimeThresholdSummary;
+  const isClockInquiry         = n.source_type === 'overtime:clock_inquiry';          // 本人：経理からの打刻の確認（要対応）
+  const isClockInquiryAnswered = n.source_type === 'overtime:clock_inquiry_answered'; // 経理：本人が回答した（結果のみ）
+  // 🚨 打刻の確認は「答えるまで消えない」要対応。isResultOnly に入れるとタップで消えてしまう
+  const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit || isPurchasePendingApproval || isOvertimePendingApproval || isOvertimePendingResubmit || isClockInquiry;
+  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isAttendance || isAttendanceCancelled || isPurchaseResult || isOvertimeResult || isOtProposalReceived || isOtProposalResponded || isOvertimeUnreported || isOvertimeThreshold || isOvertimeThresholdSummary || isClockInquiryAnswered;
   // 旧来のフォールバック（source_typeが無い通知向け）
   const isLegacyReject = !isPendingAction && !isResultOnly && (n.message.includes('差し戻し') || n.message.includes('差し戻され'));
 
@@ -919,6 +922,12 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
     }
     // 実績未報告リマインド → 履歴（実績を報告する場所）へ
     if (isOvertimeUnreported) { navigate('/overtime?tab=history'); onDismiss(n.id); return; }
+    // 打刻の確認：本人は回答画面へ（答えるまで消さない）／経理は回答結果を見て閉じる
+    if (isClockInquiry) { navigate(n.reference_id ? `/overtime?inquiry=${n.reference_id}` : '/overtime'); return; }
+    if (isClockInquiryAnswered) {
+      navigate(n.reference_id ? `/admin?tab=overtime_admin&section=inquiries&focus=${n.reference_id}` : '/admin?tab=overtime_admin&section=inquiries');
+      onDismiss(n.id); return;
+    }
     if (isLegacyReject) { navigate('/leave'); return; }
     // どの種別にも当てはまらない通知（古いデータ等）はタップで閉じる（無反応にしない保険）
     onDismiss(n.id);
@@ -1017,9 +1026,25 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
       (rows || []).forEach((r: any) => overtimeMap.set(r.id, r));
     }
 
+    // 打刻の確認：回答したらバナーを自動で消す（専用バナーを作らず汎用バナーに乗せている）
+    const inquiryIds = [...new Set(data.filter(n => n.source_type === 'overtime:clock_inquiry' && n.reference_id).map(n => n.reference_id as string))];
+    const inquiryMap = new Map<string, { status: string }>();
+    let inquiryFetchOk = true;
+    if (inquiryIds.length > 0) {
+      const { data: rows, error } = await supabase.from('overtime_clock_inquiries').select('id, status').in('id', inquiryIds);
+      if (error) inquiryFetchOk = false;
+      (rows || []).forEach((r: any) => inquiryMap.set(r.id, r));
+    }
+
     // データが取れない場合（RLS等）は安全側に倒して「まだ対応中」扱いにし、消さない
     const isResolvedPending = (n: typeof data[number]): boolean => {
       if (!n.reference_id) return false;
+      if (n.source_type === 'overtime:clock_inquiry') {
+        if (!inquiryFetchOk) return false;
+        const r = inquiryMap.get(n.reference_id);
+        if (!r) return true;   // 取り下げ・削除済み＝もう答えられないので消す
+        return r.status !== 'open';
+      }
       if (n.source_type === 'leave_request:pending_approval') {
         const r = leaveMap.get(n.reference_id);
         if (!r) return false;

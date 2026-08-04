@@ -11,6 +11,7 @@ import type { DayKind, CalendarKind } from '../../lib/breakCalc';
 import { DEFAULT_LOCATION } from '../../lib/shiftExcelImport';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
 import OvertimeEditModal, { type OvertimeRecord } from './OvertimeEditModal';
+import OvertimeClockInquiryPanel from './OvertimeClockInquiryPanel';
 import { OT_TYPE_INFO, isOvertimeType, isFullDayReport } from '../../lib/overtimeTypes';
 import { notifyOvertimeReturned, notifyOvertimeAdminCancelled, notifyOvertimeGrant, notifyOvertimeGrantDeclined } from '../../lib/overtimeNotify';
 
@@ -178,8 +179,8 @@ const OvertimeAdminTab: React.FC = () => {
 
   const [searchParams] = useSearchParams();
   const sectionFromUrl = searchParams.get('section');
-  const [section, setSection] = useState<'reports' | 'patterns' | 'calendar' | 'settings' | 'grants'>(
-    sectionFromUrl === 'grants' ? 'grants' : 'reports'
+  const [section, setSection] = useState<'reports' | 'patterns' | 'calendar' | 'settings' | 'grants' | 'inquiries'>(
+    sectionFromUrl === 'grants' ? 'grants' : sectionFromUrl === 'inquiries' ? 'inquiries' : 'reports'
   );
 
   // ─────────── 受理済み一覧（残業レコードの管理） ───────────
@@ -814,7 +815,8 @@ const OvertimeAdminTab: React.FC = () => {
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
         {sectionBtn('reports', '受理済み一覧')}
-        {sectionBtn('grants', '締め後申請の許可')}
+        {sectionBtn('inquiries', '打刻の確認')}
+        {sectionBtn('grants', '締め後の許可')}
         {sectionBtn('patterns', '曜日パターン')}
         {sectionBtn('calendar', '会社カレンダー')}
         {sectionBtn('settings', '設定')}
@@ -1061,6 +1063,10 @@ const OvertimeAdminTab: React.FC = () => {
       )}
 
       {/* ─── 締め後申請の許可（経理から。B） ─── */}
+      {section === 'inquiries' && (
+        <OvertimeClockInquiryPanel staff={staff} isDark={isDarkMode} />
+      )}
+
       {section === 'grants' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 

@@ -78,6 +78,9 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string }> = {
   "overtime:admin_cancelled":    { app: "残業", word: "新着",   url: "/overtime?tab=history" },
   "overtime:admin_edited":       { app: "残業", word: "新着",   url: "/overtime?tab=history" },
   "overtime:grant":              { app: "残業", word: "新着",   url: "/overtime" },
+  // 打刻の確認（経理→本人／本人→経理）。アプリ名「勤務時間」は実機テスト済み（2026-08-04・林の端末）
+  "overtime:clock_inquiry":          { app: "勤務時間", word: "新着", url: "/overtime?tab=history" },
+  "overtime:clock_inquiry_answered": { app: "勤務時間", word: "新着", url: "/admin?tab=overtime_admin&section=inquiries" },
   "overtime:grant_declined":     { app: "残業", word: "新着",   url: "/overtime" },
   // 修正依頼・取消依頼（correction_requests のRPCがベル通知を作る）
   // ⚠️ app名に「依頼」「確認」は使わない（Chromeが不正な通知と判定する実機テスト済みNG語）。

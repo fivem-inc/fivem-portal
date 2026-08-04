@@ -3,6 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import OvertimeProposalSheet, { type DraftCandidate } from '../components/OvertimeProposalSheet';
 import OvertimeProposalResponse from '../components/OvertimeProposalResponse';
+import ClockInquiryResponse from '../components/ClockInquiryResponse';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import {
@@ -25,7 +26,7 @@ const ERR_FIELD_BY_MSG: Record<string, string> = {
 import type { PatternRow, NormalShiftSnapshot } from '../lib/overtimeShift';
 import type { AuthUser } from '../types';
 import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
-import { OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport } from '../lib/overtimeTypes';
+import { OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport, CLOCK_ONLY_REASONS } from '../lib/overtimeTypes';
 import type { OvertimeType } from '../lib/overtimeTypes';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
 import { notifyOvertimeNewRequest, notifyOvertimeGrantRequest } from '../lib/overtimeNotify';
@@ -105,6 +106,7 @@ const SELF_REVIEW_ROLES = ['マネージャー', '社長', '管理者'];
 const ABSENCE_REVIEWER_ROLES = ['マネージャー'];
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 const SELF_REVIEW_VALUE = '__self__';
+
 
 function dowLabel(dateStr: string): string {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -523,6 +525,17 @@ const OvertimeForm: React.FC<{
     return d && isOvertimeType(d) && FULL_DAY_TYPES.includes(d) ? d : null;
   });
   const [fullDayError, setFullDayError] = useState('');
+
+  // 打刻ズレ（打刻が遅れただけ・残業なし）モード。事後報告の新規のみ。
+  // 労働時間は通常シフトどおり＝差分0。押した時点で確定し、確認者は不要。
+  // ⚠️ 理由の選択肢は「自分の都合」だけを並べること。
+  //    片付け・準備・保護者対応は会社の指示でやる仕事なので、ここに出すと
+  //    サービス残業を本人に認めさせた記録になってしまう（下の警告枠で残業へ誘導する）。
+  const [clockOnly, setClockOnly] = useState(false);
+  const [clockInAt, setClockInAt] = useState('');
+  const [clockOutAt, setClockOutAt] = useState('');
+  const [clockReason, setClockReason] = useState('');
+  const [clockReasonOther, setClockReasonOther] = useState('');
   // 振替休日の振替元（実際に出勤した日＋その日の勤務校＋出退勤時刻）。時刻から労働時間を出し、差分＝振替元労働−対象日労働。
   const [furikaeOriginDate, setFurikaeOriginDate] = useState<string>(() => editTarget?.furikae_origin_date ?? draft?.furikaeOriginDate ?? '');
   // 勤務校：登録済みの校以外（その他イベント会場等）は「その他」＋自由入力欄に復元する（勤務地欄と同じパターン）
@@ -759,6 +772,20 @@ const OvertimeForm: React.FC<{
 
   const fullDayMode = fullDay && !!fullDayType;
 
+  // 打刻ズレは「事後報告の新規」でだけ使う（実績報告・再提出・事前申請では出さない）
+  const clockOnlyMode = clockOnly && mode === 'posthoc' && !editTarget;
+  const effectiveClockReason = clockReason === 'その他' ? clockReasonOther.trim() : clockReason;
+  // 打刻ズレの労働時間は通常シフトそのもの。打刻時刻は参考値で、ここには入れない
+  const normalWorkSegments: WorkSegment[] = useMemo(() =>
+    normalSegs.map(s => {
+      const st = timeToMin(s.start);
+      let en = timeToMin(s.end);
+      if (st == null || en == null) return null;
+      if (en <= st) en += 1440;
+      return { startMin: st, endMin: en };
+    }).filter((s): s is WorkSegment => s !== null),
+  [normalSegs]);
+
   // 振替元の勤務時間（自動休憩・労働）。振替休日の差分＝振替元労働−対象日（休む日）の通常シフト労働。
   const furikaeOriginSegs: WorkSegment[] = useMemo(() => {
     const st = timeToMin(furikaeOriginStart);
@@ -933,6 +960,14 @@ const OvertimeForm: React.FC<{
     if (mode === 'advance' && !editTarget && date < today) return '事前申請は当日以降の日付を選択してください';
     if (mode === 'posthoc' && date > today) return '事後報告は当日以前の日付を選択してください';
     if (closeLocked) return `この対象日は【${payMonthPeriodLabel(targetPeriodStart)}】の申請です。締め切り（${payPeriodCloseCutoff(targetPeriodStart).replace(/-/g, '/')}）を過ぎているため申請できません。経理に申請の許可を依頼してください。`;
+    // 打刻ズレ（残業ではありません）は時刻・勤務地・申請先の検証をスキップし、専用の検証のみ行う。
+    // ※ ここを通さないと「勤務地を選択してください」「申請先を選択してください」で必ず止まる
+    if (clockOnlyMode) {
+      if (!normalShift.start_time) return 'この日はシフトが休みです。出勤予定日のみ記録できます';
+      if (!clockReason) return '打刻が遅くなった理由を選んでください';
+      if (clockReason === 'その他' && !clockReasonOther.trim()) return '理由を入力してください';
+      return '';
+    }
     // 終日（調整休・欠勤）は時刻・休憩・勤務地の検証をスキップし、専用の検証のみ行う
     if (fullDay) {
       if (!normalShift.start_time) return 'この日はシフトが休みです。出勤予定日のみ登録できます';
@@ -1048,6 +1083,26 @@ const OvertimeForm: React.FC<{
         reviewer_id: isSelfReview ? user.id : reviewerId,
         ...((isSelfReview || isPureZero) ? { confirmed_by: user.id, confirmed_at: new Date().toISOString() } : {}),
         ...(isResubmit ? { return_comment: null } : {}),
+        // 打刻ズレはここで丸ごと上書きする（既存の分岐に条件を足すと読めなくなるため）。
+        // 労働時間＝通常シフトどおり／差分0／押した時点で確定／確認者なし。
+        // 打刻時刻は参考値であり、労働時間・差分の計算には一切使わない。
+        ...(clockOnlyMode ? {
+          status: 'confirmed' as OvertimeStatus,
+          break_minutes: normalShift.break_minutes,
+          break_manual: false,
+          labor_minutes: normalShift.labor_minutes,
+          diff_minutes: 0,
+          legal_warning: false,
+          reason: `残業ではありません（理由：${effectiveClockReason}）`,
+          change_reason: null,
+          location: normalShift.location ?? '',
+          application_types: ['clock_only'],
+          reviewer_id: user.id,
+          confirmed_by: user.id,
+          confirmed_at: new Date().toISOString(),
+          clock_in_reported: clockInAt || null,
+          clock_out_reported: clockOutAt || null,
+        } : {}),
       };
 
       // DBトリガー由来のエラーを分かりやすい日本語に変換（締めロック・振替の二重計上防止）
@@ -1086,7 +1141,7 @@ const OvertimeForm: React.FC<{
       }
 
       // 終日（調整休・欠勤）は時間帯を持たない
-      const segRows = fullDayMode ? [] : workSegments.map((s, i) => ({
+      const segRows = fullDayMode ? [] : (clockOnlyMode ? normalWorkSegments : workSegments).map((s, i) => ({
         report_id: reportId, phase, seg_no: i + 1, start_min: s.startMin, end_min: s.endMin,
       }));
       if (segRows.length > 0) {
@@ -1611,7 +1666,86 @@ const OvertimeForm: React.FC<{
       )}
 
       {/* 実務の勤務時間帯 */}
-      {!fullDay && (
+      {/* 打刻ズレ（残業ではありません）トグル。事後報告の新規のみ・終日トグルの兄弟として並べる */}
+      {date && mode === 'posthoc' && !editTarget && !fullDay && (
+        <div style={{ marginBottom: 12 }}>
+          <button type="button"
+            onClick={() => {
+              if (!normalShift.start_time) { setFullDayError('この日はシフトが休みです。出勤予定日のみ記録できます'); return; }
+              setFullDayError('');
+              setClockOnly(v => !v);
+            }}
+            style={{
+              width: '100%', padding: '10px 0', borderRadius: 8, cursor: 'pointer', fontSize: 13.5, fontWeight: 'bold',
+              border: `1px solid ${isDark ? '#4a90d9' : '#90caf9'}`,
+              background: isDark ? '#2c3e50' : '#e8f4fd',
+              color: isDark ? '#fff' : '#1565c0',
+            }}>
+            {clockOnly ? '✓ 残業ではありません（打刻が遅れただけ）─ 押すと通常の報告に戻ります' : '🕐 残業ではありません（打刻が遅れただけ）はこちらを押す'}
+          </button>
+        </div>
+      )}
+
+      {/* 打刻ズレの入力（打刻時刻＋理由）。時間帯・勤務地・申請先は出さない */}
+      {clockOnlyMode && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ background: innerBg, borderRadius: 10, padding: '12px 14px', marginBottom: 12 }}>
+            <p style={{ margin: '0 0 8px', fontSize: 12.5, color: subText }}>
+              通常シフト {fmtTime(normalShift.start_time)}〜{fmtTime(normalShift.end_time)}　労働 {formatMin(normalShift.labor_minutes)}
+            </p>
+            <p style={{ margin: 0, fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
+              勤務時間はシフトどおりとして記録します。合計時間数は増えも減りもしません。
+            </p>
+          </div>
+
+          <span style={labelStyle}>打刻の時刻<span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（分かれば・任意）</span></span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+            <span style={{ fontSize: 12, color: subText, minWidth: 44 }}>出勤</span>
+            <input type="time" value={clockInAt} onChange={e => setClockInAt(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
+            <span style={{ fontSize: 12, color: subText, minWidth: 44, textAlign: 'right' }}>退勤</span>
+            <input type="time" value={clockOutAt} onChange={e => setClockOutAt(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
+          </div>
+
+          <span style={labelStyle}>打刻が遅くなった理由{req}</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
+            {CLOCK_ONLY_REASONS.map(r => (
+              <button key={r} type="button"
+                onClick={() => { setClockReason(r); clearErr('clockReason'); }}
+                data-err-field={r === CLOCK_ONLY_REASONS[0] ? 'clockReason' : undefined}
+                style={{
+                  padding: '10px 12px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
+                  fontSize: 13.5, fontWeight: 'bold',
+                  border: `2px solid ${clockReason === r ? '#1565c0' : '#90caf9'}`,
+                  background: clockReason === r ? '#1976d2' : '#e3f2fd',
+                  color: clockReason === r ? '#fff' : '#1565c0',
+                }}>
+                {r}
+              </button>
+            ))}
+          </div>
+          {clockReason === 'その他' && (
+            <input value={clockReasonOther} onChange={e => setClockReasonOther(e.target.value)}
+              placeholder="例：迎えを待っていた" style={{ ...fieldStyle, marginBottom: 10 }} />
+          )}
+
+          {/* 🚨 この枠は絶対に外さない。片付け・準備・保護者対応は業務であり、
+              「残業ではありません」で記録させるとサービス残業を認めた記録になる。
+              配色は黄色の固定色（ライト・ダーク共通で必ず読めるようにする） */}
+          <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '10px 12px' }}>
+            <p style={{ margin: 0, fontSize: 12.5, color: '#664d03', lineHeight: 1.7 }}>
+              ⚠️ 片付け・準備・保護者対応など、<b>仕事をしていた時間は残業です</b>。
+              その場合はこの画面ではなく、残業として報告してください。
+            </p>
+            <button type="button"
+              onClick={() => { setClockOnly(false); setClockReason(''); setClockReasonOther(''); }}
+              style={{ marginTop: 8, background: '#fff', border: '1px solid #856404', borderRadius: 8, cursor: 'pointer', padding: '7px 14px', fontSize: 12.5, fontWeight: 'bold', color: '#856404' }}>
+              残業として報告する →
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!fullDay && !clockOnlyMode && (
       <div style={{ marginBottom: 12 }}>
         <span style={labelStyle}>{isReportPhase ? '実際に勤務した時間' : (mode === 'advance' && !(editTarget && isResubmit && (editTarget.segments ?? []).some(s => s.phase === 'actual')) ? '予定の勤務時間' : '実務の勤務時間')}{req}</span>
         {isReportPhase && (
@@ -1641,7 +1775,7 @@ const OvertimeForm: React.FC<{
       )}
 
       {/* 休憩・労働時間・差分 */}
-      {!fullDay && hasInput && (
+      {!fullDay && !clockOnlyMode && hasInput && (
         <div style={{ background: innerBg, borderRadius: 10, padding: '10px 12px', marginBottom: 12 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, marginBottom: 4 }}>
             <span style={{ color: subText }}>休憩{breakManual ? '（手修正）' : '（自動計算）'}</span>
@@ -1692,7 +1826,7 @@ const OvertimeForm: React.FC<{
       )}
 
       {/* 種別の2択バナー（調整か遅刻/早退かだけ本人に確認） */}
-      {!fullDay && hasInput && typeDetect.lateQ && (
+      {!fullDay && !clockOnlyMode && hasInput && typeDetect.lateQ && (
         <div style={{ marginBottom: 12 }}>
           <span style={{ fontSize: 13, color: subText, display: 'block', marginBottom: 6 }}>開始が遅い理由は？{req}</span>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -1710,7 +1844,7 @@ const OvertimeForm: React.FC<{
           </div>
         </div>
       )}
-      {!fullDay && hasInput && typeDetect.earlyQ && (
+      {!fullDay && !clockOnlyMode && hasInput && typeDetect.earlyQ && (
         <div style={{ marginBottom: 12 }}>
           <span style={{ fontSize: 13, color: subText, display: 'block', marginBottom: 6 }}>早く終わる理由は？{req}</span>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -1730,7 +1864,7 @@ const OvertimeForm: React.FC<{
       )}
 
       {/* 法定チェック警告（本人側にも表示） */}
-      {!fullDay && hasInput && !legal.ok && (
+      {!fullDay && !clockOnlyMode && hasInput && !legal.ok && (
         <div style={{ background: isDark ? '#4a3a10' : '#fff8e1', border: '1px solid #f59e0b', borderRadius: 10, padding: '10px 12px', marginBottom: 12 }}>
           <p style={{ margin: 0, fontSize: 12.5, color: isDark ? '#ffd54f' : '#856404', lineHeight: 1.7 }}>
             ⚠️ この日は労働{laborMin > 480 ? '8時間' : '6時間'}超のため、法律上{legal.requiredMinutes}分以上の休憩が必要です
@@ -1747,7 +1881,7 @@ const OvertimeForm: React.FC<{
         </div>
       )}
       {/* 勤務地（勤務変更報告と同様に自由入力あり）。終日でシフトに校がある日は自動使用のため非表示 */}
-      {!(fullDay && normalShift.location) && !isReportPhase && (
+      {!(fullDay && normalShift.location) && !isReportPhase && !clockOnlyMode && (
       <div style={{ marginBottom: 12 }}>
         <span style={labelStyle}>勤務地{req}</span>
         <select value={location} onChange={e => setLocation(e.target.value)} style={fieldStyle}>
@@ -1777,7 +1911,8 @@ const OvertimeForm: React.FC<{
       </div>
       )}
 
-      {/* 理由 */}
+      {/* 理由。打刻ズレは専用の理由（選択式）を上で出しているのでここは出さない */}
+      {!clockOnlyMode && (
       <div style={{ marginBottom: 12 }}>
         <span style={labelStyle}>理由{isReportPhase ? '' : req}</span>
         {isReportPhase && !fullDay ? (
@@ -1818,6 +1953,7 @@ const OvertimeForm: React.FC<{
         )}
         </>)}
       </div>
+      )}
 
       {/* 予定から変わった理由（実績報告フェーズで差分がある時だけ必須。残業なし＝通常どおりは理由不要） */}
       {isReportPhase && !fullDay && hasChanges && !isPureZero && (
@@ -1832,7 +1968,8 @@ const OvertimeForm: React.FC<{
         </div>
       )}
 
-      {/* 申請先 */}
+      {/* 申請先。打刻ズレは押した時点で確定するので確認者を選ばせない */}
+      {!clockOnlyMode && (
       <div style={{ marginBottom: 16 }}>
         <span style={labelStyle}>申請先{isReportPhase ? '' : req}</span>
         {isReportPhase && !fullDay ? (
@@ -1855,6 +1992,7 @@ const OvertimeForm: React.FC<{
           <p style={{ margin: '6px 0 0', fontSize: 12, color: subText }}>欠勤はマネージャー以上の受理が必要です（自己受理はできません）</p>
         )}
       </div>
+      )}
 
       {error && (
         <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '8px 12px', marginBottom: 12 }}>
@@ -1866,12 +2004,20 @@ const OvertimeForm: React.FC<{
       {!showConfirm ? (
         <button onClick={handleSubmit} disabled={saving}
           style={{ width: '100%', padding: '12px 0', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 'bold', background: '#28a745', color: '#fff' }}>
-          {isReportPhase ? (isPureZero ? '残業なしで報告する（確定）' : hasChanges ? '実績を報告する（変更あり）' : '実績を報告する（予定どおり）') : isResubmit ? '再提出する' : mode === 'advance' ? '事前申請する' : '報告する'}
+          {clockOnlyMode ? 'この内容で記録する（確定）' : isReportPhase ? (isPureZero ? '残業なしで報告する（確定）' : hasChanges ? '実績を報告する（変更あり）' : '実績を報告する（予定どおり）') : isResubmit ? '再提出する' : mode === 'advance' ? '事前申請する' : '報告する'}
         </button>
       ) : (
         <div style={{ background: innerBg, borderRadius: 10, padding: '12px 14px' }}>
-          <p style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 'bold', color: text }}>この内容で送信しますか？</p>
-          {fullDayMode ? (
+          <p style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 'bold', color: text }}>{clockOnlyMode ? 'この内容で記録しますか？' : 'この内容で送信しますか？'}</p>
+          {clockOnlyMode ? (
+            <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
+              {date}（{dowLabel(date)}）　<b>残業ではありません</b>（打刻が遅れただけ）<br />
+              理由：{effectiveClockReason}<br />
+              {(clockInAt || clockOutAt) && <>打刻：{clockInAt || '—'}〜{clockOutAt || '—'}<br /></>}
+              勤務時間はシフトどおり（労働{formatMin(normalShift.labor_minutes)}）・合計時間数は変わりません<br />
+              確認者への申請はありません。記録した時点で確定します
+            </p>
+          ) : fullDayMode ? (
             <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
               {date}（{dowLabel(date)}）　終日：{fullDayType ? OT_TYPE_INFO[fullDayType].label : ''}<br />
               {fullDayType === 'furikae_off' && furikaeOriginDate && <>振替元：{furikaeOriginDate.slice(5).replace('-', '/')}（{dowLabel(furikaeOriginDate)}）{effectiveFurikaeOriginLocation && `・${effectiveFurikaeOriginLocation}`}{furikaeHasTime && `・${furikaeOriginStart}〜${furikaeOriginEnd}（労働${formatMin(furikaeOriginLabor)}）`}<br /></>}
@@ -2292,6 +2438,42 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
           currentUserId={user.id}
           isDark={isDark}
           onClose={() => setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('proposal'); return n; })}
+        />
+      </div>
+    );
+  }
+
+  // ────────────────────────────────────────────
+  // 打刻の確認への回答ビュー（?inquiry=<id>）
+  // ────────────────────────────────────────────
+  const inquiryIdParam = searchParams.get('inquiry');
+  if (inquiryIdParam) {
+    return (
+      <div style={{ maxWidth: 600, margin: '0 auto', padding: '16px 16px 40px' }}>
+        <ClockInquiryResponse
+          inquiryId={inquiryIdParam}
+          currentUserId={user.id}
+          isDark={isDark}
+          onClose={() => setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('inquiry'); return n; })}
+          onReportOvertime={(workDate) => {
+            // 回答は既に確定済み。ここでは残業の報告フォームを開くだけ。
+            // 時間帯は空にしておき、日付を選んだときの通常シフト自動入力に任せる
+            // （実際の退勤時刻は完了画面に打刻として出しているので、そこを見て直してもらう）
+            const d: FormDraft = {
+              mode: 'posthoc', date: workDate,
+              segments: [{ start: '', end: '' }],
+              breakManual: false, breakManualMin: '',
+              reason: '', location: '', locationCustom: '', reviewerId: '',
+              normOverride: false, normStart: '', normEnd: '',
+            };
+            saveDraft(DRAFT_KEYS.overtime, d);
+            setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('inquiry'); return n; });
+            setEditTarget(null);
+            setTab('form');
+            window.scrollTo({ top: 0 });
+            // ※締め後の許可は確認の送信時に付いている。回答画面から戻るとフォームは
+            //   作り直されるので、そのマウント時に最新の許可が読み込まれる
+          }}
         />
       </div>
     );

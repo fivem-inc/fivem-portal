@@ -4,7 +4,8 @@
 export type OvertimeType =
   | 'overtime' | 'early_start' | 'tardiness' | 'early_leave'
   | 'holiday_work' | 'location_change' | 'late_start_adj' | 'early_end_adj'
-  | 'chosei_off' | 'furikae_off' | 'absence';
+  | 'chosei_off' | 'furikae_off' | 'absence'
+  | 'clock_only';
 
 export const OT_TYPE_INFO: Record<OvertimeType, { label: string; color: string; darkBg: string }> = {
   overtime:        { label: '残業',       color: '#1565c0', darkBg: '#1e3a5f' },
@@ -19,7 +20,22 @@ export const OT_TYPE_INFO: Record<OvertimeType, { label: string; color: string; 
   chosei_off:      { label: '時間外調整休', color: '#d4537e', darkBg: '#4b1528' },
   furikae_off:     { label: '振替休日',   color: '#3f51b5', darkBg: '#1f2a5c' },
   absence:         { label: '欠勤',       color: '#b23b3b', darkBg: '#4a1515' },
+  // 打刻ズレ（打刻が遅れただけ・残業なし）。差分0の記録で、合計時間数には影響しない。
+  // 灰色にしているのは「何も増減していない」ことを一目で分かるようにするため。
+  clock_only:      { label: '打刻ズレ',   color: '#5a6b7d', darkBg: '#2c3540' },
 };
+
+// 「残業ではありません（打刻が遅れただけ）」の理由。本人の記録画面と、経理の確認への回答画面で共用する。
+// 🚨 ここに業務（片付け・準備・保護者対応・引き継ぎなど）を並べてはいけない。
+//    それらは会社の指示でやる仕事＝残業であり、「残業ではない」と記録させると
+//    サービス残業を本人に認めさせた記録になる。並べてよいのは本人の都合だけ。
+//    「着替え」も制服着用が義務だと労働時間と判断されうるため出さない。
+export const CLOCK_ONLY_REASONS = [
+  '打刻を忘れた（あとで押した）',
+  '同僚と話していた',
+  '私用で残っていた（休憩・電話・迎え待ちなど）',
+  'その他',
+];
 
 /** 終日種別（時刻入力なし・segments を持たない） */
 export const FULL_DAY_TYPES: OvertimeType[] = ['chosei_off', 'furikae_off', 'absence'];

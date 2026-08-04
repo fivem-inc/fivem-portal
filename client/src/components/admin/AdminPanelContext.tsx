@@ -545,12 +545,10 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       if (profileError) {
         setSuccessMsg('名前の更新に失敗しました: ' + profileError.message);
       } else {
-        try {
-          await supabase.rpc('update_user_metadata', {
-            user_id: userId,
-            metadata: { name: editName.trim(), display_name: editName.trim(), full_name: editName.trim() }
-          });
-        } catch {}
+        // ここには以前 update_user_metadata（ログイン情報側の表示名を書き換える処理）の
+        // 呼び出しがあったが、その関数は本番DBに存在せず、しかも supabase.rpc は
+        // エラーで throw しないため catch にも入らず、完全に無反応だった。
+        // 画面・通知の氏名はすべて profiles.name を見る作りなので、この更新だけで足りる。
         setSuccessMsg('名前を更新しました');
         setEditingUser(null);
         setEditName('');

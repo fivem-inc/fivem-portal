@@ -6,6 +6,7 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import ReceiptUploader, { type ReceiptValue } from './ReceiptUploader';
 import { todayJstStr } from '../lib/breakCalc';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
+import { getUserName } from '../lib/notificationDispatch';
 
 const BannerSuccess: React.FC<{ message: string; sub?: string; onClose: () => void }> = ({ message, sub, onClose }) => {
   React.useEffect(() => { const t = setTimeout(onClose, 4000); return () => clearTimeout(t); }, [onClose]);
@@ -215,9 +216,12 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
       return;
     }
 
-    supabase.functions.invoke('purchase-reimbursement-notify', {
-      body: { user_id: user.id, user_name: user.user_metadata?.name ?? '', item_name: itemName.trim(), amount: parsedAmount },
-    }).then(null, () => {});
+    // 氏名は profiles.name から取る（user_metadata は full_name で入っている人がいて空になる）
+    getUserName(user.id).then(nm => {
+      supabase.functions.invoke('purchase-reimbursement-notify', {
+        body: { user_id: user.id, user_name: nm, item_name: itemName.trim(), amount: parsedAmount },
+      }).then(null, () => {});
+    }, () => {});
 
     setSuccessBanner(true);
     resetForm();

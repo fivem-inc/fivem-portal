@@ -210,12 +210,15 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
         if (repErr || !rep) continue; // 同日重複(23505)等は個別スキップ（部分成功を許容）
         const reportId = (rep as { id: string }).id;
         // セグメント（planned）
-        await supabase.from('overtime_report_segments').insert(
+        // seg_no は 1 始まり。DBの制約が check (seg_no between 1 and 3) なので、
+        // 0 始まりだと配列ごと弾かれ「時間帯が1件も入らない」状態になる（実際にそうなっていた）
+        const { error: segErr } = await supabase.from('overtime_report_segments').insert(
           b.segments.map((s, i) => {
             const st = timeToMin(s.start) ?? 0; let en = timeToMin(s.end) ?? st; if (en <= st) en += 1440;
-            return { report_id: reportId, phase: 'planned', seg_no: i, start_min: st, end_min: en };
+            return { report_id: reportId, phase: 'planned', seg_no: i + 1, start_min: st, end_min: en };
           })
         );
+        if (segErr) { setError('時間帯の保存に失敗しました：' + segErr.message); setSubmitting(false); return; }
         await supabase.from('overtime_adjustment_proposal_options').update({ result_type: 'overtime_report', result_id: reportId }).eq('id', o.id);
         // 提案者＝この申請の確認依頼先。通常の申請と同じく「申請が届きました」を送る
         // （提案への回答通知だけでは、確認待ちが1件増えたことが伝わらないため）
@@ -228,8 +231,9 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
           timeLabel: formatSignedMin(b.diff_minutes),
         }).then(null, () => {});
       }
-      // 3) 提案者へ回答通知
-      await insertNotification(proposal.proposer_id, `${responderName}さんが調整の提案に回答しました`, `採用${chosen.length}件`, 'overtime_proposal:responded', proposal.id, 'overtime_proposal:responded');
+      // 3) 提案者への回答通知は RPC（respond_overtime_adjustment_proposal）の中で作られる。
+      //    ここでクライアントから insert すると、回答者が一般・パート・フロア責任者のとき
+      //    notifications の INSERT ポリシー（リーダー以上限定）で弾かれ、無言で届かない
       setDone('accepted');
     } catch (e) {
       setError('送信に失敗しました：' + String(e));
@@ -246,7 +250,7 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
       const { data: claimed, error: rErr } = await supabase.rpc('respond_overtime_adjustment_proposal', { p_proposal_id: proposal.id, p_note: note.trim() || null, p_options: respOptions });
       if (rErr) { setError('記録に失敗しました：' + rErr.message); setSubmitting(false); return; }
       if (claimed === false) { setDone('declined'); setSubmitting(false); return; }
-      await insertNotification(proposal.proposer_id, `${(await supabase.auth.getUser()).data.user?.user_metadata?.name ?? 'スタッフ'}さんが調整の提案に回答しました`, '後日あらためて調整', 'overtime_proposal:responded', proposal.id, 'overtime_proposal:responded');
+      // 提案者への通知は RPC の中で作られる（クライアントからは RLS で入らない）
       setDone('declined');
     } catch (e) {
       setError('送信に失敗しました：' + String(e)); setSubmitting(false);

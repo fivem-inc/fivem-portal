@@ -92,6 +92,9 @@ const OVERTIME_TYPES: Record<string, { label: string; colorId: string; sync: boo
   chosei_off:      { label: '調整休',      colorId: '4',  sync: true,  priority: 9 },
   furikae_off:     { label: '振休',        colorId: '4',  sync: true,  priority: 10 },
   absence:         { label: '休み',        colorId: '4',  sync: true,  priority: 11 },
+  // 打刻ズレ（打刻が遅れただけ・残業なし）。労働時間は通常どおりなので
+  // カレンダーには出さない（出すと「何もなかった日」でカレンダーが埋まる）
+  clock_only:      { label: '打刻ズレ',    colorId: '',   sync: false, priority: 12 },
 }
 
 // 終日種別は事後報告でもカレンダーに出す（「誰が休んだか」は事後でも周知価値があるため）
