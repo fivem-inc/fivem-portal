@@ -26,6 +26,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
  5. 25日に上長向けのまとめが出るか（部門ごと・前回比・新規）
 
 【デプロイ後に見つけて直した漏れ】
+・🚨 役職ごと・個人ごとのしきい値が「追加する」で保存できなかった
+  （there is no unique or exclusion constraint matching the ON CONFLICT specification）
+  一意性を**部分ユニークインデックス**（`where role_title is not null`）で作ったため、
+  PostgREST の upsert(onConflict) がターゲットにできなかった。
+  **CLAUDE.md 2026-07-24 に同じ教訓があるのに再発させた**
+  → そもそも部分にする必要がなかった。PostgreSQLは**NULL同士を重複扱いしない**ので
+    通常の `unique (role_title)` / `unique (user_id)` で「役職ルールは役職ごとに1件、
+    個人ルールは人ごとに1件」が成立する（20260804700000 で修正・DB変更のみ）
 ・新しい source_type（overtime:threshold / overtime:threshold_summary）を App.tsx に
   登録し忘れていた。そのままだと
   ①専用のオレンジのバナーと NotificationBanner が**二重に出る**
