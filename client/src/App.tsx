@@ -334,16 +334,17 @@ const ProtectedLayout: React.FC = () => {
 
 // ナビゲーションバー
 
-interface NotificationRow { id: string; message: string; sub_message: string | null; read: boolean; created_at: string; source_type: string | null; reference_id: string | null; }
+interface NotificationRow { id: string; message: string; sub_message: string | null; read: boolean; created_at: string; source_type: string | null; reference_id: string | null; event_key: string | null; }
 
 const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
   const [notifs, setNotifs] = useState<NotificationRow[]>([]);
   const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
   const ref = useRef<HTMLDivElement>(null);
   const portalRef = useRef<HTMLDivElement>(null);
 
   const fetchNotifs = useCallback(async () => {
-    const { data } = await supabase.from('notifications').select('id, message, sub_message, read, created_at, source_type, reference_id').eq('user_id', userId).eq('dismissed', false).or('source_type.is.null,source_type.neq.board').order('created_at', { ascending: false }).limit(30);
+    const { data } = await supabase.from('notifications').select('id, message, sub_message, read, created_at, source_type, reference_id, event_key').eq('user_id', userId).eq('dismissed', false).or('source_type.is.null,source_type.neq.board').order('created_at', { ascending: false }).limit(30);
     if (data) setNotifs(data);
   }, [userId]);
 
@@ -359,30 +360,31 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
 
   const unread = notifs.filter(n => !n.read).length;
 
-  const dismissOne = async (id: string) => {
-    console.log('[notification] dismiss clicked', id);
-    const { error } = await supabase.from('notifications').update({ dismissed: true }).eq('id', id);
-    if (error) { console.error('[notification] dismiss error', error); return; }
-    console.log('[notification] dismiss success', id);
-    setNotifs(prev => prev.filter(n => n.id !== id));
+  // ベルは「これまでに届いたものの一覧（履歴）」。消す操作は持たせず、既読にするだけ。
+  // 一覧に残り続けるが、read_at から30日で自動削除される（cron）
+  const markRead = (id: string) => {
+    setNotifs(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+    supabase.from('notifications').update({ read: true, read_at: new Date().toISOString() }).eq('id', id).then(null, () => {});
+  };
+
+  // 行をタップ＝既読にして、その通知の行き先へ移動する。
+  // 行き先の判定は classifyNotif に集約（ホームのバナーと同じものを使う）
+  const handleRowTap = (n: NotificationRow) => {
+    if (!n.read) markRead(n.id);
+    setOpen(false);
+    const { target } = classifyNotif(n);
+    if (target.path) navigate(target.path);
   };
 
   const btnRef = useRef<HTMLButtonElement>(null);
   const [dropRect, setDropRect] = useState<DOMRect | null>(null);
 
+  // 🚨 開いただけでは既読にしない。以前は「開いた瞬間に全件を既読」にしていたため、
+  // ざっと見て閉じると「まだ読んでいないもの」が二度と分からなくなっていた。
+  // 既読になるのは行をタップしたときだけ（読み飛ばしが赤い●で残る）
   const handleOpen = () => {
     if (!open && btnRef.current) setDropRect(btnRef.current.getBoundingClientRect());
-    setOpen(o => {
-      const opening = !o;
-      if (opening) {
-        const unreadIds = notifs.filter(n => !n.read).map(n => n.id);
-        if (unreadIds.length > 0) {
-          setNotifs(prev => prev.map(n => unreadIds.includes(n.id) ? { ...n, read: true } : n));
-          supabase.from('notifications').update({ read: true, read_at: new Date().toISOString() }).in('id', unreadIds).then(null, () => {});
-        }
-      }
-      return opening;
-    });
+    setOpen(o => !o);
   };
 
   return (
@@ -395,18 +397,25 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
       </button>
       {open && dropRect && ReactDOM.createPortal(
         <div ref={portalRef} style={{ position: 'fixed', top: dropRect.bottom + 4, right: window.innerWidth - dropRect.right, width: 300, background: '#fff', borderRadius: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.2)', zIndex: 9999, overflow: 'hidden' }}>
-          <div style={{ padding: '10px 14px', borderBottom: '1px solid #eee', fontSize: 13, fontWeight: 'bold', color: '#333' }}>通知</div>
+          <div style={{ padding: '10px 14px', borderBottom: '1px solid #eee', fontSize: 13, fontWeight: 'bold', color: '#333' }}>通知の履歴</div>
           <div style={{ maxHeight: 320, overflowY: 'auto' }}>
             {notifs.length === 0 ? (
               <div style={{ padding: '20px', textAlign: 'center', color: '#888', fontSize: 13 }}>通知はありません</div>
             ) : notifs.map(n => (
-              <div key={n.id} style={{ padding: '10px 14px', borderBottom: '1px solid #f0f0f0', background: n.read ? '#fff' : '#f0f8ff', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+              // 行ごと押せる。押すと既読になり、その通知の画面へ移動する
+              <div key={n.id} onClick={() => handleRowTap(n)}
+                style={{ padding: '10px 14px', borderBottom: '1px solid #f0f0f0', background: n.read ? '#fff' : '#eaf4ff', display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+                {/* 未読の印。既読になっても行は消さず、印と背景の色だけ消える（履歴として残す）。
+                    文字の濃さだけだと、行に本文・補足・日時が並ぶと差が埋もれるため「面」で区別する */}
+                <span aria-hidden="true" style={{ width: 10, height: 10, borderRadius: '50%', background: n.read ? 'transparent' : '#dc3545', flexShrink: 0, marginTop: 4 }} />
+                {/* 既読は文字を薄くして沈ませる。未読を目立たせるより、読み終わったものを沈める方が
+                    未読が拾いやすい（履歴が30日分たまるため、既読が濃いままだと一覧が真っ黒になる） */}
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, color: '#333', fontWeight: n.read ? 'normal' : 'bold' }}>{n.message}</div>
-                  {n.sub_message && <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>{n.sub_message}</div>}
-                  <div style={{ fontSize: 10, color: '#aaa', marginTop: 4 }}>{(() => { const d = new Date(n.created_at); const now = new Date(); if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: 'numeric', minute: '2-digit' }); const m = d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric' }); const day = d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', day: 'numeric' }); const time = d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }); return `${m}/${day} ${time}`; })()}</div>
+                  <div style={{ fontSize: 13, color: n.read ? '#999' : '#1a1a2e', fontWeight: n.read ? 'normal' : 'bold' }}>{n.message}</div>
+                  {n.sub_message && <div style={{ fontSize: 11, color: n.read ? '#b0b0b0' : '#5a6b7d', marginTop: 2 }}>{n.sub_message}</div>}
+                  <div style={{ fontSize: 10, color: n.read ? '#c4c4c4' : '#8a9bb0', marginTop: 4 }}>{(() => { const d = new Date(n.created_at); const now = new Date(); if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: 'numeric', minute: '2-digit' }); const m = d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric' }); const day = d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', day: 'numeric' }); const time = d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }); return `${m}/${day} ${time}`; })()}</div>
                 </div>
-                <button onClick={() => dismissOne(n.id)} style={{ background: 'none', border: 'none', color: '#bbb', cursor: 'pointer', fontSize: 14, padding: '0 2px', flexShrink: 0, lineHeight: 1 }}>✕</button>
+                <span aria-hidden="true" style={{ fontSize: 13, color: n.read ? '#ddd' : '#ccc', flexShrink: 0, marginTop: 2 }}>›</span>
               </div>
             ))}
           </div>
@@ -885,8 +894,12 @@ const PreviewBodyOffset: React.FC = () => {
 };
 
 // 通知バナー（notifications テーブルから未読を表示）
-const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: string | null; read: boolean; source_type: string | null; reference_id: string | null }; onDismiss: (id: string) => void }> = ({ n, onDismiss }) => {
-  const navigate = useNavigate();
+// 通知の種別判定と「タップしたらどこへ行くか」を1か所に集約する。
+// ホームのバナー(NotifItem)とベルの一覧(BellIcon)の両方から使うため、
+// ここを直せば両方に反映される（同じ判定を2か所に書くと必ず食い違うため）
+type NotifLike = { id: string; message: string; sub_message: string | null; read: boolean; source_type: string | null; reference_id: string | null; event_key?: string | null };
+
+const classifyNotif = (n: NotifLike) => {
   const isEnc = n.message.includes('有給奨励日');
   const isUnconfirmedReminder = n.message.includes('への対応がまだ完了していません');
   // 安否確認：isBoardの文言判定より先に見る
@@ -919,9 +932,13 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
   const isOvertimeUnreported      = n.source_type === 'overtime:unreported';                // 本人：実績未報告リマインド
   const isClockInquiry         = n.source_type === 'overtime:clock_inquiry';          // 本人：経理からの打刻の確認（要対応）
   const isClockInquiryAnswered = n.source_type === 'overtime:clock_inquiry_answered'; // 経理：本人が回答した（結果のみ）
+  // 修正依頼・取消依頼。source_type は3種とも 'correction_request' で同じなので、
+  // 管理者宛(new)か本人宛(その返事)かは event_key で見分ける
+  const isCorrection    = n.source_type === 'correction_request';
+  const isCorrectionNew = isCorrection && n.event_key === 'correction:new';           // 管理者：要対応
   // 🚨 打刻の確認は「答えるまで消えない」要対応。isResultOnly に入れるとタップで消えてしまう
-  const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit || isPurchasePendingApproval || isOvertimePendingApproval || isOvertimePendingResubmit || isClockInquiry;
-  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isAttendance || isAttendanceCancelled || isPurchaseResult || isOvertimeResult || isOtProposalReceived || isOtProposalResponded || isOvertimeUnreported || isOvertimeThreshold || isOvertimeThresholdSummary || isClockInquiryAnswered;
+  const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit || isPurchasePendingApproval || isOvertimePendingApproval || isOvertimePendingResubmit || isClockInquiry || isCorrectionNew;
+  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isAttendance || isAttendanceCancelled || isPurchaseResult || isOvertimeResult || isOtProposalReceived || isOtProposalResponded || isOvertimeUnreported || isOvertimeThreshold || isOvertimeThresholdSummary || isClockInquiryAnswered || (isCorrection && !isCorrectionNew);
   // 旧来のフォールバック（source_typeが無い通知向け）
   const isLegacyReject = !isPendingAction && !isResultOnly && (n.message.includes('差し戻し') || n.message.includes('差し戻され'));
 
@@ -933,90 +950,110 @@ const NotifItem: React.FC<{ n: { id: string; message: string; sub_message: strin
   const textColor  = isLegacyReject ? '#721c24' : isGreenTone ? '#155724' : '#155724';
   const subColor   = isLegacyReject ? '#a03030' : isGreenTone ? '#3a7d52' : '#3a7d52';
 
-  // タップ＝詳細画面への移動。結果報告のみ（A分類）はタップで閉じる。要対応（B分類）は対応完了まで残る。
-  const handleTap = () => {
-    if (isEnc) { navigate('/leave'); return; }
+  // タップしたときの行き先。path が null なら移動しない。
+  // closeOnTap = 「結果報告のみ（対応が要らない）」の印。
+  //   バナー側 … タップで閉じる／ベル側 … 既読にするだけ（一覧には履歴として残す）
+  // 要対応（承認待ち・打刻の確認など）は closeOnTap: false。対応が終わるまで残す
+  const target: { path: string | null; closeOnTap: boolean } = (() => {
+    if (isEnc) return { path: '/leave', closeOnTap: false };
     if (isSafety) {
       // 「助けが必要」の知らせは必ず集計画面を開く。
       // 通常の安否確認は「自分が未回答なら回答画面を優先」だが、これは他人の緊急を
       // 伝える通知なので、その規則のままだと肝心の「誰が助けを求めているか」に辿り着けない。
       const openSummary = isSafetyUrgent ? '&open=summary' : '';
-      navigate(n.reference_id ? `/safety?check=${n.reference_id}${openSummary}` : '/safety?open=summary');
       // 未回答のうちはSafetyCheckBannerが別途出続けるので、ここでは常に閉じてよい（対応済みならこのタップで完了）
-      onDismiss(n.id);
-      return;
+      return { path: n.reference_id ? `/safety?check=${n.reference_id}${openSummary}` : '/safety?open=summary', closeOnTap: true };
     }
     if (isBoard || isUnconfirmedReminder) {
-      if (n.reference_id) { navigate(`/board?openInboxId=${n.reference_id}`); } else { navigate('/board'); }
-      return;
+      return { path: n.reference_id ? `/board?openInboxId=${n.reference_id}` : '/board', closeOnTap: false };
     }
     // reference_id（申請ID）があれば ?focus= を付け、飛び先で該当申請を強調する
     const fq = n.reference_id ? `focus=${n.reference_id}` : '';
-    if (isLeavePendingApproval) { navigate(`/leave-approvals${fq ? `?${fq}` : ''}`); return; }
-    if (isLeavePendingResubmit) { navigate(`/leave?tab=history${fq ? `&${fq}` : ''}`); return; }
-    if (isLeaveResult) { navigate(`/leave?tab=history${fq ? `&${fq}` : ''}`); onDismiss(n.id); return; }
+    if (isLeavePendingApproval) return { path: `/leave-approvals${fq ? `?${fq}` : ''}`, closeOnTap: false };
+    if (isLeavePendingResubmit) return { path: `/leave?tab=history${fq ? `&${fq}` : ''}`, closeOnTap: false };
+    if (isLeaveResult) return { path: `/leave?tab=history${fq ? `&${fq}` : ''}`, closeOnTap: true };
     // 受理FYI（上長向け・誰がいつ休むか）はカレンダーの該当日へ。view=fyi のときだけ全チーム表示に切替（一般スタッフの欠勤動線には影響しない）
     if (isLeaveFyi) {
       const focus = n.reference_id && /^\d{4}-\d{2}-\d{2}$/.test(n.reference_id) ? `focus=${n.reference_id}&` : '';
-      navigate(`/calendar?${focus}view=fyi`); onDismiss(n.id); return;
+      return { path: `/calendar?${focus}view=fyi`, closeOnTap: true };
     }
-    if (isShiftPendingApproval) { navigate(`/shift-report?view=confirm${fq ? `&${fq}` : ''}`); return; }
-    if (isShiftPendingResubmit) { navigate(`/shift-report?tab=history${fq ? `&${fq}` : ''}`); return; }
-    if (isShiftResult) { navigate(`/shift-report?tab=history${fq ? `&${fq}` : ''}`); onDismiss(n.id); return; }
+    if (isShiftPendingApproval) return { path: `/shift-report?view=confirm${fq ? `&${fq}` : ''}`, closeOnTap: false };
+    if (isShiftPendingResubmit) return { path: `/shift-report?tab=history${fq ? `&${fq}` : ''}`, closeOnTap: false };
+    if (isShiftResult) return { path: `/shift-report?tab=history${fq ? `&${fq}` : ''}`, closeOnTap: true };
     // 勤怠の取消：飛び先の予定はもう消えているため移動しない（その場で閉じるだけ）。誰が・何を・いつ は文面に入っている
-    if (isAttendanceCancelled) { onDismiss(n.id); return; }
+    if (isAttendanceCancelled) return { path: null, closeOnTap: true };
     // 欠勤登録：reference_idに対象日(YYYY-MM-DD)があれば、その月へジャンプして該当行を強調する
     if (isAttendance) {
       const focus = n.reference_id && /^\d{4}-\d{2}-\d{2}$/.test(n.reference_id) ? `?focus=${n.reference_id}` : '';
-      navigate(`/calendar${focus}`); onDismiss(n.id); return;
+      return { path: `/calendar${focus}`, closeOnTap: true };
     }
     // 時間調整はFYI。チームカレンダーで確認できる（タップで閉じる）
-    if (isTimeAdjustment) { navigate('/calendar'); onDismiss(n.id); return; }
-    if (isPurchasePendingApproval) { navigate(`/purchase?tab=approvals${fq ? `&${fq}` : ''}`); return; }
-    if (isPurchaseResult) { navigate(`/purchase?tab=history${fq ? `&${fq}` : ''}`); onDismiss(n.id); return; }
-    if (isOvertimePendingApproval) { navigate(`/overtime?view=confirm${fq ? `&${fq}` : ''}`); return; }
-    if (isOvertimePendingResubmit) { navigate(`/overtime?tab=history${fq ? `&${fq}` : ''}`); return; }
-    if (isOvertimeResult) { navigate(`/overtime?tab=history${fq ? `&${fq}` : ''}`); onDismiss(n.id); return; }
+    if (isTimeAdjustment) return { path: '/calendar', closeOnTap: true };
+    if (isPurchasePendingApproval) return { path: `/purchase?tab=approvals${fq ? `&${fq}` : ''}`, closeOnTap: false };
+    if (isPurchaseResult) return { path: `/purchase?tab=history${fq ? `&${fq}` : ''}`, closeOnTap: true };
+    if (isOvertimePendingApproval) return { path: `/overtime?view=confirm${fq ? `&${fq}` : ''}`, closeOnTap: false };
+    if (isOvertimePendingResubmit) return { path: `/overtime?tab=history${fq ? `&${fq}` : ''}`, closeOnTap: false };
+    if (isOvertimeResult) return { path: `/overtime?tab=history${fq ? `&${fq}` : ''}`, closeOnTap: true };
     // 残業が目安を超えたお知らせ。本人は自分の履歴へ、上長は部門集計へ
-    if (isOvertimeThreshold) { navigate('/overtime?tab=history'); onDismiss(n.id); return; }
-    if (isOvertimeThresholdSummary) { navigate('/overtime?tab=history&mode=summary'); onDismiss(n.id); return; }
+    if (isOvertimeThreshold) return { path: '/overtime?tab=history', closeOnTap: true };
+    if (isOvertimeThresholdSummary) return { path: '/overtime?tab=history&mode=summary', closeOnTap: true };
     // 残業調整の提案（相手＝受信／提案者＝回答通知）。どちらも催促しない＝タップで開いて閉じる。
     if (isOtProposalReceived || isOtProposalResponded) {
-      navigate(n.reference_id ? `/overtime?proposal=${n.reference_id}` : '/overtime'); onDismiss(n.id); return;
+      return { path: n.reference_id ? `/overtime?proposal=${n.reference_id}` : '/overtime', closeOnTap: true };
     }
     // 実績未報告リマインド → 履歴（実績を報告する場所）へ
-    if (isOvertimeUnreported) { navigate('/overtime?tab=history'); onDismiss(n.id); return; }
+    if (isOvertimeUnreported) return { path: '/overtime?tab=history', closeOnTap: true };
     // 打刻の確認：本人は回答画面へ（答えるまで消さない）／経理は回答結果を見て閉じる
-    if (isClockInquiry) { navigate(n.reference_id ? `/overtime?inquiry=${n.reference_id}` : '/overtime'); return; }
+    if (isClockInquiry) return { path: n.reference_id ? `/overtime?inquiry=${n.reference_id}` : '/overtime', closeOnTap: false };
     if (isClockInquiryAnswered) {
-      navigate(n.reference_id ? `/admin?tab=overtime_admin&section=inquiries&focus=${n.reference_id}` : '/admin?tab=overtime_admin&section=inquiries');
-      onDismiss(n.id); return;
+      return { path: n.reference_id ? `/admin?tab=overtime_admin&section=inquiries&focus=${n.reference_id}` : '/admin?tab=overtime_admin&section=inquiries', closeOnTap: true };
     }
-    if (isLegacyReject) { navigate('/leave'); return; }
+    // 修正依頼・取消依頼。管理者は対応する画面へ（対応するまで残す）。
+    // 本人への返事は、飛び先になる一覧が本人側に無い（各申請の履歴に状態が出る作り）ため移動しない。
+    // 対応内容・理由は通知の本文に入っているので、読めば用が足りる
+    if (isCorrectionNew) return { path: '/admin?tab=corrections', closeOnTap: false };
+    if (isCorrection) return { path: null, closeOnTap: true };
+    if (isLegacyReject) return { path: '/leave', closeOnTap: false };
     // どの種別にも当てはまらない通知（古いデータ等）はタップで閉じる（無反応にしない保険）
-    onDismiss(n.id);
+    return { path: null, closeOnTap: true };
+  })();
+
+  return { bgColor, borderMain, borderSub, textColor, subColor, isAttendanceCancelled, target };
+};
+
+const NotifItem: React.FC<{ n: NotifLike; onDismiss: (id: string) => void }> = ({ n, onDismiss }) => {
+  const navigate = useNavigate();
+  const c = classifyNotif(n);
+  const handleTap = () => {
+    if (c.target.path) navigate(c.target.path);
+    if (c.target.closeOnTap) onDismiss(n.id);
   };
 
   return (
     <div style={{
-      background: bgColor, border: `1px solid ${borderSub}`,
-      borderLeft: `4px solid ${borderMain}`,
+      background: c.bgColor, border: `1px solid ${c.borderSub}`,
+      borderLeft: `4px solid ${c.borderMain}`,
       borderRadius: '0 10px 10px 0',
       padding: '12px 16px', marginBottom: 10,
     }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
         <div onClick={handleTap} style={{ flex: 1, cursor: 'pointer' }}>
-          <div style={{ fontWeight: 500, fontSize: 14, color: textColor }}>{n.message}</div>
-          {n.sub_message && <div style={{ fontSize: 12, color: subColor }}>{n.sub_message}</div>}
+          <div style={{ fontWeight: 500, fontSize: 14, color: c.textColor }}>{n.message}</div>
+          {n.sub_message && <div style={{ fontSize: 12, color: c.subColor }}>{n.sub_message}</div>}
         </div>
         {/* 取消のお知らせは移動しない（その場で閉じるだけ）ので、動きに合わせて文言を変える */}
-        <div onClick={handleTap} style={{ fontSize: 12, color: subColor, whiteSpace: 'nowrap', flexShrink: 0, cursor: 'pointer', marginTop: 2 }}>{isAttendanceCancelled ? 'タップして閉じる' : 'タップして確認 →'}</div>
+        <div onClick={handleTap} style={{ fontSize: 12, color: c.subColor, whiteSpace: 'nowrap', flexShrink: 0, cursor: 'pointer', marginTop: 2 }}>{c.isAttendanceCancelled ? 'タップして閉じる' : 'タップして確認 →'}</div>
         <button onClick={() => onDismiss(n.id)} title="このお知らせを閉じる"
-          style={{ background: 'none', border: 'none', color: subColor, cursor: 'pointer', fontSize: 15, padding: '0 2px', flexShrink: 0, lineHeight: 1 }}>✕</button>
+          style={{ background: 'none', border: 'none', color: c.subColor, cursor: 'pointer', fontSize: 15, padding: '0 2px', flexShrink: 0, lineHeight: 1 }}>✕</button>
       </div>
     </div>
   );
 };
+
+// ホームのバナーに出す通知の種別。ここに書いたものだけがバナーに出る（ホワイトリスト）。
+// safety_check_urgent＝「助けが必要」の知らせ。専用バナーが無く、災害時に最優先で気づく必要があるため残す。
+// これ以外（結果のお知らせ・連絡板・欠勤登録など）はベルの一覧が担当する
+const BANNER_ONLY_SOURCE_TYPES = ['safety_check_urgent'];
 
 const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
   const [notifs, setNotifs] = useState<{ id: string; message: string; sub_message: string | null; read: boolean; source_type: string | null; reference_id: string | null }[]>([]);
@@ -1025,9 +1062,16 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
   const fetchNotifs = useCallback(async () => {
     const { data } = await supabase
       .from('notifications')
-      .select('id, message, sub_message, read, source_type, reference_id')
+      // event_key は classifyNotif が飛び先の判定に使う（修正依頼は source_type が同じで event_key でしか区別できない）
+      .select('id, message, sub_message, read, source_type, reference_id, event_key')
       .eq('user_id', userId)
       .eq('banner_dismissed', false)
+      // 🚨 ホームのバナーに出すのは「専用バナーが無く、かつ急を要する要対応」だけに絞る（2026-08-06）。
+      // 結果のお知らせ（受理されました等）はベルの一覧に一本化した。
+      // 理由：同じ1件がバナーとベルの両方に出て、それぞれ別に消す必要があり「2回消すのが面倒」だったため。
+      // ホームに残るバナーは申請テーブルを直接数えている専用バナーだけになり、対応すれば自動で消える。
+      // ここに新しく足すときは「専用バナーが無い」「読むだけでは済まない」の両方を満たすか確認すること。
+      .in('source_type', BANNER_ONLY_SOURCE_TYPES)
       .not('message', 'like', '%有給奨励日%')
       // 「要対応」の承認待ちは専用の集計バナー(LeaveApprovalBanner/ShiftReportApprovalBanner/PurchaseApprovalBanner)が別途出るため、ここでは重複表示しない
       // 安否確認も専用の赤バナー(SafetyCheckBanner)が別途出るため、ここでは重複表示しない
