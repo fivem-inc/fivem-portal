@@ -78,6 +78,8 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string }> = {
   "overtime:admin_cancelled":    { app: "残業", word: "新着",   url: "/overtime?tab=history" },
   "overtime:admin_edited":       { app: "残業", word: "新着",   url: "/overtime?tab=history" },
   "overtime:grant":              { app: "残業", word: "新着",   url: "/overtime" },
+  // 備品購入申請の質問・回答。履歴タブに着地し、該当カードが光る（reference_id＝申請id）
+  "purchase_request:comment_added": { app: "備品精算", word: "新着", url: "/purchase?tab=history" },
   // 打刻の確認（経理→本人／本人→経理）。アプリ名「勤務時間」は実機テスト済み（2026-08-04・林の端末）
   "overtime:clock_inquiry":          { app: "勤務時間", word: "新着", url: "/overtime?tab=history" },
   "overtime:clock_inquiry_answered": { app: "勤務時間", word: "新着", url: "/admin?tab=overtime_admin&section=inquiries" },

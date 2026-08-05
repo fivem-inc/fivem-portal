@@ -225,6 +225,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
   );
   const [leaders, setLeaders] = useState<{ id: string; name: string; role_title: string }[]>([]);
   const [managers, setManagers] = useState<{ id: string; name: string }[]>([]);
+  const [managerPlusIds, setManagerPlusIds] = useState<string[]>([]);
   const [shareCandidates, setShareCandidates] = useState<{ id: string; name: string; role_title: string }[]>([]);
   const [boardApprovers, setBoardApprovers] = useState<{ id: string; name: string; role_title: string }[]>([]);
 
@@ -258,6 +259,14 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
     supabase.from('profiles').select('id, name, role_title').eq('is_active', true)
       .in('role_title', ['マネージャー', '社長']).order('role_title').order('name').then(
         ({ data }) => setShareCandidates((data ?? []) as { id: string; name: string; role_title: string }[]),
+        () => {}
+      );
+    // 決裁権限内の購入（承認不要）を共有する相手。
+    // 申請者が選んだ共有先だけだと1人しか知らない状態になり「何が買われているか把握できない」ため、
+    // マネージャー・社長・管理者（経理）にも届ける。⚠️ 経理にはホームのバナーは出ない（App.tsxが !isAdmin）
+    supabase.from('profiles').select('id').eq('is_active', true)
+      .in('role_title', ['マネージャー', '社長', '管理者']).neq('id', user.id).then(
+        ({ data }) => setManagerPlusIds(((data ?? []) as { id: string }[]).map(m => m.id)),
         () => {}
       );
     // 3万円超・全員承認フローの対象者プレビュー（読み取り専用、選択不可）
@@ -616,9 +625,12 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
         sendPurchaseSlackForEvent('purchase_request:submitted_board', 'submitted', 'board', applicantName, itemNameVar, parsedAmount).then(null, () => {});
         notifyEmailToMany('purchase_request:submitted_board', boardApprovers.map(a => a.id)).then(null, () => {});
       } else if (isSelfJudgment) {
+        // ベル・プッシュは「選んだ共有先＋マネージャー以上＋経理」に広げる（何が買われているかの把握のため）。
+        // メールは選んだ共有先だけに留める（Resend無料枠は1日100通。ベル＋プッシュ＋バナーで足りる）
+        const shareTargets = [...new Set([...sharedManagerIds, ...managerPlusIds])].filter(id => id !== user.id);
         const tpl = await getNotificationTemplate('purchase_request:self_judgment_shared', 'site', vars);
         if (tpl) {
-          await Promise.all(sharedManagerIds.map(id => insertNotification(id, tpl.template, tpl.subject || undefined, 'purchase_request', recordId, 'purchase_request:self_judgment_shared')));
+          await Promise.all(shareTargets.map(id => insertNotification(id, tpl.template, tpl.subject || undefined, 'purchase_request', recordId, 'purchase_request:self_judgment_shared')));
         }
         sendPurchaseSlackForEvent('purchase_request:self_judgment_shared', 'submitted', 'self_judgment', applicantName, itemNameVar, parsedAmount).then(null, () => {});
         notifyEmailToMany('purchase_request:self_judgment_shared', sharedManagerIds).then(null, () => {});
@@ -751,9 +763,9 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
       <div style={{ marginBottom: 14, padding: '10px 12px', background: isDarkMode ? '#20304a' : '#eef6ff', border: `1px solid ${isDarkMode ? '#2e4a70' : '#cfe4ff'}`, borderRadius: 8, fontSize: 12, color: isDarkMode ? '#fff' : '#004085' }}>
         <div style={{ marginBottom: 6 }}>ℹ️ まだ購入していないものの購入前承認はこちら。すでに購入済みの実費精算は「💰精算」タブをご利用ください。</div>
         <div style={{ fontWeight: 'bold', marginBottom: 2 }}>承認ルール（金額の目安）</div>
-        <div>・1万円以下：リーダー以上は決裁権限内のため自己判断（共有のみ）／一般スタッフはリーダーかマネージャーの承認が必要</div>
-        <div>・1万円超〜3万円：マネージャー以上は決裁権限内のため自己判断（共有のみ）／それ以外はマネージャーの承認が必要（相見積もりも必須）</div>
-        <div>・3万円超：全マネージャー・社長の全員承認が必要（相見積もりも必須）。社長ご本人の申請のみ自己判断（共有のみ）を選択できます</div>
+        <div>・1万円以下：リーダー以上は決裁権限内のため承認不要（購入後に共有）／一般スタッフはリーダーかマネージャーの承認が必要</div>
+        <div>・1万円超〜3万円：マネージャー以上は決裁権限内のため承認不要（購入後に共有）／それ以外はマネージャーの承認が必要（相見積もりも必須）</div>
+        <div>・3万円超：全マネージャー・社長の全員承認が必要（相見積もりも必須）。社長ご本人の申請のみ承認不要（購入後に共有）を選択できます</div>
       </div>
 
       {tierBanner && (
@@ -1211,7 +1223,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
             （2026-07-30ユーザー承認）。色は固定＝leader緑/manager青/boardアンバー。赤はエラーと誤認するため使わない */}
         {tier !== 'none' && (() => {
           const selfJ = isSelfJudgment || (tier === 'board' && isPresident && presidentSelfJudgment);
-          const routeName = selfJ ? '自己判断（共有のみ）' : tier === 'leader' ? 'リーダー確認' : tier === 'manager' ? 'マネージャー承認' : '全員承認';
+          const routeName = selfJ ? '決裁権限内（承認不要）' : tier === 'leader' ? 'リーダー確認' : tier === 'manager' ? 'マネージャー承認' : '全員承認';
           const c = tier === 'leader'
             ? { bg: '#f0fdf4', bd: '#86efac', fg: '#166534' }
             : tier === 'manager'
@@ -1297,7 +1309,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: text, cursor: 'pointer' }}>
                 <input type="radio" checked={presidentSelfJudgment} onChange={() => setPresidentSelfJudgment(true)} />
-                自己判断（共有のみ、全マネージャーに共有通知）
+                このまま購入する（承認不要・全マネージャーに共有）
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: text, cursor: 'pointer' }}>
                 <input type="radio" checked={!presidentSelfJudgment} onChange={() => setPresidentSelfJudgment(false)} />
@@ -1419,7 +1431,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
           金額のケタ違いや0円のような入力ミスにも気づける */}
       {showConfirm && (() => {
         const routeText = isSelfJudgment || (tier === 'board' && isPresident && presidentSelfJudgment)
-          ? '自己判断（共有のみ・承認は不要）'
+          ? '決裁権限内（承認不要・購入後に共有）'
           : tier === 'leader' ? (leaderIds.length > 1 ? '確認依頼（依頼した全員の回答がそろってから決定）' : 'リーダー承認')
           : tier === 'manager' ? 'マネージャー承認（依頼した全員の回答がそろってから決定）'
           : '全員承認（全マネージャー＋社長の回答がそろってから決定）';

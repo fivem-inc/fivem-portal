@@ -13,6 +13,8 @@ import PurchaseItemsSummary from '../components/PurchaseItemsSummary';
 import { paymentMethodLabel } from '../utils';
 import ReceiptViewButton from '../components/ReceiptViewButton';
 import { openReceiptImage } from '../lib/receiptView';
+import PurchaseCommentThread from '../components/PurchaseCommentThread';
+import { fetchPurchaseComments, type PurchaseComment } from '../lib/purchaseComments';
 
 interface PurchaseRequestPageProps {
   user: AuthUser;
@@ -66,7 +68,9 @@ const STATUS_LABEL: Record<string, { label: string; color: string }> = {
   leader_approved:      { label: '承認済み', color: '#28a745' },
   pending_manager:      { label: '承認待ち（マネージャー）', color: '#e0a800' },
   manager_approved:     { label: '承認済み', color: '#28a745' },
-  self_judgment_shared: { label: '共有済み（自己判断）', color: '#6c757d' },
+  // 「自己判断」は「勝手に判断した」と読めるが、実際は役職の決裁権限内の正当な購入。
+  // 保存されている値（self_judgment_shared）は変えず、表示だけ改めている
+  self_judgment_shared: { label: '決裁権限内（承認不要）', color: '#6c757d' },
   pending_board:        { label: '承認待ち（全員承認）', color: '#e0a800' },
   board_approved:       { label: '承認済み（全員承認）', color: '#28a745' },
   returned:             { label: '差し戻し', color: '#dc3545' },
@@ -80,6 +84,12 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
   // 通知バナーから ?focus=<申請ID> で来たとき履歴の該当カードを強調
   const { highlightId, focusRef } = useFocusHighlight(records);
   const [names, setNames] = useState<Record<string, string>>({});
+  const [roles, setRoles] = useState<Record<string, string>>({});
+  const [comments, setComments] = useState<Record<string, PurchaseComment[]>>({});
+  // 一覧としての絞り込み（マネージャー以上は全社の申請と精算が全部降ってくるため）
+  const [scope, setScope] = useState<'mine' | 'all'>('all');
+  const [period, setPeriod] = useState<'thisMonth' | 'lastMonth' | 'all'>('thisMonth');
+  const [kind, setKind] = useState<'all' | 'purchase_request' | 'reimbursement'>('all');
   const [opinions, setOpinions] = useState<Record<string, OpinionRow[]>>({});
   // answers は「誰がどう答えたか」（コメントは含まない）。名前を見せてよい相手でなければ
   // pendingIds・answers はDB関数側で空配列にされ、件数だけが返る
@@ -141,8 +151,15 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
       setItemsByRequest({});
     }
 
+    // 申請者名は常に取りに行く（以前はマネージャー以上のときだけで、自分の分は名前が出なかった）。
+    // 承認したリーダーの名前も出すので一緒に集める
     const namesToFetch = new Set<string>();
-    if (isManagerPlus) rows.forEach(r => namesToFetch.add(r.user_id));
+    rows.forEach(r => { namesToFetch.add(r.user_id); if (r.leader_id) namesToFetch.add(r.leader_id); });
+
+    // 質問・回答（履歴・承認・管理で共通の lib から取得）
+    const cmts = await fetchPurchaseComments(rows.map(r => r.id));
+    setComments(cmts);
+    Object.values(cmts).forEach(list => list.forEach(c => namesToFetch.add(c.author_id)));
 
     // 自分の申請だけでなく、履歴に出ているすべての申請の進み具合・意見を取りに行く。
     // 承認する人は「誰がもう答えたか」を過去の申請も含めて見られないと判断できない
@@ -192,10 +209,15 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
     }
 
     if (namesToFetch.size > 0) {
-      const { data: profs } = await supabase.from('profiles').select('id, name').in('id', [...namesToFetch]);
+      const { data: profs } = await supabase.from('profiles').select('id, name, role_title').in('id', [...namesToFetch]);
       const map: Record<string, string> = {};
-      (profs ?? []).forEach((p: { id: string; name: string }) => { map[p.id] = p.name; });
+      const roleMap: Record<string, string> = {};
+      (profs ?? []).forEach((p: { id: string; name: string; role_title: string | null }) => {
+        map[p.id] = p.name;
+        if (p.role_title) roleMap[p.id] = p.role_title;
+      });
       setNames(map);
+      setRoles(roleMap);
     }
     setLoading(false);
   }, [isManagerPlus, userId]);
@@ -205,9 +227,61 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
   if (loading) return <div style={{ padding: 20, textAlign: 'center', color: subText }}>読み込み中...</div>;
   if (records.length === 0) return <div style={{ padding: 20, textAlign: 'center', color: subText }}>記録はまだありません</div>;
 
+  // ── 一覧としての絞り込み ──
+  // マネージャー以上には全社の申請と精算が開設以来ぜんぶ降ってくるので、
+  // 「先週何が買われたか」を見る道具として使えるようにする
+  const dateOf = (r: PurchaseRecord) => (r.purchased_at ?? r.requested_purchase_date ?? r.created_at).slice(0, 7);
+  const now = new Date();
+  const ym = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const thisYm = ym(now);
+  const lastYm = ym(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+  const filtered = records.filter(r => {
+    if (isManagerPlus && scope === 'mine' && r.user_id !== userId) return false;
+    if (kind !== 'all' && r.request_type !== kind) return false;
+    if (period === 'thisMonth' && dateOf(r) !== thisYm) return false;
+    if (period === 'lastMonth' && dateOf(r) !== lastYm) return false;
+    return true;
+  });
+  const total = filtered.reduce((s, r) => s + (r.amount ?? 0), 0);
+
+  const pill = (active: boolean): React.CSSProperties => ({
+    padding: '5px 12px', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 'bold',
+    border: `2px solid ${active ? '#1565c0' : '#90caf9'}`,
+    background: active ? '#1976d2' : '#e3f2fd',
+    color: active ? '#fff' : '#1565c0',
+  });
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {records.map(r => {
+      <div style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: '10px 12px' }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+          {isManagerPlus && (
+            <>
+              <button type="button" style={pill(scope === 'mine')} onClick={() => setScope('mine')}>自分の分</button>
+              <button type="button" style={pill(scope === 'all')} onClick={() => setScope('all')}>全員</button>
+              <span style={{ width: 8 }} />
+            </>
+          )}
+          <button type="button" style={pill(period === 'thisMonth')} onClick={() => setPeriod('thisMonth')}>今月</button>
+          <button type="button" style={pill(period === 'lastMonth')} onClick={() => setPeriod('lastMonth')}>先月</button>
+          <button type="button" style={pill(period === 'all')} onClick={() => setPeriod('all')}>すべて</button>
+          <span style={{ width: 8 }} />
+          <button type="button" style={pill(kind === 'all')} onClick={() => setKind('all')}>すべて</button>
+          <button type="button" style={pill(kind === 'purchase_request')} onClick={() => setKind('purchase_request')}>申請</button>
+          <button type="button" style={pill(kind === 'reimbursement')} onClick={() => setKind('reimbursement')}>精算</button>
+        </div>
+        <div style={{ fontSize: 13, fontWeight: 'bold', color: text }}>
+          {filtered.length}件　合計 ¥{total.toLocaleString()}
+        </div>
+      </div>
+
+      {filtered.length === 0 && (
+        <div style={{ padding: 20, textAlign: 'center', color: subText, fontSize: 13 }}>
+          この条件に当てはまる記録はありません
+        </div>
+      )}
+
+      {filtered.map(r => {
         const statusInfo = STATUS_LABEL[r.status];
         const resolvedItems = resolveItems(r, itemsByRequest[r.id] ?? []);
         const isFocused = highlightId === r.id;
@@ -233,8 +307,24 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
             <span>📅 {r.purchased_at ?? r.requested_purchase_date}</span>
             {r.payment_method && r.request_type === 'reimbursement' && <span>💳 {paymentMethodLabel(r)}</span>}
             {r.receipt_type && <span>🧾 {RECEIPT_LABEL[r.receipt_type]}</span>}
-            {isManagerPlus && r.user_id !== userId && <span>👤 {names[r.user_id] ?? '不明'}</span>}
+            {/* 申請者名は自分の分にも出す。混在リストでは名前が全行に揃っているほうが目で追いやすい
+                （一般スタッフの履歴は自分の分しか出ないので、そのときは名前自体を出さない） */}
+            {isManagerPlus && <span>👤 {names[r.user_id] ?? '不明'}</span>}
           </div>
+          {/* 誰の決裁で通ったか。1行に収める（共有先は人数だけ・自分が入っているときだけ明示） */}
+          {r.request_type === 'purchase_request' && (r.is_self_judgment || r.status === 'leader_approved') && (
+            <div style={{ fontSize: 12, color: subText, marginTop: 2 }}>
+              {r.is_self_judgment ? (
+                <>
+                  {names[r.user_id] ?? ''}さんの決裁で購入（承認不要）
+                  {(r.shared_manager_ids?.length ?? 0) > 0 && `／共有先 ${r.shared_manager_ids!.length}名`}
+                  {r.shared_manager_ids?.includes(userId) && '（あなたにも共有）'}
+                </>
+              ) : (
+                <>{names[r.leader_id ?? ''] ?? ''}さんが承認</>
+              )}
+            </div>
+          )}
           {(r.store_name || r.purpose || r.instructed_by || r.location) && (
             <div style={{ fontSize: 12, color: subText, marginTop: 4 }}>
               {r.store_name && <span>購入先：{r.store_name}　</span>}
@@ -305,6 +395,18 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
               承認時のひとこと：{r.approval_comment}
             </div>
           )}
+          {/* 質問・回答。0件でも入口を出す（出さないと存在自体が知られない） */}
+          <PurchaseCommentThread
+            requestId={r.id}
+            itemName={r.item_name}
+            comments={comments[r.id] ?? []}
+            names={names}
+            roles={roles}
+            currentUserId={userId}
+            currentUserName={names[userId] ?? ''}
+            isDark={isDarkMode}
+            onPosted={load}
+          />
           {r.status === 'returned' && r.user_id === userId && (
             <button
               type="button"

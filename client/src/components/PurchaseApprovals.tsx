@@ -10,6 +10,8 @@ import { resolveItems } from '../lib/purchaseItemsFallback';
 import PurchaseItemsSummary from './PurchaseItemsSummary';
 import { openReceiptImage } from '../lib/receiptView';
 import type { PurchaseRequestItem, PurchaseRequestItemQuote } from '../types';
+import PurchaseCommentThread from './PurchaseCommentThread';
+import { fetchPurchaseComments, type PurchaseComment } from '../lib/purchaseComments';
 
 type Route = 'leader' | 'manager' | 'board';
 type OpinionValue = 'approve' | 'deny' | 'undecided' | 'other';
@@ -78,6 +80,8 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
   // 通知バナーから ?focus=<申請ID> で来たとき該当カードを強調
   const { highlightId, focusRef } = useFocusHighlight(requests);
   const [names, setNames] = useState<Record<string, string>>({});
+  const [roles, setRoles] = useState<Record<string, string>>({});
+  const [comments, setComments] = useState<Record<string, PurchaseComment[]>>({});
   const [opinions, setOpinions] = useState<Record<string, OpinionRow[]>>({});
   const [loading, setLoading] = useState(true);
   const [returningId, setReturningId] = useState<string | null>(null);
@@ -184,11 +188,22 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
     rows.forEach(r => (r.requested_manager_ids ?? []).forEach(id => userIds.add(id)));
     rows.forEach(r => (r.board_approver_ids ?? []).forEach(id => userIds.add(id)));
     opinionRows.forEach(o => userIds.add(o.manager_id));
+    userIds.add(userId);   // 自分の名前（質問の投稿者名に使う）
+
+    const cmts = await fetchPurchaseComments(rows.map(r => r.id));
+    setComments(cmts);
+    Object.values(cmts).forEach(list => list.forEach(c => userIds.add(c.author_id)));
+
     if (userIds.size > 0) {
-      const { data: profs } = await supabase.from('profiles').select('id, name').in('id', [...userIds]);
+      const { data: profs } = await supabase.from('profiles').select('id, name, role_title').in('id', [...userIds]);
       const map: Record<string, string> = {};
-      (profs ?? []).forEach((p: { id: string; name: string }) => { map[p.id] = p.name; });
+      const roleMap: Record<string, string> = {};
+      (profs ?? []).forEach((p: { id: string; name: string; role_title: string | null }) => {
+        map[p.id] = p.name;
+        if (p.role_title) roleMap[p.id] = p.role_title;
+      });
       setNames(map);
+      setRoles(roleMap);
     }
     setLoading(false);
   }, [userId]);
@@ -451,7 +466,14 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
                         </button>
                       </div>
                     )}
-                    <div style={{ fontSize: 12, fontWeight: 'bold', color: text, marginBottom: 6 }}>あなたの意見</div>
+                    {/* 「聞いてから決める」順になるよう、意見より前に質問を置く */}
+                    <PurchaseCommentThread
+                      requestId={r.id} itemName={r.item_name}
+                      comments={comments[r.id] ?? []} names={names} roles={roles}
+                      currentUserId={userId} currentUserName={names[userId] ?? ''}
+                      isDark={isDarkMode} defaultOpen onPosted={load}
+                    />
+                    <div style={{ fontSize: 12, fontWeight: 'bold', color: text, margin: '10px 0 6px' }}>承認の意見（記録に残ります）</div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8, opacity: isLocked ? 0.6 : 1 }}>
                       {OPINION_OPTIONS.map(opt => (
                         <label key={opt} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: text, cursor: isLocked ? 'default' : 'pointer' }}>

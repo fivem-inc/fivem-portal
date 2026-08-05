@@ -10,6 +10,8 @@ import { downloadReceiptsAsZip } from '../../lib/purchaseReceiptBulkDownload';
 import { openReceiptImage } from '../../lib/receiptView';
 import PurchaseItemsSummary from '../PurchaseItemsSummary';
 import ReceiptViewButton from '../ReceiptViewButton';
+import PurchaseCommentThread from '../PurchaseCommentThread';
+import { fetchPurchaseComments, type PurchaseComment } from '../../lib/purchaseComments';
 import SearchableSelect from '../common/SearchableSelect';
 import PurchaseRequestEditModal from './PurchaseRequestEditModal';
 import PurchaseRequestEditHistoryModal from './PurchaseRequestEditHistoryModal';
@@ -56,6 +58,27 @@ const PurchaseRequestsTab: React.FC = () => {
     purchaseRequestsList, purchaseRequestsListLoading, purchaseRequestNames,
     purchaseRequestLastDownload, purchaseRequestEditLogCounts, purchaseRequestRemovedApprovers, fetchPurchaseRequestsList,
   } = ctx;
+  // 質問・回答（履歴・承認画面と同じ lib / 同じ部品を使う）
+  const [comments, setComments] = useState<Record<string, PurchaseComment[]>>({});
+  const [commentRoles, setCommentRoles] = useState<Record<string, string>>({});
+  const [myId, setMyId] = useState('');
+  const loadComments = useCallback(async () => {
+    const ids = purchaseRequestsList.map(r => r.id);
+    if (ids.length === 0) { setComments({}); return; }
+    const cmts = await fetchPurchaseComments(ids);
+    setComments(cmts);
+    const authorIds = new Set<string>();
+    Object.values(cmts).forEach(list => list.forEach(c => authorIds.add(c.author_id)));
+    if (authorIds.size > 0) {
+      const { data } = await supabase.from('profiles').select('id, role_title').in('id', [...authorIds]);
+      const m: Record<string, string> = {};
+      (data ?? []).forEach((p: { id: string; role_title: string | null }) => { if (p.role_title) m[p.id] = p.role_title; });
+      setCommentRoles(m);
+    }
+  }, [purchaseRequestsList]);
+  useEffect(() => { loadComments(); }, [loadComments]);
+  useEffect(() => { supabase.auth.getUser().then(({ data }) => setMyId(data.user?.id ?? ''), () => {}); }, []);
+
   const [statusFilter, setStatusFilter] = useState('all');
   const [requestTypeFilter, setRequestTypeFilter] = useState<'all' | 'purchase_request' | 'reimbursement'>('all');
   const [fyFilter, setFyFilter] = useState('__current__');
@@ -468,7 +491,7 @@ const PurchaseRequestsTab: React.FC = () => {
                     <div style={{ fontSize: 11, color: subText, marginBottom: 4 }}>精算記録のため承認操作はありません</div>
                   )}
                   {r.request_type === 'purchase_request' && r.status === 'self_judgment_shared' && (
-                    <div style={{ fontSize: 11, color: subText, marginBottom: 4 }}>自己判断（共有のみ）のため承認操作はありません</div>
+                    <div style={{ fontSize: 11, color: subText, marginBottom: 4 }}>決裁権限内のため承認操作はありません</div>
                   )}
                   {/* 受理済み：誰が・いつ承認したかまで出す（結果だけだと経理が管理できないため） */}
                   {r.request_type === 'purchase_request' && APPROVED_STATUSES.includes(r.status) && r.status !== 'self_judgment_shared' && (() => {
@@ -573,6 +596,14 @@ const PurchaseRequestsTab: React.FC = () => {
                   )}
 
                   <PurchaseItemsSummary items={resolvedItems} isDarkMode={isDarkMode} onViewFile={path => { openReceiptImage(path, false); }} />
+
+                  {/* 質問・回答（履歴・承認画面と同じ部品）。経理もここから質問できる */}
+                  <PurchaseCommentThread
+                    requestId={r.id} itemName={r.item_name}
+                    comments={comments[r.id] ?? []} names={purchaseRequestNames} roles={commentRoles}
+                    currentUserId={myId} currentUserName={purchaseRequestNames[myId] ?? ''}
+                    isDark={isDarkMode} onPosted={loadComments}
+                  />
 
                   {confirmingDeleteId === r.id ? (
                     <div style={{ marginTop: 8, padding: 8, background: '#fff5f5', border: '1px solid #f5c2c7', borderRadius: 8 }}>

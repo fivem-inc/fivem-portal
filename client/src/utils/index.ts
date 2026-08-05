@@ -127,7 +127,7 @@ const PURCHASE_STATUS_LABEL: Record<string, string> = {
   leader_approved: '承認済み',
   pending_manager: '承認待ち（マネージャー）',
   manager_approved: '承認済み',
-  self_judgment_shared: '共有済み（自己判断）',
+  self_judgment_shared: '決裁権限内（承認不要）',
   pending_board: '承認待ち（全員承認）',
   board_approved: '承認済み（全員承認）',
   returned: '差し戻し',
@@ -157,7 +157,7 @@ const purchaseAmountBand = (row: PurchaseRequestCSVRow): string => {
 
 const purchaseRouteType = (row: PurchaseRequestCSVRow): string => {
   if (row.request_type !== 'purchase_request') return '';
-  if (row.president_self_judgment || row.is_self_judgment) return '自己判断（共有のみ）';
+  if (row.president_self_judgment || row.is_self_judgment) return '決裁権限内（承認不要）';
   if (row.amount <= 10000) return 'リーダー承認';
   if (row.amount <= 30000) return 'マネージャー承認';
   return '全員承認';

@@ -132,7 +132,7 @@ const EVENT_GROUPS = [
       { key: 'purchase_request:submitted_manager',     label: '申請時（マネージャー審議ルート）' },
       { key: 'purchase_request:submitted_board',       label: '申請時（全員承認ルート）' },
       { key: 'purchase_request:manager_opinions_ready', label: '意見出揃い時（プッシュのみ）' },
-      { key: 'purchase_request:self_judgment_shared',  label: '自己判断・共有時' },
+      { key: 'purchase_request:self_judgment_shared',  label: '決裁権限内の購入（共有）' },
       { key: 'purchase_request:leader_approved',       label: 'リーダー最終承認時' },
       { key: 'purchase_request:manager_approved',      label: 'マネージャー最終承認時' },
       { key: 'purchase_request:board_all_approved',    label: '全員承認・自動確定時' },
