@@ -225,7 +225,10 @@ async function deleteEvent(
     `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${eventId}`,
     { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }
   )
-  if (!res.ok && res.status !== 410) {
+  // 404/410 は「もう存在しない」＝目的は達成できているので成功として扱う。
+  // 人がGoogleカレンダー側で手作業で消したイベントは404を返し、以前はここで例外になって
+  // アプリ側の削除・取消が丸ごと失敗していた
+  if (!res.ok && res.status !== 404 && res.status !== 410) {
     throw new Error(`イベント削除失敗: status=${res.status}`)
   }
 }

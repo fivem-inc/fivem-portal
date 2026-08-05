@@ -1151,7 +1151,7 @@ const BoardPage: React.FC = () => {
     setComposeDeadlineType(''); setComposeDeadline(''); setComposeScheduledAt('');
     setComposeOptions(true); setComposeDraftId(null); setComposeQuery('');
     setComposeAnswerPrompt(''); setComposeAnswerLocation(''); setComposeAnswerLink('');
-    clearDraft(DRAFT_KEYS.boardCompose); // 送信成功・🗑クリアで下書きを消す
+    clearDraft(DRAFT_KEYS.boardCompose); // 送信成功・🚫クリアで下書きを消す
   };
 
   // 作成画面を開く。書きかけの下書きがあれば消さずに保持したまま開く（別アプリ移動対策）。
@@ -1293,7 +1293,7 @@ const BoardPage: React.FC = () => {
                 {favMessageIds.has(msg.id) ? '★' : '☆'}
               </button>
               {canEdit && msg.channel_id && (
-                <button type="button" onClick={() => setChannelDeleteConfirmId(channelDeleteConfirmId === msg.id ? null : msg.id)} title="削除" style={{ background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 13, padding: '2px 4px' }}>🗑️</button>
+                <button type="button" onClick={() => setChannelDeleteConfirmId(channelDeleteConfirmId === msg.id ? null : msg.id)} title="削除" style={{ background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 13, padding: '2px 4px' }}>🚫</button>
               )}
             </div>
           </div>
@@ -2026,7 +2026,7 @@ const BoardPage: React.FC = () => {
               {canDelete && (
                 <button type="button" onClick={e => deleteChannel(ch.id, e)}
                   title="削除"
-                  style={{ background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 13, padding: '0 2px', lineHeight: 1 }}>🗑️</button>
+                  style={{ background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 13, padding: '0 2px', lineHeight: 1 }}>🚫</button>
               )}
             </div>
           </div>
@@ -2263,7 +2263,7 @@ const BoardPage: React.FC = () => {
                 </button>
                 <button type="button" onClick={() => setDeleteConfirmId(inboxDetail.id)}
                   style={{ padding: '7px 14px', background: 'none', border: '1.5px solid #dc3545', color: '#dc3545', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
-                  🗑️ 取消・削除
+                  🚫 取消・削除
                 </button>
               </div>
             )}
@@ -2320,7 +2320,7 @@ const BoardPage: React.FC = () => {
             <div style={{ borderBottom: `1px solid ${border}` }}>
               {/* 期間指定一括削除 */}
               <div style={{ padding: '8px 12px', background: isDark ? '#2a1a1a' : '#fff5f5', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 12, color: subColor, flexShrink: 0 }}>🗑️ 一括削除：</span>
+                <span style={{ fontSize: 12, color: subColor, flexShrink: 0 }}>🚫 一括削除：</span>
                 {([['1m', '1ヶ月以上前'], ['3m', '3ヶ月以上前'], ['1y', '1年以上前'], ['all', 'すべて']] as const).map(([key, label]) => (
                   <button key={key} type="button" onClick={() => setArchiveBulkPeriod(archiveBulkPeriod === key ? '' : key)}
                     style={{ padding: '4px 10px', borderRadius: 20, border: `1.5px solid ${archiveBulkPeriod === key ? '#dc3545' : border}`, background: archiveBulkPeriod === key ? '#dc3545' : 'none', color: archiveBulkPeriod === key ? '#fff' : subColor, cursor: 'pointer', fontSize: 12, fontWeight: archiveBulkPeriod === key ? 700 : 400 }}>
@@ -2511,7 +2511,7 @@ const BoardPage: React.FC = () => {
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
           <button type="button" onClick={resetCompose}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: subColor, background: 'none', border: `1px solid ${border}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
-            🗑 クリア
+            🚫 クリア
           </button>
         </div>
         {/* 宛先 */}
@@ -2774,7 +2774,7 @@ const BoardPage: React.FC = () => {
                 )}
                 <button type="button" onClick={() => setDeleteConfirmId(outboxDetail.id)}
                   style={{ padding: '8px 16px', background: 'none', border: '1.5px solid #dc3545', color: '#dc3545', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
-                  🗑️ 完全削除
+                  🚫 完全削除
                 </button>
               </div>
             )}
@@ -2798,7 +2798,7 @@ const BoardPage: React.FC = () => {
                 {/* 一括削除・チェック操作バー */}
                 <div style={{ marginBottom: 8 }}>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '8px 0', background: isDark ? '#2d1a1a' : '#fff5f5', border: `1px solid ${isDark ? '#7f1d1d' : '#fca5a5'}`, borderRadius: 8, marginBottom: 6, paddingLeft: 10 }}>
-                    <span style={{ fontSize: 11, color: subColor, alignSelf: 'center', marginRight: 2 }}>🗑️ 一括：</span>
+                    <span style={{ fontSize: 11, color: subColor, alignSelf: 'center', marginRight: 2 }}>🚫 一括：</span>
                     {[{ label: '1ヶ月以上前', months: 1 }, { label: '3ヶ月以上前', months: 3 }, { label: '1年以上前', months: 12 }, { label: 'すべて', months: null }].map(({ label, months }) => {
                       const cutoff = months ? new Date(Date.now() - months * 30 * 24 * 60 * 60 * 1000) : null;
                       const targets = cutoff ? outboxArchivedMessages.filter(m => new Date(m.created_at) < cutoff) : outboxArchivedMessages;
@@ -3747,7 +3747,7 @@ const BoardPage: React.FC = () => {
       {noticeActionBanner && (
         <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: noticeActionBanner === 'deleted' ? '#fff5f5' : '#f0fdf4', border: `1px solid ${noticeActionBanner === 'deleted' ? '#dc2626' : '#86efac'}`, borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 220 }}>
           <div style={{ width: 36, height: 36, borderRadius: '50%', background: noticeActionBanner === 'deleted' ? '#dc2626' : '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>
-            {noticeActionBanner === 'deleted' ? '🗑️' : '✓'}
+            {noticeActionBanner === 'deleted' ? '🚫' : '✓'}
           </div>
           <span style={{ fontSize: 15, fontWeight: 'bold', color: noticeActionBanner === 'deleted' ? '#dc2626' : '#166534' }}>
             {noticeActionBanner === 'deleted' ? '削除しました' : '修正を保存しました'}

@@ -723,7 +723,7 @@ const BoardSettingsTab: React.FC = () => {
                 </button>
                 <button type="button" onClick={() => deleteChannel(ch.id, ch.name || 'チャンネル')}
                   style={{ padding: '4px 10px', background: 'none', border: `1px solid #dc3545`, borderRadius: 6, color: '#dc3545', cursor: 'pointer', fontSize: 12 }}>
-                  🗑
+                  🚫
                 </button>
               </div>
             )}

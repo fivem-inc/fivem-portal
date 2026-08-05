@@ -653,7 +653,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
                 <button type="button" onClick={() => { setDraftExpense(emptyDraft); setHighlightFields(new Set()); setFormError(''); setTemplateSource(null); }}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: isDarkMode ? '#adb5bd' : '#8a939c', background: 'none', border: `1px solid ${isDarkMode ? '#555' : '#d5dae0'}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
-                  🗑 クリア
+                  🚫 クリア
                 </button>
               </div>
               {/* 区分 */}

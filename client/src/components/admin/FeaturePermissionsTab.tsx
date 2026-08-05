@@ -460,7 +460,7 @@ const FeaturePermissionsTab: React.FC = () => {
       {deleteTarget && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}>
           <div style={{ background: cardBg, borderRadius: 12, padding: 24, width: 320, color: text, boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>
-            <h4 style={{ margin: '0 0 10px', fontSize: 15, color: '#dc3545' }}>🗑️ 役職を削除</h4>
+            <h4 style={{ margin: '0 0 10px', fontSize: 15, color: '#dc3545' }}>🚫 役職を削除</h4>
             <p style={{ fontSize: 14, margin: '0 0 10px', color: text }}>
               <strong>「{deleteTarget.role.name}」</strong> を削除しますか？
             </p>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { useAuth } from '../../hooks/useAuth';
 import type { AdminLeaveRequest } from '../../types';
@@ -80,9 +80,14 @@ const LeaveRequestsTab: React.FC = () => {
     isDarkMode, leaveRequests, loadingLeaveRequests, leaveStatusFilter, setLeaveStatusFilter,
     users, fetchLeaveRequests, fetchUsers,
     setAdminManagerList, setAdminSelectedManagerId, setAdminSelectingManagerFor,
-    sendLeaveSlack, supabase, setSuccessMsg,
+    sendLeaveSlack, supabase, setSuccessMsg, focusTarget, setFocusTarget,
   } = ctx;
   const { user: authUser } = useAuth();
+
+  // 修正依頼タブから飛んできたとき、対象の行を光らせる。
+  // 🚨 絞り込みは解除する（既定が「確認待ち」なので受理済みの申請は一覧に出ず、探せなかった）
+  const focusId = focusTarget?.type === 'leave' ? focusTarget.id : null;
+  const focusRowRef = useRef<HTMLTableRowElement | null>(null);
 
   const [absenceView, setAbsenceView] = useState(false);
   const [rejectModal, setRejectModal] = useState<AdminLeaveRequest | null>(null);
@@ -107,6 +112,16 @@ const LeaveRequestsTab: React.FC = () => {
   const [leaveHistory, setLeaveHistory] = useState<Record<string, LeaveHistoryRow[]>>({});
   const [historyReqIds, setHistoryReqIds] = useState<Set<string>>(new Set());
   const [filterType, setFilterType] = useState<string>('all');
+
+  useEffect(() => {
+    if (!focusId) return;
+    setAbsenceView(false);
+    setLeaveStatusFilter('all'); setFilterFY('all'); setFilterPerson('all'); setFilterType('all');
+    const t1 = setTimeout(() => focusRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 400);
+    const t2 = setTimeout(() => setFocusTarget(null), 6000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [focusId, setLeaveStatusFilter, setFocusTarget]);
+
   const [encDays, setEncDays] = useState<EncDay[]>([]);
   const [encLoading, setEncLoading] = useState(false);
   const [expandedEncDays, setExpandedEncDays] = useState<Set<string>>(new Set());
@@ -339,6 +354,22 @@ const LeaveRequestsTab: React.FC = () => {
     setSuccessMsg(`奨励日（${fmtEncDow(day.target_date)}）を削除しました`);
     fetchEncDays();
   }, [supabase, fetchEncDays, setSuccessMsg]);
+
+  // 休暇のカレンダーイベントを消す。
+  // 🚨 invoke は 4xx/5xx でも throw しないので error と success を必ず見る。
+  // 以前は try/catch で握りつぶしていたため、「アプリからは消えたのにカレンダーに残る」ことに
+  // 誰も気づけなかった（実際に発生）。失敗したら必ず画面に出す
+  const deleteLeaveGcal = async (id: string): Promise<boolean> => {
+    const { data, error } = await supabase.functions.invoke('gcal-sync', {
+      body: { action: 'delete', source_type: 'leave', source_id: id },
+    });
+    const res = data as { success?: boolean } | null;
+    if (error || res?.success === false) {
+      console.error('[gcal-sync] 休暇の削除失敗:', error);
+      return false;
+    }
+    return true;
+  };
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
@@ -1355,7 +1386,10 @@ const LeaveRequestsTab: React.FC = () => {
                         const st = getStatusDisplay(req);
                         return (
                           <React.Fragment key={req.id}>
-                          <tr style={{ background: indent ? (isDarkMode ? '#1e3a1e' : '#f0fff4') : (i % 2 === 0 ? (isDarkMode ? '#343a40' : 'white') : (isDarkMode ? '#3d4349' : '#f8f9fa')) }}>
+                          <tr
+                            ref={req.id === focusId ? focusRowRef : undefined}
+                            style={{ background: req.id === focusId ? (isDarkMode ? '#4a3f1a' : '#fff9c4') : indent ? (isDarkMode ? '#1e3a1e' : '#f0fff4') : (i % 2 === 0 ? (isDarkMode ? '#343a40' : 'white') : (isDarkMode ? '#3d4349' : '#f8f9fa')), transition: 'background 0.6s' }}
+                          >
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12, borderLeft: indent ? '3px solid #28a745' : undefined, paddingLeft: indent ? 8 : undefined }}>
                               {indent && <div style={{ fontSize: 9, color: '#28a745', lineHeight: 1 }}>└→</div>}
                               <div>{jstY}/{jstM}/{jstD}</div><div>{jstH}:{jstMin}</div>
@@ -1415,7 +1449,7 @@ const LeaveRequestsTab: React.FC = () => {
                                 <button
                                   onClick={() => setEditingLeave(req)}
                                   style={{ padding: '4px 8px', background: '#fd7e14', color: 'white', border: '2px solid #d96b0c', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}
-                                >🖊 修正</button>
+                                >📋 修正</button>
                               )}
                               {req.status === 'rejected' && (
                                 <button
@@ -1519,14 +1553,19 @@ const LeaveRequestsTab: React.FC = () => {
                               <button
                                 onClick={() => {
                                   setConfirmDialog({ message: 'この申請を削除します。\n本当に削除しますか？この操作は取り消せません。', onConfirm: async () => {
-                                    const { error } = await supabase.from('leave_requests').delete().eq('id', req.id);
+                                    // 🚨 削除件数を必ず見る。RLSで0件でもエラーは返らないため、
+                                    // 権限が足りないと「消えたように見えて実は残っている」ことになる
+                                    const { data: deleted, error } = await supabase.from('leave_requests').delete().eq('id', req.id).select('id');
                                     if (error) { setSuccessMsg('⚠ 削除に失敗しました: ' + error.message); return; }
-                                    // カレンダーからも削除
-                                    try {
-                                      await supabase.functions.invoke('gcal-sync', {
-                                        body: { action: 'delete', source_type: 'leave', source_id: req.id },
-                                      });
-                                    } catch (e) { console.error('[gcal-sync] 削除失敗:', e); }
+                                    if (!deleted || deleted.length === 0) {
+                                      setSuccessMsg('⚠ 削除できませんでした（権限/RLSの可能性）。管理者アカウントでログインしているかご確認ください。');
+                                      fetchLeaveRequests();
+                                      return;
+                                    }
+                                    const gcalOk = await deleteLeaveGcal(req.id);
+                                    setSuccessMsg(gcalOk
+                                      ? '申請を削除しました'
+                                      : '⚠ 削除しましたが、Googleカレンダーからの削除に失敗しました。カレンダーを確認してください。');
                                     fetchLeaveRequests();
                                   } });
                                 }}
@@ -1747,11 +1786,9 @@ const LeaveRequestsTab: React.FC = () => {
                           if (rejectNewType) update.leave_type = rejectNewType;
                           await supabase.from('leave_requests').update(update).eq('id', rejectModal.id);
                           // 差戻し元のカレンダーイベントを削除
-                          try {
-                            await supabase.functions.invoke('gcal-sync', {
-                              body: { action: 'delete', source_type: 'leave', source_id: rejectModal.id },
-                            });
-                          } catch (e) { console.error('[gcal-sync] 削除失敗:', e); }
+                          if (!(await deleteLeaveGcal(rejectModal.id))) {
+                            setSuccessMsg('⚠ 差し戻しましたが、Googleカレンダーからの削除に失敗しました。カレンダーを確認してください。');
+                          }
                           if (rejectNewType) {
                             // 種別変更あり → 新申請を受理済みで自動作成
                             const autoNote = `【管理者が種別変更】${origType} → ${rejectNewType}（元の申請から自動作成）`;
@@ -1813,11 +1850,9 @@ const LeaveRequestsTab: React.FC = () => {
                             modified_at: new Date().toISOString(),
                           }).eq('id', rejectModal.id);
                           // カレンダーから削除
-                          try {
-                            await supabase.functions.invoke('gcal-sync', {
-                              body: { action: 'delete', source_type: 'leave', source_id: rejectModal.id },
-                            });
-                          } catch (e) { console.error('[gcal-sync] 削除失敗:', e); }
+                          if (!(await deleteLeaveGcal(rejectModal.id))) {
+                            setSuccessMsg('⚠ 取り消しましたが、Googleカレンダーからの削除に失敗しました。カレンダーを確認してください。');
+                          }
                           // 社長（宛先で「社長」を選んだ場合の届け先。複数人いても全員に届ける）
                           const cancelType = rejectModal.leave_type === 'その他' ? (rejectModal.leave_type_other || 'その他') : rejectModal.leave_type;
                           const cancelVars = { 申請者名: rejectModal.profile?.name ?? '', 休暇種別: cancelType, 取り消し理由: rejectReason || '' };

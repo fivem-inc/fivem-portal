@@ -326,7 +326,7 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
                           style={{ ...inputStyle, width: 110 }} />
                       </td>
                       <td style={{ padding: '6px 8px', textAlign: 'right' }}>
-                        {/* ✕ を使う（🗑 は環境によって□に化ける） */}
+                        {/* ✕ を使う（🚫 は環境によって□に化ける） */}
                         <button onClick={() => setRows(prev => prev.filter((_, j) => j !== i))}
                           title="この日を外す"
                           style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, color: subText }} aria-label="この日を外す">✕</button>

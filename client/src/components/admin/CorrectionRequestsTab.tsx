@@ -2,17 +2,42 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { resolveCorrectionRequest, declineCorrectionRequest } from '../../lib/correctionRequest';
 import type { CorrectionRequestRow } from '../../lib/correctionRequest';
+import { OT_TYPE_INFO, isOvertimeType } from '../../lib/overtimeTypes';
 
 const PURPLE = '#534AB7';
 const RED = '#A32D2D';
 const TYPE_LABEL: Record<string, string> = { leave: '休暇', shift: '勤務変更', overtime: '残業' };
 const TYPE_TAB: Record<string, string> = { leave: 'leave_requests', shift: 'shift_reports', overtime: 'overtime_admin' };
 
+// 状態の日本語。飛ぶ前に「もう取り消し済みか」が分かるようにするため
+const STATUS_LABEL: Record<string, string> = {
+  pending: '確認待ち', step2_pending: '確認待ち', manager_approved: '経理確認待ち', admin_approved: '社長確認待ち',
+  approved: '受理済み', rejected: '差し戻し', cancelled: '取消済み',
+  resubmitted: '再提出', confirmed: '受理済み', returned: '差し戻し',
+  requested: '申請中', request_confirmed: '事前受理', reported: '実績報告済み',
+};
+
+// 対象の申請の要約（日付・種別・状態）。依頼カードに出して取り違えを防ぐ
+type TargetInfo = { dateLabel: string; typeLabel: string; status: string };
+
+const mdJp = (d: string) => {
+  const p = d.split('-');
+  return p.length === 3 ? `${Number(p[1])}/${Number(p[2])}` : d;
+};
+const datesLabel = (leaveDates: string | null, start: string | null) => {
+  let list: string[] = [];
+  try { list = leaveDates ? JSON.parse(leaveDates) : []; } catch { list = []; }
+  if (list.length === 0) return start ? mdJp(start) : '日付不明';
+  return list.length === 1 ? mdJp(list[0]) : `${mdJp(list[0])} 他${list.length - 1}日`;
+};
+
 const CorrectionRequestsTab: React.FC = () => {
-  const { supabase, isDarkMode, setActiveTab, setSuccessMsg } = useAdminPanel() as any;
+  const { supabase, isDarkMode, setActiveTab, setSuccessMsg, setFocusTarget } = useAdminPanel() as any;
 
   const [rows, setRows] = useState<CorrectionRequestRow[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
+  // target_id → 対象の申請の要約。キーが無い＝対象がもう存在しない（削除済み）
+  const [targets, setTargets] = useState<Record<string, TargetInfo>>({});
   const [loading, setLoading] = useState(true);
   const [showHandled, setShowHandled] = useState(false);
   // 行ごとの操作状態
@@ -44,8 +69,58 @@ const CorrectionRequestsTab: React.FC = () => {
       for (const p of (profs as any[] | null) ?? []) map[p.id] = p.name || p.email || '不明';
       setNames(map);
     }
+
+    // 対象の申請の日付・種別・状態を取ってカードに出す。
+    // 「どの申請への依頼か」が分からないと、飛んだ先で取り違えるため（実際に取り違えが起きた）
+    const info: Record<string, TargetInfo> = {};
+    const idsOf = (t: string) => [...new Set(list.filter(r => r.target_type === t).map(r => r.target_id))];
+
+    const leaveIds = idsOf('leave');
+    if (leaveIds.length) {
+      const { data: lv } = await supabase.from('leave_requests')
+        .select('id, leave_type, leave_type_other, chosei_sub_type, leave_dates, start_date, status').in('id', leaveIds);
+      for (const r of (lv as any[] | null) ?? []) {
+        const sub = r.chosei_sub_type === 'zangyou' ? '時間外調整休' : r.chosei_sub_type === 'furikae' ? '振替休日' : null;
+        info[r.id] = {
+          dateLabel: datesLabel(r.leave_dates, r.start_date),
+          typeLabel: sub ?? (r.leave_type === 'その他' && r.leave_type_other ? r.leave_type_other : r.leave_type),
+          status: STATUS_LABEL[r.status] ?? r.status,
+        };
+      }
+    }
+
+    const shiftIds = idsOf('shift');
+    if (shiftIds.length) {
+      const { data: sr } = await supabase.from('shift_reports')
+        .select('id, work_date, status').in('id', shiftIds);
+      for (const r of (sr as any[] | null) ?? []) {
+        info[r.id] = { dateLabel: mdJp(r.work_date), typeLabel: '勤務変更', status: STATUS_LABEL[r.status] ?? r.status };
+      }
+    }
+
+    const otIds = idsOf('overtime');
+    if (otIds.length) {
+      const { data: ot } = await supabase.from('overtime_reports')
+        .select('id, work_date, application_types, status').in('id', otIds);
+      for (const r of (ot as any[] | null) ?? []) {
+        const labels = ((r.application_types ?? []) as string[]).filter(isOvertimeType).map(t => OT_TYPE_INFO[t].label);
+        info[r.id] = {
+          dateLabel: mdJp(r.work_date),
+          typeLabel: labels.length ? labels.join('＋') : '残業',
+          status: STATUS_LABEL[r.status] ?? r.status,
+        };
+      }
+    }
+    setTargets(info);
     setLoading(false);
   }, [supabase]);
+
+  // 対象の申請のタブへ移動して、その行を光らせる。
+  // 飛び先では絞り込みを解除する（受理済みは既定の「確認待ち」フィルタに隠れて見つけられなかった）
+  const jumpToTarget = (r: CorrectionRequestRow) => {
+    setFocusTarget({ type: r.target_type as 'leave' | 'shift' | 'overtime', id: r.target_id });
+    setActiveTab(TYPE_TAB[r.target_type]);
+  };
 
   useEffect(() => {
     load();
@@ -94,8 +169,9 @@ const CorrectionRequestsTab: React.FC = () => {
     const isCancel = r.request_kind === 'cancel';
     const accent = isCancel ? RED : PURPLE;
     const kindChip = isCancel
-      ? { label: '🗑 取消依頼', bg: isDarkMode ? '#791F1F' : '#FCEBEB', fg: isDarkMode ? '#F7C1C1' : '#A32D2D' }
-      : { label: '🖊 修正依頼', bg: isDarkMode ? '#3C3489' : '#EEEDFE', fg: isDarkMode ? '#CECBF6' : '#26215C' };
+      ? { label: '🚫 取消依頼', bg: isDarkMode ? '#791F1F' : '#FCEBEB', fg: isDarkMode ? '#F7C1C1' : '#A32D2D' }
+      : { label: '📋 修正依頼', bg: isDarkMode ? '#3C3489' : '#EEEDFE', fg: isDarkMode ? '#CECBF6' : '#26215C' };
+    const tgt = targets[r.target_id];
     const statusChip = isOpen
       ? { label: '未対応', bg: isDarkMode ? '#3C3489' : '#EEEDFE', fg: isDarkMode ? '#CECBF6' : '#26215C' }
       : r.status === 'resolved'
@@ -114,6 +190,18 @@ const CorrectionRequestsTab: React.FC = () => {
           </div>
         </div>
 
+        {/* どの申請への依頼かを明記する。日付が出ないと飛び先で取り違える */}
+        <div style={{ fontSize: 13, marginBottom: 8 }}>
+          {tgt ? (
+            <span style={{ color: text }}>
+              対象：<strong>{tgt.dateLabel}</strong>（{tgt.typeLabel}）
+              <span style={{ color: sub, marginLeft: 6 }}>／{tgt.status}</span>
+            </span>
+          ) : (
+            <span style={{ color: '#A32D2D', fontWeight: 'bold' }}>対象の申請は削除済みです（対応済みにして片付けてください）</span>
+          )}
+        </div>
+
         {r.requested_changes && r.requested_changes.length > 0 && (
           <div style={{ background: innerBg, borderRadius: 8, padding: '8px 10px', marginBottom: 8, fontSize: 13, color: text }}>
             {r.requested_changes.map((c, i) => (
@@ -127,10 +215,12 @@ const CorrectionRequestsTab: React.FC = () => {
         {isOpen && (
           <>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              <button type="button" style={btn(accent)} disabled={busy}
-                onClick={() => setActiveTab(TYPE_TAB[r.target_type])}>
-                {isCancel ? `🗑 ${TYPE_LABEL[r.target_type]}タブで取り消す` : `🖊 ${TYPE_LABEL[r.target_type]}タブで修正する`}
-              </button>
+              {tgt && (
+                <button type="button" style={btn(accent)} disabled={busy}
+                  onClick={() => jumpToTarget(r)}>
+                  {isCancel ? `🚫 ${TYPE_LABEL[r.target_type]}タブで取り消す` : `📋 ${TYPE_LABEL[r.target_type]}タブで修正する`}
+                </button>
+              )}
               <button type="button" style={btn('transparent', text)} disabled={busy}
                 onClick={() => { setReplyFor(replyFor === r.id ? null : r.id); setDeclineFor(null); setReplyText(''); setErr(''); }}>
                 対応済みにする
@@ -174,7 +264,7 @@ const CorrectionRequestsTab: React.FC = () => {
     <div style={{ textAlign: 'left' }}>
       <h3 style={{ color: text, marginTop: 0 }}>📩 修正依頼</h3>
       <p style={{ fontSize: 13, color: sub, marginTop: 0 }}>
-        スタッフが申請後に送った「ここを直してほしい」の一覧です。該当タブの🖊修正で反映したあと「対応済み」にしてください。
+        スタッフが申請後に送った「ここを直してほしい」の一覧です。ボタンを押すと該当タブの対象の行が黄色く光ります。反映したあと「対応済み」にしてください。
       </p>
 
       {loading ? (

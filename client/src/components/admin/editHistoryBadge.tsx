@@ -15,10 +15,10 @@ interface KindMeta {
   rowBgDark: string;
 }
 
-// 管理者修正＝オレンジ（既存の🖊修正と統一。紫は勤務変更「代行」で使用済みのため避ける）
+// 管理者修正＝オレンジ（既存の📋修正と統一。紫は勤務変更「代行」で使用済みのため避ける）
 const META: Record<ChangeKind, KindMeta> = {
-  admin_edit:  { label: '管理者が修正', icon: '🖊', fg: '#7c4d00', bg: '#ffe8cc', bgDark: '#3a2a00', rowBg: '#fff8f0', rowBgDark: '#2a1e00' },
-  type_change: { label: '種別変更して受理', icon: '🖊', fg: '#7c4d00', bg: '#ffe8cc', bgDark: '#3a2a00', rowBg: '#fff8f0', rowBgDark: '#2a1e00' },
+  admin_edit:  { label: '管理者が修正', icon: '📋', fg: '#7c4d00', bg: '#ffe8cc', bgDark: '#3a2a00', rowBg: '#fff8f0', rowBgDark: '#2a1e00' },
+  type_change: { label: '種別変更して受理', icon: '📋', fg: '#7c4d00', bg: '#ffe8cc', bgDark: '#3a2a00', rowBg: '#fff8f0', rowBgDark: '#2a1e00' },
   resubmit:    { label: '本人が再提出', icon: '↩', fg: '#0c447c', bg: '#e6f1fb', bgDark: '#12304d', rowBg: '#f0f6fd', rowBgDark: '#16233a' },
   rejected:    { label: '差し戻し',     icon: '⟲', fg: '#791f1f', bg: '#fcebeb', bgDark: '#3a1414', rowBg: '#fdf1f1', rowBgDark: '#2a1414' },
   approved:    { label: '受理',         icon: '✓', fg: '#27500a', bg: '#eaf3de', bgDark: '#1b3a1e', rowBg: '#f3f8ec', rowBgDark: '#16261a' },

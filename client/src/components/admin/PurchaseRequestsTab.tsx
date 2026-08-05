@@ -742,7 +742,7 @@ const ActionButtons: React.FC<{
       {hasHistory && (
         <button type="button" onClick={onHistory} style={{ ...smallBtnStyle, border: '1px solid #4a90d9', color: '#4a90d9' }}>🕘 履歴</button>
       )}
-      <button type="button" onClick={onDeleteRequest} style={{ ...smallBtnStyle, border: '1px solid #dc3545', color: '#dc3545' }}>🗑 削除</button>
+      <button type="button" onClick={onDeleteRequest} style={{ ...smallBtnStyle, border: '1px solid #dc3545', color: '#dc3545' }}>🚫 削除</button>
     </>
   );
 };

@@ -8,6 +8,9 @@ import { sendLeaveSlack } from '../../lib/leaveSlack';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import { resolveItems } from '../../lib/purchaseItemsFallback';
 
+// 修正依頼から「どの申請へ飛んだか」を飛び先のタブへ伝えるための型
+export type AdminFocusTarget = { type: 'leave' | 'shift' | 'overtime'; id: string };
+
 export type AdminTab = 'approvals' | 'users' | 'groups' | 'reports' | 'trip_reports' | 'leave_requests' | 'shift_reports' | 'overtime_admin' | 'overtime_proposals' | 'leader_assignments' | 'notifications' | 'scheduled_reminders' | 'board_settings' | 'feature_permissions' | 'purchase_requests' | 'announcements' | 'corrections' | 'safety_checks';
 
 const ADMIN_TABS: AdminTab[] = ['approvals', 'users', 'groups', 'reports', 'trip_reports', 'leave_requests', 'shift_reports', 'overtime_admin', 'overtime_proposals', 'leader_assignments', 'notifications', 'scheduled_reminders', 'board_settings', 'feature_permissions', 'purchase_requests', 'announcements', 'corrections', 'safety_checks'];
@@ -199,6 +202,11 @@ export interface AdminPanelContextType {
   leaveRequests: AdminLeaveRequest[];
   loadingLeaveRequests: boolean;
   leaveStatusFilter: string; setLeaveStatusFilter: React.Dispatch<React.SetStateAction<string>>;
+
+  // 修正依頼タブから対象の申請へ飛ぶための目印。
+  // 飛び先のタブが「絞り込みを解除して該当行を光らせる」ために使う（6秒後に自分でnullに戻す）
+  focusTarget: AdminFocusTarget | null;
+  setFocusTarget: React.Dispatch<React.SetStateAction<AdminFocusTarget | null>>;
   adminSelectingManagerFor: AdminLeaveRequest | null; setAdminSelectingManagerFor: React.Dispatch<React.SetStateAction<AdminLeaveRequest | null>>;
   adminManagerList: AdminUserProfile[]; setAdminManagerList: React.Dispatch<React.SetStateAction<AdminUserProfile[]>>;
   adminSelectedManagerId: string; setAdminSelectedManagerId: React.Dispatch<React.SetStateAction<string>>;
@@ -296,6 +304,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const [leaveRequests, setLeaveRequests] = useState<AdminLeaveRequest[]>([]);
   const [loadingLeaveRequests, setLoadingLeaveRequests] = useState(false);
   const [leaveStatusFilter, setLeaveStatusFilter] = useState<string>('active');
+  const [focusTarget, setFocusTarget] = useState<AdminFocusTarget | null>(null);
   const [adminSelectingManagerFor, setAdminSelectingManagerFor] = useState<AdminLeaveRequest | null>(null);
   const [adminManagerList, setAdminManagerList] = useState<AdminUserProfile[]>([]);
   const [adminSelectedManagerId, setAdminSelectedManagerId] = useState('');
@@ -1387,6 +1396,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       customExpenseTypes, newExpenseTypeName, setNewExpenseTypeName, handleAddExpenseType, handleDeleteExpenseType,
       expenseTypeLabels, renamingExpenseTypeLabelId, setRenamingExpenseTypeLabelId, renamingExpenseTypeLabelValue, setRenamingExpenseTypeLabelValue, handleRenameExpenseTypeLabel,
       leaveRequests, loadingLeaveRequests, leaveStatusFilter, setLeaveStatusFilter,
+      focusTarget, setFocusTarget,
       adminSelectingManagerFor, setAdminSelectingManagerFor,
       adminManagerList, setAdminManagerList, adminSelectedManagerId, setAdminSelectedManagerId,
       fetchLeaveRequests,

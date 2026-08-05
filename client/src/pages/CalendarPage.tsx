@@ -92,7 +92,7 @@ const CalendarResultModal: React.FC<{ type: 'save' | 'delete'; onClose: () => vo
       <div onClick={e => e.stopPropagation()} style={{ background: isSave ? '#f0fdf4' : '#fff5f5', border: `1.5px solid ${isSave ? '#b7e4cc' : '#f5b8bb'}`, borderRadius: 18, padding: '28px 24px', width: '100%', maxWidth: 300, textAlign: 'center', position: 'relative' }}>
         <button onClick={onClose} style={{ position: 'absolute', top: 10, right: 10, background: isSave ? 'rgba(21,87,36,0.1)' : 'rgba(114,28,36,0.1)', border: 'none', color: isSave ? '#155724' : '#721c24', borderRadius: '50%', width: 26, height: 26, cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
         <div style={{ width: 64, height: 64, borderRadius: '50%', background: isSave ? '#d4edda' : '#f8d7da', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>
-          <span style={{ fontSize: 28, color: isSave ? '#28a745' : '#dc3545' }}>{isSave ? '✓' : '🗑'}</span>
+          <span style={{ fontSize: 28, color: isSave ? '#28a745' : '#dc3545' }}>{isSave ? '✓' : '🚫'}</span>
         </div>
         <div style={{ fontSize: 16, fontWeight: 500, color: isSave ? '#155724' : '#721c24' }}>{isSave ? '登録しました' : '削除しました'}</div>
         <div style={{ fontSize: 11, color: isSave ? '#3a7d52' : '#a03030', marginTop: 6, opacity: .7 }}>✕ または画面タップで閉じる</div>
@@ -775,7 +775,7 @@ const AbsenceInputSheet: React.FC<{
   // 一方、更新や別アプリ移動でシートが消えた場合は下書きが残り、次回開いたとき復元される。
   const handleDismiss = () => { clearDraft(DRAFT_KEYS.attendance); onClose(); };
 
-  // 🗑クリア：入力内容を空に戻す（シートは閉じない）。下書きも消す。
+  // 🚫クリア：入力内容を空に戻す（シートは閉じない）。下書きも消す。
   const clearAbsenceForm = () => {
     setUserIds(new Set()); setLocations({}); setLocationCustoms({}); setBulkLocation('');
     setIsAbsent(false); setTargetDates(new Set([date])); setConflicts([]);
@@ -806,7 +806,7 @@ const AbsenceInputSheet: React.FC<{
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
           <button type="button" onClick={clearAbsenceForm}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#8a939c', background: 'none', border: '1px solid #d5dae0', borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
-            🗑 クリア
+            🚫 クリア
           </button>
         </div>
 
@@ -966,7 +966,7 @@ const AbsenceInputSheet: React.FC<{
                       style={{ flex: 1, padding: '8px', borderRadius: 8, border: `1px solid ${!seg.end ? '#f0a0a0' : '#ccc'}`, fontSize: 14, background: '#fff', color: '#333' }} />
                     {segments.length > 1 && (
                       <button type="button" onClick={() => removeSegment(i)} title="この時間帯を削除"
-                        style={{ background: 'none', border: 'none', color: '#999', cursor: 'pointer', fontSize: 15, padding: '0 2px', flexShrink: 0 }}>🗑</button>
+                        style={{ background: 'none', border: 'none', color: '#999', cursor: 'pointer', fontSize: 15, padding: '0 2px', flexShrink: 0 }}>🚫</button>
                     )}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 52 }}>

@@ -166,7 +166,7 @@ const GroupsTab: React.FC = () => {
                         setIsUserEditMode(false);
                       } });
                     }} style={{ padding: '8px 20px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}>
-                      🗑 このグループを削除
+                      🚫 このグループを削除
                     </button>
                   </div>
                 )}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import SearchableSelect from '../common/SearchableSelect';
 import { useAdminPanel } from './AdminPanelContext';
@@ -175,7 +175,11 @@ function dowLabelOt(dateStr: string): string {
 
 const OvertimeAdminTab: React.FC = () => {
   const ctx = useAdminPanel();
-  const { isDarkMode, supabase } = ctx;
+  const { isDarkMode, supabase, focusTarget, setFocusTarget } = ctx;
+
+  // 修正依頼タブから飛んできたとき、受理済み一覧に切り替えて対象の行を光らせる
+  const focusId = focusTarget?.type === 'overtime' ? focusTarget.id : null;
+  const focusRowRef = useRef<HTMLTableRowElement | null>(null);
 
   const [searchParams] = useSearchParams();
   const sectionFromUrl = searchParams.get('section');
@@ -205,6 +209,15 @@ const OvertimeAdminTab: React.FC = () => {
   const [otFilterType, setOtFilterType] = useState('all');
   const [otSortKey, setOtSortKey] = useState<'work_date' | 'name' | 'diff'>('work_date');
   const [otSortAsc, setOtSortAsc] = useState(false);
+
+  useEffect(() => {
+    if (!focusId) return;
+    setSection('reports');
+    setOtFilterStatus('all'); setOtFilterPeriod('all'); setOtFilterPerson('all'); setOtFilterType('all');
+    const t1 = setTimeout(() => focusRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 400);
+    const t2 = setTimeout(() => setFocusTarget(null), 6000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [focusId, setFocusTarget]);
 
   const fetchOtReports = useCallback(async () => {
     setOtLoading(true); setOtErr('');
@@ -817,7 +830,7 @@ const OvertimeAdminTab: React.FC = () => {
         {sectionBtn('reports', '受理済み一覧')}
         {sectionBtn('inquiries', '打刻の確認')}
         {sectionBtn('grants', '締め後の許可')}
-        {sectionBtn('patterns', '曜日パターン')}
+        {sectionBtn('patterns', '通常シフト')}
         {sectionBtn('calendar', '会社カレンダー')}
         {sectionBtn('settings', '設定')}
       </div>
@@ -917,7 +930,10 @@ const OvertimeAdminTab: React.FC = () => {
                     const cell: React.CSSProperties = { padding: '7px 4px', borderBottom: `1px solid ${borderColor}`, textAlign: 'center', verticalAlign: 'top' };
                     return (
                       <React.Fragment key={r.id}>
-                        <tr>
+                        <tr
+                          ref={r.id === focusId ? focusRowRef : undefined}
+                          style={{ background: r.id === focusId ? (isDarkMode ? '#4a3f1a' : '#fff9c4') : undefined, transition: 'background 0.6s' }}
+                        >
                           <td style={{ ...cell, fontWeight: 'bold', textAlign: 'left' }}>{r.applicantName}</td>
                           <td style={{ ...cell, whiteSpace: 'nowrap' }}>{r.work_date}</td>
                           <td style={{ ...cell, textAlign: 'left', fontSize: 12 }}>
@@ -951,7 +967,7 @@ const OvertimeAdminTab: React.FC = () => {
                             <div style={{ display: 'flex', gap: 3, justifyContent: 'center', flexWrap: 'wrap' }}>
                               {/* 終日行（調整休・欠勤）は修正モーダル非対応（segments前提の再計算で差分が壊れるため。種別変更UIは公開準備時に対応） */}
                               {!rowFullDay && (
-                                <button onClick={() => setEditingOt(r)} style={{ padding: '3px 8px', borderRadius: 6, border: 'none', background: '#fd7e14', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}>🖊修正</button>
+                                <button onClick={() => setEditingOt(r)} style={{ padding: '3px 8px', borderRadius: 6, border: 'none', background: '#fd7e14', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}>📋修正</button>
                               )}
                               {st !== 'returned' && st !== 'cancelled' && (
                                 <button onClick={() => { setOtReturnTarget(r); setOtReturnComment(''); }} style={{ padding: '3px 8px', borderRadius: 6, border: 'none', background: '#dc3545', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}>差戻</button>
@@ -1285,7 +1301,7 @@ const OvertimeAdminTab: React.FC = () => {
                             onChange={ev => setEditTimes(prev => ({ ...prev, [k]: { ...t, end2: ev.target.value } }))}
                             style={inputStyle} />
                           <button onClick={() => setEditTimes(prev => ({ ...prev, [k]: { ...t, start2: '', end2: '' } }))}
-                            aria-label="2つ目の時間帯を削除" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: subText }}>🗑</button>
+                            aria-label="2つ目の時間帯を削除" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: subText }}>🚫</button>
                         </>
                       )}
                       {valid && (
@@ -1463,7 +1479,7 @@ const OvertimeAdminTab: React.FC = () => {
                         </>
                       ) : (
                         <button onClick={() => setCalDeleteTarget(r.date)}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: subText }}>🗑</button>
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: subText }}>🚫</button>
                       )}
                     </td>
                   </tr>

@@ -651,7 +651,7 @@ const ShiftReportForm: React.FC<{
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
                 <button type="button" onClick={clearShiftForm}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: subColor, background: 'none', border: `1px solid ${borderCol}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
-                  🗑 クリア
+                  🚫 クリア
                 </button>
               </div>
             )}

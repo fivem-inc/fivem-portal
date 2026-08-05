@@ -178,7 +178,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
     saveDraft(DRAFT_KEYS.trip, { reportType, category, categoryOther, location, locationCustom, useCustomLocation, notes, nextDates, slackComment, selectedChannels });
   }, [reportType, category, categoryOther, location, locationCustom, useCustomLocation, notes, nextDates, slackComment, selectedChannels]);
 
-  // 入力内容をすべて空にする（🗑クリア。GPS等の一時情報も含めリセット）
+  // 入力内容をすべて空にする（🚫クリア。GPS等の一時情報も含めリセット）
   const clearTripForm = () => {
     setReportType('到着'); setCategory('出張'); setCategoryOther('');
     setLocation(''); setLocationCustom(''); setUseCustomLocation(false);
@@ -368,7 +368,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
             <label style={{ fontWeight: 'bold' }}>報告種別</label>
             <button type="button" onClick={clearTripForm}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: isDark ? '#adb5bd' : '#8a939c', background: 'none', border: `1px solid ${isDark ? '#555' : '#d5dae0'}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
-              🗑 クリア
+              🚫 クリア
             </button>
           </div>
           <div style={{ display: 'flex', gap: 0, borderRadius: 8, overflow: 'hidden', border: `1px solid ${isDark ? '#6c757d' : '#dee2e6'}` }}>

@@ -1318,7 +1318,7 @@ const OvertimeForm: React.FC<{
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
           <button type="button" onClick={handleClear}
             style={{ background: isDark ? '#495057' : '#f1f3f5', border: `1px solid ${isDark ? '#6c757d' : '#ced4da'}`, borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 'bold', color: isDark ? '#e9ecef' : '#495057', padding: '5px 14px' }}>
-            🗑 クリア
+            🚫 クリア
           </button>
         </div>
       )}
@@ -1760,7 +1760,7 @@ const OvertimeForm: React.FC<{
             {segments.length > 1 && (
               <button onClick={() => setSegments(prev => prev.filter((_, j) => j !== i))}
                 aria-label={`時間帯${i + 1}を削除`}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: subText }}>🗑</button>
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: subText }}>🚫</button>
             )}
           </div>
         ))}

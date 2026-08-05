@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { notifyShiftReportReturned } from '../../lib/shiftReportReturnedNotify';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
@@ -88,7 +88,11 @@ function payPeriodLabel(s: string) {
 type StatusFilter = 'active' | 'confirmed' | 'cancelled' | 'all';
 
 const ShiftReportsTab: React.FC = () => {
-  const { isDarkMode, supabase, setSuccessMsg } = useAdminPanel();
+  const { isDarkMode, supabase, setSuccessMsg, focusTarget, setFocusTarget } = useAdminPanel();
+
+  // 修正依頼タブから飛んできたとき、対象の行を光らせる（絞り込みは解除して必ず一覧に出す）
+  const focusId = focusTarget?.type === 'shift' ? focusTarget.id : null;
+  const focusRowRef = useRef<HTMLTableRowElement | null>(null);
 
   const [reports, setReports]           = useState<ShiftReport[]>([]);
   const [loading, setLoading]           = useState(true);
@@ -98,6 +102,15 @@ const ShiftReportsTab: React.FC = () => {
   const [groupFilter, setGroupFilter]   = useState('all');
   const [typeFilter, setTypeFilter]     = useState('all');
   const [periodFilter, setPeriodFilter] = useState('__current__');
+
+  useEffect(() => {
+    if (!focusId) return;
+    setStatusFilter('all'); setPersonFilter('all'); setGroupFilter('all'); setTypeFilter('all'); setPeriodFilter('all');
+    const t1 = setTimeout(() => focusRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 400);
+    const t2 = setTimeout(() => setFocusTarget(null), 6000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [focusId, setFocusTarget]);
+
   const [groupOptions, setGroupOptions] = useState<string[]>([]);
   const [groupMap, setGroupMap]         = useState<Record<string, string[]>>({});
   const [confirming, setConfirming]     = useState<string | null>(null);
@@ -502,7 +515,10 @@ const ShiftReportsTab: React.FC = () => {
 
                 return (
                   <React.Fragment key={r.id}>
-                    <tr style={{ background: rowBg, borderLeft: isPend ? '3px solid #ffc107' : undefined }}>
+                    <tr
+                      ref={r.id === focusId ? focusRowRef : undefined}
+                      style={{ background: r.id === focusId ? (isDarkMode ? '#4a3f1a' : '#fff9c4') : rowBg, borderLeft: isPend ? '3px solid #ffc107' : undefined, transition: 'background 0.6s' }}
+                    >
                       {/* 申請日 */}
                       <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'center', fontSize: 12 }}>
                         <div>{cDate}</div><div style={{ color: sub }}>{cTime}</div>
@@ -605,7 +621,7 @@ const ShiftReportsTab: React.FC = () => {
                           {r.status !== 'cancelled' && (
                             <button onClick={() => setEditingShift(r)}
                               style={{ ...btnBase, background: '#fd7e14', color: '#fff', border: '2px solid #d96b0c' }}>
-                              🖊 修正
+                              📋 修正
                             </button>
                           )}
                           {!['cancelled', 'returned'].includes(r.status) && (

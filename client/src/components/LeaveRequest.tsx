@@ -622,13 +622,13 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     // 初期選択なし（ユーザーに明示的に選ばせる）
   };
 
-  // 休暇申請フォームの🗑クリア（入力内容をすべて空にして下書きも消す）
+  // 休暇申請フォームの🚫クリア（入力内容をすべて空にして下書きも消す）
   const clearLeaveForm = () => {
     handleReset();
     setSelectedApproverId('');
     clearDraft(DRAFT_KEYS.leave);
   };
-  // 時間調整フォームの🗑クリア
+  // 時間調整フォームの🚫クリア
   const clearAdjForm = () => {
     setAdjLateStart(false); setAdjEarlyEnd(false);
     setAdjDate(''); setAdjLateTime(''); setAdjEarlyTime('');
@@ -911,7 +911,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
               <button type="button" onClick={clearLeaveForm}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: subText, background: 'none', border: `1px solid ${borderColor}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
-                🗑 クリア
+                🚫 クリア
               </button>
             </div>
           )}
@@ -1251,7 +1251,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
               <button type="button" onClick={clearAdjForm}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: subText, background: 'none', border: `1px solid ${borderColor}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
-                🗑 クリア
+                🚫 クリア
               </button>
             </div>
 
