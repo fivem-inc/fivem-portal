@@ -1510,6 +1510,10 @@ const LeaveRequestsTab: React.FC = () => {
                                           }
                                         }
 
+                                        // 🚨 通知の失敗を受理の成否に巻き込まない。
+                                        // 以前はここで例外が出ると下の fetchLeaveRequests() に到達せず、
+                                        // 「はいを押しても画面が変わらない・リロードすると受理済み」になっていた
+                                        try {
                                         const typeName = req.leave_type === 'その他' ? (req.leave_type_other || 'その他') : req.leave_type;
                                         if (req.status === 'step2_pending') {
                                           const daysCount = req.leave_dates ? (() => { try { return String(JSON.parse(req.leave_dates).length); } catch { return ''; } })() : '';
@@ -1537,6 +1541,11 @@ const LeaveRequestsTab: React.FC = () => {
                                         }
                                         if (req.status === 'manager_approved' && await shouldSend('leave:manager_approved', 'slack')) {
                                           await sendLeaveSlack('accounting_approved', '経理担当者', '管理者');
+                                        }
+                                        setSuccessMsg('受理しました');
+                                        } catch (e) {
+                                          console.error('[leave] 受理後の通知に失敗:', e);
+                                          setSuccessMsg('⚠ 受理しましたが、通知の送信に失敗しました。相手に直接お知らせしてください。');
                                         }
                                         fetchLeaveRequests();
                                         } });

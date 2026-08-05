@@ -645,12 +645,15 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const inputBg = isDark ? '#495057' : 'white';
   const borderColor = isDark ? '#6c757d' : '#ddd';
 
+  const isApprover = ['リーダー', 'マネージャー', '社長', '管理者'].includes(_roleTitle);
+  // 🚨 Hook は必ず早期returnより前で呼ぶ。
+  // 以前はこの行が下の `if (submitted)` の後ろにあり、申請を送信した瞬間に
+  // Hookの数が変わってReactが落ち、画面が真っ黒になっていた（2026-07-25〜）
+  const { pendingCount: approvalPendingCount } = useLeavePendingCount(user.id, _roleTitle, false);
+
   if (submitted) {
     return <BannerSuccess message="申請しました" onClose={() => { if (onSubmitSuccess) { onSubmitSuccess(); } else { handleReset(); navigate('/'); } }} />;
   }
-
-  const isApprover = ['リーダー', 'マネージャー', '社長', '管理者'].includes(_roleTitle);
-  const { pendingCount: approvalPendingCount } = useLeavePendingCount(user.id, _roleTitle, false);
 
   const encAnsweringDay = encPending.find(d => d.id === encAnsweringId) || null;
 
