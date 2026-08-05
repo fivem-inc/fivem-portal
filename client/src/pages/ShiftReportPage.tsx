@@ -1272,18 +1272,26 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       report_id: r.id, changed_by: user.id,
       change_summary: comment ? `差戻し：${comment}` : '差戻しました', snapshot: r,
     }).then(null, () => {});
-    await notifyShiftReportReturned({
-      reportId: r.id,
-      applicantId: r.applicant_id,
-      applicantName: (r.applicant as { name: string | null } | null)?.name ?? '',
-      typeLabels: (r.application_types?.length ? r.application_types : [r.application_type]).map(t => TYPE_INFO[t]?.label ?? t).join('＋'),
-      workDate: r.work_date,
-      reason: comment,
-    });
+    // 🚨 差し戻しはDBで確定済み。画面を閉じて一覧を更新するのを通知より先にする。
+    // 通知で例外が出るとここに到達せず、モーダルが開いたまま固まっていた
     setReturningId(null); setReturnTarget(null); setReturnComment('');
     window.dispatchEvent(new CustomEvent('shift-pending-changed'));
     fetchPending(); fetchReviewedReports(); fetchAllReports();
     setSuccessMsg('差戻しました');
+
+    try {
+      await notifyShiftReportReturned({
+        reportId: r.id,
+        applicantId: r.applicant_id,
+        applicantName: (r.applicant as { name: string | null } | null)?.name ?? '',
+        typeLabels: (r.application_types?.length ? r.application_types : [r.application_type]).map(t => TYPE_INFO[t]?.label ?? t).join('＋'),
+        workDate: r.work_date,
+        reason: comment,
+      });
+    } catch (e) {
+      console.error('[shift] 差し戻し後の通知に失敗:', e);
+      setSuccessMsg('⚠ 差戻しましたが、通知の送信に失敗しました。相手に直接お知らせしてください。');
+    }
   };
 
   // 完全削除はアプリ規約によりwindow.confirmを使わず、ボタンの2段階インライン確認で行う

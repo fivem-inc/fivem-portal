@@ -36,7 +36,10 @@ export async function approvePurchaseRequestAction(params: ActionParams & { comm
   if (!data || data.length === 0) return '他の操作によりステータスが変わっているため、この操作は反映されませんでした。一覧を更新してご確認ください。';
 
   const vars = { '申請者名': applicantName, '品目名': itemNameSummary, '金額': amount.toLocaleString() };
-  await dispatchSiteNotification(eventKey, vars, { applicant: applicantUserId }, insertNotification, 'purchase_request', id);
+  // 通知の失敗で承認そのものを失敗扱いにしない（承認はDBで確定済み）
+  try {
+    await dispatchSiteNotification(eventKey, vars, { applicant: applicantUserId }, insertNotification, 'purchase_request', id);
+  } catch (e) { console.error('[purchase] 承認通知に失敗:', e); }
   sendPurchaseSlackForEvent(eventKey, 'approved', route, applicantName, itemNameSummary, amount).then(null, () => {});
   (async () => {
     const applicantEmail = await getUserEmail(applicantUserId);
@@ -56,7 +59,10 @@ export async function returnPurchaseRequestAction(params: ActionParams & { reaso
   if (!data || data.length === 0) return '他の操作によりステータスが変わっているため、この操作は反映されませんでした。一覧を更新してご確認ください。';
 
   const vars = { '申請者名': applicantName, '品目名': itemNameSummary, '金額': amount.toLocaleString() };
-  await dispatchSiteNotification('purchase_request:returned', vars, { applicant: applicantUserId }, insertNotification, 'purchase_request', id);
+  // 通知の失敗で差し戻しそのものを失敗扱いにしない（差し戻しはDBで確定済み）
+  try {
+    await dispatchSiteNotification('purchase_request:returned', vars, { applicant: applicantUserId }, insertNotification, 'purchase_request', id);
+  } catch (e) { console.error('[purchase] 差し戻し通知に失敗:', e); }
   sendPurchaseSlackForEvent('purchase_request:returned', 'returned', route, applicantName, itemNameSummary, amount, reason).then(null, () => {});
   (async () => {
     const applicantEmail = await getUserEmail(applicantUserId);

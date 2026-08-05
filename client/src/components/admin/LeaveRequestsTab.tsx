@@ -1488,6 +1488,10 @@ const LeaveRequestsTab: React.FC = () => {
                                         const { data: locked } = await supabase.from('leave_requests').update({ status: nextSt }).eq('id', req.id).eq('status', req.status).select('id');
                                         if (!locked || locked.length === 0) { setSuccessMsg('⚠ この申請は他の受理者が先に処理したため、最新の状態に更新しました'); fetchLeaveRequests(); return; }
 
+                                        // 🚨 受理はDBで確定済み。画面の更新は通知（数秒かかる）より先に行う
+                                        setSuccessMsg('受理しました');
+                                        fetchLeaveRequests();
+
                                         // マネージャー受理時にGoogleカレンダーへ書き込む
                                         if (nextSt === 'manager_approved' || nextSt === 'approved') {
                                           try {
@@ -1542,12 +1546,10 @@ const LeaveRequestsTab: React.FC = () => {
                                         if (req.status === 'manager_approved' && await shouldSend('leave:manager_approved', 'slack')) {
                                           await sendLeaveSlack('accounting_approved', '経理担当者', '管理者');
                                         }
-                                        setSuccessMsg('受理しました');
                                         } catch (e) {
                                           console.error('[leave] 受理後の通知に失敗:', e);
                                           setSuccessMsg('⚠ 受理しましたが、通知の送信に失敗しました。相手に直接お知らせしてください。');
                                         }
-                                        fetchLeaveRequests();
                                         } });
                                       }
                                     }}

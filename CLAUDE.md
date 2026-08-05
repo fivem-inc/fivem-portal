@@ -888,6 +888,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 【作業ルール（毎回厳守）】
 ・開始時：git pull → git status → CLAUDE.mdの本引き継ぎ確認
 ・修正後：cd client && npx tsc -b && npx vite build（ルートで実行すると別のtscが動くので必ずcd）
+・🚨 **修正後は npm run lint も回す**（2026-08-05 追加）。
+  見るのは **react-hooks/rules-of-hooks のエラーだけ**。ここは常に0件を保つこと。
+  これは「Hookを早期returnより後ろに置く」バグを検出できる唯一の自動チェックで、
+  実際に休暇申請の画面が2週間ずっと真っ黒になっていた不具合を、作り込んだ日に検出できた。
+  他の指摘（no-irregular-whitespace 139件＝日本語の全角スペース／no-explicit-any 61件）は
+  既存の積み残し。**新たに増やさない**方針で、今すぐ0にする必要はない
 ・デプロイもClaudeが実施：DB変更はSQL全文提示→ユーザーがSupabase SQL Editorで実行、
   Edge Functionは npx supabase functions deploy <名前> --project-ref xaeynaxctiiyqxjyuzfi、
   commit/push は Claude。push後は git ls-remote origin master で突合確認

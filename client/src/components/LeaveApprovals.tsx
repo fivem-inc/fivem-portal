@@ -242,17 +242,25 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
       const { data: locked } = await supabase.from('leave_requests').update({ status: next }).eq('id', req.id).eq('status', req.status).select('id');
       if (!locked || locked.length === 0) { setStaleMsg('この申請は他の受理者が先に処理したため、最新の状態に更新しました。'); fetchRequests(); return; }
 
-      if (req.status === 'step2_pending') {
-        // マネージャー受理確定：カレンダー書き込み＋受理通知（共通処理）
-        await emitManagerApproved(req);
-      } else if (req.status === 'manager_approved') {
-        if (await shouldSend('leave:manager_approved', 'slack')) {
-          await sendLeaveSlack('accounting_approved', profileName || '経理担当者', '管理者');
-        }
-      }
-
+      // 🚨 受理はDBで確定済み。画面の更新を通知より先に行う。
+      // 通知（メール・Slack）は数秒かかるうえ、失敗すると例外で以降が止まるため、
+      // 後ろに置くと「押しても画面が変わらない」ことになる
       window.dispatchEvent(new CustomEvent('leave-pending-changed'));
       fetchRequests();
+
+      try {
+        if (req.status === 'step2_pending') {
+          // マネージャー受理確定：カレンダー書き込み＋受理通知（共通処理）
+          await emitManagerApproved(req);
+        } else if (req.status === 'manager_approved') {
+          if (await shouldSend('leave:manager_approved', 'slack')) {
+            await sendLeaveSlack('accounting_approved', profileName || '経理担当者', '管理者');
+          }
+        }
+      } catch (e) {
+        console.error('[leave] 受理後の通知に失敗:', e);
+        setStaleMsg('受理は完了しましたが、通知の送信に失敗しました。相手に直接お知らせしてください。');
+      }
     } });
   };
 
@@ -267,10 +275,18 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     // 二重受理防止（楽観ロック）
     const { data: locked } = await supabase.from('leave_requests').update({ status: next, approver2_id: user.id }).eq('id', req.id).eq('status', req.status).select('id');
     if (!locked || locked.length === 0) { setStaleMsg('この申請は他の受理者が先に処理したため、最新の状態に更新しました。'); setSelectingManagerFor(null); fetchRequests(); return; }
-    await emitManagerApproved(req); // leader_approved通知は送らない（次のマネージャーがいないため）
+
+    // 画面の更新を先に確定（通知の完了を待たない）
     setSelectingManagerFor(null);
     window.dispatchEvent(new CustomEvent('leave-pending-changed'));
     fetchRequests();
+
+    try {
+      await emitManagerApproved(req); // leader_approved通知は送らない（次のマネージャーがいないため）
+    } catch (e) {
+      console.error('[leave] 受理後の通知に失敗:', e);
+      setStaleMsg('受理は完了しましたが、通知の送信に失敗しました。相手に直接お知らせしてください。');
+    }
   };
 
   // 一人目承認 + マネージャー指定
@@ -283,25 +299,32 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     }).eq('id', selectingManagerFor.id).eq('status', selectingManagerFor.status).select('id');
     if (!locked || locked.length === 0) { setStaleMsg('この申請は他の受理者が先に処理したため、最新の状態に更新しました。'); setSelectingManagerFor(null); fetchRequests(); return; }
 
-    // Slack通知（リーダーが受理 → マネージャーへ）
-    if (await shouldSend('leave:leader_approved', 'slack')) {
-      const selectedManager = managers.find(m => m.id === selectedManagerId);
-      await sendLeaveSlack('leader_approved', profileName || '承認者', roleTitle || 'リーダー', selectedManager?.name || '', 'マネージャー');
-    }
-    // サイト通知・メール
-    const leaderDays = selectingManagerFor.leave_dates ? (() => { try { return String(JSON.parse(selectingManagerFor.leave_dates!).length); } catch { return ''; } })() : '';
-    const leaderVars = { 休暇種別: selectingManagerFor.leave_type === 'その他' ? (selectingManagerFor.leave_type_other || 'その他') : selectingManagerFor.leave_type, 申請日数: leaderDays, リンク: 'https://fivem-portal.vercel.app/leave-approvals' };
-    const applicantEmail = await getUserEmail(selectingManagerFor.user_id) ?? '';
-    const managerEmail = await getUserEmail(selectedManagerId) ?? '';
-    // 同じイベントでも宛先によって役割が違う（マネージャーは要対応、申請者はFYI）ため、source_typeを分けて別々に送る
-    await dispatchSiteNotification('leave:leader_approved', leaderVars, { manager: selectedManagerId }, insertNotification, 'leave_request:pending_approval', selectingManagerFor.id);
-    await dispatchSiteNotification('leave:leader_approved', leaderVars, { applicant: selectingManagerFor.user_id }, insertNotification, 'leave_request', selectingManagerFor.id);
-    // recipient設定が'approver'の場合も解決できるよう、manager宛のメールアドレスをapproverキーにも渡す
-    await dispatchEmail('leave:leader_approved', leaderVars, { applicant: applicantEmail, manager: managerEmail, approver: managerEmail });
-
+    // 画面の更新を先に確定（通知の完了を待たない）
+    const target = selectingManagerFor;
     setSelectingManagerFor(null);
     window.dispatchEvent(new CustomEvent('leave-pending-changed'));
     fetchRequests();
+
+    try {
+      // Slack通知（リーダーが受理 → マネージャーへ）
+      if (await shouldSend('leave:leader_approved', 'slack')) {
+        const selectedManager = managers.find(m => m.id === selectedManagerId);
+        await sendLeaveSlack('leader_approved', profileName || '承認者', roleTitle || 'リーダー', selectedManager?.name || '', 'マネージャー');
+      }
+      // サイト通知・メール
+      const leaderDays = target.leave_dates ? (() => { try { return String(JSON.parse(target.leave_dates!).length); } catch { return ''; } })() : '';
+      const leaderVars = { 休暇種別: target.leave_type === 'その他' ? (target.leave_type_other || 'その他') : target.leave_type, 申請日数: leaderDays, リンク: 'https://fivem-portal.vercel.app/leave-approvals' };
+      const applicantEmail = await getUserEmail(target.user_id) ?? '';
+      const managerEmail = await getUserEmail(selectedManagerId) ?? '';
+      // 同じイベントでも宛先によって役割が違う（マネージャーは要対応、申請者はFYI）ため、source_typeを分けて別々に送る
+      await dispatchSiteNotification('leave:leader_approved', leaderVars, { manager: selectedManagerId }, insertNotification, 'leave_request:pending_approval', target.id);
+      await dispatchSiteNotification('leave:leader_approved', leaderVars, { applicant: target.user_id }, insertNotification, 'leave_request', target.id);
+      // recipient設定が'approver'の場合も解決できるよう、manager宛のメールアドレスをapproverキーにも渡す
+      await dispatchEmail('leave:leader_approved', leaderVars, { applicant: applicantEmail, manager: managerEmail, approver: managerEmail });
+    } catch (e) {
+      console.error('[leave] 受理後の通知に失敗:', e);
+      setStaleMsg('受理は完了しましたが、通知の送信に失敗しました。相手に直接お知らせしてください。');
+    }
   };
 
   const handleReject = async () => {
@@ -313,36 +336,45 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     if (rejectNewType) update.leave_type = rejectNewType;
     await supabase.from('leave_requests').update(update).eq('id', rejectingReq.id);
 
-    // 差し戻し時にGoogleカレンダーのイベントを削除
-    try {
-      await supabase.functions.invoke('gcal-sync', {
-        body: { action: 'delete', source_type: 'leave', source_id: rejectingReq.id },
-      });
-    } catch (e) {
-      console.error('[gcal-sync] 削除失敗:', e);
-    }
-
-    // 申請者へ差し戻し通知（サイト内通知・Slack・メール）
-    const rejectTypeName = rejectingReq.leave_type === 'その他' ? (rejectingReq.leave_type_other || 'その他') : rejectingReq.leave_type;
-    const rejectVars = { 申請者名: rejectingReq.requester?.name || '', 休暇種別: rejectTypeName, 差し戻し理由: rejectReason || '', リンク: 'https://fivem-portal.vercel.app/leave?tab=history' };
-    if (await shouldSend('leave:rejected', 'site')) {
-      const t = await getNotificationTemplate('leave:rejected', 'site', rejectVars);
-      // バナー2行目にはどの申請か分かるよう休暇日を表示（例：7/26 有給休暇（1日））。差し戻し理由はタップ先の申請履歴で確認できる
-      const dateSummary = formatLeaveDateSummary(rejectingReq.leave_dates, rejectingReq.start_date, rejectingReq.end_date, rejectTypeName);
-      await insertNotification(rejectingReq.user_id, t?.template ?? `休暇申請が差し戻されました`, dateSummary, 'leave_request:pending_resubmit', rejectingReq.id, 'leave:rejected');
-    }
-    if (await shouldSend('leave:rejected', 'slack')) {
-      const targetChannel = await getNotificationRecipient('leave:rejected', 'slack');
-      await sendLeaveSlack('rejected', profileName || '受理者', roleTitle || '受理者', undefined, undefined, targetChannel ?? 'leader');
-    }
-    const rejectedEmail = await getUserEmail(rejectingReq.user_id) ?? '';
-    await dispatchEmail('leave:rejected', rejectVars, { applicant: rejectedEmail });
-
+    // 🚨 差し戻しはDBで確定済み。モーダルを閉じて一覧を更新するのを通知より先にする。
+    // 以前は通知が失敗すると、ここまで到達せずモーダルが開いたまま固まっていた
+    const target = rejectingReq;
+    const reason = rejectReason;
     setRejectingReq(null);
     setRejectReason('');
     setRejectNewType('');
     window.dispatchEvent(new CustomEvent('leave-pending-changed'));
     fetchRequests();
+
+    try {
+      // 差し戻し時にGoogleカレンダーのイベントを削除
+      try {
+        await supabase.functions.invoke('gcal-sync', {
+          body: { action: 'delete', source_type: 'leave', source_id: target.id },
+        });
+      } catch (e) {
+        console.error('[gcal-sync] 削除失敗:', e);
+      }
+
+      // 申請者へ差し戻し通知（サイト内通知・Slack・メール）
+      const rejectTypeName = target.leave_type === 'その他' ? (target.leave_type_other || 'その他') : target.leave_type;
+      const rejectVars = { 申請者名: target.requester?.name || '', 休暇種別: rejectTypeName, 差し戻し理由: reason || '', リンク: 'https://fivem-portal.vercel.app/leave?tab=history' };
+      if (await shouldSend('leave:rejected', 'site')) {
+        const t = await getNotificationTemplate('leave:rejected', 'site', rejectVars);
+        // バナー2行目にはどの申請か分かるよう休暇日を表示（例：7/26 有給休暇（1日））。差し戻し理由はタップ先の申請履歴で確認できる
+        const dateSummary = formatLeaveDateSummary(target.leave_dates, target.start_date, target.end_date, rejectTypeName);
+        await insertNotification(target.user_id, t?.template ?? `休暇申請が差し戻されました`, dateSummary, 'leave_request:pending_resubmit', target.id, 'leave:rejected');
+      }
+      if (await shouldSend('leave:rejected', 'slack')) {
+        const targetChannel = await getNotificationRecipient('leave:rejected', 'slack');
+        await sendLeaveSlack('rejected', profileName || '受理者', roleTitle || '受理者', undefined, undefined, targetChannel ?? 'leader');
+      }
+      const rejectedEmail = await getUserEmail(target.user_id) ?? '';
+      await dispatchEmail('leave:rejected', rejectVars, { applicant: rejectedEmail });
+    } catch (e) {
+      console.error('[leave] 差し戻し後の通知に失敗:', e);
+      setStaleMsg('差し戻しは完了しましたが、通知の送信に失敗しました。相手に直接お知らせしてください。');
+    }
   };
 
   const calcDays = (s: string, e: string) => {
