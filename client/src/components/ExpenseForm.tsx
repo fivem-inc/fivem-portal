@@ -530,9 +530,10 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
 
   return (
     <div>
-      <div style={{ textAlign: 'center', paddingTop: 12, marginBottom: 12, paddingBottom: 12, borderBottom: `1px solid ${isDarkMode ? '#2c2c3e' : '#e9ecef'}` }}>
-        <p style={{ margin: '0 0 3px', fontSize: 10, letterSpacing: '0.22em', color: isDarkMode ? '#6c757d' : '#adb5bd', fontWeight: 700 }}>ファイブMスタッフサイト</p>
-        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: isDarkMode ? '#fff' : '#1a1a2e', letterSpacing: '0.04em', lineHeight: 1.2 }} aria-label="交通費申請フォーム">🚃 交通費申請</h1>
+      {/* ホームの中の1機能としてのセクション見出し。ページ名（🏠 ホーム）は App.tsx 側にある。
+          区切り線を上に置き、バナー群と入力欄の境目が分かるようにしている */}
+      <div style={{ textAlign: 'center', paddingTop: 16, marginBottom: 12, paddingBottom: 4, borderTop: `1px solid ${isDarkMode ? '#2c2c3e' : '#e9ecef'}` }}>
+        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: isDarkMode ? '#fff' : '#1a1a2e', letterSpacing: '0.04em', lineHeight: 1.2 }} aria-label="交通費申請フォーム">🚃 交通費申請</h2>
       </div>
 
       
@@ -653,7 +654,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
                 <button type="button" onClick={() => { setDraftExpense(emptyDraft); setHighlightFields(new Set()); setFormError(''); setTemplateSource(null); }}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: isDarkMode ? '#adb5bd' : '#8a939c', background: 'none', border: `1px solid ${isDarkMode ? '#555' : '#d5dae0'}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
-                  🚫 クリア
+                  クリア
                 </button>
               </div>
               {/* 区分 */}

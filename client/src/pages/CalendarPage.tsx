@@ -775,7 +775,7 @@ const AbsenceInputSheet: React.FC<{
   // 一方、更新や別アプリ移動でシートが消えた場合は下書きが残り、次回開いたとき復元される。
   const handleDismiss = () => { clearDraft(DRAFT_KEYS.attendance); onClose(); };
 
-  // 🚫クリア：入力内容を空に戻す（シートは閉じない）。下書きも消す。
+  // クリア：入力内容を空に戻す（シートは閉じない）。下書きも消す。
   const clearAbsenceForm = () => {
     setUserIds(new Set()); setLocations({}); setLocationCustoms({}); setBulkLocation('');
     setIsAbsent(false); setTargetDates(new Set([date])); setConflicts([]);
@@ -806,7 +806,7 @@ const AbsenceInputSheet: React.FC<{
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
           <button type="button" onClick={clearAbsenceForm}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#8a939c', background: 'none', border: '1px solid #d5dae0', borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
-            🚫 クリア
+            クリア
           </button>
         </div>
 

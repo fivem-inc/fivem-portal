@@ -41,6 +41,7 @@ import { useFeaturePublished, isFeaturePublished } from './hooks/useFeaturePubli
 import { supabase } from './lib/supabaseClient';
 import { isFullDayReport } from './lib/overtimeTypes';
 import { useExpenses } from './hooks/useExpenses';
+import { useDarkMode } from './hooks/useDarkMode';
 import { useLeavePendingCount } from './hooks/useLeavePendingCount';
 import { usePurchasePendingCount } from './hooks/usePurchasePendingCount';
 import { useSafetyPendingCount, safetyTone } from './hooks/useSafetyPendingCount';
@@ -1462,6 +1463,8 @@ const Dashboard: React.FC = () => {
 
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  // 🚨 Hookは必ず早期return（下の「読み込んでいます...」）より前に置く。後ろに置くと画面が真っ黒になる
+  const isDarkMode = useDarkMode();
   const { submissions, isLoading, fetchExpenses, rejectionNotice, clearRejectionNotice } = useExpenses(user, isAdmin);
 
   const [expenses, setExpensesState] = useState<Expense[]>([]);
@@ -1597,6 +1600,13 @@ const Dashboard: React.FC = () => {
         </div>
       )}
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} roleTitle={roleTitle} userId={user.id} />
+
+      {/* ページタイトル。ホームであることが分かるよう他ページと同じ「サイト名＋ページ名」の形にする。
+          交通費申請の見出しは ExpenseForm 側にセクション見出しとして置いている */}
+      <div style={{ textAlign: 'center', paddingTop: 12, marginBottom: 12, paddingBottom: 12, borderBottom: `1px solid ${isDarkMode ? '#2c2c3e' : '#e9ecef'}` }}>
+        <p style={{ margin: '0 0 3px', fontSize: 10, letterSpacing: '0.22em', color: isDarkMode ? '#6c757d' : '#adb5bd', fontWeight: 700 }}>ファイブMスタッフサイト</p>
+        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: isDarkMode ? '#fff' : '#1a1a2e', letterSpacing: '0.04em', lineHeight: 1.2 }}>🏠 ホーム</h1>
+      </div>
 
       {/* ⓪-0 安否確認の未回答バナー（最優先。消せない） */}
       <SafetyCheckBanner userId={user.id} isAdmin={isAdmin} roleTitle={roleTitle} />

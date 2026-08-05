@@ -780,7 +780,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: -6 }}>
             <button type="button" onClick={resetForm}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: subText, background: 'none', border: `1px solid ${border}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
-              🚫 クリア
+              クリア
             </button>
           </div>
         )}

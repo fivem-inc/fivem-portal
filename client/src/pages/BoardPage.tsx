@@ -1151,7 +1151,7 @@ const BoardPage: React.FC = () => {
     setComposeDeadlineType(''); setComposeDeadline(''); setComposeScheduledAt('');
     setComposeOptions(true); setComposeDraftId(null); setComposeQuery('');
     setComposeAnswerPrompt(''); setComposeAnswerLocation(''); setComposeAnswerLink('');
-    clearDraft(DRAFT_KEYS.boardCompose); // 送信成功・🚫クリアで下書きを消す
+    clearDraft(DRAFT_KEYS.boardCompose); // 送信成功・クリアで下書きを消す
   };
 
   // 作成画面を開く。書きかけの下書きがあれば消さずに保持したまま開く（別アプリ移動対策）。
@@ -2511,7 +2511,7 @@ const BoardPage: React.FC = () => {
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
           <button type="button" onClick={resetCompose}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: subColor, background: 'none', border: `1px solid ${border}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
-            🚫 クリア
+            クリア
           </button>
         </div>
         {/* 宛先 */}
