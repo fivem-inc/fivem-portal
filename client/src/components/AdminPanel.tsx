@@ -472,7 +472,7 @@ const AdminPanelContent: React.FC = () => {
           { key: 'trip_reports',       label: '出張報告',      icon: '📍' },
           { key: 'leave_requests',     label: '休暇申請',      icon: '🌿' },
           { key: 'shift_reports',      label: '勤務変更',      icon: '⏰' },
-          { key: 'overtime_admin',     label: '残業管理',      icon: '⏱' },
+          { key: 'overtime_admin',     label: '残業管理',      icon: '🕐'},
           { key: 'overtime_proposals', label: '調整提案',      icon: '🤝' },
           { key: 'purchase_requests',  label: '購入申請',      icon: '🧾' },
           { key: 'corrections',        label: '修正依頼',      icon: '📩' },

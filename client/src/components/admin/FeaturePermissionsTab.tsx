@@ -29,7 +29,7 @@ const FEATURES = [
   { key: 'trip_report',     icon: '📍', label: '出張報告',       note: '' },
   { key: 'board',           icon: '💬', label: '連絡板',         note: '' },
   { key: 'purchase_request', icon: '🧾', label: '備品購入申請・経費精算', note: 'パートも精算のみ利用可' },
-  { key: 'overtime',        icon: '⏱', label: '残業・時間管理（正社員）', note: 'パートは勤務変更報告を利用' },
+  { key: 'overtime',        icon: '🕐', label: '残業・時間管理（正社員）', note: 'パートは勤務変更報告を利用' },
   { key: 'overtime_summary', icon: '📊', label: '残業の集計・超過バナー閲覧', note: '全員分を見られる役職' },
   { key: 'shift_pattern_directory', icon: '🗓', label: '全員のシフト予定 閲覧', note: 'パート含む全員の通常シフトを見られる役職' },
   // 安否確認は災害時に全員へ届く必要があるため、役職別のトグルは使わず公開/非公開だけで運用する

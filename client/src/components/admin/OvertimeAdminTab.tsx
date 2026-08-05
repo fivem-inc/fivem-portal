@@ -808,7 +808,7 @@ const OvertimeAdminTab: React.FC = () => {
 
   return (
     <div>
-      <h3 style={{ margin: '0 0 4px', fontSize: 16, color: text }}>⏱ 残業・時間管理（正社員）</h3>
+      <h3 style={{ margin: '0 0 4px', fontSize: 16, color: text }}>🕐 残業・時間管理（正社員）</h3>
       <p style={{ margin: '0 0 12px', fontSize: 12, color: subText }}>
         通常シフトの曜日パターン・会社カレンダー・超過バナーの設定を管理します
       </p>

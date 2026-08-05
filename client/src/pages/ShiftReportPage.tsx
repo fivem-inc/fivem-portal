@@ -101,7 +101,7 @@ const TYPE_INFO: Record<ApplicationType, { label: string; color: string; darkBg:
   overtime:     { label: '残業',     color: '#1565c0', darkBg: '#1e3a5f', emoji: '⏰' },
   holiday_work: { label: '休日出勤', color: '#0f766e', darkBg: '#123a35', emoji: '🏢' },
   early_leave:  { label: '早退',     color: '#e65100', darkBg: '#4a2c0a', emoji: '🏃' },
-  tardiness:    { label: '遅刻',     color: '#7b1fa2', darkBg: '#3a1f4d', emoji: '⏱️' },
+  tardiness:    { label: '遅刻',     color: '#7b1fa2', darkBg: '#3a1f4d', emoji: '🕐' },
   absence:      { label: '欠勤',     color: '#c62828', darkBg: '#4a1515', emoji: '❌' },
   early_start:  { label: '早出',     color: '#0891b2', darkBg: '#123a42', emoji: '🌅' },
   location_change: { label: '勤務地変更', color: '#6d28d9', darkBg: '#2e1a5c', emoji: '📍' },
@@ -281,7 +281,7 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
               {!data.origDayOff && origMin > 0 && diffMin !== 0 && (
                 <div style={{ background: isDark ? '#1e3a5f' : '#eff6ff', borderRadius: 8, padding: '8px 12px', marginTop: 4 }}>
                   {data.types.includes('early_start') && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#22d3ee' }}>🌅 早出：{formatMin(Math.max(0, toMin(data.origStart) - toMin(data.actStart)))}</div>}
-                  {data.types.includes('tardiness') && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#c084fc' }}>⏱️ 遅刻：{formatMin(Math.max(0, toMin(data.actStart) - toMin(data.origStart)))}</div>}
+                  {data.types.includes('tardiness') && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#c084fc' }}>🕐 遅刻：{formatMin(Math.max(0, toMin(data.actStart) - toMin(data.origStart)))}</div>}
                   {data.types.includes('early_leave') && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#fb923c' }}>🏃 早退：{formatMin(Math.max(0, toMin(data.origEnd) - toMin(data.actEnd)))}</div>}
                 </div>
               )}
@@ -921,7 +921,7 @@ const ShiftReportForm: React.FC<{
                     {!noPlan && origMin > 0 && (
                       <div style={{ marginTop: 4 }}>
                         {types.includes('early_start') && toMin(origStart) > toMin(actStart) && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#0891b2' }}>🌅 早出：{formatMin(toMin(origStart) - toMin(actStart))}</div>}
-                        {types.includes('tardiness') && toMin(actStart) > toMin(origStart) && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#7b1fa2' }}>⏱️ 遅刻：{formatMin(toMin(actStart) - toMin(origStart))}</div>}
+                        {types.includes('tardiness') && toMin(actStart) > toMin(origStart) && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#7b1fa2' }}>🕐 遅刻：{formatMin(toMin(actStart) - toMin(origStart))}</div>}
                         {types.includes('early_leave') && toMin(origEnd) > toMin(actEnd) && <div style={{ fontSize: 13, fontWeight: 'bold', color: '#c2410c' }}>🏃 早退：{formatMin(toMin(origEnd) - toMin(actEnd))}</div>}
                       </div>
                     )}
