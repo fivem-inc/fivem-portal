@@ -154,7 +154,11 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
     // 申請者名は常に取りに行く（以前はマネージャー以上のときだけで、自分の分は名前が出なかった）。
     // 承認したリーダーの名前も出すので一緒に集める
     const namesToFetch = new Set<string>();
-    rows.forEach(r => { namesToFetch.add(r.user_id); if (r.leader_id) namesToFetch.add(r.leader_id); });
+    rows.forEach(r => {
+      namesToFetch.add(r.user_id);
+      if (r.leader_id) namesToFetch.add(r.leader_id);
+      (r.shared_manager_ids ?? []).forEach(id => namesToFetch.add(id));   // 共有先を名前で出すため
+    });
 
     // 質問・回答（履歴・承認・管理で共通の lib から取得）
     const cmts = await fetchPurchaseComments(rows.map(r => r.id));
@@ -317,7 +321,13 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
               {r.is_self_judgment ? (
                 <>
                   {names[r.user_id] ?? ''}さんの決裁で購入（承認不要）
-                  {(r.shared_manager_ids?.length ?? 0) > 0 && `／共有先 ${r.shared_manager_ids!.length}名`}
+                  {/* 共有先は名前で出す（誰が知っているのかが分からないと確認の取りようがない）。
+                      4人以上のときだけ「他N名」に畳んで、スマホ幅で折り返しすぎないようにする */}
+                  {(r.shared_manager_ids?.length ?? 0) > 0 && (() => {
+                    const ids = r.shared_manager_ids!;
+                    const shown = ids.slice(0, 3).map(id => names[id] ?? '不明').join('・');
+                    return `／共有先：${shown}${ids.length > 3 ? ` 他${ids.length - 3}名` : ''}`;
+                  })()}
                   {r.shared_manager_ids?.includes(userId) && '（あなたにも共有）'}
                 </>
               ) : (
