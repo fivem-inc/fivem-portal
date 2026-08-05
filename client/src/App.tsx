@@ -622,18 +622,67 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   const navScrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
+  // 画面の外に隠れているボタンの未対応件数。スワイプしないと気づけず埋もれる、という声への対応
+  const [hiddenLeftBadge, setHiddenLeftBadge] = useState(0);
+  const [hiddenRightBadge, setHiddenRightBadge] = useState(0);
+
+  // バッジ付きボタンのうち、いま見えていないものを集める。
+  // 位置の判定は getBoundingClientRect で行う（offsetLeft は親の position 次第でずれるため）。
+  // バッジはボタンの右上に出るので「右端が見えているか」で判定する
+  const collectHiddenBadges = useCallback(() => {
+    const el = navScrollRef.current;
+    if (!el) return { left: 0, right: 0, leftNode: null as HTMLElement | null, rightNode: null as HTMLElement | null };
+    const cont = el.getBoundingClientRect();
+    let left = 0, right = 0;
+    let leftNode: HTMLElement | null = null, rightNode: HTMLElement | null = null;
+    el.querySelectorAll<HTMLElement>('[data-nav-badge]').forEach(node => {
+      const n = Number(node.getAttribute('data-nav-badge') || 0);
+      if (n <= 0) return;
+      const r = node.getBoundingClientRect();
+      if (r.right <= cont.left + 6) {
+        left += n;
+        leftNode = node; // 左は「いちばん右寄り＝手前」のものへ戻す
+        // 右端の判定を厳しくしすぎると、端までスクロールしても「隠れている」と誤判定して
+        // 赤い印が出っぱなしになる（コンテナの padding-right が 4px あるため）
+      } else if (r.right > cont.right - 3) {
+        right += n;
+        if (!rightNode) rightNode = node; // 右は「いちばん左寄り＝手前」のものへ進む
+      }
+    });
+    return { left, right, leftNode, rightNode };
+  }, []);
+
   const updateScrollFade = useCallback(() => {
     const el = navScrollRef.current;
     if (!el) return;
     setCanScrollLeft(el.scrollLeft > 2);
     setCanScrollRight(el.scrollWidth - el.clientWidth - el.scrollLeft > 2);
-  }, []);
+    const { left, right } = collectHiddenBadges();
+    setHiddenLeftBadge(left);
+    setHiddenRightBadge(right);
+  }, [collectHiddenBadges]);
+
+  // 赤い印を押したとき、その方向の手前にある未対応ボタンが見える位置まで動かす（ページ自体は動かさない）
+  const scrollToHiddenBadge = useCallback((dir: 'left' | 'right') => {
+    const el = navScrollRef.current;
+    if (!el) return;
+    const { leftNode, rightNode } = collectHiddenBadges();
+    const target = dir === 'left' ? leftNode : rightNode;
+    if (!target) return;
+    const cont = el.getBoundingClientRect();
+    const r = target.getBoundingClientRect();
+    const delta = dir === 'left' ? r.left - cont.left - 12 : r.right - cont.right + 12;
+    el.scrollBy({ left: delta, behavior: 'smooth' });
+  }, [collectHiddenBadges]);
+
   useEffect(() => {
     updateScrollFade();
     window.addEventListener('resize', updateScrollFade);
     return () => window.removeEventListener('resize', updateScrollFade);
-    // isPub の判定材料（featurePublishState等）が非同期で確定してボタン数が変わった時にも再計算する
-  }, [updateScrollFade, isMobile, featurePublishState, isAdmin, canLeave, canShiftReport, canCalendar]);
+    // isPub の判定材料（featurePublishState等）が非同期で確定してボタン数が変わった時にも再計算する。
+    // 各バッジの件数が増減したときも隠れている合計を数え直す
+  }, [updateScrollFade, isMobile, featurePublishState, isAdmin, canLeave, canShiftReport, canCalendar,
+      leavePending, shiftPending, overtimeBadge, purchasePending, boardUnread]);
 
   const btnStyle = (active: boolean, activeColor = '#007bff') => isMobile ? ({
     width: 44, height: 44, borderRadius: 8, border: 'none', cursor: 'pointer',
@@ -689,7 +738,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
             </button>
           )}
           {canLeave && isPub('leave_request') && (
-            <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
+            <div data-nav-badge={leavePending} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
               <button onClick={() => navTo('/leave')} style={btnStyle(location.pathname === '/leave', '#28a745')}>
                 {isMobile ? <><span style={{ fontSize: 20 }}>🌿</span>{navLabel('休暇申請')}</> : '🌿 休暇申請'}
               </button>
@@ -706,7 +755,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
             </button>
           )}
           {canShiftReport && isPub('shift_report') && (
-            <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
+            <div data-nav-badge={shiftPending} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
               <button onClick={() => navTo('/shift-report')} style={btnStyle(location.pathname === '/shift-report', '#c0392b')}>
                 {isMobile ? <><span style={{ fontSize: 20 }}>⏰</span>{navLabel('勤務変更')}</> : '⏰ 勤務変更'}
               </button>
@@ -718,7 +767,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
             </div>
           )}
           {canOvertime && isPub('overtime') && (
-            <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
+            <div data-nav-badge={overtimeBadge} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
               <button onClick={() => navTo('/overtime')} style={btnStyle(location.pathname === '/overtime', '#1565c0')}>
                 {isMobile ? <><span style={{ fontSize: 20 }}>🕐</span>{navLabel('残業')}</> : '🕐 残業・時間'}
               </button>
@@ -730,7 +779,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
             </div>
           )}
           {canPurchaseRequest && isPub('purchase_request') && (
-            <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
+            <div data-nav-badge={purchasePending} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
               <button onClick={() => navTo('/purchase')} style={btnStyle(location.pathname === '/purchase', '#17a2b8')}>
                 {isMobile ? <><span style={{ fontSize: 20 }}>📦</span>{navLabel('備品精算')}</> : '📦 備品精算'}
               </button>
@@ -742,7 +791,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
             </div>
           )}
           {isPub('board') && (
-          <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
+          <div data-nav-badge={location.pathname !== '/board' ? boardUnread : 0} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
             <button onClick={() => navTo('/board')} style={btnStyle(location.pathname === '/board', '#e67e22')}>
               {isMobile ? <><span style={{ fontSize: 20 }}>💬</span>{navLabel('連絡板')}</> : '💬 連絡板'}
             </button>
@@ -759,6 +808,20 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
         )}
         {isMobile && canScrollRight && (
           <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 20, background: 'linear-gradient(to left, #1a1a2e, transparent)', pointerEvents: 'none' }} />
+        )}
+        {/* 画面の外に隠れている未対応の件数。押すとその手前のボタンまで動く。
+            0件のときは出さない（普段の見た目は今までと変わらない） */}
+        {isMobile && hiddenLeftBadge > 0 && (
+          <button type="button" onClick={() => scrollToHiddenBadge('left')} title="左に未対応があります"
+            style={{ position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)', zIndex: 2, background: '#dc3545', color: '#fff', border: '2px solid #1a1a2e', borderRadius: 12, fontSize: 11, fontWeight: 'bold', padding: '2px 7px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, lineHeight: 1.4 }}>
+            <span style={{ fontSize: 13 }}>‹</span>{hiddenLeftBadge > 99 ? '99+' : hiddenLeftBadge}
+          </button>
+        )}
+        {isMobile && hiddenRightBadge > 0 && (
+          <button type="button" onClick={() => scrollToHiddenBadge('right')} title="右に未対応があります"
+            style={{ position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)', zIndex: 2, background: '#dc3545', color: '#fff', border: '2px solid #1a1a2e', borderRadius: 12, fontSize: 11, fontWeight: 'bold', padding: '2px 7px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, lineHeight: 1.4 }}>
+            {hiddenRightBadge > 99 ? '99+' : hiddenRightBadge}<span style={{ fontSize: 13 }}>›</span>
+          </button>
         )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, paddingLeft: 6 }}>
