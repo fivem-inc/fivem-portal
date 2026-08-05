@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { openReceiptImage } from '../lib/receiptView';
+import FileViewerModal from './FileViewerModal';
 
 interface ReceiptViewButtonProps {
   path: string;
@@ -10,15 +11,17 @@ interface ReceiptViewButtonProps {
 }
 
 const ReceiptViewButton: React.FC<ReceiptViewButtonProps> = ({ path, isDarkMode, canDownload = false, onDownloaded, extraActions }) => {
-  const [loadingMode, setLoadingMode] = useState<'view' | 'download' | null>(null);
+  const [loadingMode, setLoadingMode] = useState<'download' | null>(null);
   const [error, setError] = useState('');
+  const [viewing, setViewing] = useState(false);
 
-  const handleClick = async (download: boolean) => {
-    setLoadingMode(download ? 'download' : 'view');
+  // ダウンロード（管理者のみ）は保存動作なのでSafariにブロックされない。従来どおり別タブに渡す
+  const handleDownload = async () => {
+    setLoadingMode('download');
     setError('');
-    const errorMessage = await openReceiptImage(path, download);
+    const errorMessage = await openReceiptImage(path, true);
     if (errorMessage) setError(errorMessage);
-    else if (download) onDownloaded?.();
+    else onDownloaded?.();
     setLoadingMode(null);
   };
 
@@ -32,16 +35,15 @@ const ReceiptViewButton: React.FC<ReceiptViewButtonProps> = ({ path, isDarkMode,
     <div style={{ marginTop: 4, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
       <button
         type="button"
-        onClick={() => handleClick(false)}
-        disabled={loadingMode !== null}
-        style={{ ...btnStyle, cursor: loadingMode ? 'default' : 'pointer' }}
+        onClick={() => setViewing(true)}
+        style={{ ...btnStyle, cursor: 'pointer' }}
       >
-        {loadingMode === 'view' ? '取得中...' : '🧾 レシート画像を見る'}
+        🧾 レシート画像を見る
       </button>
       {canDownload && (
         <button
           type="button"
-          onClick={() => handleClick(true)}
+          onClick={handleDownload}
           disabled={loadingMode !== null}
           style={{ ...btnStyle, cursor: loadingMode ? 'default' : 'pointer' }}
         >
@@ -50,6 +52,9 @@ const ReceiptViewButton: React.FC<ReceiptViewButtonProps> = ({ path, isDarkMode,
       )}
       {extraActions}
       {error && <div style={{ marginTop: 4, fontSize: 12, color: '#842029', flexBasis: '100%' }}>{error}</div>}
+      {viewing && (
+        <FileViewerModal path={path} title="レシート" isDarkMode={isDarkMode} onClose={() => setViewing(false)} />
+      )}
     </div>
   );
 };

@@ -12,7 +12,6 @@ import { resolveItems } from '../lib/purchaseItemsFallback';
 import PurchaseItemsSummary from '../components/PurchaseItemsSummary';
 import { paymentMethodLabel } from '../utils';
 import ReceiptViewButton from '../components/ReceiptViewButton';
-import { openReceiptImage } from '../lib/receiptView';
 import PurchaseCommentThread from '../components/PurchaseCommentThread';
 import { fetchPurchaseComments, type PurchaseComment } from '../lib/purchaseComments';
 
@@ -349,7 +348,7 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
           )}
           {r.notes && <div style={{ fontSize: 12, color: subText, marginTop: 4 }}>備考：{r.notes}</div>}
           <div style={{ marginTop: 8 }}>
-            <PurchaseItemsSummary items={resolvedItems} isDarkMode={isDarkMode} onViewFile={path => { openReceiptImage(path, false); }} />
+            <PurchaseItemsSummary items={resolvedItems} isDarkMode={isDarkMode} canViewFile />
           </div>
           {r.receipt_type === 'photo' && r.receipt_storage_path && (r.user_id === userId || isAdmin) && (
             <ReceiptViewButton path={r.receipt_storage_path} isDarkMode={isDarkMode} canDownload={isAdmin} />

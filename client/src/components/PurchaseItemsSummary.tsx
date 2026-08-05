@@ -1,14 +1,36 @@
 import React, { useState } from 'react';
 import type { PurchaseRequestItem } from '../types';
+import FileViewerModal from './FileViewerModal';
 
 interface PurchaseItemsSummaryProps {
   items: PurchaseRequestItem[];
   isDarkMode: boolean;
-  onViewFile?: (path: string) => void;
+  // 見積書を開けるかどうか。表示はこの部品の中のFileViewerModalで行う
+  // （以前は呼び出し側で window.open していたが、iPhoneがポップアップ扱いでブロックしていた）
+  canViewFile?: boolean;
 }
 
-const PurchaseItemsSummary: React.FC<PurchaseItemsSummaryProps> = ({ items, isDarkMode, onViewFile }) => {
+const PurchaseItemsSummary: React.FC<PurchaseItemsSummaryProps> = ({ items, isDarkMode, canViewFile }) => {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const [viewPath, setViewPath] = useState<string | null>(null);
+
+  const quoteFileButton = (path: string) =>
+    canViewFile ? (
+      <button
+        type="button"
+        onClick={() => setViewPath(path)}
+        title="見積書を見る"
+        style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 12, padding: 0, textDecoration: 'underline' }}
+      >
+        📎 見積書
+      </button>
+    ) : (
+      <span title="見積書あり">📎</span>
+    );
+
+  const viewerModal = viewPath ? (
+    <FileViewerModal path={viewPath} title="見積書" isDarkMode={isDarkMode} onClose={() => setViewPath(null)} />
+  ) : null;
 
   const border = isDarkMode ? '#495057' : '#e0e0e0';
   const text = isDarkMode ? '#eeeeee' : '#222222';
@@ -78,24 +100,13 @@ const PurchaseItemsSummary: React.FC<PurchaseItemsSummaryProps> = ({ items, isDa
                   <span style={{ color: '#fff', background: '#28a745', borderRadius: 4, padding: '1px 6px', fontSize: 11 }}>購入予定</span>
                 )}
                 {q.note && renderNote(q.note)}
-                {q.quote_file_path && (
-                  onViewFile ? (
-                    <button
-                      type="button"
-                      onClick={() => onViewFile(q.quote_file_path!)}
-                      title="見積書を見る"
-                      style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 12, padding: 0, textDecoration: 'underline' }}
-                    >
-                      📎 見積書
-                    </button>
-                  ) : (
-                    <span title="見積書あり">📎</span>
-                  )
-                )}
+                {q.quote_file_path && quoteFileButton(q.quote_file_path)}
               </div>
             ))}
           </div>
         )}
+        {/* 🚨 商品1件の早期returnと下の通常returnの両方に描画する（片方だけだと押しても何も出ない） */}
+        {viewerModal}
       </div>
     );
   }
@@ -135,20 +146,7 @@ const PurchaseItemsSummary: React.FC<PurchaseItemsSummaryProps> = ({ items, isDa
                       <span style={{ color: '#fff', background: '#28a745', borderRadius: 4, padding: '1px 6px', fontSize: 11 }}>購入予定</span>
                     )}
                     {q.note && renderNote(q.note)}
-                    {q.quote_file_path && (
-                  onViewFile ? (
-                    <button
-                      type="button"
-                      onClick={() => onViewFile(q.quote_file_path!)}
-                      title="見積書を見る"
-                      style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 12, padding: 0, textDecoration: 'underline' }}
-                    >
-                      📎 見積書
-                    </button>
-                  ) : (
-                    <span title="見積書あり">📎</span>
-                  )
-                )}
+                    {q.quote_file_path && quoteFileButton(q.quote_file_path)}
                   </div>
                 ))}
               </div>
@@ -156,6 +154,7 @@ const PurchaseItemsSummary: React.FC<PurchaseItemsSummaryProps> = ({ items, isDa
           </div>
         );
       })}
+      {viewerModal}
     </div>
   );
 };

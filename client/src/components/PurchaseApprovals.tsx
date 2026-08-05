@@ -8,7 +8,6 @@ import { sendPurchaseSlackForEvent } from '../lib/purchaseSlack';
 import { approvePurchaseRequestAction, returnPurchaseRequestAction } from '../lib/purchaseApprovalActions';
 import { resolveItems } from '../lib/purchaseItemsFallback';
 import PurchaseItemsSummary from './PurchaseItemsSummary';
-import { openReceiptImage } from '../lib/receiptView';
 import type { PurchaseRequestItem, PurchaseRequestItemQuote } from '../types';
 import PurchaseCommentThread from './PurchaseCommentThread';
 import { fetchPurchaseComments, type PurchaseComment } from '../lib/purchaseComments';
@@ -424,7 +423,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
           )}
           {r.notes && <div style={{ fontSize: 12, color: subText, marginBottom: 8 }}>備考：{r.notes}</div>}
           <div style={{ marginBottom: 8 }}>
-            <PurchaseItemsSummary items={resolvedItems} isDarkMode={isDarkMode} onViewFile={path => { openReceiptImage(path, false); }} />
+            <PurchaseItemsSummary items={resolvedItems} isDarkMode={isDarkMode} canViewFile />
           </div>
 
           {(r.route === 'manager' || r.route === 'board') && (

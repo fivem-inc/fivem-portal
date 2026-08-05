@@ -7,7 +7,6 @@ import type { PurchaseRequestCSVRow } from '../../utils';
 import { PAYMENT_DETAIL_LABEL } from '../../utils';
 import { approvePurchaseRequestAction, returnPurchaseRequestAction, cancelReturnedPurchaseRequest, type PurchaseApprovalRoute } from '../../lib/purchaseApprovalActions';
 import { downloadReceiptsAsZip } from '../../lib/purchaseReceiptBulkDownload';
-import { openReceiptImage } from '../../lib/receiptView';
 import PurchaseItemsSummary from '../PurchaseItemsSummary';
 import ReceiptViewButton from '../ReceiptViewButton';
 import PurchaseCommentThread from '../PurchaseCommentThread';
@@ -595,7 +594,7 @@ const PurchaseRequestsTab: React.FC = () => {
                     </div>
                   )}
 
-                  <PurchaseItemsSummary items={resolvedItems} isDarkMode={isDarkMode} onViewFile={path => { openReceiptImage(path, false); }} />
+                  <PurchaseItemsSummary items={resolvedItems} isDarkMode={isDarkMode} canViewFile />
 
                   {/* 質問・回答（履歴・承認画面と同じ部品）。経理もここから質問できる */}
                   <PurchaseCommentThread
