@@ -41,6 +41,15 @@ const ANSWER_LABEL: Record<string, string> = {
   pending: '未回答', worked: '業務をしていた', not_worked: '打刻が遅れただけ', unknown: '思い出せない',
 };
 
+// 一言の文例。
+// ⚠️ 「残業ではないですよね」のように、答えを誘導する書き方は入れないこと。
+//    経理（立場が上）から届く確認なので、押し付けに読めるとサービス残業の同意記録になる。
+const MESSAGE_EXAMPLES = [
+  'この日の打刻について確認させてください',
+  '業務をしていた場合は、残業として報告してください',
+  '給与計算のため確認させてください',
+];
+
 interface Props { staff: StaffRow[]; isDark: boolean }
 
 const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
@@ -68,10 +77,52 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
 
   const [inquiries, setInquiries] = useState<InquiryRow[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
+  // 一言の「よく使う履歴」（過去に自分が送った一言・重複除去・新しい順）。
+  // 残業フォームの理由履歴と同じ作り：押すと入力／✕でその候補だけ端末に記憶して出さない
+  const [myId, setMyId] = useState('');
+  const [pastMessages, setPastMessages] = useState<string[]>([]);
+  const [hiddenMessages, setHiddenMessages] = useState<string[]>([]);
+  const [showAllMessages, setShowAllMessages] = useState(false);
   const [withdrawTarget, setWithdrawTarget] = useState<string | null>(null);
   const [clockRows, setClockRows] = useState<ClockOnlyRow[]>([]);
 
   useEffect(() => { setNames(Object.fromEntries(staff.map(s => [s.id, s.name]))); }, [staff]);
+
+  // 自分が過去に送った一言を集める（重複除去・新しい順・空は除く）
+  useEffect(() => {
+    (async () => {
+      const { data: auth } = await supabase.auth.getUser();
+      const uid = auth.user?.id ?? '';
+      setMyId(uid);
+      if (!uid) return;
+      try {
+        const v = JSON.parse(localStorage.getItem(`fivem_hidden_msgs_clock_inquiry_${uid}`) || '[]');
+        setHiddenMessages(Array.isArray(v) ? v : []);
+      } catch { /* 読めなくても履歴は出す */ }
+      const { data } = await supabase.from('overtime_clock_inquiries')
+        .select('message').eq('sender_id', uid).not('message', 'is', null)
+        .order('created_at', { ascending: false }).limit(60);
+      const seen = new Set<string>();
+      const list: string[] = [];
+      (data ?? []).forEach((r: { message: string | null }) => {
+        const m = (r.message ?? '').trim();
+        if (m && !seen.has(m)) { seen.add(m); list.push(m); }
+      });
+      setPastMessages(list.slice(0, 10));
+    })();
+  }, []);
+
+  const hideMessage = (m: string) => {
+    setHiddenMessages(prev => {
+      const next = [...prev, m];
+      try { localStorage.setItem(`fivem_hidden_msgs_clock_inquiry_${myId}`, JSON.stringify(next)); } catch { /* 保存できなくても表示は消す */ }
+      return next;
+    });
+  };
+  const visiblePastMessages = useMemo(
+    () => pastMessages.filter(m => !hiddenMessages.includes(m)),
+    [pastMessages, hiddenMessages],
+  );
 
   // 対象者を選んだら曜日パターンを取得（通常シフトの自動表示に使う）
   useEffect(() => {
@@ -168,6 +219,9 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
       }
 
       setMsg(`${names[targetId] ?? ''}さんに${payload.length}日ぶんの確認を送りました`);
+      // 送った一言を「よく使う履歴」の先頭に反映（次回すぐ押せるように）
+      const sent = message.trim();
+      if (sent) setPastMessages(prev => [sent, ...prev.filter(m => m !== sent)].slice(0, 10));
       setRows([]); setMessage(''); setConfirming(false);
       loadInquiries();
       setTimeout(() => setMsg(''), 4000);
@@ -272,8 +326,10 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
                           style={{ ...inputStyle, width: 110 }} />
                       </td>
                       <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                        {/* ✕ を使う（🗑 は環境によって□に化ける） */}
                         <button onClick={() => setRows(prev => prev.filter((_, j) => j !== i))}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, color: subText }} aria-label="この日を外す">🗑</button>
+                          title="この日を外す"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, color: subText }} aria-label="この日を外す">✕</button>
                       </td>
                     </tr>
                   );
@@ -286,8 +342,40 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
         <div style={{ marginBottom: 12 }}>
           {label('一言（任意）')}
           <input value={message} onChange={e => setMessage(e.target.value)}
-            placeholder="例：この日の18:05の打刻について確認させてください"
+            placeholder={`例：${MESSAGE_EXAMPLES[0]}`}
             style={{ ...inputStyle, width: '100%', boxSizing: 'border-box' }} />
+
+          {/* 文例ボタン（押すと入る） */}
+          <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+            {MESSAGE_EXAMPLES.map(ex => (
+              <button key={ex} type="button" onClick={() => setMessage(ex)}
+                style={{ padding: '5px 12px', borderRadius: 6, border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, background: isDark ? '#2c3e50' : '#e8f4fd', color: isDark ? '#fff' : '#1565c0', fontSize: 11.5, fontWeight: 'bold', cursor: 'pointer' }}>
+                文例 ー「{ex}」
+              </button>
+            ))}
+          </div>
+
+          {/* よく使う履歴（過去に自分が送った一言・押すと入力・✕でこの端末から消す） */}
+          {visiblePastMessages.length > 0 && (
+            <div style={{ background: isDark ? '#243447' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, borderRadius: 8, padding: '8px 10px', marginTop: 8 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 'bold', color: isDark ? '#fff' : '#1565c0', marginBottom: 6 }}>よく使う一言</div>
+              {(showAllMessages ? visiblePastMessages : visiblePastMessages.slice(0, 3)).map((m, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', background: isDark ? '#2c3e50' : '#fff', border: `1px solid ${isDark ? '#3d5166' : '#bbdefb'}`, borderRadius: 5, marginBottom: 5 }}>
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: isDark ? '#fff' : '#333' }}>{m}</span>
+                  <button type="button" onClick={() => setMessage(m)}
+                    style={{ flexShrink: 0, background: '#1976d2', color: '#fff', fontSize: 11, fontWeight: 'bold', padding: '4px 12px', border: 'none', borderRadius: 4, cursor: 'pointer' }}>入力</button>
+                  <button type="button" onClick={() => hideMessage(m)} title="この候補を消す"
+                    style={{ flexShrink: 0, background: 'none', border: 'none', color: isDark ? '#adb5bd' : '#90a4ae', fontSize: 14, lineHeight: 1, padding: '2px 4px', cursor: 'pointer' }}>✕</button>
+                </div>
+              ))}
+              {visiblePastMessages.length > 3 && (
+                <button type="button" onClick={() => setShowAllMessages(v => !v)}
+                  style={{ width: '100%', padding: '4px', background: 'none', border: `1px dashed ${isDark ? '#5a6b7d' : '#90caf9'}`, borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 'bold', color: isDark ? '#e9ecef' : '#1565c0', marginTop: 2 }}>
+                  {showAllMessages ? '▲ 閉じる' : `▼ もっと見る（あと${visiblePastMessages.length - 3}件）`}
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {!confirming ? (
