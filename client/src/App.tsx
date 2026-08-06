@@ -43,6 +43,7 @@ import { isFullDayReport } from './lib/overtimeTypes';
 import { useExpenses } from './hooks/useExpenses';
 import { useDarkMode } from './hooks/useDarkMode';
 import { useAdminSetupAlerts } from './hooks/useAdminSetupAlerts';
+import { useAppUpdate } from './hooks/useAppUpdate';
 import { useLeavePendingCount } from './hooks/useLeavePendingCount';
 import { usePurchasePendingCount } from './hooks/usePurchasePendingCount';
 import { useSafetyPendingCount, safetyTone } from './hooks/useSafetyPendingCount';
@@ -2003,12 +2004,46 @@ const PurchaseRequestPageWrapper: React.FC = () => {
 };
 
 // メインのAppコンポーネント
+// 新しい版が出たときに画面のいちばん下に出す帯。
+// 🚨 上（ナビの下）ではなく下に出す：各ページが上余白70pxを直書きしているため、
+//    上の高さを変える改修は全ページに影響する
+const AppUpdateBanner: React.FC = () => {
+  const { showUpdate, dismiss } = useAppUpdate();
+  if (!showUpdate) return null;
+  return (
+    <div style={{
+      position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 4000,
+      background: '#1976d2', color: '#fff',
+      padding: '10px 12px',
+      // iPhone の画面下端のホームバーに隠れないよう余白を足す。
+      // 一括指定に混ぜると env() 非対応の環境で余白がまるごと消えるため、別々に書く
+      paddingBottom: 'calc(10px + env(safe-area-inset-bottom))',
+      display: 'flex', alignItems: 'center', gap: 10,
+      boxShadow: '0 -2px 10px rgba(0,0,0,0.2)',
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 'bold', color: '#fff' }}>新しいバージョンがあります</div>
+        <div style={{ fontSize: 12, color: '#e3f2fd' }}>ページを更新してください</div>
+      </div>
+      <button type="button" onClick={() => window.location.reload()}
+        style={{ padding: '8px 14px', borderRadius: 8, border: 'none', background: '#fff', color: '#1565c0', fontSize: 13, fontWeight: 'bold', cursor: 'pointer', flexShrink: 0 }}>
+        更新する
+      </button>
+      <button type="button" onClick={dismiss} aria-label="閉じる"
+        style={{ background: 'none', border: 'none', color: '#e3f2fd', fontSize: 17, cursor: 'pointer', padding: '0 4px', flexShrink: 0 }}>
+        ✕
+      </button>
+    </div>
+  );
+};
+
 function App() {
   return (
     <BrowserRouter>
       <ScrollToTop />
       <AuthProvider>
         <PreviewBodyOffset />
+        <AppUpdateBanner />
         <Routes>
           <Route path="/signin" element={<SignIn />} />
           <Route path="/reset-password" element={<ResetPassword />} />
