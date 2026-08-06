@@ -101,7 +101,19 @@ const FileViewerModal: React.FC<FileViewerModalProps> = ({ path, title, isDarkMo
                 style={{ display: 'block', width: '100%', height: 'auto' }}
               />
             </div>
-            <div style={{ padding: '8px 12px', fontSize: 12, color: subText }}>画面をつまむと拡大できます</div>
+            {/* 🚨 index.html の viewport に user-scalable=no が入っているため、アプリの中では
+                つまんでも拡大できない。細かく読みたいときはブラウザの画像画面で開いてもらう。
+                リンクの直接タップなので、iPhoneのポップアップ扱いでブロックされることもない */}
+            <div style={{ padding: '12px 14px', display: 'flex', justifyContent: 'center' }}>
+              <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ display: 'block', width: '100%', maxWidth: 260, textAlign: 'center', padding: '10px 12px', borderRadius: 8, background: '#e3f2fd', border: '2px solid #90caf9', color: '#1565c0', fontSize: 14, fontWeight: 'bold', textDecoration: 'none' }}
+              >
+                画像を大きく開く
+              </a>
+            </div>
           </div>
         )}
       </div>
