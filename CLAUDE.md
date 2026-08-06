@@ -67,6 +67,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ・デプロイもClaudeが実施：SQL全文提示→ユーザーが SQL Editor で実行／
   npx supabase functions deploy <名前> --project-ref xaeynaxctiiyqxjyuzfi／commit・push
 ・push後は git ls-remote origin master で突合（exit 0 でも未送信のことがある）
+・🚨 **push後は本番の /version.json がJSONで返ることを必ず確認する**（2026-08-06 追加）
+  curl https://fivem-portal.vercel.app/version.json
+  → {"buildId":"..."} が返ればOK。index.html が返ったら更新バナーが一生出ない。
+    エラーも出ず誰も気づけないので、デプロイのたびに毎回見ること
+・🚨 **新しい通知を作るときは、タイトルに「リマインド」「お知らせ」「メッセージが届き」を
+  入れない**（2026-08-06 追加）。App.tsx:919 が連絡板の通知と判定し、
+  タップすると /board に飛んで何も無い画面に着地する
 ・**pushの許可は1回分**。以降の変更は都度確認する（勝手にpushしない）
 ・git add 前に必ず git status 目視。AGENTS.md はコミットに含めない
 ・commit メッセージは Write でファイルに書いて git commit -F <file>
