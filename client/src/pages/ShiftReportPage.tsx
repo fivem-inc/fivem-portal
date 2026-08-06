@@ -11,6 +11,8 @@ import type { AuthUser } from '../types';
 import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
 import type { CorrectionRequestRow } from '../lib/correctionRequest';
+import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
+import type { CalendarKind } from '../lib/breakCalc';
 
 // ────────────────────────────────────────────────────────────────
 // Types
@@ -158,7 +160,7 @@ const STATUS_INFO: Record<string, { label: string; color: string; bg: string }> 
 // ────────────────────────────────────────────────────────────────
 // Single Date Calendar
 // ────────────────────────────────────────────────────────────────
-const SingleDatePicker: React.FC<{ value: string; onChange: (d: string) => void; isDark: boolean }> = ({ value, onChange, isDark }) => {
+const SingleDatePicker: React.FC<{ value: string; onChange: (d: string) => void; isDark: boolean; calendarKinds?: Record<string, CalendarKind> }> = ({ value, onChange, isDark, calendarKinds }) => {
   const today = new Date();
   const [year, setYear]   = useState(value ? new Date(value + 'T00:00:00').getFullYear() : today.getFullYear());
   const [month, setMonth] = useState(value ? new Date(value + 'T00:00:00').getMonth()    : today.getMonth());
@@ -166,7 +168,12 @@ const SingleDatePicker: React.FC<{ value: string; onChange: (d: string) => void;
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const prev = () => { if (month === 0) { setYear(y => y - 1); setMonth(11); } else setMonth(m => m - 1); };
   const next = () => { if (month === 11) { setYear(y => y + 1); setMonth(0); } else setMonth(m => m + 1); };
-  const cells: (number | null)[] = [...Array(firstDay).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
+  // 月によって週の数が変わると高さが動き、下のボタンや「‹ ›」の位置がずれる。常に6週間ぶんにする
+  const cells: (number | null)[] = [
+    ...Array(firstDay).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+    ...Array(Math.max(0, 42 - firstDay - daysInMonth)).fill(null),
+  ];
   const calBg = isDark ? '#495057' : '#f8f9fa';
   const calText = isDark ? '#fff' : '#333';
   const calBorder = isDark ? '#6c757d' : '#ddd';
@@ -190,10 +197,15 @@ const SingleDatePicker: React.FC<{ value: string; onChange: (d: string) => void;
           const sel = iso === value, isT = iso === todayStr();
           const d = (firstDay + day - 1) % 7;
           const col = d === 0 ? '#e74c3c' : d === 6 ? '#3498db' : calText;
+          // 会社の休館日（全社員休み／社員出勤日）を背景で示す
+          const ck = calendarKinds?.[iso];
+          const cs = ck ? CALENDAR_CELL_STYLE[ck] : null;
           return (
             <button key={i} onClick={() => onChange(iso)}
-              style={{ padding: '10px 2px', minHeight: 38, borderRadius: 6, border: isT ? '2px solid #007bff' : '1px solid transparent', background: sel ? '#28a745' : 'transparent', color: sel ? '#fff' : col, cursor: 'pointer', fontSize: 13, fontWeight: sel ? 'bold' : 'normal', textAlign: 'center' }}>
+              title={cs ? CALENDAR_NOTICE[ck as CalendarKind] : undefined}
+              style={{ padding: '10px 2px', minHeight: 38, borderRadius: 6, border: isT ? '2px solid #007bff' : '1px solid transparent', background: sel ? '#28a745' : cs ? cs.bg : 'transparent', color: sel ? '#fff' : cs ? cs.text : col, cursor: 'pointer', fontSize: 13, fontWeight: sel ? 'bold' : 'normal', textAlign: 'center', lineHeight: 1.2 }}>
               {day}
+              {cs && <div style={{ fontSize: 8, fontWeight: 'bold', color: sel ? 'rgba(255,255,255,0.9)' : cs.text }}>{cs.short}</div>}
             </button>
           );
         })}
@@ -326,6 +338,8 @@ const ShiftReportForm: React.FC<{
   onClose: () => void; onSaved: () => void;
 }> = ({ user, profileName, roleTitle, isAdmin, editTarget, reviewers, workplaces, leaderAssignments: _leaderAssignments, inline = false, onClose, onSaved }) => {
   const canProxy = IS_APPROVER(roleTitle, isAdmin);
+  // 会社の休館日（全社員休み／社員出勤日）を日付カレンダーに出す
+  const calendarKinds = useCompanyCalendar();
   // 確認者が他人の報告を修正するときは、確認依頼先を変えられない。
   // DBのRLS（reviewer_confirm）が「自分が確認者である報告」しか更新を許さないため、
   // 変えて保存すると必ず失敗する。選べないようにしたうえで、差戻しで行う旨を案内する。
@@ -676,7 +690,7 @@ const ShiftReportForm: React.FC<{
             {/* 日付 */}
             <div style={{ marginBottom: 14 }}>
               <label style={L}>日付 {Req}</label>
-              <SingleDatePicker value={date} onChange={setDate} isDark={isDark} />
+              <SingleDatePicker value={date} onChange={setDate} isDark={isDark} calendarKinds={calendarKinds} />
             </div>
             {/* 種別 */}
             <div style={{ marginBottom: 14 }}>

@@ -5,6 +5,7 @@ import OvertimeProposalSheet, { type DraftCandidate } from '../components/Overti
 import OvertimeProposalResponse from '../components/OvertimeProposalResponse';
 import ClockInquiryResponse from '../components/ClockInquiryResponse';
 import { useDarkMode } from '../hooks/useDarkMode';
+import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import {
   calcTotalBreak, calcLaborMinutes, calcSegmentBreak, checkLegalBreak,
@@ -262,7 +263,8 @@ const SingleDatePicker: React.FC<{
   isDark: boolean;
   minDate?: string;
   maxDate?: string;
-}> = ({ value, onChange, isDark, minDate, maxDate }) => {
+  calendarKinds?: Record<string, CalendarKind>;
+}> = ({ value, onChange, isDark, minDate, maxDate, calendarKinds }) => {
   const text = isDark ? '#f8f9fa' : '#212529';
   const borderColor = isDark ? '#6c757d' : '#dee2e6';
   const base = value ? new Date(value + 'T00:00:00') : new Date();
@@ -309,18 +311,23 @@ const SingleDatePicker: React.FC<{
           const dow = (firstDay + day - 1) % 7;
           const isToday = dateStr === todayStr;
           const disabled = (!!minDate && dateStr < minDate) || (!!maxDate && dateStr > maxDate);
+          // 会社の休館日（全社員休み／社員出勤日）を背景で示す。選べる日かどうかは変えない
+          const ck = calendarKinds?.[dateStr];
+          const cs = ck && !disabled ? CALENDAR_CELL_STYLE[ck] : null;
           return (
             <button key={dateStr} type="button" disabled={disabled}
               onClick={() => onChange(dateStr)}
+              title={cs ? CALENDAR_NOTICE[ck as CalendarKind] : undefined}
               style={{
                 padding: '10px 2px', minHeight: 40, borderRadius: 6,
                 border: isToday ? '2px solid #007bff' : '1px solid transparent',
-                background: isSelected ? '#28a745' : 'transparent',
-                color: disabled ? (isDark ? '#5c636a' : '#c4c9cf') : isSelected ? 'white' : dow === 0 ? '#e74c3c' : dow === 6 ? '#3498db' : text,
+                background: isSelected ? '#28a745' : cs ? cs.bg : 'transparent',
+                color: disabled ? (isDark ? '#5c636a' : '#c4c9cf') : isSelected ? 'white' : cs ? cs.text : dow === 0 ? '#e74c3c' : dow === 6 ? '#3498db' : text,
                 cursor: disabled ? 'default' : 'pointer', fontSize: 13,
-                fontWeight: isSelected ? 'bold' : 'normal', textAlign: 'center',
+                fontWeight: isSelected ? 'bold' : 'normal', textAlign: 'center', lineHeight: 1.2,
               }}>
               {day}
+              {cs && <div style={{ fontSize: 8, fontWeight: 'bold', color: isSelected ? 'rgba(255,255,255,0.9)' : cs.text }}>{cs.short}</div>}
             </button>
           );
         })}
@@ -604,6 +611,8 @@ const OvertimeForm: React.FC<{
   }, [date]);
 
   // 締め後申請の依頼期限計算用：会社カレンダーの休館日一覧（過去半年分、前営業日の遡り判定に使う）
+  // 日付カレンダーに休館日を色分け表示するための一覧（上の calendarKind は「選んだ1日ぶん」なので別に取る）
+  const calendarKinds = useCompanyCalendar();
   const [closedDates, setClosedDates] = useState<Set<string>>(new Set());
   useEffect(() => {
     const from = new Date(); from.setMonth(from.getMonth() - 6);
@@ -1361,7 +1370,7 @@ const OvertimeForm: React.FC<{
             {date}（{dowLabel(date)}）
           </div>
         ) : (
-          <SingleDatePicker value={date} onChange={setDate} isDark={isDark}
+          <SingleDatePicker value={date} onChange={setDate} isDark={isDark} calendarKinds={calendarKinds}
             minDate={mode === 'advance' ? today : undefined}
             maxDate={mode === 'posthoc' ? today : undefined} />
         )}
@@ -1612,7 +1621,7 @@ const OvertimeForm: React.FC<{
                   <span style={{ ...labelStyle, marginBottom: 4 }}>振替元の勤務日{req}
                     <span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（実際に出勤した日をタップ）</span>
                   </span>
-                  <SingleDatePicker value={furikaeOriginDate} onChange={setFurikaeOriginDate} isDark={isDark} />
+                  <SingleDatePicker value={furikaeOriginDate} onChange={setFurikaeOriginDate} isDark={isDark} calendarKinds={calendarKinds} />
                   <div style={{ marginTop: 8 }}>
                     <span style={{ ...labelStyle, marginBottom: 4 }}>振替元の勤務校{req}
                       <span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（シフトから自動・違えば修正。休日出勤で普段と違う場所なら「その他」）</span>
