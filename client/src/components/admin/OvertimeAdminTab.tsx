@@ -613,6 +613,8 @@ const OvertimeAdminTab: React.FC = () => {
     setCalMsg(`${calDates.length}件を「${CALENDAR_KIND_LABELS[calKind]}」として保存しました`);
     setCalDates([]); setCalNote('');
     fetchCalendar();
+    // 「次年度のカレンダー未登録」のバッジを、30秒待たずにその場で数え直す
+    window.dispatchEvent(new CustomEvent('admin-setup-changed'));
   };
 
   const deleteCalendar = async (date: string) => {

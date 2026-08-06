@@ -42,6 +42,7 @@ import { supabase } from './lib/supabaseClient';
 import { isFullDayReport } from './lib/overtimeTypes';
 import { useExpenses } from './hooks/useExpenses';
 import { useDarkMode } from './hooks/useDarkMode';
+import { useAdminSetupAlerts } from './hooks/useAdminSetupAlerts';
 import { useLeavePendingCount } from './hooks/useLeavePendingCount';
 import { usePurchasePendingCount } from './hooks/usePurchasePendingCount';
 import { useSafetyPendingCount, safetyTone } from './hooks/useSafetyPendingCount';
@@ -623,6 +624,8 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   const { pendingCount: leavePending } = useLeavePendingCount(userId, roleTitle, isAdmin);
   const { pendingCount: shiftPending } = useShiftPendingCount(userId, roleTitle, isAdmin, canShiftReport);
   const { pendingCount: overtimePending } = useOvertimePendingCount(userId, canOvertime);
+  // 管理者の設定もれ（次年度の会社カレンダー未登録など）。管理者にだけ数える
+  const { badgeCount: adminSetupBadge } = useAdminSetupAlerts(isAdmin);
   const { count: overtimeUnreported } = useOvertimeUnreportedCount(userId, canOvertime);
   const overtimeBadge = overtimePending + overtimeUnreported; // 確認依頼＋自分の実績未報告
 
@@ -732,9 +735,17 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
           }}
         >
           {isAdmin && (
-            <button onClick={() => navTo('/admin')} style={btnStyle(location.pathname === '/admin', '#6f42c1')}>
-              {isMobile ? <><span style={{ fontSize: 20 }}>⚙️</span>{navLabel('管理')}</> : '⚙️ 管理'}
-            </button>
+            <div data-nav-badge={adminSetupBadge} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
+              <button onClick={() => navTo('/admin')} style={btnStyle(location.pathname === '/admin', '#6f42c1')}>
+                {isMobile ? <><span style={{ fontSize: 20 }}>⚙️</span>{navLabel('管理')}</> : '⚙️ 管理'}
+              </button>
+              {/* 設定の入力もれ（次年度の会社カレンダー未登録など）。登録が済めば自動で消える */}
+              {adminSetupBadge > 0 && (
+                <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
+                  {adminSetupBadge > 99 ? '99+' : adminSetupBadge}
+                </span>
+              )}
+            </div>
           )}
           {isPub('expense') && (
             <button onClick={() => navTo('/')} style={btnStyle(location.pathname === '/')}>

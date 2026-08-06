@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import type { PendingApproval, Submission } from '../types';
 import { AdminPanelProvider, useAdminPanel } from './admin/AdminPanelContext';
+import { useAdminSetupAlerts } from '../hooks/useAdminSetupAlerts';
 import ApprovalsTab from './admin/ApprovalsTab';
 import GroupsTab from './admin/GroupsTab';
 import UsersTab from './admin/UsersTab';
@@ -55,6 +56,9 @@ const AdminPanelContent: React.FC = () => {
   }, [supabase]);
   const STORAGE_LIMIT_MB = 1024;
   const isStorageLow = storageUsageMb !== null && storageUsageMb / STORAGE_LIMIT_MB >= 0.8; // 残り2割を切ったら警告
+
+  // 設定の入力もれ（次年度の会社カレンダー未登録など）。判定はDBの admin_setup_alerts() に集約
+  const { badgeCount: adminSetupBadge } = useAdminSetupAlerts(true);
 
   // 修正依頼の未対応件数（タブの赤バッジ用）。correction-pending-changed で再取得。
   const [openCorrectionCount, setOpenCorrectionCount] = useState(0);
@@ -523,6 +527,10 @@ const AdminPanelContent: React.FC = () => {
                     {t.key === 'corrections' && openCorrectionCount > 0 && (
                       <Badge count={openCorrectionCount} />
                     )}
+                    {/* 設定の入力もれ（次年度の会社カレンダー未登録など）。登録が済めば自動で消える */}
+                    {t.key === 'overtime_admin' && adminSetupBadge > 0 && (
+                      <Badge count={adminSetupBadge} />
+                    )}
                   </button>
                 ))}
               </div>
@@ -560,6 +568,7 @@ const AdminPanelContent: React.FC = () => {
                     {t.key === 'users' && pendingUsers.length > 0 ? `（承認待ち${pendingUsers.length}件）` : ''}
                     {t.key === 'leave_requests' && pendingLeaveRequests.length > 0 ? `（承認待ち${pendingLeaveRequests.length}件）` : ''}
                     {t.key === 'corrections' && openCorrectionCount > 0 ? `（未対応${openCorrectionCount}件）` : ''}
+                    {t.key === 'overtime_admin' && adminSetupBadge > 0 ? `（要設定${adminSetupBadge}件）` : ''}
                   </option>
                 ))}
               </select>
