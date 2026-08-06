@@ -8,6 +8,7 @@ import {
   DAY_KIND_LABELS, CALENDAR_KIND_LABELS,
 } from '../../lib/breakCalc';
 import type { DayKind, CalendarKind } from '../../lib/breakCalc';
+import { CALENDAR_CELL_STYLE } from '../../hooks/useCompanyCalendar';
 import { DEFAULT_LOCATION } from '../../lib/shiftExcelImport';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
 import OvertimeEditModal, { type OvertimeRecord } from './OvertimeEditModal';
@@ -1473,6 +1474,8 @@ const OvertimeAdminTab: React.FC = () => {
                   const cells: (number | null)[] = [];
                   for (let i = 0; i < firstDow; i++) cells.push(null);
                   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+                  // 月によって週の数が変わると高さが動き、下の「追加・更新」や「‹ ›」の位置がずれる。常に6週間ぶんにする
+                  while (cells.length < 42) cells.push(null);
                   return cells.map((day, i) => {
                     if (!day) return <div key={`e-${i}`} />;
                     const ds = `${calViewYear}-${String(calViewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -1532,34 +1535,66 @@ const OvertimeAdminTab: React.FC = () => {
           {calRows.length === 0 ? (
             <p style={{ margin: 0, fontSize: 13, color: subText }}>登録済みの特別日はありません</p>
           ) : (
-            <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse', color: text }}>
-              <tbody>
-                {calRows.map(r => (
-                  <tr key={r.date}>
-                    <td style={{ padding: '5px 4px', borderBottom: `1px solid ${borderColor}`, whiteSpace: 'nowrap' }}>{r.date}</td>
-                    <td style={{ padding: '5px 4px', borderBottom: `1px solid ${borderColor}` }}>{CALENDAR_KIND_LABELS[r.kind]}</td>
-                    <td style={{ padding: '5px 4px', borderBottom: `1px solid ${borderColor}`, color: subText }}>{r.note ?? ''}</td>
-                    <td style={{ padding: '5px 4px', borderBottom: `1px solid ${borderColor}`, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      {calDeleteTarget === r.date ? (
-                        <>
-                          <button onClick={() => deleteCalendar(r.date)}
-                            style={{ padding: '4px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, background: '#dc3545', color: '#fff', marginRight: 4 }}>
-                            削除する
-                          </button>
-                          <button onClick={() => setCalDeleteTarget(null)}
-                            style={{ padding: '4px 10px', borderRadius: 6, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12, background: 'transparent', color: subText }}>
-                            やめる
-                          </button>
-                        </>
-                      ) : (
-                        <button onClick={() => setCalDeleteTarget(r.date)}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: subText }}>🚫</button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <>
+              <p style={{ margin: '0 0 8px', fontSize: 12.5, color: subText }}>
+                登録済み {calRows.length}件
+                <span style={{ marginLeft: 10 }}>
+                  （休館日・全社員休み {calRows.filter(r => r.kind === 'closed_all').length}／
+                  社員出勤日 {calRows.filter(r => r.kind === 'work_on_closed').length}／
+                  有休奨励日 {calRows.filter(r => r.kind === 'work_on_closed_encouraged').length}）
+                </span>
+              </p>
+              {/* 年間で数十件になるため、月ごとに区切って見る。日付は曜日つき（土日が一目で分かるように） */}
+              {(() => {
+                const groups = new Map<string, CalendarRow[]>();
+                calRows.forEach(r => {
+                  const key = r.date.slice(0, 7);
+                  if (!groups.has(key)) groups.set(key, []);
+                  groups.get(key)!.push(r);
+                });
+                const todayStr = todayJstStr();
+                return [...groups.entries()].map(([ym, rows]) => (
+                  <div key={ym} style={{ marginBottom: 12 }}>
+                    <p style={{ margin: '0 0 4px', fontSize: 12.5, fontWeight: 'bold', color: subText }}>
+                      {Number(ym.slice(0, 4))}年 {Number(ym.slice(5, 7))}月
+                      <span style={{ fontWeight: 'normal', marginLeft: 6 }}>{rows.length}件</span>
+                    </p>
+                    {rows.map(r => {
+                      const d = new Date(`${r.date}T00:00:00`);
+                      const dow = ['日', '月', '火', '水', '木', '金', '土'][d.getDay()];
+                      const cs = CALENDAR_CELL_STYLE[r.kind];
+                      const past = r.date < todayStr;
+                      return (
+                        <div key={r.date} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px', borderBottom: `1px solid ${borderColor}`, opacity: past ? 0.55 : 1 }}>
+                          <span style={{ fontSize: 13, fontWeight: 'bold', color: d.getDay() === 0 ? '#e74c3c' : d.getDay() === 6 ? '#3498db' : text, minWidth: 62, whiteSpace: 'nowrap' }}>
+                            {Number(r.date.slice(5, 7))}/{Number(r.date.slice(8, 10))}（{dow}）
+                          </span>
+                          <span style={{ fontSize: 12, fontWeight: 'bold', background: cs.bg, color: cs.text, borderRadius: 5, padding: '3px 8px', whiteSpace: 'nowrap' }}>
+                            {CALENDAR_KIND_LABELS[r.kind]}
+                          </span>
+                          <span style={{ flex: 1, fontSize: 12, color: subText, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.note ?? ''}</span>
+                          {calDeleteTarget === r.date ? (
+                            <span style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
+                              <button onClick={() => deleteCalendar(r.date)}
+                                style={{ padding: '4px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, background: '#dc3545', color: '#fff', marginRight: 4 }}>
+                                削除する
+                              </button>
+                              <button onClick={() => setCalDeleteTarget(null)}
+                                style={{ padding: '4px 10px', borderRadius: 6, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12, background: 'transparent', color: subText }}>
+                                やめる
+                              </button>
+                            </span>
+                          ) : (
+                            <button onClick={() => setCalDeleteTarget(r.date)} title="この日の登録を削除"
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: subText, flexShrink: 0, textDecoration: 'underline' }}>削除</button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ));
+              })()}
+            </>
           )}
         </div>
       )}

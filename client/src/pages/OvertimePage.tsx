@@ -286,6 +286,8 @@ const SingleDatePicker: React.FC<{
   const cells: (number | null)[] = [];
   for (let i = 0; i < firstDay; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  // 月によって週の数が変わると高さが変わり、下のボタンや「‹ ›」の位置が動く。常に6週間ぶんにする
+  while (cells.length < 42) cells.push(null);
 
   return (
     <div style={{ background: isDark ? '#495057' : '#f8f9fa', borderRadius: 10, padding: 12, border: `1px solid ${borderColor}` }}>
@@ -357,6 +359,8 @@ const GrantDatePicker: React.FC<{
   const cells: (number | null)[] = [];
   for (let i = 0; i < firstDay; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  // 月によって週の数が変わると高さが変わり、下のボタンや「‹ ›」の位置が動く。常に6週間ぶんにする
+  while (cells.length < 42) cells.push(null);
 
   const toggle = (dateStr: string) => {
     if (selectedDates.includes(dateStr)) onChange(selectedDates.filter(d => d !== dateStr));

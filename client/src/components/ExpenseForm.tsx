@@ -54,6 +54,9 @@ const SingleDatePicker: React.FC<{
   const cells: (number|null)[] = [];
   for (let i = 0; i < firstDay; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  // 🚨 月によって週の数が変わると、カレンダーの高さが変わり「‹ ›」ボタンの位置がずれて連続で押せない。
+  // 常に6週間ぶん（42マス）にして高さを固定する
+  while (cells.length < 42) cells.push(null);
 
   const fmt = (y: number, m: number, d: number) =>
     `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
