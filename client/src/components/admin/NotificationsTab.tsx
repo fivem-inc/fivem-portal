@@ -1443,6 +1443,7 @@ interface ScheduledReminder {
   is_active: boolean;
   send_hour: number;
   send_minute: number;
+  months: number[] | null;
 }
 
 interface BoardChannel {
@@ -1467,6 +1468,20 @@ const formatReminderDays = (r: ScheduledReminder): string => {
   return `毎月${labels.join('・')}`;
 };
 
+const ALL_MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+
+// 送る月の表示。全月（＝これまでどおり）のときは何も出さない。
+// 外れているのが1〜2か月だけなら「◯月を除く」、それ以外は「◯月のみ」と出す。
+const formatReminderMonths = (months: number[] | null | undefined): string => {
+  const target = [...new Set((months ?? []).filter(m => ALL_MONTHS.includes(m)))].sort((a, b) => a - b);
+  if (target.length === 0 || target.length === 12) return '';
+  if (target.length >= 10) {
+    const excluded = ALL_MONTHS.filter(m => !target.includes(m));
+    return `（${excluded.join('・')}月を除く）`;
+  }
+  return `（${target.join('・')}月のみ）`;
+};
+
 type RecipientMode = 'all' | 'channel' | 'individual';
 
 export const ScheduledRemindersPanel: React.FC = () => {
@@ -1476,11 +1491,12 @@ export const ScheduledRemindersPanel: React.FC = () => {
   const [profiles, setProfiles] = useState<ReminderProfile[]>([]);
   const [profileQuery, setProfileQuery] = useState('');
   const [recipientMode, setRecipientMode] = useState<RecipientMode>('all');
-  const [form, setForm] = useState<{ channel_id: string; user_ids: string[]; frequency: 'monthly' | 'weekly'; days: number[]; title: string; body: string; send_hour: number; send_minute: number }>({
-    channel_id: '', user_ids: [], frequency: 'monthly', days: [1], title: '', body: '', send_hour: 9, send_minute: 0,
+  const [form, setForm] = useState<{ channel_id: string; user_ids: string[]; frequency: 'monthly' | 'weekly'; days: number[]; months: number[]; title: string; body: string; send_hour: number; send_minute: number }>({
+    channel_id: '', user_ids: [], frequency: 'monthly', days: [1], months: ALL_MONTHS, title: '', body: '', send_hour: 9, send_minute: 0,
   });
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<ScheduledReminder | null>(null); // 削除のインライン確認（confirm禁止）
 
   const bg = isDarkMode ? '#2c2c3e' : '#fff';
   const text = isDarkMode ? '#fff' : '#1a1a2e';
@@ -1505,8 +1521,12 @@ export const ScheduledRemindersPanel: React.FC = () => {
     setForm(f => ({ ...f, days: f.days.includes(d) ? f.days.filter(x => x !== d) : [...f.days, d].sort((a, b) => a - b) }));
   };
 
+  const toggleMonth = (m: number) => {
+    setForm(f => ({ ...f, months: f.months.includes(m) ? f.months.filter(x => x !== m) : [...f.months, m].sort((a, b) => a - b) }));
+  };
+
   const resetForm = () => {
-    setForm({ channel_id: '', user_ids: [], frequency: 'monthly', days: [1], title: '', body: '', send_hour: 9, send_minute: 0 });
+    setForm({ channel_id: '', user_ids: [], frequency: 'monthly', days: [1], months: ALL_MONTHS, title: '', body: '', send_hour: 9, send_minute: 0 });
     setRecipientMode('all');
     setProfileQuery('');
     setEditingId(null);
@@ -1519,6 +1539,8 @@ export const ScheduledRemindersPanel: React.FC = () => {
       user_ids: r.user_ids ?? [],
       frequency: r.frequency,
       days: r.days,
+      // 空・未設定は「全月に送る」の意味なので、編集画面では12か月すべて選んだ状態で開く
+      months: r.months && r.months.length > 0 ? r.months : ALL_MONTHS,
       title: r.title,
       body: r.body,
       send_hour: r.send_hour,
@@ -1533,7 +1555,7 @@ export const ScheduledRemindersPanel: React.FC = () => {
   };
 
   const handleSave = async () => {
-    if (!form.title.trim() || !form.body.trim() || form.days.length === 0) return;
+    if (!form.title.trim() || !form.body.trim() || form.days.length === 0 || form.months.length === 0) return;
     if (recipientMode === 'individual' && form.user_ids.length === 0) return;
     setSaving(true);
     const payload = {
@@ -1541,6 +1563,7 @@ export const ScheduledRemindersPanel: React.FC = () => {
       user_ids: recipientMode === 'individual' ? form.user_ids : null,
       frequency: form.frequency,
       days: form.days,
+      months: form.months,
       title: form.title.trim(),
       body: form.body.trim(),
       send_hour: form.send_hour,
@@ -1565,6 +1588,8 @@ export const ScheduledRemindersPanel: React.FC = () => {
   const handleDelete = async (id: string) => {
     await supabase.from('board_scheduled_reminders').delete().eq('id', id);
     setReminders(prev => prev.filter(r => r.id !== id));
+    setConfirmDelete(null);
+    if (editingId === id) resetForm();
   };
 
   const inputStyle: React.CSSProperties = {
@@ -1576,6 +1601,23 @@ export const ScheduledRemindersPanel: React.FC = () => {
   return (
     <div style={{ padding: 16 }}>
       <h3 style={{ color: text, margin: '0 0 16px', fontSize: 16 }}>📅 定期リマインド設定</h3>
+
+      {confirmDelete && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 5000, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setConfirmDelete(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: bg, borderRadius: 12, padding: '22px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.25)', maxWidth: 360, width: '100%' }}>
+            <p style={{ fontSize: 15, fontWeight: 'bold', color: text, margin: '0 0 6px', lineHeight: 1.6 }}>この定期リマインドを削除しますか？</p>
+            <p style={{ fontSize: 13, color: sub, margin: '0 0 18px', lineHeight: 1.6 }}>
+              {formatReminderDays(confirmDelete)}{formatReminderMonths(confirmDelete.months)} {confirmDelete.send_hour}時{confirmDelete.send_minute}分<br />
+              {confirmDelete.title}<br />
+              <span style={{ color: '#dc3545' }}>元に戻せません。</span>
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setConfirmDelete(null)} style={{ padding: '8px 18px', background: 'transparent', color: sub, border: `1px solid ${border}`, borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
+              <button onClick={() => handleDelete(confirmDelete.id)} style={{ padding: '8px 18px', background: '#dc3545', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>削除する</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 新規追加／編集フォーム */}
       <div style={{ background: bg, border: `1px solid ${editingId ? '#007bff' : border}`, borderRadius: 12, padding: 16, marginBottom: 20 }}>
@@ -1623,6 +1665,36 @@ export const ScheduledRemindersPanel: React.FC = () => {
               </div>
             </div>
           )}
+          <div>
+            <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>送る月（複数選択可）</p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 4, maxWidth: 300 }}>
+              {ALL_MONTHS.map(m => (
+                <button key={m} type="button" onClick={() => toggleMonth(m)}
+                  style={{ padding: '6px 0', borderRadius: 6, border: `1px solid ${border}`, cursor: 'pointer', fontSize: 12, background: form.months.includes(m) ? '#007bff' : inputBg, color: form.months.includes(m) ? '#fff' : text }}>
+                  {m}月
+                </button>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+              <button type="button" onClick={() => setForm(f => ({ ...f, months: ALL_MONTHS }))}
+                style={{ padding: '5px 12px', borderRadius: 6, border: `1px solid ${border}`, cursor: 'pointer', fontSize: 12, background: inputBg, color: text }}>
+                すべて選ぶ
+              </button>
+              <button type="button" onClick={() => setForm(f => ({ ...f, months: [] }))}
+                style={{ padding: '5px 12px', borderRadius: 6, border: `1px solid ${border}`, cursor: 'pointer', fontSize: 12, background: inputBg, color: text }}>
+                すべて外す
+              </button>
+            </div>
+            {form.months.length === 0 ? (
+              <p style={{ margin: '6px 0 0', padding: '6px 10px', borderRadius: 6, background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029', fontSize: 12 }}>
+                送る月を1つ以上選んでください
+              </p>
+            ) : (
+              <p style={{ margin: '6px 0 0', fontSize: 11, color: sub }}>
+                はじめは12か月すべてが選ばれています。外した月には送りません。
+              </p>
+            )}
+          </div>
           <div>
             <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>送り先</p>
             <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
@@ -1681,8 +1753,8 @@ export const ScheduledRemindersPanel: React.FC = () => {
               style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
-            <button onClick={handleSave} disabled={saving || !form.title.trim() || !form.body.trim()}
-              style={{ flex: 1, padding: '10px 0', background: saving ? '#6c757d' : '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold', opacity: !form.title.trim() || !form.body.trim() ? 0.5 : 1 }}>
+            <button onClick={handleSave} disabled={saving || !form.title.trim() || !form.body.trim() || form.months.length === 0}
+              style={{ flex: 1, padding: '10px 0', background: saving ? '#6c757d' : '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold', opacity: !form.title.trim() || !form.body.trim() || form.months.length === 0 ? 0.5 : 1 }}>
               {saving ? '保存中...' : editingId ? '更新する' : '追加する'}
             </button>
             {editingId && (
@@ -1703,7 +1775,11 @@ export const ScheduledRemindersPanel: React.FC = () => {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
             <div style={{ flex: 1 }}>
               <p style={{ margin: '0 0 2px', fontSize: 14, fontWeight: 'bold', color: text }}>
-                {formatReminderDays(r)} {r.send_hour}時{r.send_minute}分 — {r.title}
+                {formatReminderDays(r)}
+                {formatReminderMonths(r.months) && (
+                  <span style={{ color: '#d85a30' }}>{formatReminderMonths(r.months)}</span>
+                )}
+                {' '}{r.send_hour}時{r.send_minute}分 — {r.title}
               </p>
               <p style={{ margin: '0 0 4px', fontSize: 12, color: sub }}>{r.body}</p>
               <p style={{ margin: 0, fontSize: 11, color: sub }}>
@@ -1721,7 +1797,7 @@ export const ScheduledRemindersPanel: React.FC = () => {
                 style={{ padding: '4px 10px', borderRadius: 6, border: `1px solid ${border}`, background: 'none', color: r.is_active ? '#28a745' : sub, cursor: 'pointer', fontSize: 12 }}>
                 {r.is_active ? 'ON' : 'OFF'}
               </button>
-              <button onClick={() => handleDelete(r.id)}
+              <button onClick={() => setConfirmDelete(r)}
                 style={{ padding: '4px 8px', borderRadius: 6, border: 'none', background: '#dc3545', color: '#fff', cursor: 'pointer', fontSize: 12 }}>
                 削除
               </button>

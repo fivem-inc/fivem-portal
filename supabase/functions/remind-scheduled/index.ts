@@ -14,6 +14,7 @@ serve(async () => {
   // cronは5分おきに呼ばれる。今この瞬間(JST)が送信時刻のリマインダーのうち、
   // frequency/daysが今日(JST)に一致するものだけを対象にする（1件ごとに別の時刻を持てる）
   const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const month = jstNow.getUTCMonth() + 1; // 1〜12
   const dayOfMonth = jstNow.getUTCDate();
   const dayOfWeek = jstNow.getUTCDay(); // 0=日〜6=土
   const hour = jstNow.getUTCHours();
@@ -23,16 +24,20 @@ serve(async () => {
 
   const { data: candidates, error } = await supabase
     .from("board_scheduled_reminders")
-    .select("id, channel_id, user_ids, title, body, frequency, days")
+    .select("id, channel_id, user_ids, title, body, frequency, days, months")
     .eq("send_hour", hour)
     .eq("send_minute", minute)
     .eq("is_active", true);
 
-  const reminders = (candidates || []).filter((r: { frequency: string; days: number[] }) =>
-    r.frequency === "weekly"
+  const reminders = (candidates || []).filter((r: { frequency: string; days: number[]; months: number[] | null }) => {
+    // months は「送る月」。未設定・空は全月に送る（＝これまでどおり）。
+    // 🚨 静かに送信が止まる事故を避けるため、判断がつかないときは送る側に倒す
+    const monthMatches = !r.months || r.months.length === 0 || r.months.includes(month);
+    if (!monthMatches) return false;
+    return r.frequency === "weekly"
       ? r.days.includes(dayOfWeek)
-      : r.days.includes(dayOfMonth) || (isLastDayOfMonth && r.days.includes(MONTH_END_DAY))
-  );
+      : r.days.includes(dayOfMonth) || (isLastDayOfMonth && r.days.includes(MONTH_END_DAY));
+  });
 
   if (error || reminders.length === 0) {
     return new Response(JSON.stringify({ sent: 0 }), { status: 200 });
