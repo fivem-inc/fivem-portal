@@ -7,6 +7,8 @@ import {
   absenceLabel, absenceColor, absenceEmoji, formatSegments, joinSegmentLocations, parseSegments, hhmm,
   type AttendanceType, type WorkSegment,
 } from '../lib/attendanceTypes';
+import { useCompanyCalendar, CALENDAR_CELL_STYLE } from '../hooks/useCompanyCalendar';
+import type { CalendarKind } from '../lib/breakCalc';
 import type { AuthUser } from '../types';
 
 // 校の選択肢の末尾に出す「その他（自由入力）」。選ぶと自由入力欄が出る（残業・出張報告と同じ扱い）
@@ -1210,9 +1212,10 @@ const PcCalendar: React.FC<{
   year: number; month: number;
   eventsByDate: Record<string, LeaveEvent[]>;
   absencesByDate: Record<string, AbsenceEvent[]>;
+  calendarKinds: Record<string, CalendarKind>;
   isDark: boolean;
   onDateTap?: (date: string) => void;
-}> = ({ year, month, eventsByDate, absencesByDate, isDark, onDateTap }) => {
+}> = ({ year, month, eventsByDate, absencesByDate, calendarKinds, isDark, onDateTap }) => {
   const bg = isDark ? '#343a40' : '#fff';
   const border = isDark ? '#495057' : '#f0f0f0';
   const textColor = isDark ? '#fff' : '#333';
@@ -1247,16 +1250,21 @@ const PcCalendar: React.FC<{
               const isToday = cell.date === todayStr;
               const events = cell.date ? (eventsByDate[cell.date] || []) : [];
               const absences = cell.date ? (absencesByDate[cell.date] || []) : [];
+              // 会社カレンダー（休館日・出勤日）はセルの背景で示す。
+              // 丸印や名前のラベルとは別の層なので、既存の表示とぶつからない
+              const ck = cell.date ? calendarKinds[cell.date] : undefined;
+              const cs = ck ? CALENDAR_CELL_STYLE[ck] : null;
               return (
                 <td key={ci}
                   onClick={() => cell.date && onDateTap?.(cell.date)}
-                  style={{ border: `1px solid ${border}`, verticalAlign: 'top', minHeight: 80, padding: 4, background: cell.date ? bg : isDark ? '#2a2f35' : '#fafafa', cursor: cell.date && onDateTap ? 'pointer' : 'default' }}>
+                  style={{ border: `1px solid ${border}`, verticalAlign: 'top', minHeight: 80, padding: 4, background: cs ? cs.bg : cell.date ? bg : isDark ? '#2a2f35' : '#fafafa', cursor: cell.date && onDateTap ? 'pointer' : 'default' }}>
                   {cell.day !== null && (
                     <>
                       <div style={{ marginBottom: 2 }}>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, borderRadius: '50%', fontSize: 12, fontWeight: 'bold', background: isToday ? '#4a90d9' : 'transparent', color: isToday ? '#fff' : isSat ? '#4a90d9' : isSun ? '#e74c3c' : textColor }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, borderRadius: '50%', fontSize: 12, fontWeight: 'bold', background: isToday ? '#4a90d9' : 'transparent', color: isToday ? '#fff' : cs ? cs.text : isSat ? '#4a90d9' : isSun ? '#e74c3c' : textColor }}>
                           {cell.day}
                         </span>
+                        {cs && <span style={{ fontSize: 10, fontWeight: 'bold', color: cs.text, marginLeft: 3 }}>{cs.short}</span>}
                       </div>
                       {events.map(ev => {
                         const c = getEventColor(ev);
@@ -1295,9 +1303,10 @@ const SpCalendar: React.FC<{
   year: number; month: number;
   eventsByDate: Record<string, LeaveEvent[]>;
   absencesByDate: Record<string, AbsenceEvent[]>;
+  calendarKinds: Record<string, CalendarKind>;
   isDark: boolean;
   onDateTap?: (date: string) => void;
-}> = ({ year, month, eventsByDate, absencesByDate, isDark, onDateTap }) => {
+}> = ({ year, month, eventsByDate, absencesByDate, calendarKinds, isDark, onDateTap }) => {
   const today = new Date();
   const todayStr = fmt(today.getFullYear(), today.getMonth(), today.getDate());
   const subColor = isDark ? '#adb5bd' : '#888';
@@ -1336,14 +1345,18 @@ const SpCalendar: React.FC<{
               const hasTeal = absences.some(a => a.type === 'holiday_work');
               const hasPurple = absences.some(a => a.type === 'location_change');
               const hasGraphite = absences.some(a => a.type === 'time_change');
+              const ck = cell.date ? calendarKinds[cell.date] : undefined;
+              const cs = ck ? CALENDAR_CELL_STYLE[ck] : null;
               return (
                 <td key={ci}
                   onClick={() => cell.date && onDateTap?.(cell.date)}
                   style={{ textAlign: 'center', padding: '3px 1px', cursor: cell.date && onDateTap ? 'pointer' : 'default' }}>
-                  <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', width: 30, borderRadius: 6, background: isToday ? (isDark ? '#2c3e50' : '#e8f4fd') : 'transparent', padding: '2px 0' }}>
-                    <span style={{ fontSize: 13, fontWeight: isToday ? 'bold' : 'normal', color: isSat ? '#4a90d9' : isSun ? '#e74c3c' : cell.day ? textColor : (isDark ? '#555' : '#ccc') }}>
+                  <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', width: 30, borderRadius: 6, background: cs ? cs.bg : isToday ? (isDark ? '#2c3e50' : '#e8f4fd') : 'transparent', padding: '2px 0' }}>
+                    <span style={{ fontSize: 13, fontWeight: isToday ? 'bold' : 'normal', color: cs ? cs.text : isSat ? '#4a90d9' : isSun ? '#e74c3c' : cell.day ? textColor : (isDark ? '#555' : '#ccc') }}>
                       {cell.day ?? ''}
                     </span>
+                    {/* 休館日は日付の下に2文字だけ。丸印がある日は、その下に並ぶ */}
+                    {cs && <span style={{ fontSize: 8, lineHeight: 1.2, color: cs.text, fontWeight: 'bold' }}>{cs.short}</span>}
                     {(hasRed || hasOrange || hasGreen || hasTeal || hasPurple || hasGraphite) && (
                       <div style={{ display: 'flex', gap: 1, marginTop: 1, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 28 }}>
                         {hasRed && <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#dc3545' }} />}
@@ -1368,6 +1381,8 @@ const SpCalendar: React.FC<{
 // ===== メインコンポーネント =====
 const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover }) => {
   const isDark = useDarkMode();
+  // 会社カレンダー（休館日・出勤日）。カレンダーのセルに敷いて、休館日が一目で分かるようにする
+  const calendarKinds = useCompanyCalendar();
   const bg = isDark ? '#343a40' : '#fff';
   const textColor = isDark ? '#fff' : '#333';
   const subColor = isDark ? '#adb5bd' : '#888';
@@ -1714,6 +1729,9 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
             { label: '休日出勤', bg: '#0f766e' },
             { label: '勤務地変更', bg: '#6d28d9' },
             { label: '勤務時間変更', bg: '#374151' },
+            // 会社カレンダー。日ごとの予定ではなく「その日の会社の状態」なので最後に置く
+            { label: '休館日（全社員休み）', bg: CALENDAR_CELL_STYLE.closed_all.bg },
+            { label: '休館日（社員出勤日）', bg: CALENDAR_CELL_STYLE.work_on_closed.bg },
           ].map(({ label, bg: cbg, border }) => (
             <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <div style={{ width: 12, height: 12, borderRadius: 3, background: cbg, border: border ? `1px dashed ${border}` : 'none' }} />
@@ -1730,9 +1748,9 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
         )}
 
         {isMobile ? (
-          <SpCalendar year={year} month={month} eventsByDate={eventsByDate} absencesByDate={absencesByDate} isDark={isDark} onDateTap={canInput ? d => setAbsenceSheet(d) : undefined} />
+          <SpCalendar year={year} month={month} eventsByDate={eventsByDate} absencesByDate={absencesByDate} calendarKinds={calendarKinds} isDark={isDark} onDateTap={canInput ? d => setAbsenceSheet(d) : undefined} />
         ) : (
-          <PcCalendar year={year} month={month} eventsByDate={eventsByDate} absencesByDate={absencesByDate} isDark={isDark} onDateTap={canInput ? d => setAbsenceSheet(d) : undefined} />
+          <PcCalendar year={year} month={month} eventsByDate={eventsByDate} absencesByDate={absencesByDate} calendarKinds={calendarKinds} isDark={isDark} onDateTap={canInput ? d => setAbsenceSheet(d) : undefined} />
         )}
       </div>
 

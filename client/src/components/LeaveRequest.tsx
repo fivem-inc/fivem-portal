@@ -26,6 +26,8 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { useLeavePendingCount } from '../hooks/useLeavePendingCount';
 import { todayJstStr } from '../lib/breakCalc';
+import type { CalendarKind } from '../lib/breakCalc';
+import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import type { AuthUser, AdminLeaveRequest } from '../types';
 
@@ -93,7 +95,8 @@ const MultiDatePicker: React.FC<{
   selectedDates: string[];
   onChange: (dates: string[]) => void;
   isDark: boolean;
-}> = ({ selectedDates, onChange, isDark }) => {
+  calendarKinds?: Record<string, CalendarKind>;
+}> = ({ selectedDates, onChange, isDark, calendarKinds }) => {
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
@@ -176,24 +179,30 @@ const MultiDatePicker: React.FC<{
           const isToday = dateStr === todayStr;
           const isSun = dow === 0;
           const isSat = dow === 6;
+          // 会社カレンダー（休館日・出勤日）。選択中の緑が優先されるので、選んだ日は今までどおり
+          const ck = calendarKinds?.[dateStr];
+          const cs = ck ? CALENDAR_CELL_STYLE[ck] : null;
           return (
             <button
               key={dateStr}
               onClick={() => toggleDate(dateStr)}
+              title={cs ? CALENDAR_NOTICE[ck as CalendarKind] : undefined}
               style={{
                 padding: '10px 2px',
                 minHeight: 40,
                 borderRadius: 6,
                 border: isToday ? '2px solid #007bff' : '1px solid transparent',
-                background: isSelected ? '#28a745' : 'transparent',
-                color: isSelected ? 'white' : isSun ? '#e74c3c' : isSat ? '#3498db' : text,
+                background: isSelected ? '#28a745' : cs ? cs.bg : 'transparent',
+                color: isSelected ? 'white' : cs ? cs.text : isSun ? '#e74c3c' : isSat ? '#3498db' : text,
                 cursor: 'pointer',
                 fontSize: 13,
                 fontWeight: isSelected ? 'bold' : 'normal',
                 textAlign: 'center',
+                lineHeight: 1.2,
               }}
             >
               {day}
+              {cs && <div style={{ fontSize: 8, fontWeight: 'bold', color: isSelected ? 'rgba(255,255,255,0.9)' : cs.text }}>{cs.short}</div>}
             </button>
           );
         })}
@@ -283,6 +292,8 @@ const DateLocationPicker: React.FC<{
 // ---- メインコンポーネント ----
 const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _roleTitle = '', leaveRequestEnabled, onSubmitSuccess }) => {
   const navigate = useNavigate();
+  // 会社カレンダー（休館日・出勤日）。カレンダーの色分けと、選んだあとの注意書きに使う
+  const calendarKinds = useCompanyCalendar();
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<'form' | 'history' | 'adjustment'>(searchParams.get('tab') === 'history' ? 'history' : 'form');
 
@@ -1081,7 +1092,24 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                 setDateLocations(prev => Object.fromEntries(dates.filter(d => prev[d]).map(d => [d, prev[d]])));
               }}
               isDark={isDark}
+              calendarKinds={calendarKinds}
             />
+            {/* 会社の休館日を選んだときの注意書き。
+                止めない（試合・イベントで出勤する日もある）。気づいてもらうだけ */}
+            {(() => {
+              const hits = selectedDates.filter(d => calendarKinds[d]);
+              if (hits.length === 0) return null;
+              return (
+                <div style={{ marginTop: 8, background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '9px 11px' }}>
+                  {hits.map(d => (
+                    <p key={d} style={{ margin: '0 0 2px', fontSize: 13, fontWeight: 'bold', color: '#856404' }}>
+                      {d.slice(5).replace('-', '/')}　{CALENDAR_NOTICE[calendarKinds[d]]}
+                    </p>
+                  ))}
+                  <p style={{ margin: '4px 0 0', fontSize: 12, color: '#856404' }}>申請内容にお間違いはありませんか？</p>
+                </div>
+              );
+            })()}
             {/* 日付ごとの校選択（選択日の一覧を兼ねる・1日1行） */}
             {selectedDates.length > 0 && (
               <div style={{ marginTop: 10 }}>

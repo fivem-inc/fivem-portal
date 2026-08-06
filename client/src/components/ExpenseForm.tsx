@@ -21,13 +21,16 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { shouldSend, dispatchEmail, dispatchSiteNotification } from '../lib/notificationDispatch';
 import { insertNotification } from '../lib/notifications';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
+import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
+import type { CalendarKind } from '../lib/breakCalc';
 
 // タップで即確定するカスタム日付ピッカー
 const SingleDatePicker: React.FC<{
   value: string;
   onChange: (date: string) => void;
   onClose: () => void;
-}> = ({ value, onChange, onClose }) => {
+  calendarKinds?: Record<string, CalendarKind>;
+}> = ({ value, onChange, onClose, calendarKinds }) => {
   const today = new Date();
   const initYear = value ? parseInt(value.slice(0, 4)) : today.getFullYear();
   const initMonth = value ? parseInt(value.slice(5, 7)) - 1 : today.getMonth();
@@ -82,14 +85,22 @@ const SingleDatePicker: React.FC<{
           const isSelected = dateStr === value;
           const isToday = dateStr === todayStr;
           const dow = (firstDay + day - 1) % 7;
+          // 会社の休館日は背景で示す。休館日に交通費を申請するミスが毎月出ていたため
+          const ck = calendarKinds?.[dateStr];
+          const cs = ck ? CALENDAR_CELL_STYLE[ck] : null;
           return (
-            <button key={dateStr} type="button" onClick={() => { onChange(dateStr); onClose(); }} style={{
+            <button key={dateStr} type="button" onClick={() => { onChange(dateStr); onClose(); }}
+              title={cs ? CALENDAR_NOTICE[ck as CalendarKind] : undefined}
+              style={{
               padding: '8px 2px', minHeight: 36, borderRadius: 6,
               border: isToday ? '2px solid #007bff' : '1px solid transparent',
-              background: isSelected ? '#007bff' : 'transparent',
-              color: isSelected ? 'white' : dow===0 ? '#e74c3c' : dow===6 ? '#3498db' : '#333',
-              cursor: 'pointer', fontSize: 13, fontWeight: isSelected ? 'bold' : 'normal',
-            }}>{day}</button>
+              background: isSelected ? '#007bff' : cs ? cs.bg : 'transparent',
+              color: isSelected ? 'white' : cs ? cs.text : dow===0 ? '#e74c3c' : dow===6 ? '#3498db' : '#333',
+              cursor: 'pointer', fontSize: 13, fontWeight: isSelected ? 'bold' : 'normal', lineHeight: 1.2,
+            }}>
+              {day}
+              {cs && <div style={{ fontSize: 8, fontWeight: 'bold', color: isSelected ? 'rgba(255,255,255,0.9)' : cs.text }}>{cs.short}</div>}
+            </button>
           );
         })}
       </div>
@@ -116,6 +127,9 @@ interface ExpenseFormProps {
 const TRANSPORT_PRESETS = ['JR', '阪急', '京阪', '京都地下鉄', '京都市バス'];
 
 const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, expenses, setExpenses, profileName: parentProfileName, pendingTemplates, onTemplateApplied }) => {
+  // 会社の休館日。カレンダーの色分けと、選んだあとの注意書きに使う。
+  // 休館日なのに交通費を申請するケースが毎月出ていたため
+  const calendarKinds = useCompanyCalendar();
   const totalAmount = useMemo(() => {
     return expenses.reduce((sum, expense) => {
       const amount = parseInt(parseAmount(expense.amount || '0'), 10);
@@ -684,8 +698,18 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                         {draftExpense.start_date || '日付を選択'}
                       </button>
                     </div>
-                    {draftDatePicker === 'start' && <SingleDatePicker value={draftExpense.start_date || ''} onChange={v => { setDraftExpense(prev => ({ ...prev, start_date: v })); setDraftDatePicker(null); }} onClose={() => setDraftDatePicker(null)} />}
+                    {draftDatePicker === 'start' && <SingleDatePicker value={draftExpense.start_date || ''} onChange={v => { setDraftExpense(prev => ({ ...prev, start_date: v })); setDraftDatePicker(null); }} onClose={() => setDraftDatePicker(null)} calendarKinds={calendarKinds} />}
                   </div>
+                  {/* 会社の休館日を選んだときの注意書き。止めない（試合・イベントで出勤する日もある）。
+                      気づいてもらうだけ。休館日なのに交通費を申請するケースが毎月出ていたため */}
+                  {draftExpense.start_date && calendarKinds[draftExpense.start_date] && (
+                    <div style={{ marginTop: 6, background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '9px 11px' }}>
+                      <p style={{ margin: 0, fontSize: 13, fontWeight: 'bold', color: '#856404' }}>
+                        {CALENDAR_NOTICE[calendarKinds[draftExpense.start_date]]}
+                      </p>
+                      <p style={{ margin: '3px 0 0', fontSize: 12, color: '#856404' }}>申請内容にお間違いはありませんか？</p>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div style={{ marginBottom: 8 }}>

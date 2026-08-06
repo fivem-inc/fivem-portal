@@ -583,7 +583,9 @@ const OvertimeAdminTab: React.FC = () => {
 
   // ─────────── 会社カレンダー ───────────
   const [calRows, setCalRows] = useState<CalendarRow[]>([]);
-  const [calDate, setCalDate] = useState('');
+  const [calDates, setCalDates] = useState<string[]>([]);
+  const [calViewYear, setCalViewYear] = useState(new Date().getFullYear());
+  const [calViewMonth, setCalViewMonth] = useState(new Date().getMonth());
   const [calKind, setCalKind] = useState<CalendarKind>('closed_all');
   const [calNote, setCalNote] = useState('');
   const [calErr, setCalErr] = useState('');
@@ -600,14 +602,15 @@ const OvertimeAdminTab: React.FC = () => {
 
   useEffect(() => { if (section === 'calendar') fetchCalendar(); }, [section, fetchCalendar]);
 
+  // 年間カレンダーは数十日あるため、カレンダーから複数日を選んでまとめて登録する
   const addCalendar = async () => {
     setCalErr(''); setCalMsg('');
-    if (!calDate) { setCalErr('日付を選択してください'); return; }
+    if (calDates.length === 0) { setCalErr('カレンダーから日付を選んでください'); return; }
     const { error } = await supabase.from('company_calendar')
-      .upsert({ date: calDate, kind: calKind, note: calNote || null });
+      .upsert(calDates.map(d => ({ date: d, kind: calKind, note: calNote || null })));
     if (error) { setCalErr('保存に失敗しました: ' + error.message); return; }
-    setCalMsg(`${calDate} を「${CALENDAR_KIND_LABELS[calKind]}」として保存しました`);
-    setCalDate(''); setCalNote('');
+    setCalMsg(`${calDates.length}件を「${CALENDAR_KIND_LABELS[calKind]}」として保存しました`);
+    setCalDates([]); setCalNote('');
     fetchCalendar();
   };
 
@@ -1434,21 +1437,92 @@ const OvertimeAdminTab: React.FC = () => {
       {section === 'calendar' && (
         <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, padding: '14px 16px' }}>
           <p style={{ margin: '0 0 10px', fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
-            曜日パターンより優先される特別な日を登録します。<br />
-            「全員休み」＝会社休日（祝パターン適用）／「休館日だけど出勤日」＝出パターン適用
+            曜日パターンより優先される特別な日を登録します（紙の全社年間カレンダーと同じ区分です）。<br />
+            <strong>休館日・全社員休み</strong>＝会社休日（祝パターン適用）／
+            <strong>休館日・社員出勤日</strong>と<strong>（有休奨励日）</strong>＝どちらも出勤日として扱います（出パターン適用）。<br />
+            ※ 有休奨励日は<strong>カレンダーの色分け用</strong>です。スタッフに回答を求める場合は、
+            管理画面 → 休暇申請 → 有給奨励日 から別途作成してください。
           </p>
 
           <div style={{ background: innerBg, borderRadius: 10, padding: '10px 12px', marginBottom: 14 }}>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-              <input type="date" value={calDate} onChange={e => setCalDate(e.target.value)} style={inputStyle} />
+            <p style={{ margin: '0 0 8px', fontSize: 12, color: subText, lineHeight: 1.7 }}>
+              カレンダーの<strong>日付をタップして選びます</strong>（もう一度タップで解除）。月をまたいで選べます。<br />
+              登録済みの日は色が付いています。同じ日をもう一度登録すると、後から入れた内容で上書きされます。
+            </p>
+
+            {/* 年月の移動 */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, maxWidth: 340 }}>
+              <button onClick={() => { if (calViewMonth === 0) { setCalViewYear(y => y - 1); setCalViewMonth(11); } else setCalViewMonth(m => m - 1); }}
+                style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: text, padding: '0 10px', lineHeight: 1 }}>‹</button>
+              <span style={{ fontWeight: 'bold', fontSize: 14, color: text }}>{calViewYear}年 {calViewMonth + 1}月</span>
+              <button onClick={() => { if (calViewMonth === 11) { setCalViewYear(y => y + 1); setCalViewMonth(0); } else setCalViewMonth(m => m + 1); }}
+                style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: text, padding: '0 10px', lineHeight: 1 }}>›</button>
+            </div>
+
+            {/* 日付グリッド */}
+            <div style={{ maxWidth: 340 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, marginBottom: 3 }}>
+                {['日', '月', '火', '水', '木', '金', '土'].map((w, i) => (
+                  <div key={w} style={{ textAlign: 'center', fontSize: 11, fontWeight: 'bold', color: i === 0 ? '#e74c3c' : i === 6 ? '#3498db' : subText }}>{w}</div>
+                ))}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
+                {(() => {
+                  const daysInMonth = new Date(calViewYear, calViewMonth + 1, 0).getDate();
+                  const firstDow = new Date(calViewYear, calViewMonth, 1).getDay();
+                  const cells: (number | null)[] = [];
+                  for (let i = 0; i < firstDow; i++) cells.push(null);
+                  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+                  return cells.map((day, i) => {
+                    if (!day) return <div key={`e-${i}`} />;
+                    const ds = `${calViewYear}-${String(calViewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                    const picked = calDates.includes(ds);
+                    // すでに登録済みの日は薄く色を付けて、二重登録に気づけるようにする
+                    const saved = calRows.find(r => r.date === ds);
+                    const dow = (firstDow + day - 1) % 7;
+                    const savedBg = saved ? (saved.kind === 'closed_all' ? '#e0e0e0' : '#fff3cd') : null;
+                    return (
+                      <button key={ds} type="button"
+                        onClick={() => setCalDates(prev => prev.includes(ds) ? prev.filter(x => x !== ds) : [...prev, ds].sort())}
+                        title={saved ? `登録済み：${CALENDAR_KIND_LABELS[saved.kind]}` : undefined}
+                        style={{
+                          padding: '7px 2px', minHeight: 34, borderRadius: 6, cursor: 'pointer', fontSize: 13,
+                          border: picked ? '2px solid #0056b3' : '1px solid transparent',
+                          background: picked ? '#007bff' : savedBg ?? 'transparent',
+                          color: picked ? '#fff' : savedBg ? '#4a4a46' : dow === 0 ? '#e74c3c' : dow === 6 ? '#3498db' : text,
+                          fontWeight: picked || saved ? 'bold' : 'normal',
+                        }}>{day}</button>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+
+            {/* 選んだ日の一覧 */}
+            {calDates.length > 0 && (
+              <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center' }}>
+                {calDates.map(d => (
+                  <span key={d} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: isDarkMode ? '#495057' : '#e3f2fd', color: isDarkMode ? '#fff' : '#1565c0', borderRadius: 12, padding: '3px 8px', fontSize: 12 }}>
+                    {d.slice(5).replace('-', '/')}
+                    <button onClick={() => setCalDates(prev => prev.filter(x => x !== d))}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 13, padding: 0, lineHeight: 1 }}>✕</button>
+                  </span>
+                ))}
+                <button onClick={() => setCalDates([])}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: subText, fontSize: 12, textDecoration: 'underline' }}>すべて外す</button>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 10 }}>
               <select value={calKind} onChange={e => setCalKind(e.target.value as CalendarKind)} style={inputStyle}>
-                <option value="closed_all">全員休み</option>
-                <option value="work_on_closed">休館日だけど出勤日</option>
+                <option value="closed_all">休館日・全社員休み</option>
+                <option value="work_on_closed">休館日・社員出勤日</option>
+                <option value="work_on_closed_encouraged">休館日・社員出勤日（有休奨励日）</option>
               </select>
               <input type="text" value={calNote} onChange={e => setCalNote(e.target.value)} placeholder="メモ（任意）" style={{ ...inputStyle, minWidth: 140 }} />
               <button onClick={addCalendar}
-                style={{ padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 'bold', background: '#007bff', color: '#fff' }}>
-                追加・更新
+                style={{ padding: '8px 18px', borderRadius: 8, border: 'none', cursor: calDates.length > 0 ? 'pointer' : 'not-allowed', fontSize: 13, fontWeight: 'bold', background: calDates.length > 0 ? '#007bff' : (isDarkMode ? '#495057' : '#ced4da'), color: '#fff' }}>
+                追加・更新{calDates.length > 0 ? `（${calDates.length}件）` : ''}
               </button>
             </div>
             {calErr && <p style={{ margin: '8px 0 0', fontSize: 13, color: '#dc3545' }}>{calErr}</p>}

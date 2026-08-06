@@ -233,16 +233,20 @@ export function isPayPeriodPayoutPassed(workDate: string, todayStr: string, clos
 // ---------- 曜日パターン・会社カレンダー解決 ----------
 
 export type DayKind = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun' | 'holiday' | 'work_on_closed';
-export type CalendarKind = 'closed_all' | 'work_on_closed';
+// work_on_closed_encouraged（有休奨励日）は、勤務の扱いとしては work_on_closed と同じ＝所定労働日。
+// 違うのはカレンダー上の色だけ（紙の年間カレンダーが3色で運用されているため選択肢を合わせている）
+export type CalendarKind = 'closed_all' | 'work_on_closed' | 'work_on_closed_encouraged';
 
 export const DAY_KIND_LABELS: Record<DayKind, string> = {
   mon: '月', tue: '火', wed: '水', thu: '木', fri: '金', sat: '土', sun: '日',
   holiday: '祝（全員休み日）', work_on_closed: '出（休館日だけど出勤日）',
 };
 
+// 紙の全社年間カレンダーの凡例と同じ言い方にしている（手元の紙と画面が違うと入力を間違えるため）
 export const CALENDAR_KIND_LABELS: Record<CalendarKind, string> = {
-  closed_all: '全員休み',
-  work_on_closed: '休館日だけど出勤日',
+  closed_all: '休館日・全社員休み',
+  work_on_closed: '休館日・社員出勤日',
+  work_on_closed_encouraged: '休館日・社員出勤日（有休奨励日）',
 };
 
 const DOW_TO_KIND: DayKind[] = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -253,7 +257,8 @@ const DOW_TO_KIND: DayKind[] = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
  */
 export function resolveDayKind(dateStr: string, calendarKind: CalendarKind | null | undefined): DayKind {
   if (calendarKind === 'closed_all') return 'holiday';
-  if (calendarKind === 'work_on_closed') return 'work_on_closed';
+  // 有休奨励日は勤務の扱いとしては出勤日と同じ（所定労働日）。違うのはカレンダーの色だけ
+  if (calendarKind === 'work_on_closed' || calendarKind === 'work_on_closed_encouraged') return 'work_on_closed';
   const [y, m, d] = dateStr.split('-').map(Number);
   return DOW_TO_KIND[new Date(y, m - 1, d).getDay()];
 }
