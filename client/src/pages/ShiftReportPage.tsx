@@ -528,10 +528,10 @@ const ShiftReportForm: React.FC<{
     if (noShift && !origLoc) return { msg: `${planWord}勤務地を選択してください`, field: 'origLoc' };
     if (noShift && origLoc === 'その他' && !origLocCustom.trim()) return { msg: `${planWord}場所を入力してください`, field: 'origLocCustom' };
     // 時間帯が前の帯と重なっている／逆順だと労働時間が合わなくなるので止める
-    if (noShift && origSegs.some((s, i) => i > 0 && s.start && origSegs[i - 1].end && toMin(s.start) < toMin(origSegs[i - 1].end))) return { msg: `${planWord}時間帯が重なっています。順番に入力してください`, field: 'origTime' };
+    if (noShift && origSegs.some((s, i) => i > 0 && s.start && origSegs[i - 1].end && toMin(s.start) < toMin(origSegs[i - 1].end))) return { msg: `${planWord}勤務の時間が重なっています。順番に入力してください`, field: 'origTime' };
     if (!hasAbsence && actSegs.some(s => !s.start || !s.end)) return { msg: '実際の時間を入力してください', field: 'actTime' };
     if (!hasAbsence && actSegs.some(s => s.start === s.end)) return { msg: '開始時間と終了時間が同じです。正しい時間を入力してください', field: 'actTime' };
-    if (!hasAbsence && actSegs.some((s, i) => i > 0 && s.start && actSegs[i - 1].end && toMin(s.start) < toMin(actSegs[i - 1].end))) return { msg: '時間帯が重なっています。順番に入力してください', field: 'actTime' };
+    if (!hasAbsence && actSegs.some((s, i) => i > 0 && s.start && actSegs[i - 1].end && toMin(s.start) < toMin(actSegs[i - 1].end))) return { msg: '勤務の時間が重なっています。順番に入力してください', field: 'actTime' };
     if (!hasAbsence && !actLoc) return { msg: '実際の勤務地を選択してください', field: 'actLoc' };
     if (!hasAbsence && actLoc === 'その他' && !actLocCustom.trim()) return { msg: '実際の勤務場所を入力してください', field: 'actLocCustom' };
     if (!reviewerId)    return { msg: '確認依頼先を選択してください', field: 'reviewer' };
@@ -872,17 +872,17 @@ const ShiftReportForm: React.FC<{
                         placeholder="勤務地を入力してください" style={{ ...f, marginTop: 6 }} />
                     )}
                   </div>
-                  <label style={L}>時間 {Req}</label>
+                  <label style={L}>勤務時間 {Req}</label>
                   {/* 勤務した時間帯を最大3つ。残業ページと同じ形（間の空きが外出・中抜けになる） */}
                   {origSegs.map((s, i) => (
                     <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                      <span style={{ fontSize: 12, color: '#888', minWidth: 44, flexShrink: 0 }}>時間帯{i + 1}</span>
+                      <span style={{ fontSize: 12, color: '#888', minWidth: 44, flexShrink: 0 }}>勤務{i + 1}</span>
                       <input type="time" value={s.start} onChange={e => setOrigSegs(prev => prev.map((p, j) => j === i ? { ...p, start: e.target.value } : p))} style={{ ...f, flex: 1, minWidth: 0 }} />
                       <span style={{ color: '#888', flexShrink: 0 }}>〜</span>
                       <input type="time" value={s.end} onChange={e => setOrigSegs(prev => prev.map((p, j) => j === i ? { ...p, end: e.target.value } : p))} style={{ ...f, flex: 1, minWidth: 0 }} />
                       {origSegs.length > 1 && (
                         <button type="button" onClick={() => setOrigSegs(prev => prev.filter((_, j) => j !== i))}
-                          aria-label={`時間帯${i + 1}を削除`}
+                          aria-label={`勤務${i + 1}を削除`}
                           style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#888', flexShrink: 0 }}>🚫</button>
                       )}
                     </div>
@@ -890,7 +890,7 @@ const ShiftReportForm: React.FC<{
                   {origSegs.length < MAX_SEGS && (
                     <button type="button" onClick={() => setOrigSegs(prev => [...prev, { start: '', end: '' }])}
                       style={{ background: isDark ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDark ? '#4a90d9' : '#90caf9'}`, borderRadius: 8, cursor: 'pointer', padding: '6px 12px', fontSize: 12.5, color: isDark ? '#fff' : '#1565c0', width: '100%' }}>
-                      ＋ 時間帯を追加（外出・戻りがある場合）
+                      ＋ 勤務を追加（外出・戻りがある場合）
                     </button>
                   )}
                 </>
@@ -914,17 +914,17 @@ const ShiftReportForm: React.FC<{
                       placeholder="勤務地を入力してください" style={{ ...f, marginTop: 6 }} />
                   )}
                 </div>
-                <label style={L}>時間 {Req}</label>
+                <label style={L}>勤務時間 {Req}</label>
                 {/* 勤務した時間帯を最大3つ。残業ページと同じ形（間の空きが外出・中抜けになる） */}
                 {actSegs.map((s, i) => (
                   <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                    <span style={{ fontSize: 12, color: '#888', minWidth: 44, flexShrink: 0 }}>時間帯{i + 1}</span>
+                    <span style={{ fontSize: 12, color: '#888', minWidth: 44, flexShrink: 0 }}>勤務{i + 1}</span>
                     <input type="time" value={s.start} onChange={e => setActSegs(prev => prev.map((p, j) => j === i ? { ...p, start: e.target.value } : p))} style={{ ...f, flex: 1, minWidth: 0 }} />
                     <span style={{ color: '#888', flexShrink: 0 }}>〜</span>
                     <input type="time" value={s.end} onChange={e => setActSegs(prev => prev.map((p, j) => j === i ? { ...p, end: e.target.value } : p))} style={{ ...f, flex: 1, minWidth: 0 }} />
                     {actSegs.length > 1 && (
                       <button type="button" onClick={() => setActSegs(prev => prev.filter((_, j) => j !== i))}
-                        aria-label={`時間帯${i + 1}を削除`}
+                        aria-label={`勤務${i + 1}を削除`}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#888', flexShrink: 0 }}>🚫</button>
                     )}
                   </div>
@@ -932,7 +932,7 @@ const ShiftReportForm: React.FC<{
                 {actSegs.length < MAX_SEGS && (
                   <button type="button" onClick={() => setActSegs(prev => [...prev, { start: '', end: '' }])}
                     style={{ background: isDark ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDark ? '#4a90d9' : '#90caf9'}`, borderRadius: 8, cursor: 'pointer', padding: '6px 12px', fontSize: 12.5, color: isDark ? '#fff' : '#1565c0', width: '100%', marginBottom: 8 }}>
-                    ＋ 時間帯を追加（外出・戻りがある場合）
+                    ＋ 勤務を追加（外出・戻りがある場合）
                   </button>
                 )}
                 {actStart && actEnd && laborMin > 0 && (

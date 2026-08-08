@@ -998,15 +998,15 @@ const OvertimeForm: React.FC<{
       if (fullDayType === 'absence' && isSelfReview) return '欠勤は本人以外の受理が必要です';
       return '';
     }
-    if (workSegments.length === 0) return '勤務時間帯を入力してください';
+    if (workSegments.length === 0) return '勤務時間を入力してください';
     for (let i = 0; i < segments.length; i++) {
       const s = segments[i];
-      if ((s.start && !s.end) || (!s.start && s.end)) return `時間帯${i + 1}の開始・終了を両方入力してください`;
+      if ((s.start && !s.end) || (!s.start && s.end)) return `勤務${i + 1}の開始・終了を両方入力してください`;
     }
     // 帯の重複チェック
     const sorted = [...workSegments].sort((a, b) => a.startMin - b.startMin);
     for (let i = 1; i < sorted.length; i++) {
-      if (sorted[i].startMin < sorted[i - 1].endMin) return '時間帯が重なっています。開始・終了時刻を確認してください';
+      if (sorted[i].startMin < sorted[i - 1].endMin) return '勤務の時間が重なっています。開始・終了時刻を確認してください';
     }
     if (breakManual && (breakManualMin === '' || isNaN(parseInt(breakManualMin, 10)) || parseInt(breakManualMin, 10) < 0)) {
       return '休憩時間（分）を入力してください';
@@ -1289,7 +1289,7 @@ const OvertimeForm: React.FC<{
             <li>突発的な残業（急なお客様対応など）を除き、残業は事前に申請してください。申請がない場合は通常のシフト時間での勤務となります。</li>
             <li>事前申請が受理されると、「履歴・実績報告」タブのその日のカードに「実績を報告する」ボタンが表示されます。業務のあと、変更がなければそのまま送信（内容は入力済みです）、時間が変わった場合は直してから送信してください。</li>
             <li>休憩は自動計算されます。突発的な残業などで自動計算どおりに取れなかった場合は、休憩の「修正」から実際の時間に直してください（休憩後は1分以上業務をしてから退勤してください）。</li>
-            <li>時間は1分単位で入力できます。外出・戻りのあるシフトは「＋時間帯を追加」で入力してください。</li>
+            <li>時間は1分単位で入力できます。外出・戻りのあるシフトは「＋勤務を追加」で入力してください。</li>
             <li>正社員の方は、残業分を別日で調整（時間調整・調整休）していただくようお願いします。</li>
             <li>調整休・欠勤（終日）は受理された時点で完了します（実績報告は不要です）。</li>
             <li>新規の申請は、支給月の17日までに提出してください。それ以降は前の給与期間の新規申請ができません（締め後に申請したい場合は経理にご相談ください）。</li>
@@ -1766,13 +1766,13 @@ const OvertimeForm: React.FC<{
         )}
         {segments.map((s, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <span style={{ fontSize: 12, color: subText, minWidth: 44 }}>時間帯{i + 1}</span>
+            <span style={{ fontSize: 12, color: subText, minWidth: 44 }}>勤務{i + 1}</span>
             <input type="time" value={s.start} onChange={e => setSegments(prev => prev.map((p, j) => j === i ? { ...p, start: e.target.value } : p))} style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
             <span style={{ color: subText }}>〜</span>
             <input type="time" value={s.end} onChange={e => setSegments(prev => prev.map((p, j) => j === i ? { ...p, end: e.target.value } : p))} style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
             {segments.length > 1 && (
               <button onClick={() => setSegments(prev => prev.filter((_, j) => j !== i))}
-                aria-label={`時間帯${i + 1}を削除`}
+                aria-label={`勤務${i + 1}を削除`}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: subText }}>🚫</button>
             )}
           </div>
@@ -1780,7 +1780,7 @@ const OvertimeForm: React.FC<{
         {segments.length < 3 && (
           <button onClick={() => setSegments(prev => [...prev, { ...EMPTY_SEG }])}
             style={{ background: isDark ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDark ? '#4a90d9' : '#90caf9'}`, borderRadius: 8, cursor: 'pointer', padding: '6px 12px', fontSize: 12.5, color: isDark ? '#fff' : '#1565c0', width: '100%' }}>
-            ＋ 時間帯を追加（外出・戻りがある場合）
+            ＋ 勤務を追加（外出・戻りがある場合）
           </button>
         )}
         <p style={{ fontSize: 11.5, color: subText, margin: '6px 0 0' }}>終了が深夜0時を越える場合は、終了時刻をそのまま入力してください（翌日として計算します）</p>

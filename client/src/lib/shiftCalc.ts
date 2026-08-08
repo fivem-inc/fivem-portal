@@ -23,7 +23,9 @@ export function calcShiftBreakMinutes(start: string, end: string): number {
 // 「9:00〜12:00 と 14:00〜18:00 に働いた」を素直に表す。間の空きが外出・中抜けになる。
 // DBには jsonb（original_segments / actual_segments）で持ち、
 // 最初の開始と最後の終了は従来の original_start/end 列にも入れて互換を保つ。
-export type Seg = { start: string; end: string };
+// location は時間帯ごとの勤務校。校をまたぐ日（午前は四条本校・午後は西陣校 など）に使う。
+// 勤怠カレンダーの休日出勤（attendance_exceptions.work_segments）と同じ持ち方に揃えている
+export type Seg = { start: string; end: string; location?: string };
 export const MAX_SEGS = 3;
 
 /**
@@ -38,33 +40,36 @@ export function parseSegments(
   legacyEnd?: string | null,
   legacyOutStart?: string | null,
   legacyOutEnd?: string | null,
+  legacyLocation?: string | null,
 ): Seg[] {
   if (Array.isArray(segments)) {
     return (segments as Seg[])
       .filter(s => s && typeof s.start === 'string' && typeof s.end === 'string')
-      .map(s => ({ start: s.start.slice(0, 5), end: s.end.slice(0, 5) }))
+      .map(s => ({ start: s.start.slice(0, 5), end: s.end.slice(0, 5), location: s.location || undefined }))
       .filter(s => s.start && s.end)
       .slice(0, MAX_SEGS);
   }
   if (!legacyStart || !legacyEnd) return [];
+  // 古い報告は勤務地を1つしか持たないので、復元した時間帯すべてに同じ校を入れる
+  const loc = legacyLocation || undefined;
   const s = legacyStart.slice(0, 5), e = legacyEnd.slice(0, 5);
   if (legacyOutStart && legacyOutEnd) {
     const os = legacyOutStart.slice(0, 5), oe = legacyOutEnd.slice(0, 5);
     if (toMin(oe) > toMin(os)) {
       // ① 勤務時間の中にある＝ふつうの中抜け。前後2つの時間帯に分ける
       if (toMin(os) > toMin(s) && toMin(oe) < toMin(e)) {
-        return [{ start: s, end: os }, { start: oe, end: e }];
+        return [{ start: s, end: os, location: loc }, { start: oe, end: e, location: loc }];
       }
       // ② 勤務時間より後ろ／前にある＝「外出」欄を2つ目の勤務時間として使っていた報告。
       // 🚨 そのまま捨てると画面から時間が消えるため、2つ目の時間帯として残す。
       // 実際に本番に3件あった（例：勤務 10:55〜11:35／外出欄 15:30〜19:00）。
       // 旧計算ではこれを「働いていない時間」として引くため実労働が0分になっていた。
       // 表示は正しく直るが、保存済みの休憩・実労働の数字は当時のままなので注意
-      if (toMin(os) >= toMin(e)) return [{ start: s, end: e }, { start: os, end: oe }];
-      if (toMin(oe) <= toMin(s)) return [{ start: os, end: oe }, { start: s, end: e }];
+      if (toMin(os) >= toMin(e)) return [{ start: s, end: e, location: loc }, { start: os, end: oe, location: loc }];
+      if (toMin(oe) <= toMin(s)) return [{ start: os, end: oe, location: loc }, { start: s, end: e, location: loc }];
     }
   }
-  return [{ start: s, end: e }];
+  return [{ start: s, end: e, location: loc }];
 }
 
 /** 勤務時間帯の合計（分）。休憩は含まない */
@@ -89,14 +94,21 @@ export const segFirstStart = (segs: Seg[]): string => segs[0]?.start ?? '';
 /** 最後の終了（従来の end 列に入れる値） */
 export const segLastEnd = (segs: Seg[]): string => segs[segs.length - 1]?.end ?? '';
 
+/** 校を重複なくつないだ表示用の文字列。例）'四条本校→西陣校'（従来の勤務地の列に入れる値） */
+export const joinSegLocations = (segs: Seg[]): string =>
+  [...new Set(segs.map(s => s.location).filter((v): v is string => !!v))].join('→');
+
 /**
  * 勤務時間帯を並べた文字列を作る。
- * 例）"9:00〜12:00 / 14:00〜18:00"
+ * 例）"9:00〜12:00［四条本校］/ 14:00〜18:00［西陣校］"
  * 時刻は 9:00 の形（時は0埋めしない・分は2桁）。Googleカレンダーの書き方と揃えている。
+ * 校が1つしかないときは［］を出さない（勤務地は別欄に出ているため）。
  */
 export function formatSegs(segs: Seg[]): string {
   const fmt = (v: string) => { const [h, m] = v.slice(0, 5).split(':'); return `${Number(h)}:${m}`; };
-  return segs.filter(s => s.start && s.end).map(s => `${fmt(s.start)}〜${fmt(s.end)}`).join(' / ');
+  const rows = segs.filter(s => s.start && s.end);
+  const multiLoc = new Set(rows.map(s => s.location).filter(Boolean)).size > 1;
+  return rows.map(s => `${fmt(s.start)}〜${fmt(s.end)}${multiLoc && s.location ? `［${s.location}］` : ''}`).join(' / ');
 }
 
 /** DBの値から直接「9:00〜12:00 / 14:00〜18:00」を作る（表示用のまとめ） */
@@ -106,6 +118,7 @@ export function formatSegsFromRecord(
   legacyEnd?: string | null,
   legacyOutStart?: string | null,
   legacyOutEnd?: string | null,
+  legacyLocation?: string | null,
 ): string {
-  return formatSegs(parseSegments(segments, legacyStart, legacyEnd, legacyOutStart, legacyOutEnd));
+  return formatSegs(parseSegments(segments, legacyStart, legacyEnd, legacyOutStart, legacyOutEnd, legacyLocation));
 }
