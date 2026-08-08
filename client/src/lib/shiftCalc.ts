@@ -50,8 +50,18 @@ export function parseSegments(
   const s = legacyStart.slice(0, 5), e = legacyEnd.slice(0, 5);
   if (legacyOutStart && legacyOutEnd) {
     const os = legacyOutStart.slice(0, 5), oe = legacyOutEnd.slice(0, 5);
-    if (toMin(os) > toMin(s) && toMin(oe) < toMin(e) && toMin(oe) > toMin(os)) {
-      return [{ start: s, end: os }, { start: oe, end: e }];
+    if (toMin(oe) > toMin(os)) {
+      // ① 勤務時間の中にある＝ふつうの中抜け。前後2つの時間帯に分ける
+      if (toMin(os) > toMin(s) && toMin(oe) < toMin(e)) {
+        return [{ start: s, end: os }, { start: oe, end: e }];
+      }
+      // ② 勤務時間より後ろ／前にある＝「外出」欄を2つ目の勤務時間として使っていた報告。
+      // 🚨 そのまま捨てると画面から時間が消えるため、2つ目の時間帯として残す。
+      // 実際に本番に3件あった（例：勤務 10:55〜11:35／外出欄 15:30〜19:00）。
+      // 旧計算ではこれを「働いていない時間」として引くため実労働が0分になっていた。
+      // 表示は正しく直るが、保存済みの休憩・実労働の数字は当時のままなので注意
+      if (toMin(os) >= toMin(e)) return [{ start: s, end: e }, { start: os, end: oe }];
+      if (toMin(oe) <= toMin(s)) return [{ start: os, end: oe }, { start: s, end: e }];
     }
   }
   return [{ start: s, end: e }];
