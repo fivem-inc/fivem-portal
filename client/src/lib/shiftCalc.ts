@@ -19,16 +19,6 @@ export function calcShiftBreakMinutes(start: string, end: string): number {
   return 60;
 }
 
-// 実労働 ＝ (退勤 − 出勤) − 休憩 − 外出。負値は0。
-// ※旧データ向け（管理者の修正モーダルが1組の外出を扱うために残している）
-export function calcShiftLaborMinutes(
-  actStart: string, actEnd: string, breakMin: number,
-  outingStart?: string | null, outingEnd?: string | null,
-): number {
-  const outingMin = outingStart && outingEnd ? Math.max(0, toMin(outingEnd) - toMin(outingStart)) : 0;
-  return Math.max(0, (toMin(actEnd) - toMin(actStart)) - breakMin - outingMin);
-}
-
 // ───────── 勤務した時間帯（最大3つ・残業ページと同じ考え方） ─────────
 // 「9:00〜12:00 と 14:00〜18:00 に働いた」を素直に表す。間の空きが外出・中抜けになる。
 // DBには jsonb（original_segments / actual_segments）で持ち、
@@ -70,6 +60,18 @@ export function parseSegments(
 /** 勤務時間帯の合計（分）。休憩は含まない */
 export function segMinutes(segs: Seg[]): number {
   return segs.reduce((sum, s) => sum + (s.start && s.end ? Math.max(0, toMin(s.end) - toMin(s.start)) : 0), 0);
+}
+
+/**
+ * 休憩の合計。
+ * 🚨 時間帯ごとにルールを当てて合算する（残業ページ breakCalc の calcTotalBreak と同じ考え方）。
+ * 最初〜最後の拘束時間で判定すると、中抜けの長い日に休憩を引きすぎる。
+ * （中抜けの間に昼食＝休憩を取っているのに、さらに休憩を引くことになるため）
+ * 例）9:00〜12:00 と 17:00〜19:00 → 3時間分0分 ＋ 2時間分0分 ＝ 0分
+ *     中抜けなしの 9:00〜18:00 は従来どおり60分で、結果は変わらない
+ */
+export function calcSegsBreak(segs: Seg[]): number {
+  return segs.reduce((sum, s) => sum + (s.start && s.end ? calcShiftBreakMinutes(s.start, s.end) : 0), 0);
 }
 
 /** 最初の開始（従来の start 列に入れる値） */

@@ -5,7 +5,7 @@ import { notifyShiftReportReturned } from '../lib/shiftReportReturnedNotify';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
-import { calcShiftBreakMinutes, parseSegments, segMinutes, formatSegs, formatSegsFromRecord, segFirstStart, segLastEnd, MAX_SEGS, type Seg } from '../lib/shiftCalc';
+import { calcSegsBreak, parseSegments, segMinutes, formatSegs, formatSegsFromRecord, segFirstStart, segLastEnd, MAX_SEGS, type Seg } from '../lib/shiftCalc';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import type { AuthUser } from '../types';
 import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
@@ -71,7 +71,6 @@ function toMin(hhmm: string): number {
   const [h, m] = hhmm.split(':').map(Number);
   return h * 60 + m;
 }
-const calcBreakMinutes = calcShiftBreakMinutes;
 function formatMin(min: number): string {
   const h = Math.floor(Math.abs(min) / 60), m = Math.abs(min) % 60;
   return `${h}時間${m > 0 ? m + '分' : ''}`;
@@ -493,7 +492,9 @@ const ShiftReportForm: React.FC<{
     });
   };
 
-  const breakMin = actStart && actEnd && !hasAbsence ? calcBreakMinutes(actStart, actEnd) : 0;
+  // 🚨 休憩は時間帯ごとに計算して合算する（残業ページと同じ）。
+  // 最初〜最後の拘束で判定すると、中抜けの長い日に休憩を引きすぎる
+  const breakMin = !hasAbsence ? calcSegsBreak(actSegs) : 0;
   // 実労働＝勤務した時間帯の合計 − 休憩（時間帯の間の空き＝外出は最初から含まれない）
   const actOutingMin = Math.max(0, (actStart && actEnd ? toMin(actEnd) - toMin(actStart) : 0) - segMinutes(actSegs));
   const laborMin = !hasAbsence ? Math.max(0, segMinutes(actSegs) - breakMin) : 0;

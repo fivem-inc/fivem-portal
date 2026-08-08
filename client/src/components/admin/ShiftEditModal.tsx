@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
-import { calcShiftBreakMinutes, calcShiftLaborMinutes } from '../../lib/shiftCalc';
+import { calcSegsBreak, parseSegments, segMinutes } from '../../lib/shiftCalc';
 
 // 管理者が勤務変更報告の内容を直接修正するモーダル。
 // 休憩・実労働は申請時と同じ shiftCalc で自動再計算（エンジン二重化を回避）。
@@ -73,8 +73,12 @@ const ShiftEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
   // 休憩・実労働の自動再計算
   const { breakMin, laborMin } = useMemo(() => {
     if (isAbsence || !actStart || !actEnd) return { breakMin: null as number | null, laborMin: null as number | null };
-    const b = calcShiftBreakMinutes(actStart, actEnd);
-    const l = calcShiftLaborMinutes(actStart, actEnd, b, outStart || null, outEnd || null);
+    // 🚨 申請画面と同じく、休憩は時間帯ごとに計算して合算する。
+    // 開始・終了＋外出から時間帯（外出の前後）を組み立ててから当てる。
+    // 拘束時間で判定すると中抜けの長い日に休憩を引きすぎ、本人画面と数字が食い違う
+    const segs = parseSegments(null, actStart, actEnd, outStart || null, outEnd || null);
+    const b = calcSegsBreak(segs);
+    const l = Math.max(0, segMinutes(segs) - b);
     return { breakMin: b, laborMin: l };
   }, [isAbsence, actStart, actEnd, outStart, outEnd]);
 
