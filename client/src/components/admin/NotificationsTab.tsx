@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { supabase } from '../../lib/supabaseClient';
 import { invalidateNotificationCache } from '../../lib/notificationDispatch';
@@ -512,6 +512,16 @@ const NotificationsTab: React.FC = () => {
   const [savedSettings, setSavedSettings] = useState<NotificationSetting[]>([]);
   const [loading, setLoading] = useState(true);
   const [openEvent, setOpenEvent] = useState<string | null>(null);
+  // 🚨 開いた項目の見出しに画面を合わせる。
+  // 1つ開くと他が閉じる作りなので、下の項目を開くと上が数百px縮み、
+  // 押した場所が画面の外へ飛んで「どこにいるか分からない」状態になっていた
+  const openRowRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!openEvent) return;
+    // 開閉でDOMが伸び縮みした後に位置を合わせる
+    const t = setTimeout(() => openRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+    return () => clearTimeout(t);
+  }, [openEvent]);
   const [saving, setSaving] = useState<string | null>(null);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null); // 共通インライン確認（confirm廃止）
@@ -935,9 +945,11 @@ const NotificationsTab: React.FC = () => {
             });
 
             return (
-              <div key={event.key} style={{
+              <div key={event.key} ref={isOpen ? openRowRef : undefined} style={{
                 background: bg, border: `0.5px solid ${borderColor}`,
                 borderRadius: 12, marginBottom: 8, overflow: 'hidden',
+                // 上部の固定ナビ（60px・ロールプレビュー中は92px）に見出しが隠れないよう余白を取る
+                scrollMarginTop: 100,
               }}>
                 <div
                   onClick={() => setOpenEvent(isOpen ? null : event.key)}
