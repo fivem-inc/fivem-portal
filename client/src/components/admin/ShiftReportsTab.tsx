@@ -551,7 +551,7 @@ const ShiftReportsTab: React.FC = () => {
                           <div style={{ fontSize: 11, color: sub }}>{r.original_location}</div>
                         )}
                         {r.original_start && (
-                          <div style={{ fontSize: 11, color: sub }}>{formatSegsFromRecord(r.original_segments, r.original_start, r.original_end, r.original_outing_start, r.original_outing_end)}</div>
+                          <div style={{ fontSize: 11, color: sub }}>{formatSegsFromRecord(r.original_segments, r.original_start, r.original_end, r.original_outing_start, r.original_outing_end, r.original_location)}</div>
                         )}
                         {!r.original_location && !r.original_start && (
                           <div style={{ fontSize: 11, color: sub }}>—</div>
@@ -563,7 +563,7 @@ const ShiftReportsTab: React.FC = () => {
                           <div style={{ fontSize: 11, color: '#166534', fontWeight: 'bold' }}>{r.actual_location}</div>
                         )}
                         {r.actual_start && (
-                          <div style={{ fontSize: 11, color: '#166534', fontWeight: 'bold' }}>{formatSegsFromRecord(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end)}</div>
+                          <div style={{ fontSize: 11, color: '#166534', fontWeight: 'bold' }}>{formatSegsFromRecord(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end, r.actual_location)}</div>
                         )}
                         {r.actual_start && (
                           <div style={{ fontSize: 11, color: '#166534' }}>休憩 {r.break_minutes ?? 0}分</div>

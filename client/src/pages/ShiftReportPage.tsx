@@ -5,7 +5,7 @@ import { notifyShiftReportReturned } from '../lib/shiftReportReturnedNotify';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
-import { calcSegsBreak, parseSegments, segMinutes, formatSegs, formatSegsFromRecord, segFirstStart, segLastEnd, MAX_SEGS, type Seg } from '../lib/shiftCalc';
+import { calcSegsBreak, parseSegments, segMinutes, formatSegs, formatSegsFromRecord, segFirstStart, segLastEnd, joinSegLocations, MAX_SEGS, type Seg } from '../lib/shiftCalc';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import type { AuthUser } from '../types';
 import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
@@ -351,7 +351,6 @@ const ShiftReportForm: React.FC<{
   // 入力中の下書きを端末に自動保存し、開き直したら復元する（新規報告のみ。修正モードは対象外）
   interface ShiftDraft {
     applicantId: string; date: string; types: ApplicationType[]; reason: string; origDayOff: boolean;
-    origLoc: string; origLocCustom: string; actLoc: string; actLocCustom: string;
     origSegs: Seg[]; actSegs: Seg[];
     reviewerId: string; actNotes: string;
   }
@@ -407,31 +406,30 @@ const ShiftReportForm: React.FC<{
       }, () => {});
   }, [applicantId]);
 
-  // 勤務地：ドロップダウン値（「その他」選択時はカスタム入力を使う）
-  const savedOrigLoc = editTarget?.original_location ?? '';
-  const savedActLoc  = editTarget?.actual_location ?? '';
-  const [origLoc, setOrigLoc]           = useState(sd?.origLoc ?? (workplaces.includes(savedOrigLoc) || savedOrigLoc === '' ? savedOrigLoc : 'その他'));
-  const [origLocCustom, setOrigLocCustom] = useState(sd?.origLocCustom ?? (workplaces.includes(savedOrigLoc) ? '' : savedOrigLoc));
-  const [actLoc, setActLoc]             = useState(sd?.actLoc ?? (workplaces.includes(savedActLoc) || savedActLoc === '' ? savedActLoc : 'その他'));
-  const [actLocCustom, setActLocCustom]   = useState(sd?.actLocCustom ?? (workplaces.includes(savedActLoc) ? '' : savedActLoc));
-
-  const finalOrigLoc = origLoc === 'その他' ? origLocCustom : origLoc;
-  const finalActLoc  = actLoc  === 'その他' ? actLocCustom  : actLoc;
-
   // 修正で開いたときは空のままにする（既定の12:00を入れると、入力していない時刻が
   // そのまま予定として保存され、静かにデータが化ける。空なら送信前に必ず弾かれる）
   // 勤務した時間帯（最大3つ・残業ページと同じ形）。間の空きが外出・中抜けになる。
   // 古い報告は「開始〜終了から外出を抜く」形で時間帯に復元する
   const [origSegs, setOrigSegs] = useState<Seg[]>(
     editTarget
-      ? parseSegments(editTarget.original_segments, editTarget.original_start, editTarget.original_end, editTarget.original_outing_start, editTarget.original_outing_end)
+      ? parseSegments(editTarget.original_segments, editTarget.original_start, editTarget.original_end, editTarget.original_outing_start, editTarget.original_outing_end, editTarget.original_location)
       : (sd?.origSegs ?? [{ start: '', end: '' }])
   );
   const [actSegs, setActSegs] = useState<Seg[]>(
     editTarget
-      ? parseSegments(editTarget.actual_segments, editTarget.actual_start, editTarget.actual_end, editTarget.actual_outing_start, editTarget.actual_outing_end)
+      ? parseSegments(editTarget.actual_segments, editTarget.actual_start, editTarget.actual_end, editTarget.actual_outing_start, editTarget.actual_outing_end, editTarget.actual_location)
       : (sd?.actSegs ?? [{ start: '', end: '' }])
   );
+  // 勤務地は時間帯ごとに選ぶ（午前は四条本校・午後は西陣校 のように校をまたぐ日があるため）。
+  // 「その他（自由入力）」を選んだかどうかだけ別に覚え、値は各時間帯の location に直接入れる
+  const [origLocOther, setOrigLocOther] = useState<boolean[]>([]);
+  const [actLocOther, setActLocOther]   = useState<boolean[]>([]);
+  // 保存済みの校が勤務地リストに無い＝「その他」で入力された値なので、自由入力欄で開く
+  const isOtherLoc = (flags: boolean[], s: Seg, i: number): boolean =>
+    flags[i] ?? (!!s.location && workplaces.length > 0 && !workplaces.includes(s.location));
+  // 従来の勤務地の列には校をつないだ文字列を入れる（例：四条本校→西陣校）
+  const finalOrigLoc = joinSegLocations(origSegs);
+  const finalActLoc  = joinSegLocations(actSegs);
   // 開始・終了は「最初の時間帯の開始」「最後の時間帯の終了」。
   // 遅刻・早退の判定や保存はこれまでどおりこの2つを使う
   const origStart = segFirstStart(origSegs);
@@ -446,10 +444,10 @@ const ShiftReportForm: React.FC<{
   useEffect(() => {
     if (editTarget) return;
     saveDraft(DRAFT_KEYS.shiftReport, {
-      applicantId, date, types, reason, origDayOff, origLoc, origLocCustom, actLoc, actLocCustom,
+      applicantId, date, types, reason, origDayOff,
       origSegs, actSegs, reviewerId, actNotes,
     });
-  }, [editTarget, applicantId, date, types, reason, origDayOff, origLoc, origLocCustom, actLoc, actLocCustom, origSegs, actSegs, reviewerId, actNotes]);
+  }, [editTarget, applicantId, date, types, reason, origDayOff, origSegs, actSegs, reviewerId, actNotes]);
 
   const hasAbsence    = types.includes('absence');
   const hasHoliday    = types.includes('holiday_work');
@@ -525,15 +523,13 @@ const ShiftReportForm: React.FC<{
     if (!reason.trim()) return { msg: '理由を入力してください', field: 'reason' };
     if (noShift && origSegs.some(s => !s.start || !s.end)) return { msg: `${planWord}時間を入力してください`, field: 'origTime' };
     if (noShift && origSegs.some(s => s.start === s.end)) return { msg: `${planWord}開始・終了が同じ時間です。正しい時間を入力してください`, field: 'origTime' };
-    if (noShift && !origLoc) return { msg: `${planWord}勤務地を選択してください`, field: 'origLoc' };
-    if (noShift && origLoc === 'その他' && !origLocCustom.trim()) return { msg: `${planWord}場所を入力してください`, field: 'origLocCustom' };
+    if (noShift && origSegs.some(s => !(s.location ?? '').trim())) return { msg: `${planWord}勤務地を選択してください`, field: 'origLoc' };
     // 時間帯が前の帯と重なっている／逆順だと労働時間が合わなくなるので止める
     if (noShift && origSegs.some((s, i) => i > 0 && s.start && origSegs[i - 1].end && toMin(s.start) < toMin(origSegs[i - 1].end))) return { msg: `${planWord}勤務の時間が重なっています。順番に入力してください`, field: 'origTime' };
     if (!hasAbsence && actSegs.some(s => !s.start || !s.end)) return { msg: '実際の時間を入力してください', field: 'actTime' };
     if (!hasAbsence && actSegs.some(s => s.start === s.end)) return { msg: '開始時間と終了時間が同じです。正しい時間を入力してください', field: 'actTime' };
     if (!hasAbsence && actSegs.some((s, i) => i > 0 && s.start && actSegs[i - 1].end && toMin(s.start) < toMin(actSegs[i - 1].end))) return { msg: '勤務の時間が重なっています。順番に入力してください', field: 'actTime' };
-    if (!hasAbsence && !actLoc) return { msg: '実際の勤務地を選択してください', field: 'actLoc' };
-    if (!hasAbsence && actLoc === 'その他' && !actLocCustom.trim()) return { msg: '実際の勤務場所を入力してください', field: 'actLocCustom' };
+    if (!hasAbsence && actSegs.some(s => !(s.location ?? '').trim())) return { msg: '実際の勤務地を選択してください', field: 'actLoc' };
     if (!reviewerId)    return { msg: '確認依頼先を選択してください', field: 'reviewer' };
     if (editTarget && !changeSummary.trim()) return { msg: '修正内容を入力してください', field: 'changeSummary' };
     return { msg: '' };
@@ -658,7 +654,7 @@ const ShiftReportForm: React.FC<{
   // 入力内容クリア（新規報告のみ。入力欄を初期状態に戻して下書きも消す）
   const clearShiftForm = () => {
     setApplicantId(user.id); setDate(todayStr()); setTypes([]); setReason(''); setOrigDayOff(false);
-    setOrigLoc(''); setOrigLocCustom(''); setActLoc(''); setActLocCustom('');
+    setOrigLocOther([]); setActLocOther([]);
     setOrigSegs([{ start: '', end: '' }]); setActSegs([{ start: '', end: '' }]);
     setReviewerId(''); setActNotes(''); setError('');
     clearDraft(DRAFT_KEYS.shiftReport);
@@ -860,37 +856,52 @@ const ShiftReportForm: React.FC<{
               )}
               {!noPlan && (
                 <>
-                  <div style={{ marginBottom: 8 }}>
-                    <label style={L}>勤務地 {Req}</label>
-                    <select data-err-field="origLoc" value={origLoc} onChange={e => { setOrigLoc(e.target.value); clearErr('origLoc'); }} style={ef('origLoc')}>
-                      <option value="">選択してください</option>
-                      {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
-                      <option value="その他">その他（自由入力）</option>
-                    </select>
-                    {origLoc === 'その他' && (
-                      <input type="text" value={origLocCustom} onChange={e => setOrigLocCustom(e.target.value)}
-                        placeholder="勤務地を入力してください" style={{ ...f, marginTop: 6 }} />
-                    )}
-                  </div>
-                  <label style={L}>勤務時間 {Req}</label>
-                  {/* 勤務した時間帯を最大3つ。残業ページと同じ形（間の空きが外出・中抜けになる） */}
-                  {origSegs.map((s, i) => (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                      <span style={{ fontSize: 12, color: '#888', minWidth: 44, flexShrink: 0 }}>勤務{i + 1}</span>
-                      <input type="time" value={s.start} onChange={e => setOrigSegs(prev => prev.map((p, j) => j === i ? { ...p, start: e.target.value } : p))} style={{ ...f, flex: 1, minWidth: 0 }} />
-                      <span style={{ color: '#888', flexShrink: 0 }}>〜</span>
-                      <input type="time" value={s.end} onChange={e => setOrigSegs(prev => prev.map((p, j) => j === i ? { ...p, end: e.target.value } : p))} style={{ ...f, flex: 1, minWidth: 0 }} />
-                      {origSegs.length > 1 && (
-                        <button type="button" onClick={() => setOrigSegs(prev => prev.filter((_, j) => j !== i))}
-                          aria-label={`勤務${i + 1}を削除`}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#888', flexShrink: 0 }}>🚫</button>
-                      )}
+                  <label style={L}>勤務時間・勤務地 {Req}</label>
+                  {/* 勤務した時間帯を最大3つ。残業ページと同じ形（間の空きが外出・中抜けになる）。
+                      校をまたぐ日があるため、勤務地は時間帯ごとに選ぶ */}
+                  {origSegs.map((s, i) => {
+                    const other = isOtherLoc(origLocOther, s, i);
+                    // 入力漏れの行だけを薄赤にする（どの行を直せばよいか分かるように）
+                    const badTime = errFields.has('origTime') && (!s.start || !s.end || s.start === s.end);
+                    const badLoc  = errFields.has('origLoc') && !(s.location ?? '').trim();
+                    return (
+                    <div key={i} style={{ marginBottom: 10 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <span style={{ fontSize: 12, color: '#888', minWidth: 44, flexShrink: 0 }}>勤務{i + 1}</span>
+                        <input type="time" data-err-field={i === 0 ? 'origTime' : undefined} value={s.start} onChange={e => { setOrigSegs(prev => prev.map((p, j) => j === i ? { ...p, start: e.target.value } : p)); clearErr('origTime'); }} style={{ ...f, ...errorStyle(badTime, isDark), flex: 1, minWidth: 0 }} />
+                        <span style={{ color: '#888', flexShrink: 0 }}>〜</span>
+                        <input type="time" value={s.end} onChange={e => { setOrigSegs(prev => prev.map((p, j) => j === i ? { ...p, end: e.target.value } : p)); clearErr('origTime'); }} style={{ ...f, ...errorStyle(badTime, isDark), flex: 1, minWidth: 0 }} />
+                        {origSegs.length > 1 && (
+                          <button type="button" onClick={() => { setOrigSegs(prev => prev.filter((_, j) => j !== i)); setOrigLocOther(prev => prev.filter((_, j) => j !== i)); }}
+                            aria-label={`勤務${i + 1}を削除`}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#888', flexShrink: 0 }}>🚫</button>
+                        )}
+                      </div>
+                      <div style={{ paddingLeft: 52 }}>
+                        <select data-err-field={i === 0 ? 'origLoc' : undefined}
+                          value={other ? 'その他' : (s.location ?? '')}
+                          onChange={e => {
+                            const v = e.target.value;
+                            setOrigLocOther(prev => { const n = [...prev]; n[i] = v === 'その他'; return n; });
+                            setOrigSegs(prev => prev.map((p, j) => j === i ? { ...p, location: v === 'その他' ? '' : v } : p));
+                            clearErr('origLoc');
+                          }} style={{ ...f, ...errorStyle(badLoc, isDark) }}>
+                          <option value="">勤務地を選択してください</option>
+                          {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+                          <option value="その他">その他（自由入力）</option>
+                        </select>
+                        {other && (
+                          <input type="text" value={s.location ?? ''} onChange={e => setOrigSegs(prev => prev.map((p, j) => j === i ? { ...p, location: e.target.value } : p))}
+                            placeholder="勤務地を入力してください" style={{ ...f, marginTop: 6 }} />
+                        )}
+                      </div>
                     </div>
-                  ))}
+                    );
+                  })}
                   {origSegs.length < MAX_SEGS && (
                     <button type="button" onClick={() => setOrigSegs(prev => [...prev, { start: '', end: '' }])}
                       style={{ background: isDark ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDark ? '#4a90d9' : '#90caf9'}`, borderRadius: 8, cursor: 'pointer', padding: '6px 12px', fontSize: 12.5, color: isDark ? '#fff' : '#1565c0', width: '100%' }}>
-                      ＋ 勤務を追加（外出・戻りがある場合）
+                      ＋ 勤務時間帯を追加（外出・戻りがある場合）
                     </button>
                   )}
                 </>
@@ -902,37 +913,51 @@ const ShiftReportForm: React.FC<{
             {!hasAbsence && (
               <div style={{ background: cardBg2, borderRadius: 10, padding: '12px 14px', marginBottom: 12 }}>
                 <div style={{ fontSize: 12, fontWeight: 'bold', color: subColor, marginBottom: 10 }}>✅ 実際に勤務した時間</div>
-                <div style={{ marginBottom: 8 }}>
-                  <label style={L}>勤務地・場所 {Req}</label>
-                  <select data-err-field="actLoc" value={actLoc} onChange={e => { setActLoc(e.target.value); clearErr('actLoc'); }} style={ef('actLoc')}>
-                    <option value="">選択してください</option>
-                    {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
-                    <option value="その他">その他（自由入力）</option>
-                  </select>
-                  {actLoc === 'その他' && (
-                    <input type="text" value={actLocCustom} onChange={e => setActLocCustom(e.target.value)}
-                      placeholder="勤務地を入力してください" style={{ ...f, marginTop: 6 }} />
-                  )}
-                </div>
-                <label style={L}>勤務時間 {Req}</label>
-                {/* 勤務した時間帯を最大3つ。残業ページと同じ形（間の空きが外出・中抜けになる） */}
-                {actSegs.map((s, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                    <span style={{ fontSize: 12, color: '#888', minWidth: 44, flexShrink: 0 }}>勤務{i + 1}</span>
-                    <input type="time" value={s.start} onChange={e => setActSegs(prev => prev.map((p, j) => j === i ? { ...p, start: e.target.value } : p))} style={{ ...f, flex: 1, minWidth: 0 }} />
-                    <span style={{ color: '#888', flexShrink: 0 }}>〜</span>
-                    <input type="time" value={s.end} onChange={e => setActSegs(prev => prev.map((p, j) => j === i ? { ...p, end: e.target.value } : p))} style={{ ...f, flex: 1, minWidth: 0 }} />
-                    {actSegs.length > 1 && (
-                      <button type="button" onClick={() => setActSegs(prev => prev.filter((_, j) => j !== i))}
-                        aria-label={`勤務${i + 1}を削除`}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#888', flexShrink: 0 }}>🚫</button>
-                    )}
+                <label style={L}>勤務時間・勤務地 {Req}</label>
+                {/* 勤務した時間帯を最大3つ。校をまたぐ日があるため勤務地は時間帯ごとに選ぶ */}
+                {actSegs.map((s, i) => {
+                  const other = isOtherLoc(actLocOther, s, i);
+                  // 入力漏れの行だけを薄赤にする（どの行を直せばよいか分かるように）
+                  const badTime = errFields.has('actTime') && (!s.start || !s.end || s.start === s.end);
+                  const badLoc  = errFields.has('actLoc') && !(s.location ?? '').trim();
+                  return (
+                  <div key={i} style={{ marginBottom: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                      <span style={{ fontSize: 12, color: '#888', minWidth: 44, flexShrink: 0 }}>勤務{i + 1}</span>
+                      <input type="time" data-err-field={i === 0 ? 'actTime' : undefined} value={s.start} onChange={e => { setActSegs(prev => prev.map((p, j) => j === i ? { ...p, start: e.target.value } : p)); clearErr('actTime'); }} style={{ ...f, ...errorStyle(badTime, isDark), flex: 1, minWidth: 0 }} />
+                      <span style={{ color: '#888', flexShrink: 0 }}>〜</span>
+                      <input type="time" value={s.end} onChange={e => { setActSegs(prev => prev.map((p, j) => j === i ? { ...p, end: e.target.value } : p)); clearErr('actTime'); }} style={{ ...f, ...errorStyle(badTime, isDark), flex: 1, minWidth: 0 }} />
+                      {actSegs.length > 1 && (
+                        <button type="button" onClick={() => { setActSegs(prev => prev.filter((_, j) => j !== i)); setActLocOther(prev => prev.filter((_, j) => j !== i)); }}
+                          aria-label={`勤務${i + 1}を削除`}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#888', flexShrink: 0 }}>🚫</button>
+                      )}
+                    </div>
+                    <div style={{ paddingLeft: 52 }}>
+                      <select data-err-field={i === 0 ? 'actLoc' : undefined}
+                        value={other ? 'その他' : (s.location ?? '')}
+                        onChange={e => {
+                          const v = e.target.value;
+                          setActLocOther(prev => { const n = [...prev]; n[i] = v === 'その他'; return n; });
+                          setActSegs(prev => prev.map((p, j) => j === i ? { ...p, location: v === 'その他' ? '' : v } : p));
+                          clearErr('actLoc');
+                        }} style={{ ...f, ...errorStyle(badLoc, isDark) }}>
+                        <option value="">勤務地を選択してください</option>
+                        {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+                        <option value="その他">その他（自由入力）</option>
+                      </select>
+                      {other && (
+                        <input type="text" value={s.location ?? ''} onChange={e => setActSegs(prev => prev.map((p, j) => j === i ? { ...p, location: e.target.value } : p))}
+                          placeholder="勤務地を入力してください" style={{ ...f, marginTop: 6 }} />
+                      )}
+                    </div>
                   </div>
-                ))}
+                  );
+                })}
                 {actSegs.length < MAX_SEGS && (
                   <button type="button" onClick={() => setActSegs(prev => [...prev, { start: '', end: '' }])}
                     style={{ background: isDark ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDark ? '#4a90d9' : '#90caf9'}`, borderRadius: 8, cursor: 'pointer', padding: '6px 12px', fontSize: 12.5, color: isDark ? '#fff' : '#1565c0', width: '100%', marginBottom: 8 }}>
-                    ＋ 勤務を追加（外出・戻りがある場合）
+                    ＋ 勤務時間帯を追加（外出・戻りがある場合）
                   </button>
                 )}
                 {actStart && actEnd && laborMin > 0 && (
@@ -999,7 +1024,7 @@ const ShiftReportForm: React.FC<{
                 <label style={L}>修正内容 {Req}</label>
                 <textarea data-err-field="changeSummary" value={changeSummary} onChange={e => { setChangeSummary(e.target.value); clearErr('changeSummary'); }} rows={2}
                   placeholder="例：退勤時刻を19:00→20:00に変更 理由：残業が延長したため"
-                  style={{ ...f, resize: 'none' }} />
+                  style={{ ...ef('changeSummary'), resize: 'none' }} />
               </div>
             )}
 
@@ -1471,14 +1496,14 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                   </span>
                 </div>
                 {r.original_start
-                  ? <div style={{ fontSize: 12, color: '#555', marginBottom: 2 }}>変更前：{r.original_location} {formatSegsFromRecord(r.original_segments, r.original_start, r.original_end, r.original_outing_start, r.original_outing_end)}</div>
+                  ? <div style={{ fontSize: 12, color: '#555', marginBottom: 2 }}>変更前：{r.original_location} {formatSegsFromRecord(r.original_segments, r.original_start, r.original_end, r.original_outing_start, r.original_outing_end, r.original_location)}</div>
                   : (r.application_type !== 'holiday_work' && r.application_type !== 'absence')
                     ? <div style={{ fontSize: 12, color: '#aaa', marginBottom: 2 }}>変更前：もともと休みの日</div>
                     : null
                 }
                 {r.actual_start && (
                   <div style={{ fontSize: 12, color: isDark ? '#4ade80' : '#166534', marginBottom: 4 }}>
-                    変更後：{r.actual_location} {formatSegsFromRecord(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end)}　休憩 {r.break_minutes ?? 0}分　実労働 {r.labor_minutes ? formatMin(r.labor_minutes) : '-'}
+                    変更後：{r.actual_location} {formatSegsFromRecord(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end, r.actual_location)}　休憩 {r.break_minutes ?? 0}分　実労働 {r.labor_minutes ? formatMin(r.labor_minutes) : '-'}
                   </div>
                 )}
                 <div style={{ fontSize: 12, color: '#888', marginBottom: 10 }}>{r.reason}</div>
@@ -1729,14 +1754,14 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                               </span>
                             </div>
                             {r.original_start
-                              ? <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#888' }}>変更前：{r.original_location} {formatSegsFromRecord(r.original_segments, r.original_start, r.original_end, r.original_outing_start, r.original_outing_end)}</div>
+                              ? <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#888' }}>変更前：{r.original_location} {formatSegsFromRecord(r.original_segments, r.original_start, r.original_end, r.original_outing_start, r.original_outing_end, r.original_location)}</div>
                               : (r.application_type !== 'holiday_work' && r.application_type !== 'absence')
                                 ? <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#bbb' }}>変更前：もともと休みの日</div>
                                 : null
                             }
                             {r.actual_start && (
                               <div style={{ fontSize: 11, color: isDark ? '#4ade80' : '#166534' }}>
-                                変更後：{r.actual_location ? `${r.actual_location}　` : ''}{formatSegsFromRecord(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end)}　休憩 {r.break_minutes ?? 0}分　実労働 {r.labor_minutes ? formatMin(r.labor_minutes) : '-'}
+                                変更後：{r.actual_location ? `${r.actual_location}　` : ''}{formatSegsFromRecord(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end, r.actual_location)}　休憩 {r.break_minutes ?? 0}分　実労働 {r.labor_minutes ? formatMin(r.labor_minutes) : '-'}
                                 {dMin != null && oMin > 0 && r.application_type === 'tardiness' && (
                                   <span style={{ marginLeft: 4, color: isDark ? '#c084fc' : '#7b1fa2', fontWeight: 'bold' }}>
                                     ／遅刻 {formatMin(Math.abs(Math.min(0, dMin)))}
