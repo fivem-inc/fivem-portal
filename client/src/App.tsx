@@ -2012,31 +2012,36 @@ const PurchaseRequestPageWrapper: React.FC = () => {
 // 🚨 上（ナビの下）ではなく下に出す：各ページが上余白70pxを直書きしているため、
 //    上の高さを変える改修は全ページに影響する
 const AppUpdateBanner: React.FC = () => {
-  const { showUpdate, dismiss } = useAppUpdate();
+  const { showUpdate } = useAppUpdate();
   if (!showUpdate) return null;
+  // 🚨 ✕ボタンは付けない（ユーザー決定 2026-08-08）。
+  // 消せる形にしていたら「気づかなかった」「更新したくない」でスルーされ、
+  // 旧バージョンのまま報告が送られて休憩計算がズレる実害が出た。更新するまで出し続ける。
+  // ⚠️・赤色・「今すぐ」は詐欺ポップアップに見えて逆に押されないため使わない。
+  // いつものアプリの見た目（青＋あいみん）で業務連絡として出す。
   return (
     <div style={{
       position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 4000,
       background: '#1976d2', color: '#fff',
-      padding: '10px 12px',
+      padding: '12px 14px',
       // iPhone の画面下端のホームバーに隠れないよう余白を足す。
       // 一括指定に混ぜると env() 非対応の環境で余白がまるごと消えるため、別々に書く
-      paddingBottom: 'calc(10px + env(safe-area-inset-bottom))',
-      display: 'flex', alignItems: 'center', gap: 10,
+      paddingBottom: 'calc(12px + env(safe-area-inset-bottom))',
       boxShadow: '0 -2px 10px rgba(0,0,0,0.2)',
     }}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 14, fontWeight: 'bold', color: '#fff' }}>新しいバージョンがあります</div>
-        <div style={{ fontSize: 12, color: '#e3f2fd' }}>ページを更新してください</div>
+      <div style={{ maxWidth: 500, margin: '0 auto' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <img src="/icon-192.png" alt="" style={{ width: 26, height: 26, borderRadius: '50%', flexShrink: 0 }} />
+          <span style={{ fontSize: 14, fontWeight: 'bold', color: '#fff' }}>新しいバージョンがあります</span>
+        </div>
+        <div style={{ fontSize: 12.5, color: '#e3f2fd', lineHeight: 1.7, marginBottom: 10 }}>
+          更新しないと不具合が出る場合があります。更新をお願いします。
+        </div>
+        <button type="button" onClick={() => window.location.reload()}
+          style={{ display: 'block', width: '100%', padding: '10px', borderRadius: 8, border: 'none', background: '#fff', color: '#1565c0', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
+          更新する
+        </button>
       </div>
-      <button type="button" onClick={() => window.location.reload()}
-        style={{ padding: '8px 14px', borderRadius: 8, border: 'none', background: '#fff', color: '#1565c0', fontSize: 13, fontWeight: 'bold', cursor: 'pointer', flexShrink: 0 }}>
-        更新する
-      </button>
-      <button type="button" onClick={dismiss} aria-label="閉じる"
-        style={{ background: 'none', border: 'none', color: '#e3f2fd', fontSize: 17, cursor: 'pointer', padding: '0 4px', flexShrink: 0 }}>
-        ✕
-      </button>
     </div>
   );
 };
