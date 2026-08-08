@@ -163,6 +163,8 @@ const PUSH_RECIPIENT_BY_EVENT: Record<string, string> = {
   'leave:leader_approved':   '申請者本人',
   'leave:manager_approved':  '申請者本人',
   'leave:rejected':          '申請者本人',
+  'trip:report_arrival':      'サイト通知と同じ宛先',
+  'trip:report_end':          'サイト通知と同じ宛先',
   'shift_report:new_request': '申請の確認依頼先（勤務校のリーダー・マネージャー）',
   'attendance:registered':    '設定した宛先（本人・リーダー・マネージャー・管理者・社長）',
   'attendance:cancelled':     '設定した宛先（本人・リーダー・マネージャー・管理者・社長）',

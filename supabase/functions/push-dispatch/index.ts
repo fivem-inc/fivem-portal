@@ -48,6 +48,11 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string }> = {
   "purchase_request:self_judgment_shared":  { app: "備品精算", word: "新着", url: "/purchase?tab=history" },
   // 交通費申請（経理の要対応）
   "expense:new_request":     { app: "交通費", word: "新着", url: "/admin" },
+  // 出張報告（到着・終了）。報告の一覧は管理画面にしかなく、宛先の中心である
+  // マネージャーは /admin に入れない（ホームへ戻される）ため、ホームに着地させてベルで内容を見てもらう。
+  // ⚠️「出張報告」は実機未検証の語。Chromeが警告表示に化けたら app を検証済みの語に変える
+  "trip:report_arrival":     { app: "出張報告", word: "新着", url: "/" },
+  "trip:report_end":         { app: "出張報告", word: "新着", url: "/" },
   // 連絡板
   "board:notice":           { app: "連絡板", word: "新着", url: "/board" },
   "board:group_message":    { app: "連絡板", word: "新着", url: "/board" },
