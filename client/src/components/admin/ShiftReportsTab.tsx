@@ -3,6 +3,7 @@ import { useAdminPanel } from './AdminPanelContext';
 import { notifyShiftReportReturned } from '../../lib/shiftReportReturnedNotify';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
 import ShiftEditModal from './ShiftEditModal';
+import { formatSegsFromRecord } from '../../lib/shiftCalc';
 
 type AppType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start' | 'location_change';
 
@@ -20,11 +21,13 @@ interface ShiftReport {
   original_end: string | null;
   original_outing_start: string | null;
   original_outing_end: string | null;
+  original_segments: unknown;   // jsonb（勤務した時間帯 最大3つ）。古い報告は null
   actual_location: string | null;
   actual_start: string | null;
   actual_end: string | null;
   actual_outing_start: string | null;
   actual_outing_end: string | null;
+  actual_segments: unknown;     // jsonb（勤務した時間帯 最大3つ）
   break_minutes: number | null;
   labor_minutes: number | null;
   reviewer_id: string | null;
@@ -548,10 +551,7 @@ const ShiftReportsTab: React.FC = () => {
                           <div style={{ fontSize: 11, color: sub }}>{r.original_location}</div>
                         )}
                         {r.original_start && (
-                          <div style={{ fontSize: 11, color: sub }}>{r.original_start.slice(0, 5)}〜{r.original_end?.slice(0, 5)}</div>
-                        )}
-                        {r.original_outing_start && (
-                          <div style={{ fontSize: 11, color: sub }}>外出 {r.original_outing_start.slice(0, 5)}〜{r.original_outing_end?.slice(0, 5)}</div>
+                          <div style={{ fontSize: 11, color: sub }}>{formatSegsFromRecord(r.original_segments, r.original_start, r.original_end, r.original_outing_start, r.original_outing_end)}</div>
                         )}
                         {!r.original_location && !r.original_start && (
                           <div style={{ fontSize: 11, color: sub }}>—</div>
@@ -563,10 +563,7 @@ const ShiftReportsTab: React.FC = () => {
                           <div style={{ fontSize: 11, color: '#166534', fontWeight: 'bold' }}>{r.actual_location}</div>
                         )}
                         {r.actual_start && (
-                          <div style={{ fontSize: 11, color: '#166534', fontWeight: 'bold' }}>{r.actual_start.slice(0, 5)}〜{r.actual_end?.slice(0, 5)}</div>
-                        )}
-                        {r.actual_outing_start && (
-                          <div style={{ fontSize: 11, color: '#166534' }}>外出 {r.actual_outing_start.slice(0, 5)}〜{r.actual_outing_end?.slice(0, 5)}</div>
+                          <div style={{ fontSize: 11, color: '#166534', fontWeight: 'bold' }}>{formatSegsFromRecord(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end)}</div>
                         )}
                         {r.actual_start && (
                           <div style={{ fontSize: 11, color: '#166534' }}>休憩 {r.break_minutes ?? 0}分</div>

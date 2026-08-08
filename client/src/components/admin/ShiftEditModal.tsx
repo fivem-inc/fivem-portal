@@ -131,6 +131,12 @@ const ShiftEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
     });
     if (rpcErr) { setSaving(false); setError('保存に失敗しました: ' + rpcErr.message); return; }
 
+    // 🚨 このモーダルは「開始・終了＋外出1組」の形で修正する。
+    // 時間帯（actual_segments）を残したままだと、修正した時刻と食い違った古い時間帯が表示されてしまう。
+    // null にすると開始・終了＋外出から時間帯を復元して表示するので、修正内容と必ず一致する。
+    // （時間帯が3つあった報告は、修正すると2つ＝外出1回分に丸まる）
+    await supabase.from('shift_reports').update({ actual_segments: null }).eq('id', record.id);
+
     await supabase.from('notifications').insert({
       user_id: record.applicant_id,
       message: '管理者が勤務変更報告を修正しました',

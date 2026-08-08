@@ -20,10 +20,80 @@ export function calcShiftBreakMinutes(start: string, end: string): number {
 }
 
 // 実労働 ＝ (退勤 − 出勤) − 休憩 − 外出。負値は0。
+// ※旧データ向け（管理者の修正モーダルが1組の外出を扱うために残している）
 export function calcShiftLaborMinutes(
   actStart: string, actEnd: string, breakMin: number,
   outingStart?: string | null, outingEnd?: string | null,
 ): number {
   const outingMin = outingStart && outingEnd ? Math.max(0, toMin(outingEnd) - toMin(outingStart)) : 0;
   return Math.max(0, (toMin(actEnd) - toMin(actStart)) - breakMin - outingMin);
+}
+
+// ───────── 勤務した時間帯（最大3つ・残業ページと同じ考え方） ─────────
+// 「9:00〜12:00 と 14:00〜18:00 に働いた」を素直に表す。間の空きが外出・中抜けになる。
+// DBには jsonb（original_segments / actual_segments）で持ち、
+// 最初の開始と最後の終了は従来の original_start/end 列にも入れて互換を保つ。
+export type Seg = { start: string; end: string };
+export const MAX_SEGS = 3;
+
+/**
+ * DBの値から勤務時間帯の配列を作る。
+ * 古い報告（segments が無い）は「開始〜終了」から外出を抜いて時間帯に分ける。
+ * 例）9:00〜18:00・外出 14:00〜15:00 → [9:00〜14:00, 15:00〜18:00]
+ * こうすることで、古い報告も新しい報告も同じ書き方で表示できる。
+ */
+export function parseSegments(
+  segments: unknown,
+  legacyStart?: string | null,
+  legacyEnd?: string | null,
+  legacyOutStart?: string | null,
+  legacyOutEnd?: string | null,
+): Seg[] {
+  if (Array.isArray(segments)) {
+    return (segments as Seg[])
+      .filter(s => s && typeof s.start === 'string' && typeof s.end === 'string')
+      .map(s => ({ start: s.start.slice(0, 5), end: s.end.slice(0, 5) }))
+      .filter(s => s.start && s.end)
+      .slice(0, MAX_SEGS);
+  }
+  if (!legacyStart || !legacyEnd) return [];
+  const s = legacyStart.slice(0, 5), e = legacyEnd.slice(0, 5);
+  if (legacyOutStart && legacyOutEnd) {
+    const os = legacyOutStart.slice(0, 5), oe = legacyOutEnd.slice(0, 5);
+    if (toMin(os) > toMin(s) && toMin(oe) < toMin(e) && toMin(oe) > toMin(os)) {
+      return [{ start: s, end: os }, { start: oe, end: e }];
+    }
+  }
+  return [{ start: s, end: e }];
+}
+
+/** 勤務時間帯の合計（分）。休憩は含まない */
+export function segMinutes(segs: Seg[]): number {
+  return segs.reduce((sum, s) => sum + (s.start && s.end ? Math.max(0, toMin(s.end) - toMin(s.start)) : 0), 0);
+}
+
+/** 最初の開始（従来の start 列に入れる値） */
+export const segFirstStart = (segs: Seg[]): string => segs[0]?.start ?? '';
+/** 最後の終了（従来の end 列に入れる値） */
+export const segLastEnd = (segs: Seg[]): string => segs[segs.length - 1]?.end ?? '';
+
+/**
+ * 勤務時間帯を並べた文字列を作る。
+ * 例）"9:00〜12:00 / 14:00〜18:00"
+ * 時刻は 9:00 の形（時は0埋めしない・分は2桁）。Googleカレンダーの書き方と揃えている。
+ */
+export function formatSegs(segs: Seg[]): string {
+  const fmt = (v: string) => { const [h, m] = v.slice(0, 5).split(':'); return `${Number(h)}:${m}`; };
+  return segs.filter(s => s.start && s.end).map(s => `${fmt(s.start)}〜${fmt(s.end)}`).join(' / ');
+}
+
+/** DBの値から直接「9:00〜12:00 / 14:00〜18:00」を作る（表示用のまとめ） */
+export function formatSegsFromRecord(
+  segments: unknown,
+  legacyStart?: string | null,
+  legacyEnd?: string | null,
+  legacyOutStart?: string | null,
+  legacyOutEnd?: string | null,
+): string {
+  return formatSegs(parseSegments(segments, legacyStart, legacyEnd, legacyOutStart, legacyOutEnd));
 }
