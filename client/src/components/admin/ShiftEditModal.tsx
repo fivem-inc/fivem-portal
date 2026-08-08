@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { calcSegsBreak, parseSegments, segMinutes, formatSegs, segFirstStart, segLastEnd, joinSegLocations, MAX_SEGS, type Seg } from '../../lib/shiftCalc';
+import { errorStyle } from '../../lib/formHighlight';
 
 // 管理者が勤務変更報告の内容を直接修正するモーダル。
 // 本人の報告画面と同じ「時間帯」方式（勤務1〜3・行ごとの勤務地）で入力する。
@@ -60,6 +61,8 @@ const ShiftEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
   const [phase, setPhase] = useState<'edit' | 'confirm'>('edit');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // どの欄が原因かを示す（'types' | 'segTime' | 'segLoc' | 'changeReason'）。入力し直すと消える
+  const [errField, setErrField] = useState('');
 
   useEffect(() => {
     supabase.from('master_options').select('value').eq('category', 'workplace').order('sort_order')
@@ -116,18 +119,19 @@ const ShiftEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
 
   const toggleType = (t: AppType) => setTypes(prev => (prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]));
 
+  const fail = (msg: string, field: string) => { setError(msg); setErrField(field); };
   const goConfirm = () => {
-    setError('');
-    if (types.length === 0) { setError('種別を1つ以上選択してください。'); return; }
+    setError(''); setErrField('');
+    if (types.length === 0) { fail('種別を1つ以上選択してください。', 'types'); return; }
     if (!isAbsence) {
-      if (segs.some(s => !s.start || !s.end)) { setError('勤務時間の開始・終了を入力してください。'); return; }
-      if (segs.some(s => s.start === s.end)) { setError('開始と終了が同じ時間の行があります。'); return; }
-      if (segs.some(s => toMin(s.end) < toMin(s.start))) { setError('終了が開始より前の行があります。'); return; }
-      if (segs.some((s, i) => i > 0 && toMin(s.start) < toMin(segs[i - 1].end))) { setError('勤務の時間が重なっています。順番に入力してください。'); return; }
-      if (segs.some(s => !(s.location ?? '').trim())) { setError('勤務地を選択してください。'); return; }
+      if (segs.some(s => !s.start || !s.end)) { fail('勤務時間の開始・終了を入力してください。', 'segTime'); return; }
+      if (segs.some(s => s.start === s.end)) { fail('開始と終了が同じ時間の行があります。', 'segTime'); return; }
+      if (segs.some(s => toMin(s.end) < toMin(s.start))) { fail('終了が開始より前の行があります。', 'segTime'); return; }
+      if (segs.some((s, i) => i > 0 && toMin(s.start) < toMin(segs[i - 1].end))) { fail('勤務の時間が重なっています。順番に入力してください。', 'segTime'); return; }
+      if (segs.some(s => !(s.location ?? '').trim())) { fail('勤務地を選択してください。', 'segLoc'); return; }
     }
     if (changedCount === 0) { setError('変更された項目がありません。'); return; }
-    if (!changeReason.trim()) { setError('修正理由を入力してください（本人へ通知されます）。'); return; }
+    if (!changeReason.trim()) { fail('修正理由を入力してください（本人へ通知されます）。', 'changeReason'); return; }
     setPhase('confirm');
   };
 
@@ -182,9 +186,9 @@ const ShiftEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div>
               <label style={labelStyle}>種別（複数可）</label>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, border: '1px solid transparent', borderRadius: 8, padding: 4, ...errorStyle(errField === 'types', isDarkMode) }}>
                 {ALL_TYPES.map(t => (
-                  <button key={t} onClick={() => toggleType(t)}
+                  <button key={t} onClick={() => { toggleType(t); if (errField === 'types') setErrField(''); }}
                     style={{ padding: '5px 10px', borderRadius: 8, border: `1px solid ${types.includes(t) ? '#007bff' : border}`, background: types.includes(t) ? '#007bff' : inputBg, color: types.includes(t) ? '#fff' : text, cursor: 'pointer', fontSize: 12 }}>
                     {TYPE_LABELS[t]}
                   </button>
@@ -200,13 +204,18 @@ const ShiftEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
                 <label style={labelStyle}>勤務時間・勤務地</label>
                 {segs.map((s, i) => {
                   const other = isOtherLoc(s, i);
+                  // 入力漏れ・不正のある行だけ薄赤にする（どの行を直せばよいか分かるように）
+                  const badTime = errField === 'segTime' && (!s.start || !s.end || s.start === s.end
+                    || (s.start && s.end && toMin(s.end) < toMin(s.start))
+                    || (i > 0 && s.start && segs[i - 1].end && toMin(s.start) < toMin(segs[i - 1].end)));
+                  const badLoc = errField === 'segLoc' && !(s.location ?? '').trim();
                   return (
                     <div key={i} style={{ marginBottom: 10 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
                         <span style={{ fontSize: 12, color: sub, minWidth: 40, flexShrink: 0 }}>勤務{i + 1}</span>
-                        <input type="time" style={{ ...inputStyle, flex: 1, minWidth: 0 }} value={s.start} onChange={e => setSegs(prev => prev.map((p, j) => j === i ? { ...p, start: e.target.value } : p))} />
+                        <input type="time" style={{ ...inputStyle, flex: 1, minWidth: 0, ...errorStyle(!!badTime, isDarkMode) }} value={s.start} onChange={e => { setSegs(prev => prev.map((p, j) => j === i ? { ...p, start: e.target.value } : p)); if (errField === 'segTime') setErrField(''); }} />
                         <span style={{ color: sub, flexShrink: 0 }}>〜</span>
-                        <input type="time" style={{ ...inputStyle, flex: 1, minWidth: 0 }} value={s.end} onChange={e => setSegs(prev => prev.map((p, j) => j === i ? { ...p, end: e.target.value } : p))} />
+                        <input type="time" style={{ ...inputStyle, flex: 1, minWidth: 0, ...errorStyle(!!badTime, isDarkMode) }} value={s.end} onChange={e => { setSegs(prev => prev.map((p, j) => j === i ? { ...p, end: e.target.value } : p)); if (errField === 'segTime') setErrField(''); }} />
                         {segs.length > 1 && (
                           <button type="button" onClick={() => { setSegs(prev => prev.filter((_, j) => j !== i)); setLocOther(prev => prev.filter((_, j) => j !== i)); }}
                             aria-label={`勤務${i + 1}を削除`}
@@ -214,12 +223,13 @@ const ShiftEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
                         )}
                       </div>
                       <div style={{ paddingLeft: 46 }}>
-                        <select style={{ ...inputStyle, width: '100%' }}
+                        <select style={{ ...inputStyle, width: '100%', ...errorStyle(!!badLoc, isDarkMode) }}
                           value={other ? 'その他' : (s.location ?? '')}
                           onChange={e => {
                             const v = e.target.value;
                             setLocOther(prev => { const n = [...prev]; n[i] = v === 'その他'; return n; });
                             setSegs(prev => prev.map((p, j) => j === i ? { ...p, location: v === 'その他' ? '' : v } : p));
+                            if (errField === 'segLoc') setErrField('');
                           }}>
                           <option value="">勤務地を選択してください</option>
                           {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
@@ -251,8 +261,8 @@ const ShiftEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
               <textarea style={{ ...inputStyle, width: '100%', minHeight: 46, resize: 'vertical' }} value={reason} onChange={e => setReason(e.target.value)} />
             </div>
             <div>
-              <label style={labelStyle}>修正理由（必須・本人へ通知されます）</label>
-              <textarea style={{ ...inputStyle, width: '100%', minHeight: 46, resize: 'vertical' }} value={changeReason} onChange={e => setChangeReason(e.target.value)} placeholder="例：本人申告の退勤時刻に誤りがあったため" />
+              <label style={{ ...labelStyle, color: errField === 'changeReason' ? '#dc3545' : text }}>修正理由（必須・本人へ通知されます）</label>
+              <textarea style={{ ...inputStyle, width: '100%', minHeight: 46, resize: 'vertical', ...errorStyle(errField === 'changeReason', isDarkMode) }} value={changeReason} onChange={e => { setChangeReason(e.target.value); if (errField === 'changeReason') setErrField(''); }} placeholder="例：本人申告の退勤時刻に誤りがあったため" />
             </div>
             {error && <div style={{ padding: 10, background: isDarkMode ? '#3a1414' : '#fff5f5', border: '1px solid #f5c2c7', borderRadius: 8, color: isDarkMode ? '#fca5a5' : '#842029', fontSize: 13 }}>{error}</div>}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
