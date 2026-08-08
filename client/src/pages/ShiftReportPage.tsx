@@ -6,7 +6,7 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import { calcSegsBreak, parseSegments, segMinutes, formatSegs, formatSegsFromRecord, segFirstStart, segLastEnd, joinSegLocations, MAX_SEGS, type Seg } from '../lib/shiftCalc';
-import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
+import { errorStyle, errorLabelColor, scrollToFirstError } from '../lib/formHighlight';
 import type { AuthUser } from '../types';
 import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
@@ -161,7 +161,7 @@ const STATUS_INFO: Record<string, { label: string; color: string; bg: string }> 
 // ────────────────────────────────────────────────────────────────
 // Single Date Calendar
 // ────────────────────────────────────────────────────────────────
-const SingleDatePicker: React.FC<{ value: string; onChange: (d: string) => void; isDark: boolean; calendarKinds?: Record<string, CalendarKind> }> = ({ value, onChange, isDark, calendarKinds }) => {
+const SingleDatePicker: React.FC<{ value: string; onChange: (d: string) => void; isDark: boolean; calendarKinds?: Record<string, CalendarKind>; hasError?: boolean }> = ({ value, onChange, isDark, calendarKinds, hasError }) => {
   const today = new Date();
   const [year, setYear]   = useState(value ? new Date(value + 'T00:00:00').getFullYear() : today.getFullYear());
   const [month, setMonth] = useState(value ? new Date(value + 'T00:00:00').getMonth()    : today.getMonth());
@@ -180,7 +180,7 @@ const SingleDatePicker: React.FC<{ value: string; onChange: (d: string) => void;
   const calBorder = isDark ? '#6c757d' : '#ddd';
 
   return (
-    <div style={{ background: calBg, border: `1px solid ${calBorder}`, borderRadius: 10, padding: 12 }}>
+    <div style={{ background: calBg, border: `1px solid ${calBorder}`, borderRadius: 10, padding: 12, ...errorStyle(!!hasError, isDark) }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
         <button onClick={prev} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: calText, padding: '0 8px', lineHeight: 1 }}>‹</button>
         <span style={{ fontWeight: 'bold', fontSize: 15, color: calText }}>{year}年 {month + 1}月</span>
@@ -477,6 +477,7 @@ const ShiftReportForm: React.FC<{
       return;
     }
     setAbsencePrompt('none');
+    clearErr('types');
     setTypes(prev => {
       if (t === 'absence') return prev.includes('absence') ? [] : ['absence'];
       const without = prev.filter(x => x !== 'absence');
@@ -690,13 +691,15 @@ const ShiftReportForm: React.FC<{
               </div>
             )}
             {/* 日付 */}
-            <div style={{ marginBottom: 14 }}>
-              <label style={L}>日付 {Req}</label>
-              <SingleDatePicker value={date} onChange={setDate} isDark={isDark} calendarKinds={calendarKinds} />
+            <div style={{ marginBottom: 14 }} data-err-field="date">
+              <label style={{ ...L, color: errorLabelColor(errFields.has('date'), subColor) }}>日付 {Req}</label>
+              <SingleDatePicker value={date} onChange={d => { setDate(d); clearErr('date'); }} isDark={isDark} calendarKinds={calendarKinds} hasError={errFields.has('date')} />
             </div>
             {/* 種別 */}
             <div style={{ marginBottom: 14 }}>
-              <label style={L}>種別 {Req}（複数選択可）</label>
+              <label style={{ ...L, color: errorLabelColor(errFields.has('types'), subColor) }}>種別 {Req}（複数選択可）</label>
+              {/* 未選択のまま送信したときは、ボタン群ごと薄赤で囲む（1つずつ赤くすると種別ごとの色と喧嘩するため） */}
+              <div data-err-field="types" style={{ border: '1px solid transparent', borderRadius: 10, padding: 8, ...errorStyle(errFields.has('types'), isDark) }}>
               {/* 1段目：休日出勤・欠勤 */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
                 {(['holiday_work', 'absence'] as ApplicationType[]).map(t => {
@@ -719,7 +722,7 @@ const ShiftReportForm: React.FC<{
                   <div role="group" aria-live="polite" style={{ marginBottom: 8, padding: '12px 14px', background: '#fff8e1', border: '2px solid #f59e0b', borderRadius: 10 }}>
                     <div style={{ fontSize: 14, fontWeight: 'bold', color: '#b45309', marginBottom: 6 }}>⚠️ 欠勤の連絡はお済みですか？</div>
                     <div style={{ fontSize: 12, color: '#92400e', lineHeight: 1.7, marginBottom: 10 }}>このページは事後報告用です。連絡がまだの場合は、先にリーダー・マネージャーへ連絡をお願いします。</div>
-                    <button type="button" onClick={() => { setTypes(['absence']); setAbsencePrompt('none'); }}
+                    <button type="button" onClick={() => { setTypes(['absence']); setAbsencePrompt('none'); clearErr('types'); }}
                       style={{ display: 'block', width: '100%', padding: '12px', marginBottom: 8, background: '#fff', border: '1.5px solid #b45309', borderRadius: 8, color: '#b45309', fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}>
                       連絡済みです（報告をつづける）
                     </button>
@@ -791,6 +794,7 @@ const ShiftReportForm: React.FC<{
                     </button>
                   );
                 })}
+              </div>
               </div>
               {/* 選択中サマリー / ブロック理由 */}
               {blockMsg ? (
