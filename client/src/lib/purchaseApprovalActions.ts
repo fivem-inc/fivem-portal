@@ -1,6 +1,6 @@
 import { supabase } from './supabaseClient';
 import { insertNotification } from './notifications';
-import { dispatchSiteNotification, dispatchEmail, getUserEmail } from './notificationDispatch';
+import { dispatchSiteNotification, dispatchEmail, getUserEmail, resolveRoleRecipients } from './notificationDispatch';
 import { sendPurchaseSlackForEvent } from './purchaseSlack';
 
 export type PurchaseApprovalRoute = 'leader' | 'manager' | 'board';
@@ -61,12 +61,16 @@ export async function returnPurchaseRequestAction(params: ActionParams & { reaso
   const vars = { '申請者名': applicantName, '品目名': itemNameSummary, '金額': amount.toLocaleString() };
   // 通知の失敗で差し戻しそのものを失敗扱いにしない（差し戻しはDBで確定済み）
   try {
-    await dispatchSiteNotification('purchase_request:returned', vars, { applicant: applicantUserId }, insertNotification, 'purchase_request', id);
+    // 宛先で役職（リーダー・マネージャー・社長）を選んでいれば、その人たちにも届くようにする
+    // （以前は applicant しか解決しておらず、チェックしても無視されていた）
+    const roleSite = await resolveRoleRecipients(applicantUserId, 'purchase_request:returned', 'site');
+    await dispatchSiteNotification('purchase_request:returned', vars, { applicant: applicantUserId, ...roleSite.ids }, insertNotification, 'purchase_request', id);
   } catch (e) { console.error('[purchase] 差し戻し通知に失敗:', e); }
   sendPurchaseSlackForEvent('purchase_request:returned', 'returned', route, applicantName, itemNameSummary, amount, reason).then(null, () => {});
   (async () => {
     const applicantEmail = await getUserEmail(applicantUserId);
-    if (applicantEmail) await dispatchEmail('purchase_request:returned', vars, { applicant: applicantEmail });
+    const roleMail = await resolveRoleRecipients(applicantUserId, 'purchase_request:returned', 'email');
+    await dispatchEmail('purchase_request:returned', vars, { applicant: applicantEmail ?? '', ...roleMail.emails });
   })().then(null, () => {});
   return null;
 }

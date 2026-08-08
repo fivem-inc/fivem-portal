@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { sendLeaveSlack } from '../lib/leaveSlack';
 import { insertNotification, formatLeaveDateSummary } from '../lib/notifications';
-import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatchEmail, dispatchSiteNotification, getUserEmail } from '../lib/notificationDispatch';
+import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatchEmail, dispatchSiteNotification, getUserEmail, resolveRoleRecipients } from '../lib/notificationDispatch';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import type { AuthUser, AdminLeaveRequest } from '../types';
@@ -223,7 +223,14 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     if (await shouldSend('leave:manager_approved', 'slack')) {
       await sendLeaveSlack('manager_approved', profileName || '受理者', 'マネージャー');
     }
-    await dispatchEmail('leave:manager_approved', vars, { applicant: applicantEmail });
+    // 宛先で役職（リーダー・マネージャー・社長）を選んでいれば上長にも共有する。
+    // 申請者本人は上で送信済み（resolveRoleRecipients 側でも本人は除外される）
+    const [mgrSite, mgrMail] = await Promise.all([
+      resolveRoleRecipients(req.user_id, 'leave:manager_approved', 'site'),
+      resolveRoleRecipients(req.user_id, 'leave:manager_approved', 'email'),
+    ]);
+    await dispatchSiteNotification('leave:manager_approved', vars, mgrSite.ids, insertNotification, 'leave_request', req.id);
+    await dispatchEmail('leave:manager_approved', vars, { applicant: applicantEmail, ...mgrMail.emails });
   };
 
   // 受理実行（一人目以外）
@@ -317,7 +324,8 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
       const applicantEmail = await getUserEmail(target.user_id) ?? '';
       const managerEmail = await getUserEmail(selectedManagerId) ?? '';
       // 同じイベントでも宛先によって役割が違う（マネージャーは要対応、申請者はFYI）ため、source_typeを分けて別々に送る
-      await dispatchSiteNotification('leave:leader_approved', leaderVars, { manager: selectedManagerId }, insertNotification, 'leave_request:pending_approval', target.id);
+      // 宛先設定が 'approver'（申請先）のときも解決できるよう、次の承認者を approver キーにも渡す
+      await dispatchSiteNotification('leave:leader_approved', leaderVars, { manager: selectedManagerId, approver: selectedManagerId }, insertNotification, 'leave_request:pending_approval', target.id);
       await dispatchSiteNotification('leave:leader_approved', leaderVars, { applicant: target.user_id }, insertNotification, 'leave_request', target.id);
       // recipient設定が'approver'の場合も解決できるよう、manager宛のメールアドレスをapproverキーにも渡す
       await dispatchEmail('leave:leader_approved', leaderVars, { applicant: applicantEmail, manager: managerEmail, approver: managerEmail });
@@ -370,7 +378,13 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
         await sendLeaveSlack('rejected', profileName || '受理者', roleTitle || '受理者', undefined, undefined, targetChannel ?? 'leader');
       }
       const rejectedEmail = await getUserEmail(target.user_id) ?? '';
-      await dispatchEmail('leave:rejected', rejectVars, { applicant: rejectedEmail });
+      // 宛先で役職を選んでいれば上長にも共有する（本人宛は上で送信済み・要対応の source_type とは分ける）
+      const [rejSite, rejMail] = await Promise.all([
+        resolveRoleRecipients(target.user_id, 'leave:rejected', 'site'),
+        resolveRoleRecipients(target.user_id, 'leave:rejected', 'email'),
+      ]);
+      await dispatchSiteNotification('leave:rejected', rejectVars, rejSite.ids, insertNotification, 'leave_request', target.id);
+      await dispatchEmail('leave:rejected', rejectVars, { applicant: rejectedEmail, ...rejMail.emails });
     } catch (e) {
       console.error('[leave] 差し戻し後の通知に失敗:', e);
       setStaleMsg('差し戻しは完了しましたが、通知の送信に失敗しました。相手に直接お知らせしてください。');

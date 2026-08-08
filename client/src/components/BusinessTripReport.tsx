@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { useDarkMode } from '../hooks/useDarkMode';
-import { dispatchEmail, dispatchSiteNotification } from '../lib/notificationDispatch';
+import { dispatchEmail, dispatchSiteNotification, resolveRoleRecipients } from '../lib/notificationDispatch';
 import { insertNotification } from '../lib/notifications';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import type { AuthUser, BusinessTripReport } from '../types';
@@ -286,8 +286,14 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
       // サイト通知・メール（ON/OFF制御あり）
       if (reportType === '終了') {
         const tripVars = { 申請者名: profileName || user.email || '' };
-        await dispatchSiteNotification('trip:report_end', tripVars, { applicant: user.id }, insertNotification);
-        await dispatchEmail('trip:report_end', tripVars, { applicant: user.email || '' });
+        // 宛先で役職（リーダー・マネージャー・社長）を選んでいれば、その人たちにも届くようにする
+        // （以前は applicant しか解決しておらず、チェックしても無視されていた）
+        const [tripSite, tripMail] = await Promise.all([
+          resolveRoleRecipients(user.id, 'trip:report_end', 'site'),
+          resolveRoleRecipients(user.id, 'trip:report_end', 'email'),
+        ]);
+        await dispatchSiteNotification('trip:report_end', tripVars, { applicant: user.id, ...tripSite.ids }, insertNotification);
+        await dispatchEmail('trip:report_end', tripVars, { applicant: user.email || '', ...tripMail.emails });
       }
       // Slack: 申請者が画面上でチャンネルを手動選択して送信する仕組みのため、ON/OFFチェック対象外
       if (reportType === '終了' && selectedChannels.length > 0) {

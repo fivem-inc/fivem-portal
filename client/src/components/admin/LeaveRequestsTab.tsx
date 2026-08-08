@@ -4,7 +4,7 @@ import { useAuth } from '../../hooks/useAuth';
 import type { AdminLeaveRequest } from '../../types';
 import { insertNotification, formatLeaveDateSummary } from '../../lib/notifications';
 import { todayJstStr } from '../../lib/breakCalc';
-import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatchEmail, dispatchSiteNotification, getUserEmail } from '../../lib/notificationDispatch';
+import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatchEmail, dispatchSiteNotification, getUserEmail, resolveRoleRecipients } from '../../lib/notificationDispatch';
 import SearchableSelect from '../common/SearchableSelect';
 import LeaveEditModal from './LeaveEditModal';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
@@ -1541,7 +1541,13 @@ const LeaveRequestsTab: React.FC = () => {
                                             await sendLeaveSlack('manager_approved', '管理者', 'マネージャー');
                                           }
                                           const applicantEmail = await getUserEmail(req.user_id) ?? '';
-                                          await dispatchEmail('leave:manager_approved', vars, { applicant: applicantEmail });
+                                          // 宛先で役職を選んでいれば上長にも共有（受理ページ側と同じ配線にする）
+                                          const [mgrSite, mgrMail] = await Promise.all([
+                                            resolveRoleRecipients(req.user_id, 'leave:manager_approved', 'site'),
+                                            resolveRoleRecipients(req.user_id, 'leave:manager_approved', 'email'),
+                                          ]);
+                                          await dispatchSiteNotification('leave:manager_approved', vars, mgrSite.ids, insertNotification, 'leave_request', req.id);
+                                          await dispatchEmail('leave:manager_approved', vars, { applicant: applicantEmail, ...mgrMail.emails });
                                         }
                                         if (req.status === 'manager_approved' && await shouldSend('leave:manager_approved', 'slack')) {
                                           await sendLeaveSlack('accounting_approved', '経理担当者', '管理者');
@@ -1842,7 +1848,14 @@ const LeaveRequestsTab: React.FC = () => {
                               await sendLeaveSlack('rejected', '管理者', '管理者', undefined, undefined, targetChannel ?? 'leader');
                             }
                             const rejectedEmail = await getUserEmail(rejectModal.user_id) ?? '';
-                            await dispatchEmail('leave:rejected', { 申請者名: '', 休暇種別: rejectModal.leave_type, 差し戻し理由: rejectReason || '', リンク: 'https://fivem-portal.vercel.app/leave?tab=history' }, { applicant: rejectedEmail });
+                            const rejVars = { 申請者名: '', 休暇種別: rejectModal.leave_type, 差し戻し理由: rejectReason || '', リンク: 'https://fivem-portal.vercel.app/leave?tab=history' };
+                            // 宛先で役職を選んでいれば上長にも共有（受理ページ側と同じ配線にする）
+                            const [rejSite, rejMail] = await Promise.all([
+                              resolveRoleRecipients(rejectModal.user_id, 'leave:rejected', 'site'),
+                              resolveRoleRecipients(rejectModal.user_id, 'leave:rejected', 'email'),
+                            ]);
+                            await dispatchSiteNotification('leave:rejected', rejVars, rejSite.ids, insertNotification, 'leave_request', rejectModal.id);
+                            await dispatchEmail('leave:rejected', rejVars, { applicant: rejectedEmail, ...rejMail.emails });
                           }
                           setRejectModal(null); setRejectReason(''); setRejectNewType('');
                           fetchLeaveRequests();
@@ -1867,17 +1880,20 @@ const LeaveRequestsTab: React.FC = () => {
                           // 社長（宛先で「社長」を選んだ場合の届け先。複数人いても全員に届ける）
                           const cancelType = rejectModal.leave_type === 'その他' ? (rejectModal.leave_type_other || 'その他') : rejectModal.leave_type;
                           const cancelVars = { 申請者名: rejectModal.profile?.name ?? '', 休暇種別: cancelType, 取り消し理由: rejectReason || '' };
-                          const { data: cancelPres } = await supabase
-                            .from('profiles').select('id, email').eq('role_title', '社長').eq('is_active', true);
-                          const cancelPresIds = (cancelPres ?? []).map((p: { id: string }) => p.id);
-                          const cancelPresEmails = (cancelPres ?? []).map((p: { email: string | null }) => p.email).filter((e): e is string => !!e);
+                          // 🚨 以前は社長だけを直接引いていたため、宛先でリーダー・マネージャーに
+                          // チェックを入れても解決されず届いていなかった。
+                          // 役職の宛先は所属チームで絞り込んで解決する（管理画面のグループ絞り込み設定に従う）
+                          const [cancelSite, cancelMail] = await Promise.all([
+                            resolveRoleRecipients(rejectModal.user_id, 'leave:cancelled', 'site'),
+                            resolveRoleRecipients(rejectModal.user_id, 'leave:cancelled', 'email'),
+                          ]);
                           // 申請者に通知（従来どおり直接送信）
                           if (await shouldSend('leave:cancelled', 'site')) {
                             await insertNotification(rejectModal.user_id, `休暇申請（${rejectModal.leave_type}）の受理が取り消されました${rejectReason ? `。理由：${rejectReason}` : ''}`, undefined, 'leave_request', rejectModal.id);
                           }
-                          // 宛先で「社長」を選んでいれば、社長にもサイト通知＋メール（applicantは上で送信済み）
-                          await dispatchSiteNotification('leave:cancelled', cancelVars, { president: cancelPresIds }, insertNotification, 'leave_request', rejectModal.id);
-                          await dispatchEmail('leave:cancelled', cancelVars, { president: cancelPresEmails });
+                          // 宛先で選ばれた役職（リーダー・マネージャー・社長）にもサイト通知＋メール（applicantは上で送信済み）
+                          await dispatchSiteNotification('leave:cancelled', cancelVars, cancelSite.ids, insertNotification, 'leave_request', rejectModal.id);
+                          await dispatchEmail('leave:cancelled', cancelVars, cancelMail.emails);
                           setRejectModal(null); setRejectReason(''); setRejectNewType('');
                           fetchLeaveRequests();
                           } });

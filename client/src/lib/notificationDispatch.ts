@@ -78,7 +78,7 @@ function parseRecipientKeys(recipient: string | null): string[] {
 }
 
 // 宛先キーごとの実アドレス/ID。社長(president)など複数人になりうる宛先は配列も受け取る。
-type RecipientMap = {
+export type RecipientMap = {
   applicant?: string | string[];
   leader?: string | string[];
   manager?: string | string[];
@@ -89,6 +89,69 @@ type RecipientMap = {
 // 宛先マップの値（string | string[] | undefined）を配列に正規化
 const toList = (v: string | string[] | undefined): string[] =>
   Array.isArray(v) ? v.filter(Boolean) : (v ? [v] : []);
+
+// 宛先キー → profiles.role_title
+const ROLE_BY_RECIPIENT_KEY: Record<string, string> = {
+  leader:    'リーダー',
+  manager:   'マネージャー',
+  president: '社長',
+};
+// グループ絞り込みを無視して常に届く役職の既定値（管理画面の「絞り込みの対象外にする役職」で上書き可）
+const DEFAULT_ORG_WIDE_ROLES = ['社長', '管理者'];
+
+// 宛先に選ばれた役職（リーダー・マネージャー・社長）を、申請者の所属チームで絞り込んで解決する。
+// 「取り消し時」のように本人＋上長の両方へ送るイベントで使う。
+//
+// 🚨 group_names には所属チーム（こども/大人/管理部）と配信用グループ（正社員・契約社員 等）が
+//    混在している。そのまま突き合わせると管理職は全員「正社員・契約社員」を持つため、
+//    「同グループのみ」が実質「全員」になる。必ず master_options の shift_report_group と
+//    照合して所属チームだけを取り出すこと（2026-08-04 に Edge Function 4本で踏んだ不具合）
+// ・絞り込みの既定は「同グループのみ」。「絞り込みの対象外にする役職」はチームに関係なく全員が対象
+// ・申請者本人は必ず除外する（本人宛は applicant として別途送るため）
+export async function resolveRoleRecipients(
+  applicantId: string,
+  eventKey: string,
+  channel: 'site' | 'email',
+): Promise<{ ids: RecipientMap; emails: RecipientMap }> {
+  const recipient = await getNotificationRecipient(eventKey, channel);
+  const roleKeys = parseRecipientKeys(recipient).filter(k => ROLE_BY_RECIPIENT_KEY[k]);
+  if (roleKeys.length === 0) return { ids: {}, emails: {} };
+
+  let groupFilter = 'same';
+  let orgWide = DEFAULT_ORG_WIDE_ROLES;
+  try {
+    const p = JSON.parse(recipient ?? '{}');
+    if (p.groupFilter) groupFilter = p.groupFilter;
+    if (Array.isArray(p.orgWideRoles)) orgWide = p.orgWideRoles;
+  } catch { /* 旧形式（プレーン文字列）は既定のまま */ }
+
+  let teams: string[] = [];
+  if (groupFilter === 'same') {
+    const [{ data: prof }, { data: teamOpts }] = await Promise.all([
+      supabase.from('profiles').select('group_names').eq('id', applicantId).single(),
+      supabase.from('master_options').select('value').eq('category', 'shift_report_group'),
+    ]);
+    const raw = (prof as { group_names?: string[] } | null)?.group_names ?? [];
+    const master = ((teamOpts ?? []) as { value: string }[]).map(t => t.value);
+    // マスタが取れなかったときだけ全グループで判定する（誰にも届かないより安全側に倒す）
+    teams = master.length > 0 ? raw.filter(g => master.includes(g)) : raw;
+  }
+
+  const ids: RecipientMap = {};
+  const emails: RecipientMap = {};
+  for (const key of roleKeys) {
+    const role = ROLE_BY_RECIPIENT_KEY[key];
+    let q = supabase.from('profiles').select('id, email').eq('role_title', role).eq('is_active', true);
+    if (groupFilter === 'same' && !orgWide.includes(role) && teams.length > 0) {
+      q = q.overlaps('group_names', teams);
+    }
+    const { data } = await q;
+    const rows = ((data ?? []) as { id: string; email: string | null }[]).filter(r => r.id !== applicantId);
+    ids[key as keyof RecipientMap] = rows.map(r => r.id);
+    emails[key as keyof RecipientMap] = rows.map(r => r.email).filter((e): e is string => !!e);
+  }
+  return { ids, emails };
+}
 
 // 宛先キー（'applicant'/'leader'/'manager'/'approver'/'president'）をもとにメールアドレスを解決して送信する
 export async function dispatchEmail(

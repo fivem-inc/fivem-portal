@@ -472,11 +472,28 @@ const RECIPIENT_OPTIONS: Record<string, { value: string; label: string }[]> = {
 const PRESIDENT_RECIPIENT_EVENTS = ['leave:manager_approved', 'leave:cancelled'];
 // 申請者本人だけに届くイベント（差し戻し）。他の宛先は送信側で解決しないため選択肢に出さない。
 const APPLICANT_ONLY_RECIPIENT_EVENTS = ['shift_report:returned'];
+// 宛先チェックの「役職」（リーダー・マネージャー・社長）を所属チームで絞り込めるイベント。
+// 宛先チェックの下にグループ絞り込みを出す。送信側は resolveRoleRecipients がこの設定を読む
+const RECIPIENT_GROUP_FILTER_EVENTS = [
+  'leave:manager_approved', 'leave:rejected', 'leave:cancelled',
+  'expense:new_request', 'trip:report_end', 'purchase_request:returned',
+];
+// 「申請先（承認者）」を選べるイベント。“その申請の相手”を指す宛先なので、
+// 交通費・出張・備品の差し戻しなど、その概念が無い（送信側も解決しない）イベントには出さない
+const APPROVER_RECIPIENT_EVENTS = ['leave:new_request', 'leave:leader_approved'];
+// 宛先キー → 役職名（絞り込みの対象外にする役職の選択肢に使う）
+const ROLE_NAME_BY_RECIPIENT_KEY: Record<string, string> = {
+  leader:    'リーダー',
+  manager:   'マネージャー',
+  president: '社長',
+};
 const getRecipientOptions = (channel: string, eventKey: string): { value: string; label: string }[] => {
   if (APPLICANT_ONLY_RECIPIENT_EVENTS.includes(eventKey)) {
     return [{ value: 'applicant', label: '申請者本人' }];
   }
-  const base = RECIPIENT_OPTIONS[channel] ?? [];
+  // 「申請先（承認者）」は概念のあるイベントだけに出す（押しても届かない設定を作らない）
+  const base = (RECIPIENT_OPTIONS[channel] ?? [])
+    .filter(o => o.value !== 'approver' || APPROVER_RECIPIENT_EVENTS.includes(eventKey));
   if (PRESIDENT_RECIPIENT_EVENTS.includes(eventKey) && (channel === 'email' || channel === 'site')) {
     return [...base, { value: 'president', label: '社長' }];
   }
@@ -1274,7 +1291,21 @@ const NotificationsTab: React.FC = () => {
                                 (() => {
                                   const recipientOptions = getRecipientOptions(channel, event.key);
                                   const selectedRecipients = parseEmailSiteRecipients(s.recipient);
+                                  // groupFilter / orgWideRoles を消さずに保つため、既存のJSONに上書きする
+                                  const curRecipient = (() => {
+                                    try { return JSON.parse(s.recipient ?? '{}') as Record<string, unknown>; } catch { return {}; }
+                                  })();
+                                  const patchRecipient = (patch: Record<string, unknown>) =>
+                                    updateLocal(event.key, channel, { recipient: JSON.stringify({ ...curRecipient, recipients: selectedRecipients, ...patch }) });
+                                  const groupFilter = typeof curRecipient.groupFilter === 'string' ? curRecipient.groupFilter : 'same';
+                                  const orgWideRoles = Array.isArray(curRecipient.orgWideRoles) ? curRecipient.orgWideRoles as string[] : ['社長', '管理者'];
+                                  // 役職（リーダー・マネージャー・社長）を宛先に選んでいるときだけ絞り込みを出す
+                                  const selectedRoleNames = selectedRecipients
+                                    .map(k => ROLE_NAME_BY_RECIPIENT_KEY[k])
+                                    .filter((r): r is string => !!r);
+                                  const showGroupFilter = RECIPIENT_GROUP_FILTER_EVENTS.includes(event.key) && selectedRoleNames.length > 0;
                                   return (
+                                    <>
                                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
                                       {recipientOptions.map(opt => (
                                         <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', color: text }}>
@@ -1285,13 +1316,47 @@ const NotificationsTab: React.FC = () => {
                                               const newRecs = e.target.checked
                                                 ? [...selectedRecipients, opt.value]
                                                 : selectedRecipients.filter(r => r !== opt.value);
-                                              updateLocal(event.key, channel, { recipient: JSON.stringify({ recipients: newRecs }) });
+                                              updateLocal(event.key, channel, { recipient: JSON.stringify({ ...curRecipient, recipients: newRecs }) });
                                             }}
                                           />
                                           {opt.label}
                                         </label>
                                       ))}
                                     </div>
+                                    {showGroupFilter && (
+                                      <div style={{ borderTop: `0.5px solid ${borderColor}`, paddingTop: 12, marginBottom: 12 }}>
+                                        <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>グループ絞り込み（リーダー・マネージャー・社長への通知）</div>
+                                        <div style={{ display: 'flex', gap: 16 }}>
+                                          {[
+                                            { value: 'same', label: '同グループのみ' },
+                                            { value: 'all',  label: 'グループに関係なく全員' },
+                                          ].map(opt => (
+                                            <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', color: text }}>
+                                              <input
+                                                type="radio"
+                                                name={`recipientGroupFilter_${event.key}_${channel}`}
+                                                value={opt.value}
+                                                checked={groupFilter === opt.value}
+                                                onChange={() => patchRecipient({ groupFilter: opt.value })}
+                                              />
+                                              {opt.label}
+                                            </label>
+                                          ))}
+                                        </div>
+                                        <div style={{ fontSize: 11, color: subText, marginTop: 6 }}>
+                                          申請者の所属チーム（こども／大人／管理部）で判定します
+                                        </div>
+                                        {groupFilter === 'same' && (
+                                          <OrgWideRolesPicker
+                                            roles={selectedRoleNames}
+                                            orgWideRoles={orgWideRoles}
+                                            isDarkMode={isDarkMode}
+                                            onChange={next => patchRecipient({ orgWideRoles: next.filter(r => selectedRoleNames.includes(r)) })}
+                                          />
+                                        )}
+                                      </div>
+                                    )}
+                                    </>
                                   );
                                 })()
                               )}

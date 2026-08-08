@@ -612,8 +612,12 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       const applicantEmail = user.email || '';
       const leaderEmail = selectedApprover ? (await getUserEmail(selectedApprover.id) ?? '') : '';
       // leave:new_request は承認者(要対応)のみが対象（申請者向け変数が無いため、宛先設定にapplicantは無い）
-      await dispatchSiteNotification('leave:new_request', vars, { applicant: user.id, leader: selectedApprover?.id }, insertNotification, 'leave_request:pending_approval', newRequest?.id);
-      await dispatchEmail('leave:new_request', vars, { applicant: applicantEmail, leader: leaderEmail, approver: leaderEmail });
+      // 🚨 申請先は「その申請の相手」。役職によって leader / manager のどちらにもなりうるので
+      // 両方＋approverキーに同じ人を渡す。approver を渡していなかったため、宛先設定が
+      // 「申請先（承認者）」のときサイト通知が誰にも届いていなかった
+      const apprKey = selectedApprover?.role_title === 'マネージャー' ? 'manager' : 'leader';
+      await dispatchSiteNotification('leave:new_request', vars, { applicant: user.id, [apprKey]: selectedApprover?.id, approver: selectedApprover?.id }, insertNotification, 'leave_request:pending_approval', newRequest?.id);
+      await dispatchEmail('leave:new_request', vars, { applicant: applicantEmail, [apprKey]: leaderEmail, approver: leaderEmail });
       // TODO: 申請フォーム送信後の追加処理（例：奨励日との照合・連携）をここに追加
       setSubmitted(true);
       setShowConfirm(false);

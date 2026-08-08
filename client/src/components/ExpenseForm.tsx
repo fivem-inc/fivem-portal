@@ -18,7 +18,7 @@ import type { Expense, AuthUser } from '../types';
 import { formatAmount, parseAmount } from '../utils';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
-import { shouldSend, dispatchEmail, dispatchSiteNotification } from '../lib/notificationDispatch';
+import { shouldSend, dispatchEmail, dispatchSiteNotification, resolveRoleRecipients } from '../lib/notificationDispatch';
 import { insertNotification } from '../lib/notifications';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
@@ -530,8 +530,14 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
       // サイト通知・メール
       const expTotal = expensesToSubmit.reduce((sum, exp) => sum + (parseInt(exp.amount || '0') || 0), 0);
       const expVars = { 申請者名: (parentProfileName || profileName).trim() || user.email || '', 金額: String(expTotal) };
-      await dispatchSiteNotification('expense:new_request', expVars, { applicant: user.id }, insertNotification);
-      await dispatchEmail('expense:new_request', expVars, { applicant: user.email || '' });
+      // 宛先で役職（リーダー・マネージャー・社長）を選んでいれば、その人たちにも届くようにする
+      // （以前は applicant しか解決しておらず、チェックしても無視されていた）
+      const [expSite, expMail] = await Promise.all([
+        resolveRoleRecipients(user.id, 'expense:new_request', 'site'),
+        resolveRoleRecipients(user.id, 'expense:new_request', 'email'),
+      ]);
+      await dispatchSiteNotification('expense:new_request', expVars, { applicant: user.id, ...expSite.ids }, insertNotification);
+      await dispatchEmail('expense:new_request', expVars, { applicant: user.email || '', ...expMail.emails });
 
       setSubmitSuccess(true);
       setFormError('');
