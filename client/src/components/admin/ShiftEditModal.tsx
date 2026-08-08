@@ -1,9 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
-import { calcSegsBreak, parseSegments, segMinutes } from '../../lib/shiftCalc';
+import { calcSegsBreak, parseSegments, segMinutes, formatSegs, segFirstStart, segLastEnd, joinSegLocations, MAX_SEGS, type Seg } from '../../lib/shiftCalc';
 
 // 管理者が勤務変更報告の内容を直接修正するモーダル。
+// 本人の報告画面と同じ「時間帯」方式（勤務1〜3・行ごとの勤務地）で入力する。
 // 休憩・実労働は申請時と同じ shiftCalc で自動再計算（エンジン二重化を回避）。
+// 🚨 休憩・実労働が保存値と違うときも「変更あり」として保存できる
+//    （旧ルールで休憩を引きすぎた過去の報告を、時刻を触らずに直せるように）。
 // 理由必須 → 確認ステップ（本人へ通知が届く旨）→ 原子的RPC(admin_edit_shift_report) → 本人へ通知。
 
 export type AppType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start' | 'location_change';
@@ -26,6 +29,7 @@ export interface ShiftRecord {
   actual_end: string | null;
   actual_outing_start: string | null;
   actual_outing_end: string | null;
+  actual_segments?: unknown;
   break_minutes: number | null;
   labor_minutes: number | null;
   status: string;
@@ -38,17 +42,18 @@ interface Props {
   onSaved: () => void;
 }
 
-const hhmm = (t: string | null): string => (t ? t.slice(0, 5) : '');
 const getTypes = (r: ShiftRecord): AppType[] => (r.application_types?.length ? r.application_types : [r.application_type]);
+const toMin = (t: string): number => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
 
 const ShiftEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved }) => {
   const [types, setTypes] = useState<AppType[]>(getTypes(record));
   const [workDate, setWorkDate] = useState(record.work_date);
-  const [location, setLocation] = useState(record.actual_location ?? '');
-  const [actStart, setActStart] = useState(hhmm(record.actual_start));
-  const [actEnd, setActEnd] = useState(hhmm(record.actual_end));
-  const [outStart, setOutStart] = useState(hhmm(record.actual_outing_start));
-  const [outEnd, setOutEnd] = useState(hhmm(record.actual_outing_end));
+  // 過去の報告（開始・終了＋外出）も時間帯に復元して同じ形で編集する
+  const [segs, setSegs] = useState<Seg[]>(() => {
+    const parsed = parseSegments(record.actual_segments ?? null, record.actual_start, record.actual_end, record.actual_outing_start, record.actual_outing_end, record.actual_location);
+    return parsed.length > 0 ? parsed : [{ start: '', end: '', location: record.actual_location ?? undefined }];
+  });
+  const [locOther, setLocOther] = useState<boolean[]>([]);
   const [reason, setReason] = useState(record.reason ?? '');
   const [changeReason, setChangeReason] = useState('');
   const [workplaces, setWorkplaces] = useState<string[]>([]);
@@ -66,24 +71,23 @@ const ShiftEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
   const text = isDarkMode ? '#eee' : '#222';
   const sub = isDarkMode ? '#adb5bd' : '#666';
   const inputBg = isDarkMode ? '#3a3a5c' : '#f8f9fa';
-  const inputStyle: React.CSSProperties = { boxSizing: 'border-box', padding: '8px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: text, fontSize: 14 };
+  const inputStyle: React.CSSProperties = { boxSizing: 'border-box', padding: '8px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: text, fontSize: 14, colorScheme: isDarkMode ? 'dark' : 'light' };
   const labelStyle: React.CSSProperties = { fontSize: 12, fontWeight: 'bold', color: text, marginBottom: 4, display: 'block' };
 
   const isAbsence = types.includes('absence');
-  // 休憩・実労働の自動再計算
+  // 勤務地セレクトの「その他（自由入力）」判定（本人の報告画面と同じ）
+  const isOtherLoc = (s: Seg, i: number): boolean =>
+    locOther[i] ?? (!!s.location && workplaces.length > 0 && !workplaces.includes(s.location));
+
+  const validSegs = useMemo(() => segs.filter(s => s.start && s.end), [segs]);
+  // 休憩・実労働の自動再計算（時間帯ごとに計算して合算。本人の報告画面と同じ）
   const { breakMin, laborMin } = useMemo(() => {
-    if (isAbsence || !actStart || !actEnd) return { breakMin: null as number | null, laborMin: null as number | null };
-    // 🚨 申請画面と同じく、休憩は時間帯ごとに計算して合算する。
-    // 開始・終了＋外出から時間帯（外出の前後）を組み立ててから当てる。
-    // 拘束時間で判定すると中抜けの長い日に休憩を引きすぎ、本人画面と数字が食い違う
-    const segs = parseSegments(null, actStart, actEnd, outStart || null, outEnd || null);
-    const b = calcSegsBreak(segs);
-    const l = Math.max(0, segMinutes(segs) - b);
-    return { breakMin: b, laborMin: l };
-  }, [isAbsence, actStart, actEnd, outStart, outEnd]);
+    if (isAbsence || validSegs.length === 0) return { breakMin: null as number | null, laborMin: null as number | null };
+    const b = calcSegsBreak(validSegs);
+    return { breakMin: b, laborMin: Math.max(0, segMinutes(validSegs) - b) };
+  }, [isAbsence, validSegs]);
 
   const fmtMin = (m: number | null) => (m == null ? '-' : `${Math.floor(m / 60)}時間${m % 60 > 0 ? (m % 60) + '分' : ''}`);
-  const timeRange = (s: string, e: string, os: string, oe: string) => (s || e ? `${s}〜${e}${os && oe ? `（外出${os}〜${oe}）` : ''}` : '(なし)');
 
   const changes = useMemo(() => {
     const c: Record<string, { old: unknown; new: unknown }> = {};
@@ -91,16 +95,23 @@ const ShiftEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
     const newTypes = types.map(t => TYPE_LABELS[t]).join('＋');
     if (oldTypes !== newTypes) c.types = { old: oldTypes, new: newTypes };
     if (record.work_date !== workDate) c.work_date = { old: record.work_date, new: workDate };
-    if ((record.actual_location ?? '') !== location) c.actual_location = { old: record.actual_location ?? '', new: location };
-    const oldRange = timeRange(hhmm(record.actual_start), hhmm(record.actual_end), hhmm(record.actual_outing_start), hhmm(record.actual_outing_end));
-    const newRange = timeRange(actStart, actEnd, outStart, outEnd);
+    const oldSegs = parseSegments(record.actual_segments ?? null, record.actual_start, record.actual_end, record.actual_outing_start, record.actual_outing_end, record.actual_location);
+    const oldRange = formatSegs(oldSegs) || '(なし)';
+    const newRange = isAbsence ? '(なし)' : (formatSegs(validSegs) || '(なし)');
     if (oldRange !== newRange) c.actual_time = { old: oldRange, new: newRange };
+    const oldLoc = record.actual_location ?? '';
+    const newLoc = isAbsence ? '' : joinSegLocations(validSegs);
+    if (oldLoc !== newLoc) c.actual_location = { old: oldLoc, new: newLoc };
+    // 🚨 休憩・実労働の再計算結果が保存値と違うときも「変更あり」に数える。
+    //    旧ルール（拘束時間で判定）で休憩を引きすぎた報告は、時刻が正しくても数字だけズレているため
+    if ((record.break_minutes ?? null) !== breakMin) c.break_minutes = { old: `${record.break_minutes ?? 0}分`, new: breakMin == null ? '-' : `${breakMin}分` };
+    if ((record.labor_minutes ?? null) !== laborMin) c.labor_minutes = { old: fmtMin(record.labor_minutes), new: fmtMin(laborMin) };
     if ((record.reason ?? '') !== reason) c.reason = { old: record.reason ?? '', new: reason };
     return c;
-  }, [record, types, workDate, location, actStart, actEnd, outStart, outEnd, reason]);
+  }, [record, types, workDate, validSegs, isAbsence, breakMin, laborMin, reason]);
 
   const changedCount = Object.keys(changes).length;
-  const FIELD_LABELS: Record<string, string> = { types: '種別', work_date: '勤務日', actual_location: '勤務地', actual_time: '実務時間', reason: '理由' };
+  const FIELD_LABELS: Record<string, string> = { types: '種別', work_date: '勤務日', actual_location: '勤務地', actual_time: '勤務時間', break_minutes: '休憩', labor_minutes: '実労働', reason: '理由' };
   const summary = Object.keys(changes).map(k => FIELD_LABELS[k] ?? k).join('・') + 'を修正';
 
   const toggleType = (t: AppType) => setTypes(prev => (prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]));
@@ -108,7 +119,13 @@ const ShiftEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
   const goConfirm = () => {
     setError('');
     if (types.length === 0) { setError('種別を1つ以上選択してください。'); return; }
-    if (!isAbsence && (!actStart || !actEnd)) { setError('実務の開始・終了時刻を入力してください。'); return; }
+    if (!isAbsence) {
+      if (segs.some(s => !s.start || !s.end)) { setError('勤務時間の開始・終了を入力してください。'); return; }
+      if (segs.some(s => s.start === s.end)) { setError('開始と終了が同じ時間の行があります。'); return; }
+      if (segs.some(s => toMin(s.end) < toMin(s.start))) { setError('終了が開始より前の行があります。'); return; }
+      if (segs.some((s, i) => i > 0 && toMin(s.start) < toMin(segs[i - 1].end))) { setError('勤務の時間が重なっています。順番に入力してください。'); return; }
+      if (segs.some(s => !(s.location ?? '').trim())) { setError('勤務地を選択してください。'); return; }
+    }
     if (changedCount === 0) { setError('変更された項目がありません。'); return; }
     if (!changeReason.trim()) { setError('修正理由を入力してください（本人へ通知されます）。'); return; }
     setPhase('confirm');
@@ -117,15 +134,19 @@ const ShiftEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
   const handleSave = async () => {
     setSaving(true);
     setError('');
+    // 保存の形は本人の報告画面と同じ：時間帯を jsonb に全部入れ、
+    // 最初の開始／最後の終了と最初の空き（＝外出）を従来の列にも書いて互換を保つ
+    const cleanSegs: Seg[] = isAbsence ? [] : validSegs.map(s => ({ start: s.start, end: s.end, location: (s.location ?? '').trim() }));
     const { error: rpcErr } = await supabase.rpc('admin_edit_shift_report', {
       p_id: record.id,
       p_application_types: types,
       p_work_date: workDate,
-      p_actual_location: location.trim() || null,
-      p_actual_start: !isAbsence && actStart ? actStart : null,
-      p_actual_end: !isAbsence && actEnd ? actEnd : null,
-      p_actual_outing_start: !isAbsence && outStart ? outStart : null,
-      p_actual_outing_end: !isAbsence && outEnd ? outEnd : null,
+      p_actual_location: isAbsence ? null : (joinSegLocations(cleanSegs) || null),
+      p_actual_start: !isAbsence && cleanSegs.length > 0 ? segFirstStart(cleanSegs) : null,
+      p_actual_end: !isAbsence && cleanSegs.length > 0 ? segLastEnd(cleanSegs) : null,
+      p_actual_outing_start: !isAbsence && cleanSegs.length >= 2 ? cleanSegs[0].end : null,
+      p_actual_outing_end: !isAbsence && cleanSegs.length >= 2 ? cleanSegs[1].start : null,
+      p_actual_segments: isAbsence ? null : cleanSegs,
       p_break_minutes: breakMin,
       p_labor_minutes: laborMin,
       p_reason: reason.trim(),
@@ -134,12 +155,6 @@ const ShiftEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
       p_change_reason: changeReason.trim(),
     });
     if (rpcErr) { setSaving(false); setError('保存に失敗しました: ' + rpcErr.message); return; }
-
-    // 🚨 このモーダルは「開始・終了＋外出1組」の形で修正する。
-    // 時間帯（actual_segments）を残したままだと、修正した時刻と食い違った古い時間帯が表示されてしまう。
-    // null にすると開始・終了＋外出から時間帯を復元して表示するので、修正内容と必ず一致する。
-    // （時間帯が3つあった報告は、修正すると2つ＝外出1回分に丸まる）
-    await supabase.from('shift_reports').update({ actual_segments: null }).eq('id', record.id);
 
     await supabase.from('notifications').insert({
       user_id: record.applicant_id,
@@ -180,33 +195,56 @@ const ShiftEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
               <label style={labelStyle}>勤務日</label>
               <input type="date" style={{ ...inputStyle, width: '100%' }} value={workDate} onChange={e => setWorkDate(e.target.value)} />
             </div>
-            <div>
-              <label style={labelStyle}>勤務地</label>
-              <select style={{ ...inputStyle, width: '100%' }} value={location} onChange={e => setLocation(e.target.value)}>
-                <option value="">校を選択</option>
-                {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
-              </select>
-            </div>
             {!isAbsence && (
-              <>
-                <div>
-                  <label style={labelStyle}>実務時間</label>
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <input type="time" style={{ ...inputStyle, flex: 1 }} value={actStart} onChange={e => setActStart(e.target.value)} />
-                    <span style={{ color: sub }}>〜</span>
-                    <input type="time" style={{ ...inputStyle, flex: 1 }} value={actEnd} onChange={e => setActEnd(e.target.value)} />
-                  </div>
-                </div>
-                <div>
-                  <label style={labelStyle}>外出（任意）</label>
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <input type="time" style={{ ...inputStyle, flex: 1 }} value={outStart} onChange={e => setOutStart(e.target.value)} />
-                    <span style={{ color: sub }}>〜</span>
-                    <input type="time" style={{ ...inputStyle, flex: 1 }} value={outEnd} onChange={e => setOutEnd(e.target.value)} />
-                  </div>
-                </div>
+              <div>
+                <label style={labelStyle}>勤務時間・勤務地</label>
+                {segs.map((s, i) => {
+                  const other = isOtherLoc(s, i);
+                  return (
+                    <div key={i} style={{ marginBottom: 10 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                        <span style={{ fontSize: 12, color: sub, minWidth: 40, flexShrink: 0 }}>勤務{i + 1}</span>
+                        <input type="time" style={{ ...inputStyle, flex: 1, minWidth: 0 }} value={s.start} onChange={e => setSegs(prev => prev.map((p, j) => j === i ? { ...p, start: e.target.value } : p))} />
+                        <span style={{ color: sub, flexShrink: 0 }}>〜</span>
+                        <input type="time" style={{ ...inputStyle, flex: 1, minWidth: 0 }} value={s.end} onChange={e => setSegs(prev => prev.map((p, j) => j === i ? { ...p, end: e.target.value } : p))} />
+                        {segs.length > 1 && (
+                          <button type="button" onClick={() => { setSegs(prev => prev.filter((_, j) => j !== i)); setLocOther(prev => prev.filter((_, j) => j !== i)); }}
+                            aria-label={`勤務${i + 1}を削除`}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: sub, flexShrink: 0 }}>🚫</button>
+                        )}
+                      </div>
+                      <div style={{ paddingLeft: 46 }}>
+                        <select style={{ ...inputStyle, width: '100%' }}
+                          value={other ? 'その他' : (s.location ?? '')}
+                          onChange={e => {
+                            const v = e.target.value;
+                            setLocOther(prev => { const n = [...prev]; n[i] = v === 'その他'; return n; });
+                            setSegs(prev => prev.map((p, j) => j === i ? { ...p, location: v === 'その他' ? '' : v } : p));
+                          }}>
+                          <option value="">勤務地を選択してください</option>
+                          {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+                          <option value="その他">その他（自由入力）</option>
+                        </select>
+                        {other && (
+                          <input type="text" style={{ ...inputStyle, width: '100%', marginTop: 6 }} value={s.location ?? ''}
+                            onChange={e => setSegs(prev => prev.map((p, j) => j === i ? { ...p, location: e.target.value } : p))}
+                            placeholder="勤務地を入力してください" />
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                {segs.length < MAX_SEGS && (
+                  <button type="button" onClick={() => setSegs(prev => [...prev, { start: '', end: '' }])}
+                    style={{ background: isDarkMode ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDarkMode ? '#4a90d9' : '#90caf9'}`, borderRadius: 8, cursor: 'pointer', padding: '6px 12px', fontSize: 12.5, color: isDarkMode ? '#fff' : '#1565c0', width: '100%', marginBottom: 8 }}>
+                    ＋ 勤務時間帯を追加（外出・戻りがある場合）
+                  </button>
+                )}
                 <div style={{ fontSize: 12, color: sub }}>自動計算：休憩 {breakMin ?? 0}分　実労働 {fmtMin(laborMin)}</div>
-              </>
+                {(record.break_minutes ?? null) !== breakMin && (
+                  <div style={{ fontSize: 12, color: '#fd7e14', marginTop: 2 }}>⚠️ 保存されている休憩（{record.break_minutes ?? 0}分）と違います。保存すると新しい計算で上書きされます。</div>
+                )}
+              </div>
             )}
             <div>
               <label style={labelStyle}>理由</label>

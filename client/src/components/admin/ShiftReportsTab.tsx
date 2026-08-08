@@ -50,7 +50,7 @@ interface HistoryRec {
   changes?: Record<string, { old: unknown; new: unknown }> | null;
   changerName?: string;
 }
-const SHIFT_FIELD_LABELS: Record<string, string> = { types: '種別', work_date: '勤務日', actual_location: '勤務地', actual_time: '実務時間', reason: '理由' };
+const SHIFT_FIELD_LABELS: Record<string, string> = { types: '種別', work_date: '勤務日', actual_location: '勤務地', actual_time: '勤務時間', break_minutes: '休憩', labor_minutes: '実労働', reason: '理由' };
 const SHIFT_KIND_LABELS: Partial<Record<ChangeKind, string>> = { resubmit: '本人が再報告' };
 
 
