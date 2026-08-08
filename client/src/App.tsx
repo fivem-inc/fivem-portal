@@ -999,8 +999,12 @@ const classifyNotif = (n: NotifLike) => {
       const focus = n.reference_id && /^\d{4}-\d{2}-\d{2}$/.test(n.reference_id) ? `?focus=${n.reference_id}` : '';
       return { path: `/calendar${focus}`, closeOnTap: true };
     }
-    // 時間調整はFYI。チームカレンダーで確認できる（タップで閉じる）
-    if (isTimeAdjustment) return { path: '/calendar', closeOnTap: true };
+    // 時間調整はFYI。欠勤登録と同じく、reference_idに対象日(YYYY-MM-DD)があれば
+    // その月へジャンプして該当行を強調する（日付が無い古い通知は今月のカレンダーを開くだけ）
+    if (isTimeAdjustment) {
+      const focus = n.reference_id && /^\d{4}-\d{2}-\d{2}$/.test(n.reference_id) ? `?focus=${n.reference_id}` : '';
+      return { path: `/calendar${focus}`, closeOnTap: true };
+    }
     if (isPurchasePendingApproval) return { path: `/purchase?tab=approvals${fq ? `&${fq}` : ''}`, closeOnTap: false };
     if (isPurchaseResult) return { path: `/purchase?tab=history${fq ? `&${fq}` : ''}`, closeOnTap: true };
     if (isOvertimePendingApproval) return { path: `/overtime?view=confirm${fq ? `&${fq}` : ''}`, closeOnTap: false };

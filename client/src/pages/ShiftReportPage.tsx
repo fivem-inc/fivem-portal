@@ -1063,7 +1063,15 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
 
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [tab, setTab]                   = useState<'apply' | 'history'>(searchParams.get('tab') === 'history' ? 'history' : 'apply');
+  const tabParam                        = searchParams.get('tab');
+  const focusParam                      = searchParams.get('focus');
+  const [tab, setTab]                   = useState<'apply' | 'history'>(tabParam === 'history' ? 'history' : 'apply');
+  // 🚨 同じページを開いたまま通知をタップされたときも履歴タブに切り替える。
+  // 画面は作り直されないので、開いた瞬間の1回だけでは切り替わらない。
+  // 依存はURLの「値」なので、確認ページの開閉（view の出し入れ）とは干渉しない
+  useEffect(() => {
+    if (tabParam === 'history') setTab('history');
+  }, [tabParam, focusParam]);
   const [formKey, setFormKey]           = useState(0);
   const [cancelTarget, setCancelTarget] = useState<ShiftReport | null>(null);
   const [hardDeleteTargetId, setHardDeleteTargetId] = useState<string | null>(null);

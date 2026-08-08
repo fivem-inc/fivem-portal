@@ -47,7 +47,8 @@ serve(async (req) => {
       '種別': typeLabels,
       '日付': dateLabel,
       '理由': reason ?? '',
-      'リンク': 'https://fivem-portal.vercel.app/leave?tab=history',
+      // 上長宛のお知らせなので、飛び先は本人の休暇申請ページではなくチームカレンダーの該当日にする
+      'リンク': `https://fivem-portal.vercel.app/calendar?focus=${date}`,
     }
 
     // notification_settings を取得
@@ -133,7 +134,9 @@ serve(async (req) => {
       const targetIds = await resolveTargetIds(siteSetting.recipient)
       if (targetIds.length > 0) {
         await supabase.from('notifications').insert(
-          targetIds.map(id => ({ user_id: id, message, sub_message: null, source_type: 'time_adjustment' }))
+          // 🚨 reference_id に対象日を入れる。これが無いとタップしても
+          // カレンダーの該当行を強調できない（今月を開くだけになる）
+          targetIds.map(id => ({ user_id: id, message, sub_message: null, source_type: 'time_adjustment', reference_id: date }))
         )
         notifiedSite = targetIds.length
       }
@@ -147,7 +150,7 @@ serve(async (req) => {
         const message = `⏰ 時間調整が登録されました`
         const subMessage = `${user_name}さんが ${dateLabel} に ${typeLabels} を登録しました。理由：${reason}`
         await supabase.from('notifications').insert(
-          fallbackIds.map(id => ({ user_id: id, message, sub_message: subMessage, source_type: 'time_adjustment' }))
+          fallbackIds.map(id => ({ user_id: id, message, sub_message: subMessage, source_type: 'time_adjustment', reference_id: date }))
         )
         notifiedSite = fallbackIds.length
       }
@@ -162,7 +165,7 @@ serve(async (req) => {
         const pushIds = [...new Set(((subs ?? []) as { user_id: string }[]).map(s => s.user_id))]
         if (pushIds.length > 0) {
           await supabase.functions.invoke('send-push', {
-            body: { user_ids: pushIds, title: 'ファイブM 時間調整', body: '新着 1件', url: '/leave', tag: 'time_adjustment' },
+            body: { user_ids: pushIds, title: 'ファイブM 時間調整', body: '新着 1件', url: `/calendar?focus=${date}`, tag: 'time_adjustment' },
           })
         }
       }

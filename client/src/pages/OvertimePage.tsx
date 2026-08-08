@@ -2078,7 +2078,15 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
   const [searchParams, setSearchParams] = useSearchParams();
   const isConfirmView = searchParams.get('view') === 'confirm';
 
-  const [tab, setTab] = useState<'form' | 'history'>(searchParams.get('tab') === 'history' ? 'history' : 'form');
+  const tabParam = searchParams.get('tab');
+  const focusParam = searchParams.get('focus');
+  const [tab, setTab] = useState<'form' | 'history'>(tabParam === 'history' ? 'history' : 'form');
+  // 🚨 同じページを開いたまま通知をタップされたときも履歴タブに切り替える。
+  // 画面は作り直されないので、開いた瞬間の1回だけでは切り替わらない。
+  // 依存はURLの「値」なので、確認ページや個人詳細の開閉とは干渉しない
+  useEffect(() => {
+    if (tabParam === 'history') setTab('history');
+  }, [tabParam, focusParam]);
   const [reports, setReports] = useState<OvertimeReport[]>([]);
   const [pendingForMe, setPendingForMe] = useState<OvertimeReport[]>([]);
   const [reviewers, setReviewers] = useState<Reviewer[]>([]);
@@ -2096,9 +2104,16 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
   const [cancelTargetId, setCancelTargetId] = useState<string | null>(null);
   // ?staff= で個人詳細に直行するほか、?mode=summary で部門集計を開ける
   // （残業超過のお知らせバナーから飛んでくる。指定が無ければ従来どおり自分の履歴）
+  const modeParam = searchParams.get('mode');
+  const staffParam = searchParams.get('staff');
   const [historyMode, setHistoryMode] = useState<'own' | 'summary'>(
-    searchParams.get('staff') || searchParams.get('mode') === 'summary' ? 'summary' : 'own'
+    staffParam || modeParam === 'summary' ? 'summary' : 'own'
   );
+  // 同じページにいるまま超過のお知らせ（?mode=summary）をタップされたときも部門集計を開く。
+  // staff が消えたとき（個人詳細から戻る）は何もしない＝集計の一覧に留まる（従来どおり）
+  useEffect(() => {
+    if (staffParam || modeParam === 'summary') setHistoryMode('summary');
+  }, [staffParam, modeParam]);
   const [canSummary, setCanSummary] = useState(false);
   const [canShiftDirectory, setCanShiftDirectory] = useState(false); // 全員のシフト予定ページへの導線表示
   const navigate = useNavigate();
@@ -2112,7 +2127,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
   const [summaryFilterOpen, setSummaryFilterOpen] = useState(false); // 「絞り込み」折りたたみ
   // 個人詳細で選択中の対象者。?staff= を単一の真実として派生させる（別stateにしない）。
   // これによりブラウザ/スマホの「戻る」でURLから staff が消えたとき、自動的に一覧表示へ戻る。
-  const selectedStaffId = searchParams.get('staff');
+  const selectedStaffId = staffParam;
 
   // 受理画面用
   const [returnTargetId, setReturnTargetId] = useState<string | null>(null);

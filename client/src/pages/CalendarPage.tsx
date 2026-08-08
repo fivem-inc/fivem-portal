@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { errorStyle, scrollToFirstError, ERROR_BORDER, errorBg } from '../lib/formHighlight';
 import { useDarkMode } from '../hooks/useDarkMode';
@@ -1388,20 +1389,28 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
   const subColor = isDark ? '#adb5bd' : '#888';
   const borderColor = isDark ? '#495057' : '#eee';
 
-  const viewParam = new URLSearchParams(window.location.search).get('view');
+  // 🚨 URLは毎回読み直す。同じページを開いたまま通知をタップしても画面は作り直されないため、
+  // 開いた瞬間の1回だけの読み取りだと ?focus= が変わったことに気づけない
+  const [searchParams] = useSearchParams();
+  const viewParam = searchParams.get('view');
   // 受理FYIのバナー（view=fyi）から来た上長は、該当スタッフを確実に表示するため全チーム表示にする
   const defaultGroup = (viewParam === 'fyi' || isAdmin || roleTitle === '社長') ? 'all' : 'mine';
   const CALENDAR_GROUPS = ['こども', '大人', '管理部'];
 
   const today = new Date();
   // バナー等から ?focus=YYYY-MM-DD で来たら、その月を開き該当行を強調する
-  const focusDate = (() => {
-    const p = new URLSearchParams(window.location.search).get('focus');
-    return p && /^\d{4}-\d{2}-\d{2}$/.test(p) ? p : null;
-  })();
+  const focusParam = searchParams.get('focus');
+  const focusDate = focusParam && /^\d{4}-\d{2}-\d{2}$/.test(focusParam) ? focusParam : null;
   const [year, setYear] = useState(focusDate ? Number(focusDate.slice(0, 4)) : today.getFullYear());
   const [month, setMonth] = useState(focusDate ? Number(focusDate.slice(5, 7)) - 1 : today.getMonth());
   const [highlightDate, setHighlightDate] = useState<string | null>(focusDate);
+  // 同じページにいるまま通知をタップされたときも、その月を開き直して該当行を強調する
+  useEffect(() => {
+    if (!focusDate) return;
+    setYear(Number(focusDate.slice(0, 4)));
+    setMonth(Number(focusDate.slice(5, 7)) - 1);
+    setHighlightDate(focusDate);
+  }, [focusDate]);
   const focusRowRef = React.useRef<HTMLDivElement | null>(null);
   const [groupMode, setGroupMode] = useState<string>(defaultGroup);
   const [events, setEvents] = useState<LeaveEvent[]>([]);

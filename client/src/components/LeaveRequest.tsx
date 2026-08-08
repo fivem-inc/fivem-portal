@@ -297,7 +297,15 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   // 会社カレンダー（休館日・出勤日）。カレンダーの色分けと、選んだあとの注意書きに使う
   const calendarKinds = useCompanyCalendar();
   const [searchParams] = useSearchParams();
-  const [tab, setTab] = useState<'form' | 'history' | 'adjustment'>(searchParams.get('tab') === 'history' ? 'history' : 'form');
+  const tabParam = searchParams.get('tab');
+  const focusParam = searchParams.get('focus');
+  const [tab, setTab] = useState<'form' | 'history' | 'adjustment'>(tabParam === 'history' ? 'history' : 'form');
+  // 🚨 同じページを開いたまま通知をタップされたときも履歴タブに切り替える。
+  // 画面は作り直されないので、開いた瞬間の1回だけでは切り替わらない。
+  // 依存はURLの「値」なので、画面内のタブ操作（URLは変わらない）とは干渉しない
+  useEffect(() => {
+    if (tabParam === 'history') setTab('history');
+  }, [tabParam, focusParam]);
 
   // 入力中の下書きを端末に自動保存し、開き直したら復元する
   const [ld] = useState(() => loadDraft<LeaveDraft>(DRAFT_KEYS.leave));

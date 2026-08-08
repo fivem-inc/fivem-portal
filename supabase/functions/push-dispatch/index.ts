@@ -16,9 +16,14 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string }> = {
   // 休暇申請（承認者の要対応）
   "leave:new_request":       { app: "休暇申請", word: "未承認", url: "/leave-approvals" },
   "leave:leader_approved":   { app: "休暇申請", word: "未承認", url: "/leave-approvals" },
-  "leave:manager_approved":  { app: "休暇申請", word: "未承認", url: "/leave-approvals" },
+  // 🚨 マネージャー受理は「申請者本人への結果報告」。承認者向けの通知ではない。
+  // 「未承認」だと受理されたのに未処理と読めてしまい、/leave-approvals は
+  // 申請者が開いても自分の申請が無い（権限が無ければ何も見えない）ため両方とも誤りだった。
+  // word は実機テスト済みの安全語のみ（「受理」「承認」は未検証のため使わない）
+  "leave:manager_approved":  { app: "休暇申請", word: "新着", url: "/leave?tab=history" },
   // 休暇申請（申請者の要対応）
-  "leave:rejected":          { app: "休暇申請", word: "差戻", url: "/leave" },
+  // ⚠️ /leave の既定タブは申請フォーム。tab=history を省くと白紙の入力画面に着地する
+  "leave:rejected":          { app: "休暇申請", word: "差戻", url: "/leave?tab=history" },
   // 安否確認：「助けが必要」の回答が入ったとき（発信者＋マネージャー以上へ）
   // 「ヘルプ」は 2026-08-04 に実機テスト済み（Chromeの警告表示に化けないことを確認）。
   // ⚠️ 化けるようになったら app を "安否"（検証済み）に戻すこと。ここ1行で切り替わる。
