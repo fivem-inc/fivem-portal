@@ -284,16 +284,19 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
 
       // 終了報告 かつ チャンネルが1つ以上選択されている場合のみSlack送信
       // サイト通知・メール（ON/OFF制御あり）
-      if (reportType === '終了') {
+      {
+        // 到着／終了で別のイベントにする（ON/OFFと宛先を別々に設定できるようにするため）。
+        // 以前は終了報告にしか通知が無く、到着報告は何も送っていなかった
+        const tripEventKey = reportType === '終了' ? 'trip:report_end' : 'trip:report_arrival';
         const tripVars = { 申請者名: profileName || user.email || '' };
         // 宛先で役職（リーダー・マネージャー・社長）を選んでいれば、その人たちにも届くようにする
         // （以前は applicant しか解決しておらず、チェックしても無視されていた）
         const [tripSite, tripMail] = await Promise.all([
-          resolveRoleRecipients(user.id, 'trip:report_end', 'site'),
-          resolveRoleRecipients(user.id, 'trip:report_end', 'email'),
+          resolveRoleRecipients(user.id, tripEventKey, 'site'),
+          resolveRoleRecipients(user.id, tripEventKey, 'email'),
         ]);
-        await dispatchSiteNotification('trip:report_end', tripVars, { applicant: user.id, ...tripSite.ids }, insertNotification);
-        await dispatchEmail('trip:report_end', tripVars, { applicant: user.email || '', ...tripMail.emails });
+        await dispatchSiteNotification(tripEventKey, tripVars, { applicant: user.id, ...tripSite.ids }, insertNotification);
+        await dispatchEmail(tripEventKey, tripVars, { applicant: user.email || '', ...tripMail.emails });
       }
       // Slack: 申請者が画面上でチャンネルを手動選択して送信する仕組みのため、ON/OFFチェック対象外
       if (reportType === '終了' && selectedChannels.length > 0) {

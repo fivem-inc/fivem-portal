@@ -52,7 +52,8 @@ const EVENT_GROUPS = [
     icon: '📍',
     headerBg: '#FFF3E0', headerBorder: '#E65100', headerText: '#BF360C',
     events: [
-      { key: 'trip:report_end', label: '終了報告時' },
+      { key: 'trip:report_arrival', label: '到着報告時' },
+      { key: 'trip:report_end',     label: '終了報告時' },
     ],
   },
   {
@@ -217,7 +218,9 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
   'leave:rejected':              ['{{申請者名}}', '{{休暇種別}}', '{{差し戻し理由}}', '{{リンク}}'],
   'leave:cancelled':             ['{{申請者名}}', '{{休暇種別}}', '{{取り消し理由}}'],
   'expense:new_request':         ['{{申請者名}}', '{{申請日}}', '{{申請内容}}', '{{項目数}}'],
-  'trip:report_end':             ['{{申請者名}}', '{{申請日}}'],
+  // 送信側が渡しているのは申請者名だけ。{{申請日}} は置換されず文字のまま出るので載せない
+  'trip:report_arrival':         ['{{申請者名}}'],
+  'trip:report_end':             ['{{申請者名}}'],
   'time_adjustment:registered':  ['{{登録者名}}', '{{種別}}', '{{日付}}', '{{理由}}', '{{リンク}}'],
   'attendance:registered':       ['{{対象者名}}', '{{種別}}', '{{日付}}', '{{リンク}}'],
   'attendance:cancelled':        ['{{対象者名}}', '{{種別}}', '{{日付}}', '{{リンク}}'],
@@ -467,17 +470,18 @@ const RECIPIENT_OPTIONS: Record<string, { value: string; label: string }[]> = {
   ],
 };
 
-// 「社長」を宛先に選べるイベント（マネージャー受理時・取り消し時）。他イベントには出さない。
-// 送信側で role_title='社長' を解決して届ける。
-const PRESIDENT_RECIPIENT_EVENTS = ['leave:manager_approved', 'leave:cancelled'];
 // 申請者本人だけに届くイベント（差し戻し）。他の宛先は送信側で解決しないため選択肢に出さない。
 const APPLICANT_ONLY_RECIPIENT_EVENTS = ['shift_report:returned'];
 // 宛先チェックの「役職」（リーダー・マネージャー・社長）を所属チームで絞り込めるイベント。
 // 宛先チェックの下にグループ絞り込みを出す。送信側は resolveRoleRecipients がこの設定を読む
 const RECIPIENT_GROUP_FILTER_EVENTS = [
   'leave:manager_approved', 'leave:rejected', 'leave:cancelled',
-  'expense:new_request', 'trip:report_end', 'purchase_request:returned',
+  'expense:new_request', 'trip:report_arrival', 'trip:report_end', 'purchase_request:returned',
 ];
+// 「社長」を宛先に選べるイベント。送信側（resolveRoleRecipients）が role_title='社長' を解決する。
+// 役職を解決できるイベント＝社長も選べる、で顔ぶれが一致するため上のリストをそのまま使う。
+// 🚨 同じリストを2か所に書くと片方だけ直して食い違うので、必ずこの参照で揃えること
+const PRESIDENT_RECIPIENT_EVENTS = RECIPIENT_GROUP_FILTER_EVENTS;
 // 「申請先（承認者）」を選べるイベント。“その申請の相手”を指す宛先なので、
 // 交通費・出張・備品の差し戻しなど、その概念が無い（送信側も解決しない）イベントには出さない
 const APPROVER_RECIPIENT_EVENTS = ['leave:new_request', 'leave:leader_approved'];
