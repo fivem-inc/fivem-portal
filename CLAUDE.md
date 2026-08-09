@@ -8,7 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```
 【状態】実装・デプロイ・push すべて完了
-・DBマイグレーション2本 適用済み（20260809000000 履歴タブの権限／20260809100000 管理者判定の統一）
+・DBマイグレーション3本 適用済み（20260809000000 履歴タブの権限／20260809100000 管理者判定の統一／
+  20260810000000 profilesの全開UPDATEポリシーを閉じてRPC化）
 ・Edge Function 変更なし
 ・未追跡は AGENTS.md のみ（触らない）
 
@@ -128,17 +129,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    共通 PageTabs への切り出しは全ページに影響するので、次回2体レビュー付きで
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-■ 🚨🚨 今日の調査中に見つかった重大な穴（未対応・次回最優先で判断）
+■ ✅ 2026-08-10 対応済み：profiles の全開UPDATEポリシー（重大な穴）
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-**profiles の UPDATE ポリシー `leader_manager_update_leave_enabled` が
-`using(true) with check(true)`** ＝ **ログインさえしていれば誰でも他人のプロフィールを
-書き換えられる**。役職(role_title)も雇用形態も変更できてしまう＝自分を管理者に昇格できる。
-・2026-06-02 に「パートへ休暇申請フォームを送る」(leave_request_enabled の更新)ために作られたもの
-・画面上はそんな操作をさせていないが、DBの許可としては全開になっている
-・直すなら「リーダー以上が leave_request_enabled 列だけ更新できる」形に絞る必要がある
-  （列単位の制限はRLSではできないので、SECURITY DEFINER の RPC に寄せるのが定石）
-・⚠️ 影響範囲が大きい（休暇申請フォーム送信・ユーザー管理・役職変更）ので、
-  **必ず現在この更新を使っている画面を洗い出してから**着手すること
+**profiles に UPDATEポリシーが2本あり、どちらも危険だった**（前日の調査で発見）。
+1. `leader_manager_update_leave_enabled`（using(true) with check(true)）
+   ＝ ログインしていれば誰でも他人のプロフィールを書き換えられた
+2. `ユーザーは自分のプロフィールを更新できる`（列の制限なし）
+   ＝ **本人が自分の role_title を「管理者」に書き換えられた**（実機で0件更新になることを確認済み＝穴あり）
+・2026-06-02 に「パートへ休暇申請フォームを送る」(leave_request_enabled の更新)のために
+  1番目が作られたのが発端。画面上はそんな操作をさせていないが、DBの許可としては全開だった
+
+【直した内容】migration `20260810000000_lock_profiles_update.sql`
+・危険な2ポリシーを削除。profilesの直接UPDATEは**管理者のみ**に絞った（既存の「管理者は全操作できる」）
+・必要な更新3つは SECURITY DEFINER の RPC に寄せた（列単位の制限はRLSでは書けないため）
+  - `set_leave_request_enabled(p_user_id, p_enabled)` … リーダー以上が他人のフォームを送る/取り消す
+  - `clear_own_leave_request_enabled()` … 本人が申請完了時に自分の分を閉じる
+  - `touch_last_sign_in()` … 本人の最終アクセス記録
+・呼び出し元4ファイル（LeaveRequestsTab・LeaveApprovals・LeaveRequest・useAuth）を
+  直接UPDATEからRPC呼び出しに置換
+・**本番でJWTを差し替えて実機検証済み**（begin/rollback）：
+  一般スタッフが set_leave_request_enabled を呼ぶ→拒否／リーダーが呼ぶ→成功／
+  一般スタッフが自分の role_title を書き換えようとする UPDATE 文→0件更新（穴が塞がったことを確認）
+・🚨 **列単位で権限を絞りたいときはRLSではなくRPC(SECURITY DEFINER)に寄せる**。
+  この教訓は次に同種のケースが出たとき必ず思い出すこと
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ■ 次にやること
@@ -163,8 +176,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 7.【実機確認】**権限トグルの配線（③）**。管理画面→機能別 表示権限 で
    交通費・出張報告・連絡板・休暇承認のトグルを切り替えると、実際にボタン／ページが
    出たり消えたりするか（役職プレビューで確認）。特に**今まで見えていた人が見えなくならないか**
-8.【🚨 要判断・次回最優先】profiles の UPDATE ポリシーが全開（誰でも他人の役職を変更できる）。
-   上の「重大な穴」セクション参照
+8.【実機確認】**リーダー・マネージャーからパートへ休暇申請フォームを送る/取り消す**が
+   引き続き動くか（受理ページ・管理画面の両方）。今回 RPC 経由に変えたため要確認。
+   本人が申請を送信したとき自分のフォームが自動で閉じるかも確認
 9.【要判断】社長に交通費を見せるか（管理者判定は直したが、社長は今も見られない）
 10.【繰越】勤務変更の入力漏れ色・管理者修正モーダルの実機確認／定期リマインドの1月分／年間カレンダー入力／
    社労士確認（昼休み1時間の日に30分引かれる件）／残り21本のEdge Functionの supabase-js 固定

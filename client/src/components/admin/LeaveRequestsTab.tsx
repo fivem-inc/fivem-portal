@@ -1047,7 +1047,9 @@ const LeaveRequestsTab: React.FC = () => {
                       const target = partUsers.find(u => u.id === userId);
                       if (!target) return;
                       setConfirmDialog({ message: `「${target.name || target.email}」さんに有給申請フォームを送信しますか？`, onConfirm: async () => {
-                        const { error } = await supabase.from('profiles').update({ leave_request_enabled: true, leave_enabled_by: (await supabase.auth.getUser()).data.user?.id }).eq('id', userId);
+                        // 🚨 直接UPDATEしない。profiles の直接更新はRLSで管理者のみに絞ってあるため、
+                        //    リーダー・マネージャーからも呼べる RPC 経由にする（2026-08-10）
+                        const { error } = await supabase.rpc('set_leave_request_enabled', { p_user_id: userId, p_enabled: true });
                         if (error) { setSuccessMsg('⚠ 送信に失敗しました: ' + error.message); return; }
                         await fetchUsers();
                         setSuccessMsg(`「${target.name || target.email}」さんに送信しました`);
@@ -1064,7 +1066,7 @@ const LeaveRequestsTab: React.FC = () => {
                         <span style={{ fontSize: 13, color: isDarkMode ? '#fff' : '#333' }}>✅ {u.name || u.email}</span>
                         <button
                           onClick={async () => {
-                            await supabase.from('profiles').update({ leave_request_enabled: false, leave_enabled_by: null }).eq('id', u.id);
+                            await supabase.rpc('set_leave_request_enabled', { p_user_id: u.id, p_enabled: false });
                             await fetchUsers();
                           }}
                           style={{ padding: '2px 8px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 11 }}

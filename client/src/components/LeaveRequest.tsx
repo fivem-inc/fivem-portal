@@ -602,7 +602,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         await supabase.from('leave_requests').update({ status: 'cancelled' }).eq('id', reapplySourceId);
         setReapplySourceId(null);
       }
-      await supabase.from('profiles').update({ leave_request_enabled: false, leave_enabled_by: null }).eq('id', user.id);
+      // 🚨 直接UPDATEしない。profiles の直接更新はRLSで管理者のみに絞ってあるため、
+      //    本人が自分の分を閉じるための RPC 経由にする（2026-08-10）
+      await supabase.rpc('clear_own_leave_request_enabled');
       // Slack通知（申請先の役職に応じてチャンネルを切り替え）
       if (selectedApprover && await shouldSend('leave:new_request', 'slack')) {
         await sendLeaveSlack('new_request', selectedApprover.name, selectedApprover.role_title);

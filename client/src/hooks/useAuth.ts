@@ -141,11 +141,10 @@ export const useAuth = (): UseAuthReturn => {
           perms: perms ?? readAuthCache(user.id)?.perms ?? {},
         });
 
-        supabase.from('profiles')
-          .update({ last_sign_in_at: new Date().toISOString() })
-          .eq('id', user.id)
-          .select('id')
-          .then(({ error }) => { if (error) console.error('[useAuth] last_sign_in_at update failed:', error); });
+        // 🚨 直接UPDATEしない。profiles の直接更新はRLSで管理者のみに絞ってあるため、
+        //    本人の最終アクセス記録は RPC 経由にする（2026-08-10）
+        supabase.rpc('touch_last_sign_in')
+          .then(({ error }) => { if (error) console.error('[useAuth] touch_last_sign_in failed:', error); });
 
         setLoading(false);
         return;
