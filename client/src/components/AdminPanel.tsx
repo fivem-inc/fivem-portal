@@ -896,8 +896,8 @@ const AdminPanelContent: React.FC = () => {
                               {expense ? (
                                 <>
                                   {expense.type === 'regular' && expense.start_date && expense.end_date ? 
-                                    `期間:${new Date(expense.start_date).toLocaleDateString('ja-JP', {year: 'numeric', month: '2-digit', day: '2-digit'})}~${new Date(expense.end_date).toLocaleDateString('ja-JP', {year: 'numeric', month: '2-digit', day: '2-digit'})}` :
-                                    expense.start_date ? `利用日:${new Date(expense.start_date).toLocaleDateString('ja-JP', {year: 'numeric', month: '2-digit', day: '2-digit'})}` : ''
+                                    `期間:${new Date(expense.start_date).toLocaleDateString('ja-JP', {year: 'numeric', month: 'numeric', day: 'numeric'})}~${new Date(expense.end_date).toLocaleDateString('ja-JP', {year: 'numeric', month: 'numeric', day: 'numeric'})}` :
+                                    expense.start_date ? `利用日:${new Date(expense.start_date).toLocaleDateString('ja-JP', {year: 'numeric', month: 'numeric', day: 'numeric'})}` : ''
                                   }<br/>
                                   {expense.from_station} → {expense.to_station}
                                   {expense.transportation && ` [${expense.transportation}]`}<br/>
@@ -976,8 +976,8 @@ const AdminPanelContent: React.FC = () => {
                               {expense ? (
                                 <>
                                   {expense.type === 'regular' && expense.start_date && expense.end_date ? 
-                                    `期間:${new Date(expense.start_date).toLocaleDateString('ja-JP', {year: 'numeric', month: '2-digit', day: '2-digit'})}~${new Date(expense.end_date).toLocaleDateString('ja-JP', {year: 'numeric', month: '2-digit', day: '2-digit'})}` :
-                                    expense.start_date ? `利用日:${new Date(expense.start_date).toLocaleDateString('ja-JP', {year: 'numeric', month: '2-digit', day: '2-digit'})}` : ''
+                                    `期間:${new Date(expense.start_date).toLocaleDateString('ja-JP', {year: 'numeric', month: 'numeric', day: 'numeric'})}~${new Date(expense.end_date).toLocaleDateString('ja-JP', {year: 'numeric', month: 'numeric', day: 'numeric'})}` :
+                                    expense.start_date ? `利用日:${new Date(expense.start_date).toLocaleDateString('ja-JP', {year: 'numeric', month: 'numeric', day: 'numeric'})}` : ''
                                   }<br/>
                                   {expense.from_station} → {expense.to_station}
                                   {expense.transportation && ` [${expense.transportation}]`}<br/>

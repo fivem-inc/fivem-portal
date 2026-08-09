@@ -386,8 +386,8 @@ const ShiftReportsTab: React.FC = () => {
 
   const fmtDateTime = (iso: string) => {
     const d = new Date(iso);
-    const y = d.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' });
-    const t = d.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' });
+    const y = d.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric' });
+    const t = d.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: 'numeric', minute: '2-digit' });
     return { date: y, time: t };
   };
 

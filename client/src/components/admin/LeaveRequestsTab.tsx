@@ -724,8 +724,8 @@ const LeaveRequestsTab: React.FC = () => {
                                 {r.note && <span style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#666', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.note}</span>}
                                 {r.responded_at && (() => {
                                   const d = new Date(r.responded_at);
-                                  const date = d.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' });
-                                  const time = d.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' });
+                                  const date = d.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric' });
+                                  const time = d.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: 'numeric', minute: '2-digit' });
                                   return (
                                     <span style={{ fontSize: 10, color: isDarkMode ? '#adb5bd' : '#888', whiteSpace: 'nowrap', marginLeft: 'auto', textAlign: 'center', lineHeight: 1.4 }}>
                                       <span style={{ display: 'block' }}>{date}</span>
@@ -1381,7 +1381,7 @@ const LeaveRequestsTab: React.FC = () => {
                           return `${(req.start_date || '').slice(5)}～${(req.end_date || '').slice(5)}`;
                         })();
                         const jst = new Date(req.created_at);
-                        const jstParts = Object.fromEntries(new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(jst).map(p => [p.type, p.value]));
+                        const jstParts = Object.fromEntries(new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: false }).formatToParts(jst).map(p => [p.type, p.value]));
                         const jstY = jstParts.year; const jstM = Number(jstParts.month); const jstD = Number(jstParts.day); const jstH = Number(jstParts.hour); const jstMin = jstParts.minute;
                         const st = getStatusDisplay(req);
                         return (
@@ -1613,7 +1613,7 @@ const LeaveRequestsTab: React.FC = () => {
                                 })()
                               : (parent.start_date === parent.end_date ? parent.start_date : `${(parent.start_date || '').slice(5)}～${(parent.end_date || '').slice(5)}`);
                             const pJst = new Date(parent.created_at);
-                            const pJstParts = Object.fromEntries(new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(pJst).map(p => [p.type, p.value]));
+                            const pJstParts = Object.fromEntries(new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: false }).formatToParts(pJst).map(p => [p.type, p.value]));
                             const pJstY = pJstParts.year; const pJstM = Number(pJstParts.month); const pJstD = Number(pJstParts.day); const pJstH = Number(pJstParts.hour); const pJstMin = pJstParts.minute;
                             const pSt = getStatusDisplay(parent);
                             const pDisplayReason = (parent.reason || '').replace(/[\s　]?【再申請】元申請ID: \S+/g, '').trim();
@@ -1652,7 +1652,7 @@ const LeaveRequestsTab: React.FC = () => {
                             // 旧データ（履歴テーブルが無い時代の種別変更）フォールバック
                             const matchChange = req.reason?.match(/【管理者が種別変更】(.+?) → (.+?)（変更して受理）/);
                             const modifiedAtJst = req.modified_at ? new Date(req.modified_at) : null;
-                            const fmtDt = (s: string) => new Date(s).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                            const fmtDt = (s: string) => new Date(s).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
                             return (
                               <tr key={`modify-${req.id}`} style={{ background: isDarkMode ? '#2a1e00' : '#fff8f0' }}>
                                 <td colSpan={9} style={{ padding: '8px 12px', borderBottom: `2px solid #fd7e14`, borderLeft: '4px solid #fd7e14' }}>
@@ -1664,7 +1664,7 @@ const LeaveRequestsTab: React.FC = () => {
                                       <div style={{ fontSize: 12, color: isDarkMode ? '#eee' : '#333' }}>
                                         <HistoryBadge kind="type_change" isDarkMode={isDarkMode} labelOverride={LEAVE_KIND_LABELS} />
                                         <span style={{ marginLeft: 8 }}>{req.modifier?.name ?? '管理者'}</span>
-                                        {modifiedAtJst && <span style={{ marginLeft: 8, color: isDarkMode ? '#adb5bd' : '#666' }}>{modifiedAtJst.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>}
+                                        {modifiedAtJst && <span style={{ marginLeft: 8, color: isDarkMode ? '#adb5bd' : '#666' }}>{modifiedAtJst.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>}
                                         <span style={{ marginLeft: 8 }}>「{matchChange[1]}」→「{matchChange[2]}」に変更して受理</span>
                                       </div>
                                     ) : <div style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666' }}>履歴なし</div>

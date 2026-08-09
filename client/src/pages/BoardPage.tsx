@@ -84,7 +84,7 @@ const fmtTime = (ts: string) => {
     return d.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: 'numeric', minute: '2-digit' });
   return d.toLocaleDateString('ja-JP', {
     timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric',
-    hour: '2-digit', minute: '2-digit',
+    hour: 'numeric', minute: '2-digit',
   });
 };
 // 年月日+時刻（送信トレイ・グループチャット用）
@@ -96,7 +96,7 @@ const fmtFull = (ts: string) => {
     return d.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: 'numeric', minute: '2-digit' });
   return d.toLocaleDateString('ja-JP', {
     timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric',
-    hour: '2-digit', minute: '2-digit',
+    hour: 'numeric', minute: '2-digit',
   });
 };
 // 確認・回答日時表示用：今日でも省略せず常に年月日時分を出す
@@ -104,7 +104,7 @@ const fmtConfirmDate = (ts: string) => {
   const d = new Date(ts);
   return d.toLocaleString('ja-JP', {
     timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric',
-    hour: '2-digit', minute: '2-digit',
+    hour: 'numeric', minute: '2-digit',
   });
 };
 // (fmtNotif は App.tsx の通知ベルで使用)
@@ -3535,7 +3535,7 @@ const BoardPage: React.FC = () => {
                 {/* 送信予約 */}
                 {newScheduledAt && (
                   <div style={{ marginTop: 8, fontSize: 12, color: '#6f42c1' }}>
-                    🕐 送信予約: {new Date(newScheduledAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    🕐 送信予約: {new Date(newScheduledAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
                   </div>
                 )}
               </div>
@@ -3722,7 +3722,7 @@ const BoardPage: React.FC = () => {
                 {/* 送信予約 */}
                 {composeScheduledAt && (
                   <div style={{ marginTop: 8, fontSize: 12, color: '#6f42c1' }}>
-                    🕐 送信予約: {new Date(composeScheduledAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    🕐 送信予約: {new Date(composeScheduledAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
                   </div>
                 )}
               </div>

@@ -390,7 +390,7 @@ const OvertimeAdminTab: React.FC = () => {
       const m = min ?? 0; const sign = m < 0 ? '-' : ''; const a = Math.abs(m);
       return `${sign}${Math.floor(a / 60)}:${String(a % 60).padStart(2, '0')}`;
     };
-    const fmtSubmitted = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
+    const fmtSubmitted = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
     const headers = ['申請者', '対象日', '状況', '通常シフト開始', '通常シフト終了', '通常シフト休憩(分)', '通常シフト実労働', '実際の勤務時間帯', '休憩(分)', '実労働', '差分(元→実績)', '差分[h]:mm', '校', '振替元の勤務日', '振替元の勤務校', '理由', '提出日時', '確認日時'];
     const rows = visibleOtReports.map(r => {
       const ns = (r.normal_shift ?? {}) as Record<string, unknown>;
@@ -1000,7 +1000,7 @@ const OvertimeAdminTab: React.FC = () => {
                                       <div key={h.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
                                         {h.change_kind && <HistoryBadge kind={h.change_kind} isDarkMode={isDarkMode} labelOverride={OT_KIND_LABELS} />}
                                         <div style={{ fontSize: 12 }}>
-                                          <div style={{ color: subText }}>{new Date(h.changed_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}　{h.changerName}</div>
+                                          <div style={{ color: subText }}>{new Date(h.changed_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}　{h.changerName}</div>
                                           {h.changes ? <DiffList changes={h.changes} fieldLabels={OT_FIELD_LABELS} isDarkMode={isDarkMode} /> : <span style={{ color: text }}>{h.change_summary}</span>}
                                           {h.change_reason && <div style={{ color: subText, marginTop: 2 }}>理由：{h.change_reason}</div>}
                                         </div>
@@ -1111,7 +1111,7 @@ const OvertimeAdminTab: React.FC = () => {
                           <span style={{ fontSize: 13, fontWeight: 'bold', color: text }}>{name}</span>
                           <span style={{ fontSize: 12.5, color: subText, marginLeft: 8 }}>対象日：{formatWorkDates(r.work_dates)}</span>
                           <div style={{ fontSize: 11.5, color: subText, marginTop: 2 }}>
-                            {new Date(r.created_at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}に依頼
+                            {new Date(r.created_at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}に依頼
                           </div>
                         </div>
                         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>

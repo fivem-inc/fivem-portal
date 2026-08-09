@@ -1407,7 +1407,7 @@ const OvertimeForm: React.FC<{
                 📩 経理に依頼済み（対象日：{formatGrantDates(myOpenGrantRequest.work_dates)}）
               </p>
               <p style={{ margin: '2px 0 8px', fontSize: 11.5, color: subText }}>
-                {new Date(myOpenGrantRequest.created_at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}に依頼
+                {new Date(myOpenGrantRequest.created_at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}に依頼
               </p>
               {withdrawConfirmId === myOpenGrantRequest.id ? (
                 <div style={{ display: 'flex', gap: 8 }}>
