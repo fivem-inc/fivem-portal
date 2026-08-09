@@ -39,8 +39,10 @@ const SearchableSelect: React.FC<{
       {open && (
         <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 1000, background: dropBg, border: `1px solid ${border}`, borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', minWidth: 180, marginTop: 2 }}>
           <div style={{ padding: '6px 8px', borderBottom: `1px solid ${border}` }}>
+            {/* 🚨 fontSize は 16 未満にしない。iPhoneは16px未満の入力欄にフォーカスすると
+                   画面を勝手に拡大してしまい、一覧が読めなくなる */}
             <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)} placeholder="名前で検索..."
-              style={{ width: '100%', padding: '4px 8px', borderRadius: 6, border: `1px solid ${border}`, background: bg, color: textColor, fontSize: 12, boxSizing: 'border-box' }} />
+              style={{ width: '100%', padding: '5px 8px', borderRadius: 6, border: `1px solid ${border}`, background: bg, color: textColor, fontSize: 16, boxSizing: 'border-box' }} />
           </div>
           <div style={{ maxHeight: 200, overflowY: 'auto' }}>
             <div onClick={() => { onChange('all'); setOpen(false); }}

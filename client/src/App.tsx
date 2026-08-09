@@ -928,6 +928,7 @@ const classifyNotif = (n: NotifLike) => {
   const isShiftPendingResubmit = n.source_type === 'shift_report:pending_resubmit';  // 申請者：再提出/取消待ち
   const isShiftResult          = n.source_type === 'shift_report';                   // 申請者：結果報告のみ
   const isTimeAdjustment       = n.source_type === 'time_adjustment';                // 上長：FYI（対応不要）
+  const isTripReport           = n.source_type === 'trip_report';                    // 上長：出張の到着・終了報告のFYI（対応不要）
   const isAttendance           = n.source_type === 'attendance';                     // 上長・本人：欠勤登録のFYI（対応不要）
   const isAttendanceCancelled  = n.source_type === 'attendance:cancelled';           // 上長・本人：勤怠の取消のお知らせ（飛び先の行はもう無い）
   // 残業が目安を超えたお知らせ。専用のオレンジのバナー（OvertimeThresholdBanner）が
@@ -950,7 +951,7 @@ const classifyNotif = (n: NotifLike) => {
   const isCorrectionNew = isCorrection && n.event_key === 'correction:new';           // 管理者：要対応
   // 🚨 打刻の確認は「答えるまで消えない」要対応。isResultOnly に入れるとタップで消えてしまう
   const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit || isPurchasePendingApproval || isOvertimePendingApproval || isOvertimePendingResubmit || isClockInquiry || isCorrectionNew;
-  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isAttendance || isAttendanceCancelled || isPurchaseResult || isOvertimeResult || isOtProposalReceived || isOtProposalResponded || isOvertimeUnreported || isOvertimeThreshold || isOvertimeThresholdSummary || isClockInquiryAnswered || (isCorrection && !isCorrectionNew);
+  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isTripReport || isAttendance || isAttendanceCancelled || isPurchaseResult || isOvertimeResult || isOtProposalReceived || isOtProposalResponded || isOvertimeUnreported || isOvertimeThreshold || isOvertimeThresholdSummary || isClockInquiryAnswered || (isCorrection && !isCorrectionNew);
   // 旧来のフォールバック（source_typeが無い通知向け）
   const isLegacyReject = !isPendingAction && !isResultOnly && (n.message.includes('差し戻し') || n.message.includes('差し戻され'));
 
@@ -1005,6 +1006,10 @@ const classifyNotif = (n: NotifLike) => {
       const focus = n.reference_id && /^\d{4}-\d{2}-\d{2}$/.test(n.reference_id) ? `?focus=${n.reference_id}` : '';
       return { path: `/calendar${focus}`, closeOnTap: true };
     }
+    // 出張の到着・終了報告（上長へのFYI）。履歴タブを開いて該当の報告を強調する。
+    // 履歴タブは権限のある役職にだけ出るので、権限が無い人が古い通知をタップしても
+    // フォームに着地するだけ（害はない）
+    if (isTripReport) return { path: `/trip-report?tab=history${fq ? `&${fq}` : ''}`, closeOnTap: true };
     if (isPurchasePendingApproval) return { path: `/purchase?tab=approvals${fq ? `&${fq}` : ''}`, closeOnTap: false };
     if (isPurchaseResult) return { path: `/purchase?tab=history${fq ? `&${fq}` : ''}`, closeOnTap: true };
     if (isOvertimePendingApproval) return { path: `/overtime?view=confirm${fq ? `&${fq}` : ''}`, closeOnTap: false };

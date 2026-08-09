@@ -27,6 +27,9 @@ const FEATURES = [
   { key: 'shift_report',    icon: '⏰', label: '勤務変更報告',   note: '' },
   { key: 'expense',         icon: '🚃', label: '交通費申請',     note: '' },
   { key: 'trip_report',     icon: '📍', label: '出張報告',       note: '' },
+  // 🚨 notification_settings の trip:report_arrival / trip:report_end の宛先に役職を足すときは、
+  //    ここも同じ役職をONにすること。片方だけだと「通知は届くのに履歴が空」になる
+  { key: 'trip_report_history', icon: '📋', label: '出張報告の履歴閲覧', note: '全員分の報告を見られる役職' },
   { key: 'board',           icon: '💬', label: '連絡板',         note: '' },
   { key: 'purchase_request', icon: '🧾', label: '備品購入申請・経費精算', note: 'パートも精算のみ利用可' },
   { key: 'overtime',        icon: '🕐', label: '残業・時間管理（正社員）', note: 'パートは勤務変更報告を利用' },

@@ -1,11 +1,32 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { useDarkMode } from '../hooks/useDarkMode';
+import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { dispatchEmail, dispatchSiteNotification, resolveRoleRecipients } from '../lib/notificationDispatch';
 import { insertNotification } from '../lib/notifications';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
+import { tripTypeColor, tripCategoryLabel, formatTripNextDates, formatTripDateTime, tripMapUrl } from '../lib/tripReportDisplay';
+import SearchableSelect from './common/SearchableSelect';
 import type { AuthUser, BusinessTripReport } from '../types';
+
+// 履歴タブに出す1件分（profiles は報告者名の表示にだけ使う）
+interface TripHistoryRow {
+  id: string;
+  user_id: string;
+  report_type: string;
+  category: string;
+  category_other: string | null;
+  location: string;
+  notes: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  address: string | null;
+  next_dates: string | null;
+  created_at: string;
+  profiles?: { name: string | null } | null;
+}
 
 // 出張報告の下書き（GPS・住所は一時情報なので保存しない）
 interface TripDraft {
@@ -121,6 +142,31 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
   const isDark = useDarkMode();
   const topRef = useRef<HTMLDivElement>(null);
 
+  // 表示中のタブ。🚨 URLに持たせる（?tab=history）。
+  //  ① 通知をタップして履歴の該当報告へ直接飛べるようにするため
+  //  ② スマホの戻るボタンで履歴→フォームに戻れるようにするため（2026-07-07 に他ページと統一した方式）
+  //  ③ 下書き（TripDraft）には保存しない。保存すると次に開いたとき履歴タブで開いてしまい、
+  //     入力途中の下書きが残っていることに気づけなくなる
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab: 'form' | 'history' = searchParams.get('tab') === 'history' ? 'history' : 'form';
+  const setTab = (next: 'form' | 'history') => {
+    setShowConfirm(false); // 送信確認を開いたままタブを切り替えられないようにする
+    const p = new URLSearchParams(searchParams);
+    if (next === 'history') p.set('tab', 'history');
+    else { p.delete('tab'); p.delete('focus'); }
+    setSearchParams(p);
+  };
+
+  // 全員分の報告を見られる役職か。
+  // 🚨 画面の出し分けとDBの許可（RLS）で同じ feature_key を見るので、判定が原理的にズレない。
+  //    useAuth の localStorage キャッシュ経由ではなく、その都度DBに聞く方式
+  //    （overtime_summary / shift_pattern_directory と同じ作り）
+  const [canHistory, setCanHistory] = useState(false);
+  useEffect(() => {
+    supabase.rpc('has_feature_permission', { p_feature: 'trip_report_history' })
+      .then(({ data }) => setCanHistory(data === true), () => { /* 取得できないときは出さない（安全側） */ });
+  }, []);
+
   // 区分リスト・場所プリセット（DBから取得）
   const [categories, setCategories] = useState<string[]>(['出張', '園指導', '試合', 'イベント（下見）', 'その他']);
   const [locationPresets, setLocationPresets] = useState<Record<string, string[]>>({});
@@ -169,9 +215,42 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
+  // ── 履歴タブ ──
+  const [historyRows, setHistoryRows] = useState<TripHistoryRow[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [hType, setHType] = useState<'all' | '到着' | '終了'>('all');
+  const [hReporter, setHReporter] = useState('all');
+  const [hCategory, setHCategory] = useState('all');
+  const [hLocation, setHLocation] = useState('all');
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
+  const [openMonths, setOpenMonths] = useState<Set<string>>(new Set());
+  // 通知から ?focus=<報告ID> で来たとき、その報告カードを黄色く光らせる
+  const { highlightId, focusRef } = useFocusHighlight(historyRows);
+
   const presets = locationPresets[category] ?? [];
   const showNextDates = reportType === '終了' && (category === '出張' || category === '園指導');
   const effectiveLocation = useCustomLocation ? locationCustom : location;
+
+  const fetchHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    setHistoryError(null);
+    // 🚨 error を必ず見る。RLSで見えないときは 0 行が返るだけでエラーにならないため、
+    //    握りつぶすと「なぜか空」の原因が分からなくなる（残業ページで実際に踏んだ）
+    const { data, error } = await supabase
+      .from('business_trip_reports')
+      .select('id, user_id, report_type, category, category_other, location, notes, latitude, longitude, address, next_dates, created_at, profiles(name)')
+      .order('created_at', { ascending: false });
+    if (error) {
+      setHistoryError('報告を読み込めませんでした。通信状況を確認してもう一度お試しください。');
+      setHistoryLoading(false);
+      return;
+    }
+    setHistoryRows((data ?? []) as unknown as TripHistoryRow[]);
+    setHistoryLoading(false);
+  }, []);
+
+  useEffect(() => { if (tab === 'history') fetchHistory(); }, [tab, fetchHistory]);
 
   // 入力中の下書きを自動保存
   useEffect(() => {
@@ -279,7 +358,9 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
         next_dates: nextDates.length > 0 ? nextDates.sort().join(',') : undefined,
       };
 
-      const { error } = await supabase.from('business_trip_reports').insert([report]);
+      // 通知をタップして該当の報告へ飛べるようにするため、登録した報告のIDを受け取る
+      const { data: inserted, error } = await supabase
+        .from('business_trip_reports').insert([report]).select('id').single();
       if (error) throw error;
 
       // 終了報告 かつ チャンネルが1つ以上選択されている場合のみSlack送信
@@ -295,7 +376,13 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
           resolveRoleRecipients(user.id, tripEventKey, 'site'),
           resolveRoleRecipients(user.id, tripEventKey, 'email'),
         ]);
-        await dispatchSiteNotification(tripEventKey, tripVars, { applicant: user.id, ...tripSite.ids }, insertNotification);
+        // 🚨 source_type / reference_id を渡す。これが無いと通知に印が付かず、
+        //    App.tsx の classifyNotif がどの分岐にも当たらず「タップしても何も起きない」になる
+        //    （実際に社長へ届いていた通知が、まさにこの状態だった）
+        await dispatchSiteNotification(
+          tripEventKey, tripVars, { applicant: user.id, ...tripSite.ids }, insertNotification,
+          'trip_report', inserted?.id,
+        );
         await dispatchEmail(tripEventKey, tripVars, { applicant: user.email || '', ...tripMail.emails });
       }
       // Slack: 申請者が画面上でチャンネルを手動選択して送信する仕組みのため、ON/OFFチェック対象外
@@ -334,6 +421,207 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
   const ef = (key: string): React.CSSProperties => ({ ...inputStyle, ...errorStyle(errFields.has(key), isDark) });
   const clearErr = (key: string) => setErrFields(prev => { if (!prev.has(key)) return prev; const n = new Set(prev); n.delete(key); return n; });
 
+  // ── 履歴タブの絞り込み・グループ化 ──
+  const hReporterOptions: [string, string][] = Array.from(
+    new Map(historyRows.map(r => [r.user_id, r.profiles?.name || '不明'] as [string, string])).entries()
+  ).sort((a, b) => a[1].localeCompare(b[1], 'ja'));
+  const hCategoryOptions = Array.from(new Set(historyRows.map(r => r.category).filter(Boolean))).sort();
+  const hLocationOptions = Array.from(new Set(historyRows.map(r => r.location).filter(Boolean))).sort();
+
+  const hasFilter = hType !== 'all' || hReporter !== 'all' || hCategory !== 'all' || hLocation !== 'all';
+  // 折りたたみの中に隠れている条件の数。隠れた条件で「空に見える」事故を防ぐためボタンに出す
+  const hiddenFilterCount = (hCategory !== 'all' ? 1 : 0) + (hLocation !== 'all' ? 1 : 0);
+  const clearHistoryFilter = () => { setHType('all'); setHReporter('all'); setHCategory('all'); setHLocation('all'); };
+
+  const filteredHistory = historyRows.filter(r => {
+    if (hType !== 'all' && r.report_type !== hType) return false;
+    if (hReporter !== 'all' && r.user_id !== hReporter) return false;
+    if (hCategory !== 'all' && r.category !== hCategory) return false;
+    if (hLocation !== 'all' && r.location !== hLocation) return false;
+    return true;
+  });
+
+  // 年 → 月 でまとめる（新しい順。historyRows が既に created_at の降順）
+  const historyGroups: { year: number; months: { ym: string; month: number; rows: TripHistoryRow[] }[] }[] = [];
+  filteredHistory.forEach(r => {
+    const d = new Date(r.created_at);
+    const y = d.getFullYear();
+    const m = d.getMonth() + 1;
+    const ym = `${y}-${String(m).padStart(2, '0')}`;
+    let yg = historyGroups.find(g => g.year === y);
+    if (!yg) { yg = { year: y, months: [] }; historyGroups.push(yg); }
+    let mg = yg.months.find(x => x.ym === ym);
+    if (!mg) { mg = { ym, month: m, rows: [] }; yg.months.push(mg); }
+    mg.rows.push(r);
+  });
+
+  // 既定で開く月：今月。ただし今月に報告が無ければ、報告がある一番新しい月を開く
+  // （出張は毎日あるものではないので、月初は「何も無い画面」になってしまう）
+  const nowForHistory = new Date();
+  const currentYm = `${nowForHistory.getFullYear()}-${String(nowForHistory.getMonth() + 1).padStart(2, '0')}`;
+  const allYms = historyGroups.flatMap(g => g.months.map(m => m.ym));
+  const defaultOpenYm = allYms.includes(currentYm) ? currentYm : allYms[0];
+  // 🚨 絞り込み中は全部の月を開く。閉じた月の中に結果が隠れて「0件」に見える事故を防ぐ
+  const isMonthOpen = (ym: string) => hasFilter || ym === defaultOpenYm || openMonths.has(ym);
+  const toggleMonth = (ym: string) => setOpenMonths(prev => {
+    const n = new Set(prev);
+    if (n.has(ym)) n.delete(ym); else n.add(ym);
+    return n;
+  });
+
+  const selectStyle: React.CSSProperties = {
+    padding: '6px 10px', borderRadius: 8,
+    border: isDark ? '1px solid #6c757d' : '1px solid #ccc',
+    background: isDark ? '#495057' : '#fff',
+    color: isDark ? '#fff' : '#333', fontSize: 13, cursor: 'pointer', maxWidth: '100%',
+  };
+  // 択一トグル（CLAUDE.md の配色ルール：未選択=薄い青／選択=濃い青ベタ・枠は両方2px）
+  const pill = (active: boolean): React.CSSProperties => ({
+    padding: '5px 14px', borderRadius: 16, cursor: 'pointer', fontSize: 13, fontWeight: 'bold',
+    background: active ? '#1976d2' : '#e3f2fd',
+    border: `2px solid ${active ? '#1565c0' : '#90caf9'}`,
+    color: active ? '#fff' : '#1565c0',
+  });
+
+  const cardBg = isDark ? '#343a40' : 'white';
+  const subText = isDark ? '#adb5bd' : '#6c757d';
+
+  const historyView = (
+    <div>
+      <div style={{ fontSize: 12, color: subText, margin: '0 0 10px', textAlign: 'center' }}>
+        ※ 閲覧専用です。削除は管理画面から行えます。
+      </div>
+
+      {/* 絞り込み。よく使う「種別」「報告者」は常時、「区分」「場所」は折りたたみの中 */}
+      <div style={{ background: cardBg, borderRadius: 12, padding: '14px 16px', marginBottom: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.1)', color: isDark ? '#fff' : '#333' }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+          {([['all', 'すべて'], ['到着', '到着'], ['終了', '終了']] as const).map(([v, label]) => (
+            <button key={v} onClick={() => setHType(v)} style={pill(hType === v)}>{label}</button>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <span style={{ fontSize: 13, color: subText, flexShrink: 0 }}>👤 報告者</span>
+          <SearchableSelect value={hReporter} options={hReporterOptions} allLabel="全員" onChange={setHReporter} isDarkMode={isDark} />
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <button onClick={() => setShowMoreFilters(o => !o)}
+            style={{ fontSize: 12, color: isDark ? '#90caf9' : '#1565c0', background: 'none', border: `1px solid ${isDark ? '#4a5f7a' : '#bbdefb'}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
+            🔍 絞り込みを追加{hiddenFilterCount > 0 ? `（${hiddenFilterCount}）` : ''} {showMoreFilters ? '▲' : '▼'}
+          </button>
+          {hasFilter && (
+            <button onClick={clearHistoryFilter}
+              style={{ fontSize: 12, color: subText, background: 'none', border: `1px solid ${isDark ? '#555' : '#d5dae0'}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
+              絞り込み解除
+            </button>
+          )}
+        </div>
+
+        {showMoreFilters && (
+          <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${isDark ? '#555' : '#e9ecef'}`, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 13, color: subText, flexShrink: 0, width: 58 }}>🏷️ 区分</span>
+              <select value={hCategory} onChange={e => setHCategory(e.target.value)} style={{ ...selectStyle, flex: 1 }}>
+                <option value="all">すべて</option>
+                {hCategoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 13, color: subText, flexShrink: 0, width: 58 }}>📍 場所</span>
+              <select value={hLocation} onChange={e => setHLocation(e.target.value)} style={{ ...selectStyle, flex: 1 }}>
+                <option value="all">すべて</option>
+                {hLocationOptions.map(l => <option key={l} value={l}>{l}</option>)}
+              </select>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {historyError ? (
+        <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '12px 14px', color: '#842029', fontSize: 13 }}>
+          {historyError}
+          <button onClick={fetchHistory} style={{ marginLeft: 10, background: 'none', border: '1px solid #842029', color: '#842029', borderRadius: 12, padding: '2px 10px', cursor: 'pointer', fontSize: 12 }}>
+            再読み込み
+          </button>
+        </div>
+      ) : historyLoading ? (
+        <p style={{ textAlign: 'center', color: subText, fontSize: 13 }}>読み込んでいます...</p>
+      ) : filteredHistory.length === 0 ? (
+        <div style={{ textAlign: 'center', color: subText, fontSize: 13, padding: '24px 0' }}>
+          {hasFilter ? (
+            <>
+              <p style={{ margin: '0 0 10px' }}>この条件に当てはまる報告はありません</p>
+              <button onClick={clearHistoryFilter}
+                style={{ fontSize: 12, color: isDark ? '#90caf9' : '#1565c0', background: 'none', border: `1px solid ${isDark ? '#4a5f7a' : '#bbdefb'}`, borderRadius: 14, padding: '5px 14px', cursor: 'pointer' }}>
+                絞り込みを解除する
+              </button>
+            </>
+          ) : '出張報告はまだありません'}
+        </div>
+      ) : (
+        historyGroups.map(yg => (
+          <div key={yg.year} style={{ marginBottom: 12 }}>
+            <div style={{ padding: '9px 14px', background: isDark ? '#495057' : '#e9ecef', borderRadius: 6, fontWeight: 'bold', fontSize: 13, color: isDark ? '#fff' : '#333', marginBottom: 6 }}>
+              {yg.year}年
+            </div>
+            {yg.months.map(mg => {
+              const open = isMonthOpen(mg.ym);
+              return (
+                <div key={mg.ym} style={{ marginLeft: 10, marginBottom: 6 }}>
+                  <div onClick={() => toggleMonth(mg.ym)}
+                    style={{ padding: '8px 12px', background: isDark ? '#3d4349' : '#f8f9fa', borderRadius: 4, cursor: 'pointer', color: isDark ? '#fff' : '#333', fontSize: 13, display: 'flex', justifyContent: 'space-between', marginBottom: open ? 6 : 0 }}>
+                    <span>{mg.month}月（{mg.rows.length}件）</span>
+                    <span style={{ color: subText, fontSize: 12 }}>{open ? '▲ 閉じる' : '▶ 開く'}</span>
+                  </div>
+                  {open && mg.rows.map(r => {
+                    const isHit = highlightId === r.id;
+                    const mapUrl = tripMapUrl(r.latitude, r.longitude);
+                    const nextD = formatTripNextDates(r.next_dates);
+                    return (
+                      <div key={r.id}
+                        ref={el => { if (el && isHit) focusRef.current = el; }}
+                        style={{
+                          border: `1px solid ${isHit ? '#f59e0b' : (isDark ? '#495057' : '#dee2e6')}`,
+                          borderRadius: 8, padding: '10px 12px', marginBottom: 6,
+                          background: isHit ? (isDark ? '#4a4020' : '#fff9c4') : cardBg,
+                          transition: 'background 0.6s',
+                        }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+                          <span style={{ background: tripTypeColor(r.report_type), color: '#fff', fontSize: 10, fontWeight: 'bold', padding: '2px 8px', borderRadius: 4, flexShrink: 0 }}>
+                            {r.report_type}
+                          </span>
+                          <span style={{ fontSize: 13, fontWeight: 'bold', color: isDark ? '#fff' : '#333' }}>
+                            {r.profiles?.name || '不明'}
+                          </span>
+                          <span style={{ fontSize: 11, color: subText, marginLeft: 'auto', flexShrink: 0 }}>
+                            {formatTripDateTime(r.created_at)}
+                          </span>
+                        </div>
+                        <p style={{ fontSize: 12, color: isDark ? '#fff' : '#333', margin: '0 0 3px' }}>
+                          {tripCategoryLabel(r)}／{r.location}
+                        </p>
+                        {mapUrl && (
+                          <p style={{ fontSize: 11, margin: '0 0 3px' }}>
+                            <a href={mapUrl} target="_blank" rel="noreferrer" style={{ color: isDark ? '#64b5f6' : '#17a2b8', wordBreak: 'break-all' }}>
+                              📍 {r.address || '地図を開く'}
+                            </a>
+                          </p>
+                        )}
+                        {nextD && <p style={{ fontSize: 11, color: subText, margin: '0 0 3px' }}>次回予定：{nextD}</p>}
+                        {r.notes && <p style={{ fontSize: 11, color: subText, margin: 0 }}>連絡事項：{r.notes}</p>}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        ))
+      )}
+    </div>
+  );
+
   return (
     <div style={{ maxWidth: 600, margin: '0 auto', padding: '16px 16px 40px' }}>
       {formError && (
@@ -368,33 +656,54 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
         <BannerSuccess message="報告を送信しました！" onClose={() => setSubmitted(false)} />
       )}
 
-
-      <div style={{ background: isDark ? '#343a40' : 'white', borderRadius: 12, padding: 24, boxShadow: '0 2px 8px rgba(0,0,0,0.1)', color: isDark ? '#fff' : '#333' }}>
-
-        {/* 報告種別（見出しの右横に入力内容クリア） */}
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-            <label style={{ fontWeight: 'bold' }}>報告種別</label>
-            <button type="button" onClick={clearTripForm}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: isDark ? '#adb5bd' : '#8a939c', background: 'none', border: `1px solid ${isDark ? '#555' : '#d5dae0'}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
-              クリア
-            </button>
-          </div>
-          <div style={{ display: 'flex', gap: 0, borderRadius: 8, overflow: 'hidden', border: `1px solid ${isDark ? '#6c757d' : '#dee2e6'}` }}>
-            {(['到着', '終了'] as const).map((type) => (
+      {/* タブ：上段＝報告する（到着／終了）、下段＝見る（履歴）。
+          🚨 白いカードの外に置く。カードの中（「報告種別」ラベルの直下）に履歴を混ぜると
+             「報告種別＝履歴」という意味の通らない構造になり、さらに隣のクリアボタンが
+             履歴表示中も残って、押すと入力途中の下書きが消える事故になる。
+             他ページ（休暇・勤務変更・備品）も説明枠の下がタブの位置で揃えてある */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 0, borderRadius: 8, overflow: 'hidden', border: `1px solid ${isDark ? '#6c757d' : '#dee2e6'}`, marginBottom: canHistory ? 8 : 0 }}>
+          {(['到着', '終了'] as const).map((type) => {
+            const active = tab === 'form' && reportType === type;
+            return (
               <button
                 key={type}
-                onClick={() => setReportType(type)}
+                onClick={() => { setReportType(type); setTab('form'); }}
                 style={{
                   flex: 1, padding: '10px 0', border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 'bold',
-                  background: reportType === type ? '#3d9a3d' : (isDark ? '#495057' : '#f8f9fa'),
-                  color: reportType === type ? 'white' : (isDark ? '#fff' : '#333'),
+                  background: active ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'),
+                  color: active ? 'white' : (isDark ? '#fff' : '#333'),
                 }}
               >
                 {type}
               </button>
-            ))}
-          </div>
+            );
+          })}
+        </div>
+        {canHistory && (
+          <button
+            onClick={() => setTab('history')}
+            style={{
+              width: '100%', padding: '9px 0', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold',
+              background: tab === 'history' ? '#1976d2' : '#e3f2fd',
+              border: `2px solid ${tab === 'history' ? '#1565c0' : '#90caf9'}`,
+              color: tab === 'history' ? '#fff' : '#1565c0',
+            }}
+          >
+            📋 履歴
+          </button>
+        )}
+      </div>
+
+      {tab === 'history' ? historyView : (
+      <div style={{ background: isDark ? '#343a40' : 'white', borderRadius: 12, padding: 24, boxShadow: '0 2px 8px rgba(0,0,0,0.1)', color: isDark ? '#fff' : '#333' }}>
+
+        {/* 入力内容のクリア（フォームの操作なので履歴タブには出さない） */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+          <button type="button" onClick={clearTripForm}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: isDark ? '#adb5bd' : '#8a939c', background: 'none', border: `1px solid ${isDark ? '#555' : '#d5dae0'}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
+            クリア
+          </button>
         </div>
 
         {/* 到着報告の注意事項 */}
@@ -619,6 +928,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
           送信
         </button>
       </div>
+      )}
 
       {/* 確認モーダル */}
       {showConfirm && (

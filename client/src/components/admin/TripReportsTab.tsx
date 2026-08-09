@@ -1,5 +1,9 @@
 import React, { useState } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
+// 種別の色・区分ラベル・次回予定の書式は lib/tripReportDisplay.ts に集約している。
+// スタッフ側の履歴タブ（BusinessTripReport.tsx）と同じ報告を表示するため、
+// ここに直接書くと必ず食い違う（過去に種別ラベルの二重定義で管理画面が真っ白になった）
+import { tripTypeColor, tripCategoryLabel, formatTripNextDates } from '../../lib/tripReportDisplay';
 
 const TripReportsTab: React.FC = () => {
   const ctx = useAdminPanel();
@@ -186,12 +190,12 @@ const TripReportsTab: React.FC = () => {
                                           <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, whiteSpace: 'nowrap', fontSize: 13 }}>{dateStr}</td>
                                           <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, fontSize: 13 }}>{report.profiles?.name || report.profiles?.email || '不明'}</td>
                                           <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, fontSize: 13 }}>
-                                            <span style={{ display: 'inline-block', padding: '3px 10px', borderRadius: 4, background: report.report_type === '到着' ? '#17a2b8' : '#28a745', color: '#fff', fontSize: 12, fontWeight: 'bold', whiteSpace: 'nowrap' }}>
+                                            <span style={{ display: 'inline-block', padding: '3px 10px', borderRadius: 4, background: tripTypeColor(report.report_type), color: '#fff', fontSize: 12, fontWeight: 'bold', whiteSpace: 'nowrap' }}>
                                               {report.report_type}
                                             </span>
                                           </td>
                                           <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, fontSize: 13 }}>
-                                            {report.category === 'その他' ? `その他（${report.category_other}）` : report.category}
+                                            {tripCategoryLabel(report)}
                                           </td>
                                           <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, fontSize: 13 }}>{report.location}</td>
                                           <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, fontSize: 13 }}>{report.notes || '-'}</td>
@@ -211,13 +215,7 @@ const TripReportsTab: React.FC = () => {
                                             ) : '-'}
                                           </td>
                                           <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, fontSize: 12, color: isDarkMode ? '#ccc' : '#555' }}>
-                                            {report.next_dates
-                                              ? report.next_dates.split(',').map((d: string) => {
-                                                  const dt = new Date(d);
-                                                  const wd = ['日','月','火','水','木','金','土'][dt.getDay()];
-                                                  return `${dt.getMonth()+1}/${dt.getDate()}（${wd}）`;
-                                                }).join('\n')
-                                              : '-'}
+                                            {formatTripNextDates(report.next_dates) || '-'}
                                           </td>
                                           <td style={{ padding: '8px 12px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, fontSize: 13 }}>
                                             <button
