@@ -585,27 +585,33 @@ const FeaturePermissionsTab: React.FC = () => {
             </div>
           </div>
 
+          {/* 🚨 列幅の合計をコンテナ幅(≈796px)に収める。列名は折り返しを許可（nowrapにしない）ことで
+                 「フロア責任者」「マネージャー」のような長い役職名でも横スクロールなしで全列が見えるようにした。
+                 スマホ幅は元々overflowXの横スクロールに任せる（この幅詰めはPC表示のため） */}
+          {/* 🚨 border-box にしないと padding が width の上に加算され、指定した列幅より広がる
+                 （実測: 772px指定のはずが実際は820pxまで膨張していた）。fixedレイアウトと組み合わせて
+                 列幅を正確に制御する */}
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 480 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 480, tableLayout: 'fixed', boxSizing: 'border-box' }}>
               <thead>
                 <tr>
-                  <th style={{ fontSize: 12, color: subText, padding: '10px 14px', textAlign: 'left', background: isDarkMode ? '#2d3136' : '#fafafa', borderBottom: `1px solid ${border}`, minWidth: 140 }}>
+                  <th style={{ boxSizing: 'border-box', fontSize: 12, color: subText, padding: '10px 8px', textAlign: 'left', background: isDarkMode ? '#2d3136' : '#fafafa', borderBottom: `1px solid ${border}`, width: 150 }}>
                     機能
                   </th>
-                  <th style={{ fontSize: 11, color: text, padding: '10px 6px', textAlign: 'center', background: isDarkMode ? '#1a2e1a' : '#f0fff4', borderBottom: `1px solid ${border}`, whiteSpace: 'nowrap', minWidth: 64 }}>
+                  <th style={{ boxSizing: 'border-box', fontSize: 10, color: text, padding: '8px 3px', textAlign: 'center', background: isDarkMode ? '#1a2e1a' : '#f0fff4', borderBottom: `1px solid ${border}`, width: 54 }}>
                     全公開
-                    <div style={{ fontSize: 9, color: subText, fontWeight: 'normal', marginTop: 1 }}>全員に表示</div>
+                    <div style={{ fontSize: 8, color: subText, fontWeight: 'normal', marginTop: 1 }}>全員に表示</div>
                   </th>
-                  <th style={{ fontSize: 11, color: text, padding: '10px 6px', textAlign: 'center', background: isDarkMode ? '#1a2030' : '#eef4ff', borderBottom: `1px solid ${border}`, whiteSpace: 'nowrap', minWidth: 72 }}>
+                  <th style={{ boxSizing: 'border-box', fontSize: 10, color: text, padding: '8px 3px', textAlign: 'center', background: isDarkMode ? '#1a2030' : '#eef4ff', borderBottom: `1px solid ${border}`, width: 60 }}>
                     リーダー以上
-                    <div style={{ fontSize: 9, color: subText, fontWeight: 'normal', marginTop: 1 }}>先行公開</div>
+                    <div style={{ fontSize: 8, color: subText, fontWeight: 'normal', marginTop: 1 }}>先行公開</div>
                   </th>
-                  <th style={{ fontSize: 11, color: text, padding: '10px 6px', textAlign: 'center', background: isDarkMode ? '#2e1a30' : '#faeeff', borderBottom: `1px solid ${border}`, borderRight: `2px solid ${border}`, whiteSpace: 'nowrap', minWidth: 64 }}>
+                  <th style={{ boxSizing: 'border-box', fontSize: 10, color: text, padding: '8px 3px', textAlign: 'center', background: isDarkMode ? '#2e1a30' : '#faeeff', borderBottom: `1px solid ${border}`, borderRight: `2px solid ${border}`, width: 54 }}>
                     社長のみ
-                    <div style={{ fontSize: 9, color: subText, fontWeight: 'normal', marginTop: 1 }}>テスト用</div>
+                    <div style={{ fontSize: 8, color: subText, fontWeight: 'normal', marginTop: 1 }}>テスト用</div>
                   </th>
                   {roles.map(role => (
-                    <th key={role.id} style={{ fontSize: 11, color: subText, padding: '10px 6px', textAlign: 'center', background: isDarkMode ? '#2d3136' : '#fafafa', borderBottom: `1px solid ${border}`, whiteSpace: 'nowrap', minWidth: 68 }}>
+                    <th key={role.id} style={{ boxSizing: 'border-box', fontSize: 10, color: subText, padding: '8px 3px', textAlign: 'center', background: isDarkMode ? '#2d3136' : '#fafafa', borderBottom: `1px solid ${border}`, width: 54, wordBreak: 'break-word' }}>
                       {role.name}
                     </th>
                   ))}
@@ -614,22 +620,22 @@ const FeaturePermissionsTab: React.FC = () => {
               <tbody>
                 {FEATURES.map(feat => (
                   <tr key={feat.key}>
-                    <td style={{ padding: '10px 14px', fontSize: 13, color: text, borderBottom: `1px solid ${border}` }}>
+                    <td style={{ padding: '10px 8px', fontSize: 12, color: text, borderBottom: `1px solid ${border}` }}>
                       <span style={{ marginRight: 5 }}>{feat.icon}</span>
                       {feat.label}
-                      {feat.note && <div style={{ fontSize: 10, color: subText, marginTop: 2 }}>{feat.note}</div>}
+                      {feat.note && <div style={{ fontSize: 9, color: subText, marginTop: 2 }}>{feat.note}</div>}
                     </td>
                     {/* 全公開トグル（非公開なら管理者以外には非表示） */}
                     {(() => {
                       const pub = published[feat.key] !== false; // 値なし=公開
                       return (
-                        <td style={{ textAlign: 'center', padding: '8px 6px', borderBottom: `1px solid ${border}`, background: isDarkMode ? '#1a2e1a55' : '#f0fff488' }}>
+                        <td style={{ boxSizing: 'border-box', textAlign: 'center', padding: '8px 3px', borderBottom: `1px solid ${border}`, background: isDarkMode ? '#1a2e1a55' : '#f0fff488' }}>
                           <button
                             onClick={() => { if (isEditMode) togglePublish(feat.key); }}
                             disabled={!isEditMode}
                             title={!isEditMode ? '「変更する」を押して編集モードに入ってください' : pub ? '全公開中（押すと非公開）' : '非公開（押すと全員に公開）'}
                             style={{
-                              width: 36, height: 20, borderRadius: 10, border: 'none', padding: 0,
+                              width: 32, height: 18, borderRadius: 9, border: 'none', padding: 0,
                               position: 'relative',
                               cursor: !isEditMode ? 'default' : 'pointer',
                               background: pub ? '#22c55e' : (isDarkMode ? '#555' : '#ccc'),
@@ -639,8 +645,8 @@ const FeaturePermissionsTab: React.FC = () => {
                           >
                             <span style={{
                               position: 'absolute', top: 3,
-                              left: pub ? 19 : 3,
-                              width: 14, height: 14, borderRadius: '50%',
+                              left: pub ? 17 : 3,
+                              width: 12, height: 12, borderRadius: '50%',
                               background: '#fff', transition: 'left .15s', display: 'block',
                             }} />
                           </button>
@@ -651,13 +657,13 @@ const FeaturePermissionsTab: React.FC = () => {
                     {(() => {
                       const pubL = publishedLeader[feat.key] === true; // 値なし=OFF
                       return (
-                        <td style={{ textAlign: 'center', padding: '8px 6px', borderBottom: `1px solid ${border}`, background: isDarkMode ? '#1a203055' : '#eef4ff88' }}>
+                        <td style={{ boxSizing: 'border-box', textAlign: 'center', padding: '8px 3px', borderBottom: `1px solid ${border}`, background: isDarkMode ? '#1a203055' : '#eef4ff88' }}>
                           <button
                             onClick={() => { if (isEditMode) togglePublishLeader(feat.key); }}
                             disabled={!isEditMode}
                             title={!isEditMode ? '「変更する」を押して編集モードに入ってください' : pubL ? 'リーダー以上に公開中（押すとOFF）' : 'OFF（押すとリーダー以上に先行公開）'}
                             style={{
-                              width: 36, height: 20, borderRadius: 10, border: 'none', padding: 0,
+                              width: 32, height: 18, borderRadius: 9, border: 'none', padding: 0,
                               position: 'relative',
                               cursor: !isEditMode ? 'default' : 'pointer',
                               background: pubL ? '#3b82f6' : (isDarkMode ? '#555' : '#ccc'),
@@ -667,8 +673,8 @@ const FeaturePermissionsTab: React.FC = () => {
                           >
                             <span style={{
                               position: 'absolute', top: 3,
-                              left: pubL ? 19 : 3,
-                              width: 14, height: 14, borderRadius: '50%',
+                              left: pubL ? 17 : 3,
+                              width: 12, height: 12, borderRadius: '50%',
                               background: '#fff', transition: 'left .15s', display: 'block',
                             }} />
                           </button>
@@ -679,13 +685,13 @@ const FeaturePermissionsTab: React.FC = () => {
                     {(() => {
                       const pubP = publishedPresident[feat.key] === true; // 値なし=OFF
                       return (
-                        <td style={{ textAlign: 'center', padding: '8px 6px', borderBottom: `1px solid ${border}`, borderRight: `2px solid ${border}`, background: isDarkMode ? '#2e1a3055' : '#faeeff88' }}>
+                        <td style={{ boxSizing: 'border-box', textAlign: 'center', padding: '8px 3px', borderBottom: `1px solid ${border}`, borderRight: `2px solid ${border}`, background: isDarkMode ? '#2e1a3055' : '#faeeff88' }}>
                           <button
                             onClick={() => { if (isEditMode) togglePublishPresident(feat.key); }}
                             disabled={!isEditMode}
                             title={!isEditMode ? '「変更する」を押して編集モードに入ってください' : pubP ? '社長のみに公開中（押すとOFF）' : 'OFF（押すと社長のみに先行公開）'}
                             style={{
-                              width: 36, height: 20, borderRadius: 10, border: 'none', padding: 0,
+                              width: 32, height: 18, borderRadius: 9, border: 'none', padding: 0,
                               position: 'relative',
                               cursor: !isEditMode ? 'default' : 'pointer',
                               background: pubP ? '#a855f7' : (isDarkMode ? '#555' : '#ccc'),
@@ -695,8 +701,8 @@ const FeaturePermissionsTab: React.FC = () => {
                           >
                             <span style={{
                               position: 'absolute', top: 3,
-                              left: pubP ? 19 : 3,
-                              width: 14, height: 14, borderRadius: '50%',
+                              left: pubP ? 17 : 3,
+                              width: 12, height: 12, borderRadius: '50%',
                               background: '#fff', transition: 'left .15s', display: 'block',
                             }} />
                           </button>
@@ -707,13 +713,13 @@ const FeaturePermissionsTab: React.FC = () => {
                       const isFixed = role.is_fixed;
                       const on = isFixed ? true : (perms[role.id]?.[feat.key] ?? false);
                       return (
-                        <td key={role.id} style={{ textAlign: 'center', padding: '8px 6px', borderBottom: `1px solid ${border}` }}>
+                        <td key={role.id} style={{ boxSizing: 'border-box', textAlign: 'center', padding: '8px 3px', borderBottom: `1px solid ${border}` }}>
                           <button
                             onClick={() => { if (!isFixed && isEditMode) togglePerm(role.id, feat.key); }}
                             disabled={isFixed || !isEditMode}
                             title={isFixed ? '管理者は常にすべての機能を利用できます' : !isEditMode ? '「変更する」を押して編集モードに入ってください' : undefined}
                             style={{
-                              width: 36, height: 20, borderRadius: 10, border: 'none', padding: 0,
+                              width: 32, height: 18, borderRadius: 9, border: 'none', padding: 0,
                               position: 'relative',
                               cursor: isFixed || !isEditMode ? 'default' : 'pointer',
                               background: isFixed ? '#93c5fd' : on ? '#22c55e' : (isDarkMode ? '#555' : '#ccc'),
@@ -723,8 +729,8 @@ const FeaturePermissionsTab: React.FC = () => {
                           >
                             <span style={{
                               position: 'absolute', top: 3,
-                              left: on || isFixed ? 19 : 3,
-                              width: 14, height: 14, borderRadius: '50%',
+                              left: on || isFixed ? 17 : 3,
+                              width: 12, height: 12, borderRadius: '50%',
                               background: '#fff', transition: 'left .15s', display: 'block',
                             }} />
                           </button>
