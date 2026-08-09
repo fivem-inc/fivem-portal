@@ -50,9 +50,12 @@ interface Props {
   user: AuthUser;
   roleTitle: string;
   isAdmin: boolean;
+  // 画面の出し分けは useAuth 経由で受け取る（役職プレビューを効かせるため）。
+  // 実データの保護はDB側のRLS（has_feature_permission）が担当する
+  canDirectory: boolean;
 }
 
-const ShiftDirectoryPage: React.FC<Props> = ({ isAdmin }) => {
+const ShiftDirectoryPage: React.FC<Props> = ({ isAdmin, canDirectory }) => {
   const isDark = useDarkMode();
   const navigate = useNavigate();
   const text = isDark ? '#f8f9fa' : '#212529';
@@ -75,8 +78,10 @@ const ShiftDirectoryPage: React.FC<Props> = ({ isAdmin }) => {
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const permRes = await supabase.rpc('has_feature_permission', { p_feature: 'shift_pattern_directory' });
-      const ok = isAdmin || permRes.data === true;
+      // 🚨 権限はDBに直接聞かず props（useAuth 経由）で判定する。
+      //    RPCで聞くと役職プレビュー中も実アカウント（管理者）で評価され、
+      //    「一般として表示」でもこのページが開けてしまい実際の見え方を確認できない
+      const ok = isAdmin || canDirectory;
       setAllowed(ok);
       if (!ok) { setLoading(false); return; }
 
@@ -104,7 +109,7 @@ const ShiftDirectoryPage: React.FC<Props> = ({ isAdmin }) => {
       setPatByUser(map);
       setLoading(false);
     })();
-  }, [isAdmin]);
+  }, [isAdmin, canDirectory]);
 
   // 各人のチーム（部門ホワイトリストに一致する group のみ採用。無ければ未所属）
   const teamOf = (p: PersonRow) => teamWhitelist.find(g => (p.group_names ?? []).includes(g)) ?? '未所属';

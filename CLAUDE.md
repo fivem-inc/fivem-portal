@@ -7,8 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## ▶▶ 次セッション ここから開始（2026-08-09・出張報告に「履歴」タブを新設）
 
 ```
-【状態】実装完了・DBマイグレーション適用済み。**commit / push はこれから**
-・DBマイグレーション1本 適用済み（20260809000000・SQL Editorで実行・本人確認済み）
+【状態】実装・デプロイ・push すべて完了
+・DBマイグレーション1本 適用済み（20260809000000・SQL Editorで実行済み）
 ・Edge Function 変更なし
 ・未追跡は AGENTS.md のみ（触らない）
 
@@ -51,9 +51,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   実データの保護＝DB側のRLS**、と役割を分けた
 ・🚨 **最初 RPC `has_feature_permission` で画面を出し分けたら、役職プレビューが効かなかった**。
   RPCはログイン中の実アカウント（管理者）で評価されるため、「一般として表示」中も true を返し、
-  一般には出ないはずの履歴タブが出てしまった（実機スクショで発覚・修正済み）。
-  ⚠️ **同じ不整合が overtime_summary（残業の部門集計）と shift_pattern_directory（全員のシフト予定）
-  にも残っている**。どちらもRPCで判定しているので、役職プレビューでは実際の見え方を確認できない
+  一般には出ないはずの履歴タブが出てしまった（実機スクショで発覚）。
+  → **同じ不整合があった overtime_summary（残業の部門集計）と shift_pattern_directory
+  （全員のシフト予定）も同時に useAuth 方式へ揃えた**。クライアント側の RPC 呼び出しは全廃。
+  ⚠️ **今後 feature_permissions で画面を出し分けるときは、必ず useAuth の canX を使うこと**。
+  RPCで直接DBに聞くと役職プレビューで実際の見え方を確認できなくなる
+  （画面の出し分け＝useAuth／実データの保護＝RLS、と役割を分ける）
 ・has_feature_permission() は SECURITY DEFINER なので profiles/roles/feature_permissions を
   RLSを通さず読む＝**相互再帰しない**。管理者判定も app_metadata 経由で正しい（既に本番で6ポリシーが使用中）
 ・⚠️ レビューで「feature_permissions を認可に使うな（CLAUDE.md にそう書いてある）」という指摘が出たが、
@@ -102,6 +105,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    あるため実害は出ていないが、管理者の role_title を変えた瞬間に全部見えなくなる時限爆弾
 3. **管理画面の権限トグルのうち4つが死んでいる**（押しても何も起きない）
    leave_approvals（どこからも参照なし）/ expense / trip_report / board（isPub のみで役職トグル未配線）
+   ※ overtime_summary / shift_pattern_directory は今回 useAuth 方式に直したので生きている
 4. **/trip-report にルートガードが無い**（ナビボタンを隠しているだけでURL直打ちで入れる）。
    連絡板は入っている。※履歴の中身はRLSで守られるので情報漏洩は起きない
 5. attendance_exceptions の閲覧役職にフロア責任者が入っていない（shift_reports には入っており不一致）
@@ -113,9 +117,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ■ 次にやること
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-0.【最優先】commit・push（未実施）→ Vercel反映後に実機確認
 1.【実機確認】社長アカウントで /trip-report を開き「📋 履歴」タブが出るか。
-   一般・パートには出ないか（役職プレビューで確認可）
+   **一般・パートのプレビューでは出ないか**（ここが最初バグっていた箇所）
+1-2.【実機確認】あわせて残業ページの部門集計・全員のシフト予定も、
+   役職プレビューで正しく出し分けされるか（今回同じ方式に揃えたため）
 2.【実機確認】履歴：年→月の折りたたみ（今月が開く）／絞り込み（種別・報告者は常時、区分・場所は折りたたみ）／
    絞り込むと全月が開くか／0件時に解除ボタン／ダークモードの見え方
 3.【実機確認】新しく出張報告を1件送信 → 社長のベルをタップ → 履歴タブが開いて該当カードが黄色く光るか

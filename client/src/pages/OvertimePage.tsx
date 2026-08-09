@@ -92,6 +92,10 @@ interface Props {
   profileName: string | null;
   roleTitle: string;
   isAdmin: boolean;
+  // 画面の出し分けは useAuth 経由で受け取る（役職プレビューを効かせるため）。
+  // 実データの保護はDB側のRLS（has_feature_permission）が担当する
+  canSummaryPerm: boolean;          // 残業の部門集計を見られる役職か
+  canShiftDirectoryPerm: boolean;   // 全員のシフト予定を見られる役職か
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -2073,7 +2077,7 @@ const OvertimeForm: React.FC<{
 // ────────────────────────────────────────────────────────────────
 // メインページ
 // ────────────────────────────────────────────────────────────────
-const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }) => {
+const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, canSummaryPerm, canShiftDirectoryPerm }) => {
   const isDark = useDarkMode();
   const [searchParams, setSearchParams] = useSearchParams();
   const isConfirmView = searchParams.get('view') === 'confirm';
@@ -2114,8 +2118,11 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
   useEffect(() => {
     if (staffParam || modeParam === 'summary') setHistoryMode('summary');
   }, [staffParam, modeParam]);
-  const [canSummary, setCanSummary] = useState(false);
-  const [canShiftDirectory, setCanShiftDirectory] = useState(false); // 全員のシフト予定ページへの導線表示
+  // 🚨 権限はDBに直接聞かず props（useAuth 経由）で受け取る。
+  //    RPCで聞くと役職プレビュー中も実アカウント（管理者）で評価され、
+  //    「一般として表示」でも集計モードが出てしまい実際の見え方を確認できない
+  const canSummary = canSummaryPerm;
+  const canShiftDirectory = canShiftDirectoryPerm; // 全員のシフト予定ページへの導線表示
   const navigate = useNavigate();
 
   // 集計モード用
@@ -2176,25 +2183,21 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin }
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const [, , revRes, wpRes, patRes, permRes, myProfRes, dirRes] = await Promise.all([
+      const [, , revRes, wpRes, patRes, myProfRes] = await Promise.all([
         fetchOwn(),
         fetchPendingForMe(),
         supabase.from('profiles').select('id, name, role_title').in('role_title', REVIEWER_ROLES).eq('is_active', true).order('role_title').order('name'),
         supabase.from('master_options').select('value').eq('category', 'workplace').order('sort_order'),
         supabase.from('weekly_shift_patterns').select('*').eq('user_id', user.id),
-        supabase.rpc('has_feature_permission', { p_feature: 'overtime_summary' }),
         supabase.from('profiles').select('group_names').eq('id', user.id).maybeSingle(),
-        supabase.rpc('has_feature_permission', { p_feature: 'shift_pattern_directory' }),
       ]);
       setReviewers((revRes.data as Reviewer[] | null) ?? []);
       setWorkplaces(((wpRes.data as { value: string }[] | null) ?? []).map(w => w.value));
       setPatterns((patRes.data as PatternRow[] | null) ?? []);
-      setCanSummary(isAdmin || permRes.data === true);
-      setCanShiftDirectory(isAdmin || dirRes.data === true);
       setMyGroups(((myProfRes.data as { group_names: string[] | null } | null)?.group_names) ?? []);
       setLoading(false);
     })();
-  }, [fetchOwn, fetchPendingForMe, user.id, isAdmin]);
+  }, [fetchOwn, fetchPendingForMe, user.id]);
 
   // 集計モードのデータ取得。確定・見込みの2値を出すため全ステータスを取得（集約のみ・segmentsは詳細で遅延取得）。
   useEffect(() => {

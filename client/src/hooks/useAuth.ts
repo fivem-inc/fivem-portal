@@ -20,6 +20,8 @@ interface UseAuthReturn {
   canPurchaseRequest: boolean;
   canOvertime: boolean;
   canTripReportHistory: boolean;
+  canOvertimeSummary: boolean;
+  canShiftPatternDirectory: boolean;
   leaveRequestEnabled: boolean;
   handleLogout: () => Promise<void>;
 }
@@ -193,6 +195,11 @@ export const useAuth = (): UseAuthReturn => {
   // 🚨 RPCで判定すると役職プレビュー中も実アカウント（管理者）で評価されてしまい、
   //    「一般として表示」でも履歴タブが出てしまうため、他機能と同じ effectivePerms を使う
   const canTripReportHistory = realIsAdmin && !previewRole ? true : (effectivePerms.trip_report_history ?? false);
+  // 残業の部門集計／全員のシフト予定も同じ方式に揃えた。
+  // 以前は各ページから RPC(has_feature_permission) を直接呼んでいたが、
+  // RPCは実アカウントで評価されるため役職プレビューが効かなかった（実際の見え方を確認できない）
+  const canOvertimeSummary = realIsAdmin && !previewRole ? true : (effectivePerms.overtime_summary ?? false);
+  const canShiftPatternDirectory = realIsAdmin && !previewRole ? true : (effectivePerms.shift_pattern_directory ?? false);
 
   const handleLogout = useCallback(async () => {
     console.log('[logout] clicked');
@@ -228,6 +235,8 @@ export const useAuth = (): UseAuthReturn => {
     canPurchaseRequest,
     canOvertime,
     canTripReportHistory,
+    canOvertimeSummary,
+    canShiftPatternDirectory,
     leaveRequestEnabled,
     handleLogout,
   };

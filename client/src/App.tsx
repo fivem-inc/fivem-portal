@@ -1951,7 +1951,7 @@ const ShiftReportPageWrapper: React.FC = () => {
 
 // 残業・時間管理ページ（/overtime・正社員用）
 const OvertimePageWrapper: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canOvertimeSummary, canShiftPatternDirectory, handleLogout, loading } = useAuth();
   const featurePublishState = useFeaturePublished();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   if (!isFeaturePublished('overtime', featurePublishState, isAdmin, roleTitle)) return <Navigate to="/" />;
@@ -1960,7 +1960,7 @@ const OvertimePageWrapper: React.FC = () => {
     <div style={{ padding: '70px 0 0' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
-        <OvertimePage user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin} />
+        <OvertimePage user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin} canSummaryPerm={canOvertimeSummary} canShiftDirectoryPerm={canShiftPatternDirectory} />
       </Suspense>
     </div>
   );
@@ -1968,13 +1968,13 @@ const OvertimePageWrapper: React.FC = () => {
 
 // 全員のシフト予定 閲覧ページ（/shift-patterns・リーダー以上）
 const ShiftDirectoryPageWrapper: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canShiftPatternDirectory, handleLogout, loading } = useAuth();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   return (
     <div style={{ padding: '70px 0 0' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
-        <ShiftDirectoryPage user={user} roleTitle={roleTitle} isAdmin={isAdmin} />
+        <ShiftDirectoryPage user={user} roleTitle={roleTitle} isAdmin={isAdmin} canDirectory={canShiftPatternDirectory} />
       </Suspense>
     </div>
   );
