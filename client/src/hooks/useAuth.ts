@@ -22,6 +22,10 @@ interface UseAuthReturn {
   canTripReportHistory: boolean;
   canOvertimeSummary: boolean;
   canShiftPatternDirectory: boolean;
+  canExpense: boolean;
+  canTripReport: boolean;
+  canBoard: boolean;
+  canLeaveApprovals: boolean;
   leaveRequestEnabled: boolean;
   handleLogout: () => Promise<void>;
 }
@@ -124,13 +128,17 @@ export const useAuth = (): UseAuthReturn => {
         const perms = await fetchPermsForRole(role);
         if (perms) setFeaturePerms(perms);
 
-        // 次回起動時に即表示できるよう名前・役職・権限をキャッシュ保存
+        // 次回起動時に即表示できるよう名前・役職・権限をキャッシュ保存。
+        // 🚨 権限の取得に失敗したとき（不安定な回線など）は、空の権限で上書きしてはいけない。
+        //    上書きすると次回起動時にその空キャッシュが読まれ、
+        //    「アプリを開いたらナビボタンが減っている」状態になる（2026-07-13 に直した症状の再発経路）。
+        //    失敗時は前回の権限をそのまま引き継ぐ
         writeAuthCache(user.id, {
           name: data.name || '',
           roleTitle: role,
           employmentType: empType,
           leaveRequestEnabled: !!data.leave_request_enabled,
-          perms: perms ?? {},
+          perms: perms ?? readAuthCache(user.id)?.perms ?? {},
         });
 
         supabase.from('profiles')
@@ -200,6 +208,15 @@ export const useAuth = (): UseAuthReturn => {
   // RPCは実アカウントで評価されるため役職プレビューが効かなかった（実際の見え方を確認できない）
   const canOvertimeSummary = realIsAdmin && !previewRole ? true : (effectivePerms.overtime_summary ?? false);
   const canShiftPatternDirectory = realIsAdmin && !previewRole ? true : (effectivePerms.shift_pattern_directory ?? false);
+  // 🚨 これまで管理画面の役職トグルがどこからも読まれておらず、押しても何も起きなかった4機能。
+  //    「設定したのに効かない」状態だったので、他機能と同じ形で配線した（2026-08-09）
+  //    ⚠️ 公開設定（全公開／リーダー以上／社長のみ）と役職トグルの両方を満たす人にだけ表示される。
+  //       連絡板を将来「全公開」にするときは、パート・一般・フロア責任者の役職トグルも
+  //       ONにしないと使えないままになるので注意
+  const canExpense    = realIsAdmin && !previewRole ? true : (effectivePerms.expense          ?? false);
+  const canTripReport = realIsAdmin && !previewRole ? true : (effectivePerms.trip_report      ?? false);
+  const canBoard      = realIsAdmin && !previewRole ? true : (effectivePerms.board            ?? false);
+  const canLeaveApprovals = realIsAdmin && !previewRole ? true : (effectivePerms.leave_approvals ?? false);
 
   const handleLogout = useCallback(async () => {
     console.log('[logout] clicked');
@@ -237,6 +254,10 @@ export const useAuth = (): UseAuthReturn => {
     canTripReportHistory,
     canOvertimeSummary,
     canShiftPatternDirectory,
+    canExpense,
+    canTripReport,
+    canBoard,
+    canLeaveApprovals,
     leaveRequestEnabled,
     handleLogout,
   };
