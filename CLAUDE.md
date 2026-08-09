@@ -47,9 +47,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ■ 権限：has_feature_permission() を使う（画面もDBも同じキーを見る）
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ・feature_key は **trip_report_history**。管理画面「機能別 表示権限」にトグルを追加。既定は社長のみON
-・🚨 画面の出し分けは useAuth の canX（localStorageキャッシュ）ではなく
-  **RPC `has_feature_permission`** を使う。RLSでも同じ関数・同じキーを見るので判定が原理的にズレない
-  （overtime_summary / shift_pattern_directory と同じ作り）
+・**画面の出し分け＝useAuth の canTripReportHistory（他機能と同じ effectivePerms 方式）／
+  実データの保護＝DB側のRLS**、と役割を分けた
+・🚨 **最初 RPC `has_feature_permission` で画面を出し分けたら、役職プレビューが効かなかった**。
+  RPCはログイン中の実アカウント（管理者）で評価されるため、「一般として表示」中も true を返し、
+  一般には出ないはずの履歴タブが出てしまった（実機スクショで発覚・修正済み）。
+  ⚠️ **同じ不整合が overtime_summary（残業の部門集計）と shift_pattern_directory（全員のシフト予定）
+  にも残っている**。どちらもRPCで判定しているので、役職プレビューでは実際の見え方を確認できない
 ・has_feature_permission() は SECURITY DEFINER なので profiles/roles/feature_permissions を
   RLSを通さず読む＝**相互再帰しない**。管理者判定も app_metadata 経由で正しい（既に本番で6ポリシーが使用中）
 ・⚠️ レビューで「feature_permissions を認可に使うな（CLAUDE.md にそう書いてある）」という指摘が出たが、

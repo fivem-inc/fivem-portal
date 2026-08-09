@@ -19,6 +19,7 @@ interface UseAuthReturn {
   canCalendar: boolean;
   canPurchaseRequest: boolean;
   canOvertime: boolean;
+  canTripReportHistory: boolean;
   leaveRequestEnabled: boolean;
   handleLogout: () => Promise<void>;
 }
@@ -187,6 +188,11 @@ export const useAuth = (): UseAuthReturn => {
   const canCalendar   = realIsAdmin && !previewRole ? true : (effectivePerms.leave_calendar  ?? false);
   const canPurchaseRequest = realIsAdmin && !previewRole ? true : (effectivePerms.purchase_request ?? false);
   const canOvertime   = realIsAdmin && !previewRole ? true : (effectivePerms.overtime        ?? false);
+  // 出張報告の履歴タブ（全員分の閲覧）。画面の出し分けはここ、実データの保護はDB側のRLS
+  // （has_feature_permission('trip_report_history')）が担当する。
+  // 🚨 RPCで判定すると役職プレビュー中も実アカウント（管理者）で評価されてしまい、
+  //    「一般として表示」でも履歴タブが出てしまうため、他機能と同じ effectivePerms を使う
+  const canTripReportHistory = realIsAdmin && !previewRole ? true : (effectivePerms.trip_report_history ?? false);
 
   const handleLogout = useCallback(async () => {
     console.log('[logout] clicked');
@@ -221,6 +227,7 @@ export const useAuth = (): UseAuthReturn => {
     canCalendar,
     canPurchaseRequest,
     canOvertime,
+    canTripReportHistory,
     leaveRequestEnabled,
     handleLogout,
   };

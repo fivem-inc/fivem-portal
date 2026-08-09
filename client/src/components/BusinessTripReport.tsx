@@ -53,6 +53,7 @@ const BannerSuccess: React.FC<{ message: string; icon?: 'check' | 'send'; onClos
 interface Props {
   user: AuthUser;
   profileName: string | null;
+  canHistory: boolean; // 全員分の報告を見られる役職か（管理画面の「出張報告の履歴閲覧」）
 }
 
 const SLACK_CHANNELS = [
@@ -138,7 +139,7 @@ const DateCalendar: React.FC<CalendarProps> = ({ selected, onToggle, isDark }) =
   );
 };
 
-const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
+const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory }) => {
   const isDark = useDarkMode();
   const topRef = useRef<HTMLDivElement>(null);
 
@@ -157,15 +158,10 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName }) => {
     setSearchParams(p);
   };
 
-  // 全員分の報告を見られる役職か。
-  // 🚨 画面の出し分けとDBの許可（RLS）で同じ feature_key を見るので、判定が原理的にズレない。
-  //    useAuth の localStorage キャッシュ経由ではなく、その都度DBに聞く方式
-  //    （overtime_summary / shift_pattern_directory と同じ作り）
-  const [canHistory, setCanHistory] = useState(false);
-  useEffect(() => {
-    supabase.rpc('has_feature_permission', { p_feature: 'trip_report_history' })
-      .then(({ data }) => setCanHistory(data === true), () => { /* 取得できないときは出さない（安全側） */ });
-  }, []);
+  // 全員分の報告を見られる役職か（props で受け取る）。
+  // 画面の出し分けはここ、実データの保護はDB側のRLS（has_feature_permission）が担当する。
+  // 🚨 RPCで直接DBに聞く方式にすると、役職プレビュー中も実アカウント（管理者）で評価されるため
+  //    「一般として表示」でも履歴タブが出てしまう。他機能と同じ useAuth 経由に揃えてある
 
   // 区分リスト・場所プリセット（DBから取得）
   const [categories, setCategories] = useState<string[]>(['出張', '園指導', '試合', 'イベント（下見）', 'その他']);

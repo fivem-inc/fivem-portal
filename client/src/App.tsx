@@ -1842,13 +1842,13 @@ const Dashboard: React.FC = () => {
 
 // 出張報告ページ
 const TripReportPage: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, handleLogout } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canTripReportHistory, handleLogout } = useAuth();
   if (!user) return <div>読み込んでいます...</div>;
   return (
     <div style={{ padding: '70px 16px 0' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
-        <BusinessTripReportForm user={user} profileName={profileName} />
+        <BusinessTripReportForm user={user} profileName={profileName} canHistory={canTripReportHistory} />
       </Suspense>
     </div>
   );
