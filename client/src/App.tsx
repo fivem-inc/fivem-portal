@@ -1072,9 +1072,19 @@ const NotifItem: React.FC<{ n: NotifLike; onDismiss: (id: string) => void }> = (
 };
 
 // ホームのバナーに出す通知の種別。ここに書いたものだけがバナーに出る（ホワイトリスト）。
-// safety_check_urgent＝「助けが必要」の知らせ。専用バナーが無く、災害時に最優先で気づく必要があるため残す。
-// これ以外（結果のお知らせ・連絡板・欠勤登録など）はベルの一覧が担当する
-const BANNER_ONLY_SOURCE_TYPES = ['safety_check_urgent'];
+// 原則：「読むだけで済むもの」はベルの一覧、「本人の操作・返信が要るもの」はバナー。
+// 足してよいのは「専用バナーが無い」かつ「読むだけでは済まない」の両方を満たすものだけ。
+//   safety_check_urgent … 「助けが必要」。災害時に最優先で気づく必要がある
+//   overtime:clock_inquiry … 経理からの打刻の確認。本人が答えないと給与の確認が進まない
+//   *:pending_resubmit … 差し戻し。本人が直して出し直す（or 取り消す）まで終わらない
+// 🚨 承認待ち（休暇・勤務変更・備品・残業）は専用バナーが担当するのでここには入れない（二重表示になる）
+const BANNER_ONLY_SOURCE_TYPES = [
+  'safety_check_urgent',
+  'overtime:clock_inquiry',
+  'leave_request:pending_resubmit',
+  'shift_report:pending_resubmit',
+  'overtime_request:pending_resubmit',
+];
 
 const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
   const [notifs, setNotifs] = useState<{ id: string; message: string; sub_message: string | null; read: boolean; source_type: string | null; reference_id: string | null }[]>([]);

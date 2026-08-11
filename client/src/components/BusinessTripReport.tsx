@@ -149,7 +149,11 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
   //  ③ 下書き（TripDraft）には保存しない。保存すると次に開いたとき履歴タブで開いてしまい、
   //     入力途中の下書きが残っていることに気づけなくなる
   const [searchParams, setSearchParams] = useSearchParams();
-  const tab: 'form' | 'history' = searchParams.get('tab') === 'history' ? 'history' : 'form';
+  // 🚨 権限が無い人は ?tab=history が付いていてもフォームに着地させる。
+  //    タブのボタン自体は canHistory で隠しているが、URLだけで開けてしまうと
+  //    「タブが無いのに中身が空の履歴画面」という迷子の画面になる（データはRLSで0件のため）。
+  //    通知の宛先に役職を足したのに履歴の権限をONにし忘れたときの保険でもある。
+  const tab: 'form' | 'history' = (searchParams.get('tab') === 'history' && canHistory) ? 'history' : 'form';
   const setTab = (next: 'form' | 'history') => {
     setShowConfirm(false); // 送信確認を開いたままタブを切り替えられないようにする
     const p = new URLSearchParams(searchParams);

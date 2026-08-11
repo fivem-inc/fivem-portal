@@ -48,11 +48,15 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string }> = {
   "purchase_request:self_judgment_shared":  { app: "備品精算", word: "新着", url: "/purchase?tab=history" },
   // 交通費申請（経理の要対応）
   "expense:new_request":     { app: "交通費", word: "新着", url: "/admin" },
-  // 出張報告（到着・終了）。報告の一覧は管理画面にしかなく、宛先の中心である
-  // マネージャーは /admin に入れない（ホームへ戻される）ため、ホームに着地させてベルで内容を見てもらう。
+  // 出張報告（到着・終了）。2026-08-09 にスタッフ側へ履歴タブを新設したので、
+  // ホーム着地（＝ベルで見てもらう）をやめて履歴タブに直接着地させる。
+  // ⚠️ 履歴タブは「出張報告の履歴閲覧」権限が要る。宛先の役職を足すときは
+  //    管理画面でこの権限も同じ役職をONにすること（OFFのままだとフォームに着地する）。
+  // ⚠️ プッシュは「ユーザー×イベント」で集約して1通にまとめるため、
+  //    ベル通知と違い focus=<報告id> は付けられない＝該当カードは光らない（一覧の先頭が最新）。
   // ⚠️「出張報告」は実機未検証の語。Chromeが警告表示に化けたら app を検証済みの語に変える
-  "trip:report_arrival":     { app: "出張報告", word: "新着", url: "/" },
-  "trip:report_end":         { app: "出張報告", word: "新着", url: "/" },
+  "trip:report_arrival":     { app: "出張報告", word: "新着", url: "/trip-report?tab=history" },
+  "trip:report_end":         { app: "出張報告", word: "新着", url: "/trip-report?tab=history" },
   // 連絡板
   "board:notice":           { app: "連絡板", word: "新着", url: "/board" },
   "board:group_message":    { app: "連絡板", word: "新着", url: "/board" },
@@ -72,7 +76,10 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string }> = {
   "overtime_proposal:received":  { app: "残業調整", word: "新着", url: "/overtime" },
   "overtime_proposal:responded": { app: "残業調整", word: "新着", url: "/overtime" },
   // 残業の実績未報告リマインド（本人へ日次・安全語「新着」）
-  "overtime:unreported":         { app: "残業", word: "新着", url: "/overtime" },
+  // ⚠️ /overtime の既定タブは「申請・報告」の入力フォーム。tab=history を省くと
+  //    「実績を報告してください」の知らせなのに、報告する場所（履歴タブ）ではなく
+  //    新規申請の入力画面に着地する。ベル側（App.tsx）は tab=history で正しかった。
+  "overtime:unreported":         { app: "残業", word: "新着", url: "/overtime?tab=history" },
   // 残業がしきい値を超えたお知らせ。他人の残業申請が回ってきたのと区別できるよう
   // アプリ名を「残業」と分けている。
   // ⚠️「勤務時間」は実機未検証の語。Chromeが警告表示に化けたらここを "残業" に戻す
