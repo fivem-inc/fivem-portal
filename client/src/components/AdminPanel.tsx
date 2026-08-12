@@ -471,42 +471,62 @@ const AdminPanelContent: React.FC = () => {
       
       {/* タブナビゲーション */}
       {(() => {
-        const ROW1 = [
-          { key: 'approvals',          label: '交通費',        icon: '🚃' },
-          { key: 'trip_reports',       label: '出張報告',      icon: '📍' },
-          { key: 'leave_requests',     label: '休暇申請',      icon: '🌿' },
-          { key: 'shift_reports',      label: '勤務変更',      icon: '⏰' },
-          { key: 'overtime_admin',     label: '残業管理',      icon: '🕐'},
-          { key: 'overtime_proposals', label: '調整提案',      icon: '🤝' },
-          { key: 'purchase_requests',  label: '購入申請',      icon: '🧾' },
-          { key: 'corrections',        label: '修正依頼',      icon: '📩' },
+        // タブは「申請／スタッフ／連絡」の系統ごとに3段。
+        // 🚨 横スクロール（overflowX）は使わない。タブが増えると画面の外に隠れて
+        //    存在に気づけなくなるため、折り返して全部見えるようにしている。
+        //    overflowX を使うと overflowY も自動でクリップされ、バッジも切れる。
+        const TAB_GROUPS = [
+          {
+            title: '申請',
+            tabs: [
+              { key: 'approvals',           label: '交通費',        icon: '🚃' },
+              { key: 'trip_reports',        label: '出張報告',      icon: '📍' },
+              { key: 'leave_requests',      label: '休暇申請',      icon: '🌿' },
+              { key: 'shift_reports',       label: '勤務変更',      icon: '⏰' },
+              { key: 'overtime_admin',      label: '残業管理',      icon: '🕐' },
+              { key: 'overtime_proposals',  label: '調整提案',      icon: '🤝' },
+              { key: 'purchase_requests',   label: '購入申請',      icon: '🧾' },
+              { key: 'corrections',         label: '修正依頼',      icon: '📩' },
+            ],
+          },
+          {
+            title: 'スタッフ',
+            tabs: [
+              { key: 'users',               label: 'ユーザー',      icon: '👤' },
+              { key: 'groups',              label: 'グループ',      icon: '👥' },
+              { key: 'leader_assignments',  label: 'リーダー',      icon: '📋' },
+              { key: 'feature_permissions', label: '権限管理',      icon: '🔐' },
+              { key: 'reports',             label: 'レポート',      icon: '📊' },
+            ],
+          },
+          {
+            title: '連絡',
+            tabs: [
+              { key: 'announcements',       label: 'お知らせ',      icon: '📢' },
+              { key: 'board_settings',      label: '連絡板設定',    icon: '📨' },
+              { key: 'notifications',       label: '通知設定',      icon: '🔔' },
+              { key: 'scheduled_reminders', label: 'リマインド設定', icon: '📅' },
+              { key: 'safety_checks',       label: '安否・緊急',    icon: '🆘' },
+            ],
+          },
         ] as const;
-        const ROW2 = [
-          { key: 'users',              label: 'ユーザー',      icon: '👤' },
-          { key: 'groups',             label: 'グループ',      icon: '👥' },
-          { key: 'leader_assignments', label: 'リーダー',      icon: '📋' },
-          { key: 'reports',            label: 'レポート',      icon: '📊' },
-          { key: 'notifications',      label: '通知設定',      icon: '🔔' },
-          { key: 'scheduled_reminders', label: 'リマインド設定', icon: '📅' },
-          { key: 'board_settings',     label: '連絡板設定',    icon: '📨' },
-          { key: 'announcements',      label: 'お知らせ',      icon: '📢' },
-          { key: 'safety_checks',      label: '安否・緊急',    icon: '🆘' },
-          { key: 'feature_permissions',label: '権限管理',      icon: '🔐' },
-        ] as const;
-        const ALL_TABS = [...ROW1, ...ROW2];
-        const handleTabChange = (key: typeof ALL_TABS[number]['key']) => {
+        type TabKey = typeof TAB_GROUPS[number]['tabs'][number]['key'];
+        const ALL_TABS = TAB_GROUPS.flatMap(g => [...g.tabs]);
+        const handleTabChange = (key: TabKey) => {
           if (key === 'groups') setSelectedGroup(null);
           setActiveTab(key);
         };
-        const rowStyle = (row: 1 | 2): React.CSSProperties => ({
-          display: 'flex', justifyContent: 'center', flexWrap: 'nowrap',
-          marginBottom: row === 1 ? 2 : 0,
-          overflowX: row === 2 ? 'auto' : undefined,
-          // overflowX: 'auto' を指定すると overflowY も自動でクリップされるため、
-          // バッジ（top: -6 で枠外に飛び出す）が切れないよう上に余白を確保し、見た目の位置は marginTop で打ち消す
-          paddingTop: row === 2 ? 8 : undefined,
-          marginTop: row === 2 ? -8 : undefined,
+        const groupRowStyle = (isLast: boolean): React.CSSProperties => ({
+          display: 'flex', alignItems: 'flex-start', gap: 8,
+          marginBottom: isLast ? 0 : 8,
         });
+        const groupLabelStyle: React.CSSProperties = {
+          fontSize: 11, color: isDarkMode ? '#adb5bd' : '#6c757d',
+          width: 52, flexShrink: 0, textAlign: 'right', paddingTop: 9, lineHeight: 1,
+        };
+        const groupTabsStyle: React.CSSProperties = {
+          display: 'flex', flexWrap: 'wrap', gap: 4,
+        };
         const Badge = ({ count }: { count: number }) => (
           <span style={{ position: 'absolute', top: -6, right: -6, background: '#dc3545', color: '#fff', borderRadius: '50%', minWidth: 18, height: 18, padding: '0 4px', fontSize: 11, fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>
             {count}
@@ -514,35 +534,34 @@ const AdminPanelContent: React.FC = () => {
         );
         return (
           <>
-            {/* PC: 2段タブ */}
-            <div className="admin-tabs-pc">
-              <div style={rowStyle(1)}>
-                {ROW1.map(t => (
-                  <button key={t.key} style={{ ...tabStyle(activeTab === t.key), position: 'relative' }}
-                          onClick={() => handleTabChange(t.key)}>
-                    {t.icon} {t.label}
-                    {t.key === 'leave_requests' && pendingLeaveRequests.length > 0 && (
-                      <Badge count={pendingLeaveRequests.length} />
-                    )}
-                    {t.key === 'corrections' && openCorrectionCount > 0 && (
-                      <Badge count={openCorrectionCount} />
-                    )}
-                    {/* 設定の入力もれ（次年度の会社カレンダー未登録など）。登録が済めば自動で消える */}
-                    {t.key === 'overtime_admin' && adminSetupBadge > 0 && (
-                      <Badge count={adminSetupBadge} />
-                    )}
-                  </button>
-                ))}
-              </div>
-              <div style={rowStyle(2)}>
-                {ROW2.map(t => (
-                  <button key={t.key} style={{ ...tabStyle(activeTab === t.key), position: 'relative' }}
-                          onClick={() => handleTabChange(t.key)}>
-                    {t.icon} {t.label}
-                    {t.key === 'users' && pendingUsers.length > 0 && (
-                      <Badge count={pendingUsers.length} />
-                    )}
-                  </button>
+            {/* PC: 系統ごとに3段。見出しの位置を揃えるため、中身は左寄せにして全体を中央に置く */}
+            <div className="admin-tabs-pc" style={{ alignItems: 'center' }}>
+              <div style={{ maxWidth: '100%' }}>
+                {TAB_GROUPS.map((g, gi) => (
+                  <div key={g.title} style={groupRowStyle(gi === TAB_GROUPS.length - 1)}>
+                    <span style={groupLabelStyle}>{g.title}</span>
+                    <div style={groupTabsStyle}>
+                      {g.tabs.map(t => (
+                        <button key={t.key} style={{ ...tabStyle(activeTab === t.key), position: 'relative' }}
+                                onClick={() => handleTabChange(t.key)}>
+                          {t.icon} {t.label}
+                          {t.key === 'leave_requests' && pendingLeaveRequests.length > 0 && (
+                            <Badge count={pendingLeaveRequests.length} />
+                          )}
+                          {t.key === 'corrections' && openCorrectionCount > 0 && (
+                            <Badge count={openCorrectionCount} />
+                          )}
+                          {/* 設定の入力もれ（次年度の会社カレンダー未登録など）。登録が済めば自動で消える */}
+                          {t.key === 'overtime_admin' && adminSetupBadge > 0 && (
+                            <Badge count={adminSetupBadge} />
+                          )}
+                          {t.key === 'users' && pendingUsers.length > 0 && (
+                            <Badge count={pendingUsers.length} />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>
@@ -550,7 +569,7 @@ const AdminPanelContent: React.FC = () => {
             <div className="admin-tabs-mobile">
               <select
                 value={activeTab}
-                onChange={e => handleTabChange(e.target.value as typeof ALL_TABS[number]['key'])}
+                onChange={e => handleTabChange(e.target.value as TabKey)}
                 style={{
                   width: '100%', padding: '12px 16px', fontSize: 16, fontWeight: 'bold',
                   borderRadius: '8px 8px 0 0', border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`,
