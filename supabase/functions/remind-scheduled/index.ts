@@ -118,7 +118,13 @@ serve(async () => {
     const { error: notifErr } = await supabase.from("notifications").insert(
       userIds.map((uid: string) => ({ user_id: uid, message: reminder.title, sub_message: reminder.body, event_key: 'reminder:scheduled' }))
     );
-    if (notifErr) console.error("[remind-scheduled] ベル通知の作成に失敗:", notifErr.message);
+    // 🚨 失敗をログに書くだけだと、ログは普段誰も見ないので実質気づけない。
+    //    管理画面を開けば分かるように、下で last_error に残す
+    const problems: string[] = [];
+    if (notifErr) {
+      console.error("[remind-scheduled] ベル通知の作成に失敗:", notifErr.message);
+      problems.push("ベル通知を作れませんでした（プッシュも届いていません）");
+    }
 
     if (emailSetting?.enabled && emailSetting.template) {
       const vars = { "タイトル": reminder.title, "本文": reminder.body };
@@ -132,8 +138,19 @@ serve(async () => {
         if (emailError) { emailFailed++; console.error("[remind-scheduled] send-email error:", emailError); }
         await new Promise((r) => setTimeout(r, 80));
       }
-      if (emailFailed > 0) console.error(`[remind-scheduled] ${emailFailed}/${emails.length}件のメール送信に失敗`);
+      if (emailFailed > 0) {
+        console.error(`[remind-scheduled] ${emailFailed}/${emails.length}件のメール送信に失敗`);
+        problems.push(`メール${emailFailed}件が届きませんでした`);
+      }
     }
+
+    // 配信の結果を残す（管理画面の設定カードに出る）。成功なら last_error は null に戻す
+    const { error: logErr } = await supabase.from("board_scheduled_reminders").update({
+      last_sent_at: new Date().toISOString(),
+      last_sent_count: userIds.length,
+      last_error: problems.length > 0 ? problems.join(" ／ ") : null,
+    }).eq("id", reminder.id);
+    if (logErr) console.error("[remind-scheduled] 配信結果の記録に失敗:", logErr.message);
 
     totalSent += userIds.length;
   }

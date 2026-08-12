@@ -1527,6 +1527,10 @@ interface ScheduledReminder {
   send_hour: number;
   send_minute: number;
   months: number[] | null;
+  // 最後の配信結果。last_error は部分的な失敗（ベル通知が作れなかった等）で、成功なら null
+  last_sent_at: string | null;
+  last_sent_count: number | null;
+  last_error: string | null;
 }
 
 interface BoardChannel {
@@ -1580,6 +1584,12 @@ type ReminderStatusRow = {
   done_count: number;
   pending_count: number;
   pending_names: string[];
+};
+
+// 「8/1 10:00」。月日と時は0埋めしない／分は0埋めする（アプリ共通の表記）
+const formatSentAt = (iso: string) => {
+  const d = new Date(iso);
+  return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
 };
 
 const ReminderResponseStatus: React.FC<{
@@ -1983,6 +1993,15 @@ export const ScheduledRemindersPanel: React.FC = () => {
                   ? `個別選択（${r.user_ids.length}人）`
                   : r.channel_id ? (channels.find(c => c.id === r.channel_id)?.name ?? 'グループ') : '全スタッフ'}
               </p>
+              {/* 配信でつまずいても通知では知らせない（その通知自体が失敗したら同じ問題になるため）。
+                  ここを見れば分かるようにしておく */}
+              {r.last_sent_at && (
+                <p style={{ margin: '3px 0 0', fontSize: 11, color: r.last_error ? '#dc3545' : sub, fontWeight: r.last_error ? 'bold' : 'normal' }}>
+                  最後の配信: {formatSentAt(r.last_sent_at)}
+                  {r.last_sent_count != null && ` ／ ${r.last_sent_count}人`}
+                  {r.last_error && ` ／ ⚠ ${r.last_error}`}
+                </p>
+              )}
             </div>
             <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
               <button onClick={() => handleEditStart(r)}
