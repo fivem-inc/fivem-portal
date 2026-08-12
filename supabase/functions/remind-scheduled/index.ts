@@ -76,14 +76,49 @@ serve(async () => {
 
     if (userIds.length === 0) continue;
 
+    // 🚨 退職者を除く。上の3つの分岐のうち「全ユーザー」だけが is_active を見ており、
+    //    個別選択（user_ids）と連絡板グループ（channel_id）は在籍確認をしていなかったため、
+    //    退職者にリマインドのメールが飛んでいた。分岐ごとに書くと同じ漏れが再発するので、
+    //    宛先が確定したここで一度だけまとめて絞る。
+    const { data: activeRows, error: activeErr } = await supabase
+      .from("profiles").select("id").in("id", userIds).eq("is_active", true);
+    if (activeErr) {
+      console.error("[remind-scheduled] 在籍確認に失敗:", activeErr.message);
+      continue; // 誰が在籍中か分からないまま送ると退職者に届くので、この回は送らない
+    }
+    userIds = (activeRows ?? []).map((p: { id: string }) => p.id);
+    if (userIds.length === 0) continue;
+
+    // 🚨 対応記録（ホームのバナー・管理画面の対応状況の元）を、通知より「先」に作る。
+    //    ここで対象者全員分の行を作ることで「何人に配ったか」が確定する。
+    //    順序が逆だと、記録の作成に失敗したときベルだけ鳴ってバナーが出ず、
+    //    管理画面の分母も欠けるのに誰も気づけない。
+    //    cronは5分おきに走るので、同じ日の二重配信は unique 制約で弾く（on conflict do nothing）。
+    const deliveredOn = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10); // JSTの今日
+    const { error: respErr } = await supabase
+      .from("scheduled_reminder_responses")
+      .upsert(
+        userIds.map((uid: string) => ({
+          reminder_id: reminder.id, delivered_on: deliveredOn, user_id: uid, status: 'pending',
+        })),
+        { onConflict: 'reminder_id,delivered_on,user_id', ignoreDuplicates: true },
+      );
+    if (respErr) {
+      console.error("[remind-scheduled] 対応記録の作成に失敗:", respErr.message);
+      continue; // バナーが出ない・集計が欠けるので、この回は通知も送らない
+    }
+
     // プッシュ通知はベル通知のINSERT→push_queueトリガー→push-dispatchワーカー経由で送られる
     // （管理者の自由文はプッシュに載せず、ワーカーが固定の安全文面を使う）
 
     // reference_id は付けない：reminder.id は board_scheduled_reminders のIDであり、
-    // board_messages のIDではないため、連絡板の詳細画面へのリンクとしては使えない
-    await supabase.from("notifications").insert(
+    // board_messages のIDではないため、連絡板の詳細画面へのリンクとしては使えない。
+    // 🚨 ここに入れると classifyNotif の isBoard 判定（本文に「リマインド」を含むと連絡板とみなす）に
+    //    吸い込まれ、タップで連絡板の空ページに着地する
+    const { error: notifErr } = await supabase.from("notifications").insert(
       userIds.map((uid: string) => ({ user_id: uid, message: reminder.title, sub_message: reminder.body, event_key: 'reminder:scheduled' }))
     );
+    if (notifErr) console.error("[remind-scheduled] ベル通知の作成に失敗:", notifErr.message);
 
     if (emailSetting?.enabled && emailSetting.template) {
       const vars = { "タイトル": reminder.title, "本文": reminder.body };

@@ -49,6 +49,7 @@ import { usePurchasePendingCount } from './hooks/usePurchasePendingCount';
 import { useSafetyPendingCount, safetyTone } from './hooks/useSafetyPendingCount';
 import { useSafetyQueueFlush } from './hooks/useSafetyQueueFlush';
 import { formatSnapshotAge } from './lib/safetyStorage';
+import { withTimeout, SAFETY_TIMEOUT_MS } from './lib/netFailure';
 import type { Expense, Submission } from './types';
 
 // ページ遷移のたびにスクロールをトップへ戻す
@@ -169,74 +170,123 @@ const writeDismissedIds = (key: string, ids: string[]) => {
 // 定期リマインド（毎月◯日の「月目標の記入をお願いします」等）のバナー。
 //   プッシュを見逃しても、アプリを開けば思い出せるようにするためのもの。
 //   ・「完了しました」＝そのリマインドはもう出さない（次の配信＝翌月まで）
-//   ・「後で」＝いったん消し、次の配信時刻（管理画面で設定した時刻）を過ぎたら再表示
-//   対応状況はDBに記録せず端末（localStorage）に持つ。誰が対応したかの管理は行わない方針。
-const REMINDER_STATE_KEY = 'fivem_reminder_banner_state'; // { [notifId]: { done?: true, snoozeUntil?: number } }
-
-type ReminderState = Record<string, { done?: boolean; snoozeUntil?: number }>;
+//   ・「後で」＝いったん消し、明日の朝9時に再表示
+//
+// 🚨 押した記録は scheduled_reminder_responses（DB）に持つ。以前は端末（localStorage）に
+//    持っていたため、ブラウザや端末を変えると同じバナーがまた出ていた。
+//    記録先を notifications にしなかった理由は 20260813100000 のマイグレーション参照
+//    （通知は既読30日で自動削除され、押した人の分から先に消えるため集計が逆さまになる）。
+type ReminderRow = {
+  id: string;
+  delivered_on: string;
+  status: 'pending' | 'snoozed';
+  snooze_until: string | null;
+  reminder: { id: string; title: string; body: string | null } | null;
+};
 
 const ScheduledReminderBanner: React.FC<{ userId: string }> = ({ userId }) => {
-  const [items, setItems] = useState<{ id: string; message: string; sub_message: string | null }[]>([]);
-  const [state, setState] = useState<ReminderState>(() => {
-    try { return JSON.parse(localStorage.getItem(REMINDER_STATE_KEY) || '{}'); } catch { return {}; }
-  });
+  const [items, setItems] = useState<ReminderRow[]>([]);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [errorId, setErrorId] = useState<string | null>(null);
+  const [showDone, setShowDone] = useState(false);
 
   useEffect(() => {
     if (!userId) return;
-    supabase.from('notifications')
-      .select('id, message, sub_message')
+    // 停止（is_active=false）にしたリマインドは出さない。!inner を付けないと
+    // 埋め込み側の条件で行が除外されず、止めたはずの催促が出続ける
+    supabase.from('scheduled_reminder_responses')
+      .select('id, delivered_on, status, snooze_until, reminder:board_scheduled_reminders!inner(id, title, body, is_active)')
       .eq('user_id', userId)
-      .eq('event_key', 'reminder:scheduled')
-      .order('created_at', { ascending: false })
-      .limit(5)
-      .then(({ data }) => setItems((data ?? []) as { id: string; message: string; sub_message: string | null }[]), () => {});
+      .in('status', ['pending', 'snoozed'])
+      .eq('reminder.is_active', true)
+      .order('delivered_on', { ascending: false })
+      .then(({ data }) => setItems(((data ?? []) as unknown) as ReminderRow[]), () => {});
   }, [userId]);
 
-  const save = (next: ReminderState) => {
-    setState(next);
-    try { localStorage.setItem(REMINDER_STATE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  useEffect(() => {
+    if (!showDone) return;
+    const t = setTimeout(() => setShowDone(false), 4000);
+    return () => clearTimeout(t);
+  }, [showDone]);
+
+  const respond = async (row: ReminderRow, status: 'done' | 'snoozed') => {
+    setBusyId(row.id);
+    setErrorId(null);
+    // 圏外だと通信が終わらず「保存中...」のまま固まるので上限を設ける
+    const res = await withTimeout(
+      supabase.rpc('respond_scheduled_reminder', { p_id: row.id, p_status: status }) as unknown as PromiseLike<{ error: { message: string } | null }>,
+      SAFETY_TIMEOUT_MS,
+      { error: { message: 'timeout' } },
+    );
+    setBusyId(null);
+    // 🚨 先に消してから失敗時に戻す（楽観的更新）はしない。消えたバナーが数秒後に
+    //    復活すると「壊れた」「二重に押したのでは」としか読めないため、成功してから消す
+    if (res.error) { setErrorId(row.id); return; }
+    setItems(prev => prev.filter(x => x.id !== row.id));
+    if (status === 'done') setShowDone(true);
   };
 
-  // 翌朝9時（次に思い出すのに自然な時刻＝出勤してPCを開く頃）
-  const nextMorning = () => {
-    const d = new Date();
-    d.setHours(9, 0, 0, 0);
-    if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
-    return d.getTime();
-  };
+  // 「後で」の期限がまだ来ていないものは出さない。
+  // 同じリマインドは最新の配信分だけ残す（押さないまま翌月の配信が来たとき、
+  // 見た目が同じバナーが2枚並んで、どちらを押すのか分からなくなるのを防ぐ）
+  const now = Date.now();
+  const visible: ReminderRow[] = [];
+  const seen = new Set<string>();
+  for (const r of items) {
+    const key = r.reminder?.id ?? r.id;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (r.status === 'snoozed' && r.snooze_until && new Date(r.snooze_until).getTime() > now) continue;
+    visible.push(r);
+  }
 
-  const visible = items.filter(n => {
-    const s = state[n.id];
-    if (!s) return true;
-    if (s.done) return false;
-    return !s.snoozeUntil || Date.now() >= s.snoozeUntil;
-  });
-
-  if (visible.length === 0) return null;
+  if (visible.length === 0 && !showDone) return null;
 
   return (
     <>
-      {visible.map(n => (
-        <div key={n.id} style={{ margin: '0 0 16px 0', padding: '12px 16px', background: '#fff3cd', border: '2px solid #ffc107', borderRadius: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-            <span style={{ fontSize: 22 }}>📋</span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 15, fontWeight: 'bold', color: '#856404' }}>{n.message}</div>
-              {n.sub_message && <div style={{ fontSize: 13, color: '#856404', marginTop: 2, whiteSpace: 'pre-wrap' }}>{n.sub_message}</div>}
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-            <button type="button" onClick={() => save({ ...state, [n.id]: { done: true } })}
-              style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: '#28a745', color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}>
-              ✅ 完了しました
-            </button>
-            <button type="button" onClick={() => save({ ...state, [n.id]: { snoozeUntil: nextMorning() } })}
-              style={{ padding: '7px 16px', borderRadius: 8, border: '1px solid #856404', background: 'transparent', color: '#856404', fontSize: 13, cursor: 'pointer' }}>
-              🕐 後で（明日また表示）
-            </button>
+      {showDone && (
+        <div style={{ margin: '0 0 16px 0', padding: '14px 16px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>✓</div>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 'bold', color: '#166534' }}>完了にしました</div>
+            <div style={{ fontSize: 12.5, color: '#15803d', marginTop: 2 }}>他のスマホ・パソコンでも表示されなくなりました。</div>
           </div>
         </div>
-      ))}
+      )}
+      {visible.map(n => {
+        const busy = busyId === n.id;
+        return (
+          <div key={n.id} style={{ margin: '0 0 16px 0', padding: '12px 16px', background: '#fff3cd', border: '2px solid #ffc107', borderRadius: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+              <span style={{ fontSize: 22 }}>📋</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 15, fontWeight: 'bold', color: '#856404' }}>{n.reminder?.title}</div>
+                {n.reminder?.body && <div style={{ fontSize: 13, color: '#856404', marginTop: 2, whiteSpace: 'pre-wrap' }}>{n.reminder.body}</div>}
+              </div>
+            </div>
+            {/* 押すと記録が残るので、誤タップしないよう十分な高さ（44px）を確保する */}
+            <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
+              <button type="button" disabled={busy} onClick={() => respond(n, 'done')}
+                style={{ flex: 1, minHeight: 44, padding: '11px 12px', borderRadius: 8, border: 'none', background: busy ? '#6c757d' : '#28a745', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: busy ? 'default' : 'pointer' }}>
+                {busy ? '保存中...' : '✅ 完了しました'}
+              </button>
+              <button type="button" disabled={busy} onClick={() => respond(n, 'snoozed')}
+                style={{ flex: 1, minHeight: 44, padding: '11px 12px', borderRadius: 8, border: '1px solid #856404', background: 'transparent', color: '#856404', fontSize: 14, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.5 : 1 }}>
+                🕐 後で（明日の朝また表示）
+              </button>
+            </div>
+            {errorId === n.id && (
+              <div style={{ marginTop: 8, padding: '8px 10px', background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, fontSize: 12.5, color: '#842029' }}>
+                まだ記録できていません。電波の良い場所で、もう一度押してください。
+              </div>
+            )}
+            <div style={{ fontSize: 11.5, color: '#856404', marginTop: 8, lineHeight: 1.5 }}>
+              上の内容が終わってから押してください。<br />
+              どちらを押しても、他のスマホ・パソコンにも反映されます。
+            </div>
+          </div>
+        );
+      })}
     </>
   );
 };

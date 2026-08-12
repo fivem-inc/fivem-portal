@@ -1567,6 +1567,119 @@ const formatReminderMonths = (months: number[] | null | undefined): string => {
 
 type RecipientMode = 'all' | 'channel' | 'individual';
 
+// 定期リマインドの対応状況（誰が「完了しました」を押したか）
+//
+// 🚨 集計は必ず scheduled_reminder_status（SECURITY DEFINER）を通す。
+//    対応記録は本人しか読めないRLSなので、画面から直接数えると「自分の分だけ」になり、
+//    しかもエラーが出ないので静かに嘘の数字が出る。
+// 🚨 「未対応」とは書かない。押していない＝やっていない、ではない
+//    （記入したが押し忘れた／アプリを開いていないだけ、が普通に起きる）。
+type ReminderStatusRow = {
+  delivered_on: string;
+  target_count: number;
+  done_count: number;
+  pending_count: number;
+  pending_names: string[];
+};
+
+const ReminderResponseStatus: React.FC<{
+  reminderId: string; border: string; text: string; sub: string; isDark: boolean;
+}> = ({ reminderId, border, text, sub, isDark }) => {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<ReminderStatusRow[] | null>(null);
+  const [idx, setIdx] = useState(0);
+  const [showNames, setShowNames] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next && rows === null) {
+      supabase.rpc('scheduled_reminder_status', { p_reminder_id: reminderId }).then(
+        ({ data, error: e }) => {
+          if (e) { setError('対応状況を取得できませんでした'); return; }
+          setRows((data ?? []) as ReminderStatusRow[]);
+        },
+        () => setError('対応状況を取得できませんでした'),
+      );
+    }
+  };
+
+  const fmtDate = (d: string) => {
+    const p = d.split('-');
+    return `${Number(p[1])}/${Number(p[2])}`;
+  };
+
+  const cur = rows && rows.length > 0 ? rows[Math.min(idx, rows.length - 1)] : null;
+  const pct = cur && cur.target_count > 0 ? Math.round((cur.done_count / cur.target_count) * 100) : 0;
+
+  return (
+    <div style={{ borderTop: `1px solid ${border}`, marginTop: 10, paddingTop: 10 }}>
+      <button onClick={toggle}
+        style={{ padding: '4px 10px', borderRadius: 6, border: `1px solid ${border}`, background: 'none', color: '#007bff', cursor: 'pointer', fontSize: 12 }}>
+        {open ? '▲ 対応状況を閉じる' : '▼ 対応状況'}
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 10 }}>
+          {error ? (
+            <p style={{ margin: 0, fontSize: 12, color: '#842029' }}>{error}</p>
+          ) : rows === null ? (
+            <p style={{ margin: 0, fontSize: 12, color: sub }}>読み込んでいます...</p>
+          ) : rows.length === 0 ? (
+            <p style={{ margin: 0, fontSize: 12, color: sub }}>まだ配信されていません。次の配信から記録されます。</p>
+          ) : cur && (
+            <>
+              {rows.length > 1 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <label style={{ fontSize: 12, color: sub }}>配信日</label>
+                  <select value={idx} onChange={e => { setIdx(Number(e.target.value)); setShowNames(false); }}
+                    style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#495057' : '#fff', color: text }}>
+                    {rows.map((r, i) => (
+                      <option key={r.delivered_on} value={i}>
+                        {fmtDate(r.delivered_on)}{i === 0 ? '（最新）' : '（終わった回）'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div style={{ height: 6, borderRadius: 3, background: isDark ? '#6c757d' : '#e9ecef', overflow: 'hidden' }}>
+                <div style={{ width: `${pct}%`, height: '100%', background: pct === 100 ? '#28a745' : '#007bff' }} />
+              </div>
+
+              <p style={{ margin: '8px 0 0', fontSize: 13, color: text }}>
+                押した人 {cur.done_count}人 ／ まだ押していない人 {cur.pending_count}人
+              </p>
+              <p style={{ margin: '4px 0 0', fontSize: 11, color: sub }}>
+                ボタンを押した記録です。実際に記入したかどうかは分かりません。
+              </p>
+
+              {cur.pending_count > 0 && (
+                <>
+                  <button onClick={() => setShowNames(v => !v)}
+                    style={{ marginTop: 8, padding: '4px 10px', borderRadius: 6, border: `1px solid ${border}`, background: 'none', color: '#007bff', cursor: 'pointer', fontSize: 12 }}>
+                    {showNames ? '▲ 閉じる' : '▼ まだ押していない人を表示'}
+                  </button>
+                  {showNames && (
+                    <p style={{ margin: '6px 0 0', fontSize: 12, color: text, lineHeight: 1.6 }}>
+                      {cur.pending_names.join('、')}
+                      {cur.pending_count > cur.pending_names.length && ` 他${cur.pending_count - cur.pending_names.length}人`}
+                    </p>
+                  )}
+                </>
+              )}
+              <p style={{ margin: '8px 0 0', fontSize: 11, color: sub }}>
+                配信した時点の送り先です。あとから送り先を変えても、この回の記録は変わりません。
+              </p>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const ScheduledRemindersPanel: React.FC = () => {
   const { isDarkMode } = useAdminPanel();
   const [reminders, setReminders] = useState<ScheduledReminder[]>([]);
@@ -1886,6 +1999,7 @@ export const ScheduledRemindersPanel: React.FC = () => {
               </button>
             </div>
           </div>
+          <ReminderResponseStatus reminderId={r.id} border={border} text={text} sub={sub} isDark={isDarkMode} />
         </div>
       ))}
     </div>
