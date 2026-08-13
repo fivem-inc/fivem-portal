@@ -8,6 +8,7 @@ import { usePurchasePendingCount } from '../hooks/usePurchasePendingCount';
 import ReimbursementForm from '../components/ReimbursementForm';
 import PurchaseRequestForm, { type ResubmitRecord } from '../components/PurchaseRequestForm';
 import PurchaseApprovals from '../components/PurchaseApprovals';
+import { PageTabs, type PageTabDef } from '../components/PageTabs';
 import { resolveItems } from '../lib/purchaseItemsFallback';
 import PurchaseItemsSummary from '../components/PurchaseItemsSummary';
 import { paymentMethodLabel } from '../utils';
@@ -454,15 +455,14 @@ const PurchaseRequestPage: React.FC<PurchaseRequestPageProps> = ({ user, roleTit
   // 「✅ 承認」タブに出す件数バッジ（ナビバーの赤バッジと同じ数え方・同じ共通フック）
   const { pendingCount: purchasePending } = usePurchasePendingCount(user.id, canApprovePurchase);
 
-  const cardBg = isDarkMode ? '#343a40' : '#ffffff';
-  const border = isDarkMode ? '#495057' : '#e0e0e0';
   const text = isDarkMode ? '#eeeeee' : '#222222';
 
-  const tabDefs: { key: Tab; label: string }[] = [
+  // 承認タブのバッジ＝自分の回答・承認を待っている件数。ナビバーの赤バッジと同じ数え方（共通フック）
+  const tabDefs: PageTabDef<Tab>[] = [
     { key: 'reimbursement', label: '💰 精算' },
     { key: 'request', label: '📝 申請' },
     { key: 'history', label: '📋 履歴' },
-    ...(canApprovePurchase ? [{ key: 'approvals' as Tab, label: '✅ 承認' }] : []),
+    ...(canApprovePurchase ? [{ key: 'approvals' as Tab, label: '✅ 承認', badge: purchasePending }] : []),
   ];
 
   return (
@@ -495,28 +495,15 @@ const PurchaseRequestPage: React.FC<PurchaseRequestPageProps> = ({ user, roleTit
         </p>
       </div>
 
-      <div style={{ display: 'flex', background: cardBg, border: `1px solid ${border}`, borderRadius: 10, overflow: 'hidden', marginBottom: 14 }}>
-        {tabDefs.map(({ key, label }) => (
-          <button
-            key={key}
-            type="button" onClick={() => { setResubmitRecord(null); setTab(key); }}
-            style={{ position: 'relative', flex: 1, padding: '10px 4px', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: tab === key ? 'bold' : 'normal', background: tab === key ? '#28a745' : 'transparent', color: tab === key ? '#fff' : text }}
-          >
-            {label}
-            {/* 自分の回答・承認を待っている件数。ナビバーの赤バッジと同じ数え方（共通フック） */}
-            {key === 'approvals' && purchasePending > 0 && (
-              <span style={{
-                position: 'absolute', top: 4, right: 4,
-                minWidth: 16, height: 16, padding: '0 4px', borderRadius: 8,
-                background: '#dc3545', color: '#fff', fontSize: 10, fontWeight: 'bold',
-                display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1,
-              }}>
-                {purchasePending > 99 ? '99+' : purchasePending}
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
+      {/* タブ（共通部品 PageTabs） */}
+      <PageTabs
+        variant="boxed"
+        isDark={isDarkMode}
+        inactiveColor={text}
+        tabs={tabDefs}
+        active={tab}
+        onChange={key => { setResubmitRecord(null); setTab(key); }}
+      />
 
       {tab === 'reimbursement' && <ReimbursementForm user={user} roleTitle={roleTitle} />}
       {tab === 'request' && (

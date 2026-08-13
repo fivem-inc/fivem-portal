@@ -27,6 +27,7 @@ const ERR_FIELD_BY_MSG: Record<string, string> = {
 import type { PatternRow, NormalShiftSnapshot } from '../lib/overtimeShift';
 import type { AuthUser } from '../types';
 import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
+import { PageTabs } from '../components/PageTabs';
 import { OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport, CLOCK_ONLY_REASONS } from '../lib/overtimeTypes';
 import type { OvertimeType } from '../lib/overtimeTypes';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
@@ -2727,27 +2728,19 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
           </div>
         )}
 
-        {/* タブ */}
-        <div style={{ display: 'flex', borderRadius: '10px 10px 0 0', overflow: 'hidden', border: `1px solid ${borderColor}`, borderBottom: 'none' }}>
-          {(['form', 'history'] as const).map(t => (
-            <button key={t} onClick={() => { setTab(t); setEditTarget(null); }}
-              style={{
-                flex: 1, padding: '12px 4px', border: 'none', cursor: 'pointer', fontSize: 13.5,
-                fontWeight: tab === t ? 'bold' : 'normal',
-                background: tab === t ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'),
-                color: tab === t ? '#fff' : text,
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, lineHeight: 1.3,
-              }}>
-              {t === 'form' ? '事前申請・事後報告' : '履歴・実績報告'}
-              {/* 履歴タブに「実績未報告（要報告）」件数を表示。開いた瞬間どこに何件あるか分かる */}
-              {t === 'history' && unreportedRequests.length > 0 && (
-                <span style={{ background: '#dc3545', color: '#fff', borderRadius: 10, minWidth: 18, height: 18, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 'bold', padding: '0 5px' }}>
-                  {unreportedRequests.length}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
+        {/* タブ（共通部品 PageTabs）
+            履歴タブのバッジ＝「実績未報告（要報告）」件数。開いた瞬間どこに何件あるか分かる */}
+        <PageTabs
+          variant="bordered"
+          isDark={isDark}
+          inactiveColor={text}
+          tabs={[
+            { key: 'form' as const, label: '事前申請・事後報告' },
+            { key: 'history' as const, label: '履歴・実績報告', badge: unreportedRequests.length },
+          ]}
+          active={tab}
+          onChange={t => { setTab(t); setEditTarget(null); }}
+        />
 
         {/* 確認ページへ（確認者・集計閲覧者のみ・タブ直下） */}
         {(canSummary || pendingForMe.length > 0) && (

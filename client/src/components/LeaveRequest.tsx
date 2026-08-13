@@ -20,6 +20,7 @@ import { sendLeaveSlack } from '../lib/leaveSlack';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
 import type { CorrectionRequestRow } from '../lib/correctionRequest';
 import CorrectionBadgeAndButton from './CorrectionBadgeAndButton';
+import { PageTabs } from './PageTabs';
 import { shouldSend, dispatchEmail, dispatchSiteNotification, getUserEmail } from '../lib/notificationDispatch';
 import { insertNotification } from '../lib/notifications';
 import { useDarkMode } from '../hooks/useDarkMode';
@@ -804,31 +805,21 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※申請が受理されると、Googleカレンダーに自動登録されます。</p>
       </div>
 
-      {/* タブ切替 */}
-      <div style={{ display: 'flex', marginBottom: 0, borderRadius: '10px 10px 0 0', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
-        <button
-          onClick={() => { setTab('form'); window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }); document.documentElement.scrollTop = 0; document.body.scrollTop = 0; }}
-          style={{ flex: 1, padding: '12px', background: tab === 'form' ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'), color: tab === 'form' ? 'white' : text, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: tab === 'form' ? 'bold' : 'normal' }}
-        >
-          🌿 休暇
-        </button>
-        {!leaveRequestEnabled && (
-          <button
-            onClick={() => { setTab('adjustment'); window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }); document.documentElement.scrollTop = 0; document.body.scrollTop = 0; }}
-            style={{ flex: 1, padding: '12px', background: tab === 'adjustment' ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'), color: tab === 'adjustment' ? 'white' : text, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: tab === 'adjustment' ? 'bold' : 'normal', borderLeft: `1px solid ${isDark ? '#6c757d' : '#dee2e6'}` }}
-          >
-            🕐 時間調整
-          </button>
-        )}
-        {!leaveRequestEnabled && (
-          <button
-            onClick={() => { setTab('history'); window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }); document.documentElement.scrollTop = 0; document.body.scrollTop = 0; }}
-            style={{ flex: 1, padding: '12px', background: tab === 'history' ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'), color: tab === 'history' ? 'white' : text, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: tab === 'history' ? 'bold' : 'normal', borderLeft: `1px solid ${isDark ? '#6c757d' : '#dee2e6'}` }}
-          >
-            📋 申請履歴
-          </button>
-        )}
-      </div>
+      {/* タブ切替（共通部品 PageTabs。パートへのフォーム送信中は休暇タブのみ） */}
+      <PageTabs
+        variant="shadow"
+        isDark={isDark}
+        inactiveColor={text}
+        tabs={leaveRequestEnabled
+          ? [{ key: 'form' as const, label: '🌿 休暇' }]
+          : [
+              { key: 'form' as const, label: '🌿 休暇' },
+              { key: 'adjustment' as const, label: '🕐 時間調整' },
+              { key: 'history' as const, label: '📋 申請履歴' },
+            ]}
+        active={tab}
+        onChange={t => { setTab(t); window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }); document.documentElement.scrollTop = 0; document.body.scrollTop = 0; }}
+      />
 
       {isApprover && (
         <button

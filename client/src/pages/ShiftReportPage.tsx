@@ -9,6 +9,7 @@ import { calcSegsBreak, parseSegments, segMinutes, formatSegs, formatSegsFromRec
 import { errorStyle, errorLabelColor, scrollToFirstError } from '../lib/formHighlight';
 import type { AuthUser } from '../types';
 import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
+import { PageTabs } from '../components/PageTabs';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
 import type { CorrectionRequestRow } from '../lib/correctionRequest';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
@@ -1570,17 +1571,21 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
           <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※欠勤・遅刻・早退の連絡は、これまで通りリーダー・マネージャーへ直接連絡してください。</p>
         </div>
 
-        {/* タブ（休暇申請と同スタイル） */}
-        <div style={{ display: 'flex', marginBottom: 0, borderRadius: '10px 10px 0 0', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
-          <button onClick={() => setTab('apply')}
-            style={{ flex: 1, padding: '12px', background: tab === 'apply' ? '#28a745' : inactiveBg, color: tab === 'apply' ? '#fff' : text, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: tab === 'apply' ? 'bold' : 'normal' }}>
-            ✏️ 報告
-          </button>
-          <button onClick={() => setTab('history')}
-            style={{ flex: 1, padding: '12px', background: tab === 'history' ? '#28a745' : inactiveBg, color: tab === 'history' ? '#fff' : text, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: tab === 'history' ? 'bold' : 'normal', borderLeft: `1px solid ${borderCol}` }}>
-            📋 履歴
-          </button>
-        </div>
+        {/* タブ（共通部品 PageTabs・休暇申請と同スタイル）
+            dividerColor は従来この画面が使っていた borderCol（ダークでは非選択背景と同色＝実質見えない）を
+            そのまま渡して見た目を維持している。休暇申請と完全に揃えたければこの prop を外す */}
+        <PageTabs
+          variant="shadow"
+          isDark={isDark}
+          inactiveColor={text}
+          dividerColor={borderCol}
+          tabs={[
+            { key: 'apply' as const, label: '✏️ 報告' },
+            { key: 'history' as const, label: '📋 履歴' },
+          ]}
+          active={tab}
+          onChange={setTab}
+        />
 
         {/* 確認ページへ（承認者のみ・タブ直下） */}
         {isApprover && (
