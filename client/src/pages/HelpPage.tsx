@@ -125,18 +125,33 @@ const HelpPage: React.FC<Props> = ({ roleTitle }) => {
     color: selected ? '#fff' : '#1565c0',
   });
 
+  // よくある質問。出す位置がカテゴリの選択で変わるので、中身を1か所にまとめておく
+  const featuredBlock = (!submitted && !opened && featured.length > 0) ? (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ fontSize: 13, fontWeight: 'bold', color: text, marginBottom: 8 }}>
+        {categoryFilter ? 'ほかのよくある質問' : 'よくある質問'}
+      </div>
+      {featured.map(t => (
+        <button key={t.id} type="button" onClick={() => openTopic(t)}
+          style={{ ...cardStyle, width: '100%', textAlign: 'left', cursor: 'pointer', display: 'block' }}>
+          <div style={{ fontSize: 14, fontWeight: 'bold', color: text }}>{t.question}</div>
+        </button>
+      ))}
+    </div>
+  ) : null;
+
   return (
     <div style={{ maxWidth: 700, margin: '0 auto', padding: '16px 16px 40px' }}>
-      <h2 style={{ fontSize: 20, textAlign: 'center', color: text, margin: '0 0 4px' }}>💡 FAQ（よくある質問）</h2>
-      <p style={{ fontSize: 12, textAlign: 'center', color: subText, margin: '0 0 16px' }}>ファイブM スタッフサイト</p>
+      <h2 style={{ fontSize: 20, textAlign: 'center', color: text, margin: '0 0 16px' }}>💡 FAQ（よくある質問）</h2>
 
-      {/* 説明枠（他ページと同じ黄色。ライト・ダーク共通の固定色） */}
+      {/* 説明枠（他ページと同じ黄色。ライト・ダーク共通の固定色）。
+          番号バッジは他ページと同じ形（22px・数字）に揃える */}
       <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '12px 14px', marginBottom: 16 }}>
-        <p style={{ fontSize: 12, fontWeight: 'bold', textAlign: 'center', color: '#856404', margin: '0 0 8px' }}>【全スタッフ】</p>
-        <p style={{ fontSize: 14, fontWeight: 'bold', color: '#664d03', margin: '0 0 6px', display: 'flex', gap: 6 }}>
-          <span style={{ background: '#4a90d9', color: '#fff', borderRadius: '50%', width: 18, height: 18, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, flexShrink: 0 }}>①</span>
-          社内サイトの使い方を調べられます
-        </p>
+        <p style={{ fontSize: 13, fontWeight: 'bold', color: '#856404', textAlign: 'center', margin: '0 0 10px' }}>【全スタッフ】</p>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '0 0 6px' }}>
+          <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>1</span>
+          <span style={{ fontSize: 14, fontWeight: 'bold', color: '#664d03', lineHeight: '22px' }}>社内サイトの使い方を調べられます</span>
+        </div>
         <p style={{ fontSize: 12, color: '#856404', margin: 0, lineHeight: 1.7 }}>
           ※あなたの役職に合わせた手順が表示されます。<br />
           ※知りたいことが見つからない場合は、お手数ですが直接おたずねください。
@@ -235,18 +250,8 @@ const HelpPage: React.FC<Props> = ({ roleTitle }) => {
         </div>
       )}
 
-      {/* よくある質問（検索していないとき） */}
-      {!submitted && !opened && featured.length > 0 && (
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 13, fontWeight: 'bold', color: text, marginBottom: 8 }}>よくある質問</div>
-          {featured.map(t => (
-            <button key={t.id} type="button" onClick={() => openTopic(t)}
-              style={{ ...cardStyle, width: '100%', textAlign: 'left', cursor: 'pointer', display: 'block' }}>
-              <div style={{ fontSize: 14, fontWeight: 'bold', color: text }}>{t.question}</div>
-            </button>
-          ))}
-        </div>
-      )}
+      {/* よくある質問。カテゴリを選んでいるときは、選んだカテゴリの一覧を先に見せたいので下に回す */}
+      {!categoryFilter && featuredBlock}
 
       {/* カテゴリ別の一覧。
           項目が多いので、すべて表示のときは折りたたんで見出しだけ並べる（何があるか一目で分かる）。
@@ -286,6 +291,11 @@ const HelpPage: React.FC<Props> = ({ roleTitle }) => {
             );
           })
         )
+      )}
+
+      {/* カテゴリを選んでいるときは、その一覧の後ろに「よくある質問」を出す */}
+      {categoryFilter && (
+        <div style={{ marginTop: 20 }}>{featuredBlock}</div>
       )}
     </div>
   );
