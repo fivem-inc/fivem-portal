@@ -22,6 +22,10 @@ interface UseAuthReturn {
   canTripReportHistory: boolean;
   canOvertimeSummary: boolean;
   canShiftPatternDirectory: boolean;
+  /** FAQ（よくある質問）を見られるか。管理画面の役職トグルで切り替える */
+  canFaq: boolean;
+  /** ナビバーにFAQボタンを出すか（canFaq とは別に切り替えられる） */
+  canFaqNav: boolean;
   canExpense: boolean;
   canTripReport: boolean;
   canBoard: boolean;
@@ -215,6 +219,12 @@ export const useAuth = (): UseAuthReturn => {
   // RPCは実アカウントで評価されるため役職プレビューが効かなかった（実際の見え方を確認できない）
   const canOvertimeSummary = realIsAdmin && !previewRole ? true : (effectivePerms.overtime_summary ?? false);
   const canShiftPatternDirectory = realIsAdmin && !previewRole ? true : (effectivePerms.shift_pattern_directory ?? false);
+  // FAQ（よくある質問）。ナビの「💡 FAQ」と各ページの「❓ FAQ」の両方がこれで切り替わる。
+  // 管理画面「役職・機能権限管理」でONにした役職に表示される
+  const canFaq = realIsAdmin && !previewRole ? true : (effectivePerms.faq ?? false);
+  // ナビに出すかは別設定。ただし FAQ 自体が使えない人には出さない
+  // （出すとボタンを押した先で弾かれる＝押せるのに見られないボタンになる）
+  const canFaqNav = canFaq && (realIsAdmin && !previewRole ? true : (effectivePerms.faq_nav ?? false));
   // 🚨 これまで管理画面の役職トグルがどこからも読まれておらず、押しても何も起きなかった4機能。
   //    「設定したのに効かない」状態だったので、他機能と同じ形で配線した（2026-08-09）
   //    ⚠️ 公開設定（全公開／リーダー以上／社長のみ）と役職トグルの両方を満たす人にだけ表示される。
@@ -261,6 +271,8 @@ export const useAuth = (): UseAuthReturn => {
     canTripReportHistory,
     canOvertimeSummary,
     canShiftPatternDirectory,
+    canFaq,
+    canFaqNav,
     canExpense,
     canTripReport,
     canBoard,

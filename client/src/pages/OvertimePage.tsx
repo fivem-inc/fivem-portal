@@ -28,6 +28,7 @@ import type { PatternRow, NormalShiftSnapshot } from '../lib/overtimeShift';
 import type { AuthUser } from '../types';
 import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
 import { PageTabs } from '../components/PageTabs';
+import HelpLinkButton from '../components/HelpLinkButton';
 import { OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport, CLOCK_ONLY_REASONS } from '../lib/overtimeTypes';
 import type { OvertimeType } from '../lib/overtimeTypes';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
@@ -2677,7 +2678,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
         <h2 style={{ textAlign: 'center', margin: '12px 0 16px', fontSize: 20, fontWeight: 'bold', color: isDark ? '#fff' : '#333' }}>🕐 残業・時間管理</h2>
 
         {/* このページの説明（他ページと同様式） */}
-        <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '12px 14px', marginBottom: 16, textAlign: 'left' }}>
+        <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '12px 14px', marginBottom: 16, textAlign: 'left', position: 'relative' }}>
+          <HelpLinkButton category="残業・時間管理" />
           <p style={{ fontSize: 13, fontWeight: 'bold', color: '#856404', textAlign: 'center', margin: '0 0 10px' }}>【正社員専用】</p>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '0 0 8px' }}>
             <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>1</span>

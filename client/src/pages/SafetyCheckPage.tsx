@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useSafetyPendingCount, safetyTone } from '../hooks/useSafetyPendingCount';
 import { isTransientFailure, timeoutSignal, SAFETY_TIMEOUT_MS } from '../lib/netFailure';
+import HelpLinkButton from '../components/HelpLinkButton';
 import {
   loadPendingQueue, savePendingQueue, loadSafetySnapshot, formatSnapshotAge, isSnapshotOld,
   loadQueueErrors, saveQueueErrors,
@@ -503,7 +504,8 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
             ▼ このページについて
           </button>
         ) : (
-        <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '12px 14px', marginBottom: 16, textAlign: 'left' }}>
+        <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '12px 14px', marginBottom: 16, textAlign: 'left', position: 'relative' }}>
+          <HelpLinkButton category="安否確認・緊急連絡" />
           <p style={{ fontSize: 13, fontWeight: 'bold', color: '#856404', textAlign: 'center', margin: '0 0 10px' }}>【全スタッフ】</p>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '0 0 8px' }}>
             <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>1</span>

@@ -10,6 +10,7 @@ import { errorStyle, errorLabelColor, scrollToFirstError } from '../lib/formHigh
 import type { AuthUser } from '../types';
 import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
 import { PageTabs } from '../components/PageTabs';
+import HelpLinkButton from '../components/HelpLinkButton';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
 import type { CorrectionRequestRow } from '../lib/correctionRequest';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
@@ -1559,7 +1560,9 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
           background: '#fff3cd',
           border: '1px solid #ffe0a3',
           borderRadius: 8, padding: '12px 14px', marginBottom: 16, textAlign: 'left',
+          position: 'relative', // 右上のFAQボタンの基準
         }}>
+          <HelpLinkButton category="勤務変更報告" />
           <p style={{ fontSize: 13, fontWeight: 'bold', color: '#856404', textAlign: 'center', margin: '0 0 10px' }}>【パート・アルバイトスタッフ専用】</p>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '0 0 8px' }}>
             <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>1</span>

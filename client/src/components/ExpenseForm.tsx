@@ -23,6 +23,7 @@ import { insertNotification } from '../lib/notifications';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
 import type { CalendarKind } from '../lib/breakCalc';
+import HelpLinkButton from './HelpLinkButton';
 
 // タップで即確定するカスタム日付ピッカー
 const SingleDatePicker: React.FC<{
@@ -565,7 +566,9 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
         background: '#fff3cd',
         border: '1px solid #ffe0a3',
         borderRadius: 8, padding: '12px 14px', margin: '16px 0', textAlign: 'left',
+        position: 'relative', // 右上のFAQボタンの基準
       }}>
+        <HelpLinkButton category="交通費申請" />
         <p style={{ fontSize: 13, fontWeight: 'bold', color: '#856404', textAlign: 'center', margin: '0 0 10px' }}>【全スタッフ】</p>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '0 0 8px' }}>
           <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>1</span>

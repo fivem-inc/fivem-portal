@@ -93,8 +93,15 @@ export default function SignIn() {
     });
 
     if (!error && data.user) {
-      // 承認待ちの新規登録を管理画面で確認する際の参考情報として、接続元IP・国を記録する（ベストエフォート）
-      supabase.functions.invoke('record-signup-ip', { body: { user_id: data.user.id } }).then(null, () => {});
+      // 承認待ちの新規登録を管理画面で確認する際の参考情報として、接続元IP・国を記録する。
+      // 🚨 記録できなくても登録自体は続ける（あくまで参考情報）が、失敗を完全に握りつぶすと
+      //    「ずっと記録されていない」ことに誰も気づけない。ログには必ず残す
+      //    （実際、CORSが本番URLのみ許可でローカルからの登録が記録されていなかった）
+      supabase.functions.invoke('record-signup-ip', { body: { user_id: data.user.id } })
+        .then(
+          ({ error: ipError }) => { if (ipError) console.error('[signup] IPの記録に失敗:', ipError); },
+          (e) => console.error('[signup] IPの記録に失敗:', e),
+        );
     }
 
     if (error) {

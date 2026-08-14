@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useDarkMode } from '../hooks/useDarkMode';
 import {
   fetchFaqTopics,
@@ -39,6 +40,12 @@ const HelpPage: React.FC<Props> = ({ roleTitle }) => {
 
   const viewer = useMemo(() => ({ roleTitle }), [roleTitle]);
 
+  // 各ページの「❓ 使い方」から来たときは、そのページの質問だけに絞る。
+  // 🚨 URLは毎回読み直す（開いた瞬間に1回だけ読むと、同じページにいるまま
+  //    別のカテゴリで開き直しても切り替わらない）
+  const [searchParams, setSearchParams] = useSearchParams();
+  const categoryFilter = searchParams.get('category');
+
   useEffect(() => {
     fetchFaqTopics('internal').then(rows => {
       setTopics(rows);
@@ -52,10 +59,11 @@ const HelpPage: React.FC<Props> = ({ roleTitle }) => {
     [submitted, topics, viewer],
   );
 
-  // 一覧に出せる質問（この役職向けの有効な回答があるものだけ）
+  // 一覧に出せる質問（この役職向けの有効な回答があるものだけ）。
+  // カテゴリ指定があればそのカテゴリだけに絞る
   const browsable = useMemo(
-    () => topics.filter(t => isTopicVisible(t, viewer)),
-    [topics, viewer],
+    () => topics.filter(t => isTopicVisible(t, viewer) && (!categoryFilter || t.category === categoryFilter)),
+    [topics, viewer, categoryFilter],
   );
   const categories = useMemo(() => {
     const map = new Map<string, FaqTopic[]>();
@@ -91,7 +99,7 @@ const HelpPage: React.FC<Props> = ({ roleTitle }) => {
 
   return (
     <div style={{ maxWidth: 700, margin: '0 auto', padding: '16px 16px 40px' }}>
-      <h2 style={{ fontSize: 20, textAlign: 'center', color: text, margin: '0 0 4px' }}>💡 使い方ヘルプ</h2>
+      <h2 style={{ fontSize: 20, textAlign: 'center', color: text, margin: '0 0 4px' }}>💡 FAQ（よくある質問）</h2>
       <p style={{ fontSize: 12, textAlign: 'center', color: subText, margin: '0 0 16px' }}>ファイブM スタッフサイト</p>
 
       {/* 説明枠（他ページと同じ黄色。ライト・ダーク共通の固定色） */}
@@ -106,6 +114,17 @@ const HelpPage: React.FC<Props> = ({ roleTitle }) => {
           ※知りたいことが見つからない場合は、お手数ですが直接おたずねください。
         </p>
       </div>
+
+      {/* カテゴリで絞り込み中の表示（各ページの「❓ 使い方」から来たとき） */}
+      {categoryFilter && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', background: isDark ? '#495057' : '#eef2f7', border: `1px solid ${borderColor}`, borderRadius: 8, padding: '8px 12px', marginBottom: 12 }}>
+          <span style={{ fontSize: 13, color: text }}>「{categoryFilter}」の項目を表示中</span>
+          <button type="button" onClick={() => setSearchParams({}, { replace: true })}
+            style={{ fontSize: 12, padding: '5px 12px', borderRadius: 6, border: `1px solid ${borderColor}`, background: 'none', color: text, cursor: 'pointer' }}>
+            すべての項目を見る
+          </button>
+        </div>
+      )}
 
       {/* 検索窓 */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>

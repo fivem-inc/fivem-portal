@@ -9,6 +9,7 @@ import { insertNotification } from '../lib/notifications';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import { tripTypeColor, tripCategoryLabel, formatTripNextDates, formatTripDateTime, tripMapUrl } from '../lib/tripReportDisplay';
 import SearchableSelect from './common/SearchableSelect';
+import HelpLinkButton from './HelpLinkButton';
 import type { AuthUser, BusinessTripReport } from '../types';
 
 // 履歴タブに出す1件分（profiles は報告者名の表示にだけ使う）
@@ -639,7 +640,9 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
         background: '#fff3cd',
         border: '1px solid #ffe0a3',
         borderRadius: 8, padding: '12px 14px', marginBottom: 16, textAlign: 'left',
+        position: 'relative', // 右上のFAQボタンの基準
       }}>
+        <HelpLinkButton category="出張報告" />
         <p style={{ fontSize: 13, fontWeight: 'bold', color: '#856404', textAlign: 'center', margin: '0 0 10px' }}>【全スタッフ】</p>
         {[
           '出張・園指導・イベント・試合などの勤怠を報告できます',

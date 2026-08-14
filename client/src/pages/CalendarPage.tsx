@@ -11,6 +11,7 @@ import {
 import { useCompanyCalendar, CALENDAR_CELL_STYLE } from '../hooks/useCompanyCalendar';
 import type { CalendarKind } from '../lib/breakCalc';
 import type { AuthUser } from '../types';
+import HelpLinkButton from '../components/HelpLinkButton';
 
 // 校の選択肢の末尾に出す「その他（自由入力）」。選ぶと自由入力欄が出る（残業・出張報告と同じ扱い）
 const OTHER_LOCATION = 'その他';
@@ -1671,7 +1672,9 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
         background: '#fff3cd',
         border: '1px solid #ffe0a3',
         borderRadius: 8, padding: '12px 14px', marginBottom: 16, textAlign: 'left',
+        position: 'relative', // 右上のFAQボタンの基準
       }}>
+        <HelpLinkButton category="勤怠カレンダー" />
         <p style={{ fontSize: 13, fontWeight: 'bold', color: '#856404', textAlign: 'center', margin: '0 0 10px' }}>【リーダー・マネージャー専用】</p>
         {[
           'スタッフの休み・出勤予定を一覧で確認できます',

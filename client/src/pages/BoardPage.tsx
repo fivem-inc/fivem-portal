@@ -12,6 +12,7 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { useSafetyPendingCount, safetyTone } from '../hooks/useSafetyPendingCount';
 import { useFeaturePublished, isFeaturePublished } from '../hooks/useFeaturePublished';
 import { AuthContext } from '../contexts/AuthContext.tsx';
+import HelpLinkButton from '../components/HelpLinkButton';
 
 // ────────────────────────────────────────────────────────────────
 // Types
@@ -3365,6 +3366,7 @@ const BoardPage: React.FC = () => {
                 <button type="button" onClick={openCompose}
                   style={{ background: '#007bff', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, padding: '5px 10px', fontWeight: 'bold', whiteSpace: 'nowrap', flexShrink: 0 }}>＋お知らせ送信</button>
               )}
+              <HelpLinkButton category="連絡板" compact borderColor={border} color={subColor} />
               <button type="button" title="通知設定" onClick={() => navigate('/notification-settings')}
                 style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: isDark ? '#6b7280' : '#9ca3af', cursor: 'pointer', fontSize: 11, padding: '5px 8px', lineHeight: 1, flexShrink: 0, whiteSpace: 'nowrap' }}>通知設定</button>
             </div>

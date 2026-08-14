@@ -19,7 +19,12 @@ export default function AccountSettings() {
   const [pushStatus, setPushStatus] = useState<'granted' | 'denied' | 'default' | 'unsupported'>('default');
   const [pushLoading, setPushLoading] = useState(false);
 
-  // 緊急連絡先（安否確認で使用。閲覧できるのは本人とマネージャー以上のみ）
+  // 緊急連絡先（安否確認で使用）
+  // 閲覧できる範囲は staff_phone_numbers の RLS が決める：
+  //   本人／マネージャー以上／安否確認が進行中のときはリーダーも
+  // 画面には「何に使うか」だけ書き、閲覧範囲は書かない（会社の業務用連絡先のため）。
+  // 🚨 もし画面に閲覧範囲を書き足すときは、上のRLSと必ず突き合わせること
+  //    （以前「本人とマネージャー以上のみ」と書かれていたが、リーダーが抜けていて事実と違っていた）
   const [phone, setPhone] = useState('');
   const [phoneSaved, setPhoneSaved] = useState('');   // 保存済みの値（変更検知用）
   const [phoneLoading, setPhoneLoading] = useState(true);
@@ -162,9 +167,6 @@ export default function AccountSettings() {
                   {phoneSaving ? '保存中...' : '保存'}
                 </button>
               </div>
-              <p style={{ margin: '8px 0 0', fontSize: 11, color: sub, lineHeight: 1.6 }}>
-                ※ この番号を見られるのは、あなた本人とマネージャー以上のみです
-              </p>
               {phoneMsg && (
                 <div style={{
                   marginTop: 10, padding: '10px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600,

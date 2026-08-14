@@ -9,6 +9,7 @@ import ReimbursementForm from '../components/ReimbursementForm';
 import PurchaseRequestForm, { type ResubmitRecord } from '../components/PurchaseRequestForm';
 import PurchaseApprovals from '../components/PurchaseApprovals';
 import { PageTabs, type PageTabDef } from '../components/PageTabs';
+import HelpLinkButton from '../components/HelpLinkButton';
 import { resolveItems } from '../lib/purchaseItemsFallback';
 import PurchaseItemsSummary from '../components/PurchaseItemsSummary';
 import { paymentMethodLabel } from '../utils';
@@ -477,7 +478,9 @@ const PurchaseRequestPage: React.FC<PurchaseRequestPageProps> = ({ user, roleTit
         background: '#fff3cd',
         border: '1px solid #ffe0a3',
         borderRadius: 8, padding: '12px 14px', marginBottom: 14, textAlign: 'left',
+        position: 'relative', // 右上のFAQボタンの基準
       }}>
+        <HelpLinkButton category="備品精算・購入申請" />
         <p style={{ fontSize: 13, fontWeight: 'bold', color: '#856404', textAlign: 'center', margin: '0 0 10px' }}>【全スタッフ】</p>
         {[
           '立て替えた備品の精算ができます',

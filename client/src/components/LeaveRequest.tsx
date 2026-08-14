@@ -21,6 +21,7 @@ import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
 import type { CorrectionRequestRow } from '../lib/correctionRequest';
 import CorrectionBadgeAndButton from './CorrectionBadgeAndButton';
 import { PageTabs } from './PageTabs';
+import HelpLinkButton from './HelpLinkButton';
 import { shouldSend, dispatchEmail, dispatchSiteNotification, getUserEmail } from '../lib/notificationDispatch';
 import { insertNotification } from '../lib/notifications';
 import { useDarkMode } from '../hooks/useDarkMode';
@@ -796,7 +797,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         background: '#fff3cd',
         border: '1px solid #ffe0a3',
         borderRadius: 8, padding: '12px 14px', marginBottom: 16, textAlign: 'left',
+        position: 'relative', // 右上のFAQボタンの基準
       }}>
+        <HelpLinkButton category="休暇申請" />
         <p style={{ fontSize: 13, fontWeight: 'bold', color: '#856404', textAlign: 'center', margin: '0 0 10px' }}>【全スタッフ】</p>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '0 0 8px' }}>
           <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>1</span>
