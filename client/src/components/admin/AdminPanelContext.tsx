@@ -11,9 +11,9 @@ import { resolveItems } from '../../lib/purchaseItemsFallback';
 // 修正依頼から「どの申請へ飛んだか」を飛び先のタブへ伝えるための型
 export type AdminFocusTarget = { type: 'leave' | 'shift' | 'overtime'; id: string };
 
-export type AdminTab = 'approvals' | 'users' | 'groups' | 'reports' | 'trip_reports' | 'leave_requests' | 'shift_reports' | 'overtime_admin' | 'overtime_proposals' | 'leader_assignments' | 'notifications' | 'scheduled_reminders' | 'board_settings' | 'feature_permissions' | 'purchase_requests' | 'announcements' | 'corrections' | 'safety_checks';
+export type AdminTab = 'approvals' | 'users' | 'groups' | 'reports' | 'trip_reports' | 'leave_requests' | 'shift_reports' | 'overtime_admin' | 'overtime_proposals' | 'leader_assignments' | 'notifications' | 'scheduled_reminders' | 'board_settings' | 'feature_permissions' | 'purchase_requests' | 'announcements' | 'corrections' | 'safety_checks' | 'faq';
 
-const ADMIN_TABS: AdminTab[] = ['approvals', 'users', 'groups', 'reports', 'trip_reports', 'leave_requests', 'shift_reports', 'overtime_admin', 'overtime_proposals', 'leader_assignments', 'notifications', 'scheduled_reminders', 'board_settings', 'feature_permissions', 'purchase_requests', 'announcements', 'corrections', 'safety_checks'];
+const ADMIN_TABS: AdminTab[] = ['approvals', 'users', 'groups', 'reports', 'trip_reports', 'leave_requests', 'shift_reports', 'overtime_admin', 'overtime_proposals', 'leader_assignments', 'notifications', 'scheduled_reminders', 'board_settings', 'feature_permissions', 'purchase_requests', 'announcements', 'corrections', 'safety_checks', 'faq'];
 
 interface PrintVoucher {
   submissionId: string;

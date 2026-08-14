@@ -15,6 +15,8 @@ const NotificationSettings = React.lazy(() => import('./pages/NotificationSettin
 const SupabaseSettingsCheck = React.lazy(() => import('./pages/SupabaseSettingsCheck'));
 
 const AdminPanel = React.lazy(() => import('./components/AdminPanel'));
+const FaqAdminPage = React.lazy(() => import('./pages/FaqAdminPage'));
+const HelpPage = React.lazy(() => import('./pages/HelpPage'));
 const HistoryView = React.lazy(() => import('./components/HistoryView'));
 const MonthlyApplicationStatus = React.lazy(() => import('./components/MonthlyApplicationStatus'));
 const BusinessTripReportForm = React.lazy(() => import('./components/BusinessTripReport'));
@@ -375,10 +377,20 @@ const AnnouncementBanner: React.FC = () => {
 
 // 保護されたルートのためのレイアウト
 const ProtectedLayout: React.FC = () => {
-  const { user } = useAuth();
+  const { user, isAdmin, isFaqEditor } = useAuth();
+  const { pathname } = useLocation();
 
   if (!user) {
     return <Navigate to="/signin" />;
+  }
+
+  // 🚨 Q&A編集専用アカウントは FAQ管理画面だけを使う運用。
+  //    ログイン後どこへ来ても FAQ管理へ送る（ここ1か所で全ページをまとめて塞ぐ）。
+  //    アカウント設定・パスワード変更は本人が必要とするため通す。
+  //    管理者は対象外（従来どおり全機能を使える）。
+  const FAQ_ONLY_ALLOWED = ['/faq-admin', '/account', '/change-password', '/change-email'];
+  if (isFaqEditor && !isAdmin && !FAQ_ONLY_ALLOWED.includes(pathname)) {
+    return <Navigate to="/faq-admin" replace />;
   }
 
   return <Outlet />;
@@ -797,6 +809,12 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
                 </span>
               )}
             </div>
+          )}
+          {/* 使い方ヘルプ。まず社長・管理者だけに公開して試運転する */}
+          {(isAdmin || roleTitle === '社長') && (
+            <button onClick={() => navTo('/help')} style={btnStyle(location.pathname === '/help', '#0891b2')}>
+              {isMobile ? <><span style={{ fontSize: 20 }}>💡</span>{navLabel('使い方')}</> : '💡 使い方'}
+            </button>
           )}
           {canExpense && isPub('expense') && (
             <button onClick={() => navTo('/')} style={btnStyle(location.pathname === '/')}>
@@ -1996,6 +2014,49 @@ const AdminPage: React.FC = () => {
   );
 };
 
+// 使い方ヘルプ（/help）
+// 社内サイトの使い方をスタッフが調べるページ。ログイン済みなので役職で回答を出し分ける。
+// 🚨 まず社長・管理者だけに公開して試運転する。範囲を広げるときは
+//    管理画面「機能別 表示権限」に help を足して段階公開する（他機能と同じ手順）。
+const HelpPageWrapper: React.FC = () => {
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, handleLogout, loading } = useAuth();
+  if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
+  if (!isAdmin && roleTitle !== '社長') return <Navigate to="/" />;
+  return (
+    <div style={{ padding: '70px 0 0' }}>
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} roleTitle={roleTitle} userId={user.id} />
+      <Suspense fallback={<PageLoader />}>
+        <HelpPage roleTitle={roleTitle} />
+      </Suspense>
+    </div>
+  );
+};
+
+// FAQ管理ページ（/faq-admin）
+// Q&A編集専用アカウント用。このアカウントは管理者ではないため /admin に入れないので、
+// FAQ管理だけを単独ページとして出す。管理者も同じ画面をここから開ける。
+// 🚨 専用アカウントは他のページを見る必要がないため、ナビバーは出さない
+//    （ログインしたらこの画面だけ、という運用をそのまま画面で表現する）。
+const FaqAdminPageWrapper: React.FC = () => {
+  const { user, isAdmin, isFaqEditor, profileName, handleLogout, loading } = useAuth();
+  if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
+  if (!isAdmin && !isFaqEditor) return <Navigate to="/" />;
+  return (
+    <div style={{ padding: '16px 0 0' }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 12, padding: '0 16px 8px', maxWidth: 900, margin: '0 auto' }}>
+        <span style={{ fontSize: 12, color: '#6c757d' }}>{profileName || user.email}</span>
+        <button type="button" onClick={handleLogout}
+          style={{ fontSize: 12, padding: '6px 14px', borderRadius: 6, border: '1px solid #dc3545', background: 'none', color: '#dc3545', cursor: 'pointer' }}>
+          ログアウト
+        </button>
+      </div>
+      <Suspense fallback={<PageLoader />}>
+        <FaqAdminPage />
+      </Suspense>
+    </div>
+  );
+};
+
 // 連絡板ページ（/board）
 const BoardPageWrapper: React.FC = () => {
   const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, handleLogout, loading } = useAuth();
@@ -2147,6 +2208,8 @@ function App() {
             <Route path="/leave-approvals" element={<LeaveApprovalsPage />} />
             <Route path="/calendar" element={<TeamCalendarPage />} />
             <Route path="/admin" element={<AdminPage />} />
+            <Route path="/faq-admin" element={<FaqAdminPageWrapper />} />
+            <Route path="/help" element={<HelpPageWrapper />} />
             <Route path="/account" element={<Suspense fallback={<PageLoader />}><AccountSettings /></Suspense>} />
             <Route path="/notification-settings" element={<Suspense fallback={<PageLoader />}><NotificationSettings /></Suspense>} />
             <Route path="/change-email" element={<Suspense fallback={<PageLoader />}><ChangeEmail /></Suspense>} />

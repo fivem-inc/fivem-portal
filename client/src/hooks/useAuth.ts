@@ -27,6 +27,8 @@ interface UseAuthReturn {
   canBoard: boolean;
   canLeaveApprovals: boolean;
   leaveRequestEnabled: boolean;
+  /** FAQ管理画面だけを使える専用アカウントか（管理者は別途 isAdmin で判定） */
+  isFaqEditor: boolean;
   handleLogout: () => Promise<void>;
 }
 
@@ -38,11 +40,12 @@ export { PREVIEW_ROLES };
 // ナビボタンが減った状態が表示される問題を防ぐ（最新は裏で取り直して上書き）。
 // 権限は表示用で、実データへのアクセスはサーバー側RLSで守られるため安全。
 const AUTH_CACHE_PREFIX = 'fivem_auth_cache_';
-const AUTH_CACHE_VERSION = 1; // 保存形式を変えたら上げる（旧キャッシュは破棄される）
+const AUTH_CACHE_VERSION = 2; // 保存形式を変えたら上げる（旧キャッシュは破棄される）
 interface AuthCache {
   v: number;
   name: string; roleTitle: string; employmentType: string;
   leaveRequestEnabled: boolean; perms: Record<string, boolean>;
+  isFaqEditor?: boolean;
 }
 function readAuthCache(userId: string): AuthCache | null {
   try {
@@ -93,6 +96,7 @@ export const useAuth = (): UseAuthReturn => {
   const [roleTitle, setRoleTitle] = useState(initCache?.roleTitle ?? '');
   const [employmentType, setEmploymentType] = useState(initCache?.employmentType ?? '');
   const [leaveRequestEnabled, setLeaveRequestEnabled] = useState(initCache?.leaveRequestEnabled ?? false);
+  const [isFaqEditor, setIsFaqEditor] = useState(initCache?.isFaqEditor ?? false);
 
   // 実際の役職の権限
   const [featurePerms, setFeaturePerms] = useState<Record<string, boolean>>(initCache?.perms ?? {});
@@ -112,7 +116,7 @@ export const useAuth = (): UseAuthReturn => {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('name, role_title, employment_type, leave_request_enabled')
+        .select('name, role_title, employment_type, leave_request_enabled, is_faq_editor')
         .eq('id', user.id)
         .single();
 
@@ -123,6 +127,7 @@ export const useAuth = (): UseAuthReturn => {
         const empType = data.employment_type || '正社員';
         setEmploymentType(empType);
         setLeaveRequestEnabled(!!data.leave_request_enabled);
+        setIsFaqEditor(!!data.is_faq_editor);
 
         // DBから権限を取得（失敗時nullは無視して既存の権限を保持）
         const perms = await fetchPermsForRole(role);
@@ -139,6 +144,7 @@ export const useAuth = (): UseAuthReturn => {
           employmentType: empType,
           leaveRequestEnabled: !!data.leave_request_enabled,
           perms: perms ?? readAuthCache(user.id)?.perms ?? {},
+          isFaqEditor: !!data.is_faq_editor,
         });
 
         // 🚨 直接UPDATEしない。profiles の直接更新はRLSで管理者のみに絞ってあるため、
@@ -169,6 +175,8 @@ export const useAuth = (): UseAuthReturn => {
     const c = readAuthCache(user.id);
     setProfileName(c?.name || user.user_metadata?.name || '');
     setEmploymentType(c?.employmentType ?? '');
+    // アカウントを切り替えたら、前のアカウントのFAQ編集権限が残らないよう必ず引き直す
+    setIsFaqEditor(c?.isFaqEditor ?? false);
     if (c) {
       setRoleTitle(c.roleTitle);
       setLeaveRequestEnabled(c.leaveRequestEnabled);
@@ -258,6 +266,8 @@ export const useAuth = (): UseAuthReturn => {
     canBoard,
     canLeaveApprovals,
     leaveRequestEnabled,
+    // 役職プレビュー中は他の権限と同じく実権限を伏せる（プレビューで実際の見え方を確認するため）
+    isFaqEditor: previewRole ? false : isFaqEditor,
     handleLogout,
   };
 };
