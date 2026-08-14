@@ -108,6 +108,11 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
   // プレビューの基準日（予約した回答が正しく切り替わるか事前に確認するため）
   const [previewDate, setPreviewDate] = useState(todayJstStr());
 
+  // 一覧の絞り込み（件数が多いと目的の質問を探せないため）
+  const [search, setSearch] = useState('');
+  const [catFilter, setCatFilter] = useState('');
+  const [stateFilter, setStateFilter] = useState<'all' | 'published' | 'unpublished' | 'review' | 'scheduled' | 'expired' | 'noanswer'>('all');
+
   const bg = isDarkMode ? '#343a40' : 'white';
   const text = isDarkMode ? '#fff' : '#333';
   const subText = isDarkMode ? '#adb5bd' : '#666';
@@ -260,6 +265,36 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
   };
 
   const needsReviewCount = useMemo(() => topics.filter(t => t.needs_review).length, [topics]);
+
+  // 絞り込みに出すカテゴリ（登録済みのものだけ・件数つき）
+  const categoryCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    topics.forEach(t => map.set(t.category, (map.get(t.category) ?? 0) + 1));
+    return [...map.entries()];
+  }, [topics]);
+
+  // 検索は質問文だけでなく、カテゴリ・キーワード・回答本文も対象にする
+  // （「この文章どこに書いたっけ」で探せるようにするため）
+  const filteredTopics = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return topics.filter(t => {
+      if (catFilter && t.category !== catFilter) return false;
+
+      if (stateFilter === 'published' && !t.is_published) return false;
+      if (stateFilter === 'unpublished' && t.is_published) return false;
+      if (stateFilter === 'review' && !t.needs_review) return false;
+      if (stateFilter === 'scheduled' && !t.answers.some(a => answerState(a, previewDate) === 'scheduled')) return false;
+      if (stateFilter === 'expired' && !t.answers.some(a => answerState(a, previewDate) === 'expired')) return false;
+      if (stateFilter === 'noanswer' && resolveAnswer(t, {}, previewDate)) return false;
+
+      if (!q) return true;
+      const haystack = [
+        t.question, t.category, ...(t.keywords ?? []),
+        ...t.answers.map(a => `${a.body} ${a.source_label ?? ''}`),
+      ].join(' ').toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [topics, search, catFilter, stateFilter, previewDate]);
   const needsRefreshCount = useMemo(
     () => topics.reduce((n, t) => n + t.answers.filter(a => a.needs_refresh).length, 0), [topics]);
 
@@ -380,6 +415,56 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
         <span style={{ fontSize: 11, color: subText }}>※未来の日付にすると、予約した回答が正しく切り替わるか確認できます</span>
       </div>
 
+      {/* 一覧の絞り込み。件数が増えると目的の質問を探せなくなるため */}
+      <div style={{ background: isDarkMode ? '#343a40' : '#f8f9fa', border: `1px solid ${borderColor}`, borderRadius: 10, padding: 12, marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="質問・キーワード・回答の文章で探す"
+            style={{ ...inputStyle, flex: 1, minWidth: 200 }}
+          />
+          <select value={catFilter} onChange={e => setCatFilter(e.target.value)} style={{ ...inputStyle, width: 'auto', minWidth: 150 }}>
+            <option value="">カテゴリ：すべて</option>
+            {categoryCounts.map(([cat, count]) => (
+              <option key={cat} value={cat}>{cat}（{count}）</option>
+            ))}
+          </select>
+          {(search || catFilter || stateFilter !== 'all') && (
+            <button type="button" onClick={() => { setSearch(''); setCatFilter(''); setStateFilter('all'); }}
+              style={{ fontSize: 12, padding: '8px 14px', borderRadius: 6, border: `1px solid ${borderColor}`, background: 'none', color: text, cursor: 'pointer' }}>
+              ✕ 絞り込みを外す
+            </button>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {([
+            ['all', 'すべて'],
+            ['published', '公開中'],
+            ['unpublished', '非公開'],
+            ['review', '⚠️ 要確認'],
+            ['scheduled', '予約あり'],
+            ['expired', '期限切れあり'],
+            ['noanswer', 'この日に出る回答なし'],
+          ] as const).map(([key, label]) => (
+            <button key={key} type="button" onClick={() => setStateFilter(key)}
+              style={{
+                fontSize: 12, fontWeight: 'bold', padding: '6px 12px', borderRadius: 16, cursor: 'pointer',
+                background: stateFilter === key ? '#1976d2' : '#e3f2fd',
+                border: `2px solid ${stateFilter === key ? '#1565c0' : '#90caf9'}`,
+                color: stateFilter === key ? '#fff' : '#1565c0',
+              }}>
+              {label}
+            </button>
+          ))}
+        </div>
+        {(search || catFilter || stateFilter !== 'all') && (
+          <div style={{ fontSize: 12, color: subText, marginTop: 10 }}>
+            {topics.length}件中 {filteredTopics.length}件を表示中
+          </div>
+        )}
+      </div>
+
       <button type="button" onClick={startNewTopic}
         style={{ padding: '10px 18px', borderRadius: 8, border: 'none', background: '#1976d2', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: 'pointer', marginBottom: 16 }}>
         ＋ 質問を追加
@@ -453,8 +538,10 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
         <p style={{ color: subText, fontSize: 14 }}>読み込んでいます...</p>
       ) : topics.length === 0 ? (
         <p style={{ color: subText, fontSize: 14 }}>まだ質問が登録されていません。「＋ 質問を追加」から作成してください。</p>
+      ) : filteredTopics.length === 0 ? (
+        <p style={{ color: subText, fontSize: 14 }}>絞り込みに当てはまる質問がありません。条件を変えるか「✕ 絞り込みを外す」を押してください。</p>
       ) : (
-        topics.map(t => {
+        filteredTopics.map(t => {
           const shown = resolveAnswer(t, {}, previewDate);
           const isOpen = expanded.has(t.id);
           return (

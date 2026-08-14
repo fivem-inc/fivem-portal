@@ -31,6 +31,16 @@ const HelpPage: React.FC<Props> = ({ roleTitle }) => {
   const [query, setQuery] = useState('');
   const [submitted, setSubmitted] = useState('');
   const [opened, setOpened] = useState<{ topic: FaqTopic; answer: FaqAnswer } | null>(null);
+  // 開いているカテゴリ（すべて表示のときの折りたたみ）
+  const [openCategories, setOpenCategories] = useState<Set<string>>(new Set());
+
+  const toggleCategory = (cat: string) => {
+    setOpenCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat); else next.add(cat);
+      return next;
+    });
+  };
 
   const bg = isDark ? '#343a40' : 'white';
   const text = isDark ? '#fff' : '#1a1a2e';
@@ -65,6 +75,16 @@ const HelpPage: React.FC<Props> = ({ roleTitle }) => {
     () => topics.filter(t => isTopicVisible(t, viewer) && (!categoryFilter || t.category === categoryFilter)),
     [topics, viewer, categoryFilter],
   );
+  // 絞り込みボタンに出すカテゴリ。カテゴリを選んでいる間も全部のボタンを出したいので
+  // categoryFilter を掛ける前の一覧から作る
+  const allCategories = useMemo(() => {
+    const map = new Map<string, number>();
+    topics.filter(t => isTopicVisible(t, viewer)).forEach(t => {
+      map.set(t.category, (map.get(t.category) ?? 0) + 1);
+    });
+    return [...map.entries()];
+  }, [topics, viewer]);
+
   const categories = useMemo(() => {
     const map = new Map<string, FaqTopic[]>();
     browsable.forEach(t => {
@@ -97,6 +117,14 @@ const HelpPage: React.FC<Props> = ({ roleTitle }) => {
     background: bg, border: `1px solid ${borderColor}`, borderRadius: 10, padding: 14, marginBottom: 10,
   };
 
+  // カテゴリの絞り込みボタン（択一トグル＝アプリ共通の青。ライト・ダーク共通の固定色）
+  const catChipStyle = (selected: boolean): React.CSSProperties => ({
+    fontSize: 12, fontWeight: 'bold', padding: '6px 12px', borderRadius: 16, cursor: 'pointer',
+    background: selected ? '#1976d2' : '#e3f2fd',
+    border: `2px solid ${selected ? '#1565c0' : '#90caf9'}`,
+    color: selected ? '#fff' : '#1565c0',
+  });
+
   return (
     <div style={{ maxWidth: 700, margin: '0 auto', padding: '16px 16px 40px' }}>
       <h2 style={{ fontSize: 20, textAlign: 'center', color: text, margin: '0 0 4px' }}>💡 FAQ（よくある質問）</h2>
@@ -115,14 +143,19 @@ const HelpPage: React.FC<Props> = ({ roleTitle }) => {
         </p>
       </div>
 
-      {/* カテゴリで絞り込み中の表示（各ページの「❓ 使い方」から来たとき） */}
-      {categoryFilter && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', background: isDark ? '#495057' : '#eef2f7', border: `1px solid ${borderColor}`, borderRadius: 8, padding: '8px 12px', marginBottom: 12 }}>
-          <span style={{ fontSize: 13, color: text }}>「{categoryFilter}」の項目を表示中</span>
-          <button type="button" onClick={() => setSearchParams({}, { replace: true })}
-            style={{ fontSize: 12, padding: '5px 12px', borderRadius: 6, border: `1px solid ${borderColor}`, background: 'none', color: text, cursor: 'pointer' }}>
-            すべての項目を見る
+      {/* カテゴリの絞り込み。各ページの「💡 FAQ」から来たときは、そのカテゴリが選ばれた状態で開く */}
+      {!submitted && !opened && allCategories.length > 1 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+          <button type="button" onClick={() => setSearchParams({}, { replace: true })} style={catChipStyle(!categoryFilter)}>
+            すべて
           </button>
+          {allCategories.map(([cat, count]) => (
+            <button key={cat} type="button"
+              onClick={() => setSearchParams({ category: cat }, { replace: true })}
+              style={catChipStyle(categoryFilter === cat)}>
+              {cat}（{count}）
+            </button>
+          ))}
         </div>
       )}
 
@@ -215,24 +248,43 @@ const HelpPage: React.FC<Props> = ({ roleTitle }) => {
         </div>
       )}
 
-      {/* カテゴリ別の一覧 */}
+      {/* カテゴリ別の一覧。
+          項目が多いので、すべて表示のときは折りたたんで見出しだけ並べる（何があるか一目で分かる）。
+          カテゴリを選んだときは中身を開いて出す。 */}
       {!submitted && !opened && !loading && (
         categories.length === 0 ? (
           <p style={{ fontSize: 14, color: subText }}>
-            まだ項目が登録されていません。
+            {categoryFilter ? `「${categoryFilter}」の項目はまだありません。` : 'まだ項目が登録されていません。'}
           </p>
         ) : (
-          categories.map(([cat, list]) => (
-            <div key={cat} style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 13, fontWeight: 'bold', color: text, marginBottom: 8, paddingBottom: 4, borderBottom: `1px solid ${borderColor}` }}>{cat}</div>
-              {list.map(t => (
-                <button key={t.id} type="button" onClick={() => openTopic(t)}
-                  style={{ ...cardStyle, width: '100%', textAlign: 'left', cursor: 'pointer', display: 'block', marginBottom: 6 }}>
-                  <div style={{ fontSize: 14, color: text }}>{t.question}</div>
+          categories.map(([cat, list]) => {
+            const isOpen = !!categoryFilter || openCategories.has(cat);
+            return (
+              <div key={cat} style={{ marginBottom: 10 }}>
+                <button type="button" onClick={() => toggleCategory(cat)}
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                    background: isDark ? '#495057' : '#eef2f7', border: `1px solid ${borderColor}`, borderRadius: 8,
+                    padding: '10px 12px', cursor: 'pointer', color: text, fontSize: 14, fontWeight: 'bold',
+                  }}>
+                  <span>{cat}</span>
+                  <span style={{ fontSize: 12, fontWeight: 'normal', color: subText }}>
+                    {list.length}件 {isOpen ? '▲' : '▼'}
+                  </span>
                 </button>
-              ))}
-            </div>
-          ))
+                {isOpen && (
+                  <div style={{ marginTop: 6 }}>
+                    {list.map(t => (
+                      <button key={t.id} type="button" onClick={() => openTopic(t)}
+                        style={{ ...cardStyle, width: '100%', textAlign: 'left', cursor: 'pointer', display: 'block', marginBottom: 6 }}>
+                        <div style={{ fontSize: 14, color: text }}>{t.question}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })
         )
       )}
     </div>

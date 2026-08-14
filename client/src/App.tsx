@@ -818,12 +818,6 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
               )}
             </div>
           )}
-          {/* FAQ（よくある質問）。表示は管理画面「権限管理」の FAQ：ナビにも出す で切り替える */}
-          {canFaqNav && (
-            <button onClick={() => navTo('/faq')} style={btnStyle(location.pathname === '/faq', '#0891b2')}>
-              {isMobile ? <><span style={{ fontSize: 20 }}>💡</span>{navLabel('FAQ')}</> : '💡 FAQ'}
-            </button>
-          )}
           {canExpense && isPub('expense') && (
             <button onClick={() => navTo('/')} style={btnStyle(location.pathname === '/')}>
               {isMobile ? <><span style={{ fontSize: 20 }}>🏠</span>{navLabel('交通費')}</> : '🏠 交通費'}
@@ -898,6 +892,13 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
               </span>
             )}
           </div>
+          )}
+          {/* FAQ（よくある質問）。表示は管理画面「権限管理」の FAQ：ナビにも出す で切り替える。
+              毎日使うものではないので並びは最後にする */}
+          {canFaqNav && (
+            <button onClick={() => navTo('/faq')} style={btnStyle(location.pathname === '/faq', '#0891b2')}>
+              {isMobile ? <><span style={{ fontSize: 20 }}>💡</span>{navLabel('FAQ')}</> : '💡 FAQ'}
+            </button>
           )}
         </div>
         {isMobile && canScrollLeft && (
