@@ -115,6 +115,33 @@ f74f497 FAQ権限の説明に、マイページからも開けることを書き
    4ページのタブ表示）／定期リマインドの対応記録テスト／脆弱性 high 3件
 7.【繰越】勤務変更の入力漏れ色・管理者修正モーダル／定期リマインドの1月分／
    年間カレンダー入力／社労士確認／残り21本のEdge Functionのsupabase-js固定
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+■ 作業ルール（毎回厳守）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+・開始時：git pull → git status → CLAUDE.md 冒頭の本まとめを確認
+・修正後：cd client && npx tsc -b && npx vite build ＋ npm run lint
+  （見るのは react-hooks/rules-of-hooks だけ。常に0件を保つ）
+・デプロイ順序：① DB migration → ② Edge Function → ③ クライアント push
+・DBは本番前に begin; …SQL… rollback; で1回通し、確認後 commit; に変えて適用
+・デプロイもClaudeが実施：SQL全文提示→ユーザーが SQL Editor で実行／
+  npx supabase functions deploy <名前> --project-ref xaeynaxctiiyqxjyuzfi／commit・push
+・push後は git ls-remote origin master で突合（exit 0 でも未送信のことがある）
+・🚨 push後は本番の /version.json がJSONで返り **buildId が更新されたか**を確認する
+・🚨 **デプロイ確認で curl を短い間隔で繰り返さない**（Vercelのボット対策が作動し
+  /version.json が「Vercel Security Checkpoint」のHTMLに化ける）。
+  着地は「**本番JSに今回の日本語ラベルが載ったか**」で判定する。
+  ファイル名のハッシュはVercel側の再ビルドで変わるので**名前では判定できない**
+  （手順：index.html → index-*.js → その中の対象チャンク名 → curl して文言をgrep）
+・pushの許可は1回分。以降の変更は都度確認する（勝手にpushしない）
+・git add 前に必ず git status 目視。AGENTS.md はコミットに含めない
+・commit メッセージは Write でファイルに書いて git commit -F <file>
+・alert() / window.confirm() / .catch() 禁止（インライン確認・成功は緑カード）
+・認証は AuthContext 一元化。文言は「承認→受理」「却下→差し戻し」
+・RLS/RPCの管理者判定は必ず (auth.jwt()->'app_metadata'->>'role')='admin'
+・UI文言・配色・新機能・設計判断は案提示→承認後に実装。配色は visualize でモック提示。
+  大規模改修は UI/UX＋シニアEng の2体レビュー
+・専門用語は新卒社会人でも分かるようかみ砕いて説明する
 ```
 
 ---
