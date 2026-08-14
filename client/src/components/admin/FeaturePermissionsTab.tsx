@@ -40,7 +40,7 @@ const FEATURES = [
   { key: 'safety_check',    icon: '🆘', label: '安否・緊急連絡',  note: '発信はマネージャー以上・回答は全員' },
   // FAQは「使えるか」と「ナビに出すか」を分けて切り替えられる。
   // ナビはボタンが並ぶ場所なので、使えるようにはしたいがナビには出したくない、が実際にある
-  { key: 'faq',             icon: '💡', label: 'FAQ（よくある質問）', note: '各ページの「💡 FAQ」ボタンから開ける' },
+  { key: 'faq',             icon: '💡', label: 'FAQ（よくある質問）', note: '各ページの「💡 FAQ」ボタン・マイページ（右上のアイコン）から開ける' },
   { key: 'faq_nav',         icon: '💡', label: 'FAQ：ナビにも出す',   note: '上のFAQがONの役職にだけ効きます' },
 ] as const;
 
