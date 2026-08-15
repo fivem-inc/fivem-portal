@@ -6,11 +6,14 @@ import {
   createFaqTopic,
   updateFaqTopic,
   deleteFaqTopic,
+  saveFaqTopicRelations,
   saveFaqAnswer,
   deleteFaqAnswer,
   answerState,
   ANSWER_STATE_LABEL,
   resolveAnswer,
+  FAQ_SCHOOL_OPTIONS,
+  FAQ_COURSE_OPTIONS,
   type FaqTopic,
   type FaqAnswer,
   type FaqAudience,
@@ -34,13 +37,9 @@ const AUDIENCE_LABEL: Record<FaqAudience, string> = {
 // 社内向けの出し分けは役職で行う（社内サイトは既に役職で画面を出し分けているため同じ基準）
 const ROLE_OPTIONS = ['パート', '一般', 'フロア責任者', 'リーダー', 'マネージャー', '社長', '管理者'];
 
-// 社外向けの出し分けは校×コース
-const SCHOOL_OPTIONS = ['四条本校', '西陣校', '上桂校', '洛西口校', '南草津校'];
-const COURSE_OPTIONS = [
-  'こども器械体操', 'マットレ', 'ジュニア姿勢・体幹トレーニング',
-  'ウェルネス体操', 'ウェルネス体操プライベート', 'こども器械体操プライベート',
-  '上級', '養成',
-];
+// 社外向けの出し分けは校×コース。定義は lib/faq.ts（お客様向けウィジェットと共用）
+const SCHOOL_OPTIONS = FAQ_SCHOOL_OPTIONS;
+const COURSE_OPTIONS = FAQ_COURSE_OPTIONS;
 
 const emptyTopicForm = (audience: FaqAudience): FaqTopicInput => ({
   audience,
@@ -88,6 +87,9 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
   const [topicEditId, setTopicEditId] = useState<string | null>(null);
   const [topicForm, setTopicForm] = useState<FaqTopicInput>(emptyTopicForm('internal'));
   const [keywordText, setKeywordText] = useState('');
+  // 関連質問（違う場合はこちら）。似た質問（25日ルール3種など）を取り違えたとき、
+  // 回答の下のボタン1つで正しい方に移れるようにする
+  const [relForm, setRelForm] = useState<{ related_topic_id: string; label: string }[]>([]);
   const [showTopicForm, setShowTopicForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDeleteTopic, setConfirmDeleteTopic] = useState<string | null>(null);
@@ -169,6 +171,7 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
     setTopicEditId(null);
     setTopicForm(emptyTopicForm(audience));
     setKeywordText('');
+    setRelForm([]);
     setShowTopicForm(true);
     setErrorMsg('');
   };
@@ -181,6 +184,7 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
       needs_review: t.needs_review, review_note: t.review_note, sort_order: t.sort_order,
     });
     setKeywordText(t.keywords.join(' '));
+    setRelForm(t.related.map(r => ({ related_topic_id: r.topic_id, label: r.label ?? '' })));
     setShowTopicForm(true);
     setErrorMsg('');
   };
@@ -196,11 +200,24 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
       audience,
       keywords: keywordText.split(/[\s,、]+/).map(s => s.trim()).filter(Boolean),
     };
-    const res = topicEditId
-      ? await updateFaqTopic(topicEditId, input, currentUserId, editorName.trim())
-      : await createFaqTopic(input, currentUserId, editorName.trim());
+    let savedTopicId = topicEditId;
+    if (topicEditId) {
+      const res = await updateFaqTopic(topicEditId, input, currentUserId, editorName.trim());
+      if (res.error) { setSaving(false); setErrorMsg(`保存できませんでした：${res.error.message}`); return; }
+    } else {
+      const res = await createFaqTopic(input, currentUserId, editorName.trim());
+      if (res.error || !res.data) { setSaving(false); setErrorMsg(`保存できませんでした：${res.error?.message ?? ''}`); return; }
+      savedTopicId = res.data.id;
+    }
+    // 関連質問も一緒に保存（未選択の行は除外）
+    if (savedTopicId) {
+      const rels = relForm
+        .filter(r => r.related_topic_id)
+        .map(r => ({ related_topic_id: r.related_topic_id, label: r.label.trim() || null }));
+      const relRes = await saveFaqTopicRelations(savedTopicId, rels);
+      if (relRes.error) { setSaving(false); setErrorMsg(`関連質問を保存できませんでした：${relRes.error}`); return; }
+    }
     setSaving(false);
-    if (res.error) { setErrorMsg(`保存できませんでした：${res.error.message}`); return; }
     setShowTopicForm(false);
     flashSaved('保存しました');
     load();
@@ -519,6 +536,41 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
               <input type="number" value={topicForm.sort_order} onChange={e => setTopicForm(f => ({ ...f, sort_order: Number(e.target.value) || 0 }))}
                 style={{ ...inputStyle, width: 120 }} />
             </div>
+
+            {/* 関連質問（違う場合はこちら）。今はお客様向けの画面だけが表示する */}
+            {audience === 'public' && (
+              <div>
+                <label style={{ fontSize: 13, color: text, display: 'block', marginBottom: 4 }}>関連質問（「違う場合はこちら」のボタン）</label>
+                <p style={{ fontSize: 11, color: subText, margin: '0 0 6px', lineHeight: 1.7 }}>
+                  似た質問（例：予約の25日ルールが3種類）を間違えて開いた方が、ボタン1つで正しい方に移れます。
+                  参照先の質問が削除されるとボタンも自動で消えます。
+                </p>
+                {relForm.map((r, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <select value={r.related_topic_id}
+                      onChange={e => setRelForm(list => list.map((x, idx) => (idx === i ? { ...x, related_topic_id: e.target.value } : x)))}
+                      style={{ ...inputStyle, width: 'auto', minWidth: 220, maxWidth: 340 }}>
+                      <option value="">（質問を選ぶ）</option>
+                      {topics
+                        .filter(o => o.id !== topicEditId)
+                        .map(o => <option key={o.id} value={o.id}>{o.question}</option>)}
+                    </select>
+                    <input value={r.label}
+                      onChange={e => setRelForm(list => list.map((x, idx) => (idx === i ? { ...x, label: e.target.value } : x)))}
+                      placeholder="ボタンの文言（空欄＝質問文のまま）"
+                      style={{ ...inputStyle, width: 'auto', minWidth: 200, flex: 1 }} />
+                    <button type="button" onClick={() => setRelForm(list => list.filter((_, idx) => idx !== i))}
+                      style={{ fontSize: 12, padding: '5px 10px', borderRadius: 6, border: `1px solid ${borderColor}`, background: 'none', color: text, cursor: 'pointer' }}>
+                      外す
+                    </button>
+                  </div>
+                ))}
+                <button type="button" onClick={() => setRelForm(list => [...list, { related_topic_id: '', label: '' }])}
+                  style={{ fontSize: 12, padding: '6px 12px', borderRadius: 6, border: `1px dashed ${borderColor}`, background: 'none', color: text, cursor: 'pointer' }}>
+                  ＋ 関連質問を追加
+                </button>
+              </div>
+            )}
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
             <button type="button" onClick={() => setShowTopicForm(false)}

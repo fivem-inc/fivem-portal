@@ -15,6 +15,15 @@ import { todayJstStr } from './breakCalc';
 
 export type FaqAudience = 'internal' | 'public';
 
+// 校・コースの一覧。管理画面（FaqTab）とお客様向けウィジェットの両方がここを使う。
+// 🚨 2か所に別々に書くと、コース追加のとき片方だけ直して食い違うため必ずここに集約する
+export const FAQ_SCHOOL_OPTIONS = ['四条本校', '西陣校', '上桂校', '洛西口校', '南草津校'];
+export const FAQ_COURSE_OPTIONS = [
+  'こども器械体操', 'マットレ', 'ジュニア姿勢・体幹トレーニング',
+  'ウェルネス体操', 'ウェルネス体操プライベート', 'こども器械体操プライベート',
+  '上級', '養成',
+];
+
 export interface FaqAnswerTarget {
   id: string;
   answer_id: string;
@@ -40,6 +49,12 @@ export interface FaqAnswer {
   targets: FaqAnswerTarget[];
 }
 
+/** 「違う場合はこちら」のボタン1つ分。label が null なら参照先の質問文を出す */
+export interface FaqRelation {
+  topic_id: string;
+  label: string | null;
+}
+
 export interface FaqTopic {
   id: string;
   audience: FaqAudience;
@@ -54,6 +69,8 @@ export interface FaqTopic {
   updated_at: string;
   updated_by_name: string | null;
   answers: FaqAnswer[];
+  /** 関連質問（取り違えたときの復帰ボタン）。参照先が削除されるとDB側で自動的に消える */
+  related: FaqRelation[];
 }
 
 /** 回答を選ぶときの条件。社外向けは校・コース、社内向けは役職を使う */
@@ -87,7 +104,10 @@ export const fetchFaqTopics = async (audience: FaqAudience): Promise<FaqTopic[]>
   if (error || !topics || topics.length === 0) return [];
 
   const ids = topics.map(t => t.id);
-  const { data: answers } = await supabase.from('faq_answers').select(ANSWER_COLS).in('topic_id', ids);
+  const [{ data: answers }, { data: relations }] = await Promise.all([
+    supabase.from('faq_answers').select(ANSWER_COLS).in('topic_id', ids),
+    supabase.from('faq_topic_relations').select('topic_id, related_topic_id, label, sort_order').in('topic_id', ids).order('sort_order'),
+  ]);
   const answerIds = (answers ?? []).map(a => a.id);
 
   // 対象（校・コース・役職）は別テーブル。回答が0件なら問い合わせない
@@ -114,10 +134,122 @@ export const fetchFaqTopics = async (audience: FaqAudience): Promise<FaqTopic[]>
     answersByTopic.set(a.topic_id, list);
   });
 
+  const relatedByTopic = new Map<string, FaqRelation[]>();
+  (relations ?? []).forEach(r => {
+    const list = relatedByTopic.get(r.topic_id) ?? [];
+    list.push({ topic_id: r.related_topic_id, label: r.label });
+    relatedByTopic.set(r.topic_id, list);
+  });
+
   return topics.map(t => ({
-    ...(t as Omit<FaqTopic, 'answers'>),
+    ...(t as Omit<FaqTopic, 'answers' | 'related'>),
     answers: answersByTopic.get(t.id) ?? [],
+    related: relatedByTopic.get(t.id) ?? [],
   }));
+};
+
+// ============================================================
+// お客様向け（未ログイン）の取得
+// ============================================================
+// 🚨 未ログインではテーブルを1行も読めない（RLSが全て to authenticated のため）。
+//    公開中・今日有効な社外向けQ&Aだけを返す RPC faq_public_data() が唯一の入口で、
+//    下書き・予約中・社内向け・社内メモ（review_note / refresh_note）は
+//    こちらに届く前にDB側で落ちている。
+// 🚨 ここでは「取得の仕方」だけを変え、絞り込みと照合（resolveAnswer / matchFaqTopics）は
+//    社内向けとまったく同じ関数を使う。片方だけ直して食い違う事故を避けるため。
+
+/** RPCが返す形。テーブルの列そのままではなく、お客様に見せてよい分だけ */
+interface PublicFaqAnswerRow {
+  id: string;
+  body: string;
+  source_label: string | null;
+  source_url: string | null;
+  valid_from: string;
+  targets: { school: string | null; course: string | null; role_title: string | null }[];
+}
+interface PublicFaqTopicRow {
+  id: string;
+  category: string;
+  question: string;
+  keywords: string[];
+  is_featured: boolean;
+  sort_order: number;
+  answers: PublicFaqAnswerRow[];
+  related: { topic_id: string; label: string | null }[];
+}
+
+/**
+ * お客様向けQ&Aを取得する（未ログインから呼べる）。
+ * 既存の照合・絞り込み関数をそのまま使えるよう FaqTopic の形に整える。
+ */
+export const fetchPublicFaqTopics = async (): Promise<FaqTopic[]> => {
+  const { data, error } = await supabase.rpc('faq_public_data');
+  if (error || !data) return [];
+
+  return (data as PublicFaqTopicRow[]).map(t => ({
+    id: t.id,
+    category: t.category,
+    question: t.question,
+    keywords: t.keywords ?? [],
+    is_featured: t.is_featured,
+    sort_order: t.sort_order,
+    answers: (t.answers ?? []).map(a => ({
+      id: a.id,
+      topic_id: t.id,
+      body: a.body,
+      source_label: a.source_label,
+      source_url: a.source_url,
+      valid_from: a.valid_from,
+      // RPCは「今日有効なもの」だけを返すので、期限は既に判定済み。
+      // ここで null を入れても isAnswerActiveOn の判定結果は変わらない
+      valid_until: null,
+      // 以下は管理画面でしか使わない項目。お客様側には返していないので既定値を入れる
+      needs_refresh: false,
+      refresh_note: null,
+      updated_at: '',
+      updated_by_name: null,
+      targets: (a.targets ?? []).map(tg => ({
+        // 対象行のidはお客様側で使わないためRPCが返していない。
+        // 使うのは school / course / role_title だけ（matchesViewer 参照）
+        id: '',
+        answer_id: a.id,
+        school: tg.school,
+        course: tg.course,
+        role_title: tg.role_title,
+      })),
+    })),
+    // RPCは公開中のものしか返さない。isTopicVisible / matchFaqTopics が
+    // is_published を見るため true を入れておく
+    audience: 'public' as FaqAudience,
+    is_published: true,
+    needs_review: false,
+    review_note: null,
+    updated_at: '',
+    updated_by_name: null,
+    // 🚨 参照先が「今日出せる状態か」はここでは判定しない。
+    //    表示側が「読み込んだ一覧に無いIDのボタンは出さない」ことで自然に消える
+    related: (t.related ?? []).map(r => ({ topic_id: r.topic_id, label: r.label })),
+  }));
+};
+
+/** お客様の質問を記録する（未ログインから呼べる）。失敗しても画面は止めない */
+export const logPublicFaqQuery = async (params: {
+  rawQuery: string;
+  hadMatch: boolean;
+  school?: string | null;
+  course?: string | null;
+  pickedTopicId?: string | null;
+}) => {
+  await supabase
+    .rpc('faq_public_log', {
+      p_raw_query: params.rawQuery,
+      p_had_match: params.hadMatch,
+      p_school: params.school ?? null,
+      p_course: params.course ?? null,
+      p_picked_topic_id: params.pickedTopicId ?? null,
+    })
+    // 記録は補助であって本体ではない。ただし黙って捨てず必ずログには残す
+    .then(null, (e: unknown) => console.error('FAQ質問ログの記録に失敗:', e));
 };
 
 // ============================================================
@@ -199,6 +331,15 @@ export const matchFaqTopics = (
   viewer: FaqViewer,
   limit = 3,
   dateStr: string = todayJstStr(),
+  opts?: {
+    /**
+     * 対象（校・コース・役職）が合わない質問も候補に出す。
+     * お客様向けウィジェットは「質問を選んだ後に校・コースを聞く」流れのため、
+     * 検索の時点では校・コースが分からない。falseのまま（既定）だと
+     * 校別の回答しか無い質問（駐車場など）が検索に一切出なくなる
+     */
+    ignoreTargets?: boolean;
+  },
 ): FaqMatch[] => {
   const q = normalize(query);
   if (!q) return [];
@@ -206,7 +347,9 @@ export const matchFaqTopics = (
   const matches: FaqMatch[] = [];
   topics.forEach(topic => {
     if (!topic.is_published) return;
-    const answer = resolveAnswer(topic, viewer, dateStr);
+    const answer =
+      resolveAnswer(topic, viewer, dateStr) ??
+      (opts?.ignoreTargets ? topic.answers.find(a => isAnswerActiveOn(a, dateStr)) ?? null : null);
     if (!answer) return; // この人向けの有効な回答が無い質問は候補にしない
 
     let score = 0;
@@ -233,9 +376,14 @@ export const featuredTopics = (
   viewer: FaqViewer,
   limit = 6,
   dateStr: string = todayJstStr(),
+  opts?: { /** matchFaqTopics と同じ。ウィジェット用（対象を後から聞く流れ） */ ignoreTargets?: boolean },
 ): FaqTopic[] =>
   topics
-    .filter(t => t.is_featured && isTopicVisible(t, viewer, dateStr))
+    .filter(t =>
+      t.is_featured &&
+      (isTopicVisible(t, viewer, dateStr) ||
+        (opts?.ignoreTargets === true && t.is_published && t.answers.some(a => isAnswerActiveOn(a, dateStr)))),
+    )
     .sort((a, b) => a.sort_order - b.sort_order)
     .slice(0, limit);
 
@@ -300,6 +448,28 @@ export const updateFaqTopic = (id: string, input: FaqTopicInput, editorId: strin
   supabase.from('faq_topics').update({ ...input, updated_by: editorId, updated_by_name: editorName }).eq('id', id);
 
 export const deleteFaqTopic = (id: string) => supabase.from('faq_topics').delete().eq('id', id);
+
+/**
+ * 関連質問（違う場合はこちら）の保存。
+ * 対象（targets）と同じく差分管理をせず、常に画面の内容で入れ替える。
+ */
+export const saveFaqTopicRelations = async (
+  topicId: string,
+  relations: { related_topic_id: string; label: string | null }[],
+): Promise<{ error: string | null }> => {
+  const { error: delError } = await supabase.from('faq_topic_relations').delete().eq('topic_id', topicId);
+  if (delError) return { error: delError.message };
+  if (relations.length === 0) return { error: null };
+  const { error } = await supabase.from('faq_topic_relations').insert(
+    relations.map((r, i) => ({
+      topic_id: topicId,
+      related_topic_id: r.related_topic_id,
+      label: r.label,
+      sort_order: i,
+    })),
+  );
+  return { error: error?.message ?? null };
+};
 
 /** 回答の保存。対象は毎回入れ替える（差分管理をせず、常に画面の内容で上書きする） */
 export const saveFaqAnswer = async (

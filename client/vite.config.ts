@@ -32,4 +32,15 @@ export default defineConfig({
       },
     },
   ],
+  build: {
+    rollupOptions: {
+      // スタッフ用アプリ（index.html）と、お客様向けFAQウィジェット（faq-widget.html）の2本立て。
+      // faq-widget.html は実在ファイルとして dist に出るため、vercel.json の
+      // 「全部 index.html に書き換える」rewrite より優先して配信される（version.json と同じ理屈）
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        'faq-widget': resolve(__dirname, 'faq-widget.html'),
+      },
+    },
+  },
 })
