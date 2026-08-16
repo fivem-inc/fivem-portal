@@ -7,6 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## ▶▶ 次セッション ここから開始（2026-08-17 実際の問い合わせ22件からFAQを16問追加＝45問に）
 
 ```
+🚨 お客様向けFAQを追加・修正するときは、まず docs/FAQ運用ガイド.md を読む
+  （管理画面での足し方／元資料のURL一覧／決まっている文言ルール／原稿テンプレ／確認手順）
+
 【状態】DB変更のみ（クライアント変更なし・デプロイ不要）。マイグレーション3本 適用済み
   20260817000000 ウェルネス25日ルール修正／20260817100000 v6投入16問／20260817200000 体験まわり3件修正
 ・お客様向けFAQ＝本番45問公開中 https://fivem-portal.vercel.app/faq-widget.html
