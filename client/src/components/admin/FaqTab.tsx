@@ -113,7 +113,7 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
   // 一覧の絞り込み（件数が多いと目的の質問を探せないため）
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState('');
-  const [stateFilter, setStateFilter] = useState<'all' | 'published' | 'unpublished' | 'review' | 'scheduled' | 'expired' | 'noanswer'>('all');
+  const [stateFilter, setStateFilter] = useState<'all' | 'published' | 'unpublished' | 'review' | 'refresh' | 'scheduled' | 'expired' | 'noanswer'>('all');
 
   const bg = isDarkMode ? '#343a40' : 'white';
   const text = isDarkMode ? '#fff' : '#333';
@@ -300,6 +300,7 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
       if (stateFilter === 'published' && !t.is_published) return false;
       if (stateFilter === 'unpublished' && t.is_published) return false;
       if (stateFilter === 'review' && !t.needs_review) return false;
+      if (stateFilter === 'refresh' && !t.answers.some(a => a.needs_refresh)) return false;
       if (stateFilter === 'scheduled' && !t.answers.some(a => answerState(a, previewDate) === 'scheduled')) return false;
       if (stateFilter === 'expired' && !t.answers.some(a => answerState(a, previewDate) === 'expired')) return false;
       if (stateFilter === 'noanswer' && resolveAnswer(t, {}, previewDate)) return false;
@@ -460,6 +461,7 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
             ['published', '公開中'],
             ['unpublished', '非公開'],
             ['review', '⚠️ 要確認'],
+            ['refresh', '🔄 要更新'],
             ['scheduled', '予約あり'],
             ['expired', '期限切れあり'],
             ['noanswer', 'この日に出る回答なし'],
