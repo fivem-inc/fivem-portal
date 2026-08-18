@@ -29,7 +29,23 @@ const STATUS_FILTERS: { key: string; label: string }[] = [
   { key: 'pending', label: '確認待ち' },
   { key: 'approved', label: '受理済み' },
   { key: 'returned', label: '差し戻し' },
+  // 削除済みだけは別のテーブル（削除の控え）を読むので、一覧の中身ごと差し替わる
+  { key: 'deleted', label: '🗑 削除済み' },
 ];
+// 削除された申請・精算の控え（purchase_request_deletion_log）1件ぶん。
+// 消える直前の中身が snapshot に丸ごと入っている
+type DeletionLogRow = {
+  id: string;
+  purchase_request_id: string;
+  request_type: string | null;
+  applicant_id: string | null;
+  amount: number | null;
+  item_name: string | null;
+  deleted_by: string | null;
+  deleted_at: string;
+  snapshot: { request?: Record<string, unknown>; items?: unknown[] } | null;
+};
+
 const PENDING_STATUSES = ['pending_leader', 'pending_manager', 'pending_board'];
 const APPROVED_STATUSES = ['leader_approved', 'manager_approved', 'board_approved', 'self_judgment_shared', 'recorded'];
 
@@ -84,6 +100,20 @@ const PurchaseRequestsTab: React.FC = () => {
   const [applicantFilter, setApplicantFilter] = useState('all');
   const [locationFilter, setLocationFilter] = useState('all');
   const [unreimbursedOnly, setUnreimbursedOnly] = useState(false);
+  // 取引の中身で探す絞り込み（購入先・金額・購入日）。
+  // 経理が「あの店にいくら払ったか」を後から追えるようにするためのもの。
+  const [storeFilter, setStoreFilter] = useState('');
+  const [amountMin, setAmountMin] = useState('');
+  const [amountMax, setAmountMax] = useState('');
+  const [purchasedFrom, setPurchasedFrom] = useState('');
+  const [purchasedTo, setPurchasedTo] = useState('');
+
+  // 🗑 削除済みの控え。めったに見ないので、タブを開いたときに1度だけ読み込む
+  const [deletedRows, setDeletedRows] = useState<DeletionLogRow[]>([]);
+  const [deletedNames, setDeletedNames] = useState<Record<string, string>>({});
+  const [deletedLoading, setDeletedLoading] = useState(false);
+  const [deletedError, setDeletedError] = useState('');
+  const [deletedLoaded, setDeletedLoaded] = useState(false);
 
   const [editingRecord, setEditingRecord] = useState<PurchaseRequestCSVRow | null>(null);
   const [editingApproversRecord, setEditingApproversRecord] = useState<PurchaseRequestCSVRow | null>(null);
@@ -246,6 +276,50 @@ const PurchaseRequestsTab: React.FC = () => {
 
   const isIncomplete = (r: PurchaseRequestCSVRow) => PENDING_STATUSES.includes(r.status);
 
+  // 🗑 削除済みタブを開いたときだけ、削除の控えを読み込む
+  const isDeletedView = statusFilter === 'deleted';
+  useEffect(() => {
+    if (statusFilter !== 'deleted' || deletedLoaded) return;
+    let cancelled = false;
+    (async () => {
+      setDeletedLoading(true);
+      setDeletedError('');
+      const { data, error } = await supabase
+        .from('purchase_request_deletion_log')
+        .select('id, purchase_request_id, request_type, applicant_id, amount, item_name, deleted_by, deleted_at, snapshot')
+        .order('deleted_at', { ascending: false });
+      if (cancelled) return;
+      if (error) {
+        setDeletedError('削除済みの記録を読み込めませんでした：' + error.message);
+        setDeletedLoading(false);
+        return;
+      }
+      const rows = (data ?? []) as DeletionLogRow[];
+      setDeletedRows(rows);
+      // 控えにはIDしか入っていないので、申請者と「削除した人」の名前を引く
+      const ids = [...new Set(rows.flatMap(r => [r.applicant_id, r.deleted_by]).filter((v): v is string => !!v))];
+      if (ids.length > 0) {
+        const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
+        if (!cancelled && profs) {
+          setDeletedNames(Object.fromEntries((profs as { id: string; name: string | null }[]).map(p => [p.id, p.name ?? ''])));
+        }
+      }
+      if (!cancelled) { setDeletedLoaded(true); setDeletedLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [statusFilter, deletedLoaded]);
+
+  const storeQuery = storeFilter.trim().toLowerCase();
+  const amountMinNum = amountMin.trim() === '' ? null : Number(amountMin);
+  const amountMaxNum = amountMax.trim() === '' ? null : Number(amountMax);
+  // 購入先は本体の列と商品明細の両方を見る（商品が複数あるときは明細側に入るため、
+  // 片方だけ見ると「入力したのに出てこない」になる）
+  const matchesStore = (r: (typeof purchaseRequestsList)[number]) => {
+    if (!storeQuery) return true;
+    if ((r.store_name || '').toLowerCase().includes(storeQuery)) return true;
+    return resolveItems(r, r.items ?? []).some(it => (it.store_name || '').toLowerCase().includes(storeQuery));
+  };
+
   const filteredList = purchaseRequestsList.filter(r => {
     if (requestTypeFilter !== 'all' && r.request_type !== requestTypeFilter) return false;
     if (statusFilter === 'pending' && !PENDING_STATUSES.includes(r.status)) return false;
@@ -254,16 +328,30 @@ const PurchaseRequestsTab: React.FC = () => {
     if (applicantFilter !== 'all' && r.user_id !== applicantFilter) return false;
     if (locationFilter !== 'all' && r.location !== locationFilter) return false;
     if (unreimbursedOnly && !(r.payment_method === 'cash' && !r.reimbursed_at)) return false;
+    // 🚨 購入先・金額・購入日は必ず isIncomplete より前で判定する。
+    // 後ろに置くと「承認待ちだけ絞り込みを無視して出てくる」ことになる
+    if (!matchesStore(r)) return false;
+    if (amountMinNum !== null && !Number.isNaN(amountMinNum) && r.amount < amountMinNum) return false;
+    if (amountMaxNum !== null && !Number.isNaN(amountMaxNum) && r.amount > amountMaxNum) return false;
+    if (purchasedFrom || purchasedTo) {
+      // 精算は購入日、申請は購入予定日。どちらも無い場合は日付で絞ったときの対象外にする
+      const pdate = r.purchased_at || r.requested_purchase_date;
+      if (!pdate) return false;
+      if (purchasedFrom && pdate < purchasedFrom) return false;
+      if (purchasedTo && pdate > purchasedTo) return false;
+    }
     if (isIncomplete(r)) return true;
     const activeFY = fyFilter === '__current__' ? nowFY : (fyFilter === 'all' ? null : Number(fyFilter));
     if (activeFY !== null && toFiscalYear(r.created_at) !== activeFY) return false;
     return true;
   });
 
-  const filtersAreDefault = statusFilter === 'all' && requestTypeFilter === 'all' && fyFilter === '__current__' && applicantFilter === 'all' && locationFilter === 'all' && !unreimbursedOnly;
+  const filtersAreDefault = statusFilter === 'all' && requestTypeFilter === 'all' && fyFilter === '__current__' && applicantFilter === 'all' && locationFilter === 'all' && !unreimbursedOnly
+    && storeFilter.trim() === '' && amountMin.trim() === '' && amountMax.trim() === '' && purchasedFrom === '' && purchasedTo === '';
   const resetFilters = () => {
     setStatusFilter('all'); setRequestTypeFilter('all'); setFyFilter('__current__');
     setApplicantFilter('all'); setLocationFilter('all'); setUnreimbursedOnly(false);
+    setStoreFilter(''); setAmountMin(''); setAmountMax(''); setPurchasedFrom(''); setPurchasedTo('');
   };
 
   const downloadableList = filteredList.filter(r => r.receipt_type === 'photo' && r.receipt_storage_path);
@@ -381,6 +469,8 @@ const PurchaseRequestsTab: React.FC = () => {
         ))}
       </div>
 
+      {/* 🗑 削除済みタブは別のデータを出すので、通常の絞り込みと一覧はまとめて隠す */}
+      {!isDeletedView && (<>
       {/* 年度・申請者・使用先フィルタ */}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <select value={fyFilter} onChange={e => setFyFilter(e.target.value)} style={{ fontSize: 12, padding: '4px 8px' }}>
@@ -402,6 +492,24 @@ const PurchaseRequestsTab: React.FC = () => {
             リセット
           </button>
         )}
+      </div>
+
+      {/* 購入先・金額・購入日で探す（「あの店にいくら払ったか」を後から追えるように） */}
+      <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <input type="text" value={storeFilter} onChange={e => setStoreFilter(e.target.value)} placeholder="購入先で探す"
+          style={{ fontSize: 12, padding: '4px 8px', width: 130 }} />
+        <span style={{ fontSize: 12, color: subText }}>金額</span>
+        <input type="number" value={amountMin} onChange={e => setAmountMin(e.target.value)} placeholder="下限"
+          style={{ fontSize: 12, padding: '4px 8px', width: 80 }} />
+        <span style={{ fontSize: 12, color: subText }}>〜</span>
+        <input type="number" value={amountMax} onChange={e => setAmountMax(e.target.value)} placeholder="上限"
+          style={{ fontSize: 12, padding: '4px 8px', width: 80 }} />
+        <span style={{ fontSize: 12, color: subText }}>購入日</span>
+        <input type="date" value={purchasedFrom} onChange={e => setPurchasedFrom(e.target.value)}
+          style={{ fontSize: 12, padding: '4px 8px', colorScheme: isDarkMode ? 'dark' : 'light' }} />
+        <span style={{ fontSize: 12, color: subText }}>〜</span>
+        <input type="date" value={purchasedTo} onChange={e => setPurchasedTo(e.target.value)}
+          style={{ fontSize: 12, padding: '4px 8px', colorScheme: isDarkMode ? 'dark' : 'light' }} />
       </div>
       <div style={{ textAlign: 'center', fontSize: 11, color: subText, marginBottom: 10 }}>
         ※ 確認待ちの申請は年度に関わらず常に表示されます（申請者名で絞れます）
@@ -434,9 +542,59 @@ const PurchaseRequestsTab: React.FC = () => {
       {!purchaseRequestsListLoading && filteredList.length === 0 && (
         <div style={{ padding: 16, textAlign: 'center', color: subText, fontSize: 13 }}>該当する申請はありません</div>
       )}
+      </>)}
+
+      {/* 🗑 削除済みの控え（管理者のみ閲覧可・書き換え不可） */}
+      {isDeletedView && (
+        <div style={{ maxWidth: 700, margin: '0 auto' }}>
+          <div style={{ padding: '8px 12px', background: isDarkMode ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDarkMode ? '#3d5a73' : '#bee5eb'}`, borderRadius: 8, fontSize: 12, color: isDarkMode ? '#d0dde8' : '#2c5f6e', marginBottom: 10 }}>
+            削除された申請・精算の記録です。消える直前の内容がそのまま残っています（あとから書き換え・削除はできません）。
+          </div>
+          {deletedLoading && (
+            <div style={{ padding: 16, textAlign: 'center', color: subText, fontSize: 13 }}>読み込み中...</div>
+          )}
+          {deletedError && (
+            <div style={{ padding: '8px 10px', background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, color: '#842029', fontSize: 12, marginBottom: 10 }}>{deletedError}</div>
+          )}
+          {!deletedLoading && !deletedError && deletedRows.length === 0 && (
+            <div style={{ padding: 16, textAlign: 'center', color: subText, fontSize: 13 }}>削除された記録はありません</div>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {deletedRows.map(d => {
+              const req = (d.snapshot?.request ?? {}) as Record<string, unknown>;
+              const itemCount = Array.isArray(d.snapshot?.items) ? d.snapshot.items.length : 0;
+              const str = (v: unknown) => (typeof v === 'string' ? v : '');
+              return (
+                <div key={d.id} style={{ border: `1px solid ${border}`, borderRadius: 8, padding: '10px 12px', background: cardBg }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+                    <span style={{ fontSize: 12, color: subText }}>
+                      🗑 {new Date(d.deleted_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} に {deletedNames[d.deleted_by ?? ''] || '不明'} が削除
+                    </span>
+                    <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: d.request_type === 'reimbursement' ? '#6f42c1' : '#28a745', color: '#fff' }}>
+                      {d.request_type === 'reimbursement' ? '精算' : '申請'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 'bold', color: text }}>
+                    {d.item_name || '(品目なし)'}{itemCount > 1 && `（他${itemCount - 1}件）`}　¥{(d.amount ?? 0).toLocaleString()}
+                  </div>
+                  <div style={{ fontSize: 12, color: subText, marginTop: 4, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    <span>申請者：{deletedNames[d.applicant_id ?? ''] || '不明'}</span>
+                    {str(req.store_name) && <span>購入先：{str(req.store_name)}</span>}
+                    {str(req.purchased_at) && <span>購入日：{str(req.purchased_at)}</span>}
+                    {str(req.location) && <span>使用先：{str(req.location)}</span>}
+                  </div>
+                  {str(req.reason) && (
+                    <div style={{ fontSize: 12, color: subText, marginTop: 4 }}>申請理由：{str(req.reason)}</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 700, margin: '0 auto' }}>
-        {filteredList.map(r => {
+        {!isDeletedView && filteredList.map(r => {
           const resolvedItems = resolveItems(r, r.items ?? []);
           const route = routeForStatus(r.status);
           const opinions = opinionsByRequest[r.id] ?? [];
