@@ -87,6 +87,34 @@ const FaqWidget: React.FC = () => {
   const today = todayJstStr();
   const rootRef = useRef<HTMLDivElement>(null);
 
+  // 🚨 スマホの戻るボタン対応。画面を1つ進めるたびに履歴を積み、戻る操作で1つ前の画面へ返す。
+  //    これが無いと、端末の戻るボタンでウィジェットごとページを離脱してしまう
+  //    （WordPress に iframe で埋め込んだ後も同じ。2026-08-18 実機指摘）。
+  //    履歴の state には深さだけを入れる（topic/answer はそのまま入れられないので、
+  //    画面の実体は stackRef で持つ）。
+  const stackRef = useRef<View[]>([{ kind: 'home' }]);
+
+  /** 画面を1つ進める（履歴に積む）。画面遷移は必ずこれを通すこと */
+  const go = useCallback((v: View) => {
+    stackRef.current = [...stackRef.current, v];
+    window.history.pushState({ faqDepth: stackRef.current.length - 1 }, '');
+    setView(v);
+  }, []);
+
+  useEffect(() => {
+    const onPop = (e: PopStateEvent) => {
+      const state = e.state as { faqDepth?: number } | null;
+      const depth = typeof state?.faqDepth === 'number' ? state.faqDepth : 0;
+      stackRef.current = stackRef.current.slice(0, depth + 1);
+      // 検索結果（searched）はあえて消さない。候補から1件開いて戻ったとき、
+      // 候補一覧が残っていた方が別の候補を試せるため。
+      // 完全に最初へ戻すのは「← 質問の一覧に戻る」ボタンの役割
+      setView(stackRef.current[stackRef.current.length - 1] ?? { kind: 'home' });
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
   useEffect(() => {
     fetchPublicFaqTopics().then(
       rows => { setTopics(rows); setLoading(false); },
@@ -142,11 +170,11 @@ const FaqWidget: React.FC = () => {
       logPublicFaqQuery({ rawQuery: fromSearch, hadMatch: true, school: v.school, course: v.course, pickedTopicId: topic.id });
     }
     const ask = neededAsk(topic, v);
-    if (ask) { setView({ kind: 'select', topic, ask }); return; }
+    if (ask) { go({ kind: 'select', topic, ask }); return; }
     const answer = resolveAnswer(topic, v, today);
-    if (!answer) { setView({ kind: 'contact', reason: 'noanswer' }); return; }
-    setView({ kind: 'answer', topic, answer });
-  }, [neededAsk, today]);
+    if (!answer) { go({ kind: 'contact', reason: 'noanswer' }); return; }
+    go({ kind: 'answer', topic, answer });
+  }, [neededAsk, today, go]);
 
   // 校・コースの選択肢は全リスト（lib/faq.ts と共用）を出す。
   // 🚨 その質問の回答が対象にしている校・コースだけに絞ってはいけない。
@@ -161,8 +189,8 @@ const FaqWidget: React.FC = () => {
       // 無ければお問い合わせ案内へ（行き止まりにしない）
       const cleared = ask === 'school' ? { ...viewer, school: null } : { ...viewer, course: null };
       const common = resolveAnswer(topic, cleared, today);
-      if (common) { setView({ kind: 'answer', topic, answer: common }); return; }
-      setView({ kind: 'contact', reason: 'unknown' });
+      if (common) { go({ kind: 'answer', topic, answer: common }); return; }
+      go({ kind: 'contact', reason: 'unknown' });
       return;
     }
     const next = ask === 'school' ? { ...viewer, school: value } : { ...viewer, course: value };
@@ -170,7 +198,18 @@ const FaqWidget: React.FC = () => {
     openTopic(topic, next);
   };
 
-  const backToHome = () => { setView({ kind: 'home' }); setSearched(null); setQuery(''); };
+  /**
+   * 「← 質問の一覧に戻る」。1つ前ではなく最初の画面まで一気に戻す。
+   * 履歴も積んだぶんだけ戻す（go(-深さ)）ので、そのあと端末の戻るボタンを押すと
+   * ウィジェットを開く前のページへ抜けられる（履歴に空の階層が残らない）。
+   */
+  const backToHome = () => {
+    setSearched(null);
+    setQuery('');
+    const depth = stackRef.current.length - 1;
+    if (depth > 0) { window.history.go(-depth); return; }  // 画面の更新は popstate 側で行う
+    setView({ kind: 'home' });
+  };
 
   /**
    * 回答の対象表示（「この回答は【◯◯】の方向けです」）。
@@ -244,7 +283,7 @@ const FaqWidget: React.FC = () => {
                   </div>
                   <p style={{ fontSize: 12, color: SUB, margin: '8px 0 0' }}>
                     どれも違う場合は、言葉を変えてもう一度ご入力いただくか、
-                    <button type="button" onClick={() => setView({ kind: 'contact', reason: 'nomatch' })}
+                    <button type="button" onClick={() => go({ kind: 'contact', reason: 'nomatch' })}
                       style={{ border: 'none', background: 'none', color: BLUE_DARK, textDecoration: 'underline', cursor: 'pointer', fontSize: 12, padding: 0 }}>
                       お問い合わせ
                     </button>
@@ -359,7 +398,7 @@ const FaqWidget: React.FC = () => {
             <button type="button" onClick={backToHome} style={backBtn}>
               ← 質問の一覧に戻る
             </button>
-            <button type="button" onClick={() => setView({ kind: 'contact', reason: 'nomatch' })} style={backBtn}>
+            <button type="button" onClick={() => go({ kind: 'contact', reason: 'nomatch' })} style={backBtn}>
               解決しない・問い合わせる
             </button>
           </div>
