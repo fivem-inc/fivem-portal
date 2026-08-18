@@ -1446,34 +1446,10 @@ const EncouragementBanner: React.FC<{ userId: string; refreshKey: number; onAnsw
 // 休暇申請の承認待ち通知バナー
 const LeaveApprovalBanner: React.FC<{ userId: string; roleTitle: string; isAdmin: boolean }> = ({ userId, roleTitle, isAdmin }) => {
   const navigate = useNavigate();
-  const [pendingCount, setPendingCount] = useState(0);
-
-  useEffect(() => {
-        if (!isAdmin && !['リーダー', 'マネージャー', '社長', '管理者'].includes(roleTitle)) return;
-
-    const fetchPending = async () => {
-      // 自分の番の申請のみカウント
-      // 一人目: status=pending かつ approver_id=自分
-      // 二人目: status=step2_pending かつ approver2_id=自分
-      const { data: d1 } = await supabase
-        .from('leave_requests')
-        .select('id')
-        .eq('status', 'pending')
-        .eq('approver_id', userId);
-      const { data: d2 } = await supabase
-        .from('leave_requests')
-        .select('id')
-        .eq('status', 'step2_pending')
-        .eq('approver2_id', userId);
-      // 社長: admin_approved ステータスをカウント
-      const { data: d3 } = roleTitle === '社長'
-        ? await supabase.from('leave_requests').select('id').eq('status', 'admin_approved')
-        : { data: [] };
-      const data = [...(d1 || []), ...(d2 || []), ...(d3 || [])];
-      if (data) setPendingCount(data.length);
-    };
-    fetchPending();
-  }, [userId, roleTitle, isAdmin]);
+  // 🚨 ナビのバッジと同じフックを使う（判定は完全に同じ内容だったが、以前はバナー側だけ
+  //    「開いた瞬間に1回数えるだけ」で、30秒ごとの数え直しも操作後の即時更新も無かった。
+  //    そのためホームを開いたまま別の人が処理すると、バッジは減るのにバナーだけ残っていた）
+  const { pendingCount } = useLeavePendingCount(userId, roleTitle, isAdmin);
 
   if (pendingCount === 0) return null;
 
@@ -1505,22 +1481,9 @@ const LeaveApprovalBanner: React.FC<{ userId: string; roleTitle: string; isAdmin
 // 勤務変更申請の承認待ち通知バナー
 const ShiftReportApprovalBanner: React.FC<{ userId: string; roleTitle: string; isAdmin: boolean; canShiftReport: boolean }> = ({ userId, roleTitle, isAdmin, canShiftReport }) => {
   const navigate = useNavigate();
-  const [pendingCount, setPendingCount] = useState(0);
-
-  useEffect(() => {
-    if (!canShiftReport) return;
-    if (!isAdmin && !['リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者'].includes(roleTitle)) return;
-
-    const fetchPending = async () => {
-      const { data } = await supabase
-        .from('shift_reports')
-        .select('id')
-        .eq('reviewer_id', userId)
-        .in('status', ['pending', 'resubmitted']);
-      setPendingCount(data?.length ?? 0);
-    };
-    fetchPending();
-  }, [userId, roleTitle, isAdmin, canShiftReport]);
+  // 🚨 ナビのバッジと同じフックを使う（判定は完全に同じ内容。以前はバナー側だけ
+  //    数え直しが無く、ホームを開いたまま別の人が処理するとバナーだけ残っていた）
+  const { pendingCount } = useShiftPendingCount(userId, roleTitle, isAdmin, canShiftReport);
 
   if (pendingCount === 0) return null;
 

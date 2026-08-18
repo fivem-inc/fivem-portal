@@ -42,7 +42,8 @@ export const usePurchasePendingCount = (userId: string | undefined, canPurchaseR
     setPendingCount((leaderRes.data?.length ?? 0) + opinionTargets.length - answeredCount);
   }, [userId, canPurchaseRequest]);
 
-  useEffect(() => { fetchPending(); }, [fetchPending]);
+  // 30秒ごとに数え直す（休暇・勤務変更のバッジと同じ。他の人が先に処理したときも減る）
+  useEffect(() => { fetchPending(); const t = setInterval(fetchPending, 30000); return () => clearInterval(t); }, [fetchPending]);
   useEffect(() => {
     window.addEventListener('purchase-pending-changed', fetchPending);
     return () => window.removeEventListener('purchase-pending-changed', fetchPending);
