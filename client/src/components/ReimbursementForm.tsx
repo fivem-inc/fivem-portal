@@ -433,7 +433,8 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
         />
 
         <div style={{ padding: '8px 12px', background: isDarkMode ? '#243447' : '#eef6ff', border: `1px solid ${isDarkMode ? '#375a7f' : '#b6dcff'}`, borderRadius: 8, fontSize: 12, color: isDarkMode ? '#d6ecff' : '#174a7c' }}>
-          原本確認が必要になる場合があります。紙のレシートは少なくとも3か月は保管してください。
+          紙のレシート・領収書は<strong>原本を経理まで送ってください</strong>（7年間の保管が必要です）。<br />
+          ここにアップした写真は社内確認用の控えです。
         </div>
 
         <div>
