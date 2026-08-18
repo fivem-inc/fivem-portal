@@ -131,7 +131,9 @@ serve(async (req) => {
       }
     }
 
-    // プッシュ通知（文面はシステム固定・安全語のみ）
+    // プッシュ通知（文面はシステム固定・安全語のみ。「受理」は 2026-08-18 実機テストで警告にならないことを確認済み）
+    // タップ先はベル通知と同じ「その月のカレンダー＋該当日ハイライト」。/calendar だけだと今月が開くだけで
+    // 対象（来年の休暇など）が見えず「押したのに何もない」になる（2026-08-17 リーダーからの報告）
     const pushSetting = getSetting('push')
     if (pushSetting?.enabled) {
       const pushTargetIds = await resolveTargetIds(pushSetting.recipient)
@@ -140,7 +142,7 @@ serve(async (req) => {
         const pushIds = [...new Set(((subs ?? []) as { user_id: string }[]).map(s => s.user_id))]
         if (pushIds.length > 0) {
           await supabase.functions.invoke('send-push', {
-            body: { user_ids: pushIds, title: 'ファイブM 休暇申請', body: '新着 1件', url: '/calendar', tag: 'leave-fyi' },
+            body: { user_ids: pushIds, title: 'ファイブM 休暇申請', body: '受理 1件', url: `/calendar?focus=${first}&view=fyi`, tag: 'leave-fyi' },
           })
           notifiedPush = pushIds.length
         }

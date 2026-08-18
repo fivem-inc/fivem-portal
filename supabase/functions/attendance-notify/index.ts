@@ -191,11 +191,12 @@ serve(async (req) => {
         if (pushIds.length > 0) {
           await supabase.functions.invoke('send-push', {
             // 文面は「状態を表す漢字名詞＋件数」に限る（文章形や「確認」「依頼」はChromeが不正な通知と判定する）
+            // 取消は対象の予定が既に削除済みでハイライトできないため focus を付けない（ベル通知と同じ挙動）
             body: {
               user_ids: pushIds,
               title: 'ファイブM 欠勤・遅刻・早退',
               body: isCancelled ? '取消 1件' : '新着 1件',
-              url: '/calendar',
+              url: isCancelled ? '/calendar' : `/calendar?focus=${first}`,
               tag: isCancelled ? 'attendance-cancel' : 'attendance',
             },
           })

@@ -148,7 +148,9 @@ serve(async (req) => {
       }
     }
 
-    // プッシュ通知（サイト通知とは別に役職を選択できる。文面はシステム固定）
+    // プッシュ通知（サイト通知とは別に役職を選択できる。文面はシステム固定。「受理」は 2026-08-18 実機確認済みの安全語）
+    // タップ先は履歴タブ＋該当行。/shift-report だけだと既定の「報告」フォームに着地して何も見えない
+    // （2026-08-17 リーダーからの報告）。プッシュのタブ指定漏れは 8/8 に他の通知で直したがここは漏れていた
     const pushSetting = getSetting('push')
     if (pushSetting?.enabled) {
       const pushTargetIds = await resolveTargetIds(pushSetting.recipient)
@@ -157,7 +159,7 @@ serve(async (req) => {
         const pushIds = [...new Set(((subs ?? []) as { user_id: string }[]).map(s => s.user_id))]
         if (pushIds.length > 0) {
           await supabase.functions.invoke('send-push', {
-            body: { user_ids: pushIds, title: 'ファイブM 勤務変更報告', body: '新着 1件', url: '/shift-report', tag: 'shift_report_confirmed' },
+            body: { user_ids: pushIds, title: 'ファイブM 勤務変更報告', body: '受理 1件', url: report_id ? `/shift-report?tab=history&focus=${report_id}` : '/shift-report?tab=history', tag: 'shift_report_confirmed' },
           })
         }
       }
