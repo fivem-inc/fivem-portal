@@ -6,6 +6,12 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+// URLにパラメータを足す（?の有無を自動で判断する）
+function addParams(url: string, params: Record<string, string>): string {
+  const parts = Object.entries(params).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+  return parts.length === 0 ? url : url + (url.includes('?') ? '&' : '?') + parts.join('&')
+}
+
 function applyTemplate(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{(.+?)\}\}/g, (_, key) => vars[key.trim()] ?? `{{${key.trim()}}}`)
 }
@@ -39,6 +45,9 @@ serve(async (req) => {
     const siteSetting = settings.find(s => s.channel === 'site')
 
     let notifiedSite = 0
+    // 「その人に作ったベル通知のID」。プッシュのURLに載せると、押したとき着地画面で
+    // ベル一覧が開き該当行が光る。ベル通知が無い人（プッシュだけの宛先）には載せない
+    const nidByUser = new Map<string, string>()
 
     if (siteSetting?.enabled && siteSetting.template) {
       let roles: string[] = ['マネージャー', '社長']
@@ -58,9 +67,11 @@ serve(async (req) => {
 
       if (targetIds.length > 0) {
         const message = applyTemplate(siteSetting.template, vars)
-        await supabase.from('notifications').insert(
+        // 作った行のIDを受け取り、プッシュのURLに載せる（押したときベル一覧で該当行を光らせるため）
+        const { data: inserted } = await supabase.from('notifications').insert(
           targetIds.map(id => ({ user_id: id, message, sub_message: null, source_type: 'purchase_request' }))
-        )
+        ).select('id, user_id')
+        for (const r of (inserted ?? []) as { id: string; user_id: string }[]) nidByUser.set(r.user_id, r.id)
         notifiedSite = targetIds.length
       }
     }
@@ -80,10 +91,17 @@ serve(async (req) => {
         const { data: subs } = await supabase.from('push_subscriptions').select('user_id').in('user_id', pushTargetIds)
         const pushIds = [...new Set(((subs ?? []) as { user_id: string }[]).map(s => s.user_id))]
         if (pushIds.length > 0) {
+          // ⚠️ /purchase の既定タブは「💰 精算」の入力フォーム。tab=history を省くと
+          //    他人の精算記録を見に来た社長が自分の入力画面に着地する（2026-08-18 修正）
+          const baseUrl = '/purchase?tab=history'
+          // 押したときベル一覧を開いて該当行を光らせる。ベル通知が無い人はそのまま履歴へ
+          const urlsByUser: Record<string, string> = {}
+          for (const uid of pushIds) {
+            const nid = nidByUser.get(uid)
+            if (nid) urlsByUser[uid] = addParams(baseUrl, { nids: nid, bell: '1' })
+          }
           await supabase.functions.invoke('send-push', {
-            // ⚠️ /purchase の既定タブは「💰 精算」の入力フォーム。tab=history を省くと
-            //    他人の精算記録を見に来た社長が自分の入力画面に着地する（2026-08-18 修正）
-            body: { user_ids: pushIds, title: 'ファイブM 備品精算', body: '新着 1件', url: '/purchase?tab=history', tag: 'reimbursement_recorded' },
+            body: { user_ids: pushIds, title: 'ファイブM 備品精算', body: '新着 1件', url: baseUrl, urls_by_user: urlsByUser, tag: 'reimbursement_recorded' },
           })
         }
       }

@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useLayoutEffect, Suspense, useRef, useContext } from 'react';
 import ReactDOM from 'react-dom';
-import { Routes, Route, Navigate, Outlet, BrowserRouter, useNavigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, Outlet, BrowserRouter, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import SignIn from './pages/SignIn';
 import ResetPassword from './pages/ResetPassword';
 import ExpenseForm from './components/ExpenseForm';
@@ -406,6 +406,12 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
   const navigate = useNavigate();
   const ref = useRef<HTMLDivElement>(null);
   const portalRef = useRef<HTMLDivElement>(null);
+  // プッシュから来たときに光らせる行（?nids= で渡される）
+  const [highlightIds, setHighlightIds] = useState<string[]>([]);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [dropRect, setDropRect] = useState<DOMRect | null>(null);
 
   const fetchNotifs = useCallback(async () => {
     const { data } = await supabase.from('notifications').select('id, message, sub_message, read, created_at, source_type, reference_id, event_key').eq('user_id', userId).eq('dismissed', false).or('source_type.is.null,source_type.neq.board').order('created_at', { ascending: false }).limit(30);
@@ -413,6 +419,36 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
   }, [userId]);
 
   useEffect(() => { fetchNotifs(); const t = setInterval(fetchNotifs, 30000); return () => clearInterval(t); }, [fetchNotifs]);
+
+  // プッシュ（結果・お知らせ系）をタップして来たとき、ベル一覧を開いて該当行を光らせる。
+  // プッシュの文面には中身を書けない（Chromeが不正な通知と判定するため）ので、
+  // 「誰が何をしたか」はベルの本文で読んでもらう。押せば既読になって飛ぶ＝普段と同じ操作。
+  // 🚨 URLの印を消すのは「開く指示を出したあと」。先に消すと、起動時の自動更新（リロード）と
+  //    ぶつかったときに開かないまま印だけ消える
+  const bellParam = searchParams.get('bell');
+  const nidsParam = searchParams.get('nids');
+  useEffect(() => {
+    if (bellParam !== '1' || !nidsParam) return;
+    // 他人が書き換えたURLで壊れないよう、UUIDの形をしたものだけ使う
+    const ids = nidsParam.split(',').filter(s => /^[0-9a-f-]{36}$/i.test(s)).slice(0, 20);
+    if (ids.length > 0) {
+      if (btnRef.current) setDropRect(btnRef.current.getBoundingClientRect());
+      setOpen(true);
+      setHighlightIds(ids);
+      const t = setTimeout(() => setHighlightIds([]), 6000);
+      // 印を消す（戻る・更新で再度開かないように）。他のパラメータ（focus/tab等）は残す
+      setSearchParams(prev => { prev.delete('bell'); prev.delete('nids'); return prev; }, { replace: true });
+      return () => clearTimeout(t);
+    }
+    setSearchParams(prev => { prev.delete('bell'); prev.delete('nids'); return prev; }, { replace: true });
+  }, [bellParam, nidsParam, setSearchParams]);
+
+  // 光らせる行が一覧の下の方にあるときは、その行まで自動でスクロールする
+  useEffect(() => {
+    if (highlightIds.length === 0 || notifs.length === 0) return;
+    const el = rowRefs.current[highlightIds[0]];
+    if (el) el.scrollIntoView({ block: 'center' });
+  }, [highlightIds, notifs]);
   useEffect(() => {
     const h = (e: MouseEvent) => {
       const inside = (ref.current?.contains(e.target as Node)) || (portalRef.current?.contains(e.target as Node));
@@ -440,9 +476,6 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
     if (target.path) navigate(target.path);
   };
 
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const [dropRect, setDropRect] = useState<DOMRect | null>(null);
-
   // 🚨 開いただけでは既読にしない。以前は「開いた瞬間に全件を既読」にしていたため、
   // ざっと見て閉じると「まだ読んでいないもの」が二度と分からなくなっていた。
   // 既読になるのは行をタップしたときだけ（読み飛ばしが赤い●で残る）
@@ -467,8 +500,9 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
               <div style={{ padding: '20px', textAlign: 'center', color: '#888', fontSize: 13 }}>通知はありません</div>
             ) : notifs.map(n => (
               // 行ごと押せる。押すと既読になり、その通知の画面へ移動する
-              <div key={n.id} onClick={() => handleRowTap(n)}
-                style={{ padding: '10px 14px', borderBottom: '1px solid #f0f0f0', background: n.read ? '#fff' : '#eaf4ff', display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+              // プッシュから来たときは、その通知の行を6秒だけ黄色く光らせる（既読でも光る）
+              <div key={n.id} ref={el => { rowRefs.current[n.id] = el; }} onClick={() => handleRowTap(n)}
+                style={{ padding: '10px 14px', borderBottom: '1px solid #f0f0f0', background: highlightIds.includes(n.id) ? '#fff8e1' : (n.read ? '#fff' : '#eaf4ff'), boxShadow: highlightIds.includes(n.id) ? 'inset 3px 0 0 #f59e0b' : 'none', transition: 'background 0.4s', display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
                 {/* 未読の印。既読になっても行は消さず、印と背景の色だけ消える（履歴として残す）。
                     文字の濃さだけだと、行に本文・補足・日時が並ぶと差が埋もれるため「面」で区別する */}
                 <span aria-hidden="true" style={{ width: 10, height: 10, borderRadius: '50%', background: n.read ? 'transparent' : '#dc3545', flexShrink: 0, marginTop: 4 }} />

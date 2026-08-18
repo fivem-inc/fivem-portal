@@ -40,8 +40,12 @@ self.addEventListener('notificationclick', (event) => {
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {
         if (client.url.includes(self.location.origin) && 'focus' in client) {
-          client.navigate(url);
-          return client.focus();
+          // 🚨 未制御のタブ（起動直後・iPhoneのPWAでよく起きる）だと navigate は失敗する。
+          //    失敗を捨てて focus だけしていたため「押しても前の画面が出るだけ」になっていた。
+          //    その場合は新しく開き直す（2026-08-18 修正）
+          return client.navigate(url)
+            .then(c => (c || client).focus())
+            .catch(() => self.clients.openWindow(url));
         }
       }
       if (self.clients.openWindow) {

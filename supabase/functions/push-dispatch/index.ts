@@ -172,7 +172,7 @@ serve(async (req) => {
     // 送信待ちを取得（古い順・上限500）
     const { data: pending, error: qErr } = await supabase
       .from("push_queue")
-      .select("id, user_id, event_key, retry_count")
+      .select("id, user_id, event_key, retry_count, notification_ids")
       .eq("status", "pending")
       .order("created_at", { ascending: true })
       .limit(500);
@@ -199,7 +199,7 @@ serve(async (req) => {
     }
 
     // ユーザー×(アプリ名×状態語×URL) で集約
-    type Group = { userId: string; app: string; word: string; url: string; ids: string[]; tagKey: string };
+    type Group = { userId: string; app: string; word: string; url: string; ids: string[]; tagKey: string; bell?: true; nids: string[] };
     const groups = new Map<string, Group>();
     const skippedIds: string[] = [];
     // 追加送信（CC）用：base event_key → その本来の宛先user_id集合（二重送信を防ぐため）
@@ -216,10 +216,12 @@ serve(async (req) => {
       }
       const gKey = `${row.user_id}|${map.app}|${map.word}|${map.url}`;
       const g = groups.get(gKey);
+      const rowNids = (row.notification_ids ?? []) as string[];
       if (g) {
         g.ids.push(row.id);
+        g.nids.push(...rowNids);
       } else {
-        groups.set(gKey, { userId: row.user_id, app: map.app, word: map.word, url: map.url, ids: [row.id], tagKey: base });
+        groups.set(gKey, { userId: row.user_id, app: map.app, word: map.word, url: map.url, ids: [row.id], tagKey: base, bell: map.bell, nids: [...rowNids] });
       }
       if (!primaryUsersByEvent.has(base)) primaryUsersByEvent.set(base, new Set());
       primaryUsersByEvent.get(base)!.add(row.user_id);
@@ -243,7 +245,12 @@ serve(async (req) => {
           user_ids: [g.userId],
           title: `ファイブM ${g.app}`,
           body: `${g.word} ${g.ids.length}件`,
-          url: g.url,
+          // bell が付いているイベントは、押したときに着地画面で🔔ベル一覧を開いて
+          // 該当行を光らせる（プッシュの文面には中身が書けないため、内容はベルで読んでもらう）。
+          // nids はその「該当行」を特定するためのベル通知ID。新しい順に20件まで
+          url: addParams(g.url, g.bell && g.nids.length > 0
+            ? { nids: [...new Set(g.nids)].slice(-20).join(","), bell: "1" }
+            : {}),
           tag: g.tagKey,
         }),
       });

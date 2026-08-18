@@ -22,6 +22,12 @@ const TYPE_LABEL: Record<string, string> = {
 // 設定が無い古い行はこの既定＝従来どおり社長・管理者だけが全件受け取る。
 const DEFAULT_ORG_WIDE_ROLES = ['社長', '管理者']
 
+// URLにパラメータを足す（?の有無を自動で判断する）
+function addParams(url: string, params: Record<string, string>): string {
+  const parts = Object.entries(params).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+  return parts.length === 0 ? url : url + (url.includes('?') ? '&' : '?') + parts.join('&')
+}
+
 const SLACK_WEBHOOK_KEYS: Record<string, string> = {
   leader:     'SLACK_WEBHOOK_LEADER',
   manager:    'SLACK_WEBHOOK_MANAGER',
@@ -151,6 +157,9 @@ serve(async (req) => {
     }
 
     let notifiedSite = 0, notifiedSlack = 0, notifiedEmail = 0
+    // 「その人に作ったベル通知のID」。プッシュのURLに載せると、押したとき着地画面で
+    // ベル一覧が開き該当行が光る。ベル通知が無い人（プッシュだけの宛先）には載せない
+    const nidByUser = new Map<string, string>()
 
     // サイト通知
     const siteSetting = getSetting('site')
@@ -168,7 +177,8 @@ serve(async (req) => {
       if (targetIds.length > 0) {
         // reference_id に対象日（先頭日・YYYY-MM-DD）を入れ、バナーから正しい月へジャンプ＋該当行を強調できるようにする
         // 取消は source_type を分ける：飛び先の行がもう無いため、バナー側で「移動せず閉じる」に出し分ける
-        await supabase.from('notifications').insert(
+        // 作った行のIDを受け取り、プッシュのURLに載せる（押したときベル一覧で該当行を光らせるため）
+        const { data: inserted } = await supabase.from('notifications').insert(
           targetIds.map(id => ({
             user_id: id,
             message,
@@ -176,7 +186,8 @@ serve(async (req) => {
             source_type: isCancelled ? 'attendance:cancelled' : 'attendance',
             reference_id: first,
           }))
-        )
+        ).select('id, user_id')
+        for (const r of (inserted ?? []) as { id: string; user_id: string }[]) nidByUser.set(r.user_id, r.id)
         notifiedSite = targetIds.length
       }
     }
@@ -189,6 +200,14 @@ serve(async (req) => {
         const { data: subs } = await supabase.from('push_subscriptions').select('user_id').in('user_id', pushTargetIds)
         const pushIds = [...new Set(((subs ?? []) as { user_id: string }[]).map(s => s.user_id))]
         if (pushIds.length > 0) {
+          const baseUrl = isCancelled ? '/calendar' : `/calendar?focus=${first}`
+          // 押したときベル一覧を開いて該当行を光らせる。ベル通知が無い人はそのままカレンダーへ。
+          // 取消は着地しても対象の行がもう無いので、ベルで本文（誰の・いつの分か）を読んでもらう
+          const urlsByUser: Record<string, string> = {}
+          for (const uid of pushIds) {
+            const nid = nidByUser.get(uid)
+            if (nid) urlsByUser[uid] = addParams(baseUrl, { nids: nid, bell: '1' })
+          }
           await supabase.functions.invoke('send-push', {
             // 文面は「状態を表す漢字名詞＋件数」に限る（文章形や「確認」「依頼」はChromeが不正な通知と判定する）
             // 取消は対象の予定が既に削除済みでハイライトできないため focus を付けない（ベル通知と同じ挙動）
@@ -198,7 +217,8 @@ serve(async (req) => {
               // 見出しは種別を限定しない「勤怠」にする（2026-08-18 実機確認済みの語）
               title: 'ファイブM 勤怠',
               body: isCancelled ? '取消 1件' : '新着 1件',
-              url: isCancelled ? '/calendar' : `/calendar?focus=${first}`,
+              url: baseUrl,
+              urls_by_user: urlsByUser,
               tag: isCancelled ? 'attendance-cancel' : 'attendance',
             },
           })

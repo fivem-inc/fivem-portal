@@ -17,6 +17,12 @@ const CORS_HEADERS = {
 // 管理画面の「絞り込みの対象外にする役職」で上書きできる（recipient.orgWideRoles）。
 const DEFAULT_ORG_WIDE_ROLES = ['社長', '管理者']
 
+// URLにパラメータを足す（?の有無を自動で判断する）
+function addParams(url: string, params: Record<string, string>): string {
+  const parts = Object.entries(params).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+  return parts.length === 0 ? url : url + (url.includes('?') ? '&' : '?') + parts.join('&')
+}
+
 function applyTemplate(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{(.+?)\}\}/g, (_, key) => vars[key.trim()] ?? `{{${key.trim()}}}`)
 }
@@ -113,6 +119,9 @@ serve(async (req) => {
     }
 
     let notifiedSite = 0, notifiedEmail = 0, notifiedPush = 0
+    // 「その人に作ったベル通知のID」。プッシュのURLに載せると、押したとき着地画面で
+    // ベル一覧が開き該当行が光る。ベル通知が無い人（プッシュだけの宛先）には載せない
+    const nidByUser = new Map<string, string>()
 
     // サイト通知（バナー／ベル）
     const siteSetting = getSetting('site')
@@ -124,9 +133,11 @@ serve(async (req) => {
       if (targetIds.length > 0) {
         // reference_id に休暇初日(YYYY-MM-DD)を入れ、バナーから正しい月へジャンプ＋該当行を強調できるようにする。
         // event_key は付けない（push_queueパイプライン非経由。プッシュは下で send-push を直接呼ぶ）。
-        await supabase.from('notifications').insert(
+        // 作った行のIDを受け取り、プッシュのURLに載せる（押したときベル一覧で該当行を光らせるため）
+        const { data: inserted } = await supabase.from('notifications').insert(
           targetIds.map(id => ({ user_id: id, message, sub_message: subMessage, source_type: 'leave_request:fyi', reference_id: first }))
-        )
+        ).select('id, user_id')
+        for (const r of (inserted ?? []) as { id: string; user_id: string }[]) nidByUser.set(r.user_id, r.id)
         notifiedSite = targetIds.length
       }
     }
@@ -141,8 +152,15 @@ serve(async (req) => {
         const { data: subs } = await supabase.from('push_subscriptions').select('user_id').in('user_id', pushTargetIds)
         const pushIds = [...new Set(((subs ?? []) as { user_id: string }[]).map(s => s.user_id))]
         if (pushIds.length > 0) {
+          const baseUrl = `/calendar?focus=${first}&view=fyi`
+          // 押したときベル一覧を開いて該当行を光らせる。ベル通知が無い人はそのままカレンダーへ
+          const urlsByUser: Record<string, string> = {}
+          for (const uid of pushIds) {
+            const nid = nidByUser.get(uid)
+            if (nid) urlsByUser[uid] = addParams(baseUrl, { nids: nid, bell: '1' })
+          }
           await supabase.functions.invoke('send-push', {
-            body: { user_ids: pushIds, title: 'ファイブM 休暇申請', body: '受理 1件', url: `/calendar?focus=${first}&view=fyi`, tag: 'leave-fyi' },
+            body: { user_ids: pushIds, title: 'ファイブM 休暇申請', body: '受理 1件', url: baseUrl, urls_by_user: urlsByUser, tag: 'leave-fyi' },
           })
           notifiedPush = pushIds.length
         }

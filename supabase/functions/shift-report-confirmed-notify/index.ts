@@ -20,6 +20,12 @@ const TYPE_LABEL: Record<string, string> = {
 // 管理画面の「絞り込みの対象外にする役職」で上書きできる（recipient.orgWideRoles）。
 const DEFAULT_ORG_WIDE_ROLES = ['社長', '管理者']
 
+// URLにパラメータを足す（?の有無を自動で判断する）
+function addParams(url: string, params: Record<string, string>): string {
+  const parts = Object.entries(params).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+  return parts.length === 0 ? url : url + (url.includes('?') ? '&' : '?') + parts.join('&')
+}
+
 const SLACK_WEBHOOK_KEYS: Record<string, string> = {
   leader:     'SLACK_WEBHOOK_LEADER',
   manager:    'SLACK_WEBHOOK_MANAGER',
@@ -128,6 +134,9 @@ serve(async (req) => {
     }
 
     let notifiedSite = 0, notifiedSlack = 0, notifiedEmail = 0
+    // 「その人に作ったベル通知のID」。プッシュのURLに載せると、押したとき着地画面で
+    // ベル一覧が開き該当行が光る。ベル通知が無い人（プッシュだけの宛先）には載せない
+    const nidByUser = new Map<string, string>()
 
     // サイト通知
     const siteSetting = getSetting('site')
@@ -137,13 +146,15 @@ serve(async (req) => {
       if (targetIds.length > 0) {
         // reference_id に報告IDを入れると、受け取った人がタップしたときに
         // 履歴でその報告の給与期間が自動で開き、該当行がハイライトされる
-        await supabase.from('notifications').insert(
+        // 作った行のIDを受け取り、プッシュのURLに載せる（押したときベル一覧で該当行を光らせるため）
+        const { data: inserted } = await supabase.from('notifications').insert(
           targetIds.map(id => ({
             user_id: id, message, sub_message: null,
             source_type: 'shift_report',
             reference_id: report_id ?? null,
           }))
-        )
+        ).select('id, user_id')
+        for (const r of (inserted ?? []) as { id: string; user_id: string }[]) nidByUser.set(r.user_id, r.id)
         notifiedSite = targetIds.length
       }
     }
@@ -158,8 +169,15 @@ serve(async (req) => {
         const { data: subs } = await supabase.from('push_subscriptions').select('user_id').in('user_id', pushTargetIds)
         const pushIds = [...new Set(((subs ?? []) as { user_id: string }[]).map(s => s.user_id))]
         if (pushIds.length > 0) {
+          const baseUrl = report_id ? `/shift-report?tab=history&focus=${report_id}` : '/shift-report?tab=history'
+          // 押したときベル一覧を開いて該当行を光らせる。ベル通知が無い人はそのまま履歴へ
+          const urlsByUser: Record<string, string> = {}
+          for (const uid of pushIds) {
+            const nid = nidByUser.get(uid)
+            if (nid) urlsByUser[uid] = addParams(baseUrl, { nids: nid, bell: '1' })
+          }
           await supabase.functions.invoke('send-push', {
-            body: { user_ids: pushIds, title: 'ファイブM 勤務変更報告', body: '受理 1件', url: report_id ? `/shift-report?tab=history&focus=${report_id}` : '/shift-report?tab=history', tag: 'shift_report_confirmed' },
+            body: { user_ids: pushIds, title: 'ファイブM 勤務変更報告', body: '受理 1件', url: baseUrl, urls_by_user: urlsByUser, tag: 'shift_report_confirmed' },
           })
         }
       }
