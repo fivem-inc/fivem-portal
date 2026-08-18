@@ -65,6 +65,15 @@ const listBtn: React.CSSProperties = {
   padding: '11px 14px', fontSize: 14, color: TEXT, cursor: 'pointer', lineHeight: 1.6,
 };
 
+/** 「← 質問の一覧に戻る」ボタン。回答・校コース選択・問い合わせ案内の3画面で共通に使う。
+ *  🚨 文言と見た目を必ず揃えること。以前は動き（backToHome）が同じなのに、
+ *     回答画面だけ「別の質問をする」という別の言葉かつ枠付き、他の画面はリンク風で、
+ *     「一覧に戻れない」と誤解して離脱する原因になっていた（2026-08-19 実機指摘）。 */
+const backBtn: React.CSSProperties = {
+  padding: '9px 14px', fontSize: 13, borderRadius: 8,
+  border: `1px solid ${BORDER}`, background: '#fff', color: TEXT, cursor: 'pointer',
+};
+
 const FaqWidget: React.FC = () => {
   const [topics, setTopics] = useState<FaqTopic[]>([]);
   const [loading, setLoading] = useState(true);
@@ -219,13 +228,17 @@ const FaqWidget: React.FC = () => {
               {candidates.length > 0 ? (
                 <>
                   <p style={{ fontSize: 13, color: SUB, margin: '0 0 8px' }}>近いご質問が見つかりました。当てはまるものをお選びください。</p>
+                  {/* 🚨 質問文を先、カテゴリを後に置くこと。カテゴリを上に置くと
+                      「自分向けかどうかの札」として先に読まれ、当てはまる質問なのに
+                      飛ばされる（2026-08-19 実機指摘：短期のカテゴリが付いた質問を
+                      通常レッスンの方が読み飛ばす懸念）。 */}
                   <div style={{ display: 'grid', gap: 6 }}>
                     {candidates.map(m => (
                       <button key={m.topic.id} type="button" onClick={() => openTopic(m.topic, viewer, searched)} style={listBtn}>
-                        <span style={{ display: 'inline-block', fontSize: 12, background: BLUE_BG, color: BLUE_DARK, padding: '2px 8px', borderRadius: 4, marginBottom: 4 }}>
+                        <span style={{ display: 'block' }}>{m.topic.question}</span>
+                        <span style={{ display: 'inline-block', fontSize: 12, background: BLUE_BG, color: BLUE_DARK, padding: '2px 8px', borderRadius: 4, marginTop: 4 }}>
                           {m.topic.category}
                         </span>
-                        <span style={{ display: 'block' }}>{m.topic.question}</span>
                       </button>
                     ))}
                   </div>
@@ -284,8 +297,7 @@ const FaqWidget: React.FC = () => {
               この中にない・わからない
             </button>
           </div>
-          <button type="button" onClick={backToHome}
-            style={{ marginTop: 12, border: 'none', background: 'none', color: BLUE_DARK, fontSize: 13, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+          <button type="button" onClick={backToHome} style={{ ...backBtn, marginTop: 12 }}>
             ← 質問の一覧に戻る
           </button>
         </>
@@ -344,12 +356,10 @@ const FaqWidget: React.FC = () => {
           )}
 
           <div style={{ borderTop: `1px solid ${BORDER}`, marginTop: 12, paddingTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button type="button" onClick={backToHome}
-              style={{ padding: '9px 14px', fontSize: 13, borderRadius: 8, border: `1px solid ${BORDER}`, background: '#fff', color: TEXT, cursor: 'pointer' }}>
-              別の質問をする
+            <button type="button" onClick={backToHome} style={backBtn}>
+              ← 質問の一覧に戻る
             </button>
-            <button type="button" onClick={() => setView({ kind: 'contact', reason: 'nomatch' })}
-              style={{ padding: '9px 14px', fontSize: 13, borderRadius: 8, border: `1px solid ${BORDER}`, background: '#fff', color: TEXT, cursor: 'pointer' }}>
+            <button type="button" onClick={() => setView({ kind: 'contact', reason: 'nomatch' })} style={backBtn}>
               解決しない・問い合わせる
             </button>
           </div>
@@ -364,8 +374,7 @@ const FaqWidget: React.FC = () => {
               : '申し訳ございません、こちらではお答えできませんでした。お手数ですが、お電話またはお問い合わせフォームからご連絡ください。'}
           </p>
           <ContactLinks />
-          <button type="button" onClick={backToHome}
-            style={{ marginTop: 12, border: 'none', background: 'none', color: BLUE_DARK, fontSize: 13, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+          <button type="button" onClick={backToHome} style={{ ...backBtn, marginTop: 12 }}>
             ← 質問の一覧に戻る
           </button>
         </>
