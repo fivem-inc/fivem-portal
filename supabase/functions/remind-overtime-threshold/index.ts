@@ -190,7 +190,9 @@ Deno.serve(async () => {
         message: `残業が目安を超えているスタッフが${targets.length}人います`,
         sub_message: `${periodLabel}　${names}`,
         source_type: 'overtime:threshold_summary',
-        event_key: 'overtime:threshold',
+        // 🚨 本人向け(overtime:threshold)と event_key を共用すると、プッシュの飛び先が
+        //    本人向けの「自分の履歴」に解決され、上長が自分の残業を見せられる（2026-08-18 修正）
+        event_key: 'overtime:threshold_summary',
         reference_id: period,
       })
     }

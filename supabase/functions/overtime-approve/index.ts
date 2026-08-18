@@ -167,7 +167,11 @@ serve(async (req) => {
           user_id: r.reviewer_id,
           message: `${applicantName}さんが残業・時間調整の申請を取り消しました`,
           sub_message: `${r.work_date}（${dowLabel(r.work_date)}）`,
-          source_type: 'overtime_request',
+          // 🚨 'overtime_request'（＝本人への結果報告）にすると、確認者がタップしたとき
+          //    「自分の履歴」を開いて存在しないIDを探しに行き必ず空振りする。
+          //    取消は確認待ち一覧からも消えているので、専用の source_type で
+          //    「移動しないお知らせ」として扱う（2026-08-18 修正）
+          source_type: 'overtime_request:cancelled_fyi',
           reference_id: r.id,
           event_key: 'overtime:cancelled',
           read: false,

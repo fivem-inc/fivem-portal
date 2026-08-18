@@ -194,7 +194,9 @@ serve(async (req) => {
             // 取消は対象の予定が既に削除済みでハイライトできないため focus を付けない（ベル通知と同じ挙動）
             body: {
               user_ids: pushIds,
-              title: 'ファイブM 欠勤・遅刻・早退',
+              // 休日出勤・勤務地変更・勤務時間変更もこの入口から登録されるため、
+              // 見出しは種別を限定しない「勤怠」にする（2026-08-18 実機確認済みの語）
+              title: 'ファイブM 勤怠',
               body: isCancelled ? '取消 1件' : '新着 1件',
               url: isCancelled ? '/calendar' : `/calendar?focus=${first}`,
               tag: isCancelled ? 'attendance-cancel' : 'attendance',

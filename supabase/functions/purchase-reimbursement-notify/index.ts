@@ -81,7 +81,9 @@ serve(async (req) => {
         const pushIds = [...new Set(((subs ?? []) as { user_id: string }[]).map(s => s.user_id))]
         if (pushIds.length > 0) {
           await supabase.functions.invoke('send-push', {
-            body: { user_ids: pushIds, title: 'ファイブM 備品精算', body: '新着 1件', url: '/purchase', tag: 'reimbursement_recorded' },
+            // ⚠️ /purchase の既定タブは「💰 精算」の入力フォーム。tab=history を省くと
+            //    他人の精算記録を見に来た社長が自分の入力画面に着地する（2026-08-18 修正）
+            body: { user_ids: pushIds, title: 'ファイブM 備品精算', body: '新着 1件', url: '/purchase?tab=history', tag: 'reimbursement_recorded' },
           })
         }
       }

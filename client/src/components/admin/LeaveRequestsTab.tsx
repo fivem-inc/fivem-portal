@@ -1526,7 +1526,8 @@ const LeaveRequestsTab: React.FC = () => {
                                           const vars = { 休暇種別: typeName, 申請日数: daysCount, リンク: 'https://fivem-portal.vercel.app/leave?tab=history' };
                                           if (await shouldSend('leave:manager_approved', 'site')) {
                                             const t = await getNotificationTemplate('leave:manager_approved', 'site', vars);
-                                            await insertNotification(req.user_id, t?.template ?? `休暇申請がマネージャーに受理されました`, t?.subject || `種別：${typeName}`, 'leave_request', req.id);
+                                            // 🚨 event_key を渡さないとプッシュが飛ばない（2026-08-18 修正・受理ページ側と同じ）
+                                            await insertNotification(req.user_id, t?.template ?? `休暇申請がマネージャーに受理されました`, t?.subject || `種別：${typeName}`, 'leave_request', req.id, 'leave:manager_approved');
                                           }
                                           // リーダー・マネージャー・社長へ FYI（誰がいつ休むか共有／カレンダー着地）。範囲は通知設定 leave:approved_fyi に従う
                                           try {

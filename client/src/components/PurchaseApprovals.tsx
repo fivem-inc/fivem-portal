@@ -295,7 +295,10 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
     const eventKey = allAnswered ? 'purchase_request:manager_opinions_ready' : 'purchase_request:manager_opinion_submitted';
     const tpl = await getNotificationTemplate(eventKey, 'site', vars);
     if (tpl && others.length > 0) {
-      await Promise.all(others.map(id => insertNotification(id, tpl.template, tpl.subject || undefined, 'purchase_request:pending_approval', req.id)));
+      // 🚨 event_key を渡さないとプッシュが飛ばない（ベルと専用バナーには出るのでPCでは気づけるが、
+      //    スマホには届かない状態だった。2026-08-18 修正）。全員そろったら「未承認」、途中は「審議」
+      const pushKey = allAnswered ? 'purchase_request:manager_opinions_ready' : 'purchase_request:opinion_submitted';
+      await Promise.all(others.map(id => insertNotification(id, tpl.template, tpl.subject || undefined, 'purchase_request:pending_approval', req.id, pushKey)));
     }
 
     setProcessingId(null);
@@ -350,7 +353,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
     } else {
       const tpl = await getNotificationTemplate('purchase_request:board_opinion_submitted', 'site', vars);
       if (tpl && others.length > 0) {
-        await Promise.all(others.map(id => insertNotification(id, tpl.template, tpl.subject || undefined, 'purchase_request:pending_approval', req.id)));
+        await Promise.all(others.map(id => insertNotification(id, tpl.template, tpl.subject || undefined, 'purchase_request:pending_approval', req.id, 'purchase_request:opinion_submitted')));
       }
       // 初めて否認が出た時点（1回のみ）で全員へ通知する
       const hasDenial = rows.some(o => o.opinion === 'deny');
@@ -358,7 +361,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
       if (hasDenial && isFirstDenial) {
         const denialTpl = await getNotificationTemplate('purchase_request:board_denial_present', 'site', vars);
         if (denialTpl) {
-          await Promise.all((req.board_approver_ids ?? []).map(id => insertNotification(id, denialTpl.template, denialTpl.subject || undefined, 'purchase_request:pending_approval', req.id)));
+          await Promise.all((req.board_approver_ids ?? []).map(id => insertNotification(id, denialTpl.template, denialTpl.subject || undefined, 'purchase_request:pending_approval', req.id, 'purchase_request:opinion_submitted')));
         }
       }
       setEditingIds(prev => { const next = new Set(prev); next.delete(req.id); return next; });

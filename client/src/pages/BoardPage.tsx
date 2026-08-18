@@ -942,8 +942,12 @@ const BoardPage: React.FC = () => {
         threadParticipants.delete(user.id); // 自分には送らない
         const senderName = profileName || '誰か';
         const chName = selectedChannel ? (selectedChannel.name || 'チャンネル') : 'チャンネル';
+        // 🚨 以前は source_type='board' で入れていたが、ベルは source_type='board' を除外し、
+        //    ホームのバナー対象でもなく、event_key が無いのでプッシュも飛ばない＝
+        //    どこにも出ない死にデータになっていた（2026-08-18 修正）。
+        //    通常の投稿と同じく source_type は付けず、event_key と元メッセージIDを渡す
         await Promise.all([...threadParticipants].map(uid =>
-          insertNotification(uid, `${senderName}がスレッドにリプライしました`, `${chName}: ${body.trim().slice(0, 40)}`, 'board')
+          insertNotification(uid, `${senderName}がスレッドにリプライしました`, `${chName}: ${body.trim().slice(0, 40)}`, undefined, parentId, 'board:group_message')
         ));
       }
 

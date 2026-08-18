@@ -1017,6 +1017,8 @@ const classifyNotif = (n: NotifLike) => {
   const isOvertimePendingApproval = n.source_type === 'overtime_request:pending_approval'; // 確認者：要対応
   const isOvertimePendingResubmit = n.source_type === 'overtime_request:pending_resubmit'; // 申請者：再提出待ち
   const isOvertimeResult          = n.source_type === 'overtime_request';                  // 申請者：結果報告のみ
+  // 確認者：本人が申請を取り消した知らせ。取消済みなので確認待ちにも自分の履歴にも無い＝移動しない
+  const isOvertimeCancelledFyi    = n.source_type === 'overtime_request:cancelled_fyi';
   const isOtProposalReceived      = n.source_type === 'overtime_proposal:received';         // 相手：残業調整の提案が届いた（任意・催促しない）
   const isOtProposalResponded     = n.source_type === 'overtime_proposal:responded';        // 提案者：相手が回答した
   const isOvertimeUnreported      = n.source_type === 'overtime:unreported';                // 本人：実績未報告リマインド
@@ -1028,7 +1030,7 @@ const classifyNotif = (n: NotifLike) => {
   const isCorrectionNew = isCorrection && n.event_key === 'correction:new';           // 管理者：要対応
   // 🚨 打刻の確認は「答えるまで消えない」要対応。isResultOnly に入れるとタップで消えてしまう
   const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit || isPurchasePendingApproval || isOvertimePendingApproval || isOvertimePendingResubmit || isClockInquiry || isCorrectionNew;
-  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isTripReport || isAttendance || isAttendanceCancelled || isPurchaseResult || isOvertimeResult || isOtProposalReceived || isOtProposalResponded || isOvertimeUnreported || isOvertimeThreshold || isOvertimeThresholdSummary || isClockInquiryAnswered || (isCorrection && !isCorrectionNew);
+  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isTripReport || isAttendance || isAttendanceCancelled || isPurchaseResult || isOvertimeResult || isOvertimeCancelledFyi || isOtProposalReceived || isOtProposalResponded || isOvertimeUnreported || isOvertimeThreshold || isOvertimeThresholdSummary || isClockInquiryAnswered || (isCorrection && !isCorrectionNew);
   // 旧来のフォールバック（source_typeが無い通知向け）
   const isLegacyReject = !isPendingAction && !isResultOnly && (n.message.includes('差し戻し') || n.message.includes('差し戻され'));
 
@@ -1054,6 +1056,11 @@ const classifyNotif = (n: NotifLike) => {
       // 未回答のうちはSafetyCheckBannerが別途出続けるので、ここでは常に閉じてよい（対応済みならこのタップで完了）
       return { path: n.reference_id ? `/safety?check=${n.reference_id}${openSummary}` : '/safety?open=summary', closeOnTap: true };
     }
+    // 🚨 isBoard は文言（「お知らせ」「リマインド」を含むか）で判定しているため、
+    //    社内お知らせ・定期リマインドがそのまま連絡板と誤判定され、押すと /board に飛んで何も無い。
+    //    どちらもホームに専用バナーがあるので、event_key で先に拾ってホームへ返す（2026-08-18 修正）
+    if (n.event_key === 'announcement:new' || n.event_key === 'announcement:remind') return { path: '/', closeOnTap: true };
+    if (n.event_key === 'reminder:scheduled') return { path: '/', closeOnTap: true };
     if (isBoard || isUnconfirmedReminder) {
       return { path: n.reference_id ? `/board?openInboxId=${n.reference_id}` : '/board', closeOnTap: false };
     }
@@ -1092,6 +1099,9 @@ const classifyNotif = (n: NotifLike) => {
     if (isOvertimePendingApproval) return { path: `/overtime?view=confirm${fq ? `&${fq}` : ''}`, closeOnTap: false };
     if (isOvertimePendingResubmit) return { path: `/overtime?tab=history${fq ? `&${fq}` : ''}`, closeOnTap: false };
     if (isOvertimeResult) return { path: `/overtime?tab=history${fq ? `&${fq}` : ''}`, closeOnTap: true };
+    // 本人が取り消した知らせ（確認者へ）。申請はもう確認待ちにも自分の履歴にも無いので移動しない。
+    // 誰が・いつの分を取り消したかは通知の本文に入っている
+    if (isOvertimeCancelledFyi) return { path: null, closeOnTap: true };
     // 残業が目安を超えたお知らせ。本人は自分の履歴へ、上長は部門集計へ
     if (isOvertimeThreshold) return { path: '/overtime?tab=history', closeOnTap: true };
     if (isOvertimeThresholdSummary) return { path: '/overtime?tab=history&mode=summary', closeOnTap: true };
@@ -1158,6 +1168,10 @@ const NotifItem: React.FC<{ n: NotifLike; onDismiss: (id: string) => void }> = (
 const BANNER_ONLY_SOURCE_TYPES = [
   'safety_check_urgent',
   'overtime:clock_inquiry',
+  // 残業調整の提案。回答画面は /overtime?proposal=<id> の専用ビューだけで、
+  // 「届いている提案」の一覧がどこにも無い＝ホームに出さないと辿り着けない（2026-08-18 追加）。
+  // 催促はしない方針なので、タップで開いて閉じる（isResultOnly のまま）
+  'overtime_proposal:received',
   'leave_request:pending_resubmit',
   'shift_report:pending_resubmit',
   'overtime_request:pending_resubmit',

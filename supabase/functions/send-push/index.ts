@@ -221,7 +221,10 @@ serve(async (req) => {
       );
     }
 
-    const { user_ids, title, body, url, tag } = await req.json();
+    // urls_by_user: ユーザーごとに飛び先を変えたいとき用（省略可）。
+    // 「押したプッシュに対応するベル通知のID(nids)」は人によって違うため、
+    // 1回の呼び出しで宛先ごとに別のURLを渡せるようにしている。指定が無い人は url を使う。
+    const { user_ids, title, body, url, tag, urls_by_user } = await req.json();
 
     if (!user_ids || !title || !body) {
       return new Response(
@@ -257,7 +260,7 @@ serve(async (req) => {
       subscriptions.map((sub) =>
         sendWebPush(
           { endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth },
-          { title, body, url: url || "/board", tag: tag || "fivem-notification" },
+          { title, body, url: urls_by_user?.[sub.user_id] || url || "/board", tag: tag || "fivem-notification" },
           VAPID_PRIVATE_KEY,
           VAPID_PUBLIC_KEY,
           VAPID_SUBJECT

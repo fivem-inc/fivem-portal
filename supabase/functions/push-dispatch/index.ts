@@ -10,20 +10,32 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+// URLにパラメータを足す（?の有無を自動で判断する）
+function addParams(url: string, params: Record<string, string>): string {
+  const parts = Object.entries(params).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v)}`);
+  if (parts.length === 0) return url;
+  return url + (url.includes("?") ? "&" : "?") + parts.join("&");
+}
+
 // イベント種別 → プッシュ文面・タップ先のマッピング（ホワイトリスト）
 // ここに無いevent_keyはプッシュしない（ベル通知のみ）
-const EVENT_MAP: Record<string, { app: string; word: string; url: string }> = {
+//
+// bell: true を付けると、押したとき着地画面で🔔ベル一覧が自動で開き、該当行が黄色く光る。
+//   付けるのは「知らせ・結果」＝中身が通知の文章にしかないもの（受理されました等）。
+//   付けないのは ①要対応（着地画面に申請の中身が全部ある）②ホームに専用バナーがあるもの
+//   ③連絡板（開けば未読が見える）④安否・緊急（災害時にベルを挟まない）。
+const EVENT_MAP: Record<string, { app: string; word: string; url: string; bell?: true }> = {
   // 休暇申請（承認者の要対応）
   "leave:new_request":       { app: "休暇申請", word: "未承認", url: "/leave-approvals" },
   "leave:leader_approved":   { app: "休暇申請", word: "未承認", url: "/leave-approvals" },
   // 🚨 マネージャー受理は「申請者本人への結果報告」。承認者向けの通知ではない。
   // 「未承認」だと受理されたのに未処理と読めてしまい、/leave-approvals は
   // 申請者が開いても自分の申請が無い（権限が無ければ何も見えない）ため両方とも誤りだった。
-  // word は実機テスト済みの安全語のみ（「受理」「承認」は未検証のため使わない）
-  "leave:manager_approved":  { app: "休暇申請", word: "新着", url: "/leave?tab=history" },
+  // word は実機テスト済みの安全語のみ（「受理」「承認」は 2026-08-18 に実機確認済み）
+  "leave:manager_approved":  { app: "休暇申請", word: "受理", url: "/leave?tab=history", bell: true },
   // 休暇申請（申請者の要対応）
   // ⚠️ /leave の既定タブは申請フォーム。tab=history を省くと白紙の入力画面に着地する
-  "leave:rejected":          { app: "休暇申請", word: "差戻", url: "/leave?tab=history" },
+  "leave:rejected":          { app: "休暇申請", word: "差戻", url: "/leave?tab=history", bell: true },
   // 安否確認：「助けが必要」の回答が入ったとき（発信者＋マネージャー以上へ）
   // 「ヘルプ」は 2026-08-04 に実機テスト済み（Chromeの警告表示に化けないことを確認）。
   // ⚠️ 化けるようになったら app を "安否"（検証済み）に戻すこと。ここ1行で切り替わる。
@@ -33,19 +45,23 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string }> = {
   // 勤務変更申請
   // ⚠️ タブ指定を省くと既定タブ（報告の入力）に着地して「何を見ればいいか分からない」になる
   "shift_report:new_request": { app: "勤務変更報告", word: "未承認", url: "/shift-report?view=confirm" },
-  "shift_report:returned":    { app: "勤務変更報告", word: "差戻", url: "/shift-report?tab=history" },
+  "shift_report:returned":    { app: "勤務変更報告", word: "差戻", url: "/shift-report?tab=history", bell: true },
   // 備品精算（購入申請）
   // ⚠️ /purchase の既定タブは「💰 精算」なので、タブを指定しないと必ず精算入力に着地する
   "purchase_request:submitted":             { app: "備品精算", word: "未承認", url: "/purchase?tab=approvals" },
   "purchase_request:submitted_manager":     { app: "備品精算", word: "未承認", url: "/purchase?tab=approvals" },
   "purchase_request:submitted_board":       { app: "備品精算", word: "未承認", url: "/purchase?tab=approvals" },
   "purchase_request:manager_opinions_ready": { app: "備品精算", word: "未承認", url: "/purchase?tab=approvals" },
-  "purchase_request:returned":              { app: "備品精算", word: "差戻", url: "/purchase?tab=history" },
+  // 審議中の回覧（他のマネージャーが意見を出した／否認が出た）。まだ全員の回答が揃っていないので
+  // 「未承認」ではなく「審議」。2026-08-18 に社長端末で実機確認済みの語
+  "purchase_request:opinion_submitted":      { app: "備品精算", word: "審議", url: "/purchase?tab=approvals" },
+  "purchase_request:returned":              { app: "備品精算", word: "差戻", url: "/purchase?tab=history", bell: true },
   // 結果報告系（申請者・共有先へ）＝自分の申請の状況を見る画面へ
-  "purchase_request:leader_approved":       { app: "備品精算", word: "承認", url: "/purchase?tab=history" },
-  "purchase_request:manager_approved":      { app: "備品精算", word: "承認", url: "/purchase?tab=history" },
-  "purchase_request:board_all_approved":    { app: "備品精算", word: "承認", url: "/purchase?tab=history" },
-  "purchase_request:self_judgment_shared":  { app: "備品精算", word: "新着", url: "/purchase?tab=history" },
+  // 「承認」は 2026-08-18 に社長端末で実機確認済み（Chromeの警告表示に化けない）
+  "purchase_request:leader_approved":       { app: "備品精算", word: "承認", url: "/purchase?tab=history", bell: true },
+  "purchase_request:manager_approved":      { app: "備品精算", word: "承認", url: "/purchase?tab=history", bell: true },
+  "purchase_request:board_all_approved":    { app: "備品精算", word: "承認", url: "/purchase?tab=history", bell: true },
+  "purchase_request:self_judgment_shared":  { app: "備品精算", word: "新着", url: "/purchase?tab=history", bell: true },
   // 交通費申請（経理の要対応）
   "expense:new_request":     { app: "交通費", word: "新着", url: "/admin" },
   // 出張報告（到着・終了）。2026-08-09 にスタッフ側へ履歴タブを新設したので、
@@ -66,15 +82,20 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string }> = {
   "reminder:unread:today":    { app: "連絡板", word: "本日期限", url: "/board" },
   "reminder:unread:tomorrow": { app: "連絡板", word: "明日期限", url: "/board" },
   "reminder:unread:later":    { app: "連絡板", word: "新着", url: "/board" },
-  "reminder:scheduled":       { app: "リマインド", word: "新着", url: "/board" },
+  // 定期リマインドは特定のメッセージを指していないため連絡板に飛ばしても何も無い。
+  // ホームに専用バナー（ScheduledReminderBanner）があるのでそちらへ着地させる（2026-08-18 修正）
+  "reminder:scheduled":       { app: "リマインド", word: "新着", url: "/" },
   "reminder:encouragement":   { app: "休暇申請", word: "新着", url: "/leave" },
   // 社内お知らせ（作成時の連絡・終了日が近づいたリマインド）
   // word は安全語ホワイトリスト（新着）のみ。自由文は Android で警告表示に化けるため不可。
   "announcement:new":         { app: "お知らせ", word: "新着", url: "/" },
   "announcement:remind":      { app: "お知らせ", word: "新着", url: "/" },
   // 残業調整の提案（相手＝受信／提案者＝回答通知）。安全語「新着」のみ・催促しない。
-  "overtime_proposal:received":  { app: "残業調整", word: "新着", url: "/overtime" },
-  "overtime_proposal:responded": { app: "残業調整", word: "新着", url: "/overtime" },
+  // 🚨 提案の回答画面は /overtime?proposal=<id> の専用ビューだけで、受信一覧が存在しない。
+  //    プッシュはIDを持てない（集約するため）ので、ホームのバナーから開いてもらう（2026-08-18 修正）
+  "overtime_proposal:received":  { app: "残業調整", word: "新着", url: "/" },
+  // 提案者への回答通知。こちらも提案画面にIDなしでは入れないため、ベルを開いて本文を読む
+  "overtime_proposal:responded": { app: "残業調整", word: "新着", url: "/overtime", bell: true },
   // 残業の実績未報告リマインド（本人へ日次・安全語「新着」）
   // ⚠️ /overtime の既定タブは「申請・報告」の入力フォーム。tab=history を省くと
   //    「実績を報告してください」の知らせなのに、報告する場所（履歴タブ）ではなく
@@ -82,23 +103,30 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string }> = {
   "overtime:unreported":         { app: "残業", word: "新着", url: "/overtime?tab=history" },
   // 残業がしきい値を超えたお知らせ。他人の残業申請が回ってきたのと区別できるよう
   // アプリ名を「残業」と分けている。
-  // ⚠️「勤務時間」は実機未検証の語。Chromeが警告表示に化けたらここを "残業" に戻す
+  // 「勤務時間」は 2026-08-04 に実機確認済み（警告表示に化けない）
   "overtime:threshold":          { app: "勤務時間", word: "新着", url: "/overtime?tab=history" },
+  // 上長向けの部門まとめ。本人向けと同じ event_key を使っていたため上長が自分の履歴に
+  // 着地していた（2026-08-18 修正）。飛び先はベル側（classifyNotif）と揃えてある
+  "overtime:threshold_summary":  { app: "勤務時間", word: "新着", url: "/overtime?tab=history&mode=summary" },
   // 残業・時間管理の承認フロー系。
-  // word は実機テスト済みの安全語のみ（未承認／差戻／新着）。「承認」「受理」は未検証のため使わない。
-  // 受理・取消・修正の結果報告は区別せず「新着」に寄せる（詳細はベル・画面で見る前提）。
+  // word は実機テスト済みの安全語のみ（未承認／差戻／新着／受理／承認。受理・承認は 2026-08-18 確認）。
+  // 取消・修正の結果報告は区別せず「新着」に寄せる（詳細はベル・画面で見る前提）。
   "overtime:new_request":        { app: "残業", word: "未承認", url: "/overtime?view=confirm" },
-  "overtime:request_confirmed":  { app: "残業", word: "新着",   url: "/overtime?tab=history" },
-  "overtime:confirmed":          { app: "残業", word: "新着",   url: "/overtime?tab=history" },
+  "overtime:request_confirmed":  { app: "残業", word: "受理",   url: "/overtime?tab=history" },
+  "overtime:confirmed":          { app: "残業", word: "受理",   url: "/overtime?tab=history" },
   "overtime:returned":           { app: "残業", word: "差戻",   url: "/overtime?tab=history" },
-  "overtime:cancelled":          { app: "残業", word: "新着",   url: "/overtime?view=confirm" },
+  // 本人が取り消した知らせ（確認者へ）。取消済みなので確認待ち一覧には無い。
+  // ベルを開いて本文（誰が・いつの分か）を読んでもらう（2026-08-18 修正）
+  "overtime:cancelled":          { app: "残業", word: "取消",   url: "/overtime?tab=history", bell: true },
   "overtime:admin_cancelled":    { app: "残業", word: "新着",   url: "/overtime?tab=history" },
   "overtime:admin_edited":       { app: "残業", word: "新着",   url: "/overtime?tab=history" },
   "overtime:grant":              { app: "残業", word: "新着",   url: "/overtime" },
   // 備品購入申請の質問・回答。履歴タブに着地し、該当カードが光る（reference_id＝申請id）
   "purchase_request:comment_added": { app: "備品精算", word: "新着", url: "/purchase?tab=history" },
   // 打刻の確認（経理→本人／本人→経理）。アプリ名「勤務時間」は実機テスト済み（2026-08-04・林の端末）
-  "overtime:clock_inquiry":          { app: "勤務時間", word: "新着", url: "/overtime?tab=history" },
+  // 🚨 回答画面は /overtime?inquiry=<id> の専用ビューでしか開けず、履歴タブに一覧は無い。
+  //    プッシュはIDを持てない（集約するため）ので、ホームの専用バナーから開いてもらう（2026-08-18 修正）
+  "overtime:clock_inquiry":          { app: "勤務時間", word: "新着", url: "/" },
   "overtime:clock_inquiry_answered": { app: "勤務時間", word: "新着", url: "/admin?tab=overtime_admin&section=inquiries" },
   "overtime:grant_declined":     { app: "残業", word: "新着",   url: "/overtime" },
   // 修正依頼・取消依頼（correction_requests のRPCがベル通知を作る）
