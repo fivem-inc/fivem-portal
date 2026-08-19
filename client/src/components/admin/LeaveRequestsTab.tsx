@@ -157,6 +157,9 @@ const LeaveRequestsTab: React.FC = () => {
   const [leaveCsvFrom, setLeaveCsvFrom]             = useState('');
   const [leaveCsvTo, setLeaveCsvTo]                 = useState('');
   const [leaveCsvExporting, setLeaveCsvExporting]   = useState(false);
+  // カスタム期間のとき、日付を「申請が出された日」で見るか「実際に休んだ日」で見るか。
+  // 休暇日ベースは、指定した期間に入っている休暇日の行だけを出す（月をまたぐ申請は範囲内だけ）
+  const [leaveCsvDateType, setLeaveCsvDateType]     = useState<'created' | 'leave'>('created');
 
   const toFiscalYearStatic = (dateStr: string) => { const d = new Date(dateStr); return d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1; };
   const nowFyStatic = (() => { const n = new Date(); return n.getMonth() >= 3 ? n.getFullYear() : n.getFullYear() - 1; })();
@@ -174,6 +177,12 @@ const LeaveRequestsTab: React.FC = () => {
       const fy = leaveCsvFy ? Number(leaveCsvFy) : nowFyStatic;
       const from = `${fy}-04-01`; const to = `${fy + 1}-03-31`;
       query = query.gte('created_at', from).lte('created_at', to + 'T23:59:59');
+    } else if (leaveCsvDateType === 'leave') {
+      // 休暇日ベース：まず申請の期間（start_date〜end_date）が指定範囲と重なるものを粗く取る。
+      // 実際の休暇日（leave_dates）はJSON文字列でSQLでは絞れないため、下の行生成で正確に絞る。
+      // ※休暇日は必ず start_date〜end_date に収まっていることを実データで確認済み（漏れない）
+      if (leaveCsvFrom) query = query.gte('end_date', leaveCsvFrom);
+      if (leaveCsvTo)   query = query.lte('start_date', leaveCsvTo);
     } else {
       if (leaveCsvFrom) query = query.gte('created_at', leaveCsvFrom);
       if (leaveCsvTo)   query = query.lte('created_at', leaveCsvTo + 'T23:59:59');
@@ -193,6 +202,8 @@ const LeaveRequestsTab: React.FC = () => {
     };
     // 1申請=1行ではなく「1日=1行」で出力する（複数日の申請は日数分の行に分解）
     const headers = ['申請日', '申請者', '種別', '休暇日', '校', '申請日数', '理由・目的', '第一承認者', '第二承認者', 'ステータス'];
+    // 休暇日ベースで期間を指定しているか（年度で選んだときは常に申請日ベース）
+    const filterByLeaveDate = leaveCsvMode === 'custom' && leaveCsvDateType === 'leave';
     const rows = (data as AdminLeaveRequest[]).flatMap(r => {
       // 休暇日リスト（leave_datesはJSON配列の文字列。旧データはstart/endから展開）
       let dates: string[] = [];
@@ -201,13 +212,21 @@ const LeaveRequestsTab: React.FC = () => {
         const s = new Date(r.start_date), e = new Date(r.end_date || r.start_date);
         for (const d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) dates.push(d.toISOString().slice(0, 10));
       }
+      // 「申請日数」は申請そのものの日数なので、期間で絞る前に数えておく
+      const totalDays = dates.filter(Boolean).length;
+      // 休暇日ベースのときは、指定した期間に入っている休暇日だけを残す。
+      // 月をまたぐ申請は範囲内の日だけが行になり、1日も残らない申請は出力しない
+      if (filterByLeaveDate) {
+        dates = dates.filter(d => !!d && (!leaveCsvFrom || d >= leaveCsvFrom) && (!leaveCsvTo || d <= leaveCsvTo));
+        if (dates.length === 0) return [];
+      }
       if (dates.length === 0) dates = [''];
       const locs = parseLeaveLocations(r.leave_locations) ?? {};
       const common = {
         created: r.created_at.slice(0, 10),
         name: nm[r.user_id] ?? '不明',
         type: r.leave_type_other ? `${r.leave_type}（${r.leave_type_other}）` : r.leave_type,
-        days: dates.filter(Boolean).length || '',
+        days: totalDays || '',
         reason: r.purpose ?? r.reason ?? '',
         ap1: r.approver_id ? (nm[r.approver_id] ?? '') : '',
         ap2: r.approver2_id ? (nm[r.approver2_id] ?? '') : '',
@@ -223,7 +242,9 @@ const LeaveRequestsTab: React.FC = () => {
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    const label = leaveCsvMode === 'fy' ? `${leaveCsvFy || nowFyStatic}年度` : `${leaveCsvFrom}〜${leaveCsvTo}`;
+    const label = leaveCsvMode === 'fy'
+      ? `${leaveCsvFy || nowFyStatic}年度`
+      : `${filterByLeaveDate ? '休暇日' : '申請日'}${leaveCsvFrom}〜${leaveCsvTo}`;
     a.href = url; a.download = `休暇申請_${label}.csv`; a.click();
     URL.revokeObjectURL(url);
     setLeaveCsvExporting(false); setShowLeaveCsvModal(false);
@@ -1936,13 +1957,30 @@ const LeaveRequestsTab: React.FC = () => {
                       </div>
                     ) : (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {/* 日付の意味を選ぶ（申請が出された日 or 実際に休んだ日） */}
                         <div>
-                          <label style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666', display: 'block', marginBottom: 4 }}>申請日（開始）</label>
+                          <label style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666', display: 'block', marginBottom: 6 }}>どの日付で絞り込むか</label>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            {([['created', '申請日'], ['leave', '休暇日']] as const).map(([v, lbl]) => (
+                              <button key={v} onClick={() => setLeaveCsvDateType(v)}
+                                style={{ flex: 1, padding: '7px 0', borderRadius: 8, border: 'none', fontSize: 12, fontWeight: 'bold', cursor: 'pointer', background: leaveCsvDateType === v ? '#007bff' : (isDarkMode ? '#495057' : '#e9ecef'), color: leaveCsvDateType === v ? '#fff' : (isDarkMode ? '#fff' : '#333') }}>
+                                {lbl}
+                              </button>
+                            ))}
+                          </div>
+                          <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#888', marginTop: 6, lineHeight: 1.5 }}>
+                            {leaveCsvDateType === 'created'
+                              ? '申請が出された日で絞ります。'
+                              : '実際に休んだ日で絞ります。月をまたぐ申請は、指定した期間に入っている日だけが出ます。'}
+                          </div>
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666', display: 'block', marginBottom: 4 }}>{leaveCsvDateType === 'leave' ? '休暇日' : '申請日'}（開始）</label>
                           <input type="date" value={leaveCsvFrom} onChange={e => setLeaveCsvFrom(e.target.value)}
                             style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#ddd'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', fontSize: 13, boxSizing: 'border-box' }} />
                         </div>
                         <div>
-                          <label style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666', display: 'block', marginBottom: 4 }}>申請日（終了）</label>
+                          <label style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666', display: 'block', marginBottom: 4 }}>{leaveCsvDateType === 'leave' ? '休暇日' : '申請日'}（終了）</label>
                           <input type="date" value={leaveCsvTo} onChange={e => setLeaveCsvTo(e.target.value)}
                             style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#ddd'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', fontSize: 13, boxSizing: 'border-box' }} />
                         </div>
