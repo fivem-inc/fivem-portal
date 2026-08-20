@@ -1,0 +1,11 @@
+# シェルスクリプト（.sh）の改行コードを LF に固定する。
+#
+# 【なぜ必要か】
+# このPCの git は core.autocrlf=true で動いており、チェックアウトのたびに
+# 改行が LF → CRLF に変換される。.sh が CRLF になると、1行目の
+#   #!/usr/bin/env bash
+# の末尾に \r が付いた状態になり、Git Bash がスクリプトを起動できなくなる
+# （「$'\r': command not found」のような分かりにくいエラーになる）。
+#
+# 新しいPCで git clone した直後に、バックアップスクリプトが動かなくなるのを防ぐための指定。
+*.sh text eol=lf
