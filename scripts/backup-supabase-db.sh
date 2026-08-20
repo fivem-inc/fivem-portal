@@ -24,6 +24,12 @@ set -uo pipefail
 # --- 設定 ---------------------------------------------------
 PROJECT_REF='xaeynaxctiiyqxjyuzfi'
 
+# 🚨 supabase CLI は「今いるフォルダの supabase/ 」を見て、どのプロジェクトに
+#    繋ぐかを決める。タスクスケジューラから起動されると作業フォルダが
+#    C:\Windows\system32 になるため --linked が効かず、localhost に繋ごうとして
+#    「Connection refused」で全部失敗する。必ずプロジェクトへ移動すること。
+PROJECT_DIR='/c/Users/kohei/fivem-portal'
+
 # NAS の保存先（UNCパス。ネットワークドライブの割り当てに依存しないようにする）
 DEST_ROOT='//NAS-SIJYO/Public/四条本校マイドキュメント/10_パソコン設定/Claud重要バックアップデータ/社内サイト/db-backup'
 DEST_DAILY="$DEST_ROOT/daily"
@@ -89,6 +95,18 @@ for cmd in pg_dump psql supabase 7z; do
     fi
 done
 
+if ! cd "$PROJECT_DIR" 2>/dev/null; then
+    fail "プロジェクトフォルダへ移動できません: $PROJECT_DIR"
+    log "===== 中止 ====="
+    exit 1
+fi
+
+if [ ! -d "$PROJECT_DIR/supabase" ]; then
+    fail "$PROJECT_DIR に supabase フォルダがありません（--linked が効きません）"
+    log "===== 中止 ====="
+    exit 1
+fi
+
 if [ ! -f "$PASSWORD_FILE" ]; then
     fail "暗号化パスワードが未設定です。先に scripts/setup-backup-password.ps1 を1回実行してください"
     log "===== 中止 ====="
@@ -141,11 +159,21 @@ translate() {
 run_dump() {
     local label="$1" outfile="$2"; shift 2
     local err="$WORK_DIR/.err"
-    if supabase db dump --linked --dry-run "$@" 2>/dev/null | translate | bash > "$outfile" 2>"$err"; then
+    # supabase 側のエラーも捨てない（捨てると「なぜ失敗したか」が永久に分からなくなる）。
+    # 正常時はここに "Initialising login role..." などの進捗が入るだけ。
+    local sberr="$WORK_DIR/.sberr"
+    # 失敗したときに何が起きたかを必ず残す（pg_dump側とCLI側の両方）。
+    # PGPASSWORD を含む行だけは絶対にログへ出さない。
+    detail() {
+        [ -s "$err" ]   && log "  詳細: $(head -3 "$err" | tr '\n' ' ' | cut -c1-200)"
+        [ -s "$sberr" ] && log "  CLI : $(grep -v 'PGPASSWORD' "$sberr" | tail -3 | tr '\n' ' ' | cut -c1-200)"
+    }
+
+    if supabase db dump --linked --dry-run "$@" 2>"$sberr" | translate | bash > "$outfile" 2>"$err"; then
         local bytes; bytes=$(wc -c < "$outfile")
         if [ "$bytes" -eq 0 ]; then
             fail "$label のダンプが 0 バイトです"
-            [ -s "$err" ] && log "  詳細: $(head -2 "$err" | tr '\n' ' ')"
+            detail
             return 1
         fi
         log "OK: $label （$bytes バイト）"
@@ -156,7 +184,7 @@ run_dump() {
         return 0
     else
         fail "$label のダンプに失敗しました"
-        [ -s "$err" ] && log "  詳細: $(head -2 "$err" | tr '\n' ' ')"
+        detail
         return 1
     fi
 }
@@ -209,14 +237,19 @@ unset PGPASSWORD PGHOST PGPORT PGUSER PGDATABASE
 
 # --- 中身の検証（サイズではなく中身で見る） -----------------
 # 「ファイルはあるのに中身が空」を見逃さないための確認。
-POLICY_COUNT=$(grep -c '^CREATE POLICY' "$WORK_DIR/01-schema.sql" 2>/dev/null || echo 0)
+# 🚨 `grep -c ... || echo 0` と書いてはいけない。grep は該当0件でも "0" を出力した上で
+#    終了コード1を返すため、|| の右側も動いて "0\n0" という2行の値になる。
+#    そうなると数値比較が壊れて「0本なのに検証OK」という最悪の誤判定になる（実際に起きた）。
+POLICY_COUNT=$(grep -c '^CREATE POLICY' "$WORK_DIR/01-schema.sql" 2>/dev/null || true)
+POLICY_COUNT=${POLICY_COUNT:-0}
 if [ "$POLICY_COUNT" -lt "$MIN_POLICIES" ]; then
     fail "RLSポリシーが $POLICY_COUNT 本しかありません（$MIN_POLICIES 本以上あるはずです）"
 else
     log "検証OK: RLSポリシー $POLICY_COUNT 本"
 fi
 
-AUTH_USERS=$(grep -c 'INSERT INTO "auth"."users"' "$WORK_DIR/02-data.sql" 2>/dev/null || echo 0)
+AUTH_USERS=$(grep -c 'INSERT INTO "auth"."users"' "$WORK_DIR/02-data.sql" 2>/dev/null || true)
+AUTH_USERS=${AUTH_USERS:-0}
 if [ "$AUTH_USERS" -lt 1 ]; then
     fail "データに auth.users（ログイン情報）が入っていません。これでは復元してもログインできません"
 else
