@@ -26,6 +26,8 @@ export interface OvertimeRecord {
   furikae_origin_location?: string | null;
   created_at?: string | null;
   confirmed_at?: string | null;
+  /** 実績報告のとき、事前申請の内容から変わった理由（変更が無ければ null） */
+  change_reason?: string | null;
   segments: Seg[];
 }
 
