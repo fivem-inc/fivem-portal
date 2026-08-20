@@ -974,21 +974,22 @@ const OvertimeAdminTab: React.FC = () => {
                             )}
                             {r.reason && <div style={{ color: subText, fontSize: 11, marginTop: 2 }}>{r.reason}</div>}
                             {/* 事前申請どおりか、予定から変わったか。開かずに分かるよう行に出す */}
-                            {hasActualSegs && (r.change_reason ? (
-                              <div style={{ marginTop: 3, fontSize: 11, padding: '3px 6px', borderRadius: 6, background: isDarkMode ? '#3a2f0b' : '#fff8e1', border: `1px solid ${isDarkMode ? '#6b5504' : '#ffe0a3'}`, color: isDarkMode ? '#ffd54f' : '#9a6700' }}>
+                            {/* 予定から変わった行だけ、事前申請の時間と理由を出す
+                                （申請どおりの行はここに何も足さない＝縦が伸びない。
+                                  変更の有無そのものは状態の列のバッジで分かる） */}
+                            {hasActualSegs && r.change_reason && (
+                              <div style={{ marginTop: 2, fontSize: 11, lineHeight: 1.4, color: isDarkMode ? '#ffd54f' : '#9a6700' }}>
                                 <div>
-                                  ⚠ 予定から変更あり　{plannedSegs.length ? plannedSegs.map(s => `${minToTime(s.start_min)}〜${minToTime(s.end_min)}`).join('、') : '(なし)'} → {segText}
+                                  予定 {plannedSegs.length ? plannedSegs.map(s => `${minToTime(s.start_min)}〜${minToTime(s.end_min)}`).join('、') : '(なし)'}
                                   {changeDiff !== 0 && (
-                                    <span style={{ fontWeight: 'bold', marginLeft: 6, color: changeDiff > 0 ? (isDarkMode ? '#ff9aa2' : '#c92a2a') : (isDarkMode ? '#8ce99a' : '#2b8a3e') }}>
+                                    <span style={{ fontWeight: 'bold', marginLeft: 4, color: changeDiff > 0 ? (isDarkMode ? '#ff9aa2' : '#c92a2a') : (isDarkMode ? '#8ce99a' : '#2b8a3e') }}>
                                       {changeDiff > 0 ? '+' : '-'}{formatMin(Math.abs(changeDiff))}
                                     </span>
                                   )}
                                 </div>
-                                <div>理由：{r.change_reason}</div>
+                                <div style={{ color: subText }}>{r.change_reason}</div>
                               </div>
-                            ) : (
-                              <div style={{ color: subText, fontSize: 11, marginTop: 3 }}>事前申請どおりに報告</div>
-                            ))}
+                            )}
                           </td>
                           <td style={{ ...cell, fontSize: 12, whiteSpace: 'nowrap' }}>休{r.break_minutes ?? 0}分<br />{formatMin(r.labor_minutes ?? 0)}</td>
                           <td style={{ ...cell, fontSize: 12 }}>
@@ -997,7 +998,16 @@ const OvertimeAdminTab: React.FC = () => {
                             ) : (r.location || nsLoc || '—')}
                           </td>
                           <td style={{ ...cell, fontWeight: 'bold', whiteSpace: 'nowrap' }}>{formatSignedMin(r.diff_minutes ?? 0)}</td>
-                          <td style={cell}><span style={{ padding: '2px 6px', borderRadius: 6, background: stInfo.color, color: '#fff', fontSize: 10, fontWeight: 'bold', whiteSpace: 'nowrap' }}>{stInfo.label}</span></td>
+                          <td style={cell}>
+                            <span style={{ padding: '2px 6px', borderRadius: 6, background: stInfo.color, color: '#fff', fontSize: 10, fontWeight: 'bold', whiteSpace: 'nowrap' }}>{stInfo.label}</span>
+                            {/* 事前申請どおりに報告されたか、予定から変わったか。
+                                この列は高さに余裕があるので、ここに出せば行が縦に伸びない */}
+                            {hasActualSegs && (
+                              <div style={{ marginTop: 3, fontSize: 10, whiteSpace: 'nowrap', fontWeight: r.change_reason ? 'bold' : 'normal', color: r.change_reason ? (isDarkMode ? '#ffb74d' : '#b45309') : subText }}>
+                                {r.change_reason ? '変更あり' : '申請どおり'}
+                              </div>
+                            )}
+                          </td>
                           <td style={cell}>
                             <div style={{ display: 'flex', gap: 3, justifyContent: 'center', flexWrap: 'wrap' }}>
                               {/* 終日行（調整休・欠勤）は修正モーダル非対応（segments前提の再計算で差分が壊れるため。種別変更UIは公開準備時に対応） */}
