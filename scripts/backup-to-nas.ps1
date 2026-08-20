@@ -38,8 +38,19 @@ $targets = @(
 foreach ($t in $targets) {
     if (Test-Path $t.Src) {
         try {
-            Copy-Item -Path $t.Src -Destination (Join-Path $destRoot $t.DstName) -Force
-            Write-BackupLog "OK: $($t.Src)"
+            $destPath = Join-Path $destRoot $t.DstName
+            Copy-Item -Path $t.Src -Destination $destPath -Force
+            # Verify on the NAS side. A log line saying "OK" is not proof that the file arrived,
+            # so compare the size against the source.
+            # -Force is required: dot-files such as .env are treated as hidden and
+            # Get-Item cannot see them without it.
+            $srcSize = (Get-Item $t.Src -Force).Length
+            $dstSize = if (Test-Path $destPath) { (Get-Item $destPath -Force).Length } else { -1 }
+            if ($dstSize -eq $srcSize) {
+                Write-BackupLog "OK: $($t.Src) ($srcSize bytes)"
+            } else {
+                Write-BackupLog "WARN: $($t.Src) size mismatch (PC=$srcSize NAS=$dstSize)"
+            }
         } catch {
             Write-BackupLog "ERROR copying $($t.Src): $($_.Exception.Message)"
         }
@@ -53,8 +64,16 @@ $memoryDst = Join-Path $destRoot 'claude_memory'
 if (Test-Path $memorySrc) {
     try {
         if (-not (Test-Path $memoryDst)) { New-Item -ItemType Directory -Force -Path $memoryDst | Out-Null }
-        Copy-Item -Path (Join-Path $memorySrc '*') -Destination $memoryDst -Recurse -Force -ErrorAction Stop
-        Write-BackupLog "OK: claude memory folder"
+        # Copy-Item with a wildcard does NOT fail when the folder is empty, so it used to log
+        # "OK" even though nothing was copied. Count the files and say so explicitly.
+        $srcCount = @(Get-ChildItem -Path $memorySrc -Recurse -Force -File -ErrorAction SilentlyContinue).Count
+        if ($srcCount -eq 0) {
+            Write-BackupLog "WARN: claude memory folder is EMPTY on this PC (0 files) - nothing to copy"
+        } else {
+            Copy-Item -Path (Join-Path $memorySrc '*') -Destination $memoryDst -Recurse -Force -ErrorAction Stop
+            $dstCount = @(Get-ChildItem -Path $memoryDst -Recurse -Force -File -ErrorAction SilentlyContinue).Count
+            Write-BackupLog "OK: claude memory folder (PC=$srcCount files / NAS=$dstCount files)"
+        }
     } catch {
         Write-BackupLog "ERROR copying claude memory: $($_.Exception.Message)"
     }

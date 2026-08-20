@@ -4732,7 +4732,9 @@ grill-me的な対話で要件を詰め → visualizeでモック2案提示 → *
 ## 💾 PC故障時バックアップ（2026-07-25設定）
 
 このPCにしかない重要ファイル（`client/.env`・`client/.env.production`・`AGENTS.md`・Claude Codeのこのプロジェクト用メモリ）を、Windowsタスク `BackupFivemPortalToNAS`（ログオン時＋毎日12:00・上書き方式）で自動的にNAS（`\\NAS-SIJYO\Public\四条本校マイドキュメント\10_パソコン設定\Claud重要バックアップデータ\社内サイト`）へバックアップしている。
-復旧手順は [docs/DISASTER-RECOVERY.md](docs/DISASTER-RECOVERY.md) を参照（Notionにも同内容のマークダウンを保管済み）。この手順書自体もNASへ`復旧手順.md`として毎日同期されるため、git/PCどちらにもアクセスできない状況でもNAS単体で読める。スクリプトは `scripts/backup-to-nas.ps1` / `scripts/setup-backup-task.ps1`。動作確認はNAS側ファイルの**CreationTime**（作成日時）で判定すること（LastWriteTimeはコピー元の日時が引き継がれるため判定に使えない）。
+復旧手順は [docs/DISASTER-RECOVERY.md](docs/DISASTER-RECOVERY.md) を参照（Notionにも同内容のマークダウンを保管済み）。この手順書自体もNASへ`復旧手順.md`として毎日同期されるため、git/PCどちらにもアクセスできない状況でもNAS単体で読める。スクリプトは `scripts/backup-to-nas.ps1` / `scripts/setup-backup-task.ps1`。🚨 **動作確認を日付でやらないこと**（2026-08-20 修正）。`CreationTime` は**上書きでは更新されず初回のまま**、`LastWriteTime` は**コピー元の日時が引き継がれる**ので、どちらも「いつバックアップされたか」を表さない。`LastTaskResult=0` も「エラーなく終わった」だけで、対象が0件でも 0 になる。確認は **`backup_log.txt` の末尾（実際のバイト数・ファイル数が出る）** か、**`Get-FileHash` で中身を突き合わせる**。`.env` のようなドット始まりのファイルは隠し扱いなので PowerShell では `-Force` が要る。
+⚠️ `claude_memory` が**空なのは正常**。このプロジェクトは Claude Code のメモリ機能を使わず、引き継ぎを CLAUDE.md（git管理下＝GitHubにある）に集約する運用のため。ログにも「WARN: claude memory folder is EMPTY」と明示されるようにした。
+⚠️ **データ本体（FAQ・申請・画像）は Supabase にあり、このPCには無い**。だからバックアップ対象は「PCにしかないもの」だけでよい（経営ダッシュボードの keiei.db のようなローカルDBは存在しない）。Supabase側のデータ保全は別の課題。
 
 ---
 

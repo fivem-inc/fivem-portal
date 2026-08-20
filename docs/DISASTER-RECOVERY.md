@@ -40,10 +40,28 @@
    Start-ScheduledTask -TaskName 'BackupFivemPortalToNAS'
    Get-ScheduledTaskInfo -TaskName 'BackupFivemPortalToNAS'
    ```
-   `LastTaskResult` が `0` なら正常終了。
-3. NAS側のファイルが実際に更新されたかは **CreationTime**（作成日時）を見る。
-   `LastWriteTime`（更新日時）はコピー元の日時がそのまま引き継がれるため、
-   「今日バックアップされたか」の判定には使えない点に注意。
+   `LastTaskResult` が `0` なら「エラーなく終わった」という意味。
+   ⚠️ **これはコピーできた証拠にはならない**（対象が0件でも `0` になる）。
+
+3. ⚠️ **日付では判定できない。** NAS側のファイルの日時は次のようになっており、
+   どちらも「いつバックアップされたか」を表さない。
+   - `CreationTime`（作成日時）… **上書きでは更新されない**（初回コピー時のまま止まる）
+   - `LastWriteTime`（更新日時）… コピー元の日時がそのまま引き継がれる
+
+4. **確実な確認方法は次の2つ。**
+   - `backup_log.txt` の末尾を見る。各行に **実際のバイト数・ファイル数** が出る。
+     `OK: ...\.env (468 bytes)` のように数字が入っていれば、NAS側で存在を確認できている。
+     `WARN:` で始まる行があれば、コピーできていないか中身が空。
+   - 中身そのものを突き合わせる（いちばん確実）:
+     ```powershell
+     $p = 'C:\Users\kohei\fivem-portal\AGENTS.md'
+     $n = '\\NAS-SIJYO\Public\四条本校マイドキュメント\10_パソコン設定\Claud重要バックアップデータ\社内サイト\AGENTS.md'
+     (Get-FileHash $p -Algorithm MD5).Hash -eq (Get-FileHash $n -Algorithm MD5).Hash
+     ```
+     `True` なら最新が届いている。
+
+   ※ `.env` のようにドットで始まるファイルは隠しファイル扱いになるため、
+     PowerShell で調べるときは `Get-Item`／`Get-ChildItem` に **`-Force` が必要**。
 
 ## 3. 新しいPCでの復旧手順（壊れた時にこの順で行う）
 
