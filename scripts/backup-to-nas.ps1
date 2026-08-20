@@ -46,7 +46,11 @@ foreach ($t in $targets) {
             # Get-Item cannot see them without it.
             $srcSize = (Get-Item $t.Src -Force).Length
             $dstSize = if (Test-Path $destPath) { (Get-Item $destPath -Force).Length } else { -1 }
-            if ($dstSize -eq $srcSize) {
+            if ($srcSize -eq 0) {
+                # An empty source would pass the size check below (0 -eq 0) and be logged as OK,
+                # silently overwriting a good backup on the NAS with an empty file. Catch it first.
+                Write-BackupLog "WARN: $($t.Src) is EMPTY on this PC (0 bytes) - check the source file"
+            } elseif ($dstSize -eq $srcSize) {
                 Write-BackupLog "OK: $($t.Src) ($srcSize bytes)"
             } else {
                 Write-BackupLog "WARN: $($t.Src) size mismatch (PC=$srcSize NAS=$dstSize)"
