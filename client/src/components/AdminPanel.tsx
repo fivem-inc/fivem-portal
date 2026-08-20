@@ -58,6 +58,18 @@ const AdminPanelContent: React.FC = () => {
   const STORAGE_LIMIT_MB = 1024;
   const isStorageLow = storageUsageMb !== null && storageUsageMb / STORAGE_LIMIT_MB >= 0.8; // 残り2割を切ったら警告
 
+  // データベース本体の使用量。画像（ストレージ）とは無料枠が別枠なので分けて出す。
+  // 2026-08-20：cronの実行記録が115MBまで膨らんでいたのに誰も気づけなかったため追加した
+  const [dbUsageMb, setDbUsageMb] = useState<number | null>(null);
+  useEffect(() => {
+    supabase.rpc('get_database_usage_mb').then(({ data }: { data: number | string | null }) => {
+      const n = Number(data);
+      if (data !== null && !Number.isNaN(n)) setDbUsageMb(n);
+    }, () => {});
+  }, [supabase]);
+  const DB_LIMIT_MB = 500;
+  const isDbLow = dbUsageMb !== null && dbUsageMb / DB_LIMIT_MB >= 0.8;
+
   // 設定の入力もれ（次年度の会社カレンダー未登録など）。判定はDBの admin_setup_alerts() に集約
   const { badgeCount: adminSetupBadge } = useAdminSetupAlerts(true);
 
@@ -74,14 +86,20 @@ const AdminPanelContent: React.FC = () => {
   }, [supabase]);
 
   return (    <div style={{ marginTop: 0, paddingTop: 0, position: 'relative' }}>
-      {storageUsageMb !== null && (
-        <div style={{
-          position: 'absolute', top: 0, right: 0, fontSize: 11, textAlign: 'right', lineHeight: 1.5,
-          color: isStorageLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'),
-          fontWeight: isStorageLow ? 'bold' : 'normal',
-        }}>
-          <div>{isStorageLow && '⚠️ '}📦 ストレージ使用量</div>
-          <div>{storageUsageMb}MB / {STORAGE_LIMIT_MB}MB（無料枠）</div>
+      {(storageUsageMb !== null || dbUsageMb !== null) && (
+        <div style={{ position: 'absolute', top: 0, right: 0, fontSize: 11, textAlign: 'right', lineHeight: 1.5 }}>
+          {storageUsageMb !== null && (
+            <div style={{ color: isStorageLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), fontWeight: isStorageLow ? 'bold' : 'normal' }}>
+              <div>{isStorageLow && '⚠️ '}📦 ストレージ使用量</div>
+              <div>{storageUsageMb}MB / {STORAGE_LIMIT_MB}MB（無料枠）</div>
+            </div>
+          )}
+          {dbUsageMb !== null && (
+            <div style={{ marginTop: 3, color: isDbLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), fontWeight: isDbLow ? 'bold' : 'normal' }}>
+              <div>{isDbLow && '⚠️ '}🗄️ データベース使用量</div>
+              <div>{dbUsageMb}MB / {DB_LIMIT_MB}MB（無料枠）</div>
+            </div>
+          )}
         </div>
       )}
       {successMsg && (
