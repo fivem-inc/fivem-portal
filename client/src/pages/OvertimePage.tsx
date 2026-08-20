@@ -2273,7 +2273,11 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const [ownCardRows, setOwnCardRows] = useState<OvertimeReport[]>([]);
   const [ownCardLoading, setOwnCardLoading] = useState(false);
   const ownCardReqRef = useRef(0);
-  useEffect(() => {
+  // 🚨 合計時間数カードは、下の履歴一覧（fetchOwn）とは別々にデータを取っている。
+  //    関数にしていなかったため、申請しても「一覧は新しいのに合計だけ古い」という
+  //    いちばん気づきにくい形で古い数字が残っていた（リロードすると直るので誤解を生む）。
+  //    申請・受理・差し戻し・取消のあとは、必ず fetchOwn と一緒にこれも呼ぶこと。
+  const fetchOwnCard = useCallback(() => {
     const reqId = ++ownCardReqRef.current;
     setOwnCardLoading(true);
     supabase.from('overtime_reports')
@@ -2286,6 +2290,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
         setOwnCardLoading(false);
       }, () => { if (reqId === ownCardReqRef.current) setOwnCardLoading(false); });
   }, [ownCardPeriod, user.id]);
+  useEffect(() => { fetchOwnCard(); }, [fetchOwnCard]);
   // 本人・部門集計・個人詳細で共通の computeBalance を使う
   const ownCardBalance = useMemo(() => computeBalance(ownCardRows, ownCardPeriod), [ownCardRows, ownCardPeriod]);
 
@@ -2332,6 +2337,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     setCancelTargetId(null);
     setActingId(null);
     fetchOwn();
+    fetchOwnCard();
   };
 
   // 取消して、その内容を下書きにコピー→新規フォームを開く（間違えて出した申請を作り直す動線）
@@ -2363,6 +2369,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     setTab('form');
     window.scrollTo({ top: 0 });
     fetchOwn();
+    fetchOwnCard();
   };
 
   // ---- 受理（確認者）。旧 attendance_exceptions 連携は gcal-sync(action:'sync') に置き換え済み ----
@@ -2378,6 +2385,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     setActingId(null);
     fetchPendingForMe();
     fetchOwn();
+    fetchOwnCard();
   };
 
   const doReturn = async (r: OvertimeReport) => {
@@ -2394,6 +2402,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     setReturnComment('');
     setActingId(null);
     fetchPendingForMe();
+    // 差し戻しでも自分の履歴・合計は変わる（受理と違ってここだけ更新が抜けていた）
+    fetchOwn();
+    fetchOwnCard();
   };
 
   // 履歴・修正依頼系の派生値とフックは、?view=confirm の早期returnより前に置くこと。
@@ -2531,7 +2542,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
           {loadError && (
             <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 10, padding: '10px 12px', marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
               <p style={{ margin: 0, fontSize: 13, color: '#842029' }}>{loadError}</p>
-              <button onClick={() => { fetchOwn(); fetchPendingForMe(); }}
+              <button onClick={() => { fetchOwn(); fetchOwnCard(); fetchPendingForMe(); }}
                 style={{ flexShrink: 0, padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 'bold', background: '#dc3545', color: '#fff' }}>再読み込み</button>
             </div>
           )}
@@ -2696,7 +2707,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
         {loadError && (
           <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 10, padding: '10px 12px', marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
             <p style={{ margin: 0, fontSize: 13, color: '#842029' }}>{loadError}</p>
-            <button onClick={() => { fetchOwn(); fetchPendingForMe(); }}
+            <button onClick={() => { fetchOwn(); fetchOwnCard(); fetchPendingForMe(); }}
               style={{ flexShrink: 0, padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 'bold', background: '#dc3545', color: '#fff' }}>再読み込み</button>
           </div>
         )}
@@ -2766,7 +2777,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
               onSaved={(gcalWarn) => {
                 setSavedBanner(true);
                 if (gcalWarn) setGcalWarning({ message: gcalWarn, reportId: editTarget?.id ?? null });
-                setEditTarget(null); setTab('history'); fetchOwn(); window.scrollTo({ top: 0 });
+                setEditTarget(null); setTab('history'); fetchOwn(); fetchOwnCard(); window.scrollTo({ top: 0 });
               }}
               onClose={() => setEditTarget(null)}
             />
