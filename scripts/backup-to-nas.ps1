@@ -32,7 +32,10 @@ $targets = @(
     @{ Src = 'C:\Users\kohei\fivem-portal\client\.env'; DstName = '.env' },
     @{ Src = 'C:\Users\kohei\fivem-portal\client\.env.production'; DstName = '.env.production' },
     @{ Src = 'C:\Users\kohei\fivem-portal\AGENTS.md'; DstName = 'AGENTS.md' },
-    @{ Src = 'C:\Users\kohei\fivem-portal\docs\DISASTER-RECOVERY.md'; DstName = '復旧手順.md' }
+    @{ Src = 'C:\Users\kohei\fivem-portal\docs\DISASTER-RECOVERY.md'; DstName = '復旧手順.md' },
+    # 運用メモも NAS に置く。PC も GitHub も見られない状況で、NAS だけを開いた人が
+    # 「何がいつ動いているか」「何を確認すればよいか」を読めるようにするため。
+    @{ Src = 'C:\Users\kohei\fivem-portal\docs\OPERATIONS.md'; DstName = '運用メモ.md' }
 )
 
 foreach ($t in $targets) {
