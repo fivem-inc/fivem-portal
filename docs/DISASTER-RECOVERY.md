@@ -7,6 +7,10 @@
 
 - **アプリのコード全体** → GitHub（`fivem-inc/fivem-portal`）に保存済み。PCが壊れても消えない
 - **データベース・ログイン認証・サーバー側の処理（Edge Functions）** → Supabase（クラウド）
+  🚨 ただし **Supabase の無料プランには、バックアップも復元機能も一切ありません**。
+  「クラウドにあるから安全」ではありません。誤って消した場合やアカウントを失った場合、
+  Supabase 側から元に戻す手段はゼロです。そのため **毎日このPCからデータを吸い出して、
+  暗号化して NAS に保管しています**（下の「2-2」）
 - **本番サイトそのもの** → Vercel（クラウド、GitHubと連携して自動更新）
 
 **このPCにしかなく、壊れたら本当に消えるものは以下の4つだけ**です（これだけが日次バックアップの対象）：
@@ -20,7 +24,7 @@
 
 このドキュメント自体も**毎日NASへ`復旧手順.md`としてコピーされる**ため、PC・GitHubのどちらにもアクセスできない状況でも、NASの保存先フォルダを直接開けば読める（本文はgitの`docs/DISASTER-RECOVERY.md`にもあるが、そちらが読めない事態を想定した二重化）。
 
-## 2. 自動バックアップの仕組み
+## 2. 自動バックアップの仕組み（PC内のファイル）
 
 - スクリプト: `scripts/backup-to-nas.ps1`（このリポジトリに含まれる）
 - 保存先（NAS）:
@@ -63,12 +67,105 @@
    ※ `.env` のようにドットで始まるファイルは隠しファイル扱いになるため、
      PowerShell で調べるときは `Get-Item`／`Get-ChildItem` に **`-Force` が必要**。
 
+## 2-2. Supabase データベースの日次バックアップ
+
+🚨 **Supabase の無料プランには復元機能がない**ため、この仕組みが唯一の命綱です。
+
+### 何を・どこに保管しているか
+
+- スクリプト: `scripts/backup-supabase-db.sh`
+- 保存先（NAS）:
+  `\\NAS-SIJYO\Public\四条本校マイドキュメント\10_パソコン設定\Claud重要バックアップデータ\社内サイト\db-backup`
+  - `daily\fivem-db-YYYYMMDD.7z` … **14世代**
+  - `monthly\fivem-db-YYYYMM.7z` … **12世代**（毎月1日の分を残す）
+  - `db_backup_log.txt` … 実行ログ
+- 実行タイミング: **毎日 12:30**（Windowsタスク名 `BackupFivemSupabaseDB`）。
+  その時刻にPCが止まっていた場合は、次に起動したときに自動で実行される
+- **7-Zip の AES-256 で暗号化**。ファイル名の一覧も暗号化しているので、
+  中に何が入っているかも外からは見えない（保存先が Public 共有のため必須）
+
+### 中に入っているもの（5つ）
+
+| ファイル | 中身 | これが無いと何が起きるか |
+|---|---|---|
+| `01-schema.sql` | RLSポリシー193本・関数・トリガー | 権限設定が全部消える。⚠️ **正本は本番DBの中にしかない** |
+| `02-data.sql` | 業務データ＋`auth.users`（ログイン情報50件） | 申請データが消える／**誰もログインできない** |
+| `03-roles.sql` | ロールの設定 | 権限の受け皿が欠ける |
+| `04-cron-jobs.sql` | pg_cron のジョブ13個 | 自動実行（プッシュ配信・掃除・リマインド）が**全部止まる** |
+| `05-vault-secret-names.txt` | Vault に登録されている**名前だけ** | 何を再登録すべきか分からなくなる |
+
+🚨 `04` を別に取っているのは、**pg_cron のジョブは pg_dump では取れない**ためです
+（拡張機能が管理しているテーブルはダンプの対象外になる）。取りこぼすと、
+復元しても自動実行が1つも動きません。
+
+🚨 Vault の**値**（service_role_key など）は取得できません（取るべきでもない）。
+復元後に手で登録し直す必要があります。名前の一覧だけを控えています。
+
+### 暗号化パスワード
+
+- 32文字のランダムな文字列
+- PC内では Windows の暗号化機能（DPAPI）で保護されており、
+  **このPC・このユーザー以外では復号できない**
+  （保存先 `C:\Users\kohei\.fivem-backup\db-backup-password.txt`）
+- 🚨 **PCが壊れると、この保存分は二度と復号できません。紙の控えが唯一の鍵になります**
+- 紙の控えは**2枚**（社長用・経理責任者用）を別々の場所に保管。
+  **年1回、封を開けて読めるかを確認する**（開封テスト）
+- 作り直すとき: `scripts\setup-backup-password.ps1`
+  ⚠️ 作り直すと、**それ以前に作ったバックアップは開けなくなります**
+
+### 正常に動いているかの確認方法
+
+⚠️ **ここでも日付では判定できません**（PC内ファイルのバックアップと同じ理由）。
+
+1. NAS の `db-backup\db_backup_log.txt` の**末尾**を見る。
+   最後が `===== 正常終了 =====` で、その手前に次の行が並んでいれば正常：
+   - `検証OK: RLSポリシー 193 本`
+   - `検証OK: auth.users あり`
+   - `検証OK: データダンプは最後まで完了`
+   - `検証OK: 暗号化ファイルを開けることを確認`
+   - `OK: NAS に保存しました （◯◯ バイト）`
+2. `ERROR:` や `===== 異常終了 =====` があれば、その日は保存されていない。
+   ただし**中身が怪しいものでNASを上書きしない**設計なので、前日までの分は無事です
+3. 手で動かすとき:
+   ```powershell
+   Start-ScheduledTask -TaskName 'BackupFivemSupabaseDB'
+   ```
+
+### この仕組みでは保存されないもの
+
+| 対象 | 理由 | どうするか |
+|---|---|---|
+| Storage の画像（レシート・見積書） | データベースの中に入っていないため | 紙の原本が正式な保存書類なので、当面は紙で担保（将来は月1回の取得を検討） |
+| Edge Function の設定値28個 | Supabaseから読み出せない仕組み | 「5. Supabase のプロジェクトを失った場合」を参照 |
+| Vault の値 | 同上 | 同上 |
+| migration の適用履歴 | サーバー側に15本／199本しか残っていない | スキーマは `01-schema.sql` から戻す（`db push` では戻せない） |
+
+### pg_dump の用意（新しいPCで必要になったとき）
+
+このバックアップは PostgreSQL に付属する `pg_dump` を使います（本番と同じ **17系**）。
+インストーラは実行せず、zip から取り出して置くだけです。
+
+1. `https://get.enterprisedb.com/postgresql/postgresql-17.6-2-windows-x64-binaries.zip`
+   をダウンロード（約315MB。配布元 EnterpriseDB ＝ PostgreSQL 公式のWindows配布元）
+2. zip の中の `pgsql\bin` フォルダだけを取り出し、`C:\Users\<ユーザー名>\pgsql17\bin` に置く
+3. 確認: `C:\Users\<ユーザー名>\pgsql17\bin\pg_dump.exe --version` が
+   `pg_dump (PostgreSQL) 17.6` と出ればOK
+
+⚠️ **18系など本番より新しいものは使わない**（復元のときに互換性の問題が出ることがある）。
+
+補足: Supabase CLI が出す設定は Supabase が独自に手を入れた pg_dump 向けなので、
+標準の pg_dump で動くようにスクリプト側で2箇所だけ書き換えています
+（`--quote-all-identifier` → `--quote-all-identifiers`、`--exclude-schema` の `|` 区切りを個別指定へ展開）。
+将来 CLI の仕様が変わって失敗するようになったら、まずここを疑ってください。
+
 ## 3. 新しいPCでの復旧手順（壊れた時にこの順で行う）
 
 ### 準備するもの
 - 新しいPC（Node.js等が使える状態）
 - GitHubのアカウント（`fivem-inc/fivem-portal` にアクセスできること）
 - NASへのアクセス権（社内ネットワーク）
+- **紙に控えたバックアップの暗号化パスワード**（データベースのバックアップを開くのに必要）
+- **pg_dump 17**（データベースのバックアップを続けるのに必要。用意のしかたは「2-2」の末尾）
 
 ### 手順
 
@@ -95,13 +192,25 @@
    | `AGENTS.md` | `fivem-portal\AGENTS.md` |
    | `claude_memory` フォルダ一式 | `C:\Users\<新しいユーザー名>\.claude\projects\C--Users-<新しいユーザー名>-fivem-portal\memory\`（Claude Codeを一度起動するとフォルダ自体は自動生成されるので、その中に中身をコピーする） |
 
-3. **自動バックアップのタスクを作り直す**
+3. **自動バックアップのタスクを作り直す（2つあります）**
+
+   ① PC内ファイルのバックアップ
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\<新しいユーザー名>\fivem-portal\scripts\setup-backup-task.ps1"
    ```
-   ※ スクリプト内のパスが `C:\Users\kohei\...` 固定になっているため、
-   ユーザー名が変わる場合は `scripts\backup-to-nas.ps1` と `scripts\setup-backup-task.ps1` の
-   中のパスを新しいユーザー名に書き換えてから実行すること。
+
+   ② Supabase データベースのバックアップ（先に pg_dump 17 を置いておくこと）
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\<新しいユーザー名>\fivem-portal\scripts\setup-backup-password.ps1"
+   powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\<新しいユーザー名>\fivem-portal\scripts\setup-db-backup-task.ps1"
+   ```
+   🚨 **新しいPCでは、古い暗号化パスワードを復号できません**（PC・ユーザーに紐づく仕組みのため）。
+   新しいパスワードを作り直すことになりますが、**紙の控えは捨てないでください**。
+   それが「古いバックアップを開ける唯一の手段」です。
+
+   ※ どのスクリプトもパスが `C:\Users\kohei\...` 固定です。ユーザー名が変わる場合は、
+   `scripts\` 配下の4本（`backup-to-nas.ps1` / `setup-backup-task.ps1` /
+   `backup-supabase-db.sh` / `setup-db-backup-task.ps1`）の中のパスを書き換えてから実行すること。
 
 4. **動作確認**
    ```bash
@@ -168,3 +277,66 @@ Edge Function（サーバー側の処理）には28個の設定値が登録さ�
   Supabaseを丸ごと失う可能性は低く（毎日使っているので自動停止もない）、
   失った場合はどのみち大がかりな復旧作業になるため、その中に再設定が含まれても
   相対的な追加負担は小さい、という判断。
+
+## 6. バックアップからデータベースを復元する
+
+⚠️ この作業は、実際には**年に1回のリハーサル**でしか使いません。
+だからこそ、**年1回、手順書のとおりに動くかを必ず試してください**。
+いちばん怖い失敗は「いざという時に動かないバックアップ」です。
+
+### 準備するもの
+- NAS の `db-backup\daily\` にある最新の `fivem-db-YYYYMMDD.7z`
+- **紙に控えた暗号化パスワード**（これが無いと中身は永久に開けません）
+- `pg_dump` / `psql`（`C:\Users\kohei\pgsql17\bin`。無ければ「2-2」の末尾の手順で用意）
+
+### 手順
+
+1. **中身を取り出す**
+   ```powershell
+   & "C:\Users\kohei\scoop\shims\7z.exe" x "fivem-db-20260820.7z" -o"C:\restore"
+   ```
+   パスワードを聞かれるので、紙の控えを入力する。
+
+2. **戻す先を用意する**
+   - Supabase で新しいプロジェクトを作る（無料プランでよい）
+   - 接続文字列（`postgresql://postgres:パスワード@db.〇〇.supabase.co:5432/postgres`）を控える
+
+3. **この順番で流し込む**（順番を変えると外部キーのエラーで失敗します）
+   ```bash
+   psql "接続文字列" -f 01-schema.sql
+   psql "接続文字列" -f 03-roles.sql
+   psql "接続文字列" -f 02-data.sql
+   psql "接続文字列" -f 04-cron-jobs.sql
+   ```
+   🚨 `02-data.sql` は外部キーのエラーが出ることがあります。
+   `board_messages` に循環参照があるためです（バックアップ時のログにも警告が出ています）。
+   その場合は、制約を一時的に止めて流し込みます:
+   ```bash
+   psql "接続文字列" -c "set session_replication_role = replica;" -f 02-data.sql
+   ```
+
+4. **手で戻すもの**（バックアップには入っていません）
+   - Vault … `05-vault-secret-names.txt` に書かれている名前で、値を登録し直す
+   - Edge Function の設定値28個 … 「5. Supabase のプロジェクトを失った場合」の表を参照
+   - Edge Function の本体 … `npx supabase functions deploy <名前> --project-ref <新しいref>`
+   - Storage のバケットと画像
+
+5. **確認する**
+   ```sql
+   select count(*) from pg_policies;   -- 193 前後なら正常
+   select count(*) from cron.job;      -- 13 前後なら正常
+   select count(*) from auth.users;    -- 50 前後なら正常
+   ```
+   そのうえで、実際にアプリからログインできるかを確認する。
+
+### 年1回のリハーサルでやること
+
+1. 上の 1〜3 を、**使い捨ての無料プロジェクト**に対して実行する（本番には触らない）
+2. 上の 5 の3つの数字を確認する
+3. **紙の封筒を開け、パスワードが読めることを確認する**（開封テスト）
+4. 終わったら使い捨てプロジェクトを削除する
+5. 下の表に実施日を記録する
+
+| 実施日 | 実施者 | 結果 | 気づいたこと |
+|---|---|---|---|
+| （未実施） | | | |
