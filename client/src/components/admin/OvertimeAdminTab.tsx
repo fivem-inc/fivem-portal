@@ -1160,17 +1160,38 @@ const OvertimeAdminTab: React.FC = () => {
                           style={{ background: r.id === focusId ? (isDarkMode ? '#4a3f1a' : '#fff9c4') : undefined, transition: 'background 0.6s' }}
                         >
                           <td style={{ ...cell, fontWeight: 'bold', textAlign: 'left' }}>{r.applicantName}</td>
-                          <td style={{ ...cell, whiteSpace: 'nowrap' }}>{r.work_date}</td>
+                          <td style={{ ...cell, whiteSpace: 'nowrap' }}>
+                            {r.work_date}
+                            {/* いつ出された申請かが分からないと、事後報告の遅れ具合が追えない */}
+                            {r.created_at && (
+                              <div style={{ fontSize: 10, color: subText, marginTop: 2 }}>
+                                申請 {new Date(r.created_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                              </div>
+                            )}
+                          </td>
                           <td style={{ ...cell, textAlign: 'left', fontSize: 12 }}>
                             <div style={{ color: subText, fontSize: 11 }}>元 {nsTime}</div>
                             <div>実 {segText}</div>
-                            {(r.application_types ?? []).filter(isOvertimeType).length > 0 && (
+                            {/* 種別が1つも付いていない行でも、事前／事後は出したいので条件を分けている */}
+                            {((r.application_types ?? []).filter(isOvertimeType).length > 0 || r.entry_type !== 'leave_auto') && (
                               <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginTop: 2 }}>
                                 {(r.application_types ?? []).filter(isOvertimeType).map(t => (
                                   <span key={t} style={{ padding: '1px 6px', borderRadius: 6, border: `1px solid ${OT_TYPE_INFO[t].color}`, color: isDarkMode ? '#fff' : OT_TYPE_INFO[t].color, background: isDarkMode ? OT_TYPE_INFO[t].darkBg : `${OT_TYPE_INFO[t].color}1a`, fontSize: 10, fontWeight: 'bold', whiteSpace: 'nowrap' }}>
                                     {OT_TYPE_INFO[t].label}
                                   </span>
                                 ))}
+                                {/* 事前に出したのか、あとから報告したのか。
+                                    種別バッジの並びに足せば列を増やさずに済む */}
+                                {r.entry_type !== 'leave_auto' && otCalMap[r.id] && (
+                                  <span style={{
+                                    padding: '1px 6px', borderRadius: 6, fontSize: 10, fontWeight: 'bold', whiteSpace: 'nowrap',
+                                    border: `1px solid ${otCalMap[r.id].postHoc ? '#e65100' : '#0f766e'}`,
+                                    color: isDarkMode ? '#fff' : (otCalMap[r.id].postHoc ? '#e65100' : '#0f766e'),
+                                    background: isDarkMode ? (otCalMap[r.id].postHoc ? '#4a2c0a' : '#123a35') : (otCalMap[r.id].postHoc ? '#e651001a' : '#0f766e1a'),
+                                  }}>
+                                    {otCalMap[r.id].postHoc ? '事後報告' : '事前申請'}
+                                  </span>
+                                )}
                               </div>
                             )}
                             {(r.application_types ?? []).includes('furikae_off') && r.furikae_origin_date && (
