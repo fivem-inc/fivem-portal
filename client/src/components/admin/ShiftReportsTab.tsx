@@ -309,11 +309,16 @@ const ShiftReportsTab: React.FC = () => {
   });
 
   const sorted = [...filtered].sort((a, b) => {
+    const dir = sortDir === 'asc' ? 1 : -1;
     let va = '', vb = '';
     if (sortKey === 'created_at') { va = a.created_at; vb = b.created_at; }
     else if (sortKey === 'work_date') { va = a.work_date; vb = b.work_date; }
     else { va = a.applicantName ?? ''; vb = b.applicantName ?? ''; }
-    return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+    const c = va.localeCompare(vb);
+    if (c !== 0) return dir * c;
+    // 同じ値のときは対象日で並べる。
+    // まとめて報告された分（報告日時が同じ）が日付順に並ばないと、一覧が読みにくいため
+    return dir * a.work_date.localeCompare(b.work_date);
   });
 
   const personOptions = [...new Map(reports.map(r => [r.applicant_id, r.applicantName ?? r.applicant_id])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
@@ -467,8 +472,11 @@ const ShiftReportsTab: React.FC = () => {
         <span style={{ fontSize: 12, color: sub }}>並び順：</span>
         <select value={sortKey} onChange={e => setSortKey(e.target.value as typeof sortKey)}
           style={{ padding: '4px 8px', borderRadius: 8, border: `1px solid ${border}`, background: selBg, color: text, fontSize: 12 }}>
+          {/* 🚨 「勤務日」と書いていたが、これは「いつの勤務についての報告か」＝対象日のこと。
+                 残業管理でも同じ理由で「勤務日」→「対象日」に統一してある。
+                 （一覧の列見出しは「変更前」のまま。あの列には対象日と変更前の内容が両方入る） */}
           <option value="created_at">報告日</option>
-          <option value="work_date">勤務日</option>
+          <option value="work_date">対象日</option>
           <option value="applicantName">報告者</option>
         </select>
         <button onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
