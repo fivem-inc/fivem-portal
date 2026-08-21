@@ -1489,7 +1489,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
 
   // 🚨 URLは毎回読み直す。同じページを開いたまま通知をタップしても画面は作り直されないため、
   // 開いた瞬間の1回だけの読み取りだと ?focus= が変わったことに気づけない
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const viewParam = searchParams.get('view');
   // 🚨 初期表示は「自分の所属チーム」。ただし下の3つは全チームで開く。
   //    ・管理者／社長 … 全体を見る立場のため
@@ -1498,12 +1498,14 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
   //    絞り込みが常に0件になり、マネージャー・リーダーの初期画面に休暇が1件も
   //    出ていなかった（欠勤は絞り込み自体が無かったので出ており、気づきにくかった）。
   //    所属チームは profiles を読んでから決まるので、下の useEffect でセットする。
-  const forceAllTeams = viewParam === 'fyi' || isAdmin || roleTitle === '社長';
-
   const today = new Date();
   // バナー等から ?focus=YYYY-MM-DD で来たら、その月を開き該当行を強調する
   const focusParam = searchParams.get('focus');
   const focusDate = focusParam && /^\d{4}-\d{2}-\d{2}$/.test(focusParam) ? focusParam : null;
+  // 🚨 通知から ?focus= 付きで来たときも全チームで開く。
+  //    対象者が自分と違うチームだと絞り込みで行が消え、光らせる対象そのものが無くなるため。
+  //    （欠勤にチーム絞り込みを入れた 2026-08-21 に、ここを忘れて実際に光らなくなった）
+  const forceAllTeams = viewParam === 'fyi' || focusDate !== null || isAdmin || roleTitle === '社長';
   const [year, setYear] = useState(focusDate ? Number(focusDate.slice(0, 4)) : today.getFullYear());
   const [month, setMonth] = useState(focusDate ? Number(focusDate.slice(5, 7)) - 1 : today.getMonth());
   const [highlightDate, setHighlightDate] = useState<string | null>(focusDate);
@@ -1727,9 +1729,19 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
   useEffect(() => {
     if (!highlightDate || loading) return;
     const t1 = setTimeout(() => focusRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300);
-    const t2 = setTimeout(() => setHighlightDate(null), 6000);
+    const t2 = setTimeout(() => {
+      setHighlightDate(null);
+      // 🚨 光らせ終わったら URL から focus を外す。
+      //    付いたままだと、同じ日付の通知をもう一度タップしたとき URL が変わらず、
+      //    「画面は開いているのに光らない」（更新すると光る）という出方になる。
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get('focus')) {
+        sp.delete('focus');
+        setSearchParams(sp, { replace: true });
+      }
+    }, 6000);
     return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, [highlightDate, loading, absences, events]);
+  }, [highlightDate, loading, absences, events, overtimes, setSearchParams]);
 
   useEffect(() => {
     if (!isApprover && !isAdmin) return;
