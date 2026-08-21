@@ -1019,7 +1019,11 @@ const OvertimeForm: React.FC<{
       }
       if (!reason.trim()) return '理由を入力してください';
       if (!reviewerId) return '申請先を選択してください';
-      if (fullDayType === 'absence' && isSelfReview) return '欠勤は本人以外の受理が必要です';
+      // 🚨 欠勤の自己受理はマネージャー以上のみ（2026-08-21 に開放）。
+      //    canSelfReview が false の人には選択肢自体を出していないが、
+      //    下書きの復元・修正で古い値が入っていることがあるのでここでも弾く。
+      //    同じ判定が RLS（overtime_insert_own）と overtime-approve にもある。片方だけ直さないこと。
+      if (fullDayType === 'absence' && isSelfReview && !canSelfReview) return '欠勤の自己受理はマネージャー以上のみです';
       return '';
     }
     if (workSegments.length === 0) return '勤務時間を入力してください';
@@ -1610,7 +1614,9 @@ const OvertimeForm: React.FC<{
                   <button key={v} type="button"
                     onClick={() => {
                       setFullDayType(v);
-                      if (v === 'absence' && reviewerId === SELF_REVIEW_VALUE) setReviewerId('');
+                      // 欠勤に切り替えたとき、自己受理できない人（リーダー以下）だけ選択を外す。
+                      // マネージャー以上は欠勤も自己受理できるので、選んだ内容をそのまま残す。
+                      if (v === 'absence' && !canSelfReview && reviewerId === SELF_REVIEW_VALUE) setReviewerId('');
                     }}
                     style={{
                       padding: '10px 12px', borderRadius: 10, border: 'none', cursor: 'pointer', textAlign: 'left',
