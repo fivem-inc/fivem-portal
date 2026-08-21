@@ -85,5 +85,11 @@ $$;
 comment on function public.calendar_overtime_events(date, date) is
   '勤怠カレンダー用の残業取得。理由(reason)は返さない。種別ごとの掲載可否は画面側の willShowOnCalendar で判定する';
 
+-- 🚨 anon（未ログイン）からは明示的に外す。
+--    Supabase は新しい関数に anon の実行権限を自動で付けるため、
+--    `revoke ... from public` だけでは外れない（実測で anon が呼べる状態だった）。
+--    関数の中で has_feature_permission を見ているのでデータは漏れないが、
+--    呼べる必要のない入口は塞いでおく。
 revoke execute on function public.calendar_overtime_events(date, date) from public;
+revoke execute on function public.calendar_overtime_events(date, date) from anon;
 grant  execute on function public.calendar_overtime_events(date, date) to authenticated;

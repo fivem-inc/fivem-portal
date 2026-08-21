@@ -82,21 +82,35 @@ export const OT_CALENDAR: Record<OvertimeType, { syncable: boolean; defaultShare
 // ============================================================
 //  勤怠カレンダー（アプリ内 /calendar）での分類
 // ============================================================
-// 「その日いない・遅れる」のか「余分に働く・場所が変わる」のかで分ける。
-// 申請した場所（休暇ページ／残業ページ）で分けると、残業ページから申請される
-// 調整休・振替休日（中身は休み）が「残業」側に入ってしまい、見る人が混乱するため。
-const OT_ATTENDING: OvertimeType[] = ['overtime', 'early_start', 'holiday_work', 'location_change'];
+// 「休暇・欠勤」「遅刻・早退」「残業・休日出勤」の3つに分ける。
+// 🚨 申請した場所（休暇ページ／残業ページ）では分けない。
+//    残業ページから申請される調整休・振替休日は中身が休みなので、
+//    場所で分けると「残業」側に入ってしまい、見る人が混乱する。
+// グループ名は抽象語（休み・遅れ 等）ではなく、中に入っている代表的な種別名にしてある。
+// 探しているものの名前でボタンを押せるようにするため（2026-08-21 ユーザー判断）。
+export type CalendarCategory = 'leave' | 'late' | 'work';
 
-/** その残業が「出勤・残業」側か（false なら「休み・遅れ」側） */
-export function isOvertimeAttending(types: string[] | null | undefined): boolean {
-  return (types ?? []).some(t => (OT_ATTENDING as string[]).includes(t));
-}
+const OT_WORK: OvertimeType[] = ['overtime', 'early_start', 'holiday_work', 'location_change'];
+const OT_LEAVE: OvertimeType[] = ['chosei_off', 'furikae_off', 'absence'];
 
 /** カレンダーに出す種別だけを、代表が先頭に来る順で返す */
 export function calendarTypesInOrder(types: string[] | null | undefined): OvertimeType[] {
   return (types ?? [])
     .filter((t): t is OvertimeType => isOvertimeType(t) && OT_CALENDAR[t].syncable)
     .sort((a, b) => OT_CALENDAR[a].priority - OT_CALENDAR[b].priority);
+}
+
+/**
+ * その残業がカレンダーのどのグループに入るか。
+ * 🚨 代表種別（表示の色に使うもの）で判定する。
+ *    別の基準で判定すると「青い帯なのに遅刻・早退のボタンで消える」ことになる。
+ */
+export function overtimeCalendarCategory(types: string[] | null | undefined): CalendarCategory {
+  const primary = calendarTypesInOrder(types)[0];
+  if (!primary) return 'late';
+  if (OT_WORK.includes(primary)) return 'work';
+  if (OT_LEAVE.includes(primary)) return 'leave';
+  return 'late'; // 遅刻・早退（事前に分かっているもの）
 }
 
 /**

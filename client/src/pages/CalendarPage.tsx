@@ -9,8 +9,8 @@ import {
   type AttendanceType, type WorkSegment,
 } from '../lib/attendanceTypes';
 import {
-  OT_TYPE_INFO, willShowOnCalendar, isOvertimeAttending, calendarTypesInOrder,
-  type OvertimeType,
+  OT_TYPE_INFO, willShowOnCalendar, overtimeCalendarCategory, calendarTypesInOrder,
+  type OvertimeType, type CalendarCategory,
 } from '../lib/overtimeTypes';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE } from '../hooks/useCompanyCalendar';
 import type { CalendarKind } from '../lib/breakCalc';
@@ -171,13 +171,31 @@ const otEventTime = (ev: OvertimeEvent): string => {
   return '';
 };
 
-/** 欠勤入力の種別が「出勤・残業」側か（休日出勤・勤務地変更・勤務時間変更は出勤している日） */
-const isAbsenceAttending = (t: AttendanceType): boolean =>
-  t === 'holiday_work' || t === 'location_change' || t === 'time_change';
+/** 欠勤入力の種別がカレンダーのどのグループに入るか */
+const absenceCategory = (t: AttendanceType): CalendarCategory => {
+  if (t === 'holiday_work' || t === 'location_change') return 'work';
+  if (t === 'absent') return 'leave';
+  // 遅刻・早退・遅出(調整)・早退(調整)・勤務時間変更＝出勤するが時間がずれる
+  return 'late';
+};
+
+// カレンダーで切り替えられるチーム。profiles.group_names には配信用グループ
+// （マネージャー・リーダー／正社員・契約社員 等）も混ざっているので、
+// 所属チームを判定するときは必ずこの3つと突き合わせる。
+const CALENDAR_GROUPS = ['こども', '大人', '管理部'];
 
 // 残業・早出の色。OT_TYPE_INFO の青(#1565c0)は欠勤入力の「早退」と同じ色で、
 // 5pxの丸印では見分けがつかないため、カレンダーでは濃紺にする。
 const OT_NAVY = '#1e3a8a';
+
+// 表示する種類（3グループ）の色。
+// 🚨 light は明るい背景に置く文字色、dark は暗い背景に直接置く文字色。
+//    濃い色のままダークモードの背景に置くと沈んで読めない（実機で指摘を受けた）。
+const CAT_COLOR: Record<CalendarCategory, { light: string; dark: string; bg: string }> = {
+  leave: { light: '#1e8449', dark: '#7bdca0', bg: '#e8f5e9' },
+  late:  { light: '#b45309', dark: '#ffb74d', bg: '#fff4e5' },
+  work:  { light: OT_NAVY,   dark: '#90caf9', bg: '#e3f2fd' },
+};
 
 /**
  * カレンダー上での残業の色。
@@ -1460,8 +1478,7 @@ const SpCalendar: React.FC<{
 };
 
 // ===== メインコンポーネント =====
-// roleTitle は props で受け取るが、初期表示を全チームに統一したため現在は使っていない
-const CalendarPage: React.FC<Props> = ({ user, isAdmin, isApprover }) => {
+const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover }) => {
   const isDark = useDarkMode();
   // 会社カレンダー（休館日・出勤日）。カレンダーのセルに敷いて、休館日が一目で分かるようにする
   const calendarKinds = useCompanyCalendar();
@@ -1473,12 +1490,15 @@ const CalendarPage: React.FC<Props> = ({ user, isAdmin, isApprover }) => {
   // 🚨 URLは毎回読み直す。同じページを開いたまま通知をタップしても画面は作り直されないため、
   // 開いた瞬間の1回だけの読み取りだと ?focus= が変わったことに気づけない
   const [searchParams] = useSearchParams();
-  // 🚨 初期表示は必ず「全チーム」。
-  //    以前は管理者・社長以外を 'mine' にしていたが、'mine' というグループは存在しないため
-  //    絞り込みが常に0件になり、マネージャー・リーダーの初期画面に休暇が1件も出ていなかった
-  //    （欠勤は絞り込み自体が無かったので出ていた＝気づきにくい出方だった。2026-08-21 修正）
-  const defaultGroup = 'all';
-  const CALENDAR_GROUPS = ['こども', '大人', '管理部'];
+  const viewParam = searchParams.get('view');
+  // 🚨 初期表示は「自分の所属チーム」。ただし下の3つは全チームで開く。
+  //    ・管理者／社長 … 全体を見る立場のため
+  //    ・受理FYIのバナー（view=fyi）から来たとき … 該当スタッフを確実に表示するため
+  //    以前はこれを 'mine' という値で表そうとしていたが、'mine' というグループは存在せず
+  //    絞り込みが常に0件になり、マネージャー・リーダーの初期画面に休暇が1件も
+  //    出ていなかった（欠勤は絞り込み自体が無かったので出ており、気づきにくかった）。
+  //    所属チームは profiles を読んでから決まるので、下の useEffect でセットする。
+  const forceAllTeams = viewParam === 'fyi' || isAdmin || roleTitle === '社長';
 
   const today = new Date();
   // バナー等から ?focus=YYYY-MM-DD で来たら、その月を開き該当行を強調する
@@ -1495,13 +1515,17 @@ const CalendarPage: React.FC<Props> = ({ user, isAdmin, isApprover }) => {
     setHighlightDate(focusDate);
   }, [focusDate]);
   const focusRowRef = React.useRef<HTMLDivElement | null>(null);
-  const [groupMode, setGroupMode] = useState<string>(defaultGroup);
+  // profiles を読むまで所属チームが分からないので、いったん全チームで開いて下の useEffect で絞る
+  const [groupMode, setGroupMode] = useState<string>('all');
+  // 一度セットしたら二度と自動で変えない（利用者がプルダウンで選んだ結果を上書きしないため）
+  const groupModeDecided = React.useRef(false);
   const [events, setEvents] = useState<LeaveEvent[]>([]);
   const [absences, setAbsences] = useState<AbsenceEvent[]>([]);
   const [overtimes, setOvertimes] = useState<OvertimeEvent[]>([]);
-  // 表示する種類の絞り込み。初期は両方ON＝これまでの見え方を変えない
-  const [showRest, setShowRest] = useState(true);      // 🌿 休み・遅れ
-  const [showAttend, setShowAttend] = useState(true);  // 🕐 出勤・残業
+  // 表示する種類の絞り込み。初期はすべてON＝これまでの見え方を変えない
+  const [showLeave, setShowLeave] = useState(true); // 休暇・欠勤
+  const [showLate, setShowLate] = useState(true);   // 遅刻・早退
+  const [showWork, setShowWork] = useState(true);   // 残業・休日出勤
   const [deleteTarget, setDeleteTarget] = useState<AbsenceEvent | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [profiles, setProfiles] = useState<ProfileEntry[]>([]);
@@ -1723,11 +1747,22 @@ const CalendarPage: React.FC<Props> = ({ user, isAdmin, isApprover }) => {
     if (absDraft?.date) setAbsenceSheet(absDraft.date);
   }, [isApprover, isAdmin]);
 
-  // 「休み・遅れ」「出勤・残業」の絞り込みを適用する。
-  // 休暇は必ず休み側。欠勤入力と残業は種別で分かれる（isAbsenceAttending / isOvertimeAttending）
-  const visibleEvents = showRest ? events : [];
-  const visibleAbsences = absences.filter(ab => (isAbsenceAttending(ab.type) ? showAttend : showRest));
-  const visibleOvertimes = overtimes.filter(ot => (isOvertimeAttending(ot.types) ? showAttend : showRest));
+  // 自分の所属チームを初期選択にする。
+  // profiles を読むまで所属が分からないため、取得できた時点で1回だけ切り替える。
+  // 🚨 group_names には配信用グループも混ざっているので CALENDAR_GROUPS と突き合わせる。
+  useEffect(() => {
+    if (groupModeDecided.current || forceAllTeams || profiles.length === 0 || !user?.id) return;
+    groupModeDecided.current = true;
+    const team = profiles.find(p => p.id === user.id)?.group_names.find(g => CALENDAR_GROUPS.includes(g));
+    if (team) setGroupMode(team); // 見つからなければ全チームのまま
+  }, [profiles, user?.id, forceAllTeams]);
+
+  // 表示する種類の絞り込みを適用する。
+  // 休暇は必ず「休暇・欠勤」。欠勤入力と残業は種別ごとに3グループへ分かれる
+  const catShown: Record<CalendarCategory, boolean> = { leave: showLeave, late: showLate, work: showWork };
+  const visibleEvents = showLeave ? events : [];
+  const visibleAbsences = absences.filter(ab => catShown[absenceCategory(ab.type)]);
+  const visibleOvertimes = overtimes.filter(ot => catShown[overtimeCalendarCategory(ot.types)]);
 
   const eventsByDate: Record<string, LeaveEvent[]> = {};
   for (const ev of visibleEvents) {
@@ -1874,17 +1909,20 @@ const CalendarPage: React.FC<Props> = ({ user, isAdmin, isApprover }) => {
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             {loading && <span style={{ fontSize: 12, color: subColor }}>読み込み中...</span>}
-            <select value={groupMode} onChange={e => setGroupMode(e.target.value)}
+            <select value={groupMode} onChange={e => { groupModeDecided.current = true; setGroupMode(e.target.value); }}
               style={{ padding: '6px 10px', border: `2px solid #4a90d9`, borderRadius: 8, fontSize: 13, color: '#4a90d9', background: isDark ? '#495057' : '#f0f4ff', cursor: 'pointer' }}>
               <option value="all">全チーム</option>
               {CALENDAR_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}
             </select>
-            {/* 表示する種類。押すとその種類だけ消える／出る（初期は両方ON） */}
-            <button type="button" onClick={() => setShowRest(v => !v)} style={filterBtnStyle(showRest, '#1e8449', '#e8f5e9')}>
-              🌿 休み・遅れ
+            {/* 表示する種類。押すとその種類だけ消える／出る（初期はすべてON） */}
+            <button type="button" onClick={() => setShowLeave(v => !v)} style={filterBtnStyle(showLeave, CAT_COLOR.leave.light, CAT_COLOR.leave.bg)}>
+              休暇・欠勤
             </button>
-            <button type="button" onClick={() => setShowAttend(v => !v)} style={filterBtnStyle(showAttend, OT_NAVY, '#e3f2fd')}>
-              🕐 出勤・残業
+            <button type="button" onClick={() => setShowLate(v => !v)} style={filterBtnStyle(showLate, CAT_COLOR.late.light, CAT_COLOR.late.bg)}>
+              遅刻・早退
+            </button>
+            <button type="button" onClick={() => setShowWork(v => !v)} style={filterBtnStyle(showWork, CAT_COLOR.work.light, CAT_COLOR.work.bg)}>
+              残業・休日出勤
             </button>
           </div>
         </div>
@@ -1895,32 +1933,37 @@ const CalendarPage: React.FC<Props> = ({ user, isAdmin, isApprover }) => {
           {([
             {
               // 🚨 見出しは暗い背景に直接置く文字なので、ダークでは明るい色にする
-              //    （濃い緑・濃紺のままだと背景に沈んで読めない）
-              show: showRest, title: '🌿 休み・遅れ', titleColor: isDark ? '#7bdca0' : '#1e8449',
+              //    （濃い緑・濃いアンバー・濃紺のままだと背景に沈んで読めない）
+              show: showLeave, title: '休暇・欠勤', titleColor: isDark ? CAT_COLOR.leave.dark : CAT_COLOR.leave.light,
               items: [
                 { label: '有給（受理）', bg: '#d5f5e3' },
                 { label: '調整休・振休', bg: '#f4ecf7' },
                 { label: '慶弔・その他', bg: '#fdedec' },
                 { label: '申請中', bg: '#fef9e7', border: '#f39c12' },
                 { label: '欠勤', bg: '#fde8e8' },
+              ],
+            },
+            {
+              show: showLate, title: '遅刻・早退', titleColor: isDark ? CAT_COLOR.late.dark : CAT_COLOR.late.light,
+              items: [
                 { label: '遅刻', bg: '#ff9800' },
                 { label: '早退', bg: '#1565c0' },
                 { label: '遅出(調整)', bg: '#558b2f' },
                 { label: '早退(調整)', bg: '#7b1fa2' },
-              ],
-            },
-            {
-              show: showAttend, title: '🕐 出勤・残業', titleColor: isDark ? '#90caf9' : OT_NAVY,
-              items: [
-                { label: '残業・早出', bg: OT_NAVY },
-                { label: '休日出勤', bg: '#0f766e' },
-                { label: '勤務地変更', bg: '#6d28d9' },
                 { label: '勤務時間変更', bg: '#374151' },
               ],
             },
             {
+              show: showWork, title: '残業・休日出勤', titleColor: isDark ? CAT_COLOR.work.dark : CAT_COLOR.work.light,
+              items: [
+                { label: '残業・早出', bg: OT_NAVY },
+                { label: '休日出勤', bg: '#0f766e' },
+                { label: '勤務地変更', bg: '#6d28d9' },
+              ],
+            },
+            {
               // 会社カレンダー。日ごとの予定ではなく「その日の会社の状態」なので最後に置く
-              show: true, title: '🏢 会社', titleColor: subColor,
+              show: true, title: '会社', titleColor: subColor,
               items: [
                 { label: '休館日（全社員休み）', bg: CALENDAR_CELL_STYLE.closed_all.bg },
                 { label: '休館日（社員出勤日）', bg: CALENDAR_CELL_STYLE.work_on_closed.bg },
