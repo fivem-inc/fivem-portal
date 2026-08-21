@@ -1528,6 +1528,8 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
   const [showLeave, setShowLeave] = useState(true); // 休暇・欠勤
   const [showLate, setShowLate] = useState(true);   // 遅刻・早退
   const [showWork, setShowWork] = useState(true);   // 残業・休日出勤
+  // 月の一覧の並び順（true＝新しい順）。既定は今までどおり日付の若い順
+  const [listDesc, setListDesc] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<AbsenceEvent | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [profiles, setProfiles] = useState<ProfileEntry[]>([]);
@@ -1805,7 +1807,10 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
     ...Object.keys(eventsByDate), ...Object.keys(absencesByDate), ...Object.keys(overtimesByDate),
   ]);
   const monthListRows: ListRow[] = [];
-  for (const date of [...allDates].sort()) {
+  // 日付の並び順。既定は今までどおり若い順（1日→31日）
+  const sortedDates = [...allDates].sort();
+  if (listDesc) sortedDates.reverse();
+  for (const date of sortedDates) {
     for (const ev of (eventsByDate[date] || [])) monthListRows.push({ kind: 'leave', date, ev });
     for (const ab of (absencesByDate[date] || [])) monthListRows.push({ kind: 'absence', date, ab });
     for (const ot of (overtimesByDate[date] || [])) monthListRows.push({ kind: 'overtime', date, ot });
@@ -2012,8 +2017,19 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
 
       {/* 月別リスト */}
       <div style={{ background: bg, borderRadius: 12, boxShadow: '0 2px 12px rgba(0,0,0,0.08)', padding: isMobile ? 14 : 20 }}>
-        <div style={{ fontSize: 14, fontWeight: 'bold', color: textColor, marginBottom: 12 }}>
-          {year}年 {month + 1}月 の休暇・勤怠一覧
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12 }}>
+          <div style={{ fontSize: 14, fontWeight: 'bold', color: textColor }}>
+            {year}年 {month + 1}月 の休暇・勤怠一覧
+          </div>
+          {/* 日付の並び順。押すたびに古い順⇄新しい順が入れ替わる */}
+          <button type="button" onClick={() => setListDesc(v => !v)}
+            style={{
+              padding: '4px 10px', borderRadius: 6, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap',
+              border: `1px solid ${isDark ? '#6c757d' : '#e5e7eb'}`,
+              background: isDark ? '#495057' : '#fff', color: textColor,
+            }}>
+            {listDesc ? '↓ 新しい順' : '↑ 古い順'}
+          </button>
         </div>
         {monthListRows.length === 0 ? (
           <div style={{ textAlign: 'center', color: subColor, fontSize: 13, padding: '16px 0' }}>
