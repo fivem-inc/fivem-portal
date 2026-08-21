@@ -13,7 +13,7 @@ import { DEFAULT_LOCATION } from '../../lib/shiftExcelImport';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
 import OvertimeEditModal, { type OvertimeRecord } from './OvertimeEditModal';
 import OvertimeClockInquiryPanel from './OvertimeClockInquiryPanel';
-import { OT_TYPE_INFO, isOvertimeType, isFullDayReport } from '../../lib/overtimeTypes';
+import { OT_TYPE_INFO, isOvertimeType, isFullDayReport, canOfferCalendarChoice, willShowOnCalendar } from '../../lib/overtimeTypes';
 import { notifyOvertimeReturned, notifyOvertimeAdminCancelled, notifyOvertimeGrant, notifyOvertimeGrantDeclined } from '../../lib/overtimeNotify';
 
 const OT_STATUS_LABEL: Record<string, { label: string; color: string }> = {
@@ -158,6 +158,65 @@ const ThresholdRuleForm: React.FC<{
   );
 };
 
+// カレンダー掲載を「自分で選べる人」を1件追加するフォーム（しきい値の設定と同じ形）。
+// ここで指定された人にだけ、残業の申請画面にチェック欄が出る。
+// 指定されていない人は今までどおり自動でカレンダーに載る。
+const CalendarChoiceRuleForm: React.FC<{
+  staff: StaffRow[];
+  subText: string;
+  inputStyle: React.CSSProperties;
+  borderColor: string;
+  onSave: (target: { role_title: string } | { user_id: string }, enabled: boolean) => void;
+}> = ({ staff, subText, inputStyle, borderColor, onSave }) => {
+  const [mode, setMode] = useState<'role' | 'user'>('role');
+  const [roleTitle, setRoleTitle] = useState('マネージャー');
+  const [userId, setUserId] = useState('');
+  const [enabled, setEnabled] = useState(true);
+
+  const toggleStyle = (on: boolean): React.CSSProperties => ({
+    fontSize: 13, padding: '6px 14px', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold',
+    background: on ? '#1976d2' : '#e3f2fd',
+    color: on ? '#fff' : '#1565c0',
+    border: `2px solid ${on ? '#1565c0' : '#90caf9'}`,
+  });
+
+  const submit = () => {
+    if (mode === 'user' && !userId) return;
+    onSave(mode === 'role' ? { role_title: roleTitle } : { user_id: userId }, enabled);
+    setUserId('');
+  };
+
+  return (
+    <div style={{ border: `1px solid ${borderColor}`, borderRadius: 8, padding: '10px 12px' }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+        <button type="button" style={toggleStyle(mode === 'role')} onClick={() => setMode('role')}>役職ごと</button>
+        <button type="button" style={toggleStyle(mode === 'user')} onClick={() => setMode('user')}>個人ごと</button>
+      </div>
+      {mode === 'role' ? (
+        <select value={roleTitle} onChange={e => setRoleTitle(e.target.value)} style={{ ...inputStyle, marginBottom: 10 }}>
+          {ROLE_CHOICES.map(r => <option key={r} value={r}>{r}</option>)}
+        </select>
+      ) : (
+        <select value={userId} onChange={e => setUserId(e.target.value)} style={{ ...inputStyle, marginBottom: 10 }}>
+          <option value="">スタッフを選択</option>
+          {staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+      )}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+        <button type="button" style={toggleStyle(enabled)} onClick={() => setEnabled(true)}>選べるようにする</button>
+        <button type="button" style={toggleStyle(!enabled)} onClick={() => setEnabled(false)}>選べないようにする</button>
+      </div>
+      <p style={{ margin: '0 0 10px', fontSize: 11.5, color: subText, lineHeight: 1.6 }}>
+        「選べないようにする」は、役職ごとの設定を特定の人だけ打ち消したいときに使います。
+      </p>
+      <button type="button" onClick={submit}
+        style={{ padding: '6px 16px', borderRadius: 6, border: 'none', background: '#28a745', color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}>
+        追加する
+      </button>
+    </div>
+  );
+};
+
 const DAY_ORDER: DayKind[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun', 'holiday', 'work_on_closed'];
 // 週の労働時間合計に含める曜日（祝・出は特別区分なので除く）
 const WEEK_DAYS: DayKind[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
@@ -191,6 +250,26 @@ const OvertimeAdminTab: React.FC = () => {
   // ─────────── 受理済み一覧（残業レコードの管理） ───────────
   const [otReports, setOtReports] = useState<OvertimeRecord[]>([]);
   const [otStatusMap, setOtStatusMap] = useState<Record<string, string>>({});
+  // カレンダー掲載の状態（postHoc=事後報告か／share=本人の選択。null は未指定＝これまでどおり）
+  const [otCalMap, setOtCalMap] = useState<Record<string, { postHoc: boolean; share: boolean | null }>>({});
+  const [calBusyId, setCalBusyId] = useState<string | null>(null);
+  const [calToggleErr, setCalToggleErr] = useState('');
+
+  /** 管理者がカレンダー掲載を切り替える（確認なしのワンクリック。労働時間の記録は変わらない） */
+  const toggleOtCalendar = async (id: string, types: string[] | null | undefined, postHoc: boolean, share: boolean | null) => {
+    setCalBusyId(id);
+    setCalToggleErr('');
+    const next = !willShowOnCalendar(types, postHoc, share);
+    const { error } = await supabase.rpc('set_overtime_show_on_calendar', { p_id: id, p_value: next });
+    if (error) {
+      setCalToggleErr('カレンダーの設定を変更できませんでした：' + error.message);
+      setCalBusyId(null);
+      return;
+    }
+    await supabase.functions.invoke('gcal-sync', { body: { action: 'sync', source_type: 'overtime', source_id: id } });
+    setCalBusyId(null);
+    fetchOtReports();
+  };
   const [otLoading, setOtLoading] = useState(false);
   const [otMsg, setOtMsg] = useState('');
   const [otErr, setOtErr] = useState('');
@@ -205,6 +284,13 @@ const OvertimeAdminTab: React.FC = () => {
   const [otActing, setOtActing] = useState(false);
   // 絞り込み・並べ替え（休暇申請タブと同じ操作感）
   const [otFilterStatus, setOtFilterStatus] = useState<'all' | 'pending' | 'done' | 'returned' | 'cancelled'>('all');
+  // CSV出力（休暇申請タブと同じ形：ボタンでモーダルを開き、期間を選んでからダウンロードする）
+  const [showOtCsvModal, setShowOtCsvModal] = useState(false);
+  const [otCsvMode, setOtCsvMode] = useState<'period' | 'custom'>('period');
+  const [otCsvPeriod, setOtCsvPeriod] = useState('');
+  const [otCsvDateType, setOtCsvDateType] = useState<'work' | 'created'>('work');
+  const [otCsvFrom, setOtCsvFrom] = useState('');
+  const [otCsvTo, setOtCsvTo] = useState('');
   const [otFilterPeriod, setOtFilterPeriod] = useState('all');
   const [otFilterPerson, setOtFilterPerson] = useState('all');
   const [otFilterType, setOtFilterType] = useState('all');
@@ -223,7 +309,7 @@ const OvertimeAdminTab: React.FC = () => {
   const fetchOtReports = useCallback(async () => {
     setOtLoading(true); setOtErr('');
     const { data, error } = await supabase.from('overtime_reports')
-      .select('id, applicant_id, work_date, entry_type, status, normal_shift, break_minutes, break_manual, labor_minutes, diff_minutes, reason, location, application_types, furikae_origin_date, furikae_origin_location, created_at, confirmed_at, change_reason')
+      .select('id, applicant_id, work_date, entry_type, status, normal_shift, break_minutes, break_manual, labor_minutes, diff_minutes, reason, location, application_types, furikae_origin_date, furikae_origin_location, created_at, confirmed_at, change_reason, is_post_hoc, show_on_calendar')
       .eq('entry_type', 'manual')
       .order('work_date', { ascending: false }).limit(300);
     if (error) { setOtErr('読み込みに失敗しました：' + error.message); setOtLoading(false); return; }
@@ -248,11 +334,15 @@ const OvertimeAdminTab: React.FC = () => {
       (segMap[s.report_id] = segMap[s.report_id] || []).push(s);
     });
     const statusMap: Record<string, string> = {};
-    setOtReports(rows.map((r: { id: string; applicant_id: string; work_date: string; entry_type: string; status: string; normal_shift: OvertimeRecord['normal_shift']; break_minutes: number | null; break_manual: boolean; labor_minutes: number | null; diff_minutes: number | null; reason: string | null; location: string | null; application_types: string[] | null; furikae_origin_date: string | null; furikae_origin_location: string | null; created_at: string | null; confirmed_at: string | null; change_reason: string | null }) => {
+    // カレンダー掲載の状態は OvertimeRecord 型を広げずに別の表で持つ（status と同じやり方）
+    const calMap: Record<string, { postHoc: boolean; share: boolean | null }> = {};
+    setOtReports(rows.map((r: { id: string; applicant_id: string; work_date: string; entry_type: string; status: string; normal_shift: OvertimeRecord['normal_shift']; break_minutes: number | null; break_manual: boolean; labor_minutes: number | null; diff_minutes: number | null; reason: string | null; location: string | null; application_types: string[] | null; furikae_origin_date: string | null; furikae_origin_location: string | null; created_at: string | null; confirmed_at: string | null; change_reason: string | null; is_post_hoc: boolean; show_on_calendar: boolean | null }) => {
       statusMap[r.id] = r.status;
+      calMap[r.id] = { postHoc: r.is_post_hoc, share: r.show_on_calendar };
       return { id: r.id, applicant_id: r.applicant_id, applicantName: nameMap[r.applicant_id] || '不明', work_date: r.work_date, entry_type: r.entry_type, normal_shift: r.normal_shift, break_minutes: r.break_minutes, break_manual: r.break_manual, labor_minutes: r.labor_minutes, diff_minutes: r.diff_minutes, reason: r.reason, location: r.location, application_types: r.application_types, furikae_origin_date: r.furikae_origin_date, furikae_origin_location: r.furikae_origin_location, created_at: r.created_at, confirmed_at: r.confirmed_at, change_reason: r.change_reason, segments: segMap[r.id] || [] };
     }));
     setOtStatusMap(statusMap);
+    setOtCalMap(calMap);
     setOtLoading(false);
   }, [supabase]);
 
@@ -398,7 +488,18 @@ const OvertimeAdminTab: React.FC = () => {
     };
     const fmtSubmitted = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
     const headers = ['申請者', '対象日', '状況', '通常シフト開始', '通常シフト終了', '通常シフト休憩(分)', '通常シフト実労働', '実際の勤務時間帯', '休憩(分)', '実労働', '差分(元→実績)', '差分[h]:mm', '校', '振替元の勤務日', '振替元の勤務校', '理由', '提出日時', '確認日時'];
-    const rows = visibleOtReports.map(r => {
+    // 出力する範囲はモーダルで指定したもの（画面の絞り込みとは切り離す）。
+    // 休暇申請タブと同じで「給与期間で選ぶ」か「カスタム期間」の2択。
+    const targets = otCsvMode === 'period'
+      ? otReports.filter(r => payPeriodOf(r.work_date) === otCsvPeriod)
+      : otReports.filter(r => {
+          const d = otCsvDateType === 'work' ? r.work_date : String(r.created_at ?? '').slice(0, 10);
+          if (!d) return false;
+          if (otCsvFrom && d < otCsvFrom) return false;
+          if (otCsvTo && d > otCsvTo) return false;
+          return true;
+        });
+    const rows = targets.map(r => {
       const ns = (r.normal_shift ?? {}) as Record<string, unknown>;
       const actualSegs = r.segments.filter(s => s.phase === (r.segments.some(x => x.phase === 'actual') ? 'actual' : 'planned')).sort((a, b) => a.seg_no - b.seg_no);
       const segText = actualSegs.length
@@ -425,7 +526,11 @@ const OvertimeAdminTab: React.FC = () => {
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `残業_受理済み一覧_${todayJstStr()}.csv`;
+    // ファイル名にも出力範囲を入れる（あとで見て何の期間か分かるように）
+    const nameRange = otCsvMode === 'period'
+      ? payPeriodLabel(otCsvPeriod)
+      : `${otCsvDateType === 'work' ? '勤務日' : '申請日'}${otCsvFrom || ''}〜${otCsvTo || ''}`;
+    a.href = url; a.download = `残業_${nameRange}.csv`;
     a.click(); URL.revokeObjectURL(url);
   };
 
@@ -647,14 +752,18 @@ const OvertimeAdminTab: React.FC = () => {
     threshold_minutes: number | null; excluded: boolean;
   }
   const [rules, setRules] = useState<ThresholdRule[]>([]);
+  // カレンダー掲載を自分で選べる人（役職ごと・個人ごと。個人が役職より優先）
+  interface CalendarChoiceRule { id: string; role_title: string | null; user_id: string | null; enabled: boolean }
+  const [calRules, setCalRules] = useState<CalendarChoiceRule[]>([]);
 
   const fetchSettings = useCallback(async () => {
-    const [setRes, grpRes, ruleRes] = await Promise.all([
+    const [setRes, grpRes, ruleRes, calRuleRes] = await Promise.all([
       supabase.from('overtime_settings')
         .select('threshold_minutes, banner_group_names, notify_on_exceed, notify_days, notify_daily')
         .eq('id', 1).maybeSingle(),
       supabase.from('master_options').select('value').eq('category', 'group').order('sort_order'),
       supabase.from('overtime_threshold_rules').select('*'),
+      supabase.from('overtime_calendar_choice_rules').select('*'),
     ]);
     const th = (setRes.data?.threshold_minutes as number | undefined) ?? 600;
     setThresholdHours(String(Math.floor(th / 60)));
@@ -665,6 +774,7 @@ const OvertimeAdminTab: React.FC = () => {
     setNotifyDays((setRes.data?.notify_days as number[] | null) ?? [25, 5]);
     setNotifyDaily(Boolean(setRes.data?.notify_daily));
     setRules(((ruleRes.data as ThresholdRule[] | null) ?? []));
+    setCalRules(((calRuleRes.data as CalendarChoiceRule[] | null) ?? []));
   }, [supabase]);
 
   useEffect(() => { if (section === 'settings') fetchSettings(); }, [section, fetchSettings]);
@@ -707,6 +817,27 @@ const OvertimeAdminTab: React.FC = () => {
 
   const deleteRule = async (id: string) => {
     const { error } = await supabase.from('overtime_threshold_rules').delete().eq('id', id);
+    if (error) { setSettingsErr('削除に失敗しました: ' + error.message); return; }
+    setSettingsMsg('削除しました');
+    fetchSettings();
+  };
+
+  /** カレンダー掲載を選べる人を1件保存する（同じ対象があれば上書き） */
+  const saveCalRule = async (
+    target: { role_title: string } | { user_id: string },
+    enabled: boolean,
+  ) => {
+    setSettingsErr(''); setSettingsMsg('');
+    const key = 'role_title' in target ? 'role_title' : 'user_id';
+    const { error } = await supabase.from('overtime_calendar_choice_rules')
+      .upsert({ ...target, enabled }, { onConflict: key });
+    if (error) { setSettingsErr('保存に失敗しました: ' + error.message); return; }
+    setSettingsMsg('設定を保存しました');
+    fetchSettings();
+  };
+
+  const deleteCalRule = async (id: string) => {
+    const { error } = await supabase.from('overtime_calendar_choice_rules').delete().eq('id', id);
     if (error) { setSettingsErr('削除に失敗しました: ' + error.message); return; }
     setSettingsMsg('削除しました');
     fetchSettings();
@@ -854,11 +985,86 @@ const OvertimeAdminTab: React.FC = () => {
             <p style={{ fontSize: 12, color: subText, margin: 0, flex: 1, minWidth: 200 }}>
               正社員の残業・時間調整の記録一覧です。受理済みも含めて修正・差し戻し・削除ができます（自動計上分は対象外）。
             </p>
-            <button onClick={exportOtCsv} disabled={visibleOtReports.length === 0}
-              style={{ flexShrink: 0, padding: '6px 14px', borderRadius: 8, border: 'none', background: visibleOtReports.length === 0 ? '#6c757d' : '#28a745', color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: visibleOtReports.length === 0 ? 'default' : 'pointer' }}>
+            <button onClick={() => { setOtCsvPeriod(otPeriodOptions[0] ?? ''); setShowOtCsvModal(true); }}
+              style={{ flexShrink: 0, padding: '6px 14px', borderRadius: 8, border: 'none', background: '#28a745', color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}>
               📥 CSV出力
             </button>
           </div>
+
+          {calToggleErr && (
+            <div style={{ marginBottom: 10, padding: '8px 12px', borderRadius: 8, background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029', fontSize: 13 }}>
+              {calToggleErr}
+            </div>
+          )}
+
+          {/* CSV出力モーダル（休暇申請タブと同じ形） */}
+          {showOtCsvModal && (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px' }}>
+              <div style={{ background: cardBg, borderRadius: 14, padding: 24, width: '100%', maxWidth: 360 }}>
+                <div style={{ fontSize: 15, fontWeight: 'bold', color: text, marginBottom: 16 }}>📥 CSV出力 — 残業・時間管理</div>
+
+                <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                  {([['period', '給与期間で選択'], ['custom', 'カスタム期間']] as const).map(([m, lbl]) => (
+                    <button key={m} onClick={() => setOtCsvMode(m)}
+                      style={{ flex: 1, padding: '7px 0', borderRadius: 8, border: 'none', fontSize: 12, fontWeight: 'bold', cursor: 'pointer', background: otCsvMode === m ? '#007bff' : (isDarkMode ? '#495057' : '#e9ecef'), color: otCsvMode === m ? '#fff' : text }}>
+                      {lbl}
+                    </button>
+                  ))}
+                </div>
+
+                {otCsvMode === 'period' ? (
+                  <div>
+                    <label style={{ fontSize: 12, color: subText, display: 'block', marginBottom: 6 }}>給与期間（16日〜翌15日）</label>
+                    <select value={otCsvPeriod} onChange={e => setOtCsvPeriod(e.target.value)}
+                      style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: isDarkMode ? '#495057' : '#fff', color: text, fontSize: 13 }}>
+                      {otPeriodOptions.length === 0 && <option value="">（記録がありません）</option>}
+                      {otPeriodOptions.map(p => <option key={p} value={p}>{payPeriodLabel(p)}</option>)}
+                    </select>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div>
+                      <label style={{ fontSize: 12, color: subText, display: 'block', marginBottom: 6 }}>どの日付で絞り込むか</label>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        {([['work', '勤務日'], ['created', '申請日']] as const).map(([v, lbl]) => (
+                          <button key={v} onClick={() => setOtCsvDateType(v)}
+                            style={{ flex: 1, padding: '7px 0', borderRadius: 8, border: 'none', fontSize: 12, fontWeight: 'bold', cursor: 'pointer', background: otCsvDateType === v ? '#007bff' : (isDarkMode ? '#495057' : '#e9ecef'), color: otCsvDateType === v ? '#fff' : text }}>
+                            {lbl}
+                          </button>
+                        ))}
+                      </div>
+                      <div style={{ fontSize: 11, color: subText, marginTop: 6, lineHeight: 1.5 }}>
+                        {otCsvDateType === 'work'
+                          ? '実際に勤務した日で絞ります。'
+                          : '申請・報告が出された日で絞ります。'}
+                      </div>
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 12, color: subText, display: 'block', marginBottom: 4 }}>{otCsvDateType === 'work' ? '勤務日' : '申請日'}（開始）</label>
+                      <input type="date" value={otCsvFrom} onChange={e => setOtCsvFrom(e.target.value)}
+                        style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: isDarkMode ? '#495057' : '#fff', color: text, fontSize: 13, boxSizing: 'border-box', colorScheme: isDarkMode ? 'dark' : 'light' }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 12, color: subText, display: 'block', marginBottom: 4 }}>{otCsvDateType === 'work' ? '勤務日' : '申請日'}（終了）</label>
+                      <input type="date" value={otCsvTo} onChange={e => setOtCsvTo(e.target.value)}
+                        style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: isDarkMode ? '#495057' : '#fff', color: text, fontSize: 13, boxSizing: 'border-box', colorScheme: isDarkMode ? 'dark' : 'light' }} />
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+                  <button onClick={() => setShowOtCsvModal(false)}
+                    style={{ flex: 1, padding: 10, borderRadius: 8, border: `1px solid ${borderColor}`, background: 'none', color: subText, fontSize: 14, cursor: 'pointer' }}>
+                    閉じる
+                  </button>
+                  <button onClick={() => { exportOtCsv(); setShowOtCsvModal(false); }}
+                    style={{ flex: 1, padding: 10, borderRadius: 8, border: 'none', background: '#28a745', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
+                    ダウンロード
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
           {/* 状況フィルター（休暇申請タブと同じピル型） */}
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10, justifyContent: 'center', alignItems: 'center' }}>
             {([
@@ -1007,6 +1213,31 @@ const OvertimeAdminTab: React.FC = () => {
                                 {r.change_reason ? '変更あり' : '申請どおり'}
                               </div>
                             )}
+                            {/* カレンダーに載っているか。押すとその場で切り替わる（確認は挟まない）。
+                                列を増やさずここに置くのは、この列だけ高さに余裕があるため */}
+                            {(() => {
+                              const cal = otCalMap[r.id];
+                              if (!cal || !canOfferCalendarChoice(r.application_types, cal.postHoc)) return null;
+                              const shown = willShowOnCalendar(r.application_types, cal.postHoc, cal.share);
+                              return (
+                                <div style={{ marginTop: 3 }}>
+                                  <button
+                                    type="button"
+                                    disabled={calBusyId === r.id}
+                                    onClick={() => toggleOtCalendar(r.id, r.application_types, cal.postHoc, cal.share)}
+                                    style={{
+                                      padding: '1px 6px', borderRadius: 6, fontSize: 10, whiteSpace: 'nowrap',
+                                      cursor: calBusyId === r.id ? 'default' : 'pointer',
+                                      background: shown ? '#e8f4fd' : 'transparent',
+                                      border: `1px solid ${shown ? '#4a90d9' : borderColor}`,
+                                      color: shown ? '#1565c0' : subText,
+                                    }}
+                                  >
+                                    {calBusyId === r.id ? '変更中' : (shown ? '📅 掲載中' : '📅 未掲載')}
+                                  </button>
+                                </div>
+                              );
+                            })()}
                           </td>
                           <td style={cell}>
                             <div style={{ display: 'flex', gap: 3, justifyContent: 'center', flexWrap: 'wrap' }}>
@@ -1725,6 +1956,43 @@ const OvertimeAdminTab: React.FC = () => {
             <ThresholdRuleForm
               staff={staff} isDarkMode={isDarkMode} text={text} subText={subText}
               inputStyle={inputStyle} borderColor={borderColor} onSave={saveRule}
+            />
+          </div>
+
+          {/* カレンダーに載せるかを自分で選べる人 */}
+          <div style={{ marginBottom: 16 }}>
+            <p style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 'bold', color: text }}>カレンダーに載せるかを自分で選べる人</p>
+            <p style={{ margin: '0 0 8px', fontSize: 12, color: subText, lineHeight: 1.7 }}>
+              ここで指定した人には、残業の申請画面に「みんなのカレンダーに表示する」のチェック欄が出ます（最初はチェックなし）。
+              在宅勤務が多く、すべてをカレンダーに出す必要がない人に向いています。
+              <strong style={{ color: text }}>個人の設定が役職の設定より優先</strong>されます。<br />
+              指定していない人は<strong style={{ color: text }}>今までどおり自動でカレンダーに載ります</strong>（見え方は変わりません）。<br />
+              ※ お休み（時間外調整休・振替休日・欠勤）は、誰の分でも必ずカレンダーに載ります。
+            </p>
+            {calRules.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                {calRules.map(r => (
+                  <div key={r.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: text,
+                    padding: '6px 0', borderBottom: `1px solid ${borderColor}`,
+                  }}>
+                    <span style={{ flex: 1 }}>
+                      {r.role_title
+                        ? `役職：${r.role_title}`
+                        : `個人：${staff.find(s => s.id === r.user_id)?.name ?? '（退職などで不明）'}`}
+                    </span>
+                    <span style={{ color: r.enabled ? '#1565c0' : subText }}>
+                      {r.enabled ? '選べる' : '選べない'}
+                    </span>
+                    <button type="button" onClick={() => deleteCalRule(r.id)}
+                      style={{ background: 'none', border: 'none', color: subText, cursor: 'pointer', fontSize: 13 }}>削除</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <CalendarChoiceRuleForm
+              staff={staff} subText={subText}
+              inputStyle={inputStyle} borderColor={borderColor} onSave={saveCalRule}
             />
           </div>
 

@@ -29,7 +29,7 @@ import type { AuthUser } from '../types';
 import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
 import { PageTabs } from '../components/PageTabs';
 import HelpLinkButton from '../components/HelpLinkButton';
-import { OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport, CLOCK_ONLY_REASONS } from '../lib/overtimeTypes';
+import { OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport, CLOCK_ONLY_REASONS, canOfferCalendarChoice, willShowOnCalendar } from '../lib/overtimeTypes';
 import type { OvertimeType } from '../lib/overtimeTypes';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
 import { notifyOvertimeNewRequest, notifyOvertimeGrantRequest } from '../lib/overtimeNotify';
@@ -59,6 +59,8 @@ interface OvertimeReport {
   pay_period_start: string;
   entry_type: 'manual' | 'leave_auto';
   is_post_hoc: boolean;
+  /** カレンダーに載せるか。null=未指定（種別ごとの既定に従う＝これまでどおりの動き） */
+  show_on_calendar?: boolean | null;
   status: OvertimeStatus;
   normal_shift: NormalShiftSnapshot | null;
   break_minutes: number | null;
@@ -438,6 +440,7 @@ interface FormDraft {
   location: string;
   locationCustom: string;
   reviewerId: string;
+  showOnCalendar?: boolean;
   normOverride: boolean;
   normStart: string;
   normEnd: string;
@@ -462,9 +465,11 @@ const OvertimeForm: React.FC<{
   patterns: PatternRow[];
   /** 実績報告・再提出の対象（新規はnull） */
   editTarget: OvertimeReport | null;
+  /** カレンダーに載せるかを自分で選べる人か（管理画面で役職・個人ごとに指定） */
+  canChooseCalendar: boolean;
   onSaved: (gcalWarning?: string) => void;
   onClose: () => void;
-}> = ({ user, profileName, roleTitle, isAdmin, reviewers, workplaces, patterns, editTarget, onSaved, onClose }) => {
+}> = ({ user, profileName, roleTitle, isAdmin, reviewers, workplaces, patterns, editTarget, canChooseCalendar, onSaved, onClose }) => {
   const isDark = useDarkMode();
   const draft = editTarget ? null : loadDraft<FormDraft>(DRAFT_KEYS.overtime);
 
@@ -524,6 +529,10 @@ const OvertimeForm: React.FC<{
   const visiblePastReasons = useMemo(() => pastReasons.filter(r => !hiddenReasons.includes(r)), [pastReasons, hiddenReasons]);
   const [showAllReasons, setShowAllReasons] = useState(false);
   const [reviewerId, setReviewerId] = useState(() => editTarget?.reviewer_id ?? draft?.reviewerId ?? '');
+  // カレンダーに載せるか。🚨 editTarget → 下書き → 既定 の順で初期化すること。
+  //   ここを既定から初期化すると、実績報告した瞬間に本人の設定が消えてカレンダーから外れる。
+  const [showOnCalendar, setShowOnCalendar] = useState<boolean>(() =>
+    editTarget?.show_on_calendar ?? draft?.showOnCalendar ?? false);
   const [normOverride, setNormOverride] = useState(() => editTarget?.normal_shift?.manual_override ?? draft?.normOverride ?? false);
   const [normStart, setNormStart] = useState(() => fmtTime(editTarget?.normal_shift?.start_time) !== '-' ? fmtTime(editTarget?.normal_shift?.start_time) : (draft?.normStart ?? ''));
   const [normEnd, setNormEnd] = useState(() => fmtTime(editTarget?.normal_shift?.end_time) !== '-' ? fmtTime(editTarget?.normal_shift?.end_time) : (draft?.normEnd ?? ''));
@@ -602,10 +611,11 @@ const OvertimeForm: React.FC<{
     if (editTarget) return;
     saveDraft(DRAFT_KEYS.overtime, {
       mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId,
+      showOnCalendar,
       normOverride, normStart, normEnd, fullDay, fullDayType: fullDayType ?? undefined,
       furikaeOriginDate, furikaeOriginLocation, furikaeOriginLocationCustom, furikaeOriginStart, furikaeOriginEnd,
     } satisfies FormDraft);
-  }, [editTarget, mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId, normOverride, normStart, normEnd, fullDay, fullDayType, furikaeOriginDate, furikaeOriginLocation, furikaeOriginLocationCustom, furikaeOriginStart, furikaeOriginEnd]);
+  }, [editTarget, mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId, showOnCalendar, normOverride, normStart, normEnd, fullDay, fullDayType, furikaeOriginDate, furikaeOriginLocation, furikaeOriginLocationCustom, furikaeOriginStart, furikaeOriginEnd]);
 
   // 日付変更→会社カレンダー取得
   useEffect(() => {
@@ -794,6 +804,14 @@ const OvertimeForm: React.FC<{
   // 打刻ズレは「事後報告の新規」でだけ使う（実績報告・再提出・事前申請では出さない）
   const clockOnlyMode = clockOnly && mode === 'posthoc' && !editTarget;
   const effectiveClockReason = clockReason === 'その他' ? clockReasonOther.trim() : clockReason;
+
+  // カレンダー掲載のチェック欄を出すか。
+  // 🚨 出しても実際には載らない組み合わせ（事後報告・打刻ズレ・お休み）では出さないこと。
+  //    出してしまうと「チェックしたのに載らない・エラーも出ない」という気づけない不一致になる。
+  //    出さない場合は show_on_calendar を null で保存し、これまでどおりの動きになる。
+  const offerCalendarChoice = canChooseCalendar
+    && !clockOnlyMode
+    && canOfferCalendarChoice(applicationTypes, mode === 'posthoc');
   // 打刻ズレの労働時間は通常シフトそのもの。打刻時刻は参考値で、ここには入れない
   const normalWorkSegments: WorkSegment[] = useMemo(() =>
     normalSegs.map(s => {
@@ -1092,6 +1110,9 @@ const OvertimeForm: React.FC<{
         change_reason: (isReportPhase && hasChanges && !isPureZero) ? changeReason.trim() : null,
         location: fullDayMode ? fdLocation : effectiveLocation,
         application_types: applicationTypes,
+        // チェック欄を出しているときだけ本人の選択を記録する。
+        // 出していないときは null＝「未指定」で、これまでどおり種別ごとの既定に従う
+        show_on_calendar: offerCalendarChoice ? showOnCalendar : null,
         // 振替休日のみ振替元（日付・校・出退勤時刻・休憩・労働）を保存（他種別ではnullで上書き＝再提出で種別が変わった場合の掃除）
         furikae_origin_date: (fullDayMode && fullDayType === 'furikae_off') ? furikaeOriginDate : null,
         furikae_origin_location: (fullDayMode && fullDayType === 'furikae_off') ? effectiveFurikaeOriginLocation : null,
@@ -1987,6 +2008,45 @@ const OvertimeForm: React.FC<{
         </div>
       )}
 
+      {/* カレンダーに載せるか（管理画面で指定された人にだけ出す）。
+          未選択＝グレーで地に馴染ませ、選ぶと明るい面に変わる（CLAUDE.md の配色ルール） */}
+      {offerCalendarChoice && (
+        <div style={{ marginBottom: 16 }}>
+          <label style={{
+            display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer',
+            background: showOnCalendar ? '#e8f4fd' : (isDark ? '#495057' : '#fff'),
+            border: `2px solid ${showOnCalendar ? '#4a90d9' : (isDark ? '#6c757d' : '#e5e7eb')}`,
+            borderRadius: 8, padding: '12px 14px',
+          }}>
+            <input
+              type="checkbox"
+              checked={showOnCalendar}
+              onChange={e => setShowOnCalendar(e.target.checked)}
+              style={{ width: 18, height: 18, marginTop: 2, flexShrink: 0, cursor: 'pointer' }}
+            />
+            <span>
+              <span style={{ fontSize: 15, fontWeight: 'bold', color: showOnCalendar ? '#1565c0' : text }}>
+                この予定をみんなのカレンダーに表示する
+              </span>
+              <span style={{ display: 'block', fontSize: 12.5, lineHeight: 1.6, marginTop: 4, color: showOnCalendar ? '#1565c0' : (isDark ? '#ced4da' : '#6c757d') }}>
+                ほかの人のシフトに関係する場合だけチェックしてください。<br />
+                在宅での作業や、一人で残っての残業は表示しなくて大丈夫です。
+              </span>
+            </span>
+          </label>
+          {showOnCalendar && (
+            <div style={{
+              marginTop: 8, padding: '8px 12px', borderRadius: 6, fontSize: 12.5, lineHeight: 1.6,
+              background: isDark ? '#2c3e50' : '#e8f4fd',
+              border: `1px solid ${isDark ? '#3d5a73' : '#bee5eb'}`,
+              color: isDark ? '#fff' : '#1565c0',
+            }}>
+              受理されると、勤怠カレンダーと Googleカレンダー（ファイブM共有）に表示されます
+            </div>
+          )}
+        </div>
+      )}
+
       {/* 申請先。打刻ズレは押した時点で確定するので確認者を選ばせない */}
       {!clockOnlyMode && (
       <div style={{ marginBottom: 16 }}>
@@ -2051,6 +2111,22 @@ const OvertimeForm: React.FC<{
             休憩{formatMin(breakMin)}・労働{formatMin(laborMin)}・差分 {formatSignedMin(diffMin)}<br />
             {isSelfReview ? '自己受理のため、送信と同時に受理されます' : `申請先：${reviewers.find(r => r.id === reviewerId)?.name ?? ''}さん`}
           </p>
+          )}
+          {/* カレンダーに載るかどうかを送信前に必ず見せる（入れ忘れ・外し忘れを潰せる最後の場所） */}
+          {offerCalendarChoice && (
+            <p style={{ margin: '0 0 8px', fontSize: 12.5, lineHeight: 1.6, color: showOnCalendar ? (isDark ? '#8ec5f0' : '#1565c0') : subText }}>
+              📅 {showOnCalendar ? 'みんなのカレンダーに表示します' : 'カレンダーには表示しません'}
+            </p>
+          )}
+          {/* 勤務する場所が変わる日は、載せ忘れると周りが困る。止めはせず注意だけ出す */}
+          {offerCalendarChoice && !showOnCalendar
+            && applicationTypes.some(t => t === 'location_change' || t === 'holiday_work') && (
+            <p style={{
+              margin: '0 0 10px', padding: '8px 10px', borderRadius: 6, fontSize: 12.5, lineHeight: 1.6,
+              background: '#fff8e1', border: '1px solid #f59e0b', color: '#b45309',
+            }}>
+              ⚠️ 勤務する場所が変わる予定ですが、カレンダーに表示しない設定になっています。このまま送信してよろしいですか？
+            </p>
           )}
           {applicationTypes.length > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', margin: '0 0 10px' }}>
@@ -2267,6 +2343,23 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('staff'); return n; });
   }, [setSearchParams]);
 
+  // ---- カレンダー掲載を自分で選べる人か（管理画面で役職ごと・個人ごとに指定） ----
+  // 🚨 判定用のRPC（overtime_can_choose_calendar）はあるが、ここでは使わない。
+  //    RPCはログイン中の実アカウントで評価されるため、役職プレビュー
+  //    （管理者が他の役職の見え方を確認する機能）で実際の見え方を確認できなくなる。
+  //    画面の出し分けは useAuth 由来の roleTitle を使う、という既存の方針に合わせている。
+  const [canChooseCalendar, setCanChooseCalendar] = useState(false);
+  useEffect(() => {
+    supabase.from('overtime_calendar_choice_rules')
+      .select('role_title, user_id, enabled')
+      .then(({ data }) => {
+        const rules = (data ?? []) as { role_title: string | null; user_id: string | null; enabled: boolean }[];
+        const personal = rules.find(r => r.user_id === user.id);          // 個人ルールが最優先
+        const byRole = rules.find(r => r.role_title === roleTitle);        // なければ役職ルール
+        setCanChooseCalendar(personal ? !!personal.enabled : (byRole ? !!byRole.enabled : false));
+      }, () => { /* 取れなければ「選べない」＝これまでどおり全部カレンダーに載る（安全側） */ });
+  }, [user.id, roleTitle]);
+
   // ---- 合計時間数カード：表示中の期間を ‹ › で切り替えられる（今期〜前期のみ。範囲は下の履歴一覧と揃える） ----
   const ownCardPrevLimit = shiftPayPeriod(currentPeriod, -1); // これより前には戻れない
   const [ownCardPeriod, setOwnCardPeriod] = useState(currentPeriod);
@@ -2325,6 +2418,32 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   };
 
   // ---- 取消（本人） ----
+  // ---- カレンダー掲載の切り替え（本人）----
+  // 受理後でも変えられる。show_on_calendar は「他の人に見せるか」の設定で、
+  // 労働時間・合計時間数・給与には一切影響しない。
+  // 列を限定して更新するため、直接 update ではなく RPC を通す。
+  const [calToggleId, setCalToggleId] = useState<string | null>(null);
+  const toggleCalendar = async (r: OvertimeReport) => {
+    setCalToggleId(r.id);
+    setActionError('');
+    const next = !willShowOnCalendar(r.application_types, r.is_post_hoc, r.show_on_calendar);
+    const { error } = await supabase.rpc('set_overtime_show_on_calendar', { p_id: r.id, p_value: next });
+    if (error) {
+      setActionError('カレンダーの設定を変更できませんでした：' + (error.message ?? ''));
+      setCalToggleId(null);
+      return;
+    }
+    // 実際のカレンダーにも反映する（外したら消える・入れたら出る）
+    const { data: sync } = await supabase.functions.invoke('gcal-sync', {
+      body: { action: 'sync', source_type: 'overtime', source_id: r.id },
+    });
+    if (sync && sync.success === false) {
+      setGcalWarning({ message: '設定は変えましたが、Googleカレンダーへの反映に失敗しました。', reportId: r.id });
+    }
+    setCalToggleId(null);
+    fetchOwn();
+  };
+
   const doCancel = async (r: OvertimeReport) => {
     setActingId(r.id);
     setActionError('');
@@ -2774,6 +2893,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
               user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin}
               reviewers={reviewers} workplaces={workplaces} patterns={patterns}
               editTarget={editTarget}
+              canChooseCalendar={canChooseCalendar}
               onSaved={(gcalWarn) => {
                 setSavedBanner(true);
                 if (gcalWarn) setGcalWarning({ message: gcalWarn, reportId: editTarget?.id ?? null });
@@ -2935,6 +3055,10 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                   const renderOwnCard = (r: OvertimeReport) => {
                     const isAuto = r.entry_type === 'leave_auto';
                     const isFullDay = isFullDayReport(r.application_types);
+                    // カレンダー掲載の状態（選べる人にだけ出す。受理後でも切り替えられる）
+                    const canToggleCal = canChooseCalendar && !isAuto
+                      && canOfferCalendarChoice(r.application_types, r.is_post_hoc);
+                    const shownOnCal = willShowOnCalendar(r.application_types, r.is_post_hoc, r.show_on_calendar);
                     const isOverdue = r.status === 'request_confirmed' && !isFullDay && r.work_date < otTodayStr;
                     const isFuturePlanned = r.status === 'request_confirmed' && !isFullDay && r.work_date >= otTodayStr;
                     const canReport = isOverdue; // 実績報告ボタンは勤務日を過ぎた分だけ（未来は勤務後に案内）
@@ -2988,6 +3112,23 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                             )}
                             {r.change_reason && (
                               <p style={{ margin: '4px 0 0', fontSize: 12.5, color: isDark ? '#ffcf87' : '#8a6d1a' }}>予定から変わった理由：{r.change_reason}</p>
+                            )}
+                            {/* カレンダー掲載の状態。押すとその場で切り替わる（労働時間の記録は変わらない） */}
+                            {canToggleCal && (
+                              <button
+                                type="button"
+                                onClick={() => toggleCalendar(r)}
+                                disabled={calToggleId === r.id}
+                                style={{
+                                  margin: '6px 0 0', fontSize: 12, padding: '4px 10px', borderRadius: 6,
+                                  cursor: calToggleId === r.id ? 'default' : 'pointer',
+                                  background: shownOnCal ? '#e8f4fd' : 'transparent',
+                                  border: `1px solid ${shownOnCal ? '#4a90d9' : borderColor}`,
+                                  color: shownOnCal ? '#1565c0' : subText,
+                                }}
+                              >
+                                📅 {calToggleId === r.id ? '変更中...' : (shownOnCal ? 'カレンダーに表示中' : 'カレンダーに表示していません')}
+                              </button>
                             )}
                           </>
                         )}

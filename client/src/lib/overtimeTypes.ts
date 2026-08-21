@@ -47,3 +47,67 @@ export function isOvertimeType(t: string): t is OvertimeType {
 export function isFullDayReport(types: string[] | null | undefined): boolean {
   return (types ?? []).some(t => (FULL_DAY_TYPES as string[]).includes(t));
 }
+
+// ============================================================
+//  カレンダー掲載の判定
+// ============================================================
+// 🚨 同じ表が supabase/functions/gcal-sync/index.ts の OVERTIME_TYPES にもある（2箇所管理）。
+//    Deno 側からこのファイルを import できないため。片方だけ直すと
+//    「アプリでは載る予定なのに Google カレンダーには出ない」という食い違いになる。
+//
+//  syncable     … そもそもカレンダーに出せる種別か（打刻ズレは記録だけなので出せない）
+//  defaultShare … 本人が何も選ばなかったとき（show_on_calendar が null）に載せるか
+//                 遅刻・早退だけ false。これまでカレンダーに出していなかったため、
+//                 チェック欄を使わない人の見え方を変えないようにしている。
+export const OT_CALENDAR: Record<OvertimeType, { syncable: boolean; defaultShare: boolean }> = {
+  overtime:        { syncable: true,  defaultShare: true },
+  early_start:     { syncable: true,  defaultShare: true },
+  holiday_work:    { syncable: true,  defaultShare: true },
+  location_change: { syncable: true,  defaultShare: true },
+  late_start_adj:  { syncable: true,  defaultShare: true },
+  early_end_adj:   { syncable: true,  defaultShare: true },
+  // 事前に分かっている遅刻・早退は載せられるが、既定では載せない（本人が選んだときだけ）
+  tardiness:       { syncable: true,  defaultShare: false },
+  early_leave:     { syncable: true,  defaultShare: false },
+  // 終日種別は「その日いない」情報なので、選ばせずに必ず載せる
+  chosei_off:      { syncable: true,  defaultShare: true },
+  furikae_off:     { syncable: true,  defaultShare: true },
+  absence:         { syncable: true,  defaultShare: true },
+  // 打刻ズレは残業ではなく記録だけ。カレンダーには出さない
+  clock_only:      { syncable: false, defaultShare: false },
+};
+
+/**
+ * カレンダー掲載のチェック欄を出してよいか。
+ * 出しても実際には載らない組み合わせでチェック欄を出すと、
+ * 「チェックしたのに載らない・エラーも出ない」という気づけない不一致になる。
+ */
+export function canOfferCalendarChoice(
+  types: string[] | null | undefined,
+  isPostHoc: boolean,
+): boolean {
+  const list = types ?? [];
+  if (list.length === 0) return false;
+  if (isPostHoc) return false;              // 事後報告は載せない（もう終わったことなので）
+  if (isFullDayReport(list)) return false;  // お休みは選ばせず必ず載せる
+  return list.some(t => isOvertimeType(t) && OT_CALENDAR[t].syncable);
+}
+
+/** show_on_calendar が未指定（null）のときに載せるかどうか */
+export function defaultShowOnCalendar(types: string[] | null | undefined): boolean {
+  return (types ?? []).some(t => isOvertimeType(t) && OT_CALENDAR[t].defaultShare);
+}
+
+/** その報告が結局カレンダーに載るのか（表示用。実際の同期判定は gcal-sync 側） */
+export function willShowOnCalendar(
+  types: string[] | null | undefined,
+  isPostHoc: boolean,
+  showOnCalendar: boolean | null | undefined,
+): boolean {
+  const list = types ?? [];
+  if (list.length === 0) return false;
+  if (!list.some(t => isOvertimeType(t) && OT_CALENDAR[t].syncable)) return false;
+  if (isFullDayReport(list)) return true;   // お休みは常に載る（事後報告でも）
+  if (isPostHoc) return false;
+  return showOnCalendar ?? defaultShowOnCalendar(list);
+}

@@ -77,24 +77,31 @@ function skipLocationSuffix(type: string, segments?: unknown): boolean {
 }
 
 // 残業種別 → ラベル・色・同期可否・優先度（source_type='overtime' 用）
-// sync=false の種別（当日の遅刻・早退）はカレンダーに出さない。
+// sync=false の種別（打刻ズレ）はカレンダーに出さない。
 // 色: 残業/早出=9(濃青)・休日出勤=10(濃緑)・勤務地変更=3(紫)・調整系=2(既存の調整色)
-const OVERTIME_TYPES: Record<string, { label: string; colorId: string; sync: boolean; priority: number }> = {
-  holiday_work:    { label: '休日出勤',    colorId: '10', sync: true,  priority: 1 },
-  overtime:        { label: '残業',        colorId: '9',  sync: true,  priority: 2 },
-  early_start:     { label: '早出',        colorId: '9',  sync: true,  priority: 3 },
-  late_start_adj:  { label: '遅出(調整)',  colorId: '2',  sync: true,  priority: 4 },
-  early_end_adj:   { label: '早退(調整)',  colorId: '2',  sync: true,  priority: 5 },
-  location_change: { label: '勤務地変更',  colorId: '3',  sync: true,  priority: 6 },
-  tardiness:       { label: '遅刻',        colorId: '2',  sync: false, priority: 7 },
-  early_leave:     { label: '早退',        colorId: '2',  sync: false, priority: 8 },
+// sync         … そもそもカレンダーに出せる種別か
+// defaultShare … overtime_reports.show_on_calendar が null（本人が選んでいない）ときに出すか
+//                遅刻・早退だけ false。これまで出していなかったので、
+//                チェック欄を使わない人の見え方を変えないため。
+// 🚨 同じ表が client/src/lib/overtimeTypes.ts の OT_CALENDAR にもある（2箇所管理）。
+//    片方だけ直すと「アプリでは載る予定なのにカレンダーに出ない」という食い違いになる。
+const OVERTIME_TYPES: Record<string, { label: string; colorId: string; sync: boolean; defaultShare: boolean; priority: number }> = {
+  holiday_work:    { label: '休日出勤',    colorId: '10', sync: true,  defaultShare: true,  priority: 1 },
+  overtime:        { label: '残業',        colorId: '9',  sync: true,  defaultShare: true,  priority: 2 },
+  early_start:     { label: '早出',        colorId: '9',  sync: true,  defaultShare: true,  priority: 3 },
+  late_start_adj:  { label: '遅出(調整)',  colorId: '2',  sync: true,  defaultShare: true,  priority: 4 },
+  early_end_adj:   { label: '早退(調整)',  colorId: '2',  sync: true,  defaultShare: true,  priority: 5 },
+  location_change: { label: '勤務地変更',  colorId: '3',  sync: true,  defaultShare: true,  priority: 6 },
+  // 事前に分かっている遅刻・早退は本人が選べば出せる（既定では出さない）
+  tardiness:       { label: '遅刻',        colorId: '2',  sync: true,  defaultShare: false, priority: 7 },
+  early_leave:     { label: '早退',        colorId: '2',  sync: true,  defaultShare: false, priority: 8 },
   // 終日種別（単独付与・時刻なしタイトル）。現状の休暇/欠勤の見た目を維持: 調整休=「調整休」・欠勤=「休み」・colorId 4
-  chosei_off:      { label: '調整休',      colorId: '4',  sync: true,  priority: 9 },
-  furikae_off:     { label: '振休',        colorId: '4',  sync: true,  priority: 10 },
-  absence:         { label: '休み',        colorId: '4',  sync: true,  priority: 11 },
+  chosei_off:      { label: '調整休',      colorId: '4',  sync: true,  defaultShare: true,  priority: 9 },
+  furikae_off:     { label: '振休',        colorId: '4',  sync: true,  defaultShare: true,  priority: 10 },
+  absence:         { label: '休み',        colorId: '4',  sync: true,  defaultShare: true,  priority: 11 },
   // 打刻ズレ（打刻が遅れただけ・残業なし）。労働時間は通常どおりなので
   // カレンダーには出さない（出すと「何もなかった日」でカレンダーが埋まる）
-  clock_only:      { label: '打刻ズレ',    colorId: '',   sync: false, priority: 12 },
+  clock_only:      { label: '打刻ズレ',    colorId: '',   sync: false, defaultShare: false, priority: 12 },
 }
 
 // 終日種別は事後報告でもカレンダーに出す（「誰が休んだか」は事後でも周知価値があるため）
@@ -291,7 +298,7 @@ serve(async (req) => {
     if (action === 'sync' && source_type === 'overtime') {
       const { data: report } = await supabase
         .from('overtime_reports')
-        .select('id, applicant_id, work_date, entry_type, is_post_hoc, status, location, application_types, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
+        .select('id, applicant_id, work_date, entry_type, is_post_hoc, status, location, application_types, show_on_calendar, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
         .eq('id', source_id)
         .maybeSingle()
 
@@ -302,11 +309,19 @@ serve(async (req) => {
         .filter((t: string) => OVERTIME_TYPES[t]?.sync)
         .sort((a: string, b: string) => OVERTIME_TYPES[a].priority - OVERTIME_TYPES[b].priority)
       const otIsFullDay = (report?.application_types ?? []).some((t: string) => OVERTIME_FULL_DAY.includes(t))
+
+      // 本人が選んだ掲載可否。null は「選んでいない」＝これまでどおりの動き。
+      //   遅刻・早退は defaultShare=false なので、選ばれない限り出さない（従来と同じ）。
+      //   終日種別は選ばせず必ず出す（その日いないことは他の人のシフトに関わるため）。
+      const otDefaultShare = syncTypes.some((t: string) => OVERTIME_TYPES[t]?.defaultShare)
+      const otShare = otIsFullDay || (report?.show_on_calendar ?? otDefaultShare)
+
       const shouldExist = !!report
         && report.entry_type === 'manual'
         && ['request_confirmed', 'reported', 'confirmed'].includes(report.status)
         && (!report.is_post_hoc || otIsFullDay)
         && syncTypes.length > 0
+        && otShare
 
       const { data: existing } = await supabase
         .from('gcal_events')
@@ -336,8 +351,10 @@ serve(async (req) => {
       let timeStr = ''
       if (firstStart != null && lastEnd != null) {
         if (syncTypes.length >= 2 || primary === 'holiday_work') timeStr = `${otMinToTime(firstStart)}〜${otMinToTime(lastEnd)}`
-        else if (primary === 'overtime' || primary === 'early_end_adj') timeStr = `〜${otMinToTime(lastEnd)}`
-        else if (primary === 'early_start' || primary === 'late_start_adj') timeStr = `${otMinToTime(firstStart)}〜`
+        // 終わりの時刻が大事なもの（残業・早退）は「〜18:00」
+        else if (primary === 'overtime' || primary === 'early_end_adj' || primary === 'early_leave') timeStr = `〜${otMinToTime(lastEnd)}`
+        // 始まりの時刻が大事なもの（早出・遅出・遅刻）は「13:00〜」
+        else if (primary === 'early_start' || primary === 'late_start_adj' || primary === 'tardiness') timeStr = `${otMinToTime(firstStart)}〜`
       }
       let summary = `${otName}｜${labels}`
       if (timeStr && primary !== 'location_change') summary += `｜${timeStr}`
