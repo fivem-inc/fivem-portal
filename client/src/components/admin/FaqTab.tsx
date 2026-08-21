@@ -82,6 +82,20 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
   // 共有アカウントではログイン情報から本人を特定できないため、保存のたびに名前を入力してもらう
   const [editorName, setEditorName] = useState('');
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  // 🚨 名前欄は画面のいちばん上、編集フォームはずっと下に出る。
+  //    名前が空だと保存されないが、エラーが画面外に出るため「押しても効かない」ように見えていた。
+  //    そこで①フォームの中（保存ボタンの上）にも理由を出し、②名前欄を赤くしてそこまでスクロールする。
+  const editorNameRef = React.useRef<HTMLDivElement | null>(null);
+  const [editorNameError, setEditorNameError] = useState(false);
+
+  /** 名前が未入力なら、理由を出して名前欄まで運ぶ（保存できないときの共通処理） */
+  const requireEditorName = (): boolean => {
+    if (editorName.trim()) return true;
+    setEditorNameError(true);
+    setErrorMsg('画面上部の「編集する方のお名前」を入力してください（誰が直したかを記録に残すため必要です）');
+    editorNameRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return false;
+  };
 
   // 質問フォーム
   const [topicEditId, setTopicEditId] = useState<string | null>(null);
@@ -192,7 +206,7 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
   const saveTopic = async () => {
     if (!topicForm.question.trim()) { setErrorMsg('質問文を入力してください'); return; }
     if (!topicForm.category.trim()) { setErrorMsg('カテゴリを入力してください'); return; }
-    if (!editorName.trim()) { setErrorMsg('編集したご自身の名前を入力してください'); return; }
+    if (!requireEditorName()) return;
     setSaving(true);
     setErrorMsg('');
     const input: FaqTopicInput = {
@@ -254,7 +268,7 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
   const saveAnswer = async () => {
     if (!answerTopicId) return;
     if (!answerForm.body.trim()) { setErrorMsg('回答文を入力してください'); return; }
-    if (!editorName.trim()) { setErrorMsg('編集したご自身の名前を入力してください'); return; }
+    if (!requireEditorName()) return;
     setSaving(true);
     setErrorMsg('');
     const { error } = await saveFaqAnswer(answerTopicId, answerEditId, answerForm, currentUserId, editorName.trim());
@@ -341,12 +355,20 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
         表示されるのはここに登録した文章そのままで、システムが文章を作ることはありません。
       </p>
 
-      {/* 編集者の名前（共有アカウント対策） */}
-      <div style={{ background: isDarkMode ? '#495057' : '#f8f9fa', border: `1px solid ${borderColor}`, borderRadius: 8, padding: 12, marginBottom: 16 }}>
-        <label style={{ fontSize: 13, fontWeight: 'bold', color: text, display: 'block', marginBottom: 6 }}>
+      {/* 編集者の名前（共有アカウント対策）。
+          未入力のまま保存を押すと、ここが赤くなり自動でここまでスクロールしてくる */}
+      <div ref={editorNameRef} style={{
+        background: editorNameError ? (isDarkMode ? '#4a2b30' : '#fdecea') : (isDarkMode ? '#495057' : '#f8f9fa'),
+        border: `1px solid ${editorNameError ? '#e24b4a' : borderColor}`,
+        borderRadius: 8, padding: 12, marginBottom: 16, scrollMarginTop: 100,
+      }}>
+        <label style={{ fontSize: 13, fontWeight: 'bold', color: editorNameError ? '#dc3545' : text, display: 'block', marginBottom: 6 }}>
           編集する方のお名前 <span style={{ color: '#dc3545' }}>*</span>
         </label>
-        <input value={editorName} onChange={e => setEditorName(e.target.value)} placeholder="例：山田 太郎" style={{ ...inputStyle, maxWidth: 260 }} />
+        <input value={editorName}
+          onChange={e => { setEditorName(e.target.value); if (e.target.value.trim()) { setEditorNameError(false); setErrorMsg(''); } }}
+          placeholder="例：山田 太郎"
+          style={{ ...inputStyle, maxWidth: 260, borderColor: editorNameError ? '#e24b4a' : undefined }} />
         <p style={{ fontSize: 11, color: subText, margin: '6px 0 0' }}>
           共有のアカウントで編集する場合があるため、「誰が直したか」を記録に残します。
         </p>
@@ -574,6 +596,13 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
               </div>
             )}
           </div>
+          {/* 🚨 押した場所で理由が分かるように、フォームの中にもエラーを出す。
+                 画面上部のエラーだけだと、下のフォームからは見えず「押しても効かない」と誤解される */}
+          {errorMsg && (
+            <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 6, padding: '8px 12px', marginTop: 12, fontSize: 12.5, color: '#842029' }}>
+              {errorMsg}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
             <button type="button" onClick={() => setShowTopicForm(false)}
               style={{ padding: '9px 18px', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'none', color: text, fontSize: 14, cursor: 'pointer' }}>
@@ -625,9 +654,11 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
                     style={{ fontSize: 12, padding: '6px 12px', borderRadius: 6, border: `1px solid ${borderColor}`, background: 'none', color: text, cursor: 'pointer' }}>
                     {isOpen ? '閉じる' : '回答を見る'}
                   </button>
+                  {/* 質問カードと回答カードの両方に編集ボタンがあるため、どちらを直すのか名前で分ける。
+                      1つの質問に回答が複数ぶら下がる作りなので、ボタン自体は分かれているのが正しい */}
                   <button type="button" onClick={() => startEditTopic(t)}
                     style={{ fontSize: 12, padding: '6px 12px', borderRadius: 6, border: `1px solid ${borderColor}`, background: 'none', color: text, cursor: 'pointer' }}>
-                    編集
+                    質問を編集
                   </button>
                   <button type="button" onClick={() => setConfirmDeleteTopic(t.id)}
                     style={{ fontSize: 12, padding: '6px 12px', borderRadius: 6, border: '1px solid #dc3545', background: 'none', color: '#dc3545', cursor: 'pointer' }}>
@@ -685,9 +716,11 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
                             <div style={{ fontSize: 11, color: subText, marginTop: 6 }}>出典：{a.source_label}</div>
                           )}
                           <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                            {/* 「この回答を出す相手（対象）」や適用期間はここから直す。
+                                質問カード右上の「質問を編集」では変えられないため、名前で区別する */}
                             <button type="button" onClick={() => startEditAnswer(t.id, a)}
                               style={{ fontSize: 12, padding: '5px 10px', borderRadius: 6, border: `1px solid ${borderColor}`, background: 'none', color: text, cursor: 'pointer' }}>
-                              編集
+                              回答を編集
                             </button>
                             <button type="button" onClick={() => setConfirmDeleteAnswer(a.id)}
                               style={{ fontSize: 12, padding: '5px 10px', borderRadius: 6, border: '1px solid #dc3545', background: 'none', color: '#dc3545', cursor: 'pointer' }}>
@@ -800,6 +833,12 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
                             placeholder="例：シーズンごとに案内ページのリンクを差し替える" style={inputStyle} />
                         )}
                       </div>
+                      {/* 🚨 押した場所で理由が分かるように、フォームの中にもエラーを出す（質問フォームと同じ理由） */}
+                      {errorMsg && (
+                        <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 6, padding: '8px 12px', marginTop: 10, fontSize: 12.5, color: '#842029' }}>
+                          {errorMsg}
+                        </div>
+                      )}
                       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
                         <button type="button" onClick={() => setAnswerTopicId(null)}
                           style={{ padding: '8px 16px', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'none', color: text, fontSize: 13, cursor: 'pointer' }}>
