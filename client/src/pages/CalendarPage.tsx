@@ -8,6 +8,10 @@ import {
   absenceLabel, absenceColor, absenceEmoji, formatSegments, joinSegmentLocations, parseSegments, hhmm,
   type AttendanceType, type WorkSegment,
 } from '../lib/attendanceTypes';
+import {
+  OT_TYPE_INFO, willShowOnCalendar, isOvertimeAttending, calendarTypesInOrder,
+  type OvertimeType,
+} from '../lib/overtimeTypes';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE } from '../hooks/useCompanyCalendar';
 import type { CalendarKind } from '../lib/breakCalc';
 import type { AuthUser } from '../types';
@@ -137,6 +141,57 @@ interface AbsenceEvent {
   work_segments: WorkSegment[]; // 勤務時間帯。単一勤務・全欠勤・過去データは空配列
   original_location: string | null; // 勤務地変更の「変更前の校」
 }
+
+// 残業・時間管理（/overtime）から受理された分。
+// 🚨 理由(reason)は持たない。RPC が返していない（他の人に「体調不良で早退」等が見えてしまうため）。
+interface OvertimeEvent {
+  id: string;
+  user_id: string;
+  name: string;
+  date: string;
+  types: OvertimeType[];   // カレンダーに出す種別（代表が先頭）
+  location: string | null; // 勤務校
+  start_min: number | null;
+  end_min: number | null;
+}
+
+/** 残業の表示ラベル（種別は最大2つまで。gcal-sync のタイトルと同じ考え方） */
+const otEventLabel = (ev: OvertimeEvent): string =>
+  ev.types.slice(0, 2).map(t => OT_TYPE_INFO[t].label).join('＋');
+
+/** 残業の時刻表示。何時に来るか／何時に帰るかのうち、その種別で大事な方を出す */
+const otEventTime = (ev: OvertimeEvent): string => {
+  const primary = ev.types[0];
+  if (!primary || ev.start_min == null || ev.end_min == null) return '';
+  const t = (m: number) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
+  if (primary === 'location_change') return '';
+  if (ev.types.length >= 2 || primary === 'holiday_work') return `${t(ev.start_min)}〜${t(ev.end_min)}`;
+  if (primary === 'overtime' || primary === 'early_end_adj' || primary === 'early_leave') return `〜${t(ev.end_min)}`;
+  if (primary === 'early_start' || primary === 'late_start_adj' || primary === 'tardiness') return `${t(ev.start_min)}〜`;
+  return '';
+};
+
+/** 欠勤入力の種別が「出勤・残業」側か（休日出勤・勤務地変更・勤務時間変更は出勤している日） */
+const isAbsenceAttending = (t: AttendanceType): boolean =>
+  t === 'holiday_work' || t === 'location_change' || t === 'time_change';
+
+// 残業・早出の色。OT_TYPE_INFO の青(#1565c0)は欠勤入力の「早退」と同じ色で、
+// 5pxの丸印では見分けがつかないため、カレンダーでは濃紺にする。
+const OT_NAVY = '#1e3a8a';
+
+/**
+ * カレンダー上での残業の色。
+ * 🚨 同じ意味のものは、休暇・欠勤入力と同じ色に揃える。
+ *    残業ページから申請された調整休だけ別の色にすると、
+ *    休暇ページから申請された調整休と見た目が食い違って混乱する
+ *    （Googleカレンダーでも同じ色にしてある）。
+ */
+const otCalendarStyle = (t: OvertimeType): { bg: string; text: string } => {
+  if (t === 'overtime' || t === 'early_start') return { bg: OT_NAVY, text: '#fff' };
+  if (t === 'chosei_off' || t === 'furikae_off') return { bg: '#f4ecf7', text: '#7d3c98' }; // 調整休と同じ
+  if (t === 'absence') return { bg: '#fde8e8', text: '#c0392b' };                            // 欠勤と同じ
+  return { bg: OT_TYPE_INFO[t].color, text: '#fff' };
+};
 
 const LEAVE_TYPE_COLOR: Record<string, { bg: string; text: string }> = {
   '有給休暇':              { bg: '#d5f5e3', text: '#1e8449' },
@@ -1214,10 +1269,11 @@ const PcCalendar: React.FC<{
   year: number; month: number;
   eventsByDate: Record<string, LeaveEvent[]>;
   absencesByDate: Record<string, AbsenceEvent[]>;
+  overtimesByDate: Record<string, OvertimeEvent[]>;
   calendarKinds: Record<string, CalendarKind>;
   isDark: boolean;
   onDateTap?: (date: string) => void;
-}> = ({ year, month, eventsByDate, absencesByDate, calendarKinds, isDark, onDateTap }) => {
+}> = ({ year, month, eventsByDate, absencesByDate, overtimesByDate, calendarKinds, isDark, onDateTap }) => {
   const bg = isDark ? '#343a40' : '#fff';
   const border = isDark ? '#495057' : '#f0f0f0';
   const textColor = isDark ? '#fff' : '#333';
@@ -1252,6 +1308,7 @@ const PcCalendar: React.FC<{
               const isToday = cell.date === todayStr;
               const events = cell.date ? (eventsByDate[cell.date] || []) : [];
               const absences = cell.date ? (absencesByDate[cell.date] || []) : [];
+              const otimes = cell.date ? (overtimesByDate[cell.date] || []) : [];
               // 会社カレンダー（休館日・出勤日）はセルの背景で示す。
               // 丸印や名前のラベルとは別の層なので、既存の表示とぶつからない
               const ck = cell.date ? calendarKinds[cell.date] : undefined;
@@ -1288,6 +1345,16 @@ const PcCalendar: React.FC<{
                           </div>
                         );
                       })}
+                      {otimes.map(ot => {
+                        const time = otEventTime(ot);
+                        const oc = otCalendarStyle(ot.types[0]);
+                        return (
+                          <div key={ot.id} title={`${ot.name}｜${otEventLabel(ot)}${time ? `｜${time}` : ''}${ot.location ? `［${ot.location}］` : ''}`}
+                            style={{ fontSize: 11, borderRadius: 4, padding: '2px 4px', marginBottom: 2, background: oc.bg, color: oc.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {ot.name}{time && <span style={{ fontSize: 9, opacity: 0.85, marginLeft: 2 }}>{time}</span>}
+                          </div>
+                        );
+                      })}
                     </>
                   )}
                 </td>
@@ -1305,10 +1372,11 @@ const SpCalendar: React.FC<{
   year: number; month: number;
   eventsByDate: Record<string, LeaveEvent[]>;
   absencesByDate: Record<string, AbsenceEvent[]>;
+  overtimesByDate: Record<string, OvertimeEvent[]>;
   calendarKinds: Record<string, CalendarKind>;
   isDark: boolean;
   onDateTap?: (date: string) => void;
-}> = ({ year, month, eventsByDate, absencesByDate, calendarKinds, isDark, onDateTap }) => {
+}> = ({ year, month, eventsByDate, absencesByDate, overtimesByDate, calendarKinds, isDark, onDateTap }) => {
   const today = new Date();
   const todayStr = fmt(today.getFullYear(), today.getMonth(), today.getDate());
   const subColor = isDark ? '#adb5bd' : '#888';
@@ -1340,13 +1408,23 @@ const SpCalendar: React.FC<{
               const isToday = cell.date === todayStr;
               const events = cell.date ? (eventsByDate[cell.date] || []) : [];
               const absences = cell.date ? (absencesByDate[cell.date] || []) : [];
-              const hasRed = events.length > 0 || absences.some(a => a.type === 'absent');
-              const hasOrange = absences.some(a => a.type === 'late' || a.type === 'early_leave');
-              const hasGreen = absences.some(a => a.type === 'late_start' || a.type === 'early_end');
+              const otimes = cell.date ? (overtimesByDate[cell.date] || []) : [];
+              // 🚨 残業（/overtime）の種別は、同じ意味の丸印に合流させる。
+              //    種別ごとに色を足すと、5pxの丸印では見分けがつかなくなるため。
+              //    新しく増やすのは「残業・早出」の濃紺だけ。
+              const otHas = (...types: OvertimeType[]) =>
+                otimes.some(o => o.types.some(t => types.includes(t)));
+              const hasRed = events.length > 0 || absences.some(a => a.type === 'absent')
+                || otHas('chosei_off', 'furikae_off', 'absence');
+              const hasOrange = absences.some(a => a.type === 'late' || a.type === 'early_leave')
+                || otHas('tardiness', 'early_leave');
+              const hasGreen = absences.some(a => a.type === 'late_start' || a.type === 'early_end')
+                || otHas('late_start_adj', 'early_end_adj');
               // 休日出勤・勤務地変更は「出勤している」＝不在系と意味が違うので別色にする
-              const hasTeal = absences.some(a => a.type === 'holiday_work');
-              const hasPurple = absences.some(a => a.type === 'location_change');
+              const hasTeal = absences.some(a => a.type === 'holiday_work') || otHas('holiday_work');
+              const hasPurple = absences.some(a => a.type === 'location_change') || otHas('location_change');
               const hasGraphite = absences.some(a => a.type === 'time_change');
+              const hasNavy = otHas('overtime', 'early_start');
               const ck = cell.date ? calendarKinds[cell.date] : undefined;
               const cs = ck ? CALENDAR_CELL_STYLE[ck] : null;
               return (
@@ -1359,7 +1437,7 @@ const SpCalendar: React.FC<{
                     </span>
                     {/* 休館日は日付の下に2文字だけ。丸印がある日は、その下に並ぶ */}
                     {cs && <span style={{ fontSize: 8, lineHeight: 1.2, color: cs.text, fontWeight: 'bold' }}>{cs.short}</span>}
-                    {(hasRed || hasOrange || hasGreen || hasTeal || hasPurple || hasGraphite) && (
+                    {(hasRed || hasOrange || hasGreen || hasTeal || hasPurple || hasGraphite || hasNavy) && (
                       <div style={{ display: 'flex', gap: 1, marginTop: 1, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 28 }}>
                         {hasRed && <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#dc3545' }} />}
                         {hasOrange && <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#ff9800' }} />}
@@ -1367,6 +1445,7 @@ const SpCalendar: React.FC<{
                         {hasTeal && <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#0f766e' }} />}
                         {hasPurple && <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#6d28d9' }} />}
                         {hasGraphite && <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#374151' }} />}
+                        {hasNavy && <div style={{ width: 5, height: 5, borderRadius: '50%', background: OT_NAVY }} />}
                       </div>
                     )}
                   </div>
@@ -1381,7 +1460,8 @@ const SpCalendar: React.FC<{
 };
 
 // ===== メインコンポーネント =====
-const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover }) => {
+// roleTitle は props で受け取るが、初期表示を全チームに統一したため現在は使っていない
+const CalendarPage: React.FC<Props> = ({ user, isAdmin, isApprover }) => {
   const isDark = useDarkMode();
   // 会社カレンダー（休館日・出勤日）。カレンダーのセルに敷いて、休館日が一目で分かるようにする
   const calendarKinds = useCompanyCalendar();
@@ -1393,9 +1473,11 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
   // 🚨 URLは毎回読み直す。同じページを開いたまま通知をタップしても画面は作り直されないため、
   // 開いた瞬間の1回だけの読み取りだと ?focus= が変わったことに気づけない
   const [searchParams] = useSearchParams();
-  const viewParam = searchParams.get('view');
-  // 受理FYIのバナー（view=fyi）から来た上長は、該当スタッフを確実に表示するため全チーム表示にする
-  const defaultGroup = (viewParam === 'fyi' || isAdmin || roleTitle === '社長') ? 'all' : 'mine';
+  // 🚨 初期表示は必ず「全チーム」。
+  //    以前は管理者・社長以外を 'mine' にしていたが、'mine' というグループは存在しないため
+  //    絞り込みが常に0件になり、マネージャー・リーダーの初期画面に休暇が1件も出ていなかった
+  //    （欠勤は絞り込み自体が無かったので出ていた＝気づきにくい出方だった。2026-08-21 修正）
+  const defaultGroup = 'all';
   const CALENDAR_GROUPS = ['こども', '大人', '管理部'];
 
   const today = new Date();
@@ -1416,6 +1498,10 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
   const [groupMode, setGroupMode] = useState<string>(defaultGroup);
   const [events, setEvents] = useState<LeaveEvent[]>([]);
   const [absences, setAbsences] = useState<AbsenceEvent[]>([]);
+  const [overtimes, setOvertimes] = useState<OvertimeEvent[]>([]);
+  // 表示する種類の絞り込み。初期は両方ON＝これまでの見え方を変えない
+  const [showRest, setShowRest] = useState(true);      // 🌿 休み・遅れ
+  const [showAttend, setShowAttend] = useState(true);  // 🕐 出勤・残業
   const [deleteTarget, setDeleteTarget] = useState<AbsenceEvent | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [profiles, setProfiles] = useState<ProfileEntry[]>([]);
@@ -1556,17 +1642,62 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
 
     if (!data || data.length === 0) { setAbsences([]); return; }
 
-    const userIds = [...new Set(data.map((a: { user_id: string }) => a.user_id))] as string[];
-    const { data: profs } = await supabase.from('profiles').select('id, name').in('id', userIds);
+    // 🚨 チームの絞り込みは休暇・欠勤・残業のすべてに効かせる（以前は欠勤だけ絞られていなかった）
+    const allUserIds = [...new Set(data.map((a: { user_id: string }) => a.user_id))] as string[];
+    const targetIds = new Set(await getTargetUserIds(allUserIds));
+    const rows = data.filter((a: { user_id: string }) => targetIds.has(a.user_id));
+    if (rows.length === 0) { setAbsences([]); return; }
+
+    const { data: profs } = await supabase.from('profiles').select('id, name').in('id', [...targetIds]);
     const profileMap: Record<string, string> = {};
     (profs || []).forEach((p: { id: string; name: string }) => { profileMap[p.id] = p.name; });
 
-    setAbsences(data.map((a: { id: string; user_id: string; date: string; type: AttendanceType; actual_time: string | null; notes: string | null; location: string | null; original_location: string | null; work_segments: unknown }) => ({
+    setAbsences(rows.map((a: { id: string; user_id: string; date: string; type: AttendanceType; actual_time: string | null; notes: string | null; location: string | null; original_location: string | null; work_segments: unknown }) => ({
       ...a, name: profileMap[a.user_id] || '不明', work_segments: parseSegments(a.work_segments),
     })));
-  }, [year, month]);
+  }, [year, month, getTargetUserIds]);
 
-  useEffect(() => { fetchEvents(); fetchAbsences(); }, [fetchEvents, fetchAbsences]);
+  /**
+   * 残業・時間管理（/overtime）で受理された分を取り込む。
+   * 🚨 取得は専用RPC（calendar_overtime_events）に限定する。
+   *    overtime_reports を直接読むと理由(reason)まで取れてしまい、
+   *    「体調不良で早退」のような内容が他の人に見えてしまう。
+   * 🚨 種別ごとの掲載可否は willShowOnCalendar で判定する（Googleカレンダーと同じ判定）。
+   *    RPC 側にも同じ判定を書くと3箇所管理になり、片方だけ直す事故が起きる。
+   */
+  const fetchOvertimes = useCallback(async () => {
+    const startStr = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+    const endDate = new Date(year, month + 1, 0);
+    const endStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+
+    const { data, error } = await supabase.rpc('calendar_overtime_events', { p_from: startStr, p_to: endStr });
+    if (error || !data || data.length === 0) { setOvertimes([]); return; }
+
+    type Row = {
+      id: string; applicant_id: string; name: string; work_date: string;
+      application_types: string[] | null; is_post_hoc: boolean;
+      show_on_calendar: boolean | null; location: string | null;
+      start_min: number | null; end_min: number | null;
+    };
+
+    const allUserIds = [...new Set((data as Row[]).map(r => r.applicant_id))];
+    const targetIds = new Set(await getTargetUserIds(allUserIds));
+
+    const rows: OvertimeEvent[] = [];
+    for (const r of data as Row[]) {
+      if (!targetIds.has(r.applicant_id)) continue;
+      if (!willShowOnCalendar(r.application_types, r.is_post_hoc, r.show_on_calendar)) continue;
+      const types = calendarTypesInOrder(r.application_types);
+      if (types.length === 0) continue;
+      rows.push({
+        id: r.id, user_id: r.applicant_id, name: r.name, date: r.work_date,
+        types, location: r.location, start_min: r.start_min, end_min: r.end_min,
+      });
+    }
+    setOvertimes(rows);
+  }, [year, month, getTargetUserIds]);
+
+  useEffect(() => { fetchEvents(); fetchAbsences(); fetchOvertimes(); }, [fetchEvents, fetchAbsences, fetchOvertimes]);
 
   // ?focus= で来たとき：一覧の該当行までスクロールし、数秒後にハイライトを消す
   useEffect(() => {
@@ -1592,8 +1723,14 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
     if (absDraft?.date) setAbsenceSheet(absDraft.date);
   }, [isApprover, isAdmin]);
 
+  // 「休み・遅れ」「出勤・残業」の絞り込みを適用する。
+  // 休暇は必ず休み側。欠勤入力と残業は種別で分かれる（isAbsenceAttending / isOvertimeAttending）
+  const visibleEvents = showRest ? events : [];
+  const visibleAbsences = absences.filter(ab => (isAbsenceAttending(ab.type) ? showAttend : showRest));
+  const visibleOvertimes = overtimes.filter(ot => (isOvertimeAttending(ot.types) ? showAttend : showRest));
+
   const eventsByDate: Record<string, LeaveEvent[]> = {};
-  for (const ev of events) {
+  for (const ev of visibleEvents) {
     for (const d of ev.dates) {
       if (!eventsByDate[d]) eventsByDate[d] = [];
       eventsByDate[d].push(ev);
@@ -1601,26 +1738,45 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
   }
 
   const absencesByDate: Record<string, AbsenceEvent[]> = {};
-  for (const ab of absences) {
+  for (const ab of visibleAbsences) {
     if (!absencesByDate[ab.date]) absencesByDate[ab.date] = [];
     absencesByDate[ab.date].push(ab);
   }
 
+  const overtimesByDate: Record<string, OvertimeEvent[]> = {};
+  for (const ot of visibleOvertimes) {
+    if (!overtimesByDate[ot.date]) overtimesByDate[ot.date] = [];
+    overtimesByDate[ot.date].push(ot);
+  }
+
   type ListRow =
     | { kind: 'leave'; date: string; ev: LeaveEvent }
-    | { kind: 'absence'; date: string; ab: AbsenceEvent };
+    | { kind: 'absence'; date: string; ab: AbsenceEvent }
+    | { kind: 'overtime'; date: string; ot: OvertimeEvent };
 
-  const allDates = new Set([...Object.keys(eventsByDate), ...Object.keys(absencesByDate)]);
+  const allDates = new Set([
+    ...Object.keys(eventsByDate), ...Object.keys(absencesByDate), ...Object.keys(overtimesByDate),
+  ]);
   const monthListRows: ListRow[] = [];
   for (const date of [...allDates].sort()) {
     for (const ev of (eventsByDate[date] || [])) monthListRows.push({ kind: 'leave', date, ev });
     for (const ab of (absencesByDate[date] || [])) monthListRows.push({ kind: 'absence', date, ab });
+    for (const ot of (overtimesByDate[date] || [])) monthListRows.push({ kind: 'overtime', date, ot });
   }
 
   const prevMonth = () => { if (month === 0) { setYear(y => y - 1); setMonth(11); } else setMonth(m => m - 1); };
   const nextMonth = () => { if (month === 11) { setYear(y => y + 1); setMonth(0); } else setMonth(m => m + 1); };
 
   const btnStyle = { background: isDark ? '#495057' : '#f0f4ff', border: 'none', borderRadius: 8, width: 32, height: 32, fontSize: 16, cursor: 'pointer', color: '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1, padding: 0 } as const;
+
+  // 表示する種類の切り替えボタン。複数選択なので
+  // 「未選択＝テーマに馴染ませる／選択中＝固定の明るい面」にする（CLAUDE.md の配色ルール）
+  const filterBtnStyle = (on: boolean, color: string, bgOn: string): React.CSSProperties => ({
+    padding: '6px 10px', borderRadius: 8, fontSize: 13, cursor: 'pointer', fontWeight: 'bold',
+    border: `2px solid ${on ? color : (isDark ? '#6c757d' : '#e5e7eb')}`,
+    background: on ? bgOn : (isDark ? '#495057' : '#fff'),
+    color: on ? color : textColor,
+  });
 
   const canInput = isApprover || isAdmin;
 
@@ -1723,33 +1879,66 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
               <option value="all">全チーム</option>
               {CALENDAR_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}
             </select>
+            {/* 表示する種類。押すとその種類だけ消える／出る（初期は両方ON） */}
+            <button type="button" onClick={() => setShowRest(v => !v)} style={filterBtnStyle(showRest, '#1e8449', '#e8f5e9')}>
+              🌿 休み・遅れ
+            </button>
+            <button type="button" onClick={() => setShowAttend(v => !v)} style={filterBtnStyle(showAttend, OT_NAVY, '#e3f2fd')}>
+              🕐 出勤・残業
+            </button>
           </div>
         </div>
 
-        {/* 凡例 */}
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12, fontSize: 12, color: subColor }}>
-          {[
-            { label: '有給（受理）', bg: '#d5f5e3' },
-            { label: '調整休（受理）', bg: '#f4ecf7' },
-            { label: '慶弔・その他', bg: '#fdedec' },
-            { label: '申請中', bg: '#fef9e7', border: '#f39c12' },
-            { label: '全欠勤', bg: '#fde8e8' },
-            { label: '遅刻', bg: '#ff9800' },
-            { label: '早退', bg: '#1565c0' },
-            { label: '遅出(調整)', bg: '#558b2f' },
-            { label: '早退(調整)', bg: '#7b1fa2' },
-            { label: '休日出勤', bg: '#0f766e' },
-            { label: '勤務地変更', bg: '#6d28d9' },
-            { label: '勤務時間変更', bg: '#374151' },
-            // 会社カレンダー。日ごとの予定ではなく「その日の会社の状態」なので最後に置く
-            { label: '休館日（全社員休み）', bg: CALENDAR_CELL_STYLE.closed_all.bg },
-            { label: '休館日（社員出勤日）', bg: CALENDAR_CELL_STYLE.work_on_closed.bg },
-          ].map(({ label, bg: cbg, border }) => (
-            <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <div style={{ width: 12, height: 12, borderRadius: 3, background: cbg, border: border ? `1px dashed ${border}` : 'none' }} />
-              {label}
-            </div>
-          ))}
+        {/* 凡例。項目が多いので「休み・遅れ」「出勤・残業」で行を分け、
+            上のボタンで消した種類は凡例からも消す（見たいものだけが残る） */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12, fontSize: 12, color: subColor }}>
+          {([
+            {
+              // 🚨 見出しは暗い背景に直接置く文字なので、ダークでは明るい色にする
+              //    （濃い緑・濃紺のままだと背景に沈んで読めない）
+              show: showRest, title: '🌿 休み・遅れ', titleColor: isDark ? '#7bdca0' : '#1e8449',
+              items: [
+                { label: '有給（受理）', bg: '#d5f5e3' },
+                { label: '調整休・振休', bg: '#f4ecf7' },
+                { label: '慶弔・その他', bg: '#fdedec' },
+                { label: '申請中', bg: '#fef9e7', border: '#f39c12' },
+                { label: '欠勤', bg: '#fde8e8' },
+                { label: '遅刻', bg: '#ff9800' },
+                { label: '早退', bg: '#1565c0' },
+                { label: '遅出(調整)', bg: '#558b2f' },
+                { label: '早退(調整)', bg: '#7b1fa2' },
+              ],
+            },
+            {
+              show: showAttend, title: '🕐 出勤・残業', titleColor: isDark ? '#90caf9' : OT_NAVY,
+              items: [
+                { label: '残業・早出', bg: OT_NAVY },
+                { label: '休日出勤', bg: '#0f766e' },
+                { label: '勤務地変更', bg: '#6d28d9' },
+                { label: '勤務時間変更', bg: '#374151' },
+              ],
+            },
+            {
+              // 会社カレンダー。日ごとの予定ではなく「その日の会社の状態」なので最後に置く
+              show: true, title: '🏢 会社', titleColor: subColor,
+              items: [
+                { label: '休館日（全社員休み）', bg: CALENDAR_CELL_STYLE.closed_all.bg },
+                { label: '休館日（社員出勤日）', bg: CALENDAR_CELL_STYLE.work_on_closed.bg },
+              ],
+            },
+          ] as { show: boolean; title: string; titleColor: string; items: { label: string; bg: string; border?: string }[] }[])
+            .filter(g => g.show)
+            .map(g => (
+              <div key={g.title} style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                <span style={{ fontWeight: 'bold', color: g.titleColor, minWidth: 92 }}>{g.title}</span>
+                {g.items.map(({ label, bg: cbg, border }) => (
+                  <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <div style={{ width: 12, height: 12, borderRadius: 3, background: cbg, border: border ? `1px dashed ${border}` : 'none' }} />
+                    {label}
+                  </div>
+                ))}
+              </div>
+            ))}
         </div>
 
         {(canInput || isMobile) && (
@@ -1760,9 +1949,9 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
         )}
 
         {isMobile ? (
-          <SpCalendar year={year} month={month} eventsByDate={eventsByDate} absencesByDate={absencesByDate} calendarKinds={calendarKinds} isDark={isDark} onDateTap={canInput ? d => setAbsenceSheet(d) : undefined} />
+          <SpCalendar year={year} month={month} eventsByDate={eventsByDate} absencesByDate={absencesByDate} overtimesByDate={overtimesByDate} calendarKinds={calendarKinds} isDark={isDark} onDateTap={canInput ? d => setAbsenceSheet(d) : undefined} />
         ) : (
-          <PcCalendar year={year} month={month} eventsByDate={eventsByDate} absencesByDate={absencesByDate} calendarKinds={calendarKinds} isDark={isDark} onDateTap={canInput ? d => setAbsenceSheet(d) : undefined} />
+          <PcCalendar year={year} month={month} eventsByDate={eventsByDate} absencesByDate={absencesByDate} overtimesByDate={overtimesByDate} calendarKinds={calendarKinds} isDark={isDark} onDateTap={canInput ? d => setAbsenceSheet(d) : undefined} />
         )}
       </div>
 
@@ -1822,7 +2011,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
                     )}
                   </div>
                 );
-              } else {
+              } else if (row.kind === 'absence') {
                 const { ab } = row;
                 const c = absenceColor(ab.type);
                 // 時間帯が複数ある場合、44px幅の列に全部は入らないので先頭の開始時刻だけ出し、
@@ -1869,6 +2058,31 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
                     {ab.notes && (
                       <div style={{ padding: '0 8px 7px', fontSize: 11, color: subColor, lineHeight: 1.5 }}>理由：{ab.notes}</div>
                     )}
+                  </div>
+                );
+              } else {
+                // 残業・時間管理（/overtime）で受理された分。
+                // 🚨 理由は出さない（RPC が返していない）。取消はこの画面からはできない
+                //    （残業の取消は残業ページ・管理画面から行う）ので取消ボタンも置かない。
+                const { ot } = row;
+                const time = otEventTime(ot);
+                const isFocused = highlightDate === row.date;
+                return (
+                  <div key={`o-${ot.id}-${i}`} ref={isFocused ? focusRowRef : undefined} style={{ borderBottom: `1px solid ${borderColor}`, background: isFocused ? (isDark ? '#4a4423' : '#fff9c4') : 'transparent', transition: 'background 0.6s' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: gridCols, gap: 6, padding: '7px 8px', fontSize: isMobile ? 13 : 14, alignItems: 'center' }}>
+                      <span style={{ color: subColor, fontSize: isMobile ? 11 : 13 }}>{month + 1}/{d}（{dow(row.date)}）</span>
+                      <span style={{ fontWeight: 'bold', color: textColor }}>{ot.name}</span>
+                      <span style={{ fontSize: 11, padding: '2px 5px', borderRadius: 4, background: otCalendarStyle(ot.types[0]).bg, color: otCalendarStyle(ot.types[0]).text, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {otEventLabel(ot)}
+                      </span>
+                      <span style={{ fontSize: 12, color: textColor, textAlign: 'center', fontWeight: time ? 'bold' : 'normal' }}>
+                        {time || '—'}
+                      </span>
+                      <span style={{ fontSize: 11, color: subColor, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {ot.location ?? '—'}
+                      </span>
+                      <span style={{ fontSize: 11, textAlign: 'right', color: '#1e8449', fontWeight: 'bold' }}>受理</span>
+                    </div>
                   </div>
                 );
               }

@@ -59,23 +59,45 @@ export function isFullDayReport(types: string[] | null | undefined): boolean {
 //  defaultShare … 本人が何も選ばなかったとき（show_on_calendar が null）に載せるか
 //                 遅刻・早退だけ false。これまでカレンダーに出していなかったため、
 //                 チェック欄を使わない人の見え方を変えないようにしている。
-export const OT_CALENDAR: Record<OvertimeType, { syncable: boolean; defaultShare: boolean }> = {
-  overtime:        { syncable: true,  defaultShare: true },
-  early_start:     { syncable: true,  defaultShare: true },
-  holiday_work:    { syncable: true,  defaultShare: true },
-  location_change: { syncable: true,  defaultShare: true },
-  late_start_adj:  { syncable: true,  defaultShare: true },
-  early_end_adj:   { syncable: true,  defaultShare: true },
+//  priority     … 複数の種別が付いているときに、どれを代表として出すか（小さいほど優先）。
+//                 gcal-sync 側の priority と同じ並びにしてある。
+export const OT_CALENDAR: Record<OvertimeType, { syncable: boolean; defaultShare: boolean; priority: number }> = {
+  holiday_work:    { syncable: true,  defaultShare: true,  priority: 1 },
+  overtime:        { syncable: true,  defaultShare: true,  priority: 2 },
+  early_start:     { syncable: true,  defaultShare: true,  priority: 3 },
+  late_start_adj:  { syncable: true,  defaultShare: true,  priority: 4 },
+  early_end_adj:   { syncable: true,  defaultShare: true,  priority: 5 },
+  location_change: { syncable: true,  defaultShare: true,  priority: 6 },
   // 事前に分かっている遅刻・早退は載せられるが、既定では載せない（本人が選んだときだけ）
-  tardiness:       { syncable: true,  defaultShare: false },
-  early_leave:     { syncable: true,  defaultShare: false },
+  tardiness:       { syncable: true,  defaultShare: false, priority: 7 },
+  early_leave:     { syncable: true,  defaultShare: false, priority: 8 },
   // 終日種別は「その日いない」情報なので、選ばせずに必ず載せる
-  chosei_off:      { syncable: true,  defaultShare: true },
-  furikae_off:     { syncable: true,  defaultShare: true },
-  absence:         { syncable: true,  defaultShare: true },
+  chosei_off:      { syncable: true,  defaultShare: true,  priority: 9 },
+  furikae_off:     { syncable: true,  defaultShare: true,  priority: 10 },
+  absence:         { syncable: true,  defaultShare: true,  priority: 11 },
   // 打刻ズレは残業ではなく記録だけ。カレンダーには出さない
-  clock_only:      { syncable: false, defaultShare: false },
+  clock_only:      { syncable: false, defaultShare: false, priority: 12 },
 };
+
+// ============================================================
+//  勤怠カレンダー（アプリ内 /calendar）での分類
+// ============================================================
+// 「その日いない・遅れる」のか「余分に働く・場所が変わる」のかで分ける。
+// 申請した場所（休暇ページ／残業ページ）で分けると、残業ページから申請される
+// 調整休・振替休日（中身は休み）が「残業」側に入ってしまい、見る人が混乱するため。
+const OT_ATTENDING: OvertimeType[] = ['overtime', 'early_start', 'holiday_work', 'location_change'];
+
+/** その残業が「出勤・残業」側か（false なら「休み・遅れ」側） */
+export function isOvertimeAttending(types: string[] | null | undefined): boolean {
+  return (types ?? []).some(t => (OT_ATTENDING as string[]).includes(t));
+}
+
+/** カレンダーに出す種別だけを、代表が先頭に来る順で返す */
+export function calendarTypesInOrder(types: string[] | null | undefined): OvertimeType[] {
+  return (types ?? [])
+    .filter((t): t is OvertimeType => isOvertimeType(t) && OT_CALENDAR[t].syncable)
+    .sort((a, b) => OT_CALENDAR[a].priority - OT_CALENDAR[b].priority);
+}
 
 /**
  * カレンダー掲載のチェック欄を出してよいか。
