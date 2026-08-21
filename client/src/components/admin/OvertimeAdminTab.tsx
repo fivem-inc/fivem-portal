@@ -294,7 +294,7 @@ const OvertimeAdminTab: React.FC = () => {
   const [otFilterPeriod, setOtFilterPeriod] = useState('all');
   const [otFilterPerson, setOtFilterPerson] = useState('all');
   const [otFilterType, setOtFilterType] = useState('all');
-  const [otSortKey, setOtSortKey] = useState<'work_date' | 'name' | 'diff'>('work_date');
+  const [otSortKey, setOtSortKey] = useState<'work_date' | 'created_at' | 'name' | 'diff'>('work_date');
   const [otSortAsc, setOtSortAsc] = useState(false);
 
   useEffect(() => {
@@ -472,6 +472,8 @@ const OvertimeAdminTab: React.FC = () => {
     return rows.sort((a, b) => {
       if (otSortKey === 'name') return (a.applicantName || '').localeCompare(b.applicantName || '', 'ja') * dir;
       if (otSortKey === 'diff') return ((a.diff_minutes ?? 0) - (b.diff_minutes ?? 0)) * dir;
+      // 申請日順（いつ出されたか）。未設定の古い行は末尾に寄せる
+      if (otSortKey === 'created_at') return String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')) * dir;
       return a.work_date.localeCompare(b.work_date) * dir;
     });
   }, [otReports, otStatusMap, otFilterStatus, otFilterPeriod, otFilterPerson, otFilterType, otSortKey, otSortAsc]);
@@ -1096,9 +1098,10 @@ const OvertimeAdminTab: React.FC = () => {
               <option value="all">全種別</option>
               {otTypeOptions.map(t => <option key={t} value={t}>{OT_TYPE_INFO[t].label}</option>)}
             </select>
-            <select value={otSortKey} onChange={e => setOtSortKey(e.target.value as 'work_date' | 'name' | 'diff')}
+            <select value={otSortKey} onChange={e => setOtSortKey(e.target.value as 'work_date' | 'created_at' | 'name' | 'diff')}
               style={{ padding: '5px 10px', borderRadius: 8, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#333', fontSize: 12 }}>
               <option value="work_date">勤務日順</option>
+              <option value="created_at">申請日順</option>
               <option value="name">申請者名順</option>
               <option value="diff">差分順</option>
             </select>
