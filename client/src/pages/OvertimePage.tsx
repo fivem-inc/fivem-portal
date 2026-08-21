@@ -2058,16 +2058,21 @@ const OvertimeForm: React.FC<{
         ) : (
         <select data-err-field="reviewer" value={reviewerId} onChange={e => { setReviewerId(e.target.value); clearErr('reviewer'); }} style={{ ...fieldStyle, ...errorStyle(errFields.has('reviewer'), isDark) }}>
           <option value="">選択してください</option>
+          {/* 🚨 自己受理はいちばん上に置く。マネージャーは自分で確定することが多く、
+                 毎回リストの末尾まで送るのは手間になるため（2026-08-21 ユーザー指示）。
+                 欠勤の自己受理はマネージャー以上のみ（canSelfReview がその判定）。
+                 リーダー以下には選択肢自体を出さない。DB側でも RLS で同じ判定をしている
+                 （overtime_insert_own。自己受理は受理ボタンを通らないため画面だけでは守れない） */}
+          {canSelfReview && <option value={SELF_REVIEW_VALUE}>自己受理（自分で確認する）</option>}
           {reviewers
             .filter(r => r.id !== user.id)
             .filter(r => !(fullDay && fullDayType === 'absence') || ABSENCE_REVIEWER_ROLES.includes(r.role_title))
             .map(r => (
               <option key={r.id} value={r.id}>{r.name}（{r.role_title}）</option>
             ))}
-          {canSelfReview && !(fullDay && fullDayType === 'absence') && <option value={SELF_REVIEW_VALUE}>自己受理（自分で確認する）</option>}
         </select>
         )}
-        {fullDay && fullDayType === 'absence' && (
+        {fullDay && fullDayType === 'absence' && !canSelfReview && (
           <p style={{ margin: '6px 0 0', fontSize: 12, color: subText }}>欠勤はマネージャー以上の受理が必要です（自己受理はできません）</p>
         )}
       </div>

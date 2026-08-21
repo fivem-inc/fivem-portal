@@ -86,9 +86,14 @@ serve(async (req) => {
 
     if (action === 'approve') {
       if (!(isAdmin || caller.id === r.reviewer_id)) return json({ success: false, error: '権限がありません' }, 403)
-      // 欠勤は本人受理禁止（管理者でも本人なら不可。DB CHECK制約と合わせた3層ガード）
-      if (types.includes('absence') && caller.id === r.applicant_id) {
-        return json({ success: false, error: '欠勤は本人以外の受理が必要です' }, 403)
+      // 欠勤の自己受理はマネージャー以上のみ（2026-08-21 に開放。リーダー以下は他の人の受理が必要）
+      // 🚨 同じ判定が overtime_reports の RLS（overtime_insert_own）にもある。
+      //    自己受理は受理ボタンを通らず直接 INSERT されるため、あちらが本来の砦。片方だけ直さないこと。
+      if (types.includes('absence') && caller.id === r.applicant_id && !isAdmin) {
+        const { data: me } = await db.from('profiles').select('role_title').eq('id', caller.id).maybeSingle()
+        if (!['社長', '管理者', 'マネージャー'].includes(me?.role_title ?? '')) {
+          return json({ success: false, error: '欠勤の自己受理はマネージャー以上のみです' }, 403)
+        }
       }
       if (!['requested', 'reported'].includes(r.status)) return json({ success: false, error: 'この状態では受理できません' }, 409)
       const isAdvance = r.status === 'requested'
