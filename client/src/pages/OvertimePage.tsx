@@ -8,14 +8,14 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import {
-  calcTotalBreak, calcLaborMinutes, calcSegmentBreak, checkLegalBreak,
+  calcTotalBreak, calcLaborMinutes, calcPatternFields, checkLegalBreak,
   timeToMin, minToTime, formatSignedMin, formatMin,
   todayJstStr, calcPayPeriodStartJst, payPeriodLabel, payMonthLabel,
   payMonthPeriodLabel, payPeriodCloseCutoff, isPayPeriodClosed, isPayPeriodPayoutPassed, shiftPayPeriod,
   DAY_KIND_LABELS,
 } from '../lib/breakCalc';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
-import { resolveNormalShift } from '../lib/overtimeShift';
+import { resolveNormalShift, normalShiftBands, normalShiftTimeText, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 
 // validate() は文言だけを返すので、文言と入力欄を突き合わせて薄赤ハイライトを付ける。
@@ -645,11 +645,17 @@ const OvertimeForm: React.FC<{
     const s = timeToMin(normStart);
     const e = timeToMin(normEnd);
     if (s == null || e == null || e <= s) return { ...base, manual_override: true };
-    const br = calcSegmentBreak(s, e);
+    // 🚨 第2の時間帯（テレワーク等）は修正欄が無く base のまま残るので、労働時間の再計算にも必ず含める。
+    //    含めないと、本人が1本目を直しただけで触っていない2本目が労働から消え、
+    //    差分（残業）が実際より多く出る（給与に効く数字が黙って動く）
+    const { breakMinutes, laborMinutes } = calcPatternFields(
+      { start: s, end: e },
+      { start: timeToMin(base.start_time2), end: timeToMin(base.end_time2) },
+    );
     return {
       ...base, manual_override: true,
       start_time: normStart, end_time: normEnd,
-      break_minutes: br, labor_minutes: (e - s) - br,
+      break_minutes: breakMinutes, labor_minutes: laborMinutes,
     };
   }, [date, patterns, calendarKind, normOverride, normStart, normEnd]);
 
@@ -1246,10 +1252,11 @@ const OvertimeForm: React.FC<{
   const labelStyle: React.CSSProperties = { fontSize: 13, fontWeight: 'bold', color: text, marginBottom: 6, display: 'block' };
   const req = <span style={{ color: '#dc3545' }}> *</span>;
 
-  const normalBand2 = normalShift.start_time2 ? `　＋　${fmtTime(normalShift.start_time2)}〜${fmtTime(normalShift.end_time2)}` : '';
   const normalLoc = normalShift.location ? `　［${normalShift.location}］` : '';
-  const normalLabel = normalShift.start_time
-    ? `${fmtTime(normalShift.start_time)}〜${fmtTime(normalShift.end_time)}${normalBand2}${normalLoc}（休憩${formatMin(normalShift.break_minutes)}・労働${formatMin(normalShift.labor_minutes)}）`
+  // 時間帯の並べ方・区切りは normalShiftTimeText に集約（画面ごとに書き方が割れないように）
+  const normalTimes = normalShiftTimeText(normalShift);
+  const normalLabel = normalTimes
+    ? `${normalTimes}${normalLoc}（休憩${formatMin(normalShift.break_minutes)}・労働${formatMin(normalShift.labor_minutes)}）`
     : '休み';
 
   // 入力内容をすべてクリア（新規フォームのみ）
@@ -1570,6 +1577,13 @@ const OvertimeForm: React.FC<{
                   パターンに戻す
                 </button>
               </div>
+              {/* 第2の時間帯はここでは直せない。黙って足され続けると「修正したのに時間が合わない」になるので明示する */}
+              {normalShift.start_time2 && (
+                <p style={{ margin: '4px 0 0', fontSize: 11.5, color: subText }}>
+                  {normalShiftBands({ start_time: normalShift.start_time2, end_time: normalShift.end_time2 })
+                    .map(b => `${b.start}〜${b.end}（労働${formatMin(b.laborMin)}）`).join('')}は変更できません
+                </p>
+              )}
             </div>
           )}
         </div>
@@ -1737,7 +1751,7 @@ const OvertimeForm: React.FC<{
         <div style={{ marginBottom: 16 }}>
           <div style={{ background: innerBg, borderRadius: 10, padding: '12px 14px', marginBottom: 12 }}>
             <p style={{ margin: '0 0 8px', fontSize: 12.5, color: subText }}>
-              通常シフト {fmtTime(normalShift.start_time)}〜{fmtTime(normalShift.end_time)}　労働 {formatMin(normalShift.labor_minutes)}
+              通常シフト {normalShiftTimeText(normalShift)}　労働 {formatMin(normalShift.labor_minutes)}
             </p>
             <p style={{ margin: 0, fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
               勤務時間はシフトどおりとして記録します。合計時間数は増えも減りもしません。
@@ -2707,6 +2721,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
             const isFullDay = isFullDayReport(r.application_types);
             const fdType = (r.application_types ?? []).find(isOvertimeType);
             const legal = r.legal_warning;
+            // 通常シフトの時間帯（第2時間帯を含む）。2本以上なら帯ごとに1行ずつ出す
+            const nsBands = normalShiftBands(r.normal_shift);
             return (
               <div key={r.id} style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, padding: '14px 16px', marginBottom: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, gap: 8 }}>
@@ -2720,10 +2736,31 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                 </div>
 
                 <div style={{ background: innerBg, borderRadius: 8, padding: '8px 10px', marginBottom: 8, fontSize: 12.5, lineHeight: 1.8, color: text }}>
-                  <span style={{ color: subText }}>通常シフト：</span>
-                  {r.normal_shift?.start_time ? `${fmtTime(r.normal_shift.start_time)}〜${fmtTime(r.normal_shift.end_time)}（労働${formatMin(r.normal_shift.labor_minutes)}）` : '休み'}
-                  {r.normal_shift?.manual_override && <span style={{ color: '#e65100' }}>（本人修正）</span>}
-                  <br />
+                  {nsBands.length >= 2 ? (
+                    // 時間帯が2本以上ある日（テレワーク・中抜けなど）。
+                    // 帯ごとの労働は参考値で、「この日の労働」は必ず保存値を出す（normalShiftBands のコメント参照）
+                    <>
+                      {nsBands.map((b, i) => (
+                        <React.Fragment key={i}>
+                          {i === 0
+                            ? <span style={{ color: subText }}>通常シフト：</span>
+                            : <span style={{ display: 'inline-block', width: NS_LABEL_W }} />}
+                          {b.start}〜{b.end}<span style={{ color: subText }}>（労働{formatMin(b.laborMin)}）</span><br />
+                        </React.Fragment>
+                      ))}
+                      <span style={{ display: 'inline-block', width: NS_LABEL_W }} />
+                      <span style={{ color: subText }}>{DAY_LABOR_LABEL} {formatMin(r.normal_shift?.labor_minutes ?? 0)}</span>
+                      {r.normal_shift?.manual_override && <span style={{ color: '#e65100' }}>（本人修正）</span>}
+                      <br />
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ color: subText }}>通常シフト：</span>
+                      {nsBands.length === 1 ? `${nsBands[0].start}〜${nsBands[0].end}（労働${formatMin(r.normal_shift?.labor_minutes ?? 0)}）` : '休み'}
+                      {r.normal_shift?.manual_override && <span style={{ color: '#e65100' }}>（本人修正）</span>}
+                      <br />
+                    </>
+                  )}
                   {isFullDay ? (
                     <>
                       <span style={{ color: subText }}>申請内容　：</span>
@@ -3351,8 +3388,7 @@ const MyPatternToggle: React.FC<{ isDark: boolean; patterns: PatternRow[] }> = (
                         <td style={cell}>
                           {p.start_time ? (
                             <>
-                              <span style={{ whiteSpace: 'nowrap' }}>{fmtTime(p.start_time)}〜{fmtTime(p.end_time)}</span>
-                              {p.start_time2 && <span style={{ whiteSpace: 'nowrap' }}>　＋　{fmtTime(p.start_time2)}〜{fmtTime(p.end_time2)}</span>}
+                              <span style={{ whiteSpace: 'nowrap' }}>{normalShiftTimeText(p)}</span>
                               <span style={{ display: 'block', fontSize: 11, color: subText, marginTop: 1 }}>休憩{formatMin(p.break_minutes)}・労働{formatMin(p.labor_minutes)}</span>
                             </>
                           ) : <span style={{ color: subText }}>休み</span>}
@@ -3729,7 +3765,7 @@ const ReadonlyReportCard: React.FC<{
           )}
           <p style={{ margin: 0, fontSize: 12.5, color: subText, lineHeight: 1.75 }}>
             {r.normal_shift?.start_time
-              ? <>通常シフト：{fmtTime(r.normal_shift.start_time)}〜{fmtTime(r.normal_shift.end_time)}（労働{formatMin(r.normal_shift.labor_minutes)}）{r.normal_shift.location ? `　${r.normal_shift.location}` : ''}<br /></>
+              ? <>通常シフト：{normalShiftTimeText(r.normal_shift)}（労働{formatMin(r.normal_shift.labor_minutes)}）{r.normal_shift.location ? `　${r.normal_shift.location}` : ''}<br /></>
               : (!isFullDay ? <>通常シフト：休み<br /></> : null)}
             {isFullDay && <>終日{r.furikae_origin_date ? `　振替元：${r.furikae_origin_date.slice(5).replace('-', '/')}（${dowLabel(r.furikae_origin_date)}）${r.furikae_origin_location ? '・' + r.furikae_origin_location : ''}${r.furikae_origin_start ? `・${r.furikae_origin_start.slice(0, 5)}〜${(r.furikae_origin_end ?? '').slice(0, 5)}（労働${formatMin(r.furikae_origin_labor_minutes ?? 0)}）` : ''}` : ''}{('furikae_off' === (r.application_types ?? [])[0] || (r.application_types ?? []).includes('furikae_off')) && r.diff_minutes != null ? `　合計時間数 ${formatSignedMin(r.diff_minutes)}` : ''}<br /></>}
             {!isFullDay && segs.length > 0 && <>{actual.length > 0 ? '実績' : '予定'}：{segmentsLabel(segs)}{r.location ? `　勤務地：${r.location}` : ''}<br /></>}

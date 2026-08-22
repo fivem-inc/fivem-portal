@@ -10,6 +10,7 @@ import {
 import type { DayKind, CalendarKind } from '../../lib/breakCalc';
 import { CALENDAR_CELL_STYLE } from '../../hooks/useCompanyCalendar';
 import { DEFAULT_LOCATION } from '../../lib/shiftExcelImport';
+import { normalShiftBands, normalShiftTimeText } from '../../lib/overtimeShift';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
 import OvertimeEditModal, { type OvertimeRecord } from './OvertimeEditModal';
 import OvertimeClockInquiryPanel from './OvertimeClockInquiryPanel';
@@ -489,7 +490,9 @@ const OvertimeAdminTab: React.FC = () => {
       return `${sign}${Math.floor(a / 60)}:${String(a % 60).padStart(2, '0')}`;
     };
     const fmtSubmitted = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
-    const headers = ['申請者', '対象日', '状況', '通常シフト開始', '通常シフト終了', '通常シフト休憩(分)', '通常シフト実労働', '実際の勤務時間帯', '休憩(分)', '実労働', '差分(元→実績)', '差分[h]:mm', '校', '振替元の勤務日', '振替元の勤務校', '理由', '提出日時', '確認日時'];
+    // 通常シフト開始2／終了2＝テレワーク・中抜けなどで勤務が2本に分かれる日の2本目。
+    // 無い日は空欄。これが無いと「9:30〜17:30なのに実労働8:00」と手計算が合わない行ができる
+    const headers = ['申請者', '対象日', '状況', '通常シフト開始', '通常シフト終了', '通常シフト開始2', '通常シフト終了2', '通常シフト休憩(分)', '通常シフト実労働', '実際の勤務時間帯', '休憩(分)', '実労働', '差分(元→実績)', '差分[h]:mm', '校', '振替元の勤務日', '振替元の勤務校', '理由', '提出日時', '確認日時'];
     // 出力する範囲はモーダルで指定したもの（画面の絞り込みとは切り離す）。
     // 休暇申請タブと同じで「給与期間で選ぶ」か「カスタム期間」の2択。
     const targets = otCsvMode === 'period'
@@ -514,7 +517,7 @@ const OvertimeAdminTab: React.FC = () => {
       const isFurikae = (r.application_types ?? []).includes('furikae_off');
       return [
         esc(r.applicantName ?? ''), esc(r.work_date), esc(OT_STATUS_LABEL[otStatusMap[r.id]]?.label ?? otStatusMap[r.id] ?? ''),
-        esc(fmtT(ns.start_time)), esc(fmtT(ns.end_time)), esc(normBreak), esc(normLabor),
+        esc(fmtT(ns.start_time)), esc(fmtT(ns.end_time)), esc(fmtT(ns.start_time2)), esc(fmtT(ns.end_time2)), esc(normBreak), esc(normLabor),
         esc(segText), esc(r.break_minutes ?? 0), esc(formatMin(r.labor_minutes ?? 0)), esc(formatSignedMin(r.diff_minutes ?? 0)),
         // [h]:mm 列は数値（時間シリアル）で出力＝Excelの [h]:mm 書式でそのまま集計可能。ただしマイナスはExcelの時間書式で表示できないため負値のみテキスト併記
         (r.diff_minutes ?? 0) < 0 ? esc(fmtHmm(r.diff_minutes)) : diffSerial(r.diff_minutes),
@@ -1151,8 +1154,9 @@ const OvertimeAdminTab: React.FC = () => {
                     const changeDiff = hasActualSegs ? spanMin(actualSegs) - spanMin(plannedSegs) : 0;
                     const rowFullDay = isFullDayReport(r.application_types);
                     const segText = actualSegs.length ? actualSegs.map(s => `${minToTime(s.start_min)}〜${minToTime(s.end_min)}`).join('、') : rowFullDay ? '終日' : '(なし)';
-                    const ns = (r.normal_shift ?? {}) as { start_time?: string | null; end_time?: string | null; location?: string | null };
-                    const nsTime = ns.start_time ? `${String(ns.start_time).slice(0, 5)}〜${ns.end_time ? String(ns.end_time).slice(0, 5) : ''}` : '休み';
+                    const ns = (r.normal_shift ?? {}) as { start_time?: string | null; end_time?: string | null; start_time2?: string | null; end_time2?: string | null; location?: string | null };
+                    // 校は右の「校（元→実）」列が担当するので、ここは時間だけ（同じ校名が同じ行に2回出るのを避ける）
+                    const nsTime = normalShiftTimeText(ns) || '休み';
                     const nsLoc = ns.location || '';
                     const isOpen = otHistoryOpen.has(r.id);
                     const cell: React.CSSProperties = { padding: '7px 4px', borderBottom: `1px solid ${borderColor}`, textAlign: 'center', verticalAlign: 'top' };
@@ -1709,8 +1713,10 @@ const OvertimeAdminTab: React.FC = () => {
                                 <td key={k} style={{ padding: '5px 4px', borderBottom: `1px solid ${borderColor}`, textAlign: 'center', whiteSpace: 'nowrap', color: p?.start_time ? text : subText }}>
                                   {p?.start_time ? (
                                     <>
-                                      {p.start_time.slice(0, 5)}〜{p.end_time?.slice(0, 5)}
-                                      {p.start_time2 && <><br />＋{p.start_time2.slice(0, 5)}〜{p.end_time2?.slice(0, 5)}</>}
+                                      {/* 列幅が狭い表なので、時間帯が2本ある日は横に並べず改行する（並び順・書式は共通関数に合わせる） */}
+                                      {normalShiftBands(p).map((b, i) => (
+                                        <React.Fragment key={i}>{i > 0 && <br />}{b.start}〜{b.end}</React.Fragment>
+                                      ))}
                                       <br /><span style={{ fontSize: 10, color: subText }}>{p.location ?? DEFAULT_LOCATION}</span>
                                     </>
                                   ) : '休'}

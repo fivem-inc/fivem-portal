@@ -5,6 +5,7 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { formatMin, DAY_KIND_LABELS } from '../lib/breakCalc';
 import type { DayKind } from '../lib/breakCalc';
 import type { AuthUser } from '../types';
+import { normalShiftTimeText } from '../lib/overtimeShift';
 
 // 通常シフト（曜日パターン）1行
 interface PatternRow {
@@ -32,10 +33,6 @@ interface PersonRow {
 
 const DAY_ORDER: DayKind[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun', 'holiday', 'work_on_closed'];
 
-function fmtTime(t: string | null | undefined): string {
-  if (!t) return '-';
-  return t.slice(0, 5);
-}
 function todayStr(): string {
   const d = new Date();
   const jst = new Date(d.getTime() + (9 * 60 + d.getTimezoneOffset()) * 60000);
@@ -227,8 +224,7 @@ const WeeklyPatternTable: React.FC<{
                 <td style={cell}>
                   {p.start_time ? (
                     <>
-                      <span style={{ whiteSpace: 'nowrap' }}>{fmtTime(p.start_time)}〜{fmtTime(p.end_time)}</span>
-                      {p.start_time2 && <span style={{ whiteSpace: 'nowrap' }}>　＋　{fmtTime(p.start_time2)}〜{fmtTime(p.end_time2)}</span>}
+                      <span style={{ whiteSpace: 'nowrap' }}>{normalShiftTimeText(p)}</span>
                       <span style={{ display: 'block', fontSize: 11, color: subText, marginTop: 1 }}>休憩{formatMin(p.break_minutes)}・労働{formatMin(p.labor_minutes)}</span>
                     </>
                   ) : <span style={{ color: subText }}>休み</span>}

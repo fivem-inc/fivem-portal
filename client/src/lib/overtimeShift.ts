@@ -1,7 +1,7 @@
 // 残業の通常シフト解決と、時間調整（遅出/早退）受諾時の残業記録フィールド算出を
 // 「単一の真実」として集約するモジュール。OvertimePage の申請フォームと、
 // 調整提案の受諾処理（OvertimeProposalResponse）で共用し、計算のズレを防ぐ。
-import { calcTotalBreak, calcLaborMinutes, resolveDayKind, timeToMin } from './breakCalc';
+import { calcTotalBreak, calcLaborMinutes, calcSegmentBreak, resolveDayKind, timeToMin } from './breakCalc';
 import type { WorkSegment, DayKind, CalendarKind } from './breakCalc';
 
 export interface PatternRow {
@@ -57,6 +57,71 @@ export function resolveNormalShift(
     break_minutes: row?.break_minutes ?? 0,
     labor_minutes: row?.labor_minutes ?? 0,
   };
+}
+
+/** 通常シフトの1つの時間帯。laborMin は「その帯だけ」の労働時間（拘束−自動休憩） */
+export interface ShiftBand { start: string; end: string; laborMin: number }
+
+/** 「通常シフト：」のラベル幅。2行目以降のぶら下げを揃えるのに使う
+ *  （全角スペースで揃えると端末の文字設定でズレる・折り返しで崩れる） */
+export const NS_LABEL_W = '6.2em';
+
+/** 時間帯が複数ある日の合計行の見出し。
+ *  🚨 「合計」は使わないこと。このアプリでは「合計時間数」＝今期の過不足（残高）として
+ *     定着しており、同じカード内の「合計時間数 −0:45」と読み違える */
+export const DAY_LABOR_LABEL = 'この日の労働';
+
+/**
+ * 通常シフトの共通形。PatternRow・NormalShiftSnapshot・画面のインライン型のどれでも
+ * そのまま渡せるように緩く受ける（型を1つに固定すると呼び出し側で as が増える）
+ */
+export type ShiftLike = {
+  start_time?: string | null;  end_time?: string | null;
+  start_time2?: string | null; end_time2?: string | null;
+  break_minutes?: number | null; labor_minutes?: number | null;
+};
+
+/** "HH:MM:SS" / "HH:MM" → "H:MM"（画面表示用・先頭ゼロなし）
+ *  ⚠️ <input type="time"> の value には使わないこと。ゼロ埋めが無いと入力欄が空になる */
+export function hmText(t: string | null | undefined): string {
+  if (!t) return '';
+  const s = t.slice(0, 5);
+  const i = s.indexOf(':');
+  return i < 0 ? s : `${Number(s.slice(0, i))}:${s.slice(i + 1)}`;
+}
+
+/**
+ * 通常シフトを時間帯ごとに分解する（休みなら空配列）。
+ * ・並びは時刻順。DBの並びは band1→band2 だが、朝が先に来るほうが読みやすい
+ * ・laborMin は帯ごとに calcSegmentBreak を当てて引いた「その帯だけ」の労働時間
+ *
+ * 🚨 laborMin の合計を「その日の労働時間」として画面に出さないこと。
+ *    保存済みの labor_minutes と一致しない場合がある
+ *    （休暇受理の自動計上行は band2 を保存していないのに labor は band2 込み／
+ *      曜日パターンの break_minutes は Excel取込・手入力で再計算値とずれうる）。
+ *    合計は必ず保存値（labor_minutes）をそのまま出す。
+ */
+export function normalShiftBands(ns: ShiftLike | null | undefined): ShiftBand[] {
+  if (!ns) return [];
+  const out: { st: number; band: ShiftBand }[] = [];
+  const add = (s?: string | null, e?: string | null) => {
+    if (!s || !e) return;                       // 開始・終了が揃っていない帯は無いものとして扱う
+    const st = timeToMin(s.slice(0, 5));
+    let en = timeToMin(e.slice(0, 5));
+    if (st == null || en == null) return;
+    if (en <= st) en += 1440;                   // 日をまたぐ勤務
+    if (en <= st) return;
+    out.push({ st, band: { start: hmText(s), end: hmText(e), laborMin: (en - st) - calcSegmentBreak(st, en) } });
+  };
+  add(ns.start_time, ns.end_time);
+  add(ns.start_time2, ns.end_time2);
+  return out.sort((a, b) => a.st - b.st).map(x => x.band);
+}
+
+/** 通常シフトを1行で表す。例 "6:30〜7:15 / 9:30〜17:30"（休みなら空文字）
+ *  区切りは実績側（segmentsLabel）と同じ " / " に揃えてある */
+export function normalShiftTimeText(ns: ShiftLike | null | undefined): string {
+  return normalShiftBands(ns).map(b => `${b.start}〜${b.end}`).join(' / ');
 }
 
 export interface TimeAdjustBuild {

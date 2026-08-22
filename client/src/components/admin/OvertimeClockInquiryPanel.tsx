@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import SearchableSelect from '../common/SearchableSelect';
-import { resolveNormalShift } from '../../lib/overtimeShift';
+import { resolveNormalShift, normalShiftBands, normalShiftTimeText } from '../../lib/overtimeShift';
 import type { PatternRow } from '../../lib/overtimeShift';
 import type { CalendarKind } from '../../lib/breakCalc';
 import { todayJstStr } from '../../lib/breakCalc';
@@ -18,6 +18,8 @@ interface StaffRow { id: string; name: string; role_title: string | null }
 interface DayInput { work_date: string; clock_in: string; clock_out: string }
 interface InquiryDay {
   id: string; work_date: string; shift_start: string | null; shift_end: string | null;
+  // 第2の時間帯（テレワーク・中抜けなど）。無い日は null
+  shift_start2: string | null; shift_end2: string | null;
   clock_in: string | null; clock_out: string | null;
   answer: 'pending' | 'worked' | 'not_worked' | 'unknown';
   answer_reason: string | null; answer_note: string | null; result_report_id: string | null;
@@ -196,6 +198,10 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
         const ns = resolveNormalShift(patterns, r.work_date, calendarKinds[r.work_date] ?? null);
         return {
           work_date: r.work_date,
+          // 第2の時間帯も書き写す。ここで落とすと、本人の回答画面に出ないまま
+          // 「この打刻は残業ですか？」と聞くことになる
+          shift_start2: ns.start_time2 ? ns.start_time2.slice(0, 5) : null,
+          shift_end2: ns.end_time2 ? ns.end_time2.slice(0, 5) : null,
           shift_start: ns.start_time ? ns.start_time.slice(0, 5) : null,
           shift_end: ns.end_time ? ns.end_time.slice(0, 5) : null,
           clock_in: r.clock_in || null,
@@ -308,12 +314,18 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
               <tbody>
                 {rows.map((r, i) => {
                   const ns = resolveNormalShift(patterns, r.work_date, calendarKinds[r.work_date] ?? null);
+                  const nsBands = normalShiftBands(ns);
                   const dup = existingDates.has(r.work_date);
                   return (
                     <tr key={r.work_date} style={{ borderBottom: `1px solid ${border}`, opacity: dup ? 0.55 : 1 }}>
                       <td style={{ padding: '6px 8px', color: text, whiteSpace: 'nowrap' }}>{md(r.work_date)}（{dowOf(r.work_date)}）</td>
                       <td style={{ padding: '6px 8px', color: subText, whiteSpace: 'nowrap' }}>
-                        {dup ? '⚠️ この日は既に記録があります' : `${hm(ns.start_time)}〜${hm(ns.end_time)}`}
+                        {/* 列は nowrap なので、時間帯が2本ある日は横に伸ばさず改行する */}
+                        {dup ? '⚠️ この日は既に記録があります'
+                          : nsBands.length === 0 ? '—'
+                            : nsBands.map((b, bi) => (
+                              <React.Fragment key={bi}>{bi > 0 && <br />}{b.start}〜{b.end}</React.Fragment>
+                            ))}
                       </td>
                       <td style={{ padding: '6px 8px' }}>
                         <input type="time" value={r.clock_in} disabled={dup}
@@ -439,7 +451,7 @@ const OvertimeClockInquiryPanel: React.FC<Props> = ({ staff, isDark }) => {
             <div style={{ marginTop: 6 }}>
               {(i.days ?? []).map(d => (
                 <div key={d.id} style={{ fontSize: 12, color: subText, lineHeight: 1.9 }}>
-                  {md(d.work_date)}（{dowOf(d.work_date)}）　シフト {hm(d.shift_start)}〜{hm(d.shift_end)}　打刻 {hm(d.clock_in)}〜{hm(d.clock_out)}
+                  {md(d.work_date)}（{dowOf(d.work_date)}）　シフト {normalShiftTimeText({ start_time: d.shift_start, end_time: d.shift_end, start_time2: d.shift_start2, end_time2: d.shift_end2 }) || '—'}　打刻 {hm(d.clock_in)}〜{hm(d.clock_out)}
                   　→ <span style={{ color: d.answer === 'pending' ? subText : text, fontWeight: d.answer === 'pending' ? 'normal' : 'bold' }}>{ANSWER_LABEL[d.answer]}</span>
                   {d.answer_reason && `（${d.answer_reason}）`}
                   {d.answer_note && `（${d.answer_note}）`}

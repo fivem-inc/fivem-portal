@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { resolveNormalShift } from '../lib/overtimeShift';
+import { resolveNormalShift, normalShiftTimeText } from '../lib/overtimeShift';
 import type { PatternRow } from '../lib/overtimeShift';
 import { calcPayPeriodStartJst } from '../lib/breakCalc';
 import type { CalendarKind } from '../lib/breakCalc';
@@ -20,6 +20,7 @@ import { dispatchEmail, getUserEmail } from '../lib/notificationDispatch';
 interface DayRow {
   id: string; work_date: string;
   shift_start: string | null; shift_end: string | null;
+  shift_start2: string | null; shift_end2: string | null;
   clock_in: string | null; clock_out: string | null;
   answer: 'pending' | 'worked' | 'not_worked' | 'unknown';
   answer_reason: string | null; answer_note: string | null;
@@ -296,7 +297,7 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
               {d.work_date.slice(0, 4)}/{md(d.work_date)}（{dowOf(d.work_date)}）
             </div>
             <div style={{ fontSize: 12.5, color: subText, marginBottom: 10 }}>
-              シフト {hm(d.shift_start)}〜{hm(d.shift_end)} ／ 打刻 {hm(d.clock_in)}〜{hm(d.clock_out)}
+              シフト {normalShiftTimeText({ start_time: d.shift_start, end_time: d.shift_end, start_time2: d.shift_start2, end_time2: d.shift_end2 }) || '—'} ／ 打刻 {hm(d.clock_in)}〜{hm(d.clock_out)}
             </div>
 
             {canRespond ? (

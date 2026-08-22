@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { insertNotification } from '../lib/notifications';
-import { resolveNormalShift, buildTimeAdjustReport, fmtTime } from '../lib/overtimeShift';
+import { resolveNormalShift, buildTimeAdjustReport, normalShiftTimeText } from '../lib/overtimeShift';
 import { ERROR_BORDER, errorBg, scrollToFirstError } from '../lib/formHighlight';
 import type { PatternRow } from '../lib/overtimeShift';
 
@@ -263,10 +263,8 @@ const OvertimeProposalSheet: React.FC<Props> = ({
               <DateField value={c.date} onChange={d => handleDateChange(c.tmpId, d)} isDark={isDark} placeholder="日付を選ぶ" />
               {c.date && (() => {
                 const ns = resolveNormalShift(patterns, c.date, null);
-                const hasShift = !!(ns.start_time || ns.start_time2);
-                const timeStr = hasShift
-                  ? `${fmtTime(ns.start_time)}〜${fmtTime(ns.end_time)}${ns.start_time2 ? `、${fmtTime(ns.start_time2)}〜${fmtTime(ns.end_time2)}` : ''}`
-                  : '';
+                const timeStr = normalShiftTimeText(ns);
+                const hasShift = !!timeStr;
                 return (
                   <div style={{ fontSize: 11.5, color: subText, marginTop: 6 }}>
                     {hasShift
