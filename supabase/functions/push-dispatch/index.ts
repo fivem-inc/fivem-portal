@@ -69,10 +69,12 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string; bell?:
   // ⚠️ 履歴タブは「出張報告の履歴閲覧」権限が要る。宛先の役職を足すときは
   //    管理画面でこの権限も同じ役職をONにすること（OFFのままだとフォームに着地する）。
   // ⚠️ プッシュは「ユーザー×イベント」で集約して1通にまとめるため、
-  //    ベル通知と違い focus=<報告id> は付けられない＝該当カードは光らない（一覧の先頭が最新）。
+  //    ベル通知と違い focus=<報告id> は付けられない（どの1件を指すか決まらない）。
+  //    そのため bell: true を付けて、着地後に🔔ベル一覧を開き該当行を光らせる（2026-08-24）。
+  //    履歴タブには他の人の報告も並ぶので、これが無いと「どれが新着か分からない」になる。
   // ⚠️「出張報告」は実機未検証の語。Chromeが警告表示に化けたら app を検証済みの語に変える
-  "trip:report_arrival":     { app: "出張報告", word: "新着", url: "/trip-report?tab=history" },
-  "trip:report_end":         { app: "出張報告", word: "新着", url: "/trip-report?tab=history" },
+  "trip:report_arrival":     { app: "出張報告", word: "新着", url: "/trip-report?tab=history", bell: true },
+  "trip:report_end":         { app: "出張報告", word: "新着", url: "/trip-report?tab=history", bell: true },
   // 連絡板
   "board:notice":           { app: "連絡板", word: "新着", url: "/board" },
   "board:group_message":    { app: "連絡板", word: "新着", url: "/board" },
@@ -112,17 +114,17 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string; bell?:
   // word は実機テスト済みの安全語のみ（未承認／差戻／新着／受理／承認。受理・承認は 2026-08-18 確認）。
   // 取消・修正の結果報告は区別せず「新着」に寄せる（詳細はベル・画面で見る前提）。
   "overtime:new_request":        { app: "残業", word: "未承認", url: "/overtime?view=confirm" },
-  "overtime:request_confirmed":  { app: "残業", word: "受理",   url: "/overtime?tab=history" },
-  "overtime:confirmed":          { app: "残業", word: "受理",   url: "/overtime?tab=history" },
-  "overtime:returned":           { app: "残業", word: "差戻",   url: "/overtime?tab=history" },
+  "overtime:request_confirmed":  { app: "残業", word: "受理",   url: "/overtime?tab=history", bell: true },
+  "overtime:confirmed":          { app: "残業", word: "受理",   url: "/overtime?tab=history", bell: true },
+  "overtime:returned":           { app: "残業", word: "差戻",   url: "/overtime?tab=history", bell: true },
   // 本人が取り消した知らせ（確認者へ）。取消済みなので確認待ち一覧には無い。
   // ベルを開いて本文（誰が・いつの分か）を読んでもらう（2026-08-18 修正）
   "overtime:cancelled":          { app: "残業", word: "取消",   url: "/overtime?tab=history", bell: true },
-  "overtime:admin_cancelled":    { app: "残業", word: "新着",   url: "/overtime?tab=history" },
-  "overtime:admin_edited":       { app: "残業", word: "新着",   url: "/overtime?tab=history" },
+  "overtime:admin_cancelled":    { app: "残業", word: "新着",   url: "/overtime?tab=history", bell: true },
+  "overtime:admin_edited":       { app: "残業", word: "新着",   url: "/overtime?tab=history", bell: true },
   "overtime:grant":              { app: "残業", word: "新着",   url: "/overtime" },
   // 備品購入申請の質問・回答。履歴タブに着地し、該当カードが光る（reference_id＝申請id）
-  "purchase_request:comment_added": { app: "備品精算", word: "新着", url: "/purchase?tab=history" },
+  "purchase_request:comment_added": { app: "備品精算", word: "新着", url: "/purchase?tab=history", bell: true },
   // 打刻の確認（経理→本人／本人→経理）。アプリ名「勤務時間」は実機テスト済み（2026-08-04・林の端末）
   // 🚨 回答画面は /overtime?inquiry=<id> の専用ビューでしか開けず、履歴タブに一覧は無い。
   //    プッシュはIDを持てない（集約するため）ので、ホームの専用バナーから開いてもらう（2026-08-18 修正）
