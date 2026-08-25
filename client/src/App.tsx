@@ -680,7 +680,10 @@ const useOvertimeUnreportedCount = (userId: string | undefined, canOvertime: boo
     const { data } = await supabase.from('overtime_reports')
       .select('id, work_date, application_types')
       .eq('applicant_id', userId)
-      .eq('status', 'request_confirmed');
+      // 🚨 requested（受理まち）も含める（2026-08-25）。
+      //    受理を待たずに実績を報告できるようにしたので、ここが request_confirmed だけだと
+      //    「毎朝のリマインドは届くのに、ホームのバナーもナビの件数も0のまま」という食い違いになる
+      .in('status', ['requested', 'request_confirmed']);
     const list = ((data ?? []) as { work_date: string; application_types: string[] | null }[])
       .filter(r => r.work_date < today && !isFullDayReport(r.application_types))
       .map(r => r.work_date).sort();
@@ -1056,6 +1059,8 @@ const classifyNotif = (n: NotifLike) => {
   const isOtProposalReceived      = n.source_type === 'overtime_proposal:received';         // 相手：残業調整の提案が届いた（任意・催促しない）
   const isOtProposalResponded     = n.source_type === 'overtime_proposal:responded';        // 提案者：相手が回答した
   const isOvertimeUnreported      = n.source_type === 'overtime:unreported';                // 本人：実績未報告リマインド
+  // 確認者：受理まちリマインド（毎日出す分と、勤務日より前に1回だけ出す分。飛び先は同じ）
+  const isOvertimePendingReview   = n.source_type === 'overtime:pending_review' || n.source_type === 'overtime:pending_review_advance';
   const isClockInquiry         = n.source_type === 'overtime:clock_inquiry';          // 本人：経理からの打刻の確認（要対応）
   const isClockInquiryAnswered = n.source_type === 'overtime:clock_inquiry_answered'; // 経理：本人が回答した（結果のみ）
   // 修正依頼・取消依頼。source_type は3種とも 'correction_request' で同じなので、
@@ -1064,7 +1069,7 @@ const classifyNotif = (n: NotifLike) => {
   const isCorrectionNew = isCorrection && n.event_key === 'correction:new';           // 管理者：要対応
   // 🚨 打刻の確認は「答えるまで消えない」要対応。isResultOnly に入れるとタップで消えてしまう
   const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit || isPurchasePendingApproval || isOvertimePendingApproval || isOvertimePendingResubmit || isClockInquiry || isCorrectionNew;
-  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isTripReport || isAttendance || isAttendanceCancelled || isPurchaseResult || isOvertimeResult || isOvertimeCancelledFyi || isOtProposalReceived || isOtProposalResponded || isOvertimeUnreported || isOvertimeThreshold || isOvertimeThresholdSummary || isClockInquiryAnswered || (isCorrection && !isCorrectionNew);
+  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isTripReport || isAttendance || isAttendanceCancelled || isPurchaseResult || isOvertimeResult || isOvertimeCancelledFyi || isOtProposalReceived || isOtProposalResponded || isOvertimeUnreported || isOvertimePendingReview || isOvertimeThreshold || isOvertimeThresholdSummary || isClockInquiryAnswered || (isCorrection && !isCorrectionNew);
   // 旧来のフォールバック（source_typeが無い通知向け）
   const isLegacyReject = !isPendingAction && !isResultOnly && (n.message.includes('差し戻し') || n.message.includes('差し戻され'));
 
@@ -1145,6 +1150,9 @@ const classifyNotif = (n: NotifLike) => {
     }
     // 実績未報告リマインド → 履歴（実績を報告する場所）へ
     if (isOvertimeUnreported) return { path: '/overtime?tab=history', closeOnTap: true };
+    // 受理まちリマインド（確認者へ）→ 確認待ちの一覧（受理する場所）へ。
+    // 毎日つくり直されるリマインドなので、タップで閉じてよい（対応が済めば翌日から出なくなる）
+    if (isOvertimePendingReview) return { path: '/overtime?view=confirm', closeOnTap: true };
     // 打刻の確認：本人は回答画面へ（答えるまで消さない）／経理は回答結果を見て閉じる
     if (isClockInquiry) return { path: n.reference_id ? `/overtime?inquiry=${n.reference_id}` : '/overtime', closeOnTap: false };
     if (isClockInquiryAnswered) {

@@ -81,6 +81,8 @@ interface OvertimeReport {
   reviewer_id: string | null;
   confirmed_by: string | null;
   confirmed_at: string | null;
+  // 事前申請を上長が受理した日時。null は「受理を経ていない」または 2026-08-25 の導入より前
+  request_confirmed_at: string | null;
   return_comment: string | null;
   source_leave_request_id: string | null;
   created_at: string;
@@ -139,6 +141,12 @@ const STATUS_INFO: Record<OvertimeStatus, { label: string; color: string; darkBg
   returned:          { label: '差し戻し',          color: '#c62828', darkBg: '#4a1515' },
   cancelled:         { label: '取消済み',          color: '#6c757d', darkBg: '#3a3f44' },
 };
+
+// 事前受理の日時（request_confirmed_at）を記録し始めた日。
+// これより前の申請は受理していても null なので、「事前受理なし」の警告を出さない（不明として扱う）。
+// 文字列比較（created_at は ISO 形式）。created_at は UTC なので境界の数時間は
+// 「警告を出さない」側にずれるが、安全側なのでこのままでよい
+const PRE_APPROVAL_TRACKED_FROM = '2026-08-25';
 
 function badgeStyle(color: string, darkBg: string, isDark: boolean): React.CSSProperties {
   return {
@@ -1174,8 +1182,16 @@ const OvertimeForm: React.FC<{
           change_reason: (isReportPhase && hasChanges) ? changeReason.trim() : null,
           snapshot: editTarget as unknown as Record<string, unknown>,
         }).then(null, () => {});
-        const { error: err } = await supabase.from('overtime_reports').update(record).eq('id', editTarget.id);
+        // 🚨 開いてから送るまでの間に、上長が受理・差し戻し・取消をしている場合がある。
+        //    status を条件に付けて件数を見ないと、差し戻された申請に実績を上書きしてしまい、
+        //    差し戻し理由が残ったまま「実績 確認待ち」に戻る（update は0件でもエラーにならない）
+        const { data: updatedRows, error: err } = await supabase.from('overtime_reports')
+          .update(record).eq('id', editTarget.id).eq('status', editTarget.status).select('id');
         if (err) { setError(friendlyDbError(err.message, err.code)); setSaving(false); setShowConfirm(false); return; }
+        if (!updatedRows || updatedRows.length === 0) {
+          setError('この申請の状態が変わっています（先に受理・差し戻し・取消がされた可能性があります）。画面を更新してからやり直してください。');
+          setSaving(false); setShowConfirm(false); return;
+        }
         reportId = editTarget.id;
         // 対象phaseの時間帯を入れ替え
         await supabase.from('overtime_report_segments').delete().eq('report_id', reportId).eq('phase', phase);
@@ -1213,10 +1229,13 @@ const OvertimeForm: React.FC<{
         }).then(null, () => {});
       }
 
-      // カレンダー同期：自己受理（送信＝受理）と、既存申請の実績報告・再提出はイベントに影響するため同期する。
-      // gcal-sync の action:'sync' は現在状態から再計算する冪等処理（未受理なら何もしない）。
+      // カレンダー同期：送信のたびに必ず同期する。
+      // gcal-sync の action:'sync' は現在状態から再計算する冪等処理なので、
+      // 載せる必要がないもの（事後報告・掲載しない種別）は中で何もせず素通りする。
+      // 🚨 以前は「自己受理・既存申請の実績報告/再提出」だけに限っていた（未受理は載らない仕様だったため）。
+      //    2026-08-25 に未受理も【申請中】として載せるようにしたので、新規申請でも必ず呼ぶ
       let gcalWarn: string | undefined;
-      if (isSelfReview || editTarget) {
+      {
         const { data: syncRes, error: syncErr } = await supabase.functions.invoke('gcal-sync', {
           body: { action: 'sync', source_type: 'overtime', source_id: reportId },
         });
@@ -1285,13 +1304,19 @@ const OvertimeForm: React.FC<{
       {isReportPhase && !fullDay && plannedBaseline && (
         <div style={{ background: innerBg, borderRadius: 10, padding: '10px 12px', marginBottom: 12, border: `1px solid ${borderColor}` }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 12, fontWeight: 'bold', color: subText }}>📋 事前申請の内容（受理済み・変更できません）</span>
+            {/* 🚨 未受理でも実績報告できるようにしたので「受理済み」と決め打ちにしない（嘘になる） */}
+            <span style={{ fontSize: 12, fontWeight: 'bold', color: subText }}>📋 事前申請の内容（{editTarget.status === 'requested' ? '受理まち・' : '受理済み・'}変更できません）</span>
             <button type="button" onClick={() => setShowPlanDetail(v => !v)} style={{ background: 'none', border: 'none', color: subText, cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>詳細 {showPlanDetail ? '▲' : '▼'}</button>
           </div>
           <div style={{ fontSize: 12.5, color: text, marginTop: 6, lineHeight: 1.6 }}>
             {editTarget.work_date.slice(5).replace('-', '/')}（{dowLabel(editTarget.work_date)}）｜予定 {segmentsLabel((editTarget.segments ?? []).filter(s => s.phase === 'planned'))}{plannedBaseline.location ? `［${plannedBaseline.location}］` : ''}
           </div>
           <div style={{ marginTop: 4 }}><TypeChips types={editTarget.application_types} isDark={isDark} /></div>
+          {editTarget.status === 'requested' && (
+            <p style={{ margin: '6px 0 0', fontSize: 12, color: subText, lineHeight: 1.6 }}>
+              ※この申請はまだ受理されていませんが、このまま実績を報告できます（受理と確認はまとめて行われます）
+            </p>
+          )}
           {showPlanDetail && (
             <div style={{ fontSize: 12, color: subText, marginTop: 6, lineHeight: 1.7, borderTop: `1px solid ${borderColor}`, paddingTop: 6 }}>
               休憩 {plannedBaseline.breakMin}分　労働 {Math.floor((editTarget.labor_minutes ?? 0) / 60)}時間{(editTarget.labor_minutes ?? 0) % 60}分<br />
@@ -2413,8 +2438,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const ownCardBalance = useMemo(() => computeBalance(ownCardRows, ownCardPeriod), [ownCardRows, ownCardPeriod]);
 
   // 実績未報告の受理済み事前申請（勤務日を過ぎたもの）。終日（調整休・欠勤）は実績報告の概念がないため除外
+  // 🚨 requested（受理まち）も含める（2026-08-25）。受理を待たずに実績を報告できるようにしたため
   const unreportedRequests = useMemo(() =>
-    reports.filter(r => r.status === 'request_confirmed' && r.work_date < todayJstStr() && !isFullDayReport(r.application_types)),
+    reports.filter(r => ['requested', 'request_confirmed'].includes(r.status) && r.work_date < todayJstStr() && !isFullDayReport(r.application_types)),
   [reports]);
 
   // ---- 受理・差し戻し・取消（Edge Function overtime-approve に集約） ----
@@ -2568,7 +2594,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
       : ownHistoryAll.filter(r => r.pay_period_start === ownCardPeriod);
 
   // 本人履歴のフィルタ・並び替え（端末に記憶。次回開いたときも同じ条件になる）
-  interface OwnHistoryFilter { status: 'all' | 'pending' | 'done' | 'returned'; types: OvertimeType[]; sortAsc: boolean; showCancelled: boolean; }
+  interface OwnHistoryFilter { status: 'all' | 'action' | 'pending' | 'done' | 'returned'; types: OvertimeType[]; sortAsc: boolean; showCancelled: boolean; }
   const OWN_HISTORY_FILTER_KEY = 'overtime_own_history_filter_v1';
   const [ownHistoryFilter, setOwnHistoryFilter] = useState<OwnHistoryFilter>(() => {
     try {
@@ -2581,6 +2607,13 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     try { localStorage.setItem(OWN_HISTORY_FILTER_KEY, JSON.stringify(ownHistoryFilter)); } catch { /* ignore */ }
   }, [ownHistoryFilter]);
 
+  // 「あなたの対応待ち」（要報告＝申請済み・勤務日超過・終日以外／差し戻し）。一覧の上にピン留めし、絞り込みにも使う。
+  // 🚨 requested（受理まち）も含める（2026-08-25）。受理を待たずに実績を報告できるようにしたため
+  // 🚨 ownHistory の useMemo から呼ぶので、必ずその「前」に置くこと（後ろだと初期化前アクセスで落ちる）
+  const isOtActionRow = (r: OvertimeReport) =>
+    r.status === 'returned' ||
+    (['requested', 'request_confirmed'].includes(r.status) && r.work_date < otTodayStr && !isFullDayReport(r.application_types));
+
   const ownHistory = useMemo(() => {
     const statusGroup: Record<string, string[]> = {
       pending: ['requested', 'reported'],
@@ -2589,7 +2622,13 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     };
     const filtered = ownHistoryPeriod.filter(r => {
       if (!ownHistoryFilter.showCancelled && r.status === 'cancelled') return false;
-      if (ownHistoryFilter.status !== 'all' && !(statusGroup[ownHistoryFilter.status] ?? []).includes(r.status)) return false;
+      // 「要報告」は status だけでは決まらない（勤務日を過ぎたか・終日かも見る）ので別扱いにする。
+      // 受理済みは「受理済み」グループに入っているため、これが無いと報告が必要な分を探せない
+      if (ownHistoryFilter.status === 'action') {
+        if (!isOtActionRow(r)) return false;
+      } else if (ownHistoryFilter.status !== 'all' && !(statusGroup[ownHistoryFilter.status] ?? []).includes(r.status)) {
+        return false;
+      }
       if (ownHistoryFilter.types.length > 0 && !(r.application_types ?? []).some(t => ownHistoryFilter.types.includes(t as OvertimeType))) return false;
       return true;
     });
@@ -2598,10 +2637,6 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ownHistoryPeriod, ownHistoryFilter]);
 
-  // 「あなたの対応待ち」（要報告＝受理済み・勤務日超過・終日以外／差し戻し）を上にピン留め。残りは記入順のまま。
-  const isOtActionRow = (r: OvertimeReport) =>
-    r.status === 'returned' ||
-    (r.status === 'request_confirmed' && r.work_date < otTodayStr && !isFullDayReport(r.application_types));
   const ownActionRows = ownHistory.filter(isOtActionRow);
   const ownRestRows = ownHistory.filter(r => !isOtActionRow(r));
   // 受理済みの残業に紐づく最新の修正依頼（修正依頼中/対応済みバッジ用）
@@ -2734,6 +2769,22 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     <span style={badgeStyle(STATUS_INFO[r.status].color, STATUS_INFO[r.status].darkBg, isDark)}>{STATUS_INFO[r.status].label}</span>
                   </div>
                 </div>
+
+                {/* 事前受理をしたかどうか。実績の確認をするとき、
+                    「予定を上長が見ている」のか「予定も実績もこれから見る」のかで判断の重さが変わる */}
+                {r.status === 'reported' && !isFullDay && (
+                  r.request_confirmed_at ? (
+                    <p style={{ margin: '0 0 8px', fontSize: 12, color: subText }}>
+                      事前受理：{r.request_confirmed_at.slice(5, 10).replace('-', '/')} 済み
+                    </p>
+                  ) : r.created_at >= PRE_APPROVAL_TRACKED_FROM ? (
+                    <div style={{ background: isDark ? '#4a3a10' : '#fff8e1', border: '1px solid #f59e0b', borderRadius: 8, padding: '6px 10px', marginBottom: 8 }}>
+                      <p style={{ margin: 0, fontSize: 12, lineHeight: 1.6, color: isDark ? '#ffffff' : '#856404' }}>
+                        ⚠️ 事前申請の受理をしていません。予定と実績をまとめて確認してください。
+                      </p>
+                    </div>
+                  ) : null
+                )}
 
                 <div style={{ background: innerBg, borderRadius: 8, padding: '8px 10px', marginBottom: 8, fontSize: 12.5, lineHeight: 1.8, color: text }}>
                   {nsBands.length >= 2 ? (
@@ -3090,7 +3141,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                   {unreportedRequests.length > 0 && (
                     <div style={{ background: isDark ? '#4a3a10' : '#fff8e1', border: '1px solid #f59e0b', borderRadius: 10, padding: '10px 12px', marginBottom: 12 }}>
                       <p style={{ margin: 0, fontSize: 12.5, fontWeight: 'bold', color: isDark ? '#ffffff' : '#856404' }}>
-                        🔔 実績が未報告の事前申請が{unreportedRequests.length}件あります（{unreportedRequests.map(r => r.work_date.slice(5).replace('-', '/')).join('・')}）
+                        {/* 日付は3件までに省略。件数が増えると折り返して読みにくくなるため */}
+                        🔔 実績が未報告の事前申請が{unreportedRequests.length}件あります（{unreportedRequests.slice(0, 3).map(r => r.work_date.slice(5).replace('-', '/')).join('・')}{unreportedRequests.length > 3 ? ` 他${unreportedRequests.length - 3}件` : ''}）
                       </p>
                     </div>
                   )}
@@ -3107,8 +3159,15 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     const canToggleCal = canChooseCalendar && !isAuto
                       && canOfferCalendarChoice(r.application_types, r.is_post_hoc);
                     const shownOnCal = willShowOnCalendar(r.application_types, r.is_post_hoc, r.show_on_calendar);
-                    const isOverdue = r.status === 'request_confirmed' && !isFullDay && r.work_date < otTodayStr;
-                    const isFuturePlanned = r.status === 'request_confirmed' && !isFullDay && r.work_date >= otTodayStr;
+                    // 実績を報告できる状態。
+                    // 🚨 requested（上長がまだ受理していない分）も含める（2026-08-25）。
+                    //    以前は受理済みだけが対象で、上長が受理を忘れると本人は何もできず、
+                    //    ⚠️要報告バッジもリマインドも出ないまま放置されていた。
+                    const isReportable = ['requested', 'request_confirmed'].includes(r.status) && !isFullDay;
+                    const isOverdue = isReportable && r.work_date < otTodayStr;
+                    const isFuturePlanned = isReportable && r.work_date >= otTodayStr;
+                    // 未受理のまま勤務日を過ぎた＝「受理を待たずに報告してよい」と案内する対象
+                    const isOverdueUnapproved = isOverdue && r.status === 'requested';
                     const canReport = isOverdue; // 実績報告ボタンは勤務日を過ぎた分だけ（未来は勤務後に案内）
                     const canResubmit = r.status === 'returned';
                     // 取消ルール：reported(実績報告済＝実態あり)は本人不可（上長が差し戻す/管理者）。
@@ -3131,10 +3190,11 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                           <div style={{ display: 'flex', gap: 4 }}>
                             {isAuto && <span style={badgeStyle(AUTO_BADGE.color, AUTO_BADGE.darkBg, isDark)}>自動計上</span>}
                             {!isAuto && r.is_post_hoc && <span style={badgeStyle(POSTHOC_BADGE.color, POSTHOC_BADGE.darkBg, isDark)}>事後報告</span>}
-                            {!isAuto && (isOverdue
-                              ? <span style={badgeStyle('#e65100', '#4a2c0a', isDark)}>⚠️ 要報告</span>
-                              : <span style={badgeStyle(STATUS_INFO[r.status].color, STATUS_INFO[r.status].darkBg, isDark)}>{STATUS_INFO[r.status].label}</span>
-                            )}
+                            {/* 🚨 ステータス（どこまで進んだか）と ⚠️要報告（あなたが何をするか）は別の軸。
+                                以前は要報告のときステータスを差し替えていたが、それだと
+                                「受理まち」と「受理済み」の区別が画面から消えるため必ず両方出す */}
+                            {!isAuto && <span style={badgeStyle(STATUS_INFO[r.status].color, STATUS_INFO[r.status].darkBg, isDark)}>{STATUS_INFO[r.status].label}</span>}
+                            {!isAuto && isOverdue && <span style={badgeStyle('#e65100', '#4a2c0a', isDark)}>⚠️ 要報告</span>}
                           </div>
                         </div>
 
@@ -3184,6 +3244,12 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                         {isFuturePlanned && (
                           <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>🗓 勤務後に「実績を報告する」ボタンが出ます</p>
                         )}
+                        {/* 未受理のまま勤務日を過ぎた分。「なぜ受理されていないのに報告するのか」が分からないと手が止まるため添える */}
+                        {isOverdueUnapproved && (
+                          <p style={{ margin: '8px 0 0', fontSize: 12, color: subText, lineHeight: 1.6 }}>
+                            ⏳ {r.reviewer?.name ? `${r.reviewer.name}さん` : '申請先'}の受理がまだですが、先に実績を報告できます（受理と確認はまとめて行われます）
+                          </p>
+                        )}
                         {isReportedLock && (
                           <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>🔒 実績報告済みのため取消できません。申請先の担当者に取り下げ（差し戻し）を依頼してください</p>
                         )}
@@ -3200,7 +3266,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                   実績を報告する
                                 </button>
                                 <p style={{ margin: '6px 0 0', fontSize: 11.5, color: subText, textAlign: 'center', lineHeight: 1.6 }}>
-                                  残業が無かった日も、こちらから「残業なし」で報告できます
+                                  {isOverdueUnapproved && '受理を待たずに報告して大丈夫です。'}残業が無かった日も、こちらから「残業なし」で報告できます
                                 </p>
                               </>
                             )}
@@ -3270,6 +3336,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
                         {([
                           { key: 'all', label: 'すべて' },
+                          // 「要報告」＝あなたが実績を報告する番のもの。
+                          // 受理済みは「受理済み」に入ってしまい探せないので専用のボタンを置く
+                          { key: 'action', label: '要報告' },
                           { key: 'pending', label: '確認待ち' },
                           { key: 'done', label: '受理済み' },
                           { key: 'returned', label: '差し戻し' },

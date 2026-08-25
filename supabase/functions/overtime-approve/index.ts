@@ -98,11 +98,21 @@ serve(async (req) => {
       if (!['requested', 'reported'].includes(r.status)) return json({ success: false, error: 'この状態では受理できません' }, 409)
       const isAdvance = r.status === 'requested'
       // 終日は実績報告が無いため、事前申請の受理でも confirmed 直行
+      // 事前受理は日時も残す。残さないと status が reported に進んだ時点で
+      // 「事前に受理したのか、受理を飛ばして報告されたのか」が分からなくなる（2026-08-25）
       const next = (isAdvance && !isFullDay)
-        ? { status: 'request_confirmed' }
+        ? { status: 'request_confirmed', request_confirmed_at: new Date().toISOString() }
         : { status: 'confirmed', confirmed_by: caller.id, confirmed_at: new Date().toISOString() }
-      const { error } = await db.from('overtime_reports').update(next).eq('id', r.id).eq('status', r.status)
+      // 🚨 楽観ロックは .eq('status') だけでは足りない。update は0件でもエラーにならないので、
+      //    件数を見ないと「実際は何も更新していないのに受理の通知だけ飛ぶ」ことが起きる。
+      //    未受理のまま本人が実績報告できるようにした（2026-08-25）ことで、
+      //    上長の受理と本人の報告が同時に起きうるようになったため必ず件数を確認する
+      const { data: updated, error } = await db.from('overtime_reports')
+        .update(next).eq('id', r.id).eq('status', r.status).select('id')
       if (error) return json({ success: false, error: '更新に失敗しました: ' + error.message }, 500)
+      if (!updated || updated.length === 0) {
+        return json({ success: false, error: 'この申請の状態が変わっています。画面を更新してからやり直してください' }, 409)
+      }
       notification = {
         user_id: r.applicant_id,
         message: isFullDay ? `${fullDayLabel}の申請が受理されました` : (isAdvance ? '事前申請が受理されました' : '残業・時間調整の実績が確認されました'),
@@ -115,10 +125,14 @@ serve(async (req) => {
     } else if (action === 'return') {
       if (!(isAdmin || caller.id === r.reviewer_id)) return json({ success: false, error: '権限がありません' }, 403)
       if (!['requested', 'reported'].includes(r.status)) return json({ success: false, error: 'この状態では差し戻せません' }, 409)
-      const { error } = await db.from('overtime_reports')
+      // 受理と同じ理由で、差し戻しも件数を見る（0件なら差し戻せていないので通知を出さない）
+      const { data: updated, error } = await db.from('overtime_reports')
         .update({ status: 'returned', return_comment: String(comment).trim() })
-        .eq('id', r.id).eq('status', r.status)
+        .eq('id', r.id).eq('status', r.status).select('id')
       if (error) return json({ success: false, error: '更新に失敗しました: ' + error.message }, 500)
+      if (!updated || updated.length === 0) {
+        return json({ success: false, error: 'この申請の状態が変わっています。画面を更新してからやり直してください' }, 409)
+      }
       notification = {
         user_id: r.applicant_id,
         message: '残業・時間調整の申請が差し戻されました',

@@ -153,6 +153,9 @@ interface OvertimeEvent {
   location: string | null; // 勤務校
   start_min: number | null;
   end_min: number | null;
+  // まだ上長が受理していない（申請中）。受理されると false になる。
+  // 🚨 受理されないと実績報告できず放置される問題への対応で、申請の段階から載せるようにした（2026-08-25）
+  isPending: boolean;
 }
 
 /** 残業の表示ラベル（種別は最大2つまで。gcal-sync のタイトルと同じ考え方） */
@@ -1706,6 +1709,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
       application_types: string[] | null; is_post_hoc: boolean;
       show_on_calendar: boolean | null; location: string | null;
       start_min: number | null; end_min: number | null;
+      status: string;
     };
 
     const allUserIds = [...new Set((data as Row[]).map(r => r.applicant_id))];
@@ -1720,6 +1724,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
       rows.push({
         id: r.id, user_id: r.applicant_id, name: r.name, date: r.work_date,
         types, location: r.location, start_min: r.start_min, end_min: r.end_min,
+        isPending: r.status === 'requested',
       });
     }
     setOvertimes(rows);
@@ -2152,7 +2157,10 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
                       <span style={{ fontSize: 11, color: subColor, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {ot.location ?? '—'}
                       </span>
-                      <span style={{ fontSize: 11, textAlign: 'right', color: '#1e8449', fontWeight: 'bold' }}>受理</span>
+                      {/* 申請中はグレー・受理済みは緑。凡例が既に多いので色を増やさず、文字と濃さで区別する */}
+                      <span style={{ fontSize: 11, textAlign: 'right', color: ot.isPending ? subColor : '#1e8449', fontWeight: 'bold' }}>
+                        {ot.isPending ? '申請中' : '受理'}
+                      </span>
                     </div>
                   </div>
                 );

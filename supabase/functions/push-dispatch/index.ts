@@ -103,6 +103,11 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string; bell?:
   //    「実績を報告してください」の知らせなのに、報告する場所（履歴タブ）ではなく
   //    新規申請の入力画面に着地する。ベル側（App.tsx）は tab=history で正しかった。
   "overtime:unreported":         { app: "残業", word: "新着", url: "/overtime?tab=history" },
+  // 残業の受理まちリマインド（確認者へ日次）。
+  // 「未承認」は実機テスト済みの安全語。着地は確認者ビュー（申請の中身がそこに全部あるので bell は付けない）
+  "overtime:pending_review":     { app: "残業", word: "未承認", url: "/overtime?view=confirm" },
+  // 同じ受理まちでも「勤務日より前に1回だけ」出す分。掃除の対象を分けるためキーを分けている
+  "overtime:pending_review_advance": { app: "残業", word: "未承認", url: "/overtime?view=confirm" },
   // 残業がしきい値を超えたお知らせ。他人の残業申請が回ってきたのと区別できるよう
   // アプリ名を「残業」と分けている。
   // 「勤務時間」は 2026-08-04 に実機確認済み（警告表示に化けない）

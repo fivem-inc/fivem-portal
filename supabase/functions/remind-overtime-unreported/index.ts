@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // 残業「実績未報告」リマインド（日次）。
-// pg_cron から1日1回叩かれ、各人の「受理済み(request_confirmed)・勤務日超過・終日以外」の件数を集計して、
+// pg_cron から1日1回叩かれ、各人の「申請済み(requested/request_confirmed)・勤務日超過・終日以外」の件数を集計して、
 // 本人へベル通知を1件だけ作る（＋push はパイプライン、メールは設定に従う）。
 // pile-up防止：毎回まず未処理(dismissed=false)の当リマインドを全削除し、現在未報告の人に付け直す。
 // 文言は board 誤判定語（リマインド／お知らせ／メッセージが届き）を含めない（App.tsx が本文で board 判定するため）。
@@ -19,11 +19,13 @@ serve(async () => {
   // JST 今日（announcement-remind と同方式）
   const todayJst = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-  // 受理済み(request_confirmed)を取得し、勤務日超過＆終日以外＝実績未報告 を人別に集計
+  // 申請済み(requested/request_confirmed)を取得し、勤務日超過＆終日以外＝実績未報告 を人別に集計。
+  // 🚨 requested（上長がまだ受理していない分）も対象にする（2026-08-25）。
+  //    受理されないと実績報告できない作りだったため、上長が受理を忘れると本人にも何も出ず放置されていた。
   const { data: rows } = await supabase
     .from("overtime_reports")
     .select("applicant_id, work_date, application_types")
-    .eq("status", "request_confirmed");
+    .in("status", ["requested", "request_confirmed"]);
 
   const byUser = new Map<string, string[]>();
   for (const r of ((rows ?? []) as { applicant_id: string; work_date: string; application_types: string[] | null }[])) {

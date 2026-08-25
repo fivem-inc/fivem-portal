@@ -302,9 +302,17 @@ serve(async (req) => {
         .eq('id', source_id)
         .maybeSingle()
 
-      // 同期対象になる条件：手動行・受理後（事前確定/実績確認待ち/実績確定）・同期可の種別が1つ以上。
+      // 同期対象になる条件：手動行・申請済み（申請中/事前確定/実績確認待ち/実績確定）・同期可の種別が1つ以上。
       // 事後報告は原則出さないが、終日種別（調整休・振替・欠勤）だけは事後でも出す。
       // ※reported を含めるのは、事前受理でカレンダーに出た予定が実績報告の瞬間に消えるのを防ぐため
+      // ※requested（未受理）を含めるのは、上長の受理が遅れても予定が共有されるようにするため（2026-08-25）。
+      //   未受理と分かるようタイトル先頭に【申請中】を付け、色もグレーにする。
+      //   差し戻し・取消は shouldExist=false になり自動で消える。
+      // 🚨 終日（欠勤・調整休・振替休日）も申請中から出す（ユーザー判断・2026-08-25）。
+      //   レビューでは「却下されたらシフトに穴が空く」ため除外を勧められたが、
+      //   実務では欠勤の申請が却下されることはほぼ無く、
+      //   逆に受理を忘れられて「休むのに誰も知らない」ほうが事故る、という判断。
+      //   除外したくなったら shouldExist の requested 許可に !otIsFullDay を足す
       const syncTypes: string[] = (report?.application_types ?? [])
         .filter((t: string) => OVERTIME_TYPES[t]?.sync)
         .sort((a: string, b: string) => OVERTIME_TYPES[a].priority - OVERTIME_TYPES[b].priority)
@@ -318,7 +326,7 @@ serve(async (req) => {
 
       const shouldExist = !!report
         && report.entry_type === 'manual'
-        && ['request_confirmed', 'reported', 'confirmed'].includes(report.status)
+        && ['requested', 'request_confirmed', 'reported', 'confirmed'].includes(report.status)
         && (!report.is_post_hoc || otIsFullDay)
         && syncTypes.length > 0
         && otShare
@@ -356,10 +364,16 @@ serve(async (req) => {
         // 始まりの時刻が大事なもの（早出・遅出・遅刻）は「13:00〜」
         else if (primary === 'early_start' || primary === 'late_start_adj' || primary === 'tardiness') timeStr = `${otMinToTime(firstStart)}〜`
       }
-      let summary = `${otName}｜${labels}`
+      // 🚨 未受理は先頭に【申請中】を付ける。受理されると消える（受理時に再同期されるため）。
+      //    先頭に置くのは、Googleカレンダーの月表示は幅が狭く後半が「…」で切れるため。
+      //    末尾や種別の後ろに付けると、肝心の「申請中」が見えない
+      let summary = `${report.status === 'requested' ? '【申請中】' : ''}${otName}｜${labels}`
       if (timeStr && primary !== 'location_change') summary += `｜${timeStr}`
       if (report.location) summary += `［${report.location}］`
-      const otColorId = OVERTIME_TYPES[primary].colorId
+      // 🚨 申請中はグレー（colorId 8 = Graphite）で統一する。
+      //    タイトルの【申請中】だけだと、他の予定に紛れて見落とされるため色でも区別する。
+      //    受理されると本来の色（残業=濃青9 / 休日出勤=濃緑10 など）に戻る（受理時に再同期される）
+      const otColorId = report.status === 'requested' ? '8' : OVERTIME_TYPES[primary].colorId
 
       // 日付が変わった場合の旧イベントを掃除しつつ、work_date に1件だけ立てる（色反映のため削除→再作成）
       for (const row of existing ?? []) {
