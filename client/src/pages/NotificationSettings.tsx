@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { requestPushPermission, unsubscribePush, getPushPermissionStatus } from '../utils/pushNotification';
+import PushQuietHoursSection from '../components/PushQuietHoursSection';
 
 export default function NotificationSettings() {
   const navigate = useNavigate();
@@ -83,6 +84,9 @@ export default function NotificationSettings() {
             </div>
           </div>
         )}
+
+        {/* プッシュ通知の受信時間（許可済みの人にだけ表示される） */}
+        <PushQuietHoursSection />
 
         <button
           onClick={() => navigate(-1)}

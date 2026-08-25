@@ -25,10 +25,17 @@ export function formatLeaveDateSummary(leaveDates: string | null | undefined, st
   return `${dateStr}${typePart}（${sorted.length}日）`;
 }
 
-export async function insertNotification(userId: string, message: string, subMessage?: string, sourceType?: string, referenceId?: string, eventKey?: string) {
+// pushUrgent: 連絡板の「当日の連絡・緊急」チェック用。true にすると、
+// 受け取る人の「受信時間帯・休暇日」設定を無視してプッシュがすぐ届く
+// （notifications.push_urgent → トリガーが push_queue.urgent へコピー → push-dispatch が判定を飛ばす）
+export async function insertNotification(userId: string, message: string, subMessage?: string, sourceType?: string, referenceId?: string, eventKey?: string, pushUrgent?: boolean) {
   try {
     // supabase-js は失敗を throw せず error で返すため、error を見ないとRLS拒否等を握りつぶしてしまう
-    const { error } = await supabase.from('notifications').insert({ user_id: userId, message, sub_message: subMessage ?? null, source_type: sourceType ?? null, reference_id: referenceId ?? null, event_key: eventKey ?? null });
+    // push_urgent は true のときだけ列に含める（false は列既定値に任せる。
+    // 万一DBマイグレーション前にクライアントが先に配られても、通常通知が壊れないように）
+    const row: Record<string, unknown> = { user_id: userId, message, sub_message: subMessage ?? null, source_type: sourceType ?? null, reference_id: referenceId ?? null, event_key: eventKey ?? null };
+    if (pushUrgent) row.push_urgent = true;
+    const { error } = await supabase.from('notifications').insert(row);
     if (error) console.error('通知挿入エラー:', error.message);
   } catch (e) {
     console.error('通知挿入エラー:', e);

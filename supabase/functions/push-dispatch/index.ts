@@ -24,7 +24,11 @@ function addParams(url: string, params: Record<string, string>): string {
 //   付けるのは「知らせ・結果」＝中身が通知の文章にしかないもの（受理されました等）。
 //   付けないのは ①要対応（着地画面に申請の中身が全部ある）②ホームに専用バナーがあるもの
 //   ③連絡板（開けば未読が見える）④安否・緊急（災害時にベルを挟まない）。
-const EVENT_MAP: Record<string, { app: string; word: string; url: string; bell?: true }> = {
+// urgent: true を付けると、受信時間帯・休暇日のミュート判定を無視して常に送る。
+//   付けるのは安否・緊急系のみ（災害時に「夜だから」で止めてはいけないもの）。
+//   ⚠️ event_key が safety: で始まるものはコード側でも常に urgent 扱いにしている
+//   （将来 safety 系のキーを足したとき、この印の付け忘れで夜間に止まる事故を防ぐ）
+const EVENT_MAP: Record<string, { app: string; word: string; url: string; bell?: true; urgent?: true }> = {
   // 休暇申請（承認者の要対応）
   "leave:new_request":       { app: "休暇申請", word: "未承認", url: "/leave-approvals" },
   "leave:leader_approved":   { app: "休暇申請", word: "未承認", url: "/leave-approvals" },
@@ -41,7 +45,7 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string; bell?:
   // ⚠️ 化けるようになったら app を "安否"（検証済み）に戻すこと。ここ1行で切り替わる。
   // ⚠️ 本文に名前や文章を入れない。文章形はNG確定で、画面ロック中に他人へ見えるため。
   //    誰が助けを求めているかはタップ先の集計画面で確認する。
-  "safety:urgent":           { app: "ヘルプ", word: "新着", url: "/safety?open=summary" },
+  "safety:urgent":           { app: "ヘルプ", word: "新着", url: "/safety?open=summary", urgent: true },
   // 勤務変更申請
   // ⚠️ タブ指定を省くと既定タブ（報告の入力）に着地して「何を見ればいいか分からない」になる
   "shift_report:new_request": { app: "勤務変更報告", word: "未承認", url: "/shift-report?view=confirm" },
@@ -179,15 +183,26 @@ serve(async (req) => {
     // 送信待ちを取得（古い順・上限500）
     const { data: pending, error: qErr } = await supabase
       .from("push_queue")
-      .select("id, user_id, event_key, retry_count, notification_ids")
+      .select("id, user_id, event_key, retry_count, notification_ids, urgent")
       .eq("status", "pending")
       .order("created_at", { ascending: true })
       .limit(500);
     if (qErr) throw qErr;
-    if (!pending || pending.length === 0) {
-      return new Response(JSON.stringify({ sent: 0, skipped: 0, failed: 0, message: "送信待ちなし" }), {
-        headers: { "Content-Type": "application/json" },
-      });
+    // ⚠️ 送信待ち0件でもここで early return しない。
+    //    受信時間外に保留した直送プッシュ（push_deferred）の配達が後段にあるため
+    const pendingRows = pending ?? [];
+
+    // 受信時間帯・休暇日のミュート判定（本人設定 push_preferences）。
+    // ミュート中の人の行は pending のまま「触らずに残す」→ 受信時間になった次の実行で
+    // 自然に集約されて届く（statusもretry_countも変えない）。
+    // 🚨 fail-open: RPCが失敗したら「誰もミュートしない」＝全部送る
+    let mutedSet = new Set<string>();
+    if (pendingRows.length > 0) {
+      try {
+        const userIds = [...new Set(pendingRows.map((r) => r.user_id))];
+        const { data: muted, error: mutedErr } = await supabase.rpc("push_muted_user_ids", { p_user_ids: userIds });
+        if (!mutedErr && Array.isArray(muted)) mutedSet = new Set(muted as string[]);
+      } catch { /* fail-open */ }
     }
 
     // イベント別ON/OFF設定・追加送信先役職（notification_settingsのchannel='push'）を取得
@@ -209,16 +224,26 @@ serve(async (req) => {
     type Group = { userId: string; app: string; word: string; url: string; ids: string[]; tagKey: string; bell?: true; nids: string[] };
     const groups = new Map<string, Group>();
     const skippedIds: string[] = [];
+    let held = 0; // 受信時間外で保留した件数（ログ用）
     // 追加送信（CC）用：base event_key → その本来の宛先user_id集合（二重送信を防ぐため）
+    // 🚨 「この実行で実際に送る行」だけから作る。保留した行まで含めると、
+    //    本来の宛先がミュート中のあいだCC役職に同じプッシュが1分毎に飛び続ける
     const primaryUsersByEvent = new Map<string, Set<string>>();
 
-    for (const row of pending) {
+    for (const row of pendingRows) {
       const map = EVENT_MAP[row.event_key];
       const base = baseEventKey(row.event_key);
       // ホワイトリスト外、または管理画面でpush OFFに設定されたイベントはスキップ
       // （設定行が無いイベントはON扱い）
       if (!map || pushEnabled.get(base) === false) {
         skippedIds.push(row.id);
+        continue;
+      }
+      // ミュート中の人の行は保留（pendingのまま次回に持ち越す）。
+      // 緊急（行のurgent＝連絡板の「当日の連絡・緊急」／EVENT_MAPのurgent／safety系）は保留しない
+      const isUrgent = row.urgent === true || map.urgent === true || row.event_key.startsWith("safety:");
+      if (!isUrgent && mutedSet.has(row.user_id)) {
+        held++;
         continue;
       }
       const gKey = `${row.user_id}|${map.app}|${map.word}|${map.url}`;
@@ -259,6 +284,9 @@ serve(async (req) => {
             ? { nids: [...new Set(g.nids)].slice(-20).join(","), bell: "1" }
             : {}),
           tag: g.tagKey,
+          // キュー側でミュート判定・保留済みなので、send-push側の二重判定を止める
+          // （付け忘れると保留解除後の配達がまた push_deferred に落ちて無限に届かない）
+          skip_quiet_check: true,
         }),
       });
       const result = await res.json().catch(() => null);
@@ -275,7 +303,7 @@ serve(async (req) => {
         const giveUpIds: string[] = [];
         const retryRows: { id: string; retryCount: number }[] = [];
         for (const id of g.ids) {
-          const rc = pending.find(p => p.id === id)?.retry_count ?? 0;
+          const rc = pendingRows.find(p => p.id === id)?.retry_count ?? 0;
           if (rc >= 2) giveUpIds.push(id);
           else retryRows.push({ id, retryCount: rc + 1 });
         }
@@ -319,6 +347,10 @@ serve(async (req) => {
       if (ccPushIds.length === 0) continue;
 
       const count = primaryUsers.size;
+      // ⚠️ CCには skip_quiet_check を付けない（意図的）。
+      //    CC宛先はベル通知を持たないため、ミュート中の人の分を捨てると
+      //    どの経路でもその連絡を知り得なくなる。send-push側の判定に任せて
+      //    push_deferred に保留し、受信時間になったら届ける
       const res = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
@@ -333,14 +365,82 @@ serve(async (req) => {
       if (res.ok) ccSent += ccPushIds.length;
     }
 
+    // ── 保留分（push_deferred）の配達 ──────────────────────────
+    // 直送経路（send-pushを直接呼ぶ関数・CC送信）でミュート中だった人の分。
+    // 受信時間になった人の分だけ配達する。
+    let deferredSent = 0;
+    {
+      const { data: defRows } = await supabase
+        .from("push_deferred")
+        .select("id, user_id, payload")
+        .eq("status", "pending")
+        .order("created_at", { ascending: true })
+        .limit(500);
+      const deferred = (defRows ?? []) as { id: string; user_id: string; payload: { title: string; body: string; url: string; tag: string } }[];
+      if (deferred.length > 0) {
+        // まだミュート中の人の分は残す
+        let stillMuted = new Set<string>();
+        try {
+          const defUserIds = [...new Set(deferred.map((d) => d.user_id))];
+          const { data: muted, error: mutedErr } = await supabase.rpc("push_muted_user_ids", { p_user_ids: defUserIds });
+          if (!mutedErr && Array.isArray(muted)) stillMuted = new Set(muted as string[]);
+        } catch { /* fail-open（＝配達する） */ }
+
+        // 同一 user×tag は「最後の1件だけ」送る。Webプッシュは同じtagで端末上書きされる
+        // ため全部送っても最後の1件しか残らない（古い方は sent 扱いで片付ける）。
+        // ⚠️ 古い方を pending に残すと毎分再判定され続けるので必ず片付けること
+        const latestByUserTag = new Map<string, { id: string; user_id: string; payload: { title: string; body: string; url: string; tag: string } }>();
+        const supersededIds: string[] = [];
+        for (const d of deferred) {
+          if (stillMuted.has(d.user_id)) continue;
+          const key = `${d.user_id}|${d.payload?.tag ?? ""}`;
+          const prev = latestByUserTag.get(key);
+          if (prev) supersededIds.push(prev.id); // 古い順に走査しているので、前の行は上書きされる側
+          latestByUserTag.set(key, d);
+        }
+        if (supersededIds.length > 0) {
+          await supabase.from("push_deferred")
+            .update({ status: "sent", sent_at: new Date().toISOString() })
+            .in("id", supersededIds);
+        }
+        for (const d of latestByUserTag.values()) {
+          const res = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+            body: JSON.stringify({
+              user_ids: [d.user_id],
+              title: d.payload.title,
+              body: d.payload.body,
+              url: d.payload.url,
+              tag: d.payload.tag,
+              skip_quiet_check: true, // 再判定して push_deferred に戻る無限ループを防ぐ
+            }),
+          });
+          const result = await res.json().catch(() => null);
+          if (res.ok && result && result.failed === 0) {
+            await supabase.from("push_deferred")
+              .update({ status: "sent", sent_at: new Date().toISOString() })
+              .eq("id", d.id);
+            deferredSent++;
+          }
+          // 失敗時は pending のまま次回リトライ（7日超で掃除される）
+        }
+      }
+    }
+
     // 7日より古い処理済み行を掃除
     await supabase.from("push_queue")
       .delete()
       .in("status", ["sent", "skipped"])
       .lt("created_at", new Date(Date.now() - 7 * 86400000).toISOString());
+    // 保留置き場も掃除。pending も7日で消す（ずっと受信時間にならない設定のままの安全弁。
+    // ベル・メールには残っているので情報は失われない）
+    await supabase.from("push_deferred")
+      .delete()
+      .lt("created_at", new Date(Date.now() - 7 * 86400000).toISOString());
 
-    console.log(`[push-dispatch] sent=${sent} cc=${ccSent} skipped=${skippedIds.length} failed=${failed}`);
-    return new Response(JSON.stringify({ sent, cc: ccSent, skipped: skippedIds.length, failed }), {
+    console.log(`[push-dispatch] sent=${sent} cc=${ccSent} held=${held} deferredSent=${deferredSent} skipped=${skippedIds.length} failed=${failed}`);
+    return new Response(JSON.stringify({ sent, cc: ccSent, held, deferredSent, skipped: skippedIds.length, failed }), {
       headers: { "Content-Type": "application/json" },
     });
   } catch (err) {

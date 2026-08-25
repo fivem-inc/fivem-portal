@@ -269,6 +269,10 @@ const BoardPage: React.FC = () => {
   const [composeDeadlineType,  setComposeDeadlineType]  = useState(cd?.deadlineType ?? '');
   const [composeDeadline,      setComposeDeadline]      = useState(cd?.deadline ?? '');
   const [composeScheduledAt,   setComposeScheduledAt]   = useState(cd?.scheduledAt ?? '');
+  // 「⚡当日の連絡・緊急」：受信時間を設定している人にもすぐプッシュを届ける印。
+  // 🚨 下書き（draftStorage）にあえて含めない＝毎回意識して押すもの。誤爆防止のため
+  //    送信成功・画面リセットで必ず false に戻す
+  const [composeUrgent,        setComposeUrgent]        = useState(false);
   const [composeOptions,        setComposeOptions]        = useState(true);
   const [_composeDraftId,       setComposeDraftId]        = useState<string | null>(null);
   const [composeQuery,          setComposeQuery]          = useState('');
@@ -287,6 +291,9 @@ const BoardPage: React.FC = () => {
   const [newDeadline,          setNewDeadline]          = useState('');
   const [newDeadlineType,      setNewDeadlineType]      = useState('');
   const [newScheduledAt,       setNewScheduledAt]       = useState('');
+  // 「⚡当日の連絡・緊急」（チャンネル投稿用）。🚨 送信後・チャンネル切替で必ず false に戻す
+  // （前の緊急連絡のチェックが残ったまま雑談を緊急送信する誤爆を防ぐ）
+  const [newUrgent,            setNewUrgent]            = useState(false);
   const [showOptionsExpanded,  setShowOptionsExpanded]  = useState(false);
   const [confirmations,        setConfirmations]        = useState<Record<string, {user_id: string; comment: string | null; confirmed_at?: string}[]>>({});
   const [myConfirmTimes,       setMyConfirmTimes]       = useState<Record<string, string>>({});
@@ -320,6 +327,7 @@ const BoardPage: React.FC = () => {
   const [dmError,          setDmError]          = useState('');
   const [dmCreating,       setDmCreating]       = useState(false);
   const [broadcastMessage, setBroadcastMessage] = useState('');
+  const [broadcastUrgent,  setBroadcastUrgent]  = useState(false); // 「⚡当日の連絡・緊急」（DM一斉送信用）
   const [loadingData,      setLoadingData]      = useState(true);
   const [readDetailMsgId,  setReadDetailMsgId]  = useState<string | null>(null);
   const [readDetailUsers,  setReadDetailUsers]  = useState<{ user_id: string; read_at: string }[]>([]);
@@ -852,6 +860,7 @@ const BoardPage: React.FC = () => {
     setNewBody('');
     setShowOptionsExpanded(false);
     setNewDeadline(''); setNewDeadlineType(''); setNewScheduledAt(''); setNewTitle(''); setNewAnswerPrompt(''); setNewAnswerLocation(''); setNewAnswerLink('');
+    setNewUrgent(false); // 🚨 チャンネル切替で緊急チェックを必ず外す（誤爆防止）
     setShowChannelList(false);
 
     await supabase.from('board_channel_last_seen').upsert(
@@ -964,7 +973,8 @@ const BoardPage: React.FC = () => {
             : `${senderName}からメッセージが届きました`;
           await Promise.all(recipientIds.map(uid =>
             insertNotification(uid, bellMessage, preview, undefined, data.id,
-              selectedChannel.type === 'group' ? 'board:group_message' : 'board:dm_message')
+              selectedChannel.type === 'group' ? 'board:group_message' : 'board:dm_message',
+              newUrgent) // 「当日の連絡・緊急」なら受信時間の設定を無視してすぐプッシュ
           ));
         }
       }
@@ -984,7 +994,7 @@ const BoardPage: React.FC = () => {
         }
       }
     }
-    if (parentId) setReplyBody(''); else { setNewBody(''); setNewDeadline(''); setNewDeadlineType(''); setNewScheduledAt(''); setNewTitle(''); setNewAnswerPrompt(''); setNewAnswerLocation(''); setNewAnswerLink(''); setShowOptionsExpanded(false); }
+    if (parentId) setReplyBody(''); else { setNewBody(''); setNewDeadline(''); setNewDeadlineType(''); setNewScheduledAt(''); setNewTitle(''); setNewAnswerPrompt(''); setNewAnswerLocation(''); setNewAnswerLink(''); setNewUrgent(false); setShowOptionsExpanded(false); }
     setSending(false);
   };
 
@@ -1105,7 +1115,7 @@ const BoardPage: React.FC = () => {
       }
       if (dmCh) {
         const { data: dmMsg } = await supabase.from('board_messages').insert({ channel_id: dmCh.id, user_id: user.id, body: broadcastMessage.trim() }).select('id').single();
-        await insertNotification(targetId, `${profileName || '誰か'}からメッセージが届きました`, broadcastMessage.trim().slice(0, 40), undefined, dmMsg?.id, 'board:dm_message');
+        await insertNotification(targetId, `${profileName || '誰か'}からメッセージが届きました`, broadcastMessage.trim().slice(0, 40), undefined, dmMsg?.id, 'board:dm_message', broadcastUrgent);
       }
     }
 
@@ -1128,6 +1138,7 @@ const BoardPage: React.FC = () => {
     setShowDMSearch(false);
     setDmSelectedIds([]);
     setBroadcastMessage('');
+    setBroadcastUrgent(false); // 🚨 緊急チェックは必ずリセット（誤爆防止）
     setDmQuery('');
   };
 
@@ -1156,6 +1167,7 @@ const BoardPage: React.FC = () => {
     setComposeDeadlineType(''); setComposeDeadline(''); setComposeScheduledAt('');
     setComposeOptions(true); setComposeDraftId(null); setComposeQuery('');
     setComposeAnswerPrompt(''); setComposeAnswerLocation(''); setComposeAnswerLink('');
+    setComposeUrgent(false); // 🚨 緊急チェックは必ずリセット（下書きにも含めない）
     clearDraft(DRAFT_KEYS.boardCompose); // 送信成功・クリアで下書きを消す
   };
 
@@ -1202,7 +1214,8 @@ const BoardPage: React.FC = () => {
         const preview = (composeSubject.trim() || composeBody.trim()).slice(0, 40);
         const recipientIds = composeRecipientIds.filter(uid => uid !== user.id);
         await Promise.all(recipientIds.map(uid =>
-          insertNotification(uid, `${senderName}からお知らせが届きました`, preview, undefined, data.id, 'board:notice')
+          insertNotification(uid, `${senderName}からお知らせが届きました`, preview, undefined, data.id, 'board:notice',
+            composeUrgent) // 「当日の連絡・緊急」なら受信時間の設定を無視してすぐプッシュ
         ));
         dispatchBoardEmail('board:notice', {
           '送信者名': senderName,
@@ -1975,13 +1988,23 @@ const BoardPage: React.FC = () => {
               style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, marginTop: 8, boxSizing: 'border-box', resize: 'vertical' }}
             />
           )}
+          {/* ⚡当日の連絡・緊急（一斉送信のみ。1人選択の「DMを開始」はメッセージを送らないため不要） */}
+          {isMulti && (
+            <div style={{ marginTop: 8 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12, color: textColor }}>
+                <input type="checkbox" checked={broadcastUrgent} onChange={e => setBroadcastUrgent(e.target.checked)} style={{ accentColor: '#d97706' }} />
+                <span style={{ fontWeight: 600 }}>⚡ 当日の連絡・緊急</span>
+              </label>
+              <div style={{ fontSize: 11, color: subColor, margin: '2px 0 0 20px' }}>通知の受信時間を設定している人にも、すぐに届きます</div>
+            </div>
+          )}
           {dmError && (
             <div style={{ marginTop: 8, padding: '8px 10px', background: isDark ? '#2d1a1a' : '#fff5f5', border: `1px solid ${isDark ? '#7f1d1d' : '#fca5a5'}`, borderRadius: 6, color: '#dc2626', fontSize: 12 }}>
               {dmError}
             </div>
           )}
           <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-            <button type="button" onClick={() => { setShowDMSearch(false); setDmQuery(''); setDmSelectedIds([]); setBroadcastMessage(''); setDmError(''); }}
+            <button type="button" onClick={() => { setShowDMSearch(false); setDmQuery(''); setDmSelectedIds([]); setBroadcastMessage(''); setBroadcastUrgent(false); setDmError(''); }}
               style={{ flex: 1, padding: 10, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
             {isSingle && (
               <button type="button" onClick={() => startDM(dmSelectedIds[0])} disabled={dmCreating}
@@ -2664,9 +2687,22 @@ const BoardPage: React.FC = () => {
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 12, color: subColor, flexShrink: 0 }}>🕐 送信予約</span>
-                <input type="datetime-local" value={composeScheduledAt} onChange={e => setComposeScheduledAt(e.target.value)} min={localDatetimeMin()}
+                {/* 予約送信は board-scheduled-send（サーバー）が通知を作るため緊急チェックを運べない。
+                    黙って無効になるのが最悪なので、予約を入れたら緊急チェックを外してグレーアウトする */}
+                <input type="datetime-local" value={composeScheduledAt} onChange={e => { setComposeScheduledAt(e.target.value); if (e.target.value) setComposeUrgent(false); }} min={localDatetimeMin()}
                   style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, flex: 1 }} />
                 {composeScheduledAt && <button type="button" onClick={() => setComposeScheduledAt('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
+              </div>
+              {/* ⚡当日の連絡・緊急 */}
+              <div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: composeScheduledAt ? 'not-allowed' : 'pointer', fontSize: 12, color: textColor, opacity: composeScheduledAt ? 0.5 : 1 }}>
+                  <input type="checkbox" checked={composeUrgent} disabled={!!composeScheduledAt}
+                    onChange={e => setComposeUrgent(e.target.checked)} style={{ accentColor: '#d97706' }} />
+                  <span style={{ fontWeight: 600 }}>⚡ 当日の連絡・緊急</span>
+                </label>
+                <div style={{ fontSize: 11, color: subColor, margin: '2px 0 0 20px' }}>
+                  {composeScheduledAt ? '予約送信では使えません' : '通知の受信時間を設定している人にも、すぐに届きます'}
+                </div>
               </div>
               {!previewRole && noticeCCUserIds.length > 0 && noticeCCUserIds.includes(user?.id ?? '') && (
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12, color: textColor }}>
@@ -3040,7 +3076,7 @@ const BoardPage: React.FC = () => {
             <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ fontSize: 13 }}>⚙️</span>
               件名・期限・種別・送信予約
-              {(newTitle || newDeadlineType || newDeadline || newScheduledAt) && (
+              {(newTitle || newDeadlineType || newDeadline || newScheduledAt || newUrgent) && (
                 <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#007bff', display: 'inline-block' }} />
               )}
             </span>
@@ -3107,14 +3143,35 @@ const BoardPage: React.FC = () => {
               {/* 送信予約 */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 12, color: textColor, fontWeight: 600, flexShrink: 0 }}>🕐 送信予約</span>
-                <input type="datetime-local" value={newScheduledAt} onChange={e => setNewScheduledAt(e.target.value)}
+                {/* 予約送信は緊急チェックを運べないため、予約を入れたら緊急チェックを外してグレーアウトする */}
+                <input type="datetime-local" value={newScheduledAt} onChange={e => { setNewScheduledAt(e.target.value); if (e.target.value) setNewUrgent(false); }}
                   min={localDatetimeMin()}
                   style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, cursor: 'pointer', flex: 1 }} />
                 {newScheduledAt && <button type="button" onClick={() => setNewScheduledAt('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
               </div>
+              {/* ⚡当日の連絡・緊急 */}
+              <div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: newScheduledAt ? 'not-allowed' : 'pointer', fontSize: 12, color: textColor, opacity: newScheduledAt ? 0.5 : 1 }}>
+                  <input type="checkbox" checked={newUrgent} disabled={!!newScheduledAt}
+                    onChange={e => setNewUrgent(e.target.checked)} style={{ accentColor: '#d97706' }} />
+                  <span style={{ fontWeight: 600 }}>⚡ 当日の連絡・緊急</span>
+                </label>
+                <div style={{ fontSize: 11, color: subColor, margin: '2px 0 0 20px' }}>
+                  {newScheduledAt ? '予約送信では使えません' : '通知の受信時間を設定している人にも、すぐに届きます'}
+                </div>
+              </div>
             </div>
           )}
         </div>
+        {/* 緊急チェックON中は⚙️パネルを閉じても見えるチップを出す（付いたまま気づかず送る誤爆防止） */}
+        {newUrgent && (
+          <div style={{ marginBottom: 6 }}>
+            <button type="button" onClick={() => setNewUrgent(false)} title="タップで解除"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', borderRadius: 14, border: '1px solid #d97706', background: isDark ? '#3a2e14' : '#fff8e1', color: isDark ? '#fbbf24' : '#b45309', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+              ⚡ 当日の連絡・緊急として送信 ✕
+            </button>
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
           <textarea
             value={newBody}
@@ -3500,6 +3557,12 @@ const BoardPage: React.FC = () => {
           <div onClick={() => setShowSendConfirm(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 5000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
             <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 16, padding: '16px 16px 20px', width: '100%', maxWidth: 420, boxSizing: 'border-box' }}>
               <p style={{ margin: '0 0 12px', fontSize: 15, fontWeight: 'bold', color: textColor, textAlign: 'center' }}>送信プレビュー</p>
+              {/* 誤タップの最終防波堤：緊急として送ることを送信直前に明示する */}
+              {newUrgent && (
+                <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 8, border: '1px solid #d97706', background: isDark ? '#3a2e14' : '#fff8e1', color: isDark ? '#fbbf24' : '#b45309', fontSize: 12.5, fontWeight: 700 }}>
+                  ⚡ 当日の連絡・緊急として送信します（通知の受信時間を設定している人にも、すぐに届きます）
+                </div>
+              )}
               {/* メッセージカードプレビュー */}
               <div style={{ background: isDark ? '#2a2a3e' : '#f8f9fa', borderRadius: 10, padding: '12px 14px', border: `1px solid ${border}`, marginBottom: 14 }}>
                 {/* 送信者行 */}
@@ -3661,6 +3724,12 @@ const BoardPage: React.FC = () => {
           <div onClick={() => { setShowComposeSendConfirm(false); setShowAllRecipients(false); }} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 5000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
             <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 16, padding: '16px 16px 20px', width: '100%', maxWidth: 420, maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box' }}>
               <p style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 'bold', color: textColor, textAlign: 'center' }}>送信プレビュー</p>
+              {/* 誤タップの最終防波堤：緊急として送ることを送信直前に明示する */}
+              {composeUrgent && (
+                <div style={{ marginBottom: 10, padding: '8px 12px', borderRadius: 8, border: '1px solid #d97706', background: isDark ? '#3a2e14' : '#fff8e1', color: isDark ? '#fbbf24' : '#b45309', fontSize: 12.5, fontWeight: 700 }}>
+                  ⚡ 当日の連絡・緊急として送信します（通知の受信時間を設定している人にも、すぐに届きます）
+                </div>
+              )}
               {/* 宛先表示（10人以上は折りたたみ） */}
               <div style={{ marginBottom: 12, padding: '10px 12px', background: isDark ? '#1e2a3a' : '#eff6ff', borderRadius: 8, border: `1px solid ${isDark ? '#3b82f6' : '#bfdbfe'}` }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>

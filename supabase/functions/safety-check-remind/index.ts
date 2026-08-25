@@ -73,7 +73,8 @@ serve(async (req) => {
       const res = await fetch(`${supabaseUrl}/functions/v1/send-push`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_ids: unanswered, title: pushTitleFor(check.pattern), body: PUSH_BODY, url: '/safety', tag: 'safety-check' }),
+        // urgent: 安否確認は本人の「受信時間帯・休暇日」設定を無視して常に届ける（災害時に止めてはいけない）
+        body: JSON.stringify({ user_ids: unanswered, title: pushTitleFor(check.pattern), body: PUSH_BODY, url: '/safety', tag: 'safety-check', urgent: true }),
       });
       const json = await res.json().catch(() => null);
       console.log(`[safety-check-remind] check=${check.id} sent=${json?.sent ?? 0}`);

@@ -224,7 +224,13 @@ serve(async (req) => {
     // urls_by_user: ユーザーごとに飛び先を変えたいとき用（省略可）。
     // 「押したプッシュに対応するベル通知のID(nids)」は人によって違うため、
     // 1回の呼び出しで宛先ごとに別のURLを渡せるようにしている。指定が無い人は url を使う。
-    const { user_ids, title, body, url, tag, urls_by_user } = await req.json();
+    //
+    // urgent: true … 受信時間帯・休暇日のミュート判定を無視して常に送る
+    //   （安否確認、連絡板の「当日の連絡・緊急」など。呼び出し元が明示する）
+    // skip_quiet_check: true … ミュート判定を行わない
+    //   （push-dispatch からの呼び出し専用。キュー側で判定済み・保留済み分の配達で
+    //     二重判定して push_deferred に落ちるのを防ぐ）
+    const { user_ids, title, body, url, tag, urls_by_user, urgent, skip_quiet_check } = await req.json();
 
     if (!user_ids || !title || !body) {
       return new Response(
@@ -249,15 +255,67 @@ serve(async (req) => {
     }
 
     if (!subscriptions || subscriptions.length === 0) {
+      // ⚠️ failed を必ず含める。呼び出し元（push-dispatch）は result.failed === 0 で
+      //    成功判定しており、フィールドが無いと undefined ≠ 0 で失敗扱い→無駄リトライになる
       return new Response(
-        JSON.stringify({ sent: 0, message: "購読者なし" }),
+        JSON.stringify({ sent: 0, failed: 0, message: "購読者なし" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
+    // 受信時間帯・休暇日のミュート判定（urgent / skip_quiet_check のときは行わない）。
+    // ミュート中の人の分は捨てずに push_deferred へ退避し、受信時間になったら
+    // push-dispatch（1分毎cron）がまとめて配達する。
+    // 🚨 fail-open: 判定RPCが失敗したら「誰もミュートしない」＝そのまま送る
+    //   （DBマイグレーション前にこの関数だけデプロイされても壊れない）
+    let deferred = 0;
+    let targetSubs = subscriptions;
+    if (!urgent && !skip_quiet_check) {
+      let mutedIds: string[] = [];
+      try {
+        const subUserIds = [...new Set(subscriptions.map((s: { user_id: string }) => s.user_id))];
+        const { data: muted, error: mutedErr } = await supabase.rpc("push_muted_user_ids", { p_user_ids: subUserIds });
+        if (!mutedErr && Array.isArray(muted)) mutedIds = muted as string[];
+      } catch { /* fail-open */ }
+      if (mutedIds.length > 0) {
+        const mutedSet = new Set(mutedIds);
+        targetSubs = subscriptions.filter((s: { user_id: string }) => !mutedSet.has(s.user_id));
+        // ミュート中の購読者は1人1行で保留（同じ人の複数端末購読があっても保存は1行でよい。
+        // 配達時は send-push 経由なので全端末に届く）
+        const deferRows = mutedIds
+          .filter((uid) => subscriptions.some((s: { user_id: string }) => s.user_id === uid))
+          .map((uid) => ({
+            user_id: uid,
+            payload: {
+              title,
+              body,
+              url: urls_by_user?.[uid] || url || "/board",
+              tag: tag || "fivem-notification",
+            },
+          }));
+        if (deferRows.length > 0) {
+          const { error: defErr } = await supabase.from("push_deferred").insert(deferRows);
+          if (defErr) {
+            // 保留の保存に失敗したら fail-open（そのまま送る）。黙って捨てるのが最悪のため
+            console.error("[send-push] push_deferred insert failed:", defErr.message);
+            targetSubs = subscriptions;
+            deferred = 0;
+          } else {
+            deferred = deferRows.length;
+          }
+        }
+      }
+      if (targetSubs.length === 0) {
+        return new Response(
+          JSON.stringify({ sent: 0, failed: 0, deferred, message: "全員が受信時間外（保留）" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
     // 全購読者に送信
     const results = await Promise.allSettled(
-      subscriptions.map((sub) =>
+      targetSubs.map((sub) =>
         sendWebPush(
           { endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth },
           { title, body, url: urls_by_user?.[sub.user_id] || url || "/board", tag: tag || "fivem-notification" },
@@ -286,7 +344,7 @@ serve(async (req) => {
         errors.push(`endpoint[${i}]: HTTP ${res.status} ${text.slice(0, 200)}`);
         // 購読期限切れ・無効はDBから削除
         if (res.status === 404 || res.status === 410) {
-          expiredEndpoints.push(subscriptions[i].endpoint);
+          expiredEndpoints.push(targetSubs[i].endpoint);
         }
       }
     }
@@ -298,10 +356,10 @@ serve(async (req) => {
         .in("endpoint", expiredEndpoints);
     }
 
-    console.log(`[send-push] sent=${sent} failed=${errors.length}`, errors);
+    console.log(`[send-push] sent=${sent} failed=${errors.length} deferred=${deferred}`, errors);
 
     return new Response(
-      JSON.stringify({ sent, failed: errors.length, errors, removed: expiredEndpoints.length }),
+      JSON.stringify({ sent, failed: errors.length, deferred, errors, removed: expiredEndpoints.length }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {

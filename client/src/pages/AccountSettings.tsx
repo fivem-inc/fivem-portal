@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { supabase } from '../lib/supabaseClient';
 import { requestPushPermission, unsubscribePush, getPushPermissionStatus } from '../utils/pushNotification';
+import PushQuietHoursSection from '../components/PushQuietHoursSection';
 
 export default function AccountSettings() {
   const navigate = useNavigate();
@@ -217,6 +218,9 @@ export default function AccountSettings() {
             </div>
           </div>
         )}
+
+        {/* プッシュ通知の受信時間（許可済みの人にだけ表示される） */}
+        <PushQuietHoursSection />
 
         <button
           onClick={() => navigate('/')}
