@@ -23,10 +23,7 @@ const SLACK_WEBHOOK_KEYS: Record<string, string> = {
   manager:    'SLACK_WEBHOOK_MANAGER',
   accounting: 'SLACK_WEBHOOK_ACCOUNTING',
   president:  'SLACK_WEBHOOK_PRESIDENT',
-}
-
-function applyTemplate(template: string, vars: Record<string, string>): string {
-  return template.replace(/\{\{(.+?)\}\}/g, (_, key) => vars[key.trim()] ?? `{{${key.trim()}}}`)
+  overtime:   'SLACK_WEBHOOK_OVERTIME',
 }
 
 serve(async (req) => {
@@ -74,9 +71,19 @@ serve(async (req) => {
       '差し戻し理由': reason ? String(reason) : '（記載なし）',
       'リンク': 'https://fivem-portal.vercel.app/shift-report?tab=history',
     }
-    const text = setting.template
-      ? applyTemplate(setting.template, vars)
-      : `🔴 *【勤務変更報告 / 差し戻し】*\n\n*報告者：* ${vars['申請者名']}\n*種別：* ${vars['種別']}\n*日付：* ${vars['日付']}`
+    // 🚨 Slackの本文はコード側で固定する（管理画面のSlack欄に本文の入力UIが無いのに
+    //    DBのテンプレートが優先される作りで、文言を直しても画面から追えなかったため）。
+    //    見出しは他の通知（勤怠・残業・休暇）と揃えて「カテゴリ｜状態」の形にする。
+    //    差し戻しは理由が本体なので理由は残す。
+    const textLines = [
+      '⏰ *勤務変更｜差し戻し*',
+      '',
+      `*対象者：* ${vars['申請者名']}`,
+      `*種別：* ${vars['種別']}`,
+      `*日付：* ${vars['日付']}`,
+      `*理由：* ${vars['差し戻し理由']}`,
+    ]
+    const text = textLines.join('\n')
 
     let sent = 0
     for (const ch of channels) {

@@ -273,12 +273,35 @@ const AUTO_RECIPIENT_EMAIL_SITE_EVENTS = [
   'purchase_request:self_judgment_shared',
 ];
 
-// 役職＋グループ配信イベント用: Slackチャンネル選択肢
+// Slackチャンネルのマスタ。value は各 Edge Function の SLACK_WEBHOOK_KEYS と対応し、
+// Supabase Secrets の Webhook URL を引くキーになる。
+// 🚨 チャンネルを足すときは「①ここ ②Edge Function の SLACK_WEBHOOK_KEYS ③Supabase Secrets」の3点セット。
+//    ①だけ足すと選べるのに送られない（エラーも出ない）。
+const SLACK_CH = {
+  leader:     { value: 'leader',     label: '#01リーダー回覧' },
+  manager:    { value: 'manager',    label: '#01マネージャー回覧' },
+  accounting: { value: 'accounting', label: '#07_3経理専用' },
+  president:  { value: 'president',  label: '#03晃平先生へ' },
+  // 残業・調整・年休・勤怠をまとめる専用チャンネル（2026-08-25 追加）
+  overtime:   { value: 'overtime',   label: '#17残業_調整_年休連絡用' },
+};
+
+// 役職＋グループ配信イベント用: Slackチャンネル選択肢（備品・出張など、勤怠系以外はこちら）
 const TIME_ADJ_SLACK_OPTIONS = [
-  { value: 'leader',     label: '#01リーダー回覧' },
-  { value: 'manager',    label: '#01マネージャー回覧' },
-  { value: 'accounting', label: '#07_3経理専用' },
-  { value: 'president',  label: '#03晃平先生へ' },
+  SLACK_CH.leader,
+  SLACK_CH.manager,
+  SLACK_CH.accounting,
+  SLACK_CH.president,
+];
+
+// 勤怠・勤務変更・時間調整・休暇・残業 用。専用チャンネルを先頭に置く
+// （既存4つは「誰に届くか」、新しい1つは「何の話題か」で軸が違うため、迷わないよう先頭＋注記で示す）
+const ATTENDANCE_SLACK_OPTIONS = [
+  SLACK_CH.overtime,
+  SLACK_CH.leader,
+  SLACK_CH.manager,
+  SLACK_CH.accounting,
+  SLACK_CH.president,
 ];
 
 // 役職＋グループ配信イベント用: 役職選択肢（メール・サイト通知）
@@ -387,13 +410,24 @@ const TRIP_SLACK_CHANNELS = [
 ];
 
 const SLACK_CHANNEL_OPTIONS_BY_EVENT: Record<string, { value: string; label: string }[]> = {
-  'leave:new_request':      [{ value: 'leader',     label: '#01リーダー回覧' }, { value: 'manager', label: '#01マネージャー回覧' }],
-  'leave:leader_approved':  [{ value: 'manager',    label: '#01マネージャー回覧' }],
-  'leave:manager_approved': [{ value: 'accounting', label: '#07_3閲覧禁止-経理専用' }],
-  'leave:rejected':         [{ value: 'leader', label: '#01リーダー回覧' }, { value: 'manager', label: '#01マネージャー回覧' }, { value: 'accounting', label: '#07_3閲覧禁止-経理専用' }],
-  'leave:cancelled':        [{ value: 'leader', label: '#01リーダー回覧' }, { value: 'manager', label: '#01マネージャー回覧' }, { value: 'accounting', label: '#07_3閲覧禁止-経理専用' }],
-  'expense:new_request':    [{ value: 'expense',    label: '#07_3閲覧禁止-経理専用' }],
-  'shift_report:returned':  TIME_ADJ_SLACK_OPTIONS,
+  // 休暇：既存の飛び先はコード側で固定されているので、ここで選ぶのは「追加で送る先」
+  'leave:new_request':      [SLACK_CH.overtime, SLACK_CH.leader, SLACK_CH.manager],
+  'leave:leader_approved':  [SLACK_CH.overtime, SLACK_CH.manager],
+  'leave:manager_approved': [SLACK_CH.overtime, SLACK_CH.accounting],
+  'leave:rejected':         [SLACK_CH.overtime, SLACK_CH.leader, SLACK_CH.manager, SLACK_CH.accounting],
+  'leave:cancelled':        [SLACK_CH.overtime, SLACK_CH.leader, SLACK_CH.manager, SLACK_CH.accounting],
+  'expense:new_request':    [{ value: 'expense',    label: '#07_3経理専用' }],
+  // 勤怠・勤務変更・時間調整・残業（役職＋グループ配信イベントもここから選択肢を引く）
+  'attendance:registered':      ATTENDANCE_SLACK_OPTIONS,
+  'attendance:cancelled':       ATTENDANCE_SLACK_OPTIONS,
+  'shift_report:confirmed':     ATTENDANCE_SLACK_OPTIONS,
+  'time_adjustment:registered': ATTENDANCE_SLACK_OPTIONS,
+  'shift_report:returned':      ATTENDANCE_SLACK_OPTIONS,
+  'overtime:new_request':       ATTENDANCE_SLACK_OPTIONS,
+  'overtime:request_confirmed': ATTENDANCE_SLACK_OPTIONS,
+  'overtime:confirmed':         ATTENDANCE_SLACK_OPTIONS,
+  'overtime:cancelled':         ATTENDANCE_SLACK_OPTIONS,
+  'overtime:admin_cancelled':   ATTENDANCE_SLACK_OPTIONS,
   'trip:report_end':        TRIP_SLACK_CHANNELS,
   'purchase_request:submitted':            TIME_ADJ_SLACK_OPTIONS,
   'purchase_request:submitted_manager':    TIME_ADJ_SLACK_OPTIONS,
@@ -403,6 +437,23 @@ const SLACK_CHANNEL_OPTIONS_BY_EVENT: Record<string, { value: string; label: str
   'purchase_request:manager_approved':     TIME_ADJ_SLACK_OPTIONS,
   'purchase_request:board_all_approved':   TIME_ADJ_SLACK_OPTIONS,
   'purchase_request:returned':             TIME_ADJ_SLACK_OPTIONS,
+};
+
+// 休暇のSlackだけ、飛び先がコード側（send-leave-slack）で固定されている。
+// 下のチェックボックスで選べるのは「そこに追加で送る先」なので、自動の飛び先を先に説明する。
+const SLACK_AUTO_CHANNEL_NOTE: Record<string, { lines: string[]; note: string }> = {
+  'leave:new_request': {
+    lines: ['申請先がリーダーの場合 → #01リーダー回覧', '申請先がマネージャーの場合 → #01マネージャー回覧'],
+    note: '※ 申請先の役職に応じて自動で振り分けられます',
+  },
+  'leave:leader_approved': {
+    lines: ['→ #01マネージャー回覧'],
+    note: '※ 次の確認者（マネージャー）へ自動で送られます',
+  },
+  'leave:manager_approved': {
+    lines: ['→ #07_3経理専用'],
+    note: '※ 経理へ自動で送られます',
+  },
 };
 
 // テンプレートライブラリで使える全変数（カテゴリ別）
@@ -1134,7 +1185,7 @@ const NotificationsTab: React.FC = () => {
                               <div style={{ borderTop: `0.5px solid ${borderColor}`, paddingTop: 10 }}>
                                 <div style={{ fontSize: 12, color: subText, marginBottom: 8 }}>送信先チャンネル（複数選択可）</div>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                  {TIME_ADJ_SLACK_OPTIONS.map(opt => (
+                                  {(SLACK_CHANNEL_OPTIONS_BY_EVENT[event.key] ?? TIME_ADJ_SLACK_OPTIONS).map(opt => (
                                     <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', color: text }}>
                                       <input
                                         type="checkbox"
@@ -1150,7 +1201,14 @@ const NotificationsTab: React.FC = () => {
                                     </label>
                                   ))}
                                 </div>
+                                {/* ONなのにチャンネル未選択＝1件も送られないが画面にはONと出る。静かに壊れるので明示する */}
+                                {selectedChannels.length === 0 && (
+                                  <div style={{ fontSize: 12, color: '#842029', background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 6, padding: '6px 10px', marginTop: 10 }}>
+                                    ⚠️ チャンネルが選ばれていないため、まだ送信されません
+                                  </div>
+                                )}
                                 <div style={{ fontSize: 11, color: subText, marginTop: 10 }}>※ メッセージはシステムで自動生成されます</div>
+                                <div style={{ fontSize: 11, color: subText, marginTop: 4 }}>※ Slackはチーム・役職の絞り込みが効きません。そのチャンネルに入っている人全員に届きます</div>
                               </div>
                             )}
                           </div>
@@ -1210,17 +1268,7 @@ const NotificationsTab: React.FC = () => {
                                 }}>
                                   宛先は依頼された全マネージャー・社長など、申請内容に応じて自動的に決まります（この画面では選択できません）。
                                 </div>
-                              ) : event.key.startsWith('board:') || event.key.startsWith('reminder:') || ['overtime:unreported', 'overtime:pending_review', 'overtime:pending_review_advance'].includes(event.key) ? null : channel === 'slack' && event.key === 'leave:new_request' ? (
-                                <div style={{
-                                  fontSize: 12, padding: '6px 10px', marginBottom: 10,
-                                  border: `0.5px solid ${borderColor}`, borderRadius: 8,
-                                  background: sectionBg, color: subText,
-                                }}>
-                                  <div>申請先がリーダーの場合 → <strong style={{ color: text }}>#01リーダー回覧</strong></div>
-                                  <div style={{ marginTop: 4 }}>申請先がマネージャーの場合 → <strong style={{ color: text }}>#01マネージャー回覧</strong></div>
-                                  <div style={{ marginTop: 6, fontSize: 11, color: subText }}>※ 申請先の役職に応じて自動で振り分けられます</div>
-                                </div>
-                              ) : ROLE_GROUP_BROADCAST_EVENTS.includes(event.key) && channel !== 'slack' ? (
+                              ) : event.key.startsWith('board:') || event.key.startsWith('reminder:') || ['overtime:unreported', 'overtime:pending_review', 'overtime:pending_review_advance'].includes(event.key) ? null : ROLE_GROUP_BROADCAST_EVENTS.includes(event.key) && channel !== 'slack' ? (
                                 // 時間調整: 役職チェックボックス + グループ絞り込み
                                 (() => {
                                   const { roles, groupFilter, orgWideRoles } = parseRoleRecipient(s.recipient);
@@ -1290,8 +1338,22 @@ const NotificationsTab: React.FC = () => {
                                 (() => {
                                   const slackOptions = SLACK_CHANNEL_OPTIONS_BY_EVENT[event.key] ?? [];
                                   const selectedChannels = parseSlackChannels(s.recipient);
+                                  const autoNote = SLACK_AUTO_CHANNEL_NOTE[event.key];
                                   return (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
+                                      {autoNote && (
+                                        <div style={{
+                                          fontSize: 12, padding: '6px 10px',
+                                          border: `0.5px solid ${borderColor}`, borderRadius: 8,
+                                          background: sectionBg, color: subText,
+                                        }}>
+                                          {autoNote.lines.map((line, i) => (
+                                            <div key={i} style={{ marginTop: i === 0 ? 0 : 4, color: text }}>{line}</div>
+                                          ))}
+                                          <div style={{ marginTop: 6, fontSize: 11, color: subText }}>{autoNote.note}</div>
+                                        </div>
+                                      )}
+                                      {autoNote && <div style={{ fontSize: 12, color: subText }}>追加で送るチャンネル（複数選択可）</div>}
                                       {slackOptions.map(opt => (
                                         <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', color: text }}>
                                           <input

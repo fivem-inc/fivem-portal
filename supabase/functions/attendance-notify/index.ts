@@ -33,10 +33,38 @@ const SLACK_WEBHOOK_KEYS: Record<string, string> = {
   manager:    'SLACK_WEBHOOK_MANAGER',
   accounting: 'SLACK_WEBHOOK_ACCOUNTING',
   president:  'SLACK_WEBHOOK_PRESIDENT',
+  overtime:   'SLACK_WEBHOOK_OVERTIME',
 }
 
 function applyTemplate(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{(.+?)\}\}/g, (_, key) => vars[key.trim()] ?? `{{${key.trim()}}}`)
+}
+
+// 「09:00」→「9:00」。gcal-sync の hm と同じ書式（Googleカレンダーの表記に揃える）
+function hm(t?: string | null): string {
+  if (!t) return ''
+  const [h, m] = String(t).split(':')
+  return `${parseInt(h, 10)}:${m}`
+}
+
+// 時間帯（休日出勤・勤務地変更・勤務時間変更）。gcal-sync の formatWorkSegments と同じ書式
+function formatWorkSegments(segments: unknown): string {
+  if (!Array.isArray(segments)) return ''
+  return segments
+    .filter((s) => s && typeof s === 'object' && s.start && s.end)
+    .map((s) => `${hm(s.start)}〜${hm(s.end)}${s.location ? `［${s.location}］` : ''}`)
+    .join(' / ')
+}
+
+// 時間帯を持つ種別。時間の文字列に［校］が入るので、勤務地の行は別に出さない（二重になる）
+const SEGMENT_TYPES = ['holiday_work', 'location_change', 'time_change']
+
+// 種別ごとの時間表記。全欠勤は時間を持たない
+function timeLabelFor(type: string, time?: string | null, segments?: unknown): string {
+  if (type === 'absent') return ''
+  if (type === 'late' || type === 'late_start') return time ? `${hm(time)}〜` : ''
+  if (type === 'early_leave' || type === 'early_end') return time ? `〜${hm(time)}` : ''
+  return formatWorkSegments(segments)
 }
 
 serve(async (req) => {
@@ -47,7 +75,10 @@ serve(async (req) => {
     //          まとめて登録できるようになったため複数受け取る。[{ id, name }]
     // user_id/user_name = 1人しか登録できなかった頃の呼び出し方（取消などから今も来る）
     // mode = 'registered'（登録した）/ 'cancelled'（取消した）。省略時は登録扱い。
-    const { users, user_id, user_name, dates, types, mode } = await req.json()
+    // details = Slack本文に出す「時間・勤務地」。種別ごとに1件（[{ type, time, segments, location }]）。
+    //           1回の登録では時間は全員共通なので人数分は持たない。勤務地が日によって違うときは
+    //           呼び出し側が location に '日によって異なります' を入れて渡す。
+    const { users, user_id, user_name, dates, types, mode, details } = await req.json()
     const staffList: { id: string; name: string }[] = Array.isArray(users) && users.length > 0
       ? users.filter((u: { id?: string }) => u?.id).map((u: { id: string; name?: string }) => ({ id: u.id, name: u.name ?? '' }))
       : (user_id ? [{ id: user_id, name: user_name ?? '' }] : [])
@@ -231,8 +262,36 @@ serve(async (req) => {
     if (slackSetting?.enabled) {
       let channels: string[] = []
       try { channels = JSON.parse(slackSetting.recipient ?? '{}').channels ?? [] } catch { /* ignore */ }
-      const slackHead = isCancelled ? '勤怠の登録が取消されました' : '勤怠が登録されました'
-      const slackMsg = `📝 *${slackHead}*\n\n*対象者：* ${staffList.map(s => s.name).filter(Boolean).join('・')}\n*日付：* ${dateLabel}\n*種別：* ${typeLabels}`
+      // 🚨 Slackはチーム・役職の絞り込みが効かない（チャンネルに入っている人全員に届く）。
+      //    公開チャンネルに流れることもあるので、載せるのは Googleカレンダーに出ているのと
+      //    同じ範囲（氏名・種別・日付・時間・勤務地）に留める。欠勤の理由（notes）は絶対に入れない。
+      const detailList: { type: string; time?: string | null; segments?: unknown; location?: string | null }[] =
+        Array.isArray(details) ? details : []
+      // 種別が2つ以上（遅刻＋早退など）のときは、どの時間がどの種別か分かるよう種別名を添える
+      const timeLine = detailList
+        .map(d => {
+          const label = timeLabelFor(d.type, d.time, d.segments)
+          if (!label) return ''
+          return detailList.length > 1 ? `${TYPE_LABEL[d.type] ?? d.type} ${label}` : label
+        })
+        .filter(Boolean)
+        .join(' / ')
+      // 時間帯を持つ種別は時間の中に［校］が入るので出さない。全欠勤は「休みなのに勤務地」と誤読される
+      const locationLine = detailList.some(d => !SEGMENT_TYPES.includes(d.type) && d.type !== 'absent')
+        ? (detailList.find(d => d.location)?.location ?? '')
+        : ''
+      const nameLine = staffList.map(s => s.name).filter(Boolean).join('・')
+        + (isMulti ? `（${staffList.length}名）` : '')
+      const slackLines = [
+        `📅 *勤怠｜${isCancelled ? '取消' : '登録'}*`,
+        '',
+        `*対象者：* ${nameLine}`,
+        `*種別：* ${typeLabels}`,
+        `*日付：* ${dateLabel}`,
+      ]
+      if (timeLine) slackLines.push(`*時間：* ${timeLine}`)
+      if (locationLine) slackLines.push(`*勤務地：* ${locationLine}`)
+      const slackMsg = slackLines.join('\n')
       for (const ch of channels) {
         const url = Deno.env.get(SLACK_WEBHOOK_KEYS[ch] ?? '')
         if (!url) continue

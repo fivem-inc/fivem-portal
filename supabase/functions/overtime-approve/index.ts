@@ -83,6 +83,10 @@ serve(async (req) => {
     const applicantName = prof?.name ?? ''
 
     let notification: Record<string, unknown> | null = null
+    // Slackに流すイベント。🚨 notification とは切り離して持つ。
+    // 取消は「確認者が自分自身（自己受理した申請）」だと notification が作られないため、
+    // notification にぶら下げると取消がSlackに出なくなる
+    let slackEventKey: string | null = null
 
     if (action === 'approve') {
       if (!(isAdmin || caller.id === r.reviewer_id)) return json({ success: false, error: '権限がありません' }, 403)
@@ -122,6 +126,7 @@ serve(async (req) => {
         event_key: (isAdvance && !isFullDay) ? 'overtime:request_confirmed' : 'overtime:confirmed',
         read: false,
       }
+      slackEventKey = (isAdvance && !isFullDay) ? 'overtime:request_confirmed' : 'overtime:confirmed'
     } else if (action === 'return') {
       if (!(isAdmin || caller.id === r.reviewer_id)) return json({ success: false, error: '権限がありません' }, 403)
       if (!['requested', 'reported'].includes(r.status)) return json({ success: false, error: 'この状態では差し戻せません' }, 409)
@@ -181,6 +186,7 @@ serve(async (req) => {
       await db.from('overtime_report_history').insert({
         report_id: r.id, changed_by: caller.id, change_kind: 'cancelled', change_summary: '取消', snapshot,
       })
+      slackEventKey = 'overtime:cancelled'
       if (r.reviewer_id && r.reviewer_id !== caller.id && ['requested', 'request_confirmed', 'reported'].includes(r.status)) {
         notification = {
           user_id: r.reviewer_id,
@@ -273,6 +279,20 @@ serve(async (req) => {
             console.error('[overtime-approve] メール送信失敗:', e instanceof Error ? e.message : String(e))
           }
         }
+      }
+    }
+
+    // Slack通知（送信先チャンネルとON/OFFは管理画面の通知設定に従う。本文は send-overtime-slack が組み立てる）
+    // 失敗しても受理・取消そのものは成功のままにする（ログのみ）
+    if (slackEventKey) {
+      try {
+        await fetch(`${supabaseUrl}/functions/v1/send-overtime-slack`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ report_id: r.id, event_key: slackEventKey }),
+        })
+      } catch (e) {
+        console.error('[overtime-approve] Slack送信失敗:', e instanceof Error ? e.message : String(e))
       }
     }
 

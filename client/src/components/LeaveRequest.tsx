@@ -1262,7 +1262,12 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             // 通知 Edge Function
             try {
               await supabase.functions.invoke('time-adjustment-notify', {
-                body: { user_id: user.id, user_name: profileName ?? '', date: adjDate, types: records.map(r => r.type), reason: adjReason.trim() },
+                body: {
+                  user_id: user.id, user_name: profileName ?? '', date: adjDate,
+                  types: records.map(r => r.type), reason: adjReason.trim(),
+                  // Slack本文に出す時間（理由はSlackには載せない）
+                  details: records.map(r => ({ type: r.type, time: r.actual_time })),
+                },
               });
             } catch (e) { console.error('[time-adjustment-notify] 通知失敗:', e); }
             // リセット＆バナー

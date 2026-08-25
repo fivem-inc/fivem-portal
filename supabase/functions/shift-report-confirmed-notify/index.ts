@@ -31,17 +31,35 @@ const SLACK_WEBHOOK_KEYS: Record<string, string> = {
   manager:    'SLACK_WEBHOOK_MANAGER',
   accounting: 'SLACK_WEBHOOK_ACCOUNTING',
   president:  'SLACK_WEBHOOK_PRESIDENT',
+  overtime:   'SLACK_WEBHOOK_OVERTIME',
 }
 
 function applyTemplate(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{(.+?)\}\}/g, (_, key) => vars[key.trim()] ?? `{{${key.trim()}}}`)
 }
 
+// 「09:00」→「9:00」。Googleカレンダー・勤怠通知と同じ書式に揃える
+function hm(t?: string | null): string {
+  if (!t) return ''
+  const [h, m] = String(t).split(':')
+  return `${parseInt(h, 10)}:${m}`
+}
+
+// 勤務した時間帯（最大3つ）。例：9:00〜12:00［四条本校］/ 14:00〜18:00［西陣校］
+function formatWorkSegments(segments: unknown): string {
+  if (!Array.isArray(segments)) return ''
+  return segments
+    .filter((s) => s && typeof s === 'object' && s.start && s.end)
+    .map((s) => `${hm(s.start)}〜${hm(s.end)}${s.location ? `［${s.location}］` : ''}`)
+    .join(' / ')
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
 
   try {
-    const { user_id, user_name, date, types, location, report_id } = await req.json()
+    // segments = 実際に勤務した時間帯（[{ start, end, location }]）。Slack本文の「時間」に使う
+    const { user_id, user_name, date, types, location, report_id, segments } = await req.json()
     if (!user_id || !date || !types?.length) {
       return new Response(JSON.stringify({ error: 'missing params' }), { status: 400, headers: CORS_HEADERS })
     }
@@ -53,10 +71,12 @@ serve(async (req) => {
 
     const typeLabels = (types as string[]).map((t: string) => TYPE_LABEL[t] ?? t).join('・')
     const dateLabel = `${date.slice(5, 7)}月${parseInt(date.slice(8, 10))}日`
+    const timeLabel = formatWorkSegments(segments)
     const vars: Record<string, string> = {
       '申請者名': user_name ?? '',
       '種別': typeLabels,
       '日付': dateLabel,
+      '時間': timeLabel,
       '勤務地': location ?? '',
       'リンク': 'https://fivem-portal.vercel.app/shift-report?tab=history',
     }
@@ -188,9 +208,21 @@ serve(async (req) => {
     if (slackSetting?.enabled) {
       let channels: string[] = []
       try { channels = JSON.parse(slackSetting.recipient ?? '{}').channels ?? [] } catch { /* ignore */ }
-      const slackMsg = slackSetting.template
-        ? applyTemplate(slackSetting.template, vars)
-        : `⏰ *勤務変更報告が受理されました*\n\n*報告者：* ${user_name}\n*種別：* ${typeLabels}\n*日付：* ${dateLabel}`
+      // 🚨 Slackの本文はコード側で固定する。管理画面のSlack欄に本文の入力UIは無いのに
+      //    DBのテンプレートが優先される作りで、2026-07-15 に「申請→報告」へ言い換えたとき
+      //    DBのテンプレートだけ「勤務変更申請／申請者」のまま取り残されていた（画面からは直せない）。
+      //    公開チャンネルに流れることもあるので、載せるのは Googleカレンダー相当
+      //    （氏名・種別・日付・時間・勤務地）まで。理由は載せない。
+      const slackLines = [
+        '⏰ *勤務変更｜受理*',
+        '',
+        `*対象者：* ${user_name ?? ''}`,
+        `*種別：* ${typeLabels}`,
+        `*日付：* ${dateLabel}`,
+      ]
+      if (timeLabel) slackLines.push(`*時間：* ${timeLabel}`)
+      if (location) slackLines.push(`*勤務地：* ${location}`)
+      const slackMsg = slackLines.join('\n')
       for (const ch of channels) {
         const url = Deno.env.get(SLACK_WEBHOOK_KEYS[ch] ?? '')
         if (!url) continue

@@ -26,17 +26,34 @@ const SLACK_WEBHOOK_KEYS: Record<string, string> = {
   manager:    'SLACK_WEBHOOK_MANAGER',
   accounting: 'SLACK_WEBHOOK_ACCOUNTING',
   president:  'SLACK_WEBHOOK_PRESIDENT',
+  overtime:   'SLACK_WEBHOOK_OVERTIME',
 }
 
 function applyTemplate(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{(.+?)\}\}/g, (_, key) => vars[key.trim()] ?? `{{${key.trim()}}}`)
 }
 
+// 「09:00」→「9:00」。Googleカレンダー・勤怠通知と同じ書式に揃える
+function hm(t?: string | null): string {
+  if (!t) return ''
+  const [h, m] = String(t).split(':')
+  return `${parseInt(h, 10)}:${m}`
+}
+
+// 調整遅出＝その時刻から出勤、調整早退＝その時刻まで勤務
+function timeLabelFor(type: string, time?: string | null): string {
+  if (!time) return ''
+  if (type === 'late_start') return `${hm(time)}〜`
+  if (type === 'early_end') return `〜${hm(time)}`
+  return hm(time)
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
 
   try {
-    const { user_id, user_name, date, types, reason } = await req.json()
+    // details = Slack本文に出す時間（[{ type, time }]）。調整遅出＝13:00〜、調整早退＝〜18:00
+    const { user_id, user_name, date, types, reason, details } = await req.json()
     if (!user_id || !date || !types?.length) {
       return new Response(JSON.stringify({ error: 'missing params' }), { status: 400, headers: CORS_HEADERS })
     }
@@ -195,7 +212,27 @@ serve(async (req) => {
     if (slackSetting?.enabled) {
       let channels: string[] = []
       try { channels = JSON.parse(slackSetting.recipient ?? '{}').channels ?? [] } catch { /* ignore */ }
-      const slackMsg = `⏰ *時間調整が登録されました*\n\n*登録者：* ${user_name}\n*日付：* ${dateLabel}\n*種別：* ${typeLabels}`
+      // 🚨 Slackはチーム・役職の絞り込みが効かない（チャンネルに入っている人全員に届く）。
+      //    公開チャンネルに流れることもあるので、載せるのはカレンダー相当（氏名・種別・日付・時間）まで。
+      //    理由（reason）はサイト通知・メールだけに留め、Slackには載せない。
+      const detailList: { type: string; time?: string | null }[] = Array.isArray(details) ? details : []
+      const timeLine = detailList
+        .map(d => {
+          const label = timeLabelFor(d.type, d.time)
+          if (!label) return ''
+          return detailList.length > 1 ? `${TYPE_LABEL[d.type] ?? d.type} ${label}` : label
+        })
+        .filter(Boolean)
+        .join(' / ')
+      const slackLines = [
+        '🕐 *時間調整｜登録*',
+        '',
+        `*対象者：* ${user_name ?? ''}`,
+        `*種別：* ${typeLabels}`,
+        `*日付：* ${dateLabel}`,
+      ]
+      if (timeLine) slackLines.push(`*時間：* ${timeLine}`)
+      const slackMsg = slackLines.join('\n')
       for (const ch of channels) {
         const url = Deno.env.get(SLACK_WEBHOOK_KEYS[ch] ?? '')
         if (!url) continue

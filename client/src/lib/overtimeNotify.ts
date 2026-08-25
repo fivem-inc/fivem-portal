@@ -12,7 +12,10 @@ import { supabase } from './supabaseClient';
 //   サイト通知 … ベル。event_key を付けて入れると、DBトリガー経由で本人へのプッシュも自動で流れる
 //   プッシュ  … 上記トリガー＋push-dispatch が送るため、ここでは何もしない（送ると二重送信になる）
 //   メール    … サイト通知と同じ人へ
-//   Slack    … 残業は個人の勤怠情報のため対象外（notification_settings に行を作っていない）
+//   Slack    … 2026-08-25 に対応（それまでは「個人の勤怠情報だから」と行自体を作っていなかった）。
+//              専用チャンネル #17残業_調整_年休連絡用 ができたため方針変更。
+//              本文は送信側（Edge Function send-overtime-slack）が report_id から組み立てる。
+//              載せるのは Googleカレンダー相当（氏名・種別・日付・時間・勤務地）まで。理由・差分は載せない
 //
 // ⚠️ source_type は App.tsx がホームバナーの表示・タップ遷移・対応完了の自動消し込みに使っている
 //    完全一致の文字列。event_key とは別体系なので、ここの値を変えないこと。
@@ -22,6 +25,22 @@ import { supabase } from './supabaseClient';
 
 const LINK_APPLICANT = 'https://fivem-portal.vercel.app/overtime?tab=history';
 const LINK_REVIEWER  = 'https://fivem-portal.vercel.app/overtime?view=confirm';
+
+/**
+ * Slackへ送る（送信先チャンネル・ON/OFFは管理画面の通知設定に従う）。
+ * 🚨 本文の材料は渡さない。report_id だけ渡してサーバー側で組み立てる
+ *    （呼び出し元が複数あるので、項目を足したときの渡し忘れを構造的に防ぐ）。
+ * 失敗しても呼び出し元の処理は止めない。
+ */
+export async function sendOvertimeSlack(reportId: string, eventKey: string): Promise<void> {
+  try {
+    await supabase.functions.invoke('send-overtime-slack', {
+      body: { report_id: reportId, event_key: eventKey },
+    });
+  } catch (e) {
+    console.error('[send-overtime-slack] Slack通知失敗:', e);
+  }
+}
 
 /** 申請・実績報告が届いた時 → 確認をお願いする人へ */
 export async function notifyOvertimeNewRequest(info: {
@@ -51,6 +70,7 @@ export async function notifyOvertimeNewRequest(info: {
       { approver: email },
     );
   }
+  await sendOvertimeSlack(reportId, 'overtime:new_request');
 }
 
 /** 差し戻した時 → 申請した本人へ（管理画面から差し戻す経路。確認者ビューからは Edge が送る） */
@@ -106,6 +126,7 @@ export async function notifyOvertimeAdminCancelled(info: {
       { applicant: email },
     );
   }
+  await sendOvertimeSlack(reportId, 'overtime:admin_cancelled');
 }
 
 /** 経理が締め後申請を許可した時 → 許可された本人へ（本人がホーム・残業ページで見落とさないよう、ベル通知で確実に伝える） */

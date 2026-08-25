@@ -222,7 +222,12 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
       }
     } catch (e) { console.error('[leave-approved-notify] FYI通知失敗:', e); }
     if (await shouldSend('leave:manager_approved', 'slack')) {
-      await sendLeaveSlack('manager_approved', profileName || '受理者', 'マネージャー');
+      // 受理＝休暇が確定した段階なので、Slackにも「誰の・どの休暇・いつ」を載せる（カレンダー相当まで）
+      await sendLeaveSlack('manager_approved', profileName || '受理者', 'マネージャー', undefined, undefined, undefined, {
+        applicantName: req.requester?.name ?? '',
+        leaveTypeName: typeName,
+        dateSummary: formatLeaveDateSummary(req.leave_dates, req.start_date, req.end_date, ''),
+      });
     }
     // 宛先で役職（リーダー・マネージャー・社長）を選んでいれば上長にも共有する。
     // 申請者本人は上で送信済み（resolveRoleRecipients 側でも本人は除外される）
@@ -262,7 +267,11 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
           await emitManagerApproved(req);
         } else if (req.status === 'manager_approved') {
           if (await shouldSend('leave:manager_approved', 'slack')) {
-            await sendLeaveSlack('accounting_approved', profileName || '経理担当者', '管理者');
+            await sendLeaveSlack('accounting_approved', profileName || '経理担当者', '管理者', undefined, undefined, undefined, {
+              applicantName: req.requester?.name ?? '',
+              leaveTypeName: req.leave_type === 'その他' ? (req.leave_type_other || 'その他') : req.leave_type,
+              dateSummary: formatLeaveDateSummary(req.leave_dates, req.start_date, req.end_date, ''),
+            });
           }
         }
       } catch (e) {

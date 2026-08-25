@@ -411,6 +411,8 @@ const LeaveRequestsTab: React.FC = () => {
       body: {
         user_id: deleteTarget.user_id, user_name: deleteTarget.targetName,
         dates: [deleteTarget.date], types: [deleteTarget.type], mode: 'cancelled',
+        // Slack本文に出す時間・勤務地（何を取り消したのかが分かるように）
+        details: [{ type: deleteTarget.type, time: deleteTarget.actual_time, segments: deleteTarget.work_segments, location: deleteTarget.location }],
       },
     });
     if (notifyErr) console.error('[attendance-notify] 取消通知の送信失敗:', notifyErr);
@@ -1562,7 +1564,12 @@ const LeaveRequestsTab: React.FC = () => {
                                             }
                                           } catch (e) { console.error('[leave-approved-notify] FYI通知失敗:', e); }
                                           if (await shouldSend('leave:manager_approved', 'slack')) {
-                                            await sendLeaveSlack('manager_approved', '管理者', 'マネージャー');
+                                            // 受理＝休暇が確定した段階なので、Slackにも「誰の・どの休暇・いつ」を載せる（カレンダー相当まで）
+                                            await sendLeaveSlack('manager_approved', '管理者', 'マネージャー', undefined, undefined, undefined, {
+                                              applicantName: req.profile?.name ?? '',
+                                              leaveTypeName: typeName,
+                                              dateSummary: formatLeaveDateSummary(req.leave_dates, req.start_date, req.end_date, ''),
+                                            });
                                           }
                                           const applicantEmail = await getUserEmail(req.user_id) ?? '';
                                           // 宛先で役職を選んでいれば上長にも共有（受理ページ側と同じ配線にする）
@@ -1574,7 +1581,11 @@ const LeaveRequestsTab: React.FC = () => {
                                           await dispatchEmail('leave:manager_approved', vars, { applicant: applicantEmail, ...mgrMail.emails });
                                         }
                                         if (req.status === 'manager_approved' && await shouldSend('leave:manager_approved', 'slack')) {
-                                          await sendLeaveSlack('accounting_approved', '経理担当者', '管理者');
+                                          await sendLeaveSlack('accounting_approved', '経理担当者', '管理者', undefined, undefined, undefined, {
+                                            applicantName: req.profile?.name ?? '',
+                                            leaveTypeName: req.leave_type === 'その他' ? (req.leave_type_other || 'その他') : req.leave_type,
+                                            dateSummary: formatLeaveDateSummary(req.leave_dates, req.start_date, req.end_date, ''),
+                                          });
                                         }
                                         } catch (e) {
                                           console.error('[leave] 受理後の通知に失敗:', e);
@@ -1918,6 +1929,14 @@ const LeaveRequestsTab: React.FC = () => {
                           // 宛先で選ばれた役職（リーダー・マネージャー・社長）にもサイト通知＋メール（applicantは上で送信済み）
                           await dispatchSiteNotification('leave:cancelled', cancelVars, cancelSite.ids, insertNotification, 'leave_request', rejectModal.id);
                           await dispatchEmail('leave:cancelled', cancelVars, cancelMail.emails);
+                          // Slack（送信先チャンネルを選んだときだけ送られる。取消の理由は載せない）
+                          if (await shouldSend('leave:cancelled', 'slack')) {
+                            await sendLeaveSlack('cancelled', '管理者', '管理者', undefined, undefined, undefined, {
+                              applicantName: rejectModal.profile?.name ?? '',
+                              leaveTypeName: cancelType,
+                              dateSummary: formatLeaveDateSummary(rejectModal.leave_dates, rejectModal.start_date, rejectModal.end_date, ''),
+                            });
+                          }
                           setRejectModal(null); setRejectReason(''); setRejectNewType('');
                           fetchLeaveRequests();
                           } });

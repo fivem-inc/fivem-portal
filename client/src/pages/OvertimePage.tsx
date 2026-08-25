@@ -32,7 +32,7 @@ import HelpLinkButton from '../components/HelpLinkButton';
 import { OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport, CLOCK_ONLY_REASONS, canOfferCalendarChoice, willShowOnCalendar } from '../lib/overtimeTypes';
 import type { OvertimeType } from '../lib/overtimeTypes';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
-import { notifyOvertimeNewRequest, notifyOvertimeGrantRequest } from '../lib/overtimeNotify';
+import { notifyOvertimeNewRequest, notifyOvertimeGrantRequest, sendOvertimeSlack } from '../lib/overtimeNotify';
 import type { CorrectionRequestRow } from '../lib/correctionRequest';
 
 // ────────────────────────────────────────────────────────────────
@@ -1227,6 +1227,14 @@ const OvertimeForm: React.FC<{
           dateLabel: `${date}（${dowLabel(date)}）`,
           timeLabel: formatSignedMin(diffMin),
         }).then(null, () => {});
+      }
+
+      // 🚨 自己受理（マネージャー以上）は受理ボタン（Edge Function overtime-approve）を通らず、
+      //    ここで status='confirmed' のまま直接保存される。そのため Slack もここから送らないと
+      //    「一番使う層の残業だけSlackに出ない」ことになる。
+      //    残業なし（差分0）と打刻ズレは実態が無いので送らない（打刻ズレは送信側でも弾いている）。
+      if (isSelfReview && !isPureZero && !clockOnlyMode) {
+        sendOvertimeSlack(reportId, 'overtime:confirmed').then(null, () => {});
       }
 
       // カレンダー同期：送信のたびに必ず同期する。

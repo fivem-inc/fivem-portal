@@ -3,7 +3,7 @@ import { useAdminPanel } from './AdminPanelContext';
 import { notifyShiftReportReturned } from '../../lib/shiftReportReturnedNotify';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
 import ShiftEditModal from './ShiftEditModal';
-import { formatSegsFromRecord } from '../../lib/shiftCalc';
+import { formatSegsFromRecord, parseSegments } from '../../lib/shiftCalc';
 
 type AppType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start' | 'location_change';
 
@@ -226,6 +226,8 @@ const ShiftReportsTab: React.FC = () => {
         date: r.work_date,
         types: getTypes(r),
         location: r.actual_location ?? r.original_location ?? '',
+        // Slack本文の「時間」に使う。古い報告は開始・終了の列しか持たないので parseSegments で復元する
+        segments: parseSegments(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end, r.actual_location),
         report_id: r.id, // 通知タップで該当行をハイライトするため
       },
     }).then(null, () => {});

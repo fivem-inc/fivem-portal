@@ -842,6 +842,18 @@ const AbsenceInputSheet: React.FC<{
         users: [...new Set(records.map(r => r.user_id))].map(id => ({ id, name: nameOf(id) })),
         dates: [...new Set(records.map(r => r.date))],
         types: [...new Set(records.map(r => r.type))],
+        // Slack本文に出す時間・勤務地。時間は1回の登録では全員共通なので種別ごとに1件でよい。
+        // 勤務地は日付ごとに選べるため、揃っていないときは「日によって異なります」と伝える
+        details: [...new Set(records.map(r => r.type))].map(type => {
+          const rows = records.filter(r => r.type === type);
+          const locs = [...new Set(rows.map(r => r.location).filter(Boolean))];
+          return {
+            type,
+            time: rows[0]?.actual_time ?? null,
+            segments: rows[0]?.work_segments ?? null,
+            location: locs.length === 1 ? locs[0] : (locs.length > 1 ? '日によって異なります' : ''),
+          };
+        }),
       },
     });
     if (notifyErr) console.error('[attendance-notify] 通知失敗:', notifyErr);
@@ -1859,7 +1871,11 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
     // 取消したことをリーダー以上へ通知（通知設定 attendance:cancelled に従う）。
     // 通知を出さないと、共有カレンダーから予定が黙って消えるだけで経緯が誰にも伝わらない
     const { error: notifyErr } = await supabase.functions.invoke('attendance-notify', {
-      body: { user_id: target.user_id, user_name: target.name, dates: [target.date], types: [target.type], mode: 'cancelled' },
+      body: {
+        user_id: target.user_id, user_name: target.name, dates: [target.date], types: [target.type], mode: 'cancelled',
+        // 取消も登録と同じ項目を出す（何を取り消したのかが分かるように）
+        details: [{ type: target.type, time: target.actual_time, segments: target.work_segments, location: target.location }],
+      },
     });
     if (notifyErr) console.error('[attendance-notify] 取消通知の送信失敗:', notifyErr);
 

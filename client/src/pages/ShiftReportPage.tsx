@@ -623,6 +623,7 @@ const ShiftReportForm: React.FC<{
               date,
               types,
               location: hasAbsence ? '' : (finalActLoc || finalOrigLoc || ''),
+              segments: hasAbsence ? null : actSegs, // Slack本文の「時間」に使う
               report_id: newReport?.id, // 通知タップで該当行をハイライトするため
             },
           }).then(null, () => {});
@@ -1291,6 +1292,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
         date: report.work_date,
         types: report.application_types?.length ? report.application_types : [report.application_type],
         location: report.actual_location ?? report.original_location ?? '',
+        // Slack本文の「時間」に使う。古い報告は開始・終了の列しか持たないので parseSegments で復元する
+        segments: parseSegments(report.actual_segments, report.actual_start, report.actual_end, report.actual_outing_start, report.actual_outing_end, report.actual_location),
         report_id: report.id, // 通知タップで該当行をハイライトするため
       },
     }).then(null, () => {});
