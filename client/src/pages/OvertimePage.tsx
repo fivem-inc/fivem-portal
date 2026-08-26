@@ -2796,6 +2796,10 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                   </div>
                 </div>
 
+                {/* 🚨 いつ出された申請かを必ず出す。これが無いと「今日出たのか、
+                    2週間前に出て放置されているのか」が受理する側から分からない */}
+                <p style={{ margin: '0 0 6px', fontSize: 12, color: subText }}>提出：{stampLabel(r.created_at)}</p>
+
                 {/* 事前受理をしたかどうか。実績の確認をするとき、
                     「予定を上長が見ている」のか「予定も実績もこれから見る」のかで判断の重さが変わる */}
                 {r.status === 'reported' && !isFullDay && (
@@ -2843,7 +2847,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                       <span style={{ color: subText }}>申請内容　：</span>
                       <span style={{ fontWeight: 'bold' }}>終日　{fdType ? OT_TYPE_INFO[fdType].label : ''}</span><br />
                       {r.furikae_origin_date && (
-                        <><span style={{ color: subText }}>振替元　　：</span>{r.furikae_origin_date.slice(5).replace('-', '/')}（{dowLabel(r.furikae_origin_date)}）{r.furikae_origin_location ? `・${r.furikae_origin_location}` : ''}<br /></>
+                        // 🚨 時間帯と労働時間まで出す。日付と勤務校だけでは
+                        //    「何時間ぶんの振替なのか」が分からず、受理してよいか判断できない
+                        <><span style={{ color: subText }}>振替元　　：</span>{r.furikae_origin_date.slice(5).replace('-', '/')}（{dowLabel(r.furikae_origin_date)}）{r.furikae_origin_location ? `・${r.furikae_origin_location}` : ''}{r.furikae_origin_start ? `・${r.furikae_origin_start.slice(0, 5)}〜${(r.furikae_origin_end ?? '').slice(0, 5)}（労働${formatMin(r.furikae_origin_labor_minutes ?? 0)}）` : ''}<br /></>
                       )}
                       <span style={{ color: subText }}>
                         {fdType === 'chosei_off' && <>合計時間数 <span style={{ fontWeight: 'bold', color: diffColor(r.diff_minutes ?? 0, isDark) }}>{formatSignedMin(r.diff_minutes ?? 0)}</span>（受理で確定します）</>}
@@ -2886,7 +2892,34 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     <TypeChips types={r.application_types} isDark={isDark} />
                   </div>
                 )}
-                <p style={{ margin: '0 0 10px', fontSize: 12.5, color: subText }}>理由：{r.reason}　／　勤務地：{r.location ?? '-'}</p>
+                <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText }}>理由：{r.reason}　／　勤務地：{r.location ?? '-'}</p>
+
+                {/* 判断に必ず要るもの（提出日時・振替元）は上に出し、
+                    突き合わせ用の細かい項目だけここに畳む */}
+                <button
+                  type="button"
+                  onClick={() => toggleDetail(r.id)}
+                  style={{ margin: '0 0 10px', fontSize: 12, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', background: 'transparent', border: `1px solid ${borderColor}`, color: subText }}
+                >
+                  {detailOpenIds.has(r.id) ? '▲ 詳細を閉じる' : '▼ 詳細'}
+                </button>
+                {detailOpenIds.has(r.id) && (
+                  <div style={{ margin: '0 0 10px', background: innerBg, borderRadius: 8, padding: '8px 10px', fontSize: 12, lineHeight: 1.9, color: text }}>
+                    {!isFullDay && r.normal_shift && (
+                      <div>
+                        <span style={detailLabelStyle(subText)}>通常シフト</span>
+                        休憩{formatMin(r.normal_shift.break_minutes ?? 0)}{r.normal_shift.location ? `・${r.normal_shift.location}` : ''}
+                      </div>
+                    )}
+                    {r.request_confirmed_at && (
+                      <div><span style={detailLabelStyle(subText)}>事前受理</span>{stampLabel(r.request_confirmed_at)}</div>
+                    )}
+                    <div>
+                      <span style={detailLabelStyle(subText)}>カレンダー</span>
+                      {willShowOnCalendar(r.application_types, r.is_post_hoc, r.show_on_calendar) ? '表示する' : '表示しない'}
+                    </div>
+                  </div>
+                )}
 
                 {returnTargetId === r.id ? (
                   <div style={{ background: innerBg, borderRadius: 8, padding: '10px 12px' }}>
