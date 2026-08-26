@@ -882,7 +882,7 @@ const ShiftReportForm: React.FC<{
                         {origSegs.length > 1 && (
                           <button type="button" onClick={() => { setOrigSegs(prev => prev.filter((_, j) => j !== i)); setOrigLocOther(prev => prev.filter((_, j) => j !== i)); }}
                             aria-label={`勤務${i + 1}を削除`}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#888', flexShrink: 0 }}>🚫</button>
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#888', flexShrink: 0 }}>✕</button>
                         )}
                       </div>
                       <div style={{ paddingLeft: 52 }}>
@@ -938,7 +938,7 @@ const ShiftReportForm: React.FC<{
                       {actSegs.length > 1 && (
                         <button type="button" onClick={() => { setActSegs(prev => prev.filter((_, j) => j !== i)); setActLocOther(prev => prev.filter((_, j) => j !== i)); }}
                           aria-label={`勤務${i + 1}を削除`}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#888', flexShrink: 0 }}>🚫</button>
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#888', flexShrink: 0 }}>✕</button>
                       )}
                     </div>
                     <div style={{ paddingLeft: 52 }}>

@@ -742,6 +742,36 @@ const OvertimeForm: React.FC<{
       .filter((s): s is WorkSegment => s !== null),
   [segments]);
 
+  // 🚨 明らかにおかしい時間帯を「送信するまで気づけない」状態にしないための入力時チェック。
+  //    終了が開始より前なら翌日扱いにする仕様（深夜勤務のため必要）が、
+  //    24時間表記の打ち間違い（夕方5時を 5:55 と入力）を静かに17時間の勤務に変えてしまう。
+  //    実際に 12:30〜23:30 ＋ 12:30〜5:55 で「労働 27:25」と表示された（実機で発生）。
+  //    行ごとの理由を返し、その場で赤くして労働時間の代わりに出す。送信は既存の検証でも止まる。
+  const MAX_SEG_MINUTES = 16 * 60;   // 1本の勤務が16時間を超えることは実務上ありえない
+  const segmentIssues = useMemo(() => {
+    const issues: (string | null)[] = segments.map(() => null);
+    let prevEnd: number | null = null;
+    segments.forEach((s, i) => {
+      const st = timeToMin(s.start);
+      let en = timeToMin(s.end);
+      if (st == null || en == null) return;
+      const wrapped = en <= st;
+      if (wrapped) en += 1440;
+      if (en - st > MAX_SEG_MINUTES) {
+        issues[i] = wrapped
+          ? `終了が開始より前のため翌日として計算し、${formatMin(en - st)}の勤務になっています。夕方5時なら 17:00 のように入力してください`
+          : `勤務${i + 1}が${formatMin(en - st)}になっています。時刻を確認してください`;
+        return;
+      }
+      if (prevEnd != null && st < prevEnd) {
+        issues[i] = `勤務${i + 1}の開始が勤務${i}の終了より前になっています`;
+      }
+      prevEnd = en;
+    });
+    return issues;
+  }, [segments]);
+  const hasSegmentIssue = segmentIssues.some(Boolean);
+
   const autoBreak = useMemo(() => calcTotalBreak(workSegments), [workSegments]);
   const breakMin = breakManual ? (parseInt(breakManualMin, 10) || 0) : autoBreak;
   const laborMin = calcLaborMinutes(workSegments, breakMin);
@@ -1056,6 +1086,9 @@ const OvertimeForm: React.FC<{
       const s = segments[i];
       if ((s.start && !s.end) || (!s.start && s.end)) return `勤務${i + 1}の開始・終了を両方入力してください`;
     }
+    // 入力時に赤く出しているもの（遡り・16時間超）と同じ理由で送信も止める
+    const issue = segmentIssues.find(Boolean);
+    if (issue) return issue;
     // 帯の重複チェック
     const sorted = [...workSegments].sort((a, b) => a.startMin - b.startMin);
     for (let i = 1; i < sorted.length; i++) {
@@ -1856,15 +1889,23 @@ const OvertimeForm: React.FC<{
           <p style={{ margin: '2px 0 8px', fontSize: 11.5, color: subText, lineHeight: 1.6 }}>予定が入っています。実際と違う場合は直してください。</p>
         )}
         {segments.map((s, i) => (
-          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <span style={{ fontSize: 12, color: subText, minWidth: 44 }}>勤務{i + 1}</span>
-            <TimeInput value={s.start} onChange={v => setSegments(prev => prev.map((p, j) => j === i ? { ...p, start: v } : p))} isDark={isDark} advance ariaLabel={`勤務${i + 1} 開始時刻`} style={{ flex: 1, minWidth: 0 }} />
-            <span style={{ color: subText }}>〜</span>
-            <TimeInput value={s.end} onChange={v => setSegments(prev => prev.map((p, j) => j === i ? { ...p, end: v } : p))} isDark={isDark} ariaLabel={`勤務${i + 1} 終了時刻`} style={{ flex: 1, minWidth: 0 }} />
-            {segments.length > 1 && (
-              <button onClick={() => setSegments(prev => prev.filter((_, j) => j !== i))}
-                aria-label={`勤務${i + 1}を削除`}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: subText }}>🚫</button>
+          <div key={i} style={{ marginBottom: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 12, color: subText, minWidth: 44 }}>勤務{i + 1}</span>
+              <TimeInput value={s.start} onChange={v => setSegments(prev => prev.map((p, j) => j === i ? { ...p, start: v } : p))} isDark={isDark} advance invalid={!!segmentIssues[i]} ariaLabel={`勤務${i + 1} 開始時刻`} style={{ flex: 1, minWidth: 0 }} />
+              <span style={{ color: subText }}>〜</span>
+              <TimeInput value={s.end} onChange={v => setSegments(prev => prev.map((p, j) => j === i ? { ...p, end: v } : p))} isDark={isDark} invalid={!!segmentIssues[i]} ariaLabel={`勤務${i + 1} 終了時刻`} style={{ flex: 1, minWidth: 0 }} />
+              {segments.length > 1 && (
+                <button onClick={() => setSegments(prev => prev.filter((_, j) => j !== i))}
+                  aria-label={`勤務${i + 1}を削除`}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: subText }}>✕</button>
+              )}
+            </div>
+            {/* 打ち間違いはその場で理由まで出す。24時間表記の案内もここでだけ伝える（常設の説明は増やさない） */}
+            {segmentIssues[i] && (
+              <p style={{ margin: '4px 0 0 52px', fontSize: 11.5, lineHeight: 1.6, color: isDark ? '#f5b5ba' : '#c62828' }}>
+                {segmentIssues[i]}
+              </p>
             )}
           </div>
         ))}
@@ -1909,17 +1950,27 @@ const OvertimeForm: React.FC<{
           {breakRecalcNote && (
             <p style={{ fontSize: 11.5, color: '#e65100', margin: '0 0 4px' }}>時間帯を変更しました。休憩は手修正の値のままです（自動計算に戻す場合は上のリンク）</p>
           )}
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
-            <span style={{ color: subText }}>労働時間</span>
-            <span style={{ fontWeight: 'bold', color: text }}>{formatMin(laborMin)}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, borderTop: `1px solid ${borderColor}`, paddingTop: 6 }}>
-            <span style={{ fontWeight: 'bold', color: text }}>シフトとの差分</span>
-            <span style={{ fontWeight: 'bold', color: diffColor(diffMin, isDark) }}>
-              {formatSignedMin(diffMin)}
-              {diffMin > 0 ? '（残業）' : diffMin < 0 ? '（早退・調整）' : ''}
-            </span>
-          </div>
+          {/* 🚨 時間帯がおかしいときは数字を出さない。
+              27:25 のような値をそのまま見せると、正しい数字だと思われてしまう */}
+          {hasSegmentIssue ? (
+            <div style={{ fontSize: 12.5, lineHeight: 1.7, color: isDark ? '#f5b5ba' : '#c62828' }}>
+              勤務時間の入力を確認してください。正しく直すと労働時間と差分が出ます
+            </div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
+                <span style={{ color: subText }}>労働時間</span>
+                <span style={{ fontWeight: 'bold', color: text }}>{formatMin(laborMin)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, borderTop: `1px solid ${borderColor}`, paddingTop: 6 }}>
+                <span style={{ fontWeight: 'bold', color: text }}>シフトとの差分</span>
+                <span style={{ fontWeight: 'bold', color: diffColor(diffMin, isDark) }}>
+                  {formatSignedMin(diffMin)}
+                  {diffMin > 0 ? '（残業）' : diffMin < 0 ? '（早退・調整）' : ''}
+                </span>
+              </div>
+            </>
+          )}
           {applicationTypes.length > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', borderTop: `1px solid ${borderColor}`, marginTop: 6, paddingTop: 8 }}>
               <span style={{ fontSize: 12.5, color: subText }}>種別：</span>

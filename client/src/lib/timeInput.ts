@@ -92,10 +92,14 @@ export function toDbTime(raw: string | null | undefined): string | null {
   return t ? t : null;
 }
 
-/** "HH:MM" → 時の欄・分の欄に入れる値（2枠入力の初期化用）。時のゼロ埋めは外す */
+/**
+ * "HH:MM" → 時の欄・分の欄に入れる値（2枠入力の初期化用）。
+ * 🚨 時もゼロ埋めして2桁で返す（09:30）。デジタル時計と同じ見た目になり、
+ *    「24時間表記で入れる欄だ」と説明文を足さずに伝えられるため（2026-08-26 ユーザー判断）。
+ */
 export function splitTime(value: string | null | undefined): { hour: string; minute: string } {
   const t = normalizeTime(value);
   if (!t) return { hour: '', minute: '' };
   const [h, m] = t.split(':');
-  return { hour: String(Number(h)), minute: m };
+  return { hour: h, minute: m };
 }

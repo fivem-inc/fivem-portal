@@ -1059,7 +1059,7 @@ const AbsenceInputSheet: React.FC<{
                       style={{ flex: 1, padding: '8px', borderRadius: 8, border: `1px solid ${!seg.end ? '#f0a0a0' : '#ccc'}`, fontSize: 14, background: '#fff', color: '#333' }} />
                     {segments.length > 1 && (
                       <button type="button" onClick={() => removeSegment(i)} title="この時間帯を削除"
-                        style={{ background: 'none', border: 'none', color: '#999', cursor: 'pointer', fontSize: 15, padding: '0 2px', flexShrink: 0 }}>🚫</button>
+                        style={{ background: 'none', border: 'none', color: '#999', cursor: 'pointer', fontSize: 15, padding: '0 2px', flexShrink: 0 }}>✕</button>
                     )}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 52 }}>

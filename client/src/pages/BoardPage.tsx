@@ -1311,7 +1311,7 @@ const BoardPage: React.FC = () => {
                 {favMessageIds.has(msg.id) ? '★' : '☆'}
               </button>
               {canEdit && msg.channel_id && (
-                <button type="button" onClick={() => setChannelDeleteConfirmId(channelDeleteConfirmId === msg.id ? null : msg.id)} title="削除" style={{ background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 13, padding: '2px 4px' }}>🚫</button>
+                <button type="button" onClick={() => setChannelDeleteConfirmId(channelDeleteConfirmId === msg.id ? null : msg.id)} title="削除" style={{ background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 13, padding: '2px 4px' }}>✕</button>
               )}
             </div>
           </div>
@@ -2054,7 +2054,7 @@ const BoardPage: React.FC = () => {
               {canDelete && (
                 <button type="button" onClick={e => deleteChannel(ch.id, e)}
                   title="削除"
-                  style={{ background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 13, padding: '0 2px', lineHeight: 1 }}>🚫</button>
+                  style={{ background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 13, padding: '0 2px', lineHeight: 1 }}>✕</button>
               )}
             </div>
           </div>

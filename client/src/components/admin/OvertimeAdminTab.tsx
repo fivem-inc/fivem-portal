@@ -1651,7 +1651,7 @@ const OvertimeAdminTab: React.FC = () => {
                             onChange={ev => setEditTimes(prev => ({ ...prev, [k]: { ...t, end2: ev.target.value } }))}
                             style={inputStyle} />
                           <button onClick={() => setEditTimes(prev => ({ ...prev, [k]: { ...t, start2: '', end2: '' } }))}
-                            aria-label="2つ目の時間帯を削除" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: subText }}>🚫</button>
+                            aria-label="2つ目の時間帯を削除" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: subText }}>✕</button>
                         </>
                       )}
                       {valid && (

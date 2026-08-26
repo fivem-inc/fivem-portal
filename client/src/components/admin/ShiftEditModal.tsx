@@ -219,7 +219,7 @@ const ShiftEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
                         {segs.length > 1 && (
                           <button type="button" onClick={() => { setSegs(prev => prev.filter((_, j) => j !== i)); setLocOther(prev => prev.filter((_, j) => j !== i)); }}
                             aria-label={`勤務${i + 1}を削除`}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: sub, flexShrink: 0 }}>🚫</button>
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: sub, flexShrink: 0 }}>✕</button>
                         )}
                       </div>
                       <div style={{ paddingLeft: 46 }}>
