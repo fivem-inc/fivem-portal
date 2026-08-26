@@ -124,6 +124,44 @@ export function normalShiftTimeText(ns: ShiftLike | null | undefined): string {
   return normalShiftBands(ns).map(b => `${b.start}〜${b.end}`).join(' / ');
 }
 
+/**
+ * 勤務日が当日のとき、「実績を報告する」ボタンを出してよい時刻（0時からの分）を返す。
+ * ＝「その日の勤務が終わるころ」。通常シフトの終了と予定の終了のうち **早いほう**。
+ *   ・残業が無くなって定時で上がった日も、待たずに「残業なし」で報告できる（通常シフト側で決まる）
+ *   ・逆に出勤前・勤務中の早すぎる報告は止まる。
+ *     🚨「残業なし」報告は誰の確認も通らずその場で確定する（OvertimePage の isPureZero → status='confirmed'）。
+ *        朝に押されると実際は残業したのに記録が残らず、本人は修正依頼でしか直せない。
+ * 通常シフトが無い日（休日出勤など）は予定の**開始**にフォールバックする（夜まで待たせない）。
+ * どちらも取れなければ null ＝ 当日いつでも報告できる（詰まらせない側に倒す）。
+ * 🚨 日をまたぐ勤務は 1440 を超える値を返す。当日は出ず、翌日に「勤務日を過ぎた分」として出る。
+ */
+export function reportGateMin(
+  ns: ShiftLike | null | undefined,
+  planned: { start_min: number; end_min: number }[],
+): number | null {
+  const nsEnds: number[] = [];
+  const addEnd = (s?: string | null, e?: string | null) => {
+    if (!s || !e) return;
+    const st = timeToMin(s.slice(0, 5));
+    let en = timeToMin(e.slice(0, 5));
+    if (st == null || en == null) return;
+    if (en <= st) en += 1440;                   // 日をまたぐ勤務
+    nsEnds.push(en);
+  };
+  addEnd(ns?.start_time, ns?.end_time);
+  addEnd(ns?.start_time2, ns?.end_time2);
+  const nsEnd = nsEnds.length > 0 ? Math.max(...nsEnds) : null;
+  // 🚨 seg_no は入力順で振られており「1本目＝最も早い」とは限らない（doSubmit はソートしない）。
+  //    必ず min / max で取ること。
+  const pStart = planned.length > 0 ? Math.min(...planned.map(s => s.start_min)) : null;
+  const pEnd = planned.length > 0 ? Math.max(...planned.map(s => s.end_min)) : null;
+
+  if (nsEnd != null && pEnd != null) return Math.min(nsEnd, pEnd);
+  if (nsEnd != null) return nsEnd;
+  if (pStart != null) return pStart;
+  return null;
+}
+
 export interface TimeAdjustBuild {
   ok: boolean;                 // その日が休み等で調整不能なら false
   normal_shift: NormalShiftSnapshot;

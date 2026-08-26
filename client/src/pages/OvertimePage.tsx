@@ -15,7 +15,7 @@ import {
   DAY_KIND_LABELS,
 } from '../lib/breakCalc';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
-import { resolveNormalShift, normalShiftBands, normalShiftTimeText, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
+import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMin, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 
 // validate() は文言だけを返すので、文言と入力欄を突き合わせて薄赤ハイライトを付ける。
@@ -1402,7 +1402,7 @@ const OvertimeForm: React.FC<{
           <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8 }}>
             <li>残業・時間調整の申請と報告は、このページで行ってください（タイムカードの打刻＋このページの申請の2つセット。Slackへの個人の残業申請入力は不要です）。</li>
             <li>突発的な残業（急なお客様対応など）を除き、残業は事前に申請してください。申請がない場合は通常のシフト時間での勤務となります。</li>
-            <li>事前申請が受理されると、「履歴・実績報告」タブのその日のカードに「実績を報告する」ボタンが表示されます。業務のあと、変更がなければそのまま送信（内容は入力済みです）、時間が変わった場合は直してから送信してください。</li>
+            <li>事前申請した日は、その日の勤務が終わるころに「履歴・実績報告」タブのカードへ「実績を報告する」ボタンが出ます（受理を待たずに報告できます）。変更がなければそのまま送信（内容は入力済みです）、時間が変わった場合は直してから送信してください。</li>
             <li>休憩は自動計算されます。突発的な残業などで自動計算どおりに取れなかった場合は、休憩の「修正」から実際の時間に直してください（休憩後は1分以上業務をしてから退勤してください）。</li>
             <li>時間は1分単位で入力できます。外出・戻りのあるシフトは「＋勤務時間帯を追加」で入力してください。</li>
             <li>正社員の方は、残業分を別日で調整（時間調整・調整休）していただくようお願いします。</li>
@@ -2516,8 +2516,13 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   // 本人・部門集計・個人詳細で共通の computeBalance を使う
   const ownCardBalance = useMemo(() => computeBalance(ownCardRows, ownCardPeriod), [ownCardRows, ownCardPeriod]);
 
-  // 実績未報告の受理済み事前申請（勤務日を過ぎたもの）。終日（調整休・欠勤）は実績報告の概念がないため除外
+  // 実績未報告の事前申請（勤務日を過ぎたもの）。終日（調整休・欠勤）は実績報告の概念がないため除外
   // 🚨 requested（受理まち）も含める（2026-08-25）。受理を待たずに実績を報告できるようにしたため
+  // 🚨🚨 ここは「催促」（黄色い枠・履歴タブの件数バッジ）なので **翌日基準のまま**。
+  //      報告できるかどうかの canReportOt（当日の勤務が終わるころから可）とは意図的に基準が違う。
+  //      当日から催促すると、まだ勤務中の人に「まだ報告していません」と出るため。揃えないこと（2026-08-26）。
+  //      同じ翌日基準の写しが App.tsx（ホーム件数・ナビ）と
+  //      Edge Function remind-overtime-unreported（毎朝のリマインド）にもある。
   const unreportedRequests = useMemo(() =>
     reports.filter(r => ['requested', 'request_confirmed'].includes(r.status) && r.work_date < todayJstStr() && !isFullDayReport(r.application_types)),
   [reports]);
@@ -2660,6 +2665,16 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   // 早期returnの後ろに Hook があると、通常ビュー⇄確認ビューの切替で Hook 数が変わり React がクラッシュ
   // （確認ページが真っ白になる）。Rules of Hooks 順守のため必ずここで宣言する。
   const otTodayStr = todayJstStr();
+  // 実績報告ボタンを出す時刻の判定に使う「今の時刻」（0時からの分）。
+  // 🚨 1分ごとの再描画は入れない（負荷とチラつき）。他アプリから戻った・タブに戻った時だけ取り直す。
+  //    そのため「画面を開いたまま待つ」と出ないことがあるが、スマホは戻ると必ず visibilitychange が起きる。
+  const [nowMin, setNowMin] = useState(() => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); });
+  useEffect(() => {
+    const tick = () => { const d = new Date(); setNowMin(d.getHours() * 60 + d.getMinutes()); };
+    document.addEventListener('visibilitychange', tick);
+    window.addEventListener('focus', tick);
+    return () => { document.removeEventListener('visibilitychange', tick); window.removeEventListener('focus', tick); };
+  }, []);
   const ownHistoryAll = reports.filter(r => r.entry_type === 'manual' || r.entry_type === 'leave_auto');
   // 本人の履歴は「前期＋今期」まで常に表示（それより古い期は非表示）。管理者は全件。給与明細照合のため直近1期は残す。
   const [curPY, curPM] = currentPeriod.split('-').map(Number);
@@ -2686,12 +2701,24 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     try { localStorage.setItem(OWN_HISTORY_FILTER_KEY, JSON.stringify(ownHistoryFilter)); } catch { /* ignore */ }
   }, [ownHistoryFilter]);
 
-  // 「あなたの対応待ち」（要報告＝申請済み・勤務日超過・終日以外／差し戻し）。一覧の上にピン留めし、絞り込みにも使う。
+  // 実績を報告できるか。過去日は無条件、当日は「その日の勤務が終わるころ」（reportGateMin）を過ぎたら。
   // 🚨 requested（受理まち）も含める（2026-08-25）。受理を待たずに実績を報告できるようにしたため
+  // 🚨🚨 催促する側（履歴タブの件数バッジ unreportedRequests／App.tsx のホーム件数・ナビ／
+  //      Edge Function remind-overtime-unreported の毎朝のリマインド）は **翌日基準のまま** で、
+  //      ここと意図的に基準が違う。当日から催促すると、まだ勤務中の人に「まだ報告していません」と出るため。
+  //      「揃っていない」と思って片方に合わせないこと（2026-08-26）。
+  const canReportOt = (r: OvertimeReport) => {
+    if (!['requested', 'request_confirmed'].includes(r.status)) return false;
+    if (isFullDayReport(r.application_types)) return false;      // 終日（調整休・振休・欠勤）は実績報告の概念がない
+    if (r.work_date < otTodayStr) return true;                   // 勤務日を過ぎた分は無条件
+    if (r.work_date > otTodayStr) return false;                  // 未来の予定
+    const gate = reportGateMin(r.normal_shift, (r.segments ?? []).filter(s => s.phase === 'planned'));
+    return gate == null || nowMin >= gate;                       // gate が取れない行は詰まらせない
+  };
+
+  // 「あなたの対応待ち」（要報告＝実績を報告できる分／差し戻し）。一覧の上にピン留めし、絞り込みにも使う。
   // 🚨 ownHistory の useMemo から呼ぶので、必ずその「前」に置くこと（後ろだと初期化前アクセスで落ちる）
-  const isOtActionRow = (r: OvertimeReport) =>
-    r.status === 'returned' ||
-    (['requested', 'request_confirmed'].includes(r.status) && r.work_date < otTodayStr && !isFullDayReport(r.application_types));
+  const isOtActionRow = (r: OvertimeReport) => r.status === 'returned' || canReportOt(r);
 
   const ownHistory = useMemo(() => {
     const statusGroup: Record<string, string[]> = {
@@ -2718,10 +2745,13 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
 
   const ownActionRows = ownHistory.filter(isOtActionRow);
   const ownRestRows = ownHistory.filter(r => !isOtActionRow(r));
-  // 受理済みの残業に紐づく最新の修正依頼（修正依頼中/対応済みバッジ用）
+  // 残業に紐づく最新の修正依頼（📩依頼中／✓対応済みバッジ用）
+  // 🚨 ここは status で絞らないこと。依頼は申請の状態が変わっても残るため、絞ると
+  //    「依頼を出したあとに上長が差し戻す」だけでバッジが消え、本人は取り下げも出し直しもできなくなる
+  //    （依頼はDBに残ったまま・二重open防止で再依頼も弾かれる）。取得は全件、出し分けは表示側で行う。
   const [corrections, setCorrections] = useState<Map<string, CorrectionRequestRow>>(new Map());
   const reloadCorrections = useCallback(() => {
-    const ids = ownHistory.filter(r => r.status === 'confirmed' && r.entry_type === 'manual').map(r => r.id);
+    const ids = ownHistory.filter(r => r.entry_type === 'manual').map(r => r.id);
     if (ids.length === 0) { setCorrections(new Map()); return; }
     fetchLatestCorrectionByTarget('overtime', ids).then(setCorrections);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3124,7 +3154,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                 <p style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#fff' : '#1a4a5a', margin: '0 0 4px' }}>■ このページでできること</p>
                 <ol style={{ margin: '0 0 10px', paddingLeft: 20, fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8 }}>
                   <li>申請・報告した内容と、今期の合計時間数を確認できます。</li>
-                  <li>事前申請が受理された日は「実績を報告する」から実績を送信します（<b>残業が無かった日も「残業なし」で報告できます</b>）。</li>
+                  <li>事前申請した日は、その日の勤務が終わるころに「実績を報告する」ボタンが出ます（<b>受理を待たずに報告できます</b>／<b>残業が無かった日も「残業なし」で報告できます</b>）。</li>
                   <li>差し戻された申請は、内容を直して再提出できます。</li>
                 </ol>
                 <p style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#fff' : '#1a4a5a', margin: '0 0 4px' }}>■ 変更・取消のルール</p>
@@ -3276,11 +3306,20 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     //    以前は受理済みだけが対象で、上長が受理を忘れると本人は何もできず、
                     //    ⚠️要報告バッジもリマインドも出ないまま放置されていた。
                     const isReportable = ['requested', 'request_confirmed'].includes(r.status) && !isFullDay;
-                    const isOverdue = isReportable && r.work_date < otTodayStr;
-                    const isFuturePlanned = isReportable && r.work_date >= otTodayStr;
-                    // 未受理のまま勤務日を過ぎた＝「受理を待たずに報告してよい」と案内する対象
-                    const isOverdueUnapproved = isOverdue && r.status === 'requested';
-                    const canReport = isOverdue; // 実績報告ボタンは勤務日を過ぎた分だけ（未来は勤務後に案内）
+                    // 判定は canReportOt に集約（当日は「勤務が終わるころ」から出す。催促側とは基準が違う）
+                    const canReport = canReportOt(r);
+                    // 🚨 「まだ報告できない」は canReport と必ず排他にすること。別々の条件にすると
+                    //    「ボタンが出ます」の案内と実物のボタンが同じカードに並ぶ
+                    const isNotYet = isReportable && !canReport;
+                    // 未受理のまま報告できる状態＝「受理を待たずに報告してよい」と案内する対象。
+                    // 🚨 canReport と同じ基準にすること。isOverdue 基準のままだと当日だけ説明が消え、
+                    //    いちばん不安な状況（上長が受理していないのに報告する）で説明だけ無くなる
+                    const isReportableUnapproved = canReport && r.status === 'requested';
+                    // 案内文に実時刻を出すためのゲート（深夜勤務で翌日にずれ込む分＝1440以上は出さない）
+                    const gateRaw = isNotYet
+                      ? reportGateMin(r.normal_shift, (r.segments ?? []).filter(s => s.phase === 'planned'))
+                      : null;
+                    const gateMin = gateRaw != null && gateRaw < 1440 ? gateRaw : null;
                     const canResubmit = r.status === 'returned';
                     // 取消ルール：reported(実績報告済＝実態あり)は本人不可（上長が差し戻す/管理者）。
                     // 本人可は事前段階(requested/request_confirmed)＋差し戻し(returned)のみ。期間は支給月17日まで、以降は管理者のみ。確定は不可（既存）。
@@ -3293,7 +3332,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     const planned = (r.segments ?? []).filter(s => s.phase === 'planned').sort((a, b) => a.seg_no - b.seg_no);
                     const segs = actual.length > 0 ? actual : planned;
                     return (
-                      <div key={r.id} style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, borderLeft: (isOverdue || r.status === 'returned') ? '4px solid #f59e0b' : `1px solid ${borderColor}`, padding: '12px 14px', marginBottom: 10 }}>
+                      <div key={r.id} style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, borderLeft: (canReport || r.status === 'returned') ? '4px solid #f59e0b' : `1px solid ${borderColor}`, padding: '12px 14px', marginBottom: 10 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4, gap: 6, flexWrap: 'wrap' }}>
                           <span style={{ fontSize: 14, fontWeight: 'bold', color: text }}>
                             {r.work_date.slice(5).replace('-', '/')}（{dowLabel(r.work_date)}）
@@ -3306,7 +3345,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                 以前は要報告のときステータスを差し替えていたが、それだと
                                 「受理まち」と「受理済み」の区別が画面から消えるため必ず両方出す */}
                             {!isAuto && <span style={badgeStyle(STATUS_INFO[r.status].color, STATUS_INFO[r.status].darkBg, isDark)}>{STATUS_INFO[r.status].label}</span>}
-                            {!isAuto && isOverdue && <span style={badgeStyle('#e65100', '#4a2c0a', isDark)}>⚠️ 要報告</span>}
+                            {!isAuto && canReport && <span style={badgeStyle('#e65100', '#4a2c0a', isDark)}>⚠️ 要報告</span>}
                           </div>
                         </div>
 
@@ -3391,17 +3430,26 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                           </>
                         )}
 
-                        {isFuturePlanned && (
-                          <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>📅 勤務後に「実績を報告する」ボタンが出ます</p>
+                        {isNotYet && (
+                          <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>
+                            {/* 🚨 いつ出るかを必ず実時刻で伝える。ゲートは「通常シフトの終了」と「予定の終了」の
+                                早いほうなので、予定より早く切り上げた日は終わってもしばらく出ない。
+                                時刻が無いと「終わったのに出ない」という問い合わせになる（2026-08-26） */}
+                            {gateMin != null
+                              ? `📅 ${minToTime(gateMin)} 以降に報告できます`
+                              : '📅 勤務が終わるころに報告できます'}
+                          </p>
                         )}
                         {/* 未受理のまま勤務日を過ぎた分。「なぜ受理されていないのに報告するのか」が分からないと手が止まるため添える */}
-                        {isOverdueUnapproved && (
+                        {isReportableUnapproved && (
                           <p style={{ margin: '8px 0 0', fontSize: 12, color: subText, lineHeight: 1.6 }}>
                             ⏳ {r.reviewer?.name ? `${r.reviewer.name}さん` : '申請先'}の受理がまだですが、先に実績を報告できます（受理と確認はまとめて行われます）
                           </p>
                         )}
                         {isReportedLock && (
-                          <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>🔒 実績報告済みのため取消できません。申請先の担当者に取り下げ（差し戻し）を依頼してください</p>
+                          // 🚨 依頼先は「管理者」に統一（下の📩ボタン＝ submit_correction_request は管理者宛）。
+                          //    以前は「申請先の担当者に」と書いており、履歴タブの注意事項（管理者に依頼）と食い違っていた
+                          <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>上長の確認待ちのため、自分では変更・取消できません。変更は下の「📩 修正を依頼」から管理者へ依頼してください</p>
                         )}
                         {selfCancelStatus && cancelLockedByPeriod && (
                           <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>🔒 給与計算が始まっているため（毎月17日以降）、取消は管理者に依頼してください</p>
@@ -3416,7 +3464,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                   実績を報告する
                                 </button>
                                 <p style={{ margin: '6px 0 0', fontSize: 11.5, color: subText, textAlign: 'center', lineHeight: 1.6 }}>
-                                  {isOverdueUnapproved && '受理を待たずに報告して大丈夫です。'}残業が無かった日も、こちらから「残業なし」で報告できます
+                                  {isReportableUnapproved && '受理を待たずに報告して大丈夫です。'}残業が無かった日も、こちらから「残業なし」で報告できます
                                 </p>
                               </>
                             )}
@@ -3460,7 +3508,12 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                           </div>
                         )}
 
-                        {!isAuto && r.status === 'confirmed' && (
+                        {/* 実績報告済み（上長の確認まち）・受理済みは本人が直せないので、ここから管理者へ依頼する。
+                            🚨 「対応待ちの依頼がある行」も状態を問わず必ず出すこと。status だけで出し分けると、
+                               依頼を出したあとに上長が差し戻した瞬間にバッジごと消え、本人は取り下げも
+                               出し直しもできなくなる（依頼はDBに残ったまま・二重openで再依頼も弾かれる）。
+                            （取得側 reloadCorrections は status で絞らず全件取っている） */}
+                        {!isAuto && (['confirmed', 'reported'].includes(r.status) || corrections.get(r.id)?.status === 'open') && (
                           <CorrectionBadgeAndButton
                             targetType="overtime"
                             targetId={r.id}
