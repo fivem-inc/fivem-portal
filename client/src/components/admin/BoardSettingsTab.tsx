@@ -327,7 +327,7 @@ const BoardSettingsTab: React.FC = () => {
       )}
       {onSetReadDetail !== undefined && showReadDetail !== undefined && (
         <div style={{ marginBottom: 14, padding: '10px 12px', background: isDark ? '#1e2328' : '#fff', borderRadius: 8, border: `1px solid ${border}` }}>
-          <div style={{ fontSize: 13, fontWeight: 'bold', color: text, marginBottom: 6 }}>👁 既読詳細の表示</div>
+          <div style={{ fontSize: 13, fontWeight: 'bold', color: text, marginBottom: 6 }}>👁️ 既読詳細の表示</div>
           <div style={{ fontSize: 11, color: sub, marginBottom: 10 }}>誰が既読したか確認できる人の範囲を設定します</div>
           <div style={{ display: 'flex', gap: 6 }}>
             {([
@@ -379,7 +379,7 @@ const BoardSettingsTab: React.FC = () => {
       {/* ── 既読詳細表示設定 ── */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, padding: '10px 14px', background: rowBg, borderRadius: 8, border: `1px solid ${border}` }}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 'bold', color: text }}>👁 既読詳細の表示</div>
+          <div style={{ fontSize: 13, fontWeight: 'bold', color: text }}>👁️ 既読詳細の表示</div>
           <div style={{ fontSize: 12, color: sub, marginTop: 2 }}>ONにすると、全員がメッセージの既読者リストを確認できます</div>
         </div>
         <button type="button" onClick={async () => {
@@ -723,7 +723,7 @@ const BoardSettingsTab: React.FC = () => {
                 </button>
                 <button type="button" onClick={() => deleteChannel(ch.id, ch.name || 'チャンネル')}
                   style={{ padding: '4px 10px', background: 'none', border: `1px solid #dc3545`, borderRadius: 6, color: '#dc3545', cursor: 'pointer', fontSize: 12 }}>
-                  🚫
+                  ✕
                 </button>
               </div>
             )}

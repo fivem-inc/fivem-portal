@@ -902,7 +902,7 @@ const NotificationsTab: React.FC = () => {
       onClick={e => { if (e.target === e.currentTarget) { setPreviewFor(null); setPreviewVars({}); } }}>
       <div style={{ background: bg, borderRadius: 12, padding: 24, width: '100%', maxWidth: 520, maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <span style={{ fontSize: 15, fontWeight: 600, color: text }}>👁 プレビュー</span>
+          <span style={{ fontSize: 15, fontWeight: 600, color: text }}>👁️ プレビュー</span>
           <button onClick={() => { setPreviewFor(null); setPreviewVars({}); }}
             style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: subText }}>✕</button>
         </div>
@@ -1471,7 +1471,7 @@ const NotificationsTab: React.FC = () => {
                                         </button>
                                         <button onClick={() => { setPreviewFor({ eventKey: event.key, channel }); setPreviewVars({}); }}
                                           style={{ fontSize: 11, padding: '4px 12px', border: `0.5px solid ${borderColor}`, borderRadius: 8, background: 'none', color: text, cursor: 'pointer' }}>
-                                          👁 プレビュー
+                                          👁️ プレビュー
                                         </button>
                                         <button onClick={() => { setSaveAsTplFor({ eventKey: event.key, channel }); setSaveAsTplName(''); }}
                                           style={{ fontSize: 11, padding: '4px 12px', border: `0.5px solid ${borderColor}`, borderRadius: 8, background: 'none', color: text, cursor: 'pointer' }}>
@@ -2067,7 +2067,7 @@ export const ScheduledRemindersPanel: React.FC = () => {
                 <p style={{ margin: '3px 0 0', fontSize: 11, color: r.last_error ? '#dc3545' : sub, fontWeight: r.last_error ? 'bold' : 'normal' }}>
                   最後の配信: {formatSentAt(r.last_sent_at)}
                   {r.last_sent_count != null && ` ／ ${r.last_sent_count}人`}
-                  {r.last_error && ` ／ ⚠ ${r.last_error}`}
+                  {r.last_error && ` ／ ⚠️ ${r.last_error}`}
                 </p>
               )}
             </div>

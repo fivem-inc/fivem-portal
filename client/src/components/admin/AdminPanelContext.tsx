@@ -599,7 +599,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const handleRejectPendingUser = useCallback(async (userId: string) => {
     const { data, error } = await supabase.functions.invoke('delete-user', { body: { userId } });
     if (error || data?.error) {
-      setSuccessMsg('⚠ 拒否できませんでした: ' + (data?.error || error?.message));
+      setSuccessMsg('⚠️ 拒否できませんでした: ' + (data?.error || error?.message));
       return;
     }
     setSuccessMsg('登録を拒否し、アカウントを削除しました');

@@ -973,7 +973,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
                 cursor: 'pointer', maxWidth: isMobile ? 54 : 100,
               }}
             >
-              <option value="">👁 確認</option>
+              <option value="">👁️ 確認</option>
               <option value="パート">パート</option>
               <option value="一般">正社員（一般）</option>
               <option value="リーダー">リーダー</option>
@@ -992,7 +992,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
           background: '#ffc107', color: '#333', fontSize: 12, fontWeight: 'bold',
           padding: '5px 16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
         }}>
-          👁 プレビュー中：{previewRole} として表示
+          👁️ プレビュー中：{previewRole} として表示
           <button onClick={() => setPreviewRole(null)}
             style={{ fontSize: 11, padding: '2px 10px', borderRadius: 4, border: 'none', background: '#333', color: '#fff', cursor: 'pointer' }}>
             × 終了

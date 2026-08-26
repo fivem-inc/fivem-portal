@@ -1382,7 +1382,7 @@ const OvertimeForm: React.FC<{
       {isReportPhase && !fullDay && !isPureZero && (
         <button type="button" onClick={applyNoOvertime}
           style={{ width: '100%', padding: '12px', marginBottom: 12, borderRadius: 10, border: '1.5px solid #64b5f6', background: '#e3f2fd', color: '#1565c0', fontSize: 13.5, fontWeight: 'bold', cursor: 'pointer' }}>
-          🚫 残業なし（通常どおりにする）
+          残業なし（通常どおりにする）
         </button>
       )}
       {isReportPhase && !fullDay && isPureZero && (
@@ -3141,7 +3141,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                 <div style={{ textAlign: 'right', marginBottom: 10 }}>
                   <button onClick={() => navigate('/shift-patterns')}
                     style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: isDark ? '#64b5f6' : '#0d6efd', textDecoration: 'underline' }}>
-                    🗓 全員のシフト予定を見る
+                    📅 全員のシフト予定を見る
                   </button>
                 </div>
               )}
@@ -3392,7 +3392,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                         )}
 
                         {isFuturePlanned && (
-                          <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>🗓 勤務後に「実績を報告する」ボタンが出ます</p>
+                          <p style={{ margin: '8px 0 0', fontSize: 12, color: subText }}>📅 勤務後に「実績を報告する」ボタンが出ます</p>
                         )}
                         {/* 未受理のまま勤務日を過ぎた分。「なぜ受理されていないのに報告するのか」が分からないと手が止まるため添える */}
                         {isOverdueUnapproved && (

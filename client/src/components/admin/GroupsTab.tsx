@@ -86,7 +86,7 @@ const GroupsTab: React.FC = () => {
                         if (!newGroupName.trim()) return;
                         const maxOrder = masterOptions.group.length + 1;
                         const { error } = await supabase.from('master_options').insert({ category: 'group', value: newGroupName.trim(), sort_order: maxOrder });
-                        if (error) { setSuccessMsg('⚠ グループの追加に失敗しました。' + error.message); return; }
+                        if (error) { setSuccessMsg('⚠️ グループの追加に失敗しました。' + error.message); return; }
                         await fetchMasterOptions();
                         setNewGroupName('');
                         setShowAddGroup(false);
@@ -166,7 +166,7 @@ const GroupsTab: React.FC = () => {
                         setIsUserEditMode(false);
                       } });
                     }} style={{ padding: '8px 20px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}>
-                      🚫 このグループを削除
+                      このグループを削除
                     </button>
                   </div>
                 )}

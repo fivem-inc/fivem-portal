@@ -522,7 +522,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
         {showMoreFilters && (
           <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${isDark ? '#555' : '#e9ecef'}`, display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 13, color: subText, flexShrink: 0, width: 58 }}>🏷️ 区分</span>
+              <span style={{ fontSize: 13, color: subText, flexShrink: 0, width: 58 }}>📋 区分</span>
               <select value={hCategory} onChange={e => setHCategory(e.target.value)} style={{ ...selectStyle, flex: 1 }}>
                 <option value="all">すべて</option>
                 {hCategoryOptions.map(c => <option key={c} value={c}>{c}</option>)}

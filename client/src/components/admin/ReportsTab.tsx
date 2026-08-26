@@ -407,7 +407,7 @@ const ReportsTab: React.FC = () => {
 
       {/* ─── 休暇申請 ─── */}
       <div style={{ marginBottom: '40px' }}>
-        <SectionTitle isDarkMode={isDarkMode}>🏖️ 休暇申請 ダッシュボード</SectionTitle>
+        <SectionTitle isDarkMode={isDarkMode}>🌿 休暇申請 ダッシュボード</SectionTitle>
 
         {/* 年度フィルタ */}
         {(() => {

@@ -132,7 +132,7 @@ const ShiftDirectoryPage: React.FC<Props> = ({ isAdmin, canDirectory }) => {
     <div style={{ maxWidth: 560, margin: '0 auto', padding: '12px 16px 60px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
         <button onClick={() => navigate('/overtime')} style={{ background: 'none', border: `1px solid ${borderColor}`, borderRadius: 8, cursor: 'pointer', fontSize: 12.5, color: subText, padding: '5px 10px' }}>← 残業・時間管理へ</button>
-        <h2 style={{ margin: 0, fontSize: 18, color: text }}>🗓 全員のシフト予定</h2>
+        <h2 style={{ margin: 0, fontSize: 18, color: text }}>📅 全員のシフト予定</h2>
       </div>
 
       {loading ? (

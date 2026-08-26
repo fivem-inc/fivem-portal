@@ -9,7 +9,7 @@
 //    「全員に一斉送信された文面」と「自分の回答」だけに限る。
 //
 // ⚠️ draftStorage.ts（入力中の下書き）とは目的が違うので別ファイルにしている。
-//      draftStorage : 無期限。消えるのは「送信成功」と「🚫クリア」のときだけ
+//      draftStorage : 無期限。消えるのは「送信成功」と「クリア」のときだけ
 //      ここ         : 毎回まるごと上書き。形が変わったら破棄。保存失敗を握りつぶさない
 
 import type { SafetyPattern } from '../hooks/useSafetyPendingCount';

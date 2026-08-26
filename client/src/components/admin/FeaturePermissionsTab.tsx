@@ -34,7 +34,7 @@ const FEATURES = [
   { key: 'purchase_request', icon: '🧾', label: '備品購入申請・経費精算', note: 'パートも精算のみ利用可' },
   { key: 'overtime',        icon: '🕐', label: '残業・時間管理（正社員）', note: 'パートは勤務変更報告を利用' },
   { key: 'overtime_summary', icon: '📊', label: '残業の集計・超過バナー閲覧', note: '全員分を見られる役職' },
-  { key: 'shift_pattern_directory', icon: '🗓', label: '全員のシフト予定 閲覧', note: 'パート含む全員の通常シフトを見られる役職' },
+  { key: 'shift_pattern_directory', icon: '📅', label: '全員のシフト予定 閲覧', note: 'パート含む全員の通常シフトを見られる役職' },
   // 安否確認は災害時に全員へ届く必要があるため、役職別のトグルは使わず公開/非公開だけで運用する
   // （役職で絞ると、その役職の人に安否確認が届かなくなってしまう）
   { key: 'safety_check',    icon: '🆘', label: '安否・緊急連絡',  note: '発信はマネージャー以上・回答は全員' },
@@ -185,7 +185,7 @@ const FeaturePermissionsTab: React.FC = () => {
       supabase.from('app_settings').upsert({ key: 'feature_published_president', value: publishedPresident, updated_at: new Date().toISOString() }, { onConflict: 'key' }),
     ]);
     setSaving(false);
-    if (error || pubError || pubLeaderError || pubPresError) { setSuccessMsg('⚠ 保存に失敗しました: ' + (error?.message || pubError?.message || pubLeaderError?.message || pubPresError?.message)); return; }
+    if (error || pubError || pubLeaderError || pubPresError) { setSuccessMsg('⚠️ 保存に失敗しました: ' + (error?.message || pubError?.message || pubLeaderError?.message || pubPresError?.message)); return; }
     setSavedPerms(JSON.parse(JSON.stringify(perms)));
     setSavedPublished({ ...published });
     setSavedPublishedLeader({ ...publishedLeader });
@@ -217,7 +217,7 @@ const FeaturePermissionsTab: React.FC = () => {
   const handleAddRole = async () => {
     const name = newRoleName.trim();
     if (!name) return;
-    if (roles.some(r => r.name === name)) { setSuccessMsg('⚠ 同じ名前の役職がすでにあります'); return; }
+    if (roles.some(r => r.name === name)) { setSuccessMsg('⚠️ 同じ名前の役職がすでにあります'); return; }
     setAddingRole(true);
     const adminOrder = roles.find(r => r.is_fixed)?.sort_order ?? 99;
     const maxNonFixed = Math.max(...roles.filter(r => !r.is_fixed).map(r => r.sort_order), 0);
@@ -227,7 +227,7 @@ const FeaturePermissionsTab: React.FC = () => {
       .insert({ name, sort_order: newOrder, is_fixed: false })
       .select()
       .single();
-    if (error || !data) { setSuccessMsg('⚠ 追加に失敗しました'); setAddingRole(false); return; }
+    if (error || !data) { setSuccessMsg('⚠️ 追加に失敗しました'); setAddingRole(false); return; }
     await supabase.from('feature_permissions').insert(
       FEATURES.map(f => ({ role_id: data.id, feature_key: f.key, enabled: false }))
     );
@@ -248,7 +248,7 @@ const FeaturePermissionsTab: React.FC = () => {
     const name = editRoleName.trim();
     if (!name) return;
     if (roles.some(r => r.name === name && r.id !== editingRole.id)) {
-      setSuccessMsg('⚠ 同じ名前の役職がすでにあります');
+      setSuccessMsg('⚠️ 同じ名前の役職がすでにあります');
       return;
     }
     const oldName = editingRole.name;
@@ -467,7 +467,7 @@ const FeaturePermissionsTab: React.FC = () => {
       {deleteTarget && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}>
           <div style={{ background: cardBg, borderRadius: 12, padding: 24, width: 320, color: text, boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>
-            <h4 style={{ margin: '0 0 10px', fontSize: 15, color: '#dc3545' }}>🚫 役職を削除</h4>
+            <h4 style={{ margin: '0 0 10px', fontSize: 15, color: '#dc3545' }}>役職を削除</h4>
             <p style={{ fontSize: 14, margin: '0 0 10px', color: text }}>
               <strong>「{deleteTarget.role.name}」</strong> を削除しますか？
             </p>

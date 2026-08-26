@@ -83,7 +83,7 @@ const TripReportsTab: React.FC = () => {
             {/* 区分・報告者・場所での絞り込み */}
             <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 13, color: isDarkMode ? '#adb5bd' : '#555' }}>🏷️ 区分</span>
+                <span style={{ fontSize: 13, color: isDarkMode ? '#adb5bd' : '#555' }}>📋 区分</span>
                 <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} style={selectStyle}>
                   <option value="all">すべて</option>
                   {categoryOptions.map(cat => <option key={cat} value={cat}>{cat}</option>)}
@@ -228,7 +228,7 @@ const TripReportsTab: React.FC = () => {
                                                     .delete()
                                                     .eq('id', report.id);
                                                   if (error) {
-                                                    setSuccessMsg('⚠ 削除に失敗しました: ' + error.message);
+                                                    setSuccessMsg('⚠️ 削除に失敗しました: ' + error.message);
                                                   } else {
                                                     fetchTripReports();
                                                   }

@@ -169,7 +169,7 @@ const CorrectionRequestsTab: React.FC = () => {
     const isCancel = r.request_kind === 'cancel';
     const accent = isCancel ? RED : PURPLE;
     const kindChip = isCancel
-      ? { label: '🚫 取消依頼', bg: isDarkMode ? '#791F1F' : '#FCEBEB', fg: isDarkMode ? '#F7C1C1' : '#A32D2D' }
+      ? { label: '取消依頼', bg: isDarkMode ? '#791F1F' : '#FCEBEB', fg: isDarkMode ? '#F7C1C1' : '#A32D2D' }
       : { label: '📋 修正依頼', bg: isDarkMode ? '#3C3489' : '#EEEDFE', fg: isDarkMode ? '#CECBF6' : '#26215C' };
     const tgt = targets[r.target_id];
     const statusChip = isOpen
@@ -218,7 +218,7 @@ const CorrectionRequestsTab: React.FC = () => {
               {tgt && (
                 <button type="button" style={btn(accent)} disabled={busy}
                   onClick={() => jumpToTarget(r)}>
-                  {isCancel ? `🚫 ${TYPE_LABEL[r.target_type]}タブで取り消す` : `📋 ${TYPE_LABEL[r.target_type]}タブで修正する`}
+                  {isCancel ? `${TYPE_LABEL[r.target_type]}タブで取り消す` : `${TYPE_LABEL[r.target_type]}タブで修正する`}
                 </button>
               )}
               <button type="button" style={btn('transparent', text)} disabled={busy}

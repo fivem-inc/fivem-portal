@@ -1353,7 +1353,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       });
     } catch (e) {
       console.error('[shift] 差し戻し後の通知に失敗:', e);
-      setSuccessMsg('⚠ 差戻しましたが、通知の送信に失敗しました。相手に直接お知らせしてください。');
+      setSuccessMsg('⚠️ 差戻しましたが、通知の送信に失敗しました。相手に直接お知らせしてください。');
     }
   };
 

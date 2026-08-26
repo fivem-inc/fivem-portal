@@ -22,7 +22,7 @@ const META: Record<ChangeKind, KindMeta> = {
   resubmit:    { label: '本人が再提出', icon: '↩', fg: '#0c447c', bg: '#e6f1fb', bgDark: '#12304d', rowBg: '#f0f6fd', rowBgDark: '#16233a' },
   rejected:    { label: '差し戻し',     icon: '⟲', fg: '#791f1f', bg: '#fcebeb', bgDark: '#3a1414', rowBg: '#fdf1f1', rowBgDark: '#2a1414' },
   approved:    { label: '受理',         icon: '✓', fg: '#27500a', bg: '#eaf3de', bgDark: '#1b3a1e', rowBg: '#f3f8ec', rowBgDark: '#16261a' },
-  cancelled:   { label: '取消',         icon: '🚫', fg: '#444441', bg: '#ececea', bgDark: '#33322f', rowBg: '#f5f5f3', rowBgDark: '#262523' },
+  cancelled:   { label: '取消',         icon: '✕', fg: '#444441', bg: '#ececea', bgDark: '#33322f', rowBg: '#f5f5f3', rowBgDark: '#262523' },
 };
 
 export function kindMeta(kind: ChangeKind, labelOverride?: Partial<Record<ChangeKind, string>>): KindMeta {

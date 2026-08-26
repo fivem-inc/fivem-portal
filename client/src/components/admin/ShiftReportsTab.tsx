@@ -343,7 +343,7 @@ const ShiftReportsTab: React.FC = () => {
       if (csvTo)   query = query.lte('work_date', csvTo);
     }
     const { data } = await query.order('work_date', { ascending: true });
-    if (!data || data.length === 0) { setCsvExporting(false); setSuccessMsg('⚠ データがありません'); return; }
+    if (!data || data.length === 0) { setCsvExporting(false); setSuccessMsg('⚠️ データがありません'); return; }
 
     const ids = [...new Set([
       ...data.map((r: ShiftReport) => r.applicant_id),

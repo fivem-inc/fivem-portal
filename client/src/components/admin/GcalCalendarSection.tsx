@@ -22,7 +22,7 @@ const GcalCalendarSection: React.FC = () => {
     setSaving(true);
     const { error } = await setGcalMode(target);
     setSaving(false);
-    if (error) { setSavedMsg('⚠ 切り替えに失敗しました'); setTimeout(() => setSavedMsg(''), 3000); return; }
+    if (error) { setSavedMsg('⚠️ 切り替えに失敗しました'); setTimeout(() => setSavedMsg(''), 3000); return; }
     setMode(target);
     setSavedMsg(target === 'production' ? '✓ 本番カレンダーに切り替えました' : '✓ テストカレンダーに切り替えました');
     setTimeout(() => setSavedMsg(''), 3000);
@@ -39,7 +39,7 @@ const GcalCalendarSection: React.FC = () => {
         background: '#E3F2FD', borderLeft: '3px solid #1565C0', borderRadius: '0 6px 6px 0',
         padding: '8px 12px', fontSize: 13, fontWeight: 500, color: '#0D47A1', marginBottom: 8,
       }}>
-        🗓 勤怠カレンダーの連携先
+        📅 勤怠カレンダーの連携先
       </div>
 
       <div style={{ background: bg, border: `0.5px solid ${borderColor}`, borderRadius: 12, padding: '14px 16px' }}>
@@ -76,7 +76,7 @@ const GcalCalendarSection: React.FC = () => {
           ) : saving ? (
             <span style={{ fontSize: 12, color: subText }}>切り替え中...</span>
           ) : savedMsg ? (
-            <span style={{ fontSize: 12, color: savedMsg.startsWith('⚠') ? '#dc3545' : '#28a745', fontWeight: 600 }}>{savedMsg}</span>
+            <span style={{ fontSize: 12, color: savedMsg.startsWith('⚠️') ? '#dc3545' : '#28a745', fontWeight: 600 }}>{savedMsg}</span>
           ) : (
             <span style={{ fontSize: 11, color: subText }}>もう一方のボタンを押すとすぐ切り替わります。</span>
           )}

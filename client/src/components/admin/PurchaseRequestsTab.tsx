@@ -30,7 +30,7 @@ const STATUS_FILTERS: { key: string; label: string }[] = [
   { key: 'approved', label: '受理済み' },
   { key: 'returned', label: '差し戻し' },
   // 削除済みだけは別のテーブル（削除の控え）を読むので、一覧の中身ごと差し替わる
-  { key: 'deleted', label: '🗑 削除済み' },
+  { key: 'deleted', label: '削除済み' },
 ];
 // 削除された申請・精算の控え（purchase_request_deletion_log）1件ぶん。
 // 消える直前の中身が snapshot に丸ごと入っている
@@ -108,7 +108,7 @@ const PurchaseRequestsTab: React.FC = () => {
   const [purchasedFrom, setPurchasedFrom] = useState('');
   const [purchasedTo, setPurchasedTo] = useState('');
 
-  // 🗑 削除済みの控え。めったに見ないので、タブを開いたときに1度だけ読み込む
+  // 削除済みの控え。めったに見ないので、タブを開いたときに1度だけ読み込む
   const [deletedRows, setDeletedRows] = useState<DeletionLogRow[]>([]);
   const [deletedNames, setDeletedNames] = useState<Record<string, string>>({});
   const [deletedLoading, setDeletedLoading] = useState(false);
@@ -276,7 +276,7 @@ const PurchaseRequestsTab: React.FC = () => {
 
   const isIncomplete = (r: PurchaseRequestCSVRow) => PENDING_STATUSES.includes(r.status);
 
-  // 🗑 削除済みタブを開いたときだけ、削除の控えを読み込む
+  // 削除済みタブを開いたときだけ、削除の控えを読み込む
   const isDeletedView = statusFilter === 'deleted';
   useEffect(() => {
     if (statusFilter !== 'deleted' || deletedLoaded) return;
@@ -469,7 +469,7 @@ const PurchaseRequestsTab: React.FC = () => {
         ))}
       </div>
 
-      {/* 🗑 削除済みタブは別のデータを出すので、通常の絞り込みと一覧はまとめて隠す */}
+      {/* 削除済みタブは別のデータを出すので、通常の絞り込みと一覧はまとめて隠す */}
       {!isDeletedView && (<>
       {/* 年度・申請者・使用先フィルタ */}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -544,7 +544,7 @@ const PurchaseRequestsTab: React.FC = () => {
       )}
       </>)}
 
-      {/* 🗑 削除済みの控え（管理者のみ閲覧可・書き換え不可） */}
+      {/* 削除済みの控え（管理者のみ閲覧可・書き換え不可） */}
       {isDeletedView && (
         <div style={{ maxWidth: 700, margin: '0 auto' }}>
           <div style={{ padding: '8px 12px', background: isDarkMode ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDarkMode ? '#3d5a73' : '#bee5eb'}`, borderRadius: 8, fontSize: 12, color: isDarkMode ? '#d0dde8' : '#2c5f6e', marginBottom: 10 }}>
@@ -568,7 +568,7 @@ const PurchaseRequestsTab: React.FC = () => {
                 <div key={d.id} style={{ border: `1px solid ${border}`, borderRadius: 8, padding: '10px 12px', background: cardBg }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
                     <span style={{ fontSize: 12, color: subText }}>
-                      🗑 {new Date(d.deleted_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} に {deletedNames[d.deleted_by ?? ''] || '不明'} が削除
+                      {new Date(d.deleted_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} に {deletedNames[d.deleted_by ?? ''] || '不明'} が削除
                     </span>
                     <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: d.request_type === 'reimbursement' ? '#6f42c1' : '#28a745', color: '#fff' }}>
                       {d.request_type === 'reimbursement' ? '精算' : '申請'}
@@ -900,7 +900,7 @@ const ActionButtons: React.FC<{
       {hasHistory && (
         <button type="button" onClick={onHistory} style={{ ...smallBtnStyle, border: '1px solid #4a90d9', color: '#4a90d9' }}>🕘 履歴</button>
       )}
-      <button type="button" onClick={onDeleteRequest} style={{ ...smallBtnStyle, border: '1px solid #dc3545', color: '#dc3545' }}>🚫 削除</button>
+      <button type="button" onClick={onDeleteRequest} style={{ ...smallBtnStyle, border: '1px solid #dc3545', color: '#dc3545' }}>削除</button>
     </>
   );
 };

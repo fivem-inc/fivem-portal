@@ -217,7 +217,7 @@ const OvertimeEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSav
                 ? <input type="number" min={0} style={{ ...inputStyle, width: 120 }} value={breakManualMin} onChange={e => setBreakManualMin(e.target.value)} />
                 : <div style={{ fontSize: 12, color: sub }}>自動休憩：{autoBreak}分</div>}
             </div>
-            <div style={{ fontSize: 12, color: sub }}>実労働 {formatMin(laborMin)}　差分 {formatSignedMin(diffMin)}{!legal.ok && <span style={{ color: '#dc3545', marginLeft: 8 }}>⚠ 休憩が法定基準に不足</span>}</div>
+            <div style={{ fontSize: 12, color: sub }}>実労働 {formatMin(laborMin)}　差分 {formatSignedMin(diffMin)}{!legal.ok && <span style={{ color: '#dc3545', marginLeft: 8 }}>⚠️ 休憩が法定基準に不足</span>}</div>
             <div>
               <label style={labelStyle}>校</label>
               <select style={{ ...inputStyle, width: '100%' }} value={locMode === 'other' ? 'その他' : location}

@@ -96,7 +96,7 @@ const AdminPanelContent: React.FC = () => {
           )}
           {dbUsageMb !== null && (
             <div style={{ marginTop: 3, color: isDbLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), fontWeight: isDbLow ? 'bold' : 'normal' }}>
-              <div>{isDbLow && '⚠️ '}🗄️ データベース使用量</div>
+              <div>{isDbLow && '⚠️ '}💾 データベース使用量</div>
               <div>{dbUsageMb}MB / {DB_LIMIT_MB}MB（無料枠）</div>
             </div>
           )}

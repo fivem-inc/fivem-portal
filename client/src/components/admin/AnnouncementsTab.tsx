@@ -260,7 +260,7 @@ const AnnouncementsTab: React.FC = () => {
               <div style={{ marginTop: 10 }}>
                 {/* 表示期間 */}
                 <div style={{ padding: 12, background: isDarkMode ? '#2d3136' : '#f8fafc', border: `0.5px solid ${borderColor}`, borderRadius: 10, marginBottom: 12 }}>
-                  <div style={{ fontSize: 12, color: isDarkMode ? '#90caf9' : '#0D47A1', fontWeight: 500, marginBottom: 8 }}>🗓 表示する期間（任意）</div>
+                  <div style={{ fontSize: 12, color: isDarkMode ? '#90caf9' : '#0D47A1', fontWeight: 500, marginBottom: 8 }}>📅 表示する期間（任意）</div>
                   <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                     <div style={{ flex: 1, minWidth: 180 }}>
                       <label htmlFor="ann-start" style={{ display: 'block', fontSize: 11, color: subText, marginBottom: 4 }}>開始日時</label>
@@ -277,7 +277,7 @@ const AnnouncementsTab: React.FC = () => {
                     開始日時を空にすると<strong>今すぐ</strong>表示、終了日時を空にすると<strong>期限なし</strong>（手動停止まで）。
                   </div>
                   {dateOrderError && (
-                    <div style={{ fontSize: 12, color: '#dc3545', fontWeight: 600, marginTop: 6 }}>⚠ 開始日時は終了日時より前にしてください。</div>
+                    <div style={{ fontSize: 12, color: '#dc3545', fontWeight: 600, marginTop: 6 }}>⚠️ 開始日時は終了日時より前にしてください。</div>
                   )}
                 </div>
 
@@ -403,7 +403,7 @@ const AnnouncementsTab: React.FC = () => {
           color: subText,
           marginBottom: 8,
         }}>
-          🗒️ これまでのお知らせ（履歴）
+          📋 これまでのお知らせ（履歴）
         </div>
 
         {loading ? (

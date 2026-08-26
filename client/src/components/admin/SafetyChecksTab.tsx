@@ -180,7 +180,7 @@ const SafetyChecksTab: React.FC = () => {
     setBusy(true);
     const { data, error } = await supabase.functions.invoke('safety-check-send', { body: { mode: 'remind', check_id: checkId } });
     setBusy(false);
-    if (error || data?.error) { setSuccessMsg('⚠ 再送できませんでした: ' + (data?.error || error?.message)); return; }
+    if (error || data?.error) { setSuccessMsg('⚠️ 再送できませんでした: ' + (data?.error || error?.message)); return; }
     setSuccessMsg(`未回答の${data?.resent ?? 0}人に再送しました`);
   };
 
@@ -193,7 +193,7 @@ const SafetyChecksTab: React.FC = () => {
       p_choice: proxyChoice, p_comment: proxyComment.trim() || null,
     });
     setBusy(false);
-    if (error) { setSuccessMsg('⚠ 記録できませんでした: ' + error.message); return; }
+    if (error) { setSuccessMsg('⚠️ 記録できませんでした: ' + error.message); return; }
     setSuccessMsg(`${proxyTarget.name}さんの回答を代行で記録しました`);
     const cid = proxyTarget.checkId;
     setProxyTarget(null); setProxyChoice(''); setProxyComment('');
@@ -214,14 +214,14 @@ const SafetyChecksTab: React.FC = () => {
   };
 
   const save = async () => {
-    if (!form.title.trim() || !form.body.trim()) { setSuccessMsg('⚠ タイトルと本文を入力してください'); return; }
+    if (!form.title.trim() || !form.body.trim()) { setSuccessMsg('⚠️ タイトルと本文を入力してください'); return; }
     setBusy(true);
     if (editingId) {
       const { error } = await supabase.from('safety_check_templates')
         .update({ title: form.title.trim(), body: form.body.trim(), pattern: form.pattern })
         .eq('id', editingId).select('id');
       setBusy(false);
-      if (error) { setSuccessMsg('⚠ 保存できませんでした: ' + error.message); return; }
+      if (error) { setSuccessMsg('⚠️ 保存できませんでした: ' + error.message); return; }
       setSuccessMsg('保存しました');
     } else {
       const maxOrder = templates.reduce((m, t) => Math.max(m, t.sort_order), 0);
@@ -229,7 +229,7 @@ const SafetyChecksTab: React.FC = () => {
         .insert({ title: form.title.trim(), body: form.body.trim(), pattern: form.pattern, sort_order: maxOrder + 1 })
         .select('id');
       setBusy(false);
-      if (error) { setSuccessMsg('⚠ 追加できませんでした: ' + error.message); return; }
+      if (error) { setSuccessMsg('⚠️ 追加できませんでした: ' + error.message); return; }
       setSuccessMsg('追加しました');
     }
     setEditingId(null); setShowNew(false);
@@ -238,7 +238,7 @@ const SafetyChecksTab: React.FC = () => {
 
   const toggleActive = async (t: Template) => {
     const { error } = await supabase.from('safety_check_templates').update({ active: !t.active }).eq('id', t.id).select('id');
-    if (error) { setSuccessMsg('⚠ 変更できませんでした'); return; }
+    if (error) { setSuccessMsg('⚠️ 変更できませんでした'); return; }
     setSuccessMsg(t.active ? '発信画面に出さないようにしました' : '発信画面に出すようにしました');
     load();
   };
@@ -260,7 +260,7 @@ const SafetyChecksTab: React.FC = () => {
     const { error } = await supabase.from('safety_check_templates').delete().eq('id', id).select('id');
     setBusy(false);
     setDeleteConfirmId(null);
-    if (error) { setSuccessMsg('⚠ 削除できませんでした: ' + error.message); return; }
+    if (error) { setSuccessMsg('⚠️ 削除できませんでした: ' + error.message); return; }
     setSuccessMsg('削除しました');
     load();
   };
@@ -271,7 +271,7 @@ const SafetyChecksTab: React.FC = () => {
     const { error } = await supabase.rpc(kind === 'close' ? 'close_safety_check' : 'cancel_safety_check', { p_check_id: checkId });
     setBusy(false);
     setActionConfirm(null);
-    if (error) { setSuccessMsg(`⚠ ${kind === 'close' ? '終了' : '取消'}できませんでした: ` + error.message); return; }
+    if (error) { setSuccessMsg(`⚠️ ${kind === 'close' ? '終了' : '取消'}できませんでした: ` + error.message); return; }
     setSuccessMsg(kind === 'close' ? '終了しました' : '取消しました（宛先全員に「誤送信でした」の通知を送りました）');
     load();
   };
@@ -283,7 +283,7 @@ const SafetyChecksTab: React.FC = () => {
     const { error } = await supabase.rpc('delete_safety_check', { p_check_id: checkId });
     setBusy(false);
     setActionConfirm(null);
-    if (error) { setSuccessMsg('⚠ 削除できませんでした: ' + error.message); return; }
+    if (error) { setSuccessMsg('⚠️ 削除できませんでした: ' + error.message); return; }
     setSuccessMsg('削除しました');
     load();
   };

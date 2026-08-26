@@ -277,7 +277,7 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
                 お疲れ様です。残業分の調整日についての相談です。下の候補から調整可能な日があれば選んでください（複数選択可）。提案日での調整が難しければ、「後日あらためて調整する」で問題ありません。
               </p>
               {proposal.remarks && <div style={{ marginBottom: 12, padding: '8px 12px', background: inputBg, borderRadius: 8, fontSize: 12.5, color: text }}>📝 {proposal.remarks}</div>}
-              {proposal.response_due_date && <p style={{ margin: '0 0 12px', fontSize: 12, color: subText }}>🗓 {proposal.response_due_date} までにお返事をいただけると助かります（任意）</p>}
+              {proposal.response_due_date && <p style={{ margin: '0 0 12px', fontSize: 12, color: subText }}>📅 {proposal.response_due_date} までにお返事をいただけると助かります（任意）</p>}
 
               {options.map(o => {
                 const pk = picks[o.id]; if (!pk) return null;
