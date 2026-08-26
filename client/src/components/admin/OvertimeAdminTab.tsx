@@ -285,7 +285,7 @@ const OvertimeAdminTab: React.FC = () => {
   const [otActing, setOtActing] = useState(false);
   // 絞り込み・並べ替え（休暇申請タブと同じ操作感）
   const [otFilterStatus, setOtFilterStatus] = useState<'all' | 'pending' | 'done' | 'returned' | 'cancelled'>('all');
-  // CSV出力（休暇申請タブと同じ形：ボタンでモーダルを開き、期間を選んでからダウンロードする）
+  // Excel出力（休暇申請タブと同じ形：ボタンでモーダルを開き、期間を選んでからダウンロードする）
   const [showOtCsvModal, setShowOtCsvModal] = useState(false);
   const [otCsvMode, setOtCsvMode] = useState<'period' | 'custom'>('period');
   const [otCsvPeriod, setOtCsvPeriod] = useState('');
@@ -479,20 +479,52 @@ const OvertimeAdminTab: React.FC = () => {
     });
   }, [otReports, otStatusMap, otFilterStatus, otFilterPeriod, otFilterPerson, otFilterType, otSortKey, otSortAsc]);
 
-  // CSV出力：元の勤務時間（通常シフト）と、実際の時間帯・差分を並べて「どう変わったか」を可視化する
-  const exportOtCsv = () => {
-    const esc = (v: string | number) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const fmtT = (t: unknown) => (typeof t === 'string' && t ? t.slice(0, 5) : '');
-    // 差分をExcelの [h]:mm で集計できる時間シリアル値（分／1440）にする。マイナスは "-h:mm" 表記で併記
-    const diffSerial = (min: number | null | undefined) => (min ?? 0) / 1440;
-    const fmtHmm = (min: number | null | undefined) => {
-      const m = min ?? 0; const sign = m < 0 ? '-' : ''; const a = Math.abs(m);
-      return `${sign}${Math.floor(a / 60)}:${String(a % 60).padStart(2, '0')}`;
+  // Excel出力：元の勤務時間（通常シフト）と、実際の時間帯・差分を並べて「どう変わったか」を可視化する。
+  //
+  // 🚨 CSVをやめて .xlsx にした理由（2026-08-26・実測で原因特定）
+  //    CSVは「値だけ」で書式を持てないため、マイナスの差分をどう書いてもExcelが壊した。
+  //      "-1:45" → Excelは先頭の「-」を数式の始まりとみなし =-1:45 として読む。
+  //                1:45 は「1〜45行」の範囲参照なので自分自身を含む【循環参照】になり、値が 0 になる
+  //      "-0:45" → 0行は存在せず数式として無効なので、ただの文字列として残る
+  //    どちらも SUM では 0 として扱われ、マイナスの差分が集計から丸ごと消えていた。
+  //    xlsx は「値」と「表示書式」をファイルに埋め込めるので、この取り違えが起きない。
+  //    ⚠️ 同じ理由で、この表の時刻・日付・時間数は文字列ではなく必ず数値＋書式で入れること。
+  //
+  // 🚨 差分だけ「分」で出す理由
+  //    Excel（1900日付方式）は【マイナスの時間を時刻の書式で表示できない】。[h]:mm でも
+  //    [h]:mm;-[h]:mm でも負値は ### になる（実測確認済み）。そこで集計用の列は分の整数にした。
+  //    人が読む用は隣の「差分(元→実績)」（−1:45 表記）が担当する。
+  //    時分で合計したいときは =SUM(範囲)/1440 して [h]:mm 書式（合計がプラスのときのみ表示可）。
+  const exportOtXlsx = async () => {
+    // Excelのシリアル値（1899-12-30 を 0 とした日数）。Excelはタイムゾーンを持たないのでJSTの壁時計で入れる
+    const dateSerial = (ymd: string | null | undefined) => {
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd ?? '');
+      return m ? (Date.UTC(+m[1], +m[2] - 1, +m[3]) - Date.UTC(1899, 11, 30)) / 86400000 : '';
     };
-    const fmtSubmitted = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
+    const dateTimeSerial = (iso: string | null | undefined) => {
+      if (!iso) return '';
+      const t = new Date(iso).getTime();
+      if (Number.isNaN(t)) return '';
+      return (t + 9 * 3600 * 1000 - Date.UTC(1899, 11, 30)) / 86400000; // +9h でJSTの見た目にする
+    };
+    const timeSerial = (t: unknown) => {
+      const m = /^(\d{1,2}):(\d{2})/.exec(typeof t === 'string' ? t : '');
+      return m ? (+m[1] * 60 + +m[2]) / 1440 : '';
+    };
+    const minSerial = (min: unknown) => (typeof min === 'number' ? min / 1440 : '');
     // 通常シフト開始2／終了2＝テレワーク・中抜けなどで勤務が2本に分かれる日の2本目。
     // 無い日は空欄。これが無いと「9:30〜17:30なのに実労働8:00」と手計算が合わない行ができる
-    const headers = ['申請者', '対象日', '状況', '通常シフト開始', '通常シフト終了', '通常シフト開始2', '通常シフト終了2', '通常シフト休憩(分)', '通常シフト実労働', '実際の勤務時間帯', '休憩(分)', '実労働', '差分(元→実績)', '差分[h]:mm', '校', '振替元の勤務日', '振替元の勤務校', '理由', '提出日時', '確認日時'];
+    const headers = ['申請者', '対象日', '状況', '通常シフト開始', '通常シフト終了', '通常シフト開始2', '通常シフト終了2', '通常シフト休憩(分)', '通常シフト実労働', '実際の勤務時間帯', '休憩(分)', '実労働', '差分(元→実績)', '差分(分)', '校', '振替元の勤務日', '振替元の勤務校', '理由', '提出日時', '確認日時'];
+    // 列番号 → 表示書式。ここに無い列は文字か素の数値のまま
+    const colFormat: Record<number, string> = {
+      1: 'yyyy/m/d',                       // 対象日
+      3: 'h:mm', 4: 'h:mm', 5: 'h:mm', 6: 'h:mm', // 通常シフトの時刻
+      8: '[h]:mm',                          // 通常シフト実労働（時間数なので [h]）
+      11: '[h]:mm',                         // 実労働
+      15: 'yyyy/m/d',                       // 振替元の勤務日
+      18: 'yyyy/m/d h:mm', 19: 'yyyy/m/d h:mm', // 提出日時・確認日時
+    };
+    const colWidths = [14, 11, 11, 12, 12, 12, 12, 15, 14, 24, 9, 9, 13, 11, 12, 13, 13, 34, 16, 16];
     // 出力する範囲はモーダルで指定したもの（画面の絞り込みとは切り離す）。
     // 休暇申請タブと同じで「給与期間で選ぶ」か「カスタム期間」の2択。
     const targets = otCsvMode === 'period'
@@ -512,31 +544,43 @@ const OvertimeAdminTab: React.FC = () => {
         : isFullDayReport(r.application_types)
           ? `終日（${(r.application_types ?? []).filter(isOvertimeType).map(t => OT_TYPE_INFO[t].label).join('・')}）`
           : '';
-      const normLabor = typeof ns.labor_minutes === 'number' ? formatMin(ns.labor_minutes) : '';
-      const normBreak = typeof ns.break_minutes === 'number' ? ns.break_minutes : '';
       const isFurikae = (r.application_types ?? []).includes('furikae_off');
       return [
-        esc(r.applicantName ?? ''), esc(r.work_date), esc(OT_STATUS_LABEL[otStatusMap[r.id]]?.label ?? otStatusMap[r.id] ?? ''),
-        esc(fmtT(ns.start_time)), esc(fmtT(ns.end_time)), esc(fmtT(ns.start_time2)), esc(fmtT(ns.end_time2)), esc(normBreak), esc(normLabor),
-        esc(segText), esc(r.break_minutes ?? 0), esc(formatMin(r.labor_minutes ?? 0)), esc(formatSignedMin(r.diff_minutes ?? 0)),
-        // [h]:mm 列は数値（時間シリアル）で出力＝Excelの [h]:mm 書式でそのまま集計可能。ただしマイナスはExcelの時間書式で表示できないため負値のみテキスト併記
-        (r.diff_minutes ?? 0) < 0 ? esc(fmtHmm(r.diff_minutes)) : diffSerial(r.diff_minutes),
-        esc(r.location ?? ''),
-        esc(isFurikae ? (r.furikae_origin_date ?? '') : ''), esc(isFurikae ? (r.furikae_origin_location ?? '') : ''),
-        esc(r.reason ?? ''),
-        esc(fmtSubmitted(r.created_at)), esc(fmtSubmitted(r.confirmed_at)),
-      ].join(',');
+        r.applicantName ?? '', dateSerial(r.work_date), OT_STATUS_LABEL[otStatusMap[r.id]]?.label ?? otStatusMap[r.id] ?? '',
+        timeSerial(ns.start_time), timeSerial(ns.end_time), timeSerial(ns.start_time2), timeSerial(ns.end_time2),
+        typeof ns.break_minutes === 'number' ? ns.break_minutes : '', minSerial(ns.labor_minutes),
+        segText, r.break_minutes ?? 0, (r.labor_minutes ?? 0) / 1440,
+        // 人が読む用（＋7:15／−1:45）。集計はとなりの「差分(分)」を使う
+        formatSignedMin(r.diff_minutes ?? 0),
+        r.diff_minutes ?? 0,
+        r.location ?? '',
+        isFurikae ? dateSerial(r.furikae_origin_date) : '', isFurikae ? (r.furikae_origin_location ?? '') : '',
+        r.reason ?? '',
+        dateTimeSerial(r.created_at), dateTimeSerial(r.confirmed_at),
+      ];
     });
-    const csv = '﻿' + [headers.map(esc).join(','), ...rows].join('\r\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
     // ファイル名にも出力範囲を入れる（あとで見て何の期間か分かるように）
     const nameRange = otCsvMode === 'period'
       ? payPeriodLabel(otCsvPeriod)
       : `${otCsvDateType === 'work' ? '勤務日' : '申請日'}${otCsvFrom || ''}〜${otCsvTo || ''}`;
-    a.href = url; a.download = `残業_${nameRange}.csv`;
-    a.click(); URL.revokeObjectURL(url);
+    try {
+      // xlsx は重いので、他の画面の表示を遅くしないよう押されたときだけ読み込む（取込機能と同じやり方）
+      const XLSX = await import('xlsx');
+      const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+      for (let row = 1; row <= rows.length; row++) {
+        for (const [col, z] of Object.entries(colFormat)) {
+          const cell = ws[XLSX.utils.encode_cell({ r: row, c: Number(col) })];
+          if (cell && typeof cell.v === 'number') cell.z = z; // 空欄には書式を付けない
+        }
+      }
+      ws['!cols'] = colWidths.map(wch => ({ wch }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, '残業');
+      XLSX.writeFile(wb, `残業_${nameRange}.xlsx`);
+      setOtErr('');
+    } catch (e) {
+      setOtErr('Excelファイルを作成できませんでした：' + (e instanceof Error ? e.message : String(e)));
+    }
   };
 
   const text = isDarkMode ? '#f8f9fa' : '#212529';
@@ -992,7 +1036,7 @@ const OvertimeAdminTab: React.FC = () => {
             </p>
             <button onClick={() => { setOtCsvPeriod(otPeriodOptions[0] ?? ''); setShowOtCsvModal(true); }}
               style={{ flexShrink: 0, padding: '6px 14px', borderRadius: 8, border: 'none', background: '#28a745', color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}>
-              📥 CSV出力
+              📥 Excel出力
             </button>
           </div>
 
@@ -1002,11 +1046,11 @@ const OvertimeAdminTab: React.FC = () => {
             </div>
           )}
 
-          {/* CSV出力モーダル（休暇申請タブと同じ形） */}
+          {/* Excel出力モーダル（休暇申請タブと同じ形） */}
           {showOtCsvModal && (
             <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px' }}>
               <div style={{ background: cardBg, borderRadius: 14, padding: 24, width: '100%', maxWidth: 360 }}>
-                <div style={{ fontSize: 15, fontWeight: 'bold', color: text, marginBottom: 16 }}>📥 CSV出力 — 残業・時間管理</div>
+                <div style={{ fontSize: 15, fontWeight: 'bold', color: text, marginBottom: 16 }}>📥 Excel出力 — 残業・時間管理</div>
 
                 <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
                   {([['period', '給与期間で選択'], ['custom', 'カスタム期間']] as const).map(([m, lbl]) => (
@@ -1062,7 +1106,7 @@ const OvertimeAdminTab: React.FC = () => {
                     style={{ flex: 1, padding: 10, borderRadius: 8, border: `1px solid ${borderColor}`, background: 'none', color: subText, fontSize: 14, cursor: 'pointer' }}>
                     閉じる
                   </button>
-                  <button onClick={() => { exportOtCsv(); setShowOtCsvModal(false); }}
+                  <button onClick={() => { void exportOtXlsx(); setShowOtCsvModal(false); }}
                     style={{ flex: 1, padding: 10, borderRadius: 8, border: 'none', background: '#28a745', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
                     ダウンロード
                   </button>

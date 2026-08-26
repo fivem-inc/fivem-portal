@@ -260,6 +260,15 @@ function toTimeInputValue(min: number): string {
 }
 
 /** 時間帯配列（分）→「10:00〜17:20 / 18:00〜19:00」表示 */
+/** 履歴カードの「▼ 詳細」のラベル列。幅を揃えて値の頭を縦に並べる */
+const detailLabelStyle = (color: string): React.CSSProperties => ({ color, display: 'inline-block', width: '5.5em' });
+
+/** ISO日時 → 「8/21 17:09」（JST・月日と時は0埋めなし、分だけ0埋めの既存ルール） */
+function stampLabel(iso: string | null | undefined): string {
+  if (!iso) return '';
+  return new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
 function segmentsLabel(segs: SegmentRow[] | WorkSegment[]): string {
   const list = (segs as (SegmentRow | WorkSegment)[]).map(s => {
     const start = 'start_min' in s ? s.start_min : s.startMin;
@@ -2221,6 +2230,15 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const tabParam = searchParams.get('tab');
   const focusParam = searchParams.get('focus');
   const [tab, setTab] = useState<'form' | 'history'>(tabParam === 'history' ? 'history' : 'form');
+  // 履歴カードの「▼ 詳細」を開いている申請。
+  // 🚨 このページは isConfirmView で早期returnするので、Hookは必ずその手前で宣言すること
+  //    （後ろに置くと確認ページに切り替えた瞬間に画面が真っ白になる。過去に踏んだ事故）
+  const [detailOpenIds, setDetailOpenIds] = useState<Set<string>>(new Set());
+  const toggleDetail = (id: string) => setDetailOpenIds(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
   // 🚨 同じページを開いたまま通知をタップされたときも履歴タブに切り替える。
   // 画面は作り直されないので、開いた瞬間の1回だけでは切り替わらない。
   // 依存はURLの「値」なので、確認ページや個人詳細の開閉とは干渉しない
@@ -3228,6 +3246,44 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                             )}
                             {r.change_reason && (
                               <p style={{ margin: '4px 0 0', fontSize: 12.5, color: isDark ? '#ffcf87' : '#8a6d1a' }}>予定から変わった理由：{r.change_reason}</p>
+                            )}
+                            {/* 🚨 理由は常に出す。ここが無いと「何のために残ったか」を本人があとから確認できない
+                                （確認者の画面と部門集計には元から出ていて、本人の履歴だけ抜けていた）。
+                                残りの内訳は行数が増えるので「▼ 詳細」に畳む */}
+                            {r.reason && (
+                              <p style={{ margin: '4px 0 0', fontSize: 12.5, color: text, lineHeight: 1.6 }}>理由：{r.reason}</p>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => toggleDetail(r.id)}
+                              style={{ margin: '8px 0 0', fontSize: 12, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', background: 'transparent', border: `1px solid ${borderColor}`, color: subText }}
+                            >
+                              {detailOpenIds.has(r.id) ? '▲ 詳細を閉じる' : '▼ 詳細'}
+                            </button>
+                            {detailOpenIds.has(r.id) && (
+                              <div style={{ marginTop: 6, background: innerBg, borderRadius: 8, padding: '8px 10px', fontSize: 12, lineHeight: 1.9, color: text }}>
+                                {!isFullDay && (
+                                  <>
+                                    <div><span style={detailLabelStyle(subText)}>通常シフト</span>{normalShiftTimeText(r.normal_shift) || '休み'}</div>
+                                    {r.normal_shift && (
+                                      <div><span style={detailLabelStyle(subText)} />休憩{formatMin(r.normal_shift.break_minutes ?? 0)}・労働{formatMin(r.normal_shift.labor_minutes ?? 0)}</div>
+                                    )}
+                                    {/* 事前に申請した時間。実績と両方あるときだけ出す（同じ内容を2回並べない） */}
+                                    {planned.length > 0 && actual.length > 0 && (
+                                      <div><span style={detailLabelStyle(subText)}>事前申請</span>{segmentsLabel(planned)}</div>
+                                    )}
+                                    <div><span style={detailLabelStyle(subText)}>実績</span>休憩{formatMin(r.break_minutes ?? 0)}{r.break_manual ? '（手修正）' : ''}・労働{formatMin(r.labor_minutes ?? 0)}</div>
+                                  </>
+                                )}
+                                <div><span style={detailLabelStyle(subText)}>勤務地</span>{r.location || '-'}</div>
+                                <div><span style={detailLabelStyle(subText)}>提出</span>{stampLabel(r.created_at)}</div>
+                                {r.request_confirmed_at && (
+                                  <div><span style={detailLabelStyle(subText)}>事前受理</span>{stampLabel(r.request_confirmed_at)}</div>
+                                )}
+                                {r.confirmed_at && (
+                                  <div><span style={detailLabelStyle(subText)}>受理</span>{stampLabel(r.confirmed_at)}</div>
+                                )}
+                              </div>
                             )}
                             {/* カレンダー掲載の状態。押すとその場で切り替わる（労働時間の記録は変わらない） */}
                             {canToggleCal && (
