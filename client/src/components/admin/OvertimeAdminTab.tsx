@@ -16,6 +16,7 @@ import OvertimeEditModal, { type OvertimeRecord } from './OvertimeEditModal';
 import OvertimeClockInquiryPanel from './OvertimeClockInquiryPanel';
 import { OT_TYPE_INFO, isOvertimeType, isFullDayReport, canOfferCalendarChoice, willShowOnCalendar } from '../../lib/overtimeTypes';
 import { notifyOvertimeReturned, notifyOvertimeAdminCancelled, notifyOvertimeGrant, notifyOvertimeGrantDeclined } from '../../lib/overtimeNotify';
+import { toDbTime } from '../../lib/timeInput';
 
 const OT_STATUS_LABEL: Record<string, { label: string; color: string }> = {
   requested:         { label: '事前申請', color: '#f59e0b' },
@@ -720,10 +721,10 @@ const OvertimeAdminTab: React.FC = () => {
         const { error } = await supabase.from('weekly_shift_patterns').insert({
           user_id: selectedStaffId,
           day_kind: k,
-          start_time: t.start || null,
-          end_time: t.end || null,
-          start_time2: (s2 != null) ? t.start2 : null,
-          end_time2: (e2 != null) ? t.end2 : null,
+          start_time: toDbTime(t.start),
+          end_time: toDbTime(t.end),
+          start_time2: (s2 != null) ? toDbTime(t.start2) : null,
+          end_time2: (e2 != null) ? toDbTime(t.end2) : null,
           location: isWork ? (t.location.trim() || DEFAULT_LOCATION) : null,
           break_minutes: breakMinutes,
           labor_minutes: laborMinutes,

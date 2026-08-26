@@ -15,6 +15,7 @@ import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
 import type { CorrectionRequestRow } from '../lib/correctionRequest';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
 import type { CalendarKind } from '../lib/breakCalc';
+import { toDbTime } from '../lib/timeInput';
 
 // ────────────────────────────────────────────────────────────────
 // Types
@@ -564,8 +565,8 @@ const ShiftReportForm: React.FC<{
         application_types: types,
         reason:            reason.trim() + (actNotes.trim() ? `\n備考：${actNotes.trim()}` : ''),
         original_location: noPlan ? null : (finalOrigLoc || null),
-        original_start:    noPlan ? null : (origStart || null),
-        original_end:      noPlan ? null : (origEnd || null),
+        original_start:    noPlan ? null : toDbTime(origStart),
+        original_end:      noPlan ? null : toDbTime(origEnd),
         // 勤務した時間帯は jsonb に全部（最大3つ）入れる。
         // 2つ目以降があるとき、最初の空き（＝外出）を従来の列にも書いて、
         // 過去データ向けの表示・CSV・管理画面がそのまま動くようにする
@@ -573,8 +574,8 @@ const ShiftReportForm: React.FC<{
         original_outing_start: (noPlan || origSegs.length < 2) ? null : origSegs[0].end,
         original_outing_end:   (noPlan || origSegs.length < 2) ? null : origSegs[1].start,
         actual_location:   !hasAbsence ? (finalActLoc || null) : null,
-        actual_start:      !hasAbsence ? (actStart || null) : null,
-        actual_end:        !hasAbsence ? (actEnd || null) : null,
+        actual_start:      !hasAbsence ? toDbTime(actStart) : null,
+        actual_end:        !hasAbsence ? toDbTime(actEnd) : null,
         actual_segments:     !hasAbsence ? actSegs : null,
         actual_outing_start: (!hasAbsence && actSegs.length >= 2) ? actSegs[0].end : null,
         actual_outing_end:   (!hasAbsence && actSegs.length >= 2) ? actSegs[1].start : null,

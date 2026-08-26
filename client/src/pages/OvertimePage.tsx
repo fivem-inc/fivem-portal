@@ -34,6 +34,8 @@ import type { OvertimeType } from '../lib/overtimeTypes';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
 import { notifyOvertimeNewRequest, notifyOvertimeGrantRequest, sendOvertimeSlack } from '../lib/overtimeNotify';
 import type { CorrectionRequestRow } from '../lib/correctionRequest';
+import { toDbTime } from '../lib/timeInput';
+import TimeInput from '../components/TimeInput';
 
 // ────────────────────────────────────────────────────────────────
 // Types
@@ -1143,8 +1145,8 @@ const OvertimeForm: React.FC<{
         // 振替休日のみ振替元（日付・校・出退勤時刻・休憩・労働）を保存（他種別ではnullで上書き＝再提出で種別が変わった場合の掃除）
         furikae_origin_date: (fullDayMode && fullDayType === 'furikae_off') ? furikaeOriginDate : null,
         furikae_origin_location: (fullDayMode && fullDayType === 'furikae_off') ? effectiveFurikaeOriginLocation : null,
-        furikae_origin_start: (fullDayMode && fullDayType === 'furikae_off' && furikaeHasTime) ? furikaeOriginStart : null,
-        furikae_origin_end: (fullDayMode && fullDayType === 'furikae_off' && furikaeHasTime) ? furikaeOriginEnd : null,
+        furikae_origin_start: (fullDayMode && fullDayType === 'furikae_off' && furikaeHasTime) ? toDbTime(furikaeOriginStart) : null,
+        furikae_origin_end: (fullDayMode && fullDayType === 'furikae_off' && furikaeHasTime) ? toDbTime(furikaeOriginEnd) : null,
         furikae_origin_break_minutes: (fullDayMode && fullDayType === 'furikae_off' && furikaeHasTime) ? furikaeOriginBreak : null,
         furikae_origin_labor_minutes: (fullDayMode && fullDayType === 'furikae_off' && furikaeHasTime) ? furikaeOriginLabor : null,
         reviewer_id: isSelfReview ? user.id : reviewerId,
@@ -1167,8 +1169,8 @@ const OvertimeForm: React.FC<{
           reviewer_id: user.id,
           confirmed_by: user.id,
           confirmed_at: new Date().toISOString(),
-          clock_in_reported: clockInAt || null,
-          clock_out_reported: clockOutAt || null,
+          clock_in_reported: toDbTime(clockInAt),
+          clock_out_reported: toDbTime(clockOutAt),
         } : {}),
       };
 
@@ -1611,9 +1613,9 @@ const OvertimeForm: React.FC<{
             <div style={{ marginTop: 8 }}>
               <span style={{ fontSize: 12, color: subText }}>通常シフトを修正：</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                <input type="time" value={normStart} onChange={e => setNormStart(e.target.value)} style={{ ...inputStyle, padding: '6px 8px' }} />
+                <TimeInput value={normStart} onChange={setNormStart} isDark={isDark} advance ariaLabel="通常シフト 開始時刻" style={{ flex: 1, minWidth: 0 }} />
                 <span style={{ color: subText }}>〜</span>
-                <input type="time" value={normEnd} onChange={e => setNormEnd(e.target.value)} style={{ ...inputStyle, padding: '6px 8px' }} />
+                <TimeInput value={normEnd} onChange={setNormEnd} isDark={isDark} ariaLabel="通常シフト 終了時刻" style={{ flex: 1, minWidth: 0 }} />
                 <button onClick={() => setNormOverride(false)}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#0d6efd', textDecoration: 'underline' }}>
                   パターンに戻す
@@ -1732,9 +1734,9 @@ const OvertimeForm: React.FC<{
                       <span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（出勤〜退勤）</span>
                     </span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <input type="time" value={furikaeOriginStart} onChange={e => setFurikaeOriginStart(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
+                      <TimeInput value={furikaeOriginStart} onChange={setFurikaeOriginStart} isDark={isDark} advance ariaLabel="振替元 開始時刻" style={{ flex: 1, minWidth: 0 }} />
                       <span style={{ color: subText }}>〜</span>
-                      <input type="time" value={furikaeOriginEnd} onChange={e => setFurikaeOriginEnd(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
+                      <TimeInput value={furikaeOriginEnd} onChange={setFurikaeOriginEnd} isDark={isDark} ariaLabel="振替元 終了時刻" style={{ flex: 1, minWidth: 0 }} />
                     </div>
                     {furikaeHasTime && (
                       <p style={{ margin: '6px 0 0', fontSize: 12, color: subText }}>
@@ -1803,9 +1805,9 @@ const OvertimeForm: React.FC<{
           <span style={labelStyle}>打刻の時刻<span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（分かれば・任意）</span></span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
             <span style={{ fontSize: 12, color: subText, minWidth: 44 }}>出勤</span>
-            <input type="time" value={clockInAt} onChange={e => setClockInAt(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
+            <TimeInput value={clockInAt} onChange={setClockInAt} isDark={isDark} advance ariaLabel="出勤の打刻時刻" style={{ flex: 1, minWidth: 0 }} />
             <span style={{ fontSize: 12, color: subText, minWidth: 44, textAlign: 'right' }}>退勤</span>
-            <input type="time" value={clockOutAt} onChange={e => setClockOutAt(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
+            <TimeInput value={clockOutAt} onChange={setClockOutAt} isDark={isDark} ariaLabel="退勤の打刻時刻" style={{ flex: 1, minWidth: 0 }} />
           </div>
 
           <span style={labelStyle}>打刻が遅くなった理由{req}</span>
@@ -1856,9 +1858,9 @@ const OvertimeForm: React.FC<{
         {segments.map((s, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
             <span style={{ fontSize: 12, color: subText, minWidth: 44 }}>勤務{i + 1}</span>
-            <input type="time" value={s.start} onChange={e => setSegments(prev => prev.map((p, j) => j === i ? { ...p, start: e.target.value } : p))} style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
+            <TimeInput value={s.start} onChange={v => setSegments(prev => prev.map((p, j) => j === i ? { ...p, start: v } : p))} isDark={isDark} advance ariaLabel={`勤務${i + 1} 開始時刻`} style={{ flex: 1, minWidth: 0 }} />
             <span style={{ color: subText }}>〜</span>
-            <input type="time" value={s.end} onChange={e => setSegments(prev => prev.map((p, j) => j === i ? { ...p, end: e.target.value } : p))} style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
+            <TimeInput value={s.end} onChange={v => setSegments(prev => prev.map((p, j) => j === i ? { ...p, end: v } : p))} isDark={isDark} ariaLabel={`勤務${i + 1} 終了時刻`} style={{ flex: 1, minWidth: 0 }} />
             {segments.length > 1 && (
               <button onClick={() => setSegments(prev => prev.filter((_, j) => j !== i))}
                 aria-label={`勤務${i + 1}を削除`}

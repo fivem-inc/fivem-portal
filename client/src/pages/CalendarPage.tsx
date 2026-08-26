@@ -16,6 +16,7 @@ import { useCompanyCalendar, CALENDAR_CELL_STYLE } from '../hooks/useCompanyCale
 import type { CalendarKind } from '../lib/breakCalc';
 import type { AuthUser } from '../types';
 import HelpLinkButton from '../components/HelpLinkButton';
+import { toDbTime } from '../lib/timeInput';
 
 // 校の選択肢の末尾に出す「その他（自由入力）」。選ぶと自由入力欄が出る（残業・出張報告と同じ扱い）
 const OTHER_LOCATION = 'その他';
@@ -780,13 +781,13 @@ const AbsenceInputSheet: React.FC<{
     const records: { user_id: string; date: string; type: string; actual_time: string | null; notes: string; created_by: string; location: string; work_segments: WorkSegment[] | null; original_location: string | null }[] = [];
     for (const { uid, d } of pairs) {
       if (isAbsent)         records.push({ user_id: uid, date: d, type: 'absent',          actual_time: null,                   notes, created_by: currentUserId, location: effectiveLocation(d), work_segments: null,   original_location: null });
-      if (isHolidayWork)    records.push({ user_id: uid, date: d, type: 'holiday_work',    actual_time: segs[0]?.start ?? null, notes, created_by: currentUserId, location: segLoc,              work_segments: segCol, original_location: null });
+      if (isHolidayWork)    records.push({ user_id: uid, date: d, type: 'holiday_work',    actual_time: toDbTime(segs[0]?.start), notes, created_by: currentUserId, location: segLoc,              work_segments: segCol, original_location: null });
       if (isLocationChange) records.push({ user_id: uid, date: d, type: 'location_change', actual_time: null,                   notes, created_by: currentUserId, location: locOf(d),            work_segments: segCol, original_location: origLoc });
       // 勤務時間変更は校が普段どおりなので変更前の校は持たない（時間帯の校がそのまま勤務校）
       if (isTimeChange)     records.push({ user_id: uid, date: d, type: 'time_change',     actual_time: segs[0]?.start ?? null, notes, created_by: currentUserId, location: segLoc,              work_segments: segCol, original_location: null });
-      if (isLate)           records.push({ user_id: uid, date: d, type: 'late',            actual_time: lateTime,               notes, created_by: currentUserId, location: locOf(d),            work_segments: segCol, original_location: origLoc });
+      if (isLate)           records.push({ user_id: uid, date: d, type: 'late',            actual_time: toDbTime(lateTime),               notes, created_by: currentUserId, location: locOf(d),            work_segments: segCol, original_location: origLoc });
       if (isLateStart)      records.push({ user_id: uid, date: d, type: 'late_start',      actual_time: lateTime,               notes, created_by: currentUserId, location: locOf(d),            work_segments: segCol, original_location: origLoc });
-      if (isEarlyLeave)     records.push({ user_id: uid, date: d, type: 'early_leave',     actual_time: earlyTime,              notes, created_by: currentUserId, location: locOf(d),            work_segments: segCol, original_location: origLoc });
+      if (isEarlyLeave)     records.push({ user_id: uid, date: d, type: 'early_leave',     actual_time: toDbTime(earlyTime),              notes, created_by: currentUserId, location: locOf(d),            work_segments: segCol, original_location: origLoc });
       if (isEarlyEnd)       records.push({ user_id: uid, date: d, type: 'early_end',       actual_time: earlyTime,              notes, created_by: currentUserId, location: locOf(d),            work_segments: segCol, original_location: origLoc });
     }
 

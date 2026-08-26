@@ -3,6 +3,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { supabase } from '../lib/supabaseClient';
 import { getPushPermissionStatus } from '../utils/pushNotification';
+import { normalizeTime } from '../lib/timeInput';
 
 // プッシュ通知の受信時間帯・休暇日ミュートの本人設定カード。
 // アカウント設定（/account）と通知設定（/notification-settings）の両方に同じものを表示する。
@@ -31,7 +32,11 @@ export default function PushQuietHoursSection() {
 
   const snap = (q: boolean, s: string, e: string, m: boolean) => JSON.stringify([q, s, e, m]);
   const dirty = snap(quietEnabled, receiveStart, receiveEnd, muteOnLeave) !== savedSnap;
-  const timeInvalid = quietEnabled && receiveStart === receiveEnd;
+  // 🚨 時刻として読めない値も止める。ここを素通りすると、画面の説明文（文字列で前後を比べている）と
+  //    サーバー側のDB関数（time型で比べる）で日またぎの判定が食い違い、
+  //    「鳴らないはずの時間に鳴る」という気づきにくい不具合になる
+  const timeInvalid = quietEnabled
+    && (receiveStart === receiveEnd || !normalizeTime(receiveStart) || !normalizeTime(receiveEnd));
 
   // プッシュ許可状態（許可済みの人にだけこのカードを出す）。
   // 別タブ・ブラウザ設定で変わることがあるので、画面に戻ったとき再チェックする
@@ -69,8 +74,8 @@ export default function PushQuietHoursSection() {
     const { error } = await supabase.from('push_preferences').upsert({
       user_id: user.id,
       quiet_enabled: quietEnabled,
-      receive_start: receiveStart,
-      receive_end: receiveEnd,
+      receive_start: normalizeTime(receiveStart) || receiveStart,
+      receive_end: normalizeTime(receiveEnd) || receiveEnd,
       mute_on_leave: muteOnLeave,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'user_id' });

@@ -2,14 +2,21 @@
 // 計算エンジンの二重化（申請と修正でズレる事故）を防ぐ。
 // ※残業(overtime)の breakCalc とは休憩ルールが異なるため別物。
 
-function toMin(hhmm: string): number {
-  const [h, m] = hhmm.split(':').map(Number);
-  return h * 60 + m;
-}
+import { timeToMinutes } from './timeInput';
+
+// 🚨 不正な時刻で NaN を返さないこと（2026-08-26）。
+//    以前は `hhmm.split(':').map(Number)` で、"930" のような値が来ると NaN になっていた。
+//    NaN は比較がすべて false になるため calcShiftBreakMinutes の判定を全部素通りし、
+//    最後の `return 60` に落ちて **エラーも出さずに「休憩60分」を記録する**（node で実測）。
+//    <input type="time"> がこれを無言で防いでいたので、テキスト入力にするなら必須の対策。
+const toMin = (hhmm: string): number | null => timeToMinutes(hhmm);
 
 // 拘束時間帯（出勤〜退勤）から自動休憩を算出する。ShiftReportPage の従来ルールと同一。
 export function calcShiftBreakMinutes(start: string, end: string): number {
-  const s = toMin(start), d = toMin(end) - s;
+  const s = toMin(start), e = toMin(end);
+  // 時刻として読めないときは休憩を作らない。送信は各画面の入力チェックで止める
+  if (s == null || e == null) return 0;
+  const d = e - s;
   if (d <= 0)               return 0;
   if (d < 255)              return 0;
   if (s >= 780 && d <= 345) return 0;
@@ -55,9 +62,10 @@ export function parseSegments(
   const s = legacyStart.slice(0, 5), e = legacyEnd.slice(0, 5);
   if (legacyOutStart && legacyOutEnd) {
     const os = legacyOutStart.slice(0, 5), oe = legacyOutEnd.slice(0, 5);
-    if (toMin(oe) > toMin(os)) {
+    const sm = toMin(s), em = toMin(e), osm = toMin(os), oem = toMin(oe);
+    if (sm != null && em != null && osm != null && oem != null && oem > osm) {
       // ① 勤務時間の中にある＝ふつうの中抜け。前後2つの時間帯に分ける
-      if (toMin(os) > toMin(s) && toMin(oe) < toMin(e)) {
+      if (osm > sm && oem < em) {
         return [{ start: s, end: os, location: loc }, { start: oe, end: e, location: loc }];
       }
       // ② 勤務時間より後ろ／前にある＝「外出」欄を2つ目の勤務時間として使っていた報告。
@@ -65,8 +73,8 @@ export function parseSegments(
       // 実際に本番に3件あった（例：勤務 10:55〜11:35／外出欄 15:30〜19:00）。
       // 旧計算ではこれを「働いていない時間」として引くため実労働が0分になっていた。
       // 表示は正しく直るが、保存済みの休憩・実労働の数字は当時のままなので注意
-      if (toMin(os) >= toMin(e)) return [{ start: s, end: e, location: loc }, { start: os, end: oe, location: loc }];
-      if (toMin(oe) <= toMin(s)) return [{ start: os, end: oe, location: loc }, { start: s, end: e, location: loc }];
+      if (osm >= em) return [{ start: s, end: e, location: loc }, { start: os, end: oe, location: loc }];
+      if (oem <= sm) return [{ start: os, end: oe, location: loc }, { start: s, end: e, location: loc }];
     }
   }
   return [{ start: s, end: e, location: loc }];
@@ -74,7 +82,10 @@ export function parseSegments(
 
 /** 勤務時間帯の合計（分）。休憩は含まない */
 export function segMinutes(segs: Seg[]): number {
-  return segs.reduce((sum, s) => sum + (s.start && s.end ? Math.max(0, toMin(s.end) - toMin(s.start)) : 0), 0);
+  return segs.reduce((sum, s) => {
+    const a = toMin(s.start), b = toMin(s.end);
+    return sum + (a != null && b != null ? Math.max(0, b - a) : 0);
+  }, 0);
 }
 
 /**
