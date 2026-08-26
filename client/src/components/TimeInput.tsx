@@ -94,8 +94,17 @@ const TimeInput: React.FC<Props> = ({
       focusNextHour(minuteRef.current);
     }
   };
+  // 🚨 keyup は「押した欄」ではなく「そのとき focus がある欄」で発火する。
+  //    時を1文字打つと advanceFromHour が先に分へ移すので、その**同じ打鍵**の keyup が
+  //    分の欄で起きる。分が既に埋まっていると（予定のプリフィル等）advanceFromMinute が
+  //    走ってしまい、分を飛ばして次の時＝終了へ行く。
+  //    実機で「開始の時を入れると分を飛び越えて終了時間に行く」として報告された不具合。
+  //    keydown を押した欄と一致するときだけ動かし、打鍵の持ち主を取り違えないようにする。
+  const keyDownPart = useRef<'hour' | 'minute' | null>(null);
+
   /** 数字キーのときだけ移動を試す（矢印・BackSpaceで飛ばないように） */
-  const onDigitKeyUp = (e: React.KeyboardEvent<HTMLInputElement>, fn: () => void) => {
+  const onDigitKeyUp = (e: React.KeyboardEvent<HTMLInputElement>, part: 'hour' | 'minute', fn: () => void) => {
+    if (keyDownPart.current !== part) return;   // 別の欄で押された打鍵の keyup は無視する
     if (/^\d$/.test(e.key)) fn();
   };
 
@@ -121,6 +130,7 @@ const TimeInput: React.FC<Props> = ({
 
   /** 分が空のときにバックスペースを押したら時の欄へ戻す（打ち直しやすく） */
   const onMinuteKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    keyDownPart.current = 'minute';
     if (e.key === 'Backspace' && !domMinute()) { hourRef.current?.focus(); hourRef.current?.select(); }
   };
 
@@ -152,7 +162,8 @@ const TimeInput: React.FC<Props> = ({
       <input
         ref={hourRef} data-time-part="hour" type="text" inputMode="numeric" pattern="[0-9]*" autoComplete="off"
         maxLength={2} disabled={disabled} value={hour} placeholder="9"
-        onChange={e => onHour(e.target.value)} onFocus={e => e.target.select()} onKeyUp={e => onDigitKeyUp(e, advanceFromHour)}
+        onChange={e => onHour(e.target.value)} onFocus={e => e.target.select()}
+        onKeyDown={() => { keyDownPart.current = 'hour'; }} onKeyUp={e => onDigitKeyUp(e, 'hour', advanceFromHour)}
         aria-label={ariaLabel ? `${ariaLabel}（時）` : '時'} aria-invalid={bad || undefined}
         style={field} {...rest}
       />
@@ -160,7 +171,7 @@ const TimeInput: React.FC<Props> = ({
       <input
         ref={minuteRef} data-time-part="minute" type="text" inputMode="numeric" pattern="[0-9]*" autoComplete="off"
         maxLength={2} disabled={disabled} value={minute} placeholder="30"
-        onChange={e => onMinute(e.target.value)} onFocus={e => e.target.select()} onKeyDown={onMinuteKeyDown} onKeyUp={e => onDigitKeyUp(e, advanceFromMinute)}
+        onChange={e => onMinute(e.target.value)} onFocus={e => e.target.select()} onKeyDown={onMinuteKeyDown} onKeyUp={e => onDigitKeyUp(e, 'minute', advanceFromMinute)}
         aria-label={ariaLabel ? `${ariaLabel}（分）` : '分'} aria-invalid={bad || undefined}
         style={field}
       />
