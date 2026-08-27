@@ -4,6 +4,7 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { supabase } from '../lib/supabaseClient';
 import { getPushPermissionStatus } from '../utils/pushNotification';
 import { normalizeTime } from '../lib/timeInput';
+import TimeInput from './TimeInput';
 
 // プッシュ通知の受信時間帯・休暇日ミュートの本人設定カード。
 // アカウント設定（/account）と通知設定（/notification-settings）の両方に同じものを表示する。
@@ -18,7 +19,6 @@ export default function PushQuietHoursSection() {
   const card = isDark ? '#2c2c3e' : '#ffffff';
   const text = isDark ? '#fff' : '#1a1a2e';
   const sub = isDark ? '#adb5bd' : '#6c757d';
-  const border = isDark ? '#3d3d55' : '#e9ecef';
 
   const [granted, setGranted] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -99,11 +99,6 @@ export default function PushQuietHoursSection() {
       ? `${disp(receiveStart)}〜翌${disp(receiveEnd)} のあいだは通知が鳴ります。${disp(receiveEnd)}〜${disp(receiveStart)} は鳴らず、${disp(receiveStart)} にまとめて届きます。（日をまたぐ設定です）`
       : '';
 
-  const timeInputStyle = {
-    padding: '8px 10px', fontSize: 16, borderRadius: 8,
-    border: `1px solid ${border}`, background: isDark ? '#3d3d55' : '#fff', color: text,
-    colorScheme: isDark ? 'dark' : 'light',
-  } as const;
 
   return (
     <div style={{ background: card, borderRadius: 16, overflow: 'hidden', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', marginTop: 12, padding: '16px 20px' }}>
@@ -129,9 +124,9 @@ export default function PushQuietHoursSection() {
             <div style={{ margin: '10px 0 0 26px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 13, color: sub }}>受け取る時間帯</span>
-                <input type="time" value={receiveStart} onChange={e => { setReceiveStart(e.target.value); setMsg(null); }} style={timeInputStyle} />
+                <TimeInput value={receiveStart} onChange={v => { setReceiveStart(v); setMsg(null); }} isDark={isDark} advance ariaLabel="受け取る時間帯 開始" style={{ flex: 1, minWidth: 0 }} />
                 <span style={{ fontSize: 14, color: text }}>〜</span>
-                <input type="time" value={receiveEnd} onChange={e => { setReceiveEnd(e.target.value); setMsg(null); }} style={timeInputStyle} />
+                <TimeInput value={receiveEnd} onChange={v => { setReceiveEnd(v); setMsg(null); }} isDark={isDark} ariaLabel="受け取る時間帯 終了" style={{ flex: 1, minWidth: 0 }} />
               </div>
               {timeInvalid ? (
                 <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 8, fontSize: 12.5,

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import TimeInput from './TimeInput';
 import { supabase } from '../lib/supabaseClient';
 import { insertNotification } from '../lib/notifications';
 import { timeToMin, calcPayPeriodStartJst, formatSignedMin } from '../lib/breakCalc';
@@ -297,7 +298,8 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
                       </label>
                       {!isChosei && (
                         <label style={{ fontSize: 11, color: subText }}>{o.kind === 'late_start' ? '出勤時刻' : '退勤時刻'}
-                          <input type="time" value={pk.time} onChange={e => setPick(o.id, { time: e.target.value })} style={{ ...selStyle, width: '100%', marginTop: 2 }} />
+                          <TimeInput value={pk.time} onChange={v => setPick(o.id, { time: v })} isDark={isDark}
+                            ariaLabel={o.kind === 'late_start' ? '出勤時刻' : '退勤時刻'} style={{ width: '100%', marginTop: 2 }} />
                         </label>
                       )}
                     </div>

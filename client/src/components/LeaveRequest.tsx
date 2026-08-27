@@ -32,6 +32,8 @@ import type { CalendarKind } from '../lib/breakCalc';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import type { AuthUser, AdminLeaveRequest } from '../types';
+import { normalizeTime } from '../lib/timeInput';
+import TimeInput from './TimeInput';
 
 // 休暇申請フォームの下書き
 interface LeaveDraft {
@@ -1233,6 +1235,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           }
           if (adjLateStart && !adjLateTime) { setAdjError('調整遅出の出勤時刻を選択してください'); return; }
           if (adjEarlyEnd && !adjEarlyTime) { setAdjError('調整早退の退勤時刻を選択してください'); return; }
+          // 🚨 type="time" をやめた分、時刻の形は自分で確かめる（空でないかだけでは足りない）
+          if (adjLateStart && normalizeTime(adjLateTime) === null) { setAdjError('調整遅出の出勤時刻を正しく入力してください（例 9:30）'); return; }
+          if (adjEarlyEnd && normalizeTime(adjEarlyTime) === null) { setAdjError('調整早退の退勤時刻を正しく入力してください（例 17:30）'); return; }
           if (!adjLocation) { setAdjError('校を選択してください'); return; }
           if (!adjReason.trim()) { setAdjError('理由を入力してください'); return; }
           setAdjSubmitting(true);
@@ -1335,8 +1340,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                   {adjLateStart && (
                     <div onClick={e => e.stopPropagation()}>
                       <label style={{ fontSize: 12, color: '#e3f2fd', marginBottom: 4, display: 'block' }}>出勤時刻 <span style={{ color: '#ffcdd2' }}>*</span></label>
-                      <input type="time" value={adjLateTime} onChange={e => setAdjLateTime(e.target.value)}
-                        style={{ width: '100%', padding: '8px', borderRadius: 6, border: `1px solid ${!adjLateTime ? '#dc3545' : borderColor}`, fontSize: 14, background: inputBg, color: text, boxSizing: 'border-box' }} />
+                      <TimeInput value={adjLateTime} onChange={setAdjLateTime} isDark={isDark}
+                        invalid={!adjLateTime} ariaLabel="調整遅出 出勤時刻" style={{ width: '100%' }} />
                     </div>
                   )}
                 </div>
@@ -1355,8 +1360,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                   {adjEarlyEnd && (
                     <div onClick={e => e.stopPropagation()}>
                       <label style={{ fontSize: 12, color: '#e3f2fd', marginBottom: 4, display: 'block' }}>退勤時刻 <span style={{ color: '#ffcdd2' }}>*</span></label>
-                      <input type="time" value={adjEarlyTime} onChange={e => setAdjEarlyTime(e.target.value)}
-                        style={{ width: '100%', padding: '8px', borderRadius: 6, border: `1px solid ${!adjEarlyTime ? '#dc3545' : borderColor}`, fontSize: 14, background: inputBg, color: text, boxSizing: 'border-box' }} />
+                      <TimeInput value={adjEarlyTime} onChange={setAdjEarlyTime} isDark={isDark}
+                        invalid={!adjEarlyTime} ariaLabel="調整早退 退勤時刻" style={{ width: '100%' }} />
                     </div>
                   )}
                 </div>

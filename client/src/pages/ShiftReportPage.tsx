@@ -15,7 +15,8 @@ import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
 import type { CorrectionRequestRow } from '../lib/correctionRequest';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
 import type { CalendarKind } from '../lib/breakCalc';
-import { toDbTime } from '../lib/timeInput';
+import { toDbTime, normalizeTime } from '../lib/timeInput';
+import TimeInput from '../components/TimeInput';
 
 // ────────────────────────────────────────────────────────────────
 // Types
@@ -525,12 +526,15 @@ const ShiftReportForm: React.FC<{
     if (!date)          return { msg: '日付を選択してください', field: 'date' };
     if (types.length === 0) return { msg: '種別を選択してください', field: 'types' };
     if (!reason.trim()) return { msg: '理由を入力してください', field: 'reason' };
+    // 🚨 type="time" をやめた分、時刻の形は自分で確かめる（空でないかだけでは足りない）
     if (noShift && origSegs.some(s => !s.start || !s.end)) return { msg: `${planWord}時間を入力してください`, field: 'origTime' };
+    if (noShift && origSegs.some(s => normalizeTime(s.start) === null || normalizeTime(s.end) === null)) return { msg: `${planWord}時間を正しく入力してください（例 9:30）`, field: 'origTime' };
     if (noShift && origSegs.some(s => s.start === s.end)) return { msg: `${planWord}開始・終了が同じ時間です。正しい時間を入力してください`, field: 'origTime' };
     if (noShift && origSegs.some(s => !(s.location ?? '').trim())) return { msg: `${planWord}勤務地を選択してください`, field: 'origLoc' };
     // 時間帯が前の帯と重なっている／逆順だと労働時間が合わなくなるので止める
     if (noShift && origSegs.some((s, i) => i > 0 && s.start && origSegs[i - 1].end && toMin(s.start) < toMin(origSegs[i - 1].end))) return { msg: `${planWord}勤務の時間が重なっています。順番に入力してください`, field: 'origTime' };
     if (!hasAbsence && actSegs.some(s => !s.start || !s.end)) return { msg: '実際の時間を入力してください', field: 'actTime' };
+    if (!hasAbsence && actSegs.some(s => normalizeTime(s.start) === null || normalizeTime(s.end) === null)) return { msg: '実際の時間を正しく入力してください（例 9:30）', field: 'actTime' };
     if (!hasAbsence && actSegs.some(s => s.start === s.end)) return { msg: '開始時間と終了時間が同じです。正しい時間を入力してください', field: 'actTime' };
     if (!hasAbsence && actSegs.some((s, i) => i > 0 && s.start && actSegs[i - 1].end && toMin(s.start) < toMin(actSegs[i - 1].end))) return { msg: '勤務の時間が重なっています。順番に入力してください', field: 'actTime' };
     if (!hasAbsence && actSegs.some(s => !(s.location ?? '').trim())) return { msg: '実際の勤務地を選択してください', field: 'actLoc' };
@@ -876,9 +880,9 @@ const ShiftReportForm: React.FC<{
                     <div key={i} style={{ marginBottom: 10 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                         <span style={{ fontSize: 12, color: '#888', minWidth: 44, flexShrink: 0 }}>勤務{i + 1}</span>
-                        <input type="time" data-err-field={i === 0 ? 'origTime' : undefined} value={s.start} onChange={e => { setOrigSegs(prev => prev.map((p, j) => j === i ? { ...p, start: e.target.value } : p)); clearErr('origTime'); }} style={{ ...f, ...errorStyle(badTime, isDark), flex: 1, minWidth: 0 }} />
+                        <TimeInput data-err-field={i === 0 ? 'origTime' : undefined} value={s.start} onChange={v => { setOrigSegs(prev => prev.map((p, j) => j === i ? { ...p, start: v } : p)); clearErr('origTime'); }} isDark={isDark} advance invalid={badTime} ariaLabel={`通常シフト 勤務${i + 1} 開始`} style={{ flex: 1, minWidth: 0 }} />
                         <span style={{ color: '#888', flexShrink: 0 }}>〜</span>
-                        <input type="time" value={s.end} onChange={e => { setOrigSegs(prev => prev.map((p, j) => j === i ? { ...p, end: e.target.value } : p)); clearErr('origTime'); }} style={{ ...f, ...errorStyle(badTime, isDark), flex: 1, minWidth: 0 }} />
+                        <TimeInput value={s.end} onChange={v => { setOrigSegs(prev => prev.map((p, j) => j === i ? { ...p, end: v } : p)); clearErr('origTime'); }} isDark={isDark} invalid={badTime} ariaLabel={`通常シフト 勤務${i + 1} 終了`} style={{ flex: 1, minWidth: 0 }} />
                         {origSegs.length > 1 && (
                           <button type="button" onClick={() => { setOrigSegs(prev => prev.filter((_, j) => j !== i)); setOrigLocOther(prev => prev.filter((_, j) => j !== i)); }}
                             aria-label={`勤務${i + 1}を削除`}
@@ -932,9 +936,9 @@ const ShiftReportForm: React.FC<{
                   <div key={i} style={{ marginBottom: 10 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                       <span style={{ fontSize: 12, color: '#888', minWidth: 44, flexShrink: 0 }}>勤務{i + 1}</span>
-                      <input type="time" data-err-field={i === 0 ? 'actTime' : undefined} value={s.start} onChange={e => { setActSegs(prev => prev.map((p, j) => j === i ? { ...p, start: e.target.value } : p)); clearErr('actTime'); }} style={{ ...f, ...errorStyle(badTime, isDark), flex: 1, minWidth: 0 }} />
+                      <TimeInput data-err-field={i === 0 ? 'actTime' : undefined} value={s.start} onChange={v => { setActSegs(prev => prev.map((p, j) => j === i ? { ...p, start: v } : p)); clearErr('actTime'); }} isDark={isDark} advance invalid={badTime} ariaLabel={`実際の勤務${i + 1} 開始`} style={{ flex: 1, minWidth: 0 }} />
                       <span style={{ color: '#888', flexShrink: 0 }}>〜</span>
-                      <input type="time" value={s.end} onChange={e => { setActSegs(prev => prev.map((p, j) => j === i ? { ...p, end: e.target.value } : p)); clearErr('actTime'); }} style={{ ...f, ...errorStyle(badTime, isDark), flex: 1, minWidth: 0 }} />
+                      <TimeInput value={s.end} onChange={v => { setActSegs(prev => prev.map((p, j) => j === i ? { ...p, end: v } : p)); clearErr('actTime'); }} isDark={isDark} invalid={badTime} ariaLabel={`実際の勤務${i + 1} 終了`} style={{ flex: 1, minWidth: 0 }} />
                       {actSegs.length > 1 && (
                         <button type="button" onClick={() => { setActSegs(prev => prev.filter((_, j) => j !== i)); setActLocOther(prev => prev.filter((_, j) => j !== i)); }}
                           aria-label={`勤務${i + 1}を削除`}

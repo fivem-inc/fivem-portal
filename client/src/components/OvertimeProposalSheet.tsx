@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import TimeInput from './TimeInput';
 import { supabase } from '../lib/supabaseClient';
 import { insertNotification } from '../lib/notifications';
 import { resolveNormalShift, buildTimeAdjustReport, normalShiftTimeText } from '../lib/overtimeShift';
@@ -275,7 +276,8 @@ const OvertimeProposalSheet: React.FC<Props> = ({
               })()}
               {!isChosei && (
                 <label style={{ fontSize: 11, color: subText, display: 'block', marginTop: 8 }}>{c.kind === 'late_start' ? '出勤時刻（提案する時刻）' : '退勤時刻（提案する時刻）'}
-                  <input type="time" value={c.time} onChange={e => updateCandidate(c.tmpId, { time: e.target.value })} style={{ ...selStyle, width: '100%', marginTop: 2, colorScheme: isDark ? 'dark' : 'light' }} />
+                  <TimeInput value={c.time} onChange={v => updateCandidate(c.tmpId, { time: v })} isDark={isDark}
+                    ariaLabel={c.kind === 'late_start' ? '提案する出勤時刻' : '提案する退勤時刻'} style={{ width: '100%', marginTop: 2 }} />
                 </label>
               )}
               <label style={{ fontSize: 11, color: subText, display: 'block', marginTop: 8 }}>校

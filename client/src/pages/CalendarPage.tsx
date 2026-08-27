@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
-import { errorStyle, scrollToFirstError, ERROR_BORDER, errorBg } from '../lib/formHighlight';
+import { scrollToFirstError, ERROR_BORDER, errorBg } from '../lib/formHighlight';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import {
@@ -16,7 +16,8 @@ import { useCompanyCalendar, CALENDAR_CELL_STYLE } from '../hooks/useCompanyCale
 import type { CalendarKind } from '../lib/breakCalc';
 import type { AuthUser } from '../types';
 import HelpLinkButton from '../components/HelpLinkButton';
-import { toDbTime } from '../lib/timeInput';
+import { toDbTime, normalizeTime } from '../lib/timeInput';
+import TimeInput from '../components/TimeInput';
 
 // 校の選択肢の末尾に出す「その他（自由入力）」。選ぶと自由入力欄が出る（残業・出張報告と同じ扱い）
 const OTHER_LOCATION = 'その他';
@@ -520,7 +521,6 @@ const AbsenceInputSheet: React.FC<{
   const _timeH = (t: string) => t ? parseInt(t.split(':')[0], 10) : 8; void _timeH;
   const _timeM = (t: string) => t ? parseInt(t.split(':')[1], 10) : 0; void _timeM;
   const _toTimeStr = (h: number, m: number) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`; void _toTimeStr;
-  const selStyle: React.CSSProperties = { padding: '4px 4px', borderRadius: 6, border: '1px solid #ccc', fontSize: 14 };
   const [notes, setNotes] = useState(absDraft?.notes ?? '');
   const [saving, setSaving] = useState(false);
   const savingRef = React.useRef(false);
@@ -693,8 +693,12 @@ const AbsenceInputSheet: React.FC<{
     setError('');
     if (userIds.size === 0) { setError('対象者を選択してください'); setErrFields(new Set(['userId'])); scrollToFirstError(['userId']); return; }
     if (!isAbsent && !isHolidayWork && !isLocationChange && !isTimeChange && !isLate && !isLateStart && !isEarlyLeave && !isEarlyEnd) { setError('種別を選択してください'); return; }
+    // 🚨 type="time" をやめた分、ここで時刻の形は自分で確かめる（空でないかだけでは足りない）。
+    //    TimeInput は中途半端な値を親に渡さないが、下書きの復元・過去データで壊れた値が入りうる。
     if ((isLate || isLateStart) && !lateTime) { setError('出勤時間を入力してください'); setErrFields(new Set(['lateTime'])); scrollToFirstError(['lateTime']); return; }
+    if ((isLate || isLateStart) && normalizeTime(lateTime) === null) { setError('出勤時間を正しく入力してください（例 9:30）'); setErrFields(new Set(['lateTime'])); scrollToFirstError(['lateTime']); return; }
     if ((isEarlyLeave || isEarlyEnd) && !earlyTime) { setError('退勤時間を入力してください'); setErrFields(new Set(['earlyTime'])); scrollToFirstError(['earlyTime']); return; }
+    if ((isEarlyLeave || isEarlyEnd) && normalizeTime(earlyTime) === null) { setError('退勤時間を正しく入力してください（例 17:30）'); setErrFields(new Set(['earlyTime'])); scrollToFirstError(['earlyTime']); return; }
     if (isLocationChange && !effectiveOriginalLocation()) { setError('変更前の校を選択してください'); setErrFields(new Set(['originalLocation'])); scrollToFirstError(['originalLocation']); return; }
 
     if (useSegments) {
@@ -704,6 +708,7 @@ const AbsenceInputSheet: React.FC<{
         const s = segs[i];
         const no = `時間帯${i + 1}`;
         if (!s.start || !s.end) { setError(`${no}の勤務時間を入力してください`); return; }
+        if (normalizeTime(s.start) === null || normalizeTime(s.end) === null) { setError(`${no}の勤務時間を正しく入力してください（例 9:30）`); return; }
         if (s.start >= s.end) { setError(`${no}は終了時刻を開始時刻より後にしてください`); return; }
         if (!s.location) { setError(`${no}の校を選択してください`); return; }
       }
@@ -967,7 +972,7 @@ const AbsenceInputSheet: React.FC<{
             {(isLate || isLateStart) && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 8 }} onClick={e => e.preventDefault()}>
                 <span style={{ fontSize: 12, color: '#666', whiteSpace: 'nowrap' }}>出勤時間</span>
-                <input data-err-field="lateTime" type="time" value={lateTime} onChange={e => { setLateTime(e.target.value); clearErr('lateTime'); }} onClick={e => e.stopPropagation()} style={{ ...selStyle, ...errorStyle(errFields.has('lateTime'), false), flex: 1 }} />
+                <TimeInput data-err-field="lateTime" value={lateTime} onChange={v => { setLateTime(v); clearErr('lateTime'); }} isDark={false} invalid={errFields.has('lateTime')} ariaLabel="出勤時間" style={{ flex: 1, minWidth: 0 }} />
               </div>
             )}
           </div>
@@ -987,7 +992,7 @@ const AbsenceInputSheet: React.FC<{
             {(isEarlyLeave || isEarlyEnd) && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 8 }} onClick={e => e.preventDefault()}>
                 <span style={{ fontSize: 12, color: '#666', whiteSpace: 'nowrap' }}>退勤時間</span>
-                <input data-err-field="earlyTime" type="time" value={earlyTime} onChange={e => { setEarlyTime(e.target.value); clearErr('earlyTime'); }} onClick={e => e.stopPropagation()} style={{ ...selStyle, ...errorStyle(errFields.has('earlyTime'), false), flex: 1 }} />
+                <TimeInput data-err-field="earlyTime" value={earlyTime} onChange={v => { setEarlyTime(v); clearErr('earlyTime'); }} isDark={false} invalid={errFields.has('earlyTime')} ariaLabel="退勤時間" style={{ flex: 1, minWidth: 0 }} />
               </div>
             )}
           </div>
@@ -1052,11 +1057,11 @@ const AbsenceInputSheet: React.FC<{
                 <div key={i} style={{ marginBottom: 8 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
                     <span style={{ fontSize: 12, color: '#666', minWidth: 46, flexShrink: 0 }}>時間帯{i + 1}</span>
-                    <input type="time" value={seg.start} onChange={e => updateSegment(i, { start: e.target.value })}
-                      style={{ flex: 1, padding: '8px', borderRadius: 8, border: `1px solid ${!seg.start ? '#f0a0a0' : '#ccc'}`, fontSize: 14, background: '#fff', color: '#333' }} />
+                    <TimeInput value={seg.start} onChange={v => updateSegment(i, { start: v })} isDark={false}
+                      advance invalid={!seg.start} ariaLabel={`時間帯${i + 1} 開始`} style={{ flex: 1, minWidth: 0 }} />
                     <span style={{ fontSize: 12, color: '#666' }}>〜</span>
-                    <input type="time" value={seg.end} onChange={e => updateSegment(i, { end: e.target.value })}
-                      style={{ flex: 1, padding: '8px', borderRadius: 8, border: `1px solid ${!seg.end ? '#f0a0a0' : '#ccc'}`, fontSize: 14, background: '#fff', color: '#333' }} />
+                    <TimeInput value={seg.end} onChange={v => updateSegment(i, { end: v })} isDark={false}
+                      invalid={!seg.end} ariaLabel={`時間帯${i + 1} 終了`} style={{ flex: 1, minWidth: 0 }} />
                     {segments.length > 1 && (
                       <button type="button" onClick={() => removeSegment(i)} title="この時間帯を削除"
                         style={{ background: 'none', border: 'none', color: '#999', cursor: 'pointer', fontSize: 15, padding: '0 2px', flexShrink: 0 }}>✕</button>
