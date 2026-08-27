@@ -39,6 +39,48 @@ const BORDER = '#d9dee3';
 const CONTACT_PHONE = '075-255-4401';
 const CONTACT_FORM_URL = 'https://www.five-m.com/inquiry/';
 
+// 🚨 回答本文に書いたURLは、そのまま出すと「押せない長い文字列」になる（実際そうなっていた）。
+//    スマホでは長押ししてコピーするしかなく、事実上たどり着けない。
+//    書く人は今までどおり本文にURLを書くだけでよく、表示するときにボタンへ変える。
+//    ボタンの文字はURLから推測する（合わなければ「ページを開く」）。
+const URL_RE = /(https?:\/\/[^\s　]+)/g;
+const linkLabel = (url: string): string => {
+  if (/shiori/i.test(url)) return '入会のしおりを見る';
+  if (/lessontime|lesson_program/i.test(url)) return 'レッスンタイム表を見る';
+  if (/freetrial/i.test(url)) return '体験レッスンのお申し込みへ';
+  if (/inquiry|contact/i.test(url)) return 'お問い合わせフォームへ';
+  if (/price/i.test(url)) return '料金表を見る';
+  if (/\.pdf(\?|$)/i.test(url)) return 'PDFを開く';
+  return 'ページを開く';
+};
+
+/** 回答本文。文中のURLを押せるボタンにして出す */
+const AnswerBody: React.FC<{ body: string }> = ({ body }) => {
+  const parts = body.split(URL_RE);
+  return (
+    <div style={{ fontSize: 15, lineHeight: 1.8, margin: '0 0 10px' }}>
+      {parts.map((part, i) => {
+        // split の区切りは1つ飛ばしでURLが入る。末尾の記号（。や）など）は本文側へ戻す
+        if (i % 2 === 1) {
+          const m = part.match(/^(.*?)([。、）」]*)$/s);
+          const url = m ? m[1] : part;
+          const tail = m ? m[2] : '';
+          return (
+            <span key={i}>
+              <a href={url} target="_blank" rel="noopener noreferrer"
+                style={{ display: 'inline-block', margin: '6px 0', padding: '9px 14px', borderRadius: 8, border: `1px solid ${BLUE}`, color: BLUE_DARK, background: '#fff', fontSize: 14, textDecoration: 'none', fontWeight: 'bold' }}>
+                {linkLabel(url)} →
+              </a>
+              {tail}
+            </span>
+          );
+        }
+        return <span key={i} style={{ whiteSpace: 'pre-wrap' }}>{part}</span>;
+      })}
+    </div>
+  );
+};
+
 // コース選択肢に添える行動の説明（v4「行動の説明つき」）。無いコースは名前だけ出す
 const COURSE_NOTE: Record<string, string> = {
   'こども器械体操': '親子・リトル・キッズ・プレミアム',
@@ -246,6 +288,19 @@ const FaqWidget: React.FC = () => {
     <div ref={rootRef} style={card}>
       {view.kind === 'home' && (
         <>
+          {/* 🚨 一度選んだ校・コースは覚えたままなので、質問一覧に戻ったときに
+              「今どれで見ているか」が分からなくなる（2026-08-27 指摘）。上に出して選び直せるようにする */}
+          {(viewer.school || viewer.course) && (
+            <div style={{ background: BLUE_BG, borderRadius: 8, padding: '8px 12px', marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 13, color: BLUE_DARK }}>
+                {[viewer.school, viewer.course].filter(Boolean).join('・')} のご案内を表示中
+              </span>
+              <button type="button" onClick={() => setViewer({})}
+                style={{ border: 'none', background: 'none', color: BLUE_DARK, fontSize: 13, cursor: 'pointer', padding: 0, textDecoration: 'underline', whiteSpace: 'nowrap' }}>
+                校を選び直す
+              </button>
+            </div>
+          )}
           <p style={{ fontSize: 15, fontWeight: 'bold', margin: '0 0 10px' }}>ご質問をどうぞ</p>
           <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
             <input
@@ -344,17 +399,29 @@ const FaqWidget: React.FC = () => {
 
       {view.kind === 'answer' && (
         <>
-          {/* 対象バナーは校・コース指定のある回答だけ。共通回答で「全ての方」と出すと、
-              本文冒頭の【プラスコースの方】等の対象表示とちぐはぐになるため */}
-          {view.answer.targets.length > 0 && (
-            <div style={{ background: BLUE_BG, borderRadius: 8, padding: '8px 12px', marginBottom: 12 }}>
-              <p style={{ fontSize: 13, color: BLUE_DARK, margin: 0 }}>
-                この回答は【<span style={{ fontWeight: 'bold' }}>{targetLabel(view.answer)}</span>】向けのご案内です
-              </p>
+          {/* 上の帯＝「いま何向けの情報を見ているか」。
+              ・対象指定のある回答 … その回答が誰向けかを出す（共通回答で「全ての方」と出すと
+                本文冒頭の【プラスコースの方】等とちぐはぐになるので出さない）
+              ・共通回答 … 代わりに選択中の校・コースを出す。
+                これが無いと、校を選んでいるのに画面のどこにも出ず「今どれで見ているか」が分からない
+              選び直しは下から上へ移した（重複させない） */}
+          {(view.answer.targets.length > 0 || viewer.school || viewer.course) && (
+            <div style={{ background: BLUE_BG, borderRadius: 8, padding: '8px 12px', marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 13, color: BLUE_DARK }}>
+                {view.answer.targets.length > 0
+                  ? <>この回答は【<span style={{ fontWeight: 'bold' }}>{targetLabel(view.answer)}</span>】向けのご案内です</>
+                  : `${[viewer.school, viewer.course].filter(Boolean).join('・')} のご案内を表示中`}
+              </span>
+              {(viewer.school || viewer.course) && (
+                <button type="button" onClick={() => { setViewer({}); openTopic(view.topic, {}); }}
+                  style={{ border: 'none', background: 'none', color: BLUE_DARK, fontSize: 13, cursor: 'pointer', padding: 0, textDecoration: 'underline', whiteSpace: 'nowrap' }}>
+                  校を選び直す
+                </button>
+              )}
             </div>
           )}
           <p style={{ fontSize: 14, fontWeight: 'bold', margin: '0 0 8px' }}>{view.topic.question}</p>
-          <p style={{ fontSize: 15, lineHeight: 1.8, margin: '0 0 10px', whiteSpace: 'pre-wrap' }}>{view.answer.body}</p>
+          <AnswerBody body={view.answer.body} />
           {view.answer.source_label && (
             <p style={{ fontSize: 12, color: '#999', margin: '0 0 12px' }}>
               出典：
@@ -384,15 +451,6 @@ const FaqWidget: React.FC = () => {
             );
           })()}
 
-          {(viewer.school || viewer.course) && (
-            <p style={{ fontSize: 12, color: SUB, margin: '10px 0 0' }}>
-              選択中：{[viewer.school, viewer.course].filter(Boolean).join('・')}
-              <button type="button" onClick={() => { setViewer({}); openTopic(view.topic, {}); }}
-                style={{ border: 'none', background: 'none', color: BLUE_DARK, fontSize: 12, cursor: 'pointer', padding: 0, marginLeft: 8, textDecoration: 'underline' }}>
-                校・コースを選び直す
-              </button>
-            </p>
-          )}
 
           <div style={{ borderTop: `1px solid ${BORDER}`, marginTop: 12, paddingTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button type="button" onClick={backToHome} style={backBtn}>
