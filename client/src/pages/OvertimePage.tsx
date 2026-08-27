@@ -864,8 +864,13 @@ const OvertimeForm: React.FC<{
   // 🚨 出しても実際には載らない組み合わせ（事後報告・打刻ズレ・お休み）では出さないこと。
   //    出してしまうと「チェックしたのに載らない・エラーも出ない」という気づけない不一致になる。
   //    出さない場合は show_on_calendar を null で保存し、これまでどおりの動きになる。
+  // 🚨 実績報告では出さない。カレンダーは「これからの予定」を知らせるもので、
+  //    勤務が終わったあとに載せるかを聞いても判断のしようがない（事前申請で一度選んでいる＝二度聞き）。
+  //    欄を出さないぶん、保存時は事前申請で選んだ値をそのまま引き継ぐこと（下の show_on_calendar 参照）。
+  //    受理後の切り替えは履歴カードの「📅 表示中／表示していません」で引き続きできる。
   const offerCalendarChoice = canChooseCalendar
     && !clockOnlyMode
+    && !isReportPhase
     && canOfferCalendarChoice(applicationTypes, mode === 'posthoc');
   // 打刻ズレの労働時間は通常シフトそのもの。打刻時刻は参考値で、ここには入れない
   const normalWorkSegments: WorkSegment[] = useMemo(() =>
@@ -1173,8 +1178,12 @@ const OvertimeForm: React.FC<{
         location: fullDayMode ? fdLocation : effectiveLocation,
         application_types: applicationTypes,
         // チェック欄を出しているときだけ本人の選択を記録する。
-        // 出していないときは null＝「未指定」で、これまでどおり種別ごとの既定に従う
-        show_on_calendar: offerCalendarChoice ? showOnCalendar : null,
+        // 出していないときは null＝「未指定」で、これまでどおり種別ごとの既定に従う。
+        // 🚨 実績報告は例外。欄は出さないが **事前申請で選んだ値をそのまま引き継ぐ**こと。
+        //    ここで null にすると「載せない」を選んでいた人の設定が既定（載せる）に戻り、
+        //    報告した瞬間にカレンダーへ出てしまう（過去に踏んだ事故と同じ型）。
+        show_on_calendar: offerCalendarChoice ? showOnCalendar
+          : (isReportPhase ? (editTarget?.show_on_calendar ?? null) : null),
         // 振替休日のみ振替元（日付・校・出退勤時刻・休憩・労働）を保存（他種別ではnullで上書き＝再提出で種別が変わった場合の掃除）
         furikae_origin_date: (fullDayMode && fullDayType === 'furikae_off') ? furikaeOriginDate : null,
         furikae_origin_location: (fullDayMode && fullDayType === 'furikae_off') ? effectiveFurikaeOriginLocation : null,
