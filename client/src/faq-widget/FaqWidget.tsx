@@ -45,7 +45,7 @@ const CONTACT_FORM_URL = 'https://www.five-m.com/inquiry/';
 //    ボタンの文字はURLから推測する（合わなければ「ページを開く」）。
 const URL_RE = /(https?:\/\/[^\s　]+)/g;
 const linkLabel = (url: string): string => {
-  if (/shiori/i.test(url)) return '入会のしおりを見る';
+  if (/shiori/i.test(url)) return '入会のしおり（校・コース別）を見る';
   if (/lessontime|lesson_program/i.test(url)) return 'レッスンタイム表を見る';
   if (/freetrial/i.test(url)) return '体験レッスンのお申し込みへ';
   if (/inquiry|contact/i.test(url)) return 'お問い合わせフォームへ';
