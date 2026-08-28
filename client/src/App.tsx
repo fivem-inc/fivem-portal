@@ -29,6 +29,7 @@ const OvertimePage     = React.lazy(() => import('./pages/OvertimePage'));
 const ShiftDirectoryPage = React.lazy(() => import('./pages/ShiftDirectoryPage'));
 const PurchaseRequestPage = React.lazy(() => import('./pages/PurchaseRequestPage'));
 const SafetyCheckPage = React.lazy(() => import('./pages/SafetyCheckPage'));
+const RoomBookingPage = React.lazy(() => import('./pages/RoomBookingPage'));
 
 const PageLoader: React.FC = () => (
   <div style={{ padding: 40, textAlign: 'center', color: '#888' }}>読み込んでいます...</div>
@@ -918,6 +919,10 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
               )}
             </div>
           )}
+          {/* 場所の予約。毎日開くものなので連絡板の前に置く。権限では絞らない（全スタッフが使う） */}
+          <button onClick={() => navTo('/rooms')} style={btnStyle(location.pathname === '/rooms', '#2f6f4f')}>
+            {isMobile ? <><span style={{ fontSize: 20 }}>🚪</span>{navLabel('場所予約')}</> : '🚪 場所予約'}
+          </button>
           {canBoard && isPub('board') && (
           <div data-nav-badge={location.pathname !== '/board' ? boardUnread : 0} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
             <button onClick={() => navTo('/board')} style={btnStyle(location.pathname === '/board', '#e67e22')}>
@@ -2169,6 +2174,20 @@ const SafetyCheckPageWrapper: React.FC = () => {
 };
 
 // 備品精算ページ（/purchase）
+// 場所（フロア）の予約表。ログインしていれば全スタッフが使える（権限で絞らない）
+const RoomBookingPageWrapper: React.FC = () => {
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canFaq, canFaqNav, handleLogout, loading } = useAuth();
+  if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
+  return (
+    <>
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
+      <Suspense fallback={<PageLoader />}>
+        <RoomBookingPage user={user} roleTitle={roleTitle} isAdmin={isAdmin} />
+      </Suspense>
+    </>
+  );
+};
+
 const PurchaseRequestPageWrapper: React.FC = () => {
   const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canFaq, canFaqNav, handleLogout, loading } = useAuth();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
@@ -2254,6 +2273,7 @@ function App() {
             <Route path="/shift-patterns" element={<ShiftDirectoryPageWrapper />} />
             <Route path="/purchase" element={<PurchaseRequestPageWrapper />} />
             <Route path="/safety" element={<SafetyCheckPageWrapper />} />
+            <Route path="/rooms" element={<RoomBookingPageWrapper />} />
           </Route>
         </Routes>
       </AuthProvider>
