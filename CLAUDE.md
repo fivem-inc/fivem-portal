@@ -110,6 +110,11 @@ c24769e FAQで選択中の校を常に表示し、本文のURLを押せるボタ
 ・大きな設計は専門エージェント2体でレビュー（委任禁止・自分で実施と明記）
 ・レビューの指摘は鵜呑みにせず、重要な主張は自分で動かして裏取りする
 ・秘密情報（.envの中身・鍵の値）はチャット・コード・コミットに書かない
+・🚨🚨 **このリポジトリは Public（公開）**。`client/.env` と `client/.env.production` は
+  **誰でも中身を読める**（両方とも追跡下・2026-08-28 実測）。秘密の鍵を1行も足さない。
+  `.env.production` は pre-commit フックが止めない＝人が守るしかない。
+  service_role／VAPID_PRIVATE_KEY／DBパスワード／Slack Webhook／Resend APIキー は
+  Supabase Secrets か Vercel の環境変数へ。詳細は `docs/開発ルール.md` 冒頭
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
@@ -2074,10 +2079,22 @@ RLSポリシー**193本**以上／auth.users のINSERTがあるか／末尾ま�
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ■ 🔐 秘密情報の置き場所（毎回厳守・全作業に共通）
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【大前提・2026-08-28 に実測で再確認】🚨🚨 **このリポジトリ `fivem-inc/fivem-portal` は
+　いまも Public（公開）**。未ログインで GitHub API が 200 を返し、
+　`raw.githubusercontent.com` から **`client/.env` も `client/.env.production` も
+　誰でも中身を読める**（両方とも git 追跡下にある）。
+　これは事故ではなく **2026-07-02 のユーザー判断**（下の「背景」の事故を修復したあと、
+　履歴クリーン化＋pre-commitフック導入を条件に Public へ戻した。方針＝
+　「危険なのはコードが見えることではなく秘密情報が漏れること」。加えて Vercel Hobby は
+　組織所有の Private リポジトリから自動デプロイできず、Private 化すると本番デプロイが止まる）。
+　→ **「Private だから外部から見えない」は誤り**。この誤解は実際に起きているので、
+　　新しく参加する人には必ず最初に伝える（共有用＝ `docs/開発ルール.md` の冒頭に明記済み）。
+
 【原則】**`VITE_` で始まる変数は、ビルド時にブラウザ向けのJSへそのまま埋め込まれる**。
 　つまり `client/.env` `client/.env.production` に書いたものは**全員に見える公開情報**。
 　現在の3つ（VITE_SUPABASE_URL ／ VITE_SUPABASE_ANON_KEY ／ VITE_VAPID_PUBLIC_KEY）は
 　いずれも公開前提のものなので問題ない（anonキーはRLSで守る設計・公開鍵は配布するもの）。
+　※全履歴を検索して service_role／VAPID_PRIVATE の混入が無いことも確認済み（2026-08-28）。
 
 ・🚨 **`client/.env.production` には公開前提の情報しか書かない**。
   service_role キー／DBパスワード／**VAPID_PRIVATE_KEY**／Slack Webhook URL／
