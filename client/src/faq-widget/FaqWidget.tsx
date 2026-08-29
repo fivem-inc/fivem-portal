@@ -7,7 +7,7 @@ import {
   resolveAnswer,
   isAnswerActiveOn,
   FAQ_SCHOOL_OPTIONS,
-  FAQ_COURSE_OPTIONS,
+  faqCourseOptionsForSchool,
   type FaqTopic,
   type FaqAnswer,
   type FaqViewer,
@@ -222,8 +222,12 @@ const FaqWidget: React.FC = () => {
   // 🚨 その質問の回答が対象にしている校・コースだけに絞ってはいけない。
   //    例：欠席・振替はウェルネス系だけ専用回答で、他コースは共通回答。
   //    絞ると「こども器械体操」の方が自分のコースを選べず、共通回答に辿り着けなくなる
+  //
+  // ただし「その校で実施していないコース」だけは出さない（faqCourseOptionsForSchool）。
+  // 上の禁止事項とは別物：質問ごとではなく校の実態で絞るので、共通回答への導線は塞がない。
+  // 校が未選択のとき（校を聞かない質問・「この中にない」を選んだとき）は全部出す。
   const askOptions = (ask: 'school' | 'course'): string[] =>
-    ask === 'school' ? FAQ_SCHOOL_OPTIONS : FAQ_COURSE_OPTIONS;
+    ask === 'school' ? FAQ_SCHOOL_OPTIONS : faqCourseOptionsForSchool(viewer.school);
 
   const pickOption = (topic: FaqTopic, ask: 'school' | 'course', value: string | null) => {
     if (value === null) {

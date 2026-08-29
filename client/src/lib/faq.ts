@@ -24,6 +24,44 @@ export const FAQ_COURSE_OPTIONS = [
   '上級', '養成',
 ];
 
+/**
+ * コースを実施している校（2026-08-29 ユーザー確認）。
+ * ここに書いたコースは、その校を選んだ人にだけ選択肢として出す。
+ *
+ * 🚨 ここに書かないコースは全校で出す。実施校が確定しているものだけ書くこと。
+ *    推測で足すと、実際に通っている方が自分のコースを選べなくなる
+ *    （回答が1つも無い質問は一覧から消えるため、質問ごと見えなくなる）。
+ *
+ * 🚨 これは「その質問が対象にしている校・コース」で絞るのとは別物なので混同しない。
+ *    質問ごとに絞ると、共通回答に落ちるべき人（例：欠席・振替のこども器械体操）が
+ *    自分を選べなくなる。こちらは「その校に無いコース」という校の実態で絞っている。
+ *
+ * 例：洛西口校ではウェルネス体操プライベートを実施していないのに選択肢に出ており、
+ *     選ぶとキャンセル料の案内まで表示されていた（2026-08-29 に修正）。
+ */
+export const FAQ_COURSE_SCHOOLS: Record<string, string[]> = {
+  'マットレ': ['四条本校'],
+  'ジュニア姿勢・体幹トレーニング': ['四条本校', '洛西口校'],
+  'ウェルネス体操': ['四条本校', '洛西口校'],
+  'ウェルネス体操プライベート': ['四条本校'],
+  '上級': ['上桂校'],
+  '養成': ['上桂校'],
+  // こども器械体操／こども器械体操プライベートは全5校のため書かない
+};
+
+/**
+ * その校で選べるコースだけを返す。
+ * 校が未選択のとき（校を聞かない質問・「この中にない・わからない」を選んだとき）は
+ * 全部返す＝逃げ道を塞がない。
+ */
+export function faqCourseOptionsForSchool(school: string | null | undefined): string[] {
+  if (!school) return FAQ_COURSE_OPTIONS;
+  return FAQ_COURSE_OPTIONS.filter(course => {
+    const schools = FAQ_COURSE_SCHOOLS[course];
+    return !schools || schools.includes(school);
+  });
+}
+
 export interface FaqAnswerTarget {
   id: string;
   answer_id: string;
