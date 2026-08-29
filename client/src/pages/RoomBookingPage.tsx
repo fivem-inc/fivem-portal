@@ -7,10 +7,16 @@ import {
   PURPOSES, purposeColor, VIEW_START_HOUR, VIEW_END_HOUR, DURATION_PRESETS,
   todayStr, toDate, hhmm, minutesOf, addMinutes, formatDateLabel, shiftDate,
   scholaUrl, floorBusyNow, nextStart, usingUntil, assignColumns, categoryLabel,
-  isWeekend, RANGE_DAYS, localDate, placeLabel, openSlotColor,
+  isWeekend, RANGE_DAYS, localDate, placeLabel, openSlotColor, durationLabel, FALLBACK_DURATIONS, gradeOf,
+  fiscalYear, fiscalYearEnd, fiscalYearLabel, RENEWAL_NOTICE_DAYS, daysUntil,
   type Campus, type Floor, type Booking, type ConflictInfo,
-  type Staff, type LessonCategory,
+  type Staff, type LessonCategory, type Recurrence, type PurposeDuration,
+  type Customer, type CustomerContact,
 } from '../lib/roomBooking';
+import {
+  readTable, guessMapping, buildCustomers, FIELD_LABEL, REQUIRED_FIELDS,
+  type CustomerField,
+} from '../lib/customerImport';
 
 // 場所（フロア）の予約表。
 //
@@ -83,6 +89,8 @@ const RoomBookingPage: React.FC<Props> = ({ user }) => {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [categories, setCategories] = useState<LessonCategory[]>([]);
+  // 用途ごとの長さの選択肢（社員が基本設定から変えられる）
+  const [purposeDurations, setPurposeDurations] = useState<PurposeDuration[]>(FALLBACK_DURATIONS);
   const [campusId, setCampusId] = useState<string>('');
   const [view, setView] = useState<ViewMode>('place');
   // 担当別・参加者別の絞り込み。'' = 全員。それ以外は staff.id または参加者キー
@@ -94,6 +102,12 @@ const RoomBookingPage: React.FC<Props> = ({ user }) => {
   const [detail, setDetail] = useState<Booking | null>(null);
   const [admin, setAdmin] = useState(false);
   const [settings, setSettings] = useState(false);
+  // 年度更新は「社員まで」（パートは不可・2026-08-29 ユーザー確定）。
+  // ⚙️設定（マスタ管理＝管理者）とは別の入口にする。仕事の性質が違うため
+  const [canRenew, setCanRenew] = useState(false);
+  const [renewal, setRenewal] = useState(false);
+  // 年度末が近いときだけ「まだ引き継いでいない件数」を数えて案内を出す
+  const [renewPending, setRenewPending] = useState(0);
   const [now, setNow] = useState(new Date());
   const [narrow, setNarrow] = useState(() => window.innerWidth < 760);
   const [mobileFloorId, setMobileFloorId] = useState<string>('');
@@ -123,17 +137,22 @@ const RoomBookingPage: React.FC<Props> = ({ user }) => {
 
   // ---- マスタ（校・場所・スタッフ・区分）の読み込み ----
   const loadMasters = useCallback(async () => {
-    const [cRes, fRes, sRes, catRes, scRes] = await Promise.all([
+    const [cRes, fRes, sRes, catRes, scRes, durRes] = await Promise.all([
       supabase.from('room_campuses').select('*').eq('active', true).order('sort_order'),
       supabase.from('room_floors').select('*').eq('active', true).order('sort_order'),
       supabase.from('room_staff').select('*').order('sort_order'),
       supabase.from('room_lesson_categories').select('*').order('sort_order'),
       supabase.from('room_staff_categories').select('*'),
+      supabase.from('room_purpose_durations').select('*'),
     ]);
     if (cRes.error || fRes.error) {
       setLoadError('場所の情報を読み込めませんでした。時間をおいて開き直してください。');
       return null;
     }
+    // 長さの選択肢。読めなかったときだけ既定値で動かす（フォームが開けなくなるのを避ける）
+    setPurposeDurations(durRes.data && durRes.data.length
+      ? (durRes.data as PurposeDuration[])
+      : FALLBACK_DURATIONS);
     const cs = (cRes.data ?? []) as Campus[];
     setCampuses(cs);
     setFloors((fRes.data ?? []) as Floor[]);
@@ -144,6 +163,29 @@ const RoomBookingPage: React.FC<Props> = ({ user }) => {
       ...s, categoryIds: links.filter(l => l.staff_id === s.id).map(l => l.category_id),
     })));
     return cs;
+  }, []);
+
+  /**
+   * 年度末が近いとき、まだ次の年度へ引き継いでいない繰り返しが何件あるかを数える。
+   *
+   * 引き継ぎ済みかどうかは「次の年度の行が renewed_from で自分を指しているか」で決まる。
+   * 数えるだけなら SQL でも書けるが、件数は多くても数十なので2年度ぶんを読んで
+   * 画面側で突き合わせる。関数を増やさないぶん、あとで読む人に分かりやすい。
+   */
+  const loadRenewPending = useCallback(async (): Promise<void> => {
+    const today = todayStr();
+    const fy = fiscalYear(today);
+    if (daysUntil(today, fiscalYearEnd(fy)) > RENEWAL_NOTICE_DAYS) { setRenewPending(0); return; }
+    const { data, error } = await supabase
+      .from('room_recurrences')
+      .select('id, fiscal_year, renewed_from')
+      .in('fiscal_year', [fy, fy + 1])
+      .eq('active', true);
+    if (error || !data) { setRenewPending(0); return; }
+    const rows = data as { id: string; fiscal_year: number; renewed_from: string | null }[];
+    const done = new Set(rows.filter(r => r.fiscal_year === fy + 1 && r.renewed_from)
+      .map(r => r.renewed_from as string));
+    setRenewPending(rows.filter(r => r.fiscal_year === fy && !done.has(r.id)).length);
   }, []);
 
   useEffect(() => {
@@ -165,9 +207,20 @@ const RoomBookingPage: React.FC<Props> = ({ user }) => {
       // 管理者だけ「場所・スタッフの設定」を開ける
       const { data: me } = await supabase.auth.getUser();
       setAdmin(((me.user?.app_metadata as { role?: string } | undefined)?.role) === 'admin');
+      // 年度更新は社員まで（パートは不可）。残業まわりと同じ判定のしかたに合わせている。
+      // 🚨 取れなかったときは出さない。「出ているのに押すと断られる」を避けるため
+      //    （開き直せば直る）。最終的な可否はサーバー側の関数でも見ている
+      let isStaffMember = false;
+      if (me.user?.id) {
+        const { data: prof } = await supabase
+          .from('profiles').select('employment_type').eq('id', me.user.id).maybeSingle();
+        isStaffMember = !!prof && (prof.employment_type ?? '') !== 'パート';
+      }
+      setCanRenew(isStaffMember);
+      if (isStaffMember) await loadRenewPending();
       setLoading(false);
     })();
-  }, [loadMasters]);
+  }, [loadMasters, loadRenewPending]);
 
   const allCampus = campusId === ALL_CAMPUS;
   const campus = useMemo(() => campuses.find(c => c.id === campusId) ?? null, [campuses, campusId]);
@@ -388,6 +441,20 @@ const RoomBookingPage: React.FC<Props> = ({ user }) => {
           </div>
         )}
 
+        {/* 年度末が近いときの案内（社員まで表示）。
+            自動では増やさないので、ここで気づいてもらえないと4月以降が空のままになる。
+            🚨 パートには出さない。押せないのに催促されることになるため */}
+        {canRenew && renewPending > 0 && (
+          <div style={{ background: isDark ? '#4a4326' : '#fff8e1', border: `1px solid ${isDark ? '#8a7a3a' : '#ffe082'}`, color: isDark ? '#ffe6a3' : '#7a5c00', borderRadius: 10, padding: '10px 14px', marginBottom: 12, fontSize: 14, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ lineHeight: 1.6 }}>
+              4月以降の繰り返し予約はまだ入っていません。
+              <strong>{renewPending}件</strong>を{fiscalYear(todayStr()) + 1}年度に引き継げます
+            </span>
+            <button onClick={() => setRenewal(true)}
+              style={{ ...btn(false), marginLeft: 'auto' }}>年度更新へ</button>
+          </div>
+        )}
+
         {/* 校のタブ。先頭に「全校」を置き、そこから校を絞れるようにする */}
         <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 8, marginBottom: 8 }}>
           <button onClick={() => selectCampus(ALL_CAMPUS)} style={btn(allCampus)}>全校</button>
@@ -403,9 +470,13 @@ const RoomBookingPage: React.FC<Props> = ({ user }) => {
           {(['place', 'staff', 'participant'] as ViewMode[]).map(v => (
             <button key={v} onClick={() => selectView(v)} style={btn(view === v)}>{VIEW_LABEL[v]}</button>
           ))}
+          {canRenew && (
+            <button onClick={() => setRenewal(true)}
+              style={{ ...btn(false), marginLeft: 'auto' }}>🗓 基本設定</button>
+          )}
           {admin && (
             <button onClick={() => setSettings(true)}
-              style={{ ...btn(false), marginLeft: 'auto' }}>⚙️ 設定</button>
+              style={{ ...btn(false), marginLeft: canRenew ? 0 : 'auto' }}>⚙️ 設定</button>
           )}
         </div>
 
@@ -500,7 +571,7 @@ const RoomBookingPage: React.FC<Props> = ({ user }) => {
       {form && (
         <BookingForm
           mode={form} user={user} floors={floors} campuses={campuses}
-          staff={staff} categories={categories}
+          staff={staff} categories={categories} purposeDurations={purposeDurations}
           onClose={() => setForm(null)}
           onSaved={(msg) => { setForm(null); loadBookings(); showFlash(msg); }}
           isDark={isDark} />
@@ -514,9 +585,19 @@ const RoomBookingPage: React.FC<Props> = ({ user }) => {
           onChanged={(msg) => { setDetail(null); loadBookings(); showFlash(msg); }}
           isDark={isDark} />
       )}
+      {renewal && (
+        <BasicSettingsPanel
+          campuses={campuses} floors={floors} staff={staff} categories={categories}
+          purposeDurations={purposeDurations}
+          onClose={() => setRenewal(false)}
+          onDone={async (msg) => {
+            await loadMasters(); await loadBookings(); await loadRenewPending(); showFlash(msg);
+          }}
+          isDark={isDark} />
+      )}
       {settings && (
         <SettingsPanel
-          campuses={campuses} floors={floors} staff={staff} categories={categories}
+          campuses={campuses} floors={floors} categories={categories}
           onClose={() => setSettings(false)}
           onChanged={async (msg) => { await loadMasters(); await loadBookings(); showFlash(msg); }}
           isDark={isDark} />
@@ -917,9 +998,9 @@ const MobileView: React.FC<{
 // ============================================================
 const BookingForm: React.FC<{
   mode: FormMode; user: AuthUser; floors: Floor[]; campuses: Campus[];
-  staff: Staff[]; categories: LessonCategory[];
+  staff: Staff[]; categories: LessonCategory[]; purposeDurations: PurposeDuration[];
   onClose: () => void; onSaved: (msg: string) => void; isDark: boolean;
-}> = ({ mode, user, floors, campuses, staff, categories, onClose, onSaved, isDark }) => {
+}> = ({ mode, user, floors, campuses, staff, categories, purposeDurations, onClose, onSaved, isDark }) => {
   const editing = mode.kind === 'edit';
   const base = editing ? mode.booking : null;
 
@@ -932,6 +1013,9 @@ const BookingForm: React.FC<{
   const [bookerName, setBookerName] = useState(editing ? base!.booker_name : (user.email?.split('@')[0] ?? ''));
   const [memberNo, setMemberNo] = useState(editing ? (base!.member_no ?? '') : '');
   const [customerLabel, setCustomerLabel] = useState(editing ? (base!.customer_label ?? '') : '');
+  // 会員番号から引いたお客様。一般の方は登録が無いので null のまま
+  const [customer, setCustomer] = useState<Customer | null>(null);
+  const [lookingUp, setLookingUp] = useState(false);
   const [memo, setMemo] = useState(editing ? (base!.memo ?? '') : '');
   const [exclusive, setExclusive] = useState(editing ? base!.exclusive : false);
   const [staffId, setStaffId] = useState<string>(editing ? (base!.staff_id ?? '') : '');
@@ -981,12 +1065,46 @@ const BookingForm: React.FC<{
     return () => { cancelled = true; clearTimeout(timer); setChecking(false); };
   }, [date, startTime, endTime, floorId, exclusive, editing, base]);
 
+  // 会員番号からお客様を引く。打っている途中で毎回問い合わせないよう少し待つ
+  const autoFilled = useRef('');
+  useEffect(() => {
+    const no = memberNo.trim();
+    if (!no) { setCustomer(null); setLookingUp(false); return; }
+    setLookingUp(true);
+    const t = setTimeout(async () => {
+      const { data } = await supabase.from('room_customers')
+        .select('*').eq('member_no', no).maybeSingle();
+      const c = (data as Customer | null) ?? null;
+      setCustomer(c);
+      setLookingUp(false);
+      if (!c) return;
+      // 🚨 手で入れたお名前を上書きしない。空のときか、前回こちらが入れた値のままのときだけ入れる
+      setCustomerLabel(prev =>
+        (prev.trim() === '' || prev === autoFilled.current) ? c.display_name : prev);
+      autoFilled.current = c.display_name;
+    }, 400);
+    return () => clearTimeout(t);
+  }, [memberNo]);
+
   const applyDuration = (min: number) => setEndTime(addMinutes(startTime, min));
   const durationMin = Math.max(0, minutesOf(endTime) - minutesOf(startTime));
+  // 用途ごとの長さ（2026-08-29 ユーザー指定）。値はDBにあり、社員が基本設定で変えられる。
+  // 知らない用途が来たときは、これまでどおり自由に入れられるようにしておく
+  const durOpt = purposeDurations.find(d => d.purpose === purpose) ?? null;
+  const durPresets = durOpt ? durOpt.minutes : [...DURATION_PRESETS];
+  const allowFreeEnd = durOpt ? durOpt.allow_free : true;
   // 確認中は押せてよい（結果が出るまで待たせない）。確認が済んで「不可」のときだけ止める
   const blocked = !checking && !!verdict && !verdict.ok;
-  // 繰り返しの終わりは最長1年先まで（打ち間違いで大量の予約が入るのを防ぐ）
-  const maxRepeatUntil = shiftDate(date, 364);
+  // 繰り返しの終わりは「年度末（3/31）まで」が基本（2026-08-29 ユーザー確定）。
+  // 年度をまたぐ繰り返しをいつでも作れるようにすると、年度更新の一覧と二重になり
+  // 「どちらが正しいのか」が分からなくなるため、通常は今年度末で止める。
+  // ただし年度末が近い時期に始まるものは翌年度も続くのが普通なので、
+  // 残り60日以内のときだけ「来年度末まで」も選べるようにする。
+  const formFy = fiscalYear(date);
+  const thisFyEnd = fiscalYearEnd(formFy);
+  const nextFyEnd = fiscalYearEnd(formFy + 1);
+  const nearFiscalEnd = daysUntil(date, thisFyEnd) <= RENEWAL_NOTICE_DAYS;
+  const maxRepeatUntil = nearFiscalEnd ? nextFyEnd : thisFyEnd;
   // 退職などで非表示にしたスタッフは選択肢に出さない。
   // ただし変更中の予約に既に入っている人は、勝手に外れないよう残す
   const activeStaff = staff.filter(s => s.active || s.id === staffId);
@@ -1020,7 +1138,7 @@ const BookingForm: React.FC<{
     // 新規。繰り返しのときは同じ曜日の分をまとめて作る
     if (repeat && repeatUntil > maxRepeatUntil) {
       setSaving(false);
-      setError(`繰り返しの終わりの日は、1年先（${formatDateLabel(maxRepeatUntil)}）までにしてください`);
+      setError(`繰り返しの終わりの日は、${maxRepeatUntil.split('-')[0]}年3月31日（年度末）までにしてください`);
       return;
     }
     const dates = repeat ? weeklyDates(date, repeatUntil) : [date];
@@ -1041,6 +1159,9 @@ const BookingForm: React.FC<{
         memo: memo.trim() || null, exclusive, staff_id: staffId || null,
         kind, seats,
         start_date: date, end_date: repeatUntil || null, generated_to: dates[dates.length - 1],
+        // 年度は「終わりの日が属する年度」。3月に来年度末まで作った場合も、
+        // その繰り返しは来年度のものとして年度更新の一覧に出したいため
+        fiscal_year: fiscalYear(repeatUntil || date),
         created_by: user.id,
       }).select('id').single();
       if (recErr || !rec) { setSaving(false); setError('繰り返しの登録に失敗しました。通信を確認してもう一度お試しください。'); return; }
@@ -1088,6 +1209,14 @@ const BookingForm: React.FC<{
     width: '100%', padding: '8px 10px', borderRadius: 8, border: `1px solid ${line}`,
     background: fieldBg, color: text, fontSize: 16, boxSizing: 'border-box',   // 🚨 16px未満にしない（iOSが拡大する）
   };
+  /** 選択式の丸ボタン（長さの 30/45/60/90 分と同じ見た目にそろえる） */
+  const pill = (on: boolean): React.CSSProperties => ({
+    padding: '6px 13px', borderRadius: 999, fontSize: 13, cursor: 'pointer',
+    border: `1px solid ${on ? accent : line}`,
+    background: on ? accent : (isDark ? '#35354e' : '#f0f2f5'),
+    color: on ? (isDark ? '#1d2a24' : '#fff') : textMid,
+    fontWeight: on ? 700 : 400,
+  });
 
   return (
     <Overlay onClose={onClose} isDark={isDark} title={editing ? '予約を変更する' : '予約を入れる'}>
@@ -1134,20 +1263,36 @@ const BookingForm: React.FC<{
 
         <div>
           <label style={label}>長さ</label>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
-            {DURATION_PRESETS.map(m => (
-              <button key={m} onClick={() => applyDuration(m)}
-                style={{
-                  padding: '6px 13px', borderRadius: 999, fontSize: 13, cursor: 'pointer',
-                  border: `1px solid ${durationMin === m ? accent : line}`,
-                  background: durationMin === m ? accent : (isDark ? '#35354e' : '#f0f2f5'),
-                  color: durationMin === m ? (isDark ? '#1d2a24' : '#fff') : textMid,
-                  fontWeight: durationMin === m ? 700 : 400,
-                }}>{m}分</button>
-            ))}
-          </div>
+          {durPresets.length > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+              {durPresets.map(m => (
+                <button key={m} onClick={() => applyDuration(m)}
+                  style={{
+                    padding: '6px 13px', borderRadius: 999, fontSize: 13, cursor: 'pointer',
+                    border: `1px solid ${durationMin === m ? accent : line}`,
+                    background: durationMin === m ? accent : (isDark ? '#35354e' : '#f0f2f5'),
+                    color: durationMin === m ? (isDark ? '#1d2a24' : '#fff') : textMid,
+                    fontWeight: durationMin === m ? 700 : 400,
+                  }}>{durationLabel(m)}</button>
+              ))}
+            </div>
+          )}
           <label style={label}>終了</label>
-          <TimeInput value={endTime} onChange={setEndTime} isDark={isDark} ariaLabel="終了時刻" />
+          {/* 長さが決まっている用途（パーソナル・レッスンなど）は終了時刻を触らせない。
+              打ち間違いで 10分のパーソナルが 100分 になるのを防ぐ。
+              🚨 この可否は基本設定から変えられる（コードに固定しない） */}
+          <TimeInput value={endTime} onChange={setEndTime} isDark={isDark}
+            disabled={!allowFreeEnd} ariaLabel="終了時刻" />
+          {!allowFreeEnd && (
+            <p style={{ fontSize: 12.5, color: textMid, margin: '6px 0 0', lineHeight: 1.6 }}>
+              この用途は長さが決まっています。上のボタンで選んでください
+            </p>
+          )}
+          {allowFreeEnd && durPresets.length === 0 && (
+            <p style={{ fontSize: 12.5, color: textMid, margin: '6px 0 0', lineHeight: 1.6 }}>
+              終了時刻を直接入れてください
+            </p>
+          )}
           {durationMin > 0 && (
             <p style={{ fontSize: 12.5, color: textMid, margin: '6px 0 0' }}>
               → {startTime}〜{endTime}（{durationMin}分）
@@ -1192,7 +1337,16 @@ const BookingForm: React.FC<{
               const on = purpose === p;
               const [fg, bgc] = purposeColor(p, isDark);
               return (
-                <button key={p} onClick={() => setPurpose(p)}
+                <button key={p}
+                  onClick={() => {
+                    setPurpose(p);
+                    // 長さが決まっている用途に変えたときは、終了時刻もその場で合わせる。
+                    // 終了は手で直せないので、合っていないまま残ると直せなくなる
+                    const opt = purposeDurations.find(d => d.purpose === p);
+                    if (opt && !opt.allow_free && opt.minutes.length > 0) {
+                      setEndTime(addMinutes(startTime, opt.minutes[0]));
+                    }
+                  }}
                   style={{
                     padding: '6px 13px', borderRadius: 999, fontSize: 13, cursor: 'pointer',
                     border: `1px solid ${on ? fg : line}`, background: on ? bgc : 'transparent',
@@ -1261,9 +1415,20 @@ const BookingForm: React.FC<{
                 <input value={customerLabel} onChange={e => setCustomerLabel(e.target.value)} style={input} placeholder="田中様" />
               </div>
             </div>
-            <p style={{ fontSize: 11.5, color: textMid, margin: '-6px 0 0', lineHeight: 1.6 }}>
-              お名前はフルネームではなく「田中様」のような呼び方で入れてください。
-              詳しい情報は、会員番号から開けるスコラプラスでご確認いただけます。
+            {/* 会員番号からお名前を引く。
+                🚨 一般の方（非会員）もいるので、見つからないのは異常ではない。
+                   その場合はお名前を手で入れてもらう（2026-08-29 ユーザー指示） */}
+            <p style={{ fontSize: 11.5, color: customer ? accent : textMid, margin: '-6px 0 0', lineHeight: 1.6 }}>
+              {lookingUp
+                ? 'お客様を探しています...'
+                : customer
+                  ? `${customer.display_name}${customer.full_name ? `（${customer.full_name}）` : ''}`
+                    + `${customer.birth_date ? ` ${gradeOf(customer.birth_date, date)}` : ''}`
+                    + `${customer.active ? '' : ' ※退会になっています'}`
+                  : memberNo.trim()
+                    ? 'この会員番号は登録がありません。一般のお客様として、お名前を手で入れてください'
+                    : 'お名前はフルネームではなく「田中様」のような呼び方で入れてください。'
+                      + '会員番号を入れると、登録されているお客様のお名前が自動で入ります。'}
             </p>
           </>
         )}
@@ -1289,12 +1454,33 @@ const BookingForm: React.FC<{
         {!editing && (
           <div style={{ background: isDark ? '#35354e' : '#f0f2f5', borderRadius: 8, padding: '10px 12px' }}>
             <label style={{ display: 'flex', gap: 9, alignItems: 'center', cursor: 'pointer' }}>
-              <input type="checkbox" checked={repeat} onChange={e => setRepeat(e.target.checked)} style={{ width: 18, height: 18, flexShrink: 0 }} />
+              <input type="checkbox" checked={repeat}
+                onChange={e => {
+                  setRepeat(e.target.checked);
+                  // 既定は年度末まで。毎回カレンダーから3/31を探させないため
+                  if (e.target.checked && !repeatUntil) setRepeatUntil(thisFyEnd);
+                }}
+                style={{ width: 18, height: 18, flexShrink: 0 }} />
               <span style={{ fontSize: 13.5, fontWeight: 700 }}>毎週この曜日に繰り返す</span>
             </label>
             {repeat && (
               <div style={{ marginTop: 10 }}>
                 <label style={label}>いつまで</label>
+                {/* 年度末が近いときだけ、来年度末も選べるようにする（2026-08-29 ユーザー確定）。
+                    3月に始まるレッスンは翌年度も続くのが普通なので、
+                    ここで作れないと年度更新を待つことになる */}
+                {nearFiscalEnd && (
+                  <div style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+                    <button type="button" onClick={() => setRepeatUntil(thisFyEnd)}
+                      style={pill(repeatUntil === thisFyEnd)}>
+                      今年度末まで（{formFy + 1}/3/31）
+                    </button>
+                    <button type="button" onClick={() => setRepeatUntil(nextFyEnd)}
+                      style={pill(repeatUntil === nextFyEnd)}>
+                      来年度末まで（{formFy + 2}/3/31）
+                    </button>
+                  </div>
+                )}
                 {/* 🚨 max を付けて、打ち間違いで何十年も先の日付が入らないようにする
                     （実機確認で「92520年」と打ててしまい、黙って60回作られる状態だった） */}
                 <input type="date" value={repeatUntil} min={shiftDate(date, 7)} max={maxRepeatUntil}
@@ -1306,9 +1492,11 @@ const BookingForm: React.FC<{
                         if (!ds.length) return '終わりの日は、開始の日より後にしてください';
                         const capped = repeatUntil > maxRepeatUntil;
                         return `${ds.length}回 予約します（${ds.slice(0, 3).map(formatDateLabel).join('、')}${ds.length > 3 ? ' …' : ''}）`
-                          + (capped ? ` ※1年先（${formatDateLabel(maxRepeatUntil)}）までにしてください` : '');
+                          + (capped
+                              ? ` ※${maxRepeatUntil.split('-')[0]}年3月31日（年度末）までにしてください`
+                              : '');
                       })()
-                    : '終わりの日を入れてください（1年先までにできます）'}
+                    : `終わりの日を入れてください（${formFy + 1}/3/31 の年度末までが基本です）`}
                 </p>
               </div>
             )}
@@ -1598,25 +1786,466 @@ const BookingDetail: React.FC<{
 };
 
 // ============================================================
-// 設定（管理者だけ）
-//   スタッフの追加・非表示・担当区分の変更、レッスン区分の追加・変更、
-//   場所の同時予約件数と営業時間の変更。
-//   🚨 ここが無いと、スタッフや区分が増えるたびに開発者へ依頼することになる。
-//      現場で完結できるようにしておくこと（2026-08-28 ユーザー指示）。
+// 年度更新（社員まで・パートは不可）
+//
+//   毎週の繰り返しは年度末（3/31）で終わる。放っておくと4月以降が空になり、
+//   誰も気づかないまま「空いている」と思われて二重に埋まる。
+//   ここで一覧を見ながら、続けるものを選んで次の年度に作り直す。
+//
+//   🚨 自動では増やさない（2026-08-29 ユーザー確定）。休講や重なりの扱いを
+//      間違えたときに取り返しがつかないため、人が確認して押す形にしている。
+//   🚨 作成そのものはサーバーの room_renew_recurrence に任せる。画面から
+//      1回ずつ作ると 30ルール×52回＝1,560回の呼び出しになり、途中で切れると
+//      中途半端な状態が残る。
 // ============================================================
-const SettingsPanel: React.FC<{
-  campuses: Campus[]; floors: Floor[]; staff: Staff[]; categories: LessonCategory[];
-  onClose: () => void; onChanged: (msg: string) => Promise<void>; isDark: boolean;
-}> = ({ campuses, floors, staff, categories, onClose, onChanged, isDark }) => {
-  const [tab, setTab] = useState<'staff' | 'category' | 'place'>('staff');
-  const [busy, setBusy] = useState(false);
+const WEEKDAY_LABEL = ['日', '月', '火', '水', '木', '金', '土'];
+
+/**
+ * 長さの設定（社員が変更できる）。
+ * 用途ごとに「選べる長さ」と「終了時刻を手で入れてよいか」を決める。
+ *
+ * 🚨 ここを固定にすると、時間が変わるたびに開発者へ依頼することになる
+ *    （2026-08-29 ユーザー指示）。
+ */
+const DurationSettings: React.FC<{
+  purposeDurations: PurposeDuration[];
+  onDone: (msg: string) => Promise<void>;
+  isDark: boolean;
+}> = ({ purposeDurations, onDone, isDark }) => {
+  const [draft, setDraft] = useState<Record<string, { text: string; free: boolean }>>(() => {
+    const d: Record<string, { text: string; free: boolean }> = {};
+    for (const p of PURPOSES) {
+      const cur = purposeDurations.find(x => x.purpose === p);
+      d[p] = { text: (cur?.minutes ?? []).join('、'), free: cur ? cur.allow_free : true };
+    }
+    return d;
+  });
+  const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
-  const [newStaffName, setNewStaffName] = useState('');
-  const [newCatCode, setNewCatCode] = useState('');
-  const [newCatDesc, setNewCatDesc] = useState('');
 
   const line = isDark ? '#3a3a5c' : '#e0e0e0';
+  const text = isDark ? '#eeeeee' : '#222222';
+  const textMid = isDark ? '#b3b8c6' : '#5b6270';
+  const accent = isDark ? '#6bbd92' : '#2f6f4f';
+  const fieldBg = isDark ? '#495057' : '#fff';
+
+  /**
+   * 「25、30、50」のような入力を数字の並びに直す。
+   * 全角の数字・読点・カンマ・空白のどれで区切っても通す（現場の入力は揃わないため）。
+   * 🚨 上限を付けないと、打ち間違いで一日中ふさがる予約が作れてしまう
+   */
+  const parseMinutes = (raw: string): { list: number[]; bad: boolean } => {
+    const half = raw.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
+    const parts = half.split(/[,、\s]+/).map(s => s.trim()).filter(Boolean);
+    const list: number[] = [];
+    let bad = false;
+    for (const p of parts) {
+      const n = Number(p);
+      if (!Number.isInteger(n) || n < 5 || n > 480) { bad = true; continue; }
+      if (!list.includes(n)) list.push(n);
+    }
+    return { list: list.sort((a, b) => a - b), bad };
+  };
+
+  const save = async (purpose: string) => {
+    const d = draft[purpose];
+    const { list, bad } = parseMinutes(d.text);
+    if (bad) { setError('長さは5〜480の数字で、「25、30、50」のように区切って入れてください'); return; }
+    if (!d.free && list.length === 0) {
+      setError('終了時刻を手で入れられない用途は、長さを1つ以上入れてください');
+      return;
+    }
+    setBusy(purpose); setError('');
+    const { data: me } = await supabase.auth.getUser();
+    const { error: err } = await supabase.from('room_purpose_durations')
+      .upsert({
+        purpose, minutes: list, allow_free: d.free,
+        updated_at: new Date().toISOString(), updated_by: me.user?.id ?? null,
+      }, { onConflict: 'purpose' });
+    setBusy('');
+    if (err) { setError('保存できませんでした。通信を確認してもう一度お試しください。'); return; }
+    setDraft(prev => ({ ...prev, [purpose]: { ...prev[purpose], text: list.join('、') } }));
+    await onDone(`${purpose}の長さを変えました`);
+  };
+
+  const input: React.CSSProperties = {
+    padding: '7px 9px', borderRadius: 8, border: `1px solid ${line}`,
+    background: fieldBg, color: text, fontSize: 16, boxSizing: 'border-box',
+  };
+
+  return (
+    <div>
+      <div style={{ background: isDark ? '#35354e' : '#f0f2f5', borderRadius: 8, padding: '10px 12px', fontSize: 13, lineHeight: 1.7, marginBottom: 14, color: textMid }}>
+        予約フォームの「長さ」ボタンを用途ごとに決めます。
+        「25、30、50」のように区切って入れてください。空にするとボタンを出しません。
+        <br />
+        <b>終了時刻を手で入れられる</b>を外すと、ここで決めた長さからしか選べなくなります
+        （パーソナル10分・レッスン50分のように長さが決まっているもの向け）。
+      </div>
+
+      {error && (
+        <div style={{ background: isDark ? '#4a2a2a' : '#fdecea', border: `1px solid ${isDark ? '#7a4444' : '#f5c6cb'}`, color: isDark ? '#ffb4b4' : '#a3282a', borderRadius: 8, padding: '9px 12px', fontSize: 13, marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {PURPOSES.map(p => {
+          const d = draft[p];
+          const preview = parseMinutes(d.text).list;
+          return (
+            <div key={p} style={{ border: `1px solid ${line}`, borderRadius: 8, padding: '10px 12px' }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 8 }}>{p}</div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <input value={d.text}
+                  onChange={e => setDraft(prev => ({ ...prev, [p]: { ...prev[p], text: e.target.value } }))}
+                  placeholder="例：25、30、50" style={{ ...input, flex: 1, minWidth: 150 }} />
+                <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={d.free}
+                    onChange={e => setDraft(prev => ({ ...prev, [p]: { ...prev[p], free: e.target.checked } }))}
+                    style={{ width: 17, height: 17 }} />
+                  終了時刻を手で入れられる
+                </label>
+                <button onClick={() => save(p)} disabled={busy === p}
+                  style={{ padding: '7px 14px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 13.5, fontWeight: 700, cursor: busy === p ? 'wait' : 'pointer' }}>
+                  {busy === p ? '保存中...' : '保存'}
+                </button>
+              </div>
+              <p style={{ fontSize: 12.5, color: textMid, margin: '7px 0 0', lineHeight: 1.6 }}>
+                {preview.length > 0
+                  ? `ボタン：${preview.map(durationLabel).join(' / ')}`
+                  : 'ボタンは出ません'}
+                {!d.free && preview.length > 0 && '（終了時刻は手で直せません）'}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+interface RenewRow {
+  src: Recurrence;
+  checked: boolean;
+  floorId: string;
+  weekday: number;
+  startTime: string;
+  endTime: string;
+  staffId: string;
+  memberNo: string;
+  customerLabel: string;
+  /** すでに次の年度へ引き継ぎ済み。もう一度作らせない */
+  done: boolean;
+  result: { made: number; skipped: string[]; error?: string } | null;
+}
+
+/**
+ * お客様（取り込み・一覧）。社員が使う。
+ *
+ * 🚨 一般の方（非会員）は会員番号を持たないので、ここには載らない。
+ *    予約フォームで会員番号が見つからないときは、これまでどおり名前を手入力する。
+ * 🚨 取り込みは「会員番号をキーに、あれば更新・なければ追加」。
+ *    ファイルに載っていない人は**消さない**。出力条件を間違えただけで
+ *    お客様が消えるのは取り返しがつかないため、退会にするかは人が決める。
+ */
+const CustomerSettings: React.FC<{
+  isDark: boolean; onDone: (msg: string) => Promise<void>;
+}> = ({ isDark, onDone }) => {
+  const [sub, setSub] = useState<'list' | 'import'>('list');
+  const [list, setList] = useState<Customer[]>([]);
+  const [contacts, setContacts] = useState<Record<string, CustomerContact>>({});
+  const [canSeeContacts, setCanSeeContacts] = useState(false);
+  const [q, setQ] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  // 取り込み
+  const [headers, setHeaders] = useState<string[]>([]);
+  const [rows, setRows] = useState<unknown[][]>([]);
+  const [map, setMap] = useState<Partial<Record<CustomerField, number>>>({});
+  const [fileName, setFileName] = useState('');
+  const [imported, setImported] = useState<{ added: number; updated: number } | null>(null);
+
+  const today = todayStr();
+  const line = isDark ? '#3a3a5c' : '#e0e0e0';
   const lineSoft = isDark ? '#35354e' : '#eef0f3';
+  const text = isDark ? '#eeeeee' : '#222222';
+  const textMid = isDark ? '#b3b8c6' : '#5b6270';
+  const accent = isDark ? '#6bbd92' : '#2f6f4f';
+  const fieldBg = isDark ? '#495057' : '#fff';
+
+  const input: React.CSSProperties = {
+    padding: '7px 9px', borderRadius: 8, border: `1px solid ${line}`,
+    background: fieldBg, color: text, fontSize: 16, boxSizing: 'border-box',
+  };
+  const smallBtn = (on: boolean): React.CSSProperties => ({
+    padding: '4px 10px', borderRadius: 999, fontSize: 12.5, cursor: busy ? 'wait' : 'pointer',
+    border: `1px solid ${on ? accent : line}`,
+    background: on ? accent : 'transparent',
+    color: on ? (isDark ? '#1d2a24' : '#fff') : textMid,
+    fontWeight: on ? 700 : 400,
+  });
+
+  const load = useCallback(async () => {
+    setLoading(true); setError('');
+    const [cRes, kRes] = await Promise.all([
+      supabase.from('room_customers').select('*').order('display_name'),
+      // 連絡先は公開範囲の設定によっては読めない。読めなくてもエラーにしない
+      supabase.from('room_customer_contacts').select('*'),
+    ]);
+    if (cRes.error) {
+      setError('お客様の一覧を読み込めませんでした。通信を確認して開き直してください。');
+      setLoading(false); return;
+    }
+    setList((cRes.data ?? []) as Customer[]);
+    const ks = (kRes.data ?? []) as CustomerContact[];
+    setCanSeeContacts(!kRes.error);
+    setContacts(Object.fromEntries(ks.map(k => [k.member_no, k])));
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const pickFile = async (file: File | null) => {
+    if (!file) return;
+    setError(''); setImported(null); setFileName(file.name);
+    try {
+      const { headers: h, rows: r } = await readTable(file);
+      if (h.length === 0) { setError('ファイルの中身を読み取れませんでした'); return; }
+      setHeaders(h); setRows(r); setMap(guessMapping(h));
+    } catch {
+      setError('ファイルを開けませんでした。CSV か Excel を選んでください。');
+    }
+  };
+
+  const built = useMemo(() => (rows.length ? buildCustomers(rows, map) : null), [rows, map]);
+  const existing = useMemo(() => new Set(list.map(c => c.member_no)), [list]);
+  const addCount = built ? built.ok.filter(c => !existing.has(c.member_no)).length : 0;
+  const updCount = built ? built.ok.length - addCount : 0;
+  const missing = built
+    ? list.filter(c => c.active && !built.ok.some(o => o.member_no === c.member_no))
+    : [];
+
+  const doImport = async () => {
+    if (!built || built.ok.length === 0) return;
+    setBusy(true); setError('');
+    const { data: me } = await supabase.auth.getUser();
+    const now = new Date().toISOString();
+    const uid = me.user?.id ?? null;
+
+    // 一度に送る件数を区切る。数千件を1回で送ると途中で切れることがある
+    const CHUNK = 200;
+    for (let i = 0; i < built.ok.length; i += CHUNK) {
+      const part = built.ok.slice(i, i + CHUNK);
+      const { error: err1 } = await supabase.from('room_customers').upsert(
+        part.map(c => ({
+          member_no: c.member_no, display_name: c.display_name, full_name: c.full_name,
+          birth_date: c.birth_date, imported_at: now, updated_at: now, updated_by: uid,
+        })), { onConflict: 'member_no' });
+      if (err1) {
+        setBusy(false);
+        setError('取り込みの途中で保存できませんでした。もう一度お試しください。');
+        await load(); return;
+      }
+      // 連絡先は、値が1つでもある行だけ入れる
+      const withContact = part.filter(c => c.phone || c.email || c.guardian_name);
+      if (withContact.length > 0) {
+        const { error: err2 } = await supabase.from('room_customer_contacts').upsert(
+          withContact.map(c => ({
+            member_no: c.member_no, phone: c.phone, email: c.email,
+            guardian_name: c.guardian_name, updated_at: now, updated_by: uid,
+          })), { onConflict: 'member_no' });
+        if (err2) {
+          setBusy(false);
+          setError('お名前は取り込めましたが、連絡先を保存できませんでした。');
+          await load(); return;
+        }
+      }
+    }
+    setBusy(false);
+    setImported({ added: addCount, updated: updCount });
+    await load();
+    await onDone(`お客様を取り込みました（追加${addCount}件・更新${updCount}件）`);
+  };
+
+  const setActive = async (c: Customer, v: boolean) => {
+    setBusy(true);
+    const { error: err } = await supabase.from('room_customers')
+      .update({ active: v, updated_at: new Date().toISOString() }).eq('member_no', c.member_no);
+    setBusy(false);
+    if (err) { setError('変えられませんでした。通信を確認してください。'); return; }
+    await load();
+  };
+
+  const shown = list.filter(c => {
+    if (!q.trim()) return true;
+    const k = q.trim().toLowerCase();
+    return c.member_no.toLowerCase().includes(k)
+      || c.display_name.toLowerCase().includes(k)
+      || (c.full_name ?? '').toLowerCase().includes(k);
+  });
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+        {([['list', '一覧'], ['import', '取り込み']] as const).map(([k, l]) => (
+          <button key={k} onClick={() => setSub(k)} style={smallBtn(sub === k)}>{l}</button>
+        ))}
+      </div>
+
+      {error && (
+        <div style={{ background: isDark ? '#4a2a2a' : '#fdecea', border: `1px solid ${isDark ? '#7a4444' : '#f5c6cb'}`, color: isDark ? '#ffb4b4' : '#a3282a', borderRadius: 8, padding: '9px 12px', fontSize: 13, marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
+
+      {/* ---- 一覧 ---- */}
+      {sub === 'list' && (loading ? (
+        <p style={{ fontSize: 13.5, color: textMid }}>読み込んでいます...</p>
+      ) : (
+        <>
+          <input value={q} onChange={e => setQ(e.target.value)}
+            placeholder="会員番号・お名前で探す" style={{ ...input, width: '100%', marginBottom: 10 }} />
+          <p style={{ fontSize: 12.5, color: textMid, margin: '0 0 10px', lineHeight: 1.6 }}>
+            {list.length}名（表示 {shown.length}名）。学年は生年月日から計算しています。
+            {!canSeeContacts && ' 連絡先は、いまの公開範囲では表示されません。'}
+          </p>
+          {shown.slice(0, 200).map(c => {
+            const k = contacts[c.member_no];
+            return (
+              <div key={c.member_no} style={{ borderTop: `1px solid ${lineSoft}`, padding: '9px 0' }}>
+                <div style={{ display: 'flex', gap: 9, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <b style={{ fontSize: 14, color: c.active ? text : textMid }}>
+                    {c.display_name}{!c.active && '（退会）'}
+                  </b>
+                  <span style={{ fontSize: 12.5, color: textMid }}>
+                    {c.member_no}
+                    {c.full_name && ` / ${c.full_name}`}
+                    {c.birth_date && ` / ${gradeOf(c.birth_date, today)}`}
+                  </span>
+                  <button disabled={busy} onClick={() => setActive(c, !c.active)}
+                    style={{ ...smallBtn(false), marginLeft: 'auto' }}>
+                    {c.active ? '退会にする' : '在籍に戻す'}
+                  </button>
+                </div>
+                {k && (k.phone || k.email || k.guardian_name) && (
+                  <div style={{ fontSize: 12.5, color: textMid, marginTop: 4 }}>
+                    {[k.phone, k.email, k.guardian_name && `保護者：${k.guardian_name}`]
+                      .filter(Boolean).join(' / ')}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {shown.length > 200 && (
+            <p style={{ fontSize: 12.5, color: textMid, marginTop: 10 }}>
+              多いので先頭200名だけ出しています。上の欄で絞り込んでください
+            </p>
+          )}
+        </>
+      ))}
+
+      {/* ---- 取り込み ---- */}
+      {sub === 'import' && (
+        <>
+          <div style={{ background: lineSoft, borderRadius: 8, padding: '10px 12px', fontSize: 13, lineHeight: 1.7, marginBottom: 12, color: textMid }}>
+            スコラプラスから出したファイル（CSV / Excel）を選んでください。
+            <b>会員番号をキーに、いる人は更新・いない人は追加</b>します。
+            <br />
+            🚨 ファイルに載っていない人は<b>消しません</b>。退会にするかどうかは、下の一覧を見て決めてください。
+          </div>
+
+          <input type="file" accept=".csv,.xlsx,.xls,text/csv"
+            onChange={e => pickFile(e.target.files?.[0] ?? null)}
+            style={{ ...input, width: '100%', marginBottom: 12 }} />
+
+          {headers.length > 0 && (
+            <>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: textMid, marginBottom: 8 }}>
+                列の対応づけ（{fileName}）
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+                {(Object.keys(FIELD_LABEL) as CustomerField[]).map(f => (
+                  <div key={f} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ fontSize: 13, minWidth: 76 }}>
+                      {FIELD_LABEL[f]}{REQUIRED_FIELDS.includes(f) && <span style={{ color: accent }}> *</span>}
+                    </span>
+                    <select value={map[f] ?? -1} style={{ ...input, flex: 1 }}
+                      onChange={e => {
+                        const v = Number(e.target.value);
+                        setMap(prev => {
+                          const next = { ...prev };
+                          if (v < 0) delete next[f]; else next[f] = v;
+                          return next;
+                        });
+                      }}>
+                      <option value={-1}>（使わない）</option>
+                      {headers.map((h, i) => (
+                        <option key={i} value={i}>{h || `${i + 1}列目`}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+
+              {built && (
+                <div style={{ border: `1px solid ${line}`, borderRadius: 8, padding: '10px 12px', marginBottom: 12, fontSize: 13, lineHeight: 1.8 }}>
+                  <b>取り込む前の確認</b>
+                  <div>追加 {addCount}件 ／ 更新 {updCount}件</div>
+                  {built.ng.length > 0 && (
+                    <div style={{ color: isDark ? '#ffb4b4' : '#a3282a', marginTop: 4 }}>
+                      読めなかった行 {built.ng.length}件：
+                      {built.ng.slice(0, 5).map(n => `${n.line}行目（${n.reason}）`).join('、')}
+                      {built.ng.length > 5 && ' …'}
+                    </div>
+                  )}
+                  {missing.length > 0 && (
+                    <div style={{ color: textMid, marginTop: 4 }}>
+                      このファイルに載っていない在籍者 {missing.length}名（消しません）：
+                      {missing.slice(0, 5).map(m => m.display_name).join('、')}
+                      {missing.length > 5 && ' …'}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <button onClick={doImport} disabled={busy || !built || built.ok.length === 0}
+                style={{ padding: '10px 18px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 14.5, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', opacity: busy || !built || built.ok.length === 0 ? .6 : 1 }}>
+                {busy ? '取り込んでいます...' : `${built?.ok.length ?? 0}件を取り込む`}
+              </button>
+
+              {imported && (
+                <p style={{ fontSize: 13, color: accent, marginTop: 10, fontWeight: 700 }}>
+                  取り込みました（追加{imported.added}件・更新{imported.updated}件）
+                </p>
+              )}
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
+/**
+ * スタッフの設定（社員が変更できる。2026-08-29 ユーザー確定で管理者用から移した）。
+ * 追加・非表示・担当できる区分の切り替え。
+ *
+ * 🚨 レッスン区分そのものの追加・文言変更は管理者のまま（ユーザー確定）。
+ *    ここで切り替えるのは「誰がどの区分を担当するか」だけ。
+ */
+const StaffSettings: React.FC<{
+  staff: Staff[]; categories: LessonCategory[];
+  onChanged: (msg: string) => Promise<void>; isDark: boolean;
+}> = ({ staff, categories, onChanged, isDark }) => {
+  const [newStaffName, setNewStaffName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const lineSoft = isDark ? '#35354e' : '#eef0f3';
+  const line = isDark ? '#3a3a5c' : '#e0e0e0';
   const text = isDark ? '#eeeeee' : '#222222';
   const textMid = isDark ? '#b3b8c6' : '#5b6270';
   const accent = isDark ? '#6bbd92' : '#2f6f4f';
@@ -1659,11 +2288,246 @@ const SettingsPanel: React.FC<{
   };
 
   return (
-    <Overlay onClose={onClose} isDark={isDark} title="場所とスタッフの設定" wide>
+    <div>
+      {error && (
+        <div style={{ background: isDark ? '#4a2a2a' : '#fdecea', border: `1px solid ${isDark ? '#7a4444' : '#f5c6cb'}`, color: isDark ? '#ffb4b4' : '#a3282a', borderRadius: 8, padding: '9px 12px', fontSize: 13, marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+        <input value={newStaffName} onChange={e => setNewStaffName(e.target.value)}
+          placeholder="スタッフの名前（例：山田 太郎）" style={{ ...input, flex: 1 }} />
+        <button disabled={busy || !newStaffName.trim()}
+          onClick={() => run(async () => {
+            const r = await supabase.from('room_staff').insert({
+              name: newStaffName.trim(), sort_order: staff.length + 1,
+            });
+            if (!r.error) setNewStaffName('');
+            return r;
+          }, 'スタッフを追加しました')}
+          style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 13.5, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', opacity: (busy || !newStaffName.trim()) ? .5 : 1 }}>
+          追加
+        </button>
+      </div>
+
+      <p style={{ fontSize: 12, color: textMid, margin: '0 0 10px', lineHeight: 1.6 }}>
+        記号を押すと、そのスタッフが担当できる区分を切り替えられます。
+        「表示中／非表示」で、予約フォームの選択肢に出すかどうかを変えられます（過去の予約は残ります）。
+      </p>
+
+      {staff.map(s => (
+        <div key={s.id} style={{ borderTop: `1px solid ${lineSoft}`, padding: '10px 0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 7, flexWrap: 'wrap' }}>
+            <b style={{ fontSize: 14, color: s.active ? text : textMid }}>
+              {s.name}{!s.active && '（非表示）'}
+            </b>
+            <button disabled={busy}
+              onClick={() => run(async () => await supabase.from('room_staff')
+                .update({ active: !s.active }).eq('id', s.id),
+                s.active ? `${s.name} を非表示にしました` : `${s.name} を表示に戻しました`)}
+              style={{ ...smallBtn(false), marginLeft: 'auto' }}>
+              {s.active ? '非表示にする' : '表示に戻す'}
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+            {categories.map(c => (
+              <button key={c.id} disabled={busy} onClick={() => toggleCategory(s, c.id)}
+                title={c.description}
+                style={smallBtn(!!s.categoryIds?.includes(c.id))}>{c.code}</button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const BasicSettingsPanel: React.FC<{
+  campuses: Campus[]; floors: Floor[]; staff: Staff[]; categories: LessonCategory[];
+  purposeDurations: PurposeDuration[];
+  onClose: () => void; onDone: (msg: string) => Promise<void>; isDark: boolean;
+}> = ({ campuses, floors, staff, categories, purposeDurations, onClose, onDone, isDark }) => {
+  const today = todayStr();
+  const [tab, setTab] = useState<'renew' | 'duration' | 'staff' | 'customer'>('renew');
+  const [fy, setFy] = useState(fiscalYear(today));
+  const [rows, setRows] = useState<RenewRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [finished, setFinished] = useState(false);
+  // まとめて置換（担当と場所だけ。参加者は人ごとに違うので行ごとに直す）
+  const [staffFrom, setStaffFrom] = useState('');
+  const [staffTo, setStaffTo] = useState('');
+  const [floorFrom, setFloorFrom] = useState('');
+  const [floorTo, setFloorTo] = useState('');
+
+  const line = isDark ? '#3a3a5c' : '#e0e0e0';
+  const lineSoft = isDark ? '#35354e' : '#eef0f3';
+  const text = isDark ? '#eeeeee' : '#222222';
+  const textMid = isDark ? '#b3b8c6' : '#5b6270';
+  const accent = isDark ? '#6bbd92' : '#2f6f4f';
+  const fieldBg = isDark ? '#495057' : '#fff';
+
+  const input: React.CSSProperties = {
+    padding: '5px 7px', borderRadius: 6, border: `1px solid ${line}`,
+    background: fieldBg, color: text, fontSize: 16, boxSizing: 'border-box',
+  };
+  const smallBtn = (on: boolean): React.CSSProperties => ({
+    padding: '4px 10px', borderRadius: 999, fontSize: 12.5,
+    cursor: running ? 'wait' : 'pointer',
+    border: `1px solid ${on ? accent : line}`,
+    background: on ? accent : 'transparent',
+    color: on ? (isDark ? '#1d2a24' : '#fff') : textMid,
+    fontWeight: on ? 700 : 400,
+  });
+
+  const placeName = useCallback((floorId: string): string => {
+    const f = floors.find(x => x.id === floorId) ?? null;
+    const c = campuses.find(x => x.id === f?.campus_id);
+    const siblings = floors.filter(x => x.campus_id === f?.campus_id).length;
+    return placeLabel(f, c?.name ?? '', siblings, true);
+  }, [floors, campuses]);
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(''); setFinished(false); setProgress(0);
+    const { data, error: err } = await supabase
+      .from('room_recurrences').select('*')
+      .in('fiscal_year', [fy, fy + 1]).eq('active', true);
+    if (err || !data) {
+      setError('繰り返しの一覧を読み込めませんでした。通信を確認して開き直してください。');
+      setLoading(false); return;
+    }
+    const all = data as Recurrence[];
+    // 引き継ぎ済みは「次の年度の行が renewed_from で自分を指している」もの
+    const done = new Set(all.filter(r => r.fiscal_year === fy + 1 && r.renewed_from)
+      .map(r => r.renewed_from as string));
+    const campusOrder = new Map(campuses.map((c, i) => [c.id, i]));
+    const floorOrder = new Map(floors.map((f, i) => [f.id, i]));
+    const list: RenewRow[] = all.filter(r => r.fiscal_year === fy).map(r => ({
+      src: r,
+      checked: !done.has(r.id),      // 大半は続くので、既定は「続ける」
+      floorId: r.floor_id,
+      weekday: r.weekday,
+      startTime: r.start_time.slice(0, 5),
+      endTime: r.end_time.slice(0, 5),
+      staffId: r.staff_id ?? '',
+      memberNo: r.member_no ?? '',
+      customerLabel: r.customer_label ?? '',
+      done: done.has(r.id),
+      result: null,
+    }));
+    list.sort((a, b) => {
+      const fa = floors.find(f => f.id === a.floorId), fb = floors.find(f => f.id === b.floorId);
+      const ca = campusOrder.get(fa?.campus_id ?? '') ?? 99;
+      const cb = campusOrder.get(fb?.campus_id ?? '') ?? 99;
+      if (ca !== cb) return ca - cb;
+      const oa = floorOrder.get(a.floorId) ?? 99, ob = floorOrder.get(b.floorId) ?? 99;
+      if (oa !== ob) return oa - ob;
+      if (a.weekday !== b.weekday) return a.weekday - b.weekday;
+      return a.startTime.localeCompare(b.startTime);
+    });
+    setRows(list);
+    setLoading(false);
+  }, [fy, campuses, floors]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const patch = (id: string, p: Partial<RenewRow>) =>
+    setRows(prev => prev.map(r => (r.src.id === id ? { ...r, ...p } : r)));
+
+  const targets = rows.filter(r => r.checked && !r.done);
+  const remaining = rows.filter(r => !r.done).length;
+
+  /** 担当・場所をまとめて置き換える。引き継ぎ済みの行には触らない */
+  const applyStaffSwap = () => {
+    if (!staffFrom || !staffTo) return;
+    setRows(prev => prev.map(r => (!r.done && r.staffId === staffFrom ? { ...r, staffId: staffTo } : r)));
+  };
+  const applyFloorSwap = () => {
+    if (!floorFrom || !floorTo) return;
+    setRows(prev => prev.map(r => (!r.done && r.floorId === floorFrom ? { ...r, floorId: floorTo } : r)));
+  };
+
+  const run = async () => {
+    if (!targets.length) { setError('引き継ぐものを選んでください'); return; }
+    setRunning(true); setError(''); setProgress(0); setFinished(false);
+    let ok = 0, ng = 0;
+    for (let i = 0; i < targets.length; i++) {
+      const t = targets[i];
+      const { data, error: err } = await supabase.rpc('room_renew_recurrence', {
+        p_recurrence_id: t.src.id,
+        p_fiscal_year: fy + 1,
+        p_floor_id: t.floorId,
+        p_weekday: t.weekday,
+        p_start_time: t.startTime,
+        p_end_time: t.endTime,
+        p_staff_id: t.staffId || null,
+        p_member_no: t.memberNo.trim(),
+        p_customer_label: t.customerLabel.trim(),
+      });
+      const row = (Array.isArray(data) ? data[0] : data) as
+        { ok?: boolean; reason?: string; made?: number; skipped?: string[] } | null;
+      if (err) {
+        patch(t.src.id, { result: { made: 0, skipped: [], error: '通信に失敗しました' } });
+        ng++;
+      } else if (row?.ok) {
+        patch(t.src.id, { done: true, result: { made: row.made ?? 0, skipped: row.skipped ?? [] } });
+        ok++;
+      } else {
+        patch(t.src.id, {
+          result: { made: 0, skipped: row?.skipped ?? [], error: row?.reason ?? '作成できませんでした' },
+        });
+        ng++;
+      }
+      setProgress(i + 1);
+    }
+    setRunning(false); setFinished(true);
+    await onDone(ng === 0
+      ? `${ok}件を${fy + 1}年度に引き継ぎました`
+      : `${ok}件を引き継ぎました（${ng}件は作成できませんでした）`);
+  };
+
+  return (
+    <Overlay onClose={onClose} isDark={isDark} title="基本設定" wide>
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
-        {([['staff', 'スタッフ'], ['category', 'レッスン区分'], ['place', '場所']] as const).map(([k, l]) => (
-          <button key={k} onClick={() => setTab(k)} style={smallBtn(tab === k)}>{l}</button>
+        {([['renew', '年度更新'], ['customer', 'お客様'], ['staff', 'スタッフ'], ['duration', '長さの設定']] as const)
+          .map(([k, l]) => (
+            <button key={k} onClick={() => !running && setTab(k)} style={smallBtn(tab === k)}>{l}</button>
+          ))}
+      </div>
+
+      {tab === 'duration' && (
+        <DurationSettings purposeDurations={purposeDurations} onDone={onDone} isDark={isDark} />
+      )}
+
+      {tab === 'staff' && (
+        <StaffSettings staff={staff} categories={categories} onChanged={onDone} isDark={isDark} />
+      )}
+
+      {tab === 'customer' && (
+        <CustomerSettings isDark={isDark} onDone={onDone} />
+      )}
+
+      {tab === 'renew' && (<>
+      {/* 何をする画面なのかを最初に書く。年1回しか使わないので、毎回説明が要る */}
+      <div style={{ background: isDark ? '#4a4326' : '#fff8e1', border: `1px solid ${isDark ? '#8a7a3a' : '#ffe082'}`, color: isDark ? '#ffe6a3' : '#7a5c00', borderRadius: 8, padding: '10px 12px', fontSize: 13, lineHeight: 1.7, marginBottom: 14 }}>
+        毎週の予約は<b>年度末（3/31）で終わります</b>。続けるものを選んで、次の年度に作り直してください。
+        <br />
+        担当や場所が変わる場合は、ここで直してから作成できます。
+        休講にした回や、この年度だけの変更は引き継がれません。
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12.5, color: textMid }}>引き継ぐ年度</span>
+        {[fiscalYear(today) - 1, fiscalYear(today)].map(y => (
+          <button key={y} onClick={() => !running && setFy(y)} style={smallBtn(fy === y)}>
+            {fiscalYearLabel(y)}
+          </button>
         ))}
+        <span style={{ fontSize: 12.5, color: textMid, marginLeft: 'auto' }}>
+          → <b style={{ color: accent }}>{fy + 1}年度</b>（{fy + 1}/4/1〜{fy + 2}/3/31）に作ります
+        </span>
       </div>
 
       {error && (
@@ -1672,53 +2536,218 @@ const SettingsPanel: React.FC<{
         </div>
       )}
 
-      {/* ---- スタッフ ---- */}
-      {tab === 'staff' && (
-        <div>
-          <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
-            <input value={newStaffName} onChange={e => setNewStaffName(e.target.value)}
-              placeholder="スタッフの名前（例：山田 太郎）" style={{ ...input, flex: 1 }} />
-            <button disabled={busy || !newStaffName.trim()}
-              onClick={() => run(async () => {
-                const r = await supabase.from('room_staff').insert({
-                  name: newStaffName.trim(), sort_order: staff.length + 1,
-                });
-                if (!r.error) setNewStaffName('');
-                return r;
-              }, 'スタッフを追加しました')}
-              style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 13.5, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', opacity: (busy || !newStaffName.trim()) ? .5 : 1 }}>
-              追加
-            </button>
+      {loading ? (
+        <p style={{ fontSize: 13.5, color: textMid }}>読み込んでいます...</p>
+      ) : rows.length === 0 ? (
+        <p style={{ fontSize: 13.5, color: textMid, lineHeight: 1.7 }}>
+          {fy}年度の毎週の予約はありません。
+        </p>
+      ) : (
+        <>
+          {/* まとめて置換。担当交代・教室移動はまとめて起きるのでここで一度に直す */}
+          <div style={{ background: lineSoft, borderRadius: 8, padding: '10px 12px', marginBottom: 12 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: textMid, marginBottom: 8 }}>
+              まとめて変える（引き継ぎ済みの行は変わりません）
+            </div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+              <span style={{ fontSize: 13, minWidth: 34 }}>担当</span>
+              <select value={staffFrom} onChange={e => setStaffFrom(e.target.value)} style={input}>
+                <option value="">選んでください</option>
+                {staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <span style={{ fontSize: 13 }}>→</span>
+              <select value={staffTo} onChange={e => setStaffTo(e.target.value)} style={input}>
+                <option value="">選んでください</option>
+                {staff.filter(s => s.active).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <button onClick={applyStaffSwap} disabled={!staffFrom || !staffTo || running}
+                style={{ ...smallBtn(false), opacity: !staffFrom || !staffTo ? .5 : 1 }}>
+                まとめて変える
+              </button>
+            </div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 13, minWidth: 34 }}>場所</span>
+              <select value={floorFrom} onChange={e => setFloorFrom(e.target.value)} style={input}>
+                <option value="">選んでください</option>
+                {floors.map(f => <option key={f.id} value={f.id}>{placeName(f.id)}</option>)}
+              </select>
+              <span style={{ fontSize: 13 }}>→</span>
+              <select value={floorTo} onChange={e => setFloorTo(e.target.value)} style={input}>
+                <option value="">選んでください</option>
+                {floors.map(f => <option key={f.id} value={f.id}>{placeName(f.id)}</option>)}
+              </select>
+              <button onClick={applyFloorSwap} disabled={!floorFrom || !floorTo || running}
+                style={{ ...smallBtn(false), opacity: !floorFrom || !floorTo ? .5 : 1 }}>
+                まとめて変える
+              </button>
+            </div>
           </div>
 
-          <p style={{ fontSize: 12, color: textMid, margin: '0 0 10px', lineHeight: 1.6 }}>
-            記号を押すと、そのスタッフが担当できる区分を切り替えられます。
-            「表示中／非表示」で、予約フォームの選択肢に出すかどうかを変えられます（過去の予約は残ります）。
-          </p>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+            <button onClick={() => setRows(prev => prev.map(r => (r.done ? r : { ...r, checked: true })))}
+              style={smallBtn(false)}>すべて選ぶ</button>
+            <button onClick={() => setRows(prev => prev.map(r => ({ ...r, checked: false })))}
+              style={smallBtn(false)}>すべて外す</button>
+            <span style={{ fontSize: 12.5, color: textMid, marginLeft: 'auto' }}>
+              全{rows.length}件／未更新 {remaining}件／選択中 {targets.length}件
+            </span>
+          </div>
 
-          {staff.map(s => (
-            <div key={s.id} style={{ borderTop: `1px solid ${lineSoft}`, padding: '10px 0' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 7, flexWrap: 'wrap' }}>
-                <b style={{ fontSize: 14, color: s.active ? text : textMid }}>
-                  {s.name}{!s.active && '（非表示）'}
-                </b>
-                <button disabled={busy}
-                  onClick={() => run(async () => await supabase.from('room_staff')
-                    .update({ active: !s.active }).eq('id', s.id),
-                    s.active ? `${s.name} を非表示にしました` : `${s.name} を表示に戻しました`)}
-                  style={{ ...smallBtn(false), marginLeft: 'auto' }}>
-                  {s.active ? '非表示にする' : '表示に戻す'}
-                </button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {rows.map(r => (
+              <div key={r.src.id}
+                style={{ border: `1px solid ${r.done ? accent : line}`, borderRadius: 8, padding: '9px 11px', background: r.done ? (isDark ? '#263b33' : '#e8f2ec') : 'transparent' }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input type="checkbox" checked={r.checked} disabled={r.done || running}
+                    onChange={e => patch(r.src.id, { checked: e.target.checked })}
+                    style={{ width: 18, height: 18, flexShrink: 0 }} />
+                  <span style={{ fontSize: 13.5, fontWeight: 700 }}>
+                    {r.src.purpose}
+                    {r.src.kind === 'open' && <span style={{ color: textMid, fontWeight: 400 }}>（募集枠）</span>}
+                  </span>
+                  {r.done && <span style={{ fontSize: 12, color: accent, fontWeight: 700 }}>✓ 引き継ぎ済み</span>}
+                </div>
+
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+                  <select value={r.floorId} disabled={r.done || running}
+                    onChange={e => patch(r.src.id, { floorId: e.target.value })} style={input}>
+                    {floors.map(f => <option key={f.id} value={f.id}>{placeName(f.id)}</option>)}
+                  </select>
+                  <select value={r.weekday} disabled={r.done || running}
+                    onChange={e => patch(r.src.id, { weekday: Number(e.target.value) })} style={input}>
+                    {WEEKDAY_LABEL.map((w, i) => <option key={i} value={i}>{w}曜</option>)}
+                  </select>
+                  {/* 🚨 時刻は type="time" にしない。iOS がドラムを出すうえ、
+                         アプリ全体でテンキー入力にそろえてある（lib/timeInput.ts 経由） */}
+                  <TimeInput value={r.startTime} onChange={v => patch(r.src.id, { startTime: v })}
+                    isDark={isDark} disabled={r.done || running}
+                    ariaLabel={`${WEEKDAY_LABEL[r.weekday]}曜 開始時刻`} style={{ width: 118 }} />
+                  <span style={{ fontSize: 13 }}>〜</span>
+                  <TimeInput value={r.endTime} onChange={v => patch(r.src.id, { endTime: v })}
+                    isDark={isDark} disabled={r.done || running}
+                    ariaLabel={`${WEEKDAY_LABEL[r.weekday]}曜 終了時刻`} style={{ width: 118 }} />
+                  <select value={r.staffId} disabled={r.done || running}
+                    onChange={e => patch(r.src.id, { staffId: e.target.value })} style={input}>
+                    <option value="">担当なし</option>
+                    {staff.filter(s => s.active || s.id === r.staffId)
+                      .map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
+                  <span style={{ fontSize: 12.5, color: textMid, minWidth: 46 }}>参加者</span>
+                  <input value={r.memberNo} disabled={r.done || running}
+                    onChange={e => patch(r.src.id, { memberNo: e.target.value })}
+                    placeholder="会員番号" style={{ ...input, width: 118 }} />
+                  <input value={r.customerLabel} disabled={r.done || running}
+                    onChange={e => patch(r.src.id, { customerLabel: e.target.value })}
+                    placeholder="表示名（例：田中様）" style={{ ...input, width: 168 }} />
+                </div>
+
+                {/* 🚨 入らなかった回を黙って捨てない。「全部入った」と誤解されると、
+                       その時間が空いていると思い込まれて二重に埋まる */}
+                {r.result && (
+                  <div style={{ marginTop: 8, fontSize: 12.5, lineHeight: 1.7, color: r.result.error ? (isDark ? '#ffb4b4' : '#a3282a') : textMid }}>
+                    {r.result.error
+                      ? `⚠️ ${r.result.error}`
+                      : `${r.result.made}回 作成しました`}
+                    {r.result.skipped.length > 0 && (
+                      <span style={{ display: 'block' }}>
+                        先約があるため入らなかった日（{r.result.skipped.length}回）：
+                        {r.result.skipped.map(formatDateLabel).join('、')}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
-              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                {categories.map(c => (
-                  <button key={c.id} disabled={busy} onClick={() => toggleCategory(s, c.id)}
-                    title={c.description}
-                    style={smallBtn(!!s.categoryIds?.includes(c.id))}>{c.code}</button>
-                ))}
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
+
+          <div style={{ borderTop: `1px solid ${line}`, marginTop: 14, paddingTop: 12, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button onClick={run} disabled={running || targets.length === 0}
+              style={{ padding: '10px 18px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 14.5, fontWeight: 700, cursor: running || !targets.length ? 'not-allowed' : 'pointer', opacity: running || !targets.length ? .6 : 1 }}>
+              {running
+                ? `作成しています... ${progress}/${targets.length}件`
+                : `選んだ${targets.length}件を${fy + 1}年度に作成する`}
+            </button>
+            {finished && (
+              <span style={{ fontSize: 13, color: textMid }}>
+                結果は各行に出しています。閉じると予約表に反映されます
+              </span>
+            )}
+          </div>
+        </>
+      )}
+      </>)}
+    </Overlay>
+  );
+};
+
+// ============================================================
+// 設定（管理者だけ）
+//   スタッフの追加・非表示・担当区分の変更、レッスン区分の追加・変更、
+//   場所の同時予約件数と営業時間の変更。
+//   🚨 ここが無いと、スタッフや区分が増えるたびに開発者へ依頼することになる。
+//      現場で完結できるようにしておくこと（2026-08-28 ユーザー指示）。
+// ============================================================
+const SettingsPanel: React.FC<{
+  campuses: Campus[]; floors: Floor[]; categories: LessonCategory[];
+  onClose: () => void; onChanged: (msg: string) => Promise<void>; isDark: boolean;
+}> = ({ campuses, floors, categories, onClose, onChanged, isDark }) => {
+  // スタッフは基本設定（社員）へ移した。ここに残すのは管理者だけが触るもの
+  const [tab, setTab] = useState<'category' | 'place' | 'privacy'>('category');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [newCatCode, setNewCatCode] = useState('');
+  const [newCatDesc, setNewCatDesc] = useState('');
+
+  const line = isDark ? '#3a3a5c' : '#e0e0e0';
+  const lineSoft = isDark ? '#35354e' : '#eef0f3';
+  const text = isDark ? '#eeeeee' : '#222222';
+  const textMid = isDark ? '#b3b8c6' : '#5b6270';
+  const accent = isDark ? '#6bbd92' : '#2f6f4f';
+  const fieldBg = isDark ? '#495057' : '#fff';
+
+  const input: React.CSSProperties = {
+    padding: '7px 9px', borderRadius: 8, border: `1px solid ${line}`,
+    background: fieldBg, color: text, fontSize: 16, boxSizing: 'border-box',
+  };
+  const smallBtn = (on: boolean): React.CSSProperties => ({
+    padding: '4px 10px', borderRadius: 999, fontSize: 12.5, cursor: busy ? 'wait' : 'pointer',
+    border: `1px solid ${on ? accent : line}`,
+    background: on ? accent : 'transparent',
+    color: on ? (isDark ? '#1d2a24' : '#fff') : textMid,
+    fontWeight: on ? 700 : 400,
+  });
+
+  /** 失敗しても画面を壊さず、理由だけ出す小さなラッパ */
+  const run = async (fn: () => Promise<{ error: unknown } | void>, msg: string) => {
+    setBusy(true); setError('');
+    try {
+      const r = await fn();
+      if (r && 'error' in r && r.error) {
+        setError('保存できませんでした。同じ名前がすでに登録されていないか確認してください。');
+        setBusy(false); return;
+      }
+      await onChanged(msg);
+    } catch {
+      setError('保存できませんでした。通信を確認してもう一度お試しください。');
+    }
+    setBusy(false);
+  };
+
+
+  return (
+    <Overlay onClose={onClose} isDark={isDark} title="管理者の設定" wide>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+        {([['category', 'レッスン区分'], ['place', '場所'], ['privacy', '連絡先の公開範囲']] as const).map(([k, l]) => (
+          <button key={k} onClick={() => setTab(k)} style={smallBtn(tab === k)}>{l}</button>
+        ))}
+      </div>
+
+      {error && (
+        <div style={{ background: isDark ? '#4a2a2a' : '#fdecea', border: `1px solid ${isDark ? '#7a4444' : '#f5c6cb'}`, color: isDark ? '#ffb4b4' : '#a3282a', borderRadius: 8, padding: '9px 12px', fontSize: 13, marginBottom: 12 }}>
+          {error}
         </div>
       )}
 
@@ -1813,11 +2842,85 @@ const SettingsPanel: React.FC<{
         </div>
       )}
 
+      {/* ---- 連絡先の公開範囲 ---- */}
+      {tab === 'privacy' && (
+        <ContactVisibility isDark={isDark} onChanged={onChanged} />
+      )}
+
       <button onClick={onClose}
         style={{ width: '100%', marginTop: 18, padding: '11px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 14, cursor: 'pointer' }}>
         閉じる
       </button>
     </Overlay>
+  );
+};
+
+// ============================================================
+// 連絡先の公開範囲（管理者だけ）
+//
+//   お客様の連絡先を誰まで見せるかを決める。あとから変える前提の設定なので、
+//   コードではなくDB（room_settings）に置き、RLS がその値を読む
+//   （2026-08-29 ユーザー指示）。ここを変えるとポリシーを書き換えずに範囲が変わる。
+// ============================================================
+const CONTACT_SCOPES = [
+  ['admin', '管理者のみ', 'いちばん狭い。現場で電話をかけたいときは管理者に聞くことになります'],
+  ['staff', '社員まで（既定）', 'パートには見えません。名前と学年は全員が見られます'],
+  ['all',   'ログインしている全員', 'パートを含む全スタッフが連絡先まで見られます'],
+] as const;
+
+const ContactVisibility: React.FC<{
+  isDark: boolean; onChanged: (msg: string) => Promise<void>;
+}> = ({ isDark, onChanged }) => {
+  const [scope, setScope] = useState<string>('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const line = isDark ? '#3a3a5c' : '#e0e0e0';
+  const textMid = isDark ? '#b3b8c6' : '#5b6270';
+  const accent = isDark ? '#6bbd92' : '#2f6f4f';
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from('room_settings')
+        .select('value').eq('key', 'contact_visibility').maybeSingle();
+      setScope(data?.value ?? 'staff');
+    })();
+  }, []);
+
+  const save = async (v: string) => {
+    setBusy(true); setError('');
+    const { data: me } = await supabase.auth.getUser();
+    const { error: err } = await supabase.from('room_settings').upsert({
+      key: 'contact_visibility', value: v,
+      updated_at: new Date().toISOString(), updated_by: me.user?.id ?? null,
+    }, { onConflict: 'key' });
+    setBusy(false);
+    if (err) { setError('変えられませんでした。通信を確認してもう一度お試しください。'); return; }
+    setScope(v);
+    await onChanged('連絡先の公開範囲を変えました');
+  };
+
+  return (
+    <div>
+      <p style={{ fontSize: 13, color: textMid, margin: '0 0 12px', lineHeight: 1.7 }}>
+        お客様の<b>連絡先</b>（電話・メール・保護者名）を、誰まで見せるかを決めます。
+        お名前と学年は、この設定にかかわらず予約表で全員が見られます。
+      </p>
+      {error && (
+        <div style={{ background: isDark ? '#4a2a2a' : '#fdecea', border: `1px solid ${isDark ? '#7a4444' : '#f5c6cb'}`, color: isDark ? '#ffb4b4' : '#a3282a', borderRadius: 8, padding: '9px 12px', fontSize: 13, marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {CONTACT_SCOPES.map(([v, title, note]) => (
+          <button key={v} disabled={busy} onClick={() => save(v)}
+            style={{ textAlign: 'left', padding: '11px 13px', borderRadius: 8, cursor: busy ? 'wait' : 'pointer', border: `1px solid ${scope === v ? accent : line}`, background: scope === v ? (isDark ? '#263b33' : '#e8f2ec') : 'transparent', color: scope === v ? accent : textMid }}>
+            <b style={{ fontSize: 13.5 }}>{scope === v ? '● ' : '○ '}{title}</b>
+            <span style={{ display: 'block', fontSize: 12, marginTop: 3, lineHeight: 1.6 }}>{note}</span>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 };
 
@@ -1883,7 +2986,9 @@ function weeklyDates(from: string, until: string): string[] {
   if (!until || until <= from) return [];
   const out: string[] = [];
   let cur = from;
-  for (let i = 0; i < 60; i++) {           // 最大60回＝約1年余
+  // 最大64回。年度末が近い時期に「来年度末まで」を選ぶと最長で約61週になるため、
+  // 60のままだと最後の1〜2回が黙って落ちる
+  for (let i = 0; i < 64; i++) {
     if (cur > until) break;
     out.push(cur);
     cur = shiftDate(cur, 7);

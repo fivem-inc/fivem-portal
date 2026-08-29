@@ -102,6 +102,124 @@ export interface Booking {
   updated_at: string;
 }
 
+/** お客様（DBの room_customers）。一般の方は会員番号を持たないので、ここには載らない */
+export interface Customer {
+  member_no: string;
+  display_name: string;
+  full_name: string | null;
+  birth_date: string | null;   // 'YYYY-MM-DD'
+  active: boolean;
+  note: string | null;
+}
+
+/** 連絡先。見える範囲は設定（contact_visibility）で決まるので、読めないことがある */
+export interface CustomerContact {
+  member_no: string;
+  phone: string | null;
+  email: string | null;
+  guardian_name: string | null;
+}
+
+/**
+ * 生年月日から「学年の番号」を出す。小1=1 … 小6=6、中1=7 … 中3=9、高1=10 … 高3=12。
+ * 0=年長、-1=年中、-2=年少。13以上は高校を出たあと。
+ *
+ * 🚨 日本の学年は「4/2〜翌4/1 生まれ」で1学年。**4/1生まれは1つ上の学年**になる。
+ *    そこで生年月日の「1日前」がどの年度かを見る。
+ *    例）2020-04-01 生まれ → 前日 2020-03-31 → 2019年度生まれ扱い
+ *        2020-04-02 生まれ → 前日 2020-04-01 → 2020年度生まれ
+ *
+ * 🚨 学年を数値で持たないこと。持つと4月に全員1つズレ、上げ忘れると
+ *    静かに間違った学年が出続ける（2026-08-29 ユーザー確定で計算方式にした）。
+ */
+export const gradeNumber = (birthDate: string, onDate: string): number | null => {
+  if (!birthDate) return null;
+  const [by, bm, bd] = birthDate.split('-').map(Number);
+  if (!by || !bm || !bd) return null;
+  const prev = new Date(by, bm - 1, bd - 1);          // 生年月日の前日
+  const bornFy = prev.getMonth() + 1 >= 4 ? prev.getFullYear() : prev.getFullYear() - 1;
+  return fiscalYear(onDate) - bornFy - 6;
+};
+
+/** 学年の番号を「小3」「年中」のような表示にする */
+export const gradeLabel = (grade: number | null): string => {
+  if (grade === null) return '';
+  if (grade >= 1 && grade <= 6) return `小${grade}`;
+  if (grade >= 7 && grade <= 9) return `中${grade - 6}`;
+  if (grade >= 10 && grade <= 12) return `高${grade - 9}`;
+  if (grade === 0) return '年長';
+  if (grade === -1) return '年中';
+  if (grade === -2) return '年少';
+  if (grade < -2) return '未就園';
+  return '一般';                                       // 高校を出たあと
+};
+
+/** 生年月日から、その日時点の学年表示を出す（'小3' など。生年月日が無ければ空） */
+export const gradeOf = (birthDate: string | null, onDate: string): string =>
+  (birthDate ? gradeLabel(gradeNumber(birthDate, onDate)) : '');
+
+/**
+ * 用途ごとの「長さ」の選択肢（DBの room_purpose_durations）。
+ *
+ * 🚨 ここをコードに固定しないこと。長さは現場の都合で変わるため、
+ *    社員が基本設定から直せるようにしてある（2026-08-29 ユーザー指示）。
+ */
+export interface PurposeDuration {
+  purpose: string;
+  /** 選べる長さ（分）。空 = ボタンを出さない（任意入力だけ） */
+  minutes: number[];
+  /** 終了時刻を手で入れてよいか。false のときは長さボタンだけで決める */
+  allow_free: boolean;
+}
+
+/**
+ * DBを読めなかったときに使う既定値。
+ * 🚨 これが出るのは通信に失敗したときだけ。ここを直しても本番の値は変わらない
+ *    （本番の値は room_purpose_durations にある）。
+ */
+export const FALLBACK_DURATIONS: PurposeDuration[] = [
+  { purpose: 'プライベート', minutes: [25, 30, 50], allow_free: true },
+  { purpose: 'パーソナル',   minutes: [10],         allow_free: false },
+  { purpose: 'レッスン',     minutes: [50],         allow_free: false },
+  { purpose: 'レンタル',     minutes: [60, 120],    allow_free: true },
+  { purpose: 'その他',       minutes: [],           allow_free: true },
+];
+
+/** 分を「1時間30分」のように読める形にする（長さボタンの文字） */
+export const durationLabel = (min: number): string => {
+  if (min < 60) return `${min}分`;
+  const h = Math.floor(min / 60), m = min % 60;
+  return m === 0 ? `${h}時間` : `${h}時間${m}分`;
+};
+
+/**
+ * 毎週の繰り返しの「約束事」。各回の実予約（Booking）とは別に1件だけ持つ。
+ * 年度更新の画面は、この行を一覧にして次の年度へ引き継ぐ。
+ */
+export interface Recurrence {
+  id: string;
+  floor_id: string;
+  weekday: number;         // 0=日曜（JS の getDay と同じ）
+  start_time: string;      // 'HH:MM:SS'
+  end_time: string;
+  purpose: string;
+  booker_name: string;
+  member_no: string | null;
+  customer_label: string | null;
+  memo: string | null;
+  exclusive: boolean;
+  staff_id: string | null;
+  kind: 'booking' | 'open';
+  seats: number;
+  start_date: string;
+  end_date: string | null;
+  /** 4/1〜翌3/31 を1つとする年度。終わりの日が属する年度を入れる */
+  fiscal_year: number;
+  /** どの繰り返しから引き継いだか。二度押しで二重に作らないための目印 */
+  renewed_from: string | null;
+  active: boolean;
+}
+
 /** 重なっている予約（RPCが返す conflicts の中身） */
 export interface ConflictInfo {
   id: string;
@@ -195,6 +313,37 @@ export const placeLabel = (
   const solo = siblingCount <= 1;
   if (withCampus) return solo ? campusName : `${campusName} ${floor.name}`;
   return solo ? campusName : floor.name;
+};
+
+/**
+ * 年度（4/1〜翌3/31）。'2026-03-31' は 2025年度、'2026-04-01' は 2026年度。
+ *
+ * 🚨 年度は必ずこの関数で求めること。画面のあちこちで「月を見て分岐」を書くと、
+ *    3月と4月の境目でだけ違う年度になるズレが出て、原因が分かりにくい。
+ */
+export const fiscalYear = (dateStr: string): number => {
+  const [y, m] = dateStr.split('-').map(Number);
+  return m >= 4 ? y : y - 1;
+};
+
+/** その年度の初日（4/1） */
+export const fiscalYearStart = (fy: number): string => `${fy}-04-01`;
+
+/** その年度の最終日（翌年の3/31）。繰り返しの既定の終わり */
+export const fiscalYearEnd = (fy: number): string => `${fy + 1}-03-31`;
+
+/** '2026年度（2027/3/31まで）' */
+export const fiscalYearLabel = (fy: number): string => `${fy}年度（${fy + 1}/3/31まで）`;
+
+/** 何日前から「年度末が近い」として扱うか（案内を出す・来年度末まで作れるようにする） */
+export const RENEWAL_NOTICE_DAYS = 60;
+
+/** 2つの日付の差（日数）。from から to まで何日あるか */
+export const daysUntil = (fromStr: string, toStr: string): number => {
+  const [y1, m1, d1] = fromStr.split('-').map(Number);
+  const [y2, m2, d2] = toStr.split('-').map(Number);
+  return Math.round(
+    (new Date(y2, m2 - 1, d2).getTime() - new Date(y1, m1 - 1, d1).getTime()) / 86400000);
 };
 
 /** 日付を n 日ずらす */
