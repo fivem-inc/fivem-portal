@@ -11,12 +11,16 @@ import {
   fiscalYear, fiscalYearEnd, fiscalYearLabel, RENEWAL_NOTICE_DAYS, daysUntil,
   type Campus, type Floor, type Booking, type ConflictInfo,
   type Staff, type LessonCategory, type Recurrence, type PurposeDuration,
-  type Customer, type CustomerContact,
+  type Customer, type CustomerContact, type Waitlist,
 } from '../lib/roomBooking';
 import {
   readTable, guessMapping, buildCustomers, FIELD_LABEL, REQUIRED_FIELDS,
   type CustomerField,
 } from '../lib/customerImport';
+import {
+  guessBookingMapping, splitPasted, buildBookings, BOOKING_FIELD_LABEL,
+  BOOKING_REQUIRED, BULK_MAX_ROWS, type BookingField,
+} from '../lib/bookingBulk';
 
 // 場所（フロア）の予約表。
 //
@@ -470,9 +474,11 @@ const RoomBookingPage: React.FC<Props> = ({ user }) => {
           {(['place', 'staff', 'participant'] as ViewMode[]).map(v => (
             <button key={v} onClick={() => selectView(v)} style={btn(view === v)}>{VIEW_LABEL[v]}</button>
           ))}
+          {/* 🚨 絵文字を付けない。🗓 は Windows の Chrome で □ に化けた（2026-08-31 実機確認）。
+                 「文字で意味が通るなら絵文字を足さない」という既存の方針どおりにする */}
           {canRenew && (
             <button onClick={() => setRenewal(true)}
-              style={{ ...btn(false), marginLeft: 'auto' }}>🗓 基本設定</button>
+              style={{ ...btn(false), marginLeft: 'auto' }}>基本設定</button>
           )}
           {admin && (
             <button onClick={() => setSettings(true)}
@@ -588,7 +594,7 @@ const RoomBookingPage: React.FC<Props> = ({ user }) => {
       {renewal && (
         <BasicSettingsPanel
           campuses={campuses} floors={floors} staff={staff} categories={categories}
-          purposeDurations={purposeDurations}
+          purposeDurations={purposeDurations} user={user}
           onClose={() => setRenewal(false)}
           onDone={async (msg) => {
             await loadMasters(); await loadBookings(); await loadRenewPending(); showFlash(msg);
@@ -1008,8 +1014,15 @@ const BookingForm: React.FC<{
   // 🚨 日付は localDate を通す（ISO文字列の頭10文字はUTCの日付で、朝の予約が前日になる）
   const [date] = useState(editing ? localDate(base!.starts_at) : mode.date);
   const [startTime, setStartTime] = useState(editing ? hhmm(base!.starts_at) : mode.startTime);
-  const [endTime, setEndTime] = useState(editing ? hhmm(base!.ends_at) : addMinutes(mode.startTime, 30));
-  const [purpose, setPurpose] = useState<string>(editing ? base!.purpose : 'レッスン');
+  // 🚨 終了の初期値も用途の長さに合わせる。ここを固定の30分にしていたため、
+  //    レッスン（50分固定・終了は手で直せない）を開いた直後に 30分 と出て、
+  //    ボタンを押すまで矛盾したままだった（2026-08-31 実機確認で発見）
+  const initialPurpose = editing ? base!.purpose : 'レッスン';
+  const initialLength =
+    purposeDurations.find(d => d.purpose === initialPurpose)?.minutes[0] ?? 30;
+  const [endTime, setEndTime] = useState(
+    editing ? hhmm(base!.ends_at) : addMinutes(mode.startTime, initialLength));
+  const [purpose, setPurpose] = useState<string>(initialPurpose);
   const [bookerName, setBookerName] = useState(editing ? base!.booker_name : (user.email?.split('@')[0] ?? ''));
   const [memberNo, setMemberNo] = useState(editing ? (base!.member_no ?? '') : '');
   const [customerLabel, setCustomerLabel] = useState(editing ? (base!.customer_label ?? '') : '');
@@ -1541,6 +1554,11 @@ const BookingDetail: React.FC<{
   // 🚨 これを省くと「今週だけ休みのつもりが全部消えた」事故になる（Googleカレンダーと同じ流儀）
   const [scope, setScope] = useState<'one' | 'future'>('one');
   const [error, setError] = useState('');
+  // キャンセル待ち（この予約の後ろに並んでいる方）
+  const [waiting, setWaiting] = useState<Waitlist[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [waitMember, setWaitMember] = useState('');
+  const [waitLabel, setWaitLabel] = useState('');
   // 募集枠に申込を入れるときの入力
   const [filling, setFilling] = useState(false);
   const [fillMember, setFillMember] = useState('');
@@ -1572,6 +1590,35 @@ const BookingDetail: React.FC<{
         .is('deleted_at', null);
     }
     return supabase.from('room_bookings').update(patch).eq('id', b.id);
+  };
+
+  // この予約を待っている方を読む
+  const loadWaiting = useCallback(async () => {
+    const { data } = await supabase.from('room_waitlist')
+      .select('*').eq('booking_id', b.id).eq('status', 'waiting')
+      .order('position').order('created_at');
+    setWaiting((data ?? []) as Waitlist[]);
+  }, [b.id]);
+
+  useEffect(() => { loadWaiting(); }, [loadWaiting]);
+
+  const addWaiting = async () => {
+    if (!waitLabel.trim()) return;
+    setBusy(true); setError('');
+    const { data: me } = await supabase.auth.getUser();
+    if (!me.user?.id) { setBusy(false); setError('ログインし直してください'); return; }
+    const { error: err } = await supabase.from('room_waitlist').insert({
+      booking_id: b.id,
+      member_no: waitMember.trim() || null,
+      customer_label: waitLabel.trim(),
+      // 末尾に並べる。同じ値でも受け付けた順に出るので、細かく詰め直さない
+      position: waiting.length,
+      created_by: me.user.id,
+    });
+    setBusy(false);
+    if (err) { setError('追加できませんでした。通信を確認してもう一度お試しください。'); return; }
+    setWaitMember(''); setWaitLabel(''); setAdding(false);
+    await loadWaiting();
   };
 
   // 休講にする（枠は残す。消すと「空いた」と誤解されて二重に埋まるため）
@@ -1757,6 +1804,58 @@ const BookingDetail: React.FC<{
           )
         )}
 
+        {/* キャンセル待ち。
+            🚨 予約そのものの見た目は変えない（空いていると誤解させないため）。
+               ここに人数と一覧を出すだけにする。繰り上げは基本設定の一覧から行う */}
+        {confirm === 'none' && !filling && (
+          <div style={{ marginTop: 14, borderTop: `1px solid ${line}`, paddingTop: 12 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <b style={{ fontSize: 13 }}>キャンセル待ち {waiting.length}名</b>
+              {!adding && (
+                <button onClick={() => setAdding(true)}
+                  style={{ marginLeft: 'auto', padding: '5px 11px', borderRadius: 999, fontSize: 12.5, border: `1px solid ${line}`, background: 'transparent', color: textMid, cursor: 'pointer' }}>
+                  ＋ キャンセル待ちを追加
+                </button>
+              )}
+            </div>
+
+            {waiting.length > 0 && (
+              <div style={{ marginTop: 7 }}>
+                {waiting.map((w, i) => (
+                  <div key={w.id} style={{ fontSize: 12.5, color: textMid, lineHeight: 1.8 }}>
+                    {i + 1}. {w.customer_label}
+                    {w.member_no ? `（${w.member_no}）` : '（一般）'}
+                    {w.note ? ` / ${w.note}` : ''}
+                  </div>
+                ))}
+                <p style={{ fontSize: 11.5, color: textMid, margin: '5px 0 0', lineHeight: 1.6 }}>
+                  繰り上げは「基本設定 → キャンセル待ち」から行います
+                  （先にこの予約を休講または取り消してください）
+                </p>
+              </div>
+            )}
+
+            {adding && (
+              <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                <input value={waitMember} onChange={e => setWaitMember(e.target.value)}
+                  placeholder="会員番号（任意）" inputMode="numeric"
+                  style={{ padding: '7px 9px', borderRadius: 8, border: `1px solid ${line}`, background: isDark ? '#495057' : '#fff', color: text, fontSize: 16, width: 130, boxSizing: 'border-box' }} />
+                <input value={waitLabel} onChange={e => setWaitLabel(e.target.value)}
+                  placeholder="お客様（例：田中様）"
+                  style={{ padding: '7px 9px', borderRadius: 8, border: `1px solid ${line}`, background: isDark ? '#495057' : '#fff', color: text, fontSize: 16, flex: 1, minWidth: 150, boxSizing: 'border-box' }} />
+                <button onClick={addWaiting} disabled={busy || !waitLabel.trim()}
+                  style={{ padding: '8px 14px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 13.5, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', opacity: !waitLabel.trim() ? .5 : 1 }}>
+                  追加
+                </button>
+                <button onClick={() => { setAdding(false); setWaitMember(''); setWaitLabel(''); }}
+                  style={{ padding: '8px 12px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 13.5, cursor: 'pointer' }}>
+                  やめる
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {confirm === 'none' && !filling && (
           <div style={{ display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
             <button onClick={() => onEdit(b)}
@@ -1939,6 +2038,467 @@ interface RenewRow {
   done: boolean;
   result: { made: number; skipped: string[]; error?: string } | null;
 }
+
+/**
+ * 予約の一括入力（CSV / Excel / テキスト貼り付け）。
+ *
+ * 🚨 入るものだけ入れて、入らなかった行は必ず一覧で出す（2026-08-31 ユーザー確定・案①）。
+ *    50件中1件が重なっただけで全部やり直しでは現場が回らない。
+ *    ただし「全部入った」と誤解させないよう、結果は必ず出す。
+ * 🚨 重なりの判定は作り直さず、1行ずつ既存の room_create_booking を通す。
+ * 🚨 初版は単発の予約のみ。繰り返しは今のフォームのほうが確実なので混ぜない。
+ */
+const BulkBookingPanel: React.FC<{
+  floors: Floor[]; campuses: Campus[]; staff: Staff[];
+  purposeDurations: PurposeDuration[]; user: AuthUser;
+  isDark: boolean; onDone: (msg: string) => Promise<void>;
+}> = ({ floors, campuses, staff, purposeDurations, user, isDark, onDone }) => {
+  const [source, setSource] = useState<'paste' | 'file'>('paste');
+  const [pasted, setPasted] = useState('');
+  const [headers, setHeaders] = useState<string[]>([]);
+  const [rows, setRows] = useState<unknown[][]>([]);
+  const [map, setMap] = useState<Partial<Record<BookingField, number>>>({});
+  const [error, setError] = useState('');
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [made, setMade] = useState<number | null>(null);
+  const [failed, setFailed] = useState<{ label: string; reason: string }[]>([]);
+
+  const today = todayStr();
+  const line = isDark ? '#3a3a5c' : '#e0e0e0';
+  const lineSoft = isDark ? '#35354e' : '#eef0f3';
+  const text = isDark ? '#eeeeee' : '#222222';
+  const textMid = isDark ? '#b3b8c6' : '#5b6270';
+  const accent = isDark ? '#6bbd92' : '#2f6f4f';
+  const fieldBg = isDark ? '#495057' : '#fff';
+
+  const input: React.CSSProperties = {
+    padding: '7px 9px', borderRadius: 8, border: `1px solid ${line}`,
+    background: fieldBg, color: text, fontSize: 16, boxSizing: 'border-box',
+  };
+  const smallBtn = (on: boolean): React.CSSProperties => ({
+    padding: '4px 10px', borderRadius: 999, fontSize: 12.5, cursor: running ? 'wait' : 'pointer',
+    border: `1px solid ${on ? accent : line}`,
+    background: on ? accent : 'transparent',
+    color: on ? (isDark ? '#1d2a24' : '#fff') : textMid,
+    fontWeight: on ? 700 : 400,
+  });
+
+  const applyTable = (h: string[], r: unknown[][]) => {
+    setHeaders(h); setRows(r); setMap(guessBookingMapping(h));
+    setMade(null); setFailed([]);
+  };
+
+  const applyPaste = () => {
+    setError('');
+    const grid = splitPasted(pasted);
+    if (grid.length < 2) {
+      setError('1行目に見出し（日付・場所・開始…）、2行目から中身を貼り付けてください');
+      return;
+    }
+    applyTable(grid[0], grid.slice(1));
+  };
+
+  const pickFile = async (file: File | null) => {
+    if (!file) return;
+    setError('');
+    try {
+      const { headers: h, rows: r } = await readTable(file);
+      if (h.length === 0) { setError('ファイルの中身を読み取れませんでした'); return; }
+      applyTable(h, r);
+    } catch {
+      setError('ファイルを開けませんでした。CSV か Excel を選んでください。');
+    }
+  };
+
+  const built = useMemo(() => (rows.length
+    ? buildBookings(rows, map, {
+        floors, campuses, staff, purposeDurations,
+        baseDate: today, defaultPurpose: 'レッスン',
+      })
+    : null), [rows, map, floors, campuses, staff, purposeDurations, today]);
+
+  const overLimit = !!built && built.ok.length > BULK_MAX_ROWS;
+
+  const run = async () => {
+    if (!built || built.ok.length === 0 || overLimit) return;
+    setRunning(true); setError(''); setProgress(0); setMade(null);
+    const ng: { label: string; reason: string }[] = [];
+    let count = 0;
+    for (let i = 0; i < built.ok.length; i++) {
+      const b = built.ok[i];
+      const ds = toDate(b.date, b.start), de = toDate(b.date, b.end);
+      const label = `${formatDateLabel(b.date)} ${b.start} ${b.customer_label || b.purpose}`;
+      if (!ds || !de) { ng.push({ label, reason: '時刻を組み立てられませんでした' }); setProgress(i + 1); continue; }
+      const { data, error: err } = await supabase.rpc('room_create_booking', {
+        p_floor_id: b.floor_id,
+        p_starts_at: ds.toISOString(), p_ends_at: de.toISOString(),
+        p_purpose: b.purpose, p_booker_name: user.email ?? '',
+        p_member_no: b.member_no, p_customer_label: b.customer_label,
+        p_memo: b.memo, p_exclusive: false, p_recurrence_id: null,
+        p_staff_id: b.staff_id, p_kind: 'booking', p_seats: 1,
+      });
+      const row = (Array.isArray(data) ? data[0] : data) as { ok?: boolean; reason?: string } | null;
+      if (err) ng.push({ label, reason: '通信エラー' });
+      else if (!row?.ok) ng.push({ label, reason: row?.reason ?? '入れられませんでした' });
+      else count++;
+      setProgress(i + 1);
+    }
+    setRunning(false); setMade(count); setFailed(ng);
+    await onDone(ng.length === 0
+      ? `${count}件の予約を入れました`
+      : `${count}件を入れました（${ng.length}件は入りませんでした）`);
+  };
+
+  return (
+    <div>
+      <div style={{ background: lineSoft, borderRadius: 8, padding: '10px 12px', fontSize: 13, lineHeight: 1.7, marginBottom: 12, color: textMid }}>
+        1行に1件ずつ書いた表から、まとめて予約を入れます。1行目は見出しにしてください。
+        <br />
+        <b>日付 / 場所 / 開始 / 終了 / 用途 / 担当 / 会員番号 / お客様 / メモ</b>
+        （日付・場所・開始は必須。終了が空なら用途の長さから計算します）
+        <br />
+        🚨 <b>入るものだけ入れます。</b>先約と重なった行は入れずに、あとで一覧に出します。
+        🚨 繰り返しはここでは入れられません（今までのフォームをお使いください）。
+      </div>
+
+      <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+        {([['paste', 'テキストを貼り付ける'], ['file', 'ファイルを選ぶ']] as const).map(([k, l]) => (
+          <button key={k} onClick={() => !running && setSource(k)} style={smallBtn(source === k)}>{l}</button>
+        ))}
+      </div>
+
+      {error && (
+        <div style={{ background: isDark ? '#4a2a2a' : '#fdecea', border: `1px solid ${isDark ? '#7a4444' : '#f5c6cb'}`, color: isDark ? '#ffb4b4' : '#a3282a', borderRadius: 8, padding: '9px 12px', fontSize: 13, marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
+
+      {source === 'paste' ? (
+        <>
+          <textarea value={pasted} onChange={e => setPasted(e.target.value)} rows={7}
+            placeholder={'日付\t場所\t開始\t終了\t用途\t担当\t会員番号\tお客様\n9/1\t四条本校 3階\t16:00\t16:50\tレッスン\t林 晃平\t2014052061\t田中様'}
+            style={{ ...input, width: '100%', fontFamily: 'monospace', fontSize: 13, marginBottom: 8 }} />
+          <p style={{ fontSize: 12, color: textMid, margin: '0 0 10px', lineHeight: 1.6 }}>
+            Excel の範囲をコピーして、そのまま貼り付けられます。
+          </p>
+          <button onClick={applyPaste} disabled={running || !pasted.trim()}
+            style={{ ...smallBtn(false), opacity: !pasted.trim() ? .5 : 1, marginBottom: 12 }}>
+            読み取る
+          </button>
+        </>
+      ) : (
+        <input type="file" accept=".csv,.xlsx,.xls,text/csv"
+          onChange={e => pickFile(e.target.files?.[0] ?? null)}
+          style={{ ...input, width: '100%', marginBottom: 12 }} />
+      )}
+
+      {headers.length > 0 && (
+        <>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: textMid, marginBottom: 8 }}>
+            列の対応づけ
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+            {(Object.keys(BOOKING_FIELD_LABEL) as BookingField[]).map(f => (
+              <div key={f} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ fontSize: 13, minWidth: 76 }}>
+                  {BOOKING_FIELD_LABEL[f]}
+                  {BOOKING_REQUIRED.includes(f) && <span style={{ color: accent }}> *</span>}
+                </span>
+                <select value={map[f] ?? -1} style={{ ...input, flex: 1 }}
+                  onChange={e => {
+                    const v = Number(e.target.value);
+                    setMap(prev => {
+                      const next = { ...prev };
+                      if (v < 0) delete next[f]; else next[f] = v;
+                      return next;
+                    });
+                  }}>
+                  <option value={-1}>（使わない）</option>
+                  {headers.map((h, i) => <option key={i} value={i}>{h || `${i + 1}列目`}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+
+          {built && (
+            <div style={{ border: `1px solid ${line}`, borderRadius: 8, padding: '10px 12px', marginBottom: 12, fontSize: 13, lineHeight: 1.8 }}>
+              <b>入れる前の確認</b>
+              <div>入れられる行 {built.ok.length}件</div>
+              {built.ng.length > 0 && (
+                <div style={{ color: isDark ? '#ffb4b4' : '#a3282a', marginTop: 4 }}>
+                  このままでは入らない行 {built.ng.length}件：
+                  <div>
+                    {built.ng.slice(0, 6).map(n => (
+                      <div key={n.line}>{n.line}行目 … {n.reason}</div>
+                    ))}
+                    {built.ng.length > 6 && <div>ほか {built.ng.length - 6}件</div>}
+                  </div>
+                </div>
+              )}
+              {overLimit && (
+                <div style={{ color: isDark ? '#ffb4b4' : '#a3282a', marginTop: 4 }}>
+                  一度に入れられるのは{BULK_MAX_ROWS}件までです。分けて入れてください
+                </div>
+              )}
+              <div style={{ color: textMid, marginTop: 4 }}>
+                先約と重なるかどうかは、押したときに1件ずつ確かめます
+              </div>
+            </div>
+          )}
+
+          <button onClick={run} disabled={running || !built || built.ok.length === 0 || overLimit}
+            style={{ padding: '10px 18px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 14.5, fontWeight: 700, cursor: running ? 'wait' : 'pointer', opacity: running || !built || built.ok.length === 0 || overLimit ? .6 : 1 }}>
+            {running
+              ? `入れています... ${progress}/${built?.ok.length ?? 0}件`
+              : `${built?.ok.length ?? 0}件を入れる`}
+          </button>
+
+          {made !== null && (
+            <div style={{ marginTop: 12, fontSize: 13, lineHeight: 1.8 }}>
+              <b style={{ color: accent }}>{made}件 入れました</b>
+              {failed.length > 0 && (
+                <div style={{ color: isDark ? '#ffb4b4' : '#a3282a', marginTop: 4 }}>
+                  入らなかった {failed.length}件：
+                  {failed.map((f, i) => <div key={i}>{f.label} … {f.reason}</div>)}
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
+/**
+ * キャンセル待ちの一覧（曜日・時間別）。
+ *
+ * 🚨 日付ごとに並べると、毎週同じ枠を待っている人が散らばって見えない。
+ *    「火曜16:00に3名待っている」が分かる形にする（2026-08-31 ユーザー指示）。
+ * 🚨 曜日は new Date(starts_at).getDay() で取る（端末時刻なので正しい）。
+ *    starts_at の文字列を切り出してはいけない（UTC表記で前日になる）。
+ */
+const WaitlistSettings: React.FC<{
+  floors: Floor[]; campuses: Campus[]; staff: Staff[];
+  isDark: boolean; onDone: (msg: string) => Promise<void>;
+}> = ({ floors, campuses, staff, isDark, onDone }) => {
+  const [rows, setRows] = useState<Waitlist[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState('');
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState<{ member: string; label: string; note: string }>(
+    { member: '', label: '', note: '' });
+
+  const line = isDark ? '#3a3a5c' : '#e0e0e0';
+  const lineSoft = isDark ? '#35354e' : '#eef0f3';
+  const text = isDark ? '#eeeeee' : '#222222';
+  const textMid = isDark ? '#b3b8c6' : '#5b6270';
+  const accent = isDark ? '#6bbd92' : '#2f6f4f';
+  const fieldBg = isDark ? '#495057' : '#fff';
+
+  const input: React.CSSProperties = {
+    padding: '6px 8px', borderRadius: 6, border: `1px solid ${line}`,
+    background: fieldBg, color: text, fontSize: 16, boxSizing: 'border-box',
+  };
+  const smallBtn = (on: boolean): React.CSSProperties => ({
+    padding: '4px 10px', borderRadius: 999, fontSize: 12.5, cursor: busy ? 'wait' : 'pointer',
+    border: `1px solid ${on ? accent : line}`,
+    background: on ? accent : 'transparent',
+    color: on ? (isDark ? '#1d2a24' : '#fff') : textMid,
+    fontWeight: on ? 700 : 400,
+  });
+
+  const placeName = useCallback((floorId: string): string => {
+    const f = floors.find(x => x.id === floorId) ?? null;
+    const c = campuses.find(x => x.id === f?.campus_id);
+    const siblings = floors.filter(x => x.campus_id === f?.campus_id).length;
+    return placeLabel(f, c?.name ?? '', siblings, true);
+  }, [floors, campuses]);
+
+  const load = useCallback(async () => {
+    setLoading(true); setError('');
+    const { data, error: err } = await supabase
+      .from('room_waitlist')
+      .select('*, booking:room_bookings(id, floor_id, starts_at, ends_at, purpose, status, deleted_at)')
+      .eq('status', 'waiting')
+      .order('position')
+      .order('created_at');
+    if (err) {
+      setError('キャンセル待ちを読み込めませんでした。通信を確認して開き直してください。');
+      setLoading(false); return;
+    }
+    setRows((data ?? []) as Waitlist[]);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  /** 場所・曜日・開始時刻でまとめる。毎週同じ枠を待っている人を1つにする */
+  const groups = useMemo(() => {
+    const m = new Map<string, { floorId: string; weekday: number; time: string; items: Waitlist[] }>();
+    for (const w of rows) {
+      const b = w.booking;
+      if (!b || b.deleted_at) continue;      // 消された予約の待ちは出さない
+      const d = new Date(b.starts_at);
+      const key = `${b.floor_id}|${d.getDay()}|${hhmm(b.starts_at)}`;
+      const g = m.get(key)
+        ?? { floorId: b.floor_id, weekday: d.getDay(), time: hhmm(b.starts_at), items: [] };
+      g.items.push(w);
+      m.set(key, g);
+    }
+    const order = new Map(floors.map((f, i) => [f.id, i]));
+    return [...m.values()].sort((a, b) =>
+      a.weekday - b.weekday
+      || a.time.localeCompare(b.time)
+      || (order.get(a.floorId) ?? 99) - (order.get(b.floorId) ?? 99));
+  }, [rows, floors]);
+
+  const saveEdit = async (w: Waitlist) => {
+    if (!draft.label.trim()) { setError('お客様のお名前を入れてください'); return; }
+    setBusy(w.id); setError('');
+    const { error: err } = await supabase.from('room_waitlist').update({
+      member_no: draft.member.trim() || null,
+      customer_label: draft.label.trim(),
+      note: draft.note.trim() || null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', w.id);
+    setBusy('');
+    if (err) { setError('保存できませんでした。通信を確認してください。'); return; }
+    setEditing(null);
+    await load();
+    await onDone('キャンセル待ちを直しました');
+  };
+
+  const move = async (list: Waitlist[], idx: number, dir: -1 | 1) => {
+    const to = idx + dir;
+    if (to < 0 || to >= list.length) return;
+    setBusy(list[idx].id);
+    // 並びは position で持つ。入れ替えるのは2件だけなので、その2件を書き換える
+    const a = list[idx], b = list[to];
+    const [pa, pb] = [a.position, b.position];
+    const now = new Date().toISOString();
+    const r1 = await supabase.from('room_waitlist')
+      .update({ position: pb === pa ? pa + dir : pb, updated_at: now }).eq('id', a.id);
+    const r2 = await supabase.from('room_waitlist')
+      .update({ position: pa, updated_at: now }).eq('id', b.id);
+    setBusy('');
+    if (r1.error || r2.error) { setError('順番を変えられませんでした。'); return; }
+    await load();
+  };
+
+  const cancel = async (w: Waitlist) => {
+    setBusy(w.id);
+    const { error: err } = await supabase.from('room_waitlist')
+      .update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', w.id);
+    setBusy('');
+    if (err) { setError('取り消せませんでした。通信を確認してください。'); return; }
+    await load();
+    await onDone('キャンセル待ちを取り消しました');
+  };
+
+  const promote = async (w: Waitlist) => {
+    setBusy(w.id); setError('');
+    const { data, error: err } = await supabase.rpc('room_promote_waitlist', { p_waitlist_id: w.id });
+    const row = (Array.isArray(data) ? data[0] : data) as
+      { ok?: boolean; reason?: string } | null;
+    setBusy('');
+    if (err) { setError('繰り上げられませんでした。通信を確認してください。'); return; }
+    if (!row?.ok) {
+      // 多くは「もとの予約がまだ生きている」。先に休講や取り消しが要る
+      setError(`${row?.reason ?? '繰り上げられませんでした'}（先にもとの予約を休講または取り消してください）`);
+      return;
+    }
+    await load();
+    await onDone(`${w.customer_label} を予約に繰り上げました`);
+  };
+
+  return (
+    <div>
+      <div style={{ background: lineSoft, borderRadius: 8, padding: '10px 12px', fontSize: 13, lineHeight: 1.7, marginBottom: 12, color: textMid }}>
+        いま並んでいる方を、<b>曜日・時間ごと</b>にまとめています。
+        <br />
+        🚨 <b>自動では繰り上げません。</b>もとの予約を休講または取り消したうえで「繰り上げる」を押すと、
+        その方の予約ができます。空きが無いまま押すと、理由を出して止まります。
+      </div>
+
+      {error && (
+        <div style={{ background: isDark ? '#4a2a2a' : '#fdecea', border: `1px solid ${isDark ? '#7a4444' : '#f5c6cb'}`, color: isDark ? '#ffb4b4' : '#a3282a', borderRadius: 8, padding: '9px 12px', fontSize: 13, marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <p style={{ fontSize: 13.5, color: textMid }}>読み込んでいます...</p>
+      ) : groups.length === 0 ? (
+        <p style={{ fontSize: 13.5, color: textMid, lineHeight: 1.7 }}>
+          いまキャンセル待ちの方はいません。
+          予約の詳細を開くと「キャンセル待ちを追加」から登録できます。
+        </p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {groups.map(g => (
+            <div key={`${g.floorId}|${g.weekday}|${g.time}`}
+              style={{ border: `1px solid ${line}`, borderRadius: 8, padding: '10px 12px' }}>
+              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>
+                {WEEKDAY_LABEL[g.weekday]}曜 {g.time}
+                <span style={{ fontSize: 12.5, fontWeight: 400, color: textMid }}>
+                  {' / '}{placeName(g.floorId)}{' / '}待ち {g.items.length}名
+                </span>
+              </div>
+
+              {g.items.map((w, i) => (
+                <div key={w.id} style={{ borderTop: `1px solid ${lineSoft}`, padding: '8px 0' }}>
+                  {editing === w.id ? (
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <input value={draft.member} placeholder="会員番号"
+                        onChange={e => setDraft(p => ({ ...p, member: e.target.value }))}
+                        style={{ ...input, width: 118 }} />
+                      <input value={draft.label} placeholder="お客様（例：田中様）"
+                        onChange={e => setDraft(p => ({ ...p, label: e.target.value }))}
+                        style={{ ...input, width: 168 }} />
+                      <input value={draft.note} placeholder="メモ"
+                        onChange={e => setDraft(p => ({ ...p, note: e.target.value }))}
+                        style={{ ...input, flex: 1, minWidth: 120 }} />
+                      <button onClick={() => saveEdit(w)} disabled={busy === w.id}
+                        style={smallBtn(true)}>保存</button>
+                      <button onClick={() => setEditing(null)} style={smallBtn(false)}>やめる</button>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 12.5, color: textMid, minWidth: 22 }}>{i + 1}.</span>
+                      <b style={{ fontSize: 13.5 }}>{w.customer_label}</b>
+                      <span style={{ fontSize: 12.5, color: textMid }}>
+                        {w.member_no ?? '一般'}
+                        {w.staff_id && ` / 希望：${staff.find(s => s.id === w.staff_id)?.name ?? ''}`}
+                        {w.note && ` / ${w.note}`}
+                      </span>
+                      <span style={{ marginLeft: 'auto', display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                        <button onClick={() => move(g.items, i, -1)} disabled={i === 0 || !!busy}
+                          style={{ ...smallBtn(false), opacity: i === 0 ? .4 : 1 }} aria-label="順番を上げる">▲</button>
+                        <button onClick={() => move(g.items, i, 1)} disabled={i === g.items.length - 1 || !!busy}
+                          style={{ ...smallBtn(false), opacity: i === g.items.length - 1 ? .4 : 1 }} aria-label="順番を下げる">▼</button>
+                        <button onClick={() => {
+                          setEditing(w.id);
+                          setDraft({ member: w.member_no ?? '', label: w.customer_label, note: w.note ?? '' });
+                        }} style={smallBtn(false)}>直す</button>
+                        <button onClick={() => promote(w)} disabled={!!busy}
+                          style={smallBtn(true)}>繰り上げる</button>
+                        <button onClick={() => cancel(w)} disabled={!!busy}
+                          style={smallBtn(false)}>取り消す</button>
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 /**
  * お客様（取り込み・一覧）。社員が使う。
@@ -2344,11 +2904,11 @@ const StaffSettings: React.FC<{
 
 const BasicSettingsPanel: React.FC<{
   campuses: Campus[]; floors: Floor[]; staff: Staff[]; categories: LessonCategory[];
-  purposeDurations: PurposeDuration[];
+  purposeDurations: PurposeDuration[]; user: AuthUser;
   onClose: () => void; onDone: (msg: string) => Promise<void>; isDark: boolean;
-}> = ({ campuses, floors, staff, categories, purposeDurations, onClose, onDone, isDark }) => {
+}> = ({ campuses, floors, staff, categories, purposeDurations, user, onClose, onDone, isDark }) => {
   const today = todayStr();
-  const [tab, setTab] = useState<'renew' | 'duration' | 'staff' | 'customer'>('renew');
+  const [tab, setTab] = useState<'renew' | 'duration' | 'staff' | 'customer' | 'waitlist' | 'bulk'>('renew');
   const [fy, setFy] = useState(fiscalYear(today));
   const [rows, setRows] = useState<RenewRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -2491,7 +3051,8 @@ const BasicSettingsPanel: React.FC<{
   return (
     <Overlay onClose={onClose} isDark={isDark} title="基本設定" wide>
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
-        {([['renew', '年度更新'], ['customer', 'お客様'], ['staff', 'スタッフ'], ['duration', '長さの設定']] as const)
+        {([['renew', '年度更新'], ['waitlist', 'キャンセル待ち'], ['customer', 'お客様'],
+           ['bulk', '予約の一括入力'], ['staff', 'スタッフ'], ['duration', '長さの設定']] as const)
           .map(([k, l]) => (
             <button key={k} onClick={() => !running && setTab(k)} style={smallBtn(tab === k)}>{l}</button>
           ))}
@@ -2507,6 +3068,16 @@ const BasicSettingsPanel: React.FC<{
 
       {tab === 'customer' && (
         <CustomerSettings isDark={isDark} onDone={onDone} />
+      )}
+
+      {tab === 'waitlist' && (
+        <WaitlistSettings floors={floors} campuses={campuses} staff={staff}
+          isDark={isDark} onDone={onDone} />
+      )}
+
+      {tab === 'bulk' && (
+        <BulkBookingPanel floors={floors} campuses={campuses} staff={staff}
+          purposeDurations={purposeDurations} user={user} isDark={isDark} onDone={onDone} />
       )}
 
       {tab === 'renew' && (<>

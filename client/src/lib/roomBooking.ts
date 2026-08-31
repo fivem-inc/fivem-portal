@@ -102,6 +102,27 @@ export interface Booking {
   updated_at: string;
 }
 
+/**
+ * キャンセル待ち（DBの room_waitlist）。埋まっている予約の後ろに並ぶ。
+ * 🚨 募集枠（kind='open'）とは別物。あちらは「空きがある枠」、こちらは「空き待ち」。
+ */
+export interface Waitlist {
+  id: string;
+  booking_id: string;
+  member_no: string | null;
+  customer_label: string;
+  staff_id: string | null;
+  note: string | null;
+  position: number;
+  status: 'waiting' | 'promoted' | 'cancelled';
+  created_at: string;
+  /** 一覧で曜日・時間別に並べるために、予約側の情報を一緒に読む */
+  booking?: {
+    id: string; floor_id: string; starts_at: string; ends_at: string;
+    purpose: string; status: 'active' | 'cancelled'; deleted_at: string | null;
+  } | null;
+}
+
 /** お客様（DBの room_customers）。一般の方は会員番号を持たないので、ここには載らない */
 export interface Customer {
   member_no: string;
