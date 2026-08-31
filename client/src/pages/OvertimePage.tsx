@@ -622,6 +622,8 @@ const OvertimeForm: React.FC<{
   const clearErr = (key: string) => setErrFields(prev => { if (!prev.has(key)) return prev; const n = new Set(prev); n.delete(key); return n; });
   const [saving, setSaving] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  // 当日の事後報告で、まだ勤務の終了時刻を過ぎていないときの注意文（送信ボタンを押した時点で決める）
+  const [endWarn, setEndWarn] = useState('');
   const [breakRecalcNote, setBreakRecalcNote] = useState(false);
   const [showRules, setShowRules] = useState(false);
 
@@ -1052,6 +1054,27 @@ const OvertimeForm: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
+  /**
+   * いま何時か（0時からの分）。**送信ボタンを押した瞬間**に評価する。
+   * 🚨 state に持たない：フォームを開いたまま何時間も置く人がいるため、
+   *    描画時の時刻で判定すると「開いた時は勤務前だったが、いまは勤務後」を取りこぼす。
+   */
+  const nowMinLive = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
+
+  /** 当日ぶんの事後報告か（実績報告・再提出は対象外＝既に一度出したものなので） */
+  const isTodayPostHoc = mode === 'posthoc' && !editTarget && date === today;
+
+  /**
+   * 当日の事後報告で、まだ勤務の終了時刻を過ぎていないときの注意文（該当しなければ空）。
+   * 🚨 止めずに確認だけ出す。早く上がった日や、終わる直前に出す運用を塞がないため。
+   */
+  const beforeEndNote = (): string => {
+    if (!isTodayPostHoc || fullDay || clockOnlyMode || workSegments.length === 0) return '';
+    const endMin = Math.max(...workSegments.map(s => s.endMin));
+    if (nowMinLive() >= endMin) return '';
+    return `まだ勤務の終了時刻（${minToTime(endMin)}）を過ぎていません。このまま事後報告をされますか？`;
+  };
+
   const validate = (): string => {
     if (!date) return '日付を選択してください';
     if (mode === 'advance' && !editTarget && date < today) return '事前申請は当日以降の日付を選択してください';
@@ -1090,6 +1113,17 @@ const OvertimeForm: React.FC<{
     for (let i = 0; i < segments.length; i++) {
       const s = segments[i];
       if ((s.start && !s.end) || (!s.start && s.end)) return `勤務${i + 1}の開始・終了を両方入力してください`;
+    }
+    // 事後報告は「もう働いた分」を出すもの。当日ぶんは勤務を始める前に出せないようにする。
+    // 🚨 基準は通常シフトではなく **本人が入力した勤務時間**（ユーザー確定・2026-08-29）。
+    //    シフトを基準にすると、休日出勤（その日のシフトが無い）は判定できず、
+    //    早出（シフト9:30の日に8:00から働いた）が「まだ9:30前」で止まってしまう。
+    //    終日（調整休・欠勤）と打刻ズレは上で早期returnしており対象外＝朝でも出せる。
+    if (isTodayPostHoc) {
+      const startMin = Math.min(...workSegments.map(s => s.startMin));
+      if (nowMinLive() < startMin) {
+        return `まだ ${minToTime(startMin)} になっていません。事後報告は勤務を始めてから送信してください`;
+      }
     }
     // 入力時に赤く出しているもの（遡り・16時間超）と同じ理由で送信も止める
     const issue = segmentIssues.find(Boolean);
@@ -1137,6 +1171,7 @@ const OvertimeForm: React.FC<{
       return;
     }
     setErrFields(new Set());
+    setEndWarn(beforeEndNote());   // 勤務終了前なら確認画面で一言そえる（止めはしない）
     setShowConfirm(true);
   };
 
@@ -2217,6 +2252,13 @@ const OvertimeForm: React.FC<{
       ) : (
         <div style={{ background: innerBg, borderRadius: 10, padding: '12px 14px' }}>
           <p style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 'bold', color: text }}>{clockOnlyMode ? 'この内容で記録しますか？' : 'この内容で送信しますか？'}</p>
+          {/* 勤務の終了時刻より前に事後報告しようとしたときの注意。止めずに気づかせるだけ。
+              配色はライト・ダーク共通の固定色（暗い地に暗い文字にすると読めなくなるため） */}
+          {endWarn && (
+            <div style={{ background: '#fff8e1', border: '1px solid #f59e0b', borderRadius: 8, padding: '8px 10px', margin: '0 0 8px' }}>
+              <p style={{ margin: 0, fontSize: 12.5, color: '#92400e', lineHeight: 1.6 }}>⏰ {endWarn}</p>
+            </div>
+          )}
           {clockOnlyMode ? (
             <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
               {date}（{dowLabel(date)}）　<b>残業ではありません</b>（打刻が遅れただけ）<br />
