@@ -52,7 +52,8 @@ const PurchaseCommentThread: React.FC<Props> = ({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const [filePath, setFilePath] = useState<string | null>(null);
+  // 添付は複数可。アップロードが終わるたびに「送信待ちの一覧」に積む
+  const [pendingFiles, setPendingFiles] = useState<{ path: string; label: string }[]>([]);
   const [labelChoice, setLabelChoice] = useState<string>(FILE_LABELS[0]);
   const [labelOther, setLabelOther] = useState('');
   const [openingPath, setOpeningPath] = useState<string | null>(null);
@@ -68,7 +69,14 @@ const PurchaseCommentThread: React.FC<Props> = ({
   const effectiveLabel = labelChoice === 'その他' ? labelOther.trim() : labelChoice;
 
   const files = comments.filter(c => c.file_path);
-  const canSend = !!body.trim() || !!filePath;
+  const canSend = !!body.trim() || pendingFiles.length > 0;
+
+  // アップロード完了 → その時点の名札を付けて送信待ちに積む。
+  // 積んだらアップローダーは空に戻る＝続けて2件目を添付できる
+  const handleUploaded = (path: string | null) => {
+    if (!path) return;
+    setPendingFiles(prev => [...prev, { path, label: effectiveLabel || '共有ファイル' }]);
+  };
 
   const openFile = async (path: string) => {
     setOpeningPath(path); setError('');
@@ -81,12 +89,12 @@ const PurchaseCommentThread: React.FC<Props> = ({
     setSaving(true); setError('');
     const res = await postPurchaseComment({
       requestId, body, authorId: currentUserId, authorName: currentUserName, itemName,
-      filePath, fileLabel: effectiveLabel,
+      files: pendingFiles,
     });
     setSaving(false);
     if (!res.ok) { setError(res.error ?? '送信に失敗しました'); return; }
     setBody('');
-    setFilePath(null);
+    setPendingFiles([]);
     setLabelChoice(FILE_LABELS[0]);
     setLabelOther('');
     onPosted();
@@ -105,10 +113,12 @@ const PurchaseCommentThread: React.FC<Props> = ({
           background: isDark ? '#2c3e50' : '#e8f4fd',
           color: isDark ? '#fff' : '#1565c0', fontSize: 12.5, fontWeight: 'bold',
         }}>
-        💬 質問する
+        {/* 「質問する」だけだと、ファイルを共有したい人がここが入口だと気づけない
+            （実際に「どこで共有するのか」と迷われた）。役割を両方名乗る */}
+        💬 質問・ファイル共有
         {/* ファイルが付いていることは閉じたままでも分かるようにする。
             開かないと気づけないと、せっかく共有しても見てもらえない */}
-        {files.length > 0 && `　📎 共有ファイル ${files.length}件`}
+        {files.length > 0 && `　📎 ${files.length}件`}
       </button>
     );
   }
@@ -117,7 +127,7 @@ const PurchaseCommentThread: React.FC<Props> = ({
     <div style={{ marginTop: 8, background: innerBg, border: `1px solid ${border}`, borderRadius: 8, padding: '10px 12px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
         <span style={{ fontSize: 12.5, fontWeight: 'bold', color: text }}>
-          💬 質問・回答{comments.length > 0 ? `（${comments.length}件）` : ''}
+          💬 質問・ファイル共有{comments.length > 0 ? `（${comments.length}件）` : ''}
         </span>
         {waiting && (
           <span style={{ fontSize: 11, fontWeight: 'bold', color: '#fff', background: '#e24b4a', borderRadius: 10, padding: '2px 8px' }}>
@@ -202,8 +212,29 @@ const PurchaseCommentThread: React.FC<Props> = ({
           border: `1px solid ${border}`, background: cardBg, color: text, fontSize: 13, resize: 'vertical',
         }} />
 
-      {/* ファイルの添付。承認済みでも使える（承認内容は変わらず、追記として残るだけ） */}
+      {/* ファイルの添付（複数可）。承認済みでも使える（承認内容は変わらず、追記として残るだけ）。
+          アップロードが終わると下の「送信待ち」一覧に積まれ、続けて次のファイルを添付できる */}
       <div style={{ marginTop: 6 }}>
+        {pendingFiles.length > 0 && (
+          <div style={{ marginBottom: 6 }}>
+            {pendingFiles.map((f, i) => (
+              <div key={`${f.path}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}>
+                <span style={{
+                  fontSize: 11, fontWeight: 'bold', borderRadius: 4, padding: '2px 8px',
+                  background: isDark ? '#2c3e50' : '#e8f4fd', color: isDark ? '#fff' : '#1565c0',
+                  border: `1px solid ${accentBorder}`,
+                }}>
+                  {f.label}
+                </span>
+                <span style={{ fontSize: 12, color: subText }}>添付済み（{i + 1}件目）</span>
+                <button type="button" onClick={() => setPendingFiles(prev => prev.filter((_, j) => j !== i))}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: subText }}>
+                  ✕ 外す
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
           <span style={{ fontSize: 11.5, color: subText }}>ファイルの種類</span>
           <select value={labelChoice} onChange={e => setLabelChoice(e.target.value)}
@@ -222,13 +253,20 @@ const PurchaseCommentThread: React.FC<Props> = ({
               }} />
           )}
         </div>
+        {/* value は常に null＝アップロード完了と同時に handleUploaded が送信待ちへ移し、
+            アップローダー自体は空に戻る（2件目をすぐ添付できる） */}
         <QuoteFileUploader
           isDarkMode={isDark}
           userId={currentUserId}
           draftId={requestId}
-          value={filePath}
-          onChange={setFilePath}
+          value={null}
+          onChange={handleUploaded}
         />
+        {pendingFiles.length > 0 && (
+          <p style={{ margin: '4px 0 0', fontSize: 11, color: subText }}>
+            もう1件添付する場合は、種類を選んで続けてアップロードしてください
+          </p>
+        )}
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
@@ -238,7 +276,10 @@ const PurchaseCommentThread: React.FC<Props> = ({
             background: canSend ? '#1976d2' : (isDark ? '#495057' : '#ced4da'),
             color: '#fff', fontSize: 12.5, fontWeight: 'bold',
           }}>
-          {saving ? '送信中...' : (filePath ? `${effectiveLabel || '共有ファイル'}を共有する` : '送信')}
+          {saving ? '送信中...'
+            : pendingFiles.length === 0 ? '送信'
+            : pendingFiles.length === 1 ? `${pendingFiles[0].label}を共有する`
+            : `ファイル${pendingFiles.length}件を共有する`}
         </button>
         <span style={{ fontSize: 11, color: subText }}>
           送信すると取り消せません。申請した人と承認した人に通知が届きます

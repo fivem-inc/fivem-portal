@@ -52,24 +52,31 @@ export async function postPurchaseComment(params: {
   authorId: string;
   authorName: string;
   itemName: string;
-  filePath?: string | null;    // 共有ファイル（任意）
-  fileLabel?: string | null;   // 種類の名札（任意）
+  // 共有ファイル（任意・複数可）。DBは1行=1ファイルなので、
+  // 2件以上は行を分けて保存する（本文は先頭の行にだけ持たせる）
+  files?: { path: string; label: string | null }[];
 }): Promise<{ ok: boolean; error?: string }> {
   const body = params.body.trim();
-  const filePath = params.filePath ?? null;
-  const fileLabel = filePath ? (params.fileLabel?.trim() || '共有ファイル') : null;
+  const files = (params.files ?? []).map(f => ({
+    path: f.path,
+    label: f.label?.trim() || '共有ファイル',
+  }));
   // ファイルだけの共有も許す（「確定見積書を貼るだけ」という使い方があるため）
-  if (!body && !filePath) {
+  if (!body && files.length === 0) {
     return { ok: false, error: '内容を入力するか、ファイルを添付してください' };
   }
 
-  const { error } = await supabase.from('purchase_request_comments').insert({
-    purchase_request_id: params.requestId,
-    author_id: params.authorId,
-    body,
-    file_path: filePath,
-    file_label: fileLabel,
-  });
+  const rows = files.length === 0
+    ? [{ body, file_path: null as string | null, file_label: null as string | null }]
+    : files.map((f, i) => ({ body: i === 0 ? body : '', file_path: f.path, file_label: f.label }));
+
+  const { error } = await supabase.from('purchase_request_comments').insert(
+    rows.map(r => ({
+      purchase_request_id: params.requestId,
+      author_id: params.authorId,
+      ...r,
+    })),
+  );
   if (error) return { ok: false, error: error.message };
 
   // 通知は投稿の成否と切り離す（通知が失敗しても投稿は成立している）
@@ -115,8 +122,8 @@ export async function postPurchaseComment(params: {
     // 2行目：ファイルがあれば何が共有されたかを出す（本文だけなら従来どおり冒頭40字）。
     // 1行目（tpl.template）は変えない。App.tsx の分岐は1行目の文言を見ており、
     // 「お知らせ」「リマインド」等の語が入ると連絡板の通知と誤判定されるため。
-    const sub = filePath
-      ? `${fileLabel}が共有されました${body ? `：${body.slice(0, 30)}` : ''}`
+    const sub = files.length > 0
+      ? `${files[0].label}${files.length > 1 ? ` 他${files.length - 1}件` : ''}が共有されました${body ? `：${body.slice(0, 30)}` : ''}`
       : (tpl.subject || body.slice(0, 40));
 
     await Promise.all([...targets].map(id =>
