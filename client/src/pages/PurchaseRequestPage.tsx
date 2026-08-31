@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { usePurchasePendingCount } from '../hooks/usePurchasePendingCount';
+import { usePurchaseUnconfirmedCount } from '../hooks/usePurchaseUnconfirmedCount';
 import ReimbursementForm from '../components/ReimbursementForm';
 import PurchaseRequestForm, { type ResubmitRecord } from '../components/PurchaseRequestForm';
 import PurchaseApprovals from '../components/PurchaseApprovals';
@@ -509,8 +510,14 @@ const PurchaseRequestPage: React.FC<PurchaseRequestPageProps> = ({ user, roleTit
   const [resubmitRecord, setResubmitRecord] = useState<ResubmitRecord | null>(null);
   const isManagerPlus = isAdmin || ['マネージャー', '社長'].includes(roleTitle);
   const canApprovePurchase = isAdmin || ['リーダー', 'マネージャー', '社長'].includes(roleTitle);
-  // 「✅ 承認」タブに出す件数バッジ（ナビバーの赤バッジと同じ数え方・同じ共通フック）
+  // 「✅ 承認」タブに出す件数バッジ（自分の承認・意見を待っている件数）
   const { pendingCount: purchasePending } = usePurchasePendingCount(user.id, canApprovePurchase);
+  // 「📋 履歴」タブに出す件数バッジ（まだ確認していないやりとりを持つ申請の件数）。
+  // 🚨 canApprovePurchase（リーダー以上）で絞らない。未確認はいちばん申請者本人
+  //    （一般社員・パート）に見せたいもので、承認の権限で絞ると
+  //    共有ファイルが届いた本人の数字だけ常に0になる。
+  //    このページを開けている時点で対象者なので true を渡す（件数の絞り込みはサーバー側）
+  const { unconfirmedCount: purchaseUnconfirmed } = usePurchaseUnconfirmedCount(user.id, true);
 
   const text = isDarkMode ? '#eeeeee' : '#222222';
 
@@ -518,7 +525,7 @@ const PurchaseRequestPage: React.FC<PurchaseRequestPageProps> = ({ user, roleTit
   const tabDefs: PageTabDef<Tab>[] = [
     { key: 'reimbursement', label: '💰 精算' },
     { key: 'request', label: '📝 申請' },
-    { key: 'history', label: '📋 履歴' },
+    { key: 'history', label: '📋 履歴', badge: purchaseUnconfirmed },
     ...(canApprovePurchase ? [{ key: 'approvals' as Tab, label: '✅ 承認', badge: purchasePending }] : []),
   ];
 

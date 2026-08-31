@@ -137,6 +137,7 @@ const PurchaseCommentThread: React.FC<Props> = ({
     //    質問に答えた直後に自分の画面へ赤が残り、わざわざ「✓ 確認した」を
     //    押さないと消えない（答えた人に催促が出る形になってしまう）。
     if (newest) await markPurchaseCommentsSeen(requestId, currentUserId, newest.created_at);
+    window.dispatchEvent(new CustomEvent('purchase-unconfirmed-changed'));
     onPosted();
   };
 
@@ -175,6 +176,9 @@ const PurchaseCommentThread: React.FC<Props> = ({
     setAcking(false);
     if (!res.ok) { setError(res.error ?? '記録できませんでした'); return; }
     await loadReads();
+    // 🚨 ナビと履歴タブのバッジをその場で数え直す。これが無いと押しても最大30秒
+    //    数字が残り、「押しても効かない」と受け取られる（承認まわりと同じ作法）
+    window.dispatchEvent(new CustomEvent('purchase-unconfirmed-changed'));
   };
 
   // 共有を見てその場で聞けるようにする。種別を「質問」に倒して本文欄へ運ぶ

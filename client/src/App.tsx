@@ -49,6 +49,7 @@ import { useAdminSetupAlerts } from './hooks/useAdminSetupAlerts';
 import { useAppUpdate } from './hooks/useAppUpdate';
 import { useLeavePendingCount } from './hooks/useLeavePendingCount';
 import { usePurchasePendingCount } from './hooks/usePurchasePendingCount';
+import { usePurchaseUnconfirmedCount } from './hooks/usePurchaseUnconfirmedCount';
 import { useSafetyPendingCount, safetyTone } from './hooks/useSafetyPendingCount';
 import { useSafetyQueueFlush } from './hooks/useSafetyQueueFlush';
 import { formatSnapshotAge } from './lib/safetyStorage';
@@ -730,6 +731,12 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   const safetyPending = isPub('safety_check') ? safetyPendingRaw : 0;
   const boardUnread = boardUnreadRaw + safetyPending; // 連絡板の未読バッジに安否確認の未回答分も合算
   const { pendingCount: purchasePending } = usePurchasePendingCount(userId, canPurchaseRequest);
+  // 未確認のやりとり。🚨 合算するのはナビの赤バッジを描くところだけ（下の purchaseNavBadge）。
+  //    usePurchasePendingCount に足してはいけない。あれはホームの黄色バナー
+  //    「備品購入申請の確認依頼が N件 あります」(:1633) と承認タブのバッジでも共用しており、
+  //    足すと承認0件でもバナーが出て、飛び先の承認タブは空のまま消せなくなる
+  const { unconfirmedCount: purchaseUnconfirmed } = usePurchaseUnconfirmedCount(userId, canPurchaseRequest);
+  const purchaseNavBadge = purchasePending + purchaseUnconfirmed;
   const { pendingCount: leavePending } = useLeavePendingCount(userId, roleTitle, isAdmin);
   const { pendingCount: shiftPending } = useShiftPendingCount(userId, roleTitle, isAdmin, canShiftReport);
   const { pendingCount: overtimePending } = useOvertimePendingCount(userId, canOvertime);
@@ -803,7 +810,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     // isPub の判定材料（featurePublishState等）が非同期で確定してボタン数が変わった時にも再計算する。
     // 各バッジの件数が増減したときも隠れている合計を数え直す
   }, [updateScrollFade, isMobile, featurePublishState, isAdmin, canLeave, canShiftReport, canCalendar,
-      leavePending, shiftPending, overtimeBadge, purchasePending, boardUnread]);
+      leavePending, shiftPending, overtimeBadge, purchaseNavBadge, boardUnread]);
 
   const btnStyle = (active: boolean, activeColor = '#007bff') => isMobile ? ({
     width: 44, height: 44, borderRadius: 8, border: 'none', cursor: 'pointer',
@@ -907,14 +914,16 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
               )}
             </div>
           )}
+          {/* 備品精算。ナビの数字＝「✅ 承認」タブの件数＋「📋 履歴」タブの未確認件数。
+              開けばどちらの用事か分かるよう、タブ側にも内訳を出している */}
           {canPurchaseRequest && isPub('purchase_request') && (
-            <div data-nav-badge={purchasePending} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
+            <div data-nav-badge={purchaseNavBadge} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
               <button onClick={() => navTo('/purchase')} style={btnStyle(location.pathname === '/purchase', '#17a2b8')}>
                 {isMobile ? <><span style={{ fontSize: 20 }}>📦</span>{navLabel('備品精算')}</> : '📦 備品精算'}
               </button>
-              {purchasePending > 0 && (
+              {purchaseNavBadge > 0 && (
                 <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
-                  {purchasePending > 99 ? '99+' : purchasePending}
+                  {purchaseNavBadge > 99 ? '99+' : purchaseNavBadge}
                 </span>
               )}
             </div>
