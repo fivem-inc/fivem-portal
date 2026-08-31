@@ -202,6 +202,34 @@ export const customerName = (c: Customer | null | undefined): string => {
   return (c.full_name ?? '').trim() || c.display_name;
 };
 
+/** ひらがなをカタカナに直す（一覧の表示用。ふりがなはひらがなで持っている） */
+export const toKatakana = (s: string): string =>
+  (s || '').replace(/[ぁ-ゖ]/g, ch => String.fromCharCode(ch.charCodeAt(0) + 0x60));
+
+/**
+ * 漢字のフルネーム（「田中 太郎」）。基本設定の一覧で使う。
+ * 予約表は customerName（「田中 たろう」）のほうを使う。
+ */
+export const customerFullName = (c: Customer | null | undefined): string => {
+  if (!c) return '';
+  const last = (c.last_name ?? '').trim();
+  const first = (c.first_name ?? '').trim();
+  if (last && first) return `${last} ${first}`;
+  return (c.full_name ?? '').trim() || last || c.display_name;
+};
+
+/**
+ * フリガナ（カタカナ）。一覧に出して探しやすくするため（2026-08-31 ユーザー指示）。
+ * 🚨 中はひらがなで持っている。表示のときだけカタカナに直す。
+ *    持ち方を変えると、予約表の「田中 たろう」も直さないといけなくなる。
+ */
+export const customerKana = (c: Customer | null | undefined): string => {
+  if (!c) return '';
+  const last = toKatakana((c.last_kana ?? '').trim());
+  const first = toKatakana((c.first_kana ?? '').trim());
+  return [last, first].filter(Boolean).join(' ');
+};
+
 /** 連絡先。見える範囲は設定（contact_visibility）で決まるので、読めないことがある */
 export interface CustomerContact {
   member_no: string;
@@ -213,11 +241,15 @@ export interface CustomerContact {
   guardian_name: string | null;
 }
 
-/** 連絡先を「固定 / 携帯 / メール」の順に、あるものだけ並べる */
+/**
+ * 連絡先を「固定電話 / 携帯 / メール」の順に、あるものだけ並べる。
+ * 🚨 固定電話には見出しを付けない（2026-08-31 ユーザー指示）。
+ *    番号だけのものが固定、「携帯」と書いてあるものが携帯、と読めればよい。
+ */
 export const contactLines = (k: CustomerContact | null | undefined): string[] => {
   if (!k) return [];
   return [
-    k.phone ? `固定 ${k.phone}` : '',
+    k.phone ?? '',
     k.mobile ? `携帯 ${k.mobile}` : '',
     k.email ?? '',
     k.guardian_name ? `保護者：${k.guardian_name}` : '',

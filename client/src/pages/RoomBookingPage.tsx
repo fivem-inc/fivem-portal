@@ -8,7 +8,7 @@ import {
   todayStr, toDate, hhmm, minutesOf, addMinutes, formatDateLabel, shiftDate,
   scholaUrl, floorBusyNow, nextStart, usingUntil, assignColumns, categoryLabel,
   isWeekend, RANGE_DAYS, localDate, placeLabel, openSlotColor, durationLabel, FALLBACK_DURATIONS, gradeOrAge, defaultMinutesOf,
-  customerName, contactLines,
+  customerName, customerFullName, customerKana, contactLines, toHiragana,
   fiscalYear, fiscalYearEnd, fiscalYearLabel, RENEWAL_NOTICE_DAYS, daysUntil,
   type Campus, type Floor, type Booking, type ConflictInfo,
   type Staff, type LessonCategory, type Recurrence, type PurposeDuration,
@@ -2760,12 +2760,16 @@ const CustomerSettings: React.FC<{
   const shown = list.filter(c => {
     if (!q.trim()) return true;
     const k = q.trim().toLowerCase();
-    // ふりがなでも探せるようにする（漢字が読めなくても引ける）
+    // ふりがなでも探せるようにする（漢字が読めなくても引ける）。
+    // 🚨 一覧にはカタカナで出しているので、カタカナで打つ人がいる。
+    //    中はひらがなで持っているため、打った文字をひらがなに直してから比べる
+    const kh = toHiragana(k);
     return c.member_no.toLowerCase().includes(k)
       || c.display_name.toLowerCase().includes(k)
       || (c.full_name ?? '').toLowerCase().includes(k)
       || `${c.last_name ?? ''}${c.first_name ?? ''}`.toLowerCase().includes(k)
-      || `${c.last_kana ?? ''}${c.first_kana ?? ''}`.toLowerCase().includes(k);
+      || `${c.last_kana ?? ''}${c.first_kana ?? ''}`.includes(kh)
+      || `${c.last_kana ?? ''} ${c.first_kana ?? ''}`.includes(kh);
   });
 
   return (
@@ -2798,13 +2802,16 @@ const CustomerSettings: React.FC<{
             return (
               <div key={c.member_no} style={{ borderTop: `1px solid ${lineSoft}`, padding: '9px 0' }}>
                 <div style={{ display: 'flex', gap: 9, alignItems: 'center', flexWrap: 'wrap' }}>
-                  {/* 姓は漢字・名はひらがなで出す（2026-08-31 ユーザー指示） */}
+                  {/* 一覧はフルネーム（漢字）＋カタカナのふりがな（2026-08-31 ユーザー指示）。
+                      予約表のほうは「田中 たろう」のまま。用途が違うので出し分ける */}
                   <b style={{ fontSize: 14, color: c.active ? text : textMid }}>
-                    {customerName(c)}{!c.active && '（退会）'}
+                    {customerFullName(c)}{!c.active && '（退会）'}
                   </b>
+                  {customerKana(c) && (
+                    <span style={{ fontSize: 12.5, color: textMid }}>{customerKana(c)}</span>
+                  )}
                   <span style={{ fontSize: 12.5, color: textMid }}>
                     {c.member_no}
-                    {c.full_name && ` / ${c.full_name}`}
                     {c.birth_date && ` / ${gradeOrAge(c.birth_date, today)}`}
                   </span>
                   <button disabled={busy} onClick={() => setActive(c, !c.active)}
