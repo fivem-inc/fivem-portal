@@ -38,6 +38,13 @@ interface Props {
   user: AuthUser;
   roleTitle: string;
   isAdmin: boolean;
+  /**
+   * 雇用形態。useAuth が返す「プレビュー込み」の値。
+   * 🚨 自分で profiles を読み直さないこと。役職プレビュー（👁️ 確認）で
+   *    パートに切り替えても実際の値のままになり、**プレビューが効かない**。
+   *    2026-08-31 に実際そうなっていた（パートで見てもスタッフ設定が触れた）。
+   */
+  employmentType: string;
 }
 
 const PX_PER_MIN = 1.1;                       // タイムラインの縦の縮尺
@@ -86,7 +93,7 @@ interface Lane {
 type FormMode = { kind: 'create'; floorId: string; date: string; startTime: string }
               | { kind: 'edit'; booking: Booking };
 
-const RoomBookingPage: React.FC<Props> = ({ user }) => {
+const RoomBookingPage: React.FC<Props> = ({ user, isAdmin: admin, employmentType }) => {
   const isDark = useDarkMode();
   const [campuses, setCampuses] = useState<Campus[]>([]);
   const [floors, setFloors] = useState<Floor[]>([]);
@@ -104,11 +111,9 @@ const RoomBookingPage: React.FC<Props> = ({ user }) => {
   const [loadError, setLoadError] = useState('');
   const [form, setForm] = useState<FormMode | null>(null);
   const [detail, setDetail] = useState<Booking | null>(null);
-  const [admin, setAdmin] = useState(false);
   const [settings, setSettings] = useState(false);
   // 年度更新は「社員まで」（パートは不可・2026-08-29 ユーザー確定）。
   // ⚙️設定（マスタ管理＝管理者）とは別の入口にする。仕事の性質が違うため
-  const [canRenew, setCanRenew] = useState(false);
   const [renewal, setRenewal] = useState(false);
   // 年度末が近いときだけ「まだ引き継いでいない件数」を数えて案内を出す
   const [renewPending, setRenewPending] = useState(0);
@@ -208,23 +213,21 @@ const RoomBookingPage: React.FC<Props> = ({ user }) => {
         //    知らない値をそのまま setView すると、どの表示にも当てはまらず空画面になる
         if (savedView === 'place' || savedView === 'staff' || savedView === 'participant') setView(savedView);
       }
-      // 管理者だけ「場所・スタッフの設定」を開ける
-      const { data: me } = await supabase.auth.getUser();
-      setAdmin(((me.user?.app_metadata as { role?: string } | undefined)?.role) === 'admin');
-      // 年度更新は社員まで（パートは不可）。残業まわりと同じ判定のしかたに合わせている。
-      // 🚨 取れなかったときは出さない。「出ているのに押すと断られる」を避けるため
-      //    （開き直せば直る）。最終的な可否はサーバー側の関数でも見ている
-      let isStaffMember = false;
-      if (me.user?.id) {
-        const { data: prof } = await supabase
-          .from('profiles').select('employment_type').eq('id', me.user.id).maybeSingle();
-        isStaffMember = !!prof && (prof.employment_type ?? '') !== 'パート';
-      }
-      setCanRenew(isStaffMember);
-      if (isStaffMember) await loadRenewPending();
       setLoading(false);
     })();
-  }, [loadMasters, loadRenewPending]);
+  }, [loadMasters]);
+
+  // 基本設定を開けるのは社員まで（パートは不可）。
+  // 🚨 employment_type を自分で読み直さないこと。役職プレビュー（👁️ 確認）で
+  //    パートに切り替えても実際の値のままになり、プレビューが効かない。
+  //    useAuth が返す「プレビュー込み」の値をそのまま使う。
+  // 🚨 これは画面に出すかどうかだけの話。実際に書けるかどうかは
+  //    データベース側（room_is_staff）でも見ているので、隠しただけにはならない。
+  const canRenew = employmentType !== '' && employmentType !== 'パート';
+
+  useEffect(() => {
+    if (canRenew) loadRenewPending();
+  }, [canRenew, loadRenewPending]);
 
   const allCampus = campusId === ALL_CAMPUS;
   const campus = useMemo(() => campuses.find(c => c.id === campusId) ?? null, [campuses, campusId]);

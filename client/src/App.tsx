@@ -2176,13 +2176,13 @@ const SafetyCheckPageWrapper: React.FC = () => {
 // 備品精算ページ（/purchase）
 // 場所（フロア）の予約表。ログインしていれば全スタッフが使える（権限で絞らない）
 const RoomBookingPageWrapper: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canFaq, canFaqNav, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, employmentType, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canFaq, canFaqNav, handleLogout, loading } = useAuth();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   return (
     <>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
-        <RoomBookingPage user={user} roleTitle={roleTitle} isAdmin={isAdmin} />
+        <RoomBookingPage user={user} roleTitle={roleTitle} isAdmin={isAdmin} employmentType={employmentType} />
       </Suspense>
     </>
   );
