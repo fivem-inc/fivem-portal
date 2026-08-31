@@ -87,6 +87,8 @@ export interface Booking {
   customer_label: string | null;
   memo: string | null;
   exclusive: boolean;
+  /** この枠が「固定」か。人ではなく曜日・時間の枠の性質。既定 false */
+  is_fixed: boolean;
   status: 'active' | 'cancelled';
   /** booking = 予約が入っている ／ open = 募集中の枠（先に置いて後から埋める） */
   kind: 'booking' | 'open';
@@ -189,6 +191,11 @@ export interface PurposeDuration {
   purpose: string;
   /** 選べる長さ（分）。空 = ボタンを出さない（任意入力だけ） */
   minutes: number[];
+  /**
+   * 最初に入る長さ（分）。null なら minutes の先頭を使う。
+   * 🚨 並び順と既定は別のこと。プライベートは「25/30/50」と並べつつ既定は30分。
+   */
+  default_minutes: number | null;
   /** 終了時刻を手で入れてよいか。false のときは長さボタンだけで決める */
   allow_free: boolean;
 }
@@ -199,12 +206,24 @@ export interface PurposeDuration {
  *    （本番の値は room_purpose_durations にある）。
  */
 export const FALLBACK_DURATIONS: PurposeDuration[] = [
-  { purpose: 'プライベート', minutes: [25, 30, 50], allow_free: true },
-  { purpose: 'パーソナル',   minutes: [10],         allow_free: false },
-  { purpose: 'レッスン',     minutes: [50],         allow_free: false },
-  { purpose: 'レンタル',     minutes: [60, 120],    allow_free: true },
-  { purpose: 'その他',       minutes: [],           allow_free: true },
+  { purpose: 'プライベート', minutes: [25, 30, 50], default_minutes: 30,   allow_free: true },
+  { purpose: 'パーソナル',   minutes: [10],         default_minutes: null, allow_free: false },
+  { purpose: 'レッスン',     minutes: [50],         default_minutes: null, allow_free: false },
+  { purpose: 'レンタル',     minutes: [60, 120],    default_minutes: null, allow_free: true },
+  { purpose: 'その他',       minutes: [],           default_minutes: null, allow_free: true },
 ];
+
+/**
+ * 最初に入る長さ。設定が無ければ一覧の先頭。どちらも無ければ null。
+ *
+ * 🚨 一覧に無い値が既定になっていたら使わない。ボタンが選択状態にならず
+ *    「押しても何も変わらない」ように見えてしまう。
+ */
+export const defaultMinutesOf = (d: PurposeDuration | null | undefined): number | null => {
+  if (!d) return null;
+  if (d.default_minutes != null && d.minutes.includes(d.default_minutes)) return d.default_minutes;
+  return d.minutes[0] ?? null;
+};
 
 /** 分を「1時間30分」のように読める形にする（長さボタンの文字） */
 export const durationLabel = (min: number): string => {
@@ -229,6 +248,12 @@ export interface Recurrence {
   customer_label: string | null;
   memo: string | null;
   exclusive: boolean;
+  /**
+   * この曜日・この時間の枠が「固定」か（2026-08-31 ユーザー確定）。
+   * 🚨 人ではなく**枠**の性質。来週も入っているかの判断材料になり、
+   *    パーソナルは固定かどうかで金額が変わる。未設定は false（固定でない）。
+   */
+  is_fixed: boolean;
   staff_id: string | null;
   kind: 'booking' | 'open';
   seats: number;

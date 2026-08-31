@@ -7,7 +7,7 @@ import {
   PURPOSES, purposeColor, VIEW_START_HOUR, VIEW_END_HOUR, DURATION_PRESETS,
   todayStr, toDate, hhmm, minutesOf, addMinutes, formatDateLabel, shiftDate,
   scholaUrl, floorBusyNow, nextStart, usingUntil, assignColumns, categoryLabel,
-  isWeekend, RANGE_DAYS, localDate, placeLabel, openSlotColor, durationLabel, FALLBACK_DURATIONS, gradeOf,
+  isWeekend, RANGE_DAYS, localDate, placeLabel, openSlotColor, durationLabel, FALLBACK_DURATIONS, gradeOf, defaultMinutesOf,
   fiscalYear, fiscalYearEnd, fiscalYearLabel, RENEWAL_NOTICE_DAYS, daysUntil,
   type Campus, type Floor, type Booking, type ConflictInfo,
   type Staff, type LessonCategory, type Recurrence, type PurposeDuration,
@@ -743,7 +743,7 @@ const TimelineView: React.FC<{
                         opacity: off ? .75 : 1,
                       }}>
                       <b style={{ display: 'block', fontSize: 11, fontVariantNumeric: 'tabular-nums', textDecoration: off ? 'line-through' : 'none' }}>
-                        {open && '🟡'}{b.exclusive && !off && !open && '🔒'}{hhmm(b.starts_at)}-{hhmm(b.ends_at)}
+                        {open && '🟡'}{b.exclusive && !off && !open && '🔒'}{b.is_fixed && '【固定】'}{hhmm(b.starts_at)}-{hhmm(b.ends_at)}
                       </b>
                       {/* 担当別・参加者別では「どこの場所か」が分からないと使えないので場所を出す */}
                       <span style={{ fontSize: 10.5, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -867,7 +867,7 @@ const RangeList: React.FC<{
                     fontWeight: 700, fontSize: 13.5, fontVariantNumeric: 'tabular-nums',
                     minWidth: 96, flexShrink: 0, textDecoration: off ? 'line-through' : 'none',
                   }}>
-                    {open && '🟡'}{b.exclusive && !off && !open && '🔒'}{hhmm(b.starts_at)}〜{hhmm(b.ends_at)}
+                    {open && '🟡'}{b.exclusive && !off && !open && '🔒'}{b.is_fixed && '【固定】'}{hhmm(b.starts_at)}〜{hhmm(b.ends_at)}
                   </span>
                   <span style={{
                     background: bgc, color: fg, borderRadius: 999, padding: '1px 9px',
@@ -986,7 +986,7 @@ const MobileView: React.FC<{
               style={{ display: 'block', width: '100%', textAlign: 'left', background: 'transparent', border: 'none', borderTop: `1px solid ${lineSoft}`, padding: '11px 12px', cursor: 'pointer', color: off ? textSoft : text }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span style={{ fontWeight: 700, fontSize: 14, fontVariantNumeric: 'tabular-nums', textDecoration: off ? 'line-through' : 'none' }}>
-                  {open && '🟡'}{b.exclusive && !off && !open && '🔒'}{hhmm(b.starts_at)}〜{hhmm(b.ends_at)}
+                  {open && '🟡'}{b.exclusive && !off && !open && '🔒'}{b.is_fixed && '【固定】'}{hhmm(b.starts_at)}〜{hhmm(b.ends_at)}
                 </span>
                 <span style={{
                   background: bgc, color: fg, borderRadius: 999, padding: '1px 9px', fontSize: 11, fontWeight: 700,
@@ -1035,13 +1035,16 @@ const BookingForm: React.FC<{
   // 🚨 終了の初期値も用途の長さに合わせる。ここを固定の30分にしていたため、
   //    レッスン（50分固定・終了は手で直せない）を開いた直後に 30分 と出て、
   //    ボタンを押すまで矛盾したままだった（2026-08-31 実機確認で発見）
-  const initialPurpose = editing ? base!.purpose : 'レッスン';
+  // 既定は「プライベート」（2026-08-31 ユーザー確定）。いちばん多い使い方のため
+  const initialPurpose = editing ? base!.purpose : 'プライベート';
   const initialLength =
-    purposeDurations.find(d => d.purpose === initialPurpose)?.minutes[0] ?? 30;
+    defaultMinutesOf(purposeDurations.find(d => d.purpose === initialPurpose)) ?? 30;
   const [endTime, setEndTime] = useState(
     editing ? hhmm(base!.ends_at) : addMinutes(mode.startTime, initialLength));
   const [purpose, setPurpose] = useState<string>(initialPurpose);
-  const [bookerName, setBookerName] = useState(editing ? base!.booker_name : (user.email?.split('@')[0] ?? ''));
+  // 「予約する人」は画面に出さず、ログインした人から自動で決める。
+  // 🚨 空のままだと保存できない（DBで必須）ので、必ず何か入る形にしておく
+  const bookerName = (editing ? base!.booker_name : (user.email?.split('@')[0] ?? '')) || 'スタッフ';
   const [memberNo, setMemberNo] = useState(editing ? (base!.member_no ?? '') : '');
   const [customerLabel, setCustomerLabel] = useState(editing ? (base!.customer_label ?? '') : '');
   // 会員番号から引いたお客様。一般の方は登録が無いので null のまま
@@ -1049,6 +1052,8 @@ const BookingForm: React.FC<{
   const [lookingUp, setLookingUp] = useState(false);
   const [memo, setMemo] = useState(editing ? (base!.memo ?? '') : '');
   const [exclusive, setExclusive] = useState(editing ? base!.exclusive : false);
+  // 固定の枠か（人ではなく曜日・時間の枠の性質）。既定は固定でない
+  const [isFixed, setIsFixed] = useState(editing ? base!.is_fixed : false);
   const [staffId, setStaffId] = useState<string>(editing ? (base!.staff_id ?? '') : '');
   // 募集中の枠（先に置いて後から埋める）かどうかと、その定員
   const [kind, setKind] = useState<'booking' | 'open'>(editing ? base!.kind : 'booking');
@@ -1147,7 +1152,6 @@ const BookingForm: React.FC<{
     if (!s) { setError('開始の時刻を正しく入れてください（例：10 と 05）'); return; }
     if (!e) { setError('終了の時刻を正しく入れてください'); return; }
     if (e <= s) { setError('終了は開始より後にしてください'); return; }
-    if (!bookerName.trim()) { setError('予約する人の名前を入れてください'); return; }
 
     setSaving(true);
     if (editing) {
@@ -1162,6 +1166,11 @@ const BookingForm: React.FC<{
       const row = Array.isArray(data) ? data[0] : data;
       if (err) { setError('保存できませんでした。通信を確認してもう一度お試しください。'); return; }
       if (!row?.ok) { setError(row?.reason ?? '保存できませんでした'); setConflicts((row?.conflicts ?? []) as ConflictInfo[]); return; }
+      // 固定は枠の性質なので、変更のときも書き込む。
+      // 🚨 room_update_booking には引数を足さない（中心の関数を触らない方針）
+      if (isFixed !== base!.is_fixed) {
+        await supabase.from('room_bookings').update({ is_fixed: isFixed }).eq('id', base!.id);
+      }
       onSaved('予約を変更しました');
       return;
     }
@@ -1201,6 +1210,7 @@ const BookingForm: React.FC<{
 
     let made = 0;
     const skipped: string[] = [];
+    const createdIds: string[] = [];   // 固定の印を後からまとめて付けるため
     for (const d of dates) {
       const ds = toDate(d, startTime), de = toDate(d, endTime);
       if (!ds || !de) continue;
@@ -1227,6 +1237,15 @@ const BookingForm: React.FC<{
         continue;
       }
       made++;
+      if (row?.booking_id) createdIds.push(row.booking_id as string);
+    }
+    // 固定の枠なら、作った予約にまとめて印を付ける。
+    // 🚨 1件ずつ付けずに1回でまとめる。件数が多いと通信が増えて途中で切れやすい
+    if (isFixed && createdIds.length > 0) {
+      await supabase.from('room_bookings').update({ is_fixed: true }).in('id', createdIds);
+      if (recurrenceId) {
+        await supabase.from('room_recurrences').update({ is_fixed: true }).eq('id', recurrenceId);
+      }
     }
     setSaving(false);
     // 🚨 入らなかった回を黙って捨てない。「全部入った」と誤解させないため必ず件数を出す
@@ -1371,12 +1390,12 @@ const BookingForm: React.FC<{
                 <button key={p}
                   onClick={() => {
                     setPurpose(p);
-                    // 長さが決まっている用途に変えたときは、終了時刻もその場で合わせる。
-                    // 終了は手で直せないので、合っていないまま残ると直せなくなる
+                    // 用途を変えたら、その用途の「最初に入る長さ」に合わせる。
+                    // 🚨 長さが決まっている用途（終了を手で直せない）は特に必須。
+                    //    合っていないまま残ると直す手段が無くなる
                     const opt = purposeDurations.find(d => d.purpose === p);
-                    if (opt && !opt.allow_free && opt.minutes.length > 0) {
-                      setEndTime(addMinutes(startTime, opt.minutes[0]));
-                    }
+                    const min = defaultMinutesOf(opt);
+                    if (min != null) setEndTime(addMinutes(startTime, min));
                   }}
                   style={{
                     padding: '6px 13px', borderRadius: 999, fontSize: 13, cursor: 'pointer',
@@ -1407,10 +1426,10 @@ const BookingForm: React.FC<{
           )}
         </div>
 
-        <div>
-          <label style={label}>予約する人</label>
-          <input value={bookerName} onChange={e => setBookerName(e.target.value)} style={input} placeholder="山田" />
-        </div>
+        {/* 「予約する人」は画面に出さない（2026-08-31 ユーザー指示）。
+            🚨 値そのものは残す。ログインした人の名前を自動で入れて保存し、
+               予約の詳細では「予約した人」として今までどおり見られる。
+               誰が入れたか分からなくなると、間違いがあったときに聞けない */}
 
         {/* 募集枠のときは定員（何名まで受けるか）を選ぶ。基本1名、2名同時希望のときだけ増やす */}
         {kind === 'open' ? (
@@ -1477,6 +1496,21 @@ const BookingForm: React.FC<{
             <b>🔒 貸切にする</b>
             <span style={{ display: 'block', fontSize: 12, color: textMid, marginTop: 2 }}>
               この時間は、他の人が予約を入れられなくなります
+            </span>
+          </span>
+        </label>
+
+        {/* 固定枠。
+            🚨 人ではなく「曜日・時間の枠」の性質（2026-08-31 ユーザー明言）。
+               来週も入っているかの判断材料になり、パーソナルは金額が変わるので
+               見て分かることが大事。入れられるかどうかの判定には関係しない */}
+        <label style={{ display: 'flex', gap: 9, alignItems: 'flex-start', cursor: 'pointer', background: isDark ? '#35354e' : '#f0f2f5', borderRadius: 8, padding: '10px 12px' }}>
+          <input type="checkbox" checked={isFixed} onChange={e => setIsFixed(e.target.checked)} style={{ width: 18, height: 18, marginTop: 1, flexShrink: 0 }} />
+          <span style={{ fontSize: 13.5 }}>
+            <b>固定の枠にする</b>
+            <span style={{ display: 'block', fontSize: 12, color: textMid, marginTop: 2 }}>
+              毎週この曜日・この時間に入っている枠のことです。
+              パーソナルは固定かどうかで金額が変わります
             </span>
           </span>
         </label>
@@ -1731,6 +1765,7 @@ const BookingDetail: React.FC<{
             </span>
           </>
         ))}
+        {b.is_fixed && row('固定の枠', 'はい（毎週この曜日・この時間の枠）')}
         {row('予約した人', b.booker_name)}
         {b.customer_label && row('お客様', b.customer_label)}
         {b.member_no && row('会員番号', (
@@ -1929,11 +1964,15 @@ const DurationSettings: React.FC<{
   onDone: (msg: string) => Promise<void>;
   isDark: boolean;
 }> = ({ purposeDurations, onDone, isDark }) => {
-  const [draft, setDraft] = useState<Record<string, { text: string; free: boolean }>>(() => {
-    const d: Record<string, { text: string; free: boolean }> = {};
+  const [draft, setDraft] = useState<Record<string, { text: string; free: boolean; def: string }>>(() => {
+    const d: Record<string, { text: string; free: boolean; def: string }> = {};
     for (const p of PURPOSES) {
       const cur = purposeDurations.find(x => x.purpose === p);
-      d[p] = { text: (cur?.minutes ?? []).join('、'), free: cur ? cur.allow_free : true };
+      d[p] = {
+        text: (cur?.minutes ?? []).join('、'),
+        free: cur ? cur.allow_free : true,
+        def: cur?.default_minutes != null ? String(cur.default_minutes) : '',
+      };
     }
     return d;
   });
@@ -1974,14 +2013,20 @@ const DurationSettings: React.FC<{
     }
     setBusy(purpose); setError('');
     const { data: me } = await supabase.auth.getUser();
+    // 🚨 一覧から消えた値が既定に残らないようにする。
+    //    残るとボタンが選択状態にならず「押しても変わらない」ように見える
+    const def = d.def && list.includes(Number(d.def)) ? Number(d.def) : null;
     const { error: err } = await supabase.from('room_purpose_durations')
       .upsert({
-        purpose, minutes: list, allow_free: d.free,
+        purpose, minutes: list, allow_free: d.free, default_minutes: def,
         updated_at: new Date().toISOString(), updated_by: me.user?.id ?? null,
       }, { onConflict: 'purpose' });
     setBusy('');
     if (err) { setError('保存できませんでした。通信を確認してもう一度お試しください。'); return; }
-    setDraft(prev => ({ ...prev, [purpose]: { ...prev[purpose], text: list.join('、') } }));
+    setDraft(prev => ({
+      ...prev,
+      [purpose]: { ...prev[purpose], text: list.join('、'), def: def != null ? String(def) : '' },
+    }));
     await onDone(`${purpose}の長さを変えました`);
   };
 
@@ -2022,6 +2067,17 @@ const DurationSettings: React.FC<{
                     onChange={e => setDraft(prev => ({ ...prev, [p]: { ...prev[p], free: e.target.checked } }))}
                     style={{ width: 17, height: 17 }} />
                   終了時刻を手で入れられる
+                </label>
+                {/* 最初に入る長さ。並び順とは別に決められる
+                    （プライベートは 25/30/50 と並べつつ、既定は30分・ユーザー指示） */}
+                <label style={{ display: 'flex', gap: 5, alignItems: 'center', fontSize: 13 }}>
+                  最初に入る
+                  <select value={d.def}
+                    onChange={e => setDraft(prev => ({ ...prev, [p]: { ...prev[p], def: e.target.value } }))}
+                    style={{ ...input, padding: '5px 7px' }}>
+                    <option value="">先頭（{preview[0] != null ? durationLabel(preview[0]) : 'なし'}）</option>
+                    {preview.map(m => <option key={m} value={m}>{durationLabel(m)}</option>)}
+                  </select>
                 </label>
                 <button onClick={() => save(p)} disabled={busy === p}
                   style={{ padding: '7px 14px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 13.5, fontWeight: 700, cursor: busy === p ? 'wait' : 'pointer' }}>
@@ -2132,7 +2188,7 @@ const BulkBookingPanel: React.FC<{
   const built = useMemo(() => (rows.length
     ? buildBookings(rows, map, {
         floors, campuses, staff, purposeDurations,
-        baseDate: today, defaultPurpose: 'レッスン',
+        baseDate: today, defaultPurpose: 'プライベート',   // 用途の列が無いときの既定。フォームと揃える
       })
     : null), [rows, map, floors, campuses, staff, purposeDurations, today]);
 
@@ -2142,6 +2198,7 @@ const BulkBookingPanel: React.FC<{
     if (!built || built.ok.length === 0 || overLimit) return;
     setRunning(true); setError(''); setProgress(0); setMade(null);
     const ng: { label: string; reason: string }[] = [];
+    const fixedIds: string[] = [];   // 固定の印を後からまとめて付けるため
     let count = 0;
     for (let i = 0; i < built.ok.length; i++) {
       const b = built.ok[i];
@@ -2156,11 +2213,19 @@ const BulkBookingPanel: React.FC<{
         p_memo: b.memo, p_exclusive: false, p_recurrence_id: null,
         p_staff_id: b.staff_id, p_kind: 'booking', p_seats: 1,
       });
-      const row = (Array.isArray(data) ? data[0] : data) as { ok?: boolean; reason?: string } | null;
+      const row = (Array.isArray(data) ? data[0] : data) as
+        { ok?: boolean; reason?: string; booking_id?: string } | null;
       if (err) ng.push({ label, reason: '通信エラー' });
       else if (!row?.ok) ng.push({ label, reason: row?.reason ?? '入れられませんでした' });
-      else count++;
+      else {
+        count++;
+        if (b.is_fixed && row.booking_id) fixedIds.push(row.booking_id);
+      }
       setProgress(i + 1);
+    }
+    // 固定の印はまとめて付ける（1件ずつ書くと通信が増えて途中で切れやすい）
+    if (fixedIds.length > 0) {
+      await supabase.from('room_bookings').update({ is_fixed: true }).in('id', fixedIds);
     }
     setRunning(false); setMade(count); setFailed(ng);
     await onDone(ng.length === 0

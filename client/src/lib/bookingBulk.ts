@@ -7,15 +7,15 @@
 // テキスト貼り付けは Excel からのコピー＝タブ区切りを想定する。
 // カンマ区切りで貼られることもあるので、行の中でタブが1つも無ければカンマで割る。
 
-import { addMinutes, minutesOf, type Floor, type Campus, type Staff, type PurposeDuration } from './roomBooking';
+import { addMinutes, minutesOf, defaultMinutesOf, type Floor, type Campus, type Staff, type PurposeDuration } from './roomBooking';
 
 export type BookingField =
   | 'date' | 'place' | 'start' | 'end' | 'purpose'
-  | 'staff' | 'member_no' | 'customer' | 'memo';
+  | 'staff' | 'member_no' | 'customer' | 'memo' | 'fixed';
 
 export const BOOKING_FIELD_LABEL: Record<BookingField, string> = {
   date: '日付', place: '場所', start: '開始', end: '終了', purpose: '用途',
-  staff: '担当', member_no: '会員番号', customer: 'お客様', memo: 'メモ',
+  staff: '担当', member_no: '会員番号', customer: 'お客様', memo: 'メモ', fixed: '固定',
 };
 
 /** これが無いと1行も作れない */
@@ -31,6 +31,7 @@ const HINTS: Record<BookingField, string[]> = {
   member_no: ['会員番号', '会員no', '会員', 'member'],
   customer:  ['お客様', '顧客', '生徒', '参加者', '氏名', '名前'],
   memo:      ['メモ', '備考', 'note', 'memo'],
+  fixed:     ['固定', 'レギュラー', 'fixed'],
 };
 
 const norm = (s: string): string =>
@@ -164,6 +165,20 @@ export function matchStaff(raw: string, staff: Staff[]): string | null {
   return loose.length === 1 ? loose[0].id : null;
 }
 
+/**
+ * 「固定」列の読み方（2026-08-31 ユーザー確定）。
+ * 〇 ○ ● 固定 レギュラー 1 true はい ○印 などが入っていれば固定。
+ * 🚨 **空欄は固定ではない**。列そのものが無いときも固定ではない。
+ *    「×」「なし」「0」も固定ではないものとして扱う。
+ */
+export function parseFixed(raw: string): boolean {
+  const t = raw.trim().toLowerCase();
+  if (!t) return false;
+  if (['×', 'x', '✕', '✖', 'なし', '無', '0', 'false', 'いいえ', '-', 'ー'].includes(t)) return false;
+  return ['〇', '○', '●', '◯', '✓', '✔', 'o', '固定', 'れぎゅらー', 'レギュラー',
+          '1', 'true', 'はい', 'yes', 'y'].includes(t);
+}
+
 export interface BulkBooking {
   date: string;
   floor_id: string;
@@ -174,6 +189,7 @@ export interface BulkBooking {
   member_no: string;
   customer_label: string;
   memo: string;
+  is_fixed: boolean;
 }
 
 export interface BulkResult {
@@ -234,7 +250,7 @@ export function buildBookings(
     let end = parseBookingTime(rawAt(row, 'end'));
     if (!end) {
       // 終了が空なら、用途ごとの長さから決める
-      const min = opt?.minutes[0];
+      const min = defaultMinutesOf(opt);
       if (!min) {
         ng.push({ line, reason: `終了がありません（用途「${purpose}」は長さが決まっていないので、終了時刻を入れてください）` });
         return;
@@ -267,6 +283,7 @@ export function buildBookings(
     ok.push({
       date, floor_id: floorId, start, end, purpose, staff_id: staffId,
       member_no: at(row, 'member_no'), customer_label: at(row, 'customer'), memo: at(row, 'memo'),
+      is_fixed: parseFixed(at(row, 'fixed')),
     });
   });
 
