@@ -104,6 +104,11 @@ export interface Booking {
    *    だから保存せず、表示のときに毎回引く。
    */
   customer_name?: string;
+  /**
+   * 名前の横に出す学年・年齢（「小3」「大2」「32歳」）。DBの列ではない。
+   * 🚨 その予約の日を基準に出す。学年は年度で変わるため
+   */
+  customer_grade?: string;
   staff_id: string | null;
   created_by: string;
   updated_by: string | null;
@@ -253,9 +258,37 @@ export const gradeLabel = (grade: number | null): string => {
   return '一般';                                       // 高校を出たあと
 };
 
-/** 生年月日から、その日時点の学年表示を出す（'小3' など。生年月日が無ければ空） */
-export const gradeOf = (birthDate: string | null, onDate: string): string =>
-  (birthDate ? gradeLabel(gradeNumber(birthDate, onDate)) : '');
+
+/** その日時点の満年齢。誕生日が来ていなければ1つ引く */
+export const ageOn = (birthDate: string, onDate: string): number | null => {
+  const [by, bm, bd] = birthDate.split('-').map(Number);
+  const [y, m, d] = onDate.split('-').map(Number);
+  if (!by || !bm || !bd || !y) return null;
+  let age = y - by;
+  if (m < bm || (m === bm && d < bd)) age--;
+  return age < 0 ? null : age;
+};
+
+/**
+ * 名前の横に出す「学年、または年齢」（2026-08-31 ユーザー指示）。
+ *   未就園〜高3 … 学年（小3・中1・高2 など）
+ *   大学生の年ごろ … 大1〜大4
+ *   それより上の大人 … 「32歳」のように年齢
+ *
+ * 🚨 大1〜大4 は**生年月日からの推定**でしかない。浪人・専門学校・就職など、
+ *    実際に大学生とは限らない。あくまで目安として出す。
+ * 🚨 学年は年度で変わるので、**その予約の日**を基準に出すこと。
+ *    今日を基準にすると、来年度の予約に今年度の学年が出る。
+ */
+export const gradeOrAge = (birthDate: string | null, onDate: string): string => {
+  if (!birthDate) return '';
+  const g = gradeNumber(birthDate, onDate);
+  if (g === null) return '';
+  if (g <= 12) return gradeLabel(g);          // 未就園 〜 高3
+  if (g <= 16) return `大${g - 12}`;           // 大1〜大4
+  const age = ageOn(birthDate, onDate);
+  return age == null ? '' : `${age}歳`;
+};
 
 /**
  * 用途ごとの「長さ」の選択肢（DBの room_purpose_durations）。

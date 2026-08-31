@@ -7,7 +7,7 @@ import {
   PURPOSES, purposeColor, VIEW_START_HOUR, VIEW_END_HOUR, DURATION_PRESETS,
   todayStr, toDate, hhmm, minutesOf, addMinutes, formatDateLabel, shiftDate,
   scholaUrl, floorBusyNow, nextStart, usingUntil, assignColumns, categoryLabel,
-  isWeekend, RANGE_DAYS, localDate, placeLabel, openSlotColor, durationLabel, FALLBACK_DURATIONS, gradeOf, defaultMinutesOf,
+  isWeekend, RANGE_DAYS, localDate, placeLabel, openSlotColor, durationLabel, FALLBACK_DURATIONS, gradeOrAge, defaultMinutesOf,
   customerName, contactLines,
   fiscalYear, fiscalYearEnd, fiscalYearLabel, RENEWAL_NOTICE_DAYS, daysUntil,
   type Campus, type Floor, type Booking, type ConflictInfo,
@@ -295,10 +295,16 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
     const map = Object.fromEntries(((cs ?? []) as Customer[]).map(c => [c.member_no, c]));
     // 予約に表示名を持たせておく。カードを描く場所が何か所もあるので、
     // それぞれで引き直すより、ここで1回だけ付けるほうが読みやすい
-    setBookings(rows.map(b => ({
-      ...b,
-      customer_name: b.member_no ? customerName(map[b.member_no]) : '',
-    })));
+    setBookings(rows.map(b => {
+      const c = b.member_no ? map[b.member_no] : null;
+      return {
+        ...b,
+        customer_name: c ? customerName(c) : '',
+        // 🚨 学年は年度で変わるので「今日」ではなく **その予約の日** を基準にする。
+        //    今日を基準にすると、来年度の予約に今年度の学年が出る
+        customer_grade: c ? gradeOrAge(c.birth_date, localDate(b.starts_at)) : '',
+      };
+    }));
   }, [date, visibleFloors, rangeDays]);
 
   useEffect(() => { loadBookings(); }, [loadBookings]);
@@ -1488,8 +1494,8 @@ const BookingForm: React.FC<{
               {lookingUp
                 ? 'お客様を探しています...'
                 : customer
-                  ? `${customer.display_name}${customer.full_name ? `（${customer.full_name}）` : ''}`
-                    + `${customer.birth_date ? ` ${gradeOf(customer.birth_date, date)}` : ''}`
+                  ? `${customerName(customer)}${customer.full_name ? `（${customer.full_name}）` : ''}`
+                    + `${customer.birth_date ? ` ${gradeOrAge(customer.birth_date, date)}` : ''}`
                     + `${customer.active ? '' : ' ※退会になっています'}`
                   : memberNo.trim()
                     ? 'この会員番号は登録がありません。一般のお客様として、お名前を手で入れてください'
@@ -1783,13 +1789,24 @@ const BookingDetail: React.FC<{
         ))}
         {b.is_fixed && row('固定の枠', 'はい（毎週この曜日・この時間の枠）')}
         {row('予約した人', b.booker_name)}
-        {b.customer_label && row('お客様', b.customer_label)}
+        {/* 名前の横に学年（大学生より上の大人は年齢）を出す・2026-08-31 ユーザー指示。
+            🚨 学年はその予約の日を基準に出している（年度で変わるため） */}
+        {(b.customer_name || b.customer_label) && row('お客様', (
+          <span>
+            {b.customer_name || b.customer_label}
+            {b.customer_grade && (
+              <span style={{ color: textMid, fontSize: 12.5, marginLeft: 7 }}>
+                {b.customer_grade}
+              </span>
+            )}
+          </span>
+        ))}
         {b.member_no && row('会員番号', (
           <span style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <span style={{ fontVariantNumeric: 'tabular-nums' }}>{b.member_no}</span>
             <a href={scholaUrl(b.member_no)} target="_blank" rel="noreferrer"
               style={{ color: accent, fontSize: 12.5, fontWeight: 700, textDecoration: 'none', border: `1px solid ${accent}`, borderRadius: 999, padding: '3px 11px' }}>
-              スコラプラスで見る →
+              スコラプラスで予約 →
             </a>
           </span>
         ))}
@@ -2788,7 +2805,7 @@ const CustomerSettings: React.FC<{
                   <span style={{ fontSize: 12.5, color: textMid }}>
                     {c.member_no}
                     {c.full_name && ` / ${c.full_name}`}
-                    {c.birth_date && ` / ${gradeOf(c.birth_date, today)}`}
+                    {c.birth_date && ` / ${gradeOrAge(c.birth_date, today)}`}
                   </span>
                   <button disabled={busy} onClick={() => setActive(c, !c.active)}
                     style={{ ...smallBtn(false), marginLeft: 'auto' }}>
