@@ -97,6 +97,13 @@ export interface Booking {
   /** 募集枠にいま何人入っているか */
   filled: number;
   recurrence_id: string | null;
+  /**
+   * 画面で組み立てるお客様名（「田中 たろう」）。DBの列ではない。
+   * 会員番号からお客様を引いて入れる。引けないとき（一般の方など）は空。
+   * 🚨 予約に名前を保存してしまうと、お客様名を直したときに古いまま残る。
+   *    だから保存せず、表示のときに毎回引く。
+   */
+  customer_name?: string;
   staff_id: string | null;
   created_by: string;
   updated_by: string | null;
@@ -130,18 +137,87 @@ export interface Customer {
   member_no: string;
   display_name: string;
   full_name: string | null;
+  /** 姓（漢字）。例：田中 */
+  last_name: string | null;
+  /** 名（漢字）。例：太郎 */
+  first_name: string | null;
+  /** 姓のふりがな（ひらがな） */
+  last_kana: string | null;
+  /** 名のふりがな（ひらがな）。予約表の表示に使う。例：たろう */
+  first_kana: string | null;
   birth_date: string | null;   // 'YYYY-MM-DD'
   active: boolean;
   note: string | null;
 }
 
+/**
+ * カタカナをひらがなに直す。
+ *
+ * 🚨 漢字からひらがなは作れない（同じ漢字でも読みが複数ある）ので、
+ *    必ず**フリガナの列から**変換すること。ここは文字コードの計算だけなので
+ *    推測が入らず、必ず同じ結果になる。
+ * 半角カナ（ﾀﾅｶ）も先に全角へ寄せてから変換する。
+ */
+export const toHiragana = (s: string): string => {
+  if (!s) return '';
+  const HALF = 'ｦｧｨｩｪｫｬｭｮｯｰｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ';
+  const FULL = 'ヲァィゥェォャュョッーアイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワン';
+  let t = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    const next = s[i + 1];
+    const h = HALF.indexOf(c);
+    if (h >= 0) {
+      let full = FULL[h];
+      // 濁点・半濁点は次の文字に付いてくるので、正しい1文字にまとめる
+      if (next === 'ﾞ' || next === 'ﾟ') {
+        const combined = (full + (next === 'ﾞ' ? '゙' : '゚')).normalize('NFC');
+        if (combined.length === 1) { full = combined; i++; }
+      }
+      t += full;
+    } else {
+      t += c;
+    }
+  }
+  // 全角カタカナ → ひらがな
+  return t.replace(/[ァ-ヶ]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0x60));
+};
+
+/**
+ * お客様の表示名。「田中 たろう」のように、姓は漢字・名はひらがなで出す
+ * （2026-08-31 ユーザー指示）。
+ * 作れないときは、取り込んだ氏名 → 「田中様」形式の表示名 の順に落とす。
+ */
+export const customerName = (c: Customer | null | undefined): string => {
+  if (!c) return '';
+  const last = (c.last_name ?? '').trim();
+  const first = (c.first_kana ?? '').trim() || (c.first_name ?? '').trim();
+  if (last && first) return `${last} ${first}`;
+  if (last) return last;
+  return (c.full_name ?? '').trim() || c.display_name;
+};
+
 /** 連絡先。見える範囲は設定（contact_visibility）で決まるので、読めないことがある */
 export interface CustomerContact {
   member_no: string;
+  /** 固定電話（家電） */
   phone: string | null;
+  /** 携帯番号。🚨 固定と両方あるときは両方出す（2026-08-31 ユーザー指示） */
+  mobile: string | null;
   email: string | null;
   guardian_name: string | null;
 }
+
+/** 連絡先を「固定 / 携帯 / メール」の順に、あるものだけ並べる */
+export const contactLines = (k: CustomerContact | null | undefined): string[] => {
+  if (!k) return [];
+  return [
+    k.phone ? `固定 ${k.phone}` : '',
+    k.mobile ? `携帯 ${k.mobile}` : '',
+    k.email ?? '',
+    k.guardian_name ? `保護者：${k.guardian_name}` : '',
+  ].filter(Boolean);
+};
 
 /**
  * 生年月日から「学年の番号」を出す。小1=1 … 小6=6、中1=7 … 中3=9、高1=10 … 高3=12。

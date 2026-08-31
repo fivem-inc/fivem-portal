@@ -8,6 +8,7 @@ import {
   todayStr, toDate, hhmm, minutesOf, addMinutes, formatDateLabel, shiftDate,
   scholaUrl, floorBusyNow, nextStart, usingUntil, assignColumns, categoryLabel,
   isWeekend, RANGE_DAYS, localDate, placeLabel, openSlotColor, durationLabel, FALLBACK_DURATIONS, gradeOf, defaultMinutesOf,
+  customerName, contactLines,
   fiscalYear, fiscalYearEnd, fiscalYearLabel, RENEWAL_NOTICE_DAYS, daysUntil,
   type Campus, type Floor, type Booking, type ConflictInfo,
   type Staff, type LessonCategory, type Recurrence, type PurposeDuration,
@@ -282,7 +283,22 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
       .order('starts_at');
     if (error) { setLoadError('予約を読み込めませんでした。'); return; }
     setLoadError('');
-    setBookings((data ?? []) as Booking[]);
+    const rows = (data ?? []) as Booking[];
+    setBookings(rows);
+
+    // 予約表に「田中 たろう」と出すため、いま見えている予約のお客様だけ読む。
+    // 🚨 全件を読まない。人数が増えたときに毎回重くなる
+    const nos = [...new Set(rows.map(b => b.member_no).filter(Boolean))] as string[];
+    if (nos.length === 0) return;
+    const { data: cs } = await supabase
+      .from('room_customers').select('*').in('member_no', nos);
+    const map = Object.fromEntries(((cs ?? []) as Customer[]).map(c => [c.member_no, c]));
+    // 予約に表示名を持たせておく。カードを描く場所が何か所もあるので、
+    // それぞれで引き直すより、ここで1回だけ付けるほうが読みやすい
+    setBookings(rows.map(b => ({
+      ...b,
+      customer_name: b.member_no ? customerName(map[b.member_no]) : '',
+    })));
   }, [date, visibleFloors, rangeDays]);
 
   useEffect(() => { loadBookings(); }, [loadBookings]);
@@ -749,7 +765,7 @@ const TimelineView: React.FC<{
                       <span style={{ fontSize: 10.5, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {off ? '休講'
                           : open ? `募集中${b.seats > 1 ? `（あと${restSeats}名）` : ''}`
-                          : view === 'place' ? `${b.purpose}${b.customer_label ? ` / ${b.customer_label}` : ''}`
+                          : view === 'place' ? `${b.purpose}${(b.customer_name || b.customer_label) ? ` / ${b.customer_name || b.customer_label}` : ''}`
                           : `${placeName(b.floor_id, allCampus)} / ${b.purpose}`}
                       </span>
                     </button>
@@ -1000,7 +1016,7 @@ const MobileView: React.FC<{
                   view !== 'place' ? whereOf(b) : '',
                   open ? b.purpose : '',
                   st ? `${st.name}（${categoryLabel(st, categories) || '区分なし'}）` : '',
-                  open ? '' : (b.customer_label || (b.member_no ? `#${b.member_no}` : '')),
+                  open ? '' : (b.customer_name || b.customer_label || (b.member_no ? `#${b.member_no}` : '')),
                 ].filter(Boolean).join('／') || b.booker_name}
               </div>
             </button>
@@ -2685,6 +2701,8 @@ const CustomerSettings: React.FC<{
       const { error: err1 } = await supabase.from('room_customers').upsert(
         part.map(c => ({
           member_no: c.member_no, display_name: c.display_name, full_name: c.full_name,
+          last_name: c.last_name, first_name: c.first_name,
+          last_kana: c.last_kana, first_kana: c.first_kana,
           birth_date: c.birth_date, imported_at: now, updated_at: now, updated_by: uid,
         })), { onConflict: 'member_no' });
       if (err1) {
@@ -2693,11 +2711,11 @@ const CustomerSettings: React.FC<{
         await load(); return;
       }
       // 連絡先は、値が1つでもある行だけ入れる
-      const withContact = part.filter(c => c.phone || c.email || c.guardian_name);
+      const withContact = part.filter(c => c.phone || c.mobile || c.email || c.guardian_name);
       if (withContact.length > 0) {
         const { error: err2 } = await supabase.from('room_customer_contacts').upsert(
           withContact.map(c => ({
-            member_no: c.member_no, phone: c.phone, email: c.email,
+            member_no: c.member_no, phone: c.phone, mobile: c.mobile, email: c.email,
             guardian_name: c.guardian_name, updated_at: now, updated_by: uid,
           })), { onConflict: 'member_no' });
         if (err2) {
@@ -2725,9 +2743,12 @@ const CustomerSettings: React.FC<{
   const shown = list.filter(c => {
     if (!q.trim()) return true;
     const k = q.trim().toLowerCase();
+    // ふりがなでも探せるようにする（漢字が読めなくても引ける）
     return c.member_no.toLowerCase().includes(k)
       || c.display_name.toLowerCase().includes(k)
-      || (c.full_name ?? '').toLowerCase().includes(k);
+      || (c.full_name ?? '').toLowerCase().includes(k)
+      || `${c.last_name ?? ''}${c.first_name ?? ''}`.toLowerCase().includes(k)
+      || `${c.last_kana ?? ''}${c.first_kana ?? ''}`.toLowerCase().includes(k);
   });
 
   return (
@@ -2760,8 +2781,9 @@ const CustomerSettings: React.FC<{
             return (
               <div key={c.member_no} style={{ borderTop: `1px solid ${lineSoft}`, padding: '9px 0' }}>
                 <div style={{ display: 'flex', gap: 9, alignItems: 'center', flexWrap: 'wrap' }}>
+                  {/* 姓は漢字・名はひらがなで出す（2026-08-31 ユーザー指示） */}
                   <b style={{ fontSize: 14, color: c.active ? text : textMid }}>
-                    {c.display_name}{!c.active && '（退会）'}
+                    {customerName(c)}{!c.active && '（退会）'}
                   </b>
                   <span style={{ fontSize: 12.5, color: textMid }}>
                     {c.member_no}
@@ -2773,10 +2795,11 @@ const CustomerSettings: React.FC<{
                     {c.active ? '退会にする' : '在籍に戻す'}
                   </button>
                 </div>
-                {k && (k.phone || k.email || k.guardian_name) && (
+                {/* 🚨 固定と携帯が両方あるときは両方出す（2026-08-31 ユーザー指示）。
+                       どちらに掛けるかは現場が選ぶので、片方に寄せない */}
+                {contactLines(k).length > 0 && (
                   <div style={{ fontSize: 12.5, color: textMid, marginTop: 4 }}>
-                    {[k.phone, k.email, k.guardian_name && `保護者：${k.guardian_name}`]
-                      .filter(Boolean).join(' / ')}
+                    {contactLines(k).join(' / ')}
                   </div>
                 )}
               </div>

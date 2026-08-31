@@ -7,17 +7,26 @@
 //    なるため、見出しから当てにいき、外れたら画面で選び直せるようにする。
 // 🚨 読めなかった行を黙って捨てない。理由をつけて件数を返し、画面で見せる。
 
+import { toHiragana } from './roomBooking';
 /** 取り込みで使う項目 */
 export type CustomerField =
-  | 'member_no' | 'full_name' | 'display_name' | 'birth_date'
-  | 'phone' | 'email' | 'guardian_name';
+  | 'member_no' | 'full_name' | 'last_name' | 'first_name'
+  | 'full_kana' | 'last_kana' | 'first_kana'
+  | 'display_name' | 'birth_date'
+  | 'phone' | 'mobile' | 'email' | 'guardian_name';
 
 export const FIELD_LABEL: Record<CustomerField, string> = {
   member_no: '会員番号',
-  full_name: '氏名',
+  full_name: '氏名（1列のとき）',
+  last_name: '姓',
+  first_name: '名',
+  full_kana: 'フリガナ（1列のとき）',
+  last_kana: 'フリガナ（姓）',
+  first_kana: 'フリガナ（名）',
   display_name: '表示名',
   birth_date: '生年月日',
-  phone: '電話',
+  phone: '固定電話',
+  mobile: '携帯番号',
   email: 'メール',
   guardian_name: '保護者名',
 };
@@ -29,12 +38,21 @@ export const REQUIRED_FIELDS: CustomerField[] = ['member_no'];
  * 見出しから項目を当てるための手がかり。
  * スコラプラスの出力に限らず、社内で作り直した表でも通るように広めに取る。
  */
+// 🚨 長い手がかりから先に当てる（guessMapping 側で並べ替えている）。
+//    「フリガナ（姓）」を「フリガナ」より先に当てないと、姓のふりがなが
+//    「フリガナ1列」の扱いになってしまう。
 const HEADER_HINTS: Record<CustomerField, string[]> = {
   member_no:     ['会員番号', '会員no', '会員ｎｏ', '会員', 'member_no', 'memberno', '番号', 'id'],
+  last_name:     ['姓', '名字', '苗字', 'lastname', 'せい'],
+  first_name:    ['名', 'firstname', 'めい'],
+  last_kana:     ['姓カナ', 'セイカナ', 'フリガナ姓', 'カナ姓', 'せいかな', 'lastkana'],
+  first_kana:    ['名カナ', 'メイカナ', 'フリガナ名', 'カナ名', 'めいかな', 'firstkana'],
+  full_kana:     ['フリガナ', 'ふりがな', 'カナ', 'かな', 'kana', 'ヨミ', 'よみ', '読み'],
   full_name:     ['氏名', '名前', '生徒名', '会員名', 'name', 'お名前'],
   display_name:  ['表示名', '呼び名', '表示'],
   birth_date:    ['生年月日', '誕生日', 'birth', 'birthday', '生年'],
-  phone:         ['電話', 'tel', 'phone', '携帯', '連絡先'],
+  phone:         ['固定電話', '自宅電話', '自宅', '電話', 'tel', 'phone'],
+  mobile:        ['携帯電話', '携帯番号', '携帯', 'ケータイ', 'mobile', 'cell'],
   email:         ['メール', 'mail', 'email', 'eメール'],
   guardian_name: ['保護者', '保護者名', '親', 'guardian'],
 };
@@ -54,8 +72,13 @@ export function guessMapping(headers: string[]): Partial<Record<CustomerField, n
     const hints = [...HEADER_HINTS[field]].sort((a, b) => b.length - a.length);
     for (const hint of hints) {
       const h = norm(hint);
-      const idx = headers.findIndex((raw, i) =>
-        !used.has(i) && norm(String(raw ?? '')).includes(h));
+      // 🚨 1文字の手がかり（「姓」「名」）は、含まれているかで見ると
+      //    「氏名」「名前」まで当たってしまう。1文字のときはぴったり一致だけにする
+      const hit = (raw: unknown) => {
+        const t = norm(String(raw ?? ''));
+        return h.length <= 1 ? t === h : t.includes(h);
+      };
+      const idx = headers.findIndex((raw, i) => !used.has(i) && hit(raw));
       if (idx >= 0) { map[field] = idx; used.add(idx); break; }
     }
   }
@@ -98,10 +121,29 @@ export interface ParsedCustomer {
   member_no: string;
   display_name: string;
   full_name: string | null;
+  last_name: string | null;
+  first_name: string | null;
+  /** ひらがなに直して入れる（元がカタカナでも） */
+  last_kana: string | null;
+  first_kana: string | null;
   birth_date: string | null;
   phone: string | null;
+  mobile: string | null;
   email: string | null;
   guardian_name: string | null;
+}
+
+/**
+ * 「田中 太郎」「田中　太郎」「田中太郎」を 姓と名に分ける。
+ * 🚨 空白が無いときは分けない（「田中太郎」を「田」「中太郎」と割るような
+ *    当てずっぽうはしない）。分けられなければ姓だけにして、名は空にする。
+ */
+export function splitName(full: string): { last: string; first: string } {
+  const t = full.replace(/[\s　]+/g, ' ').trim();
+  if (!t) return { last: '', first: '' };
+  const parts = t.split(' ');
+  if (parts.length >= 2) return { last: parts[0], first: parts.slice(1).join(' ') };
+  return { last: t, first: '' };
 }
 
 export interface ParseResult {
@@ -157,8 +199,23 @@ export function buildCustomers(
     if (seen.has(memberNo)) { ng.push({ line, reason: `会員番号 ${memberNo} が重なっています` }); return; }
     seen.add(memberNo);
 
+    // 姓と名。「姓」「名」の列があればそれを使い、無ければ「氏名」を空白で分ける
     const fullName = at(row, 'full_name');
-    const display = at(row, 'display_name') || defaultDisplayName(fullName) || `${memberNo} 様`;
+    const nameParts = splitName(fullName);
+    const lastName = at(row, 'last_name') || nameParts.last;
+    const firstName = at(row, 'first_name') || nameParts.first;
+
+    // ふりがな。🚨 元がカタカナでもひらがなに直して入れる。
+    //    漢字からは作れないので、フリガナの列が無ければ空のままにする
+    const fullKana = at(row, 'full_kana');
+    const kanaParts = splitName(fullKana);
+    const lastKana = toHiragana(at(row, 'last_kana') || kanaParts.last);
+    const firstKana = toHiragana(at(row, 'first_kana') || kanaParts.first);
+
+    const display = at(row, 'display_name')
+      || (lastName ? `${lastName}様` : '')
+      || defaultDisplayName(fullName)
+      || `${memberNo} 様`;
 
     const rawBirth = map.birth_date === undefined ? '' : row[map.birth_date];
     const birth = parseBirthDate(rawBirth);
@@ -172,8 +229,13 @@ export function buildCustomers(
       member_no: memberNo,
       display_name: display,
       full_name: fullName || null,
+      last_name: lastName || null,
+      first_name: firstName || null,
+      last_kana: lastKana || null,
+      first_kana: firstKana || null,
       birth_date: birth,
       phone: at(row, 'phone') || null,
+      mobile: at(row, 'mobile') || null,
       email: at(row, 'email') || null,
       guardian_name: at(row, 'guardian_name') || null,
     });
