@@ -15,7 +15,7 @@ import {
   type Customer, type CustomerContact, type Waitlist,
 } from '../lib/roomBooking';
 import {
-  readTable, guessMapping, buildCustomers, FIELD_LABEL, REQUIRED_FIELDS,
+  readTable, guessMapping, buildCustomers, parseBirthDate, FIELD_LABEL, REQUIRED_FIELDS,
   type CustomerField,
 } from '../lib/customerImport';
 import {
@@ -113,6 +113,10 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
   const [form, setForm] = useState<FormMode | null>(null);
   const [detail, setDetail] = useState<Booking | null>(null);
   const [settings, setSettings] = useState(false);
+  // 「このお客様で予約を入れる」流れ（お客様一覧の『予約する』から入る）。
+  // 🚨 一覧の時点では場所も時間も決まっていないので、ここでは覚えておくだけ。
+  //    空き枠を選んだときに、会員番号とお名前を入れた状態でフォームを開く
+  const [bookingFor, setBookingFor] = useState<Customer | null>(null);
   // 基本設定を使える役職（管理者が ⚙️設定 で決める）。
   // null = まだ読めていない／設定が無い → これまでどおり「パート以外は可」で動かす
   const [basicRoles, setBasicRoles] = useState<string[] | null>(null);
@@ -299,7 +303,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
       const c = b.member_no ? map[b.member_no] : null;
       return {
         ...b,
-        customer_name: c ? customerName(c) : '',
+        customer_name: c ? customerName(c, localDate(b.starts_at)) : '',
         // 🚨 学年は年度で変わるので「今日」ではなく **その予約の日** を基準にする。
         //    今日を基準にすると、来年度の予約に今年度の学年が出る
         customer_grade: c ? gradeOrAge(c.birth_date, localDate(b.starts_at)) : '',
@@ -499,6 +503,20 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
           </div>
         )}
 
+        {/* このお客様で予約を入れる最中の案内。
+            🚨 やめる手段を必ず添える。抜け方が分からないと、別の予約まで
+               このお客様の名前で入ってしまう */}
+        {bookingFor && (
+          <div style={{ background: accentBg, border: `1px solid ${accent}`, color: accent, borderRadius: 10, padding: '10px 14px', marginBottom: 12, fontSize: 14, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ lineHeight: 1.6 }}>
+              <strong>{customerName(bookingFor, date)}</strong> さんの予約を入れます。
+              空いている枠を選んでください
+            </span>
+            <button onClick={() => setBookingFor(null)}
+              style={{ ...btn(false), marginLeft: 'auto' }}>やめる</button>
+          </div>
+        )}
+
         {/* 校のタブ。先頭に「全校」を置き、そこから校を絞れるようにする */}
         <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 8, marginBottom: 8 }}>
           <button onClick={() => selectCampus(ALL_CAMPUS)} style={btn(allCampus)}>全校</button>
@@ -616,7 +634,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
 
       {form && (
         <BookingForm
-          mode={form} user={user} floors={floors} campuses={campuses}
+          mode={form} user={user} floors={floors} campuses={campuses} bookingFor={bookingFor}
           staff={staff} categories={categories} purposeDurations={purposeDurations}
           onClose={() => setForm(null)}
           onSaved={(msg) => { setForm(null); loadBookings(); showFlash(msg); }}
@@ -635,6 +653,12 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
         <BasicSettingsPanel
           campuses={campuses} floors={floors} staff={staff} categories={categories}
           purposeDurations={purposeDurations} user={user}
+          onBook={(c) => {
+            // 基本設定を閉じて予約表に戻し、場所別（＝新規を入れられる並べ方）にする
+            setBookingFor(c);
+            setRenewal(false);
+            selectView('place');
+          }}
           onClose={() => setRenewal(false)}
           onDone={async (msg) => {
             await loadMasters(); await loadBookings(); await loadRenewPending(); showFlash(msg);
@@ -1045,8 +1069,10 @@ const MobileView: React.FC<{
 const BookingForm: React.FC<{
   mode: FormMode; user: AuthUser; floors: Floor[]; campuses: Campus[];
   staff: Staff[]; categories: LessonCategory[]; purposeDurations: PurposeDuration[];
+  /** お客様一覧の「予約する」から来たとき。会員番号とお名前を先に入れておく */
+  bookingFor: Customer | null;
   onClose: () => void; onSaved: (msg: string) => void; isDark: boolean;
-}> = ({ mode, user, floors, campuses, staff, categories, purposeDurations, onClose, onSaved, isDark }) => {
+}> = ({ mode, user, floors, campuses, staff, categories, purposeDurations, bookingFor, onClose, onSaved, isDark }) => {
   const editing = mode.kind === 'edit';
   const base = editing ? mode.booking : null;
 
@@ -1067,8 +1093,11 @@ const BookingForm: React.FC<{
   // 「予約する人」は画面に出さず、ログインした人から自動で決める。
   // 🚨 空のままだと保存できない（DBで必須）ので、必ず何か入る形にしておく
   const bookerName = (editing ? base!.booker_name : (user.email?.split('@')[0] ?? '')) || 'スタッフ';
-  const [memberNo, setMemberNo] = useState(editing ? (base!.member_no ?? '') : '');
-  const [customerLabel, setCustomerLabel] = useState(editing ? (base!.customer_label ?? '') : '');
+  // お客様一覧の「予約する」から来たときは、会員番号とお名前を先に入れておく
+  const [memberNo, setMemberNo] = useState(
+    editing ? (base!.member_no ?? '') : (bookingFor?.member_no ?? ''));
+  const [customerLabel, setCustomerLabel] = useState(
+    editing ? (base!.customer_label ?? '') : (bookingFor ? customerName(bookingFor, mode.kind === 'create' ? mode.date : todayStr()) : ''));
   // 会員番号から引いたお客様。一般の方は登録が無いので null のまま
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [lookingUp, setLookingUp] = useState(false);
@@ -1494,7 +1523,7 @@ const BookingForm: React.FC<{
               {lookingUp
                 ? 'お客様を探しています...'
                 : customer
-                  ? `${customerName(customer)}${customer.full_name ? `（${customer.full_name}）` : ''}`
+                  ? `${customerName(customer, date)}${customer.full_name ? `（${customer.full_name}）` : ''}`
                     + `${customer.birth_date ? ` ${gradeOrAge(customer.birth_date, date)}` : ''}`
                     + `${customer.active ? '' : ' ※退会になっています'}`
                   : memberNo.trim()
@@ -2626,9 +2655,20 @@ const WaitlistSettings: React.FC<{
  *    お客様が消えるのは取り返しがつかないため、退会にするかは人が決める。
  */
 const CustomerSettings: React.FC<{
-  isDark: boolean; onDone: (msg: string) => Promise<void>;
-}> = ({ isDark, onDone }) => {
-  const [sub, setSub] = useState<'list' | 'import'>('list');
+  isDark: boolean;
+  onDone: (msg: string) => Promise<void>;
+  /** 一覧の「予約」ボタン。このお客様で予約を入れる流れに移る */
+  onBook: (c: Customer) => void;
+}> = ({ isDark, onDone, onBook }) => {
+  const [sub, setSub] = useState<'list' | 'import' | 'new'>('list');
+  // 手入力での追加（2026-08-31 ユーザー指示）。
+  // 🚨 会員番号は必須。お客様を1人と見分ける唯一の手がかりなので、
+  //    空を許すと同じ人が二重に増える
+  const [form, setForm] = useState({
+    member_no: '', last_name: '', first_name: '', last_kana: '', first_kana: '',
+    birth_date: '', phone: '', mobile: '', email: '', guardian_name: '', note: '',
+  });
+  const [saving, setSaving] = useState(false);
   const [list, setList] = useState<Customer[]>([]);
   const [contacts, setContacts] = useState<Record<string, CustomerContact>>({});
   const [canSeeContacts, setCanSeeContacts] = useState(false);
@@ -2748,6 +2788,66 @@ const CustomerSettings: React.FC<{
     await onDone(`お客様を取り込みました（追加${addCount}件・更新${updCount}件）`);
   };
 
+  /**
+   * 手入力でお客様を1人追加する。
+   * 🚨 ふりがなは、打たれたのがカタカナでも**ひらがなに直して**保存する。
+   *    取り込みと同じ持ち方にしないと、予約表の表示や検索が片方だけ崩れる。
+   */
+  const addOne = async () => {
+    const no = form.member_no.trim();
+    if (!no) { setError('会員番号を入れてください'); return; }
+    if (!form.last_name.trim()) { setError('姓を入れてください'); return; }
+    if (list.some(c => c.member_no === no)) {
+      setError(`会員番号 ${no} のお客様はすでに登録されています。一覧から探してください`);
+      return;
+    }
+    const birth = form.birth_date.trim() ? parseBirthDate(form.birth_date.trim()) : null;
+    if (form.birth_date.trim() && !birth) {
+      setError('生年月日は 2020-04-01 のように入れてください'); return;
+    }
+    setSaving(true); setError('');
+    const { data: me } = await supabase.auth.getUser();
+    const now = new Date().toISOString();
+    const uid = me.user?.id ?? null;
+    const lastName = form.last_name.trim();
+    const { error: err } = await supabase.from('room_customers').insert({
+      member_no: no,
+      display_name: `${lastName}様`,
+      full_name: [lastName, form.first_name.trim()].filter(Boolean).join(' ') || null,
+      last_name: lastName,
+      first_name: form.first_name.trim() || null,
+      last_kana: toHiragana(form.last_kana.trim()) || null,
+      first_kana: toHiragana(form.first_kana.trim()) || null,
+      birth_date: birth,
+      note: form.note.trim() || null,
+      updated_at: now, updated_by: uid,
+    });
+    if (err) {
+      setSaving(false);
+      setError('登録できませんでした。会員番号が重なっていないか確認してください。');
+      return;
+    }
+    // 連絡先は、何か入っているときだけ作る
+    if (form.phone.trim() || form.mobile.trim() || form.email.trim() || form.guardian_name.trim()) {
+      await supabase.from('room_customer_contacts').upsert({
+        member_no: no,
+        phone: form.phone.trim() || null,
+        mobile: form.mobile.trim() || null,
+        email: form.email.trim() || null,
+        guardian_name: form.guardian_name.trim() || null,
+        updated_at: now, updated_by: uid,
+      }, { onConflict: 'member_no' });
+    }
+    setSaving(false);
+    setForm({
+      member_no: '', last_name: '', first_name: '', last_kana: '', first_kana: '',
+      birth_date: '', phone: '', mobile: '', email: '', guardian_name: '', note: '',
+    });
+    setSub('list');
+    await load();
+    await onDone(`${lastName}様を登録しました`);
+  };
+
   const setActive = async (c: Customer, v: boolean) => {
     setBusy(true);
     const { error: err } = await supabase.from('room_customers')
@@ -2775,8 +2875,8 @@ const CustomerSettings: React.FC<{
   return (
     <div>
       <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
-        {([['list', '一覧'], ['import', '取り込み']] as const).map(([k, l]) => (
-          <button key={k} onClick={() => setSub(k)} style={smallBtn(sub === k)}>{l}</button>
+        {([['list', '一覧'], ['new', '1人ずつ追加'], ['import', '取り込み']] as const).map(([k, l]) => (
+          <button key={k} onClick={() => { setSub(k); setError(''); }} style={smallBtn(sub === k)}>{l}</button>
         ))}
       </div>
 
@@ -2814,10 +2914,18 @@ const CustomerSettings: React.FC<{
                     {c.member_no}
                     {c.birth_date && ` / ${gradeOrAge(c.birth_date, today)}`}
                   </span>
-                  <button disabled={busy} onClick={() => setActive(c, !c.active)}
-                    style={{ ...smallBtn(false), marginLeft: 'auto' }}>
-                    {c.active ? '退会にする' : '在籍に戻す'}
-                  </button>
+                  <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {/* この方で予約を入れる流れへ。場所と時間は予約表で選ぶ */}
+                    {c.active && (
+                      <button disabled={busy} onClick={() => onBook(c)} style={smallBtn(true)}>
+                        予約する
+                      </button>
+                    )}
+                    <button disabled={busy} onClick={() => setActive(c, !c.active)}
+                      style={smallBtn(false)}>
+                      {c.active ? '退会にする' : '在籍に戻す'}
+                    </button>
+                  </span>
                 </div>
                 {/* 🚨 固定と携帯が両方あるときは両方出す（2026-08-31 ユーザー指示）。
                        どちらに掛けるかは現場が選ぶので、片方に寄せない */}
@@ -2836,6 +2944,51 @@ const CustomerSettings: React.FC<{
           )}
         </>
       ))}
+
+      {/* ---- 1人ずつ追加 ---- */}
+      {sub === 'new' && (
+        <>
+          <div style={{ background: lineSoft, borderRadius: 8, padding: '10px 12px', fontSize: 13, lineHeight: 1.7, marginBottom: 12, color: textMid }}>
+            取り込みを使わずに、1人だけ登録します。
+            <br />
+            🚨 <b>会員番号は必須</b>です。お客様を1人と見分ける唯一の手がかりなので、
+            空のままだと同じ方が二重に増えてしまいます。
+            <br />
+            会員番号を持たない一般の方は、ここには登録せず、
+            予約フォームでお名前を直接入れてください。
+            <br />
+            ふりがなはカタカナで入れても、ひらがなに直して保存します。
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+            {([
+              ['member_no', '会員番号（必須）', '2014052061'],
+              ['last_name', '姓（必須）', '田中'],
+              ['first_name', '名', '太郎'],
+              ['last_kana', 'フリガナ（姓）', 'タナカ'],
+              ['first_kana', 'フリガナ（名）', 'タロウ'],
+              ['birth_date', '生年月日', '2015-04-02'],
+              ['phone', '固定電話', '075-123-4567'],
+              ['mobile', '携帯番号', '090-1234-5678'],
+              ['email', 'メール', ''],
+              ['guardian_name', '保護者名', ''],
+              ['note', 'メモ', ''],
+            ] as const).map(([key, label, ph]) => (
+              <div key={key} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 13, minWidth: 116 }}>{label}</span>
+                <input value={form[key]} placeholder={ph}
+                  onChange={e => setForm(p => ({ ...p, [key]: e.target.value }))}
+                  style={{ ...input, flex: 1, minWidth: 160 }} />
+              </div>
+            ))}
+          </div>
+
+          <button onClick={addOne} disabled={saving}
+            style={{ marginTop: 14, padding: '10px 18px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 14.5, fontWeight: 700, cursor: saving ? 'wait' : 'pointer' }}>
+            {saving ? '登録しています...' : '登録する'}
+          </button>
+        </>
+      )}
 
       {/* ---- 取り込み ---- */}
       {sub === 'import' && (
@@ -3035,8 +3188,10 @@ const StaffSettings: React.FC<{
 const BasicSettingsPanel: React.FC<{
   campuses: Campus[]; floors: Floor[]; staff: Staff[]; categories: LessonCategory[];
   purposeDurations: PurposeDuration[]; user: AuthUser;
+  /** 一覧の「予約する」から、そのお客様で予約を入れる流れに移る */
+  onBook: (c: Customer) => void;
   onClose: () => void; onDone: (msg: string) => Promise<void>; isDark: boolean;
-}> = ({ campuses, floors, staff, categories, purposeDurations, user, onClose, onDone, isDark }) => {
+}> = ({ campuses, floors, staff, categories, purposeDurations, user, onBook, onClose, onDone, isDark }) => {
   const today = todayStr();
   const [tab, setTab] = useState<'renew' | 'duration' | 'staff' | 'customer' | 'waitlist' | 'bulk'>('renew');
   const [fy, setFy] = useState(fiscalYear(today));
@@ -3197,7 +3352,7 @@ const BasicSettingsPanel: React.FC<{
       )}
 
       {tab === 'customer' && (
-        <CustomerSettings isDark={isDark} onDone={onDone} />
+        <CustomerSettings isDark={isDark} onDone={onDone} onBook={onBook} />
       )}
 
       {tab === 'waitlist' && (

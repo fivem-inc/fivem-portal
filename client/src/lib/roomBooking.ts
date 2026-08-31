@@ -193,10 +193,17 @@ export const toHiragana = (s: string): string => {
  * （2026-08-31 ユーザー指示）。
  * 作れないときは、取り込んだ氏名 → 「田中様」形式の表示名 の順に落とす。
  */
-export const customerName = (c: Customer | null | undefined): string => {
+export const customerName = (c: Customer | null | undefined, onDate: string): string => {
   if (!c) return '';
   const last = (c.last_name ?? '').trim();
-  const first = (c.first_kana ?? '').trim() || (c.first_name ?? '').trim();
+  const kana = (c.first_kana ?? '').trim();
+  const kanji = (c.first_name ?? '').trim();
+  // 🚨 大学生より上の大人は下の名前も漢字、それ以下の子どもはひらがな
+  //    （2026-08-31 ユーザー指示）。境目は学年／年齢の切り替わりと同じ。
+  //    生年月日が無いと大人かどうか分からないので、その場合はひらがな側に倒す
+  const g = c.birth_date ? gradeNumber(c.birth_date, onDate) : null;
+  const adult = g !== null && g > 16;
+  const first = adult ? (kanji || kana) : (kana || kanji);
   if (last && first) return `${last} ${first}`;
   if (last) return last;
   return (c.full_name ?? '').trim() || c.display_name;
