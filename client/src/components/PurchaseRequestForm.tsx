@@ -996,6 +996,14 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
                           1万円未満でも、複数の業者・店舗で価格を比べておくとコスト意識の共有に役立ちます。1社目は購入先として必ず入力してください（2社目以降は任意です）。
                         </div>
                       )}
+                      {/* URLは「内訳・条件」欄に書けば、表示するときに自動でリンクになる
+                          （PurchaseItemsSummary の renderNote）。機能はあるのに書いてよいと
+                          分からず、貼る場所に迷うという指摘があったため案内を出す。
+                          🚨 上の1万円以上／未満の出し分けの「外」に置くこと。
+                             中に入れると1万円以上の申請では出ない（赤いバナーに差し替わるため）。 */}
+                      <div style={{ fontSize: 12, color: subText, marginBottom: 4 }}>
+                        商品ページのURLがあれば「内訳・条件」欄に貼ってください。
+                      </div>
                       {/* 商品ごとに業者を打ち直す手間は「この商品をコピーして追加」（カード下部）で解消するため、
                           旧「商品1の業者情報をコピー」ボタンは廃止した */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -1034,7 +1042,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
                             <textarea
                               value={q.note} onChange={e => updateQuote(itemIndex, qi, { note: e.target.value })}
                               rows={2}
-                              placeholder="内訳・条件（任意）　例：ミニハードル10本／収納袋付き／送料無料／値引き -3,000"
+                              placeholder="内訳・条件・商品ページのURL（任意）　例：ミニハードル10本／送料無料／https://..."
                               style={{ ...inputStyle, marginTop: 6, resize: 'vertical' as const }}
                             />
                             <div style={{ marginTop: 6 }}>

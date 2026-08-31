@@ -90,6 +90,10 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
   // 一覧としての絞り込み（マネージャー以上は全社の申請と精算が全部降ってくるため）
   const [scope, setScope] = useState<'mine' | 'all'>('all');
   const [period, setPeriod] = useState<'thisMonth' | 'lastMonth' | 'all'>('thisMonth');
+  // 期間を「申請した日」で見るか「購入日」で見るか。既定は申請日。
+  // 購入日基準だと「8月に申請・購入予定日が9月1日」が9月扱いになり、
+  // 今月出した申請が「今月」に出ない＝直感に反するため（2026-08-31 ユーザー決定）。
+  const [dateBasis, setDateBasis] = useState<'created' | 'purchase'>('created');
   const [kind, setKind] = useState<'all' | 'purchase_request' | 'reimbursement'>('all');
   const [opinions, setOpinions] = useState<Record<string, OpinionRow[]>>({});
   // answers は「誰がどう答えたか」（コメントは含まない）。名前を見せてよい相手でなければ
@@ -235,7 +239,14 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
   // ── 一覧としての絞り込み ──
   // マネージャー以上には全社の申請と精算が開設以来ぜんぶ降ってくるので、
   // 「先週何が買われたか」を見る道具として使えるようにする
-  const dateOf = (r: PurchaseRecord) => (r.purchased_at ?? r.requested_purchase_date ?? r.created_at).slice(0, 7);
+  // 「申請日」＝いつ出した申請か。「購入日」＝精算なら購入した日・申請なら購入予定日。
+  // 休暇申請のCSVで同じ問題（申請日で見たいのか実際の日で見たいのか）を
+  // 選べる形で解決した前例に揃えている。
+  const dateOf = (r: PurchaseRecord) => (
+    dateBasis === 'created'
+      ? r.created_at
+      : (r.purchased_at ?? r.requested_purchase_date ?? r.created_at)
+  ).slice(0, 7);
   const now = new Date();
   const ym = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   const thisYm = ym(now);
@@ -270,6 +281,15 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
           <button type="button" style={pill(period === 'thisMonth')} onClick={() => setPeriod('thisMonth')}>今月</button>
           <button type="button" style={pill(period === 'lastMonth')} onClick={() => setPeriod('lastMonth')}>先月</button>
           <button type="button" style={pill(period === 'all')} onClick={() => setPeriod('all')}>すべて</button>
+          {/* 上の「今月・先月」が何の日付を見ているかを選ぶ。既定は申請日 */}
+          <select value={dateBasis} onChange={e => setDateBasis(e.target.value as 'created' | 'purchase')}
+            style={{
+              padding: '5px 8px', borderRadius: 8, fontSize: 12, fontWeight: 'bold', cursor: 'pointer',
+              border: `1px solid ${border}`, background: cardBg, color: text,
+            }}>
+            <option value="created">申請日で絞る</option>
+            <option value="purchase">購入日で絞る</option>
+          </select>
           <span style={{ width: 8 }} />
           <button type="button" style={pill(kind === 'all')} onClick={() => setKind('all')}>すべて</button>
           <button type="button" style={pill(kind === 'purchase_request')} onClick={() => setKind('purchase_request')}>申請</button>
