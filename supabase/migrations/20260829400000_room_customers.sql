@@ -62,6 +62,42 @@ create policy room_settings_write on room_settings
 insert into room_settings (key, value) values ('contact_visibility', 'staff')
 on conflict (key) do nothing;
 
+-- 「基本設定」を使える役職（2026-08-31 ユーザー確定・案A）。
+-- カンマ区切りの役職名。既定はパート以外すべて＝いままでと同じ動き。
+-- 🚨 「リーダー以上」のような序列では持たない。フロア責任者をどちら側に
+--    含めるかで過去に判断が割れており、序列にすると同じ罠を踏むため
+--    （CLAUDE.md「役職序列」参照）。役職名を並べて持つ。
+insert into room_settings (key, value)
+values ('basic_settings_roles', '一般,リーダー,フロア責任者,マネージャー,社長,管理者')
+on conflict (key) do nothing;
+
+/**
+ * 「基本設定」を使ってよいか。
+ *   ・パートは常に不可
+ *   ・管理者は設定に関わらず常に可（自分を締め出せないようにする）
+ *   ・それ以外は basic_settings_roles に自分の役職が入っていれば可
+ * 設定が無いときは「パートでなければ可」＝これまでの動きに倒す。
+ *
+ * 🚨 画面だけで絞らないこと。ここでも同じ判定をするので、
+ *    「ボタンは出ないのに実は書き込めた」が起きない。
+ */
+create or replace function room_can_use_basic_settings() returns boolean
+language sql stable security definer set search_path = public as $$
+  select case
+    when (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin' then true
+    when not room_is_staff() then false
+    else exists (
+      select 1 from profiles p
+       where p.id = auth.uid()
+         and coalesce(p.role_title, '') = any (
+           string_to_array(
+             coalesce((select value from room_settings where key = 'basic_settings_roles'),
+                      '一般,リーダー,フロア責任者,マネージャー,社長,管理者'),
+             ','))
+    )
+  end;
+$$;
+
 -- ------------------------------------------------------------
 -- 2) お客様（名前・生年月日）。ここは予約表に出すので広く読める
 -- ------------------------------------------------------------
@@ -90,8 +126,8 @@ create policy room_customers_select on room_customers
 drop policy if exists room_customers_write on room_customers;
 create policy room_customers_write on room_customers
   for all to authenticated
-  using (room_is_staff())
-  with check (room_is_staff());
+  using (room_can_use_basic_settings())
+  with check (room_can_use_basic_settings());
 
 -- ------------------------------------------------------------
 -- 3) 連絡先。見える範囲を設定で変えられるように別テーブルにする
@@ -129,5 +165,5 @@ create policy room_customer_contacts_select on room_customer_contacts
 drop policy if exists room_customer_contacts_write on room_customer_contacts;
 create policy room_customer_contacts_write on room_customer_contacts
   for all to authenticated
-  using (room_is_staff())
-  with check (room_is_staff());
+  using (room_can_use_basic_settings())
+  with check (room_can_use_basic_settings());

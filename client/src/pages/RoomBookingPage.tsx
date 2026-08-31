@@ -93,7 +93,7 @@ interface Lane {
 type FormMode = { kind: 'create'; floorId: string; date: string; startTime: string }
               | { kind: 'edit'; booking: Booking };
 
-const RoomBookingPage: React.FC<Props> = ({ user, isAdmin: admin, employmentType }) => {
+const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, employmentType }) => {
   const isDark = useDarkMode();
   const [campuses, setCampuses] = useState<Campus[]>([]);
   const [floors, setFloors] = useState<Floor[]>([]);
@@ -112,6 +112,9 @@ const RoomBookingPage: React.FC<Props> = ({ user, isAdmin: admin, employmentType
   const [form, setForm] = useState<FormMode | null>(null);
   const [detail, setDetail] = useState<Booking | null>(null);
   const [settings, setSettings] = useState(false);
+  // 基本設定を使える役職（管理者が ⚙️設定 で決める）。
+  // null = まだ読めていない／設定が無い → これまでどおり「パート以外は可」で動かす
+  const [basicRoles, setBasicRoles] = useState<string[] | null>(null);
   // 年度更新は「社員まで」（パートは不可・2026-08-29 ユーザー確定）。
   // ⚙️設定（マスタ管理＝管理者）とは別の入口にする。仕事の性質が違うため
   const [renewal, setRenewal] = useState(false);
@@ -146,14 +149,20 @@ const RoomBookingPage: React.FC<Props> = ({ user, isAdmin: admin, employmentType
 
   // ---- マスタ（校・場所・スタッフ・区分）の読み込み ----
   const loadMasters = useCallback(async () => {
-    const [cRes, fRes, sRes, catRes, scRes, durRes] = await Promise.all([
+    const [cRes, fRes, sRes, catRes, scRes, durRes, setRes] = await Promise.all([
       supabase.from('room_campuses').select('*').eq('active', true).order('sort_order'),
       supabase.from('room_floors').select('*').eq('active', true).order('sort_order'),
       supabase.from('room_staff').select('*').order('sort_order'),
       supabase.from('room_lesson_categories').select('*').order('sort_order'),
       supabase.from('room_staff_categories').select('*'),
       supabase.from('room_purpose_durations').select('*'),
+      supabase.from('room_settings').select('value').eq('key', 'basic_settings_roles').maybeSingle(),
     ]);
+    // 設定が読めないとき（まだ作っていない等）は null のままにして、
+    // これまでどおり「パート以外は使える」で動かす。急に誰も使えなくならないように
+    setBasicRoles(setRes.data?.value
+      ? setRes.data.value.split(',').map((s: string) => s.trim()).filter(Boolean)
+      : null);
     if (cRes.error || fRes.error) {
       setLoadError('場所の情報を読み込めませんでした。時間をおいて開き直してください。');
       return null;
@@ -217,13 +226,19 @@ const RoomBookingPage: React.FC<Props> = ({ user, isAdmin: admin, employmentType
     })();
   }, [loadMasters]);
 
-  // 基本設定を開けるのは社員まで（パートは不可）。
-  // 🚨 employment_type を自分で読み直さないこと。役職プレビュー（👁️ 確認）で
-  //    パートに切り替えても実際の値のままになり、プレビューが効かない。
-  //    useAuth が返す「プレビュー込み」の値をそのまま使う。
+  // 基本設定を開けるか。
+  //   ・パートは常に不可
+  //   ・管理者は設定に関わらず常に可（自分を締め出せないようにする）
+  //   ・それ以外は、管理者が決めた役職の一覧に自分の役職が入っていれば可
+  //
+  // 🚨 employmentType / roleTitle を自分で読み直さないこと。useAuth が返す
+  //    「プレビュー込み」の値を使う。自前で読むと役職プレビュー（👁️ 確認）が
+  //    効かず、パートに切り替えてもボタンが出たままになる（2026-08-31 実機で発覚）。
   // 🚨 これは画面に出すかどうかだけの話。実際に書けるかどうかは
-  //    データベース側（room_is_staff）でも見ているので、隠しただけにはならない。
-  const canRenew = employmentType !== '' && employmentType !== 'パート';
+  //    データベース側（room_can_use_basic_settings）でも同じ設定を見ている。
+  const canRenew = admin
+    || (employmentType !== '' && employmentType !== 'パート'
+        && (basicRoles === null || basicRoles.includes(roleTitle)));
 
   useEffect(() => {
     if (canRenew) loadRenewPending();
@@ -3269,7 +3284,7 @@ const SettingsPanel: React.FC<{
   onClose: () => void; onChanged: (msg: string) => Promise<void>; isDark: boolean;
 }> = ({ campuses, floors, categories, onClose, onChanged, isDark }) => {
   // スタッフは基本設定（社員）へ移した。ここに残すのは管理者だけが触るもの
-  const [tab, setTab] = useState<'category' | 'place' | 'privacy'>('category');
+  const [tab, setTab] = useState<'category' | 'place' | 'privacy' | 'basicroles'>('category');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [newCatCode, setNewCatCode] = useState('');
@@ -3314,7 +3329,7 @@ const SettingsPanel: React.FC<{
   return (
     <Overlay onClose={onClose} isDark={isDark} title="管理者の設定" wide>
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
-        {([['category', 'レッスン区分'], ['place', '場所'], ['privacy', '連絡先の公開範囲']] as const).map(([k, l]) => (
+        {([['category', 'レッスン区分'], ['place', '場所'], ['basicroles', '基本設定の権限'], ['privacy', '連絡先の公開範囲']] as const).map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} style={smallBtn(tab === k)}>{l}</button>
         ))}
       </div>
@@ -3416,6 +3431,11 @@ const SettingsPanel: React.FC<{
         </div>
       )}
 
+      {/* ---- 基本設定を使える役職 ---- */}
+      {tab === 'basicroles' && (
+        <BasicSettingsRoles isDark={isDark} onChanged={onChanged} />
+      )}
+
       {/* ---- 連絡先の公開範囲 ---- */}
       {tab === 'privacy' && (
         <ContactVisibility isDark={isDark} onChanged={onChanged} />
@@ -3426,6 +3446,108 @@ const SettingsPanel: React.FC<{
         閉じる
       </button>
     </Overlay>
+  );
+};
+
+// ============================================================
+// 「基本設定」を使える役職（管理者だけ）
+//
+//   正社員の中にも役職があるので、「パートでなければ全員」では粗すぎる
+//   （2026-08-31 ユーザー指示）。管理者が役職ごとに決められるようにする。
+//
+//   🚨 「リーダー以上」のような序列にしない。フロア責任者をどちら側に含めるかで
+//      過去に判断が割れているため（CLAUDE.md「役職序列」）。役職ごとのON/OFFにする。
+//   🚨 管理者は設定に関わらず常に使える。自分を締め出せてしまうと、
+//      設定を戻す手段が無くなる。
+// ============================================================
+const BASIC_SETTINGS_ROLES_KEY = 'basic_settings_roles';
+
+const BasicSettingsRoles: React.FC<{
+  isDark: boolean; onChanged: (msg: string) => Promise<void>;
+}> = ({ isDark, onChanged }) => {
+  const [roles, setRoles] = useState<{ id: string; name: string }[]>([]);
+  const [allowed, setAllowed] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const line = isDark ? '#3a3a5c' : '#e0e0e0';
+  const textMid = isDark ? '#b3b8c6' : '#5b6270';
+  const accent = isDark ? '#6bbd92' : '#2f6f4f';
+
+  useEffect(() => {
+    (async () => {
+      const [rRes, sRes] = await Promise.all([
+        supabase.from('roles').select('id, name').order('sort_order'),
+        supabase.from('room_settings').select('value').eq('key', BASIC_SETTINGS_ROLES_KEY).maybeSingle(),
+      ]);
+      if (rRes.error) {
+        setError('役職の一覧を読み込めませんでした。開き直してください。');
+        setLoading(false); return;
+      }
+      setRoles((rRes.data ?? []) as { id: string; name: string }[]);
+      setAllowed((sRes.data?.value ?? '').split(',').map((s: string) => s.trim()).filter(Boolean));
+      setLoading(false);
+    })();
+  }, []);
+
+  const toggle = async (name: string) => {
+    const next = allowed.includes(name)
+      ? allowed.filter(n => n !== name)
+      : [...allowed, name];
+    setBusy(true); setError('');
+    const { data: me } = await supabase.auth.getUser();
+    const { error: err } = await supabase.from('room_settings').upsert({
+      key: BASIC_SETTINGS_ROLES_KEY, value: next.join(','),
+      updated_at: new Date().toISOString(), updated_by: me.user?.id ?? null,
+    }, { onConflict: 'key' });
+    setBusy(false);
+    if (err) { setError('変えられませんでした。通信を確認してもう一度お試しください。'); return; }
+    setAllowed(next);
+    await onChanged('基本設定を使える役職を変えました');
+  };
+
+  return (
+    <div>
+      <p style={{ fontSize: 13, color: textMid, margin: '0 0 12px', lineHeight: 1.7 }}>
+        <b>基本設定</b>（年度更新・キャンセル待ち・お客様・予約の一括入力・スタッフ・長さの設定）を
+        使える役職を決めます。
+        <br />
+        🚨 <b>パートは、この設定に関わらず使えません。</b>
+        <br />
+        🚨 <b>管理者は、この設定に関わらず常に使えます。</b>
+        全部外しても設定に戻れなくなることはありません。
+      </p>
+      {error && (
+        <div style={{ background: isDark ? '#4a2a2a' : '#fdecea', border: `1px solid ${isDark ? '#7a4444' : '#f5c6cb'}`, color: isDark ? '#ffb4b4' : '#a3282a', borderRadius: 8, padding: '9px 12px', fontSize: 13, marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
+      {loading ? (
+        <p style={{ fontSize: 13.5, color: textMid }}>読み込んでいます...</p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+          {roles.map(r => {
+            const fixed = r.name === 'パート' || r.name === '管理者';
+            const on = r.name === '管理者' ? true : (r.name === 'パート' ? false : allowed.includes(r.name));
+            return (
+              <label key={r.id}
+                style={{ display: 'flex', gap: 9, alignItems: 'center', padding: '9px 12px', borderRadius: 8, border: `1px solid ${on && !fixed ? accent : line}`, cursor: fixed ? 'default' : 'pointer', opacity: fixed ? .65 : 1 }}>
+                <input type="checkbox" checked={on} disabled={fixed || busy}
+                  onChange={() => !fixed && toggle(r.name)}
+                  style={{ width: 17, height: 17 }} />
+                <span style={{ fontSize: 13.5, fontWeight: on ? 700 : 400 }}>{r.name}</span>
+                {fixed && (
+                  <span style={{ fontSize: 12, color: textMid, marginLeft: 'auto' }}>
+                    {r.name === 'パート' ? '常に使えません' : '常に使えます'}
+                  </span>
+                )}
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 };
 
