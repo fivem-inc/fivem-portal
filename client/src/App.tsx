@@ -29,6 +29,7 @@ const OvertimePage     = React.lazy(() => import('./pages/OvertimePage'));
 const ShiftDirectoryPage = React.lazy(() => import('./pages/ShiftDirectoryPage'));
 const PurchaseRequestPage = React.lazy(() => import('./pages/PurchaseRequestPage'));
 const SafetyCheckPage = React.lazy(() => import('./pages/SafetyCheckPage'));
+const RoomBookingPage = React.lazy(() => import('./pages/RoomBookingPage'));
 
 const PageLoader: React.FC = () => (
   <div style={{ padding: 40, textAlign: 'center', color: '#888' }}>読み込んでいます...</div>
@@ -697,7 +698,7 @@ const useOvertimeUnreportedCount = (userId: string | undefined, canOvertime: boo
   return { count, dates };
 };
 
-const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean; canShiftReport?: boolean; canCalendar?: boolean; canPurchaseRequest?: boolean; canOvertime?: boolean; canExpense?: boolean; canTripReport?: boolean; canBoard?: boolean; canFaq?: boolean; canFaqNav?: boolean; roleTitle?: string; userId?: string }> = ({ isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canFaq, canFaqNav, roleTitle, userId }) => {
+const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean; canShiftReport?: boolean; canCalendar?: boolean; canPurchaseRequest?: boolean; canOvertime?: boolean; canExpense?: boolean; canTripReport?: boolean; canBoard?: boolean; canRoomBooking?: boolean; canFaq?: boolean; canFaqNav?: boolean; roleTitle?: string; userId?: string }> = ({ isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, roleTitle, userId }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { previewRole, setPreviewRole, user: ctxUser } = useContext(AuthContext);
@@ -917,6 +918,16 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
                 </span>
               )}
             </div>
+          )}
+          {/* 場所の予約。毎日開くものなので連絡板の前に置く。
+              🚨 2026-08-31 にマネージャー以上へ絞った（ユーザー確定）。
+                 フロア責任者は**含めない**（案A）。「マネージャー以上」に
+                 フロア責任者を入れるかは毎回割れるので、役職ごとのONで持つ。
+                 出し分けは管理画面の「役職・機能権限」で変えられる */}
+          {canRoomBooking && isPub('room_booking') && (
+            <button onClick={() => navTo('/rooms')} style={btnStyle(location.pathname === '/rooms', '#2f6f4f')}>
+              {isMobile ? <><span style={{ fontSize: 20 }}>🚪</span>{navLabel('場所予約')}</> : '🚪 場所予約'}
+            </button>
           )}
           {canBoard && isPub('board') && (
           <div data-nav-badge={location.pathname !== '/board' ? boardUnread : 0} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
@@ -1694,6 +1705,7 @@ const Dashboard: React.FC = () => {
     canExpense,
     canTripReport,
     canBoard,
+    canRoomBooking,
     canFaq,
     canFaqNav,
     leaveRequestEnabled,
@@ -1839,7 +1851,7 @@ const Dashboard: React.FC = () => {
           <div style={{ fontSize: 15, fontWeight: 'bold', color: '#155724' }}>回答を送信しました</div>
         </div>
       )}
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
 
       {/* ページタイトル。ホームであることが分かるよう他ページと同じ「サイト名＋ページ名」の形にする。
           交通費申請の見出しは ExpenseForm 側にセクション見出しとして置いている */}
@@ -1958,7 +1970,7 @@ const Dashboard: React.FC = () => {
 
 // 出張報告ページ
 const TripReportPage: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canFaq, canFaqNav, canTripReportHistory, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, canTripReportHistory, handleLogout, loading } = useAuth();
   const featurePublishState = useFeaturePublished();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   // 🚨 ナビのボタンを隠すだけでなく、ルート側にもガードを入れる
@@ -1967,7 +1979,7 @@ const TripReportPage: React.FC = () => {
   if (!isAdmin && !canTripReport) return <Navigate to="/" />;
   return (
     <div style={{ padding: '70px 16px 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <BusinessTripReportForm user={user} profileName={profileName} canHistory={canTripReportHistory} />
       </Suspense>
@@ -1977,11 +1989,11 @@ const TripReportPage: React.FC = () => {
 
 // 休暇申請ページ
 const LeaveRequestPage: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canFaq, canFaqNav, leaveRequestEnabled, handleLogout } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, leaveRequestEnabled, handleLogout } = useAuth();
   if (!user) return <div>読み込んでいます...</div>;
   return (
     <div style={{ padding: '70px 16px 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <LeaveRequestForm user={user} profileName={profileName} roleTitle={roleTitle} leaveRequestEnabled={leaveRequestEnabled} />
       </Suspense>
@@ -1991,7 +2003,7 @@ const LeaveRequestPage: React.FC = () => {
 
 // 休暇申請承認ページ（リーダー・マネージャー・管理者用）
 const LeaveApprovalsPage: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canFaq, canFaqNav, canLeaveApprovals, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, canLeaveApprovals, handleLogout, loading } = useAuth();
   const featurePublishState = useFeaturePublished();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   if (roleTitle && !isApprover) return <Navigate to="/" />;
@@ -2000,7 +2012,7 @@ const LeaveApprovalsPage: React.FC = () => {
   if (!isAdmin && !canLeaveApprovals) return <Navigate to="/" />;
   return (
     <div style={{ padding: '110px 16px 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <LeaveApprovals user={user} profileName={profileName} isAdmin={isAdmin} roleTitle={roleTitle} />
       </Suspense>
@@ -2010,12 +2022,12 @@ const LeaveApprovalsPage: React.FC = () => {
 
 // チームカレンダーページ
 const TeamCalendarPage: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canFaq, canFaqNav, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, handleLogout, loading } = useAuth();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   if (!isAdmin && !canCalendar) return <Navigate to="/" />;
   return (
     <div style={{ padding: '70px 16px 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <CalendarPage user={user} roleTitle={roleTitle} isAdmin={isAdmin} isApprover={isApprover} />
       </Suspense>
@@ -2025,13 +2037,13 @@ const TeamCalendarPage: React.FC = () => {
 
 // 管理画面ページ（/admin）
 const AdminPage: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canFaq, canFaqNav, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, handleLogout, loading } = useAuth();
   const { submissions, pendingApprovals, isLoading, fetchExpenses } = useExpenses(user, isAdmin);
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   if (!isAdmin) return <Navigate to="/" />;
   return (
     <div style={{ padding: '110px 16px 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
 <Suspense fallback={<PageLoader />}>
         <AdminPanel
           pendingApprovals={pendingApprovals}
@@ -2049,13 +2061,13 @@ const AdminPage: React.FC = () => {
 // 🚨 公開範囲は管理画面「役職・機能権限管理」の FAQ の行で切り替える（コードに役職を直書きしない）。
 //    ナビにボタンを出すかは別の行（FAQ：ナビにも出す）で切り替える。
 const HelpPageWrapper: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canFaq, canFaqNav, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, handleLogout, loading } = useAuth();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   // 🚨 ナビのボタンを隠すだけでなく、ルート側にもガードを入れる（URL直打ち対策）
   if (!canFaq) return <Navigate to="/" />;
   return (
     <div style={{ padding: '70px 0 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <HelpPage roleTitle={roleTitle} />
       </Suspense>
@@ -2090,7 +2102,7 @@ const FaqAdminPageWrapper: React.FC = () => {
 
 // 連絡板ページ（/board）
 const BoardPageWrapper: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canFaq, canFaqNav, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, handleLogout, loading } = useAuth();
   const featurePublishState = useFeaturePublished();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   if (!isFeaturePublished('board', featurePublishState, isAdmin, roleTitle)) return <Navigate to="/" />;
@@ -2098,7 +2110,7 @@ const BoardPageWrapper: React.FC = () => {
   if (!isAdmin && !canBoard) return <Navigate to="/" />;
   return (
     <>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <BoardPage />
       </Suspense>
@@ -2108,11 +2120,11 @@ const BoardPageWrapper: React.FC = () => {
 
 // シフト実績申請ページ（/shift-report）
 const ShiftReportPageWrapper: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canFaq, canFaqNav, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, handleLogout, loading } = useAuth();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   return (
     <>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <ShiftReportPage user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin} />
       </Suspense>
@@ -2122,14 +2134,14 @@ const ShiftReportPageWrapper: React.FC = () => {
 
 // 残業・時間管理ページ（/overtime・正社員用）
 const OvertimePageWrapper: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canFaq, canFaqNav, canOvertimeSummary, canShiftPatternDirectory, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, canOvertimeSummary, canShiftPatternDirectory, handleLogout, loading } = useAuth();
   const featurePublishState = useFeaturePublished();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   if (!isFeaturePublished('overtime', featurePublishState, isAdmin, roleTitle)) return <Navigate to="/" />;
   if (!isAdmin && !canOvertime) return <Navigate to="/" />;
   return (
     <div style={{ padding: '70px 0 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <OvertimePage user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin} canSummaryPerm={canOvertimeSummary} canShiftDirectoryPerm={canShiftPatternDirectory} />
       </Suspense>
@@ -2139,11 +2151,11 @@ const OvertimePageWrapper: React.FC = () => {
 
 // 全員のシフト予定 閲覧ページ（/shift-patterns・リーダー以上）
 const ShiftDirectoryPageWrapper: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canFaq, canFaqNav, canShiftPatternDirectory, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, canShiftPatternDirectory, handleLogout, loading } = useAuth();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   return (
     <div style={{ padding: '70px 0 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <ShiftDirectoryPage user={user} roleTitle={roleTitle} isAdmin={isAdmin} canDirectory={canShiftPatternDirectory} />
       </Suspense>
@@ -2154,13 +2166,13 @@ const ShiftDirectoryPageWrapper: React.FC = () => {
 // 安否確認ページ（/safety・回答は全員対象。発信操作の制限はページ内で役職を見て行う）
 //   ⚠️ ナビの出し分けだけでなくルート側にもガードを入れる（連絡板で抜けていた事故と同型）
 const SafetyCheckPageWrapper: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canFaq, canFaqNav, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, handleLogout, loading } = useAuth();
   const featurePublishState = useFeaturePublished();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   if (!isFeaturePublished('safety_check', featurePublishState, isAdmin, roleTitle)) return <Navigate to="/" />;
   return (
     <div style={{ padding: '70px 0 0' }}>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <SafetyCheckPage user={user} roleTitle={roleTitle} isAdmin={isAdmin} />
       </Suspense>
@@ -2169,13 +2181,32 @@ const SafetyCheckPageWrapper: React.FC = () => {
 };
 
 // 備品精算ページ（/purchase）
+// 場所（フロア）の予約表。ログインしていれば全スタッフが使える（権限で絞らない）
+const RoomBookingPageWrapper: React.FC = () => {
+  const { user, isAdmin, isApprover, profileName, roleTitle, employmentType, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, handleLogout, loading } = useAuth();
+  const featurePublishState = useFeaturePublished();
+  if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
+  // 🚨 ボタンを隠すだけでなく、URLを直接打たれても入れないようにする
+  //    （他のページと同じ守り方に合わせる）
+  if (!isFeaturePublished('room_booking', featurePublishState, isAdmin, roleTitle)) return <Navigate to="/" />;
+  if (!isAdmin && !canRoomBooking) return <Navigate to="/" />;
+  return (
+    <>
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
+      <Suspense fallback={<PageLoader />}>
+        <RoomBookingPage user={user} roleTitle={roleTitle} isAdmin={isAdmin} employmentType={employmentType} />
+      </Suspense>
+    </>
+  );
+};
+
 const PurchaseRequestPageWrapper: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canFaq, canFaqNav, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, handleLogout, loading } = useAuth();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   if (!isAdmin && !canPurchaseRequest) return <Navigate to="/" />;
   return (
     <>
-      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <PurchaseRequestPage user={user} roleTitle={roleTitle} isAdmin={isAdmin} />
       </Suspense>
@@ -2254,6 +2285,7 @@ function App() {
             <Route path="/shift-patterns" element={<ShiftDirectoryPageWrapper />} />
             <Route path="/purchase" element={<PurchaseRequestPageWrapper />} />
             <Route path="/safety" element={<SafetyCheckPageWrapper />} />
+            <Route path="/rooms" element={<RoomBookingPageWrapper />} />
           </Route>
         </Routes>
       </AuthProvider>
