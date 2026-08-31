@@ -6,17 +6,37 @@ import { getNotificationTemplate } from './notificationDispatch';
 // 表示は履歴・承認画面・管理画面の3か所にあるが、取得も投稿もここに集約する
 // （同じUIとロジックを3か所に書くと、必ず片方だけ直す事故になる）。
 
+/**
+ * 投稿の種別。
+ *  question … 返事がほしい。赤い「回答待ち」が出る
+ *  share    … 共有。返事は不要で「確認した」だけで終われる
+ *
+ * 🚨 「最後の投稿にファイルが付いているか」で代用しない。
+ *    質問 →（誰も答えない）→ 経理が請求書を共有、という並びで
+ *    答えていない質問があるのに回答待ちが消える。やりとりが伸びるほど外れる。
+ *    意図は投稿した本人にしか分からないので、送信時に持たせる。
+ */
+export type PurchaseCommentKind = 'question' | 'share';
+
 export interface PurchaseComment {
   id: string;
   purchase_request_id: string;
   author_id: string;
   body: string;
   created_at: string;
+  kind: PurchaseCommentKind;
   // 共有ファイル（承認後に届く確定見積書・納品書など）。未添付なら null。
   // 承認の根拠になった相見積もり（purchase_request_item_quotes）は承認確定後に
   // 書き換えられない仕様なので、あとから届いたものはここに「追記」として残す。
   file_path: string | null;
   file_label: string | null;   // 種類の名札（確定見積書／納品書 など）
+}
+
+/** 「確認した」＝その人がこのやりとりをどこまで見たか（1人1申請につき1行） */
+export interface PurchaseCommentRead {
+  purchase_request_id: string;
+  user_id: string;
+  last_seen_at: string;
 }
 
 /** 申請idの配列に対する質問・回答をまとめて取得（古い順） */
@@ -26,7 +46,7 @@ export async function fetchPurchaseComments(
   if (requestIds.length === 0) return {};
   const { data, error } = await supabase
     .from('purchase_request_comments')
-    .select('id, purchase_request_id, author_id, body, created_at, file_path, file_label')
+    .select('id, purchase_request_id, author_id, body, created_at, kind, file_path, file_label')
     .in('purchase_request_id', requestIds)
     .order('created_at');
   if (error) return {};
@@ -35,6 +55,45 @@ export async function fetchPurchaseComments(
     (byId[(c as PurchaseComment).purchase_request_id] ??= []).push(c as PurchaseComment);
   });
   return byId;
+}
+
+/** 「確認した」の記録をまとめて取得 */
+export async function fetchPurchaseCommentReads(
+  requestIds: string[],
+): Promise<Record<string, PurchaseCommentRead[]>> {
+  if (requestIds.length === 0) return {};
+  const { data, error } = await supabase
+    .from('purchase_request_comment_reads')
+    .select('purchase_request_id, user_id, last_seen_at')
+    .in('purchase_request_id', requestIds);
+  if (error) return {};
+  const byId: Record<string, PurchaseCommentRead[]> = {};
+  (data ?? []).forEach(r => {
+    const row = r as PurchaseCommentRead;
+    (byId[row.purchase_request_id] ??= []).push(row);
+  });
+  return byId;
+}
+
+/**
+ * 「確認した」を押したときの記録。いま見えている最後の投稿の時刻まで進める。
+ *
+ * 🚨 通知は出さない。「確認した」で46人に通知が飛ぶと、押すこと自体が嫌がられる
+ *    （新しい通知は「設定が無い＝全員に送る」作りのため）。
+ * 🚨 now() ではなく最後の投稿の時刻を入れる。押した瞬間の時刻にすると、
+ *    その直後に届いた投稿まで「確認済み」に飲み込んでしまう。
+ */
+export async function markPurchaseCommentsSeen(
+  requestId: string, userId: string, lastSeenAt: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const { error } = await supabase
+    .from('purchase_request_comment_reads')
+    .upsert(
+      { purchase_request_id: requestId, user_id: userId, last_seen_at: lastSeenAt },
+      { onConflict: 'purchase_request_id,user_id' },
+    );
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
 }
 
 /**
@@ -52,6 +111,7 @@ export async function postPurchaseComment(params: {
   authorId: string;
   authorName: string;
   itemName: string;
+  kind: PurchaseCommentKind;
   // 共有ファイル（任意・複数可）。DBは1行=1ファイルなので、
   // 2件以上は行を分けて保存する（本文は先頭の行にだけ持たせる）
   files?: { path: string; label: string | null }[];
@@ -74,6 +134,7 @@ export async function postPurchaseComment(params: {
     rows.map(r => ({
       purchase_request_id: params.requestId,
       author_id: params.authorId,
+      kind: params.kind,
       ...r,
     })),
   );
@@ -119,10 +180,12 @@ export async function postPurchaseComment(params: {
     });
     if (!tpl) return { ok: true };   // 管理画面でOFFにされている
 
-    // 2行目：ファイルがあれば何が共有されたかを出す（本文だけなら従来どおり冒頭40字）。
+    // 2行目：共有ならファイルの種類を出す（質問や本文だけなら従来どおり冒頭40字）。
+    // 🚨 質問にファイルが付いていても「共有されました」とは書かない。
+    //    返事が要る投稿を共有と読み違えると、そのまま放置される。
     // 1行目（tpl.template）は変えない。App.tsx の分岐は1行目の文言を見ており、
     // 「お知らせ」「リマインド」等の語が入ると連絡板の通知と誤判定されるため。
-    const sub = files.length > 0
+    const sub = params.kind === 'share' && files.length > 0
       ? `${files[0].label}${files.length > 1 ? ` 他${files.length - 1}件` : ''}が共有されました${body ? `：${body.slice(0, 30)}` : ''}`
       : (tpl.subject || body.slice(0, 40));
 
