@@ -239,6 +239,14 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
   // ── 一覧としての絞り込み ──
   // マネージャー以上には全社の申請と精算が開設以来ぜんぶ降ってくるので、
   // 「先週何が買われたか」を見る道具として使えるようにする
+  // 申請日時。日付は購入予定日と同じ形（0埋め）に揃え、時刻は時を0埋めしない
+  // ／分は0埋めする（アプリ共通の表記ルール）
+  const fmtSubmittedAt = (iso: string): string => {
+    const d = new Date(iso);
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${d.getHours()}:${p(d.getMinutes())}`;
+  };
+
   // 「申請日」＝いつ出した申請か。「購入日」＝精算なら購入した日・申請なら購入予定日。
   // 休暇申請のCSVで同じ問題（申請日で見たいのか実際の日で見たいのか）を
   // 選べる形で解決した前例に揃えている。
@@ -329,7 +337,12 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
             {statusInfo && r.request_type === 'purchase_request' && (
               <span style={{ color: '#fff', background: statusInfo.color, borderRadius: 4, padding: '1px 6px' }}>{statusInfo.label}</span>
             )}
-            <span>📅 {r.purchased_at ?? r.requested_purchase_date}</span>
+            {/* 何の日付かをラベルで示す。上の「申請日で絞る／購入日で絞る」と
+                対応が付かないと、なぜこの行が出ているのか分からなくなる */}
+            {(r.purchased_at || r.requested_purchase_date) && (
+              <span>📅 {r.purchased_at ? '購入' : '購入予定'} {r.purchased_at ?? r.requested_purchase_date}</span>
+            )}
+            <span>📝 申請 {fmtSubmittedAt(r.created_at)}</span>
             {r.payment_method && r.request_type === 'reimbursement' && <span>💳 {paymentMethodLabel(r)}</span>}
             {r.receipt_type && <span>🧾 {RECEIPT_LABEL[r.receipt_type]}</span>}
             {/* 申請者名は自分の分にも出す。混在リストでは名前が全行に揃っているほうが目で追いやすい
