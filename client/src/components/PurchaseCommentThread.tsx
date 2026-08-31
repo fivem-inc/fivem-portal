@@ -1,13 +1,24 @@
 import React, { useState } from 'react';
 import { postPurchaseComment, type PurchaseComment } from '../lib/purchaseComments';
+import QuoteFileUploader from './QuoteFileUploader';
+import { openReceiptImage } from '../lib/receiptView';
 
-// 備品購入申請の「質問・回答」。履歴・承認画面・管理画面の3か所で共用する。
+// 備品購入申請の「質問・回答」と「共有ファイル」。履歴・承認画面・管理画面の3か所で共用する。
 //
 // 🚨 使われずに終わらせないための決まりごと（過去の失敗の再発防止）
 //  ・0件でも必ず入口を出す（「対応中マーク」が他人に見えず意味を成さなかった件と同型）
 //  ・文字だけの見出しにしない。枠付きボタン＋動詞（「質問する」）にする
 //    （定型メッセージの折りたたみが「押せると気づけなかった」失敗があった）
 //  ・発言者の名前と役職を必ず出す（誰が答えるべきか分からないと放置される）
+//
+// 🚨 共有ファイルについて
+//  ・承認の根拠になった相見積もり（purchase_request_item_quotes）は承認確定後に
+//    書き換えられない（RLSが拒否する）。あとから届いた確定見積書・納品書は
+//    ここに「追記」として残す。承認済みの内容は一切変わらない。
+//  ・添付できる人は制限しない（経理が請求書を貼る、承認者が資料を貼る等があるため）。
+//    誰が貼ったかは名前と時刻で必ず残る。
+//  ・ファイルを開く処理は props で受け取らず直接 import する。
+//    3画面それぞれに配線すると、必ずどこかで渡し忘れて「その画面だけ開けない」になる。
 
 interface Props {
   requestId: string;
@@ -23,6 +34,10 @@ interface Props {
   onPosted: () => void;
 }
 
+// ファイルの種類の名札。既定は「確定見積書」＝今いちばん多い用途なので、
+// そのまま送れば選ぶ手間が増えない。
+const FILE_LABELS = ['確定見積書', '納品書', '請求書', 'カタログ・仕様書', 'その他'] as const;
+
 const fmt = (iso: string): string => {
   const d = new Date(iso);
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -37,20 +52,43 @@ const PurchaseCommentThread: React.FC<Props> = ({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  const [filePath, setFilePath] = useState<string | null>(null);
+  const [labelChoice, setLabelChoice] = useState<string>(FILE_LABELS[0]);
+  const [labelOther, setLabelOther] = useState('');
+  const [openingPath, setOpeningPath] = useState<string | null>(null);
+
   const text = isDark ? '#e9ecef' : '#212529';
   const subText = isDark ? '#adb5bd' : '#6c757d';
   const border = isDark ? '#5a6268' : '#dee2e6';
   const cardBg = isDark ? '#343a40' : '#fff';
   const innerBg = isDark ? '#2c3e50' : '#f1f7fd';
+  const accentBorder = isDark ? '#4a90d9' : '#90caf9';
+
+  // 名札は「その他」のときだけ自由入力。空なら「共有ファイル」に落とす（lib側でも同じ既定）
+  const effectiveLabel = labelChoice === 'その他' ? labelOther.trim() : labelChoice;
+
+  const files = comments.filter(c => c.file_path);
+  const canSend = !!body.trim() || !!filePath;
+
+  const openFile = async (path: string) => {
+    setOpeningPath(path); setError('');
+    const err = await openReceiptImage(path);
+    setOpeningPath(null);
+    if (err) setError(err);
+  };
 
   const submit = async () => {
     setSaving(true); setError('');
     const res = await postPurchaseComment({
       requestId, body, authorId: currentUserId, authorName: currentUserName, itemName,
+      filePath, fileLabel: effectiveLabel,
     });
     setSaving(false);
     if (!res.ok) { setError(res.error ?? '送信に失敗しました'); return; }
     setBody('');
+    setFilePath(null);
+    setLabelChoice(FILE_LABELS[0]);
+    setLabelOther('');
     onPosted();
   };
 
@@ -63,11 +101,14 @@ const PurchaseCommentThread: React.FC<Props> = ({
       <button type="button" onClick={() => setOpen(true)}
         style={{
           marginTop: 8, padding: '7px 14px', borderRadius: 8, cursor: 'pointer',
-          border: `1px solid ${isDark ? '#4a90d9' : '#90caf9'}`,
+          border: `1px solid ${accentBorder}`,
           background: isDark ? '#2c3e50' : '#e8f4fd',
           color: isDark ? '#fff' : '#1565c0', fontSize: 12.5, fontWeight: 'bold',
         }}>
         💬 質問する
+        {/* ファイルが付いていることは閉じたままでも分かるようにする。
+            開かないと気づけないと、せっかく共有しても見てもらえない */}
+        {files.length > 0 && `　📎 共有ファイル ${files.length}件`}
       </button>
     );
   }
@@ -89,6 +130,37 @@ const PurchaseCommentThread: React.FC<Props> = ({
         </button>
       </div>
 
+      {/* 共有ファイルだけを先にまとめて出す。やりとりに埋もれると後から探せない */}
+      {files.length > 0 && (
+        <div style={{ background: cardBg, border: `1px solid ${accentBorder}`, borderRadius: 6, padding: '8px 10px', marginBottom: 8 }}>
+          <div style={{ fontSize: 12, fontWeight: 'bold', color: text, marginBottom: 6 }}>
+            📎 共有ファイル（{files.length}件）
+          </div>
+          {files.map(c => (
+            <div key={`f-${c.id}`} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '4px 0' }}>
+              <span style={{
+                fontSize: 11, fontWeight: 'bold', borderRadius: 4, padding: '2px 8px',
+                background: isDark ? '#2c3e50' : '#e8f4fd', color: isDark ? '#fff' : '#1565c0',
+                border: `1px solid ${accentBorder}`,
+              }}>
+                {c.file_label || '共有ファイル'}
+              </span>
+              <button type="button" onClick={() => openFile(c.file_path as string)}
+                disabled={openingPath === c.file_path}
+                style={{
+                  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                  fontSize: 12.5, color: isDark ? '#90caf9' : '#1565c0', textDecoration: 'underline',
+                }}>
+                {openingPath === c.file_path ? '開いています...' : 'ファイルを開く'}
+              </button>
+              <span style={{ fontSize: 11, color: subText }}>
+                {names[c.author_id] ?? '不明'} が共有　{fmt(c.created_at)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {comments.map(c => (
         <div key={c.id} style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 6, padding: '7px 10px', marginBottom: 6 }}>
           <div style={{ fontSize: 11.5, color: subText, marginBottom: 3 }}>
@@ -96,7 +168,20 @@ const PurchaseCommentThread: React.FC<Props> = ({
             {roles?.[c.author_id] && `（${roles[c.author_id]}）`}
             　{fmt(c.created_at)}
           </div>
-          <div style={{ fontSize: 13, color: text, whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>{c.body}</div>
+          {c.body && (
+            <div style={{ fontSize: 13, color: text, whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>{c.body}</div>
+          )}
+          {c.file_path && (
+            <button type="button" onClick={() => openFile(c.file_path as string)}
+              disabled={openingPath === c.file_path}
+              style={{
+                marginTop: c.body ? 5 : 0, background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                fontSize: 12.5, color: isDark ? '#90caf9' : '#1565c0', textDecoration: 'underline',
+              }}>
+              📎 {c.file_label || '共有ファイル'}
+              {openingPath === c.file_path ? '（開いています...）' : ' を開く'}
+            </button>
+          )}
         </div>
       ))}
 
@@ -116,16 +201,48 @@ const PurchaseCommentThread: React.FC<Props> = ({
           width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 6,
           border: `1px solid ${border}`, background: cardBg, color: text, fontSize: 13, resize: 'vertical',
         }} />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-        <button type="button" onClick={submit} disabled={saving || !body.trim()}
+
+      {/* ファイルの添付。承認済みでも使える（承認内容は変わらず、追記として残るだけ） */}
+      <div style={{ marginTop: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+          <span style={{ fontSize: 11.5, color: subText }}>ファイルの種類</span>
+          <select value={labelChoice} onChange={e => setLabelChoice(e.target.value)}
+            style={{
+              padding: '5px 8px', borderRadius: 6, fontSize: 12.5,
+              border: `1px solid ${border}`, background: cardBg, color: text,
+            }}>
+            {FILE_LABELS.map(l => <option key={l} value={l}>{l}</option>)}
+          </select>
+          {labelChoice === 'その他' && (
+            <input value={labelOther} onChange={e => setLabelOther(e.target.value)}
+              placeholder="例：保証書"
+              style={{
+                padding: '5px 8px', borderRadius: 6, fontSize: 12.5, flex: 1, minWidth: 120,
+                border: `1px solid ${border}`, background: cardBg, color: text,
+              }} />
+          )}
+        </div>
+        <QuoteFileUploader
+          isDarkMode={isDark}
+          userId={currentUserId}
+          draftId={requestId}
+          value={filePath}
+          onChange={setFilePath}
+        />
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+        <button type="button" onClick={submit} disabled={saving || !canSend}
           style={{
-            padding: '7px 16px', borderRadius: 8, border: 'none', cursor: body.trim() ? 'pointer' : 'default',
-            background: body.trim() ? '#1976d2' : (isDark ? '#495057' : '#ced4da'),
+            padding: '7px 16px', borderRadius: 8, border: 'none', cursor: canSend ? 'pointer' : 'default',
+            background: canSend ? '#1976d2' : (isDark ? '#495057' : '#ced4da'),
             color: '#fff', fontSize: 12.5, fontWeight: 'bold',
           }}>
-          {saving ? '送信中...' : '送信'}
+          {saving ? '送信中...' : (filePath ? `${effectiveLabel || '共有ファイル'}を共有する` : '送信')}
         </button>
-        <span style={{ fontSize: 11, color: subText }}>送信すると取り消せません</span>
+        <span style={{ fontSize: 11, color: subText }}>
+          送信すると取り消せません。申請した人と承認した人に通知が届きます
+        </span>
       </div>
     </div>
   );

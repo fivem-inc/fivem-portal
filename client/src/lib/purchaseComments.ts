@@ -12,6 +12,11 @@ export interface PurchaseComment {
   author_id: string;
   body: string;
   created_at: string;
+  // 共有ファイル（承認後に届く確定見積書・納品書など）。未添付なら null。
+  // 承認の根拠になった相見積もり（purchase_request_item_quotes）は承認確定後に
+  // 書き換えられない仕様なので、あとから届いたものはここに「追記」として残す。
+  file_path: string | null;
+  file_label: string | null;   // 種類の名札（確定見積書／納品書 など）
 }
 
 /** 申請idの配列に対する質問・回答をまとめて取得（古い順） */
@@ -21,7 +26,7 @@ export async function fetchPurchaseComments(
   if (requestIds.length === 0) return {};
   const { data, error } = await supabase
     .from('purchase_request_comments')
-    .select('id, purchase_request_id, author_id, body, created_at')
+    .select('id, purchase_request_id, author_id, body, created_at, file_path, file_label')
     .in('purchase_request_id', requestIds)
     .order('created_at');
   if (error) return {};
@@ -47,14 +52,23 @@ export async function postPurchaseComment(params: {
   authorId: string;
   authorName: string;
   itemName: string;
+  filePath?: string | null;    // 共有ファイル（任意）
+  fileLabel?: string | null;   // 種類の名札（任意）
 }): Promise<{ ok: boolean; error?: string }> {
   const body = params.body.trim();
-  if (!body) return { ok: false, error: '内容を入力してください' };
+  const filePath = params.filePath ?? null;
+  const fileLabel = filePath ? (params.fileLabel?.trim() || '共有ファイル') : null;
+  // ファイルだけの共有も許す（「確定見積書を貼るだけ」という使い方があるため）
+  if (!body && !filePath) {
+    return { ok: false, error: '内容を入力するか、ファイルを添付してください' };
+  }
 
   const { error } = await supabase.from('purchase_request_comments').insert({
     purchase_request_id: params.requestId,
     author_id: params.authorId,
     body,
+    file_path: filePath,
+    file_label: fileLabel,
   });
   if (error) return { ok: false, error: error.message };
 
@@ -98,9 +112,16 @@ export async function postPurchaseComment(params: {
     });
     if (!tpl) return { ok: true };   // 管理画面でOFFにされている
 
+    // 2行目：ファイルがあれば何が共有されたかを出す（本文だけなら従来どおり冒頭40字）。
+    // 1行目（tpl.template）は変えない。App.tsx の分岐は1行目の文言を見ており、
+    // 「お知らせ」「リマインド」等の語が入ると連絡板の通知と誤判定されるため。
+    const sub = filePath
+      ? `${fileLabel}が共有されました${body ? `：${body.slice(0, 30)}` : ''}`
+      : (tpl.subject || body.slice(0, 40));
+
     await Promise.all([...targets].map(id =>
       insertNotification(
-        id, tpl.template, tpl.subject || body.slice(0, 40),
+        id, tpl.template, sub,
         'purchase_request', params.requestId, 'purchase_request:comment_added',
       ),
     ));

@@ -18,10 +18,10 @@ const QuoteFileUploader: React.FC<QuoteFileUploaderProps> = ({ isDarkMode, userI
   const cameraFallbackInputRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<CameraCaptureHandle>(null);
 
-  const border = isDarkMode ? '#3a3a5c' : '#e0e0e0';
+  const border = isDarkMode ? '#495057' : '#e0e0e0';
   const text = isDarkMode ? '#eeeeee' : '#222222';
   const subText = isDarkMode ? '#aaaaaa' : '#666666';
-  const inputBg = isDarkMode ? '#3a3a5c' : '#f8f9fa';
+  const inputBg = isDarkMode ? '#495057' : '#f8f9fa';
 
   const uploadBlob = async (blob: Blob, isPdf: boolean) => {
     setUploading(true);

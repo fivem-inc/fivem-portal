@@ -38,12 +38,12 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
   const cameraRef = useRef<CameraCaptureHandle>(null);
   const processingRef = useRef(false);
 
-  const cardBg = isDarkMode ? '#2d2d3e' : '#ffffff';
-  const border = isDarkMode ? '#3a3a5c' : '#e0e0e0';
+  const cardBg = isDarkMode ? '#343a40' : '#ffffff';
+  const border = isDarkMode ? '#495057' : '#e0e0e0';
   const activeBorder = '#28a745';
   const text = isDarkMode ? '#eeeeee' : '#222222';
   const subText = isDarkMode ? '#aaaaaa' : '#666666';
-  const inputBg = isDarkMode ? '#3a3a5c' : '#f8f9fa';
+  const inputBg = isDarkMode ? '#495057' : '#f8f9fa';
 
   const setUploadState = (next: boolean) => {
     setUploading(next);
