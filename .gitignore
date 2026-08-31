@@ -7,3 +7,7 @@ node_modules
 .local/
 .nvm/
 .npm/
+
+# バックアップの失敗ログ（NASに書けなかったときだけローカルに出る）。
+# その時々の記録であってコードではないので、コミットには含めない。
+scripts/backup_error_log.txt
