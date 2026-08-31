@@ -133,30 +133,40 @@ const PurchaseCommentThread: React.FC<Props> = ({
     setLabelChoice(FILE_LABELS[0]);
     setLabelOther('');
     setKindChoice(null);
+    // 🚨 投稿＝そこまでのやりとりに目を通したということ。ここで確認済みにしないと、
+    //    質問に答えた直後に自分の画面へ赤が残り、わざわざ「✓ 確認した」を
+    //    押さないと消えない（答えた人に催促が出る形になってしまう）。
+    if (newest) await markPurchaseCommentsSeen(requestId, currentUserId, newest.created_at);
     onPosted();
   };
 
-  // ── 「確認した」 ─────────────────────────────
-  // 最新の投稿より後に見ていれば確認済み。新しい共有が来れば自然にまた未確認に戻る
+  // ── 未読の判定（🚨 ここ1か所だけ。赤いバッジもボタンも同じ式から出す） ──
+  //
+  // 🚨 以前は「ボタンを出すか」と「赤を出すか」を別々の式で書いていて、
+  //    行き止まりができていた（2026-09-01・レビューで発覚）：
+  //    Aさんの質問にファイルを付けて返信すると種別が自動で「共有」になり、
+  //    最新の投稿が自分＝ボタンが消える一方、最後の"質問"はAさんのままなので
+  //    赤だけが残り、消す手段が画面から無くなっていた。
+  //    同じ意味の判定を2か所に書かない（CLAUDE.md）。
   const newest = comments[comments.length - 1];
+  const myLastSeen = reads.find(r => r.user_id === currentUserId)?.last_seen_at;
+  const isUnseen = (c: PurchaseComment) =>
+    c.author_id !== currentUserId
+    && (!myLastSeen || new Date(c.created_at).getTime() > new Date(myLastSeen).getTime());
+  const unseen = comments.filter(isUnseen);
+
+  // 「✓ 確認した」＝まだ目を通していない他人の投稿があるときだけ出す
+  const canAck = unseen.length > 0;
+
+  // 🚨 赤い「回答待ち」は、未読のうちに**質問**があるときだけ。
+  //    共有に出すと、返事の要らない投稿で関係者全員に赤が残り続ける
+  //    （誰も答えないので永久に消えない。2026-09-01 実機で発生）。
+  const waiting = unseen.some(c => c.kind === 'question');
+
+  // 「✓ 確認：」に並べるのは、最新の投稿まで目を通した人
   const seenBy = newest
     ? reads.filter(r => new Date(r.last_seen_at).getTime() >= new Date(newest.created_at).getTime())
     : [];
-  const iHaveSeen = seenBy.some(r => r.user_id === currentUserId);
-  // 自分が最後に書いた本人なら押す意味がない
-  const canAck = !!newest && newest.author_id !== currentUserId && !iHaveSeen;
-
-  // ── 赤い「回答待ち」 ──────────────────────────
-  // 🚨 共有には出さない。返事の要らない投稿で関係者全員に赤が残り続ける
-  //    （誰も答えないので永久に消えない。2026-09-01 実機で発生）。
-  // 🚨 「最後の投稿」ではなく「最後の質問」を見る。
-  //    質問 →（誰も答えない）→ 経理が請求書を共有、でも赤が消えないようにするため。
-  // 🚨 「確認した」を押していれば出さない。これが無いと、答えをもらった側に
-  //    赤が移って往復し続け、最後は誰かが放置して終わる（案A・ユーザー決定）。
-  const lastQuestion = [...comments].reverse().find(c => c.kind === 'question');
-  const waiting = !!lastQuestion
-    && lastQuestion.author_id !== currentUserId
-    && !iHaveSeen;
 
   const ack = async () => {
     if (!newest) return;

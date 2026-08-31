@@ -8,6 +8,7 @@ import { usePurchasePendingCount } from '../hooks/usePurchasePendingCount';
 import ReimbursementForm from '../components/ReimbursementForm';
 import PurchaseRequestForm, { type ResubmitRecord } from '../components/PurchaseRequestForm';
 import PurchaseApprovals from '../components/PurchaseApprovals';
+import { toJstDateStr } from '../lib/breakCalc';
 import { PageTabs, type PageTabDef } from '../components/PageTabs';
 import HelpLinkButton from '../components/HelpLinkButton';
 import { resolveItems } from '../lib/purchaseItemsFallback';
@@ -90,6 +91,19 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
   // 一覧としての絞り込み（マネージャー以上は全社の申請と精算が全部降ってくるため）
   const [scope, setScope] = useState<'mine' | 'all'>('all');
   const [period, setPeriod] = useState<'thisMonth' | 'lastMonth' | 'all'>('thisMonth');
+
+  // 🚨 通知から ?focus=<申請ID> で来たときは、期間の絞り込みを外す。
+  //    確定見積書・納品書・請求書は「承認が終わったあと」に届くので、
+  //    申請した月より後の月に共有が起きるのが普通。既定の「今月・申請日」のままだと
+  //    先月の申請カードが描画されず、強調もスクロールも無音で不発になり、
+  //    画面には「この条件に当てはまる記録はありません」しか出ない。
+  //    （2026-09-01 本番で発生。8/31 の申請に届いた共有の通知を押しても開けなかった）
+  // 🚨 初期値ではなく effect で見る。同じページを開いたまま通知をタップしても
+  //    画面は作り直されないため、1回きりの読み取りでは変化に気づけない
+  //    （useFocusHighlight が同じ理由で effect にしている）。
+  const [searchParams] = useSearchParams();
+  const focusId = searchParams.get('focus');
+  useEffect(() => { if (focusId) setPeriod('all'); }, [focusId]);
   // 期間を「申請した日」で見るか「購入日」で見るか。既定は申請日。
   // 購入日基準だと「8月に申請・購入予定日が9月1日」が9月扱いになり、
   // 今月出した申請が「今月」に出ない＝直感に反するため（2026-08-31 ユーザー決定）。
@@ -159,6 +173,11 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
     // 申請者名は常に取りに行く（以前はマネージャー以上のときだけで、自分の分は名前が出なかった）。
     // 承認したリーダーの名前も出すので一緒に集める
     const namesToFetch = new Set<string>();
+    // 🚨 自分の名前も必ず集める。質問・共有を投稿するときの投稿者名に使っており、
+    //    空だと通知が「💬 さんが〜書き込みました」になる。
+    //    申請者でもリーダーでも共有先でもないマネージャーが履歴から投稿すると起きる
+    //    （承認画面 PurchaseApprovals.tsx:190 は集めているのに、履歴だけ抜けていた）
+    namesToFetch.add(userId);
     rows.forEach(r => {
       namesToFetch.add(r.user_id);
       if (r.leader_id) namesToFetch.add(r.leader_id);
@@ -250,10 +269,14 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
   // 「申請日」＝いつ出した申請か。「購入日」＝精算なら購入した日・申請なら購入予定日。
   // 休暇申請のCSVで同じ問題（申請日で見たいのか実際の日で見たいのか）を
   // 選べる形で解決した前例に揃えている。
+  // 🚨 created_at は timestamptz で、UTC表記（例 '2026-08-31T23:30:00+00:00'）で返る。
+  //    そのまま slice すると日本時間の 0:00〜8:59 に出した申請が前月扱いになる。
+  //    購入日（purchased_at / requested_purchase_date）は date 型なので変換不要。
+  const createdYmJst = (r: PurchaseRecord) => toJstDateStr(new Date(r.created_at));
   const dateOf = (r: PurchaseRecord) => (
     dateBasis === 'created'
-      ? r.created_at
-      : (r.purchased_at ?? r.requested_purchase_date ?? r.created_at)
+      ? createdYmJst(r)
+      : (r.purchased_at ?? r.requested_purchase_date ?? createdYmJst(r))
   ).slice(0, 7);
   const now = new Date();
   const ym = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
