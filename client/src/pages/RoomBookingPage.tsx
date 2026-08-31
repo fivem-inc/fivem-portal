@@ -2676,6 +2676,10 @@ const CustomerSettings: React.FC<{
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // 一覧のページ切り替え（2026-09-01 ユーザー指示。300名ごと）
+  const [page, setPage] = useState(0);
+  // 読み込みの上限に達したか（お客様が MAX_CUSTOMERS を超えている）
+  const [overCap, setOverCap] = useState(false);
 
   // 取り込み
   const [headers, setHeaders] = useState<string[]>([]);
@@ -2704,20 +2708,51 @@ const CustomerSettings: React.FC<{
     fontWeight: on ? 700 : 400,
   });
 
+  /**
+   * お客様と連絡先をまとめて読む。
+   * 🚨 1回の問い合わせで返ってくるのは **1000件まで**。件数を指定しないと
+   *    1001人目以降が**エラーも出さずに黙って欠ける**（2026-09-01 発覚）。
+   *    1000件ずつ範囲を指定して MAX_CUSTOMERS 件まで読む。
+   * 🚨 並びは会員番号順（ユーザー指示）。
+   */
   const load = useCallback(async () => {
     setLoading(true); setError('');
-    const [cRes, kRes] = await Promise.all([
-      supabase.from('room_customers').select('*').order('display_name'),
-      // 連絡先は公開範囲の設定によっては読めない。読めなくてもエラーにしない
-      supabase.from('room_customer_contacts').select('*'),
-    ]);
-    if (cRes.error) {
-      setError('お客様の一覧を読み込めませんでした。通信を確認して開き直してください。');
-      setLoading(false); return;
+    const CHUNK = 1000;
+    const MAX_CUSTOMERS = 5000;
+
+    const cs: Customer[] = [];
+    let hitCap = false;
+    for (let from = 0; ; from += CHUNK) {
+      const { data, error: err } = await supabase
+        .from('room_customers').select('*')
+        .order('member_no')
+        .range(from, from + CHUNK - 1);
+      if (err) {
+        setError('お客様の一覧を読み込めませんでした。通信を確認して開き直してください。');
+        setLoading(false); return;
+      }
+      const part = (data ?? []) as Customer[];
+      cs.push(...part);
+      if (part.length < CHUNK) break;          // これで最後
+      if (cs.length >= MAX_CUSTOMERS) { hitCap = true; break; }
     }
-    setList((cRes.data ?? []) as Customer[]);
-    const ks = (kRes.data ?? []) as CustomerContact[];
-    setCanSeeContacts(!kRes.error);
+    setList(cs);
+    setOverCap(hitCap);
+
+    // 連絡先は公開範囲の設定によっては読めない。読めなくてもエラーにしない
+    const ks: CustomerContact[] = [];
+    let contactsOk = true;
+    for (let from = 0; ; from += CHUNK) {
+      const { data, error: err } = await supabase
+        .from('room_customer_contacts').select('*')
+        .order('member_no')
+        .range(from, from + CHUNK - 1);
+      if (err) { contactsOk = false; break; }
+      const part = (data ?? []) as CustomerContact[];
+      ks.push(...part);
+      if (part.length < CHUNK || ks.length >= MAX_CUSTOMERS) break;
+    }
+    setCanSeeContacts(contactsOk);
     setContacts(Object.fromEntries(ks.map(k => [k.member_no, k])));
     setLoading(false);
   }, []);
@@ -2872,6 +2907,42 @@ const CustomerSettings: React.FC<{
       || `${c.last_kana ?? ''} ${c.first_kana ?? ''}`.includes(kh);
   });
 
+  // ---- ページ切り替え（300名ごと）----
+  const PAGE_SIZE = 300;
+  const pageCount = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
+  // 🚨 絞り込みでページ数が減ったときに空ページを出さないよう、表示は必ず範囲内に丸める
+  const safePage = Math.min(page, pageCount - 1);
+  const pageStart = safePage * PAGE_SIZE;
+  const paged = shown.slice(pageStart, pageStart + PAGE_SIZE);
+
+  const pager = pageCount > 1 ? (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+      padding: '8px 0', flexWrap: 'wrap',
+    }}>
+      <button
+        onClick={() => setPage(p => Math.max(0, Math.min(p, pageCount - 1) - 1))}
+        disabled={safePage === 0}
+        style={{
+          ...smallBtn(false), opacity: safePage === 0 ? 0.4 : 1,
+          cursor: safePage === 0 ? 'default' : 'pointer',
+        }}
+      >← 前へ</button>
+      <span style={{ fontSize: 12.5, color: textMid }}>
+        {pageStart + 1}〜{Math.min(pageStart + PAGE_SIZE, shown.length)}名
+        （{safePage + 1} / {pageCount}ページ）
+      </span>
+      <button
+        onClick={() => setPage(p => Math.min(pageCount - 1, Math.min(p, pageCount - 1) + 1))}
+        disabled={safePage >= pageCount - 1}
+        style={{
+          ...smallBtn(false), opacity: safePage >= pageCount - 1 ? 0.4 : 1,
+          cursor: safePage >= pageCount - 1 ? 'default' : 'pointer',
+        }}
+      >次へ →</button>
+    </div>
+  ) : null;
+
   return (
     <div>
       <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -2891,13 +2962,16 @@ const CustomerSettings: React.FC<{
         <p style={{ fontSize: 13.5, color: textMid }}>読み込んでいます...</p>
       ) : (
         <>
-          <input value={q} onChange={e => setQ(e.target.value)}
+          <input value={q} onChange={e => { setQ(e.target.value); setPage(0); }}
             placeholder="会員番号・お名前で探す" style={{ ...input, width: '100%', marginBottom: 10 }} />
           <p style={{ fontSize: 12.5, color: textMid, margin: '0 0 10px', lineHeight: 1.6 }}>
-            {list.length}名（表示 {shown.length}名）。学年は生年月日から計算しています。
+            {list.length}名（表示 {shown.length}名）。会員番号の順に並んでいます。
+            学年は生年月日から計算しています。
             {!canSeeContacts && ' 連絡先は、いまの公開範囲では表示されません。'}
+            {overCap && ' 🚨 5,000名を超えています。5,000名までを表示しています。'}
           </p>
-          {shown.slice(0, 200).map(c => {
+          {pager}
+          {paged.map(c => {
             const k = contacts[c.member_no];
             return (
               <div key={c.member_no} style={{ borderTop: `1px solid ${lineSoft}`, padding: '9px 0' }}>
@@ -2937,9 +3011,10 @@ const CustomerSettings: React.FC<{
               </div>
             );
           })}
-          {shown.length > 200 && (
+          {pager}
+          {shown.length === 0 && (
             <p style={{ fontSize: 12.5, color: textMid, marginTop: 10 }}>
-              多いので先頭200名だけ出しています。上の欄で絞り込んでください
+              見つかりませんでした。会員番号・お名前・ふりがなで探せます
             </p>
           )}
         </>

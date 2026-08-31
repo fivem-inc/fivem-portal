@@ -63,6 +63,21 @@ const HEADER_HINTS: Record<CustomerField, string[]> = {
   guardian_name: ['保護者', '保護者名', '親', 'guardian'],
 };
 
+/**
+ * 生徒本人ではない人の列（保護者・緊急連絡先）。
+ * 🚨 スコラプラスには「代表者名前_姓」のような**保護者の列**が並んでいる。
+ *    これを外さないと、お客様の「氏名」に**保護者の姓**が入ってしまう
+ *    （姓と名が別に取れているときは画面に出ないので気づけない）。
+ *    お名前まわりの項目だけ、これらの列を最初から対象外にする。
+ */
+const OTHER_PERSON_HINTS = ['代表者', '保護者', '緊急連絡'];
+
+/** お名前まわりの項目（保護者の列を当ててはいけないもの） */
+const PERSON_NAME_FIELDS: CustomerField[] = [
+  'member_no', 'last_name', 'first_name', 'last_kana', 'first_kana',
+  'full_kana', 'full_name', 'display_name',
+];
+
 /** 比べやすい形にする（全角→半角・小文字・空白と記号を落とす） */
 const norm = (s: string): string =>
   s.replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
@@ -76,12 +91,15 @@ export function guessMapping(headers: string[]): Partial<Record<CustomerField, n
   // 手がかりが長いものから当てる（「会員番号」を「番号」より先に取る）
   for (const field of Object.keys(HEADER_HINTS) as CustomerField[]) {
     const hints = [...HEADER_HINTS[field]].sort((a, b) => b.length - a.length);
+    // お名前まわりの項目は、保護者・緊急連絡先の列を最初から対象外にする
+    const skipOther = PERSON_NAME_FIELDS.includes(field);
     for (const hint of hints) {
       const h = norm(hint);
       // 🚨 1文字の手がかり（「姓」「名」）は、含まれているかで見ると
       //    「氏名」「名前」まで当たってしまう。1文字のときはぴったり一致だけにする
       const hit = (raw: unknown) => {
         const t = norm(String(raw ?? ''));
+        if (skipOther && OTHER_PERSON_HINTS.some(o => t.includes(norm(o)))) return false;
         return h.length <= 1 ? t === h : t.includes(h);
       };
       const idx = headers.findIndex((raw, i) => !used.has(i) && hit(raw));
@@ -157,11 +175,44 @@ export interface ParseResult {
   rows: unknown[][];
 }
 
+/**
+ * Excel のブック（バイナリ）かどうかを、先頭の数バイトで見分ける。
+ * xlsx/xlsm は zip なので 'PK'、古い xls は D0 CF 11 E0 で始まる。
+ */
+const isWorkbookBinary = (u8: Uint8Array): boolean =>
+  (u8[0] === 0x50 && u8[1] === 0x4b) ||
+  (u8[0] === 0xd0 && u8[1] === 0xcf && u8[2] === 0x11 && u8[3] === 0xe0);
+
+/**
+ * CSV・テキストを文字として読む。
+ * 🚨 スコラプラスの CSV は **Shift_JIS**。UTF-8 として読むと見出しが文字化けし、
+ *    列が1つも当たらず全行「会員番号がありません」になる（2026-08-31 実データで再現）。
+ *    まず UTF-8 として厳密に読み、読めなければ Shift_JIS として読み直す。
+ *    先頭の BOM は取り除く（付いたままだと1列目の見出しが当たらない）。
+ */
+const decodeText = (u8: Uint8Array): string => {
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(u8);
+  } catch {
+    try {
+      text = new TextDecoder('shift_jis').decode(u8);
+    } catch {
+      // どちらでも読めないときは止めずに UTF-8 の寛容な読み方に落とす
+      text = new TextDecoder('utf-8').decode(u8);
+    }
+  }
+  return text.replace(/^﻿/, '');
+};
+
 /** ファイルを読んで、見出し行と中身の行に分ける */
 export async function readTable(file: File): Promise<ParseResult> {
   const XLSX = await import('xlsx');
   const buf = await file.arrayBuffer();
-  const wb = XLSX.read(buf, { type: 'array', cellDates: true, raw: false });
+  const u8 = new Uint8Array(buf);
+  const wb = isWorkbookBinary(u8)
+    ? XLSX.read(u8, { type: 'array', cellDates: true, raw: false })
+    : XLSX.read(decodeText(u8), { type: 'string', cellDates: true, raw: false });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   if (!sheet) return { headers: [], rows: [] };
   const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: false }) as unknown[][];
