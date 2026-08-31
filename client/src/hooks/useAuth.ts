@@ -29,6 +29,8 @@ interface UseAuthReturn {
   canExpense: boolean;
   canTripReport: boolean;
   canBoard: boolean;
+  /** 場所予約（/rooms）。2026-08-31 ユーザー確定でマネージャー以上に絞った */
+  canRoomBooking: boolean;
   canLeaveApprovals: boolean;
   leaveRequestEnabled: boolean;
   /** FAQ管理画面だけを使える専用アカウントか（管理者は別途 isAdmin で判定） */
@@ -233,6 +235,9 @@ export const useAuth = (): UseAuthReturn => {
   const canExpense    = realIsAdmin && !previewRole ? true : (effectivePerms.expense          ?? false);
   const canTripReport = realIsAdmin && !previewRole ? true : (effectivePerms.trip_report      ?? false);
   const canBoard      = realIsAdmin && !previewRole ? true : (effectivePerms.board            ?? false);
+  // 場所予約。既定は false（＝権限行が無ければ出さない）。
+  // 🚨 「無ければ全員に出す」にすると、権限行を入れ忘れたときに全員へ公開されてしまう
+  const canRoomBooking = realIsAdmin && !previewRole ? true : (effectivePerms.room_booking     ?? false);
   const canLeaveApprovals = realIsAdmin && !previewRole ? true : (effectivePerms.leave_approvals ?? false);
 
   const handleLogout = useCallback(async () => {
@@ -276,6 +281,7 @@ export const useAuth = (): UseAuthReturn => {
     canExpense,
     canTripReport,
     canBoard,
+    canRoomBooking,
     canLeaveApprovals,
     leaveRequestEnabled,
     // 役職プレビュー中は他の権限と同じく実権限を伏せる（プレビューで実際の見え方を確認するため）
