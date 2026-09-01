@@ -61,6 +61,59 @@ export function splitPasted(text: string): string[][] {
 }
 
 /**
+ * スタッフの予定表の1行を読む（2026-09-01 ユーザー指示）。
+ *
+ *   【四条本校5階】9/1(火) 13:10～13:40 森本 純矢 A・B・C・D
+ *    └ 場所      └ 日付   └ 開始〜終了 └ 担当    └ 担当できる区分
+ *
+ * 🚨 見出しの無い**べた書きの行**なので、表として割れない。ここで**表の形に直して**
+ *    渡し、日付・時刻・場所・担当の読み取りは**既存の仕組みをそのまま使う**
+ *    （同じ規則を2か所に書かないため）。
+ * 🚨 末尾の「A・B・C・D」は**担当できる区分**で、予約には要らないので落とす。
+ *    担当が決まればその人の区分は分かるため、書いてあっても照合しない
+ *    （照合すると、区分を1つ増やしただけで読めなくなる）。
+ * 🚨 **用途は行に書かれていない**。画面で選んだものを使う（呼ぶ側の責任）。
+ *
+ * この形式に見えないときは null を返す。呼ぶ側はいままでどおりタブ／カンマで割ること。
+ */
+export interface ScheduleParse { headers: string[]; rows: string[][] }
+
+export function parseScheduleLines(text: string): ScheduleParse | null {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n').map(l => l.trim()).filter(Boolean);
+  // 【…】で始まる行が1つも無ければ、この形式ではない
+  if (!lines.some(l => /^[【\[]/.test(l))) return null;
+
+  const rows: string[][] = [];
+  for (const line of lines) {
+    // ① 【場所】
+    const place = line.match(/^[【\[]\s*([^】\]]+?)\s*[】\]]\s*(.*)$/);
+    if (!place) { rows.push(['', '', '', '', line]); continue; }   // 読めない行も残す（黙って捨てない）
+    const rest0 = place[2];
+
+    // ② 日付（9/1、9/1(火)、2026/9/1 など）。曜日のかっこは付いていても外れる
+    const date = rest0.match(/^(\d{1,4}\s*[-/.年]\s*\d{1,2}(?:\s*[-/.月]\s*\d{1,2})?\s*日?(?:\s*[（(].[）)])?)\s*(.*)$/);
+    if (!date) { rows.push([place[1], '', '', '', rest0]); continue; }
+    const rest1 = date[2];
+
+    // ③ 開始〜終了。区切りは 〜 ～ ~ - − のどれでも
+    const time = rest1.match(/^(\d{1,2}\s*[:：時]\s*\d{1,2}|\d{3,4})\s*[〜～~\-－ー]\s*(\d{1,2}\s*[:：時]\s*\d{1,2}|\d{3,4})\s*(.*)$/);
+    const timeStartOnly = rest1.match(/^(\d{1,2}\s*[:：時]\s*\d{1,2}|\d{3,4})\s*(.*)$/);
+    let start = '', end = '', rest2 = rest1;
+    if (time) { start = time[1]; end = time[2]; rest2 = time[3]; }
+    else if (timeStartOnly) { start = timeStartOnly[1]; rest2 = timeStartOnly[2]; }
+
+    // ④ 末尾の「A・B・C・D」（担当できる区分）を落とす。残りが担当の名前
+    // 🚨 区分の前に空白を必ず求める。求めないと、名前の末尾の1文字を区分と
+    //    読み違えて削ってしまう
+    const staff = rest2.replace(/[\s　]+[A-ZＡ-Ｚ](?:[・･、,][A-ZＡ-Ｚ])*[\s　]*$/, '').trim();
+
+    rows.push([date[1], place[1], start, end, staff]);
+  }
+  // 🚨 見出しは既存の当て推量（guessBookingMapping）が読める語にする
+  return { headers: ['日付', '場所', '開始', '終了', '担当'], rows };
+}
+
+/**
  * 日付を 'YYYY-MM-DD' に直す。年が無い「9/1」は基準日の年度で補う。
  * 🚨 年を「今年」で補うと、1〜3月に来年度の表を入れたときに1年ずれる。
  *    月が基準日より前なら翌年とみなす。

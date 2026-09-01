@@ -23,7 +23,7 @@ import {
 import { downloadCSV } from '../utils';
 import {
   guessBookingMapping, splitPasted, buildBookings, BOOKING_FIELD_LABEL,
-  BOOKING_REQUIRED, BULK_MAX_ROWS, type BookingField,
+  BOOKING_REQUIRED, BULK_MAX_ROWS, parseScheduleLines, type BookingField,
 } from '../lib/bookingBulk';
 
 // 場所（フロア）の予約表。
@@ -3596,6 +3596,10 @@ const BulkBookingPanel: React.FC<{
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [made, setMade] = useState<number | null>(null);
+  // スタッフの予定表の形で貼られたか。true なら募集枠として作る（2026-09-01 ユーザー指示）
+  const [scheduleMode, setScheduleMode] = useState(false);
+  // 予定表の行には用途が書かれていないので、画面で選ぶ
+  const [schedulePurpose, setSchedulePurpose] = useState<string>('プライベート');
   const [failed, setFailed] = useState<{ label: string; reason: string }[]>([]);
 
   const today = todayStr();
@@ -3625,6 +3629,15 @@ const BulkBookingPanel: React.FC<{
 
   const applyPaste = () => {
     setError('');
+    // 🚨 まず「スタッフの予定表」の形（【場所】日付 時刻 担当 区分）かを見る。
+    //    見出しの無いべた書きなので、表として割る前に判定する（2026-09-01 ユーザー指示）
+    const sched = parseScheduleLines(pasted);
+    if (sched) {
+      setScheduleMode(true);
+      applyTable(sched.headers, sched.rows);
+      return;
+    }
+    setScheduleMode(false);
     const grid = splitPasted(pasted);
     if (grid.length < 2) {
       setError('1行目に見出し（日付・場所・開始…）、2行目から中身を貼り付けてください');
@@ -3648,9 +3661,10 @@ const BulkBookingPanel: React.FC<{
   const built = useMemo(() => (rows.length
     ? buildBookings(rows, map, {
         floors, campuses, staff, purposeDurations,
-        baseDate: today, defaultPurpose: 'プライベート',   // 用途の列が無いときの既定。フォームと揃える
+        // 用途の列が無いときの既定。予定表の形のときは画面で選んだものを使う
+        baseDate: today, defaultPurpose: schedulePurpose,
       })
-    : null), [rows, map, floors, campuses, staff, purposeDurations, today]);
+    : null), [rows, map, floors, campuses, staff, purposeDurations, today, schedulePurpose]);
 
   const overLimit = !!built && built.ok.length > BULK_MAX_ROWS;
 
@@ -3671,7 +3685,9 @@ const BulkBookingPanel: React.FC<{
         p_purpose: b.purpose, p_booker_name: user.email ?? '',
         p_member_no: b.member_no, p_customer_label: b.customer_label,
         p_memo: b.memo, p_exclusive: false, p_recurrence_id: null,
-        p_staff_id: b.staff_id, p_kind: 'booking', p_seats: 1,
+        // 🚨 予定表から作るときは「募集中の枠」にする（ユーザー確定）。
+        //    その行にはお客様が入っていないので、先に枠を置いて後から埋める形が合う
+        p_staff_id: b.staff_id, p_kind: scheduleMode ? 'open' : 'booking', p_seats: 1,
       });
       const row = (Array.isArray(data) ? data[0] : data) as
         { ok?: boolean; reason?: string; booking_id?: string } | null;
@@ -3724,6 +3740,9 @@ const BulkBookingPanel: React.FC<{
             style={{ ...input, width: '100%', fontFamily: 'monospace', fontSize: 13, marginBottom: 8 }} />
           <p style={{ fontSize: 12, color: textMid, margin: '0 0 10px', lineHeight: 1.6 }}>
             Excel の範囲をコピーして、そのまま貼り付けられます。
+            <br />
+            スタッフの予定表の形（<code>【四条本校5階】9/1(火) 13:10～13:40 森本 純矢 A・B・C・D</code>）
+            でも読み取れます。その場合は<b>募集中の枠</b>として作ります。
           </p>
           <button onClick={applyPaste} disabled={running || !pasted.trim()}
             style={{ ...smallBtn(false), opacity: !pasted.trim() ? .5 : 1, marginBottom: 12 }}>
@@ -3734,6 +3753,33 @@ const BulkBookingPanel: React.FC<{
         <input type="file" accept=".csv,.xlsx,.xls,text/csv"
           onChange={e => pickFile(e.target.files?.[0] ?? null)}
           style={{ ...input, width: '100%', marginBottom: 12 }} />
+      )}
+
+      {/* 予定表の形で読んだとき。行に用途が書かれていないので、ここで選ぶ
+          （2026-09-01 ユーザー確定：貼り付けるときに選ぶ） */}
+      {scheduleMode && headers.length > 0 && (
+        <div style={{ background: isDark ? '#35354e' : '#f0f2f5', borderRadius: 8, padding: '10px 12px', marginBottom: 12 }}>
+          <div style={{ fontSize: 12.5, color: textMid, lineHeight: 1.7, marginBottom: 8 }}>
+            スタッフの予定表として読み取りました。<b style={{ color: text }}>募集中の枠</b>として作ります
+            （お客様は後から埋めます）。行に用途が書かれていないので、ここで選んでください。
+          </div>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12.5, color: textMid }}>用途</span>
+            {PURPOSES.map(p => {
+              const on = schedulePurpose === p;
+              const [fg, bgc] = purposeColor(p, isDark);
+              return (
+                <button key={p} onClick={() => setSchedulePurpose(p)}
+                  style={{
+                    padding: '5px 12px', borderRadius: 999, fontSize: 12.5, cursor: 'pointer',
+                    border: `1px solid ${on ? fg : line}`,
+                    background: on ? bgc : 'transparent',
+                    color: on ? fg : textMid, fontWeight: on ? 700 : 400,
+                  }}>{p}</button>
+              );
+            })}
+          </div>
+        </div>
       )}
 
       {headers.length > 0 && (
