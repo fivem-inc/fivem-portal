@@ -2603,12 +2603,14 @@ const AttendanceDayList: React.FC<{
   bookings: Booking[];
   floors: Floor[];
   campuses: Campus[];
+  /** 🚨 出欠が分からないときに「誰に聞けばよいか」が要るので担当を出す（2026-09-01 ユーザー指示） */
+  staff: Staff[];
   options: AttendanceOption[];
   attendance: AttendanceRow[];
   canWrite: boolean;
   onSaved: () => void | Promise<void>;
   isDark: boolean;
-}> = ({ date, bookings, floors, campuses, options, attendance, canWrite, onSaved, isDark }) => {
+}> = ({ date, bookings, floors, campuses, staff, options, attendance, canWrite, onSaved, isDark }) => {
   const line = isDark ? '#3a3a5c' : '#e0e0e0';
   const text = isDark ? '#eeeeee' : '#222222';
   const textMid = isDark ? '#b3b8c6' : '#5b6270';
@@ -2699,6 +2701,11 @@ const AttendanceDayList: React.FC<{
                         <div style={{ fontSize: 13, color: textMid, marginBottom: 7, fontVariantNumeric: 'tabular-nums' }}>
                           {hhmm(b.starts_at)}〜{hhmm(b.ends_at)}　{placeOf(b)}
                           {b.detail && `　${b.detail}`}
+                          {/* 🚨 担当は出欠が分からないときの「聞く先」。担当なしのときも
+                                 その旨を出す（空欄だと入れ忘れと見分けが付かない） */}
+                          <span style={{ color: text }}>
+                            　{staff.find(s => s.id === b.staff_id)?.name ?? '担当なし'}
+                          </span>
                         </div>
                         <AttendanceEditor booking={b} options={options}
                           rows={attendance.filter(r => r.booking_id === b.id)}
@@ -2753,7 +2760,7 @@ const AttendancePanel: React.FC<{
         </div>
         {tab === 'day' ? (
           <AttendanceDayList
-            date={date} bookings={bookings} floors={floors} campuses={campuses}
+            date={date} bookings={bookings} floors={floors} campuses={campuses} staff={staff}
             options={options} attendance={attendance} canWrite={canWrite}
             onSaved={onSaved} isDark={isDark} />
         ) : (
