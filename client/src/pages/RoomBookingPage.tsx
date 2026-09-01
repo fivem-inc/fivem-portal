@@ -2250,6 +2250,8 @@ const AttendanceSummary: React.FC<{
    */
   const [purposeFilter, setPurposeFilter] = useState('');
   const [rows, setRows] = useState<AttendanceJoined[]>([]);
+  // 期間ぶんの予約。未入力を数えるために必要（記録だけだと付けていない予約が見えない）
+  const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [capped, setCapped] = useState(false);
@@ -2286,7 +2288,11 @@ const AttendanceSummary: React.FC<{
   }, [mode, month, from, to]);
 
   /**
-   * 期間ぶんの出欠を読む。
+   * 期間ぶんの「予約」と「出欠」を読む。
+   *
+   * 🚨 **予約のほうも読む**（2026-09-01 ユーザー指示で未入力を出せるようにした）。
+   *    出欠の記録だけを読むと、**まだ付けていない予約が集計に現れない**ため、
+   *    「入れ忘れているのか、そもそも予約が無いのか」が分からなかった。
    * 🚨 Supabase は件数を指定しないと **1000件で黙って打ち切る**。
    *    分けて読み、上限に達したら画面に断りを出す（静かに欠けさせない）。
    */
@@ -2294,6 +2300,30 @@ const AttendanceSummary: React.FC<{
     setLoading(true); setError(''); setCapped(false);
     const CHUNK = 1000;
     const MAX = 20000;
+
+    // ① その期間の予約。🚨 休講と募集中の枠は出欠の対象にしない（まとめて付ける画面と同じ条件）
+    const bs: Booking[] = [];
+    for (let f = 0; ; f += CHUNK) {
+      const { data, error: err } = await supabase
+        .from('room_bookings').select('*')
+        .is('deleted_at', null)
+        .neq('status', 'cancelled')
+        .neq('kind', 'open')
+        .gte('starts_at', period.start.toISOString())
+        .lt('starts_at', period.end.toISOString())
+        .order('starts_at')
+        .range(f, f + CHUNK - 1);
+      if (err) {
+        setError('集計を読み込めませんでした。通信を確認してもう一度お試しください。');
+        setLoading(false); return;
+      }
+      const part = (data ?? []) as Booking[];
+      bs.push(...part);
+      if (part.length < CHUNK) break;
+      if (bs.length >= MAX) { setCapped(true); break; }
+    }
+
+    // ② その期間の出欠。予約に紐づけて絞る（予約のIDを並べて渡すとURLが長くなりすぎる）
     const out: AttendanceJoined[] = [];
     for (let f = 0; ; f += CHUNK) {
       const { data, error: err } = await supabase
@@ -2312,7 +2342,8 @@ const AttendanceSummary: React.FC<{
       if (part.length < CHUNK) break;
       if (out.length >= MAX) { setCapped(true); break; }
     }
-    out.sort((a, b) => (a.room_bookings?.starts_at ?? '').localeCompare(b.room_bookings?.starts_at ?? ''));
+
+    setBookings(bs);
     setRows(out);
     setLoading(false);
   }, [period]);
@@ -2326,36 +2357,54 @@ const AttendanceSummary: React.FC<{
     return f ? placeLabel(f, c?.name ?? '', floors.filter(x => x.campus_id === f.campus_id).length, true) : '';
   };
 
-  // 用途で絞ったあとの記録。表もCSVもここから作る（片方だけ絞ると食い違う）
-  const shown = useMemo(
-    () => (purposeFilter ? rows.filter(r => r.room_bookings?.purpose === purposeFilter) : rows),
-    [rows, purposeFilter]);
+  /**
+   * 集計のもとになる「対象」。**参加者1人＝1件**。
+   * 出欠が付いていなければ `att` が null（＝未入力）。
+   *
+   * 🚨 予約から作る（記録から作らない）。記録から作ると、
+   *    まだ付けていない予約が数に入らず「未入力」が出せない。
+   * 🚨 用途の絞り込みはここで済ませる。表もCSVも件数もこの1つから作るので食い違わない。
+   */
+  const shown = useMemo(() => {
+    const key = (bid: string, no: string, name: string) => `${bid}|${no}|${name}`;
+    const map = new Map(rows.map(r => [key(r.booking_id, r.participant_no, r.participant_name), r]));
+    return bookings
+      .filter(b => !purposeFilter || b.purpose === purposeFilter)
+      .flatMap(b => participantsOf(b).map(p => ({
+        b, p, att: map.get(key(b.id, p.no, p.name)) ?? null,
+      })));
+  }, [bookings, rows, purposeFilter]);
+
+  const missing = shown.filter(s => !s.att).length;
 
   // 並べる軸ごとにまとめる。列は「出欠の種類ごとの件数」
   const groups = useMemo(() => {
-    const map = new Map<string, { label: string; counts: Record<string, number>; present: number; notes: string[] }>();
-    for (const r of shown) {
-      const b = r.room_bookings;
+    const map = new Map<string, { label: string; counts: Record<string, number>; present: number; missing: number; notes: string[] }>();
+    for (const s of shown) {
+      const { b, p, att } = s;
       let key: string, label: string;
       if (axis === 'customer') {
-        key = `${r.participant_no}|${r.participant_name}`;
-        label = r.participant_name || (r.participant_no ? `#${r.participant_no}` : '（お名前なし）');
-        if (r.participant_name && r.participant_no) label = `${r.participant_name}（${r.participant_no}）`;
+        key = `${p.no}|${p.name}`;
+        label = p.name && p.no ? `${p.name}（${p.no}）` : participantLabelOf(p);
       } else if (axis === 'day') {
-        key = b ? localDate(b.starts_at) : '';
-        label = key ? formatDateLabel(key) : '';
+        key = localDate(b.starts_at);
+        label = formatDateLabel(key);
       } else if (axis === 'purpose') {
         // 🚨 詳細（体操など）まで分けない。分けたい人は用途で絞ってから見る
-        key = b?.purpose ?? '';
+        key = b.purpose;
         label = key || '（用途なし）';
       } else {
-        key = b?.staff_id ?? '__none__';
-        label = staffName(b?.staff_id ?? null);
+        key = b.staff_id ?? '__none__';
+        label = staffName(b.staff_id);
       }
-      const g = map.get(key) ?? { label, counts: {}, present: 0, notes: [] };
-      g.counts[r.status] = (g.counts[r.status] ?? 0) + 1;
-      if (r.counted_present) g.present++;
-      if (r.payment_note) g.notes.push(r.payment_note);
+      const g = map.get(key) ?? { label, counts: {}, present: 0, missing: 0, notes: [] };
+      if (att) {
+        g.counts[att.status] = (g.counts[att.status] ?? 0) + 1;
+        if (att.counted_present) g.present++;
+        if (att.payment_note) g.notes.push(att.payment_note);
+      } else {
+        g.missing++;
+      }
       map.set(key, g);
     }
     const list = [...map.entries()].map(([key, g]) => ({ key, ...g }));
@@ -2378,33 +2427,31 @@ const AttendanceSummary: React.FC<{
   // 表に出す列（隠した選択肢でも、記録があれば出す）
   const columns = useMemo(() => {
     const names = options.filter(o => o.active).map(o => o.name);
-    for (const r of shown) if (!names.includes(r.status)) names.push(r.status);
+    for (const s of shown) if (s.att && !names.includes(s.att.status)) names.push(s.att.status);
     return names;
   }, [options, shown]);
 
   /**
-   * CSVは**明細**（1行＝1つの記録）で出す。
+   * CSVは**明細**（1行＝参加者1人）で出す。
    * 🚨 画面の集計をそのまま出さない。10回区切りの一覧表と突き合わせるには、
    *    いつ・誰が・何回目か が1行ずつ並んでいるほうが照合しやすいため。
+   * 🚨 **未入力の行も出す**（出欠の欄が空になる）。入れ忘れを探すのに使えるようにするため。
    */
   const exportCsv = () => {
     const esc = (v: string) => `"${(v ?? '').replace(/"/g, '""')}"`;
     const head = ['日付', '開始', '場所', '用途', '担当', '会員番号', 'お客様', '出欠', '出席扱い', '支払い'];
-    const body = shown.map(r => {
-      const b = r.room_bookings;
-      return [
-        b ? localDate(b.starts_at) : '',
-        b ? hhmm(b.starts_at) : '',
-        b ? placeOf(b.floor_id) : '',
-        b ? (b.detail ? `${b.purpose}・${b.detail}` : b.purpose) : '',
-        staffName(b?.staff_id ?? null),
-        r.participant_no,
-        r.participant_name,
-        r.status,
-        r.counted_present ? '○' : '',
-        r.payment_note ?? '',
-      ].map(esc).join(',');
-    });
+    const body = shown.map(({ b, p, att }) => [
+      localDate(b.starts_at),
+      hhmm(b.starts_at),
+      placeOf(b.floor_id),
+      b.detail ? `${b.purpose}・${b.detail}` : b.purpose,
+      staffName(b.staff_id),
+      p.no,
+      p.name,
+      att ? att.status : '',
+      att?.counted_present ? '○' : '',
+      att?.payment_note ?? '',
+    ].map(esc).join(','));
     downloadCSV([head.map(esc).join(','), ...body].join('\r\n'),
       `出欠_${mode === 'month' ? month : `${from}_${to}`}${purposeFilter ? '_' + purposeFilter : ''}.csv`);
   };
@@ -2419,6 +2466,8 @@ const AttendanceSummary: React.FC<{
     <div>
       <div style={{ background: isDark ? '#35354e' : '#f0f2f5', borderRadius: 8, padding: '10px 12px', fontSize: 13, lineHeight: 1.7, marginBottom: 12, color: textMid }}>
         期間の出欠をまとめます（<b style={{ color: text }}>全校ぶん</b>）。
+        まだ付けていないものは<b style={{ color: text }}>未入力</b>として数えます
+        （休講と募集中の枠は数えません）。
         支払いの欄は<b style={{ color: text }}>書いた文字をそのまま</b>並べています
         （「2/10」は分数ではないので足し算はしません）。
         <br />
@@ -2496,12 +2545,13 @@ const AttendanceSummary: React.FC<{
         <p style={{ fontSize: 13.5, color: textMid }}>読み込んでいます...</p>
       ) : shown.length === 0 ? (
         <p style={{ fontSize: 13.5, color: textMid, lineHeight: 1.7 }}>
-          この期間に出欠の記録がありません。
+          この期間に出欠を付ける予約がありません（休講と募集中の枠は数えていません）。
         </p>
       ) : (
         <>
           <p style={{ fontSize: 12.5, color: textMid, margin: '0 0 7px' }}>
-            記録 {shown.length}件／{axis === 'customer' ? 'お客様' : axis === 'purpose' ? '用途' : axis === 'day' ? '日' : '担当'} {groups.length}件
+            対象 {shown.length}人（<b style={{ color: text }}>入力済み {shown.length - missing} ／ 未入力 {missing}</b>）
+            ／{axis === 'customer' ? 'お客様' : axis === 'purpose' ? '用途' : axis === 'day' ? '日' : '担当'} {groups.length}件
           </p>
           {/* 🚨 列が多いので横に伸びる。画面ごと横スクロールさせず、表だけを動かす */}
           <div style={{ overflowX: 'auto' }}>
@@ -2514,6 +2564,7 @@ const AttendanceSummary: React.FC<{
                   {columns.map(c => (
                     <th key={c} style={{ textAlign: 'right', padding: '6px 9px', borderBottom: `2px solid ${line}`, whiteSpace: 'nowrap', color: textMid }}>{c}</th>
                   ))}
+                  <th style={{ textAlign: 'right', padding: '6px 9px', borderBottom: `2px solid ${line}`, whiteSpace: 'nowrap', color: textMid }}>未入力</th>
                   <th style={{ textAlign: 'right', padding: '6px 9px', borderBottom: `2px solid ${line}`, whiteSpace: 'nowrap', color: textMid }}>出席扱い</th>
                   {axis === 'customer' && (
                     <th style={{ textAlign: 'left', padding: '6px 9px', borderBottom: `2px solid ${line}`, whiteSpace: 'nowrap', color: textMid }}>支払い</th>
@@ -2529,6 +2580,7 @@ const AttendanceSummary: React.FC<{
                         {g.counts[c] ?? 0}
                       </td>
                     ))}
+                    <td style={{ padding: '6px 9px', borderBottom: `1px solid ${line}`, textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: g.missing ? (isDark ? '#e8c98a' : '#8a6a12') : textMid, fontWeight: g.missing ? 700 : 400 }}>{g.missing}</td>
                     <td style={{ padding: '6px 9px', borderBottom: `1px solid ${line}`, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{g.present}</td>
                     {axis === 'customer' && (
                       <td style={{ padding: '6px 9px', borderBottom: `1px solid ${line}`, color: textMid, fontVariantNumeric: 'tabular-nums' }}>
