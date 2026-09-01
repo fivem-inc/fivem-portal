@@ -374,7 +374,14 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
 
     // 予約表に「田中 たろう」と出すため、いま見えている予約のお客様だけ読む。
     // 🚨 全件を読まない。人数が増えたときに毎回重くなる
-    const nos = [...new Set(rows.map(b => b.member_no).filter(Boolean))] as string[];
+    // 🚨 **参加者ごとに分けてから引く**。2名の予約は member_no が
+    //    「2023030565, 2023051425」とカンマでつながっており、そのまま渡すと
+    //    どのお客様にも一致せず、**名前が漢字のまま出ていた**（2026-09-01 実機で発覚）。
+    //    名前は生年月日から学年を見て「太田 かりん」と作り分けているので、
+    //    引けないとその作り分けごと効かなくなる。
+    const nos = [...new Set(
+      rows.flatMap(b => participantsOf(b).map(p => p.no)).filter(Boolean),
+    )];
     if (nos.length === 0) return;
     const { data: cs } = await supabase
       .from('room_customers').select('*').in('member_no', nos);
@@ -382,14 +389,27 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
     // 予約に表示名を持たせておく。カードを描く場所が何か所もあるので、
     // それぞれで引き直すより、ここで1回だけ付けるほうが読みやすい
     setBookings(rows.map(b => {
-      const c = b.member_no ? map[b.member_no] : null;
-      return {
-        ...b,
-        customer_name: c ? customerName(c, localDate(b.starts_at)) : '',
-        // 🚨 学年は年度で変わるので「今日」ではなく **その予約の日** を基準にする。
-        //    今日を基準にすると、来年度の予約に今年度の学年が出る
-        customer_grade: c ? gradeOrAge(c.birth_date, localDate(b.starts_at)) : '',
-      };
+      // 🚨 学年は年度で変わるので「今日」ではなく **その予約の日** を基準にする。
+      //    今日を基準にすると、来年度の予約に今年度の学年が出る
+      const on = localDate(b.starts_at);
+      const ps = participantsOf(b);
+      if (ps.length <= 1) {
+        const c = ps[0]?.no ? map[ps[0].no] : null;
+        return {
+          ...b,
+          customer_name: c ? customerName(c, on) : '',
+          customer_grade: c ? gradeOrAge(c.birth_date, on) : '',
+        };
+      }
+      // 🚨 2名以上は学年が人によって違うので、**名前のすぐ後ろ**に付けて1つにまとめる。
+      //    学年だけ別に出すと、どちらの学年か分からなくなる
+      const names = ps.map(p => {
+        const c = p.no ? map[p.no] : null;
+        const nm = c ? customerName(c, on) : p.name;
+        const g = c?.birth_date ? gradeOrAge(c.birth_date, on) : '';
+        return g ? `${nm}（${g}）` : nm;
+      }).filter(Boolean);
+      return { ...b, customer_name: names.join('、'), customer_grade: '' };
     }));
   }, [date, visibleFloors, rangeDays]);
 
@@ -2222,7 +2242,13 @@ const AttendanceSummary: React.FC<{
   const [month, setMonth] = useState(today.slice(0, 7));       // 'YYYY-MM'
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(today);
-  const [axis, setAxis] = useState<'customer' | 'day' | 'staff'>('customer');
+  const [axis, setAxis] = useState<'customer' | 'day' | 'staff' | 'purpose'>('customer');
+  /**
+   * 用途の絞り込み（2026-09-01 ユーザー指示）。'' = すべて。
+   * 🚨 出欠は用途によって意味が変わる（10回区切りの照合はプライベートだけが対象）。
+   *    全用途を混ぜたままだと、どの数字を見ればよいか判断できない。
+   */
+  const [purposeFilter, setPurposeFilter] = useState('');
   const [rows, setRows] = useState<AttendanceJoined[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -2300,10 +2326,15 @@ const AttendanceSummary: React.FC<{
     return f ? placeLabel(f, c?.name ?? '', floors.filter(x => x.campus_id === f.campus_id).length, true) : '';
   };
 
+  // 用途で絞ったあとの記録。表もCSVもここから作る（片方だけ絞ると食い違う）
+  const shown = useMemo(
+    () => (purposeFilter ? rows.filter(r => r.room_bookings?.purpose === purposeFilter) : rows),
+    [rows, purposeFilter]);
+
   // 並べる軸ごとにまとめる。列は「出欠の種類ごとの件数」
   const groups = useMemo(() => {
     const map = new Map<string, { label: string; counts: Record<string, number>; present: number; notes: string[] }>();
-    for (const r of rows) {
+    for (const r of shown) {
       const b = r.room_bookings;
       let key: string, label: string;
       if (axis === 'customer') {
@@ -2313,6 +2344,10 @@ const AttendanceSummary: React.FC<{
       } else if (axis === 'day') {
         key = b ? localDate(b.starts_at) : '';
         label = key ? formatDateLabel(key) : '';
+      } else if (axis === 'purpose') {
+        // 🚨 詳細（体操など）まで分けない。分けたい人は用途で絞ってから見る
+        key = b?.purpose ?? '';
+        label = key || '（用途なし）';
       } else {
         key = b?.staff_id ?? '__none__';
         label = staffName(b?.staff_id ?? null);
@@ -2324,21 +2359,28 @@ const AttendanceSummary: React.FC<{
       map.set(key, g);
     }
     const list = [...map.entries()].map(([key, g]) => ({ key, ...g }));
-    // 日ごとは日付順、それ以外は件数の多い順（多い人から見たいため）
+    // 用途ごとは予約フォームと同じ並び、日ごとは日付順、それ以外は件数の多い順
+    if (axis === 'purpose') {
+      const ord = (k: string) => {
+        const i = (PURPOSES as readonly string[]).indexOf(k);
+        return i < 0 ? 99 : i;
+      };
+      return list.sort((a, b) => ord(a.key) - ord(b.key) || a.key.localeCompare(b.key, 'ja'));
+    }
     return axis === 'day'
       ? list.sort((a, b) => a.key.localeCompare(b.key))
       : list.sort((a, b) => {
           const n = (x: typeof a) => Object.values(x.counts).reduce((s, v) => s + v, 0);
           return n(b) - n(a) || a.label.localeCompare(b.label, 'ja');
         });
-  }, [rows, axis, staff]);
+  }, [shown, axis, staff]);
 
   // 表に出す列（隠した選択肢でも、記録があれば出す）
   const columns = useMemo(() => {
     const names = options.filter(o => o.active).map(o => o.name);
-    for (const r of rows) if (!names.includes(r.status)) names.push(r.status);
+    for (const r of shown) if (!names.includes(r.status)) names.push(r.status);
     return names;
-  }, [options, rows]);
+  }, [options, shown]);
 
   /**
    * CSVは**明細**（1行＝1つの記録）で出す。
@@ -2348,7 +2390,7 @@ const AttendanceSummary: React.FC<{
   const exportCsv = () => {
     const esc = (v: string) => `"${(v ?? '').replace(/"/g, '""')}"`;
     const head = ['日付', '開始', '場所', '用途', '担当', '会員番号', 'お客様', '出欠', '出席扱い', '支払い'];
-    const body = rows.map(r => {
+    const body = shown.map(r => {
       const b = r.room_bookings;
       return [
         b ? localDate(b.starts_at) : '',
@@ -2364,7 +2406,7 @@ const AttendanceSummary: React.FC<{
       ].map(esc).join(',');
     });
     downloadCSV([head.map(esc).join(','), ...body].join('\r\n'),
-      `出欠_${mode === 'month' ? month : `${from}_${to}`}.csv`);
+      `出欠_${mode === 'month' ? month : `${from}_${to}`}${purposeFilter ? '_' + purposeFilter : ''}.csv`);
   };
 
   const shiftMonth = (d: number) => {
@@ -2403,14 +2445,38 @@ const AttendanceSummary: React.FC<{
         )}
       </div>
 
+      {/* 用途の絞り込み（2026-09-01 ユーザー指示）。
+          🚨 出欠は用途によって意味が変わる（10回区切りの照合はプライベートだけ）。
+             混ぜたままだと、どの数字を見ればよいか判断できない。
+             色は予約表の用途の色に合わせる（同じ意味には同じ色） */}
+      <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+        <span style={{ fontSize: 12.5, color: textMid }}>用途</span>
+        <button onClick={() => setPurposeFilter('')} style={smallBtn(purposeFilter === '')}>すべて</button>
+        {PURPOSES.map(p => {
+          const on = purposeFilter === p;
+          const [fg, bgc] = purposeColor(p, isDark);
+          return (
+            <button key={p} onClick={() => setPurposeFilter(on ? '' : p)}
+              style={{
+                padding: '5px 12px', borderRadius: 999, fontSize: 12.5, cursor: 'pointer',
+                border: `1px solid ${on ? fg : line}`,
+                background: on ? bgc : 'transparent',
+                color: on ? fg : textMid,
+                fontWeight: on ? 700 : 400,
+              }}>{p}</button>
+          );
+        })}
+      </div>
+
       {/* 並べ方 */}
       <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
         <span style={{ fontSize: 12.5, color: textMid }}>並べ方</span>
         <button onClick={() => setAxis('customer')} style={smallBtn(axis === 'customer')}>お客様ごと</button>
+        <button onClick={() => setAxis('purpose')} style={smallBtn(axis === 'purpose')}>用途ごと</button>
         <button onClick={() => setAxis('day')} style={smallBtn(axis === 'day')}>日ごと</button>
         <button onClick={() => setAxis('staff')} style={smallBtn(axis === 'staff')}>担当ごと</button>
-        <button onClick={exportCsv} disabled={rows.length === 0}
-          style={{ ...smallBtn(false), marginLeft: 'auto', opacity: rows.length === 0 ? .5 : 1 }}>
+        <button onClick={exportCsv} disabled={shown.length === 0}
+          style={{ ...smallBtn(false), marginLeft: 'auto', opacity: shown.length === 0 ? .5 : 1 }}>
           CSV（明細）
         </button>
       </div>
@@ -2428,14 +2494,14 @@ const AttendanceSummary: React.FC<{
 
       {loading ? (
         <p style={{ fontSize: 13.5, color: textMid }}>読み込んでいます...</p>
-      ) : rows.length === 0 ? (
+      ) : shown.length === 0 ? (
         <p style={{ fontSize: 13.5, color: textMid, lineHeight: 1.7 }}>
           この期間に出欠の記録がありません。
         </p>
       ) : (
         <>
           <p style={{ fontSize: 12.5, color: textMid, margin: '0 0 7px' }}>
-            記録 {rows.length}件／{axis === 'customer' ? 'お客様' : axis === 'day' ? '日' : '担当'} {groups.length}件
+            記録 {shown.length}件／{axis === 'customer' ? 'お客様' : axis === 'purpose' ? '用途' : axis === 'day' ? '日' : '担当'} {groups.length}件
           </p>
           {/* 🚨 列が多いので横に伸びる。画面ごと横スクロールさせず、表だけを動かす */}
           <div style={{ overflowX: 'auto' }}>
@@ -2443,7 +2509,7 @@ const AttendanceSummary: React.FC<{
               <thead>
                 <tr>
                   <th style={{ textAlign: 'left', padding: '6px 9px', borderBottom: `2px solid ${line}`, whiteSpace: 'nowrap', color: textMid }}>
-                    {axis === 'customer' ? 'お客様' : axis === 'day' ? '日付' : '担当'}
+                    {axis === 'customer' ? 'お客様' : axis === 'purpose' ? '用途' : axis === 'day' ? '日付' : '担当'}
                   </th>
                   {columns.map(c => (
                     <th key={c} style={{ textAlign: 'right', padding: '6px 9px', borderBottom: `2px solid ${line}`, whiteSpace: 'nowrap', color: textMid }}>{c}</th>
