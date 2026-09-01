@@ -1818,9 +1818,9 @@ const BookingForm: React.FC<{
         </div>
 
         {/* 「予約する人」は画面に出さない（2026-08-31 ユーザー指示）。
-            🚨 値そのものは残す。ログインした人の名前を自動で入れて保存し、
-               予約の詳細では「予約した人」として今までどおり見られる。
-               誰が入れたか分からなくなると、間違いがあったときに聞けない */}
+            🚨 値そのものは残す。ログインした人の名前を自動で入れて保存している。
+               2026-09-01 のユーザー指示で、予約の詳細からも出さなくなった。
+               誰が入れたかは room_bookings.booker_name に残っている */}
 
         {/* 募集枠のときは定員（何名まで受けるか）を選ぶ。基本1名、2名同時希望のときだけ増やす */}
         {kind === 'open' ? (
@@ -2517,6 +2517,30 @@ const AttendanceDayList: React.FC<{
     return f ? placeLabel(f, c?.name ?? '', floors.filter(x => x.campus_id === f.campus_id).length, true) : '';
   };
 
+  /**
+   * 用途ごとにくくる（2026-09-01 ユーザー指示）。
+   * 🚨 出欠は用途によって判断が変わる（キャンセル料の扱い・支払いの要否など）ので、
+   *    時刻順に混ぜて並べると付けにくい。用途でまとめ、中を時刻順にする。
+   * 並びは予約フォームの用途ボタンと同じ順に揃える。知らない用途は最後にまわす。
+   */
+  const groups = [...new Set(targets.map(b => b.purpose))]
+    .sort((a, b) => {
+      const ia = (PURPOSES as readonly string[]).indexOf(a);
+      const ib = (PURPOSES as readonly string[]).indexOf(b);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b, 'ja');
+    })
+    .map(purpose => {
+      const items = targets.filter(b => b.purpose === purpose);
+      let t = 0, d = 0;
+      for (const b of items) {
+        for (const p of participantsOf(b)) {
+          t++;
+          if (attendance.some(r => r.booking_id === b.id && r.participant_no === p.no && r.participant_name === p.name)) d++;
+        }
+      }
+      return { purpose, items, total: t, done: d };
+    });
+
   return (
       <div>
         <div style={{ background: isDark ? '#35354e' : '#f0f2f5', borderRadius: 8, padding: '10px 12px', fontSize: 13, lineHeight: 1.7, marginBottom: 12, color: textMid }}>
@@ -2534,17 +2558,39 @@ const AttendanceDayList: React.FC<{
             この日は出欠を付ける予約がありません（募集中の枠と休講は出しません）。
           </p>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {targets.map(b => (
-              <div key={b.id} style={{ border: `1px solid ${line}`, borderRadius: 8, padding: '9px 11px' }}>
-                <div style={{ fontSize: 13, color: textMid, marginBottom: 7, fontVariantNumeric: 'tabular-nums' }}>
-                  {hhmm(b.starts_at)}〜{hhmm(b.ends_at)}　{placeOf(b)}　{purposeWithDetail(b)}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+            {groups.map(g => {
+              const [fg, bgc] = purposeColor(g.purpose, isDark);
+              return (
+                <div key={g.purpose}>
+                  {/* 用途の見出し。色は予約表の用途の色に合わせる（同じ意味には同じ色） */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 8, flexWrap: 'wrap' }}>
+                    <span style={{ background: bgc, color: fg, borderRadius: 999, padding: '3px 13px', fontSize: 13, fontWeight: 700 }}>
+                      {g.purpose}
+                    </span>
+                    <span style={{ fontSize: 12.5, color: textMid }}>
+                      {g.items.length}件／入力済み {g.done} / {g.total} 人
+                      {g.total - g.done > 0 && `（未入力 ${g.total - g.done} 人）`}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {g.items.map(b => (
+                      <div key={b.id} style={{ border: `1px solid ${line}`, borderRadius: 8, padding: '9px 11px' }}>
+                        {/* 🚨 見出しに用途が出ているので、ここでは繰り返さない。
+                               詳細（体操など）は用途では分からないので出す */}
+                        <div style={{ fontSize: 13, color: textMid, marginBottom: 7, fontVariantNumeric: 'tabular-nums' }}>
+                          {hhmm(b.starts_at)}〜{hhmm(b.ends_at)}　{placeOf(b)}
+                          {b.detail && `　${b.detail}`}
+                        </div>
+                        <AttendanceEditor booking={b} options={options}
+                          rows={attendance.filter(r => r.booking_id === b.id)}
+                          canWrite={canWrite} showNameWhenSingle onSaved={onSaved} isDark={isDark} />
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <AttendanceEditor booking={b} options={options}
-                  rows={attendance.filter(r => r.booking_id === b.id)}
-                  canWrite={canWrite} showNameWhenSingle onSaved={onSaved} isDark={isDark} />
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -2918,7 +2964,9 @@ const BookingDetail: React.FC<{
           </>
         ))}
         {b.is_fixed && row('固定の枠', 'はい（毎週この曜日・この時間の枠）')}
-        {row('予約した人', b.booker_name)}
+        {/* 🚨 「予約した人」は画面に出さない（2026-09-01 ユーザー指示）。
+               値そのものは保存し続けている（DBでは必須）。誰が入れたかを知りたいときは
+               room_bookings.booker_name を見れば分かるが、**画面からは追えなくなった**。 */}
         {/* 名前の横に学年（大学生より上の大人は年齢）を出す・2026-08-31 ユーザー指示。
             🚨 学年はその予約の日を基準に出している（年度で変わるため） */}
         {(b.customer_name || b.customer_label) && row('お客様', (
@@ -2934,7 +2982,9 @@ const BookingDetail: React.FC<{
         {b.member_no && row('会員番号', (
           <span style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <span style={{ fontVariantNumeric: 'tabular-nums' }}>{b.member_no}</span>
-            <a href={scholaUrl(b.member_no)} target="_blank" rel="noreferrer"
+            {/* 🚨 2名の予約は会員番号がカンマでつながっているので、分けて渡す。
+                   scholaUrl が全角スペースでつなぎ直し、1回で2人ぶん開ける */}
+            <a href={scholaUrl(participantsOf(b).map(p => p.no))} target="_blank" rel="noreferrer"
               style={{ color: accent, fontSize: 12.5, fontWeight: 700, textDecoration: 'none', border: `1px solid ${accent}`, borderRadius: 999, padding: '3px 11px' }}>
               スコラプラスで予約 →
             </a>

@@ -752,13 +752,21 @@ export const shiftDate = (dateStr: string, days: number): string => {
 
 /**
  * スコラプラスで会員を開くURL。
- * 会員番号を keyword に入れるだけ（2026-08-28 ユーザー提供の実URLと同じ形）。
+ *
+ * 🚨 2026-09-01 に形を直した。**うまく開かなかった**ため、ユーザーから提供された
+ *    実際に動くURLと同じ形にした：`?keyword=<会員番号>&limit=50` だけ。
+ *    それまで付けていた `search_condition_type=` と
+ *    `data[reservable_flg]=1&2` は**外した**（この絞り込みが効いて出てこなかった）。
+ * 🚨 複数人のときは**全角スペースでつなぐ**（提供されたURLが %E3%80%80 ＝ 全角空白）。
+ *    2名の予約から1回で2人ぶんを開けるようにするため。
  * 🚨 会員番号以外の個人情報はURLにもDBにも入れない方針。
  */
-export const scholaUrl = (memberNo: string): string =>
-  'https://buscatch.net/sc/admin/five-m/course_children'
-  + `?search_condition_type=&keyword=${encodeURIComponent(memberNo)}&limit=50`
-  + '&data%5Breservable_flg%5D=1&data%5Breservable_flg%5D=2';
+export const scholaUrl = (memberNos: string | string[]): string => {
+  const list = (Array.isArray(memberNos) ? memberNos : [memberNos])
+    .map(s => s.trim()).filter(Boolean);
+  return 'https://buscatch.net/sc/admin/five-m/course_children'
+    + `?keyword=${encodeURIComponent(list.join('　'))}&limit=50`;
+};
 
 /**
  * スタッフの担当できる区分を「A・B・D」の形にする。
