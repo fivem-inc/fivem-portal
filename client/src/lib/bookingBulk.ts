@@ -1,7 +1,10 @@
 // 予約の一括入力（CSV / Excel / テキスト貼り付け）の読み取りと組み立て。
 //
-// 🚨 重なりの判定はここでしない。1行ずつ既存の room_create_booking を通す。
+// 🚨 **場所**の重なりの判定はここでしない。1行ずつ既存の room_create_booking を通す。
 //    画面側で数え直すと、サーバーの判定とズレて「入るはずが入らない」が起きる。
+// 🚨 ただし**担当（スタッフ）の重なりはサーバーが見ていない**ので、ここで止める
+//    （2026-09-01 ユーザー指摘。同じ担当が同じ時間に2つ入る行が通っていた）。
+//    場所とは別の規則なので、混同しないこと。
 // 🚨 読めなかった行を黙って捨てない。理由をつけて返し、画面で必ず見せる。
 //
 // テキスト貼り付けは Excel からのコピー＝タブ区切りを想定する。
@@ -233,6 +236,8 @@ export function parseFixed(raw: string): boolean {
 }
 
 export interface BulkBooking {
+  /** 貼り付けた中での行番号（1始まり）。エラーの見出しに使う */
+  line: number;
   date: string;
   floor_id: string;
   start: string;
@@ -334,11 +339,32 @@ export function buildBookings(
     }
 
     ok.push({
+      line,
       date, floor_id: floorId, start, end, purpose, staff_id: staffId,
       member_no: at(row, 'member_no'), customer_label: at(row, 'customer'), memo: at(row, 'memo'),
       is_fixed: parseFixed(at(row, 'fixed')),
     });
   });
 
-  return { ok, ng };
+  // 🚨 同じ担当が同じ時間に2つ入る行を弾く（2026-09-01 ユーザー指摘）。
+  //    サーバーは**場所**の重なりしか見ていないので、担当の重なりはここで止める。
+  //    先に出てきた行を残し、あとの行をエラーにする（貼り付けた順が意図の順のため）。
+  const kept: BulkBooking[] = [];
+  for (const b of ok) {
+    const clash = b.staff_id
+      ? kept.find(k => k.staff_id === b.staff_id && k.date === b.date
+          && minutesOf(b.start) < minutesOf(k.end) && minutesOf(b.end) > minutesOf(k.start))
+      : undefined;
+    if (clash) {
+      ng.push({
+        line: b.line,
+        reason: `同じ担当の時間が ${clash.line}行目（${clash.start}〜${clash.end}）と重なっています`,
+      });
+      continue;
+    }
+    kept.push(b);
+  }
+  ng.sort((a, b) => a.line - b.line);
+
+  return { ok: kept, ng };
 }
