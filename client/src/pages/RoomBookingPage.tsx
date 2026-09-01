@@ -777,8 +777,9 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
       )}
       {attendanceOpen && (
         <AttendancePanel
-          date={date} bookings={bookings} floors={floors} campuses={campuses} staff={staff}
-          options={attendanceOptions} attendance={attendance}
+          date={date} floorIds={visibleFloors.map(f => f.id)}
+          floors={floors} campuses={campuses} staff={staff}
+          options={attendanceOptions}
           canWrite={canAttendance}
           onSaved={() => loadAttendance(bookings.map(b => b.id))}
           onClose={() => setAttendanceOpen(false)} isDark={isDark} />
@@ -2674,9 +2675,12 @@ const AttendanceDayList: React.FC<{
   onSaved: () => void | Promise<void>;
   isDark: boolean;
 }> = ({ date, bookings, floors, campuses, staff, options, attendance, canWrite, onSaved, isDark }) => {
+  // 未入力だけに絞る（2026-09-01 ユーザー指示）。付け残しを片付けるときに使う
+  const [onlyMissing, setOnlyMissing] = useState(false);
   const line = isDark ? '#3a3a5c' : '#e0e0e0';
   const text = isDark ? '#eeeeee' : '#222222';
   const textMid = isDark ? '#b3b8c6' : '#5b6270';
+  const accent = isDark ? '#6bbd92' : '#2f6f4f';
 
   // 出欠を付けられる予約だけ。🚨 募集中の枠（まだ人がいない）と休講は除く
   const targets = bookings
@@ -2713,27 +2717,55 @@ const AttendanceDayList: React.FC<{
       return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b, 'ja');
     })
     .map(purpose => {
-      const items = targets.filter(b => b.purpose === purpose);
+      const all = targets.filter(b => b.purpose === purpose);
       let t = 0, d = 0;
-      for (const b of items) {
+      for (const b of all) {
         for (const p of participantsOf(b)) {
           t++;
           if (attendance.some(r => r.booking_id === b.id && r.participant_no === p.no && r.participant_name === p.name)) d++;
         }
       }
+      /**
+       * 「未入力だけ」に絞ったときの出し方。
+       * 🚨 **予約ごと**に出す（参加者の行だけ隠さない）。2名のうち1人だけ未入力でも、
+       *    もう1人が何になっているか見えないと、付け間違いに気づけない。
+       * 🚨 件数（入力済み ◯/◯）は**絞る前の数**のまま。絞ったら残りが減ったように
+       *    見えるのは、進み具合が分からなくなって困る。
+       */
+      const items = onlyMissing
+        ? all.filter(b => participantsOf(b).some(p =>
+            !attendance.some(r => r.booking_id === b.id && r.participant_no === p.no && r.participant_name === p.name)))
+        : all;
       return { purpose, items, total: t, done: d };
-    });
+    })
+    .filter(g => g.items.length > 0);
 
   return (
       <div>
         <div style={{ background: isDark ? '#35354e' : '#f0f2f5', borderRadius: 8, padding: '10px 12px', fontSize: 13, lineHeight: 1.7, marginBottom: 12, color: textMid }}>
           <b style={{ color: text }}>{formatDateLabel(date)}</b> の予約です。
-          日付を変えるときは、この画面を閉じて予約表の日付を動かしてください。
-          <br />
           押すとその場で保存されます。もう一度同じものを押すと取り消せます。
           <br />
           <b style={{ color: text }}>入力済み {done} / {total} 人</b>
           {total - done > 0 && `（未入力 ${total - done} 人）`}
+        </div>
+
+        {/* 未入力だけに絞る（2026-09-01 ユーザー指示）。付け残しを片付けるとき用 */}
+        <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+          <span style={{ fontSize: 12.5, color: textMid }}>表示</span>
+          {([[false, 'すべて'], [true, '未入力だけ']] as const).map(([v, l]) => (
+            <button key={l} onClick={() => setOnlyMissing(v)}
+              style={{
+                padding: '5px 12px', borderRadius: 999, fontSize: 12.5, cursor: 'pointer',
+                border: `1px solid ${onlyMissing === v ? accent : line}`,
+                background: onlyMissing === v ? accent : 'transparent',
+                color: onlyMissing === v ? (isDark ? '#1d2a24' : '#fff') : textMid,
+                fontWeight: onlyMissing === v ? 700 : 400,
+              }}>{l}</button>
+          ))}
+          {onlyMissing && total - done === 0 && (
+            <span style={{ fontSize: 12.5, color: accent, fontWeight: 700 }}>すべて入力済みです</span>
+          )}
         </div>
 
         {targets.length === 0 ? (
@@ -2797,19 +2829,60 @@ const AttendanceDayList: React.FC<{
 // 「まとめて付ける」と「集計」をタブで切り替える
 // ============================================================
 const AttendancePanel: React.FC<{
+  /** 開いたときに見ていた日。ここを起点に、この画面の中で日付を動かせる */
   date: string;
-  bookings: Booking[];
+  /** いま見えている場所（校の絞り込みを引き継ぐ） */
+  floorIds: string[];
   floors: Floor[];
   campuses: Campus[];
   staff: Staff[];
   options: AttendanceOption[];
-  attendance: AttendanceRow[];
   canWrite: boolean;
+  /** 予約表側の出欠も読み直す（予約の詳細と食い違わないように） */
   onSaved: () => void | Promise<void>;
   onClose: () => void;
   isDark: boolean;
-}> = ({ date, bookings, floors, campuses, staff, options, attendance, canWrite, onSaved, onClose, isDark }) => {
+}> = ({ date, floorIds, floors, campuses, staff, options, canWrite, onSaved, onClose, isDark }) => {
   const [tab, setTab] = useState<'day' | 'summary'>('day');
+  /**
+   * この画面の中で見ている日（2026-09-01 ユーザー指示）。
+   * 🚨 予約表を閉じて日付を動かす必要があったのをやめ、ここで切り替えられるようにした。
+   *    そのため**この画面が自分で予約と出欠を読む**（予約表から渡されたものは使わない）。
+   *    渡されたものを使うと、日付を変えたときに前の日のままになる。
+   */
+  const [viewDate, setViewDate] = useState(date);
+  const [dayBookings, setDayBookings] = useState<Booking[]>([]);
+  const [dayAttendance, setDayAttendance] = useState<AttendanceRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
+
+  const loadDay = useCallback(async () => {
+    if (floorIds.length === 0) { setDayBookings([]); setDayAttendance([]); return; }
+    setLoading(true); setLoadError('');
+    const from = new Date(`${viewDate}T00:00:00`);
+    const to = new Date(from);
+    to.setDate(to.getDate() + 1);
+    const { data, error: err } = await supabase.from('room_bookings').select('*')
+      .in('floor_id', floorIds)
+      .is('deleted_at', null)
+      .gte('starts_at', from.toISOString())
+      .lt('starts_at', to.toISOString())
+      .order('starts_at');
+    if (err) { setLoadError('予約を読み込めませんでした。通信を確認してください。'); setLoading(false); return; }
+    const bs = (data ?? []) as Booking[];
+    setDayBookings(bs);
+    // 🚨 予約が0件のときは問い合わせない（in に空の配列を渡す形を作らない）
+    if (bs.length === 0) { setDayAttendance([]); setLoading(false); return; }
+    const { data: at } = await supabase.from('room_booking_attendance')
+      .select('*').in('booking_id', bs.map(b => b.id));
+    setDayAttendance((at ?? []) as AttendanceRow[]);
+    setLoading(false);
+  }, [viewDate, floorIds]);
+
+  useEffect(() => { loadDay(); }, [loadDay]);
+
+  // 出欠を付けたら、この画面と予約表の両方を読み直す
+  const saved = async () => { await loadDay(); await onSaved(); };
   const line = isDark ? '#3a3a5c' : '#e0e0e0';
   const textMid = isDark ? '#b3b8c6' : '#5b6270';
   const accent = isDark ? '#6bbd92' : '#2f6f4f';
@@ -2829,13 +2902,32 @@ const AttendancePanel: React.FC<{
           <button onClick={() => setTab('summary')} style={tabBtn(tab === 'summary')}>集計</button>
         </div>
         {tab === 'day' ? (
-          <AttendanceDayList
-            date={date} bookings={bookings} floors={floors} campuses={campuses} staff={staff}
-            options={options} attendance={attendance} canWrite={canWrite}
-            onSaved={onSaved} isDark={isDark} />
+          <>
+            {/* 日付の切り替え（2026-09-01 ユーザー指示）。
+                🚨 別の日の出欠を見るのに、いちいち画面を閉じて予約表を動かさせない */}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+              <button onClick={() => setViewDate(todayStr())} style={tabBtn(viewDate === todayStr())}>今日</button>
+              <button onClick={() => setViewDate(shiftDate(viewDate, -1))}
+                style={{ ...tabBtn(false), padding: '6px 12px' }} aria-label="前の日">◀</button>
+              <input type="date" value={viewDate} onChange={e => setViewDate(e.target.value)}
+                style={{ padding: '6px 9px', borderRadius: 8, border: `1px solid ${line}`, background: isDark ? '#495057' : '#fff', color: isDark ? '#eeeeee' : '#222222', fontSize: 16, boxSizing: 'border-box' }} />
+              <button onClick={() => setViewDate(shiftDate(viewDate, 1))}
+                style={{ ...tabBtn(false), padding: '6px 12px' }} aria-label="次の日">▶</button>
+              {loading && <span style={{ fontSize: 12.5, color: textMid }}>読み込んでいます…</span>}
+            </div>
+            {loadError && (
+              <div style={{ background: isDark ? '#4a2a2a' : '#fdecea', border: `1px solid ${isDark ? '#7a4444' : '#f5c6cb'}`, color: isDark ? '#ffb4b4' : '#a3282a', borderRadius: 8, padding: '9px 12px', fontSize: 13, marginBottom: 12 }}>
+                {loadError}
+              </div>
+            )}
+            <AttendanceDayList
+              date={viewDate} bookings={dayBookings} floors={floors} campuses={campuses} staff={staff}
+              options={options} attendance={dayAttendance} canWrite={canWrite}
+              onSaved={saved} isDark={isDark} />
+          </>
         ) : (
           <AttendanceSummary
-            today={date} floors={floors} campuses={campuses} staff={staff}
+            today={viewDate} floors={floors} campuses={campuses} staff={staff}
             options={options} isDark={isDark} />
         )}
       </div>
