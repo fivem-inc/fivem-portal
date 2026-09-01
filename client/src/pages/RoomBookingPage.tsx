@@ -10,7 +10,7 @@ import {
   isWeekend, RANGE_DAYS, localDate, placeLabel, openSlotColor, durationLabel, FALLBACK_DURATIONS, gradeOrAge, defaultMinutesOf,
   customerName, customerFullName, customerKana, contactLines, toHiragana,
   fiscalYear, fiscalYearEnd, fiscalYearLabel, RENEWAL_NOTICE_DAYS, daysUntil, detailsOf, purposeWithDetail,
-  participantsOf, participantLabelOf, attendanceOptionsFor,
+  participantsOf, participantLabelOf, attendanceOptionsFor, needsPaymentNote,
   type Campus, type Floor, type Booking, type ConflictInfo,
   type Staff, type LessonCategory, type Recurrence, type PurposeDuration, type PurposeDetail,
   type AttendanceOption, type AttendanceRow, type Participant,
@@ -20,6 +20,7 @@ import {
   readTable, guessMapping, buildCustomers, parseBirthDate, FIELD_LABEL, REQUIRED_FIELDS,
   type CustomerField,
 } from '../lib/customerImport';
+import { downloadCSV } from '../utils';
 import {
   guessBookingMapping, splitPasted, buildBookings, BOOKING_FIELD_LABEL,
   BOOKING_REQUIRED, BULK_MAX_ROWS, type BookingField,
@@ -119,6 +120,27 @@ const saveAttendanceRow = async (
     recorded_by: me.user?.id ?? null,
   }, { onConflict: 'booking_id,participant_no,participant_name' });
   if (error) return '出欠を保存できませんでした。通信を確認してもう一度お試しください。';
+  return '';
+};
+
+/**
+ * 支払いの覚書だけを書き換える（出欠はすでに付いている前提）。
+ * 🚨 出欠の行が無いときは何もしない。先に出欠を選んでもらう
+ *    （空の記録だけができると、集計で「出欠なしの支払い」が出て意味が分からなくなる）。
+ * 戻り値は画面に出すエラー文（空なら成功）。
+ */
+const savePaymentNote = async (
+  bookingId: string, p: Participant, note: string,
+): Promise<string> => {
+  const { data, error } = await supabase.from('room_booking_attendance')
+    .update({ payment_note: note.trim() || null })
+    .eq('booking_id', bookingId)
+    .eq('participant_no', p.no)
+    .eq('participant_name', p.name)
+    .select('id');
+  // 🚨 update は0件でもエラーにならない。書けた件数で判断する
+  if (error) return '支払いを保存できませんでした。通信を確認してもう一度お試しください。';
+  if (!data || data.length === 0) return '先に出欠を選んでください。';
   return '';
 };
 
@@ -734,8 +756,8 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
           isDark={isDark} />
       )}
       {attendanceOpen && (
-        <AttendanceBulk
-          date={date} bookings={bookings} floors={floors} campuses={campuses}
+        <AttendancePanel
+          date={date} bookings={bookings} floors={floors} campuses={campuses} staff={staff}
           options={attendanceOptions} attendance={attendance}
           canWrite={canAttendance}
           onSaved={() => loadAttendance(bookings.map(b => b.id))}
@@ -1883,8 +1905,9 @@ const AttendanceOptionSettings: React.FC<{
     await onDone('並びを変えました');
   };
 
-  const purposeChip = (p: string, on: boolean, onClick: () => void) => (
-    <button key={p} onClick={onClick}
+  // 🚨 key は用途名だけにしない。表示用・支払い用・追加用で同じ用途のボタンが並ぶため
+  const purposeChip = (key: string, p: string, on: boolean, onClick: () => void) => (
+    <button key={key} onClick={onClick}
       style={{
         padding: '3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: 'pointer',
         border: `2px solid ${on ? '#1565c0' : '#90caf9'}`,
@@ -1939,7 +1962,7 @@ const AttendanceOptionSettings: React.FC<{
               <span style={{ fontSize: 12, color: textMid, minWidth: 34 }}>用途</span>
               {PURPOSES.map(p => {
                 const on = !!o.purposes?.includes(p);
-                return purposeChip(p, on, () => {
+                return purposeChip(`show-${p}`, p, on, () => {
                   const next = on ? (o.purposes ?? []).filter(x => x !== p) : [...(o.purposes ?? []), p];
                   patch(o, { purposes: next.length ? next : null },
                     next.length ? `「${o.name}」を ${next.join('・')} だけに出します` : `「${o.name}」を全部の用途に出します`);
@@ -1947,6 +1970,27 @@ const AttendanceOptionSettings: React.FC<{
               })}
               {(!o.purposes || o.purposes.length === 0) && (
                 <span style={{ fontSize: 12, color: textMid }}>（全部の用途に出ます）</span>
+              )}
+            </div>
+            {/* 支払いの記入欄を出す用途（2026-09-01 ユーザー指示）。
+                🚨 上の「用途」とは別物。出席は全用途に出すが、支払い欄はプライベートだけ、
+                   という形にできるように分けてある */}
+            <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap', marginTop: 5 }}>
+              <span style={{ fontSize: 12, color: textMid, minWidth: 34 }}>支払い</span>
+              {PURPOSES.map(p => {
+                const on = !!o.payment_purposes?.includes(p);
+                return purposeChip(`pay-${p}`, p, on, () => {
+                  const next = on
+                    ? (o.payment_purposes ?? []).filter(x => x !== p)
+                    : [...(o.payment_purposes ?? []), p];
+                  patch(o, { payment_purposes: next.length ? next : null },
+                    next.length
+                      ? `「${o.name}」に ${next.join('・')} の支払い欄を出します`
+                      : `「${o.name}」の支払い欄を出さないようにしました`);
+                });
+              })}
+              {(!o.payment_purposes || o.payment_purposes.length === 0) && (
+                <span style={{ fontSize: 12, color: textMid }}>（支払い欄は出ません）</span>
               )}
             </div>
           </div>
@@ -1970,7 +2014,7 @@ const AttendanceOptionSettings: React.FC<{
         </div>
         <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ fontSize: 12, color: textMid, minWidth: 34 }}>用途</span>
-          {PURPOSES.map(p => purposeChip(p, purposes.includes(p), () =>
+          {PURPOSES.map(p => purposeChip(`new-${p}`, p, purposes.includes(p), () =>
             setPurposes(prev => prev.includes(p) ? prev.filter(x => x !== p) : [...prev, p])))}
           {purposes.length === 0 && (
             <span style={{ fontSize: 12, color: textMid }}>（選ばなければ全部の用途に出ます）</span>
@@ -1988,7 +2032,297 @@ const AttendanceOptionSettings: React.FC<{
 // 🚨 未入力に赤いバッジは付けない。押して消せない赤は「関係者全員が自分の番だと思い、
 //    結局誰も動かない」形になる（備品購入申請で踏んだ失敗）。件数を出すだけにする。
 // ============================================================
-const AttendanceBulk: React.FC<{
+/** 出欠の記録に、その予約の情報をくっつけたもの（集計で使う） */
+interface AttendanceJoined extends AttendanceRow {
+  room_bookings: {
+    starts_at: string;
+    floor_id: string;
+    purpose: string;
+    detail: string | null;
+    staff_id: string | null;
+    deleted_at: string | null;
+  } | null;
+}
+
+/**
+ * 出欠の集計（2026-09-01 ユーザー指示）。
+ * お客様ごと・日ごと・担当ごとに切り替えられる。期間は「月」と「開始〜終了」の両方。
+ *
+ * 🚨 支払いの覚書（「2/10」など）は**計算しない**。書いた文字をそのまま並べるだけ。
+ *    「何回目 / 何回払い」であって分数ではないため。照合は人が目で行う。
+ */
+const AttendanceSummary: React.FC<{
+  /** 画面を開いたときに見ていた日。月の初期値をここから決める */
+  today: string;
+  floors: Floor[];
+  campuses: Campus[];
+  staff: Staff[];
+  options: AttendanceOption[];
+  isDark: boolean;
+}> = ({ today, floors, campuses, staff, options, isDark }) => {
+  const [mode, setMode] = useState<'month' | 'range'>('month');
+  const [month, setMonth] = useState(today.slice(0, 7));       // 'YYYY-MM'
+  const [from, setFrom] = useState(today);
+  const [to, setTo] = useState(today);
+  const [axis, setAxis] = useState<'customer' | 'day' | 'staff'>('customer');
+  const [rows, setRows] = useState<AttendanceJoined[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [capped, setCapped] = useState(false);
+
+  const line = isDark ? '#3a3a5c' : '#e0e0e0';
+  const text = isDark ? '#eeeeee' : '#222222';
+  const textMid = isDark ? '#b3b8c6' : '#5b6270';
+  const accent = isDark ? '#6bbd92' : '#2f6f4f';
+  const fieldBg = isDark ? '#495057' : '#fff';
+  const input: React.CSSProperties = {
+    padding: '6px 9px', borderRadius: 8, border: `1px solid ${line}`,
+    background: fieldBg, color: text, fontSize: 16, boxSizing: 'border-box',
+  };
+  const smallBtn = (on: boolean): React.CSSProperties => ({
+    padding: '5px 12px', borderRadius: 999, fontSize: 12.5, cursor: 'pointer',
+    border: `1px solid ${on ? accent : line}`,
+    background: on ? accent : 'transparent',
+    color: on ? (isDark ? '#1d2a24' : '#fff') : textMid,
+    fontWeight: on ? 700 : 400,
+  });
+
+  // 期間の始まりと終わり（終わりは「その日を含む」）
+  const period = useMemo(() => {
+    if (mode === 'month') {
+      const [y, m] = month.split('-').map(Number);
+      const s = new Date(y, m - 1, 1);
+      const e = new Date(y, m, 1);                 // 翌月1日（含まない）
+      return { start: s, end: e, label: `${y}年${m}月` };
+    }
+    const s = new Date(`${from}T00:00:00`);
+    const e = new Date(`${to}T00:00:00`);
+    e.setDate(e.getDate() + 1);                    // 終了日を含める
+    return { start: s, end: e, label: `${formatDateLabel(from)}〜${formatDateLabel(to)}` };
+  }, [mode, month, from, to]);
+
+  /**
+   * 期間ぶんの出欠を読む。
+   * 🚨 Supabase は件数を指定しないと **1000件で黙って打ち切る**。
+   *    分けて読み、上限に達したら画面に断りを出す（静かに欠けさせない）。
+   */
+  const load = useCallback(async () => {
+    setLoading(true); setError(''); setCapped(false);
+    const CHUNK = 1000;
+    const MAX = 20000;
+    const out: AttendanceJoined[] = [];
+    for (let f = 0; ; f += CHUNK) {
+      const { data, error: err } = await supabase
+        .from('room_booking_attendance')
+        .select('*, room_bookings!inner(starts_at, floor_id, purpose, detail, staff_id, deleted_at)')
+        .is('room_bookings.deleted_at', null)
+        .gte('room_bookings.starts_at', period.start.toISOString())
+        .lt('room_bookings.starts_at', period.end.toISOString())
+        .range(f, f + CHUNK - 1);
+      if (err) {
+        setError('集計を読み込めませんでした。通信を確認してもう一度お試しください。');
+        setLoading(false); return;
+      }
+      const part = (data ?? []) as AttendanceJoined[];
+      out.push(...part);
+      if (part.length < CHUNK) break;
+      if (out.length >= MAX) { setCapped(true); break; }
+    }
+    out.sort((a, b) => (a.room_bookings?.starts_at ?? '').localeCompare(b.room_bookings?.starts_at ?? ''));
+    setRows(out);
+    setLoading(false);
+  }, [period]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const staffName = (id: string | null) => staff.find(s => s.id === id)?.name ?? '担当なし';
+  const placeOf = (floorId: string) => {
+    const f = floors.find(x => x.id === floorId);
+    const c = f ? campuses.find(x => x.id === f.campus_id) : null;
+    return f ? placeLabel(f, c?.name ?? '', floors.filter(x => x.campus_id === f.campus_id).length, true) : '';
+  };
+
+  // 並べる軸ごとにまとめる。列は「出欠の種類ごとの件数」
+  const groups = useMemo(() => {
+    const map = new Map<string, { label: string; counts: Record<string, number>; present: number; notes: string[] }>();
+    for (const r of rows) {
+      const b = r.room_bookings;
+      let key: string, label: string;
+      if (axis === 'customer') {
+        key = `${r.participant_no}|${r.participant_name}`;
+        label = r.participant_name || (r.participant_no ? `#${r.participant_no}` : '（お名前なし）');
+        if (r.participant_name && r.participant_no) label = `${r.participant_name}（${r.participant_no}）`;
+      } else if (axis === 'day') {
+        key = b ? localDate(b.starts_at) : '';
+        label = key ? formatDateLabel(key) : '';
+      } else {
+        key = b?.staff_id ?? '__none__';
+        label = staffName(b?.staff_id ?? null);
+      }
+      const g = map.get(key) ?? { label, counts: {}, present: 0, notes: [] };
+      g.counts[r.status] = (g.counts[r.status] ?? 0) + 1;
+      if (r.counted_present) g.present++;
+      if (r.payment_note) g.notes.push(r.payment_note);
+      map.set(key, g);
+    }
+    const list = [...map.entries()].map(([key, g]) => ({ key, ...g }));
+    // 日ごとは日付順、それ以外は件数の多い順（多い人から見たいため）
+    return axis === 'day'
+      ? list.sort((a, b) => a.key.localeCompare(b.key))
+      : list.sort((a, b) => {
+          const n = (x: typeof a) => Object.values(x.counts).reduce((s, v) => s + v, 0);
+          return n(b) - n(a) || a.label.localeCompare(b.label, 'ja');
+        });
+  }, [rows, axis, staff]);
+
+  // 表に出す列（隠した選択肢でも、記録があれば出す）
+  const columns = useMemo(() => {
+    const names = options.filter(o => o.active).map(o => o.name);
+    for (const r of rows) if (!names.includes(r.status)) names.push(r.status);
+    return names;
+  }, [options, rows]);
+
+  /**
+   * CSVは**明細**（1行＝1つの記録）で出す。
+   * 🚨 画面の集計をそのまま出さない。10回区切りの一覧表と突き合わせるには、
+   *    いつ・誰が・何回目か が1行ずつ並んでいるほうが照合しやすいため。
+   */
+  const exportCsv = () => {
+    const esc = (v: string) => `"${(v ?? '').replace(/"/g, '""')}"`;
+    const head = ['日付', '開始', '場所', '用途', '担当', '会員番号', 'お客様', '出欠', '出席扱い', '支払い'];
+    const body = rows.map(r => {
+      const b = r.room_bookings;
+      return [
+        b ? localDate(b.starts_at) : '',
+        b ? hhmm(b.starts_at) : '',
+        b ? placeOf(b.floor_id) : '',
+        b ? (b.detail ? `${b.purpose}・${b.detail}` : b.purpose) : '',
+        staffName(b?.staff_id ?? null),
+        r.participant_no,
+        r.participant_name,
+        r.status,
+        r.counted_present ? '○' : '',
+        r.payment_note ?? '',
+      ].map(esc).join(',');
+    });
+    downloadCSV([head.map(esc).join(','), ...body].join('\r\n'),
+      `出欠_${mode === 'month' ? month : `${from}_${to}`}.csv`);
+  };
+
+  const shiftMonth = (d: number) => {
+    const [y, m] = month.split('-').map(Number);
+    const dt = new Date(y, m - 1 + d, 1);
+    setMonth(`${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`);
+  };
+
+  return (
+    <div>
+      <div style={{ background: isDark ? '#35354e' : '#f0f2f5', borderRadius: 8, padding: '10px 12px', fontSize: 13, lineHeight: 1.7, marginBottom: 12, color: textMid }}>
+        期間の出欠をまとめます（<b style={{ color: text }}>全校ぶん</b>）。
+        支払いの欄は<b style={{ color: text }}>書いた文字をそのまま</b>並べています
+        （「2/10」は分数ではないので足し算はしません）。
+        <br />
+        10回区切りの一覧表と照合するときは、<b style={{ color: text }}>CSV（明細）</b>のほうが
+        1行ずつ並ぶので見比べやすいです。
+      </div>
+
+      {/* 期間 */}
+      <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+        <button onClick={() => setMode('month')} style={smallBtn(mode === 'month')}>月ごと</button>
+        <button onClick={() => setMode('range')} style={smallBtn(mode === 'range')}>期間を指定</button>
+        {mode === 'month' ? (
+          <>
+            <button onClick={() => shiftMonth(-1)} style={{ ...smallBtn(false), padding: '5px 11px' }} aria-label="前の月">◀</button>
+            <b style={{ fontSize: 14, minWidth: 96, textAlign: 'center' }}>{period.label}</b>
+            <button onClick={() => shiftMonth(1)} style={{ ...smallBtn(false), padding: '5px 11px' }} aria-label="次の月">▶</button>
+          </>
+        ) : (
+          <>
+            <input type="date" value={from} onChange={e => setFrom(e.target.value)} style={input} />
+            <span style={{ fontSize: 13, color: textMid }}>〜</span>
+            <input type="date" value={to} onChange={e => setTo(e.target.value)} style={input} />
+          </>
+        )}
+      </div>
+
+      {/* 並べ方 */}
+      <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+        <span style={{ fontSize: 12.5, color: textMid }}>並べ方</span>
+        <button onClick={() => setAxis('customer')} style={smallBtn(axis === 'customer')}>お客様ごと</button>
+        <button onClick={() => setAxis('day')} style={smallBtn(axis === 'day')}>日ごと</button>
+        <button onClick={() => setAxis('staff')} style={smallBtn(axis === 'staff')}>担当ごと</button>
+        <button onClick={exportCsv} disabled={rows.length === 0}
+          style={{ ...smallBtn(false), marginLeft: 'auto', opacity: rows.length === 0 ? .5 : 1 }}>
+          CSV（明細）
+        </button>
+      </div>
+
+      {error && (
+        <div style={{ background: isDark ? '#4a2a2a' : '#fdecea', border: `1px solid ${isDark ? '#7a4444' : '#f5c6cb'}`, color: isDark ? '#ffb4b4' : '#a3282a', borderRadius: 8, padding: '9px 12px', fontSize: 13, marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
+      {capped && (
+        <div style={{ background: isDark ? '#4a3f2a' : '#fff6e0', border: `1px solid ${isDark ? '#7a6a44' : '#f0d9a0'}`, color: isDark ? '#e8c98a' : '#8a6a12', borderRadius: 8, padding: '9px 12px', fontSize: 13, marginBottom: 12 }}>
+          件数が多いため途中までしか読めていません。期間を短くしてください。
+        </div>
+      )}
+
+      {loading ? (
+        <p style={{ fontSize: 13.5, color: textMid }}>読み込んでいます...</p>
+      ) : rows.length === 0 ? (
+        <p style={{ fontSize: 13.5, color: textMid, lineHeight: 1.7 }}>
+          この期間に出欠の記録がありません。
+        </p>
+      ) : (
+        <>
+          <p style={{ fontSize: 12.5, color: textMid, margin: '0 0 7px' }}>
+            記録 {rows.length}件／{axis === 'customer' ? 'お客様' : axis === 'day' ? '日' : '担当'} {groups.length}件
+          </p>
+          {/* 🚨 列が多いので横に伸びる。画面ごと横スクロールさせず、表だけを動かす */}
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', fontSize: 13, minWidth: 520 }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: 'left', padding: '6px 9px', borderBottom: `2px solid ${line}`, whiteSpace: 'nowrap', color: textMid }}>
+                    {axis === 'customer' ? 'お客様' : axis === 'day' ? '日付' : '担当'}
+                  </th>
+                  {columns.map(c => (
+                    <th key={c} style={{ textAlign: 'right', padding: '6px 9px', borderBottom: `2px solid ${line}`, whiteSpace: 'nowrap', color: textMid }}>{c}</th>
+                  ))}
+                  <th style={{ textAlign: 'right', padding: '6px 9px', borderBottom: `2px solid ${line}`, whiteSpace: 'nowrap', color: textMid }}>出席扱い</th>
+                  {axis === 'customer' && (
+                    <th style={{ textAlign: 'left', padding: '6px 9px', borderBottom: `2px solid ${line}`, whiteSpace: 'nowrap', color: textMid }}>支払い</th>
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {groups.map(g => (
+                  <tr key={g.key}>
+                    <td style={{ padding: '6px 9px', borderBottom: `1px solid ${line}`, whiteSpace: 'nowrap' }}>{g.label}</td>
+                    {columns.map(c => (
+                      <td key={c} style={{ padding: '6px 9px', borderBottom: `1px solid ${line}`, textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: g.counts[c] ? text : textMid }}>
+                        {g.counts[c] ?? 0}
+                      </td>
+                    ))}
+                    <td style={{ padding: '6px 9px', borderBottom: `1px solid ${line}`, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{g.present}</td>
+                    {axis === 'customer' && (
+                      <td style={{ padding: '6px 9px', borderBottom: `1px solid ${line}`, color: textMid, fontVariantNumeric: 'tabular-nums' }}>
+                        {g.notes.join('、') || '—'}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+const AttendanceDayList: React.FC<{
   date: string;
   bookings: Booking[];
   floors: Floor[];
@@ -1997,9 +2331,8 @@ const AttendanceBulk: React.FC<{
   attendance: AttendanceRow[];
   canWrite: boolean;
   onSaved: () => void | Promise<void>;
-  onClose: () => void;
   isDark: boolean;
-}> = ({ date, bookings, floors, campuses, options, attendance, canWrite, onSaved, onClose, isDark }) => {
+}> = ({ date, bookings, floors, campuses, options, attendance, canWrite, onSaved, isDark }) => {
   const line = isDark ? '#3a3a5c' : '#e0e0e0';
   const text = isDark ? '#eeeeee' : '#222222';
   const textMid = isDark ? '#b3b8c6' : '#5b6270';
@@ -2027,7 +2360,6 @@ const AttendanceBulk: React.FC<{
   };
 
   return (
-    <Overlay onClose={onClose} isDark={isDark} title="出欠をまとめて付ける" wide>
       <div>
         <div style={{ background: isDark ? '#35354e' : '#f0f2f5', borderRadius: 8, padding: '10px 12px', fontSize: 13, lineHeight: 1.7, marginBottom: 12, color: textMid }}>
           <b style={{ color: text }}>{formatDateLabel(date)}</b> の予約です。
@@ -2052,10 +2384,60 @@ const AttendanceBulk: React.FC<{
                 </div>
                 <AttendanceEditor booking={b} options={options}
                   rows={attendance.filter(r => r.booking_id === b.id)}
-                  canWrite={canWrite} onSaved={onSaved} isDark={isDark} />
+                  canWrite={canWrite} showNameWhenSingle onSaved={onSaved} isDark={isDark} />
               </div>
             ))}
           </div>
+        )}
+      </div>
+  );
+};
+
+// ============================================================
+// 出欠の画面（予約表の上の「出欠」ボタンから開く）
+// 「まとめて付ける」と「集計」をタブで切り替える
+// ============================================================
+const AttendancePanel: React.FC<{
+  date: string;
+  bookings: Booking[];
+  floors: Floor[];
+  campuses: Campus[];
+  staff: Staff[];
+  options: AttendanceOption[];
+  attendance: AttendanceRow[];
+  canWrite: boolean;
+  onSaved: () => void | Promise<void>;
+  onClose: () => void;
+  isDark: boolean;
+}> = ({ date, bookings, floors, campuses, staff, options, attendance, canWrite, onSaved, onClose, isDark }) => {
+  const [tab, setTab] = useState<'day' | 'summary'>('day');
+  const line = isDark ? '#3a3a5c' : '#e0e0e0';
+  const textMid = isDark ? '#b3b8c6' : '#5b6270';
+  const accent = isDark ? '#6bbd92' : '#2f6f4f';
+  const tabBtn = (on: boolean): React.CSSProperties => ({
+    padding: '6px 14px', borderRadius: 999, fontSize: 13, cursor: 'pointer',
+    border: `1px solid ${on ? accent : line}`,
+    background: on ? accent : 'transparent',
+    color: on ? (isDark ? '#1d2a24' : '#fff') : textMid,
+    fontWeight: on ? 700 : 400,
+  });
+
+  return (
+    <Overlay onClose={onClose} isDark={isDark} title="出欠" wide>
+      <div>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+          <button onClick={() => setTab('day')} style={tabBtn(tab === 'day')}>まとめて付ける</button>
+          <button onClick={() => setTab('summary')} style={tabBtn(tab === 'summary')}>集計</button>
+        </div>
+        {tab === 'day' ? (
+          <AttendanceDayList
+            date={date} bookings={bookings} floors={floors} campuses={campuses}
+            options={options} attendance={attendance} canWrite={canWrite}
+            onSaved={onSaved} isDark={isDark} />
+        ) : (
+          <AttendanceSummary
+            today={date} floors={floors} campuses={campuses} staff={staff}
+            options={options} isDark={isDark} />
         )}
       </div>
     </Overlay>
@@ -2078,9 +2460,16 @@ const AttendanceEditor: React.FC<{
    *    緩めると「押せるのに保存できないボタン」になる。
    */
   canWrite: boolean;
+  /**
+   * 参加者が1人だけのときにも名前を出すか。
+   * 🚨 予約の詳細画面では **false**。すぐ上の「お客様」の欄と同じ名前が並んで邪魔になる
+   *    （2026-09-01 実機で指摘）。2人以上のときは、どちらの出欠か分からなくなるので必ず出す。
+   *    まとめて付ける画面にはお客様の欄が無いので true。
+   */
+  showNameWhenSingle: boolean;
   onSaved: () => void | Promise<void>;
   isDark: boolean;
-}> = ({ booking: b, options, rows, canWrite, onSaved, isDark }) => {
+}> = ({ booking: b, options, rows, canWrite, showNameWhenSingle, onSaved, isDark }) => {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
 
@@ -2113,6 +2502,12 @@ const AttendanceEditor: React.FC<{
     if (msg) { setError(msg); return; }
     await onSaved();
   };
+  const savePayment = async (p: Participant, note: string) => {
+    setError('');
+    const msg = await savePaymentNote(b.id, p, note);
+    if (msg) { setError(msg); return; }
+    await onSaved();
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -2125,7 +2520,9 @@ const AttendanceEditor: React.FC<{
         const cur = rows.find(r => r.participant_no === p.no && r.participant_name === p.name);
         return (
           <div key={p.key} style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 13, color: text, minWidth: 108 }}>{participantLabelOf(p)}</span>
+            {(showNameWhenSingle || people.length > 1) && (
+              <span style={{ fontSize: 13, color: text, minWidth: 108 }}>{participantLabelOf(p)}</span>
+            )}
             {/* 書けない人（パート）には、押せないボタンではなく結果だけを見せる */}
             {!canWrite && (
               <span style={{ fontSize: 13, fontWeight: 700, color: cur ? text : textMid }}>
@@ -2149,6 +2546,29 @@ const AttendanceEditor: React.FC<{
             })}
             {canWrite && !cur && (
               <span style={{ fontSize: 12, color: textMid }}>未入力</span>
+            )}
+            {/* 支払いの覚書（2026-09-01 ユーザー指示）。
+                プライベートの「10回区切りの一覧表」との照合に使う。
+                🚨 出す・出さないは選択肢ごとの設定（payment_purposes）で決まる。
+                   ここに用途名を直書きしないこと */}
+            {cur && needsPaymentNote(options.find(o => o.name === cur.status), b.purpose) && (
+              canWrite ? (
+                <input
+                  defaultValue={cur.payment_note ?? ''}
+                  // 🚨 打つたびに保存しない。離れたとき（と Enter）だけ書く
+                  onBlur={e => savePayment(p, e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                  placeholder="支払い 例：2/10"
+                  style={{
+                    padding: '4px 8px', borderRadius: 8, border: `1px solid ${line}`,
+                    background: isDark ? '#495057' : '#fff', color: text,
+                    fontSize: 16, width: 128, boxSizing: 'border-box',
+                  }} />
+              ) : (
+                <span style={{ fontSize: 12.5, color: textMid }}>
+                  支払い：{cur.payment_note || '未記入'}
+                </span>
+              )
             )}
           </div>
         );
@@ -2368,7 +2788,8 @@ const BookingDetail: React.FC<{
         {!isOpen && row('出欠', (
           <AttendanceEditor booking={b} options={attendanceOptions}
             rows={attendance.filter(r => r.booking_id === b.id)}
-            canWrite={canAttendance} onSaved={onAttendanceSaved} isDark={isDark} />
+            canWrite={canAttendance} showNameWhenSingle={false}
+            onSaved={onAttendanceSaved} isDark={isDark} />
         ))}
 
         {error && (

@@ -392,6 +392,12 @@ export interface AttendanceOption {
   counts_present: boolean;
   /** どの用途で出すか。null・空 = 全用途。例：「連絡なし休み」は パーソナル のみ */
   purposes: string[] | null;
+  /**
+   * 支払いの記入欄を出す用途。null・空 = 出さない。
+   * 🚨 表示の出し分け（purposes）とは**別物**。「出席」は全用途に出すが、
+   *    支払い欄はプライベートのときだけ、という形にするため分けてある。
+   */
+  payment_purposes: string[] | null;
   sort_order: number;
   active: boolean;
 }
@@ -404,9 +410,22 @@ export interface AttendanceRow {
   participant_name: string;
   status: string;
   counted_present: boolean;
+  /**
+   * 支払いの覚書。プライベートの「10回区切りの一覧表」との照合に使う。
+   * 書き方は「何回目 / 何回払い」（10回払いの2回目＝「2/10」、1回払いの4回目＝「4/1」）。
+   * 🚨 **分数ではない。計算に使わないこと。**書き方が変わっても直さずに済むよう文字で持つ。
+   */
+  payment_note: string | null;
   recorded_at: string;
   recorded_by: string | null;
 }
+
+/**
+ * この出欠を選んだとき、この用途で支払いの記入欄を出すか。
+ * 🚨 判定をここ1か所にまとめる（入力欄・集計・CSVの3か所から呼ぶ）。
+ */
+export const needsPaymentNote = (opt: AttendanceOption | null | undefined, purpose: string): boolean =>
+  !!opt?.payment_purposes?.includes(purpose);
 
 /** その用途で出す出欠の選択肢を、並び順で取り出す */
 export const attendanceOptionsFor = (
