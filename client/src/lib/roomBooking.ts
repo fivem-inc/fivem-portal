@@ -450,19 +450,26 @@ export interface Participant {
  * 🚨 いまの作りでは、2名定員の募集枠を埋めると room_fill_open_slot が
  *    会員番号とお名前を「田中 太郎, 佐藤 花子」のように**カンマでつないで1行に**入れる。
  *    参加者の表は無いので、ここで分ける。
- * 🚨 番号とお名前は別々につながれるため、**片方だけ入っている人がいると
- *    並びがずれる**（番号1つ・名前2つ、など）。ずれても人数は多いほうに合わせ、
- *    足りないほうは空にする。お名前を優先して見せること。
+ * 🚨 番号とお名前は**別々につながれる**。会員番号は任意なので、2名のうち片方だけ
+ *    番号があると「番号1つ・名前2つ」になり、**単純に順番で結ぶと番号が別人に付く**
+ *    （2026-09-01 検算で発覚。1人目に番号が無いと、2人目の番号が1人目に付いていた）。
+ *    どの番号が誰のものか復元できないので、**数が合わないときは番号を捨てる**。
+ *    黙って間違った番号を集計・CSVに載せるより、空のほうが安全。
  * 🚨 どちらも空の予約（レンタルなど）でも1人ぶん返す。出欠を付けられなくなるため。
  */
 export const participantsOf = (b: Pick<Booking, 'member_no' | 'customer_label'>): Participant[] => {
   const split = (v: string | null) => (v ?? '').split(',').map(s => s.trim()).filter(Boolean);
   const nos = split(b.member_no);
   const names = split(b.customer_label);
+  // 番号と名前を順番で結んでよいか。
+  //   ・数が同じ … 結んでよい
+  //   ・名前が1人以下 … ずれようがない（会員番号だけの予約もここ）
+  //   ・番号が無い … 結ぶものが無い
+  const aligned = nos.length === names.length || names.length <= 1 || nos.length === 0;
   const n = Math.max(nos.length, names.length, 1);
   const out: Participant[] = [];
   for (let i = 0; i < n; i++) {
-    const no = nos[i] ?? '';
+    const no = aligned ? (nos[i] ?? '') : '';
     const name = names[i] ?? '';
     out.push({ no, name, key: `${no}|${name}` });
   }
