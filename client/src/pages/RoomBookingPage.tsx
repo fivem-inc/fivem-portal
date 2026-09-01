@@ -1471,6 +1471,55 @@ const BookingForm: React.FC<{
   }, [date, startTime, endTime, floorId, exclusive, editing, base]);
 
 
+  /**
+   * 担当の時間かぶりを見る（2026-09-01 ユーザー指示）。
+   *
+   * 🚨 **止めない。警告だけ**（「大丈夫ならそのまま予約できてよい」ユーザー確定）。
+   * 🚨 サーバー（room_create_booking）は**場所**の重なりしか見ていない。
+   *    担当の重なりは判定していないので、画面で気づけるようにするしかない。
+   *    一括入力（bookingBulk）と同じ考え方だが、あちらは**弾く**、ここは**警告**。
+   * 🚨 繰り返しのときも**入力した日だけ**を見る。各回まで見に行くと重くなるので、
+   *    見ていないことを画面にも書く（黙って「問題なし」に見せない）。
+   */
+  const [staffClash, setStaffClash] = useState<string[]>([]);
+  const [staffChecking, setStaffChecking] = useState(false);
+  useEffect(() => {
+    const s = toDate(date, startTime), e = toDate(date, endTime);
+    if (!staffId || !s || !e || e <= s) { setStaffClash([]); setStaffChecking(false); return; }
+    let cancelled = false;
+    setStaffChecking(true);
+    const timer = setTimeout(async () => {
+      const dayStart = new Date(`${date}T00:00:00`);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+      const { data, error: err } = await supabase.from('room_bookings')
+        .select('id, starts_at, ends_at, floor_id, purpose, detail, customer_label, kind')
+        .eq('staff_id', staffId)
+        .is('deleted_at', null)
+        .neq('status', 'cancelled')
+        .gte('starts_at', dayStart.toISOString())
+        .lt('starts_at', dayEnd.toISOString());
+      if (cancelled) return;
+      setStaffChecking(false);
+      // 🚨 読めなかったときは「かぶりなし」にしない。黙って安心させないため
+      if (err) { setStaffClash(['この担当の予定を確かめられませんでした（通信を確認してください）']); return; }
+      const rows = (data ?? []) as (Pick<Booking, 'id' | 'starts_at' | 'ends_at' | 'floor_id' | 'purpose' | 'detail' | 'customer_label' | 'kind'>)[];
+      setStaffClash(rows
+        // 変更のときは自分自身を除く
+        .filter(r => r.id !== base?.id
+          && new Date(r.starts_at) < e && new Date(r.ends_at) > s)
+        .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
+        .map(r => {
+          const f = floors.find(x => x.id === r.floor_id);
+          const c = f ? campuses.find(x => x.id === f.campus_id) : null;
+          const place = f ? placeLabel(f, c?.name ?? '', floors.filter(x => x.campus_id === f.campus_id).length, true) : '';
+          return `${hhmm(r.starts_at)}〜${hhmm(r.ends_at)}　${place}　${purposeWithDetail(r)}`
+            + (r.kind === 'open' ? '（募集中）' : r.customer_label ? `　${r.customer_label}` : '');
+        }));
+    }, 400);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [staffId, date, startTime, endTime, base, floors, campuses]);
+
   const applyDuration = (min: number) => setEndTime(addMinutes(startTime, min));
   const durationMin = Math.max(0, minutesOf(endTime) - minutesOf(startTime));
   // 用途ごとの長さ（2026-08-29 ユーザー指定）。値はDBにあり、社員が基本設定で変えられる。
@@ -1833,7 +1882,21 @@ const BookingForm: React.FC<{
           {selectedStaff && (
             <p style={{ fontSize: 11.5, color: textMid, margin: '5px 0 0', lineHeight: 1.6 }}>
               担当できる区分：{categoryLabel(selectedStaff, categories) || '登録がありません'}
+              {staffChecking && '　／　この時間に他の予定がないか確認中…'}
             </p>
+          )}
+          {/* 担当の時間かぶりの警告（2026-09-01 ユーザー指示）。
+              🚨 止めない。「大丈夫ならそのまま予約できてよい」というご判断。
+                 だから赤（エラー）ではなく黄色（気づき）にしている */}
+          {staffClash.length > 0 && (
+            <div style={{ background: isDark ? '#4a3f2a' : '#fff6e0', border: `1px solid ${isDark ? '#7a6a44' : '#f0d9a0'}`, color: isDark ? '#e8c98a' : '#8a6a12', borderRadius: 8, padding: '9px 12px', fontSize: 12.5, lineHeight: 1.7, marginTop: 7 }}>
+              <b>{selectedStaff?.name ?? 'この担当'}は、この時間に別の予定があります</b>
+              {staffClash.map((c, i) => <div key={i}>・{c}</div>)}
+              <div style={{ marginTop: 3 }}>
+                問題なければ、このまま予約できます。
+                {repeat && '（繰り返しは、入力した日のぶんだけ見ています）'}
+              </div>
+            </div>
           )}
         </div>
 
