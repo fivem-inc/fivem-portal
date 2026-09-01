@@ -2698,13 +2698,20 @@ const AttendanceDayList: React.FC<{
                       <div key={b.id} style={{ border: `1px solid ${line}`, borderRadius: 8, padding: '9px 11px' }}>
                         {/* 🚨 見出しに用途が出ているので、ここでは繰り返さない。
                                詳細（体操など）は用途では分からないので出す */}
-                        <div style={{ fontSize: 13, color: textMid, marginBottom: 7, fontVariantNumeric: 'tabular-nums' }}>
-                          {hhmm(b.starts_at)}〜{hhmm(b.ends_at)}　{placeOf(b)}
-                          {b.detail && `　${b.detail}`}
+                        {/* 🚨 全角スペースで間を空けない。詳細（体操など）が入ると詰まって見える
+                               （2026-09-01 実機で指摘）。間隔は gap で決めて、
+                               中身が変わっても一定になるようにする */}
+                        <div style={{
+                          display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'baseline',
+                          fontSize: 13, color: textMid, marginBottom: 7, fontVariantNumeric: 'tabular-nums',
+                        }}>
+                          <span>{hhmm(b.starts_at)}〜{hhmm(b.ends_at)}</span>
+                          <span>{placeOf(b)}</span>
+                          {b.detail && <span>{b.detail}</span>}
                           {/* 🚨 担当は出欠が分からないときの「聞く先」。担当なしのときも
                                  その旨を出す（空欄だと入れ忘れと見分けが付かない） */}
                           <span style={{ color: text }}>
-                            　{staff.find(s => s.id === b.staff_id)?.name ?? '担当なし'}
+                            {staff.find(s => s.id === b.staff_id)?.name ?? '担当なし'}
                           </span>
                         </div>
                         <AttendanceEditor booking={b} options={options}
