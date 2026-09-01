@@ -10,7 +10,7 @@ import {
   isWeekend, RANGE_DAYS, localDate, placeLabel, openSlotColor, durationLabel, FALLBACK_DURATIONS, gradeOrAge, defaultMinutesOf,
   customerName, customerFullName, customerKana, contactLines, toHiragana,
   fiscalYear, fiscalYearEnd, fiscalYearLabel, RENEWAL_NOTICE_DAYS, daysUntil, detailsOf, purposeWithDetail,
-  participantsOf, participantLabelOf, attendanceOptionsFor, needsPaymentNote,
+  participantsOf, participantLabelOf, attendanceOptionsFor, needsPaymentNote, customerSearchFilter, customerMatches,
   type Campus, type Floor, type Booking, type ConflictInfo,
   type Staff, type LessonCategory, type Recurrence, type PurposeDuration, type PurposeDetail,
   type AttendanceOption, type AttendanceRow, type Participant,
@@ -1179,6 +1179,167 @@ const MobileView: React.FC<{
 };
 
 // ============================================================
+// 予約フォームの「お客様」1人ぶん（2026-09-01 ユーザー指示）
+//
+// 会員番号から呼ぶ／お名前から探す の**両方**に対応する。
+// 🚨 1,950名を毎回読み込まない。打った文字でDB側から20件だけ絞って引く。
+// 🚨 一般（非会員）のお客様もいるので、**見つからないのは異常ではない**。
+//    候補は「押せば入る手助け」であって、手で書いたものを消してはいけない。
+// ============================================================
+interface PersonInput { no: string; name: string }
+
+const ParticipantRow: React.FC<{
+  value: PersonInput;
+  onChange: (v: PersonInput) => void;
+  onRemove: (() => void) | null;
+  /** 学年をその予約の日で出すため */
+  date: string;
+  isDark: boolean;
+}> = ({ value, onChange, onRemove, date, isDark }) => {
+  const [customer, setCustomer] = useState<Customer | null>(null);
+  const [lookingUp, setLookingUp] = useState(false);
+  const [cands, setCands] = useState<Customer[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [openList, setOpenList] = useState(false);
+  // 🚨 こちらが入れたお名前を覚えておく。手で書き換えられたものは上書きしない
+  const autoFilled = useRef('');
+
+  const line = isDark ? '#3a3a5c' : '#e0e0e0';
+  const text = isDark ? '#eeeeee' : '#222222';
+  const textMid = isDark ? '#b3b8c6' : '#5b6270';
+  const accent = isDark ? '#6bbd92' : '#2f6f4f';
+  const cardBg = isDark ? '#2f2f47' : '#ffffff';
+  const input: React.CSSProperties = {
+    width: '100%', padding: '9px 11px', borderRadius: 8, border: `1px solid ${line}`,
+    background: isDark ? '#495057' : '#fff', color: text, fontSize: 16, boxSizing: 'border-box',
+  };
+  const label: React.CSSProperties = { display: 'block', fontSize: 12.5, color: textMid, marginBottom: 4 };
+
+  // 会員番号 → お客様。打っている途中で毎回問い合わせないよう少し待つ
+  useEffect(() => {
+    const no = value.no.trim();
+    if (!no) { setCustomer(null); setLookingUp(false); return; }
+    setLookingUp(true);
+    const t = setTimeout(async () => {
+      const { data } = await supabase.from('room_customers')
+        .select('*').eq('member_no', no).maybeSingle();
+      const c = (data as Customer | null) ?? null;
+      setCustomer(c);
+      setLookingUp(false);
+      if (!c) return;
+      // 🚨 フルネームで入れる（2026-09-01 方針変更）。display_name は「田中様」形式なので使わない
+      const full = customerFullName(c) || c.display_name;
+      onChange({
+        no: value.no,
+        name: (value.name.trim() === '' || value.name === autoFilled.current) ? full : value.name,
+      });
+      autoFilled.current = full;
+    }, 400);
+    return () => clearTimeout(t);
+    // 🚨 onChange / value.name を見張らない。打つたびに引き直して候補が消える
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value.no]);
+
+  // お名前 → 候補。2文字から探す（1文字だと候補が多すぎて選べない）
+  useEffect(() => {
+    const q = value.name.trim();
+    if (q.length < 2 || q === autoFilled.current) { setCands([]); setSearching(false); return; }
+    const filter = customerSearchFilter(q);
+    if (!filter) { setCands([]); return; }
+    setSearching(true);
+    const t = setTimeout(async () => {
+      // 🚨 DBは最初のかたまりだけで引いている。残りは customerMatches で絞る。
+      //    絞ったあと20件に減らすので、多めに取っておく
+      const { data } = await supabase.from('room_customers')
+        .select('*').or(filter).order('member_no').limit(60);
+      setCands(((data ?? []) as Customer[]).filter(c => customerMatches(c, q)).slice(0, 20));
+      setSearching(false);
+      setOpenList(true);
+    }, 350);
+    return () => clearTimeout(t);
+  }, [value.name]);
+
+  const choose = (c: Customer) => {
+    const full = customerFullName(c) || c.display_name;
+    autoFilled.current = full;
+    onChange({ no: c.member_no, name: full });
+    setCustomer(c);
+    setOpenList(false);
+    setCands([]);
+  };
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+        <div style={{ flex: 1 }}>
+          <label style={label}>会員番号（任意）</label>
+          <input value={value.no} onChange={e => onChange({ ...value, no: e.target.value })}
+            style={input} inputMode="numeric" placeholder="2014052061" />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={label}>お客様（任意）</label>
+          <input value={value.name}
+            onChange={e => onChange({ ...value, name: e.target.value })}
+            onFocus={() => { if (cands.length) setOpenList(true); }}
+            style={input} placeholder="田中 太郎" />
+        </div>
+        {onRemove && (
+          // 🚨 消す手段を必ず添える。増やせるのに減らせないと、間違えた行が残ったまま保存される
+          <button onClick={onRemove} aria-label="この方を消す"
+            style={{ padding: '9px 12px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 14, cursor: 'pointer', flexShrink: 0 }}>✕</button>
+        )}
+      </div>
+
+      {/* お名前の候補。押すと会員番号も一緒に入る */}
+      {openList && cands.length > 0 && (
+        <div style={{
+          position: 'absolute', zIndex: 5, left: 0, right: 0, marginTop: 3,
+          background: cardBg, border: `1px solid ${line}`, borderRadius: 8,
+          maxHeight: 232, overflowY: 'auto', boxShadow: '0 6px 18px rgba(0,0,0,.18)',
+        }}>
+          {cands.map(c => (
+            <button key={c.member_no} onClick={() => choose(c)}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left', padding: '8px 11px',
+                background: 'transparent', border: 'none', borderBottom: `1px solid ${line}`,
+                color: text, fontSize: 13.5, cursor: 'pointer',
+              }}>
+              {customerFullName(c) || c.display_name}
+              <span style={{ color: textMid, fontSize: 12, marginLeft: 7 }}>
+                {c.member_no}
+                {c.birth_date && ` ／ ${gradeOrAge(c.birth_date, date)}`}
+                {!c.active && ' ／ 退会'}
+              </span>
+            </button>
+          ))}
+          <button onClick={() => setOpenList(false)}
+            style={{ display: 'block', width: '100%', textAlign: 'center', padding: '7px', background: 'transparent', border: 'none', color: textMid, fontSize: 12.5, cursor: 'pointer' }}>
+            閉じる
+          </button>
+        </div>
+      )}
+
+      <p style={{ fontSize: 11.5, color: customer ? accent : textMid, margin: '5px 0 0', lineHeight: 1.6 }}>
+        {lookingUp
+          ? 'お客様を探しています...'
+          : customer
+            ? `${customerName(customer, date)}${customer.full_name ? `（${customer.full_name}）` : ''}`
+              + `${customer.birth_date ? ` ${gradeOrAge(customer.birth_date, date)}` : ''}`
+              + `${customer.active ? '' : ' ※退会になっています'}`
+            : searching
+              ? 'お名前で探しています...'
+              : value.no.trim()
+                ? 'この会員番号は登録がありません。一般のお客様として、お名前を手で入れてください'
+                : value.name.trim().length >= 2 && cands.length === 0
+                  ? '見つかりませんでした。一般のお客様として、このまま進められます'
+                  : 'お名前は「田中 太郎」のようにフルネームで入れてください。'
+                    + '会員番号を入れるか、お名前を2文字以上入れると候補が出ます。'}
+      </p>
+    </div>
+  );
+};
+
+// ============================================================
 // 予約フォーム（新規・変更）
 // ============================================================
 const BookingForm: React.FC<{
@@ -1211,14 +1372,33 @@ const BookingForm: React.FC<{
   // 「予約する人」は画面に出さず、ログインした人から自動で決める。
   // 🚨 空のままだと保存できない（DBで必須）ので、必ず何か入る形にしておく
   const bookerName = (editing ? base!.booker_name : (user.email?.split('@')[0] ?? '')) || 'スタッフ';
-  // お客様一覧の「予約する」から来たときは、会員番号とお名前を先に入れておく
-  const [memberNo, setMemberNo] = useState(
-    editing ? (base!.member_no ?? '') : (bookingFor?.member_no ?? ''));
-  const [customerLabel, setCustomerLabel] = useState(
-    editing ? (base!.customer_label ?? '') : (bookingFor ? customerName(bookingFor, mode.kind === 'create' ? mode.date : todayStr()) : ''));
-  // 会員番号から引いたお客様。一般の方は登録が無いので null のまま
-  const [customer, setCustomer] = useState<Customer | null>(null);
-  const [lookingUp, setLookingUp] = useState(false);
+  /**
+   * お客様（複数可・2026-09-01 ユーザー指示）。
+   * 🚨 保存するときは、いままでと同じ**カンマ区切り**で member_no / customer_label に入れる。
+   *    募集枠を埋める room_fill_open_slot が同じ形で書くので、読み方を1つに保てる。
+   * 編集で開いたときは participantsOf で人数ぶんに分けて戻す。
+   * お客様一覧の「予約する」から来たときは、その方を先に入れておく。
+   */
+  const [people, setPeople] = useState<PersonInput[]>(() => {
+    if (editing) {
+      return participantsOf(base!).map(p => ({ no: p.no, name: p.name }));
+    }
+    if (bookingFor) {
+      return [{ no: bookingFor.member_no, name: customerFullName(bookingFor) || bookingFor.display_name }];
+    }
+    return [{ no: '', name: '' }];
+  });
+  const memberNo = people.map(p => p.no.trim()).filter(Boolean).join(', ');
+  const customerLabel = people.map(p => p.name.trim()).filter(Boolean).join(', ');
+  /**
+   * 🚨 2名以上で「会員番号を入れた人と入れていない人が混ざる」と、
+   *    どの番号が誰のものか復元できないため**会員番号は保存されない**
+   *    （lib の participantsOf で捨てている）。画面で先に断っておく。
+   */
+  const numbersDropped = people.length > 1
+    && people.some(p => p.no.trim()) && people.some(p => !p.no.trim());
+  // 🚨 会員番号の引き当てとお名前の検索は ParticipantRow が1人ずつ持つ。
+  //    ここに戻さないこと（人数ぶんの状態をこの画面で持つと、行を消したときにずれる）
   const [memo, setMemo] = useState(editing ? (base!.memo ?? '') : '');
   const [exclusive, setExclusive] = useState(editing ? base!.exclusive : false);
   // 固定の枠か（人ではなく曜日・時間の枠の性質）。既定は固定でない
@@ -1270,26 +1450,6 @@ const BookingForm: React.FC<{
     return () => { cancelled = true; clearTimeout(timer); setChecking(false); };
   }, [date, startTime, endTime, floorId, exclusive, editing, base]);
 
-  // 会員番号からお客様を引く。打っている途中で毎回問い合わせないよう少し待つ
-  const autoFilled = useRef('');
-  useEffect(() => {
-    const no = memberNo.trim();
-    if (!no) { setCustomer(null); setLookingUp(false); return; }
-    setLookingUp(true);
-    const t = setTimeout(async () => {
-      const { data } = await supabase.from('room_customers')
-        .select('*').eq('member_no', no).maybeSingle();
-      const c = (data as Customer | null) ?? null;
-      setCustomer(c);
-      setLookingUp(false);
-      if (!c) return;
-      // 🚨 手で入れたお名前を上書きしない。空のときか、前回こちらが入れた値のままのときだけ入れる
-      setCustomerLabel(prev =>
-        (prev.trim() === '' || prev === autoFilled.current) ? c.display_name : prev);
-      autoFilled.current = c.display_name;
-    }, 400);
-    return () => clearTimeout(t);
-  }, [memberNo]);
 
   const applyDuration = (min: number) => setEndTime(addMinutes(startTime, min));
   const durationMin = Math.max(0, minutesOf(endTime) - minutesOf(startTime));
@@ -1685,32 +1845,30 @@ const BookingForm: React.FC<{
           </div>
         ) : (
           <>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <div style={{ flex: 1 }}>
-                <label style={label}>会員番号（任意）</label>
-                <input value={memberNo} onChange={e => setMemberNo(e.target.value)} style={input}
-                  inputMode="numeric" placeholder="2014052061" />
-              </div>
-              <div style={{ flex: 1 }}>
-                <label style={label}>お客様（任意）</label>
-                <input value={customerLabel} onChange={e => setCustomerLabel(e.target.value)} style={input} placeholder="田中 太郎" />
-              </div>
-            </div>
-            {/* 会員番号からお名前を引く。
+            {/* お客様。会員番号から呼ぶ／お名前から探す の両方に対応（2026-09-01 ユーザー指示）。
                 🚨 一般の方（非会員）もいるので、見つからないのは異常ではない。
                    その場合はお名前を手で入れてもらう（2026-08-29 ユーザー指示） */}
-            <p style={{ fontSize: 11.5, color: customer ? accent : textMid, margin: '-6px 0 0', lineHeight: 1.6 }}>
-              {lookingUp
-                ? 'お客様を探しています...'
-                : customer
-                  ? `${customerName(customer, date)}${customer.full_name ? `（${customer.full_name}）` : ''}`
-                    + `${customer.birth_date ? ` ${gradeOrAge(customer.birth_date, date)}` : ''}`
-                    + `${customer.active ? '' : ' ※退会になっています'}`
-                  : memberNo.trim()
-                    ? 'この会員番号は登録がありません。一般のお客様として、お名前を手で入れてください'
-                    : 'お名前は「田中 太郎」のようにフルネームで入れてください。'
-                      + '会員番号を入れると、登録されているお客様のお名前が自動で入ります。'}
-            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {people.map((p, i) => (
+                <ParticipantRow key={i} value={p} date={date} isDark={isDark}
+                  onChange={v => setPeople(prev => prev.map((x, j) => (j === i ? v : x)))}
+                  onRemove={people.length > 1
+                    ? () => setPeople(prev => prev.filter((_, j) => j !== i))
+                    : null} />
+              ))}
+            </div>
+            <button onClick={() => setPeople(prev => [...prev, { no: '', name: '' }])}
+              style={{ alignSelf: 'flex-start', padding: '7px 14px', borderRadius: 8, border: `1px solid ${accent}`, background: 'transparent', color: accent, fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}>
+              ＋ お客様を追加
+            </button>
+            {numbersDropped && (
+              // 🚨 静かに落とさない。保存してから気づけないため、押す前に伝える
+              <div style={{ background: isDark ? '#4a3f2a' : '#fff6e0', border: `1px solid ${isDark ? '#7a6a44' : '#f0d9a0'}`, color: isDark ? '#e8c98a' : '#8a6a12', borderRadius: 8, padding: '9px 12px', fontSize: 12.5, lineHeight: 1.7 }}>
+                会員番号を入れていない方がいるため、<b>この予約には会員番号が残りません</b>
+                （どの番号がどなたのものか分からなくなるためです）。お名前と出欠はふつうに使えます。
+                会員番号も残したいときは、<b>全員ぶん入れてください</b>。
+              </div>
+            )}
           </>
         )}
 

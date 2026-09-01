@@ -242,6 +242,61 @@ export const customerKana = (c: Customer | null | undefined): string => {
   return [last, first].filter(Boolean).join(' ');
 };
 
+/**
+ * お名前でお客様を探すときの条件（PostgREST の or に渡す文字列）を作る。
+ *
+ * 🚨 一覧の絞り込みと**同じ考え方**をここ1か所に置く。探し方を2か所に書くと、
+ *    片方だけ直して「一覧では出るのに予約画面では出ない」が起きる。
+ * 🚨 ふりがなは**中はひらがな**で持っているので、カタカナ・半角カナで打たれても
+ *    ひらがなに直してから当てる（`toHiragana`）。
+ * 🚨 `,` `(` `)` は or の区切りとぶつかって条件ごと壊れるので落とす。
+ *    落とした結果が空になったら null を返し、呼ぶ側で問い合わせを止めること。
+ */
+export const customerSearchFilter = (raw: string): string | null => {
+  // 🚨 「田中 太郎」のように空白を含めて打たれても当たるように、**最初のかたまりだけ**で引く。
+  //    姓と名は別の列なので、空白を含んだままではどの列にも一致しない（2026-09-01 検算で発覚）。
+  //    残りのかたまりは `customerMatches` で絞る（DBに複雑な条件を書かずに済む）。
+  const first = raw.trim().split(/[\s　]+/).filter(Boolean)[0] ?? '';
+  const q = first.replace(/[,()*]/g, '');
+  if (q.length < 1) return null;
+  const kana = toHiragana(q);
+  const like = (col: string, v: string) => `${col}.ilike.%${v}%`;
+  return [
+    like('display_name', q),
+    like('last_name', q),
+    like('first_name', q),
+    like('full_name', q),
+    like('last_kana', kana),
+    like('first_kana', kana),
+    like('member_no', q),
+  ].join(',');
+};
+
+/**
+ * 打った文字がこのお客様に当てはまるか（候補の絞り込み）。
+ *
+ * 🚨 DB では最初のかたまりだけで引いているので、「田中 太郎」の**「太郎」の部分**は
+ *    ここで絞る。空白で区切られたかたまりが**すべて**含まれていることを求める。
+ * 🚨 カタカナ・半角カナで打たれてもふりがなに当たるよう、ひらがなに直して比べる。
+ */
+export const customerMatches = (c: Customer, raw: string): boolean => {
+  const q = raw.trim();
+  if (!q) return true;
+  const parts = [
+    c.display_name, c.full_name, c.last_name, c.first_name, c.member_no,
+    `${c.last_name ?? ''} ${c.first_name ?? ''}`,
+    `${c.last_name ?? ''}${c.first_name ?? ''}`,
+    c.last_kana, c.first_kana,
+    `${c.last_kana ?? ''} ${c.first_kana ?? ''}`,
+    `${c.last_kana ?? ''}${c.first_kana ?? ''}`,
+  ];
+  const hay = parts.filter(Boolean).join(' ').toLowerCase();
+  return q.split(/[\s　]+/).filter(Boolean).every(tok => {
+    const t = tok.toLowerCase();
+    return hay.includes(t) || hay.includes(toHiragana(t));
+  });
+};
+
 /** 連絡先。見える範囲は設定（contact_visibility）で決まるので、読めないことがある */
 export interface CustomerContact {
   member_no: string;
