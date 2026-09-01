@@ -9,9 +9,9 @@ import {
   scholaUrl, floorBusyNow, nextStart, usingUntil, assignColumns, categoryLabel,
   isWeekend, RANGE_DAYS, localDate, placeLabel, openSlotColor, durationLabel, FALLBACK_DURATIONS, gradeOrAge, defaultMinutesOf,
   customerName, customerFullName, customerKana, contactLines, toHiragana,
-  fiscalYear, fiscalYearEnd, fiscalYearLabel, RENEWAL_NOTICE_DAYS, daysUntil,
+  fiscalYear, fiscalYearEnd, fiscalYearLabel, RENEWAL_NOTICE_DAYS, daysUntil, detailsOf, purposeWithDetail,
   type Campus, type Floor, type Booking, type ConflictInfo,
-  type Staff, type LessonCategory, type Recurrence, type PurposeDuration,
+  type Staff, type LessonCategory, type Recurrence, type PurposeDuration, type PurposeDetail,
   type Customer, type CustomerContact, type Waitlist,
 } from '../lib/roomBooking';
 import {
@@ -103,6 +103,9 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
   const [categories, setCategories] = useState<LessonCategory[]>([]);
   // 用途ごとの長さの選択肢（社員が基本設定から変えられる）
   const [purposeDurations, setPurposeDurations] = useState<PurposeDuration[]>(FALLBACK_DURATIONS);
+  // 用途ごとの詳細（パーソナルの「体操」「筋トレ」など。社員が基本設定から足せる）。
+  // 🚨 既定は空。読めなかったときに勝手な選択肢を出すより、出さないほうが安全
+  const [purposeDetails, setPurposeDetails] = useState<PurposeDetail[]>([]);
   const [campusId, setCampusId] = useState<string>('');
   const [view, setView] = useState<ViewMode>('place');
   // 担当別・参加者別の絞り込み。'' = 全員。それ以外は staff.id または参加者キー
@@ -154,7 +157,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
 
   // ---- マスタ（校・場所・スタッフ・区分）の読み込み ----
   const loadMasters = useCallback(async () => {
-    const [cRes, fRes, sRes, catRes, scRes, durRes, setRes] = await Promise.all([
+    const [cRes, fRes, sRes, catRes, scRes, durRes, setRes, detRes] = await Promise.all([
       supabase.from('room_campuses').select('*').eq('active', true).order('sort_order'),
       supabase.from('room_floors').select('*').eq('active', true).order('sort_order'),
       supabase.from('room_staff').select('*').order('sort_order'),
@@ -162,6 +165,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
       supabase.from('room_staff_categories').select('*'),
       supabase.from('room_purpose_durations').select('*'),
       supabase.from('room_settings').select('value').eq('key', 'basic_settings_roles').maybeSingle(),
+      supabase.from('room_purpose_details').select('*').order('sort_order'),
     ]);
     // 設定が読めないとき（まだ作っていない等）は null のままにして、
     // これまでどおり「パート以外は使える」で動かす。急に誰も使えなくならないように
@@ -176,6 +180,8 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
     setPurposeDurations(durRes.data && durRes.data.length
       ? (durRes.data as PurposeDuration[])
       : FALLBACK_DURATIONS);
+    // 詳細。読めなくてもエラーにしない（詳細が出ないだけで、予約はできる）
+    setPurposeDetails((detRes.data ?? []) as PurposeDetail[]);
     const cs = (cRes.data ?? []) as Campus[];
     setCampuses(cs);
     setFloors((fRes.data ?? []) as Floor[]);
@@ -636,6 +642,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
         <BookingForm
           mode={form} user={user} floors={floors} campuses={campuses} bookingFor={bookingFor}
           staff={staff} categories={categories} purposeDurations={purposeDurations}
+          purposeDetails={purposeDetails}
           onClose={() => setForm(null)}
           onSaved={(msg) => { setForm(null); loadBookings(); showFlash(msg); }}
           isDark={isDark} />
@@ -652,7 +659,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
       {renewal && (
         <BasicSettingsPanel
           campuses={campuses} floors={floors} staff={staff} categories={categories}
-          purposeDurations={purposeDurations} user={user}
+          purposeDurations={purposeDurations} purposeDetails={purposeDetails} user={user}
           onBook={(c) => {
             // 基本設定を閉じて予約表に戻し、場所別（＝新規を入れられる並べ方）にする
             setBookingFor(c);
@@ -795,8 +802,8 @@ const TimelineView: React.FC<{
                       <span style={{ fontSize: 10.5, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {off ? '休講'
                           : open ? `募集中${b.seats > 1 ? `（あと${restSeats}名）` : ''}`
-                          : view === 'place' ? `${b.purpose}${(b.customer_name || b.customer_label) ? ` / ${b.customer_name || b.customer_label}` : ''}`
-                          : `${placeName(b.floor_id, allCampus)} / ${b.purpose}`}
+                          : view === 'place' ? `${purposeWithDetail(b)}${(b.customer_name || b.customer_label) ? ` / ${b.customer_name || b.customer_label}` : ''}`
+                          : `${placeName(b.floor_id, allCampus)} / ${purposeWithDetail(b)}`}
                       </span>
                     </button>
                   );
@@ -920,7 +927,7 @@ const RangeList: React.FC<{
                     fontSize: 11, fontWeight: 700, flexShrink: 0,
                     border: open ? `1px dashed ${fg}` : 'none',
                   }}>
-                    {off ? '休講' : open ? `募集中${b.seats > 1 ? ` あと${rest}名` : ''}` : b.purpose}
+                    {off ? '休講' : open ? `募集中${b.seats > 1 ? ` あと${rest}名` : ''}` : purposeWithDetail(b)}
                   </span>
                   {/* 場所／（絞っていなければ）並べている軸の本人／もう一方の軸。
                       1人に絞っているときは、その人の名前を毎行くり返さない */}
@@ -928,7 +935,7 @@ const RangeList: React.FC<{
                     {[
                       where,
                       ...(view === 'staff'
-                        ? [only ? '' : (st ? st.name : '担当なし'), open ? b.purpose : participantLabel(b)]
+                        ? [only ? '' : (st ? st.name : '担当なし'), open ? purposeWithDetail(b) : participantLabel(b)]
                         : [only ? '' : participantLabel(b),
                            st ? `${st.name}（${categoryLabel(st, categories) || '区分なし'}）` : '担当なし']),
                     ].filter(Boolean).join('／')}
@@ -1038,13 +1045,13 @@ const MobileView: React.FC<{
                   background: bgc, color: fg, borderRadius: 999, padding: '1px 9px', fontSize: 11, fontWeight: 700,
                   border: open ? `1px dashed ${fg}` : 'none',
                 }}>
-                  {off ? '休講' : open ? `募集中${b.seats > 1 ? ` あと${rest}名` : ''}` : b.purpose}
+                  {off ? '休講' : open ? `募集中${b.seats > 1 ? ` あと${rest}名` : ''}` : purposeWithDetail(b)}
                 </span>
               </div>
               <div style={{ fontSize: 12.5, color: textMid, marginTop: 3 }}>
                 {[
                   view !== 'place' ? whereOf(b) : '',
-                  open ? b.purpose : '',
+                  open ? purposeWithDetail(b) : '',
                   st ? `${st.name}（${categoryLabel(st, categories) || '区分なし'}）` : '',
                   open ? '' : (b.customer_name || b.customer_label || (b.member_no ? `#${b.member_no}` : '')),
                 ].filter(Boolean).join('／') || b.booker_name}
@@ -1069,10 +1076,11 @@ const MobileView: React.FC<{
 const BookingForm: React.FC<{
   mode: FormMode; user: AuthUser; floors: Floor[]; campuses: Campus[];
   staff: Staff[]; categories: LessonCategory[]; purposeDurations: PurposeDuration[];
+  purposeDetails: PurposeDetail[];
   /** お客様一覧の「予約する」から来たとき。会員番号とお名前を先に入れておく */
   bookingFor: Customer | null;
   onClose: () => void; onSaved: (msg: string) => void; isDark: boolean;
-}> = ({ mode, user, floors, campuses, staff, categories, purposeDurations, bookingFor, onClose, onSaved, isDark }) => {
+}> = ({ mode, user, floors, campuses, staff, categories, purposeDurations, purposeDetails, bookingFor, onClose, onSaved, isDark }) => {
   const editing = mode.kind === 'edit';
   const base = editing ? mode.booking : null;
 
@@ -1090,6 +1098,8 @@ const BookingForm: React.FC<{
   const [endTime, setEndTime] = useState(
     editing ? hhmm(base!.ends_at) : addMinutes(mode.startTime, initialLength));
   const [purpose, setPurpose] = useState<string>(initialPurpose);
+  // 用途の詳細（パーソナルの「体操」など）。'' = 未選択
+  const [detail, setDetail] = useState<string>(editing ? (base!.detail ?? '') : '');
   // 「予約する人」は画面に出さず、ログインした人から自動で決める。
   // 🚨 空のままだと保存できない（DBで必須）ので、必ず何か入る形にしておく
   const bookerName = (editing ? base!.booker_name : (user.email?.split('@')[0] ?? '')) || 'スタッフ';
@@ -1180,6 +1190,18 @@ const BookingForm: React.FC<{
   const durOpt = purposeDurations.find(d => d.purpose === purpose) ?? null;
   const durPresets = durOpt ? durOpt.minutes : [...DURATION_PRESETS];
   const allowFreeEnd = durOpt ? durOpt.allow_free : true;
+  /**
+   * この用途で選べる詳細（2026-09-01 ユーザー指示）。
+   * 🚨 いま入っている値は、あとから隠された（active=false）ものでも必ず選択肢に残す。
+   *    残さないと、古い予約を開いたときに選択が消えたように見え、
+   *    保存し直すと黙って別の値になる。
+   */
+  const detailOpts = useMemo(() => {
+    const list = detailsOf(purpose, purposeDetails).map(d => d.name);
+    return detail && !list.includes(detail) ? [...list, detail] : list;
+  }, [purpose, purposeDetails, detail]);
+  // 必須にするかは用途ごとの設定。🚨 選択肢が1つも無い用途では効かせない（予約できなくなる）
+  const detailRequired = (durOpt?.detail_required ?? false) && detailOpts.length > 0;
   // 確認中は押せてよい（結果が出るまで待たせない）。確認が済んで「不可」のときだけ止める
   const blocked = !checking && !!verdict && !verdict.ok;
   // 繰り返しの終わりは「年度末（3/31）まで」が基本（2026-08-29 ユーザー確定）。
@@ -1203,6 +1225,9 @@ const BookingForm: React.FC<{
     if (!s) { setError('開始の時刻を正しく入れてください（例：10 と 05）'); return; }
     if (!e) { setError('終了の時刻を正しく入れてください'); return; }
     if (e <= s) { setError('終了は開始より後にしてください'); return; }
+    // 🚨 詳細が必須の用途は、選ぶまで保存させない（2026-09-01 ユーザー指示）。
+    //    detailRequired は「選択肢が1つ以上ある用途」でしか true にならない
+    if (detailRequired && !detail) { setError(`${purpose}の詳細を選んでください`); return; }
 
     setSaving(true);
     if (editing) {
@@ -1217,10 +1242,14 @@ const BookingForm: React.FC<{
       const row = Array.isArray(data) ? data[0] : data;
       if (err) { setError('保存できませんでした。通信を確認してもう一度お試しください。'); return; }
       if (!row?.ok) { setError(row?.reason ?? '保存できませんでした'); setConflicts((row?.conflicts ?? []) as ConflictInfo[]); return; }
-      // 固定は枠の性質なので、変更のときも書き込む。
-      // 🚨 room_update_booking には引数を足さない（中心の関数を触らない方針）
-      if (isFixed !== base!.is_fixed) {
-        await supabase.from('room_bookings').update({ is_fixed: isFixed }).eq('id', base!.id);
+      // 固定と詳細は、RPCを通さず後から書き込む。
+      // 🚨 room_update_booking には引数を足さない（中心の関数を触らない方針）。
+      //    過去に、RPCを古い版で上書きして申請が全部止まった事故がある
+      const patch: Record<string, unknown> = {};
+      if (isFixed !== base!.is_fixed) patch.is_fixed = isFixed;
+      if ((detail || null) !== (base!.detail ?? null)) patch.detail = detail || null;
+      if (Object.keys(patch).length > 0) {
+        await supabase.from('room_bookings').update(patch).eq('id', base!.id);
       }
       onSaved('予約を変更しました');
       return;
@@ -1245,7 +1274,7 @@ const BookingForm: React.FC<{
         floor_id: floorId,
         weekday: new Date(y, mo - 1, d0).getDay(),
         start_time: startTime, end_time: endTime,
-        purpose, booker_name: bookerName.trim(),
+        purpose, detail: detail || null, booker_name: bookerName.trim(),
         member_no: memberNo.trim() || null, customer_label: customerLabel.trim() || null,
         memo: memo.trim() || null, exclusive, staff_id: staffId || null,
         kind, seats,
@@ -1289,6 +1318,11 @@ const BookingForm: React.FC<{
       }
       made++;
       if (row?.booking_id) createdIds.push(row.booking_id as string);
+    }
+    // 詳細も、作ったあとにまとめて書く（RPCには引数を足さない方針のため）。
+    // 🚨 繰り返しのときは全部の回に付ける。1回目だけ付くと一覧で食い違う
+    if (detail && createdIds.length > 0) {
+      await supabase.from('room_bookings').update({ detail }).in('id', createdIds);
     }
     // 固定の枠なら、作った予約にまとめて印を付ける。
     // 🚨 1件ずつ付けずに1回でまとめる。件数が多いと通信が増えて途中で切れやすい
@@ -1447,6 +1481,9 @@ const BookingForm: React.FC<{
                     const opt = purposeDurations.find(d => d.purpose === p);
                     const min = defaultMinutesOf(opt);
                     if (min != null) setEndTime(addMinutes(startTime, min));
+                    // 🚨 詳細は用途ごとに違うので、用途を変えたら必ず消す。
+                    //    残すと「パーソナルの体操」がレッスンに付いたまま保存される
+                    setDetail(prev => detailsOf(p, purposeDetails).some(d => d.name === prev) ? prev : '');
                   }}
                   style={{
                     padding: '6px 13px', borderRadius: 999, fontSize: 13, cursor: 'pointer',
@@ -1457,6 +1494,41 @@ const BookingForm: React.FC<{
             })}
           </div>
         </div>
+
+        {/* 用途の詳細（パーソナルの「体操」「筋トレ」など・2026-09-01 ユーザー指示）。
+            🚨 その用途に詳細が登録されているときだけ出す。登録が無ければ欄ごと出さない。
+            配色は 🎨🔒 択一トグルの固定ルール（青）に従う。用途ボタンだけが例外的に
+            用途色なのは、予約表の色と一致させる意味があるため */}
+        {detailOpts.length > 0 && (
+          <div>
+            <label style={label}>
+              詳細{detailRequired ? '' : '（任意）'}
+            </label>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {!detailRequired && (
+                <button onClick={() => setDetail('')}
+                  style={{
+                    padding: '6px 13px', borderRadius: 999, fontSize: 13, cursor: 'pointer', fontWeight: 700,
+                    border: `2px solid ${detail === '' ? '#1565c0' : '#90caf9'}`,
+                    background: detail === '' ? '#1976d2' : '#e3f2fd',
+                    color: detail === '' ? '#fff' : '#1565c0',
+                  }}>指定なし</button>
+              )}
+              {detailOpts.map(name => {
+                const on = detail === name;
+                return (
+                  <button key={name} onClick={() => setDetail(name)}
+                    style={{
+                      padding: '6px 13px', borderRadius: 999, fontSize: 13, cursor: 'pointer', fontWeight: 700,
+                      border: `2px solid ${on ? '#1565c0' : '#90caf9'}`,
+                      background: on ? '#1976d2' : '#e3f2fd',
+                      color: on ? '#fff' : '#1565c0',
+                    }}>{name}</button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* 担当スタッフ。担当できる区分は表示するだけで、選択の制限はしない
             （2026-08-28 ユーザー確定。現場では例外的な割り当てが起きるため） */}
@@ -1513,7 +1585,7 @@ const BookingForm: React.FC<{
               </div>
               <div style={{ flex: 1 }}>
                 <label style={label}>お客様（任意）</label>
-                <input value={customerLabel} onChange={e => setCustomerLabel(e.target.value)} style={input} placeholder="田中様" />
+                <input value={customerLabel} onChange={e => setCustomerLabel(e.target.value)} style={input} placeholder="田中 太郎" />
               </div>
             </div>
             {/* 会員番号からお名前を引く。
@@ -1528,7 +1600,7 @@ const BookingForm: React.FC<{
                     + `${customer.active ? '' : ' ※退会になっています'}`
                   : memberNo.trim()
                     ? 'この会員番号は登録がありません。一般のお客様として、お名前を手で入れてください'
-                    : 'お名前はフルネームではなく「田中様」のような呼び方で入れてください。'
+                    : 'お名前は「田中 太郎」のようにフルネームで入れてください。'
                       + '会員番号を入れると、登録されているお客様のお名前が自動で入ります。'}
             </p>
           </>
@@ -1793,7 +1865,7 @@ const BookingDetail: React.FC<{
     <Overlay onClose={onClose} isDark={isDark} title="予約の内容">
       <div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-          <span style={{ background: bgc, color: fg, borderRadius: 999, padding: '2px 11px', fontSize: 12.5, fontWeight: 700 }}>{b.purpose}</span>
+          <span style={{ background: bgc, color: fg, borderRadius: 999, padding: '2px 11px', fontSize: 12.5, fontWeight: 700 }}>{purposeWithDetail(b)}</span>
           {isOpen && (
             <span style={{ fontSize: 12.5, fontWeight: 700, color: openSlotColor(isDark)[0] }}>
               🟡 募集中{b.seats > 1 ? `（あと${restSeats}名）` : ''}
@@ -1892,7 +1964,7 @@ const BookingDetail: React.FC<{
                   placeholder="会員番号（任意）" inputMode="numeric"
                   style={{ flex: 1, padding: '8px 10px', borderRadius: 8, border: `1px solid ${line}`, background: isDark ? '#495057' : '#fff', color: text, fontSize: 16, boxSizing: 'border-box' }} />
                 <input value={fillLabel} onChange={e => setFillLabel(e.target.value)}
-                  placeholder="田中様"
+                  placeholder="田中 太郎"
                   style={{ flex: 1, padding: '8px 10px', borderRadius: 8, border: `1px solid ${line}`, background: isDark ? '#495057' : '#fff', color: text, fontSize: 16, boxSizing: 'border-box' }} />
               </div>
               <p style={{ fontSize: 11.5, color: textMid, margin: '7px 0 10px', lineHeight: 1.6 }}>
@@ -1956,7 +2028,7 @@ const BookingDetail: React.FC<{
                   placeholder="会員番号（任意）" inputMode="numeric"
                   style={{ padding: '7px 9px', borderRadius: 8, border: `1px solid ${line}`, background: isDark ? '#495057' : '#fff', color: text, fontSize: 16, width: 130, boxSizing: 'border-box' }} />
                 <input value={waitLabel} onChange={e => setWaitLabel(e.target.value)}
-                  placeholder="お客様（例：田中様）"
+                  placeholder="お客様（例：田中 太郎）"
                   style={{ padding: '7px 9px', borderRadius: 8, border: `1px solid ${line}`, background: isDark ? '#495057' : '#fff', color: text, fontSize: 16, flex: 1, minWidth: 150, boxSizing: 'border-box' }} />
                 <button onClick={addWaiting} disabled={busy || !waitLabel.trim()}
                   style={{ padding: '8px 14px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 13.5, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', opacity: !waitLabel.trim() ? .5 : 1 }}>
@@ -2015,31 +2087,38 @@ const BookingDetail: React.FC<{
 const WEEKDAY_LABEL = ['日', '月', '火', '水', '木', '金', '土'];
 
 /**
- * 長さの設定（社員が変更できる）。
- * 用途ごとに「選べる長さ」と「終了時刻を手で入れてよいか」を決める。
+ * 用途詳細の設定（社員が変更できる）。
+ * 用途ごとに「選べる長さ」「終了時刻を手で入れてよいか」「詳細（体操・筋トレなど）」を決める。
+ * 🚨 2026-09-01 に詳細を足したので、タブ名を「長さの設定」→「用途詳細」に変えた
+ *    （長さだけの画面ではなくなったため・ユーザー指示）。
  *
  * 🚨 ここを固定にすると、時間が変わるたびに開発者へ依頼することになる
  *    （2026-08-29 ユーザー指示）。
  */
-const DurationSettings: React.FC<{
+const PurposeSettings: React.FC<{
   purposeDurations: PurposeDuration[];
+  purposeDetails: PurposeDetail[];
   onDone: (msg: string) => Promise<void>;
   isDark: boolean;
-}> = ({ purposeDurations, onDone, isDark }) => {
-  const [draft, setDraft] = useState<Record<string, { text: string; free: boolean; def: string }>>(() => {
-    const d: Record<string, { text: string; free: boolean; def: string }> = {};
+}> = ({ purposeDurations, purposeDetails, onDone, isDark }) => {
+  const [draft, setDraft] = useState<Record<string, { text: string; free: boolean; def: string; required: boolean }>>(() => {
+    const d: Record<string, { text: string; free: boolean; def: string; required: boolean }> = {};
     for (const p of PURPOSES) {
       const cur = purposeDurations.find(x => x.purpose === p);
       d[p] = {
         text: (cur?.minutes ?? []).join('、'),
         free: cur ? cur.allow_free : true,
         def: cur?.default_minutes != null ? String(cur.default_minutes) : '',
+        required: cur ? cur.detail_required : true,
       };
     }
     return d;
   });
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  // 詳細（体操・筋トレなど）の編集。用途ごとに「追加する名前」を持つ
+  const [newDetail, setNewDetail] = useState<Record<string, string>>({});
+  const [detailBusy, setDetailBusy] = useState('');
 
   const line = isDark ? '#3a3a5c' : '#e0e0e0';
   const text = isDark ? '#eeeeee' : '#222222';
@@ -2081,6 +2160,7 @@ const DurationSettings: React.FC<{
     const { error: err } = await supabase.from('room_purpose_durations')
       .upsert({
         purpose, minutes: list, allow_free: d.free, default_minutes: def,
+        detail_required: d.required,
         updated_at: new Date().toISOString(), updated_by: me.user?.id ?? null,
       }, { onConflict: 'purpose' });
     setBusy('');
@@ -2090,6 +2170,68 @@ const DurationSettings: React.FC<{
       [purpose]: { ...prev[purpose], text: list.join('、'), def: def != null ? String(def) : '' },
     }));
     await onDone(`${purpose}の長さを変えました`);
+  };
+
+  // ---- 詳細（体操・筋トレなど）の編集 ----------------------------------
+  // 🚨 一度使った詳細は**消さない**（隠すだけ）。過去の予約に名前が残っており、
+  //    消すと「どの詳細だったか」を後から確かめられなくなる。
+
+  const detailsFor = (purpose: string) => purposeDetails
+    .filter(d => d.purpose === purpose)
+    .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, 'ja'));
+
+  const addDetail = async (purpose: string) => {
+    const name = (newDetail[purpose] ?? '').trim();
+    if (!name) { setError('詳細の名前を入れてください'); return; }
+    // 🚨 隠してあるものとも重複させない。DBにも (用途,名前) の一意の印がある
+    if (purposeDetails.some(d => d.purpose === purpose && d.name === name)) {
+      setError(`「${name}」はもう登録されています（隠している場合は「戻す」を押してください）`);
+      return;
+    }
+    setDetailBusy(purpose); setError('');
+    const { data: me } = await supabase.auth.getUser();
+    const orders = purposeDetails.filter(d => d.purpose === purpose).map(d => d.sort_order);
+    const { error: err } = await supabase.from('room_purpose_details').insert({
+      purpose, name, sort_order: (orders.length ? Math.max(...orders) : 0) + 1,
+      updated_by: me.user?.id ?? null,
+    });
+    setDetailBusy('');
+    if (err) { setError('追加できませんでした。通信を確認してもう一度お試しください。'); return; }
+    setNewDetail(prev => ({ ...prev, [purpose]: '' }));
+    await onDone(`${purpose}に「${name}」を足しました`);
+  };
+
+  const toggleDetail = async (d: PurposeDetail) => {
+    setDetailBusy(d.id); setError('');
+    const { data: me } = await supabase.auth.getUser();
+    // 🚨 update は0件でもエラーにならないので、書けた件数を select で数える
+    const { data, error: err } = await supabase.from('room_purpose_details')
+      .update({ active: !d.active, updated_at: new Date().toISOString(), updated_by: me.user?.id ?? null })
+      .eq('id', d.id).select('id');
+    setDetailBusy('');
+    if (err || !data || data.length === 0) { setError('変えられませんでした。権限か通信を確認してください。'); return; }
+    await onDone(d.active ? `「${d.name}」を出さないようにしました` : `「${d.name}」を出すようにしました`);
+  };
+
+  /** 並び替え。となりと順番の数字を入れ替えるだけ */
+  const moveDetail = async (d: PurposeDetail, dir: -1 | 1) => {
+    const list = detailsFor(d.purpose);
+    const i = list.findIndex(x => x.id === d.id);
+    const other = list[i + dir];
+    if (!other) return;
+    setDetailBusy(d.id); setError('');
+    const now = new Date().toISOString();
+    // 🚨 同じ数字だと並びが決まらないので、必ず両方を書き換える
+    const r1 = await supabase.from('room_purpose_details')
+      .update({ sort_order: other.sort_order, updated_at: now }).eq('id', d.id).select('id');
+    const r2 = await supabase.from('room_purpose_details')
+      .update({ sort_order: d.sort_order, updated_at: now }).eq('id', other.id).select('id');
+    setDetailBusy('');
+    if (r1.error || r2.error || !r1.data?.length || !r2.data?.length) {
+      setError('並び替えできませんでした。通信を確認してもう一度お試しください。');
+      return;
+    }
+    await onDone('並びを変えました');
   };
 
   const input: React.CSSProperties = {
@@ -2105,6 +2247,10 @@ const DurationSettings: React.FC<{
         <br />
         <b>終了時刻を手で入れられる</b>を外すと、ここで決めた長さからしか選べなくなります
         （パーソナル10分・レッスン50分のように長さが決まっているもの向け）。
+        <br />
+        <b>詳細</b>は、その用途の中の区分です（パーソナルの「体操」「筋トレ」など）。
+        足すと予約フォームに選ぶボタンが出ます。使わなくなったものは
+        <b>消さずに「隠す」</b>でお願いします（過去の予約に名前が残っているため）。
       </div>
 
       {error && (
@@ -2152,6 +2298,53 @@ const DurationSettings: React.FC<{
                   : 'ボタンは出ません'}
                 {!d.free && preview.length > 0 && '（終了時刻は手で直せません）'}
               </p>
+
+              {/* 詳細（パーソナルの「体操」「筋トレ」など・2026-09-01 ユーザー指示）。
+                  🚨 一度使ったものは消さず「隠す」。過去の予約に名前が残っているため */}
+              <div style={{ borderTop: `1px solid ${line}`, marginTop: 10, paddingTop: 9 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: textMid, marginBottom: 7 }}>
+                  詳細（この用途の中の区分）
+                </div>
+                {detailsFor(p).length === 0 && (
+                  <p style={{ fontSize: 12.5, color: textMid, margin: '0 0 7px', lineHeight: 1.6 }}>
+                    まだありません。足すと、予約フォームに選ぶボタンが出ます。
+                  </p>
+                )}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+                  {detailsFor(p).map((dt, i, arr) => (
+                    <div key={dt.id} style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 13.5, color: dt.active ? text : textMid, minWidth: 96 }}>
+                        {dt.name}{!dt.active && '（隠しています）'}
+                      </span>
+                      <button onClick={() => moveDetail(dt, -1)} disabled={i === 0 || detailBusy === dt.id}
+                        style={{ padding: '3px 9px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 12.5, cursor: i === 0 ? 'default' : 'pointer', opacity: i === 0 ? .4 : 1 }}>↑</button>
+                      <button onClick={() => moveDetail(dt, 1)} disabled={i === arr.length - 1 || detailBusy === dt.id}
+                        style={{ padding: '3px 9px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 12.5, cursor: i === arr.length - 1 ? 'default' : 'pointer', opacity: i === arr.length - 1 ? .4 : 1 }}>↓</button>
+                      <button onClick={() => toggleDetail(dt)} disabled={detailBusy === dt.id}
+                        style={{ padding: '3px 11px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 12.5, cursor: detailBusy === dt.id ? 'wait' : 'pointer' }}>
+                        {dt.active ? '隠す' : '戻す'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input value={newDetail[p] ?? ''}
+                    onChange={e => setNewDetail(prev => ({ ...prev, [p]: e.target.value }))}
+                    placeholder="例：体操" style={{ ...input, flex: 1, minWidth: 130 }} />
+                  <button onClick={() => addDetail(p)} disabled={detailBusy === p}
+                    style={{ padding: '7px 14px', borderRadius: 8, border: `1px solid ${accent}`, background: 'transparent', color: accent, fontSize: 13.5, fontWeight: 700, cursor: detailBusy === p ? 'wait' : 'pointer' }}>
+                    {detailBusy === p ? '追加中...' : '追加'}
+                  </button>
+                </div>
+                {/* 必須にするかどうか。🚨 詳細が1つも無い用途では効かない（予約できなくなるため） */}
+                <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, cursor: 'pointer', marginTop: 8 }}>
+                  <input type="checkbox" checked={d.required}
+                    onChange={e => setDraft(prev => ({ ...prev, [p]: { ...prev[p], required: e.target.checked } }))}
+                    style={{ width: 17, height: 17 }} />
+                  予約するとき詳細を必ず選ばせる
+                  <span style={{ fontSize: 12, color: textMid }}>（変えたら上の「保存」を押してください）</span>
+                </label>
+              </div>
             </div>
           );
         })}
@@ -2322,7 +2515,7 @@ const BulkBookingPanel: React.FC<{
       {source === 'paste' ? (
         <>
           <textarea value={pasted} onChange={e => setPasted(e.target.value)} rows={7}
-            placeholder={'日付\t場所\t開始\t終了\t用途\t担当\t会員番号\tお客様\n9/1\t四条本校 3階\t16:00\t16:50\tレッスン\t林 晃平\t2014052061\t田中様'}
+            placeholder={'日付\t場所\t開始\t終了\t用途\t担当\t会員番号\tお客様\n9/1\t四条本校 3階\t16:00\t16:50\tレッスン\t林 晃平\t2014052061\t田中 太郎'}
             style={{ ...input, width: '100%', fontFamily: 'monospace', fontSize: 13, marginBottom: 8 }} />
           <p style={{ fontSize: 12, color: textMid, margin: '0 0 10px', lineHeight: 1.6 }}>
             Excel の範囲をコピーして、そのまま貼り付けられます。
@@ -2600,7 +2793,7 @@ const WaitlistSettings: React.FC<{
                       <input value={draft.member} placeholder="会員番号"
                         onChange={e => setDraft(p => ({ ...p, member: e.target.value }))}
                         style={{ ...input, width: 118 }} />
-                      <input value={draft.label} placeholder="お客様（例：田中様）"
+                      <input value={draft.label} placeholder="お客様（例：田中 太郎）"
                         onChange={e => setDraft(p => ({ ...p, label: e.target.value }))}
                         style={{ ...input, width: 168 }} />
                       <input value={draft.note} placeholder="メモ"
@@ -3262,11 +3455,11 @@ const StaffSettings: React.FC<{
 
 const BasicSettingsPanel: React.FC<{
   campuses: Campus[]; floors: Floor[]; staff: Staff[]; categories: LessonCategory[];
-  purposeDurations: PurposeDuration[]; user: AuthUser;
+  purposeDurations: PurposeDuration[]; purposeDetails: PurposeDetail[]; user: AuthUser;
   /** 一覧の「予約する」から、そのお客様で予約を入れる流れに移る */
   onBook: (c: Customer) => void;
   onClose: () => void; onDone: (msg: string) => Promise<void>; isDark: boolean;
-}> = ({ campuses, floors, staff, categories, purposeDurations, user, onBook, onClose, onDone, isDark }) => {
+}> = ({ campuses, floors, staff, categories, purposeDurations, purposeDetails, user, onBook, onClose, onDone, isDark }) => {
   const today = todayStr();
   const [tab, setTab] = useState<'renew' | 'duration' | 'staff' | 'customer' | 'waitlist' | 'bulk'>('renew');
   const [fy, setFy] = useState(fiscalYear(today));
@@ -3412,14 +3605,14 @@ const BasicSettingsPanel: React.FC<{
     <Overlay onClose={onClose} isDark={isDark} title="基本設定" wide>
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
         {([['renew', '年度更新'], ['waitlist', 'キャンセル待ち'], ['customer', 'お客様'],
-           ['bulk', '予約の一括入力'], ['staff', 'スタッフ'], ['duration', '長さの設定']] as const)
+           ['bulk', '予約の一括入力'], ['staff', 'スタッフ'], ['duration', '用途詳細']] as const)
           .map(([k, l]) => (
             <button key={k} onClick={() => !running && setTab(k)} style={smallBtn(tab === k)}>{l}</button>
           ))}
       </div>
 
       {tab === 'duration' && (
-        <DurationSettings purposeDurations={purposeDurations} onDone={onDone} isDark={isDark} />
+        <PurposeSettings purposeDurations={purposeDurations} purposeDetails={purposeDetails} onDone={onDone} isDark={isDark} />
       )}
 
       {tab === 'staff' && (
@@ -3572,7 +3765,7 @@ const BasicSettingsPanel: React.FC<{
                     placeholder="会員番号" style={{ ...input, width: 118 }} />
                   <input value={r.customerLabel} disabled={r.done || running}
                     onChange={e => patch(r.src.id, { customerLabel: e.target.value })}
-                    placeholder="表示名（例：田中様）" style={{ ...input, width: 168 }} />
+                    placeholder="表示名（例：田中 太郎）" style={{ ...input, width: 168 }} />
                 </div>
 
                 {/* 🚨 入らなかった回を黙って捨てない。「全部入った」と誤解されると、
@@ -3852,7 +4045,7 @@ const BasicSettingsRoles: React.FC<{
   return (
     <div>
       <p style={{ fontSize: 13, color: textMid, margin: '0 0 12px', lineHeight: 1.7 }}>
-        <b>基本設定</b>（年度更新・キャンセル待ち・お客様・予約の一括入力・スタッフ・長さの設定）を
+        <b>基本設定</b>（年度更新・キャンセル待ち・お客様・予約の一括入力・スタッフ・用途詳細）を
         使える役職を決めます。
         <br />
         🚨 <b>パートは、この設定に関わらず使えません。</b>

@@ -82,6 +82,11 @@ export interface Booking {
   starts_at: string;       // ISO（timestamptz）
   ends_at: string;
   purpose: string;
+  /**
+   * 用途の中の区分（パーソナルの「体操」「筋トレ」など）。選ばれていなければ null。
+   * 🚨 選択肢は room_purpose_details にあり、管理者が足せる。ここに直書きしないこと。
+   */
+  detail: string | null;
   booker_name: string;
   member_no: string | null;
   customer_label: string | null;
@@ -346,7 +351,45 @@ export interface PurposeDuration {
   default_minutes: number | null;
   /** 終了時刻を手で入れてよいか。false のときは長さボタンだけで決める */
   allow_free: boolean;
+  /**
+   * 詳細（体操・筋トレなど）を必ず選ばせるか（2026-09-01 ユーザー指示）。
+   * 🚨 効くのは**その用途に詳細が1つ以上あるときだけ**。
+   *    詳細を作っていない用途で必須にすると、予約そのものができなくなる。
+   */
+  detail_required: boolean;
 }
+
+/**
+ * 用途の「詳細」（DBの room_purpose_details）。
+ * パーソナルの 体操・筋トレ のような、用途の中の区分。
+ *
+ * 🚨 用途を増やす（「パーソナル（体操）」）形にはしないこと。色分け・長さの設定・
+ *    集計がすべて用途の単位なので、増やすたびに設定が重複して食い違う。
+ */
+export interface PurposeDetail {
+  id: string;
+  purpose: string;
+  name: string;
+  sort_order: number;
+  active: boolean;
+}
+
+/**
+ * その用途で選べる詳細を、並び順で取り出す。
+ * 🚨 隠したもの（active=false）は出さない。ただし**すでに保存されている詳細**は
+ *    別扱いにすること（隠したあとで古い予約を開くと、選択が消えたように見えるため
+ *    画面側で「いま入っている値」を足している）。
+ */
+/**
+ * 予約の見出し（「パーソナル・体操」）。詳細が無ければ用途だけ。
+ * 🚨 同じ組み立てを画面のあちこちに書かないこと。片方だけ直す事故のもとになる。
+ */
+export const purposeWithDetail = (b: { purpose: string; detail?: string | null }): string =>
+  b.detail ? `${b.purpose}・${b.detail}` : b.purpose;
+
+export const detailsOf = (purpose: string, all: PurposeDetail[]): PurposeDetail[] =>
+  all.filter(d => d.purpose === purpose && d.active)
+     .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, 'ja'));
 
 /**
  * DBを読めなかったときに使う既定値。
@@ -354,11 +397,11 @@ export interface PurposeDuration {
  *    （本番の値は room_purpose_durations にある）。
  */
 export const FALLBACK_DURATIONS: PurposeDuration[] = [
-  { purpose: 'プライベート', minutes: [25, 30, 50], default_minutes: 30,   allow_free: true },
-  { purpose: 'パーソナル',   minutes: [10],         default_minutes: null, allow_free: false },
-  { purpose: 'レッスン',     minutes: [50],         default_minutes: null, allow_free: false },
-  { purpose: 'レンタル',     minutes: [60, 120],    default_minutes: null, allow_free: true },
-  { purpose: 'その他',       minutes: [],           default_minutes: null, allow_free: true },
+  { purpose: 'プライベート', minutes: [25, 30, 50], default_minutes: 30,   allow_free: true,  detail_required: true },
+  { purpose: 'パーソナル',   minutes: [10],         default_minutes: null, allow_free: false, detail_required: true },
+  { purpose: 'レッスン',     minutes: [50],         default_minutes: null, allow_free: false, detail_required: true },
+  { purpose: 'レンタル',     minutes: [60, 120],    default_minutes: null, allow_free: true,  detail_required: true },
+  { purpose: 'その他',       minutes: [],           default_minutes: null, allow_free: true,  detail_required: true },
 ];
 
 /**
@@ -391,6 +434,11 @@ export interface Recurrence {
   start_time: string;      // 'HH:MM:SS'
   end_time: string;
   purpose: string;
+  /**
+   * 用途の中の区分。来年度へ引き継ぐときに消えないよう、繰り返しにも持たせる。
+   * 🚨 年度更新（room_renew_recurrence）はまだこれを予約にコピーしない（2026-09-01 時点）
+   */
+  detail: string | null;
   booker_name: string;
   member_no: string | null;
   customer_label: string | null;
