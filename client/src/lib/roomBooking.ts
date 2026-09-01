@@ -381,6 +381,80 @@ export interface PurposeDetail {
  *    画面側で「いま入っている値」を足している）。
  */
 /**
+ * 出欠の選択肢（DBの room_attendance_options）。
+ * 🚨 コードに固定しないこと。あとで「振替」等を足すのにデプロイが要るため
+ *    （2026-09-01 ユーザー確定。用途詳細と同じ考え方）。
+ */
+export interface AttendanceOption {
+  id: string;
+  name: string;
+  /** 出席として数えるか。「キャン1回消化」は来ていないが出席扱い */
+  counts_present: boolean;
+  /** どの用途で出すか。null・空 = 全用途。例：「連絡なし休み」は パーソナル のみ */
+  purposes: string[] | null;
+  sort_order: number;
+  active: boolean;
+}
+
+/** 出欠の記録（DBの room_booking_attendance）。付けたときだけ行がある */
+export interface AttendanceRow {
+  id: string;
+  booking_id: string;
+  participant_no: string;
+  participant_name: string;
+  status: string;
+  counted_present: boolean;
+  recorded_at: string;
+  recorded_by: string | null;
+}
+
+/** その用途で出す出欠の選択肢を、並び順で取り出す */
+export const attendanceOptionsFor = (
+  purpose: string, all: AttendanceOption[],
+): AttendanceOption[] =>
+  all.filter(o => o.active && (!o.purposes || o.purposes.length === 0 || o.purposes.includes(purpose)))
+     .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, 'ja'));
+
+/** 予約に紐づく参加者1人ぶん */
+export interface Participant {
+  /** 会員番号。一般のお客様は空 */
+  no: string;
+  /** お名前。入っていないこともある */
+  name: string;
+  /** 出欠の記録を結び付ける鍵。番号とお名前の組で1人と数える */
+  key: string;
+}
+
+/**
+ * 予約から参加者を取り出す。
+ *
+ * 🚨 いまの作りでは、2名定員の募集枠を埋めると room_fill_open_slot が
+ *    会員番号とお名前を「田中 太郎, 佐藤 花子」のように**カンマでつないで1行に**入れる。
+ *    参加者の表は無いので、ここで分ける。
+ * 🚨 番号とお名前は別々につながれるため、**片方だけ入っている人がいると
+ *    並びがずれる**（番号1つ・名前2つ、など）。ずれても人数は多いほうに合わせ、
+ *    足りないほうは空にする。お名前を優先して見せること。
+ * 🚨 どちらも空の予約（レンタルなど）でも1人ぶん返す。出欠を付けられなくなるため。
+ */
+export const participantsOf = (b: Pick<Booking, 'member_no' | 'customer_label'>): Participant[] => {
+  const split = (v: string | null) => (v ?? '').split(',').map(s => s.trim()).filter(Boolean);
+  const nos = split(b.member_no);
+  const names = split(b.customer_label);
+  const n = Math.max(nos.length, names.length, 1);
+  const out: Participant[] = [];
+  for (let i = 0; i < n; i++) {
+    const no = nos[i] ?? '';
+    const name = names[i] ?? '';
+    out.push({ no, name, key: `${no}|${name}` });
+  }
+  return out;
+};
+
+/** 参加者の見せ方。お名前が無ければ会員番号、どちらも無ければその旨を出す */
+export const participantLabelOf = (p: Participant): string =>
+  p.name || (p.no ? `#${p.no}` : '（お名前なし）');
+
+/**
  * 予約の見出し（「パーソナル・体操」）。詳細が無ければ用途だけ。
  * 🚨 同じ組み立てを画面のあちこちに書かないこと。片方だけ直す事故のもとになる。
  */

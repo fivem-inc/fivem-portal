@@ -10,8 +10,10 @@ import {
   isWeekend, RANGE_DAYS, localDate, placeLabel, openSlotColor, durationLabel, FALLBACK_DURATIONS, gradeOrAge, defaultMinutesOf,
   customerName, customerFullName, customerKana, contactLines, toHiragana,
   fiscalYear, fiscalYearEnd, fiscalYearLabel, RENEWAL_NOTICE_DAYS, daysUntil, detailsOf, purposeWithDetail,
+  participantsOf, participantLabelOf, attendanceOptionsFor,
   type Campus, type Floor, type Booking, type ConflictInfo,
   type Staff, type LessonCategory, type Recurrence, type PurposeDuration, type PurposeDetail,
+  type AttendanceOption, type AttendanceRow, type Participant,
   type Customer, type CustomerContact, type Waitlist,
 } from '../lib/roomBooking';
 import {
@@ -82,6 +84,44 @@ const participantLabel = (b: Booking): string => {
   return [b.customer_label, b.member_no ? `#${b.member_no}` : ''].filter(Boolean).join(' ');
 };
 
+/**
+ * 出欠を1人ぶん記録する（付け直しは上書き、同じものをもう一度押すと取り消し）。
+ *
+ * 🚨 詳細画面とまとめて画面の**両方から呼ぶので、ここ1か所にまとめる**。
+ *    同じ意味の処理を2か所に書くと、片方だけ直す事故になる。
+ * 🚨 `counted_present` は**押した時点の設定を写して**保存する。
+ *    あとで選択肢の「出席扱い」を変えても、過去の記録の意味が変わらないようにするため。
+ * 戻り値は画面に出すエラー文（空なら成功）。
+ */
+const saveAttendanceRow = async (
+  bookingId: string, p: Participant, opt: AttendanceOption | null,
+): Promise<string> => {
+  const { data: me } = await supabase.auth.getUser();
+  if (opt === null) {
+    // 取り消し。🚨 delete は0件でもエラーにならないので、消えた件数を数える
+    const { data, error } = await supabase.from('room_booking_attendance')
+      .delete()
+      .eq('booking_id', bookingId)
+      .eq('participant_no', p.no)
+      .eq('participant_name', p.name)
+      .select('id');
+    if (error) return '取り消せませんでした。通信を確認してもう一度お試しください。';
+    if (!data || data.length === 0) return '';   // もともと付いていない。何もしないでよい
+    return '';
+  }
+  const { error } = await supabase.from('room_booking_attendance').upsert({
+    booking_id: bookingId,
+    participant_no: p.no,
+    participant_name: p.name,
+    status: opt.name,
+    counted_present: opt.counts_present,
+    recorded_at: new Date().toISOString(),
+    recorded_by: me.user?.id ?? null,
+  }, { onConflict: 'booking_id,participant_no,participant_name' });
+  if (error) return '出欠を保存できませんでした。通信を確認してもう一度お試しください。';
+  return '';
+};
+
 /** タイムラインの1列。場所別なら1フロア、担当別なら1スタッフ。 */
 interface Lane {
   key: string;
@@ -106,6 +146,12 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
   // 用途ごとの詳細（パーソナルの「体操」「筋トレ」など。社員が基本設定から足せる）。
   // 🚨 既定は空。読めなかったときに勝手な選択肢を出すより、出さないほうが安全
   const [purposeDetails, setPurposeDetails] = useState<PurposeDetail[]>([]);
+  // 出欠の選択肢（社員が基本設定から足せる）。読めなければボタンを出さない
+  const [attendanceOptions, setAttendanceOptions] = useState<AttendanceOption[]>([]);
+  // いま見えている予約ぶんの出欠。付いていない予約は行が無い
+  const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
+  // まとめて出欠を付ける画面を開いているか
+  const [attendanceOpen, setAttendanceOpen] = useState(false);
   const [campusId, setCampusId] = useState<string>('');
   const [view, setView] = useState<ViewMode>('place');
   // 担当別・参加者別の絞り込み。'' = 全員。それ以外は staff.id または参加者キー
@@ -157,7 +203,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
 
   // ---- マスタ（校・場所・スタッフ・区分）の読み込み ----
   const loadMasters = useCallback(async () => {
-    const [cRes, fRes, sRes, catRes, scRes, durRes, setRes, detRes] = await Promise.all([
+    const [cRes, fRes, sRes, catRes, scRes, durRes, setRes, detRes, attRes] = await Promise.all([
       supabase.from('room_campuses').select('*').eq('active', true).order('sort_order'),
       supabase.from('room_floors').select('*').eq('active', true).order('sort_order'),
       supabase.from('room_staff').select('*').order('sort_order'),
@@ -166,6 +212,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
       supabase.from('room_purpose_durations').select('*'),
       supabase.from('room_settings').select('value').eq('key', 'basic_settings_roles').maybeSingle(),
       supabase.from('room_purpose_details').select('*').order('sort_order'),
+      supabase.from('room_attendance_options').select('*').order('sort_order'),
     ]);
     // 設定が読めないとき（まだ作っていない等）は null のままにして、
     // これまでどおり「パート以外は使える」で動かす。急に誰も使えなくならないように
@@ -182,6 +229,8 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
       : FALLBACK_DURATIONS);
     // 詳細。読めなくてもエラーにしない（詳細が出ないだけで、予約はできる）
     setPurposeDetails((detRes.data ?? []) as PurposeDetail[]);
+    // 出欠の選択肢。読めなくてもエラーにしない（出欠が付けられないだけ）
+    setAttendanceOptions((attRes.data ?? []) as AttendanceOption[]);
     const cs = (cRes.data ?? []) as Campus[];
     setCampuses(cs);
     setFloors((fRes.data ?? []) as Floor[]);
@@ -247,6 +296,11 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
   //    効かず、パートに切り替えてもボタンが出たままになる（2026-08-31 実機で発覚）。
   // 🚨 これは画面に出すかどうかだけの話。実際に書けるかどうかは
   //    データベース側（room_can_use_basic_settings）でも同じ設定を見ている。
+  // 🚨 出欠を書けるのは「パートでない人」。DB側の room_is_staff() と同じ条件にする。
+  //    ここを緩めると、押せるのに保存できないボタンになる。
+  //    基本設定（canRenew）と違い、役職の一覧（basicRoles）では絞らない
+  const canAttendance = admin || (employmentType !== '' && employmentType !== 'パート');
+
   const canRenew = admin
     || (employmentType !== '' && employmentType !== 'パート'
         && (basicRoles === null || basicRoles.includes(roleTitle)));
@@ -318,6 +372,23 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
   }, [date, visibleFloors, rangeDays]);
 
   useEffect(() => { loadBookings(); }, [loadBookings]);
+
+  /**
+   * いま見えている予約ぶんの出欠を読む。
+   * 🚨 全件を読まない（予約が増えると毎回重くなる）。
+   * 🚨 予約が0件のときは問い合わせない。`in()` に空の配列を渡すと全件になる作りの
+   *    ライブラリがあるため、条件が空になる呼び出しは最初から避ける。
+   */
+  const loadAttendance = useCallback(async (ids: string[]) => {
+    if (ids.length === 0) { setAttendance([]); return; }
+    const { data, error } = await supabase
+      .from('room_booking_attendance').select('*').in('booking_id', ids);
+    if (error) return;                       // 出欠が出ないだけ。予約表は動かす
+    setAttendance((data ?? []) as AttendanceRow[]);
+  }, []);
+
+  useEffect(() => { loadAttendance(bookings.map(b => b.id)); },
+    [bookings, loadAttendance]);
 
   const selectCampus = (id: string) => {
     setCampusId(id);
@@ -540,13 +611,16 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
           ))}
           {/* 🚨 絵文字を付けない。🗓 は Windows の Chrome で □ に化けた（2026-08-31 実機確認）。
                  「文字で意味が通るなら絵文字を足さない」という既存の方針どおりにする */}
+          {/* 出欠をまとめて付ける（2026-09-01 ユーザー指示）。
+              🚨 出すのは「いま見ている日」の予約。担当別・参加者別は1ヶ月を描くが、
+                 出欠は起点の日だけを出す（画面の中でも同じことを断っている） */}
+          <button onClick={() => setAttendanceOpen(true)}
+            style={{ ...btn(false), marginLeft: 'auto' }}>出欠</button>
           {canRenew && (
-            <button onClick={() => setRenewal(true)}
-              style={{ ...btn(false), marginLeft: 'auto' }}>基本設定</button>
+            <button onClick={() => setRenewal(true)} style={btn(false)}>基本設定</button>
           )}
           {admin && (
-            <button onClick={() => setSettings(true)}
-              style={{ ...btn(false), marginLeft: canRenew ? 0 : 'auto' }}>⚙️ 設定</button>
+            <button onClick={() => setSettings(true)} style={btn(false)}>⚙️ 設定</button>
           )}
         </div>
 
@@ -651,15 +725,27 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
         <BookingDetail
           booking={detail} floors={floors} campuses={campuses}
           staff={staff} categories={categories}
+          attendanceOptions={attendanceOptions} attendance={attendance}
+          canAttendance={canAttendance}
+          onAttendanceSaved={() => loadAttendance(bookings.map(b => b.id))}
           onClose={() => setDetail(null)}
           onEdit={(b) => { setDetail(null); setForm({ kind: 'edit', booking: b }); }}
           onChanged={(msg) => { setDetail(null); loadBookings(); showFlash(msg); }}
           isDark={isDark} />
       )}
+      {attendanceOpen && (
+        <AttendanceBulk
+          date={date} bookings={bookings} floors={floors} campuses={campuses}
+          options={attendanceOptions} attendance={attendance}
+          canWrite={canAttendance}
+          onSaved={() => loadAttendance(bookings.map(b => b.id))}
+          onClose={() => setAttendanceOpen(false)} isDark={isDark} />
+      )}
       {renewal && (
         <BasicSettingsPanel
           campuses={campuses} floors={floors} staff={staff} categories={categories}
-          purposeDurations={purposeDurations} purposeDetails={purposeDetails} user={user}
+          purposeDurations={purposeDurations} purposeDetails={purposeDetails}
+          attendanceOptions={attendanceOptions} user={user}
           onBook={(c) => {
             // 基本設定を閉じて予約表に戻し、場所別（＝新規を入れられる並べ方）にする
             setBookingFor(c);
@@ -1716,13 +1802,378 @@ const BookingForm: React.FC<{
 };
 
 // ============================================================
+// 出欠の選択肢の設定（社員が変更できる・2026-09-01 ユーザー指示）
+//
+// 🚨 コードに固定しないこと。あとで「振替」等を足すのにデプロイが要るため。
+// 🚨 一度使った選択肢は**消さずに隠す**。過去の記録に名前が残っているため。
+// ============================================================
+const AttendanceOptionSettings: React.FC<{
+  options: AttendanceOption[];
+  onDone: (msg: string) => Promise<void>;
+  isDark: boolean;
+}> = ({ options, onDone, isDark }) => {
+  const [name, setName] = useState('');
+  const [present, setPresent] = useState(false);
+  const [purposes, setPurposes] = useState<string[]>([]);
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+
+  const line = isDark ? '#3a3a5c' : '#e0e0e0';
+  const text = isDark ? '#eeeeee' : '#222222';
+  const textMid = isDark ? '#b3b8c6' : '#5b6270';
+  const accent = isDark ? '#6bbd92' : '#2f6f4f';
+  const fieldBg = isDark ? '#495057' : '#fff';
+  const input: React.CSSProperties = {
+    padding: '7px 9px', borderRadius: 8, border: `1px solid ${line}`,
+    background: fieldBg, color: text, fontSize: 16, boxSizing: 'border-box',
+  };
+
+  const sorted = [...options].sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, 'ja'));
+
+  const add = async () => {
+    const n = name.trim();
+    if (!n) { setError('出欠の名前を入れてください'); return; }
+    if (options.some(o => o.name === n)) {
+      setError(`「${n}」はもう登録されています（隠している場合は「戻す」を押してください）`);
+      return;
+    }
+    setBusy('__new__'); setError('');
+    const { data: me } = await supabase.auth.getUser();
+    const orders = options.map(o => o.sort_order);
+    const { error: err } = await supabase.from('room_attendance_options').insert({
+      name: n, counts_present: present,
+      // 🚨 用途を1つも選んでいなければ null（＝全用途で出す）
+      purposes: purposes.length ? purposes : null,
+      sort_order: (orders.length ? Math.max(...orders) : 0) + 1,
+      updated_by: me.user?.id ?? null,
+    });
+    setBusy('');
+    if (err) { setError('追加できませんでした。通信を確認してもう一度お試しください。'); return; }
+    setName(''); setPresent(false); setPurposes([]);
+    await onDone(`出欠に「${n}」を足しました`);
+  };
+
+  /** 出席扱い・表示/非表示の切り替え。🚨 update は0件でもエラーにならないので件数を数える */
+  const patch = async (o: AttendanceOption, v: Partial<AttendanceOption>, msg: string) => {
+    setBusy(o.id); setError('');
+    const { data: me } = await supabase.auth.getUser();
+    const { data, error: err } = await supabase.from('room_attendance_options')
+      .update({ ...v, updated_at: new Date().toISOString(), updated_by: me.user?.id ?? null })
+      .eq('id', o.id).select('id');
+    setBusy('');
+    if (err || !data || data.length === 0) { setError('変えられませんでした。権限か通信を確認してください。'); return; }
+    await onDone(msg);
+  };
+
+  const move = async (o: AttendanceOption, dir: -1 | 1) => {
+    const i = sorted.findIndex(x => x.id === o.id);
+    const other = sorted[i + dir];
+    if (!other) return;
+    setBusy(o.id); setError('');
+    const now = new Date().toISOString();
+    const r1 = await supabase.from('room_attendance_options')
+      .update({ sort_order: other.sort_order, updated_at: now }).eq('id', o.id).select('id');
+    const r2 = await supabase.from('room_attendance_options')
+      .update({ sort_order: o.sort_order, updated_at: now }).eq('id', other.id).select('id');
+    setBusy('');
+    if (r1.error || r2.error || !r1.data?.length || !r2.data?.length) {
+      setError('並び替えできませんでした。通信を確認してもう一度お試しください。');
+      return;
+    }
+    await onDone('並びを変えました');
+  };
+
+  const purposeChip = (p: string, on: boolean, onClick: () => void) => (
+    <button key={p} onClick={onClick}
+      style={{
+        padding: '3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+        border: `2px solid ${on ? '#1565c0' : '#90caf9'}`,
+        background: on ? '#1976d2' : '#e3f2fd', color: on ? '#fff' : '#1565c0',
+      }}>{p}</button>
+  );
+
+  return (
+    <div>
+      <div style={{ background: isDark ? '#35354e' : '#f0f2f5', borderRadius: 8, padding: '10px 12px', fontSize: 13, lineHeight: 1.7, marginBottom: 14, color: textMid }}>
+        予約に付ける出欠のボタンを決めます。
+        <b>出席扱い</b>を入れると、来ていなくても出席として数えます（「キャン1回消化」など）。
+        <br />
+        <b>用途</b>を選ぶとその用途だけに出ます。1つも選ばなければ全部の用途に出ます
+        （「連絡なし休み」はパーソナルだけ、といった使い方）。
+        <br />
+        🚨 使わなくなったものは<b>消さずに「隠す」</b>でお願いします（過去の記録に名前が残っているため）。
+        <b>出席扱いを後から変えても、すでに付けた記録の意味は変わりません</b>（記録した時点の扱いを残しています）。
+      </div>
+
+      {error && (
+        <div style={{ background: isDark ? '#4a2a2a' : '#fdecea', border: `1px solid ${isDark ? '#7a4444' : '#f5c6cb'}`, color: isDark ? '#ffb4b4' : '#a3282a', borderRadius: 8, padding: '9px 12px', fontSize: 13, marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
+        {sorted.map((o, i, arr) => (
+          <div key={o.id} style={{ border: `1px solid ${line}`, borderRadius: 8, padding: '9px 11px' }}>
+            <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 13.5, fontWeight: 700, color: o.active ? text : textMid, minWidth: 108 }}>
+                {o.name}{!o.active && '（隠しています）'}
+              </span>
+              <label style={{ display: 'flex', gap: 5, alignItems: 'center', fontSize: 12.5, cursor: 'pointer', color: textMid }}>
+                <input type="checkbox" checked={o.counts_present} disabled={busy === o.id}
+                  onChange={e => patch(o, { counts_present: e.target.checked },
+                    e.target.checked ? `「${o.name}」を出席扱いにしました` : `「${o.name}」を出席扱いから外しました`)}
+                  style={{ width: 16, height: 16 }} />
+                出席扱い
+              </label>
+              <button onClick={() => move(o, -1)} disabled={i === 0 || busy === o.id}
+                style={{ padding: '3px 9px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 12.5, cursor: i === 0 ? 'default' : 'pointer', opacity: i === 0 ? .4 : 1 }}>↑</button>
+              <button onClick={() => move(o, 1)} disabled={i === arr.length - 1 || busy === o.id}
+                style={{ padding: '3px 9px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 12.5, cursor: i === arr.length - 1 ? 'default' : 'pointer', opacity: i === arr.length - 1 ? .4 : 1 }}>↓</button>
+              <button onClick={() => patch(o, { active: !o.active }, o.active ? `「${o.name}」を出さないようにしました` : `「${o.name}」を出すようにしました`)}
+                disabled={busy === o.id}
+                style={{ padding: '3px 11px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 12.5, cursor: busy === o.id ? 'wait' : 'pointer' }}>
+                {o.active ? '隠す' : '戻す'}
+              </button>
+            </div>
+            <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap', marginTop: 7 }}>
+              <span style={{ fontSize: 12, color: textMid, minWidth: 34 }}>用途</span>
+              {PURPOSES.map(p => {
+                const on = !!o.purposes?.includes(p);
+                return purposeChip(p, on, () => {
+                  const next = on ? (o.purposes ?? []).filter(x => x !== p) : [...(o.purposes ?? []), p];
+                  patch(o, { purposes: next.length ? next : null },
+                    next.length ? `「${o.name}」を ${next.join('・')} だけに出します` : `「${o.name}」を全部の用途に出します`);
+                });
+              })}
+              {(!o.purposes || o.purposes.length === 0) && (
+                <span style={{ fontSize: 12, color: textMid }}>（全部の用途に出ます）</span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ borderTop: `1px solid ${line}`, paddingTop: 11 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 7 }}>新しく足す</div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 7 }}>
+          <input value={name} onChange={e => setName(e.target.value)}
+            placeholder="例：振替" style={{ ...input, flex: 1, minWidth: 140 }} />
+          <label style={{ display: 'flex', gap: 5, alignItems: 'center', fontSize: 12.5, cursor: 'pointer', color: textMid }}>
+            <input type="checkbox" checked={present} onChange={e => setPresent(e.target.checked)}
+              style={{ width: 16, height: 16 }} />
+            出席扱い
+          </label>
+          <button onClick={add} disabled={busy === '__new__'}
+            style={{ padding: '7px 14px', borderRadius: 8, border: `1px solid ${accent}`, background: 'transparent', color: accent, fontSize: 13.5, fontWeight: 700, cursor: busy === '__new__' ? 'wait' : 'pointer' }}>
+            {busy === '__new__' ? '追加中...' : '追加'}
+          </button>
+        </div>
+        <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, color: textMid, minWidth: 34 }}>用途</span>
+          {PURPOSES.map(p => purposeChip(p, purposes.includes(p), () =>
+            setPurposes(prev => prev.includes(p) ? prev.filter(x => x !== p) : [...prev, p])))}
+          {purposes.length === 0 && (
+            <span style={{ fontSize: 12, color: textMid }}>（選ばなければ全部の用途に出ます）</span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ============================================================
+// 出欠をまとめて付ける画面（予約表の上のボタンから開く・2026-09-01 ユーザー指示）
+//
+// 見ている日付の予約を、参加者ごとに1行ずつ並べる。終業後にまとめて押していく用。
+// 🚨 未入力に赤いバッジは付けない。押して消せない赤は「関係者全員が自分の番だと思い、
+//    結局誰も動かない」形になる（備品購入申請で踏んだ失敗）。件数を出すだけにする。
+// ============================================================
+const AttendanceBulk: React.FC<{
+  date: string;
+  bookings: Booking[];
+  floors: Floor[];
+  campuses: Campus[];
+  options: AttendanceOption[];
+  attendance: AttendanceRow[];
+  canWrite: boolean;
+  onSaved: () => void | Promise<void>;
+  onClose: () => void;
+  isDark: boolean;
+}> = ({ date, bookings, floors, campuses, options, attendance, canWrite, onSaved, onClose, isDark }) => {
+  const line = isDark ? '#3a3a5c' : '#e0e0e0';
+  const text = isDark ? '#eeeeee' : '#222222';
+  const textMid = isDark ? '#b3b8c6' : '#5b6270';
+
+  // 出欠を付けられる予約だけ。🚨 募集中の枠（まだ人がいない）と休講は除く
+  const targets = bookings
+    .filter(b => b.kind !== 'open' && b.status !== 'cancelled')
+    .filter(b => localDate(b.starts_at) === date)
+    .sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+
+  // 未入力の数え方は「参加者1人＝1つ」。予約の数ではない
+  let total = 0, done = 0;
+  for (const b of targets) {
+    for (const p of participantsOf(b)) {
+      total++;
+      if (attendance.some(r => r.booking_id === b.id && r.participant_no === p.no && r.participant_name === p.name)) done++;
+    }
+  }
+
+  const placeOf = (b: Booking) => {
+    const f = floors.find(x => x.id === b.floor_id);
+    const c = f ? campuses.find(x => x.id === f.campus_id) : null;
+    // 第3引数は「その校にいくつ場所があるか」。1つだけならフロア名を書かない作り
+    return f ? placeLabel(f, c?.name ?? '', floors.filter(x => x.campus_id === f.campus_id).length, true) : '';
+  };
+
+  return (
+    <Overlay onClose={onClose} isDark={isDark} title="出欠をまとめて付ける" wide>
+      <div>
+        <div style={{ background: isDark ? '#35354e' : '#f0f2f5', borderRadius: 8, padding: '10px 12px', fontSize: 13, lineHeight: 1.7, marginBottom: 12, color: textMid }}>
+          <b style={{ color: text }}>{formatDateLabel(date)}</b> の予約です。
+          日付を変えるときは、この画面を閉じて予約表の日付を動かしてください。
+          <br />
+          押すとその場で保存されます。もう一度同じものを押すと取り消せます。
+          <br />
+          <b style={{ color: text }}>入力済み {done} / {total} 人</b>
+          {total - done > 0 && `（未入力 ${total - done} 人）`}
+        </div>
+
+        {targets.length === 0 ? (
+          <p style={{ fontSize: 13.5, color: textMid, lineHeight: 1.7 }}>
+            この日は出欠を付ける予約がありません（募集中の枠と休講は出しません）。
+          </p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {targets.map(b => (
+              <div key={b.id} style={{ border: `1px solid ${line}`, borderRadius: 8, padding: '9px 11px' }}>
+                <div style={{ fontSize: 13, color: textMid, marginBottom: 7, fontVariantNumeric: 'tabular-nums' }}>
+                  {hhmm(b.starts_at)}〜{hhmm(b.ends_at)}　{placeOf(b)}　{purposeWithDetail(b)}
+                </div>
+                <AttendanceEditor booking={b} options={options}
+                  rows={attendance.filter(r => r.booking_id === b.id)}
+                  canWrite={canWrite} onSaved={onSaved} isDark={isDark} />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Overlay>
+  );
+};
+
+// ============================================================
+// 出欠の入力（1件ぶん）
+//
+// 🚨 詳細画面と「まとめて付ける画面」の**両方でこの部品を使う**。
+//    見た目と判定を1か所にまとめておかないと、片方だけ直す事故になる。
+// ============================================================
+const AttendanceEditor: React.FC<{
+  booking: Booking;
+  options: AttendanceOption[];
+  /** この予約ぶんの記録だけ渡す */
+  rows: AttendanceRow[];
+  /**
+   * 出欠を書けるか。🚨 DB側の room_is_staff()（＝パート以外）と同じ条件にすること。
+   *    緩めると「押せるのに保存できないボタン」になる。
+   */
+  canWrite: boolean;
+  onSaved: () => void | Promise<void>;
+  isDark: boolean;
+}> = ({ booking: b, options, rows, canWrite, onSaved, isDark }) => {
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+
+  const line = isDark ? '#3a3a5c' : '#e0e0e0';
+  const text = isDark ? '#eeeeee' : '#222222';
+  const textMid = isDark ? '#b3b8c6' : '#5b6270';
+
+  // 🚨 休講の回に出欠は無い（その回自体が行われていないため）
+  if (b.status === 'cancelled') {
+    return (
+      <p style={{ fontSize: 12.5, color: textMid, margin: 0, lineHeight: 1.6 }}>
+        休講なので出欠はありません。
+      </p>
+    );
+  }
+  const opts = attendanceOptionsFor(b.purpose, options);
+  if (opts.length === 0) {
+    return (
+      <p style={{ fontSize: 12.5, color: textMid, margin: 0, lineHeight: 1.6 }}>
+        この用途で選べる出欠がありません（基本設定 → 出欠の選択肢 で足せます）。
+      </p>
+    );
+  }
+
+  const people = participantsOf(b);
+  const pick = async (p: Participant, opt: AttendanceOption | null) => {
+    setBusy(p.key); setError('');
+    const msg = await saveAttendanceRow(b.id, p, opt);
+    setBusy('');
+    if (msg) { setError(msg); return; }
+    await onSaved();
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {error && (
+        <div style={{ background: isDark ? '#4a2a2a' : '#fdecea', border: `1px solid ${isDark ? '#7a4444' : '#f5c6cb'}`, color: isDark ? '#ffb4b4' : '#a3282a', borderRadius: 8, padding: '7px 10px', fontSize: 12.5 }}>
+          {error}
+        </div>
+      )}
+      {people.map(p => {
+        const cur = rows.find(r => r.participant_no === p.no && r.participant_name === p.name);
+        return (
+          <div key={p.key} style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 13, color: text, minWidth: 108 }}>{participantLabelOf(p)}</span>
+            {/* 書けない人（パート）には、押せないボタンではなく結果だけを見せる */}
+            {!canWrite && (
+              <span style={{ fontSize: 13, fontWeight: 700, color: cur ? text : textMid }}>
+                {cur ? cur.status : '未入力'}
+              </span>
+            )}
+            {canWrite && opts.map(o => {
+              const on = cur?.status === o.name;
+              return (
+                // 🚨 選んでいるものをもう一度押すと取り消し（付け間違いを直せるように）
+                <button key={o.id} disabled={busy === p.key}
+                  onClick={() => pick(p, on ? null : o)}
+                  style={{
+                    padding: '5px 11px', borderRadius: 999, fontSize: 12.5, fontWeight: 700,
+                    cursor: busy === p.key ? 'wait' : 'pointer',
+                    border: `2px solid ${on ? '#1565c0' : '#90caf9'}`,
+                    background: on ? '#1976d2' : '#e3f2fd',
+                    color: on ? '#fff' : '#1565c0',
+                  }}>{o.name}</button>
+              );
+            })}
+            {canWrite && !cur && (
+              <span style={{ fontSize: 12, color: textMid }}>未入力</span>
+            )}
+          </div>
+        );
+      })}
+      <p style={{ fontSize: 11.5, color: textMid, margin: 0, lineHeight: 1.6, borderTop: `1px solid ${line}`, paddingTop: 6 }}>
+        {canWrite
+          ? '押すとその場で保存されます。もう一度同じものを押すと取り消せます。'
+          : '出欠を付けられるのはパート以外の方です。ここでは記録を見るだけです。'}
+      </p>
+    </div>
+  );
+};
+
+// ============================================================
 // 予約の詳細（変更・休講・削除）
 // ============================================================
 const BookingDetail: React.FC<{
   booking: Booking; floors: Floor[]; campuses: Campus[];
   staff: Staff[]; categories: LessonCategory[];
+  attendanceOptions: AttendanceOption[]; attendance: AttendanceRow[];
+  /** 🚨 DB側の room_is_staff()（＝パート以外）と同じ条件を渡すこと */
+  canAttendance: boolean;
+  onAttendanceSaved: () => void | Promise<void>;
   onClose: () => void; onEdit: (b: Booking) => void; onChanged: (msg: string) => void; isDark: boolean;
-}> = ({ booking: b, floors, campuses, staff, categories, onClose, onEdit, onChanged, isDark }) => {
+}> = ({ booking: b, floors, campuses, staff, categories, attendanceOptions, attendance, canAttendance, onAttendanceSaved, onClose, onEdit, onChanged, isDark }) => {
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<'none' | 'cancel' | 'delete'>('none');
   // 繰り返しの予約は「この回だけ」か「今後すべて」かを必ず選んでもらう。
@@ -1912,6 +2363,13 @@ const BookingDetail: React.FC<{
           </span>
         ))}
         {b.memo && row('メモ', <span style={{ whiteSpace: 'pre-wrap' }}>{b.memo}</span>)}
+        {/* 出欠（2026-09-01 ユーザー指示）。
+            🚨 募集中の枠はまだ人が入っていないので出さない */}
+        {!isOpen && row('出欠', (
+          <AttendanceEditor booking={b} options={attendanceOptions}
+            rows={attendance.filter(r => r.booking_id === b.id)}
+            canWrite={canAttendance} onSaved={onAttendanceSaved} isDark={isDark} />
+        ))}
 
         {error && (
           <div style={{ background: isDark ? '#4a2a2a' : '#fdecea', border: `1px solid ${isDark ? '#7a4444' : '#f5c6cb'}`, color: isDark ? '#ffb4b4' : '#a3282a', borderRadius: 8, padding: '10px 12px', fontSize: 13.5, marginTop: 12 }}>
@@ -3455,13 +3913,14 @@ const StaffSettings: React.FC<{
 
 const BasicSettingsPanel: React.FC<{
   campuses: Campus[]; floors: Floor[]; staff: Staff[]; categories: LessonCategory[];
-  purposeDurations: PurposeDuration[]; purposeDetails: PurposeDetail[]; user: AuthUser;
+  purposeDurations: PurposeDuration[]; purposeDetails: PurposeDetail[];
+  attendanceOptions: AttendanceOption[]; user: AuthUser;
   /** 一覧の「予約する」から、そのお客様で予約を入れる流れに移る */
   onBook: (c: Customer) => void;
   onClose: () => void; onDone: (msg: string) => Promise<void>; isDark: boolean;
-}> = ({ campuses, floors, staff, categories, purposeDurations, purposeDetails, user, onBook, onClose, onDone, isDark }) => {
+}> = ({ campuses, floors, staff, categories, purposeDurations, purposeDetails, attendanceOptions, user, onBook, onClose, onDone, isDark }) => {
   const today = todayStr();
-  const [tab, setTab] = useState<'renew' | 'duration' | 'staff' | 'customer' | 'waitlist' | 'bulk'>('renew');
+  const [tab, setTab] = useState<'renew' | 'duration' | 'attendance' | 'staff' | 'customer' | 'waitlist' | 'bulk'>('renew');
   const [fy, setFy] = useState(fiscalYear(today));
   const [rows, setRows] = useState<RenewRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -3605,7 +4064,8 @@ const BasicSettingsPanel: React.FC<{
     <Overlay onClose={onClose} isDark={isDark} title="基本設定" wide>
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
         {([['renew', '年度更新'], ['waitlist', 'キャンセル待ち'], ['customer', 'お客様'],
-           ['bulk', '予約の一括入力'], ['staff', 'スタッフ'], ['duration', '用途詳細']] as const)
+           ['bulk', '予約の一括入力'], ['staff', 'スタッフ'], ['duration', '用途詳細'],
+           ['attendance', '出欠の選択肢']] as const)
           .map(([k, l]) => (
             <button key={k} onClick={() => !running && setTab(k)} style={smallBtn(tab === k)}>{l}</button>
           ))}
@@ -3613,6 +4073,9 @@ const BasicSettingsPanel: React.FC<{
 
       {tab === 'duration' && (
         <PurposeSettings purposeDurations={purposeDurations} purposeDetails={purposeDetails} onDone={onDone} isDark={isDark} />
+      )}
+      {tab === 'attendance' && (
+        <AttendanceOptionSettings options={attendanceOptions} onDone={onDone} isDark={isDark} />
       )}
 
       {tab === 'staff' && (
