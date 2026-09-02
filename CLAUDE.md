@@ -162,14 +162,24 @@ URLを開けば全ファイルを読めます（2026-08-28 実測確認済み）
 
 ### 自動チェックの限界
 
-| ファイル | pre-commit フック |
-|---|---|
-| `client/.env` | ✅ 止まる |
-| `client/.env.production` | ✅ 止まる（2026-09-01 実測。以前の「素通り」は誤り） |
+| ファイル | pre-commit フック | 止め方 |
+|---|---|---|
+| `client/.env` | ✅ 止まる | ファイル名 |
+| `client/.env.production` | ✅ **中身に禁止された鍵があるときだけ止まる** | 追加行の中身 |
 
-🚨 **`client/.env.production` も止まります。**このファイルは本番ビルドに必要で
-GitHubに置く前提なので、**そこを直すときだけ** `git commit --no-verify` で通してください。
-「素通り」より「止まって考える」ほうが安全なので、あえて緩めていません。
+🚨 **`client/.env.production` はファイル名では止めません**（2026-09-01 両担当で合意）。
+このファイルは本番ビルドに必要でGitHubに置く前提で、`VITE_` の追加など**正当な更新が
+定期的にあります**。ファイル名で一律に止めると毎回 `--no-verify` が必要になり、
+**`--no-verify` はそのコミットのフック全体を無効にします**。
+同じコミットに `.env` や `.pem` が混ざっていても素通りするので、
+「止める」設定にするとかえって守りが薄くなります。
+
+そこで**追加された行の中身だけ**を見て、下記のときに止めます。
+　`SERVICE_ROLE` / `VAPID_PRIVATE` / `_PRIVATE_KEY` / `hooks.slack.com` /
+　`RESEND` / `PASSWORD` / `SECRET`
+実測（2026-09-01・両PCで確認済み）：`VITE_SUPABASE_URL` `VITE_SUPABASE_ANON_KEY`
+`VITE_VAPID_PUBLIC_KEY` だけの更新は通り、`SUPABASE_SERVICE_ROLE_KEY` や
+`VAPID_PRIVATE_KEY` を足すと止まる。止めたときも**鍵の値は画面に出さない**。
 
 🚨 このチェックは **PCごとの設定**です。**新しいPCには入っていません**
 （2026-09-01 時点で、既存の2台には両方とも入っています）。
