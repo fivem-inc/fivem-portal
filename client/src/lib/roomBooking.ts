@@ -115,6 +115,12 @@ export interface Booking {
    */
   customer_grade?: string;
   staff_id: string | null;
+  /**
+   * 取り消した日時（消さずに印だけ付ける）。ふだんの一覧は deleted_at を除いて
+   * 読むので null。キャンセル待ちの「入れる日」の候補だけは、取り消した回も
+   * 読むためにここを見る（2026-09-02）。
+   */
+  deleted_at?: string | null;
   created_by: string;
   updated_by: string | null;
   created_at: string;
@@ -127,7 +133,10 @@ export interface Booking {
  */
 export interface Waitlist {
   id: string;
-  booking_id: string;
+  /** 「この回だけ」の待ち。毎週の枠の待ちでは null（どちらか片方だけが入る） */
+  booking_id: string | null;
+  /** 「毎週の枠」の待ち（2026-09-02〜）。担当が違えば枠も別＝待ち行列も別 */
+  recurrence_id: string | null;
   member_no: string | null;
   customer_label: string;
   staff_id: string | null;
@@ -135,10 +144,16 @@ export interface Waitlist {
   position: number;
   status: 'waiting' | 'promoted' | 'cancelled';
   created_at: string;
-  /** 一覧で曜日・時間別に並べるために、予約側の情報を一緒に読む */
+  /** 一覧で並べるために、予約側の情報を一緒に読む（この回だけの待ち用） */
   booking?: {
     id: string; floor_id: string; starts_at: string; ends_at: string;
     purpose: string; status: 'active' | 'cancelled'; deleted_at: string | null;
+    staff_id: string | null;
+  } | null;
+  /** 毎週の枠の待ち用。枠の曜日・時間・担当をここから出す */
+  recurrence?: {
+    id: string; floor_id: string; weekday: number; start_time: string; end_time: string;
+    purpose: string; staff_id: string | null; active: boolean;
   } | null;
 }
 

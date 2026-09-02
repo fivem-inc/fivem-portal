@@ -174,6 +174,10 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
   const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
   // まとめて出欠を付ける画面を開いているか
   const [attendanceOpen, setAttendanceOpen] = useState(false);
+  // キャンセル待ちの一覧（予約表の上のボタンから開く・2026-09-02 ユーザー承認）。
+  // 🚨 基本設定の中だけだと開くまで見えないので、いつでも開ける入口を表に出す
+  const [waitlistOpen, setWaitlistOpen] = useState(false);
+  const [waitingCount, setWaitingCount] = useState(0);
   const [campusId, setCampusId] = useState<string>('');
   const [view, setView] = useState<ViewMode>('place');
   // 担当別・参加者別の絞り込み。'' = 全員。それ以外は staff.id または参加者キー
@@ -264,6 +268,18 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
     })));
     return cs;
   }, []);
+
+  /**
+   * いま並んでいるキャンセル待ちの人数（予約表の上のボタンに出す）。
+   * 数だけなので head で数え、行は読まない。
+   */
+  const loadWaitingCount = useCallback(async (): Promise<void> => {
+    const { count } = await supabase.from('room_waitlist')
+      .select('id', { count: 'exact', head: true }).eq('status', 'waiting');
+    setWaitingCount(count ?? 0);
+  }, []);
+
+  useEffect(() => { loadWaitingCount(); }, [loadWaitingCount]);
 
   /**
    * 年度末が近いとき、まだ次の年度へ引き継いでいない繰り返しが何件あるかを数える。
@@ -658,6 +674,11 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
                  出欠は起点の日だけを出す（画面の中でも同じことを断っている） */}
           <button onClick={() => setAttendanceOpen(true)}
             style={{ ...btn(false), marginLeft: 'auto' }}>出欠</button>
+          {/* キャンセル待ちの一覧（2026-09-02 ユーザー承認）。
+              🚨 人数はボタンに直接出す。0名でも入口は出す（登録の説明が中にあるため） */}
+          <button onClick={() => setWaitlistOpen(true)} style={btn(false)}>
+            キャンセル待ち{waitingCount > 0 ? ` ${waitingCount}名` : ''}
+          </button>
           {canRenew && (
             <button onClick={() => setRenewal(true)} style={btn(false)}>基本設定</button>
           )}
@@ -770,10 +791,19 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
           attendanceOptions={attendanceOptions} attendance={attendance}
           canAttendance={canAttendance}
           onAttendanceSaved={() => loadAttendance(bookings.map(b => b.id))}
-          onClose={() => setDetail(null)}
+          onClose={() => { setDetail(null); loadWaitingCount(); }}
           onEdit={(b) => { setDetail(null); setForm({ kind: 'edit', booking: b }); }}
-          onChanged={(msg) => { setDetail(null); loadBookings(); showFlash(msg); }}
+          onChanged={(msg) => { setDetail(null); loadBookings(); loadWaitingCount(); showFlash(msg); }}
           isDark={isDark} />
+      )}
+      {waitlistOpen && (
+        <Overlay onClose={() => setWaitlistOpen(false)} isDark={isDark} title="キャンセル待ち" wide>
+          <WaitlistSettings floors={floors} campuses={campuses} staff={staff} isDark={isDark}
+            onDone={async (msg) => {
+              // 繰り上げで予約ができるので、予約表と人数も読み直す
+              await loadBookings(); await loadWaitingCount(); showFlash(msg);
+            }} />
+        </Overlay>
       )}
       {attendanceOpen && (
         <AttendancePanel
@@ -3096,6 +3126,11 @@ const BookingDetail: React.FC<{
   const [adding, setAdding] = useState(false);
   const [waitMember, setWaitMember] = useState('');
   const [waitLabel, setWaitLabel] = useState('');
+  // 繰り返しの予約では「毎週この枠を待つ」か「この回だけ待つ」かを選ぶ（既定は毎週）。
+  // 実運用は「毎週◯曜のこの枠が空いたら入りたい」がほとんどのため（2026-09-02 ユーザー承認）
+  const [waitScope, setWaitScope] = useState<'weekly' | 'once'>('weekly');
+  // 会員番号のコピー（どの番号をコピーしたか。数秒で消える）
+  const [copiedNo, setCopiedNo] = useState('');
   // 募集枠に申込を入れるときの入力
   const [filling, setFilling] = useState(false);
   // 🚨 予約フォームと**同じ部品**を使う（会員番号の引き当て・お名前の検索）。
@@ -3130,13 +3165,17 @@ const BookingDetail: React.FC<{
     return supabase.from('room_bookings').update(patch).eq('id', b.id);
   };
 
-  // この予約を待っている方を読む
+  // この予約（と、繰り返しならその枠）を待っている方を読む。
+  // 🚨 キャンセル待ちは「毎週の枠（recurrence）」か「この回だけ（booking）」の
+  //    どちらかに付く（2026-09-02〜）。繰り返しの予約では両方を合わせて出す
   const loadWaiting = useCallback(async () => {
-    const { data } = await supabase.from('room_waitlist')
-      .select('*').eq('booking_id', b.id).eq('status', 'waiting')
-      .order('position').order('created_at');
+    let q = supabase.from('room_waitlist').select('*').eq('status', 'waiting');
+    q = b.recurrence_id
+      ? q.or(`booking_id.eq.${b.id},recurrence_id.eq.${b.recurrence_id}`)
+      : q.eq('booking_id', b.id);
+    const { data } = await q.order('position').order('created_at');
     setWaiting((data ?? []) as Waitlist[]);
-  }, [b.id]);
+  }, [b.id, b.recurrence_id]);
 
   useEffect(() => { loadWaiting(); }, [loadWaiting]);
 
@@ -3145,8 +3184,12 @@ const BookingDetail: React.FC<{
     setBusy(true); setError('');
     const { data: me } = await supabase.auth.getUser();
     if (!me.user?.id) { setBusy(false); setError('ログインし直してください'); return; }
+    // 繰り返しの予約で「毎週この枠」を選んだときは枠（recurrence）に付ける。
+    // 🚨 どちらか片方だけを入れる（DBの check 制約と同じ約束）
+    const weekly = !!b.recurrence_id && waitScope === 'weekly';
     const { error: err } = await supabase.from('room_waitlist').insert({
-      booking_id: b.id,
+      booking_id: weekly ? null : b.id,
+      recurrence_id: weekly ? b.recurrence_id : null,
       member_no: waitMember.trim() || null,
       customer_label: waitLabel.trim(),
       // 末尾に並べる。同じ値でも受け付けた順に出るので、細かく詰め直さない
@@ -3276,6 +3319,24 @@ const BookingDetail: React.FC<{
               style={{ color: accent, fontSize: 12.5, fontWeight: 700, textDecoration: 'none', border: `1px solid ${accent}`, borderRadius: 999, padding: '3px 11px' }}>
               スコラプラスで予約 →
             </a>
+            {/* 会員番号のコピー（2026-09-02 ユーザー指示）。
+                🚨 2名の予約は「A, B」とつながっており、そのままコピーしても貼り先で
+                   使えないので、**番号ごとにボタンを分ける**（ユーザー承認済み） */}
+            {participantsOf(b).map(p => p.no).filter(Boolean).map((no, _, arr) => (
+              <button key={no}
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(no);
+                    setCopiedNo(no);
+                    setTimeout(() => setCopiedNo(prev => (prev === no ? '' : prev)), 2000);
+                  } catch {
+                    setError('コピーできませんでした。番号を長押し（または選択）してコピーしてください。');
+                  }
+                }}
+                style={{ color: copiedNo === no ? accent : textMid, fontSize: 12.5, fontWeight: copiedNo === no ? 700 : 400, background: 'transparent', border: `1px solid ${copiedNo === no ? accent : line}`, borderRadius: 999, padding: '3px 11px', cursor: 'pointer' }}>
+                {copiedNo === no ? '✓ コピーしました' : (arr.length > 1 ? `📋 ${no}` : '📋 コピー')}
+              </button>
+            ))}
           </span>
         ))}
         {b.memo && row('メモ', <span style={{ whiteSpace: 'pre-wrap' }}>{b.memo}</span>)}
@@ -3385,18 +3446,28 @@ const BookingDetail: React.FC<{
                   <div key={w.id} style={{ fontSize: 12.5, color: textMid, lineHeight: 1.8 }}>
                     {i + 1}. {w.customer_label}
                     {w.member_no ? `（${w.member_no}）` : '（一般）'}
+                    {/* 繰り返しの予約では「毎週の枠の待ち」と「この回だけの待ち」が
+                        混ざるので、どちらか分かるように印を付ける */}
+                    {repeating && (w.recurrence_id ? '〔毎週〕' : '〔この回だけ〕')}
                     {w.note ? ` / ${w.note}` : ''}
                   </div>
                 ))}
                 <p style={{ fontSize: 11.5, color: textMid, margin: '5px 0 0', lineHeight: 1.6 }}>
-                  繰り上げは「基本設定 → キャンセル待ち」から行います
-                  （先にこの予約を休講または取り消してください）
+                  繰り上げは予約表の上の「キャンセル待ち」から行います
+                  （先に入れたい回を休講または取り消してください）
                 </p>
               </div>
             )}
 
             {adding && (
               <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                {/* 毎週の枠か、この回だけか（繰り返しの予約のときだけ選べる。既定は毎週） */}
+                {repeating && (['weekly', 'once'] as const).map(s => (
+                  <button key={s} onClick={() => setWaitScope(s)}
+                    style={{ padding: '6px 12px', borderRadius: 999, fontSize: 12.5, cursor: 'pointer', border: `1px solid ${waitScope === s ? accent : line}`, background: waitScope === s ? accent : 'transparent', color: waitScope === s ? (isDark ? '#1d2a24' : '#fff') : textMid, fontWeight: waitScope === s ? 700 : 400 }}>
+                    {s === 'weekly' ? '毎週この枠' : 'この回だけ'}
+                  </button>
+                ))}
                 <input value={waitMember} onChange={e => setWaitMember(e.target.value)}
                   placeholder="会員番号（任意）" inputMode="numeric"
                   style={{ padding: '7px 9px', borderRadius: 8, border: `1px solid ${line}`, background: isDark ? '#495057' : '#fff', color: text, fontSize: 16, width: 130, boxSizing: 'border-box' }} />
@@ -3492,6 +3563,11 @@ const PurposeSettings: React.FC<{
   // 詳細（体操・筋トレなど）の編集。用途ごとに「追加する名前」を持つ
   const [newDetail, setNewDetail] = useState<Record<string, string>>({});
   const [detailBusy, setDetailBusy] = useState('');
+  // 名前の変更（2026-09-02 ユーザー承認・案A＝過去の予約もまとめて書き換える）
+  const [renaming, setRenaming] = useState<string | null>(null);   // 変更中の詳細の id
+  const [renameText, setRenameText] = useState('');
+  // 「過去◯件も変わります」を見せてから実行する（null = まだ数えていない）
+  const [renameCounts, setRenameCounts] = useState<{ bookings: number; recurrences: number } | null>(null);
 
   const line = isDark ? '#3a3a5c' : '#e0e0e0';
   const text = isDark ? '#eeeeee' : '#222222';
@@ -3607,6 +3683,60 @@ const PurposeSettings: React.FC<{
     await onDone('並びを変えました');
   };
 
+  const startRename = (dt: PurposeDetail) => {
+    setRenaming(dt.id); setRenameText(dt.name); setRenameCounts(null); setError('');
+  };
+
+  /** 名前を変える前に、影響する件数を数えて見せる（いきなり書き換えない） */
+  const checkRename = async (dt: PurposeDetail) => {
+    const name = renameText.trim();
+    if (!name) { setError('新しい名前を入れてください'); return; }
+    if (name === dt.name) { setRenaming(null); return; }
+    if (purposeDetails.some(x => x.purpose === dt.purpose && x.name === name)) {
+      setError(`「${name}」はもう登録されています（別の名前にしてください）`);
+      return;
+    }
+    setDetailBusy(dt.id); setError('');
+    const [rb, rr] = await Promise.all([
+      supabase.from('room_bookings').select('id', { count: 'exact', head: true })
+        .eq('purpose', dt.purpose).eq('detail', dt.name),
+      supabase.from('room_recurrences').select('id', { count: 'exact', head: true })
+        .eq('purpose', dt.purpose).eq('detail', dt.name),
+    ]);
+    setDetailBusy('');
+    if (rb.error || rr.error) { setError('件数を数えられませんでした。通信を確認してもう一度お試しください。'); return; }
+    setRenameCounts({ bookings: rb.count ?? 0, recurrences: rr.count ?? 0 });
+  };
+
+  /**
+   * 名前の変更の本体（案A・2026-09-02 ユーザー承認）。
+   * 🚨 過去の予約・繰り返しの中身も**まとめて新しい名前に書き換える**。
+   *    表記の変更（例：筋トレ→筋力トレーニング）で意味は同じ、が前提。
+   *    意味が変わるときは「追加して古いほうを隠す」でやってもらう（画面にも書いてある）。
+   * 🚨 3回の書き込みは途中で失敗することがある。予約→繰り返し→選択肢の順に書き、
+   *    失敗したらもう一度「変える」を押せば続きから直せる（旧名で残った行だけが対象になるため）。
+   */
+  const doRename = async (dt: PurposeDetail) => {
+    const name = renameText.trim();
+    setDetailBusy(dt.id); setError('');
+    const { data: me } = await supabase.auth.getUser();
+    const now = new Date().toISOString();
+    const r1 = await supabase.from('room_bookings').update({ detail: name, updated_at: now })
+      .eq('purpose', dt.purpose).eq('detail', dt.name);
+    if (r1.error) { setDetailBusy(''); setError('予約の書き換えに失敗しました。もう一度「変える」を押すと続きから直せます。'); return; }
+    const r2 = await supabase.from('room_recurrences').update({ detail: name })
+      .eq('purpose', dt.purpose).eq('detail', dt.name);
+    if (r2.error) { setDetailBusy(''); setError('繰り返しの書き換えに失敗しました。もう一度「変える」を押すと続きから直せます。'); return; }
+    // 🚨 選択肢そのものは最後に。update は0件でもエラーにならないので件数を見る
+    const r3 = await supabase.from('room_purpose_details')
+      .update({ name, updated_at: now, updated_by: me.user?.id ?? null })
+      .eq('id', dt.id).select('id');
+    setDetailBusy('');
+    if (r3.error || !r3.data?.length) { setError('選択肢の名前を変えられませんでした。権限か通信を確認して、もう一度お試しください。'); return; }
+    setRenaming(null);
+    await onDone(`「${dt.name}」を「${name}」に変えました`);
+  };
+
   const input: React.CSSProperties = {
     padding: '7px 9px', borderRadius: 8, border: `1px solid ${line}`,
     background: fieldBg, color: text, fontSize: 16, boxSizing: 'border-box',
@@ -3675,9 +3805,13 @@ const PurposeSettings: React.FC<{
               {/* 詳細（パーソナルの「体操」「筋トレ」など・2026-09-01 ユーザー指示）。
                   🚨 一度使ったものは消さず「隠す」。過去の予約に名前が残っているため */}
               <div style={{ borderTop: `1px solid ${line}`, marginTop: 10, paddingTop: 9 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 700, color: textMid, marginBottom: 7 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: textMid, marginBottom: 4 }}>
                   詳細（この用途の中の区分）
                 </div>
+                <p style={{ fontSize: 12, color: textMid, margin: '0 0 7px', lineHeight: 1.6 }}>
+                  「名前を変える」は書き方を直すためのものです（過去の予約の表示もまとめて変わります）。
+                  中身が別のものに変わるときは、新しく追加して古いほうを隠してください。
+                </p>
                 {detailsFor(p).length === 0 && (
                   <p style={{ fontSize: 12.5, color: textMid, margin: '0 0 7px', lineHeight: 1.6 }}>
                     まだありません。足すと、予約フォームに選ぶボタンが出ます。
@@ -3685,18 +3819,55 @@ const PurposeSettings: React.FC<{
                 )}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
                   {detailsFor(p).map((dt, i, arr) => (
-                    <div key={dt.id} style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: 13.5, color: dt.active ? text : textMid, minWidth: 96 }}>
-                        {dt.name}{!dt.active && '（隠しています）'}
-                      </span>
-                      <button onClick={() => moveDetail(dt, -1)} disabled={i === 0 || detailBusy === dt.id}
-                        style={{ padding: '3px 9px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 12.5, cursor: i === 0 ? 'default' : 'pointer', opacity: i === 0 ? .4 : 1 }}>↑</button>
-                      <button onClick={() => moveDetail(dt, 1)} disabled={i === arr.length - 1 || detailBusy === dt.id}
-                        style={{ padding: '3px 9px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 12.5, cursor: i === arr.length - 1 ? 'default' : 'pointer', opacity: i === arr.length - 1 ? .4 : 1 }}>↓</button>
-                      <button onClick={() => toggleDetail(dt)} disabled={detailBusy === dt.id}
-                        style={{ padding: '3px 11px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 12.5, cursor: detailBusy === dt.id ? 'wait' : 'pointer' }}>
-                        {dt.active ? '隠す' : '戻す'}
-                      </button>
+                    <div key={dt.id} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 13.5, color: dt.active ? text : textMid, minWidth: 96 }}>
+                          {dt.name}{!dt.active && '（隠しています）'}
+                        </span>
+                        <button onClick={() => moveDetail(dt, -1)} disabled={i === 0 || detailBusy === dt.id}
+                          style={{ padding: '3px 9px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 12.5, cursor: i === 0 ? 'default' : 'pointer', opacity: i === 0 ? .4 : 1 }}>↑</button>
+                        <button onClick={() => moveDetail(dt, 1)} disabled={i === arr.length - 1 || detailBusy === dt.id}
+                          style={{ padding: '3px 9px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 12.5, cursor: i === arr.length - 1 ? 'default' : 'pointer', opacity: i === arr.length - 1 ? .4 : 1 }}>↓</button>
+                        <button onClick={() => (renaming === dt.id ? setRenaming(null) : startRename(dt))}
+                          disabled={detailBusy === dt.id}
+                          style={{ padding: '3px 11px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 12.5, cursor: detailBusy === dt.id ? 'wait' : 'pointer' }}>
+                          名前を変える
+                        </button>
+                        <button onClick={() => toggleDetail(dt)} disabled={detailBusy === dt.id}
+                          style={{ padding: '3px 11px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 12.5, cursor: detailBusy === dt.id ? 'wait' : 'pointer' }}>
+                          {dt.active ? '隠す' : '戻す'}
+                        </button>
+                      </div>
+                      {/* 名前の変更（2026-09-02 ユーザー承認・案A）。
+                          🚨 いきなり書き換えず、影響する件数を見せてから実行する */}
+                      {renaming === dt.id && (
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginLeft: 8, padding: '7px 9px', border: `1px solid ${line}`, borderRadius: 8 }}>
+                          <input value={renameText}
+                            onChange={e => { setRenameText(e.target.value); setRenameCounts(null); }}
+                            placeholder="新しい名前" style={{ ...input, width: 150 }} />
+                          {renameCounts === null ? (
+                            <button onClick={() => checkRename(dt)} disabled={detailBusy === dt.id}
+                              style={{ padding: '7px 14px', borderRadius: 8, border: `1px solid ${accent}`, background: 'transparent', color: accent, fontSize: 13, fontWeight: 700, cursor: detailBusy === dt.id ? 'wait' : 'pointer' }}>
+                              {detailBusy === dt.id ? '数えています...' : '次へ'}
+                            </button>
+                          ) : (
+                            <>
+                              <span style={{ fontSize: 12.5, color: textMid, lineHeight: 1.6 }}>
+                                過去の予約 <b>{renameCounts.bookings}件</b>・繰り返し <b>{renameCounts.recurrences}件</b> の表示も
+                                「{renameText.trim()}」に変わります。よろしいですか？
+                              </span>
+                              <button onClick={() => doRename(dt)} disabled={detailBusy === dt.id}
+                                style={{ padding: '7px 14px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 13, fontWeight: 700, cursor: detailBusy === dt.id ? 'wait' : 'pointer' }}>
+                                {detailBusy === dt.id ? '変えています...' : '変える'}
+                              </button>
+                            </>
+                          )}
+                          <button onClick={() => setRenaming(null)}
+                            style={{ padding: '7px 12px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 13, cursor: 'pointer' }}>
+                            やめる
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -4095,10 +4266,11 @@ const BulkBookingPanel: React.FC<{
 };
 
 /**
- * キャンセル待ちの一覧（曜日・時間別）。
+ * キャンセル待ちの一覧（枠ごと）。
  *
- * 🚨 日付ごとに並べると、毎週同じ枠を待っている人が散らばって見えない。
- *    「火曜16:00に3名待っている」が分かる形にする（2026-08-31 ユーザー指示）。
+ * 🚨 待ちは「毎週の枠（recurrence）」か「この回だけ（booking）」のどちらかに付く
+ *    （2026-09-02 ユーザー承認・案A）。一覧も**枠ごと**にまとめる。
+ *    担当者が違えば繰り返し（recurrence）も別なので、待ち行列は自動的に分かれる。
  * 🚨 曜日は new Date(starts_at).getDay() で取る（端末時刻なので正しい）。
  *    starts_at の文字列を切り出してはいけない（UTC表記で前日になる）。
  */
@@ -4113,6 +4285,13 @@ const WaitlistSettings: React.FC<{
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ member: string; label: string; note: string }>(
     { member: '', label: '', note: '' });
+  // 「どの日に入れるか」を選んでいる待ち（毎週の枠の繰り上げ用）
+  const [pickFor, setPickFor] = useState<string | null>(null);
+  const [occ, setOcc] = useState<Booking[]>([]);
+  const [occLoading, setOccLoading] = useState(false);
+  // 繰り上げた直後に「その方の他の待ち」をどうするか選んでもらう
+  // （🚨 自動では消さない。別の枠も引き続き待ちたい場合があるため・2026-09-02 ユーザー承認）
+  const [afterPromote, setAfterPromote] = useState<{ name: string; items: Waitlist[] } | null>(null);
 
   const line = isDark ? '#3a3a5c' : '#e0e0e0';
   const lineSoft = isDark ? '#35354e' : '#eef0f3';
@@ -4144,7 +4323,7 @@ const WaitlistSettings: React.FC<{
     setLoading(true); setError('');
     const { data, error: err } = await supabase
       .from('room_waitlist')
-      .select('*, booking:room_bookings(id, floor_id, starts_at, ends_at, purpose, status, deleted_at)')
+      .select('*, booking:room_bookings(id, floor_id, starts_at, ends_at, purpose, status, deleted_at, staff_id), recurrence:room_recurrences(id, floor_id, weekday, start_time, end_time, purpose, staff_id, active)')
       .eq('status', 'waiting')
       .order('position')
       .order('created_at');
@@ -4158,22 +4337,48 @@ const WaitlistSettings: React.FC<{
 
   useEffect(() => { load(); }, [load]);
 
-  /** 場所・曜日・開始時刻でまとめる。毎週同じ枠を待っている人を1つにする */
+  /**
+   * 枠ごとにまとめる。
+   *   ・毎週の枠の待ち … recurrence ごと（担当が違えば別の枠）
+   *   ・この回だけの待ち … 予約ごと
+   * 見出しに使う曜日・時刻・担当もここで決めておく。
+   */
+  type WaitGroup = {
+    key: string; kind: 'slot' | 'single'; floorId: string;
+    /** 並べ替え用（毎週の枠は曜日、単発は日付） */
+    weekday: number; time: string; dateStr: string;
+    staffId: string | null; purpose: string; items: Waitlist[];
+  };
   const groups = useMemo(() => {
-    const m = new Map<string, { floorId: string; weekday: number; time: string; items: Waitlist[] }>();
+    const m = new Map<string, WaitGroup>();
     for (const w of rows) {
-      const b = w.booking;
-      if (!b || b.deleted_at) continue;      // 消された予約の待ちは出さない
-      const d = new Date(b.starts_at);
-      const key = `${b.floor_id}|${d.getDay()}|${hhmm(b.starts_at)}`;
-      const g = m.get(key)
-        ?? { floorId: b.floor_id, weekday: d.getDay(), time: hhmm(b.starts_at), items: [] };
+      let g: WaitGroup | undefined;
+      if (w.recurrence_id && w.recurrence) {
+        const r = w.recurrence;
+        g = m.get(`r|${r.id}`) ?? {
+          key: `r|${r.id}`, kind: 'slot', floorId: r.floor_id,
+          weekday: r.weekday, time: r.start_time.slice(0, 5), dateStr: '',
+          staffId: r.staff_id, purpose: r.purpose, items: [],
+        };
+      } else if (w.booking_id && w.booking) {
+        const b = w.booking;
+        if (b.deleted_at) continue;          // 消された予約の「この回だけ」の待ちは出さない
+        const d = new Date(b.starts_at);
+        g = m.get(`b|${b.id}`) ?? {
+          key: `b|${b.id}`, kind: 'single', floorId: b.floor_id,
+          weekday: d.getDay(), time: hhmm(b.starts_at), dateStr: localDate(b.starts_at),
+          staffId: b.staff_id, purpose: b.purpose, items: [],
+        };
+      }
+      if (!g) continue;
       g.items.push(w);
-      m.set(key, g);
+      m.set(g.key, g);
     }
     const order = new Map(floors.map((f, i) => [f.id, i]));
+    // 毎週の枠を先に（曜日→時刻→場所）、そのあとに単発（日付→時刻）
     return [...m.values()].sort((a, b) =>
-      a.weekday - b.weekday
+      (a.kind === 'single' ? 1 : 0) - (b.kind === 'single' ? 1 : 0)
+      || (a.kind === 'single' ? a.dateStr.localeCompare(b.dateStr) : a.weekday - b.weekday)
       || a.time.localeCompare(b.time)
       || (order.get(a.floorId) ?? 99) - (order.get(b.floorId) ?? 99));
   }, [rows, floors]);
@@ -4211,6 +4416,19 @@ const WaitlistSettings: React.FC<{
     await load();
   };
 
+  /** 先頭へ（2026-09-02 ユーザー承認）。いちばん小さい position より小さくするだけ */
+  const moveTop = async (list: Waitlist[], idx: number) => {
+    if (idx <= 0) return;
+    setBusy(list[idx].id);
+    const minPos = Math.min(...list.map(x => x.position));
+    const { error: err } = await supabase.from('room_waitlist')
+      .update({ position: minPos - 1, updated_at: new Date().toISOString() })
+      .eq('id', list[idx].id);
+    setBusy('');
+    if (err) { setError('順番を変えられませんでした。'); return; }
+    await load();
+  };
+
   const cancel = async (w: Waitlist) => {
     setBusy(w.id);
     const { error: err } = await supabase.from('room_waitlist')
@@ -4221,34 +4439,115 @@ const WaitlistSettings: React.FC<{
     await onDone('キャンセル待ちを取り消しました');
   };
 
-  const promote = async (w: Waitlist) => {
+  /**
+   * 繰り上げの本体。「どの回に入れるか」（予約表の1行）を指定して呼ぶ。
+   * 🚨 空きの最終判定はサーバー（room_create_booking）。画面では判定しない。
+   */
+  const promoteAt = async (w: Waitlist, targetBookingId: string) => {
     setBusy(w.id); setError('');
-    const { data, error: err } = await supabase.rpc('room_promote_waitlist', { p_waitlist_id: w.id });
+    const { data, error: err } = await supabase.rpc('room_promote_waitlist_at', {
+      p_waitlist_id: w.id, p_target_booking_id: targetBookingId,
+    });
     const row = (Array.isArray(data) ? data[0] : data) as
       { ok?: boolean; reason?: string } | null;
     setBusy('');
     if (err) { setError('繰り上げられませんでした。通信を確認してください。'); return; }
     if (!row?.ok) {
-      // 多くは「もとの予約がまだ生きている」。先に休講や取り消しが要る
-      setError(`${row?.reason ?? '繰り上げられませんでした'}（先にもとの予約を休講または取り消してください）`);
+      // 多くは「その回がまだ生きている」。先に休講や取り消しが要る
+      setError(`${row?.reason ?? '繰り上げられませんでした'}（先にその回を休講または取り消してください）`);
       return;
     }
+    setPickFor(null); setOcc([]);
+    // 🚨 繰り上げた方が**他の枠でも待っていたら**、その場でどうするか選んでもらう
+    //    （残す／取り消す）。自動では消さない（別の枠も待ち続けたい場合があるため）
+    const others = rows.filter(x =>
+      x.id !== w.id && x.status === 'waiting'
+      && (w.member_no && x.member_no ? x.member_no === w.member_no : x.customer_label === w.customer_label));
+    setAfterPromote(others.length ? { name: w.customer_label, items: others } : null);
     await load();
     await onDone(`${w.customer_label} を予約に繰り上げました`);
+  };
+
+  /** 毎週の枠の待ち：入れる日の候補（今後の回）を読み込んで選んでもらう */
+  const openPick = async (w: Waitlist) => {
+    if (!w.recurrence_id) return;
+    setPickFor(w.id); setOcc([]); setOccLoading(true); setError('');
+    const from = new Date(); from.setHours(0, 0, 0, 0);
+    // 🚨 取り消し（deleted_at あり）の回も読む。「取り消して空けた日」こそ入れる先になるため
+    const { data, error: err } = await supabase.from('room_bookings')
+      .select('*')
+      .eq('recurrence_id', w.recurrence_id)
+      .gte('starts_at', from.toISOString())
+      .order('starts_at')
+      .limit(12);
+    setOccLoading(false);
+    if (err) { setError('枠の日付を読み込めませんでした。通信を確認してください。'); setPickFor(null); return; }
+    setOcc((data ?? []) as Booking[]);
+  };
+
+  /** 担当の表示。🚨 空欄だと「担当が無い」のか「出ていない」のか分からないので必ず書く */
+  const staffName = (id: string | null): string =>
+    id ? (staff.find(s => s.id === id)?.name ?? '担当なし') : '担当なし';
+
+  /** 待ちが付いている枠のことば（「他の待ちをどうしますか」の一覧で使う） */
+  const waitSlotLabel = (w: Waitlist): string => {
+    if (w.recurrence) {
+      const r = w.recurrence;
+      return `毎週${WEEKDAY_LABEL[r.weekday]}曜 ${r.start_time.slice(0, 5)} / ${placeName(r.floor_id)} / 担当：${staffName(r.staff_id)}`;
+    }
+    if (w.booking) {
+      return `${formatDateLabel(localDate(w.booking.starts_at))} ${hhmm(w.booking.starts_at)} / ${placeName(w.booking.floor_id)}（この回だけ）`;
+    }
+    return '';
+  };
+
+  /** その回の状態。🚨 空きの最終判定はサーバー。ここは目安を出すだけ */
+  const occLabel = (o: Booking): { label: string; free: boolean } => {
+    if (o.deleted_at) return { label: '取消済み', free: true };
+    if (o.status === 'cancelled') return { label: '休講', free: true };
+    return { label: '予約が入っています', free: false };
   };
 
   return (
     <div>
       <div style={{ background: lineSoft, borderRadius: 8, padding: '10px 12px', fontSize: 13, lineHeight: 1.7, marginBottom: 12, color: textMid }}>
-        いま並んでいる方を、<b>曜日・時間ごと</b>にまとめています。
+        いま並んでいる方を、<b>枠ごと</b>（毎週の枠は担当ごとに別）にまとめています。
         <br />
-        🚨 <b>自動では繰り上げません。</b>もとの予約を休講または取り消したうえで「繰り上げる」を押すと、
+        🚨 <b>自動では繰り上げません。</b>入れたい回を休講または取り消したうえで繰り上げると、
         その方の予約ができます。空きが無いまま押すと、理由を出して止まります。
       </div>
 
       {error && (
         <div style={{ background: isDark ? '#4a2a2a' : '#fdecea', border: `1px solid ${isDark ? '#7a4444' : '#f5c6cb'}`, color: isDark ? '#ffb4b4' : '#a3282a', borderRadius: 8, padding: '9px 12px', fontSize: 13, marginBottom: 12 }}>
           {error}
+        </div>
+      )}
+
+      {/* 繰り上げた方が他の枠でも待っていたときの案内。
+          🚨 自動では消さない（別の枠も待ち続けたい場合があるため）。1件ずつ選んでもらう */}
+      {afterPromote && (
+        <div style={{ background: isDark ? '#4a4326' : '#fff8e1', border: `1px solid ${isDark ? '#8a7a3a' : '#ffe082'}`, color: isDark ? '#ffe6a3' : '#7a5c00', borderRadius: 8, padding: '10px 12px', fontSize: 13, marginBottom: 12, lineHeight: 1.8 }}>
+          <b>{afterPromote.name}</b> さんは、他の枠でも待っています。それぞれどうしますか？
+          {afterPromote.items.map(o => (
+            <div key={o.id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
+              <span>{waitSlotLabel(o)}</span>
+              <span style={{ marginLeft: 'auto', display: 'flex', gap: 5 }}>
+                <button onClick={async () => {
+                  await cancel(o);
+                  setAfterPromote(p => {
+                    if (!p) return null;
+                    const rest = p.items.filter(x => x.id !== o.id);
+                    return rest.length ? { ...p, items: rest } : null;
+                  });
+                }} disabled={!!busy} style={smallBtn(false)}>待ちを取り消す</button>
+                <button onClick={() => setAfterPromote(p => {
+                  if (!p) return null;
+                  const rest = p.items.filter(x => x.id !== o.id);
+                  return rest.length ? { ...p, items: rest } : null;
+                })} style={smallBtn(false)}>残す</button>
+              </span>
+            </div>
+          ))}
         </div>
       )}
 
@@ -4262,12 +4561,16 @@ const WaitlistSettings: React.FC<{
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {groups.map(g => (
-            <div key={`${g.floorId}|${g.weekday}|${g.time}`}
+            <div key={g.key}
               style={{ border: `1px solid ${line}`, borderRadius: 8, padding: '10px 12px' }}>
               <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>
-                {WEEKDAY_LABEL[g.weekday]}曜 {g.time}
+                {g.kind === 'slot'
+                  ? <>毎週{WEEKDAY_LABEL[g.weekday]}曜 {g.time}</>
+                  : <>{formatDateLabel(g.dateStr)} {g.time}（この回だけ）</>}
                 <span style={{ fontSize: 12.5, fontWeight: 400, color: textMid }}>
-                  {' / '}{placeName(g.floorId)}{' / '}待ち {g.items.length}名
+                  {' / '}{placeName(g.floorId)}{' / '}{g.purpose}
+                  {' / '}担当：{staffName(g.staffId)}
+                  {' / '}待ち {g.items.length}名
                 </span>
               </div>
 
@@ -4289,29 +4592,73 @@ const WaitlistSettings: React.FC<{
                       <button onClick={() => setEditing(null)} style={smallBtn(false)}>やめる</button>
                     </div>
                   ) : (
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: 12.5, color: textMid, minWidth: 22 }}>{i + 1}.</span>
-                      <b style={{ fontSize: 13.5 }}>{w.customer_label}</b>
-                      <span style={{ fontSize: 12.5, color: textMid }}>
-                        {w.member_no ?? '一般'}
-                        {w.staff_id && ` / 希望：${staff.find(s => s.id === w.staff_id)?.name ?? ''}`}
-                        {w.note && ` / ${w.note}`}
-                      </span>
-                      <span style={{ marginLeft: 'auto', display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                        <button onClick={() => move(g.items, i, -1)} disabled={i === 0 || !!busy}
-                          style={{ ...smallBtn(false), opacity: i === 0 ? .4 : 1 }} aria-label="順番を上げる">▲</button>
-                        <button onClick={() => move(g.items, i, 1)} disabled={i === g.items.length - 1 || !!busy}
-                          style={{ ...smallBtn(false), opacity: i === g.items.length - 1 ? .4 : 1 }} aria-label="順番を下げる">▼</button>
-                        <button onClick={() => {
-                          setEditing(w.id);
-                          setDraft({ member: w.member_no ?? '', label: w.customer_label, note: w.note ?? '' });
-                        }} style={smallBtn(false)}>直す</button>
-                        <button onClick={() => promote(w)} disabled={!!busy}
-                          style={smallBtn(true)}>繰り上げる</button>
-                        <button onClick={() => cancel(w)} disabled={!!busy}
-                          style={smallBtn(false)}>取り消す</button>
-                      </span>
-                    </div>
+                    <>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 12.5, color: textMid, minWidth: 22 }}>{i + 1}.</span>
+                        <b style={{ fontSize: 13.5 }}>{w.customer_label}</b>
+                        <span style={{ fontSize: 12.5, color: textMid }}>
+                          {w.member_no ?? '一般'}
+                          {w.staff_id && ` / 希望：${staff.find(s => s.id === w.staff_id)?.name ?? ''}`}
+                          {w.note && ` / ${w.note}`}
+                        </span>
+                        <span style={{ marginLeft: 'auto', display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                          <button onClick={() => move(g.items, i, -1)} disabled={i === 0 || !!busy}
+                            style={{ ...smallBtn(false), opacity: i === 0 ? .4 : 1 }} aria-label="順番を上げる">▲</button>
+                          <button onClick={() => move(g.items, i, 1)} disabled={i === g.items.length - 1 || !!busy}
+                            style={{ ...smallBtn(false), opacity: i === g.items.length - 1 ? .4 : 1 }} aria-label="順番を下げる">▼</button>
+                          <button onClick={() => moveTop(g.items, i)} disabled={i === 0 || !!busy}
+                            style={{ ...smallBtn(false), opacity: i === 0 ? .4 : 1 }}>先頭へ</button>
+                          <button onClick={() => {
+                            setEditing(w.id);
+                            setDraft({ member: w.member_no ?? '', label: w.customer_label, note: w.note ?? '' });
+                          }} style={smallBtn(false)}>直す</button>
+                          {/* 毎週の枠は「どの日に入れるか」を選んでから。この回だけは直接 */}
+                          {g.kind === 'slot' ? (
+                            <button onClick={() => (pickFor === w.id ? setPickFor(null) : openPick(w))}
+                              disabled={!!busy} style={smallBtn(pickFor === w.id)}>
+                              {pickFor === w.id ? '日を選ぶのをやめる' : '繰り上げる（日を選ぶ）'}
+                            </button>
+                          ) : (
+                            <button onClick={() => w.booking_id && promoteAt(w, w.booking_id)}
+                              disabled={!!busy} style={smallBtn(true)}>繰り上げる</button>
+                          )}
+                          <button onClick={() => cancel(w)} disabled={!!busy}
+                            style={smallBtn(false)}>取り消す</button>
+                        </span>
+                      </div>
+
+                      {/* どの日に入れるか（毎週の枠の待ちだけ） */}
+                      {pickFor === w.id && (
+                        <div style={{ margin: '8px 0 2px 30px', border: `1px solid ${lineSoft}`, borderRadius: 8, padding: '8px 10px' }}>
+                          {occLoading ? (
+                            <p style={{ fontSize: 12.5, color: textMid, margin: 0 }}>日付を読み込んでいます…</p>
+                          ) : occ.length === 0 ? (
+                            <p style={{ fontSize: 12.5, color: textMid, margin: 0, lineHeight: 1.7 }}>
+                              この枠の今後の回が見つかりません（繰り返しの期限が切れているなど）。
+                              その場合は予約表から普通に予約を入れてください。
+                            </p>
+                          ) : (
+                            <>
+                              <p style={{ fontSize: 12, color: textMid, margin: '0 0 6px', lineHeight: 1.6 }}>
+                                入れる日を選んでください。「予約が入っています」の日は、先にその回を
+                                休講または取り消さないと入りません（押しても理由を出して止まります）。
+                              </p>
+                              {occ.map(o => {
+                                const s = occLabel(o);
+                                return (
+                                  <div key={o.id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '3px 0' }}>
+                                    <span style={{ fontSize: 13 }}>{formatDateLabel(localDate(o.starts_at))} {hhmm(o.starts_at)}</span>
+                                    <span style={{ fontSize: 12, color: s.free ? accent : textMid }}>{s.label}</span>
+                                    <button onClick={() => promoteAt(w, o.id)} disabled={!!busy}
+                                      style={{ ...smallBtn(s.free), marginLeft: 'auto' }}>この日に入れる</button>
+                                  </div>
+                                );
+                              })}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               ))}
