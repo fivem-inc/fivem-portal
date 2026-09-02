@@ -3373,8 +3373,22 @@ const BookingDetail: React.FC<{
     setBusy(true); setError('');
     const { data: me } = await supabase.auth.getUser();
     const { error: err } = await applyTo({ deleted_at: new Date().toISOString(), deleted_by: me.user?.id ?? null });
+    if (err) { setBusy(false); setError('削除できませんでした。通信を確認してもう一度お試しください。'); return; }
+    // 🚨 消した回に付いていた「この回だけ」のキャンセル待ちも取り消す（2026-09-02）。
+    //    残すと waiting のまま宙に浮き、「数字は1名なのに一覧にいない」になる
+    //    （長岡さんの待ちで実際に起きた）。毎週の枠の待ちは枠に付いているので触らない。
+    //    ここが失敗しても削除自体は成功として扱う（宙に浮いた待ちは一覧の
+    //    「対象の回は取り消されています」のカードから手で取り消せる＝二重の網）
+    let ids = [b.id];
+    if (scope === 'future' && b.recurrence_id) {
+      const { data: sib } = await supabase.from('room_bookings').select('id')
+        .eq('recurrence_id', b.recurrence_id).gte('starts_at', b.starts_at);
+      if (sib?.length) ids = sib.map(x => x.id);
+    }
+    await supabase.from('room_waitlist')
+      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+      .eq('status', 'waiting').in('booking_id', ids);
     setBusy(false);
-    if (err) { setError('削除できませんでした。通信を確認してもう一度お試しください。'); return; }
     onChanged(scope === 'future' && repeating ? '今後の分をまとめて削除しました' : '予約を削除しました');
   };
 
@@ -4527,6 +4541,12 @@ const WaitlistSettings: React.FC<{
     staffId: string | null; purpose: string; items: Waitlist[];
     /** キャンセル待ちの受付を締め切っている枠（枠の設定・2026-09-02） */
     closed: boolean;
+    /**
+     * 対象の回が取り消された（削除済み）待ち。🚨 隠さずグレーで出す。
+     * 隠すと数字（◯名）とずれて「1名いるのに誰もいない」になる（実機で発覚）。
+     * 繰り上げ先が無いので「取り消す」だけ押せる
+     */
+    orphan: boolean;
   };
   const groups = useMemo(() => {
     const m = new Map<string, WaitGroup>();
@@ -4538,17 +4558,16 @@ const WaitlistSettings: React.FC<{
           key: `r|${r.id}`, kind: 'slot', floorId: r.floor_id,
           weekday: r.weekday, time: r.start_time.slice(0, 5), dateStr: '',
           staffId: r.staff_id, purpose: r.purpose, items: [],
-          closed: r.waitlist_closed === true,
+          closed: r.waitlist_closed === true, orphan: false,
         };
       } else if (w.booking_id && w.booking) {
         const b = w.booking;
-        if (b.deleted_at) continue;          // 消された予約の「この回だけ」の待ちは出さない
         const d = new Date(b.starts_at);
         g = m.get(`b|${b.id}`) ?? {
           key: `b|${b.id}`, kind: 'single', floorId: b.floor_id,
           weekday: d.getDay(), time: hhmm(b.starts_at), dateStr: localDate(b.starts_at),
           staffId: b.staff_id, purpose: b.purpose, items: [],
-          closed: false,
+          closed: false, orphan: !!b.deleted_at,
         };
       }
       if (!g) continue;
@@ -4970,10 +4989,11 @@ const WaitlistSettings: React.FC<{
                   {' / '}担当：{staffName(g.staffId)}
                   {' / '}待ち {g.items.length}名
                   {g.closed && <b>（受付停止中）</b>}
+                  {g.orphan && <b>（対象の回は取り消されています）</b>}
                 </span>
                 {/* 押す前に繰り上げられるか分かる目印（2026-09-02 ユーザー指示）。
                     判定は日付選びと同じ。数えている最中は何も出さない */}
-                {avail && (
+                {!g.orphan && avail && (
                   avail[g.key]
                     ? <span style={{ fontSize: 12, fontWeight: 700, color: accent, background: isDark ? '#263b33' : '#e8f2ec', borderRadius: 999, padding: '2px 10px', marginLeft: 8 }}>
                         空きあり（最短 {formatDateLabel(avail[g.key] as string)}）
@@ -5012,25 +5032,31 @@ const WaitlistSettings: React.FC<{
                           {w.note && ` / ${w.note}`}
                         </span>
                         <span style={{ marginLeft: 'auto', display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                          <button onClick={() => move(g.items, i, -1)} disabled={i === 0 || !!busy}
-                            style={{ ...smallBtn(false), opacity: i === 0 ? .4 : 1 }} aria-label="順番を上げる">▲</button>
-                          <button onClick={() => move(g.items, i, 1)} disabled={i === g.items.length - 1 || !!busy}
-                            style={{ ...smallBtn(false), opacity: i === g.items.length - 1 ? .4 : 1 }} aria-label="順番を下げる">▼</button>
-                          <button onClick={() => moveTop(g.items, i)} disabled={i === 0 || !!busy}
-                            style={{ ...smallBtn(false), opacity: i === 0 ? .4 : 1 }}>先頭へ</button>
-                          <button onClick={() => {
-                            setEditing(w.id);
-                            setDraft({ person: { no: w.member_no ?? '', name: w.customer_label }, note: w.note ?? '' });
-                          }} style={smallBtn(false)}>直す</button>
-                          {/* 毎週の枠は「どの日に入れるか」を選んでから。この回だけは直接 */}
-                          {g.kind === 'slot' ? (
-                            <button onClick={() => (pickFor === w.id ? setPickFor(null) : openPick(w))}
-                              disabled={!!busy} style={smallBtn(pickFor === w.id)}>
-                              {pickFor === w.id ? '日を選ぶのをやめる' : '繰り上げる（日を選ぶ）'}
-                            </button>
-                          ) : (
-                            <button onClick={() => w.booking_id && promoteAt(w, w.booking_id)}
-                              disabled={!!busy} style={smallBtn(true)}>繰り上げる</button>
+                          {/* 🚨 対象の回が取り消された待ちは「取り消す」しか押せない
+                              （繰り上げ先が無く、並び替えにも意味が無いため） */}
+                          {!g.orphan && (
+                            <>
+                              <button onClick={() => move(g.items, i, -1)} disabled={i === 0 || !!busy}
+                                style={{ ...smallBtn(false), opacity: i === 0 ? .4 : 1 }} aria-label="順番を上げる">▲</button>
+                              <button onClick={() => move(g.items, i, 1)} disabled={i === g.items.length - 1 || !!busy}
+                                style={{ ...smallBtn(false), opacity: i === g.items.length - 1 ? .4 : 1 }} aria-label="順番を下げる">▼</button>
+                              <button onClick={() => moveTop(g.items, i)} disabled={i === 0 || !!busy}
+                                style={{ ...smallBtn(false), opacity: i === 0 ? .4 : 1 }}>先頭へ</button>
+                              <button onClick={() => {
+                                setEditing(w.id);
+                                setDraft({ person: { no: w.member_no ?? '', name: w.customer_label }, note: w.note ?? '' });
+                              }} style={smallBtn(false)}>直す</button>
+                              {/* 毎週の枠は「どの日に入れるか」を選んでから。この回だけは直接 */}
+                              {g.kind === 'slot' ? (
+                                <button onClick={() => (pickFor === w.id ? setPickFor(null) : openPick(w))}
+                                  disabled={!!busy} style={smallBtn(pickFor === w.id)}>
+                                  {pickFor === w.id ? '日を選ぶのをやめる' : '繰り上げる（日を選ぶ）'}
+                                </button>
+                              ) : (
+                                <button onClick={() => w.booking_id && promoteAt(w, w.booking_id)}
+                                  disabled={!!busy} style={smallBtn(true)}>繰り上げる</button>
+                              )}
+                            </>
                           )}
                           <button onClick={() => cancel(w)} disabled={!!busy}
                             style={smallBtn(false)}>取り消す</button>
