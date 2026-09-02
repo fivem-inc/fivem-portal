@@ -4473,7 +4473,10 @@ const WaitlistSettings: React.FC<{
     const [{ data, error: err }, st] = await Promise.all([
       supabase
         .from('room_waitlist')
-        .select('*, booking:room_bookings(id, floor_id, starts_at, ends_at, purpose, status, deleted_at, staff_id), recurrence:room_recurrences(id, floor_id, weekday, start_time, end_time, purpose, staff_id, active, auto_open_slot, waitlist_closed)')
+        // 🚨 room_bookings へは booking_id と promoted_booking_id の**外部キーが2本**ある。
+        //    「!booking_id」でどちらで結ぶかを明示しないと PGRST201（曖昧）で
+        //    一覧全体が読めなくなる（2026-09-02 実機で発覚。8/31 の作成時からのバグ）
+        .select('*, booking:room_bookings!booking_id(id, floor_id, starts_at, ends_at, purpose, status, deleted_at, staff_id), recurrence:room_recurrences(id, floor_id, weekday, start_time, end_time, purpose, staff_id, active, auto_open_slot, waitlist_closed)')
         .eq('status', 'waiting')
         .order('position')
         .order('created_at'),
