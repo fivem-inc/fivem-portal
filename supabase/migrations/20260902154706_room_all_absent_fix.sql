@@ -24,6 +24,10 @@
 --   drop function if exists room_booking_all_absent(uuid);
 -- ============================================================
 
+-- 🚨 出欠の鍵は（会員番号, お名前）の**ペア**（room_booking_attendance の一意キー）。
+--    参加者の分け方は画面の participantsOf と同じ規則にする：
+--    番号と名前の数が合うとき（または名前が1人以下・番号なし）は順番で結び、
+--    ずれているときは番号を捨てて名前だけで見る（間違った結び方をしない）。
 create or replace function room_booking_all_absent(p_booking_id uuid)
 returns boolean
 language plpgsql
@@ -32,11 +36,15 @@ security definer
 set search_path = public
 as $$
 declare
-  v_t     room_bookings;
-  v_open  text[];
-  v_names text[];
-  v_nos   text[];
-  v_key   text;
+  v_t       room_bookings;
+  v_open    text[];
+  v_names   text[];
+  v_nos     text[];
+  v_cnt     int;
+  v_aligned boolean;
+  v_name    text;
+  v_no      text;
+  i         int;
 begin
   select * into v_t from room_bookings where id = p_booking_id;
   if not found then return false; end if;
@@ -56,43 +64,35 @@ begin
     from unnest(string_to_array(coalesce(v_t.member_no, ''), ',')) s
    where btrim(s) <> '';
 
-  if coalesce(array_length(v_names, 1), 0) > 0 then
-    -- お名前を鍵に、参加者1人ずつ確かめる
-    foreach v_key in array v_names loop
-      if not exists (select 1 from room_booking_attendance a
-                      where a.booking_id = v_t.id
-                        and btrim(a.participant_name) = v_key
-                        and btrim(a.status) = any (v_open)) then
-        return false;
-      end if;
-      if exists (select 1 from room_booking_attendance a
-                  where a.booking_id = v_t.id
-                    and btrim(a.participant_name) = v_key
-                    and not (btrim(a.status) = any (v_open))) then
-        return false;
-      end if;
-    end loop;
-    return true;
-  elsif coalesce(array_length(v_nos, 1), 0) > 0 then
-    -- お名前が無い予約（会員番号だけ）は番号を鍵にする
-    foreach v_key in array v_nos loop
-      if not exists (select 1 from room_booking_attendance a
-                      where a.booking_id = v_t.id
-                        and btrim(a.participant_no) = v_key
-                        and btrim(a.status) = any (v_open)) then
-        return false;
-      end if;
-      if exists (select 1 from room_booking_attendance a
-                  where a.booking_id = v_t.id
-                    and btrim(a.participant_no) = v_key
-                    and not (btrim(a.status) = any (v_open))) then
-        return false;
-      end if;
-    end loop;
-    return true;
-  end if;
+  v_cnt := greatest(coalesce(array_length(v_names, 1), 0),
+                    coalesce(array_length(v_nos, 1), 0));
+  if v_cnt = 0 then return false; end if;   -- 参加者が読み取れない予約は空き扱いにしない
 
-  return false;   -- 参加者が読み取れない予約は空き扱いにしない
+  v_aligned := coalesce(array_length(v_nos, 1), 0) = coalesce(array_length(v_names, 1), 0)
+            or coalesce(array_length(v_names, 1), 0) <= 1
+            or coalesce(array_length(v_nos, 1), 0) = 0;
+
+  for i in 1..v_cnt loop
+    v_name := coalesce(v_names[i], '');
+    v_no   := case when v_aligned then coalesce(v_nos[i], '') else '' end;
+    -- この参加者に空き扱いの出欠が付いているか
+    if not exists (select 1 from room_booking_attendance a
+                    where a.booking_id = v_t.id
+                      and btrim(a.participant_name) = v_name
+                      and btrim(a.participant_no)   = v_no
+                      and btrim(a.status) = any (v_open)) then
+      return false;
+    end if;
+    -- 同じ参加者に空き扱い**でない**出欠が付いていたら不成立
+    if exists (select 1 from room_booking_attendance a
+                where a.booking_id = v_t.id
+                  and btrim(a.participant_name) = v_name
+                  and btrim(a.participant_no)   = v_no
+                  and not (btrim(a.status) = any (v_open))) then
+      return false;
+    end if;
+  end loop;
+  return true;
 end;
 $$;
 
