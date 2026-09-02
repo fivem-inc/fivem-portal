@@ -87,6 +87,18 @@ const participantLabel = (b: Booking): string => {
   return [b.customer_label, b.member_no ? `#${b.member_no}` : ''].filter(Boolean).join(' ');
 };
 
+/** その月の末日（YYYY-MM-DD）。m は 1〜12 */
+const monthEndStr = (y: number, m: number): string => {
+  const d = new Date(y, m, 0);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+/** 翌月の末日（YYYY-MM-DD）。月次更新・期限なし繰り返しの生成範囲に使う */
+const endOfNextMonthStr = (): string => {
+  const t = new Date();
+  return monthEndStr(t.getFullYear(), t.getMonth() + 2);
+};
+
 /**
  * 出欠を1人ぶん記録する（付け直しは上書き、同じものをもう一度押すと取り消し）。
  *
@@ -202,6 +214,10 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
   const [renewal, setRenewal] = useState(false);
   // 年度末が近いときだけ「まだ引き継いでいない件数」を数えて案内を出す
   const [renewPending, setRenewPending] = useState(0);
+  // 月末が近いのに翌月分が未生成の枠の数（月次更新の案内・2026-09-02）
+  const [monthlyPending, setMonthlyPending] = useState(0);
+  // 基本設定を開いたとき最初に出すタブ（月次更新の案内バナーから直接開くため）
+  const [basicInitialTab, setBasicInitialTab] = useState<'renew' | 'monthly'>('renew');
   const [now, setNow] = useState(new Date());
   const [narrow, setNarrow] = useState(() => window.innerWidth < 760);
   const [mobileFloorId, setMobileFloorId] = useState<string>('');
@@ -287,6 +303,29 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
   useEffect(() => { loadWaitingCount(); }, [loadWaitingCount]);
 
   /**
+   * 月末が近いとき、翌月分がまだ作られていない枠（繰り返し）が何件あるかを数える。
+   * 🚨 自動では作らない（従来方針）。数えて黄色い案内を出すだけ。
+   *    作るのは 基本設定 → 月次更新 で人が押す。
+   */
+  const loadMonthlyPending = useCallback(async (): Promise<void> => {
+    const t = new Date();
+    const thisEnd = monthEndStr(t.getFullYear(), t.getMonth() + 1);
+    // 月末の10日前から案内する
+    if (daysUntil(todayStr(), thisEnd) > 10) { setMonthlyPending(0); return; }
+    const n = new Date(t.getFullYear(), t.getMonth() + 1, 1);
+    const nmStart = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-01`;
+    const nmEnd = monthEndStr(n.getFullYear(), n.getMonth() + 1);
+    const { data } = await supabase.from('room_recurrences')
+      .select('id, generated_to, end_date').eq('active', true);
+    const rows = (data ?? []) as { id: string; generated_to: string | null; end_date: string | null }[];
+    setMonthlyPending(rows.filter(r => {
+      if (r.end_date && r.end_date < nmStart) return false;          // 翌月には無い枠
+      const cap = r.end_date && r.end_date < nmEnd ? r.end_date : nmEnd;
+      return (r.generated_to ?? '') < cap;                            // 翌月分が未作成
+    }).length);
+  }, []);
+
+  /**
    * 年度末が近いとき、まだ次の年度へ引き継いでいない繰り返しが何件あるかを数える。
    *
    * 引き継ぎ済みかどうかは「次の年度の行が renewed_from で自分を指しているか」で決まる。
@@ -301,7 +340,9 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
       .from('room_recurrences')
       .select('id, fiscal_year, renewed_from')
       .in('fiscal_year', [fy, fy + 1])
-      .eq('active', true);
+      .eq('active', true)
+      // 🚨 期限なし（end_date null）の繰り返しは月次更新で回すので、年度更新の対象外
+      .not('end_date', 'is', null);
     if (error || !data) { setRenewPending(0); return; }
     const rows = data as { id: string; fiscal_year: number; renewed_from: string | null }[];
     const done = new Set(rows.filter(r => r.fiscal_year === fy + 1 && r.renewed_from)
@@ -349,8 +390,8 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
         && (basicRoles === null || basicRoles.includes(roleTitle)));
 
   useEffect(() => {
-    if (canRenew) loadRenewPending();
-  }, [canRenew, loadRenewPending]);
+    if (canRenew) { loadRenewPending(); loadMonthlyPending(); }
+  }, [canRenew, loadRenewPending, loadMonthlyPending]);
 
   const allCampus = campusId === ALL_CAMPUS;
   const campus = useMemo(() => campuses.find(c => c.id === campusId) ?? null, [campuses, campusId]);
@@ -638,8 +679,20 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
               4月以降の繰り返し予約はまだ入っていません。
               <strong>{renewPending}件</strong>を{fiscalYear(todayStr()) + 1}年度に引き継げます
             </span>
-            <button onClick={() => setRenewal(true)}
+            <button onClick={() => { setBasicInitialTab('renew'); setRenewal(true); }}
               style={{ ...btn(false), marginLeft: 'auto' }}>年度更新へ</button>
+          </div>
+        )}
+
+        {/* 月次更新の案内（2026-09-02・案A）。月末10日前から、翌月分が未作成の枠があるときだけ。
+            🚨 自動では作らない。案内だけ出して、人が押す */}
+        {canRenew && monthlyPending > 0 && (
+          <div style={{ background: isDark ? '#4a4326' : '#fff8e1', border: `1px solid ${isDark ? '#8a7a3a' : '#ffe082'}`, color: isDark ? '#ffe6a3' : '#7a5c00', borderRadius: 10, padding: '10px 14px', marginBottom: 12, fontSize: 14, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ lineHeight: 1.6 }}>
+              来月分の予約がまだ作られていない枠が <strong>{monthlyPending}件</strong> あります
+            </span>
+            <button onClick={() => { setBasicInitialTab('monthly'); setRenewal(true); }}
+              style={{ ...btn(false), marginLeft: 'auto' }}>月次更新へ</button>
           </div>
         )}
 
@@ -685,7 +738,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
             キャンセル待ち{waitingCount > 0 ? ` ${waitingCount}名` : ''}
           </button>
           {canRenew && (
-            <button onClick={() => setRenewal(true)} style={btn(false)}>基本設定</button>
+            <button onClick={() => { setBasicInitialTab('renew'); setRenewal(true); }} style={btn(false)}>基本設定</button>
           )}
           {admin && (
             <button onClick={() => setSettings(true)} style={btn(false)}>⚙️ 設定</button>
@@ -832,6 +885,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
           campuses={campuses} floors={floors} staff={staff} categories={categories}
           purposeDurations={purposeDurations} purposeDetails={purposeDetails}
           attendanceOptions={attendanceOptions} user={user}
+          initialTab={basicInitialTab}
           onBook={(c) => {
             // 基本設定を閉じて予約表に戻し、場所別（＝新規を入れられる並べ方）にする
             setBookingFor(c);
@@ -840,7 +894,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
           }}
           onClose={() => setRenewal(false)}
           onDone={async (msg) => {
-            await loadMasters(); await loadBookings(); await loadRenewPending(); showFlash(msg);
+            await loadMasters(); await loadBookings(); await loadRenewPending(); await loadMonthlyPending(); showFlash(msg);
           }}
           isDark={isDark} />
       )}
@@ -1473,6 +1527,9 @@ const BookingForm: React.FC<{
   const [kind, setKind] = useState<'booking' | 'open'>(editing ? base!.kind : 'booking');
   const [seats, setSeats] = useState<number>(editing ? base!.seats : 1);
   const [repeat, setRepeat] = useState(false);
+  // 繰り返しの「いつまで」。既定は期限なし（2026-09-02 ユーザー承認・案A＝ローリング運用）。
+  // 期限なしのときは「翌月末まで」だけ先に作り、以後は基本設定の「月次更新」で延長する
+  const [noEnd, setNoEnd] = useState(true);
   const [repeatUntil, setRepeatUntil] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -1638,12 +1695,19 @@ const BookingForm: React.FC<{
     }
 
     // 新規。繰り返しのときは同じ曜日の分をまとめて作る
-    if (repeat && repeatUntil > maxRepeatUntil) {
+    if (repeat && !noEnd && repeatUntil > maxRepeatUntil) {
       setSaving(false);
       setError(`繰り返しの終わりの日は、${maxRepeatUntil.split('-')[0]}年3月31日（年度末）までにしてください`);
       return;
     }
-    const dates = repeat ? weeklyDates(date, repeatUntil) : [date];
+    // 🚨 期限なしは「翌月末まで」だけ先に作る（開始が先の月なら、その月の末まで）。
+    //    残りは月次更新で延ばす。年度末まで一括で作ると、変更の多いプライベートで
+    //    未来の直し作業が膨らむため（2026-09-02 ユーザー承認・案A）
+    const [gy, gm] = date.split('-').map(Number);
+    const genUntil = !repeat ? '' : noEnd
+      ? (endOfNextMonthStr() > monthEndStr(gy, gm) ? endOfNextMonthStr() : monthEndStr(gy, gm))
+      : repeatUntil;
+    const dates = repeat ? weeklyDates(date, genUntil) : [date];
     if (repeat && dates.length === 0) { setSaving(false); setError('繰り返しの終わりの日は、開始の日より後にしてください'); return; }
 
     // 繰り返しは「親のルール1件＋各回の予約」で持つ。
@@ -1660,10 +1724,13 @@ const BookingForm: React.FC<{
         member_no: memberNo.trim() || null, customer_label: customerLabel.trim() || null,
         memo: memo.trim() || null, exclusive, staff_id: staffId || null,
         kind, seats,
-        start_date: date, end_date: repeatUntil || null, generated_to: dates[dates.length - 1],
+        // 期限なし（既定）は end_date を null にする。年度更新の対象から外れ、
+        // 月次更新が generated_to を起点に延長していく
+        start_date: date, end_date: noEnd ? null : (repeatUntil || null),
+        generated_to: dates[dates.length - 1],
         // 年度は「終わりの日が属する年度」。3月に来年度末まで作った場合も、
         // その繰り返しは来年度のものとして年度更新の一覧に出したいため
-        fiscal_year: fiscalYear(repeatUntil || date),
+        fiscal_year: fiscalYear(noEnd ? genUntil : (repeatUntil || date)),
         created_by: user.id,
       }).select('id').single();
       if (recErr || !rec) { setSaving(false); setError('繰り返しの登録に失敗しました。通信を確認してもう一度お試しください。'); return; }
@@ -2048,37 +2115,58 @@ const BookingForm: React.FC<{
             {repeat && (
               <div style={{ marginTop: 10 }}>
                 <label style={label}>いつまで</label>
-                {/* 年度末が近いときだけ、来年度末も選べるようにする（2026-08-29 ユーザー確定）。
-                    3月に始まるレッスンは翌年度も続くのが普通なので、
-                    ここで作れないと年度更新を待つことになる */}
-                {nearFiscalEnd && (
-                  <div style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
-                    <button type="button" onClick={() => setRepeatUntil(thisFyEnd)}
-                      style={pill(repeatUntil === thisFyEnd)}>
-                      今年度末まで（{formFy + 1}/3/31）
-                    </button>
-                    <button type="button" onClick={() => setRepeatUntil(nextFyEnd)}
-                      style={pill(repeatUntil === nextFyEnd)}>
-                      来年度末まで（{formFy + 2}/3/31）
-                    </button>
-                  </div>
+                {/* 既定は期限なし＝ローリング運用（2026-09-02 ユーザー承認・案A）。
+                    まず翌月末まで作り、以後は基本設定の「月次更新」で延長する */}
+                <div style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+                  <button type="button" onClick={() => setNoEnd(true)}
+                    style={pill(noEnd)}>期限なし（月次更新で延長）</button>
+                  <button type="button" onClick={() => { setNoEnd(false); if (!repeatUntil) setRepeatUntil(thisFyEnd); }}
+                    style={pill(!noEnd)}>日付で区切る</button>
+                </div>
+                {!noEnd && (
+                  <>
+                    {/* 年度末が近いときだけ、来年度末も選べるようにする（2026-08-29 ユーザー確定）。
+                        3月に始まるレッスンは翌年度も続くのが普通なので、
+                        ここで作れないと年度更新を待つことになる */}
+                    {nearFiscalEnd && (
+                      <div style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+                        <button type="button" onClick={() => setRepeatUntil(thisFyEnd)}
+                          style={pill(repeatUntil === thisFyEnd)}>
+                          今年度末まで（{formFy + 1}/3/31）
+                        </button>
+                        <button type="button" onClick={() => setRepeatUntil(nextFyEnd)}
+                          style={pill(repeatUntil === nextFyEnd)}>
+                          来年度末まで（{formFy + 2}/3/31）
+                        </button>
+                      </div>
+                    )}
+                    {/* 🚨 max を付けて、打ち間違いで何十年も先の日付が入らないようにする
+                        （実機確認で「92520年」と打ててしまい、黙って60回作られる状態だった） */}
+                    <input type="date" value={repeatUntil} min={shiftDate(date, 7)} max={maxRepeatUntil}
+                      onChange={e => setRepeatUntil(e.target.value)} style={input} />
+                  </>
                 )}
-                {/* 🚨 max を付けて、打ち間違いで何十年も先の日付が入らないようにする
-                    （実機確認で「92520年」と打ててしまい、黙って60回作られる状態だった） */}
-                <input type="date" value={repeatUntil} min={shiftDate(date, 7)} max={maxRepeatUntil}
-                  onChange={e => setRepeatUntil(e.target.value)} style={input} />
                 <p style={{ fontSize: 12, color: textMid, margin: '6px 0 0', lineHeight: 1.6 }}>
-                  {repeatUntil
+                  {noEnd
                     ? (() => {
-                        const ds = weeklyDates(date, repeatUntil);
-                        if (!ds.length) return '終わりの日は、開始の日より後にしてください';
-                        const capped = repeatUntil > maxRepeatUntil;
-                        return `${ds.length}回 予約します（${ds.slice(0, 3).map(formatDateLabel).join('、')}${ds.length > 3 ? ' …' : ''}）`
-                          + (capped
-                              ? ` ※${maxRepeatUntil.split('-')[0]}年3月31日（年度末）までにしてください`
-                              : '');
+                        const [gy, gm] = date.split('-').map(Number);
+                        const until = endOfNextMonthStr() > monthEndStr(gy, gm) ? endOfNextMonthStr() : monthEndStr(gy, gm);
+                        const ds = weeklyDates(date, until);
+                        return ds.length
+                          ? `まず ${formatDateLabel(until)} までの ${ds.length}回 を予約します。その先は毎月、基本設定の「月次更新」で作ります（キャンセル待ちや枠の設定は引き継がれます）`
+                          : '開始の日を確かめてください';
                       })()
-                    : `終わりの日を入れてください（${formFy + 1}/3/31 の年度末までが基本です）`}
+                    : repeatUntil
+                      ? (() => {
+                          const ds = weeklyDates(date, repeatUntil);
+                          if (!ds.length) return '終わりの日は、開始の日より後にしてください';
+                          const capped = repeatUntil > maxRepeatUntil;
+                          return `${ds.length}回 予約します（${ds.slice(0, 3).map(formatDateLabel).join('、')}${ds.length > 3 ? ' …' : ''}）`
+                            + (capped
+                                ? ` ※${maxRepeatUntil.split('-')[0]}年3月31日（年度末）までにしてください`
+                                : '');
+                        })()
+                      : `終わりの日を入れてください（${formFy + 1}/3/31 の年度末までが基本です）`}
                 </p>
               </div>
             )}
@@ -5724,16 +5812,216 @@ const StaffSettings: React.FC<{
   );
 };
 
+// ============================================================
+// 月次更新（2026-09-02 ユーザー承認・案A＝ローリング運用）
+//
+// 週の型（繰り返しルール）をマスターとして、対象月ぶんの予約をまとめて作る。
+// 生成はサーバーの room_extend_recurrence（generated_to の続きから作るので
+// 二度押ししても増えない。重なりで作れなかった回は理由つきで返る）。
+// 🚨 キャンセル待ち・枠の設定・【固定】・詳細は枠に付いているので、
+//    ここでは何もしなくても新しい月の回に自動で効く。月ごとに作り直さないこと。
+// 🚨 自動では増やさない（従来方針）。人がこの画面で押す。
+// ============================================================
+const MonthlyExtendSettings: React.FC<{
+  floors: Floor[]; campuses: Campus[]; staff: Staff[];
+  isDark: boolean; onDone: (msg: string) => Promise<void>;
+}> = ({ floors, campuses, staff, isDark, onDone }) => {
+  // 対象の月（既定は翌月）
+  const [ym, setYm] = useState(() => {
+    const t = new Date();
+    const n = new Date(t.getFullYear(), t.getMonth() + 1, 1);
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [rules, setRules] = useState<Recurrence[]>([]);
+  const [waitCounts, setWaitCounts] = useState<Record<string, number>>({});
+  const [checked, setChecked] = useState<Record<string, boolean>>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [results, setResults] = useState<{ name: string; created: number; skipped: string[] }[] | null>(null);
+
+  const line = isDark ? '#3a3a5c' : '#e0e0e0';
+  const lineSoft = isDark ? '#35354e' : '#eef0f3';
+  const text = isDark ? '#eeeeee' : '#222222';
+  const textMid = isDark ? '#b3b8c6' : '#5b6270';
+  const accent = isDark ? '#6bbd92' : '#2f6f4f';
+  const smallBtn = (on: boolean): React.CSSProperties => ({
+    padding: '4px 10px', borderRadius: 999, fontSize: 12.5, cursor: running ? 'wait' : 'pointer',
+    border: `1px solid ${on ? accent : line}`,
+    background: on ? accent : 'transparent',
+    color: on ? (isDark ? '#1d2a24' : '#fff') : textMid,
+    fontWeight: on ? 700 : 400,
+  });
+
+  const [yNum, mNum] = ym.split('-').map(Number);
+  const monthStart = `${ym}-01`;
+  const monthEnd = monthEndStr(yNum, mNum);
+  const ymLabel = `${yNum}年${mNum}月`;
+
+  const placeName = (floorId: string): string => {
+    const f = floors.find(x => x.id === floorId) ?? null;
+    const c = campuses.find(x => x.id === f?.campus_id);
+    const siblings = floors.filter(x => x.campus_id === f?.campus_id).length;
+    return placeLabel(f, c?.name ?? '', siblings, true);
+  };
+  const ruleLabel = (r: Recurrence): string =>
+    `毎週${WEEKDAY_LABEL[r.weekday]}曜 ${r.start_time.slice(0, 5)}〜${r.end_time.slice(0, 5)}`
+    + ` / ${placeName(r.floor_id)} / ${r.purpose}`
+    + ` / 担当：${staff.find(s => s.id === r.staff_id)?.name ?? '担当なし'}`
+    + (r.customer_label ? ` / ${r.customer_label}` : '');
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(''); setResults(null);
+    const { data, error: err } = await supabase.from('room_recurrences')
+      .select('*').eq('active', true).order('weekday').order('start_time');
+    if (err) { setError('繰り返しの一覧を読み込めませんでした。通信を確認して開き直してください。'); setLoading(false); return; }
+    // 対象月に生きている枠だけ（期限がその前に切れるものは出さない）
+    const rs = ((data ?? []) as Recurrence[]).filter(r => !r.end_date || r.end_date >= monthStart);
+    setRules(rs);
+    if (rs.length > 0) {
+      const { data: ws } = await supabase.from('room_waitlist')
+        .select('recurrence_id').eq('status', 'waiting').in('recurrence_id', rs.map(r => r.id));
+      const m: Record<string, number> = {};
+      for (const w of (ws ?? []) as { recurrence_id: string | null }[]) {
+        if (w.recurrence_id) m[w.recurrence_id] = (m[w.recurrence_id] ?? 0) + 1;
+      }
+      setWaitCounts(m);
+    } else {
+      setWaitCounts({});
+    }
+    // 既定のチェック＝対象月ぶんがまだ作られていないもの
+    setChecked(Object.fromEntries(rs.map(r => {
+      const cap = r.end_date && r.end_date < monthEnd ? r.end_date : monthEnd;
+      return [r.id, (r.generated_to ?? '') < cap];
+    })));
+    setLoading(false);
+  }, [monthStart, monthEnd]);
+  useEffect(() => { load(); }, [load]);
+
+  const shiftYm = (d: number) => {
+    const t = new Date(yNum, mNum - 1 + d, 1);
+    setYm(`${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`);
+  };
+
+  const run = async () => {
+    const targets = rules.filter(r => checked[r.id]);
+    if (targets.length === 0) { setError('作る枠を選んでください'); return; }
+    setRunning(true); setError(''); setResults(null); setProgress(0);
+    const out: { name: string; created: number; skipped: string[] }[] = [];
+    // 🚨 1ルールずつサーバーへ。途中で切れても、済んだ分は generated_to が進んでいるので
+    //    もう一度押せば続きからになる（二重には作られない）
+    for (let i = 0; i < targets.length; i++) {
+      const r = targets[i];
+      const { data, error: err } = await supabase.rpc('room_extend_recurrence', {
+        p_recurrence_id: r.id, p_until: monthEnd,
+      });
+      const row = (Array.isArray(data) ? data[0] : data) as
+        { ok?: boolean; reason?: string; created?: number; skipped?: string[] } | null;
+      out.push({
+        name: ruleLabel(r),
+        created: row?.ok ? (row.created ?? 0) : 0,
+        skipped: err
+          ? ['通信エラーで実行できませんでした。もう一度お試しください']
+          : (row?.ok ? (row.skipped ?? []) : [row?.reason ?? '実行できませんでした']),
+      });
+      setProgress(i + 1);
+    }
+    setRunning(false);
+    await load();
+    setResults(out);           // 🚨 load() が results を消すので、必ず後に入れる
+    await onDone(`${ymLabel}分の月次更新を実行しました`);
+  };
+
+  return (
+    <div>
+      <div style={{ background: lineSoft, borderRadius: 8, padding: '10px 12px', fontSize: 13, lineHeight: 1.7, marginBottom: 12, color: textMid }}>
+        週の型（繰り返しの枠）から、対象の月の予約をまとめて作ります。月に1回、これを押すだけです。
+        <br />
+        キャンセル待ち・枠の設定・【固定】は枠に付いているので、<b style={{ color: text }}>新しい月にも自動で効きます</b>
+        （月ごとに作り直す必要はありません）。重なりで作れなかった回は、下に理由つきで出ます。
+        二度押ししても二重には作られません。
+      </div>
+
+      {error && (
+        <div style={{ background: isDark ? '#4a2a2a' : '#fdecea', border: `1px solid ${isDark ? '#7a4444' : '#f5c6cb'}`, color: isDark ? '#ffb4b4' : '#a3282a', borderRadius: 8, padding: '9px 12px', fontSize: 13, marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+        <button onClick={() => shiftYm(-1)} disabled={running} style={{ ...smallBtn(false), padding: '5px 11px' }} aria-label="前の月">◀</button>
+        <b style={{ fontSize: 14, minWidth: 96, textAlign: 'center' }}>{ymLabel}分</b>
+        <button onClick={() => shiftYm(1)} disabled={running} style={{ ...smallBtn(false), padding: '5px 11px' }} aria-label="次の月">▶</button>
+        <button onClick={run} disabled={running || loading}
+          style={{ marginLeft: 'auto', padding: '9px 16px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 13.5, fontWeight: 700, cursor: running ? 'wait' : 'pointer' }}>
+          {running
+            ? `作っています…（${progress}/${rules.filter(r => checked[r.id]).length}枠）`
+            : `${ymLabel}分を作る（${rules.filter(r => checked[r.id]).length}枠）`}
+        </button>
+      </div>
+
+      {loading ? (
+        <p style={{ fontSize: 13.5, color: textMid }}>読み込んでいます...</p>
+      ) : rules.length === 0 ? (
+        <p style={{ fontSize: 13.5, color: textMid, lineHeight: 1.7 }}>
+          対象の枠（生きている繰り返し）がありません。予約フォームで「毎週この曜日に繰り返す」を
+          付けて作ると、ここに出ます。
+        </p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {rules.map(r => {
+            const cap = r.end_date && r.end_date < monthEnd ? r.end_date : monthEnd;
+            const doneAlready = (r.generated_to ?? '') >= cap;
+            return (
+              <label key={r.id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', border: `1px solid ${line}`, borderRadius: 8, padding: '8px 11px', cursor: 'pointer', opacity: doneAlready ? .65 : 1 }}>
+                <input type="checkbox" checked={!!checked[r.id]} disabled={running}
+                  onChange={e => setChecked(prev => ({ ...prev, [r.id]: e.target.checked }))}
+                  style={{ width: 17, height: 17, flexShrink: 0 }} />
+                <span style={{ fontSize: 13 }}>{ruleLabel(r)}</span>
+                <span style={{ marginLeft: 'auto', fontSize: 12, color: doneAlready ? accent : textMid }}>
+                  {doneAlready
+                    ? `作成済み（${r.generated_to ? formatDateLabel(r.generated_to) : ''}まで）`
+                    : `未作成（${r.generated_to ? `${formatDateLabel(r.generated_to)}まで作成済み` : 'まだ1回も無い'}）`}
+                  {(waitCounts[r.id] ?? 0) > 0 && `｜待ち${waitCounts[r.id]}名`}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+
+      {results && (
+        <div style={{ marginTop: 12, border: `1px solid ${line}`, borderRadius: 8, padding: '10px 12px' }}>
+          <b style={{ fontSize: 13.5 }}>結果</b>
+          {results.map((res, i) => (
+            <div key={i} style={{ borderTop: i > 0 ? `1px solid ${lineSoft}` : 'none', padding: '6px 0', fontSize: 12.5, lineHeight: 1.7 }}>
+              <span style={{ color: textMid }}>{res.name}</span>
+              <br />
+              <b style={{ color: accent }}>{res.created}回 作成</b>
+              {res.skipped.map((s, j) => (
+                <span key={j} style={{ display: 'block', color: isDark ? '#ffb4b4' : '#a3282a' }}>作れなかった回：{s}</span>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const BasicSettingsPanel: React.FC<{
   campuses: Campus[]; floors: Floor[]; staff: Staff[]; categories: LessonCategory[];
   purposeDurations: PurposeDuration[]; purposeDetails: PurposeDetail[];
   attendanceOptions: AttendanceOption[]; user: AuthUser;
   /** 一覧の「予約する」から、そのお客様で予約を入れる流れに移る */
   onBook: (c: Customer) => void;
+  /** 開いたときに出すタブ（月末の案内バナーから月次更新を直接開くため） */
+  initialTab?: 'renew' | 'monthly';
   onClose: () => void; onDone: (msg: string) => Promise<void>; isDark: boolean;
-}> = ({ campuses, floors, staff, categories, purposeDurations, purposeDetails, attendanceOptions, user, onBook, onClose, onDone, isDark }) => {
+}> = ({ campuses, floors, staff, categories, purposeDurations, purposeDetails, attendanceOptions, user, onBook, initialTab, onClose, onDone, isDark }) => {
   const today = todayStr();
-  const [tab, setTab] = useState<'renew' | 'duration' | 'attendance' | 'staff' | 'customer' | 'waitlist' | 'bulk'>('renew');
+  const [tab, setTab] = useState<'monthly' | 'renew' | 'duration' | 'attendance' | 'staff' | 'customer' | 'waitlist' | 'bulk'>(initialTab ?? 'renew');
   const [fy, setFy] = useState(fiscalYear(today));
   const [rows, setRows] = useState<RenewRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -5778,7 +6066,9 @@ const BasicSettingsPanel: React.FC<{
     setLoading(true); setError(''); setFinished(false); setProgress(0);
     const { data, error: err } = await supabase
       .from('room_recurrences').select('*')
-      .in('fiscal_year', [fy, fy + 1]).eq('active', true);
+      .in('fiscal_year', [fy, fy + 1]).eq('active', true)
+      // 🚨 期限なし（end_date null）の繰り返しは月次更新で回すので、年度更新の対象外
+      .not('end_date', 'is', null);
     if (err || !data) {
       setError('繰り返しの一覧を読み込めませんでした。通信を確認して開き直してください。');
       setLoading(false); return;
@@ -5876,7 +6166,7 @@ const BasicSettingsPanel: React.FC<{
   return (
     <Overlay onClose={onClose} isDark={isDark} title="基本設定" wide>
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
-        {([['renew', '年度更新'], ['waitlist', 'キャンセル待ち'], ['customer', 'お客様'],
+        {([['monthly', '月次更新'], ['renew', '年度更新'], ['waitlist', 'キャンセル待ち'], ['customer', 'お客様'],
            ['bulk', '予約の一括入力'], ['staff', 'スタッフ'], ['duration', '用途詳細'],
            ['attendance', '出欠の選択肢']] as const)
           .map(([k, l]) => (
@@ -5884,6 +6174,10 @@ const BasicSettingsPanel: React.FC<{
           ))}
       </div>
 
+      {tab === 'monthly' && (
+        <MonthlyExtendSettings floors={floors} campuses={campuses} staff={staff}
+          onDone={onDone} isDark={isDark} />
+      )}
       {tab === 'duration' && (
         <PurposeSettings purposeDurations={purposeDurations} purposeDetails={purposeDetails} onDone={onDone} isDark={isDark} />
       )}

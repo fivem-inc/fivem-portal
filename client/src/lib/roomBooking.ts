@@ -693,7 +693,14 @@ export interface Recurrence {
   kind: 'booking' | 'open';
   seats: number;
   start_date: string;
+  /** null = 期限なし（2026-09-02〜の既定。月次更新で延長し続ける。年度更新の対象外） */
   end_date: string | null;
+  /** どこまで子予約を作ったか。月次更新（room_extend_recurrence）がここから先を作る */
+  generated_to: string | null;
+  /** 空きが出たとき「空き枠にする」を出すか（枠ごとの設定・既定 true） */
+  auto_open_slot?: boolean;
+  /** キャンセル待ちの受付を締め切っているか（既定 false） */
+  waitlist_closed?: boolean;
   /** 4/1〜翌3/31 を1つとする年度。終わりの日が属する年度を入れる */
   fiscal_year: number;
   /** どの繰り返しから引き継いだか。二度押しで二重に作らないための目印 */
