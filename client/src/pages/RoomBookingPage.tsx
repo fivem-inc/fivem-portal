@@ -3053,13 +3053,18 @@ const AttendanceEditor: React.FC<{
       return;
     }
     // 待ちがいない → 全員が空き扱いなら「空き枠にする」を出す（2026-09-02 ユーザー承認）。
-    // 🚨 出欠は保存し直した直後なので、props の rows ではなくDBから読み直す
+    // 🚨 出欠は保存し直した直後なので、props の rows ではなくDBから読み直す。
+    // 🚨 判定は「行の全部」ではなく**いまの参加者1人ずつ**で見る。過去のテストで残った
+    //    キーの違う古い行（迷子の行）が1つあるだけで発動しなくなるため（2026-09-02 実機で発覚）。
+    //    DB側の room_booking_all_absent() と同じ判定。片方だけ直さないこと
     const { data: att } = await supabase.from('room_booking_attendance')
-      .select('status').eq('booking_id', b.id);
-    const rowsA = (att ?? []) as { status: string }[];
-    const peopleCnt = Math.max(participantsOf(b).length, 1);
-    const allAbsent = rowsA.length >= peopleCnt && rowsA.length > 0
-      && rowsA.every(a => open.includes(a.status.trim()));
+      .select('participant_no, participant_name, status').eq('booking_id', b.id);
+    const rowsA = (att ?? []) as { participant_no: string; participant_name: string; status: string }[];
+    const ppl = participantsOf(b);
+    const allAbsent = ppl.length > 0 && ppl.every(p => {
+      const r = rowsA.find(a => a.participant_no === p.no && a.participant_name === p.name);
+      return !!r && open.includes(r.status.trim());
+    });
     if (!allAbsent) return;
     // 枠ごとの設定（空き枠を作らない枠では出さない）。単発の予約は常に出す
     if (b.recurrence_id) {
@@ -4730,11 +4735,14 @@ const WaitlistSettings: React.FC<{
   const occLabel = (o: Booking, attList: AttendanceRow[] = occAtt): { label: string; free: boolean } => {
     if (o.deleted_at) return { label: '取消済み', free: true };
     if (o.status === 'cancelled') return { label: '休講', free: true };
+    // 🚨 判定は「行の全部」ではなく**いまの参加者1人ずつ**で見る。過去のテストで残った
+    //    キーの違う古い行が1つあるだけで判定が壊れるため（2026-09-02 実機で発覚）。
+    //    DB側の room_booking_all_absent() と同じ判定。片方だけ直さないこと
     const att = attList.filter(a => a.booking_id === o.id);
-    const people = Math.max(participantsOf(o).length, 1);
-    if (att.length >= people && att.length > 0
-      && att.every(a => openStatuses.includes(a.status.trim()))) {
-      return { label: `休みの連絡あり（${att[0].status}）`, free: true };
+    const ppl = participantsOf(o);
+    const matched = ppl.map(p => att.find(a => a.participant_no === p.no && a.participant_name === p.name));
+    if (ppl.length > 0 && matched.every(r => !!r && openStatuses.includes(r.status.trim()))) {
+      return { label: `休みの連絡あり（${matched[0]!.status}）`, free: true };
     }
     return { label: '予約が入っています', free: false };
   };
