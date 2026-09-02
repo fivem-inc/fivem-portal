@@ -7,20 +7,75 @@
 import { normalizeTime } from './timeInput';
 
 /** 用途の区分（2026-08-28 ユーザー確定）。色は明/暗それぞれで見分けられる組み合わせにしている */
+/**
+ * 用途の既定（＝DBが読めないときの逃げ道）。
+ * 🚨 2026-09-02 から用途は room_purposes テーブルにあり、管理者が
+ *    ⚙️設定 → 用途 で追加・名前変更できる。ここに直書きで増やさないこと。
+ */
 export const PURPOSES = ['プライベート', 'パーソナル', 'レッスン', 'レンタル', 'その他'] as const;
-export type Purpose = typeof PURPOSES[number];
+/** 用途は管理者が増やせるので、決まった一覧の型では持てない */
+export type Purpose = string;
 
-/** 用途ごとの色。[文字色, 背景色] を明るい画面／暗い画面で分ける */
-export const PURPOSE_COLOR: Record<string, { light: [string, string]; dark: [string, string] }> = {
-  'プライベート': { light: ['#7b4bb5', '#efe7fa'], dark: ['#c4a5ee', '#3a2f52'] },
-  'パーソナル':   { light: ['#1f7a8c', '#e0f2f5'], dark: ['#7fd3e0', '#233f45'] },
-  'レッスン':     { light: ['#3b6fb5', '#e6eefa'], dark: ['#8ab4e8', '#2b3950'] },
-  'レンタル':     { light: ['#b5761f', '#fbeed8'], dark: ['#e0b071', '#453520'] },
-  'その他':       { light: ['#5b6270', '#eceef1'], dark: ['#aab0be', '#383a4a'] },
+/** 用途（DBの room_purposes）。管理者が ⚙️設定 で増減・改名できる */
+export interface RoomPurpose {
+  id: string;
+  name: string;
+  /** 色は下の PURPOSE_PALETTE の鍵で持つ（自由な色コードにしない） */
+  color_key: string;
+  sort_order: number;
+  active: boolean;
+}
+
+/**
+ * 用途に選べる色（明るい画面／暗い画面のペアを調整済み）。
+ * 🚨 自由な色コードを許さない。暗い画面で読めない色や、募集中の枠（黄系の破線）と
+ *    紛らわしい色を選ばれると事故になるため、この一覧からだけ選ぶ。
+ */
+export const PURPOSE_PALETTE: Record<string, { label: string; light: [string, string]; dark: [string, string] }> = {
+  purple: { label: '紫',     light: ['#7b4bb5', '#efe7fa'], dark: ['#c4a5ee', '#3a2f52'] },
+  teal:   { label: '青緑',   light: ['#1f7a8c', '#e0f2f5'], dark: ['#7fd3e0', '#233f45'] },
+  blue:   { label: '青',     light: ['#3b6fb5', '#e6eefa'], dark: ['#8ab4e8', '#2b3950'] },
+  amber:  { label: '茶',     light: ['#b5761f', '#fbeed8'], dark: ['#e0b071', '#453520'] },
+  green:  { label: '緑',     light: ['#2f7a45', '#e3f2e8'], dark: ['#8fd3a8', '#24402e'] },
+  rose:   { label: '赤紫',   light: ['#b5476b', '#fae7ee'], dark: ['#eda5bd', '#4a2b38'] },
+  indigo: { label: '藍',     light: ['#5b52b5', '#e9e7fa'], dark: ['#b0a8ee', '#332f52'] },
+  gray:   { label: '灰',     light: ['#5b6270', '#eceef1'], dark: ['#aab0be', '#383a4a'] },
+};
+
+/** 既存5用途の色（DBが読めないとき・登録前の名前のための逃げ道） */
+const LEGACY_PURPOSE_KEY: Record<string, string> = {
+  'プライベート': 'purple', 'パーソナル': 'teal', 'レッスン': 'blue',
+  'レンタル': 'amber', 'その他': 'gray',
+};
+
+/**
+ * 読み込んだ用途の一覧（画面全体で共通）。
+ * 🚨 loadMasters が setPurposeRegistry で入れる。13か所の呼び出しに配列を
+ *    引き回すと渡し忘れが出るので、ここ1か所で持つ。
+ *    読み込み前・読めなかったときは PURPOSES（既定の5つ）で動く。
+ */
+let purposeRegistry: RoomPurpose[] = [];
+export const setPurposeRegistry = (rows: RoomPurpose[]): void => {
+  purposeRegistry = [...rows].sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, 'ja'));
+};
+
+/** 予約フォームなどに出す用途（隠したものは出さない）。並びは sort_order */
+export const activePurposes = (): string[] => {
+  const act = purposeRegistry.filter(p => p.active).map(p => p.name);
+  return act.length ? act : [...PURPOSES];
+};
+
+/** 集計などの並べ替え用。一覧に無い（隠した・古い）用途は最後にまわす */
+export const purposeOrder = (name: string): number => {
+  const all = purposeRegistry.length ? purposeRegistry.map(p => p.name) : [...PURPOSES];
+  const i = all.indexOf(name);
+  return i < 0 ? 99 : i;
 };
 
 export const purposeColor = (purpose: string, isDark: boolean): [string, string] => {
-  const c = PURPOSE_COLOR[purpose] ?? PURPOSE_COLOR['その他'];
+  const key = purposeRegistry.find(p => p.name === purpose)?.color_key
+    ?? LEGACY_PURPOSE_KEY[purpose] ?? 'gray';
+  const c = PURPOSE_PALETTE[key] ?? PURPOSE_PALETTE['gray'];
   return isDark ? c.dark : c.light;
 };
 
@@ -154,6 +209,10 @@ export interface Waitlist {
   recurrence?: {
     id: string; floor_id: string; weekday: number; start_time: string; end_time: string;
     purpose: string; staff_id: string | null; active: boolean;
+    /** 空きが出たとき「空き枠にする」を出すか（枠ごとの設定・既定 true） */
+    auto_open_slot?: boolean;
+    /** キャンセル待ちの受付を締め切っているか（既定 false） */
+    waitlist_closed?: boolean;
   } | null;
 }
 
