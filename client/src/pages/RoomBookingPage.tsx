@@ -4456,6 +4456,10 @@ const WaitlistSettings: React.FC<{
   const [vacOcc, setVacOcc] = useState<Booking[]>([]);
   const [vacAtt, setVacAtt] = useState<AttendanceRow[]>([]);
   const [vacLoading, setVacLoading] = useState(false);
+  // 枠ごとの「いま繰り上げられる日があるか」の目印（2026-09-02 ユーザー指示）。
+  // 鍵は枠（queueKeyOf）、値はいちばん近い空きの日（無ければ null）。
+  // null = まだ数えている最中（何も出さない）
+  const [avail, setAvail] = useState<Record<string, string | null> | null>(null);
 
   const line = isDark ? '#3a3a5c' : '#e0e0e0';
   const lineSoft = isDark ? '#35354e' : '#eef0f3';
@@ -4491,7 +4495,7 @@ const WaitlistSettings: React.FC<{
         // 🚨 room_bookings へは booking_id と promoted_booking_id の**外部キーが2本**ある。
         //    「!booking_id」でどちらで結ぶかを明示しないと PGRST201（曖昧）で
         //    一覧全体が読めなくなる（2026-09-02 実機で発覚。8/31 の作成時からのバグ）
-        .select('*, booking:room_bookings!booking_id(id, floor_id, starts_at, ends_at, purpose, status, deleted_at, staff_id), recurrence:room_recurrences(id, floor_id, weekday, start_time, end_time, purpose, staff_id, active, auto_open_slot, waitlist_closed)')
+        .select('*, booking:room_bookings!booking_id(id, floor_id, starts_at, ends_at, purpose, status, deleted_at, staff_id, member_no, customer_label, cancel_kind), recurrence:room_recurrences(id, floor_id, weekday, start_time, end_time, purpose, staff_id, active, auto_open_slot, waitlist_closed)')
         .eq('status', 'waiting')
         .order('position')
         .order('created_at'),
@@ -4788,6 +4792,72 @@ const WaitlistSettings: React.FC<{
     return { label: '予約が入っています', free: false };
   };
 
+  /**
+   * 枠ごとの「空きあり（最短◯/◯）／いま空きなし」の先読み（2026-09-02 ユーザー指示）。
+   * 押す前に、どの枠を繰り上げられるかが見出しで分かるようにする。
+   * 🚨 判定は日付選びの occLabel と**同じもの**を使う（別の式を書かない）。
+   *    今後8週間ぶんの 回・出欠・担当の生きた予約 をまとめて読み、枠ごとに照合する
+   */
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setAvail(null);
+      if (rows.length === 0) { setAvail({}); return; }
+      const from = new Date(); from.setHours(0, 0, 0, 0);
+      const to = new Date(from); to.setDate(to.getDate() + 56);
+      // ① 毎週の枠の今後の回（🚨 取り消し済みの回も読む。そこが空きになるため）
+      const recIds = [...new Set(rows.filter(w => w.recurrence_id).map(w => w.recurrence_id as string))];
+      let occs: Booking[] = [];
+      if (recIds.length > 0) {
+        const { data } = await supabase.from('room_bookings').select('*')
+          .in('recurrence_id', recIds)
+          .gte('starts_at', from.toISOString())
+          .lt('starts_at', to.toISOString())
+          .order('starts_at');
+        occs = (data ?? []) as Booking[];
+      }
+      // ② この回だけの待ちは、埋め込みで読んだ予約をそのまま候補にする
+      const singles = rows
+        .filter(w => w.booking_id && w.booking && !w.booking.deleted_at)
+        .map(w => w.booking as unknown as Booking);
+      const cands = [...occs, ...singles];
+      if (cands.length === 0) { if (alive) setAvail({}); return; }
+      // ③ 出欠と、担当の生きた予約（繰り上げ済みの検出用）をまとめて読む
+      const { data: at } = await supabase.from('room_booking_attendance')
+        .select('*').in('booking_id', cands.map(c => c.id));
+      const attAll = (at ?? []) as AttendanceRow[];
+      const staffIds = [...new Set(cands.map(c => c.staff_id).filter(Boolean))] as string[];
+      let busyAll: { id: string; starts_at: string; ends_at: string; staff_id: string | null }[] = [];
+      if (staffIds.length > 0) {
+        const { data: sb } = await supabase.from('room_bookings')
+          .select('id, starts_at, ends_at, staff_id')
+          .in('staff_id', staffIds)
+          .eq('status', 'active').eq('kind', 'booking').is('deleted_at', null)
+          .gte('ends_at', from.toISOString())
+          .lt('starts_at', to.toISOString());
+        busyAll = (sb ?? []) as typeof busyAll;
+      }
+      // ④ 枠ごとに、いちばん近い空きの日を探す
+      const map: Record<string, string | null> = {};
+      for (const w of rows) {
+        const key = queueKeyOf(w);
+        if (key in map) continue;
+        const list = w.recurrence_id
+          ? occs.filter(o => o.recurrence_id === w.recurrence_id)
+          : (w.booking && !w.booking.deleted_at ? [w.booking as unknown as Booking] : []);
+        const staffId = w.recurrence ? w.recurrence.staff_id : (w.booking?.staff_id ?? null);
+        const busyForStaff = staffId ? busyAll.filter(x => x.staff_id === staffId) : [];
+        const hit = list.find(o => occLabel(o, attAll, busyForStaff).free);
+        map[key] = hit ? localDate(hit.starts_at) : null;
+      }
+      if (alive) setAvail(map);
+    })();
+    return () => { alive = false; };
+    // 🚨 occLabel と queueKeyOf は毎レンダーで作り直されるので依存に入れない
+    //    （入れると無限ループになる）。実質の依存は rows と openStatuses だけ
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, openStatuses]);
+
   return (
     <div>
       <div style={{ background: lineSoft, borderRadius: 8, padding: '10px 12px', fontSize: 13, lineHeight: 1.7, marginBottom: 12, color: textMid }}>
@@ -4901,6 +4971,17 @@ const WaitlistSettings: React.FC<{
                   {' / '}待ち {g.items.length}名
                   {g.closed && <b>（受付停止中）</b>}
                 </span>
+                {/* 押す前に繰り上げられるか分かる目印（2026-09-02 ユーザー指示）。
+                    判定は日付選びと同じ。数えている最中は何も出さない */}
+                {avail && (
+                  avail[g.key]
+                    ? <span style={{ fontSize: 12, fontWeight: 700, color: accent, background: isDark ? '#263b33' : '#e8f2ec', borderRadius: 999, padding: '2px 10px', marginLeft: 8 }}>
+                        空きあり（最短 {formatDateLabel(avail[g.key] as string)}）
+                      </span>
+                    : <span style={{ fontSize: 12, fontWeight: 400, color: textMid, border: `1px solid ${lineSoft}`, borderRadius: 999, padding: '2px 10px', marginLeft: 8 }}>
+                        いま空きなし（8週間先まで）
+                      </span>
+                )}
               </div>
 
               {g.items.map((w, i) => (
