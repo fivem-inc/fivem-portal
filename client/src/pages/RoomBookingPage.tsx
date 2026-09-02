@@ -3124,8 +3124,10 @@ const BookingDetail: React.FC<{
   // キャンセル待ち（この予約の後ろに並んでいる方）
   const [waiting, setWaiting] = useState<Waitlist[]>([]);
   const [adding, setAdding] = useState(false);
-  const [waitMember, setWaitMember] = useState('');
-  const [waitLabel, setWaitLabel] = useState('');
+  // 🚨 予約フォーム・募集枠と**同じ部品（ParticipantRow）**を使う。
+  //    素の入力欄にすると検索（番号→お名前／お名前→候補）が効かない
+  //    （2026-09-02 実機で指摘。募集枠で踏んだのと同じ罠）
+  const [waitPerson, setWaitPerson] = useState<PersonInput>({ no: '', name: '' });
   // 繰り返しの予約では「毎週この枠を待つ」か「この回だけ待つ」かを選ぶ（既定は毎週）。
   // 実運用は「毎週◯曜のこの枠が空いたら入りたい」がほとんどのため（2026-09-02 ユーザー承認）
   const [waitScope, setWaitScope] = useState<'weekly' | 'once'>('weekly');
@@ -3180,7 +3182,7 @@ const BookingDetail: React.FC<{
   useEffect(() => { loadWaiting(); }, [loadWaiting]);
 
   const addWaiting = async () => {
-    if (!waitLabel.trim()) return;
+    if (!waitPerson.name.trim()) return;
     setBusy(true); setError('');
     const { data: me } = await supabase.auth.getUser();
     if (!me.user?.id) { setBusy(false); setError('ログインし直してください'); return; }
@@ -3190,15 +3192,15 @@ const BookingDetail: React.FC<{
     const { error: err } = await supabase.from('room_waitlist').insert({
       booking_id: weekly ? null : b.id,
       recurrence_id: weekly ? b.recurrence_id : null,
-      member_no: waitMember.trim() || null,
-      customer_label: waitLabel.trim(),
+      member_no: waitPerson.no.trim() || null,
+      customer_label: waitPerson.name.trim(),
       // 末尾に並べる。同じ値でも受け付けた順に出るので、細かく詰め直さない
       position: waiting.length,
       created_by: me.user.id,
     });
     setBusy(false);
     if (err) { setError('追加できませんでした。通信を確認してもう一度お試しください。'); return; }
-    setWaitMember(''); setWaitLabel(''); setAdding(false);
+    setWaitPerson({ no: '', name: '' }); setAdding(false);
     await loadWaiting();
   };
 
@@ -3460,28 +3462,33 @@ const BookingDetail: React.FC<{
             )}
 
             {adding && (
-              <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+              <div style={{ marginTop: 8 }}>
                 {/* 毎週の枠か、この回だけか（繰り返しの予約のときだけ選べる。既定は毎週） */}
-                {repeating && (['weekly', 'once'] as const).map(s => (
-                  <button key={s} onClick={() => setWaitScope(s)}
-                    style={{ padding: '6px 12px', borderRadius: 999, fontSize: 12.5, cursor: 'pointer', border: `1px solid ${waitScope === s ? accent : line}`, background: waitScope === s ? accent : 'transparent', color: waitScope === s ? (isDark ? '#1d2a24' : '#fff') : textMid, fontWeight: waitScope === s ? 700 : 400 }}>
-                    {s === 'weekly' ? '毎週この枠' : 'この回だけ'}
+                {repeating && (
+                  <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                    {(['weekly', 'once'] as const).map(s => (
+                      <button key={s} onClick={() => setWaitScope(s)}
+                        style={{ padding: '6px 12px', borderRadius: 999, fontSize: 12.5, cursor: 'pointer', border: `1px solid ${waitScope === s ? accent : line}`, background: waitScope === s ? accent : 'transparent', color: waitScope === s ? (isDark ? '#1d2a24' : '#fff') : textMid, fontWeight: waitScope === s ? 700 : 400 }}>
+                        {s === 'weekly' ? '毎週この枠' : 'この回だけ'}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {/* 🚨 予約フォーム・募集枠と同じ部品。会員番号を入れるとお名前が入り、
+                       お名前を2文字以上入れると候補が出る。素の入力欄にすると検索が
+                       効かない（2026-09-02 実機で指摘・募集枠と同じ罠） */}
+                <ParticipantRow value={waitPerson} onChange={setWaitPerson} onRemove={null}
+                  date={localDate(b.starts_at)} isDark={isDark} />
+                <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                  <button onClick={addWaiting} disabled={busy || !waitPerson.name.trim()}
+                    style={{ padding: '8px 14px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 13.5, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', opacity: !waitPerson.name.trim() ? .5 : 1 }}>
+                    追加
                   </button>
-                ))}
-                <input value={waitMember} onChange={e => setWaitMember(e.target.value)}
-                  placeholder="会員番号（任意）" inputMode="numeric"
-                  style={{ padding: '7px 9px', borderRadius: 8, border: `1px solid ${line}`, background: isDark ? '#495057' : '#fff', color: text, fontSize: 16, width: 130, boxSizing: 'border-box' }} />
-                <input value={waitLabel} onChange={e => setWaitLabel(e.target.value)}
-                  placeholder="お客様（例：田中 太郎）"
-                  style={{ padding: '7px 9px', borderRadius: 8, border: `1px solid ${line}`, background: isDark ? '#495057' : '#fff', color: text, fontSize: 16, flex: 1, minWidth: 150, boxSizing: 'border-box' }} />
-                <button onClick={addWaiting} disabled={busy || !waitLabel.trim()}
-                  style={{ padding: '8px 14px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 13.5, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', opacity: !waitLabel.trim() ? .5 : 1 }}>
-                  追加
-                </button>
-                <button onClick={() => { setAdding(false); setWaitMember(''); setWaitLabel(''); }}
-                  style={{ padding: '8px 12px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 13.5, cursor: 'pointer' }}>
-                  やめる
-                </button>
+                  <button onClick={() => { setAdding(false); setWaitPerson({ no: '', name: '' }); }}
+                    style={{ padding: '8px 12px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 13.5, cursor: 'pointer' }}>
+                    やめる
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -4283,8 +4290,10 @@ const WaitlistSettings: React.FC<{
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [editing, setEditing] = useState<string | null>(null);
-  const [draft, setDraft] = useState<{ member: string; label: string; note: string }>(
-    { member: '', label: '', note: '' });
+  // 🚨 お客様の欄は予約フォームと同じ部品（ParticipantRow）を使う。
+  //    素の入力欄だと検索（番号→お名前／お名前→候補）が効かない（2026-09-02 実機で指摘）
+  const [draft, setDraft] = useState<{ person: PersonInput; note: string }>(
+    { person: { no: '', name: '' }, note: '' });
   // 「どの日に入れるか」を選んでいる待ち（毎週の枠の繰り上げ用）
   const [pickFor, setPickFor] = useState<string | null>(null);
   const [occ, setOcc] = useState<Booking[]>([]);
@@ -4384,11 +4393,11 @@ const WaitlistSettings: React.FC<{
   }, [rows, floors]);
 
   const saveEdit = async (w: Waitlist) => {
-    if (!draft.label.trim()) { setError('お客様のお名前を入れてください'); return; }
+    if (!draft.person.name.trim()) { setError('お客様のお名前を入れてください'); return; }
     setBusy(w.id); setError('');
     const { error: err } = await supabase.from('room_waitlist').update({
-      member_no: draft.member.trim() || null,
-      customer_label: draft.label.trim(),
+      member_no: draft.person.no.trim() || null,
+      customer_label: draft.person.name.trim(),
       note: draft.note.trim() || null,
       updated_at: new Date().toISOString(),
     }).eq('id', w.id);
@@ -4577,19 +4586,19 @@ const WaitlistSettings: React.FC<{
               {g.items.map((w, i) => (
                 <div key={w.id} style={{ borderTop: `1px solid ${lineSoft}`, padding: '8px 0' }}>
                   {editing === w.id ? (
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                      <input value={draft.member} placeholder="会員番号"
-                        onChange={e => setDraft(p => ({ ...p, member: e.target.value }))}
-                        style={{ ...input, width: 118 }} />
-                      <input value={draft.label} placeholder="お客様（例：田中 太郎）"
-                        onChange={e => setDraft(p => ({ ...p, label: e.target.value }))}
-                        style={{ ...input, width: 168 }} />
-                      <input value={draft.note} placeholder="メモ"
-                        onChange={e => setDraft(p => ({ ...p, note: e.target.value }))}
-                        style={{ ...input, flex: 1, minWidth: 120 }} />
-                      <button onClick={() => saveEdit(w)} disabled={busy === w.id}
-                        style={smallBtn(true)}>保存</button>
-                      <button onClick={() => setEditing(null)} style={smallBtn(false)}>やめる</button>
+                    <div>
+                      {/* 🚨 予約フォームと同じ部品。素の入力欄だと検索が効かない */}
+                      <ParticipantRow value={draft.person}
+                        onChange={v => setDraft(p => ({ ...p, person: v }))}
+                        onRemove={null} date={todayStr()} isDark={isDark} />
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
+                        <input value={draft.note} placeholder="メモ"
+                          onChange={e => setDraft(p => ({ ...p, note: e.target.value }))}
+                          style={{ ...input, flex: 1, minWidth: 120 }} />
+                        <button onClick={() => saveEdit(w)} disabled={busy === w.id}
+                          style={smallBtn(true)}>保存</button>
+                        <button onClick={() => setEditing(null)} style={smallBtn(false)}>やめる</button>
+                      </div>
                     </div>
                   ) : (
                     <>
@@ -4610,7 +4619,7 @@ const WaitlistSettings: React.FC<{
                             style={{ ...smallBtn(false), opacity: i === 0 ? .4 : 1 }}>先頭へ</button>
                           <button onClick={() => {
                             setEditing(w.id);
-                            setDraft({ member: w.member_no ?? '', label: w.customer_label, note: w.note ?? '' });
+                            setDraft({ person: { no: w.member_no ?? '', name: w.customer_label }, note: w.note ?? '' });
                           }} style={smallBtn(false)}>直す</button>
                           {/* 毎週の枠は「どの日に入れるか」を選んでから。この回だけは直接 */}
                           {g.kind === 'slot' ? (
