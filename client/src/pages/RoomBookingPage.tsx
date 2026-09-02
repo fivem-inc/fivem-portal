@@ -4440,6 +4440,9 @@ const WaitlistSettings: React.FC<{
   const [occ, setOcc] = useState<Booking[]>([]);
   // 候補の回の出欠（「休みの連絡あり」を出すために読む）
   const [occAtt, setOccAtt] = useState<AttendanceRow[]>([]);
+  // その担当の生きた予約（「埋まっています（繰り上げ済みなど）」を出すために読む・2026-09-02）
+  const [occBusy, setOccBusy] = useState<Pick<Booking, 'id' | 'starts_at' | 'ends_at'>[]>([]);
+  const [vacBusy, setVacBusy] = useState<Pick<Booking, 'id' | 'starts_at' | 'ends_at'>[]>([]);
   const [occLoading, setOccLoading] = useState(false);
   // 空き扱いにする出欠の名前（⚙️設定 → キャンセル待ち。読めないときは既定）
   const [openStatuses, setOpenStatuses] = useState<string[]>(['休み', 'キャンセル料']);
@@ -4645,8 +4648,8 @@ const WaitlistSettings: React.FC<{
   };
 
   /** 空き枠にする日の候補を読む（emptyOffer が毎週の枠のとき） */
-  const loadVacOcc = async (recurrenceId: string) => {
-    setVacLoading(true); setError('');
+  const loadVacOcc = async (recurrenceId: string, staffId: string | null) => {
+    setVacLoading(true); setError(''); setVacBusy([]);
     const from = new Date(); from.setHours(0, 0, 0, 0);
     const { data, error: err } = await supabase.from('room_bookings')
       .select('*')
@@ -4662,6 +4665,7 @@ const WaitlistSettings: React.FC<{
         .select('*').in('booking_id', bs.map(x => x.id));
       setVacAtt((at ?? []) as AttendanceRow[]);
     }
+    setVacBusy(await loadStaffBusy(staffId, bs));
     setVacLoading(false);
   };
 
@@ -4694,10 +4698,29 @@ const WaitlistSettings: React.FC<{
     await onDone(`${w.customer_label} を予約に繰り上げました`);
   };
 
+  /**
+   * その担当の生きた予約を読む（候補の回と重なるものを探すため）。
+   * 🚨 繰り上げでできた予約は recurrence に紐付かないので、枠の回だけ見ても分からない。
+   *    担当で引かないと「1人目で埋まった枠に2人目」を見落とす（2026-09-02 実機で発覚）
+   */
+  const loadStaffBusy = async (staffId: string | null, bs: Booking[]) => {
+    if (!staffId || bs.length === 0) return [];
+    const from = new Date(); from.setHours(0, 0, 0, 0);
+    const { data } = await supabase.from('room_bookings')
+      .select('id, starts_at, ends_at')
+      .eq('staff_id', staffId)
+      .eq('status', 'active')
+      .eq('kind', 'booking')
+      .is('deleted_at', null)
+      .gte('ends_at', from.toISOString())
+      .lte('starts_at', bs[bs.length - 1].ends_at);
+    return (data ?? []) as Pick<Booking, 'id' | 'starts_at' | 'ends_at'>[];
+  };
+
   /** 毎週の枠の待ち：入れる日の候補（今後の回）を読み込んで選んでもらう */
   const openPick = async (w: Waitlist) => {
     if (!w.recurrence_id) return;
-    setPickFor(w.id); setOcc([]); setOccAtt([]); setOccLoading(true); setError('');
+    setPickFor(w.id); setOcc([]); setOccAtt([]); setOccBusy([]); setOccLoading(true); setError('');
     const from = new Date(); from.setHours(0, 0, 0, 0);
     // 🚨 取り消し（deleted_at あり）の回も読む。「取り消して空けた日」こそ入れる先になるため
     const { data, error: err } = await supabase.from('room_bookings')
@@ -4715,6 +4738,7 @@ const WaitlistSettings: React.FC<{
         .select('*').in('booking_id', bs.map(x => x.id));
       setOccAtt((at ?? []) as AttendanceRow[]);
     }
+    setOccBusy(await loadStaffBusy(w.recurrence?.staff_id ?? null, bs));
     setOccLoading(false);
   };
 
@@ -4739,7 +4763,17 @@ const WaitlistSettings: React.FC<{
    * 「休みの連絡あり」＝参加者全員に空き扱いの出欠（休み・キャンセル料など）が
    * 付いている回。この回はそのまま繰り上げられる（サーバーが自動で休講にする）
    */
-  const occLabel = (o: Booking, attList: AttendanceRow[] = occAtt): { label: string; free: boolean } => {
+  const occLabel = (
+    o: Booking,
+    attList: AttendanceRow[] = occAtt,
+    busyList: Pick<Booking, 'id' | 'starts_at' | 'ends_at'>[] = occBusy,
+  ): { label: string; free: boolean } => {
+    // 🚨 まず担当の重なり。取り消し・お休みで空いたように見える回でも、
+    //    繰り上げ済みの予約（recurrence に紐付かない）で埋まっていることがある。
+    //    サーバー（room_staff_busy）も同じ判定で止める。ここは目安の表示
+    if (busyList.some(x => x.id !== o.id && x.starts_at < o.ends_at && o.starts_at < x.ends_at)) {
+      return { label: '埋まっています（繰り上げ済みなど）', free: false };
+    }
     if (o.deleted_at) return { label: '取消済み', free: true };
     if (o.status === 'cancelled') return { label: cancelledLabel(o), free: true };
     // 🚨 判定は「行の全部」ではなく**いまの参加者1人ずつ**で見る。過去のテストで残った
@@ -4811,7 +4845,7 @@ const WaitlistSettings: React.FC<{
             </span>
             <span style={{ marginLeft: 'auto', display: 'flex', gap: 5 }}>
               {emptyOffer.recurrence_id ? (
-                <button onClick={() => (vacOcc.length || vacLoading ? (setVacOcc([]), setVacAtt([])) : loadVacOcc(emptyOffer.recurrence_id!))}
+                <button onClick={() => (vacOcc.length || vacLoading ? (setVacOcc([]), setVacAtt([])) : loadVacOcc(emptyOffer.recurrence_id!, emptyOffer.recurrence?.staff_id ?? null))}
                   disabled={!!busy} style={smallBtn(vacOcc.length > 0 || vacLoading)}>
                   {vacOcc.length || vacLoading ? '日を選ぶのをやめる' : '日を選んで空き枠にする'}
                 </button>
@@ -4828,7 +4862,7 @@ const WaitlistSettings: React.FC<{
               {vacLoading ? (
                 <span style={{ fontSize: 12.5 }}>日付を読み込んでいます…</span>
               ) : vacOcc.map(o => {
-                const s = occLabel(o, vacAtt);
+                const s = occLabel(o, vacAtt, vacBusy);
                 return (
                   <div key={o.id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '3px 0' }}>
                     <span style={{ fontSize: 13 }}>{formatDateLabel(localDate(o.starts_at))} {hhmm(o.starts_at)}</span>
@@ -4937,7 +4971,9 @@ const WaitlistSettings: React.FC<{
                               <p style={{ fontSize: 12, color: textMid, margin: '0 0 6px', lineHeight: 1.6 }}>
                                 入れる日を選んでください。「休みの連絡あり」の日はそのまま入れられます
                                 （その回は自動で「お休み」になり、記録は残ります）。「予約が入っています」の日は、
-                                先にその回を休講または取り消さないと入りません（押しても理由を出して止まります）。
+                                先にその回を休講または取り消さないと入りません。
+                                「埋まっています」の日は、この担当にすでに別の予約（繰り上げ済みなど）が
+                                あるため入れられません（押しても理由を出して止まります）。
                               </p>
                               {occ.map(o => {
                                 const s = occLabel(o);
