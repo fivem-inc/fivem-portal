@@ -9,6 +9,7 @@ import {
   todayStr, toDate, hhmm, minutesOf, addMinutes, formatDateLabel, shiftDate,
   scholaUrl, floorBusyNow, nextStart, usingUntil, assignColumns, categoryLabel,
   isWeekend, RANGE_DAYS, localDate, placeLabel, openSlotColor, durationLabel, FALLBACK_DURATIONS, gradeOrAge, defaultMinutesOf,
+  isAbsence, cancelledLabel,
   customerName, customerFullName, customerKana, contactLines, toHiragana,
   fiscalYear, fiscalYearEnd, fiscalYearLabel, RENEWAL_NOTICE_DAYS, daysUntil, detailsOf, purposeWithDetail,
   participantsOf, participantLabelOf, attendanceOptionsFor, needsPaymentNote, customerSearchFilter, customerMatches,
@@ -972,7 +973,7 @@ const TimelineView: React.FC<{
                       </b>
                       {/* 担当別・参加者別では「どこの場所か」が分からないと使えないので場所を出す */}
                       <span style={{ fontSize: 10.5, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {off ? '休講'
+                        {off ? cancelledLabel(b)
                           : open ? `募集中${b.seats > 1 ? `（あと${restSeats}名）` : ''}`
                           : view === 'place' ? `${purposeWithDetail(b)}${(b.customer_name || b.customer_label) ? ` / ${b.customer_name || b.customer_label}` : ''}`
                           : `${placeName(b.floor_id, allCampus)} / ${purposeWithDetail(b)}`}
@@ -1099,7 +1100,7 @@ const RangeList: React.FC<{
                     fontSize: 11, fontWeight: 700, flexShrink: 0,
                     border: open ? `1px dashed ${fg}` : 'none',
                   }}>
-                    {off ? '休講' : open ? `募集中${b.seats > 1 ? ` あと${rest}名` : ''}` : purposeWithDetail(b)}
+                    {off ? cancelledLabel(b) : open ? `募集中${b.seats > 1 ? ` あと${rest}名` : ''}` : purposeWithDetail(b)}
                   </span>
                   {/* 場所／（絞っていなければ）並べている軸の本人／もう一方の軸。
                       1人に絞っているときは、その人の名前を毎行くり返さない */}
@@ -1217,7 +1218,7 @@ const MobileView: React.FC<{
                   background: bgc, color: fg, borderRadius: 999, padding: '1px 9px', fontSize: 11, fontWeight: 700,
                   border: open ? `1px dashed ${fg}` : 'none',
                 }}>
-                  {off ? '休講' : open ? `募集中${b.seats > 1 ? ` あと${rest}名` : ''}` : purposeWithDetail(b)}
+                  {off ? cancelledLabel(b) : open ? `募集中${b.seats > 1 ? ` あと${rest}名` : ''}` : purposeWithDetail(b)}
                 </span>
               </div>
               <div style={{ fontSize: 12.5, color: textMid, marginTop: 3 }}>
@@ -2408,13 +2409,15 @@ const AttendanceSummary: React.FC<{
     const CHUNK = 1000;
     const MAX = 20000;
 
-    // ① その期間の予約。🚨 休講と募集中の枠は出欠の対象にしない（まとめて付ける画面と同じ条件）
+    // ① その期間の予約。🚨 休講と募集中の枠は出欠の対象にしない（まとめて付ける画面と同じ条件）。
+    //    ただし「お休み」（お客様都合・cancel_kind='absence'）は**含める**。
+    //    外すとキャンセル料・キャン1回消化の回数消化が10回区切りの照合から漏れる（2026-09-02）
     const bs: Booking[] = [];
     for (let f = 0; ; f += CHUNK) {
       const { data, error: err } = await supabase
         .from('room_bookings').select('*')
         .is('deleted_at', null)
-        .neq('status', 'cancelled')
+        .or('status.eq.active,and(status.eq.cancelled,cancel_kind.eq.absence)')
         .neq('kind', 'open')
         .gte('starts_at', period.start.toISOString())
         .lt('starts_at', period.end.toISOString())
@@ -2721,9 +2724,10 @@ const AttendanceDayList: React.FC<{
   const textMid = isDark ? '#b3b8c6' : '#5b6270';
   const accent = isDark ? '#6bbd92' : '#2f6f4f';
 
-  // 出欠を付けられる予約だけ。🚨 募集中の枠（まだ人がいない）と休講は除く
+  // 出欠を付けられる予約だけ。🚨 募集中の枠（まだ人がいない）と休講は除く。
+  //    「お休み」（お客様都合）は**含める**（出欠の記録を見え・直せたままにする）
   const targets = bookings
-    .filter(b => b.kind !== 'open' && b.status !== 'cancelled')
+    .filter(b => b.kind !== 'open' && (b.status !== 'cancelled' || isAbsence(b)))
     .filter(b => localDate(b.starts_at) === date)
     .sort((a, b) => a.starts_at.localeCompare(b.starts_at));
 
@@ -3011,8 +3015,9 @@ const AttendanceEditor: React.FC<{
   const text = isDark ? '#eeeeee' : '#222222';
   const textMid = isDark ? '#b3b8c6' : '#5b6270';
 
-  // 🚨 休講の回に出欠は無い（その回自体が行われていないため）
-  if (b.status === 'cancelled') {
+  // 🚨 休講（当社都合）の回に出欠は無い（その回自体が行われていないため）。
+  //    「お休み」（お客様都合・isAbsence）は別もの：出欠の記録を見え・直せたままにする
+  if (b.status === 'cancelled' && !isAbsence(b)) {
     return (
       <p style={{ fontSize: 12.5, color: textMid, margin: 0, lineHeight: 1.6 }}>
         休講なので出欠はありません。
@@ -3085,7 +3090,7 @@ const AttendanceEditor: React.FC<{
     if (err) { setError('空き枠を作れませんでした。通信を確認してください。'); return; }
     if (!row?.ok) { setError(row?.reason ?? '空き枠を作れませんでした'); return; }
     setVacateOffer(false);
-    setWaitHint('空き枠を作りました。この回は休講になり、予約表に募集中の枠（黄色の破線）が出ます。');
+    setWaitHint('空き枠を作りました。この回は「お休み」（グレー）になり、予約表に募集中の枠（黄色の破線）が出ます。');
     await onSaved();
   };
 
@@ -3316,7 +3321,9 @@ const BookingDetail: React.FC<{
   // 休講にする（枠は残す。消すと「空いた」と誤解されて二重に埋まるため）
   const setCancelled = async () => {
     setBusy(true); setError('');
-    const { error: err } = await applyTo({ status: 'cancelled', updated_at: new Date().toISOString() });
+    // 🚨 手動のこのボタンは「休講」（当社都合）。お客様都合の「お休み」（absence）は
+    //    繰り上げ・空き枠化の自動処理だけが付ける
+    const { error: err } = await applyTo({ status: 'cancelled', cancel_kind: 'closed', updated_at: new Date().toISOString() });
     setBusy(false);
     if (err) { setError('変更できませんでした。通信を確認してもう一度お試しください。'); return; }
     onChanged(scope === 'future' && repeating ? '今後の分をまとめて休講にしました' : '休講にしました');
@@ -3336,11 +3343,11 @@ const BookingDetail: React.FC<{
     if (!row?.ok) { setBusy(false); setError(`元に戻せません：${row?.reason ?? 'この時間は他の予約で埋まっています'}`); return; }
 
     const { error: err } = await supabase.from('room_bookings')
-      .update({ status: 'active', updated_at: new Date().toISOString() })
+      .update({ status: 'active', cancel_kind: 'closed', updated_at: new Date().toISOString() })
       .eq('id', b.id);
     setBusy(false);
     if (err) { setError('元に戻せませんでした。通信を確認してもう一度お試しください。'); return; }
-    onChanged('休講を取り消しました');
+    onChanged(`${cancelledLabel(b)}を取り消しました`);
   };
 
   /**
@@ -3390,7 +3397,7 @@ const BookingDetail: React.FC<{
           )}
           {b.exclusive && <span style={{ fontSize: 12.5, fontWeight: 700 }}>🔒 貸切</span>}
           {repeating && <span style={{ fontSize: 12.5, fontWeight: 700, color: textMid }}>🔁 毎週の繰り返し</span>}
-          {b.status === 'cancelled' && <span style={{ fontSize: 12.5, fontWeight: 700, color: textMid }}>休講</span>}
+          {b.status === 'cancelled' && <span style={{ fontSize: 12.5, fontWeight: 700, color: textMid }}>{cancelledLabel(b)}</span>}
         </div>
         <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 10, fontVariantNumeric: 'tabular-nums' }}>
           {formatDateLabel(localDate(b.starts_at))} {hhmm(b.starts_at)}〜{hhmm(b.ends_at)}
@@ -3641,7 +3648,7 @@ const BookingDetail: React.FC<{
             ) : (
               <button onClick={unCancel} disabled={busy}
                 style={{ flex: '1 1 100px', padding: '11px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: text, fontSize: 14, cursor: busy ? 'wait' : 'pointer' }}>
-                休講をやめる
+                {cancelledLabel(b)}をやめる
               </button>
             )}
             <button onClick={() => setConfirm('delete')}
@@ -4734,7 +4741,7 @@ const WaitlistSettings: React.FC<{
    */
   const occLabel = (o: Booking, attList: AttendanceRow[] = occAtt): { label: string; free: boolean } => {
     if (o.deleted_at) return { label: '取消済み', free: true };
-    if (o.status === 'cancelled') return { label: '休講', free: true };
+    if (o.status === 'cancelled') return { label: cancelledLabel(o), free: true };
     // 🚨 判定は「行の全部」ではなく**いまの参加者1人ずつ**で見る。過去のテストで残った
     //    キーの違う古い行が1つあるだけで判定が壊れるため（2026-09-02 実機で発覚）。
     //    DB側の room_booking_all_absent() と同じ判定。片方だけ直さないこと
@@ -4753,7 +4760,7 @@ const WaitlistSettings: React.FC<{
         いま並んでいる方を、<b>枠ごと</b>（毎週の枠は担当ごとに別）にまとめています。
         <br />
         出欠で<b>{openStatuses.join('・')}</b>が付いた回（＝休みの連絡あり）は、
-        そのまま繰り上げられます（繰り上げた瞬間に、その回は自動で休講になります。
+        そのまま繰り上げられます（繰り上げた瞬間に、その回は自動で<b>お休み</b>（グレー）になります。
         予約も出欠の記録も消えません）。それ以外の回は、先に休講または取り消してから。
         空きが無いまま押すと、理由を出して止まります。
       </div>
@@ -4929,7 +4936,7 @@ const WaitlistSettings: React.FC<{
                             <>
                               <p style={{ fontSize: 12, color: textMid, margin: '0 0 6px', lineHeight: 1.6 }}>
                                 入れる日を選んでください。「休みの連絡あり」の日はそのまま入れられます
-                                （その回は自動で休講になり、記録は残ります）。「予約が入っています」の日は、
+                                （その回は自動で「お休み」になり、記録は残ります）。「予約が入っています」の日は、
                                 先にその回を休講または取り消さないと入りません（押しても理由を出して止まります）。
                               </p>
                               {occ.map(o => {
@@ -6524,8 +6531,8 @@ const WaitlistTriggerSettings: React.FC<{
     <div>
       <div style={{ background: isDark ? '#35354e' : '#f0f2f5', borderRadius: 8, padding: '10px 12px', fontSize: 13, lineHeight: 1.7, marginBottom: 14, color: textMid }}>
         ここで選んだ出欠が付いた回は<b>空き扱い</b>になり、予約を消したり休講にしたりしなくても、
-        キャンセル待ちの方をそのまま繰り上げられます（繰り上げた瞬間に、その回は自動で休講になります。
-        予約と出欠の記録はそのまま残ります）。
+        キャンセル待ちの方をそのまま繰り上げられます（繰り上げた瞬間に、その回は自動で
+        <b>お休み</b>（お客様都合のグレー表示）になります。予約と出欠の記録はそのまま残ります）。
         <br />
         🚨 2名の予約は、<b>全員</b>にここで選んだ出欠が付いたときだけ空き扱いになります。
         すべて外すと連動は止まり、休講・取り消しだけで繰り上げる今までの動きになります。

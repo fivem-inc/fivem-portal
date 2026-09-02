@@ -150,6 +150,13 @@ export interface Booking {
   /** この枠が「固定」か。人ではなく曜日・時間の枠の性質。既定 false */
   is_fixed: boolean;
   status: 'active' | 'cancelled';
+  /**
+   * 取り消しの種類（status='cancelled' のときだけ意味を持つ・2026-09-02〜）。
+   *   'closed'  … 休講（当社都合。レッスン自体を開催しない）
+   *   'absence' … お休み（お客様都合のキャンセル。出欠の記録は見えたまま・集計にも入る）
+   * 🚨 判定は isAbsence() / cancelledLabel() を使う。直接比較を書き散らさない
+   */
+  cancel_kind?: 'closed' | 'absence';
   /** booking = 予約が入っている ／ open = 募集中の枠（先に置いて後から埋める） */
   kind: 'booking' | 'open';
   /** 募集枠の定員。基本1。「2名同時で受けたい」ときだけ2以上 */
@@ -733,6 +740,18 @@ export const hhmm = (iso: string): string => {
  *    **朝8時台の予約が前日にまとめられる**（2026-08-28 の実機確認で発見）。
  *    日付でまとめる・比べるときは必ずこの関数を通すこと。
  */
+/**
+ * お客様都合の「お休み」か（2026-09-02〜）。休講（当社都合）とは別もの。
+ * どちらも status='cancelled'（＝予約数に数えない・空き判定から外れる）だが、
+ * お休みは出欠の記録が見えたまま・集計にも入る。
+ */
+export const isAbsence = (b: Pick<Booking, 'status' | 'cancel_kind'>): boolean =>
+  b.status === 'cancelled' && b.cancel_kind === 'absence';
+
+/** 取り消した予約のグレー表示に出す呼び名（案A・2026-09-02 ユーザー確定） */
+export const cancelledLabel = (b: Pick<Booking, 'status' | 'cancel_kind'>): string =>
+  isAbsence(b) ? 'お休み' : '休講';
+
 export const localDate = (iso: string): string => {
   const d = new Date(iso);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
