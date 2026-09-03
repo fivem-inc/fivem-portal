@@ -212,6 +212,13 @@ export interface Waitlist {
   // 🚨 受け入れ時間は待ちごとに持たない（2026-09-03 に枠＝room_recurrences の
   //    accept_start/accept_end へ一本化）。DBの accept_start/accept_end 列は
   //    未使用のまま残っている（消していない）。復活させないこと
+  /**
+   * 最後にどの回へ繰り上げたか（2026-09-03〜）。
+   * 🚨 **毎週の枠の待ちは繰り上げても waiting のまま残る**（他の週のために待ち続ける）。
+   *    「この回だけ」の待ちだけが promoted になって終わる
+   */
+  last_promoted_booking_id: string | null;
+  last_promoted_at: string | null;
   position: number;
   status: 'waiting' | 'promoted' | 'cancelled';
   created_at: string;

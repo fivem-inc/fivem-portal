@@ -4964,6 +4964,14 @@ const WaitlistSettings: React.FC<{
   // 鍵は枠（queueKeyOf）、値はいちばん近い空きの日（無ければ null）。
   // null = まだ数えている最中（何も出さない）
   const [avail, setAvail] = useState<Record<string, string | null> | null>(null);
+  /**
+   * どの待ちが、どの回にすでに繰り上げ済みか（2026-09-03）。
+   * 🚨 毎週の枠の待ちは繰り上げても残るので、同じ回に二重で入れないよう
+   *    画面でも押せなくする（最終判定はサーバー）。鍵は `待ちID|予約ID`
+   */
+  const [promoted, setPromoted] = useState<Set<string>>(new Set());
+  /** 取り消しの確認（誤操作で待ちを消さないため・2026-09-03 ユーザー指示） */
+  const [cancelTarget, setCancelTarget] = useState<Waitlist | null>(null);
 
   const line = isDark ? '#3a3a5c' : '#e0e0e0';
   const lineSoft = isDark ? '#35354e' : '#eef0f3';
@@ -5012,7 +5020,17 @@ const WaitlistSettings: React.FC<{
       setError('キャンセル待ちを読み込めませんでした。通信を確認して開き直してください。');
       setLoading(false); return;
     }
-    setRows((data ?? []) as Waitlist[]);
+    const list = (data ?? []) as Waitlist[];
+    setRows(list);
+    // すでに繰り上げ済みの（待ち, 回）の組を読む。毎週の待ちは残るので二重防止に要る
+    if (list.length > 0) {
+      const { data: pr } = await supabase.from('room_waitlist_promotions')
+        .select('waitlist_id, booking_id').in('waitlist_id', list.map(w => w.id));
+      setPromoted(new Set(((pr ?? []) as { waitlist_id: string; booking_id: string }[])
+        .map(p => `${p.waitlist_id}|${p.booking_id}`)));
+    } else {
+      setPromoted(new Set());
+    }
     setLoading(false);
   }, []);
 
@@ -5253,6 +5271,26 @@ const WaitlistSettings: React.FC<{
    *    パネルが画面外に出て「押しても何も起きない」ように見えていた。
    * 🚨 用途の長さ制限は掛けない（受け入れ時の例外対応が目的・ユーザー確定）
    */
+  /**
+   * 取り消しの確認（2026-09-03 ユーザー指示）。
+   * 🚨 毎週の待ちは繰り上げても残るので、「取り消す」＝**今後ずっと待たない**という意味。
+   *    誤操作で消すと順番も失われるため、必ずここで確かめてもらう
+   */
+  const cancelPanel = (w: Waitlist) => (cancelTarget && cancelTarget.id === w.id) ? (
+    <div style={{ background: isDark ? '#4a2a2a' : '#fdecea', border: `1px solid ${isDark ? '#7a4444' : '#f5c6cb'}`, color: isDark ? '#ffb4b4' : '#a3282a', borderRadius: 8, padding: '10px 12px', fontSize: 13, margin: '8px 0 0 30px', lineHeight: 1.8 }}>
+      <b>{w.customer_label}</b> さんのキャンセル待ちを取り消します。
+      {w.recurrence_id
+        ? 'この枠の待ちが終わり、今後の週も繰り上げの対象から外れます。'
+        : 'この回の待ちが終わります。'}
+      よろしいですか？（順番は元に戻せません）
+      <div style={{ display: 'flex', gap: 5, marginTop: 6, flexWrap: 'wrap' }}>
+        <button onClick={async () => { const t = cancelTarget; setCancelTarget(null); await cancel(t); }}
+          disabled={!!busy} style={smallBtn(true)}>取り消す</button>
+        <button onClick={() => setCancelTarget(null)} style={smallBtn(false)}>やめる</button>
+      </div>
+    </div>
+  ) : null;
+
   const promotePanel = (w: Waitlist) => (promoteDraft && promoteDraft.w.id === w.id) ? (
     <div style={{ background: isDark ? '#263b33' : '#e8f2ec', border: `1px solid ${accent}`, color: isDark ? '#d7efe2' : '#1d4535', borderRadius: 8, padding: '10px 12px', fontSize: 13, margin: '8px 0 0 30px', lineHeight: 1.8 }}>
       <b>{promoteDraft.w.customer_label}</b> さんを <b>{formatDateLabel(promoteDraft.dateStr)}</b> に繰り上げます。
@@ -5659,6 +5697,8 @@ const WaitlistSettings: React.FC<{
                           {g.kind === 'slot' && !w.recurrence_id && w.booking
                             && <b>〔{formatDateLabel(localDate(w.booking.starts_at))}のみ〕</b>}
                           {w.staff_id && ` / 希望：${staff.find(s => s.id === w.staff_id)?.name ?? ''}`}
+                          {/* 毎週の待ちは繰り上げても残るので、最後に入った日を出す（2026-09-03） */}
+                          {w.last_promoted_at && ` / 最後の繰り上げ：${formatDateLabel(localDate(w.last_promoted_at))}`}
                           {w.note && ` / ${w.note}`}
                         </span>
                         <span style={{ marginLeft: 'auto', display: 'flex', gap: 5, flexWrap: 'wrap' }}>
@@ -5689,13 +5729,16 @@ const WaitlistSettings: React.FC<{
                               )}
                             </>
                           )}
-                          <button onClick={() => cancel(w)} disabled={!!busy}
+                          {/* 🚨 いきなり消さない。確認を挟む（2026-09-03 ユーザー指示）。
+                                 毎週の待ちは繰り上げても残るので、取り消し＝今後すべて終了になる */}
+                          <button onClick={() => setCancelTarget(w)} disabled={!!busy}
                             style={smallBtn(false)}>取り消す</button>
                         </span>
                       </div>
 
                       {/* 「この回だけ」の待ちは日付選びが無いので、行の直下に確認パネルを出す */}
                       {pickFor !== w.id && promotePanel(w)}
+                      {cancelPanel(w)}
 
                       {/* どの日に入れるか（毎週の枠の待ちだけ） */}
                       {pickFor === w.id && (
@@ -5722,12 +5765,18 @@ const WaitlistSettings: React.FC<{
                                   <div key={o.id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '3px 0' }}>
                                     <span style={{ fontSize: 13 }}>{formatDateLabel(localDate(o.starts_at))} {hhmm(o.starts_at)}</span>
                                     <span style={{ fontSize: 12, color: s.free ? accent : textMid }}>{s.label}</span>
-                                    {/* 🚨 対象外の回はボタン自体を押せなくする（2026-09-03 実機指摘）。
+                                    {/* 🚨 対象外の回・すでに入れた回はボタン自体を押せなくする。
                                            サーバーでも断るが、押せるのに弾かれる状態を画面に作らない */}
-                                    <button onClick={() => openPromoteDraft(w, o)}
-                                      disabled={!!busy || !!o.no_waitlist}
-                                      style={{ ...smallBtn(s.free), marginLeft: 'auto', opacity: o.no_waitlist ? .4 : 1, cursor: o.no_waitlist ? 'not-allowed' : undefined }}>
-                                      {o.no_waitlist ? '入れられません' : 'この日に入れる'}</button>
+                                    {(() => {
+                                      const done = promoted.has(`${w.id}|${o.id}`);
+                                      const ng = !!o.no_waitlist || done;
+                                      return (
+                                        <button onClick={() => openPromoteDraft(w, o)}
+                                          disabled={!!busy || ng}
+                                          style={{ ...smallBtn(s.free && !ng), marginLeft: 'auto', opacity: ng ? .4 : 1, cursor: ng ? 'not-allowed' : undefined }}>
+                                          {done ? '入っています' : o.no_waitlist ? '入れられません' : 'この日に入れる'}</button>
+                                      );
+                                    })()}
                                   </div>
                                 );
                               })}
