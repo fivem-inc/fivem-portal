@@ -5581,8 +5581,10 @@ const WaitlistSettings: React.FC<{
                     <span style={{ fontSize: 13 }}>{formatDateLabel(localDate(o.starts_at))} {hhmm(o.starts_at)}</span>
                     <span style={{ fontSize: 12 }}>{s.label}</span>
                     {!o.deleted_at && (
-                      <button onClick={() => emptyOffer && openVacDraft(emptyOffer, o)} disabled={!!busy}
-                        style={{ ...smallBtn(s.free), marginLeft: 'auto' }}>この日を空き枠にする</button>
+                      <button onClick={() => emptyOffer && openVacDraft(emptyOffer, o)}
+                        disabled={!!busy || !!o.no_waitlist}
+                        style={{ ...smallBtn(s.free), marginLeft: 'auto', opacity: o.no_waitlist ? .4 : 1, cursor: o.no_waitlist ? 'not-allowed' : undefined }}>
+                        {o.no_waitlist ? '対象外です' : 'この日を空き枠にする'}</button>
                     )}
                   </div>
                 );
@@ -5720,8 +5722,12 @@ const WaitlistSettings: React.FC<{
                                   <div key={o.id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '3px 0' }}>
                                     <span style={{ fontSize: 13 }}>{formatDateLabel(localDate(o.starts_at))} {hhmm(o.starts_at)}</span>
                                     <span style={{ fontSize: 12, color: s.free ? accent : textMid }}>{s.label}</span>
-                                    <button onClick={() => openPromoteDraft(w, o)} disabled={!!busy}
-                                      style={{ ...smallBtn(s.free), marginLeft: 'auto' }}>この日に入れる</button>
+                                    {/* 🚨 対象外の回はボタン自体を押せなくする（2026-09-03 実機指摘）。
+                                           サーバーでも断るが、押せるのに弾かれる状態を画面に作らない */}
+                                    <button onClick={() => openPromoteDraft(w, o)}
+                                      disabled={!!busy || !!o.no_waitlist}
+                                      style={{ ...smallBtn(s.free), marginLeft: 'auto', opacity: o.no_waitlist ? .4 : 1, cursor: o.no_waitlist ? 'not-allowed' : undefined }}>
+                                      {o.no_waitlist ? '入れられません' : 'この日に入れる'}</button>
                                   </div>
                                 );
                               })}
