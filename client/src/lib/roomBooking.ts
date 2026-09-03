@@ -203,13 +203,9 @@ export interface Waitlist {
   customer_label: string;
   staff_id: string | null;
   note: string | null;
-  /**
-   * 受け入れ時間（2026-09-03〜・任意）。「この待ちを受けるならこの時間」という
-   * 枠ごとの決まりを予め持たせる。'HH:MM:SS'。null = 枠の時間のまま。
-   * 繰り上げの確認パネルに既定値として入る（その場の微調整も可能）
-   */
-  accept_start: string | null;
-  accept_end: string | null;
+  // 🚨 受け入れ時間は待ちごとに持たない（2026-09-03 に枠＝room_recurrences の
+  //    accept_start/accept_end へ一本化）。DBの accept_start/accept_end 列は
+  //    未使用のまま残っている（消していない）。復活させないこと
   position: number;
   status: 'waiting' | 'promoted' | 'cancelled';
   created_at: string;

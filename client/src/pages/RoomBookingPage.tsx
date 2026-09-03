@@ -3543,11 +3543,6 @@ const BookingDetail: React.FC<{
   // 繰り返しの予約では「毎週この枠を待つ」か「この回だけ待つ」かを選ぶ（既定は毎週）。
   // 実運用は「毎週◯曜のこの枠が空いたら入りたい」がほとんどのため（2026-09-02 ユーザー承認）
   const [waitScope, setWaitScope] = useState<'weekly' | 'once'>('weekly');
-  // 受け入れ時間（任意・2026-09-03 ユーザー承認）。
-  // 「この待ちを受けるならこの時間」という枠ごとの決まりを予め持たせる
-  const [waitAcceptOn, setWaitAcceptOn] = useState(false);
-  const [waitAcceptStart, setWaitAcceptStart] = useState('');
-  const [waitAcceptEnd, setWaitAcceptEnd] = useState('');
   // 枠ごとの設定（2026-09-02 ユーザー承認）。繰り返しの予約でだけ意味を持つ。
   // null = まだ読めていない（読めるまでは既定＝空き枠ON・受付ONとして扱う）
   const [slotSet, setSlotSet] = useState<{
@@ -3645,9 +3640,8 @@ const BookingDetail: React.FC<{
       recurrence_id: weekly ? b.recurrence_id : null,
       member_no: waitPerson.no.trim() || null,
       customer_label: waitPerson.name.trim(),
-      // 受け入れ時間（指定したときだけ）。繰り上げの確認パネルに既定値として入る
-      accept_start: waitAcceptOn && waitAcceptStart ? waitAcceptStart : null,
-      accept_end: waitAcceptOn && waitAcceptEnd ? waitAcceptEnd : null,
+      // 🚨 受け入れ時間は待ちごとに持たない（2026-09-03 に枠の設定へ一本化。
+      //    個別の例外は繰り上げの確認パネルでその場調整する）
       // 末尾に並べる。同じ値でも受け付けた順に出るので、細かく詰め直さない
       position: waiting.length,
       created_by: me.user.id,
@@ -3655,7 +3649,6 @@ const BookingDetail: React.FC<{
     setBusy(false);
     if (err) { setError('追加できませんでした。通信を確認してもう一度お試しください。'); return; }
     setWaitPerson({ no: '', name: '' }); setAdding(false);
-    setWaitAcceptOn(false); setWaitAcceptStart(''); setWaitAcceptEnd('');
     await loadWaiting();
   };
 
@@ -3932,7 +3925,6 @@ const BookingDetail: React.FC<{
                     {/* 繰り返しの予約では「毎週の枠の待ち」と「この回だけの待ち」が
                         混ざるので、どちらか分かるように印を付ける */}
                     {repeating && (w.recurrence_id ? '〔毎週〕' : '〔この回だけ〕')}
-                    {w.accept_start && ` / 受け入れ ${w.accept_start.slice(0, 5)}〜${w.accept_end ? w.accept_end.slice(0, 5) : ''}`}
                     {w.note ? ` / ${w.note}` : ''}
                   </div>
                 ))}
@@ -3961,28 +3953,9 @@ const BookingDetail: React.FC<{
                        効かない（2026-09-02 実機で指摘・募集枠と同じ罠） */}
                 <ParticipantRow value={waitPerson} onChange={setWaitPerson} onRemove={null}
                   date={localDate(b.starts_at)} isDark={isDark} />
-                {/* 受け入れ時間（任意・2026-09-03）。「受けるならこの時間」という枠の決まりを予め持たせる */}
-                <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12.5, color: textMid, cursor: 'pointer', marginTop: 8 }}>
-                  <input type="checkbox" checked={waitAcceptOn}
-                    onChange={e => {
-                      setWaitAcceptOn(e.target.checked);
-                      // 初期値は 枠の受け入れ時間 → 無ければ枠の時間（2026-09-03）
-                      if (e.target.checked && !waitAcceptStart) {
-                        setWaitAcceptStart(slotSet?.accept_start ? slotSet.accept_start.slice(0, 5) : hhmm(b.starts_at));
-                        setWaitAcceptEnd(slotSet?.accept_end ? slotSet.accept_end.slice(0, 5) : hhmm(b.ends_at));
-                      }
-                    }} style={{ width: 16, height: 16, flexShrink: 0 }} />
-                  受け入れ時間を指定する（受けるならこの時間、という決まりがあるとき）
-                </label>
-                {waitAcceptOn && (
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6, flexWrap: 'wrap' }}>
-                    <TimeInput value={waitAcceptStart} onChange={setWaitAcceptStart} isDark={isDark}
-                      ariaLabel="受け入れ開始" style={{ width: 110 }} />
-                    <span style={{ fontSize: 13 }}>〜</span>
-                    <TimeInput value={waitAcceptEnd} onChange={setWaitAcceptEnd} isDark={isDark}
-                      ariaLabel="受け入れ終了" style={{ width: 110 }} />
-                  </div>
-                )}
+                {/* 🚨 待ちごとの「受け入れ時間」は置かない（2026-09-03 に枠の設定へ一本化）。
+                       時間のルールは枠の設定（下）で決め、個別の例外は繰り上げの
+                       確認パネルでその場調整する */}
                 <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
                   <button onClick={addWaiting} disabled={busy || !waitPerson.name.trim()}
                     style={{ padding: '8px 14px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 13.5, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', opacity: !waitPerson.name.trim() ? .5 : 1 }}>
@@ -4840,10 +4813,8 @@ const WaitlistSettings: React.FC<{
   const [editing, setEditing] = useState<string | null>(null);
   // 🚨 お客様の欄は予約フォームと同じ部品（ParticipantRow）を使う。
   //    素の入力欄だと検索（番号→お名前／お名前→候補）が効かない（2026-09-02 実機で指摘）
-  const [draft, setDraft] = useState<{
-    person: PersonInput; note: string;
-    acceptOn: boolean; acceptStart: string; acceptEnd: string;
-  }>({ person: { no: '', name: '' }, note: '', acceptOn: false, acceptStart: '', acceptEnd: '' });
+  const [draft, setDraft] = useState<{ person: PersonInput; note: string }>(
+    { person: { no: '', name: '' }, note: '' });
   // 「どの日に入れるか」を選んでいる待ち（毎週の枠の繰り上げ用）
   const [pickFor, setPickFor] = useState<string | null>(null);
   const [occ, setOcc] = useState<Booking[]>([]);
@@ -4999,8 +4970,6 @@ const WaitlistSettings: React.FC<{
       member_no: draft.person.no.trim() || null,
       customer_label: draft.person.name.trim(),
       note: draft.note.trim() || null,
-      accept_start: draft.acceptOn && draft.acceptStart ? draft.acceptStart : null,
-      accept_end: draft.acceptOn && draft.acceptEnd ? draft.acceptEnd : null,
       updated_at: new Date().toISOString(),
     }).eq('id', w.id);
     setBusy('');
@@ -5144,15 +5113,12 @@ const WaitlistSettings: React.FC<{
 
   const openPromoteDraft = (w: Waitlist, target: Pick<Booking, 'id' | 'starts_at' | 'ends_at'>) => {
     setError('');
-    // 既定値の優先順位：待ちの個別設定 → 枠の受け入れ時間 → 枠の時間（2026-09-03）
+    // 既定値：枠の受け入れ時間 → 無ければ枠の時間（2026-09-03 に枠の設定へ一本化。
+    // 個別の例外はこのパネルでその場調整する）
     setPromoteDraft({
       w, targetId: target.id, dateStr: localDate(target.starts_at),
-      start: w.accept_start ? w.accept_start.slice(0, 5)
-        : w.recurrence?.accept_start ? w.recurrence.accept_start.slice(0, 5)
-        : hhmm(target.starts_at),
-      end: w.accept_end ? w.accept_end.slice(0, 5)
-        : w.recurrence?.accept_end ? w.recurrence.accept_end.slice(0, 5)
-        : hhmm(target.ends_at),
+      start: w.recurrence?.accept_start ? w.recurrence.accept_start.slice(0, 5) : hhmm(target.starts_at),
+      end: w.recurrence?.accept_end ? w.recurrence.accept_end.slice(0, 5) : hhmm(target.ends_at),
     });
   };
 
@@ -5469,7 +5435,7 @@ const WaitlistSettings: React.FC<{
         <div style={{ background: isDark ? '#263b33' : '#e8f2ec', border: `1px solid ${accent}`, color: isDark ? '#d7efe2' : '#1d4535', borderRadius: 8, padding: '10px 12px', fontSize: 13, marginBottom: 12, lineHeight: 1.8 }}>
           <b>{promoteDraft.w.customer_label}</b> さんを <b>{formatDateLabel(promoteDraft.dateStr)}</b> に繰り上げます。
           時間を確かめてください
-          {promoteDraft.w.accept_start && <b>（受け入れ時間の指定あり）</b>}。
+          {promoteDraft.w.recurrence?.accept_start && <b>（枠の受け入れ時間が入っています）</b>}。
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
             <TimeInput value={promoteDraft.start}
               onChange={v => setPromoteDraft(p => (p ? { ...p, start: v } : p))}
@@ -5533,39 +5499,7 @@ const WaitlistSettings: React.FC<{
                       <ParticipantRow value={draft.person}
                         onChange={v => setDraft(p => ({ ...p, person: v }))}
                         onRemove={null} date={todayStr()} isDark={isDark} />
-                      {/* 受け入れ時間（任意・2026-09-03） */}
-                      <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12.5, color: textMid, cursor: 'pointer', marginTop: 6 }}>
-                        <input type="checkbox" checked={draft.acceptOn}
-                          onChange={e => {
-                            const on = e.target.checked;
-                            setDraft(p => ({
-                              ...p, acceptOn: on,
-                              // 初期値は 枠の受け入れ時間 → 枠の時間（2026-09-03）
-                              acceptStart: on && !p.acceptStart
-                                ? (w.recurrence?.accept_start ? w.recurrence.accept_start.slice(0, 5)
-                                    : w.recurrence ? w.recurrence.start_time.slice(0, 5)
-                                    : w.booking ? hhmm(w.booking.starts_at) : '')
-                                : p.acceptStart,
-                              acceptEnd: on && !p.acceptEnd
-                                ? (w.recurrence?.accept_end ? w.recurrence.accept_end.slice(0, 5)
-                                    : w.recurrence ? w.recurrence.end_time.slice(0, 5)
-                                    : w.booking ? hhmm(w.booking.ends_at) : '')
-                                : p.acceptEnd,
-                            }));
-                          }} style={{ width: 16, height: 16, flexShrink: 0 }} />
-                        受け入れ時間を指定する
-                      </label>
-                      {draft.acceptOn && (
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6, flexWrap: 'wrap' }}>
-                          <TimeInput value={draft.acceptStart}
-                            onChange={v => setDraft(p => ({ ...p, acceptStart: v }))}
-                            isDark={isDark} ariaLabel="受け入れ開始" style={{ width: 110 }} />
-                          <span style={{ fontSize: 13 }}>〜</span>
-                          <TimeInput value={draft.acceptEnd}
-                            onChange={v => setDraft(p => ({ ...p, acceptEnd: v }))}
-                            isDark={isDark} ariaLabel="受け入れ終了" style={{ width: 110 }} />
-                        </div>
-                      )}
+                      {/* 🚨 待ちごとの受け入れ時間は置かない（枠の設定へ一本化・2026-09-03） */}
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
                         <input value={draft.note} placeholder="メモ"
                           onChange={e => setDraft(p => ({ ...p, note: e.target.value }))}
@@ -5585,7 +5519,6 @@ const WaitlistSettings: React.FC<{
                           {/* 合流した「この回だけ」の待ちは、どの日限定かをひと目で */}
                           {g.kind === 'slot' && !w.recurrence_id && w.booking
                             && <b>〔{formatDateLabel(localDate(w.booking.starts_at))}のみ〕</b>}
-                          {w.accept_start && ` / 受け入れ ${w.accept_start.slice(0, 5)}〜${w.accept_end ? w.accept_end.slice(0, 5) : ''}`}
                           {w.staff_id && ` / 希望：${staff.find(s => s.id === w.staff_id)?.name ?? ''}`}
                           {w.note && ` / ${w.note}`}
                         </span>
@@ -5602,13 +5535,7 @@ const WaitlistSettings: React.FC<{
                                 style={{ ...smallBtn(false), opacity: i === 0 ? .4 : 1 }}>先頭へ</button>
                               <button onClick={() => {
                                 setEditing(w.id);
-                                setDraft({
-                                  person: { no: w.member_no ?? '', name: w.customer_label },
-                                  note: w.note ?? '',
-                                  acceptOn: !!w.accept_start,
-                                  acceptStart: w.accept_start ? w.accept_start.slice(0, 5) : '',
-                                  acceptEnd: w.accept_end ? w.accept_end.slice(0, 5) : '',
-                                });
+                                setDraft({ person: { no: w.member_no ?? '', name: w.customer_label }, note: w.note ?? '' });
                               }} style={smallBtn(false)}>直す</button>
                               {/* 毎週の待ちは「どの日に入れるか」を選んでから。
                                   「この回だけ」の待ちは（合流していても）その日へ直接 */}
