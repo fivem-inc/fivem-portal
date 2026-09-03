@@ -3282,6 +3282,9 @@ const AttendanceEditor: React.FC<{
   // 🚨 全自動にはしない（ユーザー確定・1タップ方式）。出欠は押し間違いを取り消せる
   //    作りなので、自動で枠を公開すると取り消したとき空き枠だけ残って二重予約の種になる
   const [vacateOffer, setVacateOffer] = useState(false);
+  // 空き枠にするときの時間（既定は 枠の受け入れ時間 → 枠の時間・2026-09-03）
+  const [vacStart, setVacStart] = useState('');
+  const [vacEnd, setVacEnd] = useState('');
 
   const line = isDark ? '#3a3a5c' : '#e0e0e0';
   const text = isDark ? '#eeeeee' : '#222222';
@@ -3344,20 +3347,30 @@ const AttendanceEditor: React.FC<{
       return !!r && !!r.status && open.includes(r.status.trim());
     });
     if (!allAbsent) return;
-    // 枠ごとの設定（空き枠を作らない枠では出さない）。単発の予約は常に出す
+    // 枠ごとの設定（空き枠を作らない枠では出さない）。単発の予約は常に出す。
+    // 空き枠の時間の既定値は 枠の受け入れ時間 → 無ければ枠の時間（2026-09-03）
+    let accStart = hhmm(b.starts_at), accEnd = hhmm(b.ends_at);
     if (b.recurrence_id) {
       const { data: rec } = await supabase.from('room_recurrences')
-        .select('auto_open_slot').eq('id', b.recurrence_id).maybeSingle();
+        .select('auto_open_slot, accept_start, accept_end').eq('id', b.recurrence_id).maybeSingle();
       if (rec && rec.auto_open_slot === false) return;
+      if (rec?.accept_start) accStart = rec.accept_start.slice(0, 5);
+      if (rec?.accept_end) accEnd = rec.accept_end.slice(0, 5);
     }
-    setWaitHint('キャンセル待ちはいません。この回を空き枠（募集中）にできます。');
+    setVacStart(accStart); setVacEnd(accEnd);
+    setWaitHint('キャンセル待ちはいません。この回を空き枠（募集中）にできます。時間はここで直せます。');
     setVacateOffer(true);
   };
 
   /** その回を空き枠にする（休講化＋募集枠の作成をサーバーが1回で行う） */
   const vacate = async () => {
+    const s = toDate(localDate(b.starts_at), vacStart);
+    const e = toDate(localDate(b.starts_at), vacEnd);
+    if (!s || !e || e <= s) { setError('受け入れ時間を正しく入れてください（終了は開始より後）'); return; }
     setBusy('__vacate__'); setError('');
-    const { data, error: err } = await supabase.rpc('room_vacate_to_open', { p_booking_id: b.id });
+    const { data, error: err } = await supabase.rpc('room_vacate_to_open', {
+      p_booking_id: b.id, p_starts_at: s.toISOString(), p_ends_at: e.toISOString(),
+    });
     const row = (Array.isArray(data) ? data[0] : data) as { ok?: boolean; reason?: string } | null;
     setBusy('');
     if (err) { setError('空き枠を作れませんでした。通信を確認してください。'); return; }
@@ -3478,10 +3491,18 @@ const AttendanceEditor: React.FC<{
         <div style={{ background: isDark ? '#263b33' : '#e8f2ec', color: isDark ? '#6bbd92' : '#2f6f4f', borderRadius: 8, padding: '7px 10px', fontSize: 12.5, lineHeight: 1.6, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <span>{waitHint}</span>
           {vacateOffer && (
-            <button onClick={vacate} disabled={busy === '__vacate__'}
-              style={{ padding: '5px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, border: 'none', background: isDark ? '#6bbd92' : '#2f6f4f', color: isDark ? '#1d2a24' : '#fff', cursor: busy === '__vacate__' ? 'wait' : 'pointer' }}>
-              {busy === '__vacate__' ? '作っています...' : 'この回を空き枠にする'}
-            </button>
+            <>
+              {/* 空き枠の時間（既定は枠の受け入れ時間・2026-09-03 ユーザー承認） */}
+              <TimeInput value={vacStart} onChange={setVacStart} isDark={isDark}
+                ariaLabel="空き枠の開始" style={{ width: 100 }} />
+              <span>〜</span>
+              <TimeInput value={vacEnd} onChange={setVacEnd} isDark={isDark}
+                ariaLabel="空き枠の終了" style={{ width: 100 }} />
+              <button onClick={vacate} disabled={busy === '__vacate__'}
+                style={{ padding: '5px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, border: 'none', background: isDark ? '#6bbd92' : '#2f6f4f', color: isDark ? '#1d2a24' : '#fff', cursor: busy === '__vacate__' ? 'wait' : 'pointer' }}>
+                {busy === '__vacate__' ? '作っています...' : 'この時間で空き枠にする'}
+              </button>
+            </>
           )}
         </div>
       )}
@@ -3529,7 +3550,10 @@ const BookingDetail: React.FC<{
   const [waitAcceptEnd, setWaitAcceptEnd] = useState('');
   // 枠ごとの設定（2026-09-02 ユーザー承認）。繰り返しの予約でだけ意味を持つ。
   // null = まだ読めていない（読めるまでは既定＝空き枠ON・受付ONとして扱う）
-  const [slotSet, setSlotSet] = useState<{ auto_open_slot: boolean; waitlist_closed: boolean } | null>(null);
+  const [slotSet, setSlotSet] = useState<{
+    auto_open_slot: boolean; waitlist_closed: boolean;
+    accept_start: string | null; accept_end: string | null;
+  } | null>(null);
   // 会員番号のコピー（どの番号をコピーしたか。数秒で消える）
   const [copiedNo, setCopiedNo] = useState('');
   // 募集枠に申込を入れるときの入力
@@ -3585,20 +3609,27 @@ const BookingDetail: React.FC<{
     if (!b.recurrence_id) { setSlotSet(null); return; }
     (async () => {
       const { data } = await supabase.from('room_recurrences')
-        .select('auto_open_slot, waitlist_closed').eq('id', b.recurrence_id).maybeSingle();
-      if (data) setSlotSet(data as { auto_open_slot: boolean; waitlist_closed: boolean });
+        .select('auto_open_slot, waitlist_closed, accept_start, accept_end')
+        .eq('id', b.recurrence_id).maybeSingle();
+      if (data) setSlotSet(data as typeof slotSet);
     })();
   }, [b.recurrence_id]);
 
   /** 枠ごとの設定を切り替える。🚨 update は0件でもエラーにならないので件数を見る */
-  const patchSlotSet = async (patch: Partial<{ auto_open_slot: boolean; waitlist_closed: boolean }>) => {
+  const patchSlotSet = async (patch: Partial<{
+    auto_open_slot: boolean; waitlist_closed: boolean;
+    accept_start: string | null; accept_end: string | null;
+  }>) => {
     if (!b.recurrence_id) return;
     setBusy(true); setError('');
     const { data, error: err } = await supabase.from('room_recurrences')
       .update(patch).eq('id', b.recurrence_id).select('id');
     setBusy(false);
     if (err || !data?.length) { setError('設定を変えられませんでした。通信を確認してもう一度お試しください。'); return; }
-    setSlotSet(prev => ({ auto_open_slot: true, waitlist_closed: false, ...prev, ...patch }));
+    setSlotSet(prev => ({
+      auto_open_slot: true, waitlist_closed: false, accept_start: null, accept_end: null,
+      ...prev, ...patch,
+    }));
   };
 
   const addWaiting = async () => {
@@ -3935,8 +3966,10 @@ const BookingDetail: React.FC<{
                   <input type="checkbox" checked={waitAcceptOn}
                     onChange={e => {
                       setWaitAcceptOn(e.target.checked);
+                      // 初期値は 枠の受け入れ時間 → 無ければ枠の時間（2026-09-03）
                       if (e.target.checked && !waitAcceptStart) {
-                        setWaitAcceptStart(hhmm(b.starts_at)); setWaitAcceptEnd(hhmm(b.ends_at));
+                        setWaitAcceptStart(slotSet?.accept_start ? slotSet.accept_start.slice(0, 5) : hhmm(b.starts_at));
+                        setWaitAcceptEnd(slotSet?.accept_end ? slotSet.accept_end.slice(0, 5) : hhmm(b.ends_at));
                       }
                     }} style={{ width: 16, height: 16, flexShrink: 0 }} />
                   受け入れ時間を指定する（受けるならこの時間、という決まりがあるとき）
@@ -3978,6 +4011,31 @@ const BookingDetail: React.FC<{
                     style={{ width: 16, height: 16 }} />
                   キャンセル待ちを受け付ける（外すと、これ以上並べなくなります）
                 </label>
+                {/* 枠の受け入れ時間（2026-09-03 ユーザー承認）。
+                    「空きが出たときの受け入れは何時から」という枠のルール。
+                    繰り上げ・空き枠化・待ち登録の既定値として効く */}
+                <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12.5, color: textMid, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={!!slotSet.accept_start} disabled={busy}
+                    onChange={e => {
+                      if (e.target.checked) {
+                        patchSlotSet({ accept_start: hhmm(b.starts_at), accept_end: hhmm(b.ends_at) });
+                      } else {
+                        patchSlotSet({ accept_start: null, accept_end: null });
+                      }
+                    }} style={{ width: 16, height: 16 }} />
+                  受け入れ時間を決めておく（空き枠・繰り上げのときの時間）
+                </label>
+                {slotSet.accept_start && (
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginLeft: 22, flexWrap: 'wrap' }}>
+                    <TimeInput value={slotSet.accept_start.slice(0, 5)}
+                      onChange={v => patchSlotSet({ accept_start: v })}
+                      isDark={isDark} ariaLabel="枠の受け入れ開始" style={{ width: 110 }} />
+                    <span style={{ fontSize: 13 }}>〜</span>
+                    <TimeInput value={(slotSet.accept_end ?? '').slice(0, 5)}
+                      onChange={v => patchSlotSet({ accept_end: v })}
+                      isDark={isDark} ariaLabel="枠の受け入れ終了" style={{ width: 110 }} />
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -4846,7 +4904,7 @@ const WaitlistSettings: React.FC<{
         // 🚨 room_bookings へは booking_id と promoted_booking_id の**外部キーが2本**ある。
         //    「!booking_id」でどちらで結ぶかを明示しないと PGRST201（曖昧）で
         //    一覧全体が読めなくなる（2026-09-02 実機で発覚。8/31 の作成時からのバグ）
-        .select('*, booking:room_bookings!booking_id(id, floor_id, starts_at, ends_at, purpose, status, deleted_at, staff_id, member_no, customer_label, cancel_kind, recurrence_id), recurrence:room_recurrences(id, floor_id, weekday, start_time, end_time, purpose, staff_id, active, auto_open_slot, waitlist_closed)')
+        .select('*, booking:room_bookings!booking_id(id, floor_id, starts_at, ends_at, purpose, status, deleted_at, staff_id, member_no, customer_label, cancel_kind, recurrence_id), recurrence:room_recurrences(id, floor_id, weekday, start_time, end_time, purpose, staff_id, active, auto_open_slot, waitlist_closed, accept_start, accept_end)')
         .eq('status', 'waiting')
         .order('position')
         .order('created_at'),
@@ -5021,15 +5079,38 @@ const WaitlistSettings: React.FC<{
     await onDone('キャンセル待ちを取り消しました');
   };
 
+  // 空き枠にするときの時間確認（2026-09-03 ユーザー承認）。
+  // 既定は 枠の受け入れ時間 → その回の時間。その場の微調整もできる
+  const [vacDraft, setVacDraft] = useState<{ bookingId: string; dateStr: string; start: string; end: string } | null>(null);
+
+  const openVacDraft = (w: Waitlist, target: Pick<Booking, 'id' | 'starts_at' | 'ends_at'>) => {
+    setError('');
+    setVacDraft({
+      bookingId: target.id, dateStr: localDate(target.starts_at),
+      start: w.recurrence?.accept_start ? w.recurrence.accept_start.slice(0, 5) : hhmm(target.starts_at),
+      end: w.recurrence?.accept_end ? w.recurrence.accept_end.slice(0, 5) : hhmm(target.ends_at),
+    });
+  };
+
+  const confirmVacate = async () => {
+    if (!vacDraft) return;
+    const s = toDate(vacDraft.dateStr, vacDraft.start);
+    const e = toDate(vacDraft.dateStr, vacDraft.end);
+    if (!s || !e || e <= s) { setError('受け入れ時間を正しく入れてください（終了は開始より後）'); return; }
+    await vacateOcc(vacDraft.bookingId, s.toISOString(), e.toISOString());
+  };
+
   /** その回を空き枠にする（休講化＋募集枠の作成をサーバーが1回で行う） */
-  const vacateOcc = async (bookingId: string) => {
+  const vacateOcc = async (bookingId: string, startsIso: string, endsIso: string) => {
     setBusy('__vacate__'); setError('');
-    const { data, error: err } = await supabase.rpc('room_vacate_to_open', { p_booking_id: bookingId });
+    const { data, error: err } = await supabase.rpc('room_vacate_to_open', {
+      p_booking_id: bookingId, p_starts_at: startsIso, p_ends_at: endsIso,
+    });
     const row = (Array.isArray(data) ? data[0] : data) as { ok?: boolean; reason?: string } | null;
     setBusy('');
     if (err) { setError('空き枠を作れませんでした。通信を確認してください。'); return; }
     if (!row?.ok) { setError(row?.reason ?? '空き枠を作れませんでした'); return; }
-    setEmptyOffer(null); setVacOcc([]); setVacAtt([]);
+    setEmptyOffer(null); setVacOcc([]); setVacAtt([]); setVacDraft(null);
     await onDone('空き枠を作りました（予約表に募集中の枠が出ます）');
   };
 
@@ -5063,10 +5144,15 @@ const WaitlistSettings: React.FC<{
 
   const openPromoteDraft = (w: Waitlist, target: Pick<Booking, 'id' | 'starts_at' | 'ends_at'>) => {
     setError('');
+    // 既定値の優先順位：待ちの個別設定 → 枠の受け入れ時間 → 枠の時間（2026-09-03）
     setPromoteDraft({
       w, targetId: target.id, dateStr: localDate(target.starts_at),
-      start: w.accept_start ? w.accept_start.slice(0, 5) : hhmm(target.starts_at),
-      end: w.accept_end ? w.accept_end.slice(0, 5) : hhmm(target.ends_at),
+      start: w.accept_start ? w.accept_start.slice(0, 5)
+        : w.recurrence?.accept_start ? w.recurrence.accept_start.slice(0, 5)
+        : hhmm(target.starts_at),
+      end: w.accept_end ? w.accept_end.slice(0, 5)
+        : w.recurrence?.accept_end ? w.recurrence.accept_end.slice(0, 5)
+        : hhmm(target.ends_at),
     });
   };
 
@@ -5331,13 +5417,30 @@ const WaitlistSettings: React.FC<{
                   {vacOcc.length || vacLoading ? '日を選ぶのをやめる' : '日を選んで空き枠にする'}
                 </button>
               ) : (
-                <button onClick={() => emptyOffer.booking_id && vacateOcc(emptyOffer.booking_id)}
+                <button onClick={() => emptyOffer.booking && openVacDraft(emptyOffer, emptyOffer.booking)}
                   disabled={!!busy} style={smallBtn(true)}>この回を空き枠にする</button>
               )}
               <button onClick={() => { setEmptyOffer(null); setVacOcc([]); setVacAtt([]); }}
                 style={smallBtn(false)}>今はしない</button>
             </span>
           </div>
+          {/* 空き枠の時間確認（2026-09-03）。既定は枠の受け入れ時間 */}
+          {vacDraft && (
+            <div style={{ marginTop: 8, borderTop: `1px solid ${isDark ? '#8a7a3a' : '#ffe082'}`, paddingTop: 7, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span><b>{formatDateLabel(vacDraft.dateStr)}</b> を空き枠にします。時間：</span>
+              <TimeInput value={vacDraft.start}
+                onChange={v => setVacDraft(p => (p ? { ...p, start: v } : p))}
+                isDark={isDark} ariaLabel="空き枠の開始" style={{ width: 100 }} />
+              <span>〜</span>
+              <TimeInput value={vacDraft.end}
+                onChange={v => setVacDraft(p => (p ? { ...p, end: v } : p))}
+                isDark={isDark} ariaLabel="空き枠の終了" style={{ width: 100 }} />
+              <span style={{ marginLeft: 'auto', display: 'flex', gap: 5 }}>
+                <button onClick={confirmVacate} disabled={!!busy} style={smallBtn(true)}>この時間で空き枠にする</button>
+                <button onClick={() => setVacDraft(null)} style={smallBtn(false)}>やめる</button>
+              </span>
+            </div>
+          )}
           {(vacLoading || vacOcc.length > 0) && (
             <div style={{ marginTop: 8, borderTop: `1px solid ${isDark ? '#8a7a3a' : '#ffe082'}`, paddingTop: 7 }}>
               {vacLoading ? (
@@ -5349,7 +5452,7 @@ const WaitlistSettings: React.FC<{
                     <span style={{ fontSize: 13 }}>{formatDateLabel(localDate(o.starts_at))} {hhmm(o.starts_at)}</span>
                     <span style={{ fontSize: 12 }}>{s.label}</span>
                     {!o.deleted_at && (
-                      <button onClick={() => vacateOcc(o.id)} disabled={!!busy}
+                      <button onClick={() => emptyOffer && openVacDraft(emptyOffer, o)} disabled={!!busy}
                         style={{ ...smallBtn(s.free), marginLeft: 'auto' }}>この日を空き枠にする</button>
                     )}
                   </div>
@@ -5437,12 +5540,15 @@ const WaitlistSettings: React.FC<{
                             const on = e.target.checked;
                             setDraft(p => ({
                               ...p, acceptOn: on,
+                              // 初期値は 枠の受け入れ時間 → 枠の時間（2026-09-03）
                               acceptStart: on && !p.acceptStart
-                                ? (w.recurrence ? w.recurrence.start_time.slice(0, 5)
+                                ? (w.recurrence?.accept_start ? w.recurrence.accept_start.slice(0, 5)
+                                    : w.recurrence ? w.recurrence.start_time.slice(0, 5)
                                     : w.booking ? hhmm(w.booking.starts_at) : '')
                                 : p.acceptStart,
                               acceptEnd: on && !p.acceptEnd
-                                ? (w.recurrence ? w.recurrence.end_time.slice(0, 5)
+                                ? (w.recurrence?.accept_end ? w.recurrence.accept_end.slice(0, 5)
+                                    : w.recurrence ? w.recurrence.end_time.slice(0, 5)
                                     : w.booking ? hhmm(w.booking.ends_at) : '')
                                 : p.acceptEnd,
                             }));

@@ -235,6 +235,9 @@ export interface Waitlist {
     auto_open_slot?: boolean;
     /** キャンセル待ちの受付を締め切っているか（既定 false） */
     waitlist_closed?: boolean;
+    /** 枠の受け入れ時間（繰り上げ・空き枠化の既定値・2026-09-03〜） */
+    accept_start?: string | null;
+    accept_end?: string | null;
   } | null;
 }
 
@@ -722,6 +725,12 @@ export interface Recurrence {
   auto_open_slot?: boolean;
   /** キャンセル待ちの受付を締め切っているか（既定 false） */
   waitlist_closed?: boolean;
+  /**
+   * 枠の受け入れ時間（任意・2026-09-03〜）。「空きが出たときの受け入れは何時から」
+   * という枠ごとのルール。繰り上げ・空き枠化・待ち登録の既定値に使う。'HH:MM:SS'
+   */
+  accept_start?: string | null;
+  accept_end?: string | null;
   /** 4/1〜翌3/31 を1つとする年度。終わりの日が属する年度を入れる */
   fiscal_year: number;
   /** どの繰り返しから引き継いだか。二度押しで二重に作らないための目印 */
