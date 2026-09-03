@@ -203,6 +203,13 @@ export interface Waitlist {
   customer_label: string;
   staff_id: string | null;
   note: string | null;
+  /**
+   * 受け入れ時間（2026-09-03〜・任意）。「この待ちを受けるならこの時間」という
+   * 枠ごとの決まりを予め持たせる。'HH:MM:SS'。null = 枠の時間のまま。
+   * 繰り上げの確認パネルに既定値として入る（その場の微調整も可能）
+   */
+  accept_start: string | null;
+  accept_end: string | null;
   position: number;
   status: 'waiting' | 'promoted' | 'cancelled';
   created_at: string;
