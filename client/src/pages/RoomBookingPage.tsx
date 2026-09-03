@@ -158,6 +158,26 @@ const savePaymentNote = async (
   return '';
 };
 
+/**
+ * 出欠のメモだけを書き換える（支払いの回数とは**別**の自由メモ・2026-09-03 ユーザー指示）。
+ * 例：「次回は◯◯の内容で」「キャンセル料をもらいたい」など。
+ * 🚨 出欠の行が無いときは何もしない（支払い欄と同じ流儀。先に出欠を選んでもらう）。
+ * 戻り値は画面に出すエラー文（空なら成功）。
+ */
+const saveAttendanceMemo = async (
+  bookingId: string, p: Participant, memo: string,
+): Promise<string> => {
+  const { data, error } = await supabase.from('room_booking_attendance')
+    .update({ memo: memo.trim() || null })
+    .eq('booking_id', bookingId)
+    .eq('participant_no', p.no)
+    .eq('participant_name', p.name)
+    .select('id');
+  if (error) return 'メモを保存できませんでした。通信を確認してもう一度お試しください。';
+  if (!data || data.length === 0) return '先に出欠を選んでください。';
+  return '';
+};
+
 /** タイムラインの1列。場所別なら1フロア、担当別なら1スタッフ。 */
 interface Lane {
   key: string;
@@ -2769,7 +2789,7 @@ const AttendanceSummary: React.FC<{
    */
   const exportCsv = () => {
     const esc = (v: string) => `"${(v ?? '').replace(/"/g, '""')}"`;
-    const head = ['日付', '開始', '場所', '用途', '担当', '会員番号', 'お客様', '出欠', '出席扱い', '支払い'];
+    const head = ['日付', '開始', '場所', '用途', '担当', '会員番号', 'お客様', '出欠', '出席扱い', '支払い', 'メモ'];
     const body = shown.map(({ b, p, att }) => [
       localDate(b.starts_at),
       hhmm(b.starts_at),
@@ -2781,6 +2801,7 @@ const AttendanceSummary: React.FC<{
       att ? att.status : '',
       att?.counted_present ? '○' : '',
       att?.payment_note ?? '',
+      att?.memo ?? '',
     ].map(esc).join(','));
     downloadCSV([head.map(esc).join(','), ...body].join('\r\n'),
       `出欠_${mode === 'month' ? month : `${from}_${to}`}${purposeFilter ? '_' + purposeFilter : ''}.csv`);
@@ -3332,6 +3353,12 @@ const AttendanceEditor: React.FC<{
     if (msg) { setError(msg); return; }
     await onSaved();
   };
+  const saveMemo = async (p: Participant, memo: string) => {
+    setError('');
+    const msg = await saveAttendanceMemo(b.id, p, memo);
+    if (msg) { setError(msg); return; }
+    await onSaved();
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -3392,6 +3419,27 @@ const AttendanceEditor: React.FC<{
                 <span style={{ fontSize: 12.5, color: textMid }}>
                   支払い：{cur.payment_note || '未記入'}
                 </span>
+              )
+            )}
+            {/* 自由メモ（2026-09-03 ユーザー指示）。支払いの回数とは別。
+                例：次回の予約内容の案／キャンセル料をもらいたい など。
+                🚨 打つたびに保存しない（離れたときと Enter だけ・支払い欄と同じ流儀） */}
+            {cur && (
+              canWrite ? (
+                <input
+                  defaultValue={cur.memo ?? ''}
+                  onBlur={e => saveMemo(p, e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                  placeholder="メモ 例：次回は…"
+                  style={{
+                    padding: '4px 8px', borderRadius: 8, border: `1px solid ${line}`,
+                    background: isDark ? '#495057' : '#fff', color: text,
+                    fontSize: 16, flex: 1, minWidth: 150, boxSizing: 'border-box',
+                  }} />
+              ) : (
+                cur.memo ? (
+                  <span style={{ fontSize: 12.5, color: textMid }}>メモ：{cur.memo}</span>
+                ) : null
               )
             )}
           </div>

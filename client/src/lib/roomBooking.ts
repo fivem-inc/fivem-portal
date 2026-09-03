@@ -567,6 +567,11 @@ export interface AttendanceRow {
    * 🚨 **分数ではない。計算に使わないこと。**書き方が変わっても直さずに済むよう文字で持つ。
    */
   payment_note: string | null;
+  /**
+   * 自由メモ（2026-09-03〜）。支払いの回数とは別。
+   * 例：「次回は◯◯の内容で」「キャンセル料をもらいたい」など
+   */
+  memo: string | null;
   recorded_at: string;
   recorded_by: string | null;
 }
