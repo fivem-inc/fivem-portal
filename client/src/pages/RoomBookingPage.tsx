@@ -1531,6 +1531,9 @@ const BookingForm: React.FC<{
   // 期限なしのときは「翌月末まで」だけ先に作り、以後は基本設定の「月次更新」で延長する
   const [noEnd, setNoEnd] = useState(true);
   const [repeatUntil, setRepeatUntil] = useState('');
+  // 変更の範囲（繰り返しの回を変更するときだけ・2026-09-02 実機指摘で追加）。
+  // 'future' はこの回＋今後の回＋マスター（ルール）をまとめて変える
+  const [editScope, setEditScope] = useState<'one' | 'future'>('one');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [conflicts, setConflicts] = useState<ConflictInfo[]>([]);
@@ -1690,6 +1693,64 @@ const BookingForm: React.FC<{
       if (Object.keys(patch).length > 0) {
         await supabase.from('room_bookings').update(patch).eq('id', base!.id);
       }
+
+      // 「今後すべて」（2026-09-02 実機指摘で追加。ローリング運用では
+      // マスターを変える手段がないと、月次更新で作る回に新しい内容が反映されない）
+      if (editScope === 'future' && base!.recurrence_id) {
+        setSaving(true);
+        // 今後の回に変えるのは**枠の性質**（時刻・用途・詳細・担当・貸切・固定）だけ。
+        // 🚨 お客様・メモ・予約した人は**回ごとのデータなので上書きしない**
+        //    （募集枠から埋めた回は、お客様が回ごとに違う）。各行の値をそのまま渡す。
+        // 🚨 休講・お休みの回は触らない（済んだ記録の時間が変わると管理上困る）
+        const { data: sibs } = await supabase.from('room_bookings').select('*')
+          .eq('recurrence_id', base!.recurrence_id)
+          .gt('starts_at', base!.starts_at)
+          .is('deleted_at', null)
+          .eq('status', 'active')
+          .order('starts_at');
+        let okCnt = 0;
+        const ng: string[] = [];
+        for (const sb of (sibs ?? []) as Booking[]) {
+          const sd = localDate(sb.starts_at);
+          const ss = toDate(sd, startTime), se = toDate(sd, endTime);
+          if (!ss || !se) continue;
+          const { data: ud, error: uerr } = await supabase.rpc('room_update_booking', {
+            p_id: sb.id, p_starts_at: ss.toISOString(), p_ends_at: se.toISOString(),
+            p_purpose: purpose, p_booker_name: sb.booker_name,
+            p_member_no: sb.member_no ?? '', p_customer_label: sb.customer_label ?? '',
+            p_memo: sb.memo ?? '', p_exclusive: exclusive, p_staff_id: staffId || null,
+            p_kind: sb.kind, p_seats: sb.seats,
+          });
+          const ur = (Array.isArray(ud) ? ud[0] : ud) as { ok?: boolean; reason?: string } | null;
+          if (uerr || !ur?.ok) {
+            // 🚨 黙って欠けさせない。変えられなかった回は理由つきで知らせる
+            ng.push(`${formatDateLabel(sd)}（${ur?.reason ?? '通信エラー'}）`);
+            continue;
+          }
+          okCnt++;
+          const sp: Record<string, unknown> = {};
+          if (isFixed !== sb.is_fixed) sp.is_fixed = isFixed;
+          if ((detail || null) !== (sb.detail ?? null)) sp.detail = detail || null;
+          if (Object.keys(sp).length > 0) {
+            await supabase.from('room_bookings').update(sp).eq('id', sb.id);
+          }
+        }
+        // マスター（繰り返しルール）も同じ内容に変える。
+        // これで月次更新がこれから作る回にも新しい値が使われる
+        // （場所と曜日はこのフォームでは変えられないので触らない）
+        await supabase.from('room_recurrences').update({
+          start_time: startTime, end_time: endTime,
+          purpose, detail: detail || null, staff_id: staffId || null,
+          exclusive, is_fixed: isFixed,
+        }).eq('id', base!.recurrence_id);
+        setSaving(false);
+        onSaved(`この回と今後の${okCnt}回（マスター含む）を変更しました`
+          + (ng.length > 0
+            ? `。${ng.length}回は変えられませんでした：${ng.slice(0, 2).join('、')}${ng.length > 2 ? ' …' : ''}`
+            : ''));
+        return;
+      }
+
       onSaved('予約を変更しました');
       return;
     }
@@ -2098,6 +2159,26 @@ const BookingForm: React.FC<{
             </span>
           </span>
         </label>
+
+        {/* 変更の範囲（繰り返しの回を変更するときだけ・2026-09-02 実機指摘で追加）。
+            🚨 「今後すべて」はマスター（ルール）も変えるので、月次更新で作る回にも
+               新しい内容が使われる。お客様・メモは回ごとのデータなので上書きしない */}
+        {editing && base?.recurrence_id && (
+          <div style={{ background: isDark ? '#35354e' : '#f0f2f5', borderRadius: 8, padding: '10px 12px' }}>
+            <label style={label}>どこまで変えますか</label>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button type="button" onClick={() => setEditScope('one')}
+                style={pill(editScope === 'one')}>この回だけ</button>
+              <button type="button" onClick={() => setEditScope('future')}
+                style={pill(editScope === 'future')}>今後すべて（枠のマスターも変える）</button>
+            </div>
+            <p style={{ fontSize: 12, color: textMid, margin: '6px 0 0', lineHeight: 1.6 }}>
+              {editScope === 'future'
+                ? '時刻・用途・詳細・担当・貸切・固定を、この回と今後の回すべてに反映します。月次更新でこれから作る回にも新しい内容が使われます。お客様とメモは各回のまま変わりません。'
+                : 'この回だけを変えます。来週以降と、月次更新でこれから作る回は今までのままです。'}
+            </p>
+          </div>
+        )}
 
         {/* 繰り返し（新規のときだけ） */}
         {!editing && (
