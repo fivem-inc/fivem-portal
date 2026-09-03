@@ -113,15 +113,23 @@ const saveAttendanceRow = async (
 ): Promise<string> => {
   const { data: me } = await supabase.auth.getUser();
   if (opt === null) {
-    // 取り消し。🚨 delete は0件でもエラーにならないので、消えた件数を数える
-    const { data, error } = await supabase.from('room_booking_attendance')
-      .delete()
+    // 取り消し。🚨 メモがある行は消さない（メモを道連れにしない・2026-09-03）。
+    //    出欠だけ空（null＝未入力扱い）に戻す。メモも無い行はこれまでどおり行ごと消す
+    const { data: kept, error: kerr } = await supabase.from('room_booking_attendance')
+      .update({ status: null, counted_present: false, payment_note: null })
       .eq('booking_id', bookingId)
       .eq('participant_no', p.no)
       .eq('participant_name', p.name)
+      .not('memo', 'is', null)
       .select('id');
+    if (kerr) return '取り消せませんでした。通信を確認してもう一度お試しください。';
+    if (kept && kept.length > 0) return '';
+    const { error } = await supabase.from('room_booking_attendance')
+      .delete()
+      .eq('booking_id', bookingId)
+      .eq('participant_no', p.no)
+      .eq('participant_name', p.name);
     if (error) return '取り消せませんでした。通信を確認してもう一度お試しください。';
-    if (!data || data.length === 0) return '';   // もともと付いていない。何もしないでよい
     return '';
   }
   const { error } = await supabase.from('room_booking_attendance').upsert({
@@ -167,14 +175,30 @@ const savePaymentNote = async (
 const saveAttendanceMemo = async (
   bookingId: string, p: Participant, memo: string,
 ): Promise<string> => {
+  const trimmed = memo.trim() || null;
   const { data, error } = await supabase.from('room_booking_attendance')
-    .update({ memo: memo.trim() || null })
+    .update({ memo: trimmed })
     .eq('booking_id', bookingId)
     .eq('participant_no', p.no)
     .eq('participant_name', p.name)
     .select('id');
   if (error) return 'メモを保存できませんでした。通信を確認してもう一度お試しください。';
-  if (!data || data.length === 0) return '先に出欠を選んでください。';
+  if (data && data.length > 0) return '';
+  if (!trimmed) return '';   // 行が無く、メモも空なら何も作らない
+  // 🚨 出欠を付ける前でもメモは書ける（2026-09-03 ユーザー指示）。
+  //    「メモだけの行」を作る。status null ＝ 未入力扱い（集計・空き判定に数えない）
+  const { data: me } = await supabase.auth.getUser();
+  const { error: ierr } = await supabase.from('room_booking_attendance').insert({
+    booking_id: bookingId,
+    participant_no: p.no,
+    participant_name: p.name,
+    status: null,
+    counted_present: false,
+    memo: trimmed,
+    recorded_at: new Date().toISOString(),
+    recorded_by: me.user?.id ?? null,
+  });
+  if (ierr) return 'メモを保存できませんでした。通信を確認してもう一度お試しください。';
   return '';
 };
 
@@ -2729,7 +2753,8 @@ const AttendanceSummary: React.FC<{
       })));
   }, [bookings, rows, purposeFilter]);
 
-  const missing = shown.filter(s => !s.att).length;
+  // 🚨 メモだけの行（status null）は未入力として数える
+  const missing = shown.filter(s => !s.att?.status).length;
 
   // 並べる軸ごとにまとめる。列は「出欠の種類ごとの件数」
   const groups = useMemo(() => {
@@ -2752,7 +2777,8 @@ const AttendanceSummary: React.FC<{
         label = staffName(b.staff_id);
       }
       const g = map.get(key) ?? { label, counts: {}, present: 0, missing: 0, notes: [] };
-      if (att) {
+      // 🚨 メモだけの行（status null）は未入力として数える
+      if (att?.status) {
         g.counts[att.status] = (g.counts[att.status] ?? 0) + 1;
         if (att.counted_present) g.present++;
         if (att.payment_note) g.notes.push(att.payment_note);
@@ -2777,7 +2803,7 @@ const AttendanceSummary: React.FC<{
   // 表に出す列（隠した選択肢でも、記録があれば出す）
   const columns = useMemo(() => {
     const names = options.filter(o => o.active).map(o => o.name);
-    for (const s of shown) if (s.att && !names.includes(s.att.status)) names.push(s.att.status);
+    for (const s of shown) if (s.att?.status && !names.includes(s.att.status)) names.push(s.att.status);
     return names;
   }, [options, shown]);
 
@@ -2798,7 +2824,7 @@ const AttendanceSummary: React.FC<{
       staffName(b.staff_id),
       p.no,
       p.name,
-      att ? att.status : '',
+      att?.status ?? '',
       att?.counted_present ? '○' : '',
       att?.payment_note ?? '',
       att?.memo ?? '',
@@ -2981,7 +3007,8 @@ const AttendanceDayList: React.FC<{
   for (const b of targets) {
     for (const p of participantsOf(b)) {
       total++;
-      if (attendance.some(r => r.booking_id === b.id && r.participant_no === p.no && r.participant_name === p.name)) done++;
+      // 🚨 メモだけの行（status null）は入力済みに数えない
+      if (attendance.some(r => r.booking_id === b.id && r.participant_no === p.no && r.participant_name === p.name && !!r.status)) done++;
     }
   }
 
@@ -3006,7 +3033,7 @@ const AttendanceDayList: React.FC<{
       for (const b of all) {
         for (const p of participantsOf(b)) {
           t++;
-          if (attendance.some(r => r.booking_id === b.id && r.participant_no === p.no && r.participant_name === p.name)) d++;
+          if (attendance.some(r => r.booking_id === b.id && r.participant_no === p.no && r.participant_name === p.name && !!r.status)) d++;
         }
       }
       /**
@@ -3018,7 +3045,7 @@ const AttendanceDayList: React.FC<{
        */
       const items = onlyMissing
         ? all.filter(b => participantsOf(b).some(p =>
-            !attendance.some(r => r.booking_id === b.id && r.participant_no === p.no && r.participant_name === p.name)))
+            !attendance.some(r => r.booking_id === b.id && r.participant_no === p.no && r.participant_name === p.name && !!r.status)))
         : all;
       return { purpose, items, total: t, done: d };
     })
@@ -3313,7 +3340,8 @@ const AttendanceEditor: React.FC<{
     const ppl = participantsOf(b);
     const allAbsent = ppl.length > 0 && ppl.every(p => {
       const r = rowsA.find(a => a.participant_no === p.no && a.participant_name === p.name);
-      return !!r && open.includes(r.status.trim());
+      // 🚨 メモだけの行（status null）は空きの根拠にならない
+      return !!r && !!r.status && open.includes(r.status.trim());
     });
     if (!allAbsent) return;
     // 枠ごとの設定（空き枠を作らない枠では出さない）。単発の予約は常に出す
@@ -3376,8 +3404,8 @@ const AttendanceEditor: React.FC<{
             )}
             {/* 書けない人（パート）には、押せないボタンではなく結果だけを見せる */}
             {!canWrite && (
-              <span style={{ fontSize: 13, fontWeight: 700, color: cur ? text : textMid }}>
-                {cur ? cur.status : '未入力'}
+              <span style={{ fontSize: 13, fontWeight: 700, color: cur?.status ? text : textMid }}>
+                {cur?.status ?? '未入力'}
               </span>
             )}
             {canWrite && opts.map(o => {
@@ -3395,7 +3423,8 @@ const AttendanceEditor: React.FC<{
                   }}>{o.name}</button>
               );
             })}
-            {canWrite && !cur && (
+            {/* 🚨 メモだけの行（status null）も未入力として出す */}
+            {canWrite && !cur?.status && (
               <span style={{ fontSize: 12, color: textMid }}>未入力</span>
             )}
             {/* 支払いの覚書（2026-09-01 ユーザー指示）。
@@ -3424,23 +3453,23 @@ const AttendanceEditor: React.FC<{
             {/* 自由メモ（2026-09-03 ユーザー指示）。支払いの回数とは別。
                 例：次回の予約内容の案／キャンセル料をもらいたい など。
                 🚨 打つたびに保存しない（離れたときと Enter だけ・支払い欄と同じ流儀） */}
-            {cur && (
-              canWrite ? (
-                <input
-                  defaultValue={cur.memo ?? ''}
-                  onBlur={e => saveMemo(p, e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                  placeholder="メモ 例：次回は…"
-                  style={{
-                    padding: '4px 8px', borderRadius: 8, border: `1px solid ${line}`,
-                    background: isDark ? '#495057' : '#fff', color: text,
-                    fontSize: 16, flex: 1, minWidth: 150, boxSizing: 'border-box',
-                  }} />
-              ) : (
-                cur.memo ? (
-                  <span style={{ fontSize: 12.5, color: textMid }}>メモ：{cur.memo}</span>
-                ) : null
-              )
+            {/* 🚨 出欠を付ける前でも書ける（2026-09-03 ユーザー指示）。
+                   行が無ければ「メモだけの行」（未入力扱い）が作られる */}
+            {canWrite ? (
+              <input
+                defaultValue={cur?.memo ?? ''}
+                onBlur={e => saveMemo(p, e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                placeholder="メモ 例：次回は…"
+                style={{
+                  padding: '4px 8px', borderRadius: 8, border: `1px solid ${line}`,
+                  background: isDark ? '#495057' : '#fff', color: text,
+                  fontSize: 16, flex: 1, minWidth: 150, boxSizing: 'border-box',
+                }} />
+            ) : (
+              cur?.memo ? (
+                <span style={{ fontSize: 12.5, color: textMid }}>メモ：{cur.memo}</span>
+              ) : null
             )}
           </div>
         );
@@ -5163,7 +5192,8 @@ const WaitlistSettings: React.FC<{
     const att = attList.filter(a => a.booking_id === o.id);
     const ppl = participantsOf(o);
     const matched = ppl.map(p => att.find(a => a.participant_no === p.no && a.participant_name === p.name));
-    if (ppl.length > 0 && matched.every(r => !!r && openStatuses.includes(r.status.trim()))) {
+    // 🚨 メモだけの行（status null）は空きの根拠にならない
+    if (ppl.length > 0 && matched.every(r => !!r && !!r.status && openStatuses.includes(r.status.trim()))) {
       return { label: `休みの連絡あり（${matched[0]!.status}）`, free: true };
     }
     return { label: '予約が入っています', free: false };
@@ -6933,8 +6963,9 @@ const WorkHistory: React.FC<{
     for (const a of ats) {
       const rb = a.room_bookings;
       const target = (rb ? `${formatDateLabel(localDate(rb.starts_at))} ${hhmm(rb.starts_at)}　${placeOf(rb.floor_id)}　${rb.purpose}　` : '')
-        + `${a.participant_name || a.participant_no || 'お名前なし'} → ${a.status}`
-        + (a.payment_note ? `（支払い ${a.payment_note}）` : '');
+        + `${a.participant_name || a.participant_no || 'お名前なし'} → ${a.status ?? '（メモのみ）'}`
+        + (a.payment_note ? `（支払い ${a.payment_note}）` : '')
+        + (a.memo ? `（メモ ${a.memo}）` : '');
       out.push({ at: a.recorded_at, kind: '出欠', who: who(a.recorded_by), what: target });
     }
     out.sort((x, y) => y.at.localeCompare(x.at));       // 新しい順

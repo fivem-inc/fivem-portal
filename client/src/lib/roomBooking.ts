@@ -559,7 +559,11 @@ export interface AttendanceRow {
   booking_id: string;
   participant_no: string;
   participant_name: string;
-  status: string;
+  /**
+   * 出欠（選択肢の名前をそのまま）。null = まだ出欠を付けていない（メモだけの行・2026-09-03〜）。
+   * 🚨 null の行は集計・空き判定のすべてで**未入力扱い**にすること
+   */
+  status: string | null;
   counted_present: boolean;
   /**
    * 支払いの覚書。プライベートの「10回区切りの一覧表」との照合に使う。
