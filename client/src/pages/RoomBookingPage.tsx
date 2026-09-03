@@ -1903,7 +1903,16 @@ const BookingForm: React.FC<{
         {/* 時刻 */}
         <div>
           <label style={label}>開始</label>
-          <TimeInput value={startTime} onChange={setStartTime} isDark={isDark} ariaLabel="開始時刻" />
+          {/* 🚨 開始を手で直しても、いま選んでいる長さ（既定30分など）は保つ（2026-09-02 実機指摘）。
+                 終了を据え置くと、開始を打っただけで長さが変わってしまう。
+                 長さを変えるのは「長さ」ボタン（または終了の手入力）だけ */}
+          <TimeInput value={startTime}
+            onChange={v => {
+              const dur = minutesOf(endTime) - minutesOf(startTime);
+              setStartTime(v);
+              if (dur > 0) setEndTime(addMinutes(v, dur));
+            }}
+            isDark={isDark} ariaLabel="開始時刻" />
         </div>
 
         <div>
@@ -3584,6 +3593,10 @@ const BookingDetail: React.FC<{
         </div>
         <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 10, fontVariantNumeric: 'tabular-nums' }}>
           {formatDateLabel(localDate(b.starts_at))} {hhmm(b.starts_at)}〜{hhmm(b.ends_at)}
+          {/* 何分のレッスンかをひと目で（2026-09-02 ユーザー指示） */}
+          <span style={{ fontSize: 14, fontWeight: 400, marginLeft: 6 }}>
+            （{Math.round((new Date(b.ends_at).getTime() - new Date(b.starts_at).getTime()) / 60000)}分）
+          </span>
         </div>
 
         {row('場所', placeLabel(floor, campus?.name ?? '', siblingFloors, true))}
