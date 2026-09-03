@@ -168,7 +168,9 @@ interface Lane {
 }
 
 type FormMode = { kind: 'create'; floorId: string; date: string; startTime: string }
-              | { kind: 'edit'; booking: Booking };
+              // scope: 'future' = 月次更新の「変更」から開いたとき。
+              // 「今後すべて（枠のマスターも変える）」を選択済みでフォームを開く
+              | { kind: 'edit'; booking: Booking; scope?: 'future' };
 
 const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, employmentType }) => {
   const isDark = useDarkMode();
@@ -892,6 +894,12 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
             setRenewal(false);
             selectView('place');
           }}
+          onEditRule={(b) => {
+            // 月次更新の「変更」：基本設定を閉じて、選んだ回の変更フォームを
+            // 「今後すべて（枠のマスターも変える）」選択済みで開く
+            setRenewal(false);
+            setForm({ kind: 'edit', booking: b, scope: 'future' });
+          }}
           onClose={() => setRenewal(false)}
           onDone={async (msg) => {
             await loadMasters(); await loadBookings(); await loadRenewPending(); await loadMonthlyPending(); showFlash(msg);
@@ -1532,8 +1540,10 @@ const BookingForm: React.FC<{
   const [noEnd, setNoEnd] = useState(true);
   const [repeatUntil, setRepeatUntil] = useState('');
   // 変更の範囲（繰り返しの回を変更するときだけ・2026-09-02 実機指摘で追加）。
-  // 'future' はこの回＋今後の回＋マスター（ルール）をまとめて変える
-  const [editScope, setEditScope] = useState<'one' | 'future'>('one');
+  // 'future' はこの回＋今後の回＋マスター（ルール）をまとめて変える。
+  // 月次更新の「変更」から開いたときは最初から 'future' が選ばれている
+  const [editScope, setEditScope] = useState<'one' | 'future'>(
+    editing && mode.kind === 'edit' && mode.scope === 'future' ? 'future' : 'one');
   // 繰り返しなのにお客様が空のまま保存しようとしたときの確認（2026-09-03 再発防止）。
   // 🚨 止めはしない。もう一度「保存」を押せばそのまま作れる（意図的に空の枠もあるため）
   const [emptyCustAck, setEmptyCustAck] = useState(false);
@@ -5986,8 +5996,14 @@ const StaffSettings: React.FC<{
 // ============================================================
 const MonthlyExtendSettings: React.FC<{
   floors: Floor[]; campuses: Campus[]; staff: Staff[];
+  /**
+   * 枠の内容を変えるとき、選んだ日の回を変更フォーム（今後すべて選択済み）で開く。
+   * 🚨 マスターへの反映処理をここに作らない。フォームの「今後すべて」1本に集約
+   *    （同じ処理を2か所に書くと片方だけ直す事故になる）
+   */
+  onEditRule: (b: Booking) => void;
   isDark: boolean; onDone: (msg: string) => Promise<void>;
-}> = ({ floors, campuses, staff, isDark, onDone }) => {
+}> = ({ floors, campuses, staff, onEditRule, isDark, onDone }) => {
   // 対象の月（既定は翌月）
   const [ym, setYm] = useState(() => {
     const t = new Date();
@@ -6002,6 +6018,10 @@ const MonthlyExtendSettings: React.FC<{
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [results, setResults] = useState<{ name: string; created: number; skipped: string[] }[] | null>(null);
+  // 「変更」＝いつから変えるかを選んでいる枠（2026-09-03 ユーザー指示）
+  const [editPickFor, setEditPickFor] = useState<string | null>(null);
+  const [editOcc, setEditOcc] = useState<Booking[]>([]);
+  const [editOccLoading, setEditOccLoading] = useState(false);
 
   const line = isDark ? '#3a3a5c' : '#e0e0e0';
   const lineSoft = isDark ? '#35354e' : '#eef0f3';
@@ -6064,6 +6084,26 @@ const MonthlyExtendSettings: React.FC<{
   const shiftYm = (d: number) => {
     const t = new Date(yNum, mNum - 1 + d, 1);
     setYm(`${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`);
+  };
+
+  /**
+   * 「変更」＝いつから変えるかの候補（作成済みの今後の回）を読む。
+   * 選んだ日の回を変更フォームで開けば、「今後すべて」がその日を起点に効く
+   */
+  const openEditPick = async (r: Recurrence) => {
+    if (editPickFor === r.id) { setEditPickFor(null); setEditOcc([]); return; }
+    setEditPickFor(r.id); setEditOcc([]); setEditOccLoading(true); setError('');
+    const from = new Date(); from.setHours(0, 0, 0, 0);
+    const { data, error: err } = await supabase.from('room_bookings').select('*')
+      .eq('recurrence_id', r.id)
+      .eq('status', 'active')
+      .is('deleted_at', null)
+      .gte('starts_at', from.toISOString())
+      .order('starts_at')
+      .limit(16);
+    setEditOccLoading(false);
+    if (err) { setError('回の一覧を読み込めませんでした。通信を確認してください。'); setEditPickFor(null); return; }
+    setEditOcc((data ?? []) as Booking[]);
   };
 
   const run = async () => {
@@ -6136,18 +6176,53 @@ const MonthlyExtendSettings: React.FC<{
             const cap = r.end_date && r.end_date < monthEnd ? r.end_date : monthEnd;
             const doneAlready = (r.generated_to ?? '') >= cap;
             return (
-              <label key={r.id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', border: `1px solid ${line}`, borderRadius: 8, padding: '8px 11px', cursor: 'pointer', opacity: doneAlready ? .65 : 1 }}>
-                <input type="checkbox" checked={!!checked[r.id]} disabled={running}
-                  onChange={e => setChecked(prev => ({ ...prev, [r.id]: e.target.checked }))}
-                  style={{ width: 17, height: 17, flexShrink: 0 }} />
-                <span style={{ fontSize: 13 }}>{ruleLabel(r)}</span>
-                <span style={{ marginLeft: 'auto', fontSize: 12, color: doneAlready ? accent : textMid }}>
-                  {doneAlready
-                    ? `作成済み（${r.generated_to ? formatDateLabel(r.generated_to) : ''}まで）`
-                    : `未作成（${r.generated_to ? `${formatDateLabel(r.generated_to)}まで作成済み` : 'まだ1回も無い'}）`}
-                  {(waitCounts[r.id] ?? 0) > 0 && `｜待ち${waitCounts[r.id]}名`}
-                </span>
-              </label>
+              <div key={r.id} style={{ border: `1px solid ${line}`, borderRadius: 8, opacity: doneAlready ? .8 : 1 }}>
+                <label style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '8px 11px', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={!!checked[r.id]} disabled={running}
+                    onChange={e => setChecked(prev => ({ ...prev, [r.id]: e.target.checked }))}
+                    style={{ width: 17, height: 17, flexShrink: 0 }} />
+                  <span style={{ fontSize: 13 }}>{ruleLabel(r)}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 12, color: doneAlready ? accent : textMid }}>
+                    {doneAlready
+                      ? `作成済み（${r.generated_to ? formatDateLabel(r.generated_to) : ''}まで）`
+                      : `未作成（${r.generated_to ? `${formatDateLabel(r.generated_to)}まで作成済み` : 'まだ1回も無い'}）`}
+                    {(waitCounts[r.id] ?? 0) > 0 && `｜待ち${waitCounts[r.id]}名`}
+                  </span>
+                  {/* 🚨 label の中のボタンはチェックボックスを巻き込むので preventDefault する */}
+                  <button onClick={e => { e.preventDefault(); openEditPick(r); }} disabled={running}
+                    style={{ padding: '4px 12px', borderRadius: 999, fontSize: 12.5, cursor: 'pointer', border: `1px solid ${editPickFor === r.id ? accent : line}`, background: editPickFor === r.id ? accent : 'transparent', color: editPickFor === r.id ? (isDark ? '#1d2a24' : '#fff') : textMid, fontWeight: editPickFor === r.id ? 700 : 400 }}>
+                    {editPickFor === r.id ? '変更をやめる' : '変更'}
+                  </button>
+                </label>
+                {/* いつから変えるか（2026-09-03 ユーザー指示）。選んだ日の回を
+                    変更フォーム（今後すべて選択済み）で開く。その日より前の回は変わらない */}
+                {editPickFor === r.id && (
+                  <div style={{ borderTop: `1px solid ${lineSoft}`, padding: '8px 11px' }}>
+                    {editOccLoading ? (
+                      <span style={{ fontSize: 12.5, color: textMid }}>日付を読み込んでいます…</span>
+                    ) : editOcc.length === 0 ? (
+                      <span style={{ fontSize: 12.5, color: textMid, lineHeight: 1.7 }}>
+                        この枠の今後の回がまだありません。先に上のボタンでこの枠の予約を作ってから変更してください。
+                      </span>
+                    ) : (
+                      <>
+                        <p style={{ fontSize: 12, color: textMid, margin: '0 0 6px', lineHeight: 1.6 }}>
+                          <b style={{ color: text }}>いつから変えますか？</b>
+                          選んだ日から先（とマスター）が新しい内容になります。それより前の回は変わりません。
+                        </p>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          {editOcc.map(o => (
+                            <button key={o.id} onClick={() => onEditRule(o)}
+                              style={{ padding: '5px 12px', borderRadius: 999, fontSize: 12.5, cursor: 'pointer', border: `1px solid ${accent}`, background: 'transparent', color: accent, fontWeight: 700 }}>
+                              {formatDateLabel(localDate(o.starts_at))}から
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>
@@ -6178,10 +6253,12 @@ const BasicSettingsPanel: React.FC<{
   attendanceOptions: AttendanceOption[]; user: AuthUser;
   /** 一覧の「予約する」から、そのお客様で予約を入れる流れに移る */
   onBook: (c: Customer) => void;
+  /** 月次更新の「変更」から、選んだ回を変更フォーム（今後すべて選択済み）で開く */
+  onEditRule: (b: Booking) => void;
   /** 開いたときに出すタブ（月末の案内バナーから月次更新を直接開くため） */
   initialTab?: 'renew' | 'monthly';
   onClose: () => void; onDone: (msg: string) => Promise<void>; isDark: boolean;
-}> = ({ campuses, floors, staff, categories, purposeDurations, purposeDetails, attendanceOptions, user, onBook, initialTab, onClose, onDone, isDark }) => {
+}> = ({ campuses, floors, staff, categories, purposeDurations, purposeDetails, attendanceOptions, user, onBook, onEditRule, initialTab, onClose, onDone, isDark }) => {
   const today = todayStr();
   const [tab, setTab] = useState<'monthly' | 'renew' | 'duration' | 'attendance' | 'staff' | 'customer' | 'waitlist' | 'bulk'>(initialTab ?? 'renew');
   const [fy, setFy] = useState(fiscalYear(today));
@@ -6338,7 +6415,7 @@ const BasicSettingsPanel: React.FC<{
 
       {tab === 'monthly' && (
         <MonthlyExtendSettings floors={floors} campuses={campuses} staff={staff}
-          onDone={onDone} isDark={isDark} />
+          onEditRule={onEditRule} onDone={onDone} isDark={isDark} />
       )}
       {tab === 'duration' && (
         <PurposeSettings purposeDurations={purposeDurations} purposeDetails={purposeDetails} onDone={onDone} isDark={isDark} />
