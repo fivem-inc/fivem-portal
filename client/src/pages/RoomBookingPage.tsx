@@ -5246,6 +5246,43 @@ const WaitlistSettings: React.FC<{
     });
   };
 
+  /**
+   * 繰り上げの確認パネル（時間つき）。
+   * 🚨 **押した待ちの行のすぐ下に出す**（2026-09-03 実機指摘）。
+   *    一覧の最上部に出していたため、下までスクロールして日付を選ぶと
+   *    パネルが画面外に出て「押しても何も起きない」ように見えていた。
+   * 🚨 用途の長さ制限は掛けない（受け入れ時の例外対応が目的・ユーザー確定）
+   */
+  const promotePanel = (w: Waitlist) => (promoteDraft && promoteDraft.w.id === w.id) ? (
+    <div style={{ background: isDark ? '#263b33' : '#e8f2ec', border: `1px solid ${accent}`, color: isDark ? '#d7efe2' : '#1d4535', borderRadius: 8, padding: '10px 12px', fontSize: 13, margin: '8px 0 0 30px', lineHeight: 1.8 }}>
+      <b>{promoteDraft.w.customer_label}</b> さんを <b>{formatDateLabel(promoteDraft.dateStr)}</b> に繰り上げます。
+      時間を確かめてください
+      {promoteDraft.w.recurrence?.accept_start && <b>（枠の受け入れ時間が入っています）</b>}。
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
+        <TimeInput value={promoteDraft.start}
+          onChange={v => setPromoteDraft(p => (p ? { ...p, start: v } : p))}
+          isDark={isDark} ariaLabel="受け入れ開始" style={{ width: 110 }} />
+        <span>〜</span>
+        <TimeInput value={promoteDraft.end}
+          onChange={v => setPromoteDraft(p => (p ? { ...p, end: v } : p))}
+          isDark={isDark} ariaLabel="受け入れ終了" style={{ width: 110 }} />
+        <span style={{ marginLeft: 'auto', display: 'flex', gap: 5 }}>
+          <button onClick={confirmPromote} disabled={!!busy} style={smallBtn(true)}>この内容で繰り上げる</button>
+          <button onClick={() => setPromoteDraft(null)} style={smallBtn(false)}>やめる</button>
+        </span>
+      </div>
+      <span style={{ fontSize: 11.5 }}>
+        時間はここで直せます（用途の長さの決まりと違っていても作れます）。
+      </span>
+      {/* 🚨 エラーは一覧の最上部にも出るが、下までスクロールしていると見えないので
+             ここにも出す（2026-09-03 実機指摘） */}
+      {error && (
+        <div style={{ marginTop: 6, color: isDark ? '#ffb4b4' : '#a3282a', fontSize: 12.5, lineHeight: 1.7 }}>
+          {error}
+        </div>
+      )}
+    </div>
+  ) : null;
   const confirmPromote = async () => {
     if (!promoteDraft) return;
     const s = toDate(promoteDraft.dateStr, promoteDraft.start);
@@ -5555,32 +5592,6 @@ const WaitlistSettings: React.FC<{
         </div>
       )}
 
-      {/* 繰り上げの確認（時間つき・2026-09-03）。受け入れ時間があれば既定値に入っている。
-          🚨 用途の長さ制限は掛けない（受け入れ時の例外対応が目的・ユーザー確定） */}
-      {promoteDraft && (
-        <div style={{ background: isDark ? '#263b33' : '#e8f2ec', border: `1px solid ${accent}`, color: isDark ? '#d7efe2' : '#1d4535', borderRadius: 8, padding: '10px 12px', fontSize: 13, marginBottom: 12, lineHeight: 1.8 }}>
-          <b>{promoteDraft.w.customer_label}</b> さんを <b>{formatDateLabel(promoteDraft.dateStr)}</b> に繰り上げます。
-          時間を確かめてください
-          {promoteDraft.w.recurrence?.accept_start && <b>（枠の受け入れ時間が入っています）</b>}。
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
-            <TimeInput value={promoteDraft.start}
-              onChange={v => setPromoteDraft(p => (p ? { ...p, start: v } : p))}
-              isDark={isDark} ariaLabel="受け入れ開始" style={{ width: 110 }} />
-            <span>〜</span>
-            <TimeInput value={promoteDraft.end}
-              onChange={v => setPromoteDraft(p => (p ? { ...p, end: v } : p))}
-              isDark={isDark} ariaLabel="受け入れ終了" style={{ width: 110 }} />
-            <span style={{ marginLeft: 'auto', display: 'flex', gap: 5 }}>
-              <button onClick={confirmPromote} disabled={!!busy} style={smallBtn(true)}>この内容で繰り上げる</button>
-              <button onClick={() => setPromoteDraft(null)} style={smallBtn(false)}>やめる</button>
-            </span>
-          </div>
-          <span style={{ fontSize: 11.5 }}>
-            時間はここで直せます（用途の長さの決まりと違っていても作れます）。
-          </span>
-        </div>
-      )}
-
       {loading ? (
         <p style={{ fontSize: 13.5, color: textMid }}>読み込んでいます...</p>
       ) : groups.length === 0 ? (
@@ -5681,6 +5692,9 @@ const WaitlistSettings: React.FC<{
                         </span>
                       </div>
 
+                      {/* 「この回だけ」の待ちは日付選びが無いので、行の直下に確認パネルを出す */}
+                      {pickFor !== w.id && promotePanel(w)}
+
                       {/* どの日に入れるか（毎週の枠の待ちだけ） */}
                       {pickFor === w.id && (
                         <div style={{ margin: '8px 0 2px 30px', border: `1px solid ${lineSoft}`, borderRadius: 8, padding: '8px 10px' }}>
@@ -5713,6 +5727,7 @@ const WaitlistSettings: React.FC<{
                               })}
                             </>
                           )}
+                          {promotePanel(w)}
                         </div>
                       )}
                     </>
