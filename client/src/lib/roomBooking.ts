@@ -183,6 +183,12 @@ export interface Booking {
    * 読むためにここを見る（2026-09-02）。
    */
   deleted_at?: string | null;
+  /**
+   * この回はキャンセル待ちの対象外か（2026-09-03〜・既定 false）。
+   * 「この日だけは、並んでいる人がいても誰も入れない」という回ごとの印。
+   * 対象外の回は 空きあり判定・日付選び・出欠後の案内 から除外される
+   */
+  no_waitlist?: boolean;
   created_by: string;
   updated_by: string | null;
   created_at: string;
@@ -217,6 +223,7 @@ export interface Waitlist {
     /** 「空きあり」の目印の判定（参加者ごとの出欠照合）に使う */
     member_no: string | null; customer_label: string | null;
     cancel_kind?: 'closed' | 'absence';
+    no_waitlist?: boolean;
     /**
      * この予約がどの毎週の枠に属すか。「この回だけ」の待ちを、
      * 同じ枠の毎週の待ちと**1本の列**にまとめるために使う（2026-09-02 案A）
@@ -633,6 +640,27 @@ export const participantsOf = (b: Pick<Booking, 'member_no' | 'customer_label'>)
     out.push({ no, name, key: `${no}|${name}` });
   }
   return out;
+};
+
+/**
+ * その回の参加者**全員**に空き扱いの出欠（休み・キャンセル料など）が付いているか。
+ * 「休みの連絡あり＝繰り上げ・空き枠にできる」の画面側の判定はすべてこれを使う
+ * （予約表の印・日付選び・出欠後の案内）。
+ * 🚨 DB側の room_booking_all_absent() と**同じ判定**。どちらかを直すときは必ず両方を見る。
+ * 🚨 出欠の鍵は（会員番号, お名前）のペア。メモだけの行（status null）は根拠にならない。
+ */
+export const allAbsentFor = (
+  b: Pick<Booking, 'member_no' | 'customer_label'>,
+  rows: Pick<AttendanceRow, 'participant_no' | 'participant_name' | 'status'>[],
+  openStatuses: string[],
+): boolean => {
+  if (openStatuses.length === 0) return false;   // 設定を空にした＝連動を止めている
+  const ppl = participantsOf(b);
+  if (ppl.length === 0) return false;            // 参加者が読み取れない回は空き扱いにしない
+  return ppl.every(p => {
+    const r = rows.find(a => a.participant_no === p.no && a.participant_name === p.name);
+    return !!r && !!r.status && openStatuses.includes(r.status.trim());
+  });
 };
 
 /** 参加者の見せ方。お名前が無ければ会員番号、どちらも無ければその旨を出す */

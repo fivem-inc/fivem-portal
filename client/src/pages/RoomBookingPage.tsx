@@ -9,7 +9,7 @@ import {
   todayStr, toDate, hhmm, minutesOf, addMinutes, formatDateLabel, shiftDate,
   scholaUrl, floorBusyNow, nextStart, usingUntil, assignColumns, categoryLabel,
   isWeekend, RANGE_DAYS, localDate, placeLabel, openSlotColor, durationLabel, FALLBACK_DURATIONS, gradeOrAge, defaultMinutesOf,
-  isAbsence, cancelledLabel,
+  isAbsence, cancelledLabel, allAbsentFor,
   customerName, customerFullName, customerKana, contactLines, toHiragana,
   fiscalYear, fiscalYearEnd, fiscalYearLabel, RENEWAL_NOTICE_DAYS, daysUntil, detailsOf, purposeWithDetail,
   participantsOf, participantLabelOf, attendanceOptionsFor, needsPaymentNote, customerSearchFilter, customerMatches,
@@ -232,6 +232,8 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
   const [attendanceOptions, setAttendanceOptions] = useState<AttendanceOption[]>([]);
   // いま見えている予約ぶんの出欠。付いていない予約は行が無い
   const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
+  // 空き扱いにする出欠の名前（⚙️設定 → キャンセル待ち）。予約表の「休み連絡」の印に使う
+  const [openStatuses, setOpenStatuses] = useState<string[]>(['休み', 'キャンセル料']);
   // まとめて出欠を付ける画面を開いているか
   const [attendanceOpen, setAttendanceOpen] = useState(false);
   // キャンセル待ちの一覧（予約表の上のボタンから開く・2026-09-02 ユーザー承認）。
@@ -293,7 +295,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
 
   // ---- マスタ（校・場所・スタッフ・区分）の読み込み ----
   const loadMasters = useCallback(async () => {
-    const [cRes, fRes, sRes, catRes, scRes, durRes, setRes, detRes, attRes, purRes] = await Promise.all([
+    const [cRes, fRes, sRes, catRes, scRes, durRes, setRes, detRes, attRes, purRes, openRes] = await Promise.all([
       supabase.from('room_campuses').select('*').eq('active', true).order('sort_order'),
       supabase.from('room_floors').select('*').eq('active', true).order('sort_order'),
       supabase.from('room_staff').select('*').order('sort_order'),
@@ -304,9 +306,14 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
       supabase.from('room_purpose_details').select('*').order('sort_order'),
       supabase.from('room_attendance_options').select('*').order('sort_order'),
       supabase.from('room_purposes').select('*').order('sort_order'),
+      supabase.from('room_settings').select('value').eq('key', 'waitlist_open_statuses').maybeSingle(),
     ]);
     // 用途（2026-09-02〜 DBで持つ）。読めないときは既定の5つで動く（activePurposes が面倒を見る）
     setPurposeRegistry((purRes.data ?? []) as RoomPurpose[]);
+    // 空き扱いにする出欠（予約表の「休み連絡」の印に使う）
+    setOpenStatuses(openRes.data?.value
+      ? openRes.data.value.split(',').map((s: string) => s.trim()).filter(Boolean)
+      : ['休み', 'キャンセル料']);
     // 設定が読めないとき（まだ作っていない等）は null のままにして、
     // これまでどおり「パート以外は使える」で動かす。急に誰も使えなくならないように
     setBasicRoles(setRes.data?.value
@@ -430,6 +437,21 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
   //    ここを緩めると、押せるのに保存できないボタンになる。
   //    基本設定（canRenew）と違い、役職の一覧（basicRoles）では絞らない
   const canAttendance = admin || (employmentType !== '' && employmentType !== 'パート');
+
+  /**
+   * 休みの連絡が全員に付いた回のID（2026-09-03 ユーザー指摘）。
+   * 予約表では普通の予約に見えてしまい、出欠を開かないと分からなかったため、
+   * カードに印を出す。🚨 判定は lib の allAbsentFor 1本（DB側と同じ考え方）
+   */
+  const absentIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const b of bookings) {
+      if (b.kind !== 'booking' || b.status !== 'active') continue;
+      const rows = attendance.filter(a => a.booking_id === b.id);
+      if (rows.length > 0 && allAbsentFor(b, rows, openStatuses)) s.add(b.id);
+    }
+    return s;
+  }, [bookings, attendance, openStatuses]);
 
   const canRenew = admin
     || (employmentType !== '' && employmentType !== 'パート'
@@ -847,7 +869,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
               groups={rangeList} view={view} only={only}
               staffById={staffById} categories={categories}
               placeName={placeName} allCampus={allCampus}
-              onOpenDetail={setDetail}
+              onOpenDetail={setDetail} absentIds={absentIds}
               colors={{ card, line, lineSoft, text, textMid, textSoft }}
               isDark={isDark} />
           : narrow
@@ -857,7 +879,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
               selectedId={mobileFloorId} onSelect={setMobileFloorId}
               staffById={staffById} categories={categories}
               placeName={placeName} allCampus={allCampus}
-              onOpenDetail={setDetail}
+              onOpenDetail={setDetail} absentIds={absentIds}
               onCreate={(floorId, startTime) => setForm({ kind: 'create', floorId, date, startTime })}
               colors={{ card, line, lineSoft, text, textMid, textSoft, accent, accentBg }}
               isDark={isDark} btn={btn} />
@@ -865,7 +887,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
               scrollRef={scrollRef} lanes={lanes} laneBookings={laneBookings}
               campus={allCampus ? null : campus} isToday={isToday} nowTop={nowTop} nowColor={nowColor} offHours={offHours}
               view={view} placeName={placeName} allCampus={allCampus}
-              onOpenDetail={setDetail}
+              onOpenDetail={setDetail} absentIds={absentIds}
               onCreate={(floorId, startTime) => setForm({ kind: 'create', floorId, date, startTime })}
               colors={{ card, line, lineSoft, text, textMid, textSoft }}
               isDark={isDark} />
@@ -971,11 +993,13 @@ const TimelineView: React.FC<{
   isToday: boolean; nowTop: number; nowColor: string; offHours: string;
   view: ViewMode; placeName: (floorId: string, withCampus: boolean) => string; allCampus: boolean;
   onOpenDetail: (b: Booking) => void;
+  /** 休みの連絡が全員に付いた回のID（カードに印を出す・2026-09-03） */
+  absentIds: Set<string>;
   onCreate: (floorId: string, startTime: string) => void;
   colors: { card: string; line: string; lineSoft: string; text: string; textMid: string; textSoft: string };
   isDark: boolean;
 }> = ({ scrollRef, lanes, laneBookings, campus, isToday, nowTop, nowColor, offHours,
-        view, placeName, allCampus, onOpenDetail, onCreate, colors, isDark }) => {
+        view, placeName, allCampus, onOpenDetail, absentIds, onCreate, colors, isDark }) => {
   const { card, line, lineSoft, text, textMid, textSoft } = colors;
   const hours = Array.from({ length: VIEW_END_HOUR - VIEW_START_HOUR }, (_, i) => VIEW_START_HOUR + i);
   // 全校表示のときは校ごとに営業時間が違うので、薄いグレーの帯は出さない
@@ -1075,6 +1099,10 @@ const TimelineView: React.FC<{
                         opacity: off ? .75 : 1,
                       }}>
                       <b style={{ display: 'block', fontSize: 11, fontVariantNumeric: 'tabular-nums', textDecoration: off ? 'line-through' : 'none' }}>
+                        {/* 🚨 休みの連絡が全員に付いた回は、出欠を開かなくても分かるように印を出す
+                               （2026-09-03 実機指摘）。グレーの「お休み」になるのは繰り上げ後。
+                               🚨 絵文字は使わない（検証済みのものだけ・文字で通るなら文字） */}
+                        {absentIds.has(b.id) && '【休み連絡】'}
                         {open && '🟡'}{b.exclusive && !off && !open && '🔒'}{b.is_fixed && '【固定】'}{hhmm(b.starts_at)}-{hhmm(b.ends_at)}
                       </b>
                       {/* 担当別・参加者別では「どこの場所か」が分からないと使えないので場所を出す */}
@@ -1135,9 +1163,11 @@ const RangeList: React.FC<{
   staffById: (id: string | null) => Staff | null; categories: LessonCategory[];
   placeName: (floorId: string, withCampus: boolean) => string; allCampus: boolean;
   onOpenDetail: (b: Booking) => void;
+  /** 休みの連絡が全員に付いた回のID（カードに印を出す・2026-09-03） */
+  absentIds: Set<string>;
   colors: { card: string; line: string; lineSoft: string; text: string; textMid: string; textSoft: string };
   isDark: boolean;
-}> = ({ groups, view, only, staffById, categories, placeName, allCampus, onOpenDetail, colors, isDark }) => {
+}> = ({ groups, view, only, staffById, categories, placeName, allCampus, onOpenDetail, absentIds, colors, isDark }) => {
   const { card, line, lineSoft, text, textMid, textSoft } = colors;
   const today = todayStr();
   const total = groups.reduce((n, g) => n + g.list.length, 0);
@@ -1199,7 +1229,8 @@ const RangeList: React.FC<{
                     fontWeight: 700, fontSize: 13.5, fontVariantNumeric: 'tabular-nums',
                     minWidth: 96, flexShrink: 0, textDecoration: off ? 'line-through' : 'none',
                   }}>
-                    {open && '🟡'}{b.exclusive && !off && !open && '🔒'}{b.is_fixed && '【固定】'}{hhmm(b.starts_at)}〜{hhmm(b.ends_at)}
+                    {absentIds.has(b.id) && '【休み連絡】'}
+                  {open && '🟡'}{b.exclusive && !off && !open && '🔒'}{b.is_fixed && '【固定】'}{hhmm(b.starts_at)}〜{hhmm(b.ends_at)}
                   </span>
                   <span style={{
                     background: bgc, color: fg, borderRadius: 999, padding: '1px 9px',
@@ -1239,12 +1270,14 @@ const MobileView: React.FC<{
   staffById: (id: string | null) => Staff | null; categories: LessonCategory[];
   placeName: (floorId: string, withCampus: boolean) => string; allCampus: boolean;
   onOpenDetail: (b: Booking) => void;
+  /** 休みの連絡が全員に付いた回のID（カードに印を出す・2026-09-03） */
+  absentIds: Set<string>;
   onCreate: (floorId: string, startTime: string) => void;
   colors: { card: string; line: string; lineSoft: string; text: string; textMid: string; textSoft: string; accent: string; accentBg: string };
   isDark: boolean;
   btn: (on: boolean, color?: string) => React.CSSProperties;
 }> = ({ lanes, laneBookings, floors, bookings, now, isToday, view, selectedId, onSelect,
-        staffById, categories, placeName, allCampus, onOpenDetail, onCreate, colors, isDark, btn }) => {
+        staffById, categories, placeName, allCampus, onOpenDetail, absentIds, onCreate, colors, isDark, btn }) => {
   const { card, line, lineSoft, text, textMid, textSoft } = colors;
 
   // 場所別のときは従来どおり「選んだ場所の1日」。
@@ -1318,6 +1351,7 @@ const MobileView: React.FC<{
               style={{ display: 'block', width: '100%', textAlign: 'left', background: 'transparent', border: 'none', borderTop: `1px solid ${lineSoft}`, padding: '11px 12px', cursor: 'pointer', color: off ? textSoft : text }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span style={{ fontWeight: 700, fontSize: 14, fontVariantNumeric: 'tabular-nums', textDecoration: off ? 'line-through' : 'none' }}>
+                  {absentIds.has(b.id) && '【休み連絡】'}
                   {open && '🟡'}{b.exclusive && !off && !open && '🔒'}{b.is_fixed && '【固定】'}{hhmm(b.starts_at)}〜{hhmm(b.ends_at)}
                 </span>
                 <span style={{
@@ -3319,6 +3353,8 @@ const AttendanceEditor: React.FC<{
   const checkWaitHint = async (opt: AttendanceOption | null) => {
     setWaitHint(''); setVacateOffer(false);
     if (!opt) return;
+    // 🚨 この回はキャンセル待ちの対象外（2026-09-03）。案内も空き枠化も出さない
+    if (b.no_waitlist) return;
     const { data: st } = await supabase.from('room_settings')
       .select('value').eq('key', 'waitlist_open_statuses').maybeSingle();
     const open = (st?.value ?? '休み,キャンセル料').split(',').map((s: string) => s.trim()).filter(Boolean);
@@ -3551,6 +3587,11 @@ const BookingDetail: React.FC<{
   } | null>(null);
   // 会員番号のコピー（どの番号をコピーしたか。数秒で消える）
   const [copiedNo, setCopiedNo] = useState('');
+  // 「お休み」を戻したときに残っていた募集枠（2026-09-03 実機指摘）。
+  // 🚨 黙って消さない。一覧で見せて、人が消すかどうかを決める
+  const [leftoverSlots, setLeftoverSlots] = useState<Pick<Booking, 'id' | 'starts_at' | 'ends_at'>[] | null>(null);
+  // この回はキャンセル待ちの対象外か（回ごとの印・2026-09-03）
+  const [noWaitlist, setNoWaitlist] = useState(!!b.no_waitlist);
   // 募集枠に申込を入れるときの入力
   const [filling, setFilling] = useState(false);
   // 🚨 予約フォームと**同じ部品**を使う（会員番号の引き当て・お名前の検索）。
@@ -3676,11 +3717,41 @@ const BookingDetail: React.FC<{
     if (chkErr) { setBusy(false); setError('空きを確認できませんでした。通信を確認してもう一度お試しください。'); return; }
     if (!row?.ok) { setBusy(false); setError(`元に戻せません：${row?.reason ?? 'この時間は他の予約で埋まっています'}`); return; }
 
+    // 🚨 担当の重なりも見る（2026-09-03 実機指摘）。場所に空きがあっても、
+    //    繰り上げで別の方が同じ担当に入っていれば二重になる
+    if (b.staff_id) {
+      const { data: busyData } = await supabase.rpc('room_staff_busy', {
+        p_staff_id: b.staff_id, p_starts: b.starts_at, p_ends: b.ends_at, p_exclude: b.id,
+      });
+      if (busyData === true) {
+        setBusy(false);
+        setError('この時間の担当には、すでに別の予約が入っています（繰り上げ済みなど）。先にそちらを整理してください。');
+        return;
+      }
+    }
+
+    const wasAbsence = isAbsence(b);
     const { error: err } = await supabase.from('room_bookings')
       .update({ status: 'active', cancel_kind: 'closed', updated_at: new Date().toISOString() })
       .eq('id', b.id);
+    if (err) { setBusy(false); setError('元に戻せませんでした。通信を確認してもう一度お試しください。'); return; }
+
+    // 🚨 「お休み」を戻したとき、そのとき作った空き枠が残る（2026-09-03 実機指摘）。
+    //    枠と空き枠のつながりは保存していないので、**同じ場所・同じ担当で時間が重なる
+    //    募集中の枠**を探して一覧で見せ、消すかどうかは人が決める（黙って消さない）
+    if (wasAbsence) {
+      const { data: slots } = await supabase.from('room_bookings')
+        .select('id, starts_at, ends_at')
+        .eq('floor_id', b.floor_id)
+        .eq('kind', 'open')
+        .eq('status', 'active')
+        .is('deleted_at', null)
+        .lt('starts_at', b.ends_at)
+        .gt('ends_at', b.starts_at);
+      const list = ((slots ?? []) as Pick<Booking, 'id' | 'starts_at' | 'ends_at'>[]);
+      if (list.length > 0) { setBusy(false); setLeftoverSlots(list); return; }
+    }
     setBusy(false);
-    if (err) { setError('元に戻せませんでした。通信を確認してもう一度お試しください。'); return; }
     onChanged(`${cancelledLabel(b)}を取り消しました`);
   };
 
@@ -3969,6 +4040,24 @@ const BookingDetail: React.FC<{
               </div>
             )}
 
+            {/* この回だけキャンセル待ちの対象外にする（2026-09-03 ユーザー承認）。
+                🚨 枠の「受け付ける／締め切る」とは別物。あちらは"並べるかどうか"、
+                   こちらは"並んでいる人がいても、この日は誰も入れない" */}
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12.5, color: textMid, cursor: 'pointer', marginTop: 10 }}>
+              <input type="checkbox" checked={noWaitlist} disabled={busy}
+                onChange={async e => {
+                  const on = e.target.checked;
+                  setBusy(true); setError('');
+                  const { data, error: err } = await supabase.from('room_bookings')
+                    .update({ no_waitlist: on, updated_at: new Date().toISOString() })
+                    .eq('id', b.id).select('id');
+                  setBusy(false);
+                  if (err || !data?.length) { setError('設定を変えられませんでした。通信を確認してください。'); return; }
+                  setNoWaitlist(on);
+                }} style={{ width: 16, height: 16, flexShrink: 0 }} />
+              この回はキャンセル待ちの対象外にする（この日は誰も入れない）
+            </label>
+
             {/* 枠ごとの設定（2026-09-02 ユーザー承認）。繰り返しの予約でだけ出す */}
             {repeating && slotSet && (
               <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -4014,7 +4103,42 @@ const BookingDetail: React.FC<{
           </div>
         )}
 
-        {confirm === 'none' && !filling && (
+        {/* お休みを戻したときに残っていた募集枠の後始末（2026-09-03 実機指摘）。
+            🚨 枠と空き枠のつながりは保存していないので、時間が重なる募集枠を
+               候補として見せるだけ。消すかどうかは人が決める */}
+        {leftoverSlots && (
+          <div style={{ background: isDark ? '#4a4326' : '#fff8e1', border: `1px solid ${isDark ? '#8a7a3a' : '#ffe082'}`, color: isDark ? '#ffe6a3' : '#7a5c00', borderRadius: 8, padding: '10px 12px', fontSize: 13, marginTop: 14, lineHeight: 1.8 }}>
+            お休みを取り消しました。この時間に<b>募集中の枠</b>が残っています
+            （お休みにしたときに作ったものかもしれません）。どうしますか？
+            {leftoverSlots.map(s => (
+              <div key={s.id} style={{ fontSize: 12.5, marginTop: 3 }}>
+                ・{hhmm(s.starts_at)}〜{hhmm(s.ends_at)} の募集枠
+              </div>
+            ))}
+            <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+              <button onClick={async () => {
+                setBusy(true); setError('');
+                const { data: me } = await supabase.auth.getUser();
+                const { error: derr } = await supabase.from('room_bookings')
+                  .update({ deleted_at: new Date().toISOString(), deleted_by: me.user?.id ?? null })
+                  .in('id', leftoverSlots.map(s => s.id));
+                setBusy(false);
+                if (derr) { setError('募集枠を取り消せませんでした。通信を確認してください。'); return; }
+                setLeftoverSlots(null);
+                onChanged('お休みを取り消し、募集中の枠も取り消しました');
+              }} disabled={busy}
+                style={{ padding: '7px 14px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 13, fontWeight: 700, cursor: busy ? 'wait' : 'pointer' }}>
+                募集枠も取り消す
+              </button>
+              <button onClick={() => { setLeftoverSlots(null); onChanged('お休みを取り消しました（募集枠はそのままです）'); }}
+                style={{ padding: '7px 12px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 13, cursor: 'pointer' }}>
+                残す
+              </button>
+            </div>
+          </div>
+        )}
+
+        {confirm === 'none' && !filling && !leftoverSlots && (
           <div style={{ display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
             <button onClick={() => onEdit(b)}
               style={{ flex: '1 1 120px', padding: '11px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
@@ -4875,7 +4999,7 @@ const WaitlistSettings: React.FC<{
         // 🚨 room_bookings へは booking_id と promoted_booking_id の**外部キーが2本**ある。
         //    「!booking_id」でどちらで結ぶかを明示しないと PGRST201（曖昧）で
         //    一覧全体が読めなくなる（2026-09-02 実機で発覚。8/31 の作成時からのバグ）
-        .select('*, booking:room_bookings!booking_id(id, floor_id, starts_at, ends_at, purpose, status, deleted_at, staff_id, member_no, customer_label, cancel_kind, recurrence_id), recurrence:room_recurrences(id, floor_id, weekday, start_time, end_time, purpose, staff_id, active, auto_open_slot, waitlist_closed, accept_start, accept_end)')
+        .select('*, booking:room_bookings!booking_id(id, floor_id, starts_at, ends_at, purpose, status, deleted_at, staff_id, member_no, customer_label, cancel_kind, recurrence_id, no_waitlist), recurrence:room_recurrences(id, floor_id, weekday, start_time, end_time, purpose, staff_id, active, auto_open_slot, waitlist_closed, accept_start, accept_end)')
         .eq('status', 'waiting')
         .order('position')
         .order('created_at'),
@@ -5230,6 +5354,8 @@ const WaitlistSettings: React.FC<{
     attList: AttendanceRow[] = occAtt,
     busyList: Pick<Booking, 'id' | 'starts_at' | 'ends_at'>[] = occBusy,
   ): { label: string; free: boolean } => {
+    // 🚨 この回はキャンセル待ちの対象外（回ごとの印・2026-09-03）
+    if (o.no_waitlist) return { label: 'この回は対象外', free: false };
     // 🚨 まず担当の重なり。取り消し・お休みで空いたように見える回でも、
     //    繰り上げ済みの予約（recurrence に紐付かない）で埋まっていることがある。
     //    サーバー（room_staff_busy）も同じ判定で止める。ここは目安の表示
