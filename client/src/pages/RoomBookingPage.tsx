@@ -4691,7 +4691,7 @@ const WaitlistSettings: React.FC<{
         // 🚨 room_bookings へは booking_id と promoted_booking_id の**外部キーが2本**ある。
         //    「!booking_id」でどちらで結ぶかを明示しないと PGRST201（曖昧）で
         //    一覧全体が読めなくなる（2026-09-02 実機で発覚。8/31 の作成時からのバグ）
-        .select('*, booking:room_bookings!booking_id(id, floor_id, starts_at, ends_at, purpose, status, deleted_at, staff_id, member_no, customer_label, cancel_kind), recurrence:room_recurrences(id, floor_id, weekday, start_time, end_time, purpose, staff_id, active, auto_open_slot, waitlist_closed)')
+        .select('*, booking:room_bookings!booking_id(id, floor_id, starts_at, ends_at, purpose, status, deleted_at, staff_id, member_no, customer_label, cancel_kind, recurrence_id), recurrence:room_recurrences(id, floor_id, weekday, start_time, end_time, purpose, staff_id, active, auto_open_slot, waitlist_closed)')
         .eq('status', 'waiting')
         .order('position')
         .order('created_at'),
@@ -4740,17 +4740,31 @@ const WaitlistSettings: React.FC<{
           key: `r|${r.id}`, kind: 'slot', floorId: r.floor_id,
           weekday: r.weekday, time: r.start_time.slice(0, 5), dateStr: '',
           staffId: r.staff_id, purpose: r.purpose, items: [],
-          closed: r.waitlist_closed === true, orphan: false,
+          closed: false, orphan: false,
         };
+        // 「この回だけ」の待ちが先にカードを作っていても、締切の印はルールの値で上書きする
+        g.closed = r.waitlist_closed === true;
       } else if (w.booking_id && w.booking) {
         const b = w.booking;
         const d = new Date(b.starts_at);
-        g = m.get(`b|${b.id}`) ?? {
-          key: `b|${b.id}`, kind: 'single', floorId: b.floor_id,
-          weekday: d.getDay(), time: hhmm(b.starts_at), dateStr: localDate(b.starts_at),
-          staffId: b.staff_id, purpose: b.purpose, items: [],
-          closed: false, orphan: !!b.deleted_at,
-        };
+        if (!b.deleted_at && b.recurrence_id) {
+          // 🚨 「この回だけ」の待ちでも、毎週の枠に属す予約なら**枠のカードに合流**させて
+          //    1本の列にする（2026-09-02 案A。別カードに分かれると、毎週の2番さんと
+          //    この回だけの1番さんのどちらが先か読めない、という実機指摘への対応）
+          g = m.get(`r|${b.recurrence_id}`) ?? {
+            key: `r|${b.recurrence_id}`, kind: 'slot', floorId: b.floor_id,
+            weekday: d.getDay(), time: hhmm(b.starts_at), dateStr: '',
+            staffId: b.staff_id, purpose: b.purpose, items: [],
+            closed: false, orphan: false,
+          };
+        } else {
+          g = m.get(`b|${b.id}`) ?? {
+            key: `b|${b.id}`, kind: 'single', floorId: b.floor_id,
+            weekday: d.getDay(), time: hhmm(b.starts_at), dateStr: localDate(b.starts_at),
+            staffId: b.staff_id, purpose: b.purpose, items: [],
+            closed: false, orphan: !!b.deleted_at,
+          };
+        }
       }
       if (!g) continue;
       g.items.push(w);
@@ -4811,7 +4825,17 @@ const WaitlistSettings: React.FC<{
     await load();
   };
 
-  const queueKeyOf = (x: Waitlist) => (x.recurrence_id ? `r|${x.recurrence_id}` : `b|${x.booking_id}`);
+  /**
+   * どの枠（＝待ち行列）に属すか。「この回だけ」の待ちでも、その予約が毎週の枠に
+   * 属すなら**同じ列**として扱う（2026-09-02 案A。別のカードに分かれると
+   * 優先順位が読めない、という実機指摘への対応）
+   */
+  const slotIdOf = (x: Waitlist): string | null =>
+    x.recurrence_id ?? x.booking?.recurrence_id ?? null;
+  const queueKeyOf = (x: Waitlist) => {
+    const sid = slotIdOf(x);
+    return sid ? `r|${sid}` : `b|${x.booking_id}`;
+  };
 
   /**
    * 取り消し。askFollowUps=true のとき、続けて2つの案内を出す：
@@ -5007,7 +5031,10 @@ const WaitlistSettings: React.FC<{
       const from = new Date(); from.setHours(0, 0, 0, 0);
       const to = new Date(from); to.setDate(to.getDate() + 56);
       // ① 毎週の枠の今後の回（🚨 取り消し済みの回も読む。そこが空きになるため）
-      const recIds = [...new Set(rows.filter(w => w.recurrence_id).map(w => w.recurrence_id as string))];
+      // 🚨 合流した「この回だけ」の待ち（予約が枠に属す）も、枠の回で空きを判定する
+      const recIds = [...new Set(rows
+        .map(w => w.recurrence_id ?? w.booking?.recurrence_id)
+        .filter(Boolean) as string[])];
       let occs: Booking[] = [];
       if (recIds.length > 0) {
         const { data } = await supabase.from('room_bookings').select('*')
@@ -5043,8 +5070,9 @@ const WaitlistSettings: React.FC<{
       for (const w of rows) {
         const key = queueKeyOf(w);
         if (key in map) continue;
-        const list = w.recurrence_id
-          ? occs.filter(o => o.recurrence_id === w.recurrence_id)
+        const sid = w.recurrence_id ?? w.booking?.recurrence_id ?? null;
+        const list = sid
+          ? occs.filter(o => o.recurrence_id === sid)
           : (w.booking && !w.booking.deleted_at ? [w.booking as unknown as Booking] : []);
         const staffId = w.recurrence ? w.recurrence.staff_id : (w.booking?.staff_id ?? null);
         const busyForStaff = staffId ? busyAll.filter(x => x.staff_id === staffId) : [];
@@ -5210,6 +5238,9 @@ const WaitlistSettings: React.FC<{
                         <b style={{ fontSize: 13.5 }}>{w.customer_label}</b>
                         <span style={{ fontSize: 12.5, color: textMid }}>
                           {w.member_no ?? '一般'}
+                          {/* 合流した「この回だけ」の待ちは、どの日限定かをひと目で */}
+                          {g.kind === 'slot' && !w.recurrence_id && w.booking
+                            && <b>〔{formatDateLabel(localDate(w.booking.starts_at))}のみ〕</b>}
                           {w.staff_id && ` / 希望：${staff.find(s => s.id === w.staff_id)?.name ?? ''}`}
                           {w.note && ` / ${w.note}`}
                         </span>
@@ -5228,8 +5259,9 @@ const WaitlistSettings: React.FC<{
                                 setEditing(w.id);
                                 setDraft({ person: { no: w.member_no ?? '', name: w.customer_label }, note: w.note ?? '' });
                               }} style={smallBtn(false)}>直す</button>
-                              {/* 毎週の枠は「どの日に入れるか」を選んでから。この回だけは直接 */}
-                              {g.kind === 'slot' ? (
+                              {/* 毎週の待ちは「どの日に入れるか」を選んでから。
+                                  「この回だけ」の待ちは（合流していても）その日へ直接 */}
+                              {w.recurrence_id ? (
                                 <button onClick={() => (pickFor === w.id ? setPickFor(null) : openPick(w))}
                                   disabled={!!busy} style={smallBtn(pickFor === w.id)}>
                                   {pickFor === w.id ? '日を選ぶのをやめる' : '繰り上げる（日を選ぶ）'}

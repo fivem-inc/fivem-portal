@@ -214,6 +214,11 @@ export interface Waitlist {
     /** 「空きあり」の目印の判定（参加者ごとの出欠照合）に使う */
     member_no: string | null; customer_label: string | null;
     cancel_kind?: 'closed' | 'absence';
+    /**
+     * この予約がどの毎週の枠に属すか。「この回だけ」の待ちを、
+     * 同じ枠の毎週の待ちと**1本の列**にまとめるために使う（2026-09-02 案A）
+     */
+    recurrence_id: string | null;
   } | null;
   /** 毎週の枠の待ち用。枠の曜日・時間・担当をここから出す */
   recurrence?: {
