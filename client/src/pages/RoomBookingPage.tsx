@@ -1534,6 +1534,11 @@ const BookingForm: React.FC<{
   // 変更の範囲（繰り返しの回を変更するときだけ・2026-09-02 実機指摘で追加）。
   // 'future' はこの回＋今後の回＋マスター（ルール）をまとめて変える
   const [editScope, setEditScope] = useState<'one' | 'future'>('one');
+  // 繰り返しなのにお客様が空のまま保存しようとしたときの確認（2026-09-03 再発防止）。
+  // 🚨 止めはしない。もう一度「保存」を押せばそのまま作れる（意図的に空の枠もあるため）
+  const [emptyCustAck, setEmptyCustAck] = useState(false);
+  // お客様や繰り返しの設定を触ったら、空のまま保存の確認は取り直す
+  useEffect(() => { setEmptyCustAck(false); }, [people, repeat, kind]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [conflicts, setConflicts] = useState<ConflictInfo[]>([]);
@@ -1709,15 +1714,25 @@ const BookingForm: React.FC<{
           .eq('status', 'active')
           .order('starts_at');
         let okCnt = 0;
+        let custKept = 0;
         const ng: string[] = [];
         for (const sb of (sibs ?? []) as Booking[]) {
           const sd = localDate(sb.starts_at);
           const ss = toDate(sd, startTime), se = toDate(sd, endTime);
           if (!ss || !se) continue;
+          // お客様も反映する。ただし**この回（変更前）と同じお客様だった回**にだけ
+          // （空も「同じ」に含む＝空のまま作った枠の一括修正ができる・2026-09-03 実機指摘）。
+          // 🚨 違うお客様が入っている回（募集枠から埋めた回など）は**そのまま残す**。
+          //    一律で上書きすると、別のお客様の名前を消してしまう
+          const sameCustomer =
+            (sb.customer_label ?? '') === (base!.customer_label ?? '')
+            && (sb.member_no ?? '') === (base!.member_no ?? '');
+          if (!sameCustomer) custKept++;
           const { data: ud, error: uerr } = await supabase.rpc('room_update_booking', {
             p_id: sb.id, p_starts_at: ss.toISOString(), p_ends_at: se.toISOString(),
             p_purpose: purpose, p_booker_name: sb.booker_name,
-            p_member_no: sb.member_no ?? '', p_customer_label: sb.customer_label ?? '',
+            p_member_no: sameCustomer ? memberNo : (sb.member_no ?? ''),
+            p_customer_label: sameCustomer ? customerLabel : (sb.customer_label ?? ''),
             p_memo: sb.memo ?? '', p_exclusive: exclusive, p_staff_id: staffId || null,
             p_kind: sb.kind, p_seats: sb.seats,
           });
@@ -1737,14 +1752,18 @@ const BookingForm: React.FC<{
         }
         // マスター（繰り返しルール）も同じ内容に変える。
         // これで月次更新がこれから作る回にも新しい値が使われる
-        // （場所と曜日はこのフォームでは変えられないので触らない）
+        // （場所と曜日はこのフォームでは変えられないので触らない。
+        //   お客様はマスターにも反映する＝2026-09-03 実機指摘：空のまま作った枠を直せるように）
         await supabase.from('room_recurrences').update({
           start_time: startTime, end_time: endTime,
           purpose, detail: detail || null, staff_id: staffId || null,
           exclusive, is_fixed: isFixed,
+          member_no: memberNo.trim() || null,
+          customer_label: customerLabel.trim() || null,
         }).eq('id', base!.recurrence_id);
         setSaving(false);
         onSaved(`この回と今後の${okCnt}回（マスター含む）を変更しました`
+          + (custKept > 0 ? `。${custKept}回は別のお客様なので、お名前は変えていません` : '')
           + (ng.length > 0
             ? `。${ng.length}回は変えられませんでした：${ng.slice(0, 2).join('、')}${ng.length > 2 ? ' …' : ''}`
             : ''));
@@ -1759,6 +1778,14 @@ const BookingForm: React.FC<{
     if (repeat && !noEnd && repeatUntil > maxRepeatUntil) {
       setSaving(false);
       setError(`繰り返しの終わりの日は、${maxRepeatUntil.split('-')[0]}年3月31日（年度末）までにしてください`);
+      return;
+    }
+    // 🚨 繰り返し（毎週の枠）なのにお客様が空のときは、一度立ち止まってもらう
+    //    （2026-09-03 再発防止。空のままマスターを作ると、月次更新で作る回もすべて空になる）。
+    //    止めはしない：もう一度「保存」を押せばそのまま作れる（意図的に空の枠もあるため）
+    if (repeat && kind === 'booking' && !customerLabel.trim() && !emptyCustAck) {
+      setSaving(false);
+      setEmptyCustAck(true);
       return;
     }
     // 🚨 期限なしは「翌月末まで」だけ先に作る（開始が先の月なら、その月の末まで）。
@@ -2183,7 +2210,7 @@ const BookingForm: React.FC<{
             </div>
             <p style={{ fontSize: 12, color: textMid, margin: '6px 0 0', lineHeight: 1.6 }}>
               {editScope === 'future'
-                ? '時刻・用途・詳細・担当・貸切・固定を、この回と今後の回すべてに反映します。月次更新でこれから作る回にも新しい内容が使われます。お客様とメモは各回のまま変わりません。'
+                ? '時刻・用途・詳細・担当・貸切・固定・お客様を、この回と今後の回すべてに反映します。月次更新でこれから作る回にも新しい内容が使われます。ただし、この回と別のお客様が入っている回（募集枠から入った方など）のお名前は変えません。メモは各回のまま。'
                 : 'この回だけを変えます。来週以降と、月次更新でこれから作る回は今までのままです。'}
             </p>
           </div>
@@ -2260,6 +2287,15 @@ const BookingForm: React.FC<{
                 </p>
               </div>
             )}
+          </div>
+        )}
+
+        {/* お客様が空のまま毎週の枠を作ろうとしたときの確認（2026-09-03 再発防止）。
+            🚨 止めない。もう一度「保存」を押せばそのまま作れる */}
+        {emptyCustAck && !editing && repeat && kind === 'booking' && !customerLabel.trim() && (
+          <div style={{ background: isDark ? '#4a3f2a' : '#fff6e0', border: `1px solid ${isDark ? '#7a6a44' : '#f0d9a0'}`, color: isDark ? '#e8c98a' : '#8a6a12', borderRadius: 8, padding: '10px 12px', fontSize: 13, lineHeight: 1.7 }}>
+            <b>お客様が入っていません。</b>このまま作ると、毎週の枠がお客様なしで登録され、
+            月次更新で作る回もすべて空になります。よろしければ、もう一度「保存」を押してください。
           </div>
         )}
 
