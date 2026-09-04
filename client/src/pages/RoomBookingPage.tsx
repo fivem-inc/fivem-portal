@@ -1766,6 +1766,14 @@ const BookingForm: React.FC<{
   //    自前で「あと何件」を数えると、占有のときに「あと2件入れられます」と表示されるのに
   //    保存すると弾かれる、という食い違いが起きる（2026-08-28 の実機確認で発見）。
   const [verdict, setVerdict] = useState<{ ok: boolean; reason: string | null } | null>(null);
+  /**
+   * 重なった予約の**お客様名**（2026-09-04 ユーザー指示）。鍵は予約ID。
+   * 🚨 これまで出していた c.booker は**入力した人**（ログイン名）で、
+   *    調整の役に立たなかった。誰の予約とぶつかっているかが分かるようにする。
+   * 🚨 判定そのもの（どれが重なりか）は**サーバーの答えのまま**使う。
+   *    ここでするのは名前を引くことだけ（重なりの計算を画面で作り直さない）
+   */
+  const [conflictNames, setConflictNames] = useState<Record<string, string>>({});
   const [checking, setChecking] = useState(false);
 
   const floor = floors.find(f => f.id === floorId);
@@ -1793,9 +1801,23 @@ const BookingForm: React.FC<{
       });
       if (cancelled) return;
       const row = Array.isArray(data) ? data[0] : data;
-      setConflicts((row?.conflicts ?? []) as ConflictInfo[]);
+      const list = (row?.conflicts ?? []) as ConflictInfo[];
+      setConflicts(list);
       setVerdict(row ? { ok: !!row.ok, reason: row.reason ?? null } : null);
       setChecking(false);
+      // お客様名を引く（サーバーが返すのは入力した人なので、IDで引き直す）
+      if (list.length > 0) {
+        const { data: cs } = await supabase.from('room_bookings')
+          .select('id, customer_label, kind')
+          .in('id', list.map(c => c.id));
+        if (cancelled) return;
+        setConflictNames(Object.fromEntries(
+          ((cs ?? []) as Pick<Booking, 'id' | 'customer_label' | 'kind'>[])
+            .map(x => [x.id, x.customer_label || (x.kind === 'open' ? '募集中の枠' : '')]),
+        ));
+      } else {
+        setConflictNames({});
+      }
     }, 400);
     return () => { cancelled = true; clearTimeout(timer); setChecking(false); };
   }, [date, startTime, endTime, floorId, exclusive, editing, base]);
@@ -2237,7 +2259,10 @@ const BookingForm: React.FC<{
             <ul style={{ margin: '6px 0 0', paddingLeft: 18, color: textMid }}>
               {conflicts.map(c => (
                 <li key={c.id} style={{ marginBottom: 2 }}>
-                  {c.exclusive && '🔒'}{hhmm(c.starts_at)}〜{hhmm(c.ends_at)}{' '}{c.purpose}／{c.booker}
+                  {/* 🚨 出すのは**お客様名**（2026-09-04 ユーザー指示）。
+                         入力した人（c.booker）では、誰とぶつかっているか分からない。
+                         引けなかったときだけ、これまでどおり入力した人を出す */}
+                  {c.exclusive && '🔒'}{hhmm(c.starts_at)}〜{hhmm(c.ends_at)}{' '}{c.purpose}／{conflictNames[c.id] || c.booker}
                 </li>
               ))}
             </ul>
@@ -3685,7 +3710,7 @@ const AttendanceEditor: React.FC<{
                 defaultValue={cur?.memo ?? ''}
                 onBlur={e => saveMemo(p, e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                placeholder="メモ 例：次回は…"
+                placeholder="メモ"
                 style={{
                   padding: '4px 8px', borderRadius: 8, border: `1px solid ${line}`,
                   background: isDark ? '#495057' : '#fff', color: text,
@@ -3700,21 +3725,21 @@ const AttendanceEditor: React.FC<{
         );
       })}
       {waitHint && (
-        <div style={{ background: isDark ? '#263b33' : '#e8f2ec', color: isDark ? '#6bbd92' : '#2f6f4f', borderRadius: 8, padding: '7px 10px', fontSize: 12.5, lineHeight: 1.6, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span>{waitHint}</span>
+        <div style={{ background: isDark ? '#263b33' : '#e8f2ec', color: isDark ? '#6bbd92' : '#2f6f4f', borderRadius: 8, padding: '7px 10px', fontSize: 12.5, lineHeight: 1.6 }}>
+          <span style={{ display: 'block' }}>{waitHint}</span>
           {vacateOffer && (
-            <>
-              {/* 空き枠の時間（既定は枠の受け入れ時間・2026-09-03 ユーザー承認） */}
-              <TimeInput value={vacStart} onChange={setVacStart} isDark={isDark}
-                ariaLabel="空き枠の開始" style={{ width: 100 }} />
-              <span>〜</span>
-              <TimeInput value={vacEnd} onChange={setVacEnd} isDark={isDark}
-                ariaLabel="空き枠の終了" style={{ width: 100 }} />
+            <div style={{ marginTop: 5 }}>
+              {/* 空き枠の時間（既定は枠の受け入れ時間・2026-09-03 ユーザー承認）。
+                  🚨 長さも出す・長さでも決められる（2026-09-04 ユーザー指示。
+                     他の3か所と同じ TimeRangeInput を使う。ここだけ別の作りにしない） */}
+              <TimeRangeInput start={vacStart} end={vacEnd}
+                onChange={(st, en) => { setVacStart(st); setVacEnd(en); }}
+                isDark={isDark} idPrefix="空き枠の" />
               <button onClick={vacate} disabled={busy === '__vacate__'}
-                style={{ padding: '5px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, border: 'none', background: isDark ? '#6bbd92' : '#2f6f4f', color: isDark ? '#1d2a24' : '#fff', cursor: busy === '__vacate__' ? 'wait' : 'pointer' }}>
+                style={{ marginTop: 6, padding: '5px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, border: 'none', background: isDark ? '#6bbd92' : '#2f6f4f', color: isDark ? '#1d2a24' : '#fff', cursor: busy === '__vacate__' ? 'wait' : 'pointer' }}>
                 {busy === '__vacate__' ? '作っています...' : 'この時間で空き枠にする'}
               </button>
-            </>
+            </div>
           )}
         </div>
       )}
@@ -4507,7 +4532,7 @@ const BookingDetail: React.FC<{
                   <span style={{ fontSize: 12.5, color: textMid, display: 'block', marginBottom: 3 }}>
                     枠のメモ（任意・この枠についての申し送り）
                   </span>
-                  <input value={slotMemoDraft} placeholder="例：17:40以降なら受け入れ可"
+                  <input value={slotMemoDraft} placeholder="メモ"
                     disabled={busy}
                     onChange={e => { setSlotMemoDraft(e.target.value); setSlotMemoSaved(false); }}
                     onBlur={async () => {
@@ -6450,7 +6475,7 @@ const WaitlistSettings: React.FC<{
                 const editingMemo = memoEdit?.recId === rec.id;
                 return editingMemo ? (
                   <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <input value={memoEdit!.text} placeholder="枠のメモ（例：17:40以降なら受け入れ可）"
+                    <input value={memoEdit!.text} placeholder="メモ"
                       onChange={e => setMemoEdit(p => (p ? { ...p, text: e.target.value } : p))}
                       style={{ ...input, flex: 1, minWidth: 160 }} />
                     <button onClick={saveSlotMemo} disabled={!!busy} style={smallBtn(true)}>保存</button>
