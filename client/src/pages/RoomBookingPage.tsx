@@ -297,7 +297,17 @@ interface Lane {
   floorId: string | null;   // 空き枠を押して予約を作れるのは場所別のときだけ
 }
 
-type FormMode = { kind: 'create'; floorId: string; date: string; startTime: string }
+type FormMode = {
+                kind: 'create'; floorId: string; date: string; startTime: string;
+                /**
+                 * 「次回の予約を入れる」から開いたとき、写しの元になる予約
+                 * （2026-09-04 ユーザー承認）。場所・担当・用途・詳細・お客様・時間・メモを
+                 * 入れた状態でフォームを開く。
+                 * 🚨 日付は**空欄のまま**（必ず人に選ばせる・ユーザー確定）。
+                 * 🚨 貸切・【固定】・確認中は写さない（前回と同じとは限らないため）
+                 */
+                from?: Booking;
+              }
               // scope: 'future' = 月次更新の「変更」から開いたとき。
               // 「今後すべて（枠のマスターも変える）」を選択済みでフォームを開く
               | { kind: 'edit'; booking: Booking; scope?: 'future' };
@@ -1018,6 +1028,11 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
             loadBookings(); loadWaitingCount();
           }}
           onEdit={(b) => { setDetail(null); setForm({ kind: 'edit', booking: b }); }}
+          onRepeat={(b) => {
+            // 次回の予約（2026-09-04）。🚨 日付は空欄で開く（必ず人に選ばせる）
+            setDetail(null);
+            setForm({ kind: 'create', floorId: b.floor_id, date: '', startTime: hhmm(b.starts_at), from: b });
+          }}
           onChanged={(msg) => { setDetail(null); loadBookings(); loadWaitingCount(); showFlash(msg); }}
           isDark={isDark} />
       )}
@@ -1657,23 +1672,31 @@ const BookingForm: React.FC<{
 }> = ({ mode, user, floors, campuses, staff, categories, purposeDurations, purposeDetails, bookingFor, onClose, onSaved, isDark }) => {
   const editing = mode.kind === 'edit';
   const base = editing ? mode.booking : null;
+  /**
+   * 「次回の予約を入れる」から開いたときの、写しの元（2026-09-04 ユーザー承認）。
+   * 🚨 日付だけは写さない（空欄で開き、必ず人に選ばせる・ユーザー確定）
+   */
+  const from = mode.kind === 'create' ? mode.from ?? null : null;
 
   const [floorId] = useState(editing ? base!.floor_id : mode.floorId);
   // 🚨 日付は localDate を通す（ISO文字列の頭10文字はUTCの日付で、朝の予約が前日になる）
-  const [date] = useState(editing ? localDate(base!.starts_at) : mode.date);
+  // 🚨 次回の予約から開いたときだけ**空欄**なので、画面で選べるようにする（下の日付欄）
+  const [date, setDate] = useState(editing ? localDate(base!.starts_at) : mode.date);
   const [startTime, setStartTime] = useState(editing ? hhmm(base!.starts_at) : mode.startTime);
   // 🚨 終了の初期値も用途の長さに合わせる。ここを固定の30分にしていたため、
   //    レッスン（50分固定・終了は手で直せない）を開いた直後に 30分 と出て、
   //    ボタンを押すまで矛盾したままだった（2026-08-31 実機確認で発見）
   // 既定は「プライベート」（2026-08-31 ユーザー確定）。いちばん多い使い方のため
-  const initialPurpose = editing ? base!.purpose : 'プライベート';
+  const initialPurpose = editing ? base!.purpose : (from?.purpose ?? 'プライベート');
   const initialLength =
     defaultMinutesOf(purposeDurations.find(d => d.purpose === initialPurpose)) ?? 30;
   const [endTime, setEndTime] = useState(
-    editing ? hhmm(base!.ends_at) : addMinutes(mode.startTime, initialLength));
+    editing ? hhmm(base!.ends_at)
+      : from ? hhmm(from.ends_at)          // 次回も前回と同じ長さで始める
+      : addMinutes(mode.startTime, initialLength));
   const [purpose, setPurpose] = useState<string>(initialPurpose);
   // 用途の詳細（パーソナルの「体操」など）。'' = 未選択
-  const [detail, setDetail] = useState<string>(editing ? (base!.detail ?? '') : '');
+  const [detail, setDetail] = useState<string>(editing ? (base!.detail ?? '') : (from?.detail ?? ''));
   // 「予約する人」は画面に出さず、ログインした人から自動で決める。
   // 🚨 空のままだと保存できない（DBで必須）ので、必ず何か入る形にしておく
   const bookerName = (editing ? base!.booker_name : (user.email?.split('@')[0] ?? '')) || 'スタッフ';
@@ -1687,6 +1710,10 @@ const BookingForm: React.FC<{
   const [people, setPeople] = useState<PersonInput[]>(() => {
     if (editing) {
       return participantsOf(base!).map(p => ({ no: p.no, name: p.name }));
+    }
+    // 次回の予約：前回と同じお客様を入れておく（2026-09-04 ユーザー承認）
+    if (from) {
+      return participantsOf(from).map(p => ({ no: p.no, name: p.name }));
     }
     if (bookingFor) {
       return [{ no: bookingFor.member_no, name: customerFullName(bookingFor) || bookingFor.display_name }];
@@ -1704,14 +1731,16 @@ const BookingForm: React.FC<{
     && people.some(p => p.no.trim()) && people.some(p => !p.no.trim());
   // 🚨 会員番号の引き当てとお名前の検索は ParticipantRow が1人ずつ持つ。
   //    ここに戻さないこと（人数ぶんの状態をこの画面で持つと、行を消したときにずれる）
-  const [memo, setMemo] = useState(editing ? (base!.memo ?? '') : '');
+  // 🚨 メモも次回に引き継ぐ（2026-09-04 ユーザー確定）。要らなければ消して保存する
+  const [memo, setMemo] = useState(editing ? (base!.memo ?? '') : (from?.memo ?? ''));
   const [exclusive, setExclusive] = useState(editing ? base!.exclusive : false);
   // 固定の枠か（人ではなく曜日・時間の枠の性質）。既定は固定でない
   const [isFixed, setIsFixed] = useState(editing ? base!.is_fixed : false);
   // 確認中（お客様の返事待ちなど・2026-09-04 ユーザー承認）。
   // 🚨 **回ごとの印**。「今後すべて」でも今後の回には広げない（返事待ちはその日ごとの話）
   const [tentative, setTentative] = useState(editing ? !!base!.tentative : false);
-  const [staffId, setStaffId] = useState<string>(editing ? (base!.staff_id ?? '') : '');
+  const [staffId, setStaffId] = useState<string>(
+    editing ? (base!.staff_id ?? '') : (from?.staff_id ?? ''));
   // 募集中の枠（先に置いて後から埋める）かどうかと、その定員
   const [kind, setKind] = useState<'booking' | 'open'>(editing ? base!.kind : 'booking');
   const [seats, setSeats] = useState<number>(editing ? base!.seats : 1);
@@ -1859,6 +1888,8 @@ const BookingForm: React.FC<{
 
   const save = async () => {
     setError('');
+    // 🚨 次回の予約は日付を空欄で開くので、選ばれていないまま保存させない
+    if (!date) { setError('日付を選んでください'); return; }
     const s = toDate(date, startTime), e = toDate(date, endTime);
     if (!s) { setError('開始の時刻を正しく入れてください（例：10 と 05）'); return; }
     if (!e) { setError('終了の時刻を正しく入れてください'); return; }
@@ -2095,11 +2126,28 @@ const BookingForm: React.FC<{
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
 
         <div style={{ background: isDark ? '#35354e' : '#f0f2f5', borderRadius: 8, padding: '9px 12px', fontSize: 13.5 }}>
-          <b>{placeLabel(floor, campus?.name ?? '', siblingFloors, true)}</b>{' / '}{formatDateLabel(date)}
+          <b>{placeLabel(floor, campus?.name ?? '', siblingFloors, true)}</b>
+          {date ? `${' / '}${formatDateLabel(date)}` : ''}
           <span style={{ display: 'block', fontSize: 12, color: textMid, marginTop: 2 }}>
             同時に入れられるのは {floor?.capacity ?? 3} 件までです
           </span>
         </div>
+
+        {/* 次回の予約から開いたときだけ、日付を選ぶ（2026-09-04 ユーザー確定）。
+            🚨 ふだんは予約表の枠を押して開くので日付は決まっている。ここで日付を
+               選べるようにするのは「前回を写して次回を入れる」ときだけ */}
+        {from && (
+          <div>
+            <label style={label}>日付（前回：{formatDateLabel(localDate(from.starts_at))}）</label>
+            <input type="date" value={date} onChange={e => setDate(e.target.value)}
+              style={input} />
+            <p style={{ fontSize: 11.5, color: date ? textMid : (isDark ? '#ffb4b4' : '#a3282a'), margin: '4px 0 0', lineHeight: 1.6 }}>
+              {date
+                ? '前回の内容（場所・担当・用途・お客様・時間・メモ）が入っています。違うところは直してください'
+                : '日付を選んでください（前回の内容はすでに入っています）'}
+            </p>
+          </div>
+        )}
 
         {/* 予約か、募集枠か。
             募集枠＝「毎週火曜 16:00〜はレッスンできます」と先に置いておき、申込が入ったら埋める */}
@@ -3689,8 +3737,11 @@ const BookingDetail: React.FC<{
   /** 🚨 DB側の room_is_staff()（＝パート以外）と同じ条件を渡すこと */
   canAttendance: boolean;
   onAttendanceSaved: () => void | Promise<void>;
-  onClose: () => void; onEdit: (b: Booking) => void; onChanged: (msg: string) => void; isDark: boolean;
-}> = ({ booking: b, floors, campuses, staff, categories, attendanceOptions, attendance, canAttendance, onAttendanceSaved, onClose, onEdit, onChanged, isDark }) => {
+  onClose: () => void; onEdit: (b: Booking) => void;
+  /** この予約を写して次回の予約を作る（2026-09-04 ユーザー承認） */
+  onRepeat: (b: Booking) => void;
+  onChanged: (msg: string) => void; isDark: boolean;
+}> = ({ booking: b, floors, campuses, staff, categories, attendanceOptions, attendance, canAttendance, onAttendanceSaved, onClose, onEdit, onRepeat, onChanged, isDark }) => {
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<'none' | 'cancel' | 'delete'>('none');
   // 繰り返しの予約は「この回だけ」か「今後すべて」かを必ず選んでもらう。
@@ -3728,6 +3779,15 @@ const BookingDetail: React.FC<{
   const [tentative, setTentative] = useState(!!b.tentative);
   // 会員番号のコピー（どの番号をコピーしたか。数秒で消える）
   const [copiedNo, setCopiedNo] = useState('');
+  /**
+   * このお客様の**今後の予約**（2026-09-04 ユーザー承認・今後3ヶ月／最大10件）。
+   * 🚨 2名の予約は会員番号もお名前も**カンマでつながって1件**に入っているので、
+   *    participantsOf で参加者ごとに分けてから探す。
+   * 🚨 探すのは**会員番号**を優先（お名前は表記ゆれがあり別人を拾う）。
+   *    番号を持たない一般のお客様のときだけ、お名前で探す
+   */
+  const [upcoming, setUpcoming] = useState<Booking[] | null>(null);
+  const [upcomingMore, setUpcomingMore] = useState(0);
   /**
    * 「お休み」「休講」を戻したあとの後片付け（2026-09-03／2026-09-04）。
    * 戻しただけでは残ってしまうものを**1枚の案内にまとめて**出し、1つずつ人が決める。
@@ -3813,6 +3873,32 @@ const BookingDetail: React.FC<{
   }, [b.id, b.recurrence_id]);
 
   useEffect(() => { loadWaiting(); }, [loadWaiting]);
+
+  // このお客様の今後の予約を読む（2026-09-04 ユーザー承認）
+  useEffect(() => {
+    const ps = participantsOf(b).filter(p => p.no || p.name);
+    if (ps.length === 0) { setUpcoming([]); return; }
+    (async () => {
+      const from = new Date(); from.setHours(0, 0, 0, 0);
+      const to = new Date(from); to.setMonth(to.getMonth() + 3);
+      // 🚨 「,」「(」「)」は or の区切りとぶつかって条件ごと壊れるので、番号は数字だけを使う
+      const conds = ps.map(p => (p.no
+        ? `member_no.ilike.*${p.no.replace(/[^0-9A-Za-z-]/g, '')}*`
+        : `customer_label.ilike.*${p.name.replace(/[,()]/g, '')}*`));
+      const { data } = await supabase.from('room_bookings')
+        .select('*')
+        .eq('status', 'active')
+        .is('deleted_at', null)
+        .gte('starts_at', from.toISOString())
+        .lt('starts_at', to.toISOString())
+        .or(conds.join(','))
+        .order('starts_at')
+        .limit(11);
+      const list = ((data ?? []) as Booking[]).filter(x => x.id !== b.id);
+      setUpcomingMore(Math.max(0, list.length - 10));
+      setUpcoming(list.slice(0, 10));
+    })();
+  }, [b]);
 
   // 枠ごとの設定を読む（繰り返しの予約だけ）
   useEffect(() => {
@@ -4151,6 +4237,34 @@ const BookingDetail: React.FC<{
             canWrite={canAttendance} showNameWhenSingle={false}
             onSaved={onAttendanceSaved} isDark={isDark} />
         ))}
+
+        {/* このお客様の今後の予約（2026-09-04 ユーザー承認・今後3ヶ月／最大10件）。
+            🚨 募集中の枠にはお客様がいないので出さない */}
+        {!isOpen && upcoming !== null && upcoming.length > 0 && (
+          <div style={{ marginTop: 14, borderTop: `1px solid ${line}`, paddingTop: 12 }}>
+            <b style={{ fontSize: 13 }}>このお客様の今後の予約 {upcoming.length}件</b>
+            <span style={{ fontSize: 11.5, color: textMid, marginLeft: 6 }}>（今後3ヶ月）</span>
+            <div style={{ marginTop: 5 }}>
+              {upcoming.map(u => (
+                <div key={u.id} style={{ fontSize: 12.5, color: textMid, lineHeight: 1.8 }}>
+                  {formatDateLabel(localDate(u.starts_at))} {hhmm(u.starts_at)}〜{hhmm(u.ends_at)}
+                  {u.is_fixed && '【固定】'}{u.tentative && '【確認中】'}
+                  {' / '}{placeLabel(
+                    floors.find(x => x.id === u.floor_id) ?? null,
+                    campuses.find(c => c.id === floors.find(x => x.id === u.floor_id)?.campus_id)?.name ?? '',
+                    floors.filter(x => x.campus_id === floors.find(y => y.id === u.floor_id)?.campus_id).length,
+                    true,
+                  )}
+                  {' / '}{statusPurposeLabel(u)}
+                  {' / '}担当：{staff.find(t => t.id === u.staff_id)?.name ?? '担当なし'}
+                </div>
+              ))}
+              {upcomingMore > 0 && (
+                <div style={{ fontSize: 12, color: textMid }}>ほか {upcomingMore}件（3ヶ月より先は出していません）</div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* 確認中の切り替え（2026-09-04 ユーザー承認）。
             🚨 募集中の枠には出さない（まだ人が入っていないので「返事待ち」が無い）。
@@ -4573,6 +4687,15 @@ const BookingDetail: React.FC<{
               style={{ flex: '1 1 120px', padding: '11px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
               変更する
             </button>
+            {/* 次回の予約（2026-09-04 ユーザー承認）。場所・担当・用途・詳細・お客様・時間・
+                メモを入れた状態で開く。🚨 日付は空欄なので、必ず選んでもらう。
+                🚨 募集中の枠は写す中身（お客様）が無いので出さない */}
+            {!isOpen && (
+              <button onClick={() => onRepeat(b)}
+                style={{ flex: '1 1 140px', padding: '11px', borderRadius: 8, border: `1px solid ${accent}`, background: 'transparent', color: accent, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
+                次回の予約を入れる
+              </button>
+            )}
             {b.status === 'active' ? (
               <button onClick={() => setConfirm('cancel')}
                 style={{ flex: '1 1 100px', padding: '11px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: text, fontSize: 14, cursor: 'pointer' }}>
