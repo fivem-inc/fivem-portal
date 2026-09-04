@@ -4905,7 +4905,15 @@ const BulkBookingPanel: React.FC<{
    * 🚨 これは**画面での事前チェック**。サーバー側では止めていないので、
    *    ここを消すと黙って二重に入るようになる。
    */
-  const [dbNg, setDbNg] = useState<{ line: number; reason: string }[]>([]);
+  /**
+   * 重なっていた行。🚨 **ぶつかった既存予約の中身も一緒に持つ**（2026-09-04 ユーザー指示）。
+   *    以前は日時しか出しておらず、どの予約と重なったのか照合できなかった
+   */
+  type DupHit = Pick<Booking,
+    'id' | 'floor_id' | 'starts_at' | 'ends_at' | 'purpose' | 'detail' | 'member_no'
+    | 'customer_label' | 'memo' | 'kind' | 'seats' | 'staff_id' | 'is_fixed' | 'status' | 'created_at'>
+    & { tentative?: boolean; recurrence_id?: string | null };
+  const [dbNg, setDbNg] = useState<{ line: number; reason: string; hit?: DupHit }[]>([]);
   const [dupChecking, setDupChecking] = useState(false);
   useEffect(() => {
     const list = parsed?.ok ?? [];
@@ -4919,7 +4927,8 @@ const BulkBookingPanel: React.FC<{
       const end = new Date(`${dates[dates.length - 1]}T00:00:00`);
       end.setDate(end.getDate() + 1);
       const { data, error: err } = await supabase.from('room_bookings')
-        .select('starts_at, ends_at, staff_id')
+        // 🚨 照合できるよう**全項目**を読む（2026-09-04 ユーザー指示）
+        .select('id, floor_id, starts_at, ends_at, purpose, detail, member_no, customer_label, memo, kind, seats, staff_id, is_fixed, tentative, status, recurrence_id, created_at')
         .is('deleted_at', null)
         .neq('status', 'cancelled')
         .in('staff_id', staffIds)
@@ -4929,8 +4938,8 @@ const BulkBookingPanel: React.FC<{
       setDupChecking(false);
       // 🚨 読めなかったときは「重なりなし」にしない。確かめられないことを画面で言う
       if (err) { setDbNg([{ line: 0, reason: 'すでにある予約との重なりを確かめられませんでした（通信を確認してください）' }]); return; }
-      const existing = (data ?? []) as { starts_at: string; ends_at: string; staff_id: string }[];
-      const out: { line: number; reason: string }[] = [];
+      const existing = (data ?? []) as DupHit[];
+      const out: { line: number; reason: string; hit?: DupHit }[] = [];
       for (const b of list) {
         const hit = existing.find(e =>
           e.staff_id === b.staff_id
@@ -4941,6 +4950,7 @@ const BulkBookingPanel: React.FC<{
           out.push({
             line: b.line,
             reason: `すでに同じ担当の予約があります（${formatDateLabel(b.date)} ${hhmm(hit.starts_at)}〜${hhmm(hit.ends_at)}）`,
+            hit,
           });
         }
       }
@@ -4948,6 +4958,14 @@ const BulkBookingPanel: React.FC<{
     })();
     return () => { cancelled = true; };
   }, [parsed]);
+
+  /**
+   * 🚨 **貼り直したら前回の結果を消す**（2026-09-04 実機指摘）。
+   *    「◯件 入れました」は実行したときにしか書き換わらないので、消さないと
+   *    新しい確認（入れられる行 0件）と前回の結果（1件 入れました）が同じ画面に並び、
+   *    入れていないのに入ったように見える
+   */
+  useEffect(() => { setMade(null); setFailed([]); }, [pasted, rows, map, scheduleMode, schedulePurpose]);
 
   // 解析の結果に、既存予約との重なりを合流させたもの。画面と実行はこちらだけを見る
   const built = useMemo(() => {
@@ -4961,6 +4979,74 @@ const BulkBookingPanel: React.FC<{
   }, [parsed, dbNg]);
 
   const overLimit = !!built && built.ok.length > BULK_MAX_ROWS;
+
+  /** 場所の名前（1つしか無い校は「全体」を出さない・placeLabel に集約済み） */
+  const placeOf = (floorId: string): string => {
+    const fl = floors.find(x => x.id === floorId) ?? null;
+    const cp = campuses.find(x => x.id === fl?.campus_id);
+    const siblings = floors.filter(x => x.campus_id === fl?.campus_id).length;
+    return placeLabel(fl, cp?.name ?? '', siblings, true);
+  };
+  const staffNameOf = (id: string | null): string =>
+    id ? (staff.find(x => x.id === id)?.name ?? '担当なし') : '担当なし';
+
+  /**
+   * ぶつかった既存予約の中身を1行で書き出す（照合用・2026-09-04 ユーザー指示）。
+   * 🚨 日時だけでは「どの予約と重なったのか」が分からず、消したつもりのデータが
+   *    残っているのか、別の予定なのかを見分けられなかった
+   */
+  const dupLine = (h: DupHit): string => [
+    `${formatDateLabel(localDate(h.starts_at))} ${hhmm(h.starts_at)}〜${hhmm(h.ends_at)}`,
+    placeOf(h.floor_id),
+    h.detail ? `${h.purpose}・${h.detail}` : h.purpose,
+    `担当：${staffNameOf(h.staff_id)}`,
+    `お客様：${h.customer_label || '（なし）'}${h.member_no ? `（${h.member_no}）` : ''}`,
+    h.kind === 'open' ? `募集枠（定員${h.seats}）` : '予約',
+    h.status === 'cancelled' ? cancelledLabel(h as Booking) : '',
+    h.is_fixed ? '【固定】' : '',
+    h.tentative ? '【確認中】' : '',
+    h.recurrence_id ? '毎週の繰り返し' : '',
+    h.memo ? `メモ：${h.memo}` : '',
+    `作成：${formatDateLabel(localDate(h.created_at))} ${hhmm(h.created_at)}`,
+  ].filter(Boolean).join(' ／ ');
+
+  /**
+   * 重なった行を CSV で書き出す（Excel で並べて照合するため・2026-09-04 ユーザー指示）。
+   * 🚨 **入力側と既存側を左右に並べて出す**。片方だけだと突き合わせられない
+   */
+  const exportDup = () => {
+    const esc = (v: string) => `"${(v ?? '').replace(/"/g, '""')}"`;
+    // 🚨 入力側は**読み取ったときのデータをそのまま**出す（2026-09-04 ユーザー指示）。
+    //    こちらで直した値（場所ID→場所名、用途の既定値など）に置き換えると、
+    //    貼り付けた表と見比べたときに文字が一致せず、かえって照合しづらい。
+    //    列は貼り付けた表の見出しをそのまま使い、**1列も落とさない**
+    const cols = headers.length;
+    const srcHead = Array.from({ length: cols }, (_, i) => `入力_${headers[i] || `${i + 1}列目`}`);
+    const head = [
+      '行', ...srcHead,
+      '既存_日付', '既存_開始', '既存_終了', '既存_場所', '既存_用途', '既存_詳細', '既存_担当',
+      '既存_会員番号', '既存_お客様', '既存_種別', '既存_定員', '既存_状態', '既存_固定',
+      '既存_確認中', '既存_毎週', '既存_メモ', '既存_作成日時', '既存_予約ID',
+    ];
+    const body = dbNg.filter(n => n.hit).map(n => {
+      const h = n.hit!;
+      // 🚨 行番号は buildBookings の line（= rows の並び + 1）。元の行をそのまま引く
+      const src = rows[n.line - 1] ?? [];
+      const srcCells = Array.from({ length: cols }, (_, i) => String(src[i] ?? ''));
+      return [
+        String(n.line),
+        ...srcCells,
+        localDate(h.starts_at), hhmm(h.starts_at), hhmm(h.ends_at), placeOf(h.floor_id),
+        h.purpose, h.detail ?? '', staffNameOf(h.staff_id), h.member_no ?? '', h.customer_label ?? '',
+        h.kind === 'open' ? '募集枠' : '予約', String(h.seats),
+        h.status === 'cancelled' ? cancelledLabel(h as Booking) : '有効',
+        h.is_fixed ? '○' : '', h.tentative ? '○' : '', h.recurrence_id ? '○' : '',
+        h.memo ?? '', `${localDate(h.created_at)} ${hhmm(h.created_at)}`, h.id,
+      ].map(esc).join(',');
+    });
+    downloadCSV([head.map(esc).join(','), ...body].join('\r\n'),
+      `重なった行_${todayStr()}.csv`);
+  };
 
   const run = async () => {
     if (!built || built.ok.length === 0 || overLimit) return;
@@ -5114,12 +5200,34 @@ const BulkBookingPanel: React.FC<{
               {built.ng.length > 0 && (
                 <div style={{ color: isDark ? '#ffb4b4' : '#a3282a', marginTop: 4 }}>
                   このままでは入らない行 {built.ng.length}件：
+                  {/* 読み取りの失敗（形式が違うなど）は今までどおり6件まで */}
                   <div>
-                    {built.ng.slice(0, 6).map(n => (
-                      <div key={n.line}>{n.line}行目 … {n.reason}</div>
+                    {(parsed?.ng ?? []).slice(0, 6).map(n => (
+                      <div key={`p${n.line}`}>{n.line}行目 … {n.reason}</div>
                     ))}
-                    {built.ng.length > 6 && <div>ほか {built.ng.length - 6}件</div>}
+                    {(parsed?.ng.length ?? 0) > 6 && <div>ほか {(parsed?.ng.length ?? 0) - 6}件</div>}
                   </div>
+                  {/* 🚨 すでにある予約と重なった行は**全件**、中身つきで出す
+                         （2026-09-04 ユーザー指示。日時だけでは、消したつもりの
+                          データが残っているのか別の予定なのか見分けられなかった） */}
+                  {dbNg.length > 0 && (
+                    <div style={{ marginTop: 4 }}>
+                      {dbNg.map(n => (
+                        <div key={`d${n.line}`} style={{ marginTop: 3 }}>
+                          {n.line}行目 … {n.reason}
+                          {n.hit && (
+                            <div style={{ color: textMid, fontSize: 12, marginLeft: 14, lineHeight: 1.7 }}>
+                              └ {dupLine(n.hit)}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      <button onClick={exportDup}
+                        style={{ marginTop: 6, padding: '5px 12px', borderRadius: 999, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 12.5, cursor: 'pointer' }}>
+                        重なった行をCSVで書き出す（入力側と既存側を並べて出します）
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
               {overLimit && (
@@ -5130,6 +5238,16 @@ const BulkBookingPanel: React.FC<{
               <div style={{ color: textMid, marginTop: 4 }}>
                 先約と重なるかどうかは、押したときに1件ずつ確かめます
               </div>
+              {/* 🚨 入れたあとは、**いま入れた予約自身**が「すでにある予約」として
+                     数え直される（マスターを読み直すと重なりチェックが走り直すため）。
+                     断らないと「1件 入れました」と「入れられる行 0件」が並んで
+                     入っていないように見える（2026-09-04 実機で混乱）*/}
+              {made !== null && made > 0 && (
+                <div style={{ color: textMid, marginTop: 4 }}>
+                  ※ 下の<b>{made}件はすでに入っています</b>。この確認はそのあとに
+                  やり直したもので、いま入れた予約も「すでにある予約」として数えています
+                </div>
+              )}
             </div>
           )}
 
@@ -5137,6 +5255,9 @@ const BulkBookingPanel: React.FC<{
             style={{ padding: '10px 18px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 14.5, fontWeight: 700, cursor: running ? 'wait' : 'pointer', opacity: running || !built || built.ok.length === 0 || overLimit ? .6 : 1 }}>
             {running
               ? `入れています... ${progress}/${built?.ok.length ?? 0}件`
+              /* 🚨 0件のときに「0件を入れる」は指示として意味を成さないので、
+                    押せない理由をボタン自体に出す（2026-09-04 ユーザー確定・案1） */
+              : (built?.ok.length ?? 0) === 0 ? '入れられる行がありません'
               : `${built?.ok.length ?? 0}件を入れる`}
           </button>
 
