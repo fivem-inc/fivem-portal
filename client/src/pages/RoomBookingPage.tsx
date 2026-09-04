@@ -5822,7 +5822,17 @@ const WaitlistSettings: React.FC<{
   // 繰り上げ・取り消しの直後に「その方の他の待ち」をどうするか選んでもらう
   // （🚨 自動では消さない。別の枠は引き続き待ちたい場合があるため・2026-09-02 ユーザー承認。
   //    断られた方が「この日の他の待ちもやめる」と言う場合はここでまとめて取り消せる）
-  const [afterPromote, setAfterPromote] = useState<{ name: string; items: Waitlist[] } | null>(null);
+  const [afterPromote, setAfterPromote] = useState<{
+    name: string; items: Waitlist[];
+    /**
+     * 繰り上げた日（2026-09-04 ユーザー指摘）。
+     * 🚨 他の枠の待ちで要らなくなるのは**この日だけ**。丸ごと取り消すと
+     *    今後ずっと待たなくなってしまう
+     */
+    dateStr: string;
+    /** 待ちID → その枠の「その日の回」のID（無ければ入らない） */
+    sameDay: Record<string, string>;
+  } | null>(null);
   // 待ちが0名になった枠 →「空き枠にしますか」の案内（枠の設定 auto_open_slot がONのときだけ）
   const [emptyOffer, setEmptyOffer] = useState<Waitlist | null>(null);
   // 空き枠にする日を選ぶ一覧（emptyOffer が毎週の枠のとき）
@@ -6125,10 +6135,9 @@ const WaitlistSettings: React.FC<{
     setBusy('');
     if (err) { setError('取り消せませんでした。通信を確認してください。'); return; }
     if (askFollowUps) {
-      const others = rows.filter(x =>
-        x.id !== w.id && x.status === 'waiting'
-        && (w.member_no && x.member_no ? x.member_no === w.member_no : x.customer_label === w.customer_label));
-      setAfterPromote(others.length ? { name: w.customer_label, items: others } : null);
+      // 取り消しのときは「その日」が無いので、対象の回の日付を使う（無ければ今日）
+      await askOthers(w, w.customer_label,
+        w.booking ? localDate(w.booking.starts_at) : todayStr());
       const remain = rows.filter(x =>
         x.id !== w.id && x.status === 'waiting' && queueKeyOf(x) === queueKeyOf(w));
       const autoOpen = w.recurrence ? w.recurrence.auto_open_slot !== false : true;
@@ -6224,6 +6233,51 @@ const WaitlistSettings: React.FC<{
     if (err || !data?.length) { setError('戻せませんでした。通信を確認してください。'); return; }
     await load();
     await onDone('期限を外しました（また待ちます）');
+  };
+
+  /**
+   * 繰り上げ・取り消しの直後に「その方の他の待ち」を出す（2026-09-04 に作り直し）。
+   * 🚨 **その日の回まで調べてから**出す。要らなくなるのは繰り上げた日だけなので、
+   *    「その日だけ見送る」を選べるようにするため
+   */
+  const askOthers = async (me: Waitlist, name: string, dateStr: string) => {
+    const others = rows.filter(x =>
+      x.id !== me.id && x.status === 'waiting'
+      && (me.member_no && x.member_no ? x.member_no === me.member_no : x.customer_label === me.customer_label));
+    if (others.length === 0) { setAfterPromote(null); return; }
+    const recIds = [...new Set(others.map(o => o.recurrence_id).filter(Boolean))] as string[];
+    const sameDay: Record<string, string> = {};
+    if (recIds.length > 0) {
+      const from = new Date(`${dateStr}T00:00:00`);
+      const to = new Date(from); to.setDate(to.getDate() + 1);
+      const { data } = await supabase.from('room_bookings')
+        .select('id, recurrence_id')
+        .in('recurrence_id', recIds)
+        .gte('starts_at', from.toISOString())
+        .lt('starts_at', to.toISOString());
+      const byRec: Record<string, string> = {};
+      for (const b of ((data ?? []) as { id: string; recurrence_id: string }[])) byRec[b.recurrence_id] = b.id;
+      for (const o of others) if (o.recurrence_id && byRec[o.recurrence_id]) sameDay[o.id] = byRec[o.recurrence_id];
+    }
+    for (const o of others) {
+      if (!o.recurrence_id && o.booking && localDate(o.booking.starts_at) === dateStr) sameDay[o.id] = o.booking.id;
+    }
+    setAfterPromote({ name, items: others, dateStr, sameDay });
+  };
+
+  /**
+   * その待ちの、その回を「見送り」にする（理由つき・2026-09-04）。
+   * 🚨 繰り上げ直後の「他の枠どうしますか」から呼ぶ。待ちも順番も消さない
+   */
+  const skipOn = async (waitlistId: string, bookingId: string, reason: string) => {
+    const { data: me } = await supabase.auth.getUser();
+    const { error: err } = await supabase.from('room_waitlist_skips').insert({
+      waitlist_id: waitlistId, booking_id: bookingId, reason,
+      created_by: me.user?.id ?? null,
+    });
+    if (err) { setError('見送りにできませんでした。通信を確認してください。'); return false; }
+    setSkips(prev => new Map(prev).set(`${waitlistId}|${bookingId}`, reason));
+    return true;
   };
 
   /** 見送りを戻す。🚨 delete は0件でもエラーにならないので件数を見る */
@@ -6421,10 +6475,7 @@ const WaitlistSettings: React.FC<{
     setPickFor(null); setOcc([]); setPromoteDraft(null);
     // 🚨 繰り上げた方が**他の枠でも待っていたら**、その場でどうするか選んでもらう
     //    （残す／取り消す）。自動では消さない（別の枠も待ち続けたい場合があるため）
-    const others = rows.filter(x =>
-      x.id !== w.id && x.status === 'waiting'
-      && (w.member_no && x.member_no ? x.member_no === w.member_no : x.customer_label === w.customer_label));
-    setAfterPromote(others.length ? { name: w.customer_label, items: others } : null);
+    await askOthers(w, w.customer_label, localDate(startsIso));
     await load();
     await onDone(`${w.customer_label} を予約に繰り上げました`);
   };
@@ -6620,27 +6671,43 @@ const WaitlistSettings: React.FC<{
           🚨 自動では消さない（別の枠も待ち続けたい場合があるため）。1件ずつ選んでもらう */}
       {afterPromote && (
         <div style={{ background: isDark ? '#4a4326' : '#fff8e1', border: `1px solid ${isDark ? '#8a7a3a' : '#ffe082'}`, color: isDark ? '#ffe6a3' : '#7a5c00', borderRadius: 8, padding: '10px 12px', fontSize: 13, marginBottom: 12, lineHeight: 1.8 }}>
-          <b>{afterPromote.name}</b> さんは、他の枠でも待っています。それぞれどうしますか？
-          {afterPromote.items.map(o => (
-            <div key={o.id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
-              <span>{waitSlotLabel(o)}</span>
-              <span style={{ marginLeft: 'auto', display: 'flex', gap: 5 }}>
-                <button onClick={async () => {
-                  await cancel(o, false);
-                  setAfterPromote(p => {
-                    if (!p) return null;
-                    const rest = p.items.filter(x => x.id !== o.id);
-                    return rest.length ? { ...p, items: rest } : null;
-                  });
-                }} disabled={!!busy} style={smallBtn(false)}>待ちを取り消す</button>
-                <button onClick={() => setAfterPromote(p => {
-                  if (!p) return null;
-                  const rest = p.items.filter(x => x.id !== o.id);
-                  return rest.length ? { ...p, items: rest } : null;
-                })} style={smallBtn(false)}>残す</button>
-              </span>
-            </div>
-          ))}
+          <b>{afterPromote.name}</b> さんのキャンセル待ちについて、
+          <br />
+          <b>{formatDateLabel(afterPromote.dateStr)}</b> の他の枠はどうしますか？
+          {afterPromote.items.map(o => {
+            const sameDayId = afterPromote.sameDay[o.id];
+            const drop = () => setAfterPromote(p => {
+              if (!p) return null;
+              const rest = p.items.filter(x => x.id !== o.id);
+              return rest.length ? { ...p, items: rest } : null;
+            });
+            return (
+              <div key={o.id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
+                <span>{waitSlotLabel(o)}</span>
+                <span style={{ marginLeft: 'auto', display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                  {/* 🚨 主にしたいのは**その日だけ**（2026-09-04 ユーザー指摘）。
+                         丸ごと取り消すと今後ずっと待たなくなってしまう */}
+                  {sameDayId ? (
+                    <button onClick={async () => {
+                      setBusy(o.id);
+                      const okDone = await skipOn(o.id, sameDayId,
+                        `${formatDateLabel(afterPromote.dateStr)}は別の枠に入ったため`);
+                      setBusy('');
+                      if (okDone) drop();
+                    }} disabled={!!busy} style={smallBtn(true)}>
+                      {formatDateLabel(afterPromote.dateStr)}だけ見送る
+                    </button>
+                  ) : (
+                    <span style={{ fontSize: 12 }}>（この枠に{formatDateLabel(afterPromote.dateStr)}の回はありません）</span>
+                  )}
+                  {/* 🚨 「丸ごと取り消す」はここに置かない（2026-09-04 ユーザー指示）。
+                         キャンセル待ちの一覧の各行から取り消せるので、ここに置くと
+                         「その日だけ」のつもりで今後ずっと消してしまう事故になる */}
+                  <button onClick={drop} style={smallBtn(false)}>そのままにする</button>
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
 
