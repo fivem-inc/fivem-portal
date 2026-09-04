@@ -604,16 +604,36 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
 
                   {/* 受理の進み具合。休暇は2人が順に受理するので、
                       「自分が1人目なのか」「誰が先に受理したのか」が分からないと判断できない。
-                      🚨 status で見分ける（pending＝まだ誰も受理していない／
-                         step2_pending 以降＝①が受理済み）。2026-09-04 追加 */}
+                      （2026-09-04 追加）
+
+                      🚨 status だけで「あなたが最初」と書かないこと。
+                         管理者は絞り込みなしで全申請が見える（fetchRequests の if (!isAdmin)）ため、
+                         自分宛でない pending の申請にまで「あなたが最初の受理者です」と出てしまう。
+                         必ず approver_id が自分かどうかで判定する。
+                      🚨 名前が引けないときに「不明」と出さない。
+                         申請先が未設定・退職などで名前が取れないことがあり、
+                         「最初の受理者：不明」は事実を言えていないうえ不安にさせる。
+                         その場合は名前を出さず、進み具合だけを伝える。 */}
                   <div style={{
                     fontSize: 13, marginBottom: 8, padding: '6px 10px', borderRadius: 6,
                     background: isDark ? '#2c3e50' : '#eef6ff',
                     color: isDark ? '#d0dde8' : '#1a4a5a',
                   }}>
-                    {req.status === 'pending'
-                      ? <>あなたが<strong>最初の受理者</strong>です</>
-                      : <>最初の受理者：<strong>{req.approver_name || '不明'}</strong> ✓</>}
+                    {(() => {
+                      const firstDone = req.status !== 'pending';   // ①が受理を済ませたか
+                      const firstName = req.approver_name;          // ①の名前（引けなければ null）
+                      const iAmFirst = !!req.approver_id && req.approver_id === user.id;
+
+                      if (!firstDone) {
+                        if (iAmFirst) return <>あなたが<strong>最初の受理者</strong>です</>;
+                        return firstName
+                          ? <>まだ受理されていません（最初の受理者：<strong>{firstName}</strong>）</>
+                          : <>まだ受理されていません</>;
+                      }
+                      return firstName
+                        ? <>最初の受理者：<strong>{firstName}</strong> ✓</>
+                        : <>1人目の受理は完了しています</>;
+                    })()}
                   </div>
 
                   <div style={{ color: subText, fontSize: 14, marginBottom: 6 }}>
