@@ -1700,7 +1700,13 @@ const BookingForm: React.FC<{
    */
   const from = mode.kind === 'create' ? mode.from ?? null : null;
 
-  const [floorId] = useState(editing ? base!.floor_id : mode.floorId);
+  /**
+   * 場所（2026-09-04 ユーザー承認で**変更できるようにした**）。
+   * 🚨 これまでは枠を押して開く前提で固定だった。場所を間違えた予約を直す手段が
+   *    削除して入れ直すしかなかったため、変更で選べるようにする。
+   * 🚨 選べるのは**全校のフロア**（校ごと間違えた場合も直せるように・ユーザー確定）
+   */
+  const [floorId, setFloorId] = useState(editing ? base!.floor_id : mode.floorId);
   // 🚨 日付は localDate を通す（ISO文字列の頭10文字はUTCの日付で、朝の予約が前日になる）
   // 🚨 次回の予約から開いたときだけ**空欄**なので、画面で選べるようにする（下の日付欄）
   const [date, setDate] = useState(editing ? localDate(base!.starts_at) : mode.date);
@@ -1944,6 +1950,31 @@ const BookingForm: React.FC<{
 
     setSaving(true);
     if (editing) {
+      /**
+       * 場所を変えるとき（2026-09-04 ユーザー承認）。
+       * 🚨 room_update_booking には**場所の引数が無い**。中心のRPCに引数を足さない方針
+       *    （古い版で上書きして申請が全部止まった事故があるため）。
+       * 🚨 そこで**先に floor_id だけ書き換えてから RPC を呼ぶ**。こうすると
+       *    RPC が**新しい場所で重なりを判定**してくれる＝「最終判定はサーバー」を保てる。
+       *    先に判定してから書き換えると、判定と書き込みの間に他の予約が入る隙ができる。
+       * 🚨 断られたら**場所を元に戻す**（中途半端に移った状態を残さない）
+       */
+      const movedFloor = floorId !== base!.floor_id;
+      if (movedFloor) {
+        const { data: mv, error: mvErr } = await supabase.from('room_bookings')
+          .update({ floor_id: floorId }).eq('id', base!.id).select('id');
+        if (mvErr || !mv?.length) {
+          setSaving(false);
+          setError('場所を変えられませんでした。通信を確認してもう一度お試しください。');
+          return;
+        }
+      }
+      const undoMove = async () => {
+        if (movedFloor) {
+          await supabase.from('room_bookings')
+            .update({ floor_id: base!.floor_id }).eq('id', base!.id);
+        }
+      };
       const { data, error: err } = await supabase.rpc('room_update_booking', {
         p_id: base!.id, p_starts_at: s.toISOString(), p_ends_at: e.toISOString(),
         p_purpose: purpose, p_booker_name: bookerName.trim(),
@@ -1951,10 +1982,23 @@ const BookingForm: React.FC<{
         p_memo: memo.trim(), p_exclusive: exclusive, p_staff_id: staffId || null,
         p_kind: kind, p_seats: seats,
       });
-      setSaving(false);
       const row = Array.isArray(data) ? data[0] : data;
-      if (err) { setError('保存できませんでした。通信を確認してもう一度お試しください。'); return; }
-      if (!row?.ok) { setError(row?.reason ?? '保存できませんでした'); setConflicts((row?.conflicts ?? []) as ConflictInfo[]); return; }
+      if (err) {
+        await undoMove();
+        setSaving(false);
+        setError('保存できませんでした。通信を確認してもう一度お試しください。');
+        return;
+      }
+      if (!row?.ok) {
+        // 🚨 移した先が埋まっていた等。場所を元に戻してから理由を出す
+        await undoMove();
+        setSaving(false);
+        setError((row?.reason ?? '保存できませんでした')
+          + (movedFloor ? '（場所は元に戻しました）' : ''));
+        setConflicts((row?.conflicts ?? []) as ConflictInfo[]);
+        return;
+      }
+      setSaving(false);
       // 固定と詳細は、RPCを通さず後から書き込む。
       // 🚨 room_update_booking には引数を足さない（中心の関数を触らない方針）。
       //    過去に、RPCを古い版で上書きして申請が全部止まった事故がある
@@ -1989,6 +2033,13 @@ const BookingForm: React.FC<{
           const sd = localDate(sb.starts_at);
           const ss = toDate(sd, startTime), se = toDate(sd, endTime);
           if (!ss || !se) continue;
+          // 🚨 場所も今後の回に反映する（2026-09-04 ユーザー確定）。
+          //    この回と同じく、**先に書き換えてから RPC**（新しい場所で重なりを見てもらう）。
+          //    断られたらこの回の場所は元に戻す
+          const sbMoved = movedFloor && sb.floor_id !== floorId;
+          if (sbMoved) {
+            await supabase.from('room_bookings').update({ floor_id: floorId }).eq('id', sb.id);
+          }
           // お客様も反映する。ただし**この回（変更前）と同じお客様だった回**にだけ
           // （空も「同じ」に含む＝空のまま作った枠の一括修正ができる・2026-09-03 実機指摘）。
           // 🚨 違うお客様が入っている回（募集枠から埋めた回など）は**そのまま残す**。
@@ -2008,6 +2059,9 @@ const BookingForm: React.FC<{
           const ur = (Array.isArray(ud) ? ud[0] : ud) as { ok?: boolean; reason?: string } | null;
           if (uerr || !ur?.ok) {
             // 🚨 黙って欠けさせない。変えられなかった回は理由つきで知らせる
+            if (sbMoved) {
+              await supabase.from('room_bookings').update({ floor_id: sb.floor_id }).eq('id', sb.id);
+            }
             ng.push(`${formatDateLabel(sd)}（${ur?.reason ?? '通信エラー'}）`);
             continue;
           }
@@ -2021,9 +2075,12 @@ const BookingForm: React.FC<{
         }
         // マスター（繰り返しルール）も同じ内容に変える。
         // これで月次更新がこれから作る回にも新しい値が使われる
-        // （場所と曜日はこのフォームでは変えられないので触らない。
+        // （曜日はこのフォームでは変えられないので触らない。
+        //   🚨 **場所は 2026-09-04 から変えられる**ので、マスターにも反映する。
+        //      でないと月次更新でこれから作る回だけ古い場所に戻ってしまう。
         //   お客様はマスターにも反映する＝2026-09-03 実機指摘：空のまま作った枠を直せるように）
         await supabase.from('room_recurrences').update({
+          floor_id: floorId,
           start_time: startTime, end_time: endTime,
           purpose, detail: detail || null, staff_id: staffId || null,
           exclusive, is_fixed: isFixed,
@@ -2176,6 +2233,32 @@ const BookingForm: React.FC<{
             同時に入れられるのは {floor?.capacity ?? 3} 件までです
           </span>
         </div>
+
+        {/* 場所の変更（2026-09-04 ユーザー承認）。
+            🚨 **変更のときだけ**出す。新規は枠を押して開くので場所は決まっている。
+            🚨 選べるのは**全校のフロア**（校ごと間違えた場合も直せるように） */}
+        {editing && (
+          <div>
+            <label style={label}>場所</label>
+            <select value={floorId} onChange={e => setFloorId(e.target.value)} style={input}>
+              {floors.map(f2 => {
+                const cp = campuses.find(c => c.id === f2.campus_id);
+                const sib = floors.filter(x => x.campus_id === f2.campus_id).length;
+                return (
+                  <option key={f2.id} value={f2.id}>
+                    {placeLabel(f2, cp?.name ?? '', sib, true)}（同時{f2.capacity}件まで）
+                  </option>
+                );
+              })}
+            </select>
+            {floorId !== base!.floor_id && (
+              <p style={{ fontSize: 11.5, color: isDark ? '#e6b980' : '#8a5a1f', margin: '4px 0 0', lineHeight: 1.6 }}>
+                場所を変えます。移した先が埋まっていたときは、理由を出して**元の場所のまま**にします
+                {base!.recurrence_id && editScope === 'future' && '。「今後すべて」なので、今後の回と枠のマスターも同じ場所になります'}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* 次回の予約から開いたときだけ、日付を選ぶ（2026-09-04 ユーザー確定）。
             🚨 ふだんは予約表の枠を押して開くので日付は決まっている。ここで日付を
@@ -8639,6 +8722,302 @@ const WaitlistTriggerSettings: React.FC<{
   );
 };
 
+/**
+ * 場所の設定（管理者のみ・2026-09-04 ユーザー承認で拡張）。
+ *
+ * これまでは営業時間と「同時◯件」しか変えられず、名前を直したりフロアを足したりするには
+ * 開発者に依頼するしかなかった。校とフロアの **名前の変更・追加・隠す・並び替え** を
+ * 画面からできるようにする。
+ *
+ * 🚨 **消せるようにはしない（隠すだけ）**。過去の予約が場所を参照しているので、
+ *    消すと予約表が壊れる（用途・詳細と同じ方針）。
+ * 🚨 名前を変えると**過去の予約の表示も自動で変わる**（IDで結んでいるため）。
+ *    用途詳細のような一括書き換えは要らない。
+ * 🚨 **この画面だけは隠したものも読む**。予約表は active だけを読むので、
+ *    親から渡された一覧では「戻す」ことができない。ここで自分で読み直す。
+ * 🚨 フロアが1つだけの校は placeLabel が「全体」を出さない。2つ目を足すと
+ *    表示が「西陣校」→「西陣校 全体」に変わるので、画面で先に断る。
+ */
+const PlaceSettings: React.FC<{
+  onChanged: (msg: string) => Promise<void>; isDark: boolean;
+}> = ({ onChanged, isDark }) => {
+  const [cs, setCs] = useState<Campus[]>([]);
+  const [fs, setFs] = useState<Floor[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [newCampus, setNewCampus] = useState('');
+  /** フロアの追加（校ごとに入力欄を持つ） */
+  const [newFloor, setNewFloor] = useState<Record<string, string>>({});
+  /**
+   * 隠す前の確認（2026-09-04 ユーザー確定）。
+   * 🚨 今後の予約が残っている場所を隠すと、その予約が予約表から消えて気づけなくなる。
+   *    件数を見せて、もう一度押してもらう
+   */
+  const [hideAsk, setHideAsk] = useState<{ kind: 'campus' | 'floor'; id: string; name: string; count: number } | null>(null);
+
+  const lineSoft = isDark ? '#35354e' : '#eef0f3';
+  const line = isDark ? '#3a3a5c' : '#e0e0e0';
+  const text = isDark ? '#eeeeee' : '#222222';
+  const textMid = isDark ? '#b3b8c6' : '#5b6270';
+  const accent = isDark ? '#6bbd92' : '#2f6f4f';
+  const fieldBg = isDark ? '#495057' : '#fff';
+  const input: React.CSSProperties = {
+    padding: '7px 9px', borderRadius: 8, border: `1px solid ${line}`,
+    background: fieldBg, color: text, fontSize: 16, boxSizing: 'border-box',
+  };
+  const smallBtn = (on: boolean): React.CSSProperties => ({
+    padding: '4px 10px', borderRadius: 999, fontSize: 12.5, cursor: busy ? 'wait' : 'pointer',
+    border: `1px solid ${on ? accent : line}`,
+    background: on ? accent : 'transparent',
+    color: on ? (isDark ? '#1d2a24' : '#fff') : textMid,
+    fontWeight: on ? 700 : 400,
+  });
+
+  /** 🚨 隠したものも読む（active で絞らない）。絞ると「戻す」ができなくなる */
+  const load = useCallback(async () => {
+    setLoading(true); setError('');
+    const [c, f] = await Promise.all([
+      supabase.from('room_campuses').select('*').order('sort_order'),
+      supabase.from('room_floors').select('*').order('sort_order'),
+    ]);
+    if (c.error || f.error) {
+      setError('場所を読み込めませんでした。通信を確認して開き直してください。');
+      setLoading(false); return;
+    }
+    setCs((c.data ?? []) as Campus[]);
+    setFs((f.data ?? []) as Floor[]);
+    setLoading(false);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  /** 失敗しても画面を壊さず理由を出す。🚨 update は0件でもエラーにならないので件数を見る */
+  const run = async (fn: () => Promise<{ error: unknown; data?: unknown[] | null }>, msg: string) => {
+    setBusy(true); setError('');
+    const r = await fn();
+    setBusy(false);
+    if (r.error || (r.data !== undefined && !r.data?.length)) {
+      setError('保存できませんでした。同じ名前がすでに無いか、通信を確認してください。');
+      return;
+    }
+    await load();
+    await onChanged(msg);
+  };
+
+  /** その場所に今後の予約が何件あるか（隠す前の確認に使う） */
+  const countFuture = async (kind: 'campus' | 'floor', id: string): Promise<number> => {
+    const ids = kind === 'floor' ? [id] : fs.filter(f => f.campus_id === id).map(f => f.id);
+    if (ids.length === 0) return 0;
+    const from = new Date(); from.setHours(0, 0, 0, 0);
+    const { count } = await supabase.from('room_bookings')
+      .select('id', { count: 'exact', head: true })
+      .in('floor_id', ids)
+      .eq('status', 'active')
+      .is('deleted_at', null)
+      .gte('starts_at', from.toISOString());
+    return count ?? 0;
+  };
+
+  const askHide = async (kind: 'campus' | 'floor', id: string, name: string) => {
+    setBusy(true); setError('');
+    const n = await countFuture(kind, id);
+    setBusy(false);
+    setHideAsk({ kind, id, name, count: n });
+  };
+
+  const doHide = async () => {
+    if (!hideAsk) return;
+    const { kind, id, name } = hideAsk;
+    setHideAsk(null);
+    await run(async () => await supabase
+      .from(kind === 'campus' ? 'room_campuses' : 'room_floors')
+      .update({ active: false }).eq('id', id).select('id'),
+      `${name} を隠しました`);
+  };
+
+  /** 並び替え。🚨 隣と sort_order を入れ替えるだけ（番号を詰め直さない） */
+  const move = async (kind: 'campus' | 'floor', list: (Campus | Floor)[], idx: number, dir: -1 | 1) => {
+    const a = list[idx], b2 = list[idx + dir];
+    if (!a || !b2) return;
+    setBusy(true); setError('');
+    const table = kind === 'campus' ? 'room_campuses' : 'room_floors';
+    await supabase.from(table).update({ sort_order: b2.sort_order }).eq('id', a.id);
+    await supabase.from(table).update({ sort_order: a.sort_order }).eq('id', b2.id);
+    setBusy(false);
+    await load();
+    await onChanged('並び順を変えました');
+  };
+
+  const addCampus = async () => {
+    const name = newCampus.trim();
+    if (!name) { setError('校の名前を入れてください'); return; }
+    if (cs.some(c => c.name === name)) { setError(`「${name}」はもう登録されています（隠している場合は「戻す」を押してください）`); return; }
+    const orders = cs.map(c => c.sort_order);
+    await run(async () => await supabase.from('room_campuses').insert({
+      name, open_time: '09:00:00', close_time: '22:00:00',
+      sort_order: (orders.length ? Math.max(...orders) : 0) + 1, active: true,
+    }).select('id'), `${name} を追加しました`);
+    setNewCampus('');
+  };
+
+  const addFloor = async (campusId: string, campusName: string) => {
+    const name = (newFloor[campusId] ?? '').trim();
+    if (!name) { setError('場所の名前を入れてください'); return; }
+    if (fs.some(f => f.campus_id === campusId && f.name === name)) {
+      setError(`「${name}」はもう登録されています（隠している場合は「戻す」を押してください）`); return;
+    }
+    const orders = fs.filter(f => f.campus_id === campusId).map(f => f.sort_order);
+    await run(async () => await supabase.from('room_floors').insert({
+      campus_id: campusId, name, capacity: 3,
+      sort_order: (orders.length ? Math.max(...orders) : 0) + 1, active: true,
+    }).select('id'), `${campusName} に ${name} を追加しました`);
+    setNewFloor(p => ({ ...p, [campusId]: '' }));
+  };
+
+  if (loading) return <p style={{ fontSize: 13.5, color: textMid }}>読み込んでいます...</p>;
+
+  return (
+    <div>
+      <p style={{ fontSize: 12, color: textMid, margin: '0 0 10px', lineHeight: 1.6 }}>
+        「同時◯件」は、その場所に同じ時間で入れられる予約の数です。数字を直すとすぐ反映されます。
+        営業時間は、タイムラインで薄いグレーにする範囲の基準です（この時間外でも予約は入れられます）。
+        <br />
+        名前を変えると、<b>過去の予約の表示も新しい名前になります</b>（同じ場所として結んでいるため）。
+        <br />
+        🚨 場所は<b>消せません（隠すだけ）</b>。過去の予約が場所を指しているので、消すと記録が読めなくなります。
+      </p>
+
+      {error && (
+        <div style={{ background: isDark ? '#4a2a2a' : '#fdecea', border: `1px solid ${isDark ? '#7a4444' : '#f5c6cb'}`, color: isDark ? '#ffb4b4' : '#a3282a', borderRadius: 8, padding: '9px 12px', fontSize: 13, marginBottom: 10 }}>
+          {error}
+        </div>
+      )}
+
+      {/* 隠す前の確認（今後の予約が残っていないか） */}
+      {hideAsk && (
+        <div style={{ background: isDark ? '#4a4326' : '#fff8e1', border: `1px solid ${isDark ? '#8a7a3a' : '#ffe082'}`, color: isDark ? '#ffe6a3' : '#7a5c00', borderRadius: 8, padding: '10px 12px', fontSize: 13, marginBottom: 10, lineHeight: 1.8 }}>
+          <b>{hideAsk.name}</b> を隠します。
+          {hideAsk.count > 0
+            ? <> この場所には<b>今後の予約が {hideAsk.count}件</b>あります。隠すと<b>予約表に出なくなります</b>（消えるわけではありません）。先に予約を移すこともできます。</>
+            : ' 今後の予約はありません。'}
+          <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+            <button onClick={doHide} disabled={busy} style={smallBtn(true)}>隠す</button>
+            <button onClick={() => setHideAsk(null)} style={smallBtn(false)}>やめる</button>
+          </div>
+        </div>
+      )}
+
+      {cs.map((c, ci) => {
+        const mine = fs.filter(f => f.campus_id === c.id);
+        return (
+          <div key={c.id} style={{ borderTop: `1px solid ${lineSoft}`, padding: '10px 0', opacity: c.active ? 1 : .55 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 7, flexWrap: 'wrap' }}>
+              {/* 校の名前（離れたときに保存する） */}
+              <input defaultValue={c.name} disabled={busy}
+                onBlur={e => {
+                  const v = e.target.value.trim();
+                  if (!v || v === c.name) { e.target.value = c.name; return; }
+                  run(async () => await supabase.from('room_campuses').update({ name: v }).eq('id', c.id).select('id'),
+                    `校の名前を「${v}」に変えました`);
+                }}
+                style={{ ...input, width: 150, fontWeight: 700 }} />
+              {!c.active && <b style={{ fontSize: 12 }}>（隠しています）</b>}
+              <span style={{ fontSize: 12, color: textMid }}>営業</span>
+              <input type="time" defaultValue={c.open_time.slice(0, 5)} disabled={busy}
+                onBlur={e => e.target.value !== c.open_time.slice(0, 5) && run(async () =>
+                  await supabase.from('room_campuses').update({ open_time: e.target.value }).eq('id', c.id).select('id'),
+                  `${c.name} の営業開始を変えました`)}
+                style={{ ...input, width: 110 }} />
+              <span style={{ fontSize: 12, color: textMid }}>〜</span>
+              <input type="time" defaultValue={c.close_time.slice(0, 5)} disabled={busy}
+                onBlur={e => e.target.value !== c.close_time.slice(0, 5) && run(async () =>
+                  await supabase.from('room_campuses').update({ close_time: e.target.value }).eq('id', c.id).select('id'),
+                  `${c.name} の営業終了を変えました`)}
+                style={{ ...input, width: 110 }} />
+              <span style={{ marginLeft: 'auto', display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                <button onClick={() => move('campus', cs, ci, -1)} disabled={ci === 0 || busy}
+                  style={{ ...smallBtn(false), opacity: ci === 0 ? .4 : 1 }} aria-label="上へ">▲</button>
+                <button onClick={() => move('campus', cs, ci, 1)} disabled={ci === cs.length - 1 || busy}
+                  style={{ ...smallBtn(false), opacity: ci === cs.length - 1 ? .4 : 1 }} aria-label="下へ">▼</button>
+                {c.active ? (
+                  <button onClick={() => askHide('campus', c.id, c.name)} disabled={busy} style={smallBtn(false)}>隠す</button>
+                ) : (
+                  <button onClick={() => run(async () => await supabase.from('room_campuses')
+                    .update({ active: true }).eq('id', c.id).select('id'), `${c.name} を戻しました`)}
+                    disabled={busy} style={smallBtn(false)}>戻す</button>
+                )}
+              </span>
+            </div>
+
+            {mine.map((f, fi) => (
+              <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0 5px 14px', flexWrap: 'wrap', opacity: f.active ? 1 : .55 }}>
+                <input defaultValue={f.name} disabled={busy}
+                  onBlur={e => {
+                    const v = e.target.value.trim();
+                    if (!v || v === f.name) { e.target.value = f.name; return; }
+                    run(async () => await supabase.from('room_floors').update({ name: v }).eq('id', f.id).select('id'),
+                      `場所の名前を「${v}」に変えました`);
+                  }}
+                  style={{ ...input, width: 120 }} />
+                {!f.active && <b style={{ fontSize: 12 }}>（隠しています）</b>}
+                <span style={{ fontSize: 12, color: textMid }}>同時</span>
+                <input type="number" min={1} max={20} defaultValue={f.capacity} disabled={busy}
+                  onBlur={e => {
+                    const n = Number(e.target.value);
+                    if (!Number.isInteger(n) || n < 1 || n === f.capacity) { e.target.value = String(f.capacity); return; }
+                    run(async () => await supabase.from('room_floors').update({ capacity: n }).eq('id', f.id).select('id'),
+                      `${f.name} を同時${n}件にしました`);
+                  }}
+                  style={{ ...input, width: 74 }} />
+                <span style={{ fontSize: 12, color: textMid }}>件まで</span>
+                <span style={{ marginLeft: 'auto', display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                  <button onClick={() => move('floor', mine, fi, -1)} disabled={fi === 0 || busy}
+                    style={{ ...smallBtn(false), opacity: fi === 0 ? .4 : 1 }} aria-label="上へ">▲</button>
+                  <button onClick={() => move('floor', mine, fi, 1)} disabled={fi === mine.length - 1 || busy}
+                    style={{ ...smallBtn(false), opacity: fi === mine.length - 1 ? .4 : 1 }} aria-label="下へ">▼</button>
+                  {f.active ? (
+                    <button onClick={() => askHide('floor', f.id, f.name)} disabled={busy} style={smallBtn(false)}>隠す</button>
+                  ) : (
+                    <button onClick={() => run(async () => await supabase.from('room_floors')
+                      .update({ active: true }).eq('id', f.id).select('id'), `${f.name} を戻しました`)}
+                      disabled={busy} style={smallBtn(false)}>戻す</button>
+                  )}
+                </span>
+              </div>
+            ))}
+
+            {/* 場所（フロア）の追加 */}
+            <div style={{ display: 'flex', gap: 6, padding: '6px 0 0 14px', flexWrap: 'wrap', alignItems: 'center' }}>
+              <input value={newFloor[c.id] ?? ''} placeholder="例：4階"
+                onChange={e => setNewFloor(p => ({ ...p, [c.id]: e.target.value }))}
+                style={{ ...input, width: 150 }} />
+              <button onClick={() => addFloor(c.id, c.name)} disabled={busy || !(newFloor[c.id] ?? '').trim()}
+                style={smallBtn(true)}>＋ 場所を追加</button>
+              {/* 🚨 1つだけの校は「全体」を出さない作りなので、増やすと表示が変わる */}
+              {mine.filter(f => f.active).length === 1 && (
+                <span style={{ fontSize: 11.5, color: textMid }}>
+                  いまは1つなので「{c.name}」とだけ出ています。2つ目を足すと「{c.name} {mine[0]?.name}」の形になります
+                </span>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      {/* 校の追加 */}
+      <div style={{ display: 'flex', gap: 6, borderTop: `1px solid ${lineSoft}`, paddingTop: 12, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+        <input value={newCampus} placeholder="例：山科教室"
+          onChange={e => setNewCampus(e.target.value)}
+          style={{ ...input, width: 180 }} />
+        <button onClick={addCampus} disabled={busy || !newCampus.trim()} style={smallBtn(true)}>＋ 校を追加</button>
+        <span style={{ fontSize: 11.5, color: textMid }}>
+          追加すると営業 9:00〜22:00 で作ります（あとから直せます）。場所（フロア）も1つ足してください
+        </span>
+      </div>
+    </div>
+  );
+};
+
 const SettingsPanel: React.FC<{
   campuses: Campus[]; floors: Floor[]; categories: LessonCategory[];
   attendanceOptions: AttendanceOption[];
@@ -8749,47 +9128,9 @@ const SettingsPanel: React.FC<{
       )}
 
       {/* ---- 場所 ---- */}
+      {/* ---- 場所（2026-09-04 ユーザー承認で、名前の変更・追加・隠す・並び替えに対応） ---- */}
       {tab === 'place' && (
-        <div>
-          <p style={{ fontSize: 12, color: textMid, margin: '0 0 10px', lineHeight: 1.6 }}>
-            「同時◯件」は、その場所に同じ時間で入れられる予約の数です。数字を直すとすぐ反映されます。
-            営業時間は、タイムラインで薄いグレーにする範囲の基準です（この時間外でも予約は入れられます）。
-          </p>
-          {campuses.map(c => (
-            <div key={c.id} style={{ borderTop: `1px solid ${lineSoft}`, padding: '10px 0' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 7, flexWrap: 'wrap' }}>
-                <b style={{ fontSize: 14 }}>{c.name}</b>
-                <span style={{ fontSize: 12, color: textMid }}>営業</span>
-                <input type="time" defaultValue={c.open_time.slice(0, 5)}
-                  onBlur={e => e.target.value !== c.open_time.slice(0, 5) && run(async () =>
-                    await supabase.from('room_campuses').update({ open_time: e.target.value }).eq('id', c.id),
-                    `${c.name} の営業開始を変えました`)}
-                  style={{ ...input, width: 110 }} />
-                <span style={{ fontSize: 12, color: textMid }}>〜</span>
-                <input type="time" defaultValue={c.close_time.slice(0, 5)}
-                  onBlur={e => e.target.value !== c.close_time.slice(0, 5) && run(async () =>
-                    await supabase.from('room_campuses').update({ close_time: e.target.value }).eq('id', c.id),
-                    `${c.name} の営業終了を変えました`)}
-                  style={{ ...input, width: 110 }} />
-              </div>
-              {floors.filter(f => f.campus_id === c.id).map(f => (
-                <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0 5px 14px', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 13.5, minWidth: 78 }}>{f.name}</span>
-                  <span style={{ fontSize: 12, color: textMid }}>同時</span>
-                  <input type="number" min={1} max={20} defaultValue={f.capacity}
-                    onBlur={e => {
-                      const n = Number(e.target.value);
-                      if (!Number.isInteger(n) || n < 1 || n === f.capacity) { e.target.value = String(f.capacity); return; }
-                      run(async () => await supabase.from('room_floors').update({ capacity: n }).eq('id', f.id),
-                        `${f.name} を同時${n}件にしました`);
-                    }}
-                    style={{ ...input, width: 74 }} />
-                  <span style={{ fontSize: 12, color: textMid }}>件まで</span>
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
+        <PlaceSettings onChanged={onChanged} isDark={isDark} />
       )}
 
       {/* ---- 基本設定を使える役職 ---- */}
