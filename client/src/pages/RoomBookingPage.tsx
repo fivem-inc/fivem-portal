@@ -3632,7 +3632,11 @@ const AttendanceEditor: React.FC<{
     });
     const row = (Array.isArray(data) ? data[0] : data) as { ok?: boolean; reason?: string } | null;
     setBusy('');
-    if (err) { setError('空き枠を作れませんでした。通信を確認してください。'); return; }
+    if (err) {
+      // 🚨 サーバーのエラーはそのまま出す（原因を握りつぶさない・2026-09-04）
+      setError(`空き枠を作れませんでした：${err.message ?? '通信を確認してください'}`);
+      return;
+    }
     if (!row?.ok) { setError(row?.reason ?? '空き枠を作れませんでした'); return; }
     setVacateOffer(false);
     setWaitHint('空き枠を作りました。この回は「お休み」（グレー）になり、予約表に募集中の枠（黄色の破線）が出ます。');
@@ -6087,7 +6091,11 @@ const WaitlistSettings: React.FC<{
     });
     const row = (Array.isArray(data) ? data[0] : data) as { ok?: boolean; reason?: string } | null;
     setBusy('');
-    if (err) { setError('空き枠を作れませんでした。通信を確認してください。'); return; }
+    if (err) {
+      // 🚨 サーバーのエラーはそのまま出す（原因を握りつぶさない・2026-09-04）
+      setError(`空き枠を作れませんでした：${err.message ?? '通信を確認してください'}`);
+      return;
+    }
     if (!row?.ok) { setError(row?.reason ?? '空き枠を作れませんでした'); return; }
     setEmptyOffer(null); setVacOcc([]); setVacAtt([]); setVacDraft(null);
     await onDone('空き枠を作りました（予約表に募集中の枠が出ます）');
@@ -6206,7 +6214,13 @@ const WaitlistSettings: React.FC<{
     const row = (Array.isArray(data) ? data[0] : data) as
       { ok?: boolean; reason?: string } | null;
     setBusy('');
-    if (err) { setError('繰り上げられませんでした。通信を確認してください。'); return; }
+    if (err) {
+      // 🚨 サーバーが投げたエラーは**そのまま出す**（2026-09-04）。
+      //    「通信を確認してください」と出していたため、実際は関数の中の不具合
+      //    （列名が曖昧）だったのに、原因にたどり着けなかった
+      setError(`繰り上げられませんでした：${err.message ?? '通信を確認してください'}`);
+      return;
+    }
     if (!row?.ok) {
       // 多くは「その回がまだ生きている」。先に休講や取り消しが要る
       setError(`${row?.reason ?? '繰り上げられませんでした'}（先にその回を休講または取り消してください）`);
