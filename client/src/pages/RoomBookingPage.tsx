@@ -5771,6 +5771,12 @@ const WaitlistSettings: React.FC<{
   const [memoEdit, setMemoEdit] = useState<{ recId: string; text: string } | null>(null);
   /** 取り消しの確認（誤操作で待ちを消さないため・2026-09-03 ユーザー指示） */
   const [cancelTarget, setCancelTarget] = useState<Waitlist | null>(null);
+  /**
+   * 「空きがある枠だけ」に絞る（2026-09-04 ユーザー指示）。
+   * 🚨 判定は見出しの目印（avail）と**同じもの**を使う。別の式を書かない。
+   *    avail は今後8週間ぶんを読んで、枠ごとに繰り上げられる最短の日を持っている
+   */
+  const [onlyAvail, setOnlyAvail] = useState(false);
 
   const line = isDark ? '#3a3a5c' : '#e0e0e0';
   const lineSoft = isDark ? '#35354e' : '#eef0f3';
@@ -5912,6 +5918,14 @@ const WaitlistSettings: React.FC<{
       || a.time.localeCompare(b.time)
       || (order.get(a.floorId) ?? 99) - (order.get(b.floorId) ?? 99));
   }, [rows, floors]);
+
+  /**
+   * 画面に出す枠。「空きがある枠だけ」を押しているときは、繰り上げられる日がある枠に絞る。
+   * 🚨 数え終わるまで（avail が null）は絞らない。空の一覧を「0枠」と見せないため
+   */
+  const shownGroups = useMemo(
+    () => (onlyAvail && avail ? groups.filter(g => !!avail[g.key]) : groups),
+    [onlyAvail, avail, groups]);
 
   const saveEdit = async (w: Waitlist) => {
     if (!draft.person.name.trim()) { setError('お客様のお名前を入れてください'); return; }
@@ -6490,7 +6504,28 @@ const WaitlistSettings: React.FC<{
         </p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {groups.map(g => (
+          {/* 空きがある枠だけに絞る（2026-09-04 ユーザー指示）。
+              🚨 数え終わるまで（avail が null）は押せない。押しても答えが出ないため */}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button onClick={() => setOnlyAvail(v => !v)} disabled={!avail}
+              style={{ ...smallBtn(onlyAvail), opacity: avail ? 1 : .5, cursor: avail ? 'pointer' : 'wait' }}>
+              空きがある枠だけ
+            </button>
+            <span style={{ fontSize: 12, color: textMid }}>
+              {!avail
+                ? '空きを数えています…'
+                : onlyAvail
+                  ? `${shownGroups.length}枠 / 全${groups.length}枠（8週間先まで）`
+                  : `全${groups.length}枠`}
+            </span>
+          </div>
+          {onlyAvail && avail && shownGroups.length === 0 && (
+            <p style={{ fontSize: 13, color: textMid, lineHeight: 1.7 }}>
+              いま空きのある枠はありません（8週間先まで）。
+              「空きがある枠だけ」をもう一度押すと、全部の枠に戻ります。
+            </p>
+          )}
+          {shownGroups.map(g => (
             <div key={g.key}
               style={{ border: `1px solid ${line}`, borderRadius: 8, padding: '10px 12px' }}>
               <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>
