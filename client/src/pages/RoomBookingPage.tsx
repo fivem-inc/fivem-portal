@@ -3653,7 +3653,7 @@ const BookingDetail: React.FC<{
    */
   const [afterUndo, setAfterUndo] = useState<{
     label: string;
-    slots: Pick<Booking, 'id' | 'starts_at' | 'ends_at'>[];
+    slots: Pick<Booking, 'id' | 'starts_at' | 'ends_at' | 'staff_id'>[];
     att: { p: Participant; status: string }[];
     done: string[];
   } | null>(null);
@@ -3820,17 +3820,25 @@ const BookingDetail: React.FC<{
     // 🚨 「お休み」を戻したとき、そのとき作った空き枠が残る（2026-09-03 実機指摘）。
     //    枠と空き枠のつながりは保存していないので、**同じ場所・同じ担当で時間が重なる
     //    募集中の枠**を探して一覧で見せ、消すかどうかは人が決める（黙って消さない）
-    let slots: Pick<Booking, 'id' | 'starts_at' | 'ends_at'>[] = [];
+    let slots: Pick<Booking, 'id' | 'starts_at' | 'ends_at' | 'staff_id'>[] = [];
     if (wasAbsence) {
-      const { data: sl } = await supabase.from('room_bookings')
-        .select('id, starts_at, ends_at')
+      // 🚨🚨 **担当で必ず絞る**（2026-09-04 実機で事故）。
+      //    空き枠化のRPC（room_vacate_to_open）は必ず**元の回と同じ担当**で
+      //    募集枠を作る。ところがここは場所と時間だけで探していたため、
+      //    同じ場所・同じ時間にある**別のスタッフの募集枠**まで候補に入り、
+      //    「募集枠も取り消す」で一緒に消えてしまった。
+      //    担当なしの回なら、担当なしの枠だけを候補にする
+      let q = supabase.from('room_bookings')
+        .select('id, starts_at, ends_at, staff_id')
         .eq('floor_id', b.floor_id)
         .eq('kind', 'open')
         .eq('status', 'active')
         .is('deleted_at', null)
         .lt('starts_at', b.ends_at)
         .gt('ends_at', b.starts_at);
-      slots = ((sl ?? []) as Pick<Booking, 'id' | 'starts_at' | 'ends_at'>[]);
+      q = b.staff_id ? q.eq('staff_id', b.staff_id) : q.is('staff_id', null);
+      const { data: sl } = await q;
+      slots = ((sl ?? []) as Pick<Booking, 'id' | 'starts_at' | 'ends_at' | 'staff_id'>[]);
     }
 
     // 🚨 出欠の「休み」も残る（2026-09-04 ユーザー指示）。予約は生きているのに
@@ -4329,28 +4337,40 @@ const BookingDetail: React.FC<{
               <div style={{ marginTop: 6, paddingTop: 6, borderTop: `1px solid ${isDark ? '#8a7a3a' : '#ffe082'}` }}>
                 この時間に<b>募集中の枠</b>が残っています
                 （お休みにしたときに作ったものかもしれません）。どうしますか？
-                {afterUndo.slots.map(s => (
-                  <div key={s.id} style={{ fontSize: 12.5, marginTop: 3 }}>
-                    ・{hhmm(s.starts_at)}〜{hhmm(s.ends_at)} の募集枠
+                {/* 🚨🚨 **1件ずつ選んで取り消す**（2026-09-04 実機の事故を受けて変更）。
+                       以前は1つのボタンで一覧を丸ごと消していたため、意図しない枠まで
+                       同時に消えた。候補は担当でも絞っているが、**まとめ消しはしない**。
+                       誰の枠かを必ず出して、見てから1件ずつ判断してもらう */}
+                {afterUndo.slots.map(sl => (
+                  <div key={sl.id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5, marginTop: 4 }}>
+                    <span>
+                      {hhmm(sl.starts_at)}〜{hhmm(sl.ends_at)} の募集枠
+                      {' / '}担当：{staff.find(x => x.id === sl.staff_id)?.name ?? '担当なし'}
+                    </span>
+                    <button onClick={async () => {
+                      setBusy(true); setError('');
+                      const { data: me } = await supabase.auth.getUser();
+                      // 🚨 update は0件でもエラーにならないので件数を見る
+                      const { data, error: derr } = await supabase.from('room_bookings')
+                        .update({ deleted_at: new Date().toISOString(), deleted_by: me.user?.id ?? null })
+                        .eq('id', sl.id).select('id');
+                      setBusy(false);
+                      if (derr || !data?.length) { setError('募集枠を取り消せませんでした。通信を確認してください。'); return; }
+                      finishUndo({
+                        ...afterUndo,
+                        slots: afterUndo.slots.filter(x => x.id !== sl.id),
+                        done: [...afterUndo.done, `${hhmm(sl.starts_at)}の募集枠を取り消しました`],
+                      });
+                    }} disabled={busy}
+                      style={{ marginLeft: 'auto', padding: '5px 12px', borderRadius: 999, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 12.5, fontWeight: 700, cursor: busy ? 'wait' : 'pointer' }}>
+                      この枠を取り消す
+                    </button>
                   </div>
                 ))}
                 <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-                  <button onClick={async () => {
-                    setBusy(true); setError('');
-                    const { data: me } = await supabase.auth.getUser();
-                    const { error: derr } = await supabase.from('room_bookings')
-                      .update({ deleted_at: new Date().toISOString(), deleted_by: me.user?.id ?? null })
-                      .in('id', afterUndo.slots.map(s => s.id));
-                    setBusy(false);
-                    if (derr) { setError('募集枠を取り消せませんでした。通信を確認してください。'); return; }
-                    finishUndo({ ...afterUndo, slots: [], done: [...afterUndo.done, '募集枠も取り消しました'] });
-                  }} disabled={busy}
-                    style={{ padding: '7px 14px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 13, fontWeight: 700, cursor: busy ? 'wait' : 'pointer' }}>
-                    募集枠も取り消す
-                  </button>
                   <button onClick={() => finishUndo({ ...afterUndo, slots: [], done: [...afterUndo.done, '募集枠はそのまま'] })}
                     style={{ padding: '7px 12px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 13, cursor: 'pointer' }}>
-                    残す
+                    すべて残す
                   </button>
                 </div>
               </div>
