@@ -1,15 +1,32 @@
 import React, { useState, useEffect } from 'react';
 
-const BannerSuccess: React.FC<{ message: string; onClose: () => void }> = ({ message, onClose }) => {
-  useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, [onClose]);
+// note を渡すと「読んでほしい案内」が付く。
+// 🚨 note があるときは自動で閉じない。3秒で消えて画面が切り替わると、
+//    いちばん読んでほしい一文が読まれずに終わる（休暇申請の「申請先へ直接相談」がこれ）。
+const BannerSuccess: React.FC<{ message: string; note?: string; onClose: () => void }> = ({ message, note, onClose }) => {
+  useEffect(() => {
+    if (note) return;                       // 案内があるときは押してもらうまで出したままにする
+    const t = setTimeout(onClose, 3000);
+    return () => clearTimeout(t);
+  }, [onClose, note]);
   return (
     <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999 }}>
-      <div style={{ background: '#f0fdf4', border: '1.5px solid #b7e4cc', borderRadius: 18, padding: '24px 28px', minWidth: 200, textAlign: 'center', position: 'relative' }}>
+      <div style={{ background: '#f0fdf4', border: '1.5px solid #b7e4cc', borderRadius: 18, padding: '24px 28px', minWidth: 200, maxWidth: 340, textAlign: 'center', position: 'relative' }}>
         <button onClick={onClose} style={{ position: 'absolute', top: 10, right: 10, background: 'rgba(21,87,36,0.1)', border: 'none', color: '#155724', borderRadius: '50%', width: 26, height: 26, cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
         <div style={{ width: 60, height: 60, borderRadius: '50%', background: '#d4edda', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>
           <span style={{ fontSize: 26, color: '#28a745' }}>✓</span>
         </div>
         <div style={{ fontSize: 15, fontWeight: 500, color: '#155724' }}>{message}</div>
+        {note && (
+          <>
+            <div style={{ marginTop: 12, padding: '10px 12px', background: '#fff8e1', border: '1px solid #ffe082', borderRadius: 10, fontSize: 13.5, lineHeight: 1.7, color: '#8a6d00', textAlign: 'left' }}>
+              {note}
+            </div>
+            <button onClick={onClose} style={{ marginTop: 14, padding: '8px 22px', background: '#28a745', border: 'none', borderRadius: 8, color: '#fff', fontSize: 13.5, fontWeight: 'bold', cursor: 'pointer' }}>
+              確認しました
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -332,6 +349,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const [submitError, setSubmitError] = useState<string | null>(null); // 送信失敗のモーダル内インラインエラー（alert廃止）
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  // 完了画面で「誰に相談すればよいか」を名前で出すため、送信した時点の申請先を控える。
+  // 🚨 送信後に選択状態がリセットされても消えないよう、別に持つ
+  const [submittedApproverLabel, setSubmittedApproverLabel] = useState('');
   const [approvers, setApprovers] = useState<Approver[]>([]);
   const [selectedApproverId, setSelectedApproverId] = useState(ld?.selectedApproverId ?? '');
   const [showApproverGuide, setShowApproverGuide] = useState(false);
@@ -570,6 +590,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         });
         if (editErr) throw editErr;
         setEditLeaveId(null);
+        setSubmittedApproverLabel(selectedApprover?.name ?? '');
         setSubmitted(true);
         setShowConfirm(false);
         clearDraft(DRAFT_KEYS.leave);
@@ -625,6 +646,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       await dispatchSiteNotification('leave:new_request', vars, { applicant: user.id, [apprKey]: selectedApprover?.id, approver: selectedApprover?.id }, insertNotification, 'leave_request:pending_approval', newRequest?.id);
       await dispatchEmail('leave:new_request', vars, { applicant: applicantEmail, [apprKey]: leaderEmail, approver: leaderEmail });
       // TODO: 申請フォーム送信後の追加処理（例：奨励日との照合・連携）をここに追加
+      setSubmittedApproverLabel(selectedApprover?.name ?? '');
       setSubmitted(true);
       setShowConfirm(false);
       clearDraft(DRAFT_KEYS.leave); // 送信成功で下書きを消す
@@ -683,7 +705,15 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const { pendingCount: approvalPendingCount } = useLeavePendingCount(user.id, _roleTitle, false);
 
   if (submitted) {
-    return <BannerSuccess message="申請しました" onClose={() => { if (onSubmitSuccess) { onSubmitSuccess(); } else { handleReset(); navigate('/'); } }} />;
+    return (
+      <BannerSuccess
+        message="申請しました"
+        note={submittedApproverLabel
+          ? `⚠️ このあと 申請先「${submittedApproverLabel}さん」へ直接相談してください。`
+          : '⚠️ このあと 申請先へ直接相談してください。'}
+        onClose={() => { if (onSubmitSuccess) { onSubmitSuccess(); } else { handleReset(); navigate('/'); } }}
+      />
+    );
   }
 
   const encAnsweringDay = encPending.find(d => d.id === encAnsweringId) || null;
@@ -868,8 +898,13 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             <p style={{ fontSize: 13, fontWeight: 'bold', color: isDark ? '#fff' : '#1a4a5a', marginBottom: 8 }}>【注意事項】</p>
             <ol style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8, textAlign: 'left' }}>
               <li>休暇申請は、できるだけ休暇予定日の<strong>2週間前まで</strong>に行ってください。</li>
-              <li>申請先は、休暇を取得する日の<strong>勤務校リーダー</strong>を選択してください。</li>
-              <li>申請後、選択したリーダーへ<strong>直接相談</strong>してください。</li>
+              {/* 🚨 「原則」を入れているのは、マネージャーへ直接申請することも認めているため。
+                     ただし「マネージャーでも構いません」とは書かない（そちらが増えてしまう）。
+                     選択肢にマネージャーが並んでいるので、選べること自体は伝わる（2026-09-04 ユーザー確定） */}
+              <li>申請先は、<strong>原則、休暇を取得する日の勤務校リーダー</strong>を選択してください。</li>
+              {/* 🚨 「リーダーへ」ではなく「申請先へ」。マネージャーを選ぶこともあるため。
+                     完了画面の案内とも同じ言い方に揃えている */}
+              <li>申請後、<strong>申請先へ直接相談</strong>してください。</li>
               <li>申請が受理されると、交通費申請ページに通知が表示されます。</li>
               <li>パートタイマーの方も、正社員と同様に申請してください。</li>
             </ol>
@@ -953,6 +988,12 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           {/* 申請先 */}
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: text }}>申請先 <span style={{ color: '#dc3545' }}>*</span></label>
+            {/* 🚨 案内はセレクトの「外」に出す。
+                   ブラウザ（OS）が描く <option> は色も書式も指定どおりにならず、
+                   iPhone では別のピッカーになるため、中に書くと環境によって読めない */}
+            <div style={{ fontSize: 12, color: subText, marginBottom: 6, lineHeight: 1.6 }}>
+              申請先は、原則、休暇を取る日の<strong>勤務校リーダー</strong>を選んでください
+            </div>
             {leaveApprovers.length === 0 ? (
               <div style={{ padding: '10px 14px', background: '#fff3cd', borderRadius: 8, color: '#856404', fontSize: 14 }}>
                 受理者が登録されていません

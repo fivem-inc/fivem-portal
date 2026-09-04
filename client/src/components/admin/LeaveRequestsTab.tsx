@@ -1373,7 +1373,8 @@ const LeaveRequestsTab: React.FC = () => {
                     <thead>
                       <tr style={{ background: isDarkMode ? '#495057' : '#f8f9fa' }}>
                         {[
-                          { label: '申請日', w: 70 }, { label: '申請者', w: 65 }, { label: '申請先', w: 65 },
+                          // 申請先の列は①②の2行を出すので少し広げてある（65→85）
+                          { label: '申請日', w: 70 }, { label: '申請者', w: 65 }, { label: '申請先', w: 85 },
                           { label: '種別', w: 55 }, { label: '休暇日', w: 100 },
                           { label: '日数', w: 40 }, { label: '事由・備考', w: 100 }, { label: '確認状況', w: 85 }, { label: '操作', w: 90 },
                         ].map(col => (
@@ -1422,8 +1423,16 @@ const LeaveRequestsTab: React.FC = () => {
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12 }}>
                               {req.profile?.name || '-'}
                             </td>
+                            {/* 申請先（①）と、①が選んだマネージャー（②）。
+                                🚨 休暇は2人が順に受理するので、①だけだと「誰が受理したか」が追えない。
+                                   ②の名前はもともと取得済み（CSVには出していた）。2026-09-04 表示を追加 */}
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12 }}>
-                              {req.approver?.name || '-'}
+                              <div>{req.approver?.name || '-'}</div>
+                              {req.approver2?.name && (
+                                <div style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#555', marginTop: 2 }}>
+                                  └ ② {req.approver2.name}
+                                </div>
+                              )}
                             </td>
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 12, wordBreak: 'break-word' }}>{req.leave_type === 'その他' ? req.leave_type_other : req.leave_type}</td>
                             <td style={{ padding: '8px 4px', borderBottom: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, textAlign: 'center', fontSize: 11 }}>{dateDisplay}</td>
@@ -1662,7 +1671,8 @@ const LeaveRequestsTab: React.FC = () => {
                                   {parent.profile?.name || '-'}
                                 </td>
                                 <td style={{ padding: '6px 4px', borderBottom: `2px solid #28a745`, textAlign: 'center', fontSize: 11, color: isDarkMode ? '#adb5bd' : '#555' }}>
-                                  {parent.approver?.name || '-'}
+                                  <div>{parent.approver?.name || '-'}</div>
+                                  {parent.approver2?.name && <div style={{ fontSize: 10, marginTop: 2 }}>└ ② {parent.approver2.name}</div>}
                                 </td>
                                 <td style={{ padding: '6px 4px', borderBottom: `2px solid #28a745`, textAlign: 'center', fontSize: 11, color: isDarkMode ? '#adb5bd' : '#555' }}>{parent.leave_type === 'その他' ? parent.leave_type_other : parent.leave_type}</td>
                                 <td style={{ padding: '6px 4px', borderBottom: `2px solid #28a745`, textAlign: 'center', fontSize: 10, color: isDarkMode ? '#adb5bd' : '#555' }}>{pDateDisplay}</td>
