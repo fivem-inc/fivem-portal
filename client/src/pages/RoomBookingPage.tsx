@@ -3657,6 +3657,20 @@ const BookingDetail: React.FC<{
     att: { p: Participant; status: string }[];
     done: string[];
   } | null>(null);
+  /**
+   * 「お休み・休講をやめる」が通らなかったときに、**何が塞いでいるか**を出す
+   * （2026-09-04 実機指摘）。
+   * きっかけ：貸切（占有）の回をお休みにすると、その時に作った**募集枠が同じ時間に残る**。
+   *   占有は「同じ時間に他の予約が1件もない」ことが条件なので、
+   *   **自分が作った募集枠にぶつかって戻せなくなる**。しかも募集枠の後片付けは
+   *   戻したあとに出る作りなので、そこへたどり着けなかった＝行き止まりだった。
+   * 🚨 黙って消さない方針は変えない。塞いでいる予約を見せ、1件ずつ人が決めてから
+   *    もう一度戻す
+   */
+  const [undoBlocked, setUndoBlocked] = useState<{
+    reason: string;
+    blockers: Pick<Booking, 'id' | 'starts_at' | 'ends_at' | 'staff_id' | 'kind' | 'purpose' | 'customer_label' | 'exclusive'>[];
+  } | null>(null);
   // この回はキャンセル待ちの対象外か（回ごとの印・2026-09-03）
   const [noWaitlist, setNoWaitlist] = useState(!!b.no_waitlist);
   // 募集枠に申込を入れるときの入力
@@ -3784,6 +3798,29 @@ const BookingDetail: React.FC<{
     onChanged(scope === 'future' && repeating ? '今後の分をまとめて休講にしました' : '休講にしました');
   };
 
+  /**
+   * 戻せなかったときに、**同じ時間に入っている予約**を読んで一覧で見せる
+   * （2026-09-04 実機指摘）。
+   * 🚨 貸切（占有）の回は「他が1件もない」ことが条件なので、お休みのときに作った
+   *    募集枠が残っているだけで戻せない。理由だけ出すと行き止まりになるため、
+   *    その募集枠をここから取り消せるようにする（消すかどうかは人が決める）
+   */
+  const showBlockers = async (reason: string) => {
+    setError('');
+    const { data } = await supabase.from('room_bookings')
+      .select('id, starts_at, ends_at, staff_id, kind, purpose, customer_label, exclusive')
+      .eq('floor_id', b.floor_id)
+      .eq('status', 'active')
+      .is('deleted_at', null)
+      .neq('id', b.id)
+      .lt('starts_at', b.ends_at)
+      .gt('ends_at', b.starts_at);
+    setUndoBlocked({
+      reason,
+      blockers: (data ?? []) as NonNullable<typeof undoBlocked>['blockers'],
+    });
+  };
+
   // 休講を取り消して元に戻す。
   // 🚨 休講にしている間に他の予約が入っている可能性があるので、戻す前に必ず空きを確認する。
   //    確認せずに戻すと、上限を超えた状態や占有との重なりが黙って出来上がる。
@@ -3795,7 +3832,11 @@ const BookingDetail: React.FC<{
     });
     const row = Array.isArray(data) ? data[0] : data;
     if (chkErr) { setBusy(false); setError('空きを確認できませんでした。通信を確認してもう一度お試しください。'); return; }
-    if (!row?.ok) { setBusy(false); setError(`元に戻せません：${row?.reason ?? 'この時間は他の予約で埋まっています'}`); return; }
+    if (!row?.ok) {
+      setBusy(false);
+      await showBlockers(row?.reason ?? 'この時間は他の予約で埋まっています');
+      return;
+    }
 
     // 🚨 担当の重なりも見る（2026-09-03 実機指摘）。場所に空きがあっても、
     //    繰り上げで別の方が同じ担当に入っていれば二重になる
@@ -3805,10 +3846,11 @@ const BookingDetail: React.FC<{
       });
       if (busyData === true) {
         setBusy(false);
-        setError('この時間の担当には、すでに別の予約が入っています（繰り上げ済みなど）。先にそちらを整理してください。');
+        await showBlockers('この時間の担当には、すでに別の予約が入っています（繰り上げ済みなど）');
         return;
       }
     }
+    setUndoBlocked(null);
 
     const wasAbsence = isAbsence(b);
     const label = cancelledLabel(b);
@@ -4286,6 +4328,68 @@ const BookingDetail: React.FC<{
           </div>
         )}
 
+        {/* 戻せなかったとき：何が塞いでいるかを出し、その場で片付けて再挑戦できるようにする
+            （2026-09-04 実機指摘。貸切の回は、お休みのときに作った募集枠が残っているだけで
+             戻せず、募集枠の後片付けは戻したあとにしか出ないので行き止まりだった） */}
+        {undoBlocked && (
+          <div style={{ background: isDark ? '#4a2a2a' : '#fdecea', border: `1px solid ${isDark ? '#7a4444' : '#f5c6cb'}`, color: isDark ? '#ffb4b4' : '#a3282a', borderRadius: 8, padding: '10px 12px', fontSize: 13, marginTop: 14, lineHeight: 1.8 }}>
+            <b>元に戻せません：{undoBlocked.reason}</b>
+            {b.exclusive && (
+              <span style={{ display: 'block', fontSize: 12 }}>
+                この回は<b>貸切</b>なので、同じ時間に予約が1件でもあると戻せません。
+              </span>
+            )}
+            {undoBlocked.blockers.length === 0 ? (
+              <span style={{ display: 'block', fontSize: 12.5, marginTop: 4 }}>
+                同じ時間の予約は見つかりませんでした。時間を空けてからもう一度お試しください。
+              </span>
+            ) : (
+              <div style={{ marginTop: 6 }}>
+                同じ時間に入っているもの：
+                {undoBlocked.blockers.map(x => (
+                  <div key={x.id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5, marginTop: 4 }}>
+                    <span>
+                      {hhmm(x.starts_at)}〜{hhmm(x.ends_at)}
+                      {' / '}{x.kind === 'open' ? '募集枠' : '予約'}
+                      {' / '}{x.purpose}
+                      {' / '}担当：{staff.find(t => t.id === x.staff_id)?.name ?? '担当なし'}
+                      {x.customer_label ? ` / ${x.customer_label}` : ''}
+                      {x.exclusive ? ' / 🔒 貸切' : ''}
+                    </span>
+                    {/* 🚨 取り消せるのは**募集枠だけ**。お客様が入っている予約は
+                           ここから消させない（消す判断は予約の詳細で行う） */}
+                    {x.kind === 'open' && (
+                      <button onClick={async () => {
+                        setBusy(true); setError('');
+                        const { data: me } = await supabase.auth.getUser();
+                        const { data, error: derr } = await supabase.from('room_bookings')
+                          .update({ deleted_at: new Date().toISOString(), deleted_by: me.user?.id ?? null })
+                          .eq('id', x.id).select('id');
+                        setBusy(false);
+                        if (derr || !data?.length) { setError('募集枠を取り消せませんでした。通信を確認してください。'); return; }
+                        setUndoBlocked(p => (p ? { ...p, blockers: p.blockers.filter(y => y.id !== x.id) } : p));
+                      }} disabled={busy}
+                        style={{ marginLeft: 'auto', padding: '5px 12px', borderRadius: 999, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 12.5, fontWeight: 700, cursor: busy ? 'wait' : 'pointer' }}>
+                        この募集枠を取り消す
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+              <button onClick={unCancel} disabled={busy}
+                style={{ padding: '7px 14px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 13, fontWeight: 700, cursor: busy ? 'wait' : 'pointer' }}>
+                もう一度「{cancelledLabel(b)}をやめる」
+              </button>
+              <button onClick={() => setUndoBlocked(null)}
+                style={{ padding: '7px 12px', borderRadius: 8, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 13, cursor: 'pointer' }}>
+                閉じる
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* お休み・休講を戻したあとの後片付け（2026-09-03／2026-09-04）。
             🚨 出欠も募集枠も**黙って消さない**。1枚にまとめて、1つずつ人が決める。
                枠と空き枠のつながりは保存していないので、募集枠は候補として見せるだけ */}
@@ -4378,7 +4482,7 @@ const BookingDetail: React.FC<{
           </div>
         )}
 
-        {confirm === 'none' && !filling && !afterUndo && (
+        {confirm === 'none' && !filling && !afterUndo && !undoBlocked && (
           <div style={{ display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
             <button onClick={() => onEdit(b)}
               style={{ flex: '1 1 120px', padding: '11px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
