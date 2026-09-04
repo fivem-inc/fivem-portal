@@ -189,6 +189,13 @@ export interface Booking {
    * 対象外の回は 空きあり判定・日付選び・出欠後の案内 から除外される
    */
   no_waitlist?: boolean;
+  /**
+   * 確認中（お客様の返事待ちなど・2026-09-04〜・既定 false）。
+   * 🚨 **表示だけの印**。空き・重なりの判定には効かせない（確認中でも場所と担当は
+   *    今までどおり押さえる＝二重予約は防げる）。予約表では【確認中】＋破線で出す。
+   * 🚨 回ごとの印。繰り返しのルールには持たせないので、月次更新で作る回は常に確定
+   */
+  tentative?: boolean;
   created_by: string;
   updated_by: string | null;
   created_at: string;
@@ -248,7 +255,25 @@ export interface Waitlist {
     /** 枠の受け入れ時間（繰り上げ・空き枠化の既定値・2026-09-03〜） */
     accept_start?: string | null;
     accept_end?: string | null;
+    /** 枠そのものへの申し送り（2026-09-04〜。回にはコピーしない） */
+    slot_memo?: string | null;
   } | null;
+}
+
+/**
+ * 「この日は見送る」（2026-09-04〜）。毎週の枠の待ちが、その回だけ繰り上げの
+ * 対象から外れる印（DBの room_waitlist_skips）。
+ * 🚨 待ちのデータは消さない。順番も残る。戻せば元どおり繰り上げられる。
+ * 🚨 判定は画面とサーバー（room_promote_waitlist_at）の**両方**にある。
+ *    片方だけ直すと「一覧には見送りと出るのに、押せば入る」になる（2026-09-03 の失敗と同型）
+ */
+export interface WaitlistSkip {
+  id: string;
+  waitlist_id: string;
+  booking_id: string;
+  /** 見送りの理由（任意）。例：「旅行のため」 */
+  reason: string | null;
+  created_at: string;
 }
 
 /** お客様（DBの room_customers）。一般の方は会員番号を持たないので、ここには載らない */
@@ -762,6 +787,13 @@ export interface Recurrence {
    */
   accept_start?: string | null;
   accept_end?: string | null;
+  /**
+   * 枠そのものへの申し送り（2026-09-04〜・任意）。
+   * 例：「17:40以降なら受け入れ可」「◯◯さん優先」。
+   * 🚨 上の `memo` とは**別物**。memo は月次更新が各回の予約メモにコピーする元なので、
+   *    運用の申し送りを書くと今後の全部の回に入ってしまう。こちらは回にコピーしない
+   */
+  slot_memo?: string | null;
   /** 4/1〜翌3/31 を1つとする年度。終わりの日が属する年度を入れる */
   fiscal_year: number;
   /** どの繰り返しから引き継いだか。二度押しで二重に作らないための目印 */
