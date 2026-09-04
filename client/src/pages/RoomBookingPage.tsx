@@ -99,6 +99,64 @@ const participantLabel = (b: Booking): string => {
 };
 
 /**
+ * 受け入れ時間・空き枠の時間を決める入力（2026-09-04 ユーザー承認・案C）。
+ *
+ * きっかけ：時刻を2つ入れる形は間違えやすい（逆に入れる／終了だけ直して長さが変わる）。
+ * 🚨 **予約フォームとまったく同じ操作感**にする。ここだけ別の作りにすると
+ *    使い方が食い違い、かえって間違いのもとになる：
+ *    ・長さボタンで決められる（終了は自動計算）
+ *    ・終了を直接打つこともできる（打つと長さの表示が追従）
+ *    ・**開始を直したら、いまの長さを保ったまま終了が動く**（2026-09-02 の実機指摘と同じ）
+ *    ・いま何分かを常に出す。逆転していれば赤字で知らせる
+ * 🚨 長さは**目安であって制限ではない**（2026-09-03 ユーザー確定。受け入れは例外対応が目的）。
+ *    用途の長さ設定に縛られず、何分でも入れられる
+ */
+const ACCEPT_DURATIONS = [10, 25, 30, 45, 50, 60, 90];
+
+const TimeRangeInput: React.FC<{
+  start: string; end: string;
+  onChange: (start: string, end: string) => void;
+  isDark: boolean; idPrefix: string;
+}> = ({ start, end, onChange, isDark, idPrefix }) => {
+  const line = isDark ? '#3a3a5c' : '#e0e0e0';
+  const textMid = isDark ? '#b3b8c6' : '#5b6270';
+  const accent = isDark ? '#6bbd92' : '#2f6f4f';
+  const dur = minutesOf(end) - minutesOf(start);
+  const pill = (on: boolean): React.CSSProperties => ({
+    padding: '4px 11px', borderRadius: 999, fontSize: 12.5, cursor: 'pointer',
+    border: `1px solid ${on ? accent : line}`,
+    background: on ? accent : 'transparent',
+    color: on ? (isDark ? '#1d2a24' : '#fff') : textMid,
+    fontWeight: on ? 700 : 400,
+  });
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <TimeInput value={start}
+          onChange={v => {
+            // 🚨 開始を直しても、いまの長さは保つ（終了を据え置くと長さが変わってしまう）
+            onChange(v, dur > 0 ? addMinutes(v, dur) : end);
+          }}
+          isDark={isDark} ariaLabel={`${idPrefix}開始`} style={{ width: 110 }} />
+        <span>〜</span>
+        <TimeInput value={end} onChange={v => onChange(start, v)}
+          isDark={isDark} ariaLabel={`${idPrefix}終了`} style={{ width: 110 }} />
+        <b style={{ fontSize: 12.5, color: dur > 0 ? accent : (isDark ? '#ffb4b4' : '#a3282a') }}>
+          {dur > 0 ? `（${durationLabel(dur)}）` : '（終了は開始より後にしてください）'}
+        </b>
+      </div>
+      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 5 }}>
+        <span style={{ fontSize: 12, color: textMid, alignSelf: 'center' }}>長さ</span>
+        {ACCEPT_DURATIONS.map(m => (
+          <button key={m} type="button" onClick={() => onChange(start, addMinutes(start, m))}
+            style={pill(dur === m)}>{durationLabel(m)}</button>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+/**
  * カードに出す「状態＋用途」（2026-09-04 ユーザー指示）。
  * 🚨 募集中・お休み・休講のときに**用途が消えて**、通常の予約とで表記が揃っていなかった
  *    （通常＝「プライベート」／募集中＝「募集中」）。何のレッスンの枠なのかが読めない。
@@ -4317,14 +4375,14 @@ const BookingDetail: React.FC<{
                   受け入れ時間を決めておく（空き枠・繰り上げのときの時間）
                 </label>
                 {slotSet.accept_start && (
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginLeft: 22, flexWrap: 'wrap' }}>
-                    <TimeInput value={slotSet.accept_start.slice(0, 5)}
-                      onChange={v => patchSlotSet({ accept_start: v })}
-                      isDark={isDark} ariaLabel="枠の受け入れ開始" style={{ width: 110 }} />
-                    <span style={{ fontSize: 13 }}>〜</span>
-                    <TimeInput value={(slotSet.accept_end ?? '').slice(0, 5)}
-                      onChange={v => patchSlotSet({ accept_end: v })}
-                      isDark={isDark} ariaLabel="枠の受け入れ終了" style={{ width: 110 }} />
+                  <div style={{ marginLeft: 22 }}>
+                    {/* 🚨 時刻を2つ入れる形は間違えやすいので、長さでも決められるようにした
+                           （2026-09-04 ユーザー承認・案C。予約フォームと同じ操作感） */}
+                    <TimeRangeInput
+                      start={slotSet.accept_start.slice(0, 5)}
+                      end={(slotSet.accept_end ?? '').slice(0, 5)}
+                      onChange={(st, en) => patchSlotSet({ accept_start: st, accept_end: en })}
+                      isDark={isDark} idPrefix="枠の受け入れ" />
                   </div>
                 )}
                 {/* 枠のメモ（2026-09-04 ユーザー承認）。この曜日・時間の枠についての申し送り。
@@ -5894,18 +5952,14 @@ const WaitlistSettings: React.FC<{
       <b>{promoteDraft.w.customer_label}</b> さんを <b>{formatDateLabel(promoteDraft.dateStr)}</b> に繰り上げます。
       時間を確かめてください
       {promoteDraft.w.recurrence?.accept_start && <b>（枠の受け入れ時間が入っています）</b>}。
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
-        <TimeInput value={promoteDraft.start}
-          onChange={v => setPromoteDraft(p => (p ? { ...p, start: v } : p))}
-          isDark={isDark} ariaLabel="受け入れ開始" style={{ width: 110 }} />
-        <span>〜</span>
-        <TimeInput value={promoteDraft.end}
-          onChange={v => setPromoteDraft(p => (p ? { ...p, end: v } : p))}
-          isDark={isDark} ariaLabel="受け入れ終了" style={{ width: 110 }} />
-        <span style={{ marginLeft: 'auto', display: 'flex', gap: 5 }}>
+      <div style={{ marginTop: 6 }}>
+        <TimeRangeInput start={promoteDraft.start} end={promoteDraft.end}
+          onChange={(st, en) => setPromoteDraft(p => (p ? { ...p, start: st, end: en } : p))}
+          isDark={isDark} idPrefix="受け入れ" />
+        <div style={{ display: 'flex', gap: 5, marginTop: 6, flexWrap: 'wrap' }}>
           <button onClick={confirmPromote} disabled={!!busy} style={smallBtn(true)}>この内容で繰り上げる</button>
           <button onClick={() => setPromoteDraft(null)} style={smallBtn(false)}>やめる</button>
-        </span>
+        </div>
       </div>
       <span style={{ fontSize: 11.5 }}>
         時間はここで直せます（用途の長さの決まりと違っていても作れます）。
@@ -6191,19 +6245,18 @@ const WaitlistSettings: React.FC<{
           </div>
           {/* 空き枠の時間確認（2026-09-03）。既定は枠の受け入れ時間 */}
           {vacDraft && (
-            <div style={{ marginTop: 8, borderTop: `1px solid ${isDark ? '#8a7a3a' : '#ffe082'}`, paddingTop: 7, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <span><b>{formatDateLabel(vacDraft.dateStr)}</b> を空き枠にします。時間：</span>
-              <TimeInput value={vacDraft.start}
-                onChange={v => setVacDraft(p => (p ? { ...p, start: v } : p))}
-                isDark={isDark} ariaLabel="空き枠の開始" style={{ width: 100 }} />
-              <span>〜</span>
-              <TimeInput value={vacDraft.end}
-                onChange={v => setVacDraft(p => (p ? { ...p, end: v } : p))}
-                isDark={isDark} ariaLabel="空き枠の終了" style={{ width: 100 }} />
-              <span style={{ marginLeft: 'auto', display: 'flex', gap: 5 }}>
+            <div style={{ marginTop: 8, borderTop: `1px solid ${isDark ? '#8a7a3a' : '#ffe082'}`, paddingTop: 7 }}>
+              <div style={{ marginBottom: 5 }}>
+                <b>{formatDateLabel(vacDraft.dateStr)}</b> を空き枠にします。時間：
+              </div>
+              {/* 🚨 長さでも決められるようにした（2026-09-04 ユーザー承認・案C） */}
+              <TimeRangeInput start={vacDraft.start} end={vacDraft.end}
+                onChange={(st, en) => setVacDraft(p => (p ? { ...p, start: st, end: en } : p))}
+                isDark={isDark} idPrefix="空き枠の" />
+              <div style={{ display: 'flex', gap: 5, marginTop: 6, flexWrap: 'wrap' }}>
                 <button onClick={confirmVacate} disabled={!!busy} style={smallBtn(true)}>この時間で空き枠にする</button>
                 <button onClick={() => setVacDraft(null)} style={smallBtn(false)}>やめる</button>
-              </span>
+              </div>
             </div>
           )}
           {(vacLoading || vacOcc.length > 0) && (
