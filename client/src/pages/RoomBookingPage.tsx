@@ -6275,7 +6275,18 @@ const WaitlistSettings: React.FC<{
       waitlist_id: waitlistId, booking_id: bookingId, reason,
       created_by: me.user?.id ?? null,
     });
-    if (err) { setError('見送りにできませんでした。通信を確認してください。'); return false; }
+    if (err) {
+      // 🚨 すでに見送りにしてある（表に「待ち×回」の重複禁止がある）。
+      //    これは失敗ではないので、そのまま見送り済みとして扱う（2026-09-04 実機指摘）
+      if (err.code === '23505') {
+        setSkips(prev => new Map(prev).set(`${waitlistId}|${bookingId}`, reason));
+        return true;
+      }
+      // 🚨 それ以外は**理由をそのまま出す**。「通信を確認してください」で
+      //    握りつぶすと、今日のように原因にたどり着けない
+      setError(`見送りにできませんでした：${err.message}`);
+      return false;
+    }
     setSkips(prev => new Map(prev).set(`${waitlistId}|${bookingId}`, reason));
     return true;
   };
@@ -6687,7 +6698,11 @@ const WaitlistSettings: React.FC<{
                 <span style={{ marginLeft: 'auto', display: 'flex', gap: 5, flexWrap: 'wrap' }}>
                   {/* 🚨 主にしたいのは**その日だけ**（2026-09-04 ユーザー指摘）。
                          丸ごと取り消すと今後ずっと待たなくなってしまう */}
-                  {sameDayId ? (
+                  {/* 🚨 すでに見送りにしてある枠は押させない（2026-09-04 実機指摘）。
+                         押すと重複で弾かれ、「通信を確認してください」と出て意味が分からなかった */}
+                  {sameDayId && skips.has(`${o.id}|${sameDayId}`) ? (
+                    <span style={{ fontSize: 12 }}>（すでに見送りにしています）</span>
+                  ) : sameDayId ? (
                     <button onClick={async () => {
                       setBusy(o.id);
                       const okDone = await skipOn(o.id, sameDayId,
