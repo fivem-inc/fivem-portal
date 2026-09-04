@@ -1523,6 +1523,19 @@ const ParticipantRow: React.FC<{
   const [openList, setOpenList] = useState(false);
   // 🚨 こちらが入れたお名前を覚えておく。手で書き換えられたものは上書きしない
   const autoFilled = useRef('');
+  /**
+   * この欄に**人が打ったか**（2026-09-04 実機指摘）。
+   * 🚨 打っていないのに候補を出さない。変更で開いたときは既にお名前が入っているため、
+   *    「2文字以上なら探す」だけの判定だと**開いた瞬間に候補が開いて**、
+   *    予約の内容が検索画面のように見えていた
+   */
+  const typed = useRef(false);
+  /**
+   * この行の欄（会員番号・お客様）を触っているか（2026-09-04 ユーザー指示）。
+   * 🚨 触っていない行の下に候補が開いたままだと、予約の内容が検索画面のように見える。
+   *    候補は**触っている間だけ**出す
+   */
+  const [focused, setFocused] = useState(false);
 
   const line = isDark ? '#3a3a5c' : '#e0e0e0';
   const text = isDark ? '#eeeeee' : '#222222';
@@ -1563,6 +1576,8 @@ const ParticipantRow: React.FC<{
   // お名前 → 候補。2文字から探す（1文字だと候補が多すぎて選べない）
   useEffect(() => {
     const q = value.name.trim();
+    // 🚨 人が打つまでは探さない（変更で開いた直後に候補が開くのを防ぐ）
+    if (!typed.current) { setCands([]); setSearching(false); return; }
     if (q.length < 2 || q === autoFilled.current) { setCands([]); setSearching(false); return; }
     const filter = customerSearchFilter(q);
     if (!filter) { setCands([]); return; }
@@ -1594,13 +1609,16 @@ const ParticipantRow: React.FC<{
         <div style={{ flex: 1 }}>
           <label style={label}>会員番号（任意）</label>
           <input value={value.no} onChange={e => onChange({ ...value, no: e.target.value })}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
             style={input} inputMode="numeric" placeholder="2014052061" />
         </div>
         <div style={{ flex: 1 }}>
           <label style={label}>お客様（任意）</label>
           <input value={value.name}
-            onChange={e => onChange({ ...value, name: e.target.value })}
-            onFocus={() => { if (cands.length) setOpenList(true); }}
+            onChange={e => { typed.current = true; onChange({ ...value, name: e.target.value }); }}
+            onFocus={() => { setFocused(true); if (cands.length) setOpenList(true); }}
+            onBlur={() => setFocused(false)}
             style={input} placeholder="田中 太郎" />
         </div>
         {onRemove && (
@@ -1611,8 +1629,12 @@ const ParticipantRow: React.FC<{
       </div>
 
       {/* お名前の候補。押すと会員番号も一緒に入る */}
-      {openList && cands.length > 0 && (
-        <div style={{
+      {openList && focused && cands.length > 0 && (
+        <div
+          // 🚨 候補を押すと先に blur が起きて一覧が消え、クリックが届かなくなる。
+          //    押し始めの時点で blur を止める
+          onMouseDown={e => e.preventDefault()}
+          style={{
           position: 'absolute', zIndex: 5, left: 0, right: 0, marginTop: 3,
           background: cardBg, border: `1px solid ${line}`, borderRadius: 8,
           maxHeight: 232, overflowY: 'auto', boxShadow: '0 6px 18px rgba(0,0,0,.18)',
