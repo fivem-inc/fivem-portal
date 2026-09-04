@@ -19,7 +19,7 @@ const BannerSuccess: React.FC<{ message: string; note?: string; onClose: () => v
         <div style={{ fontSize: 15, fontWeight: 500, color: '#155724' }}>{message}</div>
         {note && (
           <>
-            <div style={{ marginTop: 12, padding: '10px 12px', background: '#fff8e1', border: '1px solid #ffe082', borderRadius: 10, fontSize: 13.5, lineHeight: 1.7, color: '#8a6d00', textAlign: 'left' }}>
+            <div style={{ marginTop: 12, padding: '10px 12px', background: '#fff3cd', border: '2px solid #ffc107', borderRadius: 10, fontSize: 13.5, lineHeight: 1.7, color: '#856404', textAlign: 'left' }}>
               {note}
             </div>
             <button onClick={onClose} style={{ marginTop: 14, padding: '8px 22px', background: '#28a745', border: 'none', borderRadius: 8, color: '#fff', fontSize: 13.5, fontWeight: 'bold', cursor: 'pointer' }}>
@@ -1370,17 +1370,25 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             </div>
 
             {/* info-box */}
-            <div style={{ background: isDark ? '#1a3a4a' : '#e8f4fd', border: `1px solid ${isDark ? '#2a6a8a' : '#bee5eb'}`, borderRadius: 10, padding: '12px 14px', marginBottom: 14 }}>
-              <div style={{ fontWeight: 'bold', fontSize: 13, color: isDark ? '#90d0f0' : '#0c4a6e', marginBottom: 6 }}>自己登録（申請不要）</div>
-              <div style={{ fontSize: 12, color: isDark ? '#a8cfe8' : '#0e5a8a', lineHeight: 1.7 }}>
+            {/* 🚨 説明枠は、このファイル上部の「注意事項」と同じ配色に揃える。
+                   ここだけ暗い紺（#1a3a4a）＋淡い青文字（#a8cfe8）で、さらに
+                   ※ の行に opacity を掛けていたため、ダークで文字が沈んで読めなかった。
+                   🚨 文字に opacity を使わない。背景と混ざって薄くなるだけで、
+                      「控えめにする」目的なら色そのもので調整する */}
+            <div style={{ background: isDark ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5a73' : '#bee5eb'}`, borderRadius: 10, padding: '12px 14px', marginBottom: 14 }}>
+              <div style={{ fontWeight: 'bold', fontSize: 13, color: isDark ? '#fff' : '#1a4a5a', marginBottom: 6 }}>自己登録（申請不要）</div>
+              <div style={{ fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.7 }}>
                 時間調整は受理フローがありません。登録するとGoogleカレンダーにも反映されます。<br />
-                <span style={{ opacity: 0.85 }}>※ 有給休暇などの休暇申請とは異なり、受理待ちにはなりません。</span><br />
-                <span style={{ opacity: 0.85 }}>※ 登録の取り消しはリーダー・マネージャーまたは経理担当者へご連絡ください。</span>
+                ※ 有給休暇などの休暇申請とは異なり、受理待ちにはなりません。<br />
+                ※ 登録の取り消しはリーダー・マネージャーまたは経理担当者へご連絡ください。
               </div>
             </div>
 
             {/* 注意文 */}
-            <div style={{ background: isDark ? '#3a2e00' : '#fff8e1', borderLeft: '4px solid #f59e0b', borderRadius: '0 8px 8px 0', padding: '10px 14px', marginBottom: 18, fontSize: 13, color: isDark ? '#ffd54f' : '#92400e', lineHeight: 1.6 }}>
+            {/* 🚨 注意の帯は固定色（#fff3cd / 2px solid #ffc107 / #856404）で統一する。
+                   以前ここだけ isDark でダークを暗い茶色にしていて、他の注意表示と
+                   見た目が揃わず沈んで見えていた（🎨🔒 バナー配色の固定ルール・例外なし） */}
+            <div style={{ background: '#fff3cd', border: '2px solid #ffc107', borderRadius: 8, padding: '10px 14px', marginBottom: 18, fontSize: 13, color: '#856404', lineHeight: 1.6 }}>
               ⚠️ 事前にフロア責任者・リーダー（マネージャー）へ必ず相談し、了承を得てから登録してください
             </div>
 
