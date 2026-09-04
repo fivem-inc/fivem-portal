@@ -82,9 +82,37 @@ const participantKey = (b: Booking): string =>
   b.member_no ? `no:${b.member_no}` : (b.customer_label ? `name:${b.customer_label}` : '__none__');
 
 /** 参加者キー → 画面に出す文字列 */
+/**
+ * 一覧（担当別・参加者別）に出すお客様の表記。
+ * 🚨 **予約表と同じ表示名を使う**（2026-09-04 実機指摘）。
+ *    loadBookings が付ける customer_name は、生年月日から
+ *    「大人は漢字／子どもはひらがな」を出し分けたもの。ここで customer_label
+ *    （DBの生の値）を直接出していたため、**この一覧だけ切り替えが効いていなかった**。
+ * 🚨 学年・年齢（customer_grade）も添える。2名以上のときは customer_name の中に
+ *    人ごとに入っているので、customer_grade は空になる（二重に出さない）
+ */
 const participantLabel = (b: Booking): string => {
   if (!b.member_no && !b.customer_label) return '参加者なし';
-  return [b.customer_label, b.member_no ? `#${b.member_no}` : ''].filter(Boolean).join(' ');
+  const nm = b.customer_name || b.customer_label || '';
+  if (!nm) return b.member_no ? `#${b.member_no}` : '参加者なし';
+  return b.customer_grade ? `${nm}（${b.customer_grade}）` : nm;
+};
+
+/**
+ * カードに出す「状態＋用途」（2026-09-04 ユーザー指示）。
+ * 🚨 募集中・お休み・休講のときに**用途が消えて**、通常の予約とで表記が揃っていなかった
+ *    （通常＝「プライベート」／募集中＝「募集中」）。何のレッスンの枠なのかが読めない。
+ *    → 「募集中 プライベート」「お休み プライベート」のように**状態＋用途**で揃える。
+ * 🚨 3つの並べ方（タイムライン・スマホ・一覧）が同じものを使う。書き写さないこと
+ */
+const statusPurposeLabel = (b: Booking): string => {
+  const p = purposeWithDetail(b);
+  if (b.status === 'cancelled') return `${cancelledLabel(b)} ${p}`;
+  if (b.kind === 'open') {
+    const rest = Math.max(0, b.seats - b.filled);
+    return `募集中${b.seats > 1 ? ` あと${rest}名` : ''} ${p}`;
+  }
+  return p;
 };
 
 /** その月の末日（YYYY-MM-DD）。m は 1〜12 */
@@ -1094,8 +1122,7 @@ const TimelineView: React.FC<{
                   const bgc = off ? (isDark ? '#33334a' : '#f0f1f4') : pb;
                   const c = cols[b.id] ?? { col: 0, cols: 1 };
                   const w = 100 / c.cols;
-                  const restSeats = Math.max(0, b.seats - b.filled);
-                  return (
+                      return (
                     <button key={b.id} onClick={() => onOpenDetail(b)}
                       style={{
                         position: 'absolute', top, height,
@@ -1120,10 +1147,11 @@ const TimelineView: React.FC<{
                       </b>
                       {/* 担当別・参加者別では「どこの場所か」が分からないと使えないので場所を出す */}
                       <span style={{ fontSize: 10.5, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {off ? cancelledLabel(b)
-                          : open ? `募集中${b.seats > 1 ? `（あと${restSeats}名）` : ''}`
-                          : view === 'place' ? `${purposeWithDetail(b)}${(b.customer_name || b.customer_label) ? ` / ${b.customer_name || b.customer_label}` : ''}`
-                          : `${placeName(b.floor_id, allCampus)} / ${purposeWithDetail(b)}`}
+                        {/* 🚨 3つの並べ方で表記を揃える（2026-09-04 ユーザー指示）。
+                               募集中・お休み・休講でも**用途が読める**ようにする */}
+                        {view === 'place'
+                          ? `${statusPurposeLabel(b)}${!open && (b.customer_name || b.customer_label) ? ` / ${b.customer_name || b.customer_label}` : ''}`
+                          : `${placeName(b.floor_id, allCampus)} / ${statusPurposeLabel(b)}`}
                       </span>
                     </button>
                   );
@@ -1229,7 +1257,6 @@ const RangeList: React.FC<{
               const bgc = off ? (isDark ? '#33334a' : '#f0f1f4') : pb;
               const st = staffById(b.staff_id);
               const where = placeName(b.floor_id, allCampus);
-              const rest = Math.max(0, b.seats - b.filled);
               return (
                 <button key={b.id} onClick={() => onOpenDetail(b)}
                   style={{
@@ -1251,7 +1278,7 @@ const RangeList: React.FC<{
                     fontSize: 11, fontWeight: 700, flexShrink: 0,
                     border: open || (b.tentative && !off) ? `1px dashed ${fg}` : 'none',
                   }}>
-                    {off ? cancelledLabel(b) : open ? `募集中${b.seats > 1 ? ` あと${rest}名` : ''}` : purposeWithDetail(b)}
+                    {statusPurposeLabel(b)}
                   </span>
                   {/* 場所／（絞っていなければ）並べている軸の本人／もう一方の軸。
                       1人に絞っているときは、その人の名前を毎行くり返さない */}
@@ -1259,8 +1286,10 @@ const RangeList: React.FC<{
                     {[
                       where,
                       ...(view === 'staff'
-                        ? [only ? '' : (st ? st.name : '担当なし'), open ? purposeWithDetail(b) : participantLabel(b)]
-                        : [only ? '' : participantLabel(b),
+                        // 🚨 用途はバッジ（statusPurposeLabel）に入ったので、本文では繰り返さない。
+                        //    募集中は参加者がいないので、お客様の欄も出さない
+                        ? [only ? '' : (st ? st.name : '担当なし'), open ? '' : participantLabel(b)]
+                        : [only || open ? '' : participantLabel(b),
                            st ? `${st.name}（${categoryLabel(st, categories) || '区分なし'}）` : '担当なし']),
                     ].filter(Boolean).join('／')}
                   </span>
@@ -1359,7 +1388,6 @@ const MobileView: React.FC<{
           const fg = off ? textSoft : pf;
           const bgc = off ? (isDark ? '#33334a' : '#f0f1f4') : pb;
           const st = staffById(b.staff_id);
-          const rest = Math.max(0, b.seats - b.filled);
           return (
             <button key={b.id} onClick={() => onOpenDetail(b)}
               style={{ display: 'block', width: '100%', textAlign: 'left', background: 'transparent', border: 'none', borderTop: `1px solid ${lineSoft}`, padding: '11px 12px', cursor: 'pointer', color: off ? textSoft : text }}>
@@ -1373,13 +1401,12 @@ const MobileView: React.FC<{
                   background: bgc, color: fg, borderRadius: 999, padding: '1px 9px', fontSize: 11, fontWeight: 700,
                   border: open || (b.tentative && !off) ? `1px dashed ${fg}` : 'none',
                 }}>
-                  {off ? cancelledLabel(b) : open ? `募集中${b.seats > 1 ? ` あと${rest}名` : ''}` : purposeWithDetail(b)}
+                  {statusPurposeLabel(b)}
                 </span>
               </div>
               <div style={{ fontSize: 12.5, color: textMid, marginTop: 3 }}>
                 {[
                   view !== 'place' ? whereOf(b) : '',
-                  open ? purposeWithDetail(b) : '',
                   st ? `${st.name}（${categoryLabel(st, categories) || '区分なし'}）` : '',
                   open ? '' : (b.customer_name || b.customer_label || (b.member_no ? `#${b.member_no}` : '')),
                 ].filter(Boolean).join('／') || b.booker_name}
