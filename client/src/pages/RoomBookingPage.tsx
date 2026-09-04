@@ -3836,6 +3836,13 @@ const BookingDetail: React.FC<{
   const [upcoming, setUpcoming] = useState<Booking[] | null>(null);
   const [upcomingMore, setUpcomingMore] = useState(0);
   /**
+   * 開いているか（2026-09-04 ユーザー指示・ボタンで開く方式）。
+   * 🚨 **開くまで読みに行かない**。予約の内容を開くたびに問い合わせると、
+   *    見ない人のぶんまで通信が増える
+   */
+  const [upcomingOpen, setUpcomingOpen] = useState(false);
+  const [upcomingLoading, setUpcomingLoading] = useState(false);
+  /**
    * 「お休み」「休講」を戻したあとの後片付け（2026-09-03／2026-09-04）。
    * 戻しただけでは残ってしまうものを**1枚の案内にまとめて**出し、1つずつ人が決める。
    *   slots … そのとき作った可能性のある募集枠（🚨 つながりは保存していないので候補として見せるだけ）
@@ -3921,11 +3928,12 @@ const BookingDetail: React.FC<{
 
   useEffect(() => { loadWaiting(); }, [loadWaiting]);
 
-  // このお客様の今後の予約を読む（2026-09-04 ユーザー承認）
-  useEffect(() => {
+  // このお客様の今後の予約を読む（2026-09-04 ユーザー承認・ボタンで開いたときだけ）
+  const loadUpcoming = async () => {
     const ps = participantsOf(b).filter(p => p.no || p.name);
     if (ps.length === 0) { setUpcoming([]); return; }
-    (async () => {
+    setUpcomingLoading(true);
+    {
       const from = new Date(); from.setHours(0, 0, 0, 0);
       const to = new Date(from); to.setMonth(to.getMonth() + 3);
       // 🚨 「,」「(」「)」は or の区切りとぶつかって条件ごと壊れるので、番号は数字だけを使う
@@ -3944,8 +3952,9 @@ const BookingDetail: React.FC<{
       const list = ((data ?? []) as Booking[]).filter(x => x.id !== b.id);
       setUpcomingMore(Math.max(0, list.length - 10));
       setUpcoming(list.slice(0, 10));
-    })();
-  }, [b]);
+      setUpcomingLoading(false);
+    }
+  };
 
   // 枠ごとの設定を読む（繰り返しの予約だけ）
   useEffect(() => {
@@ -4287,11 +4296,29 @@ const BookingDetail: React.FC<{
 
         {/* このお客様の今後の予約（2026-09-04 ユーザー承認・今後3ヶ月／最大10件）。
             🚨 募集中の枠にはお客様がいないので出さない */}
-        {!isOpen && upcoming !== null && upcoming.length > 0 && (
+        {!isOpen && (b.member_no || b.customer_label) && (
           <div style={{ marginTop: 14, borderTop: `1px solid ${line}`, paddingTop: 12 }}>
-            <b style={{ fontSize: 13 }}>このお客様の今後の予約 {upcoming.length}件</b>
-            <span style={{ fontSize: 11.5, color: textMid, marginLeft: 6 }}>（今後3ヶ月）</span>
-            <div style={{ marginTop: 5 }}>
+            {/* 🚨 押したときだけ読む（2026-09-04 ユーザー指示）。予約の内容を開くたびに
+                   問い合わせると、見ない人のぶんまで通信が増える */}
+            <button onClick={async () => {
+              if (upcomingOpen) { setUpcomingOpen(false); return; }
+              setUpcomingOpen(true);
+              if (upcoming === null) await loadUpcoming();
+            }} disabled={upcomingLoading}
+              style={{ padding: '7px 13px', borderRadius: 999, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 12.5, cursor: upcomingLoading ? 'wait' : 'pointer' }}>
+              {upcomingLoading ? '読み込んでいます…'
+                : upcomingOpen ? 'このお客様の今後の予約を閉じる'
+                : 'このお客様の今後の予約を見る'}
+            </button>
+            {upcomingOpen && upcoming !== null && upcoming.length === 0 && (
+              <p style={{ fontSize: 12.5, color: textMid, margin: '6px 0 0' }}>
+                今後3ヶ月に、この方の予約はありません
+              </p>
+            )}
+            {upcomingOpen && upcoming !== null && upcoming.length > 0 && (
+            <div style={{ marginTop: 6 }}>
+              <b style={{ fontSize: 13 }}>今後の予約 {upcoming.length}件</b>
+              <span style={{ fontSize: 11.5, color: textMid, marginLeft: 6 }}>（今後3ヶ月）</span>
               {upcoming.map(u => (
                 <div key={u.id} style={{ fontSize: 12.5, color: textMid, lineHeight: 1.8 }}>
                   {formatDateLabel(localDate(u.starts_at))} {hhmm(u.starts_at)}〜{hhmm(u.ends_at)}
@@ -4310,6 +4337,7 @@ const BookingDetail: React.FC<{
                 <div style={{ fontSize: 12, color: textMid }}>ほか {upcomingMore}件（3ヶ月より先は出していません）</div>
               )}
             </div>
+            )}
           </div>
         )}
 
