@@ -990,10 +990,32 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: text }}>申請先 <span style={{ color: '#dc3545' }}>*</span></label>
             {/* 🚨 案内はセレクトの「外」に出す。
                    ブラウザ（OS）が描く <option> は色も書式も指定どおりにならず、
-                   iPhone では別のピッカーになるため、中に書くと環境によって読めない */}
-            <div style={{ fontSize: 12, color: subText, marginBottom: 6, lineHeight: 1.6 }}>
-              申請先は、原則、休暇を取る日の<strong>勤務校リーダー</strong>を選んでください
-            </div>
+                   iPhone では別のピッカーになるため、中に書くと環境によって読めない。
+                   「開いたら出す」も不可（開閉を知らせる仕組みが無く、開いたリストが下を覆う）。
+
+                🚨 まだ選んでいない間だけ強調する。読んでほしいのは「選ぶ直前」で、
+                   選び終わった人にまで警告を出し続けると、次から目に入らなくなる。
+
+                🚨 黄色の枠は**固定色**にする（isDark で切り替えない）。
+                   ダークで暗い色にすると本文が沈んで読めなくなるため
+                   （🎨🔒 バナー配色の固定ルール・例外なし）。
+                   落ち着いた側のグレー文字は「地に馴染ませる」ものなのでテーマ追従のまま */}
+            {selectedApproverId ? (
+              <div style={{ fontSize: 12, color: subText, marginBottom: 6, lineHeight: 1.6 }}>
+                申請先は、原則、休暇を取る日の勤務校リーダーを選んでください
+              </div>
+            ) : (
+              <div style={{
+                display: 'flex', gap: 8, alignItems: 'flex-start',
+                padding: '10px 12px', marginBottom: 8, borderRadius: 8,
+                background: '#fff3cd', border: '2px solid #ffc107', color: '#856404',
+              }}>
+                <span style={{ fontSize: 15, lineHeight: 1.5 }}>⚠️</span>
+                <span style={{ fontSize: 13.5, lineHeight: 1.7, fontWeight: 'bold' }}>
+                  申請先は、原則、休暇を取る日の勤務校リーダーを選んでください
+                </span>
+              </div>
+            )}
             {leaveApprovers.length === 0 ? (
               <div style={{ padding: '10px 14px', background: '#fff3cd', borderRadius: 8, color: '#856404', fontSize: 14 }}>
                 受理者が登録されていません
