@@ -5868,6 +5868,12 @@ const WaitlistSettings: React.FC<{
   /** 取り消しの確認（誤操作で待ちを消さないため・2026-09-03 ユーザー指示） */
   const [cancelTarget, setCancelTarget] = useState<Waitlist | null>(null);
   /**
+   * 「◯◯以降を取り消す」で日付を選んでいる待ち（2026-09-04 ユーザー承認）。
+   * 🚨 実際の導線は「今後ずっと」だけではない（10月から通えない、など）。
+   *    期限は room_waitlist.waiting_until に入れる（選んだ日の**前日**）
+   */
+  const [cancelFromFor, setCancelFromFor] = useState<string | null>(null);
+  /**
    * 「空きがある枠だけ」に絞る（2026-09-04 ユーザー指示）。
    * 🚨 判定は見出しの目印（avail）と**同じもの**を使う。別の式を書かない。
    *    avail は今後8週間ぶんを読んで、枠ごとに繰り上げられる最短の日を持っている
@@ -6187,6 +6193,39 @@ const WaitlistSettings: React.FC<{
       : 'この日を見送りにしました（キャンセル待ちは残っています）');
   };
 
+  /**
+   * 「◯月◯日以降を取り消す」（2026-09-04 ユーザー承認）。
+   * 🚨 選んだ日**そのものも対象外**なので、期限にはその**前日**を入れる。
+   * 🚨 待ちは消さない（status は waiting のまま）。順番も残る。あとで戻せる。
+   * 🚨 サーバー（room_promote_waitlist_at）も同じ日付で断る
+   */
+  const cancelFrom = async (w: Waitlist, fromDateStr: string) => {
+    const d = new Date(`${fromDateStr}T00:00:00`);
+    d.setDate(d.getDate() - 1);
+    const until = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    setBusy(w.id); setError('');
+    const { data, error: err } = await supabase.from('room_waitlist')
+      .update({ waiting_until: until, updated_at: new Date().toISOString() })
+      .eq('id', w.id).select('id');
+    setBusy('');
+    if (err || !data?.length) { setError('取り消せませんでした。通信を確認してください。'); return; }
+    setCancelFromFor(null); setCancelTarget(null); setPickFor(null);
+    await load();
+    await onDone(`${formatDateLabel(fromDateStr)}以降のキャンセル待ちを取り消しました`);
+  };
+
+  /** 期限を外して、また待つ状態に戻す */
+  const clearWaitingUntil = async (w: Waitlist) => {
+    setBusy(w.id); setError('');
+    const { data, error: err } = await supabase.from('room_waitlist')
+      .update({ waiting_until: null, updated_at: new Date().toISOString() })
+      .eq('id', w.id).select('id');
+    setBusy('');
+    if (err || !data?.length) { setError('戻せませんでした。通信を確認してください。'); return; }
+    await load();
+    await onDone('期限を外しました（また待ちます）');
+  };
+
   /** 見送りを戻す。🚨 delete は0件でもエラーにならないので件数を見る */
   const removeSkip = async (wId: string, bId: string) => {
     setBusy(wId); setError('');
@@ -6297,9 +6336,26 @@ const WaitlistSettings: React.FC<{
       よろしいですか？（順番は元に戻せません）
       <div style={{ display: 'flex', gap: 5, marginTop: 6, flexWrap: 'wrap' }}>
         <button onClick={async () => { const t = cancelTarget; setCancelTarget(null); await cancel(t); }}
-          disabled={!!busy} style={smallBtn(true)}>取り消す</button>
-        <button onClick={() => setCancelTarget(null)} style={smallBtn(false)}>やめる</button>
+          disabled={!!busy} style={smallBtn(true)}>今後すべて取り消す</button>
+        {/* 「◯◯以降を取り消す」（2026-09-04 ユーザー承認）。
+            🚨 実際の導線は「今後ずっと」だけではない（10月から通えない、など）。
+               待ちも順番も消さず、その日以降だけ対象から外す */}
+        {w.recurrence_id && (
+          <button onClick={async () => {
+            setCancelFromFor(w.id);
+            if (pickFor !== w.id) await openPick(w);
+          }} disabled={!!busy} style={smallBtn(cancelFromFor === w.id)}>
+            日を選んで「◯月◯日以降」だけ取り消す
+          </button>
+        )}
+        <button onClick={() => { setCancelTarget(null); setCancelFromFor(null); }} style={smallBtn(false)}>やめる</button>
       </div>
+      {cancelFromFor === w.id && (
+        <div style={{ marginTop: 6, fontSize: 12.5 }}>
+          下の日付一覧から「<b>この日以降を取り消す</b>」を押してください
+          （選んだ日<b>そのものも対象外</b>になります）。
+        </div>
+      )}
     </div>
   ) : null;
 
@@ -6766,6 +6822,12 @@ const WaitlistSettings: React.FC<{
                             const n = [...skips.keys()].filter(k => k.startsWith(`${w.id}|`)).length;
                             return n > 0 ? ` / 見送り ${n}件` : '';
                           })()}
+                          {/* 「◯◯以降を取り消す」で区切った待ち（2026-09-04）。
+                              🚨 待ち自体は残っているので、区切りが見えないと
+                                 「なぜ繰り上げられないのか」が分からなくなる */}
+                          {w.waiting_until && (
+                            <b>{' / '}{formatDateLabel(shiftDate(w.waiting_until, 1))}以降は取り消し済み</b>
+                          )}
                           {w.note && ` / ${w.note}`}
                         </span>
                         <span style={{ marginLeft: 'auto', display: 'flex', gap: 5, flexWrap: 'wrap' }}>
@@ -6798,6 +6860,12 @@ const WaitlistSettings: React.FC<{
                           )}
                           {/* 🚨 いきなり消さない。確認を挟む（2026-09-03 ユーザー指示）。
                                  毎週の待ちは繰り上げても残るので、取り消し＝今後すべて終了になる */}
+                          {/* 期限を外して、また待つ状態に戻す（2026-09-04）。
+                              🚨 戻す手段を必ず添える（抜け方が分からないと詰む） */}
+                          {w.waiting_until && (
+                            <button onClick={() => clearWaitingUntil(w)} disabled={!!busy}
+                              style={smallBtn(false)}>期限を外す</button>
+                          )}
                           <button onClick={() => setCancelTarget(w)} disabled={!!busy}
                             style={smallBtn(false)}>取り消す</button>
                         </span>
@@ -6835,7 +6903,10 @@ const WaitlistSettings: React.FC<{
                                 const done = promoted.has(skipKey);
                                 // 🚨 見送り・対象外・繰り上げ済みは押せなくする。
                                 //    サーバーでも断るが、押せるのに弾かれる状態を画面に作らない
-                                const ng = !!o.no_waitlist || done || skipped;
+                                // 🚨 「◯◯以降を取り消す」で区切られた日（サーバーも同じ判定で断る）
+                                const overLimit = !!w.waiting_until
+                                  && localDate(o.starts_at) > w.waiting_until;
+                                const ng = !!o.no_waitlist || done || skipped || overLimit;
                                 return (
                                   <div key={o.id} style={{ padding: '3px 0' }}>
                                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -6843,6 +6914,7 @@ const WaitlistSettings: React.FC<{
                                       <span style={{ fontSize: 12, color: s.free && !skipped ? accent : textMid }}>
                                         {skipped
                                           ? `見送り${skips.get(skipKey) ? `（${skips.get(skipKey)}）` : ''}`
+                                          : overLimit ? 'この日以降は取り消し済み'
                                           : s.label}
                                       </span>
                                       <span style={{ marginLeft: 'auto', display: 'flex', gap: 5, flexWrap: 'wrap' }}>
@@ -6860,10 +6932,21 @@ const WaitlistSettings: React.FC<{
                                           })}
                                             disabled={!!busy} style={smallBtn(false)}>この日は見送る</button>
                                         )}
-                                        <button onClick={() => openPromoteDraft(w, o)}
-                                          disabled={!!busy || ng}
-                                          style={{ ...smallBtn(s.free && !ng), opacity: ng ? .4 : 1, cursor: ng ? 'not-allowed' : undefined }}>
-                                          {done ? '入っています' : skipped ? '見送りです' : o.no_waitlist ? '入れられません' : 'この日に入れる'}</button>
+                                        {/* 「◯◯以降を取り消す」を選んでいる間だけ出す（2026-09-04） */}
+                                        {cancelFromFor === w.id ? (
+                                          <button onClick={() => cancelFrom(w, localDate(o.starts_at))}
+                                            disabled={!!busy} style={smallBtn(true)}>
+                                            この日以降を取り消す
+                                          </button>
+                                        ) : (
+                                          <button onClick={() => openPromoteDraft(w, o)}
+                                            disabled={!!busy || ng}
+                                            style={{ ...smallBtn(s.free && !ng), opacity: ng ? .4 : 1, cursor: ng ? 'not-allowed' : undefined }}>
+                                            {done ? '入っています'
+                                              : skipped ? '見送りです'
+                                              : overLimit ? '取り消し済み'
+                                              : o.no_waitlist ? '入れられません' : 'この日に入れる'}</button>
+                                        )}
                                       </span>
                                     </div>
                                     {/* 理由の入力。🚨 押した行のすぐ下に出す（一覧が長いと最上部では見えない・㉔の教訓） */}

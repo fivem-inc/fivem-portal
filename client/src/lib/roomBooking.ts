@@ -226,6 +226,13 @@ export interface Waitlist {
    */
   last_promoted_booking_id: string | null;
   last_promoted_at: string | null;
+  /**
+   * この日まで待つ（2026-09-04〜・任意）。**翌日以降は繰り上げの対象外**。
+   * 「◯月◯日以降を取り消す」を選ぶと、その前日が入る（選んだ日そのものも対象外）。
+   * null は期限なし（今までどおり）。
+   * 🚨 判定は画面とサーバー（room_promote_waitlist_at）の両方にある
+   */
+  waiting_until?: string | null;
   position: number;
   status: 'waiting' | 'promoted' | 'cancelled';
   created_at: string;
