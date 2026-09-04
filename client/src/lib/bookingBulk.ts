@@ -56,10 +56,21 @@ export function guessBookingMapping(headers: string[]): Partial<Record<BookingFi
   return map;
 }
 
+/**
+ * 貼り付けたテキストを**行に分ける**（空行は捨てる）。
+ * 🚨 行の数え方（＝エラーに出す「◯行目」）は、ここ1か所だけに書く。
+ *    表として割るときも、予定表の形を読むときも、画面が元の行を出すときも
+ *    この関数を通す。別々に書くと行番号がずれる
+ */
+export function sourceLines(text: string): string[] {
+  return text.replace(/\r\n?/g, '\n').split('\n')
+    .map(l => l.trim())
+    .filter(Boolean);
+}
+
 /** 貼り付けたテキストを表に分ける。タブが無ければカンマで割る */
 export function splitPasted(text: string): string[][] {
-  return text.replace(/\r\n?/g, '\n').split('\n')
-    .filter(l => l.trim() !== '')
+  return sourceLines(text)
     .map(l => (l.includes('\t') ? l.split('\t') : l.split(',')).map(c => c.trim()));
 }
 
@@ -82,7 +93,7 @@ export function splitPasted(text: string): string[][] {
 export interface ScheduleParse { headers: string[]; rows: string[][] }
 
 export function parseScheduleLines(text: string): ScheduleParse | null {
-  const lines = text.replace(/\r\n?/g, '\n').split('\n').map(l => l.trim()).filter(Boolean);
+  const lines = sourceLines(text);
   // 【…】で始まる行が1つも無ければ、この形式ではない
   if (!lines.some(l => /^[【\[]/.test(l))) return null;
 

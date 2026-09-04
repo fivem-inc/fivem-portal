@@ -25,7 +25,7 @@ import {
 import { downloadCSV } from '../utils';
 import {
   guessBookingMapping, splitPasted, buildBookings, BOOKING_FIELD_LABEL,
-  BOOKING_REQUIRED, BULK_MAX_ROWS, parseScheduleLines, type BookingField,
+  BOOKING_REQUIRED, BULK_MAX_ROWS, parseScheduleLines, sourceLines, type BookingField,
 } from '../lib/bookingBulk';
 
 // 場所（フロア）の予約表。
@@ -4832,6 +4832,17 @@ const BulkBookingPanel: React.FC<{
   // 予定表の行には用途が書かれていないので、画面で選ぶ
   const [schedulePurpose, setSchedulePurpose] = useState<string>('プライベート');
   const [failed, setFailed] = useState<{ label: string; reason: string }[]>([]);
+  /**
+   * 読み取りに使った**元の行そのもの**（2026-09-04 ユーザー指示）。
+   * 添字は「◯行目」-1。予定表の形は行を分解して表に直すため、
+   * 区分（A・B・D）など**予約に使わない部分が表からは消える**。
+   * 元の行を残しておけば、貼り付けた文章と文字単位で見比べられる。
+   * 🚨 行の数え方は lib の sourceLines に1本化してある（別々に書くとずれる）。
+   * 🚨 Excel・CSVファイルから読んだときは行の文章が無いので空になる（表の列で照合する）
+   */
+  const [rawLines, setRawLines] = useState<string[]>([]);
+  /** 「◯行目」の元の行。無ければ空 */
+  const rawOf = (line: number): string => rawLines[line - 1] ?? '';
 
   const today = todayStr();
   const line = isDark ? '#3a3a5c' : '#e0e0e0';
@@ -4865,6 +4876,8 @@ const BulkBookingPanel: React.FC<{
     const sched = parseScheduleLines(pasted);
     if (sched) {
       setScheduleMode(true);
+      // 予定表の形は見出しの行が無いので、そのまま1行目から対応する
+      setRawLines(sourceLines(pasted));
       applyTable(sched.headers, sched.rows);
       return;
     }
@@ -4874,6 +4887,8 @@ const BulkBookingPanel: React.FC<{
       setError('1行目に見出し（日付・場所・開始…）、2行目から中身を貼り付けてください');
       return;
     }
+    // 表の形は1行目が見出しなので、その次からが「1行目」
+    setRawLines(sourceLines(pasted).slice(1));
     applyTable(grid[0], grid.slice(1));
   };
 
@@ -4883,6 +4898,7 @@ const BulkBookingPanel: React.FC<{
     try {
       const { headers: h, rows: r } = await readTable(file);
       if (h.length === 0) { setError('ファイルの中身を読み取れませんでした'); return; }
+      setRawLines([]);   // ファイルは行の文章が無い（表の列で照合する）
       applyTable(h, r);
     } catch {
       setError('ファイルを開けませんでした。CSV か Excel を選んでください。');
@@ -5023,7 +5039,10 @@ const BulkBookingPanel: React.FC<{
     const cols = headers.length;
     const srcHead = Array.from({ length: cols }, (_, i) => `入力_${headers[i] || `${i + 1}列目`}`);
     const head = [
-      '行', ...srcHead,
+      // 🚨 いちばん左に**貼り付けた行そのもの**を置く（2026-09-04 ユーザー指示）。
+      //    予定表の形は分解すると区分（A・B・D）などが表から消えるため、
+      //    元の文章が無いと貼り付けた表と突き合わせられない
+      '行', '入力_元の行', ...srcHead,
       '既存_日付', '既存_開始', '既存_終了', '既存_場所', '既存_用途', '既存_詳細', '既存_担当',
       '既存_会員番号', '既存_お客様', '既存_種別', '既存_定員', '既存_状態', '既存_固定',
       '既存_確認中', '既存_毎週', '既存_メモ', '既存_作成日時', '既存_予約ID',
@@ -5035,6 +5054,7 @@ const BulkBookingPanel: React.FC<{
       const srcCells = Array.from({ length: cols }, (_, i) => String(src[i] ?? ''));
       return [
         String(n.line),
+        rawOf(n.line),
         ...srcCells,
         localDate(h.starts_at), hhmm(h.starts_at), hhmm(h.ends_at), placeOf(h.floor_id),
         h.purpose, h.detail ?? '', staffNameOf(h.staff_id), h.member_no ?? '', h.customer_label ?? '',
@@ -5203,7 +5223,16 @@ const BulkBookingPanel: React.FC<{
                   {/* 読み取りの失敗（形式が違うなど）は今までどおり6件まで */}
                   <div>
                     {(parsed?.ng ?? []).slice(0, 6).map(n => (
-                      <div key={`p${n.line}`}>{n.line}行目 … {n.reason}</div>
+                      <div key={`p${n.line}`}>
+                        {n.line}行目 … {n.reason}
+                        {/* 元の行を添える（2026-09-04 ユーザー指示）。
+                            どの行のことか、貼り付けた文章のまま分かるようにする */}
+                        {rawOf(n.line) && (
+                          <div style={{ color: textMid, fontSize: 12, marginLeft: 14, lineHeight: 1.7 }}>
+                            元の行：{rawOf(n.line)}
+                          </div>
+                        )}
+                      </div>
                     ))}
                     {(parsed?.ng.length ?? 0) > 6 && <div>ほか {(parsed?.ng.length ?? 0) - 6}件</div>}
                   </div>
@@ -5215,9 +5244,14 @@ const BulkBookingPanel: React.FC<{
                       {dbNg.map(n => (
                         <div key={`d${n.line}`} style={{ marginTop: 3 }}>
                           {n.line}行目 … {n.reason}
+                          {rawOf(n.line) && (
+                            <div style={{ color: textMid, fontSize: 12, marginLeft: 14, lineHeight: 1.7 }}>
+                              元の行：{rawOf(n.line)}
+                            </div>
+                          )}
                           {n.hit && (
                             <div style={{ color: textMid, fontSize: 12, marginLeft: 14, lineHeight: 1.7 }}>
-                              └ {dupLine(n.hit)}
+                              └ すでにある予約：{dupLine(n.hit)}
                             </div>
                           )}
                         </div>
