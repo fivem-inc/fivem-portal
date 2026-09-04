@@ -5918,13 +5918,28 @@ const WaitlistSettings: React.FC<{
     if (list.length > 0) {
       const ids = list.map(w => w.id);
       const [{ data: pr }, { data: sk }] = await Promise.all([
+        // 🚨 **繰り上げでできた予約が生きているものだけ**を数える（2026-09-04 実機指摘）。
+        //    記録だけを見ていたため、繰り上げた予約を削除しても「入っています」が残った。
+        //    サーバー（room_promote_waitlist_at）も同じ判定にしてある。片方だけにしない
         supabase.from('room_waitlist_promotions')
-          .select('waitlist_id, booking_id').in('waitlist_id', ids),
+          .select('waitlist_id, booking_id, created:room_bookings!created_booking_id(deleted_at, status)')
+          .in('waitlist_id', ids),
         // 「この日は見送る」（2026-09-04）
         supabase.from('room_waitlist_skips')
           .select('waitlist_id, booking_id, reason').in('waitlist_id', ids),
       ]);
-      setPromoted(new Set(((pr ?? []) as { waitlist_id: string; booking_id: string }[])
+      // 🚨 埋め込みの戻りは「1件のオブジェクト」と「配列」のどちらでも来るので、
+      //    どちらでも読めるようにしてから見る
+      type Created = { deleted_at: string | null; status: string };
+      type PromoRow = { waitlist_id: string; booking_id: string; created?: Created | Created[] | null };
+      const aliveOf = (c: PromoRow['created']): Created | null =>
+        Array.isArray(c) ? (c[0] ?? null) : (c ?? null);
+      setPromoted(new Set(((pr ?? []) as unknown as PromoRow[])
+        // created が空の古い記録は、対応する予約が分からないので数えない（サーバーと同じ）
+        .filter(p => {
+          const c = aliveOf(p.created);
+          return !!c && !c.deleted_at && c.status === 'active';
+        })
         .map(p => `${p.waitlist_id}|${p.booking_id}`)));
       setSkips(new Map(((sk ?? []) as { waitlist_id: string; booking_id: string; reason: string | null }[])
         .map(x => [`${x.waitlist_id}|${x.booking_id}`, x.reason])));
