@@ -3614,6 +3614,12 @@ const BookingDetail: React.FC<{
   const [error, setError] = useState('');
   // キャンセル待ち（この予約の後ろに並んでいる方）
   const [waiting, setWaiting] = useState<Waitlist[]>([]);
+  /**
+   * この回を「見送り」にしている待ち（2026-09-04 ユーザー指示）。鍵は待ちID、値は理由。
+   * 🚨 見送りは「待ち × 回」なので、同じ人でも別の週は繰り上げられる。
+   *    設定・解除はキャンセル待ちの一覧（日付選び）で行う。ここは表示だけ
+   */
+  const [waitSkips, setWaitSkips] = useState<Map<string, string | null>>(new Map());
   const [adding, setAdding] = useState(false);
   // 🚨 予約フォーム・募集枠と**同じ部品（ParticipantRow）**を使う。
   //    素の入力欄にすると検索（番号→お名前／お名前→候補）が効かない
@@ -3698,6 +3704,13 @@ const BookingDetail: React.FC<{
       : q.eq('booking_id', b.id);
     const { data } = await q.order('position').order('created_at');
     setWaiting((data ?? []) as Waitlist[]);
+    // 🚨 **この回**を見送りにしている待ちを一緒に読む（2026-09-04 ユーザー指示）。
+    //    見送りは「待ち × 回」なので、ここでは booking_id をこの回に固定して引く。
+    //    出さないと、この画面では繰り上げられる人と見送りの人が同じに見える
+    const { data: sk } = await supabase.from('room_waitlist_skips')
+      .select('waitlist_id, reason').eq('booking_id', b.id);
+    setWaitSkips(new Map(((sk ?? []) as { waitlist_id: string; reason: string | null }[])
+      .map(x => [x.waitlist_id, x.reason])));
   }, [b.id, b.recurrence_id]);
 
   useEffect(() => { loadWaiting(); }, [loadWaiting]);
@@ -4131,6 +4144,10 @@ const BookingDetail: React.FC<{
                     {/* 繰り返しの予約では「毎週の枠の待ち」と「この回だけの待ち」が
                         混ざるので、どちらか分かるように印を付ける */}
                     {repeating && (w.recurrence_id ? '〔毎週〕' : '〔この回だけ〕')}
+                    {/* この回を見送りにしている方（2026-09-04）。理由があれば添える */}
+                    {waitSkips.has(w.id) && (
+                      <b>{' / '}見送り{waitSkips.get(w.id) ? `（${waitSkips.get(w.id)}）` : ''}</b>
+                    )}
                     {w.note ? ` / ${w.note}` : ''}
                   </div>
                 ))}
@@ -5964,7 +5981,7 @@ const WaitlistSettings: React.FC<{
                     </span>
                     <button onClick={() => setMemoEdit({ recId: rec.id, text: rec.slot_memo ?? '' })}
                       disabled={!!busy} style={smallBtn(false)}>
-                      {rec.slot_memo ? '直す' : '書く'}
+                      {rec.slot_memo ? '修正' : '入力'}
                     </button>
                   </div>
                 );
