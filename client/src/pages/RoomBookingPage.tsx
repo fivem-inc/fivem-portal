@@ -7034,8 +7034,7 @@ const WaitlistSettings: React.FC<{
                                         {skipDraft.createdId && (
                                           <div style={{ color: isDark ? '#ffe6a3' : '#7a5c00', marginTop: 4 }}>
                                             <b>この日は繰り上げ済みで、予約が入っています。</b>
-                                            見送りにすると<b>その予約も取り消します</b>
-                                            （予約が入ったまま見送りにはできません）。
+                                            見送りにすると<b>その予約も取り消します</b>。
                                             この日はまた繰り上げられる状態に戻ります。
                                           </div>
                                         )}
