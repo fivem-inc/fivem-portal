@@ -7720,11 +7720,14 @@ const StaffSettings: React.FC<{
   /** 読み（ひらがな）。🚨 漢字から作れないので人が入れる（2026-09-04） */
   const [newStaffKana, setNewStaffKana] = useState('');
   /**
-   * 名前・ふりがなを直している行（2026-09-04 ユーザー指示）。
+   * 名前・ふりがな・担当できる区分を直している行（2026-09-04 ユーザー指示）。
    * 🚨 打つたび・離れるたびに保存しない。**「修正」を押してから「保存」**の2段にする。
    *    同じものを直す手段を2通り置かない（onBlur 保存は廃止した）
+   * 🚨 区分の記号も同じ（2026-09-04 ユーザー指示）。以前は記号を押した瞬間に保存して
+   *    いたが、「修正」を押していない行では触れないようにし、「保存」でまとめて書く。
+   *    categoryIds は「保存を押したときの状態」で、元の値との差分だけ insert / delete する
    */
-  const [editStaff, setEditStaff] = useState<{ id: string; name: string; kana: string } | null>(null);
+  const [editStaff, setEditStaff] = useState<{ id: string; name: string; kana: string; categoryIds: string[] } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -7747,13 +7750,20 @@ const StaffSettings: React.FC<{
     fontWeight: on ? 700 : 400,
   });
 
-  /** 失敗しても画面を壊さず、理由だけ出す小さなラッパ */
+  /**
+   * 失敗しても画面を壊さず、理由だけ出す小さなラッパ。
+   * 🚨 サーバーの理由は握りつぶさず、そのまま添える（2026-09-04 の教訓）。
+   *    「同じ名前」の案内は、実際に重複（23505）で弾かれたときだけ出す
+   */
   const run = async (fn: () => Promise<{ error: unknown } | void>, msg: string) => {
     setBusy(true); setError('');
     try {
       const r = await fn();
       if (r && 'error' in r && r.error) {
-        setError('保存できませんでした。同じ名前がすでに登録されていないか確認してください。');
+        const e = r.error as { code?: string; message?: string };
+        setError(e.code === '23505'
+          ? '保存できませんでした。同じ名前がすでに登録されています。'
+          : `保存できませんでした：${e.message ?? '通信を確認してもう一度お試しください。'}`);
         setBusy(false); return;
       }
       await onChanged(msg);
@@ -7763,12 +7773,45 @@ const StaffSettings: React.FC<{
     setBusy(false);
   };
 
-  const toggleCategory = (s: Staff, catId: string) => {
-    const has = s.categoryIds?.includes(catId);
-    run(async () => has
-      ? await supabase.from('room_staff_categories').delete().eq('staff_id', s.id).eq('category_id', catId)
-      : await supabase.from('room_staff_categories').insert({ staff_id: s.id, category_id: catId }),
-      '担当できる区分を変えました');
+  /** 修正中の行で記号を押したとき。🚨 ここでは保存しない（「保存」でまとめて書く） */
+  const toggleEditCategory = (catId: string) => {
+    setEditStaff(p => {
+      if (!p) return p;
+      const has = p.categoryIds.includes(catId);
+      return { ...p, categoryIds: has ? p.categoryIds.filter(id => id !== catId) : [...p.categoryIds, catId] };
+    });
+  };
+
+  /**
+   * 「保存」：名前・ふりがな・担当できる区分をまとめて書く。
+   * 区分は元の値（s.categoryIds）との差分だけ insert / delete する。
+   * 🚨 名前 → 区分の順。名前で失敗したら区分は触らない（途中まで書いた状態を残さない）
+   */
+  const saveEditStaff = (s: Staff) => {
+    if (!editStaff) return;
+    const nm = editStaff.name.trim();
+    // 🚨 カタカナで打たれてもひらがなに直して保存（持ち方を1つに保つ）
+    const kn = toHiragana(editStaff.kana.trim()) || null;
+    const before = new Set(s.categoryIds ?? []);
+    const after = new Set(editStaff.categoryIds);
+    const added = [...after].filter(id => !before.has(id));
+    const removed = [...before].filter(id => !after.has(id));
+    run(async () => {
+      const r = await supabase.from('room_staff')
+        .update({ name: nm, kana: kn }).eq('id', s.id).select('id');
+      if (r.error) return r;
+      if (added.length > 0) {
+        const ins = await supabase.from('room_staff_categories')
+          .insert(added.map(category_id => ({ staff_id: s.id, category_id })));
+        if (ins.error) return ins;
+      }
+      if (removed.length > 0) {
+        const del = await supabase.from('room_staff_categories')
+          .delete().eq('staff_id', s.id).in('category_id', removed);
+        if (del.error) return del;
+      }
+      setEditStaff(null);
+    }, `${nm} を保存しました`);
   };
 
   return (
@@ -7800,8 +7843,8 @@ const StaffSettings: React.FC<{
       </div>
 
       <p style={{ fontSize: 12, color: textMid, margin: '0 0 10px', lineHeight: 1.6 }}>
-        記号を押すと、そのスタッフが担当できる区分を切り替えられます。
-        「表示中／非表示」で、予約フォームの選択肢に出すかどうかを変えられます（過去の予約は残ります）。
+        「修正」を押すと、名前・ふりがな・担当できる区分（記号）を直せます。「保存」を押すまで変わりません。
+        「非表示にする／表示に戻す」で、予約フォームの選択肢に出すかどうかを変えられます（過去の予約は残ります）。
       </p>
 
       {staff.map(s => (
@@ -7818,19 +7861,9 @@ const StaffSettings: React.FC<{
                   onChange={e => setEditStaff(p => (p ? { ...p, kana: e.target.value } : p))}
                   placeholder="ふりがな" style={{ ...input, width: 160 }} />
                 <button disabled={busy || !editStaff.name.trim()}
-                  onClick={() => {
-                    const nm = editStaff.name.trim();
-                    // 🚨 カタカナで打たれてもひらがなに直して保存（持ち方を1つに保つ）
-                    const kn = toHiragana(editStaff.kana.trim()) || null;
-                    run(async () => {
-                      const r = await supabase.from('room_staff')
-                        .update({ name: nm, kana: kn }).eq('id', s.id).select('id');
-                      if (!r.error) setEditStaff(null);
-                      return r;
-                    }, `${nm} を保存しました`);
-                  }}
+                  onClick={() => saveEditStaff(s)}
                   style={smallBtn(true)}>保存</button>
-                <button onClick={() => setEditStaff(null)} style={smallBtn(false)}>やめる</button>
+                <button disabled={busy} onClick={() => setEditStaff(null)} style={smallBtn(false)}>やめる</button>
               </>
             ) : (
               <>
@@ -7843,7 +7876,7 @@ const StaffSettings: React.FC<{
                   {s.kana ? `（${s.kana}）` : '（ふりがな未登録）'}
                 </span>
                 <button disabled={busy}
-                  onClick={() => setEditStaff({ id: s.id, name: s.name, kana: s.kana ?? '' })}
+                  onClick={() => setEditStaff({ id: s.id, name: s.name, kana: s.kana ?? '', categoryIds: [...(s.categoryIds ?? [])] })}
                   style={smallBtn(false)}>修正</button>
               </>
             )}
@@ -7855,12 +7888,21 @@ const StaffSettings: React.FC<{
               {s.active ? '非表示にする' : '表示に戻す'}
             </button>
           </div>
+          {/* 担当できる区分（記号）。🚨 「修正」を押した行だけ押せる（2026-09-04 ユーザー指示）。
+                 それ以外の行は見た目は同じまま、押せない表示にする（span・cursor default） */}
           <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-            {categories.map(c => (
-              <button key={c.id} disabled={busy} onClick={() => toggleCategory(s, c.id)}
-                title={c.description}
-                style={smallBtn(!!s.categoryIds?.includes(c.id))}>{c.code}</button>
-            ))}
+            {editStaff?.id === s.id
+              ? categories.map(c => (
+                <button key={c.id} disabled={busy} onClick={() => toggleEditCategory(c.id)}
+                  title={c.description}
+                  style={smallBtn(editStaff.categoryIds.includes(c.id))}>{c.code}</button>
+              ))
+              : categories.map(c => (
+                <span key={c.id} title={c.description}
+                  style={{ ...smallBtn(!!s.categoryIds?.includes(c.id)), cursor: 'default', display: 'inline-block', lineHeight: 'normal' }}>
+                  {c.code}
+                </span>
+              ))}
           </div>
         </div>
       ))}
