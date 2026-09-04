@@ -7034,25 +7034,22 @@ const WaitlistSettings: React.FC<{
                                         {skipDraft.createdId && (
                                           <div style={{ color: isDark ? '#ffe6a3' : '#7a5c00', marginTop: 4 }}>
                                             <b>この日は繰り上げ済みで、予約が入っています。</b>
-                                            予約も取り消すと、この日はまた繰り上げられる状態に戻ります。
+                                            見送りにすると<b>その予約も取り消します</b>
+                                            （予約が入ったまま見送りにはできません）。
+                                            この日はまた繰り上げられる状態に戻ります。
                                           </div>
                                         )}
                                         <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                                           <input value={skipDraft.reason} placeholder="理由（任意）例：旅行のため"
                                             onChange={e => setSkipDraft(p => (p ? { ...p, reason: e.target.value } : p))}
                                             style={{ ...input, flex: 1, minWidth: 140 }} />
-                                          {skipDraft.createdId ? (
-                                            <>
-                                              <button onClick={() => addSkip(true)} disabled={!!busy} style={smallBtn(true)}>
-                                                予約も取り消して見送る
-                                              </button>
-                                              <button onClick={() => addSkip(false)} disabled={!!busy} style={smallBtn(false)}>
-                                                予約は残して見送りだけ
-                                              </button>
-                                            </>
-                                          ) : (
-                                            <button onClick={() => addSkip(false)} disabled={!!busy} style={smallBtn(true)}>見送りにする</button>
-                                          )}
+                                          {/* 🚨 「予約は残して見送りだけ」は置かない（2026-09-04 ユーザー指示）。
+                                                 予約が入っているのに見送り、という状態は**同時に成り立たない**。
+                                                 選べるようにすると、矛盾した記録を作る手段を用意することになる */}
+                                          <button onClick={() => addSkip(!!skipDraft.createdId)}
+                                            disabled={!!busy} style={smallBtn(true)}>
+                                            {skipDraft.createdId ? '予約も取り消して見送る' : '見送りにする'}
+                                          </button>
                                           <button onClick={() => setSkipDraft(null)} style={smallBtn(false)}>やめる</button>
                                         </div>
                                       </div>
