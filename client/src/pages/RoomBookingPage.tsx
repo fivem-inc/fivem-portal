@@ -7719,6 +7719,12 @@ const StaffSettings: React.FC<{
   const [newStaffName, setNewStaffName] = useState('');
   /** 読み（ひらがな）。🚨 漢字から作れないので人が入れる（2026-09-04） */
   const [newStaffKana, setNewStaffKana] = useState('');
+  /**
+   * 名前・ふりがなを直している行（2026-09-04 ユーザー指示）。
+   * 🚨 打つたび・離れるたびに保存しない。**「修正」を押してから「保存」**の2段にする。
+   *    同じものを直す手段を2通り置かない（onBlur 保存は廃止した）
+   */
+  const [editStaff, setEditStaff] = useState<{ id: string; name: string; kana: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -7801,21 +7807,46 @@ const StaffSettings: React.FC<{
       {staff.map(s => (
         <div key={s.id} style={{ borderTop: `1px solid ${lineSoft}`, padding: '10px 0' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 7, flexWrap: 'wrap' }}>
-            <b style={{ fontSize: 14, color: s.active ? text : textMid }}>
-              {s.name}{!s.active && '（非表示）'}
-            </b>
-            {/* 読み（2026-09-04 ユーザー指示）。予約フォームの絞り込みで
-                ひらがな・カタカナ・半角カナから引けるようにするため。
-                🚨 打つたびに保存しない（離れたときだけ）。ひらがなに直して入れる */}
-            <input defaultValue={s.kana ?? ''} placeholder="ふりがな" disabled={busy}
-              onBlur={e => {
-                const v = toHiragana(e.target.value.trim()) || null;
-                if (v === (s.kana ?? null)) return;
-                run(async () => await supabase.from('room_staff')
-                  .update({ kana: v }).eq('id', s.id),
-                  `${s.name} のふりがなを保存しました`);
-              }}
-              style={{ ...input, width: 150 }} />
+            {editStaff?.id === s.id ? (
+              <>
+                {/* 🚨 名前を直すと、**過去の予約の表示も新しい名前になる**（IDで結んでいるため）。
+                       用途詳細のような一括書き換えは要らない */}
+                <input value={editStaff.name} disabled={busy}
+                  onChange={e => setEditStaff(p => (p ? { ...p, name: e.target.value } : p))}
+                  placeholder="お名前" style={{ ...input, width: 160 }} />
+                <input value={editStaff.kana} disabled={busy}
+                  onChange={e => setEditStaff(p => (p ? { ...p, kana: e.target.value } : p))}
+                  placeholder="ふりがな" style={{ ...input, width: 160 }} />
+                <button disabled={busy || !editStaff.name.trim()}
+                  onClick={() => {
+                    const nm = editStaff.name.trim();
+                    // 🚨 カタカナで打たれてもひらがなに直して保存（持ち方を1つに保つ）
+                    const kn = toHiragana(editStaff.kana.trim()) || null;
+                    run(async () => {
+                      const r = await supabase.from('room_staff')
+                        .update({ name: nm, kana: kn }).eq('id', s.id).select('id');
+                      if (!r.error) setEditStaff(null);
+                      return r;
+                    }, `${nm} を保存しました`);
+                  }}
+                  style={smallBtn(true)}>保存</button>
+                <button onClick={() => setEditStaff(null)} style={smallBtn(false)}>やめる</button>
+              </>
+            ) : (
+              <>
+                <b style={{ fontSize: 14, color: s.active ? text : textMid }}>
+                  {s.name}{!s.active && '（非表示）'}
+                </b>
+                {/* 読み（2026-09-04）。予約フォームの絞り込みで
+                    ひらがな・カタカナ・半角カナから引けるようにするため */}
+                <span style={{ fontSize: 12.5, color: textMid }}>
+                  {s.kana ? `（${s.kana}）` : '（ふりがな未登録）'}
+                </span>
+                <button disabled={busy}
+                  onClick={() => setEditStaff({ id: s.id, name: s.name, kana: s.kana ?? '' })}
+                  style={smallBtn(false)}>修正</button>
+              </>
+            )}
             <button disabled={busy}
               onClick={() => run(async () => await supabase.from('room_staff')
                 .update({ active: !s.active }).eq('id', s.id),
