@@ -32,6 +32,10 @@ interface LeaveReq {
   rejected_reason: string | null;
   approver_id: string | null;
   approver2_id: string | null;
+  // 受理者の名前（①＝申請先／②＝①が選んだマネージャー）。
+  // 「自分が1人目か、誰かが先に受理したのか」を画面に出すために引いている
+  approver_name?: string | null;
+  approver2_name?: string | null;
   requester?: { name: string } | null;
 }
 
@@ -143,8 +147,14 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
       if (error) { console.error('leave_requests取得エラー:', error); return; }
       if (!data || data.length === 0) { setRequests([]); return; }
 
-      // 申請者名を取得
-      const userIds = [...new Set(data.map((r: AdminLeaveRequest) => r.user_id))];
+      // 申請者名と、受理者（①②）の名前を取得。
+      // 🚨 受理者の名前も引くこと。引かないと「自分が1人目なのか、誰かが先に受理したのか」が
+      //    画面から分からない（休暇は2人が順に受理する作りのため。2026-09-04 追加）
+      const userIds = [...new Set([
+        ...data.map((r: AdminLeaveRequest) => r.user_id),
+        ...data.map((r: AdminLeaveRequest) => r.approver_id),
+        ...data.map((r: AdminLeaveRequest) => r.approver2_id),
+      ].filter((id): id is string => !!id))];
       const { data: profiles } = await supabase
         .from('profiles')
         .select('id, name')
@@ -163,6 +173,8 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
         rejected_reason: r.rejected_reason ?? null,
         approver_id: r.approver_id ?? null,
         approver2_id: r.approver2_id ?? null,
+        approver_name: r.approver_id ? (profileMap[r.approver_id]?.name ?? null) : null,
+        approver2_name: r.approver2_id ? (profileMap[r.approver2_id]?.name ?? null) : null,
         requester: profileMap[r.user_id] || null,
       })));
     } finally {
@@ -588,6 +600,20 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                     <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: 12, fontWeight: 'bold', background: '#e67e22', color: 'white' }}>
                       {STATUS_LABEL[req.status] || req.status}
                     </span>
+                  </div>
+
+                  {/* 受理の進み具合。休暇は2人が順に受理するので、
+                      「自分が1人目なのか」「誰が先に受理したのか」が分からないと判断できない。
+                      🚨 status で見分ける（pending＝まだ誰も受理していない／
+                         step2_pending 以降＝①が受理済み）。2026-09-04 追加 */}
+                  <div style={{
+                    fontSize: 13, marginBottom: 8, padding: '6px 10px', borderRadius: 6,
+                    background: isDark ? '#2c3e50' : '#eef6ff',
+                    color: isDark ? '#d0dde8' : '#1a4a5a',
+                  }}>
+                    {req.status === 'pending'
+                      ? <>あなたが<strong>最初の受理者</strong>です</>
+                      : <>最初の受理者：<strong>{req.approver_name || '不明'}</strong> ✓</>}
                   </div>
 
                   <div style={{ color: subText, fontSize: 14, marginBottom: 6 }}>
