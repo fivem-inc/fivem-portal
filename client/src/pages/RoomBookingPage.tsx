@@ -5926,31 +5926,41 @@ const WaitlistSettings: React.FC<{
     // すでに繰り上げ済みの（待ち, 回）の組を読む。毎週の待ちは残るので二重防止に要る
     if (list.length > 0) {
       const ids = list.map(w => w.id);
-      const [{ data: pr }, { data: sk }] = await Promise.all([
-        // 🚨 **繰り上げでできた予約が生きているものだけ**を数える（2026-09-04 実機指摘）。
-        //    記録だけを見ていたため、繰り上げた予約を削除しても「入っています」が残った。
-        //    サーバー（room_promote_waitlist_at）も同じ判定にしてある。片方だけにしない
+      // 🚨 **埋め込みで一度に読まない**（2026-09-04 実機で発覚）。
+      //    room_waitlist_promotions は room_bookings への外部キーが**2本**あり、
+      //    埋め込みは過去に PGRST201 で失敗している（9/02）。素直に2回に分ける。
+      // 🚨 **エラーを必ず見る**。見ていなかったため、読み込みに失敗しても
+      //    「繰り上げ済みは0件」と黙って判断し、画面が事実と違うことを言っていた
+      const [prRes, skRes] = await Promise.all([
         supabase.from('room_waitlist_promotions')
-          .select('waitlist_id, booking_id, created:room_bookings!created_booking_id(id, deleted_at, status)')
-          .in('waitlist_id', ids),
+          .select('waitlist_id, booking_id, created_booking_id').in('waitlist_id', ids),
         // 「この日は見送る」（2026-09-04）
         supabase.from('room_waitlist_skips')
           .select('waitlist_id, booking_id, reason').in('waitlist_id', ids),
       ]);
-      // 🚨 埋め込みの戻りは「1件のオブジェクト」と「配列」のどちらでも来るので、
-      //    どちらでも読めるようにしてから見る
-      type Created = { id: string; deleted_at: string | null; status: string };
-      type PromoRow = { waitlist_id: string; booking_id: string; created?: Created | Created[] | null };
-      const aliveOf = (c: PromoRow['created']): Created | null =>
-        Array.isArray(c) ? (c[0] ?? null) : (c ?? null);
-      setPromoted(new Map(((pr ?? []) as unknown as PromoRow[])
+      if (prRes.error || skRes.error) {
+        setError('繰り上げ済み・見送りの記録を読み込めませんでした。通信を確認して開き直してください。');
+        setPromoted(new Map()); setSkips(new Map()); setLoading(false); return;
+      }
+      type PromoRow = { waitlist_id: string; booking_id: string; created_booking_id: string | null };
+      const promos = (prRes.data ?? []) as PromoRow[];
+      // 作った予約が**まだ生きているか**を別に見る（削除したら繰り上げ直せる）
+      const createdIds = [...new Set(promos.map(p => p.created_booking_id).filter(Boolean))] as string[];
+      const alive = new Set<string>();
+      if (createdIds.length > 0) {
+        const { data: cb, error: cbErr } = await supabase.from('room_bookings')
+          .select('id').in('id', createdIds).is('deleted_at', null).eq('status', 'active');
+        if (cbErr) {
+          setError('繰り上げた予約を確認できませんでした。通信を確認して開き直してください。');
+          setPromoted(new Map()); setSkips(new Map()); setLoading(false); return;
+        }
+        for (const x of (cb ?? []) as { id: string }[]) alive.add(x.id);
+      }
+      setPromoted(new Map(promos
         // created が空の古い記録は、対応する予約が分からないので数えない（サーバーと同じ）
-        .filter(p => {
-          const c = aliveOf(p.created);
-          return !!c && !c.deleted_at && c.status === 'active';
-        })
-        .map(p => [`${p.waitlist_id}|${p.booking_id}`, aliveOf(p.created)!.id])));
-      setSkips(new Map(((sk ?? []) as { waitlist_id: string; booking_id: string; reason: string | null }[])
+        .filter(p => p.created_booking_id && alive.has(p.created_booking_id))
+        .map(p => [`${p.waitlist_id}|${p.booking_id}`, p.created_booking_id!])));
+      setSkips(new Map(((skRes.data ?? []) as { waitlist_id: string; booking_id: string; reason: string | null }[])
         .map(x => [`${x.waitlist_id}|${x.booking_id}`, x.reason])));
     } else {
       setPromoted(new Map());
