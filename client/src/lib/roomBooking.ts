@@ -125,6 +125,12 @@ export interface LessonCategory {
 export interface Staff {
   id: string;
   name: string;
+  /**
+   * お名前の読み（ひらがなで持つ・2026-09-04〜）。担当スタッフの絞り込みに使う。
+   * 🚨 **ひらがなで持ち、表示のときだけカタカナに直す**（お客様のふりがなと同じ方針）。
+   * 🚨 漢字から読みは作れないので、基本設定 → スタッフ で人が入れる。空でもよい
+   */
+  kana?: string | null;
   user_id: string | null;
   sort_order: number;
   active: boolean;

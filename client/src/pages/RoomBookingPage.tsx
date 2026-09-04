@@ -2510,15 +2510,27 @@ const BookingForm: React.FC<{
             </div>
           ) : (
             <div>
-              <input value={staffQuery} placeholder="お名前や区分で絞り込む（空欄なら全員）"
+              <input value={staffQuery} placeholder="押して担当を選ぶ（お名前・ふりがな・区分で絞り込めます）"
                 onChange={e => { setStaffQuery(e.target.value); setStaffOpen(true); }}
                 onFocus={() => setStaffOpen(true)}
+                onBlur={() => setStaffOpen(false)}
                 style={input} />
-              <div style={{ marginTop: 6, border: `1px solid ${line}`, borderRadius: 8, maxHeight: 260, overflowY: 'auto' }}>
+              {/* 🚨 一覧は**この欄を触っている間だけ**出す（2026-09-04 ユーザー指示）。
+                     開いたままだとフォームが長くなり、下の項目が押しにくい。
+                  🚨 候補を押すと先に blur が起きて一覧が消え、クリックが届かなくなるので、
+                     押し始めの時点で blur を止める（お客様欄で踏んだのと同じ罠） */}
+              {staffOpen && (
+              <div onMouseDown={e => e.preventDefault()}
+                style={{ marginTop: 6, border: `1px solid ${line}`, borderRadius: 8, maxHeight: 260, overflowY: 'auto' }}>
                 {(() => {
+                  // 🚨 打った文字を**ひらがなに直して**比べる（カタカナ・半角カナでも引ける）。
+                  //    読みは room_staff.kana にひらがなで入っている（2026-09-04〜）。
+                  //    🚨 1文字から絞る（お客様欄と違い、人数が少なく候補が多すぎないため）
                   const q = staffQuery.trim();
+                  const qh = toHiragana(q);
                   const hit = activeStaff.filter(st => !q
                     || st.name.includes(q)
+                    || (st.kana ? toHiragana(st.kana).includes(qh) : false)
                     || (categoryLabel(st, categories) || '').includes(q));
                   // 🚨 空いている人を上に。判定は「かぶりの警告」と同じものを使う
                   const free = hit.filter(st => (busyByStaff[st.id] ?? []).length === 0);
@@ -2555,7 +2567,7 @@ const BookingForm: React.FC<{
                       )}
                       {free.length > 0 && head('この時間に空いています')}
                       {free.map(st => row(st, []))}
-                      {busyList.length > 0 && head('すでに予定があります（選べます）')}
+                      {busyList.length > 0 && head('すでに予定があります')}
                       {busyList.map(st => row(st, busyByStaff[st.id] ?? []))}
                       {hit.length === 0 && (
                         <div style={{ padding: '10px 11px', fontSize: 12.5, color: textMid }}>
@@ -2566,6 +2578,7 @@ const BookingForm: React.FC<{
                   );
                 })()}
               </div>
+              )}
             </div>
           )}
           {selectedStaff && (
@@ -7704,6 +7717,8 @@ const StaffSettings: React.FC<{
   onChanged: (msg: string) => Promise<void>; isDark: boolean;
 }> = ({ staff, categories, onChanged, isDark }) => {
   const [newStaffName, setNewStaffName] = useState('');
+  /** 読み（ひらがな）。🚨 漢字から作れないので人が入れる（2026-09-04） */
+  const [newStaffKana, setNewStaffKana] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -7760,12 +7775,17 @@ const StaffSettings: React.FC<{
       <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
         <input value={newStaffName} onChange={e => setNewStaffName(e.target.value)}
           placeholder="スタッフの名前（例：山田 太郎）" style={{ ...input, flex: 1 }} />
+        <input value={newStaffKana} onChange={e => setNewStaffKana(e.target.value)}
+          placeholder="ふりがな（例：やまだ たろう）" style={{ ...input, flex: 1 }} />
         <button disabled={busy || !newStaffName.trim()}
           onClick={() => run(async () => {
             const r = await supabase.from('room_staff').insert({
-              name: newStaffName.trim(), sort_order: staff.length + 1,
+              name: newStaffName.trim(),
+              // 🚨 ひらがなで持つ（打たれたのがカタカナでも直して入れる）
+              kana: toHiragana(newStaffKana.trim()) || null,
+              sort_order: staff.length + 1,
             });
-            if (!r.error) setNewStaffName('');
+            if (!r.error) { setNewStaffName(''); setNewStaffKana(''); }
             return r;
           }, 'スタッフを追加しました')}
           style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 13.5, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', opacity: (busy || !newStaffName.trim()) ? .5 : 1 }}>
@@ -7784,6 +7804,18 @@ const StaffSettings: React.FC<{
             <b style={{ fontSize: 14, color: s.active ? text : textMid }}>
               {s.name}{!s.active && '（非表示）'}
             </b>
+            {/* 読み（2026-09-04 ユーザー指示）。予約フォームの絞り込みで
+                ひらがな・カタカナ・半角カナから引けるようにするため。
+                🚨 打つたびに保存しない（離れたときだけ）。ひらがなに直して入れる */}
+            <input defaultValue={s.kana ?? ''} placeholder="ふりがな" disabled={busy}
+              onBlur={e => {
+                const v = toHiragana(e.target.value.trim()) || null;
+                if (v === (s.kana ?? null)) return;
+                run(async () => await supabase.from('room_staff')
+                  .update({ kana: v }).eq('id', s.id),
+                  `${s.name} のふりがなを保存しました`);
+              }}
+              style={{ ...input, width: 150 }} />
             <button disabled={busy}
               onClick={() => run(async () => await supabase.from('room_staff')
                 .update({ active: !s.active }).eq('id', s.id),
