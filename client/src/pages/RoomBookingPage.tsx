@@ -1769,6 +1769,15 @@ const BookingForm: React.FC<{
   const [tentative, setTentative] = useState(editing ? !!base!.tentative : false);
   const [staffId, setStaffId] = useState<string>(
     editing ? (base!.staff_id ?? '') : (from?.staff_id ?? ''));
+  /**
+   * 担当スタッフの絞り込み（2026-09-04 ユーザー承認・案A＋B）。
+   * 人数が増えると1つの一覧から探せなくなるため、
+   *   ・**その時間に空いている人を上に**出す（案A）
+   *   ・**名前・区分で絞り込める**ようにする（案B）
+   * 🚨 空いていない人も**選べる**ままにする（現場の例外対応を止めない・2026-08-28 確定）
+   */
+  const [staffQuery, setStaffQuery] = useState('');
+  const [staffOpen, setStaffOpen] = useState(false);
   // 募集中の枠（先に置いて後から埋める）かどうかと、その定員
   const [kind, setKind] = useState<'booking' | 'open'>(editing ? base!.kind : 'booking');
   const [seats, setSeats] = useState<number>(editing ? base!.seats : 1);
@@ -1861,11 +1870,20 @@ const BookingForm: React.FC<{
    * 🚨 繰り返しのときも**入力した日だけ**を見る。各回まで見に行くと重くなるので、
    *    見ていないことを画面にも書く（黙って「問題なし」に見せない）。
    */
-  const [staffClash, setStaffClash] = useState<string[]>([]);
+  /**
+   * その日の予定（担当が入っているものだけ）。**1回読んで2つの用途に使う**：
+   *   ① 選んでいる担当の「時間かぶり」の警告（従来どおり・止めない）
+   *   ② 担当スタッフの一覧を「この時間に空いています／予定があります」に分ける
+   * 🚨 同じ判定を2か所に書かない。担当を変えるたびに読み直さないよう、
+   *    担当ではなく**日付と時刻**で読む（2026-09-04 に①だけの読み込みから広げた）
+   */
+  type DayRow = Pick<Booking, 'id' | 'starts_at' | 'ends_at' | 'floor_id' | 'purpose' | 'detail' | 'customer_label' | 'kind' | 'staff_id'>;
+  const [dayRows, setDayRows] = useState<DayRow[] | null>(null);
   const [staffChecking, setStaffChecking] = useState(false);
+  const [dayLoadError, setDayLoadError] = useState(false);
   useEffect(() => {
-    const s = toDate(date, startTime), e = toDate(date, endTime);
-    if (!staffId || !s || !e || e <= s) { setStaffClash([]); setStaffChecking(false); return; }
+    const s2 = toDate(date, startTime), e2 = toDate(date, endTime);
+    if (!date || !s2 || !e2 || e2 <= s2) { setDayRows(null); setStaffChecking(false); return; }
     let cancelled = false;
     setStaffChecking(true);
     const timer = setTimeout(async () => {
@@ -1873,8 +1891,8 @@ const BookingForm: React.FC<{
       const dayEnd = new Date(dayStart);
       dayEnd.setDate(dayEnd.getDate() + 1);
       const { data, error: err } = await supabase.from('room_bookings')
-        .select('id, starts_at, ends_at, floor_id, purpose, detail, customer_label, kind')
-        .eq('staff_id', staffId)
+        .select('id, starts_at, ends_at, floor_id, purpose, detail, customer_label, kind, staff_id')
+        .not('staff_id', 'is', null)
         .is('deleted_at', null)
         .neq('status', 'cancelled')
         .gte('starts_at', dayStart.toISOString())
@@ -1882,23 +1900,39 @@ const BookingForm: React.FC<{
       if (cancelled) return;
       setStaffChecking(false);
       // 🚨 読めなかったときは「かぶりなし」にしない。黙って安心させないため
-      if (err) { setStaffClash(['この担当の予定を確かめられませんでした（通信を確認してください）']); return; }
-      const rows = (data ?? []) as (Pick<Booking, 'id' | 'starts_at' | 'ends_at' | 'floor_id' | 'purpose' | 'detail' | 'customer_label' | 'kind'>)[];
-      setStaffClash(rows
-        // 変更のときは自分自身を除く
-        .filter(r => r.id !== base?.id
-          && new Date(r.starts_at) < e && new Date(r.ends_at) > s)
-        .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
-        .map(r => {
-          const f = floors.find(x => x.id === r.floor_id);
-          const c = f ? campuses.find(x => x.id === f.campus_id) : null;
-          const place = f ? placeLabel(f, c?.name ?? '', floors.filter(x => x.campus_id === f.campus_id).length, true) : '';
-          return `${hhmm(r.starts_at)}〜${hhmm(r.ends_at)}　${place}　${purposeWithDetail(r)}`
-            + (r.kind === 'open' ? '（募集中）' : r.customer_label ? `　${r.customer_label}` : '');
-        }));
+      if (err) { setDayRows(null); setDayLoadError(true); return; }
+      setDayLoadError(false);
+      setDayRows((data ?? []) as DayRow[]);
     }, 400);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [staffId, date, startTime, endTime, base, floors, campuses]);
+  }, [date, startTime, endTime]);
+
+  /** その時間に重なる予定を担当ごとにまとめる（鍵＝担当ID） */
+  const busyByStaff = useMemo(() => {
+    const s2 = toDate(date, startTime), e2 = toDate(date, endTime);
+    const m: Record<string, string[]> = {};
+    if (!dayRows || !s2 || !e2) return m;
+    for (const r of dayRows) {
+      if (!r.staff_id || r.id === base?.id) continue;   // 変更のときは自分自身を除く
+      if (!(new Date(r.starts_at) < e2 && new Date(r.ends_at) > s2)) continue;
+      const fl = floors.find(x => x.id === r.floor_id);
+      const cp = fl ? campuses.find(x => x.id === fl.campus_id) : null;
+      const place = fl ? placeLabel(fl, cp?.name ?? '', floors.filter(x => x.campus_id === fl.campus_id).length, true) : '';
+      const label = `${hhmm(r.starts_at)}〜${hhmm(r.ends_at)}　${place}　${purposeWithDetail(r)}`
+        + (r.kind === 'open' ? '（募集中）' : r.customer_label ? `　${r.customer_label}` : '');
+      (m[r.staff_id] ??= []).push(label);
+    }
+    for (const k of Object.keys(m)) m[k].sort();
+    return m;
+  }, [dayRows, date, startTime, endTime, base, floors, campuses]);
+
+  /** 選んでいる担当の時間かぶり（従来の警告。🚨 止めない・気づかせるだけ） */
+  const staffClash = useMemo(() => {
+    if (dayLoadError) return ['この担当の予定を確かめられませんでした（通信を確認してください）'];
+    if (!staffId) return [];
+    return busyByStaff[staffId] ?? [];
+  }, [staffId, busyByStaff, dayLoadError]);
+
 
   const applyDuration = (min: number) => setEndTime(addMinutes(startTime, min));
   const durationMin = Math.max(0, minutesOf(endTime) - minutesOf(startTime));
@@ -2458,14 +2492,82 @@ const BookingForm: React.FC<{
             （2026-08-28 ユーザー確定。現場では例外的な割り当てが起きるため） */}
         <div>
           <label style={label}>担当スタッフ</label>
-          <select value={staffId} onChange={e => setStaffId(e.target.value)} style={input}>
-            <option value="">（選ばない）</option>
-            {activeStaff.map(s => (
-              <option key={s.id} value={s.id}>
-                {s.name}{categoryLabel(s, categories) ? `（${categoryLabel(s, categories)}）` : ''}
-              </option>
-            ))}
-          </select>
+          {/* 選んでいる人／選び直す（2026-09-04・案A＋B） */}
+          {selectedStaff && !staffOpen ? (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <b style={{ fontSize: 14 }}>
+                {selectedStaff.name}
+                {categoryLabel(selectedStaff, categories) ? `（${categoryLabel(selectedStaff, categories)}）` : ''}
+              </b>
+              <button type="button" onClick={() => { setStaffOpen(true); setStaffQuery(''); }}
+                style={{ padding: '5px 12px', borderRadius: 999, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 12.5, cursor: 'pointer' }}>
+                選び直す
+              </button>
+              <button type="button" onClick={() => setStaffId('')}
+                style={{ padding: '5px 12px', borderRadius: 999, border: `1px solid ${line}`, background: 'transparent', color: textMid, fontSize: 12.5, cursor: 'pointer' }}>
+                担当を外す
+              </button>
+            </div>
+          ) : (
+            <div>
+              <input value={staffQuery} placeholder="お名前や区分で絞り込む（空欄なら全員）"
+                onChange={e => { setStaffQuery(e.target.value); setStaffOpen(true); }}
+                onFocus={() => setStaffOpen(true)}
+                style={input} />
+              <div style={{ marginTop: 6, border: `1px solid ${line}`, borderRadius: 8, maxHeight: 260, overflowY: 'auto' }}>
+                {(() => {
+                  const q = staffQuery.trim();
+                  const hit = activeStaff.filter(st => !q
+                    || st.name.includes(q)
+                    || (categoryLabel(st, categories) || '').includes(q));
+                  // 🚨 空いている人を上に。判定は「かぶりの警告」と同じものを使う
+                  const free = hit.filter(st => (busyByStaff[st.id] ?? []).length === 0);
+                  const busyList = hit.filter(st => (busyByStaff[st.id] ?? []).length > 0);
+                  const rowStyle: React.CSSProperties = {
+                    display: 'block', width: '100%', textAlign: 'left', padding: '8px 11px',
+                    background: 'transparent', border: 'none', borderBottom: `1px solid ${line}`,
+                    color: text, fontSize: 13.5, cursor: 'pointer',
+                  };
+                  const head = (t: string) => (
+                    <div style={{ padding: '5px 11px', fontSize: 11.5, fontWeight: 700, color: textMid, background: isDark ? '#35354e' : '#f0f2f5' }}>{t}</div>
+                  );
+                  const row = (st: Staff, busy: string[]) => (
+                    <button key={st.id} type="button"
+                      onClick={() => { setStaffId(st.id); setStaffOpen(false); setStaffQuery(''); }}
+                      style={rowStyle}>
+                      {st.name}
+                      <span style={{ color: textMid, fontSize: 12, marginLeft: 7 }}>
+                        {categoryLabel(st, categories) || '区分なし'}
+                      </span>
+                      {busy.length > 0 && (
+                        <span style={{ display: 'block', fontSize: 11.5, color: isDark ? '#e6b980' : '#8a5a1f' }}>
+                          {busy[0]}{busy.length > 1 ? `　ほか${busy.length - 1}件` : ''}
+                        </span>
+                      )}
+                    </button>
+                  );
+                  return (
+                    <>
+                      <button type="button" onClick={() => { setStaffId(''); setStaffOpen(false); setStaffQuery(''); }}
+                        style={rowStyle}>（担当を決めない）</button>
+                      {staffChecking && (
+                        <div style={{ padding: '7px 11px', fontSize: 12, color: textMid }}>空き状況を確認中…</div>
+                      )}
+                      {free.length > 0 && head('この時間に空いています')}
+                      {free.map(st => row(st, []))}
+                      {busyList.length > 0 && head('すでに予定があります（選べます）')}
+                      {busyList.map(st => row(st, busyByStaff[st.id] ?? []))}
+                      {hit.length === 0 && (
+                        <div style={{ padding: '10px 11px', fontSize: 12.5, color: textMid }}>
+                          見つかりませんでした。絞り込みを消すと全員出ます
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
           {selectedStaff && (
             <p style={{ fontSize: 11.5, color: textMid, margin: '5px 0 0', lineHeight: 1.6 }}>
               担当できる区分：{categoryLabel(selectedStaff, categories) || '登録がありません'}
