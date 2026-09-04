@@ -6508,6 +6508,13 @@ const WaitlistSettings: React.FC<{
       return { label: '埋まっています（繰り上げ済みなど）', free: false };
     }
     if (o.deleted_at) return { label: '取消済み', free: true };
+    // 🚨 募集中の枠は**すでに空いている**（2026-09-04 ユーザー指摘・案A）。
+    //    サーバーは同じ行を room_fill_open_slot で埋める（枠を消して作り直さない）。
+    //    定員2以上なら埋めてもまだ空きが残るので、あと何名かも出す
+    if (o.kind === 'open' && o.status === 'active') {
+      const rest = Math.max(0, o.seats - o.filled);
+      return { label: `募集中（空きあり${o.seats > 1 ? ` あと${rest}名` : ''}）`, free: rest > 0 };
+    }
     if (o.status === 'cancelled') return { label: cancelledLabel(o), free: true };
     // 🚨 判定は「行の全部」ではなく**いまの参加者1人ずつ**で見る。過去のテストで残った
     //    キーの違う古い行が1つあるだけで判定が壊れるため（2026-09-02 実機で発覚）。
