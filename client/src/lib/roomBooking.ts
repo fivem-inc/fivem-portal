@@ -286,8 +286,151 @@ export interface WaitlistSkip {
   booking_id: string;
   /** 見送りの理由（任意）。例：「旅行のため」 */
   reason: string | null;
+  /**
+   * 別の枠で予約が取れたので見送った、という印（2026-09-05〜）。
+   * 🚨 理由の文章に「別枠で予約」と書く方式は採らなかった（表記ゆれで数えられないため）。
+   */
+  booked_elsewhere: boolean;
   created_at: string;
 }
+
+/** 見送り1件の中身。画面はこの形で持つ（鍵は waitKey） */
+export interface SkipInfo {
+  /** 別枠で予約したか。担当別の一覧は**これだけ**を出す */
+  booked: boolean;
+  /** 自由な理由（任意）。🚨 担当別の一覧には出さない（ユーザー確定・2026-09-05） */
+  reason: string | null;
+}
+
+/**
+ * 見送りに添える補足の文字（「別枠で予約／旅行のため」）。空文字なら何も添えない。
+ * 🚨 **詳しい画面（キャンセル待ちの一覧・予約の内容）が2か所とも これを呼ぶ。**
+ *    片方だけ書き方を変えると、同じ見送りが画面によって違って見える。
+ * 🚨 担当別の一覧は**これを使わない**（理由を出さない決まりなので、booked だけを見る）。
+ */
+export const skipDetailLabel = (s: SkipInfo | null | undefined): string => {
+  if (!s) return '';
+  return [s.booked ? '別枠で予約' : '', s.reason ?? ''].filter(Boolean).join('／');
+};
+
+// ============================================================
+// キャンセル待ちの「列のまとめ方」と「その回で対象かどうか」の判定（2026-09-05）
+//
+// 🚨 **同じ判定を2か所に書かない**ため、ここ1か所に集めた。
+//    キャンセル待ちの一覧（WaitlistSettings）と、担当別の予約一覧が同じものを呼ぶ。
+//    2026-09-03 に「一覧には対象外と出るのに押せば通った」を実際に踏んでいる（㉕）。
+// 🚨 サーバー（room_promote_waitlist_at）にも同じ条件が入っている。片方だけ変えないこと。
+// 🚨 読み込み（supabase を叩く側）は lib/roomWaitlist.ts。ここは**計算だけ**なので
+//    画面を開かずに検算できる。
+// ============================================================
+
+/** （待ち, 回）の組を表す鍵 */
+export const waitKey = (waitlistId: string, bookingId: string): string =>
+  `${waitlistId}|${bookingId}`;
+
+/**
+ * 「◯月◯日以降だけ取り消す」の期限に掛かっているか（2026-09-04〜）。
+ * 🚨 waiting_until は「この日まで待つ」。**翌日以降が対象外**なので比較は「より後」。
+ *    選んだ日そのものを対象外にするため、登録時にはその前日を入れている。
+ */
+export const waitOverLimit = (
+  w: { waiting_until?: string | null },
+  occStartsAt: string,
+): boolean => !!w.waiting_until && localDate(occStartsAt) > w.waiting_until;
+
+/** その回で対象から外れている理由。null＝いま並んでいる（繰り上げられる） */
+export type WaitBlockReason = 'skip' | 'limit' | 'promoted' | null;
+
+/**
+ * ある待ちが、その回で繰り上げの対象から外れているか。
+ * 🚨 見た目の優先順位は 見送り → 期限 → 繰り上げ済み。
+ *    「見送り」は人が明示的に押したものなので、いちばん先に見せる。
+ * 🚨 回そのものの「この回はキャンセル待ち対象外」（no_waitlist）はここに含めない。
+ *    あれは枠ではなく**回の都合**なので、呼ぶ側で回ごと外すこと。
+ */
+export const waitBlockedOn = (
+  w: { id: string; waiting_until?: string | null },
+  occ: { id: string; starts_at: string },
+  isSkipped: (key: string) => boolean,
+  isPromoted: (key: string) => boolean,
+): WaitBlockReason => {
+  const k = waitKey(w.id, occ.id);
+  if (isSkipped(k)) return 'skip';
+  if (waitOverLimit(w, occ.starts_at)) return 'limit';
+  if (isPromoted(k)) return 'promoted';
+  return null;
+};
+
+/**
+ * 待ちが属する「列」の鍵（2026-09-02 ⑮ の決まりをそのまま関数にしたもの）。
+ *
+ * 🚨 **毎週の枠の待ちと、その枠の回に付いた「この回だけ」の待ちは、同じ1本の列**。
+ *    別々にすると優先順位（毎週の2番と この回だけの1番はどちらが先か）が読めない。
+ * 🚨 だから鍵は「回のID」ではなく **回が属する枠のID** を先に見る。
+ *    ここを booking_id で組むと、繰り返しの回に付いた「この回だけ」の待ちが
+ *    枠の列から外れ、予約の行と結び付かなくなる。
+ */
+export const waitQueueKey = (w: Waitlist): string => {
+  const sid = w.recurrence_id ?? w.booking?.recurrence_id ?? null;
+  return sid ? `r|${sid}` : `b|${w.booking_id}`;
+};
+
+/** 予約（回）から見た列の鍵。上の waitQueueKey と必ず対になる */
+export const queueKeyOfBooking = (b: { id: string; recurrence_id: string | null }): string =>
+  b.recurrence_id ? `r|${b.recurrence_id}` : `b|${b.id}`;
+
+/**
+ * その待ちが「その回」に効くか。
+ * 🚨 同じ列に並んでいても、**「この回だけ」の待ちは自分の回にしか効かない**。
+ *    列だけで結ぶと、9/8 だけ待っている方が 9/15 の行にも出てしまう。
+ */
+export const waitAppliesTo = (w: Waitlist, bookingId: string): boolean =>
+  w.recurrence_id ? true : w.booking_id === bookingId;
+
+/** ある回の待ちの並び1件ぶん。名前は呼ぶ側で作る（お客様の読み込みが要るため） */
+export interface WaitSeat {
+  wait: Waitlist;
+  /** 列の中の順番（1始まり）。キャンセル待ちの一覧の「1. 2. 3.」と同じ */
+  order: number;
+  /** waiting＝この日に入れる／skip＝この日は見送り／promoted＝この日はもう入っている */
+  state: 'waiting' | 'skip' | 'promoted';
+  /** 見送りの中身（skip のときだけ入る）。担当別は booked だけを使う */
+  skip: SkipInfo | null;
+}
+
+/**
+ * ある回（occ）について、その日の待ちの並びを組み立てる。
+ *
+ * 🚨 **期限（「◯月◯日以降だけ取り消す」）に掛かった方は返さない**（2026-09-05 ユーザー確定）。
+ *    その日以降はもう待っていないので、出すと「連絡できる人」と誤解される。人数にも数えない。
+ * 🚨 **「この回だけ」の待ちは自分の回にしか効かない**。列だけで結ぶと、
+ *    9/8 だけ待っている方が 9/15 の行にも出てしまう。
+ * 🚨 **番号は振り直さない**。期限の方を抜いたぶん飛ぶことがあるが、番号は
+ *    キャンセル待ちの一覧と突き合わせるためのものなので、振り直すと食い違う。
+ * 🚨 呼ぶ側は、回そのものが対象外（no_waitlist）のときは**この関数を呼ぶ前に外す**こと。
+ */
+export const waitSeatsFor = (
+  entries: Waitlist[],
+  occ: { id: string; starts_at: string },
+  skips: ReadonlyMap<string, SkipInfo>,
+  promoted: ReadonlyMap<string, string>,
+): WaitSeat[] => {
+  const isSkipped = (k: string) => skips.has(k);
+  const isPromoted = (k: string) => promoted.has(k);
+  const out: WaitSeat[] = [];
+  entries.forEach((w, i) => {
+    if (!waitAppliesTo(w, occ.id)) return;
+    const why = waitBlockedOn(w, occ, isSkipped, isPromoted);
+    if (why === 'limit') return;
+    out.push({
+      wait: w,
+      order: i + 1,
+      state: why === 'skip' ? 'skip' : why === 'promoted' ? 'promoted' : 'waiting',
+      skip: why === 'skip' ? (skips.get(waitKey(w.id, occ.id)) ?? null) : null,
+    });
+  });
+  return out;
+};
 
 /** お客様（DBの room_customers）。一般の方は会員番号を持たないので、ここには載らない */
 export interface Customer {

@@ -13,11 +13,16 @@ import {
   customerName, customerFullName, customerKana, contactLines, toHiragana,
   fiscalYear, fiscalYearEnd, fiscalYearLabel, RENEWAL_NOTICE_DAYS, daysUntil, detailsOf, purposeWithDetail,
   participantsOf, participantLabelOf, attendanceOptionsFor, needsPaymentNote, customerSearchFilter, customerMatches,
+  skipDetailLabel, waitKey, type SkipInfo,
+  waitOverLimit, waitQueueKey, queueKeyOfBooking, waitSeatsFor,
   type Campus, type Floor, type Booking, type ConflictInfo,
   type Staff, type LessonCategory, type Recurrence, type PurposeDuration, type PurposeDetail,
   type AttendanceOption, type AttendanceRow, type Participant,
   type Customer, type CustomerContact, type Waitlist, type RoomPurpose,
 } from '../lib/roomBooking';
+// 🚨 キャンセル待ちの読み込みは**この1か所だけ**（判定は lib/roomBooking.ts 側）。
+//    キャンセル待ちの一覧と、担当別の予約一覧の両方が同じものを呼ぶ（2026-09-05）
+import { loadWaitlistState, type WaitlistState } from '../lib/roomWaitlist';
 import {
   readTable, guessMapping, buildCustomers, parseBirthDate, FIELD_LABEL, REQUIRED_FIELDS,
   type CustomerField,
@@ -297,6 +302,41 @@ interface Lane {
   floorId: string | null;   // 空き枠を押して予約を作れるのは場所別のときだけ
 }
 
+/**
+ * 担当別の一覧に出すキャンセル待ち（2026-09-05 ユーザー承認）。
+ * 中身の作り方は RoomBookingPage の waitInfo を見ること。
+ * 🚨 **参加者別には出さない**（ユーザー確定）。あちらの「待ち」は
+ *    「その人が待っている枠」という逆の意味になり、同じ言葉が2つの意味を持つため。
+ */
+/**
+ * 一覧に出す待ちの方1名ぶん（2026-09-05 ユーザー確定）。
+ * 🚨 **期限（「◯月◯日以降だけ取り消す」）に掛かった方はここに入れない**。
+ *    その日以降はもう待っていないので、出さないし人数にも数えない。
+ */
+interface WaitPerson {
+  /** 列の中の順番。キャンセル待ちの一覧の「1. 2. 3.」と同じ番号 */
+  order: number;
+  label: string;
+  /** waiting＝この日に入れる／skip＝この日は見送り／promoted＝この日はもう入っている */
+  state: 'waiting' | 'skip' | 'promoted';
+  /**
+   * 別枠で予約の印（skip のときだけ意味を持つ・2026-09-05 ユーザー確定）。
+   * 🚨 担当別の一覧に**自由な理由は出さない**。出すのはこの印だけ
+   */
+  booked: boolean;
+}
+
+interface WaitInfo {
+  /** 回ID → その回の待ち（並んでいる方＋見送り・繰上りの方。期限切れは含まない） */
+  byBooking: Map<string, WaitPerson[]>;
+  /** 回ID →「この回はキャンセル待ち対象外」のとき、本来並んでいた人数 */
+  offByBooking: Map<string, number>;
+  /** 予約の行が1件も無い枠の待ち（一覧のいちばん上に出す） */
+  orphans: { key: string; staffId: string; title: string; people: string[] }[];
+  /** 読めなかったときの説明。空文字なら成功 */
+  error: string;
+}
+
 type FormMode = {
                 kind: 'create'; floorId: string; date: string; startTime: string;
                 /**
@@ -453,6 +493,32 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
   }, []);
 
   useEffect(() => { loadWaitingCount(); }, [loadWaitingCount]);
+
+  /**
+   * 担当別の一覧に出すキャンセル待ち（2026-09-05 ユーザー承認）。
+   *
+   * 🚨 読み込みも「その回で対象か」の判定も **lib/roomWaitlist.ts の1本**を使う。
+   *    キャンセル待ちの一覧（WaitlistSettings）と同じものなので、片方だけ直して
+   *    食い違う事故が起きない。判定を足すときは必ずあちらに足すこと。
+   * 🚨 待ちの件数は多くないので**全件読む**（枠や期間で絞ると、
+   *    「予約が無い枠の待ち」を取りこぼす）。
+   */
+  const [waitState, setWaitState] = useState<WaitlistState | null>(null);
+  /** 待っている方の表示名を作るためのお客様。会員番号で引く */
+  const [waitCustomers, setWaitCustomers] = useState<Record<string, Customer>>({});
+
+  const loadWaitInfo = useCallback(async () => {
+    const ws = await loadWaitlistState();
+    setWaitState(ws);
+    // 🚨 名前は予約表と同じ作り分け（大人は漢字／子どもはひらがな＋学年）で出す。
+    //    生の customer_label をそのまま出すと、この一覧だけ表記が変わる（2026-09-04 ㊲(1)）
+    const nos = [...new Set(ws.rows.map(w => w.member_no).filter(Boolean))] as string[];
+    if (nos.length === 0) { setWaitCustomers({}); return; }
+    const { data } = await supabase.from('room_customers').select('*').in('member_no', nos);
+    setWaitCustomers(Object.fromEntries(((data ?? []) as Customer[]).map(c => [c.member_no, c])));
+  }, []);
+
+  useEffect(() => { loadWaitInfo(); }, [loadWaitInfo]);
 
   /**
    * 月末が近いとき、翌月分がまだ作られていない枠（繰り返し）が何件あるかを数える。
@@ -690,6 +756,49 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
     [isToday, visibleFloors, bookings, now]);
 
   /**
+   * 「待ちはいるのに、この期間に予約の行が1件も無い枠」（2026-09-05 ユーザー確定）。
+   *
+   * 🚨 **抽出はここ1か所だけ**。担当別の並び・絞り込み・一覧の見出しの3つが
+   *    同じものを見る。別々に書くと「絞り込みには出るのに一覧に出ない」になる。
+   * 🚨 見出しの文字はここで作らない（placeName がまだ無いため）。
+   *    文字にするのは waitInfo（下）で、抽出の規則はこちらに一本化してある。
+   */
+  const waitOrphanSlots = useMemo(() => {
+    type Slot = { key: string; staffId: string; floorId: string; entries: Waitlist[] };
+    const out: Slot[] = [];
+    if (view !== 'staff' || !waitState) return out;
+    const shown = new Set(bookings.map(b => queueKeyOfBooking(b)));
+    const visibleFloorIds = new Set(visibleFloors.map(f => f.id));
+    const bySlot = new Map<string, Waitlist[]>();
+    for (const w of waitState.rows) {
+      const k = waitQueueKey(w);
+      const arr = bySlot.get(k);
+      if (arr) arr.push(w); else bySlot.set(k, [w]);
+    }
+    for (const [k, entries] of bySlot) {
+      if (shown.has(k)) continue;
+      const head = entries[0];
+      const rec = head.recurrence;
+      const bk = head.booking;
+      // 🚨 対象の回が取り消された待ちは繰り上げ先が無いので出さない
+      //    （キャンセル待ちの一覧には「対象の回は取り消されています」と別に出る）
+      if (!rec && (!bk || bk.deleted_at)) continue;
+      const floorId = rec?.floor_id ?? bk?.floor_id ?? '';
+      const staffId = rec?.staff_id ?? bk?.staff_id ?? null;
+      // 🚨 いま見えている校の枠だけ（校を絞っている意味が無くなるため）
+      if (!floorId || !visibleFloorIds.has(floorId)) continue;
+      // 担当別の一覧なので、担当が入っていない枠はここには出せない
+      if (!staffId) continue;
+      out.push({ key: k, staffId, floorId, entries });
+    }
+    return out;
+  }, [view, waitState, bookings, visibleFloors]);
+
+  /** 上の枠に出てくる担当（並び・絞り込みの両方がこれを見る） */
+  const waitOnlyStaffIds = useMemo(
+    () => new Set(waitOrphanSlots.map(s => s.staffId)), [waitOrphanSlots]);
+
+  /**
    * タイムラインの列を組み立てる。
    * 場所別 … その校（または全校）の場所を並べる。
    * 担当別 … その日に予約が入っているスタッフだけを並べる。
@@ -766,9 +875,15 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
   const onlyOptions = useMemo(() => {
     if (view === 'staff') {
       const used = new Set(bookings.map(b => b.staff_id).filter(Boolean) as string[]);
-      const opts = staff.filter(s => used.has(s.id))
+      // 🚨 予約が無くても、待ちがいる枠の担当は必ず出す（2026-09-05 ユーザー確定）。
+      //    出さないと「順番待ちがいるのに、その担当を画面から探せない」状態になる
+      const opts = staff.filter(s => used.has(s.id) || waitOnlyStaffIds.has(s.id))
         .sort((a, b) => a.sort_order - b.sort_order)
-        .map(s => ({ value: s.id, label: `${s.name}（${categoryLabel(s, categories) || '区分なし'}）` }));
+        .map(s => ({
+          value: s.id,
+          label: `${s.name}（${categoryLabel(s, categories) || '区分なし'}）`
+            + (used.has(s.id) ? '' : '｜予約なし・待ちのみ'),
+        }));
       if (bookings.some(b => !b.staff_id)) opts.push({ value: '__none__', label: '担当なし' });
       return opts;
     }
@@ -783,7 +898,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
         .map(([value, label]) => ({ value, label }));
     }
     return [];
-  }, [view, bookings, staff, categories]);
+  }, [view, bookings, staff, categories, waitOnlyStaffIds]);
 
   // 絞り込みで選んでいた人がいなくなったら「全員」に戻す（空表示のまま固まるのを防ぐ）
   useEffect(() => {
@@ -810,6 +925,94 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([d, list]) => ({ date: d, list: list.sort((a, b) => a.starts_at.localeCompare(b.starts_at)) }));
   }, [view, only, onlyTentative, bookings]);
+
+  /**
+   * 担当別の一覧に出すキャンセル待ち（2026-09-05 ユーザー承認）。
+   *
+   * 🚨 **参加者別には出さない**（ユーザー確定）。参加者別の「待ち」は
+   *    「その人が待っている枠」という**逆の意味**になり、同じ言葉で別のものを
+   *    指すことになるため。担当別だけに出す。
+   * 🚨 その日に**実際に並んでいる人**を出す。見送り・期限切れ・繰り上げ済みは外す。
+   *    判定は lib/roomWaitlist.ts の waitBlockedOn（キャンセル待ちの一覧と同じ）。
+   * 🚨 外した人数も一緒に返す。黙って人数が減ると「一覧では3名なのにここは1名」と
+   *    食い違って見え、原因が分からなくなる。
+   */
+  const waitInfo = useMemo(() => {
+    const byBooking = new Map<string, WaitPerson[]>();
+    const offByBooking = new Map<string, number>();
+    type Orphan = { key: string; staffId: string; title: string; people: string[] };
+    const orphans: Orphan[] = [];
+    if (view !== 'staff' || !waitState) {
+      return { byBooking, offByBooking, orphans, error: waitState?.error ?? '' };
+    }
+
+    const nowIso = new Date().toISOString();
+    /** 待っている方の表示名。予約表と同じ作り分けにそろえる */
+    const nameOf = (w: Waitlist, onDate: string) => {
+      const c = w.member_no ? waitCustomers[w.member_no] : null;
+      const nm = c ? customerName(c, onDate) : (w.customer_label || (w.member_no ? `#${w.member_no}` : '名前なし'));
+      const g = c?.birth_date ? gradeOrAge(c.birth_date, onDate) : '';
+      return g ? `${nm}（${g}）` : nm;
+    };
+
+    // 枠ごとにまとめる（毎週の枠＝recurrence／この回だけ＝その回）。
+    // 🚨 並びは読み込みの order（position → created_at）のまま。
+    //    キャンセル待ちの一覧の「1. 2. 3.」と同じ番号になる
+    const bySlot = new Map<string, Waitlist[]>();
+    for (const w of waitState.rows) {
+      const k = waitQueueKey(w);
+      const arr = bySlot.get(k);
+      if (arr) arr.push(w); else bySlot.set(k, [w]);
+    }
+
+    // ① いま画面に出ている回それぞれについて、その日に並んでいる人を出す
+    for (const b of bookings) {
+      const entries = bySlot.get(queueKeyOfBooking(b));
+      if (!entries?.length) continue;
+      // 🚨 「この回はキャンセル待ち対象外」の回は、枠に待ちがいても繰り上げ先にならない
+      if (b.no_waitlist) {
+        // 🚨 期限に掛かった方は数えない（もう待っていないため・ユーザー確定）
+        const n = waitSeatsFor(entries, b, waitState.skips, waitState.promoted).length;
+        if (n) offByBooking.set(b.id, n);
+        continue;
+      }
+      const on = localDate(b.starts_at);
+      // 🚨 並びの組み立ては lib の waitSeatsFor 1本（画面を開かずに検算できる場所に置いてある）。
+      //    ここでやるのは「名前の文字を作る」ことだけ
+      const line: WaitPerson[] = waitSeatsFor(entries, b, waitState.skips, waitState.promoted)
+        .map(s => ({ order: s.order, label: nameOf(s.wait, on), state: s.state, booked: !!s.skip?.booked }));
+      if (line.length) byBooking.set(b.id, line);
+    }
+
+    // ② 待ちはいるのに、この期間に予約の行が1件も無い枠（ユーザー確定・一覧の上に出す）
+    // 🚨 「確認中だけ」で絞っているときは出さない。絞った一覧の上に
+    //    無関係な枠が並ぶと、何で絞られているのか読めなくなる
+    // 🚨 **どの枠を出すかの判定は waitOrphanSlots（上）だけ**。ここは文字にするだけ。
+    //    絞り込みの選択肢も同じものを見ているので、食い違いが起きない
+    for (const s of (onlyTentative ? [] : waitOrphanSlots)) {
+      const head = s.entries[0];
+      const rec = head.recurrence;
+      const bk = head.booking;
+      const when = rec
+        ? `毎週${WEEKDAY_LABEL[rec.weekday] ?? ''}曜 ${rec.start_time.slice(0, 5)}〜${rec.end_time.slice(0, 5)}`
+        : `${formatDateLabel(localDate(bk!.starts_at))} ${hhmm(bk!.starts_at)}〜${hhmm(bk!.ends_at)}`;
+      // 🚨 学年はその日を基準に出す。毎週の枠は日が定まらないので今日で出す
+      const on = rec ? todayStr() : localDate(bk!.starts_at);
+      // 🚨 ここでも期限切れの方は出さない（回が無いので**今日**を基準に見る）
+      const people = s.entries
+        .map((w, i) => ({ w, order: i + 1 }))
+        .filter(({ w }) => !waitOverLimit(w, nowIso))
+        .map(({ w, order }) => `${order}. ${nameOf(w, on)}`);
+      if (!people.length) continue;
+      orphans.push({
+        key: s.key, staffId: s.staffId,
+        title: `${when}／${placeName(s.floorId, allCampus)}／${rec?.purpose ?? bk?.purpose ?? ''}`,
+        people,
+      });
+    }
+    orphans.sort((a, b) => a.title.localeCompare(b.title, 'ja'));
+    return { byBooking, offByBooking, orphans, error: waitState.error };
+  }, [view, waitState, waitCustomers, bookings, waitOrphanSlots, onlyTentative, placeName, allCampus]);
 
   // ---------------- 見た目の部品 ----------------
   const btn = (on: boolean, color = accent): React.CSSProperties => ({
@@ -975,6 +1178,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
               staffById={staffById} categories={categories}
               placeName={placeName} allCampus={allCampus}
               onOpenDetail={setDetail} absentIds={absentIds}
+              waitInfo={waitInfo}
               colors={{ card, line, lineSoft, text, textMid, textSoft }}
               isDark={isDark} />
           : narrow
@@ -1279,14 +1483,32 @@ const RangeList: React.FC<{
   onOpenDetail: (b: Booking) => void;
   /** 休みの連絡が全員に付いた回のID（カードに印を出す・2026-09-03） */
   absentIds: Set<string>;
+  /** 担当別のキャンセル待ち（2026-09-05）。参加者別では中身が空で渡る */
+  waitInfo: WaitInfo;
   colors: { card: string; line: string; lineSoft: string; text: string; textMid: string; textSoft: string };
   isDark: boolean;
-}> = ({ groups, view, only, staffById, categories, placeName, allCampus, onOpenDetail, absentIds, colors, isDark }) => {
+}> = ({ groups, view, only, staffById, categories, placeName, allCampus, onOpenDetail, absentIds, waitInfo, colors, isDark }) => {
   const { card, line, lineSoft, text, textMid, textSoft } = colors;
   const today = todayStr();
   const total = groups.reduce((n, g) => n + g.list.length, 0);
 
-  if (!groups.length) {
+  // 予約の行が無い枠の待ち。担当を1人に絞っているときはその人のぶんだけ
+  const orphans = view === 'staff'
+    ? waitInfo.orphans.filter(o => !only || o.staffId === only)
+    : [];
+
+  /** キャンセル待ちの1行（予約の行の下・枠の見出しの下で同じ見た目にする） */
+  const waitLine = (body: React.ReactNode) => (
+    <div style={{
+      padding: '0 14px 9px 14px', fontSize: 12, color: textMid, lineHeight: 1.6,
+      // 🚨 新しい色は足さない（配色の決まり）。左の細い線だけで「予約の続き」と分かるようにする
+      borderLeft: `3px solid ${lineSoft}`, marginLeft: 14,
+    }}>{body}</div>
+  );
+
+  // 🚨 予約が0件でも、待ちだけの枠があるなら画面を出す（2026-09-05 ユーザー確定）。
+  //    ここで早く返してしまうと「順番待ちがいるのに何も出ない」に戻る
+  if (!groups.length && !orphans.length) {
     return <div style={{ background: card, border: `1px solid ${line}`, borderRadius: 12, padding: 30, textAlign: 'center', color: textMid }}>
       この期間に{only ? '、選んだ人の' : ''}予約はありません。
     </div>;
@@ -1297,6 +1519,41 @@ const RangeList: React.FC<{
       <div style={{ padding: '8px 14px', fontSize: 12.5, color: textMid, borderBottom: `1px solid ${lineSoft}` }}>
         {groups.length}日ぶん・{total}件
       </div>
+
+      {/* 🚨 読み込みに失敗したときは必ず断る。空を「待ち0名」と読ませない（2026-09-04 の教訓） */}
+      {view === 'staff' && waitInfo.error && (
+        <div style={{ padding: '8px 14px', fontSize: 12.5, color: textMid, borderBottom: `1px solid ${lineSoft}` }}>
+          {waitInfo.error}（キャンセル待ちの人数は出せていません）
+        </div>
+      )}
+
+      {/* 予約の行が無い枠の待ち（2026-09-05 ユーザー確定）。
+          毎週の枠は日付を持たないので、日付ごとの並びには入れられない */}
+      {orphans.length > 0 && (
+        <div style={{ borderBottom: `1px solid ${line}` }}>
+          <div style={{ padding: '7px 14px', fontSize: 12.5, fontWeight: 700, color: text, background: isDark ? '#26263a' : '#f5f6f8' }}>
+            予約の無い枠に、キャンセル待ちが {orphans.length}件
+          </div>
+          {orphans.map(o => (
+            <div key={o.key} style={{ borderTop: `1px solid ${lineSoft}`, padding: '8px 14px 4px' }}>
+              <div style={{ fontSize: 12.5, color: text }}>
+                {o.title}
+                {!only && <span style={{ color: textMid }}>／{staffById(o.staffId)?.name ?? '担当なし'}</span>}
+              </div>
+              <div style={{ fontSize: 12, color: textMid, lineHeight: 1.6, paddingTop: 2 }}>
+                キャンセル待ち {o.people.length}名：{o.people.join('／')}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 待ちだけがあって予約が0件のとき、下が真っ白になるので断っておく */}
+      {!groups.length && (
+        <div style={{ padding: '14px', fontSize: 13, color: textMid, textAlign: 'center' }}>
+          この期間に{only ? '、選んだ人の' : ''}予約はありません。
+        </div>
+      )}
 
       {groups.map(g => {
         const wk = isWeekend(g.date);
@@ -1330,8 +1587,12 @@ const RangeList: React.FC<{
               const bgc = off ? (isDark ? '#33334a' : '#f0f1f4') : pb;
               const st = staffById(b.staff_id);
               const where = placeName(b.floor_id, allCampus);
+              // キャンセル待ち（2026-09-05）。担当別のときだけ中身が入る
+              const waiters = waitInfo.byBooking.get(b.id) ?? [];
+              const waitOff = waitInfo.offByBooking.get(b.id) ?? 0;
               return (
-                <button key={b.id} onClick={() => onOpenDetail(b)}
+                <React.Fragment key={b.id}>
+                <button onClick={() => onOpenDetail(b)}
                   style={{
                     display: 'flex', alignItems: 'flex-start', gap: 10, width: '100%', textAlign: 'left',
                     background: 'transparent', border: 'none', borderTop: `1px solid ${lineSoft}`,
@@ -1367,6 +1628,39 @@ const RangeList: React.FC<{
                     ].filter(Boolean).join('／')}
                   </span>
                 </button>
+                {/* その回のキャンセル待ち（2026-09-05 ユーザー確定）。
+                    ・いま並んでいる方 … そのまま
+                    ・見送り … 名前に取消し線＋「（見送り：別枠で予約）」または「（見送り）」
+                    ・繰り上げ済み … 名前に取消し線＋「（繰上り）」
+                    🚨 **並んでいない方は一律で取消し線**（2026-09-05 ユーザー指示）。
+                       繰上りの方はもう枠を持っていて、いま待っているわけではないので、
+                       待っている方と見た目で差を付ける
+                    🚨 **自由な理由はここには出さない**（ユーザー確定）。出すのは「別枠で予約」だけ。
+                       理由はキャンセル待ちの一覧・予約の内容で読む
+                    🚨 期限（「◯月◯日以降だけ取り消す」）の方はそもそも入っていない
+                    🚨 頭の人数は「この日に入れる方」の数。見送り・繰上りは数に入れない */}
+                {waiters.length > 0 && waitLine(
+                  <>
+                    キャンセル待ち {waiters.filter(w => w.state === 'waiting').length}名：
+                    {waiters.map((w, i) => (
+                      <React.Fragment key={w.order}>
+                        {i > 0 && '／'}
+                        <span style={w.state === 'waiting' ? undefined : { color: textSoft }}>
+                          {w.order}.{' '}
+                          <span style={{ textDecoration: w.state === 'waiting' ? 'none' : 'line-through' }}>
+                            {w.label}
+                          </span>
+                          {w.state === 'skip' && `（見送り${w.booked ? '：別枠で予約' : ''}）`}
+                          {w.state === 'promoted' && '（繰上り）'}
+                        </span>
+                      </React.Fragment>
+                    ))}
+                  </>,
+                )}
+                {waiters.length === 0 && waitOff > 0 && waitLine(
+                  `キャンセル待ちは、この日は対象外です（${waitOff}名）`,
+                )}
+                </React.Fragment>
               );
             })}
           </div>
@@ -4004,7 +4298,7 @@ const BookingDetail: React.FC<{
    * 🚨 見送りは「待ち × 回」なので、同じ人でも別の週は繰り上げられる。
    *    設定・解除はキャンセル待ちの一覧（日付選び）で行う。ここは表示だけ
    */
-  const [waitSkips, setWaitSkips] = useState<Map<string, string | null>>(new Map());
+  const [waitSkips, setWaitSkips] = useState<Map<string, SkipInfo>>(new Map());
   const [adding, setAdding] = useState(false);
   // 🚨 予約フォーム・募集枠と**同じ部品（ParticipantRow）**を使う。
   //    素の入力欄にすると検索（番号→お名前／お名前→候補）が効かない
@@ -4123,9 +4417,9 @@ const BookingDetail: React.FC<{
     //    見送りは「待ち × 回」なので、ここでは booking_id をこの回に固定して引く。
     //    出さないと、この画面では繰り上げられる人と見送りの人が同じに見える
     const { data: sk } = await supabase.from('room_waitlist_skips')
-      .select('waitlist_id, reason').eq('booking_id', b.id);
-    setWaitSkips(new Map(((sk ?? []) as { waitlist_id: string; reason: string | null }[])
-      .map(x => [x.waitlist_id, x.reason])));
+      .select('waitlist_id, reason, booked_elsewhere').eq('booking_id', b.id);
+    setWaitSkips(new Map(((sk ?? []) as { waitlist_id: string; reason: string | null; booked_elsewhere: boolean }[])
+      .map(x => [x.waitlist_id, { booked: !!x.booked_elsewhere, reason: x.reason }])));
   }, [b.id, b.recurrence_id]);
 
   useEffect(() => { loadWaiting(); }, [loadWaiting]);
@@ -4670,9 +4964,10 @@ const BookingDetail: React.FC<{
                     {/* 繰り返しの予約では「毎週の枠の待ち」と「この回だけの待ち」が
                         混ざるので、どちらか分かるように印を付ける */}
                     {repeating && (w.recurrence_id ? '〔毎週〕' : '〔この回だけ〕')}
-                    {/* この回を見送りにしている方（2026-09-04）。理由があれば添える */}
+                    {/* この回を見送りにしている方（2026-09-04）。「別枠で予約」と理由を添える。
+                        🚨 添える文字の作り方は lib の skipDetailLabel 1本（キャンセル待ちの一覧と同じ見え方にする） */}
                     {waitSkips.has(w.id) && (
-                      <b>{' / '}見送り{waitSkips.get(w.id) ? `（${waitSkips.get(w.id)}）` : ''}</b>
+                      <b>{' / '}見送り{skipDetailLabel(waitSkips.get(w.id)) ? `（${skipDetailLabel(waitSkips.get(w.id))}）` : ''}</b>
                     )}
                     {w.note ? ` / ${w.note}` : ''}
                   </div>
@@ -5977,10 +6272,14 @@ const WaitlistSettings: React.FC<{
    * 🚨 サーバー（room_promote_waitlist_at）でも同じ判定をする。片方だけにしない
    *    （2026-09-03 に no_waitlist を画面だけに入れて「押せば通った」失敗と同型）
    */
-  const [skips, setSkips] = useState<Map<string, string | null>>(new Map());
+  const [skips, setSkips] = useState<Map<string, SkipInfo>>(new Map());
   /** 見送りの理由を書いてもらう小さな入力（押した日の行の下に出す） */
   const [skipDraft, setSkipDraft] = useState<{
+    /** new＝これから見送りにする／edit＝すでにある見送りの中身だけ直す（2026-09-05） */
+    mode: 'new' | 'edit';
     wId: string; bId: string; dateStr: string; reason: string;
+    /** 別枠で予約が取れたので見送る（2026-09-05 ユーザー指示）。理由とは別に持つ */
+    booked: boolean;
     /** その日にこの方を繰り上げて作った予約（あれば）。一緒に取り消すか聞く */
     createdId: string | null;
   } | null>(null);
@@ -6033,70 +6332,21 @@ const WaitlistSettings: React.FC<{
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
-    const [{ data, error: err }, st] = await Promise.all([
-      supabase
-        .from('room_waitlist')
-        // 🚨 room_bookings へは booking_id と promoted_booking_id の**外部キーが2本**ある。
-        //    「!booking_id」でどちらで結ぶかを明示しないと PGRST201（曖昧）で
-        //    一覧全体が読めなくなる（2026-09-02 実機で発覚。8/31 の作成時からのバグ）
-        .select('*, booking:room_bookings!booking_id(id, floor_id, starts_at, ends_at, purpose, status, deleted_at, staff_id, member_no, customer_label, cancel_kind, recurrence_id, no_waitlist), recurrence:room_recurrences(id, floor_id, weekday, start_time, end_time, purpose, staff_id, active, auto_open_slot, waitlist_closed, accept_start, accept_end, slot_memo)')
-        .eq('status', 'waiting')
-        .order('position')
-        .order('created_at'),
+    // 🚨 読み込みと「その回で対象か」の判定は lib/roomWaitlist.ts に集約した（2026-09-05）。
+    //    担当別の予約一覧も**同じもの**を呼ぶ。ここに書き写さないこと
+    //    （書き写すと「一覧には見送りと出るのに押せば入る」の食い違いが戻る）
+    const [ws, st] = await Promise.all([
+      loadWaitlistState(),
       supabase.from('room_settings').select('value').eq('key', 'waitlist_open_statuses').maybeSingle(),
     ]);
     if (st.data?.value) {
       setOpenStatuses(st.data.value.split(',').map((s: string) => s.trim()).filter(Boolean));
     }
-    if (err) {
-      setError('キャンセル待ちを読み込めませんでした。通信を確認して開き直してください。');
-      setLoading(false); return;
-    }
-    const list = (data ?? []) as Waitlist[];
-    setRows(list);
-    // すでに繰り上げ済みの（待ち, 回）の組を読む。毎週の待ちは残るので二重防止に要る
-    if (list.length > 0) {
-      const ids = list.map(w => w.id);
-      // 🚨 **埋め込みで一度に読まない**（2026-09-04 実機で発覚）。
-      //    room_waitlist_promotions は room_bookings への外部キーが**2本**あり、
-      //    埋め込みは過去に PGRST201 で失敗している（9/02）。素直に2回に分ける。
-      // 🚨 **エラーを必ず見る**。見ていなかったため、読み込みに失敗しても
-      //    「繰り上げ済みは0件」と黙って判断し、画面が事実と違うことを言っていた
-      const [prRes, skRes] = await Promise.all([
-        supabase.from('room_waitlist_promotions')
-          .select('waitlist_id, booking_id, created_booking_id').in('waitlist_id', ids),
-        // 「この日は見送る」（2026-09-04）
-        supabase.from('room_waitlist_skips')
-          .select('waitlist_id, booking_id, reason').in('waitlist_id', ids),
-      ]);
-      if (prRes.error || skRes.error) {
-        setError('繰り上げ済み・見送りの記録を読み込めませんでした。通信を確認して開き直してください。');
-        setPromoted(new Map()); setSkips(new Map()); setLoading(false); return;
-      }
-      type PromoRow = { waitlist_id: string; booking_id: string; created_booking_id: string | null };
-      const promos = (prRes.data ?? []) as PromoRow[];
-      // 作った予約が**まだ生きているか**を別に見る（削除したら繰り上げ直せる）
-      const createdIds = [...new Set(promos.map(p => p.created_booking_id).filter(Boolean))] as string[];
-      const alive = new Set<string>();
-      if (createdIds.length > 0) {
-        const { data: cb, error: cbErr } = await supabase.from('room_bookings')
-          .select('id').in('id', createdIds).is('deleted_at', null).eq('status', 'active');
-        if (cbErr) {
-          setError('繰り上げた予約を確認できませんでした。通信を確認して開き直してください。');
-          setPromoted(new Map()); setSkips(new Map()); setLoading(false); return;
-        }
-        for (const x of (cb ?? []) as { id: string }[]) alive.add(x.id);
-      }
-      setPromoted(new Map(promos
-        // created が空の古い記録は、対応する予約が分からないので数えない（サーバーと同じ）
-        .filter(p => p.created_booking_id && alive.has(p.created_booking_id))
-        .map(p => [`${p.waitlist_id}|${p.booking_id}`, p.created_booking_id!])));
-      setSkips(new Map(((skRes.data ?? []) as { waitlist_id: string; booking_id: string; reason: string | null }[])
-        .map(x => [`${x.waitlist_id}|${x.booking_id}`, x.reason])));
-    } else {
-      setPromoted(new Map());
-      setSkips(new Map());
-    }
+    setRows(ws.rows);
+    setPromoted(ws.promoted);
+    setSkips(ws.skips);
+    // 🚨 失敗したときは必ず画面に出す。黙って「0件」と判断させない（2026-09-04 の失敗）
+    if (ws.error) { setError(ws.error); setLoading(false); return; }
     setLoading(false);
   }, []);
 
@@ -6230,12 +6480,8 @@ const WaitlistSettings: React.FC<{
    * 属すなら**同じ列**として扱う（2026-09-02 案A。別のカードに分かれると
    * 優先順位が読めない、という実機指摘への対応）
    */
-  const slotIdOf = (x: Waitlist): string | null =>
-    x.recurrence_id ?? x.booking?.recurrence_id ?? null;
-  const queueKeyOf = (x: Waitlist) => {
-    const sid = slotIdOf(x);
-    return sid ? `r|${sid}` : `b|${x.booking_id}`;
-  };
+  // 🚨 列のまとめ方は lib/roomWaitlist.ts の1本だけ（担当別の一覧も同じものを使う・2026-09-05）
+  const queueKeyOf = waitQueueKey;
 
   /**
    * 取り消し。askFollowUps=true のとき、続けて2つの案内を出す：
@@ -6290,6 +6536,7 @@ const WaitlistSettings: React.FC<{
     const { error: err } = await supabase.from('room_waitlist_skips').insert({
       waitlist_id: skipDraft.wId, booking_id: skipDraft.bId,
       reason: skipDraft.reason.trim() || null,
+      booked_elsewhere: skipDraft.booked,
       created_by: me.user?.id ?? null,
     });
     if (err) { setBusy(''); setError('見送りにできませんでした。通信を確認してください。'); return; }
@@ -6315,6 +6562,37 @@ const WaitlistSettings: React.FC<{
     await onDone(cancelled
       ? 'この日を見送りにし、繰り上げた予約も取り消しました'
       : 'この日を見送りにしました（キャンセル待ちは残っています）');
+  };
+
+  /**
+   * すでにある見送りの「別枠で予約」と理由だけを直す（2026-09-05 ユーザー指示）。
+   *
+   * 🚨 **見送りを消して入れ直さない**。入れ直すと created_at（いつ見送りにしたか）が
+   *    書き換わってしまい、記録として意味が変わる。中身だけ update する。
+   * 🚨 update は0件でもエラーにならないので、必ず件数（select('id')）を見る。
+   *    見ないと「直したつもりが直っていない」を静かに通す。
+   * 🚨 繰り上げた予約をどうするかはここでは聞かない。それは「見送りにする瞬間」の
+   *    話で、すでに見送りになっている日には起こらない。
+   */
+  const saveSkipEdit = async () => {
+    if (!skipDraft) return;
+    setBusy(skipDraft.wId); setError('');
+    const reason = skipDraft.reason.trim() || null;
+    const { data, error: err } = await supabase.from('room_waitlist_skips')
+      .update({ reason, booked_elsewhere: skipDraft.booked })
+      .eq('waitlist_id', skipDraft.wId).eq('booking_id', skipDraft.bId)
+      .select('id');
+    setBusy('');
+    if (err || !data?.length) {
+      // 🚨 理由をそのまま出す（「通信を確認してください」で握りつぶさない）
+      setError(err
+        ? `見送りを直せませんでした：${err.message}`
+        : '見送りを直せませんでした（記録が見つかりません）。開き直してもう一度お試しください。');
+      return;
+    }
+    setSkips(prev => new Map(prev).set(waitKey(skipDraft.wId, skipDraft.bId), { booked: skipDraft.booked, reason }));
+    setSkipDraft(null);
+    await onDone('見送りの内容を直しました');
   };
 
   /**
@@ -6384,17 +6662,18 @@ const WaitlistSettings: React.FC<{
    * その待ちの、その回を「見送り」にする（理由つき・2026-09-04）。
    * 🚨 繰り上げ直後の「他の枠どうしますか」から呼ぶ。待ちも順番も消さない
    */
-  const skipOn = async (waitlistId: string, bookingId: string, reason: string) => {
+  const skipOn = async (waitlistId: string, bookingId: string, reason: string | null, booked = false) => {
     const { data: me } = await supabase.auth.getUser();
     const { error: err } = await supabase.from('room_waitlist_skips').insert({
       waitlist_id: waitlistId, booking_id: bookingId, reason,
+      booked_elsewhere: booked,
       created_by: me.user?.id ?? null,
     });
     if (err) {
       // 🚨 すでに見送りにしてある（表に「待ち×回」の重複禁止がある）。
       //    これは失敗ではないので、そのまま見送り済みとして扱う（2026-09-04 実機指摘）
       if (err.code === '23505') {
-        setSkips(prev => new Map(prev).set(`${waitlistId}|${bookingId}`, reason));
+        setSkips(prev => new Map(prev).set(`${waitlistId}|${bookingId}`, { booked, reason }));
         return true;
       }
       // 🚨 それ以外は**理由をそのまま出す**。「通信を確認してください」で
@@ -6402,7 +6681,7 @@ const WaitlistSettings: React.FC<{
       setError(`見送りにできませんでした：${err.message}`);
       return false;
     }
-    setSkips(prev => new Map(prev).set(`${waitlistId}|${bookingId}`, reason));
+    setSkips(prev => new Map(prev).set(`${waitlistId}|${bookingId}`, { booked, reason }));
     return true;
   };
 
@@ -6820,8 +7099,9 @@ const WaitlistSettings: React.FC<{
                   ) : sameDayId ? (
                     <button onClick={async () => {
                       setBusy(o.id);
-                      const okDone = await skipOn(o.id, sameDayId,
-                        `${formatDateLabel(afterPromote.dateStr)}は別の枠に入ったため`);
+                      // 🚨 これは「別の枠に入ったので今回はいらない」そのものなので、
+                      //    印を立てる（2026-09-05）。理由の文章は重ねない
+                      const okDone = await skipOn(o.id, sameDayId, null, true);
                       setBusy('');
                       if (okDone) drop();
                     }} disabled={!!busy} style={smallBtn(true)}>
@@ -7108,8 +7388,8 @@ const WaitlistSettings: React.FC<{
                                 // 🚨 見送り・対象外・繰り上げ済みは押せなくする。
                                 //    サーバーでも断るが、押せるのに弾かれる状態を画面に作らない
                                 // 🚨 「◯◯以降を取り消す」で区切られた日（サーバーも同じ判定で断る）
-                                const overLimit = !!w.waiting_until
-                                  && localDate(o.starts_at) > w.waiting_until;
+                                // 🚨 判定は lib/roomWaitlist.ts の1か所だけ（担当別の一覧と共通）
+                                const overLimit = waitOverLimit(w, o.starts_at);
                                 const ng = !!o.no_waitlist || done || skipped || overLimit;
                                 return (
                                   <div key={o.id} style={{ padding: '3px 0' }}>
@@ -7117,7 +7397,7 @@ const WaitlistSettings: React.FC<{
                                       <span style={{ fontSize: 13 }}>{formatDateLabel(localDate(o.starts_at))} {hhmm(o.starts_at)}</span>
                                       <span style={{ fontSize: 12, color: s.free && !skipped ? accent : textMid }}>
                                         {skipped
-                                          ? `見送り${skips.get(skipKey) ? `（${skips.get(skipKey)}）` : ''}`
+                                          ? `見送り${skipDetailLabel(skips.get(skipKey)) ? `（${skipDetailLabel(skips.get(skipKey))}）` : ''}`
                                           : overLimit ? 'この日以降は取り消し済み'
                                           : s.label}
                                       </span>
@@ -7125,12 +7405,25 @@ const WaitlistSettings: React.FC<{
                                         {/* この日は見送る／戻す（2026-09-04 ユーザー承認）。
                                             🚨 待ちは消さない。順番も残る */}
                                         {skipped ? (
-                                          <button onClick={() => removeSkip(w.id, o.id)} disabled={!!busy}
-                                            style={smallBtn(false)}>見送りを戻す</button>
+                                          <>
+                                            {/* 見送りの中身だけ直す（2026-09-05 ユーザー指示）。
+                                                🚨 スタッフの「修正→保存」と同じ2段。押した瞬間には保存しない */}
+                                            <button onClick={() => setSkipDraft({
+                                              mode: 'edit',
+                                              wId: w.id, bId: o.id, dateStr: localDate(o.starts_at),
+                                              reason: skips.get(skipKey)?.reason ?? '',
+                                              booked: !!skips.get(skipKey)?.booked,
+                                              createdId: null,
+                                            })}
+                                              disabled={!!busy} style={smallBtn(false)}>修正</button>
+                                            <button onClick={() => removeSkip(w.id, o.id)} disabled={!!busy}
+                                              style={smallBtn(false)}>見送りを戻す</button>
+                                          </>
                                         ) : (
                                           /* 🚨 繰り上げ済みの日でも押せる（2026-09-04 ユーザー確定）。
                                                 その場合は「作った予約も取り消しますか」と確認する */
                                           <button onClick={() => setSkipDraft({
+                                            mode: 'new', booked: false,
                                             wId: w.id, bId: o.id, dateStr: localDate(o.starts_at), reason: '',
                                             createdId: promoted.get(skipKey) ?? null,
                                           })}
@@ -7156,8 +7449,13 @@ const WaitlistSettings: React.FC<{
                                     {/* 理由の入力。🚨 押した行のすぐ下に出す（一覧が長いと最上部では見えない・㉔の教訓） */}
                                     {skipDraft && skipDraft.wId === w.id && skipDraft.bId === o.id && (
                                       <div style={{ background: isDark ? '#35354e' : '#f0f2f5', borderRadius: 8, padding: '8px 10px', marginTop: 4, fontSize: 12.5, lineHeight: 1.7 }}>
-                                        <b>{formatDateLabel(skipDraft.dateStr)}</b> を見送りにします。
-                                        キャンセル待ちは残り、順番も変わりません（あとで戻せます）。
+                                        {skipDraft.mode === 'edit' ? (
+                                          <><b>{formatDateLabel(skipDraft.dateStr)}</b> の見送りの中身を直します。
+                                          見送りそのものは外れません（外すときは「見送りを戻す」）。</>
+                                        ) : (
+                                          <><b>{formatDateLabel(skipDraft.dateStr)}</b> を見送りにします。
+                                          キャンセル待ちは残り、順番も変わりません（あとで戻せます）。</>
+                                        )}
                                         {/* 🚨 すでに繰り上げて予約を作っている日は、そのままだと
                                                「見送りなのに予約が入っている」状態になる。
                                                黙って消さず、どうするかを聞く（2026-09-04 ユーザー確定） */}
@@ -7168,6 +7466,15 @@ const WaitlistSettings: React.FC<{
                                             この日はまた繰り上げられる状態に戻ります。
                                           </div>
                                         )}
+                                        {/* 「別枠で予約」（2026-09-05 ユーザー指示）。
+                                            🚨 理由の文章に「別枠で予約」と書いてもらう方式は採らない。
+                                               表記ゆれで数えられなくなるので、印として別に持つ。
+                                            🚨 チェックを外しても理由は書ける（従来の使い方を狭めない） */}
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, cursor: 'pointer' }}>
+                                          <input type="checkbox" checked={skipDraft.booked}
+                                            onChange={e => setSkipDraft(p => (p ? { ...p, booked: e.target.checked } : p))} />
+                                          <span>別枠で予約</span>
+                                        </label>
                                         <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                                           <input value={skipDraft.reason} placeholder="理由（任意）例：旅行のため"
                                             onChange={e => setSkipDraft(p => (p ? { ...p, reason: e.target.value } : p))}
@@ -7175,9 +7482,11 @@ const WaitlistSettings: React.FC<{
                                           {/* 🚨 「予約は残して見送りだけ」は置かない（2026-09-04 ユーザー指示）。
                                                  予約が入っているのに見送り、という状態は**同時に成り立たない**。
                                                  選べるようにすると、矛盾した記録を作る手段を用意することになる */}
-                                          <button onClick={() => addSkip(!!skipDraft.createdId)}
+                                          <button
+                                            onClick={() => (skipDraft.mode === 'edit' ? saveSkipEdit() : addSkip(!!skipDraft.createdId))}
                                             disabled={!!busy} style={smallBtn(true)}>
-                                            {skipDraft.createdId ? '予約も取り消して見送る' : '見送りにする'}
+                                            {skipDraft.mode === 'edit' ? '保存'
+                                              : skipDraft.createdId ? '予約も取り消して見送る' : '見送りにする'}
                                           </button>
                                           <button onClick={() => setSkipDraft(null)} style={smallBtn(false)}>やめる</button>
                                         </div>
