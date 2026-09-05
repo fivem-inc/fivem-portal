@@ -289,6 +289,80 @@ export interface WaitlistSkip {
   created_at: string;
 }
 
+// ============================================================
+// キャンセル待ちの「列のまとめ方」と「その回で対象かどうか」の判定（2026-09-05）
+//
+// 🚨 **同じ判定を2か所に書かない**ため、ここ1か所に集めた。
+//    キャンセル待ちの一覧（WaitlistSettings）と、担当別の予約一覧が同じものを呼ぶ。
+//    2026-09-03 に「一覧には対象外と出るのに押せば通った」を実際に踏んでいる（㉕）。
+// 🚨 サーバー（room_promote_waitlist_at）にも同じ条件が入っている。片方だけ変えないこと。
+// 🚨 読み込み（supabase を叩く側）は lib/roomWaitlist.ts。ここは**計算だけ**なので
+//    画面を開かずに検算できる。
+// ============================================================
+
+/** （待ち, 回）の組を表す鍵 */
+export const waitKey = (waitlistId: string, bookingId: string): string =>
+  `${waitlistId}|${bookingId}`;
+
+/**
+ * 「◯月◯日以降だけ取り消す」の期限に掛かっているか（2026-09-04〜）。
+ * 🚨 waiting_until は「この日まで待つ」。**翌日以降が対象外**なので比較は「より後」。
+ *    選んだ日そのものを対象外にするため、登録時にはその前日を入れている。
+ */
+export const waitOverLimit = (
+  w: { waiting_until?: string | null },
+  occStartsAt: string,
+): boolean => !!w.waiting_until && localDate(occStartsAt) > w.waiting_until;
+
+/** その回で対象から外れている理由。null＝いま並んでいる（繰り上げられる） */
+export type WaitBlockReason = 'skip' | 'limit' | 'promoted' | null;
+
+/**
+ * ある待ちが、その回で繰り上げの対象から外れているか。
+ * 🚨 見た目の優先順位は 見送り → 期限 → 繰り上げ済み。
+ *    「見送り」は人が明示的に押したものなので、いちばん先に見せる。
+ * 🚨 回そのものの「この回はキャンセル待ち対象外」（no_waitlist）はここに含めない。
+ *    あれは枠ではなく**回の都合**なので、呼ぶ側で回ごと外すこと。
+ */
+export const waitBlockedOn = (
+  w: { id: string; waiting_until?: string | null },
+  occ: { id: string; starts_at: string },
+  isSkipped: (key: string) => boolean,
+  isPromoted: (key: string) => boolean,
+): WaitBlockReason => {
+  const k = waitKey(w.id, occ.id);
+  if (isSkipped(k)) return 'skip';
+  if (waitOverLimit(w, occ.starts_at)) return 'limit';
+  if (isPromoted(k)) return 'promoted';
+  return null;
+};
+
+/**
+ * 待ちが属する「列」の鍵（2026-09-02 ⑮ の決まりをそのまま関数にしたもの）。
+ *
+ * 🚨 **毎週の枠の待ちと、その枠の回に付いた「この回だけ」の待ちは、同じ1本の列**。
+ *    別々にすると優先順位（毎週の2番と この回だけの1番はどちらが先か）が読めない。
+ * 🚨 だから鍵は「回のID」ではなく **回が属する枠のID** を先に見る。
+ *    ここを booking_id で組むと、繰り返しの回に付いた「この回だけ」の待ちが
+ *    枠の列から外れ、予約の行と結び付かなくなる。
+ */
+export const waitQueueKey = (w: Waitlist): string => {
+  const sid = w.recurrence_id ?? w.booking?.recurrence_id ?? null;
+  return sid ? `r|${sid}` : `b|${w.booking_id}`;
+};
+
+/** 予約（回）から見た列の鍵。上の waitQueueKey と必ず対になる */
+export const queueKeyOfBooking = (b: { id: string; recurrence_id: string | null }): string =>
+  b.recurrence_id ? `r|${b.recurrence_id}` : `b|${b.id}`;
+
+/**
+ * その待ちが「その回」に効くか。
+ * 🚨 同じ列に並んでいても、**「この回だけ」の待ちは自分の回にしか効かない**。
+ *    列だけで結ぶと、9/8 だけ待っている方が 9/15 の行にも出てしまう。
+ */
+export const waitAppliesTo = (w: Waitlist, bookingId: string): boolean =>
+  w.recurrence_id ? true : w.booking_id === bookingId;
+
 /** お客様（DBの room_customers）。一般の方は会員番号を持たないので、ここには載らない */
 export interface Customer {
   member_no: string;
