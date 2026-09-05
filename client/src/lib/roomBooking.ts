@@ -286,8 +286,32 @@ export interface WaitlistSkip {
   booking_id: string;
   /** 見送りの理由（任意）。例：「旅行のため」 */
   reason: string | null;
+  /**
+   * 別の枠で予約が取れたので見送った、という印（2026-09-05〜）。
+   * 🚨 理由の文章に「別枠で予約」と書く方式は採らなかった（表記ゆれで数えられないため）。
+   */
+  booked_elsewhere: boolean;
   created_at: string;
 }
+
+/** 見送り1件の中身。画面はこの形で持つ（鍵は waitKey） */
+export interface SkipInfo {
+  /** 別枠で予約したか。担当別の一覧は**これだけ**を出す */
+  booked: boolean;
+  /** 自由な理由（任意）。🚨 担当別の一覧には出さない（ユーザー確定・2026-09-05） */
+  reason: string | null;
+}
+
+/**
+ * 見送りに添える補足の文字（「別枠で予約／旅行のため」）。空文字なら何も添えない。
+ * 🚨 **詳しい画面（キャンセル待ちの一覧・予約の内容）が2か所とも これを呼ぶ。**
+ *    片方だけ書き方を変えると、同じ見送りが画面によって違って見える。
+ * 🚨 担当別の一覧は**これを使わない**（理由を出さない決まりなので、booked だけを見る）。
+ */
+export const skipDetailLabel = (s: SkipInfo | null | undefined): string => {
+  if (!s) return '';
+  return [s.booked ? '別枠で予約' : '', s.reason ?? ''].filter(Boolean).join('／');
+};
 
 // ============================================================
 // キャンセル待ちの「列のまとめ方」と「その回で対象かどうか」の判定（2026-09-05）
@@ -370,8 +394,8 @@ export interface WaitSeat {
   order: number;
   /** waiting＝この日に入れる／skip＝この日は見送り／promoted＝この日はもう入っている */
   state: 'waiting' | 'skip' | 'promoted';
-  /** 見送りの理由（任意・skip のときだけ入る） */
-  note: string | null;
+  /** 見送りの中身（skip のときだけ入る）。担当別は booked だけを使う */
+  skip: SkipInfo | null;
 }
 
 /**
@@ -388,7 +412,7 @@ export interface WaitSeat {
 export const waitSeatsFor = (
   entries: Waitlist[],
   occ: { id: string; starts_at: string },
-  skips: ReadonlyMap<string, string | null>,
+  skips: ReadonlyMap<string, SkipInfo>,
   promoted: ReadonlyMap<string, string>,
 ): WaitSeat[] => {
   const isSkipped = (k: string) => skips.has(k);
@@ -402,7 +426,7 @@ export const waitSeatsFor = (
       wait: w,
       order: i + 1,
       state: why === 'skip' ? 'skip' : why === 'promoted' ? 'promoted' : 'waiting',
-      note: why === 'skip' ? (skips.get(waitKey(w.id, occ.id)) ?? null) : null,
+      skip: why === 'skip' ? (skips.get(waitKey(w.id, occ.id)) ?? null) : null,
     });
   });
   return out;

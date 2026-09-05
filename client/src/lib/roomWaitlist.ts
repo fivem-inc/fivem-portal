@@ -8,15 +8,15 @@
 
 import { supabase } from './supabaseClient';
 import { waitKey } from './roomBooking';
-import type { Waitlist } from './roomBooking';
+import type { Waitlist, SkipInfo } from './roomBooking';
 
 /** 読み込んだ結果。error が入っているときは中身を信用しないこと */
 export interface WaitlistState {
   rows: Waitlist[];
   /** 鍵 → 繰り上げで作った予約のID（**生きているものだけ**） */
   promoted: Map<string, string>;
-  /** 鍵 → 見送りの理由（理由なしは null） */
-  skips: Map<string, string | null>;
+  /** 鍵 → 見送りの中身（別枠で予約の印＋理由） */
+  skips: Map<string, SkipInfo>;
   /** 読めなかったときの説明。空文字なら成功 */
   error: string;
 }
@@ -59,7 +59,7 @@ export const loadWaitlistState = async (): Promise<WaitlistState> => {
     supabase.from('room_waitlist_promotions')
       .select('waitlist_id, booking_id, created_booking_id').in('waitlist_id', ids),
     supabase.from('room_waitlist_skips')
-      .select('waitlist_id, booking_id, reason').in('waitlist_id', ids),
+      .select('waitlist_id, booking_id, reason, booked_elsewhere').in('waitlist_id', ids),
   ]);
   if (prRes.error || skRes.error) {
     return failed('繰り上げ済み・見送りの記録を読み込めませんでした。通信を確認して開き直してください。', rows);
@@ -84,8 +84,8 @@ export const loadWaitlistState = async (): Promise<WaitlistState> => {
     promoted: new Map(promos
       .filter(p => p.created_booking_id && alive.has(p.created_booking_id))
       .map(p => [waitKey(p.waitlist_id, p.booking_id), p.created_booking_id!])),
-    skips: new Map(((skRes.data ?? []) as { waitlist_id: string; booking_id: string; reason: string | null }[])
-      .map(x => [waitKey(x.waitlist_id, x.booking_id), x.reason])),
+    skips: new Map(((skRes.data ?? []) as { waitlist_id: string; booking_id: string; reason: string | null; booked_elsewhere: boolean }[])
+      .map(x => [waitKey(x.waitlist_id, x.booking_id), { booked: !!x.booked_elsewhere, reason: x.reason }])),
     error: '',
   };
 };
