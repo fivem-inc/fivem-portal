@@ -3,6 +3,16 @@ import React, { useState, useEffect } from 'react';
 // note を渡すと「読んでほしい案内」が付く。
 // 🚨 note があるときは自動で閉じない。3秒で消えて画面が切り替わると、
 //    いちばん読んでほしい一文が読まれずに終わる（休暇申請の「申請先へ直接相談」がこれ）。
+// 🚨 note があるときは右上の ✕ を出さない（2026-09-05・実機報告）。
+//    ① ✕ と「確認しました」はまったく同じ処理なので、出口が2つある必然性が無い。
+//    ② ✕ は「読まずに閉じる」ための導線。必ず読んでほしい案内を出しているのに
+//       右上に読まずに消すボタンを置くのは目的と逆向き。
+//    ③ iPhone で「✕ を押すと画面が真っ黒（再読み込みで復帰）」の報告が1件あった。
+//       「確認しました」では起きず、コード上は同じ処理なので原因は未特定のまま。
+//       ✕ を外すのは報告された唯一の経路をふさぐだけで、修理ではない。
+//       原因を捕まえるにはエラーバウンダリが要る（未導入・App.tsx を触るため要相談）。
+//    note が無いバナー（調整休の「登録しました」など）は3秒で自動的に消えるので
+//    ✕ はそのまま残す（早く消したい人のための、実害の無い便利機能）。
 const BannerSuccess: React.FC<{ message: string; note?: string; onClose: () => void }> = ({ message, note, onClose }) => {
   useEffect(() => {
     if (note) return;                       // 案内があるときは押してもらうまで出したままにする
@@ -12,7 +22,9 @@ const BannerSuccess: React.FC<{ message: string; note?: string; onClose: () => v
   return (
     <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999 }}>
       <div style={{ background: '#f0fdf4', border: '1.5px solid #b7e4cc', borderRadius: 18, padding: '24px 28px', minWidth: 200, maxWidth: 340, textAlign: 'center', position: 'relative' }}>
-        <button onClick={onClose} style={{ position: 'absolute', top: 10, right: 10, background: 'rgba(21,87,36,0.1)', border: 'none', color: '#155724', borderRadius: '50%', width: 26, height: 26, cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+        {!note && (
+          <button onClick={onClose} style={{ position: 'absolute', top: 10, right: 10, background: 'rgba(21,87,36,0.1)', border: 'none', color: '#155724', borderRadius: '50%', width: 26, height: 26, cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+        )}
         <div style={{ width: 60, height: 60, borderRadius: '50%', background: '#d4edda', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>
           <span style={{ fontSize: 26, color: '#28a745' }}>✓</span>
         </div>
