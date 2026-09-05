@@ -21,6 +21,7 @@ import {
   type FaqAnswerInput,
 } from '../../lib/faq';
 import { todayJstStr } from '../../lib/breakCalc';
+import FaqAnalytics from './FaqAnalytics';
 
 // FAQ管理タブ。
 // ・質問を作り、その下に「回答」を複数ぶら下げる。回答は対象（役職／校・コース）と期間を持つ。
@@ -422,6 +423,17 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
           </button>
         ))}
       </div>
+
+      {/* 利用状況の集計。
+          🚨 社外向けだけに出す。社内（/help）には記録の仕組みを入れていないので、
+             社内タブで出すと「集計が壊れている」と誤解される（何も出ない理由を明示する） */}
+      {audience === 'public'
+        ? <FaqAnalytics isDarkMode={isDarkMode} onChanged={load} />
+        : (
+          <div style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666', marginBottom: 16 }}>
+            利用状況の集計は、お客様向け（社外）のみです。
+          </div>
+        )}
 
       {/* 要対応の件数 */}
       {(needsReviewCount > 0 || needsRefreshCount > 0) && (

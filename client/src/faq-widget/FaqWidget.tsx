@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import {
   fetchPublicFaqTopics,
   logPublicFaqQuery,
+  logFaqEvent,
+  faqEventSent,
   matchFaqTopics,
   featuredTopics,
   resolveAnswer,
@@ -11,6 +13,7 @@ import {
   type FaqTopic,
   type FaqAnswer,
   type FaqViewer,
+  type FaqContactReason,
 } from '../lib/faq';
 import { todayJstStr } from '../lib/breakCalc';
 
@@ -36,8 +39,8 @@ const BORDER = '#d9dee3';
 
 // 「この中にない・わからない」の逃げ道（v4 F-1）。
 // 電話のご案内は四条本校 総合受付に統一（2026-08-15 ユーザー確定）
-const CONTACT_PHONE = '075-255-4401';
-const CONTACT_FORM_URL = 'https://www.five-m.com/inquiry/';
+export const CONTACT_PHONE = '075-255-4401';
+export const CONTACT_FORM_URL = 'https://www.five-m.com/inquiry/';
 
 // 🚨 回答本文に書いたURLは、そのまま出すと「押せない長い文字列」になる（実際そうなっていた）。
 //    スマホでは長押ししてコピーするしかなく、事実上たどり着けない。
@@ -90,11 +93,15 @@ const COURSE_NOTE: Record<string, string> = {
   'こども器械体操プライベート': 'マンツーマンでレッスンを受けている方',
 };
 
+// 🚨 contact には topic / answer を必ず持たせる。
+//    これが無いと「どの質問で解決しなかったか」が記録できず、
+//    「どの回答を書き直すべきか」という運用の判断ができない（2026-09-05 設計レビュー指摘）。
+//    :463 の時点では view.topic / view.answer をその場で持っているのに捨てていた。
 type View =
   | { kind: 'home' }
   | { kind: 'select'; topic: FaqTopic; ask: 'school' | 'course' }
   | { kind: 'answer'; topic: FaqTopic; answer: FaqAnswer }
-  | { kind: 'contact'; reason: 'nomatch' | 'unknown' | 'noanswer' };
+  | { kind: 'contact'; reason: FaqContactReason; topic?: FaqTopic; answer?: FaqAnswer };
 
 const card: React.CSSProperties = {
   background: '#fff', border: `1px solid ${BORDER}`, borderRadius: 12,
@@ -116,6 +123,16 @@ const backBtn: React.CSSProperties = {
   border: `1px solid ${BORDER}`, background: '#fff', color: TEXT, cursor: 'pointer',
 };
 
+/** 「解決しましたか？」の2つのボタン。
+ *  🚨 左右で幅を揃える（flex:1）。文字数の違いで幅が3倍違うと、長いほうが主役に見える。
+ *  🚨 高さは44px以上にする（スマホで押しやすい最低限の大きさ）。backBtn は36px程度で足りない。
+ *  🚨 色は既存のものだけを使う（新しい色を足さない）。 */
+const evalBtn: React.CSSProperties = {
+  flex: 1, minWidth: 120, boxSizing: 'border-box', textAlign: 'center',
+  padding: '12px 16px', fontSize: 14, borderRadius: 8,
+  border: `1px solid ${BORDER}`, background: '#fff', color: TEXT, cursor: 'pointer',
+};
+
 const FaqWidget: React.FC = () => {
   const [topics, setTopics] = useState<FaqTopic[]>([]);
   const [loading, setLoading] = useState(true);
@@ -126,6 +143,10 @@ const FaqWidget: React.FC = () => {
   // 一度選んだ校・コースは覚えておく（質問のたびに聞き直さない）。
   // 回答画面の「校・コースを選び直す」でリセットできる
   const [viewer, setViewer] = useState<FaqViewer>({});
+  // 🚨 「解決した」を押したかどうかは lib 側（faqEventSent）が唯一の情報源。
+  //    ここでは描き直しのきっかけだけを持つ。状態を2か所で持つと、
+  //    戻る操作のあとに「押したのにボタンが戻る」といった食い違いが起きる
+  const [, forceRedraw] = useState(0);
   const today = todayJstStr();
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -160,9 +181,41 @@ const FaqWidget: React.FC = () => {
   useEffect(() => {
     fetchPublicFaqTopics().then(
       rows => { setTopics(rows); setLoading(false); },
-      () => { setLoadError(true); setLoading(false); },
+      () => {
+        setLoadError(true); setLoading(false);
+        // 読み込みに失敗したことも記録する（運用で気づけるように）
+        logFaqEvent({ kind: 'contact', reason: 'load_error', once: 'load_error' });
+      },
     );
   }, []);
+
+  // ページを開いたことを記録（1セッション1回）。
+  // 🚨 ボットも数えるので参考値。割り算の分母には topic_view を使うこと
+  useEffect(() => {
+    logFaqEvent({ kind: 'page_view', once: 'page' });
+  }, []);
+
+  /** 回答を表示する。🚨 表示の記録はここ1か所だけで行う。
+   *  openTopic の中に置くと、校を聞く質問で pickOption → openTopic と
+   *  もう一度通るため、同じ閲覧が2〜3回数えられる（2026-09-05 設計レビュー指摘）。
+   *  once を付けているので、戻る操作で戻ってきても二重にならない。 */
+  const goAnswer = useCallback((topic: FaqTopic, answer: FaqAnswer, v: FaqViewer) => {
+    logFaqEvent({
+      kind: 'topic_view', topicId: topic.id, answerId: answer.id,
+      school: v.school, course: v.course, once: `topic:${topic.id}`,
+    });
+    go({ kind: 'answer', topic, answer });
+  }, [go]);
+
+  /** 問い合わせの案内へ進む。🚨 理由と質問を必ず添える（これが運用の判断材料そのもの） */
+  const goContact = useCallback((reason: FaqContactReason, v: FaqViewer, topic?: FaqTopic, answer?: FaqAnswer) => {
+    logFaqEvent({
+      kind: 'contact', reason, topicId: topic?.id ?? null, answerId: answer?.id ?? null,
+      school: v.school, course: v.course,
+    });
+    go({ kind: 'contact', reason, topic, answer });
+  }, [go]);
+
 
   // 親ページ（WordPress）へ高さを知らせて iframe を伸縮させる。
   // 高さの数字だけを送る（個人情報・回答内容は送らない）
@@ -186,6 +239,18 @@ const FaqWidget: React.FC = () => {
     () => featuredTopics(topics, viewer, 6, today, { ignoreTargets: true }),
     [topics, viewer, today],
   );
+
+  // 🚨 「検索したのに候補が0件」は画面が切り替わらない（その場に問い合わせ案内を出すだけ）ので、
+  //    出た時点で記録する。ここを取り逃すと「新しい質問を作るべき言葉」が分からない。
+  //    同じ言葉なら1回だけ数える。
+  //    🚨 この effect は candidates の定義より後ろに置くこと（前だと参照できずに落ちる）
+  useEffect(() => {
+    if (loading || !searched || candidates.length > 0) return;
+    logFaqEvent({
+      kind: 'contact', reason: 'search_nohit',
+      school: viewer.school, course: viewer.course, once: `nohit:${searched}`,
+    });
+  }, [loading, searched, candidates, viewer.school, viewer.course]);
 
   const doSearch = () => {
     const q = query.trim();
@@ -214,9 +279,9 @@ const FaqWidget: React.FC = () => {
     const ask = neededAsk(topic, v);
     if (ask) { go({ kind: 'select', topic, ask }); return; }
     const answer = resolveAnswer(topic, v, today);
-    if (!answer) { go({ kind: 'contact', reason: 'noanswer' }); return; }
-    go({ kind: 'answer', topic, answer });
-  }, [neededAsk, today, go]);
+    if (!answer) { goContact('noanswer', v, topic); return; }
+    goAnswer(topic, answer, v);
+  }, [neededAsk, today, go, goAnswer, goContact]);
 
   // 校・コースの選択肢は全リスト（lib/faq.ts と共用）を出す。
   // 🚨 その質問の回答が対象にしている校・コースだけに絞ってはいけない。
@@ -235,8 +300,8 @@ const FaqWidget: React.FC = () => {
       // 無ければお問い合わせ案内へ（行き止まりにしない）
       const cleared = ask === 'school' ? { ...viewer, school: null } : { ...viewer, course: null };
       const common = resolveAnswer(topic, cleared, today);
-      if (common) { go({ kind: 'answer', topic, answer: common }); return; }
-      go({ kind: 'contact', reason: 'unknown' });
+      if (common) { goAnswer(topic, common, cleared); return; }
+      goContact('unknown', cleared, topic);
       return;
     }
     const next = ask === 'school' ? { ...viewer, school: value } : { ...viewer, course: value };
@@ -273,6 +338,11 @@ const FaqWidget: React.FC = () => {
     return parts.join(' / ') || '全ての方';
   };
 
+  /** 電話・フォームを押したことの記録。ContactLinks を置く全ての場所に渡す */
+  const onContactOpen = (channel: 'tel' | 'form') => {
+    logFaqEvent({ kind: 'contact_click', channel, school: viewer.school, course: viewer.course });
+  };
+
   if (loading) {
     return <div ref={rootRef} style={{ ...card, fontSize: 14, color: SUB }}>読み込んでいます...</div>;
   }
@@ -283,7 +353,7 @@ const FaqWidget: React.FC = () => {
         <p style={{ fontSize: 14, margin: '0 0 8px', lineHeight: 1.7 }}>
           ただいまこちらのご案内を表示できません。お手数ですが、お電話またはお問い合わせフォームからご連絡ください。
         </p>
-        <ContactLinks />
+        <ContactLinks onOpen={onContactOpen} />
       </div>
     );
   }
@@ -342,7 +412,7 @@ const FaqWidget: React.FC = () => {
                   </div>
                   <p style={{ fontSize: 12, color: SUB, margin: '8px 0 0' }}>
                     どれも違う場合は、言葉を変えてもう一度ご入力いただくか、
-                    <button type="button" onClick={() => go({ kind: 'contact', reason: 'nomatch' })}
+                    <button type="button" onClick={() => goContact('search_nomatch', viewer)}
                       style={{ border: 'none', background: 'none', color: BLUE_DARK, textDecoration: 'underline', cursor: 'pointer', fontSize: 12, padding: 0 }}>
                       お問い合わせ
                     </button>
@@ -354,7 +424,7 @@ const FaqWidget: React.FC = () => {
                   <p style={{ fontSize: 13, color: '#856404', margin: 0, lineHeight: 1.7 }}>
                     申し訳ございません、近いご質問が見つかりませんでした。言葉を変えてお試しいただくか、下記からお問い合わせください。
                   </p>
-                  <div style={{ marginTop: 8 }}><ContactLinks /></div>
+                  <div style={{ marginTop: 8 }}><ContactLinks onOpen={onContactOpen} /></div>
                 </div>
               )}
             </div>
@@ -456,12 +526,44 @@ const FaqWidget: React.FC = () => {
           })()}
 
 
-          <div style={{ borderTop: `1px solid ${BORDER}`, marginTop: 12, paddingTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {/* 解決したかを聞く。
+              🚨 「← 質問の一覧に戻る」と同じ行に並べない。3つ同じ見た目のボタンが並ぶと
+                 スマホで折り返し、「はい」と「いいえ」が上下に分断されて対に見えなくなる。
+              🚨 押したあとも「いいえ・問い合わせる」は残す。誤って「はい」を押した方から
+                 問い合わせの導線を奪ってはいけない（行き止まりを作らない方針）。
+              🚨 押した状態の情報源は lib 側の faqEventSent 1つ。ここで useState を別に持つと
+                 戻る操作で「送ったのにボタンが復活する」といった食い違いが起きる。 */}
+          <div style={{ borderTop: `1px solid ${BORDER}`, marginTop: 12, paddingTop: 12 }}>
+            <p style={{ fontSize: 13, color: SUB, margin: '0 0 8px' }}>この回答で解決しましたか？</p>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {faqEventSent(`solved:${view.topic.id}`) ? (
+                // 🚨 押す前と高さを合わせる（iframe の高さが動くと、指の下の要素がずれて誤爆する）
+                <div role="status" style={{ ...evalBtn, background: '#f0fdf4', border: '1px solid #b7e4cc', color: '#155724', cursor: 'default' }}>
+                  ✓ ありがとうございました
+                </div>
+              ) : (
+                <button type="button" style={evalBtn}
+                  onClick={() => {
+                    logFaqEvent({
+                      kind: 'solved', topicId: view.topic.id, answerId: view.answer.id,
+                      school: viewer.school, course: viewer.course, once: `solved:${view.topic.id}`,
+                    });
+                    // 記録したこと自体は lib 側が覚えている。ここは描き直しのきっかけだけ
+                    forceRedraw(n => n + 1);
+                  }}>
+                  はい
+                </button>
+              )}
+              <button type="button" style={evalBtn}
+                onClick={() => goContact('unsolved', viewer, view.topic, view.answer)}>
+                いいえ・問い合わせる
+              </button>
+            </div>
+          </div>
+
+          <div style={{ borderTop: `1px solid ${BORDER}`, marginTop: 12, paddingTop: 12 }}>
             <button type="button" onClick={backToHome} style={backBtn}>
               ← 質問の一覧に戻る
-            </button>
-            <button type="button" onClick={() => go({ kind: 'contact', reason: 'nomatch' })} style={backBtn}>
-              解決しない・問い合わせる
             </button>
           </div>
         </>
@@ -474,7 +576,7 @@ const FaqWidget: React.FC = () => {
               ? 'お手数ですが、お通いの校に直接お問い合わせください。'
               : '申し訳ございません、こちらではお答えできませんでした。お手数ですが、お電話またはお問い合わせフォームからご連絡ください。'}
           </p>
-          <ContactLinks />
+          <ContactLinks onOpen={onContactOpen} />
           <button type="button" onClick={backToHome} style={{ ...backBtn, marginTop: 12 }}>
             ← 質問の一覧に戻る
           </button>
@@ -484,14 +586,18 @@ const FaqWidget: React.FC = () => {
   );
 };
 
-/** 電話・問い合わせフォームへの逃げ道（どの行き止まりからも出す） */
-const ContactLinks: React.FC = () => (
+/** 電話・問い合わせフォームへの逃げ道（どの行き止まりからも出す）。
+ *  🚨 押されたことを記録する。「案内を出した」と「実際に問い合わせた」は別物で、
+ *     記録しないと『案内は出たが誰も連絡しなかった』と『全員が連絡した』が同じ数字になる。
+ *  🚨 電話は画面が電話アプリに切り替わるため、送信が間に合わず取り逃すことがある。
+ *     取りこぼす前提の数字として扱うこと（集計画面にもその旨を出している）。 */
+const ContactLinks: React.FC<{ onOpen?: (channel: 'tel' | 'form') => void }> = ({ onOpen }) => (
   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-    <a href={`tel:${CONTACT_PHONE.replace(/-/g, '')}`}
+    <a href={`tel:${CONTACT_PHONE.replace(/-/g, '')}`} onClick={() => onOpen?.('tel')}
       style={{ display: 'inline-block', padding: '9px 14px', fontSize: 13, borderRadius: 8, border: `1px solid ${BORDER}`, background: '#fff', color: TEXT, textDecoration: 'none' }}>
       📞 {CONTACT_PHONE}（四条本校 総合受付）
     </a>
-    <a href={CONTACT_FORM_URL} target="_blank" rel="noopener noreferrer"
+    <a href={CONTACT_FORM_URL} target="_blank" rel="noopener noreferrer" onClick={() => onOpen?.('form')}
       style={{ display: 'inline-block', padding: '9px 14px', fontSize: 13, borderRadius: 8, border: 'none', background: BLUE, color: '#fff', textDecoration: 'none' }}>
       お問い合わせフォーム
     </a>

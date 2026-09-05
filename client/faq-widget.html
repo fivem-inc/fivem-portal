@@ -4,6 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="robots" content="noindex" />
+    <!-- 🚨 明るい配色で固定する。宣言が無いと、Android Chrome の自動ダークテーマが
+         ページを勝手に反転させ、白いカードが暗転して青の意味が読めなくなる。
+         この画面はホームページ（白背景）に埋め込む前提で、ダークモードは持たない -->
+    <meta name="color-scheme" content="light" />
     <title>ファイブM よくあるご質問</title>
     <style>
       /* ホームページに iframe で埋め込まれる前提。背景は透過でWordPress側に馴染ませる */

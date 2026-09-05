@@ -291,6 +291,119 @@ export const logPublicFaqQuery = async (params: {
 };
 
 // ============================================================
+// 社外FAQの利用記録（faq_public_event）
+// ============================================================
+// 「どの回答を書き直すべきか」を判断するための記録。検索した言葉は
+// faq_query_log 側が持っているので、ここには入れない（個人情報の保存場所を増やさない）。
+
+/** 記録する出来事 */
+export type FaqEventKind =
+  | 'page_view'      // ページを開いた（1セッション1回）
+  | 'topic_view'     // 回答が表示された（1セッション×1質問1回）
+  | 'contact'        // 問い合わせの案内に進んだ（reason で理由を分ける）
+  | 'contact_click'  // 電話・フォームを実際に押した
+  | 'solved';        // 「はい（解決した）」を押した
+
+/** 問い合わせに進んだ理由。🚨 それぞれ「やるべきこと」が違うので必ず分けて記録する */
+export type FaqContactReason =
+  | 'unsolved'        // 回答を読んだが解決しない  → その回答を書き直す
+  | 'search_nomatch'  // 検索候補は出たが的外れ    → 検索の手がかり語を足す
+  | 'search_nohit'    // 検索候補が0件             → 新しい質問と回答を作る
+  | 'unknown'         // 校・コースに該当が無い    → 既存の回答に対象を足す
+  | 'noanswer'        // 有効な回答が無い          → 下書きを公開する
+  | 'load_error';     // 読み込みに失敗した        → 不具合として気づくため
+
+// 🚨 ここから下は「記録が取れなくても、お客様の画面は絶対に止めない」が最優先。
+//    ウィジェットは別オリジンの iframe で動くため、ブラウザの設定によっては
+//    sessionStorage を読むだけで例外が飛ぶ。エラーバウンダリはあるが、
+//    そもそも落とさないように全て try/catch で包む。
+
+const FAQ_SID_KEY = 'fivem_faq_sid';
+const FAQ_SENT_KEY = 'fivem_faq_sent';
+
+/** 端末の一時ID。🚨 crypto.randomUUID は古い端末（iOS 15.4未満）に無いので必ず逃げ道を持つ */
+const newId = (): string => {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  } catch { /* 使えなければ下の簡易版へ */ }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+};
+
+let memorySid: string | null = null;
+
+/** セッションID（タブを閉じると消える）。個人は特定しない */
+const faqSessionId = (): string => {
+  try {
+    const s = window.sessionStorage.getItem(FAQ_SID_KEY);
+    if (s) return s;
+    const v = newId();
+    window.sessionStorage.setItem(FAQ_SID_KEY, v);
+    return v;
+  } catch {
+    // ストレージが使えない端末。記録の精度より、回答が読めることを優先する
+    return (memorySid ??= newId());
+  }
+};
+
+/** 「1セッションに1回だけ」の判定。🚨 情報源はここ1つ（画面側で別に持たない） */
+const sentKeys: Set<string> = (() => {
+  try {
+    const raw = window.sessionStorage.getItem(FAQ_SENT_KEY);
+    return new Set<string>(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set<string>();
+  }
+})();
+
+const rememberSent = (key: string): void => {
+  sentKeys.add(key);
+  try {
+    window.sessionStorage.setItem(FAQ_SENT_KEY, JSON.stringify([...sentKeys]));
+  } catch { /* 画面の中だけで覚える（タブを再読み込みすると忘れる） */ }
+};
+
+/** その出来事を、このセッションでもう送ったか */
+export const faqEventSent = (once: string): boolean => sentKeys.has(once);
+
+export interface FaqEventInput {
+  kind: FaqEventKind;
+  reason?: FaqContactReason | null;
+  channel?: 'tel' | 'form' | null;
+  topicId?: string | null;
+  answerId?: string | null;
+  school?: string | null;
+  course?: string | null;
+  /** 指定すると「1セッションに1回だけ」送る（例: 'page' / `topic:<id>`） */
+  once?: string;
+}
+
+export const logFaqEvent = async (p: FaqEventInput): Promise<void> => {
+  // 🚨 印は送る前に立てる。あとで立てると、連打したぶんだけ二重に入る
+  if (p.once) {
+    if (sentKeys.has(p.once)) return;
+    rememberSent(p.once);
+  }
+  try {
+    const { error } = await supabase.rpc('faq_public_event_log', {
+      p_kind: p.kind,
+      p_reason: p.reason ?? null,
+      p_channel: p.channel ?? null,
+      p_topic_id: p.topicId ?? null,
+      p_answer_id: p.answerId ?? null,
+      p_school: p.school ?? null,
+      p_course: p.course ?? null,
+      p_session_id: faqSessionId(),
+    });
+    // 🚨 supabase の rpc は 4xx/5xx でも例外を投げない。error を必ず見ること。
+    //    既存の `.then(null, ...)` は通信エラーしか拾えず、
+    //    制約違反・関数が無い（PGRST202）などが黙って消える
+    if (error) console.error('FAQ利用記録に失敗:', error.code, error.message);
+  } catch (e) {
+    console.error('FAQ利用記録に失敗（通信）:', e);
+  }
+};
+
+// ============================================================
 // 「今どの回答を出すか」の判定
 // ============================================================
 
