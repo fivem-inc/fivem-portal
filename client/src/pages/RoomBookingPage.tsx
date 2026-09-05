@@ -13,7 +13,7 @@ import {
   customerName, customerFullName, customerKana, contactLines, toHiragana,
   fiscalYear, fiscalYearEnd, fiscalYearLabel, RENEWAL_NOTICE_DAYS, daysUntil, detailsOf, purposeWithDetail,
   participantsOf, participantLabelOf, attendanceOptionsFor, needsPaymentNote, customerSearchFilter, customerMatches,
-  waitBlockedOn, waitOverLimit, waitQueueKey, queueKeyOfBooking, waitAppliesTo,
+  waitOverLimit, waitQueueKey, queueKeyOfBooking, waitSeatsFor,
   type Campus, type Floor, type Booking, type ConflictInfo,
   type Staff, type LessonCategory, type Recurrence, type PurposeDuration, type PurposeDetail,
   type AttendanceOption, type AttendanceRow, type Participant,
@@ -307,10 +307,25 @@ interface Lane {
  * 🚨 **参加者別には出さない**（ユーザー確定）。あちらの「待ち」は
  *    「その人が待っている枠」という逆の意味になり、同じ言葉が2つの意味を持つため。
  */
+/**
+ * 一覧に出す待ちの方1名ぶん（2026-09-05 ユーザー確定）。
+ * 🚨 **期限（「◯月◯日以降だけ取り消す」）に掛かった方はここに入れない**。
+ *    その日以降はもう待っていないので、出さないし人数にも数えない。
+ */
+interface WaitPerson {
+  /** 列の中の順番。キャンセル待ちの一覧の「1. 2. 3.」と同じ番号 */
+  order: number;
+  label: string;
+  /** waiting＝この日に入れる／skip＝この日は見送り／promoted＝この日はもう入っている */
+  state: 'waiting' | 'skip' | 'promoted';
+  /** 見送りの理由（任意・skip のときだけ） */
+  note?: string | null;
+}
+
 interface WaitInfo {
-  /** 回ID → その日に並んでいる人（枠の中での順番つき） */
-  byBooking: Map<string, { order: number; label: string }[]>;
-  /** 回ID → その日は対象外の人数（見送り・期限・繰り上げ済み・この回は対象外） */
+  /** 回ID → その回の待ち（並んでいる方＋見送り・繰上りの方。期限切れは含まない） */
+  byBooking: Map<string, WaitPerson[]>;
+  /** 回ID →「この回はキャンセル待ち対象外」のとき、本来並んでいた人数 */
   offByBooking: Map<string, number>;
   /** 予約の行が1件も無い枠の待ち（一覧のいちばん上に出す） */
   orphans: { key: string; staffId: string; title: string; people: string[] }[];
@@ -919,7 +934,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
    *    食い違って見え、原因が分からなくなる。
    */
   const waitInfo = useMemo(() => {
-    const byBooking = new Map<string, { order: number; label: string }[]>();
+    const byBooking = new Map<string, WaitPerson[]>();
     const offByBooking = new Map<string, number>();
     type Orphan = { key: string; staffId: string; title: string; people: string[] };
     const orphans: Orphan[] = [];
@@ -927,8 +942,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
       return { byBooking, offByBooking, orphans, error: waitState?.error ?? '' };
     }
 
-    const isSkipped = (k: string) => waitState.skips.has(k);
-    const isPromoted = (k: string) => waitState.promoted.has(k);
+    const nowIso = new Date().toISOString();
     /** 待っている方の表示名。予約表と同じ作り分けにそろえる */
     const nameOf = (w: Waitlist, onDate: string) => {
       const c = w.member_no ? waitCustomers[w.member_no] : null;
@@ -953,23 +967,17 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
       if (!entries?.length) continue;
       // 🚨 「この回はキャンセル待ち対象外」の回は、枠に待ちがいても繰り上げ先にならない
       if (b.no_waitlist) {
-        const n = entries.filter(w => waitAppliesTo(w, b.id)).length;
+        // 🚨 期限に掛かった方は数えない（もう待っていないため・ユーザー確定）
+        const n = waitSeatsFor(entries, b, waitState.skips, waitState.promoted).length;
         if (n) offByBooking.set(b.id, n);
         continue;
       }
       const on = localDate(b.starts_at);
-      const line: { order: number; label: string }[] = [];
-      let off = 0;
-      entries.forEach((w, i) => {
-        // 🚨 同じ列に並んでいても、「この回だけ」の待ちは**自分の回にしか効かない**。
-        //    列だけで結ぶと、9/8 だけ待っている方が 9/15 の行にも出てしまう
-        if (!waitAppliesTo(w, b.id)) return;
-        if (waitBlockedOn(w, b, isSkipped, isPromoted)) { off++; return; }
-        // 番号は**列の中の順番**（キャンセル待ちの一覧の 1. 2. 3. と同じ）
-        line.push({ order: i + 1, label: nameOf(w, on) });
-      });
+      // 🚨 並びの組み立ては lib の waitSeatsFor 1本（画面を開かずに検算できる場所に置いてある）。
+      //    ここでやるのは「名前の文字を作る」ことだけ
+      const line: WaitPerson[] = waitSeatsFor(entries, b, waitState.skips, waitState.promoted)
+        .map(s => ({ order: s.order, label: nameOf(s.wait, on), state: s.state, note: s.note }));
       if (line.length) byBooking.set(b.id, line);
-      if (off) offByBooking.set(b.id, off);
     }
 
     // ② 待ちはいるのに、この期間に予約の行が1件も無い枠（ユーザー確定・一覧の上に出す）
@@ -986,10 +994,16 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
         : `${formatDateLabel(localDate(bk!.starts_at))} ${hhmm(bk!.starts_at)}〜${hhmm(bk!.ends_at)}`;
       // 🚨 学年はその日を基準に出す。毎週の枠は日が定まらないので今日で出す
       const on = rec ? todayStr() : localDate(bk!.starts_at);
+      // 🚨 ここでも期限切れの方は出さない（回が無いので**今日**を基準に見る）
+      const people = s.entries
+        .map((w, i) => ({ w, order: i + 1 }))
+        .filter(({ w }) => !waitOverLimit(w, nowIso))
+        .map(({ w, order }) => `${order}. ${nameOf(w, on)}`);
+      if (!people.length) continue;
       orphans.push({
         key: s.key, staffId: s.staffId,
         title: `${when}／${placeName(s.floorId, allCampus)}／${rec?.purpose ?? bk?.purpose ?? ''}`,
-        people: s.entries.map((w, i) => `${i + 1}. ${nameOf(w, on)}`),
+        people,
       });
     }
     orphans.sort((a, b) => a.title.localeCompare(b.title, 'ja'));
@@ -1610,11 +1624,30 @@ const RangeList: React.FC<{
                     ].filter(Boolean).join('／')}
                   </span>
                 </button>
-                {/* その日に**実際に並んでいる**方。見送り・期限・繰り上げ済みは外してある。
-                    🚨 外した人数も添える。黙って減るとキャンセル待ちの一覧と食い違って見える */}
+                {/* その回のキャンセル待ち（2026-09-05 ユーザー確定）。
+                    ・並んでいる方 … そのまま
+                    ・見送り … 名前に取消し線＋理由（あれば）
+                    ・繰り上げ済み … （繰上り）
+                    🚨 期限（「◯月◯日以降だけ取り消す」）の方は**そもそも入っていない**
+                       （もう待っていないので出さない・数えない）
+                    🚨 頭の人数は「この日に入れる方」の数。見送り・繰上りは数に入れない */}
                 {waiters.length > 0 && waitLine(
-                  <>キャンセル待ち {waiters.length}名：{waiters.map(w => `${w.order}. ${w.label}`).join('／')}
-                    {waitOff > 0 && `　（この日は対象外 ${waitOff}名）`}</>,
+                  <>
+                    キャンセル待ち {waiters.filter(w => w.state === 'waiting').length}名：
+                    {waiters.map((w, i) => (
+                      <React.Fragment key={w.order}>
+                        {i > 0 && '／'}
+                        <span style={w.state === 'waiting' ? undefined : { color: textSoft }}>
+                          {w.order}.{' '}
+                          <span style={{ textDecoration: w.state === 'skip' ? 'line-through' : 'none' }}>
+                            {w.label}
+                          </span>
+                          {w.state === 'skip' && `（見送り${w.note ? `：${w.note}` : ''}）`}
+                          {w.state === 'promoted' && '（繰上り）'}
+                        </span>
+                      </React.Fragment>
+                    ))}
+                  </>,
                 )}
                 {waiters.length === 0 && waitOff > 0 && waitLine(
                   `キャンセル待ちは、この日は対象外です（${waitOff}名）`,

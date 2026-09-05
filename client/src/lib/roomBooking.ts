@@ -363,6 +363,51 @@ export const queueKeyOfBooking = (b: { id: string; recurrence_id: string | null 
 export const waitAppliesTo = (w: Waitlist, bookingId: string): boolean =>
   w.recurrence_id ? true : w.booking_id === bookingId;
 
+/** ある回の待ちの並び1件ぶん。名前は呼ぶ側で作る（お客様の読み込みが要るため） */
+export interface WaitSeat {
+  wait: Waitlist;
+  /** 列の中の順番（1始まり）。キャンセル待ちの一覧の「1. 2. 3.」と同じ */
+  order: number;
+  /** waiting＝この日に入れる／skip＝この日は見送り／promoted＝この日はもう入っている */
+  state: 'waiting' | 'skip' | 'promoted';
+  /** 見送りの理由（任意・skip のときだけ入る） */
+  note: string | null;
+}
+
+/**
+ * ある回（occ）について、その日の待ちの並びを組み立てる。
+ *
+ * 🚨 **期限（「◯月◯日以降だけ取り消す」）に掛かった方は返さない**（2026-09-05 ユーザー確定）。
+ *    その日以降はもう待っていないので、出すと「連絡できる人」と誤解される。人数にも数えない。
+ * 🚨 **「この回だけ」の待ちは自分の回にしか効かない**。列だけで結ぶと、
+ *    9/8 だけ待っている方が 9/15 の行にも出てしまう。
+ * 🚨 **番号は振り直さない**。期限の方を抜いたぶん飛ぶことがあるが、番号は
+ *    キャンセル待ちの一覧と突き合わせるためのものなので、振り直すと食い違う。
+ * 🚨 呼ぶ側は、回そのものが対象外（no_waitlist）のときは**この関数を呼ぶ前に外す**こと。
+ */
+export const waitSeatsFor = (
+  entries: Waitlist[],
+  occ: { id: string; starts_at: string },
+  skips: ReadonlyMap<string, string | null>,
+  promoted: ReadonlyMap<string, string>,
+): WaitSeat[] => {
+  const isSkipped = (k: string) => skips.has(k);
+  const isPromoted = (k: string) => promoted.has(k);
+  const out: WaitSeat[] = [];
+  entries.forEach((w, i) => {
+    if (!waitAppliesTo(w, occ.id)) return;
+    const why = waitBlockedOn(w, occ, isSkipped, isPromoted);
+    if (why === 'limit') return;
+    out.push({
+      wait: w,
+      order: i + 1,
+      state: why === 'skip' ? 'skip' : why === 'promoted' ? 'promoted' : 'waiting',
+      note: why === 'skip' ? (skips.get(waitKey(w.id, occ.id)) ?? null) : null,
+    });
+  });
+  return out;
+};
+
 /** お客様（DBの room_customers）。一般の方は会員番号を持たないので、ここには載らない */
 export interface Customer {
   member_no: string;
