@@ -13,7 +13,7 @@ import {
   customerName, customerFullName, customerKana, contactLines, toHiragana,
   fiscalYear, fiscalYearEnd, fiscalYearLabel, RENEWAL_NOTICE_DAYS, daysUntil, detailsOf, purposeWithDetail,
   participantsOf, participantLabelOf, attendanceOptionsFor, needsPaymentNote, customerSearchFilter, customerMatches,
-  skipDetailLabel, type SkipInfo,
+  skipDetailLabel, waitKey, type SkipInfo,
   waitOverLimit, waitQueueKey, queueKeyOfBooking, waitSeatsFor,
   type Campus, type Floor, type Booking, type ConflictInfo,
   type Staff, type LessonCategory, type Recurrence, type PurposeDuration, type PurposeDetail,
@@ -6275,6 +6275,8 @@ const WaitlistSettings: React.FC<{
   const [skips, setSkips] = useState<Map<string, SkipInfo>>(new Map());
   /** 見送りの理由を書いてもらう小さな入力（押した日の行の下に出す） */
   const [skipDraft, setSkipDraft] = useState<{
+    /** new＝これから見送りにする／edit＝すでにある見送りの中身だけ直す（2026-09-05） */
+    mode: 'new' | 'edit';
     wId: string; bId: string; dateStr: string; reason: string;
     /** 別枠で予約が取れたので見送る（2026-09-05 ユーザー指示）。理由とは別に持つ */
     booked: boolean;
@@ -6560,6 +6562,37 @@ const WaitlistSettings: React.FC<{
     await onDone(cancelled
       ? 'この日を見送りにし、繰り上げた予約も取り消しました'
       : 'この日を見送りにしました（キャンセル待ちは残っています）');
+  };
+
+  /**
+   * すでにある見送りの「別枠で予約」と理由だけを直す（2026-09-05 ユーザー指示）。
+   *
+   * 🚨 **見送りを消して入れ直さない**。入れ直すと created_at（いつ見送りにしたか）が
+   *    書き換わってしまい、記録として意味が変わる。中身だけ update する。
+   * 🚨 update は0件でもエラーにならないので、必ず件数（select('id')）を見る。
+   *    見ないと「直したつもりが直っていない」を静かに通す。
+   * 🚨 繰り上げた予約をどうするかはここでは聞かない。それは「見送りにする瞬間」の
+   *    話で、すでに見送りになっている日には起こらない。
+   */
+  const saveSkipEdit = async () => {
+    if (!skipDraft) return;
+    setBusy(skipDraft.wId); setError('');
+    const reason = skipDraft.reason.trim() || null;
+    const { data, error: err } = await supabase.from('room_waitlist_skips')
+      .update({ reason, booked_elsewhere: skipDraft.booked })
+      .eq('waitlist_id', skipDraft.wId).eq('booking_id', skipDraft.bId)
+      .select('id');
+    setBusy('');
+    if (err || !data?.length) {
+      // 🚨 理由をそのまま出す（「通信を確認してください」で握りつぶさない）
+      setError(err
+        ? `見送りを直せませんでした：${err.message}`
+        : '見送りを直せませんでした（記録が見つかりません）。開き直してもう一度お試しください。');
+      return;
+    }
+    setSkips(prev => new Map(prev).set(waitKey(skipDraft.wId, skipDraft.bId), { booked: skipDraft.booked, reason }));
+    setSkipDraft(null);
+    await onDone('見送りの内容を直しました');
   };
 
   /**
@@ -7372,13 +7405,25 @@ const WaitlistSettings: React.FC<{
                                         {/* この日は見送る／戻す（2026-09-04 ユーザー承認）。
                                             🚨 待ちは消さない。順番も残る */}
                                         {skipped ? (
-                                          <button onClick={() => removeSkip(w.id, o.id)} disabled={!!busy}
-                                            style={smallBtn(false)}>見送りを戻す</button>
+                                          <>
+                                            {/* 見送りの中身だけ直す（2026-09-05 ユーザー指示）。
+                                                🚨 スタッフの「修正→保存」と同じ2段。押した瞬間には保存しない */}
+                                            <button onClick={() => setSkipDraft({
+                                              mode: 'edit',
+                                              wId: w.id, bId: o.id, dateStr: localDate(o.starts_at),
+                                              reason: skips.get(skipKey)?.reason ?? '',
+                                              booked: !!skips.get(skipKey)?.booked,
+                                              createdId: null,
+                                            })}
+                                              disabled={!!busy} style={smallBtn(false)}>修正</button>
+                                            <button onClick={() => removeSkip(w.id, o.id)} disabled={!!busy}
+                                              style={smallBtn(false)}>見送りを戻す</button>
+                                          </>
                                         ) : (
                                           /* 🚨 繰り上げ済みの日でも押せる（2026-09-04 ユーザー確定）。
                                                 その場合は「作った予約も取り消しますか」と確認する */
                                           <button onClick={() => setSkipDraft({
-                                            booked: false,
+                                            mode: 'new', booked: false,
                                             wId: w.id, bId: o.id, dateStr: localDate(o.starts_at), reason: '',
                                             createdId: promoted.get(skipKey) ?? null,
                                           })}
@@ -7404,8 +7449,13 @@ const WaitlistSettings: React.FC<{
                                     {/* 理由の入力。🚨 押した行のすぐ下に出す（一覧が長いと最上部では見えない・㉔の教訓） */}
                                     {skipDraft && skipDraft.wId === w.id && skipDraft.bId === o.id && (
                                       <div style={{ background: isDark ? '#35354e' : '#f0f2f5', borderRadius: 8, padding: '8px 10px', marginTop: 4, fontSize: 12.5, lineHeight: 1.7 }}>
-                                        <b>{formatDateLabel(skipDraft.dateStr)}</b> を見送りにします。
-                                        キャンセル待ちは残り、順番も変わりません（あとで戻せます）。
+                                        {skipDraft.mode === 'edit' ? (
+                                          <><b>{formatDateLabel(skipDraft.dateStr)}</b> の見送りの中身を直します。
+                                          見送りそのものは外れません（外すときは「見送りを戻す」）。</>
+                                        ) : (
+                                          <><b>{formatDateLabel(skipDraft.dateStr)}</b> を見送りにします。
+                                          キャンセル待ちは残り、順番も変わりません（あとで戻せます）。</>
+                                        )}
                                         {/* 🚨 すでに繰り上げて予約を作っている日は、そのままだと
                                                「見送りなのに予約が入っている」状態になる。
                                                黙って消さず、どうするかを聞く（2026-09-04 ユーザー確定） */}
@@ -7432,9 +7482,11 @@ const WaitlistSettings: React.FC<{
                                           {/* 🚨 「予約は残して見送りだけ」は置かない（2026-09-04 ユーザー指示）。
                                                  予約が入っているのに見送り、という状態は**同時に成り立たない**。
                                                  選べるようにすると、矛盾した記録を作る手段を用意することになる */}
-                                          <button onClick={() => addSkip(!!skipDraft.createdId)}
+                                          <button
+                                            onClick={() => (skipDraft.mode === 'edit' ? saveSkipEdit() : addSkip(!!skipDraft.createdId))}
                                             disabled={!!busy} style={smallBtn(true)}>
-                                            {skipDraft.createdId ? '予約も取り消して見送る' : '見送りにする'}
+                                            {skipDraft.mode === 'edit' ? '保存'
+                                              : skipDraft.createdId ? '予約も取り消して見送る' : '見送りにする'}
                                           </button>
                                           <button onClick={() => setSkipDraft(null)} style={smallBtn(false)}>やめる</button>
                                         </div>
