@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { AuthUser, PurchaseRequestItem, PurchaseRequestItemQuote } from '../types';
 import { supabase } from '../lib/supabaseClient';
@@ -105,6 +105,47 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
   const [searchParams] = useSearchParams();
   const focusId = searchParams.get('focus');
   useEffect(() => { if (focusId) setPeriod('all'); }, [focusId]);
+
+  // ── 未確認のやりとり（2026-09-07 実機の事故対応）─────────────────
+  // 🚨 判定はDBの purchase_unconfirmed_ids() 1か所だけ。ここで書き直さない。
+  //    バッジ（purchase_unconfirmed_count）は同じ関数を数えているので、
+  //    「バッジは1なのに帯は0」「帯は3件なのにバッジは1」が構造的に起きない。
+  //    画面側で条件を書くと、履歴が RLS で全社の申請を読んでいるぶん
+  //    無関係な申請にまで帯が出る（マネージャー以上は全件見えるため）。
+  const [unconfirmedIds, setUnconfirmedIds] = useState<string[]>([]);
+  const [unconfirmedErr, setUnconfirmedErr] = useState('');
+  const loadUnconfirmed = useCallback(async () => {
+    const { data, error } = await supabase.rpc('purchase_unconfirmed_ids');
+    // 🚨 rpc は 4xx/5xx でも throw しない。error を必ず見る。
+    //    黙って空にすると「未確認なのに帯が出ない」＝今回と同じ静かな不具合になる
+    if (error) { setUnconfirmedErr(`未確認の件数を確認できませんでした：${error.message}`); return; }
+    setUnconfirmedErr('');
+    setUnconfirmedIds(((data ?? []) as string[]));
+  }, []);
+  useEffect(() => { loadUnconfirmed(); }, [loadUnconfirmed]);
+  // 🚨 「✓ 確認した」を押すと PurchaseCommentThread が purchase-unconfirmed-changed を投げる。
+  //    これを聞かないと、バッジは0になるのに帯だけが残る＝「押しても消えない帯」になる
+  //    （この案件が繰り返している失敗そのもの）。
+  useEffect(() => {
+    const h = () => { loadUnconfirmed(); };
+    window.addEventListener('purchase-unconfirmed-changed', h);
+    return () => window.removeEventListener('purchase-unconfirmed-changed', h);
+  }, [loadUnconfirmed]);
+
+  // ① 未確認があるときは「全期間」で開く。
+  // 🚨 1回だけ効かせる。依存を件数にすると、2件のうち1件を確認した瞬間（2→1）に
+  //    再発火して、利用者が選び直した「今月」を勝手に全期間へ戻してしまう。
+  //    未確認カウントは30秒ごと＋押した直後にも更新されるため、必ず起きる。
+  // 🚨 これは応急処置。絞り込みは scope（自分の分）と kind（精算だけ）でも効くので、
+  //    期間だけ外しても届かない場合がある。恒久対策は下の「確認をお願いします」の帯。
+  const periodAutoApplied = useRef(false);
+  const userPickedPeriod = useRef(false);
+  useEffect(() => {
+    if (periodAutoApplied.current || userPickedPeriod.current) return;
+    if (unconfirmedIds.length === 0) return;
+    periodAutoApplied.current = true;
+    setPeriod('all');
+  }, [unconfirmedIds]);
   // 期間を「申請した日」で見るか「購入日」で見るか。既定は申請日。
   // 購入日基準だと「8月に申請・購入予定日が9月1日」が9月扱いになり、
   // 今月出した申請が「今月」に出ない＝直感に反するため（2026-08-31 ユーザー決定）。
@@ -118,7 +159,22 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
     answers: { manager_id: string; opinion: string }[];
   }>>({});
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [itemsByRequest, setItemsByRequest] = useState<Record<string, PurchaseRequestItem[]>>({});
+  // 帯から該当カードへ運ぶための ref。
+  // 🚨 ?focus= は使わない。同じIDを2回押すと URL が変わらず useEffect が再発火せず、
+  //    「押しても反応しないボタン」になる（useFocusHighlight は focusId の変化で動く）
+  const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const [manualFocusId, setManualFocusId] = useState<string | null>(null);
+  // 🚨 動きは useFocusHighlight（通知・勤怠から飛んだとき）と必ずそろえる。
+  //    400ms 待ってからスクロール（絞り込みを外した直後は、まだカードが描かれていない）、
+  //    6秒で強調をフェードさせる。ここだけ光りっぱなしだと「これは何の色？」になる
+  useEffect(() => {
+    if (!manualFocusId) return;
+    const t1 = setTimeout(() => cardRefs.current[manualFocusId]?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 400);
+    const t2 = setTimeout(() => setManualFocusId(null), 6000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [manualFocusId]);
 
   const cardBg = isDarkMode ? '#343a40' : '#ffffff';
   const border = isDarkMode ? '#495057' : '#e0e0e0';
@@ -130,10 +186,21 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase
+    // 🚨 error を必ず見る。以前は data だけを受けており、通信が一度切れると
+    //    records が空になって「記録はまだありません」と出ていた。
+    //    バッジは前の値を保つ作りなので「バッジは1・一覧は空」が再現し、
+    //    しかも理由がどこにも出ない（2026-09-07 の事故と同じ見え方）。
+    const { data, error } = await supabase
       .from('purchase_requests')
       .select('id, user_id, request_type, status, item_name, quantity, amount, purchased_at, requested_purchase_date, store_name, purpose, reason, instructed_by, payment_method, payment_method_detail, payment_method_other, receipt_type, receipt_missing_reason, receipt_storage_path, returned_reason, approval_comment, leader_id, requested_manager_ids, shared_manager_ids, is_self_judgment, president_self_judgment, board_approver_ids, notes, quotes, quote_file_path, created_at, approval_round, items_subtotal, amount_diff_reason, amount_diff_flag, location')
       .order('created_at', { ascending: false });
+    if (error) {
+      // 🚨 「記録はまだありません」とは必ず別の文言にする。同じだと区別が付かない
+      setLoadError(`記録を読み込めませんでした：${error.message}`);
+      setLoading(false);
+      return;
+    }
+    setLoadError('');
     const rows = (data ?? []) as PurchaseRecord[];
     setRecords(rows);
 
@@ -254,6 +321,14 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
   useEffect(() => { load(); }, [load]);
 
   if (loading) return <div style={{ padding: 20, textAlign: 'center', color: subText }}>読み込み中...</div>;
+  if (loadError) {
+    return (
+      <div style={{ padding: 16, background: '#f8d7da', border: '1px solid #f5c6cb', borderRadius: 8, fontSize: 13, color: '#721c24', lineHeight: 1.7 }}>
+        {loadError}<br />
+        通信が切れている可能性があります。画面を再読み込みしてお試しください。
+      </div>
+    );
+  }
   if (records.length === 0) return <div style={{ padding: 20, textAlign: 'center', color: subText }}>記録はまだありません</div>;
 
   // ── 一覧としての絞り込み ──
@@ -283,6 +358,47 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
   const ym = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   const thisYm = ym(now);
   const lastYm = ym(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+  // ── 未確認の帯（2026-09-07）──────────────────────────────
+  // 🚨 絞り込み（期間・対象・種別）を素通りさせる。これが恒久対策。
+  //    ①（期間を全期間にする）は期間軸しか塞げないので、応急処置でしかない。
+  const unconfirmedSet = new Set(unconfirmedIds);
+  const unconfirmedRecords = records.filter(r => unconfirmedSet.has(r.id));
+
+  /** 何日前か。🚨 「1件あります」では人は動かないが、「8日前から止まっています」なら動く。
+   *  いま「何日放置されているか」は社内のどの画面にも出ていない（今回2週間気づかれなかった一因） */
+  const daysAgo = (iso: string): number =>
+    Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+
+  /** 帯の1行の説明。誰が・何を・いつ（何日前） */
+  const unconfirmedNote = (r: PurchaseRecord): string => {
+    const mine = (comments[r.id] ?? []).filter(c => c.author_id !== userId);
+    const last = mine[mine.length - 1];
+    if (!last) return '新しいやりとりがあります';
+    const who = names[last.author_id] ?? '担当者';
+    const what = last.kind === 'share'
+      ? `「${last.file_label ?? '共有'}」を共有しました`
+      : '質問を書きました';
+    const d = daysAgo(last.created_at);
+    const when = `${new Date(last.created_at).getMonth() + 1}/${new Date(last.created_at).getDate()}`;
+    return `${who}さんが${what}（${when}・${d === 0 ? '今日' : `${d}日前`}）`;
+  };
+
+  /** 帯から該当のカードへ運ぶ。
+   *  🚨 期間だけでなく対象・種別も戻す。戻さないと「自分の分」「精算だけ」で
+   *     絞っている人はカードが描画されておらず、押しても無音で不発になる。 */
+  const jumpToRecord = (r: PurchaseRecord) => {
+    setPeriod('all');
+    setKind('all');
+    if (isManagerPlus && r.user_id !== userId) setScope('all');
+    userPickedPeriod.current = true;   // ここから先は自動で期間を変えない
+    // 🚨 同じ帯を2回押しても効くように、いったん null を挟む。
+    //    同じ値を入れ直すだけだと state が変わらず、effect が再発火しない
+    //    （＝「押しても反応しないボタン」になる）
+    setManualFocusId(null);
+    setTimeout(() => setManualFocusId(r.id), 0);
+    // スクロールと強調の解除は、上の useEffect（useFocusHighlight と同じ流儀）が行う
+  };
+
   const filtered = records.filter(r => {
     if (isManagerPlus && scope === 'mine' && r.user_id !== userId) return false;
     if (kind !== 'all' && r.request_type !== kind) return false;
@@ -309,6 +425,41 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {/* ② 未確認の帯。
+          🚨 絞り込みカードより「上」に置く。下に置くと絞り込みの結果の一部に見える。
+          🚨 配色は同じ画面ですでに使っている warnBg/warnBorder/warnText を再利用する。
+             ここで #fff3cd を直に書くと、同じ画面に黄色が2種類並ぶ（金額差の警告が #fff8e1）。
+             2026-09-04 に休暇申請で直した「同じ画面に3種類の配色」と同型の失敗になる。
+          🚨 「まとめて確認する」ボタンは置かない。中身を読まずに全部消せてしまい、
+             この機能の意味が無くなる。 */}
+      {unconfirmedErr && (
+        <div style={{ background: '#f8d7da', border: '1px solid #f5c6cb', borderRadius: 8, padding: 10, fontSize: 12, color: '#721c24' }}>
+          {unconfirmedErr}
+        </div>
+      )}
+      {unconfirmedRecords.length > 0 && (
+        <div style={{ background: warnBg, border: `2px solid ${warnBorder}`, borderRadius: 10, padding: '12px 14px' }}>
+          <div style={{ fontSize: 13, fontWeight: 'bold', color: warnText, marginBottom: 8 }}>
+            ⚠️ 確認をお願いします（{unconfirmedRecords.length}件）
+          </div>
+          {unconfirmedRecords.map(r => (
+            <div key={r.id} style={{ borderTop: `1px solid ${warnBorder}`, paddingTop: 8, marginTop: 8, display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 'bold', color: warnText }}>{r.item_name}</div>
+                <div style={{ fontSize: 12, color: warnText, lineHeight: 1.7 }}>{unconfirmedNote(r)}</div>
+              </div>
+              <button type="button" onClick={() => jumpToRecord(r)}
+                style={{ padding: '10px 16px', borderRadius: 8, fontSize: 13, fontWeight: 'bold', cursor: 'pointer', border: `1px solid ${warnBorder}`, background: cardBg, color: text, whiteSpace: 'nowrap' }}>
+                内容を見る
+              </button>
+            </div>
+          ))}
+          <div style={{ fontSize: 11.5, color: warnText, marginTop: 8, lineHeight: 1.7 }}>
+            内容を見て［✓ 確認した］を押すと、この案内は消えます。
+          </div>
+        </div>
+      )}
+
       <div style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: '10px 12px' }}>
         {/* 🚨 絞り込みは「1行に1グループ」。見出しを必ず添えること。
             以前は3グループを1行に詰めており、区切りが <span width:8> だけだった。
@@ -326,11 +477,11 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
         )}
         <div style={filterRow}>
           <span style={filterLabel}>期間</span>
-          <button type="button" style={pill(period === 'thisMonth')} onClick={() => setPeriod('thisMonth')}>今月</button>
-          <button type="button" style={pill(period === 'lastMonth')} onClick={() => setPeriod('lastMonth')}>先月</button>
+          <button type="button" style={pill(period === 'thisMonth')} onClick={() => { userPickedPeriod.current = true; setPeriod('thisMonth'); }}>今月</button>
+          <button type="button" style={pill(period === 'lastMonth')} onClick={() => { userPickedPeriod.current = true; setPeriod('lastMonth'); }}>先月</button>
           {/* 🚨 ここは「すべて」にしない。種別の「すべて」と同じ文字・同じ見た目になり、
               どちらを押したのか分からなくなる（この画面で実際に起きていた） */}
-          <button type="button" style={pill(period === 'all')} onClick={() => setPeriod('all')}>全期間</button>
+          <button type="button" style={pill(period === 'all')} onClick={() => { userPickedPeriod.current = true; setPeriod('all'); }}>全期間</button>
           {/* 上の「今月・先月」が何の日付を見ているかを選ぶ。既定は申請日。
               🚨 期間の行の中に置く。別の行にすると、何に効く設定なのか分からない */}
           <select value={dateBasis} onChange={e => setDateBasis(e.target.value as 'created' | 'purchase')}
@@ -362,9 +513,9 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
       {filtered.map(r => {
         const statusInfo = STATUS_LABEL[r.status];
         const resolvedItems = resolveItems(r, itemsByRequest[r.id] ?? []);
-        const isFocused = highlightId === r.id;
+        const isFocused = highlightId === r.id || manualFocusId === r.id;
         return (
-        <div key={r.id} ref={el => { if (el && isFocused) focusRef.current = el; }} style={{ background: isFocused ? (isDarkMode ? '#4a4423' : '#fff9c4') : cardBg, border: `1px solid ${isFocused ? '#f0c000' : border}`, borderRadius: 10, padding: 14, transition: 'background 0.6s, border-color 0.6s' }}>
+        <div key={r.id} ref={el => { cardRefs.current[r.id] = el; if (el && isFocused) focusRef.current = el; }} style={{ background: isFocused ? (isDarkMode ? '#4a4423' : '#fff9c4') : cardBg, border: `1px solid ${isFocused ? '#f0c000' : border}`, borderRadius: 10, padding: 14, transition: 'background 0.6s, border-color 0.6s' }}>
           {r.amount_diff_flag && (
             <div style={{ marginBottom: 10, padding: '8px 10px', background: warnBg, border: `1px solid ${warnBorder}`, borderRadius: 8, fontSize: 12, color: warnText }}>
               ⚠️ 明細合計（¥{(r.items_subtotal ?? 0).toLocaleString()}）と申請金額（¥{r.amount.toLocaleString()}）に差があります
