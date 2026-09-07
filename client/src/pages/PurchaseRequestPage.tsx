@@ -299,21 +299,40 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
     color: active ? '#fff' : '#1565c0',
   });
 
+  // 絞り込みの1グループ＝1行。見出しは幅を固定して、行をまたいでボタンの左端を揃える
+  const filterRow: React.CSSProperties = {
+    display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6,
+  };
+  const filterLabel: React.CSSProperties = {
+    width: 34, flexShrink: 0, fontSize: 11, fontWeight: 'bold', color: subText,
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: '10px 12px' }}>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
-          {isManagerPlus && (
-            <>
-              <button type="button" style={pill(scope === 'mine')} onClick={() => setScope('mine')}>自分の分</button>
-              <button type="button" style={pill(scope === 'all')} onClick={() => setScope('all')}>全員</button>
-              <span style={{ width: 8 }} />
-            </>
-          )}
+        {/* 🚨 絞り込みは「1行に1グループ」。見出しを必ず添えること。
+            以前は3グループを1行に詰めており、区切りが <span width:8> だけだった。
+            ボタン同士の隙間が 6px なので差は2pxしかなく、どこで区切れているのか見えず、
+            さらにスマホで折り返すと別のグループが同じ行に並んで混ざっていた
+            （2026-09-06 実機指摘）。行を分ければ、幅がいくら狭くても混ざらない。
+            🚨 ボタンの配色は「択一トグルの青」の固定ルール（🎨🔒・例外なし）なので変えていない。
+               見えにくさは色ではなく、並べ方と言葉で直している。 */}
+        {isManagerPlus && (
+          <div style={filterRow}>
+            <span style={filterLabel}>対象</span>
+            <button type="button" style={pill(scope === 'mine')} onClick={() => setScope('mine')}>自分の分</button>
+            <button type="button" style={pill(scope === 'all')} onClick={() => setScope('all')}>全員</button>
+          </div>
+        )}
+        <div style={filterRow}>
+          <span style={filterLabel}>期間</span>
           <button type="button" style={pill(period === 'thisMonth')} onClick={() => setPeriod('thisMonth')}>今月</button>
           <button type="button" style={pill(period === 'lastMonth')} onClick={() => setPeriod('lastMonth')}>先月</button>
-          <button type="button" style={pill(period === 'all')} onClick={() => setPeriod('all')}>すべて</button>
-          {/* 上の「今月・先月」が何の日付を見ているかを選ぶ。既定は申請日 */}
+          {/* 🚨 ここは「すべて」にしない。種別の「すべて」と同じ文字・同じ見た目になり、
+              どちらを押したのか分からなくなる（この画面で実際に起きていた） */}
+          <button type="button" style={pill(period === 'all')} onClick={() => setPeriod('all')}>全期間</button>
+          {/* 上の「今月・先月」が何の日付を見ているかを選ぶ。既定は申請日。
+              🚨 期間の行の中に置く。別の行にすると、何に効く設定なのか分からない */}
           <select value={dateBasis} onChange={e => setDateBasis(e.target.value as 'created' | 'purchase')}
             style={{
               padding: '5px 8px', borderRadius: 8, fontSize: 12, fontWeight: 'bold', cursor: 'pointer',
@@ -322,7 +341,9 @@ const HistoryList: React.FC<{ isDarkMode: boolean; isManagerPlus: boolean; isAdm
             <option value="created">申請日で絞る</option>
             <option value="purchase">購入日で絞る</option>
           </select>
-          <span style={{ width: 8 }} />
+        </div>
+        <div style={{ ...filterRow, marginBottom: 8 }}>
+          <span style={filterLabel}>種別</span>
           <button type="button" style={pill(kind === 'all')} onClick={() => setKind('all')}>すべて</button>
           <button type="button" style={pill(kind === 'purchase_request')} onClick={() => setKind('purchase_request')}>申請</button>
           <button type="button" style={pill(kind === 'reimbursement')} onClick={() => setKind('reimbursement')}>精算</button>
