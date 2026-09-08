@@ -1078,6 +1078,7 @@ const classifyNotif = (n: NotifLike) => {
   const isLeavePendingResubmit = n.source_type === 'leave_request:pending_resubmit'; // 申請者：再提出/取消待ち
   const isLeaveResult          = n.source_type === 'leave_request';                  // 申請者：結果報告のみ
   const isLeaveFyi             = n.source_type === 'leave_request:fyi';              // 上長：FYI（誰がいつ休むか共有・カレンダー着地）
+  const isShiftAdjustDue       = n.source_type === 'leave:shift_adjust_due';         // 上長：シフト調整がまだの休暇（カレンダー着地・未調整で絞る）
   const isShiftPendingApproval = n.source_type === 'shift_report:pending_approval';  // レビュアー：要対応
   const isShiftPendingResubmit = n.source_type === 'shift_report:pending_resubmit';  // 申請者：再提出/取消待ち
   const isShiftResult          = n.source_type === 'shift_report';                   // 申請者：結果報告のみ
@@ -1152,6 +1153,15 @@ const classifyNotif = (n: NotifLike) => {
     if (isLeaveFyi) {
       const focus = n.reference_id && /^\d{4}-\d{2}-\d{2}$/.test(n.reference_id) ? `focus=${n.reference_id}&` : '';
       return { path: `/calendar?${focus}view=fyi`, closeOnTap: true };
+    }
+    // シフト調整がまだの休暇（上長向け）。
+    // 🚨 この通知は「その人が受け持つぶんをまとめた1本」なので、1日だけ光らせても
+    //    残りが見つからない。**未調整だけで絞った状態**で着地させ、やることが並んで見えるようにする。
+    //    いちばん近い日も focus で光らせて、どこから見ればよいかを示す（2026-09-09 ユーザー指示）。
+    //    closeOnTap は false（やることが残っているので、ベルの行を消さない）。
+    if (isShiftAdjustDue) {
+      const focus = n.reference_id && /^\d{4}-\d{2}-\d{2}$/.test(n.reference_id) ? `focus=${n.reference_id}&` : '';
+      return { path: `/calendar?${focus}shift=pending&view=fyi`, closeOnTap: false };
     }
     if (isShiftPendingApproval) return { path: `/shift-report?view=confirm${fq ? `&${fq}` : ''}`, closeOnTap: false };
     if (isShiftPendingResubmit) return { path: `/shift-report?tab=history${fq ? `&${fq}` : ''}`, closeOnTap: false };
@@ -2032,7 +2042,7 @@ const LeaveRequestPage: React.FC = () => {
 
 // 休暇申請承認ページ（リーダー・マネージャー・管理者用）
 const LeaveApprovalsPage: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, canLeaveApprovals, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, canLeaveApprovals, canPartLeaveFormSend, handleLogout, loading } = useAuth();
   const featurePublishState = useFeaturePublished();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   if (roleTitle && !isApprover) return <Navigate to="/" />;
@@ -2043,7 +2053,7 @@ const LeaveApprovalsPage: React.FC = () => {
     <div style={{ padding: '110px 16px 0' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
-        <LeaveApprovals user={user} profileName={profileName} isAdmin={isAdmin} roleTitle={roleTitle} />
+        <LeaveApprovals user={user} profileName={profileName} isAdmin={isAdmin} roleTitle={roleTitle} canPartFormSend={canPartLeaveFormSend} />
       </Suspense>
     </div>
   );
@@ -2051,14 +2061,14 @@ const LeaveApprovalsPage: React.FC = () => {
 
 // チームカレンダーページ
 const TeamCalendarPage: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, canLeaveShiftAdjust, handleLogout, loading } = useAuth();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   if (!isAdmin && !canCalendar) return <Navigate to="/" />;
   return (
     <div style={{ padding: '70px 16px 0' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
-        <CalendarPage user={user} roleTitle={roleTitle} isAdmin={isAdmin} isApprover={isApprover} />
+        <CalendarPage user={user} roleTitle={roleTitle} isAdmin={isAdmin} isApprover={isApprover} canShiftAdjustPerm={canLeaveShiftAdjust} />
       </Suspense>
     </div>
   );

@@ -31,6 +31,9 @@ interface UseAuthReturn {
   canBoard: boolean;
   /** 場所予約（/rooms）。2026-08-31 ユーザー確定でマネージャー以上に絞った */
   canRoomBooking: boolean;
+  canLeaveShiftAdjust: boolean;
+  canApplicationRequest: boolean;
+  canPartLeaveFormSend: boolean;
   canLeaveApprovals: boolean;
   leaveRequestEnabled: boolean;
   /** FAQ管理画面だけを使える専用アカウントか（管理者は別途 isAdmin で判定） */
@@ -239,6 +242,13 @@ export const useAuth = (): UseAuthReturn => {
   // 🚨 「無ければ全員に出す」にすると、権限行を入れ忘れたときに全員へ公開されてしまう
   const canRoomBooking = realIsAdmin && !previewRole ? true : (effectivePerms.room_booking     ?? false);
   const canLeaveApprovals = realIsAdmin && !previewRole ? true : (effectivePerms.leave_approvals ?? false);
+  // 上長が部下に対して行う操作の権限（2026-09-09 追加）。
+  // 🚨 既定は false。権限行を入れ忘れたときに全員が使える状態になるより安全側に倒す。
+  //    管理画面「役職・機能権限」でONにする（初期値は migration で入れている）。
+  //    🚨 DB側（set_leave_shift_adjust など）も同じ権限を見ている。片方だけ変えないこと。
+  const canLeaveShiftAdjust = realIsAdmin && !previewRole ? true : (effectivePerms.leave_shift_adjust ?? false);
+  const canApplicationRequest = realIsAdmin && !previewRole ? true : (effectivePerms.application_request ?? false);
+  const canPartLeaveFormSend = realIsAdmin && !previewRole ? true : (effectivePerms.part_leave_form_send ?? false);
 
   const handleLogout = useCallback(async () => {
     console.log('[logout] clicked');
@@ -283,6 +293,9 @@ export const useAuth = (): UseAuthReturn => {
     canBoard,
     canRoomBooking,
     canLeaveApprovals,
+    canLeaveShiftAdjust,
+    canApplicationRequest,
+    canPartLeaveFormSend,
     leaveRequestEnabled,
     // 役職プレビュー中は他の権限と同じく実権限を伏せる（プレビューで実際の見え方を確認するため）
     isFaqEditor: previewRole ? false : isFaqEditor,

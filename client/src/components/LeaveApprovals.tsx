@@ -13,6 +13,9 @@ interface Props {
   profileName: string | null;
   isAdmin: boolean;
   roleTitle?: string;
+  /** パートへ休暇申請フォームを送れるか（管理画面「役職・機能権限」で役職ごとに指定）。
+   *  🚨 このページを開ける権限（休暇承認）とは別。ページは見られるが送信はさせない、を作れるようにするため */
+  canPartFormSend?: boolean;
 }
 
 interface LeaveReq {
@@ -55,7 +58,7 @@ const STATUS_LABEL: Record<string, string> = {
   rejected:         '差し戻し',
 };
 
-const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle }) => {
+const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle, canPartFormSend }) => {
   const isPresident = roleTitle === '社長';
   const navigate = useNavigate();
   const [requests, setRequests] = useState<LeaveReq[]>([]);
@@ -466,8 +469,8 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
         </div>
       )}
 
-      {/* パートへ申請フォーム送信 */}
-      {(() => {
+      {/* パートへ申請フォーム送信。権限がOFFの役職には欄ごと出さない（2026-09-09） */}
+      {canPartFormSend && (() => {
         const canSeeAll = isAdmin || roleTitle === 'マネージャー' || roleTitle === '社長' || roleTitle === '管理者';
         const isLeader = roleTitle === 'リーダー';
         // リーダーは自分が送ったものだけ表示

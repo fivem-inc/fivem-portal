@@ -62,6 +62,11 @@ interface OvertimeReport {
   pay_period_start: string;
   entry_type: 'manual' | 'leave_auto';
   is_post_hoc: boolean;
+  /** 「内容を修正する（取り消して再申請）」で作り直したときの、元（取消済み）の申請ID。
+   *  受理者に「🔁 修正」と修正前の内容を見せるために持つ（2026-09-09） */
+  modified_from_id?: string | null;
+  /** 修正前の申請の中身（埋め込みで引く。元が消えていれば null） */
+  modified_from?: { work_date: string; diff_minutes: number | null; application_types: string[] | null; location: string | null } | null;
   /** カレンダーに載せるか。null=未指定（種別ごとの既定に従う＝これまでどおりの動き） */
   show_on_calendar?: boolean | null;
   status: OvertimeStatus;
@@ -120,6 +125,26 @@ const SELF_REVIEW_ROLES = ['マネージャー', '社長', '管理者'];
 const ABSENCE_REVIEWER_ROLES = ['マネージャー'];
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 const SELF_REVIEW_VALUE = '__self__';
+
+// 🔁 修正の再申請であることを示すバッジ（2026-09-09）。
+// 「内容を修正する（取り消して再申請）」で作り直された申請は、受理者から見ると
+// ただの新しい申請にしか見えず、何が変わったのか分からないまま受理することになる。
+// 🚨 バッジと「修正前」の出し方はこの2つの部品に集約する。受理者の画面と本人の履歴が
+//    同じものを呼ぶので、片方だけ直す事故が起きない。
+const MODIFIED_BADGE = { color: '#0d6efd', darkBg: '#1b2a4a' };
+
+/** 修正前の申請の中身を1行にする。元が消えていれば null */
+function modifiedFromLine(mf: OvertimeReport["modified_from"]): string | null {
+  if (!mf) return null;
+  const types = (mf.application_types ?? []).filter(isOvertimeType).map(t => OT_TYPE_INFO[t].label).join('・');
+  const parts = [
+    `${mf.work_date.slice(5).replace('-', '/')}`,
+    types,
+    mf.diff_minutes != null ? formatSignedMin(mf.diff_minutes) : null,
+    mf.location,
+  ].filter(Boolean);
+  return parts.join('　');
+}
 
 
 function dowLabel(dateStr: string): string {
@@ -471,6 +496,9 @@ interface FormDraft {
   furikaeOriginLocationCustom?: string;
   furikaeOriginStart?: string;
   furikaeOriginEnd?: string;
+  /** 「内容を修正する（取り消して再申請）」で来たときの、元（取消済み）の申請ID。
+   *  受理者に「🔁 修正」と修正前の内容を見せるために、送信時 overtime_reports.modified_from_id に入れる */
+  modifiedFromId?: string;
 }
 
 const EMPTY_SEG = { start: '', end: '' };
@@ -636,6 +664,10 @@ const OvertimeForm: React.FC<{
       showOnCalendar,
       normOverride, normStart, normEnd, fullDay, fullDayType: fullDayType ?? undefined,
       furikaeOriginDate, furikaeOriginLocation, furikaeOriginLocationCustom, furikaeOriginStart, furikaeOriginEnd,
+      // 🚨 「内容を修正する」で来たときの元IDを、自動保存でも持ち続ける。
+      //    ここを書かないと、利用者が1文字打った瞬間に上書きされて紐づけが消え、
+      //    受理者に「🔁 修正」が出なくなる（気づけない形で消える）
+      modifiedFromId: draft?.modifiedFromId,
     } satisfies FormDraft);
   }, [editTarget, mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId, showOnCalendar, normOverride, normStart, normEnd, fullDay, fullDayType, furikaeOriginDate, furikaeOriginLocation, furikaeOriginLocationCustom, furikaeOriginStart, furikaeOriginEnd]);
 
@@ -1253,6 +1285,10 @@ const OvertimeForm: React.FC<{
         furikae_origin_break_minutes: (fullDayMode && fullDayType === 'furikae_off' && furikaeHasTime) ? furikaeOriginBreak : null,
         furikae_origin_labor_minutes: (fullDayMode && fullDayType === 'furikae_off' && furikaeHasTime) ? furikaeOriginLabor : null,
         reviewer_id: isSelfReview ? user.id : reviewerId,
+        // 🚨 「内容を修正する（取り消して再申請）」で来たときだけ、元の（取消済み）申請を指す。
+        //    これが無いと受理者からは「ただの新しい申請」に見え、何が変わったのか分からない。
+        //    新規・実績報告・再提出では null にする（下書きが残っていても引きずらない）。
+        modified_from_id: (!editTarget && draft?.modifiedFromId) ? draft.modifiedFromId : null,
         ...((isSelfReview || isPureZero) ? { confirmed_by: user.id, confirmed_at: new Date().toISOString() } : {}),
         ...(isResubmit ? { return_comment: null } : {}),
         // 打刻ズレはここで丸ごと上書きする（既存の分岐に条件を足すと読めなくなるため）。
@@ -1337,7 +1373,9 @@ const OvertimeForm: React.FC<{
           reportId,
           reviewerId,
           applicantName: profileName ?? '',
-          phaseLabel: phase === 'actual' ? '実績報告' : '事前申請',
+          // 🚨 修正の再申請は、受理者が「また同じ日の申請が来た」と思わないよう名前を変える。
+          //    受理はやり直しになるので、いつもの事前申請と同じ扱いだと気づけない（2026-09-09）
+          phaseLabel: phase === 'actual' ? '実績報告' : ((!editTarget && draft?.modifiedFromId) ? '修正の再申請' : '事前申請'),
           dateLabel: `${date}（${dowLabel(date)}）`,
           timeLabel: formatSignedMin(diffMin),
         }).then(null, () => {});
@@ -2465,7 +2503,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   // 20260727 マイグレーションで追加した profiles 向き named FK を使う。
   const fetchOwn = useCallback(async () => {
     const { data, error } = await supabase.from('overtime_reports')
-      .select('*, applicant:profiles!overtime_reports_applicant_profiles_fkey(name), reviewer:profiles!overtime_reports_reviewer_profiles_fkey(name), segments:overtime_report_segments(*)')
+      .select('*, applicant:profiles!overtime_reports_applicant_profiles_fkey(name), reviewer:profiles!overtime_reports_reviewer_profiles_fkey(name), segments:overtime_report_segments(*), modified_from:overtime_reports!modified_from_id(work_date, diff_minutes, application_types, location)')
       .eq('applicant_id', user.id)
       .order('work_date', { ascending: false })
       .limit(100);
@@ -2476,7 +2514,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
 
   const fetchPendingForMe = useCallback(async () => {
     const { data, error } = await supabase.from('overtime_reports')
-      .select('*, applicant:profiles!overtime_reports_applicant_profiles_fkey(name), segments:overtime_report_segments(*)')
+      // 🚨 overtime_reports から overtime_reports への外部キーなので、必ず列名（!modified_from_id）を書く。
+      //    書かないと関係を決められずエラーになる（過去に PGRST201 で踏んでいる型）
+      .select('*, applicant:profiles!overtime_reports_applicant_profiles_fkey(name), segments:overtime_report_segments(*), modified_from:overtime_reports!modified_from_id(work_date, diff_minutes, application_types, location)')
       .eq('reviewer_id', user.id)
       .eq('entry_type', 'manual')
       .in('status', ['requested', 'reported'])
@@ -2727,6 +2767,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
       // 🚨 カレンダー掲載の選択も写す。写さないと、修正のたびに既定（外れた状態）に戻り、
       //    本人が選んだ「みんなのカレンダーに表示する」が黙って消える（2026-09-09）
       showOnCalendar: r.show_on_calendar ?? undefined,
+      // 🚨 どの申請を直したものかを持たせる。持たせないと受理者からは「ただの新しい申請」に見え、
+      //    何が変わったのか分からないまま受理することになる（2026-09-09）
+      modifiedFromId: r.id,
     };
     saveDraft(DRAFT_KEYS.overtime, draftCopy);
     setCancelTargetId(null);
@@ -2987,9 +3030,20 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                   </span>
                   <div style={{ display: 'flex', gap: 4 }}>
                     {r.is_post_hoc && <span style={badgeStyle(POSTHOC_BADGE.color, POSTHOC_BADGE.darkBg, isDark)}>事後報告</span>}
+                    {r.modified_from_id && <span style={badgeStyle(MODIFIED_BADGE.color, MODIFIED_BADGE.darkBg, isDark)}>🔁 修正</span>}
                     <span style={badgeStyle(STATUS_INFO[r.status].color, STATUS_INFO[r.status].darkBg, isDark)}>{STATUS_INFO[r.status].label}</span>
                   </div>
                 </div>
+
+                {/* 🚨 何が変わったのかが分からないまま受理させない。修正前の内容を並べて出す。
+                    元の申請が消えている（物理削除された）ときは、その旨だけ出す */}
+                {r.modified_from_id && (
+                  <p style={{ margin: '0 0 6px', padding: '6px 10px', borderRadius: 6, fontSize: 12, lineHeight: 1.7,
+                    background: isDark ? '#1b2a4a' : '#e8f4fd', color: isDark ? '#90caf9' : '#0d47a1' }}>
+                    🔁 これは修正の再申請です（前の申請は取り消されています）<br />
+                    修正前：{modifiedFromLine(r.modified_from) ?? '（前の申請は見られません）'}
+                  </p>
+                )}
 
                 {/* 🚨 いつ出された申請かを必ず出す。これが無いと「今日出たのか、
                     2週間前に出て放置されているのか」が受理する側から分からない */}
@@ -3457,6 +3511,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                           <div style={{ display: 'flex', gap: 4 }}>
                             {isAuto && <span style={badgeStyle(AUTO_BADGE.color, AUTO_BADGE.darkBg, isDark)}>自動計上</span>}
                             {!isAuto && r.is_post_hoc && <span style={badgeStyle(POSTHOC_BADGE.color, POSTHOC_BADGE.darkBg, isDark)}>事後報告</span>}
+                            {r.modified_from_id && <span style={badgeStyle(MODIFIED_BADGE.color, MODIFIED_BADGE.darkBg, isDark)}>🔁 修正</span>}
                             {/* 🚨 ステータス（どこまで進んだか）と ⚠️要報告（あなたが何をするか）は別の軸。
                                 以前は要報告のときステータスを差し替えていたが、それだと
                                 「受理まち」と「受理済み」の区別が画面から消えるため必ず両方出す */}

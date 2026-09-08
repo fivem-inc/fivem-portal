@@ -115,6 +115,8 @@ interface Props {
   user?: AuthUser;
   roleTitle?: string;
   isAdmin?: boolean;
+  /** 休暇のシフト調整の状態を変えられるか（管理画面「役職・機能権限」で役職ごとに指定） */
+  canShiftAdjustPerm?: boolean;
   isApprover?: boolean;
 }
 
@@ -129,6 +131,9 @@ interface LeaveEvent {
   locations?: Record<string, string>; // 日付→校（leave_locations列。無い申請はundefined）
   purpose?: string | null; // 事由（一覧の理由表示は調整休のみ使用。他の休暇はプライバシー配慮で出さない）
   reason?: string | null;  // 備考（調整休の種類「振替休日／時間外調整休」の判定に使用）
+  // シフト調整の状態（2026-09-09）。pending=未／adjusted=調整済／no_change=確認済（変更なし）
+  // 🚨 出すのは受理済み（マネージャー受理以降）だけ。それ以前は調整のしようがないため
+  shift_adjust_status?: string | null;
 }
 
 interface AbsenceEvent {
@@ -1499,7 +1504,7 @@ const SpCalendar: React.FC<{
 };
 
 // ===== メインコンポーネント =====
-const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover }) => {
+const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover, canShiftAdjustPerm }) => {
   const isDark = useDarkMode();
   // 会社カレンダー（休館日・出勤日）。カレンダーのセルに敷いて、休館日が一目で分かるようにする
   const calendarKinds = useCompanyCalendar();
@@ -1522,6 +1527,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
   const today = new Date();
   // バナー等から ?focus=YYYY-MM-DD で来たら、その月を開き該当行を強調する
   const focusParam = searchParams.get('focus');
+  const shiftParam = searchParams.get('shift');
   const focusDate = focusParam && /^\d{4}-\d{2}-\d{2}$/.test(focusParam) ? focusParam : null;
   // 🚨 通知から ?focus= 付きで来たときも全チームで開く。
   //    対象者が自分と違うチームだと絞り込みで行が消え、光らせる対象そのものが無くなるため。
@@ -1552,6 +1558,35 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
   // 月の一覧の並び順（true＝新しい順）。既定は今までどおり日付の若い順
   const [listDesc, setListDesc] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<AbsenceEvent | null>(null);
+
+  // ---- 休暇のシフト調整（2026-09-09）----
+  // 🚨 誰が変えられるかは管理画面「役職・機能権限」→「🔁 シフト調整の記録」で決める（2026-09-09）。
+  //    ここは画面の出し分けで、実際に止めているのは DB の set_leave_shift_adjust。
+  //    片方だけ変えると「押せるのに保存できないボタン」になるので必ず両方を見ること。
+  const canShiftAdjust = !!canShiftAdjustPerm;
+  const [shiftPanelFor, setShiftPanelFor] = useState<string | null>(null);
+  const [shiftSavingId, setShiftSavingId] = useState<string | null>(null);
+  const [shiftError, setShiftError] = useState('');
+  // 「シフト未調整だけ」の絞り込み（変えられる人にだけ出す）
+  // 🚨 プッシュ・ベルから来たときは、最初から「未調整だけ」で絞った状態で開く（2026-09-09 ユーザー指示）。
+  //    この通知はその人が受け持つぶんをまとめた1本なので、絞らずに着地すると
+  //    ひと月ぶんの一覧の中から自分で探すことになり、何をすればよいか分からない。
+  const [onlyShiftPending, setOnlyShiftPending] = useState(() => shiftParam === 'pending');
+
+  const saveShiftAdjust = async (ev: LeaveEvent, status: 'pending' | 'adjusted' | 'no_change') => {
+    setShiftSavingId(ev.id);
+    setShiftError('');
+    // 🚨 rpc は 4xx でも throw しない。error と、関数が返す ok の両方を必ず見る
+    const { data, error } = await supabase.rpc('set_leave_shift_adjust', { p_id: ev.id, p_status: status });
+    setShiftSavingId(null);
+    if (error) { setShiftError('保存できませんでした：' + error.message); return; }
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row?.ok) { setShiftError(row?.reason || '保存できませんでした'); return; }
+    // 画面をその場で更新（読み直しを待たせない）。同じ申請が複数日に並ぶので全部変わる
+    setEvents(prev => prev.map(e => e.id === ev.id ? { ...e, shift_adjust_status: status } : e));
+    setShiftPanelFor(null);
+  };
+
   const [deleting, setDeleting] = useState(false);
   const [profiles, setProfiles] = useState<ProfileEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -1638,7 +1673,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
 
       const { data: leaves } = await supabase
         .from('leave_requests')
-        .select('id, user_id, leave_type, leave_type_other, leave_dates, leave_locations, start_date, end_date, status, purpose, reason')
+        .select('id, user_id, leave_type, leave_type_other, leave_dates, leave_locations, start_date, end_date, status, purpose, reason, shift_adjust_status')
         .not('status', 'in', '("rejected","cancelled")')
         .or(`and(start_date.lte.${endStr},end_date.gte.${startStr})`);
 
@@ -1668,7 +1703,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
         let locations: Record<string, string> | undefined;
         try { if (l.leave_locations) locations = JSON.parse(l.leave_locations); } catch { locations = undefined; }
         if (dates.length > 0) {
-          result.push({ id: l.id, user_id: l.user_id, name, leave_type: l.leave_type, leave_type_other: l.leave_type_other, dates, status: l.status, locations, purpose: l.purpose, reason: l.reason });
+          result.push({ id: l.id, user_id: l.user_id, name, leave_type: l.leave_type, leave_type_other: l.leave_type_other, dates, status: l.status, locations, purpose: l.purpose, reason: l.reason, shift_adjust_status: l.shift_adjust_status });
         }
       }
       setEvents(result);
@@ -1834,7 +1869,15 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
   const sortedDates = [...allDates].sort();
   if (listDesc) sortedDates.reverse();
   for (const date of sortedDates) {
-    for (const ev of (eventsByDate[date] || [])) monthListRows.push({ kind: 'leave', date, ev });
+    for (const ev of (eventsByDate[date] || [])) {
+      // 「シフト未調整だけ」の絞り込み（2026-09-09）。受理済みで未のものだけ残す。
+      // 🚨 チップを出す条件と同じにすること。片方だけ変えると「絞ると出ないのにチップは未」になる
+      if (onlyShiftPending) {
+        const target = ['manager_approved', 'admin_approved', 'approved'].includes(ev.status);
+        if (!target || (ev.shift_adjust_status ?? 'pending') !== 'pending') continue;
+      }
+      monthListRows.push({ kind: 'leave', date, ev });
+    }
     for (const ab of (absencesByDate[date] || [])) monthListRows.push({ kind: 'absence', date, ab });
     for (const ot of (overtimesByDate[date] || [])) monthListRows.push({ kind: 'overtime', date, ot });
   }
@@ -1854,6 +1897,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
   });
 
   const canInput = isApprover || isAdmin;
+
 
   /**
    * 勤怠の取消。
@@ -1968,8 +2012,29 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
             <button type="button" onClick={() => setShowWork(v => !v)} style={filterBtnStyle(showWork, CAT_COLOR.work.light, CAT_COLOR.work.bg)}>
               残業・休日出勤
             </button>
+            {/* シフト調整がまだの休暇だけを見る（マネージャー以上・管理者にだけ出す）。
+                🚨 一般・パートはこのページ自体を開けないが、権限設定が変わったときのために出し分ける */}
+            {canShiftAdjust && (
+              <button type="button" onClick={() => setOnlyShiftPending(v => !v)}
+                style={filterBtnStyle(onlyShiftPending, isDark ? '#ffcf8f' : '#b7770d', isDark ? '#4a3a1a' : '#fff8e1')}>
+                シフト未調整だけ
+              </button>
+            )}
           </div>
         </div>
+
+        {/* 🚨 絞っているときは必ずそう書く。黙って件数が減ると「無くなった」と誤解される。
+            プッシュ・ベルから来たときはここが最初に目に入る（2026-09-09 ユーザー指示） */}
+        {onlyShiftPending && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12, padding: '10px 12px', borderRadius: 8,
+            background: isDark ? '#4a3a1a' : '#fff8e1', border: `1px solid ${isDark ? '#7a5a1a' : '#f0c36d'}`, color: isDark ? '#ffcf8f' : '#b7770d' }}>
+            <span style={{ fontSize: 13, fontWeight: 'bold' }}>🔁 シフト調整がまだの休暇だけを表示しています</span>
+            <button type="button" onClick={() => setOnlyShiftPending(false)}
+              style={{ padding: '4px 12px', borderRadius: 12, fontSize: 11.5, cursor: 'pointer', border: `1px solid ${isDark ? '#7a5a1a' : '#f0c36d'}`, background: 'transparent', color: 'inherit' }}>
+              すべて表示
+            </button>
+          </div>
+        )}
 
         {/* 凡例。項目が多いので「休み・遅れ」「出勤・残業」で行を分け、
             上のボタンで消した種類は凡例からも消す（見たいものだけが残る） */}
@@ -2087,6 +2152,26 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
                   : (ev.reason?.includes('【有給奨励日】') || ev.purpose === '有給奨励日')
                     ? '📅 有給奨励日'
                     : null;
+                // シフト調整のチップ（2026-09-09）。受理済み（マネージャー受理以降）だけに出す。
+                // 🚨 受理前は調整のしようがないので出さない。⑨の毎朝のお知らせも同じ条件にすること
+                const shiftTarget = ['manager_approved', 'admin_approved', 'approved'].includes(ev.status);
+                const shiftSt = ev.shift_adjust_status ?? 'pending';
+                const shiftChip = shiftTarget ? (() => {
+                  const isPendingShift = shiftSt === 'pending';
+                  // 🚨 新しい色は足さない。「未」は「あなたがやることがある」ことを示す既存の橙、
+                  //    済んだものは主張しないグレーにする（配色の決まり 🎨🔒）
+                  const lbl = isPendingShift ? 'シフト 未' : shiftSt === 'adjusted' ? 'シフト 調整済' : 'シフト 確認済（変更なし）';
+                  const fg = isPendingShift ? (isDark ? '#ffcf8f' : '#b7770d') : subColor;
+                  const bg = isPendingShift ? (isDark ? '#4a3a1a' : '#fff8e1') : 'transparent';
+                  const style: React.CSSProperties = {
+                    fontSize: 10.5, fontWeight: 'bold', padding: '2px 8px', borderRadius: 10,
+                    color: fg, background: bg, border: `1px solid ${isPendingShift ? (isDark ? '#7a5a1a' : '#f0c36d') : borderColor}`,
+                    cursor: canShiftAdjust ? 'pointer' : 'default', whiteSpace: 'nowrap',
+                  };
+                  return canShiftAdjust
+                    ? <button type="button" onClick={() => { setShiftPanelFor(f => f === ev.id ? null : ev.id); setShiftError(''); }} style={style}>{lbl}</button>
+                    : <span style={style}>{lbl}</span>;
+                })() : null;
                 const isFocused = highlightDate === row.date;
                 return (
                   <div key={`l-${ev.id}-${row.date}-${i}`} ref={isFocused ? focusRowRef : undefined} style={{ borderBottom: `1px solid ${borderColor}`, background: isFocused ? (isDark ? '#4a4423' : '#fff9c4') : 'transparent', transition: 'background 0.6s' }}>
@@ -2104,8 +2189,38 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover })
                         {STATUS_LABEL[ev.status] || ev.status}
                       </span>
                     </div>
-                    {choseiNote && (
-                      <div style={{ padding: '0 8px 7px', fontSize: 11, color: subColor, lineHeight: 1.5 }}>{choseiNote}</div>
+                    {(choseiNote || shiftChip) && (
+                      <div style={{ padding: '0 8px 7px', fontSize: 11, color: subColor, lineHeight: 1.5, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        {choseiNote && <span>{choseiNote}</span>}
+                        {/* 🚨 上の行の「状態」列はスマホで42pxしかなく、チップは入らない。
+                            振替休日の補足と同じ2行目に出す（2026-09-09） */}
+                        {shiftChip}
+                      </div>
+                    )}
+                    {/* シフト調整の切り替え（マネージャー以上・管理者だけ）。
+                        🚨 確認・操作は押した場所の近くに出す。モーダルにしない */}
+                    {shiftPanelFor === ev.id && (
+                      <div style={{ margin: '0 8px 8px', padding: '8px 10px', borderRadius: 8, background: isDark ? '#3a3f44' : '#f8f9fa', border: `1px solid ${borderColor}` }}>
+                        <div style={{ fontSize: 11, color: subColor, marginBottom: 6 }}>この休暇のシフト調整</div>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          {([['pending', '未'], ['adjusted', '調整済'], ['no_change', '確認済（変更なし）']] as const).map(([v, lbl]) => (
+                            <button key={v} onClick={() => saveShiftAdjust(ev, v)} disabled={shiftSavingId === ev.id}
+                              style={{ padding: '6px 12px', borderRadius: 14, fontSize: 11.5, fontWeight: 'bold', cursor: 'pointer',
+                                border: `1px solid ${(ev.shift_adjust_status ?? 'pending') === v ? '#4a90d9' : borderColor}`,
+                                background: (ev.shift_adjust_status ?? 'pending') === v ? '#e8f4fd' : 'transparent',
+                                color: (ev.shift_adjust_status ?? 'pending') === v ? '#1565c0' : subColor }}>
+                              {lbl}
+                            </button>
+                          ))}
+                          <button onClick={() => setShiftPanelFor(null)}
+                            style={{ padding: '6px 12px', borderRadius: 14, fontSize: 11.5, cursor: 'pointer', border: `1px solid ${borderColor}`, background: 'transparent', color: subColor }}>
+                            やめる
+                          </button>
+                        </div>
+                        {shiftError && (
+                          <div style={{ marginTop: 6, fontSize: 11, color: '#dc3545' }}>{shiftError}</div>
+                        )}
+                      </div>
                     )}
                   </div>
                 );
