@@ -262,3 +262,33 @@ export function resolveDayKind(dateStr: string, calendarKind: CalendarKind | nul
   const [y, m, d] = dateStr.split('-').map(Number);
   return DOW_TO_KIND[new Date(y, m - 1, d).getDay()];
 }
+
+// ============================================================
+//  申請できる期間の上限（2026-09-09 ユーザー確定）
+// ============================================================
+// 🚨 これまで「今日以降なら何年先でも申請できる」状態だった。
+//    シフトが組まれていない先の日を押さえられてしまうため、種類ごとに上限を設ける。
+//    上限を超えた日は日付選びで押せなくし、送信前にも弾く（画面だけで止めない）。
+
+/** 事前申請（残業）の上限日。今期から数えて3期先の期末（16日〜翌15日の15日）。例: 9/8 → 12/15 */
+export function advanceRequestMaxDate(todayStr: string): string {
+  let period = calcPayPeriodStartJst(todayStr);
+  for (let i = 0; i < 3; i++) period = shiftPayPeriod(period, 1);
+  return payPeriodEnd(period);
+}
+
+/**
+ * 休暇・勤務変更の上限日。1年先の前月末。例: 9/8 → 翌年8/31
+ * 月の途中で切ると「8/31は出せて9/1は出せない」が分かりにくいため、月末で揃える。
+ */
+export function leaveRequestMaxDate(todayStr: string): string {
+  const [y, m] = todayStr.split('-').map(Number);
+  const d = new Date(y + 1, m - 1, 0); // 月インデックス m-1 の0日 ＝ その前月の末日
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** "2026-12-15" → "2026年12月15日"（上限を伝える案内で使う） */
+export function jpDateLabel(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return `${y}年${m}月${d}日`;
+}

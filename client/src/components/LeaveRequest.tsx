@@ -56,7 +56,7 @@ import { insertNotification } from '../lib/notifications';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { useLeavePendingCount } from '../hooks/useLeavePendingCount';
-import { todayJstStr } from '../lib/breakCalc';
+import { todayJstStr, leaveRequestMaxDate, jpDateLabel } from '../lib/breakCalc';
 import type { CalendarKind } from '../lib/breakCalc';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
@@ -129,7 +129,9 @@ const MultiDatePicker: React.FC<{
   onChange: (dates: string[]) => void;
   isDark: boolean;
   calendarKinds?: Record<string, CalendarKind>;
-}> = ({ selectedDates, onChange, isDark, calendarKinds }) => {
+  /** これより先は選べない（休暇の申請できる期間の上限）。判定は breakCalc の leaveRequestMaxDate に集約 */
+  maxDate?: string;
+}> = ({ selectedDates, onChange, isDark, calendarKinds, maxDate }) => {
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
@@ -214,12 +216,15 @@ const MultiDatePicker: React.FC<{
           const isToday = dateStr === todayStr;
           const isSun = dow === 0;
           const isSat = dow === 6;
+          // 申請できる期間の上限より先は押せない（2026-09-09 ユーザー確定）
+          const disabled = !!maxDate && dateStr > maxDate;
           // 会社カレンダー（休館日・出勤日）。選択中の緑が優先されるので、選んだ日は今までどおり
           const ck = calendarKinds?.[dateStr];
-          const cs = ck ? CALENDAR_CELL_STYLE[ck] : null;
+          const cs = ck && !disabled ? CALENDAR_CELL_STYLE[ck] : null;
           return (
             <button
               key={dateStr}
+              disabled={disabled}
               onClick={() => toggleDate(dateStr)}
               title={cs ? CALENDAR_NOTICE[ck as CalendarKind] : undefined}
               style={{
@@ -228,8 +233,8 @@ const MultiDatePicker: React.FC<{
                 borderRadius: 6,
                 border: isToday ? '2px solid #007bff' : '1px solid transparent',
                 background: isSelected ? '#28a745' : cs ? cs.bg : 'transparent',
-                color: isSelected ? 'white' : cs ? cs.text : isSun ? '#e74c3c' : isSat ? '#3498db' : text,
-                cursor: 'pointer',
+                color: disabled ? (isDark ? '#5c636a' : '#c4c9cf') : isSelected ? 'white' : cs ? cs.text : isSun ? '#e74c3c' : isSat ? '#3498db' : text,
+                cursor: disabled ? 'default' : 'pointer',
                 fontSize: 13,
                 fontWeight: isSelected ? 'bold' : 'normal',
                 textAlign: 'center',
@@ -339,6 +344,10 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   useEffect(() => {
     if (tabParam === 'history') setTab('history');
   }, [tabParam, focusParam]);
+
+  // 休暇を申請できるいちばん先の日（1年先の前月末）。シフトが決まっていない先の日を
+  // 押さえられないようにするための上限（2026-09-09 ユーザー確定）。判定は breakCalc に集約
+  const leaveMaxDate = leaveRequestMaxDate(todayJstStr());
 
   // 入力中の下書きを端末に自動保存し、開き直したら復元する
   const [ld] = useState(() => loadDraft<LeaveDraft>(DRAFT_KEYS.leave));
@@ -1168,7 +1177,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           {/* 休暇日 カレンダー */}
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 6, color: errFields.has('dates') ? '#dc3545' : text }}>
-              休暇日 <span style={{ color: '#dc3545' }}>*</span> <span style={{ fontSize: 12, fontWeight: 'normal', color: subText }}>（日付をタップして選択・解除）</span>
+              休暇日 <span style={{ color: '#dc3545' }}>*</span> <span style={{ fontSize: 12, fontWeight: 'normal', color: subText }}>（日付をタップして選択・解除・{jpDateLabel(leaveMaxDate)}まで）</span>
             </label>
             <MultiDatePicker
               selectedDates={selectedDates}
@@ -1269,6 +1278,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               const isFurikae = leaveType === '調整休' && choseiSubType === 'furikae';
               if (!selectedApproverId) { errs.push('申請先を選んでください'); bad.add('approver'); }
               if (selectedDates.length === 0) { errs.push('休暇日を選択してください'); bad.add('dates'); }
+              // 🚨 先の日付の上限（2026-09-09 ユーザー確定）。日付選びでも押せなくしているが、
+              //    下書きの復元や作り直しで上限を越えた日が残ることがあるので送信前にも必ず弾く
+              if (selectedDates.some(d => d > leaveMaxDate)) { errs.push(`休暇の申請は${jpDateLabel(leaveMaxDate)}までです`); bad.add('dates'); }
               if (isFurikae && choseiOriginDates.length === 0) { errs.push('振替元の勤務日を選択してください'); bad.add('originDates'); }
               if (isFurikae && choseiOriginDates.length > 0 && choseiOriginDates.length !== selectedDates.length) { errs.push(`振替元の勤務日（${choseiOriginDates.length}日）と休暇日（${selectedDates.length}日）の日数が一致していません`); bad.add('originDates'); }
               if (!purpose.trim() && leaveType !== '調整休') { errs.push('事由を入力してください'); bad.add('purpose'); }

@@ -147,3 +147,72 @@ export function willShowOnCalendar(
   if (isPostHoc) return false;
   return showOnCalendar ?? defaultShowOnCalendar(list);
 }
+
+// ============================================================
+//  Googleカレンダーに載るタイトルの組み立て
+// ============================================================
+// 🚨🚨 同じ組み立てが supabase/functions/gcal-sync/index.ts にもある（2箇所管理）。
+//    Deno 側からこのファイルを import できないため。片方だけ直すと
+//    「画面の見本と、実際にカレンダーに載る文字が違う」ことになる。
+//    直すときは必ず両方を見ること（gcal-sync 側の summary の組み立て）。
+//
+// 画面でこれを出す理由：どの項目がカレンダーに載るのか（時刻は開始か終了か両方か、校は付くか）は
+// 種別ごとに違い、説明文で書くと長くなる。実物を1行見せるのがいちばん短い（2026-09-09 ユーザー確定）。
+
+/** 分 → "HH:MM"（1440以上は翌日表記）。gcal-sync の otMinToTime と同じ */
+function gcalTimeLabel(min: number): string {
+  const m = ((min % 1440) + 1440) % 1440;
+  const hh = String(Math.floor(m / 60)).padStart(2, '0');
+  const mm = String(m % 60).padStart(2, '0');
+  return min >= 1440 ? `翌${hh}:${mm}` : `${hh}:${mm}`;
+}
+
+// 🚨 カレンダー側のラベルは画面のラベル（OT_TYPE_INFO）と一部違う。
+//    画面「調整遅出」→カレンダー「遅出(調整)」、「時間外調整休」→「調整休」、
+//    「振替休日」→「振休」、「欠勤」→「休み」。gcal-sync の OVERTIME_TYPES.label と一致させること。
+const GCAL_LABEL: Partial<Record<OvertimeType, string>> = {
+  late_start_adj: '遅出(調整)', early_end_adj: '早退(調整)',
+  chosei_off: '調整休', furikae_off: '振休', absence: '休み',
+};
+const gcalLabelOf = (t: OvertimeType): string => GCAL_LABEL[t] ?? OT_TYPE_INFO[t].label;
+
+export interface GcalSummaryInput {
+  /** 表示名（全角スペースは半角に直す。gcal-sync 側と同じ） */
+  name: string;
+  types: string[];
+  /** 勤務時間帯の最初の開始・最後の終了（分）。終日種別・時刻なしのときは null */
+  firstStartMin: number | null;
+  lastEndMin: number | null;
+  location: string | null;
+  /** 未受理（申請中）か。受理されると先頭の【申請中】が消える */
+  isPending: boolean;
+}
+
+/**
+ * カレンダーに載るタイトル。載らない組み合わせのときは null を返す
+ * （載らないのに見本を出すと「載る」と誤解させるため）。
+ */
+export function buildGcalSummary(input: GcalSummaryInput): string | null {
+  const syncTypes = calendarTypesInOrder(input.types);
+  if (syncTypes.length === 0) return null;
+  const primary = syncTypes[0];
+  const label = syncTypes.slice(0, 2).map(gcalLabelOf).join('＋');
+
+  let timeStr = '';
+  if (input.firstStartMin != null && input.lastEndMin != null) {
+    if (syncTypes.length >= 2 || primary === 'holiday_work') {
+      timeStr = `${gcalTimeLabel(input.firstStartMin)}〜${gcalTimeLabel(input.lastEndMin)}`;
+    } else if (primary === 'overtime' || primary === 'early_end_adj' || primary === 'early_leave') {
+      // 終わりの時刻が大事なもの
+      timeStr = `〜${gcalTimeLabel(input.lastEndMin)}`;
+    } else if (primary === 'early_start' || primary === 'late_start_adj' || primary === 'tardiness') {
+      // 始まりの時刻が大事なもの
+      timeStr = `${gcalTimeLabel(input.firstStartMin)}〜`;
+    }
+  }
+
+  let summary = `${input.isPending ? '【申請中】' : ''}${input.name.replace(/　/g, ' ')}｜${label}`;
+  if (timeStr && primary !== 'location_change') summary += `｜${timeStr}`;
+  if (input.location) summary += `［${input.location}］`;
+  return summary;
+}

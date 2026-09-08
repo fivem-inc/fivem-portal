@@ -218,3 +218,60 @@ export function buildTimeAdjustReport(
     application_types: kind === 'late_start' ? ['late_start_adj'] : ['early_end_adj'],
   };
 }
+
+// ============================================================
+//  合計時間数への差分（＋−）の計算
+// ============================================================
+// 🚨 これまで残業と終日（調整休・振替休日）の差分は申請フォームの中に直接書かれていた。
+//    「残業の調整案（自分用）」など別の画面が同じ計算を必要とするので、ここに出して1か所にした
+//    （2026-09-09）。フォームもこの関数を呼ぶ。書き写して増やさないこと。
+//    遅出・早退は buildTimeAdjustReport が同じ考え方で計算している（あちらは時刻から組み立てる）。
+
+/** 時間外調整休の差分。その日の通常シフトの労働ぶんを丸ごと差し引く */
+export function choseiOffDiffMin(ns: NormalShiftSnapshot): number {
+  return -ns.labor_minutes;
+}
+
+/** 振替休日の差分。振替元（出勤した日）の労働 − 休む日の通常シフト労働 */
+export function furikaeOffDiffMin(originLaborMin: number, ns: NormalShiftSnapshot): number {
+  return originLaborMin - ns.labor_minutes;
+}
+
+/** 欠勤の差分。時間には効かない（日数で別に数える） */
+export const ABSENCE_DIFF_MIN = 0;
+
+/**
+ * 終日種別の差分をまとめて返す。
+ * furikae_off のときだけ originLaborMin（振替元の労働）が要る。
+ * 🚨 終日種別でないもの（残業など）を渡すと 0 を返す。時刻のある種別は buildWorkDiff を使うこと。
+ */
+export function fullDayDiffMin(
+  fullDayType: string | null | undefined,
+  ns: NormalShiftSnapshot,
+  originLaborMin = 0,
+): number {
+  if (fullDayType === 'chosei_off') return choseiOffDiffMin(ns);
+  if (fullDayType === 'furikae_off') return furikaeOffDiffMin(originLaborMin, ns);
+  return ABSENCE_DIFF_MIN;
+}
+
+export interface WorkDiff {
+  break_minutes: number;
+  labor_minutes: number;
+  /** 労働 − 通常シフトの労働。プラス＝残業、マイナス＝早退などの相殺 */
+  diff_minutes: number;
+}
+
+/**
+ * 勤務時間帯から休憩・労働・差分を出す（残業・早出・休日出勤など時刻を入れる種別）。
+ * manualBreakMin に数値を渡すと休憩を手修正した扱いにする（null/undefined は自動計算）。
+ */
+export function buildWorkDiff(
+  segments: WorkSegment[],
+  ns: NormalShiftSnapshot,
+  manualBreakMin?: number | null,
+): WorkDiff {
+  const breakMin = manualBreakMin != null ? manualBreakMin : calcTotalBreak(segments);
+  const laborMin = calcLaborMinutes(segments, breakMin);
+  return { break_minutes: breakMin, labor_minutes: laborMin, diff_minutes: laborMin - ns.labor_minutes };
+}

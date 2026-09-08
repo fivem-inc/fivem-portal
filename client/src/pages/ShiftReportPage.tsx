@@ -14,6 +14,7 @@ import HelpLinkButton from '../components/HelpLinkButton';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
 import type { CorrectionRequestRow } from '../lib/correctionRequest';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
+import { leaveRequestMaxDate, jpDateLabel } from '../lib/breakCalc';
 import type { CalendarKind } from '../lib/breakCalc';
 import { toDbTime, normalizeTime } from '../lib/timeInput';
 import TimeInput from '../components/TimeInput';
@@ -165,7 +166,7 @@ const STATUS_INFO: Record<string, { label: string; color: string; bg: string }> 
 // ────────────────────────────────────────────────────────────────
 // Single Date Calendar
 // ────────────────────────────────────────────────────────────────
-const SingleDatePicker: React.FC<{ value: string; onChange: (d: string) => void; isDark: boolean; calendarKinds?: Record<string, CalendarKind>; hasError?: boolean }> = ({ value, onChange, isDark, calendarKinds, hasError }) => {
+const SingleDatePicker: React.FC<{ value: string; onChange: (d: string) => void; isDark: boolean; calendarKinds?: Record<string, CalendarKind>; hasError?: boolean; maxDate?: string }> = ({ value, onChange, isDark, calendarKinds, hasError, maxDate }) => {
   const today = new Date();
   const [year, setYear]   = useState(value ? new Date(value + 'T00:00:00').getFullYear() : today.getFullYear());
   const [month, setMonth] = useState(value ? new Date(value + 'T00:00:00').getMonth()    : today.getMonth());
@@ -204,11 +205,13 @@ const SingleDatePicker: React.FC<{ value: string; onChange: (d: string) => void;
           const col = d === 0 ? '#e74c3c' : d === 6 ? '#3498db' : calText;
           // 会社の休館日（全社員休み／社員出勤日）を背景で示す
           const ck = calendarKinds?.[iso];
-          const cs = ck ? CALENDAR_CELL_STYLE[ck] : null;
+          // 申請できる期間の上限より先は押せない（2026-09-09 ユーザー確定）
+          const disabled = !!maxDate && iso > maxDate;
+          const cs = ck && !disabled ? CALENDAR_CELL_STYLE[ck] : null;
           return (
-            <button key={i} onClick={() => onChange(iso)}
+            <button key={i} disabled={disabled} onClick={() => onChange(iso)}
               title={cs ? CALENDAR_NOTICE[ck as CalendarKind] : undefined}
-              style={{ padding: '10px 2px', minHeight: 38, borderRadius: 6, border: isT ? '2px solid #007bff' : '1px solid transparent', background: sel ? '#28a745' : cs ? cs.bg : 'transparent', color: sel ? '#fff' : cs ? cs.text : col, cursor: 'pointer', fontSize: 13, fontWeight: sel ? 'bold' : 'normal', textAlign: 'center', lineHeight: 1.2 }}>
+              style={{ padding: '10px 2px', minHeight: 38, borderRadius: 6, border: isT ? '2px solid #007bff' : '1px solid transparent', background: sel ? '#28a745' : cs ? cs.bg : 'transparent', color: disabled ? (isDark ? '#5c636a' : '#c4c9cf') : sel ? '#fff' : cs ? cs.text : col, cursor: disabled ? 'default' : 'pointer', fontSize: 13, fontWeight: sel ? 'bold' : 'normal', textAlign: 'center', lineHeight: 1.2 }}>
               {day}
               {cs && <div style={{ fontSize: 8, fontWeight: 'bold', color: sel ? 'rgba(255,255,255,0.9)' : cs.text }}>{cs.short}</div>}
             </button>
@@ -359,6 +362,10 @@ const ShiftReportForm: React.FC<{
     reviewerId: string; actNotes: string;
   }
   const [sd] = useState(() => (editTarget ? null : loadDraft<ShiftDraft>(DRAFT_KEYS.shiftReport)));
+
+  // 勤務変更を申請できるいちばん先の日（1年先の前月末）。休暇と同じ上限にそろえている
+  // （2026-09-09 ユーザー確定）。判定は breakCalc の leaveRequestMaxDate に集約
+  const shiftMaxDate = leaveRequestMaxDate(todayStr());
 
   const [applicantId, setApplicantId] = useState(editTarget?.applicant_id ?? sd?.applicantId ?? user.id);
   const [date, setDate]               = useState(editTarget?.work_date ?? sd?.date ?? todayStr());
@@ -524,6 +531,9 @@ const ShiftReportForm: React.FC<{
     // 予定を持つ状態のときだけ、予定の入力を必須にする（noPlan と必ず対で判断する）
     const noShift = !noPlan;
     if (!date)          return { msg: '日付を選択してください', field: 'date' };
+    // 🚨 先の日付の上限（2026-09-09 ユーザー確定）。日付選びでも押せなくしているが、
+    //    下書きの復元や作り直しで上限を越えた日が残ることがあるので送信前にも必ず弾く
+    if (date > shiftMaxDate) return { msg: `勤務変更の申請は${jpDateLabel(shiftMaxDate)}までです`, field: 'date' };
     if (types.length === 0) return { msg: '種別を選択してください', field: 'types' };
     if (!reason.trim()) return { msg: '理由を入力してください', field: 'reason' };
     // 🚨 type="time" をやめた分、時刻の形は自分で確かめる（空でないかだけでは足りない）
@@ -700,8 +710,8 @@ const ShiftReportForm: React.FC<{
             )}
             {/* 日付 */}
             <div style={{ marginBottom: 14 }} data-err-field="date">
-              <label style={{ ...L, color: errorLabelColor(errFields.has('date'), subColor) }}>日付 {Req}</label>
-              <SingleDatePicker value={date} onChange={d => { setDate(d); clearErr('date'); }} isDark={isDark} calendarKinds={calendarKinds} hasError={errFields.has('date')} />
+              <label style={{ ...L, color: errorLabelColor(errFields.has('date'), subColor) }}>日付 {Req} <span style={{ fontSize: 11, fontWeight: 'normal', color: subColor }}>（{jpDateLabel(shiftMaxDate)}まで）</span></label>
+              <SingleDatePicker value={date} onChange={d => { setDate(d); clearErr('date'); }} isDark={isDark} calendarKinds={calendarKinds} hasError={errFields.has('date')} maxDate={shiftMaxDate} />
             </div>
             {/* 種別 */}
             <div style={{ marginBottom: 14 }}>

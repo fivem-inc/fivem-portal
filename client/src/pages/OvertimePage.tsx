@@ -12,10 +12,11 @@ import {
   timeToMin, minToTime, formatSignedMin, formatMin,
   todayJstStr, calcPayPeriodStartJst, payPeriodLabel, payMonthLabel,
   payMonthPeriodLabel, payPeriodCloseCutoff, isPayPeriodClosed, isPayPeriodPayoutPassed, shiftPayPeriod,
+  advanceRequestMaxDate, jpDateLabel,
   DAY_KIND_LABELS,
 } from '../lib/breakCalc';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
-import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMin, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
+import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMin, buildWorkDiff, fullDayDiffMin, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 
 // validate() は文言だけを返すので、文言と入力欄を突き合わせて薄赤ハイライトを付ける。
@@ -29,7 +30,7 @@ import type { AuthUser } from '../types';
 import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
 import { PageTabs } from '../components/PageTabs';
 import HelpLinkButton from '../components/HelpLinkButton';
-import { OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport, CLOCK_ONLY_REASONS, canOfferCalendarChoice, willShowOnCalendar } from '../lib/overtimeTypes';
+import { buildGcalSummary, OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport, CLOCK_ONLY_REASONS, canOfferCalendarChoice, willShowOnCalendar } from '../lib/overtimeTypes';
 import type { OvertimeType } from '../lib/overtimeTypes';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
 import { notifyOvertimeNewRequest, notifyOvertimeGrantRequest, sendOvertimeSlack } from '../lib/overtimeNotify';
@@ -775,9 +776,12 @@ const OvertimeForm: React.FC<{
   const hasSegmentIssue = segmentIssues.some(Boolean);
 
   const autoBreak = useMemo(() => calcTotalBreak(workSegments), [workSegments]);
-  const breakMin = breakManual ? (parseInt(breakManualMin, 10) || 0) : autoBreak;
-  const laborMin = calcLaborMinutes(workSegments, breakMin);
-  const diffMin = laborMin - normalShift.labor_minutes;
+  // 🚨 休憩・労働・差分の計算は lib/overtimeShift の buildWorkDiff 1か所に集約している（2026-09-09）。
+  //    ここに式を書き戻すと、調整案・提案など他の画面と食い違う。
+  const workDiff = buildWorkDiff(workSegments, normalShift, breakManual ? (parseInt(breakManualMin, 10) || 0) : null);
+  const breakMin = workDiff.break_minutes;
+  const laborMin = workDiff.labor_minutes;
+  const diffMin = workDiff.diff_minutes;
   const legal = checkLegalBreak(workSegments, breakMin);
   const hasInput = workSegments.length > 0;
 
@@ -874,6 +878,23 @@ const OvertimeForm: React.FC<{
     && !clockOnlyMode
     && !isReportPhase
     && canOfferCalendarChoice(applicationTypes, mode === 'posthoc');
+
+  // Googleカレンダーに実際に載る1行の見本（2026-09-09 ユーザー確定）。
+  // どの項目が載るのか（時刻は開始か終了か両方か・校は付くか）は種別ごとに違い、
+  // 説明文にすると長い。実物を見せるのがいちばん短く、入れ忘れ・外し忘れにも気づける。
+  // 🚨 組み立ては lib/overtimeTypes.ts の buildGcalSummary に集約（gcal-sync と対で管理）。
+  const gcalPreview = useMemo(() => buildGcalSummary({
+    name: profileName ?? '',
+    types: applicationTypes,
+    // 実際の同期は「実績があれば実績・なければ予定」を使う。事前申請の時点では予定しかない
+    firstStartMin: workSegments.length > 0 ? workSegments[0].startMin : null,
+    lastEndMin: workSegments.length > 0 ? workSegments[workSegments.length - 1].endMin : null,
+    location: effectiveLocation || null,
+    // 🚨 見本には【申請中】を付けない（2026-09-09 ユーザー確定）。受理までの間は実際には
+    //    先頭に【申請中】が付くが、ここで伝えたいのは「どの項目が載るか」なので、
+    //    受理後の形（最終的にみんなが見る形）を見せる。
+    isPending: false,
+  }), [profileName, applicationTypes, workSegments, effectiveLocation]);
   // 打刻ズレの労働時間は通常シフトそのもの。打刻時刻は参考値で、ここには入れない
   const normalWorkSegments: WorkSegment[] = useMemo(() =>
     normalSegs.map(s => {
@@ -901,10 +922,8 @@ const OvertimeForm: React.FC<{
 
   // 終日の合計時間数への効き（差分）。
   //  時間外調整休 = −対象日の通常シフト労働／振替休日 = 振替元労働 − 対象日の通常シフト労働（自己完結）／欠勤 = 0
-  const fdDiffMin =
-    fullDayType === 'chosei_off' ? -normalShift.labor_minutes
-    : fullDayType === 'furikae_off' ? (furikaeOriginLabor - normalShift.labor_minutes)
-    : 0;
+  // 🚨 計算は lib/overtimeShift の fullDayDiffMin 1か所に集約している（2026-09-09）
+  const fdDiffMin = fullDayDiffMin(fullDayType, normalShift, furikaeOriginLabor);
   // 終日の勤務地はシフトの校を自動使用（シフトに校が無い日だけ手動選択）
   const fdLocation = normalShift.location ?? effectiveLocation;
   // 振替元の日付が過去（すでに出勤済み）＝事後の振替（ブロックせず注意表示）
@@ -1003,6 +1022,9 @@ const OvertimeForm: React.FC<{
   const isSelfReview = reviewerId === SELF_REVIEW_VALUE;
 
   const today = todayJstStr();
+  // 事前申請で選べるいちばん先の日（今期から3期先の期末）。シフトが決まっていない先の日を
+  // 押さえられないようにするための上限（2026-09-09 ユーザー確定）。判定は breakCalc に集約
+  const advanceMaxDate = advanceRequestMaxDate(today);
 
   // ── 実績報告フェーズの「予定→実績」差分検知（案A）──
   // editTarget は update 前なので本体値＝予定値。planned セグメント＋本体値をベースラインにする。
@@ -1078,6 +1100,10 @@ const OvertimeForm: React.FC<{
   const validate = (): string => {
     if (!date) return '日付を選択してください';
     if (mode === 'advance' && !editTarget && date < today) return '事前申請は当日以降の日付を選択してください';
+    // 🚨 先の日付の上限（2026-09-09 ユーザー確定）。日付選びでも押せなくしているが、
+    //    下書きの復元や種類の切り替えで上限を越えた日が残ることがあるので送信前にも必ず弾く。
+    if (mode === 'advance' && !editTarget && date > advanceMaxDate)
+      return `事前申請は${jpDateLabel(advanceMaxDate)}までです。それより先の日付は、その時期が近づいてから申請してください`;
     if (mode === 'posthoc' && date > today) return '事後報告は当日以前の日付を選択してください';
     if (closeLocked) return `この対象日は【${payMonthPeriodLabel(targetPeriodStart)}】の申請です。締め切り（${payPeriodCloseCutoff(targetPeriodStart).replace(/-/g, '/')}）を過ぎているため申請できません。経理に申請の許可を依頼してください。`;
     // 打刻ズレ（残業ではありません）は時刻・勤務地・申請先の検証をスキップし、専用の検証のみ行う。
@@ -1452,6 +1478,7 @@ const OvertimeForm: React.FC<{
             <li>正社員の方は、残業分を別日で調整（時間調整・調整休）していただくようお願いします。</li>
             <li>調整休・欠勤（終日）は受理された時点で完了します（実績報告は不要です）。</li>
             <li>新規の申請は、支給月の17日までに提出してください。それ以降は前の給与期間の新規申請ができません（締め後に申請したい場合は経理にご相談ください）。</li>
+            <li>事前申請ができるのは{jpDateLabel(advanceMaxDate)}までです（3か月先の給与期間まで）。それより先の予定は、その時期が近づいてから申請してください。</li>
           </ol>
 
           <button type="button" onClick={() => setShowRules(v => !v)}
@@ -1521,7 +1548,7 @@ const OvertimeForm: React.FC<{
       {/* 日付 */}
       <div style={{ marginBottom: 12 }}>
         <span style={labelStyle}>日付{req}
-          {!editTarget && <span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（日付をタップして選択・{mode === 'advance' ? '当日以降' : '当日以前'}のみ）</span>}
+          {!editTarget && <span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（日付をタップして選択・{mode === 'advance' ? `当日〜${jpDateLabel(advanceMaxDate)}` : '当日以前'}のみ）</span>}
         </span>
         {editTarget ? (
           // 実績報告・再提出は勤務日固定。誤操作防止のため表示のみ
@@ -1531,7 +1558,7 @@ const OvertimeForm: React.FC<{
         ) : (
           <SingleDatePicker value={date} onChange={setDate} isDark={isDark} calendarKinds={calendarKinds}
             minDate={mode === 'advance' ? today : undefined}
-            maxDate={mode === 'posthoc' ? today : undefined} />
+            maxDate={mode === 'posthoc' ? today : advanceMaxDate} />
         )}
       </div>
 
@@ -2201,6 +2228,17 @@ const OvertimeForm: React.FC<{
               color: isDark ? '#fff' : '#1565c0',
             }}>
               受理されると、勤怠カレンダーと Googleカレンダー（ファイブM共有）に表示されます
+              {gcalPreview && (
+                <>
+                  <div style={{ marginTop: 8, fontSize: 11.5, opacity: 0.85 }}>Googleカレンダー表示</div>
+                  <div style={{
+                    marginTop: 2, padding: '6px 10px', borderRadius: 6, fontSize: 13, fontWeight: 'bold',
+                    background: isDark ? '#1f2b36' : '#fff',
+                    border: `1px solid ${isDark ? '#3d5a73' : '#bee5eb'}`,
+                    wordBreak: 'break-all',
+                  }}>{gcalPreview}</div>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -2287,6 +2325,13 @@ const OvertimeForm: React.FC<{
           {offerCalendarChoice && (
             <p style={{ margin: '0 0 8px', fontSize: 12.5, lineHeight: 1.6, color: showOnCalendar ? (isDark ? '#8ec5f0' : '#1565c0') : subText }}>
               📅 {showOnCalendar ? 'みんなのカレンダーに表示します' : 'カレンダーには表示しません'}
+              {/* 送信前に、実際にカレンダーへ載る1行をそのまま見せる（最後の確認） */}
+              {showOnCalendar && gcalPreview && (
+                <>
+                  <br />Googleカレンダー表示
+                  <br /><b style={{ color: isDark ? '#fff' : '#0d47a1', wordBreak: 'break-all' }}>{gcalPreview}</b>
+                </>
+              )}
             </p>
           )}
           {/* 勤務する場所が変わる日は、載せ忘れると周りが困る。止めはせず注意だけ出す */}
@@ -2364,6 +2409,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     return () => clearTimeout(t);
   }, [savedBanner]);
   const [cancelTargetId, setCancelTargetId] = useState<string | null>(null);
+  // 「内容を修正する（取り消して再申請）」の確認を出している申請。取消の確認とは同時に開かない
+  const [modifyTargetId, setModifyTargetId] = useState<string | null>(null);
   // ?staff= で個人詳細に直行するほか、?mode=summary で部門集計を開ける
   // （残業超過のお知らせバナーから飛んでくる。指定が無ければ従来どおり自分の履歴）
   const modeParam = searchParams.get('mode');
@@ -2542,6 +2589,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
 
   // ---- 合計時間数カード：表示中の期間を ‹ › で切り替えられる（今期〜前期のみ。範囲は下の履歴一覧と揃える） ----
   const ownCardPrevLimit = shiftPayPeriod(currentPeriod, -1); // これより前には戻れない
+  // これより先には進めない。事前申請の上限（3期先の期末）と同じ期にそろえる（2026-09-09 ユーザー確定）。
+  // 🚨 ここと advanceRequestMaxDate がずれると「申請できるのに合計時間数を見られない期」ができる
+  const ownCardNextLimit = calcPayPeriodStartJst(advanceRequestMaxDate(todayJstStr()));
   const [ownCardPeriod, setOwnCardPeriod] = useState(currentPeriod);
   const [ownCardRows, setOwnCardRows] = useState<OvertimeReport[]>([]);
   const [ownCardLoading, setOwnCardLoading] = useState(false);
@@ -2550,22 +2600,30 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   //    関数にしていなかったため、申請しても「一覧は新しいのに合計だけ古い」という
   //    いちばん気づきにくい形で古い数字が残っていた（リロードすると直るので誤解を生む）。
   //    申請・受理・差し戻し・取消のあとは、必ず fetchOwn と一緒にこれも呼ぶこと。
+  // 🚨 前期〜3期先を「1回でまとめて」取る（2026-09-09）。以前は選んでいる期だけを取っていたが、
+  //    履歴一覧にも期ごとの合計を出すことにしたため、別々に数えると
+  //    「カードの数字と見出しの数字が違う」という、いちばん気づきにくい食い違いになる。
+  //    データ元を1つにし、期の切り分けは computeBalance（引数の period で絞る）に任せる。
+  //    ついでに ‹ › を押すたびの読み直しも無くなる。
   const fetchOwnCard = useCallback(() => {
     const reqId = ++ownCardReqRef.current;
     setOwnCardLoading(true);
     supabase.from('overtime_reports')
       .select('applicant_id, work_date, pay_period_start, entry_type, status, diff_minutes, application_types')
       .eq('applicant_id', user.id)
-      .eq('pay_period_start', ownCardPeriod)
+      .gte('pay_period_start', ownCardPrevLimit)
+      .lte('pay_period_start', ownCardNextLimit)
       .then(({ data }) => {
         if (reqId !== ownCardReqRef.current) return; // 古いレスポンスは無視（連打対策）
         setOwnCardRows((data as OvertimeReport[] | null) ?? []);
         setOwnCardLoading(false);
       }, () => { if (reqId === ownCardReqRef.current) setOwnCardLoading(false); });
-  }, [ownCardPeriod, user.id]);
+  }, [ownCardPrevLimit, ownCardNextLimit, user.id]);
   useEffect(() => { fetchOwnCard(); }, [fetchOwnCard]);
   // 本人・部門集計・個人詳細で共通の computeBalance を使う
   const ownCardBalance = useMemo(() => computeBalance(ownCardRows, ownCardPeriod), [ownCardRows, ownCardPeriod]);
+  /** 履歴一覧の期の見出しに出す合計。カードと同じ ownCardRows・同じ computeBalance から作る */
+  const balanceOfPeriod = useCallback((period: string) => computeBalance(ownCardRows, period), [ownCardRows]);
 
   // 実績未報告の事前申請（勤務日を過ぎたもの）。終日（調整休・欠勤）は実績報告の概念がないため除外
   // 🚨 requested（受理まち）も含める（2026-08-25）。受理を待たずに実績を報告できるようにしたため
@@ -2666,6 +2724,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
       normOverride: r.normal_shift?.manual_override ?? false,
       normStart: r.normal_shift?.start_time ? fmtTime(r.normal_shift.start_time) : '',
       normEnd: r.normal_shift?.end_time ? fmtTime(r.normal_shift.end_time) : '',
+      // 🚨 カレンダー掲載の選択も写す。写さないと、修正のたびに既定（外れた状態）に戻り、
+      //    本人が選んだ「みんなのカレンダーに表示する」が黙って消える（2026-09-09）
+      showOnCalendar: r.show_on_calendar ?? undefined,
     };
     saveDraft(DRAFT_KEYS.overtime, draftCopy);
     setCancelTargetId(null);
@@ -3210,7 +3271,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                 </ol>
                 <p style={{ fontSize: 12, fontWeight: 'bold', color: isDark ? '#fff' : '#1a4a5a', margin: '0 0 4px' }}>■ 変更・取消のルール</p>
                 <ul style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: isDark ? '#d0dde8' : '#2c5f6e', lineHeight: 1.8 }}>
-                  <li><b>申請中／事前申請 受理済み／差し戻し</b>は、自分で「この申請を取消する」から取消できます。内容を直したいときは、取消の確認画面にある「<b>取消して、この内容で作り直す</b>」が便利です。</li>
+                  <li><b>申請中／事前申請 受理済み／差し戻し</b>は、自分で変更・取消できます。時間や内容を直すときは「<b>内容を修正する（取り消して再申請）</b>」を押してください（受理はやり直しになります）。勤務日のあとは「<b>実績を報告する</b>」から変更してください（残業が無かった日もこちらです）。</li>
                   <li><b>実績報告済み・確認済み</b>は自分では変更・取消できません。「<b>📩 管理者に修正を依頼</b>」または「<b>取消を依頼</b>」から依頼してください（依頼はあとから取り下げられます）。</li>
                   <li>自分で取消できるのは<b>支給月の17日まで</b>です。それ以降は管理者へご依頼ください。</li>
                   <li>調整休の受理により自動で計上された記録は、変更・取消の対象外です（もとの休暇申請を取り消してください）。</li>
@@ -3274,7 +3335,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                   {(() => {
                     const isThisPeriod = ownCardPeriod === currentPeriod;
                     const canGoPrev = ownCardPeriod > ownCardPrevLimit;
-                    const canGoNext = ownCardPeriod < currentPeriod;
+                    const canGoNext = ownCardPeriod < ownCardNextLimit;
                     const arrowStyle = (enabled: boolean): React.CSSProperties => ({
                       background: 'none', border: 'none', fontSize: 20, lineHeight: 1, padding: '6px 10px',
                       cursor: enabled ? 'pointer' : 'default',
@@ -3286,7 +3347,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                           <button type="button" aria-label="前の期間へ" disabled={!canGoPrev}
                             onClick={() => setOwnCardPeriod(p => shiftPayPeriod(p, -1))} style={arrowStyle(canGoPrev)}>‹</button>
                           <p style={{ margin: 0, fontSize: 12.5, color: subText, textAlign: 'center' }}>
-                            {isThisPeriod ? '今期の合計時間数' : '合計時間数'}（{payPeriodLabel(ownCardPeriod)}・{payMonthLabel(ownCardPeriod)}）
+                            {isThisPeriod ? '今期の合計時間数' : ownCardPeriod > currentPeriod ? '先の期間の見込み' : '合計時間数'}（{payPeriodLabel(ownCardPeriod)}・{payMonthLabel(ownCardPeriod)}）
                           </p>
                           <button type="button" aria-label="次の期間へ" disabled={!canGoNext}
                             onClick={() => setOwnCardPeriod(p => shiftPayPeriod(p, 1))} style={arrowStyle(canGoNext)}>›</button>
@@ -3302,7 +3363,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                         <p style={{ margin: '4px 0 2px', fontSize: 26, fontWeight: 'bold', color: diffColor(ownCardBalance.total, isDark), textAlign: 'center' }}>
                           {formatSignedMin(ownCardBalance.total)}
                         </p>
-                        {isThisPeriod && ownCardBalance.plannedDelta !== 0 && (
+                        {ownCardBalance.plannedDelta !== 0 && (
                           <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText, textAlign: 'center' }}>
                             見込み {formatSignedMin(ownCardBalance.plannedTotal)}（確認待ち反映後）
                           </p>
@@ -3379,6 +3440,10 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     const selfCancelStatus = ['requested', 'request_confirmed', 'returned'].includes(r.status) && !isAuto;
                     const adminCancelStatus = ['requested', 'request_confirmed', 'reported', 'returned'].includes(r.status) && !isAuto;
                     const canCancel = isAdmin ? adminCancelStatus : (selfCancelStatus && !cancelLockedByPeriod);
+                    // 内容を直す＝取消して同じ内容で作り直す（2026-09-09 ユーザー確定）。
+                    // 🚨 実績報告が出ているとき（勤務日のあと）は出さない。過ぎた日の予定を作り直す意味が無く、
+                    //    「実績を報告する」と並ぶと迷うため。差し戻しは「修正して再提出」が別にあるので除く。
+                    const canModify = canCancel && !canReport && !canResubmit && !isAuto;
                     const actual = (r.segments ?? []).filter(s => s.phase === 'actual').sort((a, b) => a.seg_no - b.seg_no);
                     const planned = (r.segments ?? []).filter(s => s.phase === 'planned').sort((a, b) => a.seg_no - b.seg_no);
                     const segs = actual.length > 0 ? actual : planned;
@@ -3519,6 +3584,44 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                 </p>
                               </>
                             )}
+                            {/* 内容を修正する＝取消してから同じ内容でフォームを開く（2026-09-09 ユーザー確定）。
+                                以前は取消の確認の中に隠れていたため、直したい人が取消を押す必要があった。
+                                🚨 実績報告が出ているとき（勤務日のあと）は出さない。過ぎた日の予定を作り直す意味が無く、
+                                   「実績を報告する」と並ぶと、どちらを押すのか迷うため。 */}
+                            {canModify && (
+                              <>
+                                {/* 🚨 押した瞬間に取消が走る（取り消してから同じ内容でフォームを開く作り）ので、
+                                    必ず確認を1段はさむ。確認なしだと、誤って触っただけで受理済みの申請が消える */}
+                                {modifyTargetId === r.id ? (
+                                  <div style={{ marginTop: canReport ? 8 : 0, padding: '10px 12px', borderRadius: 8, background: innerBg, border: `1px solid ${borderColor}` }}>
+                                    <p style={{ margin: '0 0 8px', fontSize: 12, color: text, lineHeight: 1.7 }}>
+                                      いまの申請を取り消して、同じ内容で申請フォームを開きます。<br />
+                                      受理はやり直しになります。
+                                    </p>
+                                    <div style={{ display: 'flex', gap: 6 }}>
+                                      <button onClick={() => { setModifyTargetId(null); cancelAndCopy(r); }} disabled={actingId === r.id}
+                                        style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>
+                                        修正をはじめる
+                                      </button>
+                                      <button onClick={() => setModifyTargetId(null)}
+                                        style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12.5, background: 'transparent', color: subText }}>
+                                        やめる
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                <button onClick={() => { setModifyTargetId(r.id); setCancelTargetId(null); }} disabled={actingId === r.id}
+                                  style={{ width: '100%', marginTop: canReport ? 8 : 0, padding: '11px 0', borderRadius: 8, border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, cursor: 'pointer', fontSize: 13.5, fontWeight: 'bold', background: isDark ? '#243447' : '#e8f4fd', color: isDark ? '#90caf9' : '#1565c0' }}>
+                                  内容を修正する（取り消して再申請）
+                                </button>
+                                )}
+                                {!r.is_post_hoc && (
+                                  <p style={{ margin: '6px 0 0', fontSize: 11.5, color: subText, textAlign: 'center', lineHeight: 1.6 }}>
+                                    ※ 勤務日のあとは「実績を報告する」から変更できます（残業なしの報告もこちら）
+                                  </p>
+                                )}
+                              </>
+                            )}
                             {canResubmit && (
                               <button onClick={() => { setEditTarget(r); setTab('form'); window.scrollTo({ top: 0 }); }}
                                 style={{ width: '100%', padding: '11px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>
@@ -3529,7 +3632,13 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                               cancelTargetId === r.id ? (
                                 <div style={{ marginTop: 10 }}>
                                   <p style={{ margin: '0 0 8px', fontSize: 11.5, color: subText, background: innerBg, borderRadius: 8, padding: '8px 10px', lineHeight: 1.7 }}>
-                                    その日は<b style={{ color: text }}>出勤しませんでしたか？</b> 残業が無かっただけなら「実績を報告する」へ（残業ゼロで報告できます）。間違えて出した申請もこちらで取消できます。
+                                    {/* 🚨 文面は「いま出ているボタン」に合わせて切り替える。出ていないボタンを案内すると探させることになる */}
+                                    この申請を取り消します。<br />
+                                    {canReport
+                                      ? <>残業が無かった場合や内容の変更は「<b style={{ color: text }}>実績を報告する</b>」から行ってください。</>
+                                      : canModify
+                                        ? <>内容の変更は「<b style={{ color: text }}>内容を修正する（取り消して再申請）</b>」から行ってください。</>
+                                        : <>取り消すと元に戻せません。</>}
                                   </p>
                                   <div style={{ display: 'flex', gap: 6 }}>
                                     <button onClick={() => doCancel(r)} disabled={actingId === r.id}
@@ -3541,15 +3650,11 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                       やめる
                                     </button>
                                   </div>
-                                  <button onClick={() => cancelAndCopy(r)} disabled={actingId === r.id}
-                                    style={{ width: '100%', marginTop: 6, padding: '9px 0', borderRadius: 8, border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', background: isDark ? '#243447' : '#e8f4fd', color: isDark ? '#90caf9' : '#1565c0' }}>
-                                    取消して、この内容で作り直す
-                                  </button>
                                 </div>
                               ) : (
                                 // 取消は常に控えめ（中央・小さめ・同じ文言）。主役は実績報告・内容の確認。
                                 <div style={{ textAlign: 'center', marginTop: 10 }}>
-                                  <button onClick={() => setCancelTargetId(r.id)}
+                                  <button onClick={() => { setCancelTargetId(r.id); setModifyTargetId(null); }}
                                     style={{ padding: '6px 16px', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12, background: 'transparent', color: subText }}>
                                     この申請を取消する
                                   </button>
@@ -3660,7 +3765,34 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                           <div style={{ flex: 1, height: 1, background: borderColor }} />
                         </div>
                       )}
-                      {ownRestRows.map(renderOwnCard)}
+                      {/* 期ごとの見出し（2026-09-09）。並び順は変えず、期が切り替わったところに挟むだけ。
+                          数字は合計時間数カードと同じ ownCardRows・同じ computeBalance から作る（食い違わせない）。
+                          🚨 絞り込み中でも見出しの数字は「その期の全部」を出す。絞った分だけを足すと
+                             「合計が合わない」と読まれるため。 */}
+                      {ownRestRows.map((r, i) => {
+                        const period = r.pay_period_start;
+                        const isNewPeriod = !!period && (i === 0 || ownRestRows[i - 1].pay_period_start !== period);
+                        if (!isNewPeriod) return renderOwnCard(r);
+                        const bal = balanceOfPeriod(period);
+                        return (
+                          <React.Fragment key={`p-${period}-${r.id}`}>
+                            <div style={{
+                              display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6,
+                              margin: '16px 0 8px', padding: '6px 10px', borderRadius: 8,
+                              background: innerBg, border: `1px solid ${borderColor}`,
+                            }}>
+                              <span style={{ fontSize: 12.5, fontWeight: 'bold', color: text }}>
+                                {payMonthPeriodLabel(period)}{period === currentPeriod && '（今期）'}
+                              </span>
+                              <span style={{ fontSize: 12, color: subText }}>
+                                確定 <b style={{ color: diffColor(bal.total, isDark) }}>{formatSignedMin(bal.total)}</b>
+                                {bal.plannedDelta !== 0 && <>　見込み <b style={{ color: diffColor(bal.plannedTotal, isDark) }}>{formatSignedMin(bal.plannedTotal)}</b></>}
+                              </span>
+                            </div>
+                            {renderOwnCard(r)}
+                          </React.Fragment>
+                        );
+                      })}
                     </>
                   );
                   })()}
