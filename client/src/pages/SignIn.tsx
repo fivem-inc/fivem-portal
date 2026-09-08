@@ -1,10 +1,11 @@
 import { useState, useContext, useEffect } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { AuthContext } from '../contexts/AuthContext.tsx';
 import { useAuth } from '../hooks/useAuth';
 
 export default function SignIn() {
+  const location = useLocation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -168,7 +169,11 @@ export default function SignIn() {
   };
 
   if (user) {
-    return <Navigate to={isAdmin ? '/admin' : '/'} replace />;
+    // ログイン前に開こうとしていた URL（ProtectedLayout が state.from に入れる）があればそこへ戻す。
+    // 🚨 同じサイトの中のパス（/ で始まり // で始まらない）だけを許す。外部URLへは飛ばさない
+    const from = (location.state as { from?: string } | null)?.from;
+    const safeFrom = typeof from === 'string' && from.startsWith('/') && !from.startsWith('//') && from !== '/signin' ? from : null;
+    return <Navigate to={safeFrom ?? (isAdmin ? '/admin' : '/')} replace />;
   }
 
   return (

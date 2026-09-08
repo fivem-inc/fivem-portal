@@ -380,10 +380,14 @@ const AnnouncementBanner: React.FC = () => {
 // 保護されたルートのためのレイアウト
 const ProtectedLayout: React.FC = () => {
   const { user, isAdmin, isFaqEditor } = useAuth();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
 
   if (!user) {
-    return <Navigate to="/signin" />;
+    // 🚨 開こうとしていた URL（例：メールのリンク /board?openInboxId=…）を覚えてからログインへ。
+    //    2026-09-08 実機報告：ログインしていない端末でメールのリンクを開くと、ログイン後にホームへ
+    //    飛ばされて「開けなかった」と見えていた（ログイン後の行き先が固定だったため）。
+    //    ログイン画面（SignIn）がこの値を読んで、ログイン後にそこへ戻す
+    return <Navigate to="/signin" state={{ from: pathname + search }} />;
   }
 
   // 🚨 Q&A編集専用アカウントは FAQ管理画面だけを使う運用。
@@ -603,15 +607,31 @@ const useBoardUnread = (userId: string | undefined, pathname: string) => {
       }
     }
 
-    // 受信トレイ未読（予約中(status='scheduled')はまだ送信されていないためカウントしない）
+    // 受信トレイ：「未読 または 未対応」の件数（2026-09-08 ユーザー確定・案①）。
+    // 🚨 足し算しない。1通が「未読でもあり未対応でもある」ときに2件と数えてしまう。
+    //    重なりを除いた「私がまだ触る必要があるお知らせの数」にする。
+    //    未対応＝読了報告・回答などが要る（requires_confirmation / deadline_type）のに
+    //    board_confirmations に自分の行が無いもの。開いただけでは減らず、［完了］を押すまで残る
+    //    （連絡板の受信トレイの「未対応」タブと同じ判定）。
+    // 予約中(status='scheduled')はまだ送信されていないためカウントしない
     let inboxUnread = 0;
     if (inboxRes.data && inboxRes.data.length > 0) {
       const inboxMsgIds = inboxRes.data.map((r: any) => r.message_id);
-      const { data: sentMsgs } = await supabase.from('board_messages').select('id').in('id', inboxMsgIds).eq('status', 'sent');
+      const { data: sentMsgs } = await supabase.from('board_messages').select('id, requires_confirmation, deadline_type').in('id', inboxMsgIds).eq('status', 'sent');
       const sentMsgIds = (sentMsgs || []).map((m: any) => m.id);
-      const { data: reads } = await supabase.from('board_reads').select('message_id').eq('user_id', userId).in('message_id', sentMsgIds);
+      const needConfirmIds = (sentMsgs || []).filter((m: any) => m.requires_confirmation || m.deadline_type).map((m: any) => m.id);
+      const [{ data: reads }, { data: confs }] = await Promise.all([
+        supabase.from('board_reads').select('message_id').eq('user_id', userId).in('message_id', sentMsgIds),
+        needConfirmIds.length > 0
+          ? supabase.from('board_confirmations').select('message_id').eq('user_id', userId).in('message_id', needConfirmIds)
+          : Promise.resolve({ data: [] as { message_id: string }[] }),
+      ]);
       const readSet = new Set((reads || []).map((r: any) => r.message_id));
-      inboxUnread = sentMsgIds.filter((id: string) => !readSet.has(id)).length;
+      const confSet = new Set((confs || []).map((c: any) => c.message_id));
+      const attention = new Set<string>();
+      sentMsgIds.forEach((id: string) => { if (!readSet.has(id)) attention.add(id); });
+      needConfirmIds.forEach((id: string) => { if (!confSet.has(id)) attention.add(id); });
+      inboxUnread = attention.size;
     }
 
     setChannelCount(channelUnread);

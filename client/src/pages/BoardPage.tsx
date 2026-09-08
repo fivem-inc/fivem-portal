@@ -2207,6 +2207,19 @@ const BoardPage: React.FC = () => {
   const groupChannels = sortedChannels.filter(c => c.type === 'group' && (!searchText || channelDisplayName(c).toLowerCase().includes(searchLower)));
   const dmChannels    = sortedChannels.filter(c => c.type === 'dm'    && (!searchText || channelDisplayName(c).toLowerCase().includes(searchLower)));
   const inboxUnread   = inboxMessages.filter(m => !inboxReadIds.has(m.id)).length;
+  // 数字バッジ（2026-09-08 ユーザー指示）：対応が必要なものの数。
+  // 🚨 判定は filteredInbox の 'pending' と同じ式（confirmations に自分が無い）。別の式を書かない
+  const isPendingMsg = (m: BoardMessage) =>
+    !!(m.requires_confirmation || m.deadline_type) && !(confirmations[m.id] || []).some(c => c.user_id === user?.id);
+  const inboxPendingCount = inboxMessages.filter(isPendingMsg).length;
+  const inboxPendingByType: Record<string, number> = {};
+  inboxMessages.filter(isPendingMsg).forEach(m => { if (m.deadline_type) inboxPendingByType[m.deadline_type] = (inboxPendingByType[m.deadline_type] || 0) + 1; });
+  // サイドバーの「受信トレイ」の数字＝「未読 または 未対応」（重なりは1件・2026-09-08 ユーザー確定・案①）。
+  // 🚨 足し算しない（1通が未読かつ未対応なら2件になる）。上のバー（App.tsx useBoardUnread）と同じ数え方
+  const inboxAttention = inboxMessages.filter(m => !inboxReadIds.has(m.id) || isPendingMsg(m)).length;
+  const inboxCountBadge = (n: number) => n > 0 ? (
+    <span style={{ background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', fontWeight: 'bold', flexShrink: 0 }}>{n > 99 ? '99+' : n}</span>
+  ) : null;
 
   // 🆘 安否・緊急連絡の入口。進行中（自分が未回答）なら点灯して最上部、平常時はグレーでお気に入りの下。
   // 色と文言は種類ごとに変える（安否＝赤／出勤確認＝オレンジ／応援のお願い＝青）。
@@ -2239,7 +2252,7 @@ const BoardPage: React.FC = () => {
         {safetyVisible && safetyPending > 0 && safetyRow}
         {/* ── 受信・送信・お気に入り ── */}
         {[
-          { key: 'inbox'  as const, icon: '📨', label: '受信トレイ', bg: isDark ? '#1e3a5f' : '#dbeafe', badge: inboxUnread, onClick: () => { setView('inbox'); setInboxFilter('all'); setShowSidebar(false); setInboxDetailId(null); } },
+          { key: 'inbox'  as const, icon: '📨', label: '受信トレイ', bg: isDark ? '#1e3a5f' : '#dbeafe', badge: inboxAttention, onClick: () => { setView('inbox'); setInboxFilter('all'); setShowSidebar(false); setInboxDetailId(null); } },
           { key: 'outbox' as const, icon: '📤', label: '送信トレイ',   bg: isDark ? '#1e3a2a' : '#dcfce7', badge: 0,           onClick: () => { setView('outbox'); setShowSidebar(false); setOutboxDetailId(null); } },
         ].map(item => {
           const isActive = view === item.key && !showSidebar;
@@ -2331,17 +2344,21 @@ const BoardPage: React.FC = () => {
   );
 
   // ── 受信トレイ ────────────────────────────────────────────────
-  const INBOX_FILTERS = [
+  // 絞り込みは2行に分ける（2026-09-08 ユーザー確定・案A）。
+  // スマホ幅では8個が1行に収まらず「アーカイブ」が見えなかった。
+  // 1行目＝状態（すべて／未読／未対応／アーカイブ）、2行目＝種類（読了／回答／提出／承認）。
+  // 「状態」と「種類」は意味が違うものなので、行を分けると言葉の意味も分かれる
+  const INBOX_STATE_FILTERS = [
     { key: 'all',      label: 'すべて' },
     { key: 'unread',   label: '未読' },
     { key: 'pending',  label: '未対応' },
+  ] as const;
+  const INBOX_TYPE_FILTERS = [
     { key: 'read',     label: '読了' },
     { key: 'answer',   label: '回答' },
     { key: 'submit',   label: '提出' },
     { key: 'approve',  label: '承認' },
-    { key: 'archived', label: 'アーカイブ' },
   ] as const;
-
   const filteredInbox = inboxFilter === 'archived' ? archivedMessages : inboxMessages.filter(m => {
     if (inboxFilter === 'all') return true;
     if (inboxFilter === 'unread') return !inboxReadIds.has(m.id);
@@ -2467,14 +2484,35 @@ const BoardPage: React.FC = () => {
         /* 一覧ビュー */
         <>
           <div style={{ paddingTop: 56, flexShrink: 0 }}>
-            {/* フィルタータブ */}
-            <div style={{ display: 'flex', overflowX: 'auto', borderBottom: `1px solid ${border}`, background: cardBg, padding: '0 8px' }}>
-              {INBOX_FILTERS.map(f => (
-                <button key={f.key} type="button" onClick={() => { setInboxFilter(f.key); setOpenInboxNotice(null); if (f.key === 'archived') loadArchived(); }}
-                  style={{ padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: inboxFilter === f.key ? 700 : 400, color: inboxFilter === f.key ? '#007bff' : subColor, borderBottom: inboxFilter === f.key ? '2px solid #007bff' : '2px solid transparent', whiteSpace: 'nowrap', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
-                  {f.key === 'archived' ? <><ArchiveIcon size={13} /> アーカイブ</> : f.label}
+            {/* 1行目：状態（すべて／未読／未対応）＋ 右端にアーカイブ。未読・未対応には件数のバッジ */}
+            <div style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${border}`, background: cardBg, padding: '0 8px' }}>
+              {INBOX_STATE_FILTERS.map(f => (
+                <button key={f.key} type="button" onClick={() => { setInboxFilter(f.key); setOpenInboxNotice(null); }}
+                  style={{ padding: '10px 12px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: inboxFilter === f.key ? 700 : 400, color: inboxFilter === f.key ? '#007bff' : subColor, borderBottom: inboxFilter === f.key ? '2px solid #007bff' : '2px solid transparent', whiteSpace: 'nowrap', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}>
+                  {f.label}
+                  {f.key === 'unread' && inboxCountBadge(inboxUnread)}
+                  {f.key === 'pending' && inboxCountBadge(inboxPendingCount)}
                 </button>
               ))}
+              <button type="button" onClick={() => { setInboxFilter('archived'); setOpenInboxNotice(null); loadArchived(); }}
+                style={{ marginLeft: 'auto', padding: '10px 10px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: inboxFilter === 'archived' ? 700 : 400, color: inboxFilter === 'archived' ? '#007bff' : subColor, borderBottom: inboxFilter === 'archived' ? '2px solid #007bff' : '2px solid transparent', whiteSpace: 'nowrap', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <ArchiveIcon size={13} /> アーカイブ
+              </button>
+            </div>
+            {/* 2行目：種類（読了／回答／提出／承認）。択一トグルの青は 🎨🔒 固定色。数字は「その種類で対応が必要な数」。
+                同じ種類をもう一度押すと「すべて」に戻る */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, borderBottom: `1px solid ${border}`, background: cardBg, padding: '6px 12px', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, color: subColor, flexShrink: 0, marginRight: 2 }}>種類</span>
+              {INBOX_TYPE_FILTERS.map(f => {
+                const active = inboxFilter === f.key;
+                return (
+                  <button key={f.key} type="button" onClick={() => { setInboxFilter(active ? 'all' : f.key); setOpenInboxNotice(null); }}
+                    style={{ padding: '3px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 'bold', border: `2px solid ${active ? '#1565c0' : '#90caf9'}`, background: active ? '#1976d2' : '#e3f2fd', color: active ? '#fff' : '#1565c0', display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' }}>
+                    {f.label}
+                    {inboxCountBadge(inboxPendingByType[f.key] || 0)}
+                  </button>
+                );
+              })}
             </div>
           </div>
           {/* アーカイブ一括削除UI */}
