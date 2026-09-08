@@ -200,7 +200,9 @@ const BoardPage: React.FC = () => {
   const boardPatchReplaceRef = useRef(false);
   const boardFlushScheduledRef = useRef(false);
   const patchBoardParams = useCallback((patch: Record<string, string | null>, opts?: { replace?: boolean }) => {
-    boardPatchRef.current = { ...(boardPatchRef.current || {}), ...patch };
+    // 🚨 利用者が自分で画面を動かしたら、ベルから来た「開く印」（openInboxId）は常に外す。
+    //    残すと、あとから届いた読み込み結果が利用者の開いた画面から詳細へ引き戻す
+    boardPatchRef.current = { openInboxId: null, ...(boardPatchRef.current || {}), ...patch };
     if (opts?.replace) boardPatchReplaceRef.current = true;
     if (!boardFlushScheduledRef.current) {
       boardFlushScheduledRef.current = true;
@@ -602,19 +604,32 @@ const BoardPage: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchText, user]);
 
+  // 🚨 loadInbox は同時に複数走る（開いたとき／ベルから来たとき／前面に戻ったとき）。
+  //    古い応答が後から届いて新しい状態を上書きしないよう、通し番号で「最新の1本」だけを採用する。
+  //    この画面で既読にしたもの（localReadRef）は、DBから読んだ既読集合に必ず足す
+  //    （upsert 前に読んだ応答が後から届くと、既読が未読に巻き戻る）
+  const inboxLoadSeq = useRef(0);
+  const localReadRef = useRef<Set<string>>(new Set());
+  const [inboxLoaded, setInboxLoaded] = useState(false); // 初回の読み込みが終わるまで「お知らせはありません」を出さない
+
   const loadInbox = useCallback(async () => {
     if (!user) return;
+    const seq = ++inboxLoadSeq.current;
+    const isLatest = () => seq === inboxLoadSeq.current;
     // 自分が受信者のメッセージを取得（archived=falseのみ）
-    const { data: recData } = await supabase
+    const { data: recData, error: recErr } = await supabase
       .from('board_message_recipients')
       .select('message_id')
       .eq('user_id', user.id)
       .eq('archived', false);
+    if (!isLatest()) return;
+    // 🚨 失敗したら空で上書きしない（通信断で「お知らせはありません」と出て、削除と区別が付かなくなる）
+    if (recErr) { console.error('受信トレイの読み込みに失敗:', recErr.code, recErr.message); setInboxLoaded(true); return; }
     const msgIds = (recData || []).map((r: any) => r.message_id);
-    if (msgIds.length === 0) { setInboxMessages([]); return; }
+    if (msgIds.length === 0) { setInboxMessages([]); setInboxLoaded(true); return; }
 
     // メッセージ・既読・カウントを並行取得してフラッシュを防ぐ
-    const [{ data: msgData }, { data: readData }, { data: rcData }] = await Promise.all([
+    const [{ data: msgData, error: msgErr }, { data: readData, error: readErr }, { data: rcData }] = await Promise.all([
       supabase
         .from('board_messages')
         .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link')
@@ -624,13 +639,16 @@ const BoardPage: React.FC = () => {
       supabase.from('board_reads').select('message_id').in('message_id', msgIds).eq('user_id', user.id),
       supabase.from('board_reads').select('message_id').in('message_id', msgIds),
     ]);
+    if (!isLatest()) return;
+    if (msgErr) { console.error('受信トレイの本文の読み込みに失敗:', msgErr.code, msgErr.message); setInboxLoaded(true); return; }
 
     // status='scheduled'（未送信）は受信トレイに出さない。cronがstatus='sent'に切り替えるまで非表示
     // ※クライアント時計とscheduled_atの比較ではなく、DBが確定させたstatusで判定する（送信時刻の表示崩れ・表示タイミングのズレを防ぐ）
     setInboxMessages((msgData || [])
       .filter((m: any) => m.status !== 'scheduled')
       .map((m: any) => ({ ...m, broadcast_recipients: null, profile: null })));
-    setInboxReadIds(new Set((readData || []).map((r: any) => r.message_id)));
+    setInboxLoaded(true);
+    if (!readErr) setInboxReadIds(new Set([...(readData || []).map((r: any) => r.message_id as string), ...localReadRef.current]));
     const rc: Record<string, number> = {};
     (rcData || []).forEach((r: any) => { rc[r.message_id] = (rc[r.message_id] || 0) + 1; });
     setReadCounts(prev => ({ ...prev, ...rc }));
@@ -772,31 +790,87 @@ const BoardPage: React.FC = () => {
     };
   }, [loadInbox, loadOutbox, loadAll]);
 
-  // URLパラメータ openInboxId で受信トレイ詳細を自動展開
+  // ── ベル（アプリ内通知）から来たとき：URL の openInboxId が指す1件を開く ──────────────
+  // 2026-09-08 作り直し（実機報告：HOMEからベルを押すと一覧のトップに着く／連絡板を開いたままだと何も起きない）。
+  // 以前の作りの穴：
+  //  (A) setSearchParams(prev => …) を2回続けて呼んでいたが、react-router 7 の prev は
+  //      「そのレンダー時点のURL」で、1回目の結果を受け取らない。2回目が 1回目を打ち消し、
+  //      どちらが最後に勝つかタイミング次第だった
+  //  (B) 手元の一覧（開いたときの古いもの）から探していたので、届いたばかりの1件は見つからず、何もしなかった
+  // いまの作り：
+  //  ① 対象の1件を DB から直接引いて正体を決める（受信トレイのお知らせか／グループ・DMの投稿か／無いか）
+  //  ② URL は「いまの値から作った完全な文字列」を渡す（関数形式を使わない）。
+  //     一覧の状態に replace → 詳細を push、で「戻る」が一覧に戻る
+  //  ③ 既読を書いてから一覧を読み直す（読み直しが既読を含むように）
+  // 🚨 deps は openInboxId と user だけ。searchParams を入れると書き換えるたびに再実行される
+  // 🚨 グループ・DM の通知も同じ入口（/board?openInboxId=投稿ID）を通る。受信トレイには無いので
+  //    channel_id を見てチャンネル画面へ運ぶ（レビューで見つかった経路）
+  const openInboxId = searchParams.get('openInboxId');
+  const handledOpenId = useRef<string | null>(null);
+  const [openInboxNotice, setOpenInboxNotice] = useState<string | null>(null); // 開けなかった理由（✕ か次の操作で消す）
   useEffect(() => {
-    const openId = searchParams.get('openInboxId');
-    if (!openId || inboxMessages.length === 0) return;
-    const msg = inboxMessages.find(m => m.id === openId);
-    if (!msg) return;
-    // まず現在のエントリを受信トレイ一覧のベース状態に置き換え（replace）、
-    // その上で詳細エントリをpush → 戻るボタンで一覧に戻れるようにする
-    setSearchParams(prev => {
-      const next = new URLSearchParams(prev);
-      ['openInboxId', 'bv', 'bin', 'bch', 'bout', 'bth'].forEach(k => next.delete(k));
-      next.set('bsb', '0');
-      return next;
-    }, { replace: true });
-    setSearchParams(prev => {
-      const next = new URLSearchParams(prev);
-      next.set('bin', openId);
-      return next;
-    }, { replace: false });
-    if (!inboxReadIds.has(openId) && user) {
-      supabase.from('board_reads').upsert({ message_id: openId, user_id: user.id }, { onConflict: 'message_id,user_id', ignoreDuplicates: true })
-        .then(() => setInboxReadIds(prev => new Set([...prev, openId])));
+    if (!openInboxId || !user) return;
+    if (handledOpenId.current === openInboxId) return; // 一覧の更新で再描画されても二重に処理しない
+    handledOpenId.current = openInboxId;
+    let cancelled = false;
+    const startedSearch = window.location.search; // 待っている間に利用者が別の操作をしたら、そちらを優先して何もしない
+    const base = new URLSearchParams(searchParams);
+    ['openInboxId', 'bv', 'bin', 'bch', 'bout', 'bth'].forEach(k => base.delete(k));
+    base.set('bsb', '0');
+    // すでにその詳細を開いているなら、印だけ外す（履歴を1段増やさない）
+    if (inboxDetailId === openInboxId) {
+      const keep = new URLSearchParams(searchParams); keep.delete('openInboxId');
+      setSearchParams(keep, { replace: true });
+      return;
     }
+    (async () => {
+      const [{ data: rec, error: recErr }, { data: msg, error: msgErr }] = await Promise.all([
+        supabase.from('board_message_recipients').select('archived').eq('message_id', openInboxId).eq('user_id', user.id).maybeSingle(),
+        supabase.from('board_messages').select('id, channel_id, parent_id').eq('id', openInboxId).maybeSingle(),
+      ]);
+      if (cancelled || window.location.search !== startedSearch) return;
+      const err = recErr || msgErr;
+      if (err) {
+        setSearchParams(base, { replace: true });
+        setOpenInboxNotice(`お知らせを読み込めませんでした：${err.message}。通信を確認して、もう一度ベルから開いてください`);
+        return;
+      }
+      if (msg?.channel_id) {
+        // グループ・DM の投稿。返信なら親の投稿（スレッド）を開く
+        const withCh = new URLSearchParams(base);
+        withCh.set('bv', 'channel'); withCh.set('bch', msg.channel_id);
+        if (msg.parent_id) withCh.set('bth', msg.parent_id);
+        setSearchParams(base, { replace: true });
+        setSearchParams(withCh);
+        return;
+      }
+      if (!rec || !msg) {
+        // 🚨 通知が来た＝宛先だった人なので「宛先に入っていない」とは言わない（本人を疑わせる）。
+        //    送信者が取り消した（削除した）のがいちばんありそうな理由
+        setSearchParams(base, { replace: true });
+        setOpenInboxNotice('このお知らせは開けませんでした。送信者が取り消した（削除した）可能性があります。');
+        return;
+      }
+      const withDetail = new URLSearchParams(base);
+      withDetail.set('bin', openInboxId);
+      setSearchParams(base, { replace: true }); // 一覧の状態（戻る先）
+      setSearchParams(withDetail);              // 詳細を push
+      // 🚨 絞り込みを対象に合わせる。「未読」のままだと既読にした瞬間に一覧から消え、
+      //    「アーカイブ」のままだと戻った先がアーカイブ一覧になる
+      setInboxFilter(rec.archived ? 'archived' : 'all');
+      if (!inboxReadIds.has(openInboxId)) {
+        const { error: rdErr } = await supabase.from('board_reads')
+          .upsert({ message_id: openInboxId, user_id: user.id }, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
+        if (rdErr) console.error('既読の記録に失敗:', rdErr.code, rdErr.message);
+        else { localReadRef.current.add(openInboxId); setInboxReadIds(prev => new Set([...prev, openInboxId])); }
+      }
+      // 🚨 ここで cancelled を見ない。上で URL を書き換えた時点で openInboxId が外れ、この effect の
+      //    後片付け（cancelled=true）が走るのが正常な流れ。見ると読み直しが毎回飛ばされる
+      if (rec.archived) loadArchived(); else loadInbox(); // 既読を書いたあとに読み直す
+    })();
+    return () => { cancelled = true; handledOpenId.current = null; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, inboxMessages]);
+  }, [openInboxId, user]);
 
   // 受信トレイ詳細を開いた時、送信者 or 管理者なら受信者＋未対応者を取得
   useEffect(() => {
@@ -2396,7 +2470,7 @@ const BoardPage: React.FC = () => {
             {/* フィルタータブ */}
             <div style={{ display: 'flex', overflowX: 'auto', borderBottom: `1px solid ${border}`, background: cardBg, padding: '0 8px' }}>
               {INBOX_FILTERS.map(f => (
-                <button key={f.key} type="button" onClick={() => { setInboxFilter(f.key); if (f.key === 'archived') loadArchived(); }}
+                <button key={f.key} type="button" onClick={() => { setInboxFilter(f.key); setOpenInboxNotice(null); if (f.key === 'archived') loadArchived(); }}
                   style={{ padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: inboxFilter === f.key ? 700 : 400, color: inboxFilter === f.key ? '#007bff' : subColor, borderBottom: inboxFilter === f.key ? '2px solid #007bff' : '2px solid transparent', whiteSpace: 'nowrap', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
                   {f.key === 'archived' ? <><ArchiveIcon size={13} /> アーカイブ</> : f.label}
                 </button>
@@ -2473,7 +2547,18 @@ const BoardPage: React.FC = () => {
             </div>
           )}
           <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px' }}>
-            {filteredInbox.length === 0 ? (
+            {/* ベルから開けなかったときの案内。自動では消さない（✕ か絞り込みの切り替えで消える） */}
+            {openInboxNotice && (
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 8, padding: '8px 10px', background: isDark ? '#3a1f1f' : '#fef2f2', border: `1px solid ${isDark ? '#7f1d1d' : '#fecaca'}`, borderRadius: 8, fontSize: 12, color: isDark ? '#fca5a5' : '#b91c1c', lineHeight: 1.5 }}>
+                <span style={{ flex: 1 }}>{openInboxNotice}</span>
+                <button type="button" onClick={() => setOpenInboxNotice(null)} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: 14, padding: 0, lineHeight: 1 }}>✕</button>
+              </div>
+            )}
+            {openInboxId ? (
+              <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>お知らせを開いています…</div>
+            ) : !inboxLoaded && inboxFilter !== 'archived' ? (
+              <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>読み込んでいます…</div>
+            ) : filteredInbox.length === 0 ? (
               <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>
                 {inboxFilter === 'all' ? 'お知らせはありません' : inboxFilter === 'unread' ? '未読のお知らせはありません' : '該当するお知らせはありません'}
               </div>
