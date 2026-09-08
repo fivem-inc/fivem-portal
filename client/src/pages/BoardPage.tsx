@@ -3027,21 +3027,24 @@ const BoardPage: React.FC = () => {
 
       </div>
 
-      {/* 本文 + 送信（チャンネルと同レイアウト） */}
-      <div style={{ padding: '10px 14px', borderTop: `1px solid ${border}`, background: cardBg, flexShrink: 0, display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-        {/* 本文の欄（2026-09-08 ユーザー指示：PCで狭いので広げられるように）
-            PC … 右下の取っ手で上下に広げられる（resize: vertical。横は画面幅いっぱいなので縦だけ）
-            スマホ … 取っ手が出ないので、打った量に合わせて自動で高くなる（画面の4割まで）。
-            🚨 rows=2 は「最初の高さ」。広げた高さは送信でリセットされる（resetCompose が空にするため） */}
-        <textarea value={composeBody} onChange={e => { setComposeBody(e.target.value); if (isMobile) autoGrowTextarea(e.target); }} placeholder="本文を入力... *必須 (Ctrl+Enterで送信)"
-          rows={2}
+      {/* 本文 + 送信。
+          2026-09-08 ユーザー指示：送信ボタンを本文の下に置き、本文の欄を横いっぱいに（横に並べると欄が狭い）。
+          PC … 右下の取っ手で上下に広げられる（resize: vertical）。最初は4行ぶん
+          スマホ … 取っ手が出ないので、打った量に合わせて自動で高くなる（画面の4割まで）。
+          🚨 rows=4 は「最初の高さ」。広げた高さは送信でリセットされる（resetCompose が空にするため） */}
+      <div style={{ padding: '10px 14px', borderTop: `1px solid ${border}`, background: cardBg, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <textarea value={composeBody} onChange={e => { setComposeBody(e.target.value); if (isMobile) autoGrowTextarea(e.target); }} placeholder="本文を入力... *必須"
+          rows={4}
           onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0 && (!composeDeadlineType || composeDeadline)) setShowComposeSendConfirm(true); }}}
-          style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, resize: isMobile ? 'none' : 'vertical', minHeight: 60, maxHeight: '50vh', fontFamily: 'inherit', lineHeight: 1.4, boxSizing: 'border-box' }} />
-        <button type="button" onClick={() => { if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0 && (!composeDeadlineType || composeDeadline)) setShowComposeSendConfirm(true); }}
-          disabled={!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || (!!composeDeadlineType && !composeDeadline) || sending}
-          style={{ padding: '10px 18px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, alignSelf: 'flex-end', opacity: (!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || (!!composeDeadlineType && !composeDeadline) || sending) ? 0.5 : 1, whiteSpace: 'nowrap' }}>
-          {sending ? '送信中...' : `送信（${composeRecipientIds.length}人）`}
-        </button>
+          style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, resize: isMobile ? 'none' : 'vertical', minHeight: 100, maxHeight: '50vh', fontFamily: 'inherit', lineHeight: 1.5, boxSizing: 'border-box' }} />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <span style={{ fontSize: 11, color: subColor }}>{isMobile ? '' : 'Ctrl+Enter でも送信できます'}</span>
+          <button type="button" onClick={() => { if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0 && (!composeDeadlineType || composeDeadline)) setShowComposeSendConfirm(true); }}
+            disabled={!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || (!!composeDeadlineType && !composeDeadline) || sending}
+            style={{ padding: '10px 22px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold', opacity: (!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || (!!composeDeadlineType && !composeDeadline) || sending) ? 0.5 : 1, whiteSpace: 'nowrap' }}>
+            {sending ? '送信中...' : `送信（${composeRecipientIds.length}人）`}
+          </button>
+        </div>
       </div>
     </div>
   );
