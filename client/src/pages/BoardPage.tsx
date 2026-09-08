@@ -61,6 +61,8 @@ interface BoardMessage {
   broadcast_recipients: { id: string; name: string }[] | null;
   profile: { name: string | null } | null;
   outbox_hidden?: boolean;
+  recipient_presets?: string[] | null;   // 送信時に全員が宛先に入っていた一括ボタン名（コピーして作成で使う）
+  recipient_extra_ids?: string[] | null; // ボタン以外で個別に足した宛先
 }
 
 type View = 'inbox' | 'outbox' | 'compose' | 'channel' | 'search' | 'favorites';
@@ -71,7 +73,44 @@ interface SimpleProfile {
   role_title: string | null;
   employment_type: string | null;
   group_names: string[] | null;
+  registered_at?: string | null; // 「コピーして作成」で、前回の送信より後に入った人を見つけるために使う
 }
+
+// 宛先の一括ボタン。🚨 判定はこの1か所だけ（作成画面のボタン／送信時の記録／コピーして作成 の3つが使う）
+const RECIPIENT_PRESET_KEYS = ['全員', '正社員', 'パート', 'マネージャー・リーダー', 'こども', '大人', '管理部'] as const;
+type RecipientPresetKey = typeof RECIPIENT_PRESET_KEYS[number];
+const recipientPresetIds = (key: string, profiles: SimpleProfile[]): string[] => {
+  switch (key) {
+    case '全員':   return profiles.map(p => p.id);
+    case '正社員': return profiles.filter(p => p.employment_type === '正社員').map(p => p.id);
+    case 'パート': return profiles.filter(p => p.employment_type === 'パート').map(p => p.id);
+    // 🚨 役職（role_title）で判定する（2026-09-08 ユーザー確定・案③）。
+    //    以前は名簿（group_names に「マネージャー・リーダー」があるか）で見ていたため、
+    //    6/13 の一括登録のあとにリーダーになった人が名簿に足されず、選ばれない事故が起きた。
+    //    休暇・備品の承認者判定と同じく役職を正とする。
+    //    フロア責任者は**含めない**（2026-09-08 ユーザー確定）。含めるかは毎回判断が割れる件なので、
+    //    変えるときは必ず聞くこと（CLAUDE.md「役職序列」）。
+    case 'マネージャー・リーダー': return profiles.filter(p => MANAGER_LEADER_ROLES.includes(p.role_title || '')).map(p => p.id);
+    case 'こども': return profiles.filter(p => (p.group_names || []).includes('こども')).map(p => p.id);
+    case '大人':   return profiles.filter(p => (p.group_names || []).includes('大人')).map(p => p.id);
+    case '管理部': return profiles.filter(p => (p.group_names || []).includes('管理部')).map(p => p.id);
+    default: return [];
+  }
+};
+// 送信時に「押したボタン（いまも全員が宛先に残っているもの）」と「ボタン以外で足した人」に分ける。
+// 🚨 押していないボタンを宛先の中身から逆算しない（人数の少ないボタンがたまたま含まれていただけで
+//    「押した」扱いになり、コピー時に無関係な人が入る）。押したあとに1人でも外したボタンは無効にする
+const splitRecipientsIntoPresets = (recipientIds: string[], pressedKeys: string[], profiles: SimpleProfile[]) => {
+  const sel = new Set(recipientIds);
+  const presets = RECIPIENT_PRESET_KEYS.filter(k => {
+    if (!pressedKeys.includes(k)) return false;
+    const ids = recipientPresetIds(k, profiles);
+    return ids.length > 0 && ids.every(id => sel.has(id));
+  });
+  const covered = new Set(presets.flatMap(k => recipientPresetIds(k, profiles)));
+  const extras = recipientIds.filter(id => !covered.has(id));
+  return { presets: presets as RecipientPresetKey[], extras };
+};
 
 // ────────────────────────────────────────────────────────────────
 // Helpers
@@ -237,7 +276,7 @@ const BoardPage: React.FC = () => {
 
   // 受信トレイ
   const [inboxMessages,    setInboxMessages]    = useState<BoardMessage[]>([]);
-  const [inboxFilter,      setInboxFilter]      = useState<'all' | 'unread' | 'pending' | 'read' | 'answer' | 'submit' | 'approve' | 'archived'>('all');
+  const [inboxFilter,      setInboxFilter]      = useState<'all' | 'unread' | 'pending' | 'read' | 'answer' | 'submit' | 'approve' | 'confirm' | 'archived'>('all');
   const inboxDetailId = searchParams.get('bin');
   const setInboxDetailId = useCallback((v: string | null) => patchBoardParams({ bin: v }), [patchBoardParams]);
   const [inboxRecipients,  setInboxRecipients]  = useState<Record<string, string[]>>({});
@@ -275,8 +314,13 @@ const BoardPage: React.FC = () => {
   interface ComposeDraft {
     subject: string; body: string; recipientIds: string[]; deadlineType: string;
     deadline: string; scheduledAt: string; answerPrompt: string; answerLocation: string; answerLink: string;
+    presetKeys?: string[];
   }
   const [cd] = useState(() => loadDraft<ComposeDraft>(DRAFT_KEYS.boardCompose));
+  // 宛先で押した一括ボタン（送信時に「選び方」として保存し、「コピーして作成」で当て直す）。
+  // 🚨 押した記録を使う。宛先の中身から逆算すると、人数の少ないボタン（例：大人）が
+  //    たまたま全員含まれていただけで「押した」扱いになり、コピー時に無関係な人が入る（検算で発覚）
+  const [composePresetKeys,    setComposePresetKeys]    = useState<string[]>(cd?.presetKeys ?? []);
   const [composeSubject,       setComposeSubject]       = useState(cd?.subject ?? '');
   const [composeBody,          setComposeBody]          = useState(cd?.body ?? '');
   const [composeRecipientIds,  setComposeRecipientIds]  = useState<string[]>(cd?.recipientIds ?? []);
@@ -287,6 +331,8 @@ const BoardPage: React.FC = () => {
   // 🚨 下書き（draftStorage）にあえて含めない＝毎回意識して押すもの。誤爆防止のため
   //    送信成功・画面リセットで必ず false に戻す
   const [composeUrgent,        setComposeUrgent]        = useState(false);
+  const [composeCopyNotice,    setComposeCopyNotice]    = useState<string[] | null>(null); // 「コピーして作成」の差分の案内（✕で消す）
+  const [copyConfirmMsg,       setCopyConfirmMsg]       = useState<BoardMessage | null>(null); // 下書きの置き換え確認
   const [composeOptions,        setComposeOptions]        = useState(true);
   const [_composeDraftId,       setComposeDraftId]        = useState<string | null>(null);
   const [composeQuery,          setComposeQuery]          = useState('');
@@ -388,7 +434,7 @@ const BoardPage: React.FC = () => {
       supabase.from('board_channel_members').select('channel_id, user_id').in('channel_id', cids),
       supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, answer_prompt, answer_location, answer_link, broadcast_recipients').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
       supabase.from('board_channel_last_seen').select('channel_id, last_seen_at').eq('user_id', user.id),
-      supabase.from('profiles').select('id, name, role_title, employment_type, group_names').eq('is_active', true).order('name'),
+      supabase.from('profiles').select('id, name, role_title, employment_type, group_names, registered_at').eq('is_active', true).order('name'),
       supabase.from('master_options').select('value').eq('category', 'board_show_read_detail').limit(1),
       supabase.from('app_settings').select('value').eq('key', 'dm_default_send_permissions').maybeSingle(),
       supabase.from('app_settings').select('value').eq('key', 'board_notice_send_roles').maybeSingle(),
@@ -703,7 +749,7 @@ const BoardPage: React.FC = () => {
 
   const loadOutbox = useCallback(async () => {
     if (!user) return;
-    const SEL = 'id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, outbox_hidden, cc_user_ids';
+    const SEL = 'id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, outbox_hidden, cc_user_ids, recipient_presets, recipient_extra_ids';
     const [{ data }, { data: archData }, { data: ccData }] = await Promise.all([
       supabase.from('board_messages').select(SEL)
         .eq('user_id', user.id).is('channel_id', null).is('parent_id', null)
@@ -905,11 +951,12 @@ const BoardPage: React.FC = () => {
         subject: composeSubject, body: composeBody, recipientIds: composeRecipientIds,
         deadlineType: composeDeadlineType, deadline: composeDeadline, scheduledAt: composeScheduledAt,
         answerPrompt: composeAnswerPrompt, answerLocation: composeAnswerLocation, answerLink: composeAnswerLink,
+        presetKeys: composePresetKeys,
       });
     } else {
       clearDraft(DRAFT_KEYS.boardCompose);
     }
-  }, [composeSubject, composeBody, composeRecipientIds, composeDeadlineType, composeDeadline, composeScheduledAt, composeAnswerPrompt, composeAnswerLocation, composeAnswerLink]);
+  }, [composeSubject, composeBody, composeRecipientIds, composeDeadlineType, composeDeadline, composeScheduledAt, composeAnswerPrompt, composeAnswerLocation, composeAnswerLink, composePresetKeys]);
 
   // 既読状況ポップアップを開いたとき、受信者が未取得なら取得する
   useEffect(() => {
@@ -1024,6 +1071,10 @@ const BoardPage: React.FC = () => {
     if (employment_types.length === 0 && role_titles.length === 0) return true;
     return employment_types.includes(employmentType) || role_titles.includes(roleTitle);
   })();
+
+  // お知らせを送れる人（管理者は常に可・設定が空なら全員・設定があればその役職）。
+  // 🚨 「＋お知らせ送信」と「コピーして作成」の両方がこれを見る。2か所に書かない
+  const canSendNotice = isAdmin || noticeSendRoles.length === 0 || noticeSendRoles.includes(roleTitle);
 
   // グループ作成権限（管理者は常に可・設定で選ばれた人・未設定ならCC代表者と同じ人）
   // 判定の中身は DB の board_can_manage_groups()。2026-09-08 から**メンバーの編集**にも同じ権限を使う
@@ -1288,6 +1339,7 @@ const BoardPage: React.FC = () => {
   };
 
   const resetCompose = () => {
+    setComposeCopyNotice(null); setComposePresetKeys([]);
     setComposeSubject(''); setComposeBody(''); setComposeRecipientIds([]);
     setComposeDeadlineType(''); setComposeDeadline(''); setComposeScheduledAt('');
     setComposeOptions(true); setComposeDraftId(null); setComposeQuery('');
@@ -1302,6 +1354,65 @@ const BoardPage: React.FC = () => {
     if (!loadDraft(DRAFT_KEYS.boardCompose)) resetCompose();
     else { setComposeOptions(true); setComposeQuery(''); setComposeDraftId(null); }
     setView('compose'); setShowSidebar(false);
+  };
+
+  // ── 送信トレイの「コピーして作成」（2026-09-08 ユーザー確定・案③＋A） ──────────────────
+  // 引き継ぐ：件名・本文・種類・回答の説明／場所／リンク・宛先
+  // 引き継がない：期限の日付（種類だけ残し日付は選び直し）・送信予約・緊急。CCは初期値（ON）に戻す
+  // 宛先：recipient_presets があれば「いまの該当者」に当て直す（昇格・入社・退職に追従）。
+  //       無い（過去のお知らせ）なら当時のID一覧の在籍者だけ ＋「役職が変わった人は反映されません」
+  const copyToCompose = (msg: BoardMessage) => {
+    const originalIds = inboxRecipients[msg.id] || [];
+    const activeIds = new Set(allProfiles.map(p => p.id));
+    const nameOf = (id: string) => allProfiles.find(p => p.id === id)?.name || '不明';
+    const hasPresets = Array.isArray(msg.recipient_presets) && msg.recipient_presets.length > 0;
+    const newIds = hasPresets
+      ? [...new Set([
+          ...(msg.recipient_presets as string[]).flatMap(k => recipientPresetIds(k, allProfiles)),
+          ...(msg.recipient_extra_ids || []).filter(id => activeIds.has(id)),
+        ])]
+      : originalIds.filter(id => activeIds.has(id));
+    const removedCount = originalIds.filter(id => !activeIds.has(id)).length;         // 退職など（名前は引けない）
+    const addedIds = newIds.filter(id => !originalIds.includes(id));                   // 昇格・入社で新たに入った人
+    const sentAt = msg.sent_at || msg.created_at;
+    const newcomerIds = allProfiles                                                    // 前回より後に入った人で、まだ宛先に無い人
+      .filter(p => p.registered_at && p.registered_at > sentAt && !newIds.includes(p.id))
+      .map(p => p.id);
+    const names5 = (ids: string[]) => ids.length <= 5
+      ? ids.map(nameOf).join('、')
+      : `${ids.slice(0, 5).map(nameOf).join('、')} ほか${ids.length - 5}人`;
+    const lines: string[] = [];
+    lines.push(`前回（${fmtTime(sentAt)} 送信）の宛先をもとに ${newIds.length}人を入れました。`);
+    if (hasPresets) lines.push(`選び方：${(msg.recipient_presets as string[]).join('・')}（いまの該当者に当て直しています）`);
+    if (removedCount > 0) lines.push(`・退職などで外れた人：${removedCount}人`);
+    if (addedIds.length > 0) lines.push(`・新たに入った人：${names5(addedIds)}（${addedIds.length}人）`);
+    if (newcomerIds.length > 0) lines.push(`・前回より後に入った人で、まだ宛先に無い人：${names5(newcomerIds)}（${newcomerIds.length}人）`);
+    if (!hasPresets) lines.push('🚨 このお知らせは宛先の選び方が残っていません。役職が変わった人は反映されないので、宛先のボタンで選び直してください。');
+    lines.push('期限の日付は選び直してください。');
+
+    clearDraft(DRAFT_KEYS.boardCompose);
+    setComposeSubject(msg.subject || msg.title || '');
+    setComposeBody(msg.body || '');
+    setComposeRecipientIds(newIds);
+    setComposePresetKeys(hasPresets ? [...(msg.recipient_presets as string[])] : []); // 選び方も引き継ぐ（次に送るときも記録される）
+    setComposeDeadlineType(msg.deadline_type || '');
+    setComposeDeadline('');                // 期限は過ぎているので引き継がない
+    setComposeScheduledAt('');
+    setComposeAnswerPrompt(msg.answer_prompt || '');
+    setComposeAnswerLocation(msg.answer_location || '');
+    setComposeAnswerLink(msg.answer_link || '');
+    setComposeUrgent(false);               // 🚨 緊急は引き継がない（誤爆防止）
+    setComposeIncludeCC(true);             // CCは初期値に戻す（ユーザー確定）
+    setComposeOptions(true); setComposeQuery(''); setComposeDraftId(null);
+    setComposeCopyNotice(lines);
+    setCopyConfirmMsg(null);
+    setView('compose'); setShowSidebar(false);
+  };
+  // 書きかけの下書きがあれば「置き換えますか」を挟む（黙って消さない・ユーザー確定）
+  const requestCopyToCompose = (msg: BoardMessage) => {
+    const draft = loadDraft<{ subject?: string; body?: string; recipientIds?: string[] }>(DRAFT_KEYS.boardCompose);
+    const hasDraft = !!draft && !!(draft.subject || draft.body || (draft.recipientIds && draft.recipientIds.length > 0));
+    if (hasDraft) setCopyConfirmMsg(msg); else copyToCompose(msg);
   };
 
   const sendNotice = async () => {
@@ -1321,6 +1432,12 @@ const BoardPage: React.FC = () => {
     if (composeAnswerPrompt.trim())    insertData.answer_prompt   = composeAnswerPrompt.trim();
     if (composeAnswerLocation.trim())  insertData.answer_location = composeAnswerLocation.trim();
     if (composeAnswerLink.trim())      insertData.answer_link     = composeAnswerLink.trim();
+    // 宛先の選び方を残す（「コピーして作成」で、いまの該当者に当て直すため）
+    {
+      const { presets, extras } = splitRecipientsIntoPresets(composeRecipientIds, composePresetKeys, allProfiles);
+      insertData.recipient_presets   = presets;
+      insertData.recipient_extra_ids = extras;
+    }
 
     const { data, error } = await supabase.from('board_messages').insert(insertData).select('id').single();
     if (!error && data) {
@@ -2353,11 +2470,14 @@ const BoardPage: React.FC = () => {
     { key: 'unread',   label: '未読' },
     { key: 'pending',  label: '未対応' },
   ] as const;
+  // 🚨 送信画面で選べる種類（DEADLINE_TYPES）と同じ5つを必ず並べる。
+  //    以前は「確認」が絞り込みに無く、「未対応 5」なのに種類の内訳が 4 にしかならなかった（2026-09-08 実機指摘）
   const INBOX_TYPE_FILTERS = [
     { key: 'read',     label: '読了' },
     { key: 'answer',   label: '回答' },
     { key: 'submit',   label: '提出' },
     { key: 'approve',  label: '承認' },
+    { key: 'confirm',  label: '確認' },
   ] as const;
   const filteredInbox = inboxFilter === 'archived' ? archivedMessages : inboxMessages.filter(m => {
     if (inboxFilter === 'all') return true;
@@ -2706,20 +2826,12 @@ const BoardPage: React.FC = () => {
   ];
 
   // 一括ボタン定義（固定順序）
-  const COMPOSE_QUICK_BTNS = [
-    { label: '正社員',               getIds: () => composeFiltered.filter(p => p.employment_type === '正社員').map(p => p.id) },
-    { label: 'パート',               getIds: () => composeFiltered.filter(p => p.employment_type === 'パート').map(p => p.id) },
-    // 🚨 役職（role_title）で判定する（2026-09-08 ユーザー確定・案③）。
-    //    以前は名簿（group_names に「マネージャー・リーダー」があるか）で見ていたため、
-    //    6/13 の一括登録のあとにリーダーになった人が名簿に足されず、選ばれない事故が起きた。
-    //    休暇・備品の承認者判定と同じく役職を正とする。
-    //    フロア責任者は**含めない**（2026-09-08 ユーザー確定）。含めるかは毎回判断が割れる件なので、
-    //    変えるときは必ず聞くこと（CLAUDE.md「役職序列」）。
-    { label: 'マネージャー・リーダー', getIds: () => composeFiltered.filter(p => MANAGER_LEADER_ROLES.includes(p.role_title || '')).map(p => p.id) },
-    { label: 'こども',               getIds: () => composeFiltered.filter(p => (p.group_names || []).includes('こども')).map(p => p.id) },
-    { label: '大人',                 getIds: () => composeFiltered.filter(p => (p.group_names || []).includes('大人')).map(p => p.id) },
-    { label: '管理部',               getIds: () => composeFiltered.filter(p => (p.group_names || []).includes('管理部')).map(p => p.id) },
-  ];
+  // 判定の中身は recipientPresetIds（ファイル上部）1か所。ここは検索で絞った候補に当てるだけ
+  const COMPOSE_QUICK_BTNS = (['正社員', 'パート', 'マネージャー・リーダー', 'こども', '大人', '管理部'] as const)
+    .map(label => ({ label, getIds: () => recipientPresetIds(label, composeFiltered) }));
+  // 宛先から人を外したら、その人を含むボタンの記録は無効にする（「ボタン全員」ではなくなったため）
+  const dropPresetsContaining = (removedIds: string[]) =>
+    setComposePresetKeys(prev => prev.filter(k => !recipientPresetIds(k, allProfiles).some(id => removedIds.includes(id))));
 
   const composePanel = (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: bg }}>
@@ -2733,12 +2845,19 @@ const BoardPage: React.FC = () => {
         </div>
         {/* 宛先 */}
         <div style={{ marginBottom: 12 }}>
+          {/* 「コピーして作成」で開いたときの、前回との違いの案内（黄色・✕で消す） */}
+          {composeCopyNotice && (
+            <div style={{ marginTop: 8, marginBottom: 8, padding: '8px 10px', background: '#fff3cd', border: '2px solid #ffc107', borderRadius: 8, fontSize: 12, color: '#856404', lineHeight: 1.6, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+              <div style={{ flex: 1 }}>{composeCopyNotice.map((l, i) => <div key={i}>{l}</div>)}</div>
+              <button type="button" onClick={() => setComposeCopyNotice(null)} style={{ background: 'none', border: 'none', color: '#856404', cursor: 'pointer', fontSize: 14, padding: 0, lineHeight: 1 }}>✕</button>
+            </div>
+          )}
           <div style={{ fontSize: 12, fontWeight: 700, color: subColor, marginBottom: 6, marginTop: 8 }}>宛先を選択 <span style={{ color: '#dc3545', fontSize: 11 }}>*必須</span></div>
           <input value={composeQuery} onChange={e => setComposeQuery(e.target.value)} placeholder="名前で検索..."
             style={{ width: '100%', padding: '7px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, boxSizing: 'border-box', marginBottom: 6 }} />
           {/* 一括ボタン（全員→各グループ→全解除の固定順） */}
           <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 6 }}>
-            <button type="button" onClick={() => setComposeRecipientIds(composeFiltered.map(p => p.id))}
+            <button type="button" onClick={() => { setComposeRecipientIds(composeFiltered.map(p => p.id)); setComposePresetKeys(composeQuery ? [] : ['全員']); }}
               style={{ padding: '3px 8px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 11, background: isDark ? '#495057' : '#e9ecef', color: isDark ? '#fff' : '#333' }}>全員</button>
             {COMPOSE_QUICK_BTNS.map(btn => {
               const ids = btn.getIds();
@@ -2747,12 +2866,15 @@ const BoardPage: React.FC = () => {
               return (
                 <button key={btn.label} type="button"
                   onClick={() => {
+                    // 押したボタンを記録する（検索で絞っているときは「ボタン全員」ではないので記録しない）
+                    const remember = !composeQuery;
                     if (allInSel && composeRecipientIds.length === ids.length) {
-                      setComposeRecipientIds([]);
+                      setComposeRecipientIds([]); setComposePresetKeys([]);
                     } else if (allInSel) {
-                      setComposeRecipientIds(ids);
+                      setComposeRecipientIds(ids); setComposePresetKeys(remember ? [btn.label] : []);
                     } else {
                       setComposeRecipientIds(prev => [...new Set([...prev, ...ids])]);
+                      if (remember) setComposePresetKeys(prev => [...new Set([...prev, btn.label])]);
                     }
                   }}
                   style={{ padding: '3px 8px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 11, background: allInSel ? '#007bff' : (isDark ? '#495057' : '#e9ecef'), color: allInSel ? '#fff' : (isDark ? '#fff' : '#333'), opacity: allSel ? 1 : allInSel ? 0.75 : 1 }}>
@@ -2760,7 +2882,7 @@ const BoardPage: React.FC = () => {
                 </button>
               );
             })}
-            <button type="button" onClick={() => setComposeRecipientIds([])}
+            <button type="button" onClick={() => { setComposeRecipientIds([]); setComposePresetKeys([]); }}
               style={{ padding: '3px 8px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 11, background: isDark ? '#495057' : '#e9ecef', color: isDark ? '#fff' : '#333' }}>全解除</button>
           </div>
           {/* メンバーグリッド */}
@@ -2782,7 +2904,7 @@ const BoardPage: React.FC = () => {
                         <div key={role} style={{ flex: '1 1 130px', borderLeft: ri > 0 ? `1px solid ${isDark ? '#3d4349' : '#e0e0e0'}` : undefined, padding: '5px 8px' }}>
                           <label style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 3, cursor: 'pointer' }}>
                             <input type="checkbox" checked={allRoleSel && roleProfiles.length > 0}
-                              onChange={() => { const ids = roleProfiles.map(p => p.id); setComposeRecipientIds(prev => allRoleSel ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])]); }} />
+                              onChange={() => { const ids = roleProfiles.map(p => p.id); setComposeRecipientIds(prev => allRoleSel ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])]); if (allRoleSel) dropPresetsContaining(ids); }} />
                             <span style={{ fontSize: 10, fontWeight: 'bold', color: isDark ? '#adb5bd' : '#555' }}>{role}</span>
                           </label>
                           {roleProfiles.map(p => {
@@ -2790,7 +2912,7 @@ const BoardPage: React.FC = () => {
                             return (
                               <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 0', cursor: 'pointer', fontSize: 12, color: textColor, flexWrap: 'wrap' }}>
                                 <input type="checkbox" checked={composeRecipientIds.includes(p.id)}
-                                  onChange={e => setComposeRecipientIds(prev => e.target.checked ? [...prev, p.id] : prev.filter(id => id !== p.id))} />
+                                  onChange={e => { setComposeRecipientIds(prev => e.target.checked ? [...prev, p.id] : prev.filter(id => id !== p.id)); if (!e.target.checked) dropPresetsContaining([p.id]); }} />
                                 <span style={{ flexShrink: 0 }}>
                                   {p.name}
                                   {p.id === user?.id && <span style={{ fontSize: 10, color: subColor }}> (自分)</span>}
@@ -2993,7 +3115,23 @@ const BoardPage: React.FC = () => {
                 </div>
               </div>
             ) : editingNoticeId !== outboxDetail.id && (
-              <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap', alignItems: 'center' }}>
+                {/* 下書きの置き換え確認（コピーして作成） */}
+                {copyConfirmMsg?.id === outboxDetail.id && (
+                  <div style={{ width: '100%', padding: '10px 12px', background: '#fff3cd', border: '2px solid #ffc107', borderRadius: 8, fontSize: 13, color: '#856404', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ flex: 1, minWidth: 200 }}>書きかけの下書きがあります。このお知らせの内容に置き換えますか？</span>
+                    <button type="button" onClick={() => setCopyConfirmMsg(null)}
+                      style={{ padding: '5px 12px', background: 'none', border: '1px solid #856404', borderRadius: 6, color: '#856404', cursor: 'pointer', fontSize: 12 }}>やめる</button>
+                    <button type="button" onClick={() => copyToCompose(outboxDetail)}
+                      style={{ padding: '5px 12px', background: '#856404', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>置き換える</button>
+                  </div>
+                )}
+                {canSendNotice && copyConfirmMsg?.id !== outboxDetail.id && (
+                  <button type="button" onClick={() => requestCopyToCompose(outboxDetail)}
+                    style={{ padding: '8px 16px', background: 'none', border: `1.5px solid ${isDark ? '#93c5fd' : '#1d4ed8'}`, color: isDark ? '#93c5fd' : '#1d4ed8', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                    コピーして作成
+                  </button>
+                )}
                 <button type="button"
                   onClick={() => { setEditingNoticeId(outboxDetail.id); setEditingNoticeSubj(outboxDetail.subject || outboxDetail.title || ''); setEditingNoticeBody(outboxDetail.body); }}
                   style={{ padding: '8px 16px', background: 'none', border: `1.5px solid ${isDark ? '#4ade80' : '#16a34a'}`, color: isDark ? '#4ade80' : '#16a34a', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
@@ -3616,7 +3754,7 @@ const BoardPage: React.FC = () => {
             <div style={{ display: 'flex', gap: 5, flexWrap: 'nowrap', flexShrink: 0 }}>
               <button type="button" title="検索" onClick={() => { setShowSearch(s => !s); setSearchText(''); setSearchResults([]); if (view === 'search') navigate(-1); }}
                 style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '5px 7px', lineHeight: 1, flexShrink: 0 }}>🔍</button>
-              {(isAdmin || noticeSendRoles.length === 0 || noticeSendRoles.includes(roleTitle)) && (
+              {canSendNotice && (
                 <button type="button" onClick={openCompose}
                   style={{ background: '#007bff', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, padding: '5px 10px', fontWeight: 'bold', whiteSpace: 'nowrap', flexShrink: 0 }}>＋お知らせ送信</button>
               )}
