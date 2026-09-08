@@ -39,6 +39,7 @@ const BoardSettingsTab: React.FC = () => {
   const [pendingShowReadDetail, setPendingShowReadDetail] = useState<'all' | 'permitted' | 'none'>('all');
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null); // 削除に失敗した理由（黙って成功に見せない）
 
   // DMデフォルト権限
   const [dmPerms, setDmPerms] = useState<SendPermissions>({ employment_types: [], role_titles: [] });
@@ -196,14 +197,27 @@ const BoardSettingsTab: React.FC = () => {
     showBanner();
   };
 
-  const deleteChannel = (chId: string, chName: string) => {
-    setConfirmDialog({ message: `「${chName}」を削除しますか？\nメッセージ・メンバー情報もすべて削除されます。`, onConfirm: async () => {
-      await supabase.from('board_channel_members').delete().eq('channel_id', chId);
-      await supabase.from('board_messages').delete().eq('channel_id', chId);
-      await supabase.from('board_channels').delete().eq('id', chId);
-      setChannels(prev => prev.filter(ch => ch.id !== chId));
-      showBanner();
-    } });
+  // 🚨 グループの削除はここ（管理者のみ）だけ。連絡板のサイドバーの ✕ は 2026-09-08 に外した。
+  //    物理削除で戻せないので、確認文に「メンバー◯人・投稿◯件」を出してから消す（ユーザー確定・案A）
+  const deleteChannel = async (chId: string, chName: string) => {
+    setErrorMsg(null);
+    const memberCount = channels.find(ch => ch.id === chId)?.member_names?.length ?? 0;
+    const { count: msgCount, error: countErr } = await supabase.from('board_messages').select('id', { count: 'exact', head: true }).eq('channel_id', chId);
+    if (countErr) { setErrorMsg(`投稿の件数を確かめられませんでした：${countErr.message}`); return; }
+    setConfirmDialog({
+      message: `「${chName}」を削除しますか？\nメンバー ${memberCount}人・投稿 ${msgCount ?? 0}件がすべて消えます。元に戻せません。`,
+      onConfirm: async () => {
+        // 🚨 delete は権限で弾かれても0件で「成功」する。本体が消えたかを件数で見る
+        const { error: e1 } = await supabase.from('board_channel_members').delete().eq('channel_id', chId);
+        const { error: e2 } = await supabase.from('board_messages').delete().eq('channel_id', chId);
+        const { data: gone, error: e3 } = await supabase.from('board_channels').delete().eq('id', chId).select('id');
+        const err = e1 || e2 || e3;
+        if (err) { setErrorMsg(`削除できませんでした：${err.message}`); return; }
+        if (!gone || gone.length === 0) { setErrorMsg('削除できませんでした（グループ本体を消す権限がありません）'); return; }
+        setChannels(prev => prev.filter(ch => ch.id !== chId));
+        showBanner();
+      },
+    });
   };
 
   const showBanner = () => {
@@ -764,6 +778,12 @@ const BoardSettingsTab: React.FC = () => {
         {editingDm && renderEditPanel(pendingDmPerms, toggleDmEmp, toggleDmRole, saveDm, () => setEditingDm(false), setPendingDmPerms)}
       </div>
 
+      {errorMsg && (
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 9999, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 12, padding: '16px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 10, maxWidth: 360 }}>
+          <span style={{ fontSize: 13, color: '#b91c1c', lineHeight: 1.5 }}>{errorMsg}</span>
+          <button type="button" onClick={() => setErrorMsg(null)} style={{ background: 'none', border: 'none', color: '#b91c1c', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
+        </div>
+      )}
       {banner && (
         <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 9999, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '16px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontSize: 18 }}>✓</span>

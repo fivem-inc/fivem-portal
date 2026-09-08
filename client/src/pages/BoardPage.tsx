@@ -118,6 +118,16 @@ const localDatetimeMin = (offsetMs = 60000) => {
 
 const avatarLetter = (name: string | null | undefined) => (name || '?')[0];
 
+// スマホ用：打った量に合わせて textarea を高くする（取っ手が無いため）。上限は画面の4割
+const autoGrowTextarea = (el: HTMLTextAreaElement) => {
+  el.style.height = 'auto';
+  el.style.height = `${Math.min(el.scrollHeight, Math.round(window.innerHeight * 0.4))}px`;
+};
+
+// 宛先の一括ボタン「マネージャー・リーダー」に入れる役職。
+// 🚨 フロア責任者は含めない（2026-09-08 ユーザー確定）。管理者アカウントも入れない（従来どおり）
+const MANAGER_LEADER_ROLES = ['リーダー', 'マネージャー', '社長'];
+
 const DEADLINE_TYPES = [
   { value: 'read',    label: '📖 読了',    reportLabel: '読了報告',  doneLabel: '読了済み', promptPlaceholder: '例：2026年経営方針',   locationPlaceholder: '例：Slackのcanvas',      linkPlaceholder: 'https://...' },
   { value: 'answer',  label: '✏️ 回答',   reportLabel: '回答報告',  doneLabel: '回答済み', promptPlaceholder: '例：短期シフト',       locationPlaceholder: '例：スプレッドシート',   linkPlaceholder: 'https://forms.google.com/...' },
@@ -175,7 +185,9 @@ const BoardPage: React.FC = () => {
   const [dmDefaultPerms, setDmDefaultPerms] = useState<SendPermissions | null>(null);
   const [noticeSendRoles, setNoticeSendRoles] = useState<string[]>([]); // 空=全員OK
   const [noticeCCUserIds, setNoticeCCUserIds] = useState<string[]>([]);  // 管理者・代表者自動CC
-  const [groupCreateUserIds, setGroupCreateUserIds] = useState<string[]>([]); // グループ作成できる人（管理者は常に可）
+  // グループを作成・メンバー編集できるか。🚨 判定は DB の board_can_manage_groups() の1か所
+  // （RLS も同じ関数を見る）。画面で設定を読んで判定し直さないこと
+  const [canManageGroups, setCanManageGroups] = useState(false);
   const [composeIncludeCC, setComposeIncludeCC] = useState(true);
   const [channelDeleteConfirmId, setChannelDeleteConfirmId] = useState<string | null>(null);
 
@@ -320,6 +332,7 @@ const BoardPage: React.FC = () => {
   const [pendingMemberIds, setPendingMemberIds] = useState<string[]>([]);
   const [memberSaving,     setMemberSaving]     = useState(false);
   const [memberBanner,     setMemberBanner]     = useState(false);
+  const [memberError,      setMemberError]      = useState<string | null>(null); // メンバー保存に失敗した理由（黙って閉じない）
   const [chipExpanded,     setChipExpanded]     = useState(false);
   const [showDMSearch,     setShowDMSearch]     = useState(false);
   const [dmQuery,          setDmQuery]          = useState('');
@@ -352,9 +365,10 @@ const BoardPage: React.FC = () => {
 
   // ── Load ────────────────────────────────────────────────────────
 
-  const loadAll = useCallback(async () => {
+  // opts.silent … 前面に戻ったときの読み直し用。一覧を一瞬消さない（setLoadingData を触らない）
+  const loadAll = useCallback(async (opts?: { silent?: boolean }) => {
     if (!user) return;
-    setLoadingData(true);
+    if (!opts?.silent) setLoadingData(true);
 
     // My channel IDs
     const { data: myMem } = await supabase
@@ -367,7 +381,7 @@ const BoardPage: React.FC = () => {
       setChannels([]); setMessages([]); setLoadingData(false); return;
     }
 
-    const [chRes, memRes, msgRes, lsRes, profRes, settingsRes, dmSettingsRes, noticeSendRes, ccSettingsRes, groupCreateRes] = await Promise.all([
+    const [chRes, memRes, msgRes, lsRes, profRes, settingsRes, dmSettingsRes, noticeSendRes, ccSettingsRes, canManageRes] = await Promise.all([
       supabase.from('board_channels').select('id, type, name, created_by, created_at, send_permissions, show_read_detail').in('id', cids),
       supabase.from('board_channel_members').select('channel_id, user_id').in('channel_id', cids),
       supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, answer_prompt, answer_location, answer_link, broadcast_recipients').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
@@ -377,12 +391,14 @@ const BoardPage: React.FC = () => {
       supabase.from('app_settings').select('value').eq('key', 'dm_default_send_permissions').maybeSingle(),
       supabase.from('app_settings').select('value').eq('key', 'board_notice_send_roles').maybeSingle(),
       supabase.from('app_settings').select('value').eq('key', 'board_notice_cc_user_ids').maybeSingle(),
-      supabase.from('app_settings').select('value').eq('key', 'board_group_create_user_ids').maybeSingle(),
+      supabase.rpc('board_can_manage_groups'),
     ]);
     if (dmSettingsRes.data?.value) setDmDefaultPerms(dmSettingsRes.data.value as SendPermissions);
     if (noticeSendRes.data?.value) setNoticeSendRoles(noticeSendRes.data.value as string[]);
     if (ccSettingsRes?.data?.value) setNoticeCCUserIds(ccSettingsRes.data.value as string[]);
-    if (groupCreateRes?.data?.value) setGroupCreateUserIds(groupCreateRes.data.value as string[]);
+    // 読めなかったときは false（＝ボタンを出さない）。管理者は下の canCreateGroup で常に true
+    if (canManageRes.error) console.error('グループ編集権限の確認に失敗:', canManageRes.error.code, canManageRes.error.message);
+    setCanManageGroups(canManageRes.data === true);
 
     setChannels((chRes.data || []) as Channel[]);
     setMembers((memRes.data || []).map((m: any) => ({ channel_id: m.channel_id, user_id: m.user_id, profile: null })));
@@ -392,13 +408,19 @@ const BoardPage: React.FC = () => {
     // requires_confirmation / deadline_type ありの投稿の確認者を取得
     const confirmMsgIds = (msgRes.data || []).filter((m: any) => m.requires_confirmation || m.deadline_type).map((m: any) => m.id);
     if (confirmMsgIds.length > 0) {
-      const { data: confData } = await supabase.from('board_confirmations').select('message_id, user_id, comment, confirmed_at').in('message_id', confirmMsgIds);
+      const { data: confData, error: confErr } = await supabase.from('board_confirmations').select('message_id, user_id, comment, confirmed_at').in('message_id', confirmMsgIds);
+      if (confErr) console.error('グループ投稿の確認状況の読み込みに失敗:', confErr.code, confErr.message);
       const confMap: Record<string, {user_id: string; comment: string | null; confirmed_at?: string}[]> = {};
       (confData || []).forEach((c: { message_id: string; user_id: string; comment: string | null; confirmed_at: string }) => {
         if (!confMap[c.message_id]) confMap[c.message_id] = [];
         confMap[c.message_id].push({ user_id: c.user_id, comment: c.comment, confirmed_at: c.confirmed_at });
       });
-      setConfirmations(confMap);
+      // 🚨 必ず「統合」する（以前は setConfirmations(confMap) と丸ごと置き換えていた）。
+      //    loadAll（グループの投稿）と loadInbox（受信トレイ）は同時に走り、たいてい loadAll が
+      //    後に終わる。置き換えると受信トレイぶんの読了・完了が消え、DBに入っているのに
+      //    「✓ 読了済み」が付かない（2026-09-08 実機報告の原因の1つ）。
+      //    自分が送ったお知らせは loadOutbox が後から入れ直すので気づかれにくかった
+      if (!confErr) setConfirmations(prev => ({ ...prev, ...confMap })); // 失敗したときは今の表示を残す（空で上書きしない）
     }
 
     const ls: Record<string, string> = {};
@@ -616,7 +638,8 @@ const BoardPage: React.FC = () => {
     // confirmations を読む（deadline_type / requires_confirmation があるもの）
     const confirmMsgIds = (msgData || []).filter((m: any) => m.requires_confirmation || m.deadline_type).map((m: any) => m.id);
     if (confirmMsgIds.length > 0) {
-      const { data: confData } = await supabase.from('board_confirmations').select('message_id, user_id, comment, confirmed_at').in('message_id', confirmMsgIds);
+      const { data: confData, error: confErr } = await supabase.from('board_confirmations').select('message_id, user_id, comment, confirmed_at').in('message_id', confirmMsgIds);
+      if (confErr) { console.error('受信トレイの読了・完了の読み込みに失敗:', confErr.code, confErr.message); return; } // 空で上書きしない
       const confMap: Record<string, {user_id: string; comment: string | null; confirmed_at?: string}[]> = {};
       (confData || []).forEach((c: any) => {
         if (!confMap[c.message_id]) confMap[c.message_id] = [];
@@ -720,6 +743,34 @@ const BoardPage: React.FC = () => {
   useEffect(() => { loadInbox(); }, [loadInbox]);
   useEffect(() => { loadArchived(); }, [loadArchived]);
   useEffect(() => { loadOutbox(); }, [loadOutbox]);
+
+  // 前面に戻ったら読み直す（2026-09-08 実機報告：スマホで読了を押したあと、プッシュ通知から
+  // 連絡板を開いたら「✓ 読了済み」が付いていなかった。DBには入っていた）。
+  // 🚨 この画面は開いたときに1回読むだけで、ベルやバッジ（30秒ごと）と違い、その後は更新して
+  //    いなかった。ホーム画面アプリ（PWA）は通知から開き直しても「前に出るだけ」で読み直しが
+  //    起きないことがあり、読了前に読み込んだ画面がそのまま出ていた。
+  //    visibilitychange / focus / pageshow は同時に複数飛ぶので、5秒以内の連続は1回にまとめる。
+  //    🚨 loadAll は silent で呼ぶ（setLoadingData(true) を通すと一覧が一瞬消える）
+  const lastForegroundLoad = useRef(0);
+  useEffect(() => {
+    const onForeground = () => {
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (now - lastForegroundLoad.current < 5000) return;
+      lastForegroundLoad.current = now;
+      loadInbox();
+      loadOutbox();
+      loadAll({ silent: true });
+    };
+    document.addEventListener('visibilitychange', onForeground);
+    window.addEventListener('focus', onForeground);
+    window.addEventListener('pageshow', onForeground);
+    return () => {
+      document.removeEventListener('visibilitychange', onForeground);
+      window.removeEventListener('focus', onForeground);
+      window.removeEventListener('pageshow', onForeground);
+    };
+  }, [loadInbox, loadOutbox, loadAll]);
 
   // URLパラメータ openInboxId で受信トレイ詳細を自動展開
   useEffect(() => {
@@ -901,9 +952,9 @@ const BoardPage: React.FC = () => {
   })();
 
   // グループ作成権限（管理者は常に可・設定で選ばれた人・未設定ならCC代表者と同じ人）
-  const canCreateGroup = isAdmin
-    || groupCreateUserIds.includes(user?.id ?? '')
-    || (groupCreateUserIds.length === 0 && noticeCCUserIds.includes(user?.id ?? ''));
+  // 判定の中身は DB の board_can_manage_groups()。2026-09-08 から**メンバーの編集**にも同じ権限を使う
+  // （役職が変わったときの追加・削除を、管理者でなくてもできるように。ユーザー指示）
+  const canCreateGroup = isAdmin || canManageGroups;
 
   const sendMessage = async (parentId?: string) => {
     if (!selectedChannelId || !user) return;
@@ -1225,7 +1276,10 @@ const BoardPage: React.FC = () => {
       }
 
       resetCompose();
-      await loadOutbox();
+      // 🚨 受信トレイも読み直す（2026-09-08 実機報告：自分を宛先に入れて送っても受信トレイに出ず、
+      //    未読にもならなかった）。送信トレイだけ読み直していたため、自分宛ての1件が画面に無かった。
+      //    ベル・プッシュは元から自分には送らない作り（recipientIds で自分を除いている）なので、そこは変えていない
+      await Promise.all([loadOutbox(), loadInbox()]);
       setView('outbox');
       setShowSidebar(false);
     } else {
@@ -1235,29 +1289,35 @@ const BoardPage: React.FC = () => {
     setSending(false);
   };
 
-  const deleteChannel = (chId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setConfirmDialog({ message: 'このチャンネルを削除しますか？\nメッセージもすべて削除されます。', onConfirm: async () => {
-      await supabase.from('board_channel_members').delete().eq('channel_id', chId);
-      await supabase.from('board_messages').delete().eq('channel_id', chId);
-      await supabase.from('board_channels').delete().eq('id', chId);
-      if (selectedChannelId === chId) { silentClearBoardParam('bch'); setShowChannelList(true); }
-      await loadAll();
-    } });
-  };
+  // 🚨 グループ・DM の削除はこの画面から外した（2026-09-08 ユーザー確定・案A）。
+  //    サイドバーの ✕ が ☆ のすぐ隣にあり、2タップで投稿ごと物理削除される作りだった。
+  //    さらに管理者以外（グループを作った本人）が押すと、RLS で本体の削除だけ弾かれ、
+  //    「自分だけ抜けて・自分の投稿だけ消えて・グループは残る」半端な状態になっていた。
+  //    削除は 管理画面 → 連絡板（管理者のみ）だけで行う。ここに戻さないこと。
 
   const saveMemberChanges = async () => {
     if (!selectedChannelId) return;
     setMemberSaving(true);
+    setMemberError(null);
     const currentIds = currentMembers.map(m => m.user_id);
     const toAdd    = pendingMemberIds.filter(id => !currentIds.includes(id));
     const toRemove = currentIds.filter(id => !pendingMemberIds.includes(id) && id !== user?.id);
-    if (toAdd.length > 0)
-      await supabase.from('board_channel_members').insert(toAdd.map(uid => ({ channel_id: selectedChannelId, user_id: uid })));
-    for (const uid of toRemove)
-      await supabase.from('board_channel_members').delete().eq('channel_id', selectedChannelId).eq('user_id', uid);
+    const failed: string[] = [];
+    if (toAdd.length > 0) {
+      const { error } = await supabase.from('board_channel_members').insert(toAdd.map(uid => ({ channel_id: selectedChannelId, user_id: uid })));
+      if (error) failed.push(`追加できませんでした：${error.message}`);
+    }
+    for (const uid of toRemove) {
+      // 🚨 delete は権限で弾かれても0件で「成功」するので、消えた件数を見る
+      const { data, error } = await supabase.from('board_channel_members').delete().eq('channel_id', selectedChannelId).eq('user_id', uid).select('user_id');
+      if (error || !data || data.length === 0) {
+        const name = allProfiles.find(p => p.id === uid)?.name || '不明';
+        failed.push(`${name} を外せませんでした${error ? `：${error.message}` : '（権限がありません）'}`);
+      }
+    }
     await loadAll();
     setMemberSaving(false);
+    if (failed.length > 0) { setMemberError(failed.join(' / ')); return; }
     setMemberBanner(true);
     setTimeout(() => setMemberBanner(false), 3000);
     setShowMemberModal(false);
@@ -1774,7 +1834,7 @@ const BoardPage: React.FC = () => {
             {isGroup ? `👥 ${channelDisplayName(selectedChannel)}` : 'メンバー'}
           </div>
 
-          {isAdmin && isGroup && pendingMemberIds.length > 0 && (() => {
+          {canCreateGroup && isGroup && pendingMemberIds.length > 0 && (() => {
             const CHIP_LIMIT = 10;
             const visible = chipExpanded ? pendingMemberIds : pendingMemberIds.slice(0, CHIP_LIMIT);
             const hasMore = pendingMemberIds.length > CHIP_LIMIT;
@@ -1807,8 +1867,13 @@ const BoardPage: React.FC = () => {
             );
           })()}
 
-          {isAdmin && isGroup ? (
+          {canCreateGroup && isGroup ? (
             <>
+              {memberError && (
+                <div style={{ marginBottom: 8, padding: '8px 10px', background: isDark ? '#3a1f1f' : '#fef2f2', border: `1px solid ${isDark ? '#7f1d1d' : '#fecaca'}`, borderRadius: 8, fontSize: 12, color: isDark ? '#fca5a5' : '#b91c1c', lineHeight: 1.5 }}>
+                  {memberError}
+                </div>
+              )}
               {/* 一括ボタン */}
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
                 {empTypes.map(et => {
@@ -2031,7 +2096,6 @@ const BoardPage: React.FC = () => {
     const last = channelLastMsg(ch.id);
     const unread = channelUnread(ch.id);
     const isSelected = view === 'channel' && ch.id === selectedChannelId;
-    const canDelete = isAdmin || ch.created_by === user?.id;
     return (
       <div key={ch.id} onClick={() => { selectChannel(ch.id); setView('channel'); setShowSidebar(false); setShowChannelList(false); }} style={{
         padding: '8px 14px', cursor: 'pointer', borderBottom: `1px solid ${border}`,
@@ -2051,11 +2115,7 @@ const BoardPage: React.FC = () => {
                 style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, padding: '0 3px', lineHeight: 1, color: favChannelIds.has(ch.id) ? '#f59e0b' : (isDark ? '#888' : '#bbb') }}>
                 {favChannelIds.has(ch.id) ? '★' : '☆'}
               </button>
-              {canDelete && (
-                <button type="button" onClick={e => deleteChannel(ch.id, e)}
-                  title="削除"
-                  style={{ background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 13, padding: '0 2px', lineHeight: 1 }}>✕</button>
-              )}
+              {/* 削除の ✕ はここに置かない（管理画面 → 連絡板 だけ）。理由は saveMemberChanges の上の注記 */}
             </div>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 1 }}>
@@ -2526,7 +2586,13 @@ const BoardPage: React.FC = () => {
   const COMPOSE_QUICK_BTNS = [
     { label: '正社員',               getIds: () => composeFiltered.filter(p => p.employment_type === '正社員').map(p => p.id) },
     { label: 'パート',               getIds: () => composeFiltered.filter(p => p.employment_type === 'パート').map(p => p.id) },
-    { label: 'マネージャー・リーダー', getIds: () => composeFiltered.filter(p => (p.group_names || []).includes('マネージャー・リーダー')).map(p => p.id) },
+    // 🚨 役職（role_title）で判定する（2026-09-08 ユーザー確定・案③）。
+    //    以前は名簿（group_names に「マネージャー・リーダー」があるか）で見ていたため、
+    //    6/13 の一括登録のあとにリーダーになった人が名簿に足されず、選ばれない事故が起きた。
+    //    休暇・備品の承認者判定と同じく役職を正とする。
+    //    フロア責任者は**含めない**（2026-09-08 ユーザー確定）。含めるかは毎回判断が割れる件なので、
+    //    変えるときは必ず聞くこと（CLAUDE.md「役職序列」）。
+    { label: 'マネージャー・リーダー', getIds: () => composeFiltered.filter(p => MANAGER_LEADER_ROLES.includes(p.role_title || '')).map(p => p.id) },
     { label: 'こども',               getIds: () => composeFiltered.filter(p => (p.group_names || []).includes('こども')).map(p => p.id) },
     { label: '大人',                 getIds: () => composeFiltered.filter(p => (p.group_names || []).includes('大人')).map(p => p.id) },
     { label: '管理部',               getIds: () => composeFiltered.filter(p => (p.group_names || []).includes('管理部')).map(p => p.id) },
@@ -2718,10 +2784,14 @@ const BoardPage: React.FC = () => {
 
       {/* 本文 + 送信（チャンネルと同レイアウト） */}
       <div style={{ padding: '10px 14px', borderTop: `1px solid ${border}`, background: cardBg, flexShrink: 0, display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-        <textarea value={composeBody} onChange={e => setComposeBody(e.target.value)} placeholder="本文を入力... *必須 (Ctrl+Enterで送信)"
+        {/* 本文の欄（2026-09-08 ユーザー指示：PCで狭いので広げられるように）
+            PC … 右下の取っ手で上下に広げられる（resize: vertical。横は画面幅いっぱいなので縦だけ）
+            スマホ … 取っ手が出ないので、打った量に合わせて自動で高くなる（画面の4割まで）。
+            🚨 rows=2 は「最初の高さ」。広げた高さは送信でリセットされる（resetCompose が空にするため） */}
+        <textarea value={composeBody} onChange={e => { setComposeBody(e.target.value); if (isMobile) autoGrowTextarea(e.target); }} placeholder="本文を入力... *必須 (Ctrl+Enterで送信)"
           rows={2}
           onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0 && (!composeDeadlineType || composeDeadline)) setShowComposeSendConfirm(true); }}}
-          style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, resize: 'none', fontFamily: 'inherit', lineHeight: 1.4 }} />
+          style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, resize: isMobile ? 'none' : 'vertical', minHeight: 60, maxHeight: '50vh', fontFamily: 'inherit', lineHeight: 1.4, boxSizing: 'border-box' }} />
         <button type="button" onClick={() => { if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0 && (!composeDeadlineType || composeDeadline)) setShowComposeSendConfirm(true); }}
           disabled={!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || (!!composeDeadlineType && !composeDeadline) || sending}
           style={{ padding: '10px 18px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, alignSelf: 'flex-end', opacity: (!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || (!!composeDeadlineType && !composeDeadline) || sending) ? 0.5 : 1, whiteSpace: 'nowrap' }}>
