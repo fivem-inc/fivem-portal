@@ -413,7 +413,16 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
       : (rejectReason || null);
     const update: Record<string, string | null> = { status: 'rejected', rejected_reason: finalReason };
     if (rejectNewType) update.leave_type = rejectNewType;
-    await supabase.from('leave_requests').update(update).eq('id', rejectingReq.id);
+    // 🚨 update は失敗しても 0件でもエラーにならない。error と件数の両方を見る。
+    //    見ないと、差し戻せていないのに申請者へ「差し戻されました」と通知が飛ぶ。
+    const { data: rejected, error: rejectErr } = await supabase.from('leave_requests')
+      .update(update).eq('id', rejectingReq.id).select('id');
+    if (rejectErr) { setStaleMsg('差し戻しできませんでした：' + rejectErr.message); return; }
+    if (!rejected || rejected.length === 0) {
+      setStaleMsg('差し戻しできませんでした（すでに取り消された可能性があります）。一覧を更新しました。');
+      fetchRequests();
+      return;
+    }
 
     // 🚨 差し戻しはDBで確定済み。モーダルを閉じて一覧を更新するのを通知より先にする。
     // 以前は通知が失敗すると、ここまで到達せずモーダルが開いたまま固まっていた
@@ -819,7 +828,15 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                           setConfirmDialog({ message: '差し戻しを取り消して自分の確認待ちに戻しますか？', onConfirm: async () => {
                             // 自分が一人目か二人目かでステータスを分ける
                             const backStatus = req.approver2_id === user.id ? 'step2_pending' : 'pending';
-                            await supabase.from('leave_requests').update({ status: backStatus, rejected_reason: null }).eq('id', req.id);
+                            // 🚨 戻せていないのに戻ったように見せない（error と件数の両方を見る）
+                            const { data: back, error: backErr } = await supabase.from('leave_requests')
+                              .update({ status: backStatus, rejected_reason: null }).eq('id', req.id).select('id');
+                            if (backErr) { setStaleMsg('確認待ちに戻せませんでした：' + backErr.message); return; }
+                            if (!back || back.length === 0) {
+                              setStaleMsg('確認待ちに戻せませんでした（すでに取り消された可能性があります）。一覧を更新しました。');
+                              fetchRequests();
+                              return;
+                            }
                             window.dispatchEvent(new CustomEvent('leave-pending-changed'));
                             fetchRequests();
                           } });

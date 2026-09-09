@@ -75,6 +75,8 @@ const AdminPanelContent: React.FC = () => {
 
   // 修正依頼の未対応件数（タブの赤バッジ用）。correction-pending-changed で再取得。
   const [openCorrectionCount, setOpenCorrectionCount] = useState(0);
+  // マネージャーへ送るときの失敗をその場に出す（黙って閉じない）
+  const [managerAssignError, setManagerAssignError] = useState('');
   useEffect(() => {
     const fetchCount = () => {
       supabase.from('correction_requests').select('id', { count: 'exact', head: true }).eq('status', 'open')
@@ -819,15 +821,31 @@ const AdminPanelContent: React.FC = () => {
                 ))}
               </select>
             )}
+            {managerAssignError && (
+              <div style={{ padding: '10px 12px', background: '#f8d7da', border: '1px solid #f5c6cb', borderRadius: 8, marginBottom: 12 }}>
+                <span style={{ fontSize: 13, color: '#721c24', fontWeight: 'bold' }}>⚠️ {managerAssignError}</span>
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 10 }}>
               <button
-                onClick={() => setAdminSelectingManagerFor(null)}
+                onClick={() => { setManagerAssignError(''); setAdminSelectingManagerFor(null); }}
                 style={{ flex: 1, padding: '10px', background: '#6c757d', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold' }}
               >キャンセル</button>
               <button
                 disabled={!adminSelectedManagerId}
                 onClick={async () => {
-                  await supabase.from('leave_requests').update({ status: 'step2_pending', approver2_id: adminSelectedManagerId }).eq('id', adminSelectingManagerFor.id);
+                  setManagerAssignError('');
+                  // 🚨 update は失敗しても 0件でもエラーにならない。見ないと、送れていないのに
+                  //    モーダルが閉じて「送れた」ように見える（申請は前に進まないまま止まる）。
+                  const { data: sent, error: sendErr } = await supabase.from('leave_requests')
+                    .update({ status: 'step2_pending', approver2_id: adminSelectedManagerId })
+                    .eq('id', adminSelectingManagerFor.id).select('id');
+                  if (sendErr) { setManagerAssignError(`送れませんでした：${sendErr.message}`); return; }
+                  if (!sent || sent.length === 0) {
+                    setManagerAssignError('送れませんでした（すでに取り消された可能性があります）');
+                    fetchLeaveRequests();
+                    return;
+                  }
                   // 管理者が代わりにpendingを進めた場合は通知なし
                   setAdminSelectingManagerFor(null);
                   fetchLeaveRequests();

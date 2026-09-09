@@ -117,7 +117,7 @@ const ShiftReportsTab: React.FC = () => {
   const [groupOptions, setGroupOptions] = useState<string[]>([]);
   const [groupMap, setGroupMap]         = useState<Record<string, string[]>>({});
   const [confirming, setConfirming]     = useState<string | null>(null);
-  const [deleteError, setDeleteError]   = useState('');
+  const [actionError, setActionError]   = useState('');
   const [expandedHistory, setExpandedHistory] = useState<Set<string>>(new Set());
   const [historyData, setHistoryData]   = useState<Record<string, HistoryRec[]>>({});
   const [historyExistIds, setHistoryExistIds] = useState<Set<string>>(new Set());
@@ -210,9 +210,29 @@ const ShiftReportsTab: React.FC = () => {
   const handleConfirm = (r: ShiftReport) => {
     setConfirmDialog({ message: `「${r.applicantName}」の報告を受理しますか？`, onConfirm: async () => {
     setConfirming(r.id);
+    setActionError('');
     const { data: { user } } = await supabase.auth.getUser();
-    await supabase.from('shift_reports').update({ status: 'confirmed', confirmed_by: user?.id, confirmed_at: new Date().toISOString() }).eq('id', r.id);
-    await supabase.from('shift_report_history').insert({ report_id: r.id, changed_by: user?.id, change_summary: '管理者が受理しました', snapshot: r }).then(null, () => {});
+    // 🚨 受理そのものが失敗しても、そのまま「受理しました」と本人へ通知が飛んでいた。
+    //    .update() は 0件でもエラーにならないので、error と件数の両方を見る（取消・削除と同じ形）。
+    const { data: updated, error: confirmErr } = await supabase.from('shift_reports')
+      .update({ status: 'confirmed', confirmed_by: user?.id, confirmed_at: new Date().toISOString() })
+      .eq('id', r.id).select('id');
+    if (confirmErr) {
+      setConfirming(null);
+      setActionError(`受理に失敗しました：${confirmErr.message}`);
+      return;
+    }
+    if (!updated || updated.length === 0) {
+      setConfirming(null);
+      setActionError('受理できませんでした（権限が不足しているか、すでに取消・削除されています）');
+      fetchReports();
+      return;
+    }
+    // ここから先は受理がDBで確定済み。記録・通知が失敗しても受理は取り消さない
+    // （ただし静かに消さず、記録の失敗はコンソールに残す）
+    await supabase.from('shift_report_history').insert({ report_id: r.id, changed_by: user?.id, change_summary: '管理者が受理しました', snapshot: r })
+      .then(({ error }) => { if (error) console.error('[shift_report] 受理の履歴を残せませんでした:', error.message); },
+            (e) => console.error('[shift_report] 受理の履歴を残せませんでした:', e));
     await supabase.from('notifications').insert({
       user_id: r.applicant_id, message: '勤務変更報告が受理されました',
       sub_message: `${getTypes(r).map(t => TYPE_INFO[t]?.label ?? t).join('＋')}　${r.work_date}`,
@@ -241,13 +261,29 @@ const ShiftReportsTab: React.FC = () => {
     if (!returnTarget) return;
     const r = returnTarget;
     setReturning(true);
+    setActionError('');
     const { data: { user } } = await supabase.auth.getUser();
-    await supabase.from('shift_reports').update({ status: 'returned' }).eq('id', r.id);
+    // 🚨 受理と同じで、差戻が通っていなくても本人へ「差戻されました」と飛んでいた
+    const { data: updated, error: returnErr } = await supabase.from('shift_reports')
+      .update({ status: 'returned' }).eq('id', r.id).select('id');
+    if (returnErr) {
+      setReturning(false);
+      setActionError(`差戻に失敗しました：${returnErr.message}`);
+      return;
+    }
+    if (!updated || updated.length === 0) {
+      setReturning(false);
+      setActionError('差戻できませんでした（権限が不足しているか、すでに取消・削除されています）');
+      fetchReports();
+      return;
+    }
     const comment = returnComment.trim();
+    // ここから先は差戻がDBで確定済み（記録の失敗で差戻を取り消さない）
     await supabase.from('shift_report_history').insert({
       report_id: r.id, changed_by: user?.id,
       change_summary: comment ? `差戻し：${comment}` : '差戻しました', snapshot: r,
-    }).then(null, () => {});
+    }).then(({ error }) => { if (error) console.error('[shift_report] 差戻の履歴を残せませんでした:', error.message); },
+            (e) => console.error('[shift_report] 差戻の履歴を残せませんでした:', e));
     await notifyShiftReportReturned({
       reportId: r.id,
       applicantId: r.applicant_id,
@@ -263,12 +299,12 @@ const ShiftReportsTab: React.FC = () => {
 
   const handleDelete = (r: ShiftReport) => {
     setConfirmDialog({ message: `「${r.applicantName}」の報告を完全削除しますか？`, onConfirm: async () => {
-      setDeleteError('');
+      setActionError('');
       // 履歴は shift_reports の削除で on delete cascade により自動削除される
       const { data: deleted, error } = await supabase.from('shift_reports').delete().eq('id', r.id).select('id');
-      if (error) { setDeleteError(`削除に失敗しました：${error.message}`); return; }
+      if (error) { setActionError(`削除に失敗しました：${error.message}`); return; }
       if (!deleted || deleted.length === 0) {
-        setDeleteError('削除できませんでした（権限が不足しているか、すでに削除済みです）');
+        setActionError('削除できませんでした（権限が不足しているか、すでに削除済みです）');
         return;
       }
       setSuccessMsg('削除しました');
@@ -282,8 +318,8 @@ const ShiftReportsTab: React.FC = () => {
     setCanceling(true);
     const { data: updated, error } = await supabase.from('shift_reports').update({ status: 'cancelled' }).eq('id', cancelTarget.id).select('id');
     setCanceling(false);
-    if (error) { setDeleteError(`取消に失敗しました：${error.message}`); return; }
-    if (!updated || updated.length === 0) { setDeleteError('取消できませんでした（権限が不足しているか、すでに取消済みです）'); return; }
+    if (error) { setActionError(`取消に失敗しました：${error.message}`); return; }
+    if (!updated || updated.length === 0) { setActionError('取消できませんでした（権限が不足しているか、すでに取消済みです）'); return; }
     setCancelTarget(null);
     setSuccessMsg('取り消しました');
     fetchReports();
@@ -413,10 +449,13 @@ const ShiftReportsTab: React.FC = () => {
       )}
       <h3 style={{ textAlign: 'center', marginBottom: 6, color: text }}>⏰ 勤務変更報告一覧</h3>
       <p style={{ textAlign: 'center', fontSize: 13, color: sub, marginBottom: 8 }}>パートスタッフの残業・早退・遅刻・欠勤の報告を管理します。</p>
-      {deleteError && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, maxWidth: 560, margin: '0 auto 10px', padding: '10px 14px', background: isDarkMode ? '#4a1515' : '#fdecea', border: `1px solid ${isDarkMode ? '#7f1d1d' : '#f5c6cb'}`, borderRadius: 8 }}>
-          <span style={{ fontSize: 13, color: isDarkMode ? '#fca5a5' : '#b71c1c', fontWeight: 'bold', flex: 1 }}>⚠️ {deleteError}</span>
-          <button onClick={() => setDeleteError('')} style={{ background: 'none', border: 'none', color: isDarkMode ? '#fca5a5' : '#b71c1c', fontSize: 16, cursor: 'pointer', lineHeight: 1 }}>✕</button>
+      {/* 🚨 配色は 🎨🔒 のエラー標準（固定色）。ダーク用の赤背景 #4a1515 は 2026-07-24 に
+          全廃されたもので、ここに残っていた（今日エラーの表示場面が増えたので直した）。
+          エラーバナーに isDark の出し分けを書かないこと。 */}
+      {actionError && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, maxWidth: 560, margin: '0 auto 10px', padding: '10px 14px', background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8 }}>
+          <span style={{ fontSize: 13, color: '#842029', fontWeight: 'bold', flex: 1 }}>⚠️ {actionError}</span>
+          <button onClick={() => setActionError('')} style={{ background: 'none', border: 'none', color: '#842029', fontSize: 16, cursor: 'pointer', lineHeight: 1 }}>✕</button>
         </div>
       )}
       <div style={{ display: 'flex', justifyContent: 'flex-end', paddingRight: 16, marginBottom: 8 }}>

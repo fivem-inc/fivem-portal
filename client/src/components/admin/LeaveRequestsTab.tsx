@@ -12,6 +12,7 @@ import {
   ABSENCE_LABEL, absenceLabel, absenceColor, formatSegments, parseSegments,
   type AttendanceType, type WorkSegment,
 } from '../../lib/attendanceTypes';
+import { describeUpdate, describePartial } from '../../lib/statusUpdate';
 
 // 休暇の履歴行（leave_request_history）
 interface LeaveHistoryRow {
@@ -91,6 +92,11 @@ const LeaveRequestsTab: React.FC = () => {
 
   const [absenceView, setAbsenceView] = useState(false);
   const [rejectModal, setRejectModal] = useState<AdminLeaveRequest | null>(null);
+  // 🚨 このモーダルの操作（受理・差し戻し・受理の取り消し）の失敗を、押した場所に出す。
+  //    これまでは失敗を検査しておらず、DBが変わっていないのに
+  //    Googleカレンダーの予定だけ削除され、申請者へ通知も飛んでいた。
+  //    配色は 🎨🔒 のエラー標準（固定色。ダーク用の赤背景は禁止）。
+  const [modalError, setModalError] = useState('');
   const [rejectReason, setRejectReason] = useState('');
   const [rejectNewType, setRejectNewType] = useState('');
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null); // 共通インライン確認（window.confirm廃止）
@@ -1790,6 +1796,15 @@ const LeaveRequestsTab: React.FC = () => {
                     <div style={{ fontSize: 13, color: isDarkMode ? '#adb5bd' : '#666', marginBottom: 16 }}>
                       {rejectModal.profile?.name}　{rejectModal.leave_type === 'その他' ? rejectModal.leave_type_other : rejectModal.leave_type}
                     </div>
+                    {/* 🚨 押した場所（このモーダル）に出す。一覧の上に出すと画面外になって無反応に見える。
+                        色は 🎨🔒 のエラー標準（固定色。ダーク用の赤背景 #4a1515 等は禁止）。
+                        自動では消さない（読む前に消えると出していないのと同じ） */}
+                    {modalError && (
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 12, padding: '10px 12px', background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8 }}>
+                        <span style={{ fontSize: 13, color: '#842029', fontWeight: 'bold', flex: 1 }}>⚠️ {modalError}</span>
+                        <button type="button" onClick={() => setModalError('')} style={{ background: 'none', border: 'none', color: '#842029', fontSize: 16, cursor: 'pointer', lineHeight: 1, padding: '0 2px' }}>✕</button>
+                      </div>
+                    )}
                     <div style={{ marginBottom: 12 }}>
                       <div style={{ fontSize: 13, color: isDarkMode ? '#adb5bd' : '#666', marginBottom: 6 }}>種別を変更する（任意）</div>
                       <select value={rejectNewType} onChange={e => setRejectNewType(e.target.value)}
@@ -1809,7 +1824,7 @@ const LeaveRequestsTab: React.FC = () => {
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {/* キャンセル：上・横全幅 */}
-                      <button onClick={() => { setRejectModal(null); setRejectReason(''); setRejectNewType(''); }}
+                      <button onClick={() => { setRejectModal(null); setRejectReason(''); setRejectNewType(''); setModalError(''); }}
                         style={{ width: '100%', padding: '10px', background: '#6c757d', color: '#fff', border: 'none', borderRadius: 10, fontSize: 14, cursor: 'pointer' }}>
                         キャンセル
                       </button>
@@ -1819,7 +1834,14 @@ const LeaveRequestsTab: React.FC = () => {
                           <button onClick={async () => {
                             const origType = rejectModal.leave_type === 'その他' ? (rejectModal.leave_type_other || 'その他') : rejectModal.leave_type;
                             const autoNote = `【管理者が種別変更】${origType} → ${rejectNewType}（変更して受理）`;
-                            await supabase.from('leave_requests').update({ leave_type: rejectNewType, status: 'approved', reason: rejectReason ? `${rejectReason}　${autoNote}` : autoNote, modified_by: authUser?.id ?? null, modified_at: new Date().toISOString() }).eq('id', rejectModal.id);
+                            setModalError('');
+                            // 🚨 検査せずに進むと、受理できていなくても本人へ通知が飛び、
+                            //    さらに下でGoogleカレンダーに新しい予定が作られる
+                            const typeChangeRes = await supabase.from('leave_requests')
+                              .update({ leave_type: rejectNewType, status: 'approved', reason: rejectReason ? `${rejectReason}　${autoNote}` : autoNote, modified_by: authUser?.id ?? null, modified_at: new Date().toISOString() })
+                              .eq('id', rejectModal.id).select('id');
+                            const typeChangeFail = describeUpdate(typeChangeRes, '受理', 'missing');
+                            if (typeChangeFail) { setModalError(typeChangeFail); return; }
                             if (await shouldSend('leave:rejected_type_changed', 'site')) {
                               const t = await getNotificationTemplate('leave:rejected_type_changed', 'site', { 元種別: origType, 新種別: rejectNewType });
                               await insertNotification(rejectModal.user_id, t?.template ?? `「${origType}」が「${rejectNewType}」に変更され、受理されました`, undefined, 'leave_request', rejectModal.id);
@@ -1833,7 +1855,7 @@ const LeaveRequestsTab: React.FC = () => {
                                 });
                               }
                             } catch (e) { console.error('[gcal-sync] upsert失敗:', e); }
-                            setRejectModal(null); setRejectReason(''); setRejectNewType('');
+                            setRejectModal(null); setRejectReason(''); setRejectNewType(''); setModalError('');
                             fetchLeaveRequests();
                           }} style={{ flex: 1, padding: '14px 8px', background: '#28a745', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 'bold', cursor: 'pointer', lineHeight: 1.4 }}>
                             差戻なし<br />「{rejectNewType}」に<br />変更して受理
@@ -1846,10 +1868,15 @@ const LeaveRequestsTab: React.FC = () => {
                             : (rejectReason || null);
                           const update: Record<string, string | null> = { status: 'rejected', rejected_reason: finalReason };
                           if (rejectNewType) update.leave_type = rejectNewType;
-                          await supabase.from('leave_requests').update(update).eq('id', rejectModal.id);
-                          // 差戻し元のカレンダーイベントを削除
+                          setModalError('');
+                          // 🚨 ここを検査せずに進むと、差し戻せていなくても
+                          //    このあとGoogleカレンダーの予定が実際に消え、申請者へ通知も飛ぶ。
+                          const rejectRes = await supabase.from('leave_requests').update(update).eq('id', rejectModal.id).select('id');
+                          const rejectFail = describeUpdate(rejectRes, '差し戻し', 'missing');
+                          if (rejectFail) { setModalError(rejectFail); return; }
+                          // 差戻し元のカレンダーイベントを削除（ここから先は差し戻しがDBで確定済み）
                           if (!(await deleteLeaveGcal(rejectModal.id))) {
-                            setSuccessMsg('⚠️ 差し戻しましたが、Googleカレンダーからの削除に失敗しました。カレンダーを確認してください。');
+                            setSuccessMsg(describePartial('差し戻し', 'Googleカレンダーからの削除に失敗しました'));
                           }
                           if (rejectNewType) {
                             // 種別変更あり → 新申請を受理済みで自動作成
@@ -1902,7 +1929,7 @@ const LeaveRequestsTab: React.FC = () => {
                             await dispatchSiteNotification('leave:rejected', rejVars, rejSite.ids, insertNotification, 'leave_request', rejectModal.id);
                             await dispatchEmail('leave:rejected', rejVars, { applicant: rejectedEmail, ...rejMail.emails });
                           }
-                          setRejectModal(null); setRejectReason(''); setRejectNewType('');
+                          setRejectModal(null); setRejectReason(''); setRejectNewType(''); setModalError('');
                           fetchLeaveRequests();
                         }} style={{ flex: 1, padding: '14px 8px', background: '#dc3545', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 'bold', cursor: 'pointer', lineHeight: 1.4 }}>
                           {rejectNewType
@@ -1912,15 +1939,20 @@ const LeaveRequestsTab: React.FC = () => {
                         </button>
                         <button onClick={() => {
                           setConfirmDialog({ message: `「${rejectModal.leave_type}」の受理を取り消しますか？\n申請者への通知を送り、カレンダーのイベントを削除します。\n（申請記録は残ります）`, onConfirm: async () => {
-                          await supabase.from('leave_requests').update({
+                          setModalError('');
+                          // 🚨 検査せずに進むと、取り消せていなくてもカレンダーの予定が消え、
+                          //    申請者・上長へ「取り消しました」の通知まで飛ぶ
+                          const cancelRes = await supabase.from('leave_requests').update({
                             status: 'cancelled',
                             rejected_reason: rejectReason || '管理者が受理を取り消しました',
                             modified_by: authUser?.id ?? null,
                             modified_at: new Date().toISOString(),
-                          }).eq('id', rejectModal.id);
-                          // カレンダーから削除
+                          }).eq('id', rejectModal.id).select('id');
+                          const cancelFail = describeUpdate(cancelRes, '受理の取り消し', 'missing');
+                          if (cancelFail) { setModalError(cancelFail); return; }
+                          // カレンダーから削除（ここから先は取り消しがDBで確定済み）
                           if (!(await deleteLeaveGcal(rejectModal.id))) {
-                            setSuccessMsg('⚠️ 取り消しましたが、Googleカレンダーからの削除に失敗しました。カレンダーを確認してください。');
+                            setSuccessMsg(describePartial('受理の取り消し', 'Googleカレンダーからの削除に失敗しました'));
                           }
                           // 社長（宛先で「社長」を選んだ場合の届け先。複数人いても全員に届ける）
                           const cancelType = rejectModal.leave_type === 'その他' ? (rejectModal.leave_type_other || 'その他') : rejectModal.leave_type;
@@ -1947,7 +1979,7 @@ const LeaveRequestsTab: React.FC = () => {
                               dateSummary: formatLeaveDateSummary(rejectModal.leave_dates, rejectModal.start_date, rejectModal.end_date, ''),
                             });
                           }
-                          setRejectModal(null); setRejectReason(''); setRejectNewType('');
+                          setRejectModal(null); setRejectReason(''); setRejectNewType(''); setModalError('');
                           fetchLeaveRequests();
                           } });
                         }} style={{ flex: 1, padding: '14px 8px', background: '#fd7e14', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 'bold', cursor: 'pointer', lineHeight: 1.4 }}>

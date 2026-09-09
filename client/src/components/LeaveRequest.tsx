@@ -645,7 +645,16 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       if (error) throw error;
       // 再申請の場合、元申請を取消済みにする
       if (reapplySourceId) {
-        await supabase.from('leave_requests').update({ status: 'cancelled' }).eq('id', reapplySourceId);
+        // 🚨 ここが失敗すると、元の申請が残ったまま新しい申請も並び、二重申請になる。
+        //    ただし新しい申請はすでに作られているので、送信そのものは失敗扱いにしない。
+        //    黙って消さず「元の申請が残っている」ことを本人に伝えて、手で取り消してもらう。
+        const { data: cancelled, error: cancelErr } = await supabase.from('leave_requests')
+          .update({ status: 'cancelled' }).eq('id', reapplySourceId).select('id');
+        if (cancelErr || !cancelled || cancelled.length === 0) {
+          setSubmitError('新しい申請は送信できましたが、元の申請を取り消せませんでした'
+            + (cancelErr ? `：${cancelErr.message}` : '（対象が見つかりませんでした）')
+            + '。二重に申請が並んでいる場合は、履歴から元の申請を取り消してください。');
+        }
         setReapplySourceId(null);
       }
       // 🚨 直接UPDATEしない。profiles の直接更新はRLSで管理者のみに絞ってあるため、
