@@ -134,7 +134,7 @@ const AddUserModal: React.FC<{
 
         <label style={labelStyle}>役職</label>
         <select value={roleTitle} onChange={e => setRoleTitle(e.target.value)} style={selectStyle}>
-          {(masterOptions.role_title.length > 0 ? masterOptions.role_title : roleNames).map(v => (
+          {roleNames.map(v => (
             <option key={v}>{v}</option>
           ))}
         </select>
@@ -479,7 +479,7 @@ const UsersTab: React.FC = () => {
                         pendingUser={pu}
                         masterOptions={{
                           employment_type: masterOptions.employment_type.length > 0 ? masterOptions.employment_type : ['正社員', 'パート'],
-                          role_title: masterOptions.role_title.length > 0 ? masterOptions.role_title : roleNames,
+                          role_title: roleNames,   // 役職の一覧は roles から（master_options の役職一覧は廃止）
                         }}
                         onApprove={handleApprovePendingUser}
                         onReject={handleRejectPendingUser}
@@ -731,7 +731,8 @@ const UsersTab: React.FC = () => {
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center' }}>
                               {(() => {
                                 const roleVal = user.role_title || '一般';
-                                const roleUnknown = !masterOptions.role_title.includes(roleVal);
+                                // 🚨 役職の一覧は roles が唯一の正（master_options の役職一覧は段6で廃止・2026-09-10）
+                                const roleUnknown = !roleNames.includes(roleVal);
                                 return (
                                   <select
                                     value={roleVal}
@@ -743,7 +744,7 @@ const UsersTab: React.FC = () => {
                                     style={{ padding: '2px 2px', fontSize: 11, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000', border: roleUnknown ? '2px solid #dc3545' : `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 4, width: '100%', opacity: isUserEditMode ? 1 : 0.7, cursor: isUserEditMode ? 'pointer' : 'default', appearance: isUserEditMode ? 'auto' : 'none' as any }}
                                   >
                                     {roleUnknown && <option value={roleVal}>⚠️ {roleVal}（未登録の値）</option>}
-                                    {masterOptions.role_title.map(v => <option key={v}>{v}</option>)}
+                                    {roleNames.map(v => <option key={v}>{v}</option>)}
                                   </select>
                                 );
                               })()}

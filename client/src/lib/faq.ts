@@ -1,6 +1,8 @@
 import { supabase } from './supabaseClient';
 import { todayJstStr } from './breakCalc';
 import { describeUpdate } from './statusUpdate';
+import { roleByName } from './roleAttrs';
+import { getCachedRoles } from '../hooks/useRoles';
 
 // FAQ（よくある質問）の読み書きと検索。
 //
@@ -69,6 +71,8 @@ export interface FaqAnswerTarget {
   school: string | null;
   course: string | null;
   role_title: string | null;
+  /** 対象役職の id（role_title から DB のトリガーが導出）。照合はこちらで行う（2026-09-10 段5） */
+  role_id?: string | null;
 }
 
 export interface FaqAnswer {
@@ -154,7 +158,7 @@ export const fetchFaqTopics = async (audience: FaqAudience): Promise<FaqTopic[]>
   if (answerIds.length > 0) {
     const { data } = await supabase
       .from('faq_answer_targets')
-      .select('id, answer_id, school, course, role_title')
+      .select('id, answer_id, school, course, role_title, role_id')
       .in('answer_id', answerIds);
     targets = (data ?? []) as FaqAnswerTarget[];
   }
@@ -419,8 +423,14 @@ export const isAnswerActiveOn = (answer: FaqAnswer, dateStr: string): boolean =>
 /** その回答が、この閲覧者（校・コース・役職）向けか。対象の指定が無い回答＝全員向け */
 const matchesViewer = (answer: FaqAnswer, viewer: FaqViewer): boolean => {
   if (answer.targets.length === 0) return true;
+  // 🚨 役職は名前ではなく role_id で照合する（改名しても対象がずれない・2026-09-10 段5）。
+  //    役職の一覧がまだ読めていない／古い行で role_id が無いときだけ、名前で照合する
+  const viewerRoleId = roleByName(getCachedRoles(), viewer.roleTitle)?.id ?? null;
   return answer.targets.some(t => {
-    if (t.role_title && t.role_title !== viewer.roleTitle) return false;
+    if (t.role_id || t.role_title) {
+      const ok = (t.role_id && viewerRoleId) ? t.role_id === viewerRoleId : t.role_title === viewer.roleTitle;
+      if (!ok) return false;
+    }
     if (t.school && t.school !== viewer.school) return false;
     if (t.course && t.course !== viewer.course) return false;
     return true;

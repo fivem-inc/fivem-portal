@@ -20,6 +20,42 @@ export default tseslint.config([
       globals: globals.browser,
     },
   },
+  // 🚨 役職名で判定する書き方を全体で禁止する（2026-09-10・役職の属性化 段7）。
+  //
+  // 【なぜ要るか】
+  //   役職名（'社長' 等）で判定していたため、改名しただけで本番の権限が壊れた（2026-09-09）。
+  //   判定は roles の属性（lib/roleAttrs.ts の attrsFor / useAuth の isLeaderPlus 等）で行い、
+  //   DB を引くときは roles!inner(...) で属性を条件にする。
+  //
+  // 【何を止めるか】文字列ではなく「形」で止める（'マネージャー' 単独の比較は '社長' の grep に出ないため）
+  //   ・role_title === '文字列' / !== '文字列'（役職名との直接比較）
+  //   ・.eq('role_title', …) / .in('role_title', …) / .neq('role_title', …)（役職名で DB を引く）
+  //   ・['…', '…'].includes(roleTitle)（役職名の配列で判定）
+  //   🚨 表示だけ（ラベル・並び替えで名前で束ねる）は対象外＝ role_title を「値として使う」のはよい。
+  //      引っかかった場合は attrsFor / roles!inner に書き換えること。例外を足すときは理由を書く
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-syntax': ['error',
+        {
+          selector: "BinaryExpression[operator=/^(===|!==|==|!=)$/][left.property.name='role_title'][right.type='Literal']",
+          message: '🚨 役職名で判定しないでください。roles の属性（lib/roleAttrs.ts の attrsFor）で判定します（2026-09-09 に改名で権限が壊れた）',
+        },
+        {
+          selector: "BinaryExpression[operator=/^(===|!==|==|!=)$/][right.property.name='role_title'][left.type='Literal']",
+          message: '🚨 役職名で判定しないでください。roles の属性（lib/roleAttrs.ts の attrsFor）で判定します',
+        },
+        {
+          selector: "CallExpression[callee.property.name=/^(eq|in|neq)$/][arguments.0.value='role_title']",
+          message: "🚨 役職名で DB を引かないでください。.select('…, roles!inner(属性)').eq('roles.属性', true) の形にします",
+        },
+        {
+          selector: "CallExpression[callee.property.name='includes'][callee.object.type='ArrayExpression'][arguments.0.name=/^(roleTitle|_roleTitle|role_title|role)$/]",
+          message: '🚨 役職名の配列で判定しないでください。roles の属性（attrsFor / useAuth の isLeaderPlus 等）で判定します',
+        },
+      ],
+    },
+  },
   // 🚨 失敗が静かに消える書き方を、片付いたファイルから順に禁止していく（2026-09-09）。
   //
   // 【なぜ要るか】

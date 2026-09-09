@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
+import RoleAttributesCard from './RoleAttributesCard';
+import { refreshRoles } from '../../hooks/useRoles';
+import type { RoleRow } from '../../lib/roleAttrs';
 
 interface Role {
   id: string;
@@ -85,6 +88,10 @@ const FeaturePermissionsTab: React.FC = () => {
   const [isRoleEditMode, setIsRoleEditMode] = useState(false);
   const [newRoleName, setNewRoleName] = useState('');
   const [addingRole, setAddingRole] = useState(false);
+  // 追加時に区分と機能の権限を写す元の役職（''＝なし）
+  const [copyFromRoleId, setCopyFromRoleId] = useState('');
+  // 追加直後の案内（✕ を押すまで消えない）
+  const [addedNotice, setAddedNotice] = useState<string | null>(null);
 
   const [editingRole, setEditingRole] = useState<Role | null>(null);
   const [editRoleName, setEditRoleName] = useState('');
@@ -237,22 +244,36 @@ const FeaturePermissionsTab: React.FC = () => {
     if (!name) return;
     if (roles.some(r => r.name === name)) { setErrorMsg('同じ名前の役職がすでにあります'); return; }
     setAddingRole(true);
-    const adminOrder = roles.find(r => r.is_fixed)?.sort_order ?? 99;
-    const maxNonFixed = Math.max(...roles.filter(r => !r.is_fixed).map(r => r.sort_order), 0);
-    const newOrder = Math.min(maxNonFixed + 1, adminOrder - 1);
+    // 🚨 新設の役職は**最下位**から始める（2026-09-09 ユーザー決定 Q3）。
+    //    以前は管理者のすぐ下＝最上位に入っていたため、作った瞬間に「社長より上」として扱われた
+    //    （序列は sort_order＝残業の閲覧範囲などに効く）。▲で必要な位置まで上げる
+    const minNonFixed = Math.min(...roles.filter(r => !r.is_fixed).map(r => r.sort_order), 1);
+    const newOrder = minNonFixed - 1;
+    // 「権限のもとにする役職」を選んでいれば、区分（立場・承認者…）と機能の権限を写す。通知の宛先は写さない
+    const base = roles.find(r => r.id === copyFromRoleId) as (Role & Partial<RoleRow>) | undefined;
+    const attrs = base ? {
+      acts_as: base.acts_as ?? null, is_approver: !!base.is_approver, is_leader_plus: !!base.is_leader_plus,
+      is_manager_plus: !!base.is_manager_plus, is_board_approver: !!base.is_board_approver, is_org_wide: !!base.is_org_wide,
+    } : {};
     const { data, error } = await supabase
       .from('roles')
-      .insert({ name, sort_order: newOrder, is_fixed: false })
+      .insert({ name, sort_order: newOrder, is_fixed: false, ...attrs })
       .select()
       .single();
-    if (error || !data) { setErrorMsg('追加に失敗しました'); setAddingRole(false); return; }
-    await supabase.from('feature_permissions').insert(
-      FEATURES.map(f => ({ role_id: data.id, feature_key: f.key, enabled: false }))
+    if (error || !data) { setErrorMsg(`追加に失敗しました：${error?.message ?? ''}`); setAddingRole(false); return; }
+    const { error: fpErr } = await supabase.from('feature_permissions').insert(
+      FEATURES.map(f => ({ role_id: data.id, feature_key: f.key, enabled: base ? (perms[base.id]?.[f.key] ?? false) : false }))
     );
+    if (fpErr) { setErrorMsg(`役職は追加しましたが、機能の権限の初期値を入れられませんでした：${fpErr.message}`); }
     setNewRoleName('');
+    setCopyFromRoleId('');
     setAddingRole(false);
     fetchAll();
-    setSuccessMsg(`「${name}」を追加しました`);
+    void refreshRoles();
+    // 🚨 消えない案内。作った直後は「何が使えるか」が分かりにくく、「作ったのに何も出ない」の問い合わせになるため
+    setAddedNotice(base
+      ? `「${name}」を追加しました。区分と機能の権限は「${base.name}」と同じです。通知の宛先には入っていません。必要なら通知設定で選んでください。`
+      : `「${name}」を追加しました。区分と機能の権限はすべてOFFです。このままではログインしても何も表示されません。下の「役職の区分」と「機能別 表示権限」で設定してください。`);
   };
 
   // ── 役職名編集 ──
@@ -291,7 +312,7 @@ const FeaturePermissionsTab: React.FC = () => {
     const { count } = await supabase
       .from('profiles')
       .select('id', { count: 'exact', head: true })
-      .eq('role_title', role.name);
+      .eq('role_id', role.id);   // 役職名ではなく role_id で引く（段0 のトリガーで常に同期している）
     setDeleteTarget({ role, staffCount: count ?? 0 });
   };
 
@@ -316,7 +337,7 @@ const FeaturePermissionsTab: React.FC = () => {
     const { data } = await supabase
       .from('profiles')
       .select('id, name, role_title')
-      .eq('role_title', role.name)
+      .eq('role_id', role.id)   // 役職名ではなく role_id で引く（段0 のトリガーで常に同期している）
       .order('name');
     setAssignTarget({ role, staff: (data as StaffMember[]) || [] });
     setStaffRoleChanges({});
@@ -452,6 +473,12 @@ const FeaturePermissionsTab: React.FC = () => {
                   color: text, fontSize: 13,
                 }}
               />
+              {/* 権限のもとにする役職（区分＋機能の権限を写す。通知の宛先は写さない） */}
+              <select value={copyFromRoleId} onChange={e => setCopyFromRoleId(e.target.value)} title="権限のもとにする役職"
+                style={{ padding: '7px 8px', borderRadius: 8, border: `1px solid ${border}`, background: isDarkMode ? '#3d4147' : '#fff', color: text, fontSize: 12, maxWidth: 170 }}>
+                <option value="">権限のもと：なし（すべてOFF）</option>
+                {roles.filter(r => !r.is_fixed).map(r => <option key={r.id} value={r.id}>権限のもと：{r.name} と同じ</option>)}
+              </select>
               <button
                 onClick={handleAddRole}
                 disabled={addingRole || !newRoleName.trim()}
@@ -462,8 +489,26 @@ const FeaturePermissionsTab: React.FC = () => {
             </div>
           )}
 
+          {/* 追加直後の案内（✕ を押すまで消えない。「作ったのに何も出ない」を防ぐ） */}
+          {addedNotice && (
+            <div style={{ margin: '0 16px 14px', padding: '10px 12px', borderRadius: 8, background: '#fff3cd', border: '1px solid #ffc107', color: '#856404', fontSize: 12.5, lineHeight: 1.6, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+              <span style={{ flex: 1 }}>⚠️ {addedNotice}</span>
+              <button onClick={() => setAddedNotice(null)} style={{ background: 'none', border: 'none', color: '#856404', cursor: 'pointer', fontSize: 15, lineHeight: 1 }}>✕</button>
+            </div>
+          )}
+
         </div>
       </div>
+
+      {/* ── 役職の区分（属性）── 役職一覧と機能表の間。判定はすべてここの属性で行う（2026-09-10） */}
+      <RoleAttributesCard
+        roles={roles as unknown as RoleRow[]}
+        isDarkMode={isDarkMode}
+        supabase={supabase}
+        onSaved={fetchAll}
+        setErrorMsg={setErrorMsg}
+        setSuccessMsg={setSuccessMsg}
+      />
 
       {/* ── 役職名編集モーダル ── */}
       {editingRole && (
@@ -483,8 +528,9 @@ const FeaturePermissionsTab: React.FC = () => {
                 color: text, fontSize: 14, boxSizing: 'border-box', marginBottom: 10,
               }}
             />
-            <p style={{ fontSize: 12, color: '#dc3545', margin: '0 0 14px', background: isDarkMode ? '#3a1a1a' : '#fff5f5', padding: '6px 10px', borderRadius: 6 }}>
-              ⚠️ 名前を変更すると、この役職のスタッフ全員に反映されます
+            {/* 2026-09-10 属性化（段0〜6）で、改名は「表示名だけを変える操作」になった。危険ではないので赤にしない */}
+            <p style={{ fontSize: 12, color: subText, margin: '0 0 14px', background: isDarkMode ? '#2b3035' : '#f8f9fa', padding: '6px 10px', borderRadius: 6, lineHeight: 1.6 }}>
+              名前だけが変わります。区分・機能の権限・通知の宛先はそのままです。
             </p>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button onClick={() => setEditingRole(null)} style={btnBase}>キャンセル</button>
@@ -503,7 +549,7 @@ const FeaturePermissionsTab: React.FC = () => {
           <div style={{ background: cardBg, borderRadius: 12, padding: 24, width: 320, color: text, boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>
             <h4 style={{ margin: '0 0 10px', fontSize: 15, color: '#dc3545' }}>役職を削除</h4>
             <p style={{ fontSize: 14, margin: '0 0 10px', color: text }}>
-              <strong>「{deleteTarget.role.name}」</strong> を削除しますか？
+              <strong>「{deleteTarget.role.name}」</strong> を削除します。
             </p>
             {deleteTarget.staffCount > 0 ? (
               <div style={{ background: isDarkMode ? '#3a1a1a' : '#fff3cd', border: `1px solid ${isDarkMode ? '#7a3030' : '#ffc107'}`, borderRadius: 8, padding: '10px 12px', marginBottom: 14 }}>

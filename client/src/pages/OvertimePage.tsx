@@ -20,7 +20,7 @@ import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMi
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { describeUpdate } from '../lib/statusUpdate';
 import { useRoles } from '../hooks/useRoles';
-import { attrsFor, rankOf, embeddedRole } from '../lib/roleAttrs';
+import { attrsFor, rankOf, embeddedRole, roleByName } from '../lib/roleAttrs';
 import type { RoleRow, EmbeddedRoleRow } from '../lib/roleAttrs';
 
 // validate() は文言だけを返すので、文言と入力欄を突き合わせて薄赤ハイライトを付ける。
@@ -2670,15 +2670,17 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   //    画面の出し分けは useAuth 由来の roleTitle を使う、という既存の方針に合わせている。
   const [canChooseCalendar, setCanChooseCalendar] = useState(false);
   useEffect(() => {
+    // 🚨 役職ルールは名前ではなく role_id で照合（改名しても効き続ける・2026-09-10 段5）。DB の overtime_can_choose_calendar と同じ
+    const myRoleId = roleByName(roles, roleTitle)?.id ?? null;
     supabase.from('overtime_calendar_choice_rules')
-      .select('role_title, user_id, enabled')
+      .select('role_id, user_id, enabled')
       .then(({ data }) => {
-        const rules = (data ?? []) as { role_title: string | null; user_id: string | null; enabled: boolean }[];
-        const personal = rules.find(r => r.user_id === user.id);          // 個人ルールが最優先
-        const byRole = rules.find(r => r.role_title === roleTitle);        // なければ役職ルール
+        const rules = (data ?? []) as { role_id: string | null; user_id: string | null; enabled: boolean }[];
+        const personal = rules.find(r => r.user_id === user.id);                         // 個人ルールが最優先
+        const byRole = myRoleId ? rules.find(r => r.role_id === myRoleId) : undefined;    // なければ役職ルール
         setCanChooseCalendar(personal ? !!personal.enabled : (byRole ? !!byRole.enabled : false));
       }, () => { /* 取れなければ「選べない」＝これまでどおり全部カレンダーに載る（安全側） */ });
-  }, [user.id, roleTitle]);
+  }, [user.id, roleTitle, roles]);
 
   // ---- 合計時間数カード：表示中の期間を ‹ › で切り替えられる（今期〜前期のみ。範囲は下の履歴一覧と揃える） ----
   const ownCardPrevLimit = shiftPayPeriod(currentPeriod, -1); // これより前には戻れない
