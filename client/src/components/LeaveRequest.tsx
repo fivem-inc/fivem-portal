@@ -890,7 +890,11 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               </span>
             )}
           </div>
-          <div style={{ fontSize: 11, opacity: 0.95, marginTop: 1 }}>パートへの申請フォーム送信</div>
+          {/* 🚨 このボタンの説明は「受理ページで何ができるか」の一覧。
+              受理ページに機能を足したら、ここにも足すこと（2026-09-09 ユーザー指摘）。
+              🚨 中の2つの枠（📩 正社員へ／📨 パート・アルバイトへ）と同じ並びにしてある。
+                 順番や対象を変えるときは、受理ページ側と必ず揃えること。 */}
+          <div style={{ fontSize: 11, opacity: 0.95, marginTop: 1, lineHeight: 1.5 }}>正社員へ残業・休暇の依頼／パートへ休暇フォーム送信</div>
         </button>
       )}
 

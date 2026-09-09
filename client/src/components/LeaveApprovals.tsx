@@ -515,6 +515,11 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
         </div>
       )}
 
+      {/* 🚨 「📩 正社員へ」を先、「📨 パート・アルバイトへ」を後に出す（2026-09-09 ユーザー確定）。
+          ブロックの順番を入れ替えるとJSXの対応が崩れやすいので、囲って並びだけ逆にしている。
+          片方が権限で消えても、残ったほうがそのまま出る。 */}
+      <div style={{ display: 'flex', flexDirection: 'column-reverse' }}>
+
       {/* パートへ申請フォーム送信。権限がOFFの役職には欄ごと出さない（2026-09-09） */}
       {canPartFormSend && (() => {
         const canSeeAll = isAdmin || roleTitle === 'マネージャー' || roleTitle === '社長' || roleTitle === '管理者';
@@ -525,7 +530,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
         );
         return (
           <div style={{ background: isDark ? '#2d3136' : '#f8f9fa', border: `1px solid ${isDark ? '#6c757d' : '#dee2e6'}`, borderRadius: 10, padding: '12px 16px', marginBottom: 16 }}>
-            <p style={{ fontWeight: 'bold', fontSize: 13, color: isDark ? '#fff' : '#333', marginBottom: 8 }}>📨 パート・アルバイトへ休暇申請フォームを送信</p>
+            <p style={{ fontWeight: 'bold', fontSize: 13, color: isDark ? '#fff' : '#333', marginBottom: 8 }}>📨 パート・アルバイトへ 休暇申請フォームを送信</p>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <select id="part-leave-target-approvals" style={{ flex: 1, minWidth: 160, padding: '6px 8px', borderRadius: 6, border: `1px solid ${isDark ? '#6c757d' : '#ccc'}`, background: isDark ? '#495057' : 'white', color: isDark ? '#fff' : '#000', fontSize: 13 }}>
                 <option value="">-- パート・アルバイトを選択 --</option>
@@ -608,18 +613,22 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
           🚨 出すかどうかは管理画面「役職・機能権限」→「📩 申請の依頼」で決まる。 */}
       {canApplicationRequest && (
         <div style={{ background: isDark ? '#2d3136' : '#f8f9fa', border: `1px solid ${isDark ? '#6c757d' : '#dee2e6'}`, borderRadius: 10, padding: '12px 16px', marginBottom: 20 }}>
-          <p style={{ fontWeight: 'bold', fontSize: 13, color: isDark ? '#fff' : '#333', marginBottom: 4 }}>📩 スタッフに申請を依頼する</p>
+          {/* 🚨 下の「パート・アルバイトへ」の枠と、見出しの形（◯◯へ ＋ 何をするか）と
+              並び（見出し → 説明 → 横いっぱいのボタン）をそろえる。
+              ボタンだけ左端に小さく置くと、枠の中で浮いて見える（2026-09-09 実機指摘） */}
+          <p style={{ fontWeight: 'bold', fontSize: 13, color: isDark ? '#fff' : '#333', marginBottom: 6 }}>📩 正社員へ 申請を依頼</p>
           <p style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#6c757d', margin: '0 0 10px', lineHeight: 1.7 }}>
-            相談で聞いた内容を伝えて、本人に申請してもらいます（残業・勤務変更／休暇）。
+            相談で聞いた内容を伝えて、本人に申請してもらいます（残業・時間管理／休暇）。<br />
+            パート・アルバイトの方には出せません（休暇は下の「フォームを送信」をお使いください）。
           </p>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <button onClick={() => setShowRequestSheet(true)}
-              style={{ padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>
+              style={{ flex: 1, minWidth: 160, padding: '8px 18px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>
               依頼を作る
             </button>
             {myRequests.length > 0 && (
-              <span style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#6c757d' }}>
-                未申請：{myRequests.filter(r => r.status === 'open').length}件
+              <span style={{ fontSize: 12, fontWeight: 'bold', whiteSpace: 'nowrap', color: myRequests.some(r => r.status === 'open') ? '#b7770d' : (isDark ? '#adb5bd' : '#6c757d') }}>
+                未申請 {myRequests.filter(r => r.status === 'open').length}件
               </span>
             )}
           </div>
@@ -647,6 +656,8 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
           {requestErr && <div style={{ marginTop: 8, fontSize: 12, color: '#dc3545' }}>{requestErr}</div>}
         </div>
       )}
+
+      </div>{/* 並びを逆にする囲いの終わり */}
 
       {showRequestSheet && (
         <ApplicationRequestSheet

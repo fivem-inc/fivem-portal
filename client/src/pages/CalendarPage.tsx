@@ -1878,8 +1878,13 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover, c
       }
       monthListRows.push({ kind: 'leave', date, ev });
     }
-    for (const ab of (absencesByDate[date] || [])) monthListRows.push({ kind: 'absence', date, ab });
-    for (const ot of (overtimesByDate[date] || [])) monthListRows.push({ kind: 'overtime', date, ot });
+    // 🚨 「シフト未調整だけ」で絞っているときは、休暇以外の行（欠勤・勤務地変更・休日出勤・残業）は
+    //    まとめて出さない。シフト調整の状態を持つのは休暇だけなので、残すと
+    //    「絞ったのに関係ない行がいっぱい出る」ことになる（2026-09-09 実機指摘で修正）。
+    if (!onlyShiftPending) {
+      for (const ab of (absencesByDate[date] || [])) monthListRows.push({ kind: 'absence', date, ab });
+      for (const ot of (overtimesByDate[date] || [])) monthListRows.push({ kind: 'overtime', date, ot });
+    }
   }
 
   const prevMonth = () => { if (month === 0) { setYear(y => y - 1); setMonth(11); } else setMonth(m => m - 1); };
@@ -2028,7 +2033,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover, c
         {onlyShiftPending && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12, padding: '10px 12px', borderRadius: 8,
             background: isDark ? '#4a3a1a' : '#fff8e1', border: `1px solid ${isDark ? '#7a5a1a' : '#f0c36d'}`, color: isDark ? '#ffcf8f' : '#b7770d' }}>
-            <span style={{ fontSize: 13, fontWeight: 'bold' }}>🔁 シフト調整がまだの休暇だけを表示しています</span>
+            <span style={{ fontSize: 13, fontWeight: 'bold' }}>🔁 下の一覧に、シフト調整がまだの休暇だけを出しています</span>
             <button type="button" onClick={() => setOnlyShiftPending(false)}
               style={{ padding: '4px 12px', borderRadius: 12, fontSize: 11.5, cursor: 'pointer', border: `1px solid ${isDark ? '#7a5a1a' : '#f0c36d'}`, background: 'transparent', color: 'inherit' }}>
               すべて表示

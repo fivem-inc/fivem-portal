@@ -2965,6 +2965,24 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   };
   const [replaceDraftFor, setReplaceDraftFor] = useState<string | null>(null);
 
+  /** 休暇の依頼から、日付とメモを入れた状態で休暇申請の画面へ移る。
+   *  🚨 休暇は複数日を1件で申請できるので、依頼の日付を全部入れる（残業は1日ずつ）。
+   *  🚨 書きかけの下書きは黙って消さない（残業側と同じ流儀）。 */
+  const startLeaveFromRequest = (r: MyAppRequest) => {
+    const cur = loadDraft<Record<string, unknown>>(DRAFT_KEYS.leave);
+    const hasDraft = !!cur && Array.isArray(cur.selectedDates) && (cur.selectedDates as string[]).length > 0;
+    if (hasDraft && replaceDraftFor !== r.id) { setReplaceDraftFor(r.id); return; }
+    setReplaceDraftFor(null);
+    saveDraft(DRAFT_KEYS.leave, {
+      leaveType: '有給休暇', leaveTypeOther: '',
+      selectedDates: (r.target_dates ?? []),
+      dateLocations: {}, purpose: r.memo ?? '', notes: '',
+      choseiSubType: 'furikae', choseiOriginDates: [], originLocations: {},
+      selectedApproverId: r.requester_id,
+    });
+    window.location.href = '/leave';
+  };
+
   /** 依頼に「対応しない」と答える */
   const dismissRequest = async (id: string) => {
     setAppReqErr('');
@@ -3920,7 +3938,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                               ) : (
                                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                                   {r.kind === 'leave' ? (
-                                    <a href="/leave" style={{ flex: 1, minWidth: 140, textAlign: 'center', padding: '10px 0', borderRadius: 8, textDecoration: 'none', fontSize: 13, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>休暇を申請する</a>
+                                    <button onClick={() => startLeaveFromRequest(r)}
+                                      style={{ flex: 1, minWidth: 140, padding: '10px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>休暇を申請する</button>
                                   ) : (
                                     <button onClick={() => startFromRequest(r)}
                                       style={{ flex: 1, minWidth: 140, padding: '10px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>この内容で申請する</button>
