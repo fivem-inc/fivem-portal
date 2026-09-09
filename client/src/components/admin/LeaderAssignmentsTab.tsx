@@ -13,7 +13,7 @@ interface LeaderAssignment {
 const emptyForm = { course: '', school: '', leader: '', manager: '', display_order: 0 };
 
 const LeaderAssignmentsTab: React.FC = () => {
-  const { isDarkMode, supabase, setSuccessMsg } = useAdminPanel();
+  const { isDarkMode, supabase, setSuccessMsg, setErrorMsg } = useAdminPanel();
   const [items, setItems] = useState<LeaderAssignment[]>([]);
   const [loading, setLoading] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -61,12 +61,12 @@ const LeaderAssignmentsTab: React.FC = () => {
           course: form.course, school: form.school, leader: form.leader, manager: form.manager, display_order: form.display_order,
           updated_at: new Date().toISOString(),
         }).eq('id', editingId);
-        if (error) { setSuccessMsg('⚠️ 更新に失敗しました: ' + error.message); return; }
+        if (error) { setErrorMsg('⚠️ 更新に失敗しました: ' + error.message); return; }
       } else {
         const { error } = await supabase.from('leader_assignments').insert({
           course: form.course, school: form.school, leader: form.leader, manager: form.manager, display_order: form.display_order,
         });
-        if (error) { setSuccessMsg('⚠️ 追加に失敗しました: ' + error.message); return; }
+        if (error) { setErrorMsg('⚠️ 追加に失敗しました: ' + error.message); return; }
       }
       cancelEdit();
       fetchItems();
@@ -82,7 +82,7 @@ const LeaderAssignmentsTab: React.FC = () => {
     setIsProcessing(true);
     try {
       const { error } = await supabase.from('leader_assignments').delete().eq('id', id);
-      if (error) { setSuccessMsg('⚠️ 削除に失敗しました: ' + error.message); return; }
+      if (error) { setErrorMsg('⚠️ 削除に失敗しました: ' + error.message); return; }
       fetchItems();
       setSuccessMsg('削除しました');
     } finally {

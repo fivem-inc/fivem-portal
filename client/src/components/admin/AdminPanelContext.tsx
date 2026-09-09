@@ -215,6 +215,12 @@ export interface AdminPanelContextType {
   // Success banner
   successMsg: string | null;
   setSuccessMsg: (msg: string | null) => void;
+  /** 画面上部の知らせの種類。ok=薄緑（3秒で消える）／fail=薄赤／partial=薄黄（どちらも消えない） */
+  noticeKind: 'ok' | 'fail' | 'partial';
+  /** 失敗を出す。🚨 失敗を setSuccessMsg で流すと、緑の ✓ カードで出て3秒で消える */
+  setErrorMsg: (msg: string | null) => void;
+  /** 本体は成功したが後続だけ失敗したときに出す（例：受理はできたがカレンダーを消せなかった） */
+  setPartialMsg: (msg: string | null) => void;
 
   // Utilities
   formatAmount: typeof formatAmount;
@@ -328,14 +334,30 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const [expenseTypeLabels, setExpenseTypeLabels] = useState<{ id: number; value: string; sort_order: number }[]>([]);
   const [renamingExpenseTypeLabelId, setRenamingExpenseTypeLabelId] = useState<number | null>(null);
   const [renamingExpenseTypeLabelValue, setRenamingExpenseTypeLabelValue] = useState('');
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  // 画面の上に出す1行の知らせ。3つの意味を1つの入れ物で持つ。
+  // 🚨 2026-09-09 まで、失敗も setSuccessMsg で流していた（17箇所）。
+  //    その結果「追加に失敗しました」が **✓ の緑カード** で出て、しかも
+  //    3秒で勝手に消えていた。「カレンダーを確認してください」のような
+  //    手で直してほしい指示まで、読み終える前に消えていた。
+  // ・ok      … 成功（薄緑・3秒で自動的に消える。従来どおり）
+  // ・fail    … 失敗（薄赤・自動では消さない。✕ を押すまで残す）
+  // ・partial … 本体は成功したが、後続（カレンダー・メール等）だけ失敗（薄黄・消さない）
+  //   🚨 partial を fail（赤）で出さないこと。本体は成立しているので、
+  //      赤にすると「できなかった」と読まれて逆向きの誤解になる。
+  const [successMsg, setSuccessMsgRaw] = useState<string | null>(null);
+  const [noticeKind, setNoticeKind] = useState<'ok' | 'fail' | 'partial'>('ok');
+  const setSuccessMsg = useCallback((msg: string | null) => { setNoticeKind('ok'); setSuccessMsgRaw(msg); }, []);
+  const setErrorMsg   = useCallback((msg: string | null) => { setNoticeKind('fail'); setSuccessMsgRaw(msg); }, []);
+  const setPartialMsg = useCallback((msg: string | null) => { setNoticeKind('partial'); setSuccessMsgRaw(msg); }, []);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null); // 共通インライン確認（window.confirm廃止）
   const [promptDialog, setPromptDialog] = useState<{ message: string; placeholder?: string; confirmLabel?: string; requireValue?: string; onSubmit: (value: string) => void } | null>(null); // 入力ダイアログ（window.prompt廃止）
   const [promptValue, setPromptValue] = useState('');
 
   useEffect(() => {
-    if (successMsg) { const t = setTimeout(() => setSuccessMsg(null), 3000); return () => clearTimeout(t); }
-  }, [successMsg]);
+    // 🚨 自動で消すのは成功のときだけ。失敗と部分成功は、読んで ✕ を押すまで残す
+    //    （読み終える前に消える知らせは、出していないのとほぼ同じ）
+    if (successMsg && noticeKind === 'ok') { const t = setTimeout(() => setSuccessMsgRaw(null), 3000); return () => clearTimeout(t); }
+  }, [successMsg, noticeKind]);
 
   useEffect(() => {
     if (purchaseCsvError) { const t = setTimeout(() => setPurchaseCsvError(null), 5000); return () => clearTimeout(t); }
@@ -369,7 +391,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     if (workplaceOptions.some(w => w.value === name)) { setSuccessMsg('同じ名前の行き先がすでに存在します'); return; }
     const maxOrder = workplaceOptions.reduce((m, w) => Math.max(m, w.sort_order), 0);
     const { error } = await supabase.from('master_options').insert({ category: 'workplace', value: name, sort_order: maxOrder + 1 });
-    if (error) { setSuccessMsg('追加に失敗しました: ' + error.message); return; }
+    if (error) { setErrorMsg('追加に失敗しました: ' + error.message); return; }
     setNewWorkplaceName('');
     await fetchLocationEditor();
   };
@@ -377,7 +399,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const handleDeleteWorkplace = async (id: number) => {
     setConfirmDialog({ message: 'この行き先を削除しますか？', onConfirm: async () => {
       const { error } = await supabase.from('master_options').delete().eq('id', id);
-      if (error) { setSuccessMsg('削除に失敗しました: ' + error.message); return; }
+      if (error) { setErrorMsg('削除に失敗しました: ' + error.message); return; }
       await fetchLocationEditor();
     } });
   };
@@ -388,7 +410,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     if (customExpenseTypes.some(t => t.value === name)) { setSuccessMsg('同じ名前の区分がすでに存在します'); return; }
     const maxOrder = customExpenseTypes.reduce((m, t) => Math.max(m, t.sort_order), 0);
     const { error } = await supabase.from('master_options').insert({ category: 'expense_type', value: name, sort_order: maxOrder + 1 });
-    if (error) { setSuccessMsg('追加に失敗しました: ' + error.message); return; }
+    if (error) { setErrorMsg('追加に失敗しました: ' + error.message); return; }
     setNewExpenseTypeName('');
     await fetchLocationEditor();
   };
@@ -397,7 +419,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     const newLabel = renamingExpenseTypeLabelValue.trim();
     if (!newLabel) { setRenamingExpenseTypeLabelId(null); return; }
     const { error } = await supabase.from('master_options').update({ value: newLabel }).eq('id', id);
-    if (error) { setSuccessMsg('更新に失敗しました: ' + error.message); return; }
+    if (error) { setErrorMsg('更新に失敗しました: ' + error.message); return; }
     setRenamingExpenseTypeLabelId(null);
     setRenamingExpenseTypeLabelValue('');
     await fetchLocationEditor();
@@ -406,7 +428,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const handleDeleteExpenseType = async (id: number) => {
     setConfirmDialog({ message: 'この区分を削除しますか？', onConfirm: async () => {
       const { error } = await supabase.from('master_options').delete().eq('id', id);
-      if (error) { setSuccessMsg('削除に失敗しました: ' + error.message); return; }
+      if (error) { setErrorMsg('削除に失敗しました: ' + error.message); return; }
       await fetchLocationEditor();
     } });
   };
@@ -417,7 +439,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     if (tripCategories.some(c => c.value === name)) { setSuccessMsg('同じ名前の区分がすでに存在します'); return; }
     const maxOrder = tripCategories.reduce((m, c) => Math.max(m, c.sort_order), 0);
     const { error } = await supabase.from('master_options').insert({ category: 'trip_category', value: name, sort_order: maxOrder + 1 });
-    if (error) { setSuccessMsg('追加に失敗しました: ' + error.message); return; }
+    if (error) { setErrorMsg('追加に失敗しました: ' + error.message); return; }
     setNewCategoryName('');
     await fetchLocationEditor();
   };
@@ -447,7 +469,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     const cat = `trip_location_${categoryName}`;
     const maxOrder = locationOptions.filter(o => o.category === cat).reduce((m, o) => Math.max(m, o.sort_order), 0);
     const { error } = await supabase.from('master_options').insert({ category: cat, value, sort_order: maxOrder + 1 });
-    if (error) { setSuccessMsg('追加に失敗しました: ' + error.message); return; }
+    if (error) { setErrorMsg('追加に失敗しました: ' + error.message); return; }
     setNewLocationByCategory(prev => ({ ...prev, [categoryName]: '' }));
     await fetchLocationEditor();
   };
@@ -455,7 +477,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const handleDeleteLocation = async (id: number) => {
     setConfirmDialog({ message: 'この場所を削除しますか？', onConfirm: async () => {
       const { error } = await supabase.from('master_options').delete().eq('id', id);
-      if (error) { setSuccessMsg('削除に失敗しました: ' + error.message); return; }
+      if (error) { setErrorMsg('削除に失敗しました: ' + error.message); return; }
       await fetchLocationEditor();
     } });
   };
@@ -485,7 +507,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
         .order('sort_order', { ascending: true, nullsFirst: false });
       if (error) {
         console.error('ユーザー取得エラー:', error);
-        setSuccessMsg('ユーザー情報の取得に失敗しました: ' + error.message);
+        setErrorMsg('ユーザー情報の取得に失敗しました: ' + error.message);
       } else {
         setUsers(data || []);
       }
@@ -552,7 +574,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     try {
       const { error: profileError } = await supabase.from('profiles').update({ name: editName.trim() || null }).eq('id', userId);
       if (profileError) {
-        setSuccessMsg('名前の更新に失敗しました: ' + profileError.message);
+        setErrorMsg('名前の更新に失敗しました: ' + profileError.message);
       } else {
         // ここには以前 update_user_metadata（ログイン情報側の表示名を書き換える処理）の
         // 呼び出しがあったが、その関数は本番DBに存在せず、しかも supabase.rpc は
@@ -574,14 +596,14 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     const action = currentIsActive ? '退職済みにします' : '現役に戻します';
     setConfirmDialog({ message: `このユーザーを${action}。よろしいですか？`, onConfirm: async () => {
       const { error } = await supabase.from('profiles').update({ is_active: !currentIsActive }).eq('id', userId);
-      if (error) { setSuccessMsg('更新に失敗しました: ' + error.message); } else { fetchUsers(); }
+      if (error) { setErrorMsg('更新に失敗しました: ' + error.message); } else { fetchUsers(); }
     } });
   }, [fetchUsers]);
 
   const handleDeleteUser = useCallback(async (userId: string, userName: string) => {
     setConfirmDialog({ message: `「${userName}」を完全に削除します。ログイン情報も含めて削除され、この操作は取り消せません。よろしいですか？`, onConfirm: async () => {
       const { data, error } = await supabase.functions.invoke('delete-user', { body: { userId } });
-      if (error || data?.error) { setSuccessMsg('削除に失敗しました: ' + (data?.error || error?.message)); } else { setSuccessMsg('削除しました'); fetchUsers(); }
+      if (error || data?.error) { setErrorMsg('削除に失敗しました: ' + (data?.error || error?.message)); } else { setSuccessMsg('削除しました'); fetchUsers(); }
     } });
   }, [fetchUsers]);
 
@@ -599,7 +621,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const handleRejectPendingUser = useCallback(async (userId: string) => {
     const { data, error } = await supabase.functions.invoke('delete-user', { body: { userId } });
     if (error || data?.error) {
-      setSuccessMsg('⚠️ 拒否できませんでした: ' + (data?.error || error?.message));
+      setErrorMsg('⚠️ 拒否できませんでした: ' + (data?.error || error?.message));
       return;
     }
     setSuccessMsg('登録を拒否し、アカウントを削除しました');
@@ -908,7 +930,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     else if (newStatus === 'rejected') { updateData.rejected_at = new Date().toISOString(); updateData.approved_at = null; updateData.rejected_reason = reason || null; }
     else { updateData.approved_at = null; updateData.rejected_at = null; updateData.rejected_reason = null; }
     const { error } = await supabase.from('expenses').update(updateData).eq('id', id);
-    if (error) { setSuccessMsg('更新に失敗しました: ' + error.message); }
+    if (error) { setErrorMsg('更新に失敗しました: ' + error.message); }
     else { setSuccessMsg(`ステータスを「${newStatus === 'pending' ? '申請中' : newStatus === 'approved' ? '承認' : '却下'}」に更新しました`); onRefresh(); }
   }, [onRefresh]);
 
@@ -1081,7 +1103,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       const currentEditCount = currentData?.edit_count || 0;
       const updateData = { expenses_data: editingExpenses, last_edited_at: new Date().toISOString(), last_edited_by: '管理者', edit_count: currentEditCount + 1 };
       const { error } = await supabase.from('expenses').update(updateData).eq('id', submissionId);
-      if (error) { setSuccessMsg('更新に失敗しました: ' + error.message); }
+      if (error) { setErrorMsg('更新に失敗しました: ' + error.message); }
       else { setSuccessMsg('申請内容を更新しました'); setEditingSubmissionId(null); setEditingExpenses([]); onRefresh(); }
     } });
   }, [editingExpenses, onRefresh]);
@@ -1094,7 +1116,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     setPromptValue('');
     setPromptDialog({ message: '本当にこの申請を削除しますか？\n削除するには「削除」と入力してください。', placeholder: '削除', requireValue: '削除', confirmLabel: '削除する', onSubmit: async () => {
       const { error } = await supabase.from('expenses').delete().eq('id', id);
-      if (error) { setSuccessMsg('削除に失敗しました: ' + error.message); } else { setSuccessMsg('申請を削除しました'); onRefresh(); }
+      if (error) { setErrorMsg('削除に失敗しました: ' + error.message); } else { setSuccessMsg('申請を削除しました'); onRefresh(); }
     } });
   }, [onRefresh]);
 
@@ -1104,7 +1126,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     if (csvStartDate) query = query.gte(dateField, `${csvStartDate}T00:00:00Z`);
     if (csvEndDate) query = query.lte(dateField, `${csvEndDate}T23:59:59Z`);
     const { data, error } = await query.order(dateField, { ascending: true });
-    if (error) { setSuccessMsg('CSV出力に失敗しました。'); return; }
+    if (error) { setErrorMsg('CSV出力に失敗しました。'); return; }
     if (!data || data.length === 0) { setSuccessMsg('承認済みの交通費がありません。'); return; }
     downloadCSV(generateCSVData(data));
     setSuccessMsg('CSVを出力しました');
@@ -1400,7 +1422,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       adminSelectingManagerFor, setAdminSelectingManagerFor,
       adminManagerList, setAdminManagerList, adminSelectedManagerId, setAdminSelectedManagerId,
       fetchLeaveRequests,
-      successMsg, setSuccessMsg,
+      successMsg, setSuccessMsg, noticeKind, setErrorMsg, setPartialMsg,
       formatAmount, supabase, sendLeaveSlack,
     }}>
       {confirmDialog && (

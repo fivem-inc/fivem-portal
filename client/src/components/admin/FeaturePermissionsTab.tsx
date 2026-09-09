@@ -58,7 +58,7 @@ const FEATURES = [
 ] as const;
 
 const FeaturePermissionsTab: React.FC = () => {
-  const { isDarkMode, supabase, setSuccessMsg } = useAdminPanel();
+  const { isDarkMode, supabase, setSuccessMsg, setErrorMsg } = useAdminPanel();
 
   const [roles, setRoles] = useState<Role[]>([]);
   const [perms, setPerms] = useState<Record<string, Record<string, boolean>>>({});
@@ -198,7 +198,7 @@ const FeaturePermissionsTab: React.FC = () => {
       supabase.from('app_settings').upsert({ key: 'feature_published_president', value: publishedPresident, updated_at: new Date().toISOString() }, { onConflict: 'key' }),
     ]);
     setSaving(false);
-    if (error || pubError || pubLeaderError || pubPresError) { setSuccessMsg('⚠️ 保存に失敗しました: ' + (error?.message || pubError?.message || pubLeaderError?.message || pubPresError?.message)); return; }
+    if (error || pubError || pubLeaderError || pubPresError) { setErrorMsg('⚠️ 保存に失敗しました: ' + (error?.message || pubError?.message || pubLeaderError?.message || pubPresError?.message)); return; }
     setSavedPerms(JSON.parse(JSON.stringify(perms)));
     setSavedPublished({ ...published });
     setSavedPublishedLeader({ ...publishedLeader });
@@ -240,7 +240,7 @@ const FeaturePermissionsTab: React.FC = () => {
       .insert({ name, sort_order: newOrder, is_fixed: false })
       .select()
       .single();
-    if (error || !data) { setSuccessMsg('⚠️ 追加に失敗しました'); setAddingRole(false); return; }
+    if (error || !data) { setErrorMsg('⚠️ 追加に失敗しました'); setAddingRole(false); return; }
     await supabase.from('feature_permissions').insert(
       FEATURES.map(f => ({ role_id: data.id, feature_key: f.key, enabled: false }))
     );

@@ -81,7 +81,7 @@ const LeaveRequestsTab: React.FC = () => {
     isDarkMode, leaveRequests, loadingLeaveRequests, leaveStatusFilter, setLeaveStatusFilter,
     users, fetchLeaveRequests, fetchUsers,
     setAdminManagerList, setAdminSelectedManagerId, setAdminSelectingManagerFor,
-    sendLeaveSlack, supabase, setSuccessMsg, focusTarget, setFocusTarget,
+    sendLeaveSlack, supabase, setSuccessMsg, setErrorMsg, setPartialMsg, focusTarget, setFocusTarget,
   } = ctx;
   const { user: authUser } = useAuth();
 
@@ -194,7 +194,7 @@ const LeaveRequestsTab: React.FC = () => {
       if (leaveCsvTo)   query = query.lte('created_at', leaveCsvTo + 'T23:59:59');
     }
     const { data } = await query;
-    if (!data || data.length === 0) { setLeaveCsvExporting(false); setSuccessMsg('⚠️ データがありません'); return; }
+    if (!data || data.length === 0) { setLeaveCsvExporting(false); setErrorMsg('データがありません'); return; }
     const ids = [...new Set([
       ...data.map((r: AdminLeaveRequest) => r.user_id),
       ...data.map((r: AdminLeaveRequest) => r.approver_id).filter(Boolean),
@@ -365,16 +365,16 @@ const LeaveRequestsTab: React.FC = () => {
     const childErr = child.find(r => r.error)?.error;
     if (childErr) {
       setEncDeleting(false); setEncDeleteId(null);
-      setSuccessMsg(`⚠️ 削除に失敗しました：${childErr.message}`);
+      setErrorMsg(`削除に失敗しました：${childErr.message}`);
       return;
     }
     // 奨励日本体。RLSで拒否されると error なしで0件になることがあるため .select() で実削除を確認
     const { data: deleted, error: dayErr } = await supabase
       .from('paid_leave_encouragement_days').delete().eq('id', day.id).select('id');
     setEncDeleting(false); setEncDeleteId(null);
-    if (dayErr) { setSuccessMsg(`⚠️ 削除に失敗しました：${dayErr.message}`); return; }
+    if (dayErr) { setErrorMsg(`削除に失敗しました：${dayErr.message}`); return; }
     if (!deleted || deleted.length === 0) {
-      setSuccessMsg('⚠️ 奨励日を削除できませんでした（権限/RLSの可能性）。管理者権限をご確認ください。');
+      setErrorMsg('奨励日を削除できませんでした（権限/RLSの可能性）。管理者権限をご確認ください。');
       fetchEncDays();
       return;
     }
@@ -409,7 +409,7 @@ const LeaveRequestsTab: React.FC = () => {
     const sr = syncRes as { success?: boolean } | null;
     if (syncErr || sr?.success === false) {
       console.error('[gcal-sync] 勤怠の削除失敗:', syncErr);
-      setSuccessMsg('⚠️ 取消しましたが、Googleカレンダーからの削除に失敗しました。カレンダーを確認してください。');
+      setPartialMsg('取消しましたが、Googleカレンダーからの削除に失敗しました。カレンダーを確認してください。');
     }
     // 取消したことをリーダー以上へ通知（通知設定 attendance:cancelled に従う）。
     // 勤怠カレンダー側の取消と同じ処理。片方だけに入れると「その画面から消したときは通知が来ない」ことになる
@@ -684,7 +684,7 @@ const LeaveRequestsTab: React.FC = () => {
                         .from('paid_leave_encouragement_days')
                         .insert({ fiscal_year: fy, target_date: encCreateDate, deadline: encCreateDeadline, created_by: authUser?.id })
                         .select('id').single();
-                      if (error || !newDay) { setSuccessMsg('⚠️ 作成に失敗しました: ' + error?.message); setEncCreating(false); return; }
+                      if (error || !newDay) { setErrorMsg('作成に失敗しました: ' + error?.message); setEncCreating(false); return; }
                       await supabase.from('paid_leave_encouragement_targets').insert(
                         encCreateTargets.map(uid => ({ encouragement_day_id: newDay.id, user_id: uid }))
                       );
@@ -1072,14 +1072,14 @@ const LeaveRequestsTab: React.FC = () => {
                     onClick={() => {
                       const sel = document.getElementById('part-leave-target') as HTMLSelectElement;
                       const userId = sel?.value;
-                      if (!userId) { setSuccessMsg('⚠️ パートを選択してください'); return; }
+                      if (!userId) { setErrorMsg('パートを選択してください'); return; }
                       const target = partUsers.find(u => u.id === userId);
                       if (!target) return;
                       setConfirmDialog({ message: `「${target.name || target.email}」さんに有給申請フォームを送信しますか？`, onConfirm: async () => {
                         // 🚨 直接UPDATEしない。profiles の直接更新はRLSで管理者のみに絞ってあるため、
                         //    リーダー・マネージャーからも呼べる RPC 経由にする（2026-08-10）
                         const { error } = await supabase.rpc('set_leave_request_enabled', { p_user_id: userId, p_enabled: true });
-                        if (error) { setSuccessMsg('⚠️ 送信に失敗しました: ' + error.message); return; }
+                        if (error) { setErrorMsg('送信に失敗しました: ' + error.message); return; }
                         await fetchUsers();
                         setSuccessMsg(`「${target.name || target.email}」さんに送信しました`);
                       } });
@@ -1525,8 +1525,11 @@ const LeaveRequestsTab: React.FC = () => {
                                         const nextStatus: Record<string, string> = { step2_pending: isChosei ? 'approved' : 'manager_approved', manager_approved: 'admin_approved', admin_approved: 'approved' };
                                         const nextSt = nextStatus[req.status] || 'approved';
                                         // 二重受理防止（楽観ロック）：自分が見た状態と一致する時だけ更新
-                                        const { data: locked } = await supabase.from('leave_requests').update({ status: nextSt }).eq('id', req.id).eq('status', req.status).select('id');
-                                        if (!locked || locked.length === 0) { setSuccessMsg('⚠️ この申請は他の受理者が先に処理したため、最新の状態に更新しました'); fetchLeaveRequests(); return; }
+                                        // 🚨 error も見る。見ないと、通信やRLSの失敗まで
+                                        //    「他の受理者が先に処理した」と誤って伝えることになる（data は null で0件に見えるため）
+                                        const { data: locked, error: lockErr } = await supabase.from('leave_requests').update({ status: nextSt }).eq('id', req.id).eq('status', req.status).select('id');
+                                        if (lockErr) { setErrorMsg('受理に失敗しました：' + lockErr.message); return; }
+                                        if (!locked || locked.length === 0) { setErrorMsg('この申請は他の受理者が先に処理したため、最新の状態に更新しました'); fetchLeaveRequests(); return; }
 
                                         // 🚨 受理はDBで確定済み。画面の更新は通知（数秒かかる）より先に行う
                                         setSuccessMsg('受理しました');
@@ -1604,7 +1607,7 @@ const LeaveRequestsTab: React.FC = () => {
                                         }
                                         } catch (e) {
                                           console.error('[leave] 受理後の通知に失敗:', e);
-                                          setSuccessMsg('⚠️ 受理しましたが、通知の送信に失敗しました。相手に直接お知らせしてください。');
+                                          setPartialMsg('受理しましたが、通知の送信に失敗しました。相手に直接お知らせしてください。');
                                         }
                                         } });
                                       }
@@ -1623,9 +1626,9 @@ const LeaveRequestsTab: React.FC = () => {
                                     // 🚨 削除件数を必ず見る。RLSで0件でもエラーは返らないため、
                                     // 権限が足りないと「消えたように見えて実は残っている」ことになる
                                     const { data: deleted, error } = await supabase.from('leave_requests').delete().eq('id', req.id).select('id');
-                                    if (error) { setSuccessMsg('⚠️ 削除に失敗しました: ' + error.message); return; }
+                                    if (error) { setErrorMsg('削除に失敗しました: ' + error.message); return; }
                                     if (!deleted || deleted.length === 0) {
-                                      setSuccessMsg('⚠️ 削除できませんでした（権限/RLSの可能性）。管理者アカウントでログインしているかご確認ください。');
+                                      setErrorMsg('削除できませんでした（権限/RLSの可能性）。管理者アカウントでログインしているかご確認ください。');
                                       fetchLeaveRequests();
                                       return;
                                     }
@@ -1876,7 +1879,7 @@ const LeaveRequestsTab: React.FC = () => {
                           if (rejectFail) { setModalError(rejectFail); return; }
                           // 差戻し元のカレンダーイベントを削除（ここから先は差し戻しがDBで確定済み）
                           if (!(await deleteLeaveGcal(rejectModal.id))) {
-                            setSuccessMsg(describePartial('差し戻し', 'Googleカレンダーからの削除に失敗しました'));
+                            setPartialMsg(describePartial('差し戻し', 'Googleカレンダーからの削除に失敗しました'));
                           }
                           if (rejectNewType) {
                             // 種別変更あり → 新申請を受理済みで自動作成
@@ -1952,7 +1955,7 @@ const LeaveRequestsTab: React.FC = () => {
                           if (cancelFail) { setModalError(cancelFail); return; }
                           // カレンダーから削除（ここから先は取り消しがDBで確定済み）
                           if (!(await deleteLeaveGcal(rejectModal.id))) {
-                            setSuccessMsg(describePartial('受理の取り消し', 'Googleカレンダーからの削除に失敗しました'));
+                            setPartialMsg(describePartial('受理の取り消し', 'Googleカレンダーからの削除に失敗しました'));
                           }
                           // 社長（宛先で「社長」を選んだ場合の届け先。複数人いても全員に届ける）
                           const cancelType = rejectModal.leave_type === 'その他' ? (rejectModal.leave_type_other || 'その他') : rejectModal.leave_type;

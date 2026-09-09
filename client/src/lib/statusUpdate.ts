@@ -16,10 +16,14 @@
 // 🚨 このファイルは supabase を import しない（クエリは呼び出し側から渡す）。
 //    画面を開かずに検算できる形を保つため。
 
+import { isTransientFailure } from './netFailure';
+
 /** update(...).select('id') の戻りだけを受け取れる、最小の形 */
 export interface UpdateOutcome {
   data: { id: string }[] | null;
   error: { message: string; code?: string } | null;
+  /** supabase が返す HTTP ステータス。0/未設定＝通信が届かなかった。渡すと文言が変わる */
+  status?: number | null;
 }
 
 /**
@@ -44,7 +48,17 @@ export function describeUpdate(
   actionLabel: string,
   zeroReason: ZeroRowReason,
 ): string | null {
-  if (outcome.error) return `${actionLabel}に失敗しました：${outcome.error.message}`;
+  if (outcome.error) {
+    // 🚨 「もう一度で直る失敗」と「何度やっても直らない失敗」を言い分ける。
+    //    利用者がすべきことが正反対で、これを混ぜると
+    //    直る失敗なのに諦めさせ、直らない失敗を延々と押させることになる。
+    //    判定は lib/netFailure.ts の1本に任せる（文字列で判定しない。
+    //    iPhone Safari の失敗は "Load failed" で "fetch" も "network" も入らないため）。
+    if (isTransientFailure(outcome.status, outcome.error)) {
+      return `通信が不安定なようです。少し待ってから、もう一度お試しください（${actionLabel}は行われていません）`;
+    }
+    return `${actionLabel}に失敗しました：${outcome.error.message}`;
+  }
   if (!outcome.data || outcome.data.length === 0) {
     return zeroReason === 'competing'
       // 文言は purchaseApprovalActions.ts の既存のものに合わせる（2か所に別の言い方を作らない）

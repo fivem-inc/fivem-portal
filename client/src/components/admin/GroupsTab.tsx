@@ -3,7 +3,7 @@ import { useAdminPanel } from './AdminPanelContext';
 
 const GroupsTab: React.FC = () => {
   const ctx = useAdminPanel();
-  const { isDarkMode, selectedGroup, setSelectedGroup, editingGroupName, setEditingGroupName, editGroupNameValue, setEditGroupNameValue, newGroupName, setNewGroupName, showAddGroup, setShowAddGroup, masterOptions, users, setUsers, isUserEditMode, setIsUserEditMode, fetchMasterOptions, fetchUsers, supabase, setSuccessMsg } = ctx;
+  const { isDarkMode, selectedGroup, setSelectedGroup, editingGroupName, setEditingGroupName, editGroupNameValue, setEditGroupNameValue, newGroupName, setNewGroupName, showAddGroup, setShowAddGroup, masterOptions, users, setUsers, isUserEditMode, setIsUserEditMode, fetchMasterOptions, fetchUsers, supabase, setErrorMsg } = ctx;
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null); // 共通インライン確認（confirm廃止）
 
   return (
@@ -86,7 +86,7 @@ const GroupsTab: React.FC = () => {
                         if (!newGroupName.trim()) return;
                         const maxOrder = masterOptions.group.length + 1;
                         const { error } = await supabase.from('master_options').insert({ category: 'group', value: newGroupName.trim(), sort_order: maxOrder });
-                        if (error) { setSuccessMsg('⚠️ グループの追加に失敗しました。' + error.message); return; }
+                        if (error) { setErrorMsg('⚠️ グループの追加に失敗しました。' + error.message); return; }
                         await fetchMasterOptions();
                         setNewGroupName('');
                         setShowAddGroup(false);

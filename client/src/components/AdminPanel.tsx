@@ -45,7 +45,7 @@ const AdminPanelContent: React.FC = () => {
     workplaceOptions, newWorkplaceName, setNewWorkplaceName, handleAddWorkplace, handleDeleteWorkplace,
     customExpenseTypes, newExpenseTypeName, setNewExpenseTypeName, handleAddExpenseType, handleDeleteExpenseType,
     expenseTypeLabels, renamingExpenseTypeLabelId, setRenamingExpenseTypeLabelId, renamingExpenseTypeLabelValue, setRenamingExpenseTypeLabelValue, handleRenameExpenseTypeLabel,
-    successMsg, setSuccessMsg,
+    successMsg, setSuccessMsg, noticeKind,
     pendingUsers, pendingLeaveRequests,
   } = useAdminPanel();
 
@@ -104,13 +104,23 @@ const AdminPanelContent: React.FC = () => {
           )}
         </div>
       )}
-      {successMsg && (
-        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 240 }}>
-          <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>✓</div>
-          <span style={{ fontSize: 15, fontWeight: 'bold', color: '#166534' }}>{successMsg}</span>
-          <button type="button" onClick={() => setSuccessMsg(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#166534', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
-        </div>
-      )}
+      {/* 画面上部の知らせ。🚨 2026-09-09 まで、失敗もここに緑の ✓ カードで出ていた。
+          配色は 🎨🔒 の固定色（成功＝薄緑／エラー＝薄赤／部分成功＝薄黄）。
+          ダーク用の出し分けは書かない。 */}
+      {successMsg && (() => {
+        const look = noticeKind === 'fail'
+          ? { bg: '#f8d7da', border: '#f5c2c7', icon: '#dc3545', mark: '!', text: '#842029' }
+          : noticeKind === 'partial'
+            ? { bg: '#fffbeb', border: '#fcd34d', icon: '#f59e0b', mark: '!', text: '#92400e' }
+            : { bg: '#f0fdf4', border: '#86efac', icon: '#22c55e', mark: '✓', text: '#166534' };
+        return (
+          <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: look.bg, border: `1px solid ${look.border}`, borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 240, maxWidth: 460 }}>
+            <div style={{ width: 36, height: 36, borderRadius: '50%', background: look.icon, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>{look.mark}</div>
+            <span style={{ fontSize: 15, fontWeight: 'bold', color: look.text }}>{successMsg}</span>
+            <button type="button" onClick={() => setSuccessMsg(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: look.text, cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
+          </div>
+        );
+      })()}
       <style>{`
         @keyframes spin {
           0% { transform: rotate(0deg); }

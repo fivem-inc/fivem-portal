@@ -7,7 +7,7 @@ import { tripTypeColor, tripCategoryLabel, formatTripNextDates } from '../../lib
 
 const TripReportsTab: React.FC = () => {
   const ctx = useAdminPanel();
-  const { isDarkMode, tripReports, loadingTripReports, expandedTripYearMonths, setExpandedTripYearMonths, tripReportFilter, setTripReportFilter, setShowLocationEditor, fetchTripReports, fetchLocationEditor, supabase, setSuccessMsg } = ctx;
+  const { isDarkMode, tripReports, loadingTripReports, expandedTripYearMonths, setExpandedTripYearMonths, tripReportFilter, setTripReportFilter, setShowLocationEditor, fetchTripReports, fetchLocationEditor, supabase, setErrorMsg } = ctx;
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null); // 共通インライン確認（confirm廃止）
 
   // 区分・報告者・場所での絞り込み
@@ -228,7 +228,7 @@ const TripReportsTab: React.FC = () => {
                                                     .delete()
                                                     .eq('id', report.id);
                                                   if (error) {
-                                                    setSuccessMsg('⚠️ 削除に失敗しました: ' + error.message);
+                                                    setErrorMsg('⚠️ 削除に失敗しました: ' + error.message);
                                                   } else {
                                                     fetchTripReports();
                                                   }
