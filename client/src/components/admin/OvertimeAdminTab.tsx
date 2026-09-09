@@ -17,6 +17,7 @@ import OvertimeClockInquiryPanel from './OvertimeClockInquiryPanel';
 import { OT_TYPE_INFO, isOvertimeType, isFullDayReport, canOfferCalendarChoice, willShowOnCalendar } from '../../lib/overtimeTypes';
 import { notifyOvertimeReturned, notifyOvertimeAdminCancelled, notifyOvertimeGrant, notifyOvertimeGrantDeclined } from '../../lib/overtimeNotify';
 import { toDbTime } from '../../lib/timeInput';
+import { describeUpdate } from '../../lib/statusUpdate';
 
 const OT_STATUS_LABEL: Record<string, { label: string; color: string }> = {
   requested:         { label: '事前申請', color: '#f59e0b' },
@@ -940,10 +941,15 @@ const OvertimeAdminTab: React.FC = () => {
   const doRevokeGrant = async () => {
     if (!revokeTarget) return;
     const { data: authData } = await supabase.auth.getUser();
-    await supabase.from('overtime_submission_grants')
+    // 🚨 取り消せていないのに「取り消しました」と出さない。
+    //    締め後申請の許可が残ったままだと、本人は締め切り後も申請を出せてしまう。
+    const res = await supabase.from('overtime_submission_grants')
       .update({ revoked_at: new Date().toISOString(), revoked_by: authData.user?.id })
-      .eq('id', revokeTarget.id);
+      .eq('id', revokeTarget.id).select('id');
+    const fail = describeUpdate(res, '許可の取り消し', 'missing');
+    if (fail) { setGrantErr(fail); fetchGrants(); return; }
     setRevokeTarget(null);
+    setGrantErr('');
     setGrantMsg('許可を取り消しました');
     fetchGrants();
   };

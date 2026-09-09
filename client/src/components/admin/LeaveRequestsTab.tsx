@@ -401,7 +401,12 @@ const LeaveRequestsTab: React.FC = () => {
   const handleDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
-    await supabase.from('attendance_exceptions').delete().eq('id', deleteTarget.id);
+    // 🚨 ここを検査せずに進むと、勤怠の取消がDBで通っていなくても
+    //    このあとGoogleカレンダーの予定が実際に消え、リーダー以上へ「取消」通知まで飛ぶ
+    //    （2026-09-09 に直した差し戻し・受理の取り消しとまったく同じ形）。
+    const delRes = await supabase.from('attendance_exceptions').delete().eq('id', deleteTarget.id).select('id');
+    const delFail = describeUpdate(delRes, '取消', 'missing');
+    if (delFail) { setDeleting(false); setErrorMsg(delFail); return; }
     // Googleカレンダーからも削除。invoke は 4xx/5xx でも throw しないので error を必ず見る
     const { data: syncRes, error: syncErr } = await supabase.functions.invoke('gcal-sync', {
       body: { action: 'delete', source_type: 'absence', source_id: deleteTarget.id },
@@ -1495,7 +1500,14 @@ const LeaveRequestsTab: React.FC = () => {
                                 <button
                                   onClick={() => {
                                     setConfirmDialog({ message: '差し戻しを取り消して最初に戻しますか？', onConfirm: async () => {
-                                      await supabase.from('leave_requests').update({ status: 'pending', rejected_reason: null }).eq('id', req.id);
+                                      // 🚨 このボタンは status が 'rejected' の行にしか出ないので、
+                                      //    .eq('status','rejected') を足しても人が押せる操作は減らない。
+                                      //    減るのは「一覧が古いまま押した」「他の人が先に処理した」場合だけ＝止めたい方。
+                                      const res = await supabase.from('leave_requests')
+                                        .update({ status: 'pending', rejected_reason: null })
+                                        .eq('id', req.id).eq('status', 'rejected').select('id');
+                                      const fail = describeUpdate(res, '差し戻しの取り消し', 'competing');
+                                      if (fail) { setErrorMsg(fail); fetchLeaveRequests(); return; }
                                       fetchLeaveRequests();
                                     } });
                                   }}
