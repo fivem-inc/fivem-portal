@@ -446,8 +446,19 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
 
   const handleDeleteCategory = async (id: number, name: string) => {
     setConfirmDialog({ message: `区分「${name}」と、その場所リストをすべて削除しますか？`, onConfirm: async () => {
-      await supabase.from('master_options').delete().eq('id', id);
-      await supabase.from('master_options').delete().eq('category', `trip_location_${name}`);
+      // 🚨 以前は2文に分けていた（区分を消す／その場所リストを消す）。
+      //    1文目だけ成功すると、場所リストが見えないゴミとして残る。
+      //    or でつないで**1文**にすれば、まとめて消えるか、まとめて残るかのどちらかになる。
+      const { data, error } = await supabase.from('master_options')
+        .delete()
+        .or(`id.eq.${id},category.eq.trip_location_${name}`)
+        .select('id');
+      if (error) { setErrorMsg(`削除に失敗しました：${error.message}`); return; }
+      if (!data || data.length === 0) {
+        setErrorMsg('削除できませんでした（権限が不足しているか、すでに削除されています）');
+        await fetchLocationEditor();
+        return;
+      }
       await fetchLocationEditor();
     } });
   };
@@ -455,9 +466,16 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const handleRenameCategory = async (id: number, oldName: string) => {
     const newName = renamingCategoryValue.trim();
     if (!newName || newName === oldName) { setRenamingCategoryId(null); return; }
-    if (tripCategories.some(c => c.value === newName && c.id !== id)) { setSuccessMsg('同じ名前の区分がすでに存在します'); return; }
-    await supabase.from('master_options').update({ value: newName }).eq('id', id);
-    await supabase.from('master_options').update({ category: `trip_location_${newName}` }).eq('category', `trip_location_${oldName}`);
+    if (tripCategories.some(c => c.value === newName && c.id !== id)) { setErrorMsg('同じ名前の区分がすでに存在します'); return; }
+    // 🚨 以前は2文に分けていた（区分の名前を変える／その場所リストの所属を変える）。
+    //    1文目だけ成功すると **場所リストが新しい区分から見えなくなり**、
+    //    出張報告で行き先が選べなくなる。しかも旧名がもう無いので、
+    //    もう一度押しても直らない。
+    //    → DB側の rename_trip_category() で1トランザクションにした。
+    const { error } = await supabase.rpc('rename_trip_category', {
+      p_id: id, p_old_name: oldName, p_new_name: newName,
+    });
+    if (error) { setErrorMsg(`区分の名前を変更できませんでした：${error.message}`); return; }
     setRenamingCategoryId(null);
     setRenamingCategoryValue('');
     await fetchLocationEditor();
