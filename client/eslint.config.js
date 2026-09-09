@@ -88,6 +88,12 @@ export default tseslint.config([
       'src/pages/OvertimePage.tsx',
       'src/components/OvertimeProposalResponse.tsx',
       'src/components/admin/LeaveRequestsTab.tsx',
+      // 2026-09-10 追加（連絡板・設定/マスタ）。いずれも追加後に0件であることを実測して足している
+      'src/pages/BoardPage.tsx',
+      'src/components/admin/BoardSettingsTab.tsx',
+      'src/components/admin/NotificationsTab.tsx',
+      'src/components/admin/OvertimeAdminTab.tsx',
+      'src/components/admin/GroupsTab.tsx',
     ],
     rules: {
       'no-restricted-syntax': ['error', {

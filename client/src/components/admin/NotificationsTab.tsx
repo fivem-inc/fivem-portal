@@ -5,6 +5,7 @@ import { useRoles } from '../../hooks/useRoles';
 import { rolesActingAs, roleNamesActingAs, roleNamesWhere } from '../../lib/roleAttrs';
 import type { RoleRow } from '../../lib/roleAttrs';
 import { invalidateNotificationCache } from '../../lib/notificationDispatch';
+import { describeUpdate } from '../../lib/statusUpdate';
 import PushBannerSettingsSection from './PushBannerSettingsSection';
 import GcalCalendarSection from './GcalCalendarSection';
 import LeaveShiftAlertSection from './LeaveShiftAlertSection';
@@ -602,6 +603,8 @@ const NotificationsTab: React.FC = () => {
   }, [openEvent]);
   const [saving, setSaving] = useState<string | null>(null);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  // 保存・削除に失敗した理由（✕ を押すまで消えない）。🚨 黙って成功に見せない
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null); // 共通インライン確認（confirm廃止）
 
   // テンプレートライブラリ
@@ -722,35 +725,51 @@ const NotificationsTab: React.FC = () => {
     const s = getSetting(saveAsTplFor.eventKey, saveAsTplFor.channel);
     if (!s) return;
     setTplSaving(true);
-    await supabase.from('email_templates').insert({ name: saveAsTplName.trim(), subject: s.subject, template: s.template });
+    const { error } = await supabase.from('email_templates').insert({ name: saveAsTplName.trim(), subject: s.subject, template: s.template });
+    setTplSaving(false);
+    if (error) { setErrorMsg(`テンプレートを保存できませんでした：${error.message}`); return; }
+    setErrorMsg(null);
     await fetchTemplates();
     setSaveAsTplFor(null);
     setSaveAsTplName('');
-    setTplSaving(false);
   };
 
   // テンプレート保存
   const handleSaveTpl = async (tpl: { name: string; subject: string; template: string }) => {
     if (!tpl.name.trim()) return;
     setTplSaving(true);
-    await supabase.from('email_templates').insert({ name: tpl.name, subject: tpl.subject, template: tpl.template });
+    const { error } = await supabase.from('email_templates').insert({ name: tpl.name, subject: tpl.subject, template: tpl.template });
+    setTplSaving(false);
+    if (error) { setErrorMsg(`テンプレートを保存できませんでした：${error.message}`); return; }
+    setErrorMsg(null);
     await fetchTemplates();
     setNewTpl(null);
-    setTplSaving(false);
   };
 
   const handleUpdateTpl = async () => {
     if (!editingTpl) return;
     setTplSaving(true);
-    await supabase.from('email_templates').update({ name: editingTpl.name, subject: editingTpl.subject, template: editingTpl.template }).eq('id', editingTpl.id);
+    // 🚨 update は権限で弾かれても error にならず「0件成功」で返る。件数まで見ないと、
+    //    直っていないのに編集画面が閉じ、直したつもりで使われる。
+    const fail = describeUpdate(
+      await supabase.from('email_templates').update({ name: editingTpl.name, subject: editingTpl.subject, template: editingTpl.template }).eq('id', editingTpl.id).select('id'),
+      '保存', 'missing',
+    );
+    setTplSaving(false);
+    if (fail) { setErrorMsg(fail); return; }   // 🚨 保存できていないので編集画面は閉じない
+    setErrorMsg(null);
     await fetchTemplates();
     setEditingTpl(null);
-    setTplSaving(false);
   };
 
   const handleDeleteTpl = (id: string) => {
     setConfirmDialog({ message: 'このテンプレートを削除しますか？', onConfirm: async () => {
-      await supabase.from('email_templates').delete().eq('id', id);
+      const fail = describeUpdate(
+        await supabase.from('email_templates').delete().eq('id', id).select('id'),
+        '削除', 'missing',
+      );
+      if (fail) { setErrorMsg(fail); return; }
+      setErrorMsg(null);
       await fetchTemplates();
     } });
   };
@@ -967,6 +986,13 @@ const NotificationsTab: React.FC = () => {
 
   return (
     <div style={{ maxWidth: 720, margin: '0 auto', padding: '16px 0' }}>
+      {/* 🚨 失敗は自動で消さない。色は BoardSettingsTab の失敗表示と同じもの（新しい色を足さない） */}
+      {errorMsg && (
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 9999, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 12, padding: '16px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 10, maxWidth: 360 }}>
+          <span style={{ fontSize: 13, color: '#b91c1c', lineHeight: 1.5 }}>{errorMsg}</span>
+          <button type="button" onClick={() => setErrorMsg(null)} style={{ background: 'none', border: 'none', color: '#b91c1c', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
+        </div>
+      )}
       {confirmDialog && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 5000, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setConfirmDialog(null)}>
           <div onClick={e => e.stopPropagation()} style={{ background: bg, borderRadius: 12, padding: '22px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.25)', maxWidth: 360, width: '100%' }}>
@@ -1794,6 +1820,8 @@ export const ScheduledRemindersPanel: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<ScheduledReminder | null>(null); // 削除のインライン確認（confirm禁止）
+  // 保存・削除・ON/OFF に失敗した理由（✕ を押すまで消えない）。🚨 黙って成功に見せない
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const bg = isDarkMode ? '#2c2c3e' : '#fff';
   const text = isDarkMode ? '#fff' : '#1a1a2e';
@@ -1866,24 +1894,43 @@ export const ScheduledRemindersPanel: React.FC = () => {
       send_hour: form.send_hour,
       send_minute: form.send_minute,
     };
+    // 🚨 保存できていないのにフォームを閉じると、書いた内容ごと消える。必ず結果を見てから閉じる
+    let fail: string | null = null;
     if (editingId) {
-      await supabase.from('board_scheduled_reminders').update(payload).eq('id', editingId);
+      fail = describeUpdate(
+        await supabase.from('board_scheduled_reminders').update(payload).eq('id', editingId).select('id'),
+        '保存', 'missing',
+      );
     } else {
       const { data: { user } } = await supabase.auth.getUser();
-      await supabase.from('board_scheduled_reminders').insert({ ...payload, created_by: user!.id });
+      const { error } = await supabase.from('board_scheduled_reminders').insert({ ...payload, created_by: user!.id });
+      if (error) fail = `保存に失敗しました：${error.message}`;
     }
+    setSaving(false);
+    if (fail) { setErrorMsg(fail); return; }
+    setErrorMsg(null);
     resetForm();
     await fetch();
-    setSaving(false);
   };
 
   const handleToggle = async (id: string, is_active: boolean) => {
-    await supabase.from('board_scheduled_reminders').update({ is_active }).eq('id', id);
+    // 🚨 切り替えられていないのに見た目だけ変わると、送られない（送られる）ことに気づけない
+    const fail = describeUpdate(
+      await supabase.from('board_scheduled_reminders').update({ is_active }).eq('id', id).select('id'),
+      is_active ? 'ONへの切り替え' : 'OFFへの切り替え', 'missing',
+    );
+    if (fail) { setErrorMsg(fail); return; }
+    setErrorMsg(null);
     setReminders(prev => prev.map(r => r.id === id ? { ...r, is_active } : r));
   };
 
   const handleDelete = async (id: string) => {
-    await supabase.from('board_scheduled_reminders').delete().eq('id', id);
+    const fail = describeUpdate(
+      await supabase.from('board_scheduled_reminders').delete().eq('id', id).select('id'),
+      '削除', 'missing',
+    );
+    if (fail) { setErrorMsg(fail); setConfirmDelete(null); return; }
+    setErrorMsg(null);
     setReminders(prev => prev.filter(r => r.id !== id));
     setConfirmDelete(null);
     if (editingId === id) resetForm();
@@ -1898,6 +1945,14 @@ export const ScheduledRemindersPanel: React.FC = () => {
   return (
     <div style={{ padding: 16 }}>
       <h3 style={{ color: text, margin: '0 0 16px', fontSize: 16 }}>📅 定期リマインド設定</h3>
+
+      {/* 🚨 失敗は自動で消さない。色は他の失敗表示と同じもの（新しい色を足さない） */}
+      {errorMsg && (
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 9999, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 12, padding: '16px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 10, maxWidth: 360 }}>
+          <span style={{ fontSize: 13, color: '#b91c1c', lineHeight: 1.5 }}>{errorMsg}</span>
+          <button type="button" onClick={() => setErrorMsg(null)} style={{ background: 'none', border: 'none', color: '#b91c1c', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
+        </div>
+      )}
 
       {confirmDelete && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 5000, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setConfirmDelete(null)}>
@@ -2137,6 +2192,8 @@ export const ReminderDaysSettingsPanel: React.FC = () => {
   const [drafts, setDrafts] = useState<Record<string, { days: string; hour: number; minute: number }>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  // 保存に失敗した理由（✕ を押すまで消えない）。🚨 黙って「✅ 保存しました」を出さない
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const bg = isDarkMode ? '#2c2c3e' : '#fff';
   const text = isDarkMode ? '#fff' : '#1a1a2e';
@@ -2174,9 +2231,16 @@ export const ReminderDaysSettingsPanel: React.FC = () => {
       patch.days_before = parsed;
     }
     setSaving(eventKey);
-    await supabase.from('reminder_days_settings').update(patch).eq('event_key', eventKey);
-    setSettings(prev => ({ ...prev, [eventKey]: { days_before: hasDays ? patch.days_before! : prev[eventKey]?.days_before ?? null, send_hour: draft.hour, send_minute: draft.minute } }));
+    // 🚨 件数まで見る。0件（＝まだその設定の行が無い／権限が無い）を通すと、
+    //    リマインドの時刻は元のままなのに「✅ 保存しました」と出てしまう。
+    const fail = describeUpdate(
+      await supabase.from('reminder_days_settings').update(patch).eq('event_key', eventKey).select('event_key'),
+      '保存', 'missing',
+    );
     setSaving(null);
+    if (fail) { setErrorMsg(fail); return; }
+    setErrorMsg(null);
+    setSettings(prev => ({ ...prev, [eventKey]: { days_before: hasDays ? patch.days_before! : prev[eventKey]?.days_before ?? null, send_hour: draft.hour, send_minute: draft.minute } }));
     setSavedMsg(eventKey);
     setTimeout(() => setSavedMsg(null), 2000);
   };
@@ -2184,6 +2248,13 @@ export const ReminderDaysSettingsPanel: React.FC = () => {
   return (
     <div style={{ padding: 16 }}>
       <h3 style={{ color: text, margin: '0 0 16px', fontSize: 16 }}>⏰ リマインド送信タイミング設定</h3>
+      {/* 🚨 失敗は自動で消さない。色は他の失敗表示と同じもの（新しい色を足さない） */}
+      {errorMsg && (
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 9999, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 12, padding: '16px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 10, maxWidth: 360 }}>
+          <span style={{ fontSize: 13, color: '#b91c1c', lineHeight: 1.5 }}>{errorMsg}</span>
+          <button type="button" onClick={() => setErrorMsg(null)} style={{ background: 'none', border: 'none', color: '#b91c1c', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
+        </div>
+      )}
       {REMINDER_DAYS_EVENTS.map(ev => {
         const draft = drafts[ev.key];
         const s = settings[ev.key];

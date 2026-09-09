@@ -29,9 +29,10 @@ const GroupsTab: React.FC = () => {
                       <input value={editGroupNameValue} onChange={e => setEditGroupNameValue(e.target.value)} style={{ fontSize: 16, padding: '4px 8px', border: '1px solid #ccc', borderRadius: 4, background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#000' }} autoFocus />
                       <button onClick={async () => {
                         if (!editGroupNameValue.trim()) return;
-                        // master_optionsのvalueを更新
-                        await supabase.from('master_options').update({ value: editGroupNameValue }).eq('category', 'group').eq('value', selectedGroup);
-                        // 全ユーザーのgroup_namesを更新
+                        // 🚨 順序が大事：**人の所属を先に、一覧のもとになる master_options は最後に**変える。
+                        //    先に master を変えて人の更新が失敗すると、古い名前のまま残った人を
+                        //    もう一度探す手段が無くなる（一覧にはもう新しい名前しか無いため）。
+                        //    人が先なら、失敗しても一覧は古い名前のままなので、もう一度押せば続きから直せる。
                         const affected = users.filter(u => (u.group_names || []).includes(selectedGroup));
                         // 🚨 1人ずつ更新するので、途中で失敗すると
                         //    「一部の人だけ古いグループ名のまま」という食い違いが静かに残る。
@@ -43,8 +44,17 @@ const GroupsTab: React.FC = () => {
                           if (describeUpdate(res, '所属の更新', 'missing')) renameFailed++;
                         }
                         if (renameFailed > 0) {
-                          setErrorMsg(`グループ名は変えましたが、${affected.length}人のうち${renameFailed}人の所属を更新できませんでした。もう一度お試しください（更新できた人はそのままです）。`);
+                          setErrorMsg(`${affected.length}人のうち${renameFailed}人の所属を更新できなかったため、グループ名は変えていません。もう一度お試しください（更新できた人はそのままです）。`);
+                          await fetchUsers();
+                          return;
                         }
+                        // master_optionsのvalueを更新
+                        const masterFail = describeUpdate(
+                          await supabase.from('master_options').update({ value: editGroupNameValue }).eq('category', 'group').eq('value', selectedGroup).select('id'),
+                          'グループ名の変更', 'missing',
+                        );
+                        if (masterFail) { setErrorMsg(masterFail); await fetchUsers(); return; }
+                        setErrorMsg(null);
                         await fetchMasterOptions();
                         await fetchUsers();
                         setSelectedGroup(editGroupNameValue);
@@ -170,9 +180,12 @@ const GroupsTab: React.FC = () => {
                   <div style={{ marginTop: 32, textAlign: 'center' }}>
                     <button onClick={() => {
                       setConfirmDialog({ message: `「${selectedGroup}」を削除しますか？\nメンバーのグループ設定からも削除されます。`, onConfirm: async () => {
-                        await supabase.from('master_options').delete().eq('category', 'group').eq('value', selectedGroup);
+                        // 🚨 順序が大事：**人の所属を先に外し、一覧のもとになる master_options は最後に消す**。
+                        //    先にグループを消すと、外せなかった人が残ったときに一覧からグループが
+                        //    消えていて、もう一度押す手段が無くなる（＝直せない）。
                         const affected = users.filter(u => (u.group_names || []).includes(selectedGroup));
-                        // 🚨 グループは消えたのに所属だけ残ると、無いグループに入ったままの人ができる
+                        // 🚨 1人でも外せなかったら、グループ自体は消さずに止める。
+                        //    消してしまうと「無いグループに入ったままの人」が残り、直す入口が無くなる
                         let removeFailed = 0;
                         for (const u of affected) {
                           const next = (u.group_names || []).filter((g: string) => g !== selectedGroup);
@@ -180,8 +193,16 @@ const GroupsTab: React.FC = () => {
                           if (describeUpdate(res, '所属の削除', 'missing')) removeFailed++;
                         }
                         if (removeFailed > 0) {
-                          setErrorMsg(`グループは削除しましたが、${affected.length}人のうち${removeFailed}人の所属を外せませんでした。存在しないグループに入ったままになっているので、もう一度お試しください。`);
+                          setErrorMsg(`${affected.length}人のうち${removeFailed}人の所属を外せなかったため、グループは削除していません。もう一度お試しください（外せた人はそのままです）。`);
+                          await fetchUsers();
+                          return;
                         }
+                        const delFail = describeUpdate(
+                          await supabase.from('master_options').delete().eq('category', 'group').eq('value', selectedGroup).select('id'),
+                          'グループの削除', 'missing',
+                        );
+                        if (delFail) { setErrorMsg(delFail); await fetchUsers(); return; }
+                        setErrorMsg(null);
                         await fetchMasterOptions();
                         await fetchUsers();
                         setSelectedGroup(null);

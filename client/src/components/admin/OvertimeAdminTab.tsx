@@ -712,11 +712,16 @@ const OvertimeAdminTab: React.FC = () => {
         const overlapping = patterns.filter(p =>
           p.day_kind === k && (p.valid_to === null || p.valid_to >= applyFrom));
         for (const p of overlapping) {
-          if (p.valid_from >= applyFrom) {
-            await supabase.from('weekly_shift_patterns').delete().eq('id', p.id);
-          } else {
-            await supabase.from('weekly_shift_patterns').update({ valid_to: prevDay }).eq('id', p.id);
-          }
+          // 🚨 古い行を消す／締める処理が黙って失敗すると、このあと入れる新しい行と**両方が生き**、
+          //    同じ曜日に2本のシフトが並ぶ。件数0（権限で弾かれた）も失敗として止める。
+          const fail = p.valid_from >= applyFrom
+            ? describeUpdate(
+                await supabase.from('weekly_shift_patterns').delete().eq('id', p.id).select('id'),
+                '前のシフトの削除', 'missing')
+            : describeUpdate(
+                await supabase.from('weekly_shift_patterns').update({ valid_to: prevDay }).eq('id', p.id).select('id'),
+                '前のシフトの締め', 'missing');
+          if (fail) throw new Error(fail);
         }
         const s = timeToMin(t.start); const e = timeToMin(t.end);
         const s2 = timeToMin(t.start2); const e2 = timeToMin(t.end2);
@@ -742,6 +747,10 @@ const OvertimeAdminTab: React.FC = () => {
       fetchOverview();
     } catch (e) {
       setPatternErr('保存に失敗しました: ' + (e instanceof Error ? e.message : String(e)));
+      // 🚨 途中で止まっているので、手元の一覧を必ず読み直す。
+      //    古いままだと、もう一度「保存」を押したときに**すでに消した行**をもう一度消しに行き、
+      //    0件＝失敗と判定されて、何度押しても先へ進めなくなる。
+      fetchPatterns(selectedStaffId);
     } finally {
       setSavingPattern(false);
     }
@@ -783,8 +792,14 @@ const OvertimeAdminTab: React.FC = () => {
   };
 
   const deleteCalendar = async (date: string) => {
-    await supabase.from('company_calendar').delete().eq('date', date);
+    // 🚨 消せていないのに一覧から消えたように見せない（読み直すので、残っていればまた出る）
+    const fail = describeUpdate(
+      await supabase.from('company_calendar').delete().eq('date', date).select('date'),
+      '削除', 'missing',
+    );
     setCalDeleteTarget(null);
+    if (fail) { setCalErr(fail); return; }
+    setCalErr('');
     fetchCalendar();
   };
 

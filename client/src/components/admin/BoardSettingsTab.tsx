@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import { useAuth } from '../../hooks/useAuth';
+import { describeUpdate } from '../../lib/statusUpdate';
 
 interface SendPermissions {
   employment_types: string[];
@@ -150,10 +151,17 @@ const BoardSettingsTab: React.FC = () => {
       pendingPerms.employment_types.length === 0 && pendingPerms.role_titles.length === 0
         ? null
         : pendingPerms;
-    await supabase.from('board_channels').update({ send_permissions: perms, show_read_detail: pendingShowReadDetail }).eq('id', chId);
+    // 🚨 update は権限で弾かれても error にならず「0件成功」で返る。
+    //    件数を見ないと、保存できていないのに緑の「保存しました」が出る。
+    const fail = describeUpdate(
+      await supabase.from('board_channels').update({ send_permissions: perms, show_read_detail: pendingShowReadDetail }).eq('id', chId).select('id'),
+      '保存', 'missing',
+    );
+    setSaving(false);
+    if (fail) { setErrorMsg(fail); return; }   // 🚨 保存できていないので編集も閉じない
+    setErrorMsg(null);
     setChannels(prev => prev.map(ch => ch.id === chId ? { ...ch, send_permissions: perms, show_read_detail: pendingShowReadDetail } : ch));
     setEditingId(null);
-    setSaving(false);
     showBanner();
   };
 
@@ -163,10 +171,12 @@ const BoardSettingsTab: React.FC = () => {
       pendingDmPerms.employment_types.length === 0 && pendingDmPerms.role_titles.length === 0
         ? { employment_types: [], role_titles: [] }
         : pendingDmPerms;
-    await supabase.from('app_settings').upsert({ key: DM_SETTINGS_KEY, value: perms, updated_at: new Date().toISOString() });
+    const { error } = await supabase.from('app_settings').upsert({ key: DM_SETTINGS_KEY, value: perms, updated_at: new Date().toISOString() });
+    setSaving(false);
+    if (error) { setErrorMsg(`保存に失敗しました：${error.message}`); return; }
+    setErrorMsg(null);
     setDmPerms(perms);
     setEditingDm(false);
-    setSaving(false);
     showBanner();
   };
 
@@ -399,8 +409,15 @@ const BoardSettingsTab: React.FC = () => {
         <button type="button" onClick={async () => {
           const next = !showReadDetail;
           setShowReadDetail(next);
-          await supabase.from('master_options').delete().eq('category', 'board_show_read_detail');
-          await supabase.from('master_options').insert({ category: 'board_show_read_detail', value: String(next), sort_order: 0 });
+          // 🚨 古い行を消してから入れ直す作りなので、消すのに失敗したまま入れると
+          //    設定が2行になり、どちらが効くか分からなくなる。失敗したらボタンを元に戻す。
+          // 🚨 消す件数の0は正常（まだ一度も設定していない）。error だけを見る。
+          const { error: delErr } = await supabase.from('master_options').delete().eq('category', 'board_show_read_detail').select('id');
+          if (delErr) { setShowReadDetail(!next); setErrorMsg(`設定を変更できませんでした：${delErr.message}`); return; }
+          const { error: insErr } = await supabase.from('master_options').insert({ category: 'board_show_read_detail', value: String(next), sort_order: 0 });
+          // 🚨 ここまで来ていると古い行はもう消えている。「元に戻った」と誤解させないよう、そのことも書く
+          if (insErr) { setShowReadDetail(!next); setErrorMsg(`設定を変更できませんでした：${insErr.message}（前の設定も消えています。もう一度切り替えてください）`); return; }
+          setErrorMsg(null);
         }} style={{ padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 'bold', background: showReadDetail ? '#22c55e' : '#6c757d', color: '#fff', flexShrink: 0 }}>
           {showReadDetail ? 'ON' : 'OFF'}
         </button>

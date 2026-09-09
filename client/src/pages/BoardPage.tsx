@@ -7,6 +7,7 @@ import { insertNotification } from '../lib/notifications';
 import { dispatchBoardEmail } from '../lib/notificationDispatch';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import { todayJstStr } from '../lib/breakCalc';
+import { describeUpdate, describePartial } from '../lib/statusUpdate';
 
 const BOARD_LINK = 'https://fivem-portal.vercel.app/board';
 import { useAuth } from '../hooks/useAuth';
@@ -181,6 +182,29 @@ const DEADLINE_TYPES = [
   { value: 'approve', label: '✅ 承認',   reportLabel: '承認報告',  doneLabel: '承認済み', promptPlaceholder: '例：〇〇企画書',       locationPlaceholder: '例：スプレッドシート',   linkPlaceholder: 'https://...' },
   { value: 'confirm', label: '☑️ 確認',   reportLabel: '確認報告',  doneLabel: '確認済み', promptPlaceholder: '例：シフト変更のご確認', locationPlaceholder: '例：スプレッドシート',  linkPlaceholder: 'https://...' },
 ] as const;
+
+// お知らせを完全に削除する（関連する行 → 本体 の順）。成功なら null、失敗ならその理由を返す。
+//
+// 🚨 消す順序を変えないこと。本体（board_messages）を先に消すと、読了・既読・宛先が
+//    中途半端に残ったまま一覧から消えて、直す手段が無くなる（docs/残作業-失敗が消える箇所.md）。
+// 🚨 関連する3つは「件数0が正常」。読了報告も既読も宛先も無いお知らせがあるので、
+//    ここで0件を失敗にすると、正しい削除が止まる。error だけを見る。
+// 🚨 1件ずつ削除する所と、アーカイブでまとめて削除する所の**2か所が同じこれを呼ぶ**。
+//    書き写すと、片方だけ直す事故になる。
+const deleteNoticeRows = async (msgId: string): Promise<string | null> => {
+  // 🚨 この3つの表には **id 列が無い**（鍵は message_id と user_id の組・2026-09-10 に本番で実測）。
+  //    件数を見るための select に 'id' を書くと、列が無いというエラーになって
+  //    「いつも失敗する削除」になる。必ず message_id を数えること。
+  for (const table of ['board_confirmations', 'board_reads', 'board_message_recipients'] as const) {
+    const { error } = await supabase.from(table).delete().eq('message_id', msgId).select('message_id');
+    if (error) return `削除に失敗しました：${error.message}`;
+  }
+  // 本体は「消せていないのに消えたことにしない」ため、件数まで見る
+  return describeUpdate(
+    await supabase.from('board_messages').delete().eq('id', msgId).select('id'),
+    '削除', 'missing',
+  );
+};
 
 // ────────────────────────────────────────────────────────────────
 // Icons
@@ -374,7 +398,10 @@ const BoardPage: React.FC = () => {
   const [replyBody,            setReplyBody]            = useState('');
   const [inboxReadIds,          setInboxReadIds]          = useState<Set<string>>(new Set());
   const [sending,               setSending]               = useState(false);
-  const [sendError,             setSendError]             = useState<string | null>(null); // 送信失敗のインライントースト（alert廃止）
+  const [sendError,             setSendError]             = useState<string | null>(null); // 失敗のインライントースト（alert廃止）。✕で閉じるまで消えない
+  // 🚨 「本体は成立したが、付随する処理だけ失敗した」ときはこちら（黄色）。
+  //    赤で出すと「送れていない・消せていない」と読まれ、逆向きの誤解になる。
+  const [partialMsg,            setPartialMsg]            = useState<string | null>(null);
   const [confirmDialog,         setConfirmDialog]         = useState<{ message: string; onConfirm: () => void } | null>(null); // 共通インライン確認（confirm廃止）
   const [showSendConfirm,       setShowSendConfirm]       = useState(false);
   const [showReplySendConfirm,  setShowReplySendConfirm]  = useState(false);
@@ -542,11 +569,16 @@ const BoardPage: React.FC = () => {
     e.stopPropagation();
     if (!user) return;
     const isFav = favChannelIds.has(chId);
+    // 🚨 失敗したときは★の見た目を変えない。変えると、画面では外れているのに
+    //    DBには残ったままになり、開き直すと戻ってきて「勝手に付く」ように見える。
+    // 🚨 解除の件数0は正常（すでに外れている＝二度押し）。error だけを見る。
     if (isFav) {
-      await supabase.from('board_favorites').delete().eq('user_id', user.id).eq('channel_id', chId);
+      const { error } = await supabase.from('board_favorites').delete().eq('user_id', user.id).eq('channel_id', chId).select('id');
+      if (error) { setSendError(`お気に入りの解除に失敗しました：${error.message}`); return; }
       setFavChannelIds(prev => { const s = new Set(prev); s.delete(chId); return s; });
     } else {
-      await supabase.from('board_favorites').insert({ user_id: user.id, channel_id: chId });
+      const { error } = await supabase.from('board_favorites').insert({ user_id: user.id, channel_id: chId });
+      if (error) { setSendError(`お気に入りに追加できませんでした：${error.message}`); return; }
       setFavChannelIds(prev => new Set([...prev, chId]));
     }
   };
@@ -555,12 +587,15 @@ const BoardPage: React.FC = () => {
     e.stopPropagation();
     if (!user) return;
     const isFav = favMessageIds.has(msgId);
+    // 🚨 チャンネルの★と同じ扱い（上の toggleFavChannel のコメントを参照）
     if (isFav) {
-      await supabase.from('board_favorites').delete().eq('user_id', user.id).eq('message_id', msgId);
+      const { error } = await supabase.from('board_favorites').delete().eq('user_id', user.id).eq('message_id', msgId).select('id');
+      if (error) { setSendError(`お気に入りの解除に失敗しました：${error.message}`); return; }
       setFavMessageIds(prev => { const s = new Set(prev); s.delete(msgId); return s; });
       setFavMessages(prev => prev.filter(m => m.id !== msgId));
     } else {
-      await supabase.from('board_favorites').insert({ user_id: user.id, message_id: msgId });
+      const { error } = await supabase.from('board_favorites').insert({ user_id: user.id, message_id: msgId });
+      if (error) { setSendError(`お気に入りに追加できませんでした：${error.message}`); return; }
       setFavMessageIds(prev => new Set([...prev, msgId]));
       setFavMessages(prev => [msg, ...prev.filter(m => m.id !== msgId)]);
     }
@@ -740,11 +775,19 @@ const BoardPage: React.FC = () => {
 
   const archiveMessage = async (msgId: string, archive: boolean) => {
     if (!user) return;
-    await supabase
-      .from('board_message_recipients')
-      .update({ archived: archive })
-      .eq('message_id', msgId)
-      .eq('user_id', user.id);
+    // 🚨 受信トレイは自分の board_message_recipients の行から作られているので、
+    //    ここでの件数0は「権限が無い／行が消えた」＝失敗。0件を通すと、
+    //    画面からは消えたのに開き直すと戻ってくる。
+    const fail = describeUpdate(
+      await supabase
+        .from('board_message_recipients')
+        .update({ archived: archive })
+        .eq('message_id', msgId)
+        .eq('user_id', user.id)
+        .select('message_id'),   // 🚨 この表に id 列は無い（上の deleteNoticeRows のコメント参照）
+      archive ? 'アーカイブ' : '受信トレイに戻す', 'missing',
+    );
+    if (fail) { setSendError(fail); return; }
     if (archive) {
       setInboxMessages(prev => prev.filter(m => m.id !== msgId));
       if (inboxDetailId === msgId) silentClearBoardParam('bin');
@@ -1182,33 +1225,43 @@ const BoardPage: React.FC = () => {
   };
 
   const deleteMessage = async (id: string) => {
-    const { error } = await supabase.from('board_messages').delete().eq('id', id);
-    if (!error) setMessages(prev => prev.filter(m => m.id !== id && m.parent_id !== id));
+    // 🚨 これまでは失敗しても何も出さずに確認パネルだけ閉じていた。
+    //    消えないまま「押しても反応がない」ように見えるので、理由を必ず出す。
+    const fail = describeUpdate(
+      await supabase.from('board_messages').delete().eq('id', id).select('id'),
+      '削除', 'missing',
+    );
+    if (fail) { setSendError(fail); setChannelDeleteConfirmId(null); return; }
+    setMessages(prev => prev.filter(m => m.id !== id && m.parent_id !== id));
     setChannelDeleteConfirmId(null);
   };
 
   // お知らせの修正（送信者・管理者）
   const saveNoticeEdit = async (msgId: string) => {
     if (!editingNoticeBody.trim() || !editingNoticeSubj.trim()) return;
-    const { error } = await supabase
-      .from('board_messages')
-      .update({ subject: editingNoticeSubj.trim(), body: editingNoticeBody.trim(), edited_at: new Date().toISOString() })
-      .eq('id', msgId);
-    if (!error) {
-      setOutboxMessages(prev => prev.map(m => m.id === msgId ? { ...m, subject: editingNoticeSubj.trim(), body: editingNoticeBody.trim(), edited_at: new Date().toISOString() } : m));
-      setInboxMessages(prev => prev.map(m => m.id === msgId ? { ...m, subject: editingNoticeSubj.trim(), body: editingNoticeBody.trim(), edited_at: new Date().toISOString() } : m));
-      setEditingNoticeId(null);
-      setNoticeActionBanner('saved');
-      setTimeout(() => setNoticeActionBanner(null), 3000);
-    }
+    // 🚨 これまで error だけを見ていたが、権限で弾かれると error は付かず「0件成功」で返る。
+    //    直っていないのに「保存しました」と出ていた（＝画面が嘘をつく）ので、件数まで見る。
+    const fail = describeUpdate(
+      await supabase
+        .from('board_messages')
+        .update({ subject: editingNoticeSubj.trim(), body: editingNoticeBody.trim(), edited_at: new Date().toISOString() })
+        .eq('id', msgId)
+        .select('id'),
+      '保存', 'missing',
+    );
+    if (fail) { setSendError(fail); return; }   // 🚨 直っていないので編集の画面は閉じない
+    setOutboxMessages(prev => prev.map(m => m.id === msgId ? { ...m, subject: editingNoticeSubj.trim(), body: editingNoticeBody.trim(), edited_at: new Date().toISOString() } : m));
+    setInboxMessages(prev => prev.map(m => m.id === msgId ? { ...m, subject: editingNoticeSubj.trim(), body: editingNoticeBody.trim(), edited_at: new Date().toISOString() } : m));
+    setEditingNoticeId(null);
+    setNoticeActionBanner('saved');
+    setTimeout(() => setNoticeActionBanner(null), 3000);
   };
 
   // お知らせの完全削除（送信者・管理者）
   const deleteNotice = async (msgId: string) => {
-    await supabase.from('board_confirmations').delete().eq('message_id', msgId);
-    await supabase.from('board_reads').delete().eq('message_id', msgId);
-    await supabase.from('board_message_recipients').delete().eq('message_id', msgId);
-    await supabase.from('board_messages').delete().eq('id', msgId);
+    // 🚨 消していないのに一覧から消さない。順序と件数の見方は deleteNoticeRows に集約している
+    const fail = await deleteNoticeRows(msgId);
+    if (fail) { setSendError(fail); setDeleteConfirmId(null); return; }
     setOutboxMessages(prev => prev.filter(m => m.id !== msgId));
     setOutboxArchivedMessages(prev => prev.filter(m => m.id !== msgId));
     setInboxMessages(prev => prev.filter(m => m.id !== msgId));
@@ -1221,7 +1274,11 @@ const BoardPage: React.FC = () => {
   };
 
   const archiveOutboxMsg = async (msgId: string) => {
-    await supabase.from('board_messages').update({ outbox_hidden: true }).eq('id', msgId);
+    const fail = describeUpdate(
+      await supabase.from('board_messages').update({ outbox_hidden: true }).eq('id', msgId).select('id'),
+      'アーカイブ', 'missing',
+    );
+    if (fail) { setSendError(fail); setOutboxArchiveConfirmId(null); return; }
     const msg = outboxMessages.find(m => m.id === msgId);
     setOutboxMessages(prev => prev.filter(m => m.id !== msgId));
     if (msg) setOutboxArchivedMessages(prev => [{ ...msg, outbox_hidden: true }, ...prev]);
@@ -1453,10 +1510,27 @@ const BoardPage: React.FC = () => {
         ? noticeCCUserIds.filter(uid => uid !== user.id && !composeRecipientIds.includes(uid))
         : [];
       if (ccIds.length > 0) {
-        await supabase.from('board_messages').update({ cc_user_ids: ccIds }).eq('id', data.id);
+        // 🚨 ここは赤にしない。お知らせ自体は送れているので、赤で出すと
+        //    「送れなかった」と読まれて二重送信につながる（黄色＝部分成功）。
+        const ccFail = describeUpdate(
+          await supabase.from('board_messages').update({ cc_user_ids: ccIds }).eq('id', data.id).select('id'),
+          'CCの記録', 'missing',
+        );
+        if (ccFail) setPartialMsg(describePartial('お知らせの送信', 'CC（写しを送る相手）を記録できませんでした'));
       }
       const recs = composeRecipientIds.map(uid => ({ message_id: data.id, user_id: uid }));
-      await supabase.from('board_message_recipients').insert(recs);
+      // 🚨 宛先の書き込みが失敗すると、送信トレイには残るのに**誰にも届かない**。
+      //    これまで結果を見ていなかったので、黙って「送れたこと」になっていた。
+      //    ここで止めて、通知・メールも送らない（届いていないのに知らせない）。
+      const { error: recErr } = await supabase.from('board_message_recipients').insert(recs);
+      if (recErr) {
+        // 🚨 宛先の無いお知らせが1件できている。送信トレイを読み直して、その場で消せるようにする
+        //    （読み直さないと画面に出ず、「消してください」と言われても消しようがない）。
+        await loadOutbox();
+        setSendError(`宛先を保存できなかったため、お知らせは誰にも届いていません：${recErr.message}（送信トレイに残っているものを削除してから、もう一度お送りください）`);
+        setSending(false);
+        return;
+      }
 
       if (!isScheduled) {
         const senderName = profileName || '誰か';
@@ -2702,11 +2776,20 @@ const BoardPage: React.FC = () => {
                     style={{ padding: '4px 12px', border: `1px solid ${border}`, borderRadius: 6, background: 'none', color: subColor, cursor: 'pointer', fontSize: 12 }}>キャンセル</button>
                   <button type="button" onClick={async () => {
                     const ids = [...inboxArchiveSelected];
-                    await supabase.from('board_message_recipients').delete().in('message_id', ids).eq('user_id', user!.id);
-                    setArchivedMessages(prev => prev.filter(m => !ids.includes(m.id)));
-                    setInboxArchiveSelected(new Set());
+                    // 🚨 まとめて消すときは「何件消えたか」を見る。権限で弾かれた行は
+                    //    error にならず黙って残るので、消えた分だけを画面から外す。
+                    const { data: gone, error } = await supabase.from('board_message_recipients')
+                      .delete().in('message_id', ids).eq('user_id', user!.id).select('message_id');
+                    if (error) { setSendError(`削除に失敗しました：${error.message}`); return; }
+                    const goneIds = new Set((gone || []).map((r: any) => r.message_id as string));
+                    setArchivedMessages(prev => prev.filter(m => !goneIds.has(m.id)));
+                    // 消せなかったものは選んだまま残す（もう一度押せる）
+                    setInboxArchiveSelected(new Set(ids.filter(id => !goneIds.has(id))));
                     setInboxArchiveDelConfirm(false);
                     setArchiveBulkPeriod('');
+                    if (goneIds.size < ids.length) {
+                      setSendError(`${ids.length - goneIds.size}件を削除できませんでした（権限が不足しているか、すでに削除されています）。${goneIds.size}件は削除しました`);
+                    }
                   }} style={{ padding: '4px 14px', border: 'none', borderRadius: 6, background: '#dc3545', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>削除する</button>
                 </div>
               )}
@@ -3224,15 +3307,22 @@ const BoardPage: React.FC = () => {
                         style={{ padding: '4px 12px', border: `1px solid ${border}`, borderRadius: 6, background: 'none', color: subColor, cursor: 'pointer', fontSize: 12 }}>キャンセル</button>
                       <button type="button" onClick={async () => {
                         const ids = [...outboxArchiveSelected];
+                        // 🚨 1件ずつ削除するところ（deleteNotice）と同じ deleteNoticeRows を呼ぶ。
+                        //    ここに同じ4行を書き写すと、片方だけ直す事故になる。
+                        const stillThere: string[] = [];
+                        let lastFail: string | null = null;
                         for (const id of ids) {
-                          await supabase.from('board_confirmations').delete().eq('message_id', id);
-                          await supabase.from('board_reads').delete().eq('message_id', id);
-                          await supabase.from('board_message_recipients').delete().eq('message_id', id);
-                          await supabase.from('board_messages').delete().eq('id', id);
+                          const fail = await deleteNoticeRows(id);
+                          if (fail) { stillThere.push(id); lastFail = fail; }
                         }
-                        setOutboxArchivedMessages(prev => prev.filter(m => !ids.includes(m.id)));
-                        setOutboxArchiveSelected(new Set());
+                        const gone = new Set(ids.filter(id => !stillThere.includes(id)));
+                        setOutboxArchivedMessages(prev => prev.filter(m => !gone.has(m.id)));
+                        // 消せなかったものは選んだまま残す（もう一度押せる）
+                        setOutboxArchiveSelected(new Set(stillThere));
                         setOutboxArchiveDelConfirm(false);
+                        if (stillThere.length > 0) {
+                          setSendError(`${stillThere.length}件を削除できませんでした（${lastFail}）。${gone.size}件は削除しました`);
+                        }
                       }} style={{ padding: '4px 14px', border: 'none', borderRadius: 6, background: '#dc3545', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>削除する</button>
                     </div>
                   )}
@@ -3258,7 +3348,11 @@ const BoardPage: React.FC = () => {
                           <span style={{ fontSize: 10, color: subColor }}>{recipientIds.length}人</span>
                           <button type="button" onClick={async e => {
                             e.stopPropagation();
-                            await supabase.from('board_messages').update({ outbox_hidden: false }).eq('id', msg.id);
+                            const fail = describeUpdate(
+                              await supabase.from('board_messages').update({ outbox_hidden: false }).eq('id', msg.id).select('id'),
+                              '送信トレイに戻す', 'missing',
+                            );
+                            if (fail) { setSendError(fail); return; }
                             setOutboxArchivedMessages(prev => prev.filter(m => m.id !== msg.id));
                             setOutboxMessages(prev => [{ ...msg, outbox_hidden: false }, ...prev].sort((a, b) => b.created_at.localeCompare(a.created_at)));
                           }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: '1px 3px', color: subColor }}>
@@ -3744,6 +3838,15 @@ const BoardPage: React.FC = () => {
           <span style={{ fontSize: 18 }}>⚠️</span>
           <span style={{ fontSize: 14, fontWeight: 'bold', color: '#dc3545' }}>{sendError}</span>
           <button type="button" onClick={() => setSendError(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
+        </div>
+      )}
+      {/* 部分成功（本体は成立したが、付随する処理だけ失敗した）。🚨 赤にしないこと。
+          色は OvertimeProposalResponse の部分成功と同じものを使う（新しい色を足さない） */}
+      {partialMsg && (
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: isDark ? '#4d431b' : '#fff8e1', border: `1px solid ${isDark ? '#7a6a2d' : '#ffe08a'}`, borderRadius: 12, padding: '16px 22px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 10, maxWidth: 340 }}>
+          <span style={{ fontSize: 18 }}>！</span>
+          <span style={{ fontSize: 13.5, color: isDark ? '#e6d27a' : '#7a5b00', lineHeight: 1.7 }}>{partialMsg}</span>
+          <button type="button" onClick={() => setPartialMsg(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: isDark ? '#e6d27a' : '#7a5b00', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
         </div>
       )}
       {confirmDialog && (
