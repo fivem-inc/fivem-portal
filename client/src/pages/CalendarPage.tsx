@@ -1963,6 +1963,8 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover, c
         {[
           'スタッフの休み・出勤予定を一覧で確認できます',
           '欠勤・遅刻・早退・休日出勤の入力ができます',
+          // 🚨 このページでできることが増えたら、ここにも足すこと（2026-09-09）
+          '受理された休暇の「シフト調整」を記録できます（未／調整済／確認済）',
         ].map((text, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '0 0 6px' }}>
             <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>

@@ -932,6 +932,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               <li>申請後、<strong>申請先へ直接相談</strong>してください。</li>
               <li>申請が受理されると、交通費申請ページに通知が表示されます。</li>
               <li>パートタイマーの方も、正社員と同様に申請してください。</li>
+              {/* 🚨 申請できる期間の上限（2026-09-09）。日付は開いた日から自動で計算する。
+                  判定は lib/breakCalc の leaveRequestMaxDate 1か所。ここに日付を書き写さないこと */}
+              <li>休暇の申請ができるのは<b>1年先まで</b>です（{jpDateLabel(leaveMaxDate)}まで）。</li>
             </ol>
 
             <button

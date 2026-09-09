@@ -1630,6 +1630,9 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                 <li>報告先は、出勤する校の担当のリーダー・マネージャー（フロア責任者）を選択してください。</li>
                 <li>受理されると「受理済み」に変わります。</li>
                 <li>間違えた場合は、担当のリーダー・マネージャーにお知らせください。</li>
+                {/* 🚨 報告できる期間の上限（2026-09-09）。休暇と同じ上限にそろえている。
+                    判定は lib/breakCalc の leaveRequestMaxDate 1か所 */}
+                <li>報告できるのは<b>1年先まで</b>です（{jpDateLabel(leaveRequestMaxDate(todayStr()))}まで）。</li>
               </ol>
 
               <button type="button" onClick={() => setShowReviewerGuide(v => !v)}

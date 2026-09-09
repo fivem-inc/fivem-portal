@@ -16,7 +16,7 @@ import {
   DAY_KIND_LABELS,
 } from '../lib/breakCalc';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
-import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMin, buildWorkDiff, fullDayDiffMin, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
+import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 
 // validate() は文言だけを返すので、文言と入力欄を突き合わせて薄赤ハイライトを付ける。
@@ -2988,6 +2988,49 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     window.location.href = '/leave';
   };
 
+  /** 調整案の1件を、申請フォームへ持っていく（2026-09-09）。
+   *  🚨 ここで申請はしない。理由・申請先は本人がフォームで入れる（フォームの検証を素通りさせない）。
+   *  🚨 遅出・早退は時刻から勤務時間帯を組み立てる。組み立ては lib の buildTimeAdjustReport に任せ、
+   *     ここで時刻の足し引きを書かない（申請フォーム・提案と同じ計算を通す）。 */
+  const startFromPlan = (plan: {
+    kind: 'late_start_adj' | 'early_end_adj' | 'chosei_off' | 'overtime';
+    work_date: string; adjust_time: string | null;
+    start_time: string | null; end_time: string | null;
+    break_minutes: number | null; note: string | null;
+  }) => {
+    const ck = pageCalendarKinds[plan.work_date] ?? null;
+    const ns = resolveNormalShift(patterns, plan.work_date, ck);
+    let segs: { start: string; end: string }[] = [{ start: '', end: '' }];
+    let fullDay = false;
+    let fullDayType: string | undefined;
+    if (plan.kind === 'chosei_off') {
+      fullDay = true;
+      fullDayType = 'chosei_off';
+    } else if (plan.kind === 'late_start_adj' || plan.kind === 'early_end_adj') {
+      const built = buildTimeAdjustReport(
+        patterns, plan.work_date, ck,
+        plan.kind === 'late_start_adj' ? 'late_start' : 'early_end',
+        (plan.adjust_time ?? '').slice(0, 5),
+      );
+      if (built.ok) segs = built.segments;
+    } else {
+      segs = [{ start: (plan.start_time ?? '').slice(0, 5), end: (plan.end_time ?? '').slice(0, 5) }];
+    }
+    // 🚨 書きかけの下書きの確認は、押した場所の近くで出す（調整案の中）。
+    //    ここに来た時点で本人が「置き換える」を選んでいる。
+    saveDraft(DRAFT_KEYS.overtime, {
+      mode: 'advance', date: plan.work_date, segments: segs,
+      breakManual: plan.break_minutes != null,
+      breakManualMin: plan.break_minutes != null ? String(plan.break_minutes) : '',
+      reason: plan.note ?? '', location: ns.location ?? '', locationCustom: '', reviewerId: '',
+      normOverride: false, normStart: '', normEnd: '',
+      fullDay, fullDayType,
+    } satisfies FormDraft);
+    setEditTarget(null);
+    setTab('form');
+    window.scrollTo({ top: 0 });
+  };
+
   /** 依頼に「対応しない」と答える */
   const dismissRequest = async (id: string) => {
     setAppReqErr('');
@@ -3550,6 +3593,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                             patterns={patterns}
                             calendarKinds={pageCalendarKinds}
                             isDark={isDark}
+                            onApply={startFromPlan}
                           />
                         </div>
                       </div>

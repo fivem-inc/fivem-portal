@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import { loadDraft, DRAFT_KEYS } from '../lib/draftStorage';
 import TimeInput from './TimeInput';
 import { DateField } from './common/DateField';
 import { formatSignedMin, formatMin, payMonthPeriodLabel, payPeriodEnd, calcPayPeriodStartJst } from '../lib/breakCalc';
@@ -50,10 +51,17 @@ interface Props {
   patterns: PatternRow[];
   calendarKinds: Record<string, CalendarKind>;
   isDark: boolean;
+  /** 1件を申請フォームへ持っていく。親が下書きに入れてフォームを開く。
+   *  🚨 ここで申請そのものはしない。理由・申請先は本人がフォームで入れる（検証を素通りさせない） */
+  onApply: (plan: {
+    kind: Kind; work_date: string; adjust_time: string | null;
+    start_time: string | null; end_time: string | null;
+    break_minutes: number | null; note: string | null;
+  }) => void;
 }
 
 const OvertimePlanSection: React.FC<Props> = ({
-  userId, period, confirmedTotal, plannedDelta, patterns, calendarKinds, isDark,
+  userId, period, confirmedTotal, plannedDelta, patterns, calendarKinds, isDark, onApply,
 }) => {
   const text = isDark ? '#f8f9fa' : '#212529';
   const subText = isDark ? '#adb5bd' : '#6c757d';
@@ -75,6 +83,8 @@ const OvertimePlanSection: React.FC<Props> = ({
   const [draftBreak, setDraftBreak] = useState('');
   const [draftBreakManual, setDraftBreakManual] = useState(false);
   const [saving, setSaving] = useState(false);
+  // 書きかけの申請があるとき、置き換えてよいか聞く相手の行
+  const [askReplaceId, setAskReplaceId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -258,7 +268,8 @@ const OvertimePlanSection: React.FC<Props> = ({
               {rows.map(r => {
                 const d = calcDiff(r);
                 return (
-                  <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '7px 0', borderBottom: `1px solid ${border}`, fontSize: 12.5, color: text }}>
+                  <div key={r.id} style={{ borderBottom: `1px solid ${border}` }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '7px 0', fontSize: 12.5, color: text }}>
                     <span style={{ fontWeight: 'bold' }}>{r.work_date.slice(5).replace('-', '/')}</span>
                     <span>{KIND_LABEL[r.kind]}</span>
                     <span style={{ color: subText }}>
@@ -266,10 +277,36 @@ const OvertimePlanSection: React.FC<Props> = ({
                       {r.start_time && r.end_time ? `${r.start_time.slice(0, 5)}〜${r.end_time.slice(0, 5)}` : ''}
                     </span>
                     <span style={{ marginLeft: 'auto', fontWeight: 'bold' }}>{d == null ? '—' : formatSignedMin(d)}</span>
+                    {/* 🚨 チェックで複数まとめてではなく、行ごとに1つずつ申請する。
+                        申請フォームは1日ぶんしか受け取れないため（2026-09-09） */}
+                    <button onClick={() => {
+                      // 🚨 書きかけの申請を黙って消さない（連絡板の「コピーして作成」と同じ流儀）
+                      const cur = loadDraft<{ date?: string; reason?: string; segments?: { start: string; end: string }[] }>(DRAFT_KEYS.overtime);
+                      const has = !!cur && (!!cur.date || !!cur.reason || (cur.segments ?? []).some(x => x.start || x.end));
+                      if (has && askReplaceId !== r.id) { setAskReplaceId(r.id); return; }
+                      setAskReplaceId(null);
+                      onApply(r);
+                    }}
+                      style={{ padding: '3px 10px', borderRadius: 10, fontSize: 11, fontWeight: 'bold', cursor: 'pointer', border: 'none', background: '#0d6efd', color: '#fff' }}>
+                      申請する
+                    </button>
                     <button onClick={() => remove(r.id)}
                       style={{ padding: '3px 10px', borderRadius: 10, fontSize: 11, cursor: 'pointer', border: `1px solid ${border}`, background: 'transparent', color: subText }}>
                       消す
                     </button>
+                    </div>
+                    {askReplaceId === r.id && (
+                      <div style={{ margin: '4px 0 8px', padding: '9px 11px', borderRadius: 8, fontSize: 12, lineHeight: 1.7,
+                        background: isDark ? '#4a3a1a' : '#fff8e1', border: '1px solid #f0c36d', color: isDark ? '#ffcf8f' : '#b7770d' }}>
+                        <p style={{ margin: '0 0 8px' }}>書きかけの申請があります。この案の内容に置き換えますか？</p>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button onClick={() => { setAskReplaceId(null); onApply(r); }}
+                            style={{ flex: 1, padding: '7px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>置き換える</button>
+                          <button onClick={() => setAskReplaceId(null)}
+                            style={{ flex: 1, padding: '7px 0', borderRadius: 8, border: `1px solid ${border}`, cursor: 'pointer', fontSize: 12, background: 'transparent', color: subText }}>やめる</button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -375,7 +412,7 @@ const OvertimePlanSection: React.FC<Props> = ({
               {saving ? '保存中…' : '案に追加する'}
             </button>
             <p style={{ margin: '8px 0 0', fontSize: 11, color: subText, lineHeight: 1.6 }}>
-              申請するときは「事前申請・事後報告」タブから、いつもどおり申請してください。<br />
+              各行の「申請する」を押すと、その内容が入った申請フォームが開きます（理由と申請先はご自身で入れてください）。<br />
               {payMonthPeriodLabel(period)}の案は、<b style={{ color: text }}>この期間の締め（支給月17日）を過ぎたら</b>自動で消えます。<br />
               先の期間の案は、その期間の締めまで残ります。
             </p>
