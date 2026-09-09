@@ -19,6 +19,9 @@ import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { describeUpdate } from '../lib/statusUpdate';
+import { useRoles } from '../hooks/useRoles';
+import { attrsFor, rankOf, embeddedRole } from '../lib/roleAttrs';
+import type { RoleRow, EmbeddedRoleRow } from '../lib/roleAttrs';
 
 // validate() は文言だけを返すので、文言と入力欄を突き合わせて薄赤ハイライトを付ける。
 // ここに無い文言は従来どおりメッセージだけ表示する（対応漏れでも壊れない）
@@ -117,14 +120,11 @@ interface Props {
 // ────────────────────────────────────────────────────────────────
 // Constants & Utilities
 // ────────────────────────────────────────────────────────────────
-const REVIEWER_ROLES = ['リーダー', 'マネージャー'];
-// 役職の序列（社長・管理者＞マネージャー＞リーダー＞フロア責任者＞一般）。数字が小さいほど上位。部門集計の並びに使う。
-const ROLE_RANK: Record<string, number> = { '社長': 1, '管理者': 1, 'マネージャー': 2, 'リーダー': 3, 'フロア責任者': 4, '一般': 5 };
-const roleRank = (role: string) => ROLE_RANK[role] ?? 99;
-// 自己受理はマネージャー以上（2026-07-21ユーザー確定。リーダーは毎回マネージャー以上に申請）
-const SELF_REVIEW_ROLES = ['マネージャー', '社長', '管理者'];
-// 欠勤の受理者はマネージャー以上のみ（リーダー不可）
-const ABSENCE_REVIEWER_ROLES = ['マネージャー'];
+// 🚨 役職名の配列（旧 REVIEWER_ROLES / ROLE_RANK / SELF_REVIEW_ROLES / ABSENCE_REVIEWER_ROLES）は書かない
+//    （2026-09-09 属性化）。確認者の候補＝立場 leader/manager（roles!inner で引く）／
+//    自己受理＝マネージャー以上（is_manager_plus・2026-07-21 ユーザー確定）／欠勤の受理者＝立場 manager／
+//    序列＝roles.sort_order（lib/roleAttrs.rankOf）。数字が小さいほど上位。不明な役職は 99（最下位）
+const roleRankOf = (roles: RoleRow[], role: string) => rankOf(roles, role) ?? 99;
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 const SELF_REVIEW_VALUE = '__self__';
 
@@ -1067,7 +1067,8 @@ const OvertimeForm: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(segments)]);
 
-  const canSelfReview = isAdmin || SELF_REVIEW_ROLES.includes(roleTitle);
+  const roles = useRoles();
+  const canSelfReview = isAdmin || attrsFor(roles, roleTitle).is_manager_plus;
   const isSelfReview = reviewerId === SELF_REVIEW_VALUE;
 
   const today = todayJstStr();
@@ -2347,7 +2348,7 @@ const OvertimeForm: React.FC<{
           {canSelfReview && <option value={SELF_REVIEW_VALUE}>自己受理（自分で確認する）</option>}
           {reviewers
             .filter(r => r.id !== user.id)
-            .filter(r => !(fullDay && fullDayType === 'absence') || ABSENCE_REVIEWER_ROLES.includes(r.role_title))
+            .filter(r => !(fullDay && fullDayType === 'absence') || embeddedRole(r as unknown as EmbeddedRoleRow<{ acts_as?: string | null }>)?.acts_as === 'manager')
             .map(r => (
               <option key={r.id} value={r.id}>{r.name}（{r.role_title}）</option>
             ))}
@@ -2456,6 +2457,8 @@ const OvertimeForm: React.FC<{
 // メインページ
 // ────────────────────────────────────────────────────────────────
 const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, canSummaryPerm, canShiftDirectoryPerm }) => {
+  // 役職の序列（部門集計の並び・閲覧範囲）は roles から（役職名の表を持たない・2026-09-09）
+  const roles = useRoles();
   const isDark = useDarkMode();
   const [searchParams, setSearchParams] = useSearchParams();
   const isConfirmView = searchParams.get('view') === 'confirm';
@@ -2581,7 +2584,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
       const [, , revRes, wpRes, patRes, myProfRes] = await Promise.all([
         fetchOwn(),
         fetchPendingForMe(),
-        supabase.from('profiles').select('id, name, role_title').in('role_title', REVIEWER_ROLES).eq('is_active', true).order('role_title').order('name'),
+        supabase.from('profiles').select('id, name, role_title, roles!inner(acts_as)').in('roles.acts_as', ['leader', 'manager']).eq('is_active', true).order('role_title').order('name'),
         supabase.from('master_options').select('value').eq('category', 'workplace').order('sort_order'),
         supabase.from('weekly_shift_patterns').select('*').eq('user_id', user.id),
         supabase.from('profiles').select('group_names').eq('id', user.id).maybeSingle(),
@@ -2645,7 +2648,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
       // チーム内は役職の序列順（上位→下位）、同役職は名前順。チーム自体は名前順のまま。
       rows.sort((a, b) => {
         if (a.group !== b.group) return a.group.localeCompare(b.group, 'ja');
-        return roleRank(a.role) - roleRank(b.role) || a.name.localeCompare(b.name, 'ja');
+        return roleRankOf(roles, a.role) - roleRankOf(roles, b.role) || a.name.localeCompare(b.name, 'ja');
       });
       setSummaryRows(rows);
     })();
@@ -3541,7 +3544,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     userId={selectedStaffId}
                     name={summaryRows.find(r => r.userId === selectedStaffId)?.name ?? ''}
                     period={summaryPeriod}
-                    viewerRank={roleRank(roleTitle)}
+                    viewerRank={roleRankOf(roles, roleTitle)}
                     isAdmin={isAdmin}
                     proposerId={user.id}
                     proposerName={profileName ?? ''}
@@ -4333,6 +4336,7 @@ const MemberDetailView: React.FC<{
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [denied, setDenied] = useState(false);
+  const roles = useRoles();
   const [showPropose, setShowPropose] = useState(false);
   const [proposeSent, setProposeSent] = useState(false);
   const [templateDraft, setTemplateDraft] = useState<DraftCandidate[] | undefined>(undefined);
@@ -4349,11 +4353,12 @@ const MemberDetailView: React.FC<{
     (async () => {
       const { data } = await supabase.from('profiles').select('role_title').eq('id', userId).maybeSingle();
       if (!alive) return;
-      const targetRank = ROLE_RANK[(data as { role_title: string | null } | null)?.role_title ?? ''] ?? 1;
+      // 役職不明の対象者は最上位(1)扱い（fail-closed・DB の overtime_role_rank_target と同じ）
+      const targetRank = rankOf(roles, (data as { role_title: string | null } | null)?.role_title ?? '') ?? 1;
       setDenied(targetRank < viewerRank);
     })();
     return () => { alive = false; };
-  }, [userId, viewerRank, isAdmin]);
+  }, [userId, viewerRank, isAdmin, roles]);
 
   useEffect(() => {
     let alive = true;

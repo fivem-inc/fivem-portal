@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import type { AuthUser } from '../types';
 import { supabase } from '../lib/supabaseClient';
+import { useRoles } from '../hooks/useRoles';
+import { attrsFor } from '../lib/roleAttrs';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useSafetyPendingCount, safetyTone } from '../hooks/useSafetyPendingCount';
 import { isTransientFailure, timeoutSignal, SAFETY_TIMEOUT_MS } from '../lib/netFailure';
@@ -211,8 +213,11 @@ const SafetyCheckPage: React.FC<SafetyCheckPageProps> = ({ user, roleTitle, isAd
   const [searchParams, setSearchParams] = useSearchParams();
   const { refetch: refetchPending } = useSafetyPendingCount(user.id);
 
-  const isManagerPlus = isAdmin || ['マネージャー', '社長', '管理者'].includes(roleTitle);
-  const isLeader = roleTitle === 'リーダー';
+  // 🚨 役職名では判定しない（2026-09-09 属性化）
+  const roles = useRoles();
+  const myAttrs = attrsFor(roles, roleTitle);
+  const isManagerPlus = isAdmin || myAttrs.is_manager_plus;
+  const isLeader = myAttrs.acts_as === 'leader';
 
   const card = isDark ? '#2c2c3e' : '#ffffff';
   const text = isDark ? '#fff' : '#1a1a2e';
@@ -1012,7 +1017,8 @@ const SendView: React.FC<{
     }
   };
 
-  const roleOptions = ['パート', '一般', 'フロア責任者', 'リーダー', 'マネージャー', '社長', '管理者'];
+  // 役職の絞り込み候補は roles から（役職名を直書きしない・2026-09-09）
+  const roleOptions = useRoles().map(r => r.name);
 
   const filteredTargets = targetMode === 'all'
     ? staff

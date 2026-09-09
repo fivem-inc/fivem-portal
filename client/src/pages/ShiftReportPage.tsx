@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import { useRoles } from '../hooks/useRoles';
+import { attrsFor, embeddedRole } from '../lib/roleAttrs';
+import type { EmbeddedRoleRow } from '../lib/roleAttrs';
 import { notifyShiftReportReturned } from '../lib/shiftReportReturnedNotify';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
@@ -69,8 +72,8 @@ interface Props {
 // ────────────────────────────────────────────────────────────────
 // Constants & Utilities
 // ────────────────────────────────────────────────────────────────
-const REVIEWER_ROLES = ['リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者'];
-const IS_APPROVER = (role: string, admin: boolean) => admin || REVIEWER_ROLES.includes(role);
+// 🚨 役職名の配列（旧 REVIEWER_ROLES）は書かない。確認者＝承認者（roles.is_approver・フロア責任者を含む）。
+//    候補は roles!inner(is_approver) で DB から引き、自分の判定は attrsFor で行う（2026-09-09 属性化）
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 
 function toMin(hhmm: string): number {
@@ -341,7 +344,9 @@ const ShiftReportForm: React.FC<{
   inline?: boolean;
   onClose: () => void; onSaved: () => void;
 }> = ({ user, profileName, roleTitle, isAdmin, editTarget, reviewers, workplaces, leaderAssignments: _leaderAssignments, inline = false, onClose, onSaved }) => {
-  const canProxy = IS_APPROVER(roleTitle, isAdmin);
+  // 代理報告＝承認者（役職名では判定しない）。🚨 Hook は || の右に置かない（条件付き呼び出しになる）
+  const rolesForProxy = useRoles();
+  const canProxy = isAdmin || attrsFor(rolesForProxy, roleTitle).is_approver;
   // 会社の休館日（全社員休み／社員出勤日）を日付カレンダーに出す
   const calendarKinds = useCompanyCalendar();
   // 確認者が他人の報告を修正するときは、確認依頼先を変えられない。
@@ -1029,11 +1034,15 @@ const ShiftReportForm: React.FC<{
                     ✓ {reviewers.find(r => r.id === user.id)!.name}（自分）※報告と同時に受理されます
                   </option>
                 )}
-                {[...reviewers.filter(r => r.id !== user.id && r.role_title !== '管理者' && r.role_title !== '社長')]
+                {/* 確認先の候補から経営（社長・経理）を除く。役職名ではなく属性 is_org_wide で（2026-09-09） */}
+                {[...reviewers.filter(r => r.id !== user.id && !embeddedRole(r as unknown as EmbeddedRoleRow<{ is_org_wide?: boolean }>)?.is_org_wide)]
                   .sort((a, b) => {
-                    const ord: Record<string, number> = { 'リーダー': 0, 'マネージャー': 1, 'フロア責任者': 2 };
-                    const aO = ord[a.role_title] ?? 99;
-                    const bO = ord[b.role_title] ?? 99;
+                    // リーダー → マネージャー → その他（フロア責任者）の順
+                    const ord = (r: Reviewer) => {
+                      const acts = embeddedRole(r as unknown as EmbeddedRoleRow<{ acts_as?: string | null }>)?.acts_as;
+                      return acts === 'leader' ? 0 : acts === 'manager' ? 1 : 2;
+                    };
+                    const aO = ord(a), bO = ord(b);
                     return aO !== bO ? aO - bO : a.name.localeCompare(b.name);
                   })
                   .map(r => <option key={r.id} value={r.id}>{r.name}（{r.role_title}）</option>)}
@@ -1110,10 +1119,11 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const noteTitleColor = isDark ? '#fff' : '#1a4a5a';
   const noteBtn   = isDark ? '#3d5a73' : '#bee5eb';
 
-  const isApprover = IS_APPROVER(roleTitle, isAdmin);
-  // RLS（approver_select）で全件閲覧可の役職と揃える。社長・フロア責任者はレビュー担当にならないため、
+  const roles = useRoles();
+  const isApprover = isAdmin || attrsFor(roles, roleTitle).is_approver;
+  // RLS（approver_select＝is_approver）で全件閲覧可の役職と揃える。社長・フロア責任者はレビュー担当にならないため、
   // ここに含めないと通知バナーのタップ先（履歴）で何も表示されない
-  const canSeeAll  = isAdmin || ['リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者'].includes(roleTitle);
+  const canSeeAll  = isApprover;
 
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1181,9 +1191,8 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
 
   // 履歴タブ モード
   const [histMode, setHistMode] = useState<'own' | 'reviewed' | 'proxy' | 'all'>(
-    () => !IS_APPROVER(roleTitle, isAdmin) ? 'own'
-        : (isAdmin || ['リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者'].includes(roleTitle)) ? 'all'
-        : 'reviewed'
+    // 承認者は「全件」、それ以外は「自分の分」（旧コードの 'reviewed' 分岐は条件が同じで到達不能だった）
+    () => isApprover ? 'all' : 'own'
   );
   const [reviewedReports, setReviewedReports] = useState<ShiftReport[]>([]);
   const [proxyReports, setProxyReports]       = useState<ShiftReport[]>([]);
@@ -1273,7 +1282,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     fetchAllReports();
     supabase.from('master_options').select('value').eq('category', 'workplace').order('sort_order')
       .then(({ data }) => { if (data) setWorkplaces(data.map(r => r.value)); });
-    supabase.from('profiles').select('id, name, role_title').in('role_title', REVIEWER_ROLES).eq('is_active', true).order('role_title').order('name')
+    supabase.from('profiles').select('id, name, role_title, roles!inner(is_approver, is_org_wide, acts_as)').eq('roles.is_approver', true).eq('is_active', true).order('role_title').order('name')
       .then(({ data }) => { if (data) setReviewers(data as Reviewer[]); });
     supabase.from('leader_assignments').select('id, course, school, leader, manager').order('display_order', { ascending: true })
       .then(({ data }) => { if (data) setLeaderAssignments(data as LeaderAssignment[]); setLoadingAssignments(false); });

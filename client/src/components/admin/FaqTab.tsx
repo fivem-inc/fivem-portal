@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import { supabase } from '../../lib/supabaseClient';
+import { useRoles } from '../../hooks/useRoles';
 import {
   fetchFaqTopics,
   createFaqTopic,
@@ -36,7 +37,7 @@ const AUDIENCE_LABEL: Record<FaqAudience, string> = {
 };
 
 // 社内向けの出し分けは役職で行う（社内サイトは既に役職で画面を出し分けているため同じ基準）
-const ROLE_OPTIONS = ['パート', '一般', 'フロア責任者', 'リーダー', 'マネージャー', '社長', '管理者'];
+// 🚨 役職の選択肢は roles から出す（役職名を直書きしない・2026-09-09 属性化）。FaqTab の中で useRoles() から作る
 
 // 社外向けの出し分けは校×コース。定義は lib/faq.ts（お客様向けウィジェットと共用）
 const SCHOOL_OPTIONS = FAQ_SCHOOL_OPTIONS;
@@ -71,6 +72,7 @@ interface FaqTabProps {
 }
 
 const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
+  const ROLE_OPTIONS = useRoles().map(r => r.name);
   const isDarkMode = useDarkMode();
 
   const [audience, setAudience] = useState<FaqAudience>('internal');

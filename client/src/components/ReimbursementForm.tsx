@@ -108,8 +108,8 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
   }, [draftReady, draftStorageKey, draftId, itemName, quantity, amount, purchasedAt, storeName, location, purpose, purposeDetail, instructedBySelect, instructedByCustom, paymentMethod, paymentMethodDetail, paymentMethodOther, receipt, notes]);
 
   useEffect(() => {
-    supabase.from('profiles').select('name, role_title').eq('is_active', true)
-      .in('role_title', ['リーダー', 'マネージャー']).order('role_title').order('name').then(
+    supabase.from('profiles').select('name, role_title, roles!inner(acts_as)').eq('is_active', true)
+      .in('roles.acts_as', ['leader', 'manager']).order('role_title').order('name').then(
         ({ data }) => setInstructors((data ?? []) as { name: string; role_title: string }[]),
         () => {}
       );

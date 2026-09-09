@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, useContext } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import { rolesByRank, attrsFor } from '../lib/roleAttrs';
+import { getCachedRoles } from '../hooks/useRoles';
 import { insertNotification } from '../lib/notifications';
 import { dispatchBoardEmail } from '../lib/notificationDispatch';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
@@ -90,7 +92,12 @@ const recipientPresetIds = (key: string, profiles: SimpleProfile[]): string[] =>
     //    休暇・備品の承認者判定と同じく役職を正とする。
     //    フロア責任者は**含めない**（2026-09-08 ユーザー確定）。含めるかは毎回判断が割れる件なので、
     //    変えるときは必ず聞くこと（CLAUDE.md「役職序列」）。
-    case 'マネージャー・リーダー': return profiles.filter(p => MANAGER_LEADER_ROLES.includes(p.role_title || '')).map(p => p.id);
+    //    🚨 役職名の配列では判定しない（2026-09-09 属性化）。リーダー以上（フロア責任者を含まない）のうち、
+    //       経理（立場 accounting）を除く＝旧 ['リーダー','マネージャー','社長'] と同じ顔ぶれ
+    case 'マネージャー・リーダー': return profiles.filter(p => {
+      const a = attrsFor(getCachedRoles(), p.role_title);
+      return a.is_leader_plus && a.acts_as !== 'accounting';
+    }).map(p => p.id);
     case 'こども': return profiles.filter(p => (p.group_names || []).includes('こども')).map(p => p.id);
     case '大人':   return profiles.filter(p => (p.group_names || []).includes('大人')).map(p => p.id);
     case '管理部': return profiles.filter(p => (p.group_names || []).includes('管理部')).map(p => p.id);
@@ -163,9 +170,9 @@ const autoGrowTextarea = (el: HTMLTextAreaElement) => {
   el.style.height = `${Math.min(el.scrollHeight, Math.round(window.innerHeight * 0.4))}px`;
 };
 
-// 宛先の一括ボタン「マネージャー・リーダー」に入れる役職。
+// 宛先の一括ボタン「マネージャー・リーダー」に入れる役職＝リーダー以上（属性）から経理を除いたもの。
 // 🚨 フロア責任者は含めない（2026-09-08 ユーザー確定）。管理者アカウントも入れない（従来どおり）
-const MANAGER_LEADER_ROLES = ['リーダー', 'マネージャー', '社長'];
+//    役職名の配列は書かない（2026-09-09 属性化）。判定は上の recipientIdsFor を参照
 
 const DEADLINE_TYPES = [
   { value: 'read',    label: '📖 読了',    reportLabel: '読了報告',  doneLabel: '読了済み', promptPlaceholder: '例：2026年経営方針',   locationPlaceholder: '例：Slackのcanvas',      linkPlaceholder: 'https://...' },
@@ -193,7 +200,7 @@ const ArchiveIcon: React.FC<{ size?: number }> = ({ size = 14 }) => (
 // ────────────────────────────────────────────────────────────────
 
 const BoardPage: React.FC = () => {
-  const { user, isAdmin, profileName, roleTitle, employmentType } = useAuth();
+  const { user, isAdmin, profileName, roleTitle, employmentType, roles } = useAuth();
   const { previewRole } = useContext(AuthContext);
   const isDark = useDarkMode();
   const navigate = useNavigate();
@@ -1917,7 +1924,8 @@ const BoardPage: React.FC = () => {
 
   // グループ作成モーダル用: 雇用形態→役職でグループ化
   const EMP_ORDER = ['正社員', 'パート'];
-  const ROLE_ORDER = ['管理者', '社長', 'マネージャー', 'リーダー', '一般', 'その他'];
+  // 役職の並びは roles の序列から（役職名を直書きしない・2026-09-09）。役職が無い人は「その他」
+  const ROLE_ORDER = [...rolesByRank(roles).map(r => r.name), 'その他'];
   const activeOthers = allProfiles.filter(p => p.id !== user?.id);
   const empTypes = ([...new Set(activeOthers.map(p => p.employment_type || 'その他'))] as string[])
     .sort((a, b) => {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { supabase } from '../../lib/supabaseClient';
+import { useRoles } from '../../hooks/useRoles';
 import { describeUpdate } from '../../lib/statusUpdate';
 
 // ユーザー追加モーダル
@@ -10,6 +11,8 @@ const AddUserModal: React.FC<{
   onClose: () => void;
   onSuccess: () => void;
 }> = ({ isDarkMode, masterOptions, onClose, onSuccess }) => {
+  // master_options が空のときの逃げ道は roles から（役職名を直書きしない・2026-09-09）
+  const roleNames = useRoles().map(r => r.name);
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [employmentType, setEmploymentType] = useState('正社員');
@@ -131,7 +134,7 @@ const AddUserModal: React.FC<{
 
         <label style={labelStyle}>役職</label>
         <select value={roleTitle} onChange={e => setRoleTitle(e.target.value)} style={selectStyle}>
-          {(masterOptions.role_title.length > 0 ? masterOptions.role_title : ['一般', 'リーダー', 'マネージャー', '管理者', '社長']).map(v => (
+          {(masterOptions.role_title.length > 0 ? masterOptions.role_title : roleNames).map(v => (
             <option key={v}>{v}</option>
           ))}
         </select>
@@ -380,6 +383,7 @@ const UsersTab: React.FC = () => {
   const { isDarkMode, users, loadingUsers, sortedUsers, pendingUsers, userSortKey, userSortAsc, handleUserSort, editingUser, editName, setEditName, handleEditName, handleSaveName, handleCancelUserEdit, showRetired, setShowRetired, editingSortOrder, setEditingSortOrder, editSortOrderValue, setEditSortOrderValue, handleSaveSortOrder, masterOptions, isUserEditMode, setIsUserEditMode, confirmChange, setConfirmChange, fetchUsers, setErrorMsg, handleToggleActive, handleDeleteUser, handleApprovePendingUser, handleRejectPendingUser, setActiveTab } = ctx;
 
   const [showAddModal, setShowAddModal] = useState(false);
+  const roleNames = useRoles().map(r => r.name);
   const [selectedForEmail, setSelectedForEmail] = useState<Set<string>>(new Set());
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [emailTarget, setEmailTarget] = useState<{ id: string; name: string; email: string }[]>([]);
@@ -475,7 +479,7 @@ const UsersTab: React.FC = () => {
                         pendingUser={pu}
                         masterOptions={{
                           employment_type: masterOptions.employment_type.length > 0 ? masterOptions.employment_type : ['正社員', 'パート'],
-                          role_title: masterOptions.role_title.length > 0 ? masterOptions.role_title : ['一般', 'リーダー', 'マネージャー', '管理者', '社長'],
+                          role_title: masterOptions.role_title.length > 0 ? masterOptions.role_title : roleNames,
                         }}
                         onApprove={handleApprovePendingUser}
                         onReject={handleRejectPendingUser}

@@ -45,6 +45,9 @@ const BannerSuccess: React.FC<{ message: string; note?: string; onClose: () => v
 };
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import { useRoles } from '../hooks/useRoles';
+import { attrsFor, embeddedRole } from '../lib/roleAttrs';
+import type { EmbeddedRoleRow } from '../lib/roleAttrs';
 import { sendLeaveSlack } from '../lib/leaveSlack';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
 import type { CorrectionRequestRow } from '../lib/correctionRequest';
@@ -472,18 +475,27 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     return String(m >= 4 ? y : y - 1);
   });
 
+  // 自分の役職の属性（役職名では判定しない・2026-09-09）
+  const roles = useRoles();
+  const myAttrs = attrsFor(roles, _roleTitle);
+
   useEffect(() => {
     supabase
       .from('profiles')
-      .select('id, name, role_title')
-      .in('role_title', ['リーダー', 'マネージャー', 'フロア責任者'])
+      // 🚨 役職名ではなく属性で引く（2026-09-09 属性化）。申請先の候補＝承認者のうち、経営（社長・経理）を除く
+      .select('id, name, role_title, roles!inner(acts_as, is_leader_plus)')
+      .eq('roles.is_approver', true)
+      .eq('roles.is_org_wide', false)
       .eq('is_active', true)
       .order('name')
       .then(({ data, error }) => {
         if (!error && data) {
-          // リーダー→マネージャー→フロア責任者の順（ShiftReportPageの報告先と同じ並び）
-          const ord: Record<string, number> = { 'リーダー': 0, 'マネージャー': 1, 'フロア責任者': 2 };
-          setApprovers([...data].sort((a, b) => (ord[a.role_title] ?? 9) - (ord[b.role_title] ?? 9) || a.name.localeCompare(b.name, 'ja')));
+          // リーダー→マネージャー→その他（フロア責任者）の順（ShiftReportPageの報告先と同じ並び）
+          const ord = (r: { roles?: unknown }) => {
+            const a = embeddedRole(r as EmbeddedRoleRow<{ acts_as?: string | null }>)?.acts_as;
+            return a === 'leader' ? 0 : a === 'manager' ? 1 : 2;
+          };
+          setApprovers([...data].sort((a, b) => ord(a) - ord(b) || a.name.localeCompare(b.name, 'ja')));
           // 初期選択なし（ユーザーに明示的に選ばせる）
         }
       });
@@ -575,7 +587,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   };
 
   // 休暇申請の「申請先」はリーダー・マネージャーのみ（フロア責任者は時間調整の了承者としてのみ選択可）
-  const leaveApprovers = approvers.filter(a => a.role_title !== 'フロア責任者');
+  // 「フロア責任者を除く」＝リーダー以上（属性 is_leader_plus）で判定する
+  const leaveApprovers = approvers.filter(a => !!embeddedRole(a as EmbeddedRoleRow<{ is_leader_plus?: boolean }>)?.is_leader_plus);
   const selectedApprover = approvers.find(a => a.id === selectedApproverId);
 
   const handleSubmit = async () => {
@@ -672,7 +685,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       // 🚨 申請先は「その申請の相手」。役職によって leader / manager のどちらにもなりうるので
       // 両方＋approverキーに同じ人を渡す。approver を渡していなかったため、宛先設定が
       // 「申請先（承認者）」のときサイト通知が誰にも届いていなかった
-      const apprKey = selectedApprover?.role_title === 'マネージャー' ? 'manager' : 'leader';
+      const apprKey = embeddedRole(selectedApprover as EmbeddedRoleRow<{ acts_as?: string | null }> | undefined)?.acts_as === 'manager' ? 'manager' : 'leader';
       await dispatchSiteNotification('leave:new_request', vars, { applicant: user.id, [apprKey]: selectedApprover?.id, approver: selectedApprover?.id }, insertNotification, 'leave_request:pending_approval', newRequest?.id);
       await dispatchEmail('leave:new_request', vars, { applicant: applicantEmail, [apprKey]: leaderEmail, approver: leaderEmail });
       // TODO: 申請フォーム送信後の追加処理（例：奨励日との照合・連携）をここに追加
@@ -728,7 +741,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const inputBg = isDark ? '#495057' : 'white';
   const borderColor = isDark ? '#6c757d' : '#ddd';
 
-  const isApprover = ['リーダー', 'マネージャー', '社長', '管理者'].includes(_roleTitle);
+  const isApprover = myAttrs.is_leader_plus;   // 旧配列＝リーダー以上（フロア責任者を含まない）
   // 🚨 Hook は必ず早期returnより前で呼ぶ。
   // 以前はこの行が下の `if (submitted)` の後ろにあり、申請を送信した瞬間に
   // Hookの数が変わってReactが落ち、画面が真っ黒になっていた（2026-07-25〜）

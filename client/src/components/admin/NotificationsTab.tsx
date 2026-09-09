@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { supabase } from '../../lib/supabaseClient';
+import { useRoles } from '../../hooks/useRoles';
+import { rolesActingAs, roleNamesActingAs, roleNamesWhere } from '../../lib/roleAttrs';
+import type { RoleRow } from '../../lib/roleAttrs';
 import { invalidateNotificationCache } from '../../lib/notificationDispatch';
 import PushBannerSettingsSection from './PushBannerSettingsSection';
 import GcalCalendarSection from './GcalCalendarSection';
@@ -309,7 +312,9 @@ const ATTENDANCE_SLACK_OPTIONS = [
 ];
 
 // 役職＋グループ配信イベント用: 役職選択肢（メール・サイト通知）
-const TIME_ADJ_ROLE_OPTIONS = ['申請者本人', 'リーダー', 'マネージャー', '管理者', '社長'];
+// 🚨 役職名を直書きしない（2026-09-09 属性化）。旧配列＝申請者本人＋リーダー以上（is_leader_plus）
+//    🚨 段5までは設定 JSON に役職名を保存する（段5で role_id に変換）
+const timeAdjRoleOptions = (roles: RoleRow[]): string[] => ['申請者本人', ...roleNamesWhere(roles, 'is_leader_plus')];
 
 // 役職チェックの表示ラベル（内部値は共通のまま、イベントごとに分かりやすい表示に）
 const roleLabel = (role: string, eventKey: string): string =>
@@ -330,18 +335,22 @@ const parseCcRoles = (recipient: string | null): string[] => {
 // ⚠️ この値は Edge Function 側（attendance-notify / time-adjustment-notify /
 //    shift-report-confirmed-notify / leave-approved-notify の DEFAULT_ORG_WIDE_ROLES）と
 //    対になっている。変えるときは両方直すこと（設定が未保存の行はEdge側の既定で動く）
-const DEFAULT_ORG_WIDE_ROLES = ['社長', '管理者'];
+//    🚨 役職名を直書きしない（2026-09-09 属性化）。既定＝属性「経営」（is_org_wide）の役職。
+//       DB の resolve_role_recipients も同じ属性を既定にしている
+const defaultOrgWideRoles = (roles: RoleRow[]): string[] => roleNamesWhere(roles, 'is_org_wide');
 
-const parseRoleRecipient = (recipient: string | null): { roles: string[]; groupFilter: string; orgWideRoles: string[] } => {
+const parseRoleRecipient = (recipient: string | null, allRoles: RoleRow[]): { roles: string[]; groupFilter: string; orgWideRoles: string[] } => {
+  // 既定の宛先＝立場 leader / manager の役職（旧 ['リーダー','マネージャー'] と同じ顔ぶれ）
+  const defaultRoles = roleNamesActingAs(allRoles, 'leader', 'manager');
   try {
     const p = JSON.parse(recipient ?? '{}');
     return {
-      roles: Array.isArray(p.roles) ? p.roles : ['リーダー', 'マネージャー'],
+      roles: Array.isArray(p.roles) ? p.roles : defaultRoles,
       groupFilter: p.groupFilter ?? 'same',
-      orgWideRoles: Array.isArray(p.orgWideRoles) ? p.orgWideRoles : DEFAULT_ORG_WIDE_ROLES,
+      orgWideRoles: Array.isArray(p.orgWideRoles) ? p.orgWideRoles : defaultOrgWideRoles(allRoles),
     };
   } catch {
-    return { roles: ['リーダー', 'マネージャー'], groupFilter: 'same', orgWideRoles: DEFAULT_ORG_WIDE_ROLES };
+    return { roles: defaultRoles, groupFilter: 'same', orgWideRoles: defaultOrgWideRoles(allRoles) };
   }
 };
 
@@ -519,17 +528,18 @@ const TEMPLATE_VAR_GROUPS: { label: string; color: string; vars: { v: string; de
 
 const RECIPIENT_OPTIONS: Record<string, { value: string; label: string }[]> = {
   slack: [],
+  // 🚨 leader / manager / president のラベルは roles から出す（label 空＝getRecipientOptions で立場から引く）
   email: [
     { value: 'applicant', label: '申請者本人' },
-    { value: 'leader',    label: 'リーダー' },
-    { value: 'manager',   label: 'マネージャー' },
+    { value: 'leader',    label: '' },
+    { value: 'manager',   label: '' },
     { value: 'approver',  label: '申請先（承認者）' },
   ],
   site: [
     { value: 'applicant', label: '申請者本人' },
     { value: 'approver',  label: '申請先（承認者）' },
-    { value: 'leader',    label: 'リーダー' },
-    { value: 'manager',   label: 'マネージャー' },
+    { value: 'leader',    label: '' },
+    { value: 'manager',   label: '' },
   ],
 };
 
@@ -548,26 +558,33 @@ const PRESIDENT_RECIPIENT_EVENTS = RECIPIENT_GROUP_FILTER_EVENTS;
 // 「申請先（承認者）」を選べるイベント。“その申請の相手”を指す宛先なので、
 // 交通費・出張・備品の差し戻しなど、その概念が無い（送信側も解決しない）イベントには出さない
 const APPROVER_RECIPIENT_EVENTS = ['leave:new_request', 'leave:leader_approved'];
-// 宛先キー → 役職名（絞り込みの対象外にする役職の選択肢に使う）
-const ROLE_NAME_BY_RECIPIENT_KEY: Record<string, string> = {
-  leader:    'リーダー',
-  manager:   'マネージャー',
-  president: '社長',
+// 宛先キー → 役職名。🚨 役職名を直書きせず、その立場に立つ役職の名前を roles から引く（複数なら「・」でつなぐ）。
+//    会長を president に立てれば「社長・会長」と出る
+const ACTS_AS_BY_RECIPIENT_KEY: Record<string, 'leader' | 'manager' | 'president'> = {
+  leader: 'leader', manager: 'manager', president: 'president',
 };
-const getRecipientOptions = (channel: string, eventKey: string): { value: string; label: string }[] => {
+const roleNameByKey = (roles: RoleRow[], key: string): string => {
+  const pos = ACTS_AS_BY_RECIPIENT_KEY[key];
+  if (!pos) return '';
+  return rolesActingAs(roles, pos).map(r => r.name).join('・') || key;
+};
+const getRecipientOptions = (channel: string, eventKey: string, roles: RoleRow[]): { value: string; label: string }[] => {
   if (APPLICANT_ONLY_RECIPIENT_EVENTS.includes(eventKey)) {
     return [{ value: 'applicant', label: '申請者本人' }];
   }
   // 「申請先（承認者）」は概念のあるイベントだけに出す（押しても届かない設定を作らない）
   const base = (RECIPIENT_OPTIONS[channel] ?? [])
-    .filter(o => o.value !== 'approver' || APPROVER_RECIPIENT_EVENTS.includes(eventKey));
+    .filter(o => o.value !== 'approver' || APPROVER_RECIPIENT_EVENTS.includes(eventKey))
+    .map(o => ({ ...o, label: o.label || roleNameByKey(roles, o.value) }));
   if (PRESIDENT_RECIPIENT_EVENTS.includes(eventKey) && (channel === 'email' || channel === 'site')) {
-    return [...base, { value: 'president', label: '社長' }];
+    return [...base, { value: 'president', label: roleNameByKey(roles, 'president') }];
   }
   return base;
 };
 
 const NotificationsTab: React.FC = () => {
+  // 役職の一覧（属性つき）。宛先の既定値・ラベルはここから引く（役職名を直書きしない・2026-09-09）
+  const allRoles = useRoles();
   const { isDarkMode } = useAdminPanel();
   const [settings, setSettings] = useState<NotificationSetting[]>([]);
   const [savedSettings, setSavedSettings] = useState<NotificationSetting[]>([]);
@@ -1049,7 +1066,7 @@ const NotificationsTab: React.FC = () => {
                         // 役職を選べるイベント（サイト通知と同様に宛先を選択できる）
                         const roleSelectable = PUSH_ROLE_SELECT_EVENTS.includes(event.key);
                         const withGroupFilter = ROLE_GROUP_BROADCAST_EVENTS.includes(event.key);
-                        const { roles, groupFilter, orgWideRoles } = parseRoleRecipient(s.recipient);
+                        const { roles, groupFilter, orgWideRoles } = parseRoleRecipient(s.recipient, allRoles);
                         return (
                           <div key={channel} style={{ background: bg, border: `0.5px solid ${borderColor}`, borderRadius: 8, padding: '12px 14px', marginBottom: 8 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: s.enabled ? 12 : 0 }}>
@@ -1067,7 +1084,7 @@ const NotificationsTab: React.FC = () => {
                               <div style={{ borderTop: `0.5px solid ${borderColor}`, paddingTop: 12, marginBottom: 4 }}>
                                 <div style={{ fontSize: 12, color: subText, marginBottom: 8 }}>プッシュ送信先の役職（複数選択可）</div>
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: withGroupFilter ? 12 : 0 }}>
-                                  {TIME_ADJ_ROLE_OPTIONS.filter(r => r !== '申請者本人').map(role => (
+                                  {timeAdjRoleOptions(allRoles).filter(r => r !== '申請者本人').map(role => (
                                     <label key={role} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', color: text }}>
                                       <input
                                         type="checkbox"
@@ -1132,7 +1149,7 @@ const NotificationsTab: React.FC = () => {
                                     <span style={{ color: subText, marginLeft: 6 }}>※選ぶと本来の宛先に加えてその役職の人にも届きます（空欄なら追加送信なし）</span>
                                   </div>
                                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-                                    {TIME_ADJ_ROLE_OPTIONS.filter(r => r !== '申請者本人').map(role => (
+                                    {timeAdjRoleOptions(allRoles).filter(r => r !== '申請者本人').map(role => (
                                       <label key={role} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', color: text }}>
                                         <input
                                           type="checkbox"
@@ -1277,7 +1294,7 @@ const NotificationsTab: React.FC = () => {
                               ) : event.key.startsWith('board:') || event.key.startsWith('reminder:') || ['overtime:unreported', 'overtime:pending_review', 'overtime:pending_review_advance'].includes(event.key) ? null : ROLE_GROUP_BROADCAST_EVENTS.includes(event.key) && channel !== 'slack' ? (
                                 // 時間調整: 役職チェックボックス + グループ絞り込み
                                 (() => {
-                                  const { roles, groupFilter, orgWideRoles } = parseRoleRecipient(s.recipient);
+                                  const { roles, groupFilter, orgWideRoles } = parseRoleRecipient(s.recipient, allRoles);
                                   const updateRoleRecipient = (newRoles: string[], newFilter: string, newOrgWide?: string[]) =>
                                     updateLocal(event.key, channel, {
                                       recipient: JSON.stringify({
@@ -1291,7 +1308,7 @@ const NotificationsTab: React.FC = () => {
                                     <div style={{ marginBottom: 12 }}>
                                       <div style={{ fontSize: 12, color: subText, marginBottom: 8 }}>通知先の役職（複数選択可）</div>
                                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
-                                        {TIME_ADJ_ROLE_OPTIONS.map(role => (
+                                        {timeAdjRoleOptions(allRoles).map(role => (
                                           <label key={role} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', color: text }}>
                                             <input
                                               type="checkbox"
@@ -1381,7 +1398,7 @@ const NotificationsTab: React.FC = () => {
                               ) : (
                                 // メール・サイト通知: 宛先チェックボックス（複数選択）
                                 (() => {
-                                  const recipientOptions = getRecipientOptions(channel, event.key);
+                                  const recipientOptions = getRecipientOptions(channel, event.key, allRoles);
                                   const selectedRecipients = parseEmailSiteRecipients(s.recipient);
                                   // groupFilter / orgWideRoles を消さずに保つため、既存のJSONに上書きする
                                   const curRecipient = (() => {
@@ -1390,10 +1407,10 @@ const NotificationsTab: React.FC = () => {
                                   const patchRecipient = (patch: Record<string, unknown>) =>
                                     updateLocal(event.key, channel, { recipient: JSON.stringify({ ...curRecipient, recipients: selectedRecipients, ...patch }) });
                                   const groupFilter = typeof curRecipient.groupFilter === 'string' ? curRecipient.groupFilter : 'same';
-                                  const orgWideRoles = Array.isArray(curRecipient.orgWideRoles) ? curRecipient.orgWideRoles as string[] : ['社長', '管理者'];
+                                  const orgWideRoles = Array.isArray(curRecipient.orgWideRoles) ? curRecipient.orgWideRoles as string[] : defaultOrgWideRoles(allRoles);
                                   // 役職（リーダー・マネージャー・社長）を宛先に選んでいるときだけ絞り込みを出す
                                   const selectedRoleNames = selectedRecipients
-                                    .map(k => ROLE_NAME_BY_RECIPIENT_KEY[k])
+                                    .map(k => roleNameByKey(allRoles, k))
                                     .filter((r): r is string => !!r);
                                   const showGroupFilter = RECIPIENT_GROUP_FILTER_EVENTS.includes(event.key) && selectedRoleNames.length > 0;
                                   return (

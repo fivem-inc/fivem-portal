@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import type { AuthUser, PurchaseRequestItem } from '../types';
 import { formatAmount, parseAmount } from '../utils';
 import { supabase } from '../lib/supabaseClient';
+import { useRoles } from '../hooks/useRoles';
+import { attrsFor } from '../lib/roleAttrs';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { insertNotification } from '../lib/notifications';
 import { todayJstStr } from '../lib/breakCalc';
@@ -245,34 +247,39 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
     } catch { /* 保存容量超過などは無視 */ }
   }, [isResubmit, items, requestedDate, purpose, reason, notes, location, leaderIds, requestedManagerIds, sharedManagerIds, presidentSelfJudgment, selfJudgeConfirmFirst, manualTotalOverride, totalManuallyOverridden, amountDiffReason]);
 
+  const roles = useRoles();
+  const myAttrs = attrsFor(roles, roleTitle);
+
   useEffect(() => {
-    supabase.from('profiles').select('id, name, role_title').eq('is_active', true)
-      .in('role_title', ['リーダー', 'マネージャー']).order('role_title').order('name').then(
+    // 🚨 役職名ではなく属性（立場・決裁者・マネージャー以上）で引く（2026-09-09 属性化）
+    supabase.from('profiles').select('id, name, role_title, roles!inner(acts_as)').eq('is_active', true)
+      .in('roles.acts_as', ['leader', 'manager']).order('role_title').order('name').then(
         ({ data }) => setLeaders((data ?? []) as { id: string; name: string; role_title: string }[]),
         () => {}
       );
-    supabase.from('profiles').select('id, name').eq('is_active', true).eq('role_title', 'マネージャー').order('name').then(
+    supabase.from('profiles').select('id, name, roles!inner(acts_as)').eq('is_active', true).eq('roles.acts_as', 'manager').order('name').then(
       ({ data }) => setManagers((data ?? []) as { id: string; name: string }[]),
       () => {}
     );
     // 自己判断（共有のみ）の共有先候補は、マネージャーだけでなく社長も含める
-    supabase.from('profiles').select('id, name, role_title').eq('is_active', true)
-      .in('role_title', ['マネージャー', '社長']).order('role_title').order('name').then(
+    supabase.from('profiles').select('id, name, role_title, roles!inner(is_board_approver)').eq('is_active', true)
+      .eq('roles.is_board_approver', true).order('role_title').order('name').then(
         ({ data }) => setShareCandidates((data ?? []) as { id: string; name: string; role_title: string }[]),
         () => {}
       );
     // 決裁権限内の購入（承認不要）を共有する相手。
     // 申請者が選んだ共有先だけだと1人しか知らない状態になり「何が買われているか把握できない」ため、
     // マネージャー・社長・管理者（経理）にも届ける。⚠️ 経理にはホームのバナーは出ない（App.tsxが !isAdmin）
-    supabase.from('profiles').select('id').eq('is_active', true)
-      .in('role_title', ['マネージャー', '社長', '管理者']).neq('id', user.id).then(
+    supabase.from('profiles').select('id, roles!inner(is_manager_plus)').eq('is_active', true)
+      .eq('roles.is_manager_plus', true).neq('id', user.id).then(
         ({ data }) => setManagerPlusIds(((data ?? []) as { id: string }[]).map(m => m.id)),
         () => {}
       );
     // 3万円超・全員承認フローの対象者プレビュー（読み取り専用、選択不可）
     // 全マネージャー・社長のうち休職中(is_active=false)を除き、申請者自身も除外する
-    supabase.from('profiles').select('id, name, role_title').eq('is_active', true)
-      .in('role_title', ['マネージャー', '社長']).neq('id', user.id).order('role_title').order('name').then(
+    // 🚨 決裁者（is_board_approver）。経理＝管理者は含まない（DB のトリガー set_board_approver_ids と同じ条件）
+    supabase.from('profiles').select('id, name, role_title, roles!inner(is_board_approver)').eq('is_active', true)
+      .eq('roles.is_board_approver', true).neq('id', user.id).order('role_title').order('name').then(
         ({ data }) => setBoardApprovers((data ?? []) as { id: string; name: string; role_title: string }[]),
         () => {}
       );
@@ -346,9 +353,11 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
 
   // 自己判断（承認不要・共有のみ）が使えるかは申請者自身の役職の決裁権限で自動的に決まる
   // （ユーザーが選ぶラジオボタンではない）。リーダー以上は1万円まで、マネージャー以上は3万円まで自己判断可
-  const isLeaderPlus = isAdmin || ['リーダー', 'マネージャー', '社長'].includes(roleTitle);
-  const isManagerPlus = isAdmin || ['マネージャー', '社長'].includes(roleTitle);
-  const isPresident = !isAdmin && roleTitle === '社長';
+  // 🚨 役職名では判定しない（2026-09-09 属性化）。
+  //    「3万円まで自己判断」は決裁者（is_board_approver）＝マネージャー・社長。経理（管理者）は含まない
+  const isLeaderPlus = isAdmin || myAttrs.is_leader_plus;
+  const isManagerPlus = isAdmin || myAttrs.is_board_approver;
+  const isPresident = !isAdmin && myAttrs.acts_as === 'president';
   const canSelfJudge = tier === 'leader' ? isLeaderPlus : tier === 'manager' ? isManagerPlus : false;
   // 決裁権限内でも「事前に確認してもらう」を選んだ場合は自己判断扱いにしない
   const isSelfJudgment = tier === 'board' ? false : (canSelfJudge && !selfJudgeConfirmFirst);

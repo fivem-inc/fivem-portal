@@ -3,14 +3,33 @@ import type { AuthUser } from '../types';
 import { supabase } from '../lib/supabaseClient';
 import { AuthContext } from '../contexts/AuthContext.tsx';
 import { readRawPendingQueue, writeRawPendingQueue } from '../lib/safetyStorage';
+import { attrsFor, rankOf, previewRoleOptions } from '../lib/roleAttrs';
+import type { RoleRow, ActsAs } from '../lib/roleAttrs';
+import { useRoles } from './useRoles';
 
-const APPROVER_ROLES = ['リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者'] as const;
+// 🚨 役職名の配列（旧 APPROVER_ROLES 等）はここに書かない。判定は roles の属性（lib/roleAttrs.ts）。
+//    2026-09-09 に「社長」を改名しただけで承認者判定が外れ、本番の権限が壊れた。
 
 interface UseAuthReturn {
   user: AuthUser | null;
   loading: boolean;
   isAdmin: boolean;
   isApprover: boolean;
+  /** 以下は roles の属性から（2026-09-09）。プレビュー中はプレビュー役職の属性 */
+  isLeaderPlus: boolean;
+  isManagerPlus: boolean;
+  /** 備品購入の決裁者（🚨 マネージャー以上とは別。経理＝管理者を含まない） */
+  isBoardApprover: boolean;
+  /** 経営（グループ絞り込みの対象外・「社長のみ」先行公開の対象） */
+  isOrgWide: boolean;
+  /** 承認フロー上の立場（leader/manager/accounting/president）。無ければ null */
+  actsAs: ActsAs | null;
+  /** 序列（小さいほど上）。役職が無ければ null */
+  roleRank: number | null;
+  /** 役職の一覧（属性つき・sort_order 順）。プルダウンや宛先の解決に使う */
+  roles: RoleRow[];
+  /** 役職プレビューに出す役職（管理者を除く） */
+  previewRoles: RoleRow[];
   profileName: string;
   roleTitle: string;
   employmentType: string;
@@ -43,8 +62,7 @@ interface UseAuthReturn {
   handleLogout: () => Promise<void>;
 }
 
-const PREVIEW_ROLES = ['パート', '一般', 'リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者'] as const;
-export { PREVIEW_ROLES };
+// 役職の一覧（属性つき）は hooks/useRoles.ts が1回だけ読んで全画面で共有する。判定は lib/roleAttrs.ts。
 
 // 前回読み込んだ名前・役職・権限を端末に保存しておき、次回起動時に即表示するためのキャッシュ。
 // これで「名前・権限がまだ読めていない一瞬」に、名前なし（メール頭文字）や
@@ -114,12 +132,24 @@ export const useAuth = (): UseAuthReturn => {
   // プレビュー役職の権限
   const [previewPerms, setPreviewPerms] = useState<Record<string, boolean>>({});
 
+  // 役職の一覧（属性つき）。キャッシュ → 裏で取り直して上書き（hooks/useRoles.ts）
+  const roles = useRoles();
+
   const realIsAdmin = user?.app_metadata?.role === 'admin';
   const effectiveRoleTitle = previewRole ?? roleTitle;
   const isAdmin = previewRole ? false : realIsAdmin;
-  const isApprover = previewRole
-    ? APPROVER_ROLES.includes(previewRole as typeof APPROVER_ROLES[number])
-    : (realIsAdmin || APPROVER_ROLES.includes(roleTitle as typeof APPROVER_ROLES[number]));
+  // 役職の属性。プレビュー中はプレビュー役職の属性そのもの（管理者の全能は効かせない＝実際の見え方）
+  const attrs = attrsFor(roles, effectiveRoleTitle);
+  const adminOr = (v: boolean) => (previewRole ? v : (realIsAdmin || v));
+  const isApprover      = adminOr(attrs.is_approver);
+  const isLeaderPlus    = adminOr(attrs.is_leader_plus);
+  const isManagerPlus   = adminOr(attrs.is_manager_plus);
+  // 🚨 決裁者に管理者を含めない（経理が3万円超の決裁に自動で入る事故を防ぐ）。管理者は isAdmin で別に扱う
+  const isBoardApprover = attrs.is_board_approver;
+  const isOrgWide       = adminOr(attrs.is_org_wide);
+  const actsAs          = attrs.acts_as;
+  const roleRank        = rankOf(roles, effectiveRoleTitle);
+  const previewRoles    = previewRoleOptions(roles);
 
   const fetchProfileName = useCallback(async () => {
     if (!user) return;
@@ -281,6 +311,14 @@ export const useAuth = (): UseAuthReturn => {
     loading,
     isAdmin,
     isApprover,
+    isLeaderPlus,
+    isManagerPlus,
+    isBoardApprover,
+    isOrgWide,
+    actsAs,
+    roleRank,
+    roles,
+    previewRoles,
     canAttendanceInput,
     profileName,
     roleTitle: effectiveRoleTitle,

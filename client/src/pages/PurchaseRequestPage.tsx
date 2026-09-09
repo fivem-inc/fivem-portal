@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { AuthUser, PurchaseRequestItem, PurchaseRequestItemQuote } from '../types';
 import { supabase } from '../lib/supabaseClient';
+import { useRoles } from '../hooks/useRoles';
+import { attrsFor } from '../lib/roleAttrs';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { usePurchasePendingCount } from '../hooks/usePurchasePendingCount';
@@ -680,8 +682,11 @@ const PurchaseRequestPage: React.FC<PurchaseRequestPageProps> = ({ user, roleTit
   const tab: Tab = (validTabs as readonly string[]).includes(tabParam ?? '') ? (tabParam as Tab) : 'reimbursement';
   const setTab = (t: Tab) => setSearchParams(t === 'reimbursement' ? {} : { tab: t });
   const [resubmitRecord, setResubmitRecord] = useState<ResubmitRecord | null>(null);
-  const isManagerPlus = isAdmin || ['マネージャー', '社長'].includes(roleTitle);
-  const canApprovePurchase = isAdmin || ['リーダー', 'マネージャー', '社長'].includes(roleTitle);
+  // 🚨 役職名では判定しない（2026-09-09 属性化）。決裁者＝マネージャー・社長／承認できる＝リーダー以上
+  const roles = useRoles();
+  const myAttrs = attrsFor(roles, roleTitle);
+  const isManagerPlus = isAdmin || myAttrs.is_board_approver;
+  const canApprovePurchase = isAdmin || myAttrs.is_leader_plus;
   // 「✅ 承認」タブに出す件数バッジ（自分の承認・意見を待っている件数）
   const { pendingCount: purchasePending } = usePurchasePendingCount(user.id, canApprovePurchase);
   // 「📋 履歴」タブに出す件数バッジ（まだ確認していないやりとりを持つ申請の件数）。

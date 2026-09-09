@@ -1554,7 +1554,7 @@ const LeaveRequestsTab: React.FC = () => {
                                     onClick={async () => {
                                       if (req.status === 'pending') {
                                         // マネージャー選択モーダルを開く
-                                        const { data: mgrs } = await supabase.from('profiles').select('id, name, role_title').eq('role_title', 'マネージャー').eq('is_active', true).order('name');
+                                        const { data: mgrs } = await supabase.from('profiles').select('id, name, role_title, roles!inner(acts_as)').eq('roles.acts_as', 'manager').eq('is_active', true).order('name');
                                         setAdminManagerList(mgrs || []);
                                         setAdminSelectedManagerId(mgrs && mgrs.length > 0 ? mgrs[0].id : '');
                                         setAdminSelectingManagerFor(req);

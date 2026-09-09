@@ -41,6 +41,8 @@ import { fetchPushBannerConfig, DEFAULT_PUSH_BANNER_MESSAGE, DEFAULT_PUSH_BANNER
 import { fetchActiveAnnouncements, type Announcement } from './lib/announcements';
 import { isInRemindWindow } from './lib/announcementDates';
 import { useFeaturePublished, isFeaturePublished } from './hooks/useFeaturePublished';
+import { useRoles } from './hooks/useRoles';
+import { attrsFor, previewRoleOptions } from './lib/roleAttrs';
 import { supabase } from './lib/supabaseClient';
 import { isFullDayReport } from './lib/overtimeTypes';
 import { useExpenses } from './hooks/useExpenses';
@@ -663,14 +665,17 @@ const useBoardUnread = (userId: string | undefined, pathname: string) => {
 // 勤務変更申請：自分の番の確認待ち件数（ShiftReportApprovalBannerと同じ判定ロジック）
 const useShiftPendingCount = (userId: string | undefined, roleTitle: string | undefined, isAdmin: boolean, canShiftReport: boolean | undefined) => {
   const [pendingCount, setPendingCount] = useState(0);
+  // 🚨 役職名では判定しない（2026-09-09 属性化）。確認者＝承認者（フロア責任者を含む）
+  const roles = useRoles();
+  const isApprover = attrsFor(roles, roleTitle).is_approver;
 
   const fetchPending = useCallback(async () => {
     if (!userId || !canShiftReport) { setPendingCount(0); return; }
-    if (!isAdmin && !['リーダー', 'マネージャー', 'フロア責任者', '社長', '管理者'].includes(roleTitle ?? '')) { setPendingCount(0); return; }
+    if (!isAdmin && !isApprover) { setPendingCount(0); return; }
 
     const { data } = await supabase.from('shift_reports').select('id').eq('reviewer_id', userId).in('status', ['pending', 'resubmitted']);
     setPendingCount(data?.length ?? 0);
-  }, [userId, roleTitle, isAdmin, canShiftReport]);
+  }, [userId, isApprover, isAdmin, canShiftReport]);
 
   useEffect(() => { fetchPending(); const t = setInterval(fetchPending, 30000); return () => clearInterval(t); }, [fetchPending]);
   useEffect(() => {
@@ -1025,12 +1030,8 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
               }}
             >
               <option value="">👁️ 確認</option>
-              <option value="パート">パート</option>
-              <option value="一般">正社員（一般）</option>
-              <option value="リーダー">リーダー</option>
-              <option value="マネージャー">マネージャー</option>
-              <option value="フロア責任者">フロア責任者</option>
-              <option value="社長">社長</option>
+              {/* 🚨 役職名を直書きしない（2026-09-09）。roles から出すので、新設した役職もそのまま並ぶ（管理者＝固定行は除く） */}
+              {previewRoleOptions(featurePublishState.roles).map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
             </select>
           )}
           {userId && <BellIcon userId={userId} />}

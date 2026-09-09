@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import { useRoles } from '../hooks/useRoles';
+import { attrsFor, embeddedRole } from '../lib/roleAttrs';
+import type { EmbeddedRoleRow } from '../lib/roleAttrs';
 import { scrollToFirstError, ERROR_BORDER, errorBg } from '../lib/formHighlight';
 import { describeUpdate } from '../lib/statusUpdate';
 import { useDarkMode } from '../hooks/useDarkMode';
@@ -1508,6 +1511,9 @@ const SpCalendar: React.FC<{
 
 // ===== メインコンポーネント =====
 const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjustPerm, canAttendanceInput }) => {
+  // 自分の役職の属性（役職名では判定しない・2026-09-09）
+  const roles = useRoles();
+  const myAttrs = attrsFor(roles, roleTitle);
   const isDark = useDarkMode();
   // 会社カレンダー（休館日・出勤日）。カレンダーのセルに敷いて、休館日が一目で分かるようにする
   const calendarKinds = useCompanyCalendar();
@@ -1535,7 +1541,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
   // 🚨 通知から ?focus= 付きで来たときも全チームで開く。
   //    対象者が自分と違うチームだと絞り込みで行が消え、光らせる対象そのものが無くなるため。
   //    （欠勤にチーム絞り込みを入れた 2026-08-21 に、ここを忘れて実際に光らなくなった）
-  const forceAllTeams = viewParam === 'fyi' || focusDate !== null || isAdmin || roleTitle === '社長';
+  const forceAllTeams = viewParam === 'fyi' || focusDate !== null || isAdmin || myAttrs.is_org_wide;
   const [year, setYear] = useState(focusDate ? Number(focusDate.slice(0, 4)) : today.getFullYear());
   const [month, setMonth] = useState(focusDate ? Number(focusDate.slice(5, 7)) - 1 : today.getMonth());
   const [highlightDate, setHighlightDate] = useState<string | null>(focusDate);
@@ -1812,8 +1818,10 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
   useEffect(() => {
     // 入力シート用の一覧は、登録できる人にだけ読む（判定は canInput と同じトグル）
     if (!canAttendanceInput && !isAdmin) return;
-    supabase.from('profiles').select('id, name, role_title, employment_type, group_names').eq('is_active', true).neq('role_title', '管理者').then(({ data }) => {
-      if (data) setProfiles(data.map((p: { id: string; name: string; role_title: string; employment_type: string; group_names: string | string[] }) => ({
+    // 🚨 一覧から経理（立場 accounting）を除く。役職名 '管理者' では判定しない（2026-09-09 属性化）。
+    //    立場が空の役職（一般・パート等）も残すので、neq ではなく取ってから除く
+    supabase.from('profiles').select('id, name, role_title, employment_type, group_names, roles(acts_as)').eq('is_active', true).then(({ data }) => {
+      if (data) setProfiles(data.filter((p: { roles?: unknown }) => embeddedRole(p as EmbeddedRoleRow<{ acts_as?: string | null }>)?.acts_as !== 'accounting').map((p: { id: string; name: string; role_title: string; employment_type: string; group_names: string | string[] }) => ({
         ...p,
         group_names: Array.isArray(p.group_names) ? p.group_names : (typeof p.group_names === 'string' ? JSON.parse(p.group_names) : []),
       })));

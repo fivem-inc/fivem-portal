@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import { useRoles } from '../hooks/useRoles';
+import { attrsFor } from '../lib/roleAttrs';
 import ApplicationRequestSheet from './ApplicationRequestSheet';
 import { sendLeaveSlack } from '../lib/leaveSlack';
 import { insertNotification, formatLeaveDateSummary } from '../lib/notifications';
@@ -62,7 +64,10 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle, canPartFormSend, canApplicationRequest }) => {
-  const isPresident = roleTitle === '社長';
+  // 🚨 役職名では判定しない（2026-09-09 属性化）。最終受理＝立場 president
+  const roles = useRoles();
+  const roleAttrs = attrsFor(roles, roleTitle);
+  const isPresident = roleAttrs.acts_as === 'president';
   const navigate = useNavigate();
   const [requests, setRequests] = useState<LeaveReq[]>([]);
   // 通知バナーから ?focus=<申請ID> で来たとき該当カードを強調
@@ -145,8 +150,8 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   useEffect(() => {
     supabase
       .from('profiles')
-      .select('id, name, role_title')
-      .eq('role_title', 'マネージャー')
+      .select('id, name, role_title, roles!inner(acts_as)')
+      .eq('roles.acts_as', 'manager')   // 🚨 役職名ではなく立場で引く（2026-09-09 属性化）
       .eq('is_active', true)
       .order('name')
       .then(({ data }) => {
@@ -531,8 +536,8 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
 
       {/* パートへ申請フォーム送信。権限がOFFの役職には欄ごと出さない（2026-09-09） */}
       {canPartFormSend && (() => {
-        const canSeeAll = isAdmin || roleTitle === 'マネージャー' || roleTitle === '社長' || roleTitle === '管理者';
-        const isLeader = roleTitle === 'リーダー';
+        const canSeeAll = isAdmin || roleAttrs.is_manager_plus;
+        const isLeader = roleAttrs.acts_as === 'leader';
         // リーダーは自分が送ったものだけ表示
         const visibleEnabled = partUsers.filter(u =>
           u.leave_request_enabled && (canSeeAll ? true : u.leave_enabled_by === user.id)
@@ -873,7 +878,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
 
       {/* 一人目受理 → マネージャー選択モーダル */}
       {selectingManagerFor && (() => {
-        const isManager = roleTitle === 'マネージャー';
+        const isManager = roleAttrs.acts_as === 'manager';
         const isChosei = selectingManagerFor.leave_type === '調整休';
         const selfLabel = isChosei ? '自分が受理して完了する' : '自分が受理して経理へ進める';
         const selfBtnLabel = isChosei ? '受理して完了' : '経理へ進める';

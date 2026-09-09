@@ -1,4 +1,6 @@
 import { supabase } from './supabaseClient';
+import { embeddedRole } from './roleAttrs';
+import type { EmbeddedRoleRow } from './roleAttrs';
 
 interface NotificationSetting {
   event_key: string;
@@ -90,14 +92,13 @@ export type RecipientMap = {
 const toList = (v: string | string[] | undefined): string[] =>
   Array.isArray(v) ? v.filter(Boolean) : (v ? [v] : []);
 
-// 宛先キー → profiles.role_title
-const ROLE_BY_RECIPIENT_KEY: Record<string, string> = {
-  leader:    'リーダー',
-  manager:   'マネージャー',
-  president: '社長',
+// 宛先キー → 役職の立場（roles.acts_as）。🚨 役職名では引かない（2026-09-09 属性化）。
+// 会長を「社長」の立場に立てれば、設定を触らずに president 宛に入る
+const ACTS_AS_BY_RECIPIENT_KEY: Record<string, 'leader' | 'manager' | 'president'> = {
+  leader:    'leader',
+  manager:   'manager',
+  president: 'president',
 };
-// グループ絞り込みを無視して常に届く役職の既定値（管理画面の「絞り込みの対象外にする役職」で上書き可）
-const DEFAULT_ORG_WIDE_ROLES = ['社長', '管理者'];
 
 // 宛先に選ばれた役職（リーダー・マネージャー・社長）を、申請者の所属チームで絞り込んで解決する。
 // 「取り消し時」のように本人＋上長の両方へ送るイベントで使う。
@@ -114,11 +115,13 @@ export async function resolveRoleRecipients(
   channel: 'site' | 'email',
 ): Promise<{ ids: RecipientMap; emails: RecipientMap }> {
   const recipient = await getNotificationRecipient(eventKey, channel);
-  const roleKeys = parseRecipientKeys(recipient).filter(k => ROLE_BY_RECIPIENT_KEY[k]);
+  const roleKeys = parseRecipientKeys(recipient).filter(k => ACTS_AS_BY_RECIPIENT_KEY[k]);
   if (roleKeys.length === 0) return { ids: {}, emails: {} };
 
   let groupFilter = 'same';
-  let orgWide = DEFAULT_ORG_WIDE_ROLES;
+  // 「絞り込みの対象外にする役職」。設定があればそれ（役職名でも role_id でも可・段5で id に揃える）、
+  // 無ければ属性「経営」（is_org_wide）＝旧既定 ['社長','管理者'] と同じ顔ぶれ
+  let orgWide: string[] | null = null;
   try {
     const p = JSON.parse(recipient ?? '{}');
     if (p.groupFilter) groupFilter = p.groupFilter;
@@ -139,14 +142,23 @@ export async function resolveRoleRecipients(
 
   const ids: RecipientMap = {};
   const emails: RecipientMap = {};
+  type RoleBit = { id: string; name: string; is_org_wide: boolean };
+  type Row = { id: string; email: string | null; group_names: string[] | null } & EmbeddedRoleRow<RoleBit>;
   for (const key of roleKeys) {
-    const role = ROLE_BY_RECIPIENT_KEY[key];
-    let q = supabase.from('profiles').select('id, email').eq('role_title', role).eq('is_active', true);
-    if (groupFilter === 'same' && !orgWide.includes(role) && teams.length > 0) {
-      q = q.overlaps('group_names', teams);
-    }
-    const { data } = await q;
-    const rows = ((data ?? []) as { id: string; email: string | null }[]).filter(r => r.id !== applicantId);
+    // 立場で引く（同じ立場に複数の役職が立てるので、役職ごとに絞り込みの対象外かを見る）
+    const { data } = await supabase.from('profiles')
+      .select('id, email, group_names, roles!inner(id, name, is_org_wide)')
+      .eq('roles.acts_as', ACTS_AS_BY_RECIPIENT_KEY[key]).eq('is_active', true);
+    const rows = ((data ?? []) as unknown as Row[])
+      .filter(r => r.id !== applicantId)
+      .filter(r => {
+        if (groupFilter !== 'same' || teams.length === 0) return true;
+        const role = embeddedRole(r);
+        const isOrgWide = orgWide
+          ? (orgWide.includes(role?.name ?? '') || orgWide.includes(role?.id ?? ''))
+          : !!role?.is_org_wide;
+        return isOrgWide || (r.group_names ?? []).some(g => teams.includes(g));
+      });
     ids[key as keyof RecipientMap] = rows.map(r => r.id);
     emails[key as keyof RecipientMap] = rows.map(r => r.email).filter((e): e is string => !!e);
   }

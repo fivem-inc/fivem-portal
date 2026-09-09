@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom';
 import SearchableSelect from '../common/SearchableSelect';
 import { useAdminPanel } from './AdminPanelContext';
+import { useRoles } from '../../hooks/useRoles';
+import { rankOf, rolesByRank, rolesActingAs } from '../../lib/roleAttrs';
 import OvertimeShiftImport from './OvertimeShiftImport';
 import {
   calcPatternFields, timeToMin, minToTime, formatMin, formatSignedMin, todayJstStr,
@@ -73,7 +75,7 @@ interface StaffRow {
 
 // 役職ごと・個人ごとのしきい値を1件追加するフォーム。
 // 「対象外」を選ぶとその人（その役職）にはお知らせを出さない（みなし残業込みの給与の方など）
-const ROLE_CHOICES = ['一般', 'フロア責任者', 'リーダー', 'マネージャー', '社長'];
+// 🚨 役職の選択肢は roles から出す（役職名を直書きしない・2026-09-09 属性化）。各フォームの中で useRoles() から作る
 
 const ThresholdRuleForm: React.FC<{
   staff: StaffRow[];
@@ -85,7 +87,8 @@ const ThresholdRuleForm: React.FC<{
   onSave: (target: { role_title: string } | { user_id: string }, minutes: number | null, excluded: boolean) => void;
 }> = ({ staff, isDarkMode, text, subText, inputStyle, borderColor, onSave }) => {
   const [mode, setMode] = useState<'role' | 'user'>('role');
-  const [roleTitle, setRoleTitle] = useState(ROLE_CHOICES[0]);
+  const ROLE_CHOICES = useRoles().filter(r => !r.is_fixed).map(r => r.name);
+  const [roleTitle, setRoleTitle] = useState(ROLE_CHOICES[0] ?? '');
   const [userId, setUserId] = useState('');
   const [hours, setHours] = useState('5');
   const [mins, setMins] = useState('0');
@@ -172,7 +175,10 @@ const CalendarChoiceRuleForm: React.FC<{
   onSave: (target: { role_title: string } | { user_id: string }, enabled: boolean) => void;
 }> = ({ staff, subText, inputStyle, borderColor, onSave }) => {
   const [mode, setMode] = useState<'role' | 'user'>('role');
-  const [roleTitle, setRoleTitle] = useState('マネージャー');
+  const rolesAll = useRoles();
+  const ROLE_CHOICES = rolesAll.filter(r => !r.is_fixed).map(r => r.name);
+  // 既定は立場 manager の役職（役職名を直書きしない）
+  const [roleTitle, setRoleTitle] = useState(rolesActingAs(rolesAll, 'manager')[0]?.name ?? ROLE_CHOICES[0] ?? '');
   const [userId, setUserId] = useState('');
   const [enabled, setEnabled] = useState(true);
 
@@ -224,11 +230,7 @@ const DAY_ORDER: DayKind[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun', '
 // 週の労働時間合計に含める曜日（祝・出は特別区分なので除く）
 const WEEK_DAYS: DayKind[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 
-// 役職の序列（社長＞マネージャー＞リーダー＞フロア責任者＞一般）。スタッフ一覧の並び順に使う
-const ROLE_RANK: Record<string, number> = {
-  '社長': 1, '管理者': 1, 'マネージャー': 2, 'リーダー': 3, 'フロア責任者': 4, '一般': 5,
-};
-const ROLE_GROUP_ORDER = ['社長', '管理者', 'マネージャー', 'リーダー', 'フロア責任者', '一般'];
+// 役職の序列は roles.sort_order から（lib/roleAttrs.rankOf / rolesByRank）。役職名の表は書かない（2026-09-09 属性化）
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 function dowLabelOt(dateStr: string): string {
@@ -237,6 +239,7 @@ function dowLabelOt(dateStr: string): string {
 }
 
 const OvertimeAdminTab: React.FC = () => {
+  const roles = useRoles();
   const ctx = useAdminPanel();
   const { isDarkMode, supabase, focusTarget, setFocusTarget } = ctx;
 
@@ -617,7 +620,7 @@ const OvertimeAdminTab: React.FC = () => {
     // 役職の序列順に並べ替え（社長＞マネージャー＞リーダー＞フロア責任者＞一般）。同役職内は名前順
     const rows = (data as StaffRow[] | null) ?? [];
     rows.sort((a, b) =>
-      (ROLE_RANK[a.role_title] ?? 99) - (ROLE_RANK[b.role_title] ?? 99)
+      (rankOf(roles, a.role_title) ?? 99) - (rankOf(roles, b.role_title) ?? 99)
       || a.name.localeCompare(b.name, 'ja'));
     setStaff(rows);
   }, [supabase]);
@@ -1591,7 +1594,7 @@ const OvertimeAdminTab: React.FC = () => {
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12, marginTop: 14 }}>
             <select value={selectedStaffId} onChange={e => setSelectedStaffId(e.target.value)} style={{ ...inputStyle, minWidth: 200 }}>
               <option value="">スタッフを選択</option>
-              {ROLE_GROUP_ORDER.map(role => {
+              {rolesByRank(roles).map(r => r.name).map(role => {
                 const members = staff.filter(s => s.role_title === role && s.employment_type !== 'パート');
                 if (members.length === 0) return null;
                 return (
@@ -1602,7 +1605,7 @@ const OvertimeAdminTab: React.FC = () => {
               })}
               {/* 序列に載っていない役職（想定外・パートを除く）は末尾に */}
               {(() => {
-                const others = staff.filter(s => !ROLE_GROUP_ORDER.includes(s.role_title) && s.employment_type !== 'パート');
+                const others = staff.filter(s => !roles.some(r => r.name === s.role_title) && s.employment_type !== 'パート');
                 if (others.length === 0) return null;
                 return (
                   <optgroup label="その他">

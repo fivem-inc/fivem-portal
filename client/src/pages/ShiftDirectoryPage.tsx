@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import { useRoles } from '../hooks/useRoles';
+import { rankOf } from '../lib/roleAttrs';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { formatMin, DAY_KIND_LABELS } from '../lib/breakCalc';
 import type { DayKind } from '../lib/breakCalc';
@@ -39,9 +41,7 @@ function todayStr(): string {
   return `${jst.getFullYear()}-${String(jst.getMonth() + 1).padStart(2, '0')}-${String(jst.getDate()).padStart(2, '0')}`;
 }
 
-// 役職序列（OvertimePage の ROLE_RANK と同じ。一覧の並び用）
-const ROLE_RANK: Record<string, number> = { '社長': 1, '管理者': 1, 'マネージャー': 2, 'リーダー': 3, 'フロア責任者': 4, '一般': 5, 'パート': 6 };
-const roleRank = (role: string) => ROLE_RANK[role] ?? 99;
+// 役職序列は roles.sort_order から（lib/roleAttrs.rankOf）。役職名の表は書かない（2026-09-09 属性化）
 
 interface Props {
   user: AuthUser;
@@ -53,6 +53,8 @@ interface Props {
 }
 
 const ShiftDirectoryPage: React.FC<Props> = ({ isAdmin, canDirectory }) => {
+  const roles = useRoles();
+  const roleRank = (role: string) => rankOf(roles, role) ?? 99;   // 不明な役職は最下位
   const isDark = useDarkMode();
   const navigate = useNavigate();
   const text = isDark ? '#f8f9fa' : '#212529';
