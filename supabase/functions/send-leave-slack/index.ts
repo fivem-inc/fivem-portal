@@ -77,7 +77,9 @@ async function fetchExtraChannels(event: string): Promise<string[]> {
 //   'manager_approved'  → マネージャー受理 → 経理へ
 //   'accounting_approved' → 経理（管理者）受理 → 社長へ
 function getFixedChannel(event: string, approverRole: string, targetChannel?: string): string | null {
-  if (event === 'new_request') return approverRole === 'マネージャー' ? 'manager' : 'leader';
+  // 🚨 役職名では判定しない（2026-09-10 段4）。呼び出し側が立場（acts_as）を渡していればそれを、
+  //    役職名しか渡していなければ approverActsAs（roles から引いた立場）で判定する
+  if (event === 'new_request') return approverRole === 'manager' ? 'manager' : 'leader';
   if (event === 'leader_approved') return 'manager';
   if (event === 'manager_approved') return 'accounting';
   if (event === 'accounting_approved') return 'president';
@@ -118,7 +120,13 @@ serve(async (req) => {
     }
     // 既定の飛び先 ＋ 管理画面で選ばれたチャンネル（重複は除く）。
     // 取消は既定の飛び先が無いので、チャンネルを選んでいなければ何も送らない
-    const fixedChannel = getFixedChannel(event, approverRole || '', targetChannel)
+    // 🚨 呼び出し側（画面）はいまも役職名を渡してくる。名前で判定せず、roles から立場（acts_as）を引いて渡す（2026-09-10 段4）
+    let approverPos = approverRole || ''
+    if (approverPos && !['leader', 'manager', 'accounting', 'president'].includes(approverPos)) {
+      const { data: r } = await supabase.from('roles').select('acts_as').eq('name', approverPos).maybeSingle()
+      approverPos = (r as { acts_as?: string | null } | null)?.acts_as ?? ''
+    }
+    const fixedChannel = getFixedChannel(event, approverPos, targetChannel)
     const extraChannels = await fetchExtraChannels(event)
     const targetChannels = [...new Set([fixedChannel, ...extraChannels].filter(Boolean) as string[])]
     if (targetChannels.length === 0) {

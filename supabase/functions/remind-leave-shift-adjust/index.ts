@@ -140,7 +140,8 @@ Deno.serve(async () => {
     return new Response(JSON.stringify({ ok: true, today, targets: targets.length, notified: 0, skipped: 'site off' }),
       { headers: { 'Content-Type': 'application/json' } })
   }
-  let recipientJson: Record<string, unknown> = { roles: ['マネージャー', '社長'], groupFilter: 'same', orgWideRoles: ['社長', '管理者'] }
+  // 🚨 既定値は役職名でなく立場のコード（2026-09-10 段4）。絞り込みの対象外の既定は DB 側の属性「経営」
+  let recipientJson: Record<string, unknown> = { roles: ['manager', 'president'], groupFilter: 'same' }
   try { if (siteSetting?.recipient) recipientJson = JSON.parse(siteSetting.recipient) } catch { /* 既定を使う */ }
 
   // ---- 「上長 → その人が受け持つ休暇」に組み替える（1人1本にまとめる）----

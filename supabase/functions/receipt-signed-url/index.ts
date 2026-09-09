@@ -2,10 +2,9 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 const ALLOWED_ORIGINS = ['https://fivem-portal.vercel.app', 'http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'];
-const VIEW_ROLES = ['管理者'];
-// 備品購入申請の相見積もり見積書は、経費精算レシートより機微度が低く、承認者が判断のために見る必要があるため
-// 閲覧のみ（ダウンロードは対象外）承認者ロールにも開放する
-const QUOTE_VIEW_ROLES = ['リーダー', 'マネージャー', '社長', '管理者'];
+// 🚨 役職名の配列（旧 VIEW_ROLES / QUOTE_VIEW_ROLES）は持たない（2026-09-10 段4）。
+//    レシートの閲覧・ダウンロード＝経理（立場 accounting）／
+//    見積書の閲覧のみ＝リーダー以上（属性 is_leader_plus。経費精算レシートより機微度が低く、承認者が判断のために見る）
 const SIGNED_URL_EXPIRES_SECONDS = 300; // 5分。表示のたびに都度発行する使い切りURL（ダウンロード保存目的ではない）
 
 function getCorsHeaders(req: Request) {
@@ -64,14 +63,10 @@ serve(async (req) => {
 
     const needsRoleCheck = download ? true : !isOwner;
     if (needsRoleCheck) {
-      const { data: profile } = await supabaseUser
-        .from('profiles')
-        .select('role_title')
-        .eq('id', user.id)
-        .single();
-
-      const allowedRoles = (!download && isQuoteFile) ? QUOTE_VIEW_ROLES : VIEW_ROLES;
-      if (!profile || !allowedRoles.includes(profile.role_title)) {
+      const allowed = (!download && isQuoteFile)
+        ? (await supabaseUser.rpc('role_is_leader_plus', { p_uid: user.id })).data === true
+        : (await supabaseUser.rpc('role_acts_as', { p_uid: user.id })).data === 'accounting';
+      if (!allowed) {
         return new Response(JSON.stringify({ error: download ? 'Forbidden: ダウンロードは管理者のみ可能です' : 'Forbidden: 閲覧権限がありません' }), {
           status: 403,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },

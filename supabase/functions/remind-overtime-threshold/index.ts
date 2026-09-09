@@ -10,14 +10,8 @@
 // cron から毎朝1回呼ばれ、その日が対象日でなければ何もせず終了する。
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0'
 
-// 役職の序列（小さいほど上位）。
-// ⚠️ client/src/pages/OvertimePage.tsx の ROLE_RANK と、
-//    DB の overtime_role_rank() と同じ並び。変えるときは3つとも直すこと
-const ROLE_RANK: Record<string, number> = {
-  '社長': 1, '管理者': 1, 'マネージャー': 2, 'リーダー': 3,
-  'フロア責任者': 4, '一般': 5, 'パート': 6,
-}
-const rankOf = (role?: string | null) => ROLE_RANK[role ?? ''] ?? 99
+// 🚨 役職の序列の表（旧 ROLE_RANK）は持たない（2026-09-10 段4）。
+//    roles.sort_order から計算する（DB の role_rank() と同じ式：max+1-sort_order。小さいほど上位・不明は 99）
 
 const jstToday = () => new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10)
 
@@ -91,8 +85,9 @@ Deno.serve(async () => {
   const site = settingOf('site')
   const email = settingOf('email')
 
-  let roles: string[] = ['申請者本人', 'リーダー', 'マネージャー', '社長', '管理者']
-  let orgWide: string[] = ['社長', '管理者']
+  // 🚨 既定値は役職名でなく属性のコード（2026-09-10 段4）。旧既定＝申請者本人＋リーダー以上／絞り込みの対象外＝経営
+  let roles: string[] = ['申請者本人', 'leader_plus']
+  let orgWide: string[] = ['org_wide']
   try {
     const p = JSON.parse((site?.recipient as string) ?? '{}')
     if (Array.isArray(p.roles)) roles = p.roles
@@ -100,14 +95,24 @@ Deno.serve(async () => {
   } catch { /* 既定のまま */ }
   const notifySelf = roles.includes('申請者本人')
   const managerRoles = roles.filter(r => r !== '申請者本人')
+  // 役職の指定（名前／role_id／コード）は DB の role_ids_for で role_id に解決する
+  const { data: mgrRoleIds } = await supabase.rpc('role_ids_for', { p_spec: managerRoles })
+  const { data: owRoleIds } = await supabase.rpc('role_ids_for', { p_spec: orgWide })
+  const managerRoleIdSet = new Set((mgrRoleIds ?? []) as string[])
+  const orgWideRoleIdSet = new Set((owRoleIds ?? []) as string[])
+  // 序列は roles.sort_order から（小さいほど上位・不明は 99）
+  const { data: roleRows } = await supabase.from('roles').select('id, sort_order')
+  const sortById = new Map(((roleRows ?? []) as { id: string; sort_order: number }[]).map(r => [r.id, r.sort_order]))
+  const maxSort = Math.max(0, ...sortById.values())
+  const rankOf = (roleId?: string | null) => (roleId && sortById.has(roleId)) ? maxSort + 1 - (sortById.get(roleId) as number) : 99
 
   // 対象者と上長のプロフィール
   const { data: profs } = await supabase
     .from('profiles')
-    .select('id, name, role_title, group_names, email, is_active')
+    .select('id, name, role_title, role_id, group_names, email, is_active')
     .eq('is_active', true)
   const allProfs = (profs ?? []) as {
-    id: string; name: string | null; role_title: string | null
+    id: string; name: string | null; role_title: string | null; role_id: string | null
     group_names: string[] | null; email: string | null
   }[]
   const profOf = new Map(allProfs.map(p => [p.id, p]))
@@ -169,14 +174,14 @@ Deno.serve(async () => {
 
   // ── 上長向け（1人ずつではなく、自分が見る範囲でまとめて1本）──
   if (site?.enabled && managerRoles.length > 0) {
-    const viewers = allProfs.filter(p => managerRoles.includes(p.role_title ?? ''))
+    const viewers = allProfs.filter(p => managerRoleIdSet.has(p.role_id ?? ''))
     for (const v of viewers) {
-      const vRank = rankOf(v.role_title)
+      const vRank = rankOf(v.role_id)
       const vTeams = teamsOf(v.id)
-      const seesAll = orgWide.includes(v.role_title ?? '')
+      const seesAll = orgWideRoleIdSet.has(v.role_id ?? '')
       const targets = over.filter(o => {
         if (o.user_id === v.id) return false                     // 自分の分は本人向けで届く
-        if (rankOf(profOf.get(o.user_id)?.role_title) < vRank) return false  // 自分より上位は見せない
+        if (rankOf(profOf.get(o.user_id)?.role_id) < vRank) return false  // 自分より上位は見せない
         if (seesAll) return true
         return teamsOf(o.user_id).some(t => vTeams.includes(t))
       })

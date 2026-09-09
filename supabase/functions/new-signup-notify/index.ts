@@ -18,10 +18,10 @@ serve(async (req) => {
     const { email, name } = await req.json();
     const displayName = name || email || '不明';
 
-    const { data: admins } = await supabase
-      .from('profiles')
-      .select('id')
-      .eq('role_title', '管理者');
+    // 🚨 役職名では引かない（2026-09-10 段4）。立場 accounting（経理）の役職すべて
+    const { data: adminRows } = await supabase.rpc('profile_ids_for_roles', { p_spec: ['accounting'] });
+    const admins = ((adminRows ?? []) as ({ profile_ids_for_roles: string } | string)[])
+      .map(r => ({ id: typeof r === 'string' ? r : r.profile_ids_for_roles }));
 
     if (admins && admins.length > 0) {
       const notifications = admins.map((a: { id: string }) => ({

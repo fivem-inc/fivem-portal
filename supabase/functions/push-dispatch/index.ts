@@ -419,9 +419,10 @@ serve(async (req) => {
       const primaryUsers = primaryUsersByEvent.get(base);
       if (!primaryUsers || primaryUsers.size === 0) continue;
 
-      const { data: roleProfiles } = await supabase
-        .from("profiles").select("id").in("role_title", roles).eq("is_active", true);
-      const roleIds = ((roleProfiles ?? []) as { id: string }[]).map(p => p.id);
+      // 🚨 役職名では引かない（2026-09-10 段4）。設定の ccRoles（役職名／role_id／立場コード）は DB 側が解釈する
+      const { data: roleProfiles } = await supabase.rpc("profile_ids_for_roles", { p_spec: roles });
+      const roleIds = ((roleProfiles ?? []) as ({ profile_ids_for_roles: string } | string)[])
+        .map(r => (typeof r === "string" ? r : r.profile_ids_for_roles));
       // 本来の宛先と重複する人は除く（二重送信防止）
       const ccIds = roleIds.filter(id => !primaryUsers.has(id));
       if (ccIds.length === 0) continue;

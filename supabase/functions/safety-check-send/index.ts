@@ -158,8 +158,10 @@ serve(async (req) => {
         return new Response(JSON.stringify({ error: 'ログイン情報を確認できませんでした。一度ログインし直してからお試しください' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
       callerId = userData.user.id;
-      const { data: profile } = await supabase.from('profiles').select('role_title, is_active').eq('id', callerId).single();
-      const isAuthorized = profile?.is_active && ['マネージャー', '社長', '管理者'].includes(profile.role_title || '');
+      // 🚨 役職名では判定しない（2026-09-10 段4）。マネージャー以上＝roles.is_manager_plus
+      const { data: profile } = await supabase.from('profiles').select('is_active').eq('id', callerId).single();
+      const { data: mp } = await supabase.rpc('role_is_manager_plus', { p_uid: callerId });
+      const isAuthorized = profile?.is_active && mp === true;
       if (!isAuthorized) {
         return new Response(JSON.stringify({ error: '発信できるのはマネージャー以上のみです' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }

@@ -42,15 +42,9 @@ serve(async (req) => {
     });
   }
 
-  // 管理者チェック（profiles テーブルの role_title）
-  const { data: profile } = await supabaseUser
-    .from('profiles')
-    .select('role_title')
-    .eq('id', user.id)
-    .single();
-
-  const adminRoles = ['admin', '管理者'];
-  if (!profile || !adminRoles.includes(profile.role_title)) {
+  // 🚨 システム管理者（app_metadata.role = 'admin'）だけ（2026-09-09 ユーザー決定 Q5=B）。
+  //    以前は役職名「管理者」でも許していたが、ユーザーの作成・削除は役職ではなくシステムの管理権限の話
+  if ((user.app_metadata as { role?: string } | null)?.role !== 'admin') {
     return new Response(JSON.stringify({ error: 'Forbidden: 管理者のみ実行可能です' }), {
       status: 403,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

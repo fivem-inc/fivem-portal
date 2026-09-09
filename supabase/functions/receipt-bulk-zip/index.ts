@@ -44,8 +44,9 @@ serve(async (req) => {
   }
 
   // 一括ダウンロードは閲覧個別ダウンロード（receipt-signed-url）と同様に管理者のみ許可する
-  const { data: profile } = await supabaseUser.from('profiles').select('role_title').eq('id', user.id).single();
-  if (!profile || profile.role_title !== '管理者') {
+  // 🚨 役職名では判定しない（2026-09-10 段4）。経理＝立場 accounting
+  const { data: pos } = await supabaseUser.rpc('role_acts_as', { p_uid: user.id });
+  if (pos !== 'accounting') {
     return new Response(JSON.stringify({ error: 'Forbidden: ダウンロードは管理者のみ可能です' }), {
       status: 403,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

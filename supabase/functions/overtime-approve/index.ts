@@ -94,8 +94,9 @@ serve(async (req) => {
       // 🚨 同じ判定が overtime_reports の RLS（overtime_insert_own）にもある。
       //    自己受理は受理ボタンを通らず直接 INSERT されるため、あちらが本来の砦。片方だけ直さないこと。
       if (types.includes('absence') && caller.id === r.applicant_id && !isAdmin) {
-        const { data: me } = await db.from('profiles').select('role_title').eq('id', caller.id).maybeSingle()
-        if (!['社長', '管理者', 'マネージャー'].includes(me?.role_title ?? '')) {
+        // 🚨 役職名では判定しない（2026-09-10 段4）。マネージャー以上＝roles.is_manager_plus（DB の role_is_manager_plus）
+        const { data: mp } = await db.rpc('role_is_manager_plus', { p_uid: caller.id })
+        if (mp !== true) {
           return json({ success: false, error: '欠勤の自己受理はマネージャー以上のみです' }, 403)
         }
       }
@@ -204,9 +205,10 @@ serve(async (req) => {
       }
       // 締め後(16〜20日)の本人取消 → 管理者・社長へアラート（情報通知・タップは閉じるのみ）
       if (notifyAfterClose) {
-        const { data: admins } = await db.from('profiles').select('id').in('role_title', ['管理者', '社長'])
-        const rows = (admins ?? [])
-          .filter((a: { id: string }) => a.id !== caller.id)
+        // 🚨 役職名では引かない（2026-09-10 段4）。経営（属性 is_org_wide＝社長・経理）
+        const { data: adminIds } = await db.rpc('profile_ids_for_roles', { p_spec: ['org_wide'], p_exclude: caller.id })
+        const rows = ((adminIds ?? []) as ({ profile_ids_for_roles: string } | string)[])
+          .map(r => ({ id: typeof r === 'string' ? r : r.profile_ids_for_roles }))
           .map((a: { id: string }) => ({
             user_id: a.id,
             message: `⚠️ ${applicantName}さんが給与締め後に残業申請を取り消しました（${String(r.work_date).slice(5).replace('-', '/')}）`,

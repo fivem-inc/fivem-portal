@@ -66,12 +66,11 @@ Deno.serve(async (req) => {
     .filter(u => (u.app_metadata as { role?: string } | null)?.role === 'admin')
     .map(u => u.id)
 
-  const { data: presidents } = await supabase
-    .from('profiles')
-    .select('id')
-    .eq('is_active', true)
-    .eq('role_title', '社長')
-  const targetIds = [...new Set([...adminIds, ...(presidents ?? []).map(p => p.id)])]
+  // 🚨 役職名では引かない（2026-09-10 段4）。立場 president の役職すべて（会長を立てればそちらにも届く）
+  const { data: presidents } = await supabase.rpc('profile_ids_for_roles', { p_spec: ['president'] })
+  const presidentIds = ((presidents ?? []) as ({ profile_ids_for_roles: string } | string)[])
+    .map(r => (typeof r === 'string' ? r : r.profile_ids_for_roles))
+  const targetIds = [...new Set([...adminIds, ...presidentIds])]
 
   let siteSent = 0
   if (site?.enabled !== false && targetIds.length > 0) {

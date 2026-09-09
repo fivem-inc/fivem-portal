@@ -38,8 +38,8 @@ serve(async (req) => {
   const { data: { user }, error: userError } = await supabaseUser.auth.getUser();
   if (userError || !user) return json({ error: 'Unauthorized' }, 401);
 
-  const { data: profile } = await supabaseUser.from('profiles').select('role_title').eq('id', user.id).single();
-  if (!profile || !['admin', '管理者'].includes(profile.role_title)) {
+  // 🚨 システム管理者（app_metadata.role = 'admin'）だけ（2026-09-09 ユーザー決定 Q5=B）。役職名では判定しない
+  if ((user.app_metadata as { role?: string } | null)?.role !== 'admin') {
     return json({ error: 'Forbidden: 管理者のみ実行可能です' }, 403);
   }
 

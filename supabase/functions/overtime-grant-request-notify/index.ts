@@ -41,14 +41,17 @@ serve(async (req) => {
     const settings = (settingsData ?? []) as { channel: string; enabled: boolean; recipient: string | null; subject: string | null; template: string | null }[]
     const getSetting = (ch: string) => settings.find(s => s.channel === ch)
 
+    // 🚨 役職名では引かない（2026-09-10 段4）。既定は立場 accounting（経理）。設定の roles（役職名／role_id）も DB 側が解釈する
     async function resolveTargetIds(recipient: string | null): Promise<string[]> {
-      let roles: string[] = ['管理者']
+      let roles: string[] = ['accounting']
       try {
         const p = JSON.parse(recipient ?? '{}')
         if (Array.isArray(p.roles)) roles = p.roles
       } catch { /* use default */ }
-      const { data } = await supabase.from('profiles').select('id').in('role_title', roles).eq('is_active', true)
-      return ((data ?? []) as { id: string }[]).map(d => d.id)
+      const { data, error } = await supabase.rpc('profile_ids_for_roles', { p_spec: roles })
+      if (error) { console.error('[overtime-grant-request-notify] 宛先を解決できません', error.message); return [] }
+      return ((data ?? []) as ({ profile_ids_for_roles: string } | string)[])
+        .map(r => (typeof r === 'string' ? r : r.profile_ids_for_roles))
     }
 
     async function resolveTargetEmails(recipient: string | null): Promise<string[]> {

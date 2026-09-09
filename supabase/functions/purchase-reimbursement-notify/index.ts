@@ -50,20 +50,16 @@ serve(async (req) => {
     const nidByUser = new Map<string, string>()
 
     if (siteSetting?.enabled && siteSetting.template) {
-      let roles: string[] = ['マネージャー', '社長']
+      // 🚨 役職名では引かない（2026-09-10 段4）。既定は決裁者（属性 board_approver＝マネージャー・社長）
+      let roles: string[] = ['board_approver']
       try {
         const p = JSON.parse(siteSetting.recipient ?? '{}')
         if (Array.isArray(p.roles)) roles = p.roles
       } catch { /* use defaults */ }
 
-      const { data } = await supabase
-        .from('profiles')
-        .select('id')
-        .in('role_title', roles)
-        .eq('is_active', true)
-      const targetIds = ((data ?? []) as { id: string }[])
-        .map(d => d.id)
-        .filter(id => id !== user_id) // 記録した本人には送らない
+      const { data } = await supabase.rpc('profile_ids_for_roles', { p_spec: roles, p_exclude: user_id }) // 記録した本人には送らない
+      const targetIds = ((data ?? []) as ({ profile_ids_for_roles: string } | string)[])
+        .map(r => (typeof r === 'string' ? r : r.profile_ids_for_roles))
 
       if (targetIds.length > 0) {
         const message = applyTemplate(siteSetting.template, vars)
@@ -79,14 +75,15 @@ serve(async (req) => {
     // プッシュ通知（サイト通知とは別に役職を選択できる。文面はシステム固定）
     const pushSetting = settings.find(s => s.channel === 'push')
     if (pushSetting?.enabled) {
-      let pushRoles: string[] = ['社長']
+      // 🚨 役職名では引かない。既定は立場 president
+      let pushRoles: string[] = ['president']
       try {
         const p = JSON.parse(pushSetting.recipient ?? '{}')
         if (Array.isArray(p.roles)) pushRoles = p.roles
       } catch { /* use defaults */ }
-      const { data: pushProfiles } = await supabase
-        .from('profiles').select('id').in('role_title', pushRoles).eq('is_active', true)
-      const pushTargetIds = ((pushProfiles ?? []) as { id: string }[]).map(d => d.id).filter(id => id !== user_id)
+      const { data: pushProfiles } = await supabase.rpc('profile_ids_for_roles', { p_spec: pushRoles, p_exclude: user_id })
+      const pushTargetIds = ((pushProfiles ?? []) as ({ profile_ids_for_roles: string } | string)[])
+        .map(r => (typeof r === 'string' ? r : r.profile_ids_for_roles))
       if (pushTargetIds.length > 0) {
         const { data: subs } = await supabase.from('push_subscriptions').select('user_id').in('user_id', pushTargetIds)
         const pushIds = [...new Set(((subs ?? []) as { user_id: string }[]).map(s => s.user_id))]

@@ -13,7 +13,7 @@ const TYPE_LABEL: Record<string, string> = {
 
 // グループ絞り込みを無視して常に届く役職の既定値。
 // 管理画面の「絞り込みの対象外にする役職」で上書きできる（recipient.orgWideRoles）。
-const DEFAULT_ORG_WIDE_ROLES = ['社長', '管理者']
+// 🚨 役職名の既定値（旧 DEFAULT_ORG_WIDE_ROLES）は持たない。DB の resolve_role_recipients が属性「経営」を既定にする（2026-09-10）
 
 // URLにパラメータを足す（?の有無を自動で判断する）
 function addParams(url: string, params: Record<string, string>): string {
@@ -105,38 +105,19 @@ serve(async (req) => {
       : rawGroups
 
     // 役職+グループフィルタで通知対象user_idを解決
+    // 🚨 宛先の解決は DB の resolve_role_recipients に任せる（2026-09-10 段4・役職名の直書きと写しをやめる）。
+    //    既定値は立場のコード（leader / manager）。登録した本人は DB 側で除外され、
+    //    「申請者本人」にチェックがあるときだけ足す（以前は本人が上長なら役職経由で自分にも届いていた）。
     async function resolveTargetIds(recipient: string | null): Promise<string[]> {
-      let roles: string[] = ['リーダー', 'マネージャー']
-      let groupFilter = 'same'
-      let orgWide: string[] = DEFAULT_ORG_WIDE_ROLES
-      try {
-        const p = JSON.parse(recipient ?? '{}')
-        if (Array.isArray(p.roles)) roles = p.roles
-        if (p.groupFilter) groupFilter = p.groupFilter
-        if (Array.isArray(p.orgWideRoles)) orgWide = p.orgWideRoles
-      } catch { /* use defaults */ }
-
-      const includeApplicant = roles.includes('申請者本人')
-      const queryRoles = roles.filter(r => r !== '申請者本人')
-      // 「絞り込みの対象外にする役職」はチームに関係なく全件受け取る
-      const groupRoles = queryRoles.filter(r => !orgWide.includes(r))
-      const orgWideRoles = queryRoles.filter(r => orgWide.includes(r))
-
-      const ids = new Set<string>()
-
-      if (groupRoles.length > 0) {
-        let query = supabase.from('profiles').select('id').in('role_title', groupRoles).eq('is_active', true)
-        if (groupFilter === 'same' && senderGroups.length > 0) {
-          query = query.overlaps('group_names', senderGroups)
-        }
-        const { data } = await query
-        for (const d of ((data ?? []) as { id: string }[])) ids.add(d.id)
-      }
-      if (orgWideRoles.length > 0) {
-        const { data } = await supabase.from('profiles').select('id').in('role_title', orgWideRoles).eq('is_active', true)
-        for (const d of ((data ?? []) as { id: string }[])) ids.add(d.id)
-      }
-      if (includeApplicant) ids.add(user_id)
+      let parsed: Record<string, unknown> = {}
+      try { parsed = JSON.parse(recipient ?? '{}') } catch { /* 旧形式は既定 */ }
+      const spec = { roles: ['leader', 'manager'], groupFilter: 'same', ...parsed }
+      const roles = Array.isArray(spec.roles) ? (spec.roles as string[]) : []
+      const { data, error } = await supabase.rpc('resolve_role_recipients', { p_applicant: user_id, p_recipient: spec })
+      if (error) { console.error('[time-adjustment-notify] 宛先を解決できません', error.message); return [] }
+      const ids = new Set(((data ?? []) as ({ resolve_role_recipients: string } | string)[])
+        .map(row => (typeof row === 'string' ? row : row.resolve_role_recipients)))
+      if (roles.includes('申請者本人')) ids.add(user_id)
       return [...ids]
     }
 
@@ -170,10 +151,13 @@ serve(async (req) => {
       }
     } else if (!siteSetting) {
       // DB未設定のフォールバック（後方互換）
-      const { data: targets } = senderGroups.length > 0
-        ? await supabase.from('profiles').select('id').in('role_title', ['リーダー', 'マネージャー']).eq('is_active', true).overlaps('group_names', senderGroups)
-        : await supabase.from('profiles').select('id').in('role_title', ['マネージャー', '管理者']).eq('is_active', true)
-      const fallbackIds = ((targets ?? []) as { id: string }[]).map(d => d.id)
+      // 🚨 役職名を直書きしない。同チームがあれば leader/manager を同グループで、無ければ manager/accounting を全体で
+      const fallbackSpec = senderGroups.length > 0
+        ? { roles: ['leader', 'manager'], groupFilter: 'same' }
+        : { roles: ['manager', 'accounting'], groupFilter: 'all' }
+      const { data: targets } = await supabase.rpc('resolve_role_recipients', { p_applicant: user_id, p_recipient: fallbackSpec })
+      const fallbackIds = ((targets ?? []) as ({ resolve_role_recipients: string } | string)[])
+        .map(row => (typeof row === 'string' ? row : row.resolve_role_recipients))
       if (fallbackIds.length > 0) {
         const message = `⏰ 時間調整が登録されました`
         const subMessage = `${user_name}さんが ${dateLabel} に ${typeLabels} を登録しました。理由：${reason}`

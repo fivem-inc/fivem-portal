@@ -20,7 +20,7 @@ const TYPE_LABEL: Record<string, string> = {
 // グループ絞り込みを無視して常に届く役職の既定値。
 // 管理画面の「絞り込みの対象外にする役職」で上書きできる（recipient.orgWideRoles）。
 // 設定が無い古い行はこの既定＝従来どおり社長・管理者だけが全件受け取る。
-const DEFAULT_ORG_WIDE_ROLES = ['社長', '管理者']
+// 🚨 役職名の既定値（旧 DEFAULT_ORG_WIDE_ROLES）は持たない。DB の resolve_role_recipients が属性「経営」を既定にする（2026-09-10）
 
 // URLにパラメータを足す（?の有無を自動で判断する）
 function addParams(url: string, params: Record<string, string>): string {
@@ -146,35 +146,25 @@ serve(async (req) => {
     // ・groupFilter=same のとき、所属チームが重なる人だけに絞る
     // ・「絞り込みの対象外にする役職」に入っている役職は、チームに関係なく常に対象
     // ・申請者本人(=該当スタッフ) … チェックされていれば本人も対象
+    // 🚨 宛先の解決は DB の resolve_role_recipients に任せる（2026-09-10 段4）。
+    //    役職名の直書きと、同じ処理の写し（Edge 7本＋画面）をやめるため。
+    //    既定値は立場のコード（leader / manager）で渡す。設定に roles があればそちらが優先。
+    //    「絞り込みの対象外」の既定は DB 側の属性「経営」（＝旧 ['社長','管理者']）。
+    //    該当スタッフが複数のときは1人ずつ解決して合わせる（誰か1人でも同じチームなら届く）。
     async function resolveTargetIds(recipient: string | null): Promise<string[]> {
-      let roles: string[] = ['リーダー', 'マネージャー']
-      let groupFilter = 'same'
-      let orgWide: string[] = DEFAULT_ORG_WIDE_ROLES
-      try {
-        const p = JSON.parse(recipient ?? '{}')
-        if (Array.isArray(p.roles)) roles = p.roles
-        if (p.groupFilter) groupFilter = p.groupFilter
-        if (Array.isArray(p.orgWideRoles)) orgWide = p.orgWideRoles
-      } catch { /* use defaults */ }
-
+      let parsed: Record<string, unknown> = {}
+      try { parsed = JSON.parse(recipient ?? '{}') } catch { /* 旧形式は既定 */ }
+      const spec = { roles: ['leader', 'manager'], groupFilter: 'same', ...parsed }
+      const roles = Array.isArray(spec.roles) ? (spec.roles as string[]) : []
       const includeStaff = roles.includes('申請者本人')
-      const queryRoles = roles.filter(r => r !== '申請者本人')
-      const groupRoles = queryRoles.filter(r => !orgWide.includes(r))
-      const orgWideRoles = queryRoles.filter(r => orgWide.includes(r))
 
       const ids = new Set<string>()
-
-      if (groupRoles.length > 0) {
-        let query = supabase.from('profiles').select('id').in('role_title', groupRoles).eq('is_active', true)
-        if (groupFilter === 'same' && staffGroups.length > 0) {
-          query = query.overlaps('group_names', staffGroups)
+      for (const sid of staffIds) {
+        const { data, error } = await supabase.rpc('resolve_role_recipients', { p_applicant: sid, p_recipient: spec })
+        if (error) { console.error('[attendance-notify] 宛先を解決できません', error.message); continue }
+        for (const row of (data ?? []) as ({ resolve_role_recipients: string } | string)[]) {
+          ids.add(typeof row === 'string' ? row : row.resolve_role_recipients)
         }
-        const { data } = await query
-        for (const d of ((data ?? []) as { id: string }[])) ids.add(d.id)
-      }
-      if (orgWideRoles.length > 0) {
-        const { data } = await supabase.from('profiles').select('id').in('role_title', orgWideRoles).eq('is_active', true)
-        for (const d of ((data ?? []) as { id: string }[])) ids.add(d.id)
       }
       if (includeStaff) for (const id of staffIds) ids.add(id)
       return [...ids]

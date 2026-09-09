@@ -15,7 +15,7 @@ const CORS_HEADERS = {
 
 // グループ絞り込みを無視して常に届く役職の既定値。
 // 管理画面の「絞り込みの対象外にする役職」で上書きできる（recipient.orgWideRoles）。
-const DEFAULT_ORG_WIDE_ROLES = ['社長', '管理者']
+// 🚨 役職名の既定値（旧 DEFAULT_ORG_WIDE_ROLES）は持たない。DB の resolve_role_recipients が属性「経営」を既定にする（2026-09-10）
 
 // URLにパラメータを足す（?の有無を自動で判断する）
 function addParams(url: string, params: Record<string, string>): string {
@@ -85,37 +85,16 @@ serve(async (req) => {
     // 役職＋グループフィルタで通知対象user_idを解決（申請者本人は必ず除外）
     // ・リーダー/マネージャー … groupFilter=same のとき同グループのみ
     // ・社長/管理者 … 組織全体を見る立場なのでグループ絞り込みを無視して常に対象
+    // 🚨 宛先の解決は DB の resolve_role_recipients に任せる（2026-09-10 段4・役職名の直書きと写しをやめる）。
+    //    既定値は立場のコード（leader / manager / president）・全グループ。本人は DB 側で必ず除外される。
     async function resolveTargetIds(recipient: string | null): Promise<string[]> {
-      let roles: string[] = ['リーダー', 'マネージャー', '社長']
-      let groupFilter = 'all'
-      let orgWide: string[] = DEFAULT_ORG_WIDE_ROLES
-      try {
-        const p = JSON.parse(recipient ?? '{}')
-        if (Array.isArray(p.roles)) roles = p.roles
-        if (p.groupFilter) groupFilter = p.groupFilter
-        if (Array.isArray(p.orgWideRoles)) orgWide = p.orgWideRoles
-      } catch { /* use defaults */ }
-
-      const queryRoles = roles.filter(r => r !== '申請者本人')
-      const groupRoles = queryRoles.filter(r => !orgWide.includes(r))
-      const orgWideRoles = queryRoles.filter(r => orgWide.includes(r))
-
-      const ids = new Set<string>()
-
-      if (groupRoles.length > 0) {
-        let query = supabase.from('profiles').select('id').in('role_title', groupRoles).eq('is_active', true)
-        if (groupFilter === 'same' && applicantGroups.length > 0) {
-          query = query.overlaps('group_names', applicantGroups)
-        }
-        const { data } = await query
-        for (const d of ((data ?? []) as { id: string }[])) ids.add(d.id)
-      }
-      if (orgWideRoles.length > 0) {
-        const { data } = await supabase.from('profiles').select('id').in('role_title', orgWideRoles).eq('is_active', true)
-        for (const d of ((data ?? []) as { id: string }[])) ids.add(d.id)
-      }
-      ids.delete(applicant_id) // 本人は結果通知で別途受け取るためFYIからは除外
-      return [...ids]
+      let parsed: Record<string, unknown> = {}
+      try { parsed = JSON.parse(recipient ?? '{}') } catch { /* 旧形式は既定 */ }
+      const spec = { roles: ['leader', 'manager', 'president'], groupFilter: 'all', ...parsed }
+      const { data, error } = await supabase.rpc('resolve_role_recipients', { p_applicant: applicant_id, p_recipient: spec })
+      if (error) { console.error('[leave-approved-notify] 宛先を解決できません', error.message); return [] }
+      return [...new Set(((data ?? []) as ({ resolve_role_recipients: string } | string)[])
+        .map(row => (typeof row === 'string' ? row : row.resolve_role_recipients)))]
     }
 
     let notifiedSite = 0, notifiedEmail = 0, notifiedPush = 0
