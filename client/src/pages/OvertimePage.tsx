@@ -28,6 +28,7 @@ const ERR_FIELD_BY_MSG: Record<string, string> = {
 import type { PatternRow, NormalShiftSnapshot } from '../lib/overtimeShift';
 import type { AuthUser } from '../types';
 import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
+import OvertimePlanSection from '../components/OvertimePlanSection';
 import { PageTabs } from '../components/PageTabs';
 import HelpLinkButton from '../components/HelpLinkButton';
 import { buildGcalSummary, OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport, CLOCK_ONLY_REASONS, canOfferCalendarChoice, willShowOnCalendar } from '../lib/overtimeTypes';
@@ -2453,6 +2454,10 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const [reviewers, setReviewers] = useState<Reviewer[]>([]);
   const [workplaces, setWorkplaces] = useState<string[]>([]);
   const [patterns, setPatterns] = useState<PatternRow[]>([]);
+  // 会社カレンダー（休館日など）。調整案の差分計算で、その日が出勤日かどうかを見るのに要る。
+  // 🚨 フォーム側にも同じフックがあるが、こちらはページ側の別インスタンス。
+  //    useCompanyCalendar は中で1回だけ読む作りなので、二重に読み込みはしない。
+  const pageCalendarKinds = useCompanyCalendar();
   const [loading, setLoading] = useState(true);
   const [editTarget, setEditTarget] = useState<OvertimeReport | null>(null);
   const [savedBanner, setSavedBanner] = useState(false);
@@ -3533,6 +3538,20 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                           期ごとの過不足管理（毎期リセット・繰り越しなし）
                           {ownCardBalance.pendingCount > 0 && `・確認待ち${ownCardBalance.pendingCount}件は未計上`}
                         </p>
+                        {/* 🚨 調整案は「その期の数字のすぐ下」に置く（2026-09-09 ユーザー確定）。
+                            変えたいのはこの数字なので、いちばん近い場所にある。
+                            タブを3枚にするとスマホで文字が収まらない（実測 375px）。 */}
+                        <div style={{ marginTop: 10, borderTop: `1px solid ${borderColor}`, paddingTop: 10 }}>
+                          <OvertimePlanSection
+                            userId={user.id}
+                            period={ownCardPeriod}
+                            confirmedTotal={ownCardBalance.total}
+                            plannedDelta={ownCardBalance.plannedDelta}
+                            patterns={patterns}
+                            calendarKinds={pageCalendarKinds}
+                            isDark={isDark}
+                          />
+                        </div>
                       </div>
                     );
                   })()}

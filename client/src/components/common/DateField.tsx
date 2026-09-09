@@ -13,7 +13,15 @@ const jpDate = (iso: string): string => {
   return `${y}/${String(m).padStart(2, '0')}/${String(d).padStart(2, '0')}（${dow}）`;
 };
 
-export const DateField: React.FC<{ value: string; onChange: (d: string) => void; isDark: boolean; placeholder?: string }> = ({ value, onChange, isDark, placeholder }) => {
+export const DateField: React.FC<{
+  value: string;
+  onChange: (d: string) => void;
+  isDark: boolean;
+  placeholder?: string;
+  /** 選べる範囲。範囲外の日は押せなくする（例：給与期間の中だけ選ばせる） */
+  minDate?: string;
+  maxDate?: string;
+}> = ({ value, onChange, isDark, placeholder, minDate, maxDate }) => {
   const [open, setOpen] = useState(false);
   const base = value ? new Date(value + 'T00:00:00') : new Date();
   const [vy, setVy] = useState(base.getFullYear());
@@ -51,9 +59,10 @@ export const DateField: React.FC<{ value: string; onChange: (d: string) => void;
               const iso = fmt(vy, vm, day);
               const sel = iso === value; const isT = iso === todayStr;
               const dow = (firstDay + day - 1) % 7;
+              const disabled = (!!minDate && iso < minDate) || (!!maxDate && iso > maxDate);
               return (
-                <button key={iso} type="button" onClick={() => { onChange(iso); setOpen(false); }}
-                  style={{ padding: '10px 2px', minHeight: 40, borderRadius: 6, border: isT ? '2px solid #007bff' : '1px solid transparent', background: sel ? '#28a745' : 'transparent', color: sel ? '#fff' : dow === 0 ? '#e74c3c' : dow === 6 ? '#3498db' : text, cursor: 'pointer', fontSize: 13, fontWeight: sel ? 'bold' : 'normal', textAlign: 'center' }}>
+                <button key={iso} type="button" disabled={disabled} onClick={() => { onChange(iso); setOpen(false); }}
+                  style={{ padding: '10px 2px', minHeight: 40, borderRadius: 6, border: isT ? '2px solid #007bff' : '1px solid transparent', background: sel ? '#28a745' : 'transparent', color: disabled ? (isDark ? '#5c636a' : '#c4c9cf') : sel ? '#fff' : dow === 0 ? '#e74c3c' : dow === 6 ? '#3498db' : text, cursor: disabled ? 'default' : 'pointer', fontSize: 13, fontWeight: sel ? 'bold' : 'normal', textAlign: 'center' }}>
                   {day}
                 </button>
               );
