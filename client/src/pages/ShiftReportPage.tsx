@@ -6,6 +6,7 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import { calcSegsBreak, parseSegments, segMinutes, formatSegs, formatSegsFromRecord, segFirstStart, segLastEnd, joinSegLocations, MAX_SEGS, type Seg } from '../lib/shiftCalc';
+import { describeUpdate } from '../lib/statusUpdate';
 import { errorStyle, errorLabelColor, scrollToFirstError } from '../lib/formHighlight';
 import type { AuthUser } from '../types';
 import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
@@ -1162,6 +1163,9 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   const [pendingReports, setPendingReports] = useState<ShiftReport[]>([]);
   const [openPeriods, setOpenPeriods]   = useState<Set<string>>(new Set());
   const [successMsg, setSuccessMsg]     = useState('');
+  // 受理・差戻・削除の失敗をその場に出す（🚨 成功用の緑カードに失敗を流さない）。
+  // 配色は 🎨🔒 のエラー標準（固定色）。自動では消さない
+  const [actionError, setActionError]   = useState('');
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [showReviewerGuide, setShowReviewerGuide] = useState(false);
   const [showAllBreakRules, setShowAllBreakRules] = useState(false);
@@ -1287,9 +1291,15 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
 
   const handleConfirm = async (report: ShiftReport) => {
     setConfirmingId(report.id);
-    await supabase.from('shift_reports').update({
+    setActionError('');
+    // 🚨 管理画面（ShiftReportsTab）と同じ処理がここにも写しである。
+    //    あちらは 2026-09-09 に直したが、こちらは戻り値を見ておらず、
+    //    受理が通っていなくても申請者へ「受理されました」と通知が飛んでいた。
+    const confirmRes = await supabase.from('shift_reports').update({
       status: 'confirmed', confirmed_by: user.id, confirmed_at: new Date().toISOString()
-    }).eq('id', report.id);
+    }).eq('id', report.id).select('id');
+    const confirmFail = describeUpdate(confirmRes, '受理', 'missing');
+    if (confirmFail) { setConfirmingId(null); setActionError(confirmFail); return; }
     // 通知：申請者へ受理を通知
     await supabase.from('notifications').insert({
       user_id: report.applicant_id,
@@ -1343,7 +1353,11 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     if (!returnTarget) return;
     const r = returnTarget;
     setReturningId(r.id);
-    await supabase.from('shift_reports').update({ status: 'returned' }).eq('id', r.id);
+    setActionError('');
+    // 🚨 受理と同じで、差戻が通っていなくても申請者へ通知が飛んでいた
+    const returnRes = await supabase.from('shift_reports').update({ status: 'returned' }).eq('id', r.id).select('id');
+    const returnFail = describeUpdate(returnRes, '差戻', 'missing');
+    if (returnFail) { setReturningId(null); setActionError(returnFail); return; }
     const comment = returnComment.trim();
     await supabase.from('shift_report_history').insert({
       report_id: r.id, changed_by: user.id,
@@ -1373,8 +1387,14 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
 
   // 完全削除はアプリ規約によりwindow.confirmを使わず、ボタンの2段階インライン確認で行う
   const hardDeleteReport = async (r: ShiftReport) => {
-    await supabase.from('shift_report_history').delete().eq('report_id', r.id);
-    await supabase.from('shift_reports').delete().eq('id', r.id);
+    setActionError('');
+    // 🚨 履歴 → 本体 の順に消す。本体を先に消すと、履歴が残ったまま
+    //    一覧から消えて、もう一度押して直すこともできなくなる。
+    const histDel = await supabase.from('shift_report_history').delete().eq('report_id', r.id);
+    if (histDel.error) { setActionError(`履歴を削除できませんでした：${histDel.error.message}`); return; }
+    const bodyDel = await supabase.from('shift_reports').delete().eq('id', r.id).select('id');
+    const delFail = describeUpdate(bodyDel, '削除', 'missing');
+    if (delFail) { setActionError(delFail); fetchMyReports(); return; }
     setHardDeleteTargetId(null);
     fetchMyReports(); fetchPending();
     setSuccessMsg('削除しました');
@@ -1498,6 +1518,12 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     return (
       <div style={{ paddingTop: 70, maxWidth: 600, margin: '0 auto', paddingBottom: 24 }}>
         {successMsg && <BannerSuccess message={successMsg} onClose={() => setSuccessMsg('')} />}
+        {actionError && (
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '0 16px 10px', padding: '10px 12px', background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8 }}>
+            <span style={{ fontSize: 13, color: '#842029', fontWeight: 'bold', flex: 1 }}>⚠️ {actionError}</span>
+            <button type="button" onClick={() => setActionError('')} style={{ background: 'none', border: 'none', color: '#842029', fontSize: 16, cursor: 'pointer', lineHeight: 1, padding: '0 2px' }}>✕</button>
+          </div>
+        )}
         <div style={{ padding: '16px 16px 0' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
             <button onClick={() => navigate(-1)} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: text }}>‹</button>
@@ -1565,6 +1591,12 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
   return (
     <div style={{ paddingTop: 70, maxWidth: 600, margin: '0 auto', paddingBottom: 32 }}>
       {successMsg && <BannerSuccess message={successMsg} onClose={() => setSuccessMsg('')} />}
+        {actionError && (
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '0 16px 10px', padding: '10px 12px', background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8 }}>
+            <span style={{ fontSize: 13, color: '#842029', fontWeight: 'bold', flex: 1 }}>⚠️ {actionError}</span>
+            <button type="button" onClick={() => setActionError('')} style={{ background: 'none', border: 'none', color: '#842029', fontSize: 16, cursor: 'pointer', lineHeight: 1, padding: '0 2px' }}>✕</button>
+          </div>
+        )}
 
       {/* ページタイトル */}
       <div style={{ textAlign: 'center', padding: '16px 0 16px' }}>

@@ -781,15 +781,29 @@ const LeaveRequestsTab: React.FC = () => {
                               title="編集">✏️</button>
                             <button onClick={() => {
                               setConfirmDialog({ message: `「${r.userName}」を対象から削除しますか？`, onConfirm: async () => {
-                                await supabase.from('paid_leave_encouragement_responses').delete().eq('encouragement_day_id', showEncDetail).eq('user_id', r.user_id);
-                                await supabase.from('paid_leave_encouragement_targets').delete().eq('encouragement_day_id', showEncDetail).eq('user_id', r.user_id);
+                                // 🚨 3つのテーブルを順に消すので、途中で失敗すると中途半端に残る。
+                                //    そこで **「対象」をいちばん最後に消す**。
+                                //    こうすると途中で失敗しても対象が一覧に残り、
+                                //    もう一度押せば続きから直せる（すでに消えたものは0件になるだけ）。
+                                //    逆の順（先に対象を消す）だと、休暇申請だけ残ったときに
+                                //    一覧から消えてしまい、**もう一度押して直すこともできない**。
+                                setModalError('');
                                 if (encDetailDay) {
-                                  await supabase.from('leave_requests').delete()
+                                  const { error } = await supabase.from('leave_requests').delete()
                                     .eq('user_id', r.user_id)
                                     .eq('start_date', encDetailDay.target_date)
                                     .eq('reason', '【有給奨励日】')
                                     .eq('status', 'approved');
+                                  // 🚨 0件は正常（休暇申請を作っていない人もいる）。error だけ見る
+                                  if (error) { setErrorMsg(`休暇申請を取り消せませんでした：${error.message}`); return; }
                                 }
+                                const resDel = await supabase.from('paid_leave_encouragement_responses')
+                                  .delete().eq('encouragement_day_id', showEncDetail).eq('user_id', r.user_id);
+                                if (resDel.error) { setErrorMsg(`回答を削除できませんでした：${resDel.error.message}`); return; }
+                                const tgtDel = await supabase.from('paid_leave_encouragement_targets')
+                                  .delete().eq('encouragement_day_id', showEncDetail).eq('user_id', r.user_id).select('id');
+                                const tgtFail = describeUpdate(tgtDel, '対象からの削除', 'missing');
+                                if (tgtFail) { setErrorMsg(tgtFail); fetchEncDetail(showEncDetail!); return; }
                                 fetchEncDetail(showEncDetail!);
                                 fetchEncDays();
                               } });
