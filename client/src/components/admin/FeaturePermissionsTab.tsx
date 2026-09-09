@@ -198,7 +198,7 @@ const FeaturePermissionsTab: React.FC = () => {
       supabase.from('app_settings').upsert({ key: 'feature_published_president', value: publishedPresident, updated_at: new Date().toISOString() }, { onConflict: 'key' }),
     ]);
     setSaving(false);
-    if (error || pubError || pubLeaderError || pubPresError) { setErrorMsg('⚠️ 保存に失敗しました: ' + (error?.message || pubError?.message || pubLeaderError?.message || pubPresError?.message)); return; }
+    if (error || pubError || pubLeaderError || pubPresError) { setErrorMsg('保存に失敗しました: ' + (error?.message || pubError?.message || pubLeaderError?.message || pubPresError?.message)); return; }
     setSavedPerms(JSON.parse(JSON.stringify(perms)));
     setSavedPublished({ ...published });
     setSavedPublishedLeader({ ...publishedLeader });
@@ -230,7 +230,7 @@ const FeaturePermissionsTab: React.FC = () => {
   const handleAddRole = async () => {
     const name = newRoleName.trim();
     if (!name) return;
-    if (roles.some(r => r.name === name)) { setSuccessMsg('⚠️ 同じ名前の役職がすでにあります'); return; }
+    if (roles.some(r => r.name === name)) { setErrorMsg('同じ名前の役職がすでにあります'); return; }
     setAddingRole(true);
     const adminOrder = roles.find(r => r.is_fixed)?.sort_order ?? 99;
     const maxNonFixed = Math.max(...roles.filter(r => !r.is_fixed).map(r => r.sort_order), 0);
@@ -240,7 +240,7 @@ const FeaturePermissionsTab: React.FC = () => {
       .insert({ name, sort_order: newOrder, is_fixed: false })
       .select()
       .single();
-    if (error || !data) { setErrorMsg('⚠️ 追加に失敗しました'); setAddingRole(false); return; }
+    if (error || !data) { setErrorMsg('追加に失敗しました'); setAddingRole(false); return; }
     await supabase.from('feature_permissions').insert(
       FEATURES.map(f => ({ role_id: data.id, feature_key: f.key, enabled: false }))
     );
@@ -261,15 +261,24 @@ const FeaturePermissionsTab: React.FC = () => {
     const name = editRoleName.trim();
     if (!name) return;
     if (roles.some(r => r.name === name && r.id !== editingRole.id)) {
-      setSuccessMsg('⚠️ 同じ名前の役職がすでにあります');
+      setErrorMsg('同じ名前の役職がすでにあります');
       return;
     }
     const oldName = editingRole.name;
-    await supabase.from('roles').update({ name }).eq('id', editingRole.id);
-    await supabase.from('profiles').update({ role_title: name }).eq('role_title', oldName);
+    // 🚨 以前はここで2文に分けて書いていた（roles と profiles を別々に update）。
+    //    2文で1つの意味なので、1文目が通って2文目が失敗すると食い違ったまま残る。
+    //    権限は profiles.role_title（文字列）で roles を引いて決まるため、
+    //    古い名前が残ると **その役職の人全員の権限が読めなくなる**。
+    //    → DB側の rename_role() で1トランザクションにした。
+    //      途中で失敗すれば役職名の変更ごと元に戻るので、食い違いが原理的に起きない。
+    const { data: changed, error } = await supabase.rpc('rename_role', {
+      p_role_id: editingRole.id,
+      p_new_name: name,
+    });
+    if (error) { setErrorMsg(`役職名を変更できませんでした：${error.message}`); return; }
     setEditingRole(null);
     fetchAll();
-    setSuccessMsg(`「${oldName}」→「${name}」に変更しました`);
+    setSuccessMsg(`「${oldName}」→「${name}」に変更しました（${changed ?? 0}人のスタッフに反映）`);
   };
 
   // ── 役職削除（確認モーダル用） ──
@@ -283,7 +292,14 @@ const FeaturePermissionsTab: React.FC = () => {
 
   const handleConfirmDelete = async () => {
     if (!deleteTarget) return;
-    await supabase.from('roles').delete().eq('id', deleteTarget.role.id);
+    // 🚨 削除できていないのに「削除しました」と出さない（役職は権限に直結する）
+    const { data: deleted, error } = await supabase.from('roles').delete().eq('id', deleteTarget.role.id).select('id');
+    if (error) { setErrorMsg(`削除できませんでした：${error.message}`); return; }
+    if (!deleted || deleted.length === 0) {
+      setErrorMsg('削除できませんでした（権限が不足しているか、すでに削除されています）');
+      fetchAll();
+      return;
+    }
     const name = deleteTarget.role.name;
     setDeleteTarget(null);
     fetchAll();
