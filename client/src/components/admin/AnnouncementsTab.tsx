@@ -37,6 +37,9 @@ const AnnouncementsTab: React.FC = () => {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [notifyCreatePush, setNotifyCreatePush] = useState(false);
+  // スマホの通知に件名そのものを出すか（既定ON）。
+  // 🚨 プッシュはロック画面に出る＝そばにいる人にも見えるので、伏せる手段を必ず用意する
+  const [pushShowTitle, setPushShowTitle] = useState(true);
   const [notifyCreateEmail, setNotifyCreateEmail] = useState(false);
   const [remindInApp, setRemindInApp] = useState(false);
   const [remindPush, setRemindPush] = useState(false);
@@ -80,6 +83,7 @@ const AnnouncementsTab: React.FC = () => {
     setTitle(''); setBody('');
     setStartDate(''); setEndDate('');
     setNotifyCreatePush(false); setNotifyCreateEmail(false);
+    setPushShowTitle(true);
     setRemindInApp(false); setRemindPush(false); setRemindEmail(false);
     setRemindDaysBefore(DEFAULT_REMIND_DAYS);
     setRemindFrequency('once');
@@ -111,6 +115,7 @@ const AnnouncementsTab: React.FC = () => {
       remind_email: hasEnd && remindEmail,
       remind_days_before: Math.max(1, parseInt(remindDaysBefore, 10) || 3),
       remind_frequency: remindFrequency,
+      push_show_title: pushShowTitle,
     };
     if (editingId) {
       const { error } = await updateAnnouncement(editingId, input);
@@ -145,6 +150,7 @@ const AnnouncementsTab: React.FC = () => {
     setRemindEmail(item.remind_email);
     setRemindDaysBefore(String(item.remind_days_before ?? 3));
     setRemindFrequency(item.remind_frequency ?? 'once');
+    setPushShowTitle(item.push_show_title ?? true);
     // 期間やリマインド等が設定済みなら詳細を開いた状態で編集させる
     setShowDetails(!!(item.starts_at || item.ends_at || item.notify_on_create_push ||
       item.notify_on_create_email || item.remind_in_app || item.remind_push || item.remind_email));
@@ -288,6 +294,17 @@ const AnnouncementsTab: React.FC = () => {
                   <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12.5, color: text, marginBottom: 8, cursor: 'pointer' }}>
                     <input type="checkbox" checked={notifyCreatePush} onChange={e => setNotifyCreatePush(e.target.checked)} style={{ marginTop: 2 }} />
                     <span>プッシュ通知で知らせる<br /><span style={{ fontSize: 11, color: subText }}>通知をONにしている人のスマホに届きます</span></span>
+                  </label>
+                  {/* 🚨 件名を出すかは1件ごとに選ぶ。既定はON。
+                      スマホの通知はロック画面に出るため、開かなくてもそばの人に見える。
+                      「◯◯さんの退職について」のような件名のときは外す。 */}
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12.5, color: text, marginBottom: 8, marginLeft: 24, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={pushShowTitle} onChange={e => setPushShowTitle(e.target.checked)} style={{ marginTop: 2 }} />
+                    <span>件名をスマホの通知に出す<br /><span style={{ fontSize: 11, color: subText }}>
+                      {pushShowTitle
+                        ? `通知に「${title.trim() || '（ここに件名）'}」と表示されます。スマホを開かなくても見えるので、人に見られて困る件名のときは外してください`
+                        : '通知には「社内お知らせが届いています」とだけ表示されます'}
+                    </span></span>
                   </label>
                   <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12.5, color: text, cursor: 'pointer' }}>
                     <input type="checkbox" checked={notifyCreateEmail} onChange={e => setNotifyCreateEmail(e.target.checked)} style={{ marginTop: 2 }} />

@@ -201,7 +201,7 @@ serve(async (req) => {
             if (nid) urlsByUser[uid] = addParams(baseUrl, { nids: nid, bell: '1' })
           }
           await supabase.functions.invoke('send-push', {
-            body: { user_ids: pushIds, title: 'ファイブM 時間調整', body: '新着 1件', url: baseUrl, urls_by_user: urlsByUser, tag: 'time_adjustment' },
+            body: { user_ids: pushIds, title: 'ファイブM 時間調整', body: '時間調整の申請が届いています', url: baseUrl, urls_by_user: urlsByUser, tag: 'time_adjustment' },
           })
         }
       }

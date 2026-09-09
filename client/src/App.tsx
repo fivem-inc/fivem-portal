@@ -1119,7 +1119,9 @@ const classifyNotif = (n: NotifLike) => {
   // 修正依頼・取消依頼。source_type は3種とも 'correction_request' で同じなので、
   // 管理者宛(new)か本人宛(その返事)かは event_key で見分ける
   const isCorrection    = n.source_type === 'correction_request';
-  const isCorrectionNew = isCorrection && n.event_key === 'correction:new';           // 管理者：要対応
+  // 🚨 2026-09-09 に event_key を種類ごとに分けた（correction:new_edit / correction:new_cancel）。
+  //    startsWith で見るのは、分ける前に作られた 'correction:new' の通知も拾い続けるため。
+  const isCorrectionNew = isCorrection && (n.event_key ?? '').startsWith('correction:new'); // 管理者：要対応
   // 🚨 打刻の確認は「答えるまで消えない」要対応。isResultOnly に入れるとタップで消えてしまう
   const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit || isPurchasePendingApproval || isOvertimePendingApproval || isOvertimePendingResubmit || isClockInquiry || isCorrectionNew;
   const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isTripReport || isAttendance || isAttendanceCancelled || isPurchaseResult || isOvertimeResult || isOvertimeCancelledFyi || isOtProposalReceived || isOtProposalResponded || isOvertimeUnreported || isOvertimePendingReview || isOvertimeThreshold || isOvertimeThresholdSummary || isClockInquiryAnswered || (isCorrection && !isCorrectionNew);

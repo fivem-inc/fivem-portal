@@ -28,10 +28,12 @@ export interface Announcement {
   remind_email: boolean;
   remind_days_before: number;
   remind_frequency: RemindFrequency;
+  /** スマホの通知に件名そのものを出すか（false なら「社内お知らせが届いています」に伏せる） */
+  push_show_title: boolean;
 }
 
 const SELECT_COLS =
-  'id, title, body, active, created_at, created_by, starts_at, ends_at, notify_on_create_push, notify_on_create_email, remind_in_app, remind_push, remind_email, remind_days_before, remind_frequency';
+  'id, title, body, active, created_at, created_by, starts_at, ends_at, notify_on_create_push, notify_on_create_email, remind_in_app, remind_push, remind_email, remind_days_before, remind_frequency, push_show_title';
 
 // 今まさに表示すべきお知らせ（active かつ 表示期間内）を新しい順で取得（ホームのバナー用）。
 // 期間フィルタは NULL を通す（starts_at/ends_at が未設定の既存お知らせも表示継続）。
@@ -71,6 +73,7 @@ export interface AnnouncementInput {
   remind_email: boolean;
   remind_days_before: number;
   remind_frequency: RemindFrequency;
+  push_show_title: boolean;
 }
 
 // 作成した行（id含む）を返す。作成時通知（announcement-notify）で id を使うため。

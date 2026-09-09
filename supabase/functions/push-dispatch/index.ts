@@ -3,10 +3,29 @@
 // pg_cron（1分毎）から呼ばれ、push_queueの送信待ちを
 // 「ユーザー×イベント種別」で集約して固定の安全文面で送信する。
 //
-// 文面ルール（2026-07-11実機テスト済み・変更禁止）:
-//   「状態を表す漢字名詞 + 件数」のみ使用可（新着/本日期限/明日期限/差戻/未承認）。
-//   「確認」「依頼」「〜待ち」「〜してください」等の行動を促す語・自由文は
-//   Android Chromeが不正な通知と判定して警告表示に置き換えるため使用禁止。
+// 文面ルール（2026-09-09 実機テストで全面的に見直した）:
+//   本文は EVENT_MAP の text（意味の通る文章）を使い、2件以上なら末尾に「（3件）」を付ける。
+//
+//   🚨 2026-09-09 の実測（社長端末＝Android Chrome・20通を1通ずつ確認）:
+//     旧ルールの「NG確定」とされていた語（確認／依頼／〜待ち／文章形）が **すべて表示された**。
+//     2026-07-11 当時の判定は、いまの Chrome では成り立っていない。
+//     ただし挙動が変わった以上 **また戻る可能性がある** ため、
+//     短い状態語（word）を消さずに残し、環境変数 PUSH_SENTENCE=0 で旧方式へ戻せるようにしてある。
+//     🚨 新しい文面を使うときは、これまでどおり社長端末へ1通ずつ試すこと。
+//
+//   🚨 文章にできても、個人名・金額・申請の中身は入れない。
+//     プッシュはロック画面に出るため、そばにいる人に見える（方針は変えていない）。
+//     例外は社内お知らせの件名だけで、これは書いた人が1件ごとにON/OFFを選ぶ。
+
+// 文章モードで送るか（既定ON）。万一 Chrome の判定が戻ったら
+// Function の環境変数に PUSH_SENTENCE=0 を入れるだけで、旧来の「状態語 + 件数」に戻る。
+const USE_SENTENCE = (Deno.env.get("PUSH_SENTENCE") ?? "1") !== "0";
+
+// プッシュ本文を組み立てる。1件のときは件数を出さない（「（1件）」は読み手に意味が無いため）
+function buildBody(text: string, word: string, count: number): string {
+  if (!USE_SENTENCE) return `${word} ${count}件`;
+  return count >= 2 ? `${text}（${count}件）` : text;
+}
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -28,59 +47,62 @@ function addParams(url: string, params: Record<string, string>): string {
 //   付けるのは安否・緊急系のみ（災害時に「夜だから」で止めてはいけないもの）。
 //   ⚠️ event_key が safety: で始まるものはコード側でも常に urgent 扱いにしている
 //   （将来 safety 系のキーを足したとき、この印の付け忘れで夜間に止まる事故を防ぐ）
-const EVENT_MAP: Record<string, { app: string; word: string; url: string; bell?: true; urgent?: true }> = {
+const EVENT_MAP: Record<string, { app: string; word: string; text: string; url: string; bell?: true; urgent?: true }> = {
   // 休暇申請（承認者の要対応）
-  "leave:new_request":       { app: "休暇申請", word: "未承認", url: "/leave-approvals" },
-  "leave:leader_approved":   { app: "休暇申請", word: "未承認", url: "/leave-approvals" },
+  "leave:new_request":       { app: "休暇申請", word: "未承認", text: "休暇申請が届いています", url: "/leave-approvals" },
+  "leave:leader_approved":   { app: "休暇申請", word: "未承認", text: "休暇申請が届いています", url: "/leave-approvals" },
   // 🚨 マネージャー受理は「申請者本人への結果報告」。承認者向けの通知ではない。
   // 「未承認」だと受理されたのに未処理と読めてしまい、/leave-approvals は
   // 申請者が開いても自分の申請が無い（権限が無ければ何も見えない）ため両方とも誤りだった。
   // word は実機テスト済みの安全語のみ（「受理」「承認」は 2026-08-18 に実機確認済み）
-  "leave:manager_approved":  { app: "休暇申請", word: "受理", url: "/leave?tab=history", bell: true },
+  "leave:manager_approved":  { app: "休暇申請", word: "受理", text: "休暇申請が受理されました", url: "/leave?tab=history", bell: true },
   // 🚨 2026-09-09 追加。ここに無い event_key はプッシュされない（ベルだけ出て静かに欠ける）。
   //    シフト調整がまだの休暇のお知らせ（上長あて）。押すと勤怠カレンダーのその日に飛ぶ。
     // 中身（誰が・いつ休むか）は着地画面で見るので bell は付けない。
   //    🚨 飛び先は「未調整だけで絞った状態」。絞らずに着地すると、ひと月ぶんの一覧から
   //       自分で探すことになり、何をすればよいか分からない（2026-09-09 ユーザー指示）。
   //       同じ着地を App.tsx の classifyNotif にも書いてある。片方だけ直さないこと。
-  "leave:shift_adjust_due":  { app: "休暇申請", word: "未調整", url: "/calendar?shift=pending&view=fyi" },
+  "leave:shift_adjust_due":  { app: "休暇申請", word: "未調整", text: "シフト調整がまだの休暇があります", url: "/calendar?shift=pending&view=fyi" },
   // 申請の依頼（上長 → 本人）。押すと残業ページが開く。
   // 🚨 文言は「検証済み語」だけを使う（引き継ぎアーカイブ「検証済み語」を参照）。
   //    「依頼」単独・「確認」を含む語・文章形は NG確定。新しい語は社長端末に1通テストしてから使う。
   //    🚨 2026-09-09 実機で確認済み：アプリ名「申請依頼」／状態語「未調整」はどちらも化けずに表示された
   //       （1通目でタイトル＋本文、2通目でタイトルだけを切り分けて確認）。
-  "application_request:received": { app: "申請依頼", word: "新着", url: "/overtime?tab=history" },
+  "application_request:received": { app: "申請依頼", word: "新着", text: "申請の依頼が届いています", url: "/overtime?tab=history" },
   // 休暇申請（申請者の要対応）
   // ⚠️ /leave の既定タブは申請フォーム。tab=history を省くと白紙の入力画面に着地する
-  "leave:rejected":          { app: "休暇申請", word: "差戻", url: "/leave?tab=history", bell: true },
+  "leave:rejected":          { app: "休暇申請", word: "差戻", text: "休暇申請が差し戻されました", url: "/leave?tab=history", bell: true },
   // 安否確認：「助けが必要」の回答が入ったとき（発信者＋マネージャー以上へ）
   // 「ヘルプ」は 2026-08-04 に実機テスト済み（Chromeの警告表示に化けないことを確認）。
   // ⚠️ 化けるようになったら app を "安否"（検証済み）に戻すこと。ここ1行で切り替わる。
   // ⚠️ 本文に名前や文章を入れない。文章形はNG確定で、画面ロック中に他人へ見えるため。
   //    誰が助けを求めているかはタップ先の集計画面で確認する。
-  "safety:urgent":           { app: "ヘルプ", word: "新着", url: "/safety?open=summary", urgent: true },
+  "safety:urgent":           { app: "ヘルプ", word: "新着", text: "助けが必要との回答があります", url: "/safety?open=summary", urgent: true },
   // 勤務変更申請
   // ⚠️ タブ指定を省くと既定タブ（報告の入力）に着地して「何を見ればいいか分からない」になる
-  "shift_report:new_request": { app: "勤務変更報告", word: "未承認", url: "/shift-report?view=confirm" },
-  "shift_report:returned":    { app: "勤務変更報告", word: "差戻", url: "/shift-report?tab=history", bell: true },
+  "shift_report:new_request": { app: "勤務変更報告", word: "未承認", text: "勤務変更報告が届いています", url: "/shift-report?view=confirm" },
+  "shift_report:returned":    { app: "勤務変更報告", word: "差戻", text: "勤務変更報告が差し戻されました", url: "/shift-report?tab=history", bell: true },
+  // 🚨 2026-09-09 追加。ベルには出ていたのに EVENT_MAP に無く、スマホに届いていなかった
+  //    （実データで4件確認）。何を直されたかはベルの本文にしかないので bell を付ける。
+  "shift:admin_edited":       { app: "勤務変更報告", word: "新着", text: "管理者が勤務変更報告を修正しました", url: "/shift-report?tab=history", bell: true },
   // 備品精算（購入申請）
   // ⚠️ /purchase の既定タブは「💰 精算」なので、タブを指定しないと必ず精算入力に着地する
-  "purchase_request:submitted":             { app: "備品精算", word: "未承認", url: "/purchase?tab=approvals" },
-  "purchase_request:submitted_manager":     { app: "備品精算", word: "未承認", url: "/purchase?tab=approvals" },
-  "purchase_request:submitted_board":       { app: "備品精算", word: "未承認", url: "/purchase?tab=approvals" },
-  "purchase_request:manager_opinions_ready": { app: "備品精算", word: "未承認", url: "/purchase?tab=approvals" },
+  "purchase_request:submitted":             { app: "備品精算", word: "未承認", text: "備品購入申請が届いています", url: "/purchase?tab=approvals" },
+  "purchase_request:submitted_manager":     { app: "備品精算", word: "未承認", text: "備品購入申請が届いています", url: "/purchase?tab=approvals" },
+  "purchase_request:submitted_board":       { app: "備品精算", word: "未承認", text: "備品購入申請が届いています", url: "/purchase?tab=approvals" },
+  "purchase_request:manager_opinions_ready": { app: "備品精算", word: "未承認", text: "備品購入申請が届いています", url: "/purchase?tab=approvals" },
   // 審議中の回覧（他のマネージャーが意見を出した／否認が出た）。まだ全員の回答が揃っていないので
   // 「未承認」ではなく「審議」。2026-08-18 に社長端末で実機確認済みの語
-  "purchase_request:opinion_submitted":      { app: "備品精算", word: "審議", url: "/purchase?tab=approvals" },
-  "purchase_request:returned":              { app: "備品精算", word: "差戻", url: "/purchase?tab=history", bell: true },
+  "purchase_request:opinion_submitted":      { app: "備品精算", word: "審議", text: "備品購入申請の審議が進んでいます", url: "/purchase?tab=approvals" },
+  "purchase_request:returned":              { app: "備品精算", word: "差戻", text: "備品購入申請が差し戻されました", url: "/purchase?tab=history", bell: true },
   // 結果報告系（申請者・共有先へ）＝自分の申請の状況を見る画面へ
   // 「承認」は 2026-08-18 に社長端末で実機確認済み（Chromeの警告表示に化けない）
-  "purchase_request:leader_approved":       { app: "備品精算", word: "承認", url: "/purchase?tab=history", bell: true },
-  "purchase_request:manager_approved":      { app: "備品精算", word: "承認", url: "/purchase?tab=history", bell: true },
-  "purchase_request:board_all_approved":    { app: "備品精算", word: "承認", url: "/purchase?tab=history", bell: true },
-  "purchase_request:self_judgment_shared":  { app: "備品精算", word: "新着", url: "/purchase?tab=history", bell: true },
+  "purchase_request:leader_approved":       { app: "備品精算", word: "承認", text: "備品購入申請が承認されました", url: "/purchase?tab=history", bell: true },
+  "purchase_request:manager_approved":      { app: "備品精算", word: "承認", text: "備品購入申請が承認されました", url: "/purchase?tab=history", bell: true },
+  "purchase_request:board_all_approved":    { app: "備品精算", word: "承認", text: "備品購入申請が承認されました", url: "/purchase?tab=history", bell: true },
+  "purchase_request:self_judgment_shared":  { app: "備品精算", word: "新着", text: "自己判断での備品購入が共有されました", url: "/purchase?tab=history", bell: true },
   // 交通費申請（経理の要対応）
-  "expense:new_request":     { app: "交通費", word: "新着", url: "/admin" },
+  "expense:new_request":     { app: "交通費", word: "新着", text: "交通費申請が届いています", url: "/admin" },
   // 出張報告（到着・終了）。2026-08-09 にスタッフ側へ履歴タブを新設したので、
   // ホーム着地（＝ベルで見てもらう）をやめて履歴タブに直接着地させる。
   // ⚠️ 履歴タブは「出張報告の履歴閲覧」権限が要る。宛先の役職を足すときは
@@ -90,77 +112,123 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string; bell?:
   //    そのため bell: true を付けて、着地後に🔔ベル一覧を開き該当行を光らせる（2026-08-24）。
   //    履歴タブには他の人の報告も並ぶので、これが無いと「どれが新着か分からない」になる。
   // ⚠️「出張報告」は実機未検証の語。Chromeが警告表示に化けたら app を検証済みの語に変える
-  "trip:report_arrival":     { app: "出張報告", word: "新着", url: "/trip-report?tab=history", bell: true },
-  "trip:report_end":         { app: "出張報告", word: "新着", url: "/trip-report?tab=history", bell: true },
+  "trip:report_arrival":     { app: "出張報告", word: "新着", text: "出張の到着報告が届いています", url: "/trip-report?tab=history", bell: true },
+  "trip:report_end":         { app: "出張報告", word: "新着", text: "出張の終了報告が届いています", url: "/trip-report?tab=history", bell: true },
   // 連絡板
-  "board:notice":           { app: "連絡板", word: "新着", url: "/board" },
-  "board:group_message":    { app: "連絡板", word: "新着", url: "/board" },
-  "board:dm_message":       { app: "連絡板", word: "新着", url: "/board" },
-  "board:confirm_request":  { app: "連絡板", word: "新着", url: "/board" },
+  "board:notice":           { app: "連絡板", word: "新着", text: "連絡板に新しい投稿があります", url: "/board" },
+  "board:group_message":    { app: "連絡板", word: "新着", text: "連絡板に新しい投稿があります", url: "/board" },
+  "board:dm_message":       { app: "連絡板", word: "新着", text: "連絡板に新しい投稿があります", url: "/board" },
+  "board:confirm_request":  { app: "連絡板", word: "新着", text: "連絡板に新しい投稿があります", url: "/board" },
   // リマインド
-  "reminder:unread:today":    { app: "連絡板", word: "本日期限", url: "/board" },
-  "reminder:unread:tomorrow": { app: "連絡板", word: "明日期限", url: "/board" },
-  "reminder:unread:later":    { app: "連絡板", word: "新着", url: "/board" },
+  "reminder:unread:today":    { app: "連絡板", word: "本日期限", text: "連絡板に本日期限の未読があります", url: "/board" },
+  "reminder:unread:tomorrow": { app: "連絡板", word: "明日期限", text: "連絡板に明日期限の未読があります", url: "/board" },
+  "reminder:unread:later":    { app: "連絡板", word: "新着", text: "連絡板に未読があります", url: "/board" },
   // 定期リマインドは特定のメッセージを指していないため連絡板に飛ばしても何も無い。
   // ホームに専用バナー（ScheduledReminderBanner）があるのでそちらへ着地させる（2026-08-18 修正）
-  "reminder:scheduled":       { app: "リマインド", word: "新着", url: "/" },
-  "reminder:encouragement":   { app: "休暇申請", word: "新着", url: "/leave" },
+  "reminder:scheduled":       { app: "リマインド", word: "新着", text: "定期リマインドが届いています", url: "/" },
+  "reminder:encouragement":   { app: "休暇申請", word: "新着", text: "有給奨励日の回答期限が近づいています", url: "/leave" },
   // 社内お知らせ（作成時の連絡・終了日が近づいたリマインド）
   // word は安全語ホワイトリスト（新着）のみ。自由文は Android で警告表示に化けるため不可。
-  "announcement:new":         { app: "お知らせ", word: "新着", url: "/" },
-  "announcement:remind":      { app: "お知らせ", word: "新着", url: "/" },
+  "announcement:new":         { app: "お知らせ", word: "新着", text: "社内お知らせが届いています", url: "/" },
+  "announcement:remind":      { app: "お知らせ", word: "新着", text: "社内お知らせの期限が近づいています", url: "/" },
   // 残業調整の提案（相手＝受信／提案者＝回答通知）。安全語「新着」のみ・催促しない。
   // 🚨 提案の回答画面は /overtime?proposal=<id> の専用ビューだけで、受信一覧が存在しない。
   //    プッシュはIDを持てない（集約するため）ので、ホームのバナーから開いてもらう（2026-08-18 修正）
-  "overtime_proposal:received":  { app: "残業調整", word: "新着", url: "/" },
+  "overtime_proposal:received":  { app: "残業調整", word: "新着", text: "残業調整の提案が届いています", url: "/" },
   // 提案者への回答通知。こちらも提案画面にIDなしでは入れないため、ベルを開いて本文を読む
-  "overtime_proposal:responded": { app: "残業調整", word: "新着", url: "/overtime", bell: true },
+  "overtime_proposal:responded": { app: "残業調整", word: "新着", text: "残業調整の提案に回答がありました", url: "/overtime", bell: true },
   // 残業の実績未報告リマインド（本人へ日次・安全語「新着」）
   // ⚠️ /overtime の既定タブは「申請・報告」の入力フォーム。tab=history を省くと
   //    「実績を報告してください」の知らせなのに、報告する場所（履歴タブ）ではなく
   //    新規申請の入力画面に着地する。ベル側（App.tsx）は tab=history で正しかった。
-  "overtime:unreported":         { app: "残業", word: "新着", url: "/overtime?tab=history" },
+  "overtime:unreported":         { app: "残業", word: "新着", text: "残業の実績報告がまだです", url: "/overtime?tab=history" },
   // 残業の受理まちリマインド（確認者へ日次）。
   // 「未承認」は実機テスト済みの安全語。着地は確認者ビュー（申請の中身がそこに全部あるので bell は付けない）
-  "overtime:pending_review":     { app: "残業", word: "未承認", url: "/overtime?view=confirm" },
+  "overtime:pending_review":     { app: "残業", word: "未承認", text: "受理まちの残業申請があります", url: "/overtime?view=confirm" },
   // 同じ受理まちでも「勤務日より前に1回だけ」出す分。掃除の対象を分けるためキーを分けている
-  "overtime:pending_review_advance": { app: "残業", word: "未承認", url: "/overtime?view=confirm" },
+  "overtime:pending_review_advance": { app: "残業", word: "未承認", text: "受理まちの残業申請があります", url: "/overtime?view=confirm" },
   // 残業がしきい値を超えたお知らせ。他人の残業申請が回ってきたのと区別できるよう
   // アプリ名を「残業」と分けている。
   // 「勤務時間」は 2026-08-04 に実機確認済み（警告表示に化けない）
-  "overtime:threshold":          { app: "勤務時間", word: "新着", url: "/overtime?tab=history" },
+  "overtime:threshold":          { app: "勤務時間", word: "新着", text: "今月の残業が目安を超えています", url: "/overtime?tab=history" },
   // 上長向けの部門まとめ。本人向けと同じ event_key を使っていたため上長が自分の履歴に
   // 着地していた（2026-08-18 修正）。飛び先はベル側（classifyNotif）と揃えてある
-  "overtime:threshold_summary":  { app: "勤務時間", word: "新着", url: "/overtime?tab=history&mode=summary" },
+  "overtime:threshold_summary":  { app: "勤務時間", word: "新着", text: "部門の残業が目安を超えています", url: "/overtime?tab=history&mode=summary" },
   // 残業・時間管理の承認フロー系。
   // word は実機テスト済みの安全語のみ（未承認／差戻／新着／受理／承認。受理・承認は 2026-08-18 確認）。
   // 取消・修正の結果報告は区別せず「新着」に寄せる（詳細はベル・画面で見る前提）。
-  "overtime:new_request":        { app: "残業", word: "未承認", url: "/overtime?view=confirm" },
-  "overtime:request_confirmed":  { app: "残業", word: "受理",   url: "/overtime?tab=history", bell: true },
-  "overtime:confirmed":          { app: "残業", word: "受理",   url: "/overtime?tab=history", bell: true },
-  "overtime:returned":           { app: "残業", word: "差戻",   url: "/overtime?tab=history", bell: true },
+  "overtime:new_request":        { app: "残業", word: "未承認", text: "残業の事前申請が届いています", url: "/overtime?view=confirm" },
+  "overtime:request_confirmed":  { app: "残業", word: "受理", text: "残業の事前申請が受理されました",   url: "/overtime?tab=history", bell: true },
+  "overtime:confirmed":          { app: "残業", word: "受理", text: "残業の実績が確認されました",   url: "/overtime?tab=history", bell: true },
+  "overtime:returned":           { app: "残業", word: "差戻", text: "残業申請が差し戻されました",   url: "/overtime?tab=history", bell: true },
   // 本人が取り消した知らせ（確認者へ）。取消済みなので確認待ち一覧には無い。
   // ベルを開いて本文（誰が・いつの分か）を読んでもらう（2026-08-18 修正）
-  "overtime:cancelled":          { app: "残業", word: "取消",   url: "/overtime?tab=history", bell: true },
-  "overtime:admin_cancelled":    { app: "残業", word: "新着",   url: "/overtime?tab=history", bell: true },
-  "overtime:admin_edited":       { app: "残業", word: "新着",   url: "/overtime?tab=history", bell: true },
-  "overtime:grant":              { app: "残業", word: "新着",   url: "/overtime" },
+  "overtime:cancelled":          { app: "残業", word: "取消", text: "残業申請が取り消されました",   url: "/overtime?tab=history", bell: true },
+  "overtime:admin_cancelled":    { app: "残業", word: "新着", text: "管理者が残業申請を取り消しました",   url: "/overtime?tab=history", bell: true },
+  "overtime:admin_edited":       { app: "残業", word: "新着", text: "管理者が残業申請を修正しました",   url: "/overtime?tab=history", bell: true },
+  "overtime:grant":              { app: "残業", word: "新着", text: "締め後の残業申請が許可されました",   url: "/overtime" },
   // 備品購入申請の質問・回答。履歴タブに着地し、該当カードが光る（reference_id＝申請id）
-  "purchase_request:comment_added": { app: "備品精算", word: "新着", url: "/purchase?tab=history", bell: true },
+  "purchase_request:comment_added": { app: "備品精算", word: "新着", text: "備品購入申請に書き込みがあります", url: "/purchase?tab=history", bell: true },
   // 打刻の確認（経理→本人／本人→経理）。アプリ名「勤務時間」は実機テスト済み（2026-08-04・林の端末）
   // 🚨 回答画面は /overtime?inquiry=<id> の専用ビューでしか開けず、履歴タブに一覧は無い。
   //    プッシュはIDを持てない（集約するため）ので、ホームの専用バナーから開いてもらう（2026-08-18 修正）
-  "overtime:clock_inquiry":          { app: "勤務時間", word: "新着", url: "/" },
-  "overtime:clock_inquiry_answered": { app: "勤務時間", word: "新着", url: "/admin?tab=overtime_admin&section=inquiries" },
-  "overtime:grant_declined":     { app: "残業", word: "新着",   url: "/overtime" },
+  "overtime:clock_inquiry":          { app: "勤務時間", word: "新着", text: "打刻の確認が届いています", url: "/" },
+  "overtime:clock_inquiry_answered": { app: "勤務時間", word: "新着", text: "打刻の確認に回答がありました", url: "/admin?tab=overtime_admin&section=inquiries" },
+  "overtime:grant_declined":     { app: "残業", word: "新着", text: "締め後申請の許可が見送られました",   url: "/overtime" },
   // 修正依頼・取消依頼（correction_requests のRPCがベル通知を作る）
   // ⚠️ app名に「依頼」「確認」は使わない（Chromeが不正な通知と判定する実機テスト済みNG語）。
   //    「修正」は未検証の新語＝実機で警告が出たら app を「お知らせ」等の検証済み語に変える。
   // new=管理者の要対応→管理画面の修正依頼タブへ／resolved・declined=本人への結果→ホーム（ベルで詳細を見る）
-  "correction:new":      { app: "修正", word: "新着", url: "/admin?tab=corrections" },
-  "correction:resolved": { app: "修正", word: "新着", url: "/" },
-  "correction:declined": { app: "修正", word: "新着", url: "/" },
+  // 🚨 旧キー（2026-09-09 に種類ごとへ分ける前に作られた通知が持っている）。消さないこと。
+  //    分けた理由：correction_requests は「修正依頼」と「取消依頼」の2種類を扱うのに
+  //    キーが1つしかなく、取消依頼のときも「修正」と出ていた。
+  "correction:new":      { app: "修正", word: "新着", text: "修正依頼が届いています", url: "/admin?tab=corrections" },
+  "correction:resolved": { app: "修正", word: "新着", text: "修正依頼が対応済みになりました", url: "/" },
+  "correction:declined": { app: "修正", word: "新着", text: "修正依頼が見送られました", url: "/" },
+  // 修正依頼（request_kind = 'edit'）
+  "correction:new_edit":       { app: "修正依頼", word: "新着", text: "修正依頼が届いています", url: "/admin?tab=corrections" },
+  "correction:resolved_edit":  { app: "修正依頼", word: "新着", text: "修正依頼に対応がありました", url: "/" },
+  "correction:declined_edit":  { app: "修正依頼", word: "新着", text: "修正依頼にお返事があります", url: "/" },
+  // 取消依頼（request_kind = 'cancel'）
+  "correction:new_cancel":      { app: "取消依頼", word: "新着", text: "取消依頼が届いています", url: "/admin?tab=corrections" },
+  "correction:resolved_cancel": { app: "取消依頼", word: "新着", text: "取消依頼に対応がありました", url: "/" },
+  "correction:declined_cancel": { app: "取消依頼", word: "新着", text: "取消依頼にお返事があります", url: "/" },
 };
+
+// 社内お知らせだけ、本文に「件名そのもの」を出せる（2026-09-09 ユーザー確定）。
+// 🚨 出せるのは次の3つが揃ったときだけ。1つでも欠けたらふつうの文章に戻す。
+//   ① 社内お知らせであること（連絡板は出さない。DMの用件がロック画面に出るため）
+//   ② まとめが1件であること（2件を1つの件名では言えない）
+//   ③ 書いた人が「件名を通知に出す」をONにしていること（announcements.push_show_title）
+// 🚨 引けなかったときは黙って落とさず、ふつうの文章で送る（通知が消えるほうが困る）。
+const TITLE_MAX = 60; // ロック画面で読めない長さは切る（末尾に…）
+
+async function bodyForGroup(
+  supabase: ReturnType<typeof createClient>,
+  g: { app: string; word: string; text: string; ids: string[]; nids: string[]; tagKey: string },
+): Promise<string> {
+  const fallback = buildBody(g.text, g.word, g.ids.length);
+  if (!USE_SENTENCE) return fallback;
+  if (!g.tagKey.startsWith("announcement:")) return fallback;
+  if (g.ids.length !== 1) return fallback;
+  const nid = g.nids[0];
+  if (!nid) return fallback;
+  try {
+    const { data: notif } = await supabase
+      .from("notifications").select("reference_id").eq("id", nid).maybeSingle();
+    const refId = (notif as { reference_id?: string } | null)?.reference_id;
+    if (!refId) return fallback;
+    const { data: ann } = await supabase
+      .from("announcements").select("title, push_show_title").eq("id", refId).maybeSingle();
+    const row = ann as { title?: string; push_show_title?: boolean } | null;
+    if (!row?.push_show_title) return fallback;
+    const title = (row.title ?? "").trim();
+    if (!title) return fallback;
+    return title.length > TITLE_MAX ? title.slice(0, TITLE_MAX - 1) + "…" : title;
+  } catch {
+    return fallback;
+  }
+}
 
 // notification_settingsの参照キー（'reminder:unread:today'→'reminder:unread'）
 function baseEventKey(eventKey: string): string {
@@ -234,7 +302,7 @@ serve(async (req) => {
     }
 
     // ユーザー×(アプリ名×状態語×URL) で集約
-    type Group = { userId: string; app: string; word: string; url: string; ids: string[]; tagKey: string; bell?: true; nids: string[] };
+    type Group = { userId: string; app: string; word: string; text: string; url: string; ids: string[]; tagKey: string; bell?: true; nids: string[] };
     const groups = new Map<string, Group>();
     const skippedIds: string[] = [];
     let held = 0; // 受信時間外で保留した件数（ログ用）
@@ -259,14 +327,19 @@ serve(async (req) => {
         held++;
         continue;
       }
-      const gKey = `${row.user_id}|${map.app}|${map.word}|${map.url}`;
+      // 🚨 まとめる鍵は「いま表示に使う文言」と必ず揃える。
+      //    文章モードで word を鍵にすると、同じ「新着」でも中身の違う通知
+      //    （例：残業の実績未報告／管理者の取消／締め後の許可）が1つに混ざり、
+      //    先に来た1件の文章だけが出て残りが消える。
+      const label = USE_SENTENCE ? map.text : map.word;
+      const gKey = `${row.user_id}|${map.app}|${label}|${map.url}`;
       const g = groups.get(gKey);
       const rowNids = (row.notification_ids ?? []) as string[];
       if (g) {
         g.ids.push(row.id);
         g.nids.push(...rowNids);
       } else {
-        groups.set(gKey, { userId: row.user_id, app: map.app, word: map.word, url: map.url, ids: [row.id], tagKey: base, bell: map.bell, nids: [...rowNids] });
+        groups.set(gKey, { userId: row.user_id, app: map.app, word: map.word, text: map.text, url: map.url, ids: [row.id], tagKey: base, bell: map.bell, nids: [...rowNids] });
       }
       if (!primaryUsersByEvent.has(base)) primaryUsersByEvent.set(base, new Set());
       primaryUsersByEvent.get(base)!.add(row.user_id);
@@ -289,7 +362,7 @@ serve(async (req) => {
         body: JSON.stringify({
           user_ids: [g.userId],
           title: `ファイブM ${g.app}`,
-          body: `${g.word} ${g.ids.length}件`,
+          body: await bodyForGroup(supabase, g),
           // bell が付いているイベントは、押したときに着地画面で🔔ベル一覧を開いて
           // 該当行を光らせる（プッシュの文面には中身が書けないため、内容はベルで読んでもらう）。
           // nids はその「該当行」を特定するためのベル通知ID。新しい順に20件まで
@@ -370,7 +443,8 @@ serve(async (req) => {
         body: JSON.stringify({
           user_ids: ccPushIds,
           title: `ファイブM ${map.app}`,
-          body: `${map.word} ${count}件`,
+          // CC送信（役職まとめ）はベル通知IDを持たないので、お知らせでも件名は出せない
+          body: buildBody(map.text, map.word, count),
           url: map.url,
           tag: `cc-${base}`,
         }),

@@ -160,7 +160,7 @@ serve(async (req) => {
             if (nid) urlsByUser[uid] = addParams(baseUrl, { nids: nid, bell: '1' })
           }
           await supabase.functions.invoke('send-push', {
-            body: { user_ids: pushIds, title: 'ファイブM 休暇申請', body: '受理 1件', url: baseUrl, urls_by_user: urlsByUser, tag: 'leave-fyi' },
+            body: { user_ids: pushIds, title: 'ファイブM 休暇申請', body: '休暇申請が受理されました', url: baseUrl, urls_by_user: urlsByUser, tag: 'leave-fyi' },
           })
           notifiedPush = pushIds.length
         }

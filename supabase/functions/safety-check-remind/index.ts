@@ -12,10 +12,22 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 // ⚠️ どちらも実機テスト済みの語。新しい語を使うときは必ず実機で確認してから
 const PUSH_TITLE_SAFETY = 'ファイブM 安否';
 const PUSH_TITLE_URGENT = 'ファイブM 緊急';
-const PUSH_BODY = '新着 1件';
+// 2026-09-09：文面を意味の通る文章に変更（実機テスト済み）。
+// 🚨 こちらは「まだ答えていない人」への再送なので、送信時（safety-check-send）とは
+//    文言を変えて、催促だと分かるようにする（1通目と同じ文だと見落とす）。
+const PUSH_BODY_SAFETY = '安否確認がまだ未回答です';
+const PUSH_BODY_URGENT = '緊急連絡がまだ未回答です';
+
+function isSafetyPattern(pattern: string): boolean {
+  return pattern === 'safety3' || pattern === 'safety4';
+}
 
 function pushTitleFor(pattern: string): string {
-  return (pattern === 'safety3' || pattern === 'safety4') ? PUSH_TITLE_SAFETY : PUSH_TITLE_URGENT;
+  return isSafetyPattern(pattern) ? PUSH_TITLE_SAFETY : PUSH_TITLE_URGENT;
+}
+
+function pushBodyFor(pattern: string): string {
+  return isSafetyPattern(pattern) ? PUSH_BODY_SAFETY : PUSH_BODY_URGENT;
 }
 
 serve(async (req) => {
@@ -74,7 +86,7 @@ serve(async (req) => {
         method: 'POST',
         headers: { Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' },
         // urgent: 安否確認は本人の「受信時間帯・休暇日」設定を無視して常に届ける（災害時に止めてはいけない）
-        body: JSON.stringify({ user_ids: unanswered, title: pushTitleFor(check.pattern), body: PUSH_BODY, url: '/safety', tag: 'safety-check', urgent: true }),
+        body: JSON.stringify({ user_ids: unanswered, title: pushTitleFor(check.pattern), body: pushBodyFor(check.pattern), url: '/safety', tag: 'safety-check', urgent: true }),
       });
       const json = await res.json().catch(() => null);
       console.log(`[safety-check-remind] check=${check.id} sent=${json?.sent ?? 0}`);

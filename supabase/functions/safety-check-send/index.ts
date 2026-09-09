@@ -41,11 +41,22 @@ const BOARD_LINK = 'https://fivem-portal.vercel.app/safety';
 // 安否を聞くもの＝「安否」、出勤可否・応援のお願い＝「緊急」で見分けられるようにする
 const PUSH_TITLE_SAFETY = 'ファイブM 安否';
 const PUSH_TITLE_URGENT = 'ファイブM 緊急';
-const PUSH_BODY = '新着 1件';
+// 2026-09-09：文面を「状態語＋件数」から意味の通る文章に変更（実機テスト済み）。
+// 🚨 災害時に開かなくても用件が分かることを優先する。中身（誰が・どこが）は書かない。
+const PUSH_BODY_SAFETY = '安否確認が届いています';
+const PUSH_BODY_URGENT = '緊急連絡が届いています';
+
+// safety3/safety4＝安否を聞く／attendance2・support＝業務の急ぎの連絡
+function isSafetyPattern(pattern: string): boolean {
+  return pattern === 'safety3' || pattern === 'safety4';
+}
 
 function pushTitleFor(pattern: string): string {
-  // safety3/safety4＝安否を聞く／attendance2・support＝業務の急ぎの連絡
-  return (pattern === 'safety3' || pattern === 'safety4') ? PUSH_TITLE_SAFETY : PUSH_TITLE_URGENT;
+  return isSafetyPattern(pattern) ? PUSH_TITLE_SAFETY : PUSH_TITLE_URGENT;
+}
+
+function pushBodyFor(pattern: string): string {
+  return isSafetyPattern(pattern) ? PUSH_BODY_SAFETY : PUSH_BODY_URGENT;
 }
 
 type Pattern = 'safety3' | 'safety4' | 'attendance2' | 'support';
@@ -102,7 +113,7 @@ async function sendPushDirect(supabaseUrl: string, serviceKey: string, userIds: 
       method: 'POST',
       headers: { Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' },
       // urgent: 安否確認は本人の「受信時間帯・休暇日」設定を無視して常に届ける（災害時に止めてはいけない）
-      body: JSON.stringify({ user_ids: userIds, title: pushTitleFor(pattern), body: PUSH_BODY, url: '/safety', tag: 'safety-check', urgent: true }),
+      body: JSON.stringify({ user_ids: userIds, title: pushTitleFor(pattern), body: pushBodyFor(pattern), url: '/safety', tag: 'safety-check', urgent: true }),
     });
     const json = await res.json().catch(() => null);
     console.log('[safety-check-send] push result', json);

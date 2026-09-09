@@ -82,7 +82,7 @@ serve(async (req) => {
         const pushIds = [...new Set(((subs ?? []) as { user_id: string }[]).map(s => s.user_id))]
         if (pushIds.length > 0) {
           await supabase.functions.invoke('send-push', {
-            body: { user_ids: pushIds, title: 'ファイブM 残業', body: '未承認 1件', url: '/admin?tab=overtime_admin&section=grants', tag: 'overtime_grant_request' },
+            body: { user_ids: pushIds, title: 'ファイブM 残業', body: '締め後申請の許可の依頼が届いています', url: '/admin?tab=overtime_admin&section=grants', tag: 'overtime_grant_request' },
           })
         }
       }
