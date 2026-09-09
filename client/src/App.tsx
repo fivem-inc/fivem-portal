@@ -1439,7 +1439,12 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
   useEffect(() => { fetchNotifs(); }, [fetchNotifs]);
 
   const dismiss = useCallback(async (id: string) => {
-    await supabase.from('notifications').update({ read: true, banner_dismissed: true }).eq('id', id);
+    // 🚨 update は0件でもエラーにならない。失敗すると、閉じたはずのバナーが
+    //    次に開いたときに戻ってくる。実害は小さいが、原因が分からないと調べようがないので記録する
+    //    （画面から消すのはそのまま。ここで閉じられないと、消す手段が無くなってしまう）
+    const { data, error } = await supabase.from('notifications')
+      .update({ read: true, banner_dismissed: true }).eq('id', id).select('id');
+    if (error || !data || data.length === 0) console.error('[notif] バナーの既読に失敗:', error, id);
     setNotifs(prev => prev.filter(n => n.id !== id));
   }, []);
 

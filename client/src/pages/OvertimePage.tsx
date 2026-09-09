@@ -18,6 +18,7 @@ import {
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
+import { describeUpdate } from '../lib/statusUpdate';
 
 // validate() は文言だけを返すので、文言と入力欄を突き合わせて薄赤ハイライトを付ける。
 // ここに無い文言は従来どおりメッセージだけ表示する（対応漏れでも壊れない）
@@ -985,6 +986,8 @@ const OvertimeForm: React.FC<{
   const [grantJustSent, setGrantJustSent] = useState(false);
   const [withdrawConfirmId, setWithdrawConfirmId] = useState<string | null>(null);
   const [withdrawing, setWithdrawing] = useState(false);
+  // 取り下げが成立しなかったときの文（消えない赤で出す）。grantError は依頼フォーム側の表示なので分ける
+  const [withdrawError, setWithdrawError] = useState<string | null>(null);
 
   const openGrantForm = () => {
     setGrantDates(date ? [date] : []);
@@ -1024,8 +1027,17 @@ const OvertimeForm: React.FC<{
   const doWithdrawGrantRequest = async () => {
     if (!withdrawConfirmId) return;
     setWithdrawing(true);
-    await supabase.from('overtime_submission_grant_requests').update({ status: 'withdrawn' }).eq('id', withdrawConfirmId);
+    setWithdrawError(null);
+    // 🚨 update は0件でもエラーにならない（RLSで弾かれても「0件成功」で返る）。
+    //    件数を見ないと、依頼が残ったままなのに画面から取り下げたように見える。
+    // 🚨 status=open を条件に付ける。このボタンは open の依頼にしか出ないので
+    //    人が押せる操作は減らない。減るのは「経理が先に許可・見送りをしていた」場合＝
+    //    その判断を黙って上書きしてしまう、止めたい方だけ。
+    const res = await supabase.from('overtime_submission_grant_requests')
+      .update({ status: 'withdrawn' }).eq('id', withdrawConfirmId).eq('status', 'open').select('id');
+    const fail = describeUpdate(res, '取り下げ', 'competing');
     setWithdrawing(false);
+    if (fail) { setWithdrawError(fail); fetchMyGrantRequests(); return; }
     setWithdrawConfirmId(null);
     fetchMyGrantRequests();
   };
@@ -1349,7 +1361,19 @@ const OvertimeForm: React.FC<{
         }
         reportId = editTarget.id;
         // 対象phaseの時間帯を入れ替え
-        await supabase.from('overtime_report_segments').delete().eq('report_id', reportId).eq('phase', phase);
+        // 🚨 消し漏れると時間帯が二重に残る。とくに危ないのは次の2つで、
+        //    どちらも「このあとの insert が unique(report_id,phase,seg_no) で弾かれる」網に
+        //    掛からないため、エラーを見ないと**何も起きずに古い時間帯が残る**：
+        //      ・終日（調整休・欠勤）に変えたとき … 新しい時間帯が0件なので insert 自体が走らない
+        //      ・時間帯を3本から2本に減らしたとき … 3本目だけが古いまま残る
+        // 🚨 件数0はここでは失敗ではない（その phase を初めて保存するときは元から0件）。
+        //    見るのは error だけにする。
+        const { error: segDelErr } = await supabase.from('overtime_report_segments')
+          .delete().eq('report_id', reportId).eq('phase', phase).select('id');
+        if (segDelErr) {
+          setError('前回の時間帯を消せませんでした：' + segDelErr.message);
+          setSaving(false); setShowConfirm(false); return;
+        }
       } else {
         const { data: inserted, error: err } = await supabase.from('overtime_reports')
           .insert({ applicant_id: user.id, submitted_by: user.id, entry_type: 'manual', ...record })
@@ -1646,19 +1670,24 @@ const OvertimeForm: React.FC<{
               <p style={{ margin: '2px 0 8px', fontSize: 11.5, color: subText }}>
                 {new Date(myOpenGrantRequest.created_at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}に依頼
               </p>
+              {withdrawError && (
+                <div style={{ marginBottom: 8, padding: '8px 10px', borderRadius: 8, background: '#f8d7da', border: '1px solid #f5c2c7', fontSize: 12, color: '#842029', lineHeight: 1.6 }}>
+                  ⚠️ {withdrawError}
+                </div>
+              )}
               {withdrawConfirmId === myOpenGrantRequest.id ? (
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button onClick={doWithdrawGrantRequest} disabled={withdrawing}
                     style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', background: '#dc3545', color: '#fff', fontSize: 12.5, fontWeight: 'bold', cursor: 'pointer' }}>
                     {withdrawing ? '取り下げ中…' : '取り下げる'}
                   </button>
-                  <button onClick={() => setWithdrawConfirmId(null)} disabled={withdrawing}
+                  <button onClick={() => { setWithdrawConfirmId(null); setWithdrawError(null); }} disabled={withdrawing}
                     style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, fontSize: 12.5, cursor: 'pointer' }}>
                     やめる
                   </button>
                 </div>
               ) : (
-                <button onClick={() => setWithdrawConfirmId(myOpenGrantRequest.id)}
+                <button onClick={() => { setWithdrawConfirmId(myOpenGrantRequest.id); setWithdrawError(null); }}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 12, color: subText, textDecoration: 'underline' }}>
                   取り下げる
                 </button>

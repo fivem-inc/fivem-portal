@@ -45,6 +45,13 @@ export default tseslint.config([
       'src/components/LeaveRequest.tsx',
       'src/components/admin/ShiftReportsTab.tsx',
       'src/components/admin/UsersTab.tsx',
+      // 2026-09-09 追加（申請まわり）。いずれも追加後に0件であることを実測して足している
+      'src/App.tsx',
+      'src/lib/faq.ts',
+      'src/pages/CalendarPage.tsx',
+      'src/pages/OvertimePage.tsx',
+      'src/components/OvertimeProposalResponse.tsx',
+      'src/components/admin/LeaveRequestsTab.tsx',
     ],
     rules: {
       'no-restricted-syntax': ['error', {

@@ -1,5 +1,6 @@
 import { supabase } from './supabaseClient';
 import { todayJstStr } from './breakCalc';
+import { describeUpdate } from './statusUpdate';
 
 // FAQ（よくある質問）の読み書きと検索。
 //
@@ -645,9 +646,17 @@ export const saveFaqAnswer = async (
 
   let id = answerId;
   if (id) {
-    const { error } = await supabase.from('faq_answers').update(row).eq('id', id).select('id');
-    if (error) return { error: error.message };
-    await supabase.from('faq_answer_targets').delete().eq('answer_id', id);
+    // 🚨 update は0件でもエラーにならない。件数を見ないと、保存できていないのに
+    //    このあと対象役職だけが入れ替わり、本文は古いままになる
+    const upd = await supabase.from('faq_answers').update(row).eq('id', id).select('id');
+    const updFail = describeUpdate(upd, '保存', 'missing');
+    if (updFail) return { error: updFail };
+    // 🚨 対象は「消してから入れ直す」形なので、消し漏れると古い対象役職が残ったまま
+    //    新しい対象が足され、**見えてはいけない役職に回答が出る**。
+    //    件数0は失敗ではない（対象を1つも付けていない回答は元から0件）ので error だけ見る。
+    const { error: delErr } = await supabase.from('faq_answer_targets')
+      .delete().eq('answer_id', id).select('id');
+    if (delErr) return { error: `対象の入れ替えに失敗しました：${delErr.message}` };
   } else {
     const { data, error } = await supabase.from('faq_answers').insert(row).select('id').single();
     if (error || !data) return { error: error?.message ?? '保存できませんでした' };

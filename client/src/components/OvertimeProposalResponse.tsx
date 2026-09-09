@@ -6,6 +6,7 @@ import { timeToMin, calcPayPeriodStartJst, formatSignedMin } from '../lib/breakC
 import { notifyOvertimeNewRequest } from '../lib/overtimeNotify';
 import { shouldSend, dispatchEmail, dispatchSiteNotification, getUserEmail } from '../lib/notificationDispatch';
 import { sendLeaveSlack } from '../lib/leaveSlack';
+import { describeUpdate, describePartial } from '../lib/statusUpdate';
 import type { CalendarKind } from '../lib/breakCalc';
 import { buildTimeAdjustReport, resolveNormalShift } from '../lib/overtimeShift';
 import type { PatternRow } from '../lib/overtimeShift';
@@ -63,6 +64,9 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [done, setDone] = useState<null | 'accepted' | 'declined'>(null);
+  // 🚨 部分成功（回答は成立したが、付随する記録だけ失敗）。赤で出さないこと。
+  //    赤にすると「回答できなかった」と読まれ、今度は逆向きの誤解になる
+  const [partial, setPartial] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -156,6 +160,8 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
         ?? 'スタッフ';
 
       // 2) 受諾ぶんを作成。時間調整＝overtime_reports（既存計算）／調整休＝leave_requests(pending)。
+      // 提案と、作成した申請の紐づけが保存できたか。1件でも落ちたら最後に黄色で断る
+      let linkFailed = false;
       for (const o of chosen) {
         const pk = picks[o.id];
         if (o.kind === 'chosei_off') {
@@ -171,7 +177,12 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
             status: 'pending', current_approver: 'first', approver_id: proposal.proposer_id,
           }).select('id').single();
           if (lrErr || !lr) continue;
-          await supabase.from('overtime_adjustment_proposal_options').update({ result_type: 'leave_request', result_id: (lr as { id: string }).id }).eq('id', o.id);
+          // 🚨 update は0件でもエラーにならない。ここが黙って失敗すると、申請はできているのに
+          //    提案側からどの申請になったのかを辿れなくなる。
+          //    ただし申請そのものは成立しているので**赤（失敗）にはしない**。あとで黄色で断る。
+          const lrLink = await supabase.from('overtime_adjustment_proposal_options')
+            .update({ result_type: 'leave_request', result_id: (lr as { id: string }).id }).eq('id', o.id).select('id');
+          if (describeUpdate(lrLink, '紐づけ', 'missing')) linkFailed = true;
           // 提案者（＝この休暇申請の承認者）へ leave:new_request を送る。
           // 通常の休暇申請（LeaveRequest.tsx）と同じ配線：Slack＋サイト通知＋メール。
           // これが無いと「回答しました」の通知だけで、承認待ちが1件増えたことが伝わらない
@@ -220,7 +231,10 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
           })
         );
         if (segErr) { setError('時間帯の保存に失敗しました：' + segErr.message); setSubmitting(false); return; }
-        await supabase.from('overtime_adjustment_proposal_options').update({ result_type: 'overtime_report', result_id: reportId }).eq('id', o.id);
+        // 🚨 上と同じ理由（申請は成立しているので赤にしない・件数だけ見て黄色で断る）
+        const repLink = await supabase.from('overtime_adjustment_proposal_options')
+          .update({ result_type: 'overtime_report', result_id: reportId }).eq('id', o.id).select('id');
+        if (describeUpdate(repLink, '紐づけ', 'missing')) linkFailed = true;
         // 提案者＝この申請の確認依頼先。通常の申請と同じく「申請が届きました」を送る
         // （提案への回答通知だけでは、確認待ちが1件増えたことが伝わらないため）
         await notifyOvertimeNewRequest({
@@ -235,6 +249,7 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
       // 3) 提案者への回答通知は RPC（respond_overtime_adjustment_proposal）の中で作られる。
       //    ここでクライアントから insert すると、回答者が一般・パート・フロア責任者のとき
       //    notifications の INSERT ポリシー（リーダー以上限定）で弾かれ、無言で届かない
+      if (linkFailed) setPartial(describePartial('回答の記録', '提案と、作成した申請の紐づけを保存できませんでした'));
       setDone('accepted');
     } catch (e) {
       setError('送信に失敗しました：' + String(e));
@@ -269,9 +284,16 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
           <h3 style={{ margin: '0 0 6px', fontSize: 16, color: text }}>🕐 残業調整のご提案</h3>
 
           {done ? (
-            <div style={{ padding: '12px 14px', background: isDark ? '#1b4d1b' : '#f0fff4', border: `1px solid ${isDark ? '#2d5a2d' : '#c3e6cb'}`, borderRadius: 8, fontSize: 13.5, color: isDark ? '#a3d9a3' : '#1e7e34', lineHeight: 1.7 }}>
-              {done === 'accepted' ? '✓ 回答しました。ありがとうございます。選んだ調整は残業記録に反映され、上長の確認後に確定します。' : '✓ 承知しました。無理なさらず、別日・後日で調整してください。'}
-            </div>
+            <>
+              <div style={{ padding: '12px 14px', background: isDark ? '#1b4d1b' : '#f0fff4', border: `1px solid ${isDark ? '#2d5a2d' : '#c3e6cb'}`, borderRadius: 8, fontSize: 13.5, color: isDark ? '#a3d9a3' : '#1e7e34', lineHeight: 1.7 }}>
+                {done === 'accepted' ? '✓ 回答しました。ありがとうございます。選んだ調整は残業記録に反映され、上長の確認後に確定します。' : '✓ 承知しました。無理なさらず、別日・後日で調整してください。'}
+              </div>
+              {partial && (
+                <div style={{ marginTop: 10, padding: '10px 12px', background: isDark ? '#4d431b' : '#fff8e1', border: `1px solid ${isDark ? '#7a6a2d' : '#ffe08a'}`, borderRadius: 8, fontSize: 12.5, color: isDark ? '#e6d27a' : '#7a5b00', lineHeight: 1.7 }}>
+                  ! {partial}
+                </div>
+              )}
+            </>
           ) : canRespond ? (
             <>
               <p style={{ margin: '0 0 12px', fontSize: 13, color: subText, lineHeight: 1.7 }}>

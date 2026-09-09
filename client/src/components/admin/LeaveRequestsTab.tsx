@@ -849,9 +849,13 @@ const LeaveRequestsTab: React.FC = () => {
                                     setEncEditError(null);
                                     setEncEditSaving(true);
                                     if (r.choice) {
-                                      await supabase.from('paid_leave_encouragement_responses')
+                                      // 🚨 update は0件でもエラーにならない。件数を見ないと、回答が
+                                      //    保存できていないのに、このあと休暇申請だけが入れ替わる
+                                      const res = await supabase.from('paid_leave_encouragement_responses')
                                         .update({ choice: encEditChoice, note: encEditNote.trim() || null })
                                         .eq('encouragement_day_id', showEncDetail).eq('user_id', r.user_id).select('id');
+                                      const fail = describeUpdate(res, '登録', 'missing');
+                                      if (fail) { setEncEditError(fail); setEncEditSaving(false); return; }
                                     } else {
                                       await supabase.from('paid_leave_encouragement_responses').insert({
                                         encouragement_day_id: showEncDetail,
@@ -862,12 +866,22 @@ const LeaveRequestsTab: React.FC = () => {
                                     }
                                     // 既存の回答がある場合、leave_requestsから削除してから再挿入
                                     if (encDetailDay) {
-                                      await supabase.from('leave_requests')
+                                      // 🚨 消してから入れ直す形なので、消せていないのに insert まで進むと
+                                      //    同じ日の承認済みの休暇が**二重に**できる。
+                                      //    delete は0件でもエラーにならないので、必ず error を見て止める。
+                                      //    件数0は失敗ではない（まだ休暇申請が無い人を直したときは元から0件）。
+                                      const { error: delErr } = await supabase.from('leave_requests')
                                         .delete()
                                         .eq('user_id', r.user_id)
                                         .eq('start_date', encDetailDay.target_date)
                                         .eq('reason', '【有給奨励日】')
-                                        .eq('status', 'approved');
+                                        .eq('status', 'approved')
+                                        .select('id');
+                                      if (delErr) {
+                                        setEncEditError(`前の休暇申請を取り消せませんでした：${delErr.message}`);
+                                        setEncEditSaving(false);
+                                        return;
+                                      }
                                       const encLeaveType = encEditChoice === 1 ? '有給休暇' : encEditChoice === 2 ? '調整休' : 'その他';
                                       const encLeaveTypeOther = encEditChoice === 3 ? '定休日' : encEditChoice === 4 ? (encEditNote.trim() || 'その他') : undefined;
                                       const { error: lrErr } = await supabase.from('leave_requests').insert({

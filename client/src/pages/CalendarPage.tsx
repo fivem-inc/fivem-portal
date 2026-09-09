@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { scrollToFirstError, ERROR_BORDER, errorBg } from '../lib/formHighlight';
+import { describeUpdate } from '../lib/statusUpdate';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import {
@@ -1595,6 +1596,9 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover, c
   const [absenceSaved, setAbsenceSaved] = useState(false);
   const [absenceDeleted, setAbsenceDeleted] = useState(false);
   const [gcalDeleteFailed, setGcalDeleteFailed] = useState(false);
+  // 取消そのものが失敗したとき（権限が無い／既に取消済み／通信）。
+  // 🚨 gcalDeleteFailed（＝取消は成立したがカレンダーだけ失敗）とは意味が違うので分ける
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [monthSummary, setMonthSummary] = useState<{ year: number; month: number; days: number }[]>([]);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 600);
 
@@ -1913,7 +1917,14 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover, c
     if (!deleteTarget) return;
     const target = deleteTarget;
     setDeleting(true);
-    await supabase.from('attendance_exceptions').delete().eq('id', target.id);
+    setDeleteError(null);
+    // 🚨 delete は0件でもエラーにならない（RLSで弾かれても「0件成功」で返る）。
+    //    ここで件数を見ないと、勤怠が消えていないのに Googleカレンダーの予定だけが消え、
+    //    さらにリーダー・マネージャーへ「取消しました」の通知まで飛ぶ。
+    //    画面には「取消しました」と出るので、誰も気づけない。
+    const delRes = await supabase.from('attendance_exceptions').delete().eq('id', target.id).select('id');
+    const delFail = describeUpdate(delRes, '取消', 'missing');
+    if (delFail) { setDeleteError(delFail); setDeleting(false); return; }
     // invoke は 4xx/5xx でも throw しないので error を必ず見る（見ないと削除失敗が誰にも見えない）
     const { data: syncRes, error: syncErr } = await supabase.functions.invoke('gcal-sync', {
       body: { action: 'delete', source_type: 'absence', source_id: target.id },
@@ -2260,7 +2271,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover, c
                       </span>
                       <span style={{ fontSize: 11, textAlign: 'right', color: subColor }}>
                         {canInput && (
-                          <button onClick={() => setDeleteTarget(ab)} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, border: '1px solid #dc3545', background: 'transparent', color: '#dc3545', cursor: 'pointer' }}>
+                          <button onClick={() => { setDeleteTarget(ab); setDeleteError(null); }} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, border: '1px solid #dc3545', background: 'transparent', color: '#dc3545', cursor: 'pointer' }}>
                             取消
                           </button>
                         )}
@@ -2339,6 +2350,13 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover, c
               内容を直したい場合は、下の「取消してこの内容を利用して入力する」を選ぶと、
               入力画面に元の内容が入った状態で開きます。
             </div>
+            {/* 🚨 取消が成立しなかったときは、消えない赤で出す（3秒で消す緑の✓にしない）。
+                読む前に消えると、利用者は取り消せたと思ってしまう */}
+            {deleteError && (
+              <div style={{ marginBottom: 16, padding: '10px 12px', borderRadius: 8, background: '#f8d7da', border: '1px solid #f5c2c7', fontSize: 13, color: '#842029', lineHeight: 1.6 }}>
+                ⚠️ {deleteError}
+              </div>
+            )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <button onClick={() => handleDelete(false)} disabled={deleting} style={{ width: '100%', padding: 12, background: '#dc3545', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: deleting ? 'not-allowed' : 'pointer', opacity: deleting ? 0.7 : 1 }}>
                 {deleting ? '処理中...' : '取消す'}
@@ -2346,7 +2364,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover, c
               <button onClick={() => handleDelete(true)} disabled={deleting} style={{ width: '100%', padding: 12, background: 'transparent', color: '#495057', border: '1px solid #adb5bd', borderRadius: 10, fontSize: 14, cursor: deleting ? 'not-allowed' : 'pointer', opacity: deleting ? 0.7 : 1, lineHeight: 1.5 }}>
                 取消してこの内容を利用して入力する
               </button>
-              <button onClick={() => setDeleteTarget(null)} disabled={deleting} style={{ width: '100%', padding: 10, background: 'none', color: '#6c757d', border: 'none', fontSize: 14, cursor: 'pointer' }}>
+              <button onClick={() => { setDeleteTarget(null); setDeleteError(null); }} disabled={deleting} style={{ width: '100%', padding: 10, background: 'none', color: '#6c757d', border: 'none', fontSize: 14, cursor: 'pointer' }}>
                 キャンセル
               </button>
             </div>
