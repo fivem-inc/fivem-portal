@@ -49,7 +49,7 @@ const EVENT_MAP: Record<string, { app: string; word: string; url: string; bell?:
   //    「依頼」単独・「確認」を含む語・文章形は NG確定。新しい語は社長端末に1通テストしてから使う。
   //    🚨 2026-09-09 実機で確認済み：アプリ名「申請依頼」／状態語「未調整」はどちらも化けずに表示された
   //       （1通目でタイトル＋本文、2通目でタイトルだけを切り分けて確認）。
-  "application_request:received": { app: "申請依頼", word: "新着", url: "/overtime" },
+  "application_request:received": { app: "申請依頼", word: "新着", url: "/overtime?tab=history" },
   // 休暇申請（申請者の要対応）
   // ⚠️ /leave の既定タブは申請フォーム。tab=history を省くと白紙の入力画面に着地する
   "leave:rejected":          { app: "休暇申請", word: "差戻", url: "/leave?tab=history", bell: true },

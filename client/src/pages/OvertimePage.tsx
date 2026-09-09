@@ -499,6 +499,8 @@ interface FormDraft {
   /** 「内容を修正する（取り消して再申請）」で来たときの、元（取消済み）の申請ID。
    *  受理者に「🔁 修正」と修正前の内容を見せるために、送信時 overtime_reports.modified_from_id に入れる */
   modifiedFromId?: string;
+  /** 「申請の依頼」から開いたときの依頼ID。送信できたらこの依頼を「申請済み」にする */
+  applicationRequestId?: string;
 }
 
 const EMPTY_SEG = { start: '', end: '' };
@@ -668,6 +670,8 @@ const OvertimeForm: React.FC<{
       //    ここを書かないと、利用者が1文字打った瞬間に上書きされて紐づけが消え、
       //    受理者に「🔁 修正」が出なくなる（気づけない形で消える）
       modifiedFromId: draft?.modifiedFromId,
+      // 🚨 依頼IDも自動保存で持ち続ける。消えると申請しても依頼が「未申請」のまま残る
+      applicationRequestId: draft?.applicationRequestId,
     } satisfies FormDraft);
   }, [editTarget, mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId, showOnCalendar, normOverride, normStart, normEnd, fullDay, fullDayType, furikaeOriginDate, furikaeOriginLocation, furikaeOriginLocationCustom, furikaeOriginStart, furikaeOriginEnd]);
 
@@ -1354,6 +1358,18 @@ const OvertimeForm: React.FC<{
           setSaving(false); setShowConfirm(false); return;
         }
         reportId = inserted.id;
+        // 「申請の依頼」から来ていれば、その依頼を「申請済み」にして申請と結び付ける。
+        // 🚨 update は0件でもエラーにならないので件数を見る。
+        //    ここが失敗しても申請そのものは成立しているので、送信は成功として扱う
+        //    （依頼が open のまま残っても、もう一度申請すれば結び付く）。
+        // 🚨 status=open を条件に入れる。相手が「対応しない」を選んだあとに申請した場合は
+        //    そのままにする（勝手に状態を戻さない）。
+        if (!editTarget && draft?.applicationRequestId) {
+          const { data: linked, error: lerr } = await supabase.from('application_requests')
+            .update({ status: 'applied', linked_id: reportId, responded_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+            .eq('id', draft.applicationRequestId).eq('status', 'open').select('id');
+          if (lerr || !linked || linked.length === 0) console.error('[申請の依頼] 申請済みにできませんでした', lerr?.message);
+        }
       }
 
       // 終日（調整休・欠勤）は時間帯を持たない
@@ -2898,6 +2914,69 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ownHistoryPeriod, ownHistoryFilter]);
 
+  // ---- 自分あての申請の依頼（2026-09-09）----
+  // 🚨 ホームの黄色い案内だけにすると、閉じたあと二度と見つけられない
+  //    （既存の「残業調整の提案」で同じ穴があり、バナー頼みになっている）。
+  //    履歴タブの先頭に必ず出して、開けば見つかる状態にする。
+  interface MyAppRequest {
+    id: string; requester_id: string; kind: string; target_dates: string[] | null;
+    memo: string | null; due_date: string | null; status: string; requester_name?: string | null;
+  }
+  const [appRequests, setAppRequests] = useState<MyAppRequest[]>([]);
+  const [appReqErr, setAppReqErr] = useState('');
+  const fetchAppRequests = useCallback(async () => {
+    const { data, error } = await supabase.from('application_requests')
+      .select('id, requester_id, kind, target_dates, memo, due_date, status')
+      .eq('recipient_id', user.id)
+      .eq('status', 'open')
+      .order('created_at', { ascending: true });
+    // 🚨 読めなかったときは空で上書きしない（依頼が無いと嘘をつくため）
+    if (error) { setAppReqErr('依頼を読み込めませんでした：' + error.message); return; }
+    setAppReqErr('');
+    const rows = (data ?? []) as MyAppRequest[];
+    const ids = [...new Set(rows.map(r => r.requester_id))];
+    if (ids.length === 0) { setAppRequests(rows); return; }
+    const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
+    const nameOf = new Map(((profs ?? []) as { id: string; name: string }[]).map(p2 => [p2.id, p2.name]));
+    setAppRequests(rows.map(r => ({ ...r, requester_name: nameOf.get(r.requester_id) ?? null })));
+  }, [user.id]);
+  useEffect(() => { fetchAppRequests(); }, [fetchAppRequests]);
+
+  /** 依頼から申請フォームを開く。日付とメモを入れた下書きにしてフォームへ移る */
+  const startFromRequest = (r: MyAppRequest) => {
+    const first = (r.target_dates ?? [])[0] ?? '';
+    // 🚨 いまの下書きを黙って消さない。書きかけがあるときは置き換えるか聞く
+    //    （連絡板の「コピーして作成」と同じ流儀）
+    const cur = loadDraft<FormDraft>(DRAFT_KEYS.overtime);
+    const hasDraft = !!cur && (!!cur.date || (cur.segments ?? []).some(x => x.start || x.end) || !!cur.reason);
+    if (hasDraft && replaceDraftFor !== r.id) { setReplaceDraftFor(r.id); return; }
+    setReplaceDraftFor(null);
+    saveDraft(DRAFT_KEYS.overtime, {
+      mode: 'advance', date: first, segments: [{ start: '', end: '' }],
+      breakManual: false, breakManualMin: '',
+      reason: r.memo ?? '', location: '', locationCustom: '', reviewerId: r.requester_id,
+      normOverride: false, normStart: '', normEnd: '',
+      // 申請したときに依頼と結び付けるため、依頼IDを持ち回す
+      applicationRequestId: r.id,
+    } satisfies FormDraft);
+    setEditTarget(null);
+    setTab('form');
+    window.scrollTo({ top: 0 });
+  };
+  const [replaceDraftFor, setReplaceDraftFor] = useState<string | null>(null);
+
+  /** 依頼に「対応しない」と答える */
+  const dismissRequest = async (id: string) => {
+    setAppReqErr('');
+    // 🚨 update は0件でもエラーにならない。件数を見る
+    const { data, error } = await supabase.from('application_requests')
+      .update({ status: 'dismissed', responded_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq('id', id).eq('status', 'open').select('id');
+    if (error) { setAppReqErr('保存できませんでした：' + error.message); return; }
+    if (!data || data.length === 0) { setAppReqErr('保存できませんでした（すでに処理された可能性があります）'); fetchAppRequests(); return; }
+    setAppRequests(prev => prev.filter(r => r.id !== id));
+  };
+
   const ownActionRows = ownHistory.filter(isOtActionRow);
   const ownRestRows = ownHistory.filter(r => !isOtActionRow(r));
   // 残業に紐づく最新の修正依頼（📩依頼中／✓対応済みバッジ用）
@@ -3808,6 +3887,51 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                       </div>
                       {ownHistory.length === 0 && (
                         <p style={{ margin: '0 0 12px', fontSize: 13, color: subText, textAlign: 'center' }}>条件に一致する履歴はありません</p>
+                      )}
+                      {/* 📩 自分あての申請の依頼（2026-09-09）。
+                          🚨 ホームの案内だけだと、閉じたあと二度と見つけられない。ここに必ず出す。 */}
+                      {appReqErr && (
+                        <div style={{ marginBottom: 10, padding: '9px 12px', borderRadius: 8, fontSize: 12.5, background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029' }}>{appReqErr}</div>
+                      )}
+                      {appRequests.length > 0 && (
+                        <div style={{ marginBottom: 14 }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 'bold', color: isDark ? '#90caf9' : '#1565c0', margin: '4px 0 8px' }}>📩 申請の依頼が届いています</div>
+                          {appRequests.map(r => (
+                            <div key={r.id} style={{ background: isDark ? '#243447' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, borderRadius: 10, padding: '12px 14px', marginBottom: 8 }}>
+                              <p style={{ margin: '0 0 6px', fontSize: 13, lineHeight: 1.8, color: isDark ? '#fff' : '#0d47a1' }}>
+                                {r.requester_name ?? ''}さんから、
+                                {(r.target_dates ?? []).map(d => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`).join('・')}の
+                                {r.kind === 'leave' ? '休暇' : '残業・勤務変更'}について申請のお願いが届いています。
+                                {r.due_date && <><br />{`${Number(r.due_date.slice(5, 7))}/${Number(r.due_date.slice(8, 10))}`}までに申請してください。</>}
+                              </p>
+                              {r.memo && (
+                                <p style={{ margin: '0 0 8px', padding: '7px 10px', borderRadius: 6, fontSize: 12, lineHeight: 1.7, background: isDark ? '#1b2a3a' : '#fff', color: isDark ? '#dee2e6' : '#495057', whiteSpace: 'pre-wrap' }}>{r.memo}</p>
+                              )}
+                              {replaceDraftFor === r.id ? (
+                                <div style={{ padding: '9px 11px', borderRadius: 8, background: isDark ? '#4a3a1a' : '#fff8e1', border: '1px solid #f0c36d', color: isDark ? '#ffcf8f' : '#b7770d' }}>
+                                  <p style={{ margin: '0 0 8px', fontSize: 12, lineHeight: 1.7 }}>書きかけの申請があります。この依頼の内容に置き換えますか？</p>
+                                  <div style={{ display: 'flex', gap: 6 }}>
+                                    <button onClick={() => startFromRequest(r)}
+                                      style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>置き換える</button>
+                                    <button onClick={() => setReplaceDraftFor(null)}
+                                      style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12.5, background: 'transparent', color: subText }}>やめる</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                  {r.kind === 'leave' ? (
+                                    <a href="/leave" style={{ flex: 1, minWidth: 140, textAlign: 'center', padding: '10px 0', borderRadius: 8, textDecoration: 'none', fontSize: 13, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>休暇を申請する</a>
+                                  ) : (
+                                    <button onClick={() => startFromRequest(r)}
+                                      style={{ flex: 1, minWidth: 140, padding: '10px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>この内容で申請する</button>
+                                  )}
+                                  <button onClick={() => dismissRequest(r.id)}
+                                    style={{ padding: '10px 16px', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12.5, background: 'transparent', color: subText }}>対応しない</button>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
                       )}
                       {ownActionRows.length > 0 && (
                         <div style={{ fontSize: 12.5, fontWeight: 'bold', color: isDark ? '#ffcf8f' : '#b7770d', margin: '4px 0 8px' }}>⚠️ あなたの対応待ち（{ownActionRows.length}）</div>

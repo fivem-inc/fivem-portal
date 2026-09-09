@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import ApplicationRequestSheet from './ApplicationRequestSheet';
 import { sendLeaveSlack } from '../lib/leaveSlack';
 import { insertNotification, formatLeaveDateSummary } from '../lib/notifications';
 import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatchEmail, dispatchSiteNotification, getUserEmail, resolveRoleRecipients } from '../lib/notificationDispatch';
@@ -16,6 +17,8 @@ interface Props {
   /** パートへ休暇申請フォームを送れるか（管理画面「役職・機能権限」で役職ごとに指定）。
    *  🚨 このページを開ける権限（休暇承認）とは別。ページは見られるが送信はさせない、を作れるようにするため */
   canPartFormSend?: boolean;
+  /** 申請の依頼を出せるか（管理画面「役職・機能権限」→「📩 申請の依頼」） */
+  canApplicationRequest?: boolean;
 }
 
 interface LeaveReq {
@@ -58,7 +61,7 @@ const STATUS_LABEL: Record<string, string> = {
   rejected:         '差し戻し',
 };
 
-const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle, canPartFormSend }) => {
+const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle, canPartFormSend, canApplicationRequest }) => {
   const isPresident = roleTitle === '社長';
   const navigate = useNavigate();
   const [requests, setRequests] = useState<LeaveReq[]>([]);
@@ -82,6 +85,49 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
 
   // パートへフォーム送信
   const [partUsers, setPartUsers] = useState<any[]>([]);
+
+  // ---- 申請の依頼（2026-09-09）----
+  // 自分が出した依頼。出しっぱなしにせず、状態と取り下げをこの画面で見られるようにする。
+  interface MyRequest {
+    id: string; recipient_id: string; kind: string; target_dates: string[] | null;
+    status: string; recipient_name?: string | null;
+  }
+  const [showRequestSheet, setShowRequestSheet] = useState(false);
+  const [myRequests, setMyRequests] = useState<MyRequest[]>([]);
+  const [requestErr, setRequestErr] = useState('');
+
+  const fetchMyRequests = useCallback(async () => {
+    const { data, error } = await supabase.from('application_requests')
+      .select('id, recipient_id, kind, target_dates, status')
+      .eq('requester_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(30);
+    // 🚨 読めなかったときは空で上書きしない（「依頼が無い」と嘘をつくため）
+    if (error) { setRequestErr('依頼の一覧を読み込めませんでした：' + error.message); return; }
+    setRequestErr('');
+    const rows = (data ?? []) as MyRequest[];
+    const ids = [...new Set(rows.map(r => r.recipient_id))];
+    if (ids.length > 0) {
+      const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
+      const nameOf = new Map(((profs ?? []) as { id: string; name: string }[]).map(p2 => [p2.id, p2.name]));
+      setMyRequests(rows.map(r => ({ ...r, recipient_name: nameOf.get(r.recipient_id) ?? null })));
+    } else {
+      setMyRequests(rows);
+    }
+  }, [user.id]);
+
+  useEffect(() => { fetchMyRequests(); }, [fetchMyRequests]);
+
+  const withdrawRequest = async (id: string) => {
+    setRequestErr('');
+    // 🚨 update は0件でもエラーにならない。件数を見る
+    const { data, error } = await supabase.from('application_requests')
+      .update({ status: 'withdrawn', updated_at: new Date().toISOString() })
+      .eq('id', id).eq('status', 'open').select('id');
+    if (error) { setRequestErr('取り下げできませんでした：' + error.message); return; }
+    if (!data || data.length === 0) { setRequestErr('取り下げできませんでした（すでに申請された可能性があります）'); fetchMyRequests(); return; }
+    setMyRequests(prev => prev.map(r => (r.id === id ? { ...r, status: 'withdrawn' } : r)));
+  };
   const [partSendSuccess, setPartSendSuccess] = useState<string | null>(null);
   const [partSendError, setPartSendError] = useState<string | null>(null); // パート送信のインラインエラー（alert廃止）
   const [partConfirmId, setPartConfirmId] = useState<string | null>(null); // パート送信のインライン確認（confirm廃止）
@@ -555,6 +601,63 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
           </div>
         );
       })()}
+
+      {/* 📩 申請の依頼（2026-09-09 ユーザー確定）。
+          🚨 パートへの送信欄と同じ「上長が相手に何かをさせる」場所なので、その下に並べる。
+             残業・休暇のどちらも、入口はここ1か所（増やすと迷う）。
+          🚨 出すかどうかは管理画面「役職・機能権限」→「📩 申請の依頼」で決まる。 */}
+      {canApplicationRequest && (
+        <div style={{ background: isDark ? '#2d3136' : '#f8f9fa', border: `1px solid ${isDark ? '#6c757d' : '#dee2e6'}`, borderRadius: 10, padding: '12px 16px', marginBottom: 20 }}>
+          <p style={{ fontWeight: 'bold', fontSize: 13, color: isDark ? '#fff' : '#333', marginBottom: 4 }}>📩 スタッフに申請を依頼する</p>
+          <p style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#6c757d', margin: '0 0 10px', lineHeight: 1.7 }}>
+            相談で聞いた内容を伝えて、本人に申請してもらいます（残業・勤務変更／休暇）。
+          </p>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button onClick={() => setShowRequestSheet(true)}
+              style={{ padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>
+              依頼を作る
+            </button>
+            {myRequests.length > 0 && (
+              <span style={{ fontSize: 12, color: isDark ? '#adb5bd' : '#6c757d' }}>
+                未申請：{myRequests.filter(r => r.status === 'open').length}件
+              </span>
+            )}
+          </div>
+          {/* 自分が出した依頼の一覧。出しっぱなしにせず、状態と取り下げをここで見る */}
+          {myRequests.length > 0 && (
+            <div style={{ marginTop: 10, borderTop: `1px solid ${isDark ? '#495057' : '#dee2e6'}`, paddingTop: 8 }}>
+              {myRequests.slice(0, 8).map(r => (
+                <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '5px 0', fontSize: 12, color: isDark ? '#dee2e6' : '#495057' }}>
+                  <span style={{ fontWeight: 'bold' }}>{r.recipient_name ?? ''}</span>
+                  <span>{(r.target_dates ?? []).map(d => d.slice(5).replace('-', '/')).join('・')}</span>
+                  <span>{r.kind === 'leave' ? '休暇' : '残業・勤務変更'}</span>
+                  <span style={{ color: r.status === 'open' ? '#b7770d' : r.status === 'applied' ? '#1e8449' : (isDark ? '#adb5bd' : '#6c757d') }}>
+                    {r.status === 'open' ? '未申請' : r.status === 'applied' ? '申請済み ✓' : r.status === 'dismissed' ? '対応しない' : '取り下げ'}
+                  </span>
+                  {r.status === 'open' && (
+                    <button onClick={() => withdrawRequest(r.id)}
+                      style={{ padding: '3px 10px', borderRadius: 10, fontSize: 11, cursor: 'pointer', border: `1px solid ${isDark ? '#6c757d' : '#dee2e6'}`, background: 'transparent', color: isDark ? '#adb5bd' : '#6c757d' }}>
+                      取り下げる
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {requestErr && <div style={{ marginTop: 8, fontSize: 12, color: '#dc3545' }}>{requestErr}</div>}
+        </div>
+      )}
+
+      {showRequestSheet && (
+        <ApplicationRequestSheet
+          requesterId={user.id}
+          requesterName={profileName ?? ''}
+          isDark={isDark}
+          defaultKind="leave"
+          onClose={() => setShowRequestSheet(false)}
+          onSubmitted={() => { setShowRequestSheet(false); fetchMyRequests(); }}
+        />
+      )}
 
       <div style={{ padding: 24, background: bg, borderRadius: 12, boxShadow: '0 2px 12px rgba(0,0,0,0.1)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>

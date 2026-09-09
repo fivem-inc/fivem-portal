@@ -500,7 +500,14 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
       </button>
       {open && dropRect && ReactDOM.createPortal(
         <div ref={portalRef} style={{ position: 'fixed', top: dropRect.bottom + 4, right: window.innerWidth - dropRect.right, width: 300, background: '#fff', borderRadius: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.2)', zIndex: 9999, overflow: 'hidden' }}>
-          <div style={{ padding: '10px 14px', borderBottom: '1px solid #eee', fontSize: 13, fontWeight: 'bold', color: '#333' }}>通知の履歴</div>
+          {/* 🚨 いつ消えるのかを書いておく（2026-09-09 ユーザー確定）。
+              実際の掃除は毎晩 JST 3:00 の cron（delete_old_read_notifications）で、
+              「既読になってから30日」経ったものだけを消す。未読は消えない。
+              期間を変えるときは、この文言も一緒に直すこと。 */}
+          <div style={{ padding: '10px 14px', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 13, fontWeight: 'bold', color: '#333' }}>通知の履歴</span>
+            <span style={{ fontSize: 10.5, color: '#9aa3ad' }}>既読は30日で自動削除</span>
+          </div>
           <div style={{ maxHeight: 320, overflowY: 'auto' }}>
             {notifs.length === 0 ? (
               <div style={{ padding: '20px', textAlign: 'center', color: '#888', fontSize: 13 }}>通知はありません</div>
@@ -517,7 +524,11 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, color: n.read ? '#999' : '#1a1a2e', fontWeight: n.read ? 'normal' : 'bold' }}>{n.message}</div>
                   {n.sub_message && <div style={{ fontSize: 11, color: n.read ? '#b0b0b0' : '#5a6b7d', marginTop: 2 }}>{n.sub_message}</div>}
-                  <div style={{ fontSize: 10, color: n.read ? '#c4c4c4' : '#8a9bb0', marginTop: 4 }}>{(() => { const d = new Date(n.created_at); const now = new Date(); if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: 'numeric', minute: '2-digit' }); const m = d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric' }); const day = d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', day: 'numeric' }); const time = d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', hour: 'numeric', minute: '2-digit' }); return `${m}/${day} ${time}`; })()}</div>
+                  <div style={{ fontSize: 10, color: n.read ? '#c4c4c4' : '#8a9bb0', marginTop: 4 }}>{(() => { const d = new Date(n.created_at); const now = new Date(); if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: 'numeric', minute: '2-digit' }); /* 🚨 ja-JP の month:'numeric' は「9月」、day:'numeric' は「8日」を返す。
+                       これを '/' でつなぐと「9月/8日」になっていた（2026-09-09 実機指摘で修正）。
+                       年月日は1回の toLocaleDateString でまとめて出す（ja-JP なら「2026年9月8日」になる）。
+                       2026-09-09 ユーザー確定：年まで出す（履歴は30日残るので、年をまたぐと分からなくなるため）。 */
+                    const ymd = d.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'long', day: 'numeric' }); const time = d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', hour: 'numeric', minute: '2-digit' }); return `${ymd} ${time}`; })()}</div>
                 </div>
                 <span aria-hidden="true" style={{ fontSize: 13, color: n.read ? '#ddd' : '#ccc', flexShrink: 0, marginTop: 2 }}>›</span>
               </div>
@@ -1079,6 +1090,7 @@ const classifyNotif = (n: NotifLike) => {
   const isLeaveResult          = n.source_type === 'leave_request';                  // 申請者：結果報告のみ
   const isLeaveFyi             = n.source_type === 'leave_request:fyi';              // 上長：FYI（誰がいつ休むか共有・カレンダー着地）
   const isShiftAdjustDue       = n.source_type === 'leave:shift_adjust_due';         // 上長：シフト調整がまだの休暇（カレンダー着地・未調整で絞る）
+  const isAppRequest           = n.source_type === 'application_request:received';   // 本人：上長からの申請の依頼
   const isShiftPendingApproval = n.source_type === 'shift_report:pending_approval';  // レビュアー：要対応
   const isShiftPendingResubmit = n.source_type === 'shift_report:pending_resubmit';  // 申請者：再提出/取消待ち
   const isShiftResult          = n.source_type === 'shift_report';                   // 申請者：結果報告のみ
@@ -1159,6 +1171,9 @@ const classifyNotif = (n: NotifLike) => {
     //    残りが見つからない。**未調整だけで絞った状態**で着地させ、やることが並んで見えるようにする。
     //    いちばん近い日も focus で光らせて、どこから見ればよいかを示す（2026-09-09 ユーザー指示）。
     //    closeOnTap は false（やることが残っているので、ベルの行を消さない）。
+    // 上長からの申請の依頼。届いた依頼は残業ページの履歴タブの先頭に並ぶ（休暇の依頼もここから辿れる）。
+    // 🚨 やることが残っているので closeOnTap は false（ベルの行を消さない）。
+    if (isAppRequest) return { path: '/overtime?tab=history', closeOnTap: false };
     if (isShiftAdjustDue) {
       const focus = n.reference_id && /^\d{4}-\d{2}-\d{2}$/.test(n.reference_id) ? `focus=${n.reference_id}&` : '';
       return { path: `/calendar?${focus}shift=pending&view=fyi`, closeOnTap: false };
@@ -2042,7 +2057,7 @@ const LeaveRequestPage: React.FC = () => {
 
 // 休暇申請承認ページ（リーダー・マネージャー・管理者用）
 const LeaveApprovalsPage: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, canLeaveApprovals, canPartLeaveFormSend, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, canLeaveApprovals, canPartLeaveFormSend, canApplicationRequest, handleLogout, loading } = useAuth();
   const featurePublishState = useFeaturePublished();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   if (roleTitle && !isApprover) return <Navigate to="/" />;
@@ -2053,7 +2068,7 @@ const LeaveApprovalsPage: React.FC = () => {
     <div style={{ padding: '110px 16px 0' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
-        <LeaveApprovals user={user} profileName={profileName} isAdmin={isAdmin} roleTitle={roleTitle} canPartFormSend={canPartLeaveFormSend} />
+        <LeaveApprovals user={user} profileName={profileName} isAdmin={isAdmin} roleTitle={roleTitle} canPartFormSend={canPartLeaveFormSend} canApplicationRequest={canApplicationRequest} />
       </Suspense>
     </div>
   );

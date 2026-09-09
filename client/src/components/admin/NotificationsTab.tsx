@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabaseClient';
 import { invalidateNotificationCache } from '../../lib/notificationDispatch';
 import PushBannerSettingsSection from './PushBannerSettingsSection';
 import GcalCalendarSection from './GcalCalendarSection';
+import LeaveShiftAlertSection from './LeaveShiftAlertSection';
 
 interface NotificationSetting {
   id: string;
@@ -37,6 +38,9 @@ const EVENT_GROUPS = [
       { key: 'leave:approved_fyi',     label: '受理お知らせ（FYI・上長へ共有）' },
       { key: 'leave:rejected',         label: '差し戻し時' },
       { key: 'leave:cancelled',        label: '取り消し時' },
+      // 2026-09-09 追加。受理済みなのにシフト調整がまだの休暇を、上長へ毎朝知らせる。
+      // 🚨 送る時刻・時期は下の「シフト未調整のお知らせ」で設定する（宛先はここ）
+      { key: 'leave:shift_adjust_due', label: 'シフト調整がまだのとき（上長へ・毎朝）' },
     ],
   },
   {
@@ -260,9 +264,9 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
 };
 
 // 役職＋グループ絞り込みで一斉配信するイベント（時間調整・勤務変更受理など、UIとロジックを共有する）
-const ROLE_GROUP_BROADCAST_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi', 'overtime:threshold'];
+const ROLE_GROUP_BROADCAST_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi', 'overtime:threshold', 'leave:shift_adjust_due'];
 // プッシュ通知で役職を選択できるイベント（一斉通知系。宛先が自動で決まらないもの）
-const PUSH_ROLE_SELECT_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'purchase:reimbursement_recorded', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi', 'overtime:threshold'];
+const PUSH_ROLE_SELECT_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'purchase:reimbursement_recorded', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi', 'overtime:threshold', 'leave:shift_adjust_due'];
 
 // 備品購入申請: 依頼された全マネージャー・社長など、宛先がその都度動的に決まるイベント。
 // サイト通知・メールの宛先はコード側で自動計算しており、この画面のチェックボックスでは
@@ -963,6 +967,8 @@ const NotificationsTab: React.FC = () => {
       <PushBannerSettingsSection />
 
       <GcalCalendarSection />
+
+      <LeaveShiftAlertSection />
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
         <button onClick={() => { setShowLibrary(true); setLibrarySelectFor(null); }}
