@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { supabase } from '../../lib/supabaseClient';
+import { describeUpdate } from '../../lib/statusUpdate';
 
 // ユーザー追加モーダル
 const AddUserModal: React.FC<{
@@ -376,7 +377,7 @@ const PendingUserRow: React.FC<{
 
 const UsersTab: React.FC = () => {
   const ctx = useAdminPanel();
-  const { isDarkMode, users, loadingUsers, sortedUsers, pendingUsers, userSortKey, userSortAsc, handleUserSort, editingUser, editName, setEditName, handleEditName, handleSaveName, handleCancelUserEdit, showRetired, setShowRetired, editingSortOrder, setEditingSortOrder, editSortOrderValue, setEditSortOrderValue, handleSaveSortOrder, masterOptions, isUserEditMode, setIsUserEditMode, confirmChange, setConfirmChange, fetchUsers, handleToggleActive, handleDeleteUser, handleApprovePendingUser, handleRejectPendingUser, setActiveTab } = ctx;
+  const { isDarkMode, users, loadingUsers, sortedUsers, pendingUsers, userSortKey, userSortAsc, handleUserSort, editingUser, editName, setEditName, handleEditName, handleSaveName, handleCancelUserEdit, showRetired, setShowRetired, editingSortOrder, setEditingSortOrder, editSortOrderValue, setEditSortOrderValue, handleSaveSortOrder, masterOptions, isUserEditMode, setIsUserEditMode, confirmChange, setConfirmChange, fetchUsers, setErrorMsg, handleToggleActive, handleDeleteUser, handleApprovePendingUser, handleRejectPendingUser, setActiveTab } = ctx;
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedForEmail, setSelectedForEmail] = useState<Set<string>>(new Set());
@@ -571,7 +572,15 @@ const UsersTab: React.FC = () => {
                         </button>
                         <button
                           onClick={async () => {
-                            await supabase.from('profiles').update({ [confirmChange.field]: confirmChange.newVal }).eq('id', confirmChange.userId);
+                            // 🚨 検査せずに閉じると、保存が権限で弾かれても何も出ないまま
+                            //    fetchUsers() で画面が元の値に戻り、
+                            //    「保存を押したのに、なぜか変わらない」だけが残る。
+                            //    役職は権限に直結するので、失敗は必ず見せる。
+                            const res = await supabase.from('profiles')
+                              .update({ [confirmChange.field]: confirmChange.newVal })
+                              .eq('id', confirmChange.userId).select('id');
+                            const fail = describeUpdate(res, '変更', 'missing');
+                            if (fail) { setErrorMsg(fail); fetchUsers(); return; }
                             fetchUsers();
                             setConfirmChange(null);
                           }}

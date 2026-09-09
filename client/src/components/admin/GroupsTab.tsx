@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
+import { describeUpdate } from '../../lib/statusUpdate';
 
 const GroupsTab: React.FC = () => {
   const ctx = useAdminPanel();
@@ -32,9 +33,17 @@ const GroupsTab: React.FC = () => {
                         await supabase.from('master_options').update({ value: editGroupNameValue }).eq('category', 'group').eq('value', selectedGroup);
                         // 全ユーザーのgroup_namesを更新
                         const affected = users.filter(u => (u.group_names || []).includes(selectedGroup));
+                        // 🚨 1人ずつ更新するので、途中で失敗すると
+                        //    「一部の人だけ古いグループ名のまま」という食い違いが静かに残る。
+                        //    何人が残ったかを数えて必ず伝える（もう一度押せば、残った人だけが対象になる）。
+                        let renameFailed = 0;
                         for (const u of affected) {
                           const next = (u.group_names || []).map((g: string) => g === selectedGroup ? editGroupNameValue : g);
-                          await supabase.from('profiles').update({ group_names: next }).eq('id', u.id);
+                          const res = await supabase.from('profiles').update({ group_names: next }).eq('id', u.id).select('id');
+                          if (describeUpdate(res, '所属の更新', 'missing')) renameFailed++;
+                        }
+                        if (renameFailed > 0) {
+                          setErrorMsg(`グループ名は変えましたが、${affected.length}人のうち${renameFailed}人の所属を更新できませんでした。もう一度お試しください（更新できた人はそのままです）。`);
                         }
                         await fetchMasterOptions();
                         await fetchUsers();
@@ -122,7 +131,11 @@ const GroupsTab: React.FC = () => {
                     {isUserEditMode && (
                       <button onClick={async () => {
                         const next = (u.group_names || []).filter((x: string) => x !== selectedGroup);
-                        await supabase.from('profiles').update({ group_names: next }).eq('id', u.id);
+                        // 🚨 先に画面を書き換えない。失敗しても外れたように見え、
+                        //    画面とDBが食い違ったまま残る（開き直すと戻る）。
+                        const res = await supabase.from('profiles').update({ group_names: next }).eq('id', u.id).select('id');
+                        const fail = describeUpdate(res, 'グループから外す操作', 'missing');
+                        if (fail) { setErrorMsg(fail); return; }
                         setUsers(prev => prev.map(p => p.id === u.id ? { ...p, group_names: next } : p));
                       }} style={{ padding: '3px 10px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 20, cursor: 'pointer', fontSize: 12 }}>削除</button>
                     )}
@@ -141,7 +154,10 @@ const GroupsTab: React.FC = () => {
                         </div>
                         <button onClick={async () => {
                           const next = [...(u.group_names || []), selectedGroup];
-                          await supabase.from('profiles').update({ group_names: next }).eq('id', u.id);
+                          // 🚨 こちらも同じ。追加できていないのに追加されたように見せない
+                          const res = await supabase.from('profiles').update({ group_names: next }).eq('id', u.id).select('id');
+                          const fail = describeUpdate(res, 'グループへの追加', 'missing');
+                          if (fail) { setErrorMsg(fail); return; }
                           setUsers(prev => prev.map(p => p.id === u.id ? { ...p, group_names: next } : p));
                         }} style={{ padding: '3px 10px', background: '#007bff', color: 'white', border: 'none', borderRadius: 20, cursor: 'pointer', fontSize: 12 }}>＋追加</button>
                       </div>
@@ -156,9 +172,15 @@ const GroupsTab: React.FC = () => {
                       setConfirmDialog({ message: `「${selectedGroup}」を削除しますか？\nメンバーのグループ設定からも削除されます。`, onConfirm: async () => {
                         await supabase.from('master_options').delete().eq('category', 'group').eq('value', selectedGroup);
                         const affected = users.filter(u => (u.group_names || []).includes(selectedGroup));
+                        // 🚨 グループは消えたのに所属だけ残ると、無いグループに入ったままの人ができる
+                        let removeFailed = 0;
                         for (const u of affected) {
                           const next = (u.group_names || []).filter((g: string) => g !== selectedGroup);
-                          await supabase.from('profiles').update({ group_names: next }).eq('id', u.id);
+                          const res = await supabase.from('profiles').update({ group_names: next }).eq('id', u.id).select('id');
+                          if (describeUpdate(res, '所属の削除', 'missing')) removeFailed++;
+                        }
+                        if (removeFailed > 0) {
+                          setErrorMsg(`グループは削除しましたが、${affected.length}人のうち${removeFailed}人の所属を外せませんでした。存在しないグループに入ったままになっているので、もう一度お試しください。`);
                         }
                         await fetchMasterOptions();
                         await fetchUsers();
