@@ -23,6 +23,11 @@ interface StaffMember {
 const FEATURES = [
   { key: 'leave_request',   icon: '🌿', label: '休暇申請',       note: 'パートは別フロー' },
   { key: 'leave_calendar',  icon: '📅', label: '勤怠カレンダー', note: '' },
+  // 🚨 2026-09-09 追加。「ページを開ける」と「登録・取消できる」を分けた。
+  //    それまで画面は承認者（フロア責任者込み）で入力ボタンを出し、DB（RLS）はリーダー以上で弾いていて、
+  //    顔ぶれが食い違っていた。画面もDBも**この1つのトグル**を読む（has_feature_permission('attendance_input')）。
+  //    🚨 上の「勤怠カレンダー」が OFF だとページを開けないので、これを ON にしても入力できない（表示が先）
+  { key: 'attendance_input', icon: '📝', label: '勤怠カレンダーへの登録・取消', note: '遅刻・早退・欠勤などを登録・取消できる役職。「勤怠カレンダー」がONの役職にだけ効きます' },
   { key: 'leave_approvals', icon: '✅', label: '休暇承認',       note: '承認者向けページ' },
   { key: 'shift_report',    icon: '⏰', label: '勤務変更報告',   note: '' },
   { key: 'expense',         icon: '🚃', label: '交通費申請',     note: '' },

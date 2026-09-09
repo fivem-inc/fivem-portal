@@ -35,6 +35,8 @@ interface UseAuthReturn {
   canApplicationRequest: boolean;
   canPartLeaveFormSend: boolean;
   canLeaveApprovals: boolean;
+  /** 勤怠カレンダーへの登録・取消（2026-09-09 追加）。DB側の RLS も同じトグルを見る */
+  canAttendanceInput: boolean;
   leaveRequestEnabled: boolean;
   /** FAQ管理画面だけを使える専用アカウントか（管理者は別途 isAdmin で判定） */
   isFaqEditor: boolean;
@@ -249,6 +251,10 @@ export const useAuth = (): UseAuthReturn => {
   const canLeaveShiftAdjust = realIsAdmin && !previewRole ? true : (effectivePerms.leave_shift_adjust ?? false);
   const canApplicationRequest = realIsAdmin && !previewRole ? true : (effectivePerms.application_request ?? false);
   const canPartLeaveFormSend = realIsAdmin && !previewRole ? true : (effectivePerms.part_leave_form_send ?? false);
+  // 勤怠カレンダーへの登録・取消（2026-09-09）。🚨 役職名では判定しない。
+  //    以前は承認者（APPROVER_ROLES）で出していたが、DBのRLSはリーダー以上で弾いており
+  //    フロア責任者が「押せるのに保存されない」状態だった。画面もDBも同じトグルを読む
+  const canAttendanceInput = realIsAdmin && !previewRole ? true : (effectivePerms.attendance_input ?? false);
 
   const handleLogout = useCallback(async () => {
     console.log('[logout] clicked');
@@ -275,6 +281,7 @@ export const useAuth = (): UseAuthReturn => {
     loading,
     isAdmin,
     isApprover,
+    canAttendanceInput,
     profileName,
     roleTitle: effectiveRoleTitle,
     employmentType: effectiveEmploymentType,

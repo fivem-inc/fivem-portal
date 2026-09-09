@@ -119,6 +119,8 @@ interface Props {
   /** 休暇のシフト調整の状態を変えられるか（管理画面「役職・機能権限」で役職ごとに指定） */
   canShiftAdjustPerm?: boolean;
   isApprover?: boolean;
+  /** 勤怠カレンダーへの登録・取消ができるか（権限管理のトグル。DBのRLSも同じものを見る） */
+  canAttendanceInput?: boolean;
 }
 
 interface LeaveEvent {
@@ -1505,7 +1507,7 @@ const SpCalendar: React.FC<{
 };
 
 // ===== メインコンポーネント =====
-const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover, canShiftAdjustPerm }) => {
+const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjustPerm, canAttendanceInput }) => {
   const isDark = useDarkMode();
   // 会社カレンダー（休館日・出勤日）。カレンダーのセルに敷いて、休館日が一目で分かるようにする
   const calendarKinds = useCompanyCalendar();
@@ -1808,7 +1810,8 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover, c
   }, [highlightDate, loading, absences, events, overtimes, setSearchParams]);
 
   useEffect(() => {
-    if (!isApprover && !isAdmin) return;
+    // 入力シート用の一覧は、登録できる人にだけ読む（判定は canInput と同じトグル）
+    if (!canAttendanceInput && !isAdmin) return;
     supabase.from('profiles').select('id, name, role_title, employment_type, group_names').eq('is_active', true).neq('role_title', '管理者').then(({ data }) => {
       if (data) setProfiles(data.map((p: { id: string; name: string; role_title: string; employment_type: string; group_names: string | string[] }) => ({
         ...p,
@@ -1821,7 +1824,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover, c
     // 更新・別アプリ移動でシートが閉じても、入力途中の下書きがあればシートを開き直す
     const absDraft = loadDraft<AbsenceDraft>(DRAFT_KEYS.attendance);
     if (absDraft?.date) setAbsenceSheet(absDraft.date);
-  }, [isApprover, isAdmin]);
+  }, [canAttendanceInput, isAdmin]);
 
   // 自分の所属チームを初期選択にする。
   // profiles を読むまで所属が分からないため、取得できた時点で1回だけ切り替える。
@@ -1905,7 +1908,9 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, isApprover, c
     color: on ? color : textColor,
   });
 
-  const canInput = isApprover || isAdmin;
+  // 🚨 役職ではなく権限管理のトグル「勤怠カレンダーへの登録・取消」で決める（2026-09-09）。
+  //    DBのRLS（attendance_exceptions）も同じトグルを見るので、「押せるのに保存されない」が起きない
+  const canInput = !!canAttendanceInput || isAdmin;
 
 
   /**
