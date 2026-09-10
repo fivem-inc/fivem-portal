@@ -68,7 +68,11 @@ const EVENT_MAP: Record<string, { app: string; word: string; text: string; url: 
   //    「依頼」単独・「確認」を含む語・文章形は NG確定。新しい語は社長端末に1通テストしてから使う。
   //    🚨 2026-09-09 実機で確認済み：アプリ名「申請依頼」／状態語「未調整」はどちらも化けずに表示された
   //       （1通目でタイトル＋本文、2通目でタイトルだけを切り分けて確認）。
-  "application_request:received": { app: "申請依頼", word: "新着", text: "申請の依頼が届いています", url: "/overtime?tab=history" },
+  // 🚨 bell: true を付けると、着地時にベルが開いて該当の通知が光り、押すとベル側の
+  //    行き先（/overtime?tab=history&focus=<依頼ID>）へ進む（2026-09-10 実機指摘）。
+  //    付けないと「残業ページに着いただけで、何をすればよいか分からない」。
+  //    プッシュは複数を1通にまとめるため依頼IDを持てないので、ベルを経由して特定する。
+  "application_request:received": { app: "申請依頼", word: "新着", text: "申請の依頼が届いています", url: "/overtime?tab=history", bell: true },
   // 休暇申請（申請者の要対応）
   // ⚠️ /leave の既定タブは申請フォーム。tab=history を省くと白紙の入力画面に着地する
   "leave:rejected":          { app: "休暇申請", word: "差戻", text: "休暇申請が差し戻されました", url: "/leave?tab=history", bell: true },
@@ -134,7 +138,10 @@ const EVENT_MAP: Record<string, { app: string; word: string; text: string; url: 
   // 残業調整の提案（相手＝受信／提案者＝回答通知）。安全語「新着」のみ・催促しない。
   // 🚨 提案の回答画面は /overtime?proposal=<id> の専用ビューだけで、受信一覧が存在しない。
   //    プッシュはIDを持てない（集約するため）ので、ホームのバナーから開いてもらう（2026-08-18 修正）
-  "overtime_proposal:received":  { app: "残業調整", word: "新着", text: "残業調整の提案が届いています", url: "/" },
+  // 🚨 2026-09-10 に bell: true を追加。着地時にベルが開いて該当の通知が光り、押すと
+  //    ベル側の行き先（/overtime?proposal=<提案ID>）へ進める。
+  //    ホームのバナーはそのまま残す（バナーを見落としても、ベルから辿れる道を増やしただけ）。
+  "overtime_proposal:received":  { app: "残業調整", word: "新着", text: "残業調整の提案が届いています", url: "/", bell: true },
   // 提案者への回答通知。こちらも提案画面にIDなしでは入れないため、ベルを開いて本文を読む
   "overtime_proposal:responded": { app: "残業調整", word: "新着", text: "残業調整の提案に回答がありました", url: "/overtime", bell: true },
   // 残業の実績未報告リマインド（本人へ日次・安全語「新着」）

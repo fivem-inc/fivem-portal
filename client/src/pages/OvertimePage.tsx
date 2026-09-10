@@ -503,6 +503,13 @@ interface FormDraft {
   modifiedFromId?: string;
   /** 「申請の依頼」から開いたときの依頼ID。送信できたらこの依頼を「申請済み」にする */
   applicationRequestId?: string;
+  /** 「申請の依頼」から開いたときの、上長のメモと依頼した人の名前（入力欄の上に出す用）。
+   *  🚨 メモは reason（理由）に入れない（2026-09-10 ユーザー確定）。
+   *     理由は「本人の言葉」で書く場所で、メモは相談で聞いた内容にすぎない。
+   *     入れておくと、そのまま送信されて本人の申請理由になっていない、という事故になる。
+   *     ［メモを理由に入れる］のようなボタンも置かない（1タップで同じ事故に戻るため）。 */
+  requestMemo?: string;
+  requestFrom?: string;
 }
 
 const EMPTY_SEG = { start: '', end: '' };
@@ -524,6 +531,9 @@ const OvertimeForm: React.FC<{
 }> = ({ user, profileName, roleTitle, isAdmin, reviewers, workplaces, patterns, editTarget, canChooseCalendar, onSaved, onClose }) => {
   const isDark = useDarkMode();
   const draft = editTarget ? null : loadDraft<FormDraft>(DRAFT_KEYS.overtime);
+  // 「申請の依頼」から開いたときの上長のメモ（理由欄の上に出す。理由には入れない）
+  const requestMemo = (draft?.requestMemo ?? '').trim();
+  const requestFrom = (draft?.requestFrom ?? '').trim();
 
   const isReportPhase = !!editTarget && ['requested', 'request_confirmed'].includes(editTarget.status);
   const isResubmit = !!editTarget && editTarget.status === 'returned';
@@ -674,6 +684,10 @@ const OvertimeForm: React.FC<{
       modifiedFromId: draft?.modifiedFromId,
       // 🚨 依頼IDも自動保存で持ち続ける。消えると申請しても依頼が「未申請」のまま残る
       applicationRequestId: draft?.applicationRequestId,
+      // 🚨 上長のメモと依頼者名も持ち続ける。書かないと、利用者が1文字打った瞬間に
+      //    上書きされて**メモの表示が消える**（何を頼まれたか分からなくなる）
+      requestMemo: draft?.requestMemo,
+      requestFrom: draft?.requestFrom,
     } satisfies FormDraft);
   }, [editTarget, mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId, showOnCalendar, normOverride, normStart, normEnd, fullDay, fullDayType, furikaeOriginDate, furikaeOriginLocation, furikaeOriginLocationCustom, furikaeOriginStart, furikaeOriginEnd]);
 
@@ -741,7 +755,12 @@ const OvertimeForm: React.FC<{
   // 日付を選ぶ／変えると、その日の通常シフトで「予定の勤務時間」を埋め直す（新規のみ・日付ごとに1回）。
   // 利用者はここから残業・早退などの差分に直して送信する。日付を変えれば新しい日のシフトに連動する。
   // 下書き復元時・同一日付での再計算（休憩手修正など）では上書きしない（filledForDateRefで制御）。
-  const filledForDateRef = useRef<string | null>(editTarget?.work_date ?? draft?.date ?? null);
+  // 🚨 下書きに**時間が1つも入っていない**ときは「まだ埋めていない」として扱う（2026-09-10 実機指摘）。
+  //    「申請の依頼」から開くと日付だけ入った下書きができるが、以前はその日付を
+  //    「もう埋めた」と見なして自動入力を飛ばしており、**予定の勤務時間が空のまま**だった。
+  //    書きかけ（時間が入っている下書き）は今までどおり上書きしない。
+  const draftHasTimes = (draft?.segments ?? []).some(s => s.start || s.end);
+  const filledForDateRef = useRef<string | null>(editTarget?.work_date ?? (draftHasTimes ? draft?.date : null) ?? null);
   useEffect(() => {
     if (editTarget || !date) return;
     if (filledForDateRef.current === date) return;
@@ -2222,6 +2241,23 @@ const OvertimeForm: React.FC<{
       </div>
       )}
 
+      {/* 「申請の依頼」から来たときの、上長のメモ（2026-09-10 ユーザー確定＝案1）。
+          🚨 メモは理由欄に入れない。理由は「本人の言葉」で書く場所で、メモは相談で聞いた内容。
+             入れておくと、そのまま送信されて本人の申請理由になっていない、という事故になる。
+          🚨 ［メモを理由に入れる］のようなボタンも置かない（1タップで同じ事故に戻る）。
+          🚨 ポップアップにしない。閉じると見えなくなり、理由を書きながら読み返せない
+             （この画面には「閉じたあと二度と見つけられない」という同型の教訓が残っている）。 */}
+      {!clockOnlyMode && !isReportPhase && requestMemo && (
+        <div style={{ marginBottom: 12, background: isDark ? '#243447' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, borderRadius: 10, padding: '11px 13px' }}>
+          <div style={{ fontSize: 12.5, fontWeight: 'bold', color: isDark ? '#90caf9' : '#1565c0', marginBottom: 7 }}>
+            📩 {requestFrom ? `${requestFrom}さんからのメモ` : '依頼のメモ'}
+          </div>
+          <div style={{ background: isDark ? '#1b2a3a' : '#fff', borderRadius: 6, padding: '8px 10px', fontSize: 12.5, lineHeight: 1.7, color: isDark ? '#dee2e6' : '#495057', whiteSpace: 'pre-wrap' }}>{requestMemo}</div>
+          <div style={{ fontSize: 11.5, color: subText, lineHeight: 1.7, marginTop: 7 }}>
+            相談で聞いた内容です。ご自分の言葉で理由を書いてください
+          </div>
+        </div>
+      )}
       {/* 理由。打刻ズレは専用の理由（選択式）を上で出しているのでここは出さない */}
       {!clockOnlyMode && (
       <div style={{ marginBottom: 12 }}>
@@ -2481,6 +2517,16 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   useEffect(() => {
     if (tabParam === 'history') setTab('history');
   }, [tabParam, focusParam]);
+  // 「この内容で申請する」で入力欄まで移動するための目印
+  const formTopRef = useRef<HTMLDivElement | null>(null);
+  // ?focus=<依頼ID> で来たとき、その依頼カードまで移動して光らせる（2026-09-10 実機指摘）。
+  // 🚨 やり方は勤怠カレンダー（CalendarPage の highlightDate）と同じにする。
+  //    300ms 後にスクロール → 6秒で消し、URL から focus を外す。
+  //    focus を外さないと、同じ通知をもう一度タップしたとき URL が変わらず
+  //    「画面は開いているのに光らない」という出方になる。
+  const [highlightReqId, setHighlightReqId] = useState<string | null>(focusParam);
+  const focusReqRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => { if (focusParam) setHighlightReqId(focusParam); }, [focusParam]);
   const [reports, setReports] = useState<OvertimeReport[]>([]);
   const [pendingForMe, setPendingForMe] = useState<OvertimeReport[]>([]);
   const [reviewers, setReviewers] = useState<Reviewer[]>([]);
@@ -2980,6 +3026,22 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     setAppRequests(rows.map(r => ({ ...r, requester_name: nameOf.get(r.requester_id) ?? null })));
   }, [user.id]);
   useEffect(() => { fetchAppRequests(); }, [fetchAppRequests]);
+  // ?focus=<依頼ID> で来たとき：依頼カードまで移動し、数秒後にハイライトを消す。
+  // 🚨 勤怠カレンダー（CalendarPage）とまったく同じ流儀。時間・色も揃えている。
+  // 🚨 appRequests を依存に入れる。読み込みが終わる前はカードが無く、スクロールできない。
+  useEffect(() => {
+    if (!highlightReqId || appRequests.length === 0) return;
+    const t1 = setTimeout(() => focusReqRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300);
+    const t2 = setTimeout(() => {
+      setHighlightReqId(null);
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get('focus')) {
+        sp.delete('focus');
+        setSearchParams(sp, { replace: true });
+      }
+    }, 6000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [highlightReqId, appRequests, setSearchParams]);
 
   /** 依頼から申請フォームを開く。日付とメモを入れた下書きにしてフォームへ移る */
   const startFromRequest = (r: MyAppRequest) => {
@@ -2993,14 +3055,21 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     saveDraft(DRAFT_KEYS.overtime, {
       mode: 'advance', date: first, segments: [{ start: '', end: '' }],
       breakManual: false, breakManualMin: '',
-      reason: r.memo ?? '', location: '', locationCustom: '', reviewerId: r.requester_id,
+      // 🚨 理由は空。上長のメモは入力欄の上に出すだけにする（2026-09-10 ユーザー確定）。
+      //    理由に入れると、そのまま送信されて「本人の言葉になっていない申請」になる。
+      reason: '', location: '', locationCustom: '', reviewerId: r.requester_id,
       normOverride: false, normStart: '', normEnd: '',
       // 申請したときに依頼と結び付けるため、依頼IDを持ち回す
       applicationRequestId: r.id,
+      requestMemo: r.memo ?? '',
+      requestFrom: r.requester_name ?? '',
     } satisfies FormDraft);
     setEditTarget(null);
     setTab('form');
-    window.scrollTo({ top: 0 });
+    // 🚨 ページ先頭ではなく**入力欄**まで移動する（2026-09-10 実機指摘）。
+    //    先頭に戻すと、タブや残業時間の集計が出るだけで「何をすればよいか」が分からない。
+    //    タブを切り替えた直後はまだ描かれていないので、少し待ってから移動する。
+    setTimeout(() => formTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
   };
   const [replaceDraftFor, setReplaceDraftFor] = useState<string | null>(null);
 
@@ -3471,7 +3540,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
           </button>
         )}
 
-        <div style={{ background: isDark ? '#2b3035' : '#fff', border: `1px solid ${borderColor}`, borderRadius: '0 0 12px 12px', padding: '16px 14px' }}>
+        {/* ref … 「この内容で申請する」で入力欄まで移動するための目印（2026-09-10 実機指摘） */}
+        <div ref={formTopRef} style={{ background: isDark ? '#2b3035' : '#fff', border: `1px solid ${borderColor}`, borderRadius: '0 0 12px 12px', padding: '16px 14px' }}>
           {loading ? (
             <p style={{ margin: 0, fontSize: 13, color: subText, textAlign: 'center' }}>読み込み中…</p>
           ) : tab === 'form' ? (
@@ -4011,8 +4081,13 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                       {appRequests.length > 0 && (
                         <div style={{ marginBottom: 14 }}>
                           <div style={{ fontSize: 12.5, fontWeight: 'bold', color: isDark ? '#90caf9' : '#1565c0', margin: '4px 0 8px' }}>📩 申請の依頼が届いています</div>
-                          {appRequests.map(r => (
-                            <div key={r.id} style={{ background: isDark ? '#243447' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, borderRadius: 10, padding: '12px 14px', marginBottom: 8 }}>
+                          {appRequests.map(r => {
+                            // ベル・プッシュから ?focus=<依頼ID> で来たときに光らせる。
+                            // 🚨 色は勤怠カレンダーのハイライトと同じ（新しい色を足さない）
+                            const isFocused = highlightReqId === r.id;
+                            return (
+                            <div key={r.id} ref={isFocused ? focusReqRef : undefined}
+                              style={{ background: isFocused ? (isDark ? '#4a4423' : '#fff9c4') : (isDark ? '#243447' : '#e8f4fd'), border: `1px solid ${isFocused ? '#f59e0b' : (isDark ? '#3d5166' : '#90caf9')}`, borderRadius: 10, padding: '12px 14px', marginBottom: 8, transition: 'background 0.6s' }}>
                               <p style={{ margin: '0 0 6px', fontSize: 13, lineHeight: 1.8, color: isDark ? '#fff' : '#0d47a1' }}>
                                 {r.requester_name ?? ''}さんから、
                                 {(r.target_dates ?? []).map(d => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`).join('・')}の
@@ -4046,7 +4121,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                 </div>
                               )}
                             </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
                       {ownActionRows.length > 0 && (

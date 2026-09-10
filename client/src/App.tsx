@@ -1176,7 +1176,12 @@ const classifyNotif = (n: NotifLike) => {
     //    closeOnTap は false（やることが残っているので、ベルの行を消さない）。
     // 上長からの申請の依頼。届いた依頼は残業ページの履歴タブの先頭に並ぶ（休暇の依頼もここから辿れる）。
     // 🚨 やることが残っているので closeOnTap は false（ベルの行を消さない）。
-    if (isAppRequest) return { path: '/overtime?tab=history', closeOnTap: false };
+    // 申請の依頼 → 履歴タブの該当カードまで移動して光らせる（2026-09-10 実機指摘）。
+    // 🚨 focus を付けないと「残業ページに着いただけで、何をすればよいか分からない」。
+    //    reference_id は application_requests.id（依頼ID）。
+    if (isAppRequest) {
+      return { path: n.reference_id ? `/overtime?tab=history&focus=${n.reference_id}` : '/overtime?tab=history', closeOnTap: false };
+    }
     if (isShiftAdjustDue) {
       const focus = n.reference_id && /^\d{4}-\d{2}-\d{2}$/.test(n.reference_id) ? `focus=${n.reference_id}&` : '';
       return { path: `/calendar?${focus}shift=pending&view=fyi`, closeOnTap: false };
