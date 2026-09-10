@@ -66,6 +66,11 @@ interface BoardMessage {
   outbox_hidden?: boolean;
   recipient_presets?: string[] | null;   // 送信時に全員が宛先に入っていた一括ボタン名（コピーして作成で使う）
   recipient_extra_ids?: string[] | null; // ボタン以外で個別に足した宛先
+  // 検索結果がどこで見つかったか（2026-09-10）。
+  // 🚨 これが無いと、押したときに開く先を決められない。同じ「channel_id が無いお知らせ」でも
+  //    受信トレイ（自分が宛先）と送信トレイ（自分が送った）で、開く画面が違う。
+  //    検索のときだけ入る印なので任意。
+  searchSrc?: 'channel' | 'inbox' | 'outbox';
 }
 
 type View = 'inbox' | 'outbox' | 'compose' | 'channel' | 'search' | 'favorites';
@@ -687,15 +692,37 @@ const BoardPage: React.FC = () => {
             .limit(30)
         : Promise.resolve({ data: [] });
 
-      const [chRes, inRes] = await Promise.all([channelQuery, inboxQuery]);
+      // 送信トレイ（自分が送ったお知らせ）検索
+      // 🚨 2026-09-10 追加。それまで検索は「グループ・DM」と「受信トレイ」だけで、
+      //    自分が送ったものは引けなかった（ユーザー指摘）。
+      //    アーカイブ（outbox_hidden）も対象にする＝片付けたものも探せる。
+      //    お気に入りは「受信トレイのお知らせ」か「チャンネルの投稿」なので、上の2つで引ける。
+      const outboxQuery = supabase
+        .from('board_messages')
+        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, outbox_hidden')
+        .eq('user_id', user.id)
+        .is('channel_id', null)
+        .is('parent_id', null)
+        .or(`body.ilike.${q},subject.ilike.${q}`)
+        .order('created_at', { ascending: false })
+        .limit(30);
+
+      const [chRes, inRes, outRes] = await Promise.all([channelQuery, inboxQuery, outboxQuery]);
 
       // 重複排除してマージ
+      // 🚨 並びは チャンネル → 受信 → 送信。自分が自分に送ったお知らせは受信側が先に入るので、
+      //    押したときは受信トレイで開く（送信トレイでも読めるので困らない）。
       const seen = new Set<string>();
       const merged: BoardMessage[] = [];
-      for (const m of [...((chRes.data || []) as any[]), ...((inRes.data || []) as any[])]) {
+      const tagged: { rows: any[]; src: 'channel' | 'inbox' | 'outbox' }[] = [
+        { rows: (chRes.data || []) as any[],  src: 'channel' },
+        { rows: (inRes.data || []) as any[],  src: 'inbox'   },
+        { rows: (outRes.data || []) as any[], src: 'outbox'  },
+      ];
+      for (const { rows, src } of tagged) for (const m of rows) {
         if (!seen.has(m.id)) {
           seen.add(m.id);
-          merged.push({ ...m, broadcast_recipients: null, profile: null });
+          merged.push({ ...m, broadcast_recipients: null, profile: null, searchSrc: src });
         }
       }
       merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
@@ -3217,7 +3244,11 @@ const BoardPage: React.FC = () => {
   );
 
   // ── 送信トレイ ────────────────────────────────────────────────────
-  const outboxDetail = outboxDetailId ? outboxMessages.find(m => m.id === outboxDetailId) : null;
+  // 🚨 アーカイブ済みも探す（2026-09-10）。受信トレイ（inboxDetail）と同じ形。
+  //    アーカイブを見ないと、検索や一覧から開いても「何も出ない」＝押せないボタンになっていた。
+  const outboxDetail = outboxDetailId
+    ? (outboxMessages.find(m => m.id === outboxDetailId) || outboxArchivedMessages.find(m => m.id === outboxDetailId))
+    : null;
 
   // 開いた中の☆の隣に出すアーカイブのボタン（2026-09-10 実機指摘。受信トレイと同じ位置に統一し、
   // 下に並んでいたオレンジの「🗃 アーカイブ」は廃止した）。
@@ -3871,7 +3902,11 @@ const BoardPage: React.FC = () => {
           {searchResults.map(msg => {
             const senderName = allProfiles.find(p => p.id === msg.user_id)?.name || '不明';
             const ch = channels.find(c => c.id === msg.channel_id);
-            const chLabel = ch ? (ch.type === 'group' ? `👥 ${ch.name || 'グループ'}` : ch.type === 'dm' ? '💬 DM' : '📧 送信メール') : '📥 受信トレイ';
+            // 🚨 channel_id が無いお知らせは「受信トレイ」と「送信トレイ」の両方がありうる。
+            //    searchSrc を見ないと、送信したものまで「📥 受信トレイ」と表示してしまう。
+            const chLabel = ch
+              ? (ch.type === 'group' ? `👥 ${ch.name || 'グループ'}` : ch.type === 'dm' ? '💬 DM' : '📧 送信メール')
+              : msg.searchSrc === 'outbox' ? '📤 送信トレイ' : '📥 受信トレイ';
             const matchBody = msg.body.toLowerCase().includes(searchText.toLowerCase());
             const matchSubject = msg.subject && msg.subject.toLowerCase().includes(searchText.toLowerCase());
             return (
@@ -3880,6 +3915,11 @@ const BoardPage: React.FC = () => {
                   if (msg.channel_id) {
                     selectChannel(msg.channel_id);
                     setView('channel');
+                  } else if (msg.searchSrc === 'outbox') {
+                    // 🚨 自分が送ったお知らせは受信トレイに無い（宛先が自分でないため）。
+                    //    受信トレイとして開くと「開いています…」のまま何も出ない＝押せないボタンになる。
+                    setView('outbox');
+                    setOutboxDetailId(msg.id);
                   } else {
                     setView('inbox');
                     setInboxDetailId(msg.id);
@@ -3919,8 +3959,28 @@ const BoardPage: React.FC = () => {
   //    「通知設定」がそこを越えてはみ出し、右の見出しの背景に塗りつぶされて見えなくなっていた
   //    （どちらも zIndex 50 で、後に描かれる右側が勝つ）。
   //    書き写して2か所に置くと「片方だけ直す」事故になるので、必ずこの定数を使うこと。
+  // いま見ている場所の名前（📥 受信トレイ など）。
+  // 🚨 **定義はここ1か所だけ**。置き場所だけを画面幅で切り替える（2026-09-10 ユーザー確定）：
+  //    PC   … 「💬 連絡板」のすぐ隣（＝サイドバーの見出しの中）
+  //    スマホ … 右の見出し（「← 💬 TOP」の隣）
+  // 🚨 PC で右の見出しに置くと、**サイドバーの実際の幅と食い違って題名がリストの上に浮く**。
+  //    右の見出しは left:280 から始まるが、サイドバーの箱は width:280 と flex:1 の
+  //    両方が指定されていて **flex が勝つため実際は画面の約半分**になっている
+  //    （BoardPage.tsx の channelListPanel。2026-09-10 実機で判明）。
+  //    「💬 連絡板」と同じ箱に入れれば、その食い違いの影響を受けない。
+  // 🚨 グループ・DM（view==='channel'）は右の見出しに専用の表示（アイコン＋人数＋メンバー）が
+  //    あるので、こちらは使わない。
+  const boardViewTitle = (
+    <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor, textAlign: 'left', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      {view === 'inbox' && inboxDetailId ? '📨 受信メッセージ'
+        : view === 'outbox' && outboxDetailId ? '📤 送信メッセージ'
+        : viewTitle[view]}
+    </span>
+  );
+
   const boardHeaderActions = (
-    <div style={{ display: 'flex', gap: 5, flexWrap: 'nowrap', flexShrink: 0 }}>
+    // marginLeft:'auto' … 題名は左寄せのまま、ボタン群だけを右端へ寄せる
+    <div style={{ display: 'flex', gap: 5, flexWrap: 'nowrap', flexShrink: 0, marginLeft: 'auto' }}>
       <button type="button" title="検索" onClick={() => { setShowSearch(s => !s); setSearchText(''); setSearchResults([]); if (view === 'search') navigate(-1); }}
         style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '5px 7px', lineHeight: 1, flexShrink: 0 }}>🔍</button>
       {canSendNotice && (
@@ -3965,9 +4025,20 @@ const BoardPage: React.FC = () => {
       {/* サイドバーヘッダー */}
       {(showSidebar || !isMobile) && (
         <div style={{ position: 'fixed', top: 'var(--topbar-height, 60px)' as string, left: 0, zIndex: 50, background: cardBg, width: isMobile ? '100%' : 280, boxSizing: 'border-box' }}>
-          <div style={{ padding: '8px 12px', height: 56, boxSizing: 'border-box', borderBottom: `1px solid ${border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-            <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor, flexShrink: 0 }}>💬 連絡板</span>
-            {/* 🚨 PC ではここにボタンを置かない（280px に収まらず、右の見出しに隠れる）。
+          {/* 🚨 justifyContent は付けない（flex-start）。ボタン群は自分の marginLeft:'auto' で
+                 右端へ行く。space-between にすると、PC で題名が280pxの右端へ飛んで
+                 「💬 連絡板」と離れてしまう。 */}
+          <div style={{ padding: '8px 12px', height: 56, boxSizing: 'border-box', borderBottom: `1px solid ${border}`, display: 'flex', alignItems: 'center', gap: 6 }}>
+            {/* 「💬 連絡板」を押したら連絡板TOPへ（2026-09-10 ユーザー指示）。
+                🚨 行き先の処理は既存の resetToTop（上のタブを押し直したときと同じ）を呼ぶだけ。
+                   同じ行き先を2通りに書くと、片方だけ直す事故になる。
+                🚨 見た目は今までの文字のまま（枠を付けない）。押せることは title で補う。 */}
+            <button type="button" onClick={resetToTop} title="連絡板TOP"
+              style={{ background: 'none', border: 'none', padding: 0, fontSize: 15, fontWeight: 'bold', color: textColor, cursor: 'pointer', flexShrink: 0, fontFamily: 'inherit', lineHeight: 'inherit' }}>💬 連絡板</button>
+            {/* PC … いま見ている場所の名前を「💬 連絡板」の隣に並べる（2026-09-10 ユーザー指定）。
+                グループ・DM は右の見出しに専用の表示があるので、ここには出さない。 */}
+            {!isMobile && view !== 'channel' && boardViewTitle}
+            {/* 🚨 PC ではボタンを置かない（280px に収まらず、右の見出しに隠れる）。
                    PC は右の見出しへ。スマホはここ＝連絡板TOP に置く（2026-09-10 ユーザー確定）。 */}
             {isMobile && boardHeaderActions}
           </div>
@@ -4012,12 +4083,10 @@ const BoardPage: React.FC = () => {
               <button type="button" onClick={openMemberModal} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px', flexShrink: 0 }}>👥 メンバー</button>
             </>
           ) : (
-            /* flex:1 … 右のボタン群を右端へ寄せるため（PCのみボタンが入る） */
-            <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor, flex: 1, minWidth: 0 }}>
-              {view === 'inbox' && inboxDetailId ? '📨 受信メッセージ'
-                : view === 'outbox' && outboxDetailId ? '📤 送信メッセージ'
-                : viewTitle[view]}
-            </span>
+            /* 🚨 PC は題名をここに置かない（「💬 連絡板」の隣＝サイドバーの見出しに移した）。
+                  ここは left:280 から始まるのに、サイドバーの実際の幅は約半分なので、
+                  題名がリストの上に浮いて見える（2026-09-10 実機指摘）。 */
+            isMobile ? boardViewTitle : null
           )}
           {/* 🚨 PC はここにボタンを置く（横幅いっぱいなので、増えても崩れない）。
                  スマホは左の見出し＝連絡板TOP に出る（2026-09-10 ユーザー確定）。 */}
