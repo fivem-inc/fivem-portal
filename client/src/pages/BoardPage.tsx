@@ -215,6 +215,21 @@ const deleteNoticeRows = async (msgId: string): Promise<string | null> => {
 // Icons
 // ────────────────────────────────────────────────────────────────
 
+// 検索を1回に読む件数（「もっと見る」でこの数ずつ増える）。
+// 🚨 以前は各対象30件・合わせて50件で打ち切り、**残りは黙って消えていた**（2026-09-10 ユーザー指摘）。
+//    いまは「もっと見る」で増やせて、まだあるかどうかも画面に出す。
+const SEARCH_PAGE = 50;
+
+// 検索結果の絞り込み（場所）。並びはこの順で出す。
+// 🚨 絵文字は既にこの画面で使っているものだけ（📥 📤 は viewTitle、👥 💬 📧 は検索結果のラベル）。
+const SEARCH_SRC_FILTERS = [
+  { key: 'inbox'     as const, label: '📥 受信トレイ' },
+  { key: 'outbox'    as const, label: '📤 送信トレイ' },
+  { key: 'group'     as const, label: '👥 グループ' },
+  { key: 'dm'        as const, label: '💬 DM' },
+  { key: 'sent_mail' as const, label: '📧 送信メール' },
+];
+
 const ArchiveIcon: React.FC<{ size?: number }> = ({ size = 14 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'block' }}>
     <path d="M21 8v13H3V8" />
@@ -395,6 +410,22 @@ const BoardPage: React.FC = () => {
   const [searchText,  setSearchText]  = useState('');
   const [searchResults, setSearchResults] = useState<BoardMessage[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
+  // 検索結果の絞り込み（2026-09-10 ユーザー承認・案2＝下線タブ）
+  // 🚨 場所のボタンは「結果にあるものだけ」出す（0件のボタン＝押しても何も出ないボタンを作らない）。
+  // 🚨 数字は「いま表示している中の数」。全件数と混ぜると、押したあと数が合わなくなる。
+  const [searchSrcFilter, setSearchSrcFilter] = useState<'all' | 'inbox' | 'outbox' | 'group' | 'dm' | 'sent_mail'>('all');
+  // 🚨 並び順は **DBの並びそのもの** に渡す（下の検索の effect を参照）。
+  //    画面の中だけで並べ替えると「古い順」が読み込んだ分の中での並びになり、
+  //    いちばん古いものが出ない＝嘘になる。
+  const [searchOrder, setSearchOrder] = useState<'new' | 'old'>('new');
+  // 🚨 打っている文字（searchText）と、実際に検索した言葉（searchQuery）を分けて持つ。
+  //    分けないと、打つたびに検索が走って画面が切り替わる（2026-09-10 実機指摘）。
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchHint, setSearchHint] = useState<string | null>(null);
+  // 何件まで読むか。「もっと見る」で増やす。
+  // 🚨 各対象からこの数ずつ取って合わせてこの数に切る。
+  //    「全体の新しい順◯件」は「各対象の新しい順◯件」の中に必ず入るので、この取り方で正しい。
+  const [searchLimit, setSearchLimit] = useState(SEARCH_PAGE);
 
   // Compose
   const [newBody,              setNewBody]              = useState('');
@@ -449,6 +480,11 @@ const BoardPage: React.FC = () => {
 
   const [saveBanner, setSaveBanner] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  // スマホで検索欄を開くと右の見出しが縦に伸びるので、そのぶん中身の上余白を足す。
+  // 🚨 足さないと、一覧の先頭が検索欄の下に隠れる（サイドバーの一覧が showSearch ? 96 : 56 と
+  //    しているのと同じ考え方）。**数値はここ1か所**に置き、各画面は これを足すだけにする。
+  // 🚨 使う場所（各画面の paddingTop）より前で宣言すること。
+  const searchPad = isMobile && showSearch ? 42 : 0;
 
   // お気に入り
   const [favChannelIds,  setFavChannelIds]  = useState<Set<string>>(new Set());
@@ -642,9 +678,11 @@ const BoardPage: React.FC = () => {
 
   // メッセージ全文検索（300msデバウンス）
   useEffect(() => {
-    if (!searchText.trim() || searchText.trim().length < 2) {
+    // 🚨 ここで navigate(-1) をしない（2026-09-10）。以前は「文字が空になったら検索画面から出る」
+    //    ために戻していたが、検索結果を押した直後にも走って **開いた画面から引き戻していた**。
+    //    検索画面から出るのは 🔍 をもう一度押すか、← ／ 💬 TOP で行う。
+    if (searchQuery.length < 2) {
       setSearchResults([]);
-      if (view === 'search') navigate(-1);
       return;
     }
     const timer = setTimeout(async () => {
@@ -668,7 +706,10 @@ const BoardPage: React.FC = () => {
         .eq('hidden', false);   // 自分が削除したものは検索にも出さない
       const inboxIds = (recData || []).map((r: any) => r.message_id);
 
-      const q = `%${searchText.trim()}%`;
+      const q = `%${searchQuery}%`;
+      // 🚨 並び順は **DBに渡す**。画面の中だけで並べ替えると、「古い順」が
+      //    「読み込んだ分の中で古い順」になり、いちばん古いものが出ない（＝嘘になる）。
+      const asc = searchOrder === 'old';
 
       // チャンネルメッセージ検索
       const channelQuery = cids.length > 0
@@ -677,8 +718,8 @@ const BoardPage: React.FC = () => {
             .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link')
             .in('channel_id', cids)
             .or(`body.ilike.${q},subject.ilike.${q}`)
-            .order('created_at', { ascending: false })
-            .limit(30)
+            .order('created_at', { ascending: asc })
+            .limit(searchLimit)
         : Promise.resolve({ data: [] });
 
       // 受信トレイメッセージ検索
@@ -688,8 +729,8 @@ const BoardPage: React.FC = () => {
             .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link')
             .in('id', inboxIds)
             .or(`body.ilike.${q},subject.ilike.${q}`)
-            .order('created_at', { ascending: false })
-            .limit(30)
+            .order('created_at', { ascending: asc })
+            .limit(searchLimit)
         : Promise.resolve({ data: [] });
 
       // 送信トレイ（自分が送ったお知らせ）検索
@@ -704,8 +745,8 @@ const BoardPage: React.FC = () => {
         .is('channel_id', null)
         .is('parent_id', null)
         .or(`body.ilike.${q},subject.ilike.${q}`)
-        .order('created_at', { ascending: false })
-        .limit(30);
+        .order('created_at', { ascending: asc })
+        .limit(searchLimit);
 
       const [chRes, inRes, outRes] = await Promise.all([channelQuery, inboxQuery, outboxQuery]);
 
@@ -725,14 +766,17 @@ const BoardPage: React.FC = () => {
           merged.push({ ...m, broadcast_recipients: null, profile: null, searchSrc: src });
         }
       }
-      merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      merged.sort((a, b) => {
+        const d = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        return asc ? d : -d;
+      });
 
-      setSearchResults(merged.slice(0, 50));
+      setSearchResults(merged.slice(0, searchLimit));
       setSearchLoading(false);
     }, 300);
     return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchText, user]);
+  }, [searchQuery, user, searchOrder, searchLimit]);
 
   // 🚨 loadInbox は同時に複数走る（開いたとき／ベルから来たとき／前面に戻ったとき）。
   //    古い応答が後から届いて新しい状態を上書きしないよう、通し番号で「最新の1本」だけを採用する。
@@ -2675,7 +2719,7 @@ const BoardPage: React.FC = () => {
       {inboxDetail ? (
         /* 詳細ビュー */
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ paddingTop: 58 }} />
+          <div style={{ paddingTop: 58 + searchPad }} />
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 14px' }}>
             {/* 宛先タグ */}
             {(inboxRecipients[inboxDetail.id] || []).length > 0 && (() => {
@@ -2780,7 +2824,7 @@ const BoardPage: React.FC = () => {
       ) : (
         /* 一覧ビュー */
         <>
-          <div style={{ paddingTop: 56, flexShrink: 0 }}>
+          <div style={{ paddingTop: 56 + searchPad, flexShrink: 0 }}>
             {/* 1行目：状態（すべて／未読／未対応）＋ 右端にアーカイブ。未読・未対応には件数のバッジ */}
             <div style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${border}`, background: cardBg, padding: '0 8px' }}>
               {INBOX_STATE_FILTERS.map(f => (
@@ -3029,7 +3073,7 @@ const BoardPage: React.FC = () => {
 
   const composePanel = (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: bg }}>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 16px', paddingTop: 58 }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 16px', paddingTop: 58 + searchPad }}>
         {/* 入力内容クリア */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
           <button type="button" onClick={resetCompose}
@@ -3267,7 +3311,7 @@ const BoardPage: React.FC = () => {
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: bg }}>
       {outboxDetail ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ paddingTop: 58 }} />
+          <div style={{ paddingTop: 58 + searchPad }} />
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 14px' }}>
             {/* 宛先タグ（10人以上折りたたみ） */}
             {(inboxRecipients[outboxDetail.id] || []).length > 0 && (() => {
@@ -3364,7 +3408,7 @@ const BoardPage: React.FC = () => {
         </div>
       ) : (
         <>
-          <div style={{ paddingTop: 56, flexShrink: 0 }}>
+          <div style={{ paddingTop: 56 + searchPad, flexShrink: 0 }}>
             <div style={{ display: 'flex', borderBottom: `1px solid ${border}`, background: cardBg }}>
               {([['sent', '送信済み'], ['scheduled', '📅 予約済み'], ['draft', '下書き'], ['archive', 'アーカイブ']] as const).map(([tab, label]) => (
                 <button key={tab} type="button" onClick={() => setOutboxTab(tab)}
@@ -3573,7 +3617,7 @@ const BoardPage: React.FC = () => {
   const messagePanel = selectedChannelId && selectedChannel ? (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Messages */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px', paddingTop: 110, background: bg }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px', paddingTop: 110 + searchPad, background: bg }}>
         {channelMessages.length === 0 && (
           <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 40 }}>まだメッセージがありません</div>
         )}
@@ -3757,7 +3801,7 @@ const BoardPage: React.FC = () => {
     outbox:    '📤 送信トレイ',
     compose:   '✉️ お知らせを作成',
     channel:   selectedChannel ? (selectedChannel.type === 'group' ? `👥 ${channelDisplayName(selectedChannel)}` : channelDisplayName(selectedChannel)) : '',
-    search:    `🔍 「${searchText}」の検索結果`,
+    search:    `🔍 「${searchQuery}」の検索結果`,
     favorites: '⭐ お気に入り',
   };
 
@@ -3782,7 +3826,7 @@ const BoardPage: React.FC = () => {
   };
 
   const favoritesPanel = (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px', paddingTop: 62 }}>
+    <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px', paddingTop: 62 + searchPad }}>
       {favChannelIds.size === 0 && favMessageIds.size === 0 ? (
         <div style={{ textAlign: 'center', color: subColor, fontSize: 14, marginTop: 60 }}>
           <div style={{ fontSize: 32, marginBottom: 12 }}>⭐</div>
@@ -3888,18 +3932,79 @@ const BoardPage: React.FC = () => {
     </div>
   );
 
+  // 検索結果がどの場所のものか。
+  // 🚨 **判定はこの1か所だけ**。ボタンの数字と一覧の中身が別の式で決まると、数が合わなくなる。
+  const searchSrcOf = (msg: BoardMessage): typeof SEARCH_SRC_FILTERS[number]['key'] => {
+    if (!msg.channel_id) return msg.searchSrc === 'outbox' ? 'outbox' : 'inbox';
+    const ch = channels.find(c => c.id === msg.channel_id);
+    return ch?.type === 'group' ? 'group' : ch?.type === 'sent_mail' ? 'sent_mail' : 'dm';
+  };
+  const searchSrcCounts = searchResults.reduce<Record<string, number>>((acc, m) => {
+    const k = searchSrcOf(m);
+    acc[k] = (acc[k] || 0) + 1;
+    return acc;
+  }, {});
+  // 🚨 絞り込みは **ここ1か所** で行い、件数と一覧の両方がこれを使う（片方だけ絞ると食い違う）。
+  const shownSearch = searchSrcFilter === 'all'
+    ? searchResults
+    : searchResults.filter(m => searchSrcOf(m) === searchSrcFilter);
+  // 取れた数が上限に届いている＝まだ先がある見込み（黙って打ち切らず「もっと見る」を出す）
+  const searchMaybeMore = searchResults.length >= searchLimit;
+
   const searchPanel = (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px', paddingTop: 62 }}>
-      {searchLoading ? (
+    <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px', paddingTop: 62 + searchPad }}>
+      {/* 🚨 「検索中...」に差し替えるのは、まだ1件も出ていないときだけ。
+             「もっと見る」でも差し替えると、一覧が消えて先頭に戻ってしまう。 */}
+      {searchLoading && searchResults.length === 0 ? (
         <div style={{ textAlign: 'center', color: subColor, fontSize: 14, marginTop: 40 }}>検索中...</div>
       ) : searchResults.length === 0 ? (
         <div style={{ textAlign: 'center', color: subColor, fontSize: 14, marginTop: 40 }}>
-          「{searchText}」に一致するメッセージがありません
+          「{searchQuery}」に一致するメッセージがありません
         </div>
       ) : (
         <>
-          <div style={{ fontSize: 12, color: subColor, marginBottom: 10 }}>{searchResults.length}件のメッセージが見つかりました</div>
-          {searchResults.map(msg => {
+          {/* 場所の絞り込み（下線タブ・2026-09-10 ユーザー承認＝案2）。
+              🚨 結果にある場所だけ出す（0件のボタンを作らない）。数字は表示している中の数。
+              🚨 色は既存の「すべて／未読／未対応」と同じ #007bff（新しい色は足さない）。 */}
+          <div style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${border}`, marginBottom: 8, overflowX: 'auto' }}>
+            <button type="button" onClick={() => setSearchSrcFilter('all')}
+              style={{ padding: '8px 12px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: searchSrcFilter === 'all' ? 700 : 400, color: searchSrcFilter === 'all' ? '#007bff' : subColor, borderBottom: searchSrcFilter === 'all' ? '2px solid #007bff' : '2px solid transparent', whiteSpace: 'nowrap', flexShrink: 0 }}>
+              すべて {searchResults.length}
+            </button>
+            {SEARCH_SRC_FILTERS.filter(f => (searchSrcCounts[f.key] || 0) > 0).map(f => (
+              <button key={f.key} type="button" onClick={() => setSearchSrcFilter(f.key)}
+                style={{ padding: '8px 12px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: searchSrcFilter === f.key ? 700 : 400, color: searchSrcFilter === f.key ? '#007bff' : subColor, borderBottom: searchSrcFilter === f.key ? '2px solid #007bff' : '2px solid transparent', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                {f.label} {searchSrcCounts[f.key]}
+              </button>
+            ))}
+          </div>
+          {/* 並び順。🚨 DBの並びに渡している（「古い順」がいちばん古いものを出す） */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 10 }}>
+            <span style={{ fontSize: 11, color: subColor, marginRight: 2 }}>並び</span>
+            {([['new', '新しい順'], ['old', '古い順']] as const).map(([key, label]) => (
+              <button key={key} type="button" onClick={() => setSearchOrder(key)}
+                style={{ padding: '3px 10px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: searchOrder === key ? 700 : 400, color: searchOrder === key ? '#007bff' : subColor, borderBottom: searchOrder === key ? '2px solid #007bff' : '2px solid transparent', whiteSpace: 'nowrap' }}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize: 12, color: subColor, marginBottom: 10 }}>
+            {shownSearch.length}件を表示しています{searchMaybeMore && '（この先にもあります）'}
+          </div>
+          {/* 🚨 空の画面を「壊れた」と思わせない。並び順を変えると、絞っている場所の結果が
+                 入れ替わって0件になることがあるので、戻し方を必ず添える。 */}
+          {shownSearch.length === 0 && (
+            <div style={{ textAlign: 'center', color: subColor, fontSize: 13, marginTop: 24 }}>
+              この場所には見つかりませんでした
+              <div style={{ marginTop: 10 }}>
+                <button type="button" onClick={() => setSearchSrcFilter('all')}
+                  style={{ padding: '5px 14px', background: 'none', border: `1px solid ${border}`, borderRadius: 8, color: '#007bff', cursor: 'pointer', fontSize: 12 }}>
+                  すべてに戻す
+                </button>
+              </div>
+            </div>
+          )}
+          {shownSearch.map(msg => {
             const senderName = allProfiles.find(p => p.id === msg.user_id)?.name || '不明';
             const ch = channels.find(c => c.id === msg.channel_id);
             // 🚨 channel_id が無いお知らせは「受信トレイ」と「送信トレイ」の両方がありうる。
@@ -3907,8 +4012,8 @@ const BoardPage: React.FC = () => {
             const chLabel = ch
               ? (ch.type === 'group' ? `👥 ${ch.name || 'グループ'}` : ch.type === 'dm' ? '💬 DM' : '📧 送信メール')
               : msg.searchSrc === 'outbox' ? '📤 送信トレイ' : '📥 受信トレイ';
-            const matchBody = msg.body.toLowerCase().includes(searchText.toLowerCase());
-            const matchSubject = msg.subject && msg.subject.toLowerCase().includes(searchText.toLowerCase());
+            const matchBody = msg.body.toLowerCase().includes(searchQuery.toLowerCase());
+            const matchSubject = msg.subject && msg.subject.toLowerCase().includes(searchQuery.toLowerCase());
             return (
               <div key={msg.id}
                 onClick={() => {
@@ -3925,7 +4030,11 @@ const BoardPage: React.FC = () => {
                     setInboxDetailId(msg.id);
                   }
                   setShowSearch(false);
-                  setSearchText('');
+                  // 🚨 ここで setSearchText('') をしてはいけない（2026-09-10 実機指摘）。
+                  //    検索の effect に「文字が空になったら検索画面から出る」処理があり、
+                  //    navigate(-1) が走って **いま開いた画面から引き戻される**。
+                  //    結果を押しても「お知らせはありません」になっていたのはこれ。
+                  //    文字を残しておけば、戻ったときに検索結果もそのまま見られる。
                 }}
                 style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: '10px 14px', marginBottom: 10, cursor: 'pointer' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
@@ -3936,29 +4045,28 @@ const BoardPage: React.FC = () => {
                 </div>
                 {(matchSubject || msg.subject) && (
                   <div style={{ fontSize: 13, fontWeight: 700, color: textColor, marginBottom: 6, paddingBottom: 6, borderBottom: `1px solid ${border}`, textAlign: 'left' }}>
-                    {matchSubject ? highlightMatch(msg.subject!, searchText) : msg.subject}
+                    {matchSubject ? highlightMatch(msg.subject!, searchQuery) : msg.subject}
                   </div>
                 )}
                 <div style={{ fontSize: 13, color: subColor, lineHeight: 1.5, textAlign: 'left' }}>
-                  {matchBody ? highlightMatch(msg.body, searchText) : <span>{msg.body.slice(0, 80)}{msg.body.length > 80 ? '…' : ''}</span>}
+                  {matchBody ? highlightMatch(msg.body, searchQuery) : <span>{msg.body.slice(0, 80)}{msg.body.length > 80 ? '…' : ''}</span>}
                 </div>
               </div>
             );
           })}
+          {/* 🚨 打ち切ったことを黙って隠さない。押すと SEARCH_PAGE 件ずつ増やして読み直す
+                 （並び順もDBに渡しているので、増やしても順番が入れ替わらない）。 */}
+          {searchMaybeMore && (
+            <button type="button" onClick={() => { if (!searchLoading) setSearchLimit(n => n + SEARCH_PAGE); }}
+              style={{ width: '100%', padding: '10px 0', marginTop: 4, background: 'none', border: `1px solid ${border}`, borderRadius: 8, color: '#007bff', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+              {searchLoading ? '読み込んでいます…' : `もっと見る（${SEARCH_PAGE}件ずつ）`}
+            </button>
+          )}
         </>
       )}
     </div>
   );
 
-  // 連絡板の操作ボタン（検索・お知らせ送信・ヘルプ・通知設定）。
-  // 🚨 **定義はここ1か所だけ**。置き場所だけを画面幅で切り替える：
-  //    PC   … 右の見出し（横幅いっぱいなので、ボタンが増えても崩れない）
-  //    スマホ … 左の見出し（＝連絡板TOP。ここに無いと TOP から送信できなくなる。
-  //            スマホは2つの見出しが同時に出ないため、右へ移すと TOP から消える）
-  // 🚨 2026-09-10 実機指摘：PCではサイドバーの見出しが **280px 固定**で、
-  //    「通知設定」がそこを越えてはみ出し、右の見出しの背景に塗りつぶされて見えなくなっていた
-  //    （どちらも zIndex 50 で、後に描かれる右側が勝つ）。
-  //    書き写して2か所に置くと「片方だけ直す」事故になるので、必ずこの定数を使うこと。
   // いま見ている場所の名前（📥 受信トレイ など）。
   // 🚨 **定義はここ1か所だけ**。置き場所だけを画面幅で切り替える（2026-09-10 ユーザー確定）：
   //    PC   … 「💬 連絡板」のすぐ隣（＝サイドバーの見出しの中）
@@ -3978,11 +4086,70 @@ const BoardPage: React.FC = () => {
     </span>
   );
 
+  // 連絡板の操作ボタン（検索・お知らせ送信・ヘルプ・通知設定）。
+  // 🚨 **定義はここ1か所だけ**。置き場所だけを画面幅で切り替える：
+  //    PC   … 右の見出し（横幅いっぱいなので、ボタンが増えても崩れない）
+  //    スマホ … 左の見出し（＝連絡板TOP。ここに無いと TOP から送信できなくなる。
+  //            スマホは2つの見出しが同時に出ないため、右へ移すと TOP から消える）
+  // 🚨 2026-09-10 実機指摘：PCではサイドバーの見出しが **280px 固定**で、
+  //    「通知設定」がそこを越えてはみ出し、右の見出しの背景に塗りつぶされて見えなくなっていた
+  //    （どちらも zIndex 50 で、後に描かれる右側が勝つ）。
+  //    書き写して2か所に置くと「片方だけ直す」事故になるので、必ずこの定数を使うこと。
+  // 検索ボタンと検索の入力欄。
+  // 🚨 **定義はどちらも1か所だけ**。置き場所を2つにする（2026-09-10 ユーザー承認＝案A）：
+  //    連絡板TOPの見出し（下の boardHeaderActions の中）と、
+  //    **スマホでトレイを開いているときの右の見出し**。
+  //    スマホは2つの見出しが同時に出ないので、画面には常に1つだけ出る。
+  //    書き写すと「片方だけ直す」事故になる。
+  const boardSearchButton = (
+    <button type="button" title="検索" onClick={() => { setShowSearch(s => !s); setSearchText(''); setSearchQuery(''); setSearchHint(null); setSearchResults([]); if (view === 'search') navigate(-1); }}
+      style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '5px 7px', lineHeight: 1, flexShrink: 0 }}>🔍</button>
+  );
+  // 🚨 **打っている途中では検索しない**（2026-09-10 実機指摘）。
+  //    以前は入力のたび（300ms後）に走り、日本語を変換している最中にも画面が検索結果へ
+  //    切り替わって、続きが打てなかった。
+  //    このリポジトリの決まり（メモ欄などは「打つたびに保存しない・Enter と離れたときだけ」）に
+  //    合わせ、**Enter か「検索」ボタン**で実行する。
+  const runSearch = () => {
+    const q = searchText.trim();
+    if (q.length < 2) { setSearchHint('2文字以上入れてください'); return; }
+    setSearchHint(null);
+    // 🚨 新しく検索したら絞り込みと読み込み件数を戻す（絞ったまま0件になり
+    //    「見つからなかった」と誤解するのを防ぐ）。並び順は選んだままにする。
+    setSearchSrcFilter('all');
+    setSearchLimit(SEARCH_PAGE);
+    setSearchQuery(q);
+  };
+  const boardSearchBox = showSearch ? (
+    <div style={{ padding: '0 14px 10px' }}>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <input
+          autoFocus
+          value={searchText}
+          onChange={e => setSearchText(e.target.value)}
+          onKeyDown={e => {
+            // 🚨 日本語の変換中（IME）の Enter は「候補の確定」なので検索しない。
+            //    isComposing を見ないと、変換を確定した瞬間に検索が走ってしまう。
+            if (e.key === 'Enter' && !(e.nativeEvent as unknown as { isComposing?: boolean }).isComposing) {
+              e.preventDefault();
+              runSearch();
+            }
+          }}
+          placeholder="メッセージを検索..."
+          style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', padding: '6px 10px', borderRadius: 8, border: `1px solid ${border}`, background: bg, color: textColor, fontSize: 13 }}
+        />
+        <button type="button" onClick={runSearch}
+          style={{ background: '#007bff', border: 'none', borderRadius: 8, color: '#fff', cursor: 'pointer', fontSize: 12, padding: '6px 12px', fontWeight: 'bold', flexShrink: 0, whiteSpace: 'nowrap' }}>検索</button>
+      </div>
+      {searchHint && (
+        <div style={{ fontSize: 11, color: '#dc3545', marginTop: 4 }}>{searchHint}</div>
+      )}
+    </div>
+  ) : null;
   const boardHeaderActions = (
     // marginLeft:'auto' … 題名は左寄せのまま、ボタン群だけを右端へ寄せる
     <div style={{ display: 'flex', gap: 5, flexWrap: 'nowrap', flexShrink: 0, marginLeft: 'auto' }}>
-      <button type="button" title="検索" onClick={() => { setShowSearch(s => !s); setSearchText(''); setSearchResults([]); if (view === 'search') navigate(-1); }}
-        style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '5px 7px', lineHeight: 1, flexShrink: 0 }}>🔍</button>
+      {boardSearchButton}
       {canSendNotice && (
         <button type="button" onClick={openCompose}
           style={{ background: '#007bff', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, padding: '5px 10px', fontWeight: 'bold', whiteSpace: 'nowrap', flexShrink: 0 }}>＋お知らせ送信</button>
@@ -4042,22 +4209,13 @@ const BoardPage: React.FC = () => {
                    PC は右の見出しへ。スマホはここ＝連絡板TOP に置く（2026-09-10 ユーザー確定）。 */}
             {isMobile && boardHeaderActions}
           </div>
-          {showSearch && (
-            <div style={{ padding: '0 14px 10px' }}>
-              <input
-                autoFocus
-                value={searchText}
-                onChange={e => setSearchText(e.target.value)}
-                placeholder="メッセージを検索..."
-                style={{ width: '100%', boxSizing: 'border-box', padding: '6px 10px', borderRadius: 8, border: `1px solid ${border}`, background: bg, color: textColor, fontSize: 13 }}
-              />
-            </div>
-          )}
+          {boardSearchBox}
         </div>
       )}
       {/* コンテンツヘッダー（モバイル: サイドバー非表示時、デスクトップ: 常時） */}
       {(!showSidebar || !isMobile) && (
-        <div style={{ position: 'fixed', top: 'var(--topbar-height, 60px)' as string, left: isMobile ? 0 : 280, right: 0, zIndex: 50, padding: '8px 14px', height: 56, boxSizing: 'border-box', borderBottom: `1px solid ${border}`, background: cardBg, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ position: 'fixed', top: 'var(--topbar-height, 60px)' as string, left: isMobile ? 0 : 280, right: 0, zIndex: 50, background: cardBg, boxSizing: 'border-box' }}>
+        <div style={{ padding: '8px 14px', height: 56, boxSizing: 'border-box', borderBottom: `1px solid ${border}`, display: 'flex', alignItems: 'center', gap: 8 }}>
           {isMobile && (
             <button type="button" onClick={() => navigate(-1)}
               style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 22, padding: '0 6px', lineHeight: 1, fontWeight: 'bold' }}>←</button>
@@ -4091,6 +4249,12 @@ const BoardPage: React.FC = () => {
           {/* 🚨 PC はここにボタンを置く（横幅いっぱいなので、増えても崩れない）。
                  スマホは左の見出し＝連絡板TOP に出る（2026-09-10 ユーザー確定）。 */}
           {!isMobile && boardHeaderActions}
+          {/* スマホでトレイを開いているときは、ここに **検索だけ** 出す（2026-09-10 ユーザー承認＝案A）。
+              🚨 ボタン4つを全部出すと狭い画面（375px）に収まらない。
+                 ＋お知らせ送信・通知設定は「💬 TOP」で戻れば使える。 */}
+          {isMobile && <div style={{ marginLeft: 'auto', display: 'flex', flexShrink: 0 }}>{boardSearchButton}</div>}
+        </div>
+        {isMobile && boardSearchBox}
         </div>
       )}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
