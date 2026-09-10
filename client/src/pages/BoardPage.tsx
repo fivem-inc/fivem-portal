@@ -219,6 +219,20 @@ const ArchiveIcon: React.FC<{ size?: number }> = ({ size = 14 }) => (
   </svg>
 );
 
+// アーカイブから出す（箱に上向きの矢印）。ArchiveIcon と対になる。
+// 🚨 この絵を書き写さないこと。**3か所が同じこれを呼ぶ**：
+//    ① 受信トレイの一覧（アーカイブ済みの行）② 受信トレイの詳細 ③ 送信トレイのアーカイブ一覧。
+//    2026-09-10 まで ③ だけ絵文字 📤 を使っており、カラーで浮いていた（実機指摘）。
+//    絵文字は「文字化けしないことを確かめた一覧」にある字だけを使う決まりで、📤 は入っていない。
+const UnarchiveIcon: React.FC<{ size?: number }> = ({ size = 14 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'block' }}>
+    <path d="M21 8v13H3V8" />
+    <rect x="1" y="3" width="22" height="5" rx="1" />
+    <polyline points="10 11 12 9 14 11" />
+    <line x1="12" y1="9" x2="12" y2="15" />
+  </svg>
+);
+
 // ────────────────────────────────────────────────────────────────
 // Component
 // ────────────────────────────────────────────────────────────────
@@ -1597,7 +1611,11 @@ const BoardPage: React.FC = () => {
 
   // ── Message render ───────────────────────────────────────────────
 
-  const renderMsg = (msg: BoardMessage, isReply = false, isOutboxView = false) => {
+  // inboxArchived … 受信トレイで開いたときだけ渡す（false=アーカイブする／true=受信トレイに戻す）。
+  // 🚨 既定の null は「アーカイブのボタンを出さない」。この renderMsg は
+  //    チャンネルの投稿（3か所目の呼び出し）と送信トレイの詳細でも使い回しているので、
+  //    条件を付けずに足すと、アーカイブの無い画面にまでボタンが出る。
+  const renderMsg = (msg: BoardMessage, isReply = false, isOutboxView = false, inboxArchived: boolean | null = null) => {
     const isOwn = msg.user_id === user?.id;
     const canEdit = isOwn || isAdmin;
     const replies = isReply ? [] : threadReplies(msg.id);
@@ -1642,6 +1660,17 @@ const BoardPage: React.FC = () => {
                 style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, padding: '2px 3px', color: favMessageIds.has(msg.id) ? '#f59e0b' : (isDark ? '#888' : '#bbb') }}>
                 {favMessageIds.has(msg.id) ? '★' : '☆'}
               </button>
+              {/* 開いた中からもアーカイブできる（2026-09-10 実機指摘）。
+                  🚨 置き場所は☆の隣＝一覧の行とまったく同じ位置・同じ形。下のボタン列
+                     （修正する・取消・削除）は送信者と管理者にしか出ないので、そこに混ぜると
+                     人によってボタンの数が変わり、アーカイブの位置まで動いてしまう。 */}
+              {inboxArchived !== null && !isReply && (
+                <button type="button" onClick={e => { e.stopPropagation(); archiveMessage(msg.id, !inboxArchived); }}
+                  title={inboxArchived ? '受信トレイに戻す' : 'アーカイブ'}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 3px', color: subColor, display: 'flex', alignItems: 'center' }}>
+                  {inboxArchived ? <UnarchiveIcon size={15} /> : <ArchiveIcon size={15} />}
+                </button>
+              )}
               {canEdit && msg.channel_id && (
                 <button type="button" onClick={() => setChannelDeleteConfirmId(channelDeleteConfirmId === msg.id ? null : msg.id)} title="削除" style={{ background: 'none', border: 'none', color: '#dc3545', cursor: 'pointer', fontSize: 13, padding: '2px 4px' }}>✕</button>
               )}
@@ -2599,6 +2628,9 @@ const BoardPage: React.FC = () => {
               );
             })()}
             {/* 修正モード（受信トレイ側・送信者 or 管理者） */}
+            {/* 🚨 アーカイブのボタンは「いま開いているタブ」ではなく「そのお知らせが実際に
+                   アーカイブに居るか」で出し分ける。タブで見ると、詳細の中で「受信トレイに戻す」を
+                   押したあともボタンが「戻す」のまま残り、見たままと中身が食い違う。 */}
             {(inboxDetail.user_id === user?.id || isAdmin) && editingNoticeId === inboxDetail.id ? (
               <div style={{ marginTop: 16, padding: '14px', background: isDark ? '#1e2a1e' : '#f0fdf4', border: `1px solid ${isDark ? '#166534' : '#86efac'}`, borderRadius: 10 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: isDark ? '#86efac' : '#166534', marginBottom: 10 }}>✏️ お知らせを修正</div>
@@ -2620,7 +2652,7 @@ const BoardPage: React.FC = () => {
                     style={{ flex: 1, padding: '8px 0', background: '#28a745', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, opacity: (!editingNoticeSubj.trim() || !editingNoticeBody.trim()) ? 0.5 : 1 }}>保存する</button>
                 </div>
               </div>
-            ) : renderMsg(inboxDetail)}
+            ) : renderMsg(inboxDetail, false, false, archivedMessages.some(m => m.id === inboxDetail.id))}
             {/* 削除確認（受信トレイ側） */}
             {(inboxDetail.user_id === user?.id || isAdmin) && deleteConfirmId === inboxDetail.id && (
               <div style={{ marginTop: 16, padding: '12px 14px', background: isDark ? '#2d1a1a' : '#fff5f5', border: `1px solid ${isDark ? '#7f1d1d' : '#fca5a5'}`, borderRadius: 10 }}>
@@ -2851,9 +2883,7 @@ const BoardPage: React.FC = () => {
                       <button type="button" onClick={e => { e.stopPropagation(); archiveMessage(msg.id, !isArchived); }}
                         title={isArchived ? '受信トレイに戻す' : 'アーカイブ'}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '1px 3px', color: subColor, display: 'flex', alignItems: 'center' }}>
-                        {isArchived
-                          ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'block' }}><path d="M21 8v13H3V8" /><rect x="1" y="3" width="22" height="5" rx="1" /><polyline points="10 11 12 9 14 11" /><line x1="12" y1="9" x2="12" y2="15" /></svg>
-                          : <ArchiveIcon size={14} />}
+                        {isArchived ? <UnarchiveIcon size={14} /> : <ArchiveIcon size={14} />}
                       </button>
                     </div>
                   </div>
@@ -3355,8 +3385,9 @@ const BoardPage: React.FC = () => {
                             if (fail) { setSendError(fail); return; }
                             setOutboxArchivedMessages(prev => prev.filter(m => m.id !== msg.id));
                             setOutboxMessages(prev => [{ ...msg, outbox_hidden: false }, ...prev].sort((a, b) => b.created_at.localeCompare(a.created_at)));
-                          }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: '1px 3px', color: subColor }}>
-                            📤
+                          }} title="送信トレイに戻す"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '1px 3px', color: subColor, display: 'flex', alignItems: 'center' }}>
+                            <UnarchiveIcon size={14} />
                           </button>
                         </div>
                       </div>
