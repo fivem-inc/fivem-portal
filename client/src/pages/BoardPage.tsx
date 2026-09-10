@@ -659,7 +659,8 @@ const BoardPage: React.FC = () => {
       const { data: recData } = await supabase
         .from('board_message_recipients')
         .select('message_id')
-        .eq('user_id', user.id);
+        .eq('user_id', user.id)
+        .eq('hidden', false);   // 自分が削除したものは検索にも出さない
       const inboxIds = (recData || []).map((r: any) => r.message_id);
 
       const q = `%${searchText.trim()}%`;
@@ -719,11 +720,13 @@ const BoardPage: React.FC = () => {
     const seq = ++inboxLoadSeq.current;
     const isLatest = () => seq === inboxLoadSeq.current;
     // 自分が受信者のメッセージを取得（archived=falseのみ）
+    // 🚨 hidden（アーカイブから自分が削除したもの）は除く。除かないと消したものが戻って見える
     const { data: recData, error: recErr } = await supabase
       .from('board_message_recipients')
       .select('message_id')
       .eq('user_id', user.id)
-      .eq('archived', false);
+      .eq('archived', false)
+      .eq('hidden', false);
     if (!isLatest()) return;
     // 🚨 失敗したら空で上書きしない（通信断で「お知らせはありません」と出て、削除と区別が付かなくなる）
     if (recErr) { console.error('受信トレイの読み込みに失敗:', recErr.code, recErr.message); setInboxLoaded(true); return; }
@@ -775,7 +778,8 @@ const BoardPage: React.FC = () => {
       .from('board_message_recipients')
       .select('message_id')
       .eq('user_id', user.id)
-      .eq('archived', true);
+      .eq('archived', true)
+      .eq('hidden', false);   // 🚨 削除したものはアーカイブ一覧からも消す（これが「削除」の実体）
     const msgIds = (recData || []).map((r: any) => r.message_id);
     if (msgIds.length === 0) { setArchivedMessages([]); return; }
     const { data: msgData } = await supabase
@@ -935,7 +939,7 @@ const BoardPage: React.FC = () => {
     }
     (async () => {
       const [{ data: rec, error: recErr }, { data: msg, error: msgErr }] = await Promise.all([
-        supabase.from('board_message_recipients').select('archived').eq('message_id', openInboxId).eq('user_id', user.id).maybeSingle(),
+        supabase.from('board_message_recipients').select('archived, hidden').eq('message_id', openInboxId).eq('user_id', user.id).maybeSingle(),
         supabase.from('board_messages').select('id, channel_id, parent_id').eq('id', openInboxId).maybeSingle(),
       ]);
       if (cancelled || window.location.search !== startedSearch) return;
@@ -952,6 +956,14 @@ const BoardPage: React.FC = () => {
         if (msg.parent_id) withCh.set('bth', msg.parent_id);
         setSearchParams(base, { replace: true });
         setSearchParams(withCh);
+        return;
+      }
+      if (rec?.hidden) {
+        // 🚨 自分がアーカイブから削除したもの。行は残っているので開けそうに見えるが、
+        //    受信トレイもアーカイブも hidden を除いて読むため、開いても一覧に無い。
+        //    ここで「送信者が取り消した」と言うと嘘になるので、理由を分けて出す。
+        setSearchParams(base, { replace: true });
+        setOpenInboxNotice('このお知らせは、あなたがアーカイブから削除したため開けません。');
         return;
       }
       if (!rec || !msg) {
@@ -2802,7 +2814,10 @@ const BoardPage: React.FC = () => {
               {inboxArchiveDelConfirm && (
                 <div style={{ padding: '10px 12px', background: isDark ? '#2d1a1a' : '#fff5f5', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                   <span style={{ fontSize: 13, color: '#dc3545', flex: 1 }}>
-                    {inboxArchiveSelected.size}件を完全に削除します。元に戻せません。
+                    {/* 🚨 「完全に削除」だけでは全員から消えたと読める。実際に消えるのは
+                           自分の受信トレイの分だけで、送信者側と送信者の記録（誰に送ったか・
+                           未対応◯人）は残る（2026-09-10 ユーザー確定・案1）。 */}
+                    {inboxArchiveSelected.size}件を自分の受信トレイから完全に消します。元に戻せません。
                   </span>
                   <button type="button" onClick={() => setInboxArchiveDelConfirm(false)}
                     style={{ padding: '4px 12px', border: `1px solid ${border}`, borderRadius: 6, background: 'none', color: subColor, cursor: 'pointer', fontSize: 12 }}>キャンセル</button>
@@ -2810,8 +2825,15 @@ const BoardPage: React.FC = () => {
                     const ids = [...inboxArchiveSelected];
                     // 🚨 まとめて消すときは「何件消えたか」を見る。権限で弾かれた行は
                     //    error にならず黙って残るので、消えた分だけを画面から外す。
+                    // 🚨 行は消さず hidden の印を立てる（2026-09-10）。この表は
+                    //    「誰に送ったか」という送信者の記録も兼ねており、送信トレイの「◯人」・
+                    //    「対応状況 ◯/◯人」・「未対応◯人」の催促リストが**この表を数えている**。
+                    //    行を消すと、受信者がアーカイブを整理しただけで送信者の記録が書き換わり、
+                    //    未対応のまま消えた人を追えなくなる。
+                    //    受信トレイ・アーカイブ・検索は hidden を除いて読むので、
+                    //    本人からは消えたように見える（送信トレイの outbox_hidden と同じ考え方）。
                     const { data: gone, error } = await supabase.from('board_message_recipients')
-                      .delete().in('message_id', ids).eq('user_id', user!.id).select('message_id');
+                      .update({ hidden: true }).in('message_id', ids).eq('user_id', user!.id).select('message_id');
                     if (error) { setSendError(`削除に失敗しました：${error.message}`); return; }
                     const goneIds = new Set((gone || []).map((r: any) => r.message_id as string));
                     setArchivedMessages(prev => prev.filter(m => !goneIds.has(m.id)));
