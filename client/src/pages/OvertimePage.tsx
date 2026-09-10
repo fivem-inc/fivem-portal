@@ -534,6 +534,19 @@ const OvertimeForm: React.FC<{
   // 「申請の依頼」から開いたときの上長のメモ（理由欄の上に出す。理由には入れない）
   const requestMemo = (draft?.requestMemo ?? '').trim();
   const requestFrom = (draft?.requestFrom ?? '').trim();
+  // 「申請の依頼」から開いたときは、**入力欄の先頭**まで移動する（2026-09-10 実機指摘）。
+  // 🚨 ページ側でフォームの箱までスクロールしていたが、箱の先頭には注意事項の一覧があり、
+  //    入力欄が画面に出なかった。移動先はこのフォームが自分で持つ（呼び出し側に持たせると、
+  //    どこが「入力欄の先頭」かを2か所で決めることになる）。
+  const inputsTopRef = useRef<HTMLDivElement | null>(null);
+  const fromRequest = !!draft?.applicationRequestId;
+  useEffect(() => {
+    if (!fromRequest) return;
+    // 描き終わってから動かす（タブを切り替えた直後はまだ高さが決まっていない）
+    const t = setTimeout(() => inputsTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 350);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const isReportPhase = !!editTarget && ['requested', 'request_confirmed'].includes(editTarget.status);
   const isResubmit = !!editTarget && editTarget.status === 'returned';
@@ -1611,6 +1624,10 @@ const OvertimeForm: React.FC<{
         </div>
       )}
 
+      {/* ここから入力欄。「申請の依頼」から来たときは、この位置まで移動する（2026-09-10 実機指摘）。
+          🚨 フォームの箱の先頭に移動すると、**注意事項の一覧が出るだけで入力欄が見えない**。 */}
+      <div ref={inputsTopRef} />
+
       {/* クリア（入力欄の先頭に配置） */}
       {!editTarget && (
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
@@ -2517,8 +2534,6 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   useEffect(() => {
     if (tabParam === 'history') setTab('history');
   }, [tabParam, focusParam]);
-  // 「この内容で申請する」で入力欄まで移動するための目印
-  const formTopRef = useRef<HTMLDivElement | null>(null);
   // ?focus=<依頼ID> で来たとき、その依頼カードまで移動して光らせる（2026-09-10 実機指摘）。
   // 🚨 やり方は勤怠カレンダー（CalendarPage の highlightDate）と同じにする。
   //    300ms 後にスクロール → 6秒で消し、URL から focus を外す。
@@ -3066,10 +3081,10 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     } satisfies FormDraft);
     setEditTarget(null);
     setTab('form');
-    // 🚨 ページ先頭ではなく**入力欄**まで移動する（2026-09-10 実機指摘）。
-    //    先頭に戻すと、タブや残業時間の集計が出るだけで「何をすればよいか」が分からない。
-    //    タブを切り替えた直後はまだ描かれていないので、少し待ってから移動する。
-    setTimeout(() => formTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
+    // 🚨 ここではスクロールしない。**入力欄の先頭までの移動はフォーム側が自分で行う**
+    //    （OvertimeForm の inputsTopRef）。ここでフォームの箱の先頭まで動かしていたが、
+    //    箱の先頭には注意事項の一覧があり、入力欄が画面に出なかった（2026-09-10 実機指摘）。
+    //    2か所で動かすと、どちらが勝つか分からない動きになる。
   };
   const [replaceDraftFor, setReplaceDraftFor] = useState<string | null>(null);
 
@@ -3540,8 +3555,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
           </button>
         )}
 
-        {/* ref … 「この内容で申請する」で入力欄まで移動するための目印（2026-09-10 実機指摘） */}
-        <div ref={formTopRef} style={{ background: isDark ? '#2b3035' : '#fff', border: `1px solid ${borderColor}`, borderRadius: '0 0 12px 12px', padding: '16px 14px' }}>
+        <div style={{ background: isDark ? '#2b3035' : '#fff', border: `1px solid ${borderColor}`, borderRadius: '0 0 12px 12px', padding: '16px 14px' }}>
           {loading ? (
             <p style={{ margin: 0, fontSize: 13, color: subText, textAlign: 'center' }}>読み込み中…</p>
           ) : tab === 'form' ? (
