@@ -25,6 +25,44 @@ export function formatLeaveDateSummary(leaveDates: string | null | undefined, st
   return `${dateStr}${typePart}（${sorted.length}日）`;
 }
 
+// 連絡板のメッセージを読んだときに、そのメッセージのベル通知も既読にする（2026-09-10 ユーザー依頼）。
+// ベルから開いたときは既読になるのに、受信トレイで直接読んだときはベルが未読のまま残っていた。
+//
+// 🚨 **「届きました」の通知だけを既読にする。**「対応がまだ完了していません」（board:confirm_request）は
+//    読んだだけでは対応が終わっていないので**既読にしない**。消すと対応漏れに気づけなくなる。
+// 🚨 判定は reference_id（＝連絡板のメッセージID）。通知を作るときに必ず入れている。
+// 🚨 失敗しても読み込みは続ける（既読の印が付かないだけで、メッセージは読める）。
+//    ただし error は握りつぶさず console に出す（supabase は throw しないため）。
+const BELL_READ_ON_MESSAGE_READ = ['board:notice', 'board:group_message', 'board:dm_message'] as const;
+
+/** ベルを読み直してほしいときに投げる合図。
+ *  🚨 ベルは30秒ごとの自動更新なので、これが無いと**読んだ直後は数字が減らず**
+ *     「効いていない」ように見える。App 側がこれを受けてその場で読み直す。 */
+export const BELL_REFRESH_EVENT = 'fivem:bell-refresh';
+
+export async function markBellReadForMessages(userId: string, messageIds: string[]) {
+  const ids = [...new Set(messageIds.filter(Boolean))];
+  if (ids.length === 0) return;
+  // 🚨 呼び出し側は待たずに投げっぱなしにする（読む操作を遅くしないため）。
+  //    そのため**ここで必ず受け止める**。外に例外を出すと、通信断のときに
+  //    「未処理のエラー」になる。
+  try {
+    const { data, error } = await supabase.from('notifications')
+      .update({ read: true, read_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .eq('read', false)
+      .in('reference_id', ids)
+      .in('event_key', BELL_READ_ON_MESSAGE_READ as unknown as string[])
+      .select('id');
+    if (error) { console.error('ベルの既読化に失敗:', error.code, error.message); return; }
+    // 🚨 **0件は正常**。自分が送ったメッセージ・すでに既読・そもそも通知が無い場合があるので、
+    //    件数0を失敗として扱わない（件数を見るのは「変わったときだけ知らせる」ため）。
+    if ((data ?? []).length > 0) window.dispatchEvent(new Event(BELL_REFRESH_EVENT));
+  } catch (e) {
+    console.error('ベルの既読化に失敗:', e);
+  }
+}
+
 // pushUrgent: 連絡板の「当日の連絡・緊急」チェック用。true にすると、
 // 受け取る人の「受信時間帯・休暇日」設定を無視してプッシュがすぐ届く
 // （notifications.push_urgent → トリガーが push_queue.urgent へコピー → push-dispatch が判定を飛ばす）

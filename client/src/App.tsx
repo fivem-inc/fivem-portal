@@ -6,6 +6,7 @@ import ResetPassword from './pages/ResetPassword';
 import ExpenseForm from './components/ExpenseForm';
 import OvertimeThresholdBanner from './components/OvertimeThresholdBanner';
 import { todayJstStr } from './lib/breakCalc';
+import { BELL_REFRESH_EVENT } from './lib/notifications';
 
 // 設定系ページは起動直後のランディング（ホーム）に不要なので遅延読込にして初期バンドルを軽くする
 const ChangeEmail = React.lazy(() => import('./pages/ChangeEmail'));
@@ -427,6 +428,13 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
   }, [userId]);
 
   useEffect(() => { fetchNotifs(); const t = setInterval(fetchNotifs, 30000); return () => clearInterval(t); }, [fetchNotifs]);
+  // 連絡板でメッセージを読んだ直後にベルを読み直す（2026-09-10 ユーザー依頼）。
+  // 🚨 30秒の自動更新だけだと、読んだのに数字が減らず「効いていない」ように見える。
+  useEffect(() => {
+    const h = () => { fetchNotifs(); };
+    window.addEventListener(BELL_REFRESH_EVENT, h);
+    return () => window.removeEventListener(BELL_REFRESH_EVENT, h);
+  }, [fetchNotifs]);
 
   // プッシュ（結果・お知らせ系）をタップして来たとき、ベル一覧を開いて該当行を光らせる。
   // プッシュの文面には中身を書けない（Chromeが不正な通知と判定するため）ので、

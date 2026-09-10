@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { rolesByRank, attrsFor } from '../lib/roleAttrs';
 import { getCachedRoles } from '../hooks/useRoles';
-import { insertNotification } from '../lib/notifications';
+import { insertNotification, markBellReadForMessages } from '../lib/notifications';
 import { dispatchBoardEmail } from '../lib/notificationDispatch';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import { todayJstStr } from '../lib/breakCalc';
@@ -1056,6 +1056,8 @@ const BoardPage: React.FC = () => {
           .upsert({ message_id: openInboxId, user_id: user.id }, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
         if (rdErr) console.error('既読の記録に失敗:', rdErr.code, rdErr.message);
         else { localReadRef.current.add(openInboxId); setInboxReadIds(prev => new Set([...prev, openInboxId])); }
+        // 🚨 読んだらベルの通知も既読にする（処理は lib/notifications の1か所）
+        void markBellReadForMessages(user.id, [openInboxId]);
       }
       // 🚨 ここで cancelled を見ない。上で URL を書き換えた時点で openInboxId が外れ、この effect の
       //    後片付け（cancelled=true）が走るのが正常な流れ。見ると読み直しが毎回飛ばされる
@@ -1193,6 +1195,7 @@ const BoardPage: React.FC = () => {
     if (parentMsgs.length > 0) {
       const reads = parentMsgs.map(m => ({ message_id: m.id, user_id: user!.id }));
       await supabase.from('board_reads').upsert(reads, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
+      void markBellReadForMessages(user!.id, parentMsgs.map(m => m.id));
       const update: Record<string, number> = {};
       parentMsgs.forEach(m => { update[m.id] = (readCounts[m.id] || 0) + (readCounts[m.id] ? 0 : 1); });
       setReadCounts(prev => ({ ...prev, ...update }));
@@ -3010,6 +3013,7 @@ const BoardPage: React.FC = () => {
                     if (!inboxReadIds.has(msg.id) && user) {
                       await supabase.from('board_reads').upsert({ message_id: msg.id, user_id: user.id }, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
                       setInboxReadIds(prev => new Set([...prev, msg.id]));
+                      void markBellReadForMessages(user.id, [msg.id]);
                       setReadCounts(prev => ({ ...prev, [msg.id]: (prev[msg.id] || 0) + 1 }));
                     }
                   }} style={{ cursor: 'pointer', textAlign: 'left' }}>
@@ -3878,6 +3882,7 @@ const BoardPage: React.FC = () => {
                       { onConflict: 'message_id,user_id', ignoreDuplicates: true }
                     );
                     setFavUnreadIds(prev => { const s = new Set(prev); s.delete(msg.id); return s; });
+                    void markBellReadForMessages(user.id, [msg.id]);
                   }
                   if (isGroupOrDm && msg.channel_id) {
                     selectChannel(msg.channel_id); setView('channel'); setShowSidebar(false);
