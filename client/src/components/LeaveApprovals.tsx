@@ -101,6 +101,11 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   }
   const [showRequestSheet, setShowRequestSheet] = useState(false);
   const [myRequests, setMyRequests] = useState<MyRequest[]>([]);
+  // 「対応しない」の知らせから ?focus=<依頼ID> で来たとき、依頼一覧の該当行を光らせる（2026-09-11）。
+  // 🚨 上の休暇申請用のフックと**2つ並んでも噛み合わない**：どちらも同じ ?focus= を読むが、
+  //    合致する行があるほうだけが focusRef を受け取り、もう一方は何もしない。
+  //    ID は別々の表（leave_requests / application_requests）の UUID なので取り違えも起きない。
+  const { highlightId: reqHighlightId, focusRef: reqFocusRef } = useFocusHighlight(myRequests);
   const [requestErr, setRequestErr] = useState('');
 
   const fetchMyRequests = useCallback(async () => {
@@ -652,7 +657,11 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
           {myRequests.length > 0 && (
             <div style={{ marginTop: 10, borderTop: `1px solid ${isDark ? '#495057' : '#dee2e6'}`, paddingTop: 8 }}>
               {myRequests.slice(0, 8).map(r => (
-                <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '5px 0', fontSize: 12, color: isDark ? '#dee2e6' : '#495057' }}>
+                <div key={r.id}
+                  ref={el => { if (el && reqHighlightId === r.id) reqFocusRef.current = el; }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '5px 0', fontSize: 12, color: isDark ? '#dee2e6' : '#495057',
+                    // 🚨 色は既存のハイライトと同じ（新しい色は足さない）
+                    background: reqHighlightId === r.id ? (isDark ? '#4a4423' : '#fff9c4') : 'transparent', transition: 'background 0.6s' }}>
                   <span style={{ fontWeight: 'bold' }}>{r.recipient_name ?? ''}</span>
                   <span>{(r.target_dates ?? []).map(d => d.slice(5).replace('-', '/')).join('・')}</span>
                   <span>{r.kind === 'leave' ? '休暇' : '残業・勤務変更'}</span>

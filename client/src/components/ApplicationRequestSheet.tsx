@@ -68,6 +68,9 @@ const ApplicationRequestSheet: React.FC<Props> = ({
   const [dates, setDates] = useState<string[]>(['']);
   const [memo, setMemo] = useState('');
   const [dueDate, setDueDate] = useState('');
+  // 相談した日（任意）。🚨 依頼を作った日（created_at）では代用しない。口頭で話した日と
+  //    画面から依頼を作る日は数日ずれることがあり、ずれた日を出すと画面が嘘をつく
+  const [consultedOn, setConsultedOn] = useState('');
   const [staff, setStaff] = useState<Staff[]>([]);
   const [permByFeature, setPermByFeature] = useState<Record<string, Set<string>>>({});
   const [teams, setTeams] = useState<string[]>([]);
@@ -154,6 +157,7 @@ const ApplicationRequestSheet: React.FC<Props> = ({
       target_dates: filledDates,
       memo: memo.trim() || null,
       due_date: dueDate || null,
+      consulted_on: consultedOn || null,
     }).select('id').single();
     if (err) {
       setSubmitting(false);
@@ -318,6 +322,12 @@ const ApplicationRequestSheet: React.FC<Props> = ({
               複数日をお願いするときは、日ごとに依頼を作ってください。
             </p>
           )}
+        </div>
+
+        {/* 相談した日（任意）。メモ（相談で聞いた内容）のすぐ上に置く＝相談まわりをまとめる */}
+        <div style={{ marginBottom: 14 }}>
+          <span style={label}>相談した日（任意）</span>
+          <DateField value={consultedOn} onChange={setConsultedOn} isDark={isDark} placeholder="指定しない" />
         </div>
 
         {/* メモ */}

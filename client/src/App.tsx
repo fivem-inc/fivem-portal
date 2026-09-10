@@ -1100,6 +1100,7 @@ const classifyNotif = (n: NotifLike) => {
   const isLeaveFyi             = n.source_type === 'leave_request:fyi';              // 上長：FYI（誰がいつ休むか共有・カレンダー着地）
   const isShiftAdjustDue       = n.source_type === 'leave:shift_adjust_due';         // 上長：シフト調整がまだの休暇（カレンダー着地・未調整で絞る）
   const isAppRequest           = n.source_type === 'application_request:received';   // 本人：上長からの申請の依頼
+  const isAppRequestDismissed  = n.source_type === 'application_request:dismissed';  // 上長：相手が「対応しない」と回答した（結果のみ）
   const isShiftPendingApproval = n.source_type === 'shift_report:pending_approval';  // レビュアー：要対応
   const isShiftPendingResubmit = n.source_type === 'shift_report:pending_resubmit';  // 申請者：再提出/取消待ち
   const isShiftResult          = n.source_type === 'shift_report';                   // 申請者：結果報告のみ
@@ -1133,7 +1134,7 @@ const classifyNotif = (n: NotifLike) => {
   const isCorrectionNew = isCorrection && (n.event_key ?? '').startsWith('correction:new'); // 管理者：要対応
   // 🚨 打刻の確認は「答えるまで消えない」要対応。isResultOnly に入れるとタップで消えてしまう
   const isPendingAction = isLeavePendingApproval || isLeavePendingResubmit || isShiftPendingApproval || isShiftPendingResubmit || isPurchasePendingApproval || isOvertimePendingApproval || isOvertimePendingResubmit || isClockInquiry || isCorrectionNew;
-  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isTripReport || isAttendance || isAttendanceCancelled || isPurchaseResult || isOvertimeResult || isOvertimeCancelledFyi || isOtProposalReceived || isOtProposalResponded || isOvertimeUnreported || isOvertimePendingReview || isOvertimeThreshold || isOvertimeThresholdSummary || isClockInquiryAnswered || (isCorrection && !isCorrectionNew);
+  const isResultOnly = isLeaveResult || isLeaveFyi || isShiftResult || isTimeAdjustment || isTripReport || isAttendance || isAttendanceCancelled || isPurchaseResult || isOvertimeResult || isOvertimeCancelledFyi || isOtProposalReceived || isOtProposalResponded || isAppRequestDismissed || isOvertimeUnreported || isOvertimePendingReview || isOvertimeThreshold || isOvertimeThresholdSummary || isClockInquiryAnswered || (isCorrection && !isCorrectionNew);
   // 旧来のフォールバック（source_typeが無い通知向け）
   const isLegacyReject = !isPendingAction && !isResultOnly && (n.message.includes('差し戻し') || n.message.includes('差し戻され'));
 
@@ -1189,6 +1190,12 @@ const classifyNotif = (n: NotifLike) => {
     //    reference_id は application_requests.id（依頼ID）。
     if (isAppRequest) {
       return { path: n.reference_id ? `/overtime?tab=history&focus=${n.reference_id}` : '/overtime?tab=history', closeOnTap: false };
+    }
+    // 相手が「対応しない」と回答した → 自分が出した依頼の一覧（休暇承認ページ）で該当行を光らせる。
+    // 🚨 closeOnTap は true（isResultOnly に入れてある）。読めば用が済むお知らせで、
+    //    ここでやることは無い（もう一度頼むなら依頼を作り直す）。
+    if (isAppRequestDismissed) {
+      return { path: n.reference_id ? `/leave-approvals?focus=${n.reference_id}` : '/leave-approvals', closeOnTap: true };
     }
     if (isShiftAdjustDue) {
       const focus = n.reference_id && /^\d{4}-\d{2}-\d{2}$/.test(n.reference_id) ? `focus=${n.reference_id}&` : '';

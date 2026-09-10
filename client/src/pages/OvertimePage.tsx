@@ -20,6 +20,7 @@ import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { describeUpdate } from '../lib/statusUpdate';
+import { insertNotification } from '../lib/notifications';
 import { useRoles } from '../hooks/useRoles';
 import { attrsFor, rankOf, embeddedRole, roleByName } from '../lib/roleAttrs';
 import type { RoleRow, EmbeddedRoleRow } from '../lib/roleAttrs';
@@ -3024,12 +3025,14 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   interface MyAppRequest {
     id: string; requester_id: string; kind: string; target_dates: string[] | null;
     memo: string | null; due_date: string | null; status: string; requester_name?: string | null;
+    // 上長が口頭で相談した日（任意・空のことがある）。🚨 created_at とは別もの
+    consulted_on: string | null;
   }
   const [appRequests, setAppRequests] = useState<MyAppRequest[]>([]);
   const [appReqErr, setAppReqErr] = useState('');
   const fetchAppRequests = useCallback(async () => {
     const { data, error } = await supabase.from('application_requests')
-      .select('id, requester_id, kind, target_dates, memo, due_date, status')
+      .select('id, requester_id, kind, target_dates, memo, due_date, status, consulted_on')
       .eq('recipient_id', user.id)
       .eq('status', 'open')
       .order('created_at', { ascending: true });
@@ -3152,6 +3155,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   /** 依頼に「対応しない」と答える */
   const dismissRequest = async (id: string, note: string) => {
     setAppReqErr('');
+    // 通知に使うので、消す前に控えておく（消したあとは一覧から引けない）
+    const target = appRequests.find(r => r.id === id);
     // 🚨 update は0件でもエラーにならない。件数を見る
     const { data, error } = await supabase.from('application_requests')
       // 🚨 理由は recipient_note に入れる（この列は元からあり未使用だった）。
@@ -3161,6 +3166,24 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     if (error) { setAppReqErr('保存できませんでした：' + error.message); return; }
     if (!data || data.length === 0) { setAppReqErr('保存できませんでした（すでに処理された可能性があります）'); fetchAppRequests(); return; }
     setAppRequests(prev => prev.filter(r => r.id !== id));
+    // 依頼した上長に知らせる（2026-09-11 ユーザー承認）。
+    // 🚨 理由を入れてもらっても、上長が依頼一覧を開かなければ気づけない。だから届ける。
+    // 🚨 **event_key を付けない**。付けると DB のトリガー（enqueue_push_notification）が
+    //    自動で push_queue に積み、**スマホが鳴る**。ここはベルだけでよい（ユーザー確定）。
+    // 🚨 宛先は依頼した本人1人だけ。dispatchSiteNotification は使わない
+    //    （あちらは宛先の設定が無いと全員に飛ぶ作り＝46人に届く）。
+    // 🚨 通知が失敗しても「対応しない」自体は成立させる（投げっぱなし。中で受け止めている）。
+    if (target?.requester_id) {
+      const kindLabel = target.kind === 'leave' ? '休暇' : '残業・勤務変更';
+      const dates = (target.target_dates ?? []).map(d => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}（${dowLabel(d)}）`).join('・');
+      void insertNotification(
+        target.requester_id,
+        `${kindLabel}の申請依頼は「対応しない」と回答がありました`,
+        `${dates}／理由：${note}`,
+        'application_request:dismissed',
+        id,
+      );
+    }
   };
 
   const ownActionRows = ownHistory.filter(isOtActionRow);
@@ -4106,6 +4129,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                               style={{ background: isFocused ? (isDark ? '#4a4423' : '#fff9c4') : (isDark ? '#243447' : '#e8f4fd'), border: `1px solid ${isFocused ? '#f59e0b' : (isDark ? '#3d5166' : '#90caf9')}`, borderRadius: 10, padding: '12px 14px', marginBottom: 8, transition: 'background 0.6s' }}>
                               <p style={{ margin: '0 0 6px', fontSize: 13, lineHeight: 1.8, color: isDark ? '#fff' : '#0d47a1' }}>
                                 {r.requester_name ?? ''}さんから、
+                                {/* 相談した日（2026-09-11 ユーザー要望）。🚨 任意なので、空のときは何も出さない。
+                                       created_at で代用しない＝話した日とずれるため（列を足した理由） */}
+                                {r.consulted_on && `${Number(r.consulted_on.slice(5, 7))}/${Number(r.consulted_on.slice(8, 10))}（${dowLabel(r.consulted_on)}）に相談した `}
                                 {/* 曜日も出す（2026-09-10 ユーザー指示）。🚨 曜日は既存の dowLabel を使う */}
                                 {(r.target_dates ?? []).map(d => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}（${dowLabel(d)}）`).join('・')}の
                                 {r.kind === 'leave' ? '休暇' : '残業・勤務変更'}について申請のお願いが届いています。

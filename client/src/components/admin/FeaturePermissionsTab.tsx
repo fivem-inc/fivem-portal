@@ -23,46 +23,66 @@ interface StaffMember {
   role_title: string;
 }
 
+// 🚨 並び順＝画面の並び順（2026-09-11 に分野ごとに並べ替えた。ユーザー確定＝案3）。
+//    項目が20個を超えて1列に並ぶと探せなくなったため、分野で区切り、各分野の中では
+//    「自分が使う機能」→「上長として行う操作」の順に置く。
+//    🚨 **並べ替えただけで、権限の値・DB・キーは1つも変えていない**。
+//    🚨 group を書き忘れると見出しが出ないだけでなく、その項目が前の分野に紛れる。
+//       新しい項目を足すときは group と bySuperior を必ず書くこと。
+//    🚨 bySuperior＝「上長が部下に対して行う操作」。うっかりONにすると他の人のデータが
+//       見えたり書けたりするので、分野の中でも見分けが付くようにしている。
+const FEATURE_GROUPS = ['休暇', '勤怠・時間', '申請・精算', '連絡・情報', 'その他'] as const;
+type FeatureGroup = typeof FEATURE_GROUPS[number];
+
 const FEATURES = [
-  { key: 'leave_request',   icon: '🌿', label: '休暇申請',       note: 'パートは別フロー' },
-  { key: 'leave_calendar',  icon: '📅', label: '勤怠カレンダー', note: '' },
-  // 🚨 2026-09-09 追加。「ページを開ける」と「登録・取消できる」を分けた。
-  //    それまで画面は承認者（フロア責任者込み）で入力ボタンを出し、DB（RLS）はリーダー以上で弾いていて、
-  //    顔ぶれが食い違っていた。画面もDBも**この1つのトグル**を読む（has_feature_permission('attendance_input')）。
-  //    🚨 上の「勤怠カレンダー」が OFF だとページを開けないので、これを ON にしても入力できない（表示が先）
-  { key: 'attendance_input', icon: '📝', label: '勤怠カレンダーへの登録・取消', note: '遅刻・早退・欠勤などを登録・取消できる役職。「勤怠カレンダー」がONの役職にだけ効きます' },
-  { key: 'leave_approvals', icon: '✅', label: '休暇承認',       note: '承認者向けページ' },
-  { key: 'shift_report',    icon: '⏰', label: '勤務変更報告',   note: '' },
-  { key: 'expense',         icon: '🚃', label: '交通費申請',     note: '' },
-  { key: 'trip_report',     icon: '📍', label: '出張報告',       note: '' },
-  // 🚨 notification_settings の trip:report_arrival / trip:report_end の宛先に役職を足すときは、
-  //    ここも同じ役職をONにすること。片方だけだと「通知は届くのに履歴が空」になる
-  { key: 'trip_report_history', icon: '📋', label: '出張報告の履歴閲覧', note: '全員分の報告を見られる役職' },
-  { key: 'board',           icon: '💬', label: '連絡板',         note: '' },
-  { key: 'purchase_request', icon: '🧾', label: '備品購入申請・経費精算', note: 'パートも精算のみ利用可' },
-  { key: 'overtime',        icon: '🕐', label: '残業・時間管理（正社員）', note: 'パートは勤務変更報告を利用' },
-  { key: 'overtime_summary', icon: '📊', label: '残業の集計・超過バナー閲覧', note: '全員分を見られる役職' },
-  { key: 'shift_pattern_directory', icon: '📅', label: '全員のシフト予定 閲覧', note: 'パート含む全員の通常シフトを見られる役職' },
-  // 安否確認は災害時に全員へ届く必要があるため、役職別のトグルは使わず公開/非公開だけで運用する
-  // （役職で絞ると、その役職の人に安否確認が届かなくなってしまう）
-  { key: 'safety_check',    icon: '🆘', label: '安否・緊急連絡',  note: '発信はマネージャー以上・回答は全員' },
-  // FAQは「使えるか」と「ナビに出すか」を分けて切り替えられる。
-  // ナビはボタンが並ぶ場所なので、使えるようにはしたいがナビには出したくない、が実際にある
-  { key: 'faq',             icon: '💡', label: 'FAQ（よくある質問）', note: '各ページの「💡 FAQ」ボタン・マイページ（右上のアイコン）から開ける' },
-  { key: 'faq_nav',         icon: '💡', label: 'FAQ：ナビにも出す',   note: '上のFAQがONの役職にだけ効きます' },
-  // 🚨 2026-08-31 にマネージャー以上へ絞った（ユーザー確定・案A）。
-  //    フロア責任者は含めない。「マネージャー以上」にフロア責任者を入れるかは
-  //    毎回判断が割れるので、役職ごとのONで持って曖昧さを残さない
-  { key: 'room_booking',    icon: '🚪', label: '場所予約', note: '初期はマネージャー・社長のみ。フロア責任者は含めない' },
+  // ── 休暇 ──
+  { key: 'leave_request',   icon: '🌿', label: '休暇申請',       note: 'パートは別フロー', group: '休暇' as FeatureGroup, bySuperior: false },
   // 🚨 2026-09-09 追加。いずれも「上長が部下に対して行う操作」で、それまでは
   //    画面の中に役職名が直接書かれており、管理画面から変えられなかった。
   //    ページを開ける権限（休暇承認・残業の集計）とは別に持たせる＝
   //    「ページは見られるが、この操作はできない」を作れるようにするため。
   //    🚨 画面のボタンの出し分けだけでなく、DB側（RPC・RLS）も同じ権限を見ること。
   //       片方だけだと「押せるのに保存できないボタン」になる。
-  { key: 'leave_shift_adjust', icon: '🔁', label: 'シフト調整の記録', note: '休暇の「シフト 未／調整済／確認済（変更なし）」を切り替えられる役職。勤怠カレンダーから行う' },
-  { key: 'application_request', icon: '📩', label: '申請の依頼', note: '残業・休暇の申請をスタッフに依頼できる役職' },
-  { key: 'part_leave_form_send', icon: '📨', label: 'パートへ休暇申請フォーム送信', note: '休暇承認ページの送信欄。OFFにするとその欄ごと出ません' },
+  { key: 'leave_approvals', icon: '✅', label: '休暇承認',       note: '承認者向けページ', group: '休暇' as FeatureGroup, bySuperior: true },
+  { key: 'leave_shift_adjust', icon: '🔁', label: 'シフト調整の記録', note: '休暇の「シフト 未／調整済／確認済（変更なし）」を切り替えられる役職。勤怠カレンダーから行う', group: '休暇' as FeatureGroup, bySuperior: true },
+  { key: 'part_leave_form_send', icon: '📨', label: 'パートへ休暇申請フォーム送信', note: '休暇承認ページの送信欄。OFFにするとその欄ごと出ません', group: '休暇' as FeatureGroup, bySuperior: true },
+
+  // ── 勤怠・時間 ──
+  { key: 'leave_calendar',  icon: '📅', label: '勤怠カレンダー', note: '', group: '勤怠・時間' as FeatureGroup, bySuperior: false },
+  { key: 'shift_report',    icon: '⏰', label: '勤務変更報告',   note: '', group: '勤怠・時間' as FeatureGroup, bySuperior: false },
+  { key: 'overtime',        icon: '🕐', label: '残業・時間管理（正社員）', note: 'パートは勤務変更報告を利用', group: '勤怠・時間' as FeatureGroup, bySuperior: false },
+  // 🚨 2026-09-09 追加。「ページを開ける」と「登録・取消できる」を分けた。
+  //    それまで画面は承認者（フロア責任者込み）で入力ボタンを出し、DB（RLS）はリーダー以上で弾いていて、
+  //    顔ぶれが食い違っていた。画面もDBも**この1つのトグル**を読む（has_feature_permission('attendance_input')）。
+  //    🚨 同じ分野の「勤怠カレンダー」が OFF だとページを開けないので、これを ON にしても入力できない（表示が先）
+  { key: 'attendance_input', icon: '📝', label: '勤怠カレンダーへの登録・取消', note: '遅刻・早退・欠勤などを登録・取消できる役職。「勤怠カレンダー」がONの役職にだけ効きます', group: '勤怠・時間' as FeatureGroup, bySuperior: true },
+  { key: 'overtime_summary', icon: '📊', label: '残業の集計・超過バナー閲覧', note: '全員分を見られる役職', group: '勤怠・時間' as FeatureGroup, bySuperior: true },
+  { key: 'shift_pattern_directory', icon: '📅', label: '全員のシフト予定 閲覧', note: 'パート含む全員の通常シフトを見られる役職', group: '勤怠・時間' as FeatureGroup, bySuperior: true },
+
+  // ── 申請・精算 ──
+  { key: 'purchase_request', icon: '🧾', label: '備品購入申請・経費精算', note: 'パートも精算のみ利用可', group: '申請・精算' as FeatureGroup, bySuperior: false },
+  { key: 'expense',         icon: '🚃', label: '交通費申請',     note: '', group: '申請・精算' as FeatureGroup, bySuperior: false },
+  { key: 'trip_report',     icon: '📍', label: '出張報告',       note: '', group: '申請・精算' as FeatureGroup, bySuperior: false },
+  // 🚨 notification_settings の trip:report_arrival / trip:report_end の宛先に役職を足すときは、
+  //    ここも同じ役職をONにすること。片方だけだと「通知は届くのに履歴が空」になる
+  { key: 'trip_report_history', icon: '📋', label: '出張報告の履歴閲覧', note: '全員分の報告を見られる役職', group: '申請・精算' as FeatureGroup, bySuperior: true },
+  { key: 'application_request', icon: '📩', label: '申請の依頼', note: '残業・休暇の申請をスタッフに依頼できる役職', group: '申請・精算' as FeatureGroup, bySuperior: true },
+
+  // ── 連絡・情報 ──
+  { key: 'board',           icon: '💬', label: '連絡板',         note: '', group: '連絡・情報' as FeatureGroup, bySuperior: false },
+  // 安否確認は災害時に全員へ届く必要があるため、役職別のトグルは使わず公開/非公開だけで運用する
+  // （役職で絞ると、その役職の人に安否確認が届かなくなってしまう）
+  { key: 'safety_check',    icon: '🆘', label: '安否・緊急連絡',  note: '発信はマネージャー以上・回答は全員', group: '連絡・情報' as FeatureGroup, bySuperior: false },
+  // FAQは「使えるか」と「ナビに出すか」を分けて切り替えられる。
+  // ナビはボタンが並ぶ場所なので、使えるようにはしたいがナビには出したくない、が実際にある
+  { key: 'faq',             icon: '💡', label: 'FAQ（よくある質問）', note: '各ページの「💡 FAQ」ボタン・マイページ（右上のアイコン）から開ける', group: '連絡・情報' as FeatureGroup, bySuperior: false },
+  { key: 'faq_nav',         icon: '💡', label: 'FAQ：ナビにも出す',   note: '上のFAQがONの役職にだけ効きます', group: '連絡・情報' as FeatureGroup, bySuperior: false },
+
+  // ── その他 ──
+  // 🚨 2026-08-31 にマネージャー以上へ絞った（ユーザー確定・案A）。
+  //    フロア責任者は含めない。「マネージャー以上」にフロア責任者を入れるかは
+  //    毎回判断が割れるので、役職ごとのONで持って曖昧さを残さない
+  { key: 'room_booking',    icon: '🚪', label: '場所予約', note: '初期はマネージャー・社長のみ。フロア責任者は含めない', group: 'その他' as FeatureGroup, bySuperior: false },
 ] as const;
 
 const FeaturePermissionsTab: React.FC = () => {
@@ -702,8 +722,33 @@ const FeaturePermissionsTab: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {FEATURES.map(feat => (
-                  <tr key={feat.key}>
+                {FEATURES.map((feat, i) => {
+                // 分野の見出しと「上長として行う操作」の小見出しを、変わり目にだけ差し込む（2026-09-11）。
+                // 🚨 判定は**前の項目と比べるだけ**。分野ごとに別の配列を作って回すと、
+                //    片方に足し忘れて項目が画面から消える（同じ一覧を2か所に書かないため）。
+                // 🚨 colSpan は列数に合わせる（機能・全公開・リーダー以上・社長のみ＝4 ＋ 役職の数）。
+                //    役職が増えても自動で合う。
+                const prev = i > 0 ? FEATURES[i - 1] : null;
+                const isNewGroup = !prev || prev.group !== feat.group;
+                const isNewSuperior = feat.bySuperior && (isNewGroup || !prev?.bySuperior);
+                const span = 4 + roles.length;
+                return (
+                <React.Fragment key={feat.key}>
+                  {isNewGroup && (
+                    <tr>
+                      <td colSpan={span} style={{ padding: '9px 8px 5px', borderTop: i === 0 ? 'none' : `2px solid ${border}`, borderBottom: `1px solid ${border}`, background: isDarkMode ? '#2d3136' : '#fafafa', fontSize: 11.5, fontWeight: 'bold', color: text }}>
+                        {feat.group}
+                      </td>
+                    </tr>
+                  )}
+                  {isNewSuperior && (
+                    <tr>
+                      <td colSpan={span} style={{ padding: '4px 8px 4px 16px', borderBottom: `1px solid ${border}`, fontSize: 10.5, color: subText }}>
+                        ‥‥ 上長として行う操作 ‥‥
+                      </td>
+                    </tr>
+                  )}
+                  <tr>
                     <td style={{ padding: '10px 8px', fontSize: 12, color: text, borderBottom: `1px solid ${border}` }}>
                       <span style={{ marginRight: 5 }}>{feat.icon}</span>
                       {feat.label}
@@ -822,7 +867,9 @@ const FeaturePermissionsTab: React.FC = () => {
                       );
                     })}
                   </tr>
-                ))}
+                  </React.Fragment>
+                );
+                })}
               </tbody>
             </table>
           </div>
