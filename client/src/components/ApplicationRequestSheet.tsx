@@ -20,6 +20,16 @@ const KIND_LABEL: Record<Kind, string> = {
   leave: '休暇',
 };
 
+// メモの入力例。🚨 種類ごとに出し分ける（2026-09-10 実機指摘・ユーザー確定＝案1）。
+//    1つの文を共通で使っていたため、休暇の依頼でも残業の例文（「雨でレッスンが…」）が出ていた。
+// 🚨 「相談で聞いた内容」を書く欄なので、事実＋時刻の短い形にする。
+// 🚨 休暇の例は「私用のため」までにとどめる。**有給は理由を問わないのが原則**なので、
+//    詳しい理由を書かせる例文を置かない（例文は手本として真似されるため）。
+const MEMO_PLACEHOLDER: Record<Kind, string> = {
+  overtime: '例：お客様対応が延びたため、18:00まで勤務',
+  leave: '例：私用のため有給を取得',
+};
+
 // 🚨 その申請を実際に使える人にしか依頼できないようにする（2026-09-09 実機指摘）。
 //    役職名を書かず、管理画面「役職・機能権限」の値を見る。本番の実測では
 //    残業＝マネージャー・リーダー・社長・管理者／休暇＝パート以外 だった。
@@ -314,7 +324,7 @@ const ApplicationRequestSheet: React.FC<Props> = ({
         <div style={{ marginBottom: 14 }}>
           <span style={label}>メモ（相談で聞いた内容）</span>
           <textarea value={memo} onChange={e => setMemo(e.target.value)} rows={3}
-            placeholder="例：雨でレッスンが無くなったぶん、18:00までの残業でお願いした分"
+            placeholder={MEMO_PLACEHOLDER[kind]}
             style={{ ...field(false), resize: 'vertical', lineHeight: 1.6 }} />
         </div>
 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { supabase } from '../lib/supabaseClient';
 import OvertimeProposalSheet, { type DraftCandidate } from '../components/OvertimeProposalSheet';
 import OvertimeProposalResponse from '../components/OvertimeProposalResponse';
@@ -148,6 +149,16 @@ function modifiedFromLine(mf: OvertimeReport["modified_from"]): string | null {
   return parts.join('　');
 }
 
+
+// 「対応しない（消す）」ときの理由（2026-09-10 ユーザー確定＝選択式）。
+// 🚨 **自由記入を必須にしない**。上長からの依頼を断るのに理由を必ず書かせると、
+//    断りにくい圧になり、押せないまま依頼が「未対応」で溜まる（＝上長にも状況が伝わらない）。
+//    とくに**有給は理由を問わないのが原則**なので、そこと逆向きの運用にしない。
+//    選ぶのは必須・書くのは「その他」のときだけ必須、という形にしている。
+// 🚨 定型の文字はそのまま recipient_note に入る。あとから数えたいので表記を増やさないこと
+//    （メモに自由記述させる方式は 2026-09-02 に「表記ゆれで数えられない」として見送っている）。
+const DISMISS_REASONS = ['すでに申請した', '日付や内容が異なる', '申請が不要になった', 'その他'] as const;
+const DISMISS_OTHER = 'その他';
 
 function dowLabel(dateStr: string): string {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -2534,14 +2545,6 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   useEffect(() => {
     if (tabParam === 'history') setTab('history');
   }, [tabParam, focusParam]);
-  // ?focus=<依頼ID> で来たとき、その依頼カードまで移動して光らせる（2026-09-10 実機指摘）。
-  // 🚨 やり方は勤怠カレンダー（CalendarPage の highlightDate）と同じにする。
-  //    300ms 後にスクロール → 6秒で消し、URL から focus を外す。
-  //    focus を外さないと、同じ通知をもう一度タップしたとき URL が変わらず
-  //    「画面は開いているのに光らない」という出方になる。
-  const [highlightReqId, setHighlightReqId] = useState<string | null>(focusParam);
-  const focusReqRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => { if (focusParam) setHighlightReqId(focusParam); }, [focusParam]);
   const [reports, setReports] = useState<OvertimeReport[]>([]);
   const [pendingForMe, setPendingForMe] = useState<OvertimeReport[]>([]);
   const [reviewers, setReviewers] = useState<Reviewer[]>([]);
@@ -3041,22 +3044,14 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     setAppRequests(rows.map(r => ({ ...r, requester_name: nameOf.get(r.requester_id) ?? null })));
   }, [user.id]);
   useEffect(() => { fetchAppRequests(); }, [fetchAppRequests]);
-  // ?focus=<依頼ID> で来たとき：依頼カードまで移動し、数秒後にハイライトを消す。
-  // 🚨 勤怠カレンダー（CalendarPage）とまったく同じ流儀。時間・色も揃えている。
-  // 🚨 appRequests を依存に入れる。読み込みが終わる前はカードが無く、スクロールできない。
-  useEffect(() => {
-    if (!highlightReqId || appRequests.length === 0) return;
-    const t1 = setTimeout(() => focusReqRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300);
-    const t2 = setTimeout(() => {
-      setHighlightReqId(null);
-      const sp = new URLSearchParams(window.location.search);
-      if (sp.get('focus')) {
-        sp.delete('focus');
-        setSearchParams(sp, { replace: true });
-      }
-    }, 6000);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, [highlightReqId, appRequests, setSearchParams]);
+  // ?focus=<依頼ID> で来たとき、その依頼カードまで移動して光らせる（2026-09-10 実機指摘）。
+  // 🚨 **共通フック useFocusHighlight を使う**（休暇の承認画面と同じもの）。
+  //    最初は自分で書いていたが、同じ処理が2か所になるうえ、こちらは6秒後に URL から
+  //    focus を外していたため、**上の「履歴タブへ切り替える」effect が再実行され、
+  //    入力欄へ移ったあと履歴タブへ引き戻される**不具合を作っていた（実機で発覚）。
+  //    フックは URL を書き換えないので、その原因ごと無くなる。
+  // 🚨 引数に appRequests を渡す。読み込みが終わる前はカードが無く、スクロールできない。
+  const { highlightId: highlightReqId, focusRef: focusReqRef } = useFocusHighlight(appRequests);
 
   /** 依頼から申請フォームを開く。日付とメモを入れた下書きにしてフォームへ移る */
   const startFromRequest = (r: MyAppRequest) => {
@@ -3087,6 +3082,11 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     //    2か所で動かすと、どちらが勝つか分からない動きになる。
   };
   const [replaceDraftFor, setReplaceDraftFor] = useState<string | null>(null);
+  // 「対応しない」の確認パネルを出している依頼ID（2026-09-10 実機指摘）
+  const [dismissConfirmFor, setDismissConfirmFor] = useState<string | null>(null);
+  const [dismissReason, setDismissReason] = useState<string | null>(null);
+  const [dismissNote, setDismissNote] = useState('');
+  const [dismissErr, setDismissErr] = useState('');
 
   /** 休暇の依頼から、日付とメモを入れた状態で休暇申請の画面へ移る。
    *  🚨 休暇は複数日を1件で申請できるので、依頼の日付を全部入れる（残業は1日ずつ）。
@@ -3150,11 +3150,13 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   };
 
   /** 依頼に「対応しない」と答える */
-  const dismissRequest = async (id: string) => {
+  const dismissRequest = async (id: string, note: string) => {
     setAppReqErr('');
     // 🚨 update は0件でもエラーにならない。件数を見る
     const { data, error } = await supabase.from('application_requests')
-      .update({ status: 'dismissed', responded_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      // 🚨 理由は recipient_note に入れる（この列は元からあり未使用だった）。
+      //    上長の依頼一覧（LeaveApprovals）でこれを読んで見せる。
+      .update({ status: 'dismissed', recipient_note: note, responded_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq('id', id).eq('status', 'open').select('id');
     if (error) { setAppReqErr('保存できませんでした：' + error.message); return; }
     if (!data || data.length === 0) { setAppReqErr('保存できませんでした（すでに処理された可能性があります）'); fetchAppRequests(); return; }
@@ -4100,18 +4102,70 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                             // 🚨 色は勤怠カレンダーのハイライトと同じ（新しい色を足さない）
                             const isFocused = highlightReqId === r.id;
                             return (
-                            <div key={r.id} ref={isFocused ? focusReqRef : undefined}
+                            <div key={r.id} ref={el => { if (el && isFocused) focusReqRef.current = el; }}
                               style={{ background: isFocused ? (isDark ? '#4a4423' : '#fff9c4') : (isDark ? '#243447' : '#e8f4fd'), border: `1px solid ${isFocused ? '#f59e0b' : (isDark ? '#3d5166' : '#90caf9')}`, borderRadius: 10, padding: '12px 14px', marginBottom: 8, transition: 'background 0.6s' }}>
                               <p style={{ margin: '0 0 6px', fontSize: 13, lineHeight: 1.8, color: isDark ? '#fff' : '#0d47a1' }}>
                                 {r.requester_name ?? ''}さんから、
-                                {(r.target_dates ?? []).map(d => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`).join('・')}の
+                                {/* 曜日も出す（2026-09-10 ユーザー指示）。🚨 曜日は既存の dowLabel を使う */}
+                                {(r.target_dates ?? []).map(d => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}（${dowLabel(d)}）`).join('・')}の
                                 {r.kind === 'leave' ? '休暇' : '残業・勤務変更'}について申請のお願いが届いています。
-                                {r.due_date && <><br />{`${Number(r.due_date.slice(5, 7))}/${Number(r.due_date.slice(8, 10))}`}までに申請してください。</>}
+                                {r.due_date && <><br />{`${Number(r.due_date.slice(5, 7))}/${Number(r.due_date.slice(8, 10))}（${dowLabel(r.due_date)}）`}までに申請してください。</>}
                               </p>
                               {r.memo && (
                                 <p style={{ margin: '0 0 8px', padding: '7px 10px', borderRadius: 6, fontSize: 12, lineHeight: 1.7, background: isDark ? '#1b2a3a' : '#fff', color: isDark ? '#dee2e6' : '#495057', whiteSpace: 'pre-wrap' }}>{r.memo}</p>
                               )}
-                              {replaceDraftFor === r.id ? (
+                              {/* 押した瞬間に一覧から消えていたので、確認を挟む（2026-09-10 実機指摘）。
+                                  🚨 window.confirm() は使わない決まり。同じカードの中の
+                                     「書きかけがあります」と同じインラインのパネルで聞く。
+                                  🚨 ボタンの言葉は「消す」に揃えた（ユーザー確定）。
+                                     押した言葉（対応しない）と確認の言葉（消す）が違うと迷う。
+                                     「対応しない」は**上長の画面にだけ**出る言葉で本人は見ないので、
+                                     画面ごとに自然な言葉であればよい。
+                                  🚨 中身は status を 'dismissed' にするだけ。行は消えないので、
+                                     上長の依頼一覧には「対応しない」と残る（LeaveApprovals）。 */}
+                              {dismissConfirmFor === r.id ? (
+                                <div style={{ padding: '9px 11px', borderRadius: 8, background: isDark ? '#4a3a1a' : '#fff8e1', border: '1px solid #f0c36d', color: isDark ? '#ffcf8f' : '#b7770d' }}>
+                                  <p style={{ margin: '0 0 6px', fontSize: 12, lineHeight: 1.7 }}>対応しない理由をお選びください</p>
+                                  {/* 🚨 色は既存の択一トグルの青（🎨🔒 固定色）。新しい色は足さない */}
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                                    {DISMISS_REASONS.map(v => {
+                                      const active = dismissReason === v;
+                                      return (
+                                        <button key={v} type="button" onClick={() => { setDismissReason(v); setDismissErr(''); }}
+                                          style={{ padding: '4px 11px', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 'bold', border: `2px solid ${active ? '#1565c0' : '#90caf9'}`, background: active ? '#1976d2' : '#e3f2fd', color: active ? '#fff' : '#1565c0' }}>
+                                          {v}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                  {/* 「その他」を選んだときだけ入力欄を出す。そのときだけ必須
+                                      （「その他」のままでは上長に何も伝わらないため） */}
+                                  {dismissReason === DISMISS_OTHER && (
+                                    <div style={{ marginBottom: 8 }}>
+                                      <div style={{ fontSize: 11.5, marginBottom: 5 }}>理由を入力してください</div>
+                                      <textarea value={dismissNote} onChange={e => { setDismissNote(e.target.value); setDismissErr(''); }} rows={2}
+                                        placeholder="例：シフトが変わったため"
+                                        style={{ width: '100%', boxSizing: 'border-box', padding: '7px 9px', borderRadius: 8, border: `1px solid ${borderColor}`, background: isDark ? '#212529' : '#fff', color: text, fontSize: 12.5, resize: 'vertical', lineHeight: 1.6 }} />
+                                    </div>
+                                  )}
+                                  {dismissErr && (
+                                    <div style={{ fontSize: 11.5, color: '#dc3545', marginBottom: 8 }}>{dismissErr}</div>
+                                  )}
+                                  <div style={{ display: 'flex', gap: 6 }}>
+                                    <button onClick={() => {
+                                      // 🚨 選んでいないまま消させない（上長に理由が伝わらない）
+                                      if (!dismissReason) { setDismissErr('理由をお選びください'); return; }
+                                      const note = dismissReason === DISMISS_OTHER ? dismissNote.trim() : dismissReason;
+                                      if (dismissReason === DISMISS_OTHER && !note) { setDismissErr('理由を入力してください'); return; }
+                                      setDismissConfirmFor(null); setDismissReason(null); setDismissNote(''); setDismissErr('');
+                                      dismissRequest(r.id, note);
+                                    }}
+                                      style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>対応しない</button>
+                                    <button onClick={() => { setDismissConfirmFor(null); setDismissReason(null); setDismissNote(''); setDismissErr(''); }}
+                                      style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12.5, background: 'transparent', color: subText }}>やめる</button>
+                                  </div>
+                                </div>
+                              ) : replaceDraftFor === r.id ? (
                                 <div style={{ padding: '9px 11px', borderRadius: 8, background: isDark ? '#4a3a1a' : '#fff8e1', border: '1px solid #f0c36d', color: isDark ? '#ffcf8f' : '#b7770d' }}>
                                   <p style={{ margin: '0 0 8px', fontSize: 12, lineHeight: 1.7 }}>書きかけの申請があります。この依頼の内容に置き換えますか？</p>
                                   <div style={{ display: 'flex', gap: 6 }}>
@@ -4130,7 +4184,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                     <button onClick={() => startFromRequest(r)}
                                       style={{ flex: 1, minWidth: 140, padding: '10px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>この内容で申請する</button>
                                   )}
-                                  <button onClick={() => dismissRequest(r.id)}
+                                  <button onClick={() => setDismissConfirmFor(r.id)}
                                     style={{ padding: '10px 16px', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12.5, background: 'transparent', color: subText }}>対応しない</button>
                                 </div>
                               )}

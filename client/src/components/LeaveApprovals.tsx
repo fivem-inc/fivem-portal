@@ -96,6 +96,8 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   interface MyRequest {
     id: string; recipient_id: string; kind: string; target_dates: string[] | null;
     status: string; recipient_name?: string | null;
+    /** 相手が「消す」ときに選んだ理由（2026-09-10）。dismissed のときだけ出す */
+    recipient_note?: string | null;
   }
   const [showRequestSheet, setShowRequestSheet] = useState(false);
   const [myRequests, setMyRequests] = useState<MyRequest[]>([]);
@@ -103,7 +105,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
 
   const fetchMyRequests = useCallback(async () => {
     const { data, error } = await supabase.from('application_requests')
-      .select('id, recipient_id, kind, target_dates, status')
+      .select('id, recipient_id, kind, target_dates, status, recipient_note')
       .eq('requester_id', user.id)
       .order('created_at', { ascending: false })
       .limit(30);
@@ -657,6 +659,12 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                   <span style={{ color: r.status === 'open' ? '#b7770d' : r.status === 'applied' ? '#1e8449' : (isDark ? '#adb5bd' : '#6c757d') }}>
                     {r.status === 'open' ? '未申請' : r.status === 'applied' ? '申請済み ✓' : r.status === 'dismissed' ? '対応しない' : '取り下げ'}
                   </span>
+                  {/* 🚨 相手が「消す」ときに選んだ理由を出す（2026-09-10）。
+                         出さないと、理由を入力させても行き先が無く、ここが「対応しない」だけで
+                         **なぜ申請が来ないのか分からない**まま（そのために理由を足した）。 */}
+                  {r.status === 'dismissed' && r.recipient_note && (
+                    <span style={{ color: isDark ? '#adb5bd' : '#6c757d' }}>（{r.recipient_note}）</span>
+                  )}
                   {r.status === 'open' && (
                     <button onClick={() => withdrawRequest(r.id)}
                       style={{ padding: '3px 10px', borderRadius: 10, fontSize: 11, cursor: 'pointer', border: `1px solid ${isDark ? '#6c757d' : '#dee2e6'}`, background: 'transparent', color: isDark ? '#adb5bd' : '#6c757d' }}>
