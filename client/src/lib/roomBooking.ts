@@ -1134,6 +1134,27 @@ export const categoryLabel = (staff: Staff | null | undefined, categories: Lesso
     .join('・');
 };
 
+/**
+ * 打った文字がこのスタッフに当てはまるか（候補の絞り込み）。
+ *
+ * 🚨 **この規則を画面に書き写さないこと。** 予約フォームの担当選びと、
+ *    担当別一覧の絞り込みが、同じ規則で動く必要がある。
+ *    2か所に書くと片方だけ直す事故になる（このリポジトリで何度も起きている）。
+ *
+ * ・お名前は打った文字のまま（漢字で引く）
+ * ・ふりがなは**ひらがなに直して**比べる（カタカナ・半角カナで打っても引ける。
+ *   読みは room_staff.kana にひらがなで入っている）
+ * ・区分（A・B・D）でも引ける
+ * 🚨 1文字から絞る（お客様と違い人数が少なく、候補が多すぎないため）
+ */
+export const staffMatches = (st: Staff, categories: LessonCategory[], raw: string): boolean => {
+  const q = raw.trim();
+  if (!q) return true;
+  return st.name.includes(q)
+    || (st.kana ? toHiragana(st.kana).includes(toHiragana(q)) : false)
+    || (categoryLabel(st, categories) || '').includes(q);
+};
+
 /** 予約が「今まさに使用中」か */
 export const isNowUsing = (b: Booking, now: Date): boolean =>
   new Date(b.starts_at) <= now && new Date(b.ends_at) > now;

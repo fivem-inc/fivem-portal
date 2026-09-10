@@ -13,6 +13,7 @@ import {
   customerName, customerFullName, customerKana, contactLines, toHiragana,
   fiscalYear, fiscalYearEnd, fiscalYearLabel, RENEWAL_NOTICE_DAYS, daysUntil, detailsOf, purposeWithDetail,
   participantsOf, participantLabelOf, attendanceOptionsFor, needsPaymentNote, customerSearchFilter, customerMatches,
+  staffMatches,
   skipDetailLabel, waitKey, type SkipInfo,
   waitOverLimit, waitQueueKey, queueKeyOfBooking, waitSeatsFor,
   type Campus, type Floor, type Booking, type ConflictInfo,
@@ -391,6 +392,10 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
   // 確認中の予約だけを拾い出す（2026-09-04 ユーザー指示・一覧＝担当別／参加者別で使う）。
   // 🚨 予約そのものの扱いは普通の予約と同じ。ここは「追いかける先を探す」ための絞り込み
   const [onlyTentative, setOnlyTentative] = useState(false);
+  // 絞り込みを名前で探すための入力（2026-09-10 ユーザー依頼）。
+  // 🚨 初期表示は今までどおり「全員」。ここは探す手段を足すだけで、既定は変えない
+  const [onlyQuery, setOnlyQuery] = useState('');
+  const [onlyOpen, setOnlyOpen] = useState(false);
   const [date, setDate] = useState<string>(todayStr());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -403,6 +408,9 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
   const [bookingFor, setBookingFor] = useState<Customer | null>(null);
   // 基本設定を使える役職（管理者が ⚙️設定 で決める）。
   // null = まだ読めていない／設定が無い → これまでどおり「パート以外は可」で動かす
+  // 予約表のお客様（会員番号 → お客様）。表示名を作るために読んだものをそのまま持つ。
+  // 🚨 参加者別の絞り込みを、ふりがな（カタカナ・半角カナ含む）でも探せるようにするため
+  const [customersByNo, setCustomersByNo] = useState<Record<string, Customer>>({});
   // 基本設定を使える役職。🚨 役職名ではなく role_id の一覧で持つ（改名に耐えるため）
   const [basicRoleIds, setBasicRoleIds] = useState<string[] | null>(null);
   // 役職の一覧（属性つき）。1回だけ読んで全画面で共有する（hooks/useRoles.ts）
@@ -699,10 +707,14 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
     const nos = [...new Set(
       rows.flatMap(b => participantsOf(b).map(p => p.no)).filter(Boolean),
     )];
-    if (nos.length === 0) return;
+    if (nos.length === 0) { setCustomersByNo({}); return; }
     const { data: cs } = await supabase
       .from('room_customers').select('*').in('member_no', nos);
     const map = Object.fromEntries(((cs ?? []) as Customer[]).map(c => [c.member_no, c]));
+    // 🚨 引いた結果を捨てない（2026-09-10）。参加者別の絞り込みを**ふりがなでも**
+    //    探せるようにするために要る。ここで持てば問い合わせは1件も増えない
+    //    （表示名を作るためにどのみち読んでいる）
+    setCustomersByNo(map);
     // 予約に表示名を持たせておく。カードを描く場所が何か所もあるので、
     // それぞれで引き直すより、ここで1回だけ付けるほうが読みやすい
     setBookings(rows.map(b => {
@@ -922,10 +934,77 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
     return [];
   }, [view, bookings, staff, categories, waitOnlyStaffIds]);
 
-  // 絞り込みで選んでいた人がいなくなったら「全員」に戻す（空表示のまま固まるのを防ぐ）
+  /**
+   * 絞り込みの候補（名前で探して押す・2026-09-10 ユーザー確定）。
+   *
+   * 🚨 **探せる範囲はユーザー確定（2026-09-10）**：
+   *    ・担当スタッフ … **全スタッフから**探せる（この期間に予約が無い人も選べる）。
+   *      選ぶと一覧は空になるが、「この期間に予約が無い」ことが分かるのが目的。
+   *      月を送れば見つかる
+   *    ・参加者 … **この期間に出てくる方だけ**（全1,950名から探すのは、その都度DBに
+   *      問い合わせる仕組みが要るうえ、予約の無い方を選んでも必ず空になるため）
+   * 🚨 絞り込みの規則は書き写さない。担当は lib の staffMatches、
+   *    参加者は lib の customerMatches（どちらも予約フォームと同じもの）
+   */
+  const onlyCands = useMemo(() => {
+    const q = onlyQuery.trim();
+    if (view === 'staff') {
+      const used = new Set(bookings.map(b => b.staff_id).filter(Boolean) as string[]);
+      // 退職などで非表示にした人は出さない。ただし今選んでいる人は残す（勝手に外れないように）
+      const rows = staff
+        .filter(s => (s.active || s.id === only) && staffMatches(s, categories, q))
+        .sort((a, b) => a.sort_order - b.sort_order)
+        .map(s => ({
+          value: s.id,
+          label: s.name,
+          sub: categoryLabel(s, categories) || '区分なし',
+          note: used.has(s.id) ? ''
+            : (waitOnlyStaffIds.has(s.id) ? '予約なし・待ちのみ' : 'この期間の予約なし'),
+          // 予約がある人を上に、この期間に予約が無い人を下に（sort は安定なので並び順は保たれる）
+          rank: used.has(s.id) ? 0 : (waitOnlyStaffIds.has(s.id) ? 1 : 2),
+        }))
+        .sort((a, b) => a.rank - b.rank);
+      if (bookings.some(b => !b.staff_id) && (!q || '担当なし'.includes(q))) {
+        rows.push({ value: '__none__', label: '担当なし', sub: '', note: '', rank: 0 });
+      }
+      return rows;
+    }
+    return onlyOptions
+      .filter(o => {
+        if (!q) return true;
+        // 画面に出ている文字（漢字・ひらがなの作り分け済み）で引く
+        if (o.label.includes(q) || toHiragana(o.label).includes(toHiragana(q))) return true;
+        // ふりがなでも引けるようにする。会員番号は2名ぶんカンマでつながることがある
+        if (!o.value.startsWith('no:')) return false;
+        return o.value.slice(3).split(',')
+          .map(n => customersByNo[n.trim()])
+          .some(c => c && customerMatches(c, q));
+      })
+      .map(o => ({ value: o.value, label: o.label, sub: '', note: '', rank: 0 }));
+  }, [view, onlyQuery, only, bookings, staff, categories, waitOnlyStaffIds, onlyOptions, customersByNo]);
+
+  /** いま選んでいる人の表示名（選択後の表示と、空のときの案内に使う） */
+  const onlyLabel = useMemo(() => {
+    if (!only) return '';
+    if (view === 'staff') {
+      if (only === '__none__') return '担当なし';
+      return staff.find(s => s.id === only)?.name ?? '';
+    }
+    return onlyOptions.find(o => o.value === only)?.label ?? '';
+  }, [only, view, staff, onlyOptions]);
+
+  // 選んでいた人が選べなくなったら「全員」に戻す（空表示のまま固まるのを防ぐ）。
+  // 🚨 担当別では戻さない（2026-09-10 ユーザー確定）。全スタッフから選べるようにしたので、
+  //    「この期間に予約が無い人」を選んだ瞬間に解除されてしまうため。
+  //    代わりに一覧側で「この期間に◯◯さんの予約はありません」と断る
   useEffect(() => {
-    if (only && !onlyOptions.some(o => o.value === only)) setOnly('');
-  }, [only, onlyOptions]);
+    if (!only) return;
+    if (view === 'staff') { if (!onlyLabel) setOnly(''); return; }
+    if (!onlyOptions.some(o => o.value === only)) setOnly('');
+  }, [only, view, onlyLabel, onlyOptions]);
+
+  // 見る軸を切り替えたら、探しかけの文字は捨てる（別の人を探すことになるため）
+  useEffect(() => { setOnlyQuery(''); setOnlyOpen(false); }, [view]);
 
   /**
    * 担当別・参加者別の1ヶ月一覧。日付ごとにまとめて並べる。
@@ -1168,13 +1247,61 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
             <span style={{ fontSize: 12.5, color: textMid }}>
               {view === 'staff' ? '担当スタッフ' : '参加者'}
             </span>
-            <select value={only} onChange={e => setOnly(e.target.value)}
-              style={{ padding: '6px 9px', borderRadius: 8, border: `1px solid ${line}`, background: card, color: text, fontSize: 16, maxWidth: 300 }}>
-              <option value="">全員（{onlyOptions.length}人）</option>
-              {onlyOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-            {only && (
-              <button onClick={() => setOnly('')} style={btn(false)}>全員に戻す</button>
+            {/* 🚨 選んでいるときは名前だけを出す。探す欄は要らない（選び直すときは「全員に戻す」） */}
+            {only ? (
+              <>
+                <span style={{ fontSize: 14, fontWeight: 700, color: text }}>{onlyLabel}</span>
+                <button onClick={() => setOnly('')} style={btn(false)}>全員に戻す</button>
+              </>
+            ) : (
+              <div style={{ position: 'relative', flex: '1 1 200px', maxWidth: 300 }}>
+                <input value={onlyQuery}
+                  placeholder={view === 'staff'
+                    ? `全員（${onlyOptions.length}人）｜押して選ぶ・お名前・ふりがな・区分`
+                    : `全員（${onlyOptions.length}人）｜押して選ぶ・お名前・ふりがな`}
+                  onChange={e => { setOnlyQuery(e.target.value); setOnlyOpen(true); }}
+                  onFocus={() => setOnlyOpen(true)}
+                  onBlur={() => setOnlyOpen(false)}
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '6px 9px', borderRadius: 8, border: `1px solid ${line}`, background: card, color: text, fontSize: 16 }} />
+                {/* 🚨 一覧はこの欄を触っている間だけ出す。
+                       候補を押すと先に blur が起きてクリックが届かないので、
+                       押し始めの時点で blur を止める（予約フォームで2回踏んだ罠） */}
+                {onlyOpen && (
+                  <div onMouseDown={e => e.preventDefault()}
+                    style={{
+                      position: 'absolute', zIndex: 5, left: 0, right: 0, marginTop: 3,
+                      background: card, border: `1px solid ${line}`, borderRadius: 8,
+                      maxHeight: 232, overflowY: 'auto', boxShadow: '0 6px 18px rgba(0,0,0,.18)',
+                    }}>
+                    {onlyCands.map(o => (
+                      <button key={o.value}
+                        onClick={() => { setOnly(o.value); setOnlyOpen(false); setOnlyQuery(''); }}
+                        style={{
+                          display: 'block', width: '100%', textAlign: 'left', padding: '8px 11px',
+                          background: 'transparent', border: 'none', borderBottom: `1px solid ${line}`,
+                          color: text, fontSize: 13.5, cursor: 'pointer',
+                        }}>
+                        {o.label}
+                        {o.sub && <span style={{ color: textMid, fontSize: 12, marginLeft: 7 }}>{o.sub}</span>}
+                        {o.note && (
+                          <span style={{ display: 'block', fontSize: 11.5, color: textMid }}>{o.note}</span>
+                        )}
+                      </button>
+                    ))}
+                    {onlyCands.length === 0 && (
+                      <div style={{ padding: '10px 11px', fontSize: 12.5, color: textMid }}>
+                        {view === 'staff'
+                          ? '見つかりませんでした。絞り込みを消すと全員出ます'
+                          : 'この期間には見つかりませんでした（この期間に出てくる方から探せます）'}
+                      </div>
+                    )}
+                    <button onClick={() => setOnlyOpen(false)}
+                      style={{ display: 'block', width: '100%', textAlign: 'center', padding: '7px', background: 'transparent', border: 'none', color: textMid, fontSize: 12.5, cursor: 'pointer' }}>
+                      閉じる
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
             {/* 確認中だけを拾う（2026-09-04 ユーザー指示）。返事待ちを追いかけるための絞り込み */}
             <button onClick={() => setOnlyTentative(v => !v)} style={btn(onlyTentative)}>
@@ -1196,7 +1323,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
             担当別／参加者別＝1ヶ月ぶんを日付ごとにまとめたリスト（PC・スマホ共通） */}
         {view !== 'place'
           ? <RangeList
-              groups={rangeList} view={view} only={only}
+              groups={rangeList} view={view} only={only} onlyLabel={onlyLabel}
               staffById={staffById} categories={categories}
               placeName={placeName} allCampus={allCampus}
               onOpenDetail={setDetail} absentIds={absentIds}
@@ -1499,6 +1626,8 @@ const TimelineView: React.FC<{
 // ============================================================
 const RangeList: React.FC<{
   groups: { date: string; list: Booking[] }[];
+  /** 選んでいる人の表示名。空のときの案内に出す（誰の分が無いのかを言う） */
+  onlyLabel: string;
   view: ViewMode; only: string;
   staffById: (id: string | null) => Staff | null; categories: LessonCategory[];
   placeName: (floorId: string, withCampus: boolean) => string; allCampus: boolean;
@@ -1509,7 +1638,7 @@ const RangeList: React.FC<{
   waitInfo: WaitInfo;
   colors: { card: string; line: string; lineSoft: string; text: string; textMid: string; textSoft: string };
   isDark: boolean;
-}> = ({ groups, view, only, staffById, categories, placeName, allCampus, onOpenDetail, absentIds, waitInfo, colors, isDark }) => {
+}> = ({ groups, view, only, onlyLabel, staffById, categories, placeName, allCampus, onOpenDetail, absentIds, waitInfo, colors, isDark }) => {
   const { card, line, lineSoft, text, textMid, textSoft } = colors;
   const today = todayStr();
   const total = groups.reduce((n, g) => n + g.list.length, 0);
@@ -1531,8 +1660,15 @@ const RangeList: React.FC<{
   // 🚨 予約が0件でも、待ちだけの枠があるなら画面を出す（2026-09-05 ユーザー確定）。
   //    ここで早く返してしまうと「順番待ちがいるのに何も出ない」に戻る
   if (!groups.length && !orphans.length) {
-    return <div style={{ background: card, border: `1px solid ${line}`, borderRadius: 12, padding: 30, textAlign: 'center', color: textMid }}>
-      この期間に{only ? '、選んだ人の' : ''}予約はありません。
+    return <div style={{ background: card, border: `1px solid ${line}`, borderRadius: 12, padding: 30, textAlign: 'center', color: textMid, lineHeight: 1.8 }}>
+      この期間に{only ? `、${onlyLabel}の` : ''}予約はありません。
+      {/* 🚨 担当は全スタッフから選べる（2026-09-10）ので、ここが空になるのは普通のこと。
+             「壊れている」と読まれないよう、次にできることを添える */}
+      {only && view === 'staff' && (
+        <span style={{ display: 'block', fontSize: 12.5 }}>
+          日付を変えると、別の期間の予約が見られます。
+        </span>
+      )}
     </div>;
   }
 
@@ -1573,7 +1709,7 @@ const RangeList: React.FC<{
       {/* 待ちだけがあって予約が0件のとき、下が真っ白になるので断っておく */}
       {!groups.length && (
         <div style={{ padding: '14px', fontSize: 13, color: textMid, textAlign: 'center' }}>
-          この期間に{only ? '、選んだ人の' : ''}予約はありません。
+          この期間に{only ? `、${onlyLabel}の` : ''}予約はありません。
         </div>
       )}
 
@@ -2892,15 +3028,10 @@ const BookingForm: React.FC<{
               <div onMouseDown={e => e.preventDefault()}
                 style={{ marginTop: 6, border: `1px solid ${line}`, borderRadius: 8, maxHeight: 260, overflowY: 'auto' }}>
                 {(() => {
-                  // 🚨 打った文字を**ひらがなに直して**比べる（カタカナ・半角カナでも引ける）。
-                  //    読みは room_staff.kana にひらがなで入っている（2026-09-04〜）。
-                  //    🚨 1文字から絞る（お客様欄と違い、人数が少なく候補が多すぎないため）
+                  // 🚨 絞り込みの規則は lib の staffMatches 1本（担当別一覧の絞り込みと共通）。
+                  //    ここに書き写すと、片方だけ直す事故になる
                   const q = staffQuery.trim();
-                  const qh = toHiragana(q);
-                  const hit = activeStaff.filter(st => !q
-                    || st.name.includes(q)
-                    || (st.kana ? toHiragana(st.kana).includes(qh) : false)
-                    || (categoryLabel(st, categories) || '').includes(q));
+                  const hit = activeStaff.filter(st => staffMatches(st, categories, q));
                   // 🚨 空いている人を上に。判定は「かぶりの警告」と同じものを使う
                   const free = hit.filter(st => (busyByStaff[st.id] ?? []).length === 0);
                   const busyList = hit.filter(st => (busyByStaff[st.id] ?? []).length > 0);
