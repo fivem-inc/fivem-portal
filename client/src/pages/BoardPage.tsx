@@ -3300,9 +3300,10 @@ const BoardPage: React.FC = () => {
 
   // 開いた中の☆の隣に出すアーカイブのボタン（2026-09-10 実機指摘。受信トレイと同じ位置に統一し、
   // 下に並んでいたオレンジの「🗃 アーカイブ」は廃止した）。
-  // 🚨 いまは outboxDetail が outboxMessages（アーカイブを除いた一覧）からしか引けないので
-  //    archived は常に false になるが、状態で分けて書いておく（アーカイブを開けるように
-  //    したときに、ここを直し忘れて「戻せないボタン」になるのを防ぐ）。
+  // 🚨 outboxDetail はアーカイブ済みも探す（すぐ上）ので、archived は true になりうる。
+  //    ＝アーカイブを開いたときはボタンが「送信トレイに戻す」に変わる。
+  //    （2026-09-11 コメント修正。以前は「開けないので常に false」と書いてあったが、
+  //     同じ日にアーカイブも探すよう直したので**その説明は嘘になっていた**）
   const outboxDetailArchived = !!outboxDetail?.outbox_hidden;
   const outboxDetailArchiveBtn = outboxDetail
     ? {

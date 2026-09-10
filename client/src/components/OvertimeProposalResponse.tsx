@@ -6,6 +6,8 @@ import { timeToMin, calcPayPeriodStartJst, formatSignedMin } from '../lib/breakC
 import { notifyOvertimeNewRequest } from '../lib/overtimeNotify';
 import { shouldSend, dispatchEmail, dispatchSiteNotification, getUserEmail } from '../lib/notificationDispatch';
 import { sendLeaveSlack } from '../lib/leaveSlack';
+import { embeddedRole } from '../lib/roleAttrs';
+import type { EmbeddedRoleRow } from '../lib/roleAttrs';
 import { describeUpdate, describePartial } from '../lib/statusUpdate';
 import type { CalendarKind } from '../lib/breakCalc';
 import { buildTimeAdjustReport, resolveNormalShift } from '../lib/overtimeShift';
@@ -53,6 +55,9 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
   const [options, setOptions] = useState<OptionRow[]>([]);
   const [proposerName, setProposerName] = useState('');
   const [proposerRole, setProposerRole] = useState('');
+  // 提案者の「立場」（'leader' / 'manager' …）。🚨 Slack のチャンネルを決めるのはこちら。
+  //    proposerRole（役職名）は**画面と本文に出す用**で、宛先の判定には使わない
+  const [proposerActsAs, setProposerActsAs] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   // 相手の回答用ローカル状態（optionId→{chosen,date,time}）
@@ -81,9 +86,11 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
       const optRows = (opts as OptionRow[] | null) ?? [];
       setOptions(optRows);
       setPicks(Object.fromEntries(optRows.map(o => [o.id, { chosen: false, date: o.work_date, time: (o.adjust_time ?? '').slice(0, 5) }])));
-      const { data: prof } = await supabase.from('profiles').select('name, role_title').eq('id', prop.proposer_id).maybeSingle();
+      // 🚨 roles は左結合（`!inner` にしない）。役職が引けない人でも提案そのものは開けるようにする
+      const { data: prof } = await supabase.from('profiles').select('name, role_title, roles(acts_as)').eq('id', prop.proposer_id).maybeSingle();
       setProposerName((prof as { name: string } | null)?.name ?? '');
       setProposerRole((prof as { role_title: string | null } | null)?.role_title ?? '');
+      setProposerActsAs(embeddedRole(prof as EmbeddedRoleRow<{ acts_as?: string | null }> | null)?.acts_as ?? '');
       // 相手本人＆未回答のときだけ、受諾に必要なシフト等を取得
       if (prop.recipient_id === currentUserId && prop.status === 'open') {
         const { data: pat } = await supabase.from('weekly_shift_patterns').select('*').eq('user_id', prop.recipient_id);
@@ -195,7 +202,10 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
               リンク: 'https://fivem-portal.vercel.app/leave-approvals',
             };
             if (await shouldSend('leave:new_request', 'slack')) {
-              await sendLeaveSlack('new_request', proposerName || 'スタッフ', proposerRole || 'リーダー');
+              // 🚨 宛先は立場で決める。引けなかったときは今までどおりリーダーのチャンネル
+              await sendLeaveSlack('new_request', proposerName || 'スタッフ', proposerRole || 'リーダー',
+                undefined, undefined, undefined,
+                { approverActsAs: proposerActsAs === 'manager' ? 'manager' : 'leader' });
             }
             await dispatchSiteNotification('leave:new_request', vars,
               { applicant: currentUserId, leader: proposal.proposer_id },

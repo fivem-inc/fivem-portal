@@ -119,28 +119,13 @@ serve(async (req) => {
     const settings = (settingsData ?? []) as { channel: string; enabled: boolean; recipient: string | null; subject: string | null; template: string | null }[]
     const getSetting = (ch: string) => settings.find(s => s.channel === ch)
 
-    // 該当スタッフのグループ（複数人のときは全員分をまとめる。誰か1人でも同じチームなら届く）
-    const { data: staffProfiles } = await supabase
-      .from('profiles')
-      .select('group_names')
-      .in('id', staffIds)
-    const rawGroups: string[] = [...new Set(
-      ((staffProfiles ?? []) as { group_names?: string[] }[]).flatMap(p => p.group_names ?? [])
-    )]
-
-    // 🚨 絞り込みに使ってよいのは所属チーム（こども/大人/管理部）だけ。
-    // group_names には配信用グループ（正社員・契約社員／マネージャー・リーダー 等）が混在しており、
-    // リーダー・マネージャー全員が「正社員・契約社員」を持っているため、
-    // そのまま突き合わせると「同グループのみ」が実質「全員」になってしまう。
-    const { data: teamOptions } = await supabase
-      .from('master_options')
-      .select('value')
-      .eq('category', 'shift_report_group')
-    const teamMaster: string[] = ((teamOptions ?? []) as { value: string }[]).map(t => t.value)
-    // マスタが取れなかったときだけ従来どおり全グループで判定する（誰にも届かないより安全側）
-    const staffGroups: string[] = teamMaster.length > 0
-      ? rawGroups.filter(g => teamMaster.includes(g))
-      : rawGroups
+    // 🚨 ここにあった「該当スタッフの所属チームを組み立てる処理」は削除した（2026-09-11）。
+    //    2026-09-10 段4 で宛先の解決を DB の resolve_role_recipients に移したあと、
+    //    **計算した結果をどこからも使っていなかった**（profiles と master_options を
+    //    読むだけ読んで捨てていた）。同じ絞り込みは RPC の中で行っている
+    //    （group_names を master_options の shift_report_group で絞る／マスタが空なら
+    //     全グループで判定する、という逃げ道まで同じ）。
+    //    🚨 **同じ判定を2か所に置かない**。復活させると、片方だけ直す事故の種になる。
 
     // 役職＋グループフィルタで通知対象user_idを解決
     // ・groupFilter=same のとき、所属チームが重なる人だけに絞る

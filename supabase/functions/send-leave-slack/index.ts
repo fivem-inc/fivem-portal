@@ -42,16 +42,27 @@ const HEAD_BY_EVENT: Record<string, string> = {
   cancelled: '🌿 *休暇｜取消*',
 }
 
+// 🚨🚨 DBへの接続は**この1か所**で作る（2026-09-11 の修正）。
+//    それまで接続は fetchExtraChannels の中だけで作られていたのに、
+//    **宛先を決めるところ（serve の中）からも `supabase` を参照していた**。
+//    その名前はそこには届いていないので、実行すると ReferenceError で落ちる。
+//    落ちると外側の catch が 500 を返すが、呼び出し側（画面）は invoke の結果を見ていないため、
+//    **Slack が1通も送られないまま画面上は成功に見えていた**（＝失敗が静かに消える形）。
+//    `deno check` を通したときに初めて表に出た。次に触る人も必ず deno check を通すこと。
+function adminClient() {
+  return createClient(
+    Deno.env.get('SUPABASE_URL') ?? '',
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+  )
+}
+
 // 管理画面で追加指定されたチャンネルを読む。
 // 🚨 失敗しても既定の送信は止めない（DBが読めないだけで休暇の通知が消えてはいけない）
 async function fetchExtraChannels(event: string): Promise<string[]> {
   const eventKey = EVENT_KEY_MAP[event]
   if (!eventKey) return []
   try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-    )
+    const supabase = adminClient()
     const { data } = await supabase
       .from('notification_settings')
       .select('recipient')
@@ -108,7 +119,7 @@ serve(async (req) => {
   try {
     // applicantName / leaveTypeName / dateSummary は受理済み（確定した休暇）のときだけ本文に出す
     const {
-      event, approverName, approverRole, nextApproverName, nextApproverRole, targetChannel,
+      event, approverName, approverRole, approverActsAs, nextApproverName, nextApproverRole, targetChannel,
       applicantName, leaveTypeName, dateSummary,
     } = await req.json()
 
@@ -120,11 +131,26 @@ serve(async (req) => {
     }
     // 既定の飛び先 ＋ 管理画面で選ばれたチャンネル（重複は除く）。
     // 取消は既定の飛び先が無いので、チャンネルを選んでいなければ何も送らない
-    // 🚨 呼び出し側（画面）はいまも役職名を渡してくる。名前で判定せず、roles から立場（acts_as）を引いて渡す（2026-09-10 段4）
-    let approverPos = approverRole || ''
-    if (approverPos && !['leader', 'manager', 'accounting', 'president'].includes(approverPos)) {
-      const { data: r } = await supabase.from('roles').select('acts_as').eq('name', approverPos).maybeSingle()
+    // 宛先を決める「立場」。
+    // 🚨 **画面が approverActsAs で立場を渡してくるので、それをそのまま使う**（2026-09-11）。
+    //    approverRole は本文に出す役職名なので、宛先の判定には使わない。
+    // 🚨 名前から引き当てる道は**古い画面が開いたままのブラウザ用に残してある**だけ。
+    //    引き当てに失敗すると getFixedChannel が既定の 'leader' に落ちる＝**誤配なのに誰も気づけない**ので、
+    //    そのときは必ず log に出す（消してよいのは、この関数を呼ぶ画面が全部立場を渡すようになったと
+    //    確かめられたとき）。
+    const KNOWN_POS = ['leader', 'manager', 'accounting', 'president']
+    let approverPos = ''
+    if (approverActsAs && KNOWN_POS.includes(approverActsAs)) {
+      approverPos = approverActsAs
+    } else if (approverRole && KNOWN_POS.includes(approverRole)) {
+      approverPos = approverRole
+    } else if (approverRole) {
+      const { data: r, error: rErr } = await adminClient().from('roles').select('acts_as').eq('name', approverRole).maybeSingle()
       approverPos = (r as { acts_as?: string | null } | null)?.acts_as ?? ''
+      if (rErr || !approverPos) {
+        console.error('[send-leave-slack] 役職名から立場を引けませんでした（宛先が既定に落ちます）',
+          { event, approverRole, error: rErr?.message ?? null })
+      }
     }
     const fixedChannel = getFixedChannel(event, approverPos, targetChannel)
     const extraChannels = await fetchExtraChannels(event)
@@ -209,8 +235,11 @@ serve(async (req) => {
     })
 
   } catch (error) {
-    console.error('send-leave-slack error:', error)
-    return new Response(JSON.stringify({ error: error.message }), {
+    // 🚨 catch で受けたものは Error とは限らないので、そのまま .message を読まない
+    //    （読むと型が通らないうえ、文字列が投げられたときに落ちる）
+    const detail = error instanceof Error ? error.message : String(error)
+    console.error('send-leave-slack error:', detail)
+    return new Response(JSON.stringify({ error: detail }), {
       status: 500,
       headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' },
     })

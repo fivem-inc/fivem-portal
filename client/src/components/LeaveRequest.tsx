@@ -673,9 +673,16 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       // 🚨 直接UPDATEしない。profiles の直接更新はRLSで管理者のみに絞ってあるため、
       //    本人が自分の分を閉じるための RPC 経由にする（2026-08-10）
       await supabase.rpc('clear_own_leave_request_enabled');
-      // Slack通知（申請先の役職に応じてチャンネルを切り替え）
+      // 🚨 申請先の「立場」（マネージャー宛か、リーダー宛か）は**ここで1回だけ**出して、
+      //    Slackのチャンネル・サイト通知・メールの3つが**同じ値**を使う。
+      //    以前は Slack だけが役職名（role_title）を渡し、Edge Function 側で名前から
+      //    roles を引き当て直していた＝**同じことを2通りに判定**していて、引き当てに
+      //    失敗すると黙ってリーダーのチャンネルへ落ちた（2026-09-11 に一本化）。
+      const apprKey = embeddedRole(selectedApprover as EmbeddedRoleRow<{ acts_as?: string | null }> | undefined)?.acts_as === 'manager' ? 'manager' : 'leader';
+      // Slack通知（申請先の立場に応じてチャンネルを切り替え）
       if (selectedApprover && await shouldSend('leave:new_request', 'slack')) {
-        await sendLeaveSlack('new_request', selectedApprover.name, selectedApprover.role_title);
+        await sendLeaveSlack('new_request', selectedApprover.name, selectedApprover.role_title,
+          undefined, undefined, undefined, { approverActsAs: apprKey });
       }
       // サイト通知・メール（申請者 or 承認者）
       const vars = { 申請者名: profileName || user.email || '', 休暇種別: leaveType, 申請日数: String(selectedDates.length), リンク: 'https://fivem-portal.vercel.app/leave-approvals' };
@@ -685,7 +692,6 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       // 🚨 申請先は「その申請の相手」。役職によって leader / manager のどちらにもなりうるので
       // 両方＋approverキーに同じ人を渡す。approver を渡していなかったため、宛先設定が
       // 「申請先（承認者）」のときサイト通知が誰にも届いていなかった
-      const apprKey = embeddedRole(selectedApprover as EmbeddedRoleRow<{ acts_as?: string | null }> | undefined)?.acts_as === 'manager' ? 'manager' : 'leader';
       await dispatchSiteNotification('leave:new_request', vars, { applicant: user.id, [apprKey]: selectedApprover?.id, approver: selectedApprover?.id }, insertNotification, 'leave_request:pending_approval', newRequest?.id);
       await dispatchEmail('leave:new_request', vars, { applicant: applicantEmail, [apprKey]: leaderEmail, approver: leaderEmail });
       // TODO: 申請フォーム送信後の追加処理（例：奨励日との照合・連携）をここに追加
