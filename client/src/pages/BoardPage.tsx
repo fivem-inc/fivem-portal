@@ -3910,6 +3910,29 @@ const BoardPage: React.FC = () => {
     </div>
   );
 
+  // 連絡板の操作ボタン（検索・お知らせ送信・ヘルプ・通知設定）。
+  // 🚨 **定義はここ1か所だけ**。置き場所だけを画面幅で切り替える：
+  //    PC   … 右の見出し（横幅いっぱいなので、ボタンが増えても崩れない）
+  //    スマホ … 左の見出し（＝連絡板TOP。ここに無いと TOP から送信できなくなる。
+  //            スマホは2つの見出しが同時に出ないため、右へ移すと TOP から消える）
+  // 🚨 2026-09-10 実機指摘：PCではサイドバーの見出しが **280px 固定**で、
+  //    「通知設定」がそこを越えてはみ出し、右の見出しの背景に塗りつぶされて見えなくなっていた
+  //    （どちらも zIndex 50 で、後に描かれる右側が勝つ）。
+  //    書き写して2か所に置くと「片方だけ直す」事故になるので、必ずこの定数を使うこと。
+  const boardHeaderActions = (
+    <div style={{ display: 'flex', gap: 5, flexWrap: 'nowrap', flexShrink: 0 }}>
+      <button type="button" title="検索" onClick={() => { setShowSearch(s => !s); setSearchText(''); setSearchResults([]); if (view === 'search') navigate(-1); }}
+        style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '5px 7px', lineHeight: 1, flexShrink: 0 }}>🔍</button>
+      {canSendNotice && (
+        <button type="button" onClick={openCompose}
+          style={{ background: '#007bff', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, padding: '5px 10px', fontWeight: 'bold', whiteSpace: 'nowrap', flexShrink: 0 }}>＋お知らせ送信</button>
+      )}
+      <HelpLinkButton category="連絡板" compact borderColor={border} color={subColor} />
+      <button type="button" title="通知設定" onClick={() => navigate('/notification-settings')}
+        style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: isDark ? '#6b7280' : '#9ca3af', cursor: 'pointer', fontSize: 11, padding: '5px 8px', lineHeight: 1, flexShrink: 0, whiteSpace: 'nowrap' }}>通知設定</button>
+    </div>
+  );
+
   return (
     <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column', background: bg, overflow: 'hidden', paddingTop: 60, boxSizing: 'border-box' } as React.CSSProperties}>
       {sendError && (
@@ -3944,17 +3967,9 @@ const BoardPage: React.FC = () => {
         <div style={{ position: 'fixed', top: 'var(--topbar-height, 60px)' as string, left: 0, zIndex: 50, background: cardBg, width: isMobile ? '100%' : 280, boxSizing: 'border-box' }}>
           <div style={{ padding: '8px 12px', height: 56, boxSizing: 'border-box', borderBottom: `1px solid ${border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
             <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor, flexShrink: 0 }}>💬 連絡板</span>
-            <div style={{ display: 'flex', gap: 5, flexWrap: 'nowrap', flexShrink: 0 }}>
-              <button type="button" title="検索" onClick={() => { setShowSearch(s => !s); setSearchText(''); setSearchResults([]); if (view === 'search') navigate(-1); }}
-                style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 14, padding: '5px 7px', lineHeight: 1, flexShrink: 0 }}>🔍</button>
-              {canSendNotice && (
-                <button type="button" onClick={openCompose}
-                  style={{ background: '#007bff', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, padding: '5px 10px', fontWeight: 'bold', whiteSpace: 'nowrap', flexShrink: 0 }}>＋お知らせ送信</button>
-              )}
-              <HelpLinkButton category="連絡板" compact borderColor={border} color={subColor} />
-              <button type="button" title="通知設定" onClick={() => navigate('/notification-settings')}
-                style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: isDark ? '#6b7280' : '#9ca3af', cursor: 'pointer', fontSize: 11, padding: '5px 8px', lineHeight: 1, flexShrink: 0, whiteSpace: 'nowrap' }}>通知設定</button>
-            </div>
+            {/* 🚨 PC ではここにボタンを置かない（280px に収まらず、右の見出しに隠れる）。
+                   PC は右の見出しへ。スマホはここ＝連絡板TOP に置く（2026-09-10 ユーザー確定）。 */}
+            {isMobile && boardHeaderActions}
           </div>
           {showSearch && (
             <div style={{ padding: '0 14px 10px' }}>
@@ -3976,6 +3991,15 @@ const BoardPage: React.FC = () => {
             <button type="button" onClick={() => navigate(-1)}
               style={{ background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 22, padding: '0 6px', lineHeight: 1, fontWeight: 'bold' }}>←</button>
           )}
+          {/* 連絡板TOP へ戻る（2026-09-10 実機指摘・案B）。
+              🚨 ← は「ブラウザの戻る」なので、履歴が深いと連絡板の外へ出たり、同じ一覧に
+                 戻ったりして TOP に着けない。こちらは履歴に頼らず必ず TOP へ着く。
+              🚨 処理は既存の resetToTop（連絡板ボタンの再タップと同じ動き）を呼ぶだけにする。
+                 同じ行き先を2通りに書くと、片方だけ直す事故になる。 */}
+          {isMobile && (
+            <button type="button" onClick={resetToTop} title="連絡板TOP"
+              style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px', lineHeight: 1, flexShrink: 0, whiteSpace: 'nowrap' }}>💬 TOP</button>
+          )}
           {view === 'channel' && selectedChannel ? (
             <>
               <div style={{ width: 32, height: 32, borderRadius: selectedChannel.type === 'group' ? 8 : '50%', background: selectedChannel.type === 'group' ? '#6f42c1' : '#4a90d9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, flexShrink: 0 }}>
@@ -3988,12 +4012,16 @@ const BoardPage: React.FC = () => {
               <button type="button" onClick={openMemberModal} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12, padding: '4px 8px', flexShrink: 0 }}>👥 メンバー</button>
             </>
           ) : (
-            <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>
+            /* flex:1 … 右のボタン群を右端へ寄せるため（PCのみボタンが入る） */
+            <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor, flex: 1, minWidth: 0 }}>
               {view === 'inbox' && inboxDetailId ? '📨 受信メッセージ'
                 : view === 'outbox' && outboxDetailId ? '📤 送信メッセージ'
                 : viewTitle[view]}
             </span>
           )}
+          {/* 🚨 PC はここにボタンを置く（横幅いっぱいなので、増えても崩れない）。
+                 スマホは左の見出し＝連絡板TOP に出る（2026-09-10 ユーザー確定）。 */}
+          {!isMobile && boardHeaderActions}
         </div>
       )}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
