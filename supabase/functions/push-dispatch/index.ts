@@ -73,6 +73,11 @@ const EVENT_MAP: Record<string, { app: string; word: string; text: string; url: 
   //    付けないと「残業ページに着いただけで、何をすればよいか分からない」。
   //    プッシュは複数を1通にまとめるため依頼IDを持てないので、ベルを経由して特定する。
   "application_request:received": { app: "申請依頼", word: "新着", text: "申請の依頼が届いています", url: "/overtime?tab=history", bell: true },
+  // 申請依頼の「期限」リマインド（本人あて・朝9時の日次）。2026-09-11 追加。
+  // 🚨 個人名・依頼の中身は書かない（プッシュはロック画面に出る）。件数はベル側で読む。
+  // 🚨 bell: true。押すとベルが開いて該当の通知が光り、そこから残業ページへ進む
+  //    （依頼が1件のときはその依頼まで光る。複数だと一覧に着地する）。
+  "application_request:due":      { app: "申請依頼", word: "期限", text: "申請の期限が近い依頼があります", url: "/overtime?tab=history", bell: true },
   // 休暇申請（申請者の要対応）
   // ⚠️ /leave の既定タブは申請フォーム。tab=history を省くと白紙の入力画面に着地する
   "leave:rejected":          { app: "休暇申請", word: "差戻", text: "休暇申請が差し戻されました", url: "/leave?tab=history", bell: true },

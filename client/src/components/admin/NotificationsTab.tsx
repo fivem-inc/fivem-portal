@@ -129,6 +129,7 @@ const EVENT_GROUPS = [
       { key: 'reminder:scheduled',     label: '定期リマインド' },
       { key: 'reminder:unread',        label: '連絡板 締切未読リマインド' },
       { key: 'overtime:unreported',    label: '残業 実績未報告リマインド（本人）' },
+      { key: 'application_request:due', label: '申請依頼 期限リマインド（本人・前日と翌日の朝）' },
       { key: 'overtime:pending_review', label: '残業 受理まちリマインド（申請先の担当者・毎日）' },
       { key: 'overtime:pending_review_advance', label: '残業 受理まちリマインド（勤務日の前に1回だけ）' },
       { key: 'overtime:threshold',     label: '残業が目安を超えたお知らせ（本人・上長）' },
@@ -195,6 +196,7 @@ const PUSH_RECIPIENT_BY_EVENT: Record<string, string> = {
   'board:confirm_request':  'まだ確認していない受信者',
   'reminder:unread':        '締切のある連絡板の未読者',
   'overtime:unreported':    '実績が未報告の申請者本人',
+  'application_request:due': '申請がまだの依頼を受けている本人',
   'overtime:pending_review': '受理がまだの申請の、申請先の担当者',
   'overtime:pending_review_advance': '受理がまだの申請の、申請先の担当者',
   'reminder:scheduled':     'リマインドの送信対象者',
@@ -247,6 +249,7 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
   'reminder:scheduled':          ['{{タイトル}}', '{{本文}}'],
   'reminder:unread':             ['{{件名}}', '{{リンク}}'],
   'overtime:unreported':         ['{{件数}}', '{{日付}}', '{{リンク}}'],
+  'application_request:due':     ['{{件数}}', '{{内訳}}', '{{リンク}}'],
   'overtime:pending_review':     ['{{件数}}', '{{内訳}}', '{{リンク}}'],
   'overtime:pending_review_advance': ['{{件数}}', '{{内訳}}', '{{リンク}}'],
   'overtime:threshold':          ['{{対象者名}}', '{{期間}}', '{{残業時間}}', '{{リンク}}'],
@@ -1296,7 +1299,7 @@ const NotificationsTab: React.FC = () => {
 
                           {s.enabled && (
                             <div style={{ borderTop: `0.5px solid ${borderColor}`, paddingTop: 10 }}>
-                              {!event.key.startsWith('board:') && !event.key.startsWith('reminder:') && !['overtime:unreported', 'overtime:pending_review', 'overtime:pending_review_advance'].includes(event.key) && !(channel !== 'slack' && FIXED_RECIPIENT_NOTE_BY_EVENT[event.key]) && !(channel !== 'slack' && AUTO_RECIPIENT_EMAIL_SITE_EVENTS.includes(event.key)) && (
+                              {!event.key.startsWith('board:') && !event.key.startsWith('reminder:') && !['overtime:unreported', 'overtime:pending_review', 'overtime:pending_review_advance', 'application_request:due'].includes(event.key) && !(channel !== 'slack' && FIXED_RECIPIENT_NOTE_BY_EVENT[event.key]) && !(channel !== 'slack' && AUTO_RECIPIENT_EMAIL_SITE_EVENTS.includes(event.key)) && (
                                 <div style={{ fontSize: 12, color: subText, marginBottom: 4 }}>
                                   {channel === 'slack' ? '送信先チャンネル' : '宛先'}
                                 </div>
@@ -1317,7 +1320,7 @@ const NotificationsTab: React.FC = () => {
                                 }}>
                                   宛先は依頼された全マネージャー・社長など、申請内容に応じて自動的に決まります（この画面では選択できません）。
                                 </div>
-                              ) : event.key.startsWith('board:') || event.key.startsWith('reminder:') || ['overtime:unreported', 'overtime:pending_review', 'overtime:pending_review_advance'].includes(event.key) ? null : ROLE_GROUP_BROADCAST_EVENTS.includes(event.key) && channel !== 'slack' ? (
+                              ) : event.key.startsWith('board:') || event.key.startsWith('reminder:') || ['overtime:unreported', 'overtime:pending_review', 'overtime:pending_review_advance', 'application_request:due'].includes(event.key) ? null : ROLE_GROUP_BROADCAST_EVENTS.includes(event.key) && channel !== 'slack' ? (
                                 // 時間調整: 役職チェックボックス + グループ絞り込み
                                 (() => {
                                   const { roles, groupFilter, orgWideRoles } = parseRoleRecipient(s.recipient, allRoles);

@@ -1101,6 +1101,7 @@ const classifyNotif = (n: NotifLike) => {
   const isShiftAdjustDue       = n.source_type === 'leave:shift_adjust_due';         // 上長：シフト調整がまだの休暇（カレンダー着地・未調整で絞る）
   const isAppRequest           = n.source_type === 'application_request:received';   // 本人：上長からの申請の依頼
   const isAppRequestDismissed  = n.source_type === 'application_request:dismissed';  // 上長：相手が「対応しない」と回答した（結果のみ）
+  const isAppRequestDue        = n.source_type === 'application_request:due';        // 本人：申請の期限が近い／過ぎた（要対応）
   const isShiftPendingApproval = n.source_type === 'shift_report:pending_approval';  // レビュアー：要対応
   const isShiftPendingResubmit = n.source_type === 'shift_report:pending_resubmit';  // 申請者：再提出/取消待ち
   const isShiftResult          = n.source_type === 'shift_report';                   // 申請者：結果報告のみ
@@ -1196,6 +1197,14 @@ const classifyNotif = (n: NotifLike) => {
     //    ここでやることは無い（もう一度頼むなら依頼を作り直す）。
     if (isAppRequestDismissed) {
       return { path: n.reference_id ? `/leave-approvals?focus=${n.reference_id}` : '/leave-approvals', closeOnTap: true };
+    }
+    // 申請の期限が近い／過ぎた（本人あて・朝の催促）。
+    // 🚨 closeOnTap は false。申請するまで用が済まないので、ベルの行を消さない。
+    // 🚨 reference_id は依頼が1件のときだけ依頼ID、複数のときは日付（YYYY-MM-DD）が入る。
+    //    日付を focus に渡しても光る行が無いだけなので、**日付のときは付けない**。
+    if (isAppRequestDue) {
+      const isReqId = !!n.reference_id && !/^\d{4}-\d{2}-\d{2}$/.test(n.reference_id);
+      return { path: isReqId ? `/overtime?tab=history&focus=${n.reference_id}` : '/overtime?tab=history', closeOnTap: false };
     }
     if (isShiftAdjustDue) {
       const focus = n.reference_id && /^\d{4}-\d{2}-\d{2}$/.test(n.reference_id) ? `focus=${n.reference_id}&` : '';
