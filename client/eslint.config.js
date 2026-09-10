@@ -94,6 +94,8 @@ export default tseslint.config([
       'src/components/admin/NotificationsTab.tsx',
       'src/components/admin/OvertimeAdminTab.tsx',
       'src/components/admin/GroupsTab.tsx',
+      // 2026-09-10 追加（場所予約）。追加後に0件であることを実測して足している
+      'src/pages/RoomBookingPage.tsx',
     ],
     rules: {
       'no-restricted-syntax': ['error', {

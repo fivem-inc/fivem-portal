@@ -28,6 +28,14 @@ import {
   type CustomerField,
 } from '../lib/customerImport';
 import { downloadCSV } from '../utils';
+// 🚨 supabase の .update() / .delete() は、RLS（権限）で弾かれても error にならず
+//    「0件成功」で返る。戻り値の件数まで見ないと、更新できていなくても先へ進んでしまう。
+//    判定と文言は申請系と同じ lib/statusUpdate.ts に集約する（2026-09-10）。
+import { describeUpdate, describePartial } from '../lib/statusUpdate';
+// 🚨 役職は「名前」ではなく roles の行（id・属性）で扱う（2026-09-10・役職の属性化）。
+//    名前で判定すると、改名しただけで権限が壊れる（2026-09-09 に本番で発生）。
+import { useRoles } from '../hooks/useRoles';
+import { roleByName } from '../lib/roleAttrs';
 import {
   guessBookingMapping, splitPasted, buildBookings, BOOKING_FIELD_LABEL,
   BOOKING_REQUIRED, BULK_MAX_ROWS, parseScheduleLines, sourceLines, type BookingField,
@@ -395,7 +403,10 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
   const [bookingFor, setBookingFor] = useState<Customer | null>(null);
   // 基本設定を使える役職（管理者が ⚙️設定 で決める）。
   // null = まだ読めていない／設定が無い → これまでどおり「パート以外は可」で動かす
-  const [basicRoles, setBasicRoles] = useState<string[] | null>(null);
+  // 基本設定を使える役職。🚨 役職名ではなく role_id の一覧で持つ（改名に耐えるため）
+  const [basicRoleIds, setBasicRoleIds] = useState<string[] | null>(null);
+  // 役職の一覧（属性つき）。1回だけ読んで全画面で共有する（hooks/useRoles.ts）
+  const roles = useRoles();
   // 年度更新は「社員まで」（パートは不可・2026-08-29 ユーザー確定）。
   // ⚙️設定（マスタ管理＝管理者）とは別の入口にする。仕事の性質が違うため
   const [renewal, setRenewal] = useState(false);
@@ -441,7 +452,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
       supabase.from('room_lesson_categories').select('*').order('sort_order'),
       supabase.from('room_staff_categories').select('*'),
       supabase.from('room_purpose_durations').select('*'),
-      supabase.from('room_settings').select('value').eq('key', 'basic_settings_roles').maybeSingle(),
+      supabase.from('room_settings').select('value').eq('key', BASIC_SETTINGS_ROLE_IDS_KEY).maybeSingle(),
       supabase.from('room_purpose_details').select('*').order('sort_order'),
       supabase.from('room_attendance_options').select('*').order('sort_order'),
       supabase.from('room_purposes').select('*').order('sort_order'),
@@ -454,10 +465,12 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
       ? openRes.data.value.split(',').map((s: string) => s.trim()).filter(Boolean)
       : ['休み', 'キャンセル料']);
     // 設定が読めないとき（まだ作っていない等）は null のままにして、
-    // これまでどおり「パート以外は使える」で動かす。急に誰も使えなくならないように
-    setBasicRoles(setRes.data?.value
-      ? setRes.data.value.split(',').map((s: string) => s.trim()).filter(Boolean)
-      : null);
+    // これまでどおり「パート以外は使える」で動かす。急に誰も使えなくならないように。
+    // 🚨 空文字（＝全部外した）と、行が無い（＝未設定）を区別する。
+    //    空文字を「未設定」に丸めると、全部外したのに全員使える状態になる
+    setBasicRoleIds(setRes.data?.value === undefined || setRes.data?.value === null
+      ? null
+      : setRes.data.value.split(',').map((s: string) => s.trim()).filter(Boolean));
     if (cRes.error || fRes.error) {
       setLoadError('場所の情報を読み込めませんでした。時間をおいて開き直してください。');
       return null;
@@ -618,9 +631,18 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
     return s;
   }, [bookings, attendance, openStatuses]);
 
+  // 🚨 役職名ではなく role_id で照合する（改名で権限が壊れないように・2026-09-10）。
+  //    roleTitle は useAuth が返す「プレビュー込み」の値なので、
+  //    役職プレビュー（👁️ 確認）もそのまま効く。
+  // 🚨 役職一覧がまだ読めていないとき（roles.length === 0）は使える側に倒す。
+  //    設定が読めないとき（basicRoleIds === null）と同じ扱い＝
+  //    急に誰も使えなくならないようにするため。実際に書けるかは DB 側
+  //    （room_can_use_basic_settings）でも同じ設定を見ているので、ここは表示の話。
+  const myRoleId = roleByName(roles, roleTitle)?.id ?? null;
   const canRenew = admin
     || (employmentType !== '' && employmentType !== 'パート'
-        && (basicRoles === null || basicRoles.includes(roleTitle)));
+        && (basicRoleIds === null || roles.length === 0
+            || (myRoleId !== null && basicRoleIds.includes(myRoleId))));
 
   useEffect(() => {
     if (canRenew) { loadRenewPending(); loadMonthlyPending(); }
@@ -2297,11 +2319,15 @@ const BookingForm: React.FC<{
           return;
         }
       }
-      const undoMove = async () => {
-        if (movedFloor) {
-          await supabase.from('room_bookings')
-            .update({ floor_id: base!.floor_id }).eq('id', base!.id);
-        }
+      // 🚨 巻き戻しも失敗しうる。黙って諦めると「場所は元に戻しました」と出しながら
+      //    新しい場所に移ったままになる。戻せなかったことを文末に足せるようにする
+      const undoMove = async (): Promise<string> => {
+        if (!movedFloor) return '';
+        const res = await supabase.from('room_bookings')
+          .update({ floor_id: base!.floor_id }).eq('id', base!.id).select('id');
+        return describeUpdate(res, '場所の巻き戻し', 'missing')
+          ? '（🚨 場所を元に戻せませんでした。予約の場所をご確認ください）'
+          : '（場所は元に戻しました）';
       };
       const { data, error: err } = await supabase.rpc('room_update_booking', {
         p_id: base!.id, p_starts_at: s.toISOString(), p_ends_at: e.toISOString(),
@@ -2312,17 +2338,16 @@ const BookingForm: React.FC<{
       });
       const row = Array.isArray(data) ? data[0] : data;
       if (err) {
-        await undoMove();
+        const undone = await undoMove();
         setSaving(false);
-        setError('保存できませんでした。通信を確認してもう一度お試しください。');
+        setError('保存できませんでした。通信を確認してもう一度お試しください。' + undone);
         return;
       }
       if (!row?.ok) {
         // 🚨 移した先が埋まっていた等。場所を元に戻してから理由を出す
-        await undoMove();
+        const undone = await undoMove();
         setSaving(false);
-        setError((row?.reason ?? '保存できませんでした')
-          + (movedFloor ? '（場所は元に戻しました）' : ''));
+        setError((row?.reason ?? '保存できませんでした') + undone);
         setConflicts((row?.conflicts ?? []) as ConflictInfo[]);
         return;
       }
@@ -2336,8 +2361,14 @@ const BookingForm: React.FC<{
       // 🚨 確認中も RPC を通さず後から書く（room_update_booking に引数を足さない方針）。
       //    「今後すべて」でも他の回には広げない＝この回だけの印
       if (tentative !== !!base!.tentative) patch.tentative = tentative;
+      // 🚨 ここが0件でも RPC 側の変更は済んでいる＝**赤にしない**。
+      //    ただし「固定にしたのに付いていない」を黙らせないので、文末で断る
+      let markNg = '';
       if (Object.keys(patch).length > 0) {
-        await supabase.from('room_bookings').update(patch).eq('id', base!.id);
+        const res = await supabase.from('room_bookings').update(patch).eq('id', base!.id).select('id');
+        if (describeUpdate(res, '印の変更', 'missing')) {
+          markNg = '（🚨 固定・詳細・確認中の印は変えられませんでした）';
+        }
       }
 
       // 「今後すべて」（2026-09-02 実機指摘で追加。ローリング運用では
@@ -2356,6 +2387,7 @@ const BookingForm: React.FC<{
           .order('starts_at');
         let okCnt = 0;
         let custKept = 0;
+        let markSkipped = 0;   // 変更は通ったが、固定・詳細の印だけ付けられなかった回
         const ng: string[] = [];
         for (const sb of (sibs ?? []) as Booking[]) {
           const sd = localDate(sb.starts_at);
@@ -2366,7 +2398,14 @@ const BookingForm: React.FC<{
           //    断られたらこの回の場所は元に戻す
           const sbMoved = movedFloor && sb.floor_id !== floorId;
           if (sbMoved) {
-            await supabase.from('room_bookings').update({ floor_id: floorId }).eq('id', sb.id);
+            // 🚨 ここが0件のまま進むと、RPC は**古い場所**で重なりを見てしまい、
+            //    「変更しました」と言いながら場所だけ古いままの回が残る
+            const mvRes = await supabase.from('room_bookings')
+              .update({ floor_id: floorId }).eq('id', sb.id).select('id');
+            if (describeUpdate(mvRes, '場所の変更', 'missing')) {
+              ng.push(`${formatDateLabel(sd)}（場所を変えられませんでした）`);
+              continue;
+            }
           }
           // お客様も反映する。ただし**この回（変更前）と同じお客様だった回**にだけ
           // （空も「同じ」に含む＝空のまま作った枠の一括修正ができる・2026-09-03 実機指摘）。
@@ -2387,10 +2426,13 @@ const BookingForm: React.FC<{
           const ur = (Array.isArray(ud) ? ud[0] : ud) as { ok?: boolean; reason?: string } | null;
           if (uerr || !ur?.ok) {
             // 🚨 黙って欠けさせない。変えられなかった回は理由つきで知らせる
+            let undone = '';
             if (sbMoved) {
-              await supabase.from('room_bookings').update({ floor_id: sb.floor_id }).eq('id', sb.id);
+              const bk = await supabase.from('room_bookings')
+                .update({ floor_id: sb.floor_id }).eq('id', sb.id).select('id');
+              if (describeUpdate(bk, '場所の巻き戻し', 'missing')) undone = '・🚨 場所が戻せていません';
             }
-            ng.push(`${formatDateLabel(sd)}（${ur?.reason ?? '通信エラー'}）`);
+            ng.push(`${formatDateLabel(sd)}（${ur?.reason ?? '通信エラー'}${undone}）`);
             continue;
           }
           okCnt++;
@@ -2398,7 +2440,10 @@ const BookingForm: React.FC<{
           if (isFixed !== sb.is_fixed) sp.is_fixed = isFixed;
           if ((detail || null) !== (sb.detail ?? null)) sp.detail = detail || null;
           if (Object.keys(sp).length > 0) {
-            await supabase.from('room_bookings').update(sp).eq('id', sb.id);
+            // 🚨 回そのものの変更は済んでいるので ng には入れない（赤にしない）。
+            //    印が付かなかった回数だけ数えて、文末で断る
+            const spRes = await supabase.from('room_bookings').update(sp).eq('id', sb.id).select('id');
+            if (describeUpdate(spRes, '印の変更', 'missing')) markSkipped++;
           }
         }
         // マスター（繰り返しルール）も同じ内容に変える。
@@ -2407,24 +2452,31 @@ const BookingForm: React.FC<{
         //   🚨 **場所は 2026-09-04 から変えられる**ので、マスターにも反映する。
         //      でないと月次更新でこれから作る回だけ古い場所に戻ってしまう。
         //   お客様はマスターにも反映する＝2026-09-03 実機指摘：空のまま作った枠を直せるように）
-        await supabase.from('room_recurrences').update({
+        // 🚨 マスターが更新できていないのに「マスター含む」と言わない。
+        //    ここが0件のまま黙って進むと、月次更新がこれから作る回だけ古い内容に戻り、
+        //    しかも誰も気づけない（画面上は変更できたように見える）
+        const recRes = await supabase.from('room_recurrences').update({
           floor_id: floorId,
           start_time: startTime, end_time: endTime,
           purpose, detail: detail || null, staff_id: staffId || null,
           exclusive, is_fixed: isFixed,
           member_no: memberNo.trim() || null,
           customer_label: customerLabel.trim() || null,
-        }).eq('id', base!.recurrence_id);
+        }).eq('id', base!.recurrence_id).select('id');
+        const recNg = describeUpdate(recRes, '毎週の枠（マスター）の変更', 'missing') !== null;
         setSaving(false);
-        onSaved(`この回と今後の${okCnt}回（マスター含む）を変更しました`
+        onSaved(`この回と今後の${okCnt}回${recNg ? '' : '（マスター含む）'}を変更しました`
+          + (recNg ? '。🚨 ただし毎週の枠（マスター）は変えられませんでした（権限が不足しているか、すでに消されています）。このままだと来月以降に作られる回は前の内容のままになります。管理者にご連絡ください' : '')
           + (custKept > 0 ? `。${custKept}回は別のお客様なので、お名前は変えていません` : '')
+          + (markSkipped > 0 ? `。${markSkipped}回は固定・詳細の印を変えられませんでした` : '')
+          + markNg
           + (ng.length > 0
             ? `。${ng.length}回は変えられませんでした：${ng.slice(0, 2).join('、')}${ng.length > 2 ? ' …' : ''}`
             : ''));
         return;
       }
 
-      onSaved('予約を変更しました');
+      onSaved('予約を変更しました' + markNg);
       return;
     }
 
@@ -2498,9 +2550,18 @@ const BookingForm: React.FC<{
         // 1件目（＝今開いている日）が入らないのは入力の問題なので、その場で止めて理由を見せる。
         // 先に作った繰り返しの親は、予約が1件も無い状態で残ると迷子になるので消しておく
         if (d === date) {
-          if (recurrenceId) await supabase.from('room_recurrences').delete().eq('id', recurrenceId);
+          // 🚨 迷子の親を消せたかまで見る。消せていないのに黙って戻ると、
+          //    予約が1件も無い毎週の枠が残り、画面からは触る入口が無い
+          let orphan = '';
+          if (recurrenceId) {
+            const delRes = await supabase.from('room_recurrences')
+              .delete().eq('id', recurrenceId).select('id');
+            if (describeUpdate(delRes, '毎週の枠の取り消し', 'missing')) {
+              orphan = '（🚨 予約の無い毎週の枠が残りました。管理者にご連絡ください）';
+            }
+          }
           setSaving(false);
-          setError(row?.reason ?? '保存できませんでした');
+          setError((row?.reason ?? '保存できませんでした') + orphan);
           setConflicts((row?.conflicts ?? []) as ConflictInfo[]);
           return;
         }
@@ -2512,28 +2573,42 @@ const BookingForm: React.FC<{
     }
     // 詳細も、作ったあとにまとめて書く（RPCには引数を足さない方針のため）。
     // 🚨 繰り返しのときは全部の回に付ける。1回目だけ付くと一覧で食い違う
+    // 🚨 予約そのものは作れているので、ここの失敗は赤にしない（describePartial で断る）。
+    //    ただし「詳細が付いていない／固定になっていない」を黙って通さない。
+    //    .in() は一部だけ通ることがあるので、件数が createdIds と一致するかまで見る
+    const markMissing: string[] = [];
+    const markAll = async (
+      table: 'room_bookings' | 'room_recurrences',
+      patch: Record<string, unknown>, ids: string[], label: string,
+    ) => {
+      const res = table === 'room_bookings'
+        ? await supabase.from(table).update(patch).in('id', ids).select('id')
+        : await supabase.from(table).update(patch).eq('id', ids[0]).select('id');
+      if (res.error || (res.data?.length ?? 0) !== ids.length) markMissing.push(label);
+    };
     if (detail && createdIds.length > 0) {
-      await supabase.from('room_bookings').update({ detail }).in('id', createdIds);
+      await markAll('room_bookings', { detail }, createdIds, '詳細');
     }
     // 固定の枠なら、作った予約にまとめて印を付ける。
     // 🚨 1件ずつ付けずに1回でまとめる。件数が多いと通信が増えて途中で切れやすい
     if (isFixed && createdIds.length > 0) {
-      await supabase.from('room_bookings').update({ is_fixed: true }).in('id', createdIds);
+      await markAll('room_bookings', { is_fixed: true }, createdIds, '固定の印');
       if (recurrenceId) {
-        await supabase.from('room_recurrences').update({ is_fixed: true }).eq('id', recurrenceId);
+        await markAll('room_recurrences', { is_fixed: true }, [recurrenceId], '毎週の枠の固定の印');
       }
     }
     // 確認中の印も、作った予約にまとめて付ける（2026-09-04）。
     // 🚨 繰り返しのルール（room_recurrences）には**付けない**。回ごとの印なので、
     //    月次更新でこれから作る回は常に「確定」で始まる
     if (tentative && createdIds.length > 0) {
-      await supabase.from('room_bookings').update({ tentative: true }).in('id', createdIds);
+      await markAll('room_bookings', { tentative: true }, createdIds, '確認中の印');
     }
     setSaving(false);
     // 🚨 入らなかった回を黙って捨てない。「全部入った」と誤解させないため必ず件数を出す
-    onSaved(skipped.length
+    onSaved((skipped.length
       ? `${made}件を予約しました。すでに埋まっていたため入れられなかった日：${skipped.join('、')}`
-      : (made > 1 ? `${made}件を予約しました` : '予約しました'));
+      : (made > 1 ? `${made}件を予約しました` : '予約しました'))
+      + (markMissing.length ? `。🚨 ${markMissing.join('・')}は付けられませんでした。予約の内容をご確認ください` : ''));
   };
 
   const label: React.CSSProperties = { fontSize: 12.5, fontWeight: 700, color: textMid, display: 'block', marginBottom: 4 };
@@ -4684,11 +4759,18 @@ const BookingDetail: React.FC<{
         .eq('recurrence_id', b.recurrence_id).gte('starts_at', b.starts_at);
       if (sib?.length) ids = sib.map(x => x.id);
     }
-    await supabase.from('room_waitlist')
+    // 🚨 件数0は**正常**（その回にキャンセル待ちが1人もいないのが普通）。
+    //    ここで0件を失敗にすると、ほとんどの削除が止まってしまう。error だけを見る。
+    //    🚨 赤にもしない（予約の削除自体は成立している。上のコメントの「二重の網」のとおり）
+    const wl = await supabase.from('room_waitlist')
       .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-      .eq('status', 'waiting').in('booking_id', ids);
+      .eq('status', 'waiting').in('booking_id', ids).select('id');
     setBusy(false);
-    onChanged(scope === 'future' && repeating ? '今後の分をまとめて削除しました' : '予約を削除しました');
+    const bulk = scope === 'future' && repeating;
+    onChanged(wl.error
+      ? describePartial(bulk ? '今後の分の削除' : '予約の削除',
+        'この回に付いていたキャンセル待ちは取り消せませんでした（一覧の「対象の回は取り消されています」から取り消せます）')
+      : (bulk ? '今後の分をまとめて削除しました' : '予約を削除しました'));
   };
 
   const row = (k: string, v: React.ReactNode) => (
@@ -5984,13 +6066,19 @@ const BulkBookingPanel: React.FC<{
       setProgress(i + 1);
     }
     // 固定の印はまとめて付ける（1件ずつ書くと通信が増えて途中で切れやすい）
+    // 🚨 予約自体は入っているので赤にしない。ただし「固定にしたのに付いていない」は黙らせない
+    let fixedNg = '';
     if (fixedIds.length > 0) {
-      await supabase.from('room_bookings').update({ is_fixed: true }).in('id', fixedIds);
+      const fx = await supabase.from('room_bookings')
+        .update({ is_fixed: true }).in('id', fixedIds).select('id');
+      if (fx.error || (fx.data?.length ?? 0) !== fixedIds.length) {
+        fixedNg = '。🚨 固定の印は付けられませんでした（予約は入っています）';
+      }
     }
     setRunning(false); setMade(count); setFailed(ng);
-    await onDone(ng.length === 0
+    await onDone((ng.length === 0
       ? `${count}件の予約を入れました`
-      : `${count}件を入れました（${ng.length}件は入りませんでした）`);
+      : `${count}件を入れました（${ng.length}件は入りませんでした）`) + fixedNg);
   };
 
   return (
@@ -6453,12 +6541,15 @@ const WaitlistSettings: React.FC<{
     const a = list[idx], b = list[to];
     const [pa, pb] = [a.position, b.position];
     const now = new Date().toISOString();
+    // 🚨 error だけでは足りない（RLSで弾かれると「0件成功」で返る）。件数まで見る。
+    //    片方だけ通ると順番が壊れるので、どちらかが0件なら読み直して知らせる
     const r1 = await supabase.from('room_waitlist')
-      .update({ position: pb === pa ? pa + dir : pb, updated_at: now }).eq('id', a.id);
+      .update({ position: pb === pa ? pa + dir : pb, updated_at: now }).eq('id', a.id).select('id');
     const r2 = await supabase.from('room_waitlist')
-      .update({ position: pa, updated_at: now }).eq('id', b.id);
+      .update({ position: pa, updated_at: now }).eq('id', b.id).select('id');
     setBusy('');
-    if (r1.error || r2.error) { setError('順番を変えられませんでした。'); return; }
+    const swapNg = describeUpdate(r1, '並び替え', 'missing') ?? describeUpdate(r2, '並び替え', 'missing');
+    if (swapNg) { setError(swapNg); await load(); return; }
     await load();
   };
 
@@ -6467,11 +6558,12 @@ const WaitlistSettings: React.FC<{
     if (idx <= 0) return;
     setBusy(list[idx].id);
     const minPos = Math.min(...list.map(x => x.position));
-    const { error: err } = await supabase.from('room_waitlist')
+    const topRes = await supabase.from('room_waitlist')
       .update({ position: minPos - 1, updated_at: new Date().toISOString() })
-      .eq('id', list[idx].id);
+      .eq('id', list[idx].id).select('id');
     setBusy('');
-    if (err) { setError('順番を変えられませんでした。'); return; }
+    const topNg = describeUpdate(topRes, '並び替え', 'missing');
+    if (topNg) { setError(topNg); await load(); return; }
     await load();
   };
 
@@ -8064,7 +8156,10 @@ const StaffSettings: React.FC<{
    * 🚨 サーバーの理由は握りつぶさず、そのまま添える（2026-09-04 の教訓）。
    *    「同じ名前」の案内は、実際に重複（23505）で弾かれたときだけ出す
    */
-  const run = async (fn: () => Promise<{ error: unknown } | void>, msg: string) => {
+  // 🚨 error だけ見ていると、RLS で弾かれた「0件成功」を保存できたことにしてしまう。
+  //    .select(...) を付けて返してきたものは件数まで見る
+  //    （付けずに返すもの＝配列でないものは、今までどおり error だけを見る）。
+  const run = async (fn: () => Promise<{ error: unknown; data?: unknown[] | null } | void>, msg: string) => {
     setBusy(true); setError('');
     try {
       const r = await fn();
@@ -8073,6 +8168,10 @@ const StaffSettings: React.FC<{
         setError(e.code === '23505'
           ? '保存できませんでした。同じ名前がすでに登録されています。'
           : `保存できませんでした：${e.message ?? '通信を確認してもう一度お試しください。'}`);
+        setBusy(false); return;
+      }
+      if (r && 'data' in r && Array.isArray(r.data) && r.data.length === 0) {
+        setError('保存できませんでした（権限が不足しているか、すでに消されています）。管理者にご確認ください。');
         setBusy(false); return;
       }
       await onChanged(msg);
@@ -8108,16 +8207,24 @@ const StaffSettings: React.FC<{
     run(async () => {
       const r = await supabase.from('room_staff')
         .update({ name: nm, kana: kn }).eq('id', s.id).select('id');
-      if (r.error) return r;
+      // 🚨 件数まで見る。0件（RLSで弾かれた）のまま先へ進むと、
+      //    名前は変わっていないのに「保存しました」が出る
+      if (r.error || !r.data?.length) return { error: r.error, data: [] };
+      // 🚨 room_staff_categories には **id 列が無い**（鍵は staff_id と category_id の組）。
+      //    件数を見るための .select('id') は「列が無い」エラーになるので staff_id を使う。
+      // 🚨 一部だけ通ることがあるので、件数が一致しないときも失敗として返す
+      //    （data を空にして返す＝run が「保存できませんでした」を出す）
       if (added.length > 0) {
         const ins = await supabase.from('room_staff_categories')
-          .insert(added.map(category_id => ({ staff_id: s.id, category_id })));
-        if (ins.error) return ins;
+          .insert(added.map(category_id => ({ staff_id: s.id, category_id })))
+          .select('staff_id');
+        if (ins.error || (ins.data?.length ?? 0) !== added.length) return { error: ins.error, data: [] };
       }
       if (removed.length > 0) {
         const del = await supabase.from('room_staff_categories')
-          .delete().eq('staff_id', s.id).in('category_id', removed);
-        if (del.error) return del;
+          .delete().eq('staff_id', s.id).in('category_id', removed)
+          .select('staff_id');
+        if (del.error || (del.data?.length ?? 0) !== removed.length) return { error: del.error, data: [] };
       }
       setEditStaff(null);
     }, `${nm} を保存しました`);
@@ -8142,8 +8249,8 @@ const StaffSettings: React.FC<{
               // 🚨 ひらがなで持つ（打たれたのがカタカナでも直して入れる）
               kana: toHiragana(newStaffKana.trim()) || null,
               sort_order: staff.length + 1,
-            });
-            if (!r.error) { setNewStaffName(''); setNewStaffKana(''); }
+            }).select('id');
+            if (!r.error && r.data?.length) { setNewStaffName(''); setNewStaffKana(''); }
             return r;
           }, 'スタッフを追加しました')}
           style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 13.5, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', opacity: (busy || !newStaffName.trim()) ? .5 : 1 }}>
@@ -8191,7 +8298,7 @@ const StaffSettings: React.FC<{
             )}
             <button disabled={busy}
               onClick={() => run(async () => await supabase.from('room_staff')
-                .update({ active: !s.active }).eq('id', s.id),
+                .update({ active: !s.active }).eq('id', s.id).select('id'),
                 s.active ? `${s.name} を非表示にしました` : `${s.name} を表示に戻しました`)}
               style={{ ...smallBtn(false), marginLeft: 'auto' }}>
               {s.active ? '非表示にする' : '表示に戻す'}
@@ -9591,10 +9698,12 @@ const PlaceSettings: React.FC<{
     if (!hideAsk) return;
     const { kind, id, name } = hideAsk;
     setHideAsk(null);
-    await run(async () => await supabase
+    // 🚨 クエリを名前付きに出しておく（await の式に直接書くと、
+    //    「戻り値を受けない update」を止める lint に形として引っかかるため）
+    const hide = async () => await supabase
       .from(kind === 'campus' ? 'room_campuses' : 'room_floors')
-      .update({ active: false }).eq('id', id).select('id'),
-      `${name} を隠しました`);
+      .update({ active: false }).eq('id', id).select('id');
+    await run(hide, `${name} を隠しました`);
   };
 
   /** 並び替え。🚨 隣と sort_order を入れ替えるだけ（番号を詰め直さない） */
@@ -9603,10 +9712,14 @@ const PlaceSettings: React.FC<{
     if (!a || !b2) return;
     setBusy(true); setError('');
     const table = kind === 'campus' ? 'room_campuses' : 'room_floors';
-    await supabase.from(table).update({ sort_order: b2.sort_order }).eq('id', a.id);
-    await supabase.from(table).update({ sort_order: a.sort_order }).eq('id', b2.id);
+    // 🚨 件数まで見る。片方だけ通ると並びが壊れるので、失敗したら読み直して知らせる
+    //    （読み直せば、もう一度押して直せる）
+    const s1 = await supabase.from(table).update({ sort_order: b2.sort_order }).eq('id', a.id).select('id');
+    const s2 = await supabase.from(table).update({ sort_order: a.sort_order }).eq('id', b2.id).select('id');
     setBusy(false);
+    const moveNg = describeUpdate(s1, '並び替え', 'missing') ?? describeUpdate(s2, '並び替え', 'missing');
     await load();
+    if (moveNg) { setError(moveNg); return; }
     await onChanged('並び順を変えました');
   };
 
@@ -9812,12 +9925,18 @@ const SettingsPanel: React.FC<{
   });
 
   /** 失敗しても画面を壊さず、理由だけ出す小さなラッパ */
-  const run = async (fn: () => Promise<{ error: unknown } | void>, msg: string) => {
+  // 🚨 error だけ見ていると、RLS で弾かれた「0件成功」を保存できたことにしてしまう。
+  //    .select(...) を付けて返してきたものは件数まで見る
+  const run = async (fn: () => Promise<{ error: unknown; data?: unknown[] | null } | void>, msg: string) => {
     setBusy(true); setError('');
     try {
       const r = await fn();
       if (r && 'error' in r && r.error) {
         setError('保存できませんでした。同じ名前がすでに登録されていないか確認してください。');
+        setBusy(false); return;
+      }
+      if (r && 'data' in r && Array.isArray(r.data) && r.data.length === 0) {
+        setError('保存できませんでした（権限が不足しているか、すでに消されています）。管理者にご確認ください。');
         setBusy(false); return;
       }
       await onChanged(msg);
@@ -9855,8 +9974,8 @@ const SettingsPanel: React.FC<{
                 const r = await supabase.from('room_lesson_categories').insert({
                   code: newCatCode.trim(), description: newCatDesc.trim(),
                   sort_order: categories.length + 1,
-                });
-                if (!r.error) { setNewCatCode(''); setNewCatDesc(''); }
+                }).select('id');
+                if (!r.error && r.data?.length) { setNewCatCode(''); setNewCatDesc(''); }
                 return r;
               }, '区分を追加しました')}
               style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: accent, color: isDark ? '#1d2a24' : '#fff', fontSize: 13.5, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', opacity: (busy || !newCatCode.trim()) ? .5 : 1 }}>
@@ -9875,12 +9994,13 @@ const SettingsPanel: React.FC<{
                   onBlur={e => {
                     if (e.target.value === c.description) return;
                     run(async () => await supabase.from('room_lesson_categories')
-                      .update({ description: e.target.value }).eq('id', c.id), `${c.code} の内容を直しました`);
+                      .update({ description: e.target.value }).eq('id', c.id).select('id'),
+                      `${c.code} の内容を直しました`);
                   }}
                   style={{ ...input, flex: 1, resize: 'vertical', fontFamily: 'inherit', fontSize: 13 }} />
                 <button disabled={busy}
                   onClick={() => run(async () => await supabase.from('room_lesson_categories')
-                    .update({ active: !c.active }).eq('id', c.id),
+                    .update({ active: !c.active }).eq('id', c.id).select('id'),
                     c.active ? `${c.code} を非表示にしました` : `${c.code} を表示に戻しました`)}
                   style={smallBtn(false)}>{c.active ? '非表示' : '表示'}</button>
               </div>
@@ -9934,13 +10054,19 @@ const SettingsPanel: React.FC<{
 //   🚨 管理者は設定に関わらず常に使える。自分を締め出せてしまうと、
 //      設定を戻す手段が無くなる。
 // ============================================================
-const BASIC_SETTINGS_ROLES_KEY = 'basic_settings_roles';
+// 🚨 役職名ではなく role_id の一覧で持つ（2026-09-10）。
+//    名前で持つと、役職を改名しただけで（rename_role は room_settings を触らないため）
+//    その役職の人が黙って基本設定を使えなくなる。
+//    旧キー 'basic_settings_roles' の行は、戻せるように残してある（誰も読まない）。
+const BASIC_SETTINGS_ROLE_IDS_KEY = 'basic_settings_role_ids';
 
 const BasicSettingsRoles: React.FC<{
   isDark: boolean; onChanged: (msg: string) => Promise<void>;
 }> = ({ isDark, onChanged }) => {
-  const [roles, setRoles] = useState<{ id: string; name: string }[]>([]);
-  const [allowed, setAllowed] = useState<string[]>([]);
+  // 🚨 役職の一覧は hooks/useRoles.ts から受け取る（画面ごとに読み直さない）。
+  //    id・is_fixed まで来るので、「管理者」を名前で判定しなくてよくなる
+  const roles = useRoles();
+  const [allowed, setAllowed] = useState<string[]>([]);   // role_id の一覧
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -9951,32 +10077,36 @@ const BasicSettingsRoles: React.FC<{
 
   useEffect(() => {
     (async () => {
-      const [rRes, sRes] = await Promise.all([
-        supabase.from('roles').select('id, name').order('sort_order'),
-        supabase.from('room_settings').select('value').eq('key', BASIC_SETTINGS_ROLES_KEY).maybeSingle(),
-      ]);
-      if (rRes.error) {
-        setError('役職の一覧を読み込めませんでした。開き直してください。');
+      const sRes = await supabase.from('room_settings')
+        .select('value').eq('key', BASIC_SETTINGS_ROLE_IDS_KEY).maybeSingle();
+      if (sRes.error) {
+        setError('設定を読み込めませんでした。開き直してください。');
         setLoading(false); return;
       }
-      setRoles((rRes.data ?? []) as { id: string; name: string }[]);
       setAllowed((sRes.data?.value ?? '').split(',').map((s: string) => s.trim()).filter(Boolean));
       setLoading(false);
     })();
   }, []);
 
-  const toggle = async (name: string) => {
-    const next = allowed.includes(name)
-      ? allowed.filter(n => n !== name)
-      : [...allowed, name];
+  const toggle = async (id: string) => {
+    const picked = allowed.includes(id)
+      ? allowed.filter(x => x !== id)
+      : [...allowed, id];
+    // 🚨 常に使える役職（管理者＝is_fixed）の id は必ず残す。
+    //    外れると、設定を戻す手段が無くなる
+    const next = [...new Set([...picked, ...roles.filter(r => r.is_fixed).map(r => r.id)])];
     setBusy(true); setError('');
     const { data: me } = await supabase.auth.getUser();
-    const { error: err } = await supabase.from('room_settings').upsert({
-      key: BASIC_SETTINGS_ROLES_KEY, value: next.join(','),
+    // 🚨 upsert も RLS で弾かれると「0件成功」で返る。件数まで見る
+    const res = await supabase.from('room_settings').upsert({
+      key: BASIC_SETTINGS_ROLE_IDS_KEY, value: next.join(','),
       updated_at: new Date().toISOString(), updated_by: me.user?.id ?? null,
-    }, { onConflict: 'key' });
+    }, { onConflict: 'key' }).select('key');
     setBusy(false);
-    if (err) { setError('変えられませんでした。通信を確認してもう一度お試しください。'); return; }
+    if (res.error || !res.data?.length) {
+      setError('変えられませんでした（権限が不足しているか、通信に失敗しました）。もう一度お試しください。');
+      return;
+    }
     setAllowed(next);
     await onChanged('基本設定を使える役職を変えました');
   };
@@ -9987,7 +10117,9 @@ const BasicSettingsRoles: React.FC<{
         <b>基本設定</b>（年度更新・キャンセル待ち・お客様・予約の一括入力・スタッフ・用途詳細）を
         使える役職を決めます。
         <br />
-        🚨 <b>パートは、この設定に関わらず使えません。</b>
+        🚨 <b>雇用形態が「パート」の人は、ここでの設定に関わらず使えません。</b>
+        （役職の「パート」とは別で、<b>雇用形態</b>で決まります。役職がパート以外でも、
+        雇用形態がパートの人は使えません）
         <br />
         🚨 <b>管理者は、この設定に関わらず常に使えます。</b>
         全部外しても設定に戻れなくなることはありません。
@@ -9997,24 +10129,24 @@ const BasicSettingsRoles: React.FC<{
           {error}
         </div>
       )}
-      {loading ? (
+      {loading || roles.length === 0 ? (
         <p style={{ fontSize: 13.5, color: textMid }}>読み込んでいます...</p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
           {roles.map(r => {
-            const fixed = r.name === 'パート' || r.name === '管理者';
-            const on = r.name === '管理者' ? true : (r.name === 'パート' ? false : allowed.includes(r.name));
+            // 🚨 役職名で判定しない（2026-09-10）。「管理者」は roles.is_fixed で分かる。
+            //    役職を改名しても、新しい役職を足しても、この画面は直さなくて済む
+            const fixed = r.is_fixed;
+            const on = fixed || allowed.includes(r.id);
             return (
               <label key={r.id}
                 style={{ display: 'flex', gap: 9, alignItems: 'center', padding: '9px 12px', borderRadius: 8, border: `1px solid ${on && !fixed ? accent : line}`, cursor: fixed ? 'default' : 'pointer', opacity: fixed ? .65 : 1 }}>
                 <input type="checkbox" checked={on} disabled={fixed || busy}
-                  onChange={() => !fixed && toggle(r.name)}
+                  onChange={() => !fixed && toggle(r.id)}
                   style={{ width: 17, height: 17 }} />
                 <span style={{ fontSize: 13.5, fontWeight: on ? 700 : 400 }}>{r.name}</span>
                 {fixed && (
-                  <span style={{ fontSize: 12, color: textMid, marginLeft: 'auto' }}>
-                    {r.name === 'パート' ? '常に使えません' : '常に使えます'}
-                  </span>
+                  <span style={{ fontSize: 12, color: textMid, marginLeft: 'auto' }}>常に使えます</span>
                 )}
               </label>
             );
