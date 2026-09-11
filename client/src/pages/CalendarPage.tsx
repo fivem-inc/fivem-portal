@@ -7,6 +7,7 @@ import type { EmbeddedRoleRow } from '../lib/roleAttrs';
 import { scrollToFirstError, ERROR_BORDER, errorBg } from '../lib/formHighlight';
 import { describeUpdate } from '../lib/statusUpdate';
 import { useDarkMode } from '../hooks/useDarkMode';
+import { actedAtLabel } from '../lib/actedAt';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import {
   absenceLabel, absenceColor, absenceEmoji, formatSegments, joinSegmentLocations, parseSegments, hhmm,
@@ -2258,7 +2259,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
                         {shiftTarget && shiftSt !== 'pending' && ev.shift_adjusted_at && (
                           <span style={{ fontSize: 10.5, color: subColor, whiteSpace: 'nowrap' }}>
                             {ev.shift_adjusted_by_name ? `${ev.shift_adjusted_by_name}・` : ''}
-                            {new Date(ev.shift_adjusted_at).toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' })}
+                            {actedAtLabel(ev.shift_adjusted_at)}
                           </span>
                         )}
                       </div>

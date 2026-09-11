@@ -9,6 +9,7 @@ import { insertNotification, formatLeaveDateSummary } from '../lib/notifications
 import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatchEmail, dispatchSiteNotification, getUserEmail, resolveRoleRecipients } from '../lib/notificationDispatch';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
+import { actedAtLabel } from '../lib/actedAt';
 import type { AuthUser, AdminLeaveRequest } from '../types';
 
 interface Props {
@@ -57,16 +58,13 @@ interface Approver {
 }
 
 // ステータスラベル
-// 受理した日を「（9/10）」の形で添える。2026-09-11 より前の申請は日時を持たないので**何も出さない**。
-// 🚨 timestamptz なので、必ず日本時間に直してから日付を取り出す。
-//    toISOString().slice(0,10) はUTCで切るので、**朝9時より前に受理すると前日になる**
-//    （このリポジトリで何度も踏んでいる罠。実測で確認済み）。
-// 🚨 「不明」などと書かない。持っていない日付を作らない。
+// 受理した日時を「（2026/9/10 14:30）」の形で添える。
+// 2026-09-11 より前の申請は日時を持たないので**何も出さない**（「不明」とは書かない）。
+// 🚨 書式は lib/actedAt の1か所に集約した（シフト調整の記録と同じ見え方にするため）。
+//    画面ごとに違う書き方にしない。
 function approvedOnLabel(iso?: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  return `（${d.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' })}）`;
+  const label = actedAtLabel(iso);
+  return label ? `（${label}）` : '';
 }
 
 const STATUS_LABEL: Record<string, string> = {
