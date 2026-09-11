@@ -129,8 +129,6 @@ serve(async (req) => {
         headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' },
       })
     }
-    // 既定の飛び先 ＋ 管理画面で選ばれたチャンネル（重複は除く）。
-    // 取消は既定の飛び先が無いので、チャンネルを選んでいなければ何も送らない
     // 宛先を決める「立場」。
     // 🚨 **画面が approverActsAs で立場を渡してくるので、それをそのまま使う**（2026-09-11）。
     //    approverRole は本文に出す役職名なので、宛先の判定には使わない。
@@ -152,6 +150,8 @@ serve(async (req) => {
           { event, approverRole, error: rErr?.message ?? null })
       }
     }
+    // 既定の飛び先 ＋ 管理画面で選ばれたチャンネル（重複は除く）。
+    // 取消は既定の飛び先が無いので、チャンネルを選んでいなければ何も送らない
     const fixedChannel = getFixedChannel(event, approverPos, targetChannel)
     const extraChannels = await fetchExtraChannels(event)
     const targetChannels = [...new Set([fixedChannel, ...extraChannels].filter(Boolean) as string[])]
@@ -238,7 +238,7 @@ serve(async (req) => {
     // 🚨 catch で受けたものは Error とは限らないので、そのまま .message を読まない
     //    （読むと型が通らないうえ、文字列が投げられたときに落ちる）
     const detail = error instanceof Error ? error.message : String(error)
-    console.error('send-leave-slack error:', detail)
+    console.error('send-leave-slack error:', error) // 🚨 log には元のまま渡す（スタックが残る）
     return new Response(JSON.stringify({ error: detail }), {
       status: 500,
       headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' },

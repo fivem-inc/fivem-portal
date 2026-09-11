@@ -469,8 +469,12 @@ serve(async (req) => {
       { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
     )
   } catch (e) {
+    // 🚨 catch で受けたものは Error とは限らないので、そのまま .message を読まない
+    //    Error 以外が投げられると .message は undefined になり、JSON から欄ごと消えて
+    //    **理由が分からなくなる**（null や undefined が投げられたときは、この行自体で落ちる）。
+    const detail = e instanceof Error ? e.message : String(e)
     return new Response(
-      JSON.stringify({ success: false, error: e.message }),
+      JSON.stringify({ success: false, error: detail }),
       { status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
     )
   }

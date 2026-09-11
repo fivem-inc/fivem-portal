@@ -101,8 +101,12 @@ serve(async (req) => {
     })
 
   } catch (error) {
-    console.error('send-purchase-slack error:', error)
-    return new Response(JSON.stringify({ error: error.message }), {
+    // 🚨 catch で受けたものは Error とは限らないので、そのまま .message を読まない
+    //    Error 以外が投げられると .message は undefined になり、JSON から欄ごと消えて
+    //    **理由が分からなくなる**（null や undefined が投げられたときは、この行自体で落ちる）。
+    const detail = error instanceof Error ? error.message : String(error)
+    console.error('send-purchase-slack error:', error) // 🚨 log には元のまま渡す（スタックが残る）
+    return new Response(JSON.stringify({ error: detail }), {
       status: 500,
       headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' },
     })
