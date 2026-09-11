@@ -66,6 +66,7 @@ import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorag
 import type { AuthUser, AdminLeaveRequest } from '../types';
 import { normalizeTime } from '../lib/timeInput';
 import TimeInput from './TimeInput';
+import { formatLeavePeriod } from '../lib/leaveDates';
 
 // 休暇申請フォームの下書き
 interface LeaveDraft {
@@ -1897,6 +1898,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                 const fy = m >= 4 ? y : y - 1;
                 return String(fy) === selectedFY;
               }).map(req => {
+                // 🚨 dateDisplay は**修正依頼に渡す文字**（Slack の修正依頼の文面と、依頼の記録の「変更前の値」に入る）。
+                //    文面を変えないため旧来の書き方のまま残している。画面に出す日付は下の periodLabel。
                 // leave_dates があれば使用、なければ start_date/end_date にフォールバック
                 let dates: string[] = [];
                 try { if (req.leave_dates) dates = JSON.parse(req.leave_dates); } catch {}
@@ -1908,6 +1911,8 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                   : (req.start_date === req.end_date
                     ? `${req.start_date}（1日）`
                     : `${req.start_date} ～ ${req.end_date}（${dayCount}日間）`);
+                // 画面に出す日付（受理の画面と同じ書き方・lib/leaveDates.ts）
+                const periodLabel = formatLeavePeriod(req.leave_dates, req.start_date, req.end_date);
 
                 const st = STATUS_LABEL[req.status] || { label: req.status, color: '#333' };
                 const isApproved = req.status === 'approved';
@@ -1939,7 +1944,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                     </div>
                     {/* 取得日 + 申請日 同じ行 */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, marginBottom: 2 }}>
-                      <span style={{ color: subText }}>{dateDisplay}</span>
+                      <span style={{ color: subText }}>{periodLabel}</span>
                       <span style={{ color: isDark ? '#6c757d' : '#aaa', fontSize: 11 }}>申請日: {new Date(req.created_at).toLocaleDateString('ja-JP')}</span>
                     </div>
                     {/* 申請先 + 受理者 同じ行 */}

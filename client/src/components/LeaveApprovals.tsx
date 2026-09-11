@@ -6,6 +6,7 @@ import { attrsFor } from '../lib/roleAttrs';
 import ApplicationRequestSheet from './ApplicationRequestSheet';
 import { sendLeaveSlack } from '../lib/leaveSlack';
 import { insertNotification, formatLeaveDateSummary } from '../lib/notifications';
+import { formatLeavePeriod } from '../lib/leaveDates';
 import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatchEmail, dispatchSiteNotification, getUserEmail, resolveRoleRecipients } from '../lib/notificationDispatch';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
@@ -508,11 +509,6 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     }
   };
 
-  const calcDays = (s: string, e: string) => {
-    const diff = Math.floor((new Date(e).getTime() - new Date(s).getTime()) / (1000 * 60 * 60 * 24)) + 1;
-    return diff > 0 ? diff : 0;
-  };
-
   // 受理ボタンのラベル
   const getApproveLabel = (status: string) => {
     if (status === 'pending') return '✅ 受理してマネージャーへ送る';
@@ -752,7 +748,6 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             {requests.map(req => {
-              const days = calcDays(req.start_date, req.end_date);
               const approvable = canApprove(req);
               const isFocused = highlightId === req.id;
               return (
@@ -844,7 +839,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                   </div>
 
                   <div style={{ color: subText, fontSize: 14, marginBottom: 6 }}>
-                    {req.start_date} ～ {req.end_date}（{days}日間）
+                    {formatLeavePeriod(req.leave_dates, req.start_date, req.end_date)}
                   </div>
                   {/* 勤務校（日付ごと・1日1行。校なしの旧申請は非表示） */}
                   {(() => {

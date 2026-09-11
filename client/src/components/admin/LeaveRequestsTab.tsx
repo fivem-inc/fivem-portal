@@ -3,6 +3,7 @@ import { useAdminPanel } from './AdminPanelContext';
 import { useAuth } from '../../hooks/useAuth';
 import type { AdminLeaveRequest } from '../../types';
 import { insertNotification, formatLeaveDateSummary } from '../../lib/notifications';
+import { shortLeaveDate } from '../../lib/leaveDates';
 import { todayJstStr } from '../../lib/breakCalc';
 import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatchEmail, dispatchSiteNotification, getUserEmail, resolveRoleRecipients } from '../../lib/notificationDispatch';
 import SearchableSelect from '../common/SearchableSelect';
@@ -1442,8 +1443,8 @@ const LeaveRequestsTab: React.FC = () => {
                             return `${year}/${parts.join('、')}`;
                           }
                           // fallback: 旧形式
-                          if (req.start_date === req.end_date) return req.start_date;
-                          return `${(req.start_date || '').slice(5)}～${(req.end_date || '').slice(5)}`;
+                          if (req.start_date === req.end_date) return shortLeaveDate(req.start_date, true);
+                          return `${shortLeaveDate(req.start_date)}～${shortLeaveDate(req.end_date)}`;
                         })();
                         const jst = new Date(req.created_at);
                         const jstParts = Object.fromEntries(new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: false }).formatToParts(jst).map(p => [p.type, p.value]));
@@ -1701,10 +1702,10 @@ const LeaveRequestsTab: React.FC = () => {
                               ? (() => {
                                   const year = pLeaveDates[0].substring(0, 4);
                                   const groups = new Map<string, string[]>();
-                                  pLeaveDates.forEach(d => { const [,m,day] = d.split('-'); const key = `${m}`; if (!groups.has(key)) groups.set(key, []); groups.get(key)!.push(day.replace(/^0/, '')); });
+                                  pLeaveDates.forEach(d => { const [,m,day] = d.split('-'); const key = String(Number(m)); if (!groups.has(key)) groups.set(key, []); groups.get(key)!.push(day.replace(/^0/, '')); });
                                   return `${year}/${[...groups.entries()].map(([m, ds]) => `${m}/${ds.join('・')}`).join('、')}`;
                                 })()
-                              : (parent.start_date === parent.end_date ? parent.start_date : `${(parent.start_date || '').slice(5)}～${(parent.end_date || '').slice(5)}`);
+                              : (parent.start_date === parent.end_date ? shortLeaveDate(parent.start_date, true) : `${shortLeaveDate(parent.start_date)}～${shortLeaveDate(parent.end_date)}`);
                             const pJst = new Date(parent.created_at);
                             const pJstParts = Object.fromEntries(new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: false }).formatToParts(pJst).map(p => [p.type, p.value]));
                             const pJstY = pJstParts.year; const pJstM = Number(pJstParts.month); const pJstD = Number(pJstParts.day); const pJstH = Number(pJstParts.hour); const pJstMin = pJstParts.minute;
