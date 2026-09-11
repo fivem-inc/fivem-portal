@@ -196,6 +196,31 @@ URLを開けば全ファイルを読めます（2026-08-28 実測確認済み）
 ### 直したあと
 - `cd client && npx tsc -b && npx vite build` ＋ `npm run lint`
   （lint で見るのは `react-hooks/rules-of-hooks` だけ。**常に0件**。必ず client で実行）
+- 🚨 **Edge Function を触ったら、リポジトリの直下で型チェックを通す**
+
+  ```bash
+  npx deno check supabase/functions/<関数名>/index.ts
+  ```
+
+  🚨 **`supabase functions deploy` は型チェックをしない。** 書き間違いがそのまま本番に出る。
+  しかも Edge Function の失敗は **`supabase.functions.invoke` が throw しない**ので、
+  呼び出し側が `error` を見ていなければ**画面上は成功に見える**。
+  2026-09-11 に実際に踏んだ：宛先を決めるところで、別の関数の中にしかない `supabase` を
+  参照していて `ReferenceError` で落ち、**休暇の Slack が約1日、1通も送られていなかった**
+  （誰も気づけなかった）。`deno check` を通した瞬間に `TS2304` として出た。
+  🚨 直した関数だけでなく、**同じセッションで触った関数は全部**通すこと。
+- 🚨 **既に出ているエラーと、本物の不具合を見分ける**
+
+  | 種類 | 意味 | 扱い |
+  |---|---|---|
+  | **TS2304**（名前が見つからない） | 🚨 **実行すると落ちる本物の不具合** | **必ず直す** |
+  | TS18046（catch の値が unknown） | 型の指定だけ。動きはする | 見つけたら直す |
+  | TS2345 / TS2322 / TS2769 / TS1192 | 外部ライブラリの型定義のズレ | 触らなくてよい |
+
+  2026-09-11 に**全40本**を通した時点の状態（これが基準）：
+  **TS2304 は 0件**。型定義のズレ等が 6本に計12件
+  （gcal-sync 1／push-dispatch 1／receipt-bulk-zip 2／send-purchase-slack 1／send-push 6／slack-notify 1）。
+  🚨 **自分が触った関数で件数が増えたら、それは自分が入れたもの**。
 
 ### 出すとき
 - デプロイ順序：**① DB migration → ② Edge Function → ③ クライアント push**
