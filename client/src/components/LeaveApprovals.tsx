@@ -782,6 +782,36 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                         ? <>最初の受理者：<strong>{firstName}</strong> ✓</>
                         : <>1人目の受理は完了しています</>;
                     })()}
+                    {/* ②（マネージャー）の進み具合（2026-09-11 ユーザー指摘
+                        「最初の受理は分かるが 二人目は？？」）。
+                        ①だけだと「次は誰なのか・もう済んだのか」が読めなかった。
+                        🚨 値は最初から取れていた（approver2_id / approver2_name）。出していなかっただけ。
+                        🚨 ①と同じ決まりを守る：名前が引けないときは**名前を出さず**進み具合だけ言う。
+                           「2人目：不明」は事実を言えていないうえ不安にさせる。 */}
+                    {(() => {
+                      // 🚨 まだ2人目が決まっていないときは**何も出さない**。
+                      //    2人目は①が受理するときに選ぶ仕組みなので、この時点で未定なのが正常。
+                      //    「2人目：未定」と書くと、決まっていないことが問題のように読める。
+                      if (!req.approver2_id) return null;
+                      const DONE2 = ['manager_approved', 'admin_approved', 'approved'];
+                      const secondName = req.approver2_name;
+                      const iAmSecond = req.approver2_id === user.id;
+                      if (DONE2.includes(req.status)) {
+                        return <div style={{ marginTop: 4 }}>
+                          {secondName ? <>2人目の受理者：<strong>{secondName}</strong> ✓</> : <>2人目の受理は完了しています</>}
+                        </div>;
+                      }
+                      if (req.status === 'step2_pending') {
+                        return <div style={{ marginTop: 4 }}>
+                          {iAmSecond
+                            ? <>あなたが<strong>2人目の受理者</strong>です</>
+                            : (secondName ? <>2人目の受理者：<strong>{secondName}</strong>（受理待ち）</> : <>2人目の受理待ちです</>)}
+                        </div>;
+                      }
+                      // 🚨 差し戻しは①②どちらで戻されたか断定できないので、ここでは書かない
+                      //    （断定して書くと、違う人の名前を出すことになる）
+                      return null;
+                    })()}
                   </div>
 
                   <div style={{ color: subText, fontSize: 14, marginBottom: 6 }}>
