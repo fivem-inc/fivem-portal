@@ -4,6 +4,7 @@ import { notifyShiftReportReturned } from '../../lib/shiftReportReturnedNotify';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
 import ShiftEditModal from './ShiftEditModal';
 import { formatSegsFromRecord, parseSegments } from '../../lib/shiftCalc';
+import { logFail } from '../../lib/logFail';
 
 type AppType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start' | 'location_change';
 
@@ -237,7 +238,7 @@ const ShiftReportsTab: React.FC = () => {
       user_id: r.applicant_id, message: '勤務変更報告が受理されました',
       sub_message: `${getTypes(r).map(t => TYPE_INFO[t]?.label ?? t).join('＋')}　${r.work_date}`,
       source_type: 'shift_report', reference_id: r.id, read: false,
-    }).then(null, () => {});
+    }).then(...logFail('ベル通知の作成'));
     // 通知：同グループの該当役職者へ一斉通知（管理画面「勤務変更申請」設定に従う）
     supabase.functions.invoke('shift-report-confirmed-notify', {
       body: {
@@ -250,7 +251,7 @@ const ShiftReportsTab: React.FC = () => {
         segments: parseSegments(r.actual_segments, r.actual_start, r.actual_end, r.actual_outing_start, r.actual_outing_end, r.actual_location),
         report_id: r.id, // 通知タップで該当行をハイライトするため
       },
-    }).then(null, () => {});
+    }).then(...logFail('勤務変更の受理の通知'));
     setConfirming(null);
     setSuccessMsg('受理しました');
     fetchReports();

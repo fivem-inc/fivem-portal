@@ -58,6 +58,7 @@ import { useSafetyQueueFlush } from './hooks/useSafetyQueueFlush';
 import { formatSnapshotAge } from './lib/safetyStorage';
 import { withTimeout, SAFETY_TIMEOUT_MS } from './lib/netFailure';
 import type { Expense, Submission } from './types';
+import { logFail } from './lib/logFail';
 
 // ページ遷移のたびにスクロールをトップへ戻す
 const ScrollToTop: React.FC = () => {
@@ -480,7 +481,7 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
   // 一覧に残り続けるが、read_at から30日で自動削除される（cron）
   const markRead = (id: string) => {
     setNotifs(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
-    supabase.from('notifications').update({ read: true, read_at: new Date().toISOString() }).eq('id', id).then(null, () => {});
+    supabase.from('notifications').update({ read: true, read_at: new Date().toISOString() }).eq('id', id).then(...logFail('ベル通知の既読化'));
   };
 
   // 行をタップ＝既読にして、その通知の行き先へ移動する。
@@ -1461,7 +1462,7 @@ const NotificationBanner: React.FC<{ userId: string }> = ({ userId }) => {
 
     const toAutoDismiss = data.filter(shouldAutoDismiss);
     if (toAutoDismiss.length > 0) {
-      supabase.from('notifications').update({ read: true, banner_dismissed: true }).in('id', toAutoDismiss.map(n => n.id)).then(null, () => {});
+      supabase.from('notifications').update({ read: true, banner_dismissed: true }).in('id', toAutoDismiss.map(n => n.id)).then(...logFail('ベル通知の既読化'));
     }
     setNotifs(data.filter(n => !shouldAutoDismiss(n)));
   }, [userId]);

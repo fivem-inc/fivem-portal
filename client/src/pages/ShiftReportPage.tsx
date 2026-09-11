@@ -22,6 +22,7 @@ import { leaveRequestMaxDate, jpDateLabel } from '../lib/breakCalc';
 import type { CalendarKind } from '../lib/breakCalc';
 import { toDbTime, normalizeTime } from '../lib/timeInput';
 import TimeInput from '../components/TimeInput';
+import { logFail } from '../lib/logFail';
 
 // ────────────────────────────────────────────────────────────────
 // Types
@@ -634,7 +635,7 @@ const ShiftReportForm: React.FC<{
             reference_id: newReport?.id,
             event_key: 'shift_report:new_request',
             read: false,
-          }).then(null, () => {});
+          }).then(...logFail('ベル通知の作成'));
         } else {
           // 自己受理の場合は即confirmedになるため、同グループの該当役職者へ一斉通知
           supabase.functions.invoke('shift-report-confirmed-notify', {
@@ -647,7 +648,7 @@ const ShiftReportForm: React.FC<{
               segments: hasAbsence ? null : actSegs, // Slack本文の「時間」に使う
               report_id: newReport?.id, // 通知タップで該当行をハイライトするため
             },
-          }).then(null, () => {});
+          }).then(...logFail('勤務変更の受理の通知'));
         }
       }
       if (!editTarget) clearDraft(DRAFT_KEYS.shiftReport); // 送信成功で下書きを消す（新規のみ）
@@ -1317,7 +1318,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
       source_type: 'shift_report',
       reference_id: report.id,
       read: false,
-    }).then(null, () => {});
+    }).then(...logFail('ベル通知の作成'));
     // 通知：同グループの該当役職者へ一斉通知（管理画面「勤務変更申請」設定に従う）
     supabase.functions.invoke('shift-report-confirmed-notify', {
       body: {
@@ -1330,7 +1331,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
         segments: parseSegments(report.actual_segments, report.actual_start, report.actual_end, report.actual_outing_start, report.actual_outing_end, report.actual_location),
         report_id: report.id, // 通知タップで該当行をハイライトするため
       },
-    }).then(null, () => {});
+    }).then(...logFail('勤務変更の受理の通知'));
     setConfirmingId(null);
     setSuccessMsg('受理しました ✓');
     window.dispatchEvent(new CustomEvent('shift-pending-changed'));
@@ -1343,14 +1344,14 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     const summary = cancelReason.trim() ? `報告を取り消しました\n取り消し理由：${cancelReason.trim()}` : '報告を取り消しました';
     const { error } = await supabase.from('shift_reports').update({ status: 'cancelled' }).eq('id', r.id);
     if (error) { console.error('[cancelReport]', error); setCancelTarget(null); setCancelReason(''); return; }
-    await supabase.from('shift_report_history').insert({ report_id: r.id, changed_by: user.id, change_summary: summary, snapshot: r }).then(null, () => {});
+    await supabase.from('shift_report_history').insert({ report_id: r.id, changed_by: user.id, change_summary: summary, snapshot: r }).then(...logFail('勤務変更の記録'));
     // レビュアーが取り消した場合は申請者に通知
     if (r.applicant_id !== user.id) {
       await supabase.from('notifications').insert({
         user_id: r.applicant_id, message: '勤務変更報告が取り消されました',
         sub_message: `${TYPE_INFO[r.application_type].label}　${r.work_date}`,
         source_type: 'shift_report', reference_id: r.id, read: false,
-      }).then(null, () => {});
+      }).then(...logFail('ベル通知の作成'));
     }
     setCancelTarget(null); setCancelReason('');
     window.dispatchEvent(new CustomEvent('shift-pending-changed'));
@@ -1371,7 +1372,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     await supabase.from('shift_report_history').insert({
       report_id: r.id, changed_by: user.id,
       change_summary: comment ? `差戻し：${comment}` : '差戻しました', snapshot: r,
-    }).then(null, () => {});
+    }).then(...logFail('勤務変更の記録'));
     // 🚨 差し戻しはDBで確定済み。画面を閉じて一覧を更新するのを通知より先にする。
     // 通知で例外が出るとここに到達せず、モーダルが開いたまま固まっていた
     setReturningId(null); setReturnTarget(null); setReturnComment('');

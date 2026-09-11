@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import { logFail } from '../lib/logFail';
 
 // 残業がしきい値を超えたときのホームバナー。
 //
@@ -80,7 +81,7 @@ const OvertimeThresholdBanner: React.FC<{
         remind_after: remindAfter ? remindAfter.toISOString() : null,
       })),
       { onConflict: 'user_id,target_user_id,pay_period_start' }
-    ).then(null, () => {});
+    ).then(...logFail('超過バナーを閉じた記録'));
   };
 
   /** 翌朝9時（定期リマインドの「後で」と同じ） */

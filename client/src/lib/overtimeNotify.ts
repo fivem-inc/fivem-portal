@@ -1,6 +1,7 @@
 import { insertNotification } from './notifications';
 import { dispatchEmail, getUserEmail, shouldSendWithDefault } from './notificationDispatch';
 import { supabase } from './supabaseClient';
+import { logFail } from './logFail';
 
 // 残業・時間管理の通知送信（管理画面「通知設定」の overtime:* に従う）
 //
@@ -190,7 +191,7 @@ export async function notifyOvertimeGrantRequest(info: {
 }): Promise<void> {
   await supabase.functions.invoke('overtime-grant-request-notify', {
     body: { applicant_name: info.applicantName, work_dates_label: info.workDatesLabel, request_id: info.requestId },
-  }).then(null, () => {});
+  }).then(...logFail('締め後申請の許可依頼の通知'));
 }
 
 /** 管理者が内容を修正した時 → 修正された本人へ */

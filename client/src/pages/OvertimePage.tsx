@@ -44,6 +44,7 @@ import { notifyOvertimeNewRequest, notifyOvertimeGrantRequest, sendOvertimeSlack
 import type { CorrectionRequestRow } from '../lib/correctionRequest';
 import { toDbTime } from '../lib/timeInput';
 import TimeInput from '../components/TimeInput';
+import { logFail } from '../lib/logFail';
 
 // ────────────────────────────────────────────────────────────────
 // Types
@@ -1393,7 +1394,7 @@ const OvertimeForm: React.FC<{
           change_summary: isReportPhase ? (isPureZero ? '残業なし（通常どおり）で報告' : hasChanges ? `実績報告（変更あり：${changedAxes.join('・')}）` : '実績報告（予定どおり）') : '再提出',
           change_reason: (isReportPhase && hasChanges) ? changeReason.trim() : null,
           snapshot: editTarget as unknown as Record<string, unknown>,
-        }).then(null, () => {});
+        }).then(...logFail('残業の修正の記録'));
         // 🚨 開いてから送るまでの間に、上長が受理・差し戻し・取消をしている場合がある。
         //    status を条件に付けて件数を見ないと、差し戻された申請に実績を上書きしてしまい、
         //    差し戻し理由が残ったまま「実績 確認待ち」に戻る（update は0件でもエラーにならない）

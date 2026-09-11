@@ -3,6 +3,7 @@ import { todayJstStr } from './breakCalc';
 import { describeUpdate } from './statusUpdate';
 import { roleByName } from './roleAttrs';
 import { getCachedRoles } from '../hooks/useRoles';
+import { logFail } from './logFail';
 
 // FAQ（よくある質問）の読み書きと検索。
 //
@@ -291,8 +292,11 @@ export const logPublicFaqQuery = async (params: {
       p_course: params.course ?? null,
       p_picked_topic_id: params.pickedTopicId ?? null,
     })
-    // 記録は補助であって本体ではない。ただし黙って捨てず必ずログには残す
-    .then(null, (e: unknown) => console.error('FAQ質問ログの記録に失敗:', e));
+    // 記録は補助であって本体ではない。ただし黙って捨てず必ずログには残す。
+    // 🚨 以前は `.then(null, …)` だったが、それでは**通信エラーしか拾えない**。
+    //    supabase は RLS 拒否・関数が無い（PGRST202）などを `{ error }` で**正常に返す**ので、
+    //    成功側に来て1つも気づけなかった。logFail は両方を見る。
+    .then(...logFail('FAQ質問ログの記録'));
 };
 
 // ============================================================
@@ -568,7 +572,7 @@ export const logFaqQuery = async (params: {
     role_title: params.viewer?.roleTitle ?? null,
     had_match: params.hadMatch,
     picked_topic_id: params.pickedTopicId ?? null,
-  }).then(null, () => {});
+  }).then(...logFail('FAQ質問ログの記録'));
 };
 
 // ============================================================

@@ -7,6 +7,7 @@ import ReceiptUploader, { type ReceiptValue } from './ReceiptUploader';
 import { todayJstStr } from '../lib/breakCalc';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { getUserName } from '../lib/notificationDispatch';
+import { logFail } from '../lib/logFail';
 
 const BannerSuccess: React.FC<{ message: string; sub?: string; onClose: () => void }> = ({ message, sub, onClose }) => {
   React.useEffect(() => { const t = setTimeout(onClose, 4000); return () => clearTimeout(t); }, [onClose]);
@@ -220,7 +221,7 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
     getUserName(user.id).then(nm => {
       supabase.functions.invoke('purchase-reimbursement-notify', {
         body: { user_id: user.id, user_name: nm, item_name: itemName.trim(), amount: parsedAmount },
-      }).then(null, () => {});
+      }).then(...logFail('精算の通知'));
     }, () => {});
 
     setSuccessBanner(true);

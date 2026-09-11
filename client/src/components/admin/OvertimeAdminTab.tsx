@@ -20,6 +20,7 @@ import { OT_TYPE_INFO, isOvertimeType, isFullDayReport, canOfferCalendarChoice, 
 import { notifyOvertimeReturned, notifyOvertimeAdminCancelled, notifyOvertimeGrant, notifyOvertimeGrantDeclined } from '../../lib/overtimeNotify';
 import { toDbTime } from '../../lib/timeInput';
 import { describeUpdate } from '../../lib/statusUpdate';
+import { logFail } from '../../lib/logFail';
 
 const OT_STATUS_LABEL: Record<string, { label: string; color: string }> = {
   requested:         { label: '事前申請', color: '#f59e0b' },
@@ -384,7 +385,7 @@ const OvertimeAdminTab: React.FC = () => {
       report_id: r.id, changed_by: (await supabase.auth.getUser()).data.user?.id, change_kind: 'rejected',
       change_summary: `差し戻し：${otReturnComment.trim()}`, change_reason: otReturnComment.trim(),
       snapshot: r as unknown as Record<string, unknown>,
-    }).then(null, () => {});
+    }).then(...logFail('残業の修正の記録'));
     const { error } = await supabase.from('overtime_reports').update({ status: 'returned', return_comment: otReturnComment.trim() }).eq('id', r.id);
     if (error) { setOtErr('差し戻しに失敗しました：' + error.message); setOtActing(false); return; }
     await notifyOvertimeReturned({

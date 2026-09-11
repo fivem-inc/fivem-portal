@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { calcSegsBreak, parseSegments, segMinutes, formatSegs, segFirstStart, segLastEnd, joinSegLocations, MAX_SEGS, type Seg } from '../../lib/shiftCalc';
 import { errorStyle } from '../../lib/formHighlight';
+import { logFail } from '../../lib/logFail';
 
 // 管理者が勤務変更報告の内容を直接修正するモーダル。
 // 本人の報告画面と同じ「時間帯」方式（勤務1〜3・行ごとの勤務地）で入力する。
@@ -168,7 +169,7 @@ const ShiftEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
       reference_id: record.id,
       event_key: 'shift:admin_edited',
       read: false,
-    }).then(null, () => {});
+    }).then(...logFail('ベル通知の作成'));
 
     setSaving(false);
     onSaved();

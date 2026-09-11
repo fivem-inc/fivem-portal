@@ -6,6 +6,7 @@ import { calcPayPeriodStartJst } from '../lib/breakCalc';
 import type { CalendarKind } from '../lib/breakCalc';
 import { CLOCK_ONLY_REASONS } from '../lib/overtimeTypes';
 import { dispatchEmail, getUserEmail } from '../lib/notificationDispatch';
+import { logFail } from '../lib/logFail';
 
 // 経理からの「打刻の確認」に答える画面。通知バナー → /overtime?inquiry=<id> から開く。
 //
@@ -188,7 +189,7 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
             segs.map((s, i) => ({ report_id: rep.id, phase: 'actual', seg_no: i + 1, start_min: s.start_min, end_min: s.end_min })),
           );
         }
-        await supabase.rpc('link_clock_inquiry_result', { p_day_id: d.id, p_report_id: rep.id }).then(null, () => {});
+        await supabase.rpc('link_clock_inquiry_result', { p_day_id: d.id, p_report_id: rep.id }).then(...logFail('打刻確認の結果の記録'));
       }
 
       // 3) 経理へメール（ベル・プッシュは RPC 側で作成済み）

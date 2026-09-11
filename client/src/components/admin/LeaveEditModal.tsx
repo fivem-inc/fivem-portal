@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import type { AdminLeaveRequest } from '../../types';
+import { logFail } from '../../lib/logFail';
 
 // 管理者が休暇申請の内容を直接修正するモーダル。
 // 理由必須 → 確認ステップ（本人へ通知が届く旨を提示）→ 原子的RPC(admin_edit_leave_request) → 本人へ通知。
@@ -119,7 +120,7 @@ const LeaveEditModal: React.FC<Props> = ({ record, isDarkMode, onClose, onSaved 
       reference_id: record.id,
       event_key: 'leave:admin_edited',
       read: false,
-    }).then(null, () => {});
+    }).then(...logFail('ベル通知の作成'));
 
     setSaving(false);
     onSaved();
