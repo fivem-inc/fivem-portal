@@ -43,6 +43,9 @@ interface LeaveReq {
   // 受理者の名前（①＝申請先／②＝①が選んだマネージャー）。
   // 「自分が1人目か、誰かが先に受理したのか」を画面に出すために引いている
   approver_name?: string | null;
+  // 受理した日時（2026-09-11 追加）。🚨 それより前の申請は null＝画面に日付を出さない
+  approved_at?: string | null;
+  approved2_at?: string | null;
   approver2_name?: string | null;
   requester?: { name: string } | null;
 }
@@ -54,6 +57,18 @@ interface Approver {
 }
 
 // ステータスラベル
+// 受理した日を「（9/10）」の形で添える。2026-09-11 より前の申請は日時を持たないので**何も出さない**。
+// 🚨 timestamptz なので、必ず日本時間に直してから日付を取り出す。
+//    toISOString().slice(0,10) はUTCで切るので、**朝9時より前に受理すると前日になる**
+//    （このリポジトリで何度も踏んでいる罠。実測で確認済み）。
+// 🚨 「不明」などと書かない。持っていない日付を作らない。
+function approvedOnLabel(iso?: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return `（${d.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' })}）`;
+}
+
 const STATUS_LABEL: Record<string, string> = {
   pending:          '確認中（一人目）',
   step2_pending:    '確認中（マネージャー）',
@@ -236,6 +251,9 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
         approver2_id: r.approver2_id ?? null,
         approver_name: r.approver_id ? (profileMap[r.approver_id]?.name ?? null) : null,
         approver2_name: r.approver2_id ? (profileMap[r.approver2_id]?.name ?? null) : null,
+        // 受理した日時（2026-09-11 追加）。select('*') なので取得はそのまま来る
+        approved_at: (r as unknown as { approved_at?: string | null }).approved_at ?? null,
+        approved2_at: (r as unknown as { approved2_at?: string | null }).approved2_at ?? null,
         requester: profileMap[r.user_id] || null,
       })));
     } finally {
@@ -325,7 +343,11 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     const label = next === 'approved' ? '最終受理（完了）' : '受理';
     setConfirmDialog({ message: `${label}しますか？`, onConfirm: async () => {
       // 二重受理防止（楽観ロック）：自分が見た状態と一致する時だけ更新。ズレていたら中断して最新化。
-      const { data: locked } = await supabase.from('leave_requests').update({ status: next }).eq('id', req.id).eq('status', req.status).select('id');
+      // 🚨 2人目の受理日時は step2_pending から進むときだけ入れる。
+      //    経理（manager_approved→admin_approved）や社長（admin_approved→approved）でも
+      //    この関数を通るので、条件を付けないと**後の人の日時で上書きされる**。
+      const stamp = req.status === 'step2_pending' ? { approved2_at: new Date().toISOString() } : {};
+      const { data: locked } = await supabase.from('leave_requests').update({ status: next, ...stamp }).eq('id', req.id).eq('status', req.status).select('id');
       if (!locked || locked.length === 0) { setStaleMsg('この申請は他の受理者が先に処理したため、最新の状態に更新しました。'); fetchRequests(); return; }
 
       // 🚨 受理はDBで確定済み。画面の更新を通知より先に行う。
@@ -363,7 +385,9 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     const next = isChosei ? 'approved' : 'manager_approved';
     // 二人目受理者として本人を記録（CSV・履歴で誰が受理したか追えるように）
     // 二重受理防止（楽観ロック）
-    const { data: locked } = await supabase.from('leave_requests').update({ status: next, approver2_id: user.id }).eq('id', req.id).eq('status', req.status).select('id');
+    // 🚨 この経路は1人目と2人目を同じ人が兼ねるので、受理日時も**両方**に同じ値を入れる（2026-09-11）
+    const nowIso = new Date().toISOString();
+    const { data: locked } = await supabase.from('leave_requests').update({ status: next, approver2_id: user.id, approved_at: nowIso, approved2_at: nowIso }).eq('id', req.id).eq('status', req.status).select('id');
     if (!locked || locked.length === 0) { setStaleMsg('この申請は他の受理者が先に処理したため、最新の状態に更新しました。'); setSelectingManagerFor(null); fetchRequests(); return; }
 
     // 画面の更新を先に確定（通知の完了を待たない）
@@ -386,6 +410,9 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     const { data: locked } = await supabase.from('leave_requests').update({
       status: 'step2_pending',
       approver2_id: selectedManagerId,
+      // 1人目が受理した日時（2026-09-11）。🚨 ここは「1人目」なので approved_at だけ。
+      //    2人目はまだ受理していない（指名しただけ）
+      approved_at: new Date().toISOString(),
     }).eq('id', selectingManagerFor.id).eq('status', selectingManagerFor.status).select('id');
     if (!locked || locked.length === 0) { setStaleMsg('この申請は他の受理者が先に処理したため、最新の状態に更新しました。'); setSelectingManagerFor(null); fetchRequests(); return; }
 
@@ -778,9 +805,11 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                           ? <>まだ受理されていません（最初の受理者：<strong>{firstName}</strong>）</>
                           : <>まだ受理されていません</>;
                       }
+                      // 受理した日を添える（2026-09-11 ユーザー要望「いつかもみえるかな？？」）。
+                      // 🚨 日時を持ち始めたのは 2026-09-11 から。それより前の申請は空なので何も出ない
                       return firstName
-                        ? <>最初の受理者：<strong>{firstName}</strong> ✓</>
-                        : <>1人目の受理は完了しています</>;
+                        ? <>最初の受理者：<strong>{firstName}</strong> ✓{approvedOnLabel(req.approved_at)}</>
+                        : <>1人目の受理は完了しています{approvedOnLabel(req.approved_at)}</>;
                     })()}
                     {/* ②（マネージャー）の進み具合（2026-09-11 ユーザー指摘
                         「最初の受理は分かるが 二人目は？？」）。
@@ -798,7 +827,9 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                       const iAmSecond = req.approver2_id === user.id;
                       if (DONE2.includes(req.status)) {
                         return <div style={{ marginTop: 4 }}>
-                          {secondName ? <>2人目の受理者：<strong>{secondName}</strong> ✓</> : <>2人目の受理は完了しています</>}
+                          {secondName
+                            ? <>2人目の受理者：<strong>{secondName}</strong> ✓{approvedOnLabel(req.approved2_at)}</>
+                            : <>2人目の受理は完了しています{approvedOnLabel(req.approved2_at)}</>}
                         </div>;
                       }
                       if (req.status === 'step2_pending') {
