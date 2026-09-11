@@ -866,7 +866,11 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                       })()}
                     </div>
                   )}
-                  <div style={{ color: isDark ? '#6c757d' : '#aaa', fontSize: 12, marginBottom: 12 }}>
+                  {/* 🚨 色は subText を使う（2026-09-11 実機指摘「だーくだと みにくい」）。
+                      ここだけ独自に #6c757d / #aaa を書いており、暗い画面でカードの背景に沈んでいた。
+                      補助的な文字の色はこのファイルで1つに決めてある（subText）。
+                      **同じ意味の文字に別の色を書かない**。新しい色も足さない。 */}
+                  <div style={{ color: subText, fontSize: 12, marginBottom: 12 }}>
                     申請日: {new Date(req.created_at).toLocaleDateString('ja-JP')}
                   </div>
 
