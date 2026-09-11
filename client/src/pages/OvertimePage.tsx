@@ -3178,7 +3178,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
       const dates = (target.target_dates ?? []).map(d => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}（${dowLabel(d)}）`).join('・');
       void insertNotification(
         target.requester_id,
-        `${kindLabel}の申請依頼は「対応しない」と回答がありました`,
+        `📩 ${kindLabel}の申請依頼は「対応しない」と回答がありました`,
         `${dates}／理由：${note}`,
         'application_request:dismissed',
         id,

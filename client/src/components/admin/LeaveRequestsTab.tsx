@@ -1608,7 +1608,7 @@ const LeaveRequestsTab: React.FC = () => {
                                           if (await shouldSend('leave:manager_approved', 'site')) {
                                             const t = await getNotificationTemplate('leave:manager_approved', 'site', vars);
                                             // 🚨 event_key を渡さないとプッシュが飛ばない（2026-08-18 修正・受理ページ側と同じ）
-                                            await insertNotification(req.user_id, t?.template ?? `休暇申請がマネージャーに受理されました`, t?.subject || `種別：${typeName}`, 'leave_request', req.id, 'leave:manager_approved');
+                                            await insertNotification(req.user_id, t?.template ?? `🌿 休暇申請がマネージャーに受理されました`, t?.subject || `種別：${typeName}`, 'leave_request', req.id, 'leave:manager_approved');
                                           }
                                           // リーダー・マネージャー・社長へ FYI（誰がいつ休むか共有／カレンダー着地）。範囲は通知設定 leave:approved_fyi に従う
                                           try {
@@ -1887,7 +1887,7 @@ const LeaveRequestsTab: React.FC = () => {
                             if (typeChangeFail) { setModalError(typeChangeFail); return; }
                             if (await shouldSend('leave:rejected_type_changed', 'site')) {
                               const t = await getNotificationTemplate('leave:rejected_type_changed', 'site', { 元種別: origType, 新種別: rejectNewType });
-                              await insertNotification(rejectModal.user_id, t?.template ?? `「${origType}」が「${rejectNewType}」に変更され、受理されました`, undefined, 'leave_request', rejectModal.id);
+                              await insertNotification(rejectModal.user_id, t?.template ?? `🌿 「${origType}」が「${rejectNewType}」に変更され、受理されました`, undefined, 'leave_request', rejectModal.id);
                             }
                             // 種別変更して受理 → カレンダーを新種別でupsert
                             try {
@@ -1949,14 +1949,14 @@ const LeaveRequestsTab: React.FC = () => {
                             }
                             if (await shouldSend('leave:rejected_reapplied', 'site')) {
                               const t = await getNotificationTemplate('leave:rejected_reapplied', 'site', { 元種別: origType, 新種別: rejectNewType });
-                              await insertNotification(rejectModal.user_id, t?.template ?? `${origType}が差し戻され、${rejectNewType}で再申請・受理済みです`, undefined, 'leave_request', newReq?.id);
+                              await insertNotification(rejectModal.user_id, t?.template ?? `🌿 ${origType}が差し戻され、${rejectNewType}で再申請・受理済みです`, undefined, 'leave_request', newReq?.id);
                             }
                           } else {
                             if (await shouldSend('leave:rejected', 'site')) {
                               const t = await getNotificationTemplate('leave:rejected', 'site', { 申請者名: '', 休暇種別: rejectModal.leave_type, 差し戻し理由: rejectReason || '' });
                               // バナー2行目にはどの申請か分かるよう休暇日を表示（例：7/26 有給休暇（1日））。差し戻し理由はタップ先の申請履歴で確認できる
                               const dateSummary = formatLeaveDateSummary(rejectModal.leave_dates, rejectModal.start_date, rejectModal.end_date, origType);
-                              await insertNotification(rejectModal.user_id, t?.template ?? `休暇申請が差し戻されました`, dateSummary, 'leave_request:pending_resubmit', rejectModal.id, 'leave:rejected');
+                              await insertNotification(rejectModal.user_id, t?.template ?? `🌿 休暇申請が差し戻されました`, dateSummary, 'leave_request:pending_resubmit', rejectModal.id, 'leave:rejected');
                             }
                             if (await shouldSend('leave:rejected', 'slack')) {
                               const targetChannel = await getNotificationRecipient('leave:rejected', 'slack');
@@ -2009,7 +2009,7 @@ const LeaveRequestsTab: React.FC = () => {
                           ]);
                           // 申請者に通知（従来どおり直接送信）
                           if (await shouldSend('leave:cancelled', 'site')) {
-                            await insertNotification(rejectModal.user_id, `休暇申請（${rejectModal.leave_type}）の受理が取り消されました${rejectReason ? `。理由：${rejectReason}` : ''}`, undefined, 'leave_request', rejectModal.id);
+                            await insertNotification(rejectModal.user_id, `🌿 休暇申請（${rejectModal.leave_type}）の受理が取り消されました${rejectReason ? `。理由：${rejectReason}` : ''}`, undefined, 'leave_request', rejectModal.id);
                           }
                           // 宛先で選ばれた役職（リーダー・マネージャー・社長）にもサイト通知＋メール（applicantは上で送信済み）
                           await dispatchSiteNotification('leave:cancelled', cancelVars, cancelSite.ids, insertNotification, 'leave_request', rejectModal.id);

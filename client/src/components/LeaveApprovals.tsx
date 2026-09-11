@@ -281,7 +281,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     if (await shouldSend('leave:manager_approved', 'site')) {
       const t = await getNotificationTemplate('leave:manager_approved', 'site', vars);
       // 🚨 event_key を渡さないとプッシュが飛ばない（差し戻しは渡していたのに受理だけ抜けていた。2026-08-18 修正）
-      await insertNotification(req.user_id, t?.template ?? `休暇申請がマネージャーに受理されました`, t?.subject || `種別：${typeName}`, 'leave_request', req.id, 'leave:manager_approved');
+      await insertNotification(req.user_id, t?.template ?? `🌿 休暇申請がマネージャーに受理されました`, t?.subject || `種別：${typeName}`, 'leave_request', req.id, 'leave:manager_approved');
     }
     // リーダー・マネージャー・社長へ FYI（誰がいつ休むか共有／カレンダー着地）。範囲は通知設定 leave:approved_fyi に従う
     try {
@@ -463,7 +463,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
         const t = await getNotificationTemplate('leave:rejected', 'site', rejectVars);
         // バナー2行目にはどの申請か分かるよう休暇日を表示（例：7/26 有給休暇（1日））。差し戻し理由はタップ先の申請履歴で確認できる
         const dateSummary = formatLeaveDateSummary(target.leave_dates, target.start_date, target.end_date, rejectTypeName);
-        await insertNotification(target.user_id, t?.template ?? `休暇申請が差し戻されました`, dateSummary, 'leave_request:pending_resubmit', target.id, 'leave:rejected');
+        await insertNotification(target.user_id, t?.template ?? `🌿 休暇申請が差し戻されました`, dateSummary, 'leave_request:pending_resubmit', target.id, 'leave:rejected');
       }
       if (await shouldSend('leave:rejected', 'slack')) {
         const targetChannel = await getNotificationRecipient('leave:rejected', 'slack');

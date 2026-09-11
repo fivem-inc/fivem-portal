@@ -172,7 +172,7 @@ const ApplicationRequestSheet: React.FC<Props> = ({
     const dueLabel = dueDate ? `（申請期限 ${Number(dueDate.slice(5, 7))}/${Number(dueDate.slice(8, 10))}）` : '';
     await insertNotification(
       recipientId,
-      `${requesterName}さんより申請依頼：${dateLabel} ${KIND_LABEL[kind]}${dueLabel}`,
+      `📩 ${requesterName}さんより申請依頼：${dateLabel} ${KIND_LABEL[kind]}${dueLabel}`,
       memo.trim() || undefined,
       'application_request:received',
       data.id,

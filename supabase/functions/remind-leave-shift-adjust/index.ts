@@ -175,7 +175,7 @@ Deno.serve(async () => {
     const detail = sorted.slice(0, 5).map(x => `${mdLabel(x.date)} ${x.name}`).join('／')
     notifications.push({
       user_id: uid,
-      message: `シフト調整がまだの休暇が${sorted.length}件あります`,
+      message: `🔁 シフト調整がまだの休暇が${sorted.length}件あります`,
       sub_message: `${detail}${sorted.length > 5 ? ` 他${sorted.length - 5}件` : ''}`,
       source_type: 'leave:shift_adjust_due',
       event_key: 'leave:shift_adjust_due',

@@ -248,7 +248,7 @@ serve(async (req) => {
     await supabase.from('notifications').insert(
       target_user_ids.map((uid: string) => ({
         user_id: uid,
-        message: `${titlePrefix}安否確認が届きました`,
+        message: `🆘 ${titlePrefix}安否確認が届きました`,
         sub_message: message,
         source_type: 'safety_check', reference_id: checkId, event_key: null, read: false,
       }))

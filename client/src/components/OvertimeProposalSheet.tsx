@@ -164,7 +164,7 @@ const OvertimeProposalSheet: React.FC<Props> = ({
       if (oErr) { setError('候補の保存に失敗しました：' + oErr.message); setSubmitting(false); return; }
       await insertNotification(
         recipientId,
-        `${proposerName}さんから残業調整の提案が届きました`,
+        `🕐 ${proposerName}さんから残業調整の提案が届きました`,
         `候補${candidates.length}件・お返事は任意です`,
         'overtime_proposal:received', proposalId, 'overtime_proposal:received',
       );

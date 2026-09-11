@@ -120,7 +120,7 @@ serve(async (req) => {
       }
       notification = {
         user_id: r.applicant_id,
-        message: isFullDay ? `${fullDayLabel}の申請が受理されました` : (isAdvance ? '事前申請が受理されました' : '残業・時間調整の実績が確認されました'),
+        message: isFullDay ? `🕐 ${fullDayLabel}の申請が受理されました` : (isAdvance ? '🕐 事前申請が受理されました' : '🕐 残業・時間調整の実績が確認されました'),
         sub_message: `${r.work_date}（${dowLabel(r.work_date)}）${isFullDay ? `　${fullDayLabel}` : `　${formatSignedMin(r.diff_minutes ?? 0)}`}`,
         source_type: 'overtime_request',
         reference_id: r.id,
@@ -141,7 +141,7 @@ serve(async (req) => {
       }
       notification = {
         user_id: r.applicant_id,
-        message: '残業・時間調整の申請が差し戻されました',
+        message: '🕐 残業・時間調整の申請が差し戻されました',
         sub_message: `${r.work_date}（${dowLabel(r.work_date)}）　理由：${String(comment).trim()}`,
         source_type: 'overtime_request:pending_resubmit',
         reference_id: r.id,

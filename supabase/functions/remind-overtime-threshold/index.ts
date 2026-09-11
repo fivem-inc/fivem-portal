@@ -134,7 +134,7 @@ Deno.serve(async () => {
     for (const o of over) {
       notifications.push({
         user_id: o.user_id,
-        message: `今月の残業が${Math.floor(o.threshold_minutes / 60)}時間を超えています`,
+        message: `🕐 今月の残業が${Math.floor(o.threshold_minutes / 60)}時間を超えています`,
         sub_message: `${periodLabel}　現在 ${fmt(o.total_minutes)}`,
         source_type: 'overtime:threshold',
         event_key: 'overtime:threshold',
@@ -192,7 +192,7 @@ Deno.serve(async () => {
         .join('／')
       notifications.push({
         user_id: v.id,
-        message: `残業が目安を超えているスタッフが${targets.length}人います`,
+        message: `🕐 残業が目安を超えているスタッフが${targets.length}人います`,
         sub_message: `${periodLabel}　${names}`,
         source_type: 'overtime:threshold_summary',
         // 🚨 本人向け(overtime:threshold)と event_key を共用すると、プッシュの飛び先が

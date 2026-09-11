@@ -51,7 +51,7 @@ serve(async (req) => {
       if (admins && admins.length > 0) {
         const notifications = admins.map((a: { id: string }) => ({
           user_id: a.id,
-          message: `⚠️ 保存容量が上限に近づいています（${warnings.join(' / ')}）`,
+          message: `🔔 保存容量が上限に近づいています（${warnings.join(' / ')}）`,
           sub_message: '不要なデータの整理、または有料プランへの切り替えを検討してください',
         }));
         await supabase.from('notifications').insert(notifications);

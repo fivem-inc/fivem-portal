@@ -72,8 +72,8 @@ serve(async (req) => {
       const dateLabel = `${Number(day.deadline.slice(5, 7))}月${Number(day.deadline.slice(8, 10))}日`
 
       const msg = diff === 0
-        ? `🔴 有給奨励日（${day.target_date}）の回答期限は本日です！`
-        : `⚠️ 有給奨励日（${day.target_date}）の回答期限まで${diff}日です（期限: ${dateLabel}）`
+        ? `🌿 有給奨励日（${day.target_date}）の回答期限は本日です！`
+        : `🌿 有給奨励日（${day.target_date}）の回答期限まで${diff}日です（期限: ${dateLabel}）`
 
       // 対象者を取得
       const { data: targets } = await supabase

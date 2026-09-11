@@ -116,7 +116,7 @@ serve(async () => {
     // 🚨 ここに入れると classifyNotif の isBoard 判定（本文に「リマインド」を含むと連絡板とみなす）に
     //    吸い込まれ、タップで連絡板の空ページに着地する
     const { error: notifErr } = await supabase.from("notifications").insert(
-      userIds.map((uid: string) => ({ user_id: uid, message: reminder.title, sub_message: reminder.body, event_key: 'reminder:scheduled' }))
+      userIds.map((uid: string) => ({ user_id: uid, message: `🔔 ${reminder.title}`, sub_message: reminder.body, event_key: 'reminder:scheduled' }))
     );
     // 🚨 失敗をログに書くだけだと、ログは普段誰も見ないので実質気づけない。
     //    管理画面を開けば分かるように、下で last_error に残す

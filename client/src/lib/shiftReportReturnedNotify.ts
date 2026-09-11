@@ -37,7 +37,7 @@ export async function notifyShiftReportReturned(info: ShiftReportReturnedInfo): 
     const subMessage = `${typeLabels}　${workDate}${reason ? `\n理由：${reason}` : ''}`;
     await insertNotification(
       applicantId,
-      t?.template ?? '勤務変更報告が差戻されました',
+      t?.template ?? '⏰ 勤務変更報告が差戻されました',
       t?.subject || subMessage,
       'shift_report:pending_resubmit',
       reportId,

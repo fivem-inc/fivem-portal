@@ -55,7 +55,7 @@ export async function notifyOvertimeNewRequest(info: {
   if (await shouldSendWithDefault('overtime:new_request', 'site', true)) {
     await insertNotification(
       reviewerId,
-      `${applicantName}さんから残業・時間調整の${phaseLabel}が届きました`,
+      `🕐 ${applicantName}さんから残業・時間調整の${phaseLabel}が届きました`,
       `${dateLabel}　${timeLabel}`,
       'overtime_request:pending_approval',
       reportId,
@@ -84,7 +84,7 @@ export async function notifyOvertimeReturned(info: {
   if (await shouldSendWithDefault('overtime:returned', 'site', true)) {
     await insertNotification(
       applicantId,
-      '残業・時間調整の申請が差し戻されました',
+      '🕐 残業・時間調整の申請が差し戻されました',
       `${dateLabel}　理由：${reason}`,
       'overtime_request:pending_resubmit',
       reportId,
@@ -111,7 +111,7 @@ export async function notifyOvertimeAdminCancelled(info: {
   if (await shouldSendWithDefault('overtime:admin_cancelled', 'site', true)) {
     await insertNotification(
       applicantId,
-      '管理者が残業・時間調整の申請を取り消しました',
+      '🕐 管理者が残業・時間調整の申請を取り消しました',
       dateLabel,
       'overtime_request',
       reportId,
@@ -138,7 +138,7 @@ export async function notifyOvertimeGrant(info: {
   if (await shouldSendWithDefault('overtime:grant', 'site', true)) {
     await insertNotification(
       applicantId,
-      `締め後の残業・時間調整申請が許可されました`,
+      `🕐 締め後の残業・時間調整申請が許可されました`,
       `${workDatesLabel}の新規申請ができます`,
       'overtime_request',
       undefined,
@@ -165,7 +165,7 @@ export async function notifyOvertimeGrantDeclined(info: {
   if (await shouldSendWithDefault('overtime:grant_declined', 'site', true)) {
     await insertNotification(
       applicantId,
-      '締め後申請の依頼は見送られました',
+      '🕐 締め後申請の依頼は見送られました',
       reason ? `${workDatesLabel}　理由：${reason}` : workDatesLabel,
       'overtime_request',
       undefined,
@@ -205,7 +205,7 @@ export async function notifyOvertimeAdminEdited(info: {
   if (await shouldSendWithDefault('overtime:admin_edited', 'site', true)) {
     await insertNotification(
       applicantId,
-      '管理者が残業・時間調整の内容を修正しました',
+      '🕐 管理者が残業・時間調整の内容を修正しました',
       `${summary}　理由：${reason}`,
       'overtime_request',
       reportId,

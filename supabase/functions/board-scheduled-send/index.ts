@@ -98,7 +98,7 @@ serve(async (req) => {
     // （以前は body/type/is_read という存在しない列名で insert していたため、通知が一件も作成されていなかった）
     const notifications = recipients.map((r: { user_id: string }) => ({
       user_id: r.user_id,
-      message: `${senderName}からお知らせが届きました`,
+      message: `💬 ${senderName}からお知らせが届きました`,
       sub_message: preview,
       reference_id: msg.id,
       event_key: 'board:notice',

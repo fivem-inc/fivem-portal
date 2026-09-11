@@ -80,10 +80,10 @@ serve(async () => {
     const deadlineDate = new Date(msg.deadline + "T00:00:00Z");
     const diffDays = Math.round((deadlineDate.getTime() - today.getTime()) / 86400000);
     const title = diffDays === 0
-      ? "⏰ 本日期限の連絡があります"
+      ? "💬 本日期限の連絡があります"
       : diffDays === 1
-        ? "📅 明日期限の連絡があります"
-        : `📅 ${diffDays}日後期限の連絡があります`;
+        ? "💬 明日期限の連絡があります"
+        : `💬 ${diffDays}日後期限の連絡があります`;
     const body = msg.body.length > 50 ? msg.body.slice(0, 50) + "…" : msg.body;
 
     // プッシュ通知はベル通知のINSERT→push_queueトリガー→push-dispatchワーカー経由で送られる

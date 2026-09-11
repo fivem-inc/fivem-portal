@@ -160,7 +160,7 @@ serve(async () => {
   // ① 勤務日を過ぎた未受理（毎日）
   const overdue = await sendBatch(
     "overtime:pending_review", overdueByReviewer,
-    (n) => `⏰ 受理がまだの残業申請が${n}件あります`,
+    (n) => `🕐 受理がまだの残業申請が${n}件あります`,
     "残業申請の受理のお願い",
   );
 

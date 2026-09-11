@@ -92,7 +92,7 @@ serve(async (req) => {
     // サイト通知（バナー／ベル）
     const siteSetting = getSetting('site')
     if (siteSetting?.enabled) {
-      const template = siteSetting.template ?? '休暇申請がマネージャーに受理されました 「{{申請者名}}（{{日付}}）」'
+      const template = siteSetting.template ?? '🌿 休暇申請がマネージャーに受理されました 「{{申請者名}}（{{日付}}）」'
       const message = applyTemplate(template, vars)
       const subMessage = siteSetting.subject ? applyTemplate(siteSetting.subject, vars) : null
       const targetIds = await resolveTargetIds(siteSetting.recipient)

@@ -172,12 +172,12 @@ serve(async (req) => {
     if (siteSetting?.enabled) {
       const template = siteSetting.template
         ?? (isCancelled
-          ? '🔴 {{対象者名}}さんの{{種別}}が取消されました（{{日付}}）'
-          : '🔴 {{対象者名}}さんの{{種別}}が登録されました（{{日付}}）')
+          ? '📅 {{対象者名}}さんの{{種別}}が取消されました（{{日付}}）'
+          : '📅 {{対象者名}}さんの{{種別}}が登録されました（{{日付}}）')
       // 1人のときは管理画面のテンプレートをそのまま使う（「◯◯さんの…」という書き方が前提）。
       // 複数人のときは「◯◯さん 他2名さんの…」と日本語が崩れるので固定文で出す
       const message = isMulti
-        ? `🔴 ${nameLabel}の${typeLabels}が${isCancelled ? '取消' : '登録'}されました（${dateLabel}）`
+        ? `📅 ${nameLabel}の${typeLabels}が${isCancelled ? '取消' : '登録'}されました（${dateLabel}）`
         : applyTemplate(template, vars)
       const targetIds = await resolveTargetIds(siteSetting.recipient)
       if (targetIds.length > 0) {

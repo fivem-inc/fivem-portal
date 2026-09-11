@@ -1282,7 +1282,7 @@ const BoardPage: React.FC = () => {
         //    どこにも出ない死にデータになっていた（2026-08-18 修正）。
         //    通常の投稿と同じく source_type は付けず、event_key と元メッセージIDを渡す
         await Promise.all([...threadParticipants].map(uid =>
-          insertNotification(uid, `${senderName}がスレッドにリプライしました`, `${chName}: ${body.trim().slice(0, 40)}`, undefined, parentId, 'board:group_message')
+          insertNotification(uid, `💬 ${senderName}がスレッドにリプライしました`, `${chName}: ${body.trim().slice(0, 40)}`, undefined, parentId, 'board:group_message')
         ));
       }
 
@@ -1295,8 +1295,8 @@ const BoardPage: React.FC = () => {
           const senderName = profileName || '誰か';
           const preview = body.trim().slice(0, 40);
           const bellMessage = selectedChannel.type === 'group'
-            ? `${selectedChannel.name || 'グループ'}に${senderName}からメッセージが届きました`
-            : `${senderName}からメッセージが届きました`;
+            ? `💬 ${selectedChannel.name || 'グループ'}に${senderName}からメッセージが届きました`
+            : `💬 ${senderName}からメッセージが届きました`;
           await Promise.all(recipientIds.map(uid =>
             insertNotification(uid, bellMessage, preview, undefined, data.id,
               selectedChannel.type === 'group' ? 'board:group_message' : 'board:dm_message',
@@ -1467,7 +1467,7 @@ const BoardPage: React.FC = () => {
       }
       if (dmCh) {
         const { data: dmMsg } = await supabase.from('board_messages').insert({ channel_id: dmCh.id, user_id: user.id, body: broadcastMessage.trim() }).select('id').single();
-        await insertNotification(targetId, `${profileName || '誰か'}からメッセージが届きました`, broadcastMessage.trim().slice(0, 40), undefined, dmMsg?.id, 'board:dm_message', broadcastUrgent);
+        await insertNotification(targetId, `💬 ${profileName || '誰か'}からメッセージが届きました`, broadcastMessage.trim().slice(0, 40), undefined, dmMsg?.id, 'board:dm_message', broadcastUrgent);
       }
     }
 
@@ -1649,7 +1649,7 @@ const BoardPage: React.FC = () => {
         const preview = (composeSubject.trim() || composeBody.trim()).slice(0, 40);
         const recipientIds = composeRecipientIds.filter(uid => uid !== user.id);
         await Promise.all(recipientIds.map(uid =>
-          insertNotification(uid, `${senderName}からお知らせが届きました`, preview, undefined, data.id, 'board:notice',
+          insertNotification(uid, `💬 ${senderName}からお知らせが届きました`, preview, undefined, data.id, 'board:notice',
             composeUrgent) // 「当日の連絡・緊急」なら受信時間の設定を無視してすぐプッシュ
         ));
         dispatchBoardEmail('board:notice', {
@@ -2807,7 +2807,7 @@ const BoardPage: React.FC = () => {
                         if (!user) return;
                         setInboxRemindSending(true);
                         await Promise.all(inboxDetailUnconfirmed.map(uid =>
-                          insertNotification(uid, `【リマインド】${inboxDetail.subject || inboxDetail.title || 'お知らせ'}への対応がまだ完了していません`, undefined, undefined, inboxDetail.id, 'board:confirm_request')
+                          insertNotification(uid, `💬 【リマインド】${inboxDetail.subject || inboxDetail.title || 'お知らせ'}への対応がまだ完了していません`, undefined, undefined, inboxDetail.id, 'board:confirm_request')
                         ));
                         setInboxRemindSending(false);
                         setSaveBanner(true);
@@ -4486,7 +4486,7 @@ const BoardPage: React.FC = () => {
                     // ベル通知を登録すると、push_queueトリガー→push-dispatchワーカー経由で
                     // プッシュ通知も自動で届く（プッシュ文面はワーカー側の固定の安全文面）
                     await Promise.all(unconfirmedUserIds.map(uid =>
-                      insertNotification(uid, `【リマインド】${msg.subject || 'お知らせ'}への対応がまだ完了していません`, msg.body.slice(0, 40), undefined, unconfirmedMsgId ?? undefined, 'board:confirm_request')
+                      insertNotification(uid, `💬 【リマインド】${msg.subject || 'お知らせ'}への対応がまだ完了していません`, msg.body.slice(0, 40), undefined, unconfirmedMsgId ?? undefined, 'board:confirm_request')
                     ));
                     setUnconfirmedMsgId(null);
                     setSaveBanner(true);

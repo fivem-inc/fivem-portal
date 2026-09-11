@@ -71,7 +71,7 @@ serve(async (req) => {
       const { error: insErr } = await supabaseAdmin.from('notifications').insert(
         rows.map((p) => ({
           user_id: p.id,
-          message: ann.title,
+          message: `🔔 ${ann.title}`,
           sub_message: ann.body,
           event_key: 'announcement:new',
           reference_id: ann.id,

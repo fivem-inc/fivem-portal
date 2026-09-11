@@ -136,7 +136,7 @@ serve(async (req) => {
     // サイト通知
     const siteSetting = getSetting('site')
     if (siteSetting?.enabled) {
-      const template = siteSetting.template ?? '⏰ {{登録者名}}さんが{{日付}}に{{種別}}を登録しました。理由：{{理由}}'
+      const template = siteSetting.template ?? '📅 {{登録者名}}さんが{{日付}}に{{種別}}を登録しました。理由：{{理由}}'
       const message = applyTemplate(template, vars)
       const targetIds = await resolveTargetIds(siteSetting.recipient)
       if (targetIds.length > 0) {
@@ -159,7 +159,7 @@ serve(async (req) => {
       const fallbackIds = ((targets ?? []) as ({ resolve_role_recipients: string } | string)[])
         .map(row => (typeof row === 'string' ? row : row.resolve_role_recipients))
       if (fallbackIds.length > 0) {
-        const message = `⏰ 時間調整が登録されました`
+        const message = `📅 時間調整が登録されました`
         const subMessage = `${user_name}さんが ${dateLabel} に ${typeLabels} を登録しました。理由：${reason}`
         const { data: inserted } = await supabase.from('notifications').insert(
           fallbackIds.map(id => ({ user_id: id, message, sub_message: subMessage, source_type: 'time_adjustment', reference_id: date }))

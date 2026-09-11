@@ -53,7 +53,7 @@ serve(async () => {
   for (const [uid, dates] of byUser) {
     const sorted = [...dates].sort();
     const count = sorted.length;
-    const message = `⏰ 実績の報告が必要な残業が${count}件あります`;
+    const message = `🕐 実績の報告が必要な残業が${count}件あります`;
     const subMessage = sorted.map(mdLabel).join("・");
 
     if (siteEnabled) {

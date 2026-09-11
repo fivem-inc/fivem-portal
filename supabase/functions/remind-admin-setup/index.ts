@@ -87,7 +87,7 @@ Deno.serve(async (req) => {
 
       const rows = targetIds.map(uid => ({
         user_id: uid,
-        message: a.title,
+        message: `🔔 ${a.title}`,
         sub_message: a.detail,
         source_type: 'admin_setup',
         reference_id: a.key,
