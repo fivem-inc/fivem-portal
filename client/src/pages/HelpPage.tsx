@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useDarkMode } from '../hooks/useDarkMode';
 import {
   fetchFaqTopics,
@@ -9,7 +9,6 @@ import {
   isTopicVisible,
   logFaqQuery,
   type FaqTopic,
-  type FaqAnswer,
 } from '../lib/faq';
 
 // スタッフ向けヘルプ（社内サイトの使い方）。
@@ -30,7 +29,14 @@ const HelpPage: React.FC<Props> = ({ roleTitle }) => {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [submitted, setSubmitted] = useState('');
-  const [opened, setOpened] = useState<{ topic: FaqTopic; answer: FaqAnswer } | null>(null);
+  // 🚨 開いた答えは**URLに持つ**（2026-09-11）。コンポーネントの状態だけで持っていたため、
+  //    スマホの戻るボタンが「FAQページごと」戻ってしまい、**FAQを開く前の作業ページまで**
+  //    戻っていた（期待は「FAQの中で1段戻る」）。
+  //    URLに載せると、戻る＝この印が消える＝答えが閉じて一覧に戻る、になる。
+  const navigate = useNavigate();
+  // 「自分で開いた（＝履歴を1つ積んだ）」かどうか。閉じるボタンの戻し方を分けるために持つ。
+  // 🚨 リンクを直接開いた人もいるので、積んでいないときに navigate(-1) するとサイトの外へ出る。
+  const pushedRef = useRef(false);
   // 開いているカテゴリ（すべて表示のときの折りたたみ）
   const [openCategories, setOpenCategories] = useState<Set<string>>(new Set());
 
@@ -55,6 +61,7 @@ const HelpPage: React.FC<Props> = ({ roleTitle }) => {
   //    別のカテゴリで開き直しても切り替わらない）
   const [searchParams, setSearchParams] = useSearchParams();
   const categoryFilter = searchParams.get('category');
+  const openedTopicId = searchParams.get('topic');
 
   useEffect(() => {
     fetchFaqTopics('internal').then(rows => {
@@ -95,23 +102,51 @@ const HelpPage: React.FC<Props> = ({ roleTitle }) => {
     return [...map.entries()];
   }, [browsable]);
 
+  // いま開いている答え。URLの `topic` から作る（状態として持たない＝戻るでそのまま閉じる）
+  const opened = useMemo(() => {
+    if (!openedTopicId) return null;
+    const t = topics.find(x => x.id === openedTopicId);
+    if (!t) return null;                       // 🚨 消された質問のリンクを開いても落ちないように
+    const a = resolveAnswer(t, viewer);
+    return a ? { topic: t, answer: a } : null; // 🚨 その役職に見せる回答が無いなら開かない（従来どおり）
+  }, [openedTopicId, topics, viewer]);
+
+  // 閉じたら「自分で開いた」の印も落とす（戻るボタンで閉じた場合もここを通る）
+  useEffect(() => { if (!openedTopicId) pushedRef.current = false; }, [openedTopicId]);
+
+  const openTopic = (t: FaqTopic) => {
+    const a = resolveAnswer(t, viewer);
+    if (!a) return;
+    // 🚨 replace にしない。履歴を1つ積むから「戻る」で閉じられる（これが今回の目的）
+    const next = new URLSearchParams(searchParams);
+    next.set('topic', t.id);
+    setSearchParams(next);
+    pushedRef.current = true;
+    logFaqQuery({ audience: 'internal', rawQuery: t.question, hadMatch: true, viewer, pickedTopicId: t.id });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // 画面の「閉じる」ボタン。
+  // 🚨 自分で開いたときは**戻る1回と同じ**にする（履歴に「開いた跡」を残さない）。
+  //    リンクを直接開いた人は積んでいないので、印だけ消す（navigate(-1) だとサイトの外へ出る）。
+  const closeOpened = useCallback((replace = false) => {
+    if (pushedRef.current && !replace) { navigate(-1); return; }
+    const next = new URLSearchParams(searchParams);
+    next.delete('topic');
+    setSearchParams(next, { replace: true });
+  }, [navigate, searchParams, setSearchParams]);
+
   const runSearch = useCallback(() => {
     const q = query.trim();
     if (!q) return;
     setSubmitted(q);
-    setOpened(null);
+    // 🚨 ここは新しい操作なので履歴を戻さない（印だけ消す）
+    closeOpened(true);
     const hits = matchFaqTopics(q, topics, viewer, 5);
     // 答えられなかった質問を記録し、次のQ&A追加につなげる
     logFaqQuery({ audience: 'internal', rawQuery: q, hadMatch: hits.length > 0, viewer });
   }, [query, topics, viewer]);
 
-  const openTopic = (t: FaqTopic) => {
-    const a = resolveAnswer(t, viewer);
-    if (!a) return;
-    setOpened({ topic: t, answer: a });
-    logFaqQuery({ audience: 'internal', rawQuery: t.question, hadMatch: true, viewer, pickedTopicId: t.id });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
 
   const cardStyle: React.CSSProperties = {
     background: bg, border: `1px solid ${borderColor}`, borderRadius: 10, padding: 14, marginBottom: 10,
@@ -212,7 +247,7 @@ const HelpPage: React.FC<Props> = ({ roleTitle }) => {
               {opened.answer.valid_from ? `（${opened.answer.valid_from}〜）` : ''}
             </div>
           )}
-          <button type="button" onClick={() => setOpened(null)}
+          <button type="button" onClick={() => closeOpened()}
             style={{ marginTop: 12, fontSize: 13, padding: '7px 14px', borderRadius: 6, border: `1px solid ${borderColor}`, background: 'none', color: text, cursor: 'pointer' }}>
             閉じる
           </button>
