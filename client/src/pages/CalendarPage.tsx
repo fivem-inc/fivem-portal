@@ -140,6 +140,12 @@ interface LeaveEvent {
   // シフト調整の状態（2026-09-09）。pending=未／adjusted=調整済／no_change=確認済（変更なし）
   // 🚨 出すのは受理済み（マネージャー受理以降）だけ。それ以前は調整のしようがないため
   shift_adjust_status?: string | null;
+  // 🚨 誰がいつ「調整済／確認済」にしたか（2026-09-11 ユーザー要望で表示するようにした）。
+  //    記録は前からあった（set_leave_shift_adjust が書いている）。出していなかっただけ。
+  //    「未」に戻すと DB 側で null に戻る＝画面からも消えるのが正しい
+  shift_adjusted_at?: string | null;
+  shift_adjusted_by?: string | null;
+  shift_adjusted_by_name?: string | null;
 }
 
 interface AbsenceEvent {
@@ -1591,8 +1597,18 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
     if (error) { setShiftError('保存できませんでした：' + error.message); return; }
     const row = Array.isArray(data) ? data[0] : data;
     if (!row?.ok) { setShiftError(row?.reason || '保存できませんでした'); return; }
-    // 画面をその場で更新（読み直しを待たせない）。同じ申請が複数日に並ぶので全部変わる
-    setEvents(prev => prev.map(e => e.id === ev.id ? { ...e, shift_adjust_status: status } : e));
+    // 画面をその場で更新（読み直しを待たせない）。同じ申請が複数日に並ぶので全部変わる。
+    // 🚨 「誰がいつ」も同時に入れる。入れないと、保存した直後だけ空で、
+    //    画面を開き直すと出てくる＝見る人には不具合に見える。
+    // 🚨 「未」に戻したときは DB 側も null に戻るので、画面も空にする（合わせる）。
+    const nowIso = new Date().toISOString();
+    setEvents(prev => prev.map(e => e.id === ev.id ? {
+      ...e,
+      shift_adjust_status: status,
+      shift_adjusted_at: status === 'pending' ? null : nowIso,
+      shift_adjusted_by: status === 'pending' ? null : (user?.id ?? null),
+      shift_adjusted_by_name: status === 'pending' ? null : (profiles.find(p => p.id === user?.id)?.name ?? null),
+    } : e));
     setShiftPanelFor(null);
   };
 
@@ -1685,7 +1701,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
 
       const { data: leaves } = await supabase
         .from('leave_requests')
-        .select('id, user_id, leave_type, leave_type_other, leave_dates, leave_locations, start_date, end_date, status, purpose, reason, shift_adjust_status')
+        .select('id, user_id, leave_type, leave_type_other, leave_dates, leave_locations, start_date, end_date, status, purpose, reason, shift_adjust_status, shift_adjusted_at, shift_adjusted_by')
         .not('status', 'in', '("rejected","cancelled")')
         .or(`and(start_date.lte.${endStr},end_date.gte.${startStr})`);
 
@@ -1694,7 +1710,14 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
       let userIds = [...new Set(leaves.map((l: { user_id: string }) => l.user_id))] as string[];
       userIds = await getTargetUserIds(userIds);
 
-      const { data: profs } = await supabase.from('profiles').select('id, name').in('id', userIds);
+      // 🚨 名前を引く相手は「休暇を出した人」だけではない。**シフト調整をした人**の名前も要る
+      //    （2026-09-11 追加）。その人は休暇を出していないことがあるので、別に集めて一緒に引く。
+      //    🚨 userIds（＝誰の休暇を見てよいか）には混ぜない。混ぜると見えない人の休暇まで出る。
+      const adjusterIds = [...new Set(
+        leaves.map((l: { shift_adjusted_by?: string | null }) => l.shift_adjusted_by).filter(Boolean),
+      )] as string[];
+      const nameIds = [...new Set([...userIds, ...adjusterIds])];
+      const { data: profs } = await supabase.from('profiles').select('id, name').in('id', nameIds);
       const profileMap: Record<string, string> = {};
       (profs || []).forEach((p: { id: string; name: string }) => { profileMap[p.id] = p.name; });
 
@@ -1715,7 +1738,9 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
         let locations: Record<string, string> | undefined;
         try { if (l.leave_locations) locations = JSON.parse(l.leave_locations); } catch { locations = undefined; }
         if (dates.length > 0) {
-          result.push({ id: l.id, user_id: l.user_id, name, leave_type: l.leave_type, leave_type_other: l.leave_type_other, dates, status: l.status, locations, purpose: l.purpose, reason: l.reason, shift_adjust_status: l.shift_adjust_status });
+          result.push({ id: l.id, user_id: l.user_id, name, leave_type: l.leave_type, leave_type_other: l.leave_type_other, dates, status: l.status, locations, purpose: l.purpose, reason: l.reason, shift_adjust_status: l.shift_adjust_status,
+            shift_adjusted_at: l.shift_adjusted_at, shift_adjusted_by: l.shift_adjusted_by,
+            shift_adjusted_by_name: l.shift_adjusted_by ? (profileMap[l.shift_adjusted_by] ?? null) : null });
         }
       }
       setEvents(result);
@@ -2226,6 +2251,16 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
                         {/* 🚨 上の行の「状態」列はスマホで42pxしかなく、チップは入らない。
                             振替休日の補足と同じ2行目に出す（2026-09-09） */}
                         {shiftChip}
+                        {/* 誰がいつ「調整済／確認済」にしたかを、印のすぐ横に小さく出す
+                            （2026-09-11 ユーザー要望）。🚨 記録は前からあったが出していなかった。
+                            🚨 「未」のときは記録そのものが無い（DB側で null に戻る）ので何も出ない。
+                            🚨 名前が引けないときは日付だけ出す（「不明」とは書かない）。 */}
+                        {shiftTarget && shiftSt !== 'pending' && ev.shift_adjusted_at && (
+                          <span style={{ fontSize: 10.5, color: subColor, whiteSpace: 'nowrap' }}>
+                            {ev.shift_adjusted_by_name ? `${ev.shift_adjusted_by_name}・` : ''}
+                            {new Date(ev.shift_adjusted_at).toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' })}
+                          </span>
+                        )}
                       </div>
                     )}
                     {/* シフト調整の切り替え（マネージャー以上・管理者だけ）。
@@ -2243,9 +2278,15 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
                               {lbl}
                             </button>
                           ))}
+                          {/* 🚨 ここは「3つのうちの4つ目」ではなく、**この枠を閉じるだけ**のボタン。
+                              2026-09-11 実機指摘：同じ丸いボタンで並んでいたので「やめる＝何をやめるの？」と
+                              読めた。**形を変えて右端へ離す**ことで、選ぶものではないと見て分かるようにした。
+                              言葉も「やめる」→「閉じる」（実際にしていることは閉じるだけ。
+                              何かを取り消すわけではない）。 */}
                           <button onClick={() => setShiftPanelFor(null)}
-                            style={{ padding: '6px 12px', borderRadius: 14, fontSize: 11.5, cursor: 'pointer', border: `1px solid ${borderColor}`, background: 'transparent', color: subColor }}>
-                            やめる
+                            style={{ marginLeft: 'auto', padding: '6px 4px', fontSize: 11.5, cursor: 'pointer',
+                              border: 'none', background: 'transparent', color: subColor, textDecoration: 'underline' }}>
+                            閉じる
                           </button>
                         </div>
                         {shiftError && (
