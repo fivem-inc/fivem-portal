@@ -661,11 +661,15 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
         // 🚨 ここが失敗すると、元の申請が残ったまま新しい申請も並び、二重申請になる。
         //    ただし新しい申請はすでに作られているので、送信そのものは失敗扱いにしない。
         //    黙って消さず「元の申請が残っている」ことを本人に伝えて、手で取り消してもらう。
-        const { data: cancelled, error: cancelErr } = await supabase.from('leave_requests')
-          .update({ status: 'cancelled' }).eq('id', reapplySourceId).select('id');
-        if (cancelErr || !cancelled || cancelled.length === 0) {
+        // 🚨 ここは表を直接 update していたが、**申請者本人には書き込みの許可が無く**、
+        //    リーダー未満の人では**いつも0件で失敗していた**（2026-09-11 実測で判明）。
+        //    本人が自分の申請を取り消す道は `cancel_own_leave`（RLSを通らない専用の処理）で、
+        //    履歴の「取消」ボタンは前からこれを使っている。**同じことを2通りに書かない**。
+        //    再申請の元は必ず「差し戻された申請」なので、この処理の条件（pending / rejected）に合う。
+        const { error: cancelErr } = await supabase.rpc('cancel_own_leave', { p_id: reapplySourceId });
+        if (cancelErr) {
           setSubmitError('新しい申請は送信できましたが、元の申請を取り消せませんでした'
-            + (cancelErr ? `：${cancelErr.message}` : '（対象が見つかりませんでした）')
+            + `：${cancelErr.message}`
             + '。二重に申請が並んでいる場合は、履歴から元の申請を取り消してください。');
         }
         setReapplySourceId(null);
