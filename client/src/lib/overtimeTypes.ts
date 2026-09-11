@@ -68,9 +68,16 @@ export const OT_CALENDAR: Record<OvertimeType, { syncable: boolean; defaultShare
   late_start_adj:  { syncable: true,  defaultShare: true,  priority: 4 },
   early_end_adj:   { syncable: true,  defaultShare: true,  priority: 5 },
   location_change: { syncable: true,  defaultShare: true,  priority: 6 },
-  // 事前に分かっている遅刻・早退は載せられるが、既定では載せない（本人が選んだときだけ）
-  tardiness:       { syncable: true,  defaultShare: false, priority: 7 },
-  early_leave:     { syncable: true,  defaultShare: false, priority: 8 },
+  // 事前に分かっている遅刻・早退も**既定で載せる**（2026-09-11 ユーザー確定）。
+  // 🚨 以前は「既定では載せない（本人が選んだときだけ）」だったが、選べるのはマネージャー・社長だけで、
+  //    **それ以外の役職（リーダー・フロア責任者・一般・パート）は本人がどう操作しても載らなかった**。
+  //    「選べない人は全部載る」という本来の意図（OvertimePage の canChooseCalendar）と食い違っていた。
+  //    「その時間帯にいない」予定なので、お休みや遅出(調整)と同じく周りが知るべき情報として扱う。
+  //    事後報告（実際に遅れた記録）は canOfferCalendarChoice / willShowOnCalendar の条件で今までどおり載らない。
+  // 🚨 gcal-sync の OVERTIME_TYPES と**必ず同時に**直すこと（2か所管理。片方だけだと
+  //    「画面では載ると出るのに実際は載らない」になる）
+  tardiness:       { syncable: true,  defaultShare: true,  priority: 7 },
+  early_leave:     { syncable: true,  defaultShare: true,  priority: 8 },
   // 終日種別は「その日いない」情報なので、選ばせずに必ず載せる
   chosei_off:      { syncable: true,  defaultShare: true,  priority: 9 },
   furikae_off:     { syncable: true,  defaultShare: true,  priority: 10 },

@@ -81,8 +81,9 @@ function skipLocationSuffix(type: string, segments?: unknown): boolean {
 // 色: 残業/早出=9(濃青)・休日出勤=10(濃緑)・勤務地変更=3(紫)・調整系=2(既存の調整色)
 // sync         … そもそもカレンダーに出せる種別か
 // defaultShare … overtime_reports.show_on_calendar が null（本人が選んでいない）ときに出すか
-//                遅刻・早退だけ false。これまで出していなかったので、
-//                チェック欄を使わない人の見え方を変えないため。
+//                2026-09-11 から全種別 true（打刻ズレは sync=false なので対象外）。
+//                🚨 以前は遅刻・早退だけ false だったが、選べるのはマネージャー・社長だけで、
+//                   それ以外の役職は本人がどう操作しても事前の遅刻・早退が載らなかった。
 // 🚨 同じ表が client/src/lib/overtimeTypes.ts の OT_CALENDAR にもある（2箇所管理）。
 //    片方だけ直すと「アプリでは載る予定なのにカレンダーに出ない」という食い違いになる。
 const OVERTIME_TYPES: Record<string, { label: string; colorId: string; sync: boolean; defaultShare: boolean; priority: number }> = {
@@ -92,9 +93,12 @@ const OVERTIME_TYPES: Record<string, { label: string; colorId: string; sync: boo
   late_start_adj:  { label: '遅出(調整)',  colorId: '2',  sync: true,  defaultShare: true,  priority: 4 },
   early_end_adj:   { label: '早退(調整)',  colorId: '2',  sync: true,  defaultShare: true,  priority: 5 },
   location_change: { label: '勤務地変更',  colorId: '3',  sync: true,  defaultShare: true,  priority: 6 },
-  // 事前に分かっている遅刻・早退は本人が選べば出せる（既定では出さない）
-  tardiness:       { label: '遅刻',        colorId: '2',  sync: true,  defaultShare: false, priority: 7 },
-  early_leave:     { label: '早退',        colorId: '2',  sync: true,  defaultShare: false, priority: 8 },
+  // 事前に分かっている遅刻・早退も**既定で載せる**（2026-09-11 ユーザー確定）。
+  // 「その時間帯にいない」予定なので、お休みや遅出(調整)と同じく周りが知るべき情報として扱う。
+  // 事後報告（実際に遅れた記録）は下の同期条件（is_post_hoc）で今までどおり載らない。
+  // マネージャー・社長はチェック欄で外せる（選べる人は増やしていない）。
+  tardiness:       { label: '遅刻',        colorId: '2',  sync: true,  defaultShare: true,  priority: 7 },
+  early_leave:     { label: '早退',        colorId: '2',  sync: true,  defaultShare: true,  priority: 8 },
   // 終日種別（単独付与・時刻なしタイトル）。現状の休暇/欠勤の見た目を維持: 調整休=「調整休」・欠勤=「休み」・colorId 4
   chosei_off:      { label: '調整休',      colorId: '4',  sync: true,  defaultShare: true,  priority: 9 },
   furikae_off:     { label: '振休',        colorId: '4',  sync: true,  defaultShare: true,  priority: 10 },
@@ -319,7 +323,7 @@ serve(async (req) => {
       const otIsFullDay = (report?.application_types ?? []).some((t: string) => OVERTIME_FULL_DAY.includes(t))
 
       // 本人が選んだ掲載可否。null は「選んでいない」＝これまでどおりの動き。
-      //   遅刻・早退は defaultShare=false なので、選ばれない限り出さない（従来と同じ）。
+      //   遅刻・早退も 2026-09-11 から defaultShare=true（選んでいなければ載る。外すのはチェック欄）。
       //   終日種別は選ばせず必ず出す（その日いないことは他の人のシフトに関わるため）。
       const otDefaultShare = syncTypes.some((t: string) => OVERTIME_TYPES[t]?.defaultShare)
       const otShare = otIsFullDay || (report?.show_on_calendar ?? otDefaultShare)
