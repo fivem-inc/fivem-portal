@@ -338,6 +338,26 @@ export const waitOverLimit = (
   occStartsAt: string,
 ): boolean => !!w.waiting_until && localDate(occStartsAt) > w.waiting_until;
 
+/**
+ * 「この回だけ」の待ちで、その回がもう終わっているか（2026-09-11 ユーザー確定・案A）。
+ *
+ * きっかけ：9/4 の回の待ちが、9/10〜 の担当別の一覧の上に「予約の無い枠に、
+ * キャンセル待ちが1件」として出続けていた。回が開催されて終わっただけでは
+ * 待ちは waiting のまま残る（予約を**削除**したときだけ取り消している）。
+ * 過ぎた回に繰り上がることはないので、「待っています」と読める形で出すのは誤り。
+ *
+ * 🚨 **毎週の枠の待ち（recurrence_id あり）は常に false**。次の週のために待ち続ける。
+ * 🚨 時刻は**文字列で比べない**。DBの ends_at は「+00:00」、toISOString は「Z」で書式が違い、
+ *    文字列の大小が時刻の前後と一致しないことがある。Date にして比べる。
+ * 🚨 回が消されているかはここでは見ない（「対象の回は取り消されています」で別に扱う）。
+ * 🚨 これは**表示の判定だけ**。データ（status）は変えない。
+ */
+export const waitTargetEnded = (
+  w: { recurrence_id: string | null; booking?: { ends_at: string } | null },
+  now: Date,
+): boolean =>
+  !w.recurrence_id && !!w.booking && new Date(w.booking.ends_at).getTime() <= now.getTime();
+
 /** その回で対象から外れている理由。null＝いま並んでいる（繰り上げられる） */
 export type WaitBlockReason = 'skip' | 'limit' | 'promoted' | null;
 

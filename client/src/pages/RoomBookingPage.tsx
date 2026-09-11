@@ -15,7 +15,7 @@ import {
   participantsOf, participantLabelOf, attendanceOptionsFor, needsPaymentNote, customerSearchFilter, customerMatches,
   staffMatches,
   skipDetailLabel, waitKey, type SkipInfo,
-  waitOverLimit, waitQueueKey, queueKeyOfBooking, waitSeatsFor,
+  waitOverLimit, waitTargetEnded, waitQueueKey, queueKeyOfBooking, waitSeatsFor,
   type Campus, type Floor, type Booking, type ConflictInfo,
   type Staff, type LessonCategory, type Recurrence, type PurposeDuration, type PurposeDetail,
   type AttendanceOption, type AttendanceRow, type Participant,
@@ -798,7 +798,9 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
    *    文字にするのは waitInfo（下）で、抽出の規則はこちらに一本化してある。
    */
   const waitOrphanSlots = useMemo(() => {
-    type Slot = { key: string; staffId: string; floorId: string; entries: Waitlist[] };
+    // head … 見出し（日時・場所・担当）の基準にする待ち。終わっていない最初の人
+    // entries … 番号を振るための全員（キャンセル待ちの一覧と同じ番号にするため、ここでは外さない）
+    type Slot = { key: string; staffId: string; floorId: string; entries: Waitlist[]; head: Waitlist };
     const out: Slot[] = [];
     if (view !== 'staff' || !waitState) return out;
     const shown = new Set(bookings.map(b => queueKeyOfBooking(b)));
@@ -811,7 +813,11 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
     }
     for (const [k, entries] of bySlot) {
       if (shown.has(k)) continue;
-      const head = entries[0];
+      // 🚨 終わった回の「この回だけ」の待ちは出さない（2026-09-11 ユーザー確定・案A）。
+      //    判定は lib の waitTargetEnded 1本。毎週の枠の待ちは今までどおり出す。
+      //    全員が終わった回の待ちなら、この枠ごと出さない
+      const head = entries.find(w => !waitTargetEnded(w, now));
+      if (!head) continue;
       const rec = head.recurrence;
       const bk = head.booking;
       // 🚨 対象の回が取り消された待ちは繰り上げ先が無いので出さない
@@ -823,10 +829,11 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
       if (!floorId || !visibleFloorIds.has(floorId)) continue;
       // 担当別の一覧なので、担当が入っていない枠はここには出せない
       if (!staffId) continue;
-      out.push({ key: k, staffId, floorId, entries });
+      out.push({ key: k, staffId, floorId, entries, head });
     }
     return out;
-  }, [view, waitState, bookings, visibleFloors]);
+    // 🚨 now（1分ごとに更新）に依存させる。回が終わったら、読み直さなくても1分以内に消える
+  }, [view, waitState, bookings, visibleFloors, now]);
 
   /** 上の枠に出てくる担当（並び・絞り込みの両方がこれを見る） */
   const waitOnlyStaffIds = useMemo(
@@ -1091,7 +1098,8 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
     // 🚨 **どの枠を出すかの判定は waitOrphanSlots（上）だけ**。ここは文字にするだけ。
     //    絞り込みの選択肢も同じものを見ているので、食い違いが起きない
     for (const s of (onlyTentative ? [] : waitOrphanSlots)) {
-      const head = s.entries[0];
+      // 🚨 見出しは「終わっていない最初の人」を基準にする（抽出側で決めたものをそのまま使う）
+      const head = s.head;
       const rec = head.recurrence;
       const bk = head.booking;
       const when = rec
@@ -1102,7 +1110,8 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
       // 🚨 ここでも期限切れの方は出さない（回が無いので**今日**を基準に見る）
       const people = s.entries
         .map((w, i) => ({ w, order: i + 1 }))
-        .filter(({ w }) => !waitOverLimit(w, nowIso))
+        // 🚨 番号を振ったあとで外す（キャンセル待ちの一覧と同じ番号のまま。飛ぶのが正しい）
+        .filter(({ w }) => !waitOverLimit(w, nowIso) && !waitTargetEnded(w, now))
         .map(({ w, order }) => `${order}. ${nameOf(w, on)}`);
       if (!people.length) continue;
       orphans.push({
@@ -1113,7 +1122,7 @@ const RoomBookingPage: React.FC<Props> = ({ user, roleTitle, isAdmin: admin, emp
     }
     orphans.sort((a, b) => a.title.localeCompare(b.title, 'ja'));
     return { byBooking, offByBooking, orphans, error: waitState.error };
-  }, [view, waitState, waitCustomers, bookings, waitOrphanSlots, onlyTentative, placeName, allCampus]);
+  }, [view, waitState, waitCustomers, bookings, waitOrphanSlots, onlyTentative, placeName, allCampus, now]);
 
   // ---------------- 見た目の部品 ----------------
   const btn = (on: boolean, color = accent): React.CSSProperties => ({
