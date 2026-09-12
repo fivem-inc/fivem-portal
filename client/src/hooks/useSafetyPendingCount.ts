@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { usePolling } from './usePolling';
 import { supabase } from '../lib/supabaseClient';
 import { isTransientFailure, timeoutSignal, SAFETY_TIMEOUT_MS } from '../lib/netFailure';
 import {
@@ -141,15 +142,14 @@ export const useSafetyPendingCount = (userId: string | undefined) => {
     saveSafetySnapshot(uid, relevant, responseMap);
   }, [userId, applySnapshot]);
 
-  useEffect(() => { fetchPending(); }, [fetchPending]);
+  // 🚨 画面を見ていない間は止まり、戻った瞬間に1回読み直す（hooks/usePolling.ts）
+  usePolling(fetchPending);
   useEffect(() => {
     window.addEventListener('safety-pending-changed', fetchPending);
     window.addEventListener('online', fetchPending);
-    const interval = setInterval(fetchPending, 30000);
     return () => {
       window.removeEventListener('safety-pending-changed', fetchPending);
       window.removeEventListener('online', fetchPending);
-      clearInterval(interval);
     };
   }, [fetchPending]);
 

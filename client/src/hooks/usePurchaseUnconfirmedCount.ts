@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { usePolling } from './usePolling';
 import { supabase } from '../lib/supabaseClient';
 
 // 備品購入申請：自分が関わった申請のうち、まだ確認していないやりとりを持つ件数
@@ -35,11 +36,8 @@ export const usePurchaseUnconfirmedCount = (
   }, [userId, canPurchaseRequest]);
 
   // 30秒ごとに数え直す（承認待ちのバッジと同じ間隔）
-  useEffect(() => {
-    fetchUnconfirmed();
-    const t = setInterval(fetchUnconfirmed, 30000);
-    return () => clearInterval(t);
-  }, [fetchUnconfirmed]);
+  // 🚨 画面を見ていない間は止まり、戻った瞬間に1回読み直す（hooks/usePolling.ts）
+  usePolling(fetchUnconfirmed);
 
   // 「✓ 確認した」を押した直後・投稿した直後に数え直す。
   // これが無いと、押したのに最大30秒バッジが残り「押しても効かない」と受け取られる

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { usePolling } from './usePolling';
 import { supabase } from '../lib/supabaseClient';
 import { attrsFor } from '../lib/roleAttrs';
 import { useRoles } from './useRoles';
@@ -25,7 +26,8 @@ export const useLeavePendingCount = (userId: string | undefined, roleTitle: stri
     setPendingCount((d1?.length ?? 0) + (d2?.length ?? 0) + (d3?.length ?? 0));
   }, [userId, isAdmin, isLeaderPlus, isPresident]);
 
-  useEffect(() => { fetchPending(); const t = setInterval(fetchPending, 30000); return () => clearInterval(t); }, [fetchPending]);
+  // 🚨 画面を見ていない間は止まり、戻った瞬間に1回読み直す（hooks/usePolling.ts）
+  usePolling(fetchPending);
   useEffect(() => {
     window.addEventListener('leave-pending-changed', fetchPending);
     return () => window.removeEventListener('leave-pending-changed', fetchPending);

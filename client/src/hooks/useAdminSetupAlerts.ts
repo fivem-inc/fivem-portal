@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { usePolling } from './usePolling';
 import { supabase } from '../lib/supabaseClient';
 
 export type AdminSetupAlert = {
@@ -30,13 +31,13 @@ export const useAdminSetupAlerts = (enabled: boolean) => {
     setAlerts(data as AdminSetupAlert[]);
   }, [enabled]);
 
+  // 入力してすぐ確認したいので、他のバッジと同じく30秒ごとに数え直す
+  // 🚨 画面を見ていない間は止まり、戻った瞬間に1回読み直す（hooks/usePolling.ts）
+  usePolling(fetchAlerts);
   useEffect(() => {
-    fetchAlerts();
-    // 入力してすぐ確認したいので、他のバッジと同じく30秒ごとに数え直す
-    const t = setInterval(fetchAlerts, 30000);
     const onChanged = () => fetchAlerts();
     window.addEventListener('admin-setup-changed', onChanged);
-    return () => { clearInterval(t); window.removeEventListener('admin-setup-changed', onChanged); };
+    return () => { window.removeEventListener('admin-setup-changed', onChanged); };
   }, [fetchAlerts]);
 
   return {

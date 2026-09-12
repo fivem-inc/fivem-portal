@@ -40,6 +40,8 @@ interface Snapshot {
   lastLoad: number;       // 最後の読み込みが終わるまで（ファイル・問い合わせの両方を含む）
   rows: Row[];
   serialMs: number;       // 「前が終わってから次が始まった」ぶんの合計＝順番待ち
+  // 🚨 起動の通過時刻の印（lib/bootMark.ts）。通信していない間のことは、これでしか分からない
+  marks: { label: string; at: number; gap: number }[];
 }
 
 const s = (ms: number) => `${(ms / 1000).toFixed(2)} 秒`;
@@ -100,6 +102,19 @@ function collect(): Snapshot | null {
     prevEnd = Math.max(prevEnd, c.end);
   }
 
+  // 通過時刻の印。**前の印からの差（gap）がいちばん大事** ＝ そこで何秒止まっていたか
+  const rawMarks = (performance.getEntriesByType('mark') as PerformanceEntry[])
+    .filter(m => m.name.startsWith('boot:'))
+    .sort((a, b) => a.startTime - b.startTime);
+  let prevAt = 0;
+  const marks = rawMarks.map(m => {
+    const gap = m.startTime - prevAt;
+    prevAt = m.startTime;
+    // 🚨 正規表現を使わない（最初の空白より後ろを取るだけ）。'boot:1 アプリが動き出した' → 'アプリが動き出した'
+    const sp = m.name.indexOf(' ');
+    return { label: sp >= 0 ? m.name.slice(sp + 1) : m.name, at: m.startTime, gap };
+  });
+
   return {
     htmlDone: nav ? nav.responseEnd : 0,
     scriptDone: nav ? nav.domContentLoadedEventEnd : 0,
@@ -107,6 +122,7 @@ function collect(): Snapshot | null {
     lastLoad: rows.length > 0 ? Math.max(...rows.map(r => r.end)) : 0,
     rows,
     serialMs,
+    marks,
   };
 }
 
@@ -118,6 +134,10 @@ function asText(d: Snapshot): string {
   lines.push(`最初の絵が出るまで       ${sOrDash(d.firstPaint)}`);
   lines.push(`最後の読み込みまで       ${sOrDash(d.lastLoad)}`);
   lines.push(`うち順番待ち             ${s(d.serialMs)}`);
+  lines.push('');
+  lines.push('【起動の通り道】（かかった時間 ＝ 前の印からの差）');
+  if (d.marks.length === 0) lines.push('  （印がありません。古い版の画面かもしれません）');
+  for (const m of d.marks) lines.push(`  ${s(m.at)}  (+${s(m.gap)})  ${m.label}`);
   lines.push('');
   lines.push('【部品のファイル】');
   for (const r of d.rows.filter(x => x.kind === 'asset')) {
@@ -210,6 +230,23 @@ export default function BootTiming({ isDark }: Props) {
             <span>最初の絵が出るまで</span><strong>{sOrDash(data.firstPaint)}</strong>
             <span>最後の読み込みまで</span><strong>{sOrDash(data.lastLoad)}</strong>
             <span style={{ color: sub }}>うち順番待ち</span><strong style={{ color: sub }}>{s(data.serialMs)}</strong>
+          </div>
+
+          <div style={{ fontSize: 12, color: sub, marginBottom: 6 }}>
+            起動の通り道（🚨 <strong>右の (+◯秒) がいちばん大事</strong>。そこで止まっていた時間）
+            <br />🚨 同じ印が2回出ていたら、<strong>起動の処理が2回走っています</strong>（全部読み直している）
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            {data.marks.length === 0 && (
+              <div style={{ fontSize: 12, color: sub }}>（印がありません。古い版の画面かもしれません）</div>
+            )}
+            {data.marks.map((m, i) => (
+              <div key={i} style={{ display: 'flex', gap: 8, fontSize: 12, color: text, padding: '3px 0', borderBottom: `1px solid ${line}`, flexWrap: 'wrap' }}>
+                <span style={{ color: sub, whiteSpace: 'nowrap' }}>{s(m.at)}</span>
+                <strong style={{ whiteSpace: 'nowrap' }}>(+{s(m.gap)})</strong>
+                <span style={{ flex: 1, minWidth: 120 }}>{m.label}</span>
+              </div>
+            ))}
           </div>
 
           <div style={{ fontSize: 12, color: sub, marginBottom: 6 }}>部品のファイル（「端末の写しから」なら通信していません）</div>

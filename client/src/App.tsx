@@ -46,6 +46,7 @@ import { fetchActiveAnnouncements, type Announcement } from './lib/announcements
 import { isInRemindWindow } from './lib/announcementDates';
 import { useFeaturePublished, isFeaturePublished } from './hooks/useFeaturePublished';
 import { useRoles } from './hooks/useRoles';
+import { usePolling } from './hooks/usePolling';
 import { attrsFor, previewRoleOptions } from './lib/roleAttrs';
 import { supabase } from './lib/supabaseClient';
 import { isFullDayReport } from './lib/overtimeTypes';
@@ -431,7 +432,8 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
     if (data) setNotifs(data);
   }, [userId]);
 
-  useEffect(() => { fetchNotifs(); const t = setInterval(fetchNotifs, 30000); return () => clearInterval(t); }, [fetchNotifs]);
+  // 🚨 画面を見ていない間は止まり、戻った瞬間に1回読み直す（hooks/usePolling.ts）
+  usePolling(fetchNotifs);
   // 連絡板でメッセージを読んだ直後にベルを読み直す（2026-09-10 ユーザー依頼）。
   // 🚨 30秒の自動更新だけだと、読んだのに数字が減らず「効いていない」ように見える。
   useEffect(() => {
@@ -670,7 +672,8 @@ const useBoardUnread = (userId: string | undefined, pathname: string) => {
     prevPath.current = pathname;
   }, [pathname, fetchCount]);
 
-  useEffect(() => { fetchCount(); const t = setInterval(fetchCount, 30000); return () => clearInterval(t); }, [fetchCount]);
+  // 🚨 画面を見ていない間は止まり、戻った瞬間に1回読み直す（hooks/usePolling.ts）
+  usePolling(fetchCount);
   return { total: channelCount + inboxCount, channelOnly: channelCount };
 };
 
@@ -689,7 +692,8 @@ const useShiftPendingCount = (userId: string | undefined, roleTitle: string | un
     setPendingCount(data?.length ?? 0);
   }, [userId, isApprover, isAdmin, canShiftReport]);
 
-  useEffect(() => { fetchPending(); const t = setInterval(fetchPending, 30000); return () => clearInterval(t); }, [fetchPending]);
+  // 🚨 画面を見ていない間は止まり、戻った瞬間に1回読み直す（hooks/usePolling.ts）
+  usePolling(fetchPending);
   useEffect(() => {
     window.addEventListener('shift-pending-changed', fetchPending);
     return () => window.removeEventListener('shift-pending-changed', fetchPending);
@@ -711,7 +715,8 @@ const useOvertimePendingCount = (userId: string | undefined, canOvertime: boolea
     setPendingCount(data?.length ?? 0);
   }, [userId, canOvertime]);
 
-  useEffect(() => { fetchPending(); const t = setInterval(fetchPending, 30000); return () => clearInterval(t); }, [fetchPending]);
+  // 🚨 画面を見ていない間は止まり、戻った瞬間に1回読み直す（hooks/usePolling.ts）
+  usePolling(fetchPending);
   useEffect(() => {
     window.addEventListener('overtime-pending-changed', fetchPending);
     return () => window.removeEventListener('overtime-pending-changed', fetchPending);
@@ -739,7 +744,8 @@ const useOvertimeUnreportedCount = (userId: string | undefined, canOvertime: boo
       .map(r => r.work_date).sort();
     setCount(list.length); setDates(list);
   }, [userId, canOvertime]);
-  useEffect(() => { fetchUnreported(); const t = setInterval(fetchUnreported, 30000); return () => clearInterval(t); }, [fetchUnreported]);
+  // 🚨 画面を見ていない間は止まり、戻った瞬間に1回読み直す（hooks/usePolling.ts）
+  usePolling(fetchUnreported);
   useEffect(() => {
     window.addEventListener('overtime-pending-changed', fetchUnreported);
     return () => window.removeEventListener('overtime-pending-changed', fetchUnreported);

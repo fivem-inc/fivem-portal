@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { usePolling } from './usePolling';
 import { supabase } from '../lib/supabaseClient';
 
 // 備品購入申請：自分の回答・承認を待っている件数
@@ -43,7 +44,8 @@ export const usePurchasePendingCount = (userId: string | undefined, canPurchaseR
   }, [userId, canPurchaseRequest]);
 
   // 30秒ごとに数え直す（休暇・勤務変更のバッジと同じ。他の人が先に処理したときも減る）
-  useEffect(() => { fetchPending(); const t = setInterval(fetchPending, 30000); return () => clearInterval(t); }, [fetchPending]);
+  // 🚨 画面を見ていない間は止まり、戻った瞬間に1回読み直す（hooks/usePolling.ts）
+  usePolling(fetchPending);
   useEffect(() => {
     window.addEventListener('purchase-pending-changed', fetchPending);
     return () => window.removeEventListener('purchase-pending-changed', fetchPending);

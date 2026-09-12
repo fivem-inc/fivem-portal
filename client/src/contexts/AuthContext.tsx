@@ -2,6 +2,7 @@ import React, { createContext, useState, useEffect } from 'react';
 import type { AuthContextType, AuthUser } from '../types';
 import { supabase } from '../lib/supabaseClient';
 import { timeoutSignal, withTimeout, AUTH_TIMEOUT_MS } from '../lib/netFailure';
+import { bootMark } from '../lib/bootMark';
 
 // AuthContextの作成
 // eslint-disable-next-line react-refresh/only-export-components
@@ -36,12 +37,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     //    上限が無いとこの await から戻れず setLoading(false) に到達しない＝
     //    起動画面のまま永久に固まって安否確認に辿り着けない。
     //    Supabase は通信に失敗しても例外を投げないので try/catch では防げない。
+    bootMark('boot:4 在籍の確認をはじめた');
     const { data: profile, error } = await supabase
       .from('profiles')
       .select('is_active, approval_status')
       .eq('id', sessionUser.id)
       .abortSignal(timeoutSignal(AUTH_TIMEOUT_MS))
       .single();
+    bootMark('boot:5 在籍の確認が終わった');
 
     // プロフィールが存在しない（PGRST116 = 行なし＝削除済みアカウント）→ 弾く。
     // ネットワーク等の一時的な取得失敗（別エラーでdataもnull）は、正常ユーザーを
@@ -70,16 +73,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         // getSession はトークンの期限が切れていると取り直しの通信をする。
         // ここも輻輳で返らないことがあるため上限を設ける（時間切れならセッション無しとして先へ進む）。
+        bootMark('boot:2 ログイン確認をはじめた');
         const { data: { session } } = await withTimeout(
           supabase.auth.getSession(),
           AUTH_TIMEOUT_MS,
           { data: { session: null } } as Awaited<ReturnType<typeof supabase.auth.getSession>>,
         );
+        bootMark('boot:3 合言葉の確認が終わった');
         await applySessionUser(session?.user as AuthUser ?? null);
       } catch (error) {
         console.error('Error getting session:', error);
       } finally {
         // 何があっても起動画面は必ず解除する
+        bootMark('boot:6 画面を出した');
         setLoading(false);
       }
     };
