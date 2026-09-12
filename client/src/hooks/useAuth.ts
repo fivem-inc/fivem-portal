@@ -113,6 +113,95 @@ async function fetchPermsForRole(roleName: string): Promise<Record<string, boole
   return map;
 }
 
+
+// ───────────────────────────────────────────────────────────────
+// 🚨🚨 読み込みは「同じ人・同じ瞬間なら1回だけ」にまとめる（2026-09-12・実機の数字で判明）
+//
+// useAuth は **25か所**（App.tsx だけで16）から呼ばれる。以前は**呼ばれた数だけ**
+// profiles → roles → feature_permissions を読みに行っていた。実機で測った本番の数字：
+//     profiles 15本 ／ roles 10本 ／ feature_permissions 9本 ／ touch_last_sign_in 12本
+// しかも1回ぶんが**3段の順番待ち**（前が終わらないと次が始まらない）で、
+// これが階段状に 0.35秒〜1.05秒まで続き、**起動が終わる時刻を決めていた**。
+//
+// 【直し方】結果を1つ作って全員で分け合う。やり方は2つ：
+//   ① いま読みに行っている最中なら、その約束（Promise）に相乗りする
+//   ② 読み終わった直後（FRESH_MS 以内）なら、その結果をそのまま配る
+// 🚨 ずっと覚えておくことはしない。権限を変えたのに反映されない、を避けるため。
+//    30秒はバッジの数え直しと同じ間隔に揃えてある（新しい決まりを増やさない）。
+// 🚨 画面に出る値は1つも変えていない。**同じ値を、何度も読まないようにしただけ**。
+// ───────────────────────────────────────────────────────────────
+interface ProfileLoad {
+  name: string;
+  roleTitle: string;
+  employmentType: string;
+  leaveRequestEnabled: boolean;
+  isFaqEditor: boolean;
+  /** 🚨 null は「取れなかった」。空の権限で上書きしないため、呼び出し側で既存を保持する */
+  perms: Record<string, boolean> | null;
+}
+
+const FRESH_MS = 30000;
+let sharedInflight: { userId: string; promise: Promise<ProfileLoad | null> } | null = null;
+let sharedResult: { userId: string; at: number; value: ProfileLoad | null } | null = null;
+
+async function loadProfileOnce(userId: string): Promise<ProfileLoad | null> {
+  if (sharedInflight && sharedInflight.userId === userId) return sharedInflight.promise;
+  if (sharedResult && sharedResult.userId === userId && Date.now() - sharedResult.at < FRESH_MS) {
+    return sharedResult.value;
+  }
+
+  const promise = (async (): Promise<ProfileLoad | null> => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('name, role_title, employment_type, leave_request_enabled, is_faq_editor')
+      .eq('id', userId)
+      .single();
+    if (error || !data) return null;
+
+    const role = data.role_title || '一般';
+    const perms = await fetchPermsForRole(role);
+
+    // 次回起動時に即表示できるよう名前・役職・権限をキャッシュ保存。
+    // 🚨 権限の取得に失敗したとき（不安定な回線など）は、空の権限で上書きしてはいけない。
+    //    上書きすると次回起動時にその空キャッシュが読まれ、
+    //    「アプリを開いたらナビボタンが減っている」状態になる（2026-07-13 に直した症状の再発経路）。
+    writeAuthCache(userId, {
+      name: data.name || '',
+      roleTitle: role,
+      employmentType: data.employment_type || '正社員',
+      leaveRequestEnabled: !!data.leave_request_enabled,
+      perms: perms ?? readAuthCache(userId)?.perms ?? {},
+      isFaqEditor: !!data.is_faq_editor,
+    });
+
+    // 🚨 直接UPDATEしない。profiles の直接更新はRLSで管理者のみに絞ってあるため、
+    //    本人の最終アクセス記録は RPC 経由にする（2026-08-10）
+    // 🚨 ここに置くことで、**1回の読み込みにつき1回**になる（以前は呼ばれた数だけ飛んでいた）
+    supabase.rpc('touch_last_sign_in')
+      .then(({ error: rpcErr }) => { if (rpcErr) console.error('[useAuth] touch_last_sign_in failed:', rpcErr); });
+
+    return {
+      name: data.name || '',
+      roleTitle: role,
+      employmentType: data.employment_type || '正社員',
+      leaveRequestEnabled: !!data.leave_request_enabled,
+      isFaqEditor: !!data.is_faq_editor,
+      perms,
+    };
+  })();
+
+  sharedInflight = { userId, promise };
+  try {
+    const value = await promise;
+    // 🚨 **取れなかったとき（null）は覚えない。** 覚えてしまうと、電波が悪くて1回失敗しただけで
+    //    30秒のあいだ誰も読み直さなくなる（＝名前も権限も出ないまま固まる）
+    if (value) sharedResult = { userId, at: Date.now(), value };
+    return value;
+  } finally {
+    if (sharedInflight && sharedInflight.promise === promise) sharedInflight = null;
+  }
+}
+
 export const useAuth = (): UseAuthReturn => {
   const { user, previewRole } = useContext(AuthContext);
   const [loading, setLoading] = useState(true);
@@ -155,44 +244,16 @@ export const useAuth = (): UseAuthReturn => {
     if (!user) return;
 
     try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('name, role_title, employment_type, leave_request_enabled, is_faq_editor')
-        .eq('id', user.id)
-        .single();
-
-      if (!error && data) {
-        if (data.name) setProfileName(data.name);
-        const role = data.role_title || '一般';
-        setRoleTitle(role);
-        const empType = data.employment_type || '正社員';
-        setEmploymentType(empType);
-        setLeaveRequestEnabled(!!data.leave_request_enabled);
-        setIsFaqEditor(!!data.is_faq_editor);
-
-        // DBから権限を取得（失敗時nullは無視して既存の権限を保持）
-        const perms = await fetchPermsForRole(role);
-        if (perms) setFeaturePerms(perms);
-
-        // 次回起動時に即表示できるよう名前・役職・権限をキャッシュ保存。
-        // 🚨 権限の取得に失敗したとき（不安定な回線など）は、空の権限で上書きしてはいけない。
-        //    上書きすると次回起動時にその空キャッシュが読まれ、
-        //    「アプリを開いたらナビボタンが減っている」状態になる（2026-07-13 に直した症状の再発経路）。
-        //    失敗時は前回の権限をそのまま引き継ぐ
-        writeAuthCache(user.id, {
-          name: data.name || '',
-          roleTitle: role,
-          employmentType: empType,
-          leaveRequestEnabled: !!data.leave_request_enabled,
-          perms: perms ?? readAuthCache(user.id)?.perms ?? {},
-          isFaqEditor: !!data.is_faq_editor,
-        });
-
-        // 🚨 直接UPDATEしない。profiles の直接更新はRLSで管理者のみに絞ってあるため、
-        //    本人の最終アクセス記録は RPC 経由にする（2026-08-10）
-        supabase.rpc('touch_last_sign_in')
-          .then(({ error }) => { if (error) console.error('[useAuth] touch_last_sign_in failed:', error); });
-
+      // 🚨 同じ人・同じ瞬間の読み込みは1回にまとまる（上の loadProfileOnce）
+      const loaded = await loadProfileOnce(user.id);
+      if (loaded) {
+        if (loaded.name) setProfileName(loaded.name);
+        setRoleTitle(loaded.roleTitle);
+        setEmploymentType(loaded.employmentType);
+        setLeaveRequestEnabled(loaded.leaveRequestEnabled);
+        setIsFaqEditor(loaded.isFaqEditor);
+        // 🚨 取れなかった（null）ときは既存の権限を保持する。空で上書きしない
+        if (loaded.perms) setFeaturePerms(loaded.perms);
         setLoading(false);
         return;
       }

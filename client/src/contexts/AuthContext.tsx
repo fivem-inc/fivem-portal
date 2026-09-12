@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect } from 'react';
+import React, { createContext, useState, useEffect, useRef } from 'react';
 import type { AuthContextType, AuthUser } from '../types';
 import { supabase } from '../lib/supabaseClient';
 import { timeoutSignal, withTimeout, AUTH_TIMEOUT_MS } from '../lib/netFailure';
@@ -27,10 +27,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [previewRole, setPreviewRole] = useState<string | null>(null);
   const [blockedMessage, setBlockedMessage] = useState<string | null>(null);
   const [emailChangeMsg, setEmailChangeMsg] = useState<string | null>(null); // メール変更完了のインライン通知（alert廃止）
+  // 🚨 起動時に applySessionUser が **3回**走っていた（2026-09-12 実機の印で判明。
+  //    getSession の道 ＋ onAuthStateChange の INITIAL_SESSION ＋ もう1回）。
+  //    そのたびに profiles を読むので、同じ問い合わせが3本出ていた。
+  //    「直前に適用した人」を覚えておき、**同じ人なら確認をやり直さない**。
+  //    🚨 undefined は「まだ一度も適用していない」。null（ログアウト）と区別する必要がある
+  const appliedUserId = useRef<string | null | undefined>(undefined);
 
   // is_active=false（退職済み・承認待ち）・プロフィール削除済みのユーザーは、
   // ログイン状態として扱う前に弾く
   const applySessionUser = async (sessionUser: AuthUser | null) => {
+    // 🚨 同じ人で2回目以降は何もしない（起動時に3回走っていたのを1回にする）。
+    //    トークンが差し替わっても中身の人は同じなので、在籍の確認をやり直す意味がない
+    if (appliedUserId.current === (sessionUser?.id ?? null)) return;
+    appliedUserId.current = sessionUser?.id ?? null;
     if (!sessionUser) { setUser(null); return; }
     // 🚨 待ち時間の上限は必須。
     //    災害時の輻輳（繋がりにくい状態）では応答が返らないことがあり、
