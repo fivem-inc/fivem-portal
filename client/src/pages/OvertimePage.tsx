@@ -46,6 +46,11 @@ import { toDbTime } from '../lib/timeInput';
 import TimeInput from '../components/TimeInput';
 import { logFail } from '../lib/logFail';
 
+/** 「申請の依頼」からフォームを開いた**直後の1回だけ**、入力欄まで画面を動かすための印。
+ *  🚨 下書き（端末に残る）の applicationRequestId だけを条件にすると、送らずに離れたあと
+ *     ナビから開くたびに毎回下へ動く（2026-09-12 実機指摘・スマホ）。だから一回限りにする。 */
+const SCROLL_ONCE_KEY = 'overtime:scrollToInputs';
+
 // ────────────────────────────────────────────────────────────────
 // Types
 // ────────────────────────────────────────────────────────────────
@@ -555,6 +560,9 @@ const OvertimeForm: React.FC<{
   const fromRequest = !!draft?.applicationRequestId;
   useEffect(() => {
     if (!fromRequest) return;
+    // 🚨 依頼から開いた直後の1回だけ動かす。印が無ければ何もしない（毎回下がるのを防ぐ）
+    if (sessionStorage.getItem(SCROLL_ONCE_KEY) !== '1') return;
+    sessionStorage.removeItem(SCROLL_ONCE_KEY);
     // 描き終わってから動かす（タブを切り替えた直後はまだ高さが決まっていない）
     const t = setTimeout(() => inputsTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 350);
     return () => clearTimeout(t);
@@ -3066,6 +3074,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     const hasDraft = !!cur && (!!cur.date || (cur.segments ?? []).some(x => x.start || x.end) || !!cur.reason);
     if (hasDraft && replaceDraftFor !== r.id) { setReplaceDraftFor(r.id); return; }
     setReplaceDraftFor(null);
+    sessionStorage.setItem(SCROLL_ONCE_KEY, '1');
     saveDraft(DRAFT_KEYS.overtime, {
       mode: 'advance', date: first, segments: [{ start: '', end: '' }],
       breakManual: false, breakManualMin: '',
