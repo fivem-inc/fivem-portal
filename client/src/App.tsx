@@ -1817,6 +1817,11 @@ const Dashboard: React.FC = () => {
   const [encAnswerChoice, setEncAnswerChoice] = useState<number | null>(null);
   const [encAnswerNote, setEncAnswerNote] = useState('');
   const [encAnswerSubmitting, setEncAnswerSubmitting] = useState(false);
+  // 🚨 「その他」で出勤する人の休暇を作らないための印（文章に「出勤」と書いてあるかでは判定しない。
+  //    「仕事のため」を取りこぼし、「出勤しません」を誤判定するため。2026-09-12 ユーザー確定）
+  const [encAnswerWorking, setEncAnswerWorking] = useState(false);
+  // 🚨 これまでモーダルに失敗の表示が無く、送信に失敗しても何も出なかった
+  const [encAnswerError, setEncAnswerError] = useState('');
   const [encRefreshKey, setEncRefreshKey] = useState(0);
   const [encAnswerSuccess, setEncAnswerSuccess] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
@@ -1872,39 +1877,43 @@ const Dashboard: React.FC = () => {
               placeholder="詳細を入力してください" />
           </div>
         )}
+        {encAnswerChoice === 4 && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, fontSize: 13, color: '#fff', cursor: 'pointer' }}>
+            <input type="checkbox" checked={encAnswerWorking} onChange={e => setEncAnswerWorking(e.target.checked)} />
+            この日は出勤します（休暇は作りません）
+          </label>
+        )}
+        {encAnswerError && (
+          <div style={{ marginBottom: 12, padding: '8px 10px', borderRadius: 8, background: '#f8d7da', color: '#842029', fontSize: 12 }}>{encAnswerError}</div>
+        )}
         <div style={{ display: 'flex', gap: 10 }}>
-          <button onClick={() => { setEncAnsweringDay(null); setEncAnswerChoice(null); setEncAnswerNote(''); }}
+          <button onClick={() => { setEncAnsweringDay(null); setEncAnswerChoice(null); setEncAnswerNote(''); setEncAnswerWorking(false); setEncAnswerError(''); }}
             style={{ flex: 1, padding: '10px 0', background: '#495057', color: '#fff', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 13 }}>キャンセル</button>
           <button disabled={!encAnswerChoice || (encAnswerChoice === 4 && !encAnswerNote.trim()) || encAnswerSubmitting}
             onClick={async () => {
               if (!encAnswerChoice || !encAnsweringDay) return;
               if (encAnswerChoice === 4 && !encAnswerNote.trim()) return;
               setEncAnswerSubmitting(true);
-              await supabase.from('paid_leave_encouragement_responses').insert({
-                encouragement_day_id: encAnsweringDay.id,
-                user_id: user.id,
-                choice: encAnswerChoice,
-                note: encAnswerNote.trim() || null,
+              setEncAnswerError('');
+              // 🚨 回答の保存と休暇の作成は **DBの専用処理にまとめてある**（2026-09-12）。
+              //    画面から2回に分けて書くと、2回押したときに回答だけ失敗して
+              //    「受理済みの休暇」だけ二重に増える（実際に起きうる状態だった）。
+              //    また、本人が受理済みの休暇を直接作れる穴を塞ぐため、入口を1本にしている。
+              const { data: encRes, error: encErr } = await supabase.rpc('answer_encouragement_day', {
+                p_day_id: encAnsweringDay.id,
+                p_choice: encAnswerChoice,
+                p_note: encAnswerNote.trim() || null,
+                p_working: encAnswerChoice === 4 && encAnswerWorking,
               });
-              // TODO: 申請フォーム送信後の追加処理（例：奨励日との照合・連携）をここに追加
-              {
-                const encLeaveType = encAnswerChoice === 1 ? '有給休暇' : encAnswerChoice === 2 ? '調整休' : 'その他';
-                const encLeaveTypeOther = encAnswerChoice === 3 ? '定休日' : encAnswerChoice === 4 ? (encAnswerNote.trim() || 'その他') : undefined;
-                await supabase.from('leave_requests').insert({
-                  user_id: user.id,
-                  leave_type: encLeaveType,
-                  ...(encLeaveTypeOther ? { leave_type_other: encLeaveTypeOther } : {}),
-                  leave_dates: JSON.stringify([encAnsweringDay.target_date]),
-                  start_date: encAnsweringDay.target_date,
-                  end_date: encAnsweringDay.target_date,
-                  purpose: '有給奨励日',
-                  reason: '【有給奨励日】',
-                  status: 'approved',
-                  current_approver: 'none',
-                });
+              // 🚨 rpc は 4xx/5xx でも例外にならない。error と ok の両方を見る（CLAUDE.md）
+              const encRow = (Array.isArray(encRes) ? encRes[0] : encRes) as { ok?: boolean; reason?: string } | null;
+              if (encErr || !encRow?.ok) {
+                setEncAnswerError(encErr?.message || encRow?.reason || '送信できませんでした。通信を確認してもう一度お試しください。');
+                setEncAnswerSubmitting(false);
+                return;
               }
               setEncAnswerSubmitting(false);
-              setEncAnsweringDay(null); setEncAnswerChoice(null); setEncAnswerNote('');
+              setEncAnsweringDay(null); setEncAnswerChoice(null); setEncAnswerNote(''); setEncAnswerWorking(false); setEncAnswerError('');
               setEncRefreshKey(k => k + 1);
               setEncAnswerSuccess(true);
               setTimeout(() => setEncAnswerSuccess(false), 3000);
