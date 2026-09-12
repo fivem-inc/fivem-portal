@@ -16,6 +16,9 @@ const NotificationSettings = React.lazy(() => import('./pages/NotificationSettin
 const SupabaseSettingsCheck = React.lazy(() => import('./pages/SupabaseSettingsCheck'));
 
 const AdminPanel = React.lazy(() => import('./components/AdminPanel'));
+// 🚨 起動の速さを調べる部品なので、**これ自体が起動を重くしてはいけない**。
+//    必ず遅延読み込みにして、管理者が押したときに初めて読む（2026-09-12）
+const BootTiming = React.lazy(() => import('./components/BootTiming'));
 const FaqAdminPage = React.lazy(() => import('./pages/FaqAdminPage'));
 const HelpPage = React.lazy(() => import('./pages/HelpPage'));
 const HistoryView = React.lazy(() => import('./components/HistoryView'));
@@ -2065,6 +2068,13 @@ const Dashboard: React.FC = () => {
           onApplyTemplate={handleApplyTemplate}
         />
       </Suspense>
+
+      {/* 起動の内訳（管理者だけ）。🚨 ブラウザが持っている記録を読むだけで、保存はしない */}
+      {isAdmin && (
+        <Suspense fallback={null}>
+          <BootTiming isDark={isDarkMode} />
+        </Suspense>
+      )}
     </div>
   );
 };
