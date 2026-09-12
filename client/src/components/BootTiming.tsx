@@ -42,6 +42,10 @@ interface Snapshot {
   serialMs: number;       // 「前が終わってから次が始まった」ぶんの合計＝順番待ち
   // 🚨 起動の通過時刻の印（lib/bootMark.ts）。通信していない間のことは、これでしか分からない
   marks: { label: string; at: number; gap: number }[];
+  // 🚨 「いつ測ったか・どの版か」。これが無いと、**前回の記録を貼り直しても誰も気づけない**
+  //    （2026-09-12 に実際に2回起きた）。版はアプリの本体ファイルの名前で見分ける
+  measuredAt: string;
+  version: string;
 }
 
 const s = (ms: number) => `${(ms / 1000).toFixed(2)} 秒`;
@@ -115,7 +119,20 @@ function collect(): Snapshot | null {
     return { label: sp >= 0 ? m.name.slice(sp + 1) : m.name, at: m.startTime, gap };
   });
 
+  // 🚨 日時は必ず日本時間に直してから出す（UTCで切ると前日になる。このリポジトリで何度も踏んでいる）
+  const measuredAt = new Date().toLocaleString('ja-JP', {
+    timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+  });
+  // 🚨 版は **ビルドのたびに作られる番号（__BUILD_ID__）** を使う。
+  //    ファイル名から拾う手もあるが、開発中は名前が違って拾えない。
+  //    この番号は version.json にも書き出されていて、更新の検出（hooks/useAppUpdate.ts）と同じもの
+  const mainFile = rows.find(r => r.kind === 'asset' && r.label.startsWith('main-') && r.label.endsWith('.js'));
+  const buildId = typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : '';
+
   return {
+    measuredAt,
+    version: buildId || (mainFile ? mainFile.label : '（分かりませんでした）'),
     htmlDone: nav ? nav.responseEnd : 0,
     scriptDone: nav ? nav.domContentLoadedEventEnd : 0,
     firstPaint: fcp ? fcp.startTime : 0,
@@ -128,7 +145,7 @@ function collect(): Snapshot | null {
 
 function asText(d: Snapshot): string {
   const lines: string[] = [];
-  lines.push('【起動の内訳】');
+  lines.push(`【起動の内訳】  ${d.measuredAt} に測定 ／ 版 ${d.version}`);
   lines.push(`HTMLを受け取るまで      ${sOrDash(d.htmlDone)}`);
   lines.push(`JSを読んで動き出すまで   ${sOrDash(d.scriptDone)}`);
   lines.push(`最初の絵が出るまで       ${sOrDash(d.firstPaint)}`);
@@ -204,6 +221,11 @@ export default function BootTiming({ isDark }: Props) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
         <strong style={{ color: text, fontSize: 14 }}>🕐 起動の内訳</strong>
         <span style={{ color: sub, fontSize: 11 }}>この端末・この1回ぶんだけ。記録は残しません</span>
+        {data && (
+          <span style={{ width: '100%', color: sub, fontSize: 11 }}>
+            {data.measuredAt} に測定 ／ 版 {data.version}
+          </span>
+        )}
         <span style={{ flex: 1 }} />
         {/* 🚨 スマホで指で押すボタンなので小さくしない（375px幅で実測して広げた） */}
         <button onClick={copy} style={{ padding: '9px 16px', fontSize: 13, color: text, background: panel, border: `1px solid ${line}`, borderRadius: 6, cursor: 'pointer' }}>
