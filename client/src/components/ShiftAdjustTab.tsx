@@ -55,6 +55,14 @@ interface AssignRow {
   application_request_id: string | null;
 }
 
+interface PartReqRow {
+  id: string; user_id: string;
+  segments: { start: string; end: string; location?: string }[];
+  location: string | null;
+  sent_at: string; due_at: string | null;
+  answer: string | null; answered_at: string | null; picked: boolean;
+}
+
 /** その日に「もう働けない」人と、その理由 */
 type BusyMap = Record<string, string>;
 
@@ -269,6 +277,16 @@ const SlotDetail: React.FC<{
   const [candErr, setCandErr] = useState('');
   const [where, setWhere] = useState('');
 
+  const [partReqs, setPartReqs] = useState<PartReqRow[]>([]);
+  const [pushUsers, setPushUsers] = useState<string[]>([]);
+  /** スマホ通知の登録状況を「読めたか」。読めていないのに「通知なし」と出さないための印 */
+  const [pushKnown, setPushKnown] = useState(false);
+  const [pickedParts, setPickedParts] = useState<string[]>([]);
+  const [reqStart, setReqStart] = useState('');
+  const [reqEnd, setReqEnd] = useState('');
+  const [reqLoc, setReqLoc] = useState('');
+  const [dueAt, setDueAt] = useState('');
+
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [memo, setMemo] = useState('');
   const [doAttendance, setDoAttendance] = useState(true);
@@ -291,7 +309,31 @@ const SlotDetail: React.FC<{
     setAssigns((data as AssignRow[] | null) ?? []);
   }, [slot.id]);
 
-  useEffect(() => { void loadComments(); void loadAssigns(); }, [loadComments, loadAssigns]);
+  const loadPartReqs = useCallback(async () => {
+    const { data, error } = await supabase.from('shift_adjust_part_requests')
+      .select('id, user_id, segments, location, sent_at, due_at, answer, answered_at, picked')
+      .eq('slot_id', slot.id)
+      .order('sent_at', { ascending: true });
+    if (error) { setErr('出勤のお願いを読み込めませんでした：' + error.message); return; }
+    setPartReqs((data as PartReqRow[] | null) ?? []);
+  }, [slot.id]);
+
+  useEffect(() => { void loadComments(); void loadAssigns(); void loadPartReqs(); },
+    [loadComments, loadAssigns, loadPartReqs]);
+
+  // スマホ通知を登録している人。🚨 送る前に「この人は通知なし」と出すため
+  //    （パート18人中6人しか登録していない。知らずに送ると、気づかれないまま待つことになる）
+  // 🚨🚨 `push_subscriptions` は **管理者しか読めない**（RLS：管理者は閲覧可／本人は自分のぶんだけ）。
+  //    読めなかったときに「全員 通知なし」と出すと**画面が嘘をつく**ので、
+  //    読めたときだけ人ごとの印を出し、読めなければ全体の断り書きだけにする。
+  useEffect(() => {
+    if (!perms.request) return;
+    supabase.from('push_subscriptions').select('user_id').then(({ data, error }) => {
+      if (error || !data || data.length === 0) { setPushKnown(false); return; }
+      setPushUsers([...new Set((data as { user_id: string }[]).map(r => r.user_id))]);
+      setPushKnown(true);
+    });
+  }, [perms.request]);
 
   // 見出しに出す校。休暇なら日ごとの勤務校、欠勤なら記録の校
   useEffect(() => {
@@ -451,6 +493,46 @@ const SlotDetail: React.FC<{
     setDrafts([]);
     setOkMsg('決定しました。');
     void loadAssigns();
+  };
+
+  const sendParts = async () => {
+    setErr(''); setOkMsg('');
+    const s = toDbTime(reqStart); const e = toDbTime(reqEnd);
+    if (!s || !e) { setErr('開始時刻と終了時刻を入力してください。'); return; }
+    if (e <= s) { setErr('終了時刻は開始時刻より後にしてください。'); return; }
+    setBusyBtn(true);
+    const segs = [{ start: s.slice(0, 5), end: e.slice(0, 5), location: reqLoc || null }];
+    const { data, error } = await supabase.rpc('shift_adjust_send_part_requests', {
+      p_slot_id: slot.id, p_user_ids: pickedParts, p_segments: segs,
+      p_location: reqLoc || null,
+      // 🚨 datetime-local は端末の時刻。new Date(…) で日本時間として解釈され、
+      //    toISOString() で正しい瞬間に変換される
+      p_due_at: dueAt ? new Date(dueAt).toISOString() : null,
+    });
+    if (error) { setBusyBtn(false); setErr('送信できませんでした：' + error.message); return; }
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row?.ok) { setBusyBtn(false); setErr(row?.reason || '送信できませんでした'); return; }
+
+    // 🚨 お知らせは画面から送る。文面に「誰の代わりか」は入れない
+    // 🚨 event_key を付けていない＝ベルだけ（スマホ通知は鳴らない）。
+    //    鳴らすには push-dispatch の EVENT_MAP（2人共通）に足す必要がある
+    const ids: string[] = row.request_ids ?? [];
+    const dl = dateLabel(slot.target_date);
+    const band = `${s.slice(0, 5)}〜${e.slice(0, 5)}`;
+    for (let i = 0; i < ids.length && i < pickedParts.length; i++) {
+      await insertNotification(
+        pickedParts[i],
+        `📅 ${dl}の出勤のお願いが届いています`,
+        `${band}${reqLoc ? ` / ${reqLoc}` : ''}`,
+        'shift_adjust:part_request',
+        ids[i],
+      );
+    }
+    setBusyBtn(false);
+    setPickedParts([]);
+    setStatus(st => (st === 'pending' ? 'working' : st));
+    setOkMsg(`${ids.length}人に出勤のお願いを送りました。`);
+    void loadPartReqs();
   };
 
   const undecide = async () => {
@@ -717,6 +799,92 @@ const SlotDetail: React.FC<{
                 </>
               )}
             </div>
+          )}
+        </div>
+      )}
+
+      {/* 出勤のお願い（休みのパートへ）
+          🚨 呼び名は「出勤のお願い」。既存の「申請の依頼」と紛れないように（ユーザー確定）
+          🚨 正社員には送らない。正社員は決定のときに「残業申請の依頼」が出る */}
+      {!showFork && status !== 'no_change' && (perms.request || partReqs.length > 0) && (
+        <div style={box}>
+          <div style={head}>出勤のお願い</div>
+
+          {partReqs.length > 0 && (
+            <div style={{ marginBottom: perms.request ? 14 : 0 }}>
+              {partReqs.map(q => (
+                <div key={q.id} style={{ padding: '6px 0', fontSize: 13, color: text, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>
+                  <span style={{ fontWeight: 'bold' }}>{nameOf(q.user_id) || '（名前なし）'}</span>
+                  <span style={{ fontSize: 12, color: subText }}>
+                    {(q.segments ?? []).map(s => `${s.start}〜${s.end}`).join(' ＋ ')}
+                  </span>
+                  <span style={{ fontSize: 12, color: q.answer === 'yes' ? text : subText, fontWeight: q.answer === 'yes' ? 'bold' : 'normal' }}>
+                    {q.answer === 'yes' ? '入れます'
+                      : q.answer === 'no' ? '入れません'
+                      : q.due_at && new Date(q.due_at).getTime() < Date.now() ? '返事なし（期限を過ぎました）'
+                      : '返事待ち'}
+                  </span>
+                  {q.picked && <span style={{ fontSize: 11, color: subText }}>この方に決定</span>}
+                  <span style={{ fontSize: 11, color: subText, marginLeft: 'auto' }}>
+                    {actedAtLabel(q.sent_at)}に送信
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {perms.request && (
+            <>
+              {restingPart.length === 0 && candLoaded && (
+                <p style={{ margin: '0 0 8px', fontSize: 12.5, color: subText }}>
+                  この日が休みのパートはいません。
+                </p>
+              )}
+              {!candLoaded && (
+                <p style={{ margin: '0 0 8px', fontSize: 12.5, color: subText }}>
+                  上の「候補」を開くと、この日が休みのパートを選べます。
+                </p>
+              )}
+              {restingPart.filter(p => !partReqs.some(q => q.user_id === p.id)).map(p => (
+                <label key={p.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '5px 0', fontSize: 13, color: text, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={pickedParts.includes(p.id)}
+                    onChange={e => setPickedParts(v => e.target.checked ? [...v, p.id] : v.filter(x => x !== p.id))} />
+                  <span style={{ fontWeight: 'bold' }}>{p.name}</span>
+                  {/* 🚨 スマホ通知を登録していない人は、アプリを開くまで気づかない。
+                      🚨 ただし登録状況が読めたときだけ出す（読めないのに「なし」と書かない） */}
+                  {pushKnown && !pushUsers.includes(p.id) && (
+                    <span style={{ fontSize: 11, color: subText }}>スマホ通知なし（アプリを開くまで気づきません）</span>
+                  )}
+                </label>
+              ))}
+
+              {pickedParts.length > 0 && (
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <TimeInput value={reqStart} onChange={setReqStart} isDark={isDark} ariaLabel="開始時刻" />
+                    <span style={{ color: subText }}>〜</span>
+                    <TimeInput value={reqEnd} onChange={setReqEnd} isDark={isDark} ariaLabel="終了時刻" />
+                    <select value={reqLoc} onChange={e => setReqLoc(e.target.value)} style={sel}>
+                      <option value="">校を選択</option>
+                      {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 12, color: subText }}>返事の期限（任意）</span>
+                    <input type="datetime-local" value={dueAt} onChange={e => setDueAt(e.target.value)} style={sel} />
+                  </div>
+                  <p style={{ margin: '8px 0 0', fontSize: 11, color: subText, lineHeight: 1.7 }}>
+                    ※ 送る内容は「日付・時間帯・校」だけです。誰の代わりかは相手に表示されません。
+                    <br />
+                    ※ スマホ通知を登録していない方には、アプリを開くまで届きません。
+                  </p>
+                  <button onClick={() => void sendParts()} disabled={busyBtn}
+                    style={{ ...mainBtn, marginTop: 10 }}>
+                    {pickedParts.length}人に出勤のお願いを送る
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

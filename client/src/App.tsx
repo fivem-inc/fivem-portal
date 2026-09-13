@@ -31,6 +31,8 @@ const BoardPage        = React.lazy(() => import('./pages/BoardPage'));
 const ShiftReportPage  = React.lazy(() => import('./pages/ShiftReportPage'));
 const OvertimePage     = React.lazy(() => import('./pages/OvertimePage'));
 const ShiftDirectoryPage = React.lazy(() => import('./pages/ShiftDirectoryPage'));
+// 出勤のお願い（パートの返事ページ）。🚨 権限では塞がない（自分あてのものしか返らない）
+const ShiftRequestPage = React.lazy(() => import('./pages/ShiftRequestPage'));
 const PurchaseRequestPage = React.lazy(() => import('./pages/PurchaseRequestPage'));
 const SafetyCheckPage = React.lazy(() => import('./pages/SafetyCheckPage'));
 const RoomBookingPage = React.lazy(() => import('./pages/RoomBookingPage'));
@@ -1163,6 +1165,8 @@ const classifyNotif = (n: NotifLike) => {
   // 要対応（承認待ち・打刻の確認など）は closeOnTap: false。対応が終わるまで残す
   const target: { path: string | null; closeOnTap: boolean } = (() => {
     if (isEnc) return { path: '/leave', closeOnTap: false };
+    // 出勤のお願い（パート向け・2026-09-13）。🚨 答えるまで消さない＝ closeOnTap: false
+    if (n.source_type === 'shift_adjust:part_request') return { path: '/shift-request', closeOnTap: false };
     if (isSafety) {
       // 「助けが必要」の知らせは必ず集計画面を開く。
       // 通常の安否確認は「自分が未回答なら回答画面を優先」だが、これは他人の緊急を
@@ -1788,6 +1792,38 @@ const OvertimeUnreportedBanner: React.FC<{ userId: string; canOvertime: boolean 
 };
 
 
+// 出勤のお願いバナー（ホーム・2026-09-13）。タップで /shift-request へ。
+// 🚨 パートはスマホ通知を登録している人が18人中6人しかいない。ベルだけだと気づかれない。
+// 🚨 権限では出し分けない。`shift_adjust_my_part_requests()` は**自分あてのものしか返さない**。
+// 🚨 ただし**パートのときだけ問い合わせる**。出勤のお願いを受け取るのはパートだけ（関数が弾く）で、
+//    全員で1本増やすと、今日せっかく減らした起動時の問い合わせが元に戻る。
+// 🚨 読めなかったときは黙って出さない（「0件」と決めつけて騒がない）。
+const ShiftRequestBanner: React.FC<{ employmentType: string }> = ({ employmentType }) => {
+  const navigate = useNavigate();
+  const [count, setCount] = useState(0);
+  const isPart = employmentType === 'パート';
+  useEffect(() => {
+    if (!isPart) return;
+    supabase.rpc('shift_adjust_my_part_requests').then(({ data, error }) => {
+      if (error || !data) return;
+      const rows = data as { answer: string | null; decided: boolean }[];
+      setCount(rows.filter(r => !r.answer && !r.decided).length);
+    });
+  }, [isPart]);
+  if (count === 0) return null;
+  return (
+    <div
+      onClick={() => navigate('/shift-request')}
+      style={{ margin: '0 0 16px 0', padding: '12px 16px', background: '#fff3cd', border: '2px solid #f59e0b', borderRadius: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, fontWeight: 'bold', color: '#92400e' }}
+    >
+      <span style={{ fontSize: 22 }}>📅</span>
+      <span>出勤のお願いが {count}件 届いています</span>
+      <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 'normal', whiteSpace: 'nowrap' }}>タップして返事 ›</span>
+    </div>
+  );
+};
+
+
 // メインのDashboardコンポーネント
 const Dashboard: React.FC = () => {
   // 通常のダッシュボード処理（パスワードリセットは専用ページで処理）
@@ -1809,6 +1845,7 @@ const Dashboard: React.FC = () => {
     canRoomBooking,
     canFaq,
     canFaqNav,
+    employmentType,
     leaveRequestEnabled,
     handleLogout
   } = useAuth();
@@ -2012,6 +2049,11 @@ const Dashboard: React.FC = () => {
 
       {/* ④-5 残業超過FYIバナー（本人・リーダー自チーム・マネージャー以上。閉じられる） */}
       <OvertimeThresholdBanner userId={user.id} isAdmin={isAdmin} canOvertime={canOvertime} />
+
+      {/* ④-6 出勤のお願いバナー（2026-09-13・主にパート向け）
+          🚨 スマホ通知を登録しているパートは18人中6人しかいない。
+             ベルだけだと気づかれないので、ホームにも出す */}
+      <ShiftRequestBanner employmentType={employmentType} />
 
       {/* ⑤ 有給申請バナー（パート向け） */}
       {leaveRequestEnabled && !leaveSubmitted && (
@@ -2267,6 +2309,23 @@ const OvertimePageWrapper: React.FC = () => {
 };
 
 // 全員のシフト予定 閲覧ページ（/shift-patterns・リーダー以上）
+// 出勤のお願い（/shift-request・パートの返事ページ）
+// 🚨 ここだけは機能権限で塞がない。返すのは `shift_adjust_my_part_requests()` で
+//    **自分あてのものだけ**なので、塞ぐ必要がない。
+//    （塞ぐと「パートの役職に権限を足す」話になり、かえって間違えやすい）
+const ShiftRequestPageWrapper: React.FC = () => {
+  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, handleLogout, loading } = useAuth();
+  if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
+  return (
+    <div style={{ padding: '70px 16px 0' }}>
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} />
+      <Suspense fallback={<PageLoader />}>
+        <ShiftRequestPage />
+      </Suspense>
+    </div>
+  );
+};
+
 const ShiftDirectoryPageWrapper: React.FC = () => {
   const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, canShiftPatternDirectory, handleLogout, loading } = useAuth();
   if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
@@ -2400,6 +2459,7 @@ function App() {
             <Route path="/shift-report" element={<ShiftReportPageWrapper />} />
             <Route path="/overtime" element={<OvertimePageWrapper />} />
             <Route path="/shift-patterns" element={<ShiftDirectoryPageWrapper />} />
+            <Route path="/shift-request" element={<ShiftRequestPageWrapper />} />
             <Route path="/purchase" element={<PurchaseRequestPageWrapper />} />
             <Route path="/safety" element={<SafetyCheckPageWrapper />} />
             <Route path="/rooms" element={<RoomBookingPageWrapper />} />
