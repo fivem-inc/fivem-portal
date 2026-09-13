@@ -3,6 +3,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { AuthContext } from '../contexts/AuthContext.tsx';
 import { useAuth } from '../hooks/useAuth';
+import { isPointerDevice, readIdleLogoutSetting, writeIdleLogoutSetting, type IdleLogoutSetting } from '../lib/idleLogout';
 
 export default function SignIn() {
   const location = useLocation();
@@ -44,10 +45,27 @@ export default function SignIn() {
     }
   }, [blockedMessage, clearBlockedMessage]);
 
+  // 共有パソコン用の自動ログアウト（2026-09-14）。決めたことは lib/idleLogout.ts の冒頭を見ること。
+  // 🚨 パソコン（マウスのある端末）だけに出す。スマホ・タブレットでは何も出さず、今までどおり
+  const isPc = isPointerDevice();
+  // 初期値は ON（この端末に記憶があればそれ）。外すには二段階の確認（ユーザー確定）
+  const [idleLogout, setIdleLogout] = useState<IdleLogoutSetting>(() => readIdleLogoutSetting() ?? 'on');
+  const [confirmIdleOff, setConfirmIdleOff] = useState(false);
+  // 自動ログアウトで戻ってきたときの案内（handleLogout が ?reason=idle を付ける）
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get('reason') === 'idle') {
+      setNotice('1分間操作がなかったため、自動的にログアウトしました。');
+    }
+  }, [location.search]);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    // 🚨 自動ログアウトの設定は**ログインしたときに端末へ記憶**する（スマホでは触らない）。
+    //    記憶が無い端末では動かないので、いまログイン中の端末には次のログインまで効かない
+    if (isPc) writeIdleLogoutSetting(idleLogout);
 
     // シンプルなログイン処理（is_active判定はAuthContextが行う）
     const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -257,10 +275,58 @@ export default function SignIn() {
               </button>
             </div>
           )}
-          <button 
-            type="submit" 
-            style={{ 
-              width: '100%', 
+          {!isSignUp && isPc && (
+            <div style={{ textAlign: 'left', margin: '10px 0 4px', fontSize: 13 }}>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={idleLogout === 'on'}
+                  style={{ marginTop: 3 }}
+                  onChange={e => {
+                    if (e.target.checked) { setIdleLogout('on'); setConfirmIdleOff(false); }
+                    else setConfirmIdleOff(true); // 🚨 すぐには外さない。二段階の確認を挟む（ユーザー確定）
+                  }}
+                />
+                <span>
+                  このパソコンは共有です
+                  <br />
+                  <span style={{ color: '#666', fontSize: 12 }}>
+                    {idleLogout === 'on'
+                      ? '1分間操作がないと自動でログアウトします（書きかけの下書きも消えます）'
+                      : '自動ログアウトなし（この端末は他の人が触らない設定です）'}
+                  </span>
+                </span>
+              </label>
+              {confirmIdleOff && idleLogout === 'on' && (
+                <div style={{ marginTop: 8, padding: '10px 12px', background: '#fff3cd', border: '2px solid #ffc107', borderRadius: 8, color: '#856404' }}>
+                  <div style={{ fontWeight: 'bold', marginBottom: 6 }}>自動ログアウトを外しますか？</div>
+                  <div style={{ fontSize: 12.5, marginBottom: 8, lineHeight: 1.5 }}>
+                    外すと、席を離れている間に他の人が画面を見られます。個人用のパソコンなど、他の人が触らない端末だけにしてください。この設定はこの端末に記憶されます。
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <button
+                      type="button"
+                      onClick={() => { setIdleLogout('off'); setConfirmIdleOff(false); }}
+                      style={{ background: '#1976d2', color: '#fff', border: '2px solid #1565c0', borderRadius: 6, padding: '6px 14px', fontWeight: 'bold', cursor: 'pointer' }}
+                    >
+                      外す
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmIdleOff(false)}
+                      style={{ background: 'none', border: 'none', textDecoration: 'underline', color: '#856404', cursor: 'pointer', padding: '6px 8px' }}
+                    >
+                      やめる
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          <button
+            type="submit"
+            style={{
+              width: '100%',
               padding: 8,
               background: '#28a745',
               color: 'white',
@@ -274,6 +340,11 @@ export default function SignIn() {
           </button>
           {error && <p style={{ color: 'red', marginTop: '10px' }}>{error}</p>}
           {info && <p style={{ color: '#1e7e34', marginTop: '10px' }}>{info}</p>}
+          {notice && (
+            <p style={{ marginTop: 10, padding: '8px 10px', background: '#fff3cd', border: '2px solid #ffc107', borderRadius: 8, color: '#856404', fontSize: 13, textAlign: 'left' }}>
+              {notice}
+            </p>
+          )}
         </form>
       ) : (
         <form onSubmit={handlePasswordReset}>

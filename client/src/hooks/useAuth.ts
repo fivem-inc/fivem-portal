@@ -3,6 +3,7 @@ import type { AuthUser } from '../types';
 import { supabase } from '../lib/supabaseClient';
 import { AuthContext } from '../contexts/AuthContext.tsx';
 import { readRawPendingQueue, writeRawPendingQueue } from '../lib/safetyStorage';
+import { readIdleLogoutSetting, writeIdleLogoutSetting } from '../lib/idleLogout';
 import { attrsFor, rankOf, previewRoleOptions } from '../lib/roleAttrs';
 import type { RoleRow, ActsAs } from '../lib/roleAttrs';
 import { useRoles } from './useRoles';
@@ -78,7 +79,10 @@ interface UseAuthReturn {
   leaveRequestEnabled: boolean;
   /** FAQ管理画面だけを使える専用アカウントか（管理者は別途 isAdmin で判定） */
   isFaqEditor: boolean;
-  handleLogout: () => Promise<void>;
+  /** 引数なしで普通のログアウト。'idle' は共有パソコンの自動ログアウトだけが渡す（2026-09-14）。
+   *  🚨 onClick={handleLogout} と直接つないでいる所があり、そこではクリックのイベントが入る。
+   *     'idle' 以外は何が来ても普通のログアウトなので、型は unknown にしてある */
+  handleLogout: (reason?: unknown) => Promise<void>;
 }
 
 // 役職の一覧（属性つき）は hooks/useRoles.ts が1回だけ読んで全画面で共有する。判定は lib/roleAttrs.ts。
@@ -378,7 +382,11 @@ export const useAuth = (): UseAuthReturn => {
   //    フロア責任者が「押せるのに保存されない」状態だった。画面もDBも同じトグルを読む
   const canAttendanceInput = realIsAdmin && !previewRole ? true : (effectivePerms.attendance_input ?? false);
 
-  const handleLogout = useCallback(async () => {
+  // 🚨 reason は共有パソコンの自動ログアウト（components/IdleLogout.tsx）だけが 'idle' を渡す（2026-09-14）。
+  //    onClick={handleLogout} から呼ばれると第1引数はクリックのイベントになるので、'idle' との一致だけを見る。
+  //    'idle' のときはログイン画面に「自動的にログアウトしました」と出す（?reason=idle）
+  const handleLogout = useCallback(async (reason?: unknown) => {
+    const dest = reason === 'idle' ? '/signin?reason=idle' : '/signin';
     console.log('[logout] clicked');
     try {
       const { error } = await supabase.auth.signOut({ scope: 'local' });
@@ -388,13 +396,18 @@ export const useAuth = (): UseAuthReturn => {
       //    安否の回答は「消えてよい下書き」ではないので、退避して書き戻す。
       //    （誰の回答かは中に持たせてあるので、別の人がログインしても送り違えない）
       const keepSafetyQueue = readRawPendingQueue();
+      // 🚨 共有パソコンの自動ログアウトの設定（端末ごと）も巻き添えで消さない（2026-09-14）。
+      //    消えると、外した端末でも次のログイン画面で毎回チェックが初期値（ON）に戻る。
+      //    下書き（fivem_draft_*）は今までどおり消える＝共有PCで次の人に見せない（ユーザー確定）
+      const keepIdleLogout = readIdleLogoutSetting();
       localStorage.clear();
       sessionStorage.clear();
       writeRawPendingQueue(keepSafetyQueue);
-      window.location.href = '/signin';
+      if (keepIdleLogout) writeIdleLogoutSetting(keepIdleLogout);
+      window.location.href = dest;
     } catch (error) {
       console.error('[logout] unexpected error:', error);
-      window.location.href = '/signin';
+      window.location.href = dest;
     }
   }, []);
 

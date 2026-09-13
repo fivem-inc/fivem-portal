@@ -19,6 +19,8 @@ const AdminPanel = React.lazy(() => import('./components/AdminPanel'));
 // 🚨 起動の速さを調べる部品なので、**これ自体が起動を重くしてはいけない**。
 //    必ず遅延読み込みにして、管理者が押したときに初めて読む（2026-09-12）
 const BootTiming = React.lazy(() => import('./components/BootTiming'));
+// 共有パソコンの自動ログアウト（2026-09-14）。設定 ON のパソコンでしか何もしない（lib/idleLogout.ts）
+import IdleLogout from './components/IdleLogout';
 const FaqAdminPage = React.lazy(() => import('./pages/FaqAdminPage'));
 const HelpPage = React.lazy(() => import('./pages/HelpPage'));
 const HistoryView = React.lazy(() => import('./components/HistoryView'));
@@ -409,7 +411,8 @@ const ProtectedLayout: React.FC = () => {
     return <Navigate to="/faq-admin" replace />;
   }
 
-  return <Outlet />;
+  // 🚨 IdleLogout はログイン済みの全ページの親であるここに1つだけ置く（ページごとに置かない）
+  return <><IdleLogout /><Outlet /></>;
 };
 
 // ナビゲーションバー
