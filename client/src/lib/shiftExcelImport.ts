@@ -23,6 +23,17 @@ export interface ParsedDay {
 
 export const DEFAULT_LOCATION = '四条本校';
 
+// この人を「通常シフト」の対象として扱うか。
+// 🚨 判定はここ1か所だけ。管理画面の3か所（Excel取り込み／スタッフを選ぶ欄／適用中の一覧）が
+//    これを呼ぶ。別々に書くと「取り込んだのに一覧に出ない」という食い違いになる。
+// 🚨 パートは長らく対象外だった（残業申請を使わないため）。2026-09-13 に
+//    「パートも」へ切り替えられるようにした（シフト調整の候補を出すのに要る）。
+//    既定は今までどおり false ＝ 正社員だけ。
+export const isShiftTarget = (
+  employmentType: string | null | undefined,
+  includePartTime: boolean,
+): boolean => includePartTime || employmentType !== 'パート';
+
 // 校名の略称→正式名。出勤列2段目の記載（例「本校大10～14:30→上桂」）から校を抽出するのに使う。
 const SCHOOL_ALIASES: [RegExp, string][] = [
   [/四条本校|本校/, '四条本校'],

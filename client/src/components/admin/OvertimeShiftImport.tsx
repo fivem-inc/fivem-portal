@@ -1,8 +1,8 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   parseShiftSheet, listSheetNames, normalizeName, sheetNameToDate,
-  IMPORT_DAYS, DEFAULT_LOCATION,
+  IMPORT_DAYS, DEFAULT_LOCATION, isShiftTarget,
 } from '../../lib/shiftExcelImport';
 import type { ParsedSheet, ImportDayKind, ParsedDay } from '../../lib/shiftExcelImport';
 import { calcPatternFields, DAY_KIND_LABELS, todayJstStr } from '../../lib/breakCalc';
@@ -80,8 +80,11 @@ const OvertimeShiftImport: React.FC<{
   supabase: SupabaseClient;
   isDarkMode: boolean;
   staff: StaffRow[];
+  // 「パートも」に切り替わっているか。🚨 持ち主は親（OvertimeAdminTab）1か所。
+  //    ここで別に持つと、取り込みと一覧で対象が食い違う
+  includePartTime: boolean;
   onImported: () => void;
-}> = ({ supabase, isDarkMode, staff, onImported }) => {
+}> = ({ supabase, isDarkMode, staff, includePartTime, onImported }) => {
   const [open, setOpen] = useState(false);
   const [fileBuf, setFileBuf] = useState<ArrayBuffer | null>(null);
   const [fileName, setFileName] = useState('');
@@ -158,7 +161,7 @@ const OvertimeShiftImport: React.FC<{
 
     let status: MatchStatus;
     if (!s) status = 'unregistered';
-    else if (s.employment_type === 'パート') status = 'part_time';
+    else if (!isShiftTarget(s.employment_type, includePartTime)) status = 'part_time';
     else status = 'importable';
     const hasChange = status === 'importable' && days.some(d => d.changed);
     return {
@@ -176,6 +179,22 @@ const OvertimeShiftImport: React.FC<{
       : 3;                                        // パート（対象外）は末尾
     return rank(a) - rank(b) || a.excelName.localeCompare(b.excelName, 'ja');
   };
+
+  // 🚨 「対象」を切り替えたら、読み取り済みの表も作り直す。
+  //    作り直さないと「正社員だけ」で読んだ表が残ったままになり、
+  //    画面には「パート（対象外）」と出ているのに切り替えは済んでいる、という食い違いになる。
+  //    読み直しは不要（Excelの中身も現在のパターンも ref に持っている）。
+  const isFirstRender = useRef(true);
+  useEffect(() => {
+    if (isFirstRender.current) { isFirstRender.current = false; return; }
+    if (!parsedInfo) return;
+    const rows = parsedInfo.people
+      .map(p => buildMatchedPerson(p.name, p.normalizedName, p.days, p.isDuplicate))
+      .sort(sortMatched);
+    setMatched(rows);
+    setShowConfirm(false);   // 確認中だったら、いったん引っ込める
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [includePartTime]);
 
   // 未登録の行をアプリのスタッフに手動で紐付け、エイリアスをDB保存する
   const linkPerson = async (row: MatchedPerson, staffId: string) => {
@@ -321,8 +340,9 @@ const OvertimeShiftImport: React.FC<{
   const selectedCount = matched.filter(m => m.selected && m.staffId && m.status === 'importable').length;
   // 未登録（要対応）は常に表示。変更なし・パートは「変更なしも表示」で開く
   const visibleRows = matched.filter(m => showUnchanged || m.hasChange || m.status === 'unregistered');
-  // 手動紐付け用の正社員候補（序列は問わず名前順）
-  const linkCandidates = staff.filter(s => s.employment_type !== 'パート');
+  // 手動紐付けの候補（序列は問わず名前順）。🚨 対象外の人を候補に出すと、
+  //    結び付けた瞬間に「対象外」と表示されて何も起きない＝押せるのに効かないボタンになる
+  const linkCandidates = staff.filter(s => isShiftTarget(s.employment_type, includePartTime));
 
   return (
     <div style={{ marginTop: 16, borderTop: `1px solid ${borderColor}`, paddingTop: 14 }}>
@@ -335,7 +355,10 @@ const OvertimeShiftImport: React.FC<{
         <div style={{ marginTop: 12 }}>
           <p style={{ margin: '0 0 10px', fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
             いつもの勤務表Excel（.xlsx）をそのまま選んでください。シートを選ぶと、現在の曜日パターンとの違いだけを表示します。<br />
-            祝・出パターンと、Excelに載っていないスタッフは変更されません。パート（対象外）は取り込みません。<br />
+            祝・出パターンと、Excelに載っていないスタッフは変更されません。
+            {includePartTime
+              ? '上の「対象」が「パートも」なので、パートも取り込みます。'
+              : '上の「対象」が「正社員だけ」なので、パート（対象外）は取り込みません。'}<br />
             旧姓・表記ゆれで名前が一致しない人は「この人を選ぶ」から手動で結び付けられます（次回から自動で一致します）。
           </p>
 
@@ -418,6 +441,12 @@ const OvertimeShiftImport: React.FC<{
                         </td>
                         <td style={{ padding: '5px 4px', borderBottom: `1px solid ${borderColor}`, whiteSpace: 'nowrap' }}>
                           {m.excelName}
+                          {/* 🚨 「パートも」のときは、どれがパートか名前の横で分かるようにする
+                              （18名が黙って混ざると、取り込む前に確かめられない） */}
+                          {m.status === 'importable' && m.staffId
+                            && staff.find(s => s.id === m.staffId)?.employment_type === 'パート' && (
+                            <span style={{ fontSize: 10.5, color: subText, marginLeft: 4 }}>パート</span>
+                          )}
                           {m.isDuplicate && <span title="同名ブロックが複数（新しい方を採用）"> ⚠️</span>}
                         </td>
                         {m.days.map(d => (

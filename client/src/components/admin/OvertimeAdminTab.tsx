@@ -11,7 +11,7 @@ import {
 } from '../../lib/breakCalc';
 import type { DayKind, CalendarKind } from '../../lib/breakCalc';
 import { CALENDAR_CELL_STYLE } from '../../hooks/useCompanyCalendar';
-import { DEFAULT_LOCATION } from '../../lib/shiftExcelImport';
+import { DEFAULT_LOCATION, isShiftTarget } from '../../lib/shiftExcelImport';
 import { normalShiftBands, normalShiftTimeText } from '../../lib/overtimeShift';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
 import OvertimeEditModal, { type OvertimeRecord } from './OvertimeEditModal';
@@ -611,6 +611,10 @@ const OvertimeAdminTab: React.FC = () => {
   // 全員の現在の適用パターン一覧（いま何が適用されているかの確認用）
   const [overview, setOverview] = useState<{ staffId: string; name: string; role: string; days: Record<string, PatternRow | undefined> }[]>([]);
   const [showOverview, setShowOverview] = useState(false);
+  // 通常シフトの「対象」。false＝正社員だけ（今までどおり）／true＝パートも
+  // 🚨 持ち主はここ1か所だけ。取り込み・スタッフを選ぶ欄・適用中の一覧の3つが同じ値を見る。
+  //    別々に持つと「取り込んだのに一覧に出ない」という食い違いになる
+  const [includePartTime, setIncludePartTime] = useState(false);
 
   const fetchStaff = useCallback(async () => {
     // 全アクティブスタッフを取得（Excel照合でパートも判定に使うため）。ドロップダウンは正社員のみ表示
@@ -653,8 +657,8 @@ const OvertimeAdminTab: React.FC = () => {
       .select('id, user_id, day_kind, start_time, end_time, start_time2, end_time2, location, break_minutes, labor_minutes, valid_from, valid_to');
     const rows = (data as PatternRow[] | null) ?? [];
     const today = todayJstStr();
-    const seishain = staff.filter(s => s.employment_type !== 'パート');
-    const list = seishain.map(s => {
+    const targets = staff.filter(s => isShiftTarget(s.employment_type, includePartTime));
+    const list = targets.map(s => {
       const days: Record<string, PatternRow | undefined> = {};
       for (const k of DAY_ORDER) {
         days[k] = rows.find(p => p.user_id === s.id && p.day_kind === k
@@ -663,11 +667,19 @@ const OvertimeAdminTab: React.FC = () => {
       return { staffId: s.id, name: s.name, role: s.role_title, days };
     }).filter(x => DAY_ORDER.some(k => x.days[k] !== undefined)); // 未登録の人は出さない
     setOverview(list);
-  }, [supabase, staff]);
+    // 🚨 includePartTime を依存に入れる。入れないと「パートも」に切り替えても一覧が古いまま
+  }, [supabase, staff, includePartTime]);
 
   useEffect(() => { fetchStaff(); }, [fetchStaff]);
   useEffect(() => { fetchPatterns(selectedStaffId); setPatternMsg(''); setPatternErr(''); }, [selectedStaffId, fetchPatterns]);
   useEffect(() => { if (section === 'patterns' && staff.length > 0) fetchOverview(); }, [section, staff, fetchOverview]);
+  // 🚨 「正社員だけ」に戻したとき、選んでいた人がパートなら選択を外す。
+  //    外さないと、欄には出ていない人の編集画面が開いたままになる
+  useEffect(() => {
+    if (!selectedStaffId) return;
+    const s = staff.find(x => x.id === selectedStaffId);
+    if (s && !isShiftTarget(s.employment_type, includePartTime)) setSelectedStaffId('');
+  }, [includePartTime, selectedStaffId, staff]);
 
   const savePatterns = async () => {
     setPatternErr(''); setPatternMsg('');
@@ -1600,10 +1612,33 @@ const OvertimeAdminTab: React.FC = () => {
             変更は「適用開始日」以降に反映され、それより前の申請・集計は変わりません（履歴型）。
           </p>
 
+          {/* 対象の切り替え。🚨 この1つで「取り込み」「スタッフを選ぶ欄」「適用中の一覧」が同時に変わる。
+              別々のスイッチにすると「取り込んだのに一覧に出ない」になる */}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+            <span style={{ fontSize: 12.5, color: subText }}>対象</span>
+            {([false, true] as const).map(v => (
+              <button key={String(v)} onClick={() => setIncludePartTime(v)}
+                style={{
+                  padding: '6px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12.5,
+                  fontWeight: includePartTime === v ? 'bold' : 'normal',
+                  background: includePartTime === v ? '#1976d2' : (isDarkMode ? '#495057' : '#e9ecef'),
+                  color: includePartTime === v ? '#fff' : (isDarkMode ? '#e9ecef' : '#495057'),
+                }}>
+                {v ? 'パートも' : '正社員だけ'}
+              </button>
+            ))}
+            {includePartTime && (
+              <span style={{ fontSize: 11.5, color: subText }}>
+                パートの通常シフトも登録・表示します（本人の画面には出ません）
+              </span>
+            )}
+          </div>
+
           <OvertimeShiftImport
             supabase={supabase}
             isDarkMode={isDarkMode}
             staff={staff}
+            includePartTime={includePartTime}
             onImported={() => { if (selectedStaffId) fetchPatterns(selectedStaffId); fetchOverview(); }}
           />
 
@@ -1611,7 +1646,8 @@ const OvertimeAdminTab: React.FC = () => {
             <select value={selectedStaffId} onChange={e => setSelectedStaffId(e.target.value)} style={{ ...inputStyle, minWidth: 200 }}>
               <option value="">スタッフを選択</option>
               {rolesByRank(roles).map(r => r.name).map(role => {
-                const members = staff.filter(s => s.role_title === role && s.employment_type !== 'パート');
+                const members = staff.filter(s => s.role_title === role
+                  && isShiftTarget(s.employment_type, includePartTime));
                 if (members.length === 0) return null;
                 return (
                   <optgroup key={role} label={role}>
@@ -1619,9 +1655,10 @@ const OvertimeAdminTab: React.FC = () => {
                   </optgroup>
                 );
               })}
-              {/* 序列に載っていない役職（想定外・パートを除く）は末尾に */}
+              {/* 序列に載っていない役職（想定外）は末尾に */}
               {(() => {
-                const others = staff.filter(s => !roles.some(r => r.name === s.role_title) && s.employment_type !== 'パート');
+                const others = staff.filter(s => !roles.some(r => r.name === s.role_title)
+                  && isShiftTarget(s.employment_type, includePartTime));
                 if (others.length === 0) return null;
                 return (
                   <optgroup label="その他">
