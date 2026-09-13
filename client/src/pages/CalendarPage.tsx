@@ -19,6 +19,7 @@ import {
 } from '../lib/overtimeTypes';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE } from '../hooks/useCompanyCalendar';
 import type { CalendarKind } from '../lib/breakCalc';
+import { todayJstStr } from '../lib/breakCalc';
 import type { AuthUser } from '../types';
 import HelpLinkButton from '../components/HelpLinkButton';
 import { toDbTime, normalizeTime } from '../lib/timeInput';
@@ -1591,6 +1592,11 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
   //    （出すと「押せるのに中身が空」になる。中身の保護はDB側のRLSが担当する）
   const saPerms = shiftAdjust ?? { view: false, review: false, plan: false, request: false, decide: false };
   const [tab, setTab] = useState<'calendar' | 'adjust'>('calendar');
+  // 欠勤の行にも「シフト 未／調整中／…」の印を出すための、場の状態。
+  // 🚨 休暇の行の印は今までどおり leave_requests.shift_adjust_status を見る（変えていない）。
+  //    欠勤にはその列が無いので、ここだけ新しい表を読む
+  const [saSlots, setSaSlots] = useState<Record<string, { id: string; status: string }>>({});
+  const [saOpenId, setSaOpenId] = useState<string | null>(null);
   const [shiftPanelFor, setShiftPanelFor] = useState<string | null>(null);
   const [shiftSavingId, setShiftSavingId] = useState<string | null>(null);
   const [shiftError, setShiftError] = useState('');
@@ -1871,6 +1877,24 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
     if (absDraft?.date) setAbsenceSheet(absDraft.date);
   }, [canAttendanceInput, isAdmin]);
 
+  // 欠勤の行に出すシフト調整の印。
+  // 🚨 権限のある人のときだけ読む（持っていない人の通信を増やさない）。
+  // 🚨 上のまとめ読みに混ぜず、別の effect にしてある（混ぜると権限が変わるたびに全部読み直す）
+  useEffect(() => {
+    if (!saPerms.view) return;
+    supabase.from('shift_adjust_slots').select('id, target_user_id, target_date, status')
+      .gte('target_date', todayJstStr())
+      .then(({ data, error }) => {
+        // 🚨 読めなかったら印を出さない（0件と決めつけて「未調整が無い」と見せない）
+        if (error || !data) return;
+        const m: Record<string, { id: string; status: string }> = {};
+        for (const s of data as { id: string; target_user_id: string; target_date: string; status: string }[]) {
+          m[`${s.target_user_id}|${s.target_date}`] = { id: s.id, status: s.status };
+        }
+        setSaSlots(m);
+      });
+  }, [saPerms.view]);
+
   // 自分の所属チームを初期選択にする。
   // profiles を読むまで所属が分からないため、取得できた時点で1回だけ切り替える。
   // 🚨 group_names には配信用グループも混ざっているので CALENDAR_GROUPS と突き合わせる。
@@ -2054,7 +2078,8 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
       )}
 
       {tab === 'adjust' && saPerms.view && user && (
-        <ShiftAdjustTab userId={user.id} isDark={isDark} isMobile={isMobile} perms={saPerms} />
+        <ShiftAdjustTab userId={user.id} isDark={isDark} isMobile={isMobile} perms={saPerms}
+          initialSlotId={saOpenId} onConsumedInitial={() => setSaOpenId(null)} />
       )}
 
       {tab === 'calendar' && (<>
@@ -2369,6 +2394,33 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
                     {ab.original_location && (
                       <div style={{ padding: '0 8px 7px', fontSize: 11, color: subColor, lineHeight: 1.5 }}>勤務地：{ab.original_location} → {ab.location ?? ''}</div>
                     )}
+                    {/* 欠勤にもシフト調整の印を出す（2026-09-13）。
+                        🚨 休暇の行と同じ見た目・同じ言葉にする。押すと「シフト調整」タブでその場が開く。
+                        🚨 場がまだ無い欠勤には出さない。出すと押しても何も開かない＝画面が嘘をつく */}
+                    {saPerms.view && ab.type === 'absent' && saSlots[`${ab.user_id}|${ab.date}`] && (() => {
+                      const sa = saSlots[`${ab.user_id}|${ab.date}`];
+                      const undone = ['pending', 'working'].includes(sa.status);
+                      const lbl = sa.status === 'pending' ? 'シフト 未'
+                        : sa.status === 'working' ? 'シフト 調整中'
+                        : sa.status === 'decided' ? 'シフト 調整済'
+                        : sa.status === 'no_change' ? 'シフト 確認済（変更なし）' : null;
+                      if (!lbl) return null;
+                      return (
+                        <div style={{ padding: '0 8px 7px' }}>
+                          <button type="button"
+                            onClick={() => { setSaOpenId(sa.id); setTab('adjust'); window.scrollTo({ top: 0 }); }}
+                            style={{
+                              fontSize: 10.5, fontWeight: 'bold', padding: '2px 8px', borderRadius: 10, cursor: 'pointer',
+                              whiteSpace: 'nowrap',
+                              color: undone ? (isDark ? '#ffcf8f' : '#b7770d') : subColor,
+                              background: sa.status === 'pending' ? (isDark ? '#4a3a1a' : '#fff8e1') : 'transparent',
+                              border: `1px solid ${undone ? (isDark ? '#7a5a1a' : '#f0c36d') : borderColor}`,
+                            }}>
+                            {lbl}
+                          </button>
+                        </div>
+                      );
+                    })()}
                     {/* 勤務時間帯（校の移動がある場合）。上の列は幅が狭く入りきらないためここに全部出す */}
                     {segs.length > 0 && (
                       <div style={{ padding: '0 8px 7px', fontSize: 11, color: subColor, lineHeight: 1.5 }}>勤務：{formatSegments(segs)}</div>
