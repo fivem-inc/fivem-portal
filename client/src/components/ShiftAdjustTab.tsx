@@ -514,8 +514,9 @@ const SlotDetail: React.FC<{
     if (!row?.ok) { setBusyBtn(false); setErr(row?.reason || '送信できませんでした'); return; }
 
     // 🚨 お知らせは画面から送る。文面に「誰の代わりか」は入れない
-    // 🚨 event_key を付けていない＝ベルだけ（スマホ通知は鳴らない）。
-    //    鳴らすには push-dispatch の EVENT_MAP（2人共通）に足す必要がある
+    // 🚨 event_key を付けると、DBのトリガーが push_queue に積む＝スマホが鳴る。
+    //    受け取るのはパートで、スマホ通知の登録は18人中6人しかいない。
+    //    鳴らない人のためにホームのバナーも出している
     const ids: string[] = row.request_ids ?? [];
     const dl = dateLabel(slot.target_date);
     const band = `${s.slice(0, 5)}〜${e.slice(0, 5)}`;
@@ -526,6 +527,7 @@ const SlotDetail: React.FC<{
         `${band}${reqLoc ? ` / ${reqLoc}` : ''}`,
         'shift_adjust:part_request',
         ids[i],
+        'shift_adjust:part_request',
       );
     }
     setBusyBtn(false);
