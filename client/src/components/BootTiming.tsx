@@ -257,6 +257,7 @@ export default function BootTiming({ isDark }: Props) {
           <div style={{ fontSize: 12, color: sub, marginBottom: 6 }}>
             起動の通り道（🚨 <strong>右の (+◯秒) がいちばん大事</strong>。そこで止まっていた時間）
             <br />🚨 同じ印が2回出ていたら、<strong>起動の処理が2回走っています</strong>（全部読み直している）
+            <br />（「認証イベント」の印は例外。合言葉の取り直しのたびに増えるので、何回出ても起動2回ではありません）
           </div>
           <div style={{ marginBottom: 14 }}>
             {data.marks.length === 0 && (

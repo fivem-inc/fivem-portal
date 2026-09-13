@@ -84,12 +84,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // getSession はトークンの期限が切れていると取り直しの通信をする。
         // ここも輻輳で返らないことがあるため上限を設ける（時間切れならセッション無しとして先へ進む）。
         bootMark('boot:2 ログイン確認をはじめた');
-        const { data: { session } } = await withTimeout(
-          supabase.auth.getSession(),
-          AUTH_TIMEOUT_MS,
-          { data: { session: null } } as Awaited<ReturnType<typeof supabase.auth.getSession>>,
-        );
-        bootMark('boot:3 合言葉の確認が終わった');
+        // 🚨 時間切れの写し（fallback）を「本当に合言葉が無い」と見分けるため、同じオブジェクトで比べる
+        const timedOut = { data: { session: null }, error: null } as Awaited<ReturnType<typeof supabase.auth.getSession>>;
+        const result = await withTimeout(supabase.auth.getSession(), AUTH_TIMEOUT_MS, timedOut);
+        const { data: { session } } = result;
+        // 🚨 2026-09-14 朝の実測：ここが 0.33秒で「合言葉なし」と即答し、3.2秒ログイン画面が出たあとで
+        //    取り直しの通信（0.31秒）が通っていた。即答の理由（無い／失敗／時間切れ）を印に添える。
+        //    error は今まで捨てていた。印に載せるだけで、動きは1つも変えていない
+        const kind = result === timedOut ? '時間切れ'
+          : result.error ? `失敗：${result.error.name} ${result.error.status ?? ''}`.trim()
+          : session ? '合言葉あり' : '合言葉なし';
+        bootMark(`boot:3 合言葉の確認が終わった（${kind}）`);
         await applySessionUser(session?.user as AuthUser ?? null);
       } catch (error) {
         console.error('Error getting session:', error);
@@ -104,6 +109,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       console.log('🔥 認証イベント:', event, '| セッション:', !!session);
+      // 🚨 印（2026-09-14）：どのイベントがいつ届いたかを「起動の内訳」に出す（console はスマホで見えない）。
+      //    朝の空白のあと「ログイン済み」に切り替えたのが INITIAL_SESSION / SIGNED_IN のどちらかを見るため。
+      //    🚨 TOKEN_REFRESHED は約1時間ごとに届くので、この印は起動後も増える。同じ印が2回＝起動2回、ではない
+      bootMark(`boot:auth 認証イベント ${event}（${session ? '合言葉あり' : '合言葉なし'}）`);
 
       if (event === 'USER_UPDATED') {
         console.log('✅ USER_UPDATED イベント検知 - ユーザー情報更新完了');
