@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useContext, useRef } from 'react';
+import { useState, useEffect, useCallback, useContext, useRef, useMemo } from 'react';
 import type { AuthUser } from '../types';
 import { supabase } from '../lib/supabaseClient';
 import { AuthContext } from '../contexts/AuthContext.tsx';
@@ -41,6 +41,25 @@ interface UseAuthReturn {
   canTripReportHistory: boolean;
   canOvertimeSummary: boolean;
   canShiftPatternDirectory: boolean;
+  /**
+   * シフト調整の作業場（勤怠カレンダーの中のタブ）の5つの権限。
+   * 🚨 1つのまとまりで渡す。ばらばらに5つ足すと App.tsx（2人共通ファイル）の
+   *    受け渡しが5行ずつ増える。中身はすべて機能権限（管理画面で切り替える）
+   * 🚨 勤怠カレンダーの権限（canCalendar）が無い人は、これが ON でも入口に届かない
+   *    （作業場はカレンダーの中にあるため）
+   */
+  shiftAdjust: {
+    /** ① 見る・コメントする */
+    view: boolean;
+    /** ② 案を確認したと押す */
+    review: boolean;
+    /** ③ 案を作る・意見の期限を付ける */
+    plan: boolean;
+    /** ④ パートへ出勤のお願いを送る */
+    request: boolean;
+    /** ⑤ 決定する・決定を取り消す・確認済（変更なし）で閉じる */
+    decide: boolean;
+  };
   /** FAQ（よくある質問）を見られるか。管理画面の役職トグルで切り替える */
   canFaq: boolean;
   /** ナビバーにFAQボタンを出すか（canFaq とは別に切り替えられる） */
@@ -317,6 +336,18 @@ export const useAuth = (): UseAuthReturn => {
   // RPCは実アカウントで評価されるため役職プレビューが効かなかった（実際の見え方を確認できない）
   const canOvertimeSummary = realIsAdmin && !previewRole ? true : (effectivePerms.overtime_summary ?? false);
   const canShiftPatternDirectory = realIsAdmin && !previewRole ? true : (effectivePerms.shift_pattern_directory ?? false);
+  // シフト調整の作業場（2026-09-13）。既定はすべて OFF ＝ 権限行が読めなかったときは出さない。
+  // 🚨 テスト中は社長・管理者だけ ON にしてある（DB側・migration 20260912222515）
+  // 🚨 useMemo で包む。5つをまとめた「もの」を毎回作り直すと、受け取った側が
+  //    useEffect の依存に入れたときに毎描画で走り続ける（このリポジトリで何度も踏んでいる形）
+  const saAll = realIsAdmin && !previewRole;
+  const shiftAdjust = useMemo(() => ({
+    view:    saAll ? true : (effectivePerms.shift_adjust_view    ?? false),
+    review:  saAll ? true : (effectivePerms.shift_adjust_review  ?? false),
+    plan:    saAll ? true : (effectivePerms.shift_adjust_plan    ?? false),
+    request: saAll ? true : (effectivePerms.shift_adjust_request ?? false),
+    decide:  saAll ? true : (effectivePerms.shift_adjust_decide  ?? false),
+  }), [saAll, effectivePerms]);
   // FAQ（よくある質問）。ナビの「💡 FAQ」と各ページの「❓ FAQ」の両方がこれで切り替わる。
   // 管理画面「役職・機能権限管理」でONにした役職に表示される
   const canFaq = realIsAdmin && !previewRole ? true : (effectivePerms.faq ?? false);
@@ -392,6 +423,7 @@ export const useAuth = (): UseAuthReturn => {
     canTripReportHistory,
     canOvertimeSummary,
     canShiftPatternDirectory,
+    shiftAdjust,
     canFaq,
     canFaqNav,
     canExpense,

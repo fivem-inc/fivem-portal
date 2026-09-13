@@ -23,6 +23,8 @@ import type { AuthUser } from '../types';
 import HelpLinkButton from '../components/HelpLinkButton';
 import { toDbTime, normalizeTime } from '../lib/timeInput';
 import TimeInput from '../components/TimeInput';
+import { PageTabs } from '../components/PageTabs';
+import ShiftAdjustTab from '../components/ShiftAdjustTab';
 
 // 校の選択肢の末尾に出す「その他（自由入力）」。選ぶと自由入力欄が出る（残業・出張報告と同じ扱い）
 const OTHER_LOCATION = 'その他';
@@ -122,6 +124,11 @@ interface Props {
   isAdmin?: boolean;
   /** 休暇のシフト調整の状態を変えられるか（管理画面「役職・機能権限」で役職ごとに指定） */
   canShiftAdjustPerm?: boolean;
+  /**
+   * シフト調整の作業場の5つの権限（2026-09-13）。
+   * 🚨 まとめて1つで受け取る。5つに分けると App.tsx（2人共通ファイル）の行が増える
+   */
+  shiftAdjust?: { view: boolean; review: boolean; plan: boolean; request: boolean; decide: boolean };
   isApprover?: boolean;
   /** 勤怠カレンダーへの登録・取消ができるか（権限管理のトグル。DBのRLSも同じものを見る） */
   canAttendanceInput?: boolean;
@@ -1517,7 +1524,7 @@ const SpCalendar: React.FC<{
 };
 
 // ===== メインコンポーネント =====
-const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjustPerm, canAttendanceInput }) => {
+const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjustPerm, canAttendanceInput, shiftAdjust }) => {
   // 自分の役職の属性（役職名では判定しない・2026-09-09）
   const roles = useRoles();
   const myAttrs = attrsFor(roles, roleTitle);
@@ -1580,6 +1587,10 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
   //    ここは画面の出し分けで、実際に止めているのは DB の set_leave_shift_adjust。
   //    片方だけ変えると「押せるのに保存できないボタン」になるので必ず両方を見ること。
   const canShiftAdjust = !!canShiftAdjustPerm;
+  // シフト調整の作業場（2026-09-13）。🚨 権限が無い人にはタブそのものを出さない
+  //    （出すと「押せるのに中身が空」になる。中身の保護はDB側のRLSが担当する）
+  const saPerms = shiftAdjust ?? { view: false, review: false, plan: false, request: false, decide: false };
+  const [tab, setTab] = useState<'calendar' | 'adjust'>('calendar');
   const [shiftPanelFor, setShiftPanelFor] = useState<string | null>(null);
   const [shiftSavingId, setShiftSavingId] = useState<string | null>(null);
   const [shiftError, setShiftError] = useState('');
@@ -2026,6 +2037,28 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
         <p style={{ fontSize: 12, color: '#856404', lineHeight: 1.8, margin: 0 }}>※ここでの登録は予定の共有用です。給与に関わる勤務時間の報告は「勤務変更」で行います。</p>
       </div>
 
+      {/* シフト調整のタブ（2026-09-13）。🚨 権限のある人にだけ出す＝他の人の画面は今までと同じ。
+          🚨 タブを切り替えたら、カレンダー側（6ヶ月サマリー・◀▶・凡例・月カレンダー・月別リスト）を
+             丸ごと隠す。隠さないと「9月を見ているのに10月の件が出る」ことになる */}
+      {saPerms.view && (
+        <div style={{ marginBottom: 12 }}>
+          <PageTabs
+            tabs={[{ key: 'calendar', label: 'カレンダー' }, { key: 'adjust', label: 'シフト調整' }]}
+            active={tab}
+            onChange={k => setTab(k as 'calendar' | 'adjust')}
+            variant="boxed"
+            isDark={isDark}
+            inactiveColor={textColor}
+          />
+        </div>
+      )}
+
+      {tab === 'adjust' && saPerms.view && user && (
+        <ShiftAdjustTab userId={user.id} isDark={isDark} isMobile={isMobile} perms={saPerms} />
+      )}
+
+      {tab === 'calendar' && (<>
+
       {/* 直近6ヶ月サマリー */}
       <div style={{ background: bg, borderRadius: 12, boxShadow: '0 2px 12px rgba(0,0,0,0.08)', padding: isMobile ? 14 : 20, marginBottom: 16 }}>
         <div style={{ fontSize: 13, fontWeight: 'bold', color: subColor, marginBottom: 12 }}>直近6ヶ月の休暇・欠勤日数</div>
@@ -2379,6 +2412,8 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
           </div>
         )}
       </div>
+
+      </>)}
 
       {/* 取消確認モーダル */}
       {deleteTarget && (
