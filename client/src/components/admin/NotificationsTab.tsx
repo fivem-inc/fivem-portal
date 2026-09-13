@@ -9,6 +9,7 @@ import { describeUpdate } from '../../lib/statusUpdate';
 import PushBannerSettingsSection from './PushBannerSettingsSection';
 import GcalCalendarSection from './GcalCalendarSection';
 import LeaveShiftAlertSection from './LeaveShiftAlertSection';
+import ShiftAdjustSettingsSection from './ShiftAdjustSettingsSection';
 
 interface NotificationSetting {
   id: string;
@@ -45,6 +46,11 @@ const EVENT_GROUPS = [
       // 2026-09-09 追加。受理済みなのにシフト調整がまだの休暇を、上長へ毎朝知らせる。
       // 🚨 送る時刻・時期は下の「シフト未調整のお知らせ」で設定する（宛先はここ）
       { key: 'leave:shift_adjust_due', label: 'シフト調整がまだのとき（上長へ・毎朝）' },
+      // 2026-09-13 追加（シフト調整の作業場）。送る時刻・対象は下の「シフト調整（毎朝のまとめ・設定）」で設定する（宛先はここ）
+      // 🚨 宛先は「ここで選んだ役職」かつ「シフト調整を見る権限がある人」。権限の無い人には届かない
+      { key: 'shift_adjust:digest',       label: 'シフト調整の毎朝のまとめ（上長へ）' },
+      // 🚨 2026-09-13 の手順7で設定の行は入れたのに、この一覧に載せ忘れていて管理画面から止められなかった
+      { key: 'shift_adjust:part_request', label: '出勤のお願い（パートへ）' },
     ],
   },
   {
@@ -224,6 +230,7 @@ const FIXED_RECIPIENT_NOTE_BY_EVENT: Record<string, string> = {
   'overtime:admin_edited':      '宛先：修正された本人（固定）',
   'overtime_proposal:received':  '宛先：提案された相手（固定）',
   'overtime_proposal:responded': '宛先：提案した人（固定）',
+  'shift_adjust:part_request':   '宛先：出勤をお願いした相手（固定）',
 };
 
 const VARIABLES_BY_EVENT: Record<string, string[]> = {
@@ -271,7 +278,7 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
 };
 
 // 役職＋グループ絞り込みで一斉配信するイベント（時間調整・勤務変更受理など、UIとロジックを共有する）
-const ROLE_GROUP_BROADCAST_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi', 'overtime:threshold', 'leave:shift_adjust_due'];
+const ROLE_GROUP_BROADCAST_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi', 'overtime:threshold', 'leave:shift_adjust_due', 'shift_adjust:digest'];
 // プッシュ通知で役職を選択できるイベント（一斉通知系。宛先が自動で決まらないもの）
 const PUSH_ROLE_SELECT_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'purchase:reimbursement_recorded', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi', 'overtime:threshold', 'leave:shift_adjust_due'];
 
@@ -1015,6 +1022,7 @@ const NotificationsTab: React.FC = () => {
       <GcalCalendarSection />
 
       <LeaveShiftAlertSection />
+      <ShiftAdjustSettingsSection />
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
         <button onClick={() => { setShowLibrary(true); setLibrarySelectFor(null); }}

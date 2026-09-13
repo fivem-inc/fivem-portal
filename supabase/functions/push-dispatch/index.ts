@@ -79,6 +79,11 @@ const EVENT_MAP: Record<string, { app: string; word: string; text: string; url: 
   // 🚨 受け取るのはパートだけ。パートは /overtime にも /calendar にも入れないので、
   //    着地先は専用ページにする（ほかのページへ送ると開けずに行き止まりになる）。
   "shift_adjust:part_request": { app: "シフト調整", word: "新着", text: "出勤のお願いが届いています", url: "/shift-request" },
+  // シフト調整の毎朝のまとめ（上長あて・2026-09-13）。送るのは DB の cron（shift_adjust_send_digest）。
+  // 🚨 休んだ人の名前・日付は書かない（ロック画面に出る）。件数と中身はベルと着地画面で読む。
+  // 🚨 bell は付けない。着地のシフト調整タブに、未調整の一覧がそのまま並ぶ。
+  // 🚨 着地は `?tab=adjust`。App.tsx の classifyNotif にも同じ行き先を書いてある。片方だけ直さないこと。
+  "shift_adjust:digest": { app: "シフト調整", word: "未調整", text: "シフト調整が済んでいない休みがあります", url: "/calendar?tab=adjust" },
   // 申請依頼の「期限」リマインド（本人あて・朝9時の日次）。2026-09-11 追加。
   // 🚨 個人名・依頼の中身は書かない（プッシュはロック画面に出る）。件数はベル側で読む。
   // 🚨 bell: true。押すとベルが開いて該当の通知が光り、そこから残業ページへ進む

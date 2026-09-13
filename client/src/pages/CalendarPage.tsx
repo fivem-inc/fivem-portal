@@ -1591,7 +1591,11 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
   // シフト調整の作業場（2026-09-13）。🚨 権限が無い人にはタブそのものを出さない
   //    （出すと「押せるのに中身が空」になる。中身の保護はDB側のRLSが担当する）
   const saPerms = shiftAdjust ?? { view: false, review: false, plan: false, request: false, decide: false };
-  const [tab, setTab] = useState<'calendar' | 'adjust'>('calendar');
+  // 🚨 通知（毎朝のまとめ・返事なし）から `?tab=adjust` で来たら、シフト調整のタブで開く。
+  //    同じページを開いたまま通知を押されても切り替わるよう、URL の変化も見る
+  const tabParam = searchParams.get('tab');
+  const [tab, setTab] = useState<'calendar' | 'adjust'>(tabParam === 'adjust' ? 'adjust' : 'calendar');
+  useEffect(() => { if (tabParam === 'adjust') setTab('adjust'); }, [tabParam]);
   // 欠勤の行にも「シフト 未／調整中／…」の印を出すための、場の状態。
   // 🚨 休暇の行の印は今までどおり leave_requests.shift_adjust_status を見る（変えていない）。
   //    欠勤にはその列が無いので、ここだけ新しい表を読む

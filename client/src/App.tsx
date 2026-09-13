@@ -1167,9 +1167,13 @@ const classifyNotif = (n: NotifLike) => {
     if (isEnc) return { path: '/leave', closeOnTap: false };
     // 出勤のお願い（パート向け・2026-09-13）。🚨 答えるまで消さない＝ closeOnTap: false
     if (n.source_type === 'shift_adjust:part_request') return { path: '/shift-request', closeOnTap: false };
-    // 出勤のお願いに返事が無い（送った人＝上長向け）。着地はシフト調整のタブ。
+    // 出勤のお願いの担当が別の方に決まった（選ばれなかったパート向け・2026-09-13）。読めば用が済む
+    if (n.source_type === 'shift_adjust:part_request_closed') return { path: '/shift-request', closeOnTap: true };
+    // 出勤のお願いに返事が無い（送った人＝上長向け）／毎朝のまとめ（上長向け）。着地はシフト調整のタブ。
+    // 🚨 `?tab=adjust` が無いとカレンダーのタブで開き、シフト調整が見えない（2026-09-13 に気づいて直した）
     // 🚨 まだ調整が残っているので closeOnTap: false（片付くまで消さない）
-    if (n.source_type === 'shift_adjust:part_request_overdue') return { path: '/calendar', closeOnTap: false };
+    if (n.source_type === 'shift_adjust:part_request_overdue') return { path: '/calendar?tab=adjust', closeOnTap: false };
+    if (n.source_type === 'shift_adjust:digest') return { path: '/calendar?tab=adjust', closeOnTap: false };
     if (isSafety) {
       // 「助けが必要」の知らせは必ず集計画面を開く。
       // 通常の安否確認は「自分が未回答なら回答画面を優先」だが、これは他人の緊急を

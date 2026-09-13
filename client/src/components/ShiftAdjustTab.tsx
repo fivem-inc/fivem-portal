@@ -289,9 +289,41 @@ const SlotDetail: React.FC<{
 
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [memo, setMemo] = useState('');
-  const [doAttendance, setDoAttendance] = useState(true);
-  const [doRequest, setDoRequest] = useState(true);
+  // 🚨 2026-09-13（手順8）：初期値は管理画面の「自動登録の開始日」で決まる。読むまでは OFF
+  const [doAttendance, setDoAttendance] = useState(false);
+  const [doRequest, setDoRequest] = useState(false);
+  const [autoNote, setAutoNote] = useState('');
+  /** 利用者がチェックを触ったか。触ったあとに設定の読み込みが終わっても上書きしない */
+  const touchedAuto = React.useRef(false);
   const [confirmUndo, setConfirmUndo] = useState(false);
+
+  // 決定するときのチェックの初期値（ユーザー確定）：
+  //   休みの日が開始日以降なら ON／それより前、または開始日が未設定なら OFF。押せば登録・依頼はできる
+  // 🚨 パート（勤怠の登録）と正社員（残業申請の依頼）で開始日は別々
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const { data, error } = await supabase.from('shift_adjust_settings')
+        .select('attendance_from, request_from').eq('id', 1).maybeSingle();
+      if (!alive) return;
+      if (error || !data) {
+        setAutoNote('自動登録の開始日を読み込めなかったため、初期値はOFFにしています。');
+        return;
+      }
+      const af = (data.attendance_from as string | null) ?? null;
+      const rf = (data.request_from as string | null) ?? null;
+      const onA = !!af && slot.target_date >= af;
+      const onR = !!rf && slot.target_date >= rf;
+      if (!touchedAuto.current) { setDoAttendance(onA); setDoRequest(onR); }
+      const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
+      const part = (name: string, from: string | null, on: boolean) =>
+        !from ? `${name}＝OFF（開始日が未設定）`
+          : on ? `${name}＝ON（${md(from)} から）`
+            : `${name}＝OFF（${md(from)} からのため対象外）`;
+      setAutoNote(`初期値：${part('勤怠の登録', af, onA)}／${part('残業申請の依頼', rf, onR)}`);
+    })();
+    return () => { alive = false; };
+  }, [slot.target_date]);
 
   const loadComments = useCallback(async () => {
     const { data, error } = await supabase.from('shift_adjust_comments')
@@ -726,14 +758,19 @@ const SlotDetail: React.FC<{
 
               <div style={{ marginTop: 12, display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12.5, color: text }}>
                 <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={doAttendance} onChange={e => setDoAttendance(e.target.checked)} />
+                  <input type="checkbox" checked={doAttendance}
+                    onChange={e => { touchedAuto.current = true; setDoAttendance(e.target.checked); }} />
                   勤怠に登録する
                 </label>
                 <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={doRequest} onChange={e => setDoRequest(e.target.checked)} />
+                  <input type="checkbox" checked={doRequest}
+                    onChange={e => { touchedAuto.current = true; setDoRequest(e.target.checked); }} />
                   残業申請を依頼する
                 </label>
               </div>
+              {autoNote && (
+                <div style={{ fontSize: 11.5, color: subText, marginTop: 4, lineHeight: 1.6 }}>{autoNote}</div>
+              )}
               <input type="text" value={memo} onChange={e => setMemo(e.target.value)} placeholder="メモ（任意）"
                 style={{ ...sel, width: '100%', boxSizing: 'border-box', marginTop: 10 }} />
 
