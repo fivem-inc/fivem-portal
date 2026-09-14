@@ -2,6 +2,9 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { teamsOf } from '../lib/staffTeam';
+import { useRoles } from '../hooks/useRoles';
+import { roleByName } from '../lib/roleAttrs';
+import { compareByPlaceRole, firstWorkplace, usualWorkplace } from '../lib/shiftAdjustSort';
 import { todayJstStr } from '../lib/breakCalc';
 import type { DayKind } from '../lib/breakCalc';
 import { normalShiftTimeText } from '../lib/overtimeShift';
@@ -312,11 +315,17 @@ const SlotDetail: React.FC<{
   const [okMsg, setOkMsg] = useState('');
   const [busyBtn, setBusyBtn] = useState(false);
 
-  // 調整中の場を開いたときは、候補を最初から開いて読み込む（出勤のお願いの一覧も同じ読み込みを使う）
+  // 調整中の場を開いたときは、候補を最初から開いておく
   const [showCandidates, setShowCandidates] = useState(slot.status === 'working');
+  /** この日の曜日の週の基本シフト */
   const [patterns, setPatterns] = useState<PatternRow[]>([]);
-  /** その日に有効な週の基本シフトを1行でも持っている人（「この曜日は勤務なし」と「週のシフト未登録」を分けるため） */
-  const [registered, setRegistered] = useState<string[]>([]);
+  /** その日に有効な週の基本シフト（全曜日）。「週のシフト未登録」の判定と「いつもの校」に使う */
+  const [weekPatterns, setWeekPatterns] = useState<PatternRow[]>([]);
+  const roles = useRoles();
+  /** 出勤する人の枠（「＋ 入れる」を押したらここまで戻る・2026-09-14 ユーザー確定） */
+  const workRef = React.useRef<HTMLDivElement>(null);
+  /** いま入れた人（行を数秒だけ目立たせる） */
+  const [flashUid, setFlashUid] = useState<string | null>(null);
   // チームの絞り込み。初期値は休んだ人と同じチーム（2026-09-14 ユーザー確定）。チームが無い人なら「すべて」
   const targetTeam = teamsOf(profiles.find(p => p.id === slot.target_user_id)?.group_names, teams)[0] ?? 'all';
   const [candTeam, setCandTeam] = useState<string>(targetTeam);
@@ -438,7 +447,8 @@ const SlotDetail: React.FC<{
     return () => { alive = false; };
   }, [slot.cause_leave_request_id, slot.cause_attendance_exception_id, slot.target_date]);
 
-  // 候補は押したときに初めて読む（見ない人のぶんまで通信しない）
+  // 週の基本シフト・この日の休暇と勤怠の記録を読む。
+  // 🚨 2026-09-14 から、場を開いたら状態に関係なく読む（見出しに休む方のこの日のシフトを出すため）
   const loadCandidates = useCallback(async () => {
     setCandErr('');
     const d = slot.target_date;
@@ -459,7 +469,7 @@ const SlotDetail: React.FC<{
     }
     const valid = ((pat as (PatternRow & { valid_from: string; valid_to: string | null })[] | null) ?? [])
       .filter(p => p.valid_to === null || p.valid_to >= d);
-    setRegistered([...new Set(valid.map(p => p.user_id))]);
+    setWeekPatterns(valid);
     setPatterns(valid.filter(p => p.day_kind === dayKindOf(d)));
 
     const b: BusyMap = {};
@@ -485,11 +495,10 @@ const SlotDetail: React.FC<{
     if (next && !candLoaded) void loadCandidates();
   };
 
-  // 🚨 調整中なら最初から読む（出勤のお願いの一覧もこの読み込みを使う）。
-  //    読み込みは失敗しても candLoaded を立てるので、繰り返し読みに行くことはない
+  // 🚨 開いたら1回読む。読み込みは失敗しても candLoaded を立てるので、繰り返し読みに行くことはない
   useEffect(() => {
-    if (status === 'working' && !candLoaded) void loadCandidates();
-  }, [status, candLoaded, loadCandidates]);
+    if (!candLoaded) void loadCandidates();
+  }, [candLoaded, loadCandidates]);
 
   const send = async () => {
     const t = body.trim();
@@ -538,6 +547,21 @@ const SlotDetail: React.FC<{
   const patchDraft = (key: number, p: Partial<Draft>) =>
     setDrafts(d => d.map(x => (x.key === key ? { ...x, ...p } : x)));
   const removeDraft = (key: number) => setDrafts(d => d.filter(x => x.key !== key));
+
+  // 「＋ 入れる」：出勤する人に入れて、上の「出勤する人」まで戻る（2026-09-14 ユーザー確定）。
+  // 🚨 入る時間は入れない（手入力）。昼から移動などがあるため（ユーザー確定）。校は今までの「＋ 出勤する人を追加」と同じ初期値
+  // 🚨 同じ人は二重に入れない。空の行（「シフトを調整する」を押したときにできる）があればそこに入れる
+  const addCandidate = (uid: string) => {
+    setDrafts(d => {
+      if (d.some(x => x.userId === uid)) return d;
+      const empty = d.find(x => !x.userId);
+      if (empty) return d.map(x => (x.key === empty.key ? { ...x, userId: uid } : x));
+      return [...d, { key: Date.now() + Math.random(), userId: uid, start: '', end: '', location: where || workplaces[0] || '' }];
+    });
+    setFlashUid(uid);
+    window.setTimeout(() => setFlashUid(v => (v === uid ? null : v)), 2500);
+    window.requestAnimationFrame(() => workRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
 
   const kindOf = (uid: string): 'attendance' | 'overtime_request' =>
     profiles.find(p => p.id === uid)?.employment_type === 'パート' ? 'attendance' : 'overtime_request';
@@ -651,22 +675,43 @@ const SlotDetail: React.FC<{
   // 候補の並び
   const teamText = (p: ProfileRow): string => teamsOf(p.group_names, teams).join('・');
   const inTeam = (p: ProfileRow, t: string): boolean => t === 'all' || teamsOf(p.group_names, teams).includes(t);
+  const roleRankOf = (p: ProfileRow): number => roleByName(roles, p.role_title)?.sort_order ?? 0;
+  const worksToday = (uid: string): boolean => patterns.some(x => x.user_id === uid && !!x.start_time);
+  /** いつもの校（週の基本シフトでいちばん多く入っている校） */
+  const usualOf = (uid: string): string =>
+    usualWorkplace(weekPatterns.filter(x => x.user_id === uid && x.start_time).map(x => x.location), workplaces);
+  const byPlaceRole = (placeOf: (uid: string) => string) => (a: ProfileRow, b: ProfileRow): number =>
+    compareByPlaceRole(
+      { place: placeOf(a.id), roleRank: roleRankOf(a), name: a.name || '' },
+      { place: placeOf(b.id), roleRank: roleRankOf(b), name: b.name || '' },
+      workplaces,
+    );
+  // この日に勤務予定がある人：その日の校 → 役職 → 名前（2026-09-14 ユーザー確定）
+  const todayPlaceOf = (uid: string): string => firstWorkplace(patterns.find(x => x.user_id === uid)?.location);
   const working = profiles
-    .filter(p => p.id !== slot.target_user_id && patterns.some(x => x.user_id === p.id && x.start_time))
-    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+    .filter(p => p.id !== slot.target_user_id && worksToday(p.id))
+    .sort(byPlaceRole(todayPlaceOf));
   const workingShown = working.filter(p => inTeam(p, candTeam));
-  // この日に勤務予定がないパート（出勤のお願いを送れる相手）
-  const restingPart = profiles
-    .filter(p => p.id !== slot.target_user_id && p.employment_type === 'パート'
-      && !patterns.some(x => x.user_id === p.id && x.start_time))
-    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+  // この日に勤務予定がない人：いつもの校 → 役職 → 名前。パートと正社員に分ける（2026-09-14 ユーザー確定）
+  const resting = profiles
+    .filter(p => p.id !== slot.target_user_id && !worksToday(p.id))
+    .sort(byPlaceRole(usualOf));
+  const restingPart = resting.filter(p => p.employment_type === 'パート');
+  /** 🚨 正社員には出勤のお願いを送れない（DB が断る）。個別に連絡して「＋ 入れる」で入れてもらう */
+  const restingStaff = resting.filter(p => p.employment_type !== 'パート');
   /** まだお願いを送っていない相手（送った相手は下の「送ったお願い」に出す） */
   const restingUnsent = restingPart.filter(p => !partReqs.some(q => q.user_id === p.id));
   const restingShown = restingUnsent.filter(p => inTeam(p, partTeam));
+  const restingStaffShown = restingStaff.filter(p => inTeam(p, partTeam));
   /** 🚨 「この日は休み」とだけ書くと、休暇なのか週のシフトが未登録なのか分からない（2026-09-14 実機指摘）。
    *     休暇・欠勤などの記録があればそれを、なければ「この曜日は勤務なし」か「週のシフト未登録」を出す */
   const restNoteOf = (uid: string): string =>
-    busy[uid] ?? (registered.includes(uid) ? 'この曜日は勤務なし' : '週のシフト未登録');
+    busy[uid] ?? (weekPatterns.some(x => x.user_id === uid) ? 'この曜日は勤務なし' : '週のシフト未登録');
+  /** 勤務予定がない人の補足（いつもの校・休みの理由） */
+  const restLineOf = (uid: string): string => [usualOf(uid), restNoteOf(uid)].filter(Boolean).join('・');
+  // 出勤する人に入れられるのは、決められる人が「シフトを調整する」を選んでいて、まだ決まっていないとき
+  const canAdd = perms.decide && status === 'working' && assigns.length === 0;
+  const inDrafts = (uid: string): boolean => drafts.some(x => x.userId === uid);
   // 絞り込みを変えたら、見えなくなった人の選択は外す（見えないまま送られないように）
   const changePartTeam = (t: string) => {
     setPartTeam(t);
@@ -684,6 +729,11 @@ const SlotDetail: React.FC<{
     }) : '';
   };
   const locOf = (uid: string): string => patterns.find(x => x.user_id === uid)?.location ?? '';
+  /** その人のこの日のシフトを1行で（出勤する人の欄・見出しで使う。2026-09-14 ユーザー指示） */
+  const dayShiftOf = (uid: string): string => {
+    const s = shiftTextOf(uid);
+    return s ? `${s}${locOf(uid) ? ` ${locOf(uid)}` : ''}` : `勤務予定なし（${restNoteOf(uid)}）`;
+  };
 
   const box: React.CSSProperties = {
     background: cardBg, borderRadius: 12, border: `1px solid ${border}`,
@@ -726,6 +776,21 @@ const SlotDetail: React.FC<{
   // 出勤する人・候補・出勤のお願いを出すか（未調整のうちは、決められる人にはまず選択だけを見せる）
   const showWork = status !== 'no_change' && !(perms.decide && status === 'pending' && assigns.length === 0);
 
+  // 「＋ 入れる」のボタン（すでに入っている人は印だけ）
+  const addBtn = (uid: string) => !canAdd ? null : inDrafts(uid) ? (
+    <span style={{ marginLeft: 'auto', fontSize: 11.5, color: subText, whiteSpace: 'nowrap', alignSelf: 'center' }}>✓ 入っています</span>
+  ) : (
+    <button type="button" onClick={e => { e.preventDefault(); addCandidate(uid); }}
+      style={{ ...toggleBtn(false, false), marginLeft: 'auto', alignSelf: 'center' }}>
+      ＋ 入れる
+    </button>
+  );
+  // この日のシフトを目立たせる帯（🚨 新しい色は足さない。月の切り替えボタンの選択中と同じ薄い青）
+  const shiftBand: React.CSSProperties = {
+    marginTop: 6, padding: '6px 10px', borderRadius: 8, fontSize: 12.5,
+    background: isDark ? '#1a3a5c' : '#e8f4fd', color: isDark ? '#e9ecef' : '#1565c0',
+  };
+
   const teamChips = (value: string, onChange: (t: string) => void) => (
     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
       {['all', ...teams].map(t => (
@@ -754,6 +819,14 @@ const SlotDetail: React.FC<{
           {nameOf(slot.target_user_id) || '（名前を読み込めませんでした）'}さんの
           {slot.cause === 'absent' ? '欠勤' : '休み'}
         </div>
+        {/* 休む方のこの日のシフト（2026-09-14 ユーザー指示）。🚨 週の基本シフトが読めなかったときは出さない（嘘をつかない） */}
+        {candLoaded && !candErr && (
+          <div style={shiftBand}>
+            休む方のこの日のシフト：{shiftTextOf(slot.target_user_id)
+              ? `${shiftTextOf(slot.target_user_id)}${locOf(slot.target_user_id) ? ` ${locOf(slot.target_user_id)}` : ''}`
+              : weekPatterns.some(x => x.user_id === slot.target_user_id) ? 'この曜日は勤務なし' : '週のシフト未登録'}
+          </div>
+        )}
         <div style={{ fontSize: 12, color: ['pending', 'working'].includes(status) ? warnFg : subText, marginTop: 6 }}>
           状態：{STATUS_LABEL[status] ?? status}
           {slot.decided_at && status === 'no_change' && (
@@ -792,10 +865,48 @@ const SlotDetail: React.FC<{
         </div>
       )}
 
+      {/* 相談（🚨 対応を決める前から見せる。隠すと、すでにある書き込みが埋もれる）。
+          🚨 2026-09-14 ユーザー確定：対応の選択のすぐ下に移した（以前はいちばん下） */}
+      <div style={box}>
+        <div style={head}>相談</div>
+        {comments.length === 0 ? (
+          <p style={{ margin: '0 0 10px', fontSize: 12.5, color: subText }}>まだ書き込みはありません。</p>
+        ) : comments.map(c => (
+          <div key={c.id} style={{ padding: '8px 0', borderBottom: `1px solid ${border}` }}>
+            <div style={{ fontSize: 11.5, color: subText }}>
+              {nameOf(c.user_id) || '（名前なし）'}・{actedAtLabel(c.created_at)}
+            </div>
+            <div style={{ fontSize: 13.5, color: text, whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>{c.body}</div>
+          </div>
+        ))}
+        {perms.view && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginTop: 10 }}>
+            <textarea value={body} onChange={e => setBody(e.target.value)} rows={2} placeholder="相談を入力"
+              style={{ flex: 1, padding: '8px 10px', borderRadius: 8, fontSize: 13.5, resize: 'vertical',
+                border: `1px solid ${border}`, background: inputBg, color: text,
+                boxSizing: 'border-box', fontFamily: 'inherit' }} />
+            <button onClick={() => void send()} disabled={!body.trim() || sending}
+              style={{ padding: '9px 16px', borderRadius: 8, border: 'none', cursor: body.trim() ? 'pointer' : 'default',
+                fontSize: 13, fontWeight: 'bold', whiteSpace: 'nowrap',
+                background: body.trim() ? '#1976d2' : (isDark ? '#495057' : '#e9ecef'),
+                color: body.trim() ? '#fff' : subText }}>
+              {sending ? '送信中' : '送信'}
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* 出勤する人 */}
       {showWork && (
-        <div style={box}>
-          <div style={head}>出勤する人</div>
+        <div ref={workRef} style={{ ...box, scrollMarginTop: 70 }}>
+          <div style={head}>
+            出勤する人
+            {canAdd && drafts.filter(d => d.userId).length > 0 && (
+              <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 'normal', color: subText }}>
+                {drafts.filter(d => d.userId).length}人
+              </span>
+            )}
+          </div>
 
           {assigns.length > 0 ? (
             <>
@@ -840,8 +951,10 @@ const SlotDetail: React.FC<{
               )}
               {drafts.map(d => {
                 const k = d.userId ? kindOf(d.userId) : null;
+                const flashing = !!d.userId && d.userId === flashUid;
                 return (
-                  <div key={d.key} style={{ padding: '8px 0', borderBottom: `1px solid ${border}` }}>
+                  <div key={d.key} style={{ padding: '8px 6px', margin: '0 -6px', borderBottom: `1px solid ${border}`, borderRadius: 8,
+                    background: flashing ? (isDark ? '#1a3a5c' : '#e8f4fd') : 'transparent', transition: 'background .4s' }}>
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                       <select value={d.userId} onChange={e => patchDraft(d.key, { userId: e.target.value })}
                         style={{ ...sel, minWidth: 150 }}>
@@ -857,7 +970,12 @@ const SlotDetail: React.FC<{
                       </select>
                       <button onClick={() => removeDraft(d.key)} style={{ ...quietBtn, marginLeft: 0 }}>削除</button>
                     </div>
+                    {/* 選んだ人のこの日のシフト（2026-09-14 ユーザー指示）。入る時間は手入力 */}
+                    {d.userId && candLoaded && !candErr && (
+                      <div style={shiftBand}>この日のシフト：{dayShiftOf(d.userId)}</div>
+                    )}
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
+                      <span style={{ fontSize: 12, color: subText }}>入る時間</span>
                       <TimeInput value={d.start} onChange={v => patchDraft(d.key, { start: v })} isDark={isDark} ariaLabel="開始時刻" />
                       <span style={{ color: subText }}>〜</span>
                       <TimeInput value={d.end} onChange={v => patchDraft(d.key, { end: v })} isDark={isDark} ariaLabel="終了時刻" />
@@ -925,20 +1043,32 @@ const SlotDetail: React.FC<{
               ) : (
                 <>
                   {teamChips(candTeam, setCandTeam)}
-                  <div style={{ fontSize: 12, color: subText, margin: '0 0 4px' }}>この日に勤務予定がある人</div>
+                  <div style={{ fontSize: 12, color: subText, margin: '0 0 4px' }}>この日に勤務予定がある人（校・役職の順）</div>
                   {workingShown.length === 0 ? (
                     <p style={{ margin: '0 0 10px', fontSize: 12.5, color: subText }}>
                       {working.length === 0 ? '該当者はいません。' : 'このチームには該当者がいません。'}
                     </p>
-                  ) : workingShown.map(p => (
-                    <CandidateRow key={p.id} name={p.name || ''} team={teamText(p)}
-                      role={p.role_title || (p.employment_type === 'パート' ? 'パート' : '')}
-                      shift={shiftTextOf(p.id)} loc={locOf(p.id)} note={busy[p.id] ?? ''} isDark={isDark} />
-                  ))}
+                  ) : workingShown.map((p, i) => {
+                    const place = todayPlaceOf(p.id);
+                    const prev = i > 0 ? todayPlaceOf(workingShown[i - 1].id) : null;
+                    return (
+                      <React.Fragment key={p.id}>
+                        {place !== prev && (
+                          <div style={{ fontSize: 12, fontWeight: 'bold', color: subText, margin: i === 0 ? '4px 0 2px' : '12px 0 2px' }}>
+                            {place || '校の登録なし'}
+                          </div>
+                        )}
+                        <CandidateRow name={p.name || ''} team={teamText(p)}
+                          role={p.role_title || (p.employment_type === 'パート' ? 'パート' : '')}
+                          shift={shiftTextOf(p.id)} loc={locOf(p.id) !== place ? locOf(p.id) : ''} note={busy[p.id] ?? ''} isDark={isDark}
+                          action={busy[p.id] ? null : addBtn(p.id)} />
+                      </React.Fragment>
+                    );
+                  })}
                   <p style={{ margin: '10px 0 0', fontSize: 11, color: subText, lineHeight: 1.7 }}>
                     ※ 週の基本シフトが未登録の方は表示されません。
                     <br />
-                    ※ この日に勤務予定がないパート・アルバイトは、下の「出勤のお願い」に表示します。
+                    ※ この日に勤務予定がない人は、下の「この日に勤務予定がない人」に表示します。
                   </p>
                 </>
               )}
@@ -947,51 +1077,55 @@ const SlotDetail: React.FC<{
         </div>
       )}
 
-      {/* 出勤のお願い（パート・アルバイトへ）
-          🚨 呼び名は「出勤のお願い」。既存の「申請の依頼」と紛れないように（ユーザー確定）
-          🚨 見出しに相手を添える（2026-09-14 ユーザー確定）
-          🚨 正社員には送らない。正社員は決定のときに「残業申請の依頼」が出る */}
-      {showWork && (perms.request || partReqs.length > 0) && (
+      {/* この日に勤務予定がない人（2026-09-14 ユーザー確定。以前の見出しは「出勤のお願い（パート・アルバイトへ）」）
+          ・パート … 出勤のお願いを送れる（チェック）＋ 個別に連絡して「＋ 入れる」
+          ・正社員 … 🚨 出勤のお願いは送れない（DB が断る。正社員は決定のときに「残業申請の依頼」が出る）。
+                     LINE などで個別に連絡して「＋ 入れる」で出勤する人に入れる
+          🚨 呼び名「出勤のお願い」は既存の「申請の依頼」と紛れないように（ユーザー確定） */}
+      {showWork && (perms.request || canAdd || partReqs.length > 0) && (
         <div style={box}>
-          <div style={head}>出勤のお願い（パート・アルバイトへ）</div>
+          <div style={head}>この日に勤務予定がない人</div>
 
-          {perms.request && (
+          {(perms.request || canAdd) && (
             !candLoaded ? (
-              <button type="button" onClick={() => { setShowCandidates(true); void loadCandidates(); }}
-                style={{ ...quietBtn, marginLeft: 0 }}>
-                この日に勤務予定がないパート・アルバイトを表示
-              </button>
+              <p style={{ margin: 0, fontSize: 12.5, color: subText }}>読み込んでいます…</p>
             ) : (
               <>
                 {teamChips(partTeam, changePartTeam)}
-                <div style={{ fontSize: 12, color: subText, margin: '0 0 4px' }}>この日に勤務予定がないパート・アルバイト</div>
+                <div style={{ fontSize: 12, fontWeight: 'bold', color: subText, margin: '4px 0 2px' }}>
+                  パート{perms.request ? '（出勤のお願いを送れます）' : ''}
+                </div>
                 {restingShown.length === 0 ? (
                   <p style={{ margin: '0 0 8px', fontSize: 12.5, color: subText }}>
-                    {restingUnsent.length === 0 ? 'お願いを送れるパート・アルバイトはいません。' : 'このチームには該当者がいません。'}
+                    {restingUnsent.length === 0 ? '該当するパートはいません。' : 'このチームには該当者がいません。'}
                   </p>
                 ) : restingShown.map(p => {
                   // 🚨 休暇・欠勤などの記録がある人は選べない（opacity 0.5・新しい色は足さない）
                   const blocked = !!busy[p.id];
                   const t = teamText(p);
                   return (
-                    <label key={p.id} style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', padding: '5px 0',
-                      fontSize: 13, color: text, cursor: blocked ? 'default' : 'pointer', opacity: blocked ? 0.5 : 1 }}>
-                      <input type="checkbox" checked={pickedParts.includes(p.id)} disabled={blocked}
-                        style={{ alignSelf: 'center' }}
-                        onChange={e => setPickedParts(v => e.target.checked ? [...v, p.id] : v.filter(x => x !== p.id))} />
+                    <div key={p.id} style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', padding: '5px 0',
+                      fontSize: 13, color: text, opacity: blocked ? 0.5 : 1 }}>
+                      {perms.request && (
+                        <input type="checkbox" checked={pickedParts.includes(p.id)} disabled={blocked}
+                          aria-label={`${p.name}に出勤のお願いを送る`}
+                          style={{ alignSelf: 'center', cursor: blocked ? 'default' : 'pointer' }}
+                          onChange={e => setPickedParts(v => e.target.checked ? [...v, p.id] : v.filter(x => x !== p.id))} />
+                      )}
                       <span style={{ fontWeight: 'bold' }}>{p.name}</span>
                       {t && <TeamTag team={t} isDark={isDark} />}
-                      <span style={{ fontSize: 11, color: subText }}>{restNoteOf(p.id)}</span>
+                      <span style={{ fontSize: 11, color: subText }}>{restLineOf(p.id)}</span>
                       {/* 🚨 スマホ通知を登録していない人は、アプリを開くまで気づかない。
                           🚨 ただし登録状況が読めたときだけ出す（読めないのに「なし」と書かない） */}
-                      {pushKnown && !pushUsers.includes(p.id) && (
+                      {perms.request && pushKnown && !pushUsers.includes(p.id) && (
                         <span style={{ fontSize: 11, color: subText }}>スマホ通知なし</span>
                       )}
-                    </label>
+                      {!blocked && addBtn(p.id)}
+                    </div>
                   );
                 })}
 
-                {pickedParts.length > 0 && (
+                {perms.request && pickedParts.length > 0 && (
                   <div style={{ marginTop: 10 }}>
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                       <TimeInput value={reqStart} onChange={setReqStart} isDark={isDark} ariaLabel="開始時刻" />
@@ -1024,8 +1158,8 @@ const SlotDetail: React.FC<{
           )}
 
           {partReqs.length > 0 && (
-            <div style={{ marginTop: perms.request ? 14 : 0 }}>
-              <div style={{ fontSize: 12, color: subText, margin: '0 0 4px' }}>送ったお願い</div>
+            <div style={{ marginTop: perms.request || canAdd ? 14 : 0 }}>
+              <div style={{ fontSize: 12, color: subText, margin: '0 0 4px' }}>送ったお願い（パート）</div>
               {partReqs.map(q => (
                 <div key={q.id} style={{ padding: '6px 0', fontSize: 13, color: text, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>
                   <span style={{ fontWeight: 'bold' }}>{nameOf(q.user_id) || '（名前なし）'}</span>
@@ -1039,46 +1173,45 @@ const SlotDetail: React.FC<{
                       : '返事待ち'}
                   </span>
                   {q.picked && <span style={{ fontSize: 11, color: subText }}>この方に決定</span>}
-                  <span style={{ fontSize: 11, color: subText, marginLeft: 'auto' }}>
+                  <span style={{ fontSize: 11, color: subText }}>
                     {actedAtLabel(q.sent_at)}に送信
                   </span>
+                  {!busy[q.user_id] && addBtn(q.user_id)}
                 </div>
               ))}
             </div>
           )}
 
+          {/* 正社員（2026-09-14 ユーザー確定：パートの下に区切って出す） */}
+          {canAdd && candLoaded && (
+            <>
+              <div style={{ borderTop: `1px dashed ${border}`, margin: '14px 0 4px' }} />
+              <div style={{ fontSize: 12, fontWeight: 'bold', color: subText, margin: '4px 0 2px' }}>
+                正社員（出勤のお願いは送れません。LINE などで個別に連絡して「＋ 入れる」を押してください）
+              </div>
+              {restingStaffShown.length === 0 ? (
+                <p style={{ margin: 0, fontSize: 12.5, color: subText }}>
+                  {restingStaff.length === 0 ? '該当する正社員はいません。' : 'このチームには該当者がいません。'}
+                </p>
+              ) : restingStaffShown.map(p => {
+                const blocked = !!busy[p.id];
+                const t = teamText(p);
+                return (
+                  <div key={p.id} style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', padding: '5px 0',
+                    fontSize: 13, color: text, opacity: blocked ? 0.5 : 1 }}>
+                    <span style={{ fontWeight: 'bold' }}>{p.name}</span>
+                    {t && <TeamTag team={t} isDark={isDark} />}
+                    {p.role_title && <span style={{ fontSize: 11, color: subText }}>{p.role_title}</span>}
+                    <span style={{ fontSize: 11, color: subText }}>{restLineOf(p.id)}</span>
+                    {!blocked && addBtn(p.id)}
+                  </div>
+                );
+              })}
+            </>
+          )}
+
         </div>
       )}
-
-      {/* 相談（🚨 対応を決める前から見せる。隠すと、すでにある書き込みが埋もれる） */}
-      <div style={box}>
-        <div style={head}>相談</div>
-        {comments.length === 0 ? (
-          <p style={{ margin: '0 0 10px', fontSize: 12.5, color: subText }}>まだ書き込みはありません。</p>
-        ) : comments.map(c => (
-          <div key={c.id} style={{ padding: '8px 0', borderBottom: `1px solid ${border}` }}>
-            <div style={{ fontSize: 11.5, color: subText }}>
-              {nameOf(c.user_id) || '（名前なし）'}・{actedAtLabel(c.created_at)}
-            </div>
-            <div style={{ fontSize: 13.5, color: text, whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>{c.body}</div>
-          </div>
-        ))}
-        {perms.view && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginTop: 10 }}>
-            <textarea value={body} onChange={e => setBody(e.target.value)} rows={2} placeholder="相談を入力"
-              style={{ flex: 1, padding: '8px 10px', borderRadius: 8, fontSize: 13.5, resize: 'vertical',
-                border: `1px solid ${border}`, background: inputBg, color: text,
-                boxSizing: 'border-box', fontFamily: 'inherit' }} />
-            <button onClick={() => void send()} disabled={!body.trim() || sending}
-              style={{ padding: '9px 16px', borderRadius: 8, border: 'none', cursor: body.trim() ? 'pointer' : 'default',
-                fontSize: 13, fontWeight: 'bold', whiteSpace: 'nowrap',
-                background: body.trim() ? '#1976d2' : (isDark ? '#495057' : '#e9ecef'),
-                color: body.trim() ? '#fff' : subText }}>
-              {sending ? '送信中' : '送信'}
-            </button>
-          </div>
-        )}
-      </div>
 
       {err && (
         <p style={{ margin: '0 0 24px', padding: '8px 10px', borderRadius: 8, fontSize: 12.5,
@@ -1103,7 +1236,9 @@ const TeamTag: React.FC<{ team: string; isDark: boolean }> = ({ team, isDark }) 
 
 const CandidateRow: React.FC<{
   name: string; team: string; role: string; shift: string; loc: string; note: string; isDark: boolean;
-}> = ({ name, team, role, shift, loc, note, isDark }) => {
+  /** 右端のボタン（「＋ 入れる」など） */
+  action?: React.ReactNode;
+}> = ({ name, team, role, shift, loc, note, isDark, action }) => {
   const text = isDark ? '#e9ecef' : '#333';
   const subText = isDark ? '#adb5bd' : '#666';
   // 🚨 選べない人は opacity で薄くする（新しい色を足さない）
@@ -1117,6 +1252,7 @@ const CandidateRow: React.FC<{
       {shift && <span style={{ fontSize: 12, color: subText }}>{shift}</span>}
       {loc && <span style={{ fontSize: 11, color: subText }}>{loc}</span>}
       {note && <span style={{ fontSize: 11, color: subText }}>（{note}）</span>}
+      {action}
     </div>
   );
 };
