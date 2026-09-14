@@ -3,7 +3,10 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { AuthContext } from '../contexts/AuthContext.tsx';
 import { useAuth } from '../hooks/useAuth';
-import { isPointerDevice, readIdleLogoutSetting, writeIdleLogoutSetting, type IdleLogoutSetting } from '../lib/idleLogout';
+import {
+  defaultIdleSetting, formatMinutes, idleCheckboxVisible, isPointerDevice, readCachedIdleConfig,
+  readIdleLogoutSetting, writeIdleLogoutSetting, type IdleLogoutSetting,
+} from '../lib/idleLogout';
 
 export default function SignIn() {
   const location = useLocation();
@@ -46,26 +49,30 @@ export default function SignIn() {
   }, [blockedMessage, clearBlockedMessage]);
 
   // 共有パソコン用の自動ログアウト（2026-09-14）。決めたことは lib/idleLogout.ts の冒頭を見ること。
-  // 🚨 パソコン（マウスのある端末）だけに出す。スマホ・タブレットでは何も出さず、今までどおり
+  // 🚨 ログイン前は app_settings を読めない（RLS が authenticated だけ）ので、管理者の設定は
+  //    **ログイン中に写した値**を使う。写しが無い端末（その端末で初めてのログイン）は既定値（1分・パソコンだけ）
   const isPc = isPointerDevice();
-  // 初期値は ON（この端末に記憶があればそれ）。外すには二段階の確認（ユーザー確定）
-  const [idleLogout, setIdleLogout] = useState<IdleLogoutSetting>(() => readIdleLogoutSetting() ?? 'on');
+  const idleCfg = readCachedIdleConfig();
+  // パソコン（マウスのある端末）には常に出す。スマホ・タブレットは管理者が「出す」にしたときだけ
+  const showIdleCheck = idleCheckboxVisible(idleCfg);
+  // 初期値：パソコンは ON・スマホは OFF（この端末に記憶があればそれ）。外すには二段階の確認（ユーザー確定）
+  const [idleLogout, setIdleLogout] = useState<IdleLogoutSetting>(() => readIdleLogoutSetting() ?? defaultIdleSetting());
   const [confirmIdleOff, setConfirmIdleOff] = useState(false);
   // 自動ログアウトで戻ってきたときの案内（handleLogout が ?reason=idle を付ける）
   const [notice, setNotice] = useState<string | null>(null);
   useEffect(() => {
     if (new URLSearchParams(location.search).get('reason') === 'idle') {
-      setNotice('1分間操作がなかったため、自動的にログアウトしました。');
+      setNotice(`${formatMinutes(idleCfg.minutes)}のあいだ操作がなかったため、自動的にログアウトしました。`);
     }
-  }, [location.search]);
+  }, [location.search, idleCfg.minutes]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
-    // 🚨 自動ログアウトの設定は**ログインしたときに端末へ記憶**する（スマホでは触らない）。
+    // 🚨 自動ログアウトのチェックは**ログインしたときに端末へ記憶**する（チェックを出していない端末では触らない）。
     //    記憶が無い端末では動かないので、いまログイン中の端末には次のログインまで効かない
-    if (isPc) writeIdleLogoutSetting(idleLogout);
+    if (showIdleCheck) writeIdleLogoutSetting(idleLogout);
 
     // シンプルなログイン処理（is_active判定はAuthContextが行う）
     const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -275,7 +282,7 @@ export default function SignIn() {
               </button>
             </div>
           )}
-          {!isSignUp && isPc && (
+          {!isSignUp && showIdleCheck && (
             <div style={{ textAlign: 'left', margin: '10px 0 4px', fontSize: 13 }}>
               <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
                 <input
@@ -288,11 +295,11 @@ export default function SignIn() {
                   }}
                 />
                 <span>
-                  このパソコンは共有です
+                  {isPc ? 'このパソコンは共有です' : 'この端末は共有です'}
                   <br />
                   <span style={{ color: '#666', fontSize: 12 }}>
                     {idleLogout === 'on'
-                      ? '1分間操作がないと自動でログアウトします（書きかけの下書きも消えます）'
+                      ? `${formatMinutes(idleCfg.minutes)}のあいだ操作がないと自動でログアウトします（書きかけの下書きも消えます）`
                       : '自動ログアウトなし（この端末は他の人が触らない設定です）'}
                   </span>
                 </span>
@@ -301,7 +308,7 @@ export default function SignIn() {
                 <div style={{ marginTop: 8, padding: '10px 12px', background: '#fff3cd', border: '2px solid #ffc107', borderRadius: 8, color: '#856404' }}>
                   <div style={{ fontWeight: 'bold', marginBottom: 6 }}>自動ログアウトを外しますか？</div>
                   <div style={{ fontSize: 12.5, marginBottom: 8, lineHeight: 1.5 }}>
-                    外すと、席を離れている間に他の人が画面を見られます。個人用のパソコンなど、他の人が触らない端末だけにしてください。この設定はこの端末に記憶されます。
+                    外すと、席を離れている間に他の人が画面を見られます。個人用の端末など、他の人が触らないときだけにしてください。この設定はこの端末に記憶されます。
                   </div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <button

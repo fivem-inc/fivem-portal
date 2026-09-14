@@ -3,6 +3,8 @@ import { useAdminPanel } from './AdminPanelContext';
 import RoleAttributesCard from './RoleAttributesCard';
 import { refreshRoles } from '../../hooks/useRoles';
 import type { RoleRow } from '../../lib/roleAttrs';
+// 共有パソコンの自動ログアウトの設定（2026-09-14・ユーザー確定でこのタブの末尾に置く）
+import IdleLogoutSettingsSection from './IdleLogoutSettingsSection';
 
 interface Role {
   id: string;
@@ -894,6 +896,8 @@ const FeaturePermissionsTab: React.FC = () => {
 
         </div>
       </div>
+
+      <IdleLogoutSettingsSection />
     </div>
   );
 };

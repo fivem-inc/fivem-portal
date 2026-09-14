@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import { idleLogoutActive, idleState } from '../lib/idleLogout';
+import { idleLogoutActive, idleState, readCachedIdleConfig } from '../lib/idleLogout';
+import { loadIdleConfig } from '../lib/idleLogoutConfig';
 
 // 共有パソコン用の自動ログアウト（2026-09-14）。決めたことは lib/idleLogout.ts の冒頭を見ること。
 //
@@ -8,9 +9,10 @@ import { idleLogoutActive, idleState } from '../lib/idleLogout';
 // 【動き】
 //   ・マウス・キー・タッチ・スクロールのどれかがあれば「最後の操作」を今にする
 //   ・1秒ごとに残りを見て、残り15秒以下なら予告のカード、0 でログアウト
+//   ・ログアウトまでの分数は管理者の設定（app_settings）。まず端末の写しで動き始め、本物が読めたら差し替える
 //   ・🚨 画面を隠している間も数える（別のタブ・別のアプリに移っても離席は離席）。
 //     戻った瞬間に見直すので、隠れている間に時間が過ぎていれば戻ったときに切れる
-//   ・🚨 設定が ON でない／パソコンでない端末では**何もしない**（描画もしない・イベントも取らない）
+//   ・🚨 チェックが ON でない／この端末に出さない設定の端末では**何もしない**（描画もしない・イベントも取らない）
 //
 // 🚨 配色は既存の黄色い注意カードと同じ固定色（#fff3cd / #ffc107 / #856404）。新しい色は足していない。
 //    「続ける」は択一トグルの選択中と同じ青（#1976d2）。alert / window.confirm は使わない
@@ -19,8 +21,17 @@ const ACTIVITY_EVENTS: (keyof WindowEventMap)[] = ['pointerdown', 'pointermove',
 
 const IdleLogout: React.FC = () => {
   const { handleLogout } = useAuth();
-  // 🚨 設定は起動時に1回読む。ログイン画面でしか変えられないので、ログイン中に変わることはない
-  const [active] = useState(() => idleLogoutActive());
+  // 端末の写しで即座に動き始め、本物の設定が読めたら差し替える（読めなければ写しのまま）
+  const [cfg, setCfg] = useState(() => readCachedIdleConfig());
+  useEffect(() => {
+    let alive = true;
+    void loadIdleConfig().then(c => { if (alive && c) setCfg(c); });
+    return () => { alive = false; };
+  }, []);
+
+  // 🚨 チェック（端末ごと）はログイン画面でしか変えられないので、ログイン中に変わることはない
+  const active = idleLogoutActive(cfg);
+  const limitMs = cfg.minutes * 60_000;
   const lastActivityAt = useRef<number>(Date.now());
   const loggingOut = useRef(false);
   // 予告の区間だけ描き直す（残り秒数）。普段は null で何も描かない
@@ -32,7 +43,7 @@ const IdleLogout: React.FC = () => {
     const touch = () => { lastActivityAt.current = Date.now(); };
     const check = () => {
       if (loggingOut.current) return;
-      const st = idleState(lastActivityAt.current, Date.now());
+      const st = idleState(lastActivityAt.current, Date.now(), limitMs);
       if (st.expired) {
         loggingOut.current = true;
         // 🚨 下書きは handleLogout の localStorage.clear() で消える（共有PCなので次の人に見せない・ユーザー確定）
@@ -52,7 +63,7 @@ const IdleLogout: React.FC = () => {
       document.removeEventListener('visibilitychange', onVisible);
       clearInterval(timer);
     };
-  }, [active, handleLogout]);
+  }, [active, limitMs, handleLogout]);
 
   if (!active || remainingSec === null) return null;
 

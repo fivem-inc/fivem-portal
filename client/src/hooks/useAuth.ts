@@ -3,7 +3,7 @@ import type { AuthUser } from '../types';
 import { supabase } from '../lib/supabaseClient';
 import { AuthContext } from '../contexts/AuthContext.tsx';
 import { readRawPendingQueue, writeRawPendingQueue } from '../lib/safetyStorage';
-import { readIdleLogoutSetting, writeIdleLogoutSetting } from '../lib/idleLogout';
+import { IDLE_CONFIG_CACHE_KEY, readIdleLogoutSetting, writeIdleLogoutSetting } from '../lib/idleLogout';
 import { attrsFor, rankOf, previewRoleOptions } from '../lib/roleAttrs';
 import type { RoleRow, ActsAs } from '../lib/roleAttrs';
 import { useRoles } from './useRoles';
@@ -400,10 +400,13 @@ export const useAuth = (): UseAuthReturn => {
       //    消えると、外した端末でも次のログイン画面で毎回チェックが初期値（ON）に戻る。
       //    下書き（fivem_draft_*）は今までどおり消える＝共有PCで次の人に見せない（ユーザー確定）
       const keepIdleLogout = readIdleLogoutSetting();
+      // 管理者の設定の写し（分数・スマホに出すか）も残す。ログイン画面は app_settings を読めないので、これが無いと既定値に戻る
+      const keepIdleCfg = localStorage.getItem(IDLE_CONFIG_CACHE_KEY);
       localStorage.clear();
       sessionStorage.clear();
       writeRawPendingQueue(keepSafetyQueue);
       if (keepIdleLogout) writeIdleLogoutSetting(keepIdleLogout);
+      if (keepIdleCfg) localStorage.setItem(IDLE_CONFIG_CACHE_KEY, keepIdleCfg);
       window.location.href = dest;
     } catch (error) {
       console.error('[logout] unexpected error:', error);
