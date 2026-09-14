@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabaseClient';
 import { useAdminPanel } from './AdminPanelContext';
+import { teamsOf } from '../../lib/staffTeam';
 
 // 安否・緊急連絡の管理
 //   ・定型メッセージの追加・編集・削除・並び替え・有効/無効
@@ -54,12 +55,10 @@ interface SafetyCheckRow {
   remind_count: number;
 }
 
-// 所属チーム（こども・大人・管理部）だけを取り出す。
-// ⚠️ group_names には配信用グループ（マネージャー・リーダー／三役／正社員・契約社員 等）も
-//    混ざっているため、先頭を機械的に取ると「マネージャー・リーダー」等を拾ってしまう。
-//    チームの一覧は master_options の shift_report_group が正。
+// 所属チーム（こども・大人・管理部）だけを取り出す。判定は lib/staffTeam.ts に1つだけ置いてある
+// （2026-09-14 にシフト調整でも使うため共通化。ここでは今までどおり最初の1つだけを使う）。
 const teamOf = (groups: string[] | null | undefined, teams: string[]): string =>
-  (groups ?? []).find(g => teams.includes(g)) ?? '';
+  teamsOf(groups, teams)[0] ?? '';
 
 const fmt = (s: string | null): string => {
   if (!s) return '';

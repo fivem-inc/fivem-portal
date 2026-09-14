@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import { teamsOf } from '../lib/staffTeam';
 import { todayJstStr } from '../lib/breakCalc';
 import type { DayKind } from '../lib/breakCalc';
 import { normalShiftTimeText } from '../lib/overtimeShift';
@@ -41,7 +43,13 @@ interface SlotRow {
 }
 
 interface CommentRow { id: string; user_id: string; body: string; created_at: string }
-interface ProfileRow { id: string; name: string | null; employment_type: string | null }
+interface ProfileRow {
+  id: string; name: string | null; employment_type: string | null;
+  /** 候補に役職を出す（2026-09-14 ユーザー指示） */
+  role_title: string | null;
+  /** 所属チーム（こども／大人／管理部）の判定に使う。配信用グループも混ざるので lib/staffTeam.ts を通す */
+  group_names: string[] | null;
+}
 interface PatternRow {
   user_id: string; day_kind: string;
   start_time: string | null; end_time: string | null;
@@ -115,7 +123,29 @@ const ShiftAdjustTab: React.FC<{
   const [slots, setSlots] = useState<SlotRow[]>([]);
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [workplaces, setWorkplaces] = useState<string[]>([]);
-  const [openId, setOpenId] = useState<string | null>(null);
+  /** 所属チームの一覧（master_options の shift_report_group：こども／大人／管理部） */
+  const [teams, setTeams] = useState<string[]>([]);
+  // 🚨 開いている場は URL（?slot=）で持つ（2026-09-14 実機指摘）。
+  //    画面の中だけで持っていたので、スマホの「戻る」で一覧ではなく前のページに飛んでいた。
+  //    開くときに履歴を1段積み、戻る＝一覧に帰る、にする
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const openId = searchParams.get('slot');
+  const openSlotById = useCallback((id: string) => {
+    const sp = new URLSearchParams(searchParams);
+    sp.set('tab', 'adjust');
+    sp.set('slot', id);
+    navigate({ search: `?${sp.toString()}` }, { state: { saPushed: true } });
+  }, [searchParams, navigate]);
+  // 「‹ 一覧へ」：この画面で開いた場なら履歴を1段戻す（戻るボタンと同じ動きにそろえる）。
+  // 🚨 URL を直接開いた・再読み込みしたときは戻る先がサイトの外になりうるので、slot だけ外す
+  const closeSlot = useCallback(() => {
+    if ((location.state as { saPushed?: boolean } | null)?.saPushed) { navigate(-1); return; }
+    const sp = new URLSearchParams(searchParams);
+    sp.delete('slot');
+    setSearchParams(sp, { replace: true });
+  }, [location.state, navigate, searchParams, setSearchParams]);
   const [showDone, setShowDone] = useState(false);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
@@ -129,19 +159,22 @@ const ShiftAdjustTab: React.FC<{
     setLoading(true);
     setErr('');
     // 🚨 error を必ず見る。読めないまま「0件」と出すと、画面が嘘をつく
-    const [{ data: sData, error: sErr }, { data: pData, error: pErr }, { data: wData }] = await Promise.all([
+    const [{ data: sData, error: sErr }, { data: pData, error: pErr }, { data: wData }, { data: tData }] = await Promise.all([
       supabase.from('shift_adjust_slots')
         .select('id, target_user_id, target_date, cause, cause_leave_request_id, cause_attendance_exception_id, status, decided_by, decided_at')
         .gte('target_date', todayJstStr())
         .order('target_date', { ascending: true }),
-      supabase.from('profiles').select('id, name, employment_type').eq('is_active', true),
+      supabase.from('profiles').select('id, name, employment_type, role_title, group_names').eq('is_active', true),
       supabase.from('master_options').select('value').eq('category', 'workplace').order('sort_order'),
+      supabase.from('master_options').select('value').eq('category', 'shift_report_group').order('sort_order'),
     ]);
     if (sErr) { setErr('調整の場を読み込めませんでした：' + sErr.message); setLoading(false); return; }
     if (pErr) { setErr('スタッフの一覧を読み込めませんでした：' + pErr.message); setLoading(false); return; }
     setSlots((sData as SlotRow[] | null) ?? []);
     setProfiles((pData as ProfileRow[] | null) ?? []);
     setWorkplaces(((wData as { value: string }[] | null) ?? []).map(r => r.value));
+    // 🚨 チームが読めなくても調整はできる（絞り込みが「すべて」だけになる）ので止めない
+    setTeams(((tData as { value: string }[] | null) ?? []).map(r => r.value));
     setLoading(false);
   }, []);
 
@@ -150,8 +183,15 @@ const ShiftAdjustTab: React.FC<{
   // 欠勤の行の印から来たときは、その場をいきなり開く。
   // 🚨 一度使ったら親の値を消す（戻ったときにまた開いてしまうため）
   useEffect(() => {
-    if (initialSlotId) { setOpenId(initialSlotId); onConsumedInitial?.(); }
-  }, [initialSlotId, onConsumedInitial]);
+    if (initialSlotId) { openSlotById(initialSlotId); onConsumedInitial?.(); }
+  }, [initialSlotId, onConsumedInitial, openSlotById]);
+
+  // 場を閉じたら（戻る・一覧へ）、状態が変わっているかもしれないので一覧を読み直す
+  const prevOpenId = React.useRef<string | null>(openId);
+  useEffect(() => {
+    if (prevOpenId.current && !openId) void load();
+    prevOpenId.current = openId;
+  }, [openId, load]);
 
   // 🚨 過ぎた日・休みが取り消されたものは出さない（片付けようがない）
   const shown = useMemo(() => {
@@ -168,9 +208,10 @@ const ShiftAdjustTab: React.FC<{
   if (openSlot) {
     return (
       <SlotDetail
+        key={openSlot.id}
         slot={openSlot} userId={userId} isDark={isDark} isMobile={isMobile}
-        perms={perms} profiles={profiles} workplaces={workplaces} nameOf={nameOf}
-        onBack={() => { setOpenId(null); void load(); }}
+        perms={perms} profiles={profiles} workplaces={workplaces} teams={teams} nameOf={nameOf}
+        onBack={closeSlot}
       />
     );
   }
@@ -204,7 +245,7 @@ const ShiftAdjustTab: React.FC<{
             const soon = s.status !== 'decided' && s.status !== 'no_change' && daysUntil(s.target_date) <= 7;
             const undone = ['pending', 'working'].includes(s.status);
             return (
-              <button key={s.id} type="button" onClick={() => setOpenId(s.id)}
+              <button key={s.id} type="button" onClick={() => openSlotById(s.id)}
                 style={{
                   width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8,
                   padding: '10px 8px', border: 'none', borderBottom: `1px solid ${border}`,
@@ -251,9 +292,10 @@ const SlotDetail: React.FC<{
   perms: Perms;
   profiles: ProfileRow[];
   workplaces: string[];
+  teams: string[];
   nameOf: (id: string | null | undefined) => string;
   onBack: () => void;
-}> = ({ slot, userId, isDark, isMobile, perms, profiles, workplaces, nameOf, onBack }) => {
+}> = ({ slot, userId, isDark, isMobile, perms, profiles, workplaces, teams, nameOf, onBack }) => {
   const text = isDark ? '#e9ecef' : '#333';
   const subText = isDark ? '#adb5bd' : '#666';
   const cardBg = isDark ? '#343a40' : '#fff';
@@ -270,8 +312,15 @@ const SlotDetail: React.FC<{
   const [okMsg, setOkMsg] = useState('');
   const [busyBtn, setBusyBtn] = useState(false);
 
-  const [showCandidates, setShowCandidates] = useState(false);
+  // 調整中の場を開いたときは、候補を最初から開いて読み込む（出勤のお願いの一覧も同じ読み込みを使う）
+  const [showCandidates, setShowCandidates] = useState(slot.status === 'working');
   const [patterns, setPatterns] = useState<PatternRow[]>([]);
+  /** その日に有効な週の基本シフトを1行でも持っている人（「この曜日は勤務なし」と「週のシフト未登録」を分けるため） */
+  const [registered, setRegistered] = useState<string[]>([]);
+  // チームの絞り込み。初期値は休んだ人と同じチーム（2026-09-14 ユーザー確定）。チームが無い人なら「すべて」
+  const targetTeam = teamsOf(profiles.find(p => p.id === slot.target_user_id)?.group_names, teams)[0] ?? 'all';
+  const [candTeam, setCandTeam] = useState<string>(targetTeam);
+  const [partTeam, setPartTeam] = useState<string>(targetTeam);
   const [busy, setBusy] = useState<BusyMap>({});
   const [candLoaded, setCandLoaded] = useState(false);
   const [candErr, setCandErr] = useState('');
@@ -394,9 +443,11 @@ const SlotDetail: React.FC<{
     setCandErr('');
     const d = slot.target_date;
     const [{ data: pat, error: patErr }, { data: att }, { data: lv }] = await Promise.all([
+      // 🚨 曜日で絞らずに読む（2026-09-14）。その日に有効な行が1つも無い人＝「週のシフト未登録」を見分けるため。
+      //    曜日で絞っていたので、9/16 から登録したパートが 9/15 に全員「この日は休み」と出ていた
       supabase.from('weekly_shift_patterns')
         .select('user_id, day_kind, start_time, end_time, start_time2, end_time2, location, valid_from, valid_to')
-        .eq('day_kind', dayKindOf(d)).lte('valid_from', d),
+        .lte('valid_from', d),
       supabase.from('attendance_exceptions').select('user_id, type').eq('date', d),
       supabase.from('leave_requests').select('user_id, leave_dates, start_date, end_date, status')
         .in('status', ['manager_approved', 'admin_approved', 'approved'])
@@ -406,8 +457,10 @@ const SlotDetail: React.FC<{
       // 🚨 権限が無いと読めない。黙って0件にしない
       setCandErr('週の基本シフトを読み込めませんでした（「全員のシフト予定 閲覧」の権限が必要です）');
     }
-    setPatterns(((pat as (PatternRow & { valid_from: string; valid_to: string | null })[] | null) ?? [])
-      .filter(p => p.valid_to === null || p.valid_to >= d));
+    const valid = ((pat as (PatternRow & { valid_from: string; valid_to: string | null })[] | null) ?? [])
+      .filter(p => p.valid_to === null || p.valid_to >= d);
+    setRegistered([...new Set(valid.map(p => p.user_id))]);
+    setPatterns(valid.filter(p => p.day_kind === dayKindOf(d)));
 
     const b: BusyMap = {};
     for (const a of ((att as { user_id: string; type: string }[] | null) ?? [])) {
@@ -432,6 +485,12 @@ const SlotDetail: React.FC<{
     if (next && !candLoaded) void loadCandidates();
   };
 
+  // 🚨 調整中なら最初から読む（出勤のお願いの一覧もこの読み込みを使う）。
+  //    読み込みは失敗しても candLoaded を立てるので、繰り返し読みに行くことはない
+  useEffect(() => {
+    if (status === 'working' && !candLoaded) void loadCandidates();
+  }, [status, candLoaded, loadCandidates]);
+
   const send = async () => {
     const t = body.trim();
     if (!t || sending) return;
@@ -445,14 +504,14 @@ const SlotDetail: React.FC<{
     void loadComments();
   };
 
-  const setSlotStatus = async (next: 'pending' | 'working' | 'no_change') => {
+  const setSlotStatus = async (next: 'pending' | 'working' | 'no_change'): Promise<boolean> => {
     setErr(''); setOkMsg(''); setBusyBtn(true);
     const { data, error } = await supabase.rpc('shift_adjust_set_status', { p_slot_id: slot.id, p_status: next });
     setBusyBtn(false);
     // 🚨 rpc は 4xx でも throw しない。error と ok の両方を見る
-    if (error) { setErr('変更できませんでした：' + error.message); return; }
+    if (error) { setErr('変更できませんでした：' + error.message); return false; }
     const row = Array.isArray(data) ? data[0] : data;
-    if (!row?.ok) { setErr(row?.reason || '変更できませんでした'); return; }
+    if (!row?.ok) { setErr(row?.reason || '変更できませんでした'); return false; }
     setStatus(next);
     if (next === 'no_change') setOkMsg('現行シフトで対応として記録しました。');
     if (next === 'working') {
@@ -461,6 +520,13 @@ const SlotDetail: React.FC<{
       if (drafts.length === 0) addDraft();
     }
     if (next === 'pending') setOkMsg('未調整に戻しました。');
+    return true;
+  };
+
+  // 「後で決める」：いま判断しない。調整中・現行シフトで対応から押したときは、未調整に戻してから一覧へ帰る
+  const decideLater = async () => {
+    if (status === 'pending') { onBack(); return; }
+    if (await setSlotStatus('pending')) onBack();
   };
 
   const addDraft = () => {
@@ -583,13 +649,32 @@ const SlotDetail: React.FC<{
   };
 
   // 候補の並び
+  const teamText = (p: ProfileRow): string => teamsOf(p.group_names, teams).join('・');
+  const inTeam = (p: ProfileRow, t: string): boolean => t === 'all' || teamsOf(p.group_names, teams).includes(t);
   const working = profiles
     .filter(p => p.id !== slot.target_user_id && patterns.some(x => x.user_id === p.id && x.start_time))
     .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+  const workingShown = working.filter(p => inTeam(p, candTeam));
+  // この日に勤務予定がないパート（出勤のお願いを送れる相手）
   const restingPart = profiles
     .filter(p => p.id !== slot.target_user_id && p.employment_type === 'パート'
       && !patterns.some(x => x.user_id === p.id && x.start_time))
     .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+  /** まだお願いを送っていない相手（送った相手は下の「送ったお願い」に出す） */
+  const restingUnsent = restingPart.filter(p => !partReqs.some(q => q.user_id === p.id));
+  const restingShown = restingUnsent.filter(p => inTeam(p, partTeam));
+  /** 🚨 「この日は休み」とだけ書くと、休暇なのか週のシフトが未登録なのか分からない（2026-09-14 実機指摘）。
+   *     休暇・欠勤などの記録があればそれを、なければ「この曜日は勤務なし」か「週のシフト未登録」を出す */
+  const restNoteOf = (uid: string): string =>
+    busy[uid] ?? (registered.includes(uid) ? 'この曜日は勤務なし' : '週のシフト未登録');
+  // 絞り込みを変えたら、見えなくなった人の選択は外す（見えないまま送られないように）
+  const changePartTeam = (t: string) => {
+    setPartTeam(t);
+    setPickedParts(v => v.filter(id => {
+      const p = profiles.find(x => x.id === id);
+      return !!p && inTeam(p, t);
+    }));
+  };
 
   const shiftTextOf = (uid: string): string => {
     const p = patterns.find(x => x.user_id === uid);
@@ -622,8 +707,34 @@ const SlotDetail: React.FC<{
     border: `1px solid ${border}`, background: inputBg, color: text,
   };
 
-  // 「対応の選択」を出すのは、決められる人で、まだ未調整で、決まっていないとき
-  const showFork = perms.decide && status === 'pending' && assigns.length === 0;
+  // 🎨🔒 択一トグル（青で固定）。未選択＝薄い青／選択中＝濃い青。枠は常に2px（押しても大きさが変わらない）
+  // 🚨 2026-09-14 実機指摘：「シフトを調整する」だけを濃い青で塗っていたため、最初から選ばれているように見えた
+  const toggleBtn = (on: boolean, large: boolean, locked = false): React.CSSProperties => ({
+    padding: large ? '11px 16px' : '5px 12px', borderRadius: large ? 10 : 16,
+    fontSize: large ? 14 : 12, fontWeight: 'bold', whiteSpace: 'nowrap',
+    border: `2px solid ${on ? '#1565c0' : '#90caf9'}`,
+    background: on ? '#1976d2' : '#e3f2fd', color: on ? '#fff' : '#1565c0',
+    cursor: locked || on ? 'default' : 'pointer', opacity: locked && !on ? 0.5 : 1,
+  });
+  const note: React.CSSProperties = { margin: '8px 0 0', fontSize: 11.5, color: subText, lineHeight: 1.7 };
+
+  // 「対応の選択」は、決められる人には、出勤する人が決まるまでずっと出す（選び直せる・2026-09-14 ユーザー確定）
+  const canFork = perms.decide && assigns.length === 0 && ['pending', 'working', 'no_change'].includes(status);
+  // 🚨 出勤のお願いを送ったあとは選び直せない（パートの画面が「現在調整中です」のまま残るため）。
+  //    DB の shift_adjust_set_status も同じ条件で断る
+  const forkLocked = partReqs.length > 0;
+  // 出勤する人・候補・出勤のお願いを出すか（未調整のうちは、決められる人にはまず選択だけを見せる）
+  const showWork = status !== 'no_change' && !(perms.decide && status === 'pending' && assigns.length === 0);
+
+  const teamChips = (value: string, onChange: (t: string) => void) => (
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+      {['all', ...teams].map(t => (
+        <button key={t} type="button" onClick={() => onChange(t)} style={toggleBtn(value === t, false)}>
+          {t === 'all' ? 'すべて' : t}
+        </button>
+      ))}
+    </div>
+  );
 
   return (
     <div>
@@ -654,26 +765,35 @@ const SlotDetail: React.FC<{
         </div>
       </div>
 
-      {/* 対応の選択（まず決めることを最初に出す） */}
-      {showFork && (
+      {/* 対応の選択（まず決めることを最初に出す。出勤する人が決まるまでは何度でも選び直せる） */}
+      {canFork && (
         <div style={box}>
           <div style={head}>対応の選択</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <button onClick={() => void setSlotStatus('working')} disabled={busyBtn} style={mainBtn}>
+            <button onClick={() => { if (status !== 'working') void setSlotStatus('working'); }}
+              disabled={busyBtn || (forkLocked && status !== 'working')}
+              style={toggleBtn(status === 'working', true, forkLocked)}>
               シフトを調整する
             </button>
-            <button onClick={() => void setSlotStatus('no_change')} disabled={busyBtn} style={subBtn}>
+            <button onClick={() => { if (status !== 'no_change') void setSlotStatus('no_change'); }}
+              disabled={busyBtn || forkLocked}
+              style={toggleBtn(status === 'no_change', true, forkLocked)}>
               現行シフトで対応
             </button>
-            {/* 🚨 いま判断できないときの逃げ道。枠線なし・下線のみで右端へ離し、
-                「3つ目の選択肢」に見えないようにする（シフト調整の「閉じる」と同じ形） */}
-            <button onClick={onBack} style={quietBtn}>後で決める</button>
+            {/* 🚨 3つとも同じ見た目（2026-09-14 ユーザー確定）。押すと未調整に戻して一覧へ帰る */}
+            <button onClick={() => void decideLater()} disabled={busyBtn || forkLocked}
+              style={toggleBtn(false, true, forkLocked)}>
+              後で決める
+            </button>
           </div>
+          {forkLocked && (
+            <p style={note}>出勤のお願いを送ったため、選び直せません。決定するか、お願いの返事を待ってください。</p>
+          )}
         </div>
       )}
 
       {/* 出勤する人 */}
-      {!showFork && status !== 'no_change' && (
+      {showWork && (
         <div style={box}>
           <div style={head}>出勤する人</div>
 
@@ -776,9 +896,7 @@ const SlotDetail: React.FC<{
 
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12 }}>
                 <button onClick={() => void decide()} disabled={busyBtn} style={mainBtn}>決定する</button>
-                <button onClick={() => void setSlotStatus('no_change')} disabled={busyBtn} style={quietBtn}>
-                  現行シフトで対応にする
-                </button>
+                {/* 「現行シフトで対応」への切り替えは、上の「対応の選択」に1つにまとめた（同じ操作を2か所に置かない） */}
               </div>
             </>
           ) : (
@@ -787,22 +905,10 @@ const SlotDetail: React.FC<{
         </div>
       )}
 
-      {/* 現行シフトで対応（確認済み） */}
-      {status === 'no_change' && (
-        <div style={box}>
-          <div style={head}>対応</div>
-          <p style={{ margin: 0, fontSize: 13, color: text }}>現行シフトで対応します。</p>
-          {perms.decide && (
-            <button onClick={() => void setSlotStatus('pending')} disabled={busyBtn}
-              style={{ ...quietBtn, marginLeft: 0, marginTop: 10, display: 'block' }}>
-              未調整に戻す
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* 候補 */}
-      {!showFork && status !== 'no_change' && (
+      {/* 候補（この日に勤務予定がある人）。
+          🚨 勤務予定がないパートは、下の「出勤のお願い」にだけ出す（2026-09-14 ユーザー確定・案2）。
+             以前は「休みのパート」として両方に同じ人を並べていた */}
+      {showWork && (
         <div style={box}>
           <button onClick={toggleCandidates}
             style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, ...head, marginBottom: 0 }}>
@@ -818,22 +924,21 @@ const SlotDetail: React.FC<{
                 <p style={{ margin: 0, fontSize: 12.5, color: subText }}>読み込んでいます…</p>
               ) : (
                 <>
-                  <div style={{ fontSize: 12, color: subText, margin: '0 0 4px' }}>勤務予定あり</div>
-                  {working.length === 0 ? (
-                    <p style={{ margin: '0 0 10px', fontSize: 12.5, color: subText }}>該当者はいません。</p>
-                  ) : working.map(p => (
-                    <CandidateRow key={p.id} name={p.name || ''} part={p.employment_type === 'パート'}
+                  {teamChips(candTeam, setCandTeam)}
+                  <div style={{ fontSize: 12, color: subText, margin: '0 0 4px' }}>この日に勤務予定がある人</div>
+                  {workingShown.length === 0 ? (
+                    <p style={{ margin: '0 0 10px', fontSize: 12.5, color: subText }}>
+                      {working.length === 0 ? '該当者はいません。' : 'このチームには該当者がいません。'}
+                    </p>
+                  ) : workingShown.map(p => (
+                    <CandidateRow key={p.id} name={p.name || ''} team={teamText(p)}
+                      role={p.role_title || (p.employment_type === 'パート' ? 'パート' : '')}
                       shift={shiftTextOf(p.id)} loc={locOf(p.id)} note={busy[p.id] ?? ''} isDark={isDark} />
                   ))}
-                  <div style={{ fontSize: 12, color: subText, margin: '12px 0 4px' }}>休みのパート</div>
-                  {restingPart.length === 0 ? (
-                    <p style={{ margin: 0, fontSize: 12.5, color: subText }}>該当者はいません。</p>
-                  ) : restingPart.map(p => (
-                    <CandidateRow key={p.id} name={p.name || ''} part shift="" loc=""
-                      note={busy[p.id] ?? 'この日は休み'} isDark={isDark} />
-                  ))}
-                  <p style={{ margin: '10px 0 0', fontSize: 11, color: subText }}>
-                    ※ 週の基本シフトが未登録の方は「勤務予定あり」に表示されません。
+                  <p style={{ margin: '10px 0 0', fontSize: 11, color: subText, lineHeight: 1.7 }}>
+                    ※ 週の基本シフトが未登録の方は表示されません。
+                    <br />
+                    ※ この日に勤務予定がないパート・アルバイトは、下の「出勤のお願い」に表示します。
                   </p>
                 </>
               )}
@@ -842,15 +947,85 @@ const SlotDetail: React.FC<{
         </div>
       )}
 
-      {/* 出勤のお願い（休みのパートへ）
+      {/* 出勤のお願い（パート・アルバイトへ）
           🚨 呼び名は「出勤のお願い」。既存の「申請の依頼」と紛れないように（ユーザー確定）
+          🚨 見出しに相手を添える（2026-09-14 ユーザー確定）
           🚨 正社員には送らない。正社員は決定のときに「残業申請の依頼」が出る */}
-      {!showFork && status !== 'no_change' && (perms.request || partReqs.length > 0) && (
+      {showWork && (perms.request || partReqs.length > 0) && (
         <div style={box}>
-          <div style={head}>出勤のお願い</div>
+          <div style={head}>出勤のお願い（パート・アルバイトへ）</div>
+
+          {perms.request && (
+            !candLoaded ? (
+              <button type="button" onClick={() => { setShowCandidates(true); void loadCandidates(); }}
+                style={{ ...quietBtn, marginLeft: 0 }}>
+                この日に勤務予定がないパート・アルバイトを表示
+              </button>
+            ) : (
+              <>
+                {teamChips(partTeam, changePartTeam)}
+                <div style={{ fontSize: 12, color: subText, margin: '0 0 4px' }}>この日に勤務予定がないパート・アルバイト</div>
+                {restingShown.length === 0 ? (
+                  <p style={{ margin: '0 0 8px', fontSize: 12.5, color: subText }}>
+                    {restingUnsent.length === 0 ? 'お願いを送れるパート・アルバイトはいません。' : 'このチームには該当者がいません。'}
+                  </p>
+                ) : restingShown.map(p => {
+                  // 🚨 休暇・欠勤などの記録がある人は選べない（opacity 0.5・新しい色は足さない）
+                  const blocked = !!busy[p.id];
+                  const t = teamText(p);
+                  return (
+                    <label key={p.id} style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', padding: '5px 0',
+                      fontSize: 13, color: text, cursor: blocked ? 'default' : 'pointer', opacity: blocked ? 0.5 : 1 }}>
+                      <input type="checkbox" checked={pickedParts.includes(p.id)} disabled={blocked}
+                        style={{ alignSelf: 'center' }}
+                        onChange={e => setPickedParts(v => e.target.checked ? [...v, p.id] : v.filter(x => x !== p.id))} />
+                      <span style={{ fontWeight: 'bold' }}>{p.name}</span>
+                      {t && <TeamTag team={t} isDark={isDark} />}
+                      <span style={{ fontSize: 11, color: subText }}>{restNoteOf(p.id)}</span>
+                      {/* 🚨 スマホ通知を登録していない人は、アプリを開くまで気づかない。
+                          🚨 ただし登録状況が読めたときだけ出す（読めないのに「なし」と書かない） */}
+                      {pushKnown && !pushUsers.includes(p.id) && (
+                        <span style={{ fontSize: 11, color: subText }}>スマホ通知なし</span>
+                      )}
+                    </label>
+                  );
+                })}
+
+                {pickedParts.length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <TimeInput value={reqStart} onChange={setReqStart} isDark={isDark} ariaLabel="開始時刻" />
+                      <span style={{ color: subText }}>〜</span>
+                      <TimeInput value={reqEnd} onChange={setReqEnd} isDark={isDark} ariaLabel="終了時刻" />
+                      <select value={reqLoc} onChange={e => setReqLoc(e.target.value)} style={sel}>
+                        <option value="">校を選択</option>
+                        {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+                      </select>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 12, color: subText }}>返事の期限（任意）</span>
+                      <input type="datetime-local" value={dueAt} onChange={e => setDueAt(e.target.value)} style={sel} />
+                    </div>
+                    <p style={{ margin: '8px 0 0', fontSize: 11, color: subText, lineHeight: 1.7 }}>
+                      ※ 送る内容は「日付・時間帯・校」だけです。誰の代わりかは相手に表示されません。
+                      <br />
+                      ※ スマホ通知を登録していない方には、アプリを開くまで届きません。
+                      <br />
+                      ※ お願いを送ると、上の「対応の選択」は選び直せなくなります。
+                    </p>
+                    <button onClick={() => void sendParts()} disabled={busyBtn}
+                      style={{ ...mainBtn, marginTop: 10 }}>
+                      {pickedParts.length}人に出勤のお願いを送る
+                    </button>
+                  </div>
+                )}
+              </>
+            )
+          )}
 
           {partReqs.length > 0 && (
-            <div style={{ marginBottom: perms.request ? 14 : 0 }}>
+            <div style={{ marginTop: perms.request ? 14 : 0 }}>
+              <div style={{ fontSize: 12, color: subText, margin: '0 0 4px' }}>送ったお願い</div>
               {partReqs.map(q => (
                 <div key={q.id} style={{ padding: '6px 0', fontSize: 13, color: text, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>
                   <span style={{ fontWeight: 'bold' }}>{nameOf(q.user_id) || '（名前なし）'}</span>
@@ -872,59 +1047,6 @@ const SlotDetail: React.FC<{
             </div>
           )}
 
-          {perms.request && (
-            <>
-              {restingPart.length === 0 && candLoaded && (
-                <p style={{ margin: '0 0 8px', fontSize: 12.5, color: subText }}>
-                  この日が休みのパートはいません。
-                </p>
-              )}
-              {!candLoaded && (
-                <p style={{ margin: '0 0 8px', fontSize: 12.5, color: subText }}>
-                  上の「候補」を開くと、この日が休みのパートを選べます。
-                </p>
-              )}
-              {restingPart.filter(p => !partReqs.some(q => q.user_id === p.id)).map(p => (
-                <label key={p.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '5px 0', fontSize: 13, color: text, cursor: 'pointer' }}>
-                  <input type="checkbox" checked={pickedParts.includes(p.id)}
-                    onChange={e => setPickedParts(v => e.target.checked ? [...v, p.id] : v.filter(x => x !== p.id))} />
-                  <span style={{ fontWeight: 'bold' }}>{p.name}</span>
-                  {/* 🚨 スマホ通知を登録していない人は、アプリを開くまで気づかない。
-                      🚨 ただし登録状況が読めたときだけ出す（読めないのに「なし」と書かない） */}
-                  {pushKnown && !pushUsers.includes(p.id) && (
-                    <span style={{ fontSize: 11, color: subText }}>スマホ通知なし（アプリを開くまで気づきません）</span>
-                  )}
-                </label>
-              ))}
-
-              {pickedParts.length > 0 && (
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <TimeInput value={reqStart} onChange={setReqStart} isDark={isDark} ariaLabel="開始時刻" />
-                    <span style={{ color: subText }}>〜</span>
-                    <TimeInput value={reqEnd} onChange={setReqEnd} isDark={isDark} ariaLabel="終了時刻" />
-                    <select value={reqLoc} onChange={e => setReqLoc(e.target.value)} style={sel}>
-                      <option value="">校を選択</option>
-                      {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
-                    </select>
-                  </div>
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 12, color: subText }}>返事の期限（任意）</span>
-                    <input type="datetime-local" value={dueAt} onChange={e => setDueAt(e.target.value)} style={sel} />
-                  </div>
-                  <p style={{ margin: '8px 0 0', fontSize: 11, color: subText, lineHeight: 1.7 }}>
-                    ※ 送る内容は「日付・時間帯・校」だけです。誰の代わりかは相手に表示されません。
-                    <br />
-                    ※ スマホ通知を登録していない方には、アプリを開くまで届きません。
-                  </p>
-                  <button onClick={() => void sendParts()} disabled={busyBtn}
-                    style={{ ...mainBtn, marginTop: 10 }}>
-                    {pickedParts.length}人に出勤のお願いを送る
-                  </button>
-                </div>
-              )}
-            </>
-          )}
         </div>
       )}
 
@@ -971,9 +1093,17 @@ const SlotDetail: React.FC<{
   );
 };
 
+/** 所属チームの小さな札（こども／大人／管理部）。🚨 新しい色は足さない（既存の枠線・補足の文字色） */
+const TeamTag: React.FC<{ team: string; isDark: boolean }> = ({ team, isDark }) => (
+  <span style={{
+    fontSize: 10.5, padding: '0 6px', borderRadius: 8, whiteSpace: 'nowrap',
+    border: `1px solid ${isDark ? '#6c757d' : '#ced4da'}`, color: isDark ? '#adb5bd' : '#666',
+  }}>{team}</span>
+);
+
 const CandidateRow: React.FC<{
-  name: string; part: boolean; shift: string; loc: string; note: string; isDark: boolean;
-}> = ({ name, part, shift, loc, note, isDark }) => {
+  name: string; team: string; role: string; shift: string; loc: string; note: string; isDark: boolean;
+}> = ({ name, team, role, shift, loc, note, isDark }) => {
   const text = isDark ? '#e9ecef' : '#333';
   const subText = isDark ? '#adb5bd' : '#666';
   // 🚨 選べない人は opacity で薄くする（新しい色を足さない）
@@ -981,7 +1111,9 @@ const CandidateRow: React.FC<{
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap',
       padding: '5px 0', opacity: note ? 0.5 : 1 }}>
       <span style={{ fontSize: 13, color: text, fontWeight: 'bold' }}>{name || '（名前なし）'}</span>
-      {part && <span style={{ fontSize: 10.5, color: subText }}>パート</span>}
+      {/* チームと役職（2026-09-14 ユーザー指示：どこのチームの人か分からない） */}
+      {team && <TeamTag team={team} isDark={isDark} />}
+      {role && <span style={{ fontSize: 11, color: subText }}>{role}</span>}
       {shift && <span style={{ fontSize: 12, color: subText }}>{shift}</span>}
       {loc && <span style={{ fontSize: 11, color: subText }}>{loc}</span>}
       {note && <span style={{ fontSize: 11, color: subText }}>（{note}）</span>}
