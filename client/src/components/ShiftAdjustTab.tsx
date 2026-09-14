@@ -586,6 +586,12 @@ const SlotDetail: React.FC<{
 
     // 🚨 お知らせは画面から送る（DBからは Edge Function を呼べない）。
     //    文面は既存の申請依頼（ApplicationRequestSheet）と同じ形に揃える
+    // 🚨 2026-09-14 ユーザー確定：2行目に「入る時間と校」を入れる。
+    //    それまでは日付とメモしか届かず、相手に時間が伝わっていなかった（依頼の記録にも時間の欄が無い）。
+    //    スマホの通知の文は push-dispatch の決まった文（申請の依頼が届いています）のままで、2行目は出ない
+    const bandOf = (d: Draft): string =>
+      `${(toDbTime(d.start) || '').slice(0, 5)}〜${(toDbTime(d.end) || '').slice(0, 5)}${d.location ? ` ${d.location}` : ''}`;
+    const memoText = memo.trim();
     const reqIds: string[] = row.request_ids ?? [];
     if (reqIds.length > 0) {
       const dl = `${Number(slot.target_date.slice(5, 7))}/${Number(slot.target_date.slice(8, 10))}`;
@@ -595,12 +601,27 @@ const SlotDetail: React.FC<{
         await insertNotification(
           targets[i].userId,
           `📩 ${me}さんより申請依頼：${dl} 残業・時間管理`,
-          memo.trim() || undefined,
+          // 🚨 時間とメモの間は全角スペース。そのまま書くと ESLint（no-irregular-whitespace）に止められるので \u3000 で書く
+          `${bandOf(targets[i])}${memoText ? `\u3000メモ：${memoText}` : ''}`,
           'application_request:received',
           reqIds[i],
           'application_request:received',
         );
       }
+    }
+    // パートを入れて決定したとき、本人にベルで知らせる（2026-09-14 ユーザー確定）。
+    // 🚨 それまでは何も届かなかった（出勤のお願いで選ばれた人だけ、返事のページに結果が出ていた）。
+    //    選ばれた人にもベルは出ていなかったので、全員に1通ずつ送っても二重にはならない
+    // 🚨 ベルだけ（event_key を付けない＝スマホは鳴らさない）。メモは入れない（勤怠の記録に残る）
+    // 🚨 誰の代わりかは書かない（計画書の決まり）
+    for (const d of drafts.filter(x => kindOf(x.userId) === 'attendance')) {
+      await insertNotification(
+        d.userId,
+        `📅 ${dateLabel(slot.target_date)}の出勤が決まりました`,
+        bandOf(d),
+        'shift_adjust:decided',
+        slot.id,
+      );
     }
     setBusyBtn(false);
     setStatus('decided');
@@ -732,9 +753,10 @@ const SlotDetail: React.FC<{
     : weekPatterns.some(x => x.user_id === slot.target_user_id) ? 'この曜日は勤務なし' : '週のシフト未登録';
   /** メモの文例。日付と校はこの場から入れる（校が分からなければ日付だけ） */
   const memoPlace = `${dateLabel(slot.target_date)}${where}`;
+  // 🚨 2026-09-14 ユーザー確定：文例は1つだけ。「時間は上記のとおりです」の文例は削除した
+  //    （相手の画面に「上記」の時間は無い。時間はベルの2行目で届ける）
   const memoExamples = [
     `${memoPlace}の欠員のため、出勤をお願いします。`,
-    `${memoPlace}の欠員対応です。時間は上記のとおりです。`,
   ];
 
   const box: React.CSSProperties = {
