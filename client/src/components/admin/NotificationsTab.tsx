@@ -1841,14 +1841,19 @@ export const ScheduledRemindersPanel: React.FC = () => {
   const inputBg = isDarkMode ? '#3d3d55' : '#f8f9fa';
 
   const fetch = useCallback(async () => {
-    const [{ data: r }, { data: c }, { data: p }] = await Promise.all([
+    // 🚨 チャンネルは reminder_channel_options（id と名前だけ）から読む。
+    //    board_channels を直接読むと「自分が入っているチャンネル」しか出ず、
+    //    マネージャー以上に開いたとき送り先の選択肢が欠ける（管理者も同じ道を通す）
+    const [{ data: r, error: re }, { data: c, error: ce }, { data: p, error: pe }] = await Promise.all([
       supabase.from('board_scheduled_reminders').select('*'),
-      supabase.from('board_channels').select('id, name').order('name'),
+      supabase.rpc('reminder_channel_options'),
       supabase.from('profiles').select('id, name, email').eq('is_active', true).order('name'),
     ]);
     if (r) setReminders(r);
     if (c) setChannels(c);
     if (p) setProfiles(p);
+    const failed = [re && '定期リマインド', ce && '送り先のグループ', pe && 'スタッフ'].filter(Boolean);
+    if (failed.length > 0) setErrorMsg(`${failed.join('・')}の一覧を読み込めませんでした。画面を開き直してください`);
   }, []);
 
   useEffect(() => { fetch(); }, [fetch]);

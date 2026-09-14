@@ -26,6 +26,10 @@ interface AdminPanelProps {
   submissions: Submission[];
   isLoading: boolean;
   onRefresh: () => void;
+  /** 本物の管理者か */
+  isAdmin: boolean;
+  /** 管理者でない人に開いているタブ（hooks/useAdminAccess.ts）。管理者は null＝全部 */
+  allowedTabs: readonly string[] | null;
 }
 
 const AdminPanelContent: React.FC = () => {
@@ -47,14 +51,17 @@ const AdminPanelContent: React.FC = () => {
     expenseTypeLabels, renamingExpenseTypeLabelId, setRenamingExpenseTypeLabelId, renamingExpenseTypeLabelValue, setRenamingExpenseTypeLabelValue, handleRenameExpenseTypeLabel,
     successMsg, setSuccessMsg, noticeKind,
     pendingUsers, pendingLeaveRequests,
+    isAdminUser, isTabAllowed,
   } = useAdminPanel();
 
+  // 🚨 ストレージ・DB の使用量／設定もれ／修正依頼の件数は管理者だけ（マネージャー以上に開いた管理画面では読まない）
   const [storageUsageMb, setStorageUsageMb] = useState<number | null>(null);
   useEffect(() => {
+    if (!isAdminUser) return;
     supabase.rpc('get_storage_usage_mb').then(({ data }: { data: number | null }) => {
       if (typeof data === 'number') setStorageUsageMb(data);
     }, () => {});
-  }, [supabase]);
+  }, [supabase, isAdminUser]);
   const STORAGE_LIMIT_MB = 1024;
   const isStorageLow = storageUsageMb !== null && storageUsageMb / STORAGE_LIMIT_MB >= 0.8; // 残り2割を切ったら警告
 
@@ -62,22 +69,24 @@ const AdminPanelContent: React.FC = () => {
   // 2026-08-20：cronの実行記録が115MBまで膨らんでいたのに誰も気づけなかったため追加した
   const [dbUsageMb, setDbUsageMb] = useState<number | null>(null);
   useEffect(() => {
+    if (!isAdminUser) return;
     supabase.rpc('get_database_usage_mb').then(({ data }: { data: number | string | null }) => {
       const n = Number(data);
       if (data !== null && !Number.isNaN(n)) setDbUsageMb(n);
     }, () => {});
-  }, [supabase]);
+  }, [supabase, isAdminUser]);
   const DB_LIMIT_MB = 500;
   const isDbLow = dbUsageMb !== null && dbUsageMb / DB_LIMIT_MB >= 0.8;
 
   // 設定の入力もれ（次年度の会社カレンダー未登録など）。判定はDBの admin_setup_alerts() に集約
-  const { badgeCount: adminSetupBadge } = useAdminSetupAlerts(true);
+  const { badgeCount: adminSetupBadge } = useAdminSetupAlerts(isAdminUser);
 
   // 修正依頼の未対応件数（タブの赤バッジ用）。correction-pending-changed で再取得。
   const [openCorrectionCount, setOpenCorrectionCount] = useState(0);
   // マネージャーへ送るときの失敗をその場に出す（黙って閉じない）
   const [managerAssignError, setManagerAssignError] = useState('');
   useEffect(() => {
+    if (!isAdminUser) return;
     const fetchCount = () => {
       supabase.from('correction_requests').select('id', { count: 'exact', head: true }).eq('status', 'open')
         .then(({ count }: { count: number | null }) => setOpenCorrectionCount(count ?? 0), () => {});
@@ -85,7 +94,7 @@ const AdminPanelContent: React.FC = () => {
     fetchCount();
     window.addEventListener('correction-pending-changed', fetchCount);
     return () => window.removeEventListener('correction-pending-changed', fetchCount);
-  }, [supabase]);
+  }, [supabase, isAdminUser]);
 
   return (    <div style={{ marginTop: 0, paddingTop: 0, position: 'relative' }}>
       {(storageUsageMb !== null || dbUsageMb !== null) && (
@@ -543,7 +552,11 @@ const AdminPanelContent: React.FC = () => {
           },
         ] as const;
         type TabKey = typeof TAB_GROUPS[number]['tabs'][number]['key'];
-        const ALL_TABS = TAB_GROUPS.flatMap(g => [...g.tabs]);
+        // 🚨 管理者でない人（マネージャー以上）には、管理者が開いたタブだけを出す（空の段は出さない）
+        const VISIBLE_GROUPS = TAB_GROUPS
+          .map(g => ({ title: g.title, tabs: g.tabs.filter(t => isTabAllowed(t.key)) }))
+          .filter(g => g.tabs.length > 0);
+        const ALL_TABS = VISIBLE_GROUPS.flatMap(g => g.tabs);
         const handleTabChange = (key: TabKey) => {
           if (key === 'groups') setSelectedGroup(null);
           setActiveTab(key);
@@ -569,8 +582,8 @@ const AdminPanelContent: React.FC = () => {
             {/* PC: 系統ごとに3段。見出しの位置を揃えるため、中身は左寄せにして全体を中央に置く */}
             <div className="admin-tabs-pc" style={{ alignItems: 'center' }}>
               <div style={{ maxWidth: '100%' }}>
-                {TAB_GROUPS.map((g, gi) => (
-                  <div key={g.title} style={groupRowStyle(gi === TAB_GROUPS.length - 1)}>
+                {VISIBLE_GROUPS.map((g, gi) => (
+                  <div key={g.title} style={groupRowStyle(gi === VISIBLE_GROUPS.length - 1)}>
                     <span style={groupLabelStyle}>{g.title}</span>
                     <div style={groupTabsStyle}>
                       {g.tabs.map(t => (
@@ -644,7 +657,7 @@ const AdminPanelContent: React.FC = () => {
         {activeTab === 'leader_assignments' && <LeaderAssignmentsTab />}
         {activeTab === 'board_settings' && <BoardSettingsTab />}
         {activeTab === 'announcements' && <AnnouncementsTab />}
-        {activeTab === 'faq' && <FaqTab canManageEditors />}
+        {activeTab === 'faq' && <FaqTab canManageEditors={isAdminUser} />}
         {activeTab === 'safety_checks' && <SafetyChecksTab />}
         {activeTab === 'feature_permissions' && <FeaturePermissionsTab />}
         {activeTab === 'notifications' && <NotificationsTab />}
@@ -1089,9 +1102,9 @@ const AdminPanelContent: React.FC = () => {
 
 };
 
-const AdminPanel: React.FC<AdminPanelProps> = ({ pendingApprovals, submissions, isLoading, onRefresh }) => {
+const AdminPanel: React.FC<AdminPanelProps> = ({ pendingApprovals, submissions, isLoading, onRefresh, isAdmin, allowedTabs }) => {
   return (
-    <AdminPanelProvider pendingApprovals={pendingApprovals} submissions={submissions} isLoading={isLoading} onRefresh={onRefresh}>
+    <AdminPanelProvider pendingApprovals={pendingApprovals} submissions={submissions} isLoading={isLoading} onRefresh={onRefresh} isAdmin={isAdmin} allowedTabs={allowedTabs}>
       <AdminPanelContent />
     </AdminPanelProvider>
   );

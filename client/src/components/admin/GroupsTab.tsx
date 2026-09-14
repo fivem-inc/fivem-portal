@@ -1,11 +1,39 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { describeUpdate } from '../../lib/statusUpdate';
 
+// 🚨 マネージャー以上に開いたとき（2026-09-15）はスタッフの所属の出し入れだけ。
+//    グループの追加・名前の変更・削除は管理者だけ（docs/計画-管理画面の開放.md）
+// 🚨 所属の出し入れは set_profile_group（1文で1つだけ足す／外す）。管理者も同じ道を通る
 const GroupsTab: React.FC = () => {
   const ctx = useAdminPanel();
-  const { isDarkMode, selectedGroup, setSelectedGroup, editingGroupName, setEditingGroupName, editGroupNameValue, setEditGroupNameValue, newGroupName, setNewGroupName, showAddGroup, setShowAddGroup, masterOptions, users, setUsers, isUserEditMode, setIsUserEditMode, fetchMasterOptions, fetchUsers, supabase, setErrorMsg } = ctx;
+  const { isDarkMode, selectedGroup, setSelectedGroup, editingGroupName, setEditingGroupName, editGroupNameValue, setEditGroupNameValue, newGroupName, setNewGroupName, showAddGroup, setShowAddGroup, masterOptions, users, setUsers, isUserEditMode, setIsUserEditMode, fetchMasterOptions, fetchUsers, supabase, setErrorMsg, isAdminUser } = ctx;
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null); // 共通インライン確認（confirm廃止）
+  // 所属チーム（こども・大人・管理部）。読めなかったときは null＝どのグループにも注意書きを出す
+  const [teams, setTeams] = useState<string[] | null>([]);
+  useEffect(() => {
+    let alive = true;
+    supabase.from('master_options').select('value').eq('category', 'shift_report_group').then(
+      ({ data, error }: { data: { value: string }[] | null; error: unknown }) => {
+        if (!alive) return;
+        setTeams(error ? null : (data ?? []).map(r => r.value));
+      },
+      () => { if (alive) setTeams(null); },
+    );
+    return () => { alive = false; };
+  }, [supabase]);
+
+  // 所属を1つ足す／外す。🚨 先に画面を書き換えない（失敗しても変わったように見えてしまう）
+  const changeMembership = async (userId: string, member: boolean) => {
+    if (!selectedGroup) return;
+    const { data, error } = await supabase.rpc('set_profile_group', { p_user_id: userId, p_group: selectedGroup, p_member: member });
+    if (error) {
+      setErrorMsg(`${member ? 'グループへの追加' : 'グループから外す操作'}ができませんでした：${error.message}`);
+      return;
+    }
+    const next = (data ?? []) as string[];
+    setUsers(prev => prev.map(p => p.id === userId ? { ...p, group_names: next } : p));
+  };
 
   return (
           <div>
@@ -65,7 +93,9 @@ const GroupsTab: React.FC = () => {
                   ) : (
                     <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       {selectedGroup}
-                      <button onClick={() => { setEditingGroupName(true); setEditGroupNameValue(selectedGroup); }} style={{ padding: '2px 8px', background: '#ffc107', color: '#212529', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>✏️名前変更</button>
+                      {isAdminUser && (
+                        <button onClick={() => { setEditingGroupName(true); setEditGroupNameValue(selectedGroup); }} style={{ padding: '2px 8px', background: '#ffc107', color: '#212529', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>✏️名前変更</button>
+                      )}
                     </span>
                   )}
                 </span>
@@ -90,7 +120,8 @@ const GroupsTab: React.FC = () => {
                   );
                 })}
 
-                {/* グループ追加 */}
+                {/* グループ追加（管理者だけ） */}
+                {isAdminUser && (
                 <div style={{ marginTop: 16, textAlign: 'center' }}>
                   {showAddGroup ? (
                     <div style={{ display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center' }}>
@@ -116,6 +147,7 @@ const GroupsTab: React.FC = () => {
                     <button onClick={() => setShowAddGroup(true)} style={{ padding: '10px 24px', background: '#fd7e14', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>＋ グループを追加</button>
                   )}
                 </div>
+                )}
               </div>
             ) : (
               /* メンバー一覧 */
@@ -131,6 +163,14 @@ const GroupsTab: React.FC = () => {
                   )}
                 </div>
 
+                {(teams === null || teams.includes(selectedGroup)) && (
+                  <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 8, fontSize: 12.5, lineHeight: 1.6, background: '#fff3cd', border: '1px solid #ffc107', color: '#856404' }}>
+                    {teams === null
+                      ? '所属チーム（こども・大人・管理部など）を変えると、休暇・残業の受理依頼が届く上長が変わります。'
+                      : `「${selectedGroup}」は所属チームです。所属チームを変えると、休暇・残業の受理依頼が届く上長が変わります。`}
+                  </div>
+                )}
+
                 {/* 現在のメンバー */}
                 {users.filter(u => u.is_active !== false && (u.group_names || []).includes(selectedGroup)).map(u => (
                   <div key={u.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', marginBottom: 6, background: isDarkMode ? '#343a40' : 'white', border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, borderRadius: 8 }}>
@@ -139,15 +179,7 @@ const GroupsTab: React.FC = () => {
                       <span style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888', marginLeft: 8 }}>{u.email}</span>
                     </div>
                     {isUserEditMode && (
-                      <button onClick={async () => {
-                        const next = (u.group_names || []).filter((x: string) => x !== selectedGroup);
-                        // 🚨 先に画面を書き換えない。失敗しても外れたように見え、
-                        //    画面とDBが食い違ったまま残る（開き直すと戻る）。
-                        const res = await supabase.from('profiles').update({ group_names: next }).eq('id', u.id).select('id');
-                        const fail = describeUpdate(res, 'グループから外す操作', 'missing');
-                        if (fail) { setErrorMsg(fail); return; }
-                        setUsers(prev => prev.map(p => p.id === u.id ? { ...p, group_names: next } : p));
-                      }} style={{ padding: '3px 10px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 20, cursor: 'pointer', fontSize: 12 }}>削除</button>
+                      <button onClick={() => changeMembership(u.id, false)} style={{ padding: '3px 10px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 20, cursor: 'pointer', fontSize: 12 }}>外す</button>
                     )}
                   </div>
                 ))}
@@ -162,21 +194,14 @@ const GroupsTab: React.FC = () => {
                           <span style={{ color: isDarkMode ? '#fff' : '#000' }}>{u.name || '未設定'}</span>
                           <span style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888', marginLeft: 8 }}>{u.email}</span>
                         </div>
-                        <button onClick={async () => {
-                          const next = [...(u.group_names || []), selectedGroup];
-                          // 🚨 こちらも同じ。追加できていないのに追加されたように見せない
-                          const res = await supabase.from('profiles').update({ group_names: next }).eq('id', u.id).select('id');
-                          const fail = describeUpdate(res, 'グループへの追加', 'missing');
-                          if (fail) { setErrorMsg(fail); return; }
-                          setUsers(prev => prev.map(p => p.id === u.id ? { ...p, group_names: next } : p));
-                        }} style={{ padding: '3px 10px', background: '#007bff', color: 'white', border: 'none', borderRadius: 20, cursor: 'pointer', fontSize: 12 }}>＋追加</button>
+                        <button onClick={() => changeMembership(u.id, true)} style={{ padding: '3px 10px', background: '#007bff', color: 'white', border: 'none', borderRadius: 20, cursor: 'pointer', fontSize: 12 }}>＋追加</button>
                       </div>
                     ))}
                   </div>
                 )}
 
-                {/* グループ削除 */}
-                {isUserEditMode && (
+                {/* グループ削除（管理者だけ） */}
+                {isUserEditMode && isAdminUser && (
                   <div style={{ marginTop: 32, textAlign: 'center' }}>
                     <button onClick={() => {
                       setConfirmDialog({ message: `「${selectedGroup}」を削除しますか？\nメンバーのグループ設定からも削除されます。`, onConfirm: async () => {

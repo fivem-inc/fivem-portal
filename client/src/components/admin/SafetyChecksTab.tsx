@@ -67,7 +67,7 @@ const fmt = (s: string | null): string => {
 };
 
 const SafetyChecksTab: React.FC = () => {
-  const { isDarkMode, users, setSuccessMsg, setErrorMsg } = useAdminPanel();
+  const { isDarkMode, users, setSuccessMsg, setErrorMsg, isAdminUser } = useAdminPanel();
   const navigate = useNavigate();
 
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -589,11 +589,14 @@ const SafetyChecksTab: React.FC = () => {
                                       取消（誤発信）
                                     </button>
                                   )}
-                                  {/* 完全削除（管理者のみ）。取消は記録が残るが、こちらは記録ごと消える */}
-                                  <button type="button" onClick={() => setActionConfirm({ id: c.id, kind: 'delete' })}
-                                    style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #dc3545', background: '#dc3545', color: '#fff', fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
-                                    削除
-                                  </button>
+                                  {/* 完全削除（管理者のみ）。取消は記録が残るが、こちらは記録ごと消える。
+                                      🚨 マネージャー以上に開いた管理画面には出さない（DB の delete_safety_check も管理者だけ） */}
+                                  {isAdminUser && (
+                                    <button type="button" onClick={() => setActionConfirm({ id: c.id, kind: 'delete' })}
+                                      style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #dc3545', background: '#dc3545', color: '#fff', fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
+                                      削除
+                                    </button>
+                                  )}
                                   <button type="button" onClick={() => navigate(`/safety?check=${c.id}`)}
                                     style={{ marginLeft: 'auto', padding: '6px 12px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: sub, fontSize: 12, cursor: 'pointer' }}>
                                     集計画面を開く →

@@ -48,6 +48,10 @@ export interface AdminPanelContextType {
   // Tab
   activeTab: AdminTab;
   setActiveTab: (tab: AdminTab) => void;
+  /** 本物の管理者か（マネージャー以上に開いた管理画面では false） */
+  isAdminUser: boolean;
+  /** そのタブを出してよいか（lib/adminTabs.ts）。管理者は全部 */
+  isTabAllowed: (tab: string) => boolean;
 
   // Dark mode & styles
   isDarkMode: boolean;
@@ -241,25 +245,38 @@ interface AdminPanelProviderProps {
   submissions: Submission[];
   isLoading: boolean;
   onRefresh: () => void;
+  /** 本物の管理者か */
+  isAdmin: boolean;
+  /** 管理者でない人に開いているタブ（hooks/useAdminAccess.ts）。管理者は null＝全部 */
+  allowedTabs: readonly string[] | null;
   children: React.ReactNode;
 }
 
 export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
-  pendingApprovals, submissions, isLoading, onRefresh, children
+  pendingApprovals, submissions, isLoading, onRefresh, isAdmin, allowedTabs, children
 }) => {
+  // 🚨 管理者でない人（マネージャー以上）には、管理者が開いたタブだけを出す。
+  //    URL の ?tab= を直接打たれても、開いていないタブには入れない（docs/計画-管理画面の開放.md）
+  const allowedKey = allowedTabs ? allowedTabs.join(',') : '';
+  const isTabAllowed = useCallback(
+    (tab: string) => isAdmin || (allowedKey !== '' && allowedKey.split(',').includes(tab)),
+    [isAdmin, allowedKey],
+  );
+  const firstAllowedTab: AdminTab = isAdmin ? 'approvals' : (ADMIN_TABS.find(t => isTabAllowed(t)) ?? 'approvals');
   // タブの状態をURLの?tabに保存し、再読み込みしても同じタブに留まれるようにする
   const [searchParams, setSearchParams] = useSearchParams();
   const tabFromUrl = searchParams.get('tab');
-  const initialTab = (tabFromUrl && ADMIN_TABS.includes(tabFromUrl as AdminTab)) ? (tabFromUrl as AdminTab) : 'approvals';
+  const initialTab = (tabFromUrl && ADMIN_TABS.includes(tabFromUrl as AdminTab) && isTabAllowed(tabFromUrl)) ? (tabFromUrl as AdminTab) : firstAllowedTab;
   const [activeTab, setActiveTabState] = useState<AdminTab>(initialTab);
   const setActiveTab = useCallback((tab: AdminTab) => {
+    if (!isTabAllowed(tab)) return;
     setActiveTabState(tab);
     setSearchParams(prev => {
       const next = new URLSearchParams(prev);
       next.set('tab', tab);
       return next;
     }, { replace: true });
-  }, [setSearchParams]);
+  }, [setSearchParams, isTabAllowed]);
   const [csvStartDate, setCsvStartDate] = useState<string>('');
   const [csvEndDate, setCsvEndDate] = useState<string>('');
   const [csvDateType, setCsvDateType] = useState<'created' | 'approved'>('approved');
@@ -928,15 +945,28 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   }, []);
 
   // 承認待ちバッジ用：タブを開かなくても件数が分かるよう、初回マウント時に一度だけ取得
-  useEffect(() => { fetchUsers(); fetchLeaveRequests(); }, [fetchUsers, fetchLeaveRequests]);
+  // 🚨 管理者だけ。マネージャー以上に開いた管理画面ではバッジのタブが無いので読まない
+  useEffect(() => {
+    if (!isAdmin) return;
+    fetchUsers(); fetchLeaveRequests();
+  }, [isAdmin, fetchUsers, fetchLeaveRequests]);
+
+  // 管理者がいま開いているタブを閉じたとき（設定は30秒ごとに読み直す）→ 残りのタブへ移して知らせる
+  useEffect(() => {
+    if (isTabAllowed(activeTab)) return;
+    setActiveTab(firstAllowedTab);
+    setPartialMsg('管理者がこのタブを閉じたため、表示できなくなりました');
+  }, [activeTab, isTabAllowed, firstAllowedTab, setActiveTab, setPartialMsg]);
 
   useEffect(() => {
+    // 安否・緊急は発信者の名前をスタッフの一覧から引く（管理者は上で読み済み）
+    if (activeTab === 'safety_checks' && !isAdmin) { fetchUsers(); }
     if (activeTab === 'users') { fetchUsers(); fetchMasterOptions(); }
     if (activeTab === 'groups') { fetchUsers(); fetchMasterOptions(); }
     if (activeTab === 'trip_reports') { fetchTripReports(); }
     if (activeTab === 'leave_requests') { fetchLeaveRequests(); fetchUsers(); }
     if (activeTab === 'reports') { fetchUsers(); }
-  }, [activeTab, fetchUsers, fetchTripReports, fetchMasterOptions, fetchLeaveRequests]);
+  }, [activeTab, isAdmin, fetchUsers, fetchTripReports, fetchMasterOptions, fetchLeaveRequests]);
 
   useEffect(() => {
     if (activeTab === 'reports' && users.length > 0 && submissions.length > 0 && !reportStats) fetchReportStats();
@@ -1392,7 +1422,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   return (
     <AdminPanelContext.Provider value={{
       pendingApprovals, submissions, isLoading, onRefresh,
-      activeTab, setActiveTab,
+      activeTab, setActiveTab, isAdminUser: isAdmin, isTabAllowed,
       isDarkMode, tabStyle, tabContentStyle,
       csvStartDate, setCsvStartDate, csvEndDate, setCsvEndDate, csvDateType, setCsvDateType,
       typeFilter, setTypeFilter, statusFilter, setStatusFilter,

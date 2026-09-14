@@ -51,12 +51,13 @@ export const fetchActiveAnnouncements = async (): Promise<Announcement[]> => {
 };
 
 // 全お知らせを新しい順で取得（管理画面の履歴一覧用）
-export const fetchAllAnnouncements = async (): Promise<Announcement[]> => {
+// 🚨 読めなかったときは null（空の配列にすると「まだお知らせはありません」と嘘をつく）
+export const fetchAllAnnouncements = async (): Promise<Announcement[] | null> => {
   const { data, error } = await supabase
     .from('announcements')
     .select(SELECT_COLS)
     .order('created_at', { ascending: false });
-  if (error || !data) return [];
+  if (error || !data) return null;
   return data as Announcement[];
 };
 
@@ -81,17 +82,19 @@ export const createAnnouncement = async (input: AnnouncementInput, createdBy: st
   return supabase.from('announcements').insert({ ...input, created_by: createdBy }).select('id').single();
 };
 
+// 🚨 update / delete は権限で弾かれても error にならず「0件」で返る。.select('id') で件数を見る（lib/statusUpdate.ts）
 export const updateAnnouncement = async (id: string, input: AnnouncementInput) => {
   return supabase
     .from('announcements')
     .update({ ...input, updated_at: new Date().toISOString() })
-    .eq('id', id);
+    .eq('id', id)
+    .select('id');
 };
 
 export const setAnnouncementActive = async (id: string, active: boolean) => {
-  return supabase.from('announcements').update({ active, updated_at: new Date().toISOString() }).eq('id', id);
+  return supabase.from('announcements').update({ active, updated_at: new Date().toISOString() }).eq('id', id).select('id');
 };
 
 export const deleteAnnouncement = async (id: string) => {
-  return supabase.from('announcements').delete().eq('id', id);
+  return supabase.from('announcements').delete().eq('id', id).select('id');
 };

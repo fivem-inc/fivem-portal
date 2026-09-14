@@ -5,6 +5,8 @@ import { refreshRoles } from '../../hooks/useRoles';
 import type { RoleRow } from '../../lib/roleAttrs';
 // 共有パソコンの自動ログアウトの設定（2026-09-14・ユーザー確定でこのタブの末尾に置く）
 import IdleLogoutSettingsSection from './IdleLogoutSettingsSection';
+// マネージャー以上に開く管理画面のタブ（2026-09-15・docs/計画-管理画面の開放.md）
+import ManagerAdminTabsSection from './ManagerAdminTabsSection';
 
 interface Role {
   id: string;
@@ -897,6 +899,7 @@ const FeaturePermissionsTab: React.FC = () => {
         </div>
       </div>
 
+      <ManagerAdminTabsSection />
       <IdleLogoutSettingsSection />
     </div>
   );

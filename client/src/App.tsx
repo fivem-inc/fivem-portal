@@ -51,6 +51,9 @@ import { isInRemindWindow } from './lib/announcementDates';
 import { useFeaturePublished, isFeaturePublished } from './hooks/useFeaturePublished';
 import { useRoles } from './hooks/useRoles';
 import { usePolling } from './hooks/usePolling';
+// 管理画面をマネージャー以上に開く（2026-09-15・docs/計画-管理画面の開放.md）
+import { useAdminAccess } from './hooks/useAdminAccess';
+import AdminAccessNotice from './components/admin/AdminAccessNotice';
 import { attrsFor, previewRoleOptions } from './lib/roleAttrs';
 import { supabase } from './lib/supabaseClient';
 import { isFullDayReport } from './lib/overtimeTypes';
@@ -801,6 +804,9 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   const { pendingCount: overtimePending } = useOvertimePendingCount(userId, canOvertime);
   // 管理者の設定もれ（次年度の会社カレンダー未登録など）。管理者にだけ数える
   const { badgeCount: adminSetupBadge } = useAdminSetupAlerts(isAdmin);
+  // 「⚙️ 管理」を出すか：管理者、またはマネージャー以上がパソコンで、管理者が開いたタブがあるとき（hooks/useAdminAccess.ts）
+  const navRoles = useRoles();
+  const adminAccess = useAdminAccess({ isAdmin, isManagerPlus: isAdmin || attrsFor(navRoles, roleTitle).is_manager_plus });
   const { count: overtimeUnreported } = useOvertimeUnreportedCount(userId, canOvertime);
   const overtimeBadge = overtimePending + overtimeUnreported; // 確認依頼＋自分の実績未報告
 
@@ -909,7 +915,7 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
             scrollbarWidth: 'none', padding: isMobile ? '6px 4px' : 0, boxSizing: 'border-box',
           }}
         >
-          {isAdmin && (
+          {adminAccess.canOpen && (
             <div data-nav-badge={adminSetupBadge} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
               <button onClick={() => navTo('/admin')} style={btnStyle(location.pathname === '/admin', '#6f42c1')}>
                 {isMobile ? <><span style={{ fontSize: 20 }}>⚙️</span>{navLabel('管理')}</> : '⚙️ 管理'}
@@ -2206,21 +2212,30 @@ const TeamCalendarPage: React.FC = () => {
 
 // 管理画面ページ（/admin）
 const AdminPage: React.FC = () => {
-  const { user, isAdmin, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, handleLogout, loading } = useAuth();
+  const { user, isAdmin, isManagerPlus, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, handleLogout, loading } = useAuth();
   const { submissions, pendingApprovals, isLoading, fetchExpenses } = useExpenses(user, isAdmin);
-  if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
-  if (!isAdmin) return <Navigate to="/" />;
+  // 🚨 管理者、またはマネージャー以上がパソコンで、管理者が開いたタブがあるとき。
+  //    設定を読み終えるまではホームへ飛ばさない。30秒ごとに読み直し、閉じられたタブは画面からも消す
+  const access = useAdminAccess({ isAdmin, isManagerPlus, poll: true });
+  if (!user || loading || !access.ready) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
+  if (access.reason === 'not_manager') return <Navigate to="/" />;
   return (
     <div style={{ padding: '110px 16px 0' }}>
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
+      {access.canOpen ? (
 <Suspense fallback={<PageLoader />}>
         <AdminPanel
           pendingApprovals={pendingApprovals}
           submissions={submissions}
           isLoading={isLoading}
           onRefresh={fetchExpenses}
+          isAdmin={isAdmin}
+          allowedTabs={access.visibleTabs}
         />
       </Suspense>
+      ) : (
+        <AdminAccessNotice reason={access.reason} />
+      )}
     </div>
   );
 };

@@ -20,6 +20,27 @@ import {
   STATUS_LABEL,
   type EffectiveStatus,
 } from '../../lib/announcementDates';
+import { describePartial, describeUpdate } from '../../lib/statusUpdate';
+
+// 作成時の通知（announcement-notify）を送る。失敗したら理由を返す（成功は null）。
+// 🚨 functions.invoke は 4xx/5xx でも throw しない。error と中身の両方を見る
+// 🚨 同じお知らせの通知は1回だけ（関数が notified_at で断る。2回目は「すでに送っています」）
+const sendCreateNotify = async (id: string): Promise<string | null> => {
+  const { data, error } = await supabase.functions.invoke('announcement-notify', { body: { id } });
+  if (error) {
+    const res = (error as { context?: unknown }).context;
+    if (res instanceof Response) {
+      try {
+        const body = await res.json();
+        if (body && typeof body.error === 'string') return body.error;
+      } catch { /* 本文が JSON でないときは下の文言 */ }
+    }
+    return error.message;
+  }
+  if (data?.push_failed) return 'スマホ通知の登録に失敗しました';
+  if (typeof data?.email_failed === 'number' && data.email_failed > 0) return `メール ${data.email_failed}通を送れませんでした`;
+  return null;
+};
 
 // 社内お知らせ管理タブ。
 // ・上部：新規作成／編集フォーム（タイトル＋本文＋「詳細設定」で表示期間・リマインド）
@@ -28,7 +49,7 @@ import {
 const DEFAULT_REMIND_DAYS = '3';
 
 const AnnouncementsTab: React.FC = () => {
-  const { isDarkMode } = useAdminPanel();
+  const { isDarkMode, setErrorMsg, setPartialMsg } = useAdminPanel();
 
   // フォーム状態（新規・編集で共用。editingId が null なら新規）
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -53,6 +74,7 @@ const AnnouncementsTab: React.FC = () => {
 
   const [items, setItems] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
@@ -72,7 +94,8 @@ const AnnouncementsTab: React.FC = () => {
   const load = useCallback(async () => {
     setLoading(true);
     const data = await fetchAllAnnouncements();
-    setItems(data);
+    setLoadFailed(data === null);
+    setItems(data ?? []);
     setLoading(false);
   }, []);
 
@@ -117,16 +140,28 @@ const AnnouncementsTab: React.FC = () => {
       remind_frequency: remindFrequency,
       push_show_title: pushShowTitle,
     };
+    // 🚨 保存・通知の失敗は必ず出す（2026-09-15 まで、失敗しても「✓ お知らせを出しました」と出ていた）
     if (editingId) {
-      const { error } = await updateAnnouncement(editingId, input);
+      const fail = describeUpdate(await updateAnnouncement(editingId, input), 'お知らせの更新', 'missing');
       setSaving(false);
-      if (error) return;
+      if (fail) { setErrorMsg(fail); return; }
     } else {
       const { data, error } = await createAnnouncement(input, (await supabase.auth.getUser()).data.user?.id ?? null);
-      if (error || !data) { setSaving(false); return; }
+      if (error || !data) {
+        setSaving(false);
+        setErrorMsg(`お知らせを出せませんでした：${error?.message ?? '作成したお知らせを確かめられませんでした'}`);
+        return;
+      }
       // 作成時通知（プッシュ／メール）はサーバー側で全員へ配信。失敗してもお知らせ自体は作成済み。
       if (input.notify_on_create_push || input.notify_on_create_email) {
-        await supabase.functions.invoke('announcement-notify', { body: { id: data.id } });
+        const notifyFail = await sendCreateNotify(data.id);
+        if (notifyFail) {
+          setSaving(false);
+          resetForm();
+          load();
+          setPartialMsg(describePartial('お知らせの作成', `作成時の通知を送れませんでした（${notifyFail}）`));
+          return;
+        }
       }
       setSaving(false);
     }
@@ -160,18 +195,18 @@ const AnnouncementsTab: React.FC = () => {
 
   const handleToggle = async (item: Announcement) => {
     setBusyId(item.id);
-    const { error } = await setAnnouncementActive(item.id, !item.active);
+    const fail = describeUpdate(await setAnnouncementActive(item.id, !item.active), item.active ? '表示の停止' : '再表示', 'missing');
     setBusyId(null);
-    if (error) return;
+    if (fail) { setErrorMsg(fail); return; }
     setItems(prev => prev.map(a => a.id === item.id ? { ...a, active: !a.active } : a));
   };
 
   const handleDelete = async (id: string) => {
     setBusyId(id);
-    const { error } = await deleteAnnouncement(id);
+    const fail = describeUpdate(await deleteAnnouncement(id), 'お知らせの削除', 'missing');
     setBusyId(null);
     setConfirmDeleteId(null);
-    if (error) return;
+    if (fail) { setErrorMsg(fail); return; }
     if (editingId === id) resetForm();
     setItems(prev => prev.filter(a => a.id !== id));
   };
@@ -425,6 +460,8 @@ const AnnouncementsTab: React.FC = () => {
 
         {loading ? (
           <div style={{ fontSize: 13, color: subText, padding: '8px 2px' }}>読み込み中...</div>
+        ) : loadFailed ? (
+          <div style={{ fontSize: 13, color: '#842029', padding: '8px 2px' }}>お知らせの履歴を読み込めませんでした。画面を開き直してください。</div>
         ) : items.length === 0 ? (
           <div style={{ fontSize: 13, color: subText, padding: '8px 2px' }}>まだお知らせはありません。</div>
         ) : (
