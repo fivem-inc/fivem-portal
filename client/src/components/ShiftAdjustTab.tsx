@@ -350,7 +350,6 @@ const SlotDetail: React.FC<{
   // 🚨 2026-09-13（手順8）：初期値は管理画面の「自動登録の開始日」で決まる。読むまでは OFF
   const [doAttendance, setDoAttendance] = useState(false);
   const [doRequest, setDoRequest] = useState(false);
-  const [autoNote, setAutoNote] = useState('');
   /** 利用者がチェックを触ったか。触ったあとに設定の読み込みが終わっても上書きしない */
   const touchedAuto = React.useRef(false);
   const [confirmUndo, setConfirmUndo] = useState(false);
@@ -364,21 +363,14 @@ const SlotDetail: React.FC<{
       const { data, error } = await supabase.from('shift_adjust_settings')
         .select('attendance_from, request_from').eq('id', 1).maybeSingle();
       if (!alive) return;
-      if (error || !data) {
-        setAutoNote('自動登録の開始日を読み込めなかったため、初期値はOFFにしています。');
-        return;
-      }
+      // 🚨 読めなかったときは OFF のまま（押せば登録・依頼はできる）。
+      // 🚨 2026-09-14 ユーザー確定：「初期値：…（開始日が未設定）」の説明は出さない（決める人には意味が伝わらないため）
+      if (error || !data) return;
       const af = (data.attendance_from as string | null) ?? null;
       const rf = (data.request_from as string | null) ?? null;
       const onA = !!af && slot.target_date >= af;
       const onR = !!rf && slot.target_date >= rf;
       if (!touchedAuto.current) { setDoAttendance(onA); setDoRequest(onR); }
-      const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
-      const part = (name: string, from: string | null, on: boolean) =>
-        !from ? `${name}＝OFF（開始日が未設定）`
-          : on ? `${name}＝ON（${md(from)} から）`
-            : `${name}＝OFF（${md(from)} からのため対象外）`;
-      setAutoNote(`初期値：${part('勤怠の登録', af, onA)}／${part('残業申請の依頼', rf, onR)}`);
     })();
     return () => { alive = false; };
   }, [slot.target_date]);
@@ -734,6 +726,16 @@ const SlotDetail: React.FC<{
     const s = shiftTextOf(uid);
     return s ? `${s}${locOf(uid) ? ` ${locOf(uid)}` : ''}` : `勤務予定なし（${restNoteOf(uid)}）`;
   };
+  /** 休む方のこの日のシフト。🚨 見出しと「出勤する人」の枠の2か所に出すので、文はここ1か所で作る */
+  const targetShiftText: string = shiftTextOf(slot.target_user_id)
+    ? `${shiftTextOf(slot.target_user_id)}${locOf(slot.target_user_id) ? ` ${locOf(slot.target_user_id)}` : ''}`
+    : weekPatterns.some(x => x.user_id === slot.target_user_id) ? 'この曜日は勤務なし' : '週のシフト未登録';
+  /** メモの文例。日付と校はこの場から入れる（校が分からなければ日付だけ） */
+  const memoPlace = `${dateLabel(slot.target_date)}${where}`;
+  const memoExamples = [
+    `${memoPlace}の欠員のため、出勤をお願いします。`,
+    `${memoPlace}の欠員対応です。時間は上記のとおりです。`,
+  ];
 
   const box: React.CSSProperties = {
     background: cardBg, borderRadius: 12, border: `1px solid ${border}`,
@@ -822,9 +824,7 @@ const SlotDetail: React.FC<{
         {/* 休む方のこの日のシフト（2026-09-14 ユーザー指示）。🚨 週の基本シフトが読めなかったときは出さない（嘘をつかない） */}
         {candLoaded && !candErr && (
           <div style={shiftBand}>
-            休む方のこの日のシフト：{shiftTextOf(slot.target_user_id)
-              ? `${shiftTextOf(slot.target_user_id)}${locOf(slot.target_user_id) ? ` ${locOf(slot.target_user_id)}` : ''}`
-              : weekPatterns.some(x => x.user_id === slot.target_user_id) ? 'この曜日は勤務なし' : '週のシフト未登録'}
+            休む方のこの日のシフト：{targetShiftText}
           </div>
         )}
         <div style={{ fontSize: 12, color: ['pending', 'working'].includes(status) ? warnFg : subText, marginTop: 6 }}>
@@ -907,6 +907,10 @@ const SlotDetail: React.FC<{
               </span>
             )}
           </div>
+          {/* 🚨 2026-09-14 ユーザー指示：相談が増えると見出しが画面の外に出るので、選ぶ位置にも休む方のシフトを出す */}
+          {candLoaded && !candErr && (
+            <div style={{ ...shiftBand, marginTop: 0, marginBottom: 8 }}>休む方のこの日のシフト：{targetShiftText}</div>
+          )}
 
           {assigns.length > 0 ? (
             <>
@@ -1006,11 +1010,21 @@ const SlotDetail: React.FC<{
                   残業申請を依頼する
                 </label>
               </div>
-              {autoNote && (
-                <div style={{ fontSize: 11.5, color: subText, marginTop: 4, lineHeight: 1.6 }}>{autoNote}</div>
-              )}
-              <input type="text" value={memo} onChange={e => setMemo(e.target.value)} placeholder="メモ（任意）"
-                style={{ ...sel, width: '100%', boxSizing: 'border-box', marginTop: 10 }} />
+              {/* メモの文例（2026-09-14 ユーザー確定・案1）。押すとメモを置き換える。
+                  🚨 休む方の名前は入れない。メモは正社員には残業申請の依頼とベルでそのまま届き、
+                     パートは勤怠カレンダーの休日出勤の記録に残るため（計画書「誰の代わりかは載せない」） */}
+              <div style={{ fontSize: 12, color: subText, marginTop: 14 }}>文例（押すとメモに入ります）</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+                {memoExamples.map(ex => (
+                  <button key={ex} type="button" onClick={() => setMemo(ex)}
+                    style={{ textAlign: 'left', fontSize: 12, fontWeight: 'bold', padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
+                      border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, background: isDark ? '#2c3e50' : '#e8f4fd', color: isDark ? '#fff' : '#1565c0' }}>
+                    文例 ー「{ex}」
+                  </button>
+                ))}
+              </div>
+              <textarea value={memo} onChange={e => setMemo(e.target.value)} placeholder="メモ（任意）" rows={2}
+                style={{ ...sel, width: '100%', boxSizing: 'border-box', marginTop: 8, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.6 }} />
 
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12 }}>
                 <button onClick={() => void decide()} disabled={busyBtn} style={mainBtn}>決定する</button>
