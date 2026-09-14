@@ -151,6 +151,8 @@ const ShiftAdjustTab: React.FC<{
     setSearchParams(sp, { replace: true });
   }, [location.state, navigate, searchParams, setSearchParams]);
   const [showDone, setShowDone] = useState(false);
+  /** 案を保存してある場（一覧に「案あり」を出す） */
+  const [planSlots, setPlanSlots] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
 
@@ -163,7 +165,7 @@ const ShiftAdjustTab: React.FC<{
     setLoading(true);
     setErr('');
     // 🚨 error を必ず見る。読めないまま「0件」と出すと、画面が嘘をつく
-    const [{ data: sData, error: sErr }, { data: pData, error: pErr }, { data: wData }, { data: tData }] = await Promise.all([
+    const [{ data: sData, error: sErr }, { data: pData, error: pErr }, { data: wData }, { data: tData }, { data: planData }] = await Promise.all([
       supabase.from('shift_adjust_slots')
         .select('id, target_user_id, target_date, cause, cause_leave_request_id, cause_attendance_exception_id, status, decided_by, decided_at')
         .gte('target_date', todayJstStr())
@@ -171,6 +173,8 @@ const ShiftAdjustTab: React.FC<{
       supabase.from('profiles').select('id, name, employment_type, role_title, group_names').eq('is_active', true),
       supabase.from('master_options').select('value').eq('category', 'workplace').order('sort_order'),
       supabase.from('master_options').select('value').eq('category', 'shift_report_group').order('sort_order'),
+      // 🚨 読めなくても一覧は出す（「案あり」の印が出ないだけ）
+      supabase.from('shift_adjust_saved_plans').select('slot_id'),
     ]);
     if (sErr) { setErr('調整の場を読み込めませんでした：' + sErr.message); setLoading(false); return; }
     if (pErr) { setErr('スタッフの一覧を読み込めませんでした：' + pErr.message); setLoading(false); return; }
@@ -179,6 +183,7 @@ const ShiftAdjustTab: React.FC<{
     setWorkplaces(((wData as { value: string }[] | null) ?? []).map(r => r.value));
     // 🚨 チームが読めなくても調整はできる（絞り込みが「すべて」だけになる）ので止めない
     setTeams(((tData as { value: string }[] | null) ?? []).map(r => r.value));
+    setPlanSlots(new Set(((planData as { slot_id: string }[] | null) ?? []).map(r => r.slot_id)));
     setLoading(false);
   }, []);
 
@@ -264,8 +269,13 @@ const ShiftAdjustTab: React.FC<{
                 <span style={{ fontSize: 11, color: subText, whiteSpace: 'nowrap' }}>
                   {s.cause === 'absent' ? '欠勤' : '休暇'}
                 </span>
+                {/* 案を保存してある未調整・調整中の場（2026-09-14）。🚨 新しい色は足さない */}
+                {undone && planSlots.has(s.id) && (
+                  <span style={{ marginLeft: 'auto', fontSize: 10.5, padding: '1px 7px', borderRadius: 10, whiteSpace: 'nowrap',
+                    color: subText, border: `1px solid ${border}` }}>案あり</span>
+                )}
                 <span style={{
-                  marginLeft: 'auto', fontSize: 10.5, fontWeight: 'bold', padding: '2px 8px', borderRadius: 10,
+                  marginLeft: undone && planSlots.has(s.id) ? 0 : 'auto', fontSize: 10.5, fontWeight: 'bold', padding: '2px 8px', borderRadius: 10,
                   whiteSpace: 'nowrap',
                   color: undone ? warnFg : subText,
                   background: s.status === 'pending' ? warnBg : 'transparent',
@@ -289,6 +299,16 @@ const ShiftAdjustTab: React.FC<{
 /** 入る時間帯1つ（開始・終了・校）。🚨 2026-09-14：午前は本校・午後は別の校、のように1人で複数持てる */
 interface DraftSeg { start: string; end: string; location: string }
 interface Draft { key: number; userId: string; segs: DraftSeg[] }
+/** 保存中の案（2026-09-14 ユーザー確定）。場ごとに1つ・決める権限がある人なら誰でも上書き。決定・休みの取消・日の経過で消える */
+interface SavedPlanRow {
+  slot_id: string;
+  assignments: { user_id: string; segs: DraftSeg[] }[];
+  do_attendance: boolean;
+  do_request: boolean;
+  memo: string | null;
+  saved_by: string;
+  saved_at: string;
+}
 
 const SlotDetail: React.FC<{
   slot: SlotRow;
@@ -356,6 +376,12 @@ const SlotDetail: React.FC<{
   /** 利用者がチェックを触ったか。触ったあとに設定の読み込みが終わっても上書きしない */
   const touchedAuto = React.useRef(false);
   const [confirmUndo, setConfirmUndo] = useState(false);
+  /** 保存中の案（無ければ null） */
+  const [savedPlan, setSavedPlan] = useState<SavedPlanRow | null>(null);
+  /** 保存しようとしたら、別の人が先に保存していた（誰が・いつ） */
+  const [planConflict, setPlanConflict] = useState<{ by: string | null; at: string | null } | null>(null);
+  /** 保存中の案を入力欄に入れたか（1回だけ入れる。入れたあとの手直しを上書きしない） */
+  const restoredPlan = React.useRef(false);
 
   // 決定するときのチェックの初期値（ユーザー確定）：
   //   休みの日が開始日以降なら ON／それより前、または開始日が未設定なら OFF。押せば登録・依頼はできる
@@ -403,8 +429,19 @@ const SlotDetail: React.FC<{
     setPartReqs((data as PartReqRow[] | null) ?? []);
   }, [slot.id]);
 
-  useEffect(() => { void loadComments(); void loadAssigns(); void loadPartReqs(); },
-    [loadComments, loadAssigns, loadPartReqs]);
+  // 保存中の案を読む。🚨 error を見る（読めないのに「案は保存されていません」と出すと画面が嘘をつく）
+  const loadSavedPlan = useCallback(async (): Promise<SavedPlanRow | null> => {
+    const { data, error } = await supabase.from('shift_adjust_saved_plans')
+      .select('slot_id, assignments, do_attendance, do_request, memo, saved_by, saved_at')
+      .eq('slot_id', slot.id).maybeSingle();
+    if (error) { setErr('保存中の案を読み込めませんでした：' + error.message); return null; }
+    const row = (data as SavedPlanRow | null) ?? null;
+    setSavedPlan(row);
+    return row;
+  }, [slot.id]);
+
+  useEffect(() => { void loadComments(); void loadAssigns(); void loadPartReqs(); void loadSavedPlan(); },
+    [loadComments, loadAssigns, loadPartReqs, loadSavedPlan]);
 
   // スマホ通知を登録している人。🚨 送る前に「この人は通知なし」と出すため
   //    （パート18人中6人しか登録していない。知らずに送ると、気づかれないまま待つことになる）
@@ -521,7 +558,8 @@ const SlotDetail: React.FC<{
     if (next === 'working') {
       setOkMsg('');
       if (!showCandidates) { setShowCandidates(true); if (!candLoaded) void loadCandidates(); }
-      if (drafts.length === 0) addDraft();
+      // 🚨 保存中の案があるときは空の行を作らない（下の effect が案を入力欄に入れる）
+      if (drafts.length === 0 && !savedPlan) addDraft();
     }
     if (next === 'pending') setOkMsg('未調整に戻しました。');
     return true;
@@ -551,6 +589,75 @@ const SlotDetail: React.FC<{
   /** 🚨 時間帯は最低1つ残す（0にすると決定できなくなる） */
   const removeSeg = (key: number, i: number) =>
     setDrafts(d => d.map(x => (x.key === key && x.segs.length > 1 ? { ...x, segs: x.segs.filter((_, j) => j !== i) } : x)));
+
+  // ───── 案を保存（2026-09-14 ユーザー確定）─────
+  /** 保存中の案を入力欄に入れる（出勤する人・時間帯・校・チェック・メモ） */
+  const applySavedPlan = (p: SavedPlanRow) => {
+    setDrafts((p.assignments ?? []).map(a => ({
+      key: Date.now() + Math.random(),
+      userId: a.user_id,
+      segs: (a.segs ?? []).length > 0 ? a.segs.map(s => ({ start: s.start ?? '', end: s.end ?? '', location: s.location ?? '' })) : [newSeg()],
+    })));
+    setMemo(p.memo ?? '');
+    // 🚨 案に保存したチェックを優先する（管理画面の開始日による初期値で上書きしない）
+    touchedAuto.current = true;
+    setDoAttendance(p.do_attendance);
+    setDoRequest(p.do_request);
+  };
+  // 「シフトを調整する」を選んでいる場を開いた／選んだとき、保存中の案があれば1回だけ入れる
+  useEffect(() => {
+    if (!savedPlan || status !== 'working' || restoredPlan.current) return;
+    restoredPlan.current = true;
+    applySavedPlan(savedPlan);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedPlan, status]);
+
+  /** 保存中の案の見出し「保存中の案（林 晃平・2026/9/14 18:20 保存）」 */
+  const savedPlanLabel = savedPlan
+    ? `保存中の案（${nameOf(savedPlan.saved_by) || '（名前なし）'}・${actedAtLabel(savedPlan.saved_at)} 保存）`
+    : '';
+
+  const savePlan = async (overwrite = false) => {
+    setErr(''); setOkMsg(''); setPlanConflict(null);
+    const rows = drafts.filter(d => d.userId);
+    // 🚨 途中の案なので、時間が空でも保存できる（決定のときに初めて確かめる）
+    const assignments = rows.map(d => ({ user_id: d.userId, segs: d.segs }));
+    // 相談の欄に残す文。時間は打った形のまま（"1000" などは "10:00" に直す）
+    const hhmm = (v: string) => (toDbTime(v) || v || '').slice(0, 5);
+    const summary = rows.map(d => {
+      const band = segmentsText(d.segs.map(s => ({ start: hhmm(s.start), end: hhmm(s.end), location: s.location || null })));
+      return `${nameOf(d.userId) || '（名前なし）'}${band ? ` ${band}` : ''}`;
+    }).join('／');
+    setBusyBtn(true);
+    const { data, error } = await supabase.rpc('shift_adjust_save_plan', {
+      p_slot_id: slot.id, p_assignments: assignments,
+      p_do_attendance: doAttendance, p_do_request: doRequest, p_memo: memo.trim() || null,
+      p_summary: summary,
+      // 🚨 この画面が知っている保存日時。別の人がそのあと保存していたら、上書きせずに知らせる
+      p_expected_saved_at: savedPlan?.saved_at ?? null,
+      p_overwrite: overwrite,
+    });
+    setBusyBtn(false);
+    // 🚨 rpc は 4xx でも throw しない。error と ok の両方を見る
+    if (error) { setErr('案を保存できませんでした：' + error.message); return; }
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row?.ok && row?.reason === 'conflict') {
+      setPlanConflict({ by: row.current_saved_by ?? null, at: row.current_saved_at ?? null });
+      return;
+    }
+    if (!row?.ok) { setErr(row?.reason || '案を保存できませんでした'); return; }
+    await loadSavedPlan();
+    void loadComments();
+    setOkMsg('案を保存しました。');
+  };
+
+  /** 別の人が保存した案を読み込み直す（いまの入力は捨てる） */
+  const reloadPlan = async () => {
+    setPlanConflict(null); setErr(''); setOkMsg('');
+    const p = await loadSavedPlan();
+    if (p) { applySavedPlan(p); setOkMsg('保存中の案を読み込み直しました。'); }
+    void loadComments();
+  };
 
   // 「＋ 入れる」：出勤する人に入れて、上の「出勤する人」まで戻る（2026-09-14 ユーザー確定）。
   // 🚨 入る時間は入れない（手入力）。昼から移動などがあるため（ユーザー確定）。校は今までの「＋ 出勤する人を追加」と同じ初期値
@@ -651,6 +758,8 @@ const SlotDetail: React.FC<{
     setBusyBtn(false);
     setStatus('decided');
     setDrafts([]);
+    // 決定すると保存中の案は消える（DBのトリガーが消す）
+    setSavedPlan(null);
     setOkMsg('決定しました。');
     void loadAssigns();
   };
@@ -1007,6 +1116,11 @@ const SlotDetail: React.FC<{
             </>
           ) : perms.decide && status === 'working' ? (
             <>
+              {/* 保存中の案（誰が・いつ）。🚨 新しい色は足さない */}
+              <div style={{ marginBottom: 8, padding: '6px 10px', borderRadius: 8, fontSize: 12.5, color: savedPlan ? text : subText,
+                border: `1px solid ${border}` }}>
+                {savedPlan ? savedPlanLabel : 'まだ案は保存されていません。途中までの内容は「案を保存」で残せます。'}
+              </div>
               {drafts.length === 0 && (
                 <p style={{ margin: '0 0 8px', fontSize: 12.5, color: subText }}>まだ決まっていません。</p>
               )}
@@ -1092,11 +1206,42 @@ const SlotDetail: React.FC<{
               <textarea value={memo} onChange={e => setMemo(e.target.value)} placeholder="メモ（任意）" rows={2}
                 style={{ ...sel, width: '100%', boxSizing: 'border-box', marginTop: 8, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.6 }} />
 
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12 }}>
+              {/* 別の人が先に案を保存していた（2026-09-14）。🚨 黙って上書きしない */}
+              {planConflict && (
+                <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8, background: '#fff3cd', border: '2px solid #ffc107', color: '#856404' }}>
+                  <p style={{ margin: '0 0 8px', fontSize: 12.5, lineHeight: 1.7, fontWeight: 'bold' }}>
+                    {nameOf(planConflict.by) || '別の方'}さんが{planConflict.at ? ` ${actedAtLabel(planConflict.at)} に` : ''}案を保存しています。
+                  </p>
+                  <p style={{ margin: '0 0 8px', fontSize: 12, lineHeight: 1.7 }}>
+                    読み込み直すと、いま入力している内容は消えます。上書きすると、その方の案が消えます（相談の欄には残ります）。
+                  </p>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <button type="button" onClick={() => void reloadPlan()} disabled={busyBtn} style={subBtn}>読み込み直す</button>
+                    <button type="button" onClick={() => void savePlan(true)} disabled={busyBtn} style={subBtn}>上書きして保存</button>
+                    <button type="button" onClick={() => setPlanConflict(null)} style={quietBtn}>やめる</button>
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12, flexWrap: 'wrap' }}>
+                {/* 🚨 2026-09-14 ユーザー確定：途中までの内容を「案」として保存し、誰でも続きから直して決定できる */}
+                <button onClick={() => void savePlan()} disabled={busyBtn} style={subBtn}>案を保存</button>
                 <button onClick={() => void decide()} disabled={busyBtn} style={mainBtn}>決定する</button>
                 {/* 「現行シフトで対応」への切り替えは、上の「対応の選択」に1つにまとめた（同じ操作を2か所に置かない） */}
               </div>
             </>
+          ) : savedPlan ? (
+            // 決める権限が無い人（見るだけ）にも、保存中の案を見せる（2026-09-14）
+            <div style={{ fontSize: 13, color: text }}>
+              <div style={{ fontSize: 12.5, color: subText, marginBottom: 4 }}>まだ決まっていません。{savedPlanLabel}</div>
+              {(savedPlan.assignments ?? []).map((a, i) => (
+                <div key={i} style={{ padding: '3px 0' }}>
+                  <span style={{ fontWeight: 'bold' }}>{nameOf(a.user_id) || '（名前なし）'}</span>
+                  <span style={{ marginLeft: 10, color: subText, fontSize: 12.5 }}>{segmentsText(a.segs)}</span>
+                </div>
+              ))}
+              {savedPlan.memo && <div style={{ marginTop: 4, fontSize: 12, color: subText, whiteSpace: 'pre-wrap' }}>メモ：{savedPlan.memo}</div>}
+            </div>
           ) : (
             <p style={{ margin: 0, fontSize: 12.5, color: subText }}>まだ決まっていません。</p>
           )}
