@@ -21,6 +21,7 @@ import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMi
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { describeUpdate } from '../lib/statusUpdate';
 import { insertNotification } from '../lib/notifications';
+import { segmentsText, type SegmentLike } from '../lib/segmentsText';
 import { useRoles } from '../hooks/useRoles';
 import { attrsFor, rankOf, embeddedRole, roleByName } from '../lib/roleAttrs';
 import type { RoleRow, EmbeddedRoleRow } from '../lib/roleAttrs';
@@ -598,6 +599,9 @@ const OvertimeForm: React.FC<{
     const loc = editTarget?.location ?? '';
     if (loc.includes('→')) return '移動あり';
     if (loc) return workplaces.includes(loc) ? loc : 'その他';
+    // 🚨 2026-09-14：申請の依頼（シフト調整）から開いた下書きには「A→B」が入ることがある。
+    //    そのまま入れると選択肢に無い値になり、勤務地が空に見えるので「移動あり」に直す
+    if ((draft?.location ?? '').includes('→')) return '移動あり';
     return draft?.location ?? '';
   });
   const [locationCustom, setLocationCustom] = useState(() => {
@@ -606,8 +610,10 @@ const OvertimeForm: React.FC<{
     return draft?.locationCustom ?? '';
   });
   // 勤務地変更（移動）：開始校→移動先校。effectiveLocation で「A→B」に合成する
-  const [locMoveStart, setLocMoveStart] = useState(() => { const l = editTarget?.location ?? ''; return l.includes('→') ? l.split('→')[0] : ''; });
-  const [locMoveEnd, setLocMoveEnd] = useState(() => { const l = editTarget?.location ?? ''; return l.includes('→') ? (l.split('→')[1] ?? '') : ''; });
+  // 🚨 2026-09-14：編集では登録済みの値、新規では下書きの値（申請の依頼から開いたとき）から戻す
+  const moveSrc = editTarget ? (editTarget.location ?? '') : (draft?.location ?? '');
+  const [locMoveStart, setLocMoveStart] = useState(() => (moveSrc.includes('→') ? moveSrc.split('→')[0] : ''));
+  const [locMoveEnd, setLocMoveEnd] = useState(() => (moveSrc.includes('→') ? (moveSrc.split('→')[1] ?? '') : ''));
   // 理由履歴（自分が過去に入力した理由）
   const [pastReasons, setPastReasons] = useState<string[]>([]);
   // 履歴は過去の申請から自動抽出するため、✕は「候補として今後出さない」（端末に記憶）
@@ -3036,12 +3042,14 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     memo: string | null; due_date: string | null; status: string; requester_name?: string | null;
     // 上長が口頭で相談した日（任意・空のことがある）。🚨 created_at とは別もの
     consulted_on: string | null;
+    // 入る時間と校（2026-09-14）。シフト調整の決定で作った依頼だけに入る。上長が画面から送った依頼は null
+    segments: SegmentLike[] | null;
   }
   const [appRequests, setAppRequests] = useState<MyAppRequest[]>([]);
   const [appReqErr, setAppReqErr] = useState('');
   const fetchAppRequests = useCallback(async () => {
     const { data, error } = await supabase.from('application_requests')
-      .select('id, requester_id, kind, target_dates, memo, due_date, status, consulted_on')
+      .select('id, requester_id, kind, target_dates, memo, due_date, status, consulted_on, segments')
       .eq('recipient_id', user.id)
       .eq('status', 'open')
       .order('created_at', { ascending: true });
@@ -3075,12 +3083,20 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     if (hasDraft && replaceDraftFor !== r.id) { setReplaceDraftFor(r.id); return; }
     setReplaceDraftFor(null);
     sessionStorage.setItem(SCROLL_ONCE_KEY, '1');
+    // 🚨 2026-09-14 ユーザー確定：依頼に「入る時間と校」があれば、申請の画面に入れた状態で開く（本人が確かめて直せる）。
+    //    校が時間帯で変わるとき（午前は本校・午後は西陣校）は、この画面の「移動あり」＝「最初の校→移る先の校」で入れる
+    //    （この画面の勤務地は「A→B」の1組しか持てない。3か所以上の移動は最初の2校になる）
+    const reqSegs = (r.segments ?? []).filter(s => s.start && s.end);
+    const reqLocs = reqSegs.map(s => (s.location ?? '').trim()).filter(Boolean);
+    const firstLoc = reqLocs[0] ?? '';
+    const moveTo = reqLocs.find(l => l !== firstLoc) ?? '';
     saveDraft(DRAFT_KEYS.overtime, {
-      mode: 'advance', date: first, segments: [{ start: '', end: '' }],
+      mode: 'advance', date: first,
+      segments: reqSegs.length > 0 ? reqSegs.map(s => ({ start: s.start, end: s.end })) : [{ start: '', end: '' }],
       breakManual: false, breakManualMin: '',
       // 🚨 理由は空。上長のメモは入力欄の上に出すだけにする（2026-09-10 ユーザー確定）。
       //    理由に入れると、そのまま送信されて「本人の言葉になっていない申請」になる。
-      reason: '', location: '', locationCustom: '', reviewerId: r.requester_id,
+      reason: '', location: moveTo ? `${firstLoc}→${moveTo}` : firstLoc, locationCustom: '', reviewerId: r.requester_id,
       normOverride: false, normStart: '', normEnd: '',
       // 申請したときに依頼と結び付けるため、依頼IDを持ち回す
       applicationRequestId: r.id,
@@ -4147,6 +4163,13 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                 {r.kind === 'leave' ? '休暇' : '残業・勤務変更'}について申請のお願いが届いています。
                                 {r.due_date && <><br />{`${Number(r.due_date.slice(5, 7))}/${Number(r.due_date.slice(8, 10))}（${dowLabel(r.due_date)}）`}までに申請してください。</>}
                               </p>
+                              {/* 入る時間と校（2026-09-14 ユーザー指摘「依頼が来ても時間が分からない」）。
+                                  🚨 シフト調整の決定で作った依頼だけに入る。上長が画面から送った依頼には無いので出さない */}
+                              {(r.segments ?? []).length > 0 && (
+                                <p style={{ margin: '0 0 6px', fontSize: 13, fontWeight: 'bold', color: isDark ? '#fff' : '#0d47a1' }}>
+                                  入る時間：{segmentsText(r.segments)}
+                                </p>
+                              )}
                               {r.memo && (
                                 <p style={{ margin: '0 0 8px', padding: '7px 10px', borderRadius: 6, fontSize: 12, lineHeight: 1.7, background: isDark ? '#1b2a3a' : '#fff', color: isDark ? '#dee2e6' : '#495057', whiteSpace: 'pre-wrap' }}>{r.memo}</p>
                               )}

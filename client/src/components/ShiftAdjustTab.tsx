@@ -5,6 +5,7 @@ import { teamsOf } from '../lib/staffTeam';
 import { useRoles } from '../hooks/useRoles';
 import { roleByName } from '../lib/roleAttrs';
 import { compareByPlaceRole, firstWorkplace, usualWorkplace } from '../lib/shiftAdjustSort';
+import { segmentsText } from '../lib/segmentsText';
 import { todayJstStr } from '../lib/breakCalc';
 import type { DayKind } from '../lib/breakCalc';
 import { normalShiftTimeText } from '../lib/overtimeShift';
@@ -285,7 +286,9 @@ const ShiftAdjustTab: React.FC<{
 // ───────────────────────────────────────────────────────────────
 // 調整の場（1件）
 // ───────────────────────────────────────────────────────────────
-interface Draft { key: number; userId: string; start: string; end: string; location: string }
+/** 入る時間帯1つ（開始・終了・校）。🚨 2026-09-14：午前は本校・午後は別の校、のように1人で複数持てる */
+interface DraftSeg { start: string; end: string; location: string }
+interface Draft { key: number; userId: string; segs: DraftSeg[] }
 
 const SlotDetail: React.FC<{
   slot: SlotRow;
@@ -530,15 +533,24 @@ const SlotDetail: React.FC<{
     if (await setSlotStatus('pending')) onBack();
   };
 
+  /** 時間帯の初期値（校はこの場の校。分からなければ校の一覧の先頭） */
+  const newSeg = (): DraftSeg => ({ start: '', end: '', location: where || workplaces[0] || '' });
   const addDraft = () => {
-    setDrafts(d => [...d, {
-      key: Date.now() + Math.random(), userId: '', start: '', end: '',
-      location: where || workplaces[0] || '',
-    }]);
+    setDrafts(d => [...d, { key: Date.now() + Math.random(), userId: '', segs: [newSeg()] }]);
   };
   const patchDraft = (key: number, p: Partial<Draft>) =>
     setDrafts(d => d.map(x => (x.key === key ? { ...x, ...p } : x)));
   const removeDraft = (key: number) => setDrafts(d => d.filter(x => x.key !== key));
+  /** 時間帯を1つ書き換える */
+  const patchSeg = (key: number, i: number, p: Partial<DraftSeg>) =>
+    setDrafts(d => d.map(x => (x.key === key ? { ...x, segs: x.segs.map((s, j) => (j === i ? { ...s, ...p } : s)) } : x)));
+  // 「＋ 時間帯を追加」：午前は本校・午後から別の校へ移る、など（2026-09-14 ユーザー依頼）。
+  // 🚨 時間も校も空で始める（入る時間は手入力の決まり。前の校のまま決まってしまうのを防ぐ）
+  const addSeg = (key: number) =>
+    setDrafts(d => d.map(x => (x.key === key ? { ...x, segs: [...x.segs, { start: '', end: '', location: '' }] } : x)));
+  /** 🚨 時間帯は最低1つ残す（0にすると決定できなくなる） */
+  const removeSeg = (key: number, i: number) =>
+    setDrafts(d => d.map(x => (x.key === key && x.segs.length > 1 ? { ...x, segs: x.segs.filter((_, j) => j !== i) } : x)));
 
   // 「＋ 入れる」：出勤する人に入れて、上の「出勤する人」まで戻る（2026-09-14 ユーザー確定）。
   // 🚨 入る時間は入れない（手入力）。昼から移動などがあるため（ユーザー確定）。校は今までの「＋ 出勤する人を追加」と同じ初期値
@@ -548,7 +560,7 @@ const SlotDetail: React.FC<{
       if (d.some(x => x.userId === uid)) return d;
       const empty = d.find(x => !x.userId);
       if (empty) return d.map(x => (x.key === empty.key ? { ...x, userId: uid } : x));
-      return [...d, { key: Date.now() + Math.random(), userId: uid, start: '', end: '', location: where || workplaces[0] || '' }];
+      return [...d, { key: Date.now() + Math.random(), userId: uid, segs: [newSeg()] }];
     });
     setFlashUid(uid);
     window.setTimeout(() => setFlashUid(v => (v === uid ? null : v)), 2500);
@@ -563,18 +575,31 @@ const SlotDetail: React.FC<{
     if (drafts.length === 0) { setErr('出勤する人を選んでください。'); return; }
     for (const d of drafts) {
       if (!d.userId) { setErr('出勤する人を選んでください。'); return; }
-      const s = toDbTime(d.start); const e = toDbTime(d.end);
-      if (!s || !e) { setErr('開始時刻と終了時刻を入力してください。'); return; }
-      if (e <= s) { setErr('終了時刻は開始時刻より後にしてください。'); return; }
+      const who = nameOf(d.userId) || 'この方';
+      let prevEnd = '';
+      for (const sg of d.segs) {
+        const s = toDbTime(sg.start); const e = toDbTime(sg.end);
+        if (!s || !e) { setErr(`${who}さんの開始時刻と終了時刻を入力してください。`); return; }
+        if (e <= s) { setErr(`${who}さんの終了時刻は開始時刻より後にしてください。`); return; }
+        // 🚨 時間帯を複数入れたとき：上から時刻の順に並び、重ならないこと。
+        //    校も時間帯ごとに必ず選ぶ（どこへ移るのかが相手に伝わらなくなるため）
+        if (prevEnd && s < prevEnd) { setErr(`${who}さんの時間帯が重なっています。上の時間帯の終了より後から始めてください。`); return; }
+        if (d.segs.length > 1 && !sg.location) { setErr(`${who}さんの時間帯ごとに校を選んでください。`); return; }
+        prevEnd = e;
+      }
     }
     if (new Set(drafts.map(d => d.userId)).size !== drafts.length) {
       setErr('同じ方が2回選ばれています。'); return;
     }
     setBusyBtn(true);
+    /** DBへ送る形に直した時間帯（"HH:MM"）。通知の文もこれから作る */
+    const segsOf = (d: Draft) => d.segs.map(sg => ({
+      start: (toDbTime(sg.start) || '').slice(0, 5), end: (toDbTime(sg.end) || '').slice(0, 5), location: sg.location || null,
+    }));
     const payload = drafts.map(d => ({
       user_id: d.userId,
       kind: kindOf(d.userId),
-      segments: [{ start: (toDbTime(d.start) || '').slice(0, 5), end: (toDbTime(d.end) || '').slice(0, 5), location: d.location || null }],
+      segments: segsOf(d),
     }));
     const { data, error } = await supabase.rpc('shift_adjust_decide', {
       p_slot_id: slot.id, p_assignments: payload,
@@ -589,8 +614,8 @@ const SlotDetail: React.FC<{
     // 🚨 2026-09-14 ユーザー確定：2行目に「入る時間と校」を入れる。
     //    それまでは日付とメモしか届かず、相手に時間が伝わっていなかった（依頼の記録にも時間の欄が無い）。
     //    スマホの通知の文は push-dispatch の決まった文（申請の依頼が届いています）のままで、2行目は出ない
-    const bandOf = (d: Draft): string =>
-      `${(toDbTime(d.start) || '').slice(0, 5)}〜${(toDbTime(d.end) || '').slice(0, 5)}${d.location ? ` ${d.location}` : ''}`;
+    // 🚨 文は lib/segmentsText.ts の1か所で作る（時間帯が複数なら「 ＋ 」でつなぐ）
+    const bandOf = (d: Draft): string => segmentsText(segsOf(d));
     const memoText = memo.trim();
     const reqIds: string[] = row.request_ids ?? [];
     if (reqIds.length > 0) {
@@ -940,8 +965,8 @@ const SlotDetail: React.FC<{
                 <div key={a.id} style={{ padding: '6px 0', fontSize: 13.5, color: text }}>
                   <span style={{ fontWeight: 'bold' }}>{nameOf(a.user_id) || '（名前なし）'}</span>
                   <span style={{ marginLeft: 10, color: subText, fontSize: 12.5 }}>
-                    {(a.segments ?? []).map(s => `${s.start}〜${s.end}`).join(' ＋ ')}
-                    {a.segments?.[0]?.location ? ` / ${a.segments[0].location}` : ''}
+                    {/* 🚨 時間帯ごとに校を出す（以前は最初の校だけで、午後に移る先が見えなかった） */}
+                    {segmentsText(a.segments)}
                   </span>
                   <span style={{ marginLeft: 10, color: subText, fontSize: 11.5 }}>
                     {a.kind === 'attendance'
@@ -1000,16 +1025,25 @@ const SlotDetail: React.FC<{
                     {d.userId && candLoaded && !candErr && (
                       <div style={shiftBand}>この日のシフト：{dayShiftOf(d.userId)}</div>
                     )}
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
-                      <span style={{ fontSize: 12, color: subText }}>入る時間</span>
-                      <TimeInput value={d.start} onChange={v => patchDraft(d.key, { start: v })} isDark={isDark} ariaLabel="開始時刻" />
-                      <span style={{ color: subText }}>〜</span>
-                      <TimeInput value={d.end} onChange={v => patchDraft(d.key, { end: v })} isDark={isDark} ariaLabel="終了時刻" />
-                      <select value={d.location} onChange={e => patchDraft(d.key, { location: e.target.value })} style={sel}>
-                        <option value="">校を選択</option>
-                        {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
-                      </select>
-                    </div>
+                    {/* 入る時間帯。🚨 2026-09-14：1人で複数持てる（午前は本校・午後から別の校へ移る、など） */}
+                    {d.segs.map((sg, i) => (
+                      <div key={i} style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
+                        <span style={{ fontSize: 12, color: subText }}>{d.segs.length > 1 ? `入る時間${i + 1}` : '入る時間'}</span>
+                        <TimeInput value={sg.start} onChange={v => patchSeg(d.key, i, { start: v })} isDark={isDark} ariaLabel="開始時刻" />
+                        <span style={{ color: subText }}>〜</span>
+                        <TimeInput value={sg.end} onChange={v => patchSeg(d.key, i, { end: v })} isDark={isDark} ariaLabel="終了時刻" />
+                        <select value={sg.location} onChange={e => patchSeg(d.key, i, { location: e.target.value })} style={sel}>
+                          <option value="">校を選択</option>
+                          {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+                        </select>
+                        {d.segs.length > 1 && (
+                          <button type="button" onClick={() => removeSeg(d.key, i)} style={{ ...quietBtn, marginLeft: 0 }}>この時間帯を削除</button>
+                        )}
+                      </div>
+                    ))}
+                    <button type="button" onClick={() => addSeg(d.key)} style={{ ...quietBtn, marginLeft: 0, marginTop: 4 }}>
+                      ＋ 時間帯を追加（午後から別の校へ移る場合など）
+                    </button>
                     {k && (
                       <div style={{ fontSize: 11.5, color: subText, marginTop: 4 }}>
                         {k === 'attendance' ? '勤怠に休日出勤として登録します。' : '残業申請を依頼します。'}
