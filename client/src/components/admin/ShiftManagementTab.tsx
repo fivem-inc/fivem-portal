@@ -15,6 +15,10 @@ import {
 } from '../../lib/shiftRosterApi';
 import { buildRosterPrintHtml, openRosterPrint, type PrintPerson } from '../../lib/shiftRosterPrint';
 import ShiftExcelLoader, { type LoadedPerson } from './ShiftExcelLoader';
+import StudySessionsPanel from './StudySessionsPanel';
+import { shortNameMap } from '../../lib/staffName';
+import { dayIssue, studyLabel, versionsOnDate, type StudyVersion } from '../../lib/studySessions';
+import { loadStudyData, type StudyData } from '../../lib/studySessionsApi';
 
 // シフト管理（2026-09-15）。設計・決めたことは docs/計画-管理画面の開放.md の 5-1〜5-3。
 // ・表は月〜日。名前を押すと、その人の月〜日（祝・出・過去の履歴）が表の中に開く（C）
@@ -34,7 +38,7 @@ const ALL_DAYS: RosterDayKind[] = [...ROSTER_WEEK, ...ROSTER_EXTRA];
 const COLOR_KEYS = Object.keys(AREA_COLORS);
 
 const ShiftManagementTab: React.FC = () => {
-  const { isDarkMode } = useAdminPanel();
+  const { isDarkMode, isAdminUser } = useAdminPanel();
   const roles = useRoles();
 
   const text = isDarkMode ? '#f8f9fa' : '#212529';
@@ -73,20 +77,37 @@ const ShiftManagementTab: React.FC = () => {
   const [areasOpen, setAreasOpen] = useState(false);
   const [areaErr, setAreaErr] = useState('');
   const [newArea, setNewArea] = useState({ name: '', short_name: '', color: 'gray' });
+  const [view, setView] = useState<'roster' | 'study'>('roster');
+  const [study, setStudy] = useState<StudyData | null>(null);
+  const [studyErr, setStudyErr] = useState('');
+  const [pdfStudyWarn, setPdfStudyWarn] = useState(false);
+
+  // 勉強会（③）：勤務表の欄・保存の確認・PDF に使う。🚨 読めなくても勤務表は使えるようにする（理由だけ出す）
+  const loadStudy = useCallback(async () => {
+    const { data: s, error } = await loadStudyData(prevDate(applyFrom));
+    setStudyErr(error ? `勉強会を読み込めませんでした（勤務表の欄に勉強会が出ていません）：${error}` : '');
+    if (s) setStudy(s);
+  }, [applyFrom]);
 
   // 読み込み：適用開始日の前日（赤字の比べ先）に効いている行と、それより先の行
   const load = useCallback(async (keepDrafts: boolean) => {
     setLoading(true); setLoadErr('');
-    const { data: d, error } = await loadRosterData(prevDate(applyFrom));
+    const [{ data: d, error }] = await Promise.all([loadRosterData(prevDate(applyFrom)), loadStudy()]);
     if (error || !d) { setLoadErr(error ?? '読み込めませんでした'); setLoading(false); return; }
     const t = await loadRosterToken(d.staff.map(s => s.id));
     if (t.error || t.token == null) { setLoadErr(`保存の準備ができませんでした：${t.error ?? ''}`); setLoading(false); return; }
     setData(d); setToken(t.token); setStale(false);
     if (!keepDrafts) setDrafts({});
     setLoading(false);
-  }, [applyFrom]);
+  }, [applyFrom, loadStudy]);
 
   useEffect(() => { void load(true); }, [load]);
+
+  const shortNames = useMemo(() => shortNameMap(study?.staff ?? []), [study]);
+  /** その人・その曜日に date で効いている勉強会 */
+  const studiesFor = (userId: string, k: RosterDayKind, date: string): StudyVersion[] =>
+    versionsOnDate(study?.versions ?? [], date).filter(v => v.day_kind === k && v.members.includes(userId))
+      .sort((a, b) => a.start_time.localeCompare(b.start_time));
 
   const rowsByUser = useMemo(() => {
     const m = new Map<string, RosterPatternRow[]>();
@@ -188,6 +209,15 @@ const ShiftManagementTab: React.FC = () => {
     return next ? `${data?.staff.find(s => s.id === id)?.name}さん（${ROSTER_DAY_LABEL[k]}）は ${Number(next.slice(5, 7))}/${Number(next.slice(8, 10))} からのシフトがあるので、${Number(prevDate(next).slice(5, 7))}/${Number(prevDate(next).slice(8, 10))} まで` : null;
   }).filter((x): x is string => !!x));
   const isPast = applyFrom < todayJstStr();
+  // 保存すると時間外になる勉強会（今は問題なく、直したあとに ⚠️ になるもの）。判定は lib/studySessions.ts の dayIssue 1か所
+  const studyWarnings = draftIds.flatMap(id => draftChangedDays(id).flatMap(k => {
+    if (!ROSTER_WEEK.includes(k)) return [];
+    const name = data?.staff.find(s => s.id === id)?.name ?? '';
+    return (study?.versions ?? [])
+      .filter(v => v.day_kind === k && v.members.includes(id) && (v.valid_to === null || v.valid_to >= applyFrom))
+      .filter(v => dayIssue(v, drafts[id].days[k]!) && !dayIssue(v, savedDay(id, k, applyFrom)))
+      .map(v => `${name}さん（${ROSTER_DAY_LABEL[k]}）：${studyLabel(v, shortNames)}`);
+  }));
 
   const doSave = async () => {
     if (!data || token == null) return;
@@ -225,9 +255,11 @@ const ShiftManagementTab: React.FC = () => {
       const days: Partial<Record<RosterDayKind, RosterDay>> = {};
       for (const k of ROSTER_WEEK) days[k] = shownDay(s.id, k);
       const mainId = mainAreaOf(s.id);
-      return { name: s.name, headNote: noteOf(s.id), mainAreaId: mainId, mainAreaName: areas.find(a => a.id === mainId)?.name ?? '', days, changedDays: redDays(s.id) };
+      const studies: PrintPerson['studies'] = {};
+      for (const k of ROSTER_WEEK) studies[k] = studiesFor(s.id, k, applyFrom).map(v => ({ text: studyLabel(v, shortNames), warn: !!dayIssue(v, days[k]!) }));
+      return { name: s.name, headNote: noteOf(s.id), mainAreaId: mainId, mainAreaName: areas.find(a => a.id === mainId)?.name ?? '', days, changedDays: redDays(s.id), studies };
     });
-    setPdfErr(openRosterPrint(buildRosterPrintHtml({ layout: pdfLayout, applyFrom, people, areas, redChanges: pdfRed })) ?? '');
+    setPdfErr(openRosterPrint(buildRosterPrintHtml({ layout: pdfLayout, applyFrom, people, areas, redChanges: pdfRed, studyWarn: pdfStudyWarn })) ?? '');
   };
 
   // ─── 部門の一覧 ───
@@ -271,6 +303,15 @@ const ShiftManagementTab: React.FC = () => {
           </div>
         )}
         {day.note && <div style={{ fontSize: 10.5, color: subText }}>{day.note}</div>}
+        {ROSTER_WEEK.includes(k) && studiesFor(userId, k, applyFrom).map(v => {
+          const warn = !!dayIssue(v, day);
+          return (
+            <div key={v.id} style={{ fontSize: 10.5, color: warn ? red : (isDarkMode ? '#8fd19e' : '#1b5e20'), whiteSpace: 'nowrap' }}
+              title={warn ? '勉強会の時間に勤務していない・校が違うなど（勉強会のタブで確かめられます）' : '勉強会'}>
+              {warn ? '⚠️' : ''}{studyLabel(v, shortNames)}
+            </div>
+          );
+        })}
         {f.error && <div style={{ fontSize: 10.5, color: red }}>⚠️ 入力を確かめてください</div>}
         {isRed && <div style={{ fontSize: 10, color: subText }}>前：{baseText}</div>}
       </div>
@@ -402,12 +443,35 @@ const ShiftManagementTab: React.FC = () => {
 
   const hiddenDraftNames = draftIds.filter(id => !visible.some(s => s.id === id)).map(id => data.staff.find(s => s.id === id)?.name ?? '');
 
-  return (
-    <div>
+  const header = (
+    <>
       <h3 style={{ margin: '0 0 4px', fontSize: 16, color: text }}>📑 シフト管理</h3>
       <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-        <span style={{ ...toggle(true), cursor: 'default' }}>勤務表</span>
+        <button type="button" onClick={() => { setView('roster'); void loadStudy(); }} style={toggle(view === 'roster')}>勤務表</button>
+        <button type="button" onClick={() => setView('study')} style={toggle(view === 'study')}>勉強会</button>
       </div>
+    </>
+  );
+
+  if (view === 'study') {
+    return (
+      <div>
+        {header}
+        {/* 🚨 勤務表の未保存の変更は、勉強会の ⚠️ とプレビューに入らない（保存済みのシフトで判定する） */}
+        {draftIds.length > 0 && (
+          <div style={{ padding: '8px 12px', borderRadius: 8, background: '#fff3cd', border: '1px solid #ffc107', color: '#856404', fontSize: 13, marginBottom: 10 }}>
+            勤務表に未保存の変更が{draftIds.length}人あります（変更は残っています）。勉強会の⚠️と入力のプレビューは、保存済みのシフトで判定します。
+          </div>
+        )}
+        <StudySessionsPanel isDarkMode={isDarkMode} isAdminUser={isAdminUser} />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {header}
+      {studyErr && <div style={{ fontSize: 12.5, color: red, marginBottom: 8 }}>{studyErr}</div>}
       <p style={{ margin: '0 0 10px', fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
         名前を押すと、その人の月〜日を直せます。赤字は、適用開始日の前日に効いているシフトから変わったマスです。<br />
         保存すると、変えた人・曜日だけが適用開始日から切り替わります。先に登録してあるシフトは消えません。
@@ -472,6 +536,12 @@ const ShiftManagementTab: React.FC = () => {
           <div>・変更なし {data.staff.length - draftIds.length}人 → そのまま（表示していない人も含めて確かめます）</div>
           {hiddenDraftNames.length > 0 && <div style={{ color: '#e65100' }}>・表示していない人の変更も保存されます（{hiddenDraftNames.join('・')}）</div>}
           {keptFuture.map(t => <div key={t}>・{t}</div>)}
+          {studyWarnings.length > 0 && (
+            <div style={{ padding: '6px 10px', borderRadius: 8, background: '#fff3cd', color: '#856404', margin: '6px 0' }}>
+              ⚠️ 勉強会{studyWarnings.length}件が時間外になります（保存はできます。勉強会のタブで直せます）
+              {studyWarnings.map(t => <div key={t}>・{t}</div>)}
+            </div>
+          )}
           {errors.length > 0 && (
             <div style={{ color: red, marginTop: 6 }}>
               入力を確かめてください（保存できません）
@@ -501,6 +571,9 @@ const ShiftManagementTab: React.FC = () => {
             <button type="button" onClick={() => setPdfWho('changed')} style={toggle(pdfWho === 'changed')}>変更があった人</button>
             <label style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 8 }}>
               <input type="checkbox" checked={pdfRed} onChange={e => setPdfRed(e.target.checked)} />変わった所を赤字にする
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 8 }}>
+              <input type="checkbox" checked={pdfStudyWarn} onChange={e => setPdfStudyWarn(e.target.checked)} />勉強会の⚠️印も刷る
             </label>
           </div>
           <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>

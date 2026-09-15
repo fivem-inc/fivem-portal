@@ -46,6 +46,8 @@ import type { CorrectionRequestRow } from '../lib/correctionRequest';
 import { toDbTime } from '../lib/timeInput';
 import TimeInput from '../components/TimeInput';
 import { logFail } from '../lib/logFail';
+import { loadMyStudySessions, type MyStudyRow } from '../lib/studySessionsApi';
+import { ROSTER_DAY_LABEL, minText, toMin } from '../lib/shiftRoster';
 
 /** 「申請の依頼」からフォームを開いた**直後の1回だけ**、入力欄まで画面を動かすための印。
  *  🚨 下書き（端末に残る）の applicationRequestId だけを条件にすると、送らずに離れたあと
@@ -4357,8 +4359,52 @@ const MyPatternToggle: React.FC<{ isDark: boolean; patterns: PatternRow[] }> = (
               <p style={{ margin: '6px 0 0', fontSize: 11.5, color: subText }}>内容が実際と違う場合は管理者にご連絡ください</p>
             </>
           )}
+          <MyStudyList isDark={isDark} />
         </div>
       )}
+    </div>
+  );
+};
+
+// 自分の勉強会（③・2026-09-15）。管理画面の「参加する本人に見せる」がオフのときは何も返らないので、何も出さない。
+// 🚨 開いたときに初めて読む（MyPatternToggle を開かない人のぶんまで通信しない）
+const MyStudyList: React.FC<{ isDark: boolean }> = ({ isDark }) => {
+  const [rows, setRows] = useState<MyStudyRow[] | null>(null);
+  const [err, setErr] = useState('');
+  const text = isDark ? '#f8f9fa' : '#212529';
+  const subText = isDark ? '#adb5bd' : '#6c757d';
+  const borderColor = isDark ? '#495057' : '#dee2e6';
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const r = await loadMyStudySessions(todayJstStr());
+      if (cancelled) return;
+      setErr(r.error ?? '');
+      setRows(r.rows);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  if (err) return <p style={{ margin: '8px 0 0', fontSize: 11.5, color: subText }}>{err}</p>;
+  if (!rows || rows.length === 0) return null;
+  const order = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+  const sorted = [...rows].sort((a, b) => order.indexOf(a.day_kind) - order.indexOf(b.day_kind) || a.start_time.localeCompare(b.start_time));
+  return (
+    <div style={{ borderTop: `1px solid ${borderColor}`, marginTop: 8, paddingTop: 6 }}>
+      <p style={{ margin: '0 0 4px', fontSize: 12.5, fontWeight: 'bold', color: text }}>勉強会</p>
+      {sorted.map(r => {
+        const s = toMin(r.start_time) ?? 0;
+        return (
+          <div key={`${r.session_id}-${r.valid_from}`} style={{ fontSize: 12.5, color: text, padding: '3px 0' }}>
+            <span style={{ color: subText, fontWeight: 'bold', marginRight: 8 }}>{ROSTER_DAY_LABEL[r.day_kind]}</span>
+            {minText(s)}〜{minText(s + r.duration_minutes)}
+            {r.location ? `\u3000${r.location}${r.floor ? ` ${r.floor}` : ''}` : ''}
+            <span style={{ display: 'block', fontSize: 11.5, color: subText }}>
+              {r.member_names.join('・')}{r.valid_to ? `（${Number(r.valid_to.slice(5, 7))}/${Number(r.valid_to.slice(8, 10))}まで）` : ''}
+              {r.memo ? `\u3000内容：${r.memo}` : ''}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 };

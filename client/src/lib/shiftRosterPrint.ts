@@ -5,7 +5,7 @@
 // B：週の一覧（A4横・メインの部門ごと）
 
 import {
-  AREA_COLORS, ROSTER_DAY_LABEL, ROSTER_WEEK, deriveFields, mainBand, minText, placeSteps, timeText,
+  AREA_COLORS, ROSTER_DAY_LABEL, ROSTER_WEEK, deriveFields, mainBand, minText, placeSteps, shortSchool, timeText,
   type RosterDay, type RosterDayKind, type WorkArea,
 } from './shiftRoster';
 
@@ -17,6 +17,8 @@ export interface PrintPerson {
   days: Partial<Record<RosterDayKind, RosterDay>>;
   /** 前の版から変わった曜日（赤字にする） */
   changedDays: RosterDayKind[];
+  /** 勉強会の欄（「12:30(30)濱口・馬場」）。warn＝勤務時間外などの ⚠️ */
+  studies: Partial<Record<RosterDayKind, { text: string; warn: boolean }[]>>;
 }
 
 export interface PrintOptions {
@@ -25,6 +27,12 @@ export interface PrintOptions {
   people: PrintPerson[];    // 並べたい順（メインの部門 → 役職順）
   areas: WorkArea[];
   redChanges: boolean;
+  /** 勉強会の ⚠️ 印も刷る（初期は刷らない） */
+  studyWarn: boolean;
+}
+
+function studyLines(p: PrintPerson, k: RosterDayKind, o: PrintOptions): string {
+  return (p.studies[k] ?? []).map(s => `<div class="stl">${o.studyWarn && s.warn ? '⚠️' : ''}${esc(s.text)}</div>`).join('');
 }
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -57,8 +65,10 @@ function blockA(p: PrintPerson, o: PrintOptions): string {
     const day = p.days[k];
     const f = day ? deriveFields(day.segments) : null;
     const red = o.redChanges && p.changedDays.includes(k) ? ' red' : '';
+    // 🚨 掃除の欄は④で入れる（いまは空欄）
+    const tail = `<td class="cl"></td><td class="st">${studyLines(p, k, o)}</td>`;
     if (!day || !f || f.bands.length === 0) {
-      return `<tr class="off"><td class="dk">${ROSTER_DAY_LABEL[k]}</td><td></td><td></td><td></td><td></td><td></td><td class="memo${red}">${esc(day?.note ?? '')}</td></tr>`;
+      return `<tr class="off"><td class="dk">${ROSTER_DAY_LABEL[k]}</td><td></td><td></td><td></td><td></td><td></td><td class="memo${red}">${esc(day?.note ?? '')}</td>${tail}</tr>`;
     }
     total += f.laborMinutes;
     const span = f.bands.reduce((s, b) => s + (b.e - b.s), 0);
@@ -71,11 +81,11 @@ function blockA(p: PrintPerson, o: PrintOptions): string {
       + `<td class="t${red}">${minText(main.s)}</td>`
       + `<td class="t${red}">${minText(main.e)}</td>`
       + `<td class="t">${minText(span)}</td><td class="t">${minText(f.breakMinutes)}</td><td class="t">${minText(f.laborMinutes)}</td>`
-      + `<td class="memo${red}">${band2}${placeLine(day, o.areas, p.mainAreaId)}${day.note ? `<div class="note">${esc(day.note)}</div>` : ''}</td></tr>`;
+      + `<td class="memo${red}">${band2}${placeLine(day, o.areas, p.mainAreaId)}${day.note ? `<div class="note">${esc(day.note)}</div>` : ''}</td>${tail}</tr>`;
   }).join('');
   return `<div class="block"><div class="bh"><b>${esc(p.name)}</b><span class="hn">${esc(p.headNote)}</span></div>`
-    + `<table><thead><tr><th>曜日</th><th>出勤</th><th>退勤</th><th>勤務時間</th><th>休憩</th><th>労働時間</th><th class="memoh">校・部門・書き添え</th></tr></thead>`
-    + `<tbody>${rows}<tr class="sum"><td colspan="5" class="r">合計</td><td class="t"><b>${minText(total)}</b></td><td></td></tr></tbody></table></div>`;
+    + `<table><thead><tr><th>曜日</th><th>出勤</th><th>退勤</th><th>勤務時間</th><th>休憩</th><th>労働時間</th><th class="memoh">校・部門・書き添え</th><th class="cl">掃除</th><th class="st">勉強会</th></tr></thead>`
+    + `<tbody>${rows}<tr class="sum"><td colspan="5" class="r">合計</td><td class="t"><b>${minText(total)}</b></td><td></td><td></td><td></td></tr></tbody></table></div>`;
 }
 
 function layoutA(o: PrintOptions): string {
@@ -103,12 +113,12 @@ function layoutB(o: PrintOptions): string {
         const day = p.days[k];
         const f = day ? deriveFields(day.segments) : null;
         const red = o.redChanges && p.changedDays.includes(k) ? ' red' : '';
-        if (!day || !f || f.bands.length === 0) return `<td class="off${red}">休${day?.note ? `<div class="note">${esc(day.note)}</div>` : ''}</td>`;
+        if (!day || !f || f.bands.length === 0) return `<td class="off${red}">休${day?.note ? `<div class="note">${esc(day.note)}</div>` : ''}${studyLines(p, k, o)}</td>`;
         total += f.laborMinutes;
         const times = f.bands.map(b => `${minText(b.s)}-${minText(b.e)}`).join('<br>');
         const places = placeSteps(day, o.areas, p.mainAreaId)
-          .map(s => chip(o.areas, s.area?.id, `${s.school.replace('四条本校', '本校').replace(/校$/, '')}${s.area ? `(${s.area.short_name})` : ''}`)).join('→');
-        return `<td class="${red.trim()}"><div class="t">${times}</div>${places}${day.note ? `<div class="note">${esc(day.note)}</div>` : ''}</td>`;
+          .map(s => chip(o.areas, s.area?.id, `${shortSchool(s.school)}${s.area ? `(${s.area.short_name})` : ''}`)).join('→');
+        return `<td class="${red.trim()}"><div class="t">${times}</div>${places}${day.note ? `<div class="note">${esc(day.note)}</div>` : ''}${studyLines(p, k, o)}</td>`;
       }).join('');
       body += `<tr><td class="nm">${esc(p.name)}${p.headNote ? `<div class="note">${esc(p.headNote)}</div>` : ''}</td>${cells}<td class="t">${minText(total)}</td></tr>`;
     }
@@ -136,7 +146,10 @@ export function buildRosterPrintHtml(o: PrintOptions): string {
     .t { text-align: center; white-space: nowrap; }
     .r { text-align: right; }
     .memo { font-size: 8px; }
-    .memoh { width: 40%; }
+    .memoh { width: 30%; }
+    .cl { width: 9%; }
+    .st { width: 17%; font-size: 7.5px; }
+    .stl { font-size: 7.5px; white-space: nowrap; }
     .sub { font-size: 8px; color: #333; }
     .note { font-size: 7.5px; color: #333; }
     .off td, td.off { color: #999; }
