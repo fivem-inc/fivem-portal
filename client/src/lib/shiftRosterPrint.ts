@@ -19,6 +19,8 @@ export interface PrintPerson {
   changedDays: RosterDayKind[];
   /** 勉強会の欄（「12:30(30)濱口・馬場」）。warn＝勤務時間外などの ⚠️ */
   studies: Partial<Record<RosterDayKind, { text: string; warn: boolean }[]>>;
+  /** 掃除の欄（「9:30 4Fトイレ」・④ 掃除担当表から） */
+  cleaning: Partial<Record<RosterDayKind, string[]>>;
 }
 
 export interface PrintOptions {
@@ -29,6 +31,10 @@ export interface PrintOptions {
   redChanges: boolean;
   /** 勉強会の ⚠️ 印も刷る（初期は刷らない） */
   studyWarn: boolean;
+}
+
+function cleaningLines(p: PrintPerson, k: RosterDayKind): string {
+  return (p.cleaning[k] ?? []).map(t => `<div class="stl">${esc(t)}</div>`).join('');
 }
 
 function studyLines(p: PrintPerson, k: RosterDayKind, o: PrintOptions): string {
@@ -65,8 +71,7 @@ function blockA(p: PrintPerson, o: PrintOptions): string {
     const day = p.days[k];
     const f = day ? deriveFields(day.segments) : null;
     const red = o.redChanges && p.changedDays.includes(k) ? ' red' : '';
-    // 🚨 掃除の欄は④で入れる（いまは空欄）
-    const tail = `<td class="cl"></td><td class="st">${studyLines(p, k, o)}</td>`;
+    const tail = `<td class="cl">${cleaningLines(p, k)}</td><td class="st">${studyLines(p, k, o)}</td>`;
     if (!day || !f || f.bands.length === 0) {
       return `<tr class="off"><td class="dk">${ROSTER_DAY_LABEL[k]}</td><td></td><td></td><td></td><td></td><td></td><td class="memo${red}">${esc(day?.note ?? '')}</td>${tail}</tr>`;
     }
@@ -113,12 +118,12 @@ function layoutB(o: PrintOptions): string {
         const day = p.days[k];
         const f = day ? deriveFields(day.segments) : null;
         const red = o.redChanges && p.changedDays.includes(k) ? ' red' : '';
-        if (!day || !f || f.bands.length === 0) return `<td class="off${red}">休${day?.note ? `<div class="note">${esc(day.note)}</div>` : ''}${studyLines(p, k, o)}</td>`;
+        if (!day || !f || f.bands.length === 0) return `<td class="off${red}">休${day?.note ? `<div class="note">${esc(day.note)}</div>` : ''}${cleaningLines(p, k)}${studyLines(p, k, o)}</td>`;
         total += f.laborMinutes;
         const times = f.bands.map(b => `${minText(b.s)}-${minText(b.e)}`).join('<br>');
         const places = placeSteps(day, o.areas, p.mainAreaId)
           .map(s => chip(o.areas, s.area?.id, `${shortSchool(s.school)}${s.area ? `(${s.area.short_name})` : ''}`)).join('→');
-        return `<td class="${red.trim()}"><div class="t">${times}</div>${places}${day.note ? `<div class="note">${esc(day.note)}</div>` : ''}${studyLines(p, k, o)}</td>`;
+        return `<td class="${red.trim()}"><div class="t">${times}</div>${places}${day.note ? `<div class="note">${esc(day.note)}</div>` : ''}${cleaningLines(p, k)}${studyLines(p, k, o)}</td>`;
       }).join('');
       body += `<tr><td class="nm">${esc(p.name)}${p.headNote ? `<div class="note">${esc(p.headNote)}</div>` : ''}</td>${cells}<td class="t">${minText(total)}</td></tr>`;
     }
@@ -146,8 +151,8 @@ export function buildRosterPrintHtml(o: PrintOptions): string {
     .t { text-align: center; white-space: nowrap; }
     .r { text-align: right; }
     .memo { font-size: 8px; }
-    .memoh { width: 30%; }
-    .cl { width: 9%; }
+    .memoh { width: 24%; }
+    .cl { width: 15%; font-size: 7.5px; }
     .st { width: 17%; font-size: 7.5px; }
     .stl { font-size: 7.5px; white-space: nowrap; }
     .sub { font-size: 8px; color: #333; }

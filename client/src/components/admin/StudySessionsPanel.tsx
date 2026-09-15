@@ -12,6 +12,7 @@ import {
 import {
   ackStudyIssue, loadStudyData, loadStudyToken, saveStudy, setStudyShowSelf, type StudyData,
 } from '../../lib/studySessionsApi';
+import { loadDisplayNames } from '../../lib/cleaningRosterApi';
 
 // ③ 勉強会（2026-09-15）。設計・決めたことは docs/計画-管理画面の開放.md の 5-5・5-6。
 // ・毎週の定例。修正は「いつから」で版を足す／終わらせるときは先の変更も取り消す
@@ -68,23 +69,24 @@ const StudySessionsPanel: React.FC<{ isDarkMode: boolean; isAdminUser: boolean }
   const [err, setErr] = useState('');
   const [stale, setStale] = useState(false);
   const [showSelfConfirm, setShowSelfConfirm] = useState(false);
+  const [labels, setLabels] = useState<Map<string, string>>(new Map());
 
   const earliest = [baseDate, editor?.applyFrom ?? baseDate, ending?.date ?? baseDate].sort()[0];
 
   const load = useCallback(async (since: string) => {
     setLoading(true); setLoadErr('');
-    const [s, r, t] = await Promise.all([loadStudyData(since), loadRosterData(since), loadStudyToken()]);
+    const [s, r, t, dn] = await Promise.all([loadStudyData(since), loadRosterData(since), loadStudyToken(), loadDisplayNames()]);
     if (s.error || !s.data) { setLoadErr(s.error ?? '読み込めませんでした'); setLoading(false); return; }
     if (r.error || !r.data) { setLoadErr(r.error ?? '週のシフトを読み込めませんでした'); setLoading(false); return; }
     if (t.error || t.token == null) { setLoadErr(`保存の準備ができませんでした：${t.error ?? ''}`); setLoading(false); return; }
-    setData(s.data); setRosterRows(r.data.patterns); setWorkplaces(r.data.workplaces); setToken(t.token); setRosterSince(since); setStale(false);
+    setLabels(dn.labels); setData(s.data); setRosterRows(r.data.patterns); setWorkplaces(r.data.workplaces); setToken(t.token); setRosterSince(since); setStale(false);
     setLoading(false);
   }, []);
 
   useEffect(() => { void load(earliest); }, [load, earliest]);
 
   const fullNames = useMemo(() => new Map((data?.staff ?? []).map(s => [s.id, fullName(s.name)])), [data]);
-  const shortNames = useMemo(() => shortNameMap(data?.staff ?? []), [data]);
+  const shortNames = useMemo(() => shortNameMap(data?.staff ?? [], labels), [data, labels]);
   const inactive = useMemo(() => new Set((data?.staff ?? []).filter(s => !s.is_active).map(s => s.id)), [data]);
   const rowsByUser = useMemo(() => {
     const m = new Map<string, RosterPatternRow[]>();

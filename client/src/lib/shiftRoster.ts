@@ -239,6 +239,62 @@ export function rowOnDate<T extends Pick<PatternRowLike, 'valid_from' | 'valid_t
 }
 
 /** "2026-10-01" の前日 */
+export type ShiftTimeIssueKind =
+  | 'no_shift' | 'off' | 'before_start' | 'leaves_early' | 'outside' | 'partial' | 'other_school' | 'unknown_school';
+
+/**
+ * ある時間（開始 s〜終了 e・分）に、その人がその校で勤務しているか（問題が無ければ null）。
+ * ③ 勉強会と ④ 掃除担当表の ⚠️ が同じこの1か所を使う（2026-09-15）。
+ * ・勤務時間帯の中に収まれば OK（終了ちょうどに終わるのは OK、終了ちょうどに始まるのは outside）
+ * ・出勤より前にかかる → before_start（detail＝出勤の時刻）／途中で退勤 → leaves_early（detail＝退勤の時刻）／
+ *   時間帯をまたぐなど → partial／全部外れる → outside／休み → off／週のシフトが無い → no_shift
+ * ・校が決まっていれば、その時間にかかる区切りの校が全部同じなら OK。「A→B」で移る時刻が分からない → unknown_school
+ * 🚨 休憩は時刻を持っていないので判定できない
+ */
+export function shiftTimeIssue(
+  s: number, e: number, location: string | null, day: RosterDay | null,
+): { kind: ShiftTimeIssueKind; detail: string; overlap: boolean } | null {
+  if (!day) return { kind: 'no_shift', detail: '', overlap: false };
+  const bands = [...deriveFields(day.segments).bands].sort((a, b) => a.s - b.s);
+  if (bands.length === 0) return { kind: 'off', detail: '', overlap: false };
+  if (!bands.some(b => b.s <= s && e <= b.e)) {
+    const overlapping = bands.filter(b => b.s < e && s < b.e);
+    if (overlapping.length === 0) {
+      // 勤務の時間帯に全く重ならない：次の出勤があれば「◯時出勤」、無ければ「◯時に退勤」（overlap=false）
+      const next = bands.find(b => b.s >= e);
+      if (next) return { kind: 'before_start', detail: minText(next.s), overlap: false };
+      const prev = [...bands].reverse().find(b => b.e <= s);
+      return prev ? { kind: 'leaves_early', detail: minText(prev.e), overlap: false } : { kind: 'outside', detail: '', overlap: false };
+    }
+    if (overlapping.length === 1) {
+      const b = overlapping[0];
+      if (s < b.s && e <= b.e) return { kind: 'before_start', detail: minText(b.s), overlap: true };
+      if (s >= b.s && e > b.e) return { kind: 'leaves_early', detail: minText(b.e), overlap: true };
+    }
+    return { kind: 'partial', detail: '', overlap: true };
+  }
+  if (location) {
+    const schools = new Set<string>();
+    for (const x of sortSegments(day.segments)) {
+      const xs = toMin(x.start) ?? 0;
+      const xe = toMin(x.end) ?? 0;
+      if (!(xs < e && s < xe)) continue;
+      if (x.location.includes('→')) return { kind: 'unknown_school', detail: x.location, overlap: true };
+      schools.add(x.location.trim());
+    }
+    const list = [...schools];
+    if (list.length > 0 && list.some(sch => sch !== location)) return { kind: 'other_school', detail: list.join('・'), overlap: true };
+  }
+  return null;
+}
+
+/** その人のその曜日のシフト（date に効いている版）。ほかの曜日の行があれば「休み」、1行も無ければ null（未登録） */
+export function shiftDayOn<T extends PatternRowLike>(rows: T[], dayKind: string, date: string): RosterDay | null {
+  const row = rowOnDate(rows.filter(r => r.day_kind === dayKind), date);
+  if (row) return rowToDay(row);
+  return rows.some(r => r.valid_from <= date && (r.valid_to === null || r.valid_to >= date)) ? { segments: [], note: '' } : null;
+}
+
 export function prevDate(date: string): string {
   const [y, m, d] = date.split('-').map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d - 1));

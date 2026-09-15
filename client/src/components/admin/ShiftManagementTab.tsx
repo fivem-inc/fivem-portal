@@ -19,6 +19,9 @@ import StudySessionsPanel from './StudySessionsPanel';
 import { shortNameMap } from '../../lib/staffName';
 import { dayIssue, studyLabel, versionsOnDate, type StudyVersion } from '../../lib/studySessions';
 import { loadStudyData, type StudyData } from '../../lib/studySessionsApi';
+import CleaningRosterPanel from './CleaningRosterPanel';
+import { cellIssues, cellValue, cellVersionOn, rosterCleaningLines, rowPlaceLabel } from '../../lib/cleaningRoster';
+import { loadCleaningData, type CleaningData } from '../../lib/cleaningRosterApi';
 
 // シフト管理（2026-09-15）。設計・決めたことは docs/計画-管理画面の開放.md の 5-1〜5-3。
 // ・表は月〜日。名前を押すと、その人の月〜日（祝・出・過去の履歴）が表の中に開く（C）
@@ -77,16 +80,21 @@ const ShiftManagementTab: React.FC = () => {
   const [areasOpen, setAreasOpen] = useState(false);
   const [areaErr, setAreaErr] = useState('');
   const [newArea, setNewArea] = useState({ name: '', short_name: '', color: 'gray' });
-  const [view, setView] = useState<'roster' | 'study'>('roster');
+  const [view, setView] = useState<'roster' | 'study' | 'cleaning'>('roster');
+  const [cleaning, setCleaning] = useState<CleaningData | null>(null);
+  const [cleaningErr, setCleaningErr] = useState('');
   const [study, setStudy] = useState<StudyData | null>(null);
   const [studyErr, setStudyErr] = useState('');
   const [pdfStudyWarn, setPdfStudyWarn] = useState(false);
 
   // 勉強会（③）：勤務表の欄・保存の確認・PDF に使う。🚨 読めなくても勤務表は使えるようにする（理由だけ出す）
   const loadStudy = useCallback(async () => {
-    const { data: s, error } = await loadStudyData(prevDate(applyFrom));
+    const [{ data: s, error }, c] = await Promise.all([loadStudyData(prevDate(applyFrom)), loadCleaningData(prevDate(applyFrom))]);
     setStudyErr(error ? `勉強会を読み込めませんでした（勤務表の欄に勉強会が出ていません）：${error}` : '');
     if (s) setStudy(s);
+    // ④ 掃除担当表：勤務表の欄・保存の確認・PDF A の掃除の列に使う。🚨 読めなくても勤務表は使える
+    setCleaningErr(c.error ? `掃除担当表を読み込めませんでした（勤務表の欄に掃除が出ていません）：${c.error}` : '');
+    if (c.data) setCleaning(c.data);
   }, [applyFrom]);
 
   // 読み込み：適用開始日の前日（赤字の比べ先）に効いている行と、それより先の行
@@ -103,7 +111,11 @@ const ShiftManagementTab: React.FC = () => {
 
   useEffect(() => { void load(true); }, [load]);
 
-  const shortNames = useMemo(() => shortNameMap(study?.staff ?? []), [study]);
+  const shortNames = useMemo(() => shortNameMap(study?.staff ?? [], cleaning?.labels ?? new Map()), [study, cleaning]);
+  const cleaningRows = useMemo(() => (cleaning?.rows ?? []).filter(r => r.active).sort((a, b) => a.sort_order - b.sort_order), [cleaning]);
+  /** 勤務表の「掃除」の欄（その人・その曜日・date に効いている掃除担当表） */
+  const cleaningFor = (userId: string, k: RosterDayKind, date: string): string[] =>
+    cleaning ? rosterCleaningLines(cleaningRows, rowId => cellValue(cellVersionOn(cleaning.cells, rowId, k, date)), userId) : [];
   /** その人・その曜日に date で効いている勉強会 */
   const studiesFor = (userId: string, k: RosterDayKind, date: string): StudyVersion[] =>
     versionsOnDate(study?.versions ?? [], date).filter(v => v.day_kind === k && v.members.includes(userId))
@@ -218,6 +230,21 @@ const ShiftManagementTab: React.FC = () => {
       .filter(v => dayIssue(v, drafts[id].days[k]!) && !dayIssue(v, savedDay(id, k, applyFrom)))
       .map(v => `${name}さん（${ROSTER_DAY_LABEL[k]}）：${studyLabel(v, shortNames)}`);
   }));
+  // 保存すると時間外になる掃除（今は問題なく、直したあとに ⚠️ になるもの）。判定は lib/cleaningRoster.ts の cellIssues 1か所
+  const cleaningWarnings = cleaning ? draftIds.flatMap(id => draftChangedDays(id).flatMap(k => {
+    if (!ROSTER_WEEK.includes(k)) return [];
+    const name = data?.staff.find(s => s.id === id)?.name ?? '';
+    return cleaningRows.flatMap(r => {
+      const v = cellValue(cellVersionOn(cleaning.cells, r.id, k, applyFrom));
+      const mine = { is_none: false, note: '', entries: v.entries.filter(e => e.user_id === id && e.start) };
+      if (v.is_none || mine.entries.length === 0) return [];
+      const names = new Map([[id, name]]);
+      const before = new Set(cellIssues(r, mine, () => savedDay(id, k, applyFrom), names).map(i => i.key));
+      return cellIssues(r, mine, () => drafts[id].days[k]!, names)
+        .filter(i => !before.has(i.key))
+        .map(i => `${name}さん（${ROSTER_DAY_LABEL[k]}）：${i.start.replace(/^0/, '')} ${rowPlaceLabel(r)}`);
+    });
+  })) : [];
 
   const doSave = async () => {
     if (!data || token == null) return;
@@ -257,7 +284,9 @@ const ShiftManagementTab: React.FC = () => {
       const mainId = mainAreaOf(s.id);
       const studies: PrintPerson['studies'] = {};
       for (const k of ROSTER_WEEK) studies[k] = studiesFor(s.id, k, applyFrom).map(v => ({ text: studyLabel(v, shortNames), warn: !!dayIssue(v, days[k]!) }));
-      return { name: s.name, headNote: noteOf(s.id), mainAreaId: mainId, mainAreaName: areas.find(a => a.id === mainId)?.name ?? '', days, changedDays: redDays(s.id), studies };
+      const cleaningLines: PrintPerson['cleaning'] = {};
+      for (const k of ROSTER_WEEK) cleaningLines[k] = cleaningFor(s.id, k, applyFrom);
+      return { name: s.name, headNote: noteOf(s.id), mainAreaId: mainId, mainAreaName: areas.find(a => a.id === mainId)?.name ?? '', days, changedDays: redDays(s.id), studies, cleaning: cleaningLines };
     });
     setPdfErr(openRosterPrint(buildRosterPrintHtml({ layout: pdfLayout, applyFrom, people, areas, redChanges: pdfRed, studyWarn: pdfStudyWarn })) ?? '');
   };
@@ -295,6 +324,10 @@ const ShiftManagementTab: React.FC = () => {
       <div style={{ color: isRed ? red : text }}>
         {f.bands.length === 0 ? <span style={{ color: isRed ? red : subText }}>{hasAnyRow(userId) || drafts[userId] ? '休' : '—'}</span>
           : f.bands.map((b, i) => <div key={i} style={{ fontWeight: isRed ? 'bold' : 'normal' }}>{minText(b.s)}-{minText(b.e)}</div>)}
+        {/* 休憩・労働は切り替えなしで時刻のすぐ下に出す（2026-09-15 ユーザー要望） */}
+        {f.bands.length > 0 && !f.error && (
+          <div style={{ fontSize: 11, color: isRed ? red : subText, whiteSpace: 'nowrap' }}>休憩{minText(f.breakMinutes)} 労働{minText(f.laborMinutes)}</div>
+        )}
         {f.bands.length > 0 && (
           <div style={{ display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap', marginTop: 1 }}>
             {placeSteps(day, areas, mainId).map((p, i) => (
@@ -312,6 +345,9 @@ const ShiftManagementTab: React.FC = () => {
             </div>
           );
         })}
+        {ROSTER_WEEK.includes(k) && cleaningFor(userId, k, applyFrom).map(t => (
+          <div key={t} style={{ fontSize: 10.5, color: subText, whiteSpace: 'nowrap' }} title="掃除担当表から">掃除 {t}</div>
+        ))}
         {f.error && <div style={{ fontSize: 10.5, color: red }}>⚠️ 入力を確かめてください</div>}
         {isRed && <div style={{ fontSize: 10, color: subText }}>前：{baseText}</div>}
       </div>
@@ -352,6 +388,12 @@ const ShiftManagementTab: React.FC = () => {
                   style={{ background: 'none', border: 'none', cursor: 'pointer', color: subText, fontSize: 14 }}>✕</button>
               </div>
             ))}
+            {/* 休憩・労働は時刻のすぐ下に大きく（右端だと見えにくい・2026-09-15 ユーザー要望） */}
+            {f.bands.length > 0 && !f.error && (
+              <div style={{ fontSize: 13.5, fontWeight: 'bold', color: text, margin: '2px 0 4px' }}>
+                休憩 {minText(f.breakMinutes)}<span style={{ marginLeft: '1em' }}>労働 {minText(f.laborMinutes)}</span>
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 2 }}>
               <button type="button" onClick={() => {
                 const last = day.segments[day.segments.length - 1];
@@ -369,9 +411,6 @@ const ShiftManagementTab: React.FC = () => {
               )}
               <input type="text" value={day.note} placeholder="書き添え" maxLength={100} style={{ ...inputStyle, flex: 1, minWidth: 160 }}
                 onChange={e => editDay(userId, k, { ...day, note: e.target.value })} />
-              <span style={{ fontSize: 11.5, color: subText, whiteSpace: 'nowrap' }}>
-                {f.bands.length > 0 && !f.error ? `休憩${minText(f.breakMinutes)}・労働${minText(f.laborMinutes)}` : ''}
-              </span>
             </div>
             {v && day.segments.length > 0 && <div style={{ fontSize: 12, color: red, marginTop: 2 }}>⚠️ {v}</div>}
           </div>
@@ -449,9 +488,19 @@ const ShiftManagementTab: React.FC = () => {
       <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
         <button type="button" onClick={() => { setView('roster'); void loadStudy(); }} style={toggle(view === 'roster')}>勤務表</button>
         <button type="button" onClick={() => setView('study')} style={toggle(view === 'study')}>勉強会</button>
+        <button type="button" onClick={() => setView('cleaning')} style={toggle(view === 'cleaning')}>掃除担当表</button>
       </div>
     </>
   );
+
+  if (view === 'cleaning') {
+    return (
+      <div>
+        {header}
+        <CleaningRosterPanel isDarkMode={isDarkMode} rosterDraftCount={draftIds.length} />
+      </div>
+    );
+  }
 
   if (view === 'study') {
     return (
@@ -472,6 +521,7 @@ const ShiftManagementTab: React.FC = () => {
     <div>
       {header}
       {studyErr && <div style={{ fontSize: 12.5, color: red, marginBottom: 8 }}>{studyErr}</div>}
+      {cleaningErr && <div style={{ fontSize: 12.5, color: red, marginBottom: 8 }}>{cleaningErr}</div>}
       <p style={{ margin: '0 0 10px', fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
         名前を押すと、その人の月〜日を直せます。赤字は、適用開始日の前日に効いているシフトから変わったマスです。<br />
         保存すると、変えた人・曜日だけが適用開始日から切り替わります。先に登録してあるシフトは消えません。
@@ -540,6 +590,12 @@ const ShiftManagementTab: React.FC = () => {
             <div style={{ padding: '6px 10px', borderRadius: 8, background: '#fff3cd', color: '#856404', margin: '6px 0' }}>
               ⚠️ 勉強会{studyWarnings.length}件が時間外になります（保存はできます。勉強会のタブで直せます）
               {studyWarnings.map(t => <div key={t}>・{t}</div>)}
+            </div>
+          )}
+          {cleaningWarnings.length > 0 && (
+            <div style={{ padding: '6px 10px', borderRadius: 8, background: '#fff3cd', color: '#856404', margin: '6px 0' }}>
+              ⚠️ 掃除{cleaningWarnings.length}件が時間外になります（保存はできます。掃除担当表のタブで直せます）
+              {cleaningWarnings.map(t => <div key={t}>・{t}</div>)}
             </div>
           )}
           {errors.length > 0 && (

@@ -11,7 +11,7 @@
 // 🚨 休憩は時刻を持っていないので判定できない
 
 import {
-  deriveFields, minText, rowOnDate, rowToDay, sortSegments, toMin,
+  minText, rowOnDate, rowToDay, shiftTimeIssue, toMin,
   type PatternRowLike, type RosterDay, type RosterDayKind,
 } from './shiftRoster';
 
@@ -66,29 +66,11 @@ export function dayIssue(
   v: Pick<StudyVersion, 'start_time' | 'duration_minutes' | 'location'>,
   day: RosterDay | null,
 ): { kind: Exclude<StudyIssueKind, 'few_members' | 'inactive'>; detail: string } | null {
-  if (!day) return { kind: 'no_shift', detail: '' };
-  const s = studyStartMin(v);
-  const e = studyEndMin(v);
-  const bands = deriveFields(day.segments).bands;
-  if (bands.length === 0) return { kind: 'off', detail: '' };
-  const covered = bands.some(b => b.s <= s && e <= b.e);
-  if (!covered) {
-    const overlap = bands.some(b => b.s < e && s < b.e);
-    return { kind: overlap ? 'partial' : 'outside', detail: '' };
-  }
-  if (v.location) {
-    const schools = new Set<string>();
-    for (const x of sortSegments(day.segments)) {
-      const xs = toMin(x.start) ?? 0;
-      const xe = toMin(x.end) ?? 0;
-      if (!(xs < e && s < xe)) continue;
-      if (x.location.includes('→')) return { kind: 'unknown_school', detail: x.location };
-      schools.add(x.location.trim());
-    }
-    const list = [...schools];
-    if (list.length > 0 && list.some(sch => sch !== v.location)) return { kind: 'other_school', detail: list.join('・') };
-  }
-  return null;
+  // 🚨 判定は lib/shiftRoster.ts の shiftTimeIssue（④ 掃除担当表と共通）。勉強会の文は「一部の時間が勤務時間外」にまとめる
+  const r = shiftTimeIssue(studyStartMin(v), studyEndMin(v), v.location, day);
+  if (!r) return null;
+  if (r.kind === 'before_start' || r.kind === 'leaves_early' || r.kind === 'partial') return { kind: r.overlap ? 'partial' : 'outside', detail: '' };
+  return { kind: r.kind, detail: r.detail };
 }
 
 function issueText(kind: StudyIssueKind, name: string, detail: string): string {
