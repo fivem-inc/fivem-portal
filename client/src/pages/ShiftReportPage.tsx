@@ -27,7 +27,7 @@ import { logFail } from '../lib/logFail';
 // ────────────────────────────────────────────────────────────────
 // Types
 // ────────────────────────────────────────────────────────────────
-type ApplicationType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start' | 'location_change';
+type ApplicationType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start' | 'location_change' | 'missed_clock';
 
 interface ShiftReport {
   id: string;
@@ -118,6 +118,8 @@ const TYPE_INFO: Record<ApplicationType, { label: string; color: string; darkBg:
   absence:      { label: '欠勤',     color: '#c62828', darkBg: '#4a1515', emoji: '❌' },
   early_start:  { label: '早出',     color: '#0891b2', darkBg: '#123a42', emoji: '🌅' },
   location_change: { label: '勤務地変更', color: '#6d28d9', darkBg: '#2e1a5c', emoji: '📍' },
+  // 打刻忘れ（2026-09-15 追加）。色は残業ページの「打刻ズレ」と同じ灰色（時間の増減ではない記録）
+  missed_clock: { label: '打刻忘れ', color: '#5a6b7d', darkBg: '#2c3540', emoji: '📋' },
 };
 
 function typeBadgeStyle(color: string, darkBg: string, isDark: boolean): React.CSSProperties {
@@ -129,7 +131,7 @@ function typeBadgeStyle(color: string, darkBg: string, isDark: boolean): React.C
   };
 }
 
-const TYPE_PRIORITY: ApplicationType[] = ['absence', 'holiday_work', 'overtime', 'early_start', 'tardiness', 'early_leave', 'location_change'];
+const TYPE_PRIORITY: ApplicationType[] = ['absence', 'holiday_work', 'overtime', 'early_start', 'tardiness', 'early_leave', 'location_change', 'missed_clock'];
 function primaryType(types: ApplicationType[]): ApplicationType {
   return TYPE_PRIORITY.find(t => types.includes(t)) ?? types[0] ?? 'overtime';
 }
@@ -773,14 +775,15 @@ const ShiftReportForm: React.FC<{
                   </div>
                 )}
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8, marginBottom: 8 }}>
-                {(['location_change'] as ApplicationType[]).map(t => {
+              {/* 🚨 打刻忘れはほかの種別と一緒に選べる（打刻を忘れた日に残業した等）。欠勤とだけは選べない（欠勤は単独） */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                {(['location_change', 'missed_clock'] as ApplicationType[]).map(t => {
                   const sel = types.includes(t);
                   const blk = isBlockedWith(types, t) && !sel;
                   const locColor = TYPE_INFO[t].color;
                   return (
                     <button key={t} onClick={() => toggleType(t)} disabled={blk}
-                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 12px', borderRadius: 10, border: `2px solid ${sel ? locColor : (isDark ? '#6c757d' : '#e5e7eb')}`, background: sel ? '#f5f3ff' : (isDark ? '#495057' : 'white'), cursor: blk ? 'not-allowed' : 'pointer', opacity: blk ? 0.5 : 1, transition: 'all 0.15s', textAlign: 'left' as const }}>
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 12px', borderRadius: 10, border: `2px solid ${sel ? locColor : (isDark ? '#6c757d' : '#e5e7eb')}`, background: sel ? (t === 'location_change' ? '#f5f3ff' : '#f1f5f9') : (isDark ? '#495057' : 'white'), cursor: blk ? 'not-allowed' : 'pointer', opacity: blk ? 0.5 : 1, transition: 'all 0.15s', textAlign: 'left' as const }}>
                       <div style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${sel ? locColor : (isDark ? '#adb5bd' : '#d1d5db')}`, background: sel ? locColor : 'transparent', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: isDark ? '#1a1a2e' : 'white', fontSize: 11, fontWeight: 'bold' }}>{sel ? '✓' : ''}</div>
                       <span style={{ fontSize: 14 }}>{TYPE_INFO[t].emoji}</span>
                       <span style={{ fontSize: 13, fontWeight: sel ? 'bold' : 'normal', color: sel ? locColor : textColor }}>{TYPE_INFO[t].label}</span>

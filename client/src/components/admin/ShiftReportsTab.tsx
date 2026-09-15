@@ -6,7 +6,7 @@ import ShiftEditModal from './ShiftEditModal';
 import { formatSegsFromRecord, parseSegments } from '../../lib/shiftCalc';
 import { logFail } from '../../lib/logFail';
 
-type AppType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start' | 'location_change';
+type AppType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start' | 'location_change' | 'missed_clock';
 
 interface ShiftReport {
   id: string;
@@ -63,6 +63,7 @@ const TYPE_INFO: Record<AppType, { label: string; color: string; emoji: string }
   absence:      { label: '欠勤',     color: '#c62828', emoji: '❌' },
   early_start:  { label: '早出',     color: '#0891b2', emoji: '🌅' },
   location_change: { label: '勤務地変更', color: '#6d28d9', emoji: '📍' },
+  missed_clock: { label: '打刻忘れ', color: '#5a6b7d', emoji: '📋' },
 };
 function getTypes(r: ShiftReport): AppType[] {
   return r.application_types?.length ? r.application_types : [r.application_type];

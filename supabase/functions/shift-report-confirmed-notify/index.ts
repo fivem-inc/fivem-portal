@@ -14,6 +14,7 @@ const TYPE_LABEL: Record<string, string> = {
   absence: '欠勤',
   early_start: '早出',
   location_change: '勤務地変更',
+  missed_clock: '打刻忘れ',
 }
 
 // グループ絞り込みを無視して常に届く役職の既定値。

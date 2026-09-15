@@ -11,10 +11,10 @@ import { logFail } from '../../lib/logFail';
 //    （旧ルールで休憩を引きすぎた過去の報告を、時刻を触らずに直せるように）。
 // 理由必須 → 確認ステップ（本人へ通知が届く旨）→ 原子的RPC(admin_edit_shift_report) → 本人へ通知。
 
-export type AppType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start' | 'location_change';
+export type AppType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start' | 'location_change' | 'missed_clock';
 const TYPE_LABELS: Record<AppType, string> = {
   overtime: '残業', holiday_work: '休日出勤', early_leave: '早退', tardiness: '遅刻',
-  absence: '欠勤', early_start: '早出', location_change: '勤務地変更',
+  absence: '欠勤', early_start: '早出', location_change: '勤務地変更', missed_clock: '打刻忘れ',
 };
 const ALL_TYPES = Object.keys(TYPE_LABELS) as AppType[];
 
