@@ -489,7 +489,9 @@ const SlotDetail: React.FC<{
       //    曜日で絞っていたので、9/16 から登録したパートが 9/15 に全員「この日は休み」と出ていた
       supabase.from('weekly_shift_patterns')
         .select('user_id, day_kind, start_time, end_time, start_time2, end_time2, location, valid_from, valid_to')
-        .lte('valid_from', d),
+        .lte('valid_from', d)
+        // 🚨 その日に効いている行だけ。終わりの日で絞らないと、版が増えたときに1,000行で黙って欠ける（2026-09-15 レビュー R1）
+        .or(`valid_to.is.null,valid_to.gte.${d}`),
       supabase.from('attendance_exceptions').select('user_id, type').eq('date', d),
       supabase.from('leave_requests').select('user_id, leave_dates, start_date, end_date, status')
         .in('status', ['manager_approved', 'admin_approved', 'approved'])

@@ -9,7 +9,7 @@
 export const MANAGER_ADMIN_TABS_SETTING_KEY = 'manager_admin_tabs';
 
 /** マネージャー以上に開けるタブ（並びは設定の画面の並び） */
-export const MANAGER_TAB_KEYS = ['groups', 'scheduled_reminders', 'faq', 'announcements', 'safety_checks'] as const;
+export const MANAGER_TAB_KEYS = ['shift_patterns', 'groups', 'scheduled_reminders', 'faq', 'announcements', 'safety_checks'] as const;
 export type ManagerTabKey = typeof MANAGER_TAB_KEYS[number];
 
 export interface ManagerTabInfo {
@@ -23,6 +23,11 @@ export interface ManagerTabInfo {
 }
 
 export const MANAGER_TAB_INFO: Record<ManagerTabKey, ManagerTabInfo> = {
+  shift_patterns: {
+    label: '📑 シフト管理',
+    canDo: '勤務表（通常シフト）のまとめての修正・Excel取り込み・PDF、部門の一覧とメインの部門',
+    dbNote: 'シフトの保存を DB でも許可します（保存は確かめの関数を通るだけで、表を直接書き換えることはできません）。全員の通常シフトが読めるようになります',
+  },
   groups: {
     label: '👥 グループ',
     canDo: 'スタッフを所属（グループ・所属チーム）に入れる・外す。グループの追加・名前の変更・削除は管理者だけです',

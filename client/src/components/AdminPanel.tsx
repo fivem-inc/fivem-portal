@@ -20,6 +20,8 @@ import AnnouncementsTab from './admin/AnnouncementsTab';
 import FaqTab from './admin/FaqTab';
 import SafetyChecksTab from './admin/SafetyChecksTab';
 import CorrectionRequestsTab from './admin/CorrectionRequestsTab';
+// シフト管理（勤務表の一括編集・2026-09-15）。docs/計画-管理画面の開放.md の 5
+import ShiftManagementTab from './admin/ShiftManagementTab';
 
 interface AdminPanelProps {
   pendingApprovals: PendingApproval[];
@@ -534,6 +536,7 @@ const AdminPanelContent: React.FC = () => {
             tabs: [
               { key: 'users',               label: 'ユーザー',      icon: '👤' },
               { key: 'groups',              label: 'グループ',      icon: '👥' },
+              { key: 'shift_patterns',      label: 'シフト管理',    icon: '📑' },
               { key: 'leader_assignments',  label: 'リーダー',      icon: '📋' },
               { key: 'feature_permissions', label: '権限管理',      icon: '🔐' },
               { key: 'reports',             label: 'レポート',      icon: '📊' },
@@ -645,6 +648,7 @@ const AdminPanelContent: React.FC = () => {
       <div style={tabContentStyle}>
         {activeTab === 'approvals' && <ApprovalsTab />}
         {activeTab === 'groups' && <GroupsTab />}
+        {activeTab === 'shift_patterns' && <ShiftManagementTab />}
         {activeTab === 'users' && <UsersTab />}
         {activeTab === 'trip_reports' && <TripReportsTab />}
         {activeTab === 'reports' && <ReportsTab />}

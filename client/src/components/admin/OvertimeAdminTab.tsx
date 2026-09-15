@@ -3,22 +3,19 @@ import { useSearchParams } from 'react-router-dom';
 import SearchableSelect from '../common/SearchableSelect';
 import { useAdminPanel } from './AdminPanelContext';
 import { useRoles } from '../../hooks/useRoles';
-import { rankOf, rolesByRank, rolesActingAs } from '../../lib/roleAttrs';
-import OvertimeShiftImport from './OvertimeShiftImport';
+import { rankOf, rolesActingAs } from '../../lib/roleAttrs';
 import {
-  calcPatternFields, timeToMin, minToTime, formatMin, formatSignedMin, todayJstStr,
-  DAY_KIND_LABELS, CALENDAR_KIND_LABELS,
+  minToTime, formatMin, formatSignedMin, todayJstStr,
+  CALENDAR_KIND_LABELS,
 } from '../../lib/breakCalc';
-import type { DayKind, CalendarKind } from '../../lib/breakCalc';
+import type { CalendarKind } from '../../lib/breakCalc';
 import { CALENDAR_CELL_STYLE } from '../../hooks/useCompanyCalendar';
-import { DEFAULT_LOCATION, isShiftTarget } from '../../lib/shiftExcelImport';
-import { normalShiftBands, normalShiftTimeText } from '../../lib/overtimeShift';
+import { normalShiftTimeText } from '../../lib/overtimeShift';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
 import OvertimeEditModal, { type OvertimeRecord } from './OvertimeEditModal';
 import OvertimeClockInquiryPanel from './OvertimeClockInquiryPanel';
 import { OT_TYPE_INFO, isOvertimeType, isFullDayReport, canOfferCalendarChoice, willShowOnCalendar } from '../../lib/overtimeTypes';
 import { notifyOvertimeReturned, notifyOvertimeAdminCancelled, notifyOvertimeGrant, notifyOvertimeGrantDeclined } from '../../lib/overtimeNotify';
-import { toDbTime } from '../../lib/timeInput';
 import { describeUpdate } from '../../lib/statusUpdate';
 import { logFail } from '../../lib/logFail';
 
@@ -44,22 +41,8 @@ interface OtHistoryRow {
   changerName?: string;
 }
 
-// 残業・時間管理の管理タブ：曜日パターン／会社カレンダー／設定
-
-interface PatternRow {
-  id: string;
-  user_id: string;
-  day_kind: DayKind;
-  start_time: string | null;
-  end_time: string | null;
-  start_time2: string | null;
-  end_time2: string | null;
-  location: string | null;
-  break_minutes: number;
-  labor_minutes: number;
-  valid_from: string;
-  valid_to: string | null;
-}
+// 残業・時間管理の管理タブ：受理済み一覧／打刻の確認／締め後の許可／会社カレンダー／設定
+// （通常シフトの曜日パターンは 2026-09-15 に「シフト管理」タブへ移した）
 
 interface CalendarRow {
   date: string;
@@ -227,10 +210,6 @@ const CalendarChoiceRuleForm: React.FC<{
   );
 };
 
-const DAY_ORDER: DayKind[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun', 'holiday', 'work_on_closed'];
-// 週の労働時間合計に含める曜日（祝・出は特別区分なので除く）
-const WEEK_DAYS: DayKind[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
-
 // 役職の序列は roles.sort_order から（lib/roleAttrs.rankOf / rolesByRank）。役職名の表は書かない（2026-09-09 属性化）
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
@@ -250,7 +229,7 @@ const OvertimeAdminTab: React.FC = () => {
 
   const [searchParams] = useSearchParams();
   const sectionFromUrl = searchParams.get('section');
-  const [section, setSection] = useState<'reports' | 'patterns' | 'calendar' | 'settings' | 'grants' | 'inquiries'>(
+  const [section, setSection] = useState<'reports' | 'calendar' | 'settings' | 'grants' | 'inquiries'>(
     sectionFromUrl === 'grants' ? 'grants' : sectionFromUrl === 'inquiries' ? 'inquiries' : 'reports'
   );
 
@@ -599,22 +578,9 @@ const OvertimeAdminTab: React.FC = () => {
     background: isDarkMode ? '#495057' : '#fff', color: text, fontSize: 13,
   };
 
-  // ─────────── 曜日パターン ───────────
+  // ─────────── スタッフ（締め後の許可・打刻の確認・設定で使う） ───────────
+  // 🚨 通常シフト（曜日パターン）の編集は 2026-09-15 に管理画面の「シフト管理」タブへ移した（components/admin/ShiftManagementTab.tsx）
   const [staff, setStaff] = useState<StaffRow[]>([]);
-  const [selectedStaffId, setSelectedStaffId] = useState('');
-  const [patterns, setPatterns] = useState<PatternRow[]>([]);
-  const [editTimes, setEditTimes] = useState<Record<string, { start: string; end: string; start2: string; end2: string; location: string }>>({});
-  const [applyFrom, setApplyFrom] = useState(() => todayJstStr());
-  const [patternMsg, setPatternMsg] = useState('');
-  const [patternErr, setPatternErr] = useState('');
-  const [savingPattern, setSavingPattern] = useState(false);
-  // 全員の現在の適用パターン一覧（いま何が適用されているかの確認用）
-  const [overview, setOverview] = useState<{ staffId: string; name: string; role: string; days: Record<string, PatternRow | undefined> }[]>([]);
-  const [showOverview, setShowOverview] = useState(false);
-  // 通常シフトの「対象」。false＝正社員だけ（今までどおり）／true＝パートも
-  // 🚨 持ち主はここ1か所だけ。取り込み・スタッフを選ぶ欄・適用中の一覧の3つが同じ値を見る。
-  //    別々に持つと「取り込んだのに一覧に出ない」という食い違いになる
-  const [includePartTime, setIncludePartTime] = useState(false);
 
   const fetchStaff = useCallback(async () => {
     // 全アクティブスタッフを取得（Excel照合でパートも判定に使うため）。ドロップダウンは正社員のみ表示
@@ -630,144 +596,7 @@ const OvertimeAdminTab: React.FC = () => {
     setStaff(rows);
   }, [supabase]);
 
-  const fetchPatterns = useCallback(async (userId: string) => {
-    if (!userId) { setPatterns([]); return; }
-    const { data } = await supabase.from('weekly_shift_patterns')
-      .select('*').eq('user_id', userId).order('valid_from', { ascending: false });
-    const rows = (data as PatternRow[] | null) ?? [];
-    setPatterns(rows);
-    // 現在有効なパターンを編集欄へ
-    const today = todayJstStr();
-    const active = rows.filter(p => p.valid_from <= today && (p.valid_to === null || p.valid_to >= today));
-    const next: Record<string, { start: string; end: string; start2: string; end2: string; location: string }> = {};
-    for (const k of DAY_ORDER) {
-      const p = active.find(x => x.day_kind === k);
-      next[k] = {
-        start: p?.start_time?.slice(0, 5) ?? '', end: p?.end_time?.slice(0, 5) ?? '',
-        start2: p?.start_time2?.slice(0, 5) ?? '', end2: p?.end_time2?.slice(0, 5) ?? '',
-        location: p?.location ?? '',
-      };
-    }
-    setEditTimes(next);
-  }, [supabase]);
-
-  // 全員の「今日時点で有効な」曜日パターンを集めて一覧化
-  const fetchOverview = useCallback(async () => {
-    const { data } = await supabase.from('weekly_shift_patterns')
-      .select('id, user_id, day_kind, start_time, end_time, start_time2, end_time2, location, break_minutes, labor_minutes, valid_from, valid_to');
-    const rows = (data as PatternRow[] | null) ?? [];
-    const today = todayJstStr();
-    const targets = staff.filter(s => isShiftTarget(s.employment_type, includePartTime));
-    const list = targets.map(s => {
-      const days: Record<string, PatternRow | undefined> = {};
-      for (const k of DAY_ORDER) {
-        days[k] = rows.find(p => p.user_id === s.id && p.day_kind === k
-          && p.valid_from <= today && (p.valid_to === null || p.valid_to >= today));
-      }
-      return { staffId: s.id, name: s.name, role: s.role_title, days };
-    }).filter(x => DAY_ORDER.some(k => x.days[k] !== undefined)); // 未登録の人は出さない
-    setOverview(list);
-    // 🚨 includePartTime を依存に入れる。入れないと「パートも」に切り替えても一覧が古いまま
-  }, [supabase, staff, includePartTime]);
-
   useEffect(() => { fetchStaff(); }, [fetchStaff]);
-  useEffect(() => { fetchPatterns(selectedStaffId); setPatternMsg(''); setPatternErr(''); }, [selectedStaffId, fetchPatterns]);
-  useEffect(() => { if (section === 'patterns' && staff.length > 0) fetchOverview(); }, [section, staff, fetchOverview]);
-  // 🚨 「正社員だけ」に戻したとき、選んでいた人がパートなら選択を外す。
-  //    外さないと、欄には出ていない人の編集画面が開いたままになる
-  useEffect(() => {
-    if (!selectedStaffId) return;
-    const s = staff.find(x => x.id === selectedStaffId);
-    if (s && !isShiftTarget(s.employment_type, includePartTime)) setSelectedStaffId('');
-  }, [includePartTime, selectedStaffId, staff]);
-
-  const savePatterns = async () => {
-    setPatternErr(''); setPatternMsg('');
-    if (!selectedStaffId) { setPatternErr('スタッフを選択してください'); return; }
-    if (!applyFrom) { setPatternErr('適用開始日を入力してください'); return; }
-    // 入力チェック
-    for (const k of DAY_ORDER) {
-      const t = editTimes[k] ?? { start: '', end: '', start2: '', end2: '', location: '' };
-      if ((t.start && !t.end) || (!t.start && t.end)) {
-        setPatternErr(`${DAY_KIND_LABELS[k]}の開始・終了を両方入力してください（休みの場合は両方空欄）`);
-        return;
-      }
-      const s = timeToMin(t.start); const e = timeToMin(t.end);
-      if (s != null && e != null && e <= s) {
-        setPatternErr(`${DAY_KIND_LABELS[k]}の終了時刻は開始より後にしてください`);
-        return;
-      }
-      if ((t.start2 && !t.end2) || (!t.start2 && t.end2)) {
-        setPatternErr(`${DAY_KIND_LABELS[k]}の2つ目の時間帯は開始・終了を両方入力してください`);
-        return;
-      }
-      const s2 = timeToMin(t.start2); const e2 = timeToMin(t.end2);
-      if (s2 != null && e2 != null && e2 <= s2) {
-        setPatternErr(`${DAY_KIND_LABELS[k]}の2つ目の時間帯の終了は開始より後にしてください`);
-        return;
-      }
-      if (s2 != null && s == null) {
-        setPatternErr(`${DAY_KIND_LABELS[k]}は1つ目の時間帯を入力してから2つ目を入力してください`);
-        return;
-      }
-    }
-    setSavingPattern(true);
-    try {
-      const prevDay = (() => {
-        const [y, m, d] = applyFrom.split('-').map(Number);
-        const dt = new Date(y, m - 1, d - 1);
-        return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-      })();
-
-      for (const k of DAY_ORDER) {
-        const t = editTimes[k] ?? { start: '', end: '', start2: '', end2: '', location: '' };
-        // 適用開始日以降と重なる既存行を締める/消す
-        const overlapping = patterns.filter(p =>
-          p.day_kind === k && (p.valid_to === null || p.valid_to >= applyFrom));
-        for (const p of overlapping) {
-          // 🚨 古い行を消す／締める処理が黙って失敗すると、このあと入れる新しい行と**両方が生き**、
-          //    同じ曜日に2本のシフトが並ぶ。件数0（権限で弾かれた）も失敗として止める。
-          const fail = p.valid_from >= applyFrom
-            ? describeUpdate(
-                await supabase.from('weekly_shift_patterns').delete().eq('id', p.id).select('id'),
-                '前のシフトの削除', 'missing')
-            : describeUpdate(
-                await supabase.from('weekly_shift_patterns').update({ valid_to: prevDay }).eq('id', p.id).select('id'),
-                '前のシフトの締め', 'missing');
-          if (fail) throw new Error(fail);
-        }
-        const s = timeToMin(t.start); const e = timeToMin(t.end);
-        const s2 = timeToMin(t.start2); const e2 = timeToMin(t.end2);
-        const isWork = s != null && e != null;
-        const { breakMinutes, laborMinutes } = calcPatternFields({ start: s, end: e }, { start: s2, end: e2 });
-        const { error } = await supabase.from('weekly_shift_patterns').insert({
-          user_id: selectedStaffId,
-          day_kind: k,
-          start_time: toDbTime(t.start),
-          end_time: toDbTime(t.end),
-          start_time2: (s2 != null) ? toDbTime(t.start2) : null,
-          end_time2: (e2 != null) ? toDbTime(t.end2) : null,
-          location: isWork ? (t.location.trim() || DEFAULT_LOCATION) : null,
-          break_minutes: breakMinutes,
-          labor_minutes: laborMinutes,
-          valid_from: applyFrom,
-          valid_to: null,
-        });
-        if (error) throw error;
-      }
-      setPatternMsg(`保存しました（${applyFrom} から適用）`);
-      fetchPatterns(selectedStaffId);
-      fetchOverview();
-    } catch (e) {
-      setPatternErr('保存に失敗しました: ' + (e instanceof Error ? e.message : String(e)));
-      // 🚨 途中で止まっているので、手元の一覧を必ず読み直す。
-      //    古いままだと、もう一度「保存」を押したときに**すでに消した行**をもう一度消しに行き、
-      //    0件＝失敗と判定されて、何度押しても先へ進めなくなる。
-      fetchPatterns(selectedStaffId);
-    } finally {
-      setSavingPattern(false);
-    }
-  };
 
   // ─────────── 会社カレンダー ───────────
   const [calRows, setCalRows] = useState<CalendarRow[]>([]);
@@ -1053,14 +882,13 @@ const OvertimeAdminTab: React.FC = () => {
     <div>
       <h3 style={{ margin: '0 0 4px', fontSize: 16, color: text }}>🕐 残業・時間管理（正社員）</h3>
       <p style={{ margin: '0 0 12px', fontSize: 12, color: subText }}>
-        通常シフトの曜日パターン・会社カレンダー・超過バナーの設定を管理します
+        会社カレンダー・超過バナーの設定などを管理します（通常シフトは管理画面の「シフト管理」タブ）
       </p>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
         {sectionBtn('reports', '受理済み一覧')}
         {sectionBtn('inquiries', '打刻の確認')}
         {sectionBtn('grants', '締め後の許可')}
-        {sectionBtn('patterns', '通常シフト')}
         {sectionBtn('calendar', '会社カレンダー')}
         {sectionBtn('settings', '設定')}
       </div>
@@ -1601,246 +1429,6 @@ const OvertimeAdminTab: React.FC = () => {
               </div>
             </div>
           )}
-        </div>
-      )}
-
-      {/* ─── 曜日パターン ─── */}
-      {section === 'patterns' && (
-        <div style={{ background: cardBg, borderRadius: 12, border: `1px solid ${borderColor}`, padding: '14px 16px' }}>
-          <p style={{ margin: '0 0 10px', fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
-            スタッフごとの通常シフト（曜日パターン）を登録します。休みの曜日は空欄のままにしてください。<br />
-            変更は「適用開始日」以降に反映され、それより前の申請・集計は変わりません（履歴型）。
-          </p>
-
-          {/* 対象の切り替え。🚨 この1つで「取り込み」「スタッフを選ぶ欄」「適用中の一覧」が同時に変わる。
-              別々のスイッチにすると「取り込んだのに一覧に出ない」になる */}
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
-            <span style={{ fontSize: 12.5, color: subText }}>対象</span>
-            {([false, true] as const).map(v => (
-              <button key={String(v)} onClick={() => setIncludePartTime(v)}
-                style={{
-                  padding: '6px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12.5,
-                  fontWeight: includePartTime === v ? 'bold' : 'normal',
-                  background: includePartTime === v ? '#1976d2' : (isDarkMode ? '#495057' : '#e9ecef'),
-                  color: includePartTime === v ? '#fff' : (isDarkMode ? '#e9ecef' : '#495057'),
-                }}>
-                {v ? 'パートも' : '正社員だけ'}
-              </button>
-            ))}
-            {includePartTime && (
-              <span style={{ fontSize: 11.5, color: subText }}>
-                パートの通常シフトも登録・表示します（本人の画面には出ません）
-              </span>
-            )}
-          </div>
-
-          <OvertimeShiftImport
-            supabase={supabase}
-            isDarkMode={isDarkMode}
-            staff={staff}
-            includePartTime={includePartTime}
-            onImported={() => { if (selectedStaffId) fetchPatterns(selectedStaffId); fetchOverview(); }}
-          />
-
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12, marginTop: 14 }}>
-            <select value={selectedStaffId} onChange={e => setSelectedStaffId(e.target.value)} style={{ ...inputStyle, minWidth: 200 }}>
-              <option value="">スタッフを選択</option>
-              {rolesByRank(roles).map(r => r.name).map(role => {
-                const members = staff.filter(s => s.role_title === role
-                  && isShiftTarget(s.employment_type, includePartTime));
-                if (members.length === 0) return null;
-                return (
-                  <optgroup key={role} label={role}>
-                    {members.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </optgroup>
-                );
-              })}
-              {/* 序列に載っていない役職（想定外）は末尾に */}
-              {(() => {
-                const others = staff.filter(s => !roles.some(r => r.name === s.role_title)
-                  && isShiftTarget(s.employment_type, includePartTime));
-                if (others.length === 0) return null;
-                return (
-                  <optgroup label="その他">
-                    {others.map(s => <option key={s.id} value={s.id}>{s.name}（{s.role_title}）</option>)}
-                  </optgroup>
-                );
-              })()}
-            </select>
-            <label style={{ fontSize: 12.5, color: subText, display: 'flex', alignItems: 'center', gap: 6 }}>
-              適用開始日
-              <input type="date" value={applyFrom} onChange={e => setApplyFrom(e.target.value)} style={inputStyle} />
-            </label>
-          </div>
-
-          {selectedStaffId && (
-            <>
-              <p style={{ margin: '0 0 8px', fontSize: 11.5, color: subText }}>
-                外出・戻り・テレワークがある日は「＋2つ目」に入力してください。校が空欄の日は{DEFAULT_LOCATION}になります。
-              </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {DAY_ORDER.map(k => {
-                  const t = editTimes[k] ?? { start: '', end: '', start2: '', end2: '', location: '' };
-                  const s = timeToMin(t.start); const e = timeToMin(t.end);
-                  const s2 = timeToMin(t.start2); const e2 = timeToMin(t.end2);
-                  const valid = s != null && e != null && e > s;
-                  const { breakMinutes, laborMinutes } = calcPatternFields({ start: s, end: e }, { start: s2, end: e2 });
-                  const has2 = t.start2 || t.end2;
-                  return (
-                    <div key={k} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, padding: '6px 8px', borderRadius: 8, background: innerBg }}>
-                      <span style={{ color: subText, whiteSpace: 'nowrap', minWidth: 110, fontSize: 12.5 }}>{DAY_KIND_LABELS[k]}</span>
-                      <input type="time" value={t.start}
-                        onChange={ev => setEditTimes(prev => ({ ...prev, [k]: { ...t, start: ev.target.value } }))}
-                        style={inputStyle} />
-                      <span style={{ color: subText }}>〜</span>
-                      <input type="time" value={t.end}
-                        onChange={ev => setEditTimes(prev => ({ ...prev, [k]: { ...t, end: ev.target.value } }))}
-                        style={inputStyle} />
-                      {!has2 ? (
-                        <button onClick={() => setEditTimes(prev => ({ ...prev, [k]: { ...t, start2: '00:00', end2: '00:00' } }))}
-                          disabled={!valid}
-                          style={{ background: 'none', border: `1px dashed ${borderColor}`, borderRadius: 6, cursor: valid ? 'pointer' : 'default', padding: '5px 8px', fontSize: 11, color: valid ? '#0d6efd' : subText, opacity: valid ? 1 : 0.5 }}>
-                          ＋2つ目
-                        </button>
-                      ) : (
-                        <>
-                          <span style={{ color: subText, fontSize: 11 }}>2つ目</span>
-                          <input type="time" value={t.start2}
-                            onChange={ev => setEditTimes(prev => ({ ...prev, [k]: { ...t, start2: ev.target.value } }))}
-                            style={inputStyle} />
-                          <span style={{ color: subText }}>〜</span>
-                          <input type="time" value={t.end2}
-                            onChange={ev => setEditTimes(prev => ({ ...prev, [k]: { ...t, end2: ev.target.value } }))}
-                            style={inputStyle} />
-                          <button onClick={() => setEditTimes(prev => ({ ...prev, [k]: { ...t, start2: '', end2: '' } }))}
-                            aria-label="2つ目の時間帯を削除" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: subText }}>✕</button>
-                        </>
-                      )}
-                      {valid && (
-                        <input type="text" value={t.location}
-                          onChange={ev => setEditTimes(prev => ({ ...prev, [k]: { ...t, location: ev.target.value } }))}
-                          placeholder={DEFAULT_LOCATION}
-                          style={{ ...inputStyle, width: 96 }} />
-                      )}
-                      {(t.start || t.end) && (
-                        <button onClick={() => setEditTimes(prev => ({ ...prev, [k]: { start: '', end: '', start2: '', end2: '', location: '' } }))}
-                          aria-label={`${DAY_KIND_LABELS[k]}を休みにする`}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: subText }}>休みにする</button>
-                      )}
-                      <span style={{ marginLeft: 'auto', fontSize: 11.5, color: subText, whiteSpace: 'nowrap' }}>
-                        {valid ? `休憩${formatMin(breakMinutes)}・労働${formatMin(laborMinutes)}` : '休み'}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {(() => {
-                const weekTotal = WEEK_DAYS.reduce((sum, k) => {
-                  const t = editTimes[k] ?? { start: '', end: '', start2: '', end2: '', location: '' };
-                  const { laborMinutes } = calcPatternFields(
-                    { start: timeToMin(t.start), end: timeToMin(t.end) },
-                    { start: timeToMin(t.start2), end: timeToMin(t.end2) },
-                  );
-                  return sum + laborMinutes;
-                }, 0);
-                return (
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8, fontSize: 13, color: text }}>
-                    <span style={{ color: subText }}>週の労働時間合計</span>
-                    <span style={{ fontWeight: 'bold' }}>{formatMin(weekTotal)}</span>
-                  </div>
-                );
-              })()}
-
-              {patternErr && <p style={{ margin: '10px 0 0', fontSize: 13, color: '#dc3545' }}>{patternErr}</p>}
-              {patternMsg && (
-                <div style={{ background: isDarkMode ? '#1b3a1e' : '#d1e7dd', border: '1px solid #28a745', borderRadius: 8, padding: '8px 12px', marginTop: 10 }}>
-                  <p style={{ margin: 0, fontSize: 13, color: isDarkMode ? '#8fd19e' : '#0f5132' }}>✅ {patternMsg}</p>
-                </div>
-              )}
-
-              <button onClick={savePatterns} disabled={savingPattern}
-                style={{ marginTop: 12, padding: '10px 24px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', background: '#007bff', color: '#fff', opacity: savingPattern ? 0.6 : 1 }}>
-                {savingPattern ? '保存中…' : 'この内容で保存'}
-              </button>
-
-              {/* 過去の履歴 */}
-              {patterns.some(p => p.valid_to !== null) && (
-                <details style={{ marginTop: 14 }}>
-                  <summary style={{ fontSize: 12.5, color: subText, cursor: 'pointer' }}>過去のパターン履歴を表示</summary>
-                  <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse', color: subText, marginTop: 8 }}>
-                    <tbody>
-                      {patterns.filter(p => p.valid_to !== null).map(p => (
-                        <tr key={p.id}>
-                          <td style={{ padding: '3px 4px' }}>{DAY_KIND_LABELS[p.day_kind]}</td>
-                          <td style={{ padding: '3px 4px' }}>{p.start_time ? `${p.start_time.slice(0, 5)}〜${p.end_time?.slice(0, 5)}` : '休み'}</td>
-                          <td style={{ padding: '3px 4px' }}>{p.valid_from}〜{p.valid_to}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </details>
-              )}
-            </>
-          )}
-
-          {/* いま適用されている曜日パターン一覧（全員） */}
-          <div style={{ marginTop: 18, borderTop: `1px solid ${borderColor}`, paddingTop: 14 }}>
-            <button onClick={() => { setShowOverview(v => !v); if (!showOverview) fetchOverview(); }}
-              style={{ background: 'none', border: `1px solid ${borderColor}`, borderRadius: 8, cursor: 'pointer', padding: '8px 16px', fontSize: 13, fontWeight: 'bold', color: '#0d6efd' }}>
-              📋 いま適用中のパターン一覧{showOverview ? ' を閉じる' : `（${overview.length}名）`}
-            </button>
-
-            {showOverview && (
-              <div style={{ marginTop: 12 }}>
-                <p style={{ margin: '0 0 8px', fontSize: 12, color: subText }}>本日（{todayJstStr()}）時点で有効な通常シフトです。</p>
-                {overview.length === 0 ? (
-                  <p style={{ margin: 0, fontSize: 12.5, color: subText }}>まだ登録されたパターンはありません。</p>
-                ) : (
-                  <div style={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', fontSize: 11.5, borderCollapse: 'collapse', color: text, minWidth: 720 }}>
-                      <thead>
-                        <tr>
-                          <th style={{ padding: '6px 6px', borderBottom: `1px solid ${borderColor}`, textAlign: 'left', whiteSpace: 'nowrap', position: 'sticky', left: 0, background: cardBg }}>名前</th>
-                          {WEEK_DAYS.map(k => (
-                            <th key={k} style={{ padding: '6px 4px', borderBottom: `1px solid ${borderColor}`, whiteSpace: 'nowrap' }}>{DAY_KIND_LABELS[k].replace(/（.*）/, '')}</th>
-                          ))}
-                          <th style={{ padding: '6px 6px', borderBottom: `1px solid ${borderColor}`, whiteSpace: 'nowrap', borderLeft: `1px solid ${borderColor}` }}>週合計</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {overview.map(row => {
-                          const weekTotal = WEEK_DAYS.reduce((sum, k) => sum + (row.days[k]?.labor_minutes ?? 0), 0);
-                          return (
-                          <tr key={row.staffId}>
-                            <td style={{ padding: '5px 6px', borderBottom: `1px solid ${borderColor}`, whiteSpace: 'nowrap', position: 'sticky', left: 0, background: cardBg }}>{row.name}</td>
-                            {WEEK_DAYS.map(k => {
-                              const p = row.days[k];
-                              return (
-                                <td key={k} style={{ padding: '5px 4px', borderBottom: `1px solid ${borderColor}`, textAlign: 'center', whiteSpace: 'nowrap', color: p?.start_time ? text : subText }}>
-                                  {p?.start_time ? (
-                                    <>
-                                      {/* 列幅が狭い表なので、時間帯が2本ある日は横に並べず改行する（並び順・書式は共通関数に合わせる） */}
-                                      {normalShiftBands(p).map((b, i) => (
-                                        <React.Fragment key={i}>{i > 0 && <br />}{b.start}〜{b.end}</React.Fragment>
-                                      ))}
-                                      <br /><span style={{ fontSize: 10, color: subText }}>{p.location ?? DEFAULT_LOCATION}</span>
-                                    </>
-                                  ) : '休'}
-                                </td>
-                              );
-                            })}
-                            <td style={{ padding: '5px 6px', borderBottom: `1px solid ${borderColor}`, textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 'bold', borderLeft: `1px solid ${borderColor}` }}>{formatMin(weekTotal)}</td>
-                          </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
         </div>
       )}
 
