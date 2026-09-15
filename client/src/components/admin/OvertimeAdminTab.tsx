@@ -540,7 +540,9 @@ const OvertimeAdminTab: React.FC = () => {
         r.diff_minutes ?? 0,
         r.location ?? '',
         isFurikae ? dateSerial(r.furikae_origin_date) : '', isFurikae ? (r.furikae_origin_location ?? '') : '',
-        r.reason ?? '',
+        // 🚨 結果報告で予定から変わったときは「元の理由 → 変わった理由」を同じ列に（2026-09-15 ユーザー確定）。
+        //    列を足すと貼り付け先のスプレッドシートの列（提出日時・確認日時）がずれるため、列は増やさない
+        r.change_reason?.trim() ? `${r.reason ?? ''} → ${r.change_reason.trim()}` : (r.reason ?? ''),
         dateTimeSerial(r.created_at), dateTimeSerial(r.confirmed_at),
       ];
     });
