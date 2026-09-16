@@ -257,6 +257,38 @@ const UnarchiveIcon: React.FC<{ size?: number }> = ({ size = 14 }) => (
 // Component
 // ────────────────────────────────────────────────────────────────
 
+// お知らせの「宛先」の枠。ふだんは人数だけを出し、押したときに名前を出す。
+// 🚨 2026-09-16 ユーザー指示：46人あてだと名前が本文の前を埋めてしまうため、**閉じておく**。
+// 🚨 受信トレイと送信トレイの**両方がこれを使う**。同じ見た目を2か所に書かない
+//    （もともと受信側は折りたたみ無し・送信側は10人まで表示、と食い違っていた）。
+// 🚨 開いたかどうかは中で持つ。別のお知らせを開いたら閉じた状態に戻すため、
+//    呼ぶ側で key にお知らせの id を渡すこと。
+const RecipientTags: React.FC<{
+  ids: string[];
+  profiles: { id: string; name: string | null }[];
+  isDark: boolean;
+}> = ({ ids, profiles, isDark }) => {
+  const [open, setOpen] = useState(false);
+  if (ids.length === 0) return null;
+  return (
+    <div style={{ marginBottom: 12, padding: '8px 12px', background: isDark ? '#1e2a3a' : '#eff6ff', borderRadius: 8 }}>
+      <button type="button" onClick={() => setOpen(v => !v)}
+        style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: isDark ? '#93c5fd' : '#3b82f6', fontWeight: 700 }}>
+        宛先 {ids.length}人{'　'}{open ? '▲ 閉じる' : '▼ 表示する'}
+      </button>
+      {open && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
+          {ids.map(uid => (
+            <span key={uid} style={{ padding: '2px 8px', background: isDark ? '#2d3561' : '#dbeafe', color: isDark ? '#93c5fd' : '#1d4ed8', borderRadius: 12, fontSize: 11, fontWeight: 500 }}>
+              {profiles.find(p => p.id === uid)?.name || '不明'}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const BoardPage: React.FC = () => {
   const { user, isAdmin, profileName, roleTitle, employmentType, roles } = useAuth();
   const { previewRole } = useContext(AuthContext);
@@ -365,7 +397,6 @@ const BoardPage: React.FC = () => {
   const [inboxArchiveDelConfirm,  setInboxArchiveDelConfirm]  = useState(false);
   const outboxDetailId = searchParams.get('bout');
   const setOutboxDetailId = useCallback((v: string | null) => patchBoardParams({ bout: v }), [patchBoardParams]);
-  const [showAllOutboxRecipients, setShowAllOutboxRecipients] = useState(false);
   // 送信メッセージ修正・削除
   const [editingNoticeId,    setEditingNoticeId]    = useState<string | null>(null);
   const [editingNoticeSubj,  setEditingNoticeSubj]  = useState('');
@@ -1376,7 +1407,7 @@ const BoardPage: React.FC = () => {
     setInboxMessages(prev => prev.filter(m => m.id !== msgId));
     setArchivedMessages(prev => prev.filter(m => m.id !== msgId));
     setDeleteConfirmId(null);
-    if (outboxDetailId === msgId) { silentClearBoardParam('bout'); setShowAllOutboxRecipients(false); }
+    if (outboxDetailId === msgId) { silentClearBoardParam('bout'); }
     if (inboxDetailId === msgId) silentClearBoardParam('bin');
     setNoticeActionBanner('deleted');
     setTimeout(() => setNoticeActionBanner(null), 3000);
@@ -1392,7 +1423,7 @@ const BoardPage: React.FC = () => {
     setOutboxMessages(prev => prev.filter(m => m.id !== msgId));
     if (msg) setOutboxArchivedMessages(prev => [{ ...msg, outbox_hidden: true }, ...prev]);
     setOutboxArchiveConfirmId(null);
-    if (outboxDetailId === msgId) { silentClearBoardParam('bout'); setShowAllOutboxRecipients(false); }
+    if (outboxDetailId === msgId) { silentClearBoardParam('bout'); }
   };
 
   // 送信トレイのアーカイブから戻す。
@@ -2737,22 +2768,8 @@ const BoardPage: React.FC = () => {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{ paddingTop: 58 + searchPad }} />
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 14px' }}>
-            {/* 宛先タグ */}
-            {(inboxRecipients[inboxDetail.id] || []).length > 0 && (() => {
-              const allIds = inboxRecipients[inboxDetail.id] || [];
-              return (
-                <div style={{ marginBottom: 12, padding: '8px 12px', background: isDark ? '#1e2a3a' : '#eff6ff', borderRadius: 8 }}>
-                  <div style={{ fontSize: 12, color: isDark ? '#93c5fd' : '#3b82f6', fontWeight: 700, marginBottom: 6 }}>宛先 {allIds.length}人</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                    {allIds.map(uid => (
-                      <span key={uid} style={{ padding: '2px 8px', background: isDark ? '#2d3561' : '#dbeafe', color: isDark ? '#93c5fd' : '#1d4ed8', borderRadius: 12, fontSize: 11, fontWeight: 500 }}>
-                        {allProfiles.find(p => p.id === uid)?.name || '不明'}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
+            {/* 宛先タグ（ふだんは閉じている。送信トレイと同じ部品） */}
+            <RecipientTags key={inboxDetail.id} ids={inboxRecipients[inboxDetail.id] || []} profiles={allProfiles} isDark={isDark} />
             {/* 修正モード（受信トレイ側・送信者 or 管理者） */}
             {(inboxDetail.user_id === user?.id || isAdmin) && editingNoticeId === inboxDetail.id ? (
               <div style={{ marginTop: 16, padding: '14px', background: isDark ? '#1e2a1e' : '#f0fdf4', border: `1px solid ${isDark ? '#166534' : '#86efac'}`, borderRadius: 10 }}>
@@ -3336,29 +3353,8 @@ const BoardPage: React.FC = () => {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{ paddingTop: 58 + searchPad }} />
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 14px' }}>
-            {/* 宛先タグ
-                🚨 2026-09-16 ユーザー指示：**ふだんは閉じておく**（人数だけ）。
-                   46人あてだと名前が本文の前を10人ぶん埋めてしまうため。押したときに名前を出す。 */}
-            {(inboxRecipients[outboxDetail.id] || []).length > 0 && (() => {
-              const allIds = inboxRecipients[outboxDetail.id] || [];
-              return (
-                <div style={{ marginBottom: 12, padding: '8px 12px', background: isDark ? '#1e2a3a' : '#eff6ff', borderRadius: 8 }}>
-                  <button type="button" onClick={() => setShowAllOutboxRecipients(v => !v)}
-                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: isDark ? '#93c5fd' : '#3b82f6', fontWeight: 700 }}>
-                    宛先 {allIds.length}人{'　'}{showAllOutboxRecipients ? '▲ 閉じる' : '▼ 表示する'}
-                  </button>
-                  {showAllOutboxRecipients && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
-                      {allIds.map(uid => (
-                        <span key={uid} style={{ padding: '2px 8px', background: isDark ? '#2d3561' : '#dbeafe', color: isDark ? '#93c5fd' : '#1d4ed8', borderRadius: 12, fontSize: 11, fontWeight: 500 }}>
-                          {allProfiles.find(p => p.id === uid)?.name || '不明'}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
+            {/* 宛先タグ（ふだんは閉じている。受信トレイと同じ部品） */}
+            <RecipientTags key={outboxDetail.id} ids={inboxRecipients[outboxDetail.id] || []} profiles={allProfiles} isDark={isDark} />
             {/* 修正モード */}
             {editingNoticeId === outboxDetail.id ? (
               <div style={{ marginTop: 16, padding: '14px', background: isDark ? '#1e2a1e' : '#f0fdf4', border: `1px solid ${isDark ? '#166534' : '#86efac'}`, borderRadius: 10 }}>
@@ -3536,7 +3532,7 @@ const BoardPage: React.FC = () => {
                           </button>
                         </div>
                       </div>
-                      <div onClick={() => { setOutboxDetailId(msg.id); setShowAllOutboxRecipients(false); }} style={{ cursor: 'pointer' }}>
+                      <div onClick={() => { setOutboxDetailId(msg.id); }} style={{ cursor: 'pointer' }}>
                         {(msg.subject || msg.title) && (
                           <div style={{ fontSize: 13, fontWeight: 700, color: textColor, marginBottom: 4, paddingBottom: 4, borderBottom: `1px solid ${border}` }}>{msg.subject || msg.title}</div>
                         )}
@@ -3571,7 +3567,7 @@ const BoardPage: React.FC = () => {
                     <div key={msg.id}
                       style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 10, padding: '10px 12px', marginBottom: 6, textAlign: 'left' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}
-                        onClick={() => { setOutboxDetailId(msg.id); setShowAllOutboxRecipients(false); }}>
+                        onClick={() => { setOutboxDetailId(msg.id); }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                           <span style={{ fontSize: 10, color: subColor }}>{fmtFull(outboxTab === 'sent' ? (msg.sent_at || msg.created_at) : msg.created_at)}</span>
                           {/* 🚨 2026-09-16 ユーザー指示：写しで他の代表者のお知らせも並ぶようになったので、
@@ -3599,7 +3595,7 @@ const BoardPage: React.FC = () => {
                             title="アーカイブ"><ArchiveIcon size={14} /></button>
                         </div>
                       </div>
-                      <div onClick={() => { setOutboxDetailId(msg.id); setShowAllOutboxRecipients(false); }} style={{ cursor: 'pointer' }}>
+                      <div onClick={() => { setOutboxDetailId(msg.id); }} style={{ cursor: 'pointer' }}>
                         {dtConfig && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                             <div style={{ width: 3, height: 16, background: accentColor, borderRadius: 2, flexShrink: 0 }} />
