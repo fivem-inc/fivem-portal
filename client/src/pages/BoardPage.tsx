@@ -910,7 +910,11 @@ const BoardPage: React.FC = () => {
     setOutboxArchivedMessages((archData || []).map((m: any) => ({ ...m, broadcast_recipients: null, profile: null })));
 
     // recipients を取得
-    const ids = (data || []).map((m: any) => m.id);
+    // 🚨 2026-09-16：**写し（CC）で入ってきた分とアーカイブ分も対象にする**。
+    //    以前は「自分が送ったもの（data）」だけを取りにいっていたため、写しのお知らせは
+    //    宛先が0人として扱われ、画面に「宛先 0人／既読0 未読0」と出ていた（実測で確認）。
+    //    宛先が読めないと既読・未読・読了の人数もすべて0になる（分母が宛先のため）。
+    const ids = [...allSent, ...(archData || [])].map((m: any) => m.id);
     if (ids.length > 0) {
       const { data: recData } = await supabase
         .from('board_message_recipients')
@@ -930,7 +934,7 @@ const BoardPage: React.FC = () => {
       setReadCounts(prev => ({ ...prev, ...rc }));
 
       // confirmations を読む（deadline_type / requires_confirmation があるもの。送信トレイの対応状況表示に必要）
-      const confirmMsgIds = (data || []).filter((m: any) => m.requires_confirmation || m.deadline_type).map((m: any) => m.id);
+      const confirmMsgIds = [...allSent, ...(archData || [])].filter((m: any) => m.requires_confirmation || m.deadline_type).map((m: any) => m.id);
       if (confirmMsgIds.length > 0) {
         const { data: confData } = await supabase.from('board_confirmations').select('message_id, user_id, comment, confirmed_at').in('message_id', confirmMsgIds);
         const confMap: Record<string, {user_id: string; comment: string | null; confirmed_at?: string}[]> = {};
@@ -3322,26 +3326,25 @@ const BoardPage: React.FC = () => {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{ paddingTop: 58 + searchPad }} />
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 14px' }}>
-            {/* 宛先タグ（10人以上折りたたみ） */}
+            {/* 宛先タグ
+                🚨 2026-09-16 ユーザー指示：**ふだんは閉じておく**（人数だけ）。
+                   46人あてだと名前が本文の前を10人ぶん埋めてしまうため。押したときに名前を出す。 */}
             {(inboxRecipients[outboxDetail.id] || []).length > 0 && (() => {
               const allIds = inboxRecipients[outboxDetail.id] || [];
-              const LIMIT = 10;
-              const shown = showAllOutboxRecipients ? allIds : allIds.slice(0, LIMIT);
               return (
                 <div style={{ marginBottom: 12, padding: '8px 12px', background: isDark ? '#1e2a3a' : '#eff6ff', borderRadius: 8 }}>
-                  <div style={{ fontSize: 12, color: isDark ? '#93c5fd' : '#3b82f6', fontWeight: 700, marginBottom: 6 }}>宛先 {allIds.length}人</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                    {shown.map(uid => (
-                      <span key={uid} style={{ padding: '2px 8px', background: isDark ? '#2d3561' : '#dbeafe', color: isDark ? '#93c5fd' : '#1d4ed8', borderRadius: 12, fontSize: 11, fontWeight: 500 }}>
-                        {allProfiles.find(p => p.id === uid)?.name || '不明'}
-                      </span>
-                    ))}
-                  </div>
-                  {allIds.length > LIMIT && (
-                    <button type="button" onClick={() => setShowAllOutboxRecipients(v => !v)}
-                      style={{ marginTop: 6, background: 'none', border: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 12, padding: 0 }}>
-                      {showAllOutboxRecipients ? '▲ 閉じる' : `▼ あと${allIds.length - LIMIT}人を表示`}
-                    </button>
+                  <button type="button" onClick={() => setShowAllOutboxRecipients(v => !v)}
+                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: isDark ? '#93c5fd' : '#3b82f6', fontWeight: 700 }}>
+                    宛先 {allIds.length}人{'　'}{showAllOutboxRecipients ? '▲ 閉じる' : '▼ 表示する'}
+                  </button>
+                  {showAllOutboxRecipients && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
+                      {allIds.map(uid => (
+                        <span key={uid} style={{ padding: '2px 8px', background: isDark ? '#2d3561' : '#dbeafe', color: isDark ? '#93c5fd' : '#1d4ed8', borderRadius: 12, fontSize: 11, fontWeight: 500 }}>
+                          {allProfiles.find(p => p.id === uid)?.name || '不明'}
+                        </span>
+                      ))}
+                    </div>
                   )}
                 </div>
               );
@@ -3561,6 +3564,11 @@ const BoardPage: React.FC = () => {
                         onClick={() => { setOutboxDetailId(msg.id); setShowAllOutboxRecipients(false); }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                           <span style={{ fontSize: 10, color: subColor }}>{fmtFull(outboxTab === 'sent' ? (msg.sent_at || msg.created_at) : msg.created_at)}</span>
+                          {/* 🚨 2026-09-16 ユーザー指示：写しで他の代表者のお知らせも並ぶようになったので、
+                              中を開かなくても誰が送ったか分かるようにする。自分のものは「自分」 */}
+                          <span style={{ fontSize: 10, fontWeight: 700, color: msg.user_id === user?.id ? subColor : (isDark ? '#93c5fd' : '#3b82f6') }}>
+                            {msg.user_id === user?.id ? '自分' : (allProfiles.find(p => p.id === msg.user_id)?.name || '不明')}
+                          </span>
                           {outboxTab === 'sent' && msg.scheduled_at && (
                             <span style={{ fontSize: 10, fontWeight: 700, color: '#3b82f6', background: isDark ? '#1e3a5f' : '#dbeafe', borderRadius: 10, padding: '1px 6px' }}>
                               📅予約送信済み
