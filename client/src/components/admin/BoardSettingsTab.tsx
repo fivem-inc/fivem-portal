@@ -28,6 +28,69 @@ interface Profile {
 const EMP_ORDER = ['正社員', 'パート'];
 const DM_SETTINGS_KEY = 'dm_default_send_permissions';
 
+// 人を選ぶ一覧（雇用形態 → 役職 → 個人。役職の行で一括選択）。
+// 🚨 2026-09-16：この一覧は「代表者CC」「グループ作成できる人」の2か所に
+//    同じものが書き写されていた。3つ目（宛先の候補に出さない人）を足すにあたり、
+//    新しい設定はこの部品を使う。既存2つは動いているので今回は触っていない。
+//    次に同じ一覧が要るときも、コピーせずここを使うこと。
+const ProfileMultiPicker: React.FC<{
+  profiles: Profile[];
+  roleTitles: string[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+  isDark: boolean;
+  border: string;
+  text: string;
+}> = ({ profiles, roleTitles, selected, onChange, isDark, border, text }) => (
+  <div style={{ maxHeight: 260, overflowY: 'auto', border: `1px solid ${border}`, borderRadius: 8, marginBottom: 10 }}>
+    {EMP_ORDER.concat(
+      [...new Set(profiles.map(p => p.employment_type || 'その他'))].filter(et => !EMP_ORDER.includes(et))
+    ).map((et, gi) => {
+      const etProfiles = profiles.filter(p => (p.employment_type || 'その他') === et);
+      if (etProfiles.length === 0) return null;
+      const roles = [...new Set(etProfiles.map(p => p.role_title || 'その他'))].sort((a, b) => {
+        const ai = roleTitles.indexOf(a), bi = roleTitles.indexOf(b);
+        if (ai === -1 && bi === -1) return a > b ? 1 : -1;
+        if (ai === -1) return 1; if (bi === -1) return -1;
+        return ai - bi;
+      });
+      return (
+        <div key={et}>
+          <div style={{ padding: '4px 10px', background: isDark ? '#2d3136' : '#e9ecef', borderTop: gi > 0 ? `2px solid ${isDark ? '#6c757d' : '#bbb'}` : undefined }}>
+            <span style={{ fontSize: 11, fontWeight: 'bold', color: isDark ? '#adb5bd' : '#444' }}>{et}</span>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap' }}>
+            {roles.map((role, ri) => {
+              const roleProfiles = etProfiles.filter(p => (p.role_title || 'その他') === role).sort((a, b) => (a.name || '') > (b.name || '') ? 1 : -1);
+              const allRoleSel = roleProfiles.length > 0 && roleProfiles.every(p => selected.includes(p.id));
+              return (
+                <div key={role} style={{ flex: '1 1 120px', borderLeft: ri > 0 ? `1px solid ${isDark ? '#3d4349' : '#e0e0e0'}` : undefined, padding: '5px 8px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 3, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={allRoleSel} onChange={() => {
+                      const ids = roleProfiles.map(p => p.id);
+                      onChange(allRoleSel ? selected.filter(id => !ids.includes(id)) : [...new Set([...selected, ...ids])]);
+                    }} />
+                    <span style={{ fontSize: 10, fontWeight: 'bold', color: isDark ? '#adb5bd' : '#555' }}>{role}</span>
+                  </label>
+                  {roleProfiles.map(p => {
+                    const on = selected.includes(p.id);
+                    return (
+                      <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 0', cursor: 'pointer', fontSize: 12, color: on ? (isDark ? '#93c5fd' : '#1d4ed8') : text, fontWeight: on ? 'bold' : 'normal' }}>
+                        <input type="checkbox" checked={on} onChange={e => onChange(e.target.checked ? [...selected, p.id] : selected.filter(id => id !== p.id))} />
+                        {p.name || '不明'}
+                      </label>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    })}
+  </div>
+);
+
 const BoardSettingsTab: React.FC = () => {
   const isDark = useDarkMode();
   const { user } = useAuth();
@@ -60,6 +123,13 @@ const BoardSettingsTab: React.FC = () => {
   const [editingCC, setEditingCC] = useState(false);
   const [pendingCCIds, setPendingCCIds] = useState<string[]>([]);
 
+  // 宛先の候補に出さない人（FAQ専用など、人が使わないアカウント向け・2026-09-16）
+  // 🚨 名前で判定しない。選んだ人の id で持つ（改名しても壊れないようにするため）
+  const EXCLUDE_KEY = 'board_recipient_exclude_user_ids';
+  const [excludeUserIds, setExcludeUserIds] = useState<string[]>([]);
+  const [editingExclude, setEditingExclude] = useState(false);
+  const [pendingExcludeIds, setPendingExcludeIds] = useState<string[]>([]);
+
   // グループ作成できる人設定
   const GROUP_CREATE_KEY = 'board_group_create_user_ids';
   const [groupCreateUserIds, setGroupCreateUserIds] = useState<string[]>([]);
@@ -83,7 +153,7 @@ const BoardSettingsTab: React.FC = () => {
 
   useEffect(() => {
     (async () => {
-      const [chRes, profRes, memRes, dmSettingsRes, readDetailRes, noticeSendRes, ccRes, groupCreateRes] = await Promise.all([
+      const [chRes, profRes, memRes, dmSettingsRes, readDetailRes, noticeSendRes, ccRes, groupCreateRes, excludeRes] = await Promise.all([
         supabase.from('board_channels').select('id, name, type, send_permissions, show_read_detail').order('type').order('created_at'),
         supabase.from('profiles').select('id, name, employment_type, role_title').eq('is_active', true),
         supabase.from('board_channel_members').select('channel_id, user_id'),
@@ -92,6 +162,7 @@ const BoardSettingsTab: React.FC = () => {
         supabase.from('app_settings').select('value').eq('key', 'board_notice_send_roles').maybeSingle(),
         supabase.from('app_settings').select('value').eq('key', 'board_notice_cc_user_ids').maybeSingle(),
         supabase.from('app_settings').select('value').eq('key', GROUP_CREATE_KEY).maybeSingle(),
+        supabase.from('app_settings').select('value').eq('key', EXCLUDE_KEY).maybeSingle(),
       ]);
       const profiles: Profile[] = profRes.data || [];
       setAllProfiles(profiles);
@@ -122,6 +193,9 @@ const BoardSettingsTab: React.FC = () => {
       }
       if (groupCreateRes?.data?.value) {
         setGroupCreateUserIds(groupCreateRes.data.value as string[]);
+      }
+      if (excludeRes?.data?.value) {
+        setExcludeUserIds(excludeRes.data.value as string[]);
       }
 
       const ets = [...new Set(profiles.map((p: Profile) => p.employment_type).filter(Boolean))] as string[];
@@ -541,6 +615,54 @@ const BoardSettingsTab: React.FC = () => {
                 showBanner();
               }} style={{ padding: '5px 18px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>
                 保存（{pendingCCIds.length}人）
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── 宛先の候補に出さない人（2026-09-16 ユーザー指示） ──
+           きっかけ：FAQ専用のアカウント（人が使わない）が全員あてのお知らせの宛先に入り、
+           そのぶん未読が減らず、読了確認も永久に「完了」にならなかった。 */}
+      <div style={{ marginBottom: 20, padding: '12px 14px', background: rowBg, borderRadius: 8, border: `1px solid ${border}` }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 'bold', color: text }}>👤 宛先の候補に出さない人</div>
+            <div style={{ fontSize: 12, color: sub, marginTop: 2 }}>
+              {excludeUserIds.length === 0
+                ? '未設定（全員が宛先の候補に出ます）'
+                : `${excludeUserIds.map(id => allProfiles.find(p => p.id === id)?.name || '不明').join('・')} は宛先の候補に出ません`}
+            </div>
+          </div>
+          <button type="button" onClick={() => { setEditingExclude(v => !v); setPendingExcludeIds([...excludeUserIds]); }}
+            style={{ padding: '5px 12px', borderRadius: 6, border: `1px solid ${border}`, background: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 12, fontWeight: 'bold', flexShrink: 0 }}>
+            {editingExclude ? 'キャンセル' : '設定'}
+          </button>
+        </div>
+        {editingExclude && (
+          <div>
+            <div style={{ fontSize: 12, color: sub, marginBottom: 6 }}>
+              ここで選んだ人は、お知らせを送るときの宛先一覧に出なくなります。<br />
+              FAQ専用など、人が使わないアカウント向けの設定です。<br />
+              ※ すでに送ったお知らせの宛先は変わりません。
+            </div>
+            <ProfileMultiPicker
+              profiles={allProfiles} roleTitles={roleTitles} selected={pendingExcludeIds}
+              onChange={setPendingExcludeIds} isDark={isDark} border={border} text={text}
+            />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" onClick={() => setPendingExcludeIds([])}
+                style={{ padding: '5px 12px', background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: sub, cursor: 'pointer', fontSize: 12 }}>全解除</button>
+              <button type="button" onClick={async () => {
+                // 🚨 保存の失敗を握りつぶさない（error を必ず見る）
+                const { error } = await supabase.from('app_settings').upsert({ key: EXCLUDE_KEY, value: pendingExcludeIds }, { onConflict: 'key' });
+                if (error) { setErrorMsg(`保存できませんでした：${error.message}`); return; }
+                setErrorMsg(null);
+                setExcludeUserIds([...pendingExcludeIds]);
+                setEditingExclude(false);
+                showBanner();
+              }} style={{ padding: '5px 18px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>
+                保存（{pendingExcludeIds.length}人）
               </button>
             </div>
           </div>

@@ -289,6 +289,8 @@ const BoardPage: React.FC = () => {
   const [dmDefaultPerms, setDmDefaultPerms] = useState<SendPermissions | null>(null);
   const [noticeSendRoles, setNoticeSendRoles] = useState<string[]>([]); // 空=全員OK
   const [noticeCCUserIds, setNoticeCCUserIds] = useState<string[]>([]);  // 管理者・代表者自動CC
+  // 宛先の候補に出さない人（管理画面 → 連絡板 で設定。FAQ専用など人が使わないアカウント向け）
+  const [recipientExcludeIds, setRecipientExcludeIds] = useState<string[]>([]);
   // グループを作成・メンバー編集できるか。🚨 判定は DB の board_can_manage_groups() の1か所
   // （RLS も同じ関数を見る）。画面で設定を読んで判定し直さないこと
   const [canManageGroups, setCanManageGroups] = useState(false);
@@ -518,7 +520,7 @@ const BoardPage: React.FC = () => {
       setChannels([]); setMessages([]); setLoadingData(false); return;
     }
 
-    const [chRes, memRes, msgRes, lsRes, profRes, settingsRes, dmSettingsRes, noticeSendRes, ccSettingsRes, canManageRes] = await Promise.all([
+    const [chRes, memRes, msgRes, lsRes, profRes, settingsRes, dmSettingsRes, noticeSendRes, ccSettingsRes, canManageRes, excludeRes] = await Promise.all([
       supabase.from('board_channels').select('id, type, name, created_by, created_at, send_permissions, show_read_detail').in('id', cids),
       supabase.from('board_channel_members').select('channel_id, user_id').in('channel_id', cids),
       supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, answer_prompt, answer_location, answer_link, broadcast_recipients').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
@@ -529,10 +531,13 @@ const BoardPage: React.FC = () => {
       supabase.from('app_settings').select('value').eq('key', 'board_notice_send_roles').maybeSingle(),
       supabase.from('app_settings').select('value').eq('key', 'board_notice_cc_user_ids').maybeSingle(),
       supabase.rpc('board_can_manage_groups'),
+      supabase.from('app_settings').select('value').eq('key', 'board_recipient_exclude_user_ids').maybeSingle(),
     ]);
     if (dmSettingsRes.data?.value) setDmDefaultPerms(dmSettingsRes.data.value as SendPermissions);
     if (noticeSendRes.data?.value) setNoticeSendRoles(noticeSendRes.data.value as string[]);
     if (ccSettingsRes?.data?.value) setNoticeCCUserIds(ccSettingsRes.data.value as string[]);
+    // 🚨 読めなかったときは空＝誰も除外しない（＝これまでどおりの動き）。急に宛先から人が消えるより安全
+    if (excludeRes?.data?.value) setRecipientExcludeIds(excludeRes.data.value as string[]);
     // 読めなかったときは false（＝ボタンを出さない）。管理者は下の canCreateGroup で常に true
     if (canManageRes.error) console.error('グループ編集権限の確認に失敗:', canManageRes.error.code, canManageRes.error.message);
     setCanManageGroups(canManageRes.data === true);
@@ -3063,7 +3068,12 @@ const BoardPage: React.FC = () => {
   );
 
   // ── 送信フロー（Compose） ─────────────────────────────────────────
-  const activeOthersForCompose = allProfiles; // 自分も含む
+  // 🚨 2026-09-16：管理画面（連絡板）で「宛先の候補に出さない人」に選ばれた人を外す。
+  //    FAQ専用など人が使わないアカウントが「全員」に混ざると、そのぶん未読が減らず、
+  //    読了確認も全員が押さないので永久に完了にならない（実際に起きた）。
+  //    🚨 ここ1か所で外せば、候補の一覧・「全員」・区分ボタンのすべてに効く
+  //    （どれも composeFiltered を通るため）。2か所に書かないこと。
+  const activeOthersForCompose = allProfiles.filter(p => !recipientExcludeIds.includes(p.id)); // 自分も含む
   const composeFiltered = activeOthersForCompose.filter(p => !composeQuery || (p.name || '').includes(composeQuery));
   const composeEmpTypes = ([...new Set(activeOthersForCompose.map(p => p.employment_type || 'その他'))] as string[])
     .sort((a, b) => { const o = EMP_ORDER; const ai = o.indexOf(a), bi = o.indexOf(b); if (ai === -1 && bi === -1) return a > b ? 1 : -1; if (ai === -1) return 1; if (bi === -1) return -1; return ai - bi; });
