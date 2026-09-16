@@ -1617,9 +1617,13 @@ const BoardPage: React.FC = () => {
 
     const { data, error } = await supabase.from('board_messages').insert(insertData).select('id').single();
     if (!error && data) {
-      // CC: 受信トレイには入らず送信トレイ（cc_user_ids）にのみ追加
+      // CC: 代表者の送信トレイ（cc_user_ids）に写しを残す。自分（送信者）だけは除く。
+      // 🚨 2026-09-16 ユーザー確定：**宛先に入っている代表者も写しの対象にする**。
+      //    以前は宛先の人を除いていたため、全員あてのお知らせでは代表者が全員宛先に含まれ、
+      //    写しが0人になっていた（チェックを入れても誰の送信トレイにも出ない）。実測で確認済み。
+      //    宛先の人は受信トレイと送信トレイの両方に出るが、送信履歴を共有できることを優先する。
       const ccIds = composeIncludeCC
-        ? noticeCCUserIds.filter(uid => uid !== user.id && !composeRecipientIds.includes(uid))
+        ? noticeCCUserIds.filter(uid => uid !== user.id)
         : [];
       if (ccIds.length > 0) {
         // 🚨 ここは赤にしない。お知らせ自体は送れているので、赤で出すと
