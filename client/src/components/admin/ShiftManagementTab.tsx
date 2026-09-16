@@ -20,6 +20,7 @@ import { shortNameMap } from '../../lib/staffName';
 import { dayIssue, studyLabel, versionsOnDate, type StudyVersion } from '../../lib/studySessions';
 import { loadStudyData, type StudyData } from '../../lib/studySessionsApi';
 import CleaningRosterPanel from './CleaningRosterPanel';
+import KidsShiftPanel from './KidsShiftPanel';
 import { cellIssues, cellValue, cellVersionOn, rosterCleaningLines, rowPlaceLabel } from '../../lib/cleaningRoster';
 import { loadCleaningData, type CleaningData } from '../../lib/cleaningRosterApi';
 
@@ -80,7 +81,13 @@ const ShiftManagementTab: React.FC = () => {
   const [areasOpen, setAreasOpen] = useState(false);
   const [areaErr, setAreaErr] = useState('');
   const [newArea, setNewArea] = useState({ name: '', short_name: '', color: 'gray' });
-  const [view, setView] = useState<'roster' | 'study' | 'cleaning'>('roster');
+  const [view, setView] = useState<'roster' | 'study' | 'cleaning' | 'kids'>('roster');
+  // 🚨 いちど開いた画面は画面から外さずに隠すだけにする（外すと未保存の入力が消えるため・2026-09-16 レビュー U1）
+  const [visited, setVisited] = useState<Set<string>>(new Set(['roster']));
+  const goView = (v: 'roster' | 'study' | 'cleaning' | 'kids') => {
+    setVisited(prev => new Set([...prev, v]));
+    setView(v);
+  };
   const [cleaning, setCleaning] = useState<CleaningData | null>(null);
   const [cleaningErr, setCleaningErr] = useState('');
   const [study, setStudy] = useState<StudyData | null>(null);
@@ -485,41 +492,47 @@ const ShiftManagementTab: React.FC = () => {
   const header = (
     <>
       <h3 style={{ margin: '0 0 4px', fontSize: 16, color: text }}>📑 シフト管理</h3>
-      <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-        <button type="button" onClick={() => { setView('roster'); void loadStudy(); }} style={toggle(view === 'roster')}>勤務表</button>
-        <button type="button" onClick={() => setView('study')} style={toggle(view === 'study')}>勉強会</button>
-        <button type="button" onClick={() => setView('cleaning')} style={toggle(view === 'cleaning')}>掃除担当表</button>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+        <button type="button" onClick={() => { goView('roster'); void loadStudy(); }} style={toggle(view === 'roster')}>勤務表</button>
+        <button type="button" onClick={() => goView('study')} style={toggle(view === 'study')}>勉強会</button>
+        <button type="button" onClick={() => goView('cleaning')} style={toggle(view === 'cleaning')}>掃除担当表</button>
+        <button type="button" onClick={() => goView('kids')} style={toggle(view === 'kids')}>こどもシフト表</button>
       </div>
     </>
   );
 
-  if (view === 'cleaning') {
-    return (
-      <div>
-        {header}
-        <CleaningRosterPanel isDarkMode={isDarkMode} rosterDraftCount={draftIds.length} />
-      </div>
-    );
-  }
-
-  if (view === 'study') {
-    return (
-      <div>
-        {header}
-        {/* 🚨 勤務表の未保存の変更は、勉強会の ⚠️ とプレビューに入らない（保存済みのシフトで判定する） */}
-        {draftIds.length > 0 && (
-          <div style={{ padding: '8px 12px', borderRadius: 8, background: '#fff3cd', border: '1px solid #ffc107', color: '#856404', fontSize: 13, marginBottom: 10 }}>
-            勤務表に未保存の変更が{draftIds.length}人あります（変更は残っています）。勉強会の⚠️と入力のプレビューは、保存済みのシフトで判定します。
-          </div>
-        )}
-        <StudySessionsPanel isDarkMode={isDarkMode} isAdminUser={isAdminUser} />
-      </div>
-    );
-  }
+  // 🚨 いちど開いた画面は隠すだけ（外すと未保存の入力が消える）。開いていない画面は読み込みもしない
+  const subPanels = (
+    <>
+      {visited.has('cleaning') && (
+        <div style={{ display: view === 'cleaning' ? 'block' : 'none' }}>
+          <CleaningRosterPanel isDarkMode={isDarkMode} rosterDraftCount={draftIds.length} />
+        </div>
+      )}
+      {visited.has('study') && (
+        <div style={{ display: view === 'study' ? 'block' : 'none' }}>
+          {/* 🚨 勤務表の未保存の変更は、勉強会の ⚠️ とプレビューに入らない（保存済みのシフトで判定する） */}
+          {draftIds.length > 0 && (
+            <div style={{ padding: '8px 12px', borderRadius: 8, background: '#fff3cd', border: '1px solid #ffc107', color: '#856404', fontSize: 13, marginBottom: 10 }}>
+              勤務表に未保存の変更が{draftIds.length}人あります（変更は残っています）。勉強会の⚠️と入力のプレビューは、保存済みのシフトで判定します。
+            </div>
+          )}
+          <StudySessionsPanel isDarkMode={isDarkMode} isAdminUser={isAdminUser} />
+        </div>
+      )}
+      {visited.has('kids') && (
+        <div style={{ display: view === 'kids' ? 'block' : 'none' }}>
+          <KidsShiftPanel isDarkMode={isDarkMode} />
+        </div>
+      )}
+    </>
+  );
 
   return (
     <div>
       {header}
+      {subPanels}
+      <div style={{ display: view === 'roster' ? 'block' : 'none' }}>
       {studyErr && <div style={{ fontSize: 12.5, color: red, marginBottom: 8 }}>{studyErr}</div>}
       {cleaningErr && <div style={{ fontSize: 12.5, color: red, marginBottom: 8 }}>{cleaningErr}</div>}
       <p style={{ margin: '0 0 10px', fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
@@ -723,6 +736,7 @@ const ShiftManagementTab: React.FC = () => {
       <p style={{ margin: '8px 0 0', fontSize: 11.5, color: subText }}>
         ※ 休憩・労働時間は、保存するときに DB でも同じ表で計算し直します。時刻の表示例：{timeText('09:30')}
       </p>
+      </div>
     </div>
   );
 };
