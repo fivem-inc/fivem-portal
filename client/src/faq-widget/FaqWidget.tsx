@@ -12,6 +12,8 @@ import {
   faqCourseOptionsForSchool,
   fetchPublicPhoneHours,
   FAQ_PHONE_HOURS_DEFAULT,
+  FAQ_CONTACT_PHONE,
+  FAQ_CONTACT_PHONE_LABEL,
   type FaqTopic,
   type FaqAnswer,
   type FaqViewer,
@@ -40,8 +42,7 @@ const SUB = '#666';
 const BORDER = '#d9dee3';
 
 // 「この中にない・わからない」の逃げ道（v4 F-1）。
-// 電話のご案内は四条本校 総合受付に統一（2026-08-15 ユーザー確定）
-export const CONTACT_PHONE = '075-255-4401';
+// 電話の番号と呼び名は lib/faq.ts の1か所（四条本校 総合受付に統一・2026-08-15 ユーザー確定）
 // 🚨 2026-09-17：末尾の #form はお問い合わせページの見出し「フォームからお問い合わせができます」の目印
 //    （WordPress 側で id="form" を付けた）。付けないとページの先頭に着地し、
 //    お問い合わせページの上でボタンを押すと「同じページの一番上に戻った」ように見えていた（実機指摘）。
@@ -618,9 +619,9 @@ const ContactLinks: React.FC<{ onOpen?: (channel: 'tel' | 'form') => void; hours
     </a>
     <div style={{ marginTop: 12, fontSize: 13, color: SUB, lineHeight: 1.7 }}>
       <div>お電話でも承ります</div>
-      <a href={`tel:${CONTACT_PHONE.replace(/-/g, '')}`} onClick={() => onOpen?.('tel')}
+      <a href={`tel:${FAQ_CONTACT_PHONE.replace(/-/g, '')}`} onClick={() => onOpen?.('tel')}
         style={{ color: TEXT, textDecoration: 'underline', fontSize: 14 }}>
-        📞 {CONTACT_PHONE}（四条本校 総合受付）
+        📞 {FAQ_CONTACT_PHONE}（{FAQ_CONTACT_PHONE_LABEL}）
       </a>
       {hours.map(h => <div key={h} style={{ fontSize: 12 }}>{h}</div>)}
     </div>

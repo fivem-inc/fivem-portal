@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { useDarkMode } from '../../hooks/useDarkMode';
-import { FAQ_PHONE_HOURS_KEY, FAQ_PHONE_HOURS_DEFAULT, normalizePhoneHours } from '../../lib/faq';
+import { FAQ_PHONE_HOURS_KEY, FAQ_PHONE_HOURS_DEFAULT, FAQ_CONTACT_PHONE, FAQ_CONTACT_PHONE_LABEL, normalizePhoneHours } from '../../lib/faq';
 
 // お客様向けFAQ（ホームページに埋め込むウィジェット）に出す「電話の受付時間」の設定。管理者だけが使う。
 //
-// 🚨 同じ時間がホームページのフッターにも書かれている。ここを直しても、フッターは変わらない（逆も同じ）。
+// 🚨 同じ受付時間が、公開Q&A「電話番号・受付時間を知りたい」の回答にも書かれている。
+//    ここを直しても、Q&Aの回答は変わらない（逆も同じ）。
 //    両方を直す必要があることを、画面にもそのまま書いてある。
 // 🚨 鍵・初期値・整え方は lib/faq.ts の1か所（ウィジェットが読む側と食い違わないようにするため）。
 // 🚨 空では保存させない。空にすると初期値に戻る作りなので、「消したつもりが古い時間が出る」になる。
@@ -62,9 +63,9 @@ const FaqContactHoursSetting: React.FC = () => {
       {open && (
         <div style={{ padding: 14, background: bg }}>
           <p style={{ fontSize: 12, color: subText, margin: '0 0 10px', lineHeight: 1.7 }}>
-            お客様向けFAQで答えが見つからなかったときの案内に、四条本校の電話番号と一緒に表示されます。
+            お客様向けFAQで答えが見つからなかったときの案内に、電話番号と一緒に表示されます。
             1行に1つずつ入れてください。<br />
-            <strong>ホームページのフッターにも同じ受付時間が書かれています。時間が変わったときは、ここと両方を直してください。</strong>
+            <strong>社外向けQ&amp;A「電話番号・受付時間を知りたい」の回答にも同じ受付時間が書かれています。時間が変わったときは、ここと両方を直してください。</strong>
           </p>
           {savedMsg && (
             <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 14, fontWeight: 'bold', color: '#166534' }}>
@@ -83,7 +84,7 @@ const FaqContactHoursSetting: React.FC = () => {
           <div style={{ fontSize: 12, color: subText, margin: '12px 0 4px' }}>お客様には、こう表示されます</div>
           <div style={{ border: `1px solid ${borderColor}`, borderRadius: 8, padding: '10px 12px', background: '#fff', color: '#666', fontSize: 13, lineHeight: 1.7 }}>
             <div>お電話でも承ります</div>
-            <div style={{ color: '#333', fontSize: 14, textDecoration: 'underline' }}>📞 075-255-4401（四条本校 総合受付）</div>
+            <div style={{ color: '#333', fontSize: 14, textDecoration: 'underline' }}>📞 {FAQ_CONTACT_PHONE}（{FAQ_CONTACT_PHONE_LABEL}）</div>
             {draftLines.length > 0
               ? draftLines.map((l, i) => <div key={i} style={{ fontSize: 12 }}>{l}</div>)
               : <div style={{ fontSize: 12, color: '#842029' }}>（受付時間が入っていません）</div>}

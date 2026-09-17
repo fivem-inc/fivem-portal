@@ -1,5 +1,6 @@
 import React from 'react';
-import { CONTACT_PHONE, CONTACT_FORM_URL } from './FaqWidget';
+import { CONTACT_FORM_URL } from './FaqWidget';
+import { FAQ_CONTACT_PHONE, FAQ_CONTACT_PHONE_LABEL } from '../lib/faq';
 
 // お客様向けFAQウィジェット専用の「受け止める網」。
 //
@@ -45,9 +46,9 @@ class FaqErrorBoundary extends React.Component<{ children: React.ReactNode }, St
           ただいまこちらのご案内を表示できません。お手数ですが、お電話またはお問い合わせフォームからご連絡ください。
         </p>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <a href={`tel:${CONTACT_PHONE.replace(/-/g, '')}`}
+          <a href={`tel:${FAQ_CONTACT_PHONE.replace(/-/g, '')}`}
             style={{ display: 'inline-block', padding: '9px 14px', fontSize: 13, borderRadius: 8, border: `1px solid ${BORDER}`, background: '#fff', color: TEXT, textDecoration: 'none' }}>
-            📞 {CONTACT_PHONE}（四条本校 総合受付）
+            📞 {FAQ_CONTACT_PHONE}（{FAQ_CONTACT_PHONE_LABEL}）
           </a>
           <a href={CONTACT_FORM_URL} target="_blank" rel="noopener noreferrer"
             style={{ display: 'inline-block', padding: '9px 14px', fontSize: 13, borderRadius: 8, border: 'none', background: BLUE, color: '#fff', textDecoration: 'none' }}>
