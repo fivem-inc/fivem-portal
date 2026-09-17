@@ -222,6 +222,30 @@ interface PublicFaqTopicRow {
   related: { topic_id: string; label: string | null }[];
 }
 
+// ── お客様向けFAQの「電話の受付時間」（2026-09-17）──
+// 出すのは四条本校の番号と時間だけ（ユーザー確定）。時間は管理画面 → FAQ から管理者が直せる。
+// 🚨 鍵・初期値・読み方はここ1か所。ウィジェット（読む側）と管理画面（書く側）の両方が使う。
+export const FAQ_PHONE_HOURS_KEY = 'faq_contact_phone_hours';
+/** 設定が読めないとき・空のときに出す時間（ホームページ共通フッターの本校の電話受付時間・2026-09-17 時点） */
+export const FAQ_PHONE_HOURS_DEFAULT = ['月〜金 9:30〜12:15／13:15〜20:00', '土 9:30〜12:40'];
+
+/** 設定の値を「空でない文字の行」だけに整える。形が違えば null（＝初期値を使う） */
+export const normalizePhoneHours = (value: unknown): string[] | null => {
+  if (!Array.isArray(value)) return null;
+  const lines = value.filter((v): v is string => typeof v === 'string').map(v => v.trim()).filter(Boolean);
+  return lines.length > 0 ? lines : null;
+};
+
+/**
+ * 電話の受付時間を取得する（未ログインから呼べる）。
+ * 🚨 失敗しても案内は止めない。読めなければ初期値を返す（行き止まりの画面で使うため）。
+ */
+export const fetchPublicPhoneHours = async (): Promise<string[]> => {
+  const { data, error } = await supabase.rpc('faq_public_contact');
+  if (error || !data) return FAQ_PHONE_HOURS_DEFAULT;
+  return normalizePhoneHours((data as { phone_hours?: unknown }).phone_hours) ?? FAQ_PHONE_HOURS_DEFAULT;
+};
+
 /**
  * お客様向けQ&Aを取得する（未ログインから呼べる）。
  * 既存の照合・絞り込み関数をそのまま使えるよう FaqTopic の形に整える。

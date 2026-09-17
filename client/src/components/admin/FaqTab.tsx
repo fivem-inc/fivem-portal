@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useDarkMode } from '../../hooks/useDarkMode';
+import FaqContactHoursSetting from './FaqContactHoursSetting';
 import { supabase } from '../../lib/supabaseClient';
 import { useRoles } from '../../hooks/useRoles';
 import {
@@ -409,6 +410,9 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
           )}
         </div>
       )}
+
+      {/* お客様向けFAQに出す電話の受付時間（管理者のみ。app_settings の更新が管理者だけのため） */}
+      {canManageEditors && <FaqContactHoursSetting />}
 
       {/* 社内向け／社外向けの切り替え */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>

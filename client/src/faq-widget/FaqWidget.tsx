@@ -10,6 +10,8 @@ import {
   isAnswerActiveOn,
   FAQ_SCHOOL_OPTIONS,
   faqCourseOptionsForSchool,
+  fetchPublicPhoneHours,
+  FAQ_PHONE_HOURS_DEFAULT,
   type FaqTopic,
   type FaqAnswer,
   type FaqViewer,
@@ -41,6 +43,7 @@ const BORDER = '#d9dee3';
 // 電話のご案内は四条本校 総合受付に統一（2026-08-15 ユーザー確定）
 export const CONTACT_PHONE = '075-255-4401';
 export const CONTACT_FORM_URL = 'https://www.five-m.com/inquiry/';
+// 電話の受付時間は管理画面から直せる設定（lib/faq.ts の fetchPublicPhoneHours）。読めなければ初期値を出す
 
 // 🚨 回答本文に書いたURLは、そのまま出すと「押せない長い文字列」になる（実際そうなっていた）。
 //    スマホでは長押ししてコピーするしかなく、事実上たどり着けない。
@@ -137,6 +140,8 @@ const FaqWidget: React.FC = () => {
   const [topics, setTopics] = useState<FaqTopic[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  // 電話の受付時間。読めるまで（読めなくても）初期値を出すので、案内が空になることはない
+  const [phoneHours, setPhoneHours] = useState<string[]>(FAQ_PHONE_HOURS_DEFAULT);
   const [query, setQuery] = useState('');
   const [searched, setSearched] = useState<string | null>(null);
   const [view, setView] = useState<View>({ kind: 'home' });
@@ -187,6 +192,10 @@ const FaqWidget: React.FC = () => {
         logFaqEvent({ kind: 'contact', reason: 'load_error', once: 'load_error' });
       },
     );
+  }, []);
+
+  useEffect(() => {
+    fetchPublicPhoneHours().then(setPhoneHours, () => { /* 初期値のまま出す */ });
   }, []);
 
   // ページを開いたことを記録（1セッション1回）。
@@ -351,9 +360,9 @@ const FaqWidget: React.FC = () => {
     return (
       <div ref={rootRef} style={card}>
         <p style={{ fontSize: 14, margin: '0 0 8px', lineHeight: 1.7 }}>
-          ただいまこちらのご案内を表示できません。お手数ですが、お電話またはお問い合わせフォームからご連絡ください。
+          ただいまこちらのご案内を表示できません。お手数ですが、お問い合わせフォームからご連絡ください。
         </p>
-        <ContactLinks onOpen={onContactOpen} />
+        <ContactLinks onOpen={onContactOpen} hours={phoneHours} />
       </div>
     );
   }
@@ -424,7 +433,7 @@ const FaqWidget: React.FC = () => {
                   <p style={{ fontSize: 13, color: '#856404', margin: 0, lineHeight: 1.7 }}>
                     申し訳ございません、近いご質問が見つかりませんでした。言葉を変えてお試しいただくか、下記からお問い合わせください。
                   </p>
-                  <div style={{ marginTop: 8 }}><ContactLinks onOpen={onContactOpen} /></div>
+                  <div style={{ marginTop: 8 }}><ContactLinks onOpen={onContactOpen} hours={phoneHours} /></div>
                 </div>
               )}
             </div>
@@ -574,9 +583,9 @@ const FaqWidget: React.FC = () => {
           <p style={{ fontSize: 14, lineHeight: 1.8, margin: '0 0 10px' }}>
             {view.reason === 'unknown'
               ? 'お手数ですが、お通いの校に直接お問い合わせください。'
-              : '申し訳ございません、こちらではお答えできませんでした。お手数ですが、お電話またはお問い合わせフォームからご連絡ください。'}
+              : '申し訳ございません、こちらではお答えできませんでした。お手数ですが、お問い合わせフォームからご連絡ください。'}
           </p>
-          <ContactLinks onOpen={onContactOpen} />
+          <ContactLinks onOpen={onContactOpen} hours={phoneHours} />
           <button type="button" onClick={backToHome} style={{ ...backBtn, marginTop: 12 }}>
             ← 質問の一覧に戻る
           </button>
@@ -590,17 +599,25 @@ const FaqWidget: React.FC = () => {
  *  🚨 押されたことを記録する。「案内を出した」と「実際に問い合わせた」は別物で、
  *     記録しないと『案内は出たが誰も連絡しなかった』と『全員が連絡した』が同じ数字になる。
  *  🚨 電話は画面が電話アプリに切り替わるため、送信が間に合わず取り逃すことがある。
- *     取りこぼす前提の数字として扱うこと（集計画面にもその旨を出している）。 */
-const ContactLinks: React.FC<{ onOpen?: (channel: 'tel' | 'form') => void }> = ({ onOpen }) => (
-  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-    <a href={`tel:${CONTACT_PHONE.replace(/-/g, '')}`} onClick={() => onOpen?.('tel')}
-      style={{ display: 'inline-block', padding: '9px 14px', fontSize: 13, borderRadius: 8, border: `1px solid ${BORDER}`, background: '#fff', color: TEXT, textDecoration: 'none' }}>
-      📞 {CONTACT_PHONE}（四条本校 総合受付）
-    </a>
+ *     取りこぼす前提の数字として扱うこと（集計画面にもその旨を出している）。
+ *  🚨 2026-09-17 ユーザー確定：**主役はフォーム**（24時間受付）。電話は「お電話でも承ります」の
+ *     位置づけで、受付時間を添える。以前は電話が先・同じ大きさのボタンで並んでいた。
+ *     電話をボタンにしないのは、フォームと同じ強さに見せないため（文字のリンクにしている）。 */
+const ContactLinks: React.FC<{ onOpen?: (channel: 'tel' | 'form') => void; hours: string[] }> = ({ onOpen, hours }) => (
+  <div>
     <a href={CONTACT_FORM_URL} target="_blank" rel="noopener noreferrer" onClick={() => onOpen?.('form')}
-      style={{ display: 'inline-block', padding: '9px 14px', fontSize: 13, borderRadius: 8, border: 'none', background: BLUE, color: '#fff', textDecoration: 'none' }}>
-      お問い合わせフォーム
+      style={{ display: 'block', boxSizing: 'border-box', width: '100%', textAlign: 'center', padding: '12px 14px', borderRadius: 8, border: 'none', background: BLUE, color: '#fff', textDecoration: 'none' }}>
+      <span style={{ display: 'block', fontSize: 15, fontWeight: 'bold' }}>お問い合わせフォームへ</span>
+      <span style={{ display: 'block', fontSize: 12, marginTop: 2 }}>24時間受付中</span>
     </a>
+    <div style={{ marginTop: 12, fontSize: 13, color: SUB, lineHeight: 1.7 }}>
+      <div>お電話でも承ります</div>
+      <a href={`tel:${CONTACT_PHONE.replace(/-/g, '')}`} onClick={() => onOpen?.('tel')}
+        style={{ color: TEXT, textDecoration: 'underline', fontSize: 14 }}>
+        📞 {CONTACT_PHONE}（四条本校 総合受付）
+      </a>
+      {hours.map(h => <div key={h} style={{ fontSize: 12 }}>{h}</div>)}
+    </div>
   </div>
 );
 
