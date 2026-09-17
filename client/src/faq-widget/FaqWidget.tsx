@@ -42,7 +42,10 @@ const BORDER = '#d9dee3';
 // 「この中にない・わからない」の逃げ道（v4 F-1）。
 // 電話のご案内は四条本校 総合受付に統一（2026-08-15 ユーザー確定）
 export const CONTACT_PHONE = '075-255-4401';
-export const CONTACT_FORM_URL = 'https://www.five-m.com/inquiry/';
+// 🚨 2026-09-17：末尾の #form はお問い合わせページの見出し「フォームからお問い合わせができます」の目印
+//    （WordPress 側で id="form" を付けた）。付けないとページの先頭に着地し、
+//    お問い合わせページの上でボタンを押すと「同じページの一番上に戻った」ように見えていた（実機指摘）。
+export const CONTACT_FORM_URL = 'https://www.five-m.com/inquiry/#form';
 // 電話の受付時間は管理画面から直せる設定（lib/faq.ts の fetchPublicPhoneHours）。読めなければ初期値を出す
 
 // 🚨 回答本文に書いたURLは、そのまま出すと「押せない長い文字列」になる（実際そうなっていた）。
@@ -605,7 +608,10 @@ const FaqWidget: React.FC = () => {
  *     電話をボタンにしないのは、フォームと同じ強さに見せないため（文字のリンクにしている）。 */
 const ContactLinks: React.FC<{ onOpen?: (channel: 'tel' | 'form') => void; hours: string[] }> = ({ onOpen, hours }) => (
   <div>
-    <a href={CONTACT_FORM_URL} target="_blank" rel="noopener noreferrer" onClick={() => onOpen?.('form')}
+    {/* 🚨 target=_top：新しいタブではなく、埋め込まれているページそのものを移動させる。
+        お問い合わせページ上なら、再読み込みせずにフォームの見出しまでスクロールするだけになる。
+        以前の _blank では、同じページの先頭が別タブで開いていた */}
+    <a href={CONTACT_FORM_URL} target="_top" onClick={() => onOpen?.('form')}
       style={{ display: 'block', boxSizing: 'border-box', width: '100%', textAlign: 'center', padding: '12px 14px', borderRadius: 8, border: 'none', background: BLUE, color: '#fff', textDecoration: 'none' }}>
       <span style={{ display: 'block', fontSize: 15, fontWeight: 'bold' }}>お問い合わせフォームへ</span>
       <span style={{ display: 'block', fontSize: 12, marginTop: 2 }}>24時間受付中</span>
