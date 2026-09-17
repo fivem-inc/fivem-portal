@@ -71,6 +71,9 @@ const FEATURES = [
   { key: 'attendance_input', icon: '📝', label: '勤怠カレンダーへの登録・取消', note: '遅刻・早退・欠勤などを登録・取消できる役職。「勤怠カレンダー」がONの役職にだけ効きます', group: '勤怠・時間' as FeatureGroup, bySuperior: true },
   { key: 'overtime_summary', icon: '📊', label: '残業の集計・超過バナー閲覧', note: '全員分を見られる役職', group: '勤怠・時間' as FeatureGroup, bySuperior: true },
   { key: 'shift_pattern_directory', icon: '📅', label: '全員のシフト予定 閲覧', note: 'パート含む全員の通常シフトを見られる役職', group: '勤怠・時間' as FeatureGroup, bySuperior: true },
+  // 🚨 2026-09-18 追加。上長向けではなく「本人が自分のために使う」機能だが、
+  //    まずマネージャー以上で試してから広げるため、ここで出し分ける（bySuperior は見出しの分類なので false）
+  { key: 'overtime_memo', icon: '🕐', label: '残業のメモ', note: '申請の前に「日付・時刻・理由」を書いておける欄。書いた本人だけが見られます。OFFの役職にはボタンが出ません', group: '勤怠・時間' as FeatureGroup, bySuperior: false },
 
   // ── 申請・精算 ──
   { key: 'purchase_request', icon: '🧾', label: '備品購入申請・経費精算', note: 'パートも精算のみ利用可', group: '申請・精算' as FeatureGroup, bySuperior: false },

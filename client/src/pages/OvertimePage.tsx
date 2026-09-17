@@ -17,7 +17,10 @@ import {
   DAY_KIND_LABELS,
 } from '../lib/breakCalc';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
-import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
+import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, cutBandsAt, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
+import OvertimeMemoSection from '../components/OvertimeMemoSection';
+import { memoShortLabel } from '../lib/overtimeMemo';
+import type { OvertimeMemo } from '../lib/overtimeMemo';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { describeUpdate } from '../lib/statusUpdate';
 import { insertNotification } from '../lib/notifications';
@@ -38,7 +41,7 @@ import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
 import OvertimePlanSection from '../components/OvertimePlanSection';
 import { PageTabs } from '../components/PageTabs';
 import HelpLinkButton from '../components/HelpLinkButton';
-import { buildGcalSummary, OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport, CLOCK_ONLY_REASONS, canOfferCalendarChoice, willShowOnCalendar } from '../lib/overtimeTypes';
+import { buildGcalSummary, OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport, CLOCK_ONLY_REASONS, canOfferCalendarChoice, willShowOnCalendar, reasonExamplesFor } from '../lib/overtimeTypes';
 import type { OvertimeType } from '../lib/overtimeTypes';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
 import { notifyOvertimeNewRequest, notifyOvertimeGrantRequest, sendOvertimeSlack } from '../lib/overtimeNotify';
@@ -126,6 +129,7 @@ interface Props {
   // 実データの保護はDB側のRLS（has_feature_permission）が担当する
   canSummaryPerm: boolean;          // 残業の部門集計を見られる役職か
   canShiftDirectoryPerm: boolean;   // 全員のシフト予定を見られる役職か
+  canMemoPerm: boolean;             // 残業のメモを使える役職か（2026-09-18・最初はマネージャー以上）
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -519,6 +523,12 @@ interface FormDraft {
   furikaeOriginLocationCustom?: string;
   furikaeOriginStart?: string;
   furikaeOriginEnd?: string;
+  /** 残業のメモ（overtime_memos）から入力したときの、そのメモ（2026-09-18）。
+   *  送信に成功したらこのメモを「申請済み」にする。
+   *  🚨 自動保存にも必ず書くこと。書かないと1文字打った瞬間に消える（modifiedFromId と同じ罠） */
+  memoId?: string;
+  memoLabel?: string;
+  memoDate?: string;
   /** 「内容を修正する（取り消して再申請）」で来たときの、元（取消済み）の申請ID。
    *  受理者に「🔁 修正」と修正前の内容を見せるために、送信時 overtime_reports.modified_from_id に入れる */
   modifiedFromId?: string;
@@ -547,9 +557,13 @@ const OvertimeForm: React.FC<{
   editTarget: OvertimeReport | null;
   /** カレンダーに載せるかを自分で選べる人か（管理画面で役職・個人ごとに指定） */
   canChooseCalendar: boolean;
+  /** 残業のメモを使える役職か（権限管理。2026-09-18 は マネージャー以上） */
+  canMemo: boolean;
+  /** すでに申請がある日（本人×日付で申請は1件までなので、メモの［申請］を出さない） */
+  appliedDates: Set<string>;
   onSaved: (gcalWarning?: string) => void;
   onClose: () => void;
-}> = ({ user, profileName, roleTitle, isAdmin, reviewers, workplaces, patterns, editTarget, canChooseCalendar, onSaved, onClose }) => {
+}> = ({ user, profileName, roleTitle, isAdmin, reviewers, workplaces, patterns, editTarget, canChooseCalendar, canMemo, appliedDates, onSaved, onClose }) => {
   const isDark = useDarkMode();
   const draft = editTarget ? null : loadDraft<FormDraft>(DRAFT_KEYS.overtime);
   // 「申請の依頼」から開いたときの上長のメモ（理由欄の上に出す。理由には入れない）
@@ -662,6 +676,15 @@ const OvertimeForm: React.FC<{
   //    片付け・準備・保護者対応は会社の指示でやる仕事なので、ここに出すと
   //    サービス残業を本人に認めさせた記録になってしまう（下の警告枠で残業へ誘導する）。
   const [clockOnly, setClockOnly] = useState(false);
+  // 残業のメモから入力したときの、そのメモ（2026-09-18）。
+  // 🚨 日付を変えたら外す（別の日の申請に「申請済み」を付けないため）。「クリア」でも外れる
+  const [memoLink, setMemoLink] = useState<{ id: string; label: string; date: string } | null>(
+    () => (draft?.memoId ? { id: draft.memoId, label: draft.memoLabel ?? '', date: draft.memoDate ?? '' } : null),
+  );
+  // メモの枠を開いている間は、下の申請の入力欄を隠す（似たボタンが上下に2組並ぶと取り違えるため）
+  const [memoOpen, setMemoOpen] = useState(false);
+  // メモの［申請］を押したが、書きかけがあるので置き換えを聞いているメモ
+  const [memoReplace, setMemoReplace] = useState<OvertimeMemo | null>(null);
   const [clockInAt, setClockInAt] = useState('');
   const [clockOutAt, setClockOutAt] = useState('');
   const [clockReason, setClockReason] = useState('');
@@ -730,8 +753,13 @@ const OvertimeForm: React.FC<{
       //    上書きされて**メモの表示が消える**（何を頼まれたか分からなくなる）
       requestMemo: draft?.requestMemo,
       requestFrom: draft?.requestFrom,
+      // 🚨 残業のメモとのつながりも持ち続ける。書かないと1文字打った瞬間に消え、
+      //    送信してもそのメモが「申請済み」にならない
+      memoId: memoLink?.id,
+      memoLabel: memoLink?.label,
+      memoDate: memoLink?.date,
     } satisfies FormDraft);
-  }, [editTarget, mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId, showOnCalendar, normOverride, normStart, normEnd, fullDay, fullDayType, furikaeOriginDate, furikaeOriginLocation, furikaeOriginLocationCustom, furikaeOriginStart, furikaeOriginEnd]);
+  }, [editTarget, mode, date, segments, breakManual, breakManualMin, reason, location, locationCustom, reviewerId, showOnCalendar, normOverride, normStart, normEnd, fullDay, fullDayType, furikaeOriginDate, furikaeOriginLocation, furikaeOriginLocationCustom, furikaeOriginStart, furikaeOriginEnd, memoLink]);
 
   // 日付変更→会社カレンダー取得
   useEffect(() => {
@@ -810,6 +838,80 @@ const OvertimeForm: React.FC<{
     setSegments(normalSegs.length > 0 ? normalSegs.map(s => ({ ...s })) : [{ ...EMPTY_SEG }]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date, normalSegs]);
+
+  // 🚨 日付を変えたら、メモとのつながりを外す（別の日の申請に「申請済み」を付けないため）
+  useEffect(() => {
+    if (memoLink && date !== memoLink.date) setMemoLink(null);
+  }, [date, memoLink]);
+
+  /** 残業のメモの［申請］。**申請はしない**。この画面に内容を入れるだけ（2026-09-18）。
+   *  🚨 日付と時刻を同時に入れるので、先に filledForDateRef を進めて
+   *     「通常シフトで埋め直す処理」に時刻を上書きさせない（797行の useEffect）。 */
+  const applyMemo = (memo: OvertimeMemo) => {
+    const md = memo.target_date;
+    const ck = calendarKinds[md];
+    const ns = resolveNormalShift(patterns, md, ck ?? null);
+    const bands = normalShiftBands(ns).map(b => ({ start: b.start, end: b.end }));
+    const t1 = (memo.time_start ?? '').slice(0, 5);
+    const t2 = (memo.time_end ?? '').slice(0, 5);
+
+    filledForDateRef.current = md;          // これから自分で入れるので、自動の埋め直しを止める
+    setMemoReplace(null);
+    setMemoOpen(false);
+    setFullDay(false); setFullDayType(null); setFullDayError('');
+    setClockOnly(false); setClockInAt(''); setClockOutAt(''); setClockReason(''); setClockReasonOther('');
+    setNormOverride(false); setNormStart(''); setNormEnd('');
+    setBreakManual(false); setBreakManualMin('');
+    setError(''); setShowConfirm(false);
+    setDate(md);
+    // 過去の日は事後報告／先の日は事前申請／今日はメモの時刻を過ぎていれば事後報告
+    const nowHm = `${String(new Date().getHours()).padStart(2, '0')}:${String(new Date().getMinutes()).padStart(2, '0')}`;
+    const memoTime = t2 || t1;
+    const isPost = md < todayJstStr() || (md === todayJstStr() && !!memoTime && memoTime <= nowHm);
+    setMode(isPost ? 'posthoc' : 'advance');
+    setReason(memo.reason ?? '');
+
+    if (memo.kind === 'day_off') {
+      // 調整休・振替休日・欠勤のどれかは、この画面で本人が選ぶ
+      setFullDay(true);
+      setSegments([{ ...EMPTY_SEG }]);
+    } else if (memo.kind === 'missed_clock' || memo.kind === 'clock_only') {
+      // 打刻ズレの入力へ。🚨 事後報告の新規でしか出せない
+      setMode('posthoc');
+      setClockOnly(true);
+      setClockInAt(t1); setClockOutAt(t2);
+      const preset = memo.kind === 'missed_clock'
+        ? CLOCK_ONLY_REASONS[0]
+        : (CLOCK_ONLY_REASONS.includes(memo.reason) ? memo.reason : '');
+      setClockReason(preset);
+      if (!preset && memo.reason) { setClockReason('その他'); setClockReasonOther(memo.reason); }
+      setReason('');
+      setSegments(bands.length > 0 ? bands.map(b => ({ ...b })) : [{ ...EMPTY_SEG }]);
+    } else {
+      // 時刻を勤務時間帯に反映する。遅刻・早退は時間帯を切り、早出・残業は端を延ばす
+      let segs = bands.map(b => ({ ...b }));
+      if (segs.length === 0) segs = [{ start: t1, end: t2 }];
+      else if (memo.kind === 'tardiness' && t1) segs = cutBandsAt(segs, 'late_start', t1) ?? segs;
+      else if (memo.kind === 'early_leave' && t2) segs = cutBandsAt(segs, 'early_end', t2) ?? segs;
+      else if (memo.kind === 'early_start' && t1) segs[0] = { ...segs[0], start: t1 };
+      else if (memo.kind === 'overtime' && t2) segs[segs.length - 1] = { ...segs[segs.length - 1], end: t2 };
+      else if (memo.kind === 'holiday_work') segs = [{ start: t1, end: t2 }];
+      setSegments(segs.length > 0 ? segs : [{ ...EMPTY_SEG }]);
+      if (memo.kind === 'location_change' && memo.location) {
+        if (workplaces.includes(memo.location)) setLocation(memo.location);
+        else { setLocation('その他'); setLocationCustom(memo.location); }
+      }
+    }
+    setMemoLink({ id: memo.id, label: memoShortLabel(memo), date: md });
+    inputsTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  /** メモの［申請］を押したとき。書きかけがあるなら、黙って消さずに聞く（依頼の対応中も同じ） */
+  const onMemoApply = (memo: OvertimeMemo) => {
+    const dirty = !!date || !!reason || segments.some(s => s.start || s.end) || !!draft?.applicationRequestId || !!draft?.modifiedFromId;
+    if (dirty && memoReplace?.id !== memo.id) { setMemoReplace(memo); setMemoOpen(true); return; }
+    applyMemo(memo);
+  };
 
   // 勤務地の実効値（保存・検証に使う）。移動あり＝「開始校→移動先校」
   const effectiveLocation =
@@ -937,27 +1039,12 @@ const OvertimeForm: React.FC<{
   // 終日モードの派生値
   // 理由の文例は「いま検知している種別」に合わせて出す（残業前提の固定文だと早退・遅刻等で使えないため）。
   // 複数該当時は 早退/遅刻 ＞ 残業/早出/休日出勤 ＞ 勤務地変更 の順で選ぶ。
-  const reasonExamples = useMemo<string[]>(() => {
-    if (fullDay) {
-      if (fullDayType === 'chosei_off') return ['〇〇イベント準備により時間外労働が発生したため', '勤務時間調整のため'];
-      if (fullDayType === 'furikae_off') return ['休日出勤の振替のため'];
-      if (fullDayType === 'absence') return ['体調不良のため', '私用のため'];
-      return ['勤務時間調整のため', '体調不良のため'];
-    }
-    const byType: Partial<Record<OvertimeType, string[]>> = {
-      early_leave: ['体調不良のため', '通院のため'],
-      tardiness: ['電車遅延のため', '私用のため'],
-      early_end_adj: ['勤務時間調整のため', '残業が多いため時間調整'],
-      late_start_adj: ['勤務時間調整のため', '残業が多いため時間調整'],
-      holiday_work: ['イベント対応のため', '試合対応のため'],
-      overtime: ['保護者対応のため', '翌日のレッスン準備のため'],
-      early_start: ['朝のレッスン準備のため', '保護者対応のため'],
-      location_change: ['〇〇校の応援のため', 'レッスン応援要請のため'],
-    };
-    const order: OvertimeType[] = ['early_leave', 'tardiness', 'early_end_adj', 'late_start_adj', 'holiday_work', 'overtime', 'early_start', 'location_change'];
-    const hit = order.find(t => applicationTypes.includes(t));
-    return (hit && byType[hit]) || ['保護者対応のため', '翌日のレッスン準備のため'];
-  }, [fullDay, fullDayType, applicationTypes]);
+  // 🚨 中身は lib/overtimeTypes.ts の reasonExamplesFor に移した（残業のメモと共用するため）。
+  //    ここで書き写さないこと（片方だけ直す事故になる）
+  const reasonExamples = useMemo<string[]>(
+    () => reasonExamplesFor(applicationTypes, fullDay, fullDayType),
+    [fullDay, fullDayType, applicationTypes],
+  );
 
   const fullDayMode = fullDay && !!fullDayType;
 
@@ -1508,6 +1595,19 @@ const OvertimeForm: React.FC<{
         }
       }
 
+      // 使ったメモを「申請済み」にする（2026-09-18・ユーザー確定）。
+      // 🚨 送信後は履歴タブへ移り成功カードも数秒で消えるので、「削除しますか？」とは聞かない。
+      //    日付を変えたときは applyMemo の useEffect でつながりが外れているので、ここには来ない。
+      // 🚨 update は0件でもエラーにならないが、印が付かなくても申請そのものは成立している。
+      //    ここで送信を失敗扱いにしない（メモは一覧から手で消せる）。
+      if (!editTarget && memoLink) {
+        const { data: marked, error: memoErr } = await supabase.from('overtime_memos')
+          .update({ applied_at: new Date().toISOString(), applied_report_id: reportId, updated_at: new Date().toISOString() })
+          .eq('id', memoLink.id).select('id');
+        if (memoErr || !marked || marked.length === 0) console.error('[残業のメモ] 申請済みにできませんでした', memoErr?.message);
+        setMemoLink(null);
+      }
+
       if (!editTarget) clearDraft(DRAFT_KEYS.overtime);
       setSaving(false);
       onSaved(gcalWarn);
@@ -1549,6 +1649,8 @@ const OvertimeForm: React.FC<{
     setFullDay(false); setFullDayType(null); setFullDayError('');
     setFurikaeOriginDate(''); setFurikaeOriginLocation('');
     setError(''); setShowConfirm(false);
+    // 🚨 メモとのつながりも外す（クリアしたあとに送っても、そのメモを「申請済み」にしない）
+    setMemoLink(null); setMemoReplace(null);
     clearDraft(DRAFT_KEYS.overtime);
   };
 
@@ -1657,15 +1759,52 @@ const OvertimeForm: React.FC<{
           🚨 フォームの箱の先頭に移動すると、**注意事項の一覧が出るだけで入力欄が見えない**。 */}
       <div ref={inputsTopRef} />
 
-      {/* クリア（入力欄の先頭に配置） */}
-      {!editTarget && (
+      {/* メモ（左）とクリア（右）。🚨 押し間違いを防ぐため両端に離して置く（2026-09-17 ユーザー確定） */}
+      {!editTarget && (canMemo ? (
+        <OvertimeMemoSection
+          userId={user.id} isDark={isDark} workplaces={workplaces}
+          appliedDates={appliedDates}
+          onApply={onMemoApply}
+          onOpenChange={setMemoOpen}
+          rightSlot={
+            <button type="button" onClick={handleClear}
+              style={{ background: isDark ? '#495057' : '#f1f3f5', border: `1px solid ${isDark ? '#6c757d' : '#ced4da'}`, borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 'bold', color: isDark ? '#e9ecef' : '#495057', padding: '5px 14px' }}>
+              クリア
+            </button>
+          }
+        />
+      ) : (
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
           <button type="button" onClick={handleClear}
             style={{ background: isDark ? '#495057' : '#f1f3f5', border: `1px solid ${isDark ? '#6c757d' : '#ced4da'}`, borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 'bold', color: isDark ? '#e9ecef' : '#495057', padding: '5px 14px' }}>
             クリア
           </button>
         </div>
+      ))}
+
+      {/* メモの［申請］で、書きかけを置き換えてよいかを聞く（黙って消さない） */}
+      {memoReplace && (
+        <div style={{ background: '#fff3cd', border: '1px solid #ffeeba', borderRadius: 8, padding: '10px 12px', marginBottom: 10 }}>
+          <p style={{ margin: '0 0 8px', fontSize: 12.5, color: '#856404', lineHeight: 1.6 }}>
+            いまの入力を消して、メモ（{memoShortLabel(memoReplace)}）の内容を入れますか？
+          </p>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" onClick={() => applyMemo(memoReplace)}
+              style={{ padding: '7px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', background: '#1976d2', color: '#fff' }}>入れる</button>
+            <button type="button" onClick={() => setMemoReplace(null)}
+              style={{ padding: '7px 14px', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12.5, background: 'transparent', color: subText }}>やめる</button>
+          </div>
+        </div>
       )}
+
+      {/* どのメモから入力したか（ボタンは置かない。クリア・日付の変更で自然に外れる） */}
+      {memoLink && !editTarget && !memoOpen && (
+        <div style={{ background: isDark ? '#1e3a5f' : '#e3f2fd', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, borderRadius: 6, padding: '6px 10px', marginBottom: 10 }}>
+          <p style={{ margin: 0, fontSize: 12, color: isDark ? '#8ec5f0' : '#1565c0' }}>{memoLink.label} のメモから入力しました</p>
+        </div>
+      )}
+
+      <div style={{ display: memoOpen ? 'none' : undefined }}>
 
       {/* 種別 */}
       {!editTarget && (
@@ -2531,6 +2670,7 @@ const OvertimeForm: React.FC<{
       )}
       </>
       )}
+      </div>
     </div>
   );
 };
@@ -2538,7 +2678,7 @@ const OvertimeForm: React.FC<{
 // ────────────────────────────────────────────────────────────────
 // メインページ
 // ────────────────────────────────────────────────────────────────
-const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, canSummaryPerm, canShiftDirectoryPerm }) => {
+const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, canSummaryPerm, canShiftDirectoryPerm, canMemoPerm }) => {
   // 役職の序列（部門集計の並び・閲覧範囲）は roles から（役職名の表を持たない・2026-09-09）
   const roles = useRoles();
   const isDark = useDarkMode();
@@ -2601,6 +2741,12 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   //    「一般として表示」でも集計モードが出てしまい実際の見え方を確認できない
   const canSummary = canSummaryPerm;
   const canShiftDirectory = canShiftDirectoryPerm; // 全員のシフト予定ページへの導線表示
+  // すでに申請がある日（メモの［申請］を出さない）。
+  // 🚨 本人×日付で手動の申請は1件まで（uq_overtime_manual_per_day）。取消したものは数えない＝また申請できる
+  const appliedDates = useMemo(
+    () => new Set(reports.filter(r => r.status !== 'cancelled').map(r => r.work_date)),
+    [reports],
+  );
   const navigate = useNavigate();
 
   // 集計モード用
@@ -3617,6 +3763,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
               reviewers={reviewers} workplaces={workplaces} patterns={patterns}
               editTarget={editTarget}
               canChooseCalendar={canChooseCalendar}
+              canMemo={canMemoPerm}
+              appliedDates={appliedDates}
               onSaved={(gcalWarn) => {
                 setSavedBanner(true);
                 if (gcalWarn) setGcalWarning({ message: gcalWarn, reportId: editTarget?.id ?? null });

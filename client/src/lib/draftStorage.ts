@@ -17,6 +17,10 @@ export const DRAFT_KEYS = {
   attendance: 'fivem_draft_attendance',  // 休暇カレンダーの欠勤入力
   shiftReport: 'fivem_draft_shift_report', // 勤務変更報告
   overtime: 'fivem_draft_overtime',      // 残業・時間管理（正社員）
+  // 🚨 保存に失敗した「残業のメモ」だけを端末に1件だけ預ける場所（2026-09-18）。
+  //    電車の中など電波の弱い場所で書くことが多く、失敗で入力が消えると機能の意味が無くなるため。
+  //    保存できたら消す。ふつうのメモは端末ではなくサーバー（overtime_memos）にある
+  overtimeMemoUnsent: 'fivem_draft_overtime_memo_unsent',
   boardCompose: 'fivem_draft_board_compose', // 連絡板お知らせ作成
   boardChat: 'fivem_draft_board_chat',   // 連絡板グループ/DM/リプライ（キー配下にIDで細分化）
 } as const;

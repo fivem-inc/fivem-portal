@@ -42,6 +42,8 @@ interface UseAuthReturn {
   canTripReportHistory: boolean;
   canOvertimeSummary: boolean;
   canShiftPatternDirectory: boolean;
+  /** 残業申請のメモ（申請の前に書いておく・本人だけが見る）。2026-09-18 は マネージャー以上だけ ON */
+  canOvertimeMemo: boolean;
   /**
    * シフト調整の作業場（勤怠カレンダーの中のタブ）の5つの権限。
    * 🚨 1つのまとまりで渡す。ばらばらに5つ足すと App.tsx（2人共通ファイル）の
@@ -340,6 +342,8 @@ export const useAuth = (): UseAuthReturn => {
   // RPCは実アカウントで評価されるため役職プレビューが効かなかった（実際の見え方を確認できない）
   const canOvertimeSummary = realIsAdmin && !previewRole ? true : (effectivePerms.overtime_summary ?? false);
   const canShiftPatternDirectory = realIsAdmin && !previewRole ? true : (effectivePerms.shift_pattern_directory ?? false);
+  // 残業のメモ（2026-09-18）。既定は OFF ＝ 権限行が読めなかったときは出さない
+  const canOvertimeMemo = realIsAdmin && !previewRole ? true : (effectivePerms.overtime_memo ?? false);
   // シフト調整の作業場（2026-09-13）。既定はすべて OFF ＝ 権限行が読めなかったときは出さない。
   // 🚨 テスト中は社長・管理者だけ ON にしてある（DB側・migration 20260912222515）
   // 🚨 useMemo で包む。5つをまとめた「もの」を毎回作り直すと、受け取った側が
@@ -439,6 +443,7 @@ export const useAuth = (): UseAuthReturn => {
     canTripReportHistory,
     canOvertimeSummary,
     canShiftPatternDirectory,
+    canOvertimeMemo,
     shiftAdjust,
     canFaq,
     canFaqNav,
