@@ -37,6 +37,36 @@ export const CLOCK_ONLY_REASONS = [
   'その他',
 ];
 
+/**
+ * 理由の文例。いま検知している種別に合わせて出す（残業前提の固定文だと早退・遅刻等で使えないため）。
+ * 複数該当時は 早退/遅刻 ＞ 残業/早出/休日出勤 ＞ 勤務地変更 の順で選ぶ。
+ * 🚨 申請フォームと残業のメモが**同じものを使う**。画面ごとに書き写さないこと
+ *    （書き写すと、文例を直したときに片方だけ古いまま残る）。
+ */
+export function reasonExamplesFor(
+  applicationTypes: OvertimeType[], fullDay: boolean, fullDayType: OvertimeType | null,
+): string[] {
+  if (fullDay) {
+    if (fullDayType === 'chosei_off') return ['〇〇イベント準備により時間外労働が発生したため', '勤務時間調整のため'];
+    if (fullDayType === 'furikae_off') return ['休日出勤の振替のため'];
+    if (fullDayType === 'absence') return ['体調不良のため', '私用のため'];
+    return ['勤務時間調整のため', '体調不良のため'];
+  }
+  const byType: Partial<Record<OvertimeType, string[]>> = {
+    early_leave: ['体調不良のため', '通院のため'],
+    tardiness: ['電車遅延のため', '私用のため'],
+    early_end_adj: ['勤務時間調整のため', '残業が多いため時間調整'],
+    late_start_adj: ['勤務時間調整のため', '残業が多いため時間調整'],
+    holiday_work: ['イベント対応のため', '試合対応のため'],
+    overtime: ['保護者対応のため', '翌日のレッスン準備のため'],
+    early_start: ['朝のレッスン準備のため', '保護者対応のため'],
+    location_change: ['〇〇校の応援のため', 'レッスン応援要請のため'],
+  };
+  const order: OvertimeType[] = ['early_leave', 'tardiness', 'early_end_adj', 'late_start_adj', 'holiday_work', 'overtime', 'early_start', 'location_change'];
+  const hit = order.find(t => applicationTypes.includes(t));
+  return (hit && byType[hit]) || ['保護者対応のため', '翌日のレッスン準備のため'];
+}
+
 /** 終日種別（時刻入力なし・segments を持たない） */
 export const FULL_DAY_TYPES: OvertimeType[] = ['chosei_off', 'furikae_off', 'absence'];
 

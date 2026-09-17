@@ -205,6 +205,30 @@ export function isPayPeriodClosed(workDate: string, todayStr: string): boolean {
 }
 
 /**
+ * 対象日の締め切りの状態。'open'＝まだ余裕がある／'soon'＝締め切りが近い／'closed'＝締め切り済み。
+ * 🚨 同じ判定を2か所に書かないため、締め切りの近さを見るところは必ずここを通す
+ *    （残業のメモの黄色い印・締めロックの予告など）。
+ * 🚨 日数は日付の文字列から出す。`toISOString()` を使うと UTC で前日になる。
+ * @param soonDays 何日前から 'soon' にするか（既定7日）
+ */
+export function payPeriodCloseState(
+  workDate: string, todayStr: string, soonDays = 7,
+): 'open' | 'soon' | 'closed' {
+  const cutoff = payPeriodCloseCutoff(calcPayPeriodStartJst(workDate));
+  if (todayStr > cutoff) return 'closed';
+  return daysBetweenDateStr(todayStr, cutoff) <= soonDays ? 'soon' : 'open';
+}
+
+/** 日付の文字列 "YYYY-MM-DD" どうしの日数の差（to - from）。UTC で数えるのでタイムゾーンの影響を受けない */
+export function daysBetweenDateStr(from: string, to: string): number {
+  const p = (s: string) => {
+    const [y, m, d] = s.split('-').map(Number);
+    return Date.UTC(y, m - 1, d);
+  };
+  return Math.round((p(to) - p(from)) / 86400000);
+}
+
+/**
  * 締め後申請の依頼ができる期限（給与データ確定日）"YYYY-MM-DD"。
  * 支給日（支給月25日）の前日を基準に、土日・会社カレンダーの休館日(closed_all)なら前営業日まで遡る。
  * SQL側 overtime_grant_deadline() と同一ロジック。closedDates は company_calendar の closed_all 日付集合。

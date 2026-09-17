@@ -162,6 +162,42 @@ export function reportGateMin(
   return null;
 }
 
+/**
+ * 勤務時間帯（bands）を、ある時刻で切る。
+ * kind='late_start' … その時刻から出勤（その時刻より前に終わる帯は捨て、またぐ帯は開始を置き換える）
+ * kind='early_end'  … その時刻で退勤（その時刻より後に始まる帯は捨て、またぐ帯は終了を置き換える）
+ * 残る帯が無いときや時刻が読めないときは null（呼ぶ側が「できない」として扱う）。
+ * 🚨 深夜をまたぐ帯（終了が開始より前）は切らず、これまでどおり先頭／末尾を置き換える。
+ */
+export function cutBandsAt(
+  bands: { start: string; end: string }[], kind: 'late_start' | 'early_end', time: string,
+): { start: string; end: string }[] | null {
+  const t = timeToMin(time);
+  if (t == null || bands.length === 0) return null;
+  const mins = bands.map(b => ({ st: timeToMin(b.start), en: timeToMin(b.end) }));
+  if (mins.some(m => m.st == null || m.en == null)) return null;
+  const overnight = mins.some(m => (m.en as number) <= (m.st as number));
+  if (overnight) {
+    const copy = bands.map(b => ({ ...b }));
+    if (kind === 'late_start') copy[0].start = time;
+    else copy[copy.length - 1].end = time;
+    return copy;
+  }
+  const out: { start: string; end: string }[] = [];
+  bands.forEach((b, i) => {
+    const st = mins[i].st as number;
+    const en = mins[i].en as number;
+    if (kind === 'late_start') {
+      if (en <= t) return;                                   // その時刻より前に終わる帯は働かない
+      out.push({ start: st < t ? time : b.start, end: b.end });
+    } else {
+      if (st >= t) return;                                   // その時刻より後に始まる帯は働かない
+      out.push({ start: b.start, end: en > t ? time : b.end });
+    }
+  });
+  return out.length > 0 ? out : null;
+}
+
 export interface TimeAdjustBuild {
   ok: boolean;                 // その日が休み等で調整不能なら false
   normal_shift: NormalShiftSnapshot;
@@ -193,9 +229,12 @@ export function buildTimeAdjustReport(
   };
   if (bands.length === 0 || !adjustTime) return empty;
 
-  const segments = bands.map(b => ({ ...b }));
-  if (kind === 'late_start') segments[0].start = adjustTime;               // 出勤を遅く
-  else segments[segments.length - 1].end = adjustTime;                     // 退勤を早く
+  // 🚨 勤務時間帯が2つある日は「先頭の開始／末尾の終了を置き換える」だけでは壊れる。
+  //    例：9:00〜12:00 と 14:00〜18:00 の人が 11:00 に早退 → 14:00〜11:00 になり、
+    //    深夜またぎとみなされて21時間勤務として通ってしまう（2026-09-17 に発見）。
+  //    切り方は cutBandsAt の1か所に集約し、メモからの流し込みも同じものを使う。
+  const segments = cutBandsAt(bands, kind, adjustTime);
+  if (!segments) return empty;
 
   // 実働セグメント（分）。開始≧終了の逆転は不正としてokにしない
   const work: WorkSegment[] = [];
