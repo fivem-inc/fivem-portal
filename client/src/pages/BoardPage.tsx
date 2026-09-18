@@ -265,6 +265,8 @@ const UnarchiveIcon: React.FC<{ size?: number }> = ({ size = 14 }) => (
 //    （もともと受信側は折りたたみ無し・送信側は10人まで表示、と食い違っていた）。
 // 🚨 開いたかどうかは中で持つ。別のお知らせを開いたら閉じた状態に戻すため、
 //    呼ぶ側で key にお知らせの id を渡すこと。
+// 🚨🚨 key は **`recipients-${id}` の形にする**。そのまま id を渡すと、すぐ隣の本文（renderMsg の外側の key も id）と
+//    **同じ並びで key が重なり**、React が前の宛先の枠を消し損ねて一覧に戻っても残った（2026-09-18 実機 A-2）。
 const RecipientTags: React.FC<{
   ids: string[];
   profiles: { id: string; name: string | null }[];
@@ -2844,7 +2846,7 @@ const BoardPage: React.FC = () => {
           <div style={{ paddingTop: 58 + searchPad }} />
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 14px' }}>
             {/* 宛先タグ（ふだんは閉じている。送信トレイと同じ部品） */}
-            <RecipientTags key={inboxDetail.id} ids={inboxRecipients[inboxDetail.id] || []} profiles={allProfiles} isDark={isDark} />
+            <RecipientTags key={`recipients-${inboxDetail.id}`} ids={inboxRecipients[inboxDetail.id] || []} profiles={allProfiles} isDark={isDark} />
             {/* 修正モード（受信トレイ側・送信者 or 管理者） */}
             {(inboxDetail.user_id === user?.id || isAdmin) && editingNoticeId === inboxDetail.id ? (
               <div style={{ marginTop: 16, padding: '14px', background: isDark ? '#1e2a1e' : '#f0fdf4', border: `1px solid ${isDark ? '#166534' : '#86efac'}`, borderRadius: 10 }}>
@@ -3421,7 +3423,7 @@ const BoardPage: React.FC = () => {
           <div style={{ paddingTop: 58 + searchPad }} />
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 14px' }}>
             {/* 宛先タグ（ふだんは閉じている。受信トレイと同じ部品） */}
-            <RecipientTags key={outboxDetail.id} ids={inboxRecipients[outboxDetail.id] || []} profiles={allProfiles} isDark={isDark} />
+            <RecipientTags key={`recipients-${outboxDetail.id}`} ids={inboxRecipients[outboxDetail.id] || []} profiles={allProfiles} isDark={isDark} />
             {/* 修正モード */}
             {editingNoticeId === outboxDetail.id ? (
               <div style={{ marginTop: 16, padding: '14px', background: isDark ? '#1e2a1e' : '#f0fdf4', border: `1px solid ${isDark ? '#166534' : '#86efac'}`, borderRadius: 10 }}>
