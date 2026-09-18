@@ -66,6 +66,8 @@ interface BoardMessage {
   outbox_hidden?: boolean;
   recipient_presets?: string[] | null;   // 送信時に全員が宛先に入っていた一括ボタン名（コピーして作成で使う）
   recipient_extra_ids?: string[] | null; // ボタン以外で個別に足した宛先
+  // 代表者の送信トレイに残す写し。🚨 DBは uuid[] ではなく text[]
+  cc_user_ids?: string[] | null;
   // 検索結果がどこで見つかったか（2026-09-10）。
   // 🚨 これが無いと、押したときに開く先を決められない。同じ「channel_id が無いお知らせ」でも
   //    受信トレイ（自分が宛先）と送信トレイ（自分が送った）で、開く画面が違う。
@@ -289,6 +291,68 @@ const RecipientTags: React.FC<{
   );
 };
 
+// お知らせの「対応状況」の枠（読了・回答などの進み具合）。
+// 🚨 受信トレイと送信トレイの**両方がこれを使う**。同じものを2か所に書かない（片方だけ直す事故になる）。
+// 🚨 見えるのは 送信した本人・管理者・写しで受け取る代表者 だけ（2026-09-18 ユーザー確定）。
+//    数字（◯人/◯人）は今までどおり、そのお知らせを開ける人みんなに出る（別の場所）。
+const ConfirmStatusBox: React.FC<{
+  recipientIds: string[];
+  confirmed: { user_id: string; confirmed_at?: string }[];
+  profiles: { id: string; name: string | null }[];
+  isDark: boolean;
+  /** 未対応の人へのリマインド（送信者・管理者のときだけ渡す。代表者には渡さない）。
+   *  🚨 「まだ押していない人」はこの部品が数えた結果を渡す（同じ判定を2か所に書かない） */
+  remind?: (notYet: string[]) => React.ReactNode;
+}> = ({ recipientIds, confirmed, profiles, isDark, remind }) => {
+  const [openDone, setOpenDone] = useState(false);
+  if (recipientIds.length === 0) return null;
+  const nameOf = (uid: string) => profiles.find(p => p.id === uid)?.name || '不明';
+  // 🚨 宛先に入っている人だけを数える（宛先から外れた人の読了で分子が分母を超えないように）
+  const doneList = confirmed.filter(c => recipientIds.includes(c.user_id));
+  const doneIds = doneList.map(c => c.user_id);
+  const notYet = recipientIds.filter(id => !doneIds.includes(id));
+  // 押した日時は「9/17 8:52」の形。🚨 日付は端末の時刻で出す（UTCで切らない）
+  const whenLabel = (iso?: string) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+  };
+  return (
+    <div style={{ marginTop: 16, padding: '12px 14px', background: isDark ? '#2a1f00' : '#fffbeb', border: `1px solid ${isDark ? '#5a3e00' : '#fcd34d'}`, borderRadius: 10 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: isDark ? '#fcd34d' : '#92400e', marginBottom: 8 }}>
+        🔔 対応状況 {doneList.length}/{recipientIds.length}人 完了
+      </div>
+      {doneList.length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <button type="button" onClick={() => setOpenDone(v => !v)}
+            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, fontWeight: 700, color: isDark ? '#fcd34d' : '#92400e' }}>
+            押した人 {doneList.length}人{'　'}{openDone ? '▲ 閉じる' : '▼ 表示する'}
+          </button>
+          {openDone && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
+              {doneList.map(c => (
+                <span key={c.user_id} style={{ padding: '2px 8px', background: isDark ? '#3a2f00' : '#fef3c7', color: isDark ? '#fcd34d' : '#92400e', borderRadius: 12, fontSize: 11 }}>
+                  {nameOf(c.user_id)}{c.confirmed_at ? `（${whenLabel(c.confirmed_at)}）` : ''}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {notYet.length > 0 ? (
+        <>
+          <div style={{ fontSize: 12, color: isDark ? '#fcd34d' : '#92400e', marginBottom: 8 }}>
+            未対応 {notYet.length}人：{notYet.map(nameOf).join('、')}
+          </div>
+          {remind?.(notYet)}
+        </>
+      ) : (
+        <div style={{ fontSize: 13, color: '#22c55e', fontWeight: 600 }}>✅ 全員対応済みです</div>
+      )}
+    </div>
+  );
+};
+
 const BoardPage: React.FC = () => {
   const { user, isAdmin, profileName, roleTitle, employmentType, roles } = useAuth();
   const { previewRole } = useContext(AuthContext);
@@ -321,6 +385,17 @@ const BoardPage: React.FC = () => {
   const [dmDefaultPerms, setDmDefaultPerms] = useState<SendPermissions | null>(null);
   const [noticeSendRoles, setNoticeSendRoles] = useState<string[]>([]); // 空=全員OK
   const [noticeCCUserIds, setNoticeCCUserIds] = useState<string[]>([]);  // 管理者・代表者自動CC
+
+  // 対応状況（押した人・未対応の人）を見られるか。
+  // 🚨 2026-09-18 ユーザー確定：送信した本人／管理者／**写しで受け取る代表者**。
+  //    代表者は「写しに入っている かつ いまの代表者設定に入っている」ときだけ（DB の board_is_notice_cc_rep と同じ考え方）。
+  const canSeeConfirmStatus = useCallback((msg: BoardMessage) => {
+    if (!user) return false;
+    if (msg.user_id === user.id || isAdmin) return true;
+    return (msg.cc_user_ids ?? []).includes(user.id) && noticeCCUserIds.includes(user.id);
+  }, [user, isAdmin, noticeCCUserIds]);
+  // リマインドを送れるのは送信した本人と管理者だけ（代表者は見るだけ）
+  const canRemind = useCallback((msg: BoardMessage) => !!user && (msg.user_id === user.id || isAdmin), [user, isAdmin]);
   // 宛先の候補に出さない人（管理画面 → 連絡板 で設定。FAQ専用など人が使わないアカウント向け）
   const [recipientExcludeIds, setRecipientExcludeIds] = useState<string[]>([]);
   // グループを作成・メンバー編集できるか。🚨 判定は DB の board_can_manage_groups() の1か所
@@ -381,7 +456,6 @@ const BoardPage: React.FC = () => {
   const [inboxRecipients,  setInboxRecipients]  = useState<Record<string, string[]>>({});
   const [archivedMessages, setArchivedMessages] = useState<BoardMessage[]>([]);
   const [inboxDetailRecipients,   setInboxDetailRecipients]   = useState<string[]>([]);
-  const [inboxDetailUnconfirmed,  setInboxDetailUnconfirmed]  = useState<string[]>([]);
   const [inboxRemindSending,      setInboxRemindSending]      = useState(false);
   const [archiveBulkPeriod,       setArchiveBulkPeriod]       = useState<'1m' | '3m' | '1y' | 'all' | ''>('');
   const [archiveBulkDeleting] = useState(false);
@@ -1109,18 +1183,19 @@ const BoardPage: React.FC = () => {
 
   // 受信トレイ詳細を開いた時、送信者 or 管理者なら受信者＋未対応者を取得
   useEffect(() => {
-    if (!inboxDetailId || !user) { setInboxDetailRecipients([]); setInboxDetailUnconfirmed([]); return; }
+    if (!inboxDetailId || !user) { setInboxDetailRecipients([]); return; }
     const msg = inboxMessages.find(m => m.id === inboxDetailId) || archivedMessages.find(m => m.id === inboxDetailId);
     if (!msg) return;
     (async () => {
       const [{ data: recData }, { data: confData }] = await Promise.all([
         supabase.from('board_message_recipients').select('user_id').eq('message_id', inboxDetailId),
-        supabase.from('board_confirmations').select('user_id').eq('message_id', inboxDetailId),
+        supabase.from('board_confirmations').select('user_id, comment, confirmed_at').eq('message_id', inboxDetailId),
       ]);
       const allIds = (recData || []).map((r: any) => r.user_id as string);
-      const confirmedIds = new Set((confData || []).map((c: any) => c.user_id as string));
       setInboxDetailRecipients(allIds);
-      setInboxDetailUnconfirmed(allIds.filter(id => !confirmedIds.has(id)));
+      // 🚨 「まだ押していない人」は ConfirmStatusBox が数える（同じ判定を2か所に書かない）。
+      //    ここでは読了・回答の記録をそのまま取り込むだけ
+      setConfirmations(prev => ({ ...prev, [inboxDetailId]: (confData || []).map((c: any) => ({ user_id: c.user_id, comment: c.comment, confirmed_at: c.confirmed_at })) }));
       setInboxRecipients(prev => ({ ...prev, [inboxDetailId]: allIds }));
     })();
   }, [inboxDetailId, user, isAdmin, inboxMessages, archivedMessages]);
@@ -2820,37 +2895,29 @@ const BoardPage: React.FC = () => {
                 </button>
               </div>
             )}
-            {/* リマインド（送信者 or 管理者かつ確認系メッセージのみ） */}
-            {(inboxDetail.user_id === user?.id || isAdmin) && (inboxDetail.requires_confirmation || inboxDetail.deadline_type) && inboxDetailRecipients.length > 0 && (
-              <div style={{ marginTop: 16, padding: '12px 14px', background: isDark ? '#2a1f00' : '#fffbeb', border: `1px solid ${isDark ? '#5a3e00' : '#fcd34d'}`, borderRadius: 10 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: isDark ? '#fcd34d' : '#92400e', marginBottom: 8 }}>
-                  🔔 対応状況 {inboxDetailRecipients.length - inboxDetailUnconfirmed.length}/{inboxDetailRecipients.length}人 完了
-                </div>
-                {inboxDetailUnconfirmed.length > 0 ? (
-                  <>
-                    <div style={{ fontSize: 12, color: isDark ? '#fcd34d' : '#92400e', marginBottom: 8 }}>
-                      未対応 {inboxDetailUnconfirmed.length}人：
-                      {inboxDetailUnconfirmed.map(uid => allProfiles.find(p => p.id === uid)?.name || '不明').join('、')}
-                    </div>
-                    <button type="button" disabled={inboxRemindSending}
-                      onClick={async () => {
-                        if (!user) return;
-                        setInboxRemindSending(true);
-                        await Promise.all(inboxDetailUnconfirmed.map(uid =>
-                          insertNotification(uid, `💬 【リマインド】${inboxDetail.subject || inboxDetail.title || 'お知らせ'}への対応がまだ完了していません`, undefined, undefined, inboxDetail.id, 'board:confirm_request')
-                        ));
-                        setInboxRemindSending(false);
-                        setSaveBanner(true);
-                        setTimeout(() => setSaveBanner(false), 3000);
-                      }}
-                      style={{ padding: '7px 16px', background: '#f59e0b', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, opacity: inboxRemindSending ? 0.6 : 1 }}>
-                      {inboxRemindSending ? '送信中...' : `🔔 ${inboxDetailUnconfirmed.length}人にリマインドを送る`}
-                    </button>
-                  </>
-                ) : (
-                  <div style={{ fontSize: 13, color: '#22c55e', fontWeight: 600 }}>✅ 全員対応済みです</div>
-                )}
-              </div>
+            {/* 対応状況（押した人・未対応の人・リマインド）。枠は ConfirmStatusBox に集約し、送信トレイと共用 */}
+            {canSeeConfirmStatus(inboxDetail) && (inboxDetail.requires_confirmation || inboxDetail.deadline_type) && (
+              <ConfirmStatusBox
+                recipientIds={inboxDetailRecipients}
+                confirmed={confirmations[inboxDetail.id] || []}
+                profiles={allProfiles} isDark={isDark}
+                remind={canRemind(inboxDetail) ? (notYet => (
+                  <button type="button" disabled={inboxRemindSending}
+                    onClick={async () => {
+                      if (!user) return;
+                      setInboxRemindSending(true);
+                      await Promise.all(notYet.map(uid =>
+                        insertNotification(uid, `💬 【リマインド】${inboxDetail.subject || inboxDetail.title || 'お知らせ'}への対応がまだ完了していません`, undefined, undefined, inboxDetail.id, 'board:confirm_request')
+                      ));
+                      setInboxRemindSending(false);
+                      setSaveBanner(true);
+                      setTimeout(() => setSaveBanner(false), 3000);
+                    }}
+                    style={{ padding: '7px 16px', background: '#f59e0b', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, opacity: inboxRemindSending ? 0.6 : 1 }}>
+                    {inboxRemindSending ? '送信中...' : `🔔 ${notYet.length}人にリマインドを送る`}
+                  </button>
+                )) : undefined}
+              />
             )}
           </div>
         </div>
@@ -3378,6 +3445,15 @@ const BoardPage: React.FC = () => {
                 </div>
               </div>
             ) : renderMsg(outboxDetail, false, true, outboxDetailArchiveBtn)}
+            {/* 対応状況（受信トレイと同じ部品）。🚨 写しで受け取る代表者はこちらでしか見られない
+                （自分が宛先に入っていないお知らせは、受信トレイに出ないため） */}
+            {canSeeConfirmStatus(outboxDetail) && (outboxDetail.requires_confirmation || outboxDetail.deadline_type) && (
+              <ConfirmStatusBox
+                recipientIds={inboxRecipients[outboxDetail.id] || []}
+                confirmed={confirmations[outboxDetail.id] || []}
+                profiles={allProfiles} isDark={isDark}
+              />
+            )}
             {/* 削除確認 */}
             {deleteConfirmId === outboxDetail.id ? (
               <div style={{ marginTop: 16, padding: '12px 14px', background: isDark ? '#2d1a1a' : '#fff5f5', border: `1px solid ${isDark ? '#7f1d1d' : '#fca5a5'}`, borderRadius: 10 }}>
