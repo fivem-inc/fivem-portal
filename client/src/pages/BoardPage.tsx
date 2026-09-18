@@ -391,6 +391,8 @@ const BoardPage: React.FC = () => {
   // 対応状況（押した人・未対応の人）を見られるか。
   // 🚨 2026-09-18 ユーザー確定：送信した本人／管理者／**写しで受け取る代表者**。
   //    代表者は「写しに入っている かつ いまの代表者設定に入っている」ときだけ（DB の board_is_notice_cc_rep と同じ考え方）。
+  // 🚨 お知らせを読み込むときは **cc_user_ids を必ず select に入れる**（受信トレイ・受信のアーカイブ・送信トレイの3か所）。
+  //    入れ忘れると代表者だけ枠が出ない（エラーも出ない）。2026-09-18 に受信トレイで入れ忘れて実機で見つかった
   const canSeeConfirmStatus = useCallback((msg: BoardMessage) => {
     if (!user) return false;
     if (msg.user_id === user.id || isAdmin) return true;
@@ -920,7 +922,7 @@ const BoardPage: React.FC = () => {
     const [{ data: msgData, error: msgErr }, { data: readData, error: readErr }, { data: rcData }] = await Promise.all([
       supabase
         .from('board_messages')
-        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link')
+        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, cc_user_ids')
         .in('id', msgIds)
         .is('parent_id', null)
         .order('created_at', { ascending: false }),
@@ -967,7 +969,7 @@ const BoardPage: React.FC = () => {
     if (msgIds.length === 0) { setArchivedMessages([]); return; }
     const { data: msgData } = await supabase
       .from('board_messages')
-      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link')
+      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, cc_user_ids')
       .in('id', msgIds)
       .is('parent_id', null)
       .order('created_at', { ascending: false });

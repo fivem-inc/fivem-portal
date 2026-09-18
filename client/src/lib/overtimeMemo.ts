@@ -67,11 +67,6 @@ export function memoNeedsLocation(kind: MemoKind): boolean {
   return kind === 'location_change';
 }
 
-/** 理由が必須か。🚨 打刻忘れ・打刻ズレだけ任意（「打刻忘れ」そのものが理由になるため） */
-export function memoReasonRequired(kind: MemoKind): boolean {
-  return kind !== 'missed_clock' && kind !== 'clock_only';
-}
-
 /** 打刻のメモ（今日以前の日付だけ・事後報告でしか出せないため） */
 export function isClockMemoKind(kind: MemoKind): boolean {
   return kind === 'missed_clock' || kind === 'clock_only';
@@ -187,6 +182,6 @@ export function validateMemo(
   if (draft.target_date < min) return `メモに書けるのは ${min.replace(/-/g, '/')} 以降の日付です`;
   if (draft.target_date > max) return `メモに書けるのは ${max.replace(/-/g, '/')} までの日付です`;
   if (isClockMemoKind(draft.kind) && draft.target_date > todayStr) return '打刻のメモは今日以前の日付だけです';
-  if (memoReasonRequired(draft.kind) && !draft.reason.trim()) return '理由を書いてください';
+  // 🚨 理由は必須にしない（2026-09-18 ユーザー指示「何を選択しても必須でなくてよい」）。DB 側の決まりも外した
   return '';
 }

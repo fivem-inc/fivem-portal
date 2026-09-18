@@ -11,7 +11,7 @@ import { supabase } from '../lib/supabaseClient';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import { todayJstStr } from '../lib/breakCalc';
 import {
-  MEMO_KINDS, memoTimeLabels, memoNeedsLocation, memoReasonRequired, memoReasonExamples,
+  MEMO_KINDS, memoTimeLabels, memoNeedsLocation, memoReasonExamples,
   memoDateRange, memoSection, memoDeadlineState, memoCloseCutoffLabel, memoSoonCount, sortMemos,
   memoHeadText, validateMemo, isClockMemoKind, addDaysStr,
 } from '../lib/overtimeMemo';
@@ -285,7 +285,7 @@ const OvertimeMemoSection: React.FC<Props> = ({ userId, isDark, workplaces, appl
           </>
         )}
 
-        <span style={labelStyle}>理由{d.kind && memoReasonRequired(d.kind) ? req : <span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（なくてもよい）</span>}</span>
+        <span style={labelStyle}>理由<span style={{ fontSize: 11, fontWeight: 'normal', color: subText }}>（なくてもよい）</span></span>
         {examples.length > 0 && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
             {examples.map(ex => (
