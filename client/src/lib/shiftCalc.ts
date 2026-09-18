@@ -133,3 +133,53 @@ export function formatSegsFromRecord(
 ): string {
   return formatSegs(parseSegments(segments, legacyStart, legacyEnd, legacyOutStart, legacyOutEnd, legacyLocation));
 }
+
+// ───────── 勤務変更報告の差分（2026-09-18 ユーザー指示「差分とまとめを」） ─────────
+/** 差分の計算に要る列だけ（shift_reports の行） */
+export interface ShiftDiffRow {
+  application_type: string;
+  application_types?: string[] | null;
+  original_segments: unknown;
+  original_start: string | null;
+  original_end: string | null;
+  original_outing_start: string | null;
+  original_outing_end: string | null;
+  labor_minutes: number | null;
+}
+
+/**
+ * 変更前（通常）の労働時間・変更後の実労働・差分（分）。
+ * 🚨 変更前の労働時間は保存していないので、変更前の時間帯から**申請と同じ休憩の決まり**で計算する。
+ *    変更後の実労働は保存済みの値（labor_minutes）を使う。
+ * 🚨 欠勤は変更後 0 分として数える（差分＝変更前の労働時間のマイナス）。
+ *    変更後の実労働が無く欠勤でもない報告（打刻忘れだけ など）は差分を出さない（null）。
+ * 🚨 古い報告は保存した実労働が当時の計算のまま（parseSegments の注意書き参照）。まれに食い違う
+ */
+export function shiftReportDiff(r: ShiftDiffRow): { original: number; actual: number | null; diff: number | null } {
+  const segs = parseSegments(r.original_segments, r.original_start, r.original_end, r.original_outing_start, r.original_outing_end);
+  const original = segs.length > 0 ? Math.max(0, segMinutes(segs) - calcSegsBreak(segs)) : 0;
+  const types = r.application_types && r.application_types.length > 0 ? r.application_types : [r.application_type];
+  const actual = types.includes('absence') ? 0 : (r.labor_minutes ?? null);
+  return { original, actual, diff: actual == null ? null : actual - original };
+}
+
+/** まとめ（個人を選んだときの1行）。受理済みだけを「確定」、確認待ちも足したものを「見込み」 */
+export function summarizeShiftDiffs(rows: (ShiftDiffRow & { status: string })[]): {
+  total: number; planned: number; plus: number; minus: number; absenceDays: number; pendingCount: number;
+} {
+  let total = 0, planned = 0, plus = 0, minus = 0, absenceDays = 0, pendingCount = 0;
+  for (const r of rows) {
+    if (r.status === 'cancelled' || r.status === 'returned') continue;
+    const d = shiftReportDiff(r).diff ?? 0;
+    const types = r.application_types && r.application_types.length > 0 ? r.application_types : [r.application_type];
+    if (r.status === 'confirmed') {
+      total += d;
+      if (d > 0) plus += d; else minus += d;
+      if (types.includes('absence')) absenceDays += 1;
+    } else {
+      pendingCount += 1;
+    }
+    planned += d;
+  }
+  return { total, planned, plus, minus, absenceDays, pendingCount };
+}

@@ -3,7 +3,7 @@ import { useAdminPanel } from './AdminPanelContext';
 import { notifyShiftReportReturned } from '../../lib/shiftReportReturnedNotify';
 import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
 import ShiftEditModal from './ShiftEditModal';
-import { formatSegsFromRecord, parseSegments } from '../../lib/shiftCalc';
+import { formatSegsFromRecord, parseSegments, shiftReportDiff, summarizeShiftDiffs } from '../../lib/shiftCalc';
 import { logFail } from '../../lib/logFail';
 
 type AppType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start' | 'location_change' | 'missed_clock';
@@ -83,6 +83,8 @@ const STATUS_BG: Record<string, string> = {
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 function dow(d: string) { return DOW[new Date(d + 'T00:00:00').getDay()]; }
+// 差分の表示（+1:15 / −0:45 / 0:00）。🚨 マイナスは全角の − にする（残業の画面と同じ書き方）
+function fmtSigned(m: number) { const a = Math.abs(m); const t = `${Math.floor(a / 60)}:${String(a % 60).padStart(2, '0')}`; return m > 0 ? `＋${t}` : m < 0 ? `−${t}` : '0:00'; }
 function fmtMin(m: number) { const h = Math.floor(m / 60), min = m % 60; return min > 0 ? `${h}時間${min}分` : `${h}時間`; }
 function payPeriodLabel(s: string) {
   const d = new Date(s + 'T00:00:00');
@@ -524,13 +526,33 @@ const ShiftReportsTab: React.FC = () => {
         </select>
         <button onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
           style={{ ...btnBase, padding: '4px 10px', fontSize: 12, background: isDarkMode ? '#495057' : '#e9ecef', color: text }}>
-          {sortDir === 'desc' ? '▼ 新しい順' : '▲ 古い順'}
+          {sortDir === 'desc' ? '↓ 降順' : '↑ 昇順'}
         </button>
         <button onClick={() => { setSortKey('created_at'); setSortDir('desc'); setStatusFilter('all'); setPersonFilter('all'); setGroupFilter('all'); setTypeFilter('all'); setPeriodFilter('__current__'); }}
           style={{ ...btnBase, padding: '4px 10px', fontSize: 12, background: isDarkMode ? '#6c757d' : '#dee2e6', color: sub }}>
           クリア
         </button>
       </div>
+
+      {/* 報告者を選んだときだけのまとめ（1行・高さを取らない。2026-09-18 ユーザー指示）。
+          🚨 状況・種別・グループの絞り込みに関係なく、その人のその給与期間の分で数える（残業の管理画面と同じ考え方）。
+             受理済みを「確定」、確認待ちも足したものを「見込み」。取消・差し戻しは数えない */}
+      {personFilter !== 'all' && (() => {
+        const p = periodFilter === '__current__' ? currentPeriod : (periodFilter === 'all' ? null : periodFilter);
+        const box: React.CSSProperties = { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'center', gap: '2px 14px', padding: '5px 10px', margin: '0 8px 8px', borderRadius: 8, background: isDarkMode ? '#2b3035' : '#f8f9fa', border: `1px solid ${border}`, fontSize: 12.5, color: text };
+        if (!p) return <div style={box}><span style={{ color: sub }}>給与期間を選ぶと、この人の差分の合計が出ます</span></div>;
+        const s = summarizeShiftDiffs(reports.filter(r => r.applicant_id === personFilter && r.pay_period_start === p));
+        return (
+          <div style={box} title="状況・種別の絞り込みに関係なく、この給与期間の受理済みの分で数えています">
+            <span>差分の合計（受理済み）<b style={{ fontSize: 14, marginLeft: 4 }}>{fmtSigned(s.total)}</b></span>
+            {s.planned !== s.total && <span style={{ color: sub }}>見込み {fmtSigned(s.planned)}</span>}
+            {s.pendingCount > 0 && <span style={{ color: sub }}>確認待ち {s.pendingCount}件</span>}
+            <span>増えた分 {fmtSigned(s.plus)}</span>
+            <span>減った分 {fmtSigned(s.minus)}</span>
+            {s.absenceDays > 0 && <span>欠勤 {s.absenceDays}日</span>}
+          </div>
+        );
+      })()}
 
       {/* テーブル */}
       {loading ? (
@@ -548,6 +570,7 @@ const ShiftReportsTab: React.FC = () => {
                   { label: '種別',     w: 70 },
                   { label: '変更前',   w: 100 },
                   { label: '変更後',   w: 100 },
+                  { label: '差分',     w: 60 },
                   { label: '理由・備考', w: 120 },
                   { label: '確認状況', w: 90 },
                   { label: '操作',     w: 110 },
@@ -626,6 +649,16 @@ const ShiftReportsTab: React.FC = () => {
                           <div style={{ fontSize: 11, color: sub }}>—</div>
                         )}
                       </td>
+                      {/* 差分（変更後の実労働 − 変更前の労働時間）。計算は lib/shiftCalc.ts の shiftReportDiff 1か所 */}
+                      {(() => {
+                        const { diff } = shiftReportDiff(r);
+                        return (
+                          <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'center', fontSize: 12, fontWeight: 'bold', whiteSpace: 'nowrap',
+                            color: diff == null || diff === 0 ? sub : diff > 0 ? (isDarkMode ? '#64b5f6' : '#1565c0') : (isDarkMode ? '#ffb74d' : '#e65100') }}>
+                            {diff == null ? '—' : fmtSigned(diff)}
+                          </td>
+                        );
+                      })()}
                       {/* 理由・バッジ */}
                       <td style={{ padding: '8px 4px', borderBottom: `1px solid ${border}`, textAlign: 'left', fontSize: 12, wordBreak: 'break-word' }}>
                         <div style={{ color: sub }}>{r.reason}</div>

@@ -4082,15 +4082,14 @@ const BoardPage: React.FC = () => {
               </button>
             ))}
           </div>
-          {/* 並び順。🚨 DBの並びに渡している（「古い順」がいちばん古いものを出す） */}
+          {/* 並び順。🚨 DBの並びに渡している（「昇順」がいちばん古いものを出す）。
+              アプリ全体で「↓ 降順／↑ 昇順」のボタン1つに揃えた（2026-09-18 ユーザー指示） */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 10 }}>
             <span style={{ fontSize: 11, color: subColor, marginRight: 2 }}>並び</span>
-            {([['new', '新しい順'], ['old', '古い順']] as const).map(([key, label]) => (
-              <button key={key} type="button" onClick={() => setSearchOrder(key)}
-                style={{ padding: '3px 10px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: searchOrder === key ? 700 : 400, color: searchOrder === key ? '#007bff' : subColor, borderBottom: searchOrder === key ? '2px solid #007bff' : '2px solid transparent', whiteSpace: 'nowrap' }}>
-                {label}
-              </button>
-            ))}
+            <button type="button" onClick={() => setSearchOrder(searchOrder === 'new' ? 'old' : 'new')}
+              style={{ padding: '3px 10px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', cursor: 'pointer', fontSize: 12, color: textColor, whiteSpace: 'nowrap' }}>
+              {searchOrder === 'new' ? '↓ 降順' : '↑ 昇順'}
+            </button>
           </div>
           <div style={{ fontSize: 12, color: subColor, marginBottom: 10 }}>
             {shownSearch.length}件を表示しています{searchMaybeMore && '（この先にもあります）'}

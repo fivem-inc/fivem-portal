@@ -614,7 +614,7 @@ const UsersTab: React.FC = () => {
                         fontSize: 13, fontWeight: userSortKey === key ? 'bold' : 'normal'
                       }}
                     >
-                      {label} {userSortKey === key ? (userSortAsc ? '▲' : '▼') : ''}
+                      {label} {userSortKey === key ? (userSortAsc ? '↑ 昇順' : '↓ 降順') : ''}
                     </button>
                   ))}
                 </div>

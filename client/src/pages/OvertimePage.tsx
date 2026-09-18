@@ -4222,7 +4222,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                         </button>
                         <button onClick={() => setOwnHistoryFilter(v => ({ ...v, sortAsc: !v.sortAsc }))}
                           style={{ marginLeft: 'auto', padding: '5px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
-                          {ownHistoryFilter.sortAsc ? '↑ 古い順' : '↓ 新しい順'}
+                          {ownHistoryFilter.sortAsc ? '↑ 昇順' : '↓ 降順'}
                         </button>
                       </div>
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
@@ -4855,7 +4855,7 @@ const MemberDetailView: React.FC<{
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
             <button type="button" onClick={toggleDetailSort}
               style={{ padding: '5px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
-              {detailSortAsc ? '↑ 古い順' : '↓ 新しい順'}
+              {detailSortAsc ? '↑ 昇順' : '↓ 降順'}
             </button>
           </div>
           {visible.map(r => <ReadonlyReportCard key={r.id} r={r} isDark={isDark} cardBg={cardBg} borderColor={borderColor} text={text} subText={subText} />)}

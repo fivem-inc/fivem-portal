@@ -1155,9 +1155,9 @@ const OvertimeAdminTab: React.FC = () => {
                           </td>
                           <td style={{ ...cell, textAlign: 'left', fontSize: 12 }}>
                             {/* 休日出勤の日は「元」の欄だけ色を付ける（2026-09-18 ユーザー確定・案1）。
-                                🚨 色は「休日出勤」の札と同じ（OT_TYPE_INFO.holiday_work）。新しい色は足さない */}
+                                🚨 色はピンク（2026-09-18 ユーザー指示）。新しい色は足さず、既存の「時間外調整休」の札の色（OT_TYPE_INFO.chosei_off）を使う */}
                             {(r.application_types ?? []).includes('holiday_work') ? (
-                              <div style={{ display: 'inline-block', fontSize: 11, fontWeight: 'bold', borderRadius: 4, padding: '0 5px', color: isDarkMode ? '#fff' : OT_TYPE_INFO.holiday_work.color, background: isDarkMode ? OT_TYPE_INFO.holiday_work.darkBg : `${OT_TYPE_INFO.holiday_work.color}1a` }}>
+                              <div style={{ display: 'inline-block', fontSize: 11, fontWeight: 'bold', borderRadius: 4, padding: '0 5px', color: isDarkMode ? '#fff' : OT_TYPE_INFO.chosei_off.color, background: isDarkMode ? OT_TYPE_INFO.chosei_off.darkBg : `${OT_TYPE_INFO.chosei_off.color}1a` }}>
                                 元 {nsTime}（休日出勤）
                               </div>
                             ) : (

@@ -900,10 +900,10 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
                   onChange={e => changeListSort(e.target.value as ListSort)}
                   style={{ fontSize: 12, padding: '4px 6px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#555' : '#ddd'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#adb5bd' : '#666' }}
                 >
-                  <option value="added_asc">登録順 ↓</option>
-                  <option value="added_desc">登録順 ↑</option>
-                  <option value="date_asc">日付順 ↓</option>
-                  <option value="date_desc">日付順 ↑</option>
+                  <option value="added_asc">登録順 ↑ 昇順</option>
+                  <option value="added_desc">登録順 ↓ 降順</option>
+                  <option value="date_asc">日付順 ↑ 昇順</option>
+                  <option value="date_desc">日付順 ↓ 降順</option>
                 </select>
               </div>
             </div>

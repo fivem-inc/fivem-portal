@@ -2239,7 +2239,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
               border: `1px solid ${isDark ? '#6c757d' : '#e5e7eb'}`,
               background: isDark ? '#495057' : '#fff', color: textColor,
             }}>
-            {listDesc ? '↓ 新しい順' : '↑ 古い順'}
+            {listDesc ? '↓ 降順' : '↑ 昇順'}
           </button>
         </div>
         {monthListRows.length === 0 ? (
