@@ -1804,7 +1804,13 @@ const OvertimeForm: React.FC<{
         </div>
       )}
 
-      <div style={{ display: memoOpen ? 'none' : undefined }}>
+      {/* メモの枠を開いている間は、下の申請欄を**薄くして押せなくする**（2026-09-18 ユーザー確定・案3）。
+          🚨 以前は隠していた（display:none）が、ページが短くなり、スマホでキーボードが出たときに
+             スクロールの余地が無く画面ごと跳ねて見えた（実機指摘）。出したまま触れなくして、長さを保つ。
+          🚨 inert で押す・入力する・Tab で移る、をすべて止める（見た目だけ薄くしても押せてしまうため）。
+             薄さは「選べない項目」の決まりどおり 0.5（🎨🔒・0.35 は薄すぎて存在が分からない） */}
+      <div inert={memoOpen} aria-hidden={memoOpen || undefined}
+        style={memoOpen ? { opacity: 0.5, pointerEvents: 'none', userSelect: 'none' } : undefined}>
 
       {/* 種別 */}
       {!editTarget && (
