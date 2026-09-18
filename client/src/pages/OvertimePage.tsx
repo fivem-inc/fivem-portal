@@ -1752,13 +1752,13 @@ const OvertimeForm: React.FC<{
         </div>
       )}
 
-      {/* メモの枠を開いている間は、下の申請欄を**薄くして押せなくする**（2026-09-18 ユーザー確定・案3）。
-          🚨 以前は隠していた（display:none）が、ページが短くなり、スマホでキーボードが出たときに
-             スクロールの余地が無く画面ごと跳ねて見えた（実機指摘）。出したまま触れなくして、長さを保つ。
-          🚨 inert で押す・入力する・Tab で移る、をすべて止める（見た目だけ薄くしても押せてしまうため）。
-             薄さは「選べない項目」の決まりどおり 0.5（🎨🔒・0.35 は薄すぎて存在が分からない） */}
+      {/* メモの枠を開いている間は、下の申請欄を**見えなくする（場所は残す）**（2026-09-18 ユーザー確定・案1。
+          いったん案3＝薄くする にしたが、実機で見て案1に戻した）。
+          🚨 display:none にしない。ページが短くなり、スマホでキーボードが出たときに
+             スクロールの余地が無く画面ごと跳ねた（実機指摘）。visibility:hidden なら長さはそのまま。
+          🚨 inert で押す・入力する・Tab で移る、をすべて止める（見えなくても Tab で入れてしまうため） */}
       <div inert={memoOpen} aria-hidden={memoOpen || undefined}
-        style={memoOpen ? { opacity: 0.5, pointerEvents: 'none', userSelect: 'none' } : undefined}>
+        style={memoOpen ? { visibility: 'hidden', pointerEvents: 'none', userSelect: 'none' } : undefined}>
 
       {/* 種別 */}
       {!editTarget && (
@@ -3094,7 +3094,11 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const [ownHistoryFilter, setOwnHistoryFilter] = useState<OwnHistoryFilter>(() => {
     try {
       const saved = localStorage.getItem(OWN_HISTORY_FILTER_KEY);
-      if (saved) return { status: 'all', types: [], sortAsc: false, showCancelled: false, ...JSON.parse(saved) };
+      if (saved) {
+        const v: OwnHistoryFilter = { status: 'all', types: [], sortAsc: false, showCancelled: false, ...JSON.parse(saved) };
+        // 🚨 以前はボタンで複数選べた。選択欄は1つしか出せないので、2つ以上残っていたら外す（見えない絞り込みを残さない）
+        return Array.isArray(v.types) && v.types.length <= 1 ? v : { ...v, types: [] };
+      }
     } catch { /* ignore */ }
     return { status: 'all', types: [], sortAsc: false, showCancelled: false };
   });
@@ -4225,30 +4229,18 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                           {ownHistoryFilter.sortAsc ? '↑ 昇順' : '↓ 降順'}
                         </button>
                       </div>
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
-                        {(Object.keys(OT_TYPE_INFO) as OvertimeType[]).map(t => {
-                          const active = ownHistoryFilter.types.includes(t);
-                          const info = OT_TYPE_INFO[t];
-                          return (
-                            <button key={t}
-                              onClick={() => setOwnHistoryFilter(v => ({ ...v, types: active ? v.types.filter(x => x !== t) : [...v.types, t] }))}
-                              style={{
-                                padding: '4px 10px', borderRadius: 12, cursor: 'pointer', fontSize: 11.5,
-                                border: `1px solid ${info.color}`,
-                                background: active ? info.color : (isDark ? info.darkBg : `${info.color}1a`),
-                                color: active ? '#fff' : (isDark ? '#fff' : info.color),
-                                fontWeight: active ? 'bold' : 'normal',
-                              }}>
-                              {info.label}
-                            </button>
-                          );
-                        })}
-                        {ownHistoryFilter.types.length > 0 && (
-                          <button onClick={() => setOwnHistoryFilter(v => ({ ...v, types: [] }))}
-                            style={{ padding: '4px 10px', borderRadius: 12, cursor: 'pointer', fontSize: 11.5, border: `1px solid ${borderColor}`, background: 'transparent', color: subText }}>
-                            選択をクリア
-                          </button>
-                        )}
+                      {/* 種類の絞り込み（2026-09-18 ユーザー指示）。色付きボタン14個が並んで見にくいため、選択欄で1つ選ぶ形にした。
+                          🚨 状態は types（配列）のまま持つ（端末に保存済みの値と互換）。選択欄では0件か1件だけにする */}
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 14 }}>
+                        <span style={{ fontSize: 12.5, color: subText, whiteSpace: 'nowrap' }}>種類</span>
+                        <select value={ownHistoryFilter.types[0] ?? ''}
+                          onChange={e => setOwnHistoryFilter(v => ({ ...v, types: e.target.value ? [e.target.value as OvertimeType] : [] }))}
+                          style={{ flex: 1, minWidth: 0, padding: '6px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: isDark ? '#495057' : '#fff', color: text, fontSize: 13 }}>
+                          <option value="">すべての種類</option>
+                          {(Object.keys(OT_TYPE_INFO) as OvertimeType[]).map(t => (
+                            <option key={t} value={t}>{OT_TYPE_INFO[t].label}</option>
+                          ))}
+                        </select>
                       </div>
                       {ownHistory.length === 0 && (
                         <p style={{ margin: '0 0 12px', fontSize: 13, color: subText, textAlign: 'center' }}>条件に一致する履歴はありません</p>
