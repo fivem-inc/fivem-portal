@@ -17,6 +17,7 @@ import OvertimeClockInquiryPanel from './OvertimeClockInquiryPanel';
 import { OT_TYPE_INFO, isOvertimeType, isFullDayReport, canOfferCalendarChoice, willShowOnCalendar } from '../../lib/overtimeTypes';
 import { notifyOvertimeReturned, notifyOvertimeAdminCancelled, notifyOvertimeGrant, notifyOvertimeGrantDeclined } from '../../lib/overtimeNotify';
 import { describeUpdate } from '../../lib/statusUpdate';
+import { computeBalance, type BalanceRow } from '../../lib/overtimeBalance';
 import { logFail } from '../../lib/logFail';
 
 const OT_STATUS_LABEL: Record<string, { label: string; color: string }> = {
@@ -434,6 +435,32 @@ const OvertimeAdminTab: React.FC = () => {
     otReports.forEach(r => m.set(r.applicant_id, r.applicantName || '不明'));
     return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1], 'ja')) as [string, string][];
   }, [otReports]);
+  // 個人と給与期間を選んだときだけ出す「合計時間数」（2026-09-18 ユーザー確定・案1）。
+  // 🚨 この一覧の行（手で出した申請だけ・全員で新しい順300件まで）を足さない。
+  //    休暇由来の自動計上（leave_auto）が入っておらず、前の期間は途中で切れるため、部門集計と数字が食い違う。
+  //    → その人のその期間の分を別に読み直し、部門集計と同じ computeBalance で数える（状況・種別の絞り込みは効かない）
+  const [otBalanceRows, setOtBalanceRows] = useState<BalanceRow[] | null>(null);
+  const [otBalanceErr, setOtBalanceErr] = useState('');
+  useEffect(() => {
+    if (otFilterPerson === 'all' || otFilterPeriod === 'all') { setOtBalanceRows(null); setOtBalanceErr(''); return; }
+    let alive = true;
+    (async () => {
+      const { data, error } = await supabase.from('overtime_reports')
+        .select('pay_period_start, status, entry_type, work_date, diff_minutes, application_types')
+        .eq('applicant_id', otFilterPerson).eq('pay_period_start', otFilterPeriod);
+      if (!alive) return;
+      // 🚨 読めなかったときに 0:00 と出さない（給与に効く数字で嘘をつかない）
+      if (error) { setOtBalanceRows(null); setOtBalanceErr('合計を読み込めませんでした：' + error.message); return; }
+      setOtBalanceErr('');
+      setOtBalanceRows((data as BalanceRow[] | null) ?? []);
+    })();
+    return () => { alive = false; };
+    // otReports を入れる：受理・差し戻しなどで一覧を読み直したら合計も読み直す
+  }, [supabase, otFilterPerson, otFilterPeriod, otReports]);
+  const otBalance = useMemo(
+    () => (otBalanceRows && otFilterPeriod !== 'all' ? computeBalance(otBalanceRows, otFilterPeriod) : null),
+    [otBalanceRows, otFilterPeriod],
+  );
   const otTypeOptions = useMemo(
     () => [...new Set(otReports.flatMap(r => (r.application_types ?? []).filter(isOvertimeType)))],
     [otReports],
@@ -1032,6 +1059,30 @@ const OvertimeAdminTab: React.FC = () => {
             )}
             <span style={{ fontSize: 12, color: subText }}>{visibleOtReports.length}件</span>
           </div>
+          {/* 個人を選んだときだけの合計（1行・高さを取らない。2026-09-18 ユーザー指示）。数え方は部門集計と同じ */}
+          {otFilterPerson !== 'all' && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'center', gap: '2px 14px', padding: '5px 10px', marginBottom: 8, borderRadius: 8, background: isDarkMode ? '#2b3035' : '#f8f9fa', border: `1px solid ${borderColor}`, fontSize: 12.5, color: text }}
+              title="状況・種別の絞り込みに関係なく、この期間の確定分で数えています（部門集計と同じ）">
+              {otFilterPeriod === 'all' ? (
+                <span style={{ color: subText }}>給与期間を選ぶと、この人の合計時間数が出ます</span>
+              ) : otBalanceErr ? (
+                <span style={{ color: '#842029' }}>{otBalanceErr}</span>
+              ) : !otBalance ? (
+                <span style={{ color: subText }}>合計を読み込んでいます…</span>
+              ) : (
+                <>
+                  <span>合計（確定）<b style={{ fontSize: 14, marginLeft: 4 }}>{formatSignedMin(otBalance.total)}</b></span>
+                  {otBalance.plannedTotal !== otBalance.total && <span style={{ color: subText }}>見込み {formatSignedMin(otBalance.plannedTotal)}</span>}
+                  {otBalance.pendingCount > 0 && <span style={{ color: subText }}>確認待ち {otBalance.pendingCount}件</span>}
+                  <span>残業 {formatSignedMin(otBalance.plus)}</span>
+                  {otBalance.holidayPlus > 0 && <span style={{ color: subText }}>（うち休日出勤 {formatSignedMin(otBalance.holidayPlus)}）</span>}
+                  <span>調整休 {formatSignedMin(otBalance.choseiMinus)}</span>
+                  <span>早退・調整 {formatSignedMin(otBalance.otherMinus)}</span>
+                  {otBalance.absenceDays > 0 && <span>欠勤 {otBalance.absenceDays}日</span>}
+                </>
+              )}
+            </div>
+          )}
           {otMsg && <div style={{ padding: 10, background: isDarkMode ? '#0f2e1a' : '#e8f5e9', border: '1px solid #28a745', borderRadius: 8, color: isDarkMode ? '#7ee2a8' : '#1b5e20', fontSize: 13, marginBottom: 10 }}>{otMsg}</div>}
           {otErr && <div style={{ padding: 10, background: isDarkMode ? '#3a1414' : '#fff5f5', border: '1px solid #f5c2c7', borderRadius: 8, color: isDarkMode ? '#fca5a5' : '#842029', fontSize: 13, marginBottom: 10 }}>{otErr}</div>}
           {otLoading ? (
@@ -1103,7 +1154,15 @@ const OvertimeAdminTab: React.FC = () => {
                             )}
                           </td>
                           <td style={{ ...cell, textAlign: 'left', fontSize: 12 }}>
-                            <div style={{ color: subText, fontSize: 11 }}>元 {nsTime}</div>
+                            {/* 休日出勤の日は「元」の欄だけ色を付ける（2026-09-18 ユーザー確定・案1）。
+                                🚨 色は「休日出勤」の札と同じ（OT_TYPE_INFO.holiday_work）。新しい色は足さない */}
+                            {(r.application_types ?? []).includes('holiday_work') ? (
+                              <div style={{ display: 'inline-block', fontSize: 11, fontWeight: 'bold', borderRadius: 4, padding: '0 5px', color: isDarkMode ? '#fff' : OT_TYPE_INFO.holiday_work.color, background: isDarkMode ? OT_TYPE_INFO.holiday_work.darkBg : `${OT_TYPE_INFO.holiday_work.color}1a` }}>
+                                元 {nsTime}（休日出勤）
+                              </div>
+                            ) : (
+                              <div style={{ color: subText, fontSize: 11 }}>元 {nsTime}</div>
+                            )}
                             <div>実 {segText}</div>
                             {(r.application_types ?? []).filter(isOvertimeType).length > 0 && (
                               <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginTop: 2 }}>
