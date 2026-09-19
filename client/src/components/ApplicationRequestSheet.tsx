@@ -134,6 +134,47 @@ const ApplicationRequestSheet: React.FC<Props> = ({
   const recipient = staff.find(s => s.id === recipientId);
   const filledDates = dates.map(d => d.trim()).filter(Boolean);
 
+  // その日にすでに申請があるか（2026-09-19 ユーザー確定）。
+  // きっかけ：先に有給が入っている日に依頼を出すと、依頼が「未申請」のまま残り、取り下げたら
+  //   「休暇 取り下げ」と出て有給が消えたように見えた（依頼が「申請済み」になるのは依頼のあとに出した申請だけ）。
+  // 🚨 止めない。気づけるように出すだけ。読めなかったら何も出さない（「無い」と言わない）
+  const datesKey = filledDates.join(',');
+  const [existing, setExisting] = useState<{ date: string; label: string }[]>([]);
+  useEffect(() => {
+    setExisting([]);
+    if (!recipientId || !datesKey) return;
+    const want = datesKey.split(',');
+    let alive = true;
+    (async () => {
+      const found: { date: string; label: string }[] = [];
+      if (kind === 'leave') {
+        const min = [...want].sort()[0]; const max = [...want].sort()[want.length - 1];
+        const { data, error: e } = await supabase.from('leave_requests')
+          .select('leave_type, status, leave_dates, start_date, end_date')
+          .eq('user_id', recipientId).not('status', 'in', '(rejected,cancelled)')
+          .lte('start_date', max).gte('end_date', min);
+        if (e || !data) return;
+        for (const r of data as { leave_type: string | null; status: string; leave_dates: string | null; start_date: string; end_date: string | null }[]) {
+          let days: string[] = [];
+          try { const a = r.leave_dates ? JSON.parse(r.leave_dates) : null; if (Array.isArray(a)) days = a.map(String); } catch { /* 下で範囲から作る */ }
+          for (const d of want) {
+            const hit = days.length > 0 ? days.includes(d) : (r.start_date <= d && d <= (r.end_date ?? r.start_date));
+            if (hit) found.push({ date: d, label: `${r.leave_type ?? '休暇'}・${['approved', 'manager_approved', 'admin_approved'].includes(r.status) ? '受理済み' : '確認待ち'}` });
+          }
+        }
+      } else {
+        const { data, error: e } = await supabase.from('overtime_reports')
+          .select('work_date, status').eq('applicant_id', recipientId).in('work_date', want).neq('status', 'cancelled');
+        if (e || !data) return;
+        for (const r of data as { work_date: string; status: string }[]) {
+          found.push({ date: r.work_date, label: ['confirmed', 'request_confirmed'].includes(r.status) ? '受理済み' : r.status === 'returned' ? '差し戻し中' : '確認待ち' });
+        }
+      }
+      if (alive) setExisting(found);
+    })();
+    return () => { alive = false; };
+  }, [kind, recipientId, datesKey]);
+
   const validate = (): string => {
     const bad = new Set<string>();
     if (!recipientId) { bad.add('recipient'); }
@@ -323,6 +364,14 @@ const ApplicationRequestSheet: React.FC<Props> = ({
             </p>
           )}
         </div>
+
+        {existing.length > 0 && (
+          <div style={{ margin: '-6px 0 14px', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, lineHeight: 1.7,
+            background: isDark ? '#3d3520' : '#fff8e1', border: `1px solid ${isDark ? '#8a6d1f' : '#ffe08a'}`, color: isDark ? '#ffd54f' : '#8a5a00' }}>
+            ⚠️ すでに申請があります：{existing.map(x => `${Number(x.date.slice(5, 7))}/${Number(x.date.slice(8, 10))}（${x.label}）`).join('、')}<br />
+            この日の依頼を出しても、「未申請」のまま残ります。
+          </div>
+        )}
 
         {/* 相談した日（任意）。メモ（相談で聞いた内容）のすぐ上に置く＝相談まわりをまとめる */}
         <div style={{ marginBottom: 14 }}>

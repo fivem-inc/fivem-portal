@@ -1175,7 +1175,10 @@ const classifyNotif = (n: NotifLike) => {
   //   バナー側 … タップで閉じる／ベル側 … 既読にするだけ（一覧には履歴として残す）
   // 要対応（承認待ち・打刻の確認など）は closeOnTap: false。対応が終わるまで残す
   const target: { path: string | null; closeOnTap: boolean } = (() => {
-    if (isEnc) return { path: '/leave', closeOnTap: false };
+    // 有給奨励日（2026-09-19 修正）。🚨 以前は /leave（休暇申請）に飛ばしていたため、回答ではなく
+    //    ふつうの休暇申請から出してしまう人がいた（奨励日の印が付かず、シフト調整の扱いもずれる）。
+    //    回答はホームのバナー（EncouragementBanner）からなので、ホームへ返して、バナーまで移動させる
+    if (isEnc) return { path: '/?enc=1', closeOnTap: false };
     // 出勤のお願い（パート向け・2026-09-13）。🚨 答えるまで消さない＝ closeOnTap: false
     if (n.source_type === 'shift_adjust:part_request') return { path: '/shift-request', closeOnTap: false };
     // 出勤のお願いの担当が別の方に決まった（選ばれなかったパート向け・2026-09-13）。読めば用が済む
@@ -1539,6 +1542,19 @@ type EncDay = { id: string; target_date: string; deadline: string };
 const EncouragementBanner: React.FC<{ userId: string; refreshKey: number; onAnswer: (day: EncDay) => void }> = ({ userId, refreshKey, onAnswer }) => {
   const [pending, setPending] = useState<EncDay[]>([]);
 
+  // ベル・プッシュから ?enc=1 で来たら、バナーまで移動して少し光らせる（2026-09-19）
+  const { search } = useLocation();
+  const fromNotif = new URLSearchParams(search).get('enc') === '1';
+  const bannerRef = useRef<HTMLDivElement | null>(null);
+  const [glow, setGlow] = useState(false);
+  useEffect(() => {
+    if (!fromNotif || pending.length === 0 || !bannerRef.current) return;
+    bannerRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setGlow(true);
+    const t = setTimeout(() => setGlow(false), 2500);
+    return () => clearTimeout(t);
+  }, [fromNotif, pending.length]);
+
   useEffect(() => {
     const fetch = async () => {
       const { data: targets } = await supabase.from('paid_leave_encouragement_targets').select('encouragement_day_id').eq('user_id', userId);
@@ -1557,7 +1573,7 @@ const EncouragementBanner: React.FC<{ userId: string; refreshKey: number; onAnsw
   if (pending.length === 0) return null;
 
   return (
-    <>
+    <div ref={bannerRef} style={{ borderRadius: 12, outline: glow ? '3px solid #ffc107' : 'none', outlineOffset: 2, transition: 'outline-color 0.6s' }}>
       {pending.map(d => {
         const today = todayJstStr();
         const diff = Math.round((new Date(d.deadline + 'T00:00:00Z').getTime() - new Date(today + 'T00:00:00Z').getTime()) / 86400000);
@@ -1581,7 +1597,7 @@ const EncouragementBanner: React.FC<{ userId: string; refreshKey: number; onAnsw
           </div>
         );
       })}
-    </>
+    </div>
   );
 };
 

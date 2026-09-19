@@ -146,7 +146,8 @@ const EVENT_MAP: Record<string, { app: string; word: string; text: string; url: 
   // 定期リマインドは特定のメッセージを指していないため連絡板に飛ばしても何も無い。
   // ホームに専用バナー（ScheduledReminderBanner）があるのでそちらへ着地させる（2026-08-18 修正）
   "reminder:scheduled":       { app: "リマインド", word: "新着", text: "定期リマインドが届いています", url: "/" },
-  "reminder:encouragement":   { app: "休暇申請", word: "新着", text: "有給奨励日の回答期限が近づいています", url: "/leave" },
+  // 有給奨励日は回答をホームのバナーでする。/leave（休暇申請）に飛ばすと、ふつうの休暇申請から出してしまう（2026-09-19）
+  "reminder:encouragement":   { app: "休暇申請", word: "新着", text: "有給奨励日の回答期限が近づいています", url: "/?enc=1" },
   // 社内お知らせ（作成時の連絡・終了日が近づいたリマインド）
   // word は安全語ホワイトリスト（新着）のみ。自由文は Android で警告表示に化けるため不可。
   "announcement:new":         { app: "お知らせ", word: "新着", text: "社内お知らせが届いています", url: "/" },

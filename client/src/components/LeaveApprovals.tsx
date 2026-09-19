@@ -687,7 +687,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                   <span>{(r.target_dates ?? []).map(d => d.slice(5).replace('-', '/')).join('・')}</span>
                   <span>{r.kind === 'leave' ? '休暇' : '残業・勤務変更'}</span>
                   <span style={{ color: r.status === 'open' ? '#b7770d' : r.status === 'applied' ? '#1e8449' : (isDark ? '#adb5bd' : '#6c757d') }}>
-                    {r.status === 'open' ? '未申請' : r.status === 'applied' ? '申請済み ✓' : r.status === 'dismissed' ? '対応しない' : '取り下げ'}
+                    {r.status === 'open' ? '未申請' : r.status === 'applied' ? '申請済み ✓' : r.status === 'dismissed' ? '対応しない' : '依頼を取り下げ済み'}
                   </span>
                   {/* 🚨 相手が「消す」ときに選んだ理由を出す（2026-09-10）。
                          出さないと、理由を入力させても行き先が無く、ここが「対応しない」だけで
@@ -698,7 +698,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                   {r.status === 'open' && (
                     <button onClick={() => withdrawRequest(r.id)}
                       style={{ padding: '3px 10px', borderRadius: 10, fontSize: 11, cursor: 'pointer', border: `1px solid ${isDark ? '#6c757d' : '#dee2e6'}`, background: 'transparent', color: isDark ? '#adb5bd' : '#6c757d' }}>
-                      取り下げる
+                      依頼を取り下げる
                     </button>
                   )}
                 </div>

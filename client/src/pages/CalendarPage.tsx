@@ -146,7 +146,7 @@ interface LeaveEvent {
   locations?: Record<string, string>; // 日付→校（leave_locations列。無い申請はundefined）
   purpose?: string | null; // 事由（一覧の理由表示は調整休のみ使用。他の休暇はプライバシー配慮で出さない）
   reason?: string | null;  // 備考（調整休の種類「振替休日／時間外調整休」の判定に使用）
-  // シフト調整の状態（2026-09-09）。pending=未／adjusted=調整済／no_change=確認済（変更なし）
+  // シフト調整の状態（2026-09-09）。pending=未／adjusted=調整済／no_change=確認済（変更なし）／not_needed=調整不要（2026-09-19）
   // 🚨 出すのは受理済み（マネージャー受理以降）だけ。それ以前は調整のしようがないため
   shift_adjust_status?: string | null;
   // 🚨 誰がいつ「調整済／確認済」にしたか（2026-09-11 ユーザー要望で表示するようにした）。
@@ -1610,7 +1610,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
   //    ひと月ぶんの一覧の中から自分で探すことになり、何をすればよいか分からない。
   const [onlyShiftPending, setOnlyShiftPending] = useState(() => shiftParam === 'pending');
 
-  const saveShiftAdjust = async (ev: LeaveEvent, status: 'pending' | 'adjusted' | 'no_change') => {
+  const saveShiftAdjust = async (ev: LeaveEvent, status: 'pending' | 'adjusted' | 'no_change' | 'not_needed') => {
     setShiftSavingId(ev.id);
     setShiftError('');
     // 🚨 rpc は 4xx でも throw しない。error と、関数が返す ok の両方を必ず見る
@@ -2279,7 +2279,8 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
                   const isPendingShift = shiftSt === 'pending';
                   // 🚨 新しい色は足さない。「未」は「あなたがやることがある」ことを示す既存の橙、
                   //    済んだものは主張しないグレーにする（配色の決まり 🎨🔒）
-                  const lbl = isPendingShift ? 'シフト 未' : shiftSt === 'adjusted' ? 'シフト 調整済' : 'シフト 確認済（変更なし）';
+                  // 調整不要（2026-09-19）：休暇の日がすべて有給奨励日なら DB が自動で入れる。ボタンからも選べる
+                  const lbl = isPendingShift ? 'シフト 未' : shiftSt === 'adjusted' ? 'シフト 調整済' : shiftSt === 'not_needed' ? 'シフト 調整不要' : 'シフト 確認済（変更なし）';
                   const fg = isPendingShift ? (isDark ? '#ffcf8f' : '#b7770d') : subColor;
                   const bg = isPendingShift ? (isDark ? '#4a3a1a' : '#fff8e1') : 'transparent';
                   const style: React.CSSProperties = {
@@ -2332,7 +2333,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
                       <div style={{ margin: '0 8px 8px', padding: '8px 10px', borderRadius: 8, background: isDark ? '#3a3f44' : '#f8f9fa', border: `1px solid ${borderColor}` }}>
                         <div style={{ fontSize: 11, color: subColor, marginBottom: 6 }}>この休暇のシフト調整</div>
                         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                          {([['pending', '未'], ['adjusted', '調整済'], ['no_change', '確認済（変更なし）']] as const).map(([v, lbl]) => (
+                          {([['pending', '未'], ['adjusted', '調整済'], ['no_change', '確認済（変更なし）'], ['not_needed', '調整不要']] as const).map(([v, lbl]) => (
                             <button key={v} onClick={() => saveShiftAdjust(ev, v)} disabled={shiftSavingId === ev.id}
                               style={{ padding: '6px 12px', borderRadius: 14, fontSize: 11.5, fontWeight: 'bold', cursor: 'pointer',
                                 border: `1px solid ${(ev.shift_adjust_status ?? 'pending') === v ? '#4a90d9' : borderColor}`,
