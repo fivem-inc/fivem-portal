@@ -3,6 +3,8 @@ import { useAdminPanel } from './AdminPanelContext';
 import { supabase } from '../../lib/supabaseClient';
 import { useRoles } from '../../hooks/useRoles';
 import { describeUpdate } from '../../lib/statusUpdate';
+import { retireState, retireStateLabel, mdLabel, fetchRetireAccessDefault, type RetireScheduleResult } from '../../lib/retire';
+import { todayJstStr } from '../../lib/breakCalc';
 
 // ユーザー追加モーダル
 const AddUserModal: React.FC<{
@@ -380,9 +382,53 @@ const PendingUserRow: React.FC<{
 
 const UsersTab: React.FC = () => {
   const ctx = useAdminPanel();
-  const { isDarkMode, users, loadingUsers, sortedUsers, pendingUsers, userSortKey, userSortAsc, handleUserSort, editingUser, editName, setEditName, handleEditName, handleSaveName, handleCancelUserEdit, showRetired, setShowRetired, editingSortOrder, setEditingSortOrder, editSortOrderValue, setEditSortOrderValue, handleSaveSortOrder, masterOptions, isUserEditMode, setIsUserEditMode, confirmChange, setConfirmChange, fetchUsers, setErrorMsg, handleToggleActive, handleDeleteUser, handleApprovePendingUser, handleRejectPendingUser, setActiveTab } = ctx;
+  const { isDarkMode, users, loadingUsers, sortedUsers, pendingUsers, userSortKey, userSortAsc, handleUserSort, editingUser, editName, setEditName, handleEditName, handleSaveName, handleCancelUserEdit, showRetired, setShowRetired, editingSortOrder, setEditingSortOrder, editSortOrderValue, setEditSortOrderValue, handleSaveSortOrder, masterOptions, isUserEditMode, setIsUserEditMode, confirmChange, setConfirmChange, fetchUsers, setErrorMsg, setSuccessMsg, handleRestoreUser, handleDeleteUser, handleApprovePendingUser, handleRejectPendingUser, setActiveTab } = ctx;
 
   const [showAddModal, setShowAddModal] = useState(false);
+  // 退職の予約（2026-09-19・案A「道は1本」）。［退職］を押すとその行の下に入力欄が開く
+  const [retireFormFor, setRetireFormFor] = useState<string | null>(null);
+  const [retireDate, setRetireDate] = useState('');
+  const [retireUntil, setRetireUntil] = useState('');
+  const [retireUntilEdited, setRetireUntilEdited] = useState(false);
+  const [retireBusy, setRetireBusy] = useState(false);
+  const [retireErr, setRetireErr] = useState('');
+  const [retireCancelFor, setRetireCancelFor] = useState<string | null>(null);
+  const todayJst = todayJstStr();
+  const openRetireForm = (userId: string) => {
+    setRetireFormFor(userId); setRetireDate(''); setRetireUntil(''); setRetireUntilEdited(false); setRetireErr(''); setRetireCancelFor(null);
+  };
+  // 退職日を変えたら、期限の初期値を DB から取り直す（🚨 画面で計算しない。手で直した期限は上書きしない）
+  useEffect(() => {
+    if (!retireFormFor || !retireDate || retireUntilEdited) return;
+    let alive = true;
+    void fetchRetireAccessDefault(retireDate).then(d => { if (alive && d) setRetireUntil(d); });
+    return () => { alive = false; };
+  }, [retireFormFor, retireDate, retireUntilEdited]);
+  const submitRetire = async (userId: string, userName: string) => {
+    if (!retireDate) { setRetireErr('退職日を選んでください'); return; }
+    if (retireUntil && retireUntil < retireDate) { setRetireErr('申請の期限は退職日より後にしてください'); return; }
+    setRetireBusy(true); setRetireErr('');
+    const { data, error } = await supabase.rpc('retire_schedule', { p_user: userId, p_retire_date: retireDate, p_access_until: retireUntil || null });
+    setRetireBusy(false);
+    if (error) { setRetireErr('退職の手続きができませんでした：' + error.message); return; }
+    const r = data as RetireScheduleResult;
+    const moved = r.reassigned > 0 ? `確認者のまま残っていた申請 ${r.reassigned} 件を「管理者」に付け替えました。` : '';
+    const grace = r.access_expired ? '申請の期限はすでに過ぎています。' : `申請の期限は ${mdLabel(r.access_until)} です。`;
+    setSuccessMsg(r.applied_now
+      ? `${userName}さんを退職に切り替えました。${grace}${moved}`
+      : `${userName}さんの退職日を ${mdLabel(r.retire_date)} で予約しました。翌日の0時に切り替わります。${grace}`);
+    setRetireFormFor(null);
+    fetchUsers();
+  };
+  const cancelRetire = async (userId: string) => {
+    setRetireBusy(true);
+    const { error } = await supabase.rpc('retire_cancel', { p_user: userId });
+    setRetireBusy(false);
+    if (error) { setErrorMsg('退職日を取り消せませんでした：' + error.message); return; }
+    setRetireCancelFor(null);
+    setSuccessMsg('退職日を取り消しました（退職の手続きのチェックも消しました）');
+    fetchUsers();
+  };
   const roleNames = useRoles().map(r => r.name);
   const [selectedForEmail, setSelectedForEmail] = useState<Set<string>>(new Set());
   const [showEmailModal, setShowEmailModal] = useState(false);
@@ -649,8 +695,10 @@ const UsersTab: React.FC = () => {
                     </thead>
                     <tbody>
                       {sortedUsers.map(user => {
+                        const rState = retireState(user, todayJst);
                         return (
-                          <tr key={user.id} style={{ opacity: user.is_active === false ? 0.6 : 1, background: sortedUsers.indexOf(user) % 2 === 0 ? (isDarkMode ? '#343a40' : 'white') : (isDarkMode ? '#3d4349' : '#f8f9fa') }}>
+                          <React.Fragment key={user.id}>
+                          <tr style={{ opacity: user.is_active === false ? 0.6 : 1, background: sortedUsers.indexOf(user) % 2 === 0 ? (isDarkMode ? '#343a40' : 'white') : (isDarkMode ? '#3d4349' : '#f8f9fa') }}>
                             {/* チェックボックス列 */}
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center' }}>
                               {user.email !== 'fivem.kyoto@gmail.com' && user.email && (
@@ -803,11 +851,10 @@ const UsersTab: React.FC = () => {
                               }
                             </td>
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px' }}>
-                              {user.is_active === false ? (
-                                <span style={{ color: '#dc3545', fontWeight: 'bold', fontSize: '11px' }}>退職済</span>
-                              ) : (
-                                <span style={{ color: '#28a745', fontWeight: 'bold', fontSize: '11px' }}>現役</span>
-                              )}
+                              {/* 状態の札は lib/retire.ts の1か所（ユーザー管理・退職の手続きで共用） */}
+                              <span style={{ color: user.is_active === false ? '#dc3545' : '#28a745', fontWeight: 'bold', fontSize: '11px' }}>
+                                {retireStateLabel(user, todayJst)}
+                              </span>
                             </td>
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px' }}>
                               <div style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
@@ -817,10 +864,16 @@ const UsersTab: React.FC = () => {
                                 )}
                                 {user.email !== 'fivem.kyoto@gmail.com' && (
                                   <>
-                                    <button style={{ padding: '3px 6px', background: user.is_active === false ? '#28a745' : '#fd7e14', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }} onClick={() => handleToggleActive(user.id, user.is_active !== false)}>
-                                      {user.is_active === false ? '復活' : '退職'}
-                                    </button>
-                                    {user.is_active === false && (
+                                    {/* 退職は「退職日を入れて確定」の1本だけ（2026-09-19・案A）。復活は RPC で退職日も空にする */}
+                                    {user.is_active === false ? (
+                                      <button style={{ padding: '3px 6px', background: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }} onClick={() => handleRestoreUser(user.id)}>復活</button>
+                                    ) : rState === 'scheduled' ? (
+                                      <button style={{ padding: '3px 6px', background: 'transparent', color: isDarkMode ? '#ffc107' : '#b35900', border: `1px solid ${isDarkMode ? '#ffc107' : '#fd7e14'}`, borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }} onClick={() => { setRetireCancelFor(user.id); setRetireFormFor(null); }}>退職日を取り消す</button>
+                                    ) : (
+                                      <button style={{ padding: '3px 6px', background: '#fd7e14', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }} onClick={() => openRetireForm(user.id)}>退職</button>
+                                    )}
+                                    {/* 🚨 申請期間中は削除を出さない（退職の手続きのチェックも一緒に消えるため） */}
+                                    {user.is_active === false && rState !== 'grace' && (
                                       <button style={{ padding: '3px 6px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }} onClick={() => handleDeleteUser(user.id, user.name || user.email || '')}>削除</button>
                                     )}
                                   </>
@@ -828,6 +881,47 @@ const UsersTab: React.FC = () => {
                               </div>
                             </td>
                           </tr>
+                          {(retireFormFor === user.id || retireCancelFor === user.id) && (
+                            <tr>
+                              <td colSpan={12} style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '10px 12px', background: isDarkMode ? '#3d3520' : '#fff8e1' }}>
+                                {retireCancelFor === user.id ? (
+                                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 13, color: isDarkMode ? '#fff' : '#212529' }}>
+                                    <span>{user.name}さんの退職日（{mdLabel(user.retire_date)}）を取り消します。退職の手続きのチェックで「済み」にした記録も消えます。</span>
+                                    <button disabled={retireBusy} onClick={() => setRetireCancelFor(null)} style={{ padding: '4px 12px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ced4da'}`, background: 'transparent', color: isDarkMode ? '#fff' : '#212529', cursor: 'pointer', fontSize: 12 }}>やめる</button>
+                                    <button disabled={retireBusy} onClick={() => cancelRetire(user.id)} style={{ padding: '4px 12px', borderRadius: 6, border: 'none', background: '#fd7e14', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>取り消す</button>
+                                  </div>
+                                ) : (
+                                  <div style={{ fontSize: 13, color: isDarkMode ? '#fff' : '#212529' }}>
+                                    <div style={{ fontWeight: 'bold', marginBottom: 8 }}>{user.name}さんの退職の手続き</div>
+                                    <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}>
+                                      <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                        退職日（在籍の最終日）
+                                        <input type="date" value={retireDate} onChange={e => { setRetireDate(e.target.value); setRetireErr(''); }}
+                                          style={{ padding: '4px 6px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ced4da'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#212529' }} />
+                                      </label>
+                                      <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                        申請の期限
+                                        <input type="date" value={retireUntil} onChange={e => { setRetireUntil(e.target.value); setRetireUntilEdited(true); setRetireErr(''); }}
+                                          style={{ padding: '4px 6px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ced4da'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#212529' }} />
+                                        {!retireUntilEdited && retireUntil && <span style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#6c757d' }}>（初期値）</span>}
+                                      </label>
+                                    </div>
+                                    <div style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#6c757d', lineHeight: 1.7, marginBottom: 8 }}>
+                                      ※ 退職日の翌日0時に自動で退職に切り替わります。過去の日を選ぶと、確定した時点で切り替わります。<br />
+                                      ※ 切り替わるとき、この方が確認者のまま残っている申請（残業・勤務変更報告・休暇）は「管理者」に付け替えます。<br />
+                                      ※ 申請の期限は、退職後に申請だけできる期間の終わりです（初期値は給与の締めの月の月末）。
+                                    </div>
+                                    {retireErr && <div style={{ color: '#dc3545', fontSize: 12, marginBottom: 6 }}>{retireErr}</div>}
+                                    <div style={{ display: 'flex', gap: 8 }}>
+                                      <button disabled={retireBusy} onClick={() => setRetireFormFor(null)} style={{ padding: '4px 12px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ced4da'}`, background: 'transparent', color: isDarkMode ? '#fff' : '#212529', cursor: 'pointer', fontSize: 12 }}>やめる</button>
+                                      <button disabled={retireBusy || !retireDate} onClick={() => submitRetire(user.id, user.name || user.email || '')} style={{ padding: '4px 12px', borderRadius: 6, border: 'none', background: retireDate ? '#fd7e14' : (isDarkMode ? '#6c757d' : '#ced4da'), color: '#fff', cursor: retireDate ? 'pointer' : 'default', fontSize: 12, fontWeight: 'bold' }}>{retireBusy ? '処理中…' : '確定'}</button>
+                                    </div>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                          </React.Fragment>
                         );
                       })}
                     </tbody>

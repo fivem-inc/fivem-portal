@@ -162,6 +162,10 @@ export interface AdminUserProfile {
   signup_ip?: string | null;
   signup_country?: string | null;
   signup_city?: string | null;
+  /** 退職日（在籍の最終日）。予約中も入る（docs/計画-退職者の申請期間.md） */
+  retire_date?: string | null;
+  /** 退職後にログインして申請できる期限 */
+  retiree_access_until?: string | null;
 }
 
 export interface AdminLeaveRequest {

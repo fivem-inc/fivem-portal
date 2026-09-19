@@ -11,9 +11,9 @@ import { resolveItems } from '../../lib/purchaseItemsFallback';
 // 修正依頼から「どの申請へ飛んだか」を飛び先のタブへ伝えるための型
 export type AdminFocusTarget = { type: 'leave' | 'shift' | 'overtime'; id: string };
 
-export type AdminTab = 'approvals' | 'users' | 'groups' | 'shift_patterns' | 'reports' | 'trip_reports' | 'leave_requests' | 'shift_reports' | 'overtime_admin' | 'overtime_proposals' | 'leader_assignments' | 'notifications' | 'scheduled_reminders' | 'board_settings' | 'feature_permissions' | 'purchase_requests' | 'announcements' | 'corrections' | 'safety_checks' | 'faq';
+export type AdminTab = 'approvals' | 'users' | 'groups' | 'shift_patterns' | 'reports' | 'trip_reports' | 'leave_requests' | 'shift_reports' | 'overtime_admin' | 'overtime_proposals' | 'leader_assignments' | 'notifications' | 'scheduled_reminders' | 'board_settings' | 'feature_permissions' | 'purchase_requests' | 'announcements' | 'corrections' | 'safety_checks' | 'faq' | 'retire';
 
-const ADMIN_TABS: AdminTab[] = ['approvals', 'users', 'groups', 'shift_patterns', 'reports', 'trip_reports', 'leave_requests', 'shift_reports', 'overtime_admin', 'overtime_proposals', 'leader_assignments', 'notifications', 'scheduled_reminders', 'board_settings', 'feature_permissions', 'purchase_requests', 'announcements', 'corrections', 'safety_checks', 'faq'];
+const ADMIN_TABS: AdminTab[] = ['approvals', 'users', 'groups', 'shift_patterns', 'reports', 'trip_reports', 'leave_requests', 'shift_reports', 'overtime_admin', 'overtime_proposals', 'leader_assignments', 'notifications', 'scheduled_reminders', 'board_settings', 'feature_permissions', 'purchase_requests', 'announcements', 'corrections', 'safety_checks', 'faq', 'retire'];
 
 interface PrintVoucher {
   submissionId: string;
@@ -99,7 +99,8 @@ export interface AdminPanelContextType {
   handleEditName: (userId: string, currentName: string) => void;
   handleSaveName: (userId: string) => Promise<void>;
   handleCancelUserEdit: () => void;
-  handleToggleActive: (userId: string, currentIsActive: boolean) => Promise<void>;
+  /** 退職済みの人を在籍に戻す（RPC retire_restore。退職日も空にする） */
+  handleRestoreUser: (userId: string) => Promise<void>;
   handleDeleteUser: (userId: string, userName: string) => Promise<void>;
   handleApprovePendingUser: (userId: string, employmentType: string, roleTitle: string) => Promise<void>;
   handleRejectPendingUser: (userId: string) => Promise<void>;
@@ -538,7 +539,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, email, name, is_active, approval_status, sort_order, registered_at, employment_type, role_title, group_names, leave_request_enabled, last_sign_in_at, signup_ip, signup_country, signup_city')
+        .select('id, email, name, is_active, approval_status, sort_order, registered_at, employment_type, role_title, group_names, leave_request_enabled, last_sign_in_at, signup_ip, signup_country, signup_city, retire_date, retiree_access_until')
         .order('sort_order', { ascending: true, nullsFirst: false });
       if (error) {
         console.error('ユーザー取得エラー:', error);
@@ -627,11 +628,12 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
 
   const handleCancelUserEdit = useCallback(() => { setEditingUser(null); setEditName(''); }, []);
 
-  const handleToggleActive = useCallback(async (userId: string, currentIsActive: boolean) => {
-    const action = currentIsActive ? '退職済みにします' : '現役に戻します';
-    setConfirmDialog({ message: `このユーザーを${action}。よろしいですか？`, onConfirm: async () => {
-      const { error } = await supabase.from('profiles').update({ is_active: !currentIsActive }).eq('id', userId);
-      if (error) { setErrorMsg('更新に失敗しました: ' + error.message); } else { fetchUsers(); }
+  // 復活（2026-09-19）。🚨 is_active を画面から直接書き換えない。退職日が残ると翌朝また退職に戻るため、
+  //    RPC retire_restore が退職日・期限・退職時の役職をまとめて空にする。退職そのものは UsersTab の［退職］→ retire_schedule
+  const handleRestoreUser = useCallback(async (userId: string) => {
+    setConfirmDialog({ message: 'このユーザーを現役に戻します。よろしいですか？', onConfirm: async () => {
+      const { error } = await supabase.rpc('retire_restore', { p_user: userId });
+      if (error) { setErrorMsg('現役に戻せませんでした: ' + error.message); } else { fetchUsers(); }
     } });
   }, [fetchUsers]);
 
@@ -1435,7 +1437,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
       masterOptions, isUserEditMode, setIsUserEditMode,
       confirmChange, setConfirmChange,
       fetchUsers, fetchMasterOptions, handleUserSort, handleSaveSortOrder,
-      handleEditName, handleSaveName, handleCancelUserEdit, handleToggleActive, handleDeleteUser,
+      handleEditName, handleSaveName, handleCancelUserEdit, handleRestoreUser, handleDeleteUser,
       handleApprovePendingUser, handleRejectPendingUser,
       selectedGroup, setSelectedGroup, editingGroupName, setEditingGroupName,
       editGroupNameValue, setEditGroupNameValue, newGroupName, setNewGroupName,

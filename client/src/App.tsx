@@ -5,11 +5,13 @@ import SignIn from './pages/SignIn';
 import ResetPassword from './pages/ResetPassword';
 import ExpenseForm from './components/ExpenseForm';
 import OvertimeThresholdBanner from './components/OvertimeThresholdBanner';
+import RetireChecklistBanner from './components/RetireChecklistBanner';
 import { todayJstStr } from './lib/breakCalc';
 import { BELL_REFRESH_EVENT } from './lib/notifications';
 
 // 設定系ページは起動直後のランディング（ホーム）に不要なので遅延読込にして初期バンドルを軽くする
 const ChangeEmail = React.lazy(() => import('./pages/ChangeEmail'));
+const RetireChecklistPanel = React.lazy(() => import('./components/RetireChecklistPanel'));
 const ChangePassword = React.lazy(() => import('./pages/ChangePassword'));
 const AccountSettings = React.lazy(() => import('./pages/AccountSettings'));
 const NotificationSettings = React.lazy(() => import('./pages/NotificationSettings'));
@@ -1847,6 +1849,7 @@ const Dashboard: React.FC = () => {
   const {
     user,
     isAdmin,
+    isManagerPlus,
     isApprover,
     profileName,
     roleTitle,
@@ -2059,6 +2062,9 @@ const Dashboard: React.FC = () => {
       {/* ④-3 備品購入申請承認バナー（承認者のみ） */}
       <PurchaseApprovalBanner userId={user.id} canPurchaseRequest={canPurchaseRequest} />
 
+      {/* ④-4 退職の手続きが残っている（マネージャー以上と管理者・2026-09-19） */}
+      <RetireChecklistBanner show={isAdmin || isManagerPlus} isDark={isDarkMode} />
+
       {/* ④-4 残業・時間調整の確認待ちバナー（確認者のみ） */}
       <OvertimeApprovalBanner userId={user.id} canOvertime={canOvertime} />
       <OvertimeUnreportedBanner userId={user.id} canOvertime={canOvertime} />
@@ -2190,6 +2196,24 @@ const LeaveApprovalsPage: React.FC = () => {
       <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
       <Suspense fallback={<PageLoader />}>
         <LeaveApprovals user={user} profileName={profileName} isAdmin={isAdmin} roleTitle={roleTitle} canPartFormSend={canPartLeaveFormSend} canApplicationRequest={canApplicationRequest} />
+      </Suspense>
+    </div>
+  );
+};
+
+// 退職の手続き（/retire）。マネージャー以上と管理者。スマホでも開ける（管理画面はパソコンだけのため別に置く・2026-09-19）
+// 🚨 中身は RetireChecklistPanel 1つ（管理画面の「退職の手続き」タブと共用）
+const RetirePage: React.FC = () => {
+  const { user, isAdmin, isManagerPlus, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, handleLogout, loading } = useAuth();
+  const isDarkMode = useDarkMode();
+  if (!user || loading) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
+  if (!isAdmin && !isManagerPlus) return <Navigate to="/" />;
+  return (
+    <div style={{ padding: '110px 16px 0', maxWidth: 760, margin: '0 auto' }}>
+      <NavBar isAdmin={isAdmin} onLogout={handleLogout} email={user.email || ''} profileName={profileName} canLeave={canLeave} canApprove={isApprover} canShiftReport={canShiftReport} canCalendar={canCalendar} canPurchaseRequest={canPurchaseRequest} canOvertime={canOvertime} canExpense={canExpense} canTripReport={canTripReport} canBoard={canBoard} canRoomBooking={canRoomBooking} canFaq={canFaq} canFaqNav={canFaqNav} roleTitle={roleTitle} userId={user.id} />
+      <h2 style={{ fontSize: 18, margin: '0 0 12px', color: isDarkMode ? '#fff' : '#212529' }}>📋 退職の手続き</h2>
+      <Suspense fallback={<PageLoader />}>
+        <RetireChecklistPanel isDark={isDarkMode} isAdmin={isAdmin} />
       </Suspense>
     </div>
   );
@@ -2471,6 +2495,7 @@ function App() {
             <Route path="/leave-approvals" element={<LeaveApprovalsPage />} />
             <Route path="/calendar" element={<TeamCalendarPage />} />
             <Route path="/admin" element={<AdminPage />} />
+            <Route path="/retire" element={<RetirePage />} />
             <Route path="/faq-admin" element={<FaqAdminPageWrapper />} />
             <Route path="/faq" element={<HelpPageWrapper />} />
             {/* 旧URL。ブックマークやメール内リンクから来ても迷子にならないよう転送する */}
