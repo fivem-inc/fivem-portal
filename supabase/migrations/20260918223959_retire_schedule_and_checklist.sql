@@ -20,7 +20,7 @@ alter table public.profiles
   add column if not exists retire_date date,
   add column if not exists retiree_access_until date,
   add column if not exists retired_at timestamptz,
-  add column if not exists retired_role_id uuid references public.roles(id) on delete set null,
+  add column if not exists retired_role_id uuid,  -- 🚨 roles への外部キーは付けない（2本目があると profiles→roles の埋め込みが PGRST201 で全滅する・20260919025525 で外した）
   add column if not exists retired_employment_type text;
 
 comment on column public.profiles.retire_date is '退職日＝在籍の最終日（退職届の日付）。翌日0時(JST)に退職へ切り替わる。予約中も入る';
