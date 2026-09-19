@@ -369,9 +369,13 @@ const OvertimeMemoSection: React.FC<Props> = ({ userId, isDark, workplaces, appl
           style={soon > 0
             ? { ...btn, background: '#fff3cd', border: '1px solid #ffeeba', color: '#856404' }
             : btn}>
-          メモ（{memos.length}）{soon > 0 ? ' 締め切り近い' : ''}{open ? ' ▲' : ''}
+          メモ（{memos.length}）{soon > 0 ? ' 締め切り近い' : ''}
         </button>
-        {rightSlot}
+        {/* 開いている間は右の［クリア］の代わりに［申請に戻る］（2026-09-19 ユーザー指示）。
+            ▲▼ だけでは「閉じると申請の画面に戻る」ことが伝わらなかったため。クリアはメモを開いている間は要らない */}
+        {open
+          ? <button type="button" onClick={() => setOpen(false)} style={btn}>申請に戻る</button>
+          : rightSlot}
       </div>
 
       {open && (
