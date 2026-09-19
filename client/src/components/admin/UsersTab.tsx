@@ -3,7 +3,7 @@ import { useAdminPanel } from './AdminPanelContext';
 import { supabase } from '../../lib/supabaseClient';
 import { useRoles } from '../../hooks/useRoles';
 import { describeUpdate } from '../../lib/statusUpdate';
-import { retireState, retireStateLabel, mdLabel, fetchRetireAccessDefault, type RetireScheduleResult } from '../../lib/retire';
+import { retireState, retireStateLabel, retireStateColor, mdLabel, fetchRetireAccessDefault, type RetireScheduleResult } from '../../lib/retire';
 import { todayJstStr } from '../../lib/breakCalc';
 
 // ユーザー追加モーダル
@@ -400,6 +400,7 @@ const UsersTab: React.FC = () => {
   // 退職日を変えたら、期限の初期値を DB から取り直す（🚨 画面で計算しない。手で直した期限は上書きしない）
   useEffect(() => {
     if (!retireFormFor || !retireDate || retireUntilEdited) return;
+    setRetireUntil('');
     let alive = true;
     void fetchRetireAccessDefault(retireDate).then(d => { if (alive && d) setRetireUntil(d); });
     return () => { alive = false; };
@@ -413,10 +414,10 @@ const UsersTab: React.FC = () => {
     if (error) { setRetireErr('退職の手続きができませんでした：' + error.message); return; }
     const r = data as RetireScheduleResult;
     const moved = r.reassigned > 0 ? `確認者のまま残っていた申請 ${r.reassigned} 件を「管理者」に付け替えました。` : '';
-    const grace = r.access_expired ? '申請の期限はすでに過ぎています。' : `申請の期限は ${mdLabel(r.access_until)} です。`;
+    // 🚨 1段目では退職者はまだログインできないので「申請の期限」は言わない（2026-09-19 UXレビュー）
     setSuccessMsg(r.applied_now
-      ? `${userName}さんを退職に切り替えました。${grace}${moved}`
-      : `${userName}さんの退職日を ${mdLabel(r.retire_date)} で予約しました。翌日の0時に切り替わります。${grace}`);
+      ? `${userName}さんを退職に切り替えました。${moved}`
+      : `${userName}さんの退職日を ${mdLabel(r.retire_date)} で予約しました。翌日の0時に退職に切り替わります。`);
     setRetireFormFor(null);
     fetchUsers();
   };
@@ -852,7 +853,7 @@ const UsersTab: React.FC = () => {
                             </td>
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px' }}>
                               {/* 状態の札は lib/retire.ts の1か所（ユーザー管理・退職の手続きで共用） */}
-                              <span style={{ color: user.is_active === false ? '#dc3545' : '#28a745', fontWeight: 'bold', fontSize: '11px' }}>
+                              <span style={{ color: retireStateColor(user, todayJst, isDarkMode), fontWeight: 'bold', fontSize: '11px' }}>
                                 {retireStateLabel(user, todayJst)}
                               </span>
                             </td>
@@ -900,21 +901,28 @@ const UsersTab: React.FC = () => {
                                           style={{ padding: '4px 6px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ced4da'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#212529' }} />
                                       </label>
                                       <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                                        申請の期限
+                                        ログインできる期限
                                         <input type="date" value={retireUntil} onChange={e => { setRetireUntil(e.target.value); setRetireUntilEdited(true); setRetireErr(''); }}
                                           style={{ padding: '4px 6px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ced4da'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#212529' }} />
                                         {!retireUntilEdited && retireUntil && <span style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#6c757d' }}>（初期値）</span>}
+                                        {!retireUntilEdited && retireDate && !retireUntil && <span style={{ fontSize: 11, color: isDarkMode ? '#adb5bd' : '#6c757d' }}>計算中…</span>}
                                       </label>
                                     </div>
                                     <div style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#6c757d', lineHeight: 1.7, marginBottom: 8 }}>
                                       ※ 退職日の翌日0時に自動で退職に切り替わります。過去の日を選ぶと、確定した時点で切り替わります。<br />
                                       ※ 切り替わるとき、この方が確認者のまま残っている申請（残業・勤務変更報告・休暇）は「管理者」に付け替えます。<br />
-                                      ※ 申請の期限は、退職後に申請だけできる期間の終わりです（初期値は給与の締めの月の月末）。
+                                      ※ ログインできる期限は、退職後に申請だけできる期間の終わりです（初期値は給与の締めの月の月末）。退職後の申請の仕組みは準備中で、いまは退職日の翌日からログインできなくなります。
                                     </div>
+                                    {/* 過去の日は確定と同時に切り替わる。入れ間違いを防ぐため、はっきり知らせる（2026-09-19 UXレビュー） */}
+                                    {retireDate && retireDate < todayJst && (
+                                      <div style={{ color: '#dc3545', fontSize: 12.5, fontWeight: 'bold', lineHeight: 1.7, marginBottom: 8 }}>
+                                        ⚠️ 過去の日付です。［今すぐ退職にする］を押すと、その場で退職に切り替わり、確認者のまま残っている申請は「管理者」に移ります。在籍に戻しても、申請の付け替えは戻りません。
+                                      </div>
+                                    )}
                                     {retireErr && <div style={{ color: '#dc3545', fontSize: 12, marginBottom: 6 }}>{retireErr}</div>}
                                     <div style={{ display: 'flex', gap: 8 }}>
                                       <button disabled={retireBusy} onClick={() => setRetireFormFor(null)} style={{ padding: '4px 12px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ced4da'}`, background: 'transparent', color: isDarkMode ? '#fff' : '#212529', cursor: 'pointer', fontSize: 12 }}>やめる</button>
-                                      <button disabled={retireBusy || !retireDate} onClick={() => submitRetire(user.id, user.name || user.email || '')} style={{ padding: '4px 12px', borderRadius: 6, border: 'none', background: retireDate ? '#fd7e14' : (isDarkMode ? '#6c757d' : '#ced4da'), color: '#fff', cursor: retireDate ? 'pointer' : 'default', fontSize: 12, fontWeight: 'bold' }}>{retireBusy ? '処理中…' : '確定'}</button>
+                                      <button disabled={retireBusy || !retireDate} onClick={() => submitRetire(user.id, user.name || user.email || '')} style={{ padding: '4px 12px', borderRadius: 6, border: 'none', background: retireDate ? '#fd7e14' : (isDarkMode ? '#6c757d' : '#ced4da'), color: '#fff', cursor: retireDate ? 'pointer' : 'default', fontSize: 12, fontWeight: 'bold' }}>{retireBusy ? '処理中…' : (retireDate && retireDate < todayJst ? '今すぐ退職にする' : '確定')}</button>
                                     </div>
                                   </div>
                                 )}

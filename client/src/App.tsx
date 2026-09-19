@@ -1179,6 +1179,8 @@ const classifyNotif = (n: NotifLike) => {
     //    ふつうの休暇申請から出してしまう人がいた（奨励日の印が付かず、シフト調整の扱いもずれる）。
     //    回答はホームのバナー（EncouragementBanner）からなので、ホームへ返して、バナーまで移動させる
     if (isEnc) return { path: '/?enc=1', closeOnTap: false };
+    // 退職の手続きが残っている（マネージャー以上と管理者・2026-09-19）。済むまで残す
+    if (n.source_type === 'retire:checklist') return { path: '/retire', closeOnTap: false };
     // 出勤のお願い（パート向け・2026-09-13）。🚨 答えるまで消さない＝ closeOnTap: false
     if (n.source_type === 'shift_adjust:part_request') return { path: '/shift-request', closeOnTap: false };
     // 出勤のお願いの担当が別の方に決まった（選ばれなかったパート向け・2026-09-13）。読めば用が済む

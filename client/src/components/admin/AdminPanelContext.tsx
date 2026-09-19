@@ -631,9 +631,10 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   // 復活（2026-09-19）。🚨 is_active を画面から直接書き換えない。退職日が残ると翌朝また退職に戻るため、
   //    RPC retire_restore が退職日・期限・退職時の役職をまとめて空にする。退職そのものは UsersTab の［退職］→ retire_schedule
   const handleRestoreUser = useCallback(async (userId: string) => {
-    setConfirmDialog({ message: 'このユーザーを現役に戻します。よろしいですか？', onConfirm: async () => {
+    // 🚨 何が消えて何が残るかを書く（2026-09-19 UXレビュー）。付け替えた申請は管理者のまま戻らない
+    setConfirmDialog({ message: 'このユーザーを在籍に戻します。退職の手続きのチェックで「済み」にした記録は消えます。退職のときに「管理者」へ付け替えた申請は、管理者のまま戻りません。よろしいですか？', onConfirm: async () => {
       const { error } = await supabase.rpc('retire_restore', { p_user: userId });
-      if (error) { setErrorMsg('現役に戻せませんでした: ' + error.message); } else { fetchUsers(); }
+      if (error) { setErrorMsg('在籍に戻せませんでした: ' + error.message); } else { setSuccessMsg('在籍に戻しました'); fetchUsers(); }
     } });
   }, [fetchUsers]);
 

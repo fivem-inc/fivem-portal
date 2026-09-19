@@ -374,7 +374,10 @@ const OvertimeMemoSection: React.FC<Props> = ({ userId, isDark, workplaces, appl
         {/* 開いている間は右の［クリア］の代わりに［申請に戻る］（2026-09-19 ユーザー指示）。
             ▲▼ だけでは「閉じると申請の画面に戻る」ことが伝わらなかったため。クリアはメモを開いている間は要らない */}
         {open
-          ? <button type="button" onClick={() => setOpen(false)} style={btn}>申請に戻る</button>
+          // 色は濃い灰の塗り（2026-09-19 ユーザー確定・案F）。🚨 メモの中は青いボタン（種類・保存）が多いので、青にすると選択肢の1つに見える。
+          //    ダークでは明るい灰に反転（濃い灰だと［メモ］と見分けが付かない）
+          ? <button type="button" onClick={() => setOpen(false)}
+              style={{ ...btn, background: isDark ? '#e9ecef' : '#495057', border: `1px solid ${isDark ? '#e9ecef' : '#495057'}`, color: isDark ? '#212529' : '#fff' }}>申請に戻る</button>
           : rightSlot}
       </div>
 

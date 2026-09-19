@@ -5,10 +5,10 @@
 // 🚨 行がある＝済み。退職日を取り消すと DB（retire_cancel）が消す／アカウントを削除すると一緒に消える
 // 🚨 更新・削除は 0件でもエラーにならないので、件数を見る
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { todayJstStr } from '../lib/breakCalc';
-import { retireStateLabel, mdLabel, retireRemaining, REASSIGN_TABLE_LABEL } from '../lib/retire';
+import { todayJstStr, toJstDateStr } from '../lib/breakCalc';
+import { retireState, retireStateLabel, mdLabel, retireRemaining, REASSIGN_TABLE_LABEL } from '../lib/retire';
 
 interface Item { id: string; label: string; required: boolean; sort_order: number; active: boolean }
 interface Person {
@@ -17,7 +17,6 @@ interface Person {
 }
 interface Check { id: string; user_id: string; item_id: string; done_by: string | null; done_at: string }
 interface Reassign { retired_user_id: string; table_name: string }
-interface PurchasePending { id: string; status: string; board_approver_ids: string[] | null; requested_manager_ids: string[] | null }
 
 interface Props {
   isDark: boolean;
@@ -37,8 +36,12 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
   const [checks, setChecks] = useState<Check[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
   const [reassigns, setReassigns] = useState<Reassign[]>([]);
-  const [purchases, setPurchases] = useState<PurchasePending[]>([]);
-  const [purchaseLoadFailed, setPurchaseLoadFailed] = useState(false);
+  // 退職者が承認者のまま残っている購入申請の件数（人ごと）。🚨 DB の retire_purchase_pending で数える
+  //    （画面から直接読むと RLS で自分が関わる行しか見えず、静かに0件になる・2026-09-19 レビュー）。null＝数えられなかった
+  const [purchaseLeft, setPurchaseLeft] = useState<Record<string, number | null>>({});
+  // 済みを戻す前のその場の確認（押し間違いで「誰が・いつ」が消えないように）
+  const [undoFor, setUndoFor] = useState<string | null>(null);
+  const namesLoaded = useRef(false);
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState('');
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -65,13 +68,13 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
     setItems((it.data ?? []) as Item[]);
     setPeople(ps);
     const ids = ps.map(p => p.id);
-    if (ids.length === 0) { setChecks([]); setReassigns([]); setPurchases([]); setLoading(false); return; }
-    const [ck, ra, pr, nm] = await Promise.all([
+    if (ids.length === 0) { setChecks([]); setReassigns([]); setPurchaseLeft({}); setLoading(false); return; }
+    const [ck, ra, nm, ...pcs] = await Promise.all([
       supabase.from('retire_checklist_checks').select('id, user_id, item_id, done_by, done_at').in('user_id', ids),
       supabase.from('retire_reassignments').select('retired_user_id, table_name').in('retired_user_id', ids),
-      supabase.from('purchase_requests').select('id, status, board_approver_ids, requested_manager_ids')
-        .in('status', ['pending_manager', 'pending_board']),
-      supabase.from('profiles').select('id, name'),
+      // 「済みにした人」の名前は最初に1回だけ読む（押すたびに全員分を読み直さない）
+      namesLoaded.current ? Promise.resolve(null) : supabase.from('profiles').select('id, name'),
+      ...ids.map(id => supabase.rpc('retire_purchase_pending', { p_user: id })),
     ]);
     if (ck.error || ra.error) {
       setLoadErr('読み込めませんでした：' + (ck.error?.message ?? ra.error?.message ?? ''));
@@ -80,12 +83,16 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
     }
     setChecks((ck.data ?? []) as Check[]);
     setReassigns((ra.data ?? []) as Reassign[]);
-    // 備品購入申請は読めない権限のこともある。読めなければ「確かめられない」とだけ出す（0件と言わない）
-    setPurchases(pr.error ? [] : (pr.data ?? []) as PurchasePending[]);
-    setPurchaseLoadFailed(!!pr.error);
-    const m: Record<string, string> = {};
-    (nm.data ?? []).forEach((r: { id: string; name: string | null }) => { m[r.id] = r.name ?? ''; });
-    setNames(m);
+    // 数えられなかったときは null（「0件」と言わない）
+    const pl: Record<string, number | null> = {};
+    ids.forEach((id, i) => { const r = pcs[i] as { data: unknown; error: unknown }; pl[id] = r.error || typeof r.data !== 'number' ? null : r.data; });
+    setPurchaseLeft(pl);
+    if (nm && !nm.error) {
+      const m: Record<string, string> = {};
+      ((nm.data ?? []) as { id: string; name: string | null }[]).forEach(r => { m[r.id] = r.name ?? ''; });
+      setNames(m);
+      namesLoaded.current = true;
+    }
     setLoading(false);
   }, []);
 
@@ -107,7 +114,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
   const toggle = async (userId: string, item: Item) => {
     const key = `${userId}:${item.id}`;
     const cur = checkOf(userId, item.id);
-    setBusyKey(key); setRowErr(e => ({ ...e, [userId]: '' }));
+    setBusyKey(key); setRowErr(e => ({ ...e, [userId]: '' })); setUndoFor(null);
     if (cur) {
       const { data, error } = await supabase.from('retire_checklist_checks').delete().eq('id', cur.id).select('id');
       if (error || !data || data.length === 0) {
@@ -212,52 +219,66 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
         const remaining = remainingOf(p.id);
         const moved = reassigns.filter(r => r.retired_user_id === p.id);
         const movedByTable = Object.entries(moved.reduce<Record<string, number>>((acc, r) => { acc[r.table_name] = (acc[r.table_name] ?? 0) + 1; return acc; }, {}));
-        const purchaseLeft = purchases.filter(r =>
-          (r.status === 'pending_board' ? (r.board_approver_ids ?? []) : (r.requested_manager_ids ?? [])).includes(p.id)).length;
+        const pLeft = purchaseLeft[p.id];
+        const failed = retireState(p, today) === 'switch_failed';
         return (
           <div key={p.id} style={{ background: cardBg, border: `1px solid ${remaining > 0 ? '#f59e0b' : border}`, borderRadius: 10, padding: '12px 14px', marginBottom: 12 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
               <span style={{ fontSize: 15, fontWeight: 'bold' }}>{p.name}さん</span>
               <span style={{ fontSize: 12, color: subText }}>退職日 {mdLabel(p.retire_date)}・{retireStateLabel(p, today)}</span>
-              <span style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 'bold', color: remaining > 0 ? (isDark ? '#ffc107' : '#b35900') : '#28a745' }}>
+              <span style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 'bold', color: remaining > 0 ? (isDark ? '#ffc107' : '#b35900') : (isDark ? '#5cb85c' : '#1e7e34') }}>
                 {remaining > 0 ? `必須が残り ${remaining} 件` : '✓ 必須はすべて済み'}
               </span>
             </div>
+            {failed && (
+              <div style={{ padding: '8px 12px', borderRadius: 8, fontSize: 12.5, background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029', marginBottom: 8 }}>
+                ⚠️ 退職日を過ぎていますが、自動の退職の切り替えができていません。管理者が「ユーザー」で退職日を入れ直してください。
+              </div>
+            )}
 
             {activeItems.map(it => {
               const c = checkOf(p.id, it.id);
               const key = `${p.id}:${it.id}`;
               return (
-                <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderTop: `1px solid ${border}`, flexWrap: 'wrap' }}>
-                  <button disabled={busyKey === key} onClick={() => toggle(p.id, it)}
-                    style={{ width: 26, height: 26, borderRadius: 6, cursor: 'pointer', fontSize: 14, lineHeight: '22px', padding: 0,
-                      border: `2px solid ${c ? '#28a745' : border}`, background: c ? '#28a745' : 'transparent', color: '#fff' }}
-                    aria-label={c ? `${it.label}を未済に戻す` : `${it.label}を済みにする`}>
-                    {c ? '✓' : ''}
-                  </button>
-                  <span style={{ flex: 1, minWidth: 160, fontSize: 13, color: c ? subText : text, textDecoration: c ? 'line-through' : 'none' }}>
-                    {it.label}{it.required && !c && <span style={{ color: '#dc3545', fontSize: 11, marginLeft: 4 }}>必須</span>}
-                  </span>
-                  {c && (
-                    <span style={{ fontSize: 11.5, color: subText }}>
-                      {names[c.done_by ?? ''] || '（不明）'}・{mdLabel(c.done_at.slice(0, 10))}
+                <div key={it.id} style={{ borderTop: `1px solid ${border}` }}>
+                  {/* 行全体を押せるボタン（スマホの指でも押しやすい高さ44px・2026-09-19 UXレビュー）。
+                      済みを戻すときだけ、その場で確認する（押し間違いで「誰が・いつ」が消えないように） */}
+                  <button type="button" disabled={busyKey === key} aria-pressed={!!c}
+                    onClick={() => (c ? setUndoFor(key) : toggle(p.id, it))}
+                    style={{ width: '100%', minHeight: 44, display: 'flex', alignItems: 'center', gap: 10, padding: '6px 2px', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', color: text, flexWrap: 'wrap' }}>
+                    <span aria-hidden style={{ width: 24, height: 24, flexShrink: 0, borderRadius: 6, fontSize: 14, lineHeight: '20px', textAlign: 'center',
+                      border: `2px solid ${c ? '#1e7e34' : border}`, background: c ? '#1e7e34' : 'transparent', color: '#fff' }}>{c ? '✓' : ''}</span>
+                    <span style={{ flex: 1, minWidth: 150, fontSize: 13.5, color: c ? subText : text, textDecoration: c ? 'line-through' : 'none' }}>
+                      {it.label}{!it.required && <span style={{ color: subText, fontSize: 11, marginLeft: 6 }}>（任意）</span>}
                     </span>
+                    {c && (
+                      <span style={{ fontSize: 11.5, color: subText }}>
+                        {names[c.done_by ?? ''] || '（不明）'}・{mdLabel(toJstDateStr(new Date(c.done_at)))}
+                      </span>
+                    )}
+                  </button>
+                  {undoFor === key && c && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '6px 10px 10px', fontSize: 12.5 }}>
+                      <span>{names[c.done_by ?? ''] || '（不明）'}さんの記録（{mdLabel(toJstDateStr(new Date(c.done_at)))}）を消して、未済に戻しますか？</span>
+                      <button type="button" style={btn(false)} onClick={() => setUndoFor(null)}>やめる</button>
+                      <button type="button" style={{ ...btn(false), borderColor: '#dc3545', color: '#dc3545' }} onClick={() => toggle(p.id, it)}>戻す</button>
+                    </div>
                   )}
                 </div>
               );
             })}
 
-            {(movedByTable.length > 0 || purchaseLeft > 0 || purchaseLoadFailed) && (
+            {(movedByTable.length > 0 || (pLeft ?? 0) > 0 || pLeft === null) && (
               <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${border}`, fontSize: 12.5, lineHeight: 1.8 }}>
                 {movedByTable.length > 0 && (
                   <div>確認者を「管理者」に付け替えた申請：{movedByTable.map(([t, n]) => `${REASSIGN_TABLE_LABEL[t] ?? t} ${n}件`).join('・')}</div>
                 )}
-                {purchaseLeft > 0 && (
+                {(pLeft ?? 0) > 0 && (
                   <div style={{ color: isDark ? '#ffc107' : '#b35900' }}>
-                    ⚠️ {p.name}さんが承認者のまま、まだ終わっていない購入申請が {purchaseLeft} 件あります。管理画面の「購入申請」で承認者を変更してください。
+                    ⚠️ {p.name}さんが承認者のまま、まだ終わっていない購入申請が {pLeft} 件あります。管理画面の「購入申請」で承認者を変更してください。
                   </div>
                 )}
-                {purchaseLoadFailed && (
+                {pLeft === null && (
                   <div style={{ color: subText }}>※ 購入申請の承認者は、この画面では確かめられませんでした（管理画面の「購入申請」でご確認ください）</div>
                 )}
               </div>

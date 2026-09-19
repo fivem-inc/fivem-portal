@@ -37,15 +37,15 @@ const RetireChecklistBanner: React.FC<{ show: boolean; isDark: boolean }> = ({ s
   if (!show || rows.length === 0) return null;
   const summary = rows.map(r => `${r.name}さん 残り${r.remaining}件`).join('・');
   return (
-    <div onClick={() => navigate('/retire')}
-      style={{ background: isDark ? '#3d3520' : '#fff8e1', border: `1px solid ${isDark ? '#8a6d1f' : '#ffe08a'}`, borderRadius: 10, padding: '12px 16px', marginBottom: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12 }}>
+    <button type="button" onClick={() => navigate('/retire')}
+      style={{ width: '100%', textAlign: 'left', font: 'inherit', background: isDark ? '#3d3520' : '#fff8e1', border: `1px solid ${isDark ? '#8a6d1f' : '#ffe08a'}`, borderRadius: 10, padding: '12px 16px', marginBottom: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12 }}>
       <div style={{ fontSize: 18, flexShrink: 0 }}>📋</div>
       <div style={{ flex: 1 }}>
         <div style={{ fontSize: 14, fontWeight: 'bold', color: isDark ? '#ffd54f' : '#8a5a00' }}>退職の手続きが残っています</div>
         <div style={{ fontSize: 12, color: isDark ? '#e0c97a' : '#8a5a00', marginTop: 2 }}>{summary}</div>
       </div>
       <div style={{ fontSize: 12, color: isDark ? '#ffd54f' : '#b35900', whiteSpace: 'nowrap', flexShrink: 0 }}>開く →</div>
-    </div>
+    </button>
   );
 };
 
