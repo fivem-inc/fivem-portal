@@ -34,6 +34,16 @@ const FALLBACK_MONTHLY_LIMIT = 3000;
 
 interface EmailRow { id: string; created_at: string }
 
+/** Resend の日時を読む。
+ *  🚨 返ってくるのは「2026-04-03 22:13:42.674981+00」の形。
+ *     ① 真ん中が空白（T ではない）② 時差が「+00」で**2桁しかない**。
+ *     JavaScript の Date は「+00」を読めず NaN を返す（＝1件も数えられず「0通」になる）。
+ *     2026-09-20 に実際にこれで 0通 と出た。必ず「+00:00」に直してから読むこと */
+const parseAt = (s: string): number => {
+  const v = String(s ?? '').trim().replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00');
+  return Date.parse(v);
+};
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: getCorsHeaders(req) });
@@ -95,6 +105,8 @@ serve(async (req) => {
     let after: string | null = null;
     let partial = false;
     let reachedOlder = false;
+    let seen = 0;        // 受け取った行の数
+    let unreadable = 0;  // 日時が読めなかった行の数
 
     for (let page = 0; page < 10; page++) {
       const url = `https://api.resend.com/emails?limit=100${after ? `&after=${after}` : ''}`;
@@ -110,9 +122,9 @@ serve(async (req) => {
       if (rows.length === 0) { reachedOlder = true; break; }
 
       for (const r of rows) {
-        // 「2026-04-03 22:13:42.674981+00」の形で返る。Date が読めなければ数に入れない
-        const t = Date.parse(r.created_at.replace(' ', 'T'));
-        if (Number.isNaN(t)) continue;
+        seen++;
+        const t = parseAt(r.created_at);
+        if (Number.isNaN(t)) { unreadable++; continue; }
         if (t < monthStart) { reachedOlder = true; break; }
         monthlyUsed++;
         if (t >= dayStart) dailyUsed++;
@@ -121,6 +133,12 @@ serve(async (req) => {
       if (!body?.has_more) { reachedOlder = true; break; }
       after = rows[rows.length - 1].id;
       if (page === 9) partial = true;   // 数え切れなかった
+    }
+
+    // 🚨 日時が1つも読めなかったのに「0通」と出すと、止まる寸前でも気づけない。
+    //    数えられなかったときは、数字を出さずに正直に断る
+    if (seen > 0 && unreadable === seen) {
+      return json({ error: '日時を読めませんでした（Resend の返し方が変わった可能性があります）' }, 502);
     }
 
     return json({

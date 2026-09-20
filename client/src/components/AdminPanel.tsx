@@ -30,6 +30,8 @@ interface MailUsage {
   daily: { used: number; limit: number };
   monthly: { used: number; limit: number };
   partial?: boolean;
+  /** 'usage'＝Resend の使用量の窓口／'emails'＝送信一覧を数えた。どちらで取れたかが分かると調べやすい */
+  source?: string;
 }
 
 interface AdminPanelProps {
@@ -129,7 +131,8 @@ const AdminPanelContent: React.FC = () => {
 
   return (    <div style={{ marginTop: 0, paddingTop: 0, position: 'relative' }}>
       {(storageUsageMb !== null || dbUsageMb !== null || mailUsage !== null || mailErr) && (
-        <div style={{ position: 'absolute', top: 0, right: 0, fontSize: 11, textAlign: 'right', lineHeight: 1.5 }}>
+        // 🚨 whiteSpace: nowrap は必須。折り返すとタブのボタンに重なって読めなくなる（2026-09-20 実機で発生）
+        <div style={{ position: 'absolute', top: 0, right: 0, fontSize: 11, textAlign: 'right', lineHeight: 1.5, whiteSpace: 'nowrap' }}>
           {storageUsageMb !== null && (
             <div style={{ color: isStorageLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), fontWeight: isStorageLow ? 'bold' : 'normal' }}>
               <div>{isStorageLow && '⚠️ '}📦 ストレージ使用量</div>
@@ -143,11 +146,12 @@ const AdminPanelContent: React.FC = () => {
             </div>
           )}
           {mailUsage !== null && (
-            <div style={{ marginTop: 3, color: isMailLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), fontWeight: isMailLow ? 'bold' : 'normal' }}>
+            <div title={`取得元: ${mailUsage.source ?? '不明'}`}
+                 style={{ marginTop: 3, color: isMailLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), fontWeight: isMailLow ? 'bold' : 'normal' }}>
               <div>{isMailLow && '⚠️ '}📩 メール送信</div>
-              <div>今月 {mailUsage.monthly.used}通 / {mailUsage.monthly.limit}通（無料枠）</div>
-              <div>今日 {mailUsage.daily.used}通 / {mailUsage.daily.limit}通</div>
-              {mailUsage.partial && <div>※ 1,000通まで数えた数です</div>}
+              <div>今月 {mailUsage.monthly.used} / {mailUsage.monthly.limit}通（無料枠）</div>
+              <div>今日 {mailUsage.daily.used} / {mailUsage.daily.limit}通</div>
+              {mailUsage.partial && <div>※ 1,000通まで数えた数</div>}
             </div>
           )}
           {/* 🚨 取れなかったことを黙って隠さない（0通と嘘をつかない） */}
