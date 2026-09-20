@@ -810,7 +810,11 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   const navRoles = useRoles();
   const adminAccess = useAdminAccess({ isAdmin, isManagerPlus: isAdmin || attrsFor(navRoles, roleTitle).is_manager_plus });
   const { count: overtimeUnreported } = useOvertimeUnreportedCount(userId, canOvertime);
-  const overtimeBadge = overtimePending + overtimeUnreported; // 確認依頼＋自分の実績未報告
+  // 🚨 自分あての「申請の依頼」も数に入れる（2026-09-20）。
+  //    ベルとプッシュしか無く、9日間気づかれなかった実例があるため。
+  //    数字が何の件数か分からなくならないよう、残業ページ側では**履歴タブにも印**を出している
+  const { count: appRequestCount } = useAppRequestCount(userId);
+  const overtimeBadge = overtimePending + overtimeUnreported + appRequestCount; // 確認依頼＋自分の実績未報告＋申請の依頼
 
   // モバイルでボタンが画面幅に収まらない時の横スワイプ対応：
   // 端までスクロールできることを示すフェードの表示/非表示を判定
@@ -1828,6 +1832,68 @@ const OvertimeUnreportedBanner: React.FC<{ userId: string; canOvertime: boolean 
 };
 
 
+// 自分あての「申請の依頼」（未対応）。ナビの数字とホームのバナーが同じこのフックを使う
+//（既存の useOvertimeUnreportedCount と同じ形。数え方を2か所に書かないための共通化）。
+// 🚨 権限では出し分けない。RLS で自分あてのものしか返らない。
+//    canOvertime で塞ぐと「依頼は届くのに答えられない」になる。
+// 🚨 読めなかったときは0で上書きしない（依頼が無いと嘘をつくため）。
+const APP_REQUEST_KIND_LABEL: Record<string, string> = { overtime: '残業・時間管理', leave: '休暇' };
+interface MyOpenRequest { id: string; kind: string; target_dates: string[] | null; due_date: string | null }
+const useAppRequestCount = (userId: string | undefined) => {
+  const [rows, setRows] = useState<MyOpenRequest[]>([]);
+  const fetchReq = useCallback(async () => {
+    if (!userId) { setRows([]); return; }
+    const { data, error } = await supabase.from('application_requests')
+      .select('id, kind, target_dates, due_date')
+      .eq('recipient_id', userId)
+      .eq('status', 'open')
+      .order('due_date', { ascending: true });
+    if (error) return;
+    setRows((data ?? []) as MyOpenRequest[]);
+  }, [userId]);
+  usePolling(fetchReq);
+  return { count: rows.length, rows };
+};
+
+// 申請の依頼バナー（ホーム・2026-09-20）。
+// 🚨 これを足した理由：受け取った依頼に答えられる場所は**残業ページだけ**で、
+//    休暇の依頼でもそこにしか出ない。休暇ページには「自分が出した依頼」しか並ばないので、
+//    受け取った人は「休暇の話なのに残業ページ」とは思い付けず、実際に9日間気づかれなかった。
+const AppRequestBanner: React.FC<{ userId: string }> = ({ userId }) => {
+  const navigate = useNavigate();
+  const { rows } = useAppRequestCount(userId);
+  if (rows.length === 0) return null;
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tokyo' });
+  // 期限が過ぎているものがあれば赤くする（過ぎていなければ黄色のまま）
+  const overdue = rows.filter(r => r.due_date && r.due_date < today);
+  const isOverdue = overdue.length > 0;
+  const head = rows[0];
+  const kindLabel = APP_REQUEST_KIND_LABEL[head.kind] ?? head.kind;
+  const dateLabel = (head.target_dates ?? []).map(d => d.slice(5).replace('-', '/')).join('・');
+  const overdueDays = isOverdue && overdue[0].due_date
+    ? Math.round((new Date(`${today}T12:00:00+09:00`).getTime() - new Date(`${overdue[0].due_date}T12:00:00+09:00`).getTime()) / 86400000)
+    : 0;
+  return (
+    <div
+      onClick={() => navigate('/overtime?tab=history')}
+      style={{ margin: '0 0 16px 0', padding: '12px 16px', borderRadius: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, fontSize: 15, fontWeight: 'bold',
+        background: isOverdue ? '#f8d7da' : '#fff3cd',
+        border: `2px solid ${isOverdue ? '#dc3545' : '#f59e0b'}`,
+        color: isOverdue ? '#842029' : '#856404' }}
+    >
+      <span style={{ fontSize: 22 }}>📩</span>
+      <span>
+        申請の依頼が {rows.length}件 届いています
+        <span style={{ fontWeight: 'normal', fontSize: 13 }}>
+          （{kindLabel}{dateLabel && `・${dateLabel}`}
+          {isOverdue ? `・期限を ${overdueDays}日 過ぎています` : head.due_date ? `・期限 ${head.due_date.slice(5).replace('-', '/')}` : ''}）
+        </span>
+      </span>
+      <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 'normal', whiteSpace: 'nowrap' }}>タップして確認 →</span>
+    </div>
+  );
+};
+
 // 出勤のお願いバナー（ホーム・2026-09-13）。タップで /shift-request へ。
 // 🚨 パートはスマホ通知を登録している人が18人中6人しかいない。ベルだけだと気づかれない。
 // 🚨 権限では出し分けない。`shift_adjust_my_part_requests()` は**自分あてのものしか返さない**。
@@ -2094,6 +2160,11 @@ const Dashboard: React.FC = () => {
           🚨 スマホ通知を登録しているパートは18人中6人しかいない。
              ベルだけだと気づかれないので、ホームにも出す */}
       <ShiftRequestBanner employmentType={employmentType} />
+
+      {/* ④-7 申請の依頼バナー（2026-09-20）
+          🚨 受け取った依頼に答えられるのは残業ページだけ（休暇の依頼でも）。
+             休暇ページには「自分が出した依頼」しか並ばないので、ここに出さないと辿り着けない */}
+      <AppRequestBanner userId={user.id} />
 
       {/* ⑤ 有給申請バナー（パート向け） */}
       {leaveRequestEnabled && !leaveSubmitted && (
