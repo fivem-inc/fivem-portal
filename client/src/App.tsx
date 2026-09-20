@@ -1943,7 +1943,7 @@ const RetireeHomeNotice: React.FC<{
         </div>
       )}
       <div style={{ margin: '0 0 16px 0', padding: '12px 16px', background: '#fff3cd', border: '2px solid #f59e0b', borderRadius: 10, color: '#856404' }}>
-        <div style={{ fontSize: 15, fontWeight: 'bold' }}>⚠️ 申請は {label} まで</div>
+        <div style={{ fontSize: 15, fontWeight: 'bold' }}>⚠️ 申請は {label}</div>
         {canOvertime && (
           <button type="button" style={btn} onClick={() => navigate('/overtime')}>🕐 残業・時間の申請へ</button>
         )}

@@ -131,15 +131,17 @@ export function daysUntil(accessUntil: string | null | undefined, todayJst: stri
   return Math.round((a - b) / 86400000);
 }
 
-/** 案内に出す期限の言い方。🚨 「あと◯日」は残り7日以内のときだけ付ける
- *  （2026-09-20 ユーザー確定。13日先の「あと13日」は情報が増えず、毎回出ると急かして見えるため） */
+/** 案内に出す期限の言い方（「2026年9月21日（月）まで（あと1日）」）。
+ *  🚨 「あと◯日」は残り7日以内のときだけ付ける
+ *     （2026-09-20 ユーザー確定。13日先の「あと13日」は情報が増えず、毎回出ると急かして見えるため）
+ *  🚨 「まで」は**かっこより前**に置く（実機で「（月）（あと1日） まで」となって読みにくかった・2026-09-20） */
 export function accessUntilLabel(accessUntil: string | null | undefined, todayJst: string): string {
   if (!accessUntil) return '';
   const [y, m, d] = accessUntil.split('-').map(Number);
   const dow = ['日', '月', '火', '水', '木', '金', '土'][new Date(`${accessUntil}T12:00:00+09:00`).getDay()];
   const base = `${y}年${m}月${d}日（${dow}）`;
   const left = daysUntil(accessUntil, todayJst);
-  return left !== null && left >= 0 && left <= 7 ? `${base}（あと${left}日）` : base;
+  return left !== null && left >= 0 && left <= 7 ? `${base}まで（あと${left}日）` : `${base}まで`;
 }
 
 /** 差し戻す相手が「退職して申請期間中」のときに、上長へ添える注意。
