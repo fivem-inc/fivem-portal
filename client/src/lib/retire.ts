@@ -91,3 +91,53 @@ export function retireRemaining(
 ): number {
   return items.filter(i => i.active && i.required && !checks.some(c => c.user_id === userId && c.item_id === i.id)).length;
 }
+
+// ============================================================
+// 3段目（退職者向けの画面）。2026-09-20
+// ============================================================
+
+/** いまログインしている人の立場。🚨 判定そのものは DB の my_access_state() が持つ（画面で日付を比べない） */
+export type AccessMode = 'staff' | 'retiree_grace' | 'blocked';
+
+export interface AccessState {
+  mode: AccessMode;
+  /** 退職者のとき：ログインできる期限 "YYYY-MM-DD" */
+  access_until?: string | null;
+  /** 退職者のとき：退職日 */
+  retire_date?: string | null;
+  /** 退職者のとき：出してよい機能（app_settings.retiree_feature_keys） */
+  feature_keys?: string[];
+}
+
+/**
+ * いまの立場を DB に聞く。
+ * 🚨 期限の判定は**必ず DB 側**で行う。端末の時計は利用者が変えられるうえ、ずれていることもある。
+ * 🚨 読めなかったときは null を返す（＝分からない）。呼ぶ側は **null で追い出してはいけない**。
+ *    通信が悪いだけの在籍者をログアウトさせるのが、いちばん起こしてはいけない事故。
+ */
+export async function fetchAccessState(): Promise<AccessState | null> {
+  const { data, error } = await supabase.rpc('my_access_state');
+  if (error || !data) return null;
+  const st = data as AccessState;
+  if (st.mode !== 'staff' && st.mode !== 'retiree_grace' && st.mode !== 'blocked') return null;
+  return st;
+}
+
+/** 期限まであと何日か（今日を含めない）。期限が無ければ null */
+export function daysUntil(accessUntil: string | null | undefined, todayJst: string): number | null {
+  if (!accessUntil) return null;
+  const a = new Date(`${accessUntil}T12:00:00+09:00`).getTime();
+  const b = new Date(`${todayJst}T12:00:00+09:00`).getTime();
+  return Math.round((a - b) / 86400000);
+}
+
+/** 案内に出す期限の言い方。🚨 「あと◯日」は残り7日以内のときだけ付ける
+ *  （2026-09-20 ユーザー確定。13日先の「あと13日」は情報が増えず、毎回出ると急かして見えるため） */
+export function accessUntilLabel(accessUntil: string | null | undefined, todayJst: string): string {
+  if (!accessUntil) return '';
+  const [y, m, d] = accessUntil.split('-').map(Number);
+  const dow = ['日', '月', '火', '水', '木', '金', '土'][new Date(`${accessUntil}T12:00:00+09:00`).getDay()];
+  const base = `${y}年${m}月${d}日（${dow}）`;
+  const left = daysUntil(accessUntil, todayJst);
+  return left !== null && left >= 0 && left <= 7 ? `${base}（あと${left}日）` : base;
+}

@@ -98,6 +98,23 @@ export interface AuthContextType {
   setPreviewRole: (role: string | null) => void;
   blockedMessage: string | null;
   clearBlockedMessage: () => void;
+  /** 退職して申請期間中の人のときだけ入る（在籍者は null）。
+   *  🚨 判定は DB の my_access_state() が持つ。画面で日付を比べない（2026-09-20・3段目） */
+  retiree: RetireeAccess | null;
+  /** 役職プレビューの「退職者として見る」。🚨 previewRole（役職名）には入れない
+   *  （存在しない役職名を入れると、公開範囲の判定がどこもかしこも false になる） */
+  previewRetiree: boolean;
+  setPreviewRetiree: (v: boolean) => void;
+}
+
+/** 退職して申請期間中の人の情報（AuthContext が配る） */
+export interface RetireeAccess {
+  /** ログインできる期限 "YYYY-MM-DD" */
+  accessUntil: string | null;
+  /** 退職日 "YYYY-MM-DD" */
+  retireDate: string | null;
+  /** 出してよい機能（feature_key の一覧） */
+  featureKeys: string[];
 }
 
 export interface LeaveRequest {

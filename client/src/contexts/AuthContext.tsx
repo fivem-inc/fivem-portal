@@ -1,12 +1,13 @@
 import React, { createContext, useState, useEffect, useRef } from 'react';
-import type { AuthContextType, AuthUser } from '../types';
+import type { AuthContextType, AuthUser, RetireeAccess } from '../types';
 import { supabase } from '../lib/supabaseClient';
 import { timeoutSignal, withTimeout, AUTH_TIMEOUT_MS } from '../lib/netFailure';
 import { bootMark } from '../lib/bootMark';
+import { fetchAccessState } from '../lib/retire';
 
 // AuthContextの作成
 // eslint-disable-next-line react-refresh/only-export-components
-export const AuthContext = createContext<AuthContextType>({ user: null, previewRole: null, setPreviewRole: () => {}, blockedMessage: null, clearBlockedMessage: () => {} });
+export const AuthContext = createContext<AuthContextType>({ user: null, previewRole: null, setPreviewRole: () => {}, blockedMessage: null, clearBlockedMessage: () => {}, retiree: null, previewRetiree: false, setPreviewRetiree: () => {} });
 
 // 認証確認中に表示する起動スケルトン。index.htmlの静的スケルトンと見た目を揃え、
 // 「真っ白」を挟まずにスプラッシュ→骨組み→アプリを滑らかに繋ぐ。個人情報は含まない
@@ -27,6 +28,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [previewRole, setPreviewRole] = useState<string | null>(null);
   const [blockedMessage, setBlockedMessage] = useState<string | null>(null);
   const [emailChangeMsg, setEmailChangeMsg] = useState<string | null>(null); // メール変更完了のインライン通知（alert廃止）
+  // 退職して申請期間中の人だけ入る（在籍者は null）。3段目・2026-09-20
+  const [retiree, setRetiree] = useState<RetireeAccess | null>(null);
+  const [previewRetiree, setPreviewRetiree] = useState(false);
   // 🚨 起動時に applySessionUser が **3回**走っていた（2026-09-12 実機の印で判明。
   //    getSession の道 ＋ onAuthStateChange の INITIAL_SESSION ＋ もう1回）。
   //    そのたびに profiles を読むので、同じ問い合わせが3本出ていた。
@@ -66,16 +70,57 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
     if (profile && profile.is_active === false) {
+      // 🚨 承認待ちは退職者より**先**に判定する。順番を逆にすると、判定の不備で承認待ちの人が入ってしまう
+      if (profile.approval_status === 'pending') {
+        await supabase.auth.signOut();
+        setUser(null);
+        setBlockedMessage('ご登録ありがとうございます。管理者の承認をお待ちください。');
+        return;
+      }
+      // ── ここから下だけが3段目の新しい道。在籍者は is_active===false に入らないので絶対に通らない ──
+      // 🚨 期限の判定は DB（my_access_state）に任せる。端末の時計で判定しない
+      const st = await fetchAccessState();
+      if (st?.mode === 'retiree_grace') {
+        setRetiree({
+          accessUntil: st.access_until ?? null,
+          retireDate: st.retire_date ?? null,
+          featureKeys: Array.isArray(st.feature_keys) ? st.feature_keys : [],
+        });
+        setUser(sessionUser);
+        return;
+      }
+      setRetiree(null);
       await supabase.auth.signOut();
       setUser(null);
-      setBlockedMessage(
-        profile.approval_status === 'pending'
-          ? 'ご登録ありがとうございます。管理者の承認をお待ちください。'
-          : 'このアカウントは無効です。管理者にお問い合わせください。'
-      );
+      setBlockedMessage('このアカウントは無効です。管理者にお問い合わせください。');
       return;
     }
+    setRetiree(null);
     setUser(sessionUser);
+  };
+
+  /**
+   * ログイン中に退職・期限切れになった人を追い出すためだけの確認。
+   * 🚨 applySessionUser とは役割が違う：
+   *   ・appliedUserId のしくみを通らない（同じ人でも毎回確かめる）
+   *   ・**setUser を呼ばない**（呼ぶと役職・権限の再取得が走り、不安定な回線でナビが消える既存の不具合が再発する）
+   *   ・できるのは「追い出す」だけ。通す判断はしない
+   * 🚨 分からないとき（通信失敗・読めない）は**何もしない**。電波の悪い場所で在籍者を
+   *    ログアウトさせるのが、いちばん起こしてはいけない事故
+   */
+  const lastRecheckAt = useRef(0);
+  const recheckAccess = async () => {
+    if (!appliedUserId.current) return;               // ログインしていない
+    if (Date.now() - lastRecheckAt.current < 60_000) return;  // 画面の切り替えは頻繁。60秒に1回まで
+    lastRecheckAt.current = Date.now();
+    const st = await fetchAccessState();
+    if (!st) return;                                   // 分からない＝何もしない
+    if (st.mode === 'blocked') {
+      await supabase.auth.signOut();
+      setRetiree(null);
+      setUser(null);
+      setBlockedMessage('このアカウントは無効です。管理者にお問い合わせください。');
+    }
   };
 
   useEffect(() => {
@@ -147,18 +192,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // ここでユーザーを作り直さない。作り直すと役職・権限の再取得が毎回走り、
         // モバイルの不安定回線で一瞬空データを掴むとナビボタンが消える不具合の原因になる。
         // （同一ユーザーのトークン差し替えだけなのでアプリ側の状態更新は不要）
+        // 🚨 ただし「ログイン中に退職・期限切れになった人」はここで追い出す（3段目・2026-09-20）。
+        //    applySessionUser は同じ人だと1行目で return するので、**別の関数**でなければ効かない
+        void recheckAccess();
       } else {
         applySessionUser(session?.user as AuthUser ?? null);
       }
     });
 
+    // 画面に戻ったときにも確かめる（トークンの更新は約1時間ごとなので、それだけでは遅い）。
+    // 🚨 hidden でも発火するので visible のときだけ。回数の制限は recheckAccess の中（60秒に1回）
+    const onVisible = () => { if (document.visibilityState === 'visible') void recheckAccess(); };
+    document.addEventListener('visibilitychange', onVisible);
+
     return () => {
       subscription.unsubscribe();
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, previewRole, setPreviewRole, blockedMessage, clearBlockedMessage: () => setBlockedMessage(null) }}>
+    <AuthContext.Provider value={{ user, previewRole, setPreviewRole, blockedMessage, clearBlockedMessage: () => setBlockedMessage(null), retiree, previewRetiree, setPreviewRetiree }}>
       {emailChangeMsg && (
         <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 100000, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '20px 26px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)', maxWidth: 340, textAlign: 'center' }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>✅</div>

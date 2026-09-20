@@ -15,6 +15,10 @@ interface UseAuthReturn {
   user: AuthUser | null;
   loading: boolean;
   isAdmin: boolean;
+  /** 退職して申請期間中か（3段目・2026-09-20） */
+  isRetiree: boolean;
+  /** ログインできる期限 "YYYY-MM-DD"（退職者以外は null） */
+  retireeAccessUntil: string | null;
   isApprover: boolean;
   /** 以下は roles の属性から（2026-09-09）。プレビュー中はプレビュー役職の属性 */
   isLeaderPlus: boolean;
@@ -228,7 +232,23 @@ async function loadProfileOnce(userId: string): Promise<ProfileLoad | null> {
 }
 
 export const useAuth = (): UseAuthReturn => {
-  const { user, previewRole } = useContext(AuthContext);
+  const { user, previewRole, retiree, previewRetiree } = useContext(AuthContext);
+
+  // ── 退職して申請期間中の人（3段目・2026-09-20）──────────────────────
+  // 🚨 絞り込みはこのフックの1か所だけ。画面側には1行も書かない
+  //    （can* が false になることで、ナビもページの門も自動で連動する）
+  const retireeMode = !!retiree || previewRetiree;
+  // 役職プレビューの「退職者として見る」のときは、出してよい機能の一覧を設定から読む
+  const [previewRetireeKeys, setPreviewRetireeKeys] = useState<string[]>([]);
+  useEffect(() => {
+    if (!previewRetiree || retiree) return;
+    supabase.from('app_settings').select('value').eq('key', 'retiree_feature_keys').maybeSingle()
+      .then(({ data }) => {
+        const keys = (data?.value as { keys?: string[] } | null)?.keys;
+        if (Array.isArray(keys)) setPreviewRetireeKeys(keys);
+      }, () => { /* 読めなければ空のまま＝何も出さない（安全側） */ });
+  }, [previewRetiree, retiree]);
+  const retireeKeys = retiree?.featureKeys ?? previewRetireeKeys;
   const [loading, setLoading] = useState(true);
   // 初期値をキャッシュから同期的に読む（遅延初期化）。AuthProviderが認証確認中は
   // スケルトンでchildrenを遅らせるため、この時点でuserは確定しており、最初の描画から
@@ -249,11 +269,19 @@ export const useAuth = (): UseAuthReturn => {
   // 役職の一覧（属性つき）。キャッシュ → 裏で取り直して上書き（hooks/useRoles.ts）
   const roles = useRoles();
 
-  const realIsAdmin = user?.app_metadata?.role === 'admin';
+  // 🚨 退職者は管理者として扱わない。退職の確定時に app_metadata の role は外しているが、
+  //    古いログインの鍵が残っている経路を塞ぐため、画面側でも倒しておく
+  const realIsAdmin = user?.app_metadata?.role === 'admin' && !retireeMode;
   const effectiveRoleTitle = previewRole ?? roleTitle;
   const isAdmin = previewRole ? false : realIsAdmin;
   // 役職の属性。プレビュー中はプレビュー役職の属性そのもの（管理者の全能は効かせない＝実際の見え方）
-  const attrs = attrsFor(roles, effectiveRoleTitle);
+  // 🚨 退職しても profiles.role_title は「マネージャー」のまま残る（退職の確定時に消していない）。
+  //    そのままだと is_manager_plus が true になり、管理画面や「退職の手続き」が開けてしまう。
+  //    can* を false にするだけでは塞がらないので、**属性も倒す**（2026-09-20 レビュー指摘）。
+  //    🚨 roleTitle 自体は残す（機能の公開範囲の判定に使われている）
+  const attrs = retireeMode
+    ? { acts_as: null, is_approver: false, is_leader_plus: false, is_manager_plus: false, is_board_approver: false, is_org_wide: false }
+    : attrsFor(roles, effectiveRoleTitle);
   const adminOr = (v: boolean) => (previewRole ? v : (realIsAdmin || v));
   const isApprover      = adminOr(attrs.is_approver);
   const isLeaderPlus    = adminOr(attrs.is_leader_plus);
@@ -320,7 +348,14 @@ export const useAuth = (): UseAuthReturn => {
   }, [previewRole]);
 
   // 実効権限（プレビュー中はプレビュー役職の権限を使う）
-  const effectivePerms = previewRole ? previewPerms : featurePerms;
+  const effectivePermsRaw = previewRole ? previewPerms : featurePerms;
+  // 🚨 退職して申請期間中は、ここで一度だけ絞る。
+  //    「出してよい機能（設定）」かつ「辞める前の役職で使えていた機能」の**両方**を満たすものだけ残す
+  //    （設計書 §4-3 ユーザー確定）。端末に保存する権限の写しは絞る前のまま持つ
+  //    ＝復活（retire_restore）したときに古い制限が端末に残らない
+  const effectivePerms = retireeMode
+    ? Object.fromEntries(Object.entries(effectivePermsRaw).filter(([k, v]) => v && retireeKeys.includes(k)))
+    : effectivePermsRaw;
 
   const effectiveEmploymentType = previewRole
     ? (previewRole === 'パート' ? 'パート' : '正社員')
@@ -422,6 +457,12 @@ export const useAuth = (): UseAuthReturn => {
     user,
     loading,
     isAdmin,
+    /** 退職して申請期間中か（役職プレビューの「退職者として見る」を含む）。
+     *  🚨 画面がこれを直接見てよいのは、案内の文面とページの門だけ。
+     *     機能の出し分けは can* が false になることで自動で連動する */
+    isRetiree: retireeMode,
+    /** ログインできる期限 "YYYY-MM-DD"（退職者以外は null） */
+    retireeAccessUntil: retiree?.accessUntil ?? null,
     isApprover,
     isLeaderPlus,
     isManagerPlus,

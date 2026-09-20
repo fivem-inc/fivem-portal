@@ -396,7 +396,7 @@ const AnnouncementBanner: React.FC = () => {
 
 // 保護されたルートのためのレイアウト
 const ProtectedLayout: React.FC = () => {
-  const { user, isAdmin, isFaqEditor } = useAuth();
+  const { user, isAdmin, isFaqEditor, isRetiree } = useAuth();
   const { pathname, search } = useLocation();
 
   if (!user) {
@@ -414,6 +414,14 @@ const ProtectedLayout: React.FC = () => {
   const FAQ_ONLY_ALLOWED = ['/faq-admin', '/account', '/change-password', '/change-email'];
   if (isFaqEditor && !isAdmin && !FAQ_ONLY_ALLOWED.includes(pathname)) {
     return <Navigate to="/faq-admin" replace />;
+  }
+
+  // 🚨 退職して申請期間中の人が開ける画面は、ここ1か所で決める（2026-09-20・3段目）。
+  //    ページごとに門を書くと、画面を1つ足したときに塞ぎ忘れる（30近い箇所に同じ判定を書くことになる）。
+  //    許したもの以外はホームへ。ホームは交通費の画面なので、申請の入口としても機能する
+  const RETIREE_ALLOWED = ['/', '/overtime', '/shift-report', '/account', '/change-password', '/change-email', '/notification-settings'];
+  if (isRetiree && !RETIREE_ALLOWED.includes(pathname)) {
+    return <Navigate to="/" replace />;
   }
 
   // 🚨 IdleLogout はログイン済みの全ページの親であるここに1つだけ置く（ページごとに置かない）
