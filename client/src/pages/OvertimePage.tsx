@@ -17,6 +17,7 @@ import {
   DAY_KIND_LABELS,
 } from '../lib/breakCalc';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
+import { retireeReturnNote } from '../lib/retire';
 import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, cutBandsAt, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import OvertimeMemoSection from '../components/OvertimeMemoSection';
 import { computeBalance } from '../lib/overtimeBalance';
@@ -114,7 +115,7 @@ interface OvertimeReport {
   return_comment: string | null;
   source_leave_request_id: string | null;
   created_at: string;
-  applicant?: { name: string | null } | null;
+  applicant?: { name: string | null; is_active?: boolean | null; retiree_access_until?: string | null } | null;
   reviewer?: { name: string | null } | null;
   segments?: SegmentRow[];
 }
@@ -2743,7 +2744,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   // 20260727 マイグレーションで追加した profiles 向き named FK を使う。
   const fetchOwn = useCallback(async () => {
     const { data, error } = await supabase.from('overtime_reports')
-      .select('*, applicant:profiles!overtime_reports_applicant_profiles_fkey(name), reviewer:profiles!overtime_reports_reviewer_profiles_fkey(name), segments:overtime_report_segments(*), modified_from:overtime_reports!modified_from_id(work_date, diff_minutes, application_types, location)')
+      .select('*, applicant:profiles!overtime_reports_applicant_profiles_fkey(name, is_active, retiree_access_until), reviewer:profiles!overtime_reports_reviewer_profiles_fkey(name), segments:overtime_report_segments(*), modified_from:overtime_reports!modified_from_id(work_date, diff_minutes, application_types, location)')
       .eq('applicant_id', user.id)
       .order('work_date', { ascending: false })
       .limit(100);
@@ -2756,7 +2757,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     const { data, error } = await supabase.from('overtime_reports')
       // 🚨 overtime_reports から overtime_reports への外部キーなので、必ず列名（!modified_from_id）を書く。
       //    書かないと関係を決められずエラーになる（過去に PGRST201 で踏んでいる型）
-      .select('*, applicant:profiles!overtime_reports_applicant_profiles_fkey(name), segments:overtime_report_segments(*), modified_from:overtime_reports!modified_from_id(work_date, diff_minutes, application_types, location)')
+      .select('*, applicant:profiles!overtime_reports_applicant_profiles_fkey(name, is_active, retiree_access_until), segments:overtime_report_segments(*), modified_from:overtime_reports!modified_from_id(work_date, diff_minutes, application_types, location)')
       .eq('reviewer_id', user.id)
       .eq('entry_type', 'manual')
       .in('status', ['requested', 'reported'])
@@ -3618,6 +3619,24 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     <span style={{ fontSize: 12.5, fontWeight: 'bold', color: text, display: 'block', marginBottom: 6 }}>差し戻しの理由 <span style={{ color: '#dc3545' }}>*</span></span>
                     <textarea value={returnComment} onChange={e => setReturnComment(e.target.value)} rows={2}
                       style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 8, border: `1px solid ${borderColor}`, background: isDark ? '#495057' : '#fff', color: text, fontSize: 13, resize: 'vertical' }} />
+                    {(() => {
+                      // 退職して申請期間中の人を差し戻すときの注意。
+                      // 🚨 判定は lib/retire.ts の1本（残業・勤務変更報告・交通費が同じものを呼ぶ）。
+                      // 🚨 止めない。警告だけ（給与に関わるので、差し戻す道は残す）。
+                      // 🚨 入力欄とボタンの**間**に置く。押す指のすぐ上にあるものしか読まれない
+                      const note = retireeReturnNote(
+                        { name: r.applicant?.name, is_active: r.applicant?.is_active, retiree_access_until: r.applicant?.retiree_access_until },
+                        otTodayStr);
+                      if (note.kind === 'none') return null;
+                      return (
+                        <div style={{ marginTop: 8, padding: '8px 12px', borderRadius: 8, fontSize: 12.5, lineHeight: 1.7,
+                          background: note.kind === 'over' ? '#f8d7da' : '#fff3cd',
+                          border: `1px solid ${note.kind === 'over' ? '#f5c2c7' : '#f59e0b'}`,
+                          color: note.kind === 'over' ? '#842029' : '#856404' }}>
+                          ⚠️ {note.text}
+                        </div>
+                      );
+                    })()}
                     <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                       <button onClick={() => doReturn(r)} disabled={!returnComment.trim() || actingId === r.id}
                         style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 'bold', background: '#dc3545', color: '#fff', opacity: !returnComment.trim() ? 0.5 : 1 }}>
@@ -4737,7 +4756,7 @@ const MemberDetailView: React.FC<{
     setLoading(true);
     (async () => {
       const { data, error } = await supabase.from('overtime_reports')
-        .select('*, applicant:profiles!overtime_reports_applicant_profiles_fkey(name), reviewer:profiles!overtime_reports_reviewer_profiles_fkey(name), segments:overtime_report_segments(*)')
+        .select('*, applicant:profiles!overtime_reports_applicant_profiles_fkey(name, is_active, retiree_access_until), reviewer:profiles!overtime_reports_reviewer_profiles_fkey(name), segments:overtime_report_segments(*)')
         .eq('applicant_id', userId)
         .eq('pay_period_start', period)
         .order('work_date', { ascending: false });

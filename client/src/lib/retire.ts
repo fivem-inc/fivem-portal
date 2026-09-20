@@ -141,3 +141,38 @@ export function accessUntilLabel(accessUntil: string | null | undefined, todayJs
   const left = daysUntil(accessUntil, todayJst);
   return left !== null && left >= 0 && left <= 7 ? `${base}（あと${left}日）` : base;
 }
+
+/** 差し戻す相手が「退職して申請期間中」のときに、上長へ添える注意。
+ *  🚨 残業・勤務変更報告・交通費の3画面が**同じこれを呼ぶ**（画面ごとに日付を比べない）。
+ *  🚨 ここで見るのは**ログインできる期限（月末）**。残業の締め切り（17日）ではない。
+ *     差し戻しの直しは18日〜月末もできるので、17日を書くと嘘になる。
+ *  🚨 止めない。警告だけ（給与に関わるので、上長が差し戻す道は残す）。 */
+export interface RetireeReturnNote {
+  kind: 'none' | 'soon' | 'over';
+  text: string;
+}
+export function retireeReturnNote(
+  p: { name?: string | null } & RetireFields,
+  todayJst: string,
+): RetireeReturnNote {
+  // 在籍者・退職日が無い人は関係ない
+  if (p.is_active !== false || !p.retiree_access_until) return { kind: 'none', text: '' };
+  const who = p.name ? `${p.name}さん` : 'この方';
+  const left = daysUntil(p.retiree_access_until, todayJst);
+  if (left === null) return { kind: 'none', text: '' };
+  if (left < 0) {
+    return {
+      kind: 'over',
+      text: `${who}の申請できる期間は終了しています（${mdLabel(p.retiree_access_until)}まで）。`
+        + `差し戻しても、ご本人は直せません。内容を直す場合は管理者が代わりに直してください。`,
+    };
+  }
+  if (left <= 7) {
+    return {
+      kind: 'soon',
+      text: `${who}が直せるのは ${mdLabel(p.retiree_access_until)}（あと${left}日）までです。`
+        + `間に合わないときは、いったん受理して、管理者に直してもらうこともできます。`,
+    };
+  }
+  return { kind: 'none', text: '' };
+}

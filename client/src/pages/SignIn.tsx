@@ -82,6 +82,11 @@ export default function SignIn() {
         errorMessage = 'メールアドレスまたはパスワードが正しくありません。';
       } else if (error.message.includes('Email not confirmed')) {
         errorMessage = 'メールアドレスが確認されていません。メールを確認してください。';
+      } else if (/banned|user_banned/i.test(error.message)) {
+        // 退職して申請期間が終わった方（毎晩の処理でログインを止めている）。
+        // 🚨 ふつうの「ログインできません」だと、ご本人は入力ミスだと思って何度も試し、最後に電話が来る。
+        //    理由を書いて、連絡先の案内につなげる（2026-09-20・3段目）
+        errorMessage = 'ご利用の期間が終了しました。申請の内容についてのご確認は、会社の担当者までご連絡ください。';
       }
       setError(errorMessage);
       setLoading(false);

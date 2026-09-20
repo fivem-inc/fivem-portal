@@ -19,6 +19,7 @@ import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
 import type { CorrectionRequestRow } from '../lib/correctionRequest';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
 import { leaveRequestMaxDate, jpDateLabel } from '../lib/breakCalc';
+import { retireeReturnNote } from '../lib/retire';
 import type { CalendarKind } from '../lib/breakCalc';
 import { toDbTime, normalizeTime } from '../lib/timeInput';
 import TimeInput from '../components/TimeInput';
@@ -57,7 +58,7 @@ interface ShiftReport {
   confirmed_by: string | null;
   confirmed_at: string | null;
   created_at: string;
-  applicant?: { name: string | null } | null;
+  applicant?: { name: string | null; is_active?: boolean | null; retiree_access_until?: string | null } | null;
   reviewer?: { name: string | null } | null;
 }
 interface Reviewer { id: string; name: string; role_title: string; }
@@ -1240,9 +1241,15 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     if (!data || data.length === 0) { setPendingReports([]); return; }
     // profiles を別クエリで取得（FK がないため）
     const ids = [...new Set(data.map((r: ShiftReport) => r.applicant_id))];
-    const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
-    const nameMap = Object.fromEntries((profs || []).map((p: { id: string; name: string }) => [p.id, p.name]));
-    setPendingReports(data.map((r: ShiftReport) => ({ ...r, applicant: { name: nameMap[r.applicant_id] ?? '不明' } })) as ShiftReport[]);
+    // 🚨 在籍と期限も読む（退職して申請期間中の人を差し戻すときの注意に要る）
+    const { data: profs } = await supabase.from('profiles').select('id, name, is_active, retiree_access_until').in('id', ids);
+    type P = { id: string; name: string; is_active: boolean | null; retiree_access_until: string | null };
+    const profOf = Object.fromEntries((profs || []).map((pr: P) => [pr.id, pr]));
+    setPendingReports(data.map((r: ShiftReport) => ({ ...r, applicant: {
+      name: profOf[r.applicant_id]?.name ?? '不明',
+      is_active: profOf[r.applicant_id]?.is_active,
+      retiree_access_until: profOf[r.applicant_id]?.retiree_access_until,
+    } })) as ShiftReport[]);
   }, [isApprover, user.id]);
 
   const fetchReviewedReports = useCallback(async () => {
@@ -1498,6 +1505,21 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
               placeholder="例：時間の記録を確認してください"
               style={{ width: '100%', padding: '9px 12px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ddd'}`, fontSize: 14, boxSizing: 'border-box', background: isDark ? '#495057' : '#fff', color: isDark ? '#fff' : '#333', resize: 'none' }}
             />
+            {(() => {
+              // 退職して申請期間中の人を差し戻すときの注意。判定は lib/retire.ts の1本
+              const note = retireeReturnNote(
+                { name: returnTarget.applicant?.name, is_active: returnTarget.applicant?.is_active, retiree_access_until: returnTarget.applicant?.retiree_access_until },
+                todayStr());
+              if (note.kind === 'none') return null;
+              return (
+                <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 8, fontSize: 12.5, lineHeight: 1.7,
+                  background: note.kind === 'over' ? '#f8d7da' : '#fff3cd',
+                  border: `1px solid ${note.kind === 'over' ? '#f5c2c7' : '#f59e0b'}`,
+                  color: note.kind === 'over' ? '#842029' : '#856404' }}>
+                  ⚠️ {note.text}
+                </div>
+              );
+            })()}
             <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
               <button type="button" onClick={() => { setReturnTarget(null); setReturnComment(''); }}
                 style={{ flex: 1, padding: '10px', borderRadius: 8, border: `1px solid ${isDark ? '#6c757d' : '#ddd'}`, background: 'none', color: isDark ? '#adb5bd' : '#555', fontSize: 14, cursor: 'pointer' }}>

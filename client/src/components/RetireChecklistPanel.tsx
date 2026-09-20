@@ -10,12 +10,20 @@ import { supabase } from '../lib/supabaseClient';
 import { todayJstStr, toJstDateStr } from '../lib/breakCalc';
 import { retireState, retireStateLabel, mdLabel, retireRemaining, REASSIGN_TABLE_LABEL } from '../lib/retire';
 
-interface Item { id: string; label: string; required: boolean; sort_order: number; active: boolean }
+interface Item {
+  /** 択一で答える項目の選択肢（null＝ふつうのチェック）。🚨 自由記述にはしない（パスワードを書かれないため） */
+  choices?: string[] | null;
+  id: string; label: string; required: boolean; sort_order: number; active: boolean;
+}
 interface Person {
   id: string; name: string | null; is_active: boolean | null; approval_status: string | null;
   retire_date: string; retiree_access_until: string | null;
 }
-interface Check { id: string; user_id: string; item_id: string; done_by: string | null; done_at: string }
+interface Check {
+  /** 択一の項目で選んだ答え */
+  choice?: string | null;
+  id: string; user_id: string; item_id: string; done_by: string | null; done_at: string;
+}
 interface Reassign { retired_user_id: string; table_name: string }
 
 interface Props {
@@ -41,6 +49,8 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
   const [purchaseLeft, setPurchaseLeft] = useState<Record<string, number | null>>({});
   // 済みを戻す前のその場の確認（押し間違いで「誰が・いつ」が消えないように）
   const [undoFor, setUndoFor] = useState<string | null>(null);
+  // 択一の項目で、いま選択肢を開いている行
+  const [choosingFor, setChoosingFor] = useState<string | null>(null);
   const namesLoaded = useRef(false);
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState('');
@@ -55,7 +65,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
   const load = useCallback(async () => {
     setLoading(true); setLoadErr('');
     const [it, pp] = await Promise.all([
-      supabase.from('retire_checklist_items').select('id, label, required, sort_order, active').order('sort_order'),
+      supabase.from('retire_checklist_items').select('id, label, required, sort_order, active, choices').order('sort_order'),
       supabase.from('profiles').select('id, name, is_active, approval_status, retire_date, retiree_access_until')
         .not('retire_date', 'is', null).order('retire_date', { ascending: false }),
     ]);
@@ -70,7 +80,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
     const ids = ps.map(p => p.id);
     if (ids.length === 0) { setChecks([]); setReassigns([]); setPurchaseLeft({}); setLoading(false); return; }
     const [ck, ra, nm, ...pcs] = await Promise.all([
-      supabase.from('retire_checklist_checks').select('id, user_id, item_id, done_by, done_at').in('user_id', ids),
+      supabase.from('retire_checklist_checks').select('id, user_id, item_id, done_by, done_at, choice').in('user_id', ids),
       supabase.from('retire_reassignments').select('retired_user_id, table_name').in('retired_user_id', ids),
       // 「済みにした人」の名前は最初に1回だけ読む（押すたびに全員分を読み直さない）
       namesLoaded.current ? Promise.resolve(null) : supabase.from('profiles').select('id, name'),
@@ -111,7 +121,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
   }, [people, showDone, remainingOf]);
   const doneCount = people.filter(p => remainingOf(p.id) === 0).length;
 
-  const toggle = async (userId: string, item: Item) => {
+  const toggle = async (userId: string, item: Item, choice?: string) => {
     const key = `${userId}:${item.id}`;
     const cur = checkOf(userId, item.id);
     setBusyKey(key); setRowErr(e => ({ ...e, [userId]: '' })); setUndoFor(null);
@@ -121,7 +131,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
         setRowErr(e => ({ ...e, [userId]: '戻せませんでした' + (error ? '：' + error.message : '（権限がないか、すでに戻されています）') }));
       }
     } else {
-      const { data, error } = await supabase.from('retire_checklist_checks').insert({ user_id: userId, item_id: item.id }).select('id');
+      const { data, error } = await supabase.from('retire_checklist_checks').insert({ user_id: userId, item_id: item.id, choice: choice ?? null }).select('id');
       if (error || !data || data.length === 0) {
         setRowErr(e => ({ ...e, [userId]: '済みにできませんでした' + (error ? '：' + error.message : '') }));
       }
@@ -244,12 +254,12 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
                   {/* 行全体を押せるボタン（スマホの指でも押しやすい高さ44px・2026-09-19 UXレビュー）。
                       済みを戻すときだけ、その場で確認する（押し間違いで「誰が・いつ」が消えないように） */}
                   <button type="button" disabled={busyKey === key} aria-pressed={!!c}
-                    onClick={() => (c ? setUndoFor(key) : toggle(p.id, it))}
+                    onClick={() => (c ? setUndoFor(key) : (it.choices?.length ? setChoosingFor(choosingFor === key ? null : key) : toggle(p.id, it)))}
                     style={{ width: '100%', minHeight: 44, display: 'flex', alignItems: 'center', gap: 10, padding: '6px 2px', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', color: text, flexWrap: 'wrap' }}>
                     <span aria-hidden style={{ width: 24, height: 24, flexShrink: 0, borderRadius: 6, fontSize: 14, lineHeight: '20px', textAlign: 'center',
                       border: `2px solid ${c ? '#1e7e34' : border}`, background: c ? '#1e7e34' : 'transparent', color: '#fff' }}>{c ? '✓' : ''}</span>
                     <span style={{ flex: 1, minWidth: 150, fontSize: 13.5, color: c ? subText : text, textDecoration: c ? 'line-through' : 'none' }}>
-                      {it.label}{!it.required && <span style={{ color: subText, fontSize: 11, marginLeft: 6 }}>（任意）</span>}
+                      {it.label}{c?.choice && <span style={{ color: subText }}>：{c.choice}</span>}{!it.required && <span style={{ color: subText, fontSize: 11, marginLeft: 6 }}>（任意）</span>}
                     </span>
                     {c && (
                       <span style={{ fontSize: 11.5, color: subText }}>
@@ -257,6 +267,17 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
                       </span>
                     )}
                   </button>
+                  {/* 択一の項目（例：Slack のパスワード）。押すと行の下に選択肢が開く。
+                      🚨 自由に書ける欄は作らない（新しいパスワードを書かれる恐れがあるため・2026-09-20 ユーザー確定） */}
+                  {choosingFor === key && !c && (it.choices?.length ?? 0) > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '0 10px 10px', fontSize: 12.5 }}>
+                      {(it.choices ?? []).map(ch => (
+                        <button key={ch} type="button" style={btn(false)} disabled={busyKey === key}
+                          onClick={() => { setChoosingFor(null); void toggle(p.id, it, ch); }}>{ch}</button>
+                      ))}
+                      <button type="button" style={{ ...btn(false), color: subText }} onClick={() => setChoosingFor(null)}>やめる</button>
+                    </div>
+                  )}
                   {undoFor === key && c && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '6px 10px 10px', fontSize: 12.5 }}>
                       <span>{names[c.done_by ?? ''] || '（不明）'}さんの記録（{mdLabel(toJstDateStr(new Date(c.done_at)))}）を消して、未済に戻しますか？</span>

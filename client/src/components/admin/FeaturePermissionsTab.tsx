@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
+import { supabase } from '../../lib/supabaseClient';
 import RoleAttributesCard from './RoleAttributesCard';
 import { refreshRoles } from '../../hooks/useRoles';
 import type { RoleRow } from '../../lib/roleAttrs';
@@ -100,6 +101,82 @@ const FEATURES = [
   //    毎回判断が割れるので、役職ごとのONで持って曖昧さを残さない
   { key: 'room_booking',    icon: '🚪', label: '場所予約', note: '初期はマネージャー・社長のみ。フロア責任者は含めない', group: 'その他' as FeatureGroup, bySuperior: false },
 ] as const;
+
+/** 退職後の申請期間に出す機能（3段目・2026-09-20）。
+ *  🚨 保存先は feature_permissions ではなく **app_settings.retiree_feature_keys**。
+ *     上の表と同じに見えて別物なので、画面にもそう書いてある。
+ *  🚨 ここで ✓ にしても、その人が**辞める前の役職で使えていた機能**でなければ出ない（両方を満たすものだけ）。
+ *  🚨 選べるのは「本人が申請・報告する機能」だけ（設計書 §4-3 ユーザー確定）。上長向けの機能は出さない。 */
+const RETIREE_SELECTABLE = ['expense', 'overtime', 'shift_report', 'leave_request', 'purchase_request', 'trip_report'] as const;
+
+const RetireeFeatureSection: React.FC = () => {
+  const { isDarkMode } = useAdminPanel();
+  const text = isDarkMode ? '#e9ecef' : '#212529';
+  const subText = isDarkMode ? '#adb5bd' : '#6c757d';
+  const border = isDarkMode ? '#495057' : '#dee2e6';
+  const [keys, setKeys] = useState<string[] | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [fail, setFail] = useState(false);
+
+  useEffect(() => {
+    supabase.from('app_settings').select('value').eq('key', 'retiree_feature_keys').maybeSingle()
+      .then(({ data, error }: { data: { value: unknown } | null; error: { message: string } | null }) => {
+        if (error) { setFail(true); setMsg('読み込めませんでした：' + error.message); setKeys([]); return; }
+        const k = (data?.value as { keys?: string[] } | null)?.keys;
+        setKeys(Array.isArray(k) ? k : []);
+      }, () => { setFail(true); setMsg('読み込めませんでした'); setKeys([]); });
+  }, []);
+
+  const save = async (next: string[]) => {
+    setSaving(true); setMsg(''); setFail(false);
+    // 🚨 upsert は0件でもエラーにならないので件数を見る
+    const { data, error } = await supabase.from('app_settings')
+      .upsert({ key: 'retiree_feature_keys', value: { keys: next }, updated_at: new Date().toISOString() }, { onConflict: 'key' })
+      .select('key');
+    setSaving(false);
+    if (error) { setFail(true); setMsg('保存できませんでした：' + error.message); return; }
+    if (!data || data.length === 0) { setFail(true); setMsg('保存できませんでした（0件）。管理者のアカウントでお試しください'); return; }
+    setKeys(next);
+    setMsg(`保存しました（${next.length}件）`);
+  };
+
+  if (keys === null) return null;
+
+  return (
+    <div style={{ background: isDarkMode ? '#343a40' : '#fff', border: `1px solid ${border}`, borderRadius: 12, padding: '16px 18px', marginTop: 16 }}>
+      <div style={{ fontSize: 15, fontWeight: 'bold', color: text, marginBottom: 6 }}>📋 退職後の申請期間に出す機能</div>
+      <div style={{ fontSize: 12.5, color: subText, lineHeight: 1.8, marginBottom: 12 }}>
+        退職した方が、申請できる期間のあいだに使える機能です。<br />
+        🚨 ここで ✓ にしても、<strong>その方が辞める前の役職で使えていた機能</strong>でなければ出ません（両方を満たすものだけ）。<br />
+        🚨 この設定は<strong>上の表とは別の場所</strong>に保存されます（上の表は役職ごとの権限）。
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {RETIREE_SELECTABLE.map(k => {
+          const f = FEATURES.find(x => x.key === k);
+          const on = keys.includes(k);
+          return (
+            <button key={k} type="button" disabled={saving}
+              onClick={() => save(on ? keys.filter(x => x !== k) : [...keys, k])}
+              style={{ padding: '8px 14px', borderRadius: 8, fontSize: 13, cursor: 'pointer',
+                border: on ? '2px solid #1976d2' : `1px solid ${border}`,
+                background: on ? '#1976d2' : (isDarkMode ? '#495057' : '#e3f2fd'),
+                color: on ? '#fff' : (isDarkMode ? '#e9ecef' : '#1565c0') }}>
+              {on ? '✓ ' : ''}{f ? `${f.icon} ${f.label}` : k}
+            </button>
+          );
+        })}
+      </div>
+      {msg && (
+        <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, fontSize: 12.5,
+          background: fail ? '#f8d7da' : '#d4edda', border: `1px solid ${fail ? '#f5c2c7' : '#c3e6cb'}`,
+          color: fail ? '#842029' : '#155724' }}>
+          {fail ? '' : '✓ '}{msg}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const FeaturePermissionsTab: React.FC = () => {
   const { isDarkMode, supabase, setSuccessMsg, setErrorMsg } = useAdminPanel();
@@ -902,6 +979,7 @@ const FeaturePermissionsTab: React.FC = () => {
         </div>
       </div>
 
+      <RetireeFeatureSection />
       <ManagerAdminTabsSection />
       <IdleLogoutSettingsSection />
     </div>
