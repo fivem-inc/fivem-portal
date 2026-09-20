@@ -5,6 +5,7 @@ import { useRoles } from '../../hooks/useRoles';
 import { describeUpdate } from '../../lib/statusUpdate';
 import { retireState, retireStateLabel, retireStateColor, mdLabel, fetchRetireAccessDefault, type RetireScheduleResult } from '../../lib/retire';
 import { todayJstStr } from '../../lib/breakCalc';
+import type { AdminUserProfile } from '../../types';
 
 // ユーザー追加モーダル
 const AddUserModal: React.FC<{
@@ -380,6 +381,19 @@ const PendingUserRow: React.FC<{
   );
 };
 
+/** "2026-06-30" → "2026/6/30"（年を残す・退職者の一覧で使う） */
+interface RetireDateChange {
+  id: string;
+  old_retire_date: string | null; new_retire_date: string | null;
+  old_access_until: string | null; new_access_until: string | null;
+  changed_by: string | null; changed_at: string;
+}
+
+const ymdLabel = (ymd: string): string => {
+  const [y, mo, d] = ymd.split("-").map(Number);
+  return `${y}/${mo}/${d}`;
+};
+
 const UsersTab: React.FC = () => {
   const ctx = useAdminPanel();
   const { isDarkMode, users, loadingUsers, sortedUsers, pendingUsers, userSortKey, userSortAsc, handleUserSort, editingUser, editName, setEditName, handleEditName, handleSaveName, handleCancelUserEdit, showRetired, setShowRetired, editingSortOrder, setEditingSortOrder, editSortOrderValue, setEditSortOrderValue, handleSaveSortOrder, masterOptions, isUserEditMode, setIsUserEditMode, confirmChange, setConfirmChange, fetchUsers, setErrorMsg, setSuccessMsg, handleRestoreUser, handleDeleteUser, handleApprovePendingUser, handleRejectPendingUser, setActiveTab } = ctx;
@@ -394,6 +408,41 @@ const UsersTab: React.FC = () => {
   const [retireErr, setRetireErr] = useState('');
   const [retireCancelFor, setRetireCancelFor] = useState<string | null>(null);
   const todayJst = todayJstStr();
+  // ── 退職日・期限を後から直す（2026-09-20・実機の指摘）──
+  // 🚨 直しても在籍には戻さない（戻すのは［復活］）。退職の切り替えもやり直さない（付け替えを二度走らせない）
+  const [retireEditFor, setRetireEditFor] = useState<string | null>(null);
+  const [editDate, setEditDate] = useState('');
+  const [editUntil, setEditUntil] = useState('');
+  const [editErr, setEditErr] = useState('');
+  const [editBusy, setEditBusy] = useState(false);
+  const [changeLog, setChangeLog] = useState<RetireDateChange[]>([]);
+  const openRetireEdit = (u: AdminUserProfile) => {
+    setRetireEditFor(u.id); setRetireFormFor(null); setRetireCancelFor(null); setEditErr('');
+    setEditDate(u.retire_date ?? ''); setEditUntil(u.retiree_access_until ?? '');
+    setChangeLog([]);
+    // 変更の記録を読む。🚨 読めなくても編集は続けられる（記録が出ないだけ）
+    void supabase.from('retire_date_changes')
+      .select('id, old_retire_date, new_retire_date, old_access_until, new_access_until, changed_by, changed_at')
+      .eq('user_id', u.id).order('changed_at', { ascending: true })
+      .then(({ data }) => setChangeLog((data ?? []) as RetireDateChange[]), () => {});
+  };
+  const submitRetireEdit = async (userId: string, userName: string) => {
+    if (!editDate) { setEditErr('退職日を選んでください'); return; }
+    if (!editUntil) { setEditErr('ログインできる期限を選んでください'); return; }
+    if (editUntil < editDate) { setEditErr('期限は退職日より後にしてください'); return; }
+    setEditBusy(true); setEditErr('');
+    // 🚨 rpc は 4xx/5xx でも throw しない。error を必ず見る
+    const { data, error } = await supabase.rpc('retire_update_dates', { p_user: userId, p_retire_date: editDate, p_access_until: editUntil });
+    setEditBusy(false);
+    if (error) { setEditErr('直せませんでした：' + error.message); return; }
+    const r = data as { changed?: boolean; access_expired?: boolean } | null;
+    setRetireEditFor(null);
+    setSuccessMsg(r?.changed === false
+      ? `${userName}さんの日付は変わっていません（同じ内容でした）。`
+      : `${userName}さんの退職日を ${ymdLabel(editDate)}、ログインできる期限を ${ymdLabel(editUntil)} に直しました。`
+      + (r?.access_expired ? 'この期限はすでに過ぎているため、ログインはできません。' : ''));
+    fetchUsers();
+  };
   const openRetireForm = (userId: string) => {
     setRetireFormFor(userId); setRetireDate(''); setRetireUntil(''); setRetireUntilEdited(false); setRetireErr(''); setRetireCancelFor(null);
   };
@@ -690,6 +739,13 @@ const UsersTab: React.FC = () => {
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 85 }}>最終アクセス</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 125 }} title="災害時の安否確認で使う緊急連絡先。初期登録は管理者が行い、以降は本人がアカウント設定から変更できます">緊急連絡先</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 55 }} title="プッシュ通知を許可しているか（アカウント設定で本人が設定）">プッシュ</th>
+                                                {/* 🚨 「退職者のみ」で絞っているときだけ出す（ふだんは列を増やさない・2026-09-20 実機の指摘） */}
+                        {showRetired === 'retired' && (
+                          <>
+                            <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 110 }}>退職日／期限</th>
+                            <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 85 }}>登録日</th>
+                          </>
+                        )}
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 55 }}>状態</th>
                         <th style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', textAlign: 'center', color: isDarkMode ? '#fff' : '#000', fontSize: 12, width: 140 }}>操作</th>
                       </tr>
@@ -851,6 +907,20 @@ const UsersTab: React.FC = () => {
                                 : <span title="プッシュ通知 未設定" style={{ color: isDarkMode ? '#6c757d' : '#adb5bd', fontSize: 12 }}>－</span>
                               }
                             </td>
+                            {/* 退職者のみのときだけ出す列（退職日・期限・登録日） */}
+                            {showRetired === 'retired' && (
+                              <>
+                                <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', fontSize: 11, textAlign: 'center', whiteSpace: 'nowrap' }}>
+                                  <div>{user.retire_date ? ymdLabel(user.retire_date) : '－'}</div>
+                                  {user.retiree_access_until && (
+                                    <div style={{ color: isDarkMode ? '#adb5bd' : '#6c757d' }}>期限 {ymdLabel(user.retiree_access_until)}</div>
+                                  )}
+                                </td>
+                                <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px', fontSize: 11, textAlign: 'center', whiteSpace: 'nowrap' }}>
+                                  {user.registered_at ? ymdLabel(user.registered_at.slice(0, 10)) : '－'}
+                                </td>
+                              </>
+                            )}
                             <td style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '4px 6px' }}>
                               {/* 状態の札は lib/retire.ts の1か所（ユーザー管理・退職の手続きで共用） */}
                               <span style={{ color: retireStateColor(user, todayJst, isDarkMode), fontWeight: 'bold', fontSize: '11px' }}>
@@ -866,6 +936,12 @@ const UsersTab: React.FC = () => {
                                 {user.email !== 'fivem.kyoto@gmail.com' && (
                                   <>
                                     {/* 退職は「退職日を入れて確定」の1本だけ（2026-09-19・案A）。復活は RPC で退職日も空にする */}
+                                    {/* 退職日が入っている人には、日付を直す入口を出す（2026-09-20 実機の指摘）。
+                                        🚨 直しても在籍には戻さない（戻すのは［復活］） */}
+                                    {user.retire_date && (
+                                      <button style={{ padding: '3px 6px', background: 'transparent', color: isDarkMode ? '#90caf9' : '#1565c0', border: `1px solid ${isDarkMode ? '#90caf9' : '#90caf9'}`, borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
+                                        onClick={() => openRetireEdit(user)}>退職日を修正</button>
+                                    )}
                                     {user.is_active === false ? (
                                       <button style={{ padding: '3px 6px', background: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }} onClick={() => handleRestoreUser(user.id)}>復活</button>
                                     ) : rState === 'scheduled' ? (
@@ -882,6 +958,53 @@ const UsersTab: React.FC = () => {
                               </div>
                             </td>
                           </tr>
+                          {retireEditFor === user.id && (
+                            <tr>
+                              <td colSpan={14} style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '10px 12px', background: isDarkMode ? '#1f2d3d' : '#eef6ff' }}>
+                                <div style={{ fontSize: 13, color: isDarkMode ? '#fff' : '#212529' }}>
+                                  <div style={{ fontWeight: 'bold', marginBottom: 8 }}>{user.name}さんの退職日を直す</div>
+                                  <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}>
+                                    <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                      退職日（在籍の最終日）
+                                      <input type="date" value={editDate} onChange={e => { setEditDate(e.target.value); setEditErr(''); }}
+                                        style={{ padding: '4px 6px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ced4da'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#212529' }} />
+                                    </label>
+                                    <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                      ログインできる期限
+                                      <input type="date" value={editUntil} onChange={e => { setEditUntil(e.target.value); setEditErr(''); }}
+                                        style={{ padding: '4px 6px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ced4da'}`, background: isDarkMode ? '#495057' : '#fff', color: isDarkMode ? '#fff' : '#212529' }} />
+                                    </label>
+                                  </div>
+                                  <div style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#6c757d', lineHeight: 1.7, marginBottom: 8 }}>
+                                    🚨 日付を直しても<strong>在籍には戻りません</strong>（戻すときは［復活］）。退職の切り替えもやり直しません。
+                                  </div>
+                                  {changeLog.length > 0 && (
+                                    <div style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#6c757d', lineHeight: 1.8, marginBottom: 8, borderTop: `1px solid ${isDarkMode ? '#495057' : '#cfe2ff'}`, paddingTop: 6 }}>
+                                      <div style={{ fontWeight: 'bold' }}>変更の記録（{changeLog.length}件）</div>
+                                      {changeLog.map(c => (
+                                        <div key={c.id}>
+                                          <span style={{ marginRight: 10 }}>{ymdLabel(c.changed_at.slice(0, 10))}</span>
+                                          退職日 {c.old_retire_date ? ymdLabel(c.old_retire_date) : '（新規）'} → {c.new_retire_date ? ymdLabel(c.new_retire_date) : '－'}
+                                          {c.old_access_until !== c.new_access_until && (
+                                            <span style={{ marginLeft: 10 }}>／ 期限 {c.old_access_until ? ymdLabel(c.old_access_until) : '（新規）'} → {c.new_access_until ? ymdLabel(c.new_access_until) : '－'}</span>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {editErr && (
+                                    <div style={{ padding: '8px 12px', borderRadius: 8, fontSize: 12.5, background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029', marginBottom: 8 }}>{editErr}</div>
+                                  )}
+                                  <div style={{ display: 'flex', gap: 8 }}>
+                                    <button disabled={editBusy} onClick={() => setRetireEditFor(null)}
+                                      style={{ padding: '4px 12px', borderRadius: 6, border: `1px solid ${isDarkMode ? '#6c757d' : '#ced4da'}`, background: 'transparent', color: isDarkMode ? '#fff' : '#212529', cursor: 'pointer', fontSize: 12 }}>やめる</button>
+                                    <button disabled={editBusy} onClick={() => submitRetireEdit(user.id, user.name || '')}
+                                      style={{ padding: '4px 12px', borderRadius: 6, border: 'none', background: '#1976d2', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>{editBusy ? '保存中…' : '保存'}</button>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
                           {(retireFormFor === user.id || retireCancelFor === user.id) && (
                             <tr>
                               <td colSpan={12} style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '10px 12px', background: isDarkMode ? '#3d3520' : '#fff8e1' }}>

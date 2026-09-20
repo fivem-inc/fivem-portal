@@ -183,6 +183,8 @@ export interface AdminUserProfile {
   retire_date?: string | null;
   /** 退職後にログインして申請できる期限 */
   retiree_access_until?: string | null;
+  /** 実際に退職へ切り替わった日時（予約だけの人は空） */
+  retired_at?: string | null;
 }
 
 export interface AdminLeaveRequest {
