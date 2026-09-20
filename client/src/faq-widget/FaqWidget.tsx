@@ -3,6 +3,7 @@ import {
   fetchPublicFaqTopics,
   logPublicFaqQuery,
   logFaqEvent,
+  startFaqDwellTracking,
   faqEventSent,
   matchFaqTopics,
   featuredTopics,
@@ -207,6 +208,10 @@ const FaqWidget: React.FC = () => {
   useEffect(() => {
     logFaqEvent({ kind: 'page_view', once: 'page' });
   }, []);
+
+  // 何秒見ていたか（画面を離れるときに1回だけ送る）。
+  // 🚨 送れないことがあるので、集計は「最初と最後の操作の差」とも突き合わせている
+  useEffect(() => startFaqDwellTracking(), []);
 
   /** 回答を表示する。🚨 表示の記録はここ1か所だけで行う。
    *  openTopic の中に置くと、校を聞く質問で pickOption → openTopic と

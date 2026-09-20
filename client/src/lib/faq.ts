@@ -343,7 +343,8 @@ export type FaqEventKind =
   | 'topic_view'     // 回答が表示された（1セッション×1質問1回）
   | 'contact'        // 問い合わせの案内に進んだ（reason で理由を分ける）
   | 'contact_click'  // 電話・フォームを実際に押した
-  | 'solved';        // 「はい（解決した）」を押した
+  | 'solved'         // 「はい（解決した）」を押した
+  | 'leave';         // 画面を離れた（滞在時間つき・1セッション1回）
 
 /** 問い合わせに進んだ理由。🚨 それぞれ「やるべきこと」が違うので必ず分けて記録する */
 export type FaqContactReason =
@@ -416,6 +417,8 @@ export interface FaqEventInput {
   course?: string | null;
   /** 指定すると「1セッションに1回だけ」送る（例: 'page' / `topic:<id>`） */
   once?: string;
+  /** 滞在時間（ミリ秒）。kind='leave' のときだけ意味を持つ */
+  dwellMs?: number;
 }
 
 export const logFaqEvent = async (p: FaqEventInput): Promise<void> => {
@@ -434,6 +437,7 @@ export const logFaqEvent = async (p: FaqEventInput): Promise<void> => {
       p_school: p.school ?? null,
       p_course: p.course ?? null,
       p_session_id: faqSessionId(),
+      p_dwell_ms: p.dwellMs ?? null,
     });
     // 🚨 supabase の rpc は 4xx/5xx でも例外を投げない。error を必ず見ること。
     //    既存の `.then(null, ...)` は通信エラーしか拾えず、
@@ -442,6 +446,53 @@ export const logFaqEvent = async (p: FaqEventInput): Promise<void> => {
   } catch (e) {
     console.error('FAQ利用記録に失敗（通信）:', e);
   }
+};
+
+/** 滞在時間の記録は1セッションに1回だけ（記録が無制限に増えないように） */
+const LEAVE_ONCE = 'leave';
+
+/** 画面を離れるときに「何秒いたか」を送る。
+ *  🚨 ふつうの fetch は、ページが閉じる瞬間に取り消される。keepalive を付けると送り切れる。
+ *  🚨 navigator.sendBeacon は使えない。apikey のヘッダーを付けられず 401 になるため。
+ *  🚨 それでも送れないことがある（スマホでアプリを切り替えた等）。**これだけに頼らない**。
+ *     集計側は「同じ人の最初と最後の操作の差」と突き合わせ、大きいほうを採っている
+ *     （faq_public_dwell_summary）。片方が欠けても数字が嘘にならない作りにしてある。 */
+const sendLeaveBeacon = (ms: number): void => {
+  const url = import.meta.env.VITE_SUPABASE_URL;
+  const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  if (!url || !key) return;
+  try {
+    void fetch(`${url}/rest/v1/rpc/faq_public_event_log`, {
+      method: 'POST',
+      keepalive: true,
+      headers: { 'Content-Type': 'application/json', apikey: key, Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ p_kind: 'leave', p_session_id: faqSessionId(), p_dwell_ms: ms }),
+    });
+  } catch { /* 記録はおまけ。失敗してもお客様の画面は何も変わらない */ }
+};
+
+/** 滞在時間の計測を始める。返ってきた関数を呼ぶと後片付けする（useEffect の戻り値に使う） */
+export const startFaqDwellTracking = (): (() => void) => {
+  const startedAt = Date.now();
+  let sent = false;
+  const send = () => {
+    if (sent) return;
+    if (faqEventSent(LEAVE_ONCE)) { sent = true; return; }
+    const ms = Date.now() - startedAt;
+    // 1秒未満は数えない（開いた瞬間に閉じた＝読んでいない）
+    if (ms < 1000) return;
+    sent = true;
+    rememberSent(LEAVE_ONCE);
+    sendLeaveBeacon(ms);
+  };
+  // 🚨 スマホでは「閉じる」が来ないことが多い。画面が隠れたときにも送る
+  const onVisibility = () => { if (document.visibilityState === 'hidden') send(); };
+  document.addEventListener('visibilitychange', onVisibility);
+  window.addEventListener('pagehide', send);
+  return () => {
+    document.removeEventListener('visibilitychange', onVisibility);
+    window.removeEventListener('pagehide', send);
+  };
 };
 
 // ============================================================

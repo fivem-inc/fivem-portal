@@ -34,7 +34,26 @@ interface SummaryRow {
   n: number;
 }
 
+/** 来た方の内訳（端末・社内社外・国・都道府県・ブラウザ・流入元・時間帯・曜日）。
+ *  🚨 「社内か社外か」は、集計のたびに**いまの会社のIPの一覧で判定し直している**
+ *     （あとから会社のIPを登録しても、過去の記録に遡って効く） */
+interface VisitorRow { dim: string; value: string; n: number; sessions: number }
+
+/** 滞在時間。🚨 2つの測り方（操作の間隔／閉じるときの実測）の大きいほうを採っている */
+interface DwellRow {
+  sessions: number;
+  median_sec: number | null;
+  avg_sec: number | null;
+  over_1min: number;
+  measured: number;
+}
+
+/** 内訳を出す順番。🚨 ここに無い項目は出さない（DB が増えても画面が勝手に変わらないように） */
+const VISITOR_DIMS = ['端末', '社内/社外', '都道府県', '国', 'ブラウザ', '流入元', '時間帯', '曜日'] as const;
+
 interface Props {
+  /** 会社のIP（社内と見なす範囲）を変えられるのは管理者だけ。app_settings の書き込みが管理者限定のため */
+  canEditSettings?: boolean;
   isDarkMode: boolean;
   /** 集計で「⚠️ 要確認」を付けたあと、一覧を読み直してもらう */
   onChanged: () => void;
@@ -67,7 +86,7 @@ const REASON_ACTION: Record<string, string> = {
   load_error: '不具合。開発担当へ',
 };
 
-const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged }) => {
+const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings = false }) => {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<Mode>('month');
   const [ym, setYm] = useState(thisMonth);
@@ -80,6 +99,12 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged }) => {
   const [spanLabel, setSpanLabel] = useState('');
   const [cmpLabel, setCmpLabel] = useState('');
   const [words, setWords] = useState<{ word: string; n: number }[]>([]);
+  const [visitors, setVisitors] = useState<VisitorRow[] | null>(null);
+  const [dwell, setDwell] = useState<DwellRow | null>(null);
+  const [staffWords, setStaffWords] = useState<{ word: string; n: number; miss: number }[]>([]);
+  const [ipText, setIpText] = useState('');
+  const [ipMsg, setIpMsg] = useState('');
+  const [ipFail, setIpFail] = useState(false);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
   const [marking, setMarking] = useState<string | null>(null);
@@ -130,6 +155,43 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged }) => {
         map.set(q.raw_query, (map.get(q.raw_query) ?? 0) + 1);
       }
       setWords([...map.entries()].map(([word, n]) => ({ word, n })).sort((a, b) => b.n - a.n));
+
+      // 来た方の内訳（端末・社内社外・都道府県 ほか）
+      const { data: vd, error: verr } = await supabase.rpc('faq_public_visitor_summary', { p_from: span.from, p_to: span.to });
+      if (verr) { setErr(`来た方の内訳を読み込めませんでした：${verr.message}`); setVisitors(null); }
+      else setVisitors((vd ?? []) as VisitorRow[]);
+
+      // 滞在時間
+      const { data: dd, error: derr } = await supabase.rpc('faq_public_dwell_summary', { p_from: span.from, p_to: span.to });
+      if (derr) { setErr(`滞在時間を読み込めませんでした：${derr.message}`); setDwell(null); }
+      else setDwell(((dd ?? [])[0] ?? null) as DwellRow | null);
+
+      // 社内FAQ（スタッフ用）の検索ワード。🚨 社内は検索ワードだけ（IP・端末は取っていない）
+      // 🚨 件数を必ず指定する。指定しないと Supabase が1,000行で黙って打ち切る
+      const { data: sq, error: sqerr } = await supabase
+        .from('faq_query_log')
+        .select('raw_query, had_match')
+        .neq('audience', 'public')
+        .gte('created_at', span.from)
+        .lt('created_at', span.to)
+        .limit(500);
+      if (sqerr) { setErr(`社内の検索ログを読み込めませんでした：${sqerr.message}`); setStaffWords([]); }
+      else {
+        const sm = new Map<string, { n: number; miss: number }>();
+        for (const q of (sq ?? []) as { raw_query: string; had_match: boolean }[]) {
+          const cur = sm.get(q.raw_query) ?? { n: 0, miss: 0 };
+          cur.n += 1;
+          if (!q.had_match) cur.miss += 1;
+          sm.set(q.raw_query, cur);
+        }
+        setStaffWords([...sm.entries()].map(([word, v]) => ({ word, ...v })).sort((a, b) => b.n - a.n));
+      }
+
+      // 会社のIP（社内と見なす範囲）。読めなくても集計は出す（設定欄が空になるだけ）
+      const { data: ipRow } = await supabase
+        .from('app_settings').select('value').eq('key', 'faq_internal_ips').maybeSingle();
+      const ips = (ipRow?.value as { ips?: string[] } | null)?.ips;
+      setIpText(Array.isArray(ips) ? ips.join(', ') : '');
     } catch (e) {
       setErr(`集計を読み込めませんでした：${e instanceof Error ? e.message : String(e)}`);
       setRows(null);
@@ -140,6 +202,23 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged }) => {
 
   const reload = (o?: { mode?: Mode; ym?: string; year?: number; from?: string; to?: string; cmp?: Compare }) =>
     load(o?.mode ?? mode, o?.ym ?? ym, o?.year ?? year, o?.from ?? from, o?.to ?? to, o?.cmp ?? cmp);
+
+  /** 会社のIPを保存する。
+   *  🚨 upsert は0件でもエラーにならないので .select('key') で件数を見る（直したつもりで直っていないを防ぐ） */
+  const saveIps = async () => {
+    setIpMsg(''); setIpFail(false);
+    const list = ipText.split(',').map(s => s.trim()).filter(Boolean);
+    const { data, error } = await supabase
+      .from('app_settings')
+      .upsert({ key: 'faq_internal_ips', value: { ips: list } }, { onConflict: 'key' })
+      .select('key');
+    if (error) { setIpFail(true); setIpMsg(`保存できませんでした：${error.message}`); return; }
+    if (!data || data.length === 0) {
+      setIpFail(true); setIpMsg('保存できませんでした（0件）。管理者のアカウントでお試しください'); return;
+    }
+    setIpMsg(`保存しました（${list.length}件）`);
+    reload();   // 「社内/社外」は集計のたびに判定し直すので、過去の記録にも効く
+  };
 
   const openAndLoad = () => { setOpen(true); reload(); };
   /** ◀▶。月のときは月、年のときは年を動かす */
@@ -459,6 +538,105 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged }) => {
               </div>
             </div>
           )}
+
+          {/* 滞在時間。🚨 2つの測り方の大きいほうを採っていることを画面にも書く（数字の意味が変わるため） */}
+          {dwell !== null && dwell.sessions > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 'bold', color: text, marginBottom: 6 }}>滞在時間</div>
+              <div style={{ fontSize: 13, color: text, lineHeight: 1.9 }}>
+                {dwell.sessions}人 ／ 中央値 <strong>{dwell.median_sec ?? '-'}秒</strong>
+                ／ 平均 {dwell.avg_sec ?? '-'}秒 ／ 1分以上 {dwell.over_1min}人
+              </div>
+              <div style={{ fontSize: 12, color: sub, lineHeight: 1.7 }}>
+                ※ {dwell.measured}人ぶんは「閉じたとき」に実測できた時間。
+                残りは<strong>最初と最後の操作の差</strong>で数えているので、
+                読んだだけで何も押さなかった方は<strong>0秒</strong>になります（短めに出ます）
+              </div>
+            </div>
+          )}
+
+          {/* 来た方の内訳 */}
+          {visitors !== null && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 'bold', color: text, marginBottom: 6 }}>来た方の内訳</div>
+              {visitors.length === 0
+                ? <div style={{ fontSize: 13, color: sub }}>この期間の記録はありません</div>
+                : VISITOR_DIMS.map(d => {
+                    const list = visitors.filter(v => v.dim === d).sort((a, b) => b.n - a.n);
+                    if (list.length === 0) return null;
+                    return (
+                      <div key={d} style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+                        <span style={{ fontSize: 12, color: sub, width: 70, flexShrink: 0 }}>{d}</span>
+                        {list.map(v => (
+                          <span key={v.value} style={{ fontSize: 13, padding: '4px 10px', borderRadius: 6, border: `1px solid ${border}`, color: text }}>
+                            {v.value} <span style={{ color: sub }}>{v.n}件 / {v.sessions}人</span>
+                          </span>
+                        ))}
+                      </div>
+                    );
+                  })}
+              <div style={{ fontSize: 12, color: sub, lineHeight: 1.7, marginTop: 4 }}>
+                ※ 「社内/社外」は、⚙️ の<strong>会社のIP</strong>の設定と照らして判定します。
+                未設定のあいだは全部「社外」になります（<strong>あとから設定すれば過去の記録にも反映されます</strong>）<br />
+                ※ 「都道府県」は<strong>まだ調べていません</strong>（IPから引く仕組みは次の段で入れます）
+              </div>
+
+              {/* 会社のIPの設定（管理者だけ） */}
+              {canEditSettings && (
+                <div style={{ marginTop: 10, padding: '10px 12px', border: `1px solid ${border}`, borderRadius: 8 }}>
+                  <div style={{ fontSize: 12.5, color: text, marginBottom: 6 }}>
+                    会社のIP（ここから来たアクセスを「社内」と数えます）
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <input
+                      value={ipText}
+                      onChange={e => { setIpText(e.target.value); setIpMsg(''); }}
+                      placeholder="例：203.0.113.45, 192.168.0.0/24"
+                      style={{ flex: '1 1 260px', minWidth: 200, padding: '7px 10px', fontSize: 13, borderRadius: 6, border: `1px solid ${border}`, background: bg, color: text }}
+                    />
+                    <button type="button" onClick={saveIps}
+                      style={{ padding: '7px 14px', borderRadius: 6, fontSize: 13, cursor: 'pointer', border: `1px solid ${border}`, background: bg, color: text }}>
+                      保存
+                    </button>
+                  </div>
+                  <div style={{ fontSize: 12, color: sub, marginTop: 6, lineHeight: 1.7 }}>
+                    カンマで区切って複数書けます。範囲（192.168.0.0/24 のような書き方）も使えます。<br />
+                    🚨 分からないときは空のままで構いません（全部「社外」として数えます）
+                  </div>
+                  {ipMsg && (
+                    <div style={{
+                      marginTop: 8, padding: '8px 12px', borderRadius: 8, fontSize: 12.5,
+                      background: ipFail ? '#f8d7da' : '#d4edda',
+                      border: `1px solid ${ipFail ? '#f5c2c7' : '#c3e6cb'}`,
+                      color: ipFail ? '#842029' : '#155724',
+                    }}>
+                      {ipFail ? '' : '✓ '}{ipMsg}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 社内FAQ（スタッフ用）の検索ワード。🚨 社内は検索ワードだけ（端末・IPは取らない） */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 'bold', color: text, marginBottom: 6 }}>
+              社内FAQで検索された言葉（スタッフ用）
+            </div>
+            {staffWords.length === 0
+              ? <div style={{ fontSize: 13, color: sub }}>この期間はありません</div>
+              : <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {staffWords.map(w => (
+                    <span key={w.word} style={{ fontSize: 13, padding: '4px 10px', borderRadius: 6, border: `1px solid ${border}`, color: text }}>
+                      {w.word} <span style={{ color: sub }}>×{w.n}</span>
+                      {w.miss > 0 && <span style={{ color: '#b35900' }}>（見つからず {w.miss}）</span>}
+                    </span>
+                  ))}
+                </div>}
+            <div style={{ fontSize: 12, color: sub, marginTop: 4 }}>
+              ※ 社内は<strong>検索した言葉だけ</strong>を記録しています（端末・IP・滞在時間は取っていません）
+            </div>
+          </div>
 
           <div style={{ fontSize: 12, color: sub, lineHeight: 1.8, borderTop: `1px solid ${border}`, paddingTop: 10 }}>
             ・見るべきは「<strong>問い合わせ率</strong>」です。「はい」は押されないほうが普通なので、

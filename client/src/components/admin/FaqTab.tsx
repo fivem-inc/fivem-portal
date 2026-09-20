@@ -434,7 +434,7 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
           🚨 社外向けだけに出す。社内（/help）には記録の仕組みを入れていないので、
              社内タブで出すと「集計が壊れている」と誤解される（何も出ない理由を明示する） */}
       {audience === 'public'
-        ? <FaqAnalytics isDarkMode={isDarkMode} onChanged={load} />
+        ? <FaqAnalytics isDarkMode={isDarkMode} onChanged={load} canEditSettings={canManageEditors} />
         : (
           <div style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#666', marginBottom: 16 }}>
             利用状況の集計は、お客様向け（社外）のみです。
