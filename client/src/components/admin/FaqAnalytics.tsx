@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { downloadCSV } from '../../utils';
 import {
-  addMonth, spanOf, compareSpanOf, diffText, thisMonth, todayStr,
+  addMonth, spanOf, compareSpanOf, diffText, thisMonth, todayStr, shiftDay,
   type Mode, type Compare,
 } from '../../lib/faqPeriod';
 
@@ -47,6 +47,13 @@ interface DwellRow {
   over_1min: number;
   measured: number;
 }
+
+/** よく見る期間。🚨 日数は「今日を含む」数え方（7日間＝今日と、その前の6日） */
+const QUICK_RANGES = [
+  { days: 1, label: '今日' },
+  { days: 7, label: '7日間' },
+  { days: 30, label: '30日間' },
+] as const;
 
 /** 内訳を出す順番。🚨 ここに無い項目は出さない（DB が増えても画面が勝手に変わらないように） */
 const VISITOR_DIMS = ['端末', '社内/社外', '都道府県', '国', 'ブラウザ', '流入元', '時間帯', '曜日'] as const;
@@ -218,6 +225,23 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
     }
     setIpMsg(`保存しました（${list.length}件）`);
     reload();   // 「社内/社外」は集計のたびに判定し直すので、過去の記録にも効く
+  };
+
+  /** よく見る期間の日付を作る（今日を含めて days 日ぶん） */
+  const quickSpan = (days: number) => {
+    const t = todayStr();
+    return { from: days <= 1 ? t : shiftDay(t, -(days - 1)), to: t };
+  };
+  const quickRange = (days: number) => {
+    const { from: f, to: t } = quickSpan(days);
+    setMode('range'); setFrom(f); setTo(t);
+    reload({ mode: 'range', from: f, to: t });
+  };
+  /** いま選ばれているのがその期間か（ボタンを青くするため） */
+  const isQuick = (days: number): boolean => {
+    if (mode !== 'range') return false;
+    const q = quickSpan(days);
+    return from === q.from && to === q.to;
   };
 
   const openAndLoad = () => { setOpen(true); reload(); };
@@ -397,6 +421,16 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
             <button type="button" onClick={() => move(1)} style={navBtn} aria-label="次へ">▶</button>
           </>
         )}
+      </div>
+
+      {/* よく見る期間。押すと「期間を指定」に切り替わり、日付が入る。
+          🚨 日付の組み立ては faqPeriod の shiftDay を通す（自前で引き算しない。境目がずれる） */}
+      <div style={filterRow}>
+        <span style={filterLabel}>よく見る</span>
+        {QUICK_RANGES.map(q => (
+          <button key={q.days} type="button" style={pill(isQuick(q.days))}
+            onClick={() => quickRange(q.days)}>{q.label}</button>
+        ))}
       </div>
 
       <div style={filterRow}>
