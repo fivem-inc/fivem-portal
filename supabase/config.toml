@@ -13,6 +13,10 @@ verify_jwt = false
 [functions.storage-usage-check]
 verify_jwt = false
 
+# メール（Resend）の使用量。🚨 中でも管理者かどうかを確かめている（二重の網）
+[functions.resend-usage]
+verify_jwt = true
+
 [functions.gcal-sync]
 enabled = true
 verify_jwt = true

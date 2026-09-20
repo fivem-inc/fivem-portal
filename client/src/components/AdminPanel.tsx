@@ -24,6 +24,14 @@ import CorrectionRequestsTab from './admin/CorrectionRequestsTab';
 // シフト管理（勤務表の一括編集・2026-09-15）。docs/計画-管理画面の開放.md の 5
 import ShiftManagementTab from './admin/ShiftManagementTab';
 
+/** メール（Resend）の使用量。Edge Function resend-usage が返す形。
+ *  🚨 上限（limit）も Resend から受け取る。こちらで 3,000 などと決め打ちしない（プラン変更に追従するため） */
+interface MailUsage {
+  daily: { used: number; limit: number };
+  monthly: { used: number; limit: number };
+  partial?: boolean;
+}
+
 interface AdminPanelProps {
   pendingApprovals: PendingApproval[];
   submissions: Submission[];
@@ -81,6 +89,26 @@ const AdminPanelContent: React.FC = () => {
   const DB_LIMIT_MB = 500;
   const isDbLow = dbUsageMb !== null && dbUsageMb / DB_LIMIT_MB >= 0.8;
 
+  // メール（Resend）の使用量。無料枠に当たると受理・差し戻しの連絡が黙って届かなくなるので、
+  // ストレージ・DB と同じように出す。
+  // 🚨 記録は貯めない。Edge Function が Resend にその場で聞く（上限も Resend が教えてくれる）
+  const [mailUsage, setMailUsage] = useState<MailUsage | null>(null);
+  const [mailErr, setMailErr] = useState('');
+  useEffect(() => {
+    if (!isAdminUser) return;
+    // 🚨 functions.invoke は 4xx/5xx でも throw しない。error と中身の error の両方を見る
+    supabase.functions.invoke('resend-usage').then(({ data, error }) => {
+      if (error) { setMailErr('取れませんでした'); return; }
+      const d = data as MailUsage & { error?: string } | null;
+      if (!d || d.error || !d.monthly) { setMailErr('取れませんでした'); return; }
+      setMailUsage(d);
+    }, () => setMailErr('取れませんでした'));
+  }, [supabase, isAdminUser]);
+  const mailRatio = mailUsage
+    ? Math.max(mailUsage.monthly.used / mailUsage.monthly.limit, mailUsage.daily.used / mailUsage.daily.limit)
+    : 0;
+  const isMailLow = mailUsage !== null && mailRatio >= 0.8;
+
   // 設定の入力もれ（次年度の会社カレンダー未登録など）。判定はDBの admin_setup_alerts() に集約
   const { badgeCount: adminSetupBadge } = useAdminSetupAlerts(isAdminUser);
 
@@ -100,7 +128,7 @@ const AdminPanelContent: React.FC = () => {
   }, [supabase, isAdminUser]);
 
   return (    <div style={{ marginTop: 0, paddingTop: 0, position: 'relative' }}>
-      {(storageUsageMb !== null || dbUsageMb !== null) && (
+      {(storageUsageMb !== null || dbUsageMb !== null || mailUsage !== null || mailErr) && (
         <div style={{ position: 'absolute', top: 0, right: 0, fontSize: 11, textAlign: 'right', lineHeight: 1.5 }}>
           {storageUsageMb !== null && (
             <div style={{ color: isStorageLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), fontWeight: isStorageLow ? 'bold' : 'normal' }}>
@@ -112,6 +140,21 @@ const AdminPanelContent: React.FC = () => {
             <div style={{ marginTop: 3, color: isDbLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), fontWeight: isDbLow ? 'bold' : 'normal' }}>
               <div>{isDbLow && '⚠️ '}💾 データベース使用量</div>
               <div>{dbUsageMb}MB / {DB_LIMIT_MB}MB（無料枠）</div>
+            </div>
+          )}
+          {mailUsage !== null && (
+            <div style={{ marginTop: 3, color: isMailLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), fontWeight: isMailLow ? 'bold' : 'normal' }}>
+              <div>{isMailLow && '⚠️ '}📩 メール送信</div>
+              <div>今月 {mailUsage.monthly.used}通 / {mailUsage.monthly.limit}通（無料枠）</div>
+              <div>今日 {mailUsage.daily.used}通 / {mailUsage.daily.limit}通</div>
+              {mailUsage.partial && <div>※ 1,000通まで数えた数です</div>}
+            </div>
+          )}
+          {/* 🚨 取れなかったことを黙って隠さない（0通と嘘をつかない） */}
+          {mailUsage === null && mailErr && (
+            <div style={{ marginTop: 3, color: isDarkMode ? '#adb5bd' : '#888' }}>
+              <div>📩 メール送信</div>
+              <div>{mailErr}</div>
             </div>
           )}
         </div>
