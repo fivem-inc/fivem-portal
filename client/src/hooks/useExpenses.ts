@@ -42,7 +42,9 @@ export const useExpenses = (user: AuthUser | null, isAdmin: boolean): UseExpense
         // 一般ユーザーの場合、自分の申請履歴のみを取得
         const { data: myData, error: myError } = await supabase
           .from('expenses')
-          .select('*, profiles!user_id(name, email)')
+          // 🚨 email は退職者に許していない列。埋め込みに混ぜると 42501 でクエリごと落ち、
+          //    交通費の履歴が1件も出なくなる（＝ホームが空になる）。本人のぶんに email は要らない
+          .select('*, profiles!user_id(name)')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false });
 

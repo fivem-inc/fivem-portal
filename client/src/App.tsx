@@ -6,7 +6,8 @@ import ResetPassword from './pages/ResetPassword';
 import ExpenseForm from './components/ExpenseForm';
 import OvertimeThresholdBanner from './components/OvertimeThresholdBanner';
 import RetireChecklistBanner from './components/RetireChecklistBanner';
-import { todayJstStr } from './lib/breakCalc';
+import { todayJstStr, payPeriodCloseCutoff, calcPayPeriodStartJst } from './lib/breakCalc';
+import { accessUntilLabel } from './lib/retire';
 import { BELL_REFRESH_EVENT } from './lib/notifications';
 
 // 設定系ページは起動直後のランディング（ホーム）に不要なので遅延読込にして初期バンドルを軽くする
@@ -626,13 +627,15 @@ const AvatarMenu: React.FC<{ userId: string; profileName: string | null; email: 
   );
 };
 
-const useBoardUnread = (userId: string | undefined, pathname: string) => {
+// 🚨 enabled=false のときは1本も問い合わせない（退職者は連絡板の表を読めないため。2026-09-20）
+const useBoardUnread = (userId: string | undefined, pathname: string, enabled = true) => {
   const [channelCount, setChannelCount] = useState(0);
   const [inboxCount,   setInboxCount]   = useState(0);
   const prevPath = useRef(pathname);
 
   const fetchCount = useCallback(async () => {
     if (!userId) return;
+    if (!enabled) return;   // 🚨 退職者は連絡板の表を読めない。1本も投げない
 
     const [memberRes, inboxRes] = await Promise.all([
       supabase.from('board_channel_members').select('channel_id').eq('user_id', userId),
@@ -681,7 +684,7 @@ const useBoardUnread = (userId: string | undefined, pathname: string) => {
 
     setChannelCount(channelUnread);
     setInboxCount(inboxUnread);
-  }, [userId]);
+  }, [userId, enabled]);
 
   useEffect(() => {
     if (prevPath.current === '/board' && pathname !== '/board') {
@@ -774,8 +777,10 @@ const useOvertimeUnreportedCount = (userId: string | undefined, canOvertime: boo
 const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean; canShiftReport?: boolean; canCalendar?: boolean; canPurchaseRequest?: boolean; canOvertime?: boolean; canExpense?: boolean; canTripReport?: boolean; canBoard?: boolean; canRoomBooking?: boolean; canFaq?: boolean; canFaqNav?: boolean; roleTitle?: string; userId?: string }> = ({ isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, roleTitle, userId }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { previewRole, setPreviewRole, user: ctxUser } = useContext(AuthContext);
-  const realIsAdmin = ctxUser?.app_metadata?.role === 'admin';
+  const { previewRole, setPreviewRole, user: ctxUser, retiree, previewRetiree } = useContext(AuthContext);
+  // 退職して申請期間中か。🚨 ここでは「読み込みを止める」ためだけに使う（機能の出し分けは can* に任せる）
+  const isRetiree = !!retiree || previewRetiree;
+  const realIsAdmin = ctxUser?.app_metadata?.role === 'admin' && !isRetiree;
   // 機能の公開/非公開（管理者は常に表示）
   // 全公開ON → 全員 / 全公開OFF+リーダー以上ON → リーダー以上のみ / 両方OFF → 管理者のみ
   const featurePublishState = useFeaturePublished();
@@ -796,10 +801,13 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
     window.addEventListener('resize', check);
     return () => window.removeEventListener('resize', check);
   }, []);
-  const { total: boardUnreadRaw } = useBoardUnread(userId, location.pathname);
-  const { pendingCount: safetyPendingRaw } = useSafetyPendingCount(userId);
+  // 🚨 この3本は権限を1つも見ずに全ページで走る（連絡板5表・安否確認3表）。
+  //    退職者はどれも読めないので、**バッジを0にするだけでなく読み込みごと止める**（2026-09-20 レビュー指摘）。
+  //    止めないと30秒ごとに 42501 が出続け、端末に残った安否の回答も送ろうとして失敗し続ける
+  const { total: boardUnreadRaw } = useBoardUnread(userId, location.pathname, !isRetiree);
+  const { pendingCount: safetyPendingRaw } = useSafetyPendingCount(userId, !isRetiree);
   // 端末に保存した安否の回答を、どのページにいても電波が戻り次第送る（NavBarは全ページに出ている）
-  useSafetyQueueFlush(userId, location.pathname);
+  useSafetyQueueFlush(userId, location.pathname, !isRetiree);
   const safetyPending = isPub('safety_check') ? safetyPendingRaw : 0;
   const boardUnread = boardUnreadRaw + safetyPending; // 連絡板の未読バッジに安否確認の未回答分も合算
   const { pendingCount: purchasePending } = usePurchasePendingCount(userId, canPurchaseRequest);
@@ -1902,6 +1910,59 @@ const AppRequestBanner: React.FC<{ userId: string }> = ({ userId }) => {
   );
 };
 
+// 退職して申請期間中の人への、ホームの案内（3段目・2026-09-20 ユーザー確定＝案E）。
+// 🚨 文言の決まり
+//   ・期限は2つある。**月末＝ログインできる期限**／**17日＝残業の「新しい」申請の締め切り**。
+//     交通費・勤務変更報告に17日の締め切りは無い（本番で実測）。ここを混ぜると嘘になる
+//   ・「あと◯日」は残り7日以内のときだけ付ける（accessUntilLabel が決める）
+//   ・🚨 「退職者」という言葉は本人の画面に出さない（管理側の言葉）
+// 🚨 ボタンは「その人が使える機能」だけ。交通費のボタンは出さない（ホームが交通費の画面そのもののため）
+const RetireeHomeNotice: React.FC<{
+  accessUntil: string | null;
+  canOvertime: boolean;
+  canShiftReport: boolean;
+  rejectedCount: number;
+}> = ({ accessUntil, canOvertime, canShiftReport, rejectedCount }) => {
+  const navigate = useNavigate();
+  const label = accessUntilLabel(accessUntil, todayJstStr());
+  const cutoff = payPeriodCloseCutoff(calcPayPeriodStartJst(todayJstStr()));
+  const cutoffLabel = `${Number(cutoff.slice(5, 7))}月${Number(cutoff.slice(8, 10))}日`;
+  const btn: React.CSSProperties = {
+    display: 'block', width: '100%', minHeight: 48, padding: '12px 16px', marginTop: 8,
+    background: '#fff', border: '1px solid #ced4da', borderRadius: 10, cursor: 'pointer',
+    fontSize: 15, fontWeight: 'bold', color: '#212529', textAlign: 'left',
+  };
+  return (
+    <>
+      {/* 差し戻しは「システムがはっきり分かること」なので、消えないバナーで出す。
+          🚨 いまの交通費の差し戻しは閉じると消えるモーダルで、次にいつ開くか分からない人には届かない */}
+      {rejectedCount > 0 && (
+        <div style={{ margin: '0 0 16px 0', padding: '12px 16px', background: '#f8d7da', border: '2px solid #dc3545', borderRadius: 10, color: '#842029' }}>
+          <div style={{ fontSize: 15, fontWeight: 'bold' }}>⚠️ 差し戻しが {rejectedCount}件 あります</div>
+          <div style={{ fontSize: 13, marginTop: 4 }}>{label} までに直していただけます（下の履歴からご確認ください）</div>
+        </div>
+      )}
+      <div style={{ margin: '0 0 16px 0', padding: '12px 16px', background: '#fff3cd', border: '2px solid #f59e0b', borderRadius: 10, color: '#856404' }}>
+        <div style={{ fontSize: 15, fontWeight: 'bold' }}>⚠️ 申請は {label} まで</div>
+        {canOvertime && (
+          <button type="button" style={btn} onClick={() => navigate('/overtime')}>🕐 残業・時間の申請へ</button>
+        )}
+        {canShiftReport && (
+          <button type="button" style={btn} onClick={() => navigate('/shift-report')}>📋 勤務変更報告へ</button>
+        )}
+        {canOvertime && (
+          <div style={{ fontSize: 12.5, marginTop: 8, lineHeight: 1.7 }}>
+            ※ 残業の<strong>新しい</strong>申請だけ {cutoffLabel} までです（差し戻しの直しは {label} まで）
+          </div>
+        )}
+        <div style={{ fontSize: 12.5, marginTop: 8, lineHeight: 1.7 }}>
+          ※ いまは申請に必要な画面だけをご利用いただけます。
+        </div>
+      </div>
+    </>
+  );
+};
+
 // 出勤のお願いバナー（ホーム・2026-09-13）。タップで /shift-request へ。
 // 🚨 パートはスマホ通知を登録している人が18人中6人しかいない。ベルだけだと気づかれない。
 // 🚨 権限では出し分けない。`shift_adjust_my_part_requests()` は**自分あてのものしか返さない**。
@@ -1958,7 +2019,9 @@ const Dashboard: React.FC = () => {
     canFaqNav,
     employmentType,
     leaveRequestEnabled,
-    handleLogout
+    handleLogout,
+    isRetiree,
+    retireeAccessUntil,
   } = useAuth();
 
   const navigate = useNavigate();
@@ -2118,6 +2181,20 @@ const Dashboard: React.FC = () => {
         <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: isDarkMode ? '#fff' : '#1a1a2e', letterSpacing: '0.04em', lineHeight: 1.2 }}>🏠 ホーム</h1>
       </div>
 
+      {/* 退職して申請期間中の人への案内（3段目・2026-09-20）。ここだけは退職者にも出す */}
+      {isRetiree && (
+        <RetireeHomeNotice
+          accessUntil={retireeAccessUntil}
+          canOvertime={canOvertime}
+          canShiftReport={canShiftReport}
+          rejectedCount={submissions.filter(sb => sb.user_id === user.id && sb.status === 'rejected').length}
+        />
+      )}
+
+      {/* 🚨 ここから下のバナーは、上長向け・全体向け・組織の情報を読むものばかり。
+          退職者には**出さないだけでなく、中の読み込みごと止まる**（出さなければフックも走らない）。
+          残すのは上の案内と、下の交通費の履歴（本人のぶんだけ）。2026-09-20・3段目 */}
+      {!isRetiree && (<>
       {/* ⓪-0 安否確認の未回答バナー（最優先。消せない） */}
       <SafetyCheckBanner userId={user.id} isAdmin={isAdmin} roleTitle={roleTitle} />
 
@@ -2173,6 +2250,10 @@ const Dashboard: React.FC = () => {
           🚨 受け取った依頼に答えられるのは残業ページだけ（休暇の依頼でも）。
              休暇ページには「自分が出した依頼」しか並ばないので、ここに出さないと辿り着けない */}
       <AppRequestBanner userId={user.id} />
+      </>)}
+
+      {/* 🚨 これは「本人の宿題」なので退職者にも出す（上の !isRetiree の外に置く） */}
+      {isRetiree && <OvertimeUnreportedBanner userId={user.id} canOvertime={canOvertime} />}
 
       {/* ⑤ 有給申請バナー（パート向け） */}
       {leaveRequestEnabled && !leaveSubmitted && (

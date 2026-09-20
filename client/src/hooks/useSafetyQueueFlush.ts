@@ -16,9 +16,11 @@ import { loadPendingQueue, savePendingQueue } from '../lib/safetyStorage';
 const APP_FLUSH_INTERVAL_MS = 60000;
 const GIVE_UP_ATTEMPTS = 10;   // これ以上はここでは試さない（安否ページ側で理由を出して片付ける）
 
-export const useSafetyQueueFlush = (userId: string | undefined, pathname: string) => {
+// 🚨 enabled=false のときは送信しない（退職者は submit_safety_response を実行できない。2026-09-20）
+export const useSafetyQueueFlush = (userId: string | undefined, pathname: string, enabled = true) => {
   const flush = useCallback(async () => {
     if (!userId) return;
+    if (!enabled) return;   // 🚨 退職者は submit_safety_response を実行できない。送らない
     if (pathname === '/safety') return;
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
 
@@ -51,7 +53,7 @@ export const useSafetyQueueFlush = (userId: string | undefined, pathname: string
       savePendingQueue(userId, queue);
       window.dispatchEvent(new CustomEvent('safety-pending-changed'));
     }
-  }, [userId, pathname]);
+  }, [userId, pathname, enabled]);
 
   useEffect(() => {
     flush();

@@ -143,11 +143,15 @@ export async function resolveRoleRecipients(
   const ids: RecipientMap = {};
   const emails: RecipientMap = {};
   type RoleBit = { id: string; name: string; is_org_wide: boolean };
-  type Row = { id: string; email: string | null; group_names: string[] | null } & EmbeddedRoleRow<RoleBit>;
+  type Row = { id: string; group_names: string[] | null } & EmbeddedRoleRow<RoleBit>;
   for (const key of roleKeys) {
     // 立場で引く（同じ立場に複数の役職が立てるので、役職ごとに絞り込みの対象外かを見る）
+    // 🚨 email をこの埋め込みに混ぜない（2026-09-20）。退職者は email の列を読めないので、
+    //    1つ混ざるだけで PostgREST がクエリごと 42501 で落とし、**宛先が0人**になる。
+    //    ＝退職して申請期間中の人が出した申請の知らせが、上長に1件も届かなくなる。
+    //    メールアドレスは下でまとめて引く（読めなければ空のまま＝ベルは届く）
     const { data } = await supabase.from('profiles')
-      .select('id, email, group_names, roles!inner(id, name, is_org_wide)')
+      .select('id, group_names, roles!inner(id, name, is_org_wide)')
       .eq('roles.acts_as', ACTS_AS_BY_RECIPIENT_KEY[key]).eq('is_active', true);
     const rows = ((data ?? []) as unknown as Row[])
       .filter(r => r.id !== applicantId)
@@ -160,7 +164,19 @@ export async function resolveRoleRecipients(
         return isOrgWide || (r.group_names ?? []).some(g => teams.includes(g));
       });
     ids[key as keyof RecipientMap] = rows.map(r => r.id);
-    emails[key as keyof RecipientMap] = rows.map(r => r.email).filter((e): e is string => !!e);
+  }
+
+  // メールアドレスはここでまとめて引く。
+  // 🚨 読めない人（退職して申請期間中の人）のときは空のままにする。
+  //    ベル（ids）は上で揃っているので、知らせ自体は届く
+  // 🚨 RecipientMap の値は「1つの文字列」と「配列」のどちらでも来るので toList でそろえる
+  const allIds = [...new Set(Object.values(ids).flatMap(v => toList(v)))];
+  if (allIds.length > 0) {
+    const { data: mailRows } = await supabase.from('profiles').select('id, email').in('id', allIds);
+    const mailOf = new Map(((mailRows ?? []) as { id: string; email: string | null }[]).map(r => [r.id, r.email]));
+    for (const key of Object.keys(ids) as (keyof RecipientMap)[]) {
+      emails[key] = toList(ids[key]).map(id => mailOf.get(id)).filter((e): e is string => !!e);
+    }
   }
   return { ids, emails };
 }

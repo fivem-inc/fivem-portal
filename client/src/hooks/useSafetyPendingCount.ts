@@ -36,7 +36,8 @@ export const safetyTone = (p: string | undefined) => SAFETY_TONE[(p as SafetyPat
 const CHECK_COLUMNS = 'id, title, body, pattern, options, is_test, status, cancelled, created_at';
 const RESPONSE_COLUMNS = 'check_id, user_id, choice, comment, is_proxy, proxy_by, answered_at';
 
-export const useSafetyPendingCount = (userId: string | undefined) => {
+// 🚨 enabled=false のときは1本も問い合わせない（退職者は安否確認の表を読めないため。2026-09-20）
+export const useSafetyPendingCount = (userId: string | undefined, enabled = true) => {
   const [pendingCount, setPendingCount] = useState(0);
   const [activeChecks, setActiveChecks] = useState<SafetyCheckLite[]>([]);
   const [queuedCount, setQueuedCount] = useState(0);   // 端末に保存済み・送信待ちの件数
@@ -62,6 +63,8 @@ export const useSafetyPendingCount = (userId: string | undefined) => {
   }, []);
 
   const fetchPending = useCallback(async () => {
+    // 🚨 退職者は安否確認の表を読めない。1本も投げない（2026-09-20）
+    if (!enabled) { setPendingCount(0); setActiveChecks([]); setQueuedCount(0); return; }
     if (!userId) {
       setPendingCount(0); setActiveChecks([]); setQueuedCount(0); setIsStale(false); setSnapshotAt(null);
       return;
@@ -140,7 +143,7 @@ export const useSafetyPendingCount = (userId: string | undefined) => {
 
     // 電波が切れる前の状態を残しておく（訓練は含めない・他人の情報は入れない）
     saveSafetySnapshot(uid, relevant, responseMap);
-  }, [userId, applySnapshot]);
+  }, [userId, applySnapshot, enabled]);
 
   // 🚨 画面を見ていない間は止まり、戻った瞬間に1回読み直す（hooks/usePolling.ts）
   usePolling(fetchPending);
