@@ -1404,6 +1404,11 @@ const OvertimeForm: React.FC<{
         //    新規・実績報告・再提出では null にする（下書きが残っていても引きずらない）。
         modified_from_id: (!editTarget && draft?.modifiedFromId) ? draft.modifiedFromId : null,
         ...((isSelfReview || isPureZero) ? { confirmed_by: user.id, confirmed_at: new Date().toISOString() } : {}),
+        // 🚨 自己受理で事前申請を出したときは「事前受理の日時」も入れる（2026-09-20・長岡さんの指摘）。
+        //    上長が受理する経路（Edge Function overtime-approve）はこの日時を入れるのに、
+        //    自己受理はそこを通らないので**空のまま**だった。空だと、あとで実績を報告したときに
+        //    確認の画面が「⚠️ 事前申請の受理をしていません」と出す（状態は受理済みなのに嘘になる）。
+        ...((isSelfReview && !fullDayMode && phase !== 'actual') ? { request_confirmed_at: new Date().toISOString() } : {}),
         ...(isResubmit ? { return_comment: null } : {}),
         // 打刻ズレはここで丸ごと上書きする（既存の分岐に条件を足すと読めなくなるため）。
         // 労働時間＝通常シフトどおり／差分0／押した時点で確定／確認者なし。
@@ -3179,6 +3184,15 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     setAppRequests(rows.map(r => ({ ...r, requester_name: nameOf.get(r.requester_id) ?? null })));
   }, [user.id]);
   useEffect(() => { fetchAppRequests(); }, [fetchAppRequests]);
+  // 依頼が届いているときは、開いた直後に履歴タブへ移す（依頼カードはこのタブの中にしか無い）。
+  // 🚨 最初の1回だけ。あとから切り替えると、入力中のフォームを人の操作なしに閉じてしまう
+  // 🚨 URL で tab を指定して来たとき（ベルからの ?tab=history など）はそちらに任せる
+  const autoTabDone = useRef(false);
+  useEffect(() => {
+    if (autoTabDone.current || tabParam || appRequests.length === 0) return;
+    autoTabDone.current = true;
+    setTab('history');
+  }, [appRequests.length, tabParam]);
   // ?focus=<依頼ID> で来たとき、その依頼カードまで移動して光らせる（2026-09-10 実機指摘）。
   // 🚨 **共通フック useFocusHighlight を使う**（休暇の承認画面と同じもの）。
   //    最初は自分で書いていたが、同じ処理が2か所になるうえ、こちらは6秒後に URL から
@@ -3704,7 +3718,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
           inactiveColor={text}
           tabs={[
             { key: 'form' as const, label: '事前申請・事後報告' },
-            { key: 'history' as const, label: '履歴・実績報告', badge: unreportedRequests.length },
+            // 🚨 申請の依頼もここに数える（2026-09-20）。ナビの数字だけだと
+            //    「何の件数か」が分からず、依頼カードは このタブの中にしか無いため
+            { key: 'history' as const, label: '履歴・実績報告', badge: unreportedRequests.length + appRequests.length },
           ]}
           active={tab}
           onChange={t => { setTab(t); setEditTarget(null); }}
