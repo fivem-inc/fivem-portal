@@ -24,7 +24,10 @@ interface Check {
   choice?: string | null;
   /** その人にはこの項目が無い（対象外）。false＝済み。🚨 どちらも残り件数からは外れる */
   na?: boolean | null;
-  id: string; user_id: string; item_id: string; done_by: string | null; done_at: string;
+  /** チェックした時点の項目名の写し。🚨 項目の文字をあとから直しても、記録はこの文字のまま */
+  item_label?: string | null;
+  /** 🚨 null＝その項目は削除された（記録は item_label の文字で残る） */
+  id: string; user_id: string; item_id: string | null; done_by: string | null; done_at: string;
 }
 interface Reassign { retired_user_id: string; table_name: string }
 
@@ -70,6 +73,8 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
   //    「見ていただけのつもりで変わった」の両方が起きる（スタッフ設定で同じ整理をしている）
   const [editingLabelId,   setEditingLabelId]   = useState<string | null>(null);
   const [editingLabelText, setEditingLabelText] = useState('');
+  // 項目の削除の確認。🚨 消しても済み・対象外の記録は残る（item_id が null になるだけ）
+  const [deleteItemId,     setDeleteItemId]     = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true); setLoadErr('');
@@ -89,7 +94,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
     const ids = ps.map(p => p.id);
     if (ids.length === 0) { setChecks([]); setReassigns([]); setPurchaseLeft({}); setLoading(false); return; }
     const [ck, ra, nm, ...pcs] = await Promise.all([
-      supabase.from('retire_checklist_checks').select('id, user_id, item_id, done_by, done_at, choice, na').in('user_id', ids),
+      supabase.from('retire_checklist_checks').select('id, user_id, item_id, done_by, done_at, choice, na, item_label').in('user_id', ids),
       supabase.from('retire_reassignments').select('retired_user_id, table_name').in('retired_user_id', ids),
       // 「済みにした人」の名前は最初に1回だけ読む（押すたびに全員分を読み直さない）
       namesLoaded.current ? Promise.resolve(null) : supabase.from('profiles').select('id, name'),
@@ -141,7 +146,10 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
         setRowErr(e => ({ ...e, [userId]: '戻せませんでした' + (error ? '：' + error.message : '（権限がないか、すでに戻されています）') }));
       }
     } else {
-      const { data, error } = await supabase.from('retire_checklist_checks').insert({ user_id: userId, item_id: item.id, choice: choice ?? null, na }).select('id');
+      // 🚨 item_label＝いま画面に出ている文字を写す。これがあるので、あとで項目を直しても消しても
+      //    この記録の読まれ方は変わらない（チェック表は「手続きをやった証拠」なので書き換わってはいけない）
+      const { data, error } = await supabase.from('retire_checklist_checks')
+        .insert({ user_id: userId, item_id: item.id, choice: choice ?? null, na, item_label: item.label }).select('id');
       if (error || !data || data.length === 0) {
         setRowErr(e => ({ ...e, [userId]: (na ? '対象外にできませんでした' : '済みにできませんでした') + (error ? '：' + error.message : '') }));
       }
@@ -164,6 +172,17 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
     const { data, error } = await supabase.from('retire_checklist_items').update(patch).eq('id', id).select('id');
     if (error || !data || data.length === 0) { setItemErr('保存できませんでした' + (error ? '：' + error.message : '')); return; }
     setItemErr('');
+    await load();
+  };
+  // 項目を消す。🚨 済み・対象外の記録は消えない（DB の外部キーが on delete set null。
+  //    記録は写した文字で「削除された項目」として残る）
+  const deleteItem = async (id: string) => {
+    const { data, error } = await supabase.from('retire_checklist_items').delete().eq('id', id).select('id');
+    if (error || !data || data.length === 0) {
+      setItemErr('削除できませんでした' + (error ? '：' + error.message : '（権限がないか、すでに消えています）'));
+      return;
+    }
+    setDeleteItemId(null); setItemErr('');
     await load();
   };
   const moveItem = async (idx: number, dir: -1 | 1) => {
@@ -210,7 +229,8 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
         <div style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 8, padding: 12, marginBottom: 14 }}>
           <div style={{ fontSize: 13, fontWeight: 'bold', marginBottom: 8 }}>チェック項目（管理者のみ編集できます）</div>
           {items.map((it, idx) => (
-            <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 0', borderBottom: `1px solid ${border}`, opacity: it.active ? 1 : 0.5, flexWrap: 'wrap' }}>
+            <div key={it.id} style={{ borderBottom: `1px solid ${border}` }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 0', opacity: it.active ? 1 : 0.5, flexWrap: 'wrap' }}>
               {editingLabelId === it.id ? (
                 <>
                   <input value={editingLabelText} onChange={e => setEditingLabelText(e.target.value)} autoFocus
@@ -234,8 +254,28 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
                   <button style={btn(false)} disabled={idx === 0} onClick={() => moveItem(idx, -1)}>↑</button>
                   <button style={btn(false)} disabled={idx === items.length - 1} onClick={() => moveItem(idx, 1)}>↓</button>
                   <button style={btn(false)} onClick={() => updateItem(it.id, { active: !it.active })}>{it.active ? '隠す' : '戻す'}</button>
+                  <button style={{ ...btn(false), borderColor: '#dc3545', color: '#dc3545' }}
+                    onClick={() => { setItemErr(''); setEditingLabelId(null); setDeleteItemId(it.id); }}>削除</button>
                 </>
               )}
+            </div>
+            {/* 削除の確認。🚨 記録が何件あるかを先に出す（消えないことも書く） */}
+            {deleteItemId === it.id && (() => {
+              const used = checks.filter(c => c.item_id === it.id).length;
+              return (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '0 0 8px', fontSize: 12.5 }}>
+                  <span>
+                    「{it.label}」を削除しますか？
+                    {used > 0
+                      ? `すでに済み・対象外にした記録が ${used} 件ありますが、「削除された項目」として残ります。`
+                      : 'まだ一度も使われていません。'}
+                  </span>
+                  <button type="button" style={btn(false)} onClick={() => setDeleteItemId(null)}>やめる</button>
+                  <button type="button" style={{ ...btn(false), borderColor: '#dc3545', color: '#dc3545' }}
+                    onClick={() => deleteItem(it.id)}>削除する</button>
+                </div>
+              );
+            })()}
             </div>
           ))}
           <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
@@ -244,8 +284,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
             <button style={btn(true)} onClick={addItem}>追加</button>
           </div>
           {itemErr && <div style={{ color: '#dc3545', fontSize: 12, marginTop: 6 }}>{itemErr}</div>}
-          <div style={{ fontSize: 11.5, color: subText, marginTop: 6 }}>※ 項目は消さずに「隠す」にします（済みの記録が残っているため）</div>
-          <div style={{ fontSize: 11.5, color: subText, marginTop: 2 }}>※ 文字を直すと、過去に済みにした記録の表示も新しい文字になります（言い方を変えるとき向けです。意味を変えるときは「隠す」＋新しい項目を追加してください）</div>
+          <div style={{ fontSize: 11.5, color: subText, marginTop: 6 }}>※［隠す］は一覧に出さないだけです。もう使わない項目は［削除］してください</div>
         </div>
       )}
 
@@ -294,7 +333,8 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
                       <span aria-hidden style={{ width: 24, height: 24, flexShrink: 0, borderRadius: 6, fontSize: 14, lineHeight: '20px', textAlign: 'center',
                         border: `2px solid ${c && !c.na ? '#1e7e34' : border}`, background: c && !c.na ? '#1e7e34' : 'transparent', color: c?.na ? subText : '#fff' }}>{c ? (c.na ? '—' : '✓') : ''}</span>
                       <span style={{ flex: 1, minWidth: 150, fontSize: 13.5, color: c ? subText : text, textDecoration: c && !c.na ? 'line-through' : 'none' }}>
-                        {it.label}{c?.choice && <span style={{ color: subText }}>：{c.choice}</span>}
+                        {/* 🚨 済み・対象外の行は「記録したときの文字」を出す。あとで項目を直しても、この記録は変わらない */}
+                        {c?.item_label ?? it.label}{c?.choice && <span style={{ color: subText }}>：{c.choice}</span>}
                         {c?.na && <span style={{ color: subText, fontSize: 11.5, marginLeft: 6 }}>（対象外）</span>}
                         {!it.required && <span style={{ color: subText, fontSize: 11, marginLeft: 6 }}>（任意）</span>}
                       </span>
@@ -343,6 +383,29 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
                 </div>
               );
             })}
+
+            {/* 削除された項目の記録。🚨 項目を消しても、やった証拠は当時の文字で残す。
+                項目の一覧には無いので、必須の残り件数には数えない */}
+            {(() => {
+              const gone = checks.filter(c => c.user_id === p.id && c.item_id === null);
+              if (gone.length === 0) return null;
+              return (
+                <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${border}` }}>
+                  <div style={{ fontSize: 11.5, color: subText, marginBottom: 4 }}>削除された項目の記録</div>
+                  {gone.map(c => (
+                    <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '3px 2px', fontSize: 12.5, color: subText, flexWrap: 'wrap' }}>
+                      <span aria-hidden style={{ width: 20, height: 20, flexShrink: 0, borderRadius: 5, fontSize: 12, lineHeight: '16px', textAlign: 'center', border: `2px solid ${border}` }}>{c.na ? '—' : '✓'}</span>
+                      <span style={{ flex: 1, minWidth: 140 }}>
+                        {c.item_label || '（名前が分かりません）'}{c.choice && `：${c.choice}`}{c.na && '（対象外）'}
+                      </span>
+                      <span style={{ fontSize: 11.5 }}>
+                        {names[c.done_by ?? ''] || '（不明）'}・{mdLabel(toJstDateStr(new Date(c.done_at)))}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
 
             {(movedByTable.length > 0 || (pLeft ?? 0) > 0 || pLeft === null) && (
               <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${border}`, fontSize: 12.5, lineHeight: 1.8 }}>

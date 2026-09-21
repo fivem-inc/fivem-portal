@@ -86,7 +86,9 @@ export const REASSIGN_TABLE_LABEL: Record<string, string> = {
 /** 必須で、まだ済んでいない項目の数（チェック表・ホームの案内で共用） */
 export function retireRemaining(
   items: { id: string; required: boolean; active: boolean }[],
-  checks: { user_id: string; item_id: string }[],
+  // 🚨 item_id が null＝その項目は削除された記録（2026-09-21）。
+  //    下の比較で i.id と一致しないので、自動的に数の対象から外れる（数え方は変えていない）
+  checks: { user_id: string; item_id: string | null }[],
   userId: string,
 ): number {
   return items.filter(i => i.active && i.required && !checks.some(c => c.user_id === userId && c.item_id === i.id)).length;
