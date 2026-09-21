@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { checkCaller } from '../_shared/callerGate.ts'
 
 // 締め後申請の許可依頼が届いた時 → 経理（role_title='管理者'）全員へ一斉配信。
 // 役職一斉配信は shift-report-confirmed-notify / time-adjustment-notify と同じパターン
@@ -16,6 +17,13 @@ function applyTemplate(template: string, vars: Record<string, string>): string {
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
+
+  // 🚨 呼ぶ人の門（2026-09-22）。判定は DB の my_access_state() 1本に任せている。
+  //    ここを通らないと、ログインできる人なら誰でも好きな内容で通知を流せてしまう
+  const gate = await checkCaller(req)
+  if (!gate.ok) {
+    return new Response(JSON.stringify({ error: gate.reason }), { status: gate.status, headers: CORS_HEADERS })
+  }
 
   try {
     const { applicant_name, work_dates_label, request_id } = await req.json()

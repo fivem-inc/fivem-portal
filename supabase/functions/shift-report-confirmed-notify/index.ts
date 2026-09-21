@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0'
+import { checkCaller } from '../_shared/callerGate.ts'
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -57,6 +58,13 @@ function formatWorkSegments(segments: unknown): string {
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
+
+  // 🚨 呼ぶ人の門（2026-09-22）。判定は DB の my_access_state() 1本に任せている。
+  //    ここを通らないと、ログインできる人なら誰でも好きな内容で通知を流せてしまう
+  const gate = await checkCaller(req)
+  if (!gate.ok) {
+    return new Response(JSON.stringify({ error: gate.reason }), { status: gate.status, headers: CORS_HEADERS })
+  }
 
   try {
     // segments = 実際に勤務した時間帯（[{ start, end, location }]）。Slack本文の「時間」に使う
