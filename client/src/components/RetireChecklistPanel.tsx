@@ -22,6 +22,8 @@ interface Person {
 interface Check {
   /** 択一の項目で選んだ答え */
   choice?: string | null;
+  /** その人にはこの項目が無い（対象外）。false＝済み。🚨 どちらも残り件数からは外れる */
+  na?: boolean | null;
   id: string; user_id: string; item_id: string; done_by: string | null; done_at: string;
 }
 interface Reassign { retired_user_id: string; table_name: string }
@@ -51,6 +53,8 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
   const [undoFor, setUndoFor] = useState<string | null>(null);
   // 択一の項目で、いま選択肢を開いている行
   const [choosingFor, setChoosingFor] = useState<string | null>(null);
+  // 「対象外」にする前のその場の確認（誤って押すと、必須の項目が静かに残りから消えるため）
+  const [naFor, setNaFor] = useState<string | null>(null);
   const namesLoaded = useRef(false);
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState('');
@@ -61,6 +65,11 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
   const [editItems, setEditItems] = useState(false);
   const [newLabel, setNewLabel] = useState('');
   const [itemErr, setItemErr] = useState('');
+  // 項目の文字を直す（2026-09-21）。🚨 「修正 → 保存」の2段にする。
+  //    打っている途中や欄から離れたときに保存すると、「直したつもりが保存されていない」
+  //    「見ていただけのつもりで変わった」の両方が起きる（スタッフ設定で同じ整理をしている）
+  const [editingLabelId,   setEditingLabelId]   = useState<string | null>(null);
+  const [editingLabelText, setEditingLabelText] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true); setLoadErr('');
@@ -80,7 +89,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
     const ids = ps.map(p => p.id);
     if (ids.length === 0) { setChecks([]); setReassigns([]); setPurchaseLeft({}); setLoading(false); return; }
     const [ck, ra, nm, ...pcs] = await Promise.all([
-      supabase.from('retire_checklist_checks').select('id, user_id, item_id, done_by, done_at, choice').in('user_id', ids),
+      supabase.from('retire_checklist_checks').select('id, user_id, item_id, done_by, done_at, choice, na').in('user_id', ids),
       supabase.from('retire_reassignments').select('retired_user_id, table_name').in('retired_user_id', ids),
       // 「済みにした人」の名前は最初に1回だけ読む（押すたびに全員分を読み直さない）
       namesLoaded.current ? Promise.resolve(null) : supabase.from('profiles').select('id, name'),
@@ -121,19 +130,20 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
   }, [people, showDone, remainingOf]);
   const doneCount = people.filter(p => remainingOf(p.id) === 0).length;
 
-  const toggle = async (userId: string, item: Item, choice?: string) => {
+  // 済み・対象外にする／戻す。🚨 na=true が「対象外」。どちらも行を作るので、残り件数の数え方は同じ
+  const toggle = async (userId: string, item: Item, choice?: string, na = false) => {
     const key = `${userId}:${item.id}`;
     const cur = checkOf(userId, item.id);
-    setBusyKey(key); setRowErr(e => ({ ...e, [userId]: '' })); setUndoFor(null);
+    setBusyKey(key); setRowErr(e => ({ ...e, [userId]: '' })); setUndoFor(null); setNaFor(null);
     if (cur) {
       const { data, error } = await supabase.from('retire_checklist_checks').delete().eq('id', cur.id).select('id');
       if (error || !data || data.length === 0) {
         setRowErr(e => ({ ...e, [userId]: '戻せませんでした' + (error ? '：' + error.message : '（権限がないか、すでに戻されています）') }));
       }
     } else {
-      const { data, error } = await supabase.from('retire_checklist_checks').insert({ user_id: userId, item_id: item.id, choice: choice ?? null }).select('id');
+      const { data, error } = await supabase.from('retire_checklist_checks').insert({ user_id: userId, item_id: item.id, choice: choice ?? null, na }).select('id');
       if (error || !data || data.length === 0) {
-        setRowErr(e => ({ ...e, [userId]: '済みにできませんでした' + (error ? '：' + error.message : '') }));
+        setRowErr(e => ({ ...e, [userId]: (na ? '対象外にできませんでした' : '済みにできませんでした') + (error ? '：' + error.message : '') }));
       }
     }
     setBusyKey(null);
@@ -178,7 +188,8 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
     <div style={{ color: text }}>
       <div style={{ background: isDark ? '#243447' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, borderRadius: 8, padding: '10px 14px', fontSize: 13, lineHeight: 1.8, marginBottom: 14 }}>
         退職日が決まった方の手続きを、漏れなく済ませるための表です。マネージャー以上と管理者が「済み」にできます（誰がいつ済みにしたかが残ります）。<br />
-        退職日は管理画面の「ユーザー」で管理者が入れます。退職日の朝9時に必須の項目が残っていると、マネージャー以上と管理者にお知らせが届きます。
+        退職日は管理画面の「ユーザー」で管理者が入れます。退職日の朝9時に必須の項目が残っていると、マネージャー以上と管理者にお知らせが届きます。<br />
+        その方にもともと無い項目（鍵・制服・名刺など）は、行の右の［対象外］で片付けられます。
       </div>
 
       {loadErr && <div style={{ padding: '9px 12px', borderRadius: 8, fontSize: 12.5, background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029', marginBottom: 10 }}>{loadErr}</div>}
@@ -200,13 +211,31 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
           <div style={{ fontSize: 13, fontWeight: 'bold', marginBottom: 8 }}>チェック項目（管理者のみ編集できます）</div>
           {items.map((it, idx) => (
             <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 0', borderBottom: `1px solid ${border}`, opacity: it.active ? 1 : 0.5, flexWrap: 'wrap' }}>
-              <span style={{ flex: 1, minWidth: 160, fontSize: 13 }}>{it.label}</span>
-              <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 3 }}>
-                <input type="checkbox" checked={it.required} onChange={e => updateItem(it.id, { required: e.target.checked })} />必須
-              </label>
-              <button style={btn(false)} disabled={idx === 0} onClick={() => moveItem(idx, -1)}>↑</button>
-              <button style={btn(false)} disabled={idx === items.length - 1} onClick={() => moveItem(idx, 1)}>↓</button>
-              <button style={btn(false)} onClick={() => updateItem(it.id, { active: !it.active })}>{it.active ? '隠す' : '戻す'}</button>
+              {editingLabelId === it.id ? (
+                <>
+                  <input value={editingLabelText} onChange={e => setEditingLabelText(e.target.value)} autoFocus
+                    style={{ flex: 1, minWidth: 160, padding: '6px 8px', borderRadius: 6, border: `1px solid ${border}`, background: inputBg, color: text, fontSize: 13 }} />
+                  <button style={btn(true)} disabled={!editingLabelText.trim()}
+                    onClick={async () => {
+                      const label = editingLabelText.trim();
+                      if (!label) { setItemErr('項目の名前を入れてください'); return; }
+                      if (label !== it.label) await updateItem(it.id, { label });
+                      setEditingLabelId(null);
+                    }}>保存</button>
+                  <button style={btn(false)} onClick={() => { setEditingLabelId(null); setItemErr(''); }}>やめる</button>
+                </>
+              ) : (
+                <>
+                  <span style={{ flex: 1, minWidth: 160, fontSize: 13 }}>{it.label}</span>
+                  <button style={btn(false)} onClick={() => { setItemErr(''); setEditingLabelId(it.id); setEditingLabelText(it.label); }}>修正</button>
+                  <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 3 }}>
+                    <input type="checkbox" checked={it.required} onChange={e => updateItem(it.id, { required: e.target.checked })} />必須
+                  </label>
+                  <button style={btn(false)} disabled={idx === 0} onClick={() => moveItem(idx, -1)}>↑</button>
+                  <button style={btn(false)} disabled={idx === items.length - 1} onClick={() => moveItem(idx, 1)}>↓</button>
+                  <button style={btn(false)} onClick={() => updateItem(it.id, { active: !it.active })}>{it.active ? '隠す' : '戻す'}</button>
+                </>
+              )}
             </div>
           ))}
           <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
@@ -216,6 +245,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
           </div>
           {itemErr && <div style={{ color: '#dc3545', fontSize: 12, marginTop: 6 }}>{itemErr}</div>}
           <div style={{ fontSize: 11.5, color: subText, marginTop: 6 }}>※ 項目は消さずに「隠す」にします（済みの記録が残っているため）</div>
+          <div style={{ fontSize: 11.5, color: subText, marginTop: 2 }}>※ 文字を直すと、過去に済みにした記録の表示も新しい文字になります（言い方を変えるとき向けです。意味を変えるときは「隠す」＋新しい項目を追加してください）</div>
         </div>
       )}
 
@@ -227,6 +257,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
 
       {shownPeople.map(p => {
         const remaining = remainingOf(p.id);
+        const naCount = checks.filter(c => c.user_id === p.id && c.na).length;
         const moved = reassigns.filter(r => r.retired_user_id === p.id);
         const movedByTable = Object.entries(moved.reduce<Record<string, number>>((acc, r) => { acc[r.table_name] = (acc[r.table_name] ?? 0) + 1; return acc; }, {}));
         const pLeft = purchaseLeft[p.id];
@@ -237,7 +268,9 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
               <span style={{ fontSize: 15, fontWeight: 'bold' }}>{p.name}さん</span>
               <span style={{ fontSize: 12, color: subText }}>退職日 {mdLabel(p.retire_date)}・{retireStateLabel(p, today)}</span>
               <span style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 'bold', color: remaining > 0 ? (isDark ? '#ffc107' : '#b35900') : (isDark ? '#5cb85c' : '#1e7e34') }}>
-                {remaining > 0 ? `必須が残り ${remaining} 件` : '✓ 必須はすべて済み'}
+                {remaining > 0
+                  ? `必須が残り ${remaining} 件`
+                  : naCount > 0 ? `✓ 必須はすべて済み（対象外 ${naCount} 件）` : '✓ 必須はすべて済み'}
               </span>
             </div>
             {failed && (
@@ -252,21 +285,43 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
               return (
                 <div key={it.id} style={{ borderTop: `1px solid ${border}` }}>
                   {/* 行全体を押せるボタン（スマホの指でも押しやすい高さ44px・2026-09-19 UXレビュー）。
-                      済みを戻すときだけ、その場で確認する（押し間違いで「誰が・いつ」が消えないように） */}
-                  <button type="button" disabled={busyKey === key} aria-pressed={!!c}
-                    onClick={() => (c ? setUndoFor(key) : (it.choices?.length ? setChoosingFor(choosingFor === key ? null : key) : toggle(p.id, it)))}
-                    style={{ width: '100%', minHeight: 44, display: 'flex', alignItems: 'center', gap: 10, padding: '6px 2px', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', color: text, flexWrap: 'wrap' }}>
-                    <span aria-hidden style={{ width: 24, height: 24, flexShrink: 0, borderRadius: 6, fontSize: 14, lineHeight: '20px', textAlign: 'center',
-                      border: `2px solid ${c ? '#1e7e34' : border}`, background: c ? '#1e7e34' : 'transparent', color: '#fff' }}>{c ? '✓' : ''}</span>
-                    <span style={{ flex: 1, minWidth: 150, fontSize: 13.5, color: c ? subText : text, textDecoration: c ? 'line-through' : 'none' }}>
-                      {it.label}{c?.choice && <span style={{ color: subText }}>：{c.choice}</span>}{!it.required && <span style={{ color: subText, fontSize: 11, marginLeft: 6 }}>（任意）</span>}
-                    </span>
-                    {c && (
-                      <span style={{ fontSize: 11.5, color: subText }}>
-                        {names[c.done_by ?? ''] || '（不明）'}・{mdLabel(toJstDateStr(new Date(c.done_at)))}
+                      済みを戻すときだけ、その場で確認する（押し間違いで「誰が・いつ」が消えないように）。
+                      🚨 ［対象外］はこのボタンの**外**に置く（ボタンの入れ子は押せなくなる） */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <button type="button" disabled={busyKey === key} aria-pressed={!!c}
+                      onClick={() => (c ? setUndoFor(key) : (it.choices?.length ? setChoosingFor(choosingFor === key ? null : key) : toggle(p.id, it)))}
+                      style={{ flex: 1, minHeight: 44, display: 'flex', alignItems: 'center', gap: 10, padding: '6px 2px', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', color: text, flexWrap: 'wrap' }}>
+                      <span aria-hidden style={{ width: 24, height: 24, flexShrink: 0, borderRadius: 6, fontSize: 14, lineHeight: '20px', textAlign: 'center',
+                        border: `2px solid ${c && !c.na ? '#1e7e34' : border}`, background: c && !c.na ? '#1e7e34' : 'transparent', color: c?.na ? subText : '#fff' }}>{c ? (c.na ? '—' : '✓') : ''}</span>
+                      <span style={{ flex: 1, minWidth: 150, fontSize: 13.5, color: c ? subText : text, textDecoration: c && !c.na ? 'line-through' : 'none' }}>
+                        {it.label}{c?.choice && <span style={{ color: subText }}>：{c.choice}</span>}
+                        {c?.na && <span style={{ color: subText, fontSize: 11.5, marginLeft: 6 }}>（対象外）</span>}
+                        {!it.required && <span style={{ color: subText, fontSize: 11, marginLeft: 6 }}>（任意）</span>}
                       </span>
+                      {c && (
+                        <span style={{ fontSize: 11.5, color: subText }}>
+                          {names[c.done_by ?? ''] || '（不明）'}・{mdLabel(toJstDateStr(new Date(c.done_at)))}
+                        </span>
+                      )}
+                    </button>
+                    {/* その方には無い項目を片付けるための［対象外］。🚨 未済のときだけ出す。
+                        押すとその場で確認する（誤って押すと、必須の項目が静かに残りから消えるため） */}
+                    {!c && naFor !== key && (
+                      <button type="button" disabled={busyKey === key}
+                        onClick={() => { setUndoFor(null); setChoosingFor(null); setNaFor(key); }}
+                        style={{ ...btn(false), flexShrink: 0, fontSize: 11.5, padding: '4px 8px', color: subText }}>
+                        対象外
+                      </button>
                     )}
-                  </button>
+                  </div>
+                  {naFor === key && !c && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '0 10px 10px', fontSize: 12.5 }}>
+                      <span>{p.name}さんには無い項目として「対象外」にしますか？（必須の残りから外れます）</span>
+                      <button type="button" style={btn(false)} onClick={() => setNaFor(null)}>やめる</button>
+                      <button type="button" style={btn(false)} disabled={busyKey === key}
+                        onClick={() => toggle(p.id, it, undefined, true)}>対象外にする</button>
+                    </div>
+                  )}
                   {/* 択一の項目（例：Slack のパスワード）。押すと行の下に選択肢が開く。
                       🚨 自由に書ける欄は作らない（新しいパスワードを書かれる恐れがあるため・2026-09-20 ユーザー確定） */}
                   {choosingFor === key && !c && (it.choices?.length ?? 0) > 0 && (
@@ -280,7 +335,7 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
                   )}
                   {undoFor === key && c && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '6px 10px 10px', fontSize: 12.5 }}>
-                      <span>{names[c.done_by ?? ''] || '（不明）'}さんの記録（{mdLabel(toJstDateStr(new Date(c.done_at)))}）を消して、未済に戻しますか？</span>
+                      <span>{names[c.done_by ?? ''] || '（不明）'}さんの{c.na ? '「対象外」の' : ''}記録（{mdLabel(toJstDateStr(new Date(c.done_at)))}）を消して、未済に戻しますか？</span>
                       <button type="button" style={btn(false)} onClick={() => setUndoFor(null)}>やめる</button>
                       <button type="button" style={{ ...btn(false), borderColor: '#dc3545', color: '#dc3545' }} onClick={() => toggle(p.id, it)}>戻す</button>
                     </div>
