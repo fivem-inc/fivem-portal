@@ -612,7 +612,15 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
               <div style={{ fontSize: 12, color: sub, lineHeight: 1.7, marginTop: 4 }}>
                 ※ 「社内/社外」は、⚙️ の<strong>会社のIP</strong>の設定と照らして判定します。
                 未設定のあいだは全部「社外」になります（<strong>あとから設定すれば過去の記録にも反映されます</strong>）<br />
-                ※ 「都道府県」は<strong>まだ調べていません</strong>（IPから引く仕組みは次の段で入れます）
+                ※ 「都道府県」は<strong>毎晩4時20分にまとめて調べます</strong>（その日のぶんは翌朝に入ります）。
+                <strong>未調査</strong>＝まだ調べていない／<strong>不明</strong>＝調べたが分からなかった（海外・社内のIPなど）
+              </div>
+              {/* GeoLite2 の出典。🚨 条件は「使っていると述べる広告・説明資料に出すこと」。
+                  都道府県はこの社内の集計でしか使わないので、その画面に1行置いておけば足りる。
+                  🚨 短くしても「GeoLite2」「MaxMind」「リンク」の3つは必ず残すこと */}
+              <div style={{ fontSize: 11, color: sub, marginTop: 6 }}>
+                地域の判定：GeoLite2 データ（MaxMind）{' '}
+                <a href="https://www.maxmind.com" target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb' }}>https://www.maxmind.com</a>
               </div>
 
               {/* 会社のIPの設定（管理者だけ） */}
