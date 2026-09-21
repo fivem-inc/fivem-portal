@@ -8,6 +8,7 @@ import { dispatchBoardEmail } from '../lib/notificationDispatch';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import { todayJstStr } from '../lib/breakCalc';
 import { describeUpdate, describePartial } from '../lib/statusUpdate';
+import { replyState, replyStatusText } from '../lib/boardReply';
 
 const BOARD_LINK = 'https://fivem-portal.vercel.app/board';
 import { useAuth } from '../hooks/useAuth';
@@ -61,6 +62,10 @@ interface BoardMessage {
   answer_prompt: string | null;
   answer_location: string | null;
   answer_link: string | null;
+  // 返信を受け付けるお知らせ（2026-09-21）。判定は lib/boardReply.ts の1か所
+  allow_reply?: boolean | null;
+  reply_until?: string | null;
+  reply_closed_at?: string | null;
   broadcast_recipients: { id: string; name: string }[] | null;
   profile: { name: string | null } | null;
   outbox_hidden?: boolean;
@@ -507,6 +512,9 @@ const BoardPage: React.FC = () => {
   // 🚨 下書き（draftStorage）にあえて含めない＝毎回意識して押すもの。誤爆防止のため
   //    送信成功・画面リセットで必ず false に戻す
   const [composeUrgent,        setComposeUrgent]        = useState(false);
+  // 「返信を受け付ける」（2026-09-21）。🚨 緊急と同じ理由で**下書きに含めない**
+  //    （毎回意識して押すもの。前に書いた連絡の設定が黙って次に引き継がれると事故になる）
+  const [composeAllowReply,    setComposeAllowReply]    = useState(false);
   const [composeCopyNotice,    setComposeCopyNotice]    = useState<string[] | null>(null); // 「コピーして作成」の差分の案内（✕で消す）
   const [copyConfirmMsg,       setCopyConfirmMsg]       = useState<BoardMessage | null>(null); // 下書きの置き換え確認
   const [composeOptions,        setComposeOptions]        = useState(true);
@@ -558,6 +566,16 @@ const BoardPage: React.FC = () => {
   const [newAnswerLink,        setNewAnswerLink]        = useState('');
   const [replyBody,            setReplyBody]            = useState('');
   const [inboxReadIds,          setInboxReadIds]          = useState<Set<string>>(new Set());
+  // ── お知らせへの返信（2026-09-21）────────────────────────────────
+  // 🚨 DM は作らない。返信は元のお知らせにぶら下がり、読めるのは当事者2人だけ。
+  //    「いま書けるか」の判定は lib/boardReply.ts の1か所（DB の board_reply_open() と同じ3つ）
+  const [noticeReplies,   setNoticeReplies]   = useState<Record<string, BoardMessage[]>>({}); // 親ID → 返信
+  const [noticeReplyTo,   setNoticeReplyTo]   = useState<Record<string, string>>({});          // 返信ID → 宛先（誰とのやり取りか）
+  const [replyDraft,      setReplyDraft]      = useState<{ msgId: string; partnerId: string; body: string } | null>(null);
+  const [replySending,    setReplySending]    = useState(false);
+  const [replyErr,        setReplyErr]        = useState('');
+  const [replyCloseFor,   setReplyCloseFor]   = useState<string | null>(null); // 終了のその場確認
+  const [replyReopenedId, setReplyReopenedId] = useState<string | null>(null); // 再開したあとの案内
   const [sending,               setSending]               = useState(false);
   const [sendError,             setSendError]             = useState<string | null>(null); // 失敗のインライントースト（alert廃止）。✕で閉じるまで消えない
   // 🚨 「本体は成立したが、付随する処理だけ失敗した」ときはこちら（黄色）。
@@ -632,7 +650,7 @@ const BoardPage: React.FC = () => {
     const [chRes, memRes, msgRes, lsRes, profRes, settingsRes, dmSettingsRes, noticeSendRes, ccSettingsRes, canManageRes, excludeRes] = await Promise.all([
       supabase.from('board_channels').select('id, type, name, created_by, created_at, send_permissions, show_read_detail').in('id', cids),
       supabase.from('board_channel_members').select('channel_id, user_id').in('channel_id', cids),
-      supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, answer_prompt, answer_location, answer_link, broadcast_recipients').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
+      supabase.from('board_messages').select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, broadcast_recipients').in('channel_id', cids).order('created_at', { ascending: false }).limit(500),
       supabase.from('board_channel_last_seen').select('channel_id, last_seen_at').eq('user_id', user.id),
       supabase.from('profiles').select('id, name, role_title, employment_type, group_names, registered_at').eq('is_active', true).order('name'),
       supabase.from('master_options').select('value').eq('category', 'board_show_read_detail').limit(1),
@@ -713,7 +731,7 @@ const BoardPage: React.FC = () => {
       const [msgsRes, readsRes] = await Promise.all([
         supabase
           .from('board_messages')
-          .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link')
+          .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at')
           .in('id', [...msgIds])
           .order('created_at', { ascending: false }),
         supabase
@@ -829,7 +847,7 @@ const BoardPage: React.FC = () => {
       const channelQuery = cids.length > 0
         ? supabase
             .from('board_messages')
-            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link')
+            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at')
             .in('channel_id', cids)
             .or(`body.ilike.${q},subject.ilike.${q}`)
             .order('created_at', { ascending: asc })
@@ -840,7 +858,7 @@ const BoardPage: React.FC = () => {
       const inboxQuery = inboxIds.length > 0
         ? supabase
             .from('board_messages')
-            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link')
+            .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at')
             .in('id', inboxIds)
             .or(`body.ilike.${q},subject.ilike.${q}`)
             .order('created_at', { ascending: asc })
@@ -854,7 +872,7 @@ const BoardPage: React.FC = () => {
       //    お気に入りは「受信トレイのお知らせ」か「チャンネルの投稿」なので、上の2つで引ける。
       const outboxQuery = supabase
         .from('board_messages')
-        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, outbox_hidden')
+        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, outbox_hidden')
         .eq('user_id', user.id)
         .is('channel_id', null)
         .is('parent_id', null)
@@ -922,7 +940,7 @@ const BoardPage: React.FC = () => {
     const [{ data: msgData, error: msgErr }, { data: readData, error: readErr }, { data: rcData }] = await Promise.all([
       supabase
         .from('board_messages')
-        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, cc_user_ids')
+        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, cc_user_ids')
         .in('id', msgIds)
         .is('parent_id', null)
         .order('created_at', { ascending: false }),
@@ -969,7 +987,7 @@ const BoardPage: React.FC = () => {
     if (msgIds.length === 0) { setArchivedMessages([]); return; }
     const { data: msgData } = await supabase
       .from('board_messages')
-      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, cc_user_ids')
+      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, cc_user_ids')
       .in('id', msgIds)
       .is('parent_id', null)
       .order('created_at', { ascending: false });
@@ -1002,7 +1020,7 @@ const BoardPage: React.FC = () => {
 
   const loadOutbox = useCallback(async () => {
     if (!user) return;
-    const SEL = 'id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, outbox_hidden, cc_user_ids, recipient_presets, recipient_extra_ids';
+    const SEL = 'id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, outbox_hidden, cc_user_ids, recipient_presets, recipient_extra_ids';
     const [{ data }, { data: archData }, { data: ccData }] = await Promise.all([
       supabase.from('board_messages').select(SEL)
         .eq('user_id', user.id).is('channel_id', null).is('parent_id', null)
@@ -1290,6 +1308,103 @@ const BoardPage: React.FC = () => {
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
   const currentMembers = members.filter(m => m.channel_id === selectedChannelId);
 
+  // ── お知らせへの返信（2026-09-21）────────────────────────────────
+  // 🚨 返信は board_messages に parent_id 付きで入る（channel_id は無し）。
+  //    相手が読めるのは board_message_recipients に1行入れるからで、**ここを忘れると相手に見えない**。
+  //    受信トレイの一覧は parent_id が無いものだけを読むので、返信が一覧に並ぶことはない。
+  const loadNoticeReplies = useCallback(async (parentId: string) => {
+    if (!user) return;
+    const { data, error } = await supabase
+      .from('board_messages')
+      .select('id, parent_id, user_id, body, created_at')
+      .eq('parent_id', parentId)
+      .is('channel_id', null)
+      .order('created_at', { ascending: true });
+    // 🚨 失敗したら空で上書きしない（通信断と「返信が0件」を同じ見た目にしない）
+    if (error) { console.error('返信の読み込みに失敗:', error.code, error.message); return; }
+    const rows = (data || []) as unknown as BoardMessage[];
+    setNoticeReplies(prev => ({ ...prev, [parentId]: rows }));
+
+    // 自分が書いた返信は「誰あてか」を宛先から引く（送信者が複数の人とやり取りするため）
+    const mine = rows.filter(r => r.user_id === user.id).map(r => r.id);
+    if (mine.length === 0) return;
+    const { data: rec, error: recErr } = await supabase
+      .from('board_message_recipients')
+      .select('message_id, user_id')
+      .in('message_id', mine);
+    if (recErr) { console.error('返信の宛先の読み込みに失敗:', recErr.code, recErr.message); return; }
+    const map: Record<string, string> = {};
+    (rec || []).forEach((r: { message_id: string; user_id: string }) => { map[r.message_id] = r.user_id; });
+    setNoticeReplyTo(prev => ({ ...prev, ...map }));
+  }, [user]);
+
+  // お知らせの詳細を開いたら、そのお知らせの返信を読む。
+  // 🚨 返信を受け付けていないお知らせでは問い合わせない（見ない人のぶんまで通信を増やさない）
+  useEffect(() => {
+    const id = inboxDetailId || outboxDetailId;
+    if (!id) return;
+    const m = [...inboxMessages, ...outboxMessages, ...outboxArchivedMessages, ...archivedMessages].find(x => x.id === id);
+    if (m && m.allow_reply) void loadNoticeReplies(id);
+  }, [inboxDetailId, outboxDetailId, inboxMessages, outboxMessages, outboxArchivedMessages, archivedMessages, loadNoticeReplies]);
+
+  /** その返信が「誰とのやり取り」か。送信者が書いたものは宛先、そうでなければ書いた人 */
+  const replyPartnerOf = (notice: BoardMessage, r: BoardMessage): string =>
+    r.user_id === notice.user_id ? (noticeReplyTo[r.id] || '') : r.user_id;
+
+  /** そのお知らせで、やり取りしている相手の一覧（やり取りが始まった順） */
+  const replyPartners = (notice: BoardMessage): string[] => {
+    const seen: string[] = [];
+    (noticeReplies[notice.id] || []).forEach(r => {
+      const p = replyPartnerOf(notice, r);
+      if (p && !seen.includes(p)) seen.push(p);
+    });
+    return seen;
+  };
+
+  const sendNoticeReply = async (notice: BoardMessage, partnerId: string, body: string) => {
+    if (!user || !body.trim() || !partnerId) return;
+    setReplySending(true); setReplyErr('');
+    const { data, error } = await supabase
+      .from('board_messages')
+      .insert({ user_id: user.id, parent_id: notice.id, body: body.trim() })
+      .select('id')
+      .single();
+    // 🚨 supabase は 4xx でも throw しない。error を見ないと「送れたように見えて消える」
+    if (error || !data) {
+      setReplyErr(`送れませんでした：${error?.message ?? '原因が分かりませんでした'}`);
+      setReplySending(false);
+      return;
+    }
+    // 🚨 これが無いと相手の画面に出ない（読む権限がこの1行で決まる）
+    const { error: recErr } = await supabase
+      .from('board_message_recipients')
+      .insert({ message_id: data.id, user_id: partnerId });
+    if (recErr) setReplyErr(`送れましたが、相手に表示されないかもしれません：${recErr.message}`);
+    // 🚨 通知の種類は既存の board:dm_message を使い回す（新しい種類を作ると、設定の行が無い＝
+    //    全員に飛ぶ作りのため。push-dispatch は2人共用なので触らない）
+    await insertNotification(
+      partnerId,
+      `↩ ${profileName || '誰か'}から返信が届きました`,
+      body.trim().slice(0, 40),
+      undefined, notice.id, 'board:dm_message',
+    );
+    setReplyDraft(null);
+    await loadNoticeReplies(notice.id);
+    setReplySending(false);
+  };
+
+  /** 終了する・再開する。🚨 どちらも件数を見る（0件＝できていない。黙って成功にしない） */
+  const setNoticeReplyOpen = async (notice: BoardMessage, open: boolean) => {
+    setReplyErr('');
+    const { data, error } = await supabase.rpc(open ? 'board_reply_reopen' : 'board_reply_close', { p_message_id: notice.id });
+    if (error) { setReplyErr(`${open ? '再開' : '終了'}できませんでした：${error.message}`); return; }
+    if (!data) { setReplyErr(`${open ? '再開' : '終了'}できませんでした（すでにその状態か、権限がありません）`); return; }
+    setReplyCloseFor(null);
+    setReplyReopenedId(open ? notice.id : null);
+    // 画面の状態を読み直す（期限が入れ替わるため）
+    await Promise.all([loadInbox(), loadOutbox()]);
+  };
+
   // ── Actions ─────────────────────────────────────────────────────
 
   const selectChannel = async (channelId: string) => {
@@ -1378,7 +1493,7 @@ const BoardPage: React.FC = () => {
     const { data, error } = await supabase
       .from('board_messages')
       .insert(insertData)
-      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, answer_prompt, answer_location, answer_link')
+      .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at')
       .single();
 
     if (!error && data) {
@@ -1640,6 +1755,7 @@ const BoardPage: React.FC = () => {
     setComposeOptions(true); setComposeDraftId(null); setComposeQuery('');
     setComposeAnswerPrompt(''); setComposeAnswerLocation(''); setComposeAnswerLink('');
     setComposeUrgent(false); // 🚨 緊急チェックは必ずリセット（下書きにも含めない）
+    setComposeAllowReply(false); // 🚨 返信のチェックも同じ（前の連絡の設定を引き継がせない）
     clearDraft(DRAFT_KEYS.boardCompose); // 送信成功・クリアで下書きを消す
   };
 
@@ -1696,6 +1812,7 @@ const BoardPage: React.FC = () => {
     setComposeAnswerPrompt(msg.answer_prompt || '');
     setComposeAnswerLocation(msg.answer_location || '');
     setComposeAnswerLink(msg.answer_link || '');
+    setComposeAllowReply(false);           // 🚨 返信の受け付けは引き継がない（緊急と同じ扱い）
     setComposeUrgent(false);               // 🚨 緊急は引き継がない（誤爆防止）
     setComposeIncludeCC(true);             // CCは初期値に戻す（ユーザー確定）
     setComposeOptions(true); setComposeQuery(''); setComposeDraftId(null);
@@ -1727,6 +1844,8 @@ const BoardPage: React.FC = () => {
     if (composeAnswerPrompt.trim())    insertData.answer_prompt   = composeAnswerPrompt.trim();
     if (composeAnswerLocation.trim())  insertData.answer_location = composeAnswerLocation.trim();
     if (composeAnswerLink.trim())      insertData.answer_link     = composeAnswerLink.trim();
+    // 🚨 期限（reply_until）は渡さない。DB のトリガーが board_reply_days() 日後を入れる（30日を2か所に持たない）
+    if (composeAllowReply)             insertData.allow_reply     = true;
     // 宛先の選び方を残す（「コピーして作成」で、いまの該当者に当て直すため）
     {
       const { presets, extras } = splitRecipientsIntoPresets(composeRecipientIds, composePresetKeys, allProfiles);
@@ -1838,6 +1957,145 @@ const BoardPage: React.FC = () => {
   //              unarchiveOutboxMsg。**同じ処理を書き写さず、既存の関数を呼ぶ**）
   // 🚨 既定の null は「ボタンを出さない」。この renderMsg はチャンネルの投稿でも
   //    使い回しているので、条件を付けずに足すとアーカイブの無い画面にまでボタンが出る。
+  // ── お知らせの返信の枠（2026-09-21）────────────────────────────
+  // 🚨 受信トレイの詳細と送信トレイの詳細の**両方がこれを使う**。同じ見た目を2か所に書かない
+  const renderNoticeReplyBox = (notice: BoardMessage, isOutboxView = false) => {
+    if (!notice.allow_reply || !user) return null;
+    const state = replyState(notice);
+    const isOpen = state === 'open';
+    const iAmSender = notice.user_id === user.id;
+    // 🚨 写し（CC）で受け取る代表者は、送信トレイで他の人のお知らせを開ける。
+    //    その人は当事者ではないので、返信は1件も読めず、書けば必ず弾かれる。
+    //    押せるのに通らないボタンを出さないため、枠ごと出さない
+    if (isOutboxView && !iAmSender) return null;
+    const rows = noticeReplies[notice.id] || [];
+    const nameOf = (id: string) => allProfiles.find(p => p.id === id)?.name || '不明';
+    // 送信者は「相手ごと」に分けて見る。受け取った人は送信者とのやり取り1本だけ
+    const groups = iAmSender
+      ? replyPartners(notice).map(p => ({ partnerId: p, rows: rows.filter(r => replyPartnerOf(notice, r) === p) }))
+      : [{ partnerId: notice.user_id, rows }];
+    const draftFor = (pid: string) =>
+      replyDraft && replyDraft.msgId === notice.id && replyDraft.partnerId === pid ? replyDraft.body : null;
+
+    const thread = (g: { partnerId: string; rows: BoardMessage[] }) => (
+      <div key={g.partnerId || 'unknown'} style={{ marginTop: 8 }}>
+        {iAmSender && (
+          <div style={{ fontSize: 12, fontWeight: 'bold', color: textColor, marginBottom: 4 }}>
+            {nameOf(g.partnerId)} さんとのやり取り
+          </div>
+        )}
+        {g.rows.map(r => (
+          <div key={r.id} style={{ background: cardBg, border: `1px solid ${border}`, borderRadius: 8, padding: '6px 10px', marginBottom: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+              <span style={{ fontSize: 11, fontWeight: 'bold', color: r.user_id === user.id ? (isDark ? '#90b4e8' : '#3b5bdb') : textColor }}>
+                {r.user_id === user.id ? '自分' : nameOf(r.user_id)}
+              </span>
+              <span style={{ fontSize: 10, color: subColor }}>{fmtFull(r.created_at)}</span>
+            </div>
+            <div style={{ fontSize: 13, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{r.body}</div>
+          </div>
+        ))}
+        {isOpen && (draftFor(g.partnerId) === null ? (
+          <button type="button"
+            onClick={() => { setReplyErr(''); setReplyDraft({ msgId: notice.id, partnerId: g.partnerId, body: '' }); }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', background: cardBg, border: `1.5px solid #2563eb`, borderRadius: 20, cursor: 'pointer', fontSize: 13, fontWeight: 500, color: '#2563eb' }}>
+            ↩ {iAmSender ? `${nameOf(g.partnerId)}さんに返信する` : '送信者に返信する'}
+          </button>
+        ) : (
+          <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+            <textarea
+              value={draftFor(g.partnerId) || ''}
+              onChange={e => setReplyDraft({ msgId: notice.id, partnerId: g.partnerId, body: e.target.value })}
+              placeholder="返信を入力..."
+              rows={2}
+              autoFocus
+              style={{ flex: 1, padding: '6px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, resize: 'none', fontFamily: 'inherit', lineHeight: 1.4 }}
+            />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <button type="button" disabled={replySending || !(draftFor(g.partnerId) || '').trim()}
+                onClick={() => void sendNoticeReply(notice, g.partnerId, draftFor(g.partnerId) || '')}
+                style={{ padding: '6px 10px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500, opacity: replySending || !(draftFor(g.partnerId) || '').trim() ? 0.5 : 1 }}>
+                {replySending ? '送信中...' : '送信'}
+              </button>
+              <button type="button" onClick={() => { setReplyDraft(null); setReplyErr(''); }}
+                style={{ padding: '6px 10px', background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12 }}>
+                やめる
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+
+    return (
+      <div style={{ marginTop: 10, background: isDark ? '#1e2328' : '#f0f4ff', border: `1px solid ${isDark ? '#3d4349' : '#c7d4f5'}`, borderRadius: 10, padding: '10px 12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 13, fontWeight: 'bold', color: textColor }}>↩ 返信</span>
+          <span style={{ fontSize: 12, color: isOpen ? (isDark ? '#90b4e8' : '#1d4ed8') : subColor }}>
+            {replyStatusText(notice)}
+          </span>
+        </div>
+
+        {groups.filter(g => g.rows.length > 0 || !iAmSender).map(thread)}
+
+        {iAmSender && rows.length === 0 && (
+          <div style={{ fontSize: 12, color: subColor, marginTop: 6 }}>まだ返信はありません</div>
+        )}
+
+        {/* 送信者だけが終了・再開できる */}
+        {iAmSender && (
+          <div style={{ marginTop: 10, paddingTop: 8, borderTop: `1px solid ${isDark ? '#3d4349' : '#c7d4f5'}` }}>
+            {isOpen ? (
+              replyCloseFor === notice.id ? (
+                <div>
+                  <div style={{ fontSize: 12, color: textColor, marginBottom: 6 }}>
+                    終了すると、あなたも相手も書けなくなります（読むことはできます）。あとで再開できます。
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button type="button" onClick={() => void setNoticeReplyOpen(notice, false)}
+                      style={{ padding: '5px 14px', background: isDark ? '#6c757d' : '#5a6268', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
+                      終了する
+                    </button>
+                    <button type="button" onClick={() => setReplyCloseFor(null)}
+                      style={{ padding: '5px 14px', background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: subColor, cursor: 'pointer', fontSize: 12 }}>
+                      やめる
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" onClick={() => { setReplyErr(''); setReplyCloseFor(notice.id); }}
+                  style={{ padding: '5px 12px', background: 'none', border: `1px solid ${border}`, borderRadius: 20, color: subColor, cursor: 'pointer', fontSize: 12 }}>
+                  このやり取りを終了する
+                </button>
+              )
+            ) : (
+              <div>
+                <button type="button" onClick={() => void setNoticeReplyOpen(notice, true)}
+                  style={{ padding: '5px 12px', background: cardBg, border: '1.5px solid #2563eb', borderRadius: 20, color: '#2563eb', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
+                  再開する
+                </button>
+                <div style={{ fontSize: 11, color: subColor, marginTop: 4 }}>
+                  再開すると、その日からまた30日間 書けるようになります
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 🚨 再開しただけでは相手に何も届かない。押した直後にそう書いておく */}
+        {replyReopenedId === notice.id && isOpen && (
+          <div style={{ marginTop: 8, background: isDark ? '#14532d' : '#f0fdf4', border: `1px solid ${isDark ? '#166534' : '#86efac'}`, borderRadius: 8, padding: '8px 10px', fontSize: 12, color: isDark ? '#bbf7d0' : '#166534' }}>
+            再開しました。この時点では<strong>相手にはまだ何も届いていません</strong>。上の［返信する］から書いて送ってください。
+          </div>
+        )}
+
+        {replyErr && (
+          <div style={{ marginTop: 8, fontSize: 12, color: '#dc2626' }}>{replyErr}</div>
+        )}
+      </div>
+    );
+  };
+
   const renderMsg = (
     msg: BoardMessage, isReply = false, isOutboxView = false,
     archiveBtn: { archived: boolean; onToggle: () => void } | null = null,
@@ -2923,6 +3181,8 @@ const BoardPage: React.FC = () => {
                 )) : undefined}
               />
             )}
+            {/* 返信（送信者と受け取った人の2人だけが読める。枠は送信トレイと共用） */}
+            {renderNoticeReplyBox(inboxDetail)}
           </div>
         </div>
       ) : (
@@ -3363,6 +3623,17 @@ const BoardPage: React.FC = () => {
                   {composeScheduledAt ? '予約送信では使えません' : '通知の受信時間を設定している人にも、すぐに届きます'}
                 </div>
               </div>
+              {/* ↩ 返信を受け付ける（2026-09-21） */}
+              <div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12, color: textColor }}>
+                  <input type="checkbox" checked={composeAllowReply}
+                    onChange={e => setComposeAllowReply(e.target.checked)} style={{ accentColor: '#2563eb' }} />
+                  <span style={{ fontWeight: 600 }}>↩ 返信を受け付ける</span>
+                </label>
+                <div style={{ fontSize: 11, color: subColor, margin: '2px 0 0 20px' }}>
+                  受け取った方が、あなたにだけ返事を書けます（他の宛先には見えません）。30日で自動的に終了します
+                </div>
+              </div>
               {!previewRole && noticeCCUserIds.length > 0 && noticeCCUserIds.includes(user?.id ?? '') && (
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12, color: textColor }}>
                   <input type="checkbox" checked={composeIncludeCC} onChange={e => setComposeIncludeCC(e.target.checked)} style={{ accentColor: '#22c55e' }} />
@@ -3458,6 +3729,8 @@ const BoardPage: React.FC = () => {
                 profiles={allProfiles} isDark={isDark}
               />
             )}
+            {/* 返信（受信トレイと同じ部品。送信者はここで終了・再開もできる） */}
+            {renderNoticeReplyBox(outboxDetail, true)}
             {/* 削除確認 */}
             {deleteConfirmId === outboxDetail.id ? (
               <div style={{ marginTop: 16, padding: '12px 14px', background: isDark ? '#2d1a1a' : '#fff5f5', border: `1px solid ${isDark ? '#7f1d1d' : '#fca5a5'}`, borderRadius: 10 }}>

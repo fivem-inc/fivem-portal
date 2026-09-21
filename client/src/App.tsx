@@ -665,7 +665,10 @@ const useBoardUnread = (userId: string | undefined, pathname: string, enabled = 
     let inboxUnread = 0;
     if (inboxRes.data && inboxRes.data.length > 0) {
       const inboxMsgIds = inboxRes.data.map((r: any) => r.message_id);
-      const { data: sentMsgs } = await supabase.from('board_messages').select('id, requires_confirmation, deadline_type').in('id', inboxMsgIds).eq('status', 'sent');
+      // 🚨 parent_id があるもの（お知らせへの返信・2026-09-21）は数えない。
+      //    返信は受信トレイの一覧に並ばない（一覧も parent_id が無いものだけを読む）ので、
+      //    数えるとバッジだけ増えて「開いても何も無い」になる。返信はベルとプッシュで届く
+      const { data: sentMsgs } = await supabase.from('board_messages').select('id, requires_confirmation, deadline_type').in('id', inboxMsgIds).is('parent_id', null).eq('status', 'sent');
       const sentMsgIds = (sentMsgs || []).map((m: any) => m.id);
       const needConfirmIds = (sentMsgs || []).filter((m: any) => m.requires_confirmation || m.deadline_type).map((m: any) => m.id);
       const [{ data: reads }, { data: confs }] = await Promise.all([
