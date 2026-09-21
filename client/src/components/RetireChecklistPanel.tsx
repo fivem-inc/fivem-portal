@@ -4,6 +4,8 @@
 // 🚨 見る・済みにする＝マネージャー以上＋管理者（RLS も is_manager_plus()）。項目の編集は管理者だけ
 // 🚨 行がある＝済み。退職日を取り消すと DB（retire_cancel）が消す／アカウントを削除すると一緒に消える
 // 🚨 更新・削除は 0件でもエラーにならないので、件数を見る
+// 🚨 メモは**別の表**（retire_notes・2026-09-22）。チェックの記録に混ぜると
+//    「メモを書いただけで必須の残りから消える」事故になる（数え方が「行があれば片付いた」のため）
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
@@ -30,6 +32,16 @@ interface Check {
   id: string; user_id: string; item_id: string | null; done_by: string | null; done_at: string;
 }
 interface Reassign { retired_user_id: string; table_name: string }
+/**
+ * 手続きのメモ。🚨 チェックの記録とは別の表（retire_notes）。
+ *  ・item_id あり              … その項目のメモ
+ *  ・item_id なし・item_label あり … 削除された項目のメモ（中身を残すため）
+ *  ・item_id なし・item_label なし … その方ぜんたいの申し送り
+ */
+interface Note {
+  id: string; user_id: string; item_id: string | null; item_label: string | null;
+  memo: string; updated_by: string | null; updated_at: string;
+}
 
 interface Props {
   isDark: boolean;
@@ -58,6 +70,15 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
   const [choosingFor, setChoosingFor] = useState<string | null>(null);
   // 「対象外」にする前のその場の確認（誤って押すと、必須の項目が静かに残りから消えるため）
   const [naFor, setNaFor] = useState<string | null>(null);
+  // ── メモ（2026-09-22）───────────────────────────────
+  // 🚨 チェックの記録とは**別の表**（retire_notes）。同じ表に入れると
+  //    「メモを書いただけで必須の残りから消える」事故になる（数え方が「行があれば片付いた」のため）
+  // 🚨 未済でも書ける（「離職票は9月分が必要」など、やる前に書いておきたいことがあるため）
+  const [notes,       setNotes]       = useState<Note[]>([]);
+  // いまメモを書いている行。key は `${userId}:${itemId ?? 'all'}`
+  const [noteFor,     setNoteFor]     = useState<string | null>(null);
+  const [noteText,    setNoteText]    = useState('');
+  const [noteSaving,  setNoteSaving]  = useState(false);
   const namesLoaded = useRef(false);
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState('');
@@ -92,21 +113,23 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
     setItems((it.data ?? []) as Item[]);
     setPeople(ps);
     const ids = ps.map(p => p.id);
-    if (ids.length === 0) { setChecks([]); setReassigns([]); setPurchaseLeft({}); setLoading(false); return; }
-    const [ck, ra, nm, ...pcs] = await Promise.all([
+    if (ids.length === 0) { setChecks([]); setReassigns([]); setNotes([]); setPurchaseLeft({}); setLoading(false); return; }
+    const [ck, ra, nt, nm, ...pcs] = await Promise.all([
       supabase.from('retire_checklist_checks').select('id, user_id, item_id, done_by, done_at, choice, na, item_label').in('user_id', ids),
       supabase.from('retire_reassignments').select('retired_user_id, table_name').in('retired_user_id', ids),
+      supabase.from('retire_notes').select('id, user_id, item_id, item_label, memo, updated_by, updated_at').in('user_id', ids),
       // 「済みにした人」の名前は最初に1回だけ読む（押すたびに全員分を読み直さない）
       namesLoaded.current ? Promise.resolve(null) : supabase.from('profiles').select('id, name'),
       ...ids.map(id => supabase.rpc('retire_purchase_pending', { p_user: id })),
     ]);
-    if (ck.error || ra.error) {
-      setLoadErr('読み込めませんでした：' + (ck.error?.message ?? ra.error?.message ?? ''));
+    if (ck.error || ra.error || nt.error) {
+      setLoadErr('読み込めませんでした：' + (ck.error?.message ?? ra.error?.message ?? nt.error?.message ?? ''));
       setLoading(false);
       return;
     }
     setChecks((ck.data ?? []) as Check[]);
     setReassigns((ra.data ?? []) as Reassign[]);
+    setNotes((nt.data ?? []) as Note[]);
     // 数えられなかったときは null（「0件」と言わない）
     const pl: Record<string, number | null> = {};
     ids.forEach((id, i) => { const r = pcs[i] as { data: unknown; error: unknown }; pl[id] = r.error || typeof r.data !== 'number' ? null : r.data; });
@@ -174,6 +197,46 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
     setItemErr('');
     await load();
   };
+  // ── メモ ──
+  // 🚨 itemId が null＝その方ぜんたいのメモ。項目ごとのメモと同じ表・同じ処理で扱う
+  const noteOf = (userId: string, itemId: string | null) =>
+    notes.find(n => n.user_id === userId
+      && (itemId === null ? (n.item_id === null && n.item_label === null) : n.item_id === itemId));
+
+  // 空にして保存したら消す。🚨 更新・削除は0件でもエラーにならないので必ず件数を見る
+  const saveNote = async (userId: string, itemId: string | null, itemLabel: string | null, memo: string) => {
+    setNoteSaving(true); setRowErr(e => ({ ...e, [userId]: '' }));
+    const cur = noteOf(userId, itemId);
+    const body = memo.trim();
+    // 🚨 更新のときは updated_by を自分で入れる（列の既定値が効くのは insert のときだけ。
+    //    入れないと RLS の「誰が直したかを必ず残す」条件に引っかかって0件になる）
+    const { data: { session } } = await supabase.auth.getSession();
+    const me = session?.user.id ?? null;
+    if (!body) {
+      if (cur) {
+        const { data, error } = await supabase.from('retire_notes').delete().eq('id', cur.id).select('id');
+        if (error || !data || data.length === 0) {
+          setRowErr(e => ({ ...e, [userId]: 'メモを消せませんでした' + (error ? '：' + error.message : '（権限がないか、すでに消えています）') }));
+        }
+      }
+    } else if (cur) {
+      const { data, error } = await supabase.from('retire_notes')
+        .update({ memo: body, item_label: itemLabel, updated_by: me, updated_at: new Date().toISOString() })
+        .eq('id', cur.id).select('id');
+      if (error || !data || data.length === 0) {
+        setRowErr(e => ({ ...e, [userId]: 'メモを保存できませんでした' + (error ? '：' + error.message : '') }));
+      }
+    } else {
+      const { data, error } = await supabase.from('retire_notes')
+        .insert({ user_id: userId, item_id: itemId, item_label: itemLabel, memo: body, updated_by: me }).select('id');
+      if (error || !data || data.length === 0) {
+        setRowErr(e => ({ ...e, [userId]: 'メモを保存できませんでした' + (error ? '：' + error.message : '') }));
+      }
+    }
+    setNoteFor(null); setNoteText(''); setNoteSaving(false);
+    await load();
+  };
+
   // 項目を消す。🚨 済み・対象外の記録は消えない（DB の外部キーが on delete set null。
   //    記録は写した文字で「削除された項目」として残る）
   const deleteItem = async (id: string) => {
@@ -198,6 +261,48 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
     background: primary ? '#1976d2' : 'transparent',
     color: primary ? '#fff' : text,
   });
+
+  // メモの枠。🚨 「項目ごと」と「その方ぜんたい」の**両方がこれを使う**（同じ見た目を2か所に書かない）
+  const renderNote = (userId: string, itemId: string | null, itemLabel: string | null, placeholder: string) => {
+    const key = `${userId}:${itemId ?? 'all'}`;
+    const cur = noteOf(userId, itemId);
+    if (noteFor === key) {
+      return (
+        <div style={{ padding: '2px 0 8px' }}>
+          <textarea value={noteText} onChange={e => setNoteText(e.target.value)} rows={2} autoFocus placeholder={placeholder}
+            style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', borderRadius: 6, border: `1px solid ${border}`, background: inputBg, color: text, fontSize: 12.5, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }} />
+          {/* 🚨 Slack のパスワードの項目を択一にしたのと同じ理由。自由に書ける欄には書かれてしまう */}
+          <div style={{ fontSize: 11, color: subText, margin: '2px 0 6px' }}>🚨 パスワードなど秘密の情報は書かないでください</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <button type="button" style={btn(true)} disabled={noteSaving || !noteText.trim()}
+              onClick={() => saveNote(userId, itemId, itemLabel, noteText)}>保存</button>
+            <button type="button" style={btn(false)} onClick={() => { setNoteFor(null); setNoteText(''); }}>やめる</button>
+            {cur && (
+              <button type="button" style={{ ...btn(false), borderColor: '#dc3545', color: '#dc3545' }} disabled={noteSaving}
+                onClick={() => saveNote(userId, itemId, itemLabel, '')}>メモを消す</button>
+            )}
+          </div>
+        </div>
+      );
+    }
+    if (cur) {
+      return (
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '0 0 8px', flexWrap: 'wrap' }}>
+          <span style={{ flex: 1, minWidth: 160, fontSize: 12.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: inputBg, border: `1px solid ${border}`, borderRadius: 6, padding: '6px 8px' }}>{cur.memo}</span>
+          <span style={{ fontSize: 11.5, color: subText }}>
+            {names[cur.updated_by ?? ''] || '（不明）'}・{mdLabel(toJstDateStr(new Date(cur.updated_at)))}
+          </span>
+          <button type="button" style={btn(false)} onClick={() => { setNoteFor(key); setNoteText(cur.memo); }}>メモを直す</button>
+        </div>
+      );
+    }
+    return (
+      <div style={{ padding: '0 0 6px' }}>
+        <button type="button" style={{ ...btn(false), fontSize: 11.5, padding: '3px 8px', color: subText }}
+          onClick={() => { setNoteFor(key); setNoteText(''); }}>＋ メモ</button>
+      </div>
+    );
+  };
 
   if (loading && people.length === 0 && items.length === 0) {
     return <p style={{ color: subText, fontSize: 13 }}>読み込み中…</p>;
@@ -318,6 +423,12 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
               </div>
             )}
 
+            {/* その方ぜんたいのメモ（項目に紐づかない申し送り）。🚨 項目ごとのメモと同じ部品を使う */}
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ fontSize: 11.5, color: subText, marginBottom: 3 }}>この方ぜんたいのメモ</div>
+              {renderNote(p.id, null, null, '例：9/30 に本人と最終面談')}
+            </div>
+
             {activeItems.map(it => {
               const c = checkOf(p.id, it.id);
               const key = `${p.id}:${it.id}`;
@@ -380,6 +491,9 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
                       <button type="button" style={{ ...btn(false), borderColor: '#dc3545', color: '#dc3545' }} onClick={() => toggle(p.id, it)}>戻す</button>
                     </div>
                   )}
+                  {/* 項目ごとのメモ。🚨 未済でも書ける（「離職票は9月分が必要」など、やる前に書くことがあるため）。
+                      🚨 チェックの記録とは別の表なので、メモを書いても「必須の残り」は減らない */}
+                  {renderNote(p.id, it.id, it.label, '例：南草津校の鍵1本を 9/30 に返却')}
                 </div>
               );
             })}
@@ -388,7 +502,10 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
                 項目の一覧には無いので、必須の残り件数には数えない */}
             {(() => {
               const gone = checks.filter(c => c.user_id === p.id && c.item_id === null);
-              if (gone.length === 0) return null;
+              // 🚨 削除された項目に書いてあったメモも、中身を失わないようにここへ出す
+              //    （item_label が入っている＝もとは項目のメモ。ぜんたいのメモとはここで見分ける）
+              const goneNotes = notes.filter(n => n.user_id === p.id && n.item_id === null && n.item_label !== null);
+              if (gone.length === 0 && goneNotes.length === 0) return null;
               return (
                 <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${border}` }}>
                   <div style={{ fontSize: 11.5, color: subText, marginBottom: 4 }}>削除された項目の記録</div>
@@ -400,6 +517,17 @@ const RetireChecklistPanel: React.FC<Props> = ({ isDark, isAdmin }) => {
                       </span>
                       <span style={{ fontSize: 11.5 }}>
                         {names[c.done_by ?? ''] || '（不明）'}・{mdLabel(toJstDateStr(new Date(c.done_at)))}
+                      </span>
+                    </div>
+                  ))}
+                  {goneNotes.map(n => (
+                    <div key={n.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '3px 2px', fontSize: 12.5, color: subText, flexWrap: 'wrap' }}>
+                      <span aria-hidden style={{ width: 20, flexShrink: 0, textAlign: 'center' }}>📩</span>
+                      <span style={{ flex: 1, minWidth: 140, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                        {n.item_label}：{n.memo}
+                      </span>
+                      <span style={{ fontSize: 11.5 }}>
+                        {names[n.updated_by ?? ''] || '（不明）'}・{mdLabel(toJstDateStr(new Date(n.updated_at)))}
                       </span>
                     </div>
                   ))}
