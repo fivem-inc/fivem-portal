@@ -10,6 +10,7 @@
 // 送信先チャンネルと ON/OFF は管理画面「通知設定」の overtime:* / slack から読む。
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0'
+import { checkCaller } from '../_shared/callerGate.ts'
 
 const ALLOWED_ORIGINS = ['https://fivem-portal.vercel.app', 'http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175']
 
@@ -69,9 +70,15 @@ const DOW = ['日', '月', '火', '水', '木', '金', '土']
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: getCorsHeaders(req) })
 
-  const authHeader = req.headers.get('Authorization')
-  if (!authHeader?.startsWith('Bearer ')) {
-    return new Response('Unauthorized', { status: 401, headers: getCorsHeaders(req) })
+  // 🚨 呼ぶ人の門（2026-09-22）。以前は Bearer が付いているかを見るだけで、
+  //    誰が呼んでいるかを確かめていなかった。判定は DB の my_access_state() 1本
+  //    （overtime-approve からは service_role で呼ばれるので、そちらは素通りする）
+  const gate = await checkCaller(req)
+  if (!gate.ok) {
+    return new Response(JSON.stringify({ error: gate.reason }), {
+      status: gate.status,
+      headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' },
+    })
   }
 
   try {

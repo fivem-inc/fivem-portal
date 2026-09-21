@@ -3,6 +3,7 @@
 // GCal同期の失敗を握りつぶさずクライアントへ返す（同期漏れの静かな発生を防ぐ）。
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { checkCaller } from '../_shared/callerGate.ts'
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -39,6 +40,10 @@ function json(body: Record<string, unknown>, status = 200): Response {
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
+
+  // 🚨 呼ぶ人の門（2026-09-22）。本人の特定は下でもしているが、こちらは「在籍か期限内の退職者か」を見る
+  const gate = await checkCaller(req)
+  if (!gate.ok) return json({ success: false, error: gate.reason }, gate.status)
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!

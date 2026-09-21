@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { checkCaller } from '../_shared/callerGate.ts'
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -263,16 +264,16 @@ serve(async (req) => {
     // 認可ゲート：サービスキー（overtime-approve等のサーバー間呼び出し）か、
     // ログイン済みの本物のユーザーのみ許可。未ログイン・公開anonキーだけの直接呼び出しは 401 で拒否。
     // （config.toml の verify_jwt=true でも公開anonキーは通るため、ここで role を確認する二重の守り）
-    const authToken = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '')
-    let authorized = !!authToken && authToken === supabaseKey
-    if (!authorized && authToken) {
-      const { data: { user } } = await supabase.auth.getUser(authToken)
-      authorized = !!user
-    }
-    if (!authorized) {
+    //
+    // 🚨 2026-09-22：ここに書いてあった判定を共通の門（_shared/callerGate.ts）に移した。
+    //    通す相手は今までと同じ（サービスキー／ログイン済みの本物のユーザー）で、
+    //    **「在籍か期限内の退職者か」の確認が増えた**だけ。
+    //    返す形（success:false / error:'unauthorized'）は画面が見ているので変えていない
+    const gate = await checkCaller(req)
+    if (!gate.ok) {
       return new Response(
         JSON.stringify({ success: false, error: 'unauthorized' }),
-        { status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
+        { status: gate.status, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
       )
     }
 
