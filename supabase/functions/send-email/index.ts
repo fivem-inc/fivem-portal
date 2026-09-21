@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { checkCaller } from '../_shared/callerGate.ts'
 
 const ALLOWED_ORIGINS = ['https://fivem-portal.vercel.app', 'http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'];
 
@@ -20,6 +21,19 @@ serve(async (req) => {
   }
 
   const corsHeaders = getCorsHeaders(req);
+
+  // 🚨 呼ぶ人の門（2026-09-22・3段目）。判定は DB の my_access_state() 1本。
+  //    他の Edge Function や cron からは service_role で呼ばれるので素通りする
+  //    （実測：この関数を呼ぶ12本すべてが service_role。画面からの呼び出しだけが本人確認の対象）
+  {
+    const gate = await checkCaller(req)
+    if (!gate.ok) {
+      return new Response(JSON.stringify({ error: gate.reason }), {
+        status: gate.status,
+        headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' },
+      })
+    }
+  }
 
   try {
     const { to, subject, html, text } = await req.json();

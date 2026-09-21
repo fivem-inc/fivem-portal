@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { checkCaller } from '../_shared/callerGate.ts'
 
 // Slack Webhook URL（Supabase Secretsから取得）
 const SLACK_WEBHOOK_URL = Deno.env.get('SLACK_WEBHOOK_EXPENSE') || ''
@@ -19,9 +20,16 @@ serve(async (req) => {
     return new Response('ok', { headers: getCorsHeaders(req) })
   }
 
-  const authHeader = req.headers.get('Authorization');
-  if (!authHeader?.startsWith('Bearer ')) {
-    return new Response('Unauthorized', { status: 401, headers: getCorsHeaders(req) });
+  // 🚨 呼ぶ人の門（2026-09-22・3段目）。判定は DB の my_access_state() 1本。
+  //    以前は Bearer が付いているかを見るだけだったので、ログインできる人なら誰でも
+  //    受け取った本文の名前をそのまま Slack に流せた。
+  //    🚨 呼び出し元は交通費の申請画面1か所だけ（実測）。退職者も交通費は出せるので retiree_grace も通す
+  const gate = await checkCaller(req);
+  if (!gate.ok) {
+    return new Response(JSON.stringify({ error: gate.reason }), {
+      status: gate.status,
+      headers: { ...getCorsHeaders(req), 'Content-Type': 'application/json' },
+    });
   }
 
   try {
