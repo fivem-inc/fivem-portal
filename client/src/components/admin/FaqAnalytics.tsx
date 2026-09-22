@@ -93,6 +93,16 @@ const REASON_ACTION: Record<string, string> = {
   load_error: '不具合。開発担当へ',
 };
 
+/** 問い合わせ率。🚨 表とCSVの**両方がこれを呼ぶ**（同じ式を2か所に書かない）。
+ *  🚨 100% を超えたら数字を出さない。分母は「読んだ人の数」、分子は「問い合わせに回った人の数」なので、
+ *     100% を超えるのは数え方がずれている証拠。黙って変な数字を出すより、出さないほうがよい
+ *     （2026-09-22 まで実際にずれていて 150% と表示されていた）。null＝出せない */
+function contactRate(views: number, contacts: number): number | null {
+  if (views <= 0) return null;
+  const r = Math.round((contacts / views) * 100);
+  return r > 100 ? null : r;
+}
+
 const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings = false }) => {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<Mode>('month');
@@ -347,7 +357,7 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
     const head = ['質問', '閲覧', '問い合わせに進んだ', '問い合わせ率(%)', 'はい'];
     const lines = [head.map(cell).join(',')];
     for (const t of byTopic) {
-      const rate = t.views > 0 ? Math.round((t.contacts / t.views) * 100) : '';
+      const rate = contactRate(t.views, t.contacts) ?? '';
       lines.push([t.q, t.views, t.contacts, rate, t.solved].map(cell).join(','));
     }
     lines.push('');
@@ -525,7 +535,7 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
                     <td style={{ ...td, minWidth: 220 }}>{t.q}</td>
                     <td style={td}>{t.views}</td>
                     <td style={{ ...td, fontWeight: t.contacts > 0 ? 'bold' : 'normal' }}>{t.contacts}</td>
-                    <td style={td}>{t.views > 0 ? `${Math.round((t.contacts / t.views) * 100)}%` : '-'}</td>
+                    <td style={td}>{(() => { const r = contactRate(t.views, t.contacts); return r === null ? '-' : `${r}%`; })()}</td>
                     {prevRows !== null && <td style={td}>{prevContactsByTopic.get(t.id) ?? 0}</td>}
                     {/* 🚨 増減に色は付けない。問い合わせは減ったほうが良いので、
                         赤字＝悪い という一般的な感覚と逆になる */}

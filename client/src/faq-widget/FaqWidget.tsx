@@ -228,7 +228,15 @@ const FaqWidget: React.FC = () => {
   /** 問い合わせの案内へ進む。🚨 理由と質問を必ず添える（これが運用の判断材料そのもの） */
   const goContact = useCallback((reason: FaqContactReason, v: FaqViewer, topic?: FaqTopic, answer?: FaqAnswer) => {
     logFaqEvent({
+      // 🚨 2026-09-22：ここに once を足した。それまで問い合わせだけ「押した回数」で数えており、
+      //    回答を読んだほう（topic_view）は once 付き＝「人数」だったため、
+      //    問い合わせ率が 150% のように 100% を超えていた（同じ人が3回押せば 1人 ÷ 3回）。
+      //    「この質問を読んだ人のうち、何割が解決せず問い合わせに回ったか」を出すと決めたので、
+      //    分母・分子とも**人数**に揃える（2026-09-22 ユーザー確定＝案A）。
+      // 🚨 理由ごとに1回。同じ人が別の理由で問い合わせに回るのは、別の出来事として数えたい
+      //    （search_nohit は以前から once 付き。load_error も同様。ここで全部そろった）
       kind: 'contact', reason, topicId: topic?.id ?? null, answerId: answer?.id ?? null,
+      once: `contact:${topic?.id ?? 'none'}:${reason}`,
       school: v.school, course: v.course,
     });
     go({ kind: 'contact', reason, topic, answer });
