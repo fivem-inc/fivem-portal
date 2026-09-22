@@ -55,6 +55,11 @@ const QUICK_RANGES = [
   { days: 30, label: '30日間' },
 ] as const;
 
+/** 検索ログを一度に読む上限。🚨 これに達したら「打ち切っています」と画面に出す
+ *  （黙って切れると、件数が多い月ほど「答えられなかった言葉」のランキングが静かに狂う）。
+ *  🚨 order を付けて「新しい順の◯件」と意味を確定させている（付けないとどの◯件か不定） */
+const LOG_LIMIT = 500;
+
 /** 内訳を出す順番。🚨 ここに無い項目は出さない（DB が増えても画面が勝手に変わらないように） */
 const VISITOR_DIMS = ['端末', '社内/社外', '都道府県', '国', 'ブラウザ', '流入元', '時間帯', '曜日'] as const;
 
@@ -119,6 +124,9 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
   const [visitors, setVisitors] = useState<VisitorRow[] | null>(null);
   const [dwell, setDwell] = useState<DwellRow | null>(null);
   const [staffWords, setStaffWords] = useState<{ word: string; n: number; miss: number }[]>([]);
+  // 検索ログが上限で切られたか（切られたまま黙っていると、ランキングが嘘になる）
+  const [wordsCut, setWordsCut] = useState(false);
+  const [staffWordsCut, setStaffWordsCut] = useState(false);
   const [ipText, setIpText] = useState('');
   const [ipMsg, setIpMsg] = useState('');
   const [ipFail, setIpFail] = useState(false);
@@ -141,29 +149,42 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
   const border = isDarkMode ? '#495057' : '#dee2e6';
   const bg = isDarkMode ? '#343a40' : '#fff';
 
+  // 🚨 いちばん新しい読み込みだけが画面に書き込む（2026-09-22）。
+  //    日付の入力は打つたびに reload を呼ぶので、読み込みが何本も重なる。
+  //    順番の見張りが無いと、遅いほう（＝古い期間）が後から着地して
+  //    「見出しは9月・中身は8月」になる。しかも画面にはどこにも手がかりが出ない
+  const loadSeq = useRef(0);
+
   /** 期間ぶんの集計を取る（比べる相手があれば2回目も取る）。
    *  🚨 期間の組み立ては spanOf / compareSpanOf の1か所に集約している。
    *     画面のあちこちで日付を計算すると、境目のずれが1か所だけ直らずに残る */
   const load = useCallback(async (
     m: Mode, targetYm: string, targetYear: number, f: string, t: string, c: Compare,
   ) => {
+    const seq = ++loadSeq.current;
+    const latest = () => seq === loadSeq.current;
     setLoading(true); setErr('');
+    // 🚨 先に全部まっさらにする。ここを消さないと、途中で失敗したときに
+    //    **前の期間の内訳・滞在時間・検索ワードが残ったまま**新しい期間の表と並ぶ
+    setRows(null); setPrevRows(null); setVisitors(null); setDwell(null);
+    setWords([]); setStaffWords([]); setWordsCut(false); setStaffWordsCut(false);
     const span = spanOf(m, targetYm, targetYear, f, t);
     const prev = compareSpanOf(c, m, targetYm, targetYear, f, t);
-    setSpanLabel(span.label);
-    setCmpLabel(prev?.label ?? '');
+    // 🚨 失敗したものだけを覚えておき、最後にまとめて出す。
+    //    1本の文字列に setErr すると、後から来た失敗が前の失敗を消してしまう
+    const problems: string[] = [];
     try {
       const { data, error } = await supabase.rpc('faq_public_event_summary', { p_from: span.from, p_to: span.to });
+      if (!latest()) return;
       // 🚨 rpc は 4xx/5xx でも throw しない。error を必ず見る（「通信を確認」で握りつぶさない）
-      if (error) { setErr(`集計を読み込めませんでした：${error.message}`); setRows(null); return; }
-      setRows((data ?? []) as SummaryRow[]);
+      if (error) problems.push(`集計を読み込めませんでした：${error.message}`);
+      else setRows((data ?? []) as SummaryRow[]);
 
       if (prev) {
         const { data: pd, error: perr } = await supabase.rpc('faq_public_event_summary', { p_from: prev.from, p_to: prev.to });
-        if (perr) { setErr(`比べる期間を読み込めませんでした：${perr.message}`); setPrevRows(null); }
+        if (!latest()) return;
+        if (perr) problems.push(`比べる期間を読み込めませんでした：${perr.message}`);
         else setPrevRows((pd ?? []) as SummaryRow[]);
-      } else {
-        setPrevRows(null);
       }
 
       // 「答えられなかった言葉」は既存の質問ログから取る（新しい表には検索語を持たせていない）
@@ -175,22 +196,31 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
         .eq('had_match', false)
         .gte('created_at', span.from)
         .lt('created_at', span.to)
-        .limit(500);
-      if (qerr) { setErr(`検索ログを読み込めませんでした：${qerr.message}`); setWords([]); return; }
-      const map = new Map<string, number>();
-      for (const q of (qs ?? []) as { raw_query: string }[]) {
-        map.set(q.raw_query, (map.get(q.raw_query) ?? 0) + 1);
+        .order('created_at', { ascending: false })
+        .limit(LOG_LIMIT);
+      if (!latest()) return;
+      // 🚨 ここで return しない。前は return していたので、これ以降（内訳・滞在時間）が
+      //    前の期間のまま残っていた
+      if (qerr) problems.push(`検索ログを読み込めませんでした：${qerr.message}`);
+      else {
+        setWordsCut((qs ?? []).length >= LOG_LIMIT);
+        const map = new Map<string, number>();
+        for (const q of (qs ?? []) as { raw_query: string }[]) {
+          map.set(q.raw_query, (map.get(q.raw_query) ?? 0) + 1);
+        }
+        setWords([...map.entries()].map(([word, n]) => ({ word, n })).sort((a, b) => b.n - a.n));
       }
-      setWords([...map.entries()].map(([word, n]) => ({ word, n })).sort((a, b) => b.n - a.n));
 
       // 来た方の内訳（端末・社内社外・都道府県 ほか）
       const { data: vd, error: verr } = await supabase.rpc('faq_public_visitor_summary', { p_from: span.from, p_to: span.to });
-      if (verr) { setErr(`来た方の内訳を読み込めませんでした：${verr.message}`); setVisitors(null); }
+      if (!latest()) return;
+      if (verr) problems.push(`来た方の内訳を読み込めませんでした：${verr.message}`);
       else setVisitors((vd ?? []) as VisitorRow[]);
 
       // 滞在時間
       const { data: dd, error: derr } = await supabase.rpc('faq_public_dwell_summary', { p_from: span.from, p_to: span.to });
-      if (derr) { setErr(`滞在時間を読み込めませんでした：${derr.message}`); setDwell(null); }
+      if (!latest()) return;
+      if (derr) problems.push(`滞在時間を読み込めませんでした：${derr.message}`);
       else setDwell(((dd ?? [])[0] ?? null) as DwellRow | null);
 
       // 社内FAQ（スタッフ用）の検索ワード。🚨 社内は検索ワードだけ（IP・端末は取っていない）
@@ -201,9 +231,12 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
         .neq('audience', 'public')
         .gte('created_at', span.from)
         .lt('created_at', span.to)
-        .limit(500);
-      if (sqerr) { setErr(`社内の検索ログを読み込めませんでした：${sqerr.message}`); setStaffWords([]); }
+        .order('created_at', { ascending: false })
+        .limit(LOG_LIMIT);
+      if (!latest()) return;
+      if (sqerr) problems.push(`社内の検索ログを読み込めませんでした：${sqerr.message}`);
       else {
+        setStaffWordsCut((sq ?? []).length >= LOG_LIMIT);
         const sm = new Map<string, { n: number; miss: number }>();
         for (const q of (sq ?? []) as { raw_query: string; had_match: boolean }[]) {
           const cur = sm.get(q.raw_query) ?? { n: 0, miss: 0 };
@@ -219,6 +252,7 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
       //    過去2年ぶんの「社内/社外」が全部「社外」に変わる（履歴が無いので元に戻せない）
       const { data: ipRow, error: ipErr } = await supabase
         .from('app_settings').select('value').eq('key', 'faq_internal_ips').maybeSingle();
+      if (!latest()) return;
       if (ipErr) {
         setIpLoadErr(`会社のIPを読み込めませんでした：${ipErr.message}`);
       } else {
@@ -227,11 +261,17 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
         // 🚨 打ちかけがあるときは上書きしない（期間ボタンを押すたびに load が走るため）
         if (!ipDirty.current) setIpText(Array.isArray(ips) ? ips.join(', ') : '');
       }
+
+      // 🚨 見出しは**中身が揃ってから**変える。先に変えると「9月と書いてあるのに8月の数字」になる
+      setSpanLabel(span.label);
+      setCmpLabel(prev?.label ?? '');
+      setErr(problems.join('\n'));
     } catch (e) {
+      if (!latest()) return;
       setErr(`集計を読み込めませんでした：${e instanceof Error ? e.message : String(e)}`);
       setRows(null);
     } finally {
-      setLoading(false);
+      if (latest()) setLoading(false);
     }
   }, []);
 
@@ -485,8 +525,9 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
         )}
       </div>
 
+      {/* 🚨 失敗が複数あるときは全部出す（1本の文字列だと後から来た失敗が前を消していた） */}
       {err && (
-        <div style={{ background: '#f8d7da', border: '1px solid #f5c6cb', borderRadius: 8, padding: 10, marginBottom: 10, fontSize: 13, color: '#721c24' }}>
+        <div style={{ background: '#f8d7da', border: '1px solid #f5c6cb', borderRadius: 8, padding: 10, marginBottom: 10, fontSize: 13, color: '#721c24', whiteSpace: 'pre-line' }}>
           {err}
         </div>
       )}
@@ -587,6 +628,11 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
                     </span>
                   ))}
                 </div>}
+            {wordsCut && (
+              <div style={{ fontSize: 12, color: '#b35900', marginTop: 4 }}>
+                🚨 この期間の検索は多く、<strong>新しい順に{LOG_LIMIT}件までしか数えていません</strong>。上の並びは実際の多い順と違うことがあります
+              </div>
+            )}
           </div>
 
           {/* 校・コースに該当が無かったもの */}
@@ -728,6 +774,11 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
                     </span>
                   ))}
                 </div>}
+            {staffWordsCut && (
+              <div style={{ fontSize: 12, color: '#b35900', marginTop: 4 }}>
+                🚨 この期間の検索は多く、<strong>新しい順に{LOG_LIMIT}件までしか数えていません</strong>。上の並びは実際の多い順と違うことがあります
+              </div>
+            )}
             <div style={{ fontSize: 12, color: sub, marginTop: 4 }}>
               ※ 社内は<strong>検索した言葉だけ</strong>を記録しています（端末・IP・滞在時間は取っていません）
             </div>
