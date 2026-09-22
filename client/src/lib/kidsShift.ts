@@ -7,8 +7,8 @@
 // ・重なり＝同じ人が同じ曜日の同じ時間に2か所へ入っている（年度替わりは勤務表より先に作るので、⚠️ の代わりに効く）
 // ・社員休み＝メインの部門が「こども」の正社員で、その曜日に勤務予定がない人
 
-import type { RosterDayKind } from './shiftRoster';
-import { toMin, normTime } from './shiftRoster';
+import type { RosterDay, RosterDayKind } from './shiftRoster';
+import { toMin, normTime, shiftTimeIssue } from './shiftRoster';
 
 export const KIDS_WEEK: RosterDayKind[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 
@@ -328,4 +328,107 @@ export function visibleColumns(
     .filter(p => p.kind === 'column' && p.active)
     .filter(p => has(p.id, day) || extra.has(p.id))
     .sort((a, b) => a.sort_order - b.sort_order);
+}
+
+// ── ⚠️（出勤していない）の印（2026-09-22・2回目）────────────────────────────
+//
+// 決まりは設計書 docs/計画-管理画面の開放.md 5-9 の「⚠️ の決まり」。
+// 🚨 判定そのものは書かない。**`lib/shiftRoster.ts` の shiftTimeIssue** を呼ぶ
+//    （④掃除担当表・③勉強会とまったく同じもの。ここで書き直すと片方だけ直す事故になる）。
+//
+// ・レッスン／P／打合せ／大人コース業務／その他（issue_mode='full'）
+//     … その曜日が休み／その時間より前に出勤／途中で退勤／その時間はほかの校
+// ・園指導・見出しの役割（issue_mode='day_only'）
+//     … **その曜日が休みかどうかだけ**（時刻・校は見ない）。
+//       園指導は月1回の朝で週のシフトに入っていないため、時刻で見ると常に ⚠️ になる
+// ・人ごとに「19まで」「16:45〜」があれば、その時間で見る（無ければ行の時間）
+// ・退職した人は 'inactive'
+//
+// 🚨 勉強会の行はここでは判定しない（勉強会の画面が同じ ⚠️ を出す。二重に出さない）
+
+export type KidsIssueKind =
+  | 'no_shift' | 'off' | 'outside' | 'partial' | 'other_school' | 'unknown_school' | 'inactive';
+
+export interface KidsIssue {
+  placeId: string;
+  dayKind: string;
+  userId: string;
+  kind: KidsIssueKind;
+  text: string;
+  /** 「確認した」に使う鍵。
+   *  🚨 **日付を混ぜない**。勉強会で日付を混ぜたせいで、押した「確認した」が翌日に外れた
+   *     （2026-09-22 に修正）。掃除当番と同じく「どこ・何の行・いつの時間・誰・何が」で作る */
+  key: string;
+}
+
+function kidsIssueText(kind: KidsIssueKind, name: string, detail: string): string {
+  switch (kind) {
+    case 'no_shift': return `${name}さんは週のシフトが未登録です`;
+    case 'off': return `${name}さんはこの曜日が休みです`;
+    case 'outside': return `${name}さんはこの時間に勤務していません`;
+    case 'partial': return `${name}さんは一部の時間が勤務時間外です`;
+    case 'other_school': return `${name}さんはこの時間 ${detail}`;
+    case 'unknown_school': return `${name}さんの校を確かめられません（「${detail}」で移る時刻が未登録）`;
+    case 'inactive': return `${name}さんは退職しています`;
+  }
+}
+
+/**
+ * マス1つぶんの ⚠️。
+ * @param items    そのマスの中身（行）
+ * @param dayOf    user_id → その曜日の勤務予定（未登録なら null）
+ * @param modeOf   行の種類 → 'full' か 'day_only'（kids_shift_row_kinds の issue_mode）
+ * @param fullNames user_id → フルネーム
+ * @param inactive 退職した人の user_id
+ * @param school   そのマスの校（列の校。null なら校は見ない）
+ */
+export function kidsCellIssues(
+  placeId: string,
+  dayKind: string,
+  items: KidsCellValue,
+  dayOf: (userId: string) => RosterDay | null,
+  modeOf: (rowKind: string) => 'full' | 'day_only',
+  fullNames: Map<string, string>,
+  inactive: Set<string>,
+  school: string | null,
+): KidsIssue[] {
+  const out: KidsIssue[] = [];
+  const seen = new Set<string>();
+  const push = (userId: string, kind: KidsIssueKind, detail: string, rowKind: string, at: string) => {
+    // 🚨 同じマスに同じ人が何度出てきても、同じ内容の ⚠️ は1つにまとめる
+    const key = `${placeId}|${dayKind}|${rowKind}|${at}|${userId}|${kind}|${detail}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ placeId, dayKind, userId, kind, text: kidsIssueText(kind, fullNames.get(userId) ?? '（不明）', detail), key });
+  };
+
+  for (const it of items) {
+    // 🚨 勉強会の行は勉強会の画面が見る（ここでは出さない）
+    if (it.kind === 'study') continue;
+    if (it.is_none) continue;
+    const dayOnly = modeOf(it.kind) === 'day_only';
+    for (const p of it.people) {
+      if (inactive.has(p.user_id)) { push(p.user_id, 'inactive', '', it.kind, ''); continue; }
+      const day = dayOf(p.user_id);
+      // 人ごとの時間があればそれで見る（「19まで」「16:45〜」）
+      const s = toMin(normTime(p.start || it.start));
+      const e = toMin(normTime(p.end || it.end));
+      if (dayOnly || s === null || e === null || e <= s) {
+        // 🚨 その曜日が休みかどうかだけ。時刻も校も見ない
+        if (!day) { push(p.user_id, 'no_shift', '', it.kind, ''); continue; }
+        if (day.segments.length === 0) { push(p.user_id, 'off', '', it.kind, ''); continue; }
+        continue;
+      }
+      const r = shiftTimeIssue(s, e, school, day);
+      if (!r) continue;
+      const at = normTime(p.start || it.start);
+      // 「前に出勤」「途中で退勤」「一部だけ」は、勉強会と同じ言い方にまとめる
+      if (r.kind === 'before_start' || r.kind === 'leaves_early' || r.kind === 'partial') {
+        push(p.user_id, r.overlap ? 'partial' : 'outside', '', it.kind, at);
+      } else {
+        push(p.user_id, r.kind as KidsIssueKind, r.detail, it.kind, at);
+      }
+    }
+  }
+  return out;
 }

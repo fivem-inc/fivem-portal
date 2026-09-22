@@ -29,6 +29,8 @@ export interface KidsData {
   flags: Map<string, boolean>;
   labels: Map<string, string>;
   staff: KidsStaffLite[];
+  /** 「確認した」の記録。🚨 決定済みの表のマス（cell_id）か、案のマス（plan_cell_id）のどちらかに付く */
+  acks: { cell_id: string | null; plan_cell_id: string | null; issue_key: string }[];
 }
 
 interface RawPerson { user_id: string; role: string; start_time: string | null; end_time: string | null; sort_order: number }
@@ -74,7 +76,7 @@ const DEFAULT_SETTINGS: KidsSettings = {
 
 /** 表の中身（決定済みの版・案・一覧・設定）。sinceDate は「赤字の比べ先」の日 */
 export async function loadKidsData(sinceDate: string): Promise<{ data: KidsData | null; error: string | null }> {
-  const [placeRes, kindRes, roleRes, cellRes, planRes, noteRes, setRes, flagRes, labelRes, staffRes, areaRes] = await Promise.all([
+  const [placeRes, kindRes, roleRes, cellRes, planRes, noteRes, setRes, flagRes, labelRes, staffRes, areaRes, ackRes] = await Promise.all([
     supabase.from('kids_shift_places').select('id, kind, school, floor, label, sort_order, active').order('sort_order'),
     supabase.from('kids_shift_row_kinds').select('key, label, has_class, has_groups, has_people, issue_mode, sort_order, active').order('sort_order'),
     supabase.from('kids_shift_role_kinds').select('key, label, sort_order, active').order('sort_order'),
@@ -91,12 +93,14 @@ export async function loadKidsData(sinceDate: string): Promise<{ data: KidsData 
     supabase.from('staff_display_names').select('user_id, label'),
     supabase.from('profiles').select('id, name, is_active, employment_type').order('name'),
     supabase.from('staff_main_work_areas').select('user_id, shift_work_areas(name)'),
+    supabase.from('kids_shift_acks').select('cell_id, plan_cell_id, issue_key'),
   ]);
 
   const failed = [
     placeRes.error && '置き場所', kindRes.error && '行の種類', roleRes.error && '役割', cellRes.error && 'マス',
     planRes.error && '案', noteRes.error && '書き添え', setRes.error && '設定', flagRes.error && 'レッスンできる印',
     labelRes.error && '呼び名', staffRes.error && 'スタッフ', areaRes.error && 'メインの部門',
+    ackRes.error && '確認した記録',
   ].filter(Boolean);
   if (failed.length > 0) return { data: null, error: `${failed.join('・')}を読み込めませんでした` };
 
@@ -132,6 +136,7 @@ export async function loadKidsData(sinceDate: string): Promise<{ data: KidsData 
       labels: new Map(((labelRes.data ?? []) as { user_id: string; label: string }[]).map(r => [r.user_id, r.label])),
       staff: ((staffRes.data ?? []) as { id: string; name: string; is_active: boolean; employment_type: string | null }[])
         .map<KidsStaffLite>(p => ({ ...p, main_area: areaByUser.get(p.id) ?? null })),
+      acks: (ackRes.data ?? []) as { cell_id: string | null; plan_cell_id: string | null; issue_key: string }[],
     },
     error: null,
   };
@@ -280,5 +285,23 @@ export async function saveMasterRow(
   const { data, error } = await supabase.from(table).insert(insert).select(keyName);
   if (error) return `保存できませんでした：${error.message}`;
   if (!data || data.length === 0) return '保存できませんでした（権限がないか、行が見つかりません）';
+  return null;
+}
+
+/** ⚠️ を「確認した」にする。
+ *  🚨 決定済みの表のマスなら cellId、案のマスなら planCellId を渡す（DBの決まりでどちらか一方）。
+ *  🚨 二度押し（23505）は成功として扱う。すでにそうなっているので失敗ではない。
+ *  🚨 0件でもエラーにならないので件数を見る。 */
+export async function ackKidsIssue(
+  owner: { cellId: string } | { planCellId: string }, issueKey: string,
+): Promise<string | null> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return 'ログインし直してください';
+  const row = 'cellId' in owner
+    ? { cell_id: owner.cellId, issue_key: issueKey, acked_by: user.id }
+    : { plan_cell_id: owner.planCellId, issue_key: issueKey, acked_by: user.id };
+  const { data, error } = await supabase.from('kids_shift_acks').insert(row).select('id');
+  if (error) return error.code === '23505' ? null : `確認を残せませんでした：${error.message}`;
+  if (!data || data.length === 0) return '確認を残せませんでした（権限がない可能性があります）';
   return null;
 }

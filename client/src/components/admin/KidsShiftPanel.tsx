@@ -6,11 +6,11 @@ import { fullName, shortNameMap } from '../../lib/staffName';
 import { openRosterPrint } from '../../lib/shiftRosterPrint';
 import {
   KIDS_WEEK, cellEquals, cellVersionOn, defaultsForGroups, emptyItem, itemText, itemTextWithBlanks,
-  makeCanLesson, mergeCell, offStaffOfDay, overlapsOfDay, shortfallOf,
-  type KidsCellValue, type KidsItem, type KidsPerson, type KidsPlace, type KidsPlan, type KidsPlanCell,
+  kidsCellIssues, makeCanLesson, mergeCell, offStaffOfDay, overlapsOfDay, shortfallOf,
+  type KidsCellValue, type KidsIssue, type KidsItem, type KidsPerson, type KidsPlace, type KidsPlan, type KidsPlanCell,
 } from '../../lib/kidsShift';
 import {
-  decidePlan, loadKidsData, loadKidsToken, loadPlanCells, savePlan, saveKidsCells, saveKidsSettings,
+  ackKidsIssue, decidePlan, loadKidsData, loadKidsToken, loadPlanCells, savePlan, saveKidsCells, saveKidsSettings,
   saveLessonFlag, saveMasterRow, savePlace, toPayloadCells, type KidsData,
 } from '../../lib/kidsShiftApi';
 import { buildKidsPrintHtml } from '../../lib/kidsShiftPrint';
@@ -182,6 +182,63 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
     }
     return out;
   }, [data, activeColumns, shownCell, canLesson, inactive]);
+
+  // ⚠️（出勤していない・2026-09-22）。
+  // 🚨 判定は lib/kidsShift.ts の kidsCellIssues（中身は ④掃除担当表・③勉強会と同じ shiftTimeIssue）。
+  //    ここで書き直さない。
+  // 🚨 保存は止めない。印を出すだけ（設計書 5-9「保存は止めない・［確認した］」）
+  const issuesOf = useCallback((placeId: string, d: RosterDayKind): KidsIssue[] => {
+    if (!data) return [];
+    const place = data.places.find(p => p.id === placeId);
+    return kidsCellIssues(
+      placeId, d, shownCell(placeId, d),
+      uid => shiftDayOn(rowsByUser.get(uid) ?? [], d, baseDate) ?? null,
+      k => data.rowKinds.find(r => r.key === k)?.issue_mode ?? 'full',
+      new Map(data.staff.map(s => [s.id, data.labels.get(s.id) || s.name])),
+      inactive,
+      place?.school ?? null,
+    );
+  }, [data, shownCell, rowsByUser, baseDate, inactive]);
+
+  /** その ⚠️ が「確認した」になっているか。
+   *  🚨 案を見ているときは案のマス、決定済みの表を見ているときはそのマスに付く（別々に数える） */
+  const ackOwner = useCallback((placeId: string, d: RosterDayKind): { cellId: string } | { planCellId: string } | null => {
+    if (!data) return null;
+    if (plan) {
+      const pc = planCells.find(c => c.place_id === placeId && c.day_kind === d);
+      return pc ? { planCellId: pc.id } : null;
+    }
+    const v = cellVersionOn(data.cells, placeId, d, applyFrom);
+    return v ? { cellId: v.id } : null;
+  }, [data, plan, planCells, applyFrom]);
+
+  const isAcked = useCallback((placeId: string, d: RosterDayKind, key: string): boolean => {
+    const o = ackOwner(placeId, d);
+    if (!o || !data) return false;
+    return data.acks.some(a => a.issue_key === key
+      && ('cellId' in o ? a.cell_id === o.cellId : a.plan_cell_id === o.planCellId));
+  }, [ackOwner, data]);
+
+  /** ⚠️ の数（確認済みを除いたもの／確認済みの数）。見出しの「⚠️ 5件（確認済み 3）」に使う */
+  const issueCount = useMemo(() => {
+    let open = 0, acked = 0;
+    for (const d of KIDS_WEEK) for (const p of activeColumns.concat(data?.places.filter(x => x.kind === 'head' && x.active) ?? [])) {
+      for (const i of issuesOf(p.id, d)) {
+        if (isAcked(p.id, d, i.key)) acked++; else open++;
+      }
+    }
+    return { open, acked };
+  }, [activeColumns, data, issuesOf, isAcked]);
+
+  const ackIssue = async (placeId: string, d: RosterDayKind, key: string) => {
+    const o = ackOwner(placeId, d);
+    // 🚨 まだ保存していないマスには付けられない（付ける先が無い）。黙って何もしないのではなく断る
+    if (!o) { setSaveErr('先にこのマスを保存してください（保存したものに「確認した」を付けます）'); return; }
+    setSaveErr('');
+    const e = await ackKidsIssue(o, key);
+    if (e) { setSaveErr(e); return; }
+    await load(true);
+  };
 
   const overlaps = useMemo(() => {
     const out: { day: RosterDayKind; userId: string; a: string; b: string; start: string; end: string }[] = [];
@@ -659,6 +716,8 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
                 const lines = cellLinesOf(c.id, day);
                 const isRed = !cellEquals(shownCell(c.id, day), baseCell(c.id, day));
                 const dirty = changedKeys.includes(k);
+                // 🚨 確認済みは数えない（押すと薄くなり数から外れる・設計書 5-9）
+                const warn = issuesOf(c.id, day).filter(i => !isAcked(c.id, day, i.key)).length;
                 return (
                   <td key={c.id} onClick={() => setOpenKey(o => (o === k ? null : k))}
                     style={{
@@ -666,7 +725,9 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
                       fontSize: 12, color: isRed ? red : text, fontWeight: isRed ? 'bold' : 'normal',
                       outline: dirty ? '2px solid #e65100' : openKey === k ? '2px solid #1976d2' : 'none', outlineOffset: -2,
                     }}>
-                    {lines.length === 0 ? <span style={{ color: subText }}>—</span> : lines.map((l, i) => <div key={i}>{l}</div>)}
+                    {lines.length === 0
+                      ? <span style={{ color: subText }}>—</span>
+                      : lines.map((l, i) => <div key={i}>{i === 0 && warn > 0 ? '⚠️' : ''}{l}</div>)}
                   </td>
                 );
               })}
@@ -723,6 +784,40 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
           ))}
           {overlaps.length > 12 && <div style={{ fontSize: 12, color: subText, marginTop: 3 }}>ほか {overlaps.length - 12} 件</div>}
         </div>
+      </div>
+
+      {/* ⚠️（出勤していない）。🚨 保存は止めない。印を出すだけ（設計書 5-9） */}
+      <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, border: `1px solid ${borderColor}`, background: cardBg }}>
+        <b style={{ fontSize: 13, color: text }}>
+          ⚠️ {issueCount.open} 件{issueCount.acked > 0 ? `（確認済み ${issueCount.acked}）` : ''}
+        </b>
+        <div style={{ fontSize: 12, color: subText, marginTop: 2 }}>
+          週のシフトでは、その時間に出勤していない方です。保存はできます。
+          {/* 🚨 園指導と見出しの役割だけ見方が違うので、その場に書いておく */}
+          <br />※ 園指導と見出しの役割は<strong>その曜日が休みかどうかだけ</strong>を見ます（時刻・校は見ません）
+        </div>
+        {(() => {
+          const all = KIDS_WEEK.flatMap(d =>
+            (activeColumns.concat((data?.places ?? []).filter(x => x.kind === 'head' && x.active)))
+              .flatMap(p => issuesOf(p.id, d).map(i => ({ d, p, i, acked: isAcked(p.id, d, i.key) }))));
+          const open = all.filter(x => !x.acked);
+          if (all.length === 0) return <div style={{ fontSize: 12.5, color: subText, marginTop: 4 }}>ありません</div>;
+          return (
+            <>
+              {open.slice(0, 12).map((x, n) => (
+                <div key={n} style={{ fontSize: 12.5, color: text, marginTop: 4, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button type="button" style={linkBtn} onClick={() => { setDay(x.d); setOpenKey(cellKey(x.p.id, x.d)); }}>
+                    {ROSTER_DAY_LABEL[x.d]} {x.p.label}
+                  </button>
+                  <span>{x.i.text}</span>
+                  <button type="button" style={{ ...linkBtn, color: subText }} onClick={() => void ackIssue(x.p.id, x.d, x.i.key)}>確認した</button>
+                </div>
+              ))}
+              {open.length > 12 && <div style={{ fontSize: 12, color: subText, marginTop: 3 }}>ほか {open.length - 12} 件</div>}
+              {open.length === 0 && <div style={{ fontSize: 12.5, color: subText, marginTop: 4 }}>すべて確認済みです</div>}
+            </>
+          );
+        })()}
       </div>
 
       {/* 保存 */}
