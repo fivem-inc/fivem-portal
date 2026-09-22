@@ -49,6 +49,12 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   const [data, setData] = useState<KidsData | null>(null);
   const [roster, setRoster] = useState<RosterData | null>(null);
   const [planCells, setPlanCells] = useState<KidsPlanCell[]>([]);
+  // ── 案を比べる（2026-09-22・2回目の c）──────────────────────────
+  // 🚨 いま見ているものと、選んだもう1つを比べて**違うマスに印**を付けるだけ（設計書 5-9）。
+  //    書き換えはしない。どちらを採るかは［この案で決定する］のときに選ぶ（既存の仕組み）
+  const [compareWith, setCompareWith] = useState<string | null>(null);  // 'decided' か 案のID
+  const [compareCells, setCompareCells] = useState<KidsPlanCell[]>([]);
+  const [compareErr, setCompareErr] = useState('');
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState('');
@@ -134,6 +140,33 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
     const date = plan ? plan.apply_from : prevDate(applyFrom);
     return cellVersionOn(data.cells, placeId, d, date)?.items ?? [];
   }, [data, plan, applyFrom]);
+
+  // 比べる相手の案のマスを読む。🚨 読めなかったときは黙って「同じ」にせず、理由を出す
+  useEffect(() => {
+    if (!compareWith || compareWith === 'decided') { setCompareCells([]); setCompareErr(''); return; }
+    let alive = true;
+    void loadPlanCells(compareWith).then(r => {
+      if (!alive) return;
+      setCompareErr(r.error ? `比べる案を読み込めませんでした：${r.error}` : '');
+      setCompareCells(r.error ? [] : r.cells);
+    });
+    return () => { alive = false; };
+  }, [compareWith]);
+
+  /** 比べる相手のマスの中身。🚨 案は「変えたマスだけ」を持つので、
+   *  触っていないマスは決定済みの表から借りる（画面と同じ mergeCell を使う） */
+  const compareCell = useCallback((placeId: string, d: string): KidsCellValue => {
+    if (!data || !compareWith) return [];
+    if (compareWith === 'decided') return cellVersionOn(data.cells, placeId, d, applyFrom)?.items ?? [];
+    const p = data.plans.find(x => x.id === compareWith);
+    return mergeCell(data.cells, compareCells, placeId, d, p?.apply_from ?? applyFrom);
+  }, [data, compareWith, compareCells, applyFrom]);
+
+  const isDiff = useCallback((placeId: string, d: string): boolean => {
+    if (!compareWith || compareErr) return false;
+    return !cellEquals(shownCell(placeId, d), compareCell(placeId, d));
+  }, [compareWith, compareErr, shownCell, compareCell]);
+
 
   const changedKeys = useMemo(
     () => Object.keys(viewDrafts).filter(k => {
@@ -240,6 +273,12 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
     await load(true);
   };
 
+  const diffCount = useMemo(() => {
+    if (!compareWith) return 0;
+    let n = 0;
+    for (const d of KIDS_WEEK) for (const p of activeColumns) if (isDiff(p.id, d)) n++;
+    return n;
+  }, [compareWith, activeColumns, isDiff]);
   const overlaps = useMemo(() => {
     const out: { day: RosterDayKind; userId: string; a: string; b: string; start: string; end: string }[] = [];
     for (const d of KIDS_WEEK) {
@@ -611,6 +650,23 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
         )}
       </div>
 
+      {/* 比べる（2026-09-22）。🚨 印を付けるだけ。書き換えはしない */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+        <span style={{ fontSize: 13, color: text }}>比べる</span>
+        <select style={inputStyle} value={compareWith ?? ''} onChange={e => setCompareWith(e.target.value || null)}>
+          <option value="">比べない</option>
+          {view !== 'decided' && <option value="decided">決定済みの表</option>}
+          {openPlans.filter(p => p.id !== view).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        {compareWith && !compareErr && (
+          <span style={{ fontSize: 12.5, color: subText }}>
+            違うマス <b style={{ color: text }}>{diffCount}</b> 件（<b style={{ color: text }}>≠</b> の付いたマス）。
+            🚨 印を付けるだけで、書き換えはしません
+          </span>
+        )}
+        {compareErr && <span style={{ fontSize: 12.5, color: red }}>{compareErr}</span>}
+      </div>
+
       {showArchived && (
         <div style={{ padding: '8px 12px', borderRadius: 8, background: innerBg, border: `1px solid ${borderColor}`, marginBottom: 8, fontSize: 12.5, color: text }}>
           {archivedPlans.map(p => (
@@ -718,6 +774,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
                 const dirty = changedKeys.includes(k);
                 // 🚨 確認済みは数えない（押すと薄くなり数から外れる・設計書 5-9）
                 const warn = issuesOf(c.id, day).filter(i => !isAcked(c.id, day, i.key)).length;
+                const diff = isDiff(c.id, day);   // 比べているときだけ true
                 return (
                   <td key={c.id} onClick={() => setOpenKey(o => (o === k ? null : k))}
                     style={{
@@ -726,8 +783,8 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
                       outline: dirty ? '2px solid #e65100' : openKey === k ? '2px solid #1976d2' : 'none', outlineOffset: -2,
                     }}>
                     {lines.length === 0
-                      ? <span style={{ color: subText }}>—</span>
-                      : lines.map((l, i) => <div key={i}>{i === 0 && warn > 0 ? '⚠️' : ''}{l}</div>)}
+                      ? <span style={{ color: subText }}>{diff ? '≠ ' : ''}—</span>
+                      : lines.map((l, i) => <div key={i}>{i === 0 ? `${diff ? '≠' : ''}${warn > 0 ? '⚠️' : ''}` : ''}{l}</div>)}
                   </td>
                 );
               })}
