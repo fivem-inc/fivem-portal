@@ -23,6 +23,8 @@ import CleaningRosterPanel from './CleaningRosterPanel';
 import KidsShiftPanel from './KidsShiftPanel';
 import { cellIssues, cellValue, cellVersionOn, rosterCleaningLines, rowPlaceLabel } from '../../lib/cleaningRoster';
 import { loadCleaningData, type CleaningData } from '../../lib/cleaningRosterApi';
+import { loadKidsData, type KidsData } from '../../lib/kidsShiftApi';
+import { cellVersionOn as kidsVersionOn, kidsCellIssues } from '../../lib/kidsShift';
 
 // シフト管理（2026-09-15）。設計・決めたことは docs/計画-管理画面の開放.md の 5-1〜5-3。
 // ・表は月〜日。名前を押すと、その人の月〜日（祝・出・過去の履歴）が表の中に開く（C）
@@ -89,19 +91,28 @@ const ShiftManagementTab: React.FC = () => {
     setView(v);
   };
   const [cleaning, setCleaning] = useState<CleaningData | null>(null);
+  // ⑤ こどもシフト表。🚨 勤務表の保存の確認に「◯件が時間外になります」を出すために読む（2026-09-22）
+  const [kids, setKids] = useState<KidsData | null>(null);
   const [cleaningErr, setCleaningErr] = useState('');
+  const [kidsErr, setKidsErr] = useState('');
   const [study, setStudy] = useState<StudyData | null>(null);
   const [studyErr, setStudyErr] = useState('');
   const [pdfStudyWarn, setPdfStudyWarn] = useState(false);
 
   // 勉強会（③）：勤務表の欄・保存の確認・PDF に使う。🚨 読めなくても勤務表は使えるようにする（理由だけ出す）
   const loadStudy = useCallback(async () => {
-    const [{ data: s, error }, c] = await Promise.all([loadStudyData(prevDate(applyFrom)), loadCleaningData(prevDate(applyFrom))]);
+    const [{ data: s, error }, c, kd] = await Promise.all([
+      loadStudyData(prevDate(applyFrom)), loadCleaningData(prevDate(applyFrom)), loadKidsData(prevDate(applyFrom)),
+    ]);
     setStudyErr(error ? `勉強会を読み込めませんでした（勤務表の欄に勉強会が出ていません）：${error}` : '');
     if (s) setStudy(s);
     // ④ 掃除担当表：勤務表の欄・保存の確認・PDF A の掃除の列に使う。🚨 読めなくても勤務表は使える
     setCleaningErr(c.error ? `掃除担当表を読み込めませんでした（勤務表の欄に掃除が出ていません）：${c.error}` : '');
     if (c.data) setCleaning(c.data);
+    // ⑤ こどもシフト表：保存の確認の「◯件が時間外になります」に使う。
+    // 🚨 読めなくても勤務表は使える。ただし黙って0件にせず、確かめられない旨を出す
+    setKidsErr(kd.error ? `こどもシフト表を読み込めませんでした（保存の確認に出ません）：${kd.error}` : '');
+    if (kd.data) setKids(kd.data);
   }, [applyFrom]);
 
   // 読み込み：適用開始日の前日（赤字の比べ先）に効いている行と、それより先の行
@@ -250,6 +261,30 @@ const ShiftManagementTab: React.FC = () => {
       return cellIssues(r, mine, () => drafts[id].days[k]!, names)
         .filter(i => !before.has(i.key))
         .map(i => `${name}さん（${ROSTER_DAY_LABEL[k]}）：${i.start.replace(/^0/, '')} ${rowPlaceLabel(r)}`);
+    });
+  })) : [];
+
+  // ⑤ こどもシフト表：この保存で新しく時間外になるもの（2026-09-22）。
+  // 🚨 掃除・勉強会と同じ形。**直す前は問題なく、直すと ⚠️ になるものだけ**を出す
+  //    （もともと ⚠️ のものまで出すと、毎回同じ警告が並んで読まれなくなる）。
+  // 🚨 判定は lib/kidsShift.ts の kidsCellIssues 1本（こどもシフト表の画面と同じもの）
+  const kidsWarnings = kids ? draftIds.flatMap(id => draftChangedDays(id).flatMap(k => {
+    if (!ROSTER_WEEK.includes(k)) return [];
+    const name = data?.staff.find(s => s.id === id)?.name ?? '';
+    const names = new Map([[id, name]]);
+    const modeOf = (rk: string) => kids.rowKinds.find(r => r.key === rk)?.issue_mode ?? 'full';
+    return kids.places.filter(p => p.active && p.kind !== 'daynote').flatMap(p => {
+      const items = kidsVersionOn(kids.cells, p.id, k, applyFrom)?.items ?? [];
+      // その人が入っている行だけに絞る（ほかの人の ⚠️ はこの保存と関係ない）
+      const mine = items.map(it => ({ ...it, people: it.people.filter(pe => pe.user_id === id) }))
+        .filter(it => it.people.length > 0);
+      if (mine.length === 0) return [];
+      const before = new Set(
+        kidsCellIssues(p.id, k, mine, () => savedDay(id, k, applyFrom), modeOf, names, new Set(), p.school)
+          .map(i => i.key));
+      return kidsCellIssues(p.id, k, mine, () => drafts[id].days[k]!, modeOf, names, new Set(), p.school)
+        .filter(i => !before.has(i.key))
+        .map(() => `${name}さん（${ROSTER_DAY_LABEL[k]}）：${p.label}`);
     });
   })) : [];
 
@@ -609,6 +644,18 @@ const ShiftManagementTab: React.FC = () => {
             <div style={{ padding: '6px 10px', borderRadius: 8, background: '#fff3cd', color: '#856404', margin: '6px 0' }}>
               ⚠️ 掃除{cleaningWarnings.length}件が時間外になります（保存はできます。掃除担当表のタブで直せます）
               {cleaningWarnings.map(t => <div key={t}>・{t}</div>)}
+            </div>
+          )}
+          {kidsWarnings.length > 0 && (
+            <div style={{ padding: '6px 10px', borderRadius: 8, background: '#fff3cd', color: '#856404', margin: '6px 0' }}>
+              ⚠️ こどもシフト表{kidsWarnings.length}件が時間外になります（保存はできます。こどもシフト表のタブで直せます）
+              {kidsWarnings.map(t => <div key={t}>・{t}</div>)}
+            </div>
+          )}
+          {/* 🚨 読めなかったときは黙って0件にしない（「問題なし」と誤解させない） */}
+          {kidsErr && (
+            <div style={{ padding: '6px 10px', borderRadius: 8, background: '#fff3cd', color: '#856404', margin: '6px 0' }}>
+              ⚠️ こどもシフト表が時間外になるかは確かめられませんでした（{kidsErr}）
             </div>
           )}
           {errors.length > 0 && (
