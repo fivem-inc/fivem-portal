@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { downloadCSV } from '../../utils';
 import {
@@ -112,6 +112,16 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
   const [ipText, setIpText] = useState('');
   const [ipMsg, setIpMsg] = useState('');
   const [ipFail, setIpFail] = useState(false);
+  // 🚨 会社のIPを読み込めなかったとき（2026-09-22）。
+  //    以前は error を受け取っておらず、読めないと入力欄が**空**になっていた。
+  //    そのまま［保存］を押すと {"ips": []} で上書きされ、「保存しました（0件）」と緑で出る。
+  //    社内/社外は集計のたびに判定し直すので、過去2年ぶんが全部「社外」に変わる。
+  //    しかも app_settings は履歴を持たないので、消えた値はどこにも残らない。
+  const [ipLoadErr, setIpLoadErr] = useState('');
+  // 空にして保存する前のその場の確認
+  const [ipClearConfirm, setIpClearConfirm] = useState(false);
+  // 打ちかけを読み直しで消さないための印（期間ボタンを押すたびに load が走るため）
+  const ipDirty = useRef(false);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
   const [marking, setMarking] = useState<string | null>(null);
@@ -194,11 +204,19 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
         setStaffWords([...sm.entries()].map(([word, v]) => ({ word, ...v })).sort((a, b) => b.n - a.n));
       }
 
-      // 会社のIP（社内と見なす範囲）。読めなくても集計は出す（設定欄が空になるだけ）
-      const { data: ipRow } = await supabase
+      // 会社のIP（社内と見なす範囲）。読めなくても集計は出す。
+      // 🚨 ただし**入力欄は空にしない**。空のまま保存すると登録済みのIPが消え、
+      //    過去2年ぶんの「社内/社外」が全部「社外」に変わる（履歴が無いので元に戻せない）
+      const { data: ipRow, error: ipErr } = await supabase
         .from('app_settings').select('value').eq('key', 'faq_internal_ips').maybeSingle();
-      const ips = (ipRow?.value as { ips?: string[] } | null)?.ips;
-      setIpText(Array.isArray(ips) ? ips.join(', ') : '');
+      if (ipErr) {
+        setIpLoadErr(`会社のIPを読み込めませんでした：${ipErr.message}`);
+      } else {
+        setIpLoadErr('');
+        const ips = (ipRow?.value as { ips?: string[] } | null)?.ips;
+        // 🚨 打ちかけがあるときは上書きしない（期間ボタンを押すたびに load が走るため）
+        if (!ipDirty.current) setIpText(Array.isArray(ips) ? ips.join(', ') : '');
+      }
     } catch (e) {
       setErr(`集計を読み込めませんでした：${e instanceof Error ? e.message : String(e)}`);
       setRows(null);
@@ -212,9 +230,12 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
 
   /** 会社のIPを保存する。
    *  🚨 upsert は0件でもエラーにならないので .select('key') で件数を見る（直したつもりで直っていないを防ぐ） */
-  const saveIps = async () => {
+  const saveIps = async (confirmedEmpty = false) => {
     setIpMsg(''); setIpFail(false);
     const list = ipText.split(',').map(s => s.trim()).filter(Boolean);
+    // 🚨 空で保存＝登録済みのIPを消すこと。過去2年ぶんが全部「社外」に変わるので、必ず一度確かめる
+    if (list.length === 0 && !confirmedEmpty) { setIpClearConfirm(true); return; }
+    setIpClearConfirm(false);
     const { data, error } = await supabase
       .from('app_settings')
       .upsert({ key: 'faq_internal_ips', value: { ips: list } }, { onConflict: 'key' })
@@ -224,6 +245,7 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
       setIpFail(true); setIpMsg('保存できませんでした（0件）。管理者のアカウントでお試しください'); return;
     }
     setIpMsg(`保存しました（${list.length}件）`);
+    ipDirty.current = false;   // 保存できたので、読み直しで上書きしてよい
     reload();   // 「社内/社外」は集計のたびに判定し直すので、過去の記録にも効く
   };
 
@@ -629,18 +651,39 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
                   <div style={{ fontSize: 12.5, color: text, marginBottom: 6 }}>
                     会社のIP（ここから来たアクセスを「社内」と数えます）
                   </div>
+                  {/* 🚨 読み込めなかったときは、入力も保存もさせない。
+                      空欄のまま保存されると、登録済みのIPが消えて元に戻せないため */}
+                  {ipLoadErr ? (
+                    <div style={{ padding: '8px 12px', borderRadius: 8, fontSize: 12.5, background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029' }}>
+                      {ipLoadErr}<br />
+                      いまは変更できません（空のまま保存すると、登録済みのIPが消えてしまうため）。画面を開き直してください。
+                    </div>
+                  ) : (
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                     <input
                       value={ipText}
-                      onChange={e => { setIpText(e.target.value); setIpMsg(''); }}
+                      onChange={e => { ipDirty.current = true; setIpText(e.target.value); setIpMsg(''); setIpClearConfirm(false); }}
                       placeholder="例：203.0.113.45, 192.168.0.0/24"
                       style={{ flex: '1 1 260px', minWidth: 200, padding: '7px 10px', fontSize: 13, borderRadius: 6, border: `1px solid ${border}`, background: bg, color: text }}
                     />
-                    <button type="button" onClick={saveIps}
+                    <button type="button" onClick={() => saveIps()}
                       style={{ padding: '7px 14px', borderRadius: 6, fontSize: 13, cursor: 'pointer', border: `1px solid ${border}`, background: bg, color: text }}>
                       保存
                     </button>
                   </div>
+                  )}
+                  {/* 空にして保存する前のその場の確認 */}
+                  {ipClearConfirm && (
+                    <div style={{ marginTop: 8, padding: '8px 12px', borderRadius: 8, fontSize: 12.5, lineHeight: 1.7, background: '#fff3cd', border: '1px solid #f59e0b', color: '#856404' }}>
+                      ⚠️ 会社のIPを<strong>0件</strong>にします。これまでの記録も<strong>すべて「社外」</strong>として数え直され、元のIPは残りません。よろしいですか？
+                      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                        <button type="button" onClick={() => setIpClearConfirm(false)}
+                          style={{ padding: '5px 14px', borderRadius: 6, fontSize: 12, cursor: 'pointer', border: `1px solid ${border}`, background: bg, color: text }}>やめる</button>
+                        <button type="button" onClick={() => saveIps(true)}
+                          style={{ padding: '5px 14px', borderRadius: 6, fontSize: 12, cursor: 'pointer', border: '1px solid #dc3545', background: bg, color: '#dc3545' }}>0件にする</button>
+                      </div>
+                    </div>
+                  )}
                   <div style={{ fontSize: 12, color: sub, marginTop: 6, lineHeight: 1.7 }}>
                     カンマで区切って複数書けます。範囲（192.168.0.0/24 のような書き方）も使えます。<br />
                     🚨 分からないときは空のままで構いません（全部「社外」として数えます）
