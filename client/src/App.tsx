@@ -780,7 +780,7 @@ const useOvertimeUnreportedCount = (userId: string | undefined, canOvertime: boo
 const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; profileName: string | null; canLeave?: boolean; canApprove?: boolean; canShiftReport?: boolean; canCalendar?: boolean; canPurchaseRequest?: boolean; canOvertime?: boolean; canExpense?: boolean; canTripReport?: boolean; canBoard?: boolean; canRoomBooking?: boolean; canFaq?: boolean; canFaqNav?: boolean; roleTitle?: string; userId?: string }> = ({ isAdmin, onLogout, email, profileName, canLeave, canApprove: _canApprove, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, roleTitle, userId }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { previewRole, setPreviewRole, user: ctxUser, retiree, previewRetiree } = useContext(AuthContext);
+  const { previewRole, setPreviewRole, user: ctxUser, retiree, previewRetiree, setPreviewRetiree } = useContext(AuthContext);
   // 退職して申請期間中か。🚨 ここでは「読み込みを止める」ためだけに使う（機能の出し分けは can* に任せる）
   const isRetiree = !!retiree || previewRetiree;
   const realIsAdmin = ctxUser?.app_metadata?.role === 'admin' && !isRetiree;
@@ -1073,7 +1073,13 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
           {realIsAdmin && (
             <select
               value={previewRole || ''}
-              onChange={e => setPreviewRole(e.target.value || null)}
+              onChange={e => {
+                // 🚨 「退職者」は役職ではないので、役職プレビューとは別のスイッチに渡す。
+                //    どちらか一方しか点かないようにする（両方点くと、どちらの見え方か分からなくなる）
+                if (e.target.value === '__retiree__') { setPreviewRole(null); setPreviewRetiree(true); return; }
+                setPreviewRetiree(false);
+                setPreviewRole(e.target.value || null);
+              }}
               title="役職プレビュー"
               style={{
                 fontSize: 11, padding: '3px 4px', borderRadius: 6,
@@ -1086,6 +1092,10 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
               <option value="">👁️ 確認</option>
               {/* 🚨 役職名を直書きしない（2026-09-09）。roles から出すので、新設した役職もそのまま並ぶ（管理者＝固定行は除く） */}
               {previewRoleOptions(featurePublishState.roles).map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+              {/* 退職して申請期間中の方の見え方（2026-09-22）。
+                  🚨 見た目だけの下見。データベース側の権限（退職者は別の役割になる）は真似できないので、
+                     本当の確認は実際のアカウントで1往復する必要がある（設計書 §9-5） */}
+              <option value="__retiree__">退職者</option>
             </select>
           )}
           {userId && <BellIcon userId={userId} />}
@@ -1093,13 +1103,16 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
         </div>
       </div>
       {/* プレビューバナー行（NavBar内に統合） */}
-      {previewRole && (
+      {/* 🚨 退職者のプレビュー中は realIsAdmin が false になり、上の選び直す欄が消える。
+          終わる手段はこのバナーの［× 終了］だけなので、必ず退職者のときも出すこと */}
+      {(previewRole || previewRetiree) && (
         <div style={{
           background: '#ffc107', color: '#333', fontSize: 12, fontWeight: 'bold',
           padding: '5px 16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
         }}>
-          👁️ プレビュー中：{previewRole} として表示
-          <button onClick={() => setPreviewRole(null)}
+          👁️ プレビュー中：{previewRetiree ? '退職者（申請期間中）' : previewRole} として表示
+          {previewRetiree && <span style={{ fontWeight: 'normal' }}>※ 見た目だけの下見です</span>}
+          <button onClick={() => { setPreviewRole(null); setPreviewRetiree(false); }}
             style={{ fontSize: 11, padding: '2px 10px', borderRadius: 4, border: 'none', background: '#333', color: '#fff', cursor: 'pointer' }}>
             × 終了
           </button>
@@ -1111,17 +1124,20 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
 
 // プレビュー時にページコンテンツを下にずらす（NavBarのバナー行分）
 const PreviewBodyOffset: React.FC = () => {
-  const { previewRole } = useContext(AuthContext);
+  // 🚨 退職者のプレビューでもバナーが1行増えるので、同じだけ下にずらす
+  //    （入れ忘れるとバナーが中身に重なる）
+  const { previewRole, previewRetiree } = useContext(AuthContext);
+  const showing = !!previewRole || previewRetiree;
   useEffect(() => {
-    const offset = previewRole ? '32px' : '0px';
-    const topbarHeight = previewRole ? '92px' : '60px';
+    const offset = showing ? '32px' : '0px';
+    const topbarHeight = showing ? '92px' : '60px';
     document.body.style.paddingTop = offset;
     document.documentElement.style.setProperty('--topbar-height', topbarHeight);
     return () => {
       document.body.style.paddingTop = '0px';
       document.documentElement.style.setProperty('--topbar-height', '60px');
     };
-  }, [previewRole]);
+  }, [showing]);
   return null;
 };
 
