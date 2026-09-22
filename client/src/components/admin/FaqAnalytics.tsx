@@ -323,20 +323,29 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
     const next = year + diff; setYear(next); reload({ year: next });
   };
 
-  /** 質問ごとにまとめる（閲覧・問い合わせ・はい） */
+  /** 質問ごとにまとめる（閲覧・問い合わせ・はい）。
+   *  🚨 比べているときは、**当期と前期の質問の和集合**から作る（2026-09-22）。
+   *     当期だけから作ると、前月50件あった質問を直して今月0件になったとき
+   *     **その行が丸ごと消える**＝「直した効果があった」といういちばん見たい情報が見えない。
+   *     逆に「今月急に増えた」だけが見えるので、悪い方向にだけ偏った表になっていた */
   const byTopic = (() => {
     if (!rows) return [];
     const m = new Map<string, { id: string; q: string; views: number; contacts: number; solved: number }>();
-    for (const r of rows) {
-      if (!r.topic_id) continue;
+    const put = (r: SummaryRow, countIt: boolean) => {
+      if (!r.topic_id) return;
       const cur = m.get(r.topic_id) ?? { id: r.topic_id, q: r.topic_question ?? '(質問が削除されています)', views: 0, contacts: 0, solved: 0 };
-      if (r.kind === 'topic_view') cur.views += r.n;
-      if (r.kind === 'contact') cur.contacts += r.n;
-      if (r.kind === 'solved') cur.solved += r.n;
+      if (countIt) {
+        if (r.kind === 'topic_view') cur.views += r.n;
+        if (r.kind === 'contact') cur.contacts += r.n;
+        if (r.kind === 'solved') cur.solved += r.n;
+      }
       if (r.topic_question) cur.q = r.topic_question;
       m.set(r.topic_id, cur);
-    }
-    // 既定は「問い合わせに進んだ数の多い順」＝直す優先順
+    };
+    for (const r of rows) put(r, true);
+    // 🚨 前期の行は「質問を登場させる」だけ。数は足さない（当期の数字を汚さない）
+    for (const r of (prevRows ?? [])) put(r, false);
+    // 既定は「問い合わせに進んだ数の多い順」＝直す優先順。当期0件は自然に下へ行く
     return [...m.values()].sort((a, b) => b.contacts - a.contacts || b.views - a.views);
   })();
 
@@ -594,6 +603,20 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
               </tbody>
             </table>
           </div>
+          {/* 🚨 上の「問い合わせに進んだ」と、この表の列の合計が合わない理由を書く（2026-09-22）。
+              検索で見つからなかった等は質問に紐づかないので、この表には1件も出てこない。
+              断りが無いと「表が壊れている」と読まれる */}
+          {(() => {
+            const inTable = byTopic.reduce((s, t) => s + t.contacts, 0);
+            const outside = total('contact') - inTable;
+            if (outside <= 0) return null;
+            return (
+              <div style={{ fontSize: 12, color: sub, marginTop: 4, lineHeight: 1.7 }}>
+                ※ 上の「問い合わせに進んだ <strong>{total('contact')}</strong>」のうち、<strong>{outside}</strong> はこの表に出ていません
+                （検索で見つからなかった等、<strong>質問に紐づかない</strong>もの）。内訳は下の「つまずいた理由」をご覧ください
+              </div>
+            );
+          })()}
 
           {/* つまずいた理由の内訳＝やるべきこと */}
           <div style={{ marginBottom: 16 }}>
