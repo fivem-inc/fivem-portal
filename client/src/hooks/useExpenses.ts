@@ -29,7 +29,9 @@ export const useExpenses = (user: AuthUser | null, isAdmin: boolean): UseExpense
         // 管理者の場合、すべての申請履歴と承認待ち一覧を取得
         const { data: allData, error: allError } = await supabase
           .from('expenses')
-          .select('*, profiles!user_id(name, email)')
+          // 🚨 is_active / retiree_access_until は、退職して申請期間中の方を却下するときの
+          //    注意書き（retireeReturnNote）に要る。読むのは管理者のときだけ
+          .select('*, profiles!user_id(name, email, is_active, retiree_access_until)')
           .order('created_at', { ascending: false });
 
         if (allError) {

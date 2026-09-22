@@ -49,6 +49,10 @@ export interface Profile {
   role_title?: string;
   group_name?: string;
   leave_request_enabled?: boolean;
+  // 🚨 退職して申請期間中の方を却下するときの注意書き（lib/retire.ts の retireeReturnNote）に使う。
+  //    読んでいるのは管理者のときだけ（useExpenses）。それ以外の画面では入らないので任意
+  is_active?: boolean | null;
+  retiree_access_until?: string | null;
 }
 
 export interface Submission {

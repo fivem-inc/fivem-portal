@@ -1,6 +1,8 @@
 import React from 'react';
 import { formatAmount } from '../../utils';
 import { useAdminPanel } from './AdminPanelContext';
+import { retireeReturnNote } from '../../lib/retire';
+import { todayJstStr } from '../../lib/breakCalc';
 
 const toJST = (utcStr: string | null | undefined): string => {
   if (!utcStr) return '';
@@ -396,8 +398,26 @@ const ApprovalsTab: React.FC = () => {
                           </li>
                         ))}
                       </ul>
-                      <button 
-                        onClick={() => handleApproval(p.id, 'approved')} 
+                      {/* 退職して申請期間中の方を却下するときの注意（2026-09-22）。
+                          🚨 判定は lib/retire.ts の retireeReturnNote 1本（残業・勤務変更報告と同じものを呼ぶ）。
+                          🚨 止めない。警告だけ（却下する道は残す）。
+                          🚨 押す指のすぐ上に置く（ボタンから離すと読まれない） */}
+                      {(() => {
+                        const note = retireeReturnNote(
+                          { name: p.profiles?.name, is_active: p.profiles?.is_active, retiree_access_until: p.profiles?.retiree_access_until },
+                          todayJstStr());
+                        if (note.kind === 'none') return null;
+                        return (
+                          <div style={{ margin: '0 0 10px 0', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, lineHeight: 1.7,
+                            background: note.kind === 'over' ? '#f8d7da' : '#fff3cd',
+                            border: `1px solid ${note.kind === 'over' ? '#f5c2c7' : '#f59e0b'}`,
+                            color: note.kind === 'over' ? '#842029' : '#856404' }}>
+                            ⚠️ {note.text}
+                          </div>
+                        );
+                      })()}
+                      <button
+                        onClick={() => handleApproval(p.id, 'approved')}
                         style={{ 
                           marginRight: 10, 
                           padding: '8px 16px',
