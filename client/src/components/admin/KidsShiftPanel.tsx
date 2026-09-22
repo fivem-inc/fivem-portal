@@ -6,7 +6,7 @@ import { fullName, shortNameMap } from '../../lib/staffName';
 import { openRosterPrint } from '../../lib/shiftRosterPrint';
 import {
   KIDS_WEEK, cellEquals, cellVersionOn, defaultsForGroups, emptyItem, itemText, itemTextWithBlanks,
-  kidsCellIssues, makeCanLesson, mergeCell, offStaffOfDay, overlapsOfDay, shortfallOf,
+  kidsCellIssues, kidsGridSheet, kidsListSheet, makeCanLesson, mergeCell, offStaffOfDay, overlapsOfDay, shortfallOf,
   type KidsCellValue, type KidsIssue, type KidsItem, type KidsPerson, type KidsPlace, type KidsPlan, type KidsPlanCell,
 } from '../../lib/kidsShift';
 import {
@@ -420,7 +420,8 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   };
 
   // ─── PDF ───
-  const printPdf = () => {
+  /** PDF。onlySchool を渡すとその校だけ出す（校ごとの PDF・2026-09-22） */
+  const printPdf = (onlySchool?: string) => {
     if (!data) return;
     const changed = new Set<string>();
     for (const d of KIDS_WEEK) for (const p of activeColumns) {
@@ -433,11 +434,11 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
       dayNotes[d] = dayNotePlace ? shownCell(dayNotePlace.id, d).map(it => it.note).filter(Boolean) : [];
     }
     const html = buildKidsPrintHtml({
-      title: `${md(baseDate)}〜 こどもシフト表${plan ? ` ${plan.name}` : ''}`,
+      title: `${md(baseDate)}〜 こどもシフト表${plan ? ` ${plan.name}` : ''}${onlySchool ? `（${onlySchool}）` : ''}`,
       asOf: today,
       notes: (data.notes ?? []).filter(n => n.active).map(n => n.body),
-      places,
-      columnsOf: d => columnsOfDay(d),
+      places: onlySchool ? places.filter(p => p.school === onlySchool) : places,
+      columnsOf: d => columnsOfDay(d).filter(c => !onlySchool || c.school === onlySchool),
       linesOf: (placeId, d) => shownCell(placeId, d).flatMap(it => {
         const s = shortfallOf(it, data.settings, canLesson, inactive);
         return (pdfBlank ? itemTextWithBlanks(it, nameOf, s, k => data.roleKinds.find(r => r.key === k)?.label ?? k)
@@ -457,9 +458,40 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   if (loadErr && !data) return <p style={{ color: red }}>{loadErr}</p>;
   if (!data || !roster) return null;
 
+  /** 校ごとの PDF に出す校（列がある校だけ・並びは列の順） */
+  const schools = [...new Set(places.filter(p => p.kind === 'column' && p.active).map(p => p.school).filter(Boolean))] as string[];
+
   const roleLabel = (k: string) => data.roleKinds.find(r => r.key === k)?.label ?? k;
   const kindLabel = (k: string) => k === 'role' ? '見出しの役割' : k === 'daynote' ? '曜日の書き添え'
     : data.rowKinds.find(r => r.key === k)?.label ?? k;
+  /** Excel（2026-09-22・ユーザー確定 案ウ＝シートを2つに分ける）。
+   *  🚨 中身の組み立ては lib/kidsShift.ts（画面を開かずに検算できる側）。ここは書き出すだけ。
+   *  🚨 xlsx は重いので、押されたときだけ読み込む（ほかの画面を遅くしない・既存のやり方と同じ） */
+  const exportExcel = async () => {
+    setPanelErr('');
+    try {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.utils.book_new();
+      const grid = XLSX.utils.aoa_to_sheet(kidsGridSheet(
+        KIDS_WEEK, d => ROSTER_DAY_LABEL[d], places, d => columnsOfDay(d),
+        (placeId, d) => cellLinesOf(placeId, d),
+      ));
+      grid['!cols'] = [{ wch: 16 }, ...KIDS_WEEK.map(() => ({ wch: 26 }))];
+      XLSX.utils.book_append_sheet(wb, grid, '表');
+      const list = XLSX.utils.aoa_to_sheet(kidsListSheet(
+        KIDS_WEEK, d => ROSTER_DAY_LABEL[d], d => columnsOfDay(d),
+        (placeId, d) => shownCell(placeId, d), kindLabel, roleLabel, nameOf,
+      ));
+      list['!cols'] = [6, 12, 6, 16, 12, 7, 7, 14, 5, 12, 10, 24].map(wch => ({ wch }));
+      XLSX.utils.book_append_sheet(wb, list, '一覧');
+      const name = `こどもシフト表_${md(baseDate)}${plan ? `_${plan.name}` : ''}`.replace(/[\\/:*?"<>|]/g, '');
+      XLSX.writeFile(wb, `${name}.xlsx`);
+    } catch (e) {
+      // 🚨 黙って何も起きないのがいちばん困る。理由をそのまま出す
+      setPanelErr(`Excelを作れませんでした：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
   const activeStaff = data.staff.filter(s => s.is_active);
   const openPlans = data.plans.filter(p => p.status === 'open');
   const archivedPlans = data.plans.filter(p => p.status === 'archived');
@@ -987,9 +1019,23 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
             <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <input type="checkbox" checked={pdfBlank} onChange={e => setPdfBlank(e.target.checked)} />{'追加必要を「（　）」で刷る'}
             </label>
-            <button type="button" style={primaryBtn} onClick={printPdf}>別の窓に出す</button>
+            <button type="button" style={primaryBtn} onClick={() => printPdf()}>全校を別の窓に出す</button>
           </div>
-          <div style={{ fontSize: 12, color: subText, marginTop: 6 }}>🚨 校ごとの PDF と Excel は次の回に入れます。</div>
+          {/* 校ごとの PDF（2026-09-22）。🚨 その校の列がある曜日だけが出る（中身のある列だけ、の決まりは同じ） */}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+            <span style={{ fontSize: 12.5, color: subText }}>校ごとに出す</span>
+            {schools.map(sc => (
+              <button key={sc} type="button" style={{ ...inputStyle, cursor: 'pointer' }} onClick={() => printPdf(sc)}>{sc}</button>
+            ))}
+            {schools.length === 0 && <span style={{ fontSize: 12.5, color: subText }}>（列がありません）</span>}
+          </div>
+          {/* Excel（2026-09-22・ユーザー確定 案ウ＝シートを2つに分ける） */}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+            <button type="button" style={{ ...inputStyle, cursor: 'pointer' }} onClick={() => void exportExcel()}>Excel で書き出す</button>
+            <span style={{ fontSize: 12, color: subText }}>
+              シートは2つ：「表」（紙と同じ見た目）と「一覧」（1行＝1件。並べ替え・絞り込み・集計に使えます）
+            </span>
+          </div>
         </div>
       )}
 

@@ -432,3 +432,62 @@ export function kidsCellIssues(
   }
   return out;
 }
+
+// ── Excel に出す中身（2026-09-22・2回目の d）────────────────────────
+// ✅ ユーザー確定（2026-09-22・案ウ）：**シートを2つに分ける**
+//   ① 「表」   … 紙と同じ見た目（曜日×校の格子）。印刷して配る・手で書き足す用
+//   ② 「一覧」 … 1行＝1件。🚨 Excel 側で並べ替え・絞り込み・集計ができる
+//                （「誰が何コマ持っているか」を数えられる）
+// 🚨 ここは supabase を読まない。画面を開かずに検算できるようにするため。
+//    XLSX の呼び出し（動的 import）は画面側で行う。
+
+/** 「表」シート。1行目が曜日の見出し、以降は置き場所ごとの行（セルの中は改行区切り） */
+export function kidsGridSheet(
+  days: RosterDayKind[],
+  dayLabel: (d: RosterDayKind) => string,
+  places: KidsPlace[],
+  columnsOf: (d: RosterDayKind) => KidsPlace[],
+  linesOf: (placeId: string, d: RosterDayKind) => string[],
+): string[][] {
+  const rows: string[][] = [['', ...days.map(dayLabel)]];
+  for (const p of places) {
+    // 🚨 どの曜日にも出ない列は行ごと出さない（画面・PDF と同じ「中身のある列だけ」の決まり）
+    if (!days.some(d => columnsOf(d).some(c => c.id === p.id))) continue;
+    rows.push([p.label, ...days.map(d =>
+      (columnsOf(d).some(c => c.id === p.id) ? linesOf(p.id, d) : []).join('\n'))]);
+  }
+  return rows;
+}
+
+/** 「一覧」シート。1行＝1件（人がいる行は人ごとに1行） */
+export function kidsListSheet(
+  days: RosterDayKind[],
+  dayLabel: (d: RosterDayKind) => string,
+  columnsOf: (d: RosterDayKind) => KidsPlace[],
+  cellOf: (placeId: string, d: RosterDayKind) => KidsCellValue,
+  kindLabel: (key: string) => string,
+  roleLabel: (key: string) => string,
+  nameOf: (userId: string) => string,
+): string[][] {
+  const head = ['曜日', '校', '階', '列', '種類', '開始', '終了', 'クラス', '班', '人', '役割', '書き添え'];
+  const rows: string[][] = [head];
+  for (const d of days) {
+    for (const p of columnsOf(d)) {
+      for (const it of cellOf(p.id, d)) {
+        const base = [
+          dayLabel(d), p.school ?? '', p.floor ?? '', p.label,
+          it.is_none ? `${kindLabel(it.kind)}（なし）` : kindLabel(it.kind),
+          it.start, it.end, it.class_name, it.groups === null ? '' : String(it.groups),
+        ];
+        if (it.people.length === 0) { rows.push([...base, '', '', it.note]); continue; }
+        // 🚨 人ごとに1行に開く。そうしないと Excel 側で「誰が何コマ」を数えられない
+        for (const pe of it.people) {
+          rows.push([...base, nameOf(pe.user_id), roleLabel(pe.role),
+            // 人ごとの「19まで」「16:45〜」は書き添えに添えて残す（列を増やさない）
+            [it.note, pe.start || pe.end ? `${pe.start || ''}〜${pe.end || ''}` : ''].filter(Boolean).join(' / ')]);
+        }
+      }
+    }
+  }
+  return rows;
+}
