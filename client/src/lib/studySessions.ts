@@ -110,7 +110,13 @@ export function studyIssues(
   const add = (userId: string | null, kind: StudyIssueKind, since: string, detail: string) => {
     const k = `${kind}|${userId ?? ''}|${detail}`;
     if (out.has(k)) return;
-    out.set(k, { userId, kind, since, text: issueText(kind, userId ? (fullNames.get(userId) ?? '（不明）') : '', detail), key: `${k}|${since}` });
+    // 🚨 key に since（この日から）を混ぜない（2026-09-22 修正）。
+    //    since は「いつから困るか」であって「何が困っているか」ではない。しかも
+    //    since は max(版の開始日, 画面が見ている日) なので、**日が変わるだけで鍵が変わる**。
+    //    その結果、押した「確認した」が翌日には外れて警告がぶり返していた
+    //    （本番に 2026-09-17 の記録が1件あり、実際に外れていた）。
+    //    🚨 掃除当番（cleaningRoster.ts:138）は最初から内容だけで鍵を作っている。そちらに合わせる
+    out.set(k, { userId, kind, since, text: issueText(kind, userId ? (fullNames.get(userId) ?? '（不明）') : '', detail), key: k });
   };
 
   const activeMembers = v.members.filter(id => !inactive.has(id));
