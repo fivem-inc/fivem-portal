@@ -305,3 +305,138 @@ export function canReportOvertime(
   if (r.work_date > todayStr) return false;                  // 未来の予定
   return gateMin == null || nowMin >= gateMin;               // gate が取れない行は詰まらせない
 }
+
+/** 保存する行の組み立てに渡す値（1件フォームの状態をそのまま写したもの） */
+export interface RecordInput {
+  userId: string;
+  date: string;
+  mode: 'advance' | 'posthoc';
+  phase: 'planned' | 'actual';
+  /** 終日（調整休・振休・欠勤）として送るか＝ fullDay && fullDayType */
+  fullDayMode: boolean;
+  fullDayType: OvertimeType | null;
+  isSelfReview: boolean;
+  isPureZero: boolean;
+  isReportPhase: boolean;
+  isResubmit: boolean;
+  hasChanges: boolean;
+  normalShift: NormalShiftSnapshot;
+  breakMin: number;
+  breakManual: boolean;
+  laborMin: number;
+  diffMin: number;
+  fdDiffMin: number;
+  legalOk: boolean;
+  reason: string;
+  changeReason: string;
+  fdLocation: string;
+  effectiveLocation: string;
+  applicationTypes: OvertimeType[];
+  offerCalendarChoice: boolean;
+  showOnCalendar: boolean;
+  /** 実績報告で引き継ぐ元の値（editTarget.show_on_calendar） */
+  editTargetShowOnCalendar: boolean | null | undefined;
+  furikaeOriginDate: string;
+  effectiveFurikaeOriginLocation: string;
+  furikaeOriginStart: string;
+  furikaeOriginEnd: string;
+  furikaeOriginBreak: number;
+  furikaeOriginLabor: number;
+  furikaeHasTime: boolean;
+  reviewerId: string;
+  /** 「内容を修正する（取り消して再申請）」の元の申請（新規以外は null） */
+  modifiedFromId: string | null;
+  clockOnlyMode: boolean;
+  effectiveClockReason: string;
+  clockInAt: string;
+  clockOutAt: string;
+  /** いまの時刻（ISO）。🚨 受理の日時に使う。送る直前の値を渡す */
+  nowIso: string;
+}
+
+/**
+ * overtime_reports に保存する1行（insert / update の中身）を組み立てる。
+ * 🚨 1件フォームの doSubmit にあったものをそのまま移した（2026-09-24）。条件を足すときはここに足す。
+ * toDbTime は呼び出し側から渡す（lib/timeInput は画面側の部品のため）。
+ */
+export function buildOvertimeRecord(v: RecordInput, toDbTime: (t: string) => string | null) {
+  const { fullDayMode, fullDayType, isSelfReview, isPureZero, phase } = v;
+  const furikae = fullDayMode && fullDayType === 'furikae_off';
+  return {
+    work_date: v.date,
+    pay_period_start: calcPayPeriodStartJst(v.date),
+    is_post_hoc: v.mode === 'posthoc',
+    // 終日は実績報告の概念がないため、自己受理=確定・他者宛=申請（受理でconfirmed直行）
+    status: (fullDayMode
+      ? (isSelfReview ? 'confirmed' : 'requested')
+      : (phase === 'actual'
+        ? ((isSelfReview || isPureZero) ? 'confirmed' : 'reported')
+        : (isSelfReview ? 'request_confirmed' : 'requested'))) as 'confirmed' | 'requested' | 'reported' | 'request_confirmed',
+    normal_shift: v.normalShift,
+    break_minutes: fullDayMode ? 0 : v.breakMin,
+    break_manual: fullDayMode ? false : v.breakManual,
+    labor_minutes: fullDayMode ? 0 : v.laborMin,
+    diff_minutes: fullDayMode ? v.fdDiffMin : v.diffMin,
+    legal_warning: fullDayMode ? false : !v.legalOk,
+    reason: v.reason.trim(),
+    // 予定から変わった理由（実績報告で変更ありのときだけ・承認者/履歴で表示）。予定どおり・残業なし・新規はnullで上書き
+    change_reason: (v.isReportPhase && v.hasChanges && !isPureZero) ? v.changeReason.trim() : null,
+    location: fullDayMode ? v.fdLocation : v.effectiveLocation,
+    application_types: v.applicationTypes,
+    // チェック欄を出しているときだけ本人の選択を記録する。
+    // 出していないときは null＝「未指定」で、これまでどおり種別ごとの既定に従う。
+    // 🚨 実績報告は例外。欄は出さないが **事前申請で選んだ値をそのまま引き継ぐ**こと。
+    //    ここで null にすると「載せない」を選んでいた人の設定が既定（載せる）に戻り、
+    //    報告した瞬間にカレンダーへ出てしまう（過去に踏んだ事故と同じ型）。
+    show_on_calendar: v.offerCalendarChoice ? v.showOnCalendar
+      : (v.isReportPhase ? (v.editTargetShowOnCalendar ?? null) : null),
+    // 振替休日のみ振替元（日付・校・出退勤時刻・休憩・労働）を保存（他種別ではnullで上書き＝再提出で種別が変わった場合の掃除）
+    furikae_origin_date: furikae ? v.furikaeOriginDate : null,
+    furikae_origin_location: furikae ? v.effectiveFurikaeOriginLocation : null,
+    furikae_origin_start: (furikae && v.furikaeHasTime) ? toDbTime(v.furikaeOriginStart) : null,
+    furikae_origin_end: (furikae && v.furikaeHasTime) ? toDbTime(v.furikaeOriginEnd) : null,
+    furikae_origin_break_minutes: (furikae && v.furikaeHasTime) ? v.furikaeOriginBreak : null,
+    furikae_origin_labor_minutes: (furikae && v.furikaeHasTime) ? v.furikaeOriginLabor : null,
+    reviewer_id: isSelfReview ? v.userId : v.reviewerId,
+    // 🚨 「内容を修正する（取り消して再申請）」で来たときだけ、元の（取消済み）申請を指す。
+    //    これが無いと受理者からは「ただの新しい申請」に見え、何が変わったのか分からない。
+    //    新規・実績報告・再提出では null にする（下書きが残っていても引きずらない）。
+    modified_from_id: v.modifiedFromId,
+    ...((isSelfReview || isPureZero) ? { confirmed_by: v.userId, confirmed_at: v.nowIso } : {}),
+    // 🚨 自己受理で事前申請を出したときは「事前受理の日時」も入れる（2026-09-20・長岡さんの指摘）。
+    //    上長が受理する経路（Edge Function overtime-approve）はこの日時を入れるのに、
+    //    自己受理はそこを通らないので**空のまま**だった。空だと、あとで実績を報告したときに
+    //    確認の画面が「⚠️ 事前申請の受理をしていません」と出す（状態は受理済みなのに嘘になる）。
+    ...((isSelfReview && !fullDayMode && phase !== 'actual') ? { request_confirmed_at: v.nowIso } : {}),
+    ...(v.isResubmit ? { return_comment: null } : {}),
+    // 打刻ズレはここで丸ごと上書きする（既存の分岐に条件を足すと読めなくなるため）。
+    // 労働時間＝通常シフトどおり／差分0／押した時点で確定／確認者なし。
+    // 打刻時刻は参考値であり、労働時間・差分の計算には一切使わない。
+    ...(v.clockOnlyMode ? {
+      status: 'confirmed' as const,
+      break_minutes: v.normalShift.break_minutes,
+      break_manual: false,
+      labor_minutes: v.normalShift.labor_minutes,
+      diff_minutes: 0,
+      legal_warning: false,
+      reason: `残業ではありません（理由：${v.effectiveClockReason}）`,
+      change_reason: null,
+      location: v.normalShift.location ?? '',
+      application_types: ['clock_only'] as OvertimeType[],
+      reviewer_id: v.userId,
+      confirmed_by: v.userId,
+      confirmed_at: v.nowIso,
+      clock_in_reported: toDbTime(v.clockInAt),
+      clock_out_reported: toDbTime(v.clockOutAt),
+    } : {}),
+  };
+}
+
+/** DBトリガー由来のエラーを分かりやすい日本語に変換（締めロック・振替の二重計上防止） */
+export function friendlyOvertimeDbError(msg: string, code?: string): string {
+  if (msg.includes('OVERTIME_CLOSED')) return 'この対象日の給与期間は締め切りを過ぎています。経理に申請の許可を依頼してください。';
+  if (msg.includes('FURIKAE_DUP_ORIGIN')) return '振替元の日には別の申請があります。振替休日は振替元の勤務時間を含むため、その日を別途「休日出勤」等で申請しないでください。';
+  if (msg.includes('FURIKAE_DUP_WORKDATE')) return 'この日は振替休日の振替元として申請済みです。二重計上になるため、この日は別途申請できません。';
+  if (code === '23505') return '同じ日付の申請がすでにあります（取消済みを除く）';
+  return '保存に失敗しました: ' + msg;
+}

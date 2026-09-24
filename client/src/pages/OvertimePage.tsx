@@ -18,7 +18,8 @@ import {
 } from '../lib/breakCalc';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import { retireeReturnNote } from '../lib/retire';
-import { toWorkSegments, segmentIssuesOf, detectOvertimeTypes, composeApplicationTypes, effectiveLocationOf, validateOvertime, overtimePhase, canReportOvertime } from '../lib/overtimeSubmit';
+import { saveOvertimeReport, syncOvertimeGcal } from '../lib/overtimeSubmitApi';
+import { toWorkSegments, segmentIssuesOf, detectOvertimeTypes, composeApplicationTypes, effectiveLocationOf, validateOvertime, overtimePhase, canReportOvertime, buildOvertimeRecord } from '../lib/overtimeSubmit';
 import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, cutBandsAt, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import OvertimeMemoSection from '../components/OvertimeMemoSection';
 import { computeBalance } from '../lib/overtimeBalance';
@@ -51,7 +52,6 @@ import { notifyOvertimeNewRequest, notifyOvertimeGrantRequest, sendOvertimeSlack
 import type { CorrectionRequestRow } from '../lib/correctionRequest';
 import { toDbTime } from '../lib/timeInput';
 import TimeInput from '../components/TimeInput';
-import { logFail } from '../lib/logFail';
 import { loadMyStudySessions, type MyStudyRow } from '../lib/studySessionsApi';
 import { ROSTER_DAY_LABEL, minText, toMin } from '../lib/shiftRoster';
 
@@ -1231,150 +1231,43 @@ const OvertimeForm: React.FC<{
         }
       }
 
-      const record = {
-        work_date: date,
-        pay_period_start: calcPayPeriodStartJst(date),
-        is_post_hoc: mode === 'posthoc',
-        // 終日は実績報告の概念がないため、自己受理=確定・他者宛=申請（受理でconfirmed直行）
-        status: (fullDayMode
-          ? (isSelfReview ? 'confirmed' : 'requested')
-          : (phase === 'actual'
-            ? ((isSelfReview || isPureZero) ? 'confirmed' : 'reported')
-            : (isSelfReview ? 'request_confirmed' : 'requested'))) as OvertimeStatus,
-        normal_shift: normalShift,
-        break_minutes: fullDayMode ? 0 : breakMin,
-        break_manual: fullDayMode ? false : breakManual,
-        labor_minutes: fullDayMode ? 0 : laborMin,
-        diff_minutes: fullDayMode ? fdDiffMin : diffMin,
-        legal_warning: fullDayMode ? false : !legal.ok,
-        reason: reason.trim(),
-        // 予定から変わった理由（実績報告で変更ありのときだけ・承認者/履歴で表示）。予定どおり・残業なし・新規はnullで上書き
-        change_reason: (isReportPhase && hasChanges && !isPureZero) ? changeReason.trim() : null,
-        location: fullDayMode ? fdLocation : effectiveLocation,
-        application_types: applicationTypes,
-        // チェック欄を出しているときだけ本人の選択を記録する。
-        // 出していないときは null＝「未指定」で、これまでどおり種別ごとの既定に従う。
-        // 🚨 実績報告は例外。欄は出さないが **事前申請で選んだ値をそのまま引き継ぐ**こと。
-        //    ここで null にすると「載せない」を選んでいた人の設定が既定（載せる）に戻り、
-        //    報告した瞬間にカレンダーへ出てしまう（過去に踏んだ事故と同じ型）。
-        show_on_calendar: offerCalendarChoice ? showOnCalendar
-          : (isReportPhase ? (editTarget?.show_on_calendar ?? null) : null),
-        // 振替休日のみ振替元（日付・校・出退勤時刻・休憩・労働）を保存（他種別ではnullで上書き＝再提出で種別が変わった場合の掃除）
-        furikae_origin_date: (fullDayMode && fullDayType === 'furikae_off') ? furikaeOriginDate : null,
-        furikae_origin_location: (fullDayMode && fullDayType === 'furikae_off') ? effectiveFurikaeOriginLocation : null,
-        furikae_origin_start: (fullDayMode && fullDayType === 'furikae_off' && furikaeHasTime) ? toDbTime(furikaeOriginStart) : null,
-        furikae_origin_end: (fullDayMode && fullDayType === 'furikae_off' && furikaeHasTime) ? toDbTime(furikaeOriginEnd) : null,
-        furikae_origin_break_minutes: (fullDayMode && fullDayType === 'furikae_off' && furikaeHasTime) ? furikaeOriginBreak : null,
-        furikae_origin_labor_minutes: (fullDayMode && fullDayType === 'furikae_off' && furikaeHasTime) ? furikaeOriginLabor : null,
-        reviewer_id: isSelfReview ? user.id : reviewerId,
-        // 🚨 「内容を修正する（取り消して再申請）」で来たときだけ、元の（取消済み）申請を指す。
-        //    これが無いと受理者からは「ただの新しい申請」に見え、何が変わったのか分からない。
-        //    新規・実績報告・再提出では null にする（下書きが残っていても引きずらない）。
-        modified_from_id: (!editTarget && draft?.modifiedFromId) ? draft.modifiedFromId : null,
-        ...((isSelfReview || isPureZero) ? { confirmed_by: user.id, confirmed_at: new Date().toISOString() } : {}),
-        // 🚨 自己受理で事前申請を出したときは「事前受理の日時」も入れる（2026-09-20・長岡さんの指摘）。
-        //    上長が受理する経路（Edge Function overtime-approve）はこの日時を入れるのに、
-        //    自己受理はそこを通らないので**空のまま**だった。空だと、あとで実績を報告したときに
-        //    確認の画面が「⚠️ 事前申請の受理をしていません」と出す（状態は受理済みなのに嘘になる）。
-        ...((isSelfReview && !fullDayMode && phase !== 'actual') ? { request_confirmed_at: new Date().toISOString() } : {}),
-        ...(isResubmit ? { return_comment: null } : {}),
-        // 打刻ズレはここで丸ごと上書きする（既存の分岐に条件を足すと読めなくなるため）。
-        // 労働時間＝通常シフトどおり／差分0／押した時点で確定／確認者なし。
-        // 打刻時刻は参考値であり、労働時間・差分の計算には一切使わない。
-        ...(clockOnlyMode ? {
-          status: 'confirmed' as OvertimeStatus,
-          break_minutes: normalShift.break_minutes,
-          break_manual: false,
-          labor_minutes: normalShift.labor_minutes,
-          diff_minutes: 0,
-          legal_warning: false,
-          reason: `残業ではありません（理由：${effectiveClockReason}）`,
-          change_reason: null,
-          location: normalShift.location ?? '',
-          application_types: ['clock_only'],
-          reviewer_id: user.id,
-          confirmed_by: user.id,
-          confirmed_at: new Date().toISOString(),
-          clock_in_reported: toDbTime(clockInAt),
-          clock_out_reported: toDbTime(clockOutAt),
-        } : {}),
-      };
+      // 🚨 保存する1行の組み立ては lib/overtimeSubmit の buildOvertimeRecord（表の入力と共用）。
+      //    項目や条件を足すときは lib 側に足すこと（ここに書き戻さない）
+      const record = buildOvertimeRecord({
+        userId: user.id, date, mode, phase, fullDayMode, fullDayType, isSelfReview, isPureZero, isReportPhase, isResubmit, hasChanges,
+        normalShift, breakMin, breakManual, laborMin, diffMin, fdDiffMin, legalOk: legal.ok, reason, changeReason, fdLocation, effectiveLocation,
+        applicationTypes, offerCalendarChoice, showOnCalendar, editTargetShowOnCalendar: editTarget?.show_on_calendar,
+        furikaeOriginDate, effectiveFurikaeOriginLocation, furikaeOriginStart, furikaeOriginEnd, furikaeOriginBreak, furikaeOriginLabor, furikaeHasTime,
+        reviewerId, modifiedFromId: (!editTarget && draft?.modifiedFromId) ? draft.modifiedFromId : null,
+        clockOnlyMode, effectiveClockReason, clockInAt, clockOutAt, nowIso: new Date().toISOString(),
+      }, toDbTime);
 
-      // DBトリガー由来のエラーを分かりやすい日本語に変換（締めロック・振替の二重計上防止）
-      const friendlyDbError = (msg: string, code?: string): string => {
-        if (msg.includes('OVERTIME_CLOSED')) return 'この対象日の給与期間は締め切りを過ぎています。経理に申請の許可を依頼してください。';
-        if (msg.includes('FURIKAE_DUP_ORIGIN')) return '振替元の日には別の申請があります。振替休日は振替元の勤務時間を含むため、その日を別途「休日出勤」等で申請しないでください。';
-        if (msg.includes('FURIKAE_DUP_WORKDATE')) return 'この日は振替休日の振替元として申請済みです。二重計上になるため、この日は別途申請できません。';
-        if (code === '23505') return '同じ日付の申請がすでにあります（取消済みを除く）';
-        return '保存に失敗しました: ' + msg;
-      };
-
-      let reportId: string;
-      if (editTarget) {
-        // 修正履歴を残してから更新
-        await supabase.from('overtime_report_history').insert({
-          report_id: editTarget.id,
-          changed_by: user.id,
-          change_summary: isReportPhase ? (isPureZero ? '残業なし（通常どおり）で報告' : hasChanges ? `実績報告（変更あり：${changedAxes.join('・')}）` : '実績報告（予定どおり）') : '再提出',
-          change_reason: (isReportPhase && hasChanges) ? changeReason.trim() : null,
-          snapshot: editTarget as unknown as Record<string, unknown>,
-        }).then(...logFail('残業の修正の記録'));
-        // 🚨 開いてから送るまでの間に、上長が受理・差し戻し・取消をしている場合がある。
-        //    status を条件に付けて件数を見ないと、差し戻された申請に実績を上書きしてしまい、
-        //    差し戻し理由が残ったまま「実績 確認待ち」に戻る（update は0件でもエラーにならない）
-        const { data: updatedRows, error: err } = await supabase.from('overtime_reports')
-          .update(record).eq('id', editTarget.id).eq('status', editTarget.status).select('id');
-        if (err) { setError(friendlyDbError(err.message, err.code)); setSaving(false); setShowConfirm(false); return; }
-        if (!updatedRows || updatedRows.length === 0) {
-          setError('この申請の状態が変わっています（先に受理・差し戻し・取消がされた可能性があります）。画面を更新してからやり直してください。');
-          setSaving(false); setShowConfirm(false); return;
-        }
-        reportId = editTarget.id;
-        // 対象phaseの時間帯を入れ替え
-        // 🚨 消し漏れると時間帯が二重に残る。とくに危ないのは次の2つで、
-        //    どちらも「このあとの insert が unique(report_id,phase,seg_no) で弾かれる」網に
-        //    掛からないため、エラーを見ないと**何も起きずに古い時間帯が残る**：
-        //      ・終日（調整休・欠勤）に変えたとき … 新しい時間帯が0件なので insert 自体が走らない
-        //      ・時間帯を3本から2本に減らしたとき … 3本目だけが古いまま残る
-        // 🚨 件数0はここでは失敗ではない（その phase を初めて保存するときは元から0件）。
-        //    見るのは error だけにする。
-        const { error: segDelErr } = await supabase.from('overtime_report_segments')
-          .delete().eq('report_id', reportId).eq('phase', phase).select('id');
-        if (segDelErr) {
-          setError('前回の時間帯を消せませんでした：' + segDelErr.message);
-          setSaving(false); setShowConfirm(false); return;
-        }
-      } else {
-        const { data: inserted, error: err } = await supabase.from('overtime_reports')
-          .insert({ applicant_id: user.id, submitted_by: user.id, entry_type: 'manual', ...record })
-          .select('id').single();
-        if (err) {
-          setError(friendlyDbError(err.message, err.code));
-          setSaving(false); setShowConfirm(false); return;
-        }
-        reportId = inserted.id;
-        // 「申請の依頼」から来ていれば、その依頼を「申請済み」にして申請と結び付ける。
-        // 🚨 update は0件でもエラーにならないので件数を見る。
-        //    ここが失敗しても申請そのものは成立しているので、送信は成功として扱う
-        //    （依頼が open のまま残っても、もう一度申請すれば結び付く）。
-        // 🚨 status=open を条件に入れる。相手が「対応しない」を選んだあとに申請した場合は
-        //    そのままにする（勝手に状態を戻さない）。
-        if (!editTarget && draft?.applicationRequestId) {
-          const { data: linked, error: lerr } = await supabase.from('application_requests')
-            .update({ status: 'applied', linked_id: reportId, responded_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-            .eq('id', draft.applicationRequestId).eq('status', 'open').select('id');
-          if (lerr || !linked || linked.length === 0) console.error('[申請の依頼] 申請済みにできませんでした', lerr?.message);
-        }
+      // 🚨 書き込み（新規の登録／実績報告・再提出の書き換え／時間帯）は lib/overtimeSubmitApi の saveOvertimeReport（表の入力と共用）
+      const saved = await saveOvertimeReport({
+        userId: user.id, record, phase,
+        // 終日（調整休・欠勤）は時間帯を持たない
+        segments: fullDayMode ? [] : (clockOnlyMode ? normalWorkSegments : workSegments),
+        edit: editTarget ? {
+          id: editTarget.id, status: editTarget.status, snapshot: editTarget,
+          historySummary: isReportPhase ? (isPureZero ? '残業なし（通常どおり）で報告' : hasChanges ? `実績報告（変更あり：${changedAxes.join('・')}）` : '実績報告（予定どおり）') : '再提出',
+          historyChangeReason: (isReportPhase && hasChanges) ? changeReason.trim() : null,
+        } : null,
+      });
+      // 「申請の依頼」から来ていれば、その依頼を「申請済み」にして申請と結び付ける（新規で本体が保存できたとき）。
+      // 🚨 update は0件でもエラーにならないので件数を見る。
+      //    ここが失敗しても申請そのものは成立しているので、送信は成功として扱う
+      //    （依頼が open のまま残っても、もう一度申請すれば結び付く）。
+      // 🚨 status=open を条件に入れる。相手が「対応しない」を選んだあとに申請した場合は
+      //    そのままにする（勝手に状態を戻さない）。
+      const savedId = saved.reportId;
+      if (!editTarget && savedId && draft?.applicationRequestId) {
+        const { data: linked, error: lerr } = await supabase.from('application_requests')
+          .update({ status: 'applied', linked_id: savedId, responded_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+          .eq('id', draft.applicationRequestId).eq('status', 'open').select('id');
+        if (lerr || !linked || linked.length === 0) console.error('[申請の依頼] 申請済みにできませんでした', lerr?.message);
       }
-
-      // 終日（調整休・欠勤）は時間帯を持たない
-      const segRows = fullDayMode ? [] : (clockOnlyMode ? normalWorkSegments : workSegments).map((s, i) => ({
-        report_id: reportId, phase, seg_no: i + 1, start_min: s.startMin, end_min: s.endMin,
-      }));
-      if (segRows.length > 0) {
-        const { error: segErr } = await supabase.from('overtime_report_segments').insert(segRows);
-        if (segErr) { setError('時間帯の保存に失敗しました: ' + segErr.message); setSaving(false); setShowConfirm(false); return; }
-      }
+      if (!saved.ok) { setError(saved.message); setSaving(false); setShowConfirm(false); return; }
+      const reportId = saved.reportId;
 
       // 通知（管理画面「通知設定」の overtime:new_request に従う）
       // isPureZero（残業なし＝差分0の実績報告）は自己確定するため確認者のキューに入らない。
@@ -1406,14 +1299,9 @@ const OvertimeForm: React.FC<{
       // 🚨 以前は「自己受理・既存申請の実績報告/再提出」だけに限っていた（未受理は載らない仕様だったため）。
       //    2026-08-25 に未受理も【申請中】として載せるようにしたので、新規申請でも必ず呼ぶ
       let gcalWarn: string | undefined;
-      {
-        const { data: syncRes, error: syncErr } = await supabase.functions.invoke('gcal-sync', {
-          body: { action: 'sync', source_type: 'overtime', source_id: reportId },
-        });
-        const sr = syncRes as { success?: boolean; error?: string } | null;
-        if (syncErr || sr?.success === false) {
-          gcalWarn = '送信は完了しましたが、Googleカレンダーへの反映に失敗しました。時間をおいて再同期してください。';
-        }
+      // 🚨 呼び出しは lib/overtimeSubmitApi の syncOvertimeGcal（表の入力と共用）
+      if (!(await syncOvertimeGcal(reportId))) {
+        gcalWarn = '送信は完了しましたが、Googleカレンダーへの反映に失敗しました。時間をおいて再同期してください。';
       }
 
       // 使ったメモを「申請済み」にする（2026-09-18・ユーザー確定）。
