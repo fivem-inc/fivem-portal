@@ -594,7 +594,9 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
 
   // 休暇申請の「申請先」はリーダー・マネージャーのみ（フロア責任者は時間調整の了承者としてのみ選択可）
   // 「フロア責任者を除く」＝リーダー以上（属性 is_leader_plus）で判定する
-  const leaveApprovers = approvers.filter(a => !!embeddedRole(a as EmbeddedRoleRow<{ is_leader_plus?: boolean }>)?.is_leader_plus);
+  // 🚨 自分は候補に出さない（2026-09-24）。DB の insert_own が「承認者に自分」を弾くので、
+  //    出すと選んだ瞬間に申請できなくなる（リーダー・マネージャーが自分の休暇を出すとき）
+  const leaveApprovers = approvers.filter(a => a.id !== user.id && !!embeddedRole(a as EmbeddedRoleRow<{ is_leader_plus?: boolean }>)?.is_leader_plus);
   const selectedApprover = approvers.find(a => a.id === selectedApproverId);
 
   const handleSubmit = async () => {
