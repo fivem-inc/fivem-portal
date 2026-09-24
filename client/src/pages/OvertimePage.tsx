@@ -19,6 +19,10 @@ import {
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import { retireeReturnNote } from '../lib/retire';
 import { saveOvertimeReport, syncOvertimeGcal } from '../lib/overtimeSubmitApi';
+import { STATUS_INFO } from '../lib/overtimeStatus';
+import OvertimeGrid from '../components/OvertimeGrid';
+import { isPointerDevice } from '../lib/idleLogout';
+import type { OvertimeStatus } from '../lib/overtimeStatus';
 import { toWorkSegments, segmentIssuesOf, detectOvertimeTypes, composeApplicationTypes, effectiveLocationOf, validateOvertime, overtimePhase, canReportOvertime, buildOvertimeRecord } from '../lib/overtimeSubmit';
 import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, cutBandsAt, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import OvertimeMemoSection from '../components/OvertimeMemoSection';
@@ -63,7 +67,7 @@ const SCROLL_ONCE_KEY = 'overtime:scrollToInputs';
 // ────────────────────────────────────────────────────────────────
 // Types
 // ────────────────────────────────────────────────────────────────
-type OvertimeStatus = 'requested' | 'request_confirmed' | 'reported' | 'confirmed' | 'returned' | 'cancelled';
+// OvertimeStatus / STATUS_INFO は lib/overtimeStatus.ts に移した（表入力と共用・2026-09-24）
 
 // NormalShiftSnapshot / PatternRow / resolveNormalShift は lib/overtimeShift.ts に集約（受諾処理と共用）
 
@@ -133,6 +137,7 @@ interface Props {
   canSummaryPerm: boolean;          // 残業の部門集計を見られる役職か
   canShiftDirectoryPerm: boolean;   // 全員のシフト予定を見られる役職か
   canMemoPerm: boolean;             // 残業のメモを使える役職か（2026-09-18・最初はマネージャー以上）
+  canGridPerm: boolean;             // 残業の「表でまとめて入力」を使える役職か（2026-09-24・最初はマネージャーだけ。PCだけに出す）
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -190,15 +195,6 @@ function formatGrantDates(dates: string[]): string {
   return `${sorted.slice(0, 2).map(short).join('・')} 他${sorted.length - 2}件`;
 }
 
-// ステータス表示（既存STATUS_INFOの配色規約に合わせる。グレー=取消済みのため事後報告はティール）
-const STATUS_INFO: Record<OvertimeStatus, { label: string; color: string; darkBg: string }> = {
-  requested:         { label: '事前申請 確認待ち', color: '#e65100', darkBg: '#4a2c0a' },
-  request_confirmed: { label: '事前申請 受理済み', color: '#2e7d32', darkBg: '#1b3a1e' },
-  reported:          { label: '実績 確認待ち',     color: '#e65100', darkBg: '#4a2c0a' },
-  confirmed:         { label: '確認済み',          color: '#1565c0', darkBg: '#1e3a5f' },
-  returned:          { label: '差し戻し',          color: '#c62828', darkBg: '#4a1515' },
-  cancelled:         { label: '取消済み',          color: '#6c757d', darkBg: '#3a3f44' },
-};
 
 // 事前受理の日時（request_confirmed_at）を記録し始めた日。
 // これより前の申請は受理していても null なので、「事前受理なし」の警告を出さない（不明として扱う）。
@@ -2393,7 +2389,7 @@ const OvertimeForm: React.FC<{
 // ────────────────────────────────────────────────────────────────
 // メインページ
 // ────────────────────────────────────────────────────────────────
-const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, canSummaryPerm, canShiftDirectoryPerm, canMemoPerm }) => {
+const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, canSummaryPerm, canShiftDirectoryPerm, canMemoPerm, canGridPerm }) => {
   // 役職の序列（部門集計の並び・閲覧範囲）は roles から（役職名の表を持たない・2026-09-09）
   const roles = useRoles();
   const isDark = useDarkMode();
@@ -2403,6 +2399,10 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const tabParam = searchParams.get('tab');
   const focusParam = searchParams.get('focus');
   const [tab, setTab] = useState<'form' | 'history'>(tabParam === 'history' ? 'history' : 'form');
+  // 残業の「表でまとめて入力」（試験中）。🚨 PCだけ：マウス操作の端末 かつ 画面幅1024px以上
+  //    （iPad の横向きは幅がちょうど1024pxなので、幅だけで判定すると出てしまう）
+  const [gridOpen, setGridOpen] = useState(false);
+  const canGrid = canGridPerm && isPointerDevice() && window.innerWidth >= 1024;
   // 履歴カードの「▼ 詳細」を開いている申請。
   // 🚨 このページは isConfirmView で早期returnするので、Hookは必ずその手前で宣言すること
   //    （後ろに置くと確認ページに切り替えた瞬間に画面が真っ白になる。過去に踏んだ事故）
@@ -3421,6 +3421,17 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   }
 
   // ────────────────────────────────────────────
+  // 表でまとめて入力（PCだけ・試験中）。🚨 表は幅が要るので、このときだけページの最大幅を広げる
+  // ────────────────────────────────────────────
+  if (gridOpen && canGrid) {
+    return (
+      <div style={{ maxWidth: 1400, margin: '0 auto', padding: '16px 16px 40px' }}>
+        <OvertimeGrid userId={user.id} isDark={isDark} onClose={() => { setGridOpen(false); window.scrollTo({ top: 0 }); }} />
+      </div>
+    );
+  }
+
+  // ────────────────────────────────────────────
   // 通常ビュー
   // ────────────────────────────────────────────
   return (
@@ -3512,6 +3523,13 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
           {loading ? (
             <p style={{ margin: 0, fontSize: 13, color: subText, textAlign: 'center' }}>読み込み中…</p>
           ) : tab === 'form' ? (
+            <>
+            {canGrid && !editTarget && (
+              <button type="button" onClick={() => { setGridOpen(true); window.scrollTo({ top: 0 }); }}
+                style={{ width: '100%', padding: '10px', marginBottom: 12, borderRadius: 8, border: '1px solid #1976d2', background: isDark ? '#1e3a5f' : '#e3f2fd', color: isDark ? '#90caf9' : '#1976d2', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
+                📋 表でまとめて入力（試験中・パソコンだけ）
+              </button>
+            )}
             <OvertimeForm
               user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin}
               reviewers={reviewers} workplaces={workplaces} patterns={patterns}
@@ -3526,6 +3544,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
               }}
               onClose={() => setEditTarget(null)}
             />
+            </>
           ) : (
             <>
               {/* 履歴タブの説明＋変更・取消ルール（申請タブの注意事項と同じ見た目） */}
