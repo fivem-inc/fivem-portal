@@ -56,7 +56,7 @@ const QUICK_RANGES = [
 ] as const;
 
 /** 検索ログを一度に読む上限。🚨 これに達したら「打ち切っています」と画面に出す
- *  （黙って切れると、件数が多い月ほど「答えられなかった言葉」のランキングが静かに狂う）。
+ *  （黙って切れると、件数が多い月ほど「検索して見つからなかった言葉」のランキングが静かに狂う）。
  *  🚨 order を付けて「新しい順の◯件」と意味を確定させている（付けないとどの◯件か不定） */
 const LOG_LIMIT = 500;
 
@@ -89,6 +89,27 @@ const REASON_LABEL: Record<string, string> = {
   load_error: '読み込みに失敗',
 };
 
+/** その理由の問い合わせに「どの質問か」が付いているか。
+ *  🚨 呼び出し元を1つずつ当たって確かめた（2026-09-24・FaqWidget.tsx）：
+ *      unsolved  … 回答の画面から押す      → 質問が付く
+ *      noanswer  … 質問を開いた直後         → 質問が付く
+ *      unknown   … 校・コースを選んだあと   → 質問が付く
+ *      search_nomatch / search_nohit … 検索結果の画面から押す → **質問が決まっていない**
+ *      load_error … 画面が出る前            → 付かない
+ *  🚨 付かない理由のところを空欄にしない。空欄だと「出ていないだけ」なのか
+ *     「不具合で消えている」のか見分けが付かないので、記録できない旨を書く */
+const REASON_HAS_TOPIC: Record<string, boolean> = {
+  unsolved: true,
+  search_nomatch: false,
+  search_nohit: false,
+  unknown: true,
+  noanswer: true,
+  load_error: false,
+};
+
+/** 理由の下に出す質問の数。これを超えたぶんは「ほか◯件の質問」とだけ書く */
+const REASON_TOPIC_TOP = 3;
+
 const REASON_ACTION: Record<string, string> = {
   unsolved: 'その回答を書き直す',
   search_nomatch: '検索の手がかり語を足す',
@@ -107,6 +128,78 @@ function contactRate(views: number, contacts: number): number | null {
   const r = Math.round((contacts / views) * 100);
   return r > 100 ? null : r;
 }
+
+/** 横棒で出すときの1行 */
+interface BarItem { key: string; label: string; n: number; note?: string }
+
+/** 折りたたまずに出す上限。🚨 これを超えたぶんは「残り◯件を見る」で広げる
+ *  （言葉の一覧は何十個にもなるので、全部出すと画面が縦に伸びて他の項目が見えなくなる） */
+const BAR_LIMIT = 10;
+
+/** 時間帯・曜日の並び。🚨 この2つだけは「多い順」にしない。
+ *  多い順にすると 17時→10時→03時… と並び、**いつ来るかという形が読めなくなる**。
+ *  記録が0の時間・曜日も並べる（「深夜は来ない」こと自体が読み取れるように） */
+const ORDER_HOUR = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, '0')}時`);
+const ORDER_DOW = ['月', '火', '水', '木', '金', '土', '日'];
+
+/** 量を横棒で出す。内訳・言葉の一覧の**4か所すべてがこれを呼ぶ**（同じものを書き写さない）。
+ *  🚨 チップ（枠付きの札）をやめた理由：**幅が文字数で決まる**ので量を逆に読ませる。
+ *     実データで「未調査 1人」と「大阪府 3人」がほぼ同じ幅になっていた。棒なら長さが数に比例する。
+ *  🚨 色は択一トグルの2色だけ（🎨🔒・新しい色は足さない）。
+ *     棒の上に文字を載せない＝押せるボタンに見せないため */
+const Bars: React.FC<{
+  items: BarItem[];
+  /** 数の単位。🚨 「人」と「回」が混ざるので、必ずその行に書く */
+  unit: string;
+  isDarkMode: boolean;
+  /** true＝items の並びをそのまま使い、折りたたまない（時間帯・曜日）。
+   *  🚨 順番に意味がある軸を上位10件で切ると、軸そのものが途中で切れて読めなくなる */
+  keepOrder?: boolean;
+}> = ({ items, unit, isDarkMode, keepOrder = false }) => {
+  const [expanded, setExpanded] = useState(false);
+  const text = isDarkMode ? '#fff' : '#1a1a2e';
+  const sub = isDarkMode ? '#adb5bd' : '#666';
+  const border = isDarkMode ? '#495057' : '#dee2e6';
+  const bg = isDarkMode ? '#343a40' : '#fff';
+  // 🚨 並べ替えてから切る（切ってから並べ替えると、上位が上位でなくなる）
+  const list = keepOrder ? items : [...items].sort((a, b) => b.n - a.n);
+  const shown = (keepOrder || expanded) ? list : list.slice(0, BAR_LIMIT);
+  const rest = list.length - shown.length;
+  // 🚨 割る数を0にしない（全部0件のとき NaN になって棒が消える）
+  const max = Math.max(1, ...list.map(i => i.n));
+  const moreBtn: React.CSSProperties = {
+    marginTop: 4, padding: '3px 10px', borderRadius: 6, fontSize: 12, cursor: 'pointer',
+    border: `1px solid ${border}`, background: bg, color: text,
+  };
+  return (
+    <div>
+      {shown.map(i => (
+        <div key={i.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+          <span style={{ fontSize: 12.5, color: i.n > 0 ? text : sub, width: 124, flexShrink: 0, overflowWrap: 'anywhere' }}>
+            {i.label}
+          </span>
+          <span style={{ flex: '1 1 50px', minWidth: 36, height: 8, borderRadius: 4, background: '#e3f2fd', overflow: 'hidden' }}>
+            <span style={{ display: 'block', width: `${Math.round((i.n / max) * 100)}%`, height: '100%', background: '#1976d2' }} />
+          </span>
+          <span style={{ fontSize: 12.5, color: i.n > 0 ? text : sub, width: 56, flexShrink: 0, textAlign: 'right' }}>
+            {i.n} {unit}
+          </span>
+          {i.note && <span style={{ fontSize: 12, color: sub, flexShrink: 0 }}>{i.note}</span>}
+        </div>
+      ))}
+      {rest > 0 && (
+        <button type="button" onClick={() => setExpanded(true)} style={moreBtn}>
+          残り {rest} 件を見る
+        </button>
+      )}
+      {expanded && !keepOrder && list.length > BAR_LIMIT && (
+        <button type="button" onClick={() => setExpanded(false)} style={moreBtn}>
+          上位 {BAR_LIMIT} 件だけにする
+        </button>
+      )}
+    </div>
+  );
+};
 
 const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings = false }) => {
   const [open, setOpen] = useState(false);
@@ -187,7 +280,7 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
         else setPrevRows((pd ?? []) as SummaryRow[]);
       }
 
-      // 「答えられなかった言葉」は既存の質問ログから取る（新しい表には検索語を持たせていない）
+      // 「検索して見つからなかった言葉」は既存の質問ログから取る（新しい表には検索語を持たせていない）
       // 🚨 件数を必ず指定する。指定しないと Supabase が1,000行で黙って打ち切る
       const { data: qs, error: qerr } = await supabase
         .from('faq_query_log')
@@ -323,7 +416,7 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
     const next = year + diff; setYear(next); reload({ year: next });
   };
 
-  /** 質問ごとにまとめる（閲覧・問い合わせ・はい）。
+  /** 質問ごとにまとめる（読んだ人・進んだ人・はい）。
    *  🚨 比べているときは、**当期と前期の質問の和集合**から作る（2026-09-22）。
    *     当期だけから作ると、前月50件あった質問を直して今月0件になったとき
    *     **その行が丸ごと消える**＝「直した効果があった」といういちばん見たい情報が見えない。
@@ -358,12 +451,15 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
   const before = (kind: string, reason?: string): number | null =>
     prevRows === null ? null : sum(prevRows, kind, reason);
 
-  /** 「120回（前月 95回 ／ +25）」の形。比較しないときは数だけ */
-  const withDiff = (kind: string, reason?: string): string => {
+  /** 「120人（前月 95人 ／ +25）」の形。比較しないときは数だけ。
+   *  🚨 単位を引数で受ける。ウィジェットは `once` という鍵で「同じ方は1回だけ」に間引いており、
+   *     数えているものが行によって違う（下の呼び出し側にどれが何かを書いてある）。
+   *     以前はここが全部「回」の決め打ちで、**5行のうち4行が嘘になっていた**（2026-09-24 に判明） */
+  const withDiff = (kind: string, unit: string, reason?: string): string => {
     const n = total(kind, reason);
     const b = before(kind, reason);
-    if (b === null) return `${n} 回`;
-    return `${n} 回（${cmpLabel} ${b} 回 ／ ${diffText(n, b)}）`;
+    if (b === null) return `${n} ${unit}`;
+    return `${n} ${unit}（${cmpLabel} ${b} ${unit} ／ ${diffText(n, b)}）`;
   };
 
   /** 質問ごとの、比べる期間の問い合わせ数 */
@@ -387,6 +483,39 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
     return [...m.entries()].map(([place, n]) => ({ place, n })).sort((a, b) => b.n - a.n);
   })();
 
+  /** その理由の問い合わせが、どの質問から出たかを多い順に返す。
+   *  🚨 「その回答を書き直す」と書いてあるのに、**どれを書き直すのかが画面に出ていなかった**
+   *     （2026-09-24 ユーザー指摘）。記録そのものは最初から持っていた（topic_id）ので、出すだけ */
+  const topicsForReason = (reason: string): { q: string; n: number }[] => {
+    const m = new Map<string, number>();
+    for (const r of rows ?? []) {
+      if (r.kind !== 'contact' || r.reason !== reason || !r.topic_id) continue;
+      const q = r.topic_question ?? '(質問が削除されています)';
+      m.set(q, (m.get(q) ?? 0) + r.n);
+    }
+    return [...m.entries()].map(([q, n]) => ({ q, n })).sort((a, b) => b.n - a.n);
+  };
+
+  /** 来た方の内訳の1軸ぶんを、横棒に渡せる形にする。
+   *  🚨 数えるのは **sessions（人）だけ**（2026-09-24）。
+   *     もう一方の n は「記録の行数」で、`once` で間引かれたあとの数なので
+   *     回でも人でもなく、業務上の意味を説明できなかった。出すのをやめた。
+   *  🚨 時間帯・曜日は記録が0のぶんも並べる（「その時間は来ていない」ことを読ませるため）。
+   *     想定していない値が来ても**落とさず末尾に足す**（DB側が増えたときに黙って消えないように） */
+  const barsFor = (dim: string): { items: BarItem[]; keepOrder: boolean } => {
+    const list = (visitors ?? []).filter(v => v.dim === dim);
+    const order = dim === '時間帯' ? ORDER_HOUR : dim === '曜日' ? ORDER_DOW : null;
+    if (!order) {
+      return { items: list.map(v => ({ key: v.value, label: v.value, n: v.sessions })), keepOrder: false };
+    }
+    const m = new Map(list.map(v => [v.value, v.sessions]));
+    const items: BarItem[] = order.map(v => ({ key: v, label: v, n: m.get(v) ?? 0 }));
+    for (const v of list) {
+      if (!order.includes(v.value)) items.push({ key: v.value, label: v.value, n: v.sessions });
+    }
+    return { items, keepOrder: true };
+  };
+
   /** その質問に「⚠️ 要確認」を付ける（判断 → 行動を1画面で閉じる） */
   const markReview = async (topicId: string, question: string) => {
     setMarking(topicId); setErr('');
@@ -403,14 +532,15 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
   };
 
   const exportCsv = () => {
-    const head = ['質問', '閲覧', '問い合わせに進んだ', '問い合わせ率(%)', 'はい'];
+    // 🚨 画面の列名と同じ言葉にする（片方だけ直すと、突き合わせるときに別のものに見える）
+    const head = ['質問', '読んだ人', '進んだ人', '問い合わせ率(%)', 'はい'];
     const lines = [head.map(cell).join(',')];
     for (const t of byTopic) {
       const rate = contactRate(t.views, t.contacts) ?? '';
       lines.push([t.q, t.views, t.contacts, rate, t.solved].map(cell).join(','));
     }
     lines.push('');
-    lines.push([cell('答えられなかった言葉'), cell('回数')].join(','));
+    lines.push([cell('検索して見つからなかった言葉'), cell('回数')].join(','));
     for (const w of words) lines.push([w.word, w.n].map(cell).join(','));
     downloadCSV(lines.join('\n'), `FAQ集計_${spanLabel.replace(/[^0-9A-Za-z年月-]/g, '_')}.csv`);
   };
@@ -545,12 +675,27 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
 
       {!loading && rows && (
         <>
-          <div style={{ fontSize: 13, color: text, marginBottom: 10 }}>
-            <div>ページを開いた {withDiff('page_view')}（参考値）</div>
-            <div>回答を読んだ <strong>{withDiff('topic_view')}</strong></div>
-            <div>問い合わせに進んだ <strong>{withDiff('contact')}</strong></div>
-            <div>電話・フォームを押した {withDiff('contact_click')}</div>
-            <div>「はい」 {withDiff('solved')}</div>
+          {/* 🚨 単位は行ごとに書く（2026-09-24）。ウィジェットの `once` の鍵で
+              何を数えているかが行ごとに違う。実測した鍵は次のとおり：
+                ページを開いた       once='page'                    → 1人1回＝**人**
+                回答を読んだ         once='topic:<質問>'            → 質問ごとに1人1回＝**のべ人**
+                問い合わせに進んだ   once='contact:<質問>:<理由>'   → 質問・理由ごとに1人1回＝**のべ人**
+                「はい」             once='solved:<質問>'           → **のべ人**
+                電話・フォームを押した once **なし**                 → 押すたび＝**回**
+              🚨 「回」なのは最後の1行だけ。ここを「回」で揃えると4行が嘘になる。
+              🚨 唯一「回」の行はいちばん下に置く（人の行をまとめて読ませるため）。並べ替えないこと */}
+          <div style={{ fontSize: 13, color: text, marginBottom: 10, lineHeight: 1.8 }}>
+            <div>ページを開いた {withDiff('page_view', '人')}（参考値）</div>
+            <div>
+              回答を読んだ <strong>のべ {withDiff('topic_view', '人')}</strong>
+              <span style={{ fontSize: 12, color: sub }}>（同じ方が2つ読めば 2）</span>
+            </div>
+            <div>問い合わせに進んだ <strong>のべ {withDiff('contact', '人')}</strong></div>
+            <div>「はい」 のべ {withDiff('solved', '人')}</div>
+            <div>
+              電話・フォームを押した {withDiff('contact_click', '回')}
+              <span style={{ fontSize: 12, color: sub }}>（この行だけ押すたびに数えます）</span>
+            </div>
           </div>
 
           {views === 0 && contacts === 0 && (
@@ -567,8 +712,10 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
               <thead>
                 <tr>
                   <th style={th}>質問</th>
-                  <th style={th}>閲覧</th>
-                  <th style={th}>問い合わせに進んだ</th>
+                  {/* 🚨 列名を「人」で言い切る（2026-09-24）。中身の数え方は1行も変えていない。
+                      質問ごとに1人1回しか数えないので、**この表の中では**のべではなく実人数 */}
+                  <th style={th}>読んだ人</th>
+                  <th style={th}>進んだ人</th>
                   <th style={th}>問い合わせ率</th>
                   {prevRows !== null && <th style={th}>{cmpLabel}</th>}
                   {prevRows !== null && <th style={th}>増減</th>}
@@ -612,7 +759,7 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
             if (outside <= 0) return null;
             return (
               <div style={{ fontSize: 12, color: sub, marginTop: 4, lineHeight: 1.7 }}>
-                ※ 上の「問い合わせに進んだ <strong>{total('contact')}</strong>」のうち、<strong>{outside}</strong> はこの表に出ていません
+                ※ 上の「問い合わせに進んだ のべ <strong>{total('contact')}</strong> 人」のうち、<strong>{outside}</strong> 人はこの表に出ていません
                 （検索で見つからなかった等、<strong>質問に紐づかない</strong>もの）。内訳は下の「つまずいた理由」をご覧ください
               </div>
             );
@@ -623,15 +770,40 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
             <div style={{ fontSize: 13, fontWeight: 'bold', color: text, marginBottom: 6 }}>つまずいた理由と、やるべきこと</div>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 520 }}>
-                <thead><tr><th style={th}>理由</th><th style={th}>件数</th><th style={th}>やるべきこと</th></tr></thead>
+                {/* 🚨 ここも「件数」ではなく「人数」。同じ方が同じ理由で何度押しても1人に間引かれる
+                    （別の理由で押せば、その理由の行にも1人として入る） */}
+                <thead><tr><th style={th}>理由</th><th style={th}>人数</th><th style={th}>やるべきこと</th></tr></thead>
                 <tbody>
-                  {Object.keys(REASON_LABEL).map(k => (
-                    <tr key={k}>
-                      <td style={td}>{REASON_LABEL[k]}</td>
-                      <td style={{ ...td, fontWeight: total('contact', k) > 0 ? 'bold' : 'normal' }}>{total('contact', k)}</td>
-                      <td style={{ ...td, color: sub }}>{REASON_ACTION[k]}</td>
-                    </tr>
-                  ))}
+                  {Object.keys(REASON_LABEL).map(k => {
+                    const n = total('contact', k);
+                    const list = topicsForReason(k);
+                    const head = list.slice(0, REASON_TOPIC_TOP);
+                    const rest = list.length - head.length;
+                    return (
+                      <tr key={k}>
+                        <td style={{ ...td, minWidth: 200 }}>
+                          {REASON_LABEL[k]}
+                          {/* 🚨 0件のときは何も足さない（読むところが増えるだけ） */}
+                          {n > 0 && (
+                            <div style={{ fontSize: 12, color: sub, marginTop: 3, lineHeight: 1.7 }}>
+                              {!REASON_HAS_TOPIC[k]
+                                ? '（どの質問かは記録できません。検索の結果から押すため、質問が決まっていません）'
+                                : head.length === 0
+                                  ? '（どの質問かが分かりませんでした）'
+                                  : (
+                                    <>
+                                      {head.map(t => <div key={t.q}>・{t.q} {t.n} 人</div>)}
+                                      {rest > 0 && <div>・ほか {rest} 件の質問</div>}
+                                    </>
+                                  )}
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ ...td, fontWeight: n > 0 ? 'bold' : 'normal', verticalAlign: 'top' }}>{n}</td>
+                        <td style={{ ...td, color: sub, verticalAlign: 'top' }}>{REASON_ACTION[k]}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -639,18 +811,19 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
 
           {/* 答えられなかった言葉 */}
           <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 13, fontWeight: 'bold', color: text, marginBottom: 6 }}>
-              答えられなかった言葉（新しい質問を作る材料）
+            {/* 🚨 見出しは短く、条件は下の説明行に逃がす（2026-09-24・ユーザー確定）。
+                旧「答えられなかった言葉（新しい質問を作る材料）」は
+                **お客様が打った言葉なのかどうかが読み取れず**、実際に聞かれた */}
+            <div style={{ fontSize: 13, fontWeight: 'bold', color: text, marginBottom: 2 }}>
+              検索して見つからなかった言葉
+            </div>
+            <div style={{ fontSize: 12, color: sub, marginBottom: 6, lineHeight: 1.7 }}>
+              お客様が検索して、候補が1件も出なかった言葉です（同じ方が3回検索すれば 3回）
             </div>
             {words.length === 0
               ? <div style={{ fontSize: 13, color: sub }}>この期間はありません</div>
-              : <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  {words.map(w => (
-                    <span key={w.word} style={{ fontSize: 13, padding: '4px 10px', borderRadius: 6, border: `1px solid ${border}`, color: text }}>
-                      {w.word} <span style={{ color: sub }}>×{w.n}</span>
-                    </span>
-                  ))}
-                </div>}
+              : <Bars unit="回" isDarkMode={isDarkMode}
+                  items={words.map(w => ({ key: w.word, label: w.word, n: w.n }))} />}
             {wordsCut && (
               <div style={{ fontSize: 12, color: '#b35900', marginTop: 4 }}>
                 🚨 この期間の検索は多く、<strong>新しい順に{LOG_LIMIT}件までしか数えていません</strong>。上の並びは実際の多い順と違うことがあります
@@ -664,13 +837,8 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
               <div style={{ fontSize: 13, fontWeight: 'bold', color: text, marginBottom: 6 }}>
                 校・コースの回答が足りない（既存の回答に対象を足す）
               </div>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {unknownByPlace.map(u => (
-                  <span key={u.place} style={{ fontSize: 13, padding: '4px 10px', borderRadius: 6, border: `1px solid ${border}`, color: text }}>
-                    {u.place} <span style={{ color: sub }}>×{u.n}</span>
-                  </span>
-                ))}
-              </div>
+              <Bars unit="人" isDarkMode={isDarkMode}
+                items={unknownByPlace.map(u => ({ key: u.place, label: u.place, n: u.n }))} />
             </div>
           )}
 
@@ -697,20 +865,23 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
               {visitors.length === 0
                 ? <div style={{ fontSize: 13, color: sub }}>この期間の記録はありません</div>
                 : VISITOR_DIMS.map(d => {
-                    const list = visitors.filter(v => v.dim === d).sort((a, b) => b.n - a.n);
-                    if (list.length === 0) return null;
+                    const { items, keepOrder } = barsFor(d);
+                    if (items.length === 0) return null;
+                    // 🚨 時間帯・曜日は0のぶんも並べるので、記録が1件も無い期間だと
+                    //    「空の棒が24本」並ぶ。そのときは軸ごと出さない
+                    if (items.every(i => i.n === 0)) return null;
                     return (
-                      <div key={d} style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
-                        <span style={{ fontSize: 12, color: sub, width: 70, flexShrink: 0 }}>{d}</span>
-                        {list.map(v => (
-                          <span key={v.value} style={{ fontSize: 13, padding: '4px 10px', borderRadius: 6, border: `1px solid ${border}`, color: text }}>
-                            {v.value} <span style={{ color: sub }}>{v.n}件 / {v.sessions}人</span>
-                          </span>
-                        ))}
+                      <div key={d} style={{ marginBottom: 10 }}>
+                        <div style={{ fontSize: 12, fontWeight: 'bold', color: sub, marginBottom: 4 }}>{d}</div>
+                        <Bars items={items} unit="人" isDarkMode={isDarkMode} keepOrder={keepOrder} />
                       </div>
                     );
                   })}
               <div style={{ fontSize: 12, color: sub, lineHeight: 1.7, marginTop: 4 }}>
+                ※ 数字は<strong>人数</strong>です（同じ方がその日に何回見ても 1 人）。
+                以前ここに並べていた「◯件」は<strong>記録の行数</strong>で、回数とも人数とも違う数だったため出すのをやめました<br />
+                ※ <strong>時間帯・曜日は記録が0のぶんも並べます</strong>（来ていない時間が分かるように）。
+                そのほかの項目は多い順で、多いほうから10件までを出します<br />
                 ※ 「社内/社外」は、⚙️ の<strong>会社のIP</strong>の設定と照らして判定します。
                 未設定のあいだは全部「社外」になります（<strong>あとから設定すれば過去の記録にも反映されます</strong>）<br />
                 ※ 「都道府県」は<strong>毎晩4時20分にまとめて調べます</strong>（その日のぶんは翌朝に入ります）。
@@ -789,14 +960,11 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
             </div>
             {staffWords.length === 0
               ? <div style={{ fontSize: 13, color: sub }}>この期間はありません</div>
-              : <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  {staffWords.map(w => (
-                    <span key={w.word} style={{ fontSize: 13, padding: '4px 10px', borderRadius: 6, border: `1px solid ${border}`, color: text }}>
-                      {w.word} <span style={{ color: sub }}>×{w.n}</span>
-                      {w.miss > 0 && <span style={{ color: '#b35900' }}>（見つからず {w.miss}）</span>}
-                    </span>
-                  ))}
-                </div>}
+              : <Bars unit="回" isDarkMode={isDarkMode}
+                  items={staffWords.map(w => ({
+                    key: w.word, label: w.word, n: w.n,
+                    note: w.miss > 0 ? `（見つからず ${w.miss}）` : undefined,
+                  }))} />}
             {staffWordsCut && (
               <div style={{ fontSize: 12, color: '#b35900', marginTop: 4 }}>
                 🚨 この期間の検索は多く、<strong>新しい順に{LOG_LIMIT}件までしか数えていません</strong>。上の並びは実際の多い順と違うことがあります
