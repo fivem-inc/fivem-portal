@@ -1250,7 +1250,7 @@ const BoardPage: React.FC = () => {
     (async () => {
       const [{ data: rec, error: recErr }, { data: msg, error: msgErr }] = await Promise.all([
         supabase.from('board_message_recipients').select('archived, hidden').eq('message_id', openInboxId).eq('user_id', user.id).maybeSingle(),
-        supabase.from('board_messages').select('id, channel_id, parent_id').eq('id', openInboxId).maybeSingle(),
+        supabase.from('board_messages').select('id, channel_id, parent_id, user_id, cc_user_ids').eq('id', openInboxId).maybeSingle(),
       ]);
       if (cancelled || window.location.search !== startedSearch) return;
       const err = recErr || msgErr;
@@ -1274,6 +1274,16 @@ const BoardPage: React.FC = () => {
         //    ここで「送信者が取り消した」と言うと嘘になるので、理由を分けて出す。
         setSearchParams(base, { replace: true });
         setOpenInboxNotice('このお知らせは、あなたがアーカイブから削除したため開けません。');
+        return;
+      }
+      if (!rec && msg && (msg.user_id === user.id || (msg.cc_user_ids ?? []).includes(user.id))) {
+        // 🚨 自分が**送った**（または写しを受けた）お知らせ。受信トレイには無い（宛先が自分でないため）ので送信トレイで開く。
+        //    お知らせへの返信のベル・プッシュは、多くの場合「送った側」に届く（2026-09-24 実機で発覚。
+        //    以前は宛先の行が無い＝「送信者が取り消した可能性」と誤って出していた）
+        const withOut = new URLSearchParams(base);
+        withOut.set('bv', 'outbox'); withOut.set('bout', openInboxId);
+        setSearchParams(base, { replace: true });
+        setSearchParams(withOut);
         return;
       }
       if (!rec || !msg) {
