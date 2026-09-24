@@ -3524,17 +3524,19 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
           </button>
         )}
 
+        {/* 表でまとめて入力（PCだけ・試験中）。🚨 入力の枠の外・「確認ページへ」と同じ形に置く（2026-09-24 ユーザー確定・案A）。
+            枠の中に置くとフォームの一部に見え、枠が二重になる */}
+        {canGrid && tab === 'form' && !editTarget && (
+          <button type="button" onClick={() => { setGridOpen(true); window.scrollTo({ top: 0 }); }}
+            style={{ width: '100%', padding: '10px', background: '#1976d2', color: 'white', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', marginTop: 8, marginBottom: 8, borderRadius: 8, boxSizing: 'border-box' }}>
+            📋 表でまとめて入力（試験中）
+          </button>
+        )}
+
         <div style={{ background: isDark ? '#2b3035' : '#fff', border: `1px solid ${borderColor}`, borderRadius: '0 0 12px 12px', padding: '16px 14px' }}>
           {loading ? (
             <p style={{ margin: 0, fontSize: 13, color: subText, textAlign: 'center' }}>読み込み中…</p>
           ) : tab === 'form' ? (
-            <>
-            {canGrid && !editTarget && (
-              <button type="button" onClick={() => { setGridOpen(true); window.scrollTo({ top: 0 }); }}
-                style={{ width: '100%', padding: '10px', marginBottom: 12, borderRadius: 8, border: '1px solid #1976d2', background: isDark ? '#1e3a5f' : '#e3f2fd', color: isDark ? '#90caf9' : '#1976d2', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
-                📋 表でまとめて入力（試験中・パソコンだけ）
-              </button>
-            )}
             <OvertimeForm
               user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin}
               reviewers={reviewers} workplaces={workplaces} patterns={patterns}
@@ -3549,7 +3551,6 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
               }}
               onClose={() => setEditTarget(null)}
             />
-            </>
           ) : (
             <>
               {/* 履歴タブの説明＋変更・取消ルール（申請タブの注意事項と同じ見た目） */}
