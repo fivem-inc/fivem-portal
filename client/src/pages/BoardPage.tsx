@@ -255,15 +255,33 @@ const ScheduledChip: React.FC<{ at: string }> = ({ at }) => (
   </div>
 );
 
-/** まだ読んでいない返信の印（2026-09-24）。
+/** お知らせの返信の件数の札（2026-09-24・案B）。
  *  🚨 返信そのものは一覧に並ばないので、**元のお知らせの行**に出す。
+ *  🚨 **読んだあとも件数を出す**。未読のときだけ出していたら「開かないと見えない」と指摘された。
+ *     未読あり … 青いベタ「↩ 返信 2件（未読1）」（目立たせる）
+ *     全部読んだ … 薄い青の札「↩ 返信 2件」（やり取りがあったことだけ分かる）
  *  🚨 受信トレイ・送信トレイ・送信トレイのアーカイブの3か所がこれを呼ぶ（書き写さない）。
- *  🚨 色はこの画面で既に使っている青（#4a90d9）。新しい色は足さない */
-const ReplyUnreadMark: React.FC<{ n: number }> = ({ n }) => n > 0 ? (
-  <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: '#4a90d9', borderRadius: 8, padding: '1px 7px', whiteSpace: 'nowrap' }}>
-    ↩ 返信 {n}
-  </span>
-) : null;
+ *  🚨 色は新しく足していない。ベタは既存の #4a90d9、薄い札は返信の枠と同じ色（ライト・ダークで追従） */
+const ReplyCountMark: React.FC<{ total: number; unread: number; isDark: boolean }> = ({ total, unread, isDark }) => {
+  if (total <= 0) return null;
+  if (unread > 0) {
+    return (
+      <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: '#4a90d9', borderRadius: 8, padding: '1px 7px', whiteSpace: 'nowrap' }}>
+        ↩ 返信 {total}件（未読{unread}）
+      </span>
+    );
+  }
+  return (
+    <span style={{
+      fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap', borderRadius: 8, padding: '0 7px',
+      color: isDark ? '#90b4e8' : '#3b5bdb',
+      background: isDark ? '#1e2328' : '#f0f4ff',
+      border: `1px solid ${isDark ? '#3d4349' : '#c7d4f5'}`,
+    }}>
+      ↩ 返信 {total}件
+    </span>
+  );
+};
 
 const ArchiveIcon: React.FC<{ size?: number }> = ({ size = 14 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'block' }}>
@@ -1449,6 +1467,46 @@ const BoardPage: React.FC = () => {
     if (m && m.allow_reply) void loadNoticeReplies(id);
   }, [inboxDetailId, outboxDetailId, inboxMessages, outboxMessages, outboxArchivedMessages, archivedMessages, loadNoticeReplies]);
 
+  // 一覧に出す「↩ 返信 ◯件」の総数（2026-09-24・案B）。
+  // 🚨 未読の数（unreadReplyCounts）だけだと、**読み終わった瞬間に一覧から何も分からなくなる**
+  //    （ユーザー指摘「開かないと見えない」）。読んだあとも件数を出すため、総数を別に数える。
+  // 🚨 数えるのは「自分が読める返信」だけ（RLS がそう絞る）＝開いたときに見える数と同じ。
+  //    送った側は相手全員とのぶん、受け取った側は送った人とのぶん。
+  // 🚨 返信を受け付けたお知らせだけを対象にする（受け付けていないものでは問い合わせない）。
+  // 🚨 一覧は自動更新のたびに作り直されるので、「対象のID」と「未読の数・開いた返信の数」が
+  //    変わったときだけ読み直す（毎回投げない）
+  const [replyTotals, setReplyTotals] = useState<Record<string, number>>({});
+  const replyTotalsKey = useMemo(() => {
+    const ids = [...new Set([...inboxMessages, ...archivedMessages, ...outboxMessages, ...outboxArchivedMessages]
+      .filter(m => m.allow_reply).map(m => m.id))].sort();
+    const unread = Object.entries(unreadReplyCounts).sort().map(([k, v]) => `${k}:${v}`).join(',');
+    const opened = Object.entries(noticeReplies).sort().map(([k, v]) => `${k}:${v.length}`).join(',');
+    return `${ids.join(',')}|${unread}|${opened}`;
+  }, [inboxMessages, archivedMessages, outboxMessages, outboxArchivedMessages, unreadReplyCounts, noticeReplies]);
+  useEffect(() => {
+    const ids = replyTotalsKey.split('|')[0];
+    if (!ids) { setReplyTotals({}); return; }
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from('board_messages').select('parent_id')
+        .in('parent_id', ids.split(',')).is('channel_id', null);
+      if (cancelled) return;
+      // 🚨 読めなかったときは空で上書きしない（件数が黙って消えると「返信が取り消された」と読める）
+      if (error) { console.error('返信の件数の読み込みに失敗:', error.code, error.message); return; }
+      const t: Record<string, number> = {};
+      (data || []).forEach((r: { parent_id: string }) => { t[r.parent_id] = (t[r.parent_id] || 0) + 1; });
+      setReplyTotals(t);
+    })();
+    return () => { cancelled = true; };
+  }, [replyTotalsKey]);
+  /** 一覧の印に渡す数。🚨 総数が読み込み前でも、未読や開いた返信の数より小さく出さない */
+  const replyCountOf = (id: string) => {
+    const unread = unreadReplyCounts[id] || 0;
+    const total = Math.max(replyTotals[id] || 0, noticeReplies[id]?.length || 0, unread);
+    return { total, unread };
+  };
+
   /** その返信が「誰とのやり取り」か。送信者が書いたものは宛先、そうでなければ書いた人 */
   const replyPartnerOf = (notice: BoardMessage, r: BoardMessage): string =>
     r.user_id === notice.user_id ? (noticeReplyTo[r.id] || '') : r.user_id;
@@ -2129,8 +2187,11 @@ const BoardPage: React.FC = () => {
       </div>
     );
 
+    // 🚨 textAlign: 'left' を明示する（2026-09-24 実機指摘）。外側の詳細の枠が中央寄せで、
+    //    それを受け継いで「◯◯さんとのやり取り」も返信の本文も中央に寄っていた（長い返信が読みにくい）。
+    //    グループ・DM のリプライは左寄せなので、それに揃える
     return (
-      <div style={{ marginTop: 10, background: isDark ? '#1e2328' : '#f0f4ff', border: `1px solid ${isDark ? '#3d4349' : '#c7d4f5'}`, borderRadius: 10, padding: '10px 12px' }}>
+      <div style={{ marginTop: 10, background: isDark ? '#1e2328' : '#f0f4ff', border: `1px solid ${isDark ? '#3d4349' : '#c7d4f5'}`, borderRadius: 10, padding: '10px 12px', textAlign: 'left' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 13, fontWeight: 'bold', color: textColor }}>↩ 返信</span>
           <span style={{ fontSize: 12, color: isOpen ? (isDark ? '#90b4e8' : '#1d4ed8') : subColor }}>
@@ -3468,8 +3529,8 @@ const BoardPage: React.FC = () => {
                       <span style={{ fontSize: 12, fontWeight: 'bold', color: textColor }}>{senderName}</span>
                       <span style={{ fontSize: 10, color: subColor }}>{fmtFull(msg.sent_at || msg.created_at)}</span>
                       {confirmed && !isArchived && <span style={{ fontSize: 10, color: '#22c55e', fontWeight: 700 }}>✓ 完了</span>}
-                      {/* まだ読んでいない返信。押して開けば既読になり、この印も消える */}
-                      <ReplyUnreadMark n={unreadReplyCounts[msg.id] || 0} />
+                      {/* 返信の件数。未読があれば青いベタ、開いて読めば薄い札に変わる（件数は残る） */}
+                      <ReplyCountMark {...replyCountOf(msg.id)} isDark={isDark} />
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                       <button type="button" onClick={e => toggleFavMessage(e, msg.id, msg)}
@@ -3991,7 +4052,7 @@ const BoardPage: React.FC = () => {
                             style={{ width: 15, height: 15, cursor: 'pointer', accentColor: '#3b82f6' }} />
                           <span style={{ fontSize: 10, color: subColor }}>{fmtFull(msg.sent_at || msg.created_at)}</span>
                           {/* 🚨 片付けたお知らせにも返信は届く（受付は30日）。ここに出さないと見つからない */}
-                          <ReplyUnreadMark n={unreadReplyCounts[msg.id] || 0} />
+                          <ReplyCountMark {...replyCountOf(msg.id)} isDark={isDark} />
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span style={{ fontSize: 10, color: subColor }}>{recipientIds.length}人</span>
@@ -4058,7 +4119,7 @@ const BoardPage: React.FC = () => {
                           )}
                           {dtConfig && allConfirmed && <span style={{ fontSize: 10, color: '#22c55e', fontWeight: 700 }}>✓ 完了</span>}
                           {/* 🚨 返信を受け取るのは多くの場合ここ（送った側）。受信トレイにだけ出すと見つからない */}
-                          <ReplyUnreadMark n={unreadReplyCounts[msg.id] || 0} />
+                          <ReplyCountMark {...replyCountOf(msg.id)} isDark={isDark} />
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span style={{ fontSize: 10, color: subColor }}>{recipientIds.length}人</span>
