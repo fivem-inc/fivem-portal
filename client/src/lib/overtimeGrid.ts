@@ -3,9 +3,17 @@
 // 🚨 ここは画面の状態を持たない（検算できるように supabase も読まない）。
 // 🚨 1件フォームと同じ判定は lib/overtimeSubmit を呼ぶ（ここに書き写さない）。
 
-import { payPeriodEnd } from './breakCalc';
+import { payPeriodEnd, minToTime, checkLegalBreak } from './breakCalc';
+import type { WorkSegment } from './breakCalc';
 import { isFullDayReport } from './overtimeTypes';
-import { canReportOvertime } from './overtimeSubmit';
+import type { OvertimeType } from './overtimeTypes';
+import {
+  canReportOvertime, toWorkSegments, segmentIssuesOf, detectOvertimeTypes, composeApplicationTypes,
+  effectiveLocationOf, validateOvertime, overtimePhase, isSameAsNormalShift,
+} from './overtimeSubmit';
+import type { SegInput, TypeDetect } from './overtimeSubmit';
+import { buildWorkDiff } from './overtimeShift';
+import type { NormalShiftSnapshot } from './overtimeShift';
 import type { OvertimeStatus } from './overtimeStatus';
 
 /** 給与期間（16日〜翌15日）の日付を順に並べる */
@@ -46,6 +54,8 @@ export interface GridReport {
   application_types: string[] | null;
   location: string | null;
   diff_minutes: number | null;
+  break_minutes: number | null;
+  break_manual: boolean;
   reason: string | null;
   return_comment: string | null;
   reviewer_id: string | null;
@@ -113,3 +123,225 @@ export const GRID_KIND_TAG: Record<GridDayKind, string> = {
   done: '済み',
   leave_auto: '休暇から自動',
 };
+
+// ────────────────────────────────────────────────────────────────
+// 第4段：行ごとの入力と計算（2026-09-24）
+// ────────────────────────────────────────────────────────────────
+
+/** 1件フォームの自己受理の値（OvertimePage の SELF_REVIEW_VALUE と同じ） */
+export const GRID_SELF_REVIEW = '__self__';
+
+/** 表の1行の入力（端末の下書きにもこの形で保存する） */
+export interface RowDraft {
+  /** 実績報告・再提出の行を「送る対象」にしたか。🚨 触るまで送らない（何もしないことが送信にならないように） */
+  touched: boolean;
+  segs: SegInput[];
+  reason: string;
+  /** 実績報告で予定から変えたときの理由 */
+  changeReason: string;
+  /** 休憩（分）の手入力。空＝自動 */
+  breakMin: string;
+  /** 勤務地の選択（校名 or 'その他'） */
+  location: string;
+  locationCustom: string;
+  lateChoice: 'adj' | 'tardiness' | null;
+  earlyChoice: 'adj' | 'early_leave' | null;
+  /** 新しく出す行だけ。空＝表の上の申請先 */
+  reviewerId: string;
+}
+
+/** 分 → 入力欄用の "HH:MM"（時をゼロ埋め・翌日印は外す） */
+export function minToInput(min: number): string {
+  const [h, m] = minToTime(min).replace('翌', '').split(':');
+  return `${h.padStart(2, '0')}:${m}`;
+}
+
+/** 通常シフトの帯を入力欄の形に（1件フォームの normalSegs と同じ：1本目→2本目の順・"HH:MM"） */
+export function normalSegsOf(ns: NormalShiftSnapshot): SegInput[] {
+  const out: SegInput[] = [];
+  if (ns.start_time) out.push({ start: (ns.start_time ?? '').slice(0, 5), end: (ns.end_time ?? '').slice(0, 5) });
+  if (ns.start_time2) out.push({ start: (ns.start_time2 ?? '').slice(0, 5), end: (ns.end_time2 ?? '').slice(0, 5) });
+  return out;
+}
+
+/** 勤務地の値 → 選択欄の値（校名なら校名、それ以外は「その他」＋自由入力） */
+export function locationPick(loc: string | null | undefined, workplaces: readonly string[]): { location: string; locationCustom: string } {
+  const l = loc ?? '';
+  if (!l) return { location: '', locationCustom: '' };
+  if (workplaces.includes(l)) return { location: l, locationCustom: '' };
+  return { location: 'その他', locationCustom: l };
+}
+
+/** 空の行の入力 */
+export const EMPTY_ROW_DRAFT: RowDraft = {
+  touched: false, segs: [{ start: '', end: '' }], reason: '', changeReason: '', breakMin: '',
+  location: '', locationCustom: '', lateChoice: null, earlyChoice: null, reviewerId: '',
+};
+
+/**
+ * 行の最初の入力。🚨 実績報告・再提出は1件フォームの初期値と同じ（予定の時刻・元の理由・元の休憩・元の勤務地・元の2択）
+ */
+export function initialRowDraft(kind: GridDayKind, main: GridReport | null, workplaces: readonly string[]): RowDraft {
+  if (!main || (kind !== 'report' && kind !== 'resubmit')) return { ...EMPTY_ROW_DRAFT, segs: [{ start: '', end: '' }] };
+  const segsAll = main.segments ?? [];
+  // 実績報告は予定を、再提出はその申請の今の時間帯（実績があれば実績）を入れる
+  const hasActual = segsAll.some(s => s.phase === 'actual');
+  const want = kind === 'resubmit' && hasActual ? 'actual' : 'planned';
+  const src = segsAll.filter(s => s.phase === want).sort((a, b) => a.seg_no - b.seg_no);
+  const t = main.application_types ?? [];
+  return {
+    ...EMPTY_ROW_DRAFT,
+    segs: src.length > 0 ? src.map(s => ({ start: minToInput(s.start_min), end: minToInput(s.end_min) })) : [{ start: '', end: '' }],
+    reason: main.reason ?? '',
+    breakMin: main.break_manual && main.break_minutes != null ? String(main.break_minutes) : '',
+    ...locationPick(main.location, workplaces),
+    lateChoice: t.includes('tardiness') ? 'tardiness' : t.includes('late_start_adj') ? 'adj' : null,
+    earlyChoice: t.includes('early_leave') ? 'early_leave' : t.includes('early_end_adj') ? 'adj' : null,
+  };
+}
+
+/** 行の状態。🚨 送るのは 'ok' と 'warn' だけ */
+export type RowState =
+  | 'view'      // 表示だけ（済み・まだ報告できない・フォームで・休暇から自動・上限より先）
+  | 'empty'     // 空（送らない）
+  | 'idle'      // 実績報告・再提出で、まだ触っていない（送らない）
+  | 'nochange'  // 通常シフトと同じ（送らない。🚨 エラーにしない）
+  | 'editing'   // 入力中（その行を触っている間は赤くしない）
+  | 'error'     // エラー（送らない）
+  | 'warn'      // 注意（送れる）
+  | 'ok';       // 送れる
+
+export interface GridRowCalc {
+  state: RowState;
+  message: string;
+  mode: 'advance' | 'posthoc';
+  phase: 'planned' | 'actual';
+  isReportPhase: boolean;
+  isResubmit: boolean;
+  workSegments: WorkSegment[];
+  breakMin: number;
+  laborMin: number;
+  diffMin: number;
+  legalOk: boolean;
+  typeDetect: TypeDetect;
+  applicationTypes: OvertimeType[];
+  effectiveLocation: string;
+  hasChanges: boolean;
+  isPureZero: boolean;
+  reviewerId: string;
+  isSelfReview: boolean;
+  /** 送ると何になるか（行に出す文字） */
+  sendLabel: string;
+}
+
+const NOCHANGE_MSG = '通常シフトと同じ内容です。残業・早退・調整など、変更した点を入力してください';
+
+/**
+ * 1行ぶんの計算とチェック。🚨 計算・判定は lib/overtimeSubmit（1件フォームと同じ部品）を呼ぶだけ。
+ * ns はその日の通常シフト（実績報告・再提出で元の申請がシフトを手直ししていれば、その控え）。
+ */
+export function computeGridRow(a: {
+  kind: GridDayKind;
+  date: string;
+  today: string;
+  nowMin: number;
+  advanceMaxDate: string;
+  ns: NormalShiftSnapshot;
+  main: GridReport | null;
+  draft: RowDraft;
+  /** 表の上の申請先（新しく出す行の既定） */
+  defaultReviewerId: string;
+  canSelfReview: boolean;
+  /** 締め切りを過ぎ、経理の許可も無い（新しく出す行だけに効く） */
+  closeLocked: boolean;
+  focused: boolean;
+}): GridRowCalc {
+  const { kind, date, today, nowMin, ns, main, draft } = a;
+  const isReportPhase = kind === 'report';
+  const isResubmit = kind === 'resubmit';
+  const isEdit = isReportPhase || isResubmit;
+  const segments = draft.segs;
+  const workSegments = toWorkSegments(segments);
+  const breakManual = draft.breakMin.trim() !== '';
+  const diff = buildWorkDiff(workSegments, ns, breakManual ? (parseInt(draft.breakMin, 10) || 0) : null);
+  const legal = checkLegalBreak(workSegments, diff.break_minutes);
+  const effectiveLocation = effectiveLocationOf(draft.location, draft.locationCustom, '', '');
+  const typeDetect = detectOvertimeTypes({ hasDate: true, workSegments, normalShift: ns, effectiveLocation });
+  const applicationTypes = composeApplicationTypes({ typeDetect, lateChoice: draft.lateChoice, earlyChoice: draft.earlyChoice, fullDay: false, fullDayType: null });
+
+  // 事前か事後か。🚨 今日の新しい行は「入れた開始時刻」で決める（1件フォームの当日の事後報告チェックと同じ基準）
+  let mode: 'advance' | 'posthoc';
+  if (kind === 'new_advance') mode = 'advance';
+  else if (kind === 'new_today') {
+    const startMin = workSegments.length > 0 ? Math.min(...workSegments.map(s => s.startMin)) : Infinity;
+    mode = nowMin >= startMin ? 'posthoc' : 'advance';
+  } else if (isEdit && main) mode = main.is_post_hoc ? 'posthoc' : 'advance';
+  else mode = 'posthoc';
+  const phase = overtimePhase({ mode, isReportPhase, isResubmit, editTarget: isEdit ? main : null });
+
+  // 実績報告の「予定から変わったか」。🚨 基準は保存値ではなく、予定を入れ直して同じ部品で計算した値（1件フォームと同じ）
+  let hasChanges = false;
+  if (isReportPhase && main) {
+    const baseDraft = initialRowDraft('report', main, []);
+    const baseWS = toWorkSegments(baseDraft.segs);
+    const baseBreak = buildWorkDiff(baseWS, ns, baseDraft.breakMin.trim() !== '' ? (parseInt(baseDraft.breakMin, 10) || 0) : null).break_minutes;
+    const baseTypes = composeApplicationTypes({
+      typeDetect: detectOvertimeTypes({ hasDate: true, workSegments: baseWS, normalShift: ns, effectiveLocation: main.location ?? '' }),
+      lateChoice: baseDraft.lateChoice, earlyChoice: baseDraft.earlyChoice, fullDay: false, fullDayType: null,
+    });
+    const live = [...workSegments].sort((x, y) => x.startMin - y.startMin);
+    const bs = [...baseWS].sort((x, y) => x.startMin - y.startMin);
+    if (live.length !== bs.length || live.some((x, i) => x.startMin !== bs[i].startMin || x.endMin !== bs[i].endMin)) hasChanges = true;
+    if (diff.break_minutes !== baseBreak) hasChanges = true;
+    if (effectiveLocation !== (main.location ?? '')) hasChanges = true;
+    if (JSON.stringify([...applicationTypes].sort()) !== JSON.stringify([...baseTypes].sort())) hasChanges = true;
+  }
+  const isPureZero = isReportPhase && diff.diff_minutes === 0 && applicationTypes.length === 0;
+
+  // 申請先：実績報告・再提出は元の申請のまま（固定）。新しい行は行の指定 → 表の上
+  const reviewerId = isEdit ? (main?.reviewer_id ?? '') : (draft.reviewerId || a.defaultReviewerId);
+  const isSelfReview = reviewerId === GRID_SELF_REVIEW;
+
+  const sendLabel =
+    isReportPhase ? (isPureZero ? '実績報告・残業なし（すぐ確定）' : hasChanges ? '実績報告（変更あり）' : '実績報告（予定どおり）')
+    : isResubmit ? `再提出（${phase === 'actual' ? '事後として' : '事前申請として'}）`
+    : mode === 'advance' ? '事前申請' : '事後報告';
+
+  const calc = {
+    message: '', mode, phase, isReportPhase, isResubmit, workSegments,
+    breakMin: diff.break_minutes, laborMin: diff.labor_minutes, diffMin: diff.diff_minutes, legalOk: legal.ok,
+    typeDetect, applicationTypes, effectiveLocation, hasChanges, isPureZero, reviewerId, isSelfReview, sendLabel,
+  };
+
+  const editable: GridDayKind[] = ['new_post', 'new_advance', 'new_today', 'report', 'resubmit'];
+  if (!editable.includes(kind)) return { ...calc, state: 'view' };
+  const anyInput = segments.some(s => s.start || s.end) || draft.reason.trim() !== '';
+  if (!isEdit && !anyInput) return { ...calc, state: 'empty' };
+  if (isEdit && !draft.touched) return { ...calc, state: 'idle' };
+  // 🚨 通常シフトと同じ日は、理由を書く前でも「変更なし（送らない）」。エラーにしない
+  //    （スプレッドシートに慣れた人は普段どおりの日も時間を書くため。判定は1件フォームと同じ関数）
+  if (!isEdit && isSameAsNormalShift({ segments, normalSegs: normalSegsOf(ns), breakManual, effectiveLocation, normalShift: ns })) {
+    return { ...calc, state: 'nochange', message: '通常シフトと同じ（送りません）' };
+  }
+
+  const message = validateOvertime({
+    date, mode, hasEditTarget: isEdit, today, advanceMaxDate: a.advanceMaxDate,
+    closeLocked: !isEdit && a.closeLocked, clockOnlyMode: false, normalShift: ns,
+    clockReason: '', clockReasonOther: '', fullDay: false, fullDayType: null, fdLocation: '',
+    furikaeOriginDate: '', furikaeOriginLocation: '', furikaeOriginLocationCustom: '', furikaeOriginStart: '', furikaeOriginEnd: '', furikaeHasTime: false,
+    reason: draft.reason, reviewerId, isSelfReview, canSelfReview: a.canSelfReview,
+    segments, workSegments, segmentIssues: segmentIssuesOf(segments),
+    isTodayPostHoc: mode === 'posthoc' && !isEdit && date === today, nowMin,
+    breakManual, breakManualMin: draft.breakMin,
+    location: draft.location, locationCustom: draft.locationCustom, locMoveStart: '', locMoveEnd: '', effectiveLocation,
+    normalSegs: normalSegsOf(ns), isReportPhase, hasChanges, isPureZero, changeReason: draft.changeReason,
+    typeDetect, lateChoice: draft.lateChoice, earlyChoice: draft.earlyChoice,
+  });
+  // 🚨 自己受理はマネージャー以上だけ（1件フォームは選択肢自体を出さない。表でも同じ判定を通す）
+  const selfBlocked = !isEdit && isSelfReview && !a.canSelfReview ? '自己受理はマネージャー以上のみです' : '';
+  const msg = message || selfBlocked;
+  if (msg === NOCHANGE_MSG) return { ...calc, state: 'nochange', message: '通常シフトと同じ（送りません）' };
+  if (msg) return { ...calc, state: a.focused ? 'editing' : 'error', message: msg };
+  if (!legal.ok) return { ...calc, state: 'warn', message: '休憩が法定より短い（送れます）' };
+  return { ...calc, state: 'ok' };
+}

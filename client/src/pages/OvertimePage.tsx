@@ -3426,7 +3426,10 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   if (gridOpen && canGrid) {
     return (
       <div style={{ maxWidth: 1400, margin: '0 auto', padding: '16px 16px 40px' }}>
-        <OvertimeGrid userId={user.id} isDark={isDark} onClose={() => { setGridOpen(false); window.scrollTo({ top: 0 }); }} />
+        <OvertimeGrid userId={user.id} roleTitle={roleTitle} isAdmin={isAdmin} isDark={isDark}
+          reviewers={reviewers} workplaces={workplaces}
+          onClose={() => { setGridOpen(false); window.scrollTo({ top: 0 }); }}
+          onOpenForm={() => { setGridOpen(false); setTab('form'); window.scrollTo({ top: 0 }); }} />
       </div>
     );
   }

@@ -1,65 +1,91 @@
 // 残業の「表でまとめて入力」（PCだけ・試験中）。計画：docs/計画-残業の表入力.md
 //
-// 🚨 第3段（2026-09-24）：**見るだけ**。給与期間1か月ぶんを1行1日で並べ、その日に何をする日かを出す。
-//    入力・送信は第4段・第5段で足す。
-// 🚨 シフト・会社カレンダー・自分の申請は、ここで給与期間の日付範囲を指定して自分で読む
+// 第3段（2026-09-24）：見るだけ ／ 🚨 第4段（2026-09-24）：**入力と行ごとのチェックまで。まだ送れない**
+//   送信は第5段で足す（新規だけ → 実績報告・再提出 → まとめ）。
+// 🚨 シフト・会社カレンダー・自分の申請・経理の許可は、ここで給与期間の日付範囲を指定して自分で読む
 //    （ページの一覧は100件で打ち切っている。シフトの型は読み込みの失敗を見ていない）。
-//    どれか1つでも読めなければ、はっきりそう出す（全日が「休み」に見えるような黙った誤りを出さない）。
-// 🚨 判定は lib/overtimeGrid・lib/overtimeSubmit にある。ここに条件を書き写さないこと。
+//    シフト・カレンダー・申請のどれか1つでも読めなければ、はっきりそう出して表を出さない。
+// 🚨 行の計算・判定は lib/overtimeGrid の computeGridRow（中身は1件フォームと同じ lib/overtimeSubmit）。
+//    ここに条件を書き写さないこと。
+// 🚨 実績報告・再提出の行は**触るまで送らない**（何もしないことが送信にならないように）。
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import {
   calcPayPeriodStartJst, shiftPayPeriod, payMonthPeriodLabel, todayJstStr, advanceRequestMaxDate,
-  formatSignedMin, minToTime,
+  formatSignedMin, formatMin, minToTime, isPayPeriodClosed,
 } from '../lib/breakCalc';
 import type { CalendarKind } from '../lib/breakCalc';
 import { resolveNormalShift, normalShiftTimeText, reportGateMin } from '../lib/overtimeShift';
 import type { PatternRow, NormalShiftSnapshot } from '../lib/overtimeShift';
-import { periodDates, pickDayReport, classifyGridDay, GRID_KIND_TAG } from '../lib/overtimeGrid';
-import type { GridReport, GridDayKind } from '../lib/overtimeGrid';
+import {
+  periodDates, pickDayReport, classifyGridDay, GRID_KIND_TAG, initialRowDraft, computeGridRow, normalSegsOf,
+  locationPick, GRID_SELF_REVIEW,
+} from '../lib/overtimeGrid';
+import type { GridReport, GridDayKind, RowDraft, RowState, GridRowCalc } from '../lib/overtimeGrid';
 import { STATUS_INFO } from '../lib/overtimeStatus';
 import { OT_TYPE_INFO, isOvertimeType } from '../lib/overtimeTypes';
 import { CALENDAR_CELL_STYLE } from '../hooks/useCompanyCalendar';
+import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
+import { useRoles } from '../hooks/useRoles';
+import { attrsFor } from '../lib/roleAttrs';
+import TimeInput from './TimeInput';
+
+interface Reviewer { id: string; name: string; role_title: string }
 
 interface Props {
   userId: string;
+  roleTitle: string;
+  isAdmin: boolean;
   isDark: boolean;
+  /** 申請先の候補（ページが読んだもの＝1件フォームと同じ） */
+  reviewers: Reviewer[];
+  /** 勤務地の候補（ページが読んだもの＝1件フォームと同じ） */
+  workplaces: string[];
   onClose: () => void;
+  /** 表で扱わない日を1件フォームで開く */
+  onOpenForm: () => void;
 }
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
 const dowOf = (d: string) => { const [y, m, dd] = d.split('-').map(Number); return new Date(y, m - 1, dd).getDay(); };
 
-/** 種類の札の色。🚨 送る種類（事前・事後・実績・再提出）は青の系統、送らないものは灰。新しい色は足さない */
+/** 種類の札の色。🚨 送る種類は青の系統、差し戻しは赤、送らないものは灰。新しい色は足さない */
 const TAG_STYLE: Record<GridDayKind, 'send' | 'muted' | 'warn'> = {
   new_post: 'send', new_advance: 'send', new_today: 'send', report: 'send', resubmit: 'warn',
   beyond_max: 'muted', report_wait: 'muted', form_only: 'muted', done: 'muted', leave_auto: 'muted',
 };
 
-const OvertimeGrid: React.FC<Props> = ({ userId, isDark, onClose }) => {
+type Drafts = Record<string, RowDraft>;
+
+const OvertimeGrid: React.FC<Props> = ({ userId, roleTitle, isAdmin, isDark, reviewers, workplaces, onClose, onOpenForm }) => {
   const today = todayJstStr();
   const [period, setPeriod] = useState(() => calcPayPeriodStartJst(today));
   const dates = useMemo(() => periodDates(period), [period]);
   const from = dates[0];
   const to = dates[dates.length - 1];
 
+  const roles = useRoles();
+  const canSelfReview = isAdmin || attrsFor(roles, roleTitle).is_manager_plus;
+
   const [patterns, setPatterns] = useState<PatternRow[] | null>(null);
   const [calendar, setCalendar] = useState<Record<string, CalendarKind> | null>(null);
   const [reports, setReports] = useState<GridReport[] | null>(null);
+  const [grants, setGrants] = useState<Set<string>>(new Set());
   const [errors, setErrors] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     const errs: string[] = [];
-    const [patRes, calRes, repRes] = await Promise.all([
+    const [patRes, calRes, repRes, grantRes] = await Promise.all([
       supabase.from('weekly_shift_patterns').select('*').eq('user_id', userId),
       supabase.from('company_calendar').select('date, kind').gte('date', from).lte('date', to),
       supabase.from('overtime_reports')
-        .select('id, work_date, status, entry_type, is_post_hoc, application_types, location, diff_minutes, reason, return_comment, reviewer_id, normal_shift, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
+        .select('id, work_date, status, entry_type, is_post_hoc, application_types, location, diff_minutes, break_minutes, break_manual, reason, return_comment, reviewer_id, normal_shift, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
         .eq('applicant_id', userId).gte('work_date', from).lte('work_date', to),
+      supabase.from('overtime_submission_grants').select('work_date').eq('user_id', userId).is('revoked_at', null),
     ]);
     // 🚨 1つでも読めなければ null のままにして、表の上に理由を出す（空の配列にしない＝全日「休み」に見えるのを防ぐ）
     if (patRes.error) { errs.push('通常シフト：' + patRes.error.message); setPatterns(null); }
@@ -72,42 +98,123 @@ const OvertimeGrid: React.FC<Props> = ({ userId, isDark, onClose }) => {
     }
     if (repRes.error) { errs.push('申請：' + repRes.error.message); setReports(null); }
     else setReports((repRes.data as GridReport[] | null) ?? []);
+    // 経理の許可は読めなくても止めない（締め後の日が「送れない」側に倒れるだけ。最終判断は DB のトリガー）
+    setGrants(grantRes.error ? new Set() : new Set(((grantRes.data ?? []) as { work_date: string }[]).map(g => g.work_date)));
     setErrors(errs);
     setLoading(false);
   }, [userId, from, to]);
 
   useEffect(() => { void load(); }, [load]);
 
-  // いまの時刻（今日の行の「実績報告はまだ／できる」に使う）。1分ごとに更新
+  // いまの時刻（今日の行の判定に使う）。1分ごとに更新
   const [nowMin, setNowMin] = useState(() => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); });
   useEffect(() => {
     const t = setInterval(() => { const d = new Date(); setNowMin(d.getHours() * 60 + d.getMinutes()); }, 60_000);
     return () => clearInterval(t);
   }, []);
 
+  // ---- 表の上の申請先（新しく出す日の既定） ----
+  const [defaultReviewerId, setDefaultReviewerId] = useState('');
+
+  // ---- 入力（行ごと）。🚨 下書きのキーは「利用者ID＋給与期間」（共用PCで前の人の入力が見えないように） ----
+  const draftKey = `${DRAFT_KEYS.overtimeGrid}:${userId}:${period}`;
+  const [drafts, setDrafts] = useState<Drafts>({});
+  const [draftNote, setDraftNote] = useState('');
+  const loadedKeyRef = useRef('');
+  const [focusedDate, setFocusedDate] = useState<string | null>(null);
+  const [lastBulk, setLastBulk] = useState<string[] | null>(null);
+  const [onlyErrors, setOnlyErrors] = useState(false);
+
   const advanceMaxDate = advanceRequestMaxDate(today);
   const ready = patterns !== null && calendar !== null && reports !== null;
 
-  const rows = useMemo(() => {
+  const baseRows = useMemo(() => {
     if (!ready) return [];
     return dates.map(date => {
       const ck = calendar![date] ?? null;
-      const ns: NormalShiftSnapshot = resolveNormalShift(patterns!, date, ck);
+      const resolved: NormalShiftSnapshot = resolveNormalShift(patterns!, date, ck);
       const { main, leaveAuto } = pickDayReport(reports!.filter(r => r.work_date === date));
       const planned = (main?.segments ?? []).filter(s => s.phase === 'planned');
       const kind = classifyGridDay({
         date, today, nowMin, advanceMaxDate, main, leaveAuto,
         gateMin: main ? reportGateMin(main.normal_shift as NormalShiftSnapshot | null, planned) : null,
       });
+      // 実績報告・再提出で元の申請がシフトを手直ししていれば、その控えで計算する（1件フォームと同じ）
+      const snap = main?.normal_shift as NormalShiftSnapshot | null | undefined;
+      const ns = (kind === 'report' || kind === 'resubmit') && snap?.manual_override ? snap : resolved;
       return { date, ck, ns, main, leaveAuto, kind };
     });
   }, [ready, dates, calendar, patterns, reports, today, nowMin, advanceMaxDate]);
 
+  // 下書きを読み込む（期間を変えたとき・読み込みが終わったとき）。
+  // 🚨 申請の状態が変わった日（新規だったのに申請ができた／実績報告だったのに済んだ 等）の下書きは捨てて一言知らせる
+  useEffect(() => {
+    if (!ready || loadedKeyRef.current === draftKey) return;
+    loadedKeyRef.current = draftKey;
+    const saved = loadDraft<{ drafts: Drafts; kinds?: Record<string, GridDayKind>; defaultReviewerId?: string }>(draftKey);
+    const next: Drafts = {};
+    let dropped = 0;
+    baseRows.forEach(r => {
+      const init = initialRowDraft(r.kind, r.main, workplaces);
+      const s = saved?.drafts?.[r.date];
+      const savedKind = saved?.kinds?.[r.date];
+      const sameKind = !savedKind || savedKind === r.kind
+        || ((savedKind === 'new_today' || savedKind === 'new_advance' || savedKind === 'new_post') && (r.kind === 'new_today' || r.kind === 'new_advance' || r.kind === 'new_post'));
+      if (!s) { next[r.date] = init; return; }
+      if (sameKind) { next[r.date] = { ...init, ...s }; return; }
+      next[r.date] = init;
+      if (s.segs?.some(x => x.start || x.end) || s.reason) dropped++;
+    });
+    setDrafts(next);
+    setLastBulk(null);
+    if (saved?.defaultReviewerId) setDefaultReviewerId(saved.defaultReviewerId);
+    setDraftNote(dropped > 0 ? `前回の入力のうち ${dropped} 日分は、その後に申請の状態が変わったため消しました。` : '');
+  }, [ready, draftKey, baseRows, workplaces]);
+
+  // 下書きを保存（入力のたび）。どの種類の行だったかも一緒に残す（状態が変わった日を見分けるため）
+  useEffect(() => {
+    if (loadedKeyRef.current !== draftKey) return;
+    const kinds: Record<string, GridDayKind> = {};
+    baseRows.forEach(r => { kinds[r.date] = r.kind; });
+    saveDraft(draftKey, { drafts, kinds, defaultReviewerId });
+  }, [drafts, defaultReviewerId, draftKey, baseRows]);
+
+  const setRow = (date: string, patch: Partial<RowDraft>) =>
+    setDrafts(prev => ({ ...prev, [date]: { ...(prev[date] ?? initialRowDraft('new_post', null, workplaces)), ...patch } }));
+
+  const rows = useMemo(() => baseRows.map(r => {
+    const draft = drafts[r.date] ?? initialRowDraft(r.kind, r.main, workplaces);
+    const calc: GridRowCalc = computeGridRow({
+      kind: r.kind, date: r.date, today, nowMin, advanceMaxDate, ns: r.ns, main: r.main, draft,
+      defaultReviewerId, canSelfReview,
+      closeLocked: isPayPeriodClosed(r.date, today) && !grants.has(r.date),
+      focused: focusedDate === r.date,
+    });
+    return { ...r, draft, calc };
+  }), [baseRows, drafts, today, nowMin, advanceMaxDate, defaultReviewerId, canSelfReview, grants, focusedDate, workplaces]);
+  type Row = typeof rows[number];
+
   const counts = useMemo(() => {
-    const c: Partial<Record<GridDayKind, number>> = {};
-    rows.forEach(r => { c[r.kind] = (c[r.kind] ?? 0) + 1; });
+    const c: Partial<Record<RowState, number>> = {};
+    rows.forEach(r => { c[r.calc.state] = (c[r.calc.state] ?? 0) + 1; });
     return c;
   }, [rows]);
+  const sendable = rows.filter(r => r.calc.state === 'ok' || r.calc.state === 'warn');
+  // 🚨 「予定どおりの日を送る対象に入れる」の対象：報告できる・まだ触っていない行だけ（直した行は含めない）
+  const plannedAsIs = rows.filter(r => r.kind === 'report' && !r.draft.touched);
+  // 締め切りを過ぎた新しい行（経理の許可が無い）。🚨 行ごとではなく表の上に1つだけ出す
+  const lockedNewRows = rows.filter(r => (r.kind === 'new_post' || r.kind === 'new_today') && isPayPeriodClosed(r.date, today) && !grants.has(r.date));
+
+  /** 新しい行を初めて触ったとき、時間が空ならその日の通常シフトを入れる（🚨 2本シフトの2本目の入れ忘れを防ぐ） */
+  const fillNormalIfEmpty = (r: Row) => {
+    if (r.kind !== 'new_post' && r.kind !== 'new_advance' && r.kind !== 'new_today') return;
+    if (r.draft.segs.some(s => s.start || s.end)) return;
+    const segs = normalSegsOf(r.ns);
+    setRow(r.date, {
+      segs: segs.length > 0 ? segs : [{ start: '', end: '' }],
+      ...(r.draft.location ? {} : locationPick(r.ns.location, workplaces)),
+    });
+  };
 
   // ---- styles（残業ページと同じ配色） ----
   const text = isDark ? '#f8f9fa' : '#212529';
@@ -115,26 +222,71 @@ const OvertimeGrid: React.FC<Props> = ({ userId, isDark, onClose }) => {
   const cardBg = isDark ? '#343a40' : '#fff';
   const innerBg = isDark ? '#2b3035' : '#f8f9fa';
   const borderColor = isDark ? '#495057' : '#dee2e6';
+  const inputBg = isDark ? '#495057' : '#fff';
   const toggleBlue = '#1976d2';
+  const toggleText = isDark ? '#90caf9' : '#1976d2';
   const toggleBg = isDark ? '#1e3a5f' : '#e3f2fd';
+  const errBg = isDark ? '#4a2b30' : '#fdecea';
+  const warnBg = isDark ? '#4a3f1e' : '#fff8e1';
+  const warnText = isDark ? '#f0c36d' : '#b8860b';
   const btn: React.CSSProperties = { padding: '6px 12px', borderRadius: 8, border: `1px solid ${borderColor}`, background: cardBg, color: text, fontSize: 13, cursor: 'pointer' };
+  const btnSm: React.CSSProperties = { ...btn, padding: '2px 8px', fontSize: 11.5 };
+  const btnOn: React.CSSProperties = { background: toggleBlue, color: '#fff', borderColor: toggleBlue };
+  const btnSub: React.CSSProperties = { ...btn, background: toggleBg, color: toggleText, borderColor: toggleBlue, fontWeight: 'bold' };
   const th: React.CSSProperties = { position: 'sticky', top: 0, background: innerBg, color: subText, fontSize: 12, fontWeight: 'bold', textAlign: 'left', padding: '7px 8px', borderBottom: `2px solid ${borderColor}`, whiteSpace: 'nowrap', zIndex: 1 };
   const td: React.CSSProperties = { padding: '6px 8px', borderBottom: `1px solid ${borderColor}`, verticalAlign: 'top', fontSize: 13, color: text };
+  // 🚨 文字の入力欄は16px以上（iOS は16px未満の欄にふれるとページを拡大する）
+  const txt: React.CSSProperties = { width: '100%', minWidth: 150, boxSizing: 'border-box', border: `1px solid ${borderColor}`, background: inputBg, color: text, borderRadius: 6, padding: '5px 7px', fontSize: 16 };
+  const sel: React.CSSProperties = { border: `1px solid ${borderColor}`, background: inputBg, color: text, borderRadius: 6, padding: '4px 6px', fontSize: 13 };
 
   const segText = (segs: { start_min: number; end_min: number }[]) =>
     [...segs].sort((a, b) => a.start_min - b.start_min).map(s => `${minToTime(s.start_min)}〜${minToTime(s.end_min)}`).join(' / ');
-  const typesText = (types: string[] | null) =>
+  const typesText = (types: readonly string[] | null) =>
     (types ?? []).filter(isOvertimeType).map(t => OT_TYPE_INFO[t].label).join('・');
 
-  const tag = (k: GridDayKind) => {
+  const tag = (k: GridDayKind, label?: string) => {
     const st = TAG_STYLE[k];
     const style: React.CSSProperties = st === 'send'
-      ? { background: toggleBg, color: toggleBlue, border: `1px solid ${toggleBlue}` }
+      ? { background: toggleBg, color: toggleText, border: `1px solid ${toggleBlue}` }
       : st === 'warn'
-        ? { background: isDark ? '#4a1515' : '#fdecea', color: isDark ? '#f5b8bb' : '#c62828', border: '1px solid #c62828' }
+        ? { background: errBg, color: isDark ? '#f5b8bb' : '#c62828', border: '1px solid #c62828' }
         : { background: innerBg, color: subText, border: `1px solid ${borderColor}` };
-    return <span style={{ ...style, display: 'inline-block', fontSize: 11.5, fontWeight: 'bold', borderRadius: 6, padding: '1px 7px', whiteSpace: 'nowrap' }}>{GRID_KIND_TAG[k]}</span>;
+    return <span style={{ ...style, display: 'inline-block', fontSize: 11.5, fontWeight: 'bold', borderRadius: 6, padding: '1px 7px', whiteSpace: 'nowrap' }}>{label ?? GRID_KIND_TAG[k]}</span>;
   };
+
+  const sendCell = (c: GridRowCalc) => {
+    switch (c.state) {
+      case 'ok': return <b style={{ color: toggleText }}>送る<div style={{ fontSize: 11.5, fontWeight: 'normal' }}>{c.sendLabel}</div></b>;
+      case 'warn': return <b style={{ color: toggleText }}>送る（注意）<div style={{ fontSize: 11.5, fontWeight: 'normal' }}>{c.sendLabel}</div></b>;
+      case 'error': return <b style={{ color: '#e24b4a' }}>エラー（送らない）</b>;
+      case 'editing': return <span style={{ color: subText }}>入力中</span>;
+      case 'nochange': return <span style={{ color: subText, fontSize: 12 }}>通常シフトと同じ（送らない）</span>;
+      case 'idle': return <span style={{ color: subText, fontSize: 12 }}>まだ送らない<br />（触るか［予定どおり］で対象に）</span>;
+      case 'empty': return <span style={{ color: subText, fontSize: 12 }}>空（送らない）</span>;
+      default: return null;
+    }
+  };
+
+  const rowBgOf = (state: RowState, kind: GridDayKind, isToday: boolean): string | undefined => {
+    if (state === 'error') return errBg;
+    if (state === 'warn') return warnBg;
+    if (TAG_STYLE[kind] === 'muted') return innerBg;
+    if (isToday) return isDark ? '#1e3a5f55' : '#e3f2fd66';
+    return undefined;
+  };
+
+  // Enter で同じ列の下の行へ（スプレッドシートと同じ動き）
+  const onEnterNext = (e: React.KeyboardEvent<HTMLInputElement>, col: string) => {
+    if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+    e.preventDefault();
+    const all = Array.from(document.querySelectorAll<HTMLInputElement>(`input[data-grid-col="${col}"]`));
+    const i = all.indexOf(e.currentTarget);
+    if (i >= 0 && all[i + 1]) all[i + 1].focus();
+  };
+
+  const reviewerOptions = reviewers.filter(r => r.id !== userId);
+  const reviewerName = (id: string) =>
+    id === GRID_SELF_REVIEW ? '自己受理' : (reviewers.find(r => r.id === id)?.name ?? (id === userId ? '自分' : '（元の申請先）'));
 
   return (
     <div style={{ background: cardBg, border: `1px solid ${borderColor}`, borderRadius: 12, padding: '16px 18px', color: text }}>
@@ -144,23 +296,41 @@ const OvertimeGrid: React.FC<Props> = ({ userId, isDark, onClose }) => {
         <b>{payMonthPeriodLabel(period)}</b>
         <button type="button" style={btn} onClick={() => setPeriod(p => shiftPayPeriod(p, 1))} aria-label="次の給与期間">▶</button>
         <span style={{ flex: 1 }} />
+        <span style={{ fontSize: 12, color: subText }}>新しく出す日の申請先</span>
+        <select value={defaultReviewerId} onChange={e => setDefaultReviewerId(e.target.value)} style={sel} aria-label="新しく出す日の申請先">
+          <option value="">選択してください</option>
+          {canSelfReview && <option value={GRID_SELF_REVIEW}>自己受理（自分で確認する）</option>}
+          {reviewerOptions.map(r => <option key={r.id} value={r.id}>{r.name}（{r.role_title}）</option>)}
+        </select>
         <button type="button" style={btn} onClick={onClose}>1件ずつのフォームに戻る</button>
       </div>
 
       <div style={{ background: innerBg, border: `1px solid ${borderColor}`, borderRadius: 8, padding: '8px 12px', fontSize: 12.5, color: subText, marginBottom: 10, lineHeight: 1.7 }}>
-        <b style={{ color: text }}>いまは見るだけです。</b>入力と送信は次の版から使えます。<br />
-        ・日付のすぐ右の札が、その日に送れるもの（<b>事後報告</b>＝過ぎた日／<b>事前申請</b>＝先の日／<b>実績報告</b>＝事前申請が済んだ日／<b>再提出</b>＝差し戻された日）です<br />
-        ・申請・報告は、これまでどおり1件ずつのフォームからも出せます
+        <b style={{ color: text }}>試験中：いまは入力とチェックまでです。送信は次の版から使えます</b>（入力はこの端末に保存されます）<br />
+        ・時間を入れた日だけ送ります。空の日と、通常シフトと同じ日は送りません<br />
+        ・<b>実績報告・再提出の行は、触るまで送りません</b>。予定どおりなら［予定どおり］、残業が無かったら［残業なし］<br />
+        ・時刻は「930」のように続けて打てます。理由の欄は Enter で下の行へ
       </div>
+
+      {draftNote && (
+        <div style={{ background: warnBg, border: '1px solid #f59e0b', borderRadius: 8, padding: '8px 12px', fontSize: 12.5, marginBottom: 10 }}>{draftNote}</div>
+      )}
 
       {errors.length > 0 && (
         <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 10, padding: '10px 12px', marginBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
           <div style={{ fontSize: 13, color: '#842029' }}>
-            <b>読み込めなかったものがあります。この表は正しく表示できません。</b>
+            <b>読み込めなかったものがあります。この表は正しく表示できません（送信もできません）。</b>
             {errors.map(e => <div key={e}>{e}</div>)}
           </div>
-          <button type="button" onClick={() => { void load(); }}
+          <button type="button" onClick={() => { loadedKeyRef.current = ''; void load(); }}
             style={{ flexShrink: 0, padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 'bold', background: '#dc3545', color: '#fff' }}>再読み込み</button>
+        </div>
+      )}
+
+      {lockedNewRows.length > 0 && (
+        <div style={{ background: warnBg, border: '1px solid #f59e0b', borderRadius: 8, padding: '8px 12px', fontSize: 12.5, marginBottom: 10 }}>
+          この給与期間は締め切りを過ぎています。新しく出す日（{lockedNewRows.length}日）は送れません。経理への許可の依頼は、1件ずつのフォームからできます。
+          （実績報告・再提出は送れます）
         </div>
       )}
 
@@ -168,11 +338,36 @@ const OvertimeGrid: React.FC<Props> = ({ userId, isDark, onClose }) => {
         <p style={{ margin: 0, fontSize: 13, color: subText, textAlign: 'center' }}>読み込み中…</p>
       ) : ready && (
         <>
-          <div style={{ fontSize: 13, marginBottom: 8 }}>
-            送れる日：事後報告 {counts.new_post ?? 0}・事前申請 {counts.new_advance ?? 0}・今日 {counts.new_today ?? 0}・
-            実績報告 {counts.report ?? 0}・再提出 {counts.resubmit ?? 0} ／
-            <span style={{ color: subText }}>済み {counts.done ?? 0}・実績報告はまだ {counts.report_wait ?? 0}・フォームで {counts.form_only ?? 0}・休暇から自動 {counts.leave_auto ?? 0}</span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', fontSize: 13, marginBottom: 8 }}>
+            <span>送れる <b>{sendable.length}件</b></span>
+            <span style={{ color: '#e24b4a' }}>エラー <b>{counts.error ?? 0}件</b></span>
+            <span style={{ color: subText }}>入力中 {counts.editing ?? 0}・まだ送らない {counts.idle ?? 0}・通常シフトと同じ {counts.nochange ?? 0}・空 {counts.empty ?? 0}</span>
+            <span style={{ flex: 1 }} />
+            {lastBulk ? (
+              <span style={{ fontSize: 12.5 }}>
+                {lastBulk.map(md).join('・')} を送る対象に入れました
+                <button type="button" style={{ ...btnSm, marginLeft: 6 }} onClick={() => {
+                  setDrafts(prev => { const n = { ...prev }; lastBulk.forEach(d => { if (n[d]) n[d] = { ...n[d], touched: false }; }); return n; });
+                  setLastBulk(null);
+                }}>元に戻す</button>
+              </span>
+            ) : (
+              <button type="button" style={{ ...btnSub, opacity: plannedAsIs.length === 0 ? 0.5 : 1 }} disabled={plannedAsIs.length === 0}
+                onClick={() => {
+                  const ds = plannedAsIs.map(r => r.date);
+                  setDrafts(prev => {
+                    const n = { ...prev };
+                    plannedAsIs.forEach(r => { n[r.date] = { ...initialRowDraft('report', r.main, workplaces), touched: true }; });
+                    return n;
+                  });
+                  setLastBulk(ds);
+                }}>
+                予定どおりの日を送る対象に入れる（{plannedAsIs.length}件）
+              </button>
+            )}
+            <button type="button" style={onlyErrors ? btnSub : btn} onClick={() => setOnlyErrors(v => !v)}>エラーの行だけ表示</button>
           </div>
+
           <div style={{ overflowX: 'auto', maxHeight: '70vh', overflowY: 'auto', border: `1px solid ${borderColor}`, borderRadius: 8 }}>
             <table style={{ borderCollapse: 'collapse', width: '100%' }}>
               <thead>
@@ -181,13 +376,16 @@ const OvertimeGrid: React.FC<Props> = ({ userId, isDark, onClose }) => {
                   <th style={th}>種類</th>
                   <th style={th}>通常シフト</th>
                   <th style={th}>この日の状態</th>
-                  <th style={th}>時間（予定／実績）</th>
-                  <th style={th}>差分・種別</th>
-                  <th style={th}>理由・メモ</th>
+                  <th style={th}>時間</th>
+                  <th style={th}>休憩（分）</th>
+                  <th style={th}>労働・差分</th>
+                  <th style={th}>理由・種別・勤務地</th>
+                  <th style={th}>申請先</th>
+                  <th style={th}>送る？</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map(r => {
+                {rows.filter(r => !onlyErrors || r.calc.state === 'error').map(r => {
                   const dow = dowOf(r.date);
                   const off = r.ns.day_kind === 'holiday' || dow === 0 || dow === 6;
                   const isToday = r.date === today;
@@ -195,46 +393,184 @@ const OvertimeGrid: React.FC<Props> = ({ userId, isDark, onClose }) => {
                   const planned = (rep?.segments ?? []).filter(s => s.phase === 'planned');
                   const actual = (rep?.segments ?? []).filter(s => s.phase === 'actual');
                   const st = rep ? STATUS_INFO[rep.status] : null;
-                  const muted = TAG_STYLE[r.kind] === 'muted';
-                  const rowBg = isToday ? (isDark ? '#1e3a5f33' : '#e3f2fd66') : (muted ? innerBg : undefined);
+                  const c = r.calc;
+                  const bg = rowBgOf(c.state, r.kind, isToday);
+                  const editable = c.state !== 'view';
+                  const isEdit = r.kind === 'report' || r.kind === 'resubmit';
+                  const idle = c.state === 'idle';
+                  // 実績報告・再提出の行は、触った時点で「送る対象」に入れる
+                  const touch = (patch: Partial<RowDraft>) => setRow(r.date, isEdit ? { ...patch, touched: true } : patch);
+                  const tagLabel = r.kind === 'new_today' ? `今日（${c.sendLabel}）` : r.kind === 'resubmit' ? c.sendLabel : undefined;
                   return (
-                    <tr key={r.date} style={{ background: rowBg }}>
-                      <td style={{ ...td, position: 'sticky', left: 0, background: rowBg ?? cardBg, whiteSpace: 'nowrap', fontWeight: 'bold', color: off ? '#d9534f' : text }}>
+                    <tr key={r.date} style={{ background: bg }}
+                      onFocus={() => setFocusedDate(r.date)}
+                      onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocusedDate(d => (d === r.date ? null : d)); }}>
+                      <td style={{ ...td, position: 'sticky', left: 0, background: bg ?? cardBg, whiteSpace: 'nowrap', fontWeight: 'bold', color: off ? '#d9534f' : text }}>
                         {md(r.date)}（{DOW[dow]}）
-                        {isToday && <div style={{ fontSize: 11, color: toggleBlue }}>今日</div>}
+                        {isToday && <div style={{ fontSize: 11, color: toggleText }}>今日</div>}
                         {r.ck && <div style={{ fontSize: 11, fontWeight: 'normal', background: CALENDAR_CELL_STYLE[r.ck].bg, color: CALENDAR_CELL_STYLE[r.ck].text, borderRadius: 4, padding: '0 4px', display: 'inline-block' }}>{CALENDAR_CELL_STYLE[r.ck].short}</div>}
                       </td>
-                      <td style={td}>{tag(r.kind)}</td>
+                      <td style={td}>{tag(r.kind, tagLabel)}</td>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>{normalShiftTimeText(r.ns) || <span style={{ color: subText }}>休み</span>}</td>
                       <td style={td}>
                         {st ? (
                           <span style={{ display: 'inline-block', fontSize: 11.5, fontWeight: 'bold', color: '#fff', background: st.color, borderRadius: 10, padding: '2px 8px', whiteSpace: 'nowrap' }}>{st.label}</span>
                         ) : <span style={{ color: subText }}>―</span>}
+                        {planned.length > 0 && <div style={{ fontSize: 11.5, color: subText, marginTop: 2 }}>予定 {segText(planned)}{rep ? `・${typesText(rep.application_types)}` : ''}</div>}
+                        {!editable && actual.length > 0 && <div style={{ fontSize: 11.5, color: subText }}>実績 {segText(actual)}</div>}
+                        {rep?.status === 'returned' && rep.return_comment && (
+                          <div style={{ color: '#e24b4a', fontWeight: 'bold', fontSize: 12, marginTop: 2 }}>差し戻し理由：{rep.return_comment}</div>
+                        )}
                         {r.kind === 'report_wait' && isToday && <div style={{ fontSize: 11.5, color: subText, marginTop: 2 }}>勤務が終わるころに報告できます</div>}
                         {r.kind === 'beyond_max' && <div style={{ fontSize: 11.5, color: subText, marginTop: 2 }}>事前申請はまだ出せません</div>}
                       </td>
-                      <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                        {planned.length > 0 && <div><span style={{ color: subText, fontSize: 11.5 }}>予定 </span>{segText(planned)}</div>}
-                        {actual.length > 0 && <div><span style={{ color: subText, fontSize: 11.5 }}>実績 </span>{segText(actual)}</div>}
-                        {!rep && <span style={{ color: subText }}>―</span>}
-                      </td>
-                      <td style={td}>
-                        {rep && rep.diff_minutes != null && (
-                          <b style={{ color: rep.diff_minutes > 0 ? '#2e7d32' : rep.diff_minutes < 0 ? '#c62828' : subText }}>{formatSignedMin(rep.diff_minutes)}</b>
-                        )}
-                        {rep && <div style={{ fontSize: 11.5, color: subText }}>{typesText(rep.application_types)}</div>}
-                      </td>
-                      <td style={{ ...td, minWidth: 180 }}>
-                        {rep?.reason && <div>{rep.reason}</div>}
-                        {rep?.status === 'returned' && rep.return_comment && (
-                          <div style={{ color: '#c62828', fontWeight: 'bold', fontSize: 12.5, marginTop: 2 }}>差し戻し理由：{rep.return_comment}</div>
-                        )}
-                      </td>
+
+                      {!editable ? (
+                        <>
+                          <td style={td} colSpan={4}>
+                            {rep && rep.diff_minutes != null && <b style={{ color: rep.diff_minutes > 0 ? '#2e7d32' : rep.diff_minutes < 0 ? '#c62828' : subText }}>{formatSignedMin(rep.diff_minutes)} </b>}
+                            {rep?.reason && <span>{rep.reason}</span>}
+                            {r.kind === 'form_only' && (
+                              <div style={{ fontSize: 12, color: subText, marginTop: 2 }}>
+                                時間外調整休・振替休日・欠勤・打刻ズレ・移動ありは、1件ずつのフォームから出してください
+                                <button type="button" style={{ ...btnSm, marginLeft: 6 }} onClick={onOpenForm}>フォームを開く</button>
+                              </div>
+                            )}
+                          </td>
+                          <td style={td}>{rep?.reviewer_id ? <span style={{ fontSize: 12, color: subText }}>{reviewerName(rep.reviewer_id)}</span> : null}</td>
+                          <td style={td}><span style={{ fontSize: 12, color: subText }}>{r.kind === 'done' || r.kind === 'leave_auto' ? '済み' : ''}</span></td>
+                        </>
+                      ) : (
+                        <>
+                          <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                            {r.draft.segs.map((s, i) => (
+                              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 3, opacity: idle ? 0.75 : 1 }}
+                                onFocus={() => { if (i === 0) fillNormalIfEmpty(r); }}>
+                                <TimeInput value={s.start} isDark={isDark} advance ariaLabel={`${md(r.date)} 勤務${i + 1} 開始`}
+                                  onChange={v => touch({ segs: r.draft.segs.map((x, j) => (j === i ? { ...x, start: v } : x)) })} />
+                                <span>〜</span>
+                                <TimeInput value={s.end} isDark={isDark} ariaLabel={`${md(r.date)} 勤務${i + 1} 終了`}
+                                  onChange={v => touch({ segs: r.draft.segs.map((x, j) => (j === i ? { ...x, end: v } : x)) })} />
+                                {i > 0 && <button type="button" style={btnSm} aria-label="この時間帯を消す"
+                                  onClick={() => touch({ segs: r.draft.segs.filter((_, j) => j !== i) })}>✕</button>}
+                              </div>
+                            ))}
+                            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                              {r.draft.segs.length < 3 && <button type="button" style={btnSm} onClick={() => touch({ segs: [...r.draft.segs, { start: '', end: '' }] })}>＋ 時間帯</button>}
+                              {r.kind === 'report' && (
+                                <>
+                                  <button type="button" style={{ ...btnSm, ...(r.draft.touched && !c.hasChanges ? btnOn : {}) }}
+                                    onClick={() => setRow(r.date, { ...initialRowDraft('report', r.main, workplaces), touched: true })}>予定どおり</button>
+                                  <button type="button" style={{ ...btnSm, ...(r.draft.touched && c.isPureZero ? btnOn : {}) }}
+                                    onClick={() => {
+                                      const segs = normalSegsOf(r.ns);
+                                      setRow(r.date, {
+                                        touched: true, segs: segs.length > 0 ? segs : [{ start: '', end: '' }], breakMin: '',
+                                        ...locationPick(r.ns.location, workplaces),
+                                        lateChoice: null, earlyChoice: null,
+                                      });
+                                    }}>残業なし</button>
+                                </>
+                              )}
+                              {isEdit && r.draft.touched && (
+                                <button type="button" style={btnSm} onClick={() => setRow(r.date, { ...initialRowDraft(r.kind, r.main, workplaces), touched: false })}>送らない</button>
+                              )}
+                            </div>
+                            {r.kind === 'report' && r.draft.touched && c.hasChanges && <div style={{ fontSize: 11.5, color: toggleText }}>予定から変更</div>}
+                          </td>
+                          <td style={td}>
+                            <input type="text" inputMode="numeric" value={r.draft.breakMin} placeholder={`自動 ${c.breakMin}`}
+                              onChange={e => touch({ breakMin: e.target.value.replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xfee0)).replace(/[^0-9]/g, '') })}
+                              style={{ ...txt, minWidth: 0, width: 80 }} aria-label={`${md(r.date)} 休憩（分）`} />
+                            {r.draft.breakMin !== '' && (
+                              <div style={{ fontSize: 11 }}>
+                                <span style={{ color: subText }}>手入力 </span>
+                                <button type="button" style={{ ...btnSm, padding: '0 6px' }} onClick={() => touch({ breakMin: '' })}>自動に戻す</button>
+                              </div>
+                            )}
+                          </td>
+                          <td style={{ ...td, whiteSpace: 'nowrap', opacity: idle ? 0.75 : 1 }}>
+                            {c.workSegments.length > 0 ? (
+                              <>
+                                {formatMin(c.laborMin)}<br />
+                                <b style={{ color: c.diffMin > 0 ? '#2e7d32' : c.diffMin < 0 ? '#c62828' : subText }}>{formatSignedMin(c.diffMin)}</b>
+                                {!c.legalOk && <div style={{ fontSize: 11.5, fontWeight: 'bold', color: warnText }}>⚠️ 休憩が法定より短い</div>}
+                              </>
+                            ) : <span style={{ color: subText }}>―</span>}
+                          </td>
+                          <td style={{ ...td, minWidth: 240 }}>
+                            <input type="text" value={r.draft.reason} placeholder="理由" data-grid-col="reason"
+                              onChange={e => touch({ reason: e.target.value })} onKeyDown={e => onEnterNext(e, 'reason')}
+                              style={{ ...txt, ...(c.state === 'error' && c.message === '理由を入力してください' ? { border: '2px solid #e24b4a' } : {}) }}
+                              aria-label={`${md(r.date)} 理由`} />
+                            {r.kind === 'report' && r.draft.touched && c.hasChanges && !c.isPureZero && (
+                              <input type="text" value={r.draft.changeReason} placeholder="予定から変わった理由（必須）" data-grid-col="changeReason"
+                                onChange={e => touch({ changeReason: e.target.value })} onKeyDown={e => onEnterNext(e, 'changeReason')}
+                                style={{ ...txt, marginTop: 4 }} aria-label={`${md(r.date)} 予定から変わった理由`} />
+                            )}
+                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 4, fontSize: 12 }}>
+                              {c.applicationTypes.length > 0 && <span style={{ color: subText }}>{typesText(c.applicationTypes)}</span>}
+                              {c.typeDetect.lateQ && (
+                                <span>開始が遅い：
+                                  <label><input type="radio" checked={r.draft.lateChoice === 'adj'} onChange={() => touch({ lateChoice: 'adj' })} /> 調整</label>{' '}
+                                  <label><input type="radio" checked={r.draft.lateChoice === 'tardiness'} onChange={() => touch({ lateChoice: 'tardiness' })} /> 遅刻</label>
+                                </span>
+                              )}
+                              {c.typeDetect.earlyQ && (
+                                <span>早く終わる：
+                                  <label><input type="radio" checked={r.draft.earlyChoice === 'adj'} onChange={() => touch({ earlyChoice: 'adj' })} /> 調整</label>{' '}
+                                  <label><input type="radio" checked={r.draft.earlyChoice === 'early_leave'} onChange={() => touch({ earlyChoice: 'early_leave' })} /> 早退</label>
+                                </span>
+                              )}
+                              <select value={r.draft.location} onChange={e => touch({ location: e.target.value })} style={sel} aria-label={`${md(r.date)} 勤務地`}>
+                                <option value="">勤務地</option>
+                                {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+                                <option value="その他">その他</option>
+                              </select>
+                              {r.draft.location === 'その他' && (
+                                <input type="text" value={r.draft.locationCustom} placeholder="勤務地" onChange={e => touch({ locationCustom: e.target.value })}
+                                  style={{ ...txt, minWidth: 0, width: 130 }} aria-label={`${md(r.date)} 勤務地（その他）`} />
+                              )}
+                            </div>
+                            {c.message && (c.state === 'error' || c.state === 'warn' || c.state === 'nochange') && (
+                              <div style={{ fontSize: 11.5, fontWeight: 'bold', marginTop: 3, color: c.state === 'error' ? '#e24b4a' : c.state === 'warn' ? warnText : subText }}>{c.message}</div>
+                            )}
+                          </td>
+                          <td style={td}>
+                            {isEdit ? (
+                              <span style={{ fontSize: 12, color: subText }}>{reviewerName(c.reviewerId)}<br />（元の申請のまま）</span>
+                            ) : (
+                              <select value={r.draft.reviewerId} onChange={e => touch({ reviewerId: e.target.value })} style={{ ...sel, maxWidth: 180 }} aria-label={`${md(r.date)} 申請先`}>
+                                <option value="">{defaultReviewerId ? `表の上と同じ（${reviewerName(defaultReviewerId)}）` : '表の上で選んでください'}</option>
+                                {canSelfReview && <option value={GRID_SELF_REVIEW}>自己受理（自分で確認する）</option>}
+                                {reviewerOptions.map(rv => <option key={rv.id} value={rv.id}>{rv.name}（{rv.role_title}）</option>)}
+                              </select>
+                            )}
+                          </td>
+                          <td style={td}>{sendCell(c)}</td>
+                        </>
+                      )}
                     </tr>
                   );
                 })}
               </tbody>
             </table>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
+            <button type="button" style={btn} onClick={() => {
+              clearDraft(draftKey);
+              const next: Drafts = {};
+              baseRows.forEach(r => { next[r.date] = initialRowDraft(r.kind, r.main, workplaces); });
+              setDrafts(next);
+              setLastBulk(null);
+            }}>この期間の入力をすべて消す</button>
+            <span style={{ fontSize: 12, color: subText }}>
+              {(counts.error ?? 0) > 0 ? `エラーの ${counts.error} 件は送りません。` : ''}送信は次の版から使えます
+            </span>
+            <button type="button" disabled style={{ ...btn, ...btnOn, fontWeight: 'bold', opacity: 0.5, cursor: 'not-allowed' }}>
+              {sendable.length}件を確認して送信（準備中）
+            </button>
           </div>
         </>
       )}

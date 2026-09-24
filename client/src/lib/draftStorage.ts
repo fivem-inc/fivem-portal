@@ -21,6 +21,9 @@ export const DRAFT_KEYS = {
   //    電車の中など電波の弱い場所で書くことが多く、失敗で入力が消えると機能の意味が無くなるため。
   //    保存できたら消す。ふつうのメモは端末ではなくサーバー（overtime_memos）にある
   overtimeMemoUnsent: 'fivem_draft_overtime_memo_unsent',
+  // 残業の「表でまとめて入力」（2026-09-24）。🚨 実際のキーは「これ:利用者ID:給与期間」にする
+  //    （共用PCで前の人の時刻・理由が見えないように。期間ごとに別の下書き）
+  overtimeGrid: 'fivem_draft_overtime_grid',
   boardCompose: 'fivem_draft_board_compose', // 連絡板お知らせ作成
   boardChat: 'fivem_draft_board_chat',   // 連絡板グループ/DM/リプライ（キー配下にIDで細分化）
 } as const;

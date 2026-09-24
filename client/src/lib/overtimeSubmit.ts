@@ -178,6 +178,19 @@ export interface ValidateInput {
   earlyChoice: 'adj' | 'early_leave' | null;
 }
 
+/**
+ * 入力が通常シフトと全く同じか（時間帯・休憩・勤務地に変更なし）。
+ * 🚨 送信前チェック（validateOvertime）と表入力の「変更なし（送らない）」の両方がこれを使う（2026-09-24）。
+ *    表では理由を書く前でも「変更なし」と分かる必要があるので、判定だけを外に出した。
+ */
+export function isSameAsNormalShift(v: {
+  segments: SegInput[]; normalSegs: SegInput[]; breakManual: boolean; effectiveLocation: string; normalShift: NormalShiftSnapshot;
+}): boolean {
+  const sameSegs = v.segments.length === v.normalSegs.length
+    && v.segments.every((s, i) => s.start === v.normalSegs[i].start && s.end === v.normalSegs[i].end);
+  return sameSegs && !v.breakManual && v.effectiveLocation === (v.normalShift.location ?? '');
+}
+
 /** 送信前チェック。問題なしは ''。🚨 文言は1文字も変えないこと（欄のハイライトが完全一致で引く） */
 export function validateOvertime(v: ValidateInput): string {
   const { date, mode, today } = v;
@@ -255,12 +268,8 @@ export function validateOvertime(v: ValidateInput): string {
   if (!v.reviewerId) return '申請先を選択してください';
   // 通常シフトと全く同じ内容（時間帯・休憩・勤務地に変更なし）では送信不可。
   // ※実績報告は除外＝「事前申請では残業予定だったが実際は通常どおりだった（残業ゼロ）」も正当に報告できるようにする。
-  if (!v.isReportPhase) {
-    const sameSegs = v.segments.length === v.normalSegs.length
-      && v.segments.every((s, i) => s.start === v.normalSegs[i].start && s.end === v.normalSegs[i].end);
-    if (sameSegs && !v.breakManual && v.effectiveLocation === (v.normalShift.location ?? '')) {
-      return '通常シフトと同じ内容です。残業・早退・調整など、変更した点を入力してください';
-    }
+  if (!v.isReportPhase && isSameAsNormalShift(v)) {
+    return '通常シフトと同じ内容です。残業・早退・調整など、変更した点を入力してください';
   }
   // 実績報告で予定から変わっている場合は変更理由が必須（ただし「残業なし＝通常どおり」は理由不要）
   if (v.isReportPhase && !v.fullDay && v.hasChanges && !v.isPureZero && !v.changeReason.trim()) {
