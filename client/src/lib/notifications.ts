@@ -33,7 +33,8 @@ export function formatLeaveDateSummary(leaveDates: string | null | undefined, st
 // 🚨 判定は reference_id（＝連絡板のメッセージID）。通知を作るときに必ず入れている。
 // 🚨 失敗しても読み込みは続ける（既読の印が付かないだけで、メッセージは読める）。
 //    ただし error は握りつぶさず console に出す（supabase は throw しないため）。
-const BELL_READ_ON_MESSAGE_READ = ['board:notice', 'board:group_message', 'board:dm_message'] as const;
+// 🚨 'board:dm_message:reply'（お知らせへの返信・2026-09-24）も入れる。reference_id は元のお知らせのID
+const BELL_READ_ON_MESSAGE_READ = ['board:notice', 'board:group_message', 'board:dm_message', 'board:dm_message:reply'] as const;
 
 /** ベルを読み直してほしいときに投げる合図。
  *  🚨 ベルは30秒ごとの自動更新なので、これが無いと**読んだ直後は数字が減らず**

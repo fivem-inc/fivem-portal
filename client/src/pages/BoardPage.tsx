@@ -1540,13 +1540,16 @@ const BoardPage: React.FC = () => {
       .from('board_message_recipients')
       .insert({ message_id: data.id, user_id: partnerId });
     if (recErr) setReplyErr(`送れましたが、相手に表示されないかもしれません：${recErr.message}`);
-    // 🚨 通知の種類は既存の board:dm_message を使い回す（新しい種類を作ると、設定の行が無い＝
-    //    全員に飛ぶ作りのため。push-dispatch は2人共用なので触らない）
+    // 🚨 通知の種類は board:dm_message の下位キー（2026-09-24）。
+    //    設定（ON/OFF・メール）は先頭2つ＝board:dm_message をそのまま見るので、新しい設定の行は要らない
+    //    （新しい種類を作ると、設定の行が無い＝全員に飛ぶ作りのため）。
+    //    分けたのはプッシュの飛び先のため。push-dispatch で bell を付け、押すとベルが開いて
+    //    この通知が光る → 押すと元のお知らせが開く（DMの「連絡板に新しい投稿」とは別の1通になる）
     await insertNotification(
       partnerId,
       `↩ ${profileName || '誰か'}から返信が届きました`,
       body.trim().slice(0, 40),
-      undefined, notice.id, 'board:dm_message',
+      undefined, notice.id, 'board:dm_message:reply',
     );
     setReplyDraft(null);
     await loadNoticeReplies(notice.id);

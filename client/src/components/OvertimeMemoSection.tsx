@@ -10,6 +10,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import { todayJstStr } from '../lib/breakCalc';
+import TimeInput from './TimeInput';
 import {
   MEMO_KINDS, memoTimeLabels, memoNeedsLocation, memoReasonExamples,
   memoDateRange, memoSection, memoDeadlineState, memoCloseCutoffLabel, memoSoonCount, sortMemos,
@@ -254,15 +255,17 @@ const OvertimeMemoSection: React.FC<Props> = ({ userId, isDark, workplaces, appl
               {times.start && (
                 <>
                   <span style={{ fontSize: 12, color: subText }}>{times.start}</span>
-                  <input type="time" value={d.time_start} onChange={e => set({ time_start: e.target.value })}
-                    style={{ ...inputStyle, width: 130 }} />
+                  {/* 🚨 時刻は TimeInput（時・分の2枠・テンキー）。残業の他の欄と揃える（2026-09-24）。
+                      type="time" はiPhoneでドラムになり、ここだけ打ち方が違っていた */}
+                  <TimeInput value={d.time_start} onChange={v => set({ time_start: v })} isDark={isDark}
+                    advance={!!times.end} ariaLabel={`メモ ${times.start}`} />
                 </>
               )}
               {times.end && (
                 <>
                   <span style={{ fontSize: 12, color: subText }}>{times.end}</span>
-                  <input type="time" value={d.time_end} onChange={e => set({ time_end: e.target.value })}
-                    style={{ ...inputStyle, width: 130 }} />
+                  <TimeInput value={d.time_end} onChange={v => set({ time_end: v })} isDark={isDark}
+                    ariaLabel={`メモ ${times.end}`} />
                 </>
               )}
               {/* 🚨 「いま」は押した瞬間の時刻を入れる（画面を開いた時刻ではない） */}

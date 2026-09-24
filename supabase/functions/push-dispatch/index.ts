@@ -42,7 +42,8 @@ function addParams(url: string, params: Record<string, string>): string {
 // bell: true を付けると、押したとき着地画面で🔔ベル一覧が自動で開き、該当行が黄色く光る。
 //   付けるのは「知らせ・結果」＝中身が通知の文章にしかないもの（受理されました等）。
 //   付けないのは ①要対応（着地画面に申請の中身が全部ある）②ホームに専用バナーがあるもの
-//   ③連絡板（開けば未読が見える）④安否・緊急（災害時にベルを挟まない）。
+//   ③連絡板（開けば未読が見える。🚨 お知らせへの返信だけは例外＝一覧に行が無いので付ける）
+//   ④安否・緊急（災害時にベルを挟まない）。
 // urgent: true を付けると、受信時間帯・休暇日のミュート判定を無視して常に送る。
 //   付けるのは安否・緊急系のみ（災害時に「夜だから」で止めてはいけないもの）。
 //   ⚠️ event_key が safety: で始まるものはコード側でも常に urgent 扱いにしている
@@ -139,6 +140,14 @@ const EVENT_MAP: Record<string, { app: string; word: string; text: string; url: 
   "board:group_message":    { app: "連絡板", word: "新着", text: "連絡板に新しい投稿があります", url: "/board" },
   "board:dm_message":       { app: "連絡板", word: "新着", text: "連絡板に新しい投稿があります", url: "/board" },
   "board:confirm_request":  { app: "連絡板", word: "新着", text: "連絡板に新しい投稿があります", url: "/board" },
+  // お知らせへの返信（2026-09-24 追加・BoardPage の sendNoticeReply が作る）。
+  // 🚨 ON/OFF は先頭2つ＝board:dm_message の設定をそのまま見る（baseEventKey）。新しい設定の行は要らない。
+  // 🚨 bell: true。返信は一覧に1行として並ばない（元のお知らせの中で往復する）ので、
+  //    /board に着いただけではどれか分からない。押すとベルが開いて返信が光り、押すと元のお知らせが開く
+  //    （App.tsx の classifyNotif が event_key の board: で拾い、reference_id＝元のお知らせを開く）。
+  // 🚨 文面を DM と分けてあるのは、同じ文面だとまとめる鍵が同じになり、DM と1通に混ざって
+  //    bell の有無が先に来た方で決まってしまうため。
+  "board:dm_message:reply": { app: "連絡板", word: "新着", text: "お知らせに返信が届いています", url: "/board", bell: true },
   // リマインド
   "reminder:unread:today":    { app: "連絡板", word: "本日期限", text: "連絡板に本日期限の未読があります", url: "/board" },
   "reminder:unread:tomorrow": { app: "連絡板", word: "明日期限", text: "連絡板に明日期限の未読があります", url: "/board" },
