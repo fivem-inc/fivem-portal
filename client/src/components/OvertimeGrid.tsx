@@ -422,6 +422,9 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
   const td: React.CSSProperties = { padding: '6px 8px', borderBottom: `1px solid ${borderColor}`, verticalAlign: 'top', fontSize: 13, color: text };
   // 🚨 文字の入力欄は16px以上（iOS は16px未満の欄にふれるとページを拡大する）
   const txt: React.CSSProperties = { width: '100%', minWidth: 150, boxSizing: 'border-box', border: `1px solid ${borderColor}`, background: inputBg, color: text, borderRadius: 6, padding: '5px 7px', fontSize: 16 };
+  // 🚨 時刻の部品（共用の TimeInput）は、空いている幅いっぱいに伸び、狭い画面では0まで縮む。
+  //    表は列が多いので縮められて数字が見えなくなる（2026-09-25 実機）。表の側で幅を決めて縮ませない
+  const timeBox: React.CSSProperties = { width: 104, flex: 'none' };
   const sel: React.CSSProperties = { border: `1px solid ${borderColor}`, background: inputBg, color: text, borderRadius: 6, padding: '4px 6px', fontSize: 13 };
 
   const segText = (segs: { start_min: number; end_min: number }[]) =>
@@ -640,10 +643,10 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                             {r.draft.segs.map((s, i) => (
                               <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 3, opacity: idle ? 0.75 : 1 }}
                                 onFocus={() => { if (i === 0) fillNormalIfEmpty(r); }}>
-                                <TimeInput value={s.start} isDark={isDark} advance ariaLabel={`${md(r.date)} 勤務${i + 1} 開始`}
+                                <TimeInput value={s.start} isDark={isDark} style={timeBox} advance ariaLabel={`${md(r.date)} 勤務${i + 1} 開始`}
                                   onChange={v => touch({ segs: r.draft.segs.map((x, j) => (j === i ? { ...x, start: v } : x)) })} />
                                 <span>〜</span>
-                                <TimeInput value={s.end} isDark={isDark} ariaLabel={`${md(r.date)} 勤務${i + 1} 終了`}
+                                <TimeInput value={s.end} isDark={isDark} style={timeBox} ariaLabel={`${md(r.date)} 勤務${i + 1} 終了`}
                                   onChange={v => touch({ segs: r.draft.segs.map((x, j) => (j === i ? { ...x, end: v } : x)) })} />
                                 {i > 0 && <button type="button" style={btnSm} aria-label="この時間帯を消す"
                                   onClick={() => touch({ segs: r.draft.segs.filter((_, j) => j !== i) })}>✕</button>}
