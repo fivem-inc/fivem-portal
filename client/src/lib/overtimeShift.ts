@@ -118,6 +118,32 @@ export function normalShiftBands(ns: ShiftLike | null | undefined): ShiftBand[] 
   return out.sort((a, b) => a.st - b.st).map(x => x.band);
 }
 
+/**
+ * 通常シフト全体の「いちばん早い始まり」と「いちばん遅い終わり」（0時からの分）。休みなら null。
+ * 🚨 種別の自動判定（早出・残業・開始が遅い・早く終わる）はこれと比べること（2026-09-24）。
+ *    以前は1本目の帯だけと比べていたため、2本シフトの人で誤判定していた（本番で5人）：
+ *    ・「9:15〜12:30 ＋ 14:00〜16:15」… 午後をふつうに働くだけで「残業」、午後の早上がりも「残業」
+ *    ・「9:30〜17:30 ＋ 朝 6:30〜7:15」… 朝の帯をふつうに働くだけで「早出」
+ *    帯の順番（start_time と start_time2 のどちらが早いか）は決まっていないので、必ず min / max で取る。
+ */
+export function normalShiftWindow(ns: ShiftLike | null | undefined): { startMin: number; endMin: number } | null {
+  if (!ns) return null;
+  const starts: number[] = [];
+  const ends: number[] = [];
+  const add = (s?: string | null, e?: string | null) => {
+    if (!s || !e) return;
+    const st = timeToMin(s.slice(0, 5));
+    let en = timeToMin(e.slice(0, 5));
+    if (st == null || en == null) return;
+    if (en <= st) en += 1440;                   // 日をまたぐ勤務
+    starts.push(st); ends.push(en);
+  };
+  add(ns.start_time, ns.end_time);
+  add(ns.start_time2, ns.end_time2);
+  if (starts.length === 0) return null;
+  return { startMin: Math.min(...starts), endMin: Math.max(...ends) };
+}
+
 /** 通常シフトを1行で表す。例 "6:30〜7:15 / 9:30〜17:30"（休みなら空文字）
  *  区切りは実績側（segmentsLabel）と同じ " / " に揃えてある */
 export function normalShiftTimeText(ns: ShiftLike | null | undefined): string {

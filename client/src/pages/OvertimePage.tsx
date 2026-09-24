@@ -18,7 +18,7 @@ import {
 } from '../lib/breakCalc';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import { retireeReturnNote } from '../lib/retire';
-import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, cutBandsAt, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
+import { resolveNormalShift, normalShiftBands, normalShiftTimeText, normalShiftWindow, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, cutBandsAt, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import OvertimeMemoSection from '../components/OvertimeMemoSection';
 import { computeBalance } from '../lib/overtimeBalance';
 import { memoShortLabel } from '../lib/overtimeMemo';
@@ -958,12 +958,14 @@ const OvertimeForm: React.FC<{
     const sorted = [...workSegments].sort((a, b) => a.startMin - b.startMin);
     const firstStart = sorted[0].startMin;
     const lastEnd = sorted[sorted.length - 1].endMin;
-    if (!normalShift.start_time) {
+    // 🚨 比べる相手は通常シフト**全体**（2本目の帯も含めた、いちばん早い始まり〜いちばん遅い終わり）。
+    //    1本目だけと比べると、2本シフトの人で「午後をふつうに働いただけで残業」「朝の帯で早出」になる（2026-09-24）
+    const win = normalShiftWindow(normalShift);
+    if (!win) {
       fixed.push('holiday_work');
     } else {
-      const ns = timeToMin(fmtTime(normalShift.start_time)) ?? 0;
-      let ne = timeToMin(fmtTime(normalShift.end_time)) ?? ns;
-      if (ne <= ns) ne += 1440; // 深夜跨ぎシフト
+      const ns = win.startMin;
+      const ne = win.endMin;
       if (lastEnd > ne) fixed.push('overtime');
       if (firstStart < ns) fixed.push('early_start');
       if (firstStart > ns) lateQ = true;
@@ -975,7 +977,7 @@ const OvertimeForm: React.FC<{
       fixed.push('location_change');
     }
     return { fixed, lateQ, earlyQ };
-  }, [hasInput, date, workSegments, normalShift.start_time, normalShift.end_time, normalShift.location, effectiveLocation]);
+  }, [hasInput, date, workSegments, normalShift, effectiveLocation]);
 
   const applicationTypes: OvertimeType[] = useMemo(() => {
     if (fullDay && fullDayType) return [fullDayType]; // 終日は単独付与（DB制約と対応）
