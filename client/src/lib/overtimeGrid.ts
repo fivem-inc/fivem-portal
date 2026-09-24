@@ -60,7 +60,23 @@ export interface GridReport {
   return_comment: string | null;
   reviewer_id: string | null;
   normal_shift: unknown;
+  /** 元の申請で本人が選んだ「カレンダーに載せるか」。🚨 実績報告・再提出ではそのまま引き継ぐ（計画 §10-7） */
+  show_on_calendar?: boolean | null;
   segments?: { phase: 'planned' | 'actual'; seg_no: number; start_min: number; end_min: number }[];
+}
+
+/**
+ * 表を読み込んだときと、送る直前に読み直したものが同じか（実績報告・再提出の行で使う）。
+ * 🚨 表は長く開きっぱなしになる。その間に上長が受理・差し戻し・修正をしていたら、表の中身は古い。
+ *    行の計算に使う項目だけを比べる（時刻の項目は比べない）
+ */
+export function sameGridReport(a: GridReport, b: GridReport): boolean {
+  const pick = (r: GridReport) => JSON.stringify([
+    r.status, r.is_post_hoc, [...(r.application_types ?? [])].sort(), r.location ?? '', r.break_minutes ?? null, !!r.break_manual,
+    r.reason ?? '', r.reviewer_id ?? null, r.normal_shift ?? null, r.show_on_calendar ?? null,
+    [...(r.segments ?? [])].sort((x, y) => (x.phase + x.seg_no).localeCompare(y.phase + y.seg_no)).map(x => [x.phase, x.seg_no, x.start_min, x.end_min]),
+  ]);
+  return pick(a) === pick(b);
 }
 
 /**
@@ -227,6 +243,8 @@ export interface GridRowCalc {
   applicationTypes: OvertimeType[];
   effectiveLocation: string;
   hasChanges: boolean;
+  /** 実績報告で予定から変わった項目（時間帯・休憩・勤務地・種別）。修正の記録に残す（1件フォームと同じ言葉） */
+  changedAxes: string[];
   isPureZero: boolean;
   reviewerId: string;
   isSelfReview: boolean;
@@ -280,7 +298,7 @@ export function computeGridRow(a: {
   const phase = overtimePhase({ mode, isReportPhase, isResubmit, editTarget: isEdit ? main : null });
 
   // 実績報告の「予定から変わったか」。🚨 基準は保存値ではなく、予定を入れ直して同じ部品で計算した値（1件フォームと同じ）
-  let hasChanges = false;
+  const changedAxes: string[] = [];
   if (isReportPhase && main) {
     const baseDraft = initialRowDraft('report', main, []);
     const baseWS = toWorkSegments(baseDraft.segs);
@@ -291,11 +309,12 @@ export function computeGridRow(a: {
     });
     const live = [...workSegments].sort((x, y) => x.startMin - y.startMin);
     const bs = [...baseWS].sort((x, y) => x.startMin - y.startMin);
-    if (live.length !== bs.length || live.some((x, i) => x.startMin !== bs[i].startMin || x.endMin !== bs[i].endMin)) hasChanges = true;
-    if (diff.break_minutes !== baseBreak) hasChanges = true;
-    if (effectiveLocation !== (main.location ?? '')) hasChanges = true;
-    if (JSON.stringify([...applicationTypes].sort()) !== JSON.stringify([...baseTypes].sort())) hasChanges = true;
+    if (live.length !== bs.length || live.some((x, i) => x.startMin !== bs[i].startMin || x.endMin !== bs[i].endMin)) changedAxes.push('時間帯');
+    if (diff.break_minutes !== baseBreak) changedAxes.push('休憩');
+    if (effectiveLocation !== (main.location ?? '')) changedAxes.push('勤務地');
+    if (JSON.stringify([...applicationTypes].sort()) !== JSON.stringify([...baseTypes].sort())) changedAxes.push('種別');
   }
+  const hasChanges = changedAxes.length > 0;
   const isPureZero = isReportPhase && diff.diff_minutes === 0 && applicationTypes.length === 0;
 
   // 申請先：実績報告・再提出は元の申請のまま（固定）。新しい行は行の指定 → 表の上
@@ -310,7 +329,7 @@ export function computeGridRow(a: {
   const calc = {
     message: '', mode, phase, isReportPhase, isResubmit, workSegments,
     breakMin: diff.break_minutes, laborMin: diff.labor_minutes, diffMin: diff.diff_minutes, legalOk: legal.ok,
-    typeDetect, applicationTypes, effectiveLocation, hasChanges, isPureZero, reviewerId, isSelfReview, sendLabel,
+    typeDetect, applicationTypes, effectiveLocation, hasChanges, changedAxes, isPureZero, reviewerId, isSelfReview, sendLabel,
   };
 
   const editable: GridDayKind[] = ['new_post', 'new_advance', 'new_today', 'report', 'resubmit'];

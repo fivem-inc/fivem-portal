@@ -20,7 +20,7 @@ import { resolveNormalShift, normalShiftTimeText, reportGateMin } from '../lib/o
 import type { PatternRow, NormalShiftSnapshot } from '../lib/overtimeShift';
 import {
   periodDates, pickDayReport, classifyGridDay, GRID_KIND_TAG, initialRowDraft, computeGridRow, normalSegsOf,
-  locationPick, GRID_SELF_REVIEW,
+  locationPick, GRID_SELF_REVIEW, sameGridReport,
 } from '../lib/overtimeGrid';
 import type { GridReport, GridDayKind, RowDraft, RowState, GridRowCalc } from '../lib/overtimeGrid';
 import { STATUS_INFO } from '../lib/overtimeStatus';
@@ -89,7 +89,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
       supabase.from('weekly_shift_patterns').select('*').eq('user_id', userId),
       supabase.from('company_calendar').select('date, kind').gte('date', from).lte('date', to),
       supabase.from('overtime_reports')
-        .select('id, work_date, status, entry_type, is_post_hoc, application_types, location, diff_minutes, break_minutes, break_manual, reason, return_comment, reviewer_id, normal_shift, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
+        .select('id, work_date, status, entry_type, is_post_hoc, application_types, location, diff_minutes, break_minutes, break_manual, reason, return_comment, reviewer_id, normal_shift, show_on_calendar, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
         .eq('applicant_id', userId).gte('work_date', from).lte('work_date', to),
       supabase.from('overtime_submission_grants').select('work_date').eq('user_id', userId).is('revoked_at', null),
     ]);
@@ -208,12 +208,8 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     rows.forEach(r => { c[r.calc.state] = (c[r.calc.state] ?? 0) + 1; });
     return c;
   }, [rows]);
-  const isNewKind = (k: GridDayKind) => k === 'new_post' || k === 'new_advance' || k === 'new_today';
-  const readyRows = rows.filter(r => r.calc.state === 'ok' || r.calc.state === 'warn');
-  // 🚨 第5段の1つ目（2026-09-24）：送れるのは新しく出す日（事前申請・事後報告）だけ。
-  //    実績報告・再提出は次の版で足す（既存の申請を書き換えるので分けて出す・計画 §10-13）
-  const sendable = readyRows.filter(r => isNewKind(r.kind));
-  const readyEditRows = readyRows.filter(r => !isNewKind(r.kind));
+  // 送れる行：新しく出す日（事前申請・事後報告）＋ 実績報告・再提出（2026-09-25 第5段の2つ目）
+  const sendable = rows.filter(r => r.calc.state === 'ok' || r.calc.state === 'warn');
   // 🚨 「予定どおりの日を送る対象に入れる」の対象：報告できる・まだ触っていない行だけ（直した行は含めない）
   const plannedAsIs = rows.filter(r => r.kind === 'report' && !r.draft.touched);
   // 締め切りを過ぎた新しい行（経理の許可が無い）。🚨 行ごとではなく表の上に1つだけ出す
@@ -277,27 +273,59 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
         defaultReviewerId, canSelfReview,
         closeLocked: isPayPeriodClosed(r.date, todayJstStr()) && !grants.has(r.date), focused: false,
       }) : null;
-      if (!r || !c || !isNewKind(r.kind) || (c.state !== 'ok' && c.state !== 'warn')) {
+      const isEdit = !!r && (r.kind === 'report' || r.kind === 'resubmit');
+      // 🚨 実績報告・再提出は、送る直前にその申請を読み直す（計画 §10-5）。
+      //    表を開いている間に上長が受理・差し戻し・修正をしていたら、古い中身で上書きしないよう送らない
+      let fresh: (GridReport & Record<string, unknown>) | null = null;
+      let freshErr = '';
+      if (isEdit && r?.main && c && (c.state === 'ok' || c.state === 'warn') && c.sendLabel === t.label) {
+        const { data, error } = await supabase.from('overtime_reports')
+          .select('*, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
+          .eq('id', r.main.id).maybeSingle();
+        if (error) freshErr = '申請を読み直せませんでした：' + error.message;
+        else if (!data) freshErr = 'この申請が見つかりません（取り消された可能性があります）。表を読み直してください';
+        else if (!sameGridReport(r.main, data as GridReport)) freshErr = '表を開いたあとで、この申請の状態か内容が変わっています（受理・差し戻し・修正など）。表を読み直してから、もう一度送ってください';
+        else fresh = data as GridReport & Record<string, unknown>;
+      }
+      if (!r || !c || (c.state !== 'ok' && c.state !== 'warn')) {
         failed++; setRes(t.date, { status: 'failed', message: c?.message || '送れる状態ではありません' });
       } else if (c.sendLabel !== t.label) {
         failed++; setRes(t.date, { status: 'failed', message: `種類が変わりました（${t.label} → ${c.sendLabel}）。確認し直してから送ってください` });
+      } else if (isEdit && !fresh) {
+        check++; setRes(t.date, { status: 'check', message: freshErr });
       } else {
         const record = buildOvertimeRecord({
           userId, date: r.date, mode: c.mode, phase: c.phase, fullDayMode: false, fullDayType: null,
-          isSelfReview: c.isSelfReview, isPureZero: false, isReportPhase: false, isResubmit: false, hasChanges: false,
+          isSelfReview: c.isSelfReview, isPureZero: c.isPureZero, isReportPhase: c.isReportPhase, isResubmit: c.isResubmit, hasChanges: c.hasChanges,
           normalShift: r.ns, breakMin: c.breakMin, breakManual: r.draft.breakMin.trim() !== '', laborMin: c.laborMin, diffMin: c.diffMin,
-          fdDiffMin: 0, legalOk: c.legalOk, reason: r.draft.reason, changeReason: '', fdLocation: '', effectiveLocation: c.effectiveLocation,
+          fdDiffMin: 0, legalOk: c.legalOk, reason: r.draft.reason, changeReason: r.draft.changeReason, fdLocation: '', effectiveLocation: c.effectiveLocation,
           applicationTypes: c.applicationTypes,
-          // 🚨 表ではカレンダーに載せるかを聞かない＝null（種類ごとの既定）。計画 §3
-          offerCalendarChoice: false, showOnCalendar: false, editTargetShowOnCalendar: undefined,
+          // 🚨 表ではカレンダーに載せるかを聞かない。新しい行は null（種類ごとの既定）・計画 §3。
+          //    実績報告は元の申請の値を引き継ぐ（buildOvertimeRecord の中で。1件フォームと同じ）
+          offerCalendarChoice: false, showOnCalendar: false, editTargetShowOnCalendar: fresh?.show_on_calendar ?? undefined,
           furikaeOriginDate: '', effectiveFurikaeOriginLocation: '', furikaeOriginStart: '', furikaeOriginEnd: '',
           furikaeOriginBreak: 0, furikaeOriginLabor: 0, furikaeHasTime: false,
           reviewerId: c.reviewerId, modifiedFromId: null,
           clockOnlyMode: false, effectiveClockReason: '', clockInAt: '', clockOutAt: '', nowIso: now.toISOString(),
         }, toDbTime);
-        const saved = await saveOvertimeReport({ userId, record, phase: c.phase, segments: c.workSegments, edit: null, segRetries: 2 });
+        // 🚨 再提出も元の値を引き継ぐ（計画 §10-7）。buildOvertimeRecord は再提出では null にするので、ここで元の値に戻す。
+        //    null にすると「載せない」を選んでいた人の申請が、直して出し直しただけでカレンダーに出てしまう
+        if (fresh && c.isResubmit) record.show_on_calendar = fresh.show_on_calendar ?? null;
+        const saved = await saveOvertimeReport({
+          userId, record, phase: c.phase, segments: c.workSegments, segRetries: 2,
+          // 修正の記録の言葉は1件フォームと同じ
+          edit: fresh ? {
+            id: fresh.id, status: fresh.status, snapshot: fresh,
+            historySummary: c.isReportPhase
+              ? (c.isPureZero ? '残業なし（通常どおり）で報告' : c.hasChanges ? `実績報告（変更あり：${c.changedAxes.join('・')}）` : '実績報告（予定どおり）')
+              : '再提出',
+            historyChangeReason: (c.isReportPhase && c.hasChanges) ? r.draft.changeReason.trim() : null,
+          } : null,
+        });
         if (!saved.ok) {
-          if (saved.code === '23505') {
+          if (saved.stage === 'conflict') {
+            check++; setRes(r.date, { status: 'check', message: saved.message });
+          } else if (saved.code === '23505') {
             // 🚨 同じ日が既にある。中身が同じ（通信が切れて応答だけ届かなかった／2つのタブで送った）なら送信済み。
             //    違えば別の経路で作られた申請なので「要確認」。どちらも通知は送らない
             const { data: ex } = await supabase.from('overtime_reports').select('id, diff_minutes, reason')
@@ -315,8 +343,9 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
           ok++; sentIds.push(saved.reportId); sentDates.push(r.date);
           setRes(r.date, { status: 'sent', message: c.sendLabel });
           const phaseLabel = c.phase === 'actual' ? '実績報告' : '事前申請';
-          // 通知（1件フォームと同じ条件）。🚨 自己受理は確認者のキューに入らないのでベルは送らない
-          if (!c.isSelfReview && c.reviewerId) {
+          // 通知（1件フォームと同じ条件）。🚨 自己受理は確認者のキューに入らないのでベルは送らない。
+          //    残業なしの実績報告（差分0）もその場で確定するので送らない（押しても該当の申請が無い空振りになる）
+          if (!c.isSelfReview && !c.isPureZero && c.reviewerId) {
             await notifyOvertimeNewRequestBell({
               reportId: saved.reportId, reviewerId: c.reviewerId, applicantName: profileName ?? '',
               phaseLabel, dateLabel: fullDateLabel(r.date), timeLabel: formatSignedMin(c.diffMin),
@@ -351,8 +380,9 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     for (const id of sentIds) { if (!(await syncOvertimeGcal(id))) gcalNg.push(id); }
     setGcalFailedIds(gcalNg);
 
-    // 送れた日の入力を消す（下書きからも消える）
-    setDrafts(prev => { const n = { ...prev }; sentDates.forEach(d => { n[d] = initialRowDraft('new_post', null, workplaces); }); return n; });
+    // 送れた日の入力を消す（下書きからも消える）。🚨 空の入力で上書きせず消す：読み直したあとの状態
+    //    （再提出を事前申請として出した日は「実績報告」の行になる 等）から、改めて最初の入力が作られるように
+    setDrafts(prev => { const n = { ...prev }; sentDates.forEach(d => { delete n[d]; }); return n; });
     setResultCard({ ok, failed, check });
     setProgress(null);
     setSending(false);
@@ -409,7 +439,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     return <span style={{ ...style, display: 'inline-block', fontSize: 11.5, fontWeight: 'bold', borderRadius: 6, padding: '1px 7px', whiteSpace: 'nowrap' }}>{label ?? GRID_KIND_TAG[k]}</span>;
   };
 
-  const sendCell = (c: GridRowCalc, date: string, kind: GridDayKind) => {
+  const sendCell = (c: GridRowCalc, date: string) => {
     const res = rowResults[date];
     if (res) {
       if (res.status === 'waiting') return <span style={{ color: subText, fontSize: 12 }}>送信待ち</span>;
@@ -417,10 +447,6 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
       if (res.status === 'sent') return <b style={{ color: '#2e7d32' }}>✓ 送信済み<div style={{ fontSize: 11.5, fontWeight: 'normal' }}>{res.message}</div></b>;
       if (res.status === 'check') return <b style={{ color: warnText }}>要確認<div style={{ fontSize: 11.5, fontWeight: 'normal' }}>{res.message}</div></b>;
       return <b style={{ color: '#e24b4a' }}>送れませんでした<div style={{ fontSize: 11.5, fontWeight: 'normal' }}>{res.message}</div></b>;
-    }
-    // 🚨 実績報告・再提出の送信は次の版（第5段の2つ目）で足す
-    if ((c.state === 'ok' || c.state === 'warn') && !isNewKind(kind)) {
-      return <span style={{ color: subText, fontSize: 12 }}>送る準備ができています<br />（実績報告・再提出は次の版から送れます）</span>;
     }
     switch (c.state) {
       case 'ok': return <b style={{ color: toggleText }}>送る<div style={{ fontSize: 11.5, fontWeight: 'normal' }}>{c.sendLabel}</div></b>;
@@ -473,7 +499,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
       </div>
 
       <div style={{ background: innerBg, border: `1px solid ${borderColor}`, borderRadius: 8, padding: '8px 12px', fontSize: 12.5, color: subText, marginBottom: 10, lineHeight: 1.7 }}>
-        <b style={{ color: text }}>試験中：いまは新しく出す日（事前申請・事後報告）だけ送れます。実績報告・再提出は次の版から</b>（入力はこの端末に保存されます）<br />
+        <b style={{ color: text }}>試験中です</b>（入力はこの端末に保存されます）<br />
         ・時間を入れた日だけ送ります。空の日と、通常シフトと同じ日は送りません<br />
         ・<b>実績報告・再提出の行は、触るまで送りません</b>。予定どおりなら［予定どおり］、残業が無かったら［残業なし］<br />
         ・時刻は「930」のように続けて打てます。理由の欄は Enter で下の行へ
@@ -715,7 +741,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                               </select>
                             )}
                           </td>
-                          <td style={td}>{sendCell(c, r.date, r.kind)}</td>
+                          <td style={td}>{sendCell(c, r.date)}</td>
                         </>
                       )}
                     </tr>
@@ -736,7 +762,6 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
             }}>この期間の入力をすべて消す</button>
             <span style={{ fontSize: 12, color: subText }}>
               {(counts.error ?? 0) > 0 ? `エラーの ${counts.error} 件は送りません。` : ''}
-              {readyEditRows.length > 0 ? `実績報告・再提出の ${readyEditRows.length} 件は次の版で送れるようになります。` : ''}
             </span>
             {!confirm && !sending && (
               <button type="button" disabled={sendable.length === 0 || errors.length > 0}
@@ -765,6 +790,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                   <b>{md(r.date)}（{DOW[dowOf(r.date)]}）</b> {r.calc.sendLabel}：{segs}
                   <b style={{ color: r.calc.diffMin > 0 ? '#2e7d32' : r.calc.diffMin < 0 ? '#c62828' : subText }}>{formatSignedMin(r.calc.diffMin)}</b>
                   {' '}{typesText(r.calc.applicationTypes)} 「{r.draft.reason.trim()}」
+                  {r.calc.isReportPhase && r.calc.hasChanges && !r.calc.isPureZero && <span style={{ color: subText }}> 変わった理由「{r.draft.changeReason.trim()}」</span>}
                   {r.calc.state === 'warn' && <span style={{ color: warnText, fontWeight: 'bold' }}> ⚠️ 休憩が法定より短い</span>}
                 </div>
               );
@@ -784,6 +810,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                 ))}
                 <p style={{ fontSize: 12, color: subText, margin: '4px 0 0' }}>
                   申請先にはベルが1件ずつ届きます。1日＝1件の、いつもの申請として登録されます（受理・差し戻しもいつもどおりです）。
+                  実績報告・再提出の申請先は、元の申請のままです。残業なしの実績報告は、送った時点で確定します（ベルは届きません）。
                 </p>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 10 }}>
                   <button type="button" style={btn} onClick={() => setConfirm(null)}>戻って直す</button>
