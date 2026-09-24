@@ -2399,10 +2399,12 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const tabParam = searchParams.get('tab');
   const focusParam = searchParams.get('focus');
   const [tab, setTab] = useState<'form' | 'history'>(tabParam === 'history' ? 'history' : 'form');
-  // 残業の「表でまとめて入力」（試験中）。🚨 PCだけ：マウス操作の端末 かつ 画面幅1024px以上
-  //    （iPad の横向きは幅がちょうど1024pxなので、幅だけで判定すると出てしまう）
+  // 残業の「表でまとめて入力」（試験中）。🚨 PCだけ＝マウス操作の端末（hover:hover かつ pointer:fine）。
+  //    iPad・スマホは指で操作するのでこれで外れる。
+  //    🚨 画面の幅では絞らない（2026-09-24 実機で発覚）。Windows のノートPCは表示の拡大（125%・150%）で
+  //       ブラウザの幅が 900px 前後になり、「幅1024px以上」にすると管理者でもボタンが出なかった。表は横にスクロールできる
   const [gridOpen, setGridOpen] = useState(false);
-  const canGrid = canGridPerm && isPointerDevice() && window.innerWidth >= 1024;
+  const canGrid = canGridPerm && isPointerDevice();
   // 履歴カードの「▼ 詳細」を開いている申請。
   // 🚨 このページは isConfirmView で早期returnするので、Hookは必ずその手前で宣言すること
   //    （後ろに置くと確認ページに切り替えた瞬間に画面が真っ白になる。過去に踏んだ事故）
