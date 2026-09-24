@@ -34,6 +34,7 @@ import { buildOvertimeRecord } from '../lib/overtimeSubmit';
 import { saveOvertimeReport, syncOvertimeGcal } from '../lib/overtimeSubmitApi';
 import { notifyOvertimeNewRequestBell, notifyOvertimeNewRequestEmail, sendOvertimeSlack } from '../lib/overtimeNotify';
 import { toDbTime } from '../lib/timeInput';
+import { segmentsText, type SegmentLike } from '../lib/segmentsText';
 
 interface Reviewer { id: string; name: string; role_title: string }
 
@@ -65,6 +66,19 @@ const TAG_STYLE: Record<GridDayKind, 'send' | 'muted' | 'warn'> = {
 
 type Drafts = Record<string, RowDraft>;
 
+/** 新しく出す日（事前申請・事後報告）の行か */
+const isNewGridKind = (k: GridDayKind) => k === 'new_post' || k === 'new_advance' || k === 'new_today';
+
+/** 上長からの「申請の依頼」（残業）。🚨 送ったら依頼を「申請済み」にして結び付ける（1件フォームと同じ・計画 §10-10） */
+interface GridRequest {
+  id: string;
+  requester_id: string;
+  requester_name: string | null;
+  target_dates: string[] | null;
+  memo: string | null;
+  segments: SegmentLike[] | null;
+}
+
 const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin, isDark, reviewers, workplaces, onClose, onOpenForm }) => {
   const today = todayJstStr();
   const [period, setPeriod] = useState(() => calcPayPeriodStartJst(today));
@@ -79,19 +93,23 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
   const [calendar, setCalendar] = useState<Record<string, CalendarKind> | null>(null);
   const [reports, setReports] = useState<GridReport[] | null>(null);
   const [grants, setGrants] = useState<Set<string>>(new Set());
+  const [requests, setRequests] = useState<GridRequest[]>([]);
+  const [reqErr, setReqErr] = useState('');
   const [errors, setErrors] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     const errs: string[] = [];
-    const [patRes, calRes, repRes, grantRes] = await Promise.all([
+    const [patRes, calRes, repRes, grantRes, reqRes] = await Promise.all([
       supabase.from('weekly_shift_patterns').select('*').eq('user_id', userId),
       supabase.from('company_calendar').select('date, kind').gte('date', from).lte('date', to),
       supabase.from('overtime_reports')
         .select('id, work_date, status, entry_type, is_post_hoc, application_types, location, diff_minutes, break_minutes, break_manual, reason, return_comment, reviewer_id, normal_shift, show_on_calendar, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
         .eq('applicant_id', userId).gte('work_date', from).lte('work_date', to),
       supabase.from('overtime_submission_grants').select('work_date').eq('user_id', userId).is('revoked_at', null),
+      supabase.from('application_requests').select('id, requester_id, target_dates, memo, segments')
+        .eq('recipient_id', userId).eq('kind', 'overtime').eq('status', 'open').order('created_at', { ascending: true }),
     ]);
     // 🚨 1つでも読めなければ null のままにして、表の上に理由を出す（空の配列にしない＝全日「休み」に見えるのを防ぐ）
     if (patRes.error) { errs.push('通常シフト：' + patRes.error.message); setPatterns(null); }
@@ -106,6 +124,22 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     else setReports((repRes.data as GridReport[] | null) ?? []);
     // 経理の許可は読めなくても止めない（締め後の日が「送れない」側に倒れるだけ。最終判断は DB のトリガー）
     setGrants(grantRes.error ? new Set() : new Set(((grantRes.data ?? []) as { work_date: string }[]).map(g => g.work_date)));
+    // 🚨 依頼は読めなくても表は止めない（送っても依頼と結び付かないだけ）。ただし黙らずに表の上に出す
+    if (reqRes.error) {
+      setRequests([]);
+      setReqErr('申請の依頼を読み込めませんでした。この表から送っても、依頼とは結び付きません（' + reqRes.error.message + '）');
+    } else {
+      const rs = (reqRes.data ?? []) as Omit<GridRequest, 'requester_name'>[];
+      const ids = [...new Set(rs.map(q => q.requester_id))];
+      let nameOf = new Map<string, string>();
+      if (ids.length > 0) {
+        // 名前が読めなくても依頼は出す（名前の所だけ空になる）
+        const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
+        nameOf = new Map(((profs ?? []) as { id: string; name: string }[]).map(p => [p.id, p.name]));
+      }
+      setRequests(rs.map(q => ({ ...q, requester_name: nameOf.get(q.requester_id) ?? null })));
+      setReqErr('');
+    }
     setErrors(errs);
     setLoading(false);
   }, [userId, from, to]);
@@ -134,6 +168,13 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
   const advanceMaxDate = advanceRequestMaxDate(today);
   const ready = patterns !== null && calendar !== null && reports !== null;
 
+  // 日付 → その日の依頼（同じ日に2件あれば先に来たもの）
+  const requestByDate = useMemo(() => {
+    const m = new Map<string, GridRequest>();
+    requests.forEach(q => (q.target_dates ?? []).forEach(d => { if (!m.has(d)) m.set(d, q); }));
+    return m;
+  }, [requests]);
+
   const baseRows = useMemo(() => {
     if (!ready) return [];
     return dates.map(date => {
@@ -148,9 +189,13 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
       // 実績報告・再提出で元の申請がシフトを手直ししていれば、その控えで計算する（1件フォームと同じ）
       const snap = main?.normal_shift as NormalShiftSnapshot | null | undefined;
       const ns = (kind === 'report' || kind === 'resubmit') && snap?.manual_override ? snap : resolved;
-      return { date, ck, ns, main, leaveAuto, kind };
+      // 依頼は新しく出す日の行にだけ付ける（申請が既にある日は、1件フォームの依頼カードから）
+      const req = isNewGridKind(kind) ? (requestByDate.get(date) ?? null) : null;
+      // 🚨 依頼がある日の申請先の既定は「依頼した人」（1件フォームと同じ）。表の上の申請先より先に使う
+      const rowDefaultReviewer = req?.requester_id || defaultReviewerId;
+      return { date, ck, ns, main, leaveAuto, kind, req, rowDefaultReviewer };
     });
-  }, [ready, dates, calendar, patterns, reports, today, nowMin, advanceMaxDate]);
+  }, [ready, dates, calendar, patterns, reports, today, nowMin, advanceMaxDate, requestByDate, defaultReviewerId]);
 
   // 下書きを読み込む（期間を変えたとき・読み込みが終わったとき）。
   // 🚨 申請の状態が変わった日（新規だったのに申請ができた／実績報告だったのに済んだ 等）の下書きは捨てて一言知らせる
@@ -195,12 +240,12 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     const draft = drafts[r.date] ?? initialRowDraft(r.kind, r.main, workplaces);
     const calc: GridRowCalc = computeGridRow({
       kind: r.kind, date: r.date, today, nowMin, advanceMaxDate, ns: r.ns, main: r.main, draft,
-      defaultReviewerId, canSelfReview,
+      defaultReviewerId: r.rowDefaultReviewer, canSelfReview,
       closeLocked: isPayPeriodClosed(r.date, today) && !grants.has(r.date),
       focused: focusedDate === r.date,
     });
     return { ...r, draft, calc };
-  }), [baseRows, drafts, today, nowMin, advanceMaxDate, defaultReviewerId, canSelfReview, grants, focusedDate, workplaces]);
+  }), [baseRows, drafts, today, nowMin, advanceMaxDate, canSelfReview, grants, focusedDate, workplaces]);
   type Row = typeof rows[number];
 
   const counts = useMemo(() => {
@@ -270,7 +315,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
       const nowMinLive = now.getHours() * 60 + now.getMinutes();
       const c = r ? computeGridRow({
         kind: r.kind, date: r.date, today: todayJstStr(), nowMin: nowMinLive, advanceMaxDate, ns: r.ns, main: r.main, draft: r.draft,
-        defaultReviewerId, canSelfReview,
+        defaultReviewerId: r.rowDefaultReviewer, canSelfReview,
         closeLocked: isPayPeriodClosed(r.date, todayJstStr()) && !grants.has(r.date), focused: false,
       }) : null;
       const isEdit = !!r && (r.kind === 'report' || r.kind === 'resubmit');
@@ -342,6 +387,16 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
         } else {
           ok++; sentIds.push(saved.reportId); sentDates.push(r.date);
           setRes(r.date, { status: 'sent', message: c.sendLabel });
+          // 依頼から来た日は、その依頼を「申請済み」にして申請と結び付ける（1件フォームと同じ）。
+          // 🚨 update は0件でもエラーにならないので件数を見る。status=open を条件に入れる（相手が「対応しない」を選んだあとなら触らない）。
+          //    失敗しても申請そのものは成立しているので、送信は成功のまま（依頼が open のまま残るだけ）
+          if (r.req) {
+            const nowIso2 = new Date().toISOString();
+            const { data: linked, error: lerr } = await supabase.from('application_requests')
+              .update({ status: 'applied', linked_id: saved.reportId, responded_at: nowIso2, updated_at: nowIso2 })
+              .eq('id', r.req.id).eq('status', 'open').select('id');
+            if (lerr || !linked || linked.length === 0) console.error('[申請の依頼] 申請済みにできませんでした', lerr?.message);
+          }
           const phaseLabel = c.phase === 'actual' ? '実績報告' : '事前申請';
           // 通知（1件フォームと同じ条件）。🚨 自己受理は確認者のキューに入らないのでベルは送らない。
           //    残業なしの実績報告（差分0）もその場で確定するので送らない（押しても該当の申請が無い空振りになる）
@@ -394,6 +449,17 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
   const fillNormalIfEmpty = (r: Row) => {
     if (r.kind !== 'new_post' && r.kind !== 'new_advance' && r.kind !== 'new_today') return;
     if (r.draft.segs.some(s => s.start || s.end)) return;
+    // 依頼に「入る時間と校」があれば、それを入れる（1件フォームの「依頼から申請」と同じ）。
+    // 🚨 表の勤務地は1か所しか持てない。依頼の校が時間帯で変わるときは勤務地を入れず、本人に選んでもらう
+    const reqSegs = (r.req?.segments ?? []).filter(x => x.start && x.end);
+    if (reqSegs.length > 0) {
+      const locs = [...new Set(reqSegs.map(x => (x.location ?? '').trim()).filter(Boolean))];
+      setRow(r.date, {
+        segs: reqSegs.slice(0, 3).map(x => ({ start: x.start, end: x.end })),
+        ...(r.draft.location || locs.length !== 1 ? {} : locationPick(locs[0], workplaces)),
+      });
+      return;
+    }
     const segs = normalSegsOf(r.ns);
     setRow(r.date, {
       segs: segs.length > 0 ? segs : [{ start: '', end: '' }],
@@ -442,7 +508,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     return <span style={{ ...style, display: 'inline-block', fontSize: 11.5, fontWeight: 'bold', borderRadius: 6, padding: '1px 7px', whiteSpace: 'nowrap' }}>{label ?? GRID_KIND_TAG[k]}</span>;
   };
 
-  const sendCell = (c: GridRowCalc, date: string) => {
+  const sendCell = (c: GridRowCalc, date: string, note = '') => {
     const res = rowResults[date];
     if (res) {
       if (res.status === 'waiting') return <span style={{ color: subText, fontSize: 12 }}>送信待ち</span>;
@@ -452,8 +518,8 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
       return <b style={{ color: '#e24b4a' }}>送れませんでした<div style={{ fontSize: 11.5, fontWeight: 'normal' }}>{res.message}</div></b>;
     }
     switch (c.state) {
-      case 'ok': return <b style={{ color: toggleText }}>送る<div style={{ fontSize: 11.5, fontWeight: 'normal' }}>{c.sendLabel}</div></b>;
-      case 'warn': return <b style={{ color: toggleText }}>送る（注意）<div style={{ fontSize: 11.5, fontWeight: 'normal' }}>{c.sendLabel}</div></b>;
+      case 'ok': return <b style={{ color: toggleText }}>送る<div style={{ fontSize: 11.5, fontWeight: 'normal' }}>{c.sendLabel}{note}</div></b>;
+      case 'warn': return <b style={{ color: toggleText }}>送る（注意）<div style={{ fontSize: 11.5, fontWeight: 'normal' }}>{c.sendLabel}{note}</div></b>;
       case 'error': return <b style={{ color: '#e24b4a' }}>エラー（送らない）</b>;
       case 'editing': return <span style={{ color: subText }}>入力中</span>;
       case 'nochange': return <span style={{ color: subText, fontSize: 12 }}>通常シフトと同じ（送らない）</span>;
@@ -510,6 +576,10 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
 
       {draftNote && (
         <div style={{ background: warnBg, border: '1px solid #f59e0b', borderRadius: 8, padding: '8px 12px', fontSize: 12.5, marginBottom: 10 }}>{draftNote}</div>
+      )}
+
+      {reqErr && (
+        <div style={{ background: warnBg, border: '1px solid #f59e0b', borderRadius: 8, padding: '8px 12px', fontSize: 12.5, marginBottom: 10 }}>{reqErr}</div>
       )}
 
       {errors.length > 0 && (
@@ -619,6 +689,13 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                           <div style={{ color: '#e24b4a', fontWeight: 'bold', fontSize: 12, marginTop: 2 }}>差し戻し理由：{rep.return_comment}</div>
                         )}
                         {r.kind === 'report_wait' && isToday && <div style={{ fontSize: 11.5, color: subText, marginTop: 2 }}>勤務が終わるころに報告できます</div>}
+                        {r.req && (
+                          <div style={{ fontSize: 12, marginTop: 3, color: toggleText, fontWeight: 'bold' }}>
+                            📩 {r.req.requester_name ?? '上長'}さんから申請の依頼
+                            {r.req.memo && <div style={{ fontWeight: 'normal', color: subText }}>「{r.req.memo}」</div>}
+                            {(r.req.segments ?? []).length > 0 && <div style={{ fontWeight: 'normal', color: subText }}>依頼の時間：{segmentsText(r.req.segments)}</div>}
+                          </div>
+                        )}
                         {r.kind === 'beyond_max' && <div style={{ fontSize: 11.5, color: subText, marginTop: 2 }}>事前申請はまだ出せません</div>}
                       </td>
 
@@ -738,13 +815,13 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                               <span style={{ fontSize: 12, color: subText }}>{reviewerName(c.reviewerId)}<br />（元の申請のまま）</span>
                             ) : (
                               <select value={r.draft.reviewerId} onChange={e => touch({ reviewerId: e.target.value })} style={{ ...sel, maxWidth: 180 }} aria-label={`${md(r.date)} 申請先`}>
-                                <option value="">{defaultReviewerId ? `表の上と同じ（${reviewerName(defaultReviewerId)}）` : '表の上で選んでください'}</option>
+                                <option value="">{r.req ? `依頼した人（${r.req.requester_name ?? reviewerName(r.req.requester_id)}）` : defaultReviewerId ? `表の上と同じ（${reviewerName(defaultReviewerId)}）` : '表の上で選んでください'}</option>
                                 {canSelfReview && <option value={GRID_SELF_REVIEW}>自己受理（自分で確認する）</option>}
                                 {reviewerOptions.map(rv => <option key={rv.id} value={rv.id}>{rv.name}（{rv.role_title}）</option>)}
                               </select>
                             )}
                           </td>
-                          <td style={td}>{sendCell(c, r.date)}</td>
+                          <td style={td}>{sendCell(c, r.date, r.req ? '（依頼に答える）' : '')}</td>
                         </>
                       )}
                     </tr>
@@ -790,7 +867,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
               const segs = [...r.calc.workSegments].sort((a, b) => a.startMin - b.startMin).map(s => `${minToTime(s.startMin)}〜${minToTime(s.endMin)}`).join(' / ');
               return (
                 <div key={r.date} style={{ fontSize: 13, padding: '2px 0' }}>
-                  <b>{md(r.date)}（{DOW[dowOf(r.date)]}）</b> {r.calc.sendLabel}：{segs}
+                  <b>{md(r.date)}（{DOW[dowOf(r.date)]}）</b> {r.calc.sendLabel}{r.req ? '（依頼に答える）' : ''}：{segs}
                   <b style={{ color: r.calc.diffMin > 0 ? '#2e7d32' : r.calc.diffMin < 0 ? '#c62828' : subText }}>{formatSignedMin(r.calc.diffMin)}</b>
                   {' '}{typesText(r.calc.applicationTypes)} 「{r.draft.reason.trim()}」
                   {r.calc.isReportPhase && r.calc.hasChanges && !r.calc.isPureZero && <span style={{ color: subText }}> 変わった理由「{r.draft.changeReason.trim()}」</span>}
