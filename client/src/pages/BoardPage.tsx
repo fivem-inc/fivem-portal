@@ -237,6 +237,34 @@ const SEARCH_SRC_FILTERS = [
   { key: 'sent_mail' as const, label: '📧 送信メール' },
 ];
 
+/** 送信プレビューに出す「送信予約」の札。
+ *  🚨 ライト・ダークで色を変えない固定色（🎨🔒）。以前は文字色 `#6f42c1` だけを置いていて、
+ *     暗い画面では地に沈んで読めなかった（2026-09-24 実機指摘）。
+ *  🚨 「いまは送られない」は見落とすと事故になるので、面の色を付けて目立たせる。
+ *  🚨 送信プレビューは2か所（グループ投稿・お知らせ）にある。必ずこの部品を通すこと
+ *     （同じ見た目を2か所に書き写すと、片方だけ直す事故になる） */
+const ScheduledChip: React.FC<{ at: string }> = ({ at }) => (
+  <div style={{ marginTop: 8 }}>
+    <span style={{
+      display: 'inline-block', padding: '3px 10px', borderRadius: 8,
+      fontSize: 12, fontWeight: 'bold',
+      background: '#f3e8ff', border: '1px solid #c084fc', color: '#6b21a8',
+    }}>
+      🕐 送信予約 {new Date(at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+    </span>
+  </div>
+);
+
+/** まだ読んでいない返信の印（2026-09-24）。
+ *  🚨 返信そのものは一覧に並ばないので、**元のお知らせの行**に出す。
+ *  🚨 受信トレイ・送信トレイ・送信トレイのアーカイブの3か所がこれを呼ぶ（書き写さない）。
+ *  🚨 色はこの画面で既に使っている青（#4a90d9）。新しい色は足さない */
+const ReplyUnreadMark: React.FC<{ n: number }> = ({ n }) => n > 0 ? (
+  <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: '#4a90d9', borderRadius: 8, padding: '1px 7px', whiteSpace: 'nowrap' }}>
+    ↩ 返信 {n}
+  </span>
+) : null;
+
 const ArchiveIcon: React.FC<{ size?: number }> = ({ size = 14 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'block' }}>
     <path d="M21 8v13H3V8" />
@@ -570,6 +598,9 @@ const BoardPage: React.FC = () => {
   // 🚨 DM は作らない。返信は元のお知らせにぶら下がり、読めるのは当事者2人だけ。
   //    「いま書けるか」の判定は lib/boardReply.ts の1か所（DB の board_reply_open() と同じ3つ）
   const [noticeReplies,   setNoticeReplies]   = useState<Record<string, BoardMessage[]>>({}); // 親ID → 返信
+  // まだ読んでいない返信の数（親ID → 件数・2026-09-24）。
+  // 🚨 返信は一覧に並ばないので、印は**元のお知らせの行**に出す。ナビの赤い数字にも入る（App.tsx）
+  const [unreadReplyCounts, setUnreadReplyCounts] = useState<Record<string, number>>({});
   const [noticeReplyTo,   setNoticeReplyTo]   = useState<Record<string, string>>({});          // 返信ID → 宛先（誰とのやり取りか）
   const [replyDraft,      setReplyDraft]      = useState<{ msgId: string; partnerId: string; body: string } | null>(null);
   const [replySending,    setReplySending]    = useState(false);
@@ -839,6 +870,20 @@ const BoardPage: React.FC = () => {
       const inboxIds = (recData || []).map((r: any) => r.message_id);
 
       const q = `%${searchQuery}%`;
+      // 🚨 打った言葉が**送信者名**にも当たるようにする（2026-09-24 ユーザー要望）。
+      //    名前は profiles 側にあり board_messages には無いので、先に読み込み済みの
+      //    一覧（allProfiles）から id に直して条件に足す。**問い合わせは増えない**。
+      //    🚨 allProfiles は在籍者だけなので、退職した方が送ったものは名前では引けない
+      //       （本文・件名では今までどおり引ける）。
+      //    🚨 or の値に「,」「(」「)」が入ると条件ごと壊れる。UUID は英数字とハイフンだけなので、
+      //       念のため形を確かめてから入れる
+      const nameHitIds = allProfiles
+        .filter(p => (p.name || '').toLowerCase().includes(searchQuery.toLowerCase()))
+        .map(p => p.id)
+        .filter(id => /^[0-9a-f-]{36}$/i.test(id));
+      const orCond = nameHitIds.length > 0
+        ? `body.ilike.${q},subject.ilike.${q},user_id.in.(${nameHitIds.join(',')})`
+        : `body.ilike.${q},subject.ilike.${q}`;
       // 🚨 並び順は **DBに渡す**。画面の中だけで並べ替えると、「古い順」が
       //    「読み込んだ分の中で古い順」になり、いちばん古いものが出ない（＝嘘になる）。
       const asc = searchOrder === 'old';
@@ -849,7 +894,7 @@ const BoardPage: React.FC = () => {
             .from('board_messages')
             .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at')
             .in('channel_id', cids)
-            .or(`body.ilike.${q},subject.ilike.${q}`)
+            .or(orCond)
             .order('created_at', { ascending: asc })
             .limit(searchLimit)
         : Promise.resolve({ data: [] });
@@ -860,7 +905,7 @@ const BoardPage: React.FC = () => {
             .from('board_messages')
             .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at')
             .in('id', inboxIds)
-            .or(`body.ilike.${q},subject.ilike.${q}`)
+            .or(orCond)
             .order('created_at', { ascending: asc })
             .limit(searchLimit)
         : Promise.resolve({ data: [] });
@@ -876,11 +921,25 @@ const BoardPage: React.FC = () => {
         .eq('user_id', user.id)
         .is('channel_id', null)
         .is('parent_id', null)
-        .or(`body.ilike.${q},subject.ilike.${q}`)
+        .or(orCond)
         .order('created_at', { ascending: asc })
         .limit(searchLimit);
 
-      const [chRes, inRes, outRes] = await Promise.all([channelQuery, inboxQuery, outboxQuery]);
+      // 自分が書いた「お知らせへの返信」検索
+      // 🚨 2026-09-24 追加。受け取った返信は受信トレイ側（board_message_recipients に行があるため）で
+      //    引けていたが、**自分が書いた返信はどの問い合わせにも入っていなかった**
+      //    （送信トレイは parent_id が無いものだけを読むため）。ユーザー指摘で気づいた。
+      const replyQuery = supabase
+        .from('board_messages')
+        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at')
+        .eq('user_id', user.id)
+        .is('channel_id', null)
+        .not('parent_id', 'is', null)
+        .or(orCond)
+        .order('created_at', { ascending: asc })
+        .limit(searchLimit);
+
+      const [chRes, inRes, outRes, repRes] = await Promise.all([channelQuery, inboxQuery, outboxQuery, replyQuery]);
 
       // 重複排除してマージ
       // 🚨 並びは チャンネル → 受信 → 送信。自分が自分に送ったお知らせは受信側が先に入るので、
@@ -890,7 +949,9 @@ const BoardPage: React.FC = () => {
       const tagged: { rows: any[]; src: 'channel' | 'inbox' | 'outbox' }[] = [
         { rows: (chRes.data || []) as any[],  src: 'channel' },
         { rows: (inRes.data || []) as any[],  src: 'inbox'   },
-        { rows: (outRes.data || []) as any[], src: 'outbox'  },
+        // 🚨 自分が送ったお知らせと、自分が書いた返信は同じ「送信した側」。
+        //    ここを2行に分けると `as any[]` が1つ増えて ESLint の件数が変わるので、まとめる
+        { rows: [...(outRes.data || []), ...(repRes.data || [])] as any[], src: 'outbox' },
       ];
       for (const { rows, src } of tagged) for (const m of rows) {
         if (!seen.has(m.id)) {
@@ -907,8 +968,11 @@ const BoardPage: React.FC = () => {
       setSearchLoading(false);
     }, 300);
     return () => clearTimeout(timer);
+  // 🚨 allProfiles を入れる（2026-09-24）。名前で引くのに使うので、
+  //    読み込みが検索より後に終わったとき、入れていないと名前の分だけ当たらないままになる。
+  // 🚨 下の eslint-disable と deps の間に行を挟まないこと（挟むと効かなくなる。今日それで1件増やした）
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery, user, searchOrder, searchLimit]);
+  }, [searchQuery, user, searchOrder, searchLimit, allProfiles]);
 
   // 🚨 loadInbox は同時に複数走る（開いたとき／ベルから来たとき／前面に戻ったとき）。
   //    古い応答が後から届いて新しい状態を上書きしないよう、通し番号で「最新の1本」だけを採用する。
@@ -937,7 +1001,9 @@ const BoardPage: React.FC = () => {
     if (msgIds.length === 0) { setInboxMessages([]); setInboxLoaded(true); return; }
 
     // メッセージ・既読・カウントを並行取得してフラッシュを防ぐ
-    const [{ data: msgData, error: msgErr }, { data: readData, error: readErr }, { data: rcData }] = await Promise.all([
+    // 🚨 msgIds には「お知らせへの返信」のIDも入っている（返信も宛先の行を作るため）。
+    //    既読（readData）はそのまま返信ぶんも拾えるので、問い合わせを増やさずに数えられる
+    const [{ data: msgData, error: msgErr }, { data: readData, error: readErr }, { data: rcData }, { data: replyData, error: replyErr }] = await Promise.all([
       supabase
         .from('board_messages')
         .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, cc_user_ids')
@@ -946,6 +1012,9 @@ const BoardPage: React.FC = () => {
         .order('created_at', { ascending: false }),
       supabase.from('board_reads').select('message_id').in('message_id', msgIds).eq('user_id', user.id),
       supabase.from('board_reads').select('message_id').in('message_id', msgIds),
+      // 自分あてに届いた「お知らせへの返信」。🚨 自分が書いたものは数えない
+      supabase.from('board_messages').select('id, parent_id')
+        .in('id', msgIds).not('parent_id', 'is', null).is('channel_id', null).neq('user_id', user.id),
     ]);
     if (!isLatest()) return;
     if (msgErr) { console.error('受信トレイの本文の読み込みに失敗:', msgErr.code, msgErr.message); setInboxLoaded(true); return; }
@@ -960,6 +1029,22 @@ const BoardPage: React.FC = () => {
     const rc: Record<string, number> = {};
     (rcData || []).forEach((r: any) => { rc[r.message_id] = (rc[r.message_id] || 0) + 1; });
     setReadCounts(prev => ({ ...prev, ...rc }));
+
+    // まだ読んでいない返信の数を、元のお知らせごとに数える（2026-09-24）。
+    // 🚨 返信そのものは一覧に並ばないので、印は**元のお知らせの行**に出す。
+    // 🚨 読めなかったときは0で上書きしない（印が黙って消えると「返信が取り消された」と読める）
+    if (!replyErr && !readErr) {
+      const readSet = new Set([...(readData || []).map((r: { message_id: string }) => r.message_id), ...localReadRef.current]);
+      const cnt: Record<string, number> = {};
+      // 🚨 周りに合わせて any にしない（ESLint が1件増える）。必要な列だけ型を書く
+      (replyData || []).forEach((r: { id: string; parent_id: string }) => {
+        if (readSet.has(r.id)) return;
+        cnt[r.parent_id] = (cnt[r.parent_id] || 0) + 1;
+      });
+      setUnreadReplyCounts(cnt);
+    } else if (replyErr) {
+      console.error('返信の数の読み込みに失敗:', replyErr.code, replyErr.message);
+    }
 
     // confirmations を読む（deadline_type / requires_confirmation があるもの）
     const confirmMsgIds = (msgData || []).filter((m: any) => m.requires_confirmation || m.deadline_type).map((m: any) => m.id);
@@ -1324,6 +1409,23 @@ const BoardPage: React.FC = () => {
     if (error) { console.error('返信の読み込みに失敗:', error.code, error.message); return; }
     const rows = (data || []) as unknown as BoardMessage[];
     setNoticeReplies(prev => ({ ...prev, [parentId]: rows }));
+
+    // 開いた＝返信を読んだ、として既読にする（2026-09-24）。
+    // 🚨 これをしないと、印もナビの赤い数字も消えない（読んだのに減らないと「効いていない」と読まれる）。
+    // 🚨 自分が書いた返信は既読にしない（元から読む必要が無い）。
+    // 🚨 upsert は0件でもエラーにならないので error を見る。ただし失敗しても画面は止めない
+    // 🚨 この関数は詳細を開いている間、一覧の自動更新のたびに呼ばれる。
+    //    この画面で既読にしたもの（localReadRef）は書き直さない（毎回の書き込みを避ける）
+    const others = rows.filter(r => r.user_id !== user.id && !localReadRef.current.has(r.id)).map(r => r.id);
+    if (others.length > 0) {
+      const { error: rdErr } = await supabase.from('board_reads')
+        .upsert(others.map(id => ({ message_id: id, user_id: user.id })), { onConflict: 'message_id,user_id', ignoreDuplicates: true });
+      if (rdErr) console.error('返信の既読の記録に失敗:', rdErr.code, rdErr.message);
+      else {
+        others.forEach(id => localReadRef.current.add(id));
+        setUnreadReplyCounts(prev => { const n = { ...prev }; delete n[parentId]; return n; });
+      }
+    }
 
     // 自分が書いた返信は「誰あてか」を宛先から引く（送信者が複数の人とやり取りするため）
     const mine = rows.filter(r => r.user_id === user.id).map(r => r.id);
@@ -2930,7 +3032,17 @@ const BoardPage: React.FC = () => {
   inboxMessages.filter(isPendingMsg).forEach(m => { if (m.deadline_type) inboxPendingByType[m.deadline_type] = (inboxPendingByType[m.deadline_type] || 0) + 1; });
   // サイドバーの「受信トレイ」の数字＝「未読 または 未対応」（重なりは1件・2026-09-08 ユーザー確定・案①）。
   // 🚨 足し算しない（1通が未読かつ未対応なら2件になる）。上のバー（App.tsx useBoardUnread）と同じ数え方
-  const inboxAttention = inboxMessages.filter(m => !inboxReadIds.has(m.id) || isPendingMsg(m)).length;
+  // まだ読んでいない返信を、元のお知らせがどちらのトレイにあるかで振り分ける（2026-09-24）。
+  // 🚨 返信を受け取るのは**多くの場合お知らせを送った側**で、その人から見ると元のお知らせは
+  //    **送信トレイ**にある（本番の最初の2件もそうだった）。受信トレイにだけ数えると、
+  //    ナビの数字は増えるのに連絡板のどこにも印が無い＝9/21 に避けた「開いても何も無い」に戻る。
+  // 🚨 ナビの赤い数字（App.tsx）＝ここの受信トレイ＋送信トレイ＋チャンネル、になるように揃えている
+  const outboxIdSet = new Set([...outboxMessages, ...outboxArchivedMessages].map(m => m.id));
+  const replyUnreadOutbox = Object.entries(unreadReplyCounts)
+    .filter(([pid]) => outboxIdSet.has(pid)).reduce((s, [, n]) => s + n, 0);
+  const replyUnreadInbox = Object.entries(unreadReplyCounts)
+    .filter(([pid]) => !outboxIdSet.has(pid)).reduce((s, [, n]) => s + n, 0);
+  const inboxAttention = inboxMessages.filter(m => !inboxReadIds.has(m.id) || isPendingMsg(m)).length + replyUnreadInbox;
   const inboxCountBadge = (n: number) => n > 0 ? (
     <span style={{ background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', fontWeight: 'bold', flexShrink: 0 }}>{n > 99 ? '99+' : n}</span>
   ) : null;
@@ -2967,7 +3079,9 @@ const BoardPage: React.FC = () => {
         {/* ── 受信・送信・お気に入り ── */}
         {[
           { key: 'inbox'  as const, icon: '📨', label: '受信トレイ', bg: isDark ? '#1e3a5f' : '#dbeafe', badge: inboxAttention, onClick: () => { setView('inbox'); setInboxFilter('all'); setShowSidebar(false); setInboxDetailId(null); } },
-          { key: 'outbox' as const, icon: '📤', label: '送信トレイ',   bg: isDark ? '#1e3a2a' : '#dcfce7', badge: 0,           onClick: () => { setView('outbox'); setShowSidebar(false); setOutboxDetailId(null); } },
+          // 🚨 送信トレイの数字は「送ったお知らせに届いた、まだ読んでいない返信」だけ（2026-09-24）。
+          //    それまでは常に0だった（送信トレイに「自分がまだ触る必要があるもの」が無かったため）
+          { key: 'outbox' as const, icon: '📤', label: '送信トレイ',   bg: isDark ? '#1e3a2a' : '#dcfce7', badge: replyUnreadOutbox, onClick: () => { setView('outbox'); setShowSidebar(false); setOutboxDetailId(null); } },
         ].map(item => {
           const isActive = view === item.key && !showSidebar;
           return (
@@ -3354,6 +3468,8 @@ const BoardPage: React.FC = () => {
                       <span style={{ fontSize: 12, fontWeight: 'bold', color: textColor }}>{senderName}</span>
                       <span style={{ fontSize: 10, color: subColor }}>{fmtFull(msg.sent_at || msg.created_at)}</span>
                       {confirmed && !isArchived && <span style={{ fontSize: 10, color: '#22c55e', fontWeight: 700 }}>✓ 完了</span>}
+                      {/* まだ読んでいない返信。押して開けば既読になり、この印も消える */}
+                      <ReplyUnreadMark n={unreadReplyCounts[msg.id] || 0} />
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                       <button type="button" onClick={e => toggleFavMessage(e, msg.id, msg)}
@@ -3874,6 +3990,8 @@ const BoardPage: React.FC = () => {
                             onClick={e => e.stopPropagation()}
                             style={{ width: 15, height: 15, cursor: 'pointer', accentColor: '#3b82f6' }} />
                           <span style={{ fontSize: 10, color: subColor }}>{fmtFull(msg.sent_at || msg.created_at)}</span>
+                          {/* 🚨 片付けたお知らせにも返信は届く（受付は30日）。ここに出さないと見つからない */}
+                          <ReplyUnreadMark n={unreadReplyCounts[msg.id] || 0} />
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span style={{ fontSize: 10, color: subColor }}>{recipientIds.length}人</span>
@@ -3939,6 +4057,8 @@ const BoardPage: React.FC = () => {
                             </span>
                           )}
                           {dtConfig && allConfirmed && <span style={{ fontSize: 10, color: '#22c55e', fontWeight: 700 }}>✓ 完了</span>}
+                          {/* 🚨 返信を受け取るのは多くの場合ここ（送った側）。受信トレイにだけ出すと見つからない */}
+                          <ReplyUnreadMark n={unreadReplyCounts[msg.id] || 0} />
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span style={{ fontSize: 10, color: subColor }}>{recipientIds.length}人</span>
@@ -4385,8 +4505,12 @@ const BoardPage: React.FC = () => {
             const ch = channels.find(c => c.id === msg.channel_id);
             // 🚨 channel_id が無いお知らせは「受信トレイ」と「送信トレイ」の両方がありうる。
             //    searchSrc を見ないと、送信したものまで「📥 受信トレイ」と表示してしまう。
+            // 🚨 お知らせへの返信は、それ自体では一覧に置き場所が無い（返信は
+            //    お知らせの中で往復する作り）。何なのかが分かるように印を付ける（2026-09-24）
+            const isNoticeReply = !msg.channel_id && !!msg.parent_id;
             const chLabel = ch
               ? (ch.type === 'group' ? `👥 ${ch.name || 'グループ'}` : ch.type === 'dm' ? '💬 DM' : '📧 送信メール')
+              : isNoticeReply ? '↩ お知らせへの返信'
               : msg.searchSrc === 'outbox' ? '📤 送信トレイ' : '📥 受信トレイ';
             const matchBody = msg.body.toLowerCase().includes(searchQuery.toLowerCase());
             const matchSubject = msg.subject && msg.subject.toLowerCase().includes(searchQuery.toLowerCase());
@@ -4396,6 +4520,21 @@ const BoardPage: React.FC = () => {
                   if (msg.channel_id) {
                     selectChannel(msg.channel_id);
                     setView('channel');
+                  } else if (isNoticeReply) {
+                    // 🚨 返信そのものは開けない（受信トレイも送信トレイも、一覧は
+                    //    parent_id が無いものだけを読む）。**元のお知らせを開く**。
+                    //    以前は返信の ID で受信トレイを開こうとして、中身が見つからず
+                    //    何も出ないまま止まっていた（2026-09-24 ユーザー指摘）。
+                    const pid = msg.parent_id!;
+                    const inInbox = inboxMessages.some(m => m.id === pid) || archivedMessages.some(m => m.id === pid);
+                    const inOutbox = outboxMessages.some(m => m.id === pid) || outboxArchivedMessages.some(m => m.id === pid);
+                    if (inInbox) { setView('inbox'); setInboxDetailId(pid); }
+                    else if (inOutbox) { setView('outbox'); setOutboxDetailId(pid); }
+                    else {
+                      // 🚨 黙って何も起きないようにしない。理由を出して、押した人が次にできることを書く
+                      setSearchHint('元のお知らせが見つかりませんでした（送信者が取り消したか、アーカイブから削除された可能性があります）');
+                      return;
+                    }
                   } else if (msg.searchSrc === 'outbox') {
                     // 🚨 自分が送ったお知らせは受信トレイに無い（宛先が自分でないため）。
                     //    受信トレイとして開くと「開いています…」のまま何も出ない＝押せないボタンになる。
@@ -4763,11 +4902,7 @@ const BoardPage: React.FC = () => {
                   {newBody}
                 </div>
                 {/* 送信予約 */}
-                {newScheduledAt && (
-                  <div style={{ marginTop: 8, fontSize: 12, color: '#6f42c1' }}>
-                    🕐 送信予約: {new Date(newScheduledAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                  </div>
-                )}
+                {newScheduledAt && <ScheduledChip at={newScheduledAt} />}
               </div>
               <div style={{ display: 'flex', gap: 10 }}>
                 <button type="button" onClick={() => setShowSendConfirm(false)}
@@ -4956,11 +5091,7 @@ const BoardPage: React.FC = () => {
                   {composeBody}
                 </div>
                 {/* 送信予約 */}
-                {composeScheduledAt && (
-                  <div style={{ marginTop: 8, fontSize: 12, color: '#6f42c1' }}>
-                    🕐 送信予約: {new Date(composeScheduledAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                  </div>
-                )}
+                {composeScheduledAt && <ScheduledChip at={composeScheduledAt} />}
               </div>
               <div style={{ display: 'flex', gap: 10 }}>
                 <button type="button" onClick={() => { setShowComposeSendConfirm(false); setShowAllRecipients(false); }}

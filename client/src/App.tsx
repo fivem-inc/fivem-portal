@@ -665,23 +665,35 @@ const useBoardUnread = (userId: string | undefined, pathname: string, enabled = 
     let inboxUnread = 0;
     if (inboxRes.data && inboxRes.data.length > 0) {
       const inboxMsgIds = inboxRes.data.map((r: any) => r.message_id);
-      // 🚨 parent_id があるもの（お知らせへの返信・2026-09-21）は数えない。
-      //    返信は受信トレイの一覧に並ばない（一覧も parent_id が無いものだけを読む）ので、
-      //    数えるとバッジだけ増えて「開いても何も無い」になる。返信はベルとプッシュで届く
+      // 🚨 お知らせ本体と、お知らせへの返信は**別々に数える**（2026-09-24）。
+      //    2026-09-21 は返信を数から外していた。一覧に返信が並ばないので、数えると
+      //    「バッジは1なのに開いても何も無い」になるためだった。
+      //    いまは受信トレイの**元のお知らせの行に「↩ 返信 ◯」の印**を出すようにしたので、
+      //    数えても必ず行き先がある。数えないと、ベルを見ない人が返信に気づけない
       const { data: sentMsgs } = await supabase.from('board_messages').select('id, requires_confirmation, deadline_type').in('id', inboxMsgIds).is('parent_id', null).eq('status', 'sent');
       const sentMsgIds = (sentMsgs || []).map((m: any) => m.id);
       const needConfirmIds = (sentMsgs || []).filter((m: any) => m.requires_confirmation || m.deadline_type).map((m: any) => m.id);
+      // お知らせへの返信（2026-09-24）。🚨 自分が書いたものは数えない
+      const { data: replyMsgs } = await supabase.from('board_messages')
+        .select('id').in('id', inboxMsgIds).not('parent_id', 'is', null).is('channel_id', null).neq('user_id', userId);
+      // 🚨 周りに合わせて any にしない（ESLint が1件増える）。必要な列だけ型を書く
+      const replyIds = (replyMsgs || []).map((m: { id: string }) => m.id);
+      // 🚨 既読は1回の問い合わせでまとめて引く（お知らせと返信を分けて投げない）
+      const readTargetIds = [...sentMsgIds, ...replyIds];
       const [{ data: reads }, { data: confs }] = await Promise.all([
-        supabase.from('board_reads').select('message_id').eq('user_id', userId).in('message_id', sentMsgIds),
+        supabase.from('board_reads').select('message_id').eq('user_id', userId).in('message_id', readTargetIds),
         needConfirmIds.length > 0
           ? supabase.from('board_confirmations').select('message_id').eq('user_id', userId).in('message_id', needConfirmIds)
           : Promise.resolve({ data: [] as { message_id: string }[] }),
       ]);
       const readSet = new Set((reads || []).map((r: any) => r.message_id));
       const confSet = new Set((confs || []).map((c: any) => c.message_id));
+      // 🚨 足し算ではなく集合にする。1通が「未読でもあり未対応でもある」ときに2件と数えないため
       const attention = new Set<string>();
       sentMsgIds.forEach((id: string) => { if (!readSet.has(id)) attention.add(id); });
       needConfirmIds.forEach((id: string) => { if (!confSet.has(id)) attention.add(id); });
+      // 未読の返信。🚨 返信は返信でIDが別なので、お知らせ本体と二重には数えられない
+      replyIds.forEach((id: string) => { if (!readSet.has(id)) attention.add(id); });
       inboxUnread = attention.size;
     }
 
@@ -1153,7 +1165,13 @@ const classifyNotif = (n: NotifLike) => {
   // 安否確認：isBoardの文言判定より先に見る
   const isSafetyUrgent = n.source_type === 'safety_check_urgent'; // 「助けが必要」の知らせ
   const isSafety = n.source_type === 'safety_check' || n.source_type === 'safety_check_cancelled' || isSafetyUrgent;
-  const isBoard = !isUnconfirmedReminder && !isSafety && (n.source_type === 'inbox' || n.message.includes('お知らせ') || n.message.includes('メッセージが届き') || n.message.includes('リマインド'));
+  // 🚨 event_key が board: で始まるものを先に拾う（2026-09-24）。
+  //    それまでは**通知の文言**だけで見分けていたため、お知らせへの返信
+  //    （「↩ ◯◯から返信が届きました」）がどの語にも当たらず、
+  //    最後の既定 path:null に落ちて**押しても何も起きなかった**。
+  //    文言を足して直すと、次に文面を変えた人がまた同じ穴を開ける。鍵で見る。
+  const isBoardEvent = (n.event_key ?? '').startsWith('board:');
+  const isBoard = !isUnconfirmedReminder && !isSafety && (isBoardEvent || n.source_type === 'inbox' || n.message.includes('お知らせ') || n.message.includes('メッセージが届き') || n.message.includes('リマインド'));
 
   // source_typeで種別を判定（休暇申請・勤務変更申請）。文言ではなくsource_typeを正とする
   const isLeavePendingApproval = n.source_type === 'leave_request:pending_approval'; // 承認者：要対応
