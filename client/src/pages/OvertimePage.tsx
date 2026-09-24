@@ -18,7 +18,8 @@ import {
 } from '../lib/breakCalc';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import { retireeReturnNote } from '../lib/retire';
-import { resolveNormalShift, normalShiftBands, normalShiftTimeText, normalShiftWindow, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, cutBandsAt, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
+import { toWorkSegments, segmentIssuesOf, detectOvertimeTypes, composeApplicationTypes, effectiveLocationOf, validateOvertime, overtimePhase, canReportOvertime } from '../lib/overtimeSubmit';
+import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, cutBandsAt, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import OvertimeMemoSection from '../components/OvertimeMemoSection';
 import { computeBalance } from '../lib/overtimeBalance';
 import { memoShortLabel } from '../lib/overtimeMemo';
@@ -863,10 +864,8 @@ const OvertimeForm: React.FC<{
   };
 
   // 勤務地の実効値（保存・検証に使う）。移動あり＝「開始校→移動先校」
-  const effectiveLocation =
-    location === 'その他' ? locationCustom.trim()
-    : location === '移動あり' ? (locMoveStart && locMoveEnd ? `${locMoveStart}→${locMoveEnd}` : '')
-    : location;
+  // 🚨 組み立ては lib/overtimeSubmit の effectiveLocationOf（表の入力と共用）
+  const effectiveLocation = effectiveLocationOf(location, locationCustom, locMoveStart, locMoveEnd);
 
   // 自分が過去に入力した理由（重複除去・新しい順）を取得
   useEffect(() => {
@@ -883,46 +882,16 @@ const OvertimeForm: React.FC<{
   }, [user.id]);
 
   // 実務時間帯（分）
-  const workSegments: WorkSegment[] = useMemo(() =>
-    segments
-      .map(s => {
-        const st = timeToMin(s.start);
-        let en = timeToMin(s.end);
-        if (st == null || en == null) return null;
-        if (en <= st) en += 1440; // 深夜跨ぎは翌日扱い
-        return { startMin: st, endMin: en };
-      })
-      .filter((s): s is WorkSegment => s !== null),
-  [segments]);
+  // 🚨 変換は lib/overtimeSubmit の toWorkSegments（表の入力と共用）
+  const workSegments: WorkSegment[] = useMemo(() => toWorkSegments(segments), [segments]);
 
   // 🚨 明らかにおかしい時間帯を「送信するまで気づけない」状態にしないための入力時チェック。
   //    終了が開始より前なら翌日扱いにする仕様（深夜勤務のため必要）が、
   //    24時間表記の打ち間違い（夕方5時を 5:55 と入力）を静かに17時間の勤務に変えてしまう。
   //    実際に 12:30〜23:30 ＋ 12:30〜5:55 で「労働 27:25」と表示された（実機で発生）。
   //    行ごとの理由を返し、その場で赤くして労働時間の代わりに出す。送信は既存の検証でも止まる。
-  const MAX_SEG_MINUTES = 16 * 60;   // 1本の勤務が16時間を超えることは実務上ありえない
-  const segmentIssues = useMemo(() => {
-    const issues: (string | null)[] = segments.map(() => null);
-    let prevEnd: number | null = null;
-    segments.forEach((s, i) => {
-      const st = timeToMin(s.start);
-      let en = timeToMin(s.end);
-      if (st == null || en == null) return;
-      const wrapped = en <= st;
-      if (wrapped) en += 1440;
-      if (en - st > MAX_SEG_MINUTES) {
-        issues[i] = wrapped
-          ? `終了が開始より前のため翌日として計算し、${formatMin(en - st)}の勤務になっています。夕方5時なら 17:00 のように入力してください`
-          : `勤務${i + 1}が${formatMin(en - st)}になっています。時刻を確認してください`;
-        return;
-      }
-      if (prevEnd != null && st < prevEnd) {
-        issues[i] = `勤務${i + 1}の開始が勤務${i}の終了より前になっています`;
-      }
-      prevEnd = en;
-    });
-    return issues;
-  }, [segments]);
+  //    判定は lib/overtimeSubmit の segmentIssuesOf（表の入力と共用）。
+  const segmentIssues = useMemo(() => segmentIssuesOf(segments), [segments]);
   const hasSegmentIssue = segmentIssues.some(Boolean);
 
   const autoBreak = useMemo(() => calcTotalBreak(workSegments), [workSegments]);
@@ -951,41 +920,14 @@ const OvertimeForm: React.FC<{
     return null;
   });
 
-  const typeDetect = useMemo(() => {
-    if (!hasInput || !date) return { fixed: [] as OvertimeType[], lateQ: false, earlyQ: false };
-    const fixed: OvertimeType[] = [];
-    let lateQ = false, earlyQ = false;
-    const sorted = [...workSegments].sort((a, b) => a.startMin - b.startMin);
-    const firstStart = sorted[0].startMin;
-    const lastEnd = sorted[sorted.length - 1].endMin;
-    // 🚨 比べる相手は通常シフト**全体**（2本目の帯も含めた、いちばん早い始まり〜いちばん遅い終わり）。
-    //    1本目だけと比べると、2本シフトの人で「午後をふつうに働いただけで残業」「朝の帯で早出」になる（2026-09-24）
-    const win = normalShiftWindow(normalShift);
-    if (!win) {
-      fixed.push('holiday_work');
-    } else {
-      const ns = win.startMin;
-      const ne = win.endMin;
-      if (lastEnd > ne) fixed.push('overtime');
-      if (firstStart < ns) fixed.push('early_start');
-      if (firstStart > ns) lateQ = true;
-      if (lastEnd < ne) earlyQ = true;
-    }
-    // 勤務地がシフトの校と違う／移動あり → 勤務地変更
-    const normLoc = normalShift.location ?? '';
-    if (effectiveLocation && (effectiveLocation.includes('→') || (normLoc && effectiveLocation !== normLoc))) {
-      fixed.push('location_change');
-    }
-    return { fixed, lateQ, earlyQ };
-  }, [hasInput, date, workSegments, normalShift, effectiveLocation]);
+  // 🚨 判定は lib/overtimeSubmit の detectOvertimeTypes（表の入力と共用）。ここに式を書き戻さないこと
+  const typeDetect = useMemo(
+    () => detectOvertimeTypes({ hasDate: !!date, workSegments, normalShift, effectiveLocation }),
+    [date, workSegments, normalShift, effectiveLocation]);
 
-  const applicationTypes: OvertimeType[] = useMemo(() => {
-    if (fullDay && fullDayType) return [fullDayType]; // 終日は単独付与（DB制約と対応）
-    const t = [...typeDetect.fixed];
-    if (typeDetect.lateQ && lateChoice) t.push(lateChoice === 'adj' ? 'late_start_adj' : 'tardiness');
-    if (typeDetect.earlyQ && earlyChoice) t.push(earlyChoice === 'adj' ? 'early_end_adj' : 'early_leave');
-    return t;
-  }, [typeDetect, lateChoice, earlyChoice, fullDay, fullDayType]);
+  const applicationTypes: OvertimeType[] = useMemo(
+    () => composeApplicationTypes({ typeDetect, lateChoice, earlyChoice, fullDay, fullDayType }),
+    [typeDetect, lateChoice, earlyChoice, fullDay, fullDayType]);
 
   // 終日モードの派生値
   // 理由の文例は「いま検知している種別」に合わせて出す（残業前提の固定文だと早退・遅刻等で使えないため）。
@@ -1246,94 +1188,17 @@ const OvertimeForm: React.FC<{
     return `まだ勤務の終了時刻（${minToTime(endMin)}）を過ぎていません。このまま事後報告をされますか？`;
   };
 
-  const validate = (): string => {
-    if (!date) return '日付を選択してください';
-    if (mode === 'advance' && !editTarget && date < today) return '事前申請は当日以降の日付を選択してください';
-    // 🚨 先の日付の上限（2026-09-09 ユーザー確定）。日付選びでも押せなくしているが、
-    //    下書きの復元や種類の切り替えで上限を越えた日が残ることがあるので送信前にも必ず弾く。
-    if (mode === 'advance' && !editTarget && date > advanceMaxDate)
-      return `事前申請は${jpDateLabel(advanceMaxDate)}までです。それより先の日付は、その時期が近づいてから申請してください`;
-    if (mode === 'posthoc' && date > today) return '事後報告は当日以前の日付を選択してください';
-    if (closeLocked) return `この対象日は【${payMonthPeriodLabel(targetPeriodStart)}】の申請です。締め切り（${payPeriodCloseCutoff(targetPeriodStart).replace(/-/g, '/')}）を過ぎているため申請できません。経理に申請の許可を依頼してください。`;
-    // 打刻ズレ（残業ではありません）は時刻・勤務地・申請先の検証をスキップし、専用の検証のみ行う。
-    // ※ ここを通さないと「勤務地を選択してください」「申請先を選択してください」で必ず止まる
-    if (clockOnlyMode) {
-      if (!normalShift.start_time) return 'この日はシフトが休みです。出勤予定日のみ記録できます';
-      if (!clockReason) return '打刻が遅くなった理由を選んでください';
-      if (clockReason === 'その他' && !clockReasonOther.trim()) return '理由を入力してください';
-      return '';
-    }
-    // 終日（調整休・欠勤）は時刻・休憩・勤務地の検証をスキップし、専用の検証のみ行う
-    if (fullDay) {
-      if (!normalShift.start_time) return 'この日はシフトが休みです。出勤予定日のみ登録できます';
-      if (!fullDayType) return '種別（時間外調整休・振替休日・欠勤）を選択してください';
-      if (!fdLocation) return '勤務地を選択してください';
-      if (fullDayType === 'furikae_off') {
-        if (!furikaeOriginDate) return '振替元の勤務日を選択してください';
-        if (!furikaeOriginLocation) return '振替元の勤務校を選択してください';
-        if (furikaeOriginLocation === 'その他' && !furikaeOriginLocationCustom.trim()) return '振替元の勤務校を入力してください';
-        if (!furikaeOriginStart || !furikaeOriginEnd) return '振替元の出勤・退勤の時刻を入力してください';
-        if (!furikaeHasTime) return '振替元の時刻が正しくありません（開始・終了を確認してください）';
-      }
-      if (!reason.trim()) return '理由を入力してください';
-      if (!reviewerId) return '申請先を選択してください';
-      // 🚨 欠勤の自己受理はマネージャー以上のみ（2026-08-21 に開放）。
-      //    canSelfReview が false の人には選択肢自体を出していないが、
-      //    下書きの復元・修正で古い値が入っていることがあるのでここでも弾く。
-      //    同じ判定が RLS（overtime_insert_own）と overtime-approve にもある。片方だけ直さないこと。
-      if (fullDayType === 'absence' && isSelfReview && !canSelfReview) return '欠勤の自己受理はマネージャー以上のみです';
-      return '';
-    }
-    if (workSegments.length === 0) return '勤務時間を入力してください';
-    for (let i = 0; i < segments.length; i++) {
-      const s = segments[i];
-      if ((s.start && !s.end) || (!s.start && s.end)) return `勤務${i + 1}の開始・終了を両方入力してください`;
-    }
-    // 事後報告は「もう働いた分」を出すもの。当日ぶんは勤務を始める前に出せないようにする。
-    // 🚨 基準は通常シフトではなく **本人が入力した勤務時間**（ユーザー確定・2026-08-29）。
-    //    シフトを基準にすると、休日出勤（その日のシフトが無い）は判定できず、
-    //    早出（シフト9:30の日に8:00から働いた）が「まだ9:30前」で止まってしまう。
-    //    終日（調整休・欠勤）と打刻ズレは上で早期returnしており対象外＝朝でも出せる。
-    if (isTodayPostHoc) {
-      const startMin = Math.min(...workSegments.map(s => s.startMin));
-      if (nowMinLive() < startMin) {
-        return `まだ ${minToTime(startMin)} になっていません。事後報告は勤務を始めてから送信してください`;
-      }
-    }
-    // 入力時に赤く出しているもの（遡り・16時間超）と同じ理由で送信も止める
-    const issue = segmentIssues.find(Boolean);
-    if (issue) return issue;
-    // 帯の重複チェック
-    const sorted = [...workSegments].sort((a, b) => a.startMin - b.startMin);
-    for (let i = 1; i < sorted.length; i++) {
-      if (sorted[i].startMin < sorted[i - 1].endMin) return '勤務の時間が重なっています。開始・終了時刻を確認してください';
-    }
-    if (breakManual && (breakManualMin === '' || isNaN(parseInt(breakManualMin, 10)) || parseInt(breakManualMin, 10) < 0)) {
-      return '休憩時間（分）を入力してください';
-    }
-    if (!location) return '勤務地を選択してください';
-    if (location === 'その他' && !locationCustom.trim()) return '勤務地を入力してください';
-    if (location === '移動あり' && (!locMoveStart || !locMoveEnd)) return '移動元・移動先の校を選択してください';
-    if (!reason.trim()) return '理由を入力してください';
-    if (!reviewerId) return '申請先を選択してください';
-    // 通常シフトと全く同じ内容（時間帯・休憩・勤務地に変更なし）では送信不可。
-    // ※実績報告は除外＝「事前申請では残業予定だったが実際は通常どおりだった（残業ゼロ）」も正当に報告できるようにする。
-    if (!isReportPhase) {
-      const sameSegs = segments.length === normalSegs.length
-        && segments.every((s, i) => s.start === normalSegs[i].start && s.end === normalSegs[i].end);
-      if (sameSegs && !breakManual && effectiveLocation === (normalShift.location ?? '')) {
-        return '通常シフトと同じ内容です。残業・早退・調整など、変更した点を入力してください';
-      }
-    }
-    // 実績報告で予定から変わっている場合は変更理由が必須（ただし「残業なし＝通常どおり」は理由不要）
-    if (isReportPhase && !fullDay && hasChanges && !isPureZero && !changeReason.trim()) {
-      return '予定から変わった理由を入力してください';
-    }
-    // 種別の2択（開始が遅い／早く終わる）は本人が選ぶまで送信不可
-    if (typeDetect.lateQ && !lateChoice) return '「開始が遅い理由は？」を選択してください';
-    if (typeDetect.earlyQ && !earlyChoice) return '「早く終わる理由は？」を選択してください';
-    return '';
-  };
+  // 🚨 送信前チェックの中身は lib/overtimeSubmit の validateOvertime（表の入力と共用）。
+  //    ここに条件を書き戻さないこと。足すときは lib 側に足す
+  const validate = (): string => validateOvertime({
+    date, mode, hasEditTarget: !!editTarget, today, advanceMaxDate, closeLocked, clockOnlyMode, normalShift,
+    clockReason, clockReasonOther, fullDay, fullDayType, fdLocation,
+    furikaeOriginDate, furikaeOriginLocation, furikaeOriginLocationCustom, furikaeOriginStart, furikaeOriginEnd, furikaeHasTime,
+    reason, reviewerId, isSelfReview, canSelfReview, segments, workSegments, segmentIssues,
+    isTodayPostHoc, nowMin: nowMinLive(), breakManual, breakManualMin,
+    location, locationCustom, locMoveStart, locMoveEnd, effectiveLocation, normalSegs,
+    isReportPhase, hasChanges, isPureZero, changeReason, typeDetect, lateChoice, earlyChoice,
+  });
 
   const handleSubmit = async () => {
     setError('');
@@ -1353,8 +1218,8 @@ const OvertimeForm: React.FC<{
   const doSubmit = async () => {
     setSaving(true);
     try {
-      const phase: 'planned' | 'actual' = (mode === 'posthoc' || isReportPhase || (isResubmit && editTarget?.is_post_hoc) || (isResubmit && (editTarget?.segments ?? []).some(s => s.phase === 'actual')))
-        ? 'actual' : 'planned';
+      // 🚨 決め方は lib/overtimeSubmit の overtimePhase（表の入力と共用）
+      const phase: 'planned' | 'actual' = overtimePhase({ mode, isReportPhase, isResubmit, editTarget });
 
       // 二重計上防止：休暇申請の時間外調整休（自動計上）が同日に既にある場合はブロック
       if (fullDayMode && fullDayType === 'chosei_off' && !editTarget) {
@@ -3120,14 +2985,11 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   //      Edge Function remind-overtime-unreported の毎朝のリマインド）は **翌日基準のまま** で、
   //      ここと意図的に基準が違う。当日から催促すると、まだ勤務中の人に「まだ報告していません」と出るため。
   //      「揃っていない」と思って片方に合わせないこと（2026-08-26）。
-  const canReportOt = (r: OvertimeReport) => {
-    if (!['requested', 'request_confirmed'].includes(r.status)) return false;
-    if (isFullDayReport(r.application_types)) return false;      // 終日（調整休・振休・欠勤）は実績報告の概念がない
-    if (r.work_date < otTodayStr) return true;                   // 勤務日を過ぎた分は無条件
-    if (r.work_date > otTodayStr) return false;                  // 未来の予定
-    const gate = reportGateMin(r.normal_shift, (r.segments ?? []).filter(s => s.phase === 'planned'));
-    return gate == null || nowMin >= gate;                       // gate が取れない行は詰まらせない
-  };
+  // 🚨 判定は lib/overtimeSubmit の canReportOvertime（表の入力と共用）
+  const canReportOt = (r: OvertimeReport) => canReportOvertime(
+    r, otTodayStr, nowMin,
+    reportGateMin(r.normal_shift, (r.segments ?? []).filter(s => s.phase === 'planned')),
+  );
 
   // 「あなたの対応待ち」（要報告＝実績を報告できる分／差し戻し）。一覧の上にピン留めし、絞り込みにも使う。
   // 🚨 ownHistory の useMemo から呼ぶので、必ずその「前」に置くこと（後ろだと初期化前アクセスで落ちる）
