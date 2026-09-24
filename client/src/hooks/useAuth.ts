@@ -124,6 +124,13 @@ function writeAuthCache(userId: string, cache: Omit<AuthCache, 'v'>): void {
 // 取得に失敗した場合は null を返す（呼び出し側で「既存の権限を保持」させ、
 // モバイルの不安定回線でトークン更新のたびに空データで上書きされ、
 // ナビボタンが消える不具合を防ぐため）
+// 役職プレビューの権限の写し（役職名 → 権限）。🚨 ページを移るたびに useAuth が作り直され、
+// 権限が空のまま最初の1回を描くと、ページの門（canOvertime など）が「権限なし」と判断して
+// 交通費（/）へ戻してしまう（2026-09-25 実機：マネージャーのプレビューで残業・出張報告などに移れなかった）。
+// 一度読んだ役職は、次のページの最初の描画から使えるようにここに持っておく
+const previewPermsCache = new Map<string, Record<string, boolean>>();
+const EMPTY_PERMS: Record<string, boolean> = {};
+
 async function fetchPermsForRole(roleName: string): Promise<Record<string, boolean> | null> {
   const { data: roleData, error: roleErr } = await supabase
     .from('roles')
@@ -265,7 +272,11 @@ export const useAuth = (): UseAuthReturn => {
   // 実際の役職の権限
   const [featurePerms, setFeaturePerms] = useState<Record<string, boolean>>(initCache?.perms ?? {});
   // プレビュー役職の権限
-  const [previewPerms, setPreviewPerms] = useState<Record<string, boolean>>({});
+  // 🚨 どの役職の権限かも一緒に持つ。役職を切り替えた直後に前の役職の権限で描かないため
+  const [previewPerms, setPreviewPerms] = useState<{ role: string; perms: Record<string, boolean> } | null>(() => {
+    const c = previewRole ? previewPermsCache.get(previewRole) : undefined;
+    return previewRole && c ? { role: previewRole, perms: c } : null;
+  });
 
   // 役職の一覧（属性つき）。キャッシュ → 裏で取り直して上書き（hooks/useRoles.ts）
   const roles = useRoles();
@@ -344,12 +355,20 @@ export const useAuth = (): UseAuthReturn => {
 
   // プレビュー役職が変わったらその役職の権限を取得（失敗時は既存を保持）
   useEffect(() => {
-    if (!previewRole) { setPreviewPerms({}); return; }
-    fetchPermsForRole(previewRole).then(p => { if (p) setPreviewPerms(p); });
+    if (!previewRole) { setPreviewPerms(null); return; }
+    const c = previewPermsCache.get(previewRole);
+    if (c) setPreviewPerms({ role: previewRole, perms: c });
+    // 🚨 読めなかったときも「空の権限」で読み込みを終える（終えないと「読み込んでいます」のまま止まる。以前も空のままだった）
+    fetchPermsForRole(previewRole).then(p => {
+      if (p) previewPermsCache.set(previewRole, p);
+      setPreviewPerms({ role: previewRole, perms: p ?? c ?? EMPTY_PERMS });
+    });
   }, [previewRole]);
 
   // 実効権限（プレビュー中はプレビュー役職の権限を使う）
-  const effectivePermsRaw = previewRole ? previewPerms : featurePerms;
+  // プレビューの権限がまだ届いていない間は「読み込み中」として扱う（ページの門が早まって / へ戻さないように）
+  const previewLoading = !!previewRole && previewPerms?.role !== previewRole;
+  const effectivePermsRaw = previewRole ? (previewPerms?.role === previewRole ? previewPerms.perms : EMPTY_PERMS) : featurePerms;
   // 🚨 退職して申請期間中は、ここで一度だけ絞る。
   //    「出してよい機能（設定）」かつ「辞める前の役職で使えていた機能」の**両方**を満たすものだけ残す
   //    （設計書 §4-3 ユーザー確定）。端末に保存する権限の写しは絞る前のまま持つ
@@ -458,7 +477,7 @@ export const useAuth = (): UseAuthReturn => {
 
   return {
     user,
-    loading,
+    loading: loading || previewLoading,
     isAdmin,
     /** 退職して申請期間中か（役職プレビューの「退職者として見る」を含む）。
      *  🚨 画面がこれを直接見てよいのは、案内の文面とページの門だけ。
