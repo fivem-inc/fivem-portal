@@ -1,7 +1,7 @@
 // 残業の「表でまとめて入力」（PCだけ・試験中）。計画：docs/計画-残業の表入力.md
 //
-// 第3段（2026-09-24）：見るだけ ／ 🚨 第4段（2026-09-24）：**入力と行ごとのチェックまで。まだ送れない**
-//   送信は第5段で足す（新規だけ → 実績報告・再提出 → まとめ）。
+// 第3段：見るだけ ／ 第4段：入力と行ごとのチェック ／ 🚨 第5段の1つ目（2026-09-24）：**新しく出す日（事前申請・事後報告）だけ送れる**
+//   実績報告・再提出の送信は次に足す（既存の申請を書き換えるので分けて出す）。
 // 🚨 シフト・会社カレンダー・自分の申請・経理の許可は、ここで給与期間の日付範囲を指定して自分で読む
 //    （ページの一覧は100件で打ち切っている。シフトの型は読み込みの失敗を見ていない）。
 //    シフト・カレンダー・申請のどれか1つでも読めなければ、はっきりそう出して表を出さない。
@@ -30,11 +30,17 @@ import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorag
 import { useRoles } from '../hooks/useRoles';
 import { attrsFor } from '../lib/roleAttrs';
 import TimeInput from './TimeInput';
+import { buildOvertimeRecord } from '../lib/overtimeSubmit';
+import { saveOvertimeReport, syncOvertimeGcal } from '../lib/overtimeSubmitApi';
+import { notifyOvertimeNewRequestBell, notifyOvertimeNewRequestEmail, sendOvertimeSlack } from '../lib/overtimeNotify';
+import { toDbTime } from '../lib/timeInput';
 
 interface Reviewer { id: string; name: string; role_title: string }
 
 interface Props {
   userId: string;
+  /** ベルの文面に使う申請者名（1件フォームと同じ） */
+  profileName: string | null;
   roleTitle: string;
   isAdmin: boolean;
   isDark: boolean;
@@ -59,7 +65,7 @@ const TAG_STYLE: Record<GridDayKind, 'send' | 'muted' | 'warn'> = {
 
 type Drafts = Record<string, RowDraft>;
 
-const OvertimeGrid: React.FC<Props> = ({ userId, roleTitle, isAdmin, isDark, reviewers, workplaces, onClose, onOpenForm }) => {
+const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin, isDark, reviewers, workplaces, onClose, onOpenForm }) => {
   const today = todayJstStr();
   const [period, setPeriod] = useState(() => calcPayPeriodStartJst(today));
   const dates = useMemo(() => periodDates(period), [period]);
@@ -179,8 +185,11 @@ const OvertimeGrid: React.FC<Props> = ({ userId, roleTitle, isAdmin, isDark, rev
     saveDraft(draftKey, { drafts, kinds, defaultReviewerId });
   }, [drafts, defaultReviewerId, draftKey, baseRows]);
 
-  const setRow = (date: string, patch: Partial<RowDraft>) =>
+  const setRow = (date: string, patch: Partial<RowDraft>) => {
     setDrafts(prev => ({ ...prev, [date]: { ...(prev[date] ?? initialRowDraft('new_post', null, workplaces)), ...patch } }));
+    // 直したら、その行の前回の送信結果（送れませんでした 等）は消す
+    setRowResults(prev => { if (!prev[date]) return prev; const n = { ...prev }; delete n[date]; return n; });
+  };
 
   const rows = useMemo(() => baseRows.map(r => {
     const draft = drafts[r.date] ?? initialRowDraft(r.kind, r.main, workplaces);
@@ -199,11 +208,157 @@ const OvertimeGrid: React.FC<Props> = ({ userId, roleTitle, isAdmin, isDark, rev
     rows.forEach(r => { c[r.calc.state] = (c[r.calc.state] ?? 0) + 1; });
     return c;
   }, [rows]);
-  const sendable = rows.filter(r => r.calc.state === 'ok' || r.calc.state === 'warn');
+  const isNewKind = (k: GridDayKind) => k === 'new_post' || k === 'new_advance' || k === 'new_today';
+  const readyRows = rows.filter(r => r.calc.state === 'ok' || r.calc.state === 'warn');
+  // 🚨 第5段の1つ目（2026-09-24）：送れるのは新しく出す日（事前申請・事後報告）だけ。
+  //    実績報告・再提出は次の版で足す（既存の申請を書き換えるので分けて出す・計画 §10-13）
+  const sendable = readyRows.filter(r => isNewKind(r.kind));
+  const readyEditRows = readyRows.filter(r => !isNewKind(r.kind));
   // 🚨 「予定どおりの日を送る対象に入れる」の対象：報告できる・まだ触っていない行だけ（直した行は含めない）
   const plannedAsIs = rows.filter(r => r.kind === 'report' && !r.draft.touched);
   // 締め切りを過ぎた新しい行（経理の許可が無い）。🚨 行ごとではなく表の上に1つだけ出す
   const lockedNewRows = rows.filter(r => (r.kind === 'new_post' || r.kind === 'new_today') && isPayPeriodClosed(r.date, today) && !grants.has(r.date));
+
+  // ────────────────────────────────────────────
+  // 送信（第5段）
+  // ────────────────────────────────────────────
+  type RowResult = { status: 'sending' | 'waiting' | 'sent' | 'failed' | 'check'; message: string };
+  const [confirm, setConfirm] = useState<{ date: string; label: string }[] | null>(null);
+  const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);   // 🚨 二度押しは state ではなく ref で止める（state は次の描画まで変わらない）
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [rowResults, setRowResults] = useState<Record<string, RowResult>>({});
+  const [resultCard, setResultCard] = useState<{ ok: number; failed: number; check: number } | null>(null);
+  // Googleカレンダーへの反映に失敗した申請（結果カードの［反映し直す］で使う）
+  const [gcalFailedIds, setGcalFailedIds] = useState<string[]>([]);
+  const [gcalRetrying, setGcalRetrying] = useState(false);
+
+  // 送信中にページを離れようとしたら、ブラウザの標準の警告を出す
+  useEffect(() => {
+    if (!sending) return;
+    const h = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', h);
+    return () => window.removeEventListener('beforeunload', h);
+  }, [sending]);
+
+  const dowLabel = (d: string) => DOW[dowOf(d)];
+  const fullDateLabel = (d: string) => `${d}（${dowLabel(d)}）`;   // 1件フォームの通知と同じ形
+
+  /**
+   * 1行ずつ順に送る。🚨 途中で失敗しても他の行は止めない（それぞれ独立した申請）。
+   * 🚨 送る直前に、その行をいまの時刻でもう一度チェックする。確認画面のときと種類が変わっていたら送らない。
+   */
+  const doSend = async () => {
+    if (!confirm || sendingRef.current) return;
+    sendingRef.current = true;
+    setSending(true);
+    const targets = confirm;
+    setConfirm(null);
+    setResultCard(null);
+    setGcalFailedIds([]);
+    setRowResults(Object.fromEntries(targets.map(t => [t.date, { status: 'waiting', message: '' } as RowResult])));
+    setProgress({ done: 0, total: targets.length });
+
+    const sentIds: string[] = [];
+    const sentDates: string[] = [];
+    // メールは申請先ごとに1通（🚨 ベルは1件ずつ）
+    const mailGroups = new Map<string, { dates: string[]; diff: number; phases: Record<string, number> }>();
+    let ok = 0, failed = 0, check = 0;
+    const setRes = (date: string, res: RowResult) => setRowResults(prev => ({ ...prev, [date]: res }));
+
+    for (let i = 0; i < targets.length; i++) {
+      const t = targets[i];
+      setRes(t.date, { status: 'sending', message: '' });
+      const r = rows.find(x => x.date === t.date);
+      const now = new Date();
+      const nowMinLive = now.getHours() * 60 + now.getMinutes();
+      const c = r ? computeGridRow({
+        kind: r.kind, date: r.date, today: todayJstStr(), nowMin: nowMinLive, advanceMaxDate, ns: r.ns, main: r.main, draft: r.draft,
+        defaultReviewerId, canSelfReview,
+        closeLocked: isPayPeriodClosed(r.date, todayJstStr()) && !grants.has(r.date), focused: false,
+      }) : null;
+      if (!r || !c || !isNewKind(r.kind) || (c.state !== 'ok' && c.state !== 'warn')) {
+        failed++; setRes(t.date, { status: 'failed', message: c?.message || '送れる状態ではありません' });
+      } else if (c.sendLabel !== t.label) {
+        failed++; setRes(t.date, { status: 'failed', message: `種類が変わりました（${t.label} → ${c.sendLabel}）。確認し直してから送ってください` });
+      } else {
+        const record = buildOvertimeRecord({
+          userId, date: r.date, mode: c.mode, phase: c.phase, fullDayMode: false, fullDayType: null,
+          isSelfReview: c.isSelfReview, isPureZero: false, isReportPhase: false, isResubmit: false, hasChanges: false,
+          normalShift: r.ns, breakMin: c.breakMin, breakManual: r.draft.breakMin.trim() !== '', laborMin: c.laborMin, diffMin: c.diffMin,
+          fdDiffMin: 0, legalOk: c.legalOk, reason: r.draft.reason, changeReason: '', fdLocation: '', effectiveLocation: c.effectiveLocation,
+          applicationTypes: c.applicationTypes,
+          // 🚨 表ではカレンダーに載せるかを聞かない＝null（種類ごとの既定）。計画 §3
+          offerCalendarChoice: false, showOnCalendar: false, editTargetShowOnCalendar: undefined,
+          furikaeOriginDate: '', effectiveFurikaeOriginLocation: '', furikaeOriginStart: '', furikaeOriginEnd: '',
+          furikaeOriginBreak: 0, furikaeOriginLabor: 0, furikaeHasTime: false,
+          reviewerId: c.reviewerId, modifiedFromId: null,
+          clockOnlyMode: false, effectiveClockReason: '', clockInAt: '', clockOutAt: '', nowIso: now.toISOString(),
+        }, toDbTime);
+        const saved = await saveOvertimeReport({ userId, record, phase: c.phase, segments: c.workSegments, edit: null, segRetries: 2 });
+        if (!saved.ok) {
+          if (saved.code === '23505') {
+            // 🚨 同じ日が既にある。中身が同じ（通信が切れて応答だけ届かなかった／2つのタブで送った）なら送信済み。
+            //    違えば別の経路で作られた申請なので「要確認」。どちらも通知は送らない
+            const { data: ex } = await supabase.from('overtime_reports').select('id, diff_minutes, reason')
+              .eq('applicant_id', userId).eq('work_date', r.date).eq('entry_type', 'manual').neq('status', 'cancelled').maybeSingle();
+            const same = !!ex && ex.diff_minutes === c.diffMin && (ex.reason ?? '').trim() === r.draft.reason.trim();
+            if (same) { ok++; sentDates.push(r.date); setRes(r.date, { status: 'sent', message: 'すでに送信済みでした' }); }
+            else { check++; setRes(r.date, { status: 'check', message: '同じ日の申請がすでにあります（内容が違います）。表を読み直して確認してください' }); }
+          } else if (saved.reportId) {
+            // 申請は保存できたが時間帯が保存できなかった（2回入れ直しても失敗）。🚨 送り直すと重複になるので再送させない
+            check++; setRes(r.date, { status: 'check', message: `申請は保存されましたが、時間帯を保存できませんでした。履歴から「内容を修正する」で直してください（${saved.message}）` });
+          } else {
+            failed++; setRes(r.date, { status: 'failed', message: saved.message });
+          }
+        } else {
+          ok++; sentIds.push(saved.reportId); sentDates.push(r.date);
+          setRes(r.date, { status: 'sent', message: c.sendLabel });
+          const phaseLabel = c.phase === 'actual' ? '実績報告' : '事前申請';
+          // 通知（1件フォームと同じ条件）。🚨 自己受理は確認者のキューに入らないのでベルは送らない
+          if (!c.isSelfReview && c.reviewerId) {
+            await notifyOvertimeNewRequestBell({
+              reportId: saved.reportId, reviewerId: c.reviewerId, applicantName: profileName ?? '',
+              phaseLabel, dateLabel: fullDateLabel(r.date), timeLabel: formatSignedMin(c.diffMin),
+            });
+            const g = mailGroups.get(c.reviewerId) ?? { dates: [], diff: 0, phases: {} };
+            g.dates.push(r.date); g.diff += c.diffMin; g.phases[phaseLabel] = (g.phases[phaseLabel] ?? 0) + 1;
+            mailGroups.set(c.reviewerId, g);
+            // 🚨 Slack は今は OFF（本番の設定）。ON にするなら先に「まとめて1通」の作りを入れること（計画 §10-3）。
+            //    それまでは1件フォームと同じく1件ずつ呼ぶ（黙って送らないよりはよい）
+            await sendOvertimeSlack(saved.reportId, 'overtime:new_request');
+          } else if (c.isSelfReview) {
+            await sendOvertimeSlack(saved.reportId, 'overtime:confirmed');
+          }
+        }
+      }
+      setProgress({ done: i + 1, total: targets.length });
+    }
+
+    // メールを申請先ごとに1通（いまは OFF の設定なので実際には出ない。ON のときに件数ぶん飛ばないように）
+    for (const [reviewerId, g] of mailGroups) {
+      const ds = [...g.dates].sort();
+      await notifyOvertimeNewRequestEmail({
+        reviewerId, applicantName: profileName ?? '',
+        phaseLabel: Object.entries(g.phases).map(([k, v]) => `${k}${v}件`).join('・'),
+        dateLabel: ds.length > 1 ? `${fullDateLabel(ds[0])}ほか${ds.length - 1}日` : fullDateLabel(ds[0]),
+        timeLabel: `計${formatSignedMin(g.diff)}（${ds.length}件）`,
+      });
+    }
+
+    // カレンダーの同期は申請をすべて入れ終えてから1件ずつ（失敗は送信の失敗とは分けて出す）
+    const gcalNg: string[] = [];
+    for (const id of sentIds) { if (!(await syncOvertimeGcal(id))) gcalNg.push(id); }
+    setGcalFailedIds(gcalNg);
+
+    // 送れた日の入力を消す（下書きからも消える）
+    setDrafts(prev => { const n = { ...prev }; sentDates.forEach(d => { n[d] = initialRowDraft('new_post', null, workplaces); }); return n; });
+    setResultCard({ ok, failed, check });
+    setProgress(null);
+    setSending(false);
+    sendingRef.current = false;
+    await load();
+  };
 
   /** 新しい行を初めて触ったとき、時間が空ならその日の通常シフトを入れる（🚨 2本シフトの2本目の入れ忘れを防ぐ） */
   const fillNormalIfEmpty = (r: Row) => {
@@ -254,7 +409,19 @@ const OvertimeGrid: React.FC<Props> = ({ userId, roleTitle, isAdmin, isDark, rev
     return <span style={{ ...style, display: 'inline-block', fontSize: 11.5, fontWeight: 'bold', borderRadius: 6, padding: '1px 7px', whiteSpace: 'nowrap' }}>{label ?? GRID_KIND_TAG[k]}</span>;
   };
 
-  const sendCell = (c: GridRowCalc) => {
+  const sendCell = (c: GridRowCalc, date: string, kind: GridDayKind) => {
+    const res = rowResults[date];
+    if (res) {
+      if (res.status === 'waiting') return <span style={{ color: subText, fontSize: 12 }}>送信待ち</span>;
+      if (res.status === 'sending') return <b style={{ color: toggleText }}>送信中…</b>;
+      if (res.status === 'sent') return <b style={{ color: '#2e7d32' }}>✓ 送信済み<div style={{ fontSize: 11.5, fontWeight: 'normal' }}>{res.message}</div></b>;
+      if (res.status === 'check') return <b style={{ color: warnText }}>要確認<div style={{ fontSize: 11.5, fontWeight: 'normal' }}>{res.message}</div></b>;
+      return <b style={{ color: '#e24b4a' }}>送れませんでした<div style={{ fontSize: 11.5, fontWeight: 'normal' }}>{res.message}</div></b>;
+    }
+    // 🚨 実績報告・再提出の送信は次の版（第5段の2つ目）で足す
+    if ((c.state === 'ok' || c.state === 'warn') && !isNewKind(kind)) {
+      return <span style={{ color: subText, fontSize: 12 }}>送る準備ができています<br />（実績報告・再提出は次の版から送れます）</span>;
+    }
     switch (c.state) {
       case 'ok': return <b style={{ color: toggleText }}>送る<div style={{ fontSize: 11.5, fontWeight: 'normal' }}>{c.sendLabel}</div></b>;
       case 'warn': return <b style={{ color: toggleText }}>送る（注意）<div style={{ fontSize: 11.5, fontWeight: 'normal' }}>{c.sendLabel}</div></b>;
@@ -306,7 +473,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, roleTitle, isAdmin, isDark, rev
       </div>
 
       <div style={{ background: innerBg, border: `1px solid ${borderColor}`, borderRadius: 8, padding: '8px 12px', fontSize: 12.5, color: subText, marginBottom: 10, lineHeight: 1.7 }}>
-        <b style={{ color: text }}>試験中：いまは入力とチェックまでです。送信は次の版から使えます</b>（入力はこの端末に保存されます）<br />
+        <b style={{ color: text }}>試験中：いまは新しく出す日（事前申請・事後報告）だけ送れます。実績報告・再提出は次の版から</b>（入力はこの端末に保存されます）<br />
         ・時間を入れた日だけ送ります。空の日と、通常シフトと同じ日は送りません<br />
         ・<b>実績報告・再提出の行は、触るまで送りません</b>。予定どおりなら［予定どおり］、残業が無かったら［残業なし］<br />
         ・時刻は「930」のように続けて打てます。理由の欄は Enter で下の行へ
@@ -368,7 +535,8 @@ const OvertimeGrid: React.FC<Props> = ({ userId, roleTitle, isAdmin, isDark, rev
             <button type="button" style={onlyErrors ? btnSub : btn} onClick={() => setOnlyErrors(v => !v)}>エラーの行だけ表示</button>
           </div>
 
-          <div style={{ overflowX: 'auto', maxHeight: '70vh', overflowY: 'auto', border: `1px solid ${borderColor}`, borderRadius: 8 }}>
+          {/* 🚨 送信中・確認中は表を触れないようにする（送っている中身が途中で変わらないように） */}
+          <div style={{ overflowX: 'auto', maxHeight: '70vh', overflowY: 'auto', border: `1px solid ${borderColor}`, borderRadius: 8, ...(sending || confirm ? { pointerEvents: 'none', opacity: 0.7 } : {}) }}>
             <table style={{ borderCollapse: 'collapse', width: '100%' }}>
               <thead>
                 <tr>
@@ -547,7 +715,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, roleTitle, isAdmin, isDark, rev
                               </select>
                             )}
                           </td>
-                          <td style={td}>{sendCell(c)}</td>
+                          <td style={td}>{sendCell(c, r.date, r.kind)}</td>
                         </>
                       )}
                     </tr>
@@ -558,20 +726,103 @@ const OvertimeGrid: React.FC<Props> = ({ userId, roleTitle, isAdmin, isDark, rev
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
-            <button type="button" style={btn} onClick={() => {
+            <button type="button" style={btn} disabled={sending} onClick={() => {
               clearDraft(draftKey);
               const next: Drafts = {};
               baseRows.forEach(r => { next[r.date] = initialRowDraft(r.kind, r.main, workplaces); });
               setDrafts(next);
               setLastBulk(null);
+              setRowResults({});
             }}>この期間の入力をすべて消す</button>
             <span style={{ fontSize: 12, color: subText }}>
-              {(counts.error ?? 0) > 0 ? `エラーの ${counts.error} 件は送りません。` : ''}送信は次の版から使えます
+              {(counts.error ?? 0) > 0 ? `エラーの ${counts.error} 件は送りません。` : ''}
+              {readyEditRows.length > 0 ? `実績報告・再提出の ${readyEditRows.length} 件は次の版で送れるようになります。` : ''}
             </span>
-            <button type="button" disabled style={{ ...btn, ...btnOn, fontWeight: 'bold', opacity: 0.5, cursor: 'not-allowed' }}>
-              {sendable.length}件を確認して送信（準備中）
-            </button>
+            {!confirm && !sending && (
+              <button type="button" disabled={sendable.length === 0 || errors.length > 0}
+                onClick={() => {
+                  setResultCard(null);
+                  setConfirm(sendable.map(r => ({ date: r.date, label: r.calc.sendLabel })));
+                }}
+                style={{ ...btn, ...btnOn, fontWeight: 'bold', ...(sendable.length === 0 ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}>
+                {sendable.length}件を確認して送信
+              </button>
+            )}
           </div>
+
+          {/* 送る前の確認（申請先ごと）。🚨 押した瞬間には送らない。ここで［送信する］を押したときだけ送る */}
+          {confirm && (() => {
+            const items = confirm.map(t => rows.find(r => r.date === t.date)).filter((r): r is Row => !!r);
+            const groups = new Map<string, Row[]>();
+            items.forEach(r => {
+              const k = r.calc.isSelfReview ? GRID_SELF_REVIEW : r.calc.reviewerId;
+              groups.set(k, [...(groups.get(k) ?? []), r]);
+            });
+            const line = (r: Row) => {
+              const segs = [...r.calc.workSegments].sort((a, b) => a.startMin - b.startMin).map(s => `${minToTime(s.startMin)}〜${minToTime(s.endMin)}`).join(' / ');
+              return (
+                <div key={r.date} style={{ fontSize: 13, padding: '2px 0' }}>
+                  <b>{md(r.date)}（{DOW[dowOf(r.date)]}）</b> {r.calc.sendLabel}：{segs}
+                  <b style={{ color: r.calc.diffMin > 0 ? '#2e7d32' : r.calc.diffMin < 0 ? '#c62828' : subText }}>{formatSignedMin(r.calc.diffMin)}</b>
+                  {' '}{typesText(r.calc.applicationTypes)} 「{r.draft.reason.trim()}」
+                  {r.calc.state === 'warn' && <span style={{ color: warnText, fontWeight: 'bold' }}> ⚠️ 休憩が法定より短い</span>}
+                </div>
+              );
+            };
+            return (
+              <div style={{ border: `2px solid ${toggleBlue}`, borderRadius: 10, padding: '12px 14px', marginTop: 14, background: cardBg }}>
+                <b style={{ fontSize: 15 }}>送る前の確認（{items.length}件）</b>
+                {[...groups.entries()].map(([k, rs]) => (
+                  <div key={k} style={{ border: `1px solid ${borderColor}`, borderRadius: 8, padding: '8px 10px', margin: '8px 0' }}>
+                    <div style={{ fontWeight: 'bold', fontSize: 13.5, marginBottom: 4 }}>
+                      {k === GRID_SELF_REVIEW
+                        ? <>自己受理（{rs.length}件）<span style={{ color: '#c62828' }}> 送った時点で確定します</span></>
+                        : <>{reviewerName(k)} さん宛（{rs.length}件）</>}
+                    </div>
+                    {rs.map(line)}
+                  </div>
+                ))}
+                <p style={{ fontSize: 12, color: subText, margin: '4px 0 0' }}>
+                  申請先にはベルが1件ずつ届きます。1日＝1件の、いつもの申請として登録されます（受理・差し戻しもいつもどおりです）。
+                </p>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 10 }}>
+                  <button type="button" style={btn} onClick={() => setConfirm(null)}>戻って直す</button>
+                  <button type="button" style={{ ...btn, ...btnOn, fontWeight: 'bold' }} onClick={() => { void doSend(); }}>{items.length}件を送信する</button>
+                </div>
+              </div>
+            );
+          })()}
+
+          {progress && (
+            <div style={{ border: `1px solid ${borderColor}`, borderRadius: 10, padding: '10px 14px', marginTop: 14, fontSize: 13 }}>
+              送信中… <b>{progress.done} / {progress.total}件</b>（このページを閉じないでください）
+            </div>
+          )}
+
+          {resultCard && (
+            <div style={{
+              background: resultCard.failed + resultCard.check > 0 ? warnBg : (isDark ? '#1b3a1e' : '#f0fdf4'),
+              border: `1px solid ${resultCard.failed + resultCard.check > 0 ? '#f59e0b' : '#86efac'}`,
+              color: resultCard.failed + resultCard.check > 0 ? text : (isDark ? '#b7e4cc' : '#166534'),
+              borderRadius: 8, padding: '10px 12px', fontSize: 13, marginTop: 14,
+            }}>
+              ✓ {resultCard.ok}件を送信しました。
+              {resultCard.failed > 0 && <> 送れなかった {resultCard.failed} 件は表に残っています（行の右端に理由）。</>}
+              {resultCard.check > 0 && <> 確認が必要な {resultCard.check} 件があります（行の右端を見てください）。</>}
+              {gcalFailedIds.length > 0 && (
+                <div style={{ marginTop: 6 }}>
+                  Googleカレンダーへの反映に失敗した申請が {gcalFailedIds.length} 件あります。
+                  <button type="button" style={{ ...btnSm, marginLeft: 6 }} disabled={gcalRetrying} onClick={async () => {
+                    setGcalRetrying(true);
+                    const ng: string[] = [];
+                    for (const id of gcalFailedIds) { if (!(await syncOvertimeGcal(id))) ng.push(id); }
+                    setGcalFailedIds(ng);
+                    setGcalRetrying(false);
+                  }}>{gcalRetrying ? '反映中…' : 'カレンダーに反映し直す'}</button>
+                </div>
+              )}
+            </div>
+          )}
         </>
       )}
     </div>

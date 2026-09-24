@@ -43,15 +43,28 @@ export async function sendOvertimeSlack(reportId: string, eventKey: string): Pro
   }
 }
 
-/** 申請・実績報告が届いた時 → 確認をお願いする人へ */
-export async function notifyOvertimeNewRequest(info: {
+type NewRequestInfo = {
   reportId: string;
   reviewerId: string;
   applicantName: string;
   phaseLabel: string;   // 「事前申請」または「実績報告」
   dateLabel: string;    // 例：2026-07-25（金）
   timeLabel: string;    // 例：+1:30
-}): Promise<void> {
+};
+
+/** 申請・実績報告が届いた時 → 確認をお願いする人へ（ベル・メール・Slack） */
+export async function notifyOvertimeNewRequest(info: NewRequestInfo): Promise<void> {
+  const { reportId, reviewerId, applicantName, phaseLabel, dateLabel, timeLabel } = info;
+  await notifyOvertimeNewRequestBell(info);
+  await notifyOvertimeNewRequestEmail({ reviewerId, applicantName, phaseLabel, dateLabel, timeLabel });
+  await sendOvertimeSlack(reportId, 'overtime:new_request');
+}
+
+/**
+ * ベルだけ（1件ずつ）。🚨 ベルは reference_id＝申請ID で「受理したら消える」ので、まとめずに1件ずつ入れる。
+ * 表でまとめて入力（2026-09-24）は、ベルを1件ずつ・メールを申請先ごとに1通にするためにこれを使う。
+ */
+export async function notifyOvertimeNewRequestBell(info: NewRequestInfo): Promise<void> {
   const { reportId, reviewerId, applicantName, phaseLabel, dateLabel, timeLabel } = info;
   if (await shouldSendWithDefault('overtime:new_request', 'site', true)) {
     await insertNotification(
@@ -63,6 +76,14 @@ export async function notifyOvertimeNewRequest(info: {
       'overtime:new_request',
     );
   }
+}
+
+/**
+ * メールだけ。表でまとめて送ったときは申請先ごとに1回だけ呼ぶ（日付＝「9/16（火）ほか4日」などにまとめて渡す）。
+ * 🚨 新しい通知の種類は作らない（設定の行が無い＝全員に送る作りのため）。テンプレートの変数も今までと同じ5つ
+ */
+export async function notifyOvertimeNewRequestEmail(info: Omit<NewRequestInfo, 'reportId'>): Promise<void> {
+  const { reviewerId, applicantName, phaseLabel, dateLabel, timeLabel } = info;
   const email = await getUserEmail(reviewerId);
   if (email) {
     await dispatchEmail(
@@ -71,7 +92,6 @@ export async function notifyOvertimeNewRequest(info: {
       { approver: email },
     );
   }
-  await sendOvertimeSlack(reportId, 'overtime:new_request');
 }
 
 /** 差し戻した時 → 申請した本人へ（管理画面から差し戻す経路。確認者ビューからは Edge が送る） */
