@@ -1251,6 +1251,11 @@ const classifyNotif = (n: NotifLike) => {
     // 🚨 push-dispatch の EVENT_MAP（shift_adjust:cancelled / :ot）と同じ行き先。片方だけ直さないこと
     if (n.source_type === 'shift_adjust:cancelled') return { path: '/shift-request', closeOnTap: true };
     if (n.source_type === 'shift_adjust:cancelled_ot') return { path: '/overtime?tab=history', closeOnTap: true };
+    // シフト調整の案（確認する人へ／意見の期限を過ぎた・案を作った人へ・2026-09-25）。その場をいきなり開く（reference_id＝場の id）。
+    // 🚨 案の id ではなく場の id（案は決定で消えるため）。読めば用が済む
+    if (n.source_type === 'shift_adjust:plan_created' || n.source_type === 'shift_adjust:plan_due') {
+      return { path: n.reference_id ? `/calendar?tab=adjust&slot=${n.reference_id}` : '/calendar?tab=adjust', closeOnTap: true };
+    }
     if (isSafety) {
       // 「助けが必要」の知らせは必ず集計画面を開く。
       // 通常の安否確認は「自分が未回答なら回答画面を優先」だが、これは他人の緊急を

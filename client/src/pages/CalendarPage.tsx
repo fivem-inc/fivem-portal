@@ -2083,7 +2083,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
       )}
 
       {tab === 'adjust' && saPerms.view && user && (
-        <ShiftAdjustTab userId={user.id} isDark={isDark} isMobile={isMobile} perms={saPerms}
+        <ShiftAdjustTab userId={user.id} isDark={isDark} isMobile={isMobile} perms={saPerms} isAdmin={!!isAdmin}
           initialSlotId={saOpenId} onConsumedInitial={() => setSaOpenId(null)} />
       )}
 

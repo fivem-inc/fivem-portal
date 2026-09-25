@@ -12,6 +12,7 @@ import { normalShiftTimeText } from '../lib/overtimeShift';
 import { actedAtLabel } from '../lib/actedAt';
 import { insertNotification } from '../lib/notifications';
 import TimeInput from './TimeInput';
+import { useScrollIntoViewWhen } from '../hooks/useScrollIntoViewWhen';
 import { toDbTime } from '../lib/timeInput';
 
 // ───────────────────────────────────────────────────────────────
@@ -111,10 +112,12 @@ const ShiftAdjustTab: React.FC<{
   isDark: boolean;
   isMobile: boolean;
   perms: Perms;
+  /** 管理者（案を消すことだけは管理者もできる・2026-09-25） */
+  isAdmin?: boolean;
   /** 欠勤の行の印から来たとき、その場をいきなり開く */
   initialSlotId?: string | null;
   onConsumedInitial?: () => void;
-}> = ({ userId, isDark, isMobile, perms, initialSlotId, onConsumedInitial }) => {
+}> = ({ userId, isDark, isMobile, perms, isAdmin = false, initialSlotId, onConsumedInitial }) => {
   const text = isDark ? '#e9ecef' : '#333';
   const subText = isDark ? '#adb5bd' : '#666';
   const cardBg = isDark ? '#343a40' : '#fff';
@@ -151,8 +154,8 @@ const ShiftAdjustTab: React.FC<{
     setSearchParams(sp, { replace: true });
   }, [location.state, navigate, searchParams, setSearchParams]);
   const [showDone, setShowDone] = useState(false);
-  /** 案を保存してある場（一覧に「案あり」を出す） */
-  const [planSlots, setPlanSlots] = useState<Set<string>>(new Set());
+  /** 場ごとの案の件数と、意見の期限を過ぎた案があるか（一覧に「案 2件」を出す・2026-09-25） */
+  const [planCounts, setPlanCounts] = useState<Map<string, { n: number; overdue: boolean }>>(new Map());
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
 
@@ -173,8 +176,8 @@ const ShiftAdjustTab: React.FC<{
       supabase.from('profiles').select('id, name, employment_type, role_title, group_names').eq('is_active', true),
       supabase.from('master_options').select('value').eq('category', 'workplace').order('sort_order'),
       supabase.from('master_options').select('value').eq('category', 'shift_report_group').order('sort_order'),
-      // 🚨 読めなくても一覧は出す（「案あり」の印が出ないだけ）
-      supabase.from('shift_adjust_saved_plans').select('slot_id'),
+      // 🚨 読めなくても一覧は出す（「案 ◯件」の印が出ないだけ）
+      supabase.from('shift_adjust_plans').select('slot_id, review_due_at'),
     ]);
     if (sErr) { setErr('調整の場を読み込めませんでした：' + sErr.message); setLoading(false); return; }
     if (pErr) { setErr('スタッフの一覧を読み込めませんでした：' + pErr.message); setLoading(false); return; }
@@ -183,7 +186,15 @@ const ShiftAdjustTab: React.FC<{
     setWorkplaces(((wData as { value: string }[] | null) ?? []).map(r => r.value));
     // 🚨 チームが読めなくても調整はできる（絞り込みが「すべて」だけになる）ので止めない
     setTeams(((tData as { value: string }[] | null) ?? []).map(r => r.value));
-    setPlanSlots(new Set(((planData as { slot_id: string }[] | null) ?? []).map(r => r.slot_id)));
+    const counts = new Map<string, { n: number; overdue: boolean }>();
+    const nowMs = Date.now();
+    for (const r of (planData as { slot_id: string; review_due_at: string | null }[] | null) ?? []) {
+      const c = counts.get(r.slot_id) ?? { n: 0, overdue: false };
+      c.n += 1;
+      if (r.review_due_at && new Date(r.review_due_at).getTime() < nowMs) c.overdue = true;
+      counts.set(r.slot_id, c);
+    }
+    setPlanCounts(counts);
     setLoading(false);
   }, []);
 
@@ -219,7 +230,7 @@ const ShiftAdjustTab: React.FC<{
       <SlotDetail
         key={openSlot.id}
         slot={openSlot} userId={userId} isDark={isDark} isMobile={isMobile}
-        perms={perms} profiles={profiles} workplaces={workplaces} teams={teams} nameOf={nameOf}
+        perms={perms} isAdmin={isAdmin} profiles={profiles} workplaces={workplaces} teams={teams} nameOf={nameOf}
         onBack={closeSlot}
       />
     );
@@ -269,13 +280,15 @@ const ShiftAdjustTab: React.FC<{
                 <span style={{ fontSize: 11, color: subText, whiteSpace: 'nowrap' }}>
                   {s.cause === 'absent' ? '欠勤' : '休暇'}
                 </span>
-                {/* 案を保存してある未調整・調整中の場（2026-09-14）。🚨 新しい色は足さない */}
-                {undone && planSlots.has(s.id) && (
+                {/* 案がある未調整・調整中の場（2026-09-25：件数と、意見の期限を過ぎた案があるか）。🚨 新しい色は足さない */}
+                {undone && planCounts.has(s.id) && (
                   <span style={{ marginLeft: 'auto', fontSize: 10.5, padding: '1px 7px', borderRadius: 10, whiteSpace: 'nowrap',
-                    color: subText, border: `1px solid ${border}` }}>案あり</span>
+                    color: subText, border: `1px solid ${border}` }}>
+                    案 {planCounts.get(s.id)!.n}件{planCounts.get(s.id)!.overdue ? '・期限過ぎ' : ''}
+                  </span>
                 )}
                 <span style={{
-                  marginLeft: undone && planSlots.has(s.id) ? 0 : 'auto', fontSize: 10.5, fontWeight: 'bold', padding: '2px 8px', borderRadius: 10,
+                  marginLeft: undone && planCounts.has(s.id) ? 0 : 'auto', fontSize: 10.5, fontWeight: 'bold', padding: '2px 8px', borderRadius: 10,
                   whiteSpace: 'nowrap',
                   color: undone ? warnFg : subText,
                   background: s.status === 'pending' ? warnBg : 'transparent',
@@ -299,16 +312,32 @@ const ShiftAdjustTab: React.FC<{
 /** 入る時間帯1つ（開始・終了・校）。🚨 2026-09-14：午前は本校・午後は別の校、のように1人で複数持てる */
 interface DraftSeg { start: string; end: string; location: string }
 interface Draft { key: number; userId: string; segs: DraftSeg[] }
-/** 保存中の案（2026-09-14 ユーザー確定）。場ごとに1つ・決める権限がある人なら誰でも上書き。決定・休みの取消・日の経過で消える */
-interface SavedPlanRow {
+/**
+ * 案（2026-09-25 ユーザー確定・docs/計画-シフト調整.md §6-2）。1つの場に何通りも作れる。
+ * 直す・消すは作った本人だけ（消すことだけは管理者も）。決定・休みの取消・日の経過・現行シフトで対応で消える。
+ * 🚨 案が持つのは 人・時間・校 と「確認する方へ」だけ。チェック2つと「出勤する方へのメモ」は決定のときに入れる
+ */
+interface PlanRow {
+  id: string;
   slot_id: string;
+  plan_no: number;
+  created_by: string;
   assignments: { user_id: string; segs: DraftSeg[] }[];
-  do_attendance: boolean;
-  do_request: boolean;
-  memo: string | null;
-  saved_by: string;
-  saved_at: string;
+  note: string | null;
+  review_due_at: string | null;
+  created_at: string;
+  updated_at: string;
+  reviews_reset_at: string | null;
+  reviews_reset_count: number | null;
+  reviews: { user_id: string; created_at: string }[] | null;
 }
+/** 入力欄のいまの使い方。🚨 先頭に1行で出し、ボタンも出し分ける（案を作っているのか、決定するのかを取り違えないため） */
+type Editor =
+  | { mode: 'new'; fromNo?: number }
+  | { mode: 'edit'; plan: PlanRow }
+  | { mode: 'decide'; fromPlan?: PlanRow };
+/** 入力欄に入れる中身 */
+interface EditorContent { assignments: { user_id: string; segs: DraftSeg[] }[]; note?: string | null; due?: string | null }
 
 const SlotDetail: React.FC<{
   slot: SlotRow;
@@ -316,12 +345,13 @@ const SlotDetail: React.FC<{
   isDark: boolean;
   isMobile: boolean;
   perms: Perms;
+  isAdmin: boolean;
   profiles: ProfileRow[];
   workplaces: string[];
   teams: string[];
   nameOf: (id: string | null | undefined) => string;
   onBack: () => void;
-}> = ({ slot, userId, isDark, isMobile, perms, profiles, workplaces, teams, nameOf, onBack }) => {
+}> = ({ slot, userId, isDark, isMobile, perms, isAdmin, profiles, workplaces, teams, nameOf, onBack }) => {
   const text = isDark ? '#e9ecef' : '#333';
   const subText = isDark ? '#adb5bd' : '#666';
   const cardBg = isDark ? '#343a40' : '#fff';
@@ -376,12 +406,25 @@ const SlotDetail: React.FC<{
   /** 利用者がチェックを触ったか。触ったあとに設定の読み込みが終わっても上書きしない */
   const touchedAuto = React.useRef(false);
   const [confirmUndo, setConfirmUndo] = useState(false);
-  /** 保存中の案（無ければ null） */
-  const [savedPlan, setSavedPlan] = useState<SavedPlanRow | null>(null);
-  /** 保存しようとしたら、別の人が先に保存していた（誰が・いつ） */
-  const [planConflict, setPlanConflict] = useState<{ by: string | null; at: string | null } | null>(null);
-  /** 保存中の案を入力欄に入れたか（1回だけ入れる。入れたあとの手直しを上書きしない） */
-  const restoredPlan = React.useRef(false);
+  /** この場の案（案1・案2…） */
+  const [plans, setPlans] = useState<PlanRow[]>([]);
+  /** 入力欄（閉じているときは null）。押したときだけ開く */
+  const [editor, setEditor] = useState<Editor | null>(null);
+  /** 入力欄を開いたときの中身（変更したかを見るため） */
+  const [editorBase, setEditorBase] = useState('');
+  /** 案の「確認する方へ」（出勤する方には届かない） */
+  const [planNote, setPlanNote] = useState('');
+  /** 案の意見の期限（datetime-local の値・空なら付けない） */
+  const [planDue, setPlanDue] = useState('');
+  /** 入力中の内容を置き換える前の確認（黙って消さない） */
+  const [confirmReplace, setConfirmReplace] = useState<{ e: Editor; c: EditorContent; label: string } | null>(null);
+  /** 消す前の確認（案の id） */
+  const [confirmDelPlan, setConfirmDelPlan] = useState<string | null>(null);
+  /** 案がある場で「現行シフトで対応」を押したときの確認 */
+  const [confirmNoChange, setConfirmNoChange] = useState(false);
+  /** 決定したとき本人にお知らせ（ベル・スマホ）を送るか（2026-09-25 ユーザー確定・案A）。
+   *  🚨 OFF でも依頼・勤怠の登録はする（事前に直接伝えて決まった場合に、突然お知らせが届かないように） */
+  const [notifyStaff, setNotifyStaff] = useState(true);
 
   // 決定するときのチェックの初期値（ユーザー確定）：
   //   休みの日が開始日以降なら ON／それより前、または開始日が未設定なら OFF。押せば登録・依頼はできる
@@ -429,19 +472,19 @@ const SlotDetail: React.FC<{
     setPartReqs((data as PartReqRow[] | null) ?? []);
   }, [slot.id]);
 
-  // 保存中の案を読む。🚨 error を見る（読めないのに「案は保存されていません」と出すと画面が嘘をつく）
-  const loadSavedPlan = useCallback(async (): Promise<SavedPlanRow | null> => {
-    const { data, error } = await supabase.from('shift_adjust_saved_plans')
-      .select('slot_id, assignments, do_attendance, do_request, memo, saved_by, saved_at')
-      .eq('slot_id', slot.id).maybeSingle();
-    if (error) { setErr('保存中の案を読み込めませんでした：' + error.message); return null; }
-    const row = (data as SavedPlanRow | null) ?? null;
-    setSavedPlan(row);
-    return row;
+  // 案を読む。🚨 error を見る（読めないのに「案はありません」と出すと画面が嘘をつく）
+  const loadPlans = useCallback(async (): Promise<PlanRow[]> => {
+    const { data, error } = await supabase.from('shift_adjust_plans')
+      .select('id, slot_id, plan_no, created_by, assignments, note, review_due_at, created_at, updated_at, reviews_reset_at, reviews_reset_count, reviews:shift_adjust_plan_reviews(user_id, created_at)')
+      .eq('slot_id', slot.id).order('plan_no', { ascending: true });
+    if (error) { setErr('案を読み込めませんでした：' + error.message); return []; }
+    const rows = (data as PlanRow[] | null) ?? [];
+    setPlans(rows);
+    return rows;
   }, [slot.id]);
 
-  useEffect(() => { void loadComments(); void loadAssigns(); void loadPartReqs(); void loadSavedPlan(); },
-    [loadComments, loadAssigns, loadPartReqs, loadSavedPlan]);
+  useEffect(() => { void loadComments(); void loadAssigns(); void loadPartReqs(); void loadPlans(); },
+    [loadComments, loadAssigns, loadPartReqs, loadPlans]);
 
   // スマホ通知を登録している人。🚨 送る前に「この人は通知なし」と出すため
   //    （パート18人中6人しか登録していない。知らずに送ると、気づかれないまま待つことになる）
@@ -560,8 +603,7 @@ const SlotDetail: React.FC<{
     if (next === 'working') {
       setOkMsg('');
       if (!showCandidates) { setShowCandidates(true); if (!candLoaded) void loadCandidates(); }
-      // 🚨 保存中の案があるときは空の行を作らない（下の effect が案を入力欄に入れる）
-      if (drafts.length === 0 && !savedPlan) addDraft();
+      // 🚨 2026-09-25：入力欄は自動では開かない（案を作るのか、決めるのかを押して選ぶ）
     }
     if (next === 'pending') setOkMsg('未調整に戻しました。');
     return true;
@@ -592,79 +634,160 @@ const SlotDetail: React.FC<{
   const removeSeg = (key: number, i: number) =>
     setDrafts(d => d.map(x => (x.key === key && x.segs.length > 1 ? { ...x, segs: x.segs.filter((_, j) => j !== i) } : x)));
 
-  // ───── 案を保存（2026-09-14 ユーザー確定）─────
-  /** 保存中の案を入力欄に入れる（出勤する人・時間帯・校・チェック・メモ） */
-  const applySavedPlan = (p: SavedPlanRow) => {
-    setDrafts((p.assignments ?? []).map(a => ({
+  // ───── 案（2026-09-25 ユーザー確定・docs/計画-シフト調整.md §6-2）─────
+  /** 入力欄の中身を1つの文字列に（変更したかを見るため） */
+  const snapshotOf = (ds: Draft[], note: string, due: string, m: string): string =>
+    JSON.stringify({ d: ds.map(d => [d.userId, d.segs]), note, due, m });
+  const editorDirty = !!editor && snapshotOf(drafts, planNote, planDue, memo) !== editorBase;
+
+  /** ISO の日時 → datetime-local の値（端末の時刻で "YYYY-MM-DDTHH:MM"） */
+  const toLocalInput = (iso: string | null | undefined): string => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  /** 意見の期限の表示「9/26（金）18:00」 */
+  const dueLabel = (iso: string): string => {
+    const d = new Date(iso);
+    return `${d.getMonth() + 1}/${d.getDate()}（${DOW[d.getDay()]}）${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  };
+
+  /** 入力欄を開く（中身を入れる）。🚨 入力中の内容があるときは requestOpen から確認を挟む */
+  const openEditor = (e: Editor, c: EditorContent) => {
+    const ds: Draft[] = (c.assignments ?? []).map(a => ({
       key: Date.now() + Math.random(),
       userId: a.user_id,
-      segs: (a.segs ?? []).length > 0 ? a.segs.map(s => ({ start: s.start ?? '', end: s.end ?? '', location: s.location ?? '' })) : [newSeg()],
-    })));
-    setMemo(p.memo ?? '');
-    // 🚨 案に保存したチェックを優先する（管理画面の開始日による初期値で上書きしない）
-    touchedAuto.current = true;
-    setDoAttendance(p.do_attendance);
-    setDoRequest(p.do_request);
+      segs: (a.segs ?? []).length > 0 ? a.segs.map(sg => ({ start: sg.start ?? '', end: sg.end ?? '', location: sg.location ?? '' })) : [newSeg()],
+    }));
+    const note = e.mode === 'decide' ? '' : (c.note ?? '');
+    const due = e.mode === 'edit' ? toLocalInput(c.due) : '';
+    // 決定のメモは決定のときに入れる（🚨 案から写さない。案の「確認する方へ」を出勤する方に届けないため）
+    const m = '';
+    setDrafts(ds); setPlanNote(note); setPlanDue(due); setMemo(m); setNotifyStaff(true);
+    setEditor(e);
+    setEditorBase(snapshotOf(ds, note, due, m));
+    setConfirmReplace(null);
+    setErr(''); setOkMsg('');
+    if (!showCandidates) { setShowCandidates(true); if (!candLoaded) void loadCandidates(); }
+    window.requestAnimationFrame(() => workRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   };
-  // 「シフトを調整する」を選んでいる場を開いた／選んだとき、保存中の案があれば1回だけ入れる
-  useEffect(() => {
-    if (!savedPlan || status !== 'working' || restoredPlan.current) return;
-    restoredPlan.current = true;
-    applySavedPlan(savedPlan);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [savedPlan, status]);
+  /** 入力中の内容があれば、消してよいかを先に聞く */
+  const requestOpen = (e: Editor, c: EditorContent, label: string) => {
+    if (editorDirty) { setConfirmReplace({ e, c, label }); return; }
+    openEditor(e, c);
+  };
+  const closeEditor = () => {
+    setEditor(null); setDrafts([]); setPlanNote(''); setPlanDue(''); setMemo(''); setEditorBase(''); setConfirmReplace(null);
+  };
+  const confirmReplaceRef = useScrollIntoViewWhen<HTMLDivElement>(confirmReplace);
+  const confirmNoChangeRef = useScrollIntoViewWhen<HTMLDivElement>(confirmNoChange);
 
-  /** 保存中の案の見出し「保存中の案（林 晃平・2026/9/14 18:20 保存）」 */
-  const savedPlanLabel = savedPlan
-    ? `保存中の案（${nameOf(savedPlan.saved_by) || '（名前なし）'}・${actedAtLabel(savedPlan.saved_at)} 保存）`
-    : '';
-
-  const savePlan = async (overwrite = false) => {
-    setErr(''); setOkMsg(''); setPlanConflict(null);
-    const rows = drafts.filter(d => d.userId);
-    // 🚨 途中の案なので、時間が空でも保存できる（決定のときに初めて確かめる）
-    const assignments = rows.map(d => ({ user_id: d.userId, segs: d.segs }));
-    // 相談の欄に残す文。時間は打った形のまま（"1000" などは "10:00" に直す）
+  /** 相談の欄に残す文（例：森本さん 9:30〜17:30 四条本校） */
+  const summaryOf = (rows: Draft[]): string => {
     const hhmm = (v: string) => (toDbTime(v) || v || '').slice(0, 5);
-    const summary = rows.map(d => {
-      const band = segmentsText(d.segs.map(s => ({ start: hhmm(s.start), end: hhmm(s.end), location: s.location || null })));
+    return rows.map(d => {
+      const band = segmentsText(d.segs.map(sg => ({ start: hhmm(sg.start), end: hhmm(sg.end), location: sg.location || null })));
       return `${nameOf(d.userId) || '（名前なし）'}${band ? ` ${band}` : ''}`;
     }).join('／');
+  };
+
+  /** 案を保存（新しい案／自分の案を直す） */
+  const savePlanFromEditor = async () => {
+    if (!editor || editor.mode === 'decide') return;
+    setErr(''); setOkMsg('');
+    const rows = drafts.filter(d => d.userId);
+    if (rows.length === 0) { setErr('出勤する人を1人以上選んでください。'); return; }
+    // 🚨 途中の案なので、時間が空でも保存できる（決定のときに初めて確かめる）
+    const assignments = rows.map(d => ({ user_id: d.userId, segs: d.segs }));
+    const dueIso = planDue ? new Date(planDue).toISOString() : null;
     setBusyBtn(true);
-    const { data, error } = await supabase.rpc('shift_adjust_save_plan', {
-      p_slot_id: slot.id, p_assignments: assignments,
-      p_do_attendance: doAttendance, p_do_request: doRequest, p_memo: memo.trim() || null,
-      p_summary: summary,
-      // 🚨 この画面が知っている保存日時。別の人がそのあと保存していたら、上書きせずに知らせる
-      p_expected_saved_at: savedPlan?.saved_at ?? null,
-      p_overwrite: overwrite,
-    });
+    const res = editor.mode === 'new'
+      ? await supabase.rpc('shift_adjust_plan_create', {
+          p_slot_id: slot.id, p_assignments: assignments, p_note: planNote.trim() || null,
+          p_review_due_at: dueIso, p_summary: summaryOf(rows),
+        })
+      : await supabase.rpc('shift_adjust_plan_update', {
+          p_plan_id: editor.plan.id, p_assignments: assignments, p_note: planNote.trim() || null,
+          p_review_due_at: dueIso, p_summary: summaryOf(rows),
+          // 🚨 開いたときの更新日時。別の画面で直されていたら上書きしない
+          p_expected_updated_at: editor.plan.updated_at,
+        });
     setBusyBtn(false);
     // 🚨 rpc は 4xx でも throw しない。error と ok の両方を見る
-    if (error) { setErr('案を保存できませんでした：' + error.message); return; }
-    const row = Array.isArray(data) ? data[0] : data;
+    if (res.error) { setErr('案を保存できませんでした：' + res.error.message); return; }
+    const row = Array.isArray(res.data) ? res.data[0] : res.data;
     if (!row?.ok && row?.reason === 'conflict') {
-      setPlanConflict({ by: row.current_saved_by ?? null, at: row.current_saved_at ?? null });
+      setErr('この案は、別の画面で直されています。読み込み直しました。もう一度「直す」から直してください。');
+      closeEditor(); void loadPlans();
       return;
     }
     if (!row?.ok) { setErr(row?.reason || '案を保存できませんでした'); return; }
-    await loadSavedPlan();
+    const no = editor.mode === 'new' ? row.out_plan_no : editor.plan.plan_no;
+    closeEditor();
+    if (status === 'pending') setStatus('working');   // DB も未調整→調整中に進めている
+    await loadPlans();
     void loadComments();
-    setOkMsg('案を保存しました。');
+    setOkMsg(`案${no}を保存しました。${dueIso ? '意見の期限を付けたので、確認する方にお知らせしました。' : ''}`);
   };
 
-  /** 別の人が保存した案を読み込み直す（いまの入力は捨てる） */
-  const reloadPlan = async () => {
-    setPlanConflict(null); setErr(''); setOkMsg('');
-    const p = await loadSavedPlan();
-    if (p) { applySavedPlan(p); setOkMsg('保存中の案を読み込み直しました。'); }
+  const deletePlan = async (p: PlanRow) => {
+    setErr(''); setOkMsg(''); setBusyBtn(true);
+    const { data, error } = await supabase.rpc('shift_adjust_plan_delete', { p_plan_id: p.id, p_expected_updated_at: p.updated_at });
+    setBusyBtn(false); setConfirmDelPlan(null);
+    if (error) { setErr('案を消せませんでした：' + error.message); return; }
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row?.ok && row?.reason === 'conflict') { setErr('この案は、別の画面で直されています。読み込み直しました。'); void loadPlans(); return; }
+    if (!row?.ok) { setErr(row?.reason || '案を消せませんでした'); return; }
+    if (editor?.mode === 'edit' && editor.plan.id === p.id) closeEditor();
+    await loadPlans();
     void loadComments();
+    setOkMsg(`案${p.plan_no}を消しました。`);
+  };
+
+  const reviewPlan = async (p: PlanRow) => {
+    setErr(''); setOkMsg(''); setBusyBtn(true);
+    // 🚨 見ていた案の更新日時を渡す。直されたあとなら断られる（古い中身への「確認した」を付けない）
+    const { data, error } = await supabase.rpc('shift_adjust_plan_review', { p_plan_id: p.id, p_expected_updated_at: p.updated_at });
+    setBusyBtn(false);
+    if (error) { setErr('「確認した」を付けられませんでした：' + error.message); return; }
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row?.ok && row?.reason === 'conflict') { setErr(`案${p.plan_no}は直されています。読み込み直したので、中身を見てからもう一度押してください。`); void loadPlans(); return; }
+    if (!row?.ok) { setErr(row?.reason || '「確認した」を付けられませんでした'); return; }
+    void loadPlans();
+  };
+
+  const unreviewPlan = async (p: PlanRow) => {
+    setErr(''); setOkMsg(''); setBusyBtn(true);
+    const { data, error } = await supabase.rpc('shift_adjust_plan_unreview', { p_plan_id: p.id });
+    setBusyBtn(false);
+    if (error) { setErr('取り消せませんでした：' + error.message); return; }
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row?.ok) { setErr(row?.reason || '取り消せませんでした'); void loadPlans(); return; }
+    void loadPlans();
+  };
+
+  /** 「案を作らずに決める」「この案で決定へ」：未調整なら先に調整中にする（決定は調整中の場で行う） */
+  const startDecide = async (fromPlan?: PlanRow) => {
+    if (status === 'pending' && !(await setSlotStatus('working'))) return;
+    const e: Editor = { mode: 'decide', fromPlan };
+    const c: EditorContent = { assignments: fromPlan?.assignments ?? [] };
+    requestOpen(e, c, fromPlan ? `案${fromPlan.plan_no}（${nameOf(fromPlan.created_by) || '名前なし'}さん）の内容` : '空の入力欄');
   };
 
   // 「＋ 入れる」：出勤する人に入れて、上の「出勤する人」まで戻る（2026-09-14 ユーザー確定）。
   // 🚨 入る時間は入れない（手入力）。昼から移動などがあるため（ユーザー確定）。校は今までの「＋ 出勤する人を追加」と同じ初期値
   // 🚨 同じ人は二重に入れない。空の行（「シフトを調整する」を押したときにできる）があればそこに入れる
   const addCandidate = (uid: string) => {
+    // 入力欄が閉じていたら開く（案を作れる人は新しい案、決めるだけの人は決定）。2026-09-25
+    if (!editor) {
+      const e: Editor = canPlan ? { mode: 'new' } : { mode: 'decide' };
+      openEditor(e, { assignments: [{ user_id: uid, segs: [] }] });
+      setFlashUid(uid);
+      window.setTimeout(() => setFlashUid(v => (v === uid ? null : v)), 2500);
+      if (!canPlan && status === 'pending') void setSlotStatus('working');
+      return;
+    }
     setDrafts(d => {
       if (d.some(x => x.userId === uid)) return d;
       const empty = d.find(x => !x.userId);
@@ -712,7 +835,8 @@ const SlotDetail: React.FC<{
     }));
     const { data, error } = await supabase.rpc('shift_adjust_decide', {
       p_slot_id: slot.id, p_assignments: payload,
-      p_do_attendance: doAttendance, p_do_request: doRequest, p_memo: memo.trim() || null,
+      // 🚨 お知らせを送らないときはメモも送らない（メモ欄は送るときだけ出している）
+      p_do_attendance: doAttendance, p_do_request: doRequest, p_memo: notifyStaff ? (memo.trim() || null) : null,
     });
     if (error) { setBusyBtn(false); setErr('決定できませんでした：' + error.message); return; }
     const row = Array.isArray(data) ? data[0] : data;
@@ -727,7 +851,8 @@ const SlotDetail: React.FC<{
     const bandOf = (d: Draft): string => segmentsText(segsOf(d));
     const memoText = memo.trim();
     const reqIds: string[] = row.request_ids ?? [];
-    if (reqIds.length > 0) {
+    // 🚨 「本人にお知らせを送る」を外したときは、ベル・スマホを送らない（依頼と勤怠の登録はしている）
+    if (notifyStaff && reqIds.length > 0) {
       const dl = `${Number(slot.target_date.slice(5, 7))}/${Number(slot.target_date.slice(8, 10))}`;
       const me = nameOf(userId) || '担当者';
       const targets = drafts.filter(d => kindOf(d.userId) === 'overtime_request');
@@ -748,7 +873,7 @@ const SlotDetail: React.FC<{
     //    選ばれた人にもベルは出ていなかったので、全員に1通ずつ送っても二重にはならない
     // 🚨 ベルだけ（event_key を付けない＝スマホは鳴らさない）。メモは入れない（勤怠の記録に残る）
     // 🚨 誰の代わりかは書かない（計画書の決まり）
-    for (const d of drafts.filter(x => kindOf(x.userId) === 'attendance')) {
+    for (const d of notifyStaff ? drafts.filter(x => kindOf(x.userId) === 'attendance') : []) {
       await insertNotification(
         d.userId,
         `📅 ${dateLabel(slot.target_date)}の出勤が決まりました`,
@@ -757,13 +882,24 @@ const SlotDetail: React.FC<{
         slot.id,
       );
     }
+    // どの案で決めたかを相談の欄に残す（案は決定で消えるので、経緯はここにしか残らない・2026-09-25）。
+    // 🚨 失敗しても決定は成立している。赤にはせず console に出す
+    const fromPlan = editor?.mode === 'decide' ? editor.fromPlan : undefined;
+    const { error: cErr } = await supabase.from('shift_adjust_comments').insert({
+      slot_id: slot.id, user_id: userId,
+      body: fromPlan
+        ? `案${fromPlan.plan_no}（${nameOf(fromPlan.created_by) || '名前なし'}さん）をもとに決定しました${editorDirty ? '（変更あり）' : ''}：${summaryOf(drafts)}`
+        : `決定しました：${summaryOf(drafts)}`,
+    });
+    if (cErr) console.error('[シフト調整] 決定の記録を相談に残せませんでした', cErr.message);
     setBusyBtn(false);
     setStatus('decided');
-    setDrafts([]);
-    // 決定すると保存中の案は消える（DBのトリガーが消す）
-    setSavedPlan(null);
+    // 決定すると案は消える（DBのトリガーが消す）
+    closeEditor();
+    setPlans([]);
     setOkMsg('決定しました。');
     void loadAssigns();
+    void loadComments();
   };
 
   const sendParts = async () => {
@@ -877,8 +1013,12 @@ const SlotDetail: React.FC<{
     busy[uid] ?? (weekPatterns.some(x => x.user_id === uid) ? 'この曜日は勤務なし' : '週のシフト未登録');
   /** 勤務予定がない人の補足（いつもの校・休みの理由） */
   const restLineOf = (uid: string): string => [usualOf(uid), restNoteOf(uid)].filter(Boolean).join('・');
-  // 出勤する人に入れられるのは、決められる人が「シフトを調整する」を選んでいて、まだ決まっていないとき
-  const canAdd = perms.decide && status === 'working' && assigns.length === 0;
+  // 案を作れる／決められる（2026-09-25）。🚨 まだ決まっていない、未調整か調整中の場だけ。休む本人は DB でも断る
+  const openStatus = ['pending', 'working'].includes(status) && assigns.length === 0 && slot.target_user_id !== userId;
+  const canPlan = perms.plan && openStatus;
+  const canDecideNow = perms.decide && openStatus;
+  // 出勤する人に入れられるのは、入力欄が開いているか、案を作れる／決められるとき
+  const canAdd = openStatus && (!!editor || canPlan || canDecideNow);
   const inDrafts = (uid: string): boolean => drafts.some(x => x.userId === uid);
   // 絞り込みを変えたら、見えなくなった人の選択は外す（見えないまま送られないように）
   const changePartTeam = (t: string) => {
@@ -1035,7 +1175,12 @@ const SlotDetail: React.FC<{
               style={toggleBtn(status === 'working', true, forkLocked)}>
               シフトを調整する
             </button>
-            <button onClick={() => { if (status !== 'no_change') void setSlotStatus('no_change'); }}
+            <button onClick={() => {
+                if (status === 'no_change') return;
+                // 案があるときは消えることを先に断る（2026-09-25）
+                if (plans.length > 0) { setConfirmNoChange(true); return; }
+                void setSlotStatus('no_change');
+              }}
               disabled={busyBtn || forkLocked}
               style={toggleBtn(status === 'no_change', true, forkLocked)}>
               現行シフトで対応
@@ -1048,6 +1193,16 @@ const SlotDetail: React.FC<{
           </div>
           {forkLocked && (
             <p style={note}>出勤のお願いを送ったため、選び直せません。決定するか、お願いの返事を待ってください。</p>
+          )}
+          {confirmNoChange && (
+            <div ref={confirmNoChangeRef} style={{ marginTop: 10, padding: '10px 12px', borderRadius: 8, background: '#fff3cd', border: '2px solid #ffc107', color: '#856404' }}>
+              <p style={{ margin: '0 0 8px', fontSize: 12.5, lineHeight: 1.7 }}>案が{plans.length}件あります。現行シフトで対応にすると、案は消えます。</p>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" onClick={() => { setConfirmNoChange(false); closeEditor(); void setSlotStatus('no_change').then(ok => { if (ok) setPlans([]); }); }}
+                  disabled={busyBtn} style={subBtn}>現行シフトで対応にする</button>
+                <button type="button" onClick={() => setConfirmNoChange(false)} style={quietBtn}>やめる</button>
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -1083,24 +1238,134 @@ const SlotDetail: React.FC<{
         )}
       </div>
 
-      {/* 出勤する人 */}
-      {showWork && (
-        <div ref={workRef} style={{ ...box, scrollMarginTop: 70 }}>
-          <div style={head}>
-            出勤する人
-            {canAdd && drafts.filter(d => d.userId).length > 0 && (
-              <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 'normal', color: subText }}>
-                {drafts.filter(d => d.userId).length}人
-              </span>
-            )}
-          </div>
-          {/* 🚨 2026-09-14 ユーザー指示：相談が増えると見出しが画面の外に出るので、選ぶ位置にも休む方のシフトを出す */}
-          {candLoaded && !candErr && (
-            <div style={{ ...shiftBand, marginTop: 0, marginBottom: 8 }}>休む方のこの日のシフト：{targetShiftText}</div>
+      {/* 案（2026-09-25 ユーザー確定・docs/計画-シフト調整.md §6-2）。相談のすぐ下・入力欄の上 */}
+      {assigns.length === 0 && (plans.length > 0 || (showWork && (canPlan || canDecideNow))) && (
+        <div style={box}>
+          <div style={head}>案{plans.length > 0 ? `（${plans.length}件）` : ''}</div>
+          {plans.length === 0 && (
+            <p style={{ margin: '0 0 8px', fontSize: 12.5, color: subText }}>まだ案はありません。</p>
           )}
+          {plans.map(p => {
+            const mine = p.created_by === userId;
+            const reviews = p.reviews ?? [];
+            const reviewedByMe = reviews.some(r => r.user_id === userId);
+            const overdue = !!p.review_due_at && new Date(p.review_due_at).getTime() < Date.now();
+            const edited = new Date(p.updated_at).getTime() - new Date(p.created_at).getTime() > 1000;
+            const canReview = perms.review && !mine && openStatus;
+            const canDel = openStatus && ((mine && perms.plan) || isAdmin);
+            const editingThis = editor?.mode === 'edit' && editor.plan.id === p.id;
+            return (
+              <div key={p.id} style={{ padding: '10px 12px', marginBottom: 8, borderRadius: 10, border: `1px solid ${editingThis ? '#1976d2' : border}` }}>
+                <div style={{ fontSize: 13.5, fontWeight: 'bold', color: text }}>
+                  案{p.plan_no}
+                  <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 'normal', color: subText }}>
+                    {mine ? 'あなた' : `${nameOf(p.created_by) || '（名前なし）'}さん`}・{actedAtLabel(p.created_at)}
+                    {edited ? `（${actedAtLabel(p.updated_at)} に直しました）` : ''}
+                  </span>
+                </div>
+                {(p.assignments ?? []).map((a, i) => (
+                  <div key={i} style={{ fontSize: 13, color: text, marginTop: 4 }}>
+                    ・{nameOf(a.user_id) || '（名前なし）'}
+                    {profiles.find(x => x.id === a.user_id)?.employment_type === 'パート' ? '（パート）' : ''}
+                    <span style={{ marginLeft: 8, color: subText, fontSize: 12.5 }}>{segmentsText(a.segs)}</span>
+                  </div>
+                ))}
+                {p.note && (
+                  <div style={{ fontSize: 12.5, color: text, marginTop: 6, whiteSpace: 'pre-wrap' }}>
+                    <span style={{ color: subText }}>確認する方へ：</span>{p.note}
+                  </div>
+                )}
+                {p.review_due_at && (
+                  <div style={{ fontSize: 12, marginTop: 6, color: overdue ? warnFg : subText }}>
+                    {overdue
+                      ? `意見の期限を過ぎました（${dueLabel(p.review_due_at)}・確認 ${reviews.length}人）`
+                      : `意見の期限 ${dueLabel(p.review_due_at)}`}
+                  </div>
+                )}
+                <div style={{ fontSize: 12, color: subText, marginTop: 4 }}>
+                  確認 {reviews.length}人{reviews.length > 0 ? `：${reviews.map(r => nameOf(r.user_id) || '（名前なし）').join('・')}` : ''}
+                </div>
+                {/* 直したら確認はやり直し（カードに残す・2026-09-25 ユーザー確定） */}
+                {p.reviews_reset_at && (
+                  <div style={{ fontSize: 12, color: warnFg, marginTop: 2 }}>
+                    {actedAtLabel(p.reviews_reset_at)} に直したため、確認はやり直しです（前回 {p.reviews_reset_count ?? 0}人）
+                  </div>
+                )}
+                {canReview && (
+                  <div style={{ marginTop: 8 }}>
+                    {reviewedByMe ? (
+                      <span style={{ fontSize: 12.5, color: text }}>
+                        ✓ 確認済み
+                        <button type="button" onClick={() => void unreviewPlan(p)} disabled={busyBtn} style={{ ...quietBtn, marginLeft: 8 }}>取り消す</button>
+                      </span>
+                    ) : (
+                      <>
+                        <button type="button" onClick={() => void reviewPlan(p)} disabled={busyBtn} style={toggleBtn(false, true)}>確認した</button>
+                        <span style={{ marginLeft: 8, fontSize: 11.5, color: subText }}>内容を見ました、の印です。意見は相談へ</span>
+                      </>
+                    )}
+                  </div>
+                )}
+                {confirmDelPlan === p.id ? (
+                  <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 8, background: '#fff3cd', border: '2px solid #ffc107', color: '#856404' }}>
+                    <p style={{ margin: '0 0 6px', fontSize: 12.5, lineHeight: 1.7 }}>
+                      案{p.plan_no}を消します。{reviews.length > 0 ? `確認した${reviews.length}人の記録も消えます。` : ''}
+                    </p>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button type="button" onClick={() => void deletePlan(p)} disabled={busyBtn} style={subBtn}>消す</button>
+                      <button type="button" onClick={() => setConfirmDelPlan(null)} style={quietBtn}>やめる</button>
+                    </div>
+                  </div>
+                ) : (openStatus && (canDecideNow || canPlan || canDel)) && (
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                    {canDecideNow && (
+                      <button type="button" onClick={() => void startDecide(p)} disabled={busyBtn} style={subBtn}>この案で決定へ</button>
+                    )}
+                    {mine && canPlan && (
+                      <button type="button" onClick={() => requestOpen({ mode: 'edit', plan: p }, { assignments: p.assignments, note: p.note, due: p.review_due_at }, `案${p.plan_no}の内容`)}
+                        disabled={busyBtn} style={quietBtn}>直す</button>
+                    )}
+                    {canPlan && (
+                      <button type="button" onClick={() => requestOpen({ mode: 'new', fromNo: p.plan_no }, { assignments: p.assignments, note: p.note }, `案${p.plan_no}の内容`)}
+                        disabled={busyBtn} style={quietBtn}>この案をもとに新しい案</button>
+                    )}
+                    {canDel && (
+                      <button type="button" onClick={() => setConfirmDelPlan(p.id)} disabled={busyBtn} style={quietBtn}>消す</button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {/* 入力中の内容を置き換える前の確認（🚨 黙って消さない） */}
+          {confirmReplace && (
+            <div ref={confirmReplaceRef} style={{ marginBottom: 8, padding: '10px 12px', borderRadius: 8, background: '#fff3cd', border: '2px solid #ffc107', color: '#856404' }}>
+              <p style={{ margin: '0 0 8px', fontSize: 12.5, lineHeight: 1.7 }}>入力中の内容は消えます。{confirmReplace.label}を入れますか。</p>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" onClick={() => openEditor(confirmReplace.e, confirmReplace.c)} style={subBtn}>入れる</button>
+                <button type="button" onClick={() => setConfirmReplace(null)} style={quietBtn}>やめる</button>
+              </div>
+            </div>
+          )}
+          {(canPlan || canDecideNow) && (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+              {canPlan && (
+                <button type="button" onClick={() => requestOpen({ mode: 'new' }, { assignments: [] }, '空の入力欄')} disabled={busyBtn} style={subBtn}>＋ 新しい案を作る</button>
+              )}
+              {canDecideNow && (
+                <button type="button" onClick={() => void startDecide()} disabled={busyBtn} style={quietBtn}>案を作らずに決める</button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
+      {/* 出勤する人（決定の内容／入力欄） */}
+      {(assigns.length > 0 || editor) && (
+        <div ref={workRef} style={{ ...box, scrollMarginTop: 70 }}>
           {assigns.length > 0 ? (
             <>
+              <div style={head}>出勤する人</div>
               {assigns.map(a => (
                 <div key={a.id} style={{ padding: '6px 0', fontSize: 13.5, color: text }}>
                   <span style={{ fontWeight: 'bold' }}>{nameOf(a.user_id) || '（名前なし）'}</span>
@@ -1135,15 +1400,36 @@ const SlotDetail: React.FC<{
                 </div>
               )}
             </>
-          ) : perms.decide && status === 'working' ? (
+          ) : editor && (
             <>
-              {/* 保存中の案（誰が・いつ）。🚨 新しい色は足さない */}
-              <div style={{ marginBottom: 8, padding: '6px 10px', borderRadius: 8, fontSize: 12.5, color: savedPlan ? text : subText,
-                border: `1px solid ${border}` }}>
-                {savedPlan ? savedPlanLabel : 'まだ案は保存されていません。途中までの内容は「案を保存」で残せます。'}
+              {/* 🚨 いまの使い方を先頭に1行で出す（案を作っているのか、決定するのかを取り違えないため） */}
+              <div style={{ marginBottom: 10, padding: '8px 12px', borderRadius: 8, fontSize: 13, fontWeight: 'bold',
+                background: isDark ? '#1a3a5c' : '#e8f4fd', color: isDark ? '#e9ecef' : '#1565c0' }}>
+                {editor.mode === 'new'
+                  ? `■ 新しい案を作っています${editor.fromNo ? `（案${editor.fromNo}をもとに）` : ''}`
+                  : editor.mode === 'edit'
+                    ? `■ 案${editor.plan.plan_no}（あなたの案）を直しています`
+                    : editor.fromPlan
+                      ? `■ 案${editor.fromPlan.plan_no}（${editor.fromPlan.created_by === userId ? 'あなた' : `${nameOf(editor.fromPlan.created_by) || '名前なし'}さん`}）の内容で決定します${editorDirty ? '（変更あり）' : ''}`
+                      : '■ 案を作らずに決定します'}
+                {editor.mode === 'edit' && (editor.plan.reviews ?? []).length > 0 && (
+                  <div style={{ fontSize: 11.5, fontWeight: 'normal', marginTop: 2 }}>直して保存すると、確認はやり直しになります（いま {(editor.plan.reviews ?? []).length}人）</div>
+                )}
               </div>
+              <div style={head}>
+                出勤する人
+                {drafts.filter(d => d.userId).length > 0 && (
+                  <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 'normal', color: subText }}>
+                    {drafts.filter(d => d.userId).length}人
+                  </span>
+                )}
+              </div>
+              {/* 🚨 2026-09-14 ユーザー指示：相談が増えると見出しが画面の外に出るので、選ぶ位置にも休む方のシフトを出す */}
+              {candLoaded && !candErr && (
+                <div style={{ ...shiftBand, marginTop: 0, marginBottom: 8 }}>休む方のこの日のシフト：{targetShiftText}</div>
+              )}
               {drafts.length === 0 && (
-                <p style={{ margin: '0 0 8px', fontSize: 12.5, color: subText }}>まだ決まっていません。</p>
+                <p style={{ margin: '0 0 8px', fontSize: 12.5, color: subText }}>下の候補の「＋ 入れる」か、「＋ 出勤する人を追加」で選んでください。</p>
               )}
               {drafts.map(d => {
                 const k = d.userId ? kindOf(d.userId) : null;
@@ -1189,7 +1475,7 @@ const SlotDetail: React.FC<{
                     <button type="button" onClick={() => addSeg(d.key)} style={{ ...quietBtn, marginLeft: 0, marginTop: 4 }}>
                       ＋ 時間帯を追加（午後から別の校へ移る場合など）
                     </button>
-                    {k && (
+                    {k && editor.mode === 'decide' && (
                       <div style={{ fontSize: 11.5, color: subText, marginTop: 4 }}>
                         {k === 'attendance' ? '勤怠に休日出勤として登録します。' : '残業申請を依頼します。'}
                       </div>
@@ -1199,72 +1485,74 @@ const SlotDetail: React.FC<{
               })}
               <button onClick={addDraft} style={{ ...quietBtn, marginLeft: 0, marginTop: 8 }}>＋ 出勤する人を追加</button>
 
-              <div style={{ marginTop: 12, display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12.5, color: text }}>
-                <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={doAttendance}
-                    onChange={e => { touchedAuto.current = true; setDoAttendance(e.target.checked); }} />
-                  勤怠に登録する
-                </label>
-                <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={doRequest}
-                    onChange={e => { touchedAuto.current = true; setDoRequest(e.target.checked); }} />
-                  残業申請を依頼する
-                </label>
-              </div>
-              {/* メモの文例（2026-09-14 ユーザー確定・案1）。押すとメモを置き換える。
-                  🚨 休む方の名前は入れない。メモは正社員には残業申請の依頼とベルでそのまま届き、
-                     パートは勤怠カレンダーの休日出勤の記録に残るため（計画書「誰の代わりかは載せない」） */}
-              <div style={{ fontSize: 12, color: subText, marginTop: 14 }}>文例（押すとメモに入ります）</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
-                {memoExamples.map(ex => (
-                  <button key={ex} type="button" onClick={() => setMemo(ex)}
-                    style={{ textAlign: 'left', fontSize: 12, fontWeight: 'bold', padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
-                      border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, background: isDark ? '#2c3e50' : '#e8f4fd', color: isDark ? '#fff' : '#1565c0' }}>
-                    文例 ー「{ex}」
-                  </button>
-                ))}
-              </div>
-              <textarea value={memo} onChange={e => setMemo(e.target.value)} placeholder="メモ（任意）" rows={2}
-                style={{ ...sel, width: '100%', boxSizing: 'border-box', marginTop: 8, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.6 }} />
-
-              {/* 別の人が先に案を保存していた（2026-09-14）。🚨 黙って上書きしない */}
-              {planConflict && (
-                <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8, background: '#fff3cd', border: '2px solid #ffc107', color: '#856404' }}>
-                  <p style={{ margin: '0 0 8px', fontSize: 12.5, lineHeight: 1.7, fontWeight: 'bold' }}>
-                    {nameOf(planConflict.by) || '別の方'}さんが{planConflict.at ? ` ${actedAtLabel(planConflict.at)} に` : ''}案を保存しています。
-                  </p>
-                  <p style={{ margin: '0 0 8px', fontSize: 12, lineHeight: 1.7 }}>
-                    読み込み直すと、いま入力している内容は消えます。上書きすると、その方の案が消えます（相談の欄には残ります）。
-                  </p>
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <button type="button" onClick={() => void reloadPlan()} disabled={busyBtn} style={subBtn}>読み込み直す</button>
-                    <button type="button" onClick={() => void savePlan(true)} disabled={busyBtn} style={subBtn}>上書きして保存</button>
-                    <button type="button" onClick={() => setPlanConflict(null)} style={quietBtn}>やめる</button>
+              {editor.mode === 'decide' ? (
+                <>
+                  {/* ─ 決定の設定 ─（🚨 案には持たせない。決定のときだけ入れる） */}
+                  <div style={{ marginTop: 12, display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12.5, color: text }}>
+                    <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={doAttendance}
+                        onChange={e => { touchedAuto.current = true; setDoAttendance(e.target.checked); }} />
+                      勤怠に登録する
+                    </label>
+                    <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={doRequest}
+                        onChange={e => { touchedAuto.current = true; setDoRequest(e.target.checked); }} />
+                      残業申請を依頼する
+                    </label>
                   </div>
-                </div>
+                  <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', marginTop: 10, fontSize: 12.5, color: text }}>
+                    <input type="checkbox" checked={notifyStaff} onChange={e => setNotifyStaff(e.target.checked)} />
+                    本人にお知らせを送る
+                  </label>
+                  {!notifyStaff && (
+                    <p style={note}>依頼・勤怠の登録はしますが、ベル・スマホのお知らせは送りません（事前に直接伝えた場合）。</p>
+                  )}
+                  {notifyStaff && (<>
+                  {/* メモの文例（2026-09-14 ユーザー確定・案1）。押すとメモを置き換える。
+                      🚨 休む方の名前は入れない。メモは正社員には残業申請の依頼とベルでそのまま届き、
+                         パートは勤怠カレンダーの休日出勤の記録に残るため（計画書「誰の代わりかは載せない」） */}
+                  <div style={{ fontSize: 12, color: subText, marginTop: 14 }}>文例（押すとメモに入ります）</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+                    {memoExamples.map(ex => (
+                      <button key={ex} type="button" onClick={() => setMemo(ex)}
+                        style={{ textAlign: 'left', fontSize: 12, fontWeight: 'bold', padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
+                          border: `1px solid ${isDark ? '#3d5166' : '#90caf9'}`, background: isDark ? '#2c3e50' : '#e8f4fd', color: isDark ? '#fff' : '#1565c0' }}>
+                        文例 ー「{ex}」
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 12, color: subText, marginTop: 10 }}>出勤する方へのメモ（届きます）</div>
+                  <textarea value={memo} onChange={e => setMemo(e.target.value)} placeholder="メモ（任意）" rows={2}
+                    style={{ ...sel, width: '100%', boxSizing: 'border-box', marginTop: 4, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.6 }} />
+                  </>)}
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12, flexWrap: 'wrap' }}>
+                    <button onClick={() => void decide()} disabled={busyBtn} style={mainBtn}>決定する</button>
+                    <button type="button" onClick={closeEditor} disabled={busyBtn} style={quietBtn}>やめる</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* ─ 案の設定 ─（確認する方へ・意見の期限）。🚨 出勤する方には届かない */}
+                  <div style={{ fontSize: 12, color: subText, marginTop: 12 }}>確認する方へ（出勤する方には届きません）</div>
+                  <textarea value={planNote} onChange={e => setPlanNote(e.target.value)} placeholder="例：西陣が手薄なので" rows={2}
+                    style={{ ...sel, width: '100%', boxSizing: 'border-box', marginTop: 4, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.6 }} />
+                  <div style={{ fontSize: 12, color: subText, marginTop: 10 }}>意見の期限（任意）</div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 4 }}>
+                    <input type="datetime-local" value={planDue} onChange={e => setPlanDue(e.target.value)} style={sel} aria-label="意見の期限" />
+                    {planDue && <button type="button" onClick={() => setPlanDue('')} style={{ ...quietBtn, marginLeft: 0 }}>期限を外す</button>}
+                  </div>
+                  <p style={note}>期限を付けると、確認する方にお知らせが届きます。期限を過ぎたら、あなたにお知らせします。</p>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12, flexWrap: 'wrap' }}>
+                    <button onClick={() => void savePlanFromEditor()}
+                      disabled={busyBtn || (editor.mode === 'new' && !!editor.fromNo && !editorDirty)} style={mainBtn}>案を保存</button>
+                    <button type="button" onClick={closeEditor} disabled={busyBtn} style={quietBtn}>やめる</button>
+                  </div>
+                  {editor.mode === 'new' && !!editor.fromNo && !editorDirty && (
+                    <p style={note}>もとの案から1か所も変えていないため、まだ保存できません。</p>
+                  )}
+                </>
               )}
-
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12, flexWrap: 'wrap' }}>
-                {/* 🚨 2026-09-14 ユーザー確定：途中までの内容を「案」として保存し、誰でも続きから直して決定できる */}
-                <button onClick={() => void savePlan()} disabled={busyBtn} style={subBtn}>案を保存</button>
-                <button onClick={() => void decide()} disabled={busyBtn} style={mainBtn}>決定する</button>
-                {/* 「現行シフトで対応」への切り替えは、上の「対応の選択」に1つにまとめた（同じ操作を2か所に置かない） */}
-              </div>
             </>
-          ) : savedPlan ? (
-            // 決める権限が無い人（見るだけ）にも、保存中の案を見せる（2026-09-14）
-            <div style={{ fontSize: 13, color: text }}>
-              <div style={{ fontSize: 12.5, color: subText, marginBottom: 4 }}>まだ決まっていません。{savedPlanLabel}</div>
-              {(savedPlan.assignments ?? []).map((a, i) => (
-                <div key={i} style={{ padding: '3px 0' }}>
-                  <span style={{ fontWeight: 'bold' }}>{nameOf(a.user_id) || '（名前なし）'}</span>
-                  <span style={{ marginLeft: 10, color: subText, fontSize: 12.5 }}>{segmentsText(a.segs)}</span>
-                </div>
-              ))}
-              {savedPlan.memo && <div style={{ marginTop: 4, fontSize: 12, color: subText, whiteSpace: 'pre-wrap' }}>メモ：{savedPlan.memo}</div>}
-            </div>
-          ) : (
-            <p style={{ margin: 0, fontSize: 12.5, color: subText }}>まだ決まっていません。</p>
           )}
         </div>
       )}
