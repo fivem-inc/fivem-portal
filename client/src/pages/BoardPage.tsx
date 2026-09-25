@@ -531,7 +531,10 @@ const BoardPage: React.FC = () => {
   const [editingNoticeSubj,  setEditingNoticeSubj]  = useState('');
   const [editingNoticeBody,  setEditingNoticeBody]  = useState('');
   const [deleteConfirmId,    setDeleteConfirmId]    = useState<string | null>(null);
-  const [noticeActionBanner, setNoticeActionBanner] = useState<'saved' | 'deleted' | null>(null);
+  const [noticeActionBanner, setNoticeActionBanner] = useState<'saved' | 'deleted' | 'ccRemoved' | null>(null);
+  // 送ったお知らせの写し（CC）を外す（2026-09-25）。開いているお知らせの id と、いまの段階（名前を見る／確認）
+  const [ccPanel, setCcPanel] = useState<{ id: string; step: 'open' | 'confirm' } | null>(null);
+  const [ccRemoving, setCcRemoving] = useState(false);
 
   // グループ/DM 折りたたみ
   const [expandGroups,     setExpandGroups]     = useState(false);
@@ -1777,6 +1780,32 @@ const BoardPage: React.FC = () => {
     if (outboxDetailId === msgId) { silentClearBoardParam('bout'); }
     if (inboxDetailId === msgId) silentClearBoardParam('bin');
     setNoticeActionBanner('deleted');
+    setTimeout(() => setNoticeActionBanner(null), 3000);
+  };
+
+  // 送ったお知らせの写し（CC）を外す（送った代表者本人・管理者。2026-09-25 ユーザー確定）
+  // 🚨 写しの記録（cc_user_ids）を空にするだけ。宛先・対応状況・返信は触らない。
+  //    写しの人全員の送信トレイから消える（同じ1件を見ているため）。付け直す操作は作っていない
+  // 🚨 管理者がほかの人のお知らせで外すと、管理者自身も写しから外れて自分の送信トレイからも消えるので、画面を閉じる
+  const removeNoticeCC = async (msg: BoardMessage) => {
+    if (!user || ccRemoving) return;
+    setCcRemoving(true);
+    const fail = describeUpdate(
+      await supabase.from('board_messages').update({ cc_user_ids: null }).eq('id', msg.id).select('id'),
+      '写しを外す', 'missing',
+    );
+    setCcRemoving(false);
+    if (fail) { setSendError(fail); return; }
+    setCcPanel(null);
+    if (msg.user_id === user.id) {
+      setOutboxMessages(prev => prev.map(m => m.id === msg.id ? { ...m, cc_user_ids: null } : m));
+      setOutboxArchivedMessages(prev => prev.map(m => m.id === msg.id ? { ...m, cc_user_ids: null } : m));
+    } else {
+      setOutboxMessages(prev => prev.filter(m => m.id !== msg.id));
+      setOutboxArchivedMessages(prev => prev.filter(m => m.id !== msg.id));
+      if (outboxDetailId === msg.id) silentClearBoardParam('bout');
+    }
+    setNoticeActionBanner('ccRemoved');
     setTimeout(() => setNoticeActionBanner(null), 3000);
   };
 
@@ -3879,6 +3908,51 @@ const BoardPage: React.FC = () => {
       }
     : null;
 
+  // 送信トレイの詳細で、下のボタンの下に小さく出す「写し ◯人 ▼」（2026-09-25 ユーザー確定）。
+  // 🚨 出すのは外せる人だけ：送った代表者本人と管理者。写しで見ているほかの代表者・代表者以外の送信者には出さない
+  //    （代表者以外の送信は常に代表者へ共有する作り。作成画面のチェックも代表者にしか出していない）。
+  // 🚨 数えるのは「写しに入っている かつ いまの代表者」＝実際に送信トレイで見られる人（canSeeConfirmStatus と同じ考え方）
+  const renderCcRow = (msg: BoardMessage) => {
+    if (!user || previewRole) return null;
+    const own = msg.user_id === user.id;
+    if (!((own && noticeCCUserIds.includes(user.id)) || isAdmin)) return null;
+    const ids = (msg.cc_user_ids ?? []).filter(uid => noticeCCUserIds.includes(uid));
+    if (ids.length === 0) return null;
+    const names = ids.map(uid => uid === user.id ? 'あなた' : (allProfiles.find(p => p.id === uid)?.name || '不明')).join('・');
+    const step = ccPanel?.id === msg.id ? ccPanel.step : null;
+    const linkColor = isDark ? '#93c5fd' : '#3b82f6';
+    const linkBtn = { background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 11, color: linkColor } as const;
+    if (step === 'confirm') {
+      return (
+        <div style={{ marginTop: 10, padding: '8px 10px', background: '#fff3cd', border: '2px solid #ffc107', borderRadius: 8, fontSize: 12, color: '#856404', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ flex: 1, minWidth: 200 }}>
+            {names}の送信トレイから、このお知らせが見えなくなります。{own ? '' : '（送った方の送信トレイには残ります）'}
+          </span>
+          <button type="button" onClick={() => setCcPanel({ id: msg.id, step: 'open' })}
+            style={{ padding: '4px 12px', background: 'none', border: '1px solid #856404', borderRadius: 6, color: '#856404', cursor: 'pointer', fontSize: 12 }}>やめる</button>
+          <button type="button" disabled={ccRemoving} onClick={() => removeNoticeCC(msg)}
+            style={{ padding: '4px 12px', background: '#856404', border: 'none', borderRadius: 6, color: '#fff', cursor: ccRemoving ? 'default' : 'pointer', fontSize: 12, fontWeight: 'bold', opacity: ccRemoving ? 0.6 : 1 }}>
+            {ccRemoving ? '外しています…' : '写しを外す'}
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div style={{ marginTop: 10, textAlign: 'right', fontSize: 11, color: subColor }}>
+        <button type="button" onClick={() => setCcPanel(step ? null : { id: msg.id, step: 'open' })} style={{ ...linkBtn, color: subColor }}>
+          写し {ids.length}人{'　'}{step ? '▲' : '▼'}
+        </button>
+        {step === 'open' && (
+          <div style={{ marginTop: 4 }}>
+            <div>写し：{names}</div>
+            <button type="button" onClick={() => setCcPanel({ id: msg.id, step: 'confirm' })}
+              style={{ ...linkBtn, marginTop: 2, textDecoration: 'underline' }}>写しを外す</button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const outboxPanel = (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: bg }}>
       {outboxDetail ? (
@@ -3951,6 +4025,9 @@ const BoardPage: React.FC = () => {
                     コピーして作成
                   </button>
                 )}
+                {/* 🚨 修正・完全削除は送った本人と管理者だけ（2026-09-25）。写しで見ているほかの代表者にも出ていたが、
+                       データベースの権限で必ず弾かれる（押すと赤いエラーになるだけ）ボタンだった */}
+                {(outboxDetail.user_id === user?.id || isAdmin) && (<>
                 <button type="button"
                   onClick={() => { setEditingNoticeId(outboxDetail.id); setEditingNoticeSubj(outboxDetail.subject || outboxDetail.title || ''); setEditingNoticeBody(outboxDetail.body); }}
                   style={{ padding: '8px 16px', background: 'none', border: `1.5px solid ${isDark ? '#4ade80' : '#16a34a'}`, color: isDark ? '#4ade80' : '#16a34a', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
@@ -3963,8 +4040,11 @@ const BoardPage: React.FC = () => {
                   style={{ padding: '8px 16px', background: 'none', border: '1.5px solid #dc3545', color: '#dc3545', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
                   完全削除
                 </button>
+                </>)}
               </div>
             )}
+            {/* 写し（CC）を外す。修正中・削除の確認中は出さない */}
+            {editingNoticeId !== outboxDetail.id && deleteConfirmId !== outboxDetail.id && renderCcRow(outboxDetail)}
           </div>
         </div>
       ) : (
@@ -5191,7 +5271,7 @@ const BoardPage: React.FC = () => {
             {noticeActionBanner === 'deleted' ? '✕' : '✓'}
           </div>
           <span style={{ fontSize: 15, fontWeight: 'bold', color: noticeActionBanner === 'deleted' ? '#dc2626' : '#166534' }}>
-            {noticeActionBanner === 'deleted' ? '削除しました' : '修正を保存しました'}
+            {noticeActionBanner === 'deleted' ? '削除しました' : noticeActionBanner === 'ccRemoved' ? '写しを外しました' : '修正を保存しました'}
           </span>
           <button type="button" onClick={() => setNoticeActionBanner(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: noticeActionBanner === 'deleted' ? '#dc2626' : '#166534', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
         </div>
