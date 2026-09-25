@@ -43,6 +43,26 @@ export async function sendOvertimeSlack(reportId: string, eventKey: string): Pro
   }
 }
 
+/**
+ * 何件かの申請を Slack に1通でまとめて送る（表でまとめて入力・2026-09-25）。
+ * 同じ種類（eventKey）のものだけを渡す。1日1行の一覧になる（1件だけなら sendOvertimeSlack と同じ形）。
+ * 🚨 本人の申請だけ（関数の側で弾く）。invoke は失敗しても throw しないので error と中身を見る。
+ * 失敗しても呼び出し元の処理は止めない（送信そのものは成功しているため）。
+ */
+export async function sendOvertimeSlackBatch(reportIds: string[], eventKey: string): Promise<void> {
+  if (reportIds.length === 0) return;
+  try {
+    const { data, error } = await supabase.functions.invoke('send-overtime-slack', {
+      body: { report_ids: reportIds, event_key: eventKey },
+    });
+    if (error || (data as { error?: string } | null)?.error) {
+      console.error('[send-overtime-slack] まとめて送れませんでした:', error?.message ?? (data as { error?: string }).error);
+    }
+  } catch (e) {
+    console.error('[send-overtime-slack] Slack通知失敗:', e);
+  }
+}
+
 type NewRequestInfo = {
   reportId: string;
   reviewerId: string;

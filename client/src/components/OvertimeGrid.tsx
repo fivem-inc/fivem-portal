@@ -32,7 +32,7 @@ import { attrsFor } from '../lib/roleAttrs';
 import TimeInput from './TimeInput';
 import { buildOvertimeRecord } from '../lib/overtimeSubmit';
 import { saveOvertimeReport, syncOvertimeGcal } from '../lib/overtimeSubmitApi';
-import { notifyOvertimeNewRequestBell, notifyOvertimeNewRequestEmail, sendOvertimeSlack } from '../lib/overtimeNotify';
+import { notifyOvertimeNewRequestBell, notifyOvertimeNewRequestEmail, sendOvertimeSlackBatch } from '../lib/overtimeNotify';
 import { toDbTime } from '../lib/timeInput';
 import { segmentsText, type SegmentLike } from '../lib/segmentsText';
 
@@ -304,6 +304,9 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     const sentDates: string[] = [];
     // メールは申請先ごとに1通（🚨 ベルは1件ずつ）
     const mailGroups = new Map<string, { dates: string[]; diff: number; phases: Record<string, number> }>();
+    // Slack は種類ごとに1通（🚨 宛先はチャンネルなので申請先ごとには分けない・計画 §10-3）
+    const slackNew: string[] = [];
+    const slackConfirmed: string[] = [];
     let ok = 0, failed = 0, check = 0;
     const setRes = (date: string, res: RowResult) => setRowResults(prev => ({ ...prev, [date]: res }));
 
@@ -408,11 +411,10 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
             const g = mailGroups.get(c.reviewerId) ?? { dates: [], diff: 0, phases: {} };
             g.dates.push(r.date); g.diff += c.diffMin; g.phases[phaseLabel] = (g.phases[phaseLabel] ?? 0) + 1;
             mailGroups.set(c.reviewerId, g);
-            // 🚨 Slack は今は OFF（本番の設定）。ON にするなら先に「まとめて1通」の作りを入れること（計画 §10-3）。
-            //    それまでは1件フォームと同じく1件ずつ呼ぶ（黙って送らないよりはよい）
-            await sendOvertimeSlack(saved.reportId, 'overtime:new_request');
-          } else if (c.isSelfReview) {
-            await sendOvertimeSlack(saved.reportId, 'overtime:confirmed');
+            slackNew.push(saved.reportId);
+          } else if (c.isSelfReview && !c.isPureZero) {
+            // 🚨 自己受理の残業なし（差分0）は送らない（中身が無い。1件フォームと同じ条件）
+            slackConfirmed.push(saved.reportId);
           }
         }
       }
@@ -429,6 +431,10 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
         timeLabel: `計${formatSignedMin(g.diff)}（${ds.length}件）`,
       });
     }
+
+    // Slack を種類ごとに1通（1日1行の一覧。いまは OFF の設定なので実際には出ない）
+    await sendOvertimeSlackBatch(slackNew, 'overtime:new_request');
+    await sendOvertimeSlackBatch(slackConfirmed, 'overtime:confirmed');
 
     // カレンダーの同期は申請をすべて入れ終えてから1件ずつ（失敗は送信の失敗とは分けて出す）
     const gcalNg: string[] = [];
