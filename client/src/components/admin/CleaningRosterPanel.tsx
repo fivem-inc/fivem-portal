@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useScrollIntoViewWhen } from '../../hooks/useScrollIntoViewWhen';
 import { todayJstStr } from '../../lib/breakCalc';
 import { isShiftTarget } from '../../lib/shiftExcelImport';
 import { ROSTER_DAY_LABEL, prevDate, type RosterDayKind } from '../../lib/shiftRoster';
@@ -50,6 +51,8 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
   const [drafts, setDrafts] = useState<Record<string, CleaningCellValue>>({});
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  // 🚨 保存の確認は保存ボタンの下に出るので、開いたらそこまで動かす（2026-09-25・［保存する］が画面の外に出ないように）
+  const confirmBoxRef = useScrollIntoViewWhen<HTMLDivElement>(confirming);
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState('');
   const [saveMsg, setSaveMsg] = useState('');
@@ -391,7 +394,7 @@ const CleaningRosterPanel: React.FC<{ isDarkMode: boolean; rosterDraftCount: num
       {saveMsg && <div style={{ padding: '8px 12px', borderRadius: 8, background: '#d1e7dd', border: '1px solid #28a745', color: '#0f5132', fontSize: 13, marginBottom: 10 }}>✓ {saveMsg}</div>}
 
       {confirming && (
-        <div style={{ padding: '12px 14px', borderRadius: 10, border: `2px solid ${isPast ? '#ffc107' : '#1976d2'}`, background: cardBg, marginBottom: 10, fontSize: 13, color: text, lineHeight: 1.7 }}>
+        <div ref={confirmBoxRef} style={{ padding: '12px 14px', borderRadius: 10, border: `2px solid ${isPast ? '#ffc107' : '#1976d2'}`, background: cardBg, marginBottom: 10, fontSize: 13, color: text, lineHeight: 1.7 }}>
           <b>{applyFrom} から適用します</b>
           {isPast && <div style={{ padding: '6px 10px', borderRadius: 8, background: '#fff3cd', color: '#856404', margin: '6px 0' }}>⚠️ 今日より前の日付です。</div>}
           <div>・変えたマス {changedKeys.length}（{changedKeys.map(k => { const { rowId, day } = splitKey(k); const r = rowById(rowId); return r ? `${r.school.replace('四条本校', '本校')}${r.floor ?? ''} ${r.short_name}（${ROSTER_DAY_LABEL[day]}）` : ''; }).join('・')}）</div>

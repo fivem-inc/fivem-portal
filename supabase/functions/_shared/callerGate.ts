@@ -31,6 +31,43 @@ export type GateResult =
   | { ok: true; kind: 'staff' | 'retiree_grace'; userId: string }
   | { ok: false; status: number; reason: string };
 
+/** 管理者の鍵の形か（新しい形式の秘密鍵、または中身に role=service_role を持つ JWT）。🚨 形だけ。本物かは isValidServiceKey で確かめる */
+function looksLikeServiceKey(token: string): boolean {
+  if (token.startsWith('sb_secret_')) return true;
+  const parts = token.split('.');
+  if (parts.length !== 3) return false;
+  try {
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4)));
+    return payload?.role === 'service_role';
+  } catch {
+    return false;
+  }
+}
+
+// 確かめ終えた鍵（同じ関数の実行環境が続くあいだだけ覚える。毎回問い合わせないため）
+const verifiedServiceKeys = new Set<string>();
+
+/** その鍵で管理者用の操作（利用者の一覧を1件だけ読む）ができるか。できれば本物の管理者の鍵 */
+async function isValidServiceKey(token: string): Promise<boolean> {
+  if (verifiedServiceKeys.has(token)) return true;
+  try {
+    const sb = createClient(Deno.env.get('SUPABASE_URL') ?? '', token, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { error } = await sb.auth.admin.listUsers({ page: 1, perPage: 1 });
+    if (error) {
+      console.error('callerGate service key check failed:', error.message);
+      return false;
+    }
+    verifiedServiceKeys.add(token);
+    return true;
+  } catch (e) {
+    console.error('callerGate service key check error:', e);
+    return false;
+  }
+}
+
 export async function checkCaller(req: Request): Promise<GateResult> {
   const auth = req.headers.get('Authorization') ?? '';
   if (!auth.startsWith('Bearer ')) {
@@ -42,6 +79,15 @@ export async function checkCaller(req: Request): Promise<GateResult> {
   // 🚨 これが無いと、毎晩のリマインドや他の関数からの呼び出しが全部止まる
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
   if (serviceKey && token === serviceKey) {
+    return { ok: true, kind: 'service', userId: null };
+  }
+  // 🚨 文字が一致しなくても、有効な管理者の鍵なら通す（2026-09-25）。
+  //    Supabase が関数側の鍵を入れ替えると（2026-09-25 10:41 JST に実際に起きた）、
+  //    データベースに保管した鍵（vault の service_role_key・cron が使う）と文字が一致しなくなる。
+  //    どちらも有効な鍵なのに、ここで断られていた（データベースから gcal-sync を呼んで 401）。
+  //    → 管理者の鍵らしい形のときだけ、その鍵で管理者用の操作を1回試して確かめる。
+  //    偽の鍵（署名が正しくない）はここで失敗し、下のログインの判定でも通らない。
+  if (looksLikeServiceKey(token) && await isValidServiceKey(token)) {
     return { ok: true, kind: 'service', userId: null };
   }
 

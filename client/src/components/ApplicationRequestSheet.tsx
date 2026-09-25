@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useScrollIntoViewWhen } from '../hooks/useScrollIntoViewWhen';
 import { supabase } from '../lib/supabaseClient';
 import { insertNotification } from '../lib/notifications';
 import { DateField } from './common/DateField';
@@ -81,6 +82,9 @@ const ApplicationRequestSheet: React.FC<Props> = ({
   const [errFields, setErrFields] = useState<Set<string>>(new Set());
   // 相手に通知が飛ぶので、送信前に必ず確認を出す（提案シートと同じ流儀）
   const [showConfirm, setShowConfirm] = useState(false);
+  // 🚨 確認の枠はいちばん下に伸びるので、開いたらそこまで動かす（2026-09-25 実機指摘：
+  //    ［内容を確認する］を押しても［この内容で依頼する］が画面の外に出て見えなかった）
+  const confirmBoxRef = useScrollIntoViewWhen<HTMLDivElement>(showConfirm);
 
   useEffect(() => {
     (async () => {
@@ -399,7 +403,7 @@ const ApplicationRequestSheet: React.FC<Props> = ({
         )}
 
         {showConfirm ? (
-          <div style={{ padding: '12px 14px', borderRadius: 10, background: isDark ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5a73' : '#bee5eb'}`, marginBottom: 10 }}>
+          <div ref={confirmBoxRef} style={{ padding: '12px 14px', borderRadius: 10, background: isDark ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDark ? '#3d5a73' : '#bee5eb'}`, marginBottom: 10 }}>
             <p style={{ margin: '0 0 10px', fontSize: 12.5, lineHeight: 1.8, color: isDark ? '#fff' : '#0d47a1' }}>
               {recipient?.name}さんに、{KIND_LABEL[kind]}の申請をお願いします。<br />
               対象日：{filledDates.map(d => d.slice(5).replace('-', '/')).join('・')}

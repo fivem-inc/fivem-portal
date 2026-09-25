@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useScrollIntoViewWhen } from '../hooks/useScrollIntoViewWhen';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { supabase } from '../lib/supabaseClient';
@@ -676,6 +677,9 @@ const OvertimeForm: React.FC<{
   const clearErr = (key: string) => setErrFields(prev => { if (!prev.has(key)) return prev; const n = new Set(prev); n.delete(key); return n; });
   const [saving, setSaving] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  // 🚨 確認の枠は送信ボタンの場所で下に伸びるので、開いたらそこまで動かす（2026-09-25：
+  //    ボタンは画面の下端で押すことが多く、［送信する］が画面の外に出ていた。表入力・申請の依頼と同じ直し）
+  const confirmBoxRef = useScrollIntoViewWhen<HTMLDivElement>(showConfirm);
   // 当日の事後報告で、まだ勤務の終了時刻を過ぎていないときの注意文（送信ボタンを押した時点で決める）
   const [endWarn, setEndWarn] = useState('');
   const [breakRecalcNote, setBreakRecalcNote] = useState(false);
@@ -2305,7 +2309,7 @@ const OvertimeForm: React.FC<{
           {clockOnlyMode ? 'この内容で記録する（確定）' : isReportPhase ? (isPureZero ? '残業なしで報告する（確定）' : hasChanges ? '実績を報告する（変更あり）' : '実績を報告する（予定どおり）') : isResubmit ? '再提出する' : mode === 'advance' ? '事前申請する' : '報告する'}
         </button>
       ) : (
-        <div style={{ background: innerBg, borderRadius: 10, padding: '12px 14px' }}>
+        <div ref={confirmBoxRef} style={{ background: innerBg, borderRadius: 10, padding: '12px 14px' }}>
           <p style={{ margin: '0 0 6px', fontSize: 13.5, fontWeight: 'bold', color: text }}>{clockOnlyMode ? 'この内容で記録しますか？' : 'この内容で送信しますか？'}</p>
           {/* 勤務の終了時刻より前に事後報告しようとしたときの注意。止めずに気づかせるだけ。
               配色はライト・ダーク共通の固定色（暗い地に暗い文字にすると読めなくなるため） */}
@@ -3000,6 +3004,8 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   const [dismissReason, setDismissReason] = useState<string | null>(null);
   const [dismissNote, setDismissNote] = useState('');
   const [dismissErr, setDismissErr] = useState('');
+  // 理由を選ぶ枠はカードの中で下に伸びるので、開いたらそこまで動かす（2026-09-25・［消す］が画面の外に出ないように）
+  const dismissBoxRef = useScrollIntoViewWhen<HTMLDivElement>(dismissConfirmFor, 'nearest');
 
   /** 休暇の依頼から、日付とメモを入れた状態で休暇申請の画面へ移る。
    *  🚨 休暇は複数日を1件で申請できるので、依頼の日付を全部入れる（残業は1日ずつ）。
@@ -3525,8 +3531,10 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
         )}
 
         {/* 表でまとめて入力（PCだけ・試験中）。🚨 入力の枠の外・「確認ページへ」と同じ形に置く（2026-09-24 ユーザー確定・案A）。
-            枠の中に置くとフォームの一部に見え、枠が二重になる */}
-        {canGrid && tab === 'form' && !editTarget && (
+            枠の中に置くとフォームの一部に見え、枠が二重になる。
+            🚨 「履歴・実績報告」タブにも出す（2026-09-25 ユーザー指摘：実績報告も表から送れるのに、
+               実績報告を出しに来たタブにボタンが無かった） */}
+        {canGrid && !editTarget && (
           <button type="button" onClick={() => { setGridOpen(true); window.scrollTo({ top: 0 }); }}
             style={{ width: '100%', padding: '10px', background: '#1976d2', color: 'white', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', marginTop: 8, marginBottom: 8, borderRadius: 8, boxSizing: 'border-box' }}>
             📋 表でまとめて入力（試験中）
@@ -4102,7 +4110,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                                   🚨 中身は status を 'dismissed' にするだけ。行は消えないので、
                                      上長の依頼一覧には「対応しない」と残る（LeaveApprovals）。 */}
                               {dismissConfirmFor === r.id ? (
-                                <div style={{ padding: '9px 11px', borderRadius: 8, background: isDark ? '#4a3a1a' : '#fff8e1', border: '1px solid #f0c36d', color: isDark ? '#ffcf8f' : '#b7770d' }}>
+                                <div ref={dismissBoxRef} style={{ padding: '9px 11px', borderRadius: 8, background: isDark ? '#4a3a1a' : '#fff8e1', border: '1px solid #f0c36d', color: isDark ? '#ffcf8f' : '#b7770d' }}>
                                   <p style={{ margin: '0 0 6px', fontSize: 12, lineHeight: 1.7 }}>対応しない理由をお選びください</p>
                                   {/* 🚨 色は既存の択一トグルの青（🎨🔒 固定色）。新しい色は足さない */}
                                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>

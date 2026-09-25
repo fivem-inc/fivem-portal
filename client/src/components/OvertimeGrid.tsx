@@ -10,6 +10,7 @@
 // 🚨 実績報告・再提出の行は**触るまで送らない**（何もしないことが送信にならないように）。
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useScrollIntoViewWhen } from '../hooks/useScrollIntoViewWhen';
 import { supabase } from '../lib/supabaseClient';
 import {
   calcPayPeriodStartJst, shiftPayPeriod, payMonthPeriodLabel, todayJstStr, advanceRequestMaxDate,
@@ -95,6 +96,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
   const [grants, setGrants] = useState<Set<string>>(new Set());
   const [requests, setRequests] = useState<GridRequest[]>([]);
   const [reqErr, setReqErr] = useState('');
+  const [peopleNames, setPeopleNames] = useState<Map<string, string>>(new Map());   // 依頼した人・元の申請先の名前
   const [errors, setErrors] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -125,18 +127,23 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     // 経理の許可は読めなくても止めない（締め後の日が「送れない」側に倒れるだけ。最終判断は DB のトリガー）
     setGrants(grantRes.error ? new Set() : new Set(((grantRes.data ?? []) as { work_date: string }[]).map(g => g.work_date)));
     // 🚨 依頼は読めなくても表は止めない（送っても依頼と結び付かないだけ）。ただし黙らずに表の上に出す
+    // 名前は「依頼した人」と「元の申請の申請先」をまとめて1回で読む。
+    // 🚨 申請先の候補（reviewers）に入っていない人がいる（例：管理者）。候補だけで名前を引くと
+    //    確認の枠が「（元の申請先）さん宛」になっていた（2026-09-25 実機指摘）
+    const rs = reqRes.error ? [] : (reqRes.data ?? []) as Omit<GridRequest, 'requester_name'>[];
+    const repRows = repRes.error ? [] : (repRes.data ?? []) as { reviewer_id: string | null }[];
+    const ids = [...new Set([...rs.map(q => q.requester_id), ...repRows.map(r => r.reviewer_id ?? '')])].filter(Boolean);
+    let nameOf = new Map<string, string>();
+    if (ids.length > 0) {
+      // 名前が読めなくても表は出す（名前の所だけ空になる）
+      const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
+      nameOf = new Map(((profs ?? []) as { id: string; name: string }[]).map(p => [p.id, p.name]));
+    }
+    setPeopleNames(nameOf);
     if (reqRes.error) {
       setRequests([]);
       setReqErr('申請の依頼を読み込めませんでした。この表から送っても、依頼とは結び付きません（' + reqRes.error.message + '）');
     } else {
-      const rs = (reqRes.data ?? []) as Omit<GridRequest, 'requester_name'>[];
-      const ids = [...new Set(rs.map(q => q.requester_id))];
-      let nameOf = new Map<string, string>();
-      if (ids.length > 0) {
-        // 名前が読めなくても依頼は出す（名前の所だけ空になる）
-        const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
-        nameOf = new Map(((profs ?? []) as { id: string; name: string }[]).map(p => [p.id, p.name]));
-      }
       setRequests(rs.map(q => ({ ...q, requester_name: nameOf.get(q.requester_id) ?? null })));
       setReqErr('');
     }
@@ -273,6 +280,18 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
   // Googleカレンダーへの反映に失敗した申請（結果カードの［反映し直す］で使う）
   const [gcalFailedIds, setGcalFailedIds] = useState<string[]>([]);
   const [gcalRetrying, setGcalRetrying] = useState(false);
+  // 送れた件数を画面中央の薄緑カードで出す（🎨🔒 成功は固定色・ライトとダークで色を変えない）。4秒で消える
+  const [doneBanner, setDoneBanner] = useState<{ ok: number; problems: number } | null>(null);
+  useEffect(() => {
+    if (!doneBanner) return;
+    const t = setTimeout(() => setDoneBanner(null), 4000);
+    return () => clearTimeout(t);
+  }, [doneBanner]);
+
+  // 🚨 確認の枠・送れなかった行の知らせは表のいちばん下に出るので、開いたらそこまで動かす
+  //    （2026-09-25 実機指摘：押しても画面の外に出て、［送信する］が見えなかった）
+  const confirmBoxRef = useScrollIntoViewWhen<HTMLDivElement>(confirm);
+  const problemBoxRef = useScrollIntoViewWhen<HTMLDivElement>(resultCard && resultCard.failed + resultCard.check > 0 ? resultCard : null);
 
   // 送信中にページを離れようとしたら、ブラウザの標準の警告を出す
   useEffect(() => {
@@ -445,6 +464,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     //    （再提出を事前申請として出した日は「実績報告」の行になる 等）から、改めて最初の入力が作られるように
     setDrafts(prev => { const n = { ...prev }; sentDates.forEach(d => { delete n[d]; }); return n; });
     setResultCard({ ok, failed, check });
+    if (ok > 0) setDoneBanner({ ok, problems: failed + check });
     setProgress(null);
     setSending(false);
     sendingRef.current = false;
@@ -491,6 +511,10 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
   const btnOn: React.CSSProperties = { background: toggleBlue, color: '#fff', borderColor: toggleBlue };
   const btnSub: React.CSSProperties = { ...btn, background: toggleBg, color: toggleText, borderColor: toggleBlue, fontWeight: 'bold' };
   const th: React.CSSProperties = { position: 'sticky', top: 0, background: innerBg, color: subText, fontSize: 12, fontWeight: 'bold', textAlign: 'left', padding: '7px 8px', borderBottom: `2px solid ${borderColor}`, whiteSpace: 'nowrap', zIndex: 1 };
+  // 右端の「送る？」の列は、表を横にずらしても右端に残す（2026-09-25 実機指摘：狭い画面で右が切れて、送るかどうかが見えなかった）。
+  // 日付の列を左に残しているのと同じ作り。🚨 背景は行と同じ色を塗る（塗らないと、下を流れる列が透けて重なる）。
+  //    今日の行の色は半透明なので、この列だけは不透明な地の色にする
+  const sendCol: React.CSSProperties = { position: 'sticky', right: 0, minWidth: 120, boxShadow: `inset 1px 0 0 ${borderColor}` };
   const td: React.CSSProperties = { padding: '6px 8px', borderBottom: `1px solid ${borderColor}`, verticalAlign: 'top', fontSize: 13, color: text };
   // 🚨 文字の入力欄は16px以上（iOS は16px未満の欄にふれるとページを拡大する）
   const txt: React.CSSProperties = { width: '100%', minWidth: 150, boxSizing: 'border-box', border: `1px solid ${borderColor}`, background: inputBg, color: text, borderRadius: 6, padding: '5px 7px', fontSize: 16 };
@@ -554,7 +578,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
 
   const reviewerOptions = reviewers.filter(r => r.id !== userId);
   const reviewerName = (id: string) =>
-    id === GRID_SELF_REVIEW ? '自己受理' : (reviewers.find(r => r.id === id)?.name ?? (id === userId ? '自分' : '（元の申請先）'));
+    id === GRID_SELF_REVIEW ? '自己受理' : (reviewers.find(r => r.id === id)?.name ?? peopleNames.get(id) ?? (id === userId ? '自分' : '（元の申請先）'));
 
   return (
     <div style={{ background: cardBg, border: `1px solid ${borderColor}`, borderRadius: 12, padding: '16px 18px', color: text }}>
@@ -654,7 +678,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                   <th style={th}>労働・差分</th>
                   <th style={th}>理由・種別・勤務地</th>
                   <th style={th}>申請先</th>
-                  <th style={th}>送る？</th>
+                  <th style={{ ...th, ...sendCol, zIndex: 2 }}>送る？</th>
                 </tr>
               </thead>
               <tbody>
@@ -718,7 +742,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                             )}
                           </td>
                           <td style={td}>{rep?.reviewer_id ? <span style={{ fontSize: 12, color: subText }}>{reviewerName(rep.reviewer_id)}</span> : null}</td>
-                          <td style={td}><span style={{ fontSize: 12, color: subText }}>{r.kind === 'done' || r.kind === 'leave_auto' ? '済み' : ''}</span></td>
+                          <td style={{ ...td, ...sendCol, background: bg && bg.length <= 7 ? bg : cardBg }}><span style={{ fontSize: 12, color: subText }}>{r.kind === 'done' || r.kind === 'leave_auto' ? '済み' : ''}</span></td>
                         </>
                       ) : (
                         <>
@@ -827,7 +851,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                               </select>
                             )}
                           </td>
-                          <td style={td}>{sendCell(c, r.date, r.req ? '（依頼に答える）' : '')}</td>
+                          <td style={{ ...td, ...sendCol, background: bg && bg.length <= 7 ? bg : cardBg }}>{sendCell(c, r.date, r.req ? '（依頼に答える）' : '')}</td>
                         </>
                       )}
                     </tr>
@@ -882,7 +906,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
               );
             };
             return (
-              <div style={{ border: `2px solid ${toggleBlue}`, borderRadius: 10, padding: '12px 14px', marginTop: 14, background: cardBg }}>
+              <div ref={confirmBoxRef} style={{ border: `2px solid ${toggleBlue}`, borderRadius: 10, padding: '12px 14px', marginTop: 14, background: cardBg }}>
                 <b style={{ fontSize: 15 }}>送る前の確認（{items.length}件）</b>
                 {[...groups.entries()].map(([k, rs]) => (
                   <div key={k} style={{ border: `1px solid ${borderColor}`, borderRadius: 8, padding: '8px 10px', margin: '8px 0' }}>
@@ -895,8 +919,8 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                   </div>
                 ))}
                 <p style={{ fontSize: 12, color: subText, margin: '4px 0 0' }}>
-                  申請先にはベルが1件ずつ届きます。1日＝1件の、いつもの申請として登録されます（受理・差し戻しもいつもどおりです）。
-                  実績報告・再提出の申請先は、元の申請のままです。残業なしの実績報告は、送った時点で確定します（ベルは届きません）。
+                  {/* 2026-09-25 ユーザー確定：説明は短く1文だけ（ベル・申請先・残業なしの扱いは書かない） */}
+                  1日ずつ、いつもの申請として登録されます。
                 </p>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 10 }}>
                   <button type="button" style={btn} onClick={() => setConfirm(null)}>戻って直す</button>
@@ -912,18 +936,17 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
             </div>
           )}
 
-          {resultCard && (
-            <div style={{
-              background: resultCard.failed + resultCard.check > 0 ? warnBg : (isDark ? '#1b3a1e' : '#f0fdf4'),
-              border: `1px solid ${resultCard.failed + resultCard.check > 0 ? '#f59e0b' : '#86efac'}`,
-              color: resultCard.failed + resultCard.check > 0 ? text : (isDark ? '#b7e4cc' : '#166534'),
+          {/* 送れた件数は画面中央の薄緑カード（doneBanner）。ここは送れなかった・確認が要る・カレンダーの反映に失敗したときだけ。
+              🚨 固定色（ライトとダークで色を変えない・🎨🔒）。以前はダークで暗い緑になり読みにくかった（2026-09-25 実機指摘） */}
+          {resultCard && (resultCard.failed + resultCard.check > 0 || gcalFailedIds.length > 0) && (
+            <div ref={problemBoxRef} style={{
+              background: '#fff3cd', border: '1px solid #ffc107', color: '#856404',
               borderRadius: 8, padding: '10px 12px', fontSize: 13, marginTop: 14,
             }}>
-              ✓ {resultCard.ok}件を送信しました。
-              {resultCard.failed > 0 && <> 送れなかった {resultCard.failed} 件は表に残っています（行の右端に理由）。</>}
-              {resultCard.check > 0 && <> 確認が必要な {resultCard.check} 件があります（行の右端を見てください）。</>}
+              {resultCard.failed > 0 && <div>送れなかった {resultCard.failed} 件は表に残っています（行の右端に理由）。</div>}
+              {resultCard.check > 0 && <div>確認が必要な {resultCard.check} 件があります（行の右端を見てください）。</div>}
               {gcalFailedIds.length > 0 && (
-                <div style={{ marginTop: 6 }}>
+                <div style={{ marginTop: resultCard.failed + resultCard.check > 0 ? 6 : 0 }}>
                   Googleカレンダーへの反映に失敗した申請が {gcalFailedIds.length} 件あります。
                   <button type="button" style={{ ...btnSm, marginLeft: 6 }} disabled={gcalRetrying} onClick={async () => {
                     setGcalRetrying(true);
@@ -937,6 +960,20 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
             </div>
           )}
         </>
+      )}
+
+      {/* 送れた件数（🎨🔒 成功の薄緑カード。残業ページの送信完了と同じ形・補足行つき） */}
+      {doneBanner && (
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 9999, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 12, padding: '20px 28px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: 12, minWidth: 260 }}>
+          <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18, flexShrink: 0 }}>✓</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: 15, fontWeight: 'bold', color: '#166534' }}>{doneBanner.ok}件を送信しました</p>
+            <p style={{ margin: '2px 0 0', fontSize: 12.5, color: '#15803d' }}>
+              {doneBanner.problems > 0 ? `送れなかった・確認が必要な ${doneBanner.problems} 件は、表の下に出ています` : '履歴・実績報告タブで状況を確認できます'}
+            </p>
+          </div>
+          <button type="button" onClick={() => setDoneBanner(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#166534', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
+        </div>
       )}
     </div>
   );

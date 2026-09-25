@@ -1257,7 +1257,8 @@ const AbsenceInputSheet: React.FC<{
           if (isEarlyEnd)       add('early_end',   `退勤 ${hhmm(earlyTime)}`, segSubs);
           return (
             <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, pointerEvents: saving ? 'none' : 'auto' }}>
-              <div style={{ background: '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 400 }}>
+              {/* 🚨 高さの上限と中のスクロール（2026-09-25）。重なりの一覧が長いと、下の［確定する］が画面の外に切れて押せなかった */}
+              <div style={{ background: '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 400, maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box' }}>
                 <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 16 }}>登録内容の確認</div>
                 <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 12, marginBottom: 12, maxHeight: '45vh', overflowY: 'auto' }}>
                   {blocks.map((b, i) => {

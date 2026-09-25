@@ -225,6 +225,9 @@ const FeaturePermissionsTab: React.FC = () => {
   const text     = isDarkMode ? '#ffffff' : '#333333';
   const subText  = isDarkMode ? '#adb5bd' : '#666666';
   const headerBg = isDarkMode ? '#3d4147' : '#f0f4ff';
+  // 権限の表の見出し（役職名）を枠の上に固定する（2026-09-25）。
+  // 🚨 borderCollapse: collapse の表では固定した見出しの下線が消えるので、影で線を引く
+  const stickyTh: React.CSSProperties = { position: 'sticky', top: 0, zIndex: 2, boxShadow: `inset 0 -1px 0 ${border}` };
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -789,27 +792,30 @@ const FeaturePermissionsTab: React.FC = () => {
           {/* 🚨 border-box にしないと padding が width の上に加算され、指定した列幅より広がる
                  （実測: 772px指定のはずが実際は820pxまで膨張していた）。fixedレイアウトと組み合わせて
                  列幅を正確に制御する */}
-          <div style={{ overflowX: 'auto' }}>
+          {/* 🚨 表が縦に長く、スクロールすると役職名の行が見えなくなっていた（2026-09-25 ユーザー指摘・案A）。
+                 表を画面の高さの枠に収め、枠の中だけをスクロールさせて、役職名の行（thead）を上に固定する。
+                 🚨 枠に高さが無いと sticky は効かない（横スクロールの枠の中では、ページのスクロールに付いてこない） */}
+          <div style={{ overflow: 'auto', maxHeight: 'calc(100vh - 160px)' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 480, tableLayout: 'fixed', boxSizing: 'border-box' }}>
               <thead>
                 <tr>
-                  <th style={{ boxSizing: 'border-box', fontSize: 12, color: subText, padding: '10px 8px', textAlign: 'left', background: isDarkMode ? '#2d3136' : '#fafafa', borderBottom: `1px solid ${border}`, width: 150 }}>
+                  <th style={{ ...stickyTh, boxSizing: 'border-box', fontSize: 12, color: subText, padding: '10px 8px', textAlign: 'left', background: isDarkMode ? '#2d3136' : '#fafafa', borderBottom: `1px solid ${border}`, width: 150 }}>
                     機能
                   </th>
-                  <th style={{ boxSizing: 'border-box', fontSize: 10, color: text, padding: '8px 3px', textAlign: 'center', background: isDarkMode ? '#1a2e1a' : '#f0fff4', borderBottom: `1px solid ${border}`, width: 54 }}>
+                  <th style={{ ...stickyTh, boxSizing: 'border-box', fontSize: 10, color: text, padding: '8px 3px', textAlign: 'center', background: isDarkMode ? '#1a2e1a' : '#f0fff4', borderBottom: `1px solid ${border}`, width: 54 }}>
                     全公開
                     <div style={{ fontSize: 8, color: subText, fontWeight: 'normal', marginTop: 1 }}>全員に表示</div>
                   </th>
-                  <th style={{ boxSizing: 'border-box', fontSize: 10, color: text, padding: '8px 3px', textAlign: 'center', background: isDarkMode ? '#1a2030' : '#eef4ff', borderBottom: `1px solid ${border}`, width: 60 }}>
+                  <th style={{ ...stickyTh, boxSizing: 'border-box', fontSize: 10, color: text, padding: '8px 3px', textAlign: 'center', background: isDarkMode ? '#1a2030' : '#eef4ff', borderBottom: `1px solid ${border}`, width: 60 }}>
                     リーダー以上
                     <div style={{ fontSize: 8, color: subText, fontWeight: 'normal', marginTop: 1 }}>先行公開</div>
                   </th>
-                  <th style={{ boxSizing: 'border-box', fontSize: 10, color: text, padding: '8px 3px', textAlign: 'center', background: isDarkMode ? '#2e1a30' : '#faeeff', borderBottom: `1px solid ${border}`, borderRight: `2px solid ${border}`, width: 54 }}>
+                  <th style={{ ...stickyTh, boxSizing: 'border-box', fontSize: 10, color: text, padding: '8px 3px', textAlign: 'center', background: isDarkMode ? '#2e1a30' : '#faeeff', borderBottom: `1px solid ${border}`, borderRight: `2px solid ${border}`, width: 54 }}>
                     社長のみ
                     <div style={{ fontSize: 8, color: subText, fontWeight: 'normal', marginTop: 1 }}>テスト用</div>
                   </th>
                   {roles.map(role => (
-                    <th key={role.id} style={{ boxSizing: 'border-box', fontSize: 10, color: subText, padding: '8px 3px', textAlign: 'center', background: isDarkMode ? '#2d3136' : '#fafafa', borderBottom: `1px solid ${border}`, width: 54, wordBreak: 'break-word' }}>
+                    <th key={role.id} style={{ ...stickyTh, boxSizing: 'border-box', fontSize: 10, color: subText, padding: '8px 3px', textAlign: 'center', background: isDarkMode ? '#2d3136' : '#fafafa', borderBottom: `1px solid ${border}`, width: 54, wordBreak: 'break-word' }}>
                       {role.name}
                     </th>
                   ))}
@@ -940,7 +946,9 @@ const FeaturePermissionsTab: React.FC = () => {
                           <button
                             onClick={() => { if (!isFixed && isEditMode) togglePerm(role.id, feat.key); }}
                             disabled={isFixed || !isEditMode}
-                            title={isFixed ? '管理者は常にすべての機能を利用できます' : !isEditMode ? '「変更する」を押して編集モードに入ってください' : undefined}
+                            // マウスを乗せると役職名が出る（表が長く、どの列か分からなくなるため・2026-09-25）
+                            title={isFixed ? `${role.name}：常にすべての機能を利用できます`
+                              : `${role.name}：${on ? 'ON' : 'OFF'}${!isEditMode ? '（「変更する」を押すと変えられます）' : ''}`}
                             style={{
                               width: 32, height: 18, borderRadius: 9, border: 'none', padding: 0,
                               position: 'relative',

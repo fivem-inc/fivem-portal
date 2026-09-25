@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useScrollIntoViewWhen } from '../../hooks/useScrollIntoViewWhen';
 import { todayJstStr } from '../../lib/breakCalc';
 import { ROSTER_DAY_LABEL, prevDate, shiftDayOn, type RosterDayKind } from '../../lib/shiftRoster';
 import { loadRosterData, type RosterData, type RosterPatternRow } from '../../lib/shiftRosterApi';
@@ -61,6 +62,8 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   const [drafts, setDrafts] = useState<Record<string, Record<string, KidsCellValue>>>({});
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  // 🚨 保存の確認は表の下に出るので、開いたらそこまで動かす（2026-09-25・［保存する］が画面の外に出ないように）
+  const confirmBoxRef = useScrollIntoViewWhen<HTMLDivElement>(confirming);
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState('');
   const [saveMsg, setSaveMsg] = useState('');
@@ -69,6 +72,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
   const [panelErr, setPanelErr] = useState('');
   const [newPlan, setNewPlan] = useState<{ name: string; from: string; copy: string } | null>(null);
   const [decideState, setDecideState] = useState<{ conflicts: { place_id: string; day_kind: string; label: string }[]; keptCount: number; changeCount: number; choices: Record<string, 'plan' | 'decided'> } | null>(null);
+  const decideBoxRef = useScrollIntoViewWhen<HTMLDivElement>(decideState);
   const [guard, setGuard] = useState<{ text: string; go: () => void } | null>(null);
   const [pdfRed, setPdfRed] = useState(true);
   const [pdfBlank, setPdfBlank] = useState(true);
@@ -937,7 +941,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
 
       {/* 保存の確認（決定済みの表） */}
       {confirming && !plan && (
-        <div style={{ ...warnCard, marginTop: 10 }}>
+        <div ref={confirmBoxRef} style={{ ...warnCard, marginTop: 10 }}>
           <b>{md(applyFrom)} から、{changedKeys.length} マスを切り替えます</b>
           <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
             {changedKeys.slice(0, 20).map(k => {
@@ -962,7 +966,7 @@ const KidsShiftPanel: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
 
       {/* 決定の確認 */}
       {decideState && plan && (
-        <div style={{ ...warnCard, marginTop: 10 }}>
+        <div ref={decideBoxRef} style={{ ...warnCard, marginTop: 10 }}>
           <b>{plan.name}を {md(plan.apply_from)} から決定します（変わるマス {decideState.changeCount}）</b>
           {decideState.conflicts.length > 0 ? (
             <div style={{ marginTop: 6 }}>
