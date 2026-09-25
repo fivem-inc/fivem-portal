@@ -3432,8 +3432,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   // 表でまとめて入力（PCだけ・試験中）。🚨 表は幅が要るので、このときだけページの最大幅を広げる
   // ────────────────────────────────────────────
   if (gridOpen && canGrid) {
+    // 🚨 1400 だと広い画面でも表が枠より少し広くなり、右端の列が申請先の欄に重なっていた（2026-09-25）
     return (
-      <div style={{ maxWidth: 1400, margin: '0 auto', padding: '16px 16px 40px' }}>
+      <div style={{ maxWidth: 1600, margin: '0 auto', padding: '16px 16px 40px' }}>
         <OvertimeGrid userId={user.id} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin} isDark={isDark}
           reviewers={reviewers} workplaces={workplaces}
           onClose={() => { setGridOpen(false); window.scrollTo({ top: 0 }); }}

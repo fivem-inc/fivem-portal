@@ -514,7 +514,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
   // 右端の「送る？」の列は、表を横にずらしても右端に残す（2026-09-25 実機指摘：狭い画面で右が切れて、送るかどうかが見えなかった）。
   // 日付の列を左に残しているのと同じ作り。🚨 背景は行と同じ色を塗る（塗らないと、下を流れる列が透けて重なる）。
   //    今日の行の色は半透明なので、この列だけは不透明な地の色にする
-  const sendCol: React.CSSProperties = { position: 'sticky', right: 0, minWidth: 120, boxShadow: `inset 1px 0 0 ${borderColor}` };
+  const sendCol: React.CSSProperties = { position: 'sticky', right: 0, minWidth: 100, boxShadow: `inset 1px 0 0 ${borderColor}` };
   const td: React.CSSProperties = { padding: '6px 8px', borderBottom: `1px solid ${borderColor}`, verticalAlign: 'top', fontSize: 13, color: text };
   // 🚨 文字の入力欄は16px以上（iOS は16px未満の欄にふれるとページを拡大する）
   const txt: React.CSSProperties = { width: '100%', minWidth: 150, boxSizing: 'border-box', border: `1px solid ${borderColor}`, background: inputBg, color: text, borderRadius: 6, padding: '5px 7px', fontSize: 16 };
@@ -802,7 +802,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                               </>
                             ) : <span style={{ color: subText }}>―</span>}
                           </td>
-                          <td style={{ ...td, minWidth: 240 }}>
+                          <td style={{ ...td, minWidth: 200 }}>
                             <input type="text" value={r.draft.reason} placeholder="理由" data-grid-col="reason"
                               onChange={e => touch({ reason: e.target.value })} onKeyDown={e => onEnterNext(e, 'reason')}
                               style={{ ...txt, ...(c.state === 'error' && c.message === '理由を入力してください' ? { border: '2px solid #e24b4a' } : {}) }}
@@ -844,7 +844,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                             {isEdit ? (
                               <span style={{ fontSize: 12, color: subText }}>{reviewerName(c.reviewerId)}<br />（元の申請のまま）</span>
                             ) : (
-                              <select value={r.draft.reviewerId} onChange={e => touch({ reviewerId: e.target.value })} style={{ ...sel, maxWidth: 180 }} aria-label={`${md(r.date)} 申請先`}>
+                              <select value={r.draft.reviewerId} onChange={e => touch({ reviewerId: e.target.value })} style={{ ...sel, maxWidth: 170 }} aria-label={`${md(r.date)} 申請先`}>
                                 <option value="">{r.req ? `依頼した人（${r.req.requester_name ?? reviewerName(r.req.requester_id)}）` : defaultReviewerId ? `表の上と同じ（${reviewerName(defaultReviewerId)}）` : '表の上で選んでください'}</option>
                                 {canSelfReview && <option value={GRID_SELF_REVIEW}>自己受理（自分で確認する）</option>}
                                 {reviewerOptions.map(rv => <option key={rv.id} value={rv.id}>{rv.name}（{rv.role_title}）</option>)}
