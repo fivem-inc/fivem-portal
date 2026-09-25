@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, useContext } from 'react';
+import LinkifiedText from '../components/LinkifiedText';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { rolesByRank, attrsFor } from '../lib/roleAttrs';
@@ -2194,7 +2195,7 @@ const BoardPage: React.FC = () => {
               </span>
               <span style={{ fontSize: 10, color: subColor }}>{fmtFull(r.created_at)}</span>
             </div>
-            <div style={{ fontSize: 13, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{r.body}</div>
+            <div style={{ fontSize: 13, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}><LinkifiedText text={r.body} /></div>
           </div>
         ))}
         {isOpen && (draftFor(g.partnerId) === null ? (
@@ -2459,7 +2460,7 @@ const BoardPage: React.FC = () => {
               </div>
             );
           })()}
-          <div style={{ fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5, textAlign: 'left' }}>{msg.body}</div>
+          <div style={{ fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5, textAlign: 'left' }}><LinkifiedText text={msg.body} /></div>
           {/* 送信メールチャンネルの宛先表示 */}
           {msg.broadcast_recipients && msg.broadcast_recipients.length > 0 && (
             <div style={{ marginTop: 6, padding: '4px 8px', background: isDark ? '#1e2d1e' : '#f0fdf4', borderRadius: 6, fontSize: 12, color: isDark ? '#86efac' : '#166534' }}>
@@ -2653,7 +2654,7 @@ const BoardPage: React.FC = () => {
                 {DEADLINE_TYPES.find(d => d.value === parentMsg.deadline_type)?.label}
               </div>
             )}
-            <div style={{ fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5, textAlign: 'left' }}>{parentMsg.body}</div>
+            <div style={{ fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5, textAlign: 'left' }}><LinkifiedText text={parentMsg.body} /></div>
           </div>
           {/* Replies */}
           {threadRepliesList.length === 0 && (
@@ -2671,7 +2672,7 @@ const BoardPage: React.FC = () => {
                     <span style={{ fontSize: 13, fontWeight: 'bold', color: textColor }}>{rSender}</span>
                     <span style={{ fontSize: 11, color: subColor }}>{fmtFull(r.created_at)}</span>
                   </div>
-                  <div style={{ fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, padding: '8px 12px', textAlign: 'left' }}>{r.body}</div>
+                  <div style={{ fontSize: 14, color: textColor, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5, background: cardBg, border: `1px solid ${border}`, borderRadius: 8, padding: '8px 12px', textAlign: 'left' }}><LinkifiedText text={r.body} /></div>
                   {(() => {
                     const chMembers = members.filter(m => m.channel_id === selectedChannelId);
                     const readN = readCounts[r.id] || 0;
