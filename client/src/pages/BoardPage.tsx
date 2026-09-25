@@ -69,6 +69,10 @@ interface BoardMessage {
   reply_closed_at?: string | null;
   broadcast_recipients: { id: string; name: string }[] | null;
   profile: { name: string | null } | null;
+  // 送信トレイで「いまの自分が」片付けたか（2026-09-26）。
+  // 🚨 DB の board_messages.outbox_hidden ではない（あれは1件に1つの印で、もう読まない）。
+  //    board_outbox_hidden（お知らせ × 人）に自分の行があるかを loadOutbox が写す。
+  //    送った本人と写しで見る代表者で値が違うので、別の人の画面と一致しなくて正しい
   outbox_hidden?: boolean;
   recipient_presets?: string[] | null;   // 送信時に全員が宛先に入っていた一括ボタン名（コピーして作成で使う）
   recipient_extra_ids?: string[] | null; // ボタン以外で個別に足した宛先
@@ -452,6 +456,9 @@ const BoardPage: React.FC = () => {
   }, [user, isAdmin, noticeCCUserIds]);
   // リマインドを送れるのは送信した本人と管理者だけ（代表者は見るだけ）
   const canRemind = useCallback((msg: BoardMessage) => !!user && (msg.user_id === user.id || isAdmin), [user, isAdmin]);
+  // 完全削除できるのも送信した本人と管理者だけ（DB の board_messages_delete と同じ）。
+  // 🚨 送信トレイの詳細の「完全削除」と、アーカイブの一括削除の**2か所がこれを見る**（2026-09-26）
+  const canDeleteNotice = useCallback((msg: BoardMessage) => !!user && (msg.user_id === user.id || isAdmin), [user, isAdmin]);
   // 宛先の候補に出さない人（管理画面 → 連絡板 で設定。FAQ専用など人が使わないアカウント向け）
   const [recipientExcludeIds, setRecipientExcludeIds] = useState<string[]>([]);
   // グループを作成・メンバー編集できるか。🚨 判定は DB の board_can_manage_groups() の1か所
@@ -935,11 +942,11 @@ const BoardPage: React.FC = () => {
       // 送信トレイ（自分が送ったお知らせ）検索
       // 🚨 2026-09-10 追加。それまで検索は「グループ・DM」と「受信トレイ」だけで、
       //    自分が送ったものは引けなかった（ユーザー指摘）。
-      //    アーカイブ（outbox_hidden）も対象にする＝片付けたものも探せる。
+      //    アーカイブも対象にする＝片付けたものも探せる（絞っていないので自然に入る）。
       //    お気に入りは「受信トレイのお知らせ」か「チャンネルの投稿」なので、上の2つで引ける。
       const outboxQuery = supabase
         .from('board_messages')
-        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, outbox_hidden')
+        .select('id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at')
         .eq('user_id', user.id)
         .is('channel_id', null)
         .is('parent_id', null)
@@ -1127,33 +1134,38 @@ const BoardPage: React.FC = () => {
 
   const loadOutbox = useCallback(async () => {
     if (!user) return;
-    const SEL = 'id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, outbox_hidden, cc_user_ids, recipient_presets, recipient_extra_ids';
-    const [{ data }, { data: archData }, { data: ccData }] = await Promise.all([
+    // 🚨 outbox_hidden（DB の列）はもう読まない（2026-09-26）。アーカイブは board_outbox_hidden（お知らせ × 人）で、
+    //    「自分が片付けたか」を自分の行の有無で決める。送った本人と写しで見る代表者は別々に片付けられる。
+    //    以前は1件に1つの印だったので、管理者が写しのお知らせを片付けると送った本人の送信トレイからも消えていた
+    const SEL = 'id, channel_id, parent_id, user_id, body, edited_at, created_at, deadline, deadline_type, requires_confirmation, scheduled_at, sent_at, title, subject, status, answer_prompt, answer_location, answer_link, allow_reply, reply_until, reply_closed_at, cc_user_ids, recipient_presets, recipient_extra_ids';
+    const [{ data }, { data: ccData }, { data: hiddenData, error: hiddenErr }] = await Promise.all([
       supabase.from('board_messages').select(SEL)
         .eq('user_id', user.id).is('channel_id', null).is('parent_id', null)
-        .or('outbox_hidden.is.null,outbox_hidden.eq.false')
-        .order('created_at', { ascending: false }),
-      supabase.from('board_messages').select(SEL)
-        .eq('user_id', user.id).is('channel_id', null).is('parent_id', null)
-        .eq('outbox_hidden', true)
         .order('created_at', { ascending: false }),
       supabase.from('board_messages').select(SEL)
         .contains('cc_user_ids', [user.id]).is('channel_id', null).is('parent_id', null)
-        .or('outbox_hidden.is.null,outbox_hidden.eq.false')
         .order('created_at', { ascending: false }),
+      supabase.from('board_outbox_hidden').select('message_id').eq('user_id', user.id),
     ]);
+    // 🚨 片付けた記録が読めなかったときは黙って「全部未整理」に見せない（片付けたものが一覧に戻ったように見えるため）
+    if (hiddenErr) setSendError('送信トレイのアーカイブの記録を読み込めませんでした：' + hiddenErr.message);
+    const hiddenIds = new Set((hiddenData || []).map((h: { message_id: string }) => h.message_id));
     const ownIds = new Set((data || []).map((m: any) => m.id));
     const ccOnly = (ccData || []).filter((m: any) => !ownIds.has(m.id));
-    const allSent = [...(data || []), ...ccOnly].sort((a: any, b: any) => b.created_at.localeCompare(a.created_at));
-    setOutboxMessages(allSent.map((m: any) => ({ ...m, broadcast_recipients: null, profile: null })));
-    setOutboxArchivedMessages((archData || []).map((m: any) => ({ ...m, broadcast_recipients: null, profile: null })));
+    const everything = [...(data || []), ...ccOnly]
+      .sort((a: any, b: any) => b.created_at.localeCompare(a.created_at))
+      .map((m: any) => ({ ...m, broadcast_recipients: null, profile: null, outbox_hidden: hiddenIds.has(m.id) }));
+    const allSent = everything.filter(m => !m.outbox_hidden);
+    const archData = everything.filter(m => m.outbox_hidden);
+    setOutboxMessages(allSent);
+    setOutboxArchivedMessages(archData);
 
     // recipients を取得
     // 🚨 2026-09-16：**写し（CC）で入ってきた分とアーカイブ分も対象にする**。
     //    以前は「自分が送ったもの（data）」だけを取りにいっていたため、写しのお知らせは
     //    宛先が0人として扱われ、画面に「宛先 0人／既読0 未読0」と出ていた（実測で確認）。
     //    宛先が読めないと既読・未読・読了の人数もすべて0になる（分母が宛先のため）。
-    const ids = [...allSent, ...(archData || [])].map((m: any) => m.id);
+    const ids = everything.map((m: any) => m.id);
     if (ids.length > 0) {
       const { data: recData } = await supabase
         .from('board_message_recipients')
@@ -1810,9 +1822,15 @@ const BoardPage: React.FC = () => {
     setTimeout(() => setNoticeActionBanner(null), 3000);
   };
 
+  // 送信トレイのアーカイブ＝「自分が片付けた」を board_outbox_hidden に1行入れる（2026-09-26）。
+  // 🚨 board_messages を書き換えない。写しで見る代表者も自分のぶんだけ片付けられる（送った本人の一覧は変わらない）。
+  //    同じ行があっても失敗にしない（二度押し・別タブ）。🚨 この表に id 列は無い。件数は message_id で数える
   const archiveOutboxMsg = async (msgId: string) => {
+    if (!user) return;
+    const r = await supabase.from('board_outbox_hidden')
+      .upsert({ message_id: msgId, user_id: user.id }, { onConflict: 'message_id,user_id' }).select('message_id');
     const fail = describeUpdate(
-      await supabase.from('board_messages').update({ outbox_hidden: true }).eq('id', msgId).select('id'),
+      { data: r.data ? r.data.map(x => ({ id: x.message_id })) : null, error: r.error, status: r.status },
       'アーカイブ', 'missing',
     );
     if (fail) { setSendError(fail); setOutboxArchiveConfirmId(null); return; }
@@ -1826,8 +1844,10 @@ const BoardPage: React.FC = () => {
   // 送信トレイのアーカイブから戻す。
   // 🚨 一覧の行と、開いた中（☆の隣）の**2か所が同じこれを呼ぶ**。書き写さないこと。
   const unarchiveOutboxMsg = async (msg: BoardMessage) => {
+    if (!user) return;
+    const r = await supabase.from('board_outbox_hidden').delete().eq('message_id', msg.id).eq('user_id', user.id).select('message_id');
     const fail = describeUpdate(
-      await supabase.from('board_messages').update({ outbox_hidden: false }).eq('id', msg.id).select('id'),
+      { data: r.data ? r.data.map(x => ({ id: x.message_id })) : null, error: r.error, status: r.status },
       '送信トレイに戻す', 'missing',
     );
     if (fail) { setSendError(fail); return; }
@@ -4028,7 +4048,7 @@ const BoardPage: React.FC = () => {
                 )}
                 {/* 🚨 修正・完全削除は送った本人と管理者だけ（2026-09-25）。写しで見ているほかの代表者にも出ていたが、
                        データベースの権限で必ず弾かれる（押すと赤いエラーになるだけ）ボタンだった */}
-                {(outboxDetail.user_id === user?.id || isAdmin) && (<>
+                {canDeleteNotice(outboxDetail) && (<>
                 <button type="button"
                   onClick={() => { setEditingNoticeId(outboxDetail.id); setEditingNoticeSubj(outboxDetail.subject || outboxDetail.title || ''); setEditingNoticeBody(outboxDetail.body); }}
                   style={{ padding: '8px 16px', background: 'none', border: `1.5px solid ${isDark ? '#4ade80' : '#16a34a'}`, color: isDark ? '#4ade80' : '#16a34a', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
@@ -4069,7 +4089,10 @@ const BoardPage: React.FC = () => {
                     <span style={{ fontSize: 11, color: subColor, alignSelf: 'center', marginRight: 2 }}>一括：</span>
                     {[{ label: '1ヶ月以上前', months: 1 }, { label: '3ヶ月以上前', months: 3 }, { label: '1年以上前', months: 12 }, { label: 'すべて', months: null }].map(({ label, months }) => {
                       const cutoff = months ? new Date(Date.now() - months * 30 * 24 * 60 * 60 * 1000) : null;
-                      const targets = cutoff ? outboxArchivedMessages.filter(m => new Date(m.created_at) < cutoff) : outboxArchivedMessages;
+                      // 🚨 完全削除の対象は送った本人（か管理者）のものだけ（2026-09-26）。アーカイブが人ごとになり、
+                      //    写しで見ているほかの代表者のお知らせもここに並ぶようになったため。詳細の「完全削除」と同じ条件
+                      const deletable = outboxArchivedMessages.filter(canDeleteNotice);
+                      const targets = cutoff ? deletable.filter(m => new Date(m.created_at) < cutoff) : deletable;
                       return (
                         <button key={label} type="button" disabled={targets.length === 0}
                           onClick={() => { setOutboxArchiveSelected(new Set(targets.map(m => m.id))); setOutboxArchiveDelConfirm(true); }}
@@ -4082,8 +4105,8 @@ const BoardPage: React.FC = () => {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px' }}>
                     <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer', color: textColor }}>
                       <input type="checkbox"
-                        checked={outboxArchiveSelected.size === outboxArchivedMessages.length && outboxArchivedMessages.length > 0}
-                        onChange={e => setOutboxArchiveSelected(e.target.checked ? new Set(outboxArchivedMessages.map(m => m.id)) : new Set())} />
+                        checked={outboxArchiveSelected.size === outboxArchivedMessages.filter(canDeleteNotice).length && outboxArchiveSelected.size > 0}
+                        onChange={e => setOutboxArchiveSelected(e.target.checked ? new Set(outboxArchivedMessages.filter(canDeleteNotice).map(m => m.id)) : new Set())} />
                       全て選択
                     </label>
                     {outboxArchiveSelected.size > 0 && (
@@ -4140,10 +4163,13 @@ const BoardPage: React.FC = () => {
                       style={{ background: cardBg, border: outSel ? '1.5px solid #3b82f6' : `1px solid ${border}`, borderRadius: 10, padding: '10px 12px', marginBottom: 6, opacity: 0.85 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          {/* 🚨 写しで見ているほかの代表者のお知らせには削除のチェックを出さない（データベースの権限で必ず弾かれるため） */}
+                          {canDeleteNotice(msg) && (
                           <input type="checkbox" checked={outSel}
                             onChange={e => setOutboxArchiveSelected(prev => { const s = new Set(prev); e.target.checked ? s.add(msg.id) : s.delete(msg.id); return s; })}
                             onClick={e => e.stopPropagation()}
                             style={{ width: 15, height: 15, cursor: 'pointer', accentColor: '#3b82f6' }} />
+                          )}
                           <span style={{ fontSize: 10, color: subColor }}>{fmtFull(msg.sent_at || msg.created_at)}</span>
                           {/* 🚨 片付けたお知らせにも返信は届く（受付は30日）。ここに出さないと見つからない */}
                           <ReplyCountMark {...replyCountOf(msg.id)} isDark={isDark} />
