@@ -810,15 +810,34 @@ const SlotDetail: React.FC<{
 
   const undecide = async () => {
     setErr(''); setOkMsg(''); setBusyBtn(true);
+    // 取り消す前に、決まっていた人を控える（取り消すと割り当ての行が消える）
+    const decidedBefore = assigns;
     const { data, error } = await supabase.rpc('shift_adjust_undecide', { p_slot_id: slot.id });
     setBusyBtn(false); setConfirmUndo(false);
     if (error) { setErr('取り消せませんでした：' + error.message); return; }
     const row = Array.isArray(data) ? data[0] : data;
     if (!row?.ok) { setErr(row?.reason || '取り消せませんでした'); return; }
+    // 決まっていた本人に、取り消しを知らせる（2026-09-25 ユーザー確定の文面）。
+    // 🚨 それまでは何も届かず、「出勤が決まりました」を見た人が出勤するつもりのままになっていた。
+    // 🚨 正社員は、依頼を受けて申請まで済ませていると申請が残る（取り消しの関数は applied の依頼を触らない）ので、一言添える
+    // 🚨 スマホは push-dispatch の決まった文（出勤の予定についてお知らせがあります）。日付と本文はベルで読む
+    for (const a of decidedBefore) {
+      const isOt = a.kind === 'overtime_request';
+      await insertNotification(
+        a.user_id,
+        `📅 ${dateLabel(slot.target_date)}の出勤についてのお知らせ`,
+        '出勤の予定は取り消しとなりました。ご調整いただいていたところ、申し訳ございません。'
+          + (isOt ? '残業の申請がお済みの場合は、お手数ですが取り消しをお願いいたします。' : ''),
+        isOt ? 'shift_adjust:cancelled_ot' : 'shift_adjust:cancelled',
+        slot.id,
+        isOt ? 'shift_adjust:cancelled:ot' : 'shift_adjust:cancelled',
+      );
+    }
     setStatus('working');
     setAssigns([]);
     setOkMsg('決定を取り消しました。');
     void loadAssigns();
+    void loadPartReqs();   // 「この方に決定」の印が外れたのを出す（DB で picked を戻している）
   };
 
   // 候補の並び

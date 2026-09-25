@@ -1247,6 +1247,10 @@ const classifyNotif = (n: NotifLike) => {
     // 🚨 まだ調整が残っているので closeOnTap: false（片付くまで消さない）
     if (n.source_type === 'shift_adjust:part_request_overdue') return { path: '/calendar?tab=adjust', closeOnTap: false };
     if (n.source_type === 'shift_adjust:digest') return { path: '/calendar?tab=adjust', closeOnTap: false };
+    // 決定の取り消し（決まっていた本人向け・2026-09-25）。読めば用が済む。パートは /overtime に入れないので行き先を分ける
+    // 🚨 push-dispatch の EVENT_MAP（shift_adjust:cancelled / :ot）と同じ行き先。片方だけ直さないこと
+    if (n.source_type === 'shift_adjust:cancelled') return { path: '/shift-request', closeOnTap: true };
+    if (n.source_type === 'shift_adjust:cancelled_ot') return { path: '/overtime?tab=history', closeOnTap: true };
     if (isSafety) {
       // 「助けが必要」の知らせは必ず集計画面を開く。
       // 通常の安否確認は「自分が未回答なら回答画面を優先」だが、これは他人の緊急を

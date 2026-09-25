@@ -85,6 +85,11 @@ const EVENT_MAP: Record<string, { app: string; word: string; text: string; url: 
   // 🚨 bell は付けない。着地のシフト調整タブに、未調整の一覧がそのまま並ぶ。
   // 🚨 着地は `?tab=adjust`。App.tsx の classifyNotif にも同じ行き先を書いてある。片方だけ直さないこと。
   "shift_adjust:digest": { app: "シフト調整", word: "未調整", text: "シフト調整が済んでいない休みがあります", url: "/calendar?tab=adjust" },
+  // 決定を取り消したとき、決まっていた本人へ（2026-09-25・ユーザー確定の文面）。送るのは ShiftAdjustTab の undecide。
+  // 🚨 日付・誰の代わりかは書かない（ロック画面に出る）。日付と本文はベルで読む＝ bell: true
+  // 🚨 パートと正社員で着地を分ける（パートは /overtime に入れない）。設定は baseEventKey＝shift_adjust:cancelled で1つ
+  "shift_adjust:cancelled": { app: "シフト調整", word: "取消", text: "出勤の予定についてお知らせがあります", url: "/shift-request", bell: true },
+  "shift_adjust:cancelled:ot": { app: "シフト調整", word: "取消", text: "出勤の予定についてお知らせがあります", url: "/overtime?tab=history", bell: true },
   // 申請依頼の「期限」リマインド（本人あて・朝9時の日次）。2026-09-11 追加。
   // 🚨 個人名・依頼の中身は書かない（プッシュはロック画面に出る）。件数はベル側で読む。
   // 🚨 bell: true。押すとベルが開いて該当の通知が光り、そこから残業ページへ進む
