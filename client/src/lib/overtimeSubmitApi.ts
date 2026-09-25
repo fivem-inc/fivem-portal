@@ -74,8 +74,15 @@ export async function saveOvertimeReport(a: SaveArgs): Promise<SaveResult> {
     //      ・時間帯を3本から2本に減らしたとき … 3本目だけが古いまま残る
     // 🚨 件数0はここでは失敗ではない（その phase を初めて保存するときは元から0件）。
     //    見るのは error だけにする。
-    const { error: segDelErr } = await supabase.from('overtime_report_segments')
-      .delete().eq('report_id', reportId).eq('phase', a.phase).select('id');
+    // 🚨 終日（時間帯が空）で保存するときは phase を問わず全部消す（2026-09-25）。
+    //    「事前受理 → 実績報告 → 差し戻し」の申請（予定と実績の両方がある）を再提出で終日に変えると、
+    //    対象 phase（実績）だけ消しても予定の時間帯が残り、勤怠カレンダーの関数（calendar_overtime_events）は
+    //    種別を見ずに時間帯を読むので「欠勤なのに時刻付き」で出る。
+    //    「空＝終日」と決めてよい根拠：時間の申請は送信前チェックで必ず1本以上あり、打刻ズレは通常シフトを渡す。
+    //    元の時間帯は書き換え直前の snapshot（修正の記録）に残るので、消しても追える
+    let segDel = supabase.from('overtime_report_segments').delete().eq('report_id', reportId);
+    if (a.segments.length > 0) segDel = segDel.eq('phase', a.phase);
+    const { error: segDelErr } = await segDel.select('id');
     if (segDelErr) return { ok: false, stage: 'seg_delete', message: '前回の時間帯を消せませんでした：' + segDelErr.message, reportId };
   } else {
     const { data: inserted, error: err } = await supabase.from('overtime_reports')

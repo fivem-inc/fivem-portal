@@ -176,6 +176,14 @@ export interface ValidateInput {
   typeDetect: TypeDetect;
   lateChoice: 'adj' | 'tardiness' | null;
   earlyChoice: 'adj' | 'early_leave' | null;
+  /**
+   * 欠勤の申請先がマネージャー以上か（他人宛のときだけ意味を持つ）。
+   * 🚨 任意。渡さなければ見ない（表入力は終日を扱わないので渡さない）。
+   *    画面は選択肢をマネージャー以上に絞っているが、先にリーダーを選んでから欠勤に切り替えると
+   *    選択肢から消えても選んだ値が残るので、送信前にもここで止める（2026-09-25）。
+   *    DB・Edge Function にはこの検査が無い＝この画面が唯一の網
+   */
+  absenceReviewerOk?: boolean;
 }
 
 /**
@@ -232,6 +240,7 @@ export function validateOvertime(v: ValidateInput): string {
     //    下書きの復元・修正で古い値が入っていることがあるのでここでも弾く。
     //    同じ判定が RLS（overtime_insert_own）と overtime-approve にもある。片方だけ直さないこと。
     if (v.fullDayType === 'absence' && v.isSelfReview && !v.canSelfReview) return '欠勤の自己受理はマネージャー以上のみです';
+    if (v.fullDayType === 'absence' && !v.isSelfReview && v.absenceReviewerOk === false) return '欠勤の申請先はマネージャー以上を選んでください';
     return '';
   }
   if (v.workSegments.length === 0) return '勤務時間を入力してください';
@@ -418,6 +427,12 @@ export function buildOvertimeRecord(v: RecordInput, toDbTime: (t: string) => str
     //    確認の画面が「⚠️ 事前申請の受理をしていません」と出す（状態は受理済みなのに嘘になる）。
     ...((isSelfReview && !fullDayMode && phase !== 'actual') ? { request_confirmed_at: v.nowIso } : {}),
     ...(v.isResubmit ? { return_comment: null } : {}),
+    // 🚨 再提出で「終日」に変えたときは、事前受理の日時を消す（2026-09-25）。
+    //    差し戻し（Edge Function overtime-approve の return）は status と理由しか書き換えないので、
+    //    「事前受理 → 実績報告 → 差し戻し」の申請には事前受理の日時が残っている。終日には事前受理の段階が
+    //    無い（受理で confirmed 直行）ので、残すと「事前受理済みの欠勤」という嘘の記録になる。
+    // 🚨 時間のまま再提出するときは触らない。消すと受理ページの「⚠️ 事前申請の受理をしていません」が嘘で出る
+    ...((v.isResubmit && fullDayMode) ? { request_confirmed_at: null } : {}),
     // 打刻ズレはここで丸ごと上書きする（既存の分岐に条件を足すと読めなくなるため）。
     // 労働時間＝通常シフトどおり／差分0／押した時点で確定／確認者なし。
     // 打刻時刻は参考値であり、労働時間・差分の計算には一切使わない。

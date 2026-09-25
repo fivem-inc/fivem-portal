@@ -43,6 +43,7 @@ import type { RoleRow, EmbeddedRoleRow } from '../lib/roleAttrs';
 const ERR_FIELD_BY_MSG: Record<string, string> = {
   '理由を入力してください': 'reason',
   '申請先を選択してください': 'reviewer',
+  '欠勤の申請先はマネージャー以上を選んでください': 'reviewer',
 };
 import type { PatternRow, NormalShiftSnapshot } from '../lib/overtimeShift';
 import type { AuthUser } from '../types';
@@ -616,6 +617,14 @@ const OvertimeForm: React.FC<{
     return d && isOvertimeType(d) && FULL_DAY_TYPES.includes(d) ? d : null;
   });
   const [fullDayError, setFullDayError] = useState('');
+  // 再提出で種別（終日 ↔ 時間）を変えたか（2026-09-25）。開いたときの申請が終日だったかと、いまの fullDay を比べる。
+  // 🚨 差し戻しの再提出だけ。実績報告では種別を変えられない（受理済みの事前申請を報告のときに終日へ変えるのは筋が違う）
+  const originalFullDay = editTarget ? isFullDayReport(editTarget.application_types) : null;
+  const typeSwitched: 'toTime' | 'toFullDay' | null =
+    (isResubmit && originalFullDay !== null && originalFullDay !== fullDay) ? (fullDay ? 'toFullDay' : 'toTime') : null;
+  // 欠勤に切り替えたとき、マネージャー以上でない申請先を外した知らせ（外した人の表示名）。
+  // 🚨 黙って外すと「さっき選んだのに消えた」→ 送信で止まる → 理由が分からない、の3段になる
+  const [absenceReviewerDropped, setAbsenceReviewerDropped] = useState('');
 
   // 打刻ズレ（打刻が遅れただけ・残業なし）モード。事後報告の新規のみ。
   // 労働時間は通常シフトどおり＝差分0。押した時点で確定し、確認者は不要。
@@ -1115,6 +1124,9 @@ const OvertimeForm: React.FC<{
   //    表入力（lib/overtimeGrid の computeGridRow）も同じ判定
   const isSelfReview = reviewerId === SELF_REVIEW_VALUE
     || (isReportPhase && canSelfReview && !!editTarget?.reviewer_id && editTarget.reviewer_id === user.id);
+  // 申請先の候補がマネージャー以上か（欠勤の申請先の判定。申請先の選択肢の絞り込みと同じ見方）
+  const reviewerIsManager = (id: string): boolean =>
+    embeddedRole(reviewers.find(r => r.id === id) as unknown as EmbeddedRoleRow<{ acts_as?: string | null }>)?.acts_as === 'manager';
 
   const today = todayJstStr();
   // 事前申請で選べるいちばん先の日（今期から3期先の期末）。シフトが決まっていない先の日を
@@ -1202,6 +1214,7 @@ const OvertimeForm: React.FC<{
     isTodayPostHoc, nowMin: nowMinLive(), breakManual, breakManualMin,
     location, locationCustom, locMoveStart, locMoveEnd, effectiveLocation, normalSegs,
     isReportPhase, hasChanges, isPureZero, changeReason, typeDetect, lateChoice, earlyChoice,
+    absenceReviewerOk: (!reviewerId || isSelfReview) ? undefined : reviewerIsManager(reviewerId),
   });
 
   const handleSubmit = async () => {
@@ -1225,8 +1238,11 @@ const OvertimeForm: React.FC<{
       // 🚨 決め方は lib/overtimeSubmit の overtimePhase（表の入力と共用）
       const phase: 'planned' | 'actual' = overtimePhase({ mode, isReportPhase, isResubmit, editTarget });
 
-      // 二重計上防止：休暇申請の時間外調整休（自動計上）が同日に既にある場合はブロック
-      if (fullDayMode && fullDayType === 'chosei_off' && !editTarget) {
+      // 二重計上防止：休暇申請の時間外調整休（自動計上）が同日に既にある場合はブロック。
+      // 🚨 DB にこの重複を止める制約は無い（一意索引は manual 同士の1日1件と leave_auto だけ）＝ここが唯一の網。
+      //    再提出で終日の調整休に変えるときも通す（2026-09-25）。以前は新規だけだった。
+      //    実績報告は終日にならないので、実質「新規と再提出」
+      if (fullDayMode && fullDayType === 'chosei_off' && !isReportPhase) {
         const { data: dup } = await supabase.from('overtime_reports')
           .select('id').eq('applicant_id', user.id).eq('work_date', date).eq('entry_type', 'leave_auto').limit(1);
         if ((dup ?? []).length > 0) {
@@ -1253,7 +1269,9 @@ const OvertimeForm: React.FC<{
         segments: fullDayMode ? [] : (clockOnlyMode ? normalWorkSegments : workSegments),
         edit: editTarget ? {
           id: editTarget.id, status: editTarget.status, snapshot: editTarget,
-          historySummary: isReportPhase ? (isPureZero ? '残業なし（通常どおり）で報告' : hasChanges ? `実績報告（変更あり：${changedAxes.join('・')}）` : '実績報告（予定どおり）') : '再提出',
+          historySummary: isReportPhase ? (isPureZero ? '残業なし（通常どおり）で報告' : hasChanges ? `実績報告（変更あり：${changedAxes.join('・')}）` : '実績報告（予定どおり）')
+            // 種別を変えた再提出は記録に残す（受理者が「何が変わったか」を追う手掛かり）
+            : typeSwitched === 'toTime' ? '再提出（終日 → 時間の申請に変更）' : typeSwitched === 'toFullDay' ? '再提出（時間の申請 → 終日に変更）' : '再提出',
           historyChangeReason: (isReportPhase && hasChanges) ? changeReason.trim() : null,
         } : null,
       });
@@ -1283,7 +1301,8 @@ const OvertimeForm: React.FC<{
           applicantName: profileName ?? '',
           // 🚨 修正の再申請は、受理者が「また同じ日の申請が来た」と思わないよう名前を変える。
           //    受理はやり直しになるので、いつもの事前申請と同じ扱いだと気づけない（2026-09-09）
-          phaseLabel: phase === 'actual' ? '実績報告' : ((!editTarget && draft?.modifiedFromId) ? '修正の再申請' : '事前申請'),
+          // 🚨 差し戻しの再提出も同じ理由で「再提出」と出す（2026-09-25）。以前は「事前申請」と出ていた
+          phaseLabel: isResubmit ? '再提出' : phase === 'actual' ? '実績報告' : ((!editTarget && draft?.modifiedFromId) ? '修正の再申請' : '事前申請'),
           dateLabel: `${date}（${dowLabel(date)}）`,
           timeLabel: formatSignedMin(diffMin),
         }).then(null, () => {});
@@ -1375,6 +1394,16 @@ const OvertimeForm: React.FC<{
             {isReportPhase ? '📝 実績を報告する' : '再提出'}（{editTarget.work_date}）
           </span>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: subText }}>✕</button>
+        </div>
+      )}
+      {/* 差し戻し理由。🚨 直す画面に出す（2026-09-25）。以前は履歴タブにしか出ておらず、
+          「修正して再提出」を押すと理由が画面から消えて、何を直すのか思い出しながら操作していた。
+          枠はこの画面のエラー表示と同じ固定色（🎨🔒・新しい色は足さない） */}
+      {isResubmit && editTarget?.return_comment && (
+        <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '8px 12px', marginBottom: 12 }}>
+          <p style={{ margin: 0, fontSize: 12.5, color: '#842029', lineHeight: 1.6 }}>
+            差し戻し理由：{editTarget.return_comment}
+          </p>
         </div>
       )}
 
@@ -1745,15 +1774,26 @@ const OvertimeForm: React.FC<{
         </div>
       )}
 
-      {/* 終日（調整休・欠勤）トグル。日付選択後に意味を持つためシフト表示カードの直後に配置 */}
-      {date && (!editTarget || fullDay) && (
+      {/* 終日（調整休・欠勤）トグル。日付選択後に意味を持つためシフト表示カードの直後に配置。
+          🚨 差し戻しの再提出でも出す（2026-09-25）。以前は編集中は出なかったので、欠勤で差し戻された申請を
+             時間の申請に変えるには「取り消して出し直す」しかなかった。実績報告では出さない（fullDay の枠だけ） */}
+      {date && (!editTarget || isResubmit || fullDay) && (
         <div style={{ marginBottom: 12 }}>
-          {!editTarget && (
+          {(!editTarget || isResubmit) && (
             <button type="button"
               onClick={() => {
                 if (!normalShift.start_time) { setFullDayError('この日はシフトが休みです。出勤予定日のみ登録できます'); return; }
                 setFullDayError('');
-                setFullDay(v => !v);
+                const next = !fullDay;
+                setFullDay(next);
+                // 種別の2択（開始が遅い／早く終わる）は切り替えたら選び直し（前の答えが残ると別の種別の申請に付く）
+                setLateChoice(null); setEarlyChoice(null);
+                setAbsenceReviewerDropped('');
+                // 終日 → 時間に戻したとき、時刻が1つも入っていなければ通常シフトを入れる（新規で日付を選んだときと同じ・
+                // 2本シフトの入れ忘れ防止・2026-09-25 ユーザー確定）。🚨 本人が打った時刻があれば触らない（往復で消さない）
+                if (!next && editTarget && !segments.some(s => s.start || s.end)) {
+                  setSegments(normalSegs.length > 0 ? normalSegs.map(s => ({ ...s })) : [{ ...EMPTY_SEG }]);
+                }
               }}
               style={{
                 width: '100%', padding: '10px 0', borderRadius: 8, cursor: 'pointer', fontSize: 13.5,
@@ -1762,8 +1802,21 @@ const OvertimeForm: React.FC<{
                 background: isDark ? '#2c3e50' : '#e8f4fd',
                 color: isDark ? '#fff' : '#1565c0',
               }}>
-              {fullDay ? '✓ 調整休・欠勤（終日）で申請中 ─ 押すと時間の申請に戻ります' : '🌙 調整休・欠勤（終日）の場合はこちらを押す'}
+              {/* 🚨 再提出は「申請中」ではない（差し戻された状態）ので文言を分ける */}
+              {isResubmit
+                ? (fullDay ? '✓ 調整休・欠勤（終日）で再提出 ─ 押すと時間の申請に変えられます' : '🌙 調整休・欠勤（終日）に変える場合はこちらを押す')
+                : (fullDay ? '✓ 調整休・欠勤（終日）で申請中 ─ 押すと時間の申請に戻ります' : '🌙 調整休・欠勤（終日）の場合はこちらを押す')}
             </button>
+          )}
+          {/* 再提出で種別を変えた直後の案内。何が残って何が消えるかを、押した場所のすぐ下で伝える */}
+          {typeSwitched && (
+            <div style={{ background: isDark ? '#2c3e50' : '#e8f4fd', border: `1px solid ${isDark ? '#4a90d9' : '#90caf9'}`, borderRadius: 8, padding: '8px 12px', marginTop: 6 }}>
+              <p style={{ margin: 0, fontSize: 12.5, color: isDark ? '#fff' : '#1565c0', lineHeight: 1.6 }}>
+                {typeSwitched === 'toTime'
+                  ? '時間の申請に変えました。通常シフトの時刻を入れてあるので、実際の時間に直してください（理由・申請先はそのままです）'
+                  : '終日の申請に変えました。下で種別を選んでください。入れていた時刻は送信すると消えます'}
+              </p>
+            </div>
           )}
           {fullDayError && (
             <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '8px 12px', marginTop: 6 }}>
@@ -1787,6 +1840,15 @@ const OvertimeForm: React.FC<{
                       // 欠勤に切り替えたとき、自己受理できない人（リーダー以下）だけ選択を外す。
                       // マネージャー以上は欠勤も自己受理できるので、選んだ内容をそのまま残す。
                       if (v === 'absence' && !canSelfReview && reviewerId === SELF_REVIEW_VALUE) setReviewerId('');
+                      // 🚨 他人宛でマネージャー以上でない申請先も外す（2026-09-25）。
+                      //    選択肢からは消えるのに選んだ値は残っていたので、先にリーダーを選んでから欠勤にすると
+                      //    リーダー宛のまま送れた（新規・再提出とも）。外した人の名前を申請先の下に出す
+                      if (v === 'absence' && reviewerId && reviewerId !== SELF_REVIEW_VALUE && !reviewerIsManager(reviewerId)) {
+                        const dropped = reviewers.find(r => r.id === reviewerId);
+                        setAbsenceReviewerDropped(dropped ? `${dropped.name}（${dropped.role_title}）` : '選んでいた申請先');
+                        setReviewerId('');
+                      }
+                      if (v !== 'absence') setAbsenceReviewerDropped('');
                     }}
                     style={{
                       padding: '10px 12px', borderRadius: 10, border: 'none', cursor: 'pointer', textAlign: 'left',
@@ -2278,7 +2340,7 @@ const OvertimeForm: React.FC<{
             {isSelfReview ? '自己受理（自分で確認）' : (editTarget?.reviewer?.name ?? reviewers.find(rv => rv.id === reviewerId)?.name ?? '')}
           </div>
         ) : (
-        <select data-err-field="reviewer" value={reviewerId} onChange={e => { setReviewerId(e.target.value); clearErr('reviewer'); }} style={{ ...fieldStyle, ...errorStyle(errFields.has('reviewer'), isDark) }}>
+        <select data-err-field="reviewer" value={reviewerId} onChange={e => { setReviewerId(e.target.value); clearErr('reviewer'); setAbsenceReviewerDropped(''); }} style={{ ...fieldStyle, ...errorStyle(errFields.has('reviewer'), isDark) }}>
           <option value="">選択してください</option>
           {/* 🚨 自己受理はいちばん上に置く。マネージャーは自分で確定することが多く、
                  毎回リストの末尾まで送るのは手間になるため（2026-08-21 ユーザー指示）。
@@ -2296,6 +2358,14 @@ const OvertimeForm: React.FC<{
         )}
         {fullDay && fullDayType === 'absence' && !canSelfReview && (
           <p style={{ margin: '6px 0 0', fontSize: 12, color: subText }}>欠勤はマネージャー以上の受理が必要です（自己受理はできません）</p>
+        )}
+        {/* 欠勤に切り替えたときに申請先を外した知らせ（黄色の固定色）。選び直すか、欠勤以外に戻すと消える */}
+        {fullDay && fullDayType === 'absence' && absenceReviewerDropped && (
+          <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '7px 10px', marginTop: 6 }}>
+            <p style={{ margin: 0, fontSize: 12, color: '#856404', lineHeight: 1.6 }}>
+              {absenceReviewerDropped}は欠勤の申請先にできないため外しました。マネージャー以上を選び直してください
+            </p>
+          </div>
         )}
       </div>
       )}
@@ -2332,6 +2402,7 @@ const OvertimeForm: React.FC<{
             </p>
           ) : fullDayMode ? (
             <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
+              {typeSwitched === 'toFullDay' && <>種別を「時間の申請」から「終日」に変えて再提出します。入れていた時間帯は消えます<br /></>}
               {date}（{dowLabel(date)}）　終日：{fullDayType ? OT_TYPE_INFO[fullDayType].label : ''}<br />
               {fullDayType === 'furikae_off' && furikaeOriginDate && <>振替元：{furikaeOriginDate.slice(5).replace('-', '/')}（{dowLabel(furikaeOriginDate)}）{effectiveFurikaeOriginLocation && `・${effectiveFurikaeOriginLocation}`}{furikaeHasTime && `・${furikaeOriginStart}〜${furikaeOriginEnd}（労働${formatMin(furikaeOriginLabor)}）`}<br /></>}
               {fullDayType === 'chosei_off' && <>シフト労働分 {formatSignedMin(fdDiffMin)} を合計時間数から差し引きます<br /></>}
@@ -2341,6 +2412,7 @@ const OvertimeForm: React.FC<{
             </p>
           ) : (
           <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText, lineHeight: 1.7 }}>
+            {typeSwitched === 'toTime' && <>種別を「終日」から「時間の申請」に変えて再提出します。前の終日の内容は消えます<br /></>}
             {date}（{dowLabel(date)}）　{segmentsLabel(workSegments)}<br />
             休憩{formatMin(breakMin)}・労働{formatMin(laborMin)}・差分 {formatSignedMin(diffMin)}<br />
             {isSelfReview ? '自己受理のため、送信と同時に受理されます' : `申請先：${reviewers.find(r => r.id === reviewerId)?.name ?? ''}さん`}
