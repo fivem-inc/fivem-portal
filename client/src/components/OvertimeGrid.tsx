@@ -247,12 +247,12 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     const draft = drafts[r.date] ?? initialRowDraft(r.kind, r.main, workplaces);
     const calc: GridRowCalc = computeGridRow({
       kind: r.kind, date: r.date, today, nowMin, advanceMaxDate, ns: r.ns, main: r.main, draft,
-      defaultReviewerId: r.rowDefaultReviewer, canSelfReview,
+      defaultReviewerId: r.rowDefaultReviewer, canSelfReview, selfId: userId,
       closeLocked: isPayPeriodClosed(r.date, today) && !grants.has(r.date),
       focused: focusedDate === r.date,
     });
     return { ...r, draft, calc };
-  }), [baseRows, drafts, today, nowMin, advanceMaxDate, canSelfReview, grants, focusedDate, workplaces]);
+  }), [baseRows, drafts, today, nowMin, advanceMaxDate, canSelfReview, grants, focusedDate, workplaces, userId]);
   type Row = typeof rows[number];
 
   const counts = useMemo(() => {
@@ -337,7 +337,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
       const nowMinLive = now.getHours() * 60 + now.getMinutes();
       const c = r ? computeGridRow({
         kind: r.kind, date: r.date, today: todayJstStr(), nowMin: nowMinLive, advanceMaxDate, ns: r.ns, main: r.main, draft: r.draft,
-        defaultReviewerId: r.rowDefaultReviewer, canSelfReview,
+        defaultReviewerId: r.rowDefaultReviewer, canSelfReview, selfId: userId,
         closeLocked: isPayPeriodClosed(r.date, todayJstStr()) && !grants.has(r.date), focused: false,
       }) : null;
       const isEdit = !!r && (r.kind === 'report' || r.kind === 'resubmit');
@@ -842,7 +842,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                           </td>
                           <td style={td}>
                             {isEdit ? (
-                              <span style={{ fontSize: 12, color: subText }}>{reviewerName(c.reviewerId)}<br />（元の申請のまま）</span>
+                              <span style={{ fontSize: 12, color: subText }}>{c.isSelfReview ? '自己受理' : reviewerName(c.reviewerId)}<br />（元の申請のまま）</span>
                             ) : (
                               <select value={r.draft.reviewerId} onChange={e => touch({ reviewerId: e.target.value })} style={{ ...sel, maxWidth: 170 }} aria-label={`${md(r.date)} 申請先`}>
                                 <option value="">{r.req ? `依頼した人（${r.req.requester_name ?? reviewerName(r.req.requester_id)}）` : defaultReviewerId ? `表の上と同じ（${reviewerName(defaultReviewerId)}）` : '表の上で選んでください'}</option>

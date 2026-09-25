@@ -270,6 +270,8 @@ export function computeGridRow(a: {
   /** 表の上の申請先（新しく出す行の既定） */
   defaultReviewerId: string;
   canSelfReview: boolean;
+  /** 表を使っている本人の id（元の申請を自己受理していたかを見るため） */
+  selfId: string;
   /** 締め切りを過ぎ、経理の許可も無い（新しく出す行だけに効く） */
   closeLocked: boolean;
   focused: boolean;
@@ -319,7 +321,10 @@ export function computeGridRow(a: {
 
   // 申請先：実績報告・再提出は元の申請のまま（固定）。新しい行は行の指定 → 表の上
   const reviewerId = isEdit ? (main?.reviewer_id ?? '') : (draft.reviewerId || a.defaultReviewerId);
-  const isSelfReview = reviewerId === GRID_SELF_REVIEW;
+  // 🚨 元の事前申請を自己受理していた（申請先が本人）なら、実績報告も自己受理＝送った時点で確定（2026-09-25 ユーザー確定）。
+  //    以前は「確認待ち」になり、本人が受理ページで自分の実績を確認し直していた（26件）。1件フォームと同じ判定
+  const isSelfReview = reviewerId === GRID_SELF_REVIEW
+    || (isReportPhase && a.canSelfReview && !!main && !!main.reviewer_id && main.reviewer_id === a.selfId);
 
   const sendLabel =
     isReportPhase ? (isPureZero ? '実績報告・残業なし（すぐ確定）' : hasChanges ? '実績報告（変更あり）' : '実績報告（予定どおり）')

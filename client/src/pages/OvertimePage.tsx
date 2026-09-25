@@ -1110,7 +1110,11 @@ const OvertimeForm: React.FC<{
 
   const roles = useRoles();
   const canSelfReview = isAdmin || attrsFor(roles, roleTitle).is_manager_plus;
-  const isSelfReview = reviewerId === SELF_REVIEW_VALUE;
+  // 🚨 元の事前申請を自己受理していた（申請先が本人）なら、実績報告も自己受理＝送った時点で確定（2026-09-25 ユーザー確定）。
+  //    以前は申請先が本人の「確認待ち」になり、自分あてのベルが届いて、受理ページで自分の実績を確認し直していた（26件）。
+  //    表入力（lib/overtimeGrid の computeGridRow）も同じ判定
+  const isSelfReview = reviewerId === SELF_REVIEW_VALUE
+    || (isReportPhase && canSelfReview && !!editTarget?.reviewer_id && editTarget.reviewer_id === user.id);
 
   const today = todayJstStr();
   // 事前申請で選べるいちばん先の日（今期から3期先の期末）。シフトが決まっていない先の日を
@@ -2271,7 +2275,7 @@ const OvertimeForm: React.FC<{
         <span style={labelStyle}>申請先{isReportPhase ? '' : req}</span>
         {isReportPhase && !fullDay ? (
           <div style={{ ...fieldStyle, background: innerBg, color: text, minHeight: 22, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            {reviewerId === SELF_REVIEW_VALUE ? '自己受理（自分で確認）' : (editTarget?.reviewer?.name ?? reviewers.find(rv => rv.id === reviewerId)?.name ?? '')}
+            {isSelfReview ? '自己受理（自分で確認）' : (editTarget?.reviewer?.name ?? reviewers.find(rv => rv.id === reviewerId)?.name ?? '')}
           </div>
         ) : (
         <select data-err-field="reviewer" value={reviewerId} onChange={e => { setReviewerId(e.target.value); clearErr('reviewer'); }} style={{ ...fieldStyle, ...errorStyle(errFields.has('reviewer'), isDark) }}>
