@@ -90,6 +90,11 @@ const EVENT_MAP: Record<string, { app: string; word: string; text: string; url: 
   // 🚨 パートと正社員で着地を分ける（パートは /overtime に入れない）。設定は baseEventKey＝shift_adjust:cancelled で1つ
   "shift_adjust:cancelled": { app: "シフト調整", word: "取消", text: "出勤の予定についてお知らせがあります", url: "/shift-request", bell: true },
   "shift_adjust:cancelled:ot": { app: "シフト調整", word: "取消", text: "出勤の予定についてお知らせがあります", url: "/overtime?tab=history", bell: true },
+  // シフト調整の案（2026-09-25・ユーザー確定の文面）。送るのは DB の関数（shift_adjust_notify_plan_created／期限の見回り）。
+  // 🚨 休む人の名前・日付は書かない（ロック画面に出る）。中身はベルで読む＝ bell: true
+  // 🚨 2つは設定が別（先頭2区切りが別）。文面もほかの通知と重ねない（重なると1通にまとめられる）
+  "shift_adjust:plan_created": { app: "シフト調整", word: "案", text: "シフト調整案のご確認をお願いします", url: "/calendar?tab=adjust", bell: true },
+  "shift_adjust:plan_due": { app: "シフト調整", word: "期限", text: "意見の期限を過ぎた案があります", url: "/calendar?tab=adjust", bell: true },
   // 申請依頼の「期限」リマインド（本人あて・朝9時の日次）。2026-09-11 追加。
   // 🚨 個人名・依頼の中身は書かない（プッシュはロック画面に出る）。件数はベル側で読む。
   // 🚨 bell: true。押すとベルが開いて該当の通知が光り、そこから残業ページへ進む
