@@ -3538,7 +3538,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
         {canGrid && !editTarget && (
           <button type="button" onClick={() => { setGridOpen(true); window.scrollTo({ top: 0 }); }}
             style={{ width: '100%', padding: '10px', background: '#1976d2', color: 'white', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', marginTop: 8, marginBottom: 8, borderRadius: 8, boxSizing: 'border-box' }}>
-            📋 表でまとめて入力（試験中）
+            📋 残業申請「表入力」（パソコン専用）
           </button>
         )}
 

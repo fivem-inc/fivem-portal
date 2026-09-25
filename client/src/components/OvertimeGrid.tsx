@@ -583,7 +583,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
   return (
     <div style={{ background: cardBg, border: `1px solid ${borderColor}`, borderRadius: 12, padding: '16px 18px', color: text }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 10 }}>
-        <span style={{ fontSize: 18, fontWeight: 'bold' }}>📋 表でまとめて入力（試験中）</span>
+        <span style={{ fontSize: 18, fontWeight: 'bold' }}>📋 残業申請「表入力」（パソコン専用）</span>
         <button type="button" style={btn} onClick={() => setPeriod(p => shiftPayPeriod(p, -1))} aria-label="前の給与期間">◀</button>
         <b>{payMonthPeriodLabel(period)}</b>
         <button type="button" style={btn} onClick={() => setPeriod(p => shiftPayPeriod(p, 1))} aria-label="次の給与期間">▶</button>
@@ -598,7 +598,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
       </div>
 
       <div style={{ background: innerBg, border: `1px solid ${borderColor}`, borderRadius: 8, padding: '8px 12px', fontSize: 12.5, color: subText, marginBottom: 10, lineHeight: 1.7 }}>
-        <b style={{ color: text }}>試験中です</b>（入力はこの端末に保存されます）<br />
+        ・入力途中の内容は、この端末に保存されます<br />
         ・時間を入れた日だけ送ります。空の日と、通常シフトと同じ日は送りません<br />
         ・<b>実績報告・再提出の行は、触るまで送りません</b>。予定どおりなら［予定どおり］、残業が無かったら［残業なし］<br />
         ・時刻は「930」のように続けて打てます。理由の欄は Enter で下の行へ
