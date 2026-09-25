@@ -55,11 +55,6 @@ const QUICK_RANGES = [
   { days: 30, label: '30日間' },
 ] as const;
 
-/** 検索ログを一度に読む上限。🚨 これに達したら「打ち切っています」と画面に出す
- *  （黙って切れると、件数が多い月ほど「検索して見つからなかった言葉」のランキングが静かに狂う）。
- *  🚨 order を付けて「新しい順の◯件」と意味を確定させている（付けないとどの◯件か不定） */
-const LOG_LIMIT = 500;
-
 /** 内訳を出す順番。🚨 ここに無い項目は出さない（DB が増えても画面が勝手に変わらないように） */
 const VISITOR_DIMS = ['端末', '社内/社外', '都道府県', '国', 'ブラウザ', '流入元', '時間帯', '曜日'] as const;
 
@@ -218,8 +213,6 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
   const [dwell, setDwell] = useState<DwellRow | null>(null);
   const [staffWords, setStaffWords] = useState<{ word: string; n: number; miss: number }[]>([]);
   // 検索ログが上限で切られたか（切られたまま黙っていると、ランキングが嘘になる）
-  const [wordsCut, setWordsCut] = useState(false);
-  const [staffWordsCut, setStaffWordsCut] = useState(false);
   const [ipText, setIpText] = useState('');
   const [ipMsg, setIpMsg] = useState('');
   const [ipFail, setIpFail] = useState(false);
@@ -260,7 +253,7 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
     // 🚨 先に全部まっさらにする。ここを消さないと、途中で失敗したときに
     //    **前の期間の内訳・滞在時間・検索ワードが残ったまま**新しい期間の表と並ぶ
     setRows(null); setPrevRows(null); setVisitors(null); setDwell(null);
-    setWords([]); setStaffWords([]); setWordsCut(false); setStaffWordsCut(false);
+    setWords([]); setStaffWords([]);
     const span = spanOf(m, targetYm, targetYear, f, t);
     const prev = compareSpanOf(c, m, targetYm, targetYear, f, t);
     // 🚨 失敗したものだけを覚えておき、最後にまとめて出す。
@@ -280,28 +273,23 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
         else setPrevRows((pd ?? []) as SummaryRow[]);
       }
 
-      // 「検索して見つからなかった言葉」は既存の質問ログから取る（新しい表には検索語を持たせていない）
-      // 🚨 件数を必ず指定する。指定しないと Supabase が1,000行で黙って打ち切る
-      const { data: qs, error: qerr } = await supabase
-        .from('faq_query_log')
-        .select('raw_query')
-        .eq('audience', 'public')
-        .eq('had_match', false)
-        .gte('created_at', span.from)
-        .lt('created_at', span.to)
-        .order('created_at', { ascending: false })
-        .limit(LOG_LIMIT);
+      // 「検索して見つからなかった言葉」（社外）と「社内FAQで検索された言葉」は、既存の質問ログを
+      // **DB 側で数えた結果**だけを受け取る（RPC faq_query_log_summary・2026-09-26）。
+      // 🚨 以前は行を 500 件まで画面に読んでから数えていた（打ち切ると多い順の並びが狂うので画面に断りを出していた）。
+      //    数えるのを DB に寄せたので上限は無くなった。行数の指定も要らない（返るのは言葉ごとの1行）
+      const { data: qs, error: qerr } = await supabase.rpc('faq_query_log_summary', { p_from: span.from, p_to: span.to });
       if (!latest()) return;
       // 🚨 ここで return しない。前は return していたので、これ以降（内訳・滞在時間）が
       //    前の期間のまま残っていた
       if (qerr) problems.push(`検索ログを読み込めませんでした：${qerr.message}`);
       else {
-        setWordsCut((qs ?? []).length >= LOG_LIMIT);
-        const map = new Map<string, number>();
-        for (const q of (qs ?? []) as { raw_query: string }[]) {
-          map.set(q.raw_query, (map.get(q.raw_query) ?? 0) + 1);
-        }
-        setWords([...map.entries()].map(([word, n]) => ({ word, n })).sort((a, b) => b.n - a.n));
+        const rows = (qs ?? []) as { is_public: boolean; raw_query: string; n: number; miss: number }[];
+        // 社外は「候補が0件だった回数」だけを出す（見つかった検索は数えない・今までと同じ）
+        setWords(rows.filter(r => r.is_public && r.miss > 0)
+          .map(r => ({ word: r.raw_query, n: Number(r.miss) })).sort((a, b) => b.n - a.n));
+        // 社内は全部（見つからなかった回数を添える）。🚨 社内は検索ワードだけ（IP・端末は取っていない）
+        setStaffWords(rows.filter(r => !r.is_public)
+          .map(r => ({ word: r.raw_query, n: Number(r.n), miss: Number(r.miss) })).sort((a, b) => b.n - a.n));
       }
 
       // 来た方の内訳（端末・社内社外・都道府県 ほか）
@@ -315,30 +303,6 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
       if (!latest()) return;
       if (derr) problems.push(`滞在時間を読み込めませんでした：${derr.message}`);
       else setDwell(((dd ?? [])[0] ?? null) as DwellRow | null);
-
-      // 社内FAQ（スタッフ用）の検索ワード。🚨 社内は検索ワードだけ（IP・端末は取っていない）
-      // 🚨 件数を必ず指定する。指定しないと Supabase が1,000行で黙って打ち切る
-      const { data: sq, error: sqerr } = await supabase
-        .from('faq_query_log')
-        .select('raw_query, had_match')
-        .neq('audience', 'public')
-        .gte('created_at', span.from)
-        .lt('created_at', span.to)
-        .order('created_at', { ascending: false })
-        .limit(LOG_LIMIT);
-      if (!latest()) return;
-      if (sqerr) problems.push(`社内の検索ログを読み込めませんでした：${sqerr.message}`);
-      else {
-        setStaffWordsCut((sq ?? []).length >= LOG_LIMIT);
-        const sm = new Map<string, { n: number; miss: number }>();
-        for (const q of (sq ?? []) as { raw_query: string; had_match: boolean }[]) {
-          const cur = sm.get(q.raw_query) ?? { n: 0, miss: 0 };
-          cur.n += 1;
-          if (!q.had_match) cur.miss += 1;
-          sm.set(q.raw_query, cur);
-        }
-        setStaffWords([...sm.entries()].map(([word, v]) => ({ word, ...v })).sort((a, b) => b.n - a.n));
-      }
 
       // 会社のIP（社内と見なす範囲）。読めなくても集計は出す。
       // 🚨 ただし**入力欄は空にしない**。空のまま保存すると登録済みのIPが消え、
@@ -824,11 +788,6 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
               ? <div style={{ fontSize: 13, color: sub }}>この期間はありません</div>
               : <Bars unit="回" isDarkMode={isDarkMode}
                   items={words.map(w => ({ key: w.word, label: w.word, n: w.n }))} />}
-            {wordsCut && (
-              <div style={{ fontSize: 12, color: '#b35900', marginTop: 4 }}>
-                🚨 この期間の検索は多く、<strong>新しい順に{LOG_LIMIT}件までしか数えていません</strong>。上の並びは実際の多い順と違うことがあります
-              </div>
-            )}
           </div>
 
           {/* 校・コースに該当が無かったもの */}
@@ -965,11 +924,6 @@ const FaqAnalytics: React.FC<Props> = ({ isDarkMode, onChanged, canEditSettings 
                     key: w.word, label: w.word, n: w.n,
                     note: w.miss > 0 ? `（見つからず ${w.miss}）` : undefined,
                   }))} />}
-            {staffWordsCut && (
-              <div style={{ fontSize: 12, color: '#b35900', marginTop: 4 }}>
-                🚨 この期間の検索は多く、<strong>新しい順に{LOG_LIMIT}件までしか数えていません</strong>。上の並びは実際の多い順と違うことがあります
-              </div>
-            )}
             <div style={{ fontSize: 12, color: sub, marginTop: 4 }}>
               ※ 社内は<strong>検索した言葉だけ</strong>を記録しています（端末・IP・滞在時間は取っていません）
             </div>
