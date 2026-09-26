@@ -303,7 +303,7 @@ serve(async (req) => {
     if (action === 'sync' && source_type === 'overtime') {
       const { data: report } = await supabase
         .from('overtime_reports')
-        .select('id, applicant_id, work_date, entry_type, is_post_hoc, status, location, application_types, show_on_calendar, late_situation, early_situation, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
+        .select('id, applicant_id, work_date, entry_type, is_post_hoc, status, location, application_types, show_on_calendar, late_situation, early_situation, furikae_origin_date, furikae_origin_location, furikae_origin_start, furikae_origin_end, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
         .eq('id', source_id)
         .maybeSingle()
 
@@ -401,6 +401,28 @@ serve(async (req) => {
         event_id: newEventId,
         date: report.work_date,
       })
+
+      // 🚨 振替休日は「休む日」と「振替元（休日出勤した日）」の2日ぶん。1回の申請で両方載せる（2026-09-26 ユーザー指摘）。
+      //    以前は休む日（振休）しか載せておらず、振替元の休日出勤がカレンダーに無かった（長岡さん 10/25 大掃除・上桂校）。
+      //    振替元は「休日出勤(振替元)｜09:30〜18:00［上桂校］」・色は休日出勤と同じ。上の削除は source_id ごとなので、消すときは両方消える。
+      //    gcal_events は (source_type, source_id, date) で一意＝日付が違うので2行持てる
+      const furikaeOrigin = (report.application_types ?? []).includes('furikae_off') ? String(report.furikae_origin_date ?? '') : ''
+      if (furikaeOrigin) {
+        const hmOf = (t: unknown) => (typeof t === 'string' && t.length >= 5 ? t.slice(0, 5) : '')
+        const oStart = hmOf(report.furikae_origin_start), oEnd = hmOf(report.furikae_origin_end)
+        let originSummary = `${report.status === 'requested' ? '【申請中】' : ''}${otName}｜休日出勤(振替元)`
+        if (oStart && oEnd) originSummary += `｜${oStart}〜${oEnd}`
+        if (report.furikae_origin_location) originSummary += `［${report.furikae_origin_location}］`
+        const originColorId = report.status === 'requested' ? '8' : OVERTIME_TYPES['holiday_work'].colorId
+        const originEventId = await createEvent(token, calendarId, originSummary, furikaeOrigin, originColorId)
+        await supabase.from('gcal_events').insert({
+          source_type: 'overtime',
+          source_id,
+          calendar_id: calendarId,
+          event_id: originEventId,
+          date: furikaeOrigin,
+        })
+      }
 
       return new Response(JSON.stringify({ success: true, synced: true, summary }),
         { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } })

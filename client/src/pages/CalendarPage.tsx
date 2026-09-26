@@ -181,6 +181,8 @@ interface OvertimeEvent {
   location: string | null; // 勤務校
   start_min: number | null;
   end_min: number | null;
+  /** 振替休日の「振替元（休日出勤した日）」の行なら元の申請の id（2026-09-26）。ふつうの行は null */
+  originOf?: string | null;
   // まだ上長が受理していない（申請中）。受理されると false になる。
   // 🚨 受理されないと実績報告できず放置される問題への対応で、申請の段階から載せるようにした（2026-08-25）
   isPending: boolean;
@@ -188,7 +190,7 @@ interface OvertimeEvent {
 
 /** 残業の表示ラベル（種別は最大2つまで。gcal-sync のタイトルと同じ考え方） */
 const otEventLabel = (ev: OvertimeEvent): string =>
-  ev.types.slice(0, 2).map(t => OT_TYPE_INFO[t].label).join('＋');
+  ev.types.slice(0, 2).map(t => OT_TYPE_INFO[t].label).join('＋') + (ev.originOf ? '(振替元)' : '');
 
 /** 残業の時刻表示。何時に来るか／何時に帰るかのうち、その種別で大事な方を出す */
 const otEventTime = (ev: OvertimeEvent): string => {
@@ -1415,7 +1417,7 @@ const PcCalendar: React.FC<{
                         const time = otEventTime(ot);
                         const oc = otCalendarStyle(ot.types[0]);
                         return (
-                          <div key={ot.id} title={`${ot.name}｜${otEventLabel(ot)}${time ? `｜${time}` : ''}${ot.location ? `［${ot.location}］` : ''}`}
+                          <div key={`${ot.id}-${ot.date}`} title={`${ot.name}｜${otEventLabel(ot)}${time ? `｜${time}` : ''}${ot.location ? `［${ot.location}］` : ''}`}
                             style={{ fontSize: 11, borderRadius: 4, padding: '2px 4px', marginBottom: 2, background: oc.bg, color: oc.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {ot.name}{time && <span style={{ fontSize: 9, opacity: 0.85, marginLeft: 2 }}>{time}</span>}
                           </div>
@@ -1823,6 +1825,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
       show_on_calendar: boolean | null; location: string | null;
       start_min: number | null; end_min: number | null;
       status: string;
+      origin_of: string | null;
     };
 
     const allUserIds = [...new Set((data as Row[]).map(r => r.applicant_id))];
@@ -1838,6 +1841,8 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
         id: r.id, user_id: r.applicant_id, name: r.name, date: r.work_date,
         types, location: r.location, start_min: r.start_min, end_min: r.end_min,
         isPending: r.status === 'requested',
+        // 振替元の行は同じ申請 id で別の日に出る（RPC が union で返す）。key は id＋日付で分ける
+        originOf: r.origin_of ?? null,
       });
     }
     setOvertimes(rows);
