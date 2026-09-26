@@ -3,6 +3,9 @@ import { supabase } from '../../lib/supabaseClient';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import { useAuth } from '../../hooks/useAuth';
 import { describeUpdate } from '../../lib/statusUpdate';
+import { filterTemplates, sortTemplates, categoryLabel, validateTemplateInput } from '../../lib/boardTemplates';
+import type { BoardTemplate, BoardTemplateCategory } from '../../lib/boardTemplates';
+import { loadTemplates, updateTemplate, deleteTemplate, insertCategory, updateCategory, countByCategory } from '../../lib/boardTemplatesApi';
 
 interface SendPermissions {
   employment_types: string[];
@@ -144,6 +147,48 @@ const BoardSettingsTab: React.FC = () => {
 
   // 既読詳細表示設定
   const [showReadDetail, setShowReadDetail] = useState(true);
+
+  // ── お知らせのテンプレート（2026-09-26・(142) ④）。分類の管理と、全体テンプレの一覧（検索・修正・削除）。
+  //    🚨 判定は lib/boardTemplates、読み書きは lib/boardTemplatesApi（送信画面と同じもの。ここに書き写さない）。
+  //    管理者が見えるのは 全体＋自分の個人。ここでは全体だけを出す
+  const [tplTemplates, setTplTemplates] = useState<BoardTemplate[]>([]);
+  const [tplCategories, setTplCategories] = useState<BoardTemplateCategory[]>([]);
+  const [tplLoadError, setTplLoadError] = useState<string | null>(null);
+  const [tplQuery, setTplQuery] = useState('');
+  const [tplOpen, setTplOpen] = useState(false);                           // 一覧を開いているか（既定は閉じる・長いため）
+  const [catEditing, setCatEditing] = useState(false);                    // 分類の編集モード
+  const [catNewName, setCatNewName] = useState('');
+  const [catRename, setCatRename] = useState<{ id: string; name: string } | null>(null);
+  const [tplEdit, setTplEdit] = useState<null | { id: string; name: string; categoryId: string; subject: string; body: string }>(null); // 全体テンプレの修正
+  const [tplEditError, setTplEditError] = useState('');
+  const [tplBusy, setTplBusy] = useState(false);
+
+  const reloadTemplates = async () => {
+    const r = await loadTemplates();
+    setTplTemplates(r.templates); setTplCategories(r.categories); setTplLoadError(r.error);
+  };
+  useEffect(() => { reloadTemplates(); }, []);
+
+  const tplGlobal = sortTemplates(filterTemplates(tplTemplates, { scope: 'global', query: tplQuery, category: 'all' }, tplCategories), 'global', tplCategories);
+  const tplCountByCat = countByCategory(tplTemplates.filter(t => t.scope === 'global'));
+  const catsSorted = [...tplCategories].sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, 'ja'));
+
+  /** 分類の並べ替え：隣と sort_order を入れ替える（2行を書く。片方だけ通ると並びが崩れるので、失敗したら読み直す） */
+  const moveCategory = async (id: string, dir: -1 | 1) => {
+    const active = catsSorted.filter(c => c.active);
+    const i = active.findIndex(c => c.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= active.length) return;
+    const a = active[i], b = active[j];
+    // 🚨 同じ sort_order が並んでいると入れ替えても動かないので、位置（並びの添字）で振り直す
+    const orderA = j + 1, orderB = i + 1;
+    setTplBusy(true);
+    const e1 = await updateCategory(a.id, { sort_order: orderA });
+    const e2 = e1 ? null : await updateCategory(b.id, { sort_order: orderB });
+    setTplBusy(false);
+    if (e1 || e2) { setErrorMsg(e1 || e2); await reloadTemplates(); return; }
+    setTplCategories(prev => prev.map(c => c.id === a.id ? { ...c, sort_order: orderA } : c.id === b.id ? { ...c, sort_order: orderB } : c));
+  };
 
   const text   = isDark ? '#ffffff' : '#212529';
   const sub    = isDark ? '#adb5bd' : '#6c757d';
@@ -915,6 +960,174 @@ const BoardSettingsTab: React.FC = () => {
           )}
         </div>
         {editingDm && renderEditPanel(pendingDmPerms, toggleDmEmp, toggleDmRole, saveDm, () => setEditingDm(false), setPendingDmPerms)}
+      </div>
+
+      {/* ── お知らせのテンプレート：分類の管理（2026-09-26） ── */}
+      <div style={{ marginBottom: 20, padding: '12px 14px', background: rowBg, borderRadius: 8, border: `1px solid ${border}` }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 'bold', color: text }}>📋 テンプレートの分類</div>
+            <div style={{ fontSize: 12, color: sub, marginTop: 2 }}>
+              {catsSorted.filter(c => c.active).map(c => c.name).join('・') || '（分類はありません）'}（{catsSorted.filter(c => c.active).length}件）
+            </div>
+          </div>
+          <button type="button" onClick={() => { setCatEditing(v => !v); setCatRename(null); setCatNewName(''); }}
+            style={{ padding: '5px 12px', borderRadius: 6, border: `1px solid ${border}`, background: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 12, fontWeight: 'bold', flexShrink: 0 }}>
+            {catEditing ? '閉じる' : '設定'}
+          </button>
+        </div>
+        {catEditing && (
+          <div>
+            <div style={{ fontSize: 12, color: sub, marginBottom: 8, lineHeight: 1.6 }}>
+              お知らせのテンプレートを登録するときに選ぶ分類です。並び順は送信画面の絞り込みボタンの順になります。<br />
+              名前を変えても、その分類のテンプレートはそのまま新しい名前で表示されます。<br />
+              「使わない」にした分類のテンプレートは消えません（「未分類」として残り、送信画面では「（旧）名前」と出ます）。
+            </div>
+            {catsSorted.map((c, idx) => {
+              const activeIdx = catsSorted.filter(x => x.active).findIndex(x => x.id === c.id);
+              const activeCount = catsSorted.filter(x => x.active).length;
+              const n = tplCountByCat.get(c.id) ?? 0;
+              return (
+                <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 0', borderBottom: idx < catsSorted.length - 1 ? `1px solid ${border}` : 'none', opacity: c.active ? 1 : 0.6 }}>
+                  {c.active ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <button type="button" disabled={tplBusy || activeIdx <= 0} onClick={() => moveCategory(c.id, -1)} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 4, color: sub, cursor: 'pointer', fontSize: 10, padding: '0 5px', opacity: activeIdx <= 0 ? 0.3 : 1 }}>▲</button>
+                      <button type="button" disabled={tplBusy || activeIdx >= activeCount - 1} onClick={() => moveCategory(c.id, 1)} style={{ background: 'none', border: `1px solid ${border}`, borderRadius: 4, color: sub, cursor: 'pointer', fontSize: 10, padding: '0 5px', opacity: activeIdx >= activeCount - 1 ? 0.3 : 1 }}>▼</button>
+                    </div>
+                  ) : <div style={{ width: 22 }} />}
+                  {catRename?.id === c.id ? (
+                    <>
+                      <input value={catRename.name} onChange={e => setCatRename({ id: c.id, name: e.target.value })}
+                        style={{ flex: 1, padding: '5px 8px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#3a3a5c' : '#fff', color: text, fontSize: 13 }} />
+                      <button type="button" disabled={tplBusy} onClick={async () => {
+                        const name = catRename.name.trim();
+                        if (!name) { setErrorMsg('分類の名前を入力してください'); return; }
+                        setTplBusy(true);
+                        const fail = await updateCategory(c.id, { name });
+                        setTplBusy(false);
+                        if (fail) { setErrorMsg(fail); return; }
+                        setTplCategories(prev => prev.map(x => x.id === c.id ? { ...x, name } : x));
+                        setCatRename(null); showBanner();
+                      }} style={{ padding: '5px 12px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>保存</button>
+                      <button type="button" onClick={() => setCatRename(null)} style={{ padding: '5px 10px', background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: sub, cursor: 'pointer', fontSize: 12 }}>やめる</button>
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ flex: 1, fontSize: 13, color: text }}>{c.active ? c.name : `（使わない）${c.name}`}<span style={{ fontSize: 11, color: sub, marginLeft: 6 }}>全体 {n}件</span></span>
+                      {c.active && (
+                        <button type="button" onClick={() => setCatRename({ id: c.id, name: c.name })} style={{ padding: '4px 10px', background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: sub, cursor: 'pointer', fontSize: 12 }}>名前を変える</button>
+                      )}
+                      {/* 「使わない」は確認なし（消えない・「戻す」で戻せる）。🚨 共通の confirmDialog はボタンが「削除する」なので、ここには使わない */}
+                      <button type="button" disabled={tplBusy} onClick={async () => {
+                        const next = !c.active;
+                        setTplBusy(true);
+                        const patch = next ? { active: true, sort_order: activeCount + 1 } : { active: false };
+                        const fail = await updateCategory(c.id, patch);
+                        setTplBusy(false);
+                        if (fail) { setErrorMsg(fail); return; }
+                        setTplCategories(prev => prev.map(x => x.id === c.id ? { ...x, ...patch } : x)); showBanner();
+                      }} style={{ padding: '4px 10px', background: 'none', border: `1px solid ${c.active ? '#dc3545' : border}`, borderRadius: 6, color: c.active ? '#dc3545' : '#4a90d9', cursor: 'pointer', fontSize: 12 }}>
+                        {c.active ? '使わない' : '戻す'}
+                      </button>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+            <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+              <input value={catNewName} onChange={e => setCatNewName(e.target.value)} placeholder="新しい分類の名前"
+                style={{ flex: 1, padding: '6px 8px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#3a3a5c' : '#fff', color: text, fontSize: 13 }} />
+              <button type="button" disabled={tplBusy || !catNewName.trim()} onClick={async () => {
+                setTplBusy(true);
+                const r = await insertCategory(catNewName, catsSorted.filter(c => c.active).length + 1);
+                setTplBusy(false);
+                if (!r.ok) { setErrorMsg(r.message); return; }
+                setTplCategories(prev => [...prev, r.category]); setCatNewName(''); showBanner();
+              }} style={{ padding: '6px 14px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 'bold', opacity: catNewName.trim() ? 1 : 0.5 }}>＋ 追加</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── お知らせのテンプレート：全体テンプレートの一覧（2026-09-26） ── */}
+      <div style={{ marginBottom: 20, padding: '12px 14px', background: rowBg, borderRadius: 8, border: `1px solid ${border}` }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 'bold', color: text }}>📋 全体のテンプレート</div>
+            <div style={{ fontSize: 12, color: sub, marginTop: 2 }}>
+              {tplTemplates.filter(t => t.scope === 'global').length}件（みんなが使える件名・本文の型。登録は送信画面から。個人のテンプレートは本人にしか見えません）
+            </div>
+          </div>
+          <button type="button" onClick={() => { setTplOpen(v => !v); setTplEdit(null); if (!tplOpen) reloadTemplates(); }}
+            style={{ padding: '5px 12px', borderRadius: 6, border: `1px solid ${border}`, background: 'none', color: '#4a90d9', cursor: 'pointer', fontSize: 12, fontWeight: 'bold', flexShrink: 0 }}>
+            {tplOpen ? '閉じる' : '一覧を見る'}
+          </button>
+        </div>
+        {tplLoadError && (
+          <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '8px 12px', fontSize: 12.5, color: '#842029', marginBottom: 8 }}>{tplLoadError}</div>
+        )}
+        {tplOpen && (
+          <div>
+            <input value={tplQuery} onChange={e => setTplQuery(e.target.value)} placeholder="🔍 名前・件名・本文で検索"
+              style={{ width: '100%', padding: '7px 10px', borderRadius: 8, border: `1px solid ${border}`, background: isDark ? '#3a3a5c' : '#fff', color: text, fontSize: 13, boxSizing: 'border-box', marginBottom: 8 }} />
+            {tplGlobal.length === 0 && <div style={{ fontSize: 13, color: sub, padding: '12px 0', textAlign: 'center' }}>{tplQuery.trim() ? '見つかりませんでした' : '全体のテンプレートはまだありません'}</div>}
+            {tplGlobal.map(t => (
+              <div key={t.id} style={{ padding: '8px 10px', border: `1px solid ${border}`, borderRadius: 8, marginBottom: 6 }}>
+                {tplEdit?.id === t.id ? (
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: text, marginBottom: 3 }}>名前</div>
+                    <input value={tplEdit.name} onChange={e => setTplEdit(s => s && ({ ...s, name: e.target.value }))} style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#3a3a5c' : '#fff', color: text, fontSize: 13, boxSizing: 'border-box', marginBottom: 6 }} />
+                    <div style={{ fontSize: 11, fontWeight: 600, color: text, marginBottom: 3 }}>分類</div>
+                    <select value={tplEdit.categoryId} onChange={e => setTplEdit(s => s && ({ ...s, categoryId: e.target.value }))} style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#3a3a5c' : '#fff', color: text, fontSize: 13, boxSizing: 'border-box', marginBottom: 6 }}>
+                      <option value="">（分類なし）</option>
+                      {catsSorted.filter(c => c.active || c.id === tplEdit.categoryId).map(c => <option key={c.id} value={c.id}>{c.active ? c.name : `（旧）${c.name}`}</option>)}
+                    </select>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: text, marginBottom: 3 }}>件名</div>
+                    <input value={tplEdit.subject} onChange={e => setTplEdit(s => s && ({ ...s, subject: e.target.value }))} style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#3a3a5c' : '#fff', color: text, fontSize: 13, boxSizing: 'border-box', marginBottom: 6 }} />
+                    <div style={{ fontSize: 11, fontWeight: 600, color: text, marginBottom: 3 }}>本文</div>
+                    <textarea value={tplEdit.body} onChange={e => setTplEdit(s => s && ({ ...s, body: e.target.value }))} rows={5} style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#3a3a5c' : '#fff', color: text, fontSize: 13, boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit', marginBottom: 6 }} />
+                    {tplEditError && <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '6px 10px', fontSize: 12, color: '#842029', marginBottom: 6 }}>{tplEditError}</div>}
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button type="button" disabled={tplBusy} onClick={async () => {
+                        const v = validateTemplateInput(tplEdit);
+                        if (v) { setTplEditError(v); return; }
+                        setTplBusy(true);
+                        const r = await updateTemplate(t.id, { scope: 'global', name: tplEdit.name, category_id: tplEdit.categoryId || null, subject: tplEdit.subject, body: tplEdit.body });
+                        setTplBusy(false);
+                        if (!r.ok) { setTplEditError(r.message); return; }
+                        setTplTemplates(prev => prev.map(x => x.id === t.id ? r.template : x)); setTplEdit(null); setTplEditError(''); showBanner();
+                      }} style={{ padding: '6px 14px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>保存</button>
+                      <button type="button" onClick={() => { setTplEdit(null); setTplEditError(''); }} style={{ padding: '6px 12px', background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: sub, cursor: 'pointer', fontSize: 12 }}>やめる</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontWeight: 700, color: text, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13 }}>{t.name}</span>
+                      {categoryLabel(t.category_id, tplCategories) && <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 11, background: isDark ? '#495057' : '#e9ecef', color: isDark ? '#fff' : '#333', whiteSpace: 'nowrap' }}>{categoryLabel(t.category_id, tplCategories)}</span>}
+                    </div>
+                    <div style={{ fontSize: 12, color: sub, marginTop: 2 }}>件名：{t.subject}</div>
+                    <div style={{ fontSize: 12, color: sub, marginTop: 2, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 60, overflow: 'hidden' }}>{t.body}</div>
+                    <div style={{ fontSize: 11, color: sub, marginTop: 4 }}>
+                      作った人：{t.owner_id ? (allProfiles.find(p => p.id === t.owner_id)?.name || '不明') : '（退職）'} ／ 最終更新：{new Date(t.updated_at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                      <button type="button" onClick={() => { setTplEdit({ id: t.id, name: t.name, categoryId: t.category_id ?? '', subject: t.subject, body: t.body }); setTplEditError(''); }} style={{ padding: '4px 12px', background: 'none', border: `1px solid ${border}`, borderRadius: 6, color: sub, cursor: 'pointer', fontSize: 12 }}>修正</button>
+                      <button type="button" onClick={() => setConfirmDialog({
+                        message: `テンプレート「${t.name}」を削除しますか？ 全体のテンプレートです。ほかの人も使えなくなります`,
+                        onConfirm: async () => {
+                          const fail = await deleteTemplate(t.id);
+                          if (fail) { setErrorMsg(fail); return; }
+                          setTplTemplates(prev => prev.filter(x => x.id !== t.id)); showBanner();
+                        },
+                      })} style={{ padding: '4px 12px', background: 'none', border: '1px solid #dc3545', borderRadius: 6, color: '#dc3545', cursor: 'pointer', fontSize: 12 }}>削除</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {errorMsg && (
