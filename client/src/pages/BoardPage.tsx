@@ -1825,11 +1825,14 @@ const BoardPage: React.FC = () => {
   // 送信トレイのアーカイブ＝「自分が片付けた」を board_outbox_hidden に1行入れる（2026-09-26）。
   // 🚨 board_messages を書き換えない。写しで見る代表者も自分のぶんだけ片付けられる（送った本人の一覧は変わらない）。
   //    同じ行があっても失敗にしない（二度押し・別タブ）。🚨 この表に id 列は無い。件数は message_id で数える
+  // 🚨 upsert は使わない（2026-09-26 実機で「permission denied」）。upsert は DB では「あれば更新」なので UPDATE の権限が要るが、
+  //    この表は更新を使わない方針で authenticated に UPDATE を付けていない。素の insert にして、すでにある（23505）は成功扱い
   const archiveOutboxMsg = async (msgId: string) => {
     if (!user) return;
     const r = await supabase.from('board_outbox_hidden')
-      .upsert({ message_id: msgId, user_id: user.id }, { onConflict: 'message_id,user_id' }).select('message_id');
-    const fail = describeUpdate(
+      .insert({ message_id: msgId, user_id: user.id }).select('message_id');
+    const already = r.error?.code === '23505';
+    const fail = already ? null : describeUpdate(
       { data: r.data ? r.data.map(x => ({ id: x.message_id })) : null, error: r.error, status: r.status },
       'アーカイブ', 'missing',
     );
