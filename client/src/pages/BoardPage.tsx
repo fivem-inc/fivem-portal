@@ -9,6 +9,9 @@ import { dispatchBoardEmail } from '../lib/notificationDispatch';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import { todayJstStr } from '../lib/breakCalc';
 import { describeUpdate, describePartial } from '../lib/statusUpdate';
+import { filterTemplates, sortTemplates, categoryChips, categoryLabel, canEditTemplate, needsReplaceConfirm, validateTemplateInput } from '../lib/boardTemplates';
+import type { BoardTemplate, BoardTemplateCategory, BoardTemplateScope, CategoryFilter } from '../lib/boardTemplates';
+import { loadTemplates, insertTemplate, updateTemplate, deleteTemplate } from '../lib/boardTemplatesApi';
 import { replyState, replyStatusText } from '../lib/boardReply';
 
 const BOARD_LINK = 'https://fivem-portal.vercel.app/board';
@@ -412,7 +415,7 @@ const ConfirmStatusBox: React.FC<{
 };
 
 const BoardPage: React.FC = () => {
-  const { user, isAdmin, profileName, roleTitle, employmentType, roles } = useAuth();
+  const { user, isAdmin, profileName, roleTitle, employmentType, roles, canBoardTemplateGlobal } = useAuth();
   const { previewRole } = useContext(AuthContext);
   const isDark = useDarkMode();
   const navigate = useNavigate();
@@ -581,6 +584,27 @@ const BoardPage: React.FC = () => {
   const [composeAnswerLocation, setComposeAnswerLocation] = useState(cd?.answerLocation ?? '');
   const [composeAnswerLink,     setComposeAnswerLink]     = useState(cd?.answerLink ?? '');
   const [showComposeSendConfirm, setShowComposeSendConfirm] = useState(false);
+  // ── お知らせのテンプレート（2026-09-26・(142)）。判定・絞り込みは lib/boardTemplates、読み書きは lib/boardTemplatesApi。
+  //    🚨 供給元は1つ（tplTemplates）。送信画面のシート・保存の枠・受信/送信トレイの「テンプレートに保存」が同じ状態を見る
+  const [tplOpen, setTplOpen] = useState(false);                       // 一覧のシート
+  const [tplLoading, setTplLoading] = useState(false);
+  const [tplError, setTplError] = useState<string | null>(null);
+  const [tplTemplates, setTplTemplates] = useState<BoardTemplate[]>([]);
+  const [tplCategories, setTplCategories] = useState<BoardTemplateCategory[]>([]);
+  const [tplTruncated, setTplTruncated] = useState(false);
+  const [tplScope, setTplScope] = useState<BoardTemplateScope>('global');
+  const [tplQuery, setTplQuery] = useState('');
+  const [tplCategory, setTplCategory] = useState<CategoryFilter>('all');
+  const [tplExpandedId, setTplExpandedId] = useState<string | null>(null); // 開いている行
+  const [tplShowAll, setTplShowAll] = useState(false);                     // 「残り◯件を見る」を押したか
+  const [tplPendingUse, setTplPendingUse] = useState<BoardTemplate | null>(null); // 「置き換えますか」を出している行
+  const [tplDeleteId, setTplDeleteId] = useState<string | null>(null);       // 「削除しますか」を出している行
+  const [tplNotice, setTplNotice] = useState<string | null>(null);           // 入れた直後の青い案内（テンプレ名）
+  const [tplSuccess, setTplSuccess] = useState<{ text: string; sub?: string } | null>(null); // 薄緑カード
+  // 保存・修正の枠（id が null なら新規）。件名・本文は「いまの送信画面」か「開いているお知らせ」から写す
+  const [tplSave, setTplSave] = useState<null | { id: string | null; name: string; categoryId: string; scope: BoardTemplateScope; subject: string; body: string }>(null);
+  const [tplSaving, setTplSaving] = useState(false);
+  const [tplSaveError, setTplSaveError] = useState('');
   const [showAllRecipients, setShowAllRecipients] = useState(false);
   const [showSearch,  setShowSearch]  = useState(false);
   const [searchText,  setSearchText]  = useState('');
@@ -2047,6 +2071,73 @@ const BoardPage: React.FC = () => {
     setView('compose'); setShowSidebar(false);
   };
   // 書きかけの下書きがあれば「置き換えますか」を挟む（黙って消さない・ユーザー確定）
+  // ── お知らせのテンプレート（2026-09-26） ──
+  /** 一覧のシートを開く。開くたびに読み直す（ほかの人が直した全体テンプレを反映するため） */
+  const openTemplates = async () => {
+    setTplOpen(true); setTplExpandedId(null); setTplPendingUse(null); setTplDeleteId(null); setTplShowAll(false); setTplQuery(''); setTplCategory('all');
+    setTplLoading(true); setTplError(null);
+    const r = await loadTemplates();
+    setTplTemplates(r.templates); setTplCategories(r.categories); setTplTruncated(r.truncated); setTplError(r.error);
+    // 最初に開くタブは「全体」。全体が0件で自分のがあるときだけ「自分の」
+    setTplScope(!r.templates.some(t => t.scope === 'global') && r.templates.some(t => t.scope === 'personal') ? 'personal' : 'global');
+    setTplLoading(false);
+  };
+  /** テンプレの件名・本文を送信画面に入れる。🚨 宛先・期限・種別は触らない（ユーザー確定：テンプレは件名・本文だけ）。
+   *  🚨 copyToCompose と違って clearDraft を呼ばない（呼ぶと宛先・期限まで消える）。下書きは state が変われば effect が勝手に保存する */
+  const applyTemplate = (t: BoardTemplate) => {
+    setComposeSubject(t.subject); setComposeBody(t.body);
+    setComposeOptions(true);   // 件名は折りたたみの中。入れたのに見えない、を避ける（copyToCompose と同じ）
+    setTplNotice(t.name); setTplPendingUse(null); setTplOpen(false);
+  };
+  /** ［使う］。件名か本文に文字があれば「置き換えますか」を挟む（黙って消さない）。🚨 判定は lib の needsReplaceConfirm */
+  const requestUseTemplate = (t: BoardTemplate) => {
+    if (needsReplaceConfirm(composeSubject, composeBody)) setTplPendingUse(t); else applyTemplate(t);
+  };
+  /** 保存・修正の枠を開く。新規は名前の初期値＝件名・保存先＝自分だけ */
+  const openTemplateSave = (src: { subject: string; body: string }, existing?: BoardTemplate) => {
+    setTplSaveError(''); setTplSuccess(null);
+    if (existing) setTplSave({ id: existing.id, name: existing.name, categoryId: existing.category_id ?? '', scope: existing.scope, subject: existing.subject, body: existing.body });
+    else setTplSave({ id: null, name: src.subject.trim(), categoryId: '', scope: 'personal', subject: src.subject, body: src.body });
+  };
+  const saveTemplateNow = async () => {
+    if (!tplSave || tplSaving) return;
+    const v = validateTemplateInput(tplSave);
+    if (v) { setTplSaveError(v); return; }
+    setTplSaving(true); setTplSaveError('');
+    const input = { scope: tplSave.scope, name: tplSave.name, category_id: tplSave.categoryId || null, subject: tplSave.subject, body: tplSave.body };
+    const r = tplSave.id ? await updateTemplate(tplSave.id, input) : await insertTemplate(input);
+    setTplSaving(false);
+    if (!r.ok) { setTplSaveError(r.message); return; }
+    const saved = r.template;
+    const isEdit = !!tplSave.id;
+    setTplTemplates(prev => isEdit ? prev.map(t => t.id === saved.id ? saved : t) : [saved, ...prev]);
+    setTplSave(null);
+    setTplSuccess({
+      text: `「${saved.name}」を${saved.scope === 'global' ? '全体の' : '自分の'}テンプレートに${isEdit ? '保存しました（直しました）' : '保存しました'}`,
+      sub: saved.scope === 'global' ? 'お知らせを送れる人全員が使えます' : '「📋 テンプレートから」で呼び出せます',
+    });
+    setTimeout(() => setTplSuccess(null), 4000);
+  };
+  const deleteTemplateNow = async (t: BoardTemplate) => {
+    const fail = await deleteTemplate(t.id);
+    if (fail) { setTplError(fail); setTplDeleteId(null); return; }
+    setTplTemplates(prev => prev.filter(x => x.id !== t.id)); setTplDeleteId(null);
+    if (tplExpandedId === t.id) setTplExpandedId(null);
+    setTplSuccess({ text: `テンプレート「${t.name}」を削除しました` });
+    setTimeout(() => setTplSuccess(null), 4000);
+  };
+  /** 修正・削除できるか（個人＝本人／全体＝権限。管理者は常に可）。🚨 役職プレビュー中は書き込みをさせない（renderCcRow と同じ） */
+  const canEditTpl = (t: BoardTemplate) => !previewRole && canEditTemplate(t, user?.id, isAdmin || canBoardTemplateGlobal);
+  const tplPersonName = (id: string | null) => (id ? (allProfiles.find(p => p.id === id)?.name ?? '不明') : '（退職）');
+  // 成功の薄緑カード（🎨🔒 固定色）。送信画面・受信/送信トレイの詳細・一覧のシートの3か所が同じこれを出す。
+  // 🚨 受信トレイの詳細（inboxPanel）より前に定義する（後ろだと「宣言前に使った」で型エラー）
+  const tplSuccessCard = tplSuccess ? (
+    <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 8, padding: '9px 12px', fontSize: 13, color: '#166534', fontWeight: 600 }}>
+      ✓ {tplSuccess.text}
+      {tplSuccess.sub && <div style={{ fontWeight: 'normal', fontSize: 12, color: '#15803d', marginTop: 2 }}>{tplSuccess.sub}</div>}
+    </div>
+  ) : null;
+
   const requestCopyToCompose = (msg: BoardMessage) => {
     const draft = loadDraft<{ subject?: string; body?: string; recipientIds?: string[] }>(DRAFT_KEYS.boardCompose);
     const hasDraft = !!draft && !!(draft.subject || draft.body || (draft.recipientIds && draft.recipientIds.length > 0));
@@ -3371,6 +3462,16 @@ const BoardPage: React.FC = () => {
                 </div>
               </div>
             ) : renderMsg(inboxDetail, false, false, inboxDetailArchiveBtn)}
+            {/* 受け取ったお知らせの件名・本文をテンプレートに（2026-09-26 ユーザー確定：受信したものからも登録できる） */}
+            {canSendNotice && !previewRole && editingNoticeId !== inboxDetail.id && (
+              <div style={{ marginTop: 8 }}>
+                <button type="button" onClick={() => openTemplateSave({ subject: inboxDetail.subject || inboxDetail.title || '', body: inboxDetail.body })}
+                  style={{ padding: '8px 16px', background: 'none', border: `1.5px solid ${border}`, color: subColor, borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                  📋 テンプレートに保存
+                </button>
+                {tplSuccess && !tplOpen && <div style={{ marginTop: 8 }}>{tplSuccessCard}</div>}
+              </div>
+            )}
             {/* 削除確認（受信トレイ側） */}
             {(inboxDetail.user_id === user?.id || isAdmin) && deleteConfirmId === inboxDetail.id && (
               <div style={{ marginTop: 16, padding: '12px 14px', background: isDark ? '#2d1a1a' : '#fff5f5', border: `1px solid ${isDark ? '#7f1d1d' : '#fca5a5'}`, borderRadius: 10 }}>
@@ -3684,6 +3785,18 @@ const BoardPage: React.FC = () => {
   const dropPresetsContaining = (removedIds: string[]) =>
     setComposePresetKeys(prev => prev.filter(k => !recipientPresetIds(k, allProfiles).some(id => removedIds.includes(id))));
 
+  // ── テンプレートの一覧（絞り込み → 並び）。🚨 中身は lib/boardTemplates（画面に判定を書かない）。
+  //    最初は20件＋「残り◯件を見る」。検索・分類で絞っているときは全部出す。🚨 並べてから切る
+  const TPL_PAGE = 20;
+  const tplVisible = sortTemplates(filterTemplates(tplTemplates, { scope: tplScope, query: tplQuery, category: tplCategory }, tplCategories), tplScope, tplCategories);
+  const tplChips = categoryChips(tplCategories, tplTemplates.filter(t => t.scope === tplScope));
+  const tplFiltered = !!tplQuery.trim() || tplCategory !== 'all';
+  const tplShown = (tplShowAll || tplFiltered) ? tplVisible : tplVisible.slice(0, TPL_PAGE);
+  const tplCountGlobal = tplTemplates.filter(t => t.scope === 'global').length;
+  const tplCountPersonal = tplTemplates.filter(t => t.scope === 'personal').length;
+  // 保存先を選べるか：権限がある人だけ。🚨 他人が作った全体テンプレを「自分だけ」に変えると持ち主のままで誰にも見えなくなる（RLS でも弾かれる）ので出さない
+  const tplCanPickScope = !!tplSave && (isAdmin || canBoardTemplateGlobal)
+    && (!tplSave.id || tplSave.scope === 'personal' || tplTemplates.find(t => t.id === tplSave.id)?.owner_id === user?.id);
   const composePanel = (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: bg }}>
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 16px', paddingTop: 58 + searchPad }}>
@@ -3895,12 +4008,36 @@ const BoardPage: React.FC = () => {
           スマホ … 取っ手が出ないので、打った量に合わせて自動で高くなる（画面の4割まで）。
           🚨 rows=4 は「最初の高さ」。広げた高さは送信でリセットされる（resetCompose が空にするため） */}
       <div style={{ padding: '10px 14px', borderTop: `1px solid ${border}`, background: cardBg, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {/* テンプレートを入れた直後の案内（青・✕で消す・自動では消さない）。何が入って何が残るかを本文の真上で伝える */}
+        {tplNotice && (
+          <div style={{ padding: '7px 10px', background: '#e8f4fd', border: '1px solid #90caf9', borderRadius: 8, fontSize: 12, color: '#1565c0', lineHeight: 1.6, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+            <span style={{ flex: 1 }}>テンプレート「{tplNotice}」を入れました。件名・本文を確かめてから送ってください（宛先・期限はそのままです）</span>
+            <button type="button" onClick={() => setTplNotice(null)} style={{ background: 'none', border: 'none', color: '#1565c0', cursor: 'pointer', fontSize: 14, padding: 0, lineHeight: 1 }}>✕</button>
+          </div>
+        )}
+        {tplSuccess && !tplOpen && tplSuccessCard}
         <textarea value={composeBody} onChange={e => { setComposeBody(e.target.value); if (isMobile) autoGrowTextarea(e.target); }} placeholder="本文を入力... *必須"
           rows={4}
           onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0 && (!composeDeadlineType || composeDeadline)) setShowComposeSendConfirm(true); }}}
           style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, resize: isMobile ? 'none' : 'vertical', minHeight: 100, maxHeight: '50vh', fontFamily: 'inherit', lineHeight: 1.5, boxSizing: 'border-box' }} />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-          <span style={{ fontSize: 11, color: subColor }}>{isMobile ? '' : 'Ctrl+Enter でも送信できます'}</span>
+          {/* テンプレート（2026-09-26 ユーザー確定：送信ボタンの隣）。以前ここにあった「Ctrl+Enter でも送信できます」の文字は
+              この位置を譲って外した（Ctrl+Enter 自体は今までどおり効く）。送信の青ベタと区別するため枠線だけの見た目・間隔を空ける */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <button type="button" onClick={openTemplates}
+              style={{ padding: '7px 10px', borderRadius: 8, border: `1.5px solid ${isDark ? '#93c5fd' : '#1d4ed8'}`, background: 'none', color: isDark ? '#93c5fd' : '#1d4ed8', cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap' }}>
+              📋 テンプレートから
+            </button>
+            {/* 🚨 役職プレビュー中は出さない（保存は本物のアカウントの個人テンプレになるため） */}
+            {!previewRole && (
+              <button type="button" onClick={() => openTemplateSave({ subject: composeSubject, body: composeBody })}
+                disabled={!composeSubject.trim() && !composeBody.trim()}
+                title={(!composeSubject.trim() && !composeBody.trim()) ? '件名か本文を入れると保存できます' : ''}
+                style={{ padding: '7px 10px', borderRadius: 8, border: `1px solid ${border}`, background: 'none', color: subColor, cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', opacity: (!composeSubject.trim() && !composeBody.trim()) ? 0.5 : 1 }}>
+                保存
+              </button>
+            )}
+          </div>
           <button type="button" onClick={() => { if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0 && (!composeDeadlineType || composeDeadline)) setShowComposeSendConfirm(true); }}
             disabled={!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || (!!composeDeadlineType && !composeDeadline) || sending}
             style={{ padding: '10px 22px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold', opacity: (!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || (!!composeDeadlineType && !composeDeadline) || sending) ? 0.5 : 1, whiteSpace: 'nowrap' }}>
@@ -4049,6 +4186,13 @@ const BoardPage: React.FC = () => {
                     コピーして作成
                   </button>
                 )}
+                {/* このお知らせの件名・本文をテンプレートに（2026-09-26 ユーザー確定：送ったものからも登録できる） */}
+                {canSendNotice && !previewRole && (
+                  <button type="button" onClick={() => openTemplateSave({ subject: outboxDetail.subject || outboxDetail.title || '', body: outboxDetail.body })}
+                    style={{ padding: '8px 16px', background: 'none', border: `1.5px solid ${border}`, color: subColor, borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+                    📋 テンプレートに保存
+                  </button>
+                )}
                 {/* 🚨 修正・完全削除は送った本人と管理者だけ（2026-09-25）。写しで見ているほかの代表者にも出ていたが、
                        データベースの権限で必ず弾かれる（押すと赤いエラーになるだけ）ボタンだった */}
                 {canDeleteNotice(outboxDetail) && (<>
@@ -4067,6 +4211,7 @@ const BoardPage: React.FC = () => {
                 </>)}
               </div>
             )}
+            {tplSuccess && !tplOpen && view === 'outbox' && <div style={{ marginTop: 8 }}>{tplSuccessCard}</div>}
             {/* 写し（CC）を外す。修正中・削除の確認中は出さない */}
             {editingNoticeId !== outboxDetail.id && deleteConfirmId !== outboxDetail.id && renderCcRow(outboxDetail)}
           </div>
@@ -5191,6 +5336,178 @@ const BoardPage: React.FC = () => {
           </div>
         );
       })()}
+
+      {/* お知らせのテンプレート：一覧のシート（2026-09-26・(142)）。送信プレビューと同じ全面のシート。
+          🚨 ［使う］は送信画面から開いたときだけ意味がある。行を押すと本文の先頭と操作が開く（1行1操作） */}
+      {tplOpen && (
+        <div onClick={() => setTplOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 5000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 16, padding: '14px 14px 16px', width: '100%', maxWidth: 480, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>📋 お知らせのテンプレート</span>
+              <button type="button" onClick={() => setTplOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: subColor }}>✕</button>
+            </div>
+            {/* 全体／自分の（🎨🔒 択一トグルの青） */}
+            <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+              {([['global', `全体（${tplCountGlobal}件）`], ['personal', `自分の（${tplCountPersonal}件）`]] as const).map(([v, label]) => (
+                <button key={v} type="button" onClick={() => { setTplScope(v); setTplExpandedId(null); setTplShowAll(false); setTplPendingUse(null); setTplDeleteId(null); }}
+                  style={{ flex: 1, padding: '7px 0', borderRadius: 8, cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold',
+                    border: tplScope === v ? 'none' : '1px solid #90caf9', background: tplScope === v ? '#1976d2' : '#e3f2fd', color: tplScope === v ? '#fff' : '#1565c0' }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <input value={tplQuery} onChange={e => { setTplQuery(e.target.value); setTplExpandedId(null); }} placeholder="🔍 名前・件名・本文で検索"
+              style={{ width: '100%', padding: '7px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, boxSizing: 'border-box', marginBottom: 8 }} />
+            {/* 分類のチップ。同じ画面の宛先チップと同じ見た目 */}
+            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 8 }}>
+              {tplChips.map(c => (
+                <button key={c.value} type="button" onClick={() => { setTplCategory(c.value); setTplExpandedId(null); }}
+                  style={{ padding: '3px 9px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 11, background: tplCategory === c.value ? '#007bff' : (isDark ? '#495057' : '#e9ecef'), color: tplCategory === c.value ? '#fff' : (isDark ? '#fff' : '#333') }}>
+                  {c.label}
+                </button>
+              ))}
+            </div>
+            {tplError && (
+              <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '8px 12px', fontSize: 12.5, color: '#842029', marginBottom: 8 }}>{tplError}</div>
+            )}
+            {tplTruncated && (
+              <div style={{ fontSize: 12, color: '#856404', background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '6px 10px', marginBottom: 8 }}>🚨 テンプレートが多く、新しい順に1000件までしか読んでいません</div>
+            )}
+            {tplSuccess && <div style={{ marginBottom: 8 }}>{tplSuccessCard}</div>}
+            <div style={{ fontSize: 11, color: subColor, marginBottom: 6 }}>
+              {tplLoading ? '読み込んでいます…' : (tplFiltered ? `${tplVisible.length}件 / ${tplScope === 'global' ? tplCountGlobal : tplCountPersonal}件` : `${tplVisible.length}件`)}
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+              {!tplLoading && tplVisible.length === 0 && (
+                <div style={{ textAlign: 'center', color: subColor, fontSize: 13, padding: '24px 0' }}>
+                  {tplFiltered ? '見つかりませんでした' : (tplScope === 'global' ? '全体のテンプレートはまだありません' : 'テンプレートはまだありません。送信画面の「保存」で登録できます')}
+                </div>
+              )}
+              {tplShown.map(t => {
+                const open = tplExpandedId === t.id;
+                const cat = categoryLabel(t.category_id, tplCategories);
+                const editable = canEditTpl(t);
+                return (
+                  <div key={t.id} style={{ padding: '9px 10px', border: open ? '1.5px solid #3b82f6' : `1px solid ${border}`, borderRadius: 10, background: cardBg, marginBottom: 6 }}>
+                    <div onClick={() => { setTplExpandedId(open ? null : t.id); setTplPendingUse(null); setTplDeleteId(null); }} style={{ cursor: 'pointer' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontWeight: 700, color: textColor, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
+                        {cat && <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 11, background: isDark ? '#495057' : '#e9ecef', color: isDark ? '#fff' : '#333', whiteSpace: 'nowrap' }}>{cat}</span>}
+                      </div>
+                      <div style={{ fontSize: 12, color: subColor, marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>件名：{t.subject}</div>
+                    </div>
+                    {open && (
+                      <>
+                        <div style={{ fontSize: 12, color: textColor, marginTop: 6, padding: '8px 10px', background: inputBg, borderRadius: 8, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 160, overflowY: 'auto' }}>{t.body}</div>
+                        <div style={{ fontSize: 11, color: subColor, marginTop: 6 }}>
+                          {t.scope === 'global' && <>作った人：{tplPersonName(t.owner_id)} ／ </>}
+                          最終更新：{fmtFull(t.updated_at)}{t.updated_by && t.updated_by !== t.owner_id ? `（${tplPersonName(t.updated_by)}）` : ''}
+                        </div>
+                        {tplPendingUse?.id === t.id ? (
+                          <div style={{ marginTop: 8, padding: '10px 12px', background: '#fff3cd', border: '2px solid #ffc107', borderRadius: 8, fontSize: 13, color: '#856404', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                            <span style={{ flex: 1, minWidth: 200 }}>件名と本文を「{t.name}」の内容に置き換えますか？ 宛先・期限はそのままです</span>
+                            <button type="button" onClick={() => setTplPendingUse(null)} style={{ padding: '5px 12px', background: 'none', border: '1px solid #856404', borderRadius: 6, color: '#856404', cursor: 'pointer', fontSize: 12 }}>やめる</button>
+                            <button type="button" onClick={() => applyTemplate(t)} style={{ padding: '5px 12px', background: '#856404', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>置き換える</button>
+                          </div>
+                        ) : tplDeleteId === t.id ? (
+                          <div style={{ marginTop: 8, padding: '10px 12px', background: '#fff3cd', border: '2px solid #ffc107', borderRadius: 8, fontSize: 13, color: '#856404', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                            <span style={{ flex: 1, minWidth: 200 }}>テンプレート「{t.name}」を削除しますか？{t.scope === 'global' && ' 全体のテンプレートです。ほかの人も使えなくなります'}</span>
+                            <button type="button" onClick={() => setTplDeleteId(null)} style={{ padding: '5px 12px', background: 'none', border: '1px solid #856404', borderRadius: 6, color: '#856404', cursor: 'pointer', fontSize: 12 }}>やめる</button>
+                            <button type="button" onClick={() => deleteTemplateNow(t)} style={{ padding: '5px 12px', background: '#dc3545', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>削除する</button>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                            {view === 'compose' && (
+                              <button type="button" onClick={() => requestUseTemplate(t)} style={{ flex: 1, padding: '8px 0', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 'bold' }}>使う</button>
+                            )}
+                            {editable && (<>
+                              <button type="button" onClick={() => openTemplateSave({ subject: t.subject, body: t.body }, t)} style={{ padding: '8px 14px', background: 'none', border: `1px solid ${border}`, color: subColor, borderRadius: 8, cursor: 'pointer', fontSize: 12 }}>修正</button>
+                              <button type="button" onClick={() => setTplDeleteId(t.id)} style={{ padding: '8px 14px', background: 'none', border: '1px solid #dc3545', color: '#dc3545', borderRadius: 8, cursor: 'pointer', fontSize: 12 }}>削除</button>
+                            </>)}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+              {!tplShowAll && !tplFiltered && tplVisible.length > TPL_PAGE && (
+                <button type="button" onClick={() => setTplShowAll(true)} style={{ width: '100%', padding: 8, background: 'none', border: 'none', color: isDark ? '#93c5fd' : '#1d4ed8', cursor: 'pointer', fontSize: 12 }}>
+                  残り {tplVisible.length - TPL_PAGE} 件を見る ▼
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* テンプレートの保存・修正の枠（2026-09-26）。送信画面の「保存」・受信/送信トレイの「テンプレートに保存」・一覧の「修正」が同じこれを使う */}
+      {tplSave && (
+        <div onClick={() => { if (!tplSaving) setTplSave(null); }} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 5001, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 16, padding: '14px 14px 16px', width: '100%', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box' }}>
+            <div style={{ fontSize: 15, fontWeight: 'bold', color: textColor, marginBottom: 10 }}>{tplSave.id ? '📋 テンプレートを直す' : '📋 テンプレートに保存'}</div>
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: textColor, marginBottom: 4 }}>テンプレートの名前 <span style={{ color: '#dc3545' }}>*必須</span></div>
+              <input value={tplSave.name} onChange={e => setTplSave(s => s && ({ ...s, name: e.target.value }))} placeholder="例：出勤時間の変更のお願い"
+                style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, boxSizing: 'border-box' }} />
+            </div>
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: textColor, marginBottom: 4 }}>分類</div>
+              <select value={tplSave.categoryId} onChange={e => setTplSave(s => s && ({ ...s, categoryId: e.target.value }))}
+                style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, boxSizing: 'border-box' }}>
+                <option value="">（分類なし）</option>
+                {/* 隠した分類は、そのテンプレがすでに持っているときだけ「（旧）」で出す（選び直せるように） */}
+                {[...tplCategories].filter(c => c.active || c.id === tplSave.categoryId).sort((a, b) => a.sort_order - b.sort_order).map(c => (
+                  <option key={c.id} value={c.id}>{c.active ? c.name : `（旧）${c.name}`}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: textColor, marginBottom: 4 }}>件名 <span style={{ color: '#dc3545' }}>*必須</span></div>
+              <input value={tplSave.subject} onChange={e => setTplSave(s => s && ({ ...s, subject: e.target.value }))}
+                style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, boxSizing: 'border-box' }} />
+            </div>
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: textColor, marginBottom: 4 }}>本文 <span style={{ color: '#dc3545' }}>*必須</span></div>
+              <textarea value={tplSave.body} onChange={e => setTplSave(s => s && ({ ...s, body: e.target.value }))} rows={5}
+                style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit' }} />
+            </div>
+            {/* 保存先。🚨 権限が無い人には「全体」を出さない（押せないボタンは出さない方針・2026-09-25） */}
+            {tplCanPickScope ? (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: textColor, marginBottom: 4 }}>保存先</div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {([['personal', '自分だけ'], ['global', '全体（みんなが使える）']] as const).map(([v, label]) => (
+                    <button key={v} type="button" onClick={() => setTplSave(s => s && ({ ...s, scope: v }))}
+                      style={{ flex: 1, padding: '7px 0', borderRadius: 8, cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold',
+                        border: tplSave.scope === v ? 'none' : '1px solid #90caf9', background: tplSave.scope === v ? '#1976d2' : '#e3f2fd', color: tplSave.scope === v ? '#fff' : '#1565c0' }}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: subColor, marginBottom: 8 }}>保存先：{tplSave.scope === 'global' ? '全体（みんなが使える）' : '自分だけ'}</div>
+            )}
+            <div style={{ fontSize: 11, color: subColor, marginBottom: 10, lineHeight: 1.6 }}>
+              ※ 件名と本文だけを保存します（宛先・期限は入りません）。{tplSave.id && 'すでに書きかけのお知らせには反映されません。'}
+            </div>
+            {tplSaveError && (
+              <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '8px 12px', fontSize: 12.5, color: '#842029', marginBottom: 8 }}>{tplSaveError}</div>
+            )}
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button type="button" onClick={saveTemplateNow} disabled={tplSaving}
+                style={{ flex: 1, padding: '9px 0', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 'bold', opacity: tplSaving ? 0.6 : 1 }}>
+                {tplSaving ? '保存中…' : '保存する'}
+              </button>
+              <button type="button" onClick={() => setTplSave(null)} disabled={tplSaving}
+                style={{ flex: 1, padding: '9px 0', background: 'none', border: `1px solid ${border}`, color: subColor, borderRadius: 8, cursor: 'pointer', fontSize: 13 }}>
+                やめる
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* お知らせ送信確認モーダル */}
       {showComposeSendConfirm && (() => {
