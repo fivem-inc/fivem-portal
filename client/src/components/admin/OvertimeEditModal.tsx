@@ -24,6 +24,9 @@ export interface OvertimeRecord {
   application_types?: string[] | null;
   furikae_origin_date?: string | null;
   furikae_origin_location?: string | null;
+  /** 「開始が遅い／早く終わる理由」で押した事情（adj／event／telework）。札の表記だけを変える（typeLabelFor・2026-09-26） */
+  late_situation?: string | null;
+  early_situation?: string | null;
   created_at?: string | null;
   confirmed_at?: string | null;
   /** 実績報告のとき、事前申請の内容から変わった理由（変更が無ければ null） */

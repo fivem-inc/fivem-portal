@@ -25,7 +25,7 @@ import {
 } from '../lib/overtimeGrid';
 import type { GridReport, GridDayKind, RowDraft, RowState, GridRowCalc } from '../lib/overtimeGrid';
 import { STATUS_INFO } from '../lib/overtimeStatus';
-import { isOvertimeType, typeLabelFor } from '../lib/overtimeTypes';
+import { isOvertimeType, typeLabelFor, overtimeAmountLabel } from '../lib/overtimeTypes';
 import type { SituationLike } from '../lib/overtimeTypes';
 import { CALENDAR_CELL_STYLE } from '../hooks/useCompanyCalendar';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
@@ -427,7 +427,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
           if (!c.isSelfReview && !c.isPureZero && c.reviewerId) {
             await notifyOvertimeNewRequestBell({
               reportId: saved.reportId, reviewerId: c.reviewerId, applicantName: profileName ?? '',
-              phaseLabel, dateLabel: fullDateLabel(r.date), timeLabel: formatSignedMin(c.diffMin),
+              phaseLabel, dateLabel: fullDateLabel(r.date), timeLabel: overtimeAmountLabel(c.applicationTypes, c.diffMin),
             });
             const g = mailGroups.get(c.reviewerId) ?? { dates: [], diff: 0, phases: {} };
             g.dates.push(r.date); g.diff += c.diffMin; g.phases[phaseLabel] = (g.phases[phaseLabel] ?? 0) + 1;

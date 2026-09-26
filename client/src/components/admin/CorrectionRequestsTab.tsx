@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { resolveCorrectionRequest, declineCorrectionRequest } from '../../lib/correctionRequest';
 import type { CorrectionRequestRow } from '../../lib/correctionRequest';
-import { OT_TYPE_INFO, isOvertimeType } from '../../lib/overtimeTypes';
+import { isOvertimeType, typeLabelFor } from '../../lib/overtimeTypes';
 
 const PURPLE = '#534AB7';
 const RED = '#A32D2D';
@@ -101,9 +101,10 @@ const CorrectionRequestsTab: React.FC = () => {
     const otIds = idsOf('overtime');
     if (otIds.length) {
       const { data: ot } = await supabase.from('overtime_reports')
-        .select('id, work_date, application_types, status').in('id', otIds);
+        .select('id, work_date, application_types, status, late_situation, early_situation').in('id', otIds);
       for (const r of (ot as any[] | null) ?? []) {
-        const labels = ((r.application_types ?? []) as string[]).filter(isOvertimeType).map(t => OT_TYPE_INFO[t].label);
+        // 🚨 札の文字は typeLabelFor（押した事情で「遅出(イベント・会議など)」などに変わる・2026-09-26）
+        const labels = ((r.application_types ?? []) as string[]).filter(isOvertimeType).map(t => typeLabelFor(t, r));
         info[r.id] = {
           dateLabel: mdJp(r.work_date),
           typeLabel: labels.length ? labels.join('＋') : '残業',

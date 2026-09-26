@@ -53,7 +53,7 @@ import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
 import OvertimePlanSection from '../components/OvertimePlanSection';
 import { PageTabs } from '../components/PageTabs';
 import HelpLinkButton from '../components/HelpLinkButton';
-import { buildGcalSummary, OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport, CLOCK_ONLY_REASONS, canOfferCalendarChoice, willShowOnCalendar, reasonExamplesFor, typeLabelFor } from '../lib/overtimeTypes';
+import { buildGcalSummary, OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport, CLOCK_ONLY_REASONS, canOfferCalendarChoice, willShowOnCalendar, reasonExamplesFor, typeLabelFor, overtimeAmountLabel } from '../lib/overtimeTypes';
 import type { OvertimeType, SituationLike } from '../lib/overtimeTypes';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
 import { notifyOvertimeNewRequest, notifyOvertimeGrantRequest, sendOvertimeSlack } from '../lib/overtimeNotify';
@@ -1314,7 +1314,8 @@ const OvertimeForm: React.FC<{
           // 🚨 差し戻しの再提出も同じ理由で「再提出」と出す（2026-09-25）。以前は「事前申請」と出ていた
           phaseLabel: isResubmit ? '再提出' : phase === 'actual' ? '実績報告' : ((!editTarget && draft?.modifiedFromId) ? '修正の再申請' : '事前申請'),
           dateLabel: `${date}（${dowLabel(date)}）`,
-          timeLabel: formatSignedMin(diffMin),
+          // 🚨 終日（調整休・振替休日・欠勤）は差分が 0 なので、時間ではなく種別の名前を出す（以前は「0:00」と出ていた・2026-09-26）
+          timeLabel: overtimeAmountLabel(applicationTypes, diffMin),
         }).then(null, () => {});
       }
 

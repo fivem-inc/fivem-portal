@@ -1,6 +1,8 @@
 // 残業・時間管理の種別定義（本人ページ・管理タブで共通利用）。
 // GCal側のタイトル・色・同期可否は supabase/functions/gcal-sync/index.ts の OVERTIME_TYPES と対応。
 // ラベルや種別を追加・変更する場合は両方を合わせて更新すること。
+import { formatSignedMin } from './breakCalc';
+
 export type OvertimeType =
   | 'overtime' | 'early_start' | 'tardiness' | 'early_leave'
   | 'holiday_work' | 'location_change' | 'late_start_adj' | 'early_end_adj'
@@ -94,6 +96,19 @@ export function isOvertimeType(t: string): t is OvertimeType {
 
 export function isFullDayReport(types: string[] | null | undefined): boolean {
   return (types ?? []).some(t => (FULL_DAY_TYPES as string[]).includes(t));
+}
+
+/**
+ * 申請が届いたときのベル・メールに出す「時間」の欄。
+ * 時間の申請＝符号付きの差分（＋1:30）／終日（調整休・振替休日・欠勤）＝種別の名前（「時間外調整休」）。
+ * 🚨 終日は時間帯が無いので差分が 0 になり、以前は「0:00」と出ていた（2026-09-26 に直した）。
+ *    受理側（Edge Function overtime-approve）のベルは以前から種別の名前を出しており、それに揃えた
+ */
+export function overtimeAmountLabel(types: string[] | null | undefined, diffMin: number): string {
+  if (isFullDayReport(types)) {
+    return (types ?? []).filter(isOvertimeType).filter(t => (FULL_DAY_TYPES as string[]).includes(t)).map(t => OT_TYPE_INFO[t].label).join('・');
+  }
+  return formatSignedMin(diffMin);
 }
 
 // ============================================================
