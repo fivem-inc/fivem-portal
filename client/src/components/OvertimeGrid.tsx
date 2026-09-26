@@ -31,7 +31,7 @@ import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorag
 import { useRoles } from '../hooks/useRoles';
 import { attrsFor } from '../lib/roleAttrs';
 import TimeInput from './TimeInput';
-import { buildOvertimeRecord } from '../lib/overtimeSubmit';
+import { buildOvertimeRecord, LATE_CHOICES, EARLY_CHOICES } from '../lib/overtimeSubmit';
 import { saveOvertimeReport, syncOvertimeGcal } from '../lib/overtimeSubmitApi';
 import { notifyOvertimeNewRequestBell, notifyOvertimeNewRequestEmail, sendOvertimeSlackBatch } from '../lib/overtimeNotify';
 import { toDbTime } from '../lib/timeInput';
@@ -814,16 +814,19 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                             )}
                             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 4, fontSize: 12 }}>
                               {c.applicationTypes.length > 0 && <span style={{ color: subText }}>{typesText(c.applicationTypes)}</span>}
+                              {/* 選択肢は lib/overtimeSubmit の LATE_CHOICES / EARLY_CHOICES（1件フォームと共用・短い表記で並べる） */}
                               {c.typeDetect.lateQ && (
                                 <span>開始が遅い：
-                                  <label><input type="radio" checked={r.draft.lateChoice === 'adj'} onChange={() => touch({ lateChoice: 'adj' })} /> 調整</label>{' '}
-                                  <label><input type="radio" checked={r.draft.lateChoice === 'tardiness'} onChange={() => touch({ lateChoice: 'tardiness' })} /> 遅刻</label>
+                                  {LATE_CHOICES.map(o => (
+                                    <label key={o.value} style={{ marginRight: 6 }}><input type="radio" checked={r.draft.lateChoice === o.value} onChange={() => touch({ lateChoice: o.value })} /> {o.short}</label>
+                                  ))}
                                 </span>
                               )}
                               {c.typeDetect.earlyQ && (
                                 <span>早く終わる：
-                                  <label><input type="radio" checked={r.draft.earlyChoice === 'adj'} onChange={() => touch({ earlyChoice: 'adj' })} /> 調整</label>{' '}
-                                  <label><input type="radio" checked={r.draft.earlyChoice === 'early_leave'} onChange={() => touch({ earlyChoice: 'early_leave' })} /> 早退</label>
+                                  {EARLY_CHOICES.map(o => (
+                                    <label key={o.value} style={{ marginRight: 6 }}><input type="radio" checked={r.draft.earlyChoice === o.value} onChange={() => touch({ earlyChoice: o.value })} /> {o.short}</label>
+                                  ))}
                                 </span>
                               )}
                               <select value={r.draft.location} onChange={e => touch({ location: e.target.value })} style={sel} aria-label={`${md(r.date)} 勤務地`}>

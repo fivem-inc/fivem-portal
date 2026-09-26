@@ -24,7 +24,8 @@ import { STATUS_INFO } from '../lib/overtimeStatus';
 import OvertimeGrid from '../components/OvertimeGrid';
 import { isPointerDevice } from '../lib/idleLogout';
 import type { OvertimeStatus } from '../lib/overtimeStatus';
-import { toWorkSegments, segmentIssuesOf, detectOvertimeTypes, composeApplicationTypes, effectiveLocationOf, validateOvertime, overtimePhase, canReportOvertime, buildOvertimeRecord } from '../lib/overtimeSubmit';
+import { toWorkSegments, segmentIssuesOf, detectOvertimeTypes, composeApplicationTypes, effectiveLocationOf, validateOvertime, overtimePhase, canReportOvertime, buildOvertimeRecord, LATE_CHOICES, EARLY_CHOICES, situationOf } from '../lib/overtimeSubmit';
+import type { LateChoice, EarlyChoice } from '../lib/overtimeSubmit';
 import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, cutBandsAt, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import OvertimeMemoSection from '../components/OvertimeMemoSection';
 import { computeBalance } from '../lib/overtimeBalance';
@@ -916,13 +917,15 @@ const OvertimeForm: React.FC<{
   // ---- 種別の自動判定 ----
   // 時刻・勤務地の入力からシステムが種別を提案する。迷いやすい「調整か遅刻/早退か」だけ2択バナーで確定。
   // デフォルトは未選択(null)。本人が押さないと送信できない（validateでブロック）。
-  const [lateChoice, setLateChoice] = useState<'adj' | 'tardiness' | null>(() => {
+  // 🚨 選択肢の文言・値は lib/overtimeSubmit の LATE_CHOICES / EARLY_CHOICES（表入力と共用）。
+  //    既存の申請を開くときは種別からしか戻せないので、調整系は「時間調整」の位置に戻る
+  const [lateChoice, setLateChoice] = useState<LateChoice | null>(() => {
     const t = editTarget?.application_types ?? [];
     if (t.includes('tardiness')) return 'tardiness';
     if (t.includes('late_start_adj')) return 'adj';
     return null;
   });
-  const [earlyChoice, setEarlyChoice] = useState<'adj' | 'early_leave' | null>(() => {
+  const [earlyChoice, setEarlyChoice] = useState<EarlyChoice | null>(() => {
     const t = editTarget?.application_types ?? [];
     if (t.includes('early_leave')) return 'early_leave';
     if (t.includes('early_end_adj')) return 'adj';
@@ -944,8 +947,8 @@ const OvertimeForm: React.FC<{
   // 🚨 中身は lib/overtimeTypes.ts の reasonExamplesFor に移した（残業のメモと共用するため）。
   //    ここで書き写さないこと（片方だけ直す事故になる）
   const reasonExamples = useMemo<string[]>(
-    () => reasonExamplesFor(applicationTypes, fullDay, fullDayType),
-    [fullDay, fullDayType, applicationTypes],
+    () => reasonExamplesFor(applicationTypes, fullDay, fullDayType, situationOf(lateChoice, earlyChoice)),
+    [fullDay, fullDayType, applicationTypes, lateChoice, earlyChoice],
   );
 
   const fullDayMode = fullDay && !!fullDayType;
@@ -2121,15 +2124,17 @@ const OvertimeForm: React.FC<{
         </div>
       )}
 
-      {/* 種別の2択バナー（調整か遅刻/早退かだけ本人に確認） */}
+      {/* 種別の選択（遅刻/早退か、それ以外＝調整か を本人に確認）。
+          2026-09-26 ユーザー確定：4つ（時間調整・会社の予定・テレワーク・遅刻/早退）を2列で。種別は増やさない（上3つは調整）。
+          🚨 文言・値は lib/overtimeSubmit の LATE_CHOICES / EARLY_CHOICES（表入力と共用） */}
       {!fullDay && !clockOnlyMode && hasInput && typeDetect.lateQ && (
         <div style={{ marginBottom: 12 }}>
           <span style={{ fontSize: 13, color: subText, display: 'block', marginBottom: 6 }}>開始が遅い理由は？{req}</span>
-          <div style={{ display: 'flex', gap: 8 }}>
-            {([['adj', '時間調整で遅く出勤'], ['tardiness', '寝坊・私用などで遅刻']] as const).map(([v, label]) => (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            {LATE_CHOICES.map(({ value: v, label }) => (
               <button key={v} type="button" onClick={() => setLateChoice(v)}
                 style={{
-                  flex: 1, padding: '11px 4px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 13,
+                  padding: '11px 4px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 12.5, lineHeight: 1.35,
                   fontWeight: lateChoice === v ? 'bold' : 'normal',
                   background: lateChoice === v ? '#1976d2' : (isDark ? '#495057' : '#e9ecef'),
                   color: lateChoice === v ? '#fff' : text,
@@ -2138,16 +2143,17 @@ const OvertimeForm: React.FC<{
               </button>
             ))}
           </div>
+          <p style={{ margin: '4px 0 0', fontSize: 11, color: subText }}>時間の計算はどれを押しても同じです。遅刻でなければ上の3つから選んでください</p>
         </div>
       )}
       {!fullDay && !clockOnlyMode && hasInput && typeDetect.earlyQ && (
         <div style={{ marginBottom: 12 }}>
           <span style={{ fontSize: 13, color: subText, display: 'block', marginBottom: 6 }}>早く終わる理由は？{req}</span>
-          <div style={{ display: 'flex', gap: 8 }}>
-            {([['adj', '時間調整で早退'], ['early_leave', '体調・私用などで早退']] as const).map(([v, label]) => (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            {EARLY_CHOICES.map(({ value: v, label }) => (
               <button key={v} type="button" onClick={() => setEarlyChoice(v)}
                 style={{
-                  flex: 1, padding: '11px 4px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 13,
+                  padding: '11px 4px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 12.5, lineHeight: 1.35,
                   fontWeight: earlyChoice === v ? 'bold' : 'normal',
                   background: earlyChoice === v ? '#1976d2' : (isDark ? '#495057' : '#e9ecef'),
                   color: earlyChoice === v ? '#fff' : text,
@@ -2156,6 +2162,7 @@ const OvertimeForm: React.FC<{
               </button>
             ))}
           </div>
+          <p style={{ margin: '4px 0 0', fontSize: 11, color: subText }}>時間の計算はどれを押しても同じです。早退でなければ上の3つから選んでください</p>
         </div>
       )}
 

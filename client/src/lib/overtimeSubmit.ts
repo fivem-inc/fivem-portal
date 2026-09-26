@@ -106,19 +106,49 @@ export function detectOvertimeTypes(args: {
   return { fixed, lateQ, earlyQ };
 }
 
-/** 自動判定＋本人の2択 → 保存する種別。終日は単独付与（DB制約と対応） */
+/**
+ * 「開始が遅い理由」「終わりが早い理由」の選択肢（2026-09-26 ユーザー確定：4つ・種別は増やさない）。
+ * 🚨 上3つ（時間調整・会社の予定・テレワーク）は**どれも種別「調整遅出／調整早退」**。違うのは理由の文例だけ。
+ *    いちばん下だけが「遅刻／早退」。時間の計算はどれを押しても同じ。
+ *    以前は「時間調整」と「遅刻」の2択で、大掃除・会議・テレワークで時間をずらした人が「どちらでもない」と迷っていた。
+ * 🚨 1件フォームと表入力の両方がこの配列を使う（文言を2か所に書かない）
+ */
+export type LateChoice = 'adj' | 'event' | 'telework' | 'tardiness';
+export type EarlyChoice = 'adj' | 'event' | 'telework' | 'early_leave';
+// ✅ 文言はユーザー確定（2026-09-26）。value の 'event'＝会社の予定（イベント・会議・大掃除）／'telework'＝働き方の都合（出張・直行直帰・在宅）
+export const LATE_CHOICES: { value: LateChoice; label: string; short: string }[] = [
+  { value: 'adj',       label: '時間調整で遅く出勤',       short: '時間調整' },
+  { value: 'event',     label: 'イベント・会議・大掃除など', short: 'イベントなど' },
+  { value: 'telework',  label: '出張・直行直帰・在宅など',   short: '出張・在宅など' },
+  { value: 'tardiness', label: '寝坊・私用などで遅刻',       short: '遅刻' },
+];
+export const EARLY_CHOICES: { value: EarlyChoice; label: string; short: string }[] = [
+  { value: 'adj',         label: '時間調整で早退',           short: '時間調整' },
+  { value: 'event',       label: 'イベント・会議・大掃除など', short: 'イベントなど' },
+  { value: 'telework',    label: '出張・直行直帰・在宅など',   short: '出張・在宅など' },
+  { value: 'early_leave', label: '体調・私用などで早退',       short: '早退' },
+];
+/** 押した選択肢から「事情」（理由の文例に使う）。遅刻・早退・時間調整は null */
+export function situationOf(late: LateChoice | null, early: EarlyChoice | null): 'event' | 'telework' | null {
+  if (late === 'event' || early === 'event') return 'event';
+  if (late === 'telework' || early === 'telework') return 'telework';
+  return null;
+}
+
+/** 自動判定＋本人の選択 → 保存する種別。終日は単独付与（DB制約と対応） */
 export function composeApplicationTypes(args: {
   typeDetect: TypeDetect;
-  lateChoice: 'adj' | 'tardiness' | null;
-  earlyChoice: 'adj' | 'early_leave' | null;
+  lateChoice: LateChoice | null;
+  earlyChoice: EarlyChoice | null;
   fullDay: boolean;
   fullDayType: OvertimeType | null;
 }): OvertimeType[] {
   const { typeDetect, lateChoice, earlyChoice, fullDay, fullDayType } = args;
   if (fullDay && fullDayType) return [fullDayType];
   const t = [...typeDetect.fixed];
-  if (typeDetect.lateQ && lateChoice) t.push(lateChoice === 'adj' ? 'late_start_adj' : 'tardiness');
-  if (typeDetect.earlyQ && earlyChoice) t.push(earlyChoice === 'adj' ? 'early_end_adj' : 'early_leave');
+  // 🚨 遅刻・早退以外（時間調整・会社の予定・テレワーク）はすべて「調整」の種別
+  if (typeDetect.lateQ && lateChoice) t.push(lateChoice === 'tardiness' ? 'tardiness' : 'late_start_adj');
+  if (typeDetect.earlyQ && earlyChoice) t.push(earlyChoice === 'early_leave' ? 'early_leave' : 'early_end_adj');
   return t;
 }
 
@@ -174,8 +204,8 @@ export interface ValidateInput {
   isPureZero: boolean;
   changeReason: string;
   typeDetect: TypeDetect;
-  lateChoice: 'adj' | 'tardiness' | null;
-  earlyChoice: 'adj' | 'early_leave' | null;
+  lateChoice: LateChoice | null;
+  earlyChoice: EarlyChoice | null;
   /**
    * 欠勤の申請先がマネージャー以上か（他人宛のときだけ意味を持つ）。
    * 🚨 任意。渡さなければ見ない（表入力は終日を扱わないので渡さない）。

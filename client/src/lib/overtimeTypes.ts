@@ -45,7 +45,11 @@ export const CLOCK_ONLY_REASONS = [
  */
 export function reasonExamplesFor(
   applicationTypes: OvertimeType[], fullDay: boolean, fullDayType: OvertimeType | null,
+  /** 「開始が遅い／終わりが早い理由」で押した事情（2026-09-26）。イベントなど／出張・在宅などのときは文例をそれに寄せる */
+  situation: 'event' | 'telework' | null = null,
 ): string[] {
+  if (!fullDay && situation === 'event') return ['大掃除のため', '会議のため', 'イベント対応のため'];
+  if (!fullDay && situation === 'telework') return ['出張のため', '直行直帰のため', '在宅勤務のため'];
   if (fullDay) {
     if (fullDayType === 'chosei_off') return ['〇〇イベント準備により時間外労働が発生したため', '勤務時間調整のため'];
     if (fullDayType === 'furikae_off') return ['休日出勤の振替のため'];

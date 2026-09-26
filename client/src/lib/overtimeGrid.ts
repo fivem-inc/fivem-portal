@@ -11,7 +11,7 @@ import {
   canReportOvertime, toWorkSegments, segmentIssuesOf, detectOvertimeTypes, composeApplicationTypes,
   effectiveLocationOf, validateOvertime, overtimePhase, isSameAsNormalShift,
 } from './overtimeSubmit';
-import type { SegInput, TypeDetect } from './overtimeSubmit';
+import type { SegInput, TypeDetect, LateChoice, EarlyChoice } from './overtimeSubmit';
 import { buildWorkDiff } from './overtimeShift';
 import type { NormalShiftSnapshot } from './overtimeShift';
 import type { OvertimeStatus } from './overtimeStatus';
@@ -160,8 +160,8 @@ export interface RowDraft {
   /** 勤務地の選択（校名 or 'その他'） */
   location: string;
   locationCustom: string;
-  lateChoice: 'adj' | 'tardiness' | null;
-  earlyChoice: 'adj' | 'early_leave' | null;
+  lateChoice: LateChoice | null;
+  earlyChoice: EarlyChoice | null;
   /** 新しく出す行だけ。空＝表の上の申請先 */
   reviewerId: string;
 }
