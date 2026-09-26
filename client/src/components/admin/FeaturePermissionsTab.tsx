@@ -88,6 +88,7 @@ const FEATURES = [
 
   // ── 連絡・情報 ──
   { key: 'board',           icon: '💬', label: '連絡板',         note: '', group: '連絡・情報' as FeatureGroup, bySuperior: false },
+  { key: 'board_template_global', icon: '📋', label: '連絡板：全体テンプレートの登録・変更', note: 'お知らせの送信画面で「全体テンプレート」（みんなが使える件名・本文の型）を登録し、ほかの人が作ったものも修正・削除できる役職。最初はリーダー以上。個人テンプレート（自分だけのもの）はこの設定に関係なく誰でも使えます', group: '連絡・情報' as FeatureGroup, bySuperior: false },
   // 安否確認は災害時に全員へ届く必要があるため、役職別のトグルは使わず公開/非公開だけで運用する
   // （役職で絞ると、その役職の人に安否確認が届かなくなってしまう）
   { key: 'safety_check',    icon: '🆘', label: '安否・緊急連絡',  note: '発信はマネージャー以上・回答は全員', group: '連絡・情報' as FeatureGroup, bySuperior: false },
