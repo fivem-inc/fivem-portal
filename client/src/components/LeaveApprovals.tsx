@@ -121,6 +121,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   //    ID は別々の表（leave_requests / application_requests）の UUID なので取り違えも起きない。
   const { highlightId: reqHighlightId, focusRef: reqFocusRef } = useFocusHighlight(myRequests);
   const [requestErr, setRequestErr] = useState('');
+  const [showDoneRequests, setShowDoneRequests] = useState(false); // 済んだ依頼を開いているか（既定は閉じる）
 
   const fetchMyRequests = useCallback(async () => {
     const { data, error } = await supabase.from('application_requests')
@@ -674,10 +675,21 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
               </span>
             )}
           </div>
-          {/* 自分が出した依頼の一覧。出しっぱなしにせず、状態と取り下げをここで見る */}
+          {/* 自分が出した依頼の一覧。出しっぱなしにせず、状態と取り下げをここで見る。
+              🚨 済んだもの（申請済み・対応しない・取り下げ）は折りたたむ（2026-09-26 ユーザー確定）。
+                 未申請だけをまず見せ、済んだものは押したときだけ開く。最後の更新から90日で自動で消える（cron purge-application-requests-daily） */}
           {myRequests.length > 0 && (
             <div style={{ marginTop: 10, borderTop: `1px solid ${isDark ? '#495057' : '#dee2e6'}`, paddingTop: 8 }}>
-              {myRequests.slice(0, 8).map(r => (
+              {myRequests.filter(r => r.status !== 'open').length > 0 && (
+                <button type="button" onClick={() => setShowDoneRequests(v => !v)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, padding: '3px 0', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: isDark ? '#adb5bd' : '#6c757d' }}>
+                  <span>{showDoneRequests ? '▼' : '▶'} 済んだもの {myRequests.filter(r => r.status !== 'open').length}件（申請済み・対応しない・取り下げ）</span>
+                </button>
+              )}
+              {showDoneRequests && myRequests.some(r => r.status !== 'open') && (
+                <div style={{ fontSize: 11, color: isDark ? '#adb5bd' : '#6c757d', marginBottom: 4 }}>※ 済んだものは、最後の更新から90日で自動で消えます</div>
+              )}
+              {myRequests.filter(r => r.status === 'open' || showDoneRequests).map(r => (
                 <div key={r.id}
                   ref={el => { if (el && reqHighlightId === r.id) reqFocusRef.current = el; }}
                   style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '5px 0', fontSize: 12, color: isDark ? '#dee2e6' : '#495057',

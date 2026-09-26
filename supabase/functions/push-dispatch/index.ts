@@ -74,6 +74,8 @@ const EVENT_MAP: Record<string, { app: string; word: string; text: string; url: 
   //    付けないと「残業ページに着いただけで、何をすればよいか分からない」。
   //    プッシュは複数を1通にまとめるため依頼IDを持てないので、ベルを経由して特定する。
   "application_request:received": { app: "申請依頼", word: "新着", text: "申請の依頼が届いています", url: "/overtime?tab=history", bell: true },
+  // 休暇の依頼は休暇ページに着く（2026-09-26）。設定は先頭2つ＝application_request:received を見る（新しい行は要らない）。文面は同じ
+  "application_request:received:leave": { app: "申請依頼", word: "新着", text: "申請の依頼が届いています", url: "/leave", bell: true },
   // シフト調整：パートへの「出勤のお願い」（2026-09-13 追加）。
   // 🚨 日付・誰の代わりかは書かない（プッシュはロック画面に出る）。中身は着地画面で見る。
   // 🚨 bell は付けない。/shift-request が自分あての依頼をそのまま並べるので、ベルを開く必要がない。

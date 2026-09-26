@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 // note を渡すと「読んでほしい案内」が付く。
 // 🚨 note があるときは自動で閉じない。3秒で消えて画面が切り替わると、
@@ -58,6 +58,9 @@ import { shouldSend, dispatchEmail, dispatchSiteNotification, getUserEmail } fro
 import { insertNotification } from '../lib/notifications';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
+import AppRequestCard from './AppRequestCard';
+import { loadReceivedAppRequests } from '../lib/appRequests';
+import type { ReceivedAppRequest } from '../lib/appRequests';
 import { useLeavePendingCount } from '../hooks/useLeavePendingCount';
 import { todayJstStr, leaveRequestMaxDate, jpDateLabel } from '../lib/breakCalc';
 import type { CalendarKind } from '../lib/breakCalc';
@@ -469,6 +472,33 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
   const [history, setHistory] = useState<LeaveRecord[]>([]);
   // 通知バナーから ?focus=<申請ID> で来たとき履歴の該当カードを強調
   const { highlightId, focusRef } = useFocusHighlight(history);
+
+  // ── 自分あての「休暇の申請依頼」（2026-09-26）。それまで依頼のカードは残業ページにしか無く、
+  //    休暇の依頼でも残業ページに探しに行く作りだった（馬場さんはベルを読んだあと、カードを通らずここから申請した）。
+  //    カードは components/AppRequestCard（残業ページと共用）。申請との結び付けは DB のトリガーが同じ日で行う。
+  const [receivedReqs, setReceivedReqs] = useState<ReceivedAppRequest[]>([]);
+  const [receivedReqErr, setReceivedReqErr] = useState('');
+  const [reqReplaceFor, setReqReplaceFor] = useState<string | null>(null); // 書きかけがあるときの置き換え確認
+  const fetchReceivedReqs = useCallback(async () => {
+    const r = await loadReceivedAppRequests(user.id, 'leave');
+    if (r.error) { setReceivedReqErr(r.error); return; }
+    setReceivedReqErr('');
+    setReceivedReqs(r.rows);
+  }, [user.id]);
+  useEffect(() => { fetchReceivedReqs(); }, [fetchReceivedReqs]);
+  // ベル・スマホから ?focus=<依頼ID> で来たとき（履歴用のフックと2つ並ぶが、合致する行があるほうだけが動く）
+  const { highlightId: reqHighlightId, focusRef: reqFocusRef } = useFocusHighlight(receivedReqs);
+  /** 依頼の日付と申請先を入れて、この画面のフォームで申請する（🚨 申請はしない。理由・種類は本人が確かめる） */
+  const startFromReceivedReq = (r: ReceivedAppRequest) => {
+    if (selectedDates.length > 0 && reqReplaceFor !== r.id) { setReqReplaceFor(r.id); return; }
+    setReqReplaceFor(null);
+    setLeaveType('有給休暇');
+    setSelectedDates(r.target_dates ?? []);
+    setSelectedApproverId(r.requester_id);
+    setPurpose(r.memo ?? '');
+    setTab('form');
+    window.scrollTo({ top: 0 });
+  };
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [adjHistory, setAdjHistory] = useState<{ id: string; date: string; type: string; actual_time: string | null; notes: string | null; created_at: string }[]>([]);
   const [historySubTab, setHistorySubTab] = useState<'leave' | 'adjustment'>('leave');
@@ -711,6 +741,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       setSubmitted(true);
       setShowConfirm(false);
       clearDraft(DRAFT_KEYS.leave); // 送信成功で下書きを消す
+      fetchReceivedReqs(); // 同じ日の依頼は DB のトリガーが「申請済み」にしているので、カードを読み直して消す（2026-09-26）
     } catch (err: unknown) {
       setSubmitError('送信に失敗しました。' + (err instanceof Error ? err.message : JSON.stringify(err)));
     } finally {
@@ -945,6 +976,36 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
       {/* 申請フォーム */}
       {tab === 'form' && (
         <div style={{ padding: 24, background: bg, borderRadius: '0 0 12px 12px', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', boxSizing: 'border-box', width: '100%' }}>
+          {/* 📩 自分あての休暇の申請依頼（2026-09-26）。カードは残業ページと共用の AppRequestCard */}
+          {receivedReqErr && (
+            <div style={{ marginBottom: 10, padding: '9px 12px', borderRadius: 8, fontSize: 12.5, background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029' }}>{receivedReqErr}</div>
+          )}
+          {receivedReqs.length > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 'bold', color: isDark ? '#90caf9' : '#1565c0', margin: '4px 0 8px' }}>📩 休暇の申請依頼が届いています</div>
+              {receivedReqs.map(r => (
+                <AppRequestCard key={r.id} r={r} isDark={isDark}
+                  focused={reqHighlightId === r.id}
+                  focusRef={el => { if (el && reqHighlightId === r.id) reqFocusRef.current = el; }}
+                  startLabel="この依頼の日付で申請する"
+                  onStart={() => startFromReceivedReq(r)}
+                  replacePanel={reqReplaceFor === r.id ? (
+                    <div style={{ padding: '9px 11px', borderRadius: 8, background: isDark ? '#4a3a1a' : '#fff8e1', border: '1px solid #f0c36d', color: isDark ? '#ffcf8f' : '#b7770d' }}>
+                      <p style={{ margin: '0 0 8px', fontSize: 12, lineHeight: 1.7 }}>選んでいる日付があります。この依頼の日付に置き換えますか？</p>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button type="button" onClick={() => startFromReceivedReq(r)}
+                          style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>置き換える</button>
+                        <button type="button" onClick={() => setReqReplaceFor(null)}
+                          style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: `1px solid ${isDark ? '#495057' : '#dee2e6'}`, cursor: 'pointer', fontSize: 12.5, background: 'transparent', color: isDark ? '#adb5bd' : '#6c757d' }}>やめる</button>
+                      </div>
+                    </div>
+                  ) : undefined}
+                  onDismissed={x => setReceivedReqs(prev => prev.filter(q => q.id !== x.id))}
+                  onError={msg => setReceivedReqErr(msg)}
+                />
+              ))}
+            </div>
+          )}
           {/* 再申請バナー */}
           {reapplySourceId && (
             <div style={{ background: isDark ? '#0d3a5e' : '#cce5ff', border: `1px solid ${isDark ? '#1a6fa8' : '#b8daff'}`, borderRadius: 8, padding: '10px 14px', marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

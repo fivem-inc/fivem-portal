@@ -215,13 +215,16 @@ const ApplicationRequestSheet: React.FC<Props> = ({
     // 相手へのお知らせ。文言は形式的に、何をすればよいかが分かる形にする（2026-09-09 ユーザー確定）
     const dateLabel = filledDates.map(d => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`).join('・');
     const dueLabel = dueDate ? `（申請期限 ${Number(dueDate.slice(5, 7))}/${Number(dueDate.slice(8, 10))}）` : '';
+    // 🚨 休暇の依頼は種類を鍵に付ける（2026-09-26）。ベル・スマホから休暇ページへ着くため
+    //    （それまでは休暇の依頼でも残業ページに着いていた）。設定（ON/OFF）は先頭2つ＝application_request:received を見るので新しい行は要らない
+    const eventKey = kind === 'leave' ? 'application_request:received:leave' : 'application_request:received';
     await insertNotification(
       recipientId,
       `📩 ${requesterName}さんより申請依頼：${dateLabel} ${KIND_LABEL[kind]}${dueLabel}`,
       memo.trim() || undefined,
-      'application_request:received',
+      eventKey,
       data.id,
-      'application_request:received',
+      eventKey,
     );
 
     setSubmitting(false);

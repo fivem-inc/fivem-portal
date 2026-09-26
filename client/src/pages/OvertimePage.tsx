@@ -2,6 +2,9 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useScrollIntoViewWhen } from '../hooks/useScrollIntoViewWhen';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
+import AppRequestCard from '../components/AppRequestCard';
+import { loadReceivedAppRequests } from '../lib/appRequests';
+import type { ReceivedAppRequest } from '../lib/appRequests';
 import { supabase } from '../lib/supabaseClient';
 import OvertimeProposalSheet, { type DraftCandidate } from '../components/OvertimeProposalSheet';
 import OvertimeProposalResponse from '../components/OvertimeProposalResponse';
@@ -33,8 +36,6 @@ import { memoShortLabel } from '../lib/overtimeMemo';
 import type { OvertimeMemo } from '../lib/overtimeMemo';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { describeUpdate } from '../lib/statusUpdate';
-import { insertNotification } from '../lib/notifications';
-import { segmentsText, type SegmentLike } from '../lib/segmentsText';
 import { useRoles } from '../hooks/useRoles';
 import { attrsFor, rankOf, embeddedRole, roleByName } from '../lib/roleAttrs';
 import type { RoleRow, EmbeddedRoleRow } from '../lib/roleAttrs';
@@ -185,8 +186,7 @@ function modifiedFromLine(mf: OvertimeReport["modified_from"]): string | null {
 //    選ぶのは必須・書くのは「その他」のときだけ必須、という形にしている。
 // 🚨 定型の文字はそのまま recipient_note に入る。あとから数えたいので表記を増やさないこと
 //    （メモに自由記述させる方式は 2026-09-02 に「表記ゆれで数えられない」として見送っている）。
-const DISMISS_REASONS = ['すでに申請した', '日付や内容が異なる', '申請が不要になった', 'その他'] as const;
-const DISMISS_OTHER = 'その他';
+// 🚨 「対応しない」の理由の選択肢は lib/appRequests（DISMISS_REASONS）へ移した（2026-09-26・休暇ページと共用）
 
 function dowLabel(dateStr: string): string {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -3006,31 +3006,16 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   // 🚨 ホームの黄色い案内だけにすると、閉じたあと二度と見つけられない
   //    （既存の「残業調整の提案」で同じ穴があり、バナー頼みになっている）。
   //    履歴タブの先頭に必ず出して、開けば見つかる状態にする。
-  interface MyAppRequest {
-    id: string; requester_id: string; kind: string; target_dates: string[] | null;
-    memo: string | null; due_date: string | null; status: string; requester_name?: string | null;
-    // 上長が口頭で相談した日（任意・空のことがある）。🚨 created_at とは別もの
-    consulted_on: string | null;
-    // 入る時間と校（2026-09-14）。シフト調整の決定で作った依頼だけに入る。上長が画面から送った依頼は null
-    segments: SegmentLike[] | null;
-  }
+  // 🚨 型・読み込みは lib/appRequests（休暇ページと共用・2026-09-26）
+  type MyAppRequest = ReceivedAppRequest;
   const [appRequests, setAppRequests] = useState<MyAppRequest[]>([]);
   const [appReqErr, setAppReqErr] = useState('');
   const fetchAppRequests = useCallback(async () => {
-    const { data, error } = await supabase.from('application_requests')
-      .select('id, requester_id, kind, target_dates, memo, due_date, status, consulted_on, segments')
-      .eq('recipient_id', user.id)
-      .eq('status', 'open')
-      .order('created_at', { ascending: true });
-    // 🚨 読めなかったときは空で上書きしない（依頼が無いと嘘をつくため）
-    if (error) { setAppReqErr('依頼を読み込めませんでした：' + error.message); return; }
+    // 🚨 読めなかったときは空で上書きしない（依頼が無いと嘘をつくため）。中身は lib/appRequests
+    const r = await loadReceivedAppRequests(user.id);
+    if (r.error) { setAppReqErr(r.error); return; }
     setAppReqErr('');
-    const rows = (data ?? []) as MyAppRequest[];
-    const ids = [...new Set(rows.map(r => r.requester_id))];
-    if (ids.length === 0) { setAppRequests(rows); return; }
-    const { data: profs } = await supabase.from('profiles').select('id, name').in('id', ids);
-    const nameOf = new Map(((profs ?? []) as { id: string; name: string }[]).map(p2 => [p2.id, p2.name]));
-    setAppRequests(rows.map(r => ({ ...r, requester_name: nameOf.get(r.requester_id) ?? null })));
+    setAppRequests(r.rows);
   }, [user.id]);
   useEffect(() => { fetchAppRequests(); }, [fetchAppRequests]);
   // 依頼が届いているときは、開いた直後に履歴タブへ移す（依頼カードはこのタブの中にしか無い）。
@@ -3089,13 +3074,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     //    2か所で動かすと、どちらが勝つか分からない動きになる。
   };
   const [replaceDraftFor, setReplaceDraftFor] = useState<string | null>(null);
-  // 「対応しない」の確認パネルを出している依頼ID（2026-09-10 実機指摘）
-  const [dismissConfirmFor, setDismissConfirmFor] = useState<string | null>(null);
-  const [dismissReason, setDismissReason] = useState<string | null>(null);
-  const [dismissNote, setDismissNote] = useState('');
-  const [dismissErr, setDismissErr] = useState('');
-  // 理由を選ぶ枠はカードの中で下に伸びるので、開いたらそこまで動かす（2026-09-25・［消す］が画面の外に出ないように）
-  const dismissBoxRef = useScrollIntoViewWhen<HTMLDivElement>(dismissConfirmFor, 'nearest');
+  // 🚨 「対応しない」の確認パネルとその状態は components/AppRequestCard の中（2026-09-26・休暇ページと共用）
 
   /** 休暇の依頼から、日付とメモを入れた状態で休暇申請の画面へ移る。
    *  🚨 休暇は複数日を1件で申請できるので、依頼の日付を全部入れる（残業は1日ずつ）。
@@ -3158,39 +3137,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     window.scrollTo({ top: 0 });
   };
 
-  /** 依頼に「対応しない」と答える */
-  const dismissRequest = async (id: string, note: string) => {
-    setAppReqErr('');
-    // 通知に使うので、消す前に控えておく（消したあとは一覧から引けない）
-    const target = appRequests.find(r => r.id === id);
-    // 🚨 update は0件でもエラーにならない。件数を見る
-    const { data, error } = await supabase.from('application_requests')
-      // 🚨 理由は recipient_note に入れる（この列は元からあり未使用だった）。
-      //    上長の依頼一覧（LeaveApprovals）でこれを読んで見せる。
-      .update({ status: 'dismissed', recipient_note: note, responded_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-      .eq('id', id).eq('status', 'open').select('id');
-    if (error) { setAppReqErr('保存できませんでした：' + error.message); return; }
-    if (!data || data.length === 0) { setAppReqErr('保存できませんでした（すでに処理された可能性があります）'); fetchAppRequests(); return; }
-    setAppRequests(prev => prev.filter(r => r.id !== id));
-    // 依頼した上長に知らせる（2026-09-11 ユーザー承認）。
-    // 🚨 理由を入れてもらっても、上長が依頼一覧を開かなければ気づけない。だから届ける。
-    // 🚨 **event_key を付けない**。付けると DB のトリガー（enqueue_push_notification）が
-    //    自動で push_queue に積み、**スマホが鳴る**。ここはベルだけでよい（ユーザー確定）。
-    // 🚨 宛先は依頼した本人1人だけ。dispatchSiteNotification は使わない
-    //    （あちらは宛先の設定が無いと全員に飛ぶ作り＝46人に届く）。
-    // 🚨 通知が失敗しても「対応しない」自体は成立させる（投げっぱなし。中で受け止めている）。
-    if (target?.requester_id) {
-      const kindLabel = target.kind === 'leave' ? '休暇' : '残業・勤務変更';
-      const dates = (target.target_dates ?? []).map(d => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}（${dowLabel(d)}）`).join('・');
-      void insertNotification(
-        target.requester_id,
-        `📩 ${kindLabel}の申請依頼は「対応しない」と回答がありました`,
-        `${dates}／理由：${note}`,
-        'application_request:dismissed',
-        id,
-      );
-    }
-  };
+  // 🚨 「対応しない」の中身（dismissed にして上長へベル）は lib/appRequests の dismissAppRequest（カードが呼ぶ）
 
   const ownActionRows = ownHistory.filter(isOtActionRow);
   const ownRestRows = ownHistory.filter(r => !isOtActionRow(r));
@@ -4157,117 +4104,35 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                         <p style={{ margin: '0 0 12px', fontSize: 13, color: subText, textAlign: 'center' }}>条件に一致する履歴はありません</p>
                       )}
                       {/* 📩 自分あての申請の依頼（2026-09-09）。
-                          🚨 ホームの案内だけだと、閉じたあと二度と見つけられない。ここに必ず出す。 */}
+                          🚨 ホームの案内だけだと、閉じたあと二度と見つけられない。ここに必ず出す。
+                          🚨 カードは components/AppRequestCard（休暇ページと共用・2026-09-26）。ここに書き写さない */}
                       {appReqErr && (
                         <div style={{ marginBottom: 10, padding: '9px 12px', borderRadius: 8, fontSize: 12.5, background: '#f8d7da', border: '1px solid #f5c2c7', color: '#842029' }}>{appReqErr}</div>
                       )}
                       {appRequests.length > 0 && (
                         <div style={{ marginBottom: 14 }}>
                           <div style={{ fontSize: 12.5, fontWeight: 'bold', color: isDark ? '#90caf9' : '#1565c0', margin: '4px 0 8px' }}>📩 申請の依頼が届いています</div>
-                          {appRequests.map(r => {
-                            // ベル・プッシュから ?focus=<依頼ID> で来たときに光らせる。
-                            // 🚨 色は勤怠カレンダーのハイライトと同じ（新しい色を足さない）
-                            const isFocused = highlightReqId === r.id;
-                            return (
-                            <div key={r.id} ref={el => { if (el && isFocused) focusReqRef.current = el; }}
-                              style={{ background: isFocused ? (isDark ? '#4a4423' : '#fff9c4') : (isDark ? '#243447' : '#e8f4fd'), border: `1px solid ${isFocused ? '#f59e0b' : (isDark ? '#3d5166' : '#90caf9')}`, borderRadius: 10, padding: '12px 14px', marginBottom: 8, transition: 'background 0.6s' }}>
-                              <p style={{ margin: '0 0 6px', fontSize: 13, lineHeight: 1.8, color: isDark ? '#fff' : '#0d47a1' }}>
-                                {r.requester_name ?? ''}さんから、
-                                {/* 相談した日（2026-09-11 ユーザー要望）。🚨 任意なので、空のときは何も出さない。
-                                       created_at で代用しない＝話した日とずれるため（列を足した理由） */}
-                                {r.consulted_on && `${Number(r.consulted_on.slice(5, 7))}/${Number(r.consulted_on.slice(8, 10))}（${dowLabel(r.consulted_on)}）に相談した `}
-                                {/* 曜日も出す（2026-09-10 ユーザー指示）。🚨 曜日は既存の dowLabel を使う */}
-                                {(r.target_dates ?? []).map(d => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}（${dowLabel(d)}）`).join('・')}の
-                                {r.kind === 'leave' ? '休暇' : '残業・勤務変更'}について申請のお願いが届いています。
-                                {r.due_date && <><br />{`${Number(r.due_date.slice(5, 7))}/${Number(r.due_date.slice(8, 10))}（${dowLabel(r.due_date)}）`}までに申請してください。</>}
-                              </p>
-                              {/* 入る時間と校（2026-09-14 ユーザー指摘「依頼が来ても時間が分からない」）。
-                                  🚨 シフト調整の決定で作った依頼だけに入る。上長が画面から送った依頼には無いので出さない */}
-                              {(r.segments ?? []).length > 0 && (
-                                <p style={{ margin: '0 0 6px', fontSize: 13, fontWeight: 'bold', color: isDark ? '#fff' : '#0d47a1' }}>
-                                  入る時間：{segmentsText(r.segments)}
-                                </p>
-                              )}
-                              {r.memo && (
-                                <p style={{ margin: '0 0 8px', padding: '7px 10px', borderRadius: 6, fontSize: 12, lineHeight: 1.7, background: isDark ? '#1b2a3a' : '#fff', color: isDark ? '#dee2e6' : '#495057', whiteSpace: 'pre-wrap' }}>{r.memo}</p>
-                              )}
-                              {/* 押した瞬間に一覧から消えていたので、確認を挟む（2026-09-10 実機指摘）。
-                                  🚨 window.confirm() は使わない決まり。同じカードの中の
-                                     「書きかけがあります」と同じインラインのパネルで聞く。
-                                  🚨 ボタンの言葉は「消す」に揃えた（ユーザー確定）。
-                                     押した言葉（対応しない）と確認の言葉（消す）が違うと迷う。
-                                     「対応しない」は**上長の画面にだけ**出る言葉で本人は見ないので、
-                                     画面ごとに自然な言葉であればよい。
-                                  🚨 中身は status を 'dismissed' にするだけ。行は消えないので、
-                                     上長の依頼一覧には「対応しない」と残る（LeaveApprovals）。 */}
-                              {dismissConfirmFor === r.id ? (
-                                <div ref={dismissBoxRef} style={{ padding: '9px 11px', borderRadius: 8, background: isDark ? '#4a3a1a' : '#fff8e1', border: '1px solid #f0c36d', color: isDark ? '#ffcf8f' : '#b7770d' }}>
-                                  <p style={{ margin: '0 0 6px', fontSize: 12, lineHeight: 1.7 }}>対応しない理由をお選びください</p>
-                                  {/* 🚨 色は既存の択一トグルの青（🎨🔒 固定色）。新しい色は足さない */}
-                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-                                    {DISMISS_REASONS.map(v => {
-                                      const active = dismissReason === v;
-                                      return (
-                                        <button key={v} type="button" onClick={() => { setDismissReason(v); setDismissErr(''); }}
-                                          style={{ padding: '4px 11px', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 'bold', border: `2px solid ${active ? '#1565c0' : '#90caf9'}`, background: active ? '#1976d2' : '#e3f2fd', color: active ? '#fff' : '#1565c0' }}>
-                                          {v}
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                  {/* 「その他」を選んだときだけ入力欄を出す。そのときだけ必須
-                                      （「その他」のままでは上長に何も伝わらないため） */}
-                                  {dismissReason === DISMISS_OTHER && (
-                                    <div style={{ marginBottom: 8 }}>
-                                      <div style={{ fontSize: 11.5, marginBottom: 5 }}>理由を入力してください</div>
-                                      <textarea value={dismissNote} onChange={e => { setDismissNote(e.target.value); setDismissErr(''); }} rows={2}
-                                        placeholder="例：シフトが変わったため"
-                                        style={{ width: '100%', boxSizing: 'border-box', padding: '7px 9px', borderRadius: 8, border: `1px solid ${borderColor}`, background: isDark ? '#212529' : '#fff', color: text, fontSize: 12.5, resize: 'vertical', lineHeight: 1.6 }} />
-                                    </div>
-                                  )}
-                                  {dismissErr && (
-                                    <div style={{ fontSize: 11.5, color: '#dc3545', marginBottom: 8 }}>{dismissErr}</div>
-                                  )}
-                                  <div style={{ display: 'flex', gap: 6 }}>
-                                    <button onClick={() => {
-                                      // 🚨 選んでいないまま消させない（上長に理由が伝わらない）
-                                      if (!dismissReason) { setDismissErr('理由をお選びください'); return; }
-                                      const note = dismissReason === DISMISS_OTHER ? dismissNote.trim() : dismissReason;
-                                      if (dismissReason === DISMISS_OTHER && !note) { setDismissErr('理由を入力してください'); return; }
-                                      setDismissConfirmFor(null); setDismissReason(null); setDismissNote(''); setDismissErr('');
-                                      dismissRequest(r.id, note);
-                                    }}
-                                      style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>対応しない</button>
-                                    <button onClick={() => { setDismissConfirmFor(null); setDismissReason(null); setDismissNote(''); setDismissErr(''); }}
-                                      style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12.5, background: 'transparent', color: subText }}>やめる</button>
-                                  </div>
-                                </div>
-                              ) : replaceDraftFor === r.id ? (
+                          {appRequests.map(r => (
+                            <AppRequestCard key={r.id} r={r} isDark={isDark}
+                              focused={highlightReqId === r.id}
+                              focusRef={el => { if (el && highlightReqId === r.id) focusReqRef.current = el; }}
+                              startLabel={r.kind === 'leave' ? '休暇を申請する' : 'この内容で申請する'}
+                              onStart={() => (r.kind === 'leave' ? startLeaveFromRequest(r) : startFromRequest(r))}
+                              replacePanel={replaceDraftFor === r.id ? (
                                 <div style={{ padding: '9px 11px', borderRadius: 8, background: isDark ? '#4a3a1a' : '#fff8e1', border: '1px solid #f0c36d', color: isDark ? '#ffcf8f' : '#b7770d' }}>
                                   <p style={{ margin: '0 0 8px', fontSize: 12, lineHeight: 1.7 }}>書きかけの申請があります。この依頼の内容に置き換えますか？</p>
                                   <div style={{ display: 'flex', gap: 6 }}>
-                                    <button onClick={() => startFromRequest(r)}
+                                    <button onClick={() => (r.kind === 'leave' ? startLeaveFromRequest(r) : startFromRequest(r))}
                                       style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>置き換える</button>
                                     <button onClick={() => setReplaceDraftFor(null)}
                                       style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12.5, background: 'transparent', color: subText }}>やめる</button>
                                   </div>
                                 </div>
-                              ) : (
-                                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                  {r.kind === 'leave' ? (
-                                    <button onClick={() => startLeaveFromRequest(r)}
-                                      style={{ flex: 1, minWidth: 140, padding: '10px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>休暇を申請する</button>
-                                  ) : (
-                                    <button onClick={() => startFromRequest(r)}
-                                      style={{ flex: 1, minWidth: 140, padding: '10px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>この内容で申請する</button>
-                                  )}
-                                  <button onClick={() => setDismissConfirmFor(r.id)}
-                                    style={{ padding: '10px 16px', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 12.5, background: 'transparent', color: subText }}>対応しない</button>
-                                </div>
-                              )}
-                            </div>
-                            );
-                          })}
+                              ) : undefined}
+                              onDismissed={x => setAppRequests(prev => prev.filter(q => q.id !== x.id))}
+                              onError={msg => setAppReqErr(msg)}
+                            />
+                          ))}
                         </div>
                       )}
                       {ownActionRows.length > 0 && (

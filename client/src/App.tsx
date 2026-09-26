@@ -844,8 +844,12 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   // 🚨 自分あての「申請の依頼」も数に入れる（2026-09-20）。
   //    ベルとプッシュしか無く、9日間気づかれなかった実例があるため。
   //    数字が何の件数か分からなくならないよう、残業ページ側では**履歴タブにも印**を出している
-  const { count: appRequestCount } = useAppRequestCount(userId);
-  const overtimeBadge = overtimePending + overtimeUnreported + appRequestCount; // 確認依頼＋自分の実績未報告＋申請の依頼
+  // 🚨 2026-09-26：種類で分ける。休暇の依頼は休暇のナビに、残業の依頼は残業のナビに数える（休暇ページにも依頼のカードを出したため）
+  const { rows: appRequestRows } = useAppRequestCount(userId);
+  const appRequestCountLeave = appRequestRows.filter(r => r.kind === 'leave').length;
+  const appRequestCountOvertime = appRequestRows.length - appRequestCountLeave;
+  const overtimeBadge = overtimePending + overtimeUnreported + appRequestCountOvertime; // 確認依頼＋自分の実績未報告＋申請の依頼（残業）
+  const leaveBadge = leavePending + appRequestCountLeave; // 承認待ち＋自分あての休暇の申請依頼
 
   // モバイルでボタンが画面幅に収まらない時の横スワイプ対応：
   // 端までスクロールできることを示すフェードの表示/非表示を判定
@@ -976,11 +980,11 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
             </button>
           )}
           {canLeave && isPub('leave_request') && (
-            <div data-nav-badge={leavePending} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
+            <div data-nav-badge={leaveBadge} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
               <button onClick={() => navTo('/leave')} style={btnStyle(location.pathname === '/leave', '#28a745')}>
                 {isMobile ? <><span style={{ fontSize: 20 }}>🌿</span>{navLabel('休暇申請')}</> : '🌿 休暇申請'}
               </button>
-              {leavePending > 0 && (
+              {leaveBadge > 0 && (
                 <span style={{ position: 'absolute', top: -4, right: -4, background: '#dc3545', color: '#fff', borderRadius: 10, fontSize: 10, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', padding: '0 3px', border: '2px solid #1a1a2e', pointerEvents: 'none' }}>
                   {leavePending > 99 ? '99+' : leavePending}
                 </span>
@@ -1179,7 +1183,8 @@ const classifyNotif = (n: NotifLike) => {
   const isLeaveResult          = n.source_type === 'leave_request';                  // 申請者：結果報告のみ
   const isLeaveFyi             = n.source_type === 'leave_request:fyi';              // 上長：FYI（誰がいつ休むか共有・カレンダー着地）
   const isShiftAdjustDue       = n.source_type === 'leave:shift_adjust_due';         // 上長：シフト調整がまだの休暇（カレンダー着地・未調整で絞る）
-  const isAppRequest           = n.source_type === 'application_request:received';   // 本人：上長からの申請の依頼
+  const isAppRequest           = n.source_type === 'application_request:received';   // 本人：上長からの申請の依頼（残業・勤務変更）
+  const isAppRequestLeave      = n.source_type === 'application_request:received:leave'; // 本人：休暇の申請依頼（2026-09-26・休暇ページに着く）
   const isAppRequestDismissed  = n.source_type === 'application_request:dismissed';  // 上長：相手が「対応しない」と回答した（結果のみ）
   const isAppRequestDue        = n.source_type === 'application_request:due';        // 本人：申請の期限が近い／過ぎた（要対応）
   const isShiftPendingApproval = n.source_type === 'shift_report:pending_approval';  // レビュアー：要対応
@@ -1294,6 +1299,10 @@ const classifyNotif = (n: NotifLike) => {
     //    reference_id は application_requests.id（依頼ID）。
     if (isAppRequest) {
       return { path: n.reference_id ? `/overtime?tab=history&focus=${n.reference_id}` : '/overtime?tab=history', closeOnTap: false };
+    }
+    // 休暇の依頼は休暇ページの申請タブに着く（依頼のカードはそこにも出る・2026-09-26）
+    if (isAppRequestLeave) {
+      return { path: n.reference_id ? `/leave?focus=${n.reference_id}` : '/leave', closeOnTap: false };
     }
     // 相手が「対応しない」と回答した → 自分が出した依頼の一覧（休暇承認ページ）で該当行を光らせる。
     // 🚨 closeOnTap は true（isResultOnly に入れてある）。読めば用が済むお知らせで、
