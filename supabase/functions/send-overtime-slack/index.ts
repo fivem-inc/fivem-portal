@@ -86,7 +86,18 @@ type Report = {
   work_date: string
   application_types: string[] | null
   location: string | null
+  /** 「開始が遅い／早く終わる理由」で押した事情（adj／event／telework）。表記に使う（2026-09-26） */
+  late_situation?: string | null
+  early_situation?: string | null
   segments: { phase: string; seg_no: number; start_min: number; end_min: number }[] | null
+}
+
+// 押した事情があれば表記を変える。🚨 client/src/lib/overtimeTypes.ts の typeLabelFor・gcal-sync と同じ文字（3か所管理）
+const SITUATION_SUFFIX: Record<string, string> = { event: 'イベント・会議など', telework: '出張・在宅など' }
+function typeLabelOf(t: string, r: Report): string {
+  if (t === 'late_start_adj' && SITUATION_SUFFIX[String(r.late_situation ?? '')]) return `遅出(${SITUATION_SUFFIX[String(r.late_situation)]})`
+  if (t === 'early_end_adj' && SITUATION_SUFFIX[String(r.early_situation ?? '')]) return `早退(${SITUATION_SUFFIX[String(r.early_situation)]})`
+  return TYPE_LABEL[t] ?? t
 }
 
 /**
@@ -95,7 +106,7 @@ type Report = {
  */
 function describe(report: Report) {
   const types: string[] = report.application_types ?? []
-  const typeLabels = types.map(t => TYPE_LABEL[t] ?? t).join('・')
+  const typeLabels = types.map(t => typeLabelOf(t, report)).join('・')
   const d = new Date(report.work_date + 'T00:00:00Z')
   const dateLabel = `${d.getUTCMonth() + 1}月${d.getUTCDate()}日（${DOW[d.getUTCDay()]}）`
 
@@ -170,7 +181,7 @@ serve(async (req) => {
 
     const { data: reportRows, error: readErr } = await supabase
       .from('overtime_reports')
-      .select('id, applicant_id, work_date, application_types, location, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
+      .select('id, applicant_id, work_date, application_types, location, late_situation, early_situation, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
       .in('id', ids)
     if (readErr) return json({ error: '申請を読めませんでした：' + readErr.message }, 500)
     const found = (reportRows ?? []) as Report[]

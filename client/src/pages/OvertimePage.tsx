@@ -52,8 +52,8 @@ import CorrectionBadgeAndButton from '../components/CorrectionBadgeAndButton';
 import OvertimePlanSection from '../components/OvertimePlanSection';
 import { PageTabs } from '../components/PageTabs';
 import HelpLinkButton from '../components/HelpLinkButton';
-import { buildGcalSummary, OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport, CLOCK_ONLY_REASONS, canOfferCalendarChoice, willShowOnCalendar, reasonExamplesFor } from '../lib/overtimeTypes';
-import type { OvertimeType } from '../lib/overtimeTypes';
+import { buildGcalSummary, OT_TYPE_INFO, isOvertimeType, FULL_DAY_TYPES, isFullDayReport, CLOCK_ONLY_REASONS, canOfferCalendarChoice, willShowOnCalendar, reasonExamplesFor, typeLabelFor } from '../lib/overtimeTypes';
+import type { OvertimeType, SituationLike } from '../lib/overtimeTypes';
 import { fetchLatestCorrectionByTarget } from '../lib/correctionRequest';
 import { notifyOvertimeNewRequest, notifyOvertimeGrantRequest, sendOvertimeSlack } from '../lib/overtimeNotify';
 import type { CorrectionRequestRow } from '../lib/correctionRequest';
@@ -98,6 +98,9 @@ interface OvertimeReport {
   modified_from?: { work_date: string; diff_minutes: number | null; application_types: string[] | null; location: string | null } | null;
   /** カレンダーに載せるか。null=未指定（種別ごとの既定に従う＝これまでどおりの動き） */
   show_on_calendar?: boolean | null;
+  /** 「開始が遅い／早く終わる理由」で押した事情（adj／event／telework）。札の表記に使う（2026-09-26） */
+  late_situation?: string | null;
+  early_situation?: string | null;
   status: OvertimeStatus;
   normal_shift: NormalShiftSnapshot | null;
   break_minutes: number | null;
@@ -216,13 +219,14 @@ function badgeStyle(color: string, darkBg: string, isDark: boolean): React.CSSPr
 }
 
 /** 種別チップ列（履歴カード・確認カード・確認ダイアログで共通利用） */
-const TypeChips: React.FC<{ types: string[] | null | undefined; isDark: boolean }> = ({ types, isDark }) => {
+// 🚨 札の文字は typeLabelFor（押した事情で「遅出(イベント・会議など)」などに変わる・2026-09-26）。situation を渡し忘れると「調整遅出」に戻る
+const TypeChips: React.FC<{ types: string[] | null | undefined; isDark: boolean; situation?: SituationLike | null }> = ({ types, isDark, situation }) => {
   const list = (types ?? []).filter(isOvertimeType);
   if (list.length === 0) return null;
   return (
     <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap', verticalAlign: 'middle' }}>
       {list.map(t => (
-        <span key={t} style={badgeStyle(OT_TYPE_INFO[t].color, OT_TYPE_INFO[t].darkBg, isDark)}>{OT_TYPE_INFO[t].label}</span>
+        <span key={t} style={badgeStyle(OT_TYPE_INFO[t].color, OT_TYPE_INFO[t].darkBg, isDark)}>{typeLabelFor(t, situation)}</span>
       ))}
     </span>
   );
@@ -922,13 +926,14 @@ const OvertimeForm: React.FC<{
   const [lateChoice, setLateChoice] = useState<LateChoice | null>(() => {
     const t = editTarget?.application_types ?? [];
     if (t.includes('tardiness')) return 'tardiness';
-    if (t.includes('late_start_adj')) return 'adj';
+    // 保存してある事情（event / telework）があれば押した位置に戻す。無ければ「時間調整」
+    if (t.includes('late_start_adj')) return (editTarget?.late_situation as LateChoice | null | undefined) ?? 'adj';
     return null;
   });
   const [earlyChoice, setEarlyChoice] = useState<EarlyChoice | null>(() => {
     const t = editTarget?.application_types ?? [];
     if (t.includes('early_leave')) return 'early_leave';
-    if (t.includes('early_end_adj')) return 'adj';
+    if (t.includes('early_end_adj')) return (editTarget?.early_situation as EarlyChoice | null | undefined) ?? 'adj';
     return null;
   });
 
@@ -985,7 +990,9 @@ const OvertimeForm: React.FC<{
     //    先頭に【申請中】が付くが、ここで伝えたいのは「どの項目が載るか」なので、
     //    受理後の形（最終的にみんなが見る形）を見せる。
     isPending: false,
-  }), [profileName, applicationTypes, workSegments, effectiveLocation]);
+    // 押した事情（イベント・出張など）で「遅出(イベント・会議など)」の表記になる。実際の gcal-sync と同じ
+    situation: { late_situation: lateChoice, early_situation: earlyChoice },
+  }), [profileName, applicationTypes, workSegments, effectiveLocation, lateChoice, earlyChoice]);
   // 打刻ズレの労働時間は通常シフトそのもの。打刻時刻は参考値で、ここには入れない
   const normalWorkSegments: WorkSegment[] = useMemo(() =>
     normalSegs.map(s => {
@@ -1259,7 +1266,7 @@ const OvertimeForm: React.FC<{
       const record = buildOvertimeRecord({
         userId: user.id, date, mode, phase, fullDayMode, fullDayType, isSelfReview, isPureZero, isReportPhase, isResubmit, hasChanges,
         normalShift, breakMin, breakManual, laborMin, diffMin, fdDiffMin, legalOk: legal.ok, reason, changeReason, fdLocation, effectiveLocation,
-        applicationTypes, offerCalendarChoice, showOnCalendar, editTargetShowOnCalendar: editTarget?.show_on_calendar,
+        applicationTypes, lateChoice, earlyChoice, offerCalendarChoice, showOnCalendar, editTargetShowOnCalendar: editTarget?.show_on_calendar,
         furikaeOriginDate, effectiveFurikaeOriginLocation, furikaeOriginStart, furikaeOriginEnd, furikaeOriginBreak, furikaeOriginLabor, furikaeHasTime,
         reviewerId, modifiedFromId: (!editTarget && draft?.modifiedFromId) ? draft.modifiedFromId : null,
         clockOnlyMode, effectiveClockReason, clockInAt, clockOutAt, nowIso: new Date().toISOString(),
@@ -1421,7 +1428,7 @@ const OvertimeForm: React.FC<{
           <div style={{ fontSize: 12.5, color: text, marginTop: 6, lineHeight: 1.6 }}>
             {editTarget.work_date.slice(5).replace('-', '/')}（{dowLabel(editTarget.work_date)}）｜予定 {segmentsLabel((editTarget.segments ?? []).filter(s => s.phase === 'planned'))}{plannedBaseline.location ? `［${plannedBaseline.location}］` : ''}
           </div>
-          <div style={{ marginTop: 4 }}><TypeChips types={editTarget.application_types} isDark={isDark} /></div>
+          <div style={{ marginTop: 4 }}><TypeChips types={editTarget.application_types} isDark={isDark} situation={editTarget} /></div>
           {editTarget.status === 'requested' && (
             <p style={{ margin: '6px 0 0', fontSize: 12, color: subText, lineHeight: 1.6 }}>
               ※この申請はまだ受理されていませんが、このまま実績を報告できます（受理と確認はまとめて行われます）
@@ -2118,7 +2125,7 @@ const OvertimeForm: React.FC<{
           {applicationTypes.length > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', borderTop: `1px solid ${borderColor}`, marginTop: 6, paddingTop: 8 }}>
               <span style={{ fontSize: 12.5, color: subText }}>種別：</span>
-              <TypeChips types={applicationTypes} isDark={isDark} />
+              <TypeChips types={applicationTypes} isDark={isDark} situation={{ late_situation: lateChoice, early_situation: earlyChoice }} />
             </div>
           )}
         </div>
@@ -2451,7 +2458,7 @@ const OvertimeForm: React.FC<{
           {applicationTypes.length > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', margin: '0 0 10px' }}>
               <span style={{ fontSize: 12.5, color: subText }}>種別：</span>
-              <TypeChips types={applicationTypes} isDark={isDark} />
+              <TypeChips types={applicationTypes} isDark={isDark} situation={{ late_situation: lateChoice, early_situation: earlyChoice }} />
             </div>
           )}
           <div style={{ display: 'flex', gap: 8 }}>
@@ -3425,7 +3432,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
 
                 {(r.application_types ?? []).length > 0 && (
                   <div style={{ margin: '0 0 8px' }}>
-                    <TypeChips types={r.application_types} isDark={isDark} />
+                    <TypeChips types={r.application_types} isDark={isDark} situation={r} />
                   </div>
                 )}
                 <p style={{ margin: '0 0 6px', fontSize: 12.5, color: subText }}>理由：{r.reason}　／　勤務地：{r.location ?? '-'}</p>
@@ -3880,7 +3887,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                           <>
                             {(r.application_types ?? []).length > 0 && (
                               <div style={{ margin: '2px 0 4px' }}>
-                                <TypeChips types={r.application_types} isDark={isDark} />
+                                <TypeChips types={r.application_types} isDark={isDark} situation={r} />
                               </div>
                             )}
                             <p style={{ margin: 0, fontSize: 12.5, color: subText }}>
@@ -4790,7 +4797,7 @@ const ReadonlyReportCard: React.FC<{
       ) : (
         <>
           {(r.application_types ?? []).length > 0 && (
-            <div style={{ margin: '2px 0 4px' }}><TypeChips types={r.application_types} isDark={isDark} /></div>
+            <div style={{ margin: '2px 0 4px' }}><TypeChips types={r.application_types} isDark={isDark} situation={r} /></div>
           )}
           <p style={{ margin: 0, fontSize: 12.5, color: subText, lineHeight: 1.75 }}>
             {r.normal_shift?.start_time

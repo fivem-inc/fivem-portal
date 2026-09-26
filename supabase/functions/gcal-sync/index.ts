@@ -303,7 +303,7 @@ serve(async (req) => {
     if (action === 'sync' && source_type === 'overtime') {
       const { data: report } = await supabase
         .from('overtime_reports')
-        .select('id, applicant_id, work_date, entry_type, is_post_hoc, status, location, application_types, show_on_calendar, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
+        .select('id, applicant_id, work_date, entry_type, is_post_hoc, status, location, application_types, show_on_calendar, late_situation, early_situation, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
         .eq('id', source_id)
         .maybeSingle()
 
@@ -359,7 +359,15 @@ serve(async (req) => {
       const firstStart = use.length > 0 ? use[0].start_min : null
       const lastEnd = use.length > 0 ? use[use.length - 1].end_min : null
 
-      const labels = syncTypes.slice(0, 2).map(t => OVERTIME_TYPES[t].label).join('＋')
+      // 押した事情（late_situation / early_situation＝event・telework）があれば、その表記に変える（2026-09-26）。
+      // 🚨 同じ表記が client/src/lib/overtimeTypes.ts の typeLabelFor と send-overtime-slack にもある（3か所管理・片方だけ直さない）
+      const SITUATION_SUFFIX: Record<string, string> = { event: 'イベント・会議など', telework: '出張・在宅など' }
+      const labelOf = (t: string): string => {
+        if (t === 'late_start_adj' && SITUATION_SUFFIX[String(report.late_situation ?? '')]) return `遅出(${SITUATION_SUFFIX[String(report.late_situation)]})`
+        if (t === 'early_end_adj' && SITUATION_SUFFIX[String(report.early_situation ?? '')]) return `早退(${SITUATION_SUFFIX[String(report.early_situation)]})`
+        return OVERTIME_TYPES[t].label
+      }
+      const labels = syncTypes.slice(0, 2).map(labelOf).join('＋')
       const primary = syncTypes[0]
       let timeStr = ''
       if (firstStart != null && lastEnd != null) {

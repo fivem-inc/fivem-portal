@@ -60,6 +60,9 @@ export interface GridReport {
   return_comment: string | null;
   reviewer_id: string | null;
   normal_shift: unknown;
+  /** 「開始が遅い／早く終わる理由」で押した事情（adj／event／telework）。札の表記と、開いたときの選択の復元に使う */
+  late_situation?: string | null;
+  early_situation?: string | null;
   /** 元の申請で本人が選んだ「カレンダーに載せるか」。🚨 実績報告・再提出ではそのまま引き継ぐ（計画 §10-7） */
   show_on_calendar?: boolean | null;
   segments?: { phase: 'planned' | 'actual'; seg_no: number; start_min: number; end_min: number }[];
@@ -211,8 +214,9 @@ export function initialRowDraft(kind: GridDayKind, main: GridReport | null, work
     reason: main.reason ?? '',
     breakMin: main.break_manual && main.break_minutes != null ? String(main.break_minutes) : '',
     ...locationPick(main.location, workplaces),
-    lateChoice: t.includes('tardiness') ? 'tardiness' : t.includes('late_start_adj') ? 'adj' : null,
-    earlyChoice: t.includes('early_leave') ? 'early_leave' : t.includes('early_end_adj') ? 'adj' : null,
+    // 保存してある事情（event / telework）があれば押した位置に戻す（1件フォームと同じ）
+    lateChoice: t.includes('tardiness') ? 'tardiness' : t.includes('late_start_adj') ? ((main.late_situation as LateChoice | null | undefined) ?? 'adj') : null,
+    earlyChoice: t.includes('early_leave') ? 'early_leave' : t.includes('early_end_adj') ? ((main.early_situation as EarlyChoice | null | undefined) ?? 'adj') : null,
   };
 }
 

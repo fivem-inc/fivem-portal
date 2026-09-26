@@ -380,6 +380,9 @@ export interface RecordInput {
   fdLocation: string;
   effectiveLocation: string;
   applicationTypes: OvertimeType[];
+  /** 「開始が遅い／早く終わる理由」で押したもの（保存する事情 late_situation / early_situation の元。2026-09-26） */
+  lateChoice: LateChoice | null;
+  earlyChoice: EarlyChoice | null;
   offerCalendarChoice: boolean;
   showOnCalendar: boolean;
   /** 実績報告で引き継ぐ元の値（editTarget.show_on_calendar） */
@@ -431,6 +434,9 @@ export function buildOvertimeRecord(v: RecordInput, toDbTime: (t: string) => str
     change_reason: (v.isReportPhase && v.hasChanges && !isPureZero) ? v.changeReason.trim() : null,
     location: fullDayMode ? v.fdLocation : v.effectiveLocation,
     application_types: v.applicationTypes,
+    // 押した事情（時間調整／イベントなど／出張・在宅など）。種別が「調整」のときだけ持つ。遅刻・早退・終日・該当なしは null で上書き
+    late_situation:  (!fullDayMode && v.applicationTypes.includes('late_start_adj') && v.lateChoice && v.lateChoice !== 'tardiness') ? v.lateChoice : null,
+    early_situation: (!fullDayMode && v.applicationTypes.includes('early_end_adj') && v.earlyChoice && v.earlyChoice !== 'early_leave') ? v.earlyChoice : null,
     // チェック欄を出しているときだけ本人の選択を記録する。
     // 出していないときは null＝「未指定」で、これまでどおり種別ごとの既定に従う。
     // 🚨 実績報告は例外。欄は出さないが **事前申請で選んだ値をそのまま引き継ぐ**こと。

@@ -5341,10 +5341,20 @@ const BoardPage: React.FC = () => {
           🚨 ［使う］は送信画面から開いたときだけ意味がある。行を押すと本文の先頭と操作が開く（1行1操作） */}
       {tplOpen && (
         <div onClick={() => setTplOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 5000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
-          <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 16, padding: '14px 14px 16px', width: '100%', maxWidth: 480, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          {/* 🚨 textAlign: left を明示（外側の枠の中央寄せを受け継いで本文が中央に寄る・2026-09-26 実機指摘） */}
+          <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 16, padding: '14px 14px 16px', width: '100%', maxWidth: 480, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxSizing: 'border-box', textAlign: 'left' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 8 }}>
               <span style={{ fontSize: 15, fontWeight: 'bold', color: textColor }}>📋 お知らせのテンプレート</span>
-              <button type="button" onClick={() => setTplOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: subColor }}>✕</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {/* 一覧から空の状態で新しく作る（2026-09-26 ユーザー依頼）。役職プレビュー中は出さない */}
+                {!previewRole && (
+                  <button type="button" onClick={() => openTemplateSave({ subject: '', body: '' })}
+                    style={{ padding: '5px 10px', borderRadius: 8, border: `1.5px solid ${isDark ? '#93c5fd' : '#1d4ed8'}`, background: 'none', color: isDark ? '#93c5fd' : '#1d4ed8', cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                    ＋ 新しく作る
+                  </button>
+                )}
+                <button type="button" onClick={() => setTplOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: subColor }}>✕</button>
+              </div>
             </div>
             {/* 全体／自分の（🎨🔒 択一トグルの青） */}
             <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
@@ -5444,7 +5454,8 @@ const BoardPage: React.FC = () => {
       {/* テンプレートの保存・修正の枠（2026-09-26）。送信画面の「保存」・受信/送信トレイの「テンプレートに保存」・一覧の「修正」が同じこれを使う */}
       {tplSave && (
         <div onClick={() => { if (!tplSaving) setTplSave(null); }} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 5001, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
-          <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 16, padding: '14px 14px 16px', width: '100%', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box' }}>
+          {/* 🚨 textAlign: left を明示（外側の枠の中央寄せを受け継いで本文が中央に寄る・2026-09-26 実機指摘） */}
+          <div onClick={e => e.stopPropagation()} style={{ background: cardBg, borderRadius: 16, padding: '14px 14px 16px', width: '100%', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box', textAlign: 'left' }}>
             <div style={{ fontSize: 15, fontWeight: 'bold', color: textColor, marginBottom: 10 }}>{tplSave.id ? '📋 テンプレートを直す' : '📋 テンプレートに保存'}</div>
             <div style={{ marginBottom: 8 }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: textColor, marginBottom: 4 }}>テンプレートの名前 <span style={{ color: '#dc3545' }}>*必須</span></div>

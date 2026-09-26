@@ -25,7 +25,8 @@ import {
 } from '../lib/overtimeGrid';
 import type { GridReport, GridDayKind, RowDraft, RowState, GridRowCalc } from '../lib/overtimeGrid';
 import { STATUS_INFO } from '../lib/overtimeStatus';
-import { OT_TYPE_INFO, isOvertimeType } from '../lib/overtimeTypes';
+import { isOvertimeType, typeLabelFor } from '../lib/overtimeTypes';
+import type { SituationLike } from '../lib/overtimeTypes';
 import { CALENDAR_CELL_STYLE } from '../hooks/useCompanyCalendar';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import { useRoles } from '../hooks/useRoles';
@@ -107,7 +108,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
       supabase.from('weekly_shift_patterns').select('*').eq('user_id', userId),
       supabase.from('company_calendar').select('date, kind').gte('date', from).lte('date', to),
       supabase.from('overtime_reports')
-        .select('id, work_date, status, entry_type, is_post_hoc, application_types, location, diff_minutes, break_minutes, break_manual, reason, return_comment, reviewer_id, normal_shift, show_on_calendar, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
+        .select('id, work_date, status, entry_type, is_post_hoc, application_types, location, diff_minutes, break_minutes, break_manual, reason, return_comment, reviewer_id, normal_shift, show_on_calendar, late_situation, early_situation, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
         .eq('applicant_id', userId).gte('work_date', from).lte('work_date', to),
       supabase.from('overtime_submission_grants').select('work_date').eq('user_id', userId).is('revoked_at', null),
       supabase.from('application_requests').select('id, requester_id, target_dates, memo, segments')
@@ -367,6 +368,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
           normalShift: r.ns, breakMin: c.breakMin, breakManual: r.draft.breakMin.trim() !== '', laborMin: c.laborMin, diffMin: c.diffMin,
           fdDiffMin: 0, legalOk: c.legalOk, reason: r.draft.reason, changeReason: r.draft.changeReason, fdLocation: '', effectiveLocation: c.effectiveLocation,
           applicationTypes: c.applicationTypes,
+          lateChoice: r.draft.lateChoice, earlyChoice: r.draft.earlyChoice,
           // 🚨 表ではカレンダーに載せるかを聞かない。新しい行は null（種類ごとの既定）・計画 §3。
           //    実績報告は元の申請の値を引き継ぐ（buildOvertimeRecord の中で。1件フォームと同じ）
           offerCalendarChoice: false, showOnCalendar: false, editTargetShowOnCalendar: fresh?.show_on_calendar ?? undefined,
@@ -525,8 +527,9 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
 
   const segText = (segs: { start_min: number; end_min: number }[]) =>
     [...segs].sort((a, b) => a.start_min - b.start_min).map(s => `${minToTime(s.start_min)}〜${minToTime(s.end_min)}`).join(' / ');
-  const typesText = (types: readonly string[] | null) =>
-    (types ?? []).filter(isOvertimeType).map(t => OT_TYPE_INFO[t].label).join('・');
+  // 🚨 札の文字は typeLabelFor（押した事情で「遅出(イベント・会議など)」などに変わる）。1件フォームの TypeChips と同じ
+  const typesText = (types: readonly string[] | null, situation?: SituationLike | null) =>
+    (types ?? []).filter(isOvertimeType).map(t => typeLabelFor(t, situation)).join('・');
 
   const tag = (k: GridDayKind, label?: string) => {
     const st = TAG_STYLE[k];
@@ -713,7 +716,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                         {st ? (
                           <span style={{ display: 'inline-block', fontSize: 11.5, fontWeight: 'bold', color: '#fff', background: st.color, borderRadius: 10, padding: '2px 8px', whiteSpace: 'nowrap' }}>{st.label}</span>
                         ) : <span style={{ color: subText }}>―</span>}
-                        {planned.length > 0 && <div style={{ fontSize: 11.5, color: subText, marginTop: 2 }}>予定 {segText(planned)}{rep ? `・${typesText(rep.application_types)}` : ''}</div>}
+                        {planned.length > 0 && <div style={{ fontSize: 11.5, color: subText, marginTop: 2 }}>予定 {segText(planned)}{rep ? `・${typesText(rep.application_types, rep)}` : ''}</div>}
                         {!editable && actual.length > 0 && <div style={{ fontSize: 11.5, color: subText }}>実績 {segText(actual)}</div>}
                         {rep?.status === 'returned' && rep.return_comment && (
                           <div style={{ color: '#e24b4a', fontWeight: 'bold', fontSize: 12, marginTop: 2 }}>差し戻し理由：{rep.return_comment}</div>
@@ -813,7 +816,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                                 style={{ ...txt, marginTop: 4 }} aria-label={`${md(r.date)} 予定から変わった理由`} />
                             )}
                             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 4, fontSize: 12 }}>
-                              {c.applicationTypes.length > 0 && <span style={{ color: subText }}>{typesText(c.applicationTypes)}</span>}
+                              {c.applicationTypes.length > 0 && <span style={{ color: subText }}>{typesText(c.applicationTypes, { late_situation: r.draft.lateChoice, early_situation: r.draft.earlyChoice })}</span>}
                               {/* 選択肢は lib/overtimeSubmit の LATE_CHOICES / EARLY_CHOICES（1件フォームと共用・短い表記で並べる） */}
                               {c.typeDetect.lateQ && (
                                 <span>開始が遅い：
@@ -902,7 +905,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                 <div key={r.date} style={{ fontSize: 13, padding: '2px 0' }}>
                   <b>{md(r.date)}（{DOW[dowOf(r.date)]}）</b> {r.calc.sendLabel}{r.req ? '（依頼に答える）' : ''}：{segs}
                   <b style={{ color: r.calc.diffMin > 0 ? '#2e7d32' : r.calc.diffMin < 0 ? '#c62828' : subText }}>{formatSignedMin(r.calc.diffMin)}</b>
-                  {' '}{typesText(r.calc.applicationTypes)} 「{r.draft.reason.trim()}」
+                  {' '}{typesText(r.calc.applicationTypes, { late_situation: r.draft.lateChoice, early_situation: r.draft.earlyChoice })} 「{r.draft.reason.trim()}」
                   {r.calc.isReportPhase && r.calc.hasChanges && !r.calc.isPureZero && <span style={{ color: subText }}> 変わった理由「{r.draft.changeReason.trim()}」</span>}
                   {r.calc.state === 'warn' && <span style={{ color: warnText, fontWeight: 'bold' }}> ⚠️ 休憩が法定より短い</span>}
                 </div>

@@ -74,6 +74,20 @@ export function reasonExamplesFor(
 /** 終日種別（時刻入力なし・segments を持たない） */
 export const FULL_DAY_TYPES: OvertimeType[] = ['chosei_off', 'furikae_off', 'absence'];
 
+/**
+ * 「開始が遅い／早く終わる理由」で押した事情（overtime_reports.late_situation / early_situation）。
+ * 種別は調整遅出／調整早退のまま、**札の表記だけ**を変える（2026-09-26 ユーザー確定）。
+ * 🚨 同じ表記が Edge Function の gcal-sync（カレンダーの見出し）と send-overtime-slack にもある（3か所管理・片方だけ直さない）
+ */
+export type ChoiceSituation = 'adj' | 'event' | 'telework';
+export interface SituationLike { late_situation?: ChoiceSituation | string | null; early_situation?: ChoiceSituation | string | null }
+const SITUATION_SUFFIX: Record<string, string> = { event: 'イベント・会議など', telework: '出張・在宅など' };
+export function typeLabelFor(t: OvertimeType, s?: SituationLike | null): string {
+  if (t === 'late_start_adj' && s?.late_situation && SITUATION_SUFFIX[s.late_situation]) return `遅出(${SITUATION_SUFFIX[s.late_situation]})`;
+  if (t === 'early_end_adj' && s?.early_situation && SITUATION_SUFFIX[s.early_situation]) return `早退(${SITUATION_SUFFIX[s.early_situation]})`;
+  return OT_TYPE_INFO[t].label;
+}
+
 export function isOvertimeType(t: string): t is OvertimeType {
   return t in OT_TYPE_INFO;
 }
@@ -215,12 +229,19 @@ const GCAL_LABEL: Partial<Record<OvertimeType, string>> = {
   late_start_adj: '遅出(調整)', early_end_adj: '早退(調整)',
   chosei_off: '調整休', furikae_off: '振休', absence: '休み',
 };
-const gcalLabelOf = (t: OvertimeType): string => GCAL_LABEL[t] ?? OT_TYPE_INFO[t].label;
+// 押した事情（イベント・出張など）があればその表記（typeLabelFor と同じ文字）。無ければカレンダー側の表記
+const gcalLabelOf = (t: OvertimeType, s?: SituationLike | null): string => {
+  const withSituation = typeLabelFor(t, s);
+  if (withSituation !== OT_TYPE_INFO[t].label) return withSituation;
+  return GCAL_LABEL[t] ?? OT_TYPE_INFO[t].label;
+};
 
 export interface GcalSummaryInput {
   /** 表示名（全角スペースは半角に直す。gcal-sync 側と同じ） */
   name: string;
   types: string[];
+  /** 押した事情（遅出(イベント・会議など) などの表記に使う） */
+  situation?: SituationLike | null;
   /** 勤務時間帯の最初の開始・最後の終了（分）。終日種別・時刻なしのときは null */
   firstStartMin: number | null;
   lastEndMin: number | null;
@@ -237,7 +258,7 @@ export function buildGcalSummary(input: GcalSummaryInput): string | null {
   const syncTypes = calendarTypesInOrder(input.types);
   if (syncTypes.length === 0) return null;
   const primary = syncTypes[0];
-  const label = syncTypes.slice(0, 2).map(gcalLabelOf).join('＋');
+  const label = syncTypes.slice(0, 2).map(t => gcalLabelOf(t, input.situation)).join('＋');
 
   let timeStr = '';
   if (input.firstStartMin != null && input.lastEndMin != null) {
