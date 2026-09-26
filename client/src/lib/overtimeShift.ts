@@ -30,25 +30,44 @@ export interface NormalShiftSnapshot {
   break_minutes: number;
   labor_minutes: number;
   manual_override?: boolean;
+  /** 「休館日・社員出勤日」で「出」の行が無く、曜日の行を使ったときに、その曜日（画面の説明に使う） */
+  weekday_fallback?: DayKind;
 }
 
 /** "HH:MM:SS" / "HH:MM" → "HH:MM" */
 export const fmtTime = (t: string | null | undefined): string => (t ? t.slice(0, 5) : '');
 
 /** 曜日パターンから該当日の通常シフトを解決（OvertimePage のロジックと同一） */
-export function resolveNormalShift(
-  patterns: PatternRow[], dateStr: string, calendarKind: CalendarKind | null,
-): NormalShiftSnapshot {
-  const dayKind = resolveDayKind(dateStr, calendarKind);
+/** その日に有効な行（無ければ、いちばん近い期間の行）。🚨 この探し方は1か所だけに置く */
+function findPatternRow(patterns: PatternRow[], dayKind: DayKind, dateStr: string): PatternRow | undefined {
   const sameKind = patterns.filter(p => p.day_kind === dayKind);
   let row = sameKind.find(p => p.valid_from <= dateStr && (p.valid_to === null || p.valid_to >= dateStr));
   if (!row && sameKind.length > 0) {
     const sorted = [...sameKind].sort((a, b) => (a.valid_from < b.valid_from ? -1 : 1));
     row = dateStr < sorted[0].valid_from ? sorted[0] : sorted[sorted.length - 1];
   }
+  return row;
+}
+
+export function resolveNormalShift(
+  patterns: PatternRow[], dateStr: string, calendarKind: CalendarKind | null,
+): NormalShiftSnapshot {
+  const dayKind = resolveDayKind(dateStr, calendarKind);
+  let row = findPatternRow(patterns, dayKind, dateStr);
+  // 🚨 「休館日・社員出勤日」に「出」の行が無い人は、その日の曜日の行を使う（2026-09-26 ユーザー確定）。
+  //    「出」は「曜日と違う時間で働く人」のための行で、43人全員が空だった。空だと通常シフトが「休み」になり、
+  //    働いた時間が丸ごと「休日出勤」になっていた（10/29 大掃除・森本さん 7:45 → 正しくは木曜 5:45 との差 +2:00）。
+  //    「出」に入れてある人はそちらが優先（今までどおり）。同じ判定が DB の sync_overtime_from_leave にもある。片方だけ直さないこと
+  let weekdayFallback: DayKind | undefined;
+  if (!row && dayKind === 'work_on_closed') {
+    const wk = resolveDayKind(dateStr, null);
+    row = findPatternRow(patterns, wk, dateStr);
+    if (row) weekdayFallback = wk;
+  }
   return {
     day_kind: dayKind,
     calendar_kind: calendarKind,
+    ...(weekdayFallback ? { weekday_fallback: weekdayFallback } : {}),
     start_time: row?.start_time ?? null,
     end_time: row?.end_time ?? null,
     start_time2: row?.start_time2 ?? null,

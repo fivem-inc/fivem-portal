@@ -1742,7 +1742,7 @@ const OvertimeForm: React.FC<{
           <p style={{ margin: '4px 0 0', fontSize: 12, color: subText }}>
             {date}（{dowLabel(date)}）
             {normalShift.calendar_kind === 'closed_all' && '・会社カレンダー：全員休み'}
-            {normalShift.calendar_kind === 'work_on_closed' && '・会社カレンダー：休館日だけど出勤日'}
+            {normalShift.calendar_kind === 'work_on_closed' && `・会社カレンダー：休館日だけど出勤日${normalShift.weekday_fallback ? `（${DAY_KIND_LABELS[normalShift.weekday_fallback]}曜のシフトを使用）` : ''}`}
             {!normalShift.calendar_kind && `・${DAY_KIND_LABELS[normalShift.day_kind]}曜パターン`}
           </p>
           {!normOverride ? (
