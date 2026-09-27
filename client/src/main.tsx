@@ -4,6 +4,8 @@ import './index.css'
 import './App.css'
 import App from './App.tsx'
 import { bootMark } from './lib/bootMark'
+// 🚨 「ホーム画面に追加」の合図（beforeinstallprompt）は開いた直後に1回だけ来るので、画面より先に受け取る
+import './lib/installPrompt'
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {

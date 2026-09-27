@@ -54,6 +54,7 @@ import { isInRemindWindow } from './lib/announcementDates';
 import { useFeaturePublished, isFeaturePublished } from './hooks/useFeaturePublished';
 import { useRoles } from './hooks/useRoles';
 import { useRefreshOn } from './hooks/useRefreshOn';
+import { canPromptInstall, subscribeInstall, promptInstall, isStandaloneApp, iosBrowserKind } from './lib/installPrompt';
 import { emit as emitRefresh } from './lib/refreshBus';
 import { routeTopics, TOPICS_BELL, TOPICS_BOARD, TOPICS_SHIFT_REPORT, TOPICS_OVERTIME, TOPICS_APPLICATION_REQUEST } from './lib/badgeTopics';
 // 管理画面をマネージャー以上に開く（2026-09-15・docs/計画-管理画面の開放.md）
@@ -93,6 +94,7 @@ const ScrollToTop: React.FC = () => {
 // iPhone(Safari・ホーム画面未追加)はプッシュ非対応なので「ホーム画面に追加」手順を、
 // それ以外(Android等)はその場で押せる「許可する」ボタンを出し分ける。
 const PUSH_BANNER_DISMISS_KEY = 'push_banner_dismissed_until';
+const INSTALL_BANNER_DISMISS_KEY = 'install_banner_dismissed_until';
 const PushEnableBanner: React.FC = () => {
   const [status, setStatus] = useState<'granted' | 'denied' | 'default' | 'unsupported' | 'loading'>('loading');
   const [hidden, setHidden] = useState(false);
@@ -112,6 +114,69 @@ const PushEnableBanner: React.FC = () => {
       if (until > Date.now()) setHidden(true);
     } catch { /* ignore */ }
   }, []);
+
+  // 「ホーム画面にアプリを追加」のカード（2026-09-27・ユーザー確定）。まだ追加していない人には、通知のカードより先にこちらを出す。
+  // Android・PC＝［ホーム画面に追加］で端末の「インストールしますか」を出す（lib/installPrompt.ts）／iPhone の Safari＝手順3行／
+  // iPhone の LINE などの中＝Safari で開き直す案内。出す・出さない・「後で」の日数は通知のカードの設定（管理画面）に従う
+  const [installAvail, setInstallAvail] = useState(canPromptInstall());
+  const [installHidden, setInstallHidden] = useState(false);
+  useEffect(() => {
+    const un = subscribeInstall(() => setInstallAvail(canPromptInstall()));
+    setInstallAvail(canPromptInstall());
+    try {
+      const until = Number(localStorage.getItem(INSTALL_BANNER_DISMISS_KEY) || 0);
+      if (until > Date.now()) setInstallHidden(true);
+    } catch { /* ignore */ }
+    return un;
+  }, []);
+  const iosKind = iosBrowserKind();
+  if (config && config.enabled && !installHidden && !isStandaloneApp() && (installAvail || iosKind !== null)) {
+    const laterLabel = config.laterLabel.trim() || DEFAULT_PUSH_BANNER_LATER_LABEL;
+    const dismissInstall = () => {
+      try { localStorage.setItem(INSTALL_BANNER_DISMISS_KEY, String(Date.now() + config.redisplayDays * 86400000)); } catch { /* ignore */ }
+      setInstallHidden(true);
+    };
+    const install = async () => {
+      const r = await promptInstall();
+      if (r === 'accepted') setInstallHidden(true);
+    };
+    return (
+      <div style={{ background: '#eef7ee', border: '1px solid #b7e0b7', borderRadius: 10, padding: '12px 14px', marginBottom: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+          <span style={{ fontSize: 20, flexShrink: 0 }}>📲</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 'bold', color: '#1b5e20', marginBottom: 2 }}>ホーム画面にアプリを追加できます</div>
+            <div style={{ fontSize: 12.5, color: '#33691e', lineHeight: 1.7 }}>アイコンから1回で開けて、通知も受け取れます</div>
+            {!installAvail && iosKind === 'safari' && (
+              <div style={{ fontSize: 12.5, color: '#33691e', lineHeight: 1.8, marginTop: 6 }}>
+                ① 下の共有ボタン（□に↑）をタップ<br />
+                ② 「ホーム画面に追加」をタップ<br />
+                ③ 追加されたアイコンから開き直す
+              </div>
+            )}
+            {!installAvail && iosKind === 'other' && (
+              <div style={{ fontSize: 12.5, color: '#33691e', lineHeight: 1.8, marginTop: 6 }}>
+                いまは LINE などのアプリの中で開いています。<br />
+                メニューから「Safari で開く」を選んでから、追加してください。
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+              {installAvail && (
+                <button onClick={install}
+                  style={{ padding: '7px 18px', borderRadius: 20, border: 'none', background: '#4CAF50', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                  ホーム画面に追加
+                </button>
+              )}
+              <button onClick={dismissInstall}
+                style={{ padding: '7px 16px', borderRadius: 20, border: '1px solid #b7e0b7', background: 'transparent', color: '#558b2f', fontSize: 13, cursor: 'pointer' }}>
+                {laterLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // 既にON・拒否済み・読み込み中・「後で」で閉じた場合・管理画面でOFFの場合は出さない
   if (hidden || status === 'loading' || status === 'granted' || status === 'denied') return null;
