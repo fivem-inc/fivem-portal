@@ -34,6 +34,19 @@ interface MailUsage {
   source?: string;
 }
 
+/** 通信量の見込み（関数 admin_usage_estimate が返す形・2026-09-27）。'collecting'＝締めの区切りの起点の記録がまだ無い */
+interface EgressEstimate {
+  status: 'ok' | 'collecting';
+  cycle_start: string;
+  cycle_end: string;
+  limit_gb: number;
+  projected_gb?: number;
+  so_far_gb?: number;
+  elapsed_days?: number;
+}
+/** 'YYYY-MM-DD' → 'M/D' */
+const shortMd = (ymd: string) => { const [, m, d] = ymd.split('-').map(Number); return `${m}/${d}`; };
+
 interface AdminPanelProps {
   pendingApprovals: PendingApproval[];
   submissions: Submission[];
@@ -76,6 +89,20 @@ const AdminPanelContent: React.FC = () => {
     }, () => {});
   }, [supabase, isAdminUser]);
   const STORAGE_LIMIT_MB = 1024;
+
+  // 通信量（今月の見込み・目安）（2026-09-27・ユーザー確定 案A）。
+  // Supabase は通信量（GB）をプログラムから読めないので、毎晩記録している問い合わせの回数から見込みを出す（関数 admin_usage_estimate）。
+  // 🚨 目安。正確な値は Supabase の Usage で見る（リンクを添える）。見込みが無料枠の8割（4 GB）以上なら赤
+  const [egress, setEgress] = useState<EgressEstimate | null>(null);
+  const [egressErr, setEgressErr] = useState('');
+  useEffect(() => {
+    if (!isAdminUser) return;
+    supabase.rpc('admin_usage_estimate').then(({ data, error }: { data: EgressEstimate | null; error: { message: string } | null }) => {
+      if (error || !data) { setEgressErr('取れませんでした'); return; }
+      setEgress(data);
+    }, () => setEgressErr('取れませんでした'));
+  }, [supabase, isAdminUser]);
+  const isEgressLow = !!egress && egress.status === 'ok' && (egress.projected_gb ?? 0) / egress.limit_gb >= 0.8;
   const isStorageLow = storageUsageMb !== null && storageUsageMb / STORAGE_LIMIT_MB >= 0.8; // 残り2割を切ったら警告
 
   // データベース本体の使用量。画像（ストレージ）とは無料枠が別枠なので分けて出す。
@@ -130,24 +157,26 @@ const AdminPanelContent: React.FC = () => {
   }, [supabase, isAdminUser]);
 
   return (    <div style={{ marginTop: 0, paddingTop: 0, position: 'relative' }}>
-      {(storageUsageMb !== null || dbUsageMb !== null || mailUsage !== null || mailErr) && (
-        // 🚨 whiteSpace: nowrap は必須。折り返すとタブのボタンに重なって読めなくなる（2026-09-20 実機で発生）
-        <div style={{ position: 'absolute', top: 0, right: 0, fontSize: 11, textAlign: 'right', lineHeight: 1.5, whiteSpace: 'nowrap' }}>
+      {(storageUsageMb !== null || dbUsageMb !== null || mailUsage !== null || mailErr || egress !== null || egressErr) && (
+        // 🚨 2026-09-27：右上に浮かせて置く（position: absolute）のをやめた。画面が狭いと見出しやタブに重なり、
+        //    通信量の行を足すとさらに縦に長くなるため。見出しの上に横並びで置き、狭いときは折り返す（どの幅でも重ならない）。
+        //    項目ごとの whiteSpace: nowrap は残す（1項目の中で折り返すと読みにくい）
+        <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'flex-start', gap: '4px 18px', fontSize: 11, textAlign: 'right', lineHeight: 1.5, marginBottom: 6 }}>
           {storageUsageMb !== null && (
-            <div style={{ color: isStorageLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), fontWeight: isStorageLow ? 'bold' : 'normal' }}>
+            <div style={{ whiteSpace: 'nowrap', color: isStorageLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), fontWeight: isStorageLow ? 'bold' : 'normal' }}>
               <div>{isStorageLow && '⚠️ '}📦 ストレージ使用量</div>
               <div>{storageUsageMb}MB / {STORAGE_LIMIT_MB}MB（無料枠）</div>
             </div>
           )}
           {dbUsageMb !== null && (
-            <div style={{ marginTop: 3, color: isDbLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), fontWeight: isDbLow ? 'bold' : 'normal' }}>
+            <div style={{ whiteSpace: 'nowrap', color: isDbLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), fontWeight: isDbLow ? 'bold' : 'normal' }}>
               <div>{isDbLow && '⚠️ '}💾 データベース使用量</div>
               <div>{dbUsageMb}MB / {DB_LIMIT_MB}MB（無料枠）</div>
             </div>
           )}
           {mailUsage !== null && (
             <div title={`取得元: ${mailUsage.source ?? '不明'}`}
-                 style={{ marginTop: 3, color: isMailLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), fontWeight: isMailLow ? 'bold' : 'normal' }}>
+                 style={{ whiteSpace: 'nowrap', color: isMailLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), fontWeight: isMailLow ? 'bold' : 'normal' }}>
               <div>{isMailLow && '⚠️ '}📩 メール送信</div>
               <div>今月 {mailUsage.monthly.used} / {mailUsage.monthly.limit}通（無料枠）</div>
               <div>今日 {mailUsage.daily.used} / {mailUsage.daily.limit}通</div>
@@ -156,9 +185,26 @@ const AdminPanelContent: React.FC = () => {
           )}
           {/* 🚨 取れなかったことを黙って隠さない（0通と嘘をつかない） */}
           {mailUsage === null && mailErr && (
-            <div style={{ marginTop: 3, color: isDarkMode ? '#adb5bd' : '#888' }}>
+            <div style={{ whiteSpace: 'nowrap', color: isDarkMode ? '#adb5bd' : '#888' }}>
               <div>📩 メール送信</div>
               <div>{mailErr}</div>
+            </div>
+          )}
+          {(egress !== null || egressErr) && (
+            <div style={{ whiteSpace: 'nowrap', color: isEgressLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), fontWeight: isEgressLow ? 'bold' : 'normal' }}>
+              <div>{isEgressLow && '⚠️ '}通信量（今月の見込み・目安）</div>
+              {egress?.status === 'ok' && (
+                <>
+                  <div>約 {egress.projected_gb} GB / {egress.limit_gb} GB（無料枠）</div>
+                  <div>これまで 約 {egress.so_far_gb} GB（{egress.elapsed_days}日分）</div>
+                </>
+              )}
+              {egress?.status === 'collecting' && <div>計測中（{shortMd(egress.cycle_end)} から見込みを出します）</div>}
+              {!egress && egressErr && <div>{egressErr}</div>}
+              <div>
+                <a href="https://supabase.com/dashboard/project/xaeynaxctiiyqxjyuzfi/settings/billing/usage" target="_blank" rel="noopener noreferrer"
+                   style={{ color: isDarkMode ? '#90b4e8' : '#1d4ed8' }}>正確な値は Supabase の Usage</a>
+              </div>
             </div>
           )}
         </div>
