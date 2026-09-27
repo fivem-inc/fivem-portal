@@ -72,3 +72,4 @@ export const TOPICS_APPLICATION_REQUEST = ['application_request'] as const;
 export const TOPICS_PURCHASE_REQUEST = ['purchase_request'] as const;
 export const TOPICS_SAFETY = ['safety'] as const;
 export const TOPICS_ADMIN = ['admin'] as const;
+export const TOPICS_BELL = ['bell'] as const;

@@ -53,10 +53,9 @@ import { fetchActiveAnnouncements, type Announcement } from './lib/announcements
 import { isInRemindWindow } from './lib/announcementDates';
 import { useFeaturePublished, isFeaturePublished } from './hooks/useFeaturePublished';
 import { useRoles } from './hooks/useRoles';
-import { usePolling } from './hooks/usePolling';
 import { useRefreshOn } from './hooks/useRefreshOn';
 import { emit as emitRefresh } from './lib/refreshBus';
-import { routeTopics, TOPICS_BOARD, TOPICS_SHIFT_REPORT, TOPICS_OVERTIME, TOPICS_APPLICATION_REQUEST } from './lib/badgeTopics';
+import { routeTopics, TOPICS_BELL, TOPICS_BOARD, TOPICS_SHIFT_REPORT, TOPICS_OVERTIME, TOPICS_APPLICATION_REQUEST } from './lib/badgeTopics';
 // 管理画面をマネージャー以上に開く（2026-09-15・docs/計画-管理画面の開放.md）
 import { useAdminAccess } from './hooks/useAdminAccess';
 import AdminAccessNotice from './components/admin/AdminAccessNotice';
@@ -454,10 +453,12 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
     if (data) setNotifs(data);
   }, [userId]);
 
-  // 🚨 画面を見ていない間は止まり、戻った瞬間に1回読み直す（hooks/usePolling.ts）
-  usePolling(fetchNotifs);
+  // 🚨 30 秒ごとをやめ、新しい通知が来たとき（通知の表の新着は必ず 'bell' を立てる）・前面復帰の全件・ベルを開いたときだけ読む
+  //    （2026-09-27・通信量の見直し 段3。ここだけで月 11 万回・本文つき約 7 KB）。
+  //    🚨 数字は今までどおり「読んだ最新 30 件の中の未読」。一覧はいつも読み込み済みなので、開いた瞬間に空にならず、bell=1 の着地もそのまま光る
+  useRefreshOn(fetchNotifs, TOPICS_BELL);
   // 連絡板でメッセージを読んだ直後にベルを読み直す（2026-09-10 ユーザー依頼）。
-  // 🚨 30秒の自動更新だけだと、読んだのに数字が減らず「効いていない」ように見える。
+  // 🚨 これが無いと、読んだのに次の数え直しまで数字が減らず「効いていない」ように見える。
   useEffect(() => {
     const h = () => { fetchNotifs(); };
     window.addEventListener(BELL_REFRESH_EVENT, h);
@@ -525,6 +526,8 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
   // 既読になるのは行をタップしたときだけ（読み飛ばしが赤い●で残る）
   const handleOpen = () => {
     if (!open && btnRef.current) setDropRect(btnRef.current.getBoundingClientRect());
+    // 開くときに読み直す（開けば正しい。別の端末で既読にした分もここで直る）。一覧は今のものを出したまま裏で入れ替える
+    if (!open) void fetchNotifs();
     setOpen(o => !o);
   };
 
