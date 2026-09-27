@@ -21,6 +21,10 @@ import { useSafetyPendingCount, safetyTone } from '../hooks/useSafetyPendingCoun
 import { useFeaturePublished, isFeaturePublished } from '../hooks/useFeaturePublished';
 import { AuthContext } from '../contexts/AuthContext.tsx';
 import HelpLinkButton from '../components/HelpLinkButton';
+import { subscribe as subscribeRefresh } from '../lib/refreshBus';
+import { TOPICS_BOARD } from '../lib/badgeTopics';
+// 前面に戻ったときに連絡板を読み直す間隔（2026-09-27・通信量の見直し 段4）。ベル・プッシュから来たときは待たない
+const BOARD_FOREGROUND_RELOAD_MS = 2 * 60 * 1000;
 
 // ────────────────────────────────────────────────────────────────
 // Types
@@ -660,6 +664,7 @@ const BoardPage: React.FC = () => {
   const [replyErr,        setReplyErr]        = useState('');
   const [replyCloseFor,   setReplyCloseFor]   = useState<string | null>(null); // 終了のその場確認
   const [replyReopenedId, setReplyReopenedId] = useState<string | null>(null); // 再開したあとの案内
+  const [replyEnabledId,  setReplyEnabledId]  = useState<string | null>(null); // あとから受け付けにしたあとの案内
   const [sending,               setSending]               = useState(false);
   const [sendError,             setSendError]             = useState<string | null>(null); // 失敗のインライントースト（alert廃止）。✕で閉じるまで消えない
   // 🚨 「本体は成立したが、付随する処理だけ失敗した」ときはこちら（黄色）。
@@ -1233,21 +1238,33 @@ const BoardPage: React.FC = () => {
   //    起きないことがあり、読了前に読み込んだ画面がそのまま出ていた。
   //    visibilitychange / focus / pageshow は同時に複数飛ぶので、5秒以内の連続は1回にまとめる。
   //    🚨 loadAll は silent で呼ぶ（setLoadingData(true) を通すと一覧が一瞬消える）
+  //    🚨 2026-09-27（通信量の見直し 段4）：前面に戻るたびに 10 本超を読み直していたので、
+  //       **前回から 2 分以上たったとき**だけにした。ただし**ベル・プッシュから来た（URL に開く印がある）ときは必ず読む**
+  //       （上の 9/8 の不具合はこの経路だった）。連絡板の新しい通知・全件の数え直し（lib/refreshBus.ts）でも読み直す
   const lastForegroundLoad = useRef(0);
   useEffect(() => {
-    const onForeground = () => {
-      if (document.visibilityState !== 'visible') return;
-      const now = Date.now();
-      if (now - lastForegroundLoad.current < 5000) return;
-      lastForegroundLoad.current = now;
+    const reload = () => {
+      lastForegroundLoad.current = Date.now();
       loadInbox();
       loadOutbox();
       loadAll({ silent: true });
     };
+    const onForeground = () => {
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      const sp = new URLSearchParams(window.location.search);
+      const cameFromBell = sp.has('openInboxId') || sp.has('bout');
+      if (now - lastForegroundLoad.current < (cameFromBell ? 5000 : BOARD_FOREGROUND_RELOAD_MS)) return;
+      reload();
+    };
+    // 開いた直後は各一覧をいま読んでいるので、その時刻を「前回」にする（開いた直後の前面の合図で二重に読まない）
+    lastForegroundLoad.current = Date.now();
+    const unsubscribe = subscribeRefresh(TOPICS_BOARD, reload);
     document.addEventListener('visibilitychange', onForeground);
     window.addEventListener('focus', onForeground);
     window.addEventListener('pageshow', onForeground);
     return () => {
+      unsubscribe();
       document.removeEventListener('visibilitychange', onForeground);
       window.removeEventListener('focus', onForeground);
       window.removeEventListener('pageshow', onForeground);
@@ -1616,6 +1633,29 @@ const BoardPage: React.FC = () => {
     setReplyReopenedId(open ? notice.id : null);
     // 画面の状態を読み直す（期限が入れ替わるため）
     await Promise.all([loadInbox(), loadOutbox()]);
+  };
+
+  /**
+   * 返信を受け付けていないお知らせを、あとから受け付けにする（2026-09-27・ユーザー確定 案C）。送った本人だけ。
+   * 🚨 受付期限はトリガー（board_reply_set_until）が入れる。🚨 件数を見る（0件＝できていない。黙って成功にしない）
+   */
+  const enablingReplyRef = useRef(false);   // 二度押しで2回目が「すでに受け付けています」と赤く出ないように
+  const enableNoticeReply = async (notice: BoardMessage) => {
+    if (!user || enablingReplyRef.current) return;
+    enablingReplyRef.current = true;
+    try {
+    setReplyErr('');
+    const { data, error } = await supabase.from('board_messages')
+      .update({ allow_reply: true })
+      .eq('id', notice.id).eq('user_id', user.id).eq('allow_reply', false)
+      .select('id');
+    if (error) { setReplyErr(`受け付けにできませんでした：${error.message}`); return; }
+    if (!data || data.length === 0) { setReplyErr('受け付けにできませんでした（すでに受け付けているか、送った方ではありません）'); return; }
+    setReplyEnabledId(notice.id);
+    await Promise.all([loadInbox(), loadOutbox()]);
+    } finally {
+      enablingReplyRef.current = false;
+    }
   };
 
   // ── Actions ─────────────────────────────────────────────────────
@@ -2277,7 +2317,29 @@ const BoardPage: React.FC = () => {
   // ── お知らせの返信の枠（2026-09-21）────────────────────────────
   // 🚨 受信トレイの詳細と送信トレイの詳細の**両方がこれを使う**。同じ見た目を2か所に書かない
   const renderNoticeReplyBox = (notice: BoardMessage, isOutboxView = false) => {
-    if (!notice.allow_reply || !user) return null;
+    if (!user) return null;
+    // 返信を受け付けていないお知らせ：送った本人だけ、送信トレイの詳細から OFF→ON にできる（2026-09-27・ユーザー確定 案C）。
+    // 🚨 受付期限はデータベースのトリガーが入れる（今日から30日・予約中は予約日から。届いたら届いた日から）。画面から日付を渡さない
+    if (!notice.allow_reply) {
+      if (!isOutboxView || notice.user_id !== user.id) return null;
+      return (
+        <div style={{ marginTop: 10, background: isDark ? '#1e2328' : '#f0f4ff', border: `1px solid ${isDark ? '#3d4349' : '#c7d4f5'}`, borderRadius: 10, padding: '10px 12px', textAlign: 'left' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 13, fontWeight: 'bold', color: textColor }}>↩ 返信</span>
+            <span style={{ fontSize: 12, color: subColor }}>受け付けていません</span>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <button type="button" onClick={() => void enableNoticeReply(notice)}
+              style={{ padding: '5px 12px', background: cardBg, border: '1.5px solid #2563eb', borderRadius: 20, color: '#2563eb', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
+              返信を受け付ける
+            </button>
+          </div>
+          {replyErr && (
+            <div style={{ marginTop: 8, fontSize: 12, color: '#dc2626' }}>{replyErr}</div>
+          )}
+        </div>
+      );
+    }
     const state = replyState(notice);
     const isOpen = state === 'open';
     const iAmSender = notice.user_id === user.id;
@@ -2399,6 +2461,13 @@ const BoardPage: React.FC = () => {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* あとから受け付けにした直後の案内（成功は薄緑の固定色）。🚨 相手に通知は送っていない */}
+        {replyEnabledId === notice.id && (
+          <div style={{ marginTop: 8, background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 8, padding: '8px 10px', fontSize: 12, color: '#166534' }}>
+            返信を受け付けるようにしました
           </div>
         )}
 
@@ -5605,6 +5674,13 @@ const BoardPage: React.FC = () => {
                 {/* 送信予約 */}
                 {composeScheduledAt && <ScheduledChip at={composeScheduledAt} />}
               </div>
+              {/* ↩ 返信を受け付けるか（2026-09-27・ユーザー確定 案C）。作成画面のチェックと同じ値を、送る直前に見せてその場で切り替えられるようにする。
+                  🚨 それまでプレビューに出ておらず、ON か OFF か分からないまま送れていた */}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 12, padding: '8px 10px', borderRadius: 8, border: `1px solid ${composeAllowReply ? '#2563eb' : border}`, background: composeAllowReply ? (isDark ? '#1e2a3a' : '#eff6ff') : 'transparent', textAlign: 'left' }}>
+                <input type="checkbox" checked={composeAllowReply}
+                  onChange={e => setComposeAllowReply(e.target.checked)} style={{ accentColor: '#2563eb' }} />
+                <span style={{ fontSize: 13, fontWeight: 600, color: textColor }}>↩ 返信を受け付ける</span>
+              </label>
               <div style={{ display: 'flex', gap: 10 }}>
                 <button type="button" onClick={() => { setShowComposeSendConfirm(false); setShowAllRecipients(false); }}
                   style={{ flex: 1, padding: '10px 0', background: 'none', border: `1px solid ${border}`, borderRadius: 8, color: subColor, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>

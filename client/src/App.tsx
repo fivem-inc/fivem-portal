@@ -55,8 +55,7 @@ import { useFeaturePublished, isFeaturePublished } from './hooks/useFeaturePubli
 import { useRoles } from './hooks/useRoles';
 import { useRefreshOn } from './hooks/useRefreshOn';
 import { canPromptInstall, subscribeInstall, promptInstall, isStandaloneApp, iosBrowserKind } from './lib/installPrompt';
-import { emit as emitRefresh } from './lib/refreshBus';
-import { routeTopics, TOPICS_BELL, TOPICS_BOARD, TOPICS_SHIFT_REPORT, TOPICS_OVERTIME, TOPICS_APPLICATION_REQUEST } from './lib/badgeTopics';
+import { TOPICS_BELL, TOPICS_BOARD, TOPICS_SHIFT_REPORT, TOPICS_OVERTIME, TOPICS_APPLICATION_REQUEST } from './lib/badgeTopics';
 // 管理画面をマネージャー以上に開く（2026-09-15・docs/計画-管理画面の開放.md）
 import { useAdminAccess } from './hooks/useAdminAccess';
 import AdminAccessNotice from './components/admin/AdminAccessNotice';
@@ -891,14 +890,8 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   // 🚨 この3本は権限を1つも見ずに全ページで走る（連絡板5表・安否確認3表）。
   //    退職者はどれも読めないので、**バッジを0にするだけでなく読み込みごと止める**（2026-09-20 レビュー指摘）。
   //    止めないと30秒ごとに 42501 が出続け、端末に残った安否の回答も送ろうとして失敗し続ける
-  // ページを移ったら、出たページと入ったページの話題を数え直す（2026-09-27・通信量の見直し 段2）。
-  // 「減る側」（他の人が処理した・自分が答えた）は通知の行が入らないため、「開けば正しい」「答えて戻れば減っている」にする
-  const prevNavPath = useRef<string | null>(null);
-  useEffect(() => {
-    const topics = routeTopics(prevNavPath.current, location.pathname);
-    if (prevNavPath.current !== null && topics.size > 0) emitRefresh(topics);
-    prevNavPath.current = location.pathname;
-  }, [location.pathname]);
+  // 🚨 ページを移ったときの数え直しは書かない：このナビは各ページの中に書かれていて、ページを移るたびに付け直され、
+  //    そのときに下のフックが全部数え直す（2026-09-27 に「移ったら数え直す」を足したが、付け直しで記憶が消えて一度も動いていなかったので消した）
   const { total: boardUnreadRaw } = useBoardUnread(userId, location.pathname, !isRetiree);
   const { pendingCount: safetyPendingRaw } = useSafetyPendingCount(userId, !isRetiree);
   // 端末に保存した安否の回答を、どのページにいても電波が戻り次第送る（NavBarは全ページに出ている）
@@ -2183,7 +2176,7 @@ const Dashboard: React.FC = () => {
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [leaveSubmitted, setLeaveSubmitted] = useState(false);
   const [templateMsg, setTemplateMsg] = useState<string | null>(null); // テンプレ適用時のインライン通知（alert廃止）
-  const { channelOnly: boardChannelUnread } = useBoardUnread(user?.id, pathname);
+  const { channelOnly: boardChannelUnread } = useBoardUnread(user?.id, pathname, !isRetiree);
 
   const setExpenses = useCallback((value: React.SetStateAction<Expense[]>) => {
     setExpensesState(value);

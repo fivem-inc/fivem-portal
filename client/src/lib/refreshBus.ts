@@ -55,6 +55,9 @@ let lastForegroundAt = 0;
 let lastFullAt = 0;
 let failures = 0;
 let running = false;
+let stopTimer: number | undefined;
+/** 購読が0になってから止めるまでの猶予。ナビはページを移るたびに付け直される（各ページの中に書かれている）ので、すぐ止めると止まって動き直し、台帳を1回余計に読む */
+export const STOP_GRACE_MS = 5 * 1000;
 
 export function setTicker(fn: Ticker): void { ticker = fn; }
 
@@ -132,10 +135,14 @@ export function subscribe(topics: readonly RefreshTopic[], fn: () => void): () =
     listeners.get(k)!.add(fn);
   }
   subscriberCount += 1;
+  if (stopTimer !== undefined) { window.clearTimeout(stopTimer); stopTimer = undefined; }
   if (subscriberCount === 1) start();
   return () => {
     for (const k of keys) listeners.get(k)?.delete(fn);
     subscriberCount -= 1;
-    if (subscriberCount === 0) stop();
+    if (subscriberCount === 0) {
+      if (stopTimer !== undefined) window.clearTimeout(stopTimer);
+      stopTimer = window.setTimeout(() => { stopTimer = undefined; if (subscriberCount === 0) stop(); }, STOP_GRACE_MS);
+    }
   };
 }

@@ -34,23 +34,40 @@ export function isFeaturePublished(
     || (state.publishedPresident[key] === true && isPresident);
 }
 
-// 機能の公開状態（app_settings の feature_published / feature_published_leader / feature_published_president）
-export function useFeaturePublished(): FeaturePublishState {
-  const roles = useRoles();
-  const [state, setState] = useState<Omit<FeaturePublishState, 'roles'>>({ published: {}, publishedLeader: {}, publishedPresident: {} });
-
-  useEffect(() => {
-    Promise.all([
+// 🚨 ホームでは3か所がこのフックを呼び、画面を開くたびに3本ずつ（計9本）読んでいた（2026-09-27・通信量の見直し）。
+//    同時の呼び出しは1本にまとめ、読んだ値は 30 秒だけ使い回す。設定を変えても長くて 30 秒で全画面に行き渡る
+type PublishedValues = Omit<FeaturePublishState, 'roles'>;
+const PUBLISHED_TTL_MS = 30 * 1000;
+let publishedCache: { at: number; value: PublishedValues } | null = null;
+let publishedInflight: Promise<PublishedValues> | null = null;
+function loadPublished(): Promise<PublishedValues> {
+  if (publishedCache && Date.now() - publishedCache.at < PUBLISHED_TTL_MS) return Promise.resolve(publishedCache.value);
+  if (publishedInflight) return publishedInflight;
+  publishedInflight = Promise.all([
       supabase.from('app_settings').select('value').eq('key', 'feature_published').maybeSingle(),
       supabase.from('app_settings').select('value').eq('key', 'feature_published_leader').maybeSingle(),
       supabase.from('app_settings').select('value').eq('key', 'feature_published_president').maybeSingle(),
     ]).then(([allRes, leaderRes, presRes]) => {
-      setState({
+      const value: PublishedValues = {
         published: (allRes?.data?.value as Record<string, boolean>) || {},
         publishedLeader: (leaderRes?.data?.value as Record<string, boolean>) || {},
         publishedPresident: (presRes?.data?.value as Record<string, boolean>) || {},
-      });
-    }, () => {});
+      };
+      publishedCache = { at: Date.now(), value };
+      return value;
+    }).finally(() => { publishedInflight = null; });
+  return publishedInflight;
+}
+
+// 機能の公開状態（app_settings の feature_published / feature_published_leader / feature_published_president）
+export function useFeaturePublished(): FeaturePublishState {
+  const roles = useRoles();
+  const [state, setState] = useState<PublishedValues>(() => publishedCache?.value ?? { published: {}, publishedLeader: {}, publishedPresident: {} });
+
+  useEffect(() => {
+    let alive = true;
+    loadPublished().then(v => { if (alive) setState(v); }, () => {});
+    return () => { alive = false; };
   }, []);
 
   return { ...state, roles };
