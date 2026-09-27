@@ -18,6 +18,7 @@ import OvertimeProposalsTab from './admin/OvertimeProposalsTab';
 import FeaturePermissionsTab from './admin/FeaturePermissionsTab';
 import PurchaseRequestsTab from './admin/PurchaseRequestsTab';
 import AnnouncementsTab from './admin/AnnouncementsTab';
+import UsagePanel, { type EgressEstimate } from './admin/UsagePanel';
 import FaqTab from './admin/FaqTab';
 import SafetyChecksTab from './admin/SafetyChecksTab';
 import CorrectionRequestsTab from './admin/CorrectionRequestsTab';
@@ -33,19 +34,6 @@ interface MailUsage {
   /** 'usage'＝Resend の使用量の窓口／'emails'＝送信一覧を数えた。どちらで取れたかが分かると調べやすい */
   source?: string;
 }
-
-/** 通信量の見込み（関数 admin_usage_estimate が返す形・2026-09-27）。'collecting'＝締めの区切りの起点の記録がまだ無い */
-interface EgressEstimate {
-  status: 'ok' | 'collecting';
-  cycle_start: string;
-  cycle_end: string;
-  limit_gb: number;
-  projected_gb?: number;
-  so_far_gb?: number;
-  elapsed_days?: number;
-}
-/** 'YYYY-MM-DD' → 'M/D' */
-const shortMd = (ymd: string) => { const [, m, d] = ymd.split('-').map(Number); return `${m}/${d}`; };
 
 interface AdminPanelProps {
   pendingApprovals: PendingApproval[];
@@ -103,6 +91,8 @@ const AdminPanelContent: React.FC = () => {
     }, () => setEgressErr('取れませんでした'));
   }, [supabase, isAdminUser]);
   const isEgressLow = !!egress && egress.status === 'ok' && (egress.projected_gb ?? 0) / egress.limit_gb >= 0.8;
+  // 使用量の表（2026-09-27・ユーザー確定：右上の［使用量］ボタンから開く。タブの一覧には足さない）
+  const [usageOpen, setUsageOpen] = useState(false);
   const isStorageLow = storageUsageMb !== null && storageUsageMb / STORAGE_LIMIT_MB >= 0.8; // 残り2割を切ったら警告
 
   // データベース本体の使用量。画像（ストレージ）とは無料枠が別枠なので分けて出す。
@@ -157,58 +147,37 @@ const AdminPanelContent: React.FC = () => {
   }, [supabase, isAdminUser]);
 
   return (    <div style={{ marginTop: 0, paddingTop: 0, position: 'relative' }}>
-      {(storageUsageMb !== null || dbUsageMb !== null || mailUsage !== null || mailErr || egress !== null || egressErr) && (
-        // 🚨 2026-09-27：右上に浮かせて置く（position: absolute）のをやめた。画面が狭いと見出しやタブに重なり、
-        //    通信量の行を足すとさらに縦に長くなるため。見出しの上に横並びで置き、狭いときは折り返す（どの幅でも重ならない）。
-        //    項目ごとの whiteSpace: nowrap は残す（1項目の中で折り返すと読みにくい）
-        <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'flex-start', gap: '4px 18px', fontSize: 11, textAlign: 'right', lineHeight: 1.5, marginBottom: 6 }}>
-          {storageUsageMb !== null && (
-            <div style={{ whiteSpace: 'nowrap', color: isStorageLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), fontWeight: isStorageLow ? 'bold' : 'normal' }}>
-              <div>{isStorageLow && '⚠️ '}📦 ストレージ使用量</div>
-              <div>{storageUsageMb}MB / {STORAGE_LIMIT_MB}MB（無料枠）</div>
-            </div>
-          )}
-          {dbUsageMb !== null && (
-            <div style={{ whiteSpace: 'nowrap', color: isDbLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), fontWeight: isDbLow ? 'bold' : 'normal' }}>
-              <div>{isDbLow && '⚠️ '}💾 データベース使用量</div>
-              <div>{dbUsageMb}MB / {DB_LIMIT_MB}MB（無料枠）</div>
-            </div>
-          )}
-          {mailUsage !== null && (
-            <div title={`取得元: ${mailUsage.source ?? '不明'}`}
-                 style={{ whiteSpace: 'nowrap', color: isMailLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), fontWeight: isMailLow ? 'bold' : 'normal' }}>
-              <div>{isMailLow && '⚠️ '}📩 メール送信</div>
-              <div>今月 {mailUsage.monthly.used} / {mailUsage.monthly.limit}通（無料枠）</div>
-              <div>今日 {mailUsage.daily.used} / {mailUsage.daily.limit}通</div>
-              {mailUsage.partial && <div>※ 1,000通まで数えた数</div>}
-            </div>
-          )}
-          {/* 🚨 取れなかったことを黙って隠さない（0通と嘘をつかない） */}
-          {mailUsage === null && mailErr && (
-            <div style={{ whiteSpace: 'nowrap', color: isDarkMode ? '#adb5bd' : '#888' }}>
-              <div>📩 メール送信</div>
-              <div>{mailErr}</div>
-            </div>
-          )}
-          {(egress !== null || egressErr) && (
-            <div style={{ whiteSpace: 'nowrap', color: isEgressLow ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#888'), fontWeight: isEgressLow ? 'bold' : 'normal' }}>
-              <div>{isEgressLow && '⚠️ '}通信量（今月の見込み・目安）</div>
-              {egress?.status === 'ok' && (
-                <>
-                  <div>約 {egress.projected_gb} GB / {egress.limit_gb} GB（無料枠）</div>
-                  <div>これまで 約 {egress.so_far_gb} GB（{egress.elapsed_days}日分）</div>
-                </>
-              )}
-              {egress?.status === 'collecting' && <div>計測中（{shortMd(egress.cycle_end)} から見込みを出します）</div>}
-              {!egress && egressErr && <div>{egressErr}</div>}
-              <div>
-                <a href="https://supabase.com/dashboard/project/xaeynaxctiiyqxjyuzfi/settings/billing/usage" target="_blank" rel="noopener noreferrer"
-                   style={{ color: isDarkMode ? '#90b4e8' : '#1d4ed8' }}>正確な値は Supabase の Usage</a>
+      {isAdminUser && (() => {
+        // 🚨 2026-09-27：使用量は右上の［使用量］ボタン1つにまとめ、押すと見出しの下に表が開く（components/admin/UsagePanel.tsx）。
+        //    それまでは右上に数字を並べていて、画面が狭いと見出しやタブに重なっていた。
+        //    8割を超えた項目があるときだけ、上に赤い一行（固定色の薄赤）を出し、ボタンも赤くする
+        const warns: string[] = [];
+        if (isEgressLow && egress) warns.push(`通信量の見込みが無料枠の8割を超えています（約 ${egress.projected_gb} GB / ${egress.limit_gb} GB）`);
+        if (isDbLow && dbUsageMb !== null) warns.push(`データベースが無料枠の8割を超えています（${dbUsageMb}MB / ${DB_LIMIT_MB}MB）`);
+        if (isStorageLow && storageUsageMb !== null) warns.push(`ファイル置き場が無料枠の8割を超えています（${storageUsageMb}MB / ${STORAGE_LIMIT_MB}MB）`);
+        if (isMailLow) warns.push('メール送信が無料枠の8割を超えています');
+        return (
+          <>
+            {warns.map(w => (
+              <div key={w} style={{ marginBottom: 6, padding: '8px 12px', borderRadius: 8, background: '#fff5f5', border: '1px solid #f5c2c7', color: '#842029', fontSize: 12, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 12px' }}>
+                <span>⚠️ {w}</span>
+                {!usageOpen && (
+                  <button type="button" onClick={() => setUsageOpen(true)}
+                    style={{ padding: 0, background: 'none', border: 'none', color: '#842029', textDecoration: 'underline', cursor: 'pointer', fontSize: 12 }}>使用量を見る</button>
+                )}
               </div>
+            ))}
+            <div style={{ textAlign: 'right' }}>
+              <button type="button" onClick={() => setUsageOpen(o => !o)}
+                style={{ fontSize: 12, padding: '3px 12px', borderRadius: 14, cursor: 'pointer', background: 'transparent',
+                  border: `1px solid ${warns.length ? '#dc3545' : (isDarkMode ? '#495057' : '#ccc')}`,
+                  color: warns.length ? '#dc3545' : (isDarkMode ? '#adb5bd' : '#666'), fontWeight: warns.length ? 'bold' : 'normal' }}>
+                {warns.length ? '⚠️ ' : ''}使用量 {usageOpen ? '▲' : '▼'}
+              </button>
             </div>
-          )}
-        </div>
-      )}
+          </>
+        );
+      })()}
       {/* 画面上部の知らせ。🚨 2026-09-09 まで、失敗もここに緑の ✓ カードで出ていた。
           配色は 🎨🔒 の固定色（成功＝薄緑／エラー＝薄赤／部分成功＝薄黄）。
           ダーク用の出し分けは書かない。 */}
@@ -532,6 +501,11 @@ const AdminPanelContent: React.FC = () => {
         }
       `}</style>
       <h2 style={{ textAlign: 'center', marginBottom: '30px', color: isDarkMode ? '#fff' : '#000' }}>管理画面</h2>
+      {isAdminUser && usageOpen && (
+        <UsagePanel isDarkMode={isDarkMode} onClose={() => setUsageOpen(false)} egress={egress}
+          storageMb={storageUsageMb} storageLimitMb={STORAGE_LIMIT_MB} dbMb={dbUsageMb} dbLimitMb={DB_LIMIT_MB} mail={mailUsage}
+          mailErr={mailErr} egressErr={egressErr} />
+      )}
       
       {/* 却下理由入力モーダル */}
       {showRejectModal && (
