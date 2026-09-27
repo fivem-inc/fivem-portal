@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { useAuth } from '../../hooks/useAuth';
 import type { AdminLeaveRequest } from '../../types';
-import { insertNotification, formatLeaveDateSummary } from '../../lib/notifications';
+import { insertNotification, formatLeaveDateSummary, notifyLeaveFinalApprovers } from '../../lib/notifications';
 import { shortLeaveDate } from '../../lib/leaveDates';
 import { todayJstStr } from '../../lib/breakCalc';
 import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatchEmail, dispatchSiteNotification, getUserEmail, resolveRoleRecipients } from '../../lib/notificationDispatch';
@@ -1638,6 +1638,10 @@ const LeaveRequestsTab: React.FC = () => {
                                           ]);
                                           await dispatchSiteNotification('leave:manager_approved', vars, mgrSite.ids, insertNotification, 'leave_request', req.id);
                                           await dispatchEmail('leave:manager_approved', vars, { applicant: applicantEmail, ...mgrMail.emails });
+                                        }
+                                        if (req.status === 'manager_approved') {
+                                          // 経理の受理で「最終受理待ち」になる → 最終受理者（社長）へベル（2026-09-27・案A。受理ページと同じ関数）
+                                          await notifyLeaveFinalApprovers(req, req.profile?.name ?? '', authUser?.id ?? '');
                                         }
                                         if (req.status === 'manager_approved' && await shouldSend('leave:manager_approved', 'slack')) {
                                           await sendLeaveSlack('accounting_approved', '経理担当者', '管理者', undefined, undefined, undefined, {

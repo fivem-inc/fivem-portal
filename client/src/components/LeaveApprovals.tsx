@@ -5,7 +5,7 @@ import { useRoles } from '../hooks/useRoles';
 import { attrsFor } from '../lib/roleAttrs';
 import ApplicationRequestSheet from './ApplicationRequestSheet';
 import { sendLeaveSlack } from '../lib/leaveSlack';
-import { insertNotification, formatLeaveDateSummary } from '../lib/notifications';
+import { insertNotification, formatLeaveDateSummary, notifyLeaveFinalApprovers } from '../lib/notifications';
 import { formatLeavePeriod } from '../lib/leaveDates';
 import { shouldSend, getNotificationTemplate, getNotificationRecipient, dispatchEmail, dispatchSiteNotification, getUserEmail, resolveRoleRecipients } from '../lib/notificationDispatch';
 import { useDarkMode } from '../hooks/useDarkMode';
@@ -361,6 +361,8 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
           // マネージャー受理確定：カレンダー書き込み＋受理通知（共通処理）
           await emitManagerApproved(req);
         } else if (req.status === 'manager_approved') {
+          // 経理の受理で「最終受理待ち」になる → 最終受理者（社長）へベル（2026-09-27・案A）
+          await notifyLeaveFinalApprovers(req, req.requester?.name ?? '', user.id);
           if (await shouldSend('leave:manager_approved', 'slack')) {
             await sendLeaveSlack('accounting_approved', profileName || '経理担当者', '管理者', undefined, undefined, undefined, {
               applicantName: req.requester?.name ?? '',

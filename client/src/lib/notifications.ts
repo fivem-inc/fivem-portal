@@ -25,6 +25,35 @@ export function formatLeaveDateSummary(leaveDates: string | null | undefined, st
   return `${dateStr}${typePart}（${sorted.length}日）`;
 }
 
+/**
+ * 休暇：経理が受理して「最終受理待ち」（admin_approved）になったとき、最終受理者（立場 president）へベルを1件入れる。
+ * 2026-09-27 ユーザー決定（案A）。それまで最終受理者には何も届かず、ナビの数字は 30 秒ごとの数え直しだけが頼りだった。
+ * 自動更新を「通知の行を目印にする」形に変えると（docs/計画-自動更新の見直し.md）、行が無いこの段は数字が動かなくなるため。
+ * 🚨 呼ぶ所は2か所（受理ページ LeaveApprovals・管理画面 LeaveRequestsTab）。文面はここ1か所だけ。
+ * 🚨 スマホ通知は出さない（event_key は push-dispatch の EVENT_MAP に無い＝ベルだけ）。宛先は立場 president に固定で、
+ *    通知設定の行は作らない（設定が無い＝全員に送る、の作りには乗せない）。自分が押したときは自分宛に入れない。
+ */
+export async function notifyLeaveFinalApprovers(
+  req: { id: string; leave_type: string; leave_type_other?: string | null; leave_dates?: string | null; start_date?: string | null; end_date?: string | null },
+  applicantName: string,
+  actorId: string,
+): Promise<void> {
+  const { data, error } = await supabase.from('profiles')
+    .select('id, is_active, roles!inner(acts_as)')
+    .eq('roles.acts_as', 'president');
+  if (error) { console.error('[leave] 最終受理者を読めませんでした:', error.message); return; }
+  const ids = ((data ?? []) as { id: string; is_active: boolean | null }[])
+    .filter(p => p.is_active !== false && p.id !== actorId)
+    .map(p => p.id);
+  if (ids.length === 0) return;
+  const typeName = req.leave_type === 'その他' ? (req.leave_type_other || 'その他') : req.leave_type;
+  const message = `🌿 ${applicantName} さんの ${typeName} が最終受理待ちです`;
+  const sub = `${formatLeaveDateSummary(req.leave_dates, req.start_date, req.end_date, '')}\u3000経理の確認済み`;
+  for (const id of ids) {
+    await insertNotification(id, message, sub, 'leave_request:pending_approval', req.id, 'leave:final_approval');
+  }
+}
+
 // 連絡板のメッセージを読んだときに、そのメッセージのベル通知も既読にする（2026-09-10 ユーザー依頼）。
 // ベルから開いたときは既読になるのに、受信トレイで直接読んだときはベルが未読のまま残っていた。
 //

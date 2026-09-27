@@ -610,6 +610,8 @@ const ShiftReportForm: React.FC<{
         confirmed_by: isSelfReview ? user.id : null,
         confirmed_at: isSelfReview ? now : null,
       };
+      // 確認者へのベルの2行目（新規・再提出で共通）
+      const reviewerBellSub = `${types.map(t => TYPE_INFO[t].label).join('＋')}　${date}`;
       if (editTarget) {
         await supabase.from('shift_report_history').insert({ report_id: editTarget.id, changed_by: user.id, change_summary: changeSummary.trim(), snapshot: editTarget });
         // 更新できたか必ず確認する。権限が足りないと0件更新で静かに失敗し、直したつもりで直っていない事故になる
@@ -619,6 +621,19 @@ const ShiftReportForm: React.FC<{
           setError(updErr ? updErr.message : 'この報告を修正する権限がありません');
           setSaving(false); setShowConfirm(false);
           return;
+        }
+        // 🚨 再提出も確認者へベル（2026-09-27・案A）。それまで新規だけで、再提出は確認者の数字が増えるのに何も届かなかった。
+        //    自己受理（その場で確定）のときは確認者の番にならないので送らない。プッシュは新規と同じ種類（文は種類ごとに固定）
+        if (!isSelfReview) {
+          supabase.from('notifications').insert({
+            user_id: reviewerId,
+            message: `${profileName ?? ''}さんから勤務変更報告の再提出が届きました`,
+            sub_message: reviewerBellSub,
+            source_type: 'shift_report:pending_approval',
+            reference_id: editTarget.id,
+            event_key: 'shift_report:new_request',
+            read: false,
+          }).then(...logFail('ベル通知の作成（再提出）'));
         }
       } else {
         const { data: newReport, error: err } = await supabase.from('shift_reports').insert(record).select('id').single();
@@ -633,7 +648,7 @@ const ShiftReportForm: React.FC<{
           supabase.from('notifications').insert({
             user_id: reviewerId,
             message: `${profileName ?? ''}さんから勤務変更報告が届きました`,
-            sub_message: `${types.map(t => TYPE_INFO[t].label).join('＋')}　${date}`,
+            sub_message: reviewerBellSub,
             source_type: 'shift_report:pending_approval',
             reference_id: newReport?.id,
             event_key: 'shift_report:new_request',
