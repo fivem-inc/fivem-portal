@@ -8,7 +8,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { usePolling } from './usePolling';
+import { useRefreshOn } from './useRefreshOn';
+import { TOPICS_ADMIN } from '../lib/badgeTopics';
 import { isPointerDevice } from '../lib/idleLogout';
 import {
   MANAGER_ADMIN_TABS_SETTING_KEY, decideAdminAccess, normalizeManagerTabs,
@@ -51,7 +52,7 @@ const pollTabs = () => { void refreshManagerAdminTabs(); };
 const noop = () => {};
 
 /**
- * @param poll 30秒ごとに読み直す（管理者がタブを閉じたら、開いている画面にも効かせるため）。
+ * @param poll 管理画面を出入りしたとき・前面復帰の全件で読み直す（2026-09-27 までは 30 秒ごと。管理者がタブを閉じたら、開いている画面にも効かせるため）。
  *             管理画面（AdminPage）だけ true。NavBar は読み直さない（同じ値を共有するので、管理画面の読み直しで更新される）
  */
 export function useAdminAccess({ isAdmin, isManagerPlus, poll = false }: { isAdmin: boolean; isManagerPlus: boolean; poll?: boolean }): AdminAccess {
@@ -66,7 +67,8 @@ export function useAdminAccess({ isAdmin, isManagerPlus, poll = false }: { isAdm
     return () => { listeners.delete(setTabsState); };
   }, [needsSetting]);
 
-  usePolling(needsSetting && poll ? pollTabs : noop);
+  // 30 秒ごとをやめ、管理画面を出入りしたとき・前面復帰の全件で読み直す（2026-09-27・段2）
+  useRefreshOn(needsSetting && poll ? pollTabs : noop, TOPICS_ADMIN);
 
   const isPc = isPointerDevice();
   // 中身が同じなら作り直さない（受け取った側が useEffect の依存に入れても毎回走らないように）

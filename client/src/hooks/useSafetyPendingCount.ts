@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { usePolling } from './usePolling';
+import { useRefreshOn } from './useRefreshOn';
+import { TOPICS_SAFETY } from '../lib/badgeTopics';
 import { supabase } from '../lib/supabaseClient';
 import { isTransientFailure, timeoutSignal, SAFETY_TIMEOUT_MS } from '../lib/netFailure';
 import {
@@ -12,7 +13,7 @@ import {
 //   回答成功時・オフラインキュー送信成功時は 'safety-pending-changed' イベントで即時に数え直す。
 //
 // 🚨 このフックは「電波が切れる直前の状態」を端末に残す役目も持つ。
-//    ログインしていればどのページにいても30秒ごとに動くため、ここで控えを取っておくと
+//    ログインしていればどのページにいても安否の通知・前面復帰で動くため、ここで控えを取っておくと
 //    「安否ページを一度も開いていない人」でもオフラインで回答画面を出せる。
 //    （/safety を開いたときだけ保存する作りだと、災害前にそのページを開いていた人しか救えない）
 //
@@ -145,8 +146,9 @@ export const useSafetyPendingCount = (userId: string | undefined, enabled = true
     saveSafetySnapshot(uid, relevant, responseMap);
   }, [userId, applySnapshot, enabled]);
 
-  // 🚨 画面を見ていない間は止まり、戻った瞬間に1回読み直す（hooks/usePolling.ts）
-  usePolling(fetchPending);
+  // 🚨 30 秒ごとをやめ、通知の表にこの話題の新しい行が来たとき・ページを出入りしたときだけ数え直す（2026-09-27・通信量の見直し 段2・hooks/useRefreshOn.ts）
+  // 安否の発信・再送・取消は通知の行が入るので、それで数え直す。代理回答・終了は行が入らない＝前面復帰 10 分／心拍 30 分の全件で拾う
+  useRefreshOn(fetchPending, TOPICS_SAFETY);
   useEffect(() => {
     window.addEventListener('safety-pending-changed', fetchPending);
     window.addEventListener('online', fetchPending);

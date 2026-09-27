@@ -55,6 +55,8 @@ import { useFeaturePublished, isFeaturePublished } from './hooks/useFeaturePubli
 import { useRoles } from './hooks/useRoles';
 import { usePolling } from './hooks/usePolling';
 import { useRefreshOn } from './hooks/useRefreshOn';
+import { emit as emitRefresh } from './lib/refreshBus';
+import { routeTopics, TOPICS_BOARD, TOPICS_SHIFT_REPORT, TOPICS_OVERTIME, TOPICS_APPLICATION_REQUEST } from './lib/badgeTopics';
 // 管理画面をマネージャー以上に開く（2026-09-15・docs/計画-管理画面の開放.md）
 import { useAdminAccess } from './hooks/useAdminAccess';
 import AdminAccessNotice from './components/admin/AdminAccessNotice';
@@ -628,8 +630,6 @@ const AvatarMenu: React.FC<{ userId: string; profileName: string | null; email: 
   );
 };
 
-// 連絡板の未読を数え直す話題（hooks/useRefreshOn.ts）。毎回作ると購読し直しになるので外側に置く
-const BOARD_TOPICS = ['board'] as const;
 // 🚨 enabled=false のときは1本も問い合わせない（退職者は連絡板の表を読めないため。2026-09-20）
 const useBoardUnread =(userId: string | undefined, pathname: string, enabled = true) => {
   const [channelCount, setChannelCount] = useState(0);
@@ -713,7 +713,7 @@ const useBoardUnread =(userId: string | undefined, pathname: string, enabled = t
 
   // 🚨 30 秒ごとの数え直しをやめ、通知の表に連絡板の新しい行が来たときだけ数え直す（2026-09-27・通信量の見直し 段1）。
   //    ここだけで月 66 万回（全体の約 4 割）あった。仕組みは hooks/useRefreshOn.ts・lib/refreshBus.ts
-  useRefreshOn(fetchCount, BOARD_TOPICS);
+  useRefreshOn(fetchCount, TOPICS_BOARD);
   return { total: channelCount + inboxCount, channelOnly: channelCount };
 };
 
@@ -732,8 +732,8 @@ const useShiftPendingCount = (userId: string | undefined, roleTitle: string | un
     setPendingCount(data?.length ?? 0);
   }, [userId, isApprover, isAdmin, canShiftReport]);
 
-  // 🚨 画面を見ていない間は止まり、戻った瞬間に1回読み直す（hooks/usePolling.ts）
-  usePolling(fetchPending);
+  // 🚨 30 秒ごとをやめ、通知の表にこの話題の新しい行が来たときだけ数え直す（2026-09-27・通信量の見直し 段2・hooks/useRefreshOn.ts）
+  useRefreshOn(fetchPending, TOPICS_SHIFT_REPORT);
   useEffect(() => {
     window.addEventListener('shift-pending-changed', fetchPending);
     return () => window.removeEventListener('shift-pending-changed', fetchPending);
@@ -755,8 +755,8 @@ const useOvertimePendingCount = (userId: string | undefined, canOvertime: boolea
     setPendingCount(data?.length ?? 0);
   }, [userId, canOvertime]);
 
-  // 🚨 画面を見ていない間は止まり、戻った瞬間に1回読み直す（hooks/usePolling.ts）
-  usePolling(fetchPending);
+  // 🚨 30 秒ごとをやめ、通知の表にこの話題の新しい行が来たときだけ数え直す（2026-09-27・通信量の見直し 段2・hooks/useRefreshOn.ts）
+  useRefreshOn(fetchPending, TOPICS_OVERTIME);
   useEffect(() => {
     window.addEventListener('overtime-pending-changed', fetchPending);
     return () => window.removeEventListener('overtime-pending-changed', fetchPending);
@@ -784,8 +784,8 @@ const useOvertimeUnreportedCount = (userId: string | undefined, canOvertime: boo
       .map(r => r.work_date).sort();
     setCount(list.length); setDates(list);
   }, [userId, canOvertime]);
-  // 🚨 画面を見ていない間は止まり、戻った瞬間に1回読み直す（hooks/usePolling.ts）
-  usePolling(fetchUnreported);
+  // 🚨 30 秒ごとをやめ、通知の表にこの話題の新しい行が来たときだけ数え直す（2026-09-27・通信量の見直し 段2・hooks/useRefreshOn.ts）
+  useRefreshOn(fetchUnreported, TOPICS_OVERTIME);
   useEffect(() => {
     window.addEventListener('overtime-pending-changed', fetchUnreported);
     return () => window.removeEventListener('overtime-pending-changed', fetchUnreported);
@@ -823,6 +823,14 @@ const NavBar: React.FC<{ isAdmin: boolean; onLogout: () => void; email: string; 
   // 🚨 この3本は権限を1つも見ずに全ページで走る（連絡板5表・安否確認3表）。
   //    退職者はどれも読めないので、**バッジを0にするだけでなく読み込みごと止める**（2026-09-20 レビュー指摘）。
   //    止めないと30秒ごとに 42501 が出続け、端末に残った安否の回答も送ろうとして失敗し続ける
+  // ページを移ったら、出たページと入ったページの話題を数え直す（2026-09-27・通信量の見直し 段2）。
+  // 「減る側」（他の人が処理した・自分が答えた）は通知の行が入らないため、「開けば正しい」「答えて戻れば減っている」にする
+  const prevNavPath = useRef<string | null>(null);
+  useEffect(() => {
+    const topics = routeTopics(prevNavPath.current, location.pathname);
+    if (prevNavPath.current !== null && topics.size > 0) emitRefresh(topics);
+    prevNavPath.current = location.pathname;
+  }, [location.pathname]);
   const { total: boardUnreadRaw } = useBoardUnread(userId, location.pathname, !isRetiree);
   const { pendingCount: safetyPendingRaw } = useSafetyPendingCount(userId, !isRetiree);
   // 端末に保存した安否の回答を、どのページにいても電波が戻り次第送る（NavBarは全ページに出ている）
@@ -1926,7 +1934,8 @@ const useAppRequestCount = (userId: string | undefined) => {
     if (error) return;
     setRows((data ?? []) as MyOpenRequest[]);
   }, [userId]);
-  usePolling(fetchReq);
+  // 30 秒ごとをやめ、依頼が届いたとき・残業／休暇のページを出入りしたときだけ数え直す（2026-09-27・段2）
+  useRefreshOn(fetchReq, TOPICS_APPLICATION_REQUEST);
   return { count: rows.length, rows };
 };
 
@@ -2476,7 +2485,7 @@ const AdminPage: React.FC = () => {
   const { user, isAdmin, isManagerPlus, isApprover, profileName, roleTitle, canLeave, canShiftReport, canCalendar, canPurchaseRequest, canOvertime, canExpense, canTripReport, canBoard, canRoomBooking, canFaq, canFaqNav, handleLogout, loading } = useAuth();
   const { submissions, pendingApprovals, isLoading, fetchExpenses } = useExpenses(user, isAdmin);
   // 🚨 管理者、またはマネージャー以上がパソコンで、管理者が開いたタブがあるとき。
-  //    設定を読み終えるまではホームへ飛ばさない。30秒ごとに読み直し、閉じられたタブは画面からも消す
+  //    設定を読み終えるまではホームへ飛ばさない。管理画面を出入りしたとき・前面復帰の全件で読み直し、閉じられたタブは画面からも消す（2026-09-27 までは 30 秒ごと）
   const access = useAdminAccess({ isAdmin, isManagerPlus, poll: true });
   if (!user || loading || !access.ready) return <div style={{ padding: 40, textAlign: 'center' }}>読み込んでいます...</div>;
   if (access.reason === 'not_manager') return <Navigate to="/" />;

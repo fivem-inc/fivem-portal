@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { usePolling } from './usePolling';
+import { useRefreshOn } from './useRefreshOn';
+import { TOPICS_PURCHASE_REQUEST } from '../lib/badgeTopics';
 import { supabase } from '../lib/supabaseClient';
 
 // 備品購入申請：自分の回答・承認を待っている件数
@@ -43,9 +44,9 @@ export const usePurchasePendingCount = (userId: string | undefined, canPurchaseR
     setPendingCount((leaderRes.data?.length ?? 0) + opinionTargets.length - answeredCount);
   }, [userId, canPurchaseRequest]);
 
-  // 30秒ごとに数え直す（休暇・勤務変更のバッジと同じ。他の人が先に処理したときも減る）
-  // 🚨 画面を見ていない間は止まり、戻った瞬間に1回読み直す（hooks/usePolling.ts）
-  usePolling(fetchPending);
+  // 備品購入の通知が来たとき・備品のページを出入りしたときに数え直す（2026-09-27 までは 30 秒ごと。休暇・勤務変更のバッジと同じ。他の人が先に処理したときも減る）
+  // 🚨 30 秒ごとをやめ、通知の表にこの話題の新しい行が来たとき・ページを出入りしたときだけ数え直す（2026-09-27・通信量の見直し 段2・hooks/useRefreshOn.ts）
+  useRefreshOn(fetchPending, TOPICS_PURCHASE_REQUEST);
   useEffect(() => {
     window.addEventListener('purchase-pending-changed', fetchPending);
     return () => window.removeEventListener('purchase-pending-changed', fetchPending);

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { usePolling } from './usePolling';
+import { useRefreshOn } from './useRefreshOn';
+import { TOPICS_LEAVE } from '../lib/badgeTopics';
 import { supabase } from '../lib/supabaseClient';
 import { attrsFor } from '../lib/roleAttrs';
 import { useRoles } from './useRoles';
@@ -26,8 +27,8 @@ export const useLeavePendingCount = (userId: string | undefined, roleTitle: stri
     setPendingCount((d1?.length ?? 0) + (d2?.length ?? 0) + (d3?.length ?? 0));
   }, [userId, isAdmin, isLeaderPlus, isPresident]);
 
-  // 🚨 画面を見ていない間は止まり、戻った瞬間に1回読み直す（hooks/usePolling.ts）
-  usePolling(fetchPending);
+  // 🚨 30 秒ごとをやめ、通知の表にこの話題の新しい行が来たとき・ページを出入りしたときだけ数え直す（2026-09-27・通信量の見直し 段2・hooks/useRefreshOn.ts）
+  useRefreshOn(fetchPending, TOPICS_LEAVE);
   useEffect(() => {
     window.addEventListener('leave-pending-changed', fetchPending);
     return () => window.removeEventListener('leave-pending-changed', fetchPending);

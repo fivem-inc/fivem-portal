@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { usePolling } from './usePolling';
+import { useRefreshOn } from './useRefreshOn';
+import { TOPICS_PURCHASE_REQUEST } from '../lib/badgeTopics';
 import { supabase } from '../lib/supabaseClient';
 
 // 備品購入申請：自分が関わった申請のうち、まだ確認していないやりとりを持つ件数
@@ -30,17 +31,17 @@ export const usePurchaseUnconfirmedCount = (
     if (!userId || !canPurchaseRequest) { setUnconfirmedCount(0); return; }
     const { data, error } = await supabase.rpc('purchase_unconfirmed_count');
     // 🚨 失敗したときに0へ落とさない。通信が一度切れただけでバッジが消え、
-    //    「対応したつもり」になってしまう。前の値のまま次の30秒を待つ
+    //    「対応したつもり」になってしまう。前の値のまま次の数え直しを待つ
     if (error) return;
     setUnconfirmedCount(typeof data === 'number' ? data : 0);
   }, [userId, canPurchaseRequest]);
 
-  // 30秒ごとに数え直す（承認待ちのバッジと同じ間隔）
-  // 🚨 画面を見ていない間は止まり、戻った瞬間に1回読み直す（hooks/usePolling.ts）
-  usePolling(fetchUnconfirmed);
+  // 備品購入の通知が来たとき・備品のページを出入りしたときに数え直す（2026-09-27 までは 30 秒ごと）
+  // 🚨 30 秒ごとをやめ、通知の表にこの話題の新しい行が来たとき・ページを出入りしたときだけ数え直す（2026-09-27・通信量の見直し 段2・hooks/useRefreshOn.ts）
+  useRefreshOn(fetchUnconfirmed, TOPICS_PURCHASE_REQUEST);
 
   // 「✓ 確認した」を押した直後・投稿した直後に数え直す。
-  // これが無いと、押したのに最大30秒バッジが残り「押しても効かない」と受け取られる
+  // これが無いと、押したのに次の数え直しまでバッジが残り「押しても効かない」と受け取られる
   useEffect(() => {
     window.addEventListener('purchase-unconfirmed-changed', fetchUnconfirmed);
     return () => window.removeEventListener('purchase-unconfirmed-changed', fetchUnconfirmed);

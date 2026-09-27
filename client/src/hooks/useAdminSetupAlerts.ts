@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { usePolling } from './usePolling';
+import { useRefreshOn } from './useRefreshOn';
+import { TOPICS_ADMIN } from '../lib/badgeTopics';
 import { supabase } from '../lib/supabaseClient';
 
 export type AdminSetupAlert = {
@@ -31,9 +32,9 @@ export const useAdminSetupAlerts = (enabled: boolean) => {
     setAlerts(data as AdminSetupAlert[]);
   }, [enabled]);
 
-  // 入力してすぐ確認したいので、他のバッジと同じく30秒ごとに数え直す
-  // 🚨 画面を見ていない間は止まり、戻った瞬間に1回読み直す（hooks/usePolling.ts）
-  usePolling(fetchAlerts);
+  // 入力してすぐの確認は admin-setup-changed で即時。それ以外は管理画面を出入りしたとき・前面復帰の全件で数え直す（2026-09-27 までは 30 秒ごと）
+  // 🚨 30 秒ごとをやめ、通知の表にこの話題の新しい行が来たとき・ページを出入りしたときだけ数え直す（2026-09-27・通信量の見直し 段2・hooks/useRefreshOn.ts）
+  useRefreshOn(fetchAlerts, TOPICS_ADMIN);
   useEffect(() => {
     const onChanged = () => fetchAlerts();
     window.addEventListener('admin-setup-changed', onChanged);
