@@ -54,6 +54,7 @@ import { isInRemindWindow } from './lib/announcementDates';
 import { useFeaturePublished, isFeaturePublished } from './hooks/useFeaturePublished';
 import { useRoles } from './hooks/useRoles';
 import { usePolling } from './hooks/usePolling';
+import { useRefreshOn } from './hooks/useRefreshOn';
 // 管理画面をマネージャー以上に開く（2026-09-15・docs/計画-管理画面の開放.md）
 import { useAdminAccess } from './hooks/useAdminAccess';
 import AdminAccessNotice from './components/admin/AdminAccessNotice';
@@ -627,8 +628,10 @@ const AvatarMenu: React.FC<{ userId: string; profileName: string | null; email: 
   );
 };
 
+// 連絡板の未読を数え直す話題（hooks/useRefreshOn.ts）。毎回作ると購読し直しになるので外側に置く
+const BOARD_TOPICS = ['board'] as const;
 // 🚨 enabled=false のときは1本も問い合わせない（退職者は連絡板の表を読めないため。2026-09-20）
-const useBoardUnread = (userId: string | undefined, pathname: string, enabled = true) => {
+const useBoardUnread =(userId: string | undefined, pathname: string, enabled = true) => {
   const [channelCount, setChannelCount] = useState(0);
   const [inboxCount,   setInboxCount]   = useState(0);
   const prevPath = useRef(pathname);
@@ -708,8 +711,9 @@ const useBoardUnread = (userId: string | undefined, pathname: string, enabled = 
     prevPath.current = pathname;
   }, [pathname, fetchCount]);
 
-  // 🚨 画面を見ていない間は止まり、戻った瞬間に1回読み直す（hooks/usePolling.ts）
-  usePolling(fetchCount);
+  // 🚨 30 秒ごとの数え直しをやめ、通知の表に連絡板の新しい行が来たときだけ数え直す（2026-09-27・通信量の見直し 段1）。
+  //    ここだけで月 66 万回（全体の約 4 割）あった。仕組みは hooks/useRefreshOn.ts・lib/refreshBus.ts
+  useRefreshOn(fetchCount, BOARD_TOPICS);
   return { total: channelCount + inboxCount, channelOnly: channelCount };
 };
 

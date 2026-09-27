@@ -1,0 +1,39 @@
+// 通知の行から「話題」を決める純粋な関数（2026-09-27・通信量の見直し 段1）
+// supabase を読まない＝node で検算できるように、badgeLedger.ts から分けてある
+
+import type { RefreshTopic } from './refreshBus';
+
+/** 1 回に読む行数。2 回の読みの間に 30 件を超える新着が来ることは無い前提（1 人あたり 1 日数件） */
+export const LEDGER_LIMIT = 30;
+
+export interface LedgerRow { id: string; event_key: string | null; source_type: string | null }
+
+/**
+ * 通知の行 → 話題。event_key の先頭区切りを優先し、無ければ source_type で見る。
+ * 🚨 どの話題にも当たらない行は 'bell' だけ（ベルの数字にだけ関係する）。
+ * 🚨 話題を足したら refreshBus.ts の RefreshTopic も足す。数え方（各フックの中身）は触らない
+ */
+export function topicOf(eventKey: string | null, sourceType: string | null): RefreshTopic {
+  const head = (eventKey ?? '').split(':')[0];
+  const src = sourceType ?? '';
+  if (head === 'board' || head === 'reminder') return 'board';
+  if (head === 'safety' || src.startsWith('safety_check')) return 'safety';
+  if (head === 'leave' || src.startsWith('leave')) return 'leave';
+  if (head === 'shift_report' || src.startsWith('shift_report')) return 'shift_report';
+  if (head === 'overtime' || src.startsWith('overtime')) return 'overtime';
+  if (head === 'application_request' || src.startsWith('application_request')) return 'application_request';
+  if (head === 'purchase_request' || src.startsWith('purchase_request')) return 'purchase_request';
+  if (src === 'admin_setup') return 'admin';
+  return 'bell';
+}
+
+/** 前回読んだ id に無い行の話題（新着があればベルも必ず入れる） */
+export function newRowTopics(seen: ReadonlySet<string>, rows: readonly LedgerRow[]): Set<RefreshTopic> {
+  const topics = new Set<RefreshTopic>();
+  for (const r of rows) {
+    if (seen.has(r.id)) continue;
+    topics.add(topicOf(r.event_key, r.source_type));
+    topics.add('bell');
+  }
+  return topics;
+}
