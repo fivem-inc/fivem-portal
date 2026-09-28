@@ -71,3 +71,10 @@ export function computeBalance(allRows: BalanceRow[], period: string): BalanceSu
 
   return { total, plannedDelta, plannedTotal, plus, choseiMinus, otherMinus, holidayPlus, minus, absenceDays, absencePending, pendingCount };
 }
+
+/** 合計時間数の数字の色（本人カード・表入力で共用）。プラス＝青／マイナス＝橙／0＝灰 */
+export function diffColor(min: number, isDark: boolean): string {
+  if (min > 0) return isDark ? '#64b5f6' : '#1565c0';
+  if (min < 0) return isDark ? '#ffb74d' : '#e65100';
+  return isDark ? '#adb5bd' : '#6c757d';
+}

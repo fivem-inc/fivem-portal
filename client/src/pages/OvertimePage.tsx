@@ -31,7 +31,7 @@ import { toWorkSegments, segmentIssuesOf, detectOvertimeTypes, composeApplicatio
 import type { LateChoice, EarlyChoice } from '../lib/overtimeSubmit';
 import { resolveNormalShift, normalShiftBands, normalShiftTimeText, reportGateMin, buildWorkDiff, fullDayDiffMin, buildTimeAdjustReport, cutBandsAt, NS_LABEL_W, DAY_LABOR_LABEL } from '../lib/overtimeShift';
 import OvertimeMemoSection from '../components/OvertimeMemoSection';
-import { computeBalance } from '../lib/overtimeBalance';
+import { computeBalance, diffColor } from '../lib/overtimeBalance';
 import { memoShortLabel } from '../lib/overtimeMemo';
 import type { OvertimeMemo } from '../lib/overtimeMemo';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
@@ -236,15 +236,6 @@ const TypeChips: React.FC<{ types: string[] | null | undefined; isDark: boolean;
 const POSTHOC_BADGE = { color: '#0f766e', darkBg: '#123a35' };
 // 自動計上バッジ（調整休の紫に合わせる）
 const AUTO_BADGE = { color: '#7d3c98', darkBg: '#3a1f4d' };
-
-const PLUS_COLOR = '#1565c0';
-const MINUS_COLOR = '#e65100';
-
-function diffColor(min: number, isDark: boolean): string {
-  if (min > 0) return isDark ? '#64b5f6' : PLUS_COLOR;
-  if (min < 0) return isDark ? '#ffb74d' : MINUS_COLOR;
-  return isDark ? '#adb5bd' : '#6c757d';
-}
 
 // 合計時間数の計算（computeBalance）は lib/overtimeBalance.ts に移した（管理画面の受理済み一覧と共用・2026-09-18）。
 // 🚨 ここに書き写さないこと（本人カード・部門集計・個人詳細・管理画面で数字が食い違う）

@@ -15,6 +15,8 @@ import type { SegInput, TypeDetect, LateChoice, EarlyChoice } from './overtimeSu
 import { buildWorkDiff } from './overtimeShift';
 import type { NormalShiftSnapshot } from './overtimeShift';
 import type { OvertimeStatus } from './overtimeStatus';
+import { computeBalance } from './overtimeBalance';
+import type { BalanceRow, BalanceSummary } from './overtimeBalance';
 
 /** 給与期間（16日〜翌15日）の日付を順に並べる */
 export function periodDates(periodStart: string): string[] {
@@ -372,4 +374,36 @@ export function computeGridRow(a: {
   if (msg) return { ...calc, state: a.focused ? 'editing' : 'error', message: msg };
   if (!legal.ok) return { ...calc, state: 'warn', message: '休憩が法定より短い（送れます）' };
   return { ...calc, state: 'ok' };
+}
+
+/**
+ * 表の上の「合計」（2026-09-28 ユーザー確定 案A）。いまの合計と、送れる行を送ったつもりの合計を返す。
+ * 🚨 計算は lib/overtimeBalance の computeBalance だけ（スマホの合計時間数カードと同じ）。ここに式を書かない。
+ * ・実績報告・再提出の行 … その申請（main）の差分を、入力中の差分に置き換える（送ると同じ行が書き換わるため）
+ * ・新しく出す日の行 … 行を1つ足す
+ * 状態は requested として足す。見込み（plannedTotal）は確定＋確認待ちの合計なので、受理の仕方（自己受理か）で変わらない。
+ * 🚨 reports は表が読んだその給与期間の申請（work_date で絞ってある）なので、pay_period_start は period として扱う。
+ */
+export function gridBalance(
+  reports: GridReport[],
+  period: string,
+  sends: { main: GridReport | null; isEdit: boolean; date: string; diffMin: number; applicationTypes: string[] }[],
+): { now: BalanceSummary; after: BalanceSummary } {
+  const toRow = (r: GridReport): BalanceRow => ({
+    pay_period_start: period, status: r.status, entry_type: r.entry_type, work_date: r.work_date,
+    diff_minutes: r.diff_minutes, application_types: r.application_types,
+  });
+  const base = reports.map(toRow);
+  const replaced = new Map<string, BalanceRow>();
+  const added: BalanceRow[] = [];
+  sends.forEach(s => {
+    const row: BalanceRow = {
+      pay_period_start: period, status: 'requested', entry_type: 'manual', work_date: s.date,
+      diff_minutes: s.diffMin, application_types: s.applicationTypes,
+    };
+    if (s.isEdit && s.main) replaced.set(s.main.id, row);
+    else added.push(row);
+  });
+  const afterRows = [...reports.map(r => replaced.get(r.id) ?? toRow(r)), ...added];
+  return { now: computeBalance(base, period), after: computeBalance(afterRows, period) };
 }

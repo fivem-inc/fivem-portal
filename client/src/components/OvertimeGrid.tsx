@@ -21,8 +21,9 @@ import { resolveNormalShift, normalShiftTimeText, reportGateMin } from '../lib/o
 import type { PatternRow, NormalShiftSnapshot } from '../lib/overtimeShift';
 import {
   periodDates, pickDayReport, classifyGridDay, GRID_KIND_TAG, initialRowDraft, computeGridRow, normalSegsOf,
-  locationPick, GRID_SELF_REVIEW, sameGridReport,
+  locationPick, GRID_SELF_REVIEW, sameGridReport, gridBalance,
 } from '../lib/overtimeGrid';
+import { diffColor } from '../lib/overtimeBalance';
 import type { GridReport, GridDayKind, RowDraft, RowState, GridRowCalc } from '../lib/overtimeGrid';
 import { STATUS_INFO } from '../lib/overtimeStatus';
 import { isOvertimeType, typeLabelFor, overtimeAmountLabel } from '../lib/overtimeTypes';
@@ -265,6 +266,11 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
   const sendable = rows.filter(r => r.calc.state === 'ok' || r.calc.state === 'warn');
   // 🚨 「予定どおりの日を送る対象に入れる」の対象：報告できる・まだ触っていない行だけ（直した行は含めない）
   const plannedAsIs = rows.filter(r => r.kind === 'report' && !r.draft.touched);
+  // 表の上の合計（2026-09-28 ユーザー確定 案A）。🚨 計算は lib の gridBalance（中身はスマホの合計時間数カードと同じ computeBalance）
+  const balance = reports ? gridBalance(reports, period, sendable.map(r => ({
+    main: r.main, isEdit: r.kind === 'report' || r.kind === 'resubmit', date: r.date,
+    diffMin: r.calc.diffMin, applicationTypes: r.calc.applicationTypes,
+  }))) : null;
   // 締め切りを過ぎた新しい行（経理の許可が無い）。🚨 行ごとではなく表の上に1つだけ出す
   const lockedNewRows = rows.filter(r => (r.kind === 'new_post' || r.kind === 'new_today') && isPayPeriodClosed(r.date, today) && !grants.has(r.date));
 
@@ -599,6 +605,24 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
         </select>
         <button type="button" style={btn} onClick={onClose}>1件ずつのフォームに戻る</button>
       </div>
+
+      {/* 合計（2026-09-28 案A）。「送ると」は送れる行（エラーでない行）があるときだけ */}
+      {ready && balance && (
+        <div style={{ background: innerBg, border: `1px solid ${borderColor}`, borderRadius: 8, padding: '8px 12px', fontSize: 13.5, marginBottom: 10, display: 'flex', flexWrap: 'wrap', gap: '4px 20px', alignItems: 'baseline' }}>
+          <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'baseline' }}>
+            <span>{period === calcPayPeriodStartJst(today) ? '今期の合計' : 'この期の合計'}</span>
+            <span>確定 <b style={{ fontSize: 16, color: diffColor(balance.now.total, isDark) }}>{formatSignedMin(balance.now.total)}</b></span>
+            <span style={{ color: subText }}>／</span>
+            <span>見込み <b style={{ fontSize: 16, color: diffColor(balance.now.plannedTotal, isDark) }}>{formatSignedMin(balance.now.plannedTotal)}</b><span style={{ color: subText }}>（確認待ち反映後）</span></span>
+          </span>
+          {sendable.length > 0 && (
+            <span>
+              入力中の {sendable.length}件 を送ると → <b style={{ fontSize: 16, color: diffColor(balance.after.plannedTotal, isDark) }}>{formatSignedMin(balance.after.plannedTotal)}</b>
+              <span style={{ color: subText }}>（{formatSignedMin(balance.after.plannedTotal - balance.now.plannedTotal)}）</span>
+            </span>
+          )}
+        </div>
+      )}
 
       <div style={{ background: innerBg, border: `1px solid ${borderColor}`, borderRadius: 8, padding: '8px 12px', fontSize: 12.5, color: subText, marginBottom: 10, lineHeight: 1.7 }}>
         ・入力途中の内容は、この端末に保存されます<br />
