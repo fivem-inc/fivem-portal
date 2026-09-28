@@ -11,6 +11,9 @@ import { logFail } from './logFail';
 import { friendlyOvertimeDbError } from './overtimeSubmit';
 import { describeUpdate } from './statusUpdate';
 import type { WorkSegment } from './breakCalc';
+import { notifyOvertimeNewRequestBell, notifyOvertimeNewRequestEmail, sendOvertimeSlackBatch } from './overtimeNotify';
+import type { BulkWriter, ExistingManual } from './overtimeBulkSend';
+import type { GridReport } from './overtimeGrid';
 
 export type SaveStage = 'insert' | 'update' | 'conflict' | 'seg_delete' | 'seg_insert';
 
@@ -179,3 +182,34 @@ export async function withdrawGrantRequest(requestId: string): Promise<string | 
     .update({ status: 'withdrawn' }).eq('id', requestId).eq('status', 'open').select('id');
   return describeUpdate(res, '取り下げ', 'competing');
 }
+
+// ── まとめて送るときの本物の「書き込み係」（lib/overtimeBulkSend の BulkWriter・2026-09-29）──
+// 🚨 表入力（OvertimeGrid.tsx の doSend）にあった問い合わせ・通知を、そのまま移した
+
+export const supabaseBulkWriter: BulkWriter = {
+  async reread(id) {
+    const { data, error } = await supabase.from('overtime_reports')
+      .select('*, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
+      .eq('id', id).maybeSingle();
+    return { data: (data as (GridReport & Record<string, unknown>) | null) ?? null, error: error ? error.message : null };
+  },
+  save: saveOvertimeReport,
+  async findExistingManual(userId, date) {
+    // 🚨 読めなかったときは error を返す（「内容が違います」と取り違えないため・2026-09-29）
+    const { data, error } = await supabase.from('overtime_reports').select('diff_minutes, reason, application_types, location, furikae_origin_date')
+      .eq('applicant_id', userId).eq('work_date', date).eq('entry_type', 'manual').neq('status', 'cancelled').maybeSingle();
+    return { data: (data as ExistingManual | null) ?? null, error: error ? error.message : null };
+  },
+  async linkRequest(requestId, reportId) {
+    // 🚨 update は0件でもエラーにならないので件数を見る。status=open を条件に入れる（相手が「対応しない」を選んだあとなら触らない）
+    const nowIso = new Date().toISOString();
+    const { data: linked, error: lerr } = await supabase.from('application_requests')
+      .update({ status: 'applied', linked_id: reportId, responded_at: nowIso, updated_at: nowIso })
+      .eq('id', requestId).eq('status', 'open').select('id');
+    if (lerr || !linked || linked.length === 0) console.error('[申請の依頼] 申請済みにできませんでした', lerr?.message);
+  },
+  bell: notifyOvertimeNewRequestBell,
+  email: notifyOvertimeNewRequestEmail,
+  slack: sendOvertimeSlackBatch,
+  gcal: syncOvertimeGcal,
+};

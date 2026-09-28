@@ -1,0 +1,256 @@
+// 残業の申請を複数日まとめて送る（表入力・まとめて申請で共用・2026-09-29）。計画：docs/計画-残業のまとめて申請.md の「作る順番」2
+//
+// 🚨 表入力（OvertimeGrid.tsx の doSend）にあった送信の流れを、そのまま移した。
+// 🚨 ここは supabase を読まない。DB への書き込み・お知らせ・カレンダーは「書き込み係」（BulkWriter）として外から渡す
+//    （本物は lib/overtimeSubmitApi の supabaseBulkWriter。node の検算では偽物を渡して流れを確かめる）。
+// 🚨 流れ：1行ずつ順に送る／途中で失敗しても他の行は止めない／送る直前にいまの時刻で行をもう一度判定する／
+//    実績報告・再提出は送る直前に元の申請を読み直す／ベルは1件ずつ・メールは申請先ごとに1通・Slack は種類ごとに1通／
+//    カレンダーは全部入れ終えてから1件ずつ
+
+import { computeGridRow, sameGridReport } from './overtimeGrid';
+import type { GridReport, GridDayKind, RowDraft, GridRowCalc } from './overtimeGrid';
+import { buildOvertimeRecord } from './overtimeSubmit';
+import { editHistorySummary, reviewerPhaseLabel, shouldNotifyReviewer } from './overtimeFormParts';
+import { isPayPeriodClosed, formatSignedMin } from './breakCalc';
+import { overtimeAmountLabel } from './overtimeTypes';
+import { toDbTime } from './timeInput';
+import type { NormalShiftSnapshot } from './overtimeShift';
+import type { SaveArgs, SaveResult } from './overtimeSubmitApi';
+
+/** 送る行（表入力の1行・まとめて申請の箱の1件） */
+export interface BulkRow {
+  kind: GridDayKind;
+  date: string;
+  ns: NormalShiftSnapshot;
+  main: GridReport | null;
+  draft: RowDraft;
+  /** この行の既定の申請先 */
+  rowDefaultReviewer: string;
+  /** 上長からの「申請の依頼」に答える行なら、その依頼 */
+  req: { id: string } | null;
+}
+
+/** 確認のときに見せた「送ると何になるか」。🚨 送る直前に種類が変わっていたら送らない */
+export interface BulkTarget { date: string; label: string }
+
+export type BulkRowStatus = 'waiting' | 'sending' | 'sent' | 'failed' | 'check';
+
+/** 同じ日の申請（手入力・取消以外）が既にあったとき、中身を比べるための列 */
+export interface ExistingManual {
+  diff_minutes: number | null;
+  reason: string | null;
+  application_types: string[] | null;
+  location: string | null;
+  furikae_origin_date?: string | null;
+}
+
+/** DB・お知らせ・カレンダーの「書き込み係」 */
+export interface BulkWriter {
+  /** 実績報告・再提出の元の申請を読み直す（時間帯つき） */
+  reread(id: string): Promise<{ data: (GridReport & Record<string, unknown>) | null; error: string | null }>;
+  save(a: SaveArgs): Promise<SaveResult>;
+  /** 同じ日の手入力の申請（取消以外）を1件 */
+  findExistingManual(userId: string, date: string): Promise<{ data: ExistingManual | null; error: string | null }>;
+  /** 依頼を「申請済み」にして申請と結び付ける。🚨 失敗しても申請そのものは成立している（依頼が open のまま残るだけ） */
+  linkRequest(requestId: string, reportId: string): Promise<void>;
+  bell(a: { reportId: string; reviewerId: string; applicantName: string; phaseLabel: string; dateLabel: string; timeLabel: string }): Promise<void>;
+  email(a: { reviewerId: string; applicantName: string; phaseLabel: string; dateLabel: string; timeLabel: string }): Promise<void>;
+  slack(reportIds: string[], eventKey: 'overtime:new_request' | 'overtime:confirmed'): Promise<void>;
+  /** Google カレンダーへ。失敗したら false */
+  gcal(reportId: string): Promise<boolean>;
+}
+
+export interface BulkCtx {
+  userId: string;
+  profileName: string;
+  canSelfReview: boolean;
+  advanceMaxDate: string;
+  /** 経理から締め後の申請を許可された対象日 */
+  grants: Set<string>;
+  now: () => Date;
+  /** 今日（JST の YYYY-MM-DD） */
+  today: () => string;
+}
+
+export interface BulkResult {
+  ok: number; failed: number; check: number;
+  sentIds: string[];
+  /** 送れた日（「すでに送信済みでした」を含む） */
+  sentDates: string[];
+  gcalFailedIds: string[];
+}
+
+const DOW = ['日', '月', '火', '水', '木', '金', '土'];
+/** "2026-10-03" → "2026-10-03（金）"（1件フォームの通知と同じ形） */
+export function fullDateLabel(d: string): string {
+  const [y, m, dd] = d.split('-').map(Number);
+  return `${d}（${DOW[new Date(y, m - 1, dd).getDay()]}）`;
+}
+
+/**
+ * 同じ日の申請が既にあったとき（23505）、送ろうとした中身と同じか。
+ * 同じなら「すでに送信済み」（通信が切れて応答だけ届かなかった／2つのタブで送った）。違えば別の経路で作られた申請なので要確認。
+ * 🚨 2026-09-29：比べるのを「組み立てた保存内容」にした（以前は下書きの理由と比べていて、保存時に理由を書き換える打刻ズレでは必ず要確認になった）。
+ *    比べる項目：差分・理由・種別・勤務地・振替元の日
+ */
+export function existingMatchesRecord(ex: ExistingManual | null, rec: Record<string, unknown>): boolean {
+  if (!ex) return false;
+  const types = (v: unknown) => JSON.stringify([...((v as string[] | null) ?? [])].sort());
+  return ex.diff_minutes === (rec.diff_minutes as number | null)
+    && (ex.reason ?? '').trim() === String(rec.reason ?? '').trim()
+    && types(ex.application_types) === types(rec.application_types)
+    && (ex.location ?? '') === String(rec.location ?? '')
+    && (ex.furikae_origin_date ?? null) === ((rec.furikae_origin_date as string | null | undefined) ?? null);
+}
+
+/** 送る直前の1行の判定（表入力・箱で同じもの）。🚨 いまの時刻で判定し直す */
+export function recomputeRow(r: BulkRow, ctx: BulkCtx, now: Date = ctx.now()): GridRowCalc {
+  const today = ctx.today();
+  return computeGridRow({
+    kind: r.kind, date: r.date, today, nowMin: now.getHours() * 60 + now.getMinutes(), advanceMaxDate: ctx.advanceMaxDate,
+    ns: r.ns, main: r.main, draft: r.draft,
+    defaultReviewerId: r.rowDefaultReviewer, canSelfReview: ctx.canSelfReview, selfId: ctx.userId,
+    closeLocked: isPayPeriodClosed(r.date, today) && !ctx.grants.has(r.date), focused: false,
+  });
+}
+
+/**
+ * まとめて送る。行ごとの結果は onRow で知らせる（画面はそれを表に出す）。
+ * 🚨 同じ日が2つ入っていたら、2つ目は送らない（箱で同じ日を入れた場合の二重申請を防ぐ）
+ */
+export async function runBulkSend(
+  targets: BulkTarget[],
+  findRow: (date: string) => BulkRow | undefined,
+  ctx: BulkCtx,
+  writer: BulkWriter,
+  onRow: (date: string, status: BulkRowStatus, message: string) => void,
+  onProgress: (done: number, total: number) => void,
+): Promise<BulkResult> {
+  const sentIds: string[] = [];
+  const sentDates: string[] = [];
+  // メールは申請先ごとに1通（🚨 ベルは1件ずつ）
+  const mailGroups = new Map<string, { dates: string[]; diff: number; phases: Record<string, number> }>();
+  // Slack は種類ごとに1通（🚨 宛先はチャンネルなので申請先ごとには分けない）
+  const slackNew: string[] = [];
+  const slackConfirmed: string[] = [];
+  let ok = 0, failed = 0, check = 0;
+  const seen = new Set<string>();
+
+  for (let i = 0; i < targets.length; i++) {
+    const t = targets[i];
+    if (seen.has(t.date)) {
+      failed++; onRow(t.date, 'failed', '同じ日が2つ入っています。1つにしてください');
+      onProgress(i + 1, targets.length);
+      continue;
+    }
+    seen.add(t.date);
+    onRow(t.date, 'sending', '');
+    const r = findRow(t.date);
+    const now = ctx.now();   // 🚨 この行の判定と保存の日時は同じ時刻を使う
+    const c = r ? recomputeRow(r, ctx, now) : null;
+    const isEdit = !!r && (r.kind === 'report' || r.kind === 'resubmit');
+    // 🚨 実績報告・再提出は、送る直前にその申請を読み直す。
+    //    表を開いている間に上長が受理・差し戻し・修正をしていたら、古い中身で上書きしないよう送らない
+    let fresh: (GridReport & Record<string, unknown>) | null = null;
+    let freshErr = '';
+    if (isEdit && r?.main && c && (c.state === 'ok' || c.state === 'warn') && c.sendLabel === t.label) {
+      const { data, error } = await writer.reread(r.main.id);
+      if (error) freshErr = '申請を読み直せませんでした：' + error;
+      else if (!data) freshErr = 'この申請が見つかりません（取り消された可能性があります）。表を読み直してください';
+      else if (!sameGridReport(r.main, data as GridReport)) freshErr = '表を開いたあとで、この申請の状態か内容が変わっています（受理・差し戻し・修正など）。表を読み直してから、もう一度送ってください';
+      else fresh = data;
+    }
+    if (!r || !c || (c.state !== 'ok' && c.state !== 'warn')) {
+      failed++; onRow(t.date, 'failed', c?.message || '送れる状態ではありません');
+    } else if (c.sendLabel !== t.label) {
+      failed++; onRow(t.date, 'failed', `種類が変わりました（${t.label} → ${c.sendLabel}）。確認し直してから送ってください`);
+    } else if (isEdit && !fresh) {
+      check++; onRow(t.date, 'check', freshErr);
+    } else {
+      const nowIso = now.toISOString();
+      const record = buildOvertimeRecord({
+        userId: ctx.userId, date: r.date, mode: c.mode, phase: c.phase, fullDayMode: false, fullDayType: null,
+        isSelfReview: c.isSelfReview, isPureZero: c.isPureZero, isReportPhase: c.isReportPhase, isResubmit: c.isResubmit, hasChanges: c.hasChanges,
+        normalShift: r.ns, breakMin: c.breakMin, breakManual: r.draft.breakMin.trim() !== '', laborMin: c.laborMin, diffMin: c.diffMin,
+        fdDiffMin: 0, legalOk: c.legalOk, reason: r.draft.reason, changeReason: r.draft.changeReason, fdLocation: '', effectiveLocation: c.effectiveLocation,
+        applicationTypes: c.applicationTypes,
+        lateChoice: r.draft.lateChoice, earlyChoice: r.draft.earlyChoice,
+        // 🚨 表ではカレンダーに載せるかを聞かない。新しい行は null（種類ごとの既定）。
+        //    実績報告は元の申請の値を引き継ぐ（buildOvertimeRecord の中で。1件フォームと同じ）
+        offerCalendarChoice: false, showOnCalendar: false, editTargetShowOnCalendar: (fresh?.show_on_calendar as boolean | null | undefined) ?? undefined,
+        furikaeOriginDate: '', effectiveFurikaeOriginLocation: '', furikaeOriginStart: '', furikaeOriginEnd: '',
+        furikaeOriginBreak: 0, furikaeOriginLabor: 0, furikaeHasTime: false,
+        reviewerId: c.reviewerId, modifiedFromId: null,
+        clockOnlyMode: false, effectiveClockReason: '', clockInAt: '', clockOutAt: '', nowIso,
+      }, toDbTime);
+      // 🚨 再提出も元の値を引き継ぐ。buildOvertimeRecord は再提出では null にするので、ここで元の値に戻す。
+      //    null にすると「載せない」を選んでいた人の申請が、直して出し直しただけでカレンダーに出てしまう
+      if (fresh && c.isResubmit) record.show_on_calendar = (fresh.show_on_calendar as boolean | null | undefined) ?? null;
+      const saved = await writer.save({
+        userId: ctx.userId, record, phase: c.phase, segments: c.workSegments, segRetries: 2,
+        edit: fresh ? {
+          id: fresh.id, status: fresh.status, snapshot: fresh,
+          historySummary: editHistorySummary({ isReportPhase: c.isReportPhase, isPureZero: c.isPureZero, changedAxes: c.changedAxes, typeSwitched: null }),
+          historyChangeReason: (c.isReportPhase && c.hasChanges) ? r.draft.changeReason.trim() : null,
+        } : null,
+      });
+      if (!saved.ok) {
+        if (saved.stage === 'conflict') {
+          check++; onRow(r.date, 'check', saved.message);
+        } else if (saved.code === '23505') {
+          // 🚨 同じ日が既にある。中身が同じなら送信済み。違えば要確認。どちらも通知は送らない
+          const ex = await writer.findExistingManual(ctx.userId, r.date);
+          if (ex.error) { check++; onRow(r.date, 'check', '同じ日の申請がすでにあるようですが、確かめられませんでした（' + ex.error + '）。表を読み直して確認してください'); }
+          else if (existingMatchesRecord(ex.data, record)) { ok++; sentDates.push(r.date); onRow(r.date, 'sent', 'すでに送信済みでした'); }
+          else { check++; onRow(r.date, 'check', '同じ日の申請がすでにあります（内容が違います）。表を読み直して確認してください'); }
+        } else if (saved.reportId) {
+          // 申請は保存できたが時間帯が保存できなかった（入れ直しても失敗）。🚨 送り直すと重複になるので再送させない
+          check++; onRow(r.date, 'check', `申請は保存されましたが、時間帯を保存できませんでした。履歴から「内容を修正する」で直してください（${saved.message}）`);
+        } else {
+          failed++; onRow(r.date, 'failed', saved.message);
+        }
+      } else {
+        ok++; sentIds.push(saved.reportId); sentDates.push(r.date);
+        onRow(r.date, 'sent', c.sendLabel);
+        if (r.req) await writer.linkRequest(r.req.id, saved.reportId);
+        // 🚨 呼び名と通知の条件は lib/overtimeFormParts（1件フォームと共用）
+        const phaseLabel = reviewerPhaseLabel({ isResubmit: c.isResubmit, phase: c.phase, isModifiedReapply: false });
+        if (shouldNotifyReviewer({ isSelfReview: c.isSelfReview, isPureZero: c.isPureZero, clockOnly: false, reviewerId: c.reviewerId })) {
+          await writer.bell({
+            reportId: saved.reportId, reviewerId: c.reviewerId, applicantName: ctx.profileName,
+            phaseLabel, dateLabel: fullDateLabel(r.date), timeLabel: overtimeAmountLabel(c.applicationTypes, c.diffMin),
+          });
+          const g = mailGroups.get(c.reviewerId) ?? { dates: [], diff: 0, phases: {} };
+          g.dates.push(r.date); g.diff += c.diffMin; g.phases[phaseLabel] = (g.phases[phaseLabel] ?? 0) + 1;
+          mailGroups.set(c.reviewerId, g);
+          slackNew.push(saved.reportId);
+        } else if (c.isSelfReview && !c.isPureZero) {
+          // 🚨 自己受理の残業なし（差分0）は送らない（中身が無い。1件フォームと同じ条件）
+          slackConfirmed.push(saved.reportId);
+        }
+      }
+    }
+    onProgress(i + 1, targets.length);
+  }
+
+  // メールを申請先ごとに1通
+  for (const [reviewerId, g] of mailGroups) {
+    const ds = [...g.dates].sort();
+    await writer.email({
+      reviewerId, applicantName: ctx.profileName,
+      phaseLabel: Object.entries(g.phases).map(([k, v]) => `${k}${v}件`).join('・'),
+      dateLabel: ds.length > 1 ? `${fullDateLabel(ds[0])}ほか${ds.length - 1}日` : fullDateLabel(ds[0]),
+      timeLabel: `計${formatSignedMin(g.diff)}（${ds.length}件）`,
+    });
+  }
+
+  // Slack を種類ごとに1通
+  await writer.slack(slackNew, 'overtime:new_request');
+  await writer.slack(slackConfirmed, 'overtime:confirmed');
+
+  // カレンダーの同期は申請をすべて入れ終えてから1件ずつ（失敗は送信の失敗とは分けて出す）
+  const gcalFailedIds: string[] = [];
+  for (const id of sentIds) { if (!(await writer.gcal(id))) gcalFailedIds.push(id); }
+
+  return { ok, failed, check, sentIds, sentDates, gcalFailedIds };
+}

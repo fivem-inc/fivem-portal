@@ -21,23 +21,21 @@ import { resolveNormalShift, normalShiftTimeText, reportGateMin } from '../lib/o
 import type { PatternRow, NormalShiftSnapshot } from '../lib/overtimeShift';
 import {
   periodDates, pickDayReport, classifyGridDay, GRID_KIND_TAG, initialRowDraft, computeGridRow, normalSegsOf,
-  locationPick, GRID_SELF_REVIEW, sameGridReport, gridBalance,
+  locationPick, GRID_SELF_REVIEW, gridBalance,
 } from '../lib/overtimeGrid';
 import { diffColor } from '../lib/overtimeBalance';
-import { shouldNotifyReviewer, reviewerPhaseLabel, editHistorySummary } from '../lib/overtimeFormParts';
 import type { GridReport, GridDayKind, RowDraft, RowState, GridRowCalc } from '../lib/overtimeGrid';
 import { STATUS_INFO } from '../lib/overtimeStatus';
-import { isOvertimeType, typeLabelFor, overtimeAmountLabel } from '../lib/overtimeTypes';
+import { isOvertimeType, typeLabelFor } from '../lib/overtimeTypes';
 import type { SituationLike } from '../lib/overtimeTypes';
 import { CALENDAR_CELL_STYLE } from '../hooks/useCompanyCalendar';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import { useRoles } from '../hooks/useRoles';
 import { attrsFor } from '../lib/roleAttrs';
 import TimeInput from './TimeInput';
-import { buildOvertimeRecord, LATE_CHOICES, EARLY_CHOICES } from '../lib/overtimeSubmit';
-import { saveOvertimeReport, syncOvertimeGcal } from '../lib/overtimeSubmitApi';
-import { notifyOvertimeNewRequestBell, notifyOvertimeNewRequestEmail, sendOvertimeSlackBatch } from '../lib/overtimeNotify';
-import { toDbTime } from '../lib/timeInput';
+import { LATE_CHOICES, EARLY_CHOICES } from '../lib/overtimeSubmit';
+import { syncOvertimeGcal, supabaseBulkWriter } from '../lib/overtimeSubmitApi';
+import { runBulkSend } from '../lib/overtimeBulkSend';
 import { segmentsText, type SegmentLike } from '../lib/segmentsText';
 
 interface Reviewer { id: string; name: string; role_title: string }
@@ -309,8 +307,6 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     return () => window.removeEventListener('beforeunload', h);
   }, [sending]);
 
-  const dowLabel = (d: string) => DOW[dowOf(d)];
-  const fullDateLabel = (d: string) => `${d}（${dowLabel(d)}）`;   // 1件フォームの通知と同じ形
 
   /**
    * 1行ずつ順に送る。🚨 途中で失敗しても他の行は止めない（それぞれ独立した申請）。
@@ -327,149 +323,19 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     setRowResults(Object.fromEntries(targets.map(t => [t.date, { status: 'waiting', message: '' } as RowResult])));
     setProgress({ done: 0, total: targets.length });
 
-    const sentIds: string[] = [];
-    const sentDates: string[] = [];
-    // メールは申請先ごとに1通（🚨 ベルは1件ずつ）
-    const mailGroups = new Map<string, { dates: string[]; diff: number; phases: Record<string, number> }>();
-    // Slack は種類ごとに1通（🚨 宛先はチャンネルなので申請先ごとには分けない・計画 §10-3）
-    const slackNew: string[] = [];
-    const slackConfirmed: string[] = [];
-    let ok = 0, failed = 0, check = 0;
+    // 🚨 送信の流れは lib/overtimeBulkSend の runBulkSend（まとめて申請と共用・2026-09-29）。
+    //    DB・お知らせ・カレンダーは lib/overtimeSubmitApi の supabaseBulkWriter
     const setRes = (date: string, res: RowResult) => setRowResults(prev => ({ ...prev, [date]: res }));
-
-    for (let i = 0; i < targets.length; i++) {
-      const t = targets[i];
-      setRes(t.date, { status: 'sending', message: '' });
-      const r = rows.find(x => x.date === t.date);
-      const now = new Date();
-      const nowMinLive = now.getHours() * 60 + now.getMinutes();
-      const c = r ? computeGridRow({
-        kind: r.kind, date: r.date, today: todayJstStr(), nowMin: nowMinLive, advanceMaxDate, ns: r.ns, main: r.main, draft: r.draft,
-        defaultReviewerId: r.rowDefaultReviewer, canSelfReview, selfId: userId,
-        closeLocked: isPayPeriodClosed(r.date, todayJstStr()) && !grants.has(r.date), focused: false,
-      }) : null;
-      const isEdit = !!r && (r.kind === 'report' || r.kind === 'resubmit');
-      // 🚨 実績報告・再提出は、送る直前にその申請を読み直す（計画 §10-5）。
-      //    表を開いている間に上長が受理・差し戻し・修正をしていたら、古い中身で上書きしないよう送らない
-      let fresh: (GridReport & Record<string, unknown>) | null = null;
-      let freshErr = '';
-      if (isEdit && r?.main && c && (c.state === 'ok' || c.state === 'warn') && c.sendLabel === t.label) {
-        const { data, error } = await supabase.from('overtime_reports')
-          .select('*, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
-          .eq('id', r.main.id).maybeSingle();
-        if (error) freshErr = '申請を読み直せませんでした：' + error.message;
-        else if (!data) freshErr = 'この申請が見つかりません（取り消された可能性があります）。表を読み直してください';
-        else if (!sameGridReport(r.main, data as GridReport)) freshErr = '表を開いたあとで、この申請の状態か内容が変わっています（受理・差し戻し・修正など）。表を読み直してから、もう一度送ってください';
-        else fresh = data as GridReport & Record<string, unknown>;
-      }
-      if (!r || !c || (c.state !== 'ok' && c.state !== 'warn')) {
-        failed++; setRes(t.date, { status: 'failed', message: c?.message || '送れる状態ではありません' });
-      } else if (c.sendLabel !== t.label) {
-        failed++; setRes(t.date, { status: 'failed', message: `種類が変わりました（${t.label} → ${c.sendLabel}）。確認し直してから送ってください` });
-      } else if (isEdit && !fresh) {
-        check++; setRes(t.date, { status: 'check', message: freshErr });
-      } else {
-        const record = buildOvertimeRecord({
-          userId, date: r.date, mode: c.mode, phase: c.phase, fullDayMode: false, fullDayType: null,
-          isSelfReview: c.isSelfReview, isPureZero: c.isPureZero, isReportPhase: c.isReportPhase, isResubmit: c.isResubmit, hasChanges: c.hasChanges,
-          normalShift: r.ns, breakMin: c.breakMin, breakManual: r.draft.breakMin.trim() !== '', laborMin: c.laborMin, diffMin: c.diffMin,
-          fdDiffMin: 0, legalOk: c.legalOk, reason: r.draft.reason, changeReason: r.draft.changeReason, fdLocation: '', effectiveLocation: c.effectiveLocation,
-          applicationTypes: c.applicationTypes,
-          lateChoice: r.draft.lateChoice, earlyChoice: r.draft.earlyChoice,
-          // 🚨 表ではカレンダーに載せるかを聞かない。新しい行は null（種類ごとの既定）・計画 §3。
-          //    実績報告は元の申請の値を引き継ぐ（buildOvertimeRecord の中で。1件フォームと同じ）
-          offerCalendarChoice: false, showOnCalendar: false, editTargetShowOnCalendar: fresh?.show_on_calendar ?? undefined,
-          furikaeOriginDate: '', effectiveFurikaeOriginLocation: '', furikaeOriginStart: '', furikaeOriginEnd: '',
-          furikaeOriginBreak: 0, furikaeOriginLabor: 0, furikaeHasTime: false,
-          reviewerId: c.reviewerId, modifiedFromId: null,
-          clockOnlyMode: false, effectiveClockReason: '', clockInAt: '', clockOutAt: '', nowIso: now.toISOString(),
-        }, toDbTime);
-        // 🚨 再提出も元の値を引き継ぐ（計画 §10-7）。buildOvertimeRecord は再提出では null にするので、ここで元の値に戻す。
-        //    null にすると「載せない」を選んでいた人の申請が、直して出し直しただけでカレンダーに出てしまう
-        if (fresh && c.isResubmit) record.show_on_calendar = fresh.show_on_calendar ?? null;
-        const saved = await saveOvertimeReport({
-          userId, record, phase: c.phase, segments: c.workSegments, segRetries: 2,
-          // 修正の記録の言葉は1件フォームと同じ
-          edit: fresh ? {
-            id: fresh.id, status: fresh.status, snapshot: fresh,
-            // 🚨 文は lib/overtimeFormParts の editHistorySummary（1件フォームと共用・2026-09-29）。表では種別の切り替えをしない
-            historySummary: editHistorySummary({ isReportPhase: c.isReportPhase, isPureZero: c.isPureZero, changedAxes: c.changedAxes, typeSwitched: null }),
-            historyChangeReason: (c.isReportPhase && c.hasChanges) ? r.draft.changeReason.trim() : null,
-          } : null,
-        });
-        if (!saved.ok) {
-          if (saved.stage === 'conflict') {
-            check++; setRes(r.date, { status: 'check', message: saved.message });
-          } else if (saved.code === '23505') {
-            // 🚨 同じ日が既にある。中身が同じ（通信が切れて応答だけ届かなかった／2つのタブで送った）なら送信済み。
-            //    違えば別の経路で作られた申請なので「要確認」。どちらも通知は送らない
-            const { data: ex } = await supabase.from('overtime_reports').select('id, diff_minutes, reason')
-              .eq('applicant_id', userId).eq('work_date', r.date).eq('entry_type', 'manual').neq('status', 'cancelled').maybeSingle();
-            const same = !!ex && ex.diff_minutes === c.diffMin && (ex.reason ?? '').trim() === r.draft.reason.trim();
-            if (same) { ok++; sentDates.push(r.date); setRes(r.date, { status: 'sent', message: 'すでに送信済みでした' }); }
-            else { check++; setRes(r.date, { status: 'check', message: '同じ日の申請がすでにあります（内容が違います）。表を読み直して確認してください' }); }
-          } else if (saved.reportId) {
-            // 申請は保存できたが時間帯が保存できなかった（2回入れ直しても失敗）。🚨 送り直すと重複になるので再送させない
-            check++; setRes(r.date, { status: 'check', message: `申請は保存されましたが、時間帯を保存できませんでした。履歴から「内容を修正する」で直してください（${saved.message}）` });
-          } else {
-            failed++; setRes(r.date, { status: 'failed', message: saved.message });
-          }
-        } else {
-          ok++; sentIds.push(saved.reportId); sentDates.push(r.date);
-          setRes(r.date, { status: 'sent', message: c.sendLabel });
-          // 依頼から来た日は、その依頼を「申請済み」にして申請と結び付ける（1件フォームと同じ）。
-          // 🚨 update は0件でもエラーにならないので件数を見る。status=open を条件に入れる（相手が「対応しない」を選んだあとなら触らない）。
-          //    失敗しても申請そのものは成立しているので、送信は成功のまま（依頼が open のまま残るだけ）
-          if (r.req) {
-            const nowIso2 = new Date().toISOString();
-            const { data: linked, error: lerr } = await supabase.from('application_requests')
-              .update({ status: 'applied', linked_id: saved.reportId, responded_at: nowIso2, updated_at: nowIso2 })
-              .eq('id', r.req.id).eq('status', 'open').select('id');
-            if (lerr || !linked || linked.length === 0) console.error('[申請の依頼] 申請済みにできませんでした', lerr?.message);
-          }
-          // 🚨 呼び名と通知の条件は lib/overtimeFormParts（1件フォームと共用・2026-09-29）。
-          //    差し戻しの再提出は「再提出」（以前は表だけ「事前申請／実績報告」と出ていて1件フォームと食い違っていた）
-          const phaseLabel = reviewerPhaseLabel({ isResubmit: c.isResubmit, phase: c.phase, isModifiedReapply: false });
-          // 通知（1件フォームと同じ条件）。🚨 自己受理は確認者のキューに入らないのでベルは送らない。
-          //    残業なしの実績報告（差分0）もその場で確定するので送らない（押しても該当の申請が無い空振りになる）
-          //    打刻ズレは表ではまだ出せない（clockOnly: false）。出せるようにしたらここに渡す
-          if (shouldNotifyReviewer({ isSelfReview: c.isSelfReview, isPureZero: c.isPureZero, clockOnly: false, reviewerId: c.reviewerId })) {
-            await notifyOvertimeNewRequestBell({
-              reportId: saved.reportId, reviewerId: c.reviewerId, applicantName: profileName ?? '',
-              phaseLabel, dateLabel: fullDateLabel(r.date), timeLabel: overtimeAmountLabel(c.applicationTypes, c.diffMin),
-            });
-            const g = mailGroups.get(c.reviewerId) ?? { dates: [], diff: 0, phases: {} };
-            g.dates.push(r.date); g.diff += c.diffMin; g.phases[phaseLabel] = (g.phases[phaseLabel] ?? 0) + 1;
-            mailGroups.set(c.reviewerId, g);
-            slackNew.push(saved.reportId);
-          } else if (c.isSelfReview && !c.isPureZero) {
-            // 🚨 自己受理の残業なし（差分0）は送らない（中身が無い。1件フォームと同じ条件）
-            slackConfirmed.push(saved.reportId);
-          }
-        }
-      }
-      setProgress({ done: i + 1, total: targets.length });
-    }
-
-    // メールを申請先ごとに1通（いまは OFF の設定なので実際には出ない。ON のときに件数ぶん飛ばないように）
-    for (const [reviewerId, g] of mailGroups) {
-      const ds = [...g.dates].sort();
-      await notifyOvertimeNewRequestEmail({
-        reviewerId, applicantName: profileName ?? '',
-        phaseLabel: Object.entries(g.phases).map(([k, v]) => `${k}${v}件`).join('・'),
-        dateLabel: ds.length > 1 ? `${fullDateLabel(ds[0])}ほか${ds.length - 1}日` : fullDateLabel(ds[0]),
-        timeLabel: `計${formatSignedMin(g.diff)}（${ds.length}件）`,
-      });
-    }
-
-    // Slack を種類ごとに1通（1日1行の一覧。いまは OFF の設定なので実際には出ない）
-    await sendOvertimeSlackBatch(slackNew, 'overtime:new_request');
-    await sendOvertimeSlackBatch(slackConfirmed, 'overtime:confirmed');
-
-    // カレンダーの同期は申請をすべて入れ終えてから1件ずつ（失敗は送信の失敗とは分けて出す）
-    const gcalNg: string[] = [];
-    for (const id of sentIds) { if (!(await syncOvertimeGcal(id))) gcalNg.push(id); }
-    setGcalFailedIds(gcalNg);
+    const result = await runBulkSend(
+      targets,
+      date => rows.find(x => x.date === date),
+      { userId, profileName: profileName ?? '', canSelfReview, advanceMaxDate, grants, now: () => new Date(), today: todayJstStr },
+      supabaseBulkWriter,
+      (date, status, message) => setRes(date, { status, message }),
+      (done, total) => setProgress({ done, total }),
+    );
+    const { ok, failed, check, sentDates } = result;
+    setGcalFailedIds(result.gcalFailedIds);
 
     // 送れた日の入力を消す（下書きからも消える）。🚨 空の入力で上書きせず消す：読み直したあとの状態
     //    （再提出を事前申請として出した日は「実績報告」の行になる 等）から、改めて最初の入力が作られるように
