@@ -9,6 +9,7 @@
 import { supabase } from './supabaseClient';
 import { logFail } from './logFail';
 import { friendlyOvertimeDbError } from './overtimeSubmit';
+import { describeUpdate } from './statusUpdate';
 import type { WorkSegment } from './breakCalc';
 
 export type SaveStage = 'insert' | 'update' | 'conflict' | 'seg_delete' | 'seg_insert';
@@ -122,4 +123,59 @@ export async function syncOvertimeGcal(reportId: string): Promise<boolean> {
   });
   const sr = syncRes as { success?: boolean; error?: string } | null;
   return !(syncErr || sr?.success === false);
+}
+
+/**
+ * 時間外調整休（終日）の二重計上のチェック：休暇から自動計上された調整休（leave_auto）が同じ日にもうあるか。
+ * 🚨 DB にこの重複を止める制約は無い（一意索引は manual 同士の1日1件と leave_auto だけ）＝ここが唯一の網。
+ * 🚨 2026-09-29：1件フォームから移したとき、**読めなかったら止める**に変えた（以前は error を見ておらず、読めないと素通りしていた）。
+ *    戻り値の error があれば送らずにその文を出すこと
+ */
+export async function findLeaveAutoDuplicate(userId: string, workDate: string): Promise<{ dup: boolean; error: string | null }> {
+  const { data, error } = await supabase.from('overtime_reports')
+    .select('id').eq('applicant_id', userId).eq('work_date', workDate).eq('entry_type', 'leave_auto').limit(1);
+  if (error) return { dup: false, error: '休暇からの調整休の計上を確かめられませんでした（' + error.message + '）。もう一度お試しください' };
+  return { dup: (data ?? []).length > 0, error: null };
+}
+
+// ── 締め後の許可の依頼（1件フォームから移した・2026-09-29。表入力でも使う）──
+
+/** 経理から締め後の申請を許可された対象日。🚨 読めなかったときは空（＝締め後の日は送れない側に倒れる。最終判断は DB のトリガー） */
+export async function fetchGrantedWorkDates(userId: string): Promise<Set<string>> {
+  const { data } = await supabase.from('overtime_submission_grants').select('work_date').eq('user_id', userId).is('revoked_at', null);
+  return new Set(((data ?? []) as { work_date: string }[]).map(g => g.work_date));
+}
+
+export interface GrantRequestRow {
+  id: string; work_dates: string[];
+  status: 'open' | 'resolved' | 'declined' | 'withdrawn';
+  created_at: string; resolve_note: string | null;
+}
+
+/** 本人の依頼のうち、依頼中（open）と見送り（declined）。🚨 読めなかったときは空 */
+export async function fetchMyGrantRequests(userId: string): Promise<GrantRequestRow[]> {
+  const { data } = await supabase.from('overtime_submission_grant_requests').select('id, work_dates, status, created_at, resolve_note')
+    .eq('user_id', userId).in('status', ['open', 'declined']).order('created_at', { ascending: false });
+  return (data as GrantRequestRow[] | null) ?? [];
+}
+
+/** 依頼を送る。失敗の文は grantRequestErrorMessage（lib/overtimeFormParts）で日本語にする */
+export async function insertGrantRequest(userId: string, workDates: string[]): Promise<{ ok: true; id: string } | { ok: false; dbMessage: string }> {
+  const { data, error } = await supabase.from('overtime_submission_grant_requests')
+    .insert({ user_id: userId, work_dates: workDates })
+    .select('id')
+    .single();
+  if (error) return { ok: false, dbMessage: error.message || '' };
+  return { ok: true, id: (data as { id: string } | null)?.id ?? '' };
+}
+
+/**
+ * 依頼を取り下げる。成立しなかったときはその文（成立したら null）。
+ * 🚨 update は0件でもエラーにならない（RLSで弾かれても「0件成功」で返る）。件数を見ないと、依頼が残ったままなのに取り下げたように見える。
+ * 🚨 status=open を条件に付ける。経理が先に許可・見送りをしていたら、その判断を黙って上書きしない
+ */
+export async function withdrawGrantRequest(requestId: string): Promise<string | null> {
+  const res = await supabase.from('overtime_submission_grant_requests')
+    .update({ status: 'withdrawn' }).eq('id', requestId).eq('status', 'open').select('id');
+  return describeUpdate(res, '取り下げ', 'competing');
 }

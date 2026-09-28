@@ -13,7 +13,7 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { useCompanyCalendar, CALENDAR_CELL_STYLE, CALENDAR_NOTICE } from '../hooks/useCompanyCalendar';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import {
-  calcTotalBreak, calcLaborMinutes, calcPatternFields, checkLegalBreak,
+  calcTotalBreak, calcPatternFields, checkLegalBreak,
   timeToMin, minToTime, formatSignedMin, formatMin,
   todayJstStr, calcPayPeriodStartJst, payPeriodLabel, payMonthLabel,
   payMonthPeriodLabel, payPeriodCloseCutoff, isPayPeriodClosed, isPayPeriodPayoutPassed, shiftPayPeriod,
@@ -22,7 +22,9 @@ import {
 } from '../lib/breakCalc';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import { retireeReturnNote } from '../lib/retire';
-import { saveOvertimeReport, syncOvertimeGcal } from '../lib/overtimeSubmitApi';
+import { saveOvertimeReport, syncOvertimeGcal, findLeaveAutoDuplicate, fetchGrantedWorkDates as loadGrantedWorkDates, fetchMyGrantRequests as loadMyGrantRequests, insertGrantRequest, withdrawGrantRequest } from '../lib/overtimeSubmitApi';
+import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
+import { storedLocationChoice, storedLocationCustom, splitMoveLocation, furikaeOriginCalc, furikaeOriginPrefill, effectiveOtherLocation, isManagerReviewer, shouldNotifyReviewer, reviewerPhaseLabel, editHistorySummary, grantRequestErrorMessage } from '../lib/overtimeFormParts';
 import { STATUS_INFO } from '../lib/overtimeStatus';
 import OvertimeGrid from '../components/OvertimeGrid';
 import { isPointerDevice } from '../lib/idleLogout';
@@ -35,10 +37,9 @@ import { computeBalance, diffColor } from '../lib/overtimeBalance';
 import { memoShortLabel } from '../lib/overtimeMemo';
 import type { OvertimeMemo } from '../lib/overtimeMemo';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
-import { describeUpdate } from '../lib/statusUpdate';
 import { useRoles } from '../hooks/useRoles';
-import { attrsFor, rankOf, embeddedRole, roleByName } from '../lib/roleAttrs';
-import type { RoleRow, EmbeddedRoleRow } from '../lib/roleAttrs';
+import { attrsFor, rankOf, roleByName } from '../lib/roleAttrs';
+import type { RoleRow } from '../lib/roleAttrs';
 
 // validate() は文言だけを返すので、文言と入力欄を突き合わせて薄赤ハイライトを付ける。
 // ここに無い文言は従来どおりメッセージだけ表示する（対応漏れでも壊れない）
@@ -555,25 +556,22 @@ const OvertimeForm: React.FC<{
     editTarget?.break_manual && editTarget.break_minutes != null ? String(editTarget.break_minutes) : (draft?.breakManualMin ?? ''));
   const [reason, setReason] = useState(() => editTarget?.reason ?? draft?.reason ?? '');
   // 勤務地：登録済みの校以外の値（自由入力）は「その他」＋カスタム欄に復元する
+  // 🚨 読み戻しの規則は lib/overtimeFormParts（表入力と共用・2026-09-29）
   const [location, setLocation] = useState(() => {
     const loc = editTarget?.location ?? '';
-    if (loc.includes('→')) return '移動あり';
-    if (loc) return workplaces.includes(loc) ? loc : 'その他';
+    if (loc) return storedLocationChoice(loc, workplaces);
     // 🚨 2026-09-14：申請の依頼（シフト調整）から開いた下書きには「A→B」が入ることがある。
     //    そのまま入れると選択肢に無い値になり、勤務地が空に見えるので「移動あり」に直す
     if ((draft?.location ?? '').includes('→')) return '移動あり';
     return draft?.location ?? '';
   });
-  const [locationCustom, setLocationCustom] = useState(() => {
-    const loc = editTarget?.location ?? '';
-    if (loc && !loc.includes('→') && !workplaces.includes(loc)) return loc;
-    return draft?.locationCustom ?? '';
-  });
+  const [locationCustom, setLocationCustom] = useState(() =>
+    storedLocationCustom(editTarget?.location ?? '', workplaces) || (draft?.locationCustom ?? ''));
   // 勤務地変更（移動）：開始校→移動先校。effectiveLocation で「A→B」に合成する
   // 🚨 2026-09-14：編集では登録済みの値、新規では下書きの値（申請の依頼から開いたとき）から戻す
   const moveSrc = editTarget ? (editTarget.location ?? '') : (draft?.location ?? '');
-  const [locMoveStart, setLocMoveStart] = useState(() => (moveSrc.includes('→') ? moveSrc.split('→')[0] : ''));
-  const [locMoveEnd, setLocMoveEnd] = useState(() => (moveSrc.includes('→') ? (moveSrc.split('→')[1] ?? '') : ''));
+  const [locMoveStart, setLocMoveStart] = useState(() => splitMoveLocation(moveSrc).start);
+  const [locMoveEnd, setLocMoveEnd] = useState(() => splitMoveLocation(moveSrc).end);
   // 理由履歴（自分が過去に入力した理由）
   const [pastReasons, setPastReasons] = useState<string[]>([]);
   // 履歴は過去の申請から自動抽出するため、✕は「候補として今後出さない」（端末に記憶）
@@ -659,19 +657,16 @@ const OvertimeForm: React.FC<{
 
   // 経理から締め後申請を許可された対象日（work_date の集合）。締めロックの救済に使う。
   const [grantedWorkDates, setGrantedWorkDates] = useState<Set<string>>(new Set());
+  // 🚨 読み込みは lib/overtimeSubmitApi（表入力と共用・2026-09-29）
   const fetchGrantedWorkDates = useCallback(() => {
-    supabase.from('overtime_submission_grants').select('work_date').eq('user_id', user.id).is('revoked_at', null)
-      .then(({ data }) => setGrantedWorkDates(new Set((data ?? []).map((g: { work_date: string }) => g.work_date))), () => {});
+    loadGrantedWorkDates(user.id).then(setGrantedWorkDates, () => {});
   }, [user.id]);
   useEffect(() => { fetchGrantedWorkDates(); }, [fetchGrantedWorkDates]);
 
   // 締め後申請の許可依頼（本人分・自分のopen/declined一覧）
-  interface GrantRequestRow { id: string; work_dates: string[]; status: 'open' | 'resolved' | 'declined' | 'withdrawn'; created_at: string; resolve_note: string | null; }
   const [myGrantRequests, setMyGrantRequests] = useState<GrantRequestRow[]>([]);
   const fetchMyGrantRequests = useCallback(() => {
-    supabase.from('overtime_submission_grant_requests').select('id, work_dates, status, created_at, resolve_note')
-      .eq('user_id', user.id).in('status', ['open', 'declined']).order('created_at', { ascending: false })
-      .then(({ data }) => setMyGrantRequests((data as GrantRequestRow[] | null) ?? []), () => {});
+    loadMyGrantRequests(user.id).then(setMyGrantRequests, () => {});
   }, [user.id]);
   useEffect(() => { fetchMyGrantRequests(); }, [fetchMyGrantRequests]);
 
@@ -985,29 +980,17 @@ const OvertimeForm: React.FC<{
     situation: { late_situation: lateChoice, early_situation: earlyChoice },
   }), [profileName, applicationTypes, workSegments, effectiveLocation, lateChoice, earlyChoice]);
   // 打刻ズレの労働時間は通常シフトそのもの。打刻時刻は参考値で、ここには入れない
-  const normalWorkSegments: WorkSegment[] = useMemo(() =>
-    normalSegs.map(s => {
-      const st = timeToMin(s.start);
-      let en = timeToMin(s.end);
-      if (st == null || en == null) return null;
-      if (en <= st) en += 1440;
-      return { startMin: st, endMin: en };
-    }).filter((s): s is WorkSegment => s !== null),
-  [normalSegs]);
+  // 🚨 式は既存の toWorkSegments と同じ（2026-09-29 に書き写しをやめた）
+  const normalWorkSegments: WorkSegment[] = useMemo(() => toWorkSegments(normalSegs), [normalSegs]);
 
   // 振替元の勤務時間（自動休憩・労働）。振替休日の差分＝振替元労働−対象日（休む日）の通常シフト労働。
-  const furikaeOriginSegs: WorkSegment[] = useMemo(() => {
-    const st = timeToMin(furikaeOriginStart);
-    let en = timeToMin(furikaeOriginEnd);
-    if (st == null || en == null) return [];
-    if (en <= st) en += 1440;
-    return [{ startMin: st, endMin: en }];
-  }, [furikaeOriginStart, furikaeOriginEnd]);
-  const furikaeOriginBreak = useMemo(() => calcTotalBreak(furikaeOriginSegs), [furikaeOriginSegs]);
-  const furikaeOriginLabor = useMemo(() => (furikaeOriginSegs.length ? calcLaborMinutes(furikaeOriginSegs, furikaeOriginBreak) : 0), [furikaeOriginSegs, furikaeOriginBreak]);
-  const furikaeHasTime = furikaeOriginSegs.length > 0;
+  // 🚨 計算は lib/overtimeFormParts の furikaeOriginCalc（表入力と共用・2026-09-29）
+  const furikaeCalc = useMemo(() => furikaeOriginCalc(furikaeOriginStart, furikaeOriginEnd), [furikaeOriginStart, furikaeOriginEnd]);
+  const furikaeOriginBreak = furikaeCalc.breakMin;
+  const furikaeOriginLabor = furikaeCalc.laborMin;
+  const furikaeHasTime = furikaeCalc.hasTime;
   // 振替元の勤務校の実効値（「その他」選択時は自由入力欄の値を使う。休日出勤は登録校以外の場所もあり得るため）
-  const effectiveFurikaeOriginLocation = furikaeOriginLocation === 'その他' ? furikaeOriginLocationCustom.trim() : furikaeOriginLocation;
+  const effectiveFurikaeOriginLocation = effectiveOtherLocation(furikaeOriginLocation, furikaeOriginLocationCustom);
 
   // 終日の合計時間数への効き（差分）。
   //  時間外調整休 = −対象日の通常シフト労働／振替休日 = 振替元労働 − 対象日の通常シフト労働（自己完結）／欠勤 = 0
@@ -1051,42 +1034,25 @@ const OvertimeForm: React.FC<{
     setGrantError('');
     if (grantDates.length === 0) { setGrantError('対象日を選択してください'); return; }
     setGrantSaving(true);
-    const { data, error } = await supabase.from('overtime_submission_grant_requests')
-      .insert({ user_id: user.id, work_dates: grantDates })
-      .select('id')
-      .single();
+    // 🚨 書き込みと文言は lib（表入力と共用・2026-09-29）
+    const res = await insertGrantRequest(user.id, grantDates);
     setGrantSaving(false);
-    if (error) {
-      const msg = error.message || '';
-      let friendly = '依頼の送信に失敗しました';
-      if (msg.includes('NOT_LOCKED')) friendly = 'まだ締め切り前の日が含まれています。締め切りを過ぎた日のみ選択してください';
-      else if (msg.includes('PAYOUT_PASSED')) friendly = '給与データが確定済みの日が含まれています。管理者にご相談ください';
-      else if (msg.includes('ALREADY_GRANTED')) friendly = '既に許可されている日が含まれています';
-      else if (msg.includes('DUPLICATE_REQUEST')) friendly = '既に依頼中の日が含まれています';
-      setGrantError(friendly);
-      return;
-    }
+    if (!res.ok) { setGrantError(grantRequestErrorMessage(res.dbMessage)); return; }
     const label = formatGrantDates(grantDates);
     setGrantFormOpen(false);
     setGrantConfirming(false);
     setGrantJustSent(true);
     setTimeout(() => setGrantJustSent(false), 4000);
     fetchMyGrantRequests();
-    notifyOvertimeGrantRequest({ requestId: data?.id ?? '', applicantName: profileName ?? '', workDatesLabel: label }).then(null, () => {});
+    notifyOvertimeGrantRequest({ requestId: res.id, applicantName: profileName ?? '', workDatesLabel: label }).then(null, () => {});
   };
 
   const doWithdrawGrantRequest = async () => {
     if (!withdrawConfirmId) return;
     setWithdrawing(true);
     setWithdrawError(null);
-    // 🚨 update は0件でもエラーにならない（RLSで弾かれても「0件成功」で返る）。
-    //    件数を見ないと、依頼が残ったままなのに画面から取り下げたように見える。
-    // 🚨 status=open を条件に付ける。このボタンは open の依頼にしか出ないので
-    //    人が押せる操作は減らない。減るのは「経理が先に許可・見送りをしていた」場合＝
-    //    その判断を黙って上書きしてしまう、止めたい方だけ。
-    const res = await supabase.from('overtime_submission_grant_requests')
-      .update({ status: 'withdrawn' }).eq('id', withdrawConfirmId).eq('status', 'open').select('id');
-    const fail = describeUpdate(res, '取り下げ', 'competing');
+    // 🚨 件数を見る・status=open を条件にする、は lib の withdrawGrantRequest の中（表入力と共用・2026-09-29）
+    const fail = await withdrawGrantRequest(withdrawConfirmId);
     setWithdrawing(false);
     if (fail) { setWithdrawError(fail); fetchMyGrantRequests(); return; }
     setWithdrawConfirmId(null);
@@ -1099,14 +1065,13 @@ const OvertimeForm: React.FC<{
     if (!furikaeOriginDate) return;
     if (furikaeFilledRef.current === furikaeOriginDate) return;
     furikaeFilledRef.current = furikaeOriginDate;
-    const ns = resolveNormalShift(patterns, furikaeOriginDate, null);
-    const loc = ns.location ?? '';
-    if (loc && !workplaces.includes(loc)) { setFurikaeOriginLocation('その他'); setFurikaeOriginLocationCustom(loc); }
-    else { setFurikaeOriginLocation(loc); setFurikaeOriginLocationCustom(''); }
+    // 🚨 入れる値は lib/overtimeFormParts の furikaeOriginPrefill（表入力と共用・2026-09-29）
+    const pre = furikaeOriginPrefill(resolveNormalShift(patterns, furikaeOriginDate, null), workplaces);
+    setFurikaeOriginLocation(pre.location); setFurikaeOriginLocationCustom(pre.locationCustom);
     // 振替元がシフト上「出勤日」なら初期値としてその時刻を入れる（休みの日＝時刻なしなら空のまま本人が入力）
-    if (ns.start_time && ns.end_time) {
-      setFurikaeOriginStart(fmtTime(ns.start_time));
-      setFurikaeOriginEnd(fmtTime(ns.end_time));
+    if (pre.start && pre.end) {
+      setFurikaeOriginStart(pre.start);
+      setFurikaeOriginEnd(pre.end);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [furikaeOriginDate, patterns]);
@@ -1126,8 +1091,7 @@ const OvertimeForm: React.FC<{
   const isSelfReview = reviewerId === SELF_REVIEW_VALUE
     || (isReportPhase && canSelfReview && !!editTarget?.reviewer_id && editTarget.reviewer_id === user.id);
   // 申請先の候補がマネージャー以上か（欠勤の申請先の判定。申請先の選択肢の絞り込みと同じ見方）
-  const reviewerIsManager = (id: string): boolean =>
-    embeddedRole(reviewers.find(r => r.id === id) as unknown as EmbeddedRoleRow<{ acts_as?: string | null }>)?.acts_as === 'manager';
+  const reviewerIsManager = (id: string): boolean => isManagerReviewer(reviewers.find(r => r.id === id));
 
   const today = todayJstStr();
   // 事前申請で選べるいちばん先の日（今期から3期先の期末）。シフトが決まっていない先の日を
@@ -1243,11 +1207,12 @@ const OvertimeForm: React.FC<{
       // 🚨 DB にこの重複を止める制約は無い（一意索引は manual 同士の1日1件と leave_auto だけ）＝ここが唯一の網。
       //    再提出で終日の調整休に変えるときも通す（2026-09-25）。以前は新規だけだった。
       //    実績報告は終日にならないので、実質「新規と再提出」
+      // 🚨 問い合わせは lib/overtimeSubmitApi の findLeaveAutoDuplicate（表入力と共用・2026-09-29）。
+      //    2026-09-29 から、読めなかったときも止める（以前は error を見ておらず素通りしていた）
       if (fullDayMode && fullDayType === 'chosei_off' && !isReportPhase) {
-        const { data: dup } = await supabase.from('overtime_reports')
-          .select('id').eq('applicant_id', user.id).eq('work_date', date).eq('entry_type', 'leave_auto').limit(1);
-        if ((dup ?? []).length > 0) {
-          setError('この日は休暇申請の時間外調整休がすでに計上されています');
+        const chk = await findLeaveAutoDuplicate(user.id, date);
+        if (chk.error || chk.dup) {
+          setError(chk.error ?? 'この日は休暇申請の時間外調整休がすでに計上されています');
           setSaving(false); setShowConfirm(false); return;
         }
       }
@@ -1270,9 +1235,8 @@ const OvertimeForm: React.FC<{
         segments: fullDayMode ? [] : (clockOnlyMode ? normalWorkSegments : workSegments),
         edit: editTarget ? {
           id: editTarget.id, status: editTarget.status, snapshot: editTarget,
-          historySummary: isReportPhase ? (isPureZero ? '残業なし（通常どおり）で報告' : hasChanges ? `実績報告（変更あり：${changedAxes.join('・')}）` : '実績報告（予定どおり）')
-            // 種別を変えた再提出は記録に残す（受理者が「何が変わったか」を追う手掛かり）
-            : typeSwitched === 'toTime' ? '再提出（終日 → 時間の申請に変更）' : typeSwitched === 'toFullDay' ? '再提出（時間の申請 → 終日に変更）' : '再提出',
+          // 🚨 文は lib/overtimeFormParts の editHistorySummary（表入力と共用・2026-09-29）
+          historySummary: editHistorySummary({ isReportPhase, isPureZero, changedAxes, typeSwitched }),
           historyChangeReason: (isReportPhase && hasChanges) ? changeReason.trim() : null,
         } : null,
       });
@@ -1297,7 +1261,8 @@ const OvertimeForm: React.FC<{
       // 通知すると「押しても該当申請が無い」空振りになるので送らない。
       // 🚨 打刻ズレ（clockOnlyMode）も確認なしで確定するので送らない（2026-09-29）。
       //    申請先を選んでから打刻ズレに切り替えると、欄は隠れても値が残り、上長に空振りのベルとメールが飛んでいた（9/16 に1件）
-      if (!isSelfReview && !isPureZero && !clockOnlyMode && reviewerId) {
+      // 🚨 条件と呼び名は lib/overtimeFormParts の shouldNotifyReviewer・reviewerPhaseLabel（表入力と共用・2026-09-29）
+      if (shouldNotifyReviewer({ isSelfReview, isPureZero, clockOnly: clockOnlyMode, reviewerId })) {
         notifyOvertimeNewRequest({
           reportId,
           reviewerId,
@@ -1305,7 +1270,7 @@ const OvertimeForm: React.FC<{
           // 🚨 修正の再申請は、受理者が「また同じ日の申請が来た」と思わないよう名前を変える。
           //    受理はやり直しになるので、いつもの事前申請と同じ扱いだと気づけない（2026-09-09）
           // 🚨 差し戻しの再提出も同じ理由で「再提出」と出す（2026-09-25）。以前は「事前申請」と出ていた
-          phaseLabel: isResubmit ? '再提出' : phase === 'actual' ? '実績報告' : ((!editTarget && draft?.modifiedFromId) ? '修正の再申請' : '事前申請'),
+          phaseLabel: reviewerPhaseLabel({ isResubmit, phase, isModifiedReapply: !editTarget && !!draft?.modifiedFromId }),
           dateLabel: `${date}（${dowLabel(date)}）`,
           // 🚨 終日（調整休・振替休日・欠勤）は差分が 0 なので、時間ではなく種別の名前を出す（以前は「0:00」と出ていた・2026-09-26）
           timeLabel: overtimeAmountLabel(applicationTypes, diffMin),
@@ -2358,7 +2323,7 @@ const OvertimeForm: React.FC<{
           {canSelfReview && <option value={SELF_REVIEW_VALUE}>自己受理（自分で確認する）</option>}
           {reviewers
             .filter(r => r.id !== user.id)
-            .filter(r => !(fullDay && fullDayType === 'absence') || embeddedRole(r as unknown as EmbeddedRoleRow<{ acts_as?: string | null }>)?.acts_as === 'manager')
+            .filter(r => !(fullDay && fullDayType === 'absence') || isManagerReviewer(r))
             .map(r => (
               <option key={r.id} value={r.id}>{r.name}（{r.role_title}）</option>
             ))}

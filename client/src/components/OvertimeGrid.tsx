@@ -24,6 +24,7 @@ import {
   locationPick, GRID_SELF_REVIEW, sameGridReport, gridBalance,
 } from '../lib/overtimeGrid';
 import { diffColor } from '../lib/overtimeBalance';
+import { shouldNotifyReviewer, reviewerPhaseLabel, editHistorySummary } from '../lib/overtimeFormParts';
 import type { GridReport, GridDayKind, RowDraft, RowState, GridRowCalc } from '../lib/overtimeGrid';
 import { STATUS_INFO } from '../lib/overtimeStatus';
 import { isOvertimeType, typeLabelFor, overtimeAmountLabel } from '../lib/overtimeTypes';
@@ -391,9 +392,8 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
           // 修正の記録の言葉は1件フォームと同じ
           edit: fresh ? {
             id: fresh.id, status: fresh.status, snapshot: fresh,
-            historySummary: c.isReportPhase
-              ? (c.isPureZero ? '残業なし（通常どおり）で報告' : c.hasChanges ? `実績報告（変更あり：${c.changedAxes.join('・')}）` : '実績報告（予定どおり）')
-              : '再提出',
+            // 🚨 文は lib/overtimeFormParts の editHistorySummary（1件フォームと共用・2026-09-29）。表では種別の切り替えをしない
+            historySummary: editHistorySummary({ isReportPhase: c.isReportPhase, isPureZero: c.isPureZero, changedAxes: c.changedAxes, typeSwitched: null }),
             historyChangeReason: (c.isReportPhase && c.hasChanges) ? r.draft.changeReason.trim() : null,
           } : null,
         });
@@ -427,10 +427,13 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
               .eq('id', r.req.id).eq('status', 'open').select('id');
             if (lerr || !linked || linked.length === 0) console.error('[申請の依頼] 申請済みにできませんでした', lerr?.message);
           }
-          const phaseLabel = c.phase === 'actual' ? '実績報告' : '事前申請';
+          // 🚨 呼び名と通知の条件は lib/overtimeFormParts（1件フォームと共用・2026-09-29）。
+          //    差し戻しの再提出は「再提出」（以前は表だけ「事前申請／実績報告」と出ていて1件フォームと食い違っていた）
+          const phaseLabel = reviewerPhaseLabel({ isResubmit: c.isResubmit, phase: c.phase, isModifiedReapply: false });
           // 通知（1件フォームと同じ条件）。🚨 自己受理は確認者のキューに入らないのでベルは送らない。
           //    残業なしの実績報告（差分0）もその場で確定するので送らない（押しても該当の申請が無い空振りになる）
-          if (!c.isSelfReview && !c.isPureZero && c.reviewerId) {
+          //    打刻ズレは表ではまだ出せない（clockOnly: false）。出せるようにしたらここに渡す
+          if (shouldNotifyReviewer({ isSelfReview: c.isSelfReview, isPureZero: c.isPureZero, clockOnly: false, reviewerId: c.reviewerId })) {
             await notifyOvertimeNewRequestBell({
               reportId: saved.reportId, reviewerId: c.reviewerId, applicantName: profileName ?? '',
               phaseLabel, dateLabel: fullDateLabel(r.date), timeLabel: overtimeAmountLabel(c.applicationTypes, c.diffMin),
