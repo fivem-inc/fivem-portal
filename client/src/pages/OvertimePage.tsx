@@ -1295,7 +1295,9 @@ const OvertimeForm: React.FC<{
       // 通知（管理画面「通知設定」の overtime:new_request に従う）
       // isPureZero（残業なし＝差分0の実績報告）は自己確定するため確認者のキューに入らない。
       // 通知すると「押しても該当申請が無い」空振りになるので送らない。
-      if (!isSelfReview && !isPureZero && reviewerId) {
+      // 🚨 打刻ズレ（clockOnlyMode）も確認なしで確定するので送らない（2026-09-29）。
+      //    申請先を選んでから打刻ズレに切り替えると、欄は隠れても値が残り、上長に空振りのベルとメールが飛んでいた（9/16 に1件）
+      if (!isSelfReview && !isPureZero && !clockOnlyMode && reviewerId) {
         notifyOvertimeNewRequest({
           reportId,
           reviewerId,
