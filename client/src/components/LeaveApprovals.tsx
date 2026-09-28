@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { useRoles } from '../hooks/useRoles';
@@ -23,6 +23,8 @@ interface Props {
   canPartFormSend?: boolean;
   /** 申請の依頼を出せるか（管理画面「役職・機能権限」→「📩 申請の依頼」） */
   canApplicationRequest?: boolean;
+  /** マネージャー受理のときに「シフト調整：必要／調整不要」を選べるか（「🔁 シフト調整の記録」の権限・2026-09-28） */
+  canShiftAdjust?: boolean;
 }
 
 interface LeaveReq {
@@ -50,6 +52,8 @@ interface LeaveReq {
   approved2_at?: string | null;
   approver2_name?: string | null;
   requester?: { name: string } | null;
+  /** シフト調整の状態。有給奨励日だけの休暇は登録のときに DB が 'not_needed' を入れる（2026-09-28 受理の選択で使う） */
+  shift_adjust_status?: string | null;
 }
 
 interface Approver {
@@ -77,7 +81,7 @@ const STATUS_LABEL: Record<string, string> = {
   rejected:         '差し戻し',
 };
 
-const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle, canPartFormSend, canApplicationRequest }) => {
+const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle, canPartFormSend, canApplicationRequest, canShiftAdjust }) => {
   // 🚨 役職名では判定しない（2026-09-09 属性化）。最終受理＝立場 president
   const roles = useRoles();
   const roleAttrs = attrsFor(roles, roleTitle);
@@ -159,7 +163,21 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   const [partSendError, setPartSendError] = useState<string | null>(null); // パート送信のインラインエラー（alert廃止）
   const [partConfirmId, setPartConfirmId] = useState<string | null>(null); // パート送信のインライン確認（confirm廃止）
   const [staleMsg, setStaleMsg] = useState<string | null>(null);
-  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null); // 共通インライン確認（window.confirm廃止）
+  // 共通インライン確認（window.confirm廃止）。shiftFor＝マネージャー受理のときだけ「シフト調整」の選択を出す（2026-09-28）
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void; shiftFor?: LeaveReq } | null>(null);
+  // マネージャー受理のときの「シフト調整：必要／調整不要」（2026-09-28 ユーザー確定 案A）。
+  // 🚨 既定は「必要」（触らずに受理すれば今までどおり「シフト 未」）。
+  // 🚨 確認の枠の onConfirm は開いた時点の関数なので、選んだ値は ref で読む（state だと古い値のまま）
+  const [shiftNotNeeded, setShiftNotNeeded] = useState(false);
+  const shiftNotNeededRef = useRef(false);
+  const chooseShiftNotNeeded = (v: boolean) => { shiftNotNeededRef.current = v; setShiftNotNeeded(v); };
+  /** 選択を出すか：権限があり、まだ「調整不要」でない（有給奨励日だけの休暇は DB が自動で調整不要にしている） */
+  const canChooseShift = (req: LeaveReq) => (isAdmin || !!canShiftAdjust) && req.shift_adjust_status !== 'not_needed';
+  /** 受理の update に一緒に入れる列。🚨 受理と同じ1回の保存で書く（別々に保存すると受理だけ通ることがある） */
+  const shiftFieldsFor = (req: LeaveReq, nowIso: string) =>
+    canChooseShift(req) && shiftNotNeededRef.current
+      ? { shift_adjust_status: 'not_needed', shift_adjusted_by: user.id, shift_adjusted_at: nowIso }
+      : {};
 
   const isDark = useDarkMode();
   const bg = isDark ? '#343a40' : 'white';
@@ -167,6 +185,30 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   const subText = isDark ? '#adb5bd' : '#666';
   const borderColor = isDark ? '#6c757d' : '#ddd';
   const inputBg = isDark ? '#495057' : 'white';
+
+  /**
+   * マネージャー受理のときの「シフト調整：必要／調整不要」（2026-09-28 ユーザー確定 案A）。
+   * 🚨 色は択一トグルの2色だけ（🎨🔒 #1976d2／#e3f2fd・ライトとダークで変えない）
+   */
+  const shiftChoiceBlock = (req: LeaveReq) => {
+    if (req.shift_adjust_status === 'not_needed') {
+      return <p style={{ margin: '0 0 16px', fontSize: 12.5, color: subText }}>シフト調整：調整不要</p>;
+    }
+    if (!canChooseShift(req)) return null;
+    const tgl = (on: boolean): React.CSSProperties => ({
+      padding: '6px 14px', borderRadius: 16, fontSize: 13, fontWeight: 'bold', border: 'none', cursor: 'pointer',
+      background: on ? '#1976d2' : '#e3f2fd', color: on ? '#fff' : '#1565c0',
+    });
+    return (
+      <div style={{ margin: '0 0 16px' }}>
+        <div style={{ fontSize: 12.5, color: subText, marginBottom: 6 }}>シフト調整</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button type="button" style={tgl(!shiftNotNeeded)} onClick={() => chooseShiftNotNeeded(false)}>必要</button>
+          <button type="button" style={tgl(shiftNotNeeded)} onClick={() => chooseShiftNotNeeded(true)}>調整不要</button>
+        </div>
+      </div>
+    );
+  };
 
   // マネージャー一覧取得
   useEffect(() => {
@@ -267,6 +309,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   const handleApproveClick = (req: LeaveReq) => {
     if (req.status === 'pending') {
       // 一人目受理 → マネージャー選択モーダルを出す
+      chooseShiftNotNeeded(false);   // シフト調整の選択は毎回「必要」から（2026-09-28）
       setSelectingManagerFor(req);
       setApproveMode('self'); // 申請先がマネージャー本人なら「自分が受理して経理へ」を既定に
       if (managers.length > 0) setSelectedManagerId(managers[0].id);
@@ -341,12 +384,17 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     };
     const next = nextMap[req.status] || 'manager_approved';
     const label = next === 'approved' ? '最終受理（完了）' : '受理';
-    setConfirmDialog({ message: `${label}しますか？`, onConfirm: async () => {
+    // 🚨 シフト調整の選択はマネージャー受理（step2_pending から進む）ときだけ。
+    //    この確認の枠は経理・社長の受理や差し戻しの取り消しでも使うため（2026-09-28）
+    const isManagerStep = req.status === 'step2_pending';
+    chooseShiftNotNeeded(false);
+    setConfirmDialog({ message: `${label}しますか？`, shiftFor: isManagerStep ? req : undefined, onConfirm: async () => {
       // 二重受理防止（楽観ロック）：自分が見た状態と一致する時だけ更新。ズレていたら中断して最新化。
       // 🚨 2人目の受理日時は step2_pending から進むときだけ入れる。
       //    経理（manager_approved→admin_approved）や社長（admin_approved→approved）でも
       //    この関数を通るので、条件を付けないと**後の人の日時で上書きされる**。
-      const stamp = req.status === 'step2_pending' ? { approved2_at: new Date().toISOString() } : {};
+      const nowIso = new Date().toISOString();
+      const stamp = isManagerStep ? { approved2_at: nowIso, ...shiftFieldsFor(req, nowIso) } : {};
       const { data: locked } = await supabase.from('leave_requests').update({ status: next, ...stamp }).eq('id', req.id).eq('status', req.status).select('id');
       if (!locked || locked.length === 0) { setStaleMsg('この申請は他の受理者が先に処理したため、最新の状態に更新しました。'); fetchRequests(); return; }
 
@@ -389,7 +437,8 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
     // 二重受理防止（楽観ロック）
     // 🚨 この経路は1人目と2人目を同じ人が兼ねるので、受理日時も**両方**に同じ値を入れる（2026-09-11）
     const nowIso = new Date().toISOString();
-    const { data: locked } = await supabase.from('leave_requests').update({ status: next, approver2_id: user.id, approved_at: nowIso, approved2_at: nowIso }).eq('id', req.id).eq('status', req.status).select('id');
+    // シフト調整の選択（2026-09-28）も受理と同じ1回の保存で書く
+    const { data: locked } = await supabase.from('leave_requests').update({ status: next, approver2_id: user.id, approved_at: nowIso, approved2_at: nowIso, ...shiftFieldsFor(req, nowIso) }).eq('id', req.id).eq('status', req.status).select('id');
     if (!locked || locked.length === 0) { setStaleMsg('この申請は他の受理者が先に処理したため、最新の状態に更新しました。'); setSelectingManagerFor(null); fetchRequests(); return; }
 
     // 画面の更新を先に確定（通知の完了を待たない）
@@ -552,6 +601,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
         <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setConfirmDialog(null)}>
           <div onClick={e => e.stopPropagation()} style={{ background: isDark ? '#343a40' : 'white', borderRadius: 12, padding: '22px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.25)', maxWidth: 340, width: '100%' }}>
             <p style={{ fontSize: 15, fontWeight: 'bold', color: isDark ? '#fff' : '#333', margin: '0 0 18px', lineHeight: 1.6 }}>{confirmDialog.message}</p>
+            {confirmDialog.shiftFor && shiftChoiceBlock(confirmDialog.shiftFor)}
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <button onClick={() => setConfirmDialog(null)} style={{ padding: '8px 18px', background: 'transparent', color: isDark ? '#adb5bd' : '#666', border: `1px solid ${isDark ? '#6c757d' : '#ccc'}`, borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
               <button onClick={() => { const cb = confirmDialog.onConfirm; setConfirmDialog(null); cb(); }} style={{ padding: '8px 18px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>はい</button>
@@ -986,6 +1036,8 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                     <span style={{ color: approveMode === 'self' ? '#28a745' : subText }}>{approveMode === 'self' ? '◉' : '○'}</span>{selfLabel}
                   </div>
                 </label>
+                {/* 自分が受理する＝マネージャー受理なので、シフト調整の選択を出す（2026-09-28） */}
+                {approveMode === 'self' && shiftChoiceBlock(selectingManagerFor)}
                 {/* 選択肢B：別のマネージャーに受理を依頼 */}
                 <label onClick={() => setApproveMode('other')} style={{ display: 'block', border: `2px solid ${approveMode === 'other' ? '#28a745' : borderColor}`, borderRadius: 10, padding: 12, marginBottom: 16, cursor: 'pointer' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 'bold', fontSize: 14, color: text }}>

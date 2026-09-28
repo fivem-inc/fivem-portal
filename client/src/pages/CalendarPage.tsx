@@ -157,6 +157,37 @@ interface LeaveEvent {
   shift_adjusted_by_name?: string | null;
 }
 
+/** 日ごとの場（shift_adjust_slots）のうち、シフトの印に使う列（2026-09-28） */
+interface SaSlotMark {
+  id: string;
+  status: string;
+  not_needed: boolean;
+  decided_by: string | null;
+  decided_at: string | null;
+}
+
+/**
+ * シフトの印の種類（2026-09-28）。🚨 休暇の行・欠勤の行・「シフト未調整だけ」の絞り込みは、必ずこれを通す
+ * （片方だけ変えると「絞ると出ないのに印は未」になる）
+ */
+type ShiftMarkKey = 'pending' | 'working' | 'decided' | 'no_change' | 'not_needed';
+const SHIFT_MARK_LABEL: Record<ShiftMarkKey, string> = {
+  pending: 'シフト 未',
+  working: 'シフト 調整中',
+  decided: 'シフト 調整済',
+  no_change: 'シフト 確認済（変更なし）',
+  not_needed: 'シフト 調整不要',
+};
+/** 場の状態 → 印。閉じた場（過ぎた日・休みが取り消された）は null＝休暇の列を見る */
+const slotMarkKey = (s: SaSlotMark): ShiftMarkKey | null => {
+  if (s.status === 'pending' || s.status === 'working' || s.status === 'decided') return s.status;
+  if (s.status === 'no_change') return s.not_needed ? 'not_needed' : 'no_change';
+  return null;
+};
+/** 休暇1件の列 → 印（場が無い日に使う） */
+const leaveMarkKey = (st: string | null | undefined): ShiftMarkKey =>
+  st === 'adjusted' ? 'decided' : st === 'no_change' ? 'no_change' : st === 'not_needed' ? 'not_needed' : 'pending';
+
 interface AbsenceEvent {
   id: string;
   user_id: string;
@@ -1591,9 +1622,9 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
   const [deleteTarget, setDeleteTarget] = useState<AbsenceEvent | null>(null);
 
   // ---- 休暇のシフト調整（2026-09-09）----
-  // 🚨 誰が変えられるかは管理画面「役職・機能権限」→「🔁 シフト調整の記録」で決める（2026-09-09）。
-  //    ここは画面の出し分けで、実際に止めているのは DB の set_leave_shift_adjust。
-  //    片方だけ変えると「押せるのに保存できないボタン」になるので必ず両方を見ること。
+  // 🚨 2026-09-28：このページの［カレンダー］タブでは状態を変えない（印は見るだけ）。
+  //    「🔁 シフト調整の記録」の権限（canShiftAdjust）は、ここでは「シフト未調整だけ」の絞り込みを出すかにだけ使う。
+  //    受理のときの［必要］［調整不要］の選択（LeaveApprovals）もこの権限で出し分ける
   const canShiftAdjust = !!canShiftAdjustPerm;
   // シフト調整の作業場（2026-09-13）。🚨 権限が無い人にはタブそのものを出さない
   //    （出すと「押せるのに中身が空」になる。中身の保護はDB側のRLSが担当する）
@@ -1603,43 +1634,20 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
   const tabParam = searchParams.get('tab');
   const [tab, setTab] = useState<'calendar' | 'adjust'>(tabParam === 'adjust' ? 'adjust' : 'calendar');
   useEffect(() => { if (tabParam === 'adjust') setTab('adjust'); }, [tabParam]);
-  // 欠勤の行にも「シフト 未／調整中／…」の印を出すための、場の状態。
-  // 🚨 休暇の行の印は今までどおり leave_requests.shift_adjust_status を見る（変えていない）。
-  //    欠勤にはその列が無いので、ここだけ新しい表を読む
-  const [saSlots, setSaSlots] = useState<Record<string, { id: string; status: string }>>({});
+  // 休暇・欠勤の行の「シフト 未／調整中／…」の印に使う、日ごとの場の状態。
+  // 🚨 2026-09-28：休暇の行の印も**その日の場**を見る（休暇1件まるごとの列ではなく）。
+  //    場が無い日（過ぎた日・有給奨励日・場を読む権限が無い人）だけ、休暇の列 shift_adjust_status を見る
+  const [saSlots, setSaSlots] = useState<Record<string, SaSlotMark>>({});
   const [saOpenId, setSaOpenId] = useState<string | null>(null);
-  const [shiftPanelFor, setShiftPanelFor] = useState<string | null>(null);
-  const [shiftSavingId, setShiftSavingId] = useState<string | null>(null);
-  const [shiftError, setShiftError] = useState('');
   // 「シフト未調整だけ」の絞り込み（変えられる人にだけ出す）
   // 🚨 プッシュ・ベルから来たときは、最初から「未調整だけ」で絞った状態で開く（2026-09-09 ユーザー指示）。
   //    この通知はその人が受け持つぶんをまとめた1本なので、絞らずに着地すると
   //    ひと月ぶんの一覧の中から自分で探すことになり、何をすればよいか分からない。
   const [onlyShiftPending, setOnlyShiftPending] = useState(() => shiftParam === 'pending');
 
-  const saveShiftAdjust = async (ev: LeaveEvent, status: 'pending' | 'adjusted' | 'no_change' | 'not_needed') => {
-    setShiftSavingId(ev.id);
-    setShiftError('');
-    // 🚨 rpc は 4xx でも throw しない。error と、関数が返す ok の両方を必ず見る
-    const { data, error } = await supabase.rpc('set_leave_shift_adjust', { p_id: ev.id, p_status: status });
-    setShiftSavingId(null);
-    if (error) { setShiftError('保存できませんでした：' + error.message); return; }
-    const row = Array.isArray(data) ? data[0] : data;
-    if (!row?.ok) { setShiftError(row?.reason || '保存できませんでした'); return; }
-    // 画面をその場で更新（読み直しを待たせない）。同じ申請が複数日に並ぶので全部変わる。
-    // 🚨 「誰がいつ」も同時に入れる。入れないと、保存した直後だけ空で、
-    //    画面を開き直すと出てくる＝見る人には不具合に見える。
-    // 🚨 「未」に戻したときは DB 側も null に戻るので、画面も空にする（合わせる）。
-    const nowIso = new Date().toISOString();
-    setEvents(prev => prev.map(e => e.id === ev.id ? {
-      ...e,
-      shift_adjust_status: status,
-      shift_adjusted_at: status === 'pending' ? null : nowIso,
-      shift_adjusted_by: status === 'pending' ? null : (user?.id ?? null),
-      shift_adjusted_by_name: status === 'pending' ? null : (profiles.find(p => p.id === user?.id)?.name ?? null),
-    } : e));
-    setShiftPanelFor(null);
-  };
+  // 🚨 2026-09-28：［カレンダー］タブの印から状態を変える枠（未／調整済／確認済／調整不要の4つ）はやめた。
+  //    休暇1件まるごとに効き、複数日の休暇で押していない日まで変わっていたため。
+  //    変えるのは［シフト調整］タブ（1日ずつ・歯止めつき）だけ。印を押すとその日の場が開く
 
   const [deleting, setDeleting] = useState(false);
   const [profiles, setProfiles] = useState<ProfileEntry[]>([]);
@@ -1895,23 +1903,64 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
     if (absDraft?.date) setAbsenceSheet(absDraft.date);
   }, [canAttendanceInput, isAdmin]);
 
-  // 欠勤の行に出すシフト調整の印。
+  // 休暇・欠勤の行に出すシフト調整の印（日ごと）。
   // 🚨 権限のある人のときだけ読む（持っていない人の通信を増やさない）。
   // 🚨 上のまとめ読みに混ぜず、別の effect にしてある（混ぜると権限が変わるたびに全部読み直す）
+  // 🚨 2026-09-28：［シフト調整］タブで変えてから戻ったときに印が古いままにならないよう、カレンダーのタブに戻るたびに読み直す
   useEffect(() => {
-    if (!saPerms.view) return;
-    supabase.from('shift_adjust_slots').select('id, target_user_id, target_date, status')
+    if (!saPerms.view || tab !== 'calendar') return;
+    supabase.from('shift_adjust_slots').select('id, target_user_id, target_date, status, not_needed, decided_by, decided_at')
       .gte('target_date', todayJstStr())
       .then(({ data, error }) => {
-        // 🚨 読めなかったら印を出さない（0件と決めつけて「未調整が無い」と見せない）
+        // 🚨 読めなかったら印を置き換えない（0件と決めつけて「未調整が無い」と見せない）。休暇の行は休暇の列で出る
         if (error || !data) return;
-        const m: Record<string, { id: string; status: string }> = {};
-        for (const s of data as { id: string; target_user_id: string; target_date: string; status: string }[]) {
-          m[`${s.target_user_id}|${s.target_date}`] = { id: s.id, status: s.status };
+        const m: Record<string, SaSlotMark> = {};
+        for (const s of data as (SaSlotMark & { target_user_id: string; target_date: string })[]) {
+          m[`${s.target_user_id}|${s.target_date}`] = { id: s.id, status: s.status, not_needed: !!s.not_needed, decided_by: s.decided_by, decided_at: s.decided_at };
         }
         setSaSlots(m);
       });
-  }, [saPerms.view]);
+  }, [saPerms.view, tab]);
+
+  /**
+   * 休暇の行の、その日のシフトの印（2026-09-28）。
+   * その日の場があればその状態（1日ずつ）。無い日（過ぎた日・有給奨励日・場を読む権限が無い人）は休暇1件の列。
+   * 「誰がいつ」は場の記録。場に無ければ、休暇の列が同じ印のときだけ休暇の記録を使う（違う印の人名を出さない）
+   */
+  const leaveDayMark = (ev: LeaveEvent, date: string): { key: ShiftMarkKey; slotId: string | null; byName: string | null; at: string | null } => {
+    const s = saSlots[`${ev.user_id}|${date}`];
+    const k = s ? slotMarkKey(s) : null;
+    const leaveKey = leaveMarkKey(ev.shift_adjust_status);
+    if (s && k) {
+      const useLeave = !s.decided_at && leaveKey === k;
+      return {
+        key: k, slotId: s.id,
+        byName: s.decided_at ? (profiles.find(p => p.id === s.decided_by)?.name ?? null) : useLeave ? (ev.shift_adjusted_by_name ?? null) : null,
+        at: s.decided_at ?? (useLeave ? (ev.shift_adjusted_at ?? null) : null),
+      };
+    }
+    return { key: leaveKey, slotId: null, byName: ev.shift_adjusted_by_name ?? null, at: ev.shift_adjusted_at ?? null };
+  };
+
+  /**
+   * シフトの印（休暇の行・欠勤の行で共用・2026-09-28 ユーザー確定）。
+   * 🚨 見るだけ。場があり、場を読める人なら押すと［シフト調整］タブのその日が開く（押せることが分かるよう「›」を付ける）。
+   * 🚨 新しい色は足さない。未＝既存の橙のベタ／調整中＝橙の枠線だけ／済んだもの＝グレー（配色の決まり 🎨🔒・計画 §2）
+   */
+  const shiftMarkChip = (key: ShiftMarkKey, slotId: string | null) => {
+    const undone = key === 'pending' || key === 'working';
+    const style: React.CSSProperties = {
+      fontSize: 10.5, fontWeight: 'bold', padding: '2px 8px', borderRadius: 10, whiteSpace: 'nowrap',
+      color: undone ? (isDark ? '#ffcf8f' : '#b7770d') : subColor,
+      background: key === 'pending' ? (isDark ? '#4a3a1a' : '#fff8e1') : 'transparent',
+      border: `1px solid ${undone ? (isDark ? '#7a5a1a' : '#f0c36d') : borderColor}`,
+    };
+    const lbl = SHIFT_MARK_LABEL[key];
+    return slotId && saPerms.view
+      ? <button type="button" onClick={() => { setSaOpenId(slotId); setTab('adjust'); window.scrollTo({ top: 0 }); }}
+          style={{ ...style, cursor: 'pointer' }}>{lbl} ›</button>
+      : <span style={style}>{lbl}</span>;
+  };
 
   // 自分の所属チームを初期選択にする。
   // profiles を読むまで所属が分からないため、取得できた時点で1回だけ切り替える。
@@ -1966,9 +2015,11 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
     for (const ev of (eventsByDate[date] || [])) {
       // 「シフト未調整だけ」の絞り込み（2026-09-09）。受理済みで未のものだけ残す。
       // 🚨 チップを出す条件と同じにすること。片方だけ変えると「絞ると出ないのにチップは未」になる
+      // 🚨 2026-09-28：印と同じく**その日**の状態で絞る（leaveDayMark）。調整中も「まだ」に含める（今までも休暇の列では未だった）
       if (onlyShiftPending) {
         const target = ['manager_approved', 'admin_approved', 'approved'].includes(ev.status);
-        if (!target || (ev.shift_adjust_status ?? 'pending') !== 'pending') continue;
+        const mk = leaveDayMark(ev, date).key;
+        if (!target || (mk !== 'pending' && mk !== 'working')) continue;
       }
       monthListRows.push({ kind: 'leave', date, ev });
     }
@@ -2288,24 +2339,9 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
                 // シフト調整のチップ（2026-09-09）。受理済み（マネージャー受理以降）だけに出す。
                 // 🚨 受理前は調整のしようがないので出さない。⑨の毎朝のお知らせも同じ条件にすること
                 const shiftTarget = ['manager_approved', 'admin_approved', 'approved'].includes(ev.status);
-                const shiftSt = ev.shift_adjust_status ?? 'pending';
-                const shiftChip = shiftTarget ? (() => {
-                  const isPendingShift = shiftSt === 'pending';
-                  // 🚨 新しい色は足さない。「未」は「あなたがやることがある」ことを示す既存の橙、
-                  //    済んだものは主張しないグレーにする（配色の決まり 🎨🔒）
-                  // 調整不要（2026-09-19）：休暇の日がすべて有給奨励日なら DB が自動で入れる。ボタンからも選べる
-                  const lbl = isPendingShift ? 'シフト 未' : shiftSt === 'adjusted' ? 'シフト 調整済' : shiftSt === 'not_needed' ? 'シフト 調整不要' : 'シフト 確認済（変更なし）';
-                  const fg = isPendingShift ? (isDark ? '#ffcf8f' : '#b7770d') : subColor;
-                  const bg = isPendingShift ? (isDark ? '#4a3a1a' : '#fff8e1') : 'transparent';
-                  const style: React.CSSProperties = {
-                    fontSize: 10.5, fontWeight: 'bold', padding: '2px 8px', borderRadius: 10,
-                    color: fg, background: bg, border: `1px solid ${isPendingShift ? (isDark ? '#7a5a1a' : '#f0c36d') : borderColor}`,
-                    cursor: canShiftAdjust ? 'pointer' : 'default', whiteSpace: 'nowrap',
-                  };
-                  return canShiftAdjust
-                    ? <button type="button" onClick={() => { setShiftPanelFor(f => f === ev.id ? null : ev.id); setShiftError(''); }} style={style}>{lbl}</button>
-                    : <span style={style}>{lbl}</span>;
-                })() : null;
+                // 🚨 2026-09-28：印は**その日**の状態（leaveDayMark）。見るだけで、押すとその日の場が開く
+                const dayMark = shiftTarget ? leaveDayMark(ev, row.date) : null;
+                const shiftChip = dayMark ? shiftMarkChip(dayMark.key, dayMark.slotId) : null;
                 const isFocused = highlightDate === row.date;
                 return (
                   <div key={`l-${ev.id}-${row.date}-${i}`} ref={isFocused ? focusRowRef : undefined} style={{ borderBottom: `1px solid ${borderColor}`, background: isFocused ? (isDark ? '#4a4423' : '#fff9c4') : 'transparent', transition: 'background 0.6s' }}>
@@ -2333,42 +2369,11 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
                             （2026-09-11 ユーザー要望）。🚨 記録は前からあったが出していなかった。
                             🚨 「未」のときは記録そのものが無い（DB側で null に戻る）ので何も出ない。
                             🚨 名前が引けないときは日付だけ出す（「不明」とは書かない）。 */}
-                        {shiftTarget && shiftSt !== 'pending' && ev.shift_adjusted_at && (
+                        {dayMark && dayMark.key !== 'pending' && dayMark.key !== 'working' && dayMark.at && (
                           <span style={{ fontSize: 10.5, color: subColor, whiteSpace: 'nowrap' }}>
-                            {ev.shift_adjusted_by_name ? `${ev.shift_adjusted_by_name}・` : ''}
-                            {actedAtLabel(ev.shift_adjusted_at)}
+                            {dayMark.byName ? `${dayMark.byName}・` : ''}
+                            {actedAtLabel(dayMark.at)}
                           </span>
-                        )}
-                      </div>
-                    )}
-                    {/* シフト調整の切り替え（マネージャー以上・管理者だけ）。
-                        🚨 確認・操作は押した場所の近くに出す。モーダルにしない */}
-                    {shiftPanelFor === ev.id && (
-                      <div style={{ margin: '0 8px 8px', padding: '8px 10px', borderRadius: 8, background: isDark ? '#3a3f44' : '#f8f9fa', border: `1px solid ${borderColor}` }}>
-                        <div style={{ fontSize: 11, color: subColor, marginBottom: 6 }}>この休暇のシフト調整</div>
-                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                          {([['pending', '未'], ['adjusted', '調整済'], ['no_change', '確認済（変更なし）'], ['not_needed', '調整不要']] as const).map(([v, lbl]) => (
-                            <button key={v} onClick={() => saveShiftAdjust(ev, v)} disabled={shiftSavingId === ev.id}
-                              style={{ padding: '6px 12px', borderRadius: 14, fontSize: 11.5, fontWeight: 'bold', cursor: 'pointer',
-                                border: `1px solid ${(ev.shift_adjust_status ?? 'pending') === v ? '#4a90d9' : borderColor}`,
-                                background: (ev.shift_adjust_status ?? 'pending') === v ? '#e8f4fd' : 'transparent',
-                                color: (ev.shift_adjust_status ?? 'pending') === v ? '#1565c0' : subColor }}>
-                              {lbl}
-                            </button>
-                          ))}
-                          {/* 🚨 ここは「3つのうちの4つ目」ではなく、**この枠を閉じるだけ**のボタン。
-                              2026-09-11 実機指摘：同じ丸いボタンで並んでいたので「やめる＝何をやめるの？」と
-                              読めた。**形を変えて右端へ離す**ことで、選ぶものではないと見て分かるようにした。
-                              言葉も「やめる」→「閉じる」（実際にしていることは閉じるだけ。
-                              何かを取り消すわけではない）。 */}
-                          <button onClick={() => setShiftPanelFor(null)}
-                            style={{ marginLeft: 'auto', padding: '6px 4px', fontSize: 11.5, cursor: 'pointer',
-                              border: 'none', background: 'transparent', color: subColor, textDecoration: 'underline' }}>
-                            閉じる
-                          </button>
-                        </div>
-                        {shiftError && (
-                          <div style={{ marginTop: 6, fontSize: 11, color: '#dc3545' }}>{shiftError}</div>
                         )}
                       </div>
                     )}
@@ -2416,27 +2421,14 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
                     {/* 欠勤にもシフト調整の印を出す（2026-09-13）。
                         🚨 休暇の行と同じ見た目・同じ言葉にする。押すと「シフト調整」タブでその場が開く。
                         🚨 場がまだ無い欠勤には出さない。出すと押しても何も開かない＝画面が嘘をつく */}
+                    {/* 🚨 2026-09-28：休暇の行と同じ部品（shiftMarkChip）にした。「調整不要」も出る */}
                     {saPerms.view && ab.type === 'absent' && saSlots[`${ab.user_id}|${ab.date}`] && (() => {
                       const sa = saSlots[`${ab.user_id}|${ab.date}`];
-                      const undone = ['pending', 'working'].includes(sa.status);
-                      const lbl = sa.status === 'pending' ? 'シフト 未'
-                        : sa.status === 'working' ? 'シフト 調整中'
-                        : sa.status === 'decided' ? 'シフト 調整済'
-                        : sa.status === 'no_change' ? 'シフト 確認済（変更なし）' : null;
-                      if (!lbl) return null;
+                      const key = slotMarkKey(sa);
+                      if (!key) return null;
                       return (
                         <div style={{ padding: '0 8px 7px' }}>
-                          <button type="button"
-                            onClick={() => { setSaOpenId(sa.id); setTab('adjust'); window.scrollTo({ top: 0 }); }}
-                            style={{
-                              fontSize: 10.5, fontWeight: 'bold', padding: '2px 8px', borderRadius: 10, cursor: 'pointer',
-                              whiteSpace: 'nowrap',
-                              color: undone ? (isDark ? '#ffcf8f' : '#b7770d') : subColor,
-                              background: sa.status === 'pending' ? (isDark ? '#4a3a1a' : '#fff8e1') : 'transparent',
-                              border: `1px solid ${undone ? (isDark ? '#7a5a1a' : '#f0c36d') : borderColor}`,
-                            }}>
-                            {lbl}
-                          </button>
+                          {shiftMarkChip(key, sa.id)}
                         </div>
                       );
                     })()}

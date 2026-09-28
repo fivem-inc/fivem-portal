@@ -49,7 +49,7 @@ const FEATURES = [
   //    🚨 画面のボタンの出し分けだけでなく、DB側（RPC・RLS）も同じ権限を見ること。
   //       片方だけだと「押せるのに保存できないボタン」になる。
   { key: 'leave_approvals', icon: '✅', label: '休暇承認',       note: '承認者向けページ', group: '休暇' as FeatureGroup, bySuperior: true },
-  { key: 'leave_shift_adjust', icon: '🔁', label: 'シフト調整の記録', note: '休暇の「シフト 未／調整済／確認済（変更なし）」を切り替えられる役職。勤怠カレンダーから行う', group: '休暇' as FeatureGroup, bySuperior: true },
+  { key: 'leave_shift_adjust', icon: '🔁', label: 'シフト調整の記録', note: 'マネージャー段で休暇を受理するときに、シフト調整の「必要／調整不要」の選択を出す役職（画面の出し分け）。受理のあとの変更は［シフト調整］タブ（「シフト調整：決定する」の権限）', group: '休暇' as FeatureGroup, bySuperior: true },
   { key: 'part_leave_form_send', icon: '📨', label: 'パートへ休暇申請フォーム送信', note: '休暇承認ページの送信欄。OFFにするとその欄ごと出ません', group: '休暇' as FeatureGroup, bySuperior: true },
   // ── シフト調整の作業場（2026-09-13 追加。設計は docs/計画-シフト調整.md）──
   // 🚨 置き場所は「勤怠カレンダーの中のタブ」なので、同じ分野の **勤怠カレンダー が OFF の役職は、
@@ -59,7 +59,7 @@ const FEATURES = [
   { key: 'shift_adjust_review',  icon: '🔁', label: 'シフト調整：案を確認した と押す', note: '出された案に「確認した」を付けられる役職', group: '休暇' as FeatureGroup, bySuperior: true },
   { key: 'shift_adjust_plan',    icon: '🔁', label: 'シフト調整：案を作る', note: '「この日はこの人で」の案と、意見の期限を付けられる役職', group: '休暇' as FeatureGroup, bySuperior: true },
   { key: 'shift_adjust_request', icon: '🔁', label: 'シフト調整：パートへ出勤のお願い', note: '休みのパートに出勤をお願いできる役職', group: '休暇' as FeatureGroup, bySuperior: true },
-  { key: 'shift_adjust_decide',  icon: '🔁', label: 'シフト調整：決定する', note: '決定・決定の取消・「確認済（変更なし）」で閉じられる役職', group: '休暇' as FeatureGroup, bySuperior: true },
+  { key: 'shift_adjust_decide',  icon: '🔁', label: 'シフト調整：決定する', note: '決定・決定の取消・「現行シフトで対応」「調整不要」で閉じられる役職', group: '休暇' as FeatureGroup, bySuperior: true },
 
   // ── 勤怠・時間 ──
   { key: 'leave_calendar',  icon: '📅', label: '勤怠カレンダー', note: '', group: '勤怠・時間' as FeatureGroup, bySuperior: false },

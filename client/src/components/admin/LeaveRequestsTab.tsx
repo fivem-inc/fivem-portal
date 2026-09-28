@@ -100,7 +100,13 @@ const LeaveRequestsTab: React.FC = () => {
   const [modalError, setModalError] = useState('');
   const [rejectReason, setRejectReason] = useState('');
   const [rejectNewType, setRejectNewType] = useState('');
-  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null); // 共通インライン確認（window.confirm廃止）
+  // 共通インライン確認（window.confirm廃止）。shiftChoice＝マネージャー段の代理受理のときだけ「シフト調整」を出す（2026-09-28）
+  //   'choose'＝［必要］［調整不要］を選ぶ／'already'＝すでに調整不要（有給奨励日だけの休暇など）なので表示だけ
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void; shiftChoice?: 'choose' | 'already' } | null>(null);
+  // 🚨 既定は「必要」。onConfirm は開いた時点の関数なので、選んだ値は ref で読む（受理ページ LeaveApprovals と同じ作り）
+  const [shiftNotNeeded, setShiftNotNeeded] = useState(false);
+  const shiftNotNeededRef = useRef(false);
+  const chooseShiftNotNeeded = (v: boolean) => { shiftNotNeededRef.current = v; setShiftNotNeeded(v); };
   const LEAVE_TYPES = ['有給休暇', 'BD休暇', '慶弔休', '調整休', 'その他', '病欠'];
   const [filterFY, setFilterFY] = useState<string>('__current__'); // 'all' | '__current__' | '2026' ...
   const [filterPerson, setFilterPerson] = useState<string>('all');
@@ -1064,6 +1070,24 @@ const LeaveRequestsTab: React.FC = () => {
             <div style={{ position: 'fixed', inset: 0, zIndex: 5000, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setConfirmDialog(null)}>
               <div onClick={e => e.stopPropagation()} style={{ background: isDarkMode ? '#343a40' : 'white', borderRadius: 12, padding: '22px 24px', boxShadow: '0 4px 20px rgba(0,0,0,0.25)', maxWidth: 360, width: '100%' }}>
                 <p style={{ fontSize: 15, fontWeight: 'bold', color: isDarkMode ? '#fff' : '#333', margin: '0 0 18px', lineHeight: 1.6, whiteSpace: 'pre-line' }}>{confirmDialog.message}</p>
+                {/* シフト調整の選択（2026-09-28）。🚨 色は択一トグルの2色だけ（🎨🔒） */}
+                {confirmDialog.shiftChoice === 'already' && (
+                  <p style={{ margin: '0 0 16px', fontSize: 12.5, color: isDarkMode ? '#adb5bd' : '#666' }}>シフト調整：調整不要</p>
+                )}
+                {confirmDialog.shiftChoice === 'choose' && (
+                  <div style={{ margin: '0 0 16px' }}>
+                    <div style={{ fontSize: 12.5, color: isDarkMode ? '#adb5bd' : '#666', marginBottom: 6 }}>シフト調整</div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      {([[false, '必要'], [true, '調整不要']] as const).map(([v, lbl]) => (
+                        <button key={lbl} type="button" onClick={() => chooseShiftNotNeeded(v)}
+                          style={{ padding: '6px 14px', borderRadius: 16, fontSize: 13, fontWeight: 'bold', border: 'none', cursor: 'pointer',
+                            background: shiftNotNeeded === v ? '#1976d2' : '#e3f2fd', color: shiftNotNeeded === v ? '#fff' : '#1565c0' }}>
+                          {lbl}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
                   <button onClick={() => setConfirmDialog(null)} style={{ padding: '8px 18px', background: 'transparent', color: isDarkMode ? '#adb5bd' : '#666', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
                   <button onClick={() => { const cb = confirmDialog.onConfirm; setConfirmDialog(null); cb(); }} style={{ padding: '8px 18px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>はい</button>
@@ -1560,15 +1584,23 @@ const LeaveRequestsTab: React.FC = () => {
                                         setAdminSelectedManagerId(mgrs && mgrs.length > 0 ? mgrs[0].id : '');
                                         setAdminSelectingManagerFor(req);
                                       } else {
-                                        setConfirmDialog({ message: '受理しますか？', onConfirm: async () => {
+                                        // シフト調整の選択はマネージャー段（step2_pending から進む）の代理受理のときだけ（2026-09-28）
+                                        const isManagerStep = req.status === 'step2_pending';
+                                        const alreadyNotNeeded = (req as { shift_adjust_status?: string | null }).shift_adjust_status === 'not_needed';
+                                        chooseShiftNotNeeded(false);
+                                        setConfirmDialog({ message: '受理しますか？', shiftChoice: isManagerStep ? (alreadyNotNeeded ? 'already' : 'choose') : undefined, onConfirm: async () => {
                                         // 調整休はマネージャー受理で完了（経理・社長ステップをスキップ）。受理ページ(LeaveApprovals)と挙動を揃える
                                         const isChosei = req.leave_type === '調整休';
                                         const nextStatus: Record<string, string> = { step2_pending: isChosei ? 'approved' : 'manager_approved', manager_approved: 'admin_approved', admin_approved: 'approved' };
                                         const nextSt = nextStatus[req.status] || 'approved';
+                                        // 「調整不要」は受理と同じ1回の保存で書く（別々に保存すると受理だけ通ることがある）
+                                        const shiftFields = isManagerStep && !alreadyNotNeeded && shiftNotNeededRef.current
+                                          ? { shift_adjust_status: 'not_needed', shift_adjusted_by: authUser?.id ?? null, shift_adjusted_at: new Date().toISOString() }
+                                          : {};
                                         // 二重受理防止（楽観ロック）：自分が見た状態と一致する時だけ更新
                                         // 🚨 error も見る。見ないと、通信やRLSの失敗まで
                                         //    「他の受理者が先に処理した」と誤って伝えることになる（data は null で0件に見えるため）
-                                        const { data: locked, error: lockErr } = await supabase.from('leave_requests').update({ status: nextSt }).eq('id', req.id).eq('status', req.status).select('id');
+                                        const { data: locked, error: lockErr } = await supabase.from('leave_requests').update({ status: nextSt, ...shiftFields }).eq('id', req.id).eq('status', req.status).select('id');
                                         if (lockErr) { setErrorMsg('受理に失敗しました：' + lockErr.message); return; }
                                         if (!locked || locked.length === 0) { setErrorMsg('この申請は他の受理者が先に処理したため、最新の状態に更新しました'); fetchLeaveRequests(); return; }
 

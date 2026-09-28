@@ -45,6 +45,8 @@ interface SlotRow {
   status: string;
   decided_by: string | null;
   decided_at: string | null;
+  /** 調整不要の印（2026-09-28）。status='no_change' のときだけ意味がある（ほかの状態では DB が false に戻す） */
+  not_needed?: boolean;
 }
 
 interface CommentRow { id: string; user_id: string; body: string; created_at: string }
@@ -106,6 +108,9 @@ const STATUS_LABEL: Record<string, string> = {
   closed_past: '過ぎた日',
   cause_cancelled: '休みが取り消されました',
 };
+/** 状態の表示。「変更なし」に調整不要の印が付いていれば「調整不要」（2026-09-28）。🚨 一覧と見出しで同じものを使う */
+const slotStatusLabel = (status: string, notNeeded?: boolean): string =>
+  status === 'no_change' && notNeeded ? '調整不要' : (STATUS_LABEL[status] ?? status);
 
 const ShiftAdjustTab: React.FC<{
   userId: string;
@@ -170,7 +175,7 @@ const ShiftAdjustTab: React.FC<{
     // 🚨 error を必ず見る。読めないまま「0件」と出すと、画面が嘘をつく
     const [{ data: sData, error: sErr }, { data: pData, error: pErr }, { data: wData }, { data: tData }, { data: planData }] = await Promise.all([
       supabase.from('shift_adjust_slots')
-        .select('id, target_user_id, target_date, cause, cause_leave_request_id, cause_attendance_exception_id, status, decided_by, decided_at')
+        .select('id, target_user_id, target_date, cause, cause_leave_request_id, cause_attendance_exception_id, status, decided_by, decided_at, not_needed')
         .gte('target_date', todayJstStr())
         .order('target_date', { ascending: true }),
       supabase.from('profiles').select('id, name, employment_type, role_title, group_names').eq('is_active', true),
@@ -294,7 +299,7 @@ const ShiftAdjustTab: React.FC<{
                   background: s.status === 'pending' ? warnBg : 'transparent',
                   border: `1px solid ${undone ? warnBd : border}`,
                 }}>
-                  {STATUS_LABEL[s.status] ?? s.status}
+                  {slotStatusLabel(s.status, s.not_needed)}
                 </span>
                 <span style={{ color: subText, fontSize: 14 }}>›</span>
               </button>
@@ -360,6 +365,9 @@ const SlotDetail: React.FC<{
   const inputBg = isDark ? '#2b3035' : '#fff';
 
   const [status, setStatus] = useState(slot.status);
+  // 調整不要の印（2026-09-28）。🚨 status が 'no_change' のときだけ見る（ほかの状態に移ると DB が外すので、ここで外さなくてよい）
+  const [notNeeded, setNotNeeded] = useState(!!slot.not_needed);
+  const isNotNeeded = status === 'no_change' && notNeeded;
   const [assigns, setAssigns] = useState<AssignRow[]>([]);
   const [comments, setComments] = useState<CommentRow[]>([]);
   const [body, setBody] = useState('');
@@ -420,8 +428,8 @@ const SlotDetail: React.FC<{
   const [confirmReplace, setConfirmReplace] = useState<{ e: Editor; c: EditorContent; label: string } | null>(null);
   /** 消す前の確認（案の id） */
   const [confirmDelPlan, setConfirmDelPlan] = useState<string | null>(null);
-  /** 案がある場で「現行シフトで対応」を押したときの確認 */
-  const [confirmNoChange, setConfirmNoChange] = useState(false);
+  /** 案がある場で「現行シフトで対応」「調整不要」を押したときの確認（押したほうを持つ・2026-09-28） */
+  const [confirmNoChange, setConfirmNoChange] = useState<'no_change' | 'not_needed' | null>(null);
   /** 決定したとき本人にお知らせ（ベル・スマホ）を送るか（2026-09-25 ユーザー確定・案A）。
    *  🚨 OFF でも依頼・勤怠の登録はする（事前に直接伝えて決まった場合に、突然お知らせが届かないように） */
   const [notifyStaff, setNotifyStaff] = useState(true);
@@ -590,7 +598,8 @@ const SlotDetail: React.FC<{
     void loadComments();
   };
 
-  const setSlotStatus = async (next: 'pending' | 'working' | 'no_change'): Promise<boolean> => {
+  // 'not_needed'（調整不要・2026-09-28）は DB では「変更なし」＋印。歯止めは同じ関数の中で効く
+  const setSlotStatus = async (next: 'pending' | 'working' | 'no_change' | 'not_needed'): Promise<boolean> => {
     setErr(''); setOkMsg(''); setBusyBtn(true);
     const { data, error } = await supabase.rpc('shift_adjust_set_status', { p_slot_id: slot.id, p_status: next });
     setBusyBtn(false);
@@ -598,8 +607,10 @@ const SlotDetail: React.FC<{
     if (error) { setErr('変更できませんでした：' + error.message); return false; }
     const row = Array.isArray(data) ? data[0] : data;
     if (!row?.ok) { setErr(row?.reason || '変更できませんでした'); return false; }
-    setStatus(next);
+    setStatus(next === 'not_needed' ? 'no_change' : next);
+    setNotNeeded(next === 'not_needed');
     if (next === 'no_change') setOkMsg('現行シフトで対応として記録しました。');
+    if (next === 'not_needed') setOkMsg('調整不要として記録しました。');
     if (next === 'working') {
       setOkMsg('');
       if (!showCandidates) { setShowCandidates(true); if (!candLoaded) void loadCandidates(); }
@@ -681,7 +692,7 @@ const SlotDetail: React.FC<{
     setEditor(null); setDrafts([]); setPlanNote(''); setPlanDue(''); setMemo(''); setEditorBase(''); setConfirmReplace(null);
   };
   const confirmReplaceRef = useScrollIntoViewWhen<HTMLDivElement>(confirmReplace);
-  const confirmNoChangeRef = useScrollIntoViewWhen<HTMLDivElement>(confirmNoChange);
+  const confirmNoChangeRef = useScrollIntoViewWhen<HTMLDivElement>(confirmNoChange !== null);
 
   /** 相談の欄に残す文（例：森本さん 9:30〜17:30 四条本校） */
   const summaryOf = (rows: Draft[]): string => {
@@ -1155,7 +1166,7 @@ const SlotDetail: React.FC<{
           </div>
         )}
         <div style={{ fontSize: 12, color: ['pending', 'working'].includes(status) ? warnFg : subText, marginTop: 6 }}>
-          状態：{STATUS_LABEL[status] ?? status}
+          状態：{slotStatusLabel(status, notNeeded)}
           {slot.decided_at && status === 'no_change' && (
             <span style={{ color: subText, marginLeft: 10 }}>
               {nameOf(slot.decided_by) ? `${nameOf(slot.decided_by)}・` : ''}
@@ -1176,16 +1187,27 @@ const SlotDetail: React.FC<{
               シフトを調整する
             </button>
             <button onClick={() => {
-                if (status === 'no_change') return;
+                if (status === 'no_change' && !notNeeded) return;
                 // 案があるときは消えることを先に断る（2026-09-25）
-                if (plans.length > 0) { setConfirmNoChange(true); return; }
+                if (plans.length > 0) { setConfirmNoChange('no_change'); return; }
                 void setSlotStatus('no_change');
               }}
               disabled={busyBtn || forkLocked}
-              style={toggleBtn(status === 'no_change', true, forkLocked)}>
+              style={toggleBtn(status === 'no_change' && !notNeeded, true, forkLocked)}>
               現行シフトで対応
             </button>
-            {/* 🚨 3つとも同じ見た目（2026-09-14 ユーザー確定）。押すと未調整に戻して一覧へ帰る */}
+            {/* 調整不要（2026-09-28 ユーザー確定）：この日だけに効く。休館日などシフトに影響しない休み。
+                DB では「変更なし」＋印（歯止めは shift_adjust_set_status の中で同じように効く） */}
+            <button onClick={() => {
+                if (isNotNeeded) return;
+                if (plans.length > 0) { setConfirmNoChange('not_needed'); return; }
+                void setSlotStatus('not_needed');
+              }}
+              disabled={busyBtn || forkLocked}
+              style={toggleBtn(isNotNeeded, true, forkLocked)}>
+              調整不要
+            </button>
+            {/* 🚨 どれも同じ見た目（2026-09-14 ユーザー確定）。押すと未調整に戻して一覧へ帰る */}
             <button onClick={() => void decideLater()} disabled={busyBtn || forkLocked}
               style={toggleBtn(false, true, forkLocked)}>
               後で決める
@@ -1196,11 +1218,11 @@ const SlotDetail: React.FC<{
           )}
           {confirmNoChange && (
             <div ref={confirmNoChangeRef} style={{ marginTop: 10, padding: '10px 12px', borderRadius: 8, background: '#fff3cd', border: '2px solid #ffc107', color: '#856404' }}>
-              <p style={{ margin: '0 0 8px', fontSize: 12.5, lineHeight: 1.7 }}>案が{plans.length}件あります。現行シフトで対応にすると、案は消えます。</p>
+              <p style={{ margin: '0 0 8px', fontSize: 12.5, lineHeight: 1.7 }}>案が{plans.length}件あります。{confirmNoChange === 'not_needed' ? '調整不要' : '現行シフトで対応'}にすると、案は消えます。</p>
               <div style={{ display: 'flex', gap: 8 }}>
-                <button type="button" onClick={() => { setConfirmNoChange(false); closeEditor(); void setSlotStatus('no_change').then(ok => { if (ok) setPlans([]); }); }}
-                  disabled={busyBtn} style={subBtn}>現行シフトで対応にする</button>
-                <button type="button" onClick={() => setConfirmNoChange(false)} style={quietBtn}>やめる</button>
+                <button type="button" onClick={() => { const next = confirmNoChange ?? 'no_change'; setConfirmNoChange(null); closeEditor(); void setSlotStatus(next).then(ok => { if (ok) setPlans([]); }); }}
+                  disabled={busyBtn} style={subBtn}>{confirmNoChange === 'not_needed' ? '調整不要にする' : '現行シフトで対応にする'}</button>
+                <button type="button" onClick={() => setConfirmNoChange(null)} style={quietBtn}>やめる</button>
               </div>
             </div>
           )}
