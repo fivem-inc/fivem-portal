@@ -155,11 +155,20 @@ export interface GrantRequestRow {
   created_at: string; resolve_note: string | null;
 }
 
-/** 本人の依頼のうち、依頼中（open）と見送り（declined）。🚨 読めなかったときは空 */
-export async function fetchMyGrantRequests(userId: string): Promise<GrantRequestRow[]> {
-  const { data } = await supabase.from('overtime_submission_grant_requests').select('id, work_dates, status, created_at, resolve_note')
+/** 本人の依頼のうち、依頼中（open）と見送り（declined）。🚨 読めなかったときは rows が空で error に理由（黙って空にしない。画面で「読み込めませんでした」を出す） */
+export async function fetchMyGrantRequests(userId: string): Promise<{ rows: GrantRequestRow[]; error: string | null }> {
+  const { data, error } = await supabase.from('overtime_submission_grant_requests').select('id, work_dates, status, created_at, resolve_note')
     .eq('user_id', userId).in('status', ['open', 'declined']).order('created_at', { ascending: false });
-  return (data as GrantRequestRow[] | null) ?? [];
+  return { rows: (data as GrantRequestRow[] | null) ?? [], error: error ? error.message : null };
+}
+
+/**
+ * 会社カレンダーの休館日（closed_all）の一覧。締め後の依頼の期限（給与データ確定日＝前営業日の遡り）の判定に使う（1件フォームから移した・2026-09-29）。
+ * 🚨 読めなかったときは空（＝期限を土日だけで数える。最終判断は DB の overtime_grant_deadline）
+ */
+export async function fetchClosedAllDates(fromDate: string): Promise<Set<string>> {
+  const { data } = await supabase.from('company_calendar').select('date').eq('kind', 'closed_all').gte('date', fromDate);
+  return new Set(((data ?? []) as { date: string }[]).map(d => d.date));
 }
 
 /** 依頼を送る。失敗の文は grantRequestErrorMessage（lib/overtimeFormParts）で日本語にする */

@@ -41,6 +41,18 @@ export function splitMoveLocation(stored: string): { start: string; end: string 
   return { start, end: end ?? '' };
 }
 
+/**
+ * 申請の依頼（シフト調整）の「入る時間と校」から入れる勤務地。
+ * 校が時間帯で変わるとき（午前は本校・午後は西陣校）は「最初の校→移る先の校」（勤務地は「A→B」の1組しか持てない。3か所以上は最初の2校）
+ * 🚨 1件フォームの「依頼から申請」と表入力で同じもの（2026-09-29）
+ */
+export function requestSegmentsLocation(segs: { location?: string | null }[]): string {
+  const locs = segs.map(s => (s.location ?? '').trim()).filter(Boolean);
+  const first = locs[0] ?? '';
+  const moveTo = locs.find(l => l !== first) ?? '';
+  return moveTo ? `${first}→${moveTo}` : first;
+}
+
 // ────────────────────────────────────────────
 // 振替休日の振替元
 // ────────────────────────────────────────────
@@ -133,4 +145,12 @@ export function grantRequestErrorMessage(dbMessage: string): string {
   if (msg.includes('ALREADY_GRANTED')) return '既に許可されている日が含まれています';
   if (msg.includes('DUPLICATE_REQUEST')) return '既に依頼中の日が含まれています';
   return '依頼の送信に失敗しました';
+}
+
+/** 複数の対象日を「7/18・7/19」のように短く整形（4件以上は「7/18・7/19 他N件」に省略）。1件フォームから移した（2026-09-29） */
+export function formatGrantDates(dates: string[]): string {
+  const sorted = [...dates].sort();
+  const short = (d: string) => `${parseInt(d.slice(5, 7))}/${parseInt(d.slice(8, 10))}`;
+  if (sorted.length <= 3) return sorted.map(short).join('・');
+  return `${sorted.slice(0, 2).map(short).join('・')} 他${sorted.length - 2}件`;
 }

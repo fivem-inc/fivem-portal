@@ -15,6 +15,7 @@ import type { SegInput, TypeDetect, LateChoice, EarlyChoice } from './overtimeSu
 import { buildWorkDiff } from './overtimeShift';
 import type { NormalShiftSnapshot } from './overtimeShift';
 import type { OvertimeStatus } from './overtimeStatus';
+import { storedLocationChoice, storedLocationCustom, splitMoveLocation } from './overtimeFormParts';
 import { computeBalance } from './overtimeBalance';
 import type { BalanceRow, BalanceSummary } from './overtimeBalance';
 
@@ -42,7 +43,7 @@ export type GridDayKind =
   | 'report'          // 事前申請あり・報告できる → 実績報告
   | 'report_wait'     // 事前申請あり・まだ報告できない（今日・勤務が終わる前／先の日）
   | 'resubmit'        // 差し戻し → 直して再提出
-  | 'form_only'       // 表では扱わない（終日・打刻ズレ・移動ありの差し戻し 等）→ 1件フォームで
+  | 'form_only'       // 表では扱わない（終日・打刻ズレの申請）→ 1件フォームで
   | 'done'            // 実績の確認待ち・確認済み → 表示だけ
   | 'leave_auto';     // 休暇からの自動計上 → 表示だけ（🚨 一意制約の対象外なので「空」と見せると二重計上になる）
 
@@ -119,8 +120,8 @@ export function classifyGridDay(args: {
       return canReportOvertime(main, today, nowMin, gateMin) ? 'report' : 'report_wait';
     }
     if (main.status === 'returned') {
-      // 表で直せないもの（終日・打刻ズレ・勤務地の移動あり）は1件フォームで
-      if (isFullDayReport(types) || types.includes('clock_only') || (main.location ?? '').includes('→')) return 'form_only';
+      // 表で直せないもの（終日・打刻ズレ）は1件フォームで。🚨 勤務地の移動ありは 2026-09-29 から表で直せる
+      if (isFullDayReport(types) || types.includes('clock_only')) return 'form_only';
       return 'resubmit';
     }
     return 'done';
@@ -162,9 +163,12 @@ export interface RowDraft {
   changeReason: string;
   /** 休憩（分）の手入力。空＝自動 */
   breakMin: string;
-  /** 勤務地の選択（校名 or 'その他'） */
+  /** 勤務地の選択（校名 or 'その他' or '移動あり'） */
   location: string;
   locationCustom: string;
+  /** 勤務地が「移動あり」のときの移動元・移動先の校（2026-09-29）。🚨 古い下書きには無いので読むときは既定値で埋める */
+  locMoveStart: string;
+  locMoveEnd: string;
   lateChoice: LateChoice | null;
   earlyChoice: EarlyChoice | null;
   /** 新しく出す行だけ。空＝表の上の申請先 */
@@ -185,18 +189,20 @@ export function normalSegsOf(ns: NormalShiftSnapshot): SegInput[] {
   return out;
 }
 
-/** 勤務地の値 → 選択欄の値（校名なら校名、それ以外は「その他」＋自由入力） */
-export function locationPick(loc: string | null | undefined, workplaces: readonly string[]): { location: string; locationCustom: string } {
+/**
+ * 勤務地の値 → 選択欄の値（校名なら校名／「A→B」は「移動あり」＋移動元・移動先／それ以外は「その他」＋自由入力）。
+ * 🚨 規則は lib/overtimeFormParts（1件フォームと共用・2026-09-29）。ここに書き写さない
+ */
+export function locationPick(loc: string | null | undefined, workplaces: readonly string[]): { location: string; locationCustom: string; locMoveStart: string; locMoveEnd: string } {
   const l = loc ?? '';
-  if (!l) return { location: '', locationCustom: '' };
-  if (workplaces.includes(l)) return { location: l, locationCustom: '' };
-  return { location: 'その他', locationCustom: l };
+  const m = splitMoveLocation(l);
+  return { location: storedLocationChoice(l, [...workplaces]), locationCustom: storedLocationCustom(l, [...workplaces]), locMoveStart: m.start, locMoveEnd: m.end };
 }
 
 /** 空の行の入力 */
 export const EMPTY_ROW_DRAFT: RowDraft = {
   touched: false, segs: [{ start: '', end: '' }], reason: '', changeReason: '', breakMin: '',
-  location: '', locationCustom: '', lateChoice: null, earlyChoice: null, reviewerId: '',
+  location: '', locationCustom: '', locMoveStart: '', locMoveEnd: '', lateChoice: null, earlyChoice: null, reviewerId: '',
 };
 
 /**
@@ -231,7 +237,8 @@ export type RowState =
   | 'editing'   // 入力中（その行を触っている間は赤くしない）
   | 'error'     // エラー（送らない）
   | 'warn'      // 注意（送れる）
-  | 'ok';       // 送れる
+  | 'ok'        // 送れる
+  | 'locked';   // 締め切り後で経理の許可が無い（入力に誤りは無い・送らない。2026-09-29 計画の3回目）
 
 export interface GridRowCalc {
   state: RowState;
@@ -291,7 +298,7 @@ export function computeGridRow(a: {
   const breakManual = draft.breakMin.trim() !== '';
   const diff = buildWorkDiff(workSegments, ns, breakManual ? (parseInt(draft.breakMin, 10) || 0) : null);
   const legal = checkLegalBreak(workSegments, diff.break_minutes);
-  const effectiveLocation = effectiveLocationOf(draft.location, draft.locationCustom, '', '');
+  const effectiveLocation = effectiveLocationOf(draft.location, draft.locationCustom, draft.locMoveStart ?? '', draft.locMoveEnd ?? '');
   const typeDetect = detectOvertimeTypes({ hasDate: true, workSegments, normalShift: ns, effectiveLocation });
   const applicationTypes = composeApplicationTypes({ typeDetect, lateChoice: draft.lateChoice, earlyChoice: draft.earlyChoice, fullDay: false, fullDayType: null });
 
@@ -356,14 +363,15 @@ export function computeGridRow(a: {
 
   const message = validateOvertime({
     date, mode, hasEditTarget: isEdit, today, advanceMaxDate: a.advanceMaxDate,
-    closeLocked: !isEdit && a.closeLocked, clockOnlyMode: false, normalShift: ns,
+    // 🚨 締め切りは最後に見る（ほかの入力の誤りを先に出すため）。表では「エラー」ではなく「許可待ち」（locked）
+    closeLocked: false, clockOnlyMode: false, normalShift: ns,
     clockReason: '', clockReasonOther: '', fullDay: false, fullDayType: null, fdLocation: '',
     furikaeOriginDate: '', furikaeOriginLocation: '', furikaeOriginLocationCustom: '', furikaeOriginStart: '', furikaeOriginEnd: '', furikaeHasTime: false,
     reason: draft.reason, reviewerId, isSelfReview, canSelfReview: a.canSelfReview,
     segments, workSegments, segmentIssues: segmentIssuesOf(segments),
     isTodayPostHoc: mode === 'posthoc' && !isEdit && date === today, nowMin,
     breakManual, breakManualMin: draft.breakMin,
-    location: draft.location, locationCustom: draft.locationCustom, locMoveStart: '', locMoveEnd: '', effectiveLocation,
+    location: draft.location, locationCustom: draft.locationCustom, locMoveStart: draft.locMoveStart ?? '', locMoveEnd: draft.locMoveEnd ?? '', effectiveLocation,
     normalSegs: normalSegsOf(ns), isReportPhase, hasChanges, isPureZero, changeReason: draft.changeReason,
     typeDetect, lateChoice: draft.lateChoice, earlyChoice: draft.earlyChoice,
   });
@@ -372,6 +380,7 @@ export function computeGridRow(a: {
   const msg = message || selfBlocked;
   if (msg === NOCHANGE_MSG) return { ...calc, state: 'nochange', message: '通常シフトと同じ（送りません）' };
   if (msg) return { ...calc, state: a.focused ? 'editing' : 'error', message: msg };
+  if (!isEdit && a.closeLocked) return { ...calc, state: 'locked', message: '締め切り後のため、経理の許可が要ります（表の上から依頼できます）' };
   if (!legal.ok) return { ...calc, state: 'warn', message: '休憩が法定より短い（送れます）' };
   return { ...calc, state: 'ok' };
 }

@@ -22,9 +22,9 @@ import {
 } from '../lib/breakCalc';
 import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import { retireeReturnNote } from '../lib/retire';
-import { saveOvertimeReport, syncOvertimeGcal, findLeaveAutoDuplicate, fetchGrantedWorkDates as loadGrantedWorkDates, fetchMyGrantRequests as loadMyGrantRequests, insertGrantRequest, withdrawGrantRequest } from '../lib/overtimeSubmitApi';
+import { saveOvertimeReport, syncOvertimeGcal, findLeaveAutoDuplicate, fetchGrantedWorkDates as loadGrantedWorkDates, fetchMyGrantRequests as loadMyGrantRequests, insertGrantRequest, withdrawGrantRequest, fetchClosedAllDates } from '../lib/overtimeSubmitApi';
 import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
-import { storedLocationChoice, storedLocationCustom, splitMoveLocation, furikaeOriginCalc, furikaeOriginPrefill, effectiveOtherLocation, isManagerReviewer, shouldNotifyReviewer, reviewerPhaseLabel, editHistorySummary, grantRequestErrorMessage } from '../lib/overtimeFormParts';
+import { storedLocationChoice, storedLocationCustom, splitMoveLocation, requestSegmentsLocation, furikaeOriginCalc, furikaeOriginPrefill, effectiveOtherLocation, isManagerReviewer, shouldNotifyReviewer, reviewerPhaseLabel, editHistorySummary, grantRequestErrorMessage, formatGrantDates } from '../lib/overtimeFormParts';
 import { STATUS_INFO } from '../lib/overtimeStatus';
 import OvertimeGrid from '../components/OvertimeGrid';
 import { isPointerDevice } from '../lib/idleLogout';
@@ -194,13 +194,7 @@ function dowLabel(dateStr: string): string {
   return DOW[new Date(y, m - 1, d).getDay()];
 }
 
-// 複数の対象日を「7/18・7/19」のように短く整形（4件超は「他N件」に省略）
-function formatGrantDates(dates: string[]): string {
-  const sorted = [...dates].sort();
-  const short = (d: string) => `${parseInt(d.slice(5, 7))}/${parseInt(d.slice(8, 10))}`;
-  if (sorted.length <= 3) return sorted.map(short).join('・');
-  return `${sorted.slice(0, 2).map(short).join('・')} 他${sorted.length - 2}件`;
-}
+// 複数の対象日の短い整形（formatGrantDates）は lib/overtimeFormParts に移した（表入力と共用・2026-09-29）
 
 
 // 事前受理の日時（request_confirmed_at）を記録し始めた日。
@@ -666,7 +660,7 @@ const OvertimeForm: React.FC<{
   // 締め後申請の許可依頼（本人分・自分のopen/declined一覧）
   const [myGrantRequests, setMyGrantRequests] = useState<GrantRequestRow[]>([]);
   const fetchMyGrantRequests = useCallback(() => {
-    loadMyGrantRequests(user.id).then(setMyGrantRequests, () => {});
+    loadMyGrantRequests(user.id).then(r => setMyGrantRequests(r.rows), () => {});
   }, [user.id]);
   useEffect(() => { fetchMyGrantRequests(); }, [fetchMyGrantRequests]);
 
@@ -727,8 +721,8 @@ const OvertimeForm: React.FC<{
   useEffect(() => {
     const from = new Date(); from.setMonth(from.getMonth() - 6);
     const fromStr = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, '0')}-${String(from.getDate()).padStart(2, '0')}`;
-    supabase.from('company_calendar').select('date').eq('kind', 'closed_all').gte('date', fromStr)
-      .then(({ data }) => setClosedDates(new Set((data ?? []).map((d: { date: string }) => d.date))), () => {});
+    // 🚨 読み込みは lib/overtimeSubmitApi の fetchClosedAllDates（表入力と共用・2026-09-29）
+    fetchClosedAllDates(fromStr).then(setClosedDates, () => {});
   }, []);
 
   // 通常シフト解決（スナップショット元）
@@ -758,9 +752,11 @@ const OvertimeForm: React.FC<{
     if (editTarget || location) return;
     const loc = normalShift.location;
     if (!loc) return;
-    if (loc.includes('→')) { setLocation('移動あり'); setLocMoveStart(loc.split('→')[0]); setLocMoveEnd(loc.split('→')[1] ?? ''); }
-    else if (workplaces.includes(loc)) setLocation(loc);
-    else { setLocation('その他'); setLocationCustom(loc); }
+    // 🚨 読み戻しの規則は lib/overtimeFormParts（表入力と共用・2026-09-29）
+    const choice = storedLocationChoice(loc, workplaces);
+    setLocation(choice);
+    if (choice === '移動あり') { const m = splitMoveLocation(loc); setLocMoveStart(m.start); setLocMoveEnd(m.end); }
+    else if (choice === 'その他') setLocationCustom(loc);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [normalShift.location]);
 
@@ -3009,16 +3005,15 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
     //    校が時間帯で変わるとき（午前は本校・午後は西陣校）は、この画面の「移動あり」＝「最初の校→移る先の校」で入れる
     //    （この画面の勤務地は「A→B」の1組しか持てない。3か所以上の移動は最初の2校になる）
     const reqSegs = (r.segments ?? []).filter(s => s.start && s.end);
-    const reqLocs = reqSegs.map(s => (s.location ?? '').trim()).filter(Boolean);
-    const firstLoc = reqLocs[0] ?? '';
-    const moveTo = reqLocs.find(l => l !== firstLoc) ?? '';
+    // 🚨 勤務地の決め方は lib/overtimeFormParts の requestSegmentsLocation（表入力と共用・2026-09-29）
+    const reqLocation = requestSegmentsLocation(reqSegs);
     saveDraft(DRAFT_KEYS.overtime, {
       mode: 'advance', date: first,
       segments: reqSegs.length > 0 ? reqSegs.map(s => ({ start: s.start, end: s.end })) : [{ start: '', end: '' }],
       breakManual: false, breakManualMin: '',
       // 🚨 理由は空。上長のメモは入力欄の上に出すだけにする（2026-09-10 ユーザー確定）。
       //    理由に入れると、そのまま送信されて「本人の言葉になっていない申請」になる。
-      reason: '', location: moveTo ? `${firstLoc}→${moveTo}` : firstLoc, locationCustom: '', reviewerId: r.requester_id,
+      reason: '', location: reqLocation, locationCustom: '', reviewerId: r.requester_id,
       normOverride: false, normStart: '', normEnd: '',
       // 申請したときに依頼と結び付けるため、依頼IDを持ち回す
       applicationRequestId: r.id,

@@ -14,7 +14,7 @@ import { useScrollIntoViewWhen } from '../hooks/useScrollIntoViewWhen';
 import { supabase } from '../lib/supabaseClient';
 import {
   calcPayPeriodStartJst, shiftPayPeriod, payMonthPeriodLabel, todayJstStr, advanceRequestMaxDate,
-  formatSignedMin, formatMin, minToTime, isPayPeriodClosed,
+  formatSignedMin, formatMin, minToTime, isPayPeriodClosed, isPayPeriodPayoutPassed,
 } from '../lib/breakCalc';
 import type { CalendarKind } from '../lib/breakCalc';
 import { resolveNormalShift, normalShiftTimeText, reportGateMin } from '../lib/overtimeShift';
@@ -34,8 +34,11 @@ import { useRoles } from '../hooks/useRoles';
 import { attrsFor } from '../lib/roleAttrs';
 import TimeInput from './TimeInput';
 import { LATE_CHOICES, EARLY_CHOICES } from '../lib/overtimeSubmit';
-import { syncOvertimeGcal, supabaseBulkWriter } from '../lib/overtimeSubmitApi';
+import { syncOvertimeGcal, supabaseBulkWriter, fetchGrantedWorkDates, fetchMyGrantRequests, fetchClosedAllDates } from '../lib/overtimeSubmitApi';
+import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
+import OvertimeGrantPanel from './OvertimeGrantPanel';
 import { runBulkSend } from '../lib/overtimeBulkSend';
+import { requestSegmentsLocation } from '../lib/overtimeFormParts';
 import { segmentsText, type SegmentLike } from '../lib/segmentsText';
 
 interface Reviewer { id: string; name: string; role_title: string }
@@ -95,6 +98,10 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
   const [calendar, setCalendar] = useState<Record<string, CalendarKind> | null>(null);
   const [reports, setReports] = useState<GridReport[] | null>(null);
   const [grants, setGrants] = useState<Set<string>>(new Set());
+  // 締め後の許可の依頼（2026-09-29）。依頼中・見送りの一覧と、給与データ確定日の判定に使う休館日
+  const [grantRequests, setGrantRequests] = useState<GrantRequestRow[]>([]);
+  const [grantReqErr, setGrantReqErr] = useState<string | null>(null);
+  const [closedDates, setClosedDates] = useState<Set<string>>(new Set());
   const [requests, setRequests] = useState<GridRequest[]>([]);
   const [reqErr, setReqErr] = useState('');
   const [peopleNames, setPeopleNames] = useState<Map<string, string>>(new Map());   // 依頼した人・元の申請先の名前
@@ -104,13 +111,12 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
   const load = useCallback(async () => {
     setLoading(true);
     const errs: string[] = [];
-    const [patRes, calRes, repRes, grantRes, reqRes] = await Promise.all([
+    const [patRes, calRes, repRes, reqRes] = await Promise.all([
       supabase.from('weekly_shift_patterns').select('*').eq('user_id', userId),
       supabase.from('company_calendar').select('date, kind').gte('date', from).lte('date', to),
       supabase.from('overtime_reports')
         .select('id, work_date, status, entry_type, is_post_hoc, application_types, location, diff_minutes, break_minutes, break_manual, reason, return_comment, reviewer_id, normal_shift, show_on_calendar, late_situation, early_situation, segments:overtime_report_segments(phase, seg_no, start_min, end_min)')
         .eq('applicant_id', userId).gte('work_date', from).lte('work_date', to),
-      supabase.from('overtime_submission_grants').select('work_date').eq('user_id', userId).is('revoked_at', null),
       supabase.from('application_requests').select('id, requester_id, target_dates, memo, segments')
         .eq('recipient_id', userId).eq('kind', 'overtime').eq('status', 'open').order('created_at', { ascending: true }),
     ]);
@@ -125,8 +131,6 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     }
     if (repRes.error) { errs.push('申請：' + repRes.error.message); setReports(null); }
     else setReports((repRes.data as GridReport[] | null) ?? []);
-    // 経理の許可は読めなくても止めない（締め後の日が「送れない」側に倒れるだけ。最終判断は DB のトリガー）
-    setGrants(grantRes.error ? new Set() : new Set(((grantRes.data ?? []) as { work_date: string }[]).map(g => g.work_date)));
     // 🚨 依頼は読めなくても表は止めない（送っても依頼と結び付かないだけ）。ただし黙らずに表の上に出す
     // 名前は「依頼した人」と「元の申請の申請先」をまとめて1回で読む。
     // 🚨 申請先の候補（reviewers）に入っていない人がいる（例：管理者）。候補だけで名前を引くと
@@ -153,6 +157,21 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
   }, [userId, from, to]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // 締め後の許可・依頼・休館日（給与データ確定日の判定用）。期間に関係ないので、開いたときと依頼・取り下げのあとだけ読む（◀▶では読まない・通信量）
+  // 🚨 読み込みは lib/overtimeSubmitApi（1件フォームと共用・2026-09-29）
+  const loadGrantState = useCallback(async () => {
+    const closedFrom = (() => { const d = new Date(); d.setMonth(d.getMonth() - 6); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
+    const [grantSet, grantReqRes, closedSet] = await Promise.all([
+      fetchGrantedWorkDates(userId), fetchMyGrantRequests(userId), fetchClosedAllDates(closedFrom),
+    ]);
+    // 経理の許可は読めなくても止めない（締め後の日が「送れない」側に倒れるだけ。最終判断は DB のトリガー）
+    setGrants(grantSet);
+    setGrantRequests(grantReqRes.rows);
+    setGrantReqErr(grantReqRes.error);
+    setClosedDates(closedSet);
+  }, [userId]);
+  useEffect(() => { void loadGrantState(); }, [loadGrantState]);
 
   // いまの時刻（今日の行の判定に使う）。1分ごとに更新
   const [nowMin, setNowMin] = useState(() => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); });
@@ -256,6 +275,9 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
   }), [baseRows, drafts, today, nowMin, advanceMaxDate, canSelfReview, grants, focusedDate, workplaces, userId]);
   type Row = typeof rows[number];
 
+  // 締め切りを過ぎ、経理の許可が無い新しい行（札の出し分け用。送れるかどうかは calc.state＝locked で見る）
+  const isLockedRow = (r: { kind: GridDayKind; date: string }) =>
+    (r.kind === 'new_post' || r.kind === 'new_today') && isPayPeriodClosed(r.date, today) && !grants.has(r.date);
   const counts = useMemo(() => {
     const c: Partial<Record<RowState, number>> = {};
     rows.forEach(r => { c[r.calc.state] = (c[r.calc.state] ?? 0) + 1; });
@@ -270,8 +292,23 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     main: r.main, isEdit: r.kind === 'report' || r.kind === 'resubmit', date: r.date,
     diffMin: r.calc.diffMin, applicationTypes: r.calc.applicationTypes,
   }))) : null;
-  // 締め切りを過ぎた新しい行（経理の許可が無い）。🚨 行ごとではなく表の上に1つだけ出す
-  const lockedNewRows = rows.filter(r => (r.kind === 'new_post' || r.kind === 'new_today') && isPayPeriodClosed(r.date, today) && !grants.has(r.date));
+  // ── 締め後の許可の依頼（2026-09-29・計画の3回目）。🚨 表の上の1つの枠（OvertimeGrantPanel）に出す ──
+  const hasInput = (r: Row) => r.draft.segs.some(x => x.start || x.end) || r.draft.reason.trim() !== '';
+  // 🚨 依頼の対象は「時間を入れた日」。入力に誤りがある日・通常シフトと同じ日も含める（許可は日付に付くので、直すのは許可のあとでもよい）
+  const lockedInputRows = rows.filter(r => isLockedRow(r) && hasInput(r) && r.calc.state !== 'nochange');
+  const openGrantDates = new Set(grantRequests.filter(g => g.status === 'open').flatMap(g => g.work_dates));
+  const inPeriod = (g: GrantRequestRow) => g.work_dates.some(d => dates.includes(d));
+  const openGrantReqs = grantRequests.filter(g => g.status === 'open' && inPeriod(g));
+  // 見送り：依頼中の日と重なるものは出さない（出し直したあと）
+  //       すべての日が許可されたもの（出し直して許可された）も出さない
+  const declinedGrantReqs = grantRequests.filter(g => g.status === 'declined' && inPeriod(g)
+    && !g.work_dates.some(d => openGrantDates.has(d)) && !g.work_dates.every(d => grants.has(d)));
+  const declinedGrantDates = new Set(declinedGrantReqs.flatMap(g => g.work_dates));
+  // 依頼できる日＝締め後・時間を入れた・依頼中でない（許可済みは isLockedRow で外れている）
+  const requestableDates = lockedInputRows.filter(r => !openGrantDates.has(r.date)).map(r => r.date);
+  // 許可済みで、まだ送っていない日（送ったあとは「送れます」を出さない）
+  const grantedClosedDates = rows.filter(r => (r.kind === 'new_post' || r.kind === 'new_today') && isPayPeriodClosed(r.date, today) && grants.has(r.date)).map(r => r.date);
+  const payoutPassed = isPayPeriodPayoutPassed(period, today, closedDates);
 
   // ────────────────────────────────────────────
   // 送信（第5段）
@@ -353,13 +390,13 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     if (r.kind !== 'new_post' && r.kind !== 'new_advance' && r.kind !== 'new_today') return;
     if (r.draft.segs.some(s => s.start || s.end)) return;
     // 依頼に「入る時間と校」があれば、それを入れる（1件フォームの「依頼から申請」と同じ）。
-    // 🚨 表の勤務地は1か所しか持てない。依頼の校が時間帯で変わるときは勤務地を入れず、本人に選んでもらう
+    // 🚨 2026-09-29：校が時間帯で変わるときは「移動あり」（最初の校→移る先の校）で入れる。決め方は lib の requestSegmentsLocation（1件フォームと共用）
     const reqSegs = (r.req?.segments ?? []).filter(x => x.start && x.end);
     if (reqSegs.length > 0) {
-      const locs = [...new Set(reqSegs.map(x => (x.location ?? '').trim()).filter(Boolean))];
+      const reqLoc = requestSegmentsLocation(reqSegs);
       setRow(r.date, {
         segs: reqSegs.slice(0, 3).map(x => ({ start: x.start, end: x.end })),
-        ...(r.draft.location || locs.length !== 1 ? {} : locationPick(locs[0], workplaces)),
+        ...(r.draft.location || !reqLoc ? {} : locationPick(reqLoc, workplaces)),
       });
       return;
     }
@@ -406,6 +443,14 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
   const typesText = (types: readonly string[] | null, situation?: SituationLike | null) =>
     (types ?? []).filter(isOvertimeType).map(t => typeLabelFor(t, situation)).join('・');
 
+  // 締め後の許可の状態の小さな札（依頼中・見送り＝灰色の枠／許可済み＝緑）。🎨 新しい色は足さない（許可済みの薄緑のカードと同じ固定色）
+  const miniTag = (label: string, tone: 'muted' | 'ok') => (
+    <span style={{
+      display: 'inline-block', fontSize: 11, fontWeight: 'bold', borderRadius: 6, padding: '0 6px', whiteSpace: 'nowrap',
+      ...(tone === 'ok' ? { background: '#f0fdf4', color: '#166534', border: '1px solid #86efac' } : { background: innerBg, color: subText, border: `1px solid ${borderColor}` }),
+    }}>{label}</span>
+  );
+
   const tag = (k: GridDayKind, label?: string) => {
     const st = TAG_STYLE[k];
     const style: React.CSSProperties = st === 'send'
@@ -429,6 +474,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
       case 'ok': return <b style={{ color: toggleText }}>送る<div style={{ fontSize: 11.5, fontWeight: 'normal' }}>{c.sendLabel}{note}</div></b>;
       case 'warn': return <b style={{ color: toggleText }}>送る（注意）<div style={{ fontSize: 11.5, fontWeight: 'normal' }}>{c.sendLabel}{note}</div></b>;
       case 'error': return <b style={{ color: '#e24b4a' }}>エラー（送らない）</b>;
+      case 'locked': return <span style={{ color: subText, fontSize: 12 }}>許可待ち（送らない）</span>;
       case 'editing': return <span style={{ color: subText }}>入力中</span>;
       case 'nochange': return <span style={{ color: subText, fontSize: 12 }}>通常シフトと同じ（送らない）</span>;
       case 'idle': return <span style={{ color: subText, fontSize: 12 }}>まだ送らない<br />（触るか［予定どおり］で対象に）</span>;
@@ -519,11 +565,18 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
         </div>
       )}
 
-      {lockedNewRows.length > 0 && (
-        <div style={{ background: warnBg, border: '1px solid #f59e0b', borderRadius: 8, padding: '8px 12px', fontSize: 12.5, marginBottom: 10 }}>
-          この給与期間は締め切りを過ぎています。新しく出す日（{lockedNewRows.length}日）は送れません。経理への許可の依頼は、1件ずつのフォームからできます。
-          （実績報告・再提出は送れます）
-        </div>
+      {ready && dates.some(d => isPayPeriodClosed(d, today)) && (
+        <OvertimeGrantPanel
+          key={period}
+          userId={userId} profileName={profileName ?? ''} isDark={isDark}
+          requestable={requestableDates}
+          openRequests={openGrantReqs} declinedRequests={declinedGrantReqs}
+          grantedDates={grantedClosedDates}
+          payoutPassed={payoutPassed}
+          loadError={grantReqErr}
+          // 依頼の状態と許可だけ読み直す（表の入力は消さない）
+          onReload={() => { void loadGrantState(); }}
+        />
       )}
 
       {loading ? (
@@ -533,6 +586,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', fontSize: 13, marginBottom: 8 }}>
             <span>送れる <b>{sendable.length}件</b></span>
             <span style={{ color: '#e24b4a' }}>エラー <b>{counts.error ?? 0}件</b></span>
+            {(counts.locked ?? 0) > 0 && <span style={{ color: subText }}>許可待ち <b>{counts.locked}件</b></span>}
             <span style={{ color: subText }}>入力中 {counts.editing ?? 0}・まだ送らない {counts.idle ?? 0}・通常シフトと同じ {counts.nochange ?? 0}・空 {counts.empty ?? 0}</span>
             <span style={{ flex: 1 }} />
             {lastBulk ? (
@@ -603,7 +657,13 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                         {isToday && <div style={{ fontSize: 11, color: toggleText }}>今日</div>}
                         {r.ck && <div style={{ fontSize: 11, fontWeight: 'normal', background: CALENDAR_CELL_STYLE[r.ck].bg, color: CALENDAR_CELL_STYLE[r.ck].text, borderRadius: 4, padding: '0 4px', display: 'inline-block' }}>{CALENDAR_CELL_STYLE[r.ck].short}</div>}
                       </td>
-                      <td style={td}>{tag(r.kind, tagLabel)}</td>
+                      <td style={td}>
+                        {tag(r.kind, tagLabel)}
+                        {/* 締め後の許可の状態（2026-09-29） */}
+                        {isLockedRow(r) && openGrantDates.has(r.date) && <div style={{ marginTop: 2 }}>{miniTag('依頼中', 'muted')}</div>}
+                        {isLockedRow(r) && !openGrantDates.has(r.date) && declinedGrantDates.has(r.date) && <div style={{ marginTop: 2 }}>{miniTag('見送り', 'muted')}</div>}
+                        {isPayPeriodClosed(r.date, today) && grants.has(r.date) && (r.kind === 'new_post' || r.kind === 'new_today') && <div style={{ marginTop: 2 }}>{miniTag('許可済み', 'ok')}</div>}
+                      </td>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>{normalShiftTimeText(r.ns) || <span style={{ color: subText }}>休み</span>}</td>
                       <td style={td}>
                         {st ? (
@@ -632,7 +692,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                             {rep?.reason && <span>{rep.reason}</span>}
                             {r.kind === 'form_only' && (
                               <div style={{ fontSize: 12, color: subText, marginTop: 2 }}>
-                                時間外調整休・振替休日・欠勤・打刻ズレ・移動ありは、1件ずつのフォームから出してください
+                                時間外調整休・振替休日・欠勤・打刻ズレは、1件ずつのフォームから出してください
                                 <button type="button" style={{ ...btnSm, marginLeft: 6 }} onClick={onOpenForm}>フォームを開く</button>
                               </div>
                             )}
@@ -728,14 +788,29 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                               <select value={r.draft.location} onChange={e => touch({ location: e.target.value })} style={sel} aria-label={`${md(r.date)} 勤務地`}>
                                 <option value="">勤務地</option>
                                 {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+                                {/* 移動あり（2026-09-29）：1件フォームと同じ言葉・同じ持ち方（「移動元→移動先」で保存・時刻は無い） */}
+                                <option value="移動あり">移動あり（校が変わる）</option>
                                 <option value="その他">その他</option>
                               </select>
                               {r.draft.location === 'その他' && (
                                 <input type="text" value={r.draft.locationCustom} placeholder="勤務地" onChange={e => touch({ locationCustom: e.target.value })}
                                   style={{ ...txt, minWidth: 0, width: 130 }} aria-label={`${md(r.date)} 勤務地（その他）`} />
                               )}
+                              {r.draft.location === '移動あり' && (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                  <select value={r.draft.locMoveStart ?? ''} onChange={e => touch({ locMoveStart: e.target.value })} style={sel} aria-label={`${md(r.date)} 移動元の校`}>
+                                    <option value="">移動元の校</option>
+                                    {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+                                  </select>
+                                  <span style={{ color: subText, fontWeight: 'bold' }}>→</span>
+                                  <select value={r.draft.locMoveEnd ?? ''} onChange={e => touch({ locMoveEnd: e.target.value })} style={sel} aria-label={`${md(r.date)} 移動先の校`}>
+                                    <option value="">移動先の校</option>
+                                    {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+                                  </select>
+                                </span>
+                              )}
                             </div>
-                            {c.message && (c.state === 'error' || c.state === 'warn' || c.state === 'nochange') && (
+                            {c.message && (c.state === 'error' || c.state === 'warn' || c.state === 'nochange' || c.state === 'locked') && (
                               <div style={{ fontSize: 11.5, fontWeight: 'bold', marginTop: 3, color: c.state === 'error' ? '#e24b4a' : c.state === 'warn' ? warnText : subText }}>{c.message}</div>
                             )}
                           </td>
