@@ -83,6 +83,8 @@ export interface BulkCtx {
   today: () => string;
   /** 申請先がマネージャー以上か（欠勤の申請先のチェック）。🚨 必須（リーダー宛の欠勤を止める網はここだけ。computeGridRow の説明） */
   reviewerIsManager: (id: string) => boolean;
+  /** カレンダーに載せるかを自分で選べる人か（computeGridRow の説明） */
+  canChooseCalendar: boolean;
 }
 
 export interface BulkResult {
@@ -124,7 +126,7 @@ export function recomputeRow(r: BulkRow, ctx: BulkCtx, now: Date = ctx.now()): G
     ns: r.ns, main: r.main, draft: r.draft,
     defaultReviewerId: r.rowDefaultReviewer, canSelfReview: ctx.canSelfReview, selfId: ctx.userId,
     closeLocked: isPayPeriodClosed(r.date, today) && !ctx.grants.has(r.date), focused: false,
-    reviewerIsManager: ctx.reviewerIsManager,
+    reviewerIsManager: ctx.reviewerIsManager, canChooseCalendar: ctx.canChooseCalendar,
     originOf: r.originOf ?? null, furikaeOriginNg: r.furikaeOriginNg ?? '',
   });
 }
@@ -237,9 +239,10 @@ export async function runBulkSend(
         fdLocation: c.fullDayType ? c.effectiveLocation : '', effectiveLocation: c.effectiveLocation,
         applicationTypes: c.applicationTypes,
         lateChoice: r.draft.lateChoice, earlyChoice: r.draft.earlyChoice,
-        // 🚨 表ではカレンダーに載せるかを聞かない。新しい行は null（種類ごとの既定）。
+        // 「📅 みんなのカレンダーに表示」（2026-09-29 案A）：出した行だけ本人の選択を保存。出さない行は新しい行＝null（種類ごとの既定）、
         //    実績報告は元の申請の値を引き継ぐ（buildOvertimeRecord の中で。1件フォームと同じ）
-        offerCalendarChoice: false, showOnCalendar: false, editTargetShowOnCalendar: (fresh?.show_on_calendar as boolean | null | undefined) ?? undefined,
+        offerCalendarChoice: c.offerCalendar, showOnCalendar: !!r.draft.showOnCalendar,
+        editTargetShowOnCalendar: (fresh?.show_on_calendar as boolean | null | undefined) ?? undefined,
         // 振替休日の振替元（6回目）。振替休日以外は空（buildOvertimeRecord が振替休日のときだけ保存する）
         furikaeOriginDate: c.furikae?.date ?? '', effectiveFurikaeOriginLocation: c.furikae?.location ?? '',
         furikaeOriginStart: c.furikae?.start ?? '', furikaeOriginEnd: c.furikae?.end ?? '',
@@ -252,7 +255,8 @@ export async function runBulkSend(
       }, toDbTime);
       // 🚨 再提出も元の値を引き継ぐ。buildOvertimeRecord は再提出では null にするので、ここで元の値に戻す。
       //    null にすると「載せない」を選んでいた人の申請が、直して出し直しただけでカレンダーに出てしまう
-      if (fresh && c.isResubmit) record.show_on_calendar = (fresh.show_on_calendar as boolean | null | undefined) ?? null;
+      //    （選び直しの欄を出した再提出は、本人の選択のまま）
+      if (fresh && c.isResubmit && !c.offerCalendar) record.show_on_calendar = (fresh.show_on_calendar as boolean | null | undefined) ?? null;
       const saved = await writer.save({
         userId: ctx.userId, record, phase: c.phase, segments: c.workSegments, segRetries: 2,
         edit: fresh ? {

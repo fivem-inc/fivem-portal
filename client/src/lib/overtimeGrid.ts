@@ -5,7 +5,7 @@
 
 import { payPeriodEnd, minToTime, checkLegalBreak } from './breakCalc';
 import type { WorkSegment } from './breakCalc';
-import { isFullDayReport, OT_TYPE_INFO } from './overtimeTypes';
+import { isFullDayReport, OT_TYPE_INFO, canOfferCalendarChoice } from './overtimeTypes';
 import type { OvertimeType } from './overtimeTypes';
 import {
   canReportOvertime, toWorkSegments, segmentIssuesOf, detectOvertimeTypes, composeApplicationTypes,
@@ -224,6 +224,8 @@ export interface RowDraft {
   furikaeOriginLocationCustom: string;
   furikaeOriginStart: string;
   furikaeOriginEnd: string;
+  /** 「📅 みんなのカレンダーに表示」（2026-09-29 ユーザー確定 案A）。選べる人・事前申請の時間の申請だけ。初期値は表示しない（1件フォームと同じ） */
+  showOnCalendar: boolean;
 }
 
 /** 分 → 入力欄用の "HH:MM"（時をゼロ埋め・翌日印は外す） */
@@ -256,6 +258,7 @@ export const EMPTY_ROW_DRAFT: RowDraft = {
   location: '', locationCustom: '', locMoveStart: '', locMoveEnd: '', lateChoice: null, earlyChoice: null, reviewerId: '',
   dayType: 'time', clockInAt: '', clockOutAt: '', clockReason: '', clockReasonOther: '',
   furikaeOriginDate: '', furikaeOriginLocation: '', furikaeOriginLocationCustom: '', furikaeOriginStart: '', furikaeOriginEnd: '',
+  showOnCalendar: false,
 };
 
 /**
@@ -273,6 +276,8 @@ export function initialRowDraft(kind: GridDayKind, main: GridReport | null, work
     ...EMPTY_ROW_DRAFT,
     segs: src.length > 0 ? src.map(s => ({ start: minToInput(s.start_min), end: minToInput(s.end_min) })) : [{ start: '', end: '' }],
     reason: main.reason ?? '',
+    // 再提出で選び直すときの初期値は元の申請の値（1件フォームと同じ）
+    showOnCalendar: main.show_on_calendar ?? false,
     breakMin: main.break_manual && main.break_minutes != null ? String(main.break_minutes) : '',
     ...locationPick(main.location, workplaces),
     // 保存してある事情（event / telework）があれば押した位置に戻す（1件フォームと同じ）
@@ -320,6 +325,11 @@ export interface GridRowCalc {
   clockOnly: boolean;
   /** 終日（時間外調整休・欠勤）の行ならその種類。🚨 差分（diffMin）は種類ごとの効き（調整休＝−シフト労働／欠勤＝0）、勤務地（effectiveLocation）はシフトの校 */
   fullDayType: GridFullDayType | null;
+  /**
+   * 「📅 みんなのカレンダーに表示」を出すか（1件フォームの offerCalendarChoice と同じ：選べる人・実績報告以外・canOfferCalendarChoice）。
+   * 🚨 出すときだけ本人の選択を保存する。出さないときは今までどおり（新しい行は種類ごとの既定・実績報告と再提出は元の値）
+   */
+  offerCalendar: boolean;
   /** 振替休日の振替元（保存に使う値）。振替休日の行だけ */
   furikae: { date: string; location: string; start: string; end: string; breakMin: number; laborMin: number; hasTime: boolean } | null;
 }
@@ -359,6 +369,8 @@ export function computeGridRow(a: {
   originOf?: string | null;
   /** 振替休日の行：振替元の日が使えない理由（表が知っている範囲＝すでにある申請・同じ表の別の行）。空なら問題なし */
   furikaeOriginNg?: string;
+  /** カレンダーに載せるかを自分で選べる人か（管理画面の設定・1件フォームと同じ）。🚨 必須（渡し忘れると選べる人の選択が黙って消える） */
+  canChooseCalendar: boolean;
 }): GridRowCalc {
   const { kind, date, today, nowMin, ns, main, draft } = a;
   const isReportPhase = kind === 'report';
@@ -430,6 +442,7 @@ export function computeGridRow(a: {
     breakMin: diff.break_minutes, laborMin: diff.labor_minutes, diffMin: diff.diff_minutes, legalOk: legal.ok,
     typeDetect, applicationTypes, effectiveLocation, hasChanges, changedAxes, isPureZero, reviewerId, isSelfReview, sendLabel,
     clockOnly: false, fullDayType: null, furikae: null,
+    offerCalendar: a.canChooseCalendar && !isReportPhase && canOfferCalendarChoice(applicationTypes, mode === 'posthoc'),
   };
 
   const editable: GridDayKind[] = ['new_post', 'new_advance', 'new_today', 'report', 'resubmit'];
@@ -485,6 +498,7 @@ function computeClockOnlyRow(a: Parameters<typeof computeGridRow>[0]): GridRowCa
     breakMin: ns.break_minutes, laborMin: ns.labor_minutes, diffMin: 0, legalOk: true,
     typeDetect, applicationTypes: ['clock_only'] as OvertimeType[], effectiveLocation, hasChanges: false, changedAxes: [] as string[],
     isPureZero: false, reviewerId: '', isSelfReview: false, sendLabel: '打刻ズレの記録（確定）', clockOnly: true, fullDayType: null, furikae: null,
+    offerCalendar: false,
   };
   const ng = gridDayTypeOptions(kind, ns).find(o => o.value === 'clock_only')?.disabledReason ?? '';
   const message = ng ? '打刻が遅れただけは選べません（' + ng + '）' : validateOvertime({
@@ -540,7 +554,8 @@ function computeFullDayRow(a: Parameters<typeof computeGridRow>[0], fdt: GridFul
     // 🚨 振替休日は振替元の日も呼び名に入れる（確認のあとで振替元を変えたら、送る直前の照合で止まるように）
     sendLabel: (mode === 'advance' ? '事前申請' : '事後報告') + '（' + OT_TYPE_INFO[fdt].label
       + (furikae?.date ? '・振替元 ' + shortMd(furikae.date) : '') + '）',
-    clockOnly: false, fullDayType: fdt, furikae,
+    // 終日は選ばせず必ず載せる（canOfferCalendarChoice と同じ）
+    clockOnly: false, fullDayType: fdt, furikae, offerCalendar: false,
   };
   const ng = gridDayTypeOptions(kind, ns).find(o => o.value === fdt)?.disabledReason ?? '';
   const message = ng ? OT_TYPE_INFO[fdt].label + 'は選べません（' + ng + '）' : validateOvertime({

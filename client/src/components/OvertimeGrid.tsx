@@ -61,6 +61,8 @@ interface Props {
   onClose: () => void;
   /** 表で扱わない日を1件フォームで開く */
   onOpenForm: () => void;
+  /** カレンダーに載せるかを自分で選べる人か（ページが読んだもの＝1件フォームと同じ） */
+  canChooseCalendar: boolean;
 }
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
@@ -89,7 +91,7 @@ interface GridRequest {
   segments: SegmentLike[] | null;
 }
 
-const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin, isDark, reviewers, workplaces, onClose, onOpenForm }) => {
+const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin, isDark, reviewers, workplaces, onClose, onOpenForm, canChooseCalendar }) => {
   const today = todayJstStr();
   const [period, setPeriod] = useState(() => calcPayPeriodStartJst(today));
   const dates = useMemo(() => periodDates(period), [period]);
@@ -305,11 +307,11 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
       defaultReviewerId: r.rowDefaultReviewer, canSelfReview, selfId: userId,
       closeLocked: isPayPeriodClosed(r.date, today) && !grants.has(r.date),
       focused: focusedDate === r.date,
-      reviewerIsManager, originOf, furikaeOriginNg,
+      reviewerIsManager, originOf, furikaeOriginNg, canChooseCalendar,
     });
     return { ...r, draft, calc, originOf, furikaeOriginNg };
     });
-  }, [baseRows, drafts, today, nowMin, advanceMaxDate, canSelfReview, grants, focusedDate, workplaces, userId, reviewerIsManager, furikaeOrigins]);
+  }, [baseRows, drafts, today, nowMin, advanceMaxDate, canSelfReview, grants, focusedDate, workplaces, userId, reviewerIsManager, furikaeOrigins, canChooseCalendar]);
   type Row = typeof rows[number];
 
   // 締め切りを過ぎ、経理の許可が無い新しい行（札の出し分け用。送れるかどうかは calc.state＝locked で見る）
@@ -405,7 +407,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     const result = await runBulkSend(
       targets,
       date => rows.find(x => x.date === date),
-      { userId, profileName: profileName ?? '', canSelfReview, advanceMaxDate, grants, now: () => new Date(), today: todayJstStr, reviewerIsManager },
+      { userId, profileName: profileName ?? '', canSelfReview, advanceMaxDate, grants, now: () => new Date(), today: todayJstStr, reviewerIsManager, canChooseCalendar },
       supabaseBulkWriter,
       (date, status, message) => setRes(date, { status, message }),
       (done, total) => setProgress({ done, total }),
@@ -640,6 +642,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
       <div style={{ background: innerBg, border: `1px solid ${borderColor}`, borderRadius: 8, padding: '8px 12px', fontSize: 12.5, color: subText, marginBottom: 10, lineHeight: 1.7 }}>
         ・入力途中の内容は、この端末に保存されます<br />
         ・時間を入れた日（終日・打刻ズレは「種類」で選んだ日）だけ送ります。空の日と、通常シフトと同じ日は送りません<br />
+        {canChooseCalendar && <>・📅 は、ほかの人のシフトに関係する予定だけチェックしてください（在宅や一人で残る残業は不要）<br /></>}
         ・<b>実績報告・再提出の行は、触るまで送りません</b>。予定どおりなら［予定どおり］、残業が無かったら［残業なし］<br />
         ・時刻は「930」のように続けて打てます。理由の欄は Enter で下の行へ
       </div>
@@ -991,7 +994,22 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                                   </select>
                                 </span>
                               )}
+                              {/* 📅 みんなのカレンダーに表示（2026-09-29 案A）。🚨 出すかどうかは lib の offerCalendar（1件フォームと同じ決まり） */}
+                              {c.offerCalendar && (
+                                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                  <input type="checkbox" checked={!!r.draft.showOnCalendar} onChange={e => touch({ showOnCalendar: e.target.checked })}
+                                    aria-label={`${md(r.date)} みんなのカレンダーに表示`} />
+                                  📅 みんなのカレンダーに表示
+                                </label>
+                              )}
+                              {!c.offerCalendar && canChooseCalendar && c.mode === 'posthoc' && !c.isReportPhase && c.state !== 'empty' && c.state !== 'idle' && (
+                                <span style={{ color: subText }}>（事後報告はカレンダーに載りません）</span>
+                              )}
                             </div>
+                            {/* 勤務する場所が変わる日は、載せ忘れると周りが困る。止めはせず注意だけ（1件フォームと同じ文） */}
+                            {c.offerCalendar && !r.draft.showOnCalendar && c.applicationTypes.some(t => t === 'location_change' || t === 'holiday_work') && (
+                              <div style={{ fontSize: 11.5, color: warnText, marginTop: 3 }}>⚠️ 勤務する場所が変わる予定ですが、カレンダーに表示しない設定になっています</div>
+                            )}
                             {c.message && (c.state === 'error' || c.state === 'warn' || c.state === 'nochange' || c.state === 'locked') && (
                               <div style={{ fontSize: 11.5, fontWeight: 'bold', marginTop: 3, color: c.state === 'error' ? '#e24b4a' : c.state === 'warn' ? warnText : subText }}>{c.message}</div>
                             )}
@@ -1165,6 +1183,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                   {' '}{typesText(r.calc.applicationTypes, { late_situation: r.draft.lateChoice, early_situation: r.draft.earlyChoice })} 「{r.draft.reason.trim()}」
                   {r.calc.isReportPhase && r.calc.hasChanges && !r.calc.isPureZero && <span style={{ color: subText }}> 変わった理由「{r.draft.changeReason.trim()}」</span>}
                   {r.calc.state === 'warn' && <span style={{ color: warnText, fontWeight: 'bold' }}> ⚠️ 休憩が法定より短い</span>}
+                  {r.calc.offerCalendar && <span style={{ color: subText }}> 📅 {r.draft.showOnCalendar ? '表示する' : '表示しない'}</span>}
                 </div>
               );
             };
