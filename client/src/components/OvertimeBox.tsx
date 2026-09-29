@@ -34,6 +34,7 @@ import {
 } from '../lib/overtimeSubmitApi';
 import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
 import OvertimeGrantPanel from './OvertimeGrantPanel';
+import OvertimeNotes from './OvertimeNotes';
 import { runBulkSend } from '../lib/overtimeBulkSend';
 import type { BulkRowStatus } from '../lib/overtimeBulkSend';
 import { requestSegmentsLocation, effectiveClockReasonOf, isManagerReviewer, furikaeOriginPrefill } from '../lib/overtimeFormParts';
@@ -535,10 +536,13 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
       )}
 
       {reqErr && <div style={{ background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 8, padding: '8px 12px', fontSize: 12.5, color: '#856404', marginBottom: 8 }}>{reqErr}</div>}
-      <p style={{ fontSize: 12.5, color: subText, margin: '0 0 8px', lineHeight: 1.7 }}>
-        1日分ずつ入れて［＋ 申請リストに追加］→ まとめて［申請する］。2件目からは［複製］で日付と時間だけ変えると早いです。
-        実績報告・差し戻しの直しは「履歴・実績報告」から。
-      </p>
+      {/* 【注意事項】は［事前申請・事後報告］と同じ部品。先頭にこの画面の使い方を入れる（2026-09-29 ユーザー指示） */}
+      <OvertimeNotes isDark={isDark} advanceMaxDate={advanceMaxDate} cardBg={isDark ? '#343a40' : '#fff'} leadItems={[
+        <>1日分ずつ入れて［＋ 申請リストに追加］→ 最後に［申請する］で送信します。<b>［申請する］を押すまでは送信されません。</b>2件目からは［複製］で日付と時間だけ変えると早いです。</>,
+        <>入れた内容は<b>この端末にだけ</b>保存されます（別のスマホやパソコンには出ません）。</>,
+        <>申請済みの日・締め切り後の日など、送れない日は赤く表示され、送信されません。</>,
+        <>実績報告・差し戻しの再提出・内容の修正は「履歴・実績報告」タブから1件ずつ行ってください。</>,
+      ]} />
 
       {banner && (
         <div style={{ background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 6, padding: '8px 12px', marginBottom: 8, fontSize: 13, color: '#856404' }}>

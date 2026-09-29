@@ -1907,9 +1907,11 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
   // 入力シートの対象者の一覧（在籍者）。
   // 🚨 読めなかったとき・0人だったときは黙って空にしない（理由を出してシートから読み直せるようにする）。
   //    0人は「ログインの確認が済む前に読んだ」ときに起きる（ログインしている人だけ読める決まりのため、エラーにならず空が返る）
+  // 🚨 役職は「profiles.role_id のつながり」を名指しで引く（roles!profiles_role_id_fkey）。名指ししないと、profiles と roles の両方を指す
+  //    表（overtime_calendar_choice_rules・overtime_threshold_rules）もつながりに数えられ「どれで結ぶか決められない」エラーになった（2026-09-29）
   const loadProfiles = useCallback(async () => {
     setProfilesError('');
-    const { data, error } = await supabase.from('profiles').select('id, name, role_title, employment_type, group_names, roles(acts_as)').eq('is_active', true);
+    const { data, error } = await supabase.from('profiles').select('id, name, role_title, employment_type, group_names, roles!profiles_role_id_fkey(acts_as)').eq('is_active', true);
     if (error) { setProfilesError(error.message); return; }
     const rows = (data ?? []) as { id: string; name: string; role_title: string; employment_type: string; group_names: string | string[]; roles?: unknown }[];
     if (rows.length === 0) { setProfilesError('0人でした。少し待ってから再読み込みしてください'); return; }

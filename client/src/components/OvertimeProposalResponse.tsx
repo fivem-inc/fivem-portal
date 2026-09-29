@@ -87,7 +87,8 @@ const OvertimeProposalResponse: React.FC<Props> = ({ proposalId, currentUserId, 
       setOptions(optRows);
       setPicks(Object.fromEntries(optRows.map(o => [o.id, { chosen: false, date: o.work_date, time: (o.adjust_time ?? '').slice(0, 5) }])));
       // 🚨 roles は左結合（`!inner` にしない）。役職が引けない人でも提案そのものは開けるようにする
-      const { data: prof } = await supabase.from('profiles').select('name, role_title, roles(acts_as)').eq('id', prop.proposer_id).maybeSingle();
+      // 🚨 つながりは名指し（roles!profiles_role_id_fkey）。名指ししないと「どれで結ぶか決められない」エラーで名前も出なかった（2026-09-29・CalendarPage と同じ）
+      const { data: prof } = await supabase.from('profiles').select('name, role_title, roles!profiles_role_id_fkey(acts_as)').eq('id', prop.proposer_id).maybeSingle();
       setProposerName((prof as { name: string } | null)?.name ?? '');
       setProposerRole((prof as { role_title: string | null } | null)?.role_title ?? '');
       setProposerActsAs(embeddedRole(prof as EmbeddedRoleRow<{ acts_as?: string | null }> | null)?.acts_as ?? '');
