@@ -24,6 +24,8 @@ export const DRAFT_KEYS = {
   // 残業の「表でまとめて入力」（2026-09-24）。🚨 実際のキーは「これ:利用者ID:給与期間」にする
   //    （共用PCで前の人の時刻・理由が見えないように。期間ごとに別の下書き）
   overtimeGrid: 'fivem_draft_overtime_grid',
+  // 残業の［まとめて申請］の箱（2026-09-29）。🚨 実際のキーは「これ:利用者ID」（共用の端末で前の人の入力が見えないように）
+  overtimeBox: 'fivem_draft_overtime_box',
   boardCompose: 'fivem_draft_board_compose', // 連絡板お知らせ作成
   boardChat: 'fivem_draft_board_chat',   // 連絡板グループ/DM/リプライ（キー配下にIDで細分化）
 } as const;

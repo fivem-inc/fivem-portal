@@ -17,10 +17,10 @@ import {
   formatSignedMin, formatMin, minToTime, isPayPeriodClosed, isPayPeriodPayoutPassed,
 } from '../lib/breakCalc';
 import type { CalendarKind } from '../lib/breakCalc';
-import { resolveNormalShift, normalShiftTimeText, reportGateMin } from '../lib/overtimeShift';
-import type { PatternRow, NormalShiftSnapshot } from '../lib/overtimeShift';
+import { resolveNormalShift, normalShiftTimeText } from '../lib/overtimeShift';
+import type { PatternRow } from '../lib/overtimeShift';
 import {
-  periodDates, pickDayReport, classifyGridDay, GRID_KIND_TAG, initialRowDraft, computeGridRow, normalSegsOf,
+  periodDates, GRID_KIND_TAG, initialRowDraft, computeGridRow, normalSegsOf, buildDayBase, isNewGridKind,
   locationPick, GRID_SELF_REVIEW, gridBalance, gridDayTypeOptions, FURIKAE_ORIGIN_TAKEN_MSG, shortMd,
 } from '../lib/overtimeGrid';
 import { diffColor } from '../lib/overtimeBalance';
@@ -77,9 +77,6 @@ const TAG_STYLE: Record<GridDayKind, 'send' | 'muted' | 'warn'> = {
 };
 
 type Drafts = Record<string, RowDraft>;
-
-/** 新しく出す日（事前申請・事後報告）の行か */
-const isNewGridKind = (k: GridDayKind) => k === 'new_post' || k === 'new_advance' || k === 'new_today';
 
 /** 上長からの「申請の依頼」（残業）。🚨 送ったら依頼を「申請済み」にして結び付ける（1件フォームと同じ・計画 §10-10） */
 interface GridRequest {
@@ -217,24 +214,11 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
 
   const baseRows = useMemo(() => {
     if (!ready) return [];
-    return dates.map(date => {
-      const ck = calendar![date] ?? null;
-      const resolved: NormalShiftSnapshot = resolveNormalShift(patterns!, date, ck);
-      const { main, leaveAuto } = pickDayReport(reports!.filter(r => r.work_date === date));
-      const planned = (main?.segments ?? []).filter(s => s.phase === 'planned');
-      const kind = classifyGridDay({
-        date, today, nowMin, advanceMaxDate, main, leaveAuto,
-        gateMin: main ? reportGateMin(main.normal_shift as NormalShiftSnapshot | null, planned) : null,
-      });
-      // 実績報告・再提出で元の申請がシフトを手直ししていれば、その控えで計算する（1件フォームと同じ）
-      const snap = main?.normal_shift as NormalShiftSnapshot | null | undefined;
-      const ns = (kind === 'report' || kind === 'resubmit') && snap?.manual_override ? snap : resolved;
-      // 依頼は新しく出す日の行にだけ付ける（申請が既にある日は、1件フォームの依頼カードから）
-      const req = isNewGridKind(kind) ? (requestByDate.get(date) ?? null) : null;
-      // 🚨 依頼がある日の申請先の既定は「依頼した人」（1件フォームと同じ）。表の上の申請先より先に使う
-      const rowDefaultReviewer = req?.requester_id || defaultReviewerId;
-      return { date, ck, ns, main, leaveAuto, kind, req, rowDefaultReviewer };
-    });
+    // 🚨 1日の土台は lib の buildDayBase（［まとめて申請］と共用）
+    return dates.map(date => buildDayBase({
+      date, today, nowMin, advanceMaxDate, patterns: patterns!, calendarKind: calendar![date] ?? null,
+      dayReports: reports!.filter(r => r.work_date === date), request: requestByDate.get(date) ?? null, defaultReviewerId,
+    }));
   }, [ready, dates, calendar, patterns, reports, today, nowMin, advanceMaxDate, requestByDate, defaultReviewerId]);
 
   // 下書きを読み込む（期間を変えたとき・読み込みが終わったとき）。

@@ -27,6 +27,7 @@ import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
 import { storedLocationChoice, storedLocationCustom, splitMoveLocation, requestSegmentsLocation, furikaeOriginCalc, furikaeOriginPrefill, effectiveOtherLocation, isManagerReviewer, shouldNotifyReviewer, reviewerPhaseLabel, editHistorySummary, grantRequestErrorMessage, formatGrantDates, effectiveClockReasonOf } from '../lib/overtimeFormParts';
 import { STATUS_INFO } from '../lib/overtimeStatus';
 import OvertimeGrid from '../components/OvertimeGrid';
+import OvertimeBox from '../components/OvertimeBox';
 import { isPointerDevice } from '../lib/idleLogout';
 import type { OvertimeStatus } from '../lib/overtimeStatus';
 import { toWorkSegments, segmentIssuesOf, detectOvertimeTypes, composeApplicationTypes, effectiveLocationOf, validateOvertime, overtimePhase, canReportOvertime, buildOvertimeRecord, LATE_CHOICES, EARLY_CHOICES, situationOf } from '../lib/overtimeSubmit';
@@ -2448,7 +2449,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
 
   const tabParam = searchParams.get('tab');
   const focusParam = searchParams.get('focus');
-  const [tab, setTab] = useState<'form' | 'history'>(tabParam === 'history' ? 'history' : 'form');
+  const [tab, setTab] = useState<'form' | 'bulk' | 'history'>(tabParam === 'history' ? 'history' : 'form');
+  // ［まとめて申請］を使えなくなったら（役職プレビューの切り替えなど）、いつものタブに戻す
+  useEffect(() => { if (tab === 'bulk' && !canGridPerm) setTab('form'); }, [tab, canGridPerm]);
   // 残業の「表でまとめて入力」（試験中）。🚨 PCだけ＝マウス操作の端末（hover:hover かつ pointer:fine）。
   //    iPad・スマホは指で操作するのでこれで外れる。
   //    🚨 画面の幅では絞らない（2026-09-24 実機で発覚）。Windows のノートPCは表示の拡大（125%・150%）で
@@ -3504,6 +3507,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
           inactiveColor={text}
           tabs={[
             { key: 'form' as const, label: '事前申請・事後報告' },
+            // ［まとめて申請］（スマホの箱・2026-09-29 ユーザー確定）。出すのは表入力と同じ権限（リーダー以上）。
+            // 🚨 問題なければ［事前申請・事後報告］の新しく出す所をこれに差し替え、タブ名を元に戻す（計画 docs/計画-残業のまとめて申請.md）
+            ...(canGridPerm ? [{ key: 'bulk' as const, label: 'まとめて申請' }] : []),
             // 🚨 申請の依頼もここに数える（2026-09-20）。ナビの数字だけだと
             //    「何の件数か」が分からず、依頼カードは このタブの中にしか無いため
             { key: 'history' as const, label: '履歴・実績報告', badge: unreportedRequests.length + appRequests.length },
@@ -3537,7 +3543,13 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
         <div style={{ background: isDark ? '#2b3035' : '#fff', border: `1px solid ${borderColor}`, borderRadius: '0 0 12px 12px', padding: '16px 14px' }}>
           {loading ? (
             <p style={{ margin: 0, fontSize: 13, color: subText, textAlign: 'center' }}>読み込み中…</p>
-          ) : tab === 'form' ? (
+          ) : tab === 'bulk' && canGridPerm ? (
+            <OvertimeBox
+              userId={user.id} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin} isDark={isDark}
+              reviewers={reviewers} workplaces={workplaces} canChooseCalendar={canChooseCalendar}
+              onSent={() => { fetchOwn(); fetchOwnCard(); fetchAppRequests(); }}
+            />
+          ) : tab === 'form' || tab === 'bulk' ? (
             <OvertimeForm
               user={user} profileName={profileName} roleTitle={roleTitle} isAdmin={isAdmin}
               reviewers={reviewers} workplaces={workplaces} patterns={patterns}

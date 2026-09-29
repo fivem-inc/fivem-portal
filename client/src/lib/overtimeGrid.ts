@@ -4,7 +4,7 @@
 // 🚨 1件フォームと同じ判定は lib/overtimeSubmit を呼ぶ（ここに書き写さない）。
 
 import { payPeriodEnd, minToTime, checkLegalBreak } from './breakCalc';
-import type { WorkSegment } from './breakCalc';
+import type { WorkSegment, CalendarKind } from './breakCalc';
 import { isFullDayReport, OT_TYPE_INFO, canOfferCalendarChoice } from './overtimeTypes';
 import type { OvertimeType } from './overtimeTypes';
 import {
@@ -12,8 +12,8 @@ import {
   effectiveLocationOf, validateOvertime, overtimePhase, isSameAsNormalShift,
 } from './overtimeSubmit';
 import type { SegInput, TypeDetect, LateChoice, EarlyChoice } from './overtimeSubmit';
-import { buildWorkDiff, fullDayDiffMin } from './overtimeShift';
-import type { NormalShiftSnapshot } from './overtimeShift';
+import { buildWorkDiff, fullDayDiffMin, resolveNormalShift, reportGateMin } from './overtimeShift';
+import type { NormalShiftSnapshot, PatternRow } from './overtimeShift';
 import type { OvertimeStatus } from './overtimeStatus';
 import { storedLocationChoice, storedLocationCustom, splitMoveLocation, furikaeOriginCalc, effectiveOtherLocation } from './overtimeFormParts';
 import { computeBalance } from './overtimeBalance';
@@ -96,6 +96,42 @@ export function pickDayReport(reports: GridReport[]): { main: GridReport | null;
   const manual = live.find(r => r.entry_type === 'manual') ?? null;
   const leaveAuto = live.find(r => r.entry_type === 'leave_auto') ?? null;
   return { main: manual, leaveAuto };
+}
+
+/** 新しく出す日（事前申請・事後報告）の行か */
+export const isNewGridKind = (k: GridDayKind): boolean => k === 'new_post' || k === 'new_advance' || k === 'new_today';
+
+/**
+ * 1日の土台（何をする日か・その日の通常シフト・元の申請・依頼・既定の申請先）。
+ * 🚨 表入力と［まとめて申請］で同じもの（2026-09-29 表入力の画面の中から移した・中身は1文字も変えていない）
+ */
+export function buildDayBase<Q extends { requester_id: string }>(a: {
+  date: string; today: string; nowMin: number; advanceMaxDate: string;
+  patterns: PatternRow[]; calendarKind: CalendarKind | null;
+  /** その日の自分の申請（取消も含めてよい） */
+  dayReports: GridReport[];
+  /** その日への上長からの申請の依頼 */
+  request: Q | null;
+  /** 新しく出す日の既定の申請先 */
+  defaultReviewerId: string;
+}) {
+  const { date, today, nowMin, advanceMaxDate } = a;
+  const ck = a.calendarKind;
+  const resolved: NormalShiftSnapshot = resolveNormalShift(a.patterns, date, ck);
+  const { main, leaveAuto } = pickDayReport(a.dayReports);
+  const planned = (main?.segments ?? []).filter(s => s.phase === 'planned');
+  const kind = classifyGridDay({
+    date, today, nowMin, advanceMaxDate, main, leaveAuto,
+    gateMin: main ? reportGateMin(main.normal_shift as NormalShiftSnapshot | null, planned) : null,
+  });
+  // 実績報告・再提出で元の申請がシフトを手直ししていれば、その控えで計算する（1件フォームと同じ）
+  const snap = main?.normal_shift as NormalShiftSnapshot | null | undefined;
+  const ns = (kind === 'report' || kind === 'resubmit') && snap?.manual_override ? snap : resolved;
+  // 依頼は新しく出す日の行にだけ付ける（申請が既にある日は、1件フォームの依頼カードから）
+  const req = isNewGridKind(kind) ? a.request : null;
+  // 🚨 依頼がある日の申請先の既定は「依頼した人」（1件フォームと同じ）。表の上の申請先より先に使う
+  const rowDefaultReviewer = req?.requester_id || a.defaultReviewerId;
+  return { date, ck, ns, main, leaveAuto, kind, req, rowDefaultReviewer };
 }
 
 /**
