@@ -149,6 +149,19 @@ export async function fetchGrantedWorkDates(userId: string): Promise<Set<string>
   return new Set(((data ?? []) as { work_date: string }[]).map(g => g.work_date));
 }
 
+/**
+ * 期間の日を振替元にしている振替休日（取消以外）。振替元の日 → 振替休日の日。
+ * 🚨 振替休日が別の給与期間にあっても拾う（振替元の日で引く）。表入力が「振替元の日」の行を入力できなくするのに使う
+ */
+export async function fetchFurikaeOrigins(userId: string, from: string, to: string): Promise<{ map: Map<string, string>; error: string | null }> {
+  const { data, error } = await supabase.from('overtime_reports').select('work_date, furikae_origin_date')
+    .eq('applicant_id', userId).eq('entry_type', 'manual').neq('status', 'cancelled')
+    .contains('application_types', ['furikae_off']).gte('furikae_origin_date', from).lte('furikae_origin_date', to);
+  const map = new Map<string, string>();
+  ((data ?? []) as { work_date: string; furikae_origin_date: string | null }[]).forEach(x => { if (x.furikae_origin_date) map.set(x.furikae_origin_date, x.work_date); });
+  return { map, error: error ? error.message : null };
+}
+
 export interface GrantRequestRow {
   id: string; work_dates: string[];
   status: 'open' | 'resolved' | 'declined' | 'withdrawn';
@@ -205,6 +218,12 @@ export const supabaseBulkWriter: BulkWriter = {
   save: saveOvertimeReport,
   // 時間外調整休の二重計上の網（1件フォームと同じ関数・2026-09-29）
   findLeaveAutoDuplicate,
+  async findFurikaeByOrigin(userId, originDate) {
+    const { data, error } = await supabase.from('overtime_reports').select('work_date')
+      .eq('applicant_id', userId).eq('entry_type', 'manual').neq('status', 'cancelled')
+      .contains('application_types', ['furikae_off']).eq('furikae_origin_date', originDate);
+    return { dates: ((data ?? []) as { work_date: string }[]).map(x => x.work_date), error: error ? error.message : null };
+  },
   async findExistingManual(userId, date) {
     // 🚨 読めなかったときは error を返す（「内容が違います」と取り違えないため・2026-09-29）
     const { data, error } = await supabase.from('overtime_reports').select('diff_minutes, reason, application_types, location, furikae_origin_date')

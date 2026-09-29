@@ -21,7 +21,7 @@ import { resolveNormalShift, normalShiftTimeText, reportGateMin } from '../lib/o
 import type { PatternRow, NormalShiftSnapshot } from '../lib/overtimeShift';
 import {
   periodDates, pickDayReport, classifyGridDay, GRID_KIND_TAG, initialRowDraft, computeGridRow, normalSegsOf,
-  locationPick, GRID_SELF_REVIEW, gridBalance, gridDayTypeOptions,
+  locationPick, GRID_SELF_REVIEW, gridBalance, gridDayTypeOptions, FURIKAE_ORIGIN_TAKEN_MSG, shortMd,
 } from '../lib/overtimeGrid';
 import { diffColor } from '../lib/overtimeBalance';
 import type { GridReport, GridDayKind, RowDraft, RowState, GridRowCalc, GridDayType } from '../lib/overtimeGrid';
@@ -34,11 +34,11 @@ import { useRoles } from '../hooks/useRoles';
 import { attrsFor } from '../lib/roleAttrs';
 import TimeInput from './TimeInput';
 import { LATE_CHOICES, EARLY_CHOICES } from '../lib/overtimeSubmit';
-import { syncOvertimeGcal, supabaseBulkWriter, fetchGrantedWorkDates, fetchMyGrantRequests, fetchClosedAllDates } from '../lib/overtimeSubmitApi';
+import { syncOvertimeGcal, supabaseBulkWriter, fetchGrantedWorkDates, fetchMyGrantRequests, fetchClosedAllDates, fetchFurikaeOrigins } from '../lib/overtimeSubmitApi';
 import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
 import OvertimeGrantPanel from './OvertimeGrantPanel';
 import { runBulkSend } from '../lib/overtimeBulkSend';
-import { requestSegmentsLocation, effectiveClockReasonOf, isManagerReviewer } from '../lib/overtimeFormParts';
+import { requestSegmentsLocation, effectiveClockReasonOf, isManagerReviewer, furikaeOriginPrefill } from '../lib/overtimeFormParts';
 import { segmentsText, type SegmentLike } from '../lib/segmentsText';
 
 /** 送る前の確認で、打刻ズレ（確認なしで確定）をまとめる箱の名前（申請先の id と重ならない値） */
@@ -64,7 +64,8 @@ interface Props {
 }
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
-const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
+// 「9/5」の形。🚨 lib の shortMd と同じもの（2か所に書かない）
+const md = shortMd;
 const dowOf = (d: string) => { const [y, m, dd] = d.split('-').map(Number); return new Date(y, m - 1, dd).getDay(); };
 
 /** 種類の札の色。🚨 送る種類は青の系統、差し戻しは赤、送らないものは灰。新しい色は足さない */
@@ -111,11 +112,13 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
   const [peopleNames, setPeopleNames] = useState<Map<string, string>>(new Map());   // 依頼した人・元の申請先の名前
   const [errors, setErrors] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  // この期間の日を振替元にしている振替休日（振替元の日 → 振替休日の日・6回目）。振替休日が別の期間でも拾う
+  const [furikaeOrigins, setFurikaeOrigins] = useState<Map<string, string>>(new Map());
 
   const load = useCallback(async () => {
     setLoading(true);
     const errs: string[] = [];
-    const [patRes, calRes, repRes, reqRes] = await Promise.all([
+    const [patRes, calRes, repRes, reqRes, originRes] = await Promise.all([
       supabase.from('weekly_shift_patterns').select('*').eq('user_id', userId),
       supabase.from('company_calendar').select('date, kind').gte('date', from).lte('date', to),
       supabase.from('overtime_reports')
@@ -123,7 +126,11 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
         .eq('applicant_id', userId).gte('work_date', from).lte('work_date', to),
       supabase.from('application_requests').select('id, requester_id, target_dates, memo, segments')
         .eq('recipient_id', userId).eq('kind', 'overtime').eq('status', 'open').order('created_at', { ascending: true }),
+      fetchFurikaeOrigins(userId, from, to),
     ]);
+    // 🚨 振替元が読めなければ送らせない（振替元の日を別に申請すると二重計上。DB でも止まるが、黙って進めない）
+    if (originRes.error) errs.push('振替休日の振替元：' + originRes.error);
+    setFurikaeOrigins(originRes.map);
     // 🚨 1つでも読めなければ null のままにして、表の上に理由を出す（空の配列にしない＝全日「休み」に見えるのを防ぐ）
     if (patRes.error) { errs.push('通常シフト：' + patRes.error.message); setPatterns(null); }
     else setPatterns((patRes.data as PatternRow[] | null) ?? []);
@@ -270,17 +277,39 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
   // 欠勤の申請先はマネージャー以上（1件フォームと同じ判定・lib/overtimeFormParts の isManagerReviewer）
   const reviewerIsManager = useMemo(() => (id: string) => isManagerReviewer(reviewers.find(rv => rv.id === id)), [reviewers]);
 
-  const rows = useMemo(() => baseRows.map(r => {
-    const draft = drafts[r.date] ?? initialRowDraft(r.kind, r.main, workplaces);
+  const rows = useMemo(() => {
+    const draftOf = (r: typeof baseRows[number]) => drafts[r.date] ?? initialRowDraft(r.kind, r.main, workplaces);
+    // 同じ表で入力中の振替休日の振替元（振替元の日 → 振替休日の行の日）
+    const batch = new Map<string, string[]>();
+    baseRows.forEach(r => {
+      const d = draftOf(r);
+      if (isNewGridKind(r.kind) && d.dayType === 'furikae_off' && d.furikaeOriginDate) batch.set(d.furikaeOriginDate, [...(batch.get(d.furikaeOriginDate) ?? []), r.date]);
+    });
+    const byDate = new Map(baseRows.map(r => [r.date, r]));
+    return baseRows.map(r => {
+    const draft = draftOf(r);
+    // この日を振替元にしている振替休日（すでにある申請 → 同じ表の行）
+    const originOf = isNewGridKind(r.kind) ? (furikaeOrigins.get(r.date) ?? (batch.get(r.date) ?? []).find(x => x !== r.date) ?? null) : null;
+    // 振替休日の行：振替元の日が使えないか（表が知っている範囲。別の期間は送る直前に確かめる）
+    let furikaeOriginNg = '';
+    const o = draft.dayType === 'furikae_off' ? draft.furikaeOriginDate : '';
+    if (o) {
+      const ex = furikaeOrigins.get(o);
+      const others = (batch.get(o) ?? []).filter(x => x !== r.date);
+      if (ex && ex !== r.date) furikaeOriginNg = `振替元の日（${md(o)}）は、すでに ${md(ex)} の振替休日の振替元になっています`;
+      else if (others.length > 0) furikaeOriginNg = `振替元の日（${md(o)}）が、${md(others[0])} の行の振替休日と同じです`;
+      else if (byDate.get(o)?.main) furikaeOriginNg = FURIKAE_ORIGIN_TAKEN_MSG;
+    }
     const calc: GridRowCalc = computeGridRow({
       kind: r.kind, date: r.date, today, nowMin, advanceMaxDate, ns: r.ns, main: r.main, draft,
       defaultReviewerId: r.rowDefaultReviewer, canSelfReview, selfId: userId,
       closeLocked: isPayPeriodClosed(r.date, today) && !grants.has(r.date),
       focused: focusedDate === r.date,
-      reviewerIsManager,
+      reviewerIsManager, originOf, furikaeOriginNg,
     });
-    return { ...r, draft, calc };
-  }), [baseRows, drafts, today, nowMin, advanceMaxDate, canSelfReview, grants, focusedDate, workplaces, userId, reviewerIsManager]);
+    return { ...r, draft, calc, originOf, furikaeOriginNg };
+    });
+  }, [baseRows, drafts, today, nowMin, advanceMaxDate, canSelfReview, grants, focusedDate, workplaces, userId, reviewerIsManager, furikaeOrigins]);
   type Row = typeof rows[number];
 
   // 締め切りを過ぎ、経理の許可が無い新しい行（札の出し分け用。送れるかどうかは calc.state＝locked で見る）
@@ -324,7 +353,9 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
   type RowResult = { status: 'sending' | 'waiting' | 'sent' | 'failed' | 'check'; message: string };
   const [confirm, setConfirm] = useState<{ date: string; label: string }[] | null>(null);
   const [sending, setSending] = useState(false);
-  const sendingRef = useRef(false);   // 🚨 二度押しは state ではなく ref で止める（state は次の描画まで変わらない）
+  const sendingRef = useRef(false);
+  // 振替元の日を選んだときに自動で入れた時刻（行の日ごと）。休みの日に選び直したとき、自動で入れた時刻だけ消すため
+  const furikaeAutoTimesRef = useRef<Map<string, { start: string; end: string }>>(new Map());   // 🚨 二度押しは state ではなく ref で止める（state は次の描画まで変わらない）
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [rowResults, setRowResults] = useState<Record<string, RowResult>>({});
   const [resultCard, setResultCard] = useState<{ ok: number; failed: number; check: number } | null>(null);
@@ -398,16 +429,42 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
    * 🚨 切り替えたら、前の種類で入れていたものは消す（ユーザー確定：時刻が残ると、開いたままの古い画面から時間の申請として送れてしまう）
    */
   const switchDayType = (r: Row, t: GridDayType) => {
-    const clearClock = { clockInAt: '', clockOutAt: '', clockReason: '', clockReasonOther: '' };
+    const clearFurikae = t === 'furikae_off' ? {} : { furikaeOriginDate: '', furikaeOriginLocation: '', furikaeOriginLocationCustom: '', furikaeOriginStart: '', furikaeOriginEnd: '' };
+    const clearClock = { clockInAt: '', clockOutAt: '', clockReason: '', clockReasonOther: '', ...clearFurikae };
     const clearTime = {
       segs: [{ start: '', end: '' }], breakMin: '', changeReason: '', lateChoice: null, earlyChoice: null,
       location: '', locationCustom: '', locMoveStart: '', locMoveEnd: '',
     };
+    // 🚨 clearClock には振替元の消去も入っている（振替休日から別の種類に移ると振替元も消える）
     if (t === 'time') setRow(r.date, { dayType: 'time', ...clearClock });
-    // 打刻ズレは理由・申請先も持たない
-    else if (t === 'clock_only') setRow(r.date, { dayType: 'clock_only', ...clearTime, reason: '', reviewerId: '' });
-    // 終日（時間外調整休・欠勤）は理由と申請先を使うので残す（欠勤で申請先がマネージャー以上でなければ赤で知らせる＝黙って差し替えない）
+    // 打刻ズレは理由・申請先も持たない（打刻の入力は残す・振替元は消す）
+    else if (t === 'clock_only') setRow(r.date, { dayType: 'clock_only', ...clearTime, ...clearFurikae, reason: '', reviewerId: '' });
+    // 終日（時間外調整休・振替休日・欠勤）は理由と申請先を使うので残す（欠勤で申請先がマネージャー以上でなければ赤で知らせる＝黙って差し替えない）
     else setRow(r.date, { dayType: t, ...clearTime, ...clearClock });
+  };
+
+  /**
+   * 振替元の日を選んだとき、その日のシフト（曜日パターン）から校と時刻を入れる（間違っていれば直す）。
+   * 🚨 入れる値は lib の furikaeOriginPrefill（1件フォームと同じ）。シフトが休みの日は時刻を入れない
+   */
+  const pickFurikaeOrigin = (r: Row, d: string) => {
+    if (!d) { setRow(r.date, { furikaeOriginDate: '' }); return; }
+    const pre = furikaeOriginPrefill(resolveNormalShift(patterns ?? [], d, null), workplaces);
+    // 🚨 日付の欄はキーボードで打つ途中でも日付になるたびに呼ばれる（例 10/1 → 10/12）。途中の日のシフトの時刻を、
+    //    休みの日（時刻を入れない日）に選び直したあとまで残さない。自動で入れたままの時刻だけ消す（本人が直した時刻は残す）
+    const auto = furikaeAutoTimesRef.current.get(r.date);
+    let times: { furikaeOriginStart?: string; furikaeOriginEnd?: string } = {};
+    if (pre.start && pre.end) {
+      times = { furikaeOriginStart: pre.start, furikaeOriginEnd: pre.end };
+      furikaeAutoTimesRef.current.set(r.date, { start: pre.start, end: pre.end });
+    } else if (auto && auto.start === (r.draft.furikaeOriginStart ?? '') && auto.end === (r.draft.furikaeOriginEnd ?? '')) {
+      times = { furikaeOriginStart: '', furikaeOriginEnd: '' };
+      furikaeAutoTimesRef.current.delete(r.date);
+    }
+    setRow(r.date, {
+      furikaeOriginDate: d, furikaeOriginLocation: pre.location, furikaeOriginLocationCustom: pre.locationCustom,
+      ...times,
+    });
   };
 
   /** 新しい行を初めて触ったとき、時間が空ならその日の通常シフトを入れる（🚨 2本シフトの2本目の入れ忘れを防ぐ） */
@@ -713,6 +770,8 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                         {isLockedRow(r) && openGrantDates.has(r.date) && <div style={{ marginTop: 2 }}>{miniTag('依頼中', 'muted')}</div>}
                         {isLockedRow(r) && !openGrantDates.has(r.date) && declinedGrantDates.has(r.date) && <div style={{ marginTop: 2 }}>{miniTag('見送り', 'muted')}</div>}
                         {isPayPeriodClosed(r.date, today) && grants.has(r.date) && (r.kind === 'new_post' || r.kind === 'new_today') && <div style={{ marginTop: 2 }}>{miniTag('許可済み', 'ok')}</div>}
+                        {/* 振替休日の振替元になっている日（6回目）。この日は別に申請しない */}
+                        {r.originOf && <div style={{ marginTop: 2 }}>{miniTag(`${md(r.originOf)}の振替元`, 'muted')}</div>}
                         {/* 種類（案A・2026-09-29）。選べないものは理由を添えて出す。🚨 選択肢は lib の gridDayTypeOptions（まとめて申請と共用） */}
                         {isNewRow && (
                           <div style={{ marginTop: 3 }}>
@@ -769,7 +828,11 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                             <div style={{ fontSize: 12, marginTop: 2 }}>
                               {c.fullDayType === 'chosei_off'
                                 ? <>シフト労働分 <b style={{ color: c.diffMin < 0 ? '#c62828' : subText }}>{formatSignedMin(c.diffMin)}</b> を合計時間数から差し引きます</>
-                                : '欠勤1日として記録します'}
+                                : c.fullDayType === 'furikae_off'
+                                  ? (c.furikae?.hasTime
+                                    ? <>振替元の労働 {formatMin(c.furikae.laborMin)} − 休む日の労働 {formatMin(r.ns.labor_minutes)} ＝ 合計時間数 <b style={{ color: c.diffMin > 0 ? '#2e7d32' : c.diffMin < 0 ? '#c62828' : subText }}>{formatSignedMin(c.diffMin)}</b></>
+                                    : '下の行で振替元の出勤時刻を入れると、合計時間数への反映（差分）が計算されます')
+                                  : '欠勤1日として記録します'}
                             </div>
                           </td>
                           <td style={{ ...td, minWidth: 200 }}>
@@ -987,6 +1050,48 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                         <td style={{ ...td, ...sendCol, background: bg && bg.length <= 7 ? bg : cardBg }} />
                       </tr>
                     )}
+                    {/* 2行目：振替休日の振替元（6回目）。🚨 項目・言葉・注意は1件フォーム（① 実際に出勤した日（振替元））と同じ */}
+                    {editable && c.fullDayType === 'furikae_off' && (
+                      <tr style={{ background: bg }} {...rowFocus}>
+                        <td style={{ ...td, position: 'sticky', left: 0, background: bg ?? cardBg }} />
+                        <td colSpan={8} style={{ ...td, borderLeft: `3px solid ${toggleBlue}` }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 'bold', marginBottom: 4 }}>① 実際に出勤した日（振替元）</div>
+                          {/* 二重計上防止の案内（黄色の固定色・1件フォームと同じ） */}
+                          <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '6px 10px', marginBottom: 6 }}>
+                            <span style={{ fontSize: 11.5, color: '#856404', lineHeight: 1.6 }}>
+                              ※ 出勤した日（振替元）は、ここに時刻を入れて記録します。<b>別途「休日出勤」として申請しないでください</b>（二重計上になります）。
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 12 }}>
+                            <span>振替元の勤務日<span style={{ color: '#dc3545' }}> *</span></span>
+                            <input type="date" value={r.draft.furikaeOriginDate ?? ''} onChange={e => pickFurikaeOrigin(r, e.target.value)}
+                              style={{ ...sel, fontSize: 13 }} aria-label={`${md(r.date)} 振替元の勤務日`} />
+                            <span style={{ marginLeft: 6 }}>勤務校<span style={{ color: '#dc3545' }}> *</span></span>
+                            <select value={r.draft.furikaeOriginLocation ?? ''} onChange={e => touch({ furikaeOriginLocation: e.target.value })} style={sel} aria-label={`${md(r.date)} 振替元の勤務校`}>
+                              <option value="">選択してください</option>
+                              {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+                              <option value="その他">その他（自由入力）</option>
+                            </select>
+                            {r.draft.furikaeOriginLocation === 'その他' && (
+                              <input type="text" value={r.draft.furikaeOriginLocationCustom ?? ''} placeholder="勤務校・場所" onChange={e => touch({ furikaeOriginLocationCustom: e.target.value })}
+                                style={{ ...txt, minWidth: 0, width: 150 }} aria-label={`${md(r.date)} 振替元の勤務校（その他）`} />
+                            )}
+                            <span style={{ marginLeft: 6 }}>勤務時間<span style={{ color: '#dc3545' }}> *</span></span>
+                            <TimeInput value={r.draft.furikaeOriginStart ?? ''} onChange={v => touch({ furikaeOriginStart: v })} isDark={isDark} style={timeBox} advance ariaLabel={`${md(r.date)} 振替元 開始時刻`} />
+                            <span>〜</span>
+                            <TimeInput value={r.draft.furikaeOriginEnd ?? ''} onChange={v => touch({ furikaeOriginEnd: v })} isDark={isDark} style={timeBox} ariaLabel={`${md(r.date)} 振替元 終了時刻`} />
+                            {c.furikae?.hasTime && <span style={{ color: subText }}>休憩 {formatMin(c.furikae.breakMin)}（自動）・労働 {formatMin(c.furikae.laborMin)}</span>}
+                          </div>
+                          {/* 事後の振替（振替元が過去の日）＝注意だけ（止めない・1件フォームと同じ） */}
+                          {!!c.furikae?.date && c.furikae.date < today && (
+                            <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '6px 10px', marginTop: 6 }}>
+                              <span style={{ fontSize: 11.5, color: '#856404', lineHeight: 1.6 }}>振替休日は、休日に出勤する前の申請が原則です。今後は事前にお願いします。</span>
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ ...td, ...sendCol, background: bg && bg.length <= 7 ? bg : cardBg }} />
+                      </tr>
+                    )}
                     </React.Fragment>
                   );
                 })}
@@ -1032,8 +1137,13 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                 return (
                   <div key={r.date} style={{ fontSize: 13, padding: '2px 0' }}>
                     <b>{md(r.date)}（{DOW[dowOf(r.date)]}）</b> {r.calc.sendLabel}{r.req ? '（依頼に答える）' : ''}：終日
-                    {' '}{r.calc.fullDayType === 'absence' ? '欠勤1日' : <b style={{ color: r.calc.diffMin < 0 ? '#c62828' : subText }}>{formatSignedMin(r.calc.diffMin)}</b>}
+                    {' '}{r.calc.fullDayType === 'absence' ? '欠勤1日' : <b style={{ color: r.calc.diffMin > 0 ? '#2e7d32' : r.calc.diffMin < 0 ? '#c62828' : subText }}>{formatSignedMin(r.calc.diffMin)}</b>}
                     {' '}「{r.draft.reason.trim()}」
+                    {r.calc.furikae && (
+                      <span style={{ color: subText }}>
+                        {' '}振替元：{md(r.calc.furikae.date)}（{DOW[dowOf(r.calc.furikae.date)]}）・{r.calc.furikae.location}・{r.calc.furikae.start}〜{r.calc.furikae.end}（労働 {formatMin(r.calc.furikae.laborMin)}）
+                      </span>
+                    )}
                   </div>
                 );
               }

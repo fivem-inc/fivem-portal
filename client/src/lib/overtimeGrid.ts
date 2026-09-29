@@ -15,7 +15,7 @@ import type { SegInput, TypeDetect, LateChoice, EarlyChoice } from './overtimeSu
 import { buildWorkDiff, fullDayDiffMin } from './overtimeShift';
 import type { NormalShiftSnapshot } from './overtimeShift';
 import type { OvertimeStatus } from './overtimeStatus';
-import { storedLocationChoice, storedLocationCustom, splitMoveLocation } from './overtimeFormParts';
+import { storedLocationChoice, storedLocationCustom, splitMoveLocation, furikaeOriginCalc, effectiveOtherLocation } from './overtimeFormParts';
 import { computeBalance } from './overtimeBalance';
 import type { BalanceRow, BalanceSummary } from './overtimeBalance';
 
@@ -155,15 +155,23 @@ export const GRID_SELF_REVIEW = '__self__';
 
 /**
  * 新しく出す行の種類（「種類」の列の［時間 ▼］・2026-09-29 ユーザー確定 案A）。
- * 🚨 4回目で「打刻が遅れただけ」、5回目で終日の「時間外調整休」「欠勤」を足した。振替休日は6回目で足す
+ * 🚨 4回目で「打刻が遅れただけ」、5回目で終日の「時間外調整休」「欠勤」、6回目で「振替休日」を足した
  */
-export type GridDayType = 'time' | 'chosei_off' | 'absence' | 'clock_only';
+export type GridDayType = 'time' | 'chosei_off' | 'furikae_off' | 'absence' | 'clock_only';
 
-/** 終日の種類（表で扱うもの）。🚨 振替休日は6回目 */
-export type GridFullDayType = 'chosei_off' | 'absence';
+/** 終日の種類（表で扱うもの） */
+export type GridFullDayType = 'chosei_off' | 'furikae_off' | 'absence';
 export function isGridFullDay(t: GridDayType | null | undefined): t is GridFullDayType {
-  return t === 'chosei_off' || t === 'absence';
+  return t === 'chosei_off' || t === 'furikae_off' || t === 'absence';
 }
+
+/** 「9/5」の形（表の注意の文に使う） */
+export function shortMd(date: string): string {
+  return `${parseInt(date.slice(5, 7), 10)}/${parseInt(date.slice(8, 10), 10)}`;
+}
+
+/** 振替元の日が別の申請で使われているときの文（DB のトリガー FURIKAE_DUP_ORIGIN と同じ言葉・lib/overtimeSubmit の friendlyOvertimeDbError） */
+export const FURIKAE_ORIGIN_TAKEN_MSG = '振替元の日には別の申請があります。振替休日は振替元の勤務時間を含むため、その日を別途「休日出勤」等で申請しないでください。';
 
 /**
  * 種類の選択肢（名前・並び・選べない理由）。🚨 表と［まとめて申請］で同じものを使う（ここに1か所）。
@@ -177,6 +185,7 @@ export function gridDayTypeOptions(kind: GridDayKind, ns: NormalShiftSnapshot): 
   return [
     { value: 'time', label: '時間', disabledReason: '' },
     { value: 'chosei_off', label: '時間外調整休（終日）', disabledReason: fullNg },
+    { value: 'furikae_off', label: '振替休日（終日）', disabledReason: fullNg },
     { value: 'absence', label: '欠勤（終日）', disabledReason: fullNg },
     { value: 'clock_only', label: '打刻が遅れただけ', disabledReason: clockNg },
   ];
@@ -209,6 +218,12 @@ export interface RowDraft {
   clockOutAt: string;
   clockReason: string;
   clockReasonOther: string;
+  /** 振替休日：振替元（実際に出勤した日・校・出退勤の時刻）。休憩と労働は時刻から自動（1件フォームと同じ） */
+  furikaeOriginDate: string;
+  furikaeOriginLocation: string;
+  furikaeOriginLocationCustom: string;
+  furikaeOriginStart: string;
+  furikaeOriginEnd: string;
 }
 
 /** 分 → 入力欄用の "HH:MM"（時をゼロ埋め・翌日印は外す） */
@@ -240,6 +255,7 @@ export const EMPTY_ROW_DRAFT: RowDraft = {
   touched: false, segs: [{ start: '', end: '' }], reason: '', changeReason: '', breakMin: '',
   location: '', locationCustom: '', locMoveStart: '', locMoveEnd: '', lateChoice: null, earlyChoice: null, reviewerId: '',
   dayType: 'time', clockInAt: '', clockOutAt: '', clockReason: '', clockReasonOther: '',
+  furikaeOriginDate: '', furikaeOriginLocation: '', furikaeOriginLocationCustom: '', furikaeOriginStart: '', furikaeOriginEnd: '',
 };
 
 /**
@@ -304,6 +320,8 @@ export interface GridRowCalc {
   clockOnly: boolean;
   /** 終日（時間外調整休・欠勤）の行ならその種類。🚨 差分（diffMin）は種類ごとの効き（調整休＝−シフト労働／欠勤＝0）、勤務地（effectiveLocation）はシフトの校 */
   fullDayType: GridFullDayType | null;
+  /** 振替休日の振替元（保存に使う値）。振替休日の行だけ */
+  furikae: { date: string; location: string; start: string; end: string; breakMin: number; laborMin: number; hasTime: boolean } | null;
 }
 
 const NOCHANGE_MSG = '通常シフトと同じ内容です。残業・早退・調整など、変更した点を入力してください';
@@ -334,6 +352,13 @@ export function computeGridRow(a: {
    * 🚨 必須。DB・受理側（overtime-approve）が止めるのは欠勤の「自己受理」だけで、リーダー宛の欠勤は止まらない＝ここが唯一の網
    */
   reviewerIsManager: (id: string) => boolean;
+  /**
+   * この日を振替元にしている振替休日の日（すでにある申請・同じ表で入力中のどちらも）。
+   * 🚨 振替元の日は別に申請すると二重計上になる（DB のトリガーでも止まる）。入力があればエラーにする
+   */
+  originOf?: string | null;
+  /** 振替休日の行：振替元の日が使えない理由（表が知っている範囲＝すでにある申請・同じ表の別の行）。空なら問題なし */
+  furikaeOriginNg?: string;
 }): GridRowCalc {
   const { kind, date, today, nowMin, ns, main, draft } = a;
   const isReportPhase = kind === 'report';
@@ -341,6 +366,12 @@ export function computeGridRow(a: {
   const isEdit = isReportPhase || isResubmit;
   // 打刻ズレは別の計算（時刻・勤務地・申請先を持たない）
   const isNewKind = kind === 'new_post' || kind === 'new_today' || kind === 'new_advance';
+  // 振替元の日（6回目）：入力していればエラー。空・通常シフトと同じ日はそのまま
+  if (!isEdit && isNewKind && a.originOf) {
+    const inner = computeGridRow({ ...a, originOf: null });
+    if (inner.state === 'empty' || inner.state === 'nochange') return inner;
+    return { ...inner, state: a.focused ? 'editing' : 'error', message: `この日は ${shortMd(a.originOf)} の振替休日の振替元です。別途申請しないでください（二重計上になります）` };
+  }
   if (!isEdit && isNewKind && (draft.dayType ?? 'time') === 'clock_only') return computeClockOnlyRow(a);
   if (!isEdit && isNewKind && isGridFullDay(draft.dayType)) return computeFullDayRow(a, draft.dayType);
   const segments = draft.segs;
@@ -398,7 +429,7 @@ export function computeGridRow(a: {
     message: '', mode, phase, isReportPhase, isResubmit, workSegments,
     breakMin: diff.break_minutes, laborMin: diff.labor_minutes, diffMin: diff.diff_minutes, legalOk: legal.ok,
     typeDetect, applicationTypes, effectiveLocation, hasChanges, changedAxes, isPureZero, reviewerId, isSelfReview, sendLabel,
-    clockOnly: false, fullDayType: null,
+    clockOnly: false, fullDayType: null, furikae: null,
   };
 
   const editable: GridDayKind[] = ['new_post', 'new_advance', 'new_today', 'report', 'resubmit'];
@@ -453,7 +484,7 @@ function computeClockOnlyRow(a: Parameters<typeof computeGridRow>[0]): GridRowCa
     message: '', mode, phase, isReportPhase: false, isResubmit: false, workSegments,
     breakMin: ns.break_minutes, laborMin: ns.labor_minutes, diffMin: 0, legalOk: true,
     typeDetect, applicationTypes: ['clock_only'] as OvertimeType[], effectiveLocation, hasChanges: false, changedAxes: [] as string[],
-    isPureZero: false, reviewerId: '', isSelfReview: false, sendLabel: '打刻ズレの記録（確定）', clockOnly: true, fullDayType: null,
+    isPureZero: false, reviewerId: '', isSelfReview: false, sendLabel: '打刻ズレの記録（確定）', clockOnly: true, fullDayType: null, furikae: null,
   };
   const ng = gridDayTypeOptions(kind, ns).find(o => o.value === 'clock_only')?.disabledReason ?? '';
   const message = ng ? '打刻が遅れただけは選べません（' + ng + '）' : validateOvertime({
@@ -490,7 +521,15 @@ function computeFullDayRow(a: Parameters<typeof computeGridRow>[0], fdt: GridFul
   const fdLocation = ns.location ?? effectiveLocation;
   const typeDetect = detectOvertimeTypes({ hasDate: true, workSegments: [], normalShift: ns, effectiveLocation });
   const applicationTypes = composeApplicationTypes({ typeDetect, lateChoice: null, earlyChoice: null, fullDay: true, fullDayType: fdt });
-  const diffMin = fullDayDiffMin(fdt, ns);
+  // 振替休日：振替元の休憩・労働は時刻から自動（1件フォームと同じ furikaeOriginCalc）。差分＝振替元の労働 − 休む日のシフト労働
+  const fk = fdt === 'furikae_off' ? furikaeOriginCalc(draft.furikaeOriginStart ?? '', draft.furikaeOriginEnd ?? '') : null;
+  const furikae = fk ? {
+    date: draft.furikaeOriginDate ?? '',
+    location: effectiveOtherLocation(draft.furikaeOriginLocation ?? '', draft.furikaeOriginLocationCustom ?? ''),
+    start: draft.furikaeOriginStart ?? '', end: draft.furikaeOriginEnd ?? '',
+    breakMin: fk.breakMin, laborMin: fk.laborMin, hasTime: fk.hasTime,
+  } : null;
+  const diffMin = fullDayDiffMin(fdt, ns, fk?.laborMin ?? 0);
   const reviewerId = draft.reviewerId || a.defaultReviewerId;
   const isSelfReview = reviewerId === GRID_SELF_REVIEW;
   const calc = {
@@ -498,8 +537,10 @@ function computeFullDayRow(a: Parameters<typeof computeGridRow>[0], fdt: GridFul
     breakMin: 0, laborMin: 0, diffMin, legalOk: true,
     typeDetect, applicationTypes, effectiveLocation: fdLocation, hasChanges: false, changedAxes: [] as string[],
     isPureZero: false, reviewerId, isSelfReview,
-    sendLabel: (mode === 'advance' ? '事前申請' : '事後報告') + '（' + OT_TYPE_INFO[fdt].label + '）',
-    clockOnly: false, fullDayType: fdt,
+    // 🚨 振替休日は振替元の日も呼び名に入れる（確認のあとで振替元を変えたら、送る直前の照合で止まるように）
+    sendLabel: (mode === 'advance' ? '事前申請' : '事後報告') + '（' + OT_TYPE_INFO[fdt].label
+      + (furikae?.date ? '・振替元 ' + shortMd(furikae.date) : '') + '）',
+    clockOnly: false, fullDayType: fdt, furikae,
   };
   const ng = gridDayTypeOptions(kind, ns).find(o => o.value === fdt)?.disabledReason ?? '';
   const message = ng ? OT_TYPE_INFO[fdt].label + 'は選べません（' + ng + '）' : validateOvertime({
@@ -507,7 +548,9 @@ function computeFullDayRow(a: Parameters<typeof computeGridRow>[0], fdt: GridFul
     // 🚨 締め切りは最後に見る（時間の行と同じ）
     closeLocked: false, clockOnlyMode: false, normalShift: ns,
     clockReason: '', clockReasonOther: '', fullDay: true, fullDayType: fdt, fdLocation,
-    furikaeOriginDate: '', furikaeOriginLocation: '', furikaeOriginLocationCustom: '', furikaeOriginStart: '', furikaeOriginEnd: '', furikaeHasTime: false,
+    furikaeOriginDate: draft.furikaeOriginDate ?? '', furikaeOriginLocation: draft.furikaeOriginLocation ?? '',
+    furikaeOriginLocationCustom: draft.furikaeOriginLocationCustom ?? '',
+    furikaeOriginStart: draft.furikaeOriginStart ?? '', furikaeOriginEnd: draft.furikaeOriginEnd ?? '', furikaeHasTime: fk?.hasTime ?? false,
     reason: draft.reason, reviewerId, isSelfReview, canSelfReview: a.canSelfReview,
     absenceReviewerOk: (!reviewerId || isSelfReview) ? undefined : a.reviewerIsManager(reviewerId),
     segments: [], workSegments: [], segmentIssues: segmentIssuesOf([]),
@@ -517,8 +560,15 @@ function computeFullDayRow(a: Parameters<typeof computeGridRow>[0], fdt: GridFul
     normalSegs: normalSegsOf(ns), isReportPhase: false, hasChanges: false, isPureZero: false, changeReason: '',
     typeDetect, lateChoice: null, earlyChoice: null,
   });
+  // 振替元の日の確かめ（表の中で分かる範囲。DB のトリガーと送る直前の読み直しでも止まる）
+  // 振替元の日は休む日の前後1年以内（年の打ち間違いで「0002年」などが通らないように・2026-09-29）
+  const originGap = furikae?.date ? Math.abs(Date.parse(furikae.date + 'T00:00:00Z') - Date.parse(date + 'T00:00:00Z')) / 86400000 : 0;
+  const originNg = !furikae || !furikae.date ? ''
+    : furikae.date === date ? '振替元の日と休む日が同じです。実際に出勤した日を選んでください'
+    : !(originGap <= 366) ? '振替元の勤務日が正しくありません（休む日の前後1年以内の日を選んでください）'
+    : (a.furikaeOriginNg ?? '');
   // 🚨 自己受理はマネージャー以上だけ（時間の行と同じ）
-  const msg = message || (isSelfReview && !a.canSelfReview ? '自己受理はマネージャー以上のみです' : '');
+  const msg = message || originNg || (isSelfReview && !a.canSelfReview ? '自己受理はマネージャー以上のみです' : '');
   if (msg) return { ...calc, state: a.focused ? 'editing' : 'error', message: msg };
   if (a.closeLocked) return { ...calc, state: 'locked', message: '締め切り後のため、経理の許可が要ります（表の上から依頼できます）' };
   return { ...calc, state: 'ok' };

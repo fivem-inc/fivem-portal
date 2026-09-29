@@ -7,7 +7,7 @@
 //    実績報告・再提出は送る直前に元の申請を読み直す／ベルは1件ずつ・メールは申請先ごとに1通・Slack は種類ごとに1通／
 //    カレンダーは全部入れ終えてから1件ずつ
 
-import { computeGridRow, sameGridReport } from './overtimeGrid';
+import { computeGridRow, sameGridReport, FURIKAE_ORIGIN_TAKEN_MSG, shortMd } from './overtimeGrid';
 import type { GridReport, GridDayKind, RowDraft, GridRowCalc } from './overtimeGrid';
 import { buildOvertimeRecord } from './overtimeSubmit';
 import { editHistorySummary, reviewerPhaseLabel, shouldNotifyReviewer, effectiveClockReasonOf } from './overtimeFormParts';
@@ -28,6 +28,10 @@ export interface BulkRow {
   rowDefaultReviewer: string;
   /** 上長からの「申請の依頼」に答える行なら、その依頼 */
   req: { id: string } | null;
+  /** この日を振替元にしている振替休日の日（computeGridRow の説明） */
+  originOf?: string | null;
+  /** 振替休日の行：振替元の日が使えない理由（表が知っている範囲） */
+  furikaeOriginNg?: string;
 }
 
 /** 確認のときに見せた「送ると何になるか」。🚨 送る直前に種類が変わっていたら送らない */
@@ -60,6 +64,11 @@ export interface BulkWriter {
   gcal(reportId: string): Promise<boolean>;
   /** 休暇からの時間外調整休（自動計上）が同じ日にあるか。🚨 DB に網が無いので時間外調整休を出す直前に確かめる（読めなければ止める・1件フォームと同じ） */
   findLeaveAutoDuplicate(userId: string, date: string): Promise<{ dup: boolean; error: string | null }>;
+  /**
+   * その日を振替元にしている振替休日（取消以外）の日。
+   * 🚨 DB のトリガーは「振替元の日に別の申請があるか」しか見ないので、同じ振替元の振替休日が2つできるのはここでしか止まらない
+   */
+  findFurikaeByOrigin(userId: string, originDate: string): Promise<{ dates: string[]; error: string | null }>;
 }
 
 export interface BulkCtx {
@@ -116,6 +125,7 @@ export function recomputeRow(r: BulkRow, ctx: BulkCtx, now: Date = ctx.now()): G
     defaultReviewerId: r.rowDefaultReviewer, canSelfReview: ctx.canSelfReview, selfId: ctx.userId,
     closeLocked: isPayPeriodClosed(r.date, today) && !ctx.grants.has(r.date), focused: false,
     reviewerIsManager: ctx.reviewerIsManager,
+    originOf: r.originOf ?? null, furikaeOriginNg: r.furikaeOriginNg ?? '',
   });
 }
 
@@ -152,6 +162,8 @@ export async function runBulkSend(
   const slackConfirmed: string[] = [];
   let ok = 0, failed = 0, check = 0;
   const seen = new Set<string>();
+  // この送信で振替元に使った日（同じ振替元の振替休日を2つ送らない）
+  const usedOrigins = new Set<string>();
 
   for (let i = 0; i < targets.length; i++) {
     const t = targets[i];
@@ -183,6 +195,29 @@ export async function runBulkSend(
       const x = await writer.findLeaveAutoDuplicate(ctx.userId, r.date);
       choseiNg = x.error ?? (x.dup ? 'この日は休暇申請の時間外調整休がすでに計上されています' : '');
     }
+    // 🚨 振替休日は、送る直前に振替元の日をもう一度確かめる（振替元が別の給与期間だと表は知らない）。読めなければ止める
+    if (!choseiNg && r && c && (c.state === 'ok' || c.state === 'warn') && c.sendLabel === t.label && c.fullDayType === 'furikae_off' && c.furikae) {
+      const o = c.furikae.date;
+      if (usedOrigins.has(o)) choseiNg = `振替元の日（${shortMd(o)}）は、この送信の別の振替休日でも使っています`;
+      else {
+        const ex = await writer.findExistingManual(ctx.userId, o);
+        if (ex.error) choseiNg = '振替元の日の申請を確かめられませんでした（' + ex.error + '）。もう一度お試しください';
+        else if (ex.data) choseiNg = FURIKAE_ORIGIN_TAKEN_MSG;
+        else {
+          const fb = await writer.findFurikaeByOrigin(ctx.userId, o);
+          const other = fb.dates.filter(x => x !== r.date);
+          if (fb.error) choseiNg = '振替元の日を確かめられませんでした（' + fb.error + '）。もう一度お試しください';
+          else if (other.length > 0) choseiNg = `振替元の日（${shortMd(o)}）は、すでに ${shortMd(other[0])} の振替休日の振替元になっています`;
+          else {
+            // 🚨 休む日そのものが、ほかの振替休日の振替元になっていないか（DB のトリガーはこの組み合わせを止めない）
+            const self = await writer.findFurikaeByOrigin(ctx.userId, r.date);
+            if (self.error) choseiNg = '振替元の日を確かめられませんでした（' + self.error + '）。もう一度お試しください';
+            else if (self.dates.length > 0) choseiNg = `この日（${shortMd(r.date)}）は、${shortMd(self.dates[0])} の振替休日の振替元です。この日を振替休日にはできません`;
+          }
+        }
+      }
+      if (!choseiNg) usedOrigins.add(o);
+    }
     if (!r || !c || (c.state !== 'ok' && c.state !== 'warn')) {
       failed++; onRow(t.date, 'failed', c?.message || '送れる状態ではありません');
     } else if (c.sendLabel !== t.label) {
@@ -205,8 +240,10 @@ export async function runBulkSend(
         // 🚨 表ではカレンダーに載せるかを聞かない。新しい行は null（種類ごとの既定）。
         //    実績報告は元の申請の値を引き継ぐ（buildOvertimeRecord の中で。1件フォームと同じ）
         offerCalendarChoice: false, showOnCalendar: false, editTargetShowOnCalendar: (fresh?.show_on_calendar as boolean | null | undefined) ?? undefined,
-        furikaeOriginDate: '', effectiveFurikaeOriginLocation: '', furikaeOriginStart: '', furikaeOriginEnd: '',
-        furikaeOriginBreak: 0, furikaeOriginLabor: 0, furikaeHasTime: false,
+        // 振替休日の振替元（6回目）。振替休日以外は空（buildOvertimeRecord が振替休日のときだけ保存する）
+        furikaeOriginDate: c.furikae?.date ?? '', effectiveFurikaeOriginLocation: c.furikae?.location ?? '',
+        furikaeOriginStart: c.furikae?.start ?? '', furikaeOriginEnd: c.furikae?.end ?? '',
+        furikaeOriginBreak: c.furikae?.breakMin ?? 0, furikaeOriginLabor: c.furikae?.laborMin ?? 0, furikaeHasTime: c.furikae?.hasTime ?? false,
         reviewerId: c.reviewerId, modifiedFromId: null,
         // 打刻ズレ（2026-09-29）：保存の中身は buildOvertimeRecord の打刻ズレの枝（確定・差分0・理由「残業ではありません（理由：…）」）
         clockOnlyMode: c.clockOnly,
