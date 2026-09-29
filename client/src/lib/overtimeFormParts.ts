@@ -54,6 +54,15 @@ export function requestSegmentsLocation(segs: { location?: string | null }[]): s
 }
 
 // ────────────────────────────────────────────
+// 打刻ズレ（残業ではありません・打刻が遅れただけ）
+// ────────────────────────────────────────────
+
+/** 打刻が遅くなった理由の実効値（「その他」は自由入力欄の値）。1件フォームと表入力で同じもの（2026-09-29） */
+export function effectiveClockReasonOf(reason: string, other: string): string {
+  return reason === 'その他' ? other.trim() : reason;
+}
+
+// ────────────────────────────────────────────
 // 振替休日の振替元
 // ────────────────────────────────────────────
 

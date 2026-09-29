@@ -153,6 +153,25 @@ export const GRID_KIND_TAG: Record<GridDayKind, string> = {
 /** 1件フォームの自己受理の値（OvertimePage の SELF_REVIEW_VALUE と同じ） */
 export const GRID_SELF_REVIEW = '__self__';
 
+/**
+ * 新しく出す行の種類（「種類」の列の［時間 ▼］・2026-09-29 ユーザー確定 案A）。
+ * 🚨 4回目は「時間」と「打刻が遅れただけ」。終日（時間外調整休・欠勤・振替休日）は5・6回目で足す
+ */
+export type GridDayType = 'time' | 'clock_only';
+
+/**
+ * 種類の選択肢（名前・並び・選べない理由）。🚨 表と［まとめて申請］で同じものを使う（ここに1か所）。
+ * 選べないものは理由を添えて出す（例「打刻が遅れただけ（休みの日は選べません）」）
+ */
+export function gridDayTypeOptions(kind: GridDayKind, ns: NormalShiftSnapshot): { value: GridDayType; label: string; disabledReason: string }[] {
+  // 打刻ズレは事後報告の新規だけ（1件フォームと同じ）。今日は事後報告として出す（2026-09-29 ユーザー確定）
+  const clockNg = kind === 'new_advance' ? '先の日は選べません' : !ns.start_time ? '休みの日は選べません' : '';
+  return [
+    { value: 'time', label: '時間', disabledReason: '' },
+    { value: 'clock_only', label: '打刻が遅れただけ', disabledReason: clockNg },
+  ];
+}
+
 /** 表の1行の入力（端末の下書きにもこの形で保存する） */
 export interface RowDraft {
   /** 実績報告・再提出の行を「送る対象」にしたか。🚨 触るまで送らない（何もしないことが送信にならないように） */
@@ -173,6 +192,13 @@ export interface RowDraft {
   earlyChoice: EarlyChoice | null;
   /** 新しく出す行だけ。空＝表の上の申請先 */
   reviewerId: string;
+  /** 新しく出す行の種類（2026-09-29）。🚨 古い下書きには無いので読むときは「時間」とみなす */
+  dayType: GridDayType;
+  /** 打刻ズレ：打刻の時刻（任意・参考値）と、打刻が遅くなった理由（CLOCK_ONLY_REASONS・「その他」は自由入力） */
+  clockInAt: string;
+  clockOutAt: string;
+  clockReason: string;
+  clockReasonOther: string;
 }
 
 /** 分 → 入力欄用の "HH:MM"（時をゼロ埋め・翌日印は外す） */
@@ -203,6 +229,7 @@ export function locationPick(loc: string | null | undefined, workplaces: readonl
 export const EMPTY_ROW_DRAFT: RowDraft = {
   touched: false, segs: [{ start: '', end: '' }], reason: '', changeReason: '', breakMin: '',
   location: '', locationCustom: '', locMoveStart: '', locMoveEnd: '', lateChoice: null, earlyChoice: null, reviewerId: '',
+  dayType: 'time', clockInAt: '', clockOutAt: '', clockReason: '', clockReasonOther: '',
 };
 
 /**
@@ -263,6 +290,8 @@ export interface GridRowCalc {
   isSelfReview: boolean;
   /** 送ると何になるか（行に出す文字） */
   sendLabel: string;
+  /** 打刻ズレ（残業ではありません）の行か。送るときは確認なしで確定・通知なし（1件フォームと同じ） */
+  clockOnly: boolean;
 }
 
 const NOCHANGE_MSG = '通常シフトと同じ内容です。残業・早退・調整など、変更した点を入力してください';
@@ -293,6 +322,9 @@ export function computeGridRow(a: {
   const isReportPhase = kind === 'report';
   const isResubmit = kind === 'resubmit';
   const isEdit = isReportPhase || isResubmit;
+  // 打刻ズレは別の計算（時刻・勤務地・申請先を持たない）
+  if (!isEdit && (draft.dayType ?? 'time') === 'clock_only'
+    && (kind === 'new_post' || kind === 'new_today' || kind === 'new_advance')) return computeClockOnlyRow(a);
   const segments = draft.segs;
   const workSegments = toWorkSegments(segments);
   const breakManual = draft.breakMin.trim() !== '';
@@ -348,6 +380,7 @@ export function computeGridRow(a: {
     message: '', mode, phase, isReportPhase, isResubmit, workSegments,
     breakMin: diff.break_minutes, laborMin: diff.labor_minutes, diffMin: diff.diff_minutes, legalOk: legal.ok,
     typeDetect, applicationTypes, effectiveLocation, hasChanges, changedAxes, isPureZero, reviewerId, isSelfReview, sendLabel,
+    clockOnly: false,
   };
 
   const editable: GridDayKind[] = ['new_post', 'new_advance', 'new_today', 'report', 'resubmit'];
@@ -382,6 +415,45 @@ export function computeGridRow(a: {
   if (msg) return { ...calc, state: a.focused ? 'editing' : 'error', message: msg };
   if (!isEdit && a.closeLocked) return { ...calc, state: 'locked', message: '締め切り後のため、経理の許可が要ります（表の上から依頼できます）' };
   if (!legal.ok) return { ...calc, state: 'warn', message: '休憩が法定より短い（送れます）' };
+  return { ...calc, state: 'ok' };
+}
+
+/**
+ * 打刻ズレ（残業ではありません・打刻が遅れただけ）の行（2026-09-29・計画の4回目）。
+ * 🚨 1件フォームと同じ：勤務時間は通常シフトどおり・差分0・事後報告・確認なしで確定・申請先なし。打刻の時刻は参考値で計算に使わない。
+ *    判定は validateOvertime の打刻ズレの枝、保存は buildOvertimeRecord の打刻ズレの枝（どちらも1件フォームと共用）
+ */
+function computeClockOnlyRow(a: Parameters<typeof computeGridRow>[0]): GridRowCalc {
+  const { kind, date, today, nowMin, ns, draft } = a;
+  const normalSegs = normalSegsOf(ns);
+  const workSegments = toWorkSegments(normalSegs);
+  const mode = 'posthoc' as const;
+  const phase = overtimePhase({ mode, isReportPhase: false, isResubmit: false, editTarget: null });
+  const effectiveLocation = ns.location ?? '';
+  const typeDetect = detectOvertimeTypes({ hasDate: true, workSegments, normalShift: ns, effectiveLocation });
+  const calc = {
+    message: '', mode, phase, isReportPhase: false, isResubmit: false, workSegments,
+    breakMin: ns.break_minutes, laborMin: ns.labor_minutes, diffMin: 0, legalOk: true,
+    typeDetect, applicationTypes: ['clock_only'] as OvertimeType[], effectiveLocation, hasChanges: false, changedAxes: [] as string[],
+    isPureZero: false, reviewerId: '', isSelfReview: false, sendLabel: '打刻ズレの記録（確定）', clockOnly: true,
+  };
+  const ng = gridDayTypeOptions(kind, ns).find(o => o.value === 'clock_only')?.disabledReason ?? '';
+  const message = ng ? '打刻が遅れただけは選べません（' + ng + '）' : validateOvertime({
+    date, mode, hasEditTarget: false, today, advanceMaxDate: a.advanceMaxDate,
+    // 🚨 締め切りは最後に見る（時間の行と同じ）
+    closeLocked: false, clockOnlyMode: true, normalShift: ns,
+    clockReason: draft.clockReason ?? '', clockReasonOther: draft.clockReasonOther ?? '', fullDay: false, fullDayType: null, fdLocation: '',
+    furikaeOriginDate: '', furikaeOriginLocation: '', furikaeOriginLocationCustom: '', furikaeOriginStart: '', furikaeOriginEnd: '', furikaeHasTime: false,
+    reason: '', reviewerId: '', isSelfReview: false, canSelfReview: a.canSelfReview,
+    segments: normalSegs, workSegments, segmentIssues: segmentIssuesOf(normalSegs),
+    isTodayPostHoc: false, nowMin,
+    breakManual: false, breakManualMin: '',
+    location: '', locationCustom: '', locMoveStart: '', locMoveEnd: '', effectiveLocation,
+    normalSegs, isReportPhase: false, hasChanges: false, isPureZero: false, changeReason: '',
+    typeDetect, lateChoice: null, earlyChoice: null,
+  });
+  if (message) return { ...calc, state: a.focused ? 'editing' : 'error', message };
+  if (a.closeLocked) return { ...calc, state: 'locked', message: '締め切り後のため、経理の許可が要ります（表の上から依頼できます）' };
   return { ...calc, state: 'ok' };
 }
 

@@ -10,7 +10,7 @@
 import { computeGridRow, sameGridReport } from './overtimeGrid';
 import type { GridReport, GridDayKind, RowDraft, GridRowCalc } from './overtimeGrid';
 import { buildOvertimeRecord } from './overtimeSubmit';
-import { editHistorySummary, reviewerPhaseLabel, shouldNotifyReviewer } from './overtimeFormParts';
+import { editHistorySummary, reviewerPhaseLabel, shouldNotifyReviewer, effectiveClockReasonOf } from './overtimeFormParts';
 import { isPayPeriodClosed, formatSignedMin } from './breakCalc';
 import { overtimeAmountLabel } from './overtimeTypes';
 import { toDbTime } from './timeInput';
@@ -181,7 +181,10 @@ export async function runBulkSend(
         furikaeOriginDate: '', effectiveFurikaeOriginLocation: '', furikaeOriginStart: '', furikaeOriginEnd: '',
         furikaeOriginBreak: 0, furikaeOriginLabor: 0, furikaeHasTime: false,
         reviewerId: c.reviewerId, modifiedFromId: null,
-        clockOnlyMode: false, effectiveClockReason: '', clockInAt: '', clockOutAt: '', nowIso,
+        // 打刻ズレ（2026-09-29）：保存の中身は buildOvertimeRecord の打刻ズレの枝（確定・差分0・理由「残業ではありません（理由：…）」）
+        clockOnlyMode: c.clockOnly,
+        effectiveClockReason: c.clockOnly ? effectiveClockReasonOf(r.draft.clockReason ?? '', r.draft.clockReasonOther ?? '') : '',
+        clockInAt: c.clockOnly ? (r.draft.clockInAt ?? '') : '', clockOutAt: c.clockOnly ? (r.draft.clockOutAt ?? '') : '', nowIso,
       }, toDbTime);
       // 🚨 再提出も元の値を引き継ぐ。buildOvertimeRecord は再提出では null にするので、ここで元の値に戻す。
       //    null にすると「載せない」を選んでいた人の申請が、直して出し直しただけでカレンダーに出てしまう
@@ -215,7 +218,8 @@ export async function runBulkSend(
         if (r.req) await writer.linkRequest(r.req.id, saved.reportId);
         // 🚨 呼び名と通知の条件は lib/overtimeFormParts（1件フォームと共用）
         const phaseLabel = reviewerPhaseLabel({ isResubmit: c.isResubmit, phase: c.phase, isModifiedReapply: false });
-        if (shouldNotifyReviewer({ isSelfReview: c.isSelfReview, isPureZero: c.isPureZero, clockOnly: false, reviewerId: c.reviewerId })) {
+        // 🚨 打刻ズレは確認なしで確定するので、上長にもベル・メール・Slack を送らない（1件フォームと同じ）
+        if (shouldNotifyReviewer({ isSelfReview: c.isSelfReview, isPureZero: c.isPureZero, clockOnly: c.clockOnly, reviewerId: c.reviewerId })) {
           await writer.bell({
             reportId: saved.reportId, reviewerId: c.reviewerId, applicantName: ctx.profileName,
             phaseLabel, dateLabel: fullDateLabel(r.date), timeLabel: overtimeAmountLabel(c.applicationTypes, c.diffMin),
@@ -224,7 +228,7 @@ export async function runBulkSend(
           g.dates.push(r.date); g.diff += c.diffMin; g.phases[phaseLabel] = (g.phases[phaseLabel] ?? 0) + 1;
           mailGroups.set(c.reviewerId, g);
           slackNew.push(saved.reportId);
-        } else if (c.isSelfReview && !c.isPureZero) {
+        } else if (c.isSelfReview && !c.isPureZero && !c.clockOnly) {
           // 🚨 自己受理の残業なし（差分0）は送らない（中身が無い。1件フォームと同じ条件）
           slackConfirmed.push(saved.reportId);
         }

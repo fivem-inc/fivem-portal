@@ -21,12 +21,12 @@ import { resolveNormalShift, normalShiftTimeText, reportGateMin } from '../lib/o
 import type { PatternRow, NormalShiftSnapshot } from '../lib/overtimeShift';
 import {
   periodDates, pickDayReport, classifyGridDay, GRID_KIND_TAG, initialRowDraft, computeGridRow, normalSegsOf,
-  locationPick, GRID_SELF_REVIEW, gridBalance,
+  locationPick, GRID_SELF_REVIEW, gridBalance, gridDayTypeOptions,
 } from '../lib/overtimeGrid';
 import { diffColor } from '../lib/overtimeBalance';
-import type { GridReport, GridDayKind, RowDraft, RowState, GridRowCalc } from '../lib/overtimeGrid';
+import type { GridReport, GridDayKind, RowDraft, RowState, GridRowCalc, GridDayType } from '../lib/overtimeGrid';
 import { STATUS_INFO } from '../lib/overtimeStatus';
-import { isOvertimeType, typeLabelFor } from '../lib/overtimeTypes';
+import { isOvertimeType, typeLabelFor, CLOCK_ONLY_REASONS } from '../lib/overtimeTypes';
 import type { SituationLike } from '../lib/overtimeTypes';
 import { CALENDAR_CELL_STYLE } from '../hooks/useCompanyCalendar';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
@@ -38,8 +38,11 @@ import { syncOvertimeGcal, supabaseBulkWriter, fetchGrantedWorkDates, fetchMyGra
 import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
 import OvertimeGrantPanel from './OvertimeGrantPanel';
 import { runBulkSend } from '../lib/overtimeBulkSend';
-import { requestSegmentsLocation } from '../lib/overtimeFormParts';
+import { requestSegmentsLocation, effectiveClockReasonOf } from '../lib/overtimeFormParts';
 import { segmentsText, type SegmentLike } from '../lib/segmentsText';
+
+/** 送る前の確認で、打刻ズレ（確認なしで確定）をまとめる箱の名前（申請先の id と重ならない値） */
+const CLOCK_GROUP = '__clock__';
 
 interface Reviewer { id: string; name: string; role_title: string }
 
@@ -241,7 +244,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
       if (!s) { next[r.date] = init; return; }
       if (sameKind) { next[r.date] = { ...init, ...s }; return; }
       next[r.date] = init;
-      if (s.segs?.some(x => x.start || x.end) || s.reason) dropped++;
+      if (s.segs?.some(x => x.start || x.end) || s.reason || (s.dayType && s.dayType !== 'time')) dropped++;
     });
     setDrafts(next);
     setLastBulk(null);
@@ -293,7 +296,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     diffMin: r.calc.diffMin, applicationTypes: r.calc.applicationTypes,
   }))) : null;
   // ── 締め後の許可の依頼（2026-09-29・計画の3回目）。🚨 表の上の1つの枠（OvertimeGrantPanel）に出す ──
-  const hasInput = (r: Row) => r.draft.segs.some(x => x.start || x.end) || r.draft.reason.trim() !== '';
+  const hasInput = (r: Row) => r.draft.segs.some(x => x.start || x.end) || r.draft.reason.trim() !== '' || (r.draft.dayType ?? 'time') !== 'time';
   // 🚨 依頼の対象は「時間を入れた日」。入力に誤りがある日・通常シフトと同じ日も含める（許可は日付に付くので、直すのは許可のあとでもよい）
   const lockedInputRows = rows.filter(r => isLockedRow(r) && hasInput(r) && r.calc.state !== 'nochange');
   const openGrantDates = new Set(grantRequests.filter(g => g.status === 'open').flatMap(g => g.work_dates));
@@ -385,9 +388,25 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     await load();
   };
 
+  /**
+   * 種類（［時間 ▼］）を切り替える（2026-09-29・計画の4回目）。
+   * 🚨 切り替えたら、前の種類で入れていたものは消す（ユーザー確定：時刻が残ると、開いたままの古い画面から時間の申請として送れてしまう）
+   */
+  const switchDayType = (r: Row, t: GridDayType) => {
+    if (t === 'clock_only') {
+      setRow(r.date, {
+        dayType: 'clock_only', segs: [{ start: '', end: '' }], breakMin: '', reason: '', changeReason: '',
+        lateChoice: null, earlyChoice: null, location: '', locationCustom: '', locMoveStart: '', locMoveEnd: '', reviewerId: '',
+      });
+    } else {
+      setRow(r.date, { dayType: 'time', clockInAt: '', clockOutAt: '', clockReason: '', clockReasonOther: '' });
+    }
+  };
+
   /** 新しい行を初めて触ったとき、時間が空ならその日の通常シフトを入れる（🚨 2本シフトの2本目の入れ忘れを防ぐ） */
   const fillNormalIfEmpty = (r: Row) => {
     if (r.kind !== 'new_post' && r.kind !== 'new_advance' && r.kind !== 'new_today') return;
+    if ((r.draft.dayType ?? 'time') !== 'time') return;
     if (r.draft.segs.some(s => s.start || s.end)) return;
     // 依頼に「入る時間と校」があれば、それを入れる（1件フォームの「依頼から申請」と同じ）。
     // 🚨 2026-09-29：校が時間帯で変わるときは「移動あり」（最初の校→移る先の校）で入れる。決め方は lib の requestSegmentsLocation（1件フォームと共用）
@@ -647,11 +666,20 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                   const idle = c.state === 'idle';
                   // 実績報告・再提出の行は、触った時点で「送る対象」に入れる
                   const touch = (patch: Partial<RowDraft>) => setRow(r.date, isEdit ? { ...patch, touched: true } : patch);
-                  const tagLabel = r.kind === 'new_today' ? `今日（${c.sendLabel}）` : r.kind === 'resubmit' ? c.sendLabel : undefined;
+                  const tagLabel = r.kind === 'new_today' ? (c.clockOnly ? '今日（事後報告）' : `今日（${c.sendLabel}）`) : r.kind === 'resubmit' ? c.sendLabel : undefined;
+                  // 🚨 1行目と2行目（打刻ズレ）は同じ日。行をまたいで移るときに「行の外へ出た」と数えない（一瞬エラーの赤が出るため）
+                  const rowFocus = {
+                    'data-grid-date': r.date,
+                    onFocus: () => setFocusedDate(r.date),
+                    onBlur: (e: React.FocusEvent<HTMLTableRowElement>) => {
+                      const next = (e.relatedTarget as HTMLElement | null)?.closest?.('tr')?.getAttribute('data-grid-date');
+                      if (next !== r.date) setFocusedDate(d => (d === r.date ? null : d));
+                    },
+                  };
+                  const isNewRow = r.kind === 'new_post' || r.kind === 'new_today' || r.kind === 'new_advance';
                   return (
-                    <tr key={r.date} style={{ background: bg }}
-                      onFocus={() => setFocusedDate(r.date)}
-                      onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocusedDate(d => (d === r.date ? null : d)); }}>
+                    <React.Fragment key={r.date}>
+                    <tr style={{ background: bg }} {...rowFocus}>
                       <td style={{ ...td, position: 'sticky', left: 0, background: bg ?? cardBg, whiteSpace: 'nowrap', fontWeight: 'bold', color: off ? '#d9534f' : text }}>
                         {md(r.date)}（{DOW[dow]}）
                         {isToday && <div style={{ fontSize: 11, color: toggleText }}>今日</div>}
@@ -663,6 +691,17 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                         {isLockedRow(r) && openGrantDates.has(r.date) && <div style={{ marginTop: 2 }}>{miniTag('依頼中', 'muted')}</div>}
                         {isLockedRow(r) && !openGrantDates.has(r.date) && declinedGrantDates.has(r.date) && <div style={{ marginTop: 2 }}>{miniTag('見送り', 'muted')}</div>}
                         {isPayPeriodClosed(r.date, today) && grants.has(r.date) && (r.kind === 'new_post' || r.kind === 'new_today') && <div style={{ marginTop: 2 }}>{miniTag('許可済み', 'ok')}</div>}
+                        {/* 種類（案A・2026-09-29）。選べないものは理由を添えて出す。🚨 選択肢は lib の gridDayTypeOptions（まとめて申請と共用） */}
+                        {isNewRow && (
+                          <div style={{ marginTop: 3 }}>
+                            <select value={r.draft.dayType ?? 'time'} onChange={e => switchDayType(r, e.target.value as GridDayType)}
+                              style={{ ...sel, fontSize: 12, padding: '2px 4px' }} aria-label={`${md(r.date)} 種類`}>
+                              {gridDayTypeOptions(r.kind, r.ns).map(o => (
+                                <option key={o.value} value={o.value} disabled={!!o.disabledReason}>{o.label}{o.disabledReason ? `（${o.disabledReason}）` : ''}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
                       </td>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>{normalShiftTimeText(r.ns) || <span style={{ color: subText }}>休み</span>}</td>
                       <td style={td}>
@@ -699,6 +738,23 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                           </td>
                           <td style={td}>{rep?.reviewer_id ? <span style={{ fontSize: 12, color: subText }}>{reviewerName(rep.reviewer_id)}</span> : null}</td>
                           <td style={{ ...td, ...sendCol, background: bg && bg.length <= 7 ? bg : cardBg }}><span style={{ fontSize: 12, color: subText }}>{r.kind === 'done' || r.kind === 'leave_auto' ? '済み' : ''}</span></td>
+                        </>
+                      ) : c.clockOnly ? (
+                        <>
+                          {/* 打刻ズレ：時刻・休憩・勤務地・申請先は持たない（1件フォームと同じ）。入力は下の2行目 */}
+                          <td style={td} colSpan={3}>
+                            <span style={{ fontSize: 12, color: subText }}>
+                              勤務時間はシフトどおり（{normalShiftTimeText(r.ns)}）・労働 {formatMin(c.laborMin)}・差分 <b>{formatSignedMin(0)}</b>
+                            </span>
+                          </td>
+                          <td style={{ ...td, minWidth: 200 }}>
+                            <span style={{ fontSize: 12, color: subText }}>残業ではありません（打刻が遅れただけ）。下の行で入力します</span>
+                            {c.message && (c.state === 'error' || c.state === 'locked') && (
+                              <div style={{ fontSize: 11.5, fontWeight: 'bold', marginTop: 3, color: c.state === 'error' ? '#e24b4a' : subText }}>{c.message}</div>
+                            )}
+                          </td>
+                          <td style={td}><span style={{ fontSize: 12, color: subText }}>なし<br />（記録と同時に確定）</span></td>
+                          <td style={{ ...td, ...sendCol, background: bg && bg.length <= 7 ? bg : cardBg }}>{sendCell(c, r.date)}</td>
                         </>
                       ) : (
                         <>
@@ -829,6 +885,50 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                         </>
                       )}
                     </tr>
+                    {/* 2行目：打刻ズレ（2026-09-29）。🚨 項目・言葉・注意は1件フォーム（OvertimePage の打刻ズレの入力）と同じ。
+                        親子は左端の青い線で示す（新しい色は使わない） */}
+                    {editable && c.clockOnly && (
+                      <tr style={{ background: bg }} {...rowFocus}>
+                        <td style={{ ...td, position: 'sticky', left: 0, background: bg ?? cardBg }} />
+                        <td colSpan={8} style={{ ...td, borderLeft: `3px solid ${toggleBlue}` }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 'bold', marginBottom: 2 }}>残業ではありません（打刻が遅れただけ）</div>
+                          <div style={{ fontSize: 12, color: subText, marginBottom: 6 }}>勤務時間はシフトどおりとして記録します。合計時間数は増えも減りもしません。</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 12, marginBottom: 6 }}>
+                            <span>打刻の時刻<span style={{ color: subText }}>（分かれば・任意）</span></span>
+                            <span style={{ color: subText }}>出勤</span>
+                            <TimeInput value={r.draft.clockInAt ?? ''} onChange={v => touch({ clockInAt: v })} isDark={isDark} style={timeBox} advance ariaLabel={`${md(r.date)} 出勤の打刻時刻`} />
+                            <span style={{ color: subText }}>退勤</span>
+                            <TimeInput value={r.draft.clockOutAt ?? ''} onChange={v => touch({ clockOutAt: v })} isDark={isDark} style={timeBox} ariaLabel={`${md(r.date)} 退勤の打刻時刻`} />
+                          </div>
+                          <div style={{ fontSize: 12, marginBottom: 4 }}>打刻が遅くなった理由<span style={{ color: '#dc3545' }}> *</span></div>
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                            {/* 選択肢は lib/overtimeTypes の CLOCK_ONLY_REASONS（1件フォームと共用） */}
+                            {CLOCK_ONLY_REASONS.map(x => (
+                              <button key={x} type="button" style={{ ...btnSm, fontSize: 12, padding: '3px 10px', ...(r.draft.clockReason === x ? btnOn : {}) }}
+                                onClick={() => touch({ clockReason: x })}>{x}</button>
+                            ))}
+                            {r.draft.clockReason === 'その他' && (
+                              <input type="text" value={r.draft.clockReasonOther ?? ''} placeholder="例：迎えを待っていた" onChange={e => touch({ clockReasonOther: e.target.value })}
+                                style={{ ...txt, minWidth: 0, width: 220 }} aria-label={`${md(r.date)} 打刻が遅くなった理由（その他）`} />
+                            )}
+                          </div>
+                          {/* 🚨 この枠は絶対に外さない（1件フォームと同じ）。片付け・準備・保護者対応は業務であり、
+                              「残業ではありません」で記録させるとサービス残業を認めた記録になる。黄色の固定色（ライト・ダーク共通） */}
+                          <div style={{ background: '#fff3cd', border: '1px solid #ffe0a3', borderRadius: 8, padding: '8px 10px', marginTop: 8 }}>
+                            <span style={{ fontSize: 12.5, color: '#664d03', lineHeight: 1.7 }}>
+                              ⚠️ 片付け・準備・保護者対応など、<b>仕事をしていた時間は残業です</b>。
+                              その場合はこの画面ではなく、残業として報告してください。
+                            </span>
+                            <button type="button" onClick={() => switchDayType(r, 'time')}
+                              style={{ marginLeft: 8, background: '#fff', border: '1px solid #856404', borderRadius: 8, cursor: 'pointer', padding: '4px 12px', fontSize: 12.5, fontWeight: 'bold', color: '#856404' }}>
+                              残業として報告する →
+                            </button>
+                          </div>
+                        </td>
+                        <td style={{ ...td, ...sendCol, background: bg && bg.length <= 7 ? bg : cardBg }} />
+                      </tr>
+                    )}
+                    </React.Fragment>
                   );
                 })}
               </tbody>
@@ -864,10 +964,21 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
             const items = confirm.map(t => rows.find(r => r.date === t.date)).filter((r): r is Row => !!r);
             const groups = new Map<string, Row[]>();
             items.forEach(r => {
-              const k = r.calc.isSelfReview ? GRID_SELF_REVIEW : r.calc.reviewerId;
+              // 打刻ズレは確認なしで確定するので、申請先ごとではなく1つにまとめる
+              const k = r.calc.clockOnly ? CLOCK_GROUP : r.calc.isSelfReview ? GRID_SELF_REVIEW : r.calc.reviewerId;
               groups.set(k, [...(groups.get(k) ?? []), r]);
             });
             const line = (r: Row) => {
+              if (r.calc.clockOnly) {
+                const ci = r.draft.clockInAt ?? '', co = r.draft.clockOutAt ?? '';
+                return (
+                  <div key={r.date} style={{ fontSize: 13, padding: '2px 0' }}>
+                    <b>{md(r.date)}（{DOW[dowOf(r.date)]}）</b> 残業ではありません（打刻が遅れただけ）{r.req ? '（依頼に答える）' : ''}：勤務時間はシフトどおり {normalShiftTimeText(r.ns)}
+                    {' '}理由「{effectiveClockReasonOf(r.draft.clockReason ?? '', r.draft.clockReasonOther ?? '')}」
+                    {(ci || co) && <span style={{ color: subText }}> 打刻 {ci || '—'}〜{co || '—'}</span>}
+                  </div>
+                );
+              }
               const segs = [...r.calc.workSegments].sort((a, b) => a.startMin - b.startMin).map(s => `${minToTime(s.startMin)}〜${minToTime(s.endMin)}`).join(' / ');
               return (
                 <div key={r.date} style={{ fontSize: 13, padding: '2px 0' }}>
@@ -885,7 +996,9 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                 {[...groups.entries()].map(([k, rs]) => (
                   <div key={k} style={{ border: `1px solid ${borderColor}`, borderRadius: 8, padding: '8px 10px', margin: '8px 0' }}>
                     <div style={{ fontWeight: 'bold', fontSize: 13.5, marginBottom: 4 }}>
-                      {k === GRID_SELF_REVIEW
+                      {k === CLOCK_GROUP
+                        ? <>打刻ズレの記録（{rs.length}件）<span style={{ color: '#c62828' }}> 確認なしで、記録した時点で確定します</span></>
+                        : k === GRID_SELF_REVIEW
                         ? <>自己受理（{rs.length}件）<span style={{ color: '#c62828' }}> 送った時点で確定します</span></>
                         : <>{reviewerName(k)} さん宛（{rs.length}件）</>}
                     </div>

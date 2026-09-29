@@ -24,7 +24,7 @@ import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import { retireeReturnNote } from '../lib/retire';
 import { saveOvertimeReport, syncOvertimeGcal, findLeaveAutoDuplicate, fetchGrantedWorkDates as loadGrantedWorkDates, fetchMyGrantRequests as loadMyGrantRequests, insertGrantRequest, withdrawGrantRequest, fetchClosedAllDates } from '../lib/overtimeSubmitApi';
 import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
-import { storedLocationChoice, storedLocationCustom, splitMoveLocation, requestSegmentsLocation, furikaeOriginCalc, furikaeOriginPrefill, effectiveOtherLocation, isManagerReviewer, shouldNotifyReviewer, reviewerPhaseLabel, editHistorySummary, grantRequestErrorMessage, formatGrantDates } from '../lib/overtimeFormParts';
+import { storedLocationChoice, storedLocationCustom, splitMoveLocation, requestSegmentsLocation, furikaeOriginCalc, furikaeOriginPrefill, effectiveOtherLocation, isManagerReviewer, shouldNotifyReviewer, reviewerPhaseLabel, editHistorySummary, grantRequestErrorMessage, formatGrantDates, effectiveClockReasonOf } from '../lib/overtimeFormParts';
 import { STATUS_INFO } from '../lib/overtimeStatus';
 import OvertimeGrid from '../components/OvertimeGrid';
 import { isPointerDevice } from '../lib/idleLogout';
@@ -942,7 +942,8 @@ const OvertimeForm: React.FC<{
 
   // 打刻ズレは「事後報告の新規」でだけ使う（実績報告・再提出・事前申請では出さない）
   const clockOnlyMode = clockOnly && mode === 'posthoc' && !editTarget;
-  const effectiveClockReason = clockReason === 'その他' ? clockReasonOther.trim() : clockReason;
+  // 🚨 実効値は lib/overtimeFormParts の effectiveClockReasonOf（表入力と共用・2026-09-29）
+  const effectiveClockReason = effectiveClockReasonOf(clockReason, clockReasonOther);
 
   // カレンダー掲載のチェック欄を出すか。
   // 🚨 出しても実際には載らない組み合わせ（事後報告・打刻ズレ・お休み）では出さないこと。
