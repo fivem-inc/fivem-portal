@@ -546,7 +546,17 @@ const AbsenceInputSheet: React.FC<{
   onClose: () => void;
   onSaved: () => void;
   onSaving: () => void;
-}> = ({ date, profiles, currentUserId, workplaces, onClose, onSaved, onSaving }) => {
+  /** 対象者の一覧を読めなかった理由（空なら問題なし） */
+  profilesError: string;
+  /** 対象者の一覧を読み直す */
+  onReloadProfiles: () => void;
+}> = ({ date, profiles, currentUserId, workplaces, onClose, onSaved, onSaving, profilesError, onReloadProfiles }) => {
+  // 🚨 開いたときに対象者の一覧が空なら、その場で読み直す（2026-09-29：Android の一部の機種で、ページを開いた瞬間の
+  //    読み込みがログインの確認より先に走って空になり、そのまま対象者を選べなかった＝濱口さん）
+  useEffect(() => {
+    if (profiles.length === 0) onReloadProfiles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // 入力中の下書きを端末に保存し、開いていた日付に戻ったとき復元する
   const [absDraft] = useState(() => {
     const d = loadDraft<AbsenceDraft>(DRAFT_KEYS.attendance);
@@ -978,6 +988,15 @@ const AbsenceInputSheet: React.FC<{
           </div>
           {/* 未選択で送信したときに薄赤で囲む（どこが原因か分かるように） */}
           <div data-err-field="userId" style={errFields.has('userId') ? { border: `1px solid ${ERROR_BORDER}`, background: errorBg(false), borderRadius: 6, padding: 4 } : undefined}>
+            {/* 一覧が読めなかったときは黙らず、理由と［再読み込み］を出す */}
+            {profiles.length === 0 && profilesError && (
+              <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '8px 10px', fontSize: 12.5, color: '#842029', marginBottom: 6 }}>
+                対象者の一覧を読み込めませんでした（{profilesError}）
+                <button type="button" onClick={onReloadProfiles}
+                  style={{ marginLeft: 8, background: '#dc3545', color: '#fff', border: 'none', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>再読み込み</button>
+              </div>
+            )}
+            {profiles.length === 0 && !profilesError && <div style={{ fontSize: 12, color: '#888', marginBottom: 6 }}>対象者の一覧を読み込んでいます…</div>}
             <StaffPicker profiles={profiles} grouped={grouped} selectedIds={userIds} onToggle={toggleUser} onClear={() => { setUserIds(new Set()); setConflicts([]); }} />
           </div>
         </div>
@@ -1651,6 +1670,7 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
 
   const [deleting, setDeleting] = useState(false);
   const [profiles, setProfiles] = useState<ProfileEntry[]>([]);
+  const [profilesError, setProfilesError] = useState('');
   const [loading, setLoading] = useState(false);
   const [absenceSheet, setAbsenceSheet] = useState<string | null>(null);
   const [workplaces, setWorkplaces] = useState<string[]>([]);
@@ -1884,24 +1904,36 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, [highlightDate, loading, absences, events, overtimes, setSearchParams]);
 
-  useEffect(() => {
-    // 入力シート用の一覧は、登録できる人にだけ読む（判定は canInput と同じトグル）
-    if (!canAttendanceInput && !isAdmin) return;
+  // 入力シートの対象者の一覧（在籍者）。
+  // 🚨 読めなかったとき・0人だったときは黙って空にしない（理由を出してシートから読み直せるようにする）。
+  //    0人は「ログインの確認が済む前に読んだ」ときに起きる（ログインしている人だけ読める決まりのため、エラーにならず空が返る）
+  const loadProfiles = useCallback(async () => {
+    setProfilesError('');
+    const { data, error } = await supabase.from('profiles').select('id, name, role_title, employment_type, group_names, roles(acts_as)').eq('is_active', true);
+    if (error) { setProfilesError(error.message); return; }
+    const rows = (data ?? []) as { id: string; name: string; role_title: string; employment_type: string; group_names: string | string[]; roles?: unknown }[];
+    if (rows.length === 0) { setProfilesError('0人でした。少し待ってから再読み込みしてください'); return; }
     // 🚨 一覧から経理（立場 accounting）を除く。役職名 '管理者' では判定しない（2026-09-09 属性化）。
     //    立場が空の役職（一般・パート等）も残すので、neq ではなく取ってから除く
-    supabase.from('profiles').select('id, name, role_title, employment_type, group_names, roles(acts_as)').eq('is_active', true).then(({ data }) => {
-      if (data) setProfiles(data.filter((p: { roles?: unknown }) => embeddedRole(p as EmbeddedRoleRow<{ acts_as?: string | null }>)?.acts_as !== 'accounting').map((p: { id: string; name: string; role_title: string; employment_type: string; group_names: string | string[] }) => ({
-        ...p,
-        group_names: Array.isArray(p.group_names) ? p.group_names : (typeof p.group_names === 'string' ? JSON.parse(p.group_names) : []),
-      })));
-    });
+    setProfiles(rows.filter(p => embeddedRole(p as EmbeddedRoleRow<{ acts_as?: string | null }>)?.acts_as !== 'accounting').map(p => ({
+      ...p,
+      group_names: Array.isArray(p.group_names) ? p.group_names : (typeof p.group_names === 'string' ? JSON.parse(p.group_names) : []),
+    })));
+  }, []);
+
+  useEffect(() => {
+    // 入力シート用の一覧は、登録できる人にだけ読む（判定は canInput と同じトグル）
+    // 🚨 ログインしている人が決まってから読む（決まる前に読むと空が返る・2026-09-29）
+    if (!user?.id) return;
+    if (!canAttendanceInput && !isAdmin) return;
+    void loadProfiles();
     // 欠勤入力の校ドロップダウン用（勤務変更報告と同じ勤務地マスタ）
     supabase.from('master_options').select('value').eq('category', 'workplace').order('sort_order')
       .then(({ data }) => { if (data) setWorkplaces(data.map((r: { value: string }) => r.value)); });
     // 更新・別アプリ移動でシートが閉じても、入力途中の下書きがあればシートを開き直す
     const absDraft = loadDraft<AbsenceDraft>(DRAFT_KEYS.attendance);
     if (absDraft?.date) setAbsenceSheet(absDraft.date);
-  }, [canAttendanceInput, isAdmin]);
+  }, [canAttendanceInput, isAdmin, user?.id, loadProfiles]);
 
   // 休暇・欠勤の行に出すシフト調整の印（日ごと）。
   // 🚨 権限のある人のときだけ読む（持っていない人の通信を増やさない）。
@@ -2551,6 +2583,8 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
           onClose={() => setAbsenceSheet(null)}
           onSaving={() => { setAbsenceSaved(true); }}
           onSaved={() => { fetchAbsences(); }}
+          profilesError={profilesError}
+          onReloadProfiles={() => { void loadProfiles(); }}
         />
       )}
     </div>
