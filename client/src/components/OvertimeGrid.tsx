@@ -38,13 +38,14 @@ import { syncOvertimeGcal, supabaseBulkWriter, fetchGrantedWorkDates, fetchMyGra
 import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
 import OvertimeGrantPanel from './OvertimeGrantPanel';
 import { runBulkSend } from '../lib/overtimeBulkSend';
-import { requestSegmentsLocation, effectiveClockReasonOf } from '../lib/overtimeFormParts';
+import { requestSegmentsLocation, effectiveClockReasonOf, isManagerReviewer } from '../lib/overtimeFormParts';
 import { segmentsText, type SegmentLike } from '../lib/segmentsText';
 
 /** 送る前の確認で、打刻ズレ（確認なしで確定）をまとめる箱の名前（申請先の id と重ならない値） */
 const CLOCK_GROUP = '__clock__';
 
-interface Reviewer { id: string; name: string; role_title: string }
+// roles は欠勤の申請先（マネージャー以上）を見分けるため（1件フォームと同じ isManagerReviewer で見る・2026-09-29）
+interface Reviewer { id: string; name: string; role_title: string; roles?: unknown }
 
 interface Props {
   userId: string;
@@ -266,6 +267,9 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     setRowResults(prev => { if (!prev[date]) return prev; const n = { ...prev }; delete n[date]; return n; });
   };
 
+  // 欠勤の申請先はマネージャー以上（1件フォームと同じ判定・lib/overtimeFormParts の isManagerReviewer）
+  const reviewerIsManager = useMemo(() => (id: string) => isManagerReviewer(reviewers.find(rv => rv.id === id)), [reviewers]);
+
   const rows = useMemo(() => baseRows.map(r => {
     const draft = drafts[r.date] ?? initialRowDraft(r.kind, r.main, workplaces);
     const calc: GridRowCalc = computeGridRow({
@@ -273,9 +277,10 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
       defaultReviewerId: r.rowDefaultReviewer, canSelfReview, selfId: userId,
       closeLocked: isPayPeriodClosed(r.date, today) && !grants.has(r.date),
       focused: focusedDate === r.date,
+      reviewerIsManager,
     });
     return { ...r, draft, calc };
-  }), [baseRows, drafts, today, nowMin, advanceMaxDate, canSelfReview, grants, focusedDate, workplaces, userId]);
+  }), [baseRows, drafts, today, nowMin, advanceMaxDate, canSelfReview, grants, focusedDate, workplaces, userId, reviewerIsManager]);
   type Row = typeof rows[number];
 
   // 締め切りを過ぎ、経理の許可が無い新しい行（札の出し分け用。送れるかどうかは calc.state＝locked で見る）
@@ -369,7 +374,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
     const result = await runBulkSend(
       targets,
       date => rows.find(x => x.date === date),
-      { userId, profileName: profileName ?? '', canSelfReview, advanceMaxDate, grants, now: () => new Date(), today: todayJstStr },
+      { userId, profileName: profileName ?? '', canSelfReview, advanceMaxDate, grants, now: () => new Date(), today: todayJstStr, reviewerIsManager },
       supabaseBulkWriter,
       (date, status, message) => setRes(date, { status, message }),
       (done, total) => setProgress({ done, total }),
@@ -393,14 +398,16 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
    * 🚨 切り替えたら、前の種類で入れていたものは消す（ユーザー確定：時刻が残ると、開いたままの古い画面から時間の申請として送れてしまう）
    */
   const switchDayType = (r: Row, t: GridDayType) => {
-    if (t === 'clock_only') {
-      setRow(r.date, {
-        dayType: 'clock_only', segs: [{ start: '', end: '' }], breakMin: '', reason: '', changeReason: '',
-        lateChoice: null, earlyChoice: null, location: '', locationCustom: '', locMoveStart: '', locMoveEnd: '', reviewerId: '',
-      });
-    } else {
-      setRow(r.date, { dayType: 'time', clockInAt: '', clockOutAt: '', clockReason: '', clockReasonOther: '' });
-    }
+    const clearClock = { clockInAt: '', clockOutAt: '', clockReason: '', clockReasonOther: '' };
+    const clearTime = {
+      segs: [{ start: '', end: '' }], breakMin: '', changeReason: '', lateChoice: null, earlyChoice: null,
+      location: '', locationCustom: '', locMoveStart: '', locMoveEnd: '',
+    };
+    if (t === 'time') setRow(r.date, { dayType: 'time', ...clearClock });
+    // 打刻ズレは理由・申請先も持たない
+    else if (t === 'clock_only') setRow(r.date, { dayType: 'clock_only', ...clearTime, reason: '', reviewerId: '' });
+    // 終日（時間外調整休・欠勤）は理由と申請先を使うので残す（欠勤で申請先がマネージャー以上でなければ赤で知らせる＝黙って差し替えない）
+    else setRow(r.date, { dayType: t, ...clearTime, ...clearClock });
   };
 
   /** 新しい行を初めて触ったとき、時間が空ならその日の通常シフトを入れる（🚨 2本シフトの2本目の入れ忘れを防ぐ） */
@@ -522,6 +529,21 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
   const reviewerOptions = reviewers.filter(r => r.id !== userId);
   const reviewerName = (id: string) =>
     id === GRID_SELF_REVIEW ? '自己受理' : (reviewers.find(r => r.id === id)?.name ?? peopleNames.get(id) ?? (id === userId ? '自分' : '（元の申請先）'));
+  /**
+   * 新しく出す行の申請先の選択。欠勤（managersOnly）はマネージャー以上だけを並べる（1件フォームと同じ）。
+   * 🚨 選んでいた人がマネージャー以上でなくても選択肢から消さない（消すと別の人が選ばれているように見える）。行が赤で知らせる
+   */
+  const reviewerSelect = (r: Row, onPick: (v: string) => void, managersOnly: boolean) => (
+    <>
+      <select value={r.draft.reviewerId} onChange={e => onPick(e.target.value)} style={{ ...sel, maxWidth: 170 }} aria-label={`${md(r.date)} 申請先`}>
+        <option value="">{r.req ? `依頼した人（${r.req.requester_name ?? reviewerName(r.req.requester_id)}）` : defaultReviewerId ? `表の上と同じ（${reviewerName(defaultReviewerId)}）` : '表の上で選んでください'}</option>
+        {canSelfReview && <option value={GRID_SELF_REVIEW}>自己受理（自分で確認する）</option>}
+        {reviewerOptions.filter(rv => !managersOnly || isManagerReviewer(rv) || rv.id === r.draft.reviewerId)
+          .map(rv => <option key={rv.id} value={rv.id}>{rv.name}（{rv.role_title}）</option>)}
+      </select>
+      {managersOnly && <div style={{ fontSize: 11, color: subText, marginTop: 2 }}>欠勤はマネージャー以上の受理が必要です</div>}
+    </>
+  );
 
   return (
     <div style={{ background: cardBg, border: `1px solid ${borderColor}`, borderRadius: 12, padding: '16px 18px', color: text }}>
@@ -560,7 +582,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
 
       <div style={{ background: innerBg, border: `1px solid ${borderColor}`, borderRadius: 8, padding: '8px 12px', fontSize: 12.5, color: subText, marginBottom: 10, lineHeight: 1.7 }}>
         ・入力途中の内容は、この端末に保存されます<br />
-        ・時間を入れた日だけ送ります。空の日と、通常シフトと同じ日は送りません<br />
+        ・時間を入れた日（終日・打刻ズレは「種類」で選んだ日）だけ送ります。空の日と、通常シフトと同じ日は送りません<br />
         ・<b>実績報告・再提出の行は、触るまで送りません</b>。予定どおりなら［予定どおり］、残業が無かったら［残業なし］<br />
         ・時刻は「930」のように続けて打てます。理由の欄は Enter で下の行へ
       </div>
@@ -666,7 +688,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                   const idle = c.state === 'idle';
                   // 実績報告・再提出の行は、触った時点で「送る対象」に入れる
                   const touch = (patch: Partial<RowDraft>) => setRow(r.date, isEdit ? { ...patch, touched: true } : patch);
-                  const tagLabel = r.kind === 'new_today' ? (c.clockOnly ? '今日（事後報告）' : `今日（${c.sendLabel}）`) : r.kind === 'resubmit' ? c.sendLabel : undefined;
+                  const tagLabel = r.kind === 'new_today' ? `今日（${c.mode === 'advance' ? '事前申請' : '事後報告'}）` : r.kind === 'resubmit' ? c.sendLabel : undefined;
                   // 🚨 1行目と2行目（打刻ズレ）は同じ日。行をまたいで移るときに「行の外へ出た」と数えない（一瞬エラーの赤が出るため）
                   const rowFocus = {
                     'data-grid-date': r.date,
@@ -738,6 +760,47 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                           </td>
                           <td style={td}>{rep?.reviewer_id ? <span style={{ fontSize: 12, color: subText }}>{reviewerName(rep.reviewer_id)}</span> : null}</td>
                           <td style={{ ...td, ...sendCol, background: bg && bg.length <= 7 ? bg : cardBg }}><span style={{ fontSize: 12, color: subText }}>{r.kind === 'done' || r.kind === 'leave_auto' ? '済み' : ''}</span></td>
+                        </>
+                      ) : c.fullDayType ? (
+                        <>
+                          {/* 終日（時間外調整休・欠勤・2026-09-29）。🚨 言葉は1件フォームの「この申請が合計時間数にどう効くか」と同じ */}
+                          <td style={td} colSpan={3}>
+                            <span style={{ fontSize: 12, color: subText }}>終日（時刻なし）</span>
+                            <div style={{ fontSize: 12, marginTop: 2 }}>
+                              {c.fullDayType === 'chosei_off'
+                                ? <>シフト労働分 <b style={{ color: c.diffMin < 0 ? '#c62828' : subText }}>{formatSignedMin(c.diffMin)}</b> を合計時間数から差し引きます</>
+                                : '欠勤1日として記録します'}
+                            </div>
+                          </td>
+                          <td style={{ ...td, minWidth: 200 }}>
+                            <input type="text" value={r.draft.reason} placeholder="理由" data-grid-col="reason"
+                              onChange={e => touch({ reason: e.target.value })} onKeyDown={e => onEnterNext(e, 'reason')}
+                              style={{ ...txt, ...(c.state === 'error' && c.message === '理由を入力してください' ? { border: '2px solid #e24b4a' } : {}) }}
+                              aria-label={`${md(r.date)} 理由`} />
+                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 4, fontSize: 12 }}>
+                              {r.ns.location ? (
+                                <span style={{ color: subText }}>勤務地：{r.ns.location}（シフトから自動）</span>
+                              ) : (
+                                <>
+                                  {/* シフトに校が無い日だけ選ぶ（1件フォームと同じ）。終日なので「移動あり」は出さない */}
+                                  <select value={r.draft.location} onChange={e => touch({ location: e.target.value })} style={sel} aria-label={`${md(r.date)} 勤務地`}>
+                                    <option value="">勤務地</option>
+                                    {workplaces.map(w => <option key={w} value={w}>{w}</option>)}
+                                    <option value="その他">その他</option>
+                                  </select>
+                                  {r.draft.location === 'その他' && (
+                                    <input type="text" value={r.draft.locationCustom} placeholder="勤務地" onChange={e => touch({ locationCustom: e.target.value })}
+                                      style={{ ...txt, minWidth: 0, width: 130 }} aria-label={`${md(r.date)} 勤務地（その他）`} />
+                                  )}
+                                </>
+                              )}
+                            </div>
+                            {c.message && (c.state === 'error' || c.state === 'locked') && (
+                              <div style={{ fontSize: 11.5, fontWeight: 'bold', marginTop: 3, color: c.state === 'error' ? '#e24b4a' : subText }}>{c.message}</div>
+                            )}
+                          </td>
+                          <td style={td}>{reviewerSelect(r, v => touch({ reviewerId: v }), c.fullDayType === 'absence')}</td>
+                          <td style={{ ...td, ...sendCol, background: bg && bg.length <= 7 ? bg : cardBg }}>{sendCell(c, r.date, r.req ? '（依頼に答える）' : '')}</td>
                         </>
                       ) : c.clockOnly ? (
                         <>
@@ -874,11 +937,7 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
                             {isEdit ? (
                               <span style={{ fontSize: 12, color: subText }}>{c.isSelfReview ? '自己受理' : reviewerName(c.reviewerId)}<br />（元の申請のまま）</span>
                             ) : (
-                              <select value={r.draft.reviewerId} onChange={e => touch({ reviewerId: e.target.value })} style={{ ...sel, maxWidth: 170 }} aria-label={`${md(r.date)} 申請先`}>
-                                <option value="">{r.req ? `依頼した人（${r.req.requester_name ?? reviewerName(r.req.requester_id)}）` : defaultReviewerId ? `表の上と同じ（${reviewerName(defaultReviewerId)}）` : '表の上で選んでください'}</option>
-                                {canSelfReview && <option value={GRID_SELF_REVIEW}>自己受理（自分で確認する）</option>}
-                                {reviewerOptions.map(rv => <option key={rv.id} value={rv.id}>{rv.name}（{rv.role_title}）</option>)}
-                              </select>
+                              reviewerSelect(r, v => touch({ reviewerId: v }), false)
                             )}
                           </td>
                           <td style={{ ...td, ...sendCol, background: bg && bg.length <= 7 ? bg : cardBg }}>{sendCell(c, r.date, r.req ? '（依頼に答える）' : '')}</td>
@@ -969,6 +1028,15 @@ const OvertimeGrid: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin
               groups.set(k, [...(groups.get(k) ?? []), r]);
             });
             const line = (r: Row) => {
+              if (r.calc.fullDayType) {
+                return (
+                  <div key={r.date} style={{ fontSize: 13, padding: '2px 0' }}>
+                    <b>{md(r.date)}（{DOW[dowOf(r.date)]}）</b> {r.calc.sendLabel}{r.req ? '（依頼に答える）' : ''}：終日
+                    {' '}{r.calc.fullDayType === 'absence' ? '欠勤1日' : <b style={{ color: r.calc.diffMin < 0 ? '#c62828' : subText }}>{formatSignedMin(r.calc.diffMin)}</b>}
+                    {' '}「{r.draft.reason.trim()}」
+                  </div>
+                );
+              }
               if (r.calc.clockOnly) {
                 const ci = r.draft.clockInAt ?? '', co = r.draft.clockOutAt ?? '';
                 return (

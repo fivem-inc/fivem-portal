@@ -58,6 +58,8 @@ export interface BulkWriter {
   slack(reportIds: string[], eventKey: 'overtime:new_request' | 'overtime:confirmed'): Promise<void>;
   /** Google カレンダーへ。失敗したら false */
   gcal(reportId: string): Promise<boolean>;
+  /** 休暇からの時間外調整休（自動計上）が同じ日にあるか。🚨 DB に網が無いので時間外調整休を出す直前に確かめる（読めなければ止める・1件フォームと同じ） */
+  findLeaveAutoDuplicate(userId: string, date: string): Promise<{ dup: boolean; error: string | null }>;
 }
 
 export interface BulkCtx {
@@ -70,6 +72,8 @@ export interface BulkCtx {
   now: () => Date;
   /** 今日（JST の YYYY-MM-DD） */
   today: () => string;
+  /** 申請先がマネージャー以上か（欠勤の申請先のチェック）。🚨 必須（リーダー宛の欠勤を止める網はここだけ。computeGridRow の説明） */
+  reviewerIsManager: (id: string) => boolean;
 }
 
 export interface BulkResult {
@@ -111,7 +115,19 @@ export function recomputeRow(r: BulkRow, ctx: BulkCtx, now: Date = ctx.now()): G
     ns: r.ns, main: r.main, draft: r.draft,
     defaultReviewerId: r.rowDefaultReviewer, canSelfReview: ctx.canSelfReview, selfId: ctx.userId,
     closeLocked: isPayPeriodClosed(r.date, today) && !ctx.grants.has(r.date), focused: false,
+    reviewerIsManager: ctx.reviewerIsManager,
   });
+}
+
+/**
+ * メールの「時間」。時間の申請は差分の合計、終日は種類ごとの件数（例「計+1:00・時間外調整休1件（2件）」）。
+ * 終日だけの1件は種類の名前だけ（1件フォームのメールと同じ「時間外調整休」）
+ */
+export function mailTimeLabel(g: { diff: number; timeCount: number; fullDays: Record<string, number> }, total: number): string {
+  const fd = Object.entries(g.fullDays);
+  if (total === 1 && g.timeCount === 0 && fd.length === 1) return fd[0][0];
+  const parts = [...(g.timeCount > 0 ? [`計${formatSignedMin(g.diff)}`] : []), ...fd.map(([k, n]) => `${k}${n}件`)];
+  return `${parts.join('・')}（${total}件）`;
 }
 
 /**
@@ -129,7 +145,8 @@ export async function runBulkSend(
   const sentIds: string[] = [];
   const sentDates: string[] = [];
   // メールは申請先ごとに1通（🚨 ベルは1件ずつ）
-  const mailGroups = new Map<string, { dates: string[]; diff: number; phases: Record<string, number> }>();
+  // 🚨 終日（時間外調整休・欠勤）は時間の合計に混ぜず、種類ごとの件数で書く（2026-09-29。1件フォームのメールは「時間外調整休」と種類の名前）
+  const mailGroups = new Map<string, { dates: string[]; diff: number; timeCount: number; fullDays: Record<string, number>; phases: Record<string, number> }>();
   // Slack は種類ごとに1通（🚨 宛先はチャンネルなので申請先ごとには分けない）
   const slackNew: string[] = [];
   const slackConfirmed: string[] = [];
@@ -160,19 +177,29 @@ export async function runBulkSend(
       else if (!sameGridReport(r.main, data as GridReport)) freshErr = '表を開いたあとで、この申請の状態か内容が変わっています（受理・差し戻し・修正など）。表を読み直してから、もう一度送ってください';
       else fresh = data;
     }
+    // 🚨 時間外調整休は、休暇からの自動計上が同じ日に無いかを送る直前に確かめる（DB に網が無い・読めなければ止める・1件フォームと同じ文）
+    let choseiNg = '';
+    if (r && c && (c.state === 'ok' || c.state === 'warn') && c.sendLabel === t.label && c.fullDayType === 'chosei_off') {
+      const x = await writer.findLeaveAutoDuplicate(ctx.userId, r.date);
+      choseiNg = x.error ?? (x.dup ? 'この日は休暇申請の時間外調整休がすでに計上されています' : '');
+    }
     if (!r || !c || (c.state !== 'ok' && c.state !== 'warn')) {
       failed++; onRow(t.date, 'failed', c?.message || '送れる状態ではありません');
     } else if (c.sendLabel !== t.label) {
       failed++; onRow(t.date, 'failed', `種類が変わりました（${t.label} → ${c.sendLabel}）。確認し直してから送ってください`);
     } else if (isEdit && !fresh) {
       check++; onRow(t.date, 'check', freshErr);
+    } else if (choseiNg) {
+      failed++; onRow(t.date, 'failed', choseiNg);
     } else {
       const nowIso = now.toISOString();
       const record = buildOvertimeRecord({
-        userId: ctx.userId, date: r.date, mode: c.mode, phase: c.phase, fullDayMode: false, fullDayType: null,
+        // 終日（2026-09-29・5回目）：保存の中身は buildOvertimeRecord の終日の枝（時刻なし・状態は自己受理なら確定／他人宛は申請中）
+        userId: ctx.userId, date: r.date, mode: c.mode, phase: c.phase, fullDayMode: !!c.fullDayType, fullDayType: c.fullDayType,
         isSelfReview: c.isSelfReview, isPureZero: c.isPureZero, isReportPhase: c.isReportPhase, isResubmit: c.isResubmit, hasChanges: c.hasChanges,
         normalShift: r.ns, breakMin: c.breakMin, breakManual: r.draft.breakMin.trim() !== '', laborMin: c.laborMin, diffMin: c.diffMin,
-        fdDiffMin: 0, legalOk: c.legalOk, reason: r.draft.reason, changeReason: r.draft.changeReason, fdLocation: '', effectiveLocation: c.effectiveLocation,
+        fdDiffMin: c.fullDayType ? c.diffMin : 0, legalOk: c.legalOk, reason: r.draft.reason, changeReason: r.draft.changeReason,
+        fdLocation: c.fullDayType ? c.effectiveLocation : '', effectiveLocation: c.effectiveLocation,
         applicationTypes: c.applicationTypes,
         lateChoice: r.draft.lateChoice, earlyChoice: r.draft.earlyChoice,
         // 🚨 表ではカレンダーに載せるかを聞かない。新しい行は null（種類ごとの既定）。
@@ -224,8 +251,10 @@ export async function runBulkSend(
             reportId: saved.reportId, reviewerId: c.reviewerId, applicantName: ctx.profileName,
             phaseLabel, dateLabel: fullDateLabel(r.date), timeLabel: overtimeAmountLabel(c.applicationTypes, c.diffMin),
           });
-          const g = mailGroups.get(c.reviewerId) ?? { dates: [], diff: 0, phases: {} };
-          g.dates.push(r.date); g.diff += c.diffMin; g.phases[phaseLabel] = (g.phases[phaseLabel] ?? 0) + 1;
+          const g = mailGroups.get(c.reviewerId) ?? { dates: [], diff: 0, timeCount: 0, fullDays: {}, phases: {} };
+          g.dates.push(r.date); g.phases[phaseLabel] = (g.phases[phaseLabel] ?? 0) + 1;
+          if (c.fullDayType) { const k = overtimeAmountLabel(c.applicationTypes, c.diffMin); g.fullDays[k] = (g.fullDays[k] ?? 0) + 1; }
+          else { g.diff += c.diffMin; g.timeCount++; }
           mailGroups.set(c.reviewerId, g);
           slackNew.push(saved.reportId);
         } else if (c.isSelfReview && !c.isPureZero && !c.clockOnly) {
@@ -244,7 +273,7 @@ export async function runBulkSend(
       reviewerId, applicantName: ctx.profileName,
       phaseLabel: Object.entries(g.phases).map(([k, v]) => `${k}${v}件`).join('・'),
       dateLabel: ds.length > 1 ? `${fullDateLabel(ds[0])}ほか${ds.length - 1}日` : fullDateLabel(ds[0]),
-      timeLabel: `計${formatSignedMin(g.diff)}（${ds.length}件）`,
+      timeLabel: mailTimeLabel(g, ds.length),
     });
   }
 

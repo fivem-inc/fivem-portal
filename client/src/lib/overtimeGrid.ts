@@ -5,14 +5,14 @@
 
 import { payPeriodEnd, minToTime, checkLegalBreak } from './breakCalc';
 import type { WorkSegment } from './breakCalc';
-import { isFullDayReport } from './overtimeTypes';
+import { isFullDayReport, OT_TYPE_INFO } from './overtimeTypes';
 import type { OvertimeType } from './overtimeTypes';
 import {
   canReportOvertime, toWorkSegments, segmentIssuesOf, detectOvertimeTypes, composeApplicationTypes,
   effectiveLocationOf, validateOvertime, overtimePhase, isSameAsNormalShift,
 } from './overtimeSubmit';
 import type { SegInput, TypeDetect, LateChoice, EarlyChoice } from './overtimeSubmit';
-import { buildWorkDiff } from './overtimeShift';
+import { buildWorkDiff, fullDayDiffMin } from './overtimeShift';
 import type { NormalShiftSnapshot } from './overtimeShift';
 import type { OvertimeStatus } from './overtimeStatus';
 import { storedLocationChoice, storedLocationCustom, splitMoveLocation } from './overtimeFormParts';
@@ -155,9 +155,15 @@ export const GRID_SELF_REVIEW = '__self__';
 
 /**
  * 新しく出す行の種類（「種類」の列の［時間 ▼］・2026-09-29 ユーザー確定 案A）。
- * 🚨 4回目は「時間」と「打刻が遅れただけ」。終日（時間外調整休・欠勤・振替休日）は5・6回目で足す
+ * 🚨 4回目で「打刻が遅れただけ」、5回目で終日の「時間外調整休」「欠勤」を足した。振替休日は6回目で足す
  */
-export type GridDayType = 'time' | 'clock_only';
+export type GridDayType = 'time' | 'chosei_off' | 'absence' | 'clock_only';
+
+/** 終日の種類（表で扱うもの）。🚨 振替休日は6回目 */
+export type GridFullDayType = 'chosei_off' | 'absence';
+export function isGridFullDay(t: GridDayType | null | undefined): t is GridFullDayType {
+  return t === 'chosei_off' || t === 'absence';
+}
 
 /**
  * 種類の選択肢（名前・並び・選べない理由）。🚨 表と［まとめて申請］で同じものを使う（ここに1か所）。
@@ -166,8 +172,12 @@ export type GridDayType = 'time' | 'clock_only';
 export function gridDayTypeOptions(kind: GridDayKind, ns: NormalShiftSnapshot): { value: GridDayType; label: string; disabledReason: string }[] {
   // 打刻ズレは事後報告の新規だけ（1件フォームと同じ）。今日は事後報告として出す（2026-09-29 ユーザー確定）
   const clockNg = kind === 'new_advance' ? '先の日は選べません' : !ns.start_time ? '休みの日は選べません' : '';
+  // 終日は出勤予定日だけ（1件フォームと同じ：validateOvertime の終日の枝）。先の日は事前申請・過ぎた日は事後報告・今日は事前申請（ユーザー確定）
+  const fullNg = !ns.start_time ? '休みの日は選べません' : '';
   return [
     { value: 'time', label: '時間', disabledReason: '' },
+    { value: 'chosei_off', label: '時間外調整休（終日）', disabledReason: fullNg },
+    { value: 'absence', label: '欠勤（終日）', disabledReason: fullNg },
     { value: 'clock_only', label: '打刻が遅れただけ', disabledReason: clockNg },
   ];
 }
@@ -292,6 +302,8 @@ export interface GridRowCalc {
   sendLabel: string;
   /** 打刻ズレ（残業ではありません）の行か。送るときは確認なしで確定・通知なし（1件フォームと同じ） */
   clockOnly: boolean;
+  /** 終日（時間外調整休・欠勤）の行ならその種類。🚨 差分（diffMin）は種類ごとの効き（調整休＝−シフト労働／欠勤＝0）、勤務地（effectiveLocation）はシフトの校 */
+  fullDayType: GridFullDayType | null;
 }
 
 const NOCHANGE_MSG = '通常シフトと同じ内容です。残業・早退・調整など、変更した点を入力してください';
@@ -317,14 +329,20 @@ export function computeGridRow(a: {
   /** 締め切りを過ぎ、経理の許可も無い（新しく出す行だけに効く） */
   closeLocked: boolean;
   focused: boolean;
+  /**
+   * 申請先がマネージャー以上か（欠勤の申請先のチェック）。
+   * 🚨 必須。DB・受理側（overtime-approve）が止めるのは欠勤の「自己受理」だけで、リーダー宛の欠勤は止まらない＝ここが唯一の網
+   */
+  reviewerIsManager: (id: string) => boolean;
 }): GridRowCalc {
   const { kind, date, today, nowMin, ns, main, draft } = a;
   const isReportPhase = kind === 'report';
   const isResubmit = kind === 'resubmit';
   const isEdit = isReportPhase || isResubmit;
   // 打刻ズレは別の計算（時刻・勤務地・申請先を持たない）
-  if (!isEdit && (draft.dayType ?? 'time') === 'clock_only'
-    && (kind === 'new_post' || kind === 'new_today' || kind === 'new_advance')) return computeClockOnlyRow(a);
+  const isNewKind = kind === 'new_post' || kind === 'new_today' || kind === 'new_advance';
+  if (!isEdit && isNewKind && (draft.dayType ?? 'time') === 'clock_only') return computeClockOnlyRow(a);
+  if (!isEdit && isNewKind && isGridFullDay(draft.dayType)) return computeFullDayRow(a, draft.dayType);
   const segments = draft.segs;
   const workSegments = toWorkSegments(segments);
   const breakManual = draft.breakMin.trim() !== '';
@@ -380,7 +398,7 @@ export function computeGridRow(a: {
     message: '', mode, phase, isReportPhase, isResubmit, workSegments,
     breakMin: diff.break_minutes, laborMin: diff.labor_minutes, diffMin: diff.diff_minutes, legalOk: legal.ok,
     typeDetect, applicationTypes, effectiveLocation, hasChanges, changedAxes, isPureZero, reviewerId, isSelfReview, sendLabel,
-    clockOnly: false,
+    clockOnly: false, fullDayType: null,
   };
 
   const editable: GridDayKind[] = ['new_post', 'new_advance', 'new_today', 'report', 'resubmit'];
@@ -435,7 +453,7 @@ function computeClockOnlyRow(a: Parameters<typeof computeGridRow>[0]): GridRowCa
     message: '', mode, phase, isReportPhase: false, isResubmit: false, workSegments,
     breakMin: ns.break_minutes, laborMin: ns.labor_minutes, diffMin: 0, legalOk: true,
     typeDetect, applicationTypes: ['clock_only'] as OvertimeType[], effectiveLocation, hasChanges: false, changedAxes: [] as string[],
-    isPureZero: false, reviewerId: '', isSelfReview: false, sendLabel: '打刻ズレの記録（確定）', clockOnly: true,
+    isPureZero: false, reviewerId: '', isSelfReview: false, sendLabel: '打刻ズレの記録（確定）', clockOnly: true, fullDayType: null,
   };
   const ng = gridDayTypeOptions(kind, ns).find(o => o.value === 'clock_only')?.disabledReason ?? '';
   const message = ng ? '打刻が遅れただけは選べません（' + ng + '）' : validateOvertime({
@@ -453,6 +471,55 @@ function computeClockOnlyRow(a: Parameters<typeof computeGridRow>[0]): GridRowCa
     typeDetect, lateChoice: null, earlyChoice: null,
   });
   if (message) return { ...calc, state: a.focused ? 'editing' : 'error', message };
+  if (a.closeLocked) return { ...calc, state: 'locked', message: '締め切り後のため、経理の許可が要ります（表の上から依頼できます）' };
+  return { ...calc, state: 'ok' };
+}
+
+/**
+ * 終日（時間外調整休・欠勤）の行（2026-09-29・計画の5回目）。
+ * 🚨 1件フォームと同じ：時刻なし・差分は fullDayDiffMin（調整休＝−シフト労働／欠勤＝0）・勤務地はシフトの校（無い日だけ選ぶ）・
+ *    理由と申請先は必須・欠勤の申請先はマネージャー以上（黙って差し替えず赤で）。判定は validateOvertime の終日の枝、保存は buildOvertimeRecord
+ * 🚨 事前か事後か：過ぎた日＝事後報告／今日と先の日＝事前申請（ユーザー確定。1件フォームも今日の終日を事前申請で出せる）
+ */
+function computeFullDayRow(a: Parameters<typeof computeGridRow>[0], fdt: GridFullDayType): GridRowCalc {
+  const { kind, date, today, nowMin, ns, draft } = a;
+  const mode: 'advance' | 'posthoc' = kind === 'new_post' ? 'posthoc' : 'advance';
+  const phase = overtimePhase({ mode, isReportPhase: false, isResubmit: false, editTarget: null });
+  const effectiveLocation = effectiveLocationOf(draft.location, draft.locationCustom, draft.locMoveStart ?? '', draft.locMoveEnd ?? '');
+  // 終日の勤務地はシフトの校を自動で使う（シフトに校が無い日だけ手で選ぶ）＝1件フォームの fdLocation と同じ
+  const fdLocation = ns.location ?? effectiveLocation;
+  const typeDetect = detectOvertimeTypes({ hasDate: true, workSegments: [], normalShift: ns, effectiveLocation });
+  const applicationTypes = composeApplicationTypes({ typeDetect, lateChoice: null, earlyChoice: null, fullDay: true, fullDayType: fdt });
+  const diffMin = fullDayDiffMin(fdt, ns);
+  const reviewerId = draft.reviewerId || a.defaultReviewerId;
+  const isSelfReview = reviewerId === GRID_SELF_REVIEW;
+  const calc = {
+    message: '', mode, phase, isReportPhase: false, isResubmit: false, workSegments: [] as WorkSegment[],
+    breakMin: 0, laborMin: 0, diffMin, legalOk: true,
+    typeDetect, applicationTypes, effectiveLocation: fdLocation, hasChanges: false, changedAxes: [] as string[],
+    isPureZero: false, reviewerId, isSelfReview,
+    sendLabel: (mode === 'advance' ? '事前申請' : '事後報告') + '（' + OT_TYPE_INFO[fdt].label + '）',
+    clockOnly: false, fullDayType: fdt,
+  };
+  const ng = gridDayTypeOptions(kind, ns).find(o => o.value === fdt)?.disabledReason ?? '';
+  const message = ng ? OT_TYPE_INFO[fdt].label + 'は選べません（' + ng + '）' : validateOvertime({
+    date, mode, hasEditTarget: false, today, advanceMaxDate: a.advanceMaxDate,
+    // 🚨 締め切りは最後に見る（時間の行と同じ）
+    closeLocked: false, clockOnlyMode: false, normalShift: ns,
+    clockReason: '', clockReasonOther: '', fullDay: true, fullDayType: fdt, fdLocation,
+    furikaeOriginDate: '', furikaeOriginLocation: '', furikaeOriginLocationCustom: '', furikaeOriginStart: '', furikaeOriginEnd: '', furikaeHasTime: false,
+    reason: draft.reason, reviewerId, isSelfReview, canSelfReview: a.canSelfReview,
+    absenceReviewerOk: (!reviewerId || isSelfReview) ? undefined : a.reviewerIsManager(reviewerId),
+    segments: [], workSegments: [], segmentIssues: segmentIssuesOf([]),
+    isTodayPostHoc: false, nowMin,
+    breakManual: false, breakManualMin: '',
+    location: draft.location, locationCustom: draft.locationCustom, locMoveStart: draft.locMoveStart ?? '', locMoveEnd: draft.locMoveEnd ?? '', effectiveLocation,
+    normalSegs: normalSegsOf(ns), isReportPhase: false, hasChanges: false, isPureZero: false, changeReason: '',
+    typeDetect, lateChoice: null, earlyChoice: null,
+  });
+  // 🚨 自己受理はマネージャー以上だけ（時間の行と同じ）
+  const msg = message || (isSelfReview && !a.canSelfReview ? '自己受理はマネージャー以上のみです' : '');
+  if (msg) return { ...calc, state: a.focused ? 'editing' : 'error', message: msg };
   if (a.closeLocked) return { ...calc, state: 'locked', message: '締め切り後のため、経理の許可が要ります（表の上から依頼できます）' };
   return { ...calc, state: 'ok' };
 }

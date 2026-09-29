@@ -203,6 +203,8 @@ export const supabaseBulkWriter: BulkWriter = {
     return { data: (data as (GridReport & Record<string, unknown>) | null) ?? null, error: error ? error.message : null };
   },
   save: saveOvertimeReport,
+  // 時間外調整休の二重計上の網（1件フォームと同じ関数・2026-09-29）
+  findLeaveAutoDuplicate,
   async findExistingManual(userId, date) {
     // 🚨 読めなかったときは error を返す（「内容が違います」と取り違えないため・2026-09-29）
     const { data, error } = await supabase.from('overtime_reports').select('diff_minutes, reason, application_types, location, furikae_origin_date')
