@@ -24,7 +24,7 @@ import type { WorkSegment, DayKind, CalendarKind } from '../lib/breakCalc';
 import { retireeReturnNote } from '../lib/retire';
 import { saveOvertimeReport, syncOvertimeGcal, findLeaveAutoDuplicate, fetchGrantedWorkDates as loadGrantedWorkDates, fetchMyGrantRequests as loadMyGrantRequests, insertGrantRequest, withdrawGrantRequest, fetchClosedAllDates } from '../lib/overtimeSubmitApi';
 import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
-import { storedLocationChoice, storedLocationCustom, splitMoveLocation, requestSegmentsLocation, furikaeOriginCalc, furikaeOriginPrefill, effectiveOtherLocation, isManagerReviewer, shouldNotifyReviewer, reviewerPhaseLabel, editHistorySummary, grantRequestErrorMessage, formatGrantDates, effectiveClockReasonOf } from '../lib/overtimeFormParts';
+import { storedLocationChoice, storedLocationCustom, splitMoveLocation, requestSegmentsLocation, furikaeOriginCalc, furikaeOriginPrefill, effectiveOtherLocation, isManagerReviewer, shouldNotifyReviewer, reviewerPhaseLabel, editHistorySummary, grantRequestErrorMessage, formatGrantDates, effectiveClockReasonOf, PAYOUT_PASSED_MSG } from '../lib/overtimeFormParts';
 import { STATUS_INFO } from '../lib/overtimeStatus';
 import OvertimeGrid from '../components/OvertimeGrid';
 import OvertimeBox from '../components/OvertimeBox';
@@ -1422,7 +1422,8 @@ const OvertimeForm: React.FC<{
           🚨 フォームの箱の先頭に移動すると、**注意事項の一覧が出るだけで入力欄が見えない**。 */}
       <div ref={inputsTopRef} />
 
-      {/* メモ（左）とクリア（右）。🚨 押し間違いを防ぐため両端に離して置く（2026-09-17 ユーザー確定） */}
+      {/* メモ（左）とクリア（右）。🚨 押し間違いを防ぐため両端に離して置く（2026-09-17 ユーザー確定）。
+          ［クリア］は全フォーム共通の丸い枠（2026-09-30 ユーザー確定。［メモ］は開く操作なので灰色の四角のまま） */}
       {!editTarget && (canMemo ? (
         <OvertimeMemoSection
           userId={user.id} isDark={isDark} workplaces={workplaces}
@@ -1431,7 +1432,7 @@ const OvertimeForm: React.FC<{
           onOpenChange={setMemoOpen}
           rightSlot={
             <button type="button" onClick={handleClear}
-              style={{ background: isDark ? '#495057' : '#f1f3f5', border: `1px solid ${isDark ? '#6c757d' : '#ced4da'}`, borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 'bold', color: isDark ? '#e9ecef' : '#495057', padding: '5px 14px' }}>
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: isDark ? '#adb5bd' : '#8a939c', background: 'none', border: `1px solid ${isDark ? '#555' : '#d5dae0'}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
               クリア
             </button>
           }
@@ -1439,7 +1440,7 @@ const OvertimeForm: React.FC<{
       ) : (
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
           <button type="button" onClick={handleClear}
-            style={{ background: isDark ? '#495057' : '#f1f3f5', border: `1px solid ${isDark ? '#6c757d' : '#ced4da'}`, borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 'bold', color: isDark ? '#e9ecef' : '#495057', padding: '5px 14px' }}>
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: isDark ? '#adb5bd' : '#8a939c', background: 'none', border: `1px solid ${isDark ? '#555' : '#d5dae0'}`, borderRadius: 14, padding: '4px 12px', cursor: 'pointer' }}>
             クリア
           </button>
         </div>
@@ -1533,7 +1534,7 @@ const OvertimeForm: React.FC<{
           {payoutPassed ? (
             <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 10, padding: '10px 12px' }}>
               <p style={{ margin: 0, fontSize: 12.5, color: '#842029', lineHeight: 1.6 }}>
-                この給与期間は給与データが確定済みのため依頼できません。管理者にご相談ください。
+                {PAYOUT_PASSED_MSG}
               </p>
             </div>
           ) : myOpenGrantRequest ? (

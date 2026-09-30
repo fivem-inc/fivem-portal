@@ -263,7 +263,7 @@ const MultiDatePicker: React.FC<{
           <span style={{ fontSize: 13, color: '#28a745', fontWeight: 'bold' }}>✓ {selectedDates.length}日選択中</span>
           <button
             onClick={() => onChange([])}
-            style={{ padding: '2px 10px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', fontSize: 11 }}
+            style={{ fontSize: 11, color: '#dc3545', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
           >クリア</button>
         </div>
       )}

@@ -146,6 +146,9 @@ export function editHistorySummary(a: {
 // 締め後の許可の依頼
 // ────────────────────────────────────────────
 
+/** 給与データが確定した期間の日（許可の依頼もできない）。1件フォーム・許可の依頼の枠・［まとめて申請］で同じ文を出す */
+export const PAYOUT_PASSED_MSG = 'この給与期間は給与データが確定済みのため依頼できません。管理者にご相談ください。';
+
 /** 依頼の送信に失敗したときの文（DB が返すエラー名を日本語にする） */
 export function grantRequestErrorMessage(dbMessage: string): string {
   const msg = dbMessage || '';

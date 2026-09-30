@@ -9,7 +9,7 @@
 import React, { useRef, useState } from 'react';
 import { insertGrantRequest, withdrawGrantRequest } from '../lib/overtimeSubmitApi';
 import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
-import { grantRequestErrorMessage, formatGrantDates } from '../lib/overtimeFormParts';
+import { grantRequestErrorMessage, formatGrantDates, PAYOUT_PASSED_MSG } from '../lib/overtimeFormParts';
 import { notifyOvertimeGrantRequest } from '../lib/overtimeNotify';
 
 interface Props {
@@ -101,7 +101,7 @@ const OvertimeGrantPanel: React.FC<Props> = ({
   }
 
   if (payoutPassed) {
-    if (requestable.length > 0 || declinedRequests.length > 0) parts.push(<div key="payout" style={redBox}>この給与期間は給与データが確定済みのため依頼できません。管理者にご相談ください。</div>);
+    if (requestable.length > 0 || declinedRequests.length > 0) parts.push(<div key="payout" style={redBox}>{PAYOUT_PASSED_MSG}</div>);
   } else if (confirmDates) {
     parts.push(
       <div key="confirm">

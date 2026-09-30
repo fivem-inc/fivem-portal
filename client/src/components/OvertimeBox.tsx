@@ -37,7 +37,7 @@ import OvertimeGrantPanel from './OvertimeGrantPanel';
 import OvertimeNotes from './OvertimeNotes';
 import { runBulkSend } from '../lib/overtimeBulkSend';
 import type { BulkRowStatus } from '../lib/overtimeBulkSend';
-import { requestSegmentsLocation, effectiveClockReasonOf, isManagerReviewer, furikaeOriginPrefill } from '../lib/overtimeFormParts';
+import { requestSegmentsLocation, effectiveClockReasonOf, isManagerReviewer, furikaeOriginPrefill, PAYOUT_PASSED_MSG } from '../lib/overtimeFormParts';
 import type { SegmentLike } from '../lib/segmentsText';
 
 interface Reviewer { id: string; name: string; role_title: string; roles?: unknown }
@@ -73,6 +73,8 @@ interface BoxStore { items: BoxItem[]; input: BoxInput; lastReviewerId: string }
 
 /** 送る前の確認で、打刻ズレ（確認なしで確定）をまとめる箱の名前 */
 const CLOCK_GROUP = '__clock__';
+/** 一度にリストに入れられる件数（2026-09-30 ユーザー確定：多すぎると送信の途中で切れたときに分かりにくい） */
+const MAX_BOX_ITEMS = 10;
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 const md = shortMd;
 const dowOf = (d: string) => { const [y, m, dd] = d.split('-').map(Number); return new Date(y, m - 1, dd).getDay(); };
@@ -201,6 +203,9 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
   const [tried, setTried] = useState(false);        // ［追加］を押したあとだけ赤い文を出す（入れている途中で赤くしない）
   const [addError, setAddError] = useState('');
   const [banner, setBanner] = useState<'' | 'copy' | 'edit'>('');
+  // ［複製］［直す］で上の枠へ移る先（注意事項のぶんページの先頭まで行かないように・2026-09-30 ユーザー指示）
+  const inputTopRef = useRef<HTMLDivElement | null>(null);
+  const scrollToInput = () => setTimeout(() => inputTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
   // 入力中の内容を消して［直す］［複製］してよいかの確認
   const [pending, setPending] = useState<{ kind: 'edit' | 'copy'; key: string } | null>(null);
   // 振替元の日を選んだときに自動で入れた時刻（表入力と同じ：休みの日に選び直したら、自動で入れた時刻だけ消す）
@@ -342,12 +347,16 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
     if (!input.date) { setAddError('日付を選んでください'); return; }
     if (outOfWindow(input.date)) { setAddError('この日は古すぎるため、ここからは出せません（管理者にご相談ください）'); return; }
     if (items.some(it => it.date === input.date && it.key !== input.editingKey)) { setAddError('この日はすでにリストにあります（直すときはリストの［直す］）'); return; }
+    // 🚨 ［直す］（置き換え）は数が増えないので止めない
+    if (!input.editingKey && items.length >= MAX_BOX_ITEMS) { setAddError(`一度にリストに入れられるのは${MAX_BOX_ITEMS}件までです。いったん［申請する］で送ってから、続きを入れてください`); return; }
     const r = inputRow;
     if (!r) { setAddError('読み込み中です。少し待ってからもう一度押してください'); return; }
     if (!isNewGridKind(r.kind)) { setAddError(kindNgMessage(r.kind, advanceMaxDate)); return; }
     const st = r.calc.state;
     if (st === 'empty') { setAddError('時間を入力してください'); return; }
     if (st === 'nochange' || st === 'error' || st === 'editing') { setAddError(r.calc.message || '入力を確かめてください'); return; }
+    // 給与データが確定した期間は、許可の依頼もできないので入れない（1件フォームと同じ）
+    if (st === 'locked' && payoutPassedOf(input.date)) { setAddError(PAYOUT_PASSED_MSG); return; }
     if (!r.calc.clockOnly && !reviewerAllowed(input.date, input.draft.reviewerId)) { setAddError('この申請先は選べません（退職・役職の変更など）。選び直してください'); return; }
     // ok・warn・locked（締め後＝許可待ち）は入れる。締め後はリストの上で許可を依頼できる
     // 🚨 直し中なら、その行を置き換える（並びの位置も同じ）
@@ -391,7 +400,7 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
       },
     }));
     setTried(false); setAddError(''); setBanner('copy');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    scrollToInput();
   };
   /**
    * 直す：その行の中身を上の枠に入れる。🚨 行はリストに残したまま「直し中」にする（途中でやめても消えない・2026-09-29 レビュー指摘）。
@@ -402,7 +411,7 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
     setStore(s => ({ ...s, input: { date: it.date, draft: it.draft, editingKey: it.key, reviewerPicked: true } }));
     clearResult(it.date);
     setPending(null); setTried(true); setAddError(''); setBanner('edit');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    scrollToInput();
   };
   const removeItem = (key: string) => {
     const it = items.find(x => x.key === key);
@@ -504,6 +513,8 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
     background: on ? toggleBlue : inputBg, color: on ? '#fff' : text,
   });
   const smBtn = (bg: string): React.CSSProperties => ({ background: bg, color: '#fff', border: 'none', borderRadius: 4, padding: '8px 10px', fontSize: 12.5, cursor: 'pointer', flexShrink: 0 });
+  // 追加済みリストの［複製］［直す］［削除］は交通費の追加済みリストと同じ大きさ（2026-09-30 ユーザー指示：大きいと［申請する］が画面の下に隠れる）
+  const rowBtn = (bg: string): React.CSSProperties => ({ background: bg, color: '#fff', border: 'none', borderRadius: 4, padding: '4px 8px', fontSize: 11, cursor: 'pointer', flexShrink: 0 });
   // 確認を開いている間・送信中は、リストと上の枠を触らせない（確認で見せた内容と送る内容がずれないように）
   const busy = sending || !!confirm;
   const req = <span style={{ color: '#dc3545' }}> *</span>;
@@ -538,12 +549,13 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
       {reqErr && <div style={{ background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 8, padding: '8px 12px', fontSize: 12.5, color: '#856404', marginBottom: 8 }}>{reqErr}</div>}
       {/* 【注意事項】は［事前申請・事後報告］と同じ部品。先頭にこの画面の使い方を入れる（2026-09-29 ユーザー指示） */}
       <OvertimeNotes isDark={isDark} advanceMaxDate={advanceMaxDate} cardBg={isDark ? '#343a40' : '#fff'} leadItems={[
-        <>1日分ずつ入れて［＋ 申請リストに追加］→ 最後に［申請する］で送信します。<b>［申請する］を押すまでは送信されません。</b>2件目からは［複製］で日付と時間だけ変えると早いです。</>,
+        <>1日分ずつ入れて［＋ 申請リストに追加］→ 最後に［申請する］で送信します。<b>［申請する］を押すまでは送信されません。</b>2件目からは［複製］で日付と時間だけ変えると早いです。一度に入れられるのは<b>{MAX_BOX_ITEMS}件まで</b>です。</>,
         <>入れた内容は<b>この端末にだけ</b>保存されます（別のスマホやパソコンには出ません）。</>,
         <>申請済みの日・締め切り後の日など、送れない日は赤く表示され、送信されません。</>,
         <>実績報告・差し戻しの再提出・内容の修正は「履歴・実績報告」タブから1件ずつ行ってください。</>,
       ]} />
 
+      <div ref={inputTopRef} style={{ scrollMarginTop: 72 }} />
       {banner && (
         <div style={{ background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 6, padding: '8px 12px', marginBottom: 8, fontSize: 13, color: '#856404' }}>
           {banner === 'copy' ? '📋 複製を適用中（日付を選んで「追加」してください）' : input.editingKey
@@ -566,13 +578,16 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
 
       {/* ===== 上の青い枠（1日分） ===== */}
       <div style={{ border: '2px solid #0d6efd', borderRadius: 10, padding: 12, marginBottom: 10, background: isDark ? '#2c3e50' : '#fff' }}>
-        {inputDirty && (
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <button type="button" onClick={clearInput} style={{ background: 'none', border: 'none', color: subText, fontSize: 12, textDecoration: 'underline', cursor: 'pointer' }}>入力内容をクリア</button>
-          </div>
-        )}
+        {/* クリア：全フォーム共通の「入力枠の右上・丸い枠」（交通費・備品・休暇・勤務変更ほかと同じ。2026-09-30 ユーザー指示「他と同じ仕様に」） */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+          <button type="button" onClick={clearInput} disabled={busy}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: isDark ? '#adb5bd' : '#8a939c', background: 'none', border: `1px solid ${isDark ? '#555' : '#d5dae0'}`, borderRadius: 14, padding: '4px 12px', cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.5 : 1 }}>
+            クリア
+          </button>
+        </div>
         <label style={{ ...lbl, marginTop: 0 }}>日付{req}</label>
-        <input type="date" value={input.date} min={winFrom} max={advanceMaxDate} onChange={e => pickDate(e.target.value)} style={fld} aria-label="日付" />
+        <input type="date" value={input.date} min={winFrom} max={advanceMaxDate} onChange={e => pickDate(e.target.value)} aria-label="日付"
+          style={banner === 'copy' && !input.date ? { ...fld, borderColor: '#e24b4a', background: isDark ? '#4a2b30' : '#fdecea' } : fld} />
         {inputRow && (
           <div style={{ background: toggleBg, color: toggleText, borderRadius: 8, padding: '7px 10px', fontSize: 12.5, marginTop: 6, lineHeight: 1.6 }}>
             通常シフト {normalShiftTimeText(inputRow.ns) || '休み'}{inputRow.ns.location ? `（${inputRow.ns.location}）` : ''}
@@ -772,10 +787,12 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
             ⚠️ {addError || c?.message}
           </div>
         )}
-        {c?.state === 'locked' && <div style={{ fontSize: 12, color: subText, marginTop: 8 }}>締め切り後の日です。リストに入れると、下の枠から経理に許可を依頼できます</div>}
+        {c?.state === 'locked' && (payoutPassedOf(input.date)
+          ? <div style={{ background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '8px 10px', marginTop: 10, fontSize: 12.5, color: '#842029', lineHeight: 1.6 }}>{PAYOUT_PASSED_MSG}</div>
+          : <div style={{ fontSize: 12, color: subText, marginTop: 8 }}>締め切り後の日です。リストに入れると、下の枠から経理に許可を依頼できます</div>)}
 
         <button type="button" onClick={addToList} disabled={busy}
-          style={{ width: '100%', marginTop: 12, padding: 11, background: '#0d6efd', color: '#fff', border: 'none', borderRadius: 6, fontSize: 15, fontWeight: 'bold', cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.5 : 1 }}>
+          style={{ width: '100%', marginTop: 12, padding: 10, background: '#0d6efd', color: '#fff', border: 'none', borderRadius: 6, fontSize: 14, fontWeight: 'bold', cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.5 : 1 }}>
           {input.editingKey ? '✓ 直した内容でリストに戻す' : '＋ 申請リストに追加'}
         </button>
       </div>
@@ -802,17 +819,17 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
             const isEditing = key === input.editingKey;
             const res = rowResults[it.date];
             const ng = !row ? '読み込み中…' : outOfWindow(it.date) ? '古すぎる日です（削除してください）' : !isNewGridKind(row.kind) ? kindNgMessage(row.kind, advanceMaxDate)
-              : row.calc.state === 'locked' ? '締め切り後です（上の枠から経理に許可を依頼）'
+              : row.calc.state === 'locked' ? (payoutPassedOf(it.date) ? '給与データが確定済みのため送れません（削除してください）' : '締め切り後です（上の枠から経理に許可を依頼）')
               : reviewerNg(row) ? reviewerNg(row)
               : isEditing ? ''
               : !ok ? (row.calc.message || '入力を確かめてください') : '';
             return (
               <div key={key} style={{
-                display: 'flex', gap: 6, alignItems: 'center', padding: 8, marginBottom: 6, borderRadius: 6, fontSize: 13,
+                display: 'flex', gap: 8, alignItems: 'center', padding: '8px 10px', marginBottom: 6, borderRadius: 6, fontSize: 13,
                 background: isDark ? '#2c3e50' : '#f8fbff', border: `1px solid ${isDark ? '#344a5e' : '#cfe2ff'}`,
                 borderLeft: `3px solid ${ng ? '#e24b4a' : isEditing ? '#ffc107' : '#0d6efd'}`,
               }}>
-                <span style={{ background: innerBg, borderRadius: 4, padding: '2px 7px', fontWeight: 'bold', fontSize: 12, flexShrink: 0 }}>{i + 1}</span>
+                <span style={{ background: isDark ? '#444' : '#e9ecef', borderRadius: 4, padding: '3px 8px', fontWeight: 'bold', fontSize: 12, flexShrink: 0 }}>{i + 1}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 11.5, color: subText }}>
                     {dayLabel(it.date)} {row ? row.calc.sendLabel : ''}
@@ -832,9 +849,9 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
                 </div>
                 {!busy && (
                   <>
-                    <button type="button" onClick={() => copyItem(it)} style={smBtn('#6c757d')}>複製</button>
-                    <button type="button" onClick={() => editItem(it)} style={smBtn('#1976d2')}>直す</button>
-                    <button type="button" onClick={() => removeItem(key)} style={smBtn('#dc3545')}>削除</button>
+                    <button type="button" onClick={() => copyItem(it)} style={rowBtn('#6c757d')}>複製</button>
+                    <button type="button" onClick={() => editItem(it)} style={rowBtn('#1976d2')}>直す</button>
+                    <button type="button" onClick={() => removeItem(key)} style={rowBtn('#dc3545')}>削除</button>
                   </>
                 )}
               </div>
@@ -859,7 +876,7 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
         <button type="button" disabled={sending || sendableRows.length === 0 || errors.length > 0}
           onClick={() => setConfirm(sendableRows.map(r => ({ date: r.date, label: r.calc.sendLabel })))}
           style={{
-            width: '100%', padding: 12, marginTop: 6, border: 'none', borderRadius: 6, fontSize: 15, fontWeight: 'bold', color: '#fff',
+            width: '100%', padding: 12, marginTop: 6, border: 'none', borderRadius: 4, fontSize: 15, fontWeight: 'bold', color: '#fff',
             background: sending || sendableRows.length === 0 ? '#6c757d' : '#007bff', opacity: sending || sendableRows.length === 0 ? 0.6 : 1,
             cursor: sending || sendableRows.length === 0 ? 'not-allowed' : 'pointer',
           }}>
