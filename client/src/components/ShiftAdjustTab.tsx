@@ -228,6 +228,29 @@ const ShiftAdjustTab: React.FC<{
     () => slots.filter(s => ['pending', 'working'].includes(s.status)).length, [slots],
   );
 
+  // ---- 「シフト調整が済んでいない休み」のお知らせ（ベル・プッシュ）から来たとき（2026-09-30 ユーザー指示） ----
+  // お知らせと同じ条件（未調整・調整中で7日以内）の行まで移って、6秒光らせる。
+  // 🚨 目印（?hl=undone）は URL から消す。残すと、場を開いて一覧に戻ったときにも光る。消しておけば同じお知らせをもう一度押したときも光る
+  // 🚨 下の早期 return（場を開いているとき）より前に置くこと（後ろに置くと画面が真っ白になる）
+  const hlParam = searchParams.get('hl');
+  const [glowUndone, setGlowUndone] = useState(false);
+  const glowRowRef = React.useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (hlParam !== 'undone') return;
+    setGlowUndone(true);
+    const sp = new URLSearchParams(searchParams);
+    sp.delete('hl');
+    setSearchParams(sp, { replace: true });
+  }, [hlParam, searchParams, setSearchParams]);
+  const isSoonUndone = (s: SlotRow) => ['pending', 'working'].includes(s.status) && daysUntil(s.target_date) <= 7;
+  const firstSoonId = shown.find(isSoonUndone)?.id;
+  useEffect(() => {
+    if (!glowUndone || loading) return;
+    const t1 = setTimeout(() => glowRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 400);
+    const t2 = setTimeout(() => setGlowUndone(false), 6000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [glowUndone, loading]);
+
   const openSlot = slots.find(s => s.id === openId) ?? null;
 
   if (openSlot) {
@@ -271,10 +294,13 @@ const ShiftAdjustTab: React.FC<{
             const undone = ['pending', 'working'].includes(s.status);
             return (
               <button key={s.id} type="button" onClick={() => openSlotById(s.id)}
+                ref={s.id === firstSoonId ? glowRowRef : undefined}
                 style={{
                   width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8,
                   padding: '10px 8px', border: 'none', borderBottom: `1px solid ${border}`,
-                  background: 'transparent', cursor: 'pointer', color: text, fontSize: isMobile ? 13 : 14,
+                  background: glowUndone && isSoonUndone(s) ? (isDark ? '#4a4423' : '#fff9c4') : 'transparent',
+                  transition: 'background 0.6s',
+                  cursor: 'pointer', color: text, fontSize: isMobile ? 13 : 14,
                 }}>
                 <span style={{ color: soon ? warnFg : subText, fontSize: isMobile ? 12 : 13, whiteSpace: 'nowrap', fontWeight: soon ? 'bold' : 'normal' }}>
                   {dateLabel(s.target_date)}

@@ -1334,7 +1334,8 @@ const classifyNotif = (n: NotifLike) => {
     // 🚨 `?tab=adjust` が無いとカレンダーのタブで開き、シフト調整が見えない（2026-09-13 に気づいて直した）
     // 🚨 まだ調整が残っているので closeOnTap: false（片付くまで消さない）
     if (n.source_type === 'shift_adjust:part_request_overdue') return { path: '/calendar?tab=adjust', closeOnTap: false };
-    if (n.source_type === 'shift_adjust:digest') return { path: '/calendar?tab=adjust', closeOnTap: false };
+    // 🚨 hl=undone で、お知らせと同じ条件（未調整・調整中で7日以内）の行を光らせる。push-dispatch の EVENT_MAP も同じ URL（2026-09-30）
+    if (n.source_type === 'shift_adjust:digest') return { path: '/calendar?tab=adjust&hl=undone', closeOnTap: false };
     // 決定の取り消し（決まっていた本人向け・2026-09-25）。読めば用が済む。パートは /overtime に入れないので行き先を分ける
     // 🚨 push-dispatch の EVENT_MAP（shift_adjust:cancelled / :ot）と同じ行き先。片方だけ直さないこと
     if (n.source_type === 'shift_adjust:cancelled') return { path: '/shift-request', closeOnTap: true };

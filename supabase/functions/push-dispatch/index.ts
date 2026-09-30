@@ -86,7 +86,8 @@ const EVENT_MAP: Record<string, { app: string; word: string; text: string; url: 
   // 🚨 休んだ人の名前・日付は書かない（ロック画面に出る）。件数と中身はベルと着地画面で読む。
   // 🚨 bell は付けない。着地のシフト調整タブに、未調整の一覧がそのまま並ぶ。
   // 🚨 着地は `?tab=adjust`。App.tsx の classifyNotif にも同じ行き先を書いてある。片方だけ直さないこと。
-  "shift_adjust:digest": { app: "シフト調整", word: "未調整", text: "シフト調整が済んでいない休みがあります", url: "/calendar?tab=adjust" },
+  // 🚨 hl=undone で、未調整・調整中で7日以内の行を光らせる。ベル（App.tsx の classifyNotif）と同じ URL（2026-09-30）
+  "shift_adjust:digest": { app: "シフト調整", word: "未調整", text: "シフト調整が済んでいない休みがあります", url: "/calendar?tab=adjust&hl=undone" },
   // 決定を取り消したとき、決まっていた本人へ（2026-09-25・ユーザー確定の文面）。送るのは ShiftAdjustTab の undecide。
   // 🚨 日付・誰の代わりかは書かない（ロック画面に出る）。日付と本文はベルで読む＝ bell: true
   // 🚨 パートと正社員で着地を分ける（パートは /overtime に入れない）。設定は baseEventKey＝shift_adjust:cancelled で1つ
