@@ -12,7 +12,7 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { actedAtLabel } from '../lib/actedAt';
 import type { AuthUser, AdminLeaveRequest } from '../types';
-import { primaryBtn, backBtn, BTN_BLUE } from '../lib/buttonStyles';
+import { primaryBtn, backBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
 
 interface Props {
   user: AuthUser;
@@ -1032,17 +1032,17 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                   申請者：{selectingManagerFor.requester?.name || '不明'} ／ {selectingManagerFor.leave_type === 'その他' ? (selectingManagerFor.leave_type_other || 'その他') : selectingManagerFor.leave_type}
                 </p>
                 {/* 選択肢A：自分が受理して経理へ（調整休は完了まで） */}
-                <label onClick={() => setApproveMode('self')} style={{ display: 'block', border: `2px solid ${approveMode === 'self' ? '#28a745' : borderColor}`, borderRadius: 10, padding: 12, marginBottom: 10, cursor: 'pointer', background: approveMode === 'self' ? (isDark ? '#1b3d24' : '#f0fff4') : 'transparent' }}>
+                <label onClick={() => setApproveMode('self')} style={{ display: 'block', border: `2px solid ${approveMode === 'self' ? TOGGLE_BLUE : borderColor}`, borderRadius: 10, padding: 12, marginBottom: 10, cursor: 'pointer', background: approveMode === 'self' ? (isDark ? '#1b3d24' : '#f0fff4') : 'transparent' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 'bold', fontSize: 14, color: text }}>
-                    <span style={{ color: approveMode === 'self' ? '#28a745' : subText }}>{approveMode === 'self' ? '◉' : '○'}</span>{selfLabel}
+                    <span style={{ color: approveMode === 'self' ? TOGGLE_BLUE : subText }}>{approveMode === 'self' ? '◉' : '○'}</span>{selfLabel}
                   </div>
                 </label>
                 {/* 自分が受理する＝マネージャー受理なので、シフト調整の選択を出す（2026-09-28） */}
                 {approveMode === 'self' && shiftChoiceBlock(selectingManagerFor)}
                 {/* 選択肢B：別のマネージャーに受理を依頼 */}
-                <label onClick={() => setApproveMode('other')} style={{ display: 'block', border: `2px solid ${approveMode === 'other' ? '#28a745' : borderColor}`, borderRadius: 10, padding: 12, marginBottom: 16, cursor: 'pointer' }}>
+                <label onClick={() => setApproveMode('other')} style={{ display: 'block', border: `2px solid ${approveMode === 'other' ? TOGGLE_BLUE : borderColor}`, borderRadius: 10, padding: 12, marginBottom: 16, cursor: 'pointer' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 'bold', fontSize: 14, color: text }}>
-                    <span style={{ color: approveMode === 'other' ? '#28a745' : subText }}>{approveMode === 'other' ? '◉' : '○'}</span>別のマネージャーに受理を依頼する
+                    <span style={{ color: approveMode === 'other' ? TOGGLE_BLUE : subText }}>{approveMode === 'other' ? '◉' : '○'}</span>別のマネージャーに受理を依頼する
                   </div>
                   {approveMode === 'other' && (
                     managers.length === 0 ? (

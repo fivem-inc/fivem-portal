@@ -11,7 +11,7 @@ import { tripTypeColor, tripCategoryLabel, formatTripNextDates, formatTripDateTi
 import SearchableSelect from './common/SearchableSelect';
 import HelpLinkButton from './HelpLinkButton';
 import type { AuthUser, BusinessTripReport } from '../types';
-import { primaryBtn, backBtn, tintBtn, TOGGLE_BLUE } from '../lib/buttonStyles';
+import { primaryBtn, backBtn, tintBtn, TOGGLE_BLUE, PAGE_TAB_GREEN } from '../lib/buttonStyles';
 
 // 履歴タブに出す1件分（profiles は報告者名の表示にだけ使う）
 interface TripHistoryRow {
@@ -675,7 +675,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
                 onClick={() => { setReportType(type); setTab('form'); }}
                 style={{
                   flex: 1, padding: '10px 0', border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 'bold',
-                  background: active ? TOGGLE_BLUE : (isDark ? '#495057' : '#f8f9fa'),
+                  background: active ? PAGE_TAB_GREEN : (isDark ? '#495057' : '#f8f9fa'),
                   color: active ? 'white' : (isDark ? '#fff' : '#333'),
                 }}
               >

@@ -8,7 +8,7 @@ import { todayJstStr } from '../lib/breakCalc';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { getUserName } from '../lib/notificationDispatch';
 import { logFail } from '../lib/logFail';
-import { primaryBtn, backBtn } from '../lib/buttonStyles';
+import { primaryBtn, backBtn, TOGGLE_BLUE } from '../lib/buttonStyles';
 
 const BannerSuccess: React.FC<{ message: string; sub?: string; onClose: () => void }> = ({ message, sub, onClose }) => {
   React.useEffect(() => { const t = setTimeout(onClose, 4000); return () => clearTimeout(t); }, [onClose]);
@@ -376,7 +376,7 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
                   onClick={() => { setPaymentMethod(opt.key); if (opt.key === 'cash') { setPaymentMethodDetail(''); setPaymentMethodOther(''); } }}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderRadius: 10,
-                    cursor: 'pointer', background: cardBg, border: `2px solid ${active ? '#28a745' : border}`,
+                    cursor: 'pointer', background: cardBg, border: `2px solid ${active ? TOGGLE_BLUE : border}`,
                     textAlign: 'left', width: '100%', boxSizing: 'border-box',
                   }}
                 >
@@ -402,7 +402,7 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
                       key={opt.key} type="button" onClick={() => setPaymentMethodDetail(opt.key)}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 10,
-                        cursor: 'pointer', background: cardBg, border: `2px solid ${active ? '#28a745' : border}`,
+                        cursor: 'pointer', background: cardBg, border: `2px solid ${active ? TOGGLE_BLUE : border}`,
                         textAlign: 'left', width: '100%', boxSizing: 'border-box',
                       }}
                     >

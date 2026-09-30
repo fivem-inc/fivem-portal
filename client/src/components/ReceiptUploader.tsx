@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { compressImageFile, ImageTooLargeError } from '../lib/imageCompress';
 import CameraCaptureModal, { type CameraCaptureHandle } from './CameraCaptureModal';
-import { tintBtn } from '../lib/buttonStyles';
+import { tintBtn, TOGGLE_BLUE } from '../lib/buttonStyles';
 
 export type ReceiptType = 'photo' | 'physical' | 'none';
 
@@ -41,7 +41,7 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
 
   const cardBg = isDarkMode ? '#343a40' : '#ffffff';
   const border = isDarkMode ? '#495057' : '#e0e0e0';
-  const activeBorder = '#28a745';
+  const activeBorder = TOGGLE_BLUE;
   const text = isDarkMode ? '#eeeeee' : '#222222';
   const subText = isDarkMode ? '#aaaaaa' : '#666666';
   const inputBg = isDarkMode ? '#495057' : '#f8f9fa';

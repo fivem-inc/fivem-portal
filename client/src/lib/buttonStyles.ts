@@ -18,6 +18,11 @@ export const BTN_BLUE = '#0d6efd';
  * 日付を選ぶカレンダーの「選んだ日」の塗りも同じ色（今日は青い枠だけ・2026-09-30 ユーザー確定）
  */
 export const TOGGLE_BLUE = '#1976d2';
+/**
+ * ページの上のタブ（PageTabs：休暇・残業・勤務変更・勤怠カレンダー・備品精算）と、出張報告の［到着］［終了］の「選んでいるタブ」の緑。
+ * 🚨 2026-09-30 ユーザー確定：ページの上のタブは緑のまま（中の切り替え＝TOGGLE_BLUE とは別の決まり）
+ */
+export const PAGE_TAB_GREEN = '#28a745';
 export const BTN_RED = '#dc3545';
 const BTN_DISABLED = '#6c757d';
 

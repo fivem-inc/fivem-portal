@@ -15,7 +15,7 @@ import QuoteFileUploader from './QuoteFileUploader';
 // 金額帯の定義は lib/purchaseTiers.ts に集約（管理画面の修正モーダルからも同じ値を使う）
 import { QUOTES_REQUIRED_THRESHOLD, TIER_LABEL, tierOf } from '../lib/purchaseTiers';
 import type { Tier } from '../lib/purchaseTiers';
-import { primaryBtn, backBtn } from '../lib/buttonStyles';
+import { primaryBtn, backBtn, TOGGLE_BLUE } from '../lib/buttonStyles';
 
 // 相見積もり1行分の下書き。isSelectedは商品内でラジオボタンにより排他選択される
 // （どの業者から購入するかは「購入予定先を選択」セクションのラジオで選ぶ。isSelectedは商品内で1件だけtrue）
@@ -882,8 +882,8 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
                     style={{
                       display: 'flex', alignItems: 'flex-start', gap: 8, width: '100%', textAlign: 'left',
                       padding: '8px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: text,
-                      border: `${isOpen ? 2 : 1}px solid ${isOpen ? '#28a745' : border}`,
-                      background: isOpen ? (isDarkMode ? '#1e3a26' : '#f3fbf5') : 'transparent',
+                      border: `${isOpen ? 2 : 1}px solid ${isOpen ? TOGGLE_BLUE : border}`,
+                      background: isOpen ? (isDarkMode ? '#1e3a5f' : '#e8f4fd') : 'transparent',
                     }}
                   >
                     <span style={{ color: subText, flexShrink: 0 }}>{i + 1}</span>
@@ -920,7 +920,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
                 key={itemIndex} ref={el => { itemRefs.current[itemIndex] = el; }}
                 style={{
                   // 開いているカードの枠を緑にして「今どこを編集しているか」を分かるようにする
-                  border: `${showHeader && !item.collapsed ? 2 : 1}px solid ${showHeader && !item.collapsed ? '#28a745' : border}`,
+                  border: `${showHeader && !item.collapsed ? 2 : 1}px solid ${showHeader && !item.collapsed ? TOGGLE_BLUE : border}`,
                   borderRadius: 10, overflow: 'hidden', scrollMarginTop: 70,
                 }}
               >
@@ -1018,7 +1018,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
                           旧「商品1の業者情報をコピー」ボタンは廃止した */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                         {item.quotes.map((q, qi) => (
-                          <div key={qi} style={{ padding: 10, border: `1px solid ${q.isSelected ? '#28a745' : border}`, borderRadius: 8, background: q.isSelected ? (isDarkMode ? '#1e3a26' : '#f3fbf5') : 'transparent' }}>
+                          <div key={qi} style={{ padding: 10, border: `1px solid ${q.isSelected ? TOGGLE_BLUE : border}`, borderRadius: 8, background: q.isSelected ? (isDarkMode ? '#1e3a5f' : '#e8f4fd') : 'transparent' }}>
                             <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
                               <span style={{ fontSize: 12, fontWeight: 'bold', color: subText }}>
                                 業者 {qi + 1}{qi === 0 ? '（購入先）' : ''}
@@ -1093,7 +1093,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
                                 key={qi}
                                 style={{
                                   display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px',
-                                  border: `1px solid ${q.isSelected ? '#28a745' : (errFields.has(`purchaseFrom-${itemIndex}`) ? ERROR_BORDER : border)}`,
+                                  border: `1px solid ${q.isSelected ? TOGGLE_BLUE : (errFields.has(`purchaseFrom-${itemIndex}`) ? ERROR_BORDER : border)}`,
                                   borderRadius: 8, cursor: 'pointer', fontSize: 14, color: text,
                                   background: errFields.has(`purchaseFrom-${itemIndex}`) && !q.isSelected ? errorBg(isDarkMode) : 'transparent',
                                 }}
@@ -1394,7 +1394,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
             <div style={{ fontSize: 12, color: subText, marginBottom: 8 }}>
               複数選べます。2名以上に依頼した場合は、依頼した全員の回答が揃ってから決定します（金額は小さいが全員に見てほしいとき）。
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, border: `2px solid ${leaderIds.length > 0 ? '#28a745' : border}`, borderRadius: 8, padding: 10 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, border: `2px solid ${leaderIds.length > 0 ? TOGGLE_BLUE : border}`, borderRadius: 8, padding: 10 }}>
               {leaders.map(l => (
                 <label key={l.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: text, cursor: 'pointer' }}>
                   <input type="checkbox" checked={leaderIds.includes(l.id)}

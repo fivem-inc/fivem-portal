@@ -1,6 +1,7 @@
 import { useState, useContext, useEffect } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import { BTN_BLUE } from '../lib/buttonStyles';
 import { AuthContext } from '../contexts/AuthContext.tsx';
 import { useAuth } from '../hooks/useAuth';
 import {
@@ -340,9 +341,9 @@ export default function SignIn() {
             style={{
               width: '100%',
               padding: 8,
-              background: '#28a745',
+              background: BTN_BLUE,
               color: 'white',
-              border: '1px solid #28a745',
+              border: `1px solid ${BTN_BLUE}`,
               borderRadius: '4px',
               cursor: 'pointer'
             }} 

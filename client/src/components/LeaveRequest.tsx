@@ -1612,7 +1612,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                           background: isSelected ? TOGGLE_BLUE : 'transparent',
                           color: isSelected ? '#fff' : isPast ? (isDark ? '#6c757d' : '#ccc') : color,
                           fontWeight: ds === todayStr ? 'bold' : 'normal',
-                          outline: ds === todayStr && !isSelected ? `2px solid #28a745` : 'none',
+                          outline: ds === todayStr && !isSelected ? '2px solid #007bff' : 'none',
                         }}
                       >{d}</button>
                     );

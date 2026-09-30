@@ -1,4 +1,5 @@
 import React from 'react';
+import { PAGE_TAB_GREEN } from '../lib/buttonStyles';
 
 /**
  * ページ上部のタブバー（共通部品）
@@ -46,7 +47,7 @@ interface PageTabsProps<K extends string> {
   dividerColor?: string;
 }
 
-const ACTIVE_BG = '#28a745';
+const ACTIVE_BG = PAGE_TAB_GREEN;
 
 export function PageTabs<K extends string>({ tabs, active, onChange, variant, isDark, inactiveColor, dividerColor }: PageTabsProps<K>) {
   const inactiveBg = isDark ? '#495057' : '#f8f9fa';
