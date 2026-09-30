@@ -13,6 +13,7 @@ import { filterTemplates, sortTemplates, categoryChips, categoryLabel, canEditTe
 import type { BoardTemplate, BoardTemplateCategory, BoardTemplateScope, CategoryFilter } from '../lib/boardTemplates';
 import { loadTemplates, insertTemplate, updateTemplate, deleteTemplate } from '../lib/boardTemplatesApi';
 import { replyState, replyStatusText } from '../lib/boardReply';
+import { primaryBtn, backBtn, BTN_BLUE } from '../lib/buttonStyles';
 
 const BOARD_LINK = 'https://fivem-portal.vercel.app/board';
 import { useAuth } from '../hooks/useAuth';
@@ -2890,7 +2891,7 @@ const BoardPage: React.FC = () => {
                 style={{ flex: 1, padding: '8px 10px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 13, resize: 'none', fontFamily: 'inherit' }}
               />
               <button type="button" onClick={() => { if (replyBody.trim()) setShowReplySendConfirm(true); }} disabled={sending || !replyBody.trim()}
-                style={{ padding: '8px 14px', background: '#28a745', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 500, opacity: sending || !replyBody.trim() ? 0.5 : 1, alignSelf: 'flex-end' }}>
+                style={{ padding: '8px 14px', background: BTN_BLUE, color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 500, opacity: sending || !replyBody.trim() ? 0.5 : 1, alignSelf: 'flex-end' }}>
                 送信
               </button>
             </div>
@@ -2989,9 +2990,9 @@ const BoardPage: React.FC = () => {
 
         <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
           <button type="button" onClick={() => { setShowGroupModal(false); setGroupName(''); setGroupMemberIds([]); }}
-            style={{ flex: 1, padding: 10, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
+            style={{ ...backBtn(isDark), flex: 1 }}>キャンセル</button>
           <button type="button" onClick={createGroup} disabled={!groupName.trim() || groupMemberIds.length === 0}
-            style={{ flex: 1, padding: 10, background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, opacity: !groupName.trim() || groupMemberIds.length === 0 ? 0.5 : 1 }}>
+            style={{ ...primaryBtn({ disabled: !groupName.trim() || groupMemberIds.length === 0 }), flex: 2 }}>
             作成（{groupMemberIds.length}人）
           </button>
         </div>
@@ -3109,9 +3110,9 @@ const BoardPage: React.FC = () => {
               <p style={{ fontSize: 12, color: subColor, marginTop: 4 }}>自分は常に含まれます</p>
               <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
                 <button type="button" onClick={() => setShowMemberModal(false)}
-                  style={{ flex: 1, padding: 10, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
+                  style={{ ...backBtn(isDark), flex: 1 }}>キャンセル</button>
                 <button type="button" onClick={saveMemberChanges} disabled={memberSaving}
-                  style={{ flex: 1, padding: 10, background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, opacity: memberSaving ? 0.6 : 1 }}>
+                  style={{ ...primaryBtn({ disabled: memberSaving }), flex: 2 }}>
                   {memberSaving ? '保存中...' : '保存'}
                 </button>
               </div>
@@ -3247,16 +3248,16 @@ const BoardPage: React.FC = () => {
           )}
           <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
             <button type="button" onClick={() => { setShowDMSearch(false); setDmQuery(''); setDmSelectedIds([]); setBroadcastMessage(''); setBroadcastUrgent(false); setDmError(''); }}
-              style={{ flex: 1, padding: 10, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
+              style={{ ...backBtn(isDark), flex: 1 }}>キャンセル</button>
             {isSingle && (
               <button type="button" onClick={() => startDM(dmSelectedIds[0])} disabled={dmCreating}
-                style={{ flex: 1, padding: 10, background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, opacity: dmCreating ? 0.6 : 1 }}>
+                style={{ ...primaryBtn({ disabled: dmCreating }), flex: 2 }}>
                 {dmCreating ? '作成中...' : 'DMを開始'}
               </button>
             )}
             {isMulti && (
               <button type="button" onClick={sendBroadcast} disabled={!broadcastMessage.trim() || sending}
-                style={{ flex: 1, padding: 10, background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, opacity: !broadcastMessage.trim() || sending ? 0.5 : 1 }}>
+                style={{ ...primaryBtn({ disabled: !broadcastMessage.trim() || sending }), flex: 2 }}>
                 一斉送信（{dmSelectedIds.length}人）
               </button>
             )}
@@ -3527,7 +3528,7 @@ const BoardPage: React.FC = () => {
                     style={{ flex: 1, padding: '8px 0', background: 'none', border: `1px solid ${border}`, color: subColor, borderRadius: 8, cursor: 'pointer', fontSize: 13 }}>キャンセル</button>
                   <button type="button" onClick={() => saveNoticeEdit(inboxDetail.id)}
                     disabled={!editingNoticeSubj.trim() || !editingNoticeBody.trim()}
-                    style={{ flex: 1, padding: '8px 0', background: '#28a745', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, opacity: (!editingNoticeSubj.trim() || !editingNoticeBody.trim()) ? 0.5 : 1 }}>保存する</button>
+                    style={{ flex: 1, padding: '8px 0', background: BTN_BLUE, color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, opacity: (!editingNoticeSubj.trim() || !editingNoticeBody.trim()) ? 0.5 : 1 }}>保存する</button>
                 </div>
               </div>
             ) : renderMsg(inboxDetail, false, false, inboxDetailArchiveBtn)}
@@ -4210,7 +4211,7 @@ const BoardPage: React.FC = () => {
                     style={{ flex: 1, padding: '8px 0', background: 'none', border: `1px solid ${border}`, color: subColor, borderRadius: 8, cursor: 'pointer', fontSize: 13 }}>キャンセル</button>
                   <button type="button" onClick={() => saveNoticeEdit(outboxDetail.id)}
                     disabled={!editingNoticeSubj.trim() || !editingNoticeBody.trim()}
-                    style={{ flex: 1, padding: '8px 0', background: '#28a745', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, opacity: (!editingNoticeSubj.trim() || !editingNoticeBody.trim()) ? 0.5 : 1 }}>保存する</button>
+                    style={{ flex: 1, padding: '8px 0', background: BTN_BLUE, color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, opacity: (!editingNoticeSubj.trim() || !editingNoticeBody.trim()) ? 0.5 : 1 }}>保存する</button>
                 </div>
               </div>
             ) : renderMsg(outboxDetail, false, true, outboxDetailArchiveBtn)}
@@ -5304,11 +5305,11 @@ const BoardPage: React.FC = () => {
               </div>
               <div style={{ display: 'flex', gap: 10 }}>
                 <button type="button" onClick={() => setShowSendConfirm(false)}
-                  style={{ flex: 1, padding: '10px 0', background: 'none', border: `1px solid ${border}`, borderRadius: 8, color: subColor, cursor: 'pointer', fontSize: 14 }}>
+                  style={{ ...backBtn(isDark), flex: 1 }}>
                   キャンセル
                 </button>
                 <button type="button" onClick={() => { setShowSendConfirm(false); sendMessage(); }}
-                  style={{ flex: 2, padding: '10px 0', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>
+                  style={{ ...primaryBtn(), flex: 2 }}>
                   送信する
                 </button>
               </div>
@@ -5327,11 +5328,11 @@ const BoardPage: React.FC = () => {
             </div>
             <div style={{ display: 'flex', gap: 10 }}>
               <button type="button" onClick={() => setShowReplySendConfirm(false)}
-                style={{ flex: 1, padding: '10px 0', background: 'none', border: `1px solid ${border}`, borderRadius: 8, color: subColor, cursor: 'pointer', fontSize: 14 }}>
+                style={{ ...backBtn(isDark), flex: 1 }}>
                 キャンセル
               </button>
               <button type="button" onClick={() => { setShowReplySendConfirm(false); sendMessage(threadMsgId); }}
-                style={{ flex: 2, padding: '10px 0', background: '#28a745', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>
+                style={{ ...primaryBtn(), flex: 2 }}>
                 送信する
               </button>
             </div>
@@ -5683,9 +5684,9 @@ const BoardPage: React.FC = () => {
               </label>
               <div style={{ display: 'flex', gap: 10 }}>
                 <button type="button" onClick={() => { setShowComposeSendConfirm(false); setShowAllRecipients(false); }}
-                  style={{ flex: 1, padding: '10px 0', background: 'none', border: `1px solid ${border}`, borderRadius: 8, color: subColor, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
+                  style={{ ...backBtn(isDark), flex: 1 }}>キャンセル</button>
                 <button type="button" onClick={() => { setShowComposeSendConfirm(false); setShowAllRecipients(false); sendNotice(); }}
-                  style={{ flex: 2, padding: '10px 0', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>送信する</button>
+                  style={{ ...primaryBtn(), flex: 2 }}>送信する</button>
               </div>
             </div>
           </div>

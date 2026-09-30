@@ -24,6 +24,7 @@ import type { CalendarKind } from '../lib/breakCalc';
 import { toDbTime, normalizeTime } from '../lib/timeInput';
 import TimeInput from '../components/TimeInput';
 import { logFail } from '../lib/logFail';
+import { primaryBtn, backBtn } from '../lib/buttonStyles';
 
 // ────────────────────────────────────────────────────────────────
 // Types
@@ -318,7 +319,7 @@ const ConfirmModal: React.FC<{ data: ConfirmData; onBack: () => void; onSubmit: 
             </div>
           )}
           <button onClick={onSubmit} disabled={saving}
-            style={{ width: '100%', padding: 14, marginTop: 20, background: saving ? '#6c757d' : '#28a745', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: saving ? 'default' : 'pointer' }}>
+            style={{ ...primaryBtn({ disabled: saving }), width: '100%', marginTop: 20 }}>
             {saving ? '送信中...' : '✓ この内容で報告する'}
           </button>
         </div>
@@ -1082,7 +1083,7 @@ const ShiftReportForm: React.FC<{
 
             {error && <div style={{ color: '#dc3545', fontSize: 13, marginBottom: 12 }}>⚠️ {error}</div>}
             <button type="button" onClick={handleConfirmOpen}
-              style={{ width: '100%', padding: 14, background: '#28a745', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: 'pointer' }}>
+              style={{ ...primaryBtn(), width: '100%' }}>
               報告内容を確認する
             </button>
     </div>
@@ -1612,11 +1613,11 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                 )}
                 <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
                   <button onClick={() => handleConfirm(r)} disabled={confirmingId === r.id}
-                    style={{ flex: 2, padding: '10px 0', background: confirmingId === r.id ? '#6c757d' : '#28a745', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 'bold', cursor: confirmingId === r.id ? 'default' : 'pointer' }}>
+                    style={{ ...primaryBtn({ disabled: confirmingId === r.id }), flex: 2 }}>
                     {confirmingId === r.id ? '処理中...' : '✓ 受理'}
                   </button>
                   <button onClick={() => { setEditTarget(r); setShowForm(true); }}
-                    style={{ flex: 1, padding: '10px 0', background: 'none', border: `1px solid ${borderCol}`, borderRadius: 8, fontSize: 13, color: text, cursor: 'pointer' }}>
+                    style={{ ...backBtn(isDark), flex: 1 }}>
                     修正
                   </button>
                   <button onClick={() => { setReturnTarget(r); setReturnComment(''); }}

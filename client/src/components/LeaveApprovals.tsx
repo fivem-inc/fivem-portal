@@ -12,6 +12,7 @@ import { useDarkMode } from '../hooks/useDarkMode';
 import { useFocusHighlight } from '../hooks/useFocusHighlight';
 import { actedAtLabel } from '../lib/actedAt';
 import type { AuthUser, AdminLeaveRequest } from '../types';
+import { primaryBtn, backBtn, BTN_BLUE } from '../lib/buttonStyles';
 
 interface Props {
   user: AuthUser;
@@ -604,7 +605,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
             {confirmDialog.shiftFor && shiftChoiceBlock(confirmDialog.shiftFor)}
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <button onClick={() => setConfirmDialog(null)} style={{ padding: '8px 18px', background: 'transparent', color: isDark ? '#adb5bd' : '#666', border: `1px solid ${isDark ? '#6c757d' : '#ccc'}`, borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
-              <button onClick={() => { const cb = confirmDialog.onConfirm; setConfirmDialog(null); cb(); }} style={{ padding: '8px 18px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>はい</button>
+              <button onClick={() => { const cb = confirmDialog.onConfirm; setConfirmDialog(null); cb(); }} style={{ padding: '8px 18px', background: BTN_BLUE, color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>はい</button>
             </div>
           </div>
         </div>
@@ -641,7 +642,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                   if (!userId) { setPartSendError('パートを選択してください'); return; }
                   setPartConfirmId(userId);
                 }}
-                style={{ padding: '6px 16px', background: '#28a745', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 13, whiteSpace: 'nowrap' }}
+                style={{ padding: '6px 16px', background: BTN_BLUE, color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 13, whiteSpace: 'nowrap' }}
               >送信</button>
             </div>
             {partSendError && (
@@ -667,7 +668,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                         setPartSendSuccess(`「${target.name || target.email}」さんに送信しました`);
                         setTimeout(() => setPartSendSuccess(null), 3000);
                       }}
-                      style={{ padding: '6px 16px', background: '#28a745', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}
+                      style={{ padding: '6px 16px', background: BTN_BLUE, color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}
                     >送信する</button>
                     <button
                       onClick={() => setPartConfirmId(null)}
@@ -992,7 +993,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                     <div style={{ display: 'flex', gap: 10 }}>
                       <button
                         onClick={() => handleApproveClick(req)}
-                        style={{ flex: 1, padding: '8px', background: '#28a745', color: 'white', border: '2px solid #1e7e34', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}
+                        style={{ ...primaryBtn(), flex: 1 }}
                       >
                         {getApproveLabel(req.status)}
                       </button>
@@ -1057,13 +1058,13 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                 </label>
                 <div style={{ display: 'flex', gap: 10 }}>
                   <button onClick={() => setSelectingManagerFor(null)}
-                    style={{ flex: 1, padding: '10px', background: isDark ? '#495057' : '#f8f9fa', border: `1px solid ${borderColor}`, borderRadius: 8, cursor: 'pointer', color: text }}>
+                    style={{ ...backBtn(isDark), flex: 1 }}>
                     キャンセル
                   </button>
                   <button
                     onClick={approveMode === 'self' ? handleApproveAsSelf : handleApproveWithManager}
                     disabled={approveMode === 'other' && (!selectedManagerId || managers.length === 0)}
-                    style={{ flex: 2, padding: '10px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold' }}>
+                    style={{ ...primaryBtn({ disabled: approveMode === 'other' && (!selectedManagerId || managers.length === 0) }), flex: 2 }}>
                     {approveMode === 'self' ? selfBtnLabel : '受理して送る'}
                   </button>
                 </div>
@@ -1084,11 +1085,11 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
                 )}
                 <div style={{ display: 'flex', gap: 10 }}>
                   <button onClick={() => setSelectingManagerFor(null)}
-                    style={{ flex: 1, padding: '10px', background: isDark ? '#495057' : '#f8f9fa', border: `1px solid ${borderColor}`, borderRadius: 8, cursor: 'pointer', color: text }}>
+                    style={{ ...backBtn(isDark), flex: 1 }}>
                     キャンセル
                   </button>
                   <button onClick={handleApproveWithManager} disabled={!selectedManagerId || managers.length === 0}
-                    style={{ flex: 1, padding: '10px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold' }}>
+                    style={{ ...primaryBtn({ disabled: !selectedManagerId || managers.length === 0 }), flex: 2 }}>
                     受理して送る
                   </button>
                 </div>
@@ -1133,11 +1134,11 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
 
             <div style={{ display: 'flex', gap: 10 }}>
               <button onClick={() => { setRejectingReq(null); setRejectReason(''); setRejectNewType(''); }}
-                style={{ flex: 1, padding: '10px', background: isDark ? '#495057' : '#f8f9fa', border: `1px solid ${borderColor}`, borderRadius: 8, cursor: 'pointer', color: text }}>
+                style={{ ...backBtn(isDark), flex: 1 }}>
                 キャンセル
               </button>
               <button onClick={handleReject}
-                style={{ flex: 1, padding: '10px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold' }}>
+                style={{ ...primaryBtn({ danger: true }), flex: 2 }}>
                 差し戻す
               </button>
             </div>

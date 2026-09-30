@@ -13,6 +13,7 @@ import {
   loadQueueErrors, saveQueueErrors,
   type PendingQueue, type SafetyCheckLite,
 } from '../lib/safetyStorage';
+import { primaryBtn, backBtn } from '../lib/buttonStyles';
 
 interface SafetyCheckPageProps {
   user: AuthUser;
@@ -1327,7 +1328,7 @@ const SendView: React.FC<{
 
           {!showConfirm ? (
             <button type="button" disabled={finalTargetIds.length === 0 || !body.trim()} onClick={() => setShowConfirm(true)}
-              style={{ width: '100%', padding: '14px', borderRadius: 10, border: 'none', background: finalTargetIds.length === 0 ? (isDark ? '#3d3d55' : '#e9ecef') : '#dc3545', color: finalTargetIds.length === 0 ? sub : '#fff', fontSize: 15, fontWeight: 700, cursor: finalTargetIds.length === 0 ? 'default' : 'pointer' }}>
+              style={{ ...primaryBtn({ danger: true, disabled: finalTargetIds.length === 0 }), width: '100%' }}>
               {isTest ? `テスト送信する（${finalTargetIds.length}人）` : `${finalTargetIds.length}人に送信する`}
             </button>
           ) : (
@@ -1336,13 +1337,13 @@ const SendView: React.FC<{
                 {finalTargetIds.length}人に送信しますか？
               </p>
               <div style={{ display: 'flex', gap: 8 }}>
-                <button type="button" disabled={sending} onClick={doSend}
-                  style={{ flex: 1, padding: '10px', borderRadius: 8, border: 'none', background: '#dc3545', color: '#fff', fontSize: 14, fontWeight: 700, cursor: sending ? 'default' : 'pointer' }}>
-                  {sending ? '送信中...' : '送信する'}
-                </button>
                 <button type="button" onClick={() => setShowConfirm(false)}
-                  style={{ padding: '10px 16px', borderRadius: 8, border: `1px solid ${border}`, background: 'none', color: sub, fontSize: 13, cursor: 'pointer' }}>
+                  style={{ ...backBtn(isDark), flex: 1 }}>
                   キャンセル
+                </button>
+                <button type="button" disabled={sending} onClick={doSend}
+                  style={{ ...primaryBtn({ danger: true, disabled: sending }), flex: 2 }}>
+                  {sending ? '送信中...' : '送信する'}
                 </button>
               </div>
             </div>

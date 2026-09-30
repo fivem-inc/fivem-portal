@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabaseClient';
 import { insertNotification } from '../lib/notifications';
 import { DateField } from './common/DateField';
 import { ERROR_BORDER, errorBg } from '../lib/formHighlight';
+import { primaryBtn, backBtn } from '../lib/buttonStyles';
 
 // 上長がスタッフに「この内容で申請してください」と依頼するシート（2026-09-09 ユーザー確定）。
 //
@@ -414,19 +415,19 @@ const ApplicationRequestSheet: React.FC<Props> = ({
               <br />相手にお知らせが届きます。
             </p>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={submit} disabled={submitting}
-                style={{ flex: 1, padding: '11px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>
-                {submitting ? '送信中…' : 'この内容で依頼する'}
-              </button>
               <button onClick={() => setShowConfirm(false)} disabled={submitting}
-                style={{ flex: 1, padding: '11px 0', borderRadius: 8, border: `1px solid ${border}`, cursor: 'pointer', fontSize: 14, background: 'transparent', color: subText }}>
+                style={{ ...backBtn(isDark), flex: 1 }}>
                 戻る
+              </button>
+              <button onClick={submit} disabled={submitting}
+                style={{ ...primaryBtn({ disabled: submitting }), flex: 2 }}>
+                {submitting ? '送信中…' : 'この内容で依頼する'}
               </button>
             </div>
           </div>
         ) : (
           <button onClick={() => { const m = validate(); if (m) { setError(m); return; } setError(''); setShowConfirm(true); }}
-            style={{ width: '100%', padding: '13px 0', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 'bold', background: '#0d6efd', color: '#fff' }}>
+            style={{ ...primaryBtn(), width: '100%' }}>
             内容を確認する
           </button>
         )}

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { primaryBtn, backBtn, BTN_BLUE } from '../lib/buttonStyles';
 
 // note を渡すと「読んでほしい案内」が付く。
 // 🚨 note があるときは自動で閉じない。3秒で消えて画面が切り替わると、
@@ -892,7 +893,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               setEncAnsweringId(null); setEncAnswerChoice(null); setEncAnswerNote(''); setEncAnswerWorking(false); setEncAnswerError('');
               fetchEncPending();
             }}
-            style={{ flex: 2, padding: '10px 0', background: encAnswerSubmitting ? '#6c757d' : '#28a745', color: '#fff', border: 'none', borderRadius: 10, cursor: encAnswerSubmitting ? 'default' : 'pointer', fontSize: 13, fontWeight: 'bold' }}>
+            style={{ flex: 2, padding: '10px 0', background: encAnswerSubmitting ? '#6c757d' : BTN_BLUE, color: '#fff', border: 'none', borderRadius: 10, cursor: encAnswerSubmitting ? 'default' : 'pointer', fontSize: 13, fontWeight: 'bold' }}>
             {encAnswerSubmitting ? '送信中...' : '回答を送信'}
           </button>
         </div>
@@ -1404,7 +1405,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               setLocError(''); setErrFields(new Set());
               setShowConfirm(true);
             }}
-            style={{ width: '100%', padding: '12px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, fontSize: 16, fontWeight: 'bold', cursor: 'pointer' }}
+            style={{ ...primaryBtn(), width: '100%' }}
           >
             申請内容を確認する
           </button>
@@ -1688,7 +1689,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             <button
               onClick={handleAdjSubmit}
               disabled={adjSubmitting}
-              style={{ width: '100%', padding: '13px', background: adjSubmitting ? '#6c757d' : '#28a745', color: 'white', border: 'none', borderRadius: 8, fontSize: 16, fontWeight: 'bold', cursor: adjSubmitting ? 'not-allowed' : 'pointer' }}
+              style={{ ...primaryBtn({ disabled: adjSubmitting }), width: '100%' }}
             >
               {adjSubmitting ? '登録中...' : '登録する'}
             </button>
@@ -2177,14 +2178,14 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
             <div style={{ display: 'flex', gap: 12 }}>
               <button
                 onClick={() => setShowConfirm(false)}
-                style={{ flex: 1, padding: '10px', background: isDark ? '#495057' : '#f8f9fa', border: `1px solid ${borderColor}`, borderRadius: 8, cursor: 'pointer', fontSize: 15, color: text }}
+                style={{ ...backBtn(isDark), flex: 1 }}
               >
                 修正する
               </button>
               <button
                 onClick={handleSubmit}
                 disabled={isSubmitting}
-                style={{ flex: 1, padding: '10px', background: isSubmitting ? '#6c757d' : '#28a745', color: 'white', border: 'none', borderRadius: 8, cursor: isSubmitting ? 'not-allowed' : 'pointer', fontSize: 15, fontWeight: 'bold' }}
+                style={{ ...primaryBtn({ disabled: isSubmitting }), flex: 2 }}
               >
                 {isSubmitting ? '送信中...' : '申請する'}
               </button>

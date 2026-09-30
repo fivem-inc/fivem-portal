@@ -11,6 +11,7 @@ import { tripTypeColor, tripCategoryLabel, formatTripNextDates, formatTripDateTi
 import SearchableSelect from './common/SearchableSelect';
 import HelpLinkButton from './HelpLinkButton';
 import type { AuthUser, BusinessTripReport } from '../types';
+import { primaryBtn, backBtn } from '../lib/buttonStyles';
 
 // 履歴タブに出す1件分（profiles は報告者名の表示にだけ使う）
 interface TripHistoryRow {
@@ -927,7 +928,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
 
         {/* 送信ボタン */}
         <button onClick={handleSubmitConfirm}
-          style={{ width: '100%', padding: '12px', borderRadius: 8, background: '#007bff', color: 'white', border: 'none', fontSize: 16, fontWeight: 'bold', cursor: 'pointer', marginTop: 20 }}>
+          style={{ ...primaryBtn(), width: '100%', marginTop: 20 }}>
           送信
         </button>
       </div>
@@ -984,11 +985,11 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
 
             <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>
               <button onClick={() => setShowConfirm(false)}
-                style={{ flex: 1, padding: '10px', borderRadius: 6, border: isDark ? '1px solid #666' : '1px solid #ccc', background: isDark ? '#444' : '#f8f9fa', color: isDark ? '#fff' : '#333', cursor: 'pointer', fontSize: 15 }}>
+                style={{ ...backBtn(isDark), flex: 1 }}>
                 戻る
               </button>
               <button onClick={handleSubmit} disabled={isSubmitting}
-                style={{ flex: 1, padding: '10px', borderRadius: 6, border: 'none', background: isSubmitting ? '#6c757d' : '#007bff', color: 'white', cursor: isSubmitting ? 'not-allowed' : 'pointer', fontSize: 15, fontWeight: 'bold' }}>
+                style={{ ...primaryBtn({ disabled: isSubmitting }), flex: 2 }}>
                 {isSubmitting ? '送信中...' : '送信する'}
               </button>
             </div>

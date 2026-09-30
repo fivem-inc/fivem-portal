@@ -7,6 +7,7 @@ import { insertNotification } from '../lib/notifications';
 import { resolveNormalShift, buildTimeAdjustReport, normalShiftTimeText } from '../lib/overtimeShift';
 import { ERROR_BORDER, errorBg, scrollToFirstError } from '../lib/formHighlight';
 import type { PatternRow } from '../lib/overtimeShift';
+import { primaryBtn, backBtn } from '../lib/buttonStyles';
 
 // 残業調整 提案作成シート（時間調整＝遅出/早退／調整休＝時間外調整休）。
 // 部門集計→個人詳細（MemberDetailView）から開く。上長が相手の残業残高を見ながら候補を組み、提案を作成する。
@@ -271,8 +272,8 @@ const OvertimeProposalSheet: React.FC<Props> = ({
         {error && <div style={{ color: '#842029', fontSize: 13, marginBottom: 12, padding: '8px 12px', background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 6 }}>⚠️ {error}</div>}
 
         <div style={{ display: 'flex', gap: 10 }}>
-          <button onClick={onClose} style={{ flex: 1, padding: 12, background: '#6c757d', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, cursor: 'pointer' }}>キャンセル</button>
-          <button onClick={handleSubmit} disabled={submitting} style={{ flex: 2, padding: 12, background: submitting ? '#9ec8f0' : '#1565c0', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: submitting ? 'not-allowed' : 'pointer' }}>
+          <button onClick={onClose} style={{ ...backBtn(isDark), flex: 1 }}>キャンセル</button>
+          <button onClick={handleSubmit} disabled={submitting} style={{ ...primaryBtn({ disabled: submitting }), flex: 2 }}>
             {submitting ? '送信中...' : '提案を送る'}
           </button>
         </div>
@@ -317,8 +318,8 @@ const OvertimeProposalSheet: React.FC<Props> = ({
             )}
 
             <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
-              <button onClick={() => setShowConfirm(false)} style={{ flex: 1, padding: 12, background: 'transparent', color: text, border: `1px solid ${border}`, borderRadius: 10, fontSize: 14, cursor: 'pointer' }}>修正する</button>
-              <button onClick={doSubmit} disabled={submitting} style={{ flex: 2, padding: 12, background: submitting ? '#9ec8f0' : '#1565c0', color: '#fff', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 'bold', cursor: submitting ? 'not-allowed' : 'pointer' }}>
+              <button onClick={() => setShowConfirm(false)} style={{ ...backBtn(isDark), flex: 1 }}>修正する</button>
+              <button onClick={doSubmit} disabled={submitting} style={{ ...primaryBtn({ disabled: submitting }), flex: 2 }}>
                 {submitting ? '送信中...' : 'この内容で提案を送る'}
               </button>
             </div>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { primaryBtn, backBtn, tintBtn } from '../lib/buttonStyles';
 
 const BannerSuccess: React.FC<{ message: string; onClose: () => void }> = ({ message, onClose }) => {
   useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, [onClose]);
@@ -865,11 +866,11 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
 
               {/* 追加ボタン */}
               <div style={{ display: 'flex', gap: 8 }}>
-                <button type="button" onClick={handleAddDraft} style={{ flex: 1, padding: 10, background: '#0d6efd', color: 'white', border: 'none', borderRadius: 6, fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
+                <button type="button" onClick={handleAddDraft} style={{ ...tintBtn(isDarkMode), flex: 1, padding: 10, fontSize: 14 }}>
                   ＋ 申請リストに追加
                 </button>
                 {draftExpense.type !== 'regular' && (
-                  <button type="button" onClick={handleAddRoundTripDraft} style={{ flex: 1, padding: 10, background: '#198754', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}>
+                  <button type="button" onClick={handleAddRoundTripDraft} style={{ ...tintBtn(isDarkMode), flex: 1, padding: 10, fontSize: 13 }}>
                     ⇄ 往復で申請リストに追加
                   </button>
                 )}
@@ -933,7 +934,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
         </div>
 
         <button type="button" onClick={handleValidateAndConfirm} disabled={isSubmitting || expenses.length === 0}
-          style={{ width: '100%', padding: 12, marginTop: 12, background: isSubmitting || expenses.length === 0 ? '#6c757d' : '#007bff', color: 'white', border: 'none', borderRadius: 4, cursor: isSubmitting || expenses.length === 0 ? 'not-allowed' : 'pointer', opacity: isSubmitting || expenses.length === 0 ? 0.6 : 1, fontSize: 15, fontWeight: 'bold' }}>
+          style={{ ...primaryBtn({ disabled: isSubmitting || expenses.length === 0 }), width: '100%', marginTop: 12 }}>
           {isSubmitting ? '送信中...' : `申請する${expenses.length > 0 ? `（${expenses.length}件）` : ''}`}
         </button>
 
@@ -998,14 +999,14 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ user, onSubmissionComplete, e
             <div style={{ display: 'flex', gap: 10 }}>
               <button
                 onClick={() => setShowConfirm(false)}
-                style={{ flex: 1, padding: 12, background: '#6c757d', color: 'white', border: 'none', borderRadius: 8, fontSize: 15, cursor: 'pointer' }}
+                style={{ ...backBtn(false), flex: 1 }}
               >
                 修正する
               </button>
               <button
                 onClick={handleSubmit}
                 disabled={isSubmitting}
-                style={{ flex: 2, padding: 12, background: '#007bff', color: 'white', border: 'none', borderRadius: 8, fontSize: 15, fontWeight: 'bold', cursor: 'pointer' }}
+                style={{ ...primaryBtn({ disabled: isSubmitting }), flex: 2 }}
               >
                 {isSubmitting ? '送信中...' : '✅ この内容で申請する'}
               </button>

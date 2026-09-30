@@ -11,6 +11,7 @@ import PurchaseItemsSummary from './PurchaseItemsSummary';
 import type { PurchaseRequestItem, PurchaseRequestItemQuote } from '../types';
 import PurchaseCommentThread from './PurchaseCommentThread';
 import { fetchPurchaseComments, type PurchaseComment } from '../lib/purchaseComments';
+import { primaryBtn } from '../lib/buttonStyles';
 
 type Route = 'leader' | 'manager' | 'board';
 type OpinionValue = 'approve' | 'deny' | 'undecided' | 'other';
@@ -612,7 +613,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
               </button>
               <button
                 type="button" onClick={() => handleApprove(r)} disabled={processingId === r.id || !allAnswered}
-                style={{ flex: 1, padding: '10px', borderRadius: 8, border: 'none', background: allAnswered ? '#28a745' : subText, color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: allAnswered ? 'pointer' : 'default' }}
+                style={{ ...primaryBtn({ disabled: processingId === r.id || !allAnswered }), flex: 1 }}
               >
                 {processingId === r.id ? '処理中...' : '最終決定：承認する'}
               </button>

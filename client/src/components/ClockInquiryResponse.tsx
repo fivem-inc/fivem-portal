@@ -7,6 +7,7 @@ import type { CalendarKind } from '../lib/breakCalc';
 import { CLOCK_ONLY_REASONS } from '../lib/overtimeTypes';
 import { dispatchEmail, getUserEmail } from '../lib/notificationDispatch';
 import { logFail } from '../lib/logFail';
+import { primaryBtn } from '../lib/buttonStyles';
 
 // 経理からの「打刻の確認」に答える画面。通知バナー → /overtime?inquiry=<id> から開く。
 //
@@ -359,7 +360,7 @@ const ClockInquiryResponse: React.FC<Props> = ({ inquiryId, currentUserId, isDar
 
       {canRespond ? (
         <button onClick={submit} disabled={saving}
-          style={{ width: '100%', padding: '12px 0', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 'bold', background: '#28a745', color: '#fff' }}>
+          style={{ ...primaryBtn({ disabled: saving }), width: '100%' }}>
           {saving ? '送信中...' : 'この内容で回答する'}
         </button>
       ) : (

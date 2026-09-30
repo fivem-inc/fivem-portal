@@ -5,6 +5,7 @@ import SignIn from './pages/SignIn';
 import ResetPassword from './pages/ResetPassword';
 import ExpenseForm from './components/ExpenseForm';
 import OvertimeThresholdBanner from './components/OvertimeThresholdBanner';
+import { BTN_BLUE } from './lib/buttonStyles';
 import RetireChecklistBanner from './components/RetireChecklistBanner';
 import { todayJstStr, payPeriodCloseCutoff, calcPayPeriodStartJst } from './lib/breakCalc';
 import { accessUntilLabel } from './lib/retire';
@@ -355,7 +356,7 @@ const ScheduledReminderBanner: React.FC<{ userId: string }> = ({ userId }) => {
             {/* 押すと記録が残るので、誤タップしないよう十分な高さ（44px）を確保する */}
             <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
               <button type="button" disabled={busy} onClick={() => respond(n, 'done')}
-                style={{ flex: 1, minHeight: 44, padding: '11px 12px', borderRadius: 8, border: 'none', background: busy ? '#6c757d' : '#28a745', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: busy ? 'default' : 'pointer' }}>
+                style={{ flex: 1, minHeight: 44, padding: '11px 12px', borderRadius: 8, border: 'none', background: busy ? '#6c757d' : BTN_BLUE, color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: busy ? 'default' : 'pointer' }}>
                 {busy ? '保存中...' : '✅ 完了しました'}
               </button>
               <button type="button" disabled={busy} onClick={() => respond(n, 'snoozed')}
@@ -2280,7 +2281,7 @@ const Dashboard: React.FC = () => {
               setEncAnswerSuccess(true);
               setTimeout(() => setEncAnswerSuccess(false), 3000);
             }}
-            style={{ flex: 2, padding: '10px 0', background: encAnswerSubmitting ? '#6c757d' : '#28a745', color: '#fff', border: 'none', borderRadius: 10, cursor: encAnswerSubmitting ? 'default' : 'pointer', fontSize: 13, fontWeight: 'bold' }}>
+            style={{ flex: 2, padding: '10px 0', background: encAnswerSubmitting ? '#6c757d' : BTN_BLUE, color: '#fff', border: 'none', borderRadius: 10, cursor: encAnswerSubmitting ? 'default' : 'pointer', fontSize: 13, fontWeight: 'bold' }}>
             {encAnswerSubmitting ? '送信中...' : '回答を送信'}
           </button>
         </div>

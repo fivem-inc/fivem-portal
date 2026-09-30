@@ -42,6 +42,7 @@ import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { useRoles } from '../hooks/useRoles';
 import { attrsFor, rankOf, roleByName } from '../lib/roleAttrs';
 import type { RoleRow } from '../lib/roleAttrs';
+import { primaryBtn, backBtn, BTN_BLUE } from '../lib/buttonStyles';
 
 // validate() は文言だけを返すので、文言と入力欄を突き合わせて薄赤ハイライトを付ける。
 // ここに無い文言は従来どおりメッセージだけ表示する（対応漏れでも壊れない）
@@ -1618,7 +1619,7 @@ const OvertimeForm: React.FC<{
                   )}
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button onClick={submitGrantRequest} disabled={grantSaving}
-                      style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', background: '#28a745', color: '#fff', fontSize: 13.5, fontWeight: 'bold', cursor: 'pointer', opacity: grantSaving ? 0.6 : 1 }}>
+                      style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', background: BTN_BLUE, color: '#fff', fontSize: 13.5, fontWeight: 'bold', cursor: 'pointer', opacity: grantSaving ? 0.6 : 1 }}>
                       {grantSaving ? '送信中…' : '依頼する'}
                     </button>
                     <button onClick={() => setGrantConfirming(false)} disabled={grantSaving}
@@ -2305,7 +2306,7 @@ const OvertimeForm: React.FC<{
       {/* 送信（インライン確認） */}
       {!showConfirm ? (
         <button onClick={handleSubmit} disabled={saving}
-          style={{ width: '100%', padding: '12px 0', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 'bold', background: '#28a745', color: '#fff' }}>
+          style={{ ...primaryBtn({ disabled: saving }), width: '100%' }}>
           {clockOnlyMode ? 'この内容で記録する（確定）' : isReportPhase ? (isPureZero ? '残業なしで報告する（確定）' : hasChanges ? '実績を報告する（変更あり）' : '実績を報告する（予定どおり）') : isResubmit ? '再提出する' : mode === 'advance' ? '事前申請する' : '報告する'}
         </button>
       ) : (
@@ -2374,13 +2375,13 @@ const OvertimeForm: React.FC<{
             </div>
           )}
           <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={doSubmit} disabled={saving}
-              style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', background: '#28a745', color: '#fff', opacity: saving ? 0.6 : 1 }}>
-              {saving ? '送信中…' : '送信する'}
-            </button>
             <button onClick={() => setShowConfirm(false)} disabled={saving}
-              style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 14, background: 'transparent', color: subText }}>
+              style={{ ...backBtn(isDark), flex: 1 }}>
               戻る
+            </button>
+            <button onClick={doSubmit} disabled={saving}
+              style={{ ...primaryBtn({ disabled: saving }), flex: 2 }}>
+              {saving ? '送信中…' : '送信する'}
             </button>
           </div>
         </div>
@@ -3379,11 +3380,11 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     })()}
                     <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                       <button onClick={() => doReturn(r)} disabled={!returnComment.trim() || actingId === r.id}
-                        style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 'bold', background: '#dc3545', color: '#fff', opacity: !returnComment.trim() ? 0.5 : 1 }}>
+                        style={{ ...primaryBtn({ danger: true }), flex: 1, opacity: !returnComment.trim() ? 0.5 : 1 }}>
                         差し戻す
                       </button>
                       <button onClick={() => { setReturnTargetId(null); setReturnComment(''); }}
-                        style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 13, background: 'transparent', color: subText }}>
+                        style={{ ...backBtn(isDark), flex: 1 }}>
                         やめる
                       </button>
                     </div>
@@ -3391,11 +3392,11 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                 ) : (
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button onClick={() => doApprove(r)} disabled={actingId === r.id}
-                      style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', background: '#28a745', color: '#fff', opacity: actingId === r.id ? 0.6 : 1 }}>
+                      style={{ ...primaryBtn({ disabled: actingId === r.id }), flex: 1 }}>
                       {isAdvance ? '事前申請を受理' : '受理'}
                     </button>
                     <button onClick={() => { setReturnTargetId(r.id); setReturnComment(''); }}
-                      style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: `1px solid ${borderColor}`, cursor: 'pointer', fontSize: 14, background: 'transparent', color: subText }}>
+                      style={{ ...backBtn(isDark), flex: 1 }}>
                       差し戻し
                     </button>
                   </div>
@@ -3894,7 +3895,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                             {canReport && (
                               <>
                                 <button onClick={() => { setEditTarget(r); setTab('form'); window.scrollTo({ top: 0 }); }}
-                                  style={{ width: '100%', padding: '12px 0', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold', background: '#28a745', color: '#fff' }}>
+                                  style={{ ...primaryBtn(), width: '100%' }}>
                                   実績を報告する
                                 </button>
                                 <p style={{ margin: '6px 0 0', fontSize: 11.5, color: subText, textAlign: 'center', lineHeight: 1.6 }}>

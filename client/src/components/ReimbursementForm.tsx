@@ -8,6 +8,7 @@ import { todayJstStr } from '../lib/breakCalc';
 import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { getUserName } from '../lib/notificationDispatch';
 import { logFail } from '../lib/logFail';
+import { primaryBtn, backBtn } from '../lib/buttonStyles';
 
 const BannerSuccess: React.FC<{ message: string; sub?: string; onClose: () => void }> = ({ message, sub, onClose }) => {
   React.useEffect(() => { const t = setTimeout(onClose, 4000); return () => clearTimeout(t); }, [onClose]);
@@ -454,7 +455,7 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
           type="button"
           onClick={handleSubmit}
           disabled={submitting || receiptUploading}
-          style={{ width: '100%', padding: '14px', borderRadius: 10, border: 'none', background: submitting || receiptUploading ? subText : '#28a745', color: '#fff', fontSize: 15, fontWeight: 'bold', cursor: submitting || receiptUploading ? 'default' : 'pointer' }}
+          style={{ ...primaryBtn({ disabled: submitting || receiptUploading }), width: '100%' }}
         >
           {submitting ? '送信しています...' : receiptUploading ? 'レシートをアップロード中...' : '送信する'}
         </button>
@@ -499,13 +500,13 @@ const ReimbursementForm: React.FC<ReimbursementFormProps> = ({ user, roleTitle }
               <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
                 <button
                   type="button" onClick={() => setShowConfirm(false)}
-                  style={{ flex: 1, padding: '12px', borderRadius: 8, border: `1px solid ${border}`, background: 'transparent', color: text, fontSize: 14, cursor: 'pointer' }}
+                  style={{ ...backBtn(isDarkMode), flex: 1 }}
                 >
                   修正する
                 </button>
                 <button
                   type="button" onClick={doSubmit} disabled={submitting}
-                  style={{ flex: 1, padding: '12px', borderRadius: 8, border: 'none', background: submitting ? subText : '#28a745', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: submitting ? 'default' : 'pointer' }}
+                  style={{ ...primaryBtn({ disabled: submitting }), flex: 2 }}
                 >
                   {submitting ? '送信しています...' : 'この内容で記録する'}
                 </button>

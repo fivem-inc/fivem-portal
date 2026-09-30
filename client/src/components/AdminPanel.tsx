@@ -24,6 +24,7 @@ import SafetyChecksTab from './admin/SafetyChecksTab';
 import CorrectionRequestsTab from './admin/CorrectionRequestsTab';
 // シフト管理（勤務表の一括編集・2026-09-15）。docs/計画-管理画面の開放.md の 5
 import ShiftManagementTab from './admin/ShiftManagementTab';
+import { primaryBtn, backBtn } from '../lib/buttonStyles';
 
 /** メール（Resend）の使用量。Edge Function resend-usage が返す形。
  *  🚨 上限（limit）も Resend から受け取る。こちらで 3,000 などと決め打ちしない（プラン変更に追従するため） */
@@ -927,7 +928,7 @@ const AdminPanelContent: React.FC = () => {
             <div style={{ display: 'flex', gap: 10 }}>
               <button
                 onClick={() => { setManagerAssignError(''); setAdminSelectingManagerFor(null); }}
-                style={{ flex: 1, padding: '10px', background: '#6c757d', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold' }}
+                style={{ ...backBtn(isDarkMode), flex: 1 }}
               >キャンセル</button>
               <button
                 disabled={!adminSelectedManagerId}
@@ -948,7 +949,7 @@ const AdminPanelContent: React.FC = () => {
                   setAdminSelectingManagerFor(null);
                   fetchLeaveRequests();
                 }}
-                style={{ flex: 1, padding: '10px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold' }}
+                style={{ ...primaryBtn(), flex: 2 }}
               >受理して送る</button>
             </div>
           </div>

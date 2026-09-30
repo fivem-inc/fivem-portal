@@ -15,6 +15,7 @@ import QuoteFileUploader from './QuoteFileUploader';
 // 金額帯の定義は lib/purchaseTiers.ts に集約（管理画面の修正モーダルからも同じ値を使う）
 import { QUOTES_REQUIRED_THRESHOLD, TIER_LABEL, tierOf } from '../lib/purchaseTiers';
 import type { Tier } from '../lib/purchaseTiers';
+import { primaryBtn, backBtn } from '../lib/buttonStyles';
 
 // 相見積もり1行分の下書き。isSelectedは商品内でラジオボタンにより排他選択される
 // （どの業者から購入するかは「購入予定先を選択」セクションのラジオで選ぶ。isSelectedは商品内で1件だけtrue）
@@ -1436,7 +1437,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
           type="button"
           onClick={handleSubmit}
           disabled={submitting || (tier === 'board' && !isPresident && boardApprovers.length === 0)}
-          style={{ width: '100%', padding: '14px', borderRadius: 10, border: 'none', background: submitting ? subText : '#28a745', color: '#fff', fontSize: 15, fontWeight: 'bold', cursor: submitting ? 'default' : 'pointer' }}
+          style={{ ...primaryBtn({ disabled: submitting || (tier === 'board' && !isPresident && boardApprovers.length === 0) }), width: '100%' }}
         >
           {submitting ? '送信しています...' : isResubmit ? '修正して再申請する' : (isSelfJudgment || (tier === 'board' && isPresident && presidentSelfJudgment)) ? '共有する' : '申請する'}
         </button>
@@ -1521,13 +1522,13 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
               <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
                 <button
                   type="button" onClick={() => setShowConfirm(false)}
-                  style={{ flex: 1, padding: '12px', borderRadius: 8, border: `1px solid ${border}`, background: 'transparent', color: text, fontSize: 14, cursor: 'pointer' }}
+                  style={{ ...backBtn(isDarkMode), flex: 1 }}
                 >
                   修正する
                 </button>
                 <button
                   type="button" onClick={doSubmit} disabled={submitting}
-                  style={{ flex: 1, padding: '12px', borderRadius: 8, border: 'none', background: submitting ? subText : '#28a745', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: submitting ? 'default' : 'pointer' }}
+                  style={{ ...primaryBtn({ disabled: submitting }), flex: 2 }}
                 >
                   {submitting ? '送信しています...' : `この内容で${isResubmit ? '再申請' : (isSelfJudgment || (tier === 'board' && isPresident && presidentSelfJudgment)) ? '共有' : '申請'}する`}
                 </button>

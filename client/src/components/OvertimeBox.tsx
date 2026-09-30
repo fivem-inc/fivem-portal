@@ -39,6 +39,7 @@ import { runBulkSend } from '../lib/overtimeBulkSend';
 import type { BulkRowStatus } from '../lib/overtimeBulkSend';
 import { requestSegmentsLocation, effectiveClockReasonOf, isManagerReviewer, furikaeOriginPrefill, PAYOUT_PASSED_MSG } from '../lib/overtimeFormParts';
 import type { SegmentLike } from '../lib/segmentsText';
+import { primaryBtn, backBtn, tintBtn } from '../lib/buttonStyles';
 
 interface Reviewer { id: string; name: string; role_title: string; roles?: unknown }
 
@@ -792,7 +793,7 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
           : <div style={{ fontSize: 12, color: subText, marginTop: 8 }}>締め切り後の日です。リストに入れると、下の枠から経理に許可を依頼できます</div>)}
 
         <button type="button" onClick={addToList} disabled={busy}
-          style={{ width: '100%', marginTop: 12, padding: 10, background: '#0d6efd', color: '#fff', border: 'none', borderRadius: 6, fontSize: 14, fontWeight: 'bold', cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.5 : 1 }}>
+          style={{ ...tintBtn(isDark), width: '100%', marginTop: 12, padding: 10, fontSize: 14, cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.5 : 1 }}>
           {input.editingKey ? '✓ 直した内容でリストに戻す' : '＋ 申請リストに追加'}
         </button>
       </div>
@@ -875,11 +876,7 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
       {!confirm && (
         <button type="button" disabled={sending || sendableRows.length === 0 || errors.length > 0}
           onClick={() => setConfirm(sendableRows.map(r => ({ date: r.date, label: r.calc.sendLabel })))}
-          style={{
-            width: '100%', padding: 12, marginTop: 6, border: 'none', borderRadius: 4, fontSize: 15, fontWeight: 'bold', color: '#fff',
-            background: sending || sendableRows.length === 0 ? '#6c757d' : '#007bff', opacity: sending || sendableRows.length === 0 ? 0.6 : 1,
-            cursor: sending || sendableRows.length === 0 ? 'not-allowed' : 'pointer',
-          }}>
+          style={{ ...primaryBtn({ disabled: sending || sendableRows.length === 0 }), width: '100%', marginTop: 6 }}>
           {sending ? '送信中…' : `申請する${sendableRows.length > 0 ? `（${sendableRows.length}件）` : ''}`}
         </button>
       )}
@@ -918,8 +915,8 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
             ))}
             <p style={{ fontSize: 12, color: subText, margin: '4px 0 0' }}>1日ずつ、いつもの申請として登録されます。</p>
             <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-              <button type="button" onClick={() => setConfirm(null)} style={{ flex: 1, padding: 10, borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: text, fontSize: 14, cursor: 'pointer' }}>戻って直す</button>
-              <button type="button" onClick={() => { void doSend(); }} style={{ flex: 1, padding: 10, borderRadius: 8, border: 'none', background: toggleBlue, color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>{list.length}件を送信する</button>
+              <button type="button" onClick={() => setConfirm(null)} style={{ ...backBtn(isDark), flex: 1 }}>戻って直す</button>
+              <button type="button" onClick={() => { void doSend(); }} style={{ ...primaryBtn(), flex: 2 }}>{list.length}件を送信する</button>
             </div>
           </div>
         );

@@ -11,6 +11,7 @@ import { insertGrantRequest, withdrawGrantRequest } from '../lib/overtimeSubmitA
 import type { GrantRequestRow } from '../lib/overtimeSubmitApi';
 import { grantRequestErrorMessage, formatGrantDates, PAYOUT_PASSED_MSG } from '../lib/overtimeFormParts';
 import { notifyOvertimeGrantRequest } from '../lib/overtimeNotify';
+import { BTN_BLUE } from '../lib/buttonStyles';
 
 interface Props {
   userId: string;
@@ -81,7 +82,7 @@ const OvertimeGrantPanel: React.FC<Props> = ({
 
   const redBox: React.CSSProperties = { background: '#f8d7da', border: '1px solid #f5c2c7', borderRadius: 8, padding: '8px 10px', fontSize: 12.5, color: '#842029', lineHeight: 1.6 };
   const sep = <div style={{ borderTop: `1px solid ${borderColor}`, margin: '8px 0' }} />;
-  const btnBlue: React.CSSProperties = { padding: '6px 14px', borderRadius: 8, border: 'none', background: '#1976d2', color: '#fff', fontSize: 12.5, fontWeight: 'bold', cursor: 'pointer' };
+  const btnBlue: React.CSSProperties = { padding: '6px 14px', borderRadius: 8, border: 'none', background: BTN_BLUE, color: '#fff', fontSize: 12.5, fontWeight: 'bold', cursor: 'pointer' };
 
   // 見送りの「もう一度依頼する」で送る日＝見送られた日のうち、いま依頼できる日だけ（時間を入れていない日・許可済み・依頼中は送らない）。
   // 🚨 その日は上の［📩 経理に許可を依頼する］から外す（同じ日のボタンが2つ並ばないように）
@@ -109,10 +110,10 @@ const OvertimeGrantPanel: React.FC<Props> = ({
         <div style={{ fontSize: 12.5, color: subText, margin: '2px 0 8px' }}>対象日：{formatGrantDates(confirmDates)}（{confirmDates.length}日）</div>
         {error && <div style={{ ...redBox, marginBottom: 8 }}>{error}</div>}
         <div style={{ display: 'flex', gap: 8 }}>
-          <button type="button" onClick={submit} disabled={saving}
-            style={{ ...btnBlue, background: '#28a745', opacity: saving ? 0.6 : 1 }}>{saving ? '送信中…' : '依頼する'}</button>
           <button type="button" onClick={() => { setConfirmDates(null); setError(''); }} disabled={saving}
             style={{ padding: '6px 14px', borderRadius: 8, border: `1px solid ${borderColor}`, background: 'transparent', color: subText, fontSize: 12.5, cursor: 'pointer' }}>戻る</button>
+          <button type="button" onClick={submit} disabled={saving}
+            style={{ ...btnBlue, opacity: saving ? 0.6 : 1 }}>{saving ? '送信中…' : '依頼する'}</button>
         </div>
       </div>,
     );
