@@ -2477,6 +2477,9 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   // 集計モード用
   const [summaryPeriod, setSummaryPeriod] = useState(() => calcPayPeriodStartJst(todayJstStr()));
   const [summaryRows, setSummaryRows] = useState<SummaryRow[]>([]);
+  // 部門集計の「目安超え」（userId → その方の目安・分）。overtime_threshold_over_visible() が部門集計と同じ範囲だけ返す（自分は含まない）
+  const [summaryOver, setSummaryOver] = useState<Map<string, number> | null>(null);
+  const [summaryOverErr, setSummaryOverErr] = useState('');
   const [myGroups, setMyGroups] = useState<string[]>([]);           // 閲覧者自身の部門（初期スコープ用）
   const [summaryDept, setSummaryDept] = useState('');               // 部門(チーム)フィルタ。''=自所属を初期選択 / '__all__'=全チーム
   const [summaryNameQuery, setSummaryNameQuery] = useState('');      // 名前検索
@@ -2554,13 +2557,20 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   useEffect(() => {
     if (historyMode !== 'summary' || !canSummary) return;
     (async () => {
-      const [repRes, setRes] = await Promise.all([
+      const [repRes, setRes, overRes] = await Promise.all([
         supabase.from('overtime_reports')
           .select('applicant_id, work_date, pay_period_start, entry_type, status, diff_minutes, application_types')
           .eq('pay_period_start', summaryPeriod),
         supabase.from('overtime_settings').select('banner_group_names').eq('id', 1).maybeSingle(),
+        supabase.rpc('overtime_threshold_over_visible', { p_period: summaryPeriod }),
       ]);
       const whitelist: string[] = (setRes.data?.banner_group_names as string[] | null) ?? [];
+      // 🚨 読めなければ札を出さないが、黙らない（一覧の上に理由を出す）
+      if (overRes.error) { setSummaryOver(null); setSummaryOverErr(overRes.error.message); }
+      else {
+        setSummaryOver(new Map(((overRes.data ?? []) as { user_id: string; threshold_minutes: number }[]).map(o => [o.user_id, o.threshold_minutes])));
+        setSummaryOverErr('');
+      }
 
       const repRows = (repRes.data as OvertimeReport[] | null) ?? [];
       const ids = [...new Set(repRows.map(r => r.applicant_id))];
@@ -2650,6 +2660,26 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
   // 🚨 ここと advanceRequestMaxDate がずれると「申請できるのに合計時間数を見られない期」ができる
   const ownCardNextLimit = calcPayPeriodStartJst(advanceRequestMaxDate(todayJstStr()));
   const [ownCardPeriod, setOwnCardPeriod] = useState(currentPeriod);
+
+  // ---- 目安超えのお知らせ（ベル・プッシュ・ホームのバナー）から来たとき、着いた先を6秒光らせる（2026-09-30 ユーザー確定） ----
+  // 本人＝今期の合計時間数のカード／上長＝部門集計の、目安を超えた人の行（札は上長だけ。本人には出さない）
+  const hlParam = searchParams.get('hl');
+  const [thresholdGlow, setThresholdGlow] = useState<'self' | 'summary' | null>(null);
+  const ownCardRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (hlParam !== 'threshold') return;
+    if (modeParam === 'summary') { setSummaryPeriod(currentPeriod); setSummaryNameQuery(''); setThresholdGlow('summary'); }
+    else { setHistoryMode('own'); setOwnCardPeriod(currentPeriod); setThresholdGlow('self'); }
+    // 🚨 目印は URL から消す。残すと部門集計で人を押して戻ったときにも光る。消しておけば、同じお知らせをもう一度押したときも光る
+    setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('hl'); return n; }, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hlParam]);
+  useEffect(() => {
+    if (!thresholdGlow) return;
+    const t1 = thresholdGlow === 'self' ? setTimeout(() => ownCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 400) : null;
+    const t2 = setTimeout(() => setThresholdGlow(null), 6000);
+    return () => { if (t1) clearTimeout(t1); clearTimeout(t2); };
+  }, [thresholdGlow]);
   const [ownCardRows, setOwnCardRows] = useState<OvertimeReport[]>([]);
   const [ownCardLoading, setOwnCardLoading] = useState(false);
   const ownCardReqRef = useRef(0);
@@ -3594,6 +3624,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                     nameQuery={summaryNameQuery} onChangeName={setSummaryNameQuery}
                     filterOpen={summaryFilterOpen} onToggleFilter={() => setSummaryFilterOpen(o => !o)}
                     onSelect={selectStaff}
+                    overMap={summaryOver} overErr={summaryOverErr} glow={thresholdGlow === 'summary'}
                   />
                 )
               ) : (
@@ -3609,7 +3640,11 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
                       color: enabled ? text : (isDark ? '#495057' : '#ced4da'),
                     });
                     return (
-                      <div style={{ background: innerBg, borderRadius: 12, padding: '14px 16px', marginBottom: 8, opacity: ownCardLoading ? 0.6 : 1, transition: 'opacity 0.15s' }}>
+                      <div ref={ownCardRef} style={{
+                        background: thresholdGlow === 'self' ? (isDark ? '#4a4423' : '#fff9c4') : innerBg,
+                        boxShadow: thresholdGlow === 'self' ? 'inset 0 0 0 1px #f0c000' : 'none',
+                        borderRadius: 12, padding: '14px 16px', marginBottom: 8, opacity: ownCardLoading ? 0.6 : 1, transition: 'opacity 0.15s, background 0.6s, box-shadow 0.6s',
+                      }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                           <button type="button" aria-label="前の期間へ" disabled={!canGoPrev}
                             onClick={() => setOwnCardPeriod(p => shiftPayPeriod(p, -1))} style={arrowStyle(canGoPrev)}>‹</button>
@@ -4242,7 +4277,12 @@ const SummaryView: React.FC<{
   filterOpen: boolean;
   onToggleFilter: () => void;
   onSelect: (userId: string) => void;
-}> = ({ isDark, rows, period, onChangePeriod, myGroups, dept, onChangeDept, nameQuery, onChangeName, filterOpen, onToggleFilter, onSelect }) => {
+  /** 目安を超えた人（userId → 目安・分）。読めなかったら null */
+  overMap: Map<string, number> | null;
+  overErr: string;
+  /** 目安超えのお知らせから来た直後（6秒）。目安を超えた人の行を光らせて、そこまで移る */
+  glow: boolean;
+}> = ({ isDark, rows, period, onChangePeriod, myGroups, dept, onChangeDept, nameQuery, onChangeName, filterOpen, onToggleFilter, onSelect, overMap, overErr, glow }) => {
   const text = isDark ? '#f8f9fa' : '#212529';
   const subText = isDark ? '#adb5bd' : '#6c757d';
   const borderColor = isDark ? '#495057' : '#dee2e6';
@@ -4268,6 +4308,21 @@ const SummaryView: React.FC<{
     return true;
   });
   const groupOrder = deptOptions.filter(g => visibleRows.some(r => r.group === g));
+
+  // お知らせから来たとき：目安を超えた人が今の部門の絞り込みで隠れていたら全チームに広げ、最初の人の行まで移る
+  const glowRowRef = useRef<HTMLTableRowElement | null>(null);
+  const overVisible = !!overMap && visibleRows.some(r => overMap.has(r.userId));
+  const overAnywhere = !!overMap && rows.some(r => overMap.has(r.userId));
+  useEffect(() => {
+    if (glow && !overVisible && overAnywhere && activeDept !== '__all__') onChangeDept('__all__');
+  }, [glow, overVisible, overAnywhere, activeDept, onChangeDept]);
+  useEffect(() => {
+    if (!glow || !overVisible) return;
+    const t = setTimeout(() => glowRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 400);
+    return () => clearTimeout(t);
+  }, [glow, overVisible]);
+  const firstOverId = overMap ? visibleRows.find(r => overMap.has(r.userId))?.userId : undefined;
+
   const total = visibleRows.reduce((s, r) => s + r.total, 0);
   const plannedTotal = visibleRows.reduce((s, r) => s + r.plannedTotal, 0);
 
@@ -4325,7 +4380,11 @@ const SummaryView: React.FC<{
               </div>
             )}
           </div>
-          <p style={{ margin: '0 0 12px', fontSize: 11.5, color: subText }}>名前をタップすると個人の申請履歴を確認できます。確定＝給与に効く数字です。</p>
+          <p style={{ margin: '0 0 12px', fontSize: 11.5, color: subText }}>
+            名前をタップすると個人の申請履歴を確認できます。確定＝給与に効く数字です。
+            {overMap && overMap.size > 0 && <>「目安超え」＝その期の見込みが、その方の目安を超えています。</>}
+          </p>
+          {overErr && <p style={{ margin: '0 0 12px', fontSize: 11.5, color: '#dc3545' }}>「目安超え」の表示を読み込めませんでした（{overErr}）</p>}
           {groupOrder.map(g => {
             const grows = visibleRows.filter(r => r.group === g);
             const sub = grows.reduce((s, r) => s + r.total, 0);
@@ -4335,8 +4394,16 @@ const SummaryView: React.FC<{
                 <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse', color: text }}>
                   <tbody>
                     {grows.map(r => (
-                      <tr key={r.userId} onClick={() => onSelect(r.userId)} style={{ cursor: 'pointer' }}>
-                        <td style={{ padding: '7px 10px 7px 0', borderBottom: `1px solid ${borderColor}`, whiteSpace: 'nowrap' }}>{r.name}</td>
+                      <tr key={r.userId} onClick={() => onSelect(r.userId)}
+                        ref={r.userId === firstOverId ? glowRowRef : undefined}
+                        style={{ cursor: 'pointer', background: glow && overMap?.has(r.userId) ? (isDark ? '#4a4423' : '#fff9c4') : 'transparent', transition: 'background 0.6s' }}>
+                        <td style={{ padding: '7px 10px 7px 0', borderBottom: `1px solid ${borderColor}`, whiteSpace: 'nowrap' }}>
+                          {r.name}
+                          {/* 🎨🔒 ホームの目安超えのバナーと同じオレンジ（固定色）。上長だけに見える（本人には出さない・2026-09-30 ユーザー確定） */}
+                          {overMap?.has(r.userId) && (
+                            <span title={`目安 ${formatMin(overMap.get(r.userId) ?? 0)}`} style={{ display: 'inline-block', marginLeft: 6, fontSize: 10.5, lineHeight: '16px', background: '#fff4e6', border: '1px solid #fb923c', color: '#9a3412', borderRadius: 10, padding: '0 6px', verticalAlign: 'middle' }}>目安超え</span>
+                          )}
+                        </td>
                         <td style={{ padding: '7px 0', borderBottom: `1px solid ${borderColor}`, width: '100%', fontSize: 11, color: subText }}>
                           {[r.group !== '未所属' ? r.group : null, r.role || null].filter(Boolean).join('・')}
                           {r.absenceDays > 0 && <span style={{ marginLeft: 8 }}>欠{r.absenceDays}日</span>}

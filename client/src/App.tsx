@@ -616,10 +616,19 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
           <div style={{ maxHeight: 320, overflowY: 'auto' }}>
             {notifs.length === 0 ? (
               <div style={{ padding: '20px', textAlign: 'center', color: '#888', fontSize: 13 }}>通知はありません</div>
-            ) : notifs.map(n => (
-              // 行ごと押せる。押すと既読になり、その通知の画面へ移動する
-              // プッシュから来たときは、その通知の行を6秒だけ黄色く光らせる（既読でも光る）
-              <div key={n.id} ref={el => { rowRefs.current[n.id] = el; }} onClick={() => handleRowTap(n)}
+            ) : [...notifs.filter(n => !n.read), ...notifs.filter(n => n.read)].map((n, i, arr) => (
+              // 🚨 未読を上に、線で区切って既読を下に（どちらも新しい順・2026-09-30 ユーザー確定）。
+              //    未読が既読の間に埋もれて、下まで探しに行く手間があったため。
+              //    押すと既読になって下へ移るが、同時に一覧が閉じて画面が移るので、目の前で行が飛ぶことはない
+              <React.Fragment key={n.id}>
+              {n.read && i > 0 && !arr[i - 1].read && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 14px', fontSize: 10.5, color: '#9aa3ad', background: '#fafafa', borderBottom: '1px solid #f0f0f0' }}>
+                  <span style={{ flex: 1, borderTop: '1px solid #dde2e7' }} />ここから既読<span style={{ flex: 1, borderTop: '1px solid #dde2e7' }} />
+                </div>
+              )}
+              {/* 行ごと押せる。押すと既読になり、その通知の画面へ移動する
+                  プッシュから来たときは、その通知の行を6秒だけ黄色く光らせる（既読でも光る） */}
+              <div ref={el => { rowRefs.current[n.id] = el; }} onClick={() => handleRowTap(n)}
                 style={{ padding: '10px 14px', borderBottom: '1px solid #f0f0f0', background: highlightIds.includes(n.id) ? '#fff8e1' : (n.read ? '#fff' : '#eaf4ff'), boxShadow: highlightIds.includes(n.id) ? 'inset 3px 0 0 #f59e0b' : 'none', transition: 'background 0.4s', display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
                 {/* 未読の印。既読になっても行は消さず、印と背景の色だけ消える（履歴として残す）。
                     文字の濃さだけだと、行に本文・補足・日時が並ぶと差が埋もれるため「面」で区別する */}
@@ -637,6 +646,7 @@ const BellIcon: React.FC<{ userId: string }> = ({ userId }) => {
                 </div>
                 <span aria-hidden="true" style={{ fontSize: 13, color: n.read ? '#ddd' : '#ccc', flexShrink: 0, marginTop: 2 }}>›</span>
               </div>
+              </React.Fragment>
             ))}
           </div>
         </div>,
@@ -1424,8 +1434,10 @@ const classifyNotif = (n: NotifLike) => {
     // 誰が・いつの分を取り消したかは通知の本文に入っている
     if (isOvertimeCancelledFyi) return { path: null, closeOnTap: true };
     // 残業が目安を超えたお知らせ。本人は自分の履歴へ、上長は部門集計へ
-    if (isOvertimeThreshold) return { path: '/overtime?tab=history', closeOnTap: true };
-    if (isOvertimeThresholdSummary) return { path: '/overtime?tab=history&mode=summary', closeOnTap: true };
+    // 🚨 hl=threshold で着いた先を光らせる（本人＝合計時間数のカード／上長＝目安を超えた人の行・2026-09-30）。
+    //    プッシュの飛び先（push-dispatch の EVENT_MAP）も同じ URL にそろえること
+    if (isOvertimeThreshold) return { path: '/overtime?tab=history&hl=threshold', closeOnTap: true };
+    if (isOvertimeThresholdSummary) return { path: '/overtime?tab=history&mode=summary&hl=threshold', closeOnTap: true };
     // 残業調整の提案（相手＝受信／提案者＝回答通知）。どちらも催促しない＝タップで開いて閉じる。
     if (isOtProposalReceived || isOtProposalResponded) {
       return { path: n.reference_id ? `/overtime?proposal=${n.reference_id}` : '/overtime', closeOnTap: true };

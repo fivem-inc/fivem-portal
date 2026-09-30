@@ -226,7 +226,7 @@ const OvertimeThresholdBanner: React.FC<{
             </div>
             <div style={{ marginTop: 10 }}>
               <button type="button" style={btnMain}
-                onClick={() => navigate('/overtime?tab=history&mode=summary')}>
+                onClick={() => navigate('/overtime?tab=history&mode=summary&hl=threshold')}>
                 部門集計を開く
               </button>
             </div>
