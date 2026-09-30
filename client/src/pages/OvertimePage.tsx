@@ -42,7 +42,7 @@ import { errorStyle, scrollToFirstError } from '../lib/formHighlight';
 import { useRoles } from '../hooks/useRoles';
 import { attrsFor, rankOf, roleByName } from '../lib/roleAttrs';
 import type { RoleRow } from '../lib/roleAttrs';
-import { primaryBtn, backBtn, BTN_BLUE } from '../lib/buttonStyles';
+import { primaryBtn, backBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
 
 // validate() は文言だけを返すので、文言と入力欄を突き合わせて薄赤ハイライトを付ける。
 // ここに無い文言は従来どおりメッセージだけ表示する（対応漏れでも壊れない）
@@ -343,7 +343,7 @@ const SingleDatePicker: React.FC<{
               style={{
                 padding: '10px 2px', minHeight: 40, borderRadius: 6,
                 border: isToday ? '2px solid #007bff' : '1px solid transparent',
-                background: isSelected ? '#28a745' : cs ? cs.bg : 'transparent',
+                background: isSelected ? TOGGLE_BLUE : cs ? cs.bg : 'transparent',
                 color: disabled ? (isDark ? '#5c636a' : '#c4c9cf') : isSelected ? 'white' : cs ? cs.text : dow === 0 ? '#e74c3c' : dow === 6 ? '#3498db' : text,
                 cursor: disabled ? 'default' : 'pointer', fontSize: 13,
                 fontWeight: isSelected ? 'bold' : 'normal', textAlign: 'center', lineHeight: 1.2,
@@ -422,7 +422,7 @@ const GrantDatePicker: React.FC<{
               style={{
                 padding: '10px 2px', minHeight: 40, borderRadius: 6,
                 border: isToday ? '2px solid #007bff' : '1px solid transparent',
-                background: isSelected ? '#28a745' : 'transparent',
+                background: isSelected ? TOGGLE_BLUE : 'transparent',
                 color: disabled ? (isDark ? '#5c636a' : '#c4c9cf') : isSelected ? 'white' : dow === 0 ? '#e74c3c' : dow === 6 ? '#3498db' : text,
                 cursor: disabled ? 'default' : 'pointer', fontSize: 13,
                 fontWeight: isSelected ? 'bold' : 'normal', textAlign: 'center',

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import SearchableSelect from '../common/SearchableSelect';
+import { TOGGLE_BLUE } from '../../lib/buttonStyles';
 import { useAdminPanel } from './AdminPanelContext';
 import { useRoles } from '../../hooks/useRoles';
 import { rankOf, rolesActingAs } from '../../lib/roleAttrs';
@@ -1551,7 +1552,7 @@ const OvertimeAdminTab: React.FC = () => {
                         style={{
                           padding: '7px 2px', minHeight: 34, borderRadius: 6, cursor: 'pointer', fontSize: 13,
                           border: picked ? '2px solid #0056b3' : '1px solid transparent',
-                          background: picked ? '#007bff' : savedBg ?? 'transparent',
+                          background: picked ? TOGGLE_BLUE : savedBg ?? 'transparent',
                           color: picked ? '#fff' : savedBg ? '#4a4a46' : dow === 0 ? '#e74c3c' : dow === 6 ? '#3498db' : text,
                           fontWeight: picked || saved ? 'bold' : 'normal',
                         }}>{day}</button>

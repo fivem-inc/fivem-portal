@@ -24,7 +24,7 @@ import SafetyChecksTab from './admin/SafetyChecksTab';
 import CorrectionRequestsTab from './admin/CorrectionRequestsTab';
 // シフト管理（勤務表の一括編集・2026-09-15）。docs/計画-管理画面の開放.md の 5
 import ShiftManagementTab from './admin/ShiftManagementTab';
-import { primaryBtn, backBtn } from '../lib/buttonStyles';
+import { primaryBtn, backBtn, tintBtn } from '../lib/buttonStyles';
 
 /** メール（Resend）の使用量。Edge Function resend-usage が返す形。
  *  🚨 上限（limit）も Resend から受け取る。こちらで 3,000 などと決め打ちしない（プラン変更に追従するため） */
@@ -796,7 +796,7 @@ const AdminPanelContent: React.FC = () => {
                   onKeyDown={e => { if (e.key === 'Enter') handleAddExpenseType(); }}
                   style={{ flex: 1, padding: '7px 10px', borderRadius: 6, border: isDarkMode ? '1px solid #666' : '1px solid #ccc', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#333', fontSize: 14 }} />
                 <button onClick={handleAddExpenseType} disabled={!newExpenseTypeName.trim()}
-                  style={{ padding: '7px 14px', borderRadius: 6, background: '#28a745', color: 'white', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>＋追加</button>
+                  style={{ ...tintBtn(isDarkMode), padding: '7px 14px', fontSize: 14 }}>＋追加</button>
               </div>
             </div>
 
@@ -818,7 +818,7 @@ const AdminPanelContent: React.FC = () => {
                   onKeyDown={e => { if (e.key === 'Enter') handleAddWorkplace(); }}
                   style={{ flex: 1, padding: '7px 10px', borderRadius: 6, border: isDarkMode ? '1px solid #666' : '1px solid #ccc', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#333', fontSize: 14 }} />
                 <button onClick={handleAddWorkplace} disabled={!newWorkplaceName.trim()}
-                  style={{ padding: '7px 14px', borderRadius: 6, background: '#28a745', color: 'white', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>＋追加</button>
+                  style={{ ...tintBtn(isDarkMode), padding: '7px 14px', fontSize: 14 }}>＋追加</button>
               </div>
             </div>
 
@@ -856,7 +856,7 @@ const AdminPanelContent: React.FC = () => {
                   onKeyDown={e => { if (e.key === 'Enter') handleAddCategory(); }}
                   style={{ flex: 1, padding: '7px 10px', borderRadius: 6, border: isDarkMode ? '1px solid #666' : '1px solid #ccc', background: isDarkMode ? '#495057' : 'white', color: isDarkMode ? '#fff' : '#333', fontSize: 14 }} />
                 <button onClick={handleAddCategory} disabled={!newCategoryName.trim()}
-                  style={{ padding: '7px 14px', borderRadius: 6, background: '#28a745', color: 'white', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>＋追加</button>
+                  style={{ ...tintBtn(isDarkMode), padding: '7px 14px', fontSize: 14 }}>＋追加</button>
               </div>
             </div>
 

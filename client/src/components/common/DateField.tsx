@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { TOGGLE_BLUE } from '../../lib/buttonStyles';
 
 // タップで開閉する日付フィールド（スマホで1タップ確定・OSのピッカーを出さない）。
 // 🚨 2026-09-09 に OvertimeProposalSheet から切り出した共通部品。
@@ -62,7 +63,7 @@ export const DateField: React.FC<{
               const disabled = (!!minDate && iso < minDate) || (!!maxDate && iso > maxDate);
               return (
                 <button key={iso} type="button" disabled={disabled} onClick={() => { onChange(iso); setOpen(false); }}
-                  style={{ padding: '10px 2px', minHeight: 40, borderRadius: 6, border: isT ? '2px solid #007bff' : '1px solid transparent', background: sel ? '#28a745' : 'transparent', color: disabled ? (isDark ? '#5c636a' : '#c4c9cf') : sel ? '#fff' : dow === 0 ? '#e74c3c' : dow === 6 ? '#3498db' : text, cursor: disabled ? 'default' : 'pointer', fontSize: 13, fontWeight: sel ? 'bold' : 'normal', textAlign: 'center' }}>
+                  style={{ padding: '10px 2px', minHeight: 40, borderRadius: 6, border: isT ? '2px solid #007bff' : '1px solid transparent', background: sel ? TOGGLE_BLUE : 'transparent', color: disabled ? (isDark ? '#5c636a' : '#c4c9cf') : sel ? '#fff' : dow === 0 ? '#e74c3c' : dow === 6 ? '#3498db' : text, cursor: disabled ? 'default' : 'pointer', fontSize: 13, fontWeight: sel ? 'bold' : 'normal', textAlign: 'center' }}>
                   {day}
                 </button>
               );

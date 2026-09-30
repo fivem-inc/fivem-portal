@@ -13,6 +13,11 @@
 import type React from 'react';
 
 export const BTN_BLUE = '#0d6efd';
+/**
+ * 選ぶ・切り替えるボタン（択一トグル・🎨🔒）の「選んでいるもの」の濃い青。選んでいないものはテーマに合わせた灰色。
+ * 日付を選ぶカレンダーの「選んだ日」の塗りも同じ色（今日は青い枠だけ・2026-09-30 ユーザー確定）
+ */
+export const TOGGLE_BLUE = '#1976d2';
 export const BTN_RED = '#dc3545';
 const BTN_DISABLED = '#6c757d';
 

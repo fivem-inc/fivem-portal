@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { primaryBtn, backBtn, BTN_BLUE } from '../lib/buttonStyles';
+import { primaryBtn, backBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
 
 // note を渡すと「読んでほしい案内」が付く。
 // 🚨 note があるときは自動で閉じない。3秒で消えて画面が切り替わると、
@@ -35,7 +35,7 @@ const BannerSuccess: React.FC<{ message: string; note?: string; onClose: () => v
             <div style={{ marginTop: 12, padding: '10px 12px', background: '#fff3cd', border: '2px solid #ffc107', borderRadius: 10, fontSize: 13.5, lineHeight: 1.7, color: '#856404', textAlign: 'left' }}>
               {note}
             </div>
-            <button onClick={onClose} style={{ marginTop: 14, padding: '8px 22px', background: '#28a745', border: 'none', borderRadius: 8, color: '#fff', fontSize: 13.5, fontWeight: 'bold', cursor: 'pointer' }}>
+            <button onClick={onClose} style={{ marginTop: 14, padding: '8px 22px', background: BTN_BLUE, border: 'none', borderRadius: 10, color: '#fff', fontSize: 13.5, fontWeight: 'bold', cursor: 'pointer' }}>
               確認しました
             </button>
           </>
@@ -240,7 +240,7 @@ const MultiDatePicker: React.FC<{
                 minHeight: 40,
                 borderRadius: 6,
                 border: isToday ? '2px solid #007bff' : '1px solid transparent',
-                background: isSelected ? '#28a745' : cs ? cs.bg : 'transparent',
+                background: isSelected ? TOGGLE_BLUE : cs ? cs.bg : 'transparent',
                 color: disabled ? (isDark ? '#5c636a' : '#c4c9cf') : isSelected ? 'white' : cs ? cs.text : isSun ? '#e74c3c' : isSat ? '#3498db' : text,
                 cursor: disabled ? 'default' : 'pointer',
                 fontSize: 13,
@@ -1609,7 +1609,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                         disabled={isPast}
                         style={{
                           padding: '6px 2px', textAlign: 'center', fontSize: 13, border: 'none', cursor: isPast ? 'default' : 'pointer', borderRadius: 6,
-                          background: isSelected ? '#28a745' : 'transparent',
+                          background: isSelected ? TOGGLE_BLUE : 'transparent',
                           color: isSelected ? '#fff' : isPast ? (isDark ? '#6c757d' : '#ccc') : color,
                           fontWeight: ds === todayStr ? 'bold' : 'normal',
                           outline: ds === todayStr && !isSelected ? `2px solid #28a745` : 'none',
@@ -1633,11 +1633,11 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               </label>
               <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                 <button onClick={() => setAdjApproverMode('select')}
-                  style={{ flex: 1, padding: '7px 0', borderRadius: 6, border: `1px solid ${adjApproverMode === 'select' ? '#28a745' : borderColor}`, background: adjApproverMode === 'select' ? (isDark ? '#1b4d1b' : '#f0fff4') : bg, color: adjApproverMode === 'select' ? '#28a745' : text, cursor: 'pointer', fontSize: 13, fontWeight: adjApproverMode === 'select' ? 'bold' : 'normal' }}>
+                  style={{ flex: 1, padding: '7px 0', borderRadius: 6, border: `1px solid ${adjApproverMode === 'select' ? TOGGLE_BLUE : borderColor}`, background: adjApproverMode === 'select' ? TOGGLE_BLUE : bg, color: adjApproverMode === 'select' ? '#fff' : text, cursor: 'pointer', fontSize: 13, fontWeight: adjApproverMode === 'select' ? 'bold' : 'normal' }}>
                   リストから選択
                 </button>
                 <button onClick={() => setAdjApproverMode('free')}
-                  style={{ flex: 1, padding: '7px 0', borderRadius: 6, border: `1px solid ${adjApproverMode === 'free' ? '#28a745' : borderColor}`, background: adjApproverMode === 'free' ? (isDark ? '#1b4d1b' : '#f0fff4') : bg, color: adjApproverMode === 'free' ? '#28a745' : text, cursor: 'pointer', fontSize: 13, fontWeight: adjApproverMode === 'free' ? 'bold' : 'normal' }}>
+                  style={{ flex: 1, padding: '7px 0', borderRadius: 6, border: `1px solid ${adjApproverMode === 'free' ? TOGGLE_BLUE : borderColor}`, background: adjApproverMode === 'free' ? TOGGLE_BLUE : bg, color: adjApproverMode === 'free' ? '#fff' : text, cursor: 'pointer', fontSize: 13, fontWeight: adjApproverMode === 'free' ? 'bold' : 'normal' }}>
                   直接入力
                 </button>
               </div>
@@ -1705,11 +1705,11 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
           {/* ── 履歴サブタブ ── */}
           <div style={{ display: 'flex', marginBottom: 16, borderRadius: 8, overflow: 'hidden', border: `1px solid ${borderColor}` }}>
             <button onClick={() => setHistorySubTab('leave')}
-              style={{ flex: 1, padding: '9px 0', background: historySubTab === 'leave' ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'), color: historySubTab === 'leave' ? '#fff' : text, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: historySubTab === 'leave' ? 'bold' : 'normal' }}>
+              style={{ flex: 1, padding: '9px 0', background: historySubTab === 'leave' ? TOGGLE_BLUE : (isDark ? '#495057' : '#f8f9fa'), color: historySubTab === 'leave' ? '#fff' : text, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: historySubTab === 'leave' ? 'bold' : 'normal' }}>
               🌿 休暇申請
             </button>
             <button onClick={() => setHistorySubTab('adjustment')}
-              style={{ flex: 1, padding: '9px 0', background: historySubTab === 'adjustment' ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'), color: historySubTab === 'adjustment' ? '#fff' : text, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: historySubTab === 'adjustment' ? 'bold' : 'normal', borderLeft: `1px solid ${borderColor}` }}>
+              style={{ flex: 1, padding: '9px 0', background: historySubTab === 'adjustment' ? TOGGLE_BLUE : (isDark ? '#495057' : '#f8f9fa'), color: historySubTab === 'adjustment' ? '#fff' : text, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: historySubTab === 'adjustment' ? 'bold' : 'normal', borderLeft: `1px solid ${borderColor}` }}>
               🕐 時間調整
             </button>
           </div>
@@ -1732,7 +1732,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
                       {fyList.map(fy => (
                         <button key={fy} onClick={() => setSelectedFY(fy)}
-                          style={{ padding: '5px 12px', borderRadius: 999, border: `1px solid ${adjFY === fy ? '#28a745' : borderColor}`, fontSize: 12, background: adjFY === fy ? '#28a745' : bg, color: adjFY === fy ? '#fff' : text, cursor: 'pointer', fontWeight: adjFY === fy ? 'bold' : 'normal' }}>
+                          style={{ padding: '5px 12px', borderRadius: 999, border: `1px solid ${adjFY === fy ? TOGGLE_BLUE : borderColor}`, fontSize: 12, background: adjFY === fy ? TOGGLE_BLUE : bg, color: adjFY === fy ? '#fff' : text, cursor: 'pointer', fontWeight: adjFY === fy ? 'bold' : 'normal' }}>
                           {fy}年度
                         </button>
                       ))}

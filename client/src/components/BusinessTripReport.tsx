@@ -11,7 +11,7 @@ import { tripTypeColor, tripCategoryLabel, formatTripNextDates, formatTripDateTi
 import SearchableSelect from './common/SearchableSelect';
 import HelpLinkButton from './HelpLinkButton';
 import type { AuthUser, BusinessTripReport } from '../types';
-import { primaryBtn, backBtn } from '../lib/buttonStyles';
+import { primaryBtn, backBtn, tintBtn, TOGGLE_BLUE } from '../lib/buttonStyles';
 
 // 履歴タブに出す1件分（profiles は報告者名の表示にだけ使う）
 interface TripHistoryRow {
@@ -129,7 +129,7 @@ const DateCalendar: React.FC<CalendarProps> = ({ selected, onToggle, isDark }) =
               style={{
                 padding: '6px 2px', borderRadius: 6, border: 'none', cursor: 'pointer',
                 fontWeight: isSelected ? 'bold' : 'normal', fontSize: 14,
-                background: isSelected ? '#007bff' : isDark ? '#495057' : '#f8f9fa',
+                background: isSelected ? TOGGLE_BLUE : isDark ? '#495057' : '#f8f9fa',
                 color: isSelected ? '#fff' : dow === 0 ? '#e74c3c' : dow === 6 ? '#3498db' : isDark ? '#fff' : '#333',
               }}>
               {day}
@@ -675,7 +675,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
                 onClick={() => { setReportType(type); setTab('form'); }}
                 style={{
                   flex: 1, padding: '10px 0', border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 'bold',
-                  background: active ? '#28a745' : (isDark ? '#495057' : '#f8f9fa'),
+                  background: active ? TOGGLE_BLUE : (isDark ? '#495057' : '#f8f9fa'),
                   color: active ? 'white' : (isDark ? '#fff' : '#333'),
                 }}
               >
@@ -825,7 +825,7 @@ const BusinessTripReportForm: React.FC<Props> = ({ user, profileName, canHistory
           ) : (
             <div>
               <button onClick={handleGetGps} disabled={gpsLoading}
-                style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid #28a745', background: '#28a745', color: 'white', cursor: 'pointer', fontSize: 15 }}>
+                style={{ ...tintBtn(isDark), padding: '8px 16px', fontSize: 15 }}>
                 {gpsLoading ? '取得中...' : '📍 現在地を取得'}
               </button>
               <div style={{ marginTop: 6, fontSize: 12, color: isDark ? '#adb5bd' : '#888', lineHeight: 1.6, textAlign: 'left' }}>

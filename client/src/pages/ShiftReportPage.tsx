@@ -24,7 +24,7 @@ import type { CalendarKind } from '../lib/breakCalc';
 import { toDbTime, normalizeTime } from '../lib/timeInput';
 import TimeInput from '../components/TimeInput';
 import { logFail } from '../lib/logFail';
-import { primaryBtn, backBtn } from '../lib/buttonStyles';
+import { primaryBtn, backBtn, BTN_BLUE, TOGGLE_BLUE } from '../lib/buttonStyles';
 
 // ────────────────────────────────────────────────────────────────
 // Types
@@ -220,7 +220,7 @@ const SingleDatePicker: React.FC<{ value: string; onChange: (d: string) => void;
           return (
             <button key={i} disabled={disabled} onClick={() => onChange(iso)}
               title={cs ? CALENDAR_NOTICE[ck as CalendarKind] : undefined}
-              style={{ padding: '10px 2px', minHeight: 38, borderRadius: 6, border: isT ? '2px solid #007bff' : '1px solid transparent', background: sel ? '#28a745' : cs ? cs.bg : 'transparent', color: disabled ? (isDark ? '#5c636a' : '#c4c9cf') : sel ? '#fff' : cs ? cs.text : col, cursor: disabled ? 'default' : 'pointer', fontSize: 13, fontWeight: sel ? 'bold' : 'normal', textAlign: 'center', lineHeight: 1.2 }}>
+              style={{ padding: '10px 2px', minHeight: 38, borderRadius: 6, border: isT ? '2px solid #007bff' : '1px solid transparent', background: sel ? TOGGLE_BLUE : cs ? cs.bg : 'transparent', color: disabled ? (isDark ? '#5c636a' : '#c4c9cf') : sel ? '#fff' : cs ? cs.text : col, cursor: disabled ? 'default' : 'pointer', fontSize: 13, fontWeight: sel ? 'bold' : 'normal', textAlign: 'center', lineHeight: 1.2 }}>
               {day}
               {cs && <div style={{ fontSize: 8, fontWeight: 'bold', color: sel ? 'rgba(255,255,255,0.9)' : cs.text }}>{cs.short}</div>}
             </button>
@@ -1808,7 +1808,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                   ...(canSeeAll ? [['all', '全スタッフ']] : []),
                 ] as [typeof histMode, string][]).map(([key, label]) => (
                   <button key={key} onClick={() => setHistMode(key)}
-                    style={{ fontSize: 12, padding: '4px 12px', borderRadius: 20, border: histMode === key ? '1.5px solid #28a745' : `1px solid ${borderCol}`, background: histMode === key ? '#d1fae5' : 'transparent', color: histMode === key ? '#065f46' : subText, cursor: 'pointer', fontWeight: histMode === key ? 'bold' : 'normal' }}>
+                    style={{ fontSize: 12, padding: '4px 12px', borderRadius: 20, border: histMode === key ? `1.5px solid ${TOGGLE_BLUE}` : `1px solid ${borderCol}`, background: histMode === key ? TOGGLE_BLUE : 'transparent', color: histMode === key ? '#fff' : subText, cursor: 'pointer', fontWeight: histMode === key ? 'bold' : 'normal' }}>
                     {label}
                   </button>
                 ))}
@@ -1910,7 +1910,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
                             </span>
                             {canSelfEdit && (
                               <button onClick={() => { setEditTarget(r); setShowForm(true); }}
-                                style={{ fontSize: 11, color: '#28a745', background: 'none', border: '1px solid #28a745', borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}>
+                                style={{ fontSize: 11, color: isDark ? '#90caf9' : BTN_BLUE, background: 'none', border: `1px solid ${isDark ? '#90caf9' : BTN_BLUE}`, borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}>
                                 修正
                               </button>
                             )}

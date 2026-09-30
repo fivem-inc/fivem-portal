@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { primaryBtn, backBtn, tintBtn } from '../lib/buttonStyles';
+import { primaryBtn, backBtn, tintBtn, TOGGLE_BLUE } from '../lib/buttonStyles';
 
 const BannerSuccess: React.FC<{ message: string; onClose: () => void }> = ({ message, onClose }) => {
   useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, [onClose]);
@@ -99,7 +99,7 @@ const SingleDatePicker: React.FC<{
               style={{
               padding: '8px 2px', minHeight: 36, borderRadius: 6,
               border: isToday ? '2px solid #007bff' : '1px solid transparent',
-              background: isSelected ? '#007bff' : cs ? cs.bg : 'transparent',
+              background: isSelected ? TOGGLE_BLUE : cs ? cs.bg : 'transparent',
               color: isSelected ? 'white' : cs ? cs.text : dow===0 ? '#e74c3c' : dow===6 ? '#3498db' : '#333',
               cursor: 'pointer', fontSize: 13, fontWeight: isSelected ? 'bold' : 'normal', lineHeight: 1.2,
             }}>

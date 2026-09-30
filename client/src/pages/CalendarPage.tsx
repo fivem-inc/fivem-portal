@@ -26,6 +26,7 @@ import { toDbTime, normalizeTime } from '../lib/timeInput';
 import TimeInput from '../components/TimeInput';
 import { PageTabs } from '../components/PageTabs';
 import ShiftAdjustTab from '../components/ShiftAdjustTab';
+import { TOGGLE_BLUE } from '../lib/buttonStyles';
 
 // 校の選択肢の末尾に出す「その他（自由入力）」。選ぶと自由入力欄が出る（残業・出張報告と同じ扱い）
 const OTHER_LOCATION = 'その他';
@@ -504,7 +505,7 @@ const MultiDatePicker: React.FC<{
                   <td key={ci} onClick={() => date && onToggle(date)}
                     style={{ textAlign: 'center', padding: '3px 1px', cursor: date ? 'pointer' : 'default' }}>
                     {day !== null && (
-                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: '50%', background: selected ? '#dc3545' : 'transparent', color: selected ? '#fff' : isSat ? '#4a90d9' : isSun ? '#e74c3c' : '#333', fontSize: 13, fontWeight: selected ? 'bold' : 'normal' }}>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: '50%', background: selected ? TOGGLE_BLUE : 'transparent', color: selected ? '#fff' : isSat ? '#4a90d9' : isSun ? '#e74c3c' : '#333', fontSize: 13, fontWeight: selected ? 'bold' : 'normal' }}>
                         {day}
                       </div>
                     )}

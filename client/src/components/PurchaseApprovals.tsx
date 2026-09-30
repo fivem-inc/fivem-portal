@@ -11,7 +11,7 @@ import PurchaseItemsSummary from './PurchaseItemsSummary';
 import type { PurchaseRequestItem, PurchaseRequestItemQuote } from '../types';
 import PurchaseCommentThread from './PurchaseCommentThread';
 import { fetchPurchaseComments, type PurchaseComment } from '../lib/purchaseComments';
-import { primaryBtn } from '../lib/buttonStyles';
+import { primaryBtn, BTN_BLUE } from '../lib/buttonStyles';
 
 type Route = 'leader' | 'manager' | 'board';
 type OpinionValue = 'approve' | 'deny' | 'undecided' | 'other';
@@ -463,7 +463,7 @@ const PurchaseApprovals: React.FC<Props> = ({ userId }) => {
                         <button
                           type="button"
                           onClick={() => setEditingIds(prev => new Set(prev).add(r.id))}
-                          style={{ marginLeft: 'auto', background: 'none', border: '1px solid #28a745', color: '#28a745', borderRadius: 6, padding: '2px 10px', fontSize: 12, cursor: 'pointer' }}
+                          style={{ marginLeft: 'auto', background: 'none', border: `1px solid ${isDarkMode ? '#90caf9' : BTN_BLUE}`, color: isDarkMode ? '#90caf9' : BTN_BLUE, borderRadius: 6, padding: '2px 10px', fontSize: 12, cursor: 'pointer' }}
                         >
                           ✏️ 修正する
                         </button>

@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { estimateBlurScore, BLUR_WARNING_THRESHOLD } from '../lib/blurDetect';
+import { BTN_BLUE, tintBtn } from '../lib/buttonStyles';
 
 const MAX_CAMERA_EDGE = 1600;
 const JPEG_QUALITY = 0.82;
@@ -192,7 +193,7 @@ const CameraCaptureModal = forwardRef<CameraCaptureHandle, CameraCaptureModalPro
                 type="button"
                 onClick={confirmCapturedPhoto}
                 disabled={uploading}
-                style={{ width: '100%', padding: '15px', borderRadius: 12, border: 'none', background: uploading ? '#777' : '#28a745', color: '#fff', fontSize: 16, fontWeight: 'bold' }}
+                style={{ width: '100%', padding: '15px', borderRadius: 12, border: 'none', background: uploading ? '#777' : BTN_BLUE, color: '#fff', fontSize: 16, fontWeight: 'bold' }}
               >
                 {uploading ? 'アップロード中...' : 'この写真を使う'}
               </button>
@@ -209,7 +210,7 @@ const CameraCaptureModal = forwardRef<CameraCaptureHandle, CameraCaptureModalPro
             <button
               type="button"
               onClick={() => { closeCamera(); onUseStandardCamera(); }}
-              style={{ width: '100%', padding: '15px', borderRadius: 12, border: 'none', background: '#28a745', color: '#fff', fontSize: 16, fontWeight: 'bold' }}
+              style={{ ...tintBtn(true), width: '100%', padding: '15px', borderRadius: 12, fontSize: 16 }}
             >
               標準カメラアプリで撮影する
             </button>
@@ -218,7 +219,7 @@ const CameraCaptureModal = forwardRef<CameraCaptureHandle, CameraCaptureModalPro
               type="button"
               onClick={captureCameraPhoto}
               disabled={cameraStarting}
-              style={{ width: '100%', padding: '15px', borderRadius: 12, border: 'none', background: cameraStarting ? '#777' : '#28a745', color: '#fff', fontSize: 16, fontWeight: 'bold' }}
+              style={{ width: '100%', padding: '15px', borderRadius: 12, border: 'none', background: cameraStarting ? '#777' : BTN_BLUE, color: '#fff', fontSize: 16, fontWeight: 'bold' }}
             >
               撮影する
             </button>

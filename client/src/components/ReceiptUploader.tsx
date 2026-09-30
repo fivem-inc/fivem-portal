@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { compressImageFile, ImageTooLargeError } from '../lib/imageCompress';
 import CameraCaptureModal, { type CameraCaptureHandle } from './CameraCaptureModal';
+import { tintBtn } from '../lib/buttonStyles';
 
 export type ReceiptType = 'photo' | 'physical' | 'none';
 
@@ -176,7 +177,7 @@ const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({ isDarkMode, userId, d
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={uploading}
-          style={{ width: '100%', padding: '14px', borderRadius: 10, border: 'none', background: uploading ? subText : '#28a745', color: '#fff', fontSize: 15, fontWeight: 'bold', cursor: uploading ? 'default' : 'pointer' }}
+          style={{ ...tintBtn(isDarkMode), width: '100%', padding: '14px', borderRadius: 10, fontSize: 15, cursor: uploading ? 'default' : 'pointer', opacity: uploading ? 0.6 : 1 }}
         >
           写真フォルダから選ぶ
         </button>
