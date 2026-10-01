@@ -28,7 +28,7 @@ import { useRoles } from '../hooks/useRoles';
 import { attrsFor } from '../lib/roleAttrs';
 import { useScrollIntoViewWhen } from '../hooks/useScrollIntoViewWhen';
 import TimeInput from './TimeInput';
-import { LATE_CHOICES, EARLY_CHOICES } from '../lib/overtimeSubmit';
+import { LATE_CHOICES, EARLY_CHOICES, segmentIssuesOf } from '../lib/overtimeSubmit';
 import {
   syncOvertimeGcal, supabaseBulkWriter, fetchGrantedWorkDates, fetchMyGrantRequests, fetchClosedAllDates, fetchFurikaeOrigins,
 } from '../lib/overtimeSubmitApi';
@@ -524,6 +524,8 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
 
   const d = input.draft;
   const c = inputRow?.calc ?? null;
+  // 打ち間違い（翌日扱いで16時間超・2本目が1本目より前）はその場で赤く出す（1件フォームと同じ判定・同じ文。2026-10-01 ユーザー指示）
+  const segIssues = segmentIssuesOf(d.segs);
   const dayType = d.dayType ?? 'time';
   const inputNg = inputRow && !isNewGridKind(inputRow.kind) ? kindNgMessage(inputRow.kind, advanceMaxDate) : '';
   const managersOnly = dayType === 'absence';
@@ -610,13 +612,20 @@ const OvertimeBox: React.FC<Props> = ({ userId, profileName, roleTitle, isAdmin,
           <>
             <label style={lbl}>勤務時間{req}</label>
             {d.segs.map((s, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                <TimeInput value={s.start} isDark={isDark} advance ariaLabel={`勤務${i + 1} 開始`} style={{ flex: 1, minWidth: 0 }}
-                  onChange={v => setInputDraft({ segs: d.segs.map((x, j) => (j === i ? { ...x, start: v } : x)) })} />
-                <span>〜</span>
-                <TimeInput value={s.end} isDark={isDark} ariaLabel={`勤務${i + 1} 終了`} style={{ flex: 1, minWidth: 0 }}
-                  onChange={v => setInputDraft({ segs: d.segs.map((x, j) => (j === i ? { ...x, end: v } : x)) })} />
-                {i > 0 && <button type="button" onClick={() => setInputDraft({ segs: d.segs.filter((_, j) => j !== i) })} style={{ ...chip(false), padding: '4px 8px' }} aria-label="この時間帯を消す">✕</button>}
+              <div key={i} style={{ marginBottom: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <TimeInput value={s.start} isDark={isDark} advance invalid={!!segIssues[i]} ariaLabel={`勤務${i + 1} 開始`} style={{ flex: 1, minWidth: 0 }}
+                    onChange={v => setInputDraft({ segs: d.segs.map((x, j) => (j === i ? { ...x, start: v } : x)) })} />
+                  <span>〜</span>
+                  <TimeInput value={s.end} isDark={isDark} invalid={!!segIssues[i]} ariaLabel={`勤務${i + 1} 終了`} style={{ flex: 1, minWidth: 0 }}
+                    onChange={v => setInputDraft({ segs: d.segs.map((x, j) => (j === i ? { ...x, end: v } : x)) })} />
+                  {i > 0 && <button type="button" onClick={() => setInputDraft({ segs: d.segs.filter((_, j) => j !== i) })} style={{ ...chip(false), padding: '4px 8px' }} aria-label="この時間帯を消す">✕</button>}
+                </div>
+                {segIssues[i] && (
+                  <p style={{ margin: '4px 0 0', fontSize: 11.5, lineHeight: 1.6, color: isDark ? '#f5b5ba' : '#c62828' }}>
+                    {segIssues[i]}
+                  </p>
+                )}
               </div>
             ))}
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', fontSize: 12.5, color: subText }}>
