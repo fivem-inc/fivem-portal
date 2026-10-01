@@ -39,7 +39,7 @@ export async function notifyLeaveFinalApprovers(
   actorId: string,
 ): Promise<void> {
   const { data, error } = await supabase.from('profiles')
-    .select('id, is_active, roles!inner(acts_as)')
+    .select('id, is_active, roles!profiles_role_id_fkey!inner(acts_as)')
     .eq('roles.acts_as', 'president');
   if (error) { console.error('[leave] 最終受理者を読めませんでした:', error.message); return; }
   const ids = ((data ?? []) as { id: string; is_active: boolean | null }[])

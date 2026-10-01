@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabaseClient';
 import type { PurchaseRequestCSVRow } from '../../utils';
 // 金額帯の定義は申請フォームと共通（lib/purchaseTiers.ts）。片方だけ変えると承認ルートがずれる
 import { TIER_LABEL, TIER_ROUTE_LABEL, tierOf } from '../../lib/purchaseTiers';
+import { BTN_BLUE } from '../../lib/buttonStyles';
 
 const PAYMENT_OPTIONS: { value: string; label: string }[] = [
   { value: 'cash', label: '立替（返金あり）' },
@@ -231,7 +232,7 @@ const PurchaseRequestEditModal: React.FC<PurchaseRequestEditModalProps> = ({ rec
             type="button"
             onClick={handleSave}
             disabled={saving}
-            style={{ padding: '10px', borderRadius: 8, border: 'none', background: saving ? '#777' : '#28a745', color: '#fff', fontWeight: 'bold', cursor: saving ? 'default' : 'pointer' }}
+            style={{ padding: '10px', borderRadius: 8, border: 'none', background: saving ? '#777' : BTN_BLUE, color: '#fff', fontWeight: 'bold', cursor: saving ? 'default' : 'pointer' }}
           >
             {saving ? '保存中...' : '保存する'}
           </button>

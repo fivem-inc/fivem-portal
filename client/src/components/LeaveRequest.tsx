@@ -520,7 +520,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     supabase
       .from('profiles')
       // 🚨 役職名ではなく属性で引く（2026-09-09 属性化）。申請先の候補＝承認者のうち、経営（社長・経理）を除く
-      .select('id, name, role_title, roles!inner(acts_as, is_leader_plus)')
+      .select('id, name, role_title, roles!profiles_role_id_fkey!inner(acts_as, is_leader_plus)')
       .eq('roles.is_approver', true)
       .eq('roles.is_org_wide', false)
       .eq('is_active', true)

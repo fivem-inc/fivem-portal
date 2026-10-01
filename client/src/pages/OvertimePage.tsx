@@ -2541,7 +2541,7 @@ const OvertimePage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmin, 
       const [, , revRes, wpRes, patRes, myProfRes] = await Promise.all([
         fetchOwn(),
         fetchPendingForMe(),
-        supabase.from('profiles').select('id, name, role_title, roles!inner(acts_as)').in('roles.acts_as', ['leader', 'manager']).eq('is_active', true).order('role_title').order('name'),
+        supabase.from('profiles').select('id, name, role_title, roles!profiles_role_id_fkey!inner(acts_as)').in('roles.acts_as', ['leader', 'manager']).eq('is_active', true).order('role_title').order('name'),
         supabase.from('master_options').select('value').eq('category', 'workplace').order('sort_order'),
         supabase.from('weekly_shift_patterns').select('*').eq('user_id', user.id),
         supabase.from('profiles').select('group_names').eq('id', user.id).maybeSingle(),

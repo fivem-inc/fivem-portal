@@ -215,7 +215,7 @@ const LeaveApprovals: React.FC<Props> = ({ user, profileName, isAdmin, roleTitle
   useEffect(() => {
     supabase
       .from('profiles')
-      .select('id, name, role_title, roles!inner(acts_as)')
+      .select('id, name, role_title, roles!profiles_role_id_fkey!inner(acts_as)')
       .eq('roles.acts_as', 'manager')   // 🚨 役職名ではなく立場で引く（2026-09-09 属性化）
       .eq('is_active', true)
       .order('name')

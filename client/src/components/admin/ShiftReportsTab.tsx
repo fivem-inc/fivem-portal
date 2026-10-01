@@ -5,6 +5,7 @@ import { HistoryBadge, DiffList, type ChangeKind } from './editHistoryBadge';
 import ShiftEditModal from './ShiftEditModal';
 import { formatSegsFromRecord, parseSegments, shiftReportDiff, summarizeShiftDiffs } from '../../lib/shiftCalc';
 import { logFail } from '../../lib/logFail';
+import { BTN_BLUE, tintBtn } from '../../lib/buttonStyles';
 
 type AppType = 'overtime' | 'holiday_work' | 'early_leave' | 'tardiness' | 'absence' | 'early_start' | 'location_change' | 'missed_clock';
 
@@ -446,7 +447,7 @@ const ShiftReportsTab: React.FC = () => {
             <p style={{ fontSize: 15, fontWeight: 'bold', color: text, margin: '0 0 18px', lineHeight: 1.6, whiteSpace: 'pre-line' }}>{confirmDialog.message}</p>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <button onClick={() => setConfirmDialog(null)} style={{ padding: '8px 18px', background: 'transparent', color: sub, border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
-              <button onClick={() => { const cb = confirmDialog.onConfirm; setConfirmDialog(null); cb(); }} style={{ padding: '8px 18px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>はい</button>
+              <button onClick={() => { const cb = confirmDialog.onConfirm; setConfirmDialog(null); cb(); }} style={{ padding: '8px 18px', background: BTN_BLUE, color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>はい</button>
             </div>
           </div>
         </div>
@@ -464,7 +465,7 @@ const ShiftReportsTab: React.FC = () => {
       )}
       <div style={{ display: 'flex', justifyContent: 'flex-end', paddingRight: 16, marginBottom: 8 }}>
         <button onClick={() => setShowCsvModal(true)}
-          style={{ ...btnBase, padding: '5px 12px', fontSize: 12, background: '#28a745', color: '#fff', border: 'none' }}>
+          style={{ ...btnBase, ...tintBtn(isDarkMode), padding: '5px 12px', fontSize: 12 }}>
           📥 CSV出力
         </button>
       </div>
@@ -695,7 +696,7 @@ const ShiftReportsTab: React.FC = () => {
                         <div style={{ display: 'flex', gap: 4, justifyContent: 'center', flexWrap: 'wrap' }}>
                           {isPend && (
                             <button disabled={confirming === r.id} onClick={() => handleConfirm(r)}
-                              style={{ ...btnBase, background: confirming === r.id ? '#6c757d' : '#28a745', color: '#fff', border: '2px solid ' + (confirming === r.id ? '#545b62' : '#1e7e34') }}>
+                              style={{ ...btnBase, background: confirming === r.id ? '#6c757d' : BTN_BLUE, color: '#fff', border: '2px solid ' + (confirming === r.id ? '#545b62' : '#0a58ca') }}>
                               {confirming === r.id ? '...' : '受理'}
                             </button>
                           )}
@@ -805,7 +806,7 @@ const ShiftReportsTab: React.FC = () => {
                 閉じる
               </button>
               <button onClick={exportCsv} disabled={csvExporting}
-                style={{ flex: 1, padding: 10, borderRadius: 8, border: 'none', background: csvExporting ? '#6c757d' : '#28a745', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
+                style={{ flex: 1, padding: 10, borderRadius: 8, border: 'none', background: csvExporting ? '#6c757d' : BTN_BLUE, color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
                 {csvExporting ? '出力中...' : 'ダウンロード'}
               </button>
             </div>

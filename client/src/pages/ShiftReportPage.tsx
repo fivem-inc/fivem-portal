@@ -1309,7 +1309,7 @@ const ShiftReportPage: React.FC<Props> = ({ user, profileName, roleTitle, isAdmi
     fetchAllReports();
     supabase.from('master_options').select('value').eq('category', 'workplace').order('sort_order')
       .then(({ data }) => { if (data) setWorkplaces(data.map(r => r.value)); });
-    supabase.from('profiles').select('id, name, role_title, roles!inner(is_approver, is_org_wide, acts_as)').eq('roles.is_approver', true).eq('is_active', true).order('role_title').order('name')
+    supabase.from('profiles').select('id, name, role_title, roles!profiles_role_id_fkey!inner(is_approver, is_org_wide, acts_as)').eq('roles.is_approver', true).eq('is_active', true).order('role_title').order('name')
       .then(({ data }) => { if (data) setReviewers(data as Reviewer[]); });
     supabase.from('leader_assignments').select('id, course, school, leader, manager').order('display_order', { ascending: true })
       .then(({ data }) => { if (data) setLeaderAssignments(data as LeaderAssignment[]); setLoadingAssignments(false); });

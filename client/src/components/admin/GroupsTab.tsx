@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { describeUpdate } from '../../lib/statusUpdate';
+import { backBtn } from '../../lib/buttonStyles';
 
 // 🚨 マネージャー以上に開いたとき（2026-09-15）はスタッフの所属の出し入れだけ。
 //    グループの追加・名前の変更・削除は管理者だけ（docs/計画-管理画面の開放.md）
@@ -157,7 +158,7 @@ const GroupsTab: React.FC = () => {
                     メンバー {users.filter(u => u.is_active !== false && (u.group_names || []).includes(selectedGroup)).length}人
                   </span>
                   {isUserEditMode ? (
-                    <button onClick={() => setIsUserEditMode(false)} style={{ padding: '5px 14px', background: '#28a745', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 12 }}>✅ 編集終了</button>
+                    <button onClick={() => setIsUserEditMode(false)} style={{ ...backBtn(isDarkMode), padding: '5px 14px', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 12 }}>✅ 編集終了</button>
                   ) : (
                     <button onClick={() => setIsUserEditMode(true)} style={{ padding: '5px 14px', background: '#fd7e14', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 12 }}>✏️ メンバーを編集</button>
                   )}

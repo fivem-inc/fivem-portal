@@ -24,6 +24,7 @@ import {
 } from '../../lib/faq';
 import { todayJstStr } from '../../lib/breakCalc';
 import FaqAnalytics from './FaqAnalytics';
+import { BTN_BLUE } from '../../lib/buttonStyles';
 
 // FAQ管理タブ。
 // ・質問を作り、その下に「回答」を複数ぶら下げる。回答は対象（役職／校・コース）と期間を持つ。
@@ -627,7 +628,7 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
               キャンセル
             </button>
             <button type="button" onClick={saveTopic} disabled={saving}
-              style={{ padding: '9px 18px', borderRadius: 8, border: 'none', background: saving ? '#6c757d' : '#28a745', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: saving ? 'default' : 'pointer' }}>
+              style={{ padding: '9px 18px', borderRadius: 8, border: 'none', background: saving ? '#6c757d' : BTN_BLUE, color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: saving ? 'default' : 'pointer' }}>
               {saving ? '保存中...' : '保存する'}
             </button>
           </div>
@@ -863,7 +864,7 @@ const FaqTab: React.FC<FaqTabProps> = ({ canManageEditors = false }) => {
                           キャンセル
                         </button>
                         <button type="button" onClick={saveAnswer} disabled={saving}
-                          style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: saving ? '#6c757d' : '#28a745', color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: saving ? 'default' : 'pointer' }}>
+                          style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: saving ? '#6c757d' : BTN_BLUE, color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: saving ? 'default' : 'pointer' }}>
                           {saving ? '保存中...' : '保存する'}
                         </button>
                       </div>

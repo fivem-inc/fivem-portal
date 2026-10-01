@@ -253,17 +253,17 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
 
   useEffect(() => {
     // 🚨 役職名ではなく属性（立場・決裁者・マネージャー以上）で引く（2026-09-09 属性化）
-    supabase.from('profiles').select('id, name, role_title, roles!inner(acts_as)').eq('is_active', true)
+    supabase.from('profiles').select('id, name, role_title, roles!profiles_role_id_fkey!inner(acts_as)').eq('is_active', true)
       .in('roles.acts_as', ['leader', 'manager']).order('role_title').order('name').then(
         ({ data }) => setLeaders((data ?? []) as { id: string; name: string; role_title: string }[]),
         () => {}
       );
-    supabase.from('profiles').select('id, name, roles!inner(acts_as)').eq('is_active', true).eq('roles.acts_as', 'manager').order('name').then(
+    supabase.from('profiles').select('id, name, roles!profiles_role_id_fkey!inner(acts_as)').eq('is_active', true).eq('roles.acts_as', 'manager').order('name').then(
       ({ data }) => setManagers((data ?? []) as { id: string; name: string }[]),
       () => {}
     );
     // 自己判断（共有のみ）の共有先候補は、マネージャーだけでなく社長も含める
-    supabase.from('profiles').select('id, name, role_title, roles!inner(is_board_approver)').eq('is_active', true)
+    supabase.from('profiles').select('id, name, role_title, roles!profiles_role_id_fkey!inner(is_board_approver)').eq('is_active', true)
       .eq('roles.is_board_approver', true).order('role_title').order('name').then(
         ({ data }) => setShareCandidates((data ?? []) as { id: string; name: string; role_title: string }[]),
         () => {}
@@ -271,7 +271,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
     // 決裁権限内の購入（承認不要）を共有する相手。
     // 申請者が選んだ共有先だけだと1人しか知らない状態になり「何が買われているか把握できない」ため、
     // マネージャー・社長・管理者（経理）にも届ける。⚠️ 経理にはホームのバナーは出ない（App.tsxが !isAdmin）
-    supabase.from('profiles').select('id, roles!inner(is_manager_plus)').eq('is_active', true)
+    supabase.from('profiles').select('id, roles!profiles_role_id_fkey!inner(is_manager_plus)').eq('is_active', true)
       .eq('roles.is_manager_plus', true).neq('id', user.id).then(
         ({ data }) => setManagerPlusIds(((data ?? []) as { id: string }[]).map(m => m.id)),
         () => {}
@@ -279,7 +279,7 @@ const PurchaseRequestForm: React.FC<PurchaseRequestFormProps> = ({ user, roleTit
     // 3万円超・全員承認フローの対象者プレビュー（読み取り専用、選択不可）
     // 全マネージャー・社長のうち休職中(is_active=false)を除き、申請者自身も除外する
     // 🚨 決裁者（is_board_approver）。経理＝管理者は含まない（DB のトリガー set_board_approver_ids と同じ条件）
-    supabase.from('profiles').select('id, name, role_title, roles!inner(is_board_approver)').eq('is_active', true)
+    supabase.from('profiles').select('id, name, role_title, roles!profiles_role_id_fkey!inner(is_board_approver)').eq('is_active', true)
       .eq('roles.is_board_approver', true).neq('id', user.id).order('role_title').order('name').then(
         ({ data }) => setBoardApprovers((data ?? []) as { id: string; name: string; role_title: string }[]),
         () => {}

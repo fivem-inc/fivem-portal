@@ -10,6 +10,7 @@ import {
   type TripPeriodMode,
 } from '../../lib/tripReportExport';
 import type { BusinessTripReport } from '../../types';
+import { BTN_BLUE, tintBtn } from '../../lib/buttonStyles';
 
 const TripReportsTab: React.FC = () => {
   const ctx = useAdminPanel();
@@ -140,7 +141,7 @@ const TripReportsTab: React.FC = () => {
               <h3 style={{ margin: 0, color: isDarkMode ? '#fff' : '#000', textAlign: 'center' }}>📍 出張報告一覧</h3>
               <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
                 <button onClick={openExport}
-                  style={{ padding: '6px 14px', borderRadius: 8, border: 'none', background: '#28a745', color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}>
+                  style={{ ...tintBtn(isDarkMode), padding: '6px 14px', borderRadius: 8, fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}>
                   📥 Excel出力
                 </button>
                 <button
@@ -212,7 +213,7 @@ const TripReportsTab: React.FC = () => {
                         閉じる
                       </button>
                       <button onClick={() => void doExport()} disabled={exporting}
-                        style={{ flex: 1, padding: 10, borderRadius: 8, border: 'none', background: '#28a745', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: exporting ? 'default' : 'pointer', opacity: exporting ? 0.6 : 1 }}>
+                        style={{ flex: 1, padding: 10, borderRadius: 8, border: 'none', background: BTN_BLUE, color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: exporting ? 'default' : 'pointer', opacity: exporting ? 0.6 : 1 }}>
                         {exporting ? '作成中…' : 'ダウンロード'}
                       </button>
                     </div>

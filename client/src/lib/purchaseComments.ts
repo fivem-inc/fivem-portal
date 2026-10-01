@@ -167,7 +167,7 @@ export async function postPurchaseComment(params: {
 
     // マネージャー以上（申請本体を全件見られる人＝タップして着地できる）
     const { data: mgrs } = await supabase.from('profiles')
-      .select('id, roles!inner(is_manager_plus)').eq('is_active', true)
+      .select('id, roles!profiles_role_id_fkey!inner(is_manager_plus)').eq('is_active', true)
       .eq('roles.is_manager_plus', true);   // 🚨 役職名ではなく属性で（2026-09-09）
     (mgrs ?? []).forEach(m => targets.add((m as { id: string }).id));
 

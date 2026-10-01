@@ -3,6 +3,7 @@ import { formatAmount } from '../../utils';
 import { useAdminPanel } from './AdminPanelContext';
 import { retireeReturnNote } from '../../lib/retire';
 import { todayJstStr } from '../../lib/breakCalc';
+import { BTN_BLUE } from '../../lib/buttonStyles';
 
 const toJST = (utcStr: string | null | undefined): string => {
   if (!utcStr) return '';
@@ -240,7 +241,7 @@ const ApprovalsTab: React.FC = () => {
                           padding: '10px 20px',
                           marginLeft: '10px',
                           marginRight: '10px',
-                          backgroundColor: '#28a745',
+                          backgroundColor: BTN_BLUE,
                           color: 'white',
                           border: 'none',
                           borderRadius: '4px',
@@ -290,10 +291,10 @@ const ApprovalsTab: React.FC = () => {
                           disabled={selectedForApproval.size === 0}
                           style={{
                             padding: '8px 20px',
-                            backgroundColor: selectedForApproval.size === 0 ? '#6c757d' : '#28a745',
+                            backgroundColor: selectedForApproval.size === 0 ? '#6c757d' : BTN_BLUE,
                             color: 'white',
                             border: '2px solid',
-                            borderColor: selectedForApproval.size === 0 ? '#5a6268' : '#1e7e34',
+                            borderColor: selectedForApproval.size === 0 ? '#5a6268' : '#0a58ca',
                             borderRadius: '4px',
                             cursor: selectedForApproval.size === 0 ? 'not-allowed' : 'pointer',
                             fontWeight: 'bold',
@@ -421,9 +422,9 @@ const ApprovalsTab: React.FC = () => {
                         style={{ 
                           marginRight: 10, 
                           padding: '8px 16px',
-                          backgroundColor: '#28a745',
+                          backgroundColor: BTN_BLUE,
                           color: 'white',
-                          border: '2px solid #1e7e34',
+                          border: '2px solid #0a58ca',
                           borderRadius: '4px',
                           cursor: 'pointer',
                           fontWeight: 'bold'
@@ -718,7 +719,7 @@ const ApprovalsTab: React.FC = () => {
                                             style={{ 
                                               marginRight: 10, 
                                               padding: '8px 16px', 
-                                              backgroundColor: '#28a745', 
+                                              backgroundColor: BTN_BLUE, 
                                               color: 'white', 
                                               border: 'none', 
                                               borderRadius: 4, 

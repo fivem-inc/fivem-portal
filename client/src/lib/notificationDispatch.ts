@@ -151,7 +151,7 @@ export async function resolveRoleRecipients(
     //    ＝退職して申請期間中の人が出した申請の知らせが、上長に1件も届かなくなる。
     //    メールアドレスは下でまとめて引く（読めなければ空のまま＝ベルは届く）
     const { data } = await supabase.from('profiles')
-      .select('id, group_names, roles!inner(id, name, is_org_wide)')
+      .select('id, group_names, roles!profiles_role_id_fkey!inner(id, name, is_org_wide)')
       .eq('roles.acts_as', ACTS_AS_BY_RECIPIENT_KEY[key]).eq('is_active', true);
     const rows = ((data ?? []) as unknown as Row[])
       .filter(r => r.id !== applicantId)

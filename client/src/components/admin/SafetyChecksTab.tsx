@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabaseClient';
 import { useAdminPanel } from './AdminPanelContext';
 import { teamsOf } from '../../lib/staffTeam';
+import { BTN_BLUE } from '../../lib/buttonStyles';
 
 // 安否・緊急連絡の管理
 //   ・定型メッセージの追加・編集・削除・並び替え・有効/無効
@@ -358,7 +359,7 @@ const SafetyChecksTab: React.FC = () => {
 
           <div style={{ display: 'flex', gap: 8 }}>
             <button type="button" disabled={busy} onClick={save}
-              style={{ padding: '7px 18px', background: '#28a745', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 'bold' }}>
+              style={{ padding: '7px 18px', background: BTN_BLUE, color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 'bold' }}>
               {busy ? '保存中...' : '保存'}
             </button>
             <button type="button" onClick={() => { setEditingId(null); setShowNew(false); }}

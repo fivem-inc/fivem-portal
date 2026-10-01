@@ -496,6 +496,7 @@ export function buildOvertimeRecord(v: RecordInput, toDbTime: (t: string) => str
 export function friendlyOvertimeDbError(msg: string, code?: string): string {
   if (msg.includes('OVERTIME_CLOSED')) return 'この対象日の給与期間は締め切りを過ぎています。経理に申請の許可を依頼してください。';
   if (msg.includes('FURIKAE_DUP_ORIGIN')) return '振替元の日には別の申請があります。振替休日は振替元の勤務時間を含むため、その日を別途「休日出勤」等で申請しないでください。';
+  if (msg.includes('FURIKAE_DUP_SAME_ORIGIN')) return '振替元の日は、すでに別の振替休日の振替元になっています。同じ日を2回振り替えることはできません。';
   if (msg.includes('FURIKAE_DUP_WORKDATE')) return 'この日は振替休日の振替元として申請済みです。二重計上になるため、この日は別途申請できません。';
   if (code === '23505') return '同じ日付の申請がすでにあります（取消済みを除く）';
   return '保存に失敗しました: ' + msg;

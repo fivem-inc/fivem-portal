@@ -2153,7 +2153,8 @@ const CalendarPage: React.FC<Props> = ({ user, roleTitle, isAdmin, canShiftAdjus
           'スタッフの休み・出勤予定を一覧で確認できます',
           '欠勤・遅刻・早退・休日出勤の入力ができます',
           // 🚨 このページでできることが増えたら、ここにも足すこと（2026-09-09）
-          '受理された休暇の「シフト調整」を記録できます（未／調整済／確認済）',
+          // 2026-10-01：9/28 から一覧の印は見るだけ・変えるのは「シフト調整」タブ（社内FAQ 904 と同じ説明）
+          '受理された休暇・欠勤の「シフト調整」の状態（未／調整中／調整済／確認済／調整不要）を一覧の印で確認できます（変えるのは「シフト調整」タブ）',
         ].map((text, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, margin: '0 0 6px' }}>
             <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#4a90d9', color: '#fff', fontSize: 13, fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>

@@ -6,6 +6,7 @@ import { describeUpdate } from '../../lib/statusUpdate';
 import { retireState, retireStateLabel, retireStateColor, mdLabel, fetchRetireAccessDefault, type RetireScheduleResult } from '../../lib/retire';
 import { todayJstStr } from '../../lib/breakCalc';
 import type { AdminUserProfile } from '../../types';
+import { BTN_BLUE, TOGGLE_BLUE, tintBtn, backBtn } from '../../lib/buttonStyles';
 
 // ユーザー追加モーダル
 const AddUserModal: React.FC<{
@@ -157,7 +158,7 @@ const AddUserModal: React.FC<{
           </button>
           <button
             onClick={handleSubmit} disabled={loading}
-            style={{ padding: '8px 20px', background: '#28a745', color: 'white', border: 'none', borderRadius: 6, cursor: loading ? 'not-allowed' : 'pointer', fontSize: 14, fontWeight: 'bold', opacity: loading ? 0.7 : 1 }}
+            style={{ padding: '8px 20px', background: BTN_BLUE, color: 'white', border: 'none', borderRadius: 6, cursor: loading ? 'not-allowed' : 'pointer', fontSize: 14, fontWeight: 'bold', opacity: loading ? 0.7 : 1 }}
           >
             {loading ? '登録中...' : '✅ 登録する'}
           </button>
@@ -253,7 +254,7 @@ const SendEmailModal: React.FC<{
           )}
           <div>
             <button onClick={() => { onSent(); onClose(); }}
-              style={{ padding: '8px 24px', background: '#28a745', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold' }}>
+              style={{ ...backBtn(isDarkMode), padding: '8px 24px', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold' }}>
               閉じる
             </button>
           </div>
@@ -372,7 +373,7 @@ const PendingUserRow: React.FC<{
       ) : (
         <>
           <button disabled={busy} onClick={async () => { setBusy(true); await onApprove(pendingUser.id, employmentType, roleTitle); setBusy(false); }}
-            style={{ padding: '6px 16px', background: '#28a745', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 'bold' }}>承認する</button>
+            style={{ padding: '6px 16px', background: BTN_BLUE, color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 'bold' }}>承認する</button>
           <button disabled={busy} onClick={() => setShowRejectConfirm(true)}
             style={{ padding: '6px 16px', background: 'none', border: '1px solid #dc3545', color: '#dc3545', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}>拒否</button>
         </>
@@ -598,14 +599,14 @@ const UsersTab: React.FC = () => {
                   <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: 8 }}>
                     <button
                       onClick={() => setShowAddModal(true)}
-                      style={{ padding: '8px 20px', background: '#28a745', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}
+                      style={{ ...tintBtn(isDarkMode), padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}
                     >
                       ＋ ユーザー追加
                     </button>
                     {isUserEditMode ? (
                       <>
                         <span style={{ color: '#fd7e14', fontSize: 11, alignSelf: 'center' }}>⚠️ 編集モード中</span>
-                        <button onClick={() => setIsUserEditMode(false)} style={{ padding: '8px 14px', background: '#28a745', color: 'white', border: '2px solid #1e7e34', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}>✅ 編集終了</button>
+                        <button onClick={() => setIsUserEditMode(false)} style={{ ...backBtn(isDarkMode), padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}>✅ 編集終了</button>
                       </>
                     ) : (
                       <button onClick={() => setIsUserEditMode(true)} style={{ padding: '8px 14px', background: '#fd7e14', color: 'white', border: '2px solid #e8690b', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}>✏️ 雇用形態・役職を編集</button>
@@ -642,7 +643,7 @@ const UsersTab: React.FC = () => {
                     </button>
                     <button
                       onClick={() => setShowRetired('all')}
-                      style={{ padding: '8px 16px', background: showRetired === 'all' ? '#28a745' : '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                      style={{ padding: '8px 16px', background: showRetired === 'all' ? TOGGLE_BLUE : '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
                     >
                       全員表示
                     </button>
@@ -777,7 +778,7 @@ const UsersTab: React.FC = () => {
                                     onKeyPress={e => e.key === 'Enter' && handleSaveSortOrder(user.id)}
                                     autoFocus
                                   />
-                                  <button onClick={() => handleSaveSortOrder(user.id)} style={{ padding: '2px 6px', background: '#28a745', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11 }}>✓</button>
+                                  <button onClick={() => handleSaveSortOrder(user.id)} style={{ padding: '2px 6px', background: BTN_BLUE, color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11 }}>✓</button>
                                   <button onClick={() => setEditingSortOrder(null)} style={{ padding: '2px 6px', background: '#6c757d', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11 }}>✕</button>
                                 </div>
                               ) : (
@@ -802,7 +803,7 @@ const UsersTab: React.FC = () => {
                                     placeholder="名前を入力"
                                     onKeyPress={(e) => { if (e.key === 'Enter') handleSaveName(user.id); }}
                                   />
-                                  <button onClick={() => handleSaveName(user.id)} style={{ padding: '4px 8px', background: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>保存</button>
+                                  <button onClick={() => handleSaveName(user.id)} style={{ padding: '4px 8px', background: BTN_BLUE, color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>保存</button>
                                   <button onClick={handleCancelUserEdit} style={{ padding: '4px 8px', background: '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>キャンセル</button>
                                 </div>
                               ) : (
@@ -881,7 +882,7 @@ const UsersTab: React.FC = () => {
                                   />
                                   <div style={{ display: 'flex', gap: 3, justifyContent: 'center' }}>
                                     <button type="button" onClick={() => savePhone(user.id)} disabled={phoneSaving}
-                                      style={{ padding: '2px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: '#28a745', color: '#fff', cursor: phoneSaving ? 'default' : 'pointer' }}>
+                                      style={{ padding: '2px 8px', fontSize: 10, borderRadius: 4, border: 'none', background: BTN_BLUE, color: '#fff', cursor: phoneSaving ? 'default' : 'pointer' }}>
                                       {phoneSaving ? '...' : '保存'}
                                     </button>
                                     <button type="button" onClick={() => { setEditingPhoneId(null); setPhoneError(''); }}
@@ -943,7 +944,7 @@ const UsersTab: React.FC = () => {
                                         onClick={() => openRetireEdit(user)}>退職日を修正</button>
                                     )}
                                     {user.is_active === false ? (
-                                      <button style={{ padding: '3px 6px', background: '#28a745', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }} onClick={() => handleRestoreUser(user.id)}>復活</button>
+                                      <button style={{ padding: '3px 6px', background: BTN_BLUE, color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }} onClick={() => handleRestoreUser(user.id)}>復活</button>
                                     ) : rState === 'scheduled' ? (
                                       <button style={{ padding: '3px 6px', background: 'transparent', color: isDarkMode ? '#ffc107' : '#b35900', border: `1px solid ${isDarkMode ? '#ffc107' : '#fd7e14'}`, borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }} onClick={() => { setRetireCancelFor(user.id); setRetireFormFor(null); }}>退職日を取り消す</button>
                                     ) : (

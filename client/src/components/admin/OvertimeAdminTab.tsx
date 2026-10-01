@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import SearchableSelect from '../common/SearchableSelect';
-import { TOGGLE_BLUE } from '../../lib/buttonStyles';
+import { TOGGLE_BLUE, BTN_BLUE, tintBtn } from '../../lib/buttonStyles';
 import { useAdminPanel } from './AdminPanelContext';
 import { useRoles } from '../../hooks/useRoles';
 import { rankOf, rolesActingAs } from '../../lib/roleAttrs';
@@ -205,7 +205,7 @@ const CalendarChoiceRuleForm: React.FC<{
         「選べないようにする」は、役職ごとの設定を特定の人だけ打ち消したいときに使います。
       </p>
       <button type="button" onClick={submit}
-        style={{ padding: '6px 16px', borderRadius: 6, border: 'none', background: '#28a745', color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}>
+        style={{ padding: '6px 16px', borderRadius: 6, border: 'none', background: BTN_BLUE, color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}>
         追加する
       </button>
     </div>
@@ -931,7 +931,7 @@ const OvertimeAdminTab: React.FC = () => {
               正社員の残業・時間調整の記録一覧です。受理済みも含めて修正・差し戻し・削除ができます（自動計上分は対象外）。
             </p>
             <button onClick={() => { setOtCsvPeriod(otPeriodOptions[0] ?? ''); setShowOtCsvModal(true); }}
-              style={{ flexShrink: 0, padding: '6px 14px', borderRadius: 8, border: 'none', background: '#28a745', color: '#fff', fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}>
+              style={{ ...tintBtn(isDarkMode), flexShrink: 0, padding: '6px 14px', borderRadius: 8, fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}>
               📥 Excel出力
             </button>
           </div>
@@ -1003,7 +1003,7 @@ const OvertimeAdminTab: React.FC = () => {
                     閉じる
                   </button>
                   <button onClick={() => { void exportOtXlsx(); setShowOtCsvModal(false); }}
-                    style={{ flex: 1, padding: 10, borderRadius: 8, border: 'none', background: '#28a745', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
+                    style={{ flex: 1, padding: 10, borderRadius: 8, border: 'none', background: BTN_BLUE, color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
                     ダウンロード
                   </button>
                 </div>
@@ -1388,7 +1388,7 @@ const OvertimeAdminTab: React.FC = () => {
                         </div>
                         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                           <button onClick={() => approveGrantRequest(r)} disabled={resolvingId === r.id}
-                            style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: '#28a745', color: '#fff', cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', opacity: resolvingId === r.id ? 0.6 : 1 }}>
+                            style={{ padding: '6px 14px', borderRadius: 6, border: 'none', background: BTN_BLUE, color: '#fff', cursor: 'pointer', fontSize: 12.5, fontWeight: 'bold', opacity: resolvingId === r.id ? 0.6 : 1 }}>
                             許可する
                           </button>
                           <button onClick={() => { setDeclineTarget(r); setDeclineNote(''); }} disabled={resolvingId === r.id}

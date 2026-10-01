@@ -14,6 +14,7 @@ import {
   type AttendanceType, type WorkSegment,
 } from '../../lib/attendanceTypes';
 import { describeUpdate, describePartial } from '../../lib/statusUpdate';
+import { BTN_BLUE, tintBtn } from '../../lib/buttonStyles';
 
 // 休暇の履歴行（leave_request_history）
 interface LeaveHistoryRow {
@@ -913,7 +914,7 @@ const LeaveRequestsTab: React.FC = () => {
                                     fetchEncDetail(showEncDetail!);
                                     fetchEncDays();
                                   }}
-                                  style={{ padding: '5px 14px', borderRadius: 6, border: 'none', background: encEditSaving ? '#6c757d' : '#28a745', color: '#fff', cursor: encEditSaving ? 'default' : 'pointer', fontSize: 12, fontWeight: 'bold' }}>
+                                  style={{ padding: '5px 14px', borderRadius: 6, border: 'none', background: encEditSaving ? '#6c757d' : BTN_BLUE, color: '#fff', cursor: encEditSaving ? 'default' : 'pointer', fontSize: 12, fontWeight: 'bold' }}>
                                   {encEditSaving ? '保存中...' : '保存'}
                                 </button>
                               </div>
@@ -1033,7 +1034,7 @@ const LeaveRequestsTab: React.FC = () => {
                         a.href = URL.createObjectURL(blob);
                         a.download = `奨励日回答_${encDetailDay?.target_date || ''}.csv`;
                         a.click();
-                      }} style={{ padding: '8px 16px', background: '#28a745', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>
+                      }} style={{ ...tintBtn(isDarkMode), padding: '8px 16px', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}>
                         CSV出力
                       </button>
                       <button disabled={encSendingMail} onClick={async () => {
@@ -1090,7 +1091,7 @@ const LeaveRequestsTab: React.FC = () => {
                 )}
                 <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
                   <button onClick={() => setConfirmDialog(null)} style={{ padding: '8px 18px', background: 'transparent', color: isDarkMode ? '#adb5bd' : '#666', border: `1px solid ${isDarkMode ? '#6c757d' : '#ccc'}`, borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>キャンセル</button>
-                  <button onClick={() => { const cb = confirmDialog.onConfirm; setConfirmDialog(null); cb(); }} style={{ padding: '8px 18px', background: '#28a745', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>はい</button>
+                  <button onClick={() => { const cb = confirmDialog.onConfirm; setConfirmDialog(null); cb(); }} style={{ padding: '8px 18px', background: BTN_BLUE, color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}>はい</button>
                 </div>
               </div>
             </div>
@@ -1108,7 +1109,7 @@ const LeaveRequestsTab: React.FC = () => {
               </p>
               <div style={{ display: 'flex', justifyContent: 'flex-end', paddingRight: 16, marginBottom: 8 }}>
                 <button onClick={() => { setLeaveCsvFy(String(nowFyStatic)); setShowLeaveCsvModal(true); }}
-                  style={{ padding: '5px 12px', borderRadius: 6, border: 'none', background: '#28a745', color: '#fff', fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
+                  style={{ ...tintBtn(isDarkMode), padding: '5px 12px', borderRadius: 6, fontSize: 12, fontWeight: 'bold', cursor: 'pointer' }}>
                   📥 CSV出力
                 </button>
               </div>
@@ -1142,7 +1143,7 @@ const LeaveRequestsTab: React.FC = () => {
                         setSuccessMsg(`「${target.name || target.email}」さんに送信しました`);
                       } });
                     }}
-                    style={{ padding: '6px 16px', background: '#28a745', color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 13, whiteSpace: 'nowrap' }}
+                    style={{ padding: '6px 16px', background: BTN_BLUE, color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 13, whiteSpace: 'nowrap' }}
                   >送信</button>
                 </div>
                 {partUsers.filter(u => u.leave_request_enabled).length > 0 && (
@@ -1356,7 +1357,7 @@ const LeaveRequestsTab: React.FC = () => {
                         a.download = `欠勤遅刻早退_${absFilterFY === 'all' ? '全年度' : `${activeFY}年度`}.csv`;
                         a.click();
                         URL.revokeObjectURL(a.href);
-                      }} style={{ padding: '4px 12px', borderRadius: 8, border: 'none', background: '#28a745', color: '#fff', fontSize: 11, fontWeight: 'bold', cursor: 'pointer' }}>
+                      }} style={{ ...tintBtn(isDarkMode), padding: '4px 12px', borderRadius: 8, fontSize: 11, fontWeight: 'bold', cursor: 'pointer' }}>
                         📥 CSV出力
                       </button>
                     </div>
@@ -1579,7 +1580,7 @@ const LeaveRequestsTab: React.FC = () => {
                                     onClick={async () => {
                                       if (req.status === 'pending') {
                                         // マネージャー選択モーダルを開く
-                                        const { data: mgrs } = await supabase.from('profiles').select('id, name, role_title, roles!inner(acts_as)').eq('roles.acts_as', 'manager').eq('is_active', true).order('name');
+                                        const { data: mgrs } = await supabase.from('profiles').select('id, name, role_title, roles!profiles_role_id_fkey!inner(acts_as)').eq('roles.acts_as', 'manager').eq('is_active', true).order('name');
                                         setAdminManagerList(mgrs || []);
                                         setAdminSelectedManagerId(mgrs && mgrs.length > 0 ? mgrs[0].id : '');
                                         setAdminSelectingManagerFor(req);
@@ -1689,7 +1690,7 @@ const LeaveRequestsTab: React.FC = () => {
                                         } });
                                       }
                                     }}
-                                    style={{ padding: '4px 8px', background: '#28a745', color: 'white', border: '2px solid #1e7e34', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}
+                                    style={{ padding: '4px 8px', background: BTN_BLUE, color: 'white', border: '2px solid #0a58ca', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 'bold' }}
                                   >受理</button>
                                   <button
                                     onClick={() => { setRejectModal(req); setRejectReason(''); setRejectNewType(''); }}
@@ -1937,7 +1938,7 @@ const LeaveRequestsTab: React.FC = () => {
                             } catch (e) { console.error('[gcal-sync] upsert失敗:', e); }
                             setRejectModal(null); setRejectReason(''); setRejectNewType(''); setModalError('');
                             fetchLeaveRequests();
-                          }} style={{ flex: 1, padding: '14px 8px', background: '#28a745', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 'bold', cursor: 'pointer', lineHeight: 1.4 }}>
+                          }} style={{ flex: 1, padding: '14px 8px', background: BTN_BLUE, color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 'bold', cursor: 'pointer', lineHeight: 1.4 }}>
                             差戻なし<br />「{rejectNewType}」に<br />変更して受理
                           </button>
                         )}
@@ -2134,7 +2135,7 @@ const LeaveRequestsTab: React.FC = () => {
                         閉じる
                       </button>
                       <button onClick={exportLeavesCsv} disabled={leaveCsvExporting}
-                        style={{ flex: 1, padding: 10, borderRadius: 8, border: 'none', background: leaveCsvExporting ? '#6c757d' : '#28a745', color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
+                        style={{ flex: 1, padding: 10, borderRadius: 8, border: 'none', background: leaveCsvExporting ? '#6c757d' : BTN_BLUE, color: '#fff', fontSize: 14, fontWeight: 'bold', cursor: 'pointer' }}>
                         {leaveCsvExporting ? '出力中...' : 'ダウンロード'}
                       </button>
                     </div>

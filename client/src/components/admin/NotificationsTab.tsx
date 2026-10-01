@@ -10,6 +10,7 @@ import PushBannerSettingsSection from './PushBannerSettingsSection';
 import GcalCalendarSection from './GcalCalendarSection';
 import LeaveShiftAlertSection from './LeaveShiftAlertSection';
 import ShiftAdjustSettingsSection from './ShiftAdjustSettingsSection';
+import { BTN_BLUE } from '../../lib/buttonStyles';
 
 interface NotificationSetting {
   id: string;
@@ -932,7 +933,7 @@ const NotificationsTab: React.FC = () => {
                       updateLocal(librarySelectFor.eventKey, librarySelectFor.channel, { subject: tpl.subject, template: tpl.template });
                       setShowLibrary(false); setLibrarySelectFor(null);
                     }}
-                      style={{ fontSize: 11, padding: '4px 12px', border: 'none', borderRadius: 8, background: '#28a745', color: 'white', cursor: 'pointer' }}>
+                      style={{ fontSize: 11, padding: '4px 12px', border: 'none', borderRadius: 8, background: BTN_BLUE, color: 'white', cursor: 'pointer' }}>
                       この内容を適用
                     </button>
                   )}

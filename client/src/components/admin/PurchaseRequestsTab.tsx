@@ -15,6 +15,7 @@ import SearchableSelect from '../common/SearchableSelect';
 import PurchaseRequestEditModal from './PurchaseRequestEditModal';
 import PurchaseRequestEditHistoryModal from './PurchaseRequestEditHistoryModal';
 import PurchaseApproverEditModal from './PurchaseApproverEditModal';
+import { BTN_BLUE, TOGGLE_BLUE } from '../../lib/buttonStyles';
 
 interface OpinionRow { purchase_request_id: string; manager_id: string; opinion: 'approve' | 'deny' | 'undecided' | 'other'; comment: string | null; approval_round: number }
 const OPINION_LABEL: Record<string, string> = { approve: '承認', deny: '否認', undecided: '判断できない', other: 'その他' };
@@ -444,8 +445,8 @@ const PurchaseRequestsTab: React.FC = () => {
           <button key={f.key} onClick={() => setRequestTypeFilter(f.key)}
             style={{
               padding: '4px 10px', borderRadius: 16, cursor: 'pointer', fontSize: 11,
-              border: `1px solid ${requestTypeFilter === f.key ? '#28a745' : border}`,
-              background: requestTypeFilter === f.key ? '#28a745' : 'transparent',
+              border: `1px solid ${requestTypeFilter === f.key ? TOGGLE_BLUE : border}`,
+              background: requestTypeFilter === f.key ? TOGGLE_BLUE : 'transparent',
               color: requestTypeFilter === f.key ? '#fff' : text,
             }}
           >
@@ -842,7 +843,7 @@ const PurchaseRequestsTab: React.FC = () => {
                         />
                         <div style={{ display: 'flex', gap: 6 }}>
                         <button type="button" onClick={() => handleApprove(r)} disabled={!allAnswered || processingId === r.id}
-                          style={{ padding: '4px 8px', background: allAnswered ? '#28a745' : subText, color: '#fff', border: `2px solid ${allAnswered ? '#1e7e34' : subText}`, borderRadius: 4, cursor: allAnswered ? 'pointer' : 'default', fontSize: 11, fontWeight: 'bold' }}>
+                          style={{ padding: '4px 8px', background: allAnswered ? BTN_BLUE : subText, color: '#fff', border: `2px solid ${allAnswered ? '#0a58ca' : subText}`, borderRadius: 4, cursor: allAnswered ? 'pointer' : 'default', fontSize: 11, fontWeight: 'bold' }}>
                           {processingId === r.id ? '処理中...' : '承認して進める'}
                         </button>
                         <button type="button" onClick={() => setReturningId(r.id)} disabled={!allAnswered}
@@ -934,7 +935,7 @@ const PaymentBadge: React.FC<{
           style={{ fontSize: 11, padding: '2px 4px', width: 130 }}
         />
         <button type="button" onClick={() => onConfirm(record)} disabled={loading || !draftDate}
-          style={{ fontSize: 11, fontWeight: 'bold', padding: '2px 6px', border: 'none', borderRadius: 4, background: '#28a745', color: '#fff', cursor: loading ? 'default' : 'pointer' }}>
+          style={{ fontSize: 11, fontWeight: 'bold', padding: '2px 6px', border: 'none', borderRadius: 4, background: BTN_BLUE, color: '#fff', cursor: loading ? 'default' : 'pointer' }}>
           確定
         </button>
         {reimbursed && (
