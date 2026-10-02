@@ -46,6 +46,8 @@ const BannerSuccess: React.FC<{ message: string; note?: string; onClose: () => v
 };
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
+import { usualWorkplaceFor } from '../lib/overtimeShift';
+import type { PatternRow } from '../lib/overtimeShift';
 import { useRoles } from '../hooks/useRoles';
 import { attrsFor, embeddedRole } from '../lib/roleAttrs';
 import type { EmbeddedRoleRow } from '../lib/roleAttrs';
@@ -469,6 +471,31 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
     supabase.from('master_options').select('value').eq('category', 'workplace').order('sort_order')
       .then(({ data }) => { if (data) setWorkplaces(data.map((r: { value: string }) => r.value)); });
   }, []);
+
+  // 勤務校を最初から入れる（2026-10-02 ユーザー確定）：その人の週の基本シフトの校。判定は lib/overtimeShift の usualWorkplaceFor 1か所。
+  // 🚨 まだ入っていない日（キーが無い日）だけに入れる。本人が選んだ日・下書きや修正で戻した日は上書きしない
+  const [shiftPatterns, setShiftPatterns] = useState<PatternRow[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data, error } = await supabase.from('weekly_shift_patterns').select('*').eq('user_id', user.id);
+      // 読めなくても止めない（自動で入らないだけ＝今までどおり本人が選ぶ）
+      if (alive && !error) setShiftPatterns((data as PatternRow[] | null) ?? []);
+    })();
+    return () => { alive = false; };
+  }, [user.id]);
+  useEffect(() => {
+    if (!shiftPatterns || shiftPatterns.length === 0 || workplaces.length === 0) return;
+    const fillFor = (dates: string[]) => (prev: Record<string, string>) => {
+      const add = dates
+        .filter(d => !(d in prev))
+        .map(d => [d, usualWorkplaceFor(shiftPatterns, d, calendarKinds[d] ?? null, workplaces)] as const)
+        .filter(([, w]) => w);
+      return add.length > 0 ? { ...prev, ...Object.fromEntries(add) } : prev;
+    };
+    setDateLocations(fillFor(selectedDates));
+    setOriginLocations(fillFor(choseiOriginDates));
+  }, [shiftPatterns, workplaces, selectedDates, choseiOriginDates, calendarKinds]);
 
   const [history, setHistory] = useState<LeaveRecord[]>([]);
   // 通知バナーから ?focus=<申請ID> で来たとき履歴の該当カードを強調
@@ -1223,7 +1250,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
                       <div style={{ marginTop: 10 }}>
                         <label style={{ display: 'block', fontSize: 14, fontWeight: 'bold', marginBottom: 2, color: errFields.has('originLocations') ? '#dc3545' : text }}>
                           振替元の勤務校 <span style={{ color: '#dc3545' }}>*</span>
-                          <span style={{ fontSize: 12, fontWeight: 'normal', color: subText, marginLeft: 6 }}>（日付ごとに選択）</span>
+                          <span style={{ fontSize: 12, fontWeight: 'normal', color: subText, marginLeft: 6 }}>（基本シフトの校が入ります。違う日は選び直してください）</span>
                         </label>
                         <DateLocationPicker
                           dates={choseiOriginDates}
@@ -1324,7 +1351,7 @@ const LeaveRequestForm: React.FC<Props> = ({ user, profileName, roleTitle: _role
               <div style={{ marginTop: 10 }}>
                 <label style={{ display: 'block', fontWeight: 'bold', marginBottom: 2, color: errFields.has('locations') ? '#dc3545' : text, fontSize: 14 }}>
                   勤務校 <span style={{ color: '#dc3545' }}>*</span>
-                  <span style={{ fontSize: 12, fontWeight: 'normal', color: subText, marginLeft: 6 }}>（日付ごとに選択）</span>
+                  <span style={{ fontSize: 12, fontWeight: 'normal', color: subText, marginLeft: 6 }}>（基本シフトの校が入ります。違う日は選び直してください）</span>
                 </label>
                 <DateLocationPicker
                   dates={selectedDates}

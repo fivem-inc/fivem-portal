@@ -78,6 +78,31 @@ export function resolveNormalShift(
   };
 }
 
+/**
+ * 休暇の申請で、日付ごとの勤務校に最初から入れる校（2026-10-02 ユーザー確定）。
+ * ① その日の基本シフトの校（「四条本校→上桂校」のような移動は最初の校）
+ * ② ①が無い日（休みの曜日・振替元の休日など）は、その人の基本シフトでいちばん多い校
+ * 選択肢（workplaces）に無い値は入れない。どちらも無ければ ''（＝今までどおり本人が選ぶ）
+ */
+export function usualWorkplaceFor(
+  patterns: PatternRow[], dateStr: string, calendarKind: CalendarKind | null, workplaces: readonly string[],
+): string {
+  const firstOf = (loc: string | null | undefined) => (loc ?? '').split('→')[0].trim();
+  const own = firstOf(resolveNormalShift(patterns, dateStr, calendarKind).location);
+  if (own && workplaces.includes(own)) return own;
+  const count = new Map<string, number>();
+  patterns
+    .filter(p => p.valid_to === null || p.valid_to >= dateStr)
+    .forEach(p => {
+      const w = firstOf(p.location);
+      if (w && workplaces.includes(w)) count.set(w, (count.get(w) ?? 0) + 1);
+    });
+  let best = '';
+  let most = 0;
+  count.forEach((n, w) => { if (n > most) { best = w; most = n; } });
+  return best;
+}
+
 /** 通常シフトの1つの時間帯。laborMin は「その帯だけ」の労働時間（拘束−自動休憩） */
 export interface ShiftBand { start: string; end: string; laborMin: number }
 
