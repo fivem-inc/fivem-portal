@@ -14,6 +14,7 @@ import { insertNotification } from '../lib/notifications';
 import TimeInput from './TimeInput';
 import { useScrollIntoViewWhen } from '../hooks/useScrollIntoViewWhen';
 import { toDbTime } from '../lib/timeInput';
+import { tintBtn } from '../lib/buttonStyles';
 
 // ───────────────────────────────────────────────────────────────
 // シフト調整の作業場（勤怠カレンダーの中のタブ）
@@ -489,13 +490,79 @@ const SlotDetail: React.FC<{
     setComments((data as CommentRow[] | null) ?? []);
   }, [slot.id]);
 
-  const loadAssigns = useCallback(async () => {
+  /** 決定の内容を読み直す。決定の直後に Google カレンダーへ書くため、読んだ行も返す（読めなければ null） */
+  const loadAssigns = useCallback(async (): Promise<AssignRow[] | null> => {
     const { data, error } = await supabase.from('shift_adjust_assignments')
       .select('id, user_id, kind, segments, attendance_exception_id, application_request_id')
       .eq('slot_id', slot.id);
-    if (error) { setErr('決定の内容を読み込めませんでした：' + error.message); return; }
-    setAssigns((data as AssignRow[] | null) ?? []);
+    if (error) { setErr('決定の内容を読み込めませんでした：' + error.message); return null; }
+    const rows = (data as AssignRow[] | null) ?? [];
+    setAssigns(rows);
+    return rows;
   }, [slot.id]);
+
+  // ── Google カレンダー（2026-10-02 ユーザー確定・ボタンを常に出す案）──
+  // 🚨 それまでは決定で勤怠に休日出勤を登録しても、Google カレンダーには何も書いていなかった
+  //    （計画書に「決定のあとに画面から呼ぶ」とあったが作られていなかった。10/10 の古家さんで発覚）。
+  // 🚨 書き方は勤怠カレンダーから手で登録したとき（CalendarPage の保存）と同じ形にそろえる。
+  //    gcal-sync は同じ記録の予定を作り直すので、何度呼んでも二重にはならない。
+  // 🚨 invoke は 4xx/5xx でも throw しないので、error と success を必ず見る
+  const [gcalNote, setGcalNote] = useState<{ ok: boolean; text: string } | null>(null);
+  /** 勤怠に登録した人の分を Google カレンダーへ書く。戻り値は書けなかった人数 */
+  const syncGcal = async (rows: AssignRow[]): Promise<number> => {
+    let failed = 0;
+    for (const a of rows) {
+      if (a.kind !== 'attendance' || !a.attendance_exception_id) continue;
+      const first = a.segments[0];
+      try {
+        const { data, error } = await supabase.functions.invoke('gcal-sync', {
+          body: {
+            action: 'upsert', source_type: 'absence', source_id: a.attendance_exception_id,
+            dates: [slot.target_date], name: nameOf(a.user_id), absence_type: 'holiday_work',
+            time: first?.start ? first.start.slice(0, 5) : undefined,
+            locations: first?.location ? { [slot.target_date]: first.location } : {},
+            work_segments: a.segments,
+          },
+        });
+        if (error || (data as { success?: boolean } | null)?.success === false) {
+          console.error('[gcal-sync] シフト調整の書き込み失敗:', error);
+          failed++;
+        }
+      } catch (e) {
+        console.error('[gcal-sync] シフト調整の書き込み失敗:', e);
+        failed++;
+      }
+    }
+    return failed;
+  };
+  /** 決定を取り消したとき、Google カレンダーの予定を消す。戻り値は消せなかった人数 */
+  const removeGcal = async (rows: AssignRow[]): Promise<number> => {
+    let failed = 0;
+    for (const a of rows) {
+      if (!a.attendance_exception_id) continue;
+      try {
+        const { data, error } = await supabase.functions.invoke('gcal-sync', {
+          body: { action: 'delete', source_type: 'absence', source_id: a.attendance_exception_id },
+        });
+        if (error || (data as { success?: boolean } | null)?.success === false) {
+          console.error('[gcal-sync] シフト調整の削除失敗:', error);
+          failed++;
+        }
+      } catch (e) {
+        console.error('[gcal-sync] シフト調整の削除失敗:', e);
+        failed++;
+      }
+    }
+    return failed;
+  };
+  const resyncGcal = async () => {
+    setGcalNote(null); setBusyBtn(true);
+    const failed = await syncGcal(assigns);
+    setBusyBtn(false);
+    setGcalNote(failed > 0
+      ? { ok: false, text: `Google カレンダーに書き込めなかった方が${failed}人います。時間をおいて、もう一度押してください。` }
+      : { ok: true, text: 'Google カレンダーに反映しました。' });
+  };
 
   const loadPartReqs = useCallback(async () => {
     const { data, error } = await supabase.from('shift_adjust_part_requests')
@@ -897,8 +964,9 @@ const SlotDetail: React.FC<{
         await insertNotification(
           targets[i].userId,
           `📩 ${me}さんより申請依頼：${dl} 残業・時間管理`,
-          // 🚨 時間とメモの間は全角スペース。そのまま書くと ESLint（no-irregular-whitespace）に止められるので \u3000 で書く
-          `${bandOf(targets[i])}${memoText ? `\u3000メモ：${memoText}` : ''}`,
+          // 🚨 時間とメッセージの間は全角スペース。そのまま書くと ESLint（no-irregular-whitespace）に止められるので \u3000 で書く
+          // 🚨 2026-10-02 ユーザー確定（案A′）：「メモ」→「メッセージ」。正社員は1行目に「〇〇さんより」があるので名前は重ねない
+          `${bandOf(targets[i])}${memoText ? `\u3000メッセージ：${memoText}` : ''}`,
           'application_request:received',
           reqIds[i],
           'application_request:received',
@@ -908,13 +976,17 @@ const SlotDetail: React.FC<{
     // パートを入れて決定したとき、本人にベルで知らせる（2026-09-14 ユーザー確定）。
     // 🚨 それまでは何も届かなかった（出勤のお願いで選ばれた人だけ、返事のページに結果が出ていた）。
     //    選ばれた人にもベルは出ていなかったので、全員に1通ずつ送っても二重にはならない
-    // 🚨 ベルだけ（event_key を付けない＝スマホは鳴らさない）。メモは入れない（勤怠の記録に残る）
+    // 🚨 ベルだけ（event_key を付けない＝スマホは鳴らさない）
     // 🚨 誰の代わりかは書かない（計画書の決まり）
+    // 🚨 2026-10-02 ユーザー確定（案A′）：メッセージも届ける。それまでは「（届きます）」と書いてあるのに
+    //    パートには届かず、勤怠の備考にだけ入っていた（10/10 の古家さんで発覚）。
+    //    パートのベルには送った人の名前が無いので「〇〇さんからのメッセージ」と名前を添える
+    const fromMe = nameOf(userId) || '担当者';
     for (const d of notifyStaff ? drafts.filter(x => kindOf(x.userId) === 'attendance') : []) {
       await insertNotification(
         d.userId,
         `📅 ${dateLabel(slot.target_date)}の出勤が決まりました`,
-        bandOf(d),
+        `${bandOf(d)}${memoText ? `\u3000${fromMe}さんからのメッセージ：${memoText}` : ''}`,
         'shift_adjust:decided',
         slot.id,
       );
@@ -929,14 +1001,21 @@ const SlotDetail: React.FC<{
         : `決定しました：${summaryOf(drafts)}`,
     });
     if (cErr) console.error('[シフト調整] 決定の記録を相談に残せませんでした', cErr.message);
-    setBusyBtn(false);
     setStatus('decided');
     // 決定すると案は消える（DBのトリガーが消す）
     closeEditor();
     setPlans([]);
     setOkMsg('決定しました。');
-    void loadAssigns();
     void loadComments();
+    // 勤怠に登録した休日出勤を Google カレンダーへ（勤怠の記録の ID は決定の内容を読み直して得る）。
+    // 🚨 書けなくても決定は成立している。決定の内容のすぐ下に知らせ、［Google カレンダーに反映し直す］で取り返せる
+    setGcalNote(null);
+    const rows = await loadAssigns();
+    const gFailed = rows ? await syncGcal(rows) : 0;
+    setBusyBtn(false);
+    if (gFailed > 0) {
+      setGcalNote({ ok: false, text: `Google カレンダーに書き込めなかった方が${gFailed}人います。下の［Google カレンダーに反映し直す］を押してください。` });
+    }
   };
 
   const sendParts = async () => {
@@ -986,10 +1065,17 @@ const SlotDetail: React.FC<{
     // 取り消す前に、決まっていた人を控える（取り消すと割り当ての行が消える）
     const decidedBefore = assigns;
     const { data, error } = await supabase.rpc('shift_adjust_undecide', { p_slot_id: slot.id });
-    setBusyBtn(false); setConfirmUndo(false);
-    if (error) { setErr('取り消せませんでした：' + error.message); return; }
+    setConfirmUndo(false); setGcalNote(null);
+    if (error) { setBusyBtn(false); setErr('取り消せませんでした：' + error.message); return; }
     const row = Array.isArray(data) ? data[0] : data;
-    if (!row?.ok) { setErr(row?.reason || '取り消せませんでした'); return; }
+    if (!row?.ok) { setBusyBtn(false); setErr(row?.reason || '取り消せませんでした'); return; }
+    // 取り消しの関数が勤怠の記録を消したので、Google カレンダーの予定も消す（2026-10-02）。
+    // 🚨 消せなかったときは取り返すボタンが無い（決定の内容ごと消えている）ので、手で消してもらう
+    const gFailed = await removeGcal(decidedBefore);
+    setBusyBtn(false);
+    if (gFailed > 0) {
+      setErr(`決定は取り消しましたが、Google カレンダーの予定を消せなかった方が${gFailed}人います。Google カレンダーから手で消してください。`);
+    }
     // 決まっていた本人に、取り消しを知らせる（2026-09-25 ユーザー確定の文面）。
     // 🚨 それまでは何も届かず、「出勤が決まりました」を見た人が出勤するつもりのままになっていた。
     // 🚨 正社員は、依頼を受けて申請まで済ませていると申請が残る（取り消しの関数は applied の依頼を触らない）ので、一言添える
@@ -1428,13 +1514,32 @@ const SlotDetail: React.FC<{
                   </span>
                 </div>
               ))}
+              {/* Google カレンダー（2026-10-02 ユーザー確定・ボタンを常に出す）。
+                  🚨 入っているかどうかは画面からは分からない（gcal_events は画面から読めない）ので、いつでも押し直せるようにする。
+                     何度押しても二重にはならない */}
+              {perms.decide && assigns.some(a => a.kind === 'attendance' && a.attendance_exception_id) && (
+                <div style={{ marginTop: 10 }}>
+                  <button type="button" onClick={() => void resyncGcal()} disabled={busyBtn}
+                    style={{ ...tintBtn(isDark), padding: '6px 12px', fontSize: 12.5 }}>
+                    Google カレンダーに反映し直す
+                  </button>
+                  {gcalNote && (
+                    <p style={{ margin: '8px 0 0', padding: '8px 10px', borderRadius: 8, fontSize: 12.5,
+                      ...(gcalNote.ok
+                        ? { background: '#f0fdf4', border: '1px solid #86efac', color: '#166534' }
+                        : { background: '#f8d7da', color: '#842029' }) }}>
+                      {gcalNote.ok ? `✓ ${gcalNote.text}` : gcalNote.text}
+                    </p>
+                  )}
+                </div>
+              )}
               {perms.decide && (
                 <div style={{ marginTop: 12 }}>
                   {confirmUndo ? (
                     <div style={{ padding: '10px 12px', borderRadius: 8, border: `1px solid ${border}`,
                       background: isDark ? '#3a3f44' : '#f8f9fa' }}>
                       <p style={{ margin: '0 0 8px', fontSize: 12.5, color: text, lineHeight: 1.8 }}>
-                        決定を取り消します。登録した勤怠は削除し、残業申請の依頼は取り下げます。
+                        決定を取り消します。登録した勤怠と Google カレンダーの予定は削除し、残業申請の依頼は取り下げます。
                         （申請が済んでいる依頼はそのまま残ります）
                       </p>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1556,10 +1661,10 @@ const SlotDetail: React.FC<{
                     <p style={note}>依頼・勤怠の登録はしますが、ベル・スマホのお知らせは送りません（事前に直接伝えた場合）。</p>
                   )}
                   {notifyStaff && (<>
-                  {/* メモの文例（2026-09-14 ユーザー確定・案1）。押すとメモを置き換える。
-                      🚨 休む方の名前は入れない。メモは正社員には残業申請の依頼とベルでそのまま届き、
-                         パートは勤怠カレンダーの休日出勤の記録に残るため（計画書「誰の代わりかは載せない」） */}
-                  <div style={{ fontSize: 12, color: subText, marginTop: 14 }}>文例（押すとメモに入ります）</div>
+                  {/* メッセージの文例（2026-09-14 ユーザー確定・案1）。押すとメッセージを置き換える。
+                      🚨 休む方の名前は入れない。メッセージは正社員には残業申請の依頼とベルで、パートにはベルでそのまま届くため
+                         （計画書「誰の代わりかは載せない」）。🚨 2026-10-02 から勤怠の備考には入れない */}
+                  <div style={{ fontSize: 12, color: subText, marginTop: 14 }}>文例（押すとメッセージに入ります）</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
                     {memoExamples.map(ex => (
                       <button key={ex} type="button" onClick={() => setMemo(ex)}
@@ -1569,8 +1674,9 @@ const SlotDetail: React.FC<{
                       </button>
                     ))}
                   </div>
-                  <div style={{ fontSize: 12, color: subText, marginTop: 10 }}>出勤する方へのメモ（届きます）</div>
-                  <textarea value={memo} onChange={e => setMemo(e.target.value)} placeholder="メモ（任意）" rows={2}
+                  {/* 🚨 2026-10-02 ユーザー確定（案A′）：「メモ」→「メッセージ」。正社員・パートとも、お知らせ（ベル）の2行目に添えて届く */}
+                  <div style={{ fontSize: 12, color: subText, marginTop: 10 }}>出勤する方へのメッセージ（お知らせに添えてお届けします）</div>
+                  <textarea value={memo} onChange={e => setMemo(e.target.value)} placeholder="メッセージ（任意）" rows={2}
                     style={{ ...sel, width: '100%', boxSizing: 'border-box', marginTop: 4, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.6 }} />
                   </>)}
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12, flexWrap: 'wrap' }}>
