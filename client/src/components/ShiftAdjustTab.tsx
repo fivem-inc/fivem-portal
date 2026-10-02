@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { teamsOf } from '../lib/staffTeam';
 import { useRoles } from '../hooks/useRoles';
 import { roleByName } from '../lib/roleAttrs';
 import { compareByPlaceRole, firstWorkplace, usualWorkplace } from '../lib/shiftAdjustSort';
-import { segmentsText } from '../lib/segmentsText';
+import { segmentsText, type SegmentLike } from '../lib/segmentsText';
 import { todayJstStr } from '../lib/breakCalc';
 import type { DayKind } from '../lib/breakCalc';
 import { normalShiftTimeText } from '../lib/overtimeShift';
@@ -555,9 +555,36 @@ const SlotDetail: React.FC<{
     }
     return failed;
   };
+  // Google カレンダーに載っているか（2026-10-02 ユーザー確定・案1「掲載済み／未掲載」）。
+  // 🚨 gcal_events は画面から読めないので、読み取り専用の RPC（shift_adjust_gcal_posted）に聞く。
+  //    毎回、実際の記録から確かめる（勤怠カレンダー側で取り消されたときも正しく「未掲載」になる）
+  /** 載っている勤怠の記録の ID。null＝まだ読んでいない（読み込み中・読めなかった） */
+  const [gcalPosted, setGcalPosted] = useState<Set<string> | null>(null);
+  const [gcalPostedErr, setGcalPostedErr] = useState(false);
+  // 🚨 決定の直後は「読み直し」が2回走る（決定の内容の読み直しと、書き込みのあと）。古い答えで上書きしないよう番号で見分ける
+  const gcalSeq = useRef(0);
+  const loadGcalPosted = useCallback(async (rows: AssignRow[]) => {
+    const seq = ++gcalSeq.current;
+    const ids = rows.filter(a => a.kind === 'attendance' && a.attendance_exception_id).map(a => a.attendance_exception_id as string);
+    if (ids.length === 0) { setGcalPosted(new Set()); setGcalPostedErr(false); return; }
+    const { data, error } = await supabase.rpc('shift_adjust_gcal_posted', { p_attendance_ids: ids });
+    if (seq !== gcalSeq.current) return;
+    if (error) {
+      console.error('[シフト調整] Google カレンダーの掲載状況を読めませんでした', error.message);
+      setGcalPosted(null); setGcalPostedErr(true); return;
+    }
+    setGcalPosted(new Set(((data as { attendance_exception_id: string }[] | null) ?? []).map(r => r.attendance_exception_id)));
+    setGcalPostedErr(false);
+  }, []);
+  useEffect(() => { void loadGcalPosted(assigns); }, [assigns, loadGcalPosted]);
+  /** まだ載っていない（載っているか分からないときも含む）勤怠の記録 */
+  const gcalUnposted = assigns.filter(a => a.kind === 'attendance' && a.attendance_exception_id
+    && (gcalPostedErr || (gcalPosted !== null && !gcalPosted.has(a.attendance_exception_id))));
+
   const resyncGcal = async () => {
     setGcalNote(null); setBusyBtn(true);
-    const failed = await syncGcal(assigns);
+    const failed = await syncGcal(gcalUnposted);
+    await loadGcalPosted(assigns);
     setBusyBtn(false);
     setGcalNote(failed > 0
       ? { ok: false, text: `Google カレンダーに書き込めなかった方が${failed}人います。時間をおいて、もう一度押してください。` }
@@ -636,7 +663,7 @@ const SlotDetail: React.FC<{
         .lte('valid_from', d)
         // 🚨 その日に効いている行だけ。終わりの日で絞らないと、版が増えたときに1,000行で黙って欠ける（2026-09-15 レビュー R1）
         .or(`valid_to.is.null,valid_to.gte.${d}`),
-      supabase.from('attendance_exceptions').select('user_id, type').eq('date', d),
+      supabase.from('attendance_exceptions').select('user_id, type, work_segments').eq('date', d),
       supabase.from('leave_requests').select('user_id, leave_dates, start_date, end_date, status')
         .in('status', ['manager_approved', 'admin_approved', 'approved'])
         .lte('start_date', d).gte('end_date', d),
@@ -651,9 +678,14 @@ const SlotDetail: React.FC<{
     setPatterns(valid.filter(p => p.day_kind === dayKindOf(d)));
 
     const b: BusyMap = {};
-    for (const a of ((att as { user_id: string; type: string }[] | null) ?? [])) {
+    for (const a of ((att as { user_id: string; type: string; work_segments: SegmentLike[] | null }[] | null) ?? [])) {
       if (a.type === 'absent') b[a.user_id] = 'この日は欠勤';
-      else if (a.type === 'holiday_work') b[a.user_id] = 'この日は休日出勤';
+      else if (a.type === 'holiday_work') {
+        // 2026-10-02 ユーザー確定（案A）：休日出勤は時間と校も出す（例「この日は休日出勤（09:15〜12:30 四条本校）」）。
+        // 🚨 文は決定済みの「出勤する人」と同じ segmentsText で作る。時間帯が無い古い記録はこれまでどおり
+        const band = segmentsText(Array.isArray(a.work_segments) ? a.work_segments : []);
+        b[a.user_id] = band ? `この日は休日出勤（${band}）` : 'この日は休日出勤';
+      }
     }
     for (const l of ((lv as { user_id: string; leave_dates: string | null }[] | null) ?? [])) {
       let hit = true;
@@ -1012,6 +1044,7 @@ const SlotDetail: React.FC<{
     setGcalNote(null);
     const rows = await loadAssigns();
     const gFailed = rows ? await syncGcal(rows) : 0;
+    if (rows) await loadGcalPosted(rows);
     setBusyBtn(false);
     if (gFailed > 0) {
       setGcalNote({ ok: false, text: `Google カレンダーに書き込めなかった方が${gFailed}人います。下の［Google カレンダーに反映し直す］を押してください。` });
@@ -1511,27 +1544,38 @@ const SlotDetail: React.FC<{
                     {a.kind === 'attendance'
                       ? (a.attendance_exception_id ? '勤怠に登録済み' : '勤怠には未登録')
                       : (a.application_request_id ? '残業申請を依頼済み' : '依頼なし')}
+                    {/* Google カレンダーの掲載（2026-10-02 ユーザー確定・案1）。未掲載だけ赤で気づけるように */}
+                    {a.kind === 'attendance' && a.attendance_exception_id && (
+                      gcalPostedErr
+                        ? '・Google カレンダーの掲載状況を読めませんでした'
+                        : gcalPosted === null
+                          ? ''
+                          : gcalPosted.has(a.attendance_exception_id)
+                            ? '・Google カレンダーに掲載済み'
+                            : <>・<span style={{ color: isDark ? '#ff8a80' : '#c62828', fontWeight: 'bold' }}>Google カレンダーに未掲載</span></>
+                    )}
                   </span>
                 </div>
               ))}
-              {/* Google カレンダー（2026-10-02 ユーザー確定・ボタンを常に出す）。
-                  🚨 入っているかどうかは画面からは分からない（gcal_events は画面から読めない）ので、いつでも押し直せるようにする。
+              {/* Google カレンダー（2026-10-02 ユーザー確定・未掲載のときだけボタンを出す）。
+                  🚨 掲載状況を読めなかったときも出す（押せずに取り返せなくなるより、押せるほうがよい）。
                      何度押しても二重にはならない */}
-              {perms.decide && assigns.some(a => a.kind === 'attendance' && a.attendance_exception_id) && (
+              {perms.decide && gcalUnposted.length > 0 && (
                 <div style={{ marginTop: 10 }}>
                   <button type="button" onClick={() => void resyncGcal()} disabled={busyBtn}
                     style={{ ...tintBtn(isDark), padding: '6px 12px', fontSize: 12.5 }}>
                     Google カレンダーに反映し直す
                   </button>
-                  {gcalNote && (
-                    <p style={{ margin: '8px 0 0', padding: '8px 10px', borderRadius: 8, fontSize: 12.5,
-                      ...(gcalNote.ok
-                        ? { background: '#f0fdf4', border: '1px solid #86efac', color: '#166534' }
-                        : { background: '#f8d7da', color: '#842029' }) }}>
-                      {gcalNote.ok ? `✓ ${gcalNote.text}` : gcalNote.text}
-                    </p>
-                  )}
                 </div>
+              )}
+              {/* 結果の知らせ。🚨 ボタンの外に置く（載るとボタンが消えるので、中に置くと「反映しました」も一緒に消える） */}
+              {gcalNote && (
+                <p style={{ margin: '8px 0 0', padding: '8px 10px', borderRadius: 8, fontSize: 12.5,
+                  ...(gcalNote.ok
+                    ? { background: '#f0fdf4', border: '1px solid #86efac', color: '#166534' }
+                    : { background: '#f8d7da', color: '#842029' }) }}>
+                  {gcalNote.ok ? `✓ ${gcalNote.text}` : gcalNote.text}
+                </p>
               )}
               {perms.decide && (
                 <div style={{ marginTop: 12 }}>
