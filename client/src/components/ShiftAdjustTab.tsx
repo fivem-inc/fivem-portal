@@ -681,10 +681,11 @@ const SlotDetail: React.FC<{
     for (const a of ((att as { user_id: string; type: string; work_segments: SegmentLike[] | null }[] | null) ?? [])) {
       if (a.type === 'absent') b[a.user_id] = 'この日は欠勤';
       else if (a.type === 'holiday_work') {
-        // 2026-10-02 ユーザー確定（案A）：休日出勤は時間と校も出す（例「この日は休日出勤（09:15〜12:30 四条本校）」）。
+        // 2026-10-02 ユーザー確定（案A）：休日出勤は時間と校も出す（例「この日は休日出勤 09:15〜12:30 四条本校」）。
+        // 🚨 後ろに「（通常シフト …）」が付くので、かっこは付けない（二重にしない）
         // 🚨 文は決定済みの「出勤する人」と同じ segmentsText で作る。時間帯が無い古い記録はこれまでどおり
         const band = segmentsText(Array.isArray(a.work_segments) ? a.work_segments : []);
-        b[a.user_id] = band ? `この日は休日出勤（${band}）` : 'この日は休日出勤';
+        b[a.user_id] = band ? `この日は休日出勤 ${band}` : 'この日は休日出勤';
       }
     }
     for (const l of ((lv as { user_id: string; leave_dates: string | null }[] | null) ?? [])) {
@@ -1167,8 +1168,26 @@ const SlotDetail: React.FC<{
    *     休暇・欠勤などの記録があればそれを、なければ「この曜日は勤務なし」か「週のシフト未登録」を出す */
   const restNoteOf = (uid: string): string =>
     busy[uid] ?? (weekPatterns.some(x => x.user_id === uid) ? 'この曜日は勤務なし' : '週のシフト未登録');
-  /** 勤務予定がない人の補足（いつもの校・休みの理由） */
-  const restLineOf = (uid: string): string => [usualOf(uid), restNoteOf(uid)].filter(Boolean).join('・');
+  /** 週の基本シフトを「曜日と校」で（例「火・金 西陣校／木 四条本校」）。基本シフトが1日も無ければ ''。
+   *  🚨 2026-10-02 ユーザー確定（案A）：それまでは「いちばん多い校」だけを先頭に出しており、
+   *     何の校か分からず、曜日で校が違う人（奥村さん＝火・金 西陣校／木 四条本校）は事実の一部しか伝わらなかった。
+   *     同じ校の曜日をまとめ、月→日の順に並べる。校は略さない */
+  const weeklyShiftText = (uid: string): string => {
+    const order: DayKind[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+    const groups = new Map<string, string[]>();
+    for (const k of order) {
+      const p = weekPatterns.find(x => x.user_id === uid && x.day_kind === k && x.start_time);
+      if (!p) continue;
+      const loc = (p.location ?? '').trim();
+      groups.set(loc, [...(groups.get(loc) ?? []), DOW[DAY_KINDS.indexOf(k)]]);
+    }
+    return [...groups].map(([loc, days]) => `${days.join('・')}${loc ? ` ${loc}` : ''}`).join('／');
+  };
+  /** 勤務予定がない人の補足（この日の様子＋通常シフト。例「この曜日は勤務なし（通常シフト 火・木 上桂校）」） */
+  const restLineOf = (uid: string): string => {
+    const w = weeklyShiftText(uid);
+    return `${restNoteOf(uid)}${w ? `（通常シフト ${w}）` : ''}`;
+  };
   // 案を作れる／決められる（2026-09-25）。🚨 まだ決まっていない、未調整か調整中の場だけ。休む本人は DB でも断る
   const openStatus = ['pending', 'working'].includes(status) && assigns.length === 0 && slot.target_user_id !== userId;
   const canPlan = perms.plan && openStatus;
