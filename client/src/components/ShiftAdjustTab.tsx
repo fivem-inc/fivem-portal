@@ -12,6 +12,8 @@ import { normalShiftTimeText } from '../lib/overtimeShift';
 import { actedAtLabel } from '../lib/actedAt';
 import { insertNotification } from '../lib/notifications';
 import TimeInput from './TimeInput';
+import DateTimeInput from './DateTimeInput';
+import { dateTimeProblem } from '../lib/dateTimeValue';
 import { useScrollIntoViewWhen } from '../hooks/useScrollIntoViewWhen';
 import { toDbTime } from '../lib/timeInput';
 import { tintBtn } from '../lib/buttonStyles';
@@ -777,7 +779,7 @@ const SlotDetail: React.FC<{
     JSON.stringify({ d: ds.map(d => [d.userId, d.segs]), note, due, m });
   const editorDirty = !!editor && snapshotOf(drafts, planNote, planDue, memo) !== editorBase;
 
-  /** ISO の日時 → datetime-local の値（端末の時刻で "YYYY-MM-DDTHH:MM"） */
+  /** ISO の日時 → 期限の入力欄の値（端末の時刻で "YYYY-MM-DDTHH:MM"） */
   const toLocalInput = (iso: string | null | undefined): string => {
     if (!iso) return '';
     const d = new Date(iso);
@@ -836,6 +838,9 @@ const SlotDetail: React.FC<{
     const rows = drafts.filter(d => d.userId);
     if (rows.length === 0) { setErr('出勤する人を1人以上選んでください。'); return; }
     // 🚨 途中の案なので、時間が空でも保存できる（決定のときに初めて確かめる）
+    // 🚨 期限は日付と時刻の両方が要る（日付だけで何時か決めつけない）
+    const dueProblem = dateTimeProblem(planDue, { requireTime: true });
+    if (dueProblem) { setErr('意見の期限：' + dueProblem); return; }
     const assignments = rows.map(d => ({ user_id: d.userId, segs: d.segs }));
     const dueIso = planDue ? new Date(planDue).toISOString() : null;
     setBusyBtn(true);
@@ -1057,12 +1062,14 @@ const SlotDetail: React.FC<{
     const s = toDbTime(reqStart); const e = toDbTime(reqEnd);
     if (!s || !e) { setErr('開始時刻と終了時刻を入力してください。'); return; }
     if (e <= s) { setErr('終了時刻は開始時刻より後にしてください。'); return; }
+    const dueProblem = dateTimeProblem(dueAt, { requireTime: true });
+    if (dueProblem) { setErr('返事の期限：' + dueProblem); return; }
     setBusyBtn(true);
     const segs = [{ start: s.slice(0, 5), end: e.slice(0, 5), location: reqLoc || null }];
     const { data, error } = await supabase.rpc('shift_adjust_send_part_requests', {
       p_slot_id: slot.id, p_user_ids: pickedParts, p_segments: segs,
       p_location: reqLoc || null,
-      // 🚨 datetime-local は端末の時刻。new Date(…) で日本時間として解釈され、
+      // 🚨 期限の値（YYYY-MM-DDTHH:mm）は端末の時刻。new Date(…) で日本時間として解釈され、
       //    toISOString() で正しい瞬間に変換される
       p_due_at: dueAt ? new Date(dueAt).toISOString() : null,
     });
@@ -1755,9 +1762,11 @@ const SlotDetail: React.FC<{
                     style={{ ...sel, width: '100%', boxSizing: 'border-box', marginTop: 4, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.6 }} />
                   <div style={{ fontSize: 12, color: subText, marginTop: 10 }}>意見の期限（任意）</div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 4 }}>
-                    <input type="datetime-local" value={planDue} onChange={e => setPlanDue(e.target.value)} style={sel} aria-label="意見の期限" />
+                    <DateTimeInput value={planDue} onChange={setPlanDue} isDark={isDark} minDate={todayJstStr()}
+                      invalid={!!dateTimeProblem(planDue, { requireTime: true })} ariaLabel="意見の期限" />
                     {planDue && <button type="button" onClick={() => setPlanDue('')} style={{ ...quietBtn, marginLeft: 0 }}>期限を外す</button>}
                   </div>
+                  {dateTimeProblem(planDue, { requireTime: true }) && <div style={{ fontSize: 12, color: '#dc3545', marginTop: 4 }}>{dateTimeProblem(planDue, { requireTime: true })}</div>}
                   <p style={note}>期限を付けると、確認する方にお知らせが届きます。期限を過ぎたら、あなたにお知らせします。</p>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12, flexWrap: 'wrap' }}>
                     <button onClick={() => void savePlanFromEditor()}
@@ -1889,8 +1898,11 @@ const SlotDetail: React.FC<{
                     </div>
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
                       <span style={{ fontSize: 12, color: subText }}>返事の期限（任意）</span>
-                      <input type="datetime-local" value={dueAt} onChange={e => setDueAt(e.target.value)} style={sel} />
+                      <DateTimeInput value={dueAt} onChange={setDueAt} isDark={isDark} minDate={todayJstStr()}
+                        invalid={!!dateTimeProblem(dueAt, { requireTime: true })} ariaLabel="返事の期限" />
+                      {dueAt && <button type="button" onClick={() => setDueAt('')} style={{ ...quietBtn, marginLeft: 0 }}>期限を外す</button>}
                     </div>
+                    {dateTimeProblem(dueAt, { requireTime: true }) && <div style={{ fontSize: 12, color: '#dc3545', marginTop: 4 }}>{dateTimeProblem(dueAt, { requireTime: true })}</div>}
                     <p style={{ margin: '8px 0 0', fontSize: 11, color: subText, lineHeight: 1.7 }}>
                       ※ 送る内容は「日付・時間帯・校」だけです。誰の代わりかは相手に表示されません。
                       <br />

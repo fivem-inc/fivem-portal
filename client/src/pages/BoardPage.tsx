@@ -8,6 +8,8 @@ import { insertNotification, markBellReadForMessages } from '../lib/notification
 import { dispatchBoardEmail } from '../lib/notificationDispatch';
 import { DRAFT_KEYS, loadDraft, saveDraft, clearDraft } from '../lib/draftStorage';
 import { todayJstStr } from '../lib/breakCalc';
+import { dateTimeProblem } from '../lib/dateTimeValue';
+import DateTimeInput from '../components/DateTimeInput';
 import { describeUpdate, describePartial } from '../lib/statusUpdate';
 import { filterTemplates, sortTemplates, categoryChips, categoryLabel, canEditTemplate, needsReplaceConfirm, validateTemplateInput } from '../lib/boardTemplates';
 import type { BoardTemplate, BoardTemplateCategory, BoardTemplateScope, CategoryFilter } from '../lib/boardTemplates';
@@ -181,12 +183,8 @@ const fmtConfirmDate = (ts: string) => {
   });
 };
 // (fmtNotif は App.tsx の通知ベルで使用)
-// 送信予約input の min用：toISOString()はUTC基準になり、JST(UTC+9)では実際の現在より9時間前がminになってしまうため、ローカル時刻で組み立てる
-const localDatetimeMin = (offsetMs = 60000) => {
-  const d = new Date(Date.now() + offsetMs);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-};
+// 送信予約の確かめ方（日付と時刻の両方・今より後）。グループ投稿とお知らせで同じものを使う
+const SCHEDULE_RULE = { requireTime: true, future: true } as const;
 
 const avatarLetter = (name: string | null | undefined) => (name || '?')[0];
 
@@ -1719,10 +1717,16 @@ const BoardPage: React.FC = () => {
   // （役職が変わったときの追加・削除を、管理者でなくてもできるように。ユーザー指示）
   const canCreateGroup = isAdmin || canManageGroups;
 
+  // 送信予約の入力に問題があれば、その文（無ければ null）。🚨 途中の値（日付だけ・時刻だけ）で送らせない。
+  //    途中のまま送ると、予約したつもりのお知らせがすぐ届いてしまう（lib/dateTimeValue.ts）
+  const newScheduleProblem = dateTimeProblem(newScheduledAt, SCHEDULE_RULE);
+  const composeScheduleProblem = dateTimeProblem(composeScheduledAt, SCHEDULE_RULE);
+
   const sendMessage = async (parentId?: string) => {
     if (!selectedChannelId || !user) return;
     const body = parentId ? replyBody : newBody;
     if (!body.trim()) return;
+    if (!parentId && newScheduleProblem) return;   // ボタンは押せなくしてある。念のため
     setSending(true);
 
     const insertData: Record<string, unknown> = {
@@ -2187,6 +2191,7 @@ const BoardPage: React.FC = () => {
 
   const sendNotice = async () => {
     if (!user || composeRecipientIds.length === 0 || !composeBody.trim() || !composeSubject.trim()) return;
+    if (composeScheduleProblem) return;   // ボタンは押せなくしてある。念のため
     setSending(true);
     const isScheduled = !!composeScheduledAt;
     const insertData: Record<string, unknown> = {
@@ -4030,13 +4035,16 @@ const BoardPage: React.FC = () => {
                   <div style={{ fontSize: 11, color: '#dc3545', marginTop: 3 }}>種別を選んだ場合、期限日の入力が必要です</div>
                 )}
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 12, color: subColor, flexShrink: 0 }}>🕐 送信予約</span>
-                {/* 予約送信は board-scheduled-send（サーバー）が通知を作るため緊急チェックを運べない。
-                    黙って無効になるのが最悪なので、予約を入れたら緊急チェックを外してグレーアウトする */}
-                <input type="datetime-local" value={composeScheduledAt} onChange={e => { setComposeScheduledAt(e.target.value); if (e.target.value) setComposeUrgent(false); }} min={localDatetimeMin()}
-                  style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: textColor, flex: 1 }} />
-                {composeScheduledAt && <button type="button" onClick={() => setComposeScheduledAt('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 12, color: subColor, flexShrink: 0 }}>🕐 送信予約</span>
+                  {/* 予約送信は board-scheduled-send（サーバー）が通知を作るため緊急チェックを運べない。
+                      黙って無効になるのが最悪なので、予約を入れたら緊急チェックを外してグレーアウトする */}
+                  <DateTimeInput value={composeScheduledAt} onChange={v => { setComposeScheduledAt(v); if (v) setComposeUrgent(false); }}
+                    isDark={isDark} minDate={todayJstStr()} invalid={!!composeScheduleProblem} ariaLabel="送信予約" style={{ flex: 1 }} />
+                  {composeScheduledAt && <button type="button" onClick={() => setComposeScheduledAt('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
+                </div>
+                {composeScheduleProblem && <div style={{ fontSize: 11, color: '#dc3545', marginTop: 3 }}>{composeScheduleProblem}</div>}
               </div>
               {/* ⚡当日の連絡・緊急 */}
               <div>
@@ -4088,7 +4096,7 @@ const BoardPage: React.FC = () => {
         {tplSuccess && !tplOpen && tplSuccessCard}
         <textarea value={composeBody} onChange={e => { setComposeBody(e.target.value); if (isMobile) autoGrowTextarea(e.target); }} placeholder="本文を入力... *必須"
           rows={4}
-          onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0 && (!composeDeadlineType || composeDeadline)) setShowComposeSendConfirm(true); }}}
+          onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0 && (!composeDeadlineType || composeDeadline) && !composeScheduleProblem) setShowComposeSendConfirm(true); }}}
           style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, resize: isMobile ? 'none' : 'vertical', minHeight: 100, maxHeight: '50vh', fontFamily: 'inherit', lineHeight: 1.5, boxSizing: 'border-box' }} />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
           {/* テンプレート（2026-09-26 ユーザー確定：送信ボタンの隣）。以前ここにあった「Ctrl+Enter でも送信できます」の文字は
@@ -4108,9 +4116,9 @@ const BoardPage: React.FC = () => {
               </button>
             )}
           </div>
-          <button type="button" onClick={() => { if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0 && (!composeDeadlineType || composeDeadline)) setShowComposeSendConfirm(true); }}
-            disabled={!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || (!!composeDeadlineType && !composeDeadline) || sending}
-            style={{ padding: '10px 22px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold', opacity: (!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || (!!composeDeadlineType && !composeDeadline) || sending) ? 0.5 : 1, whiteSpace: 'nowrap' }}>
+          <button type="button" onClick={() => { if (composeBody.trim() && composeSubject.trim() && composeRecipientIds.length > 0 && (!composeDeadlineType || composeDeadline) && !composeScheduleProblem) setShowComposeSendConfirm(true); }}
+            disabled={!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || (!!composeDeadlineType && !composeDeadline) || !!composeScheduleProblem || sending}
+            style={{ padding: '10px 22px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 'bold', opacity: (!composeBody.trim() || !composeSubject.trim() || composeRecipientIds.length === 0 || (!!composeDeadlineType && !composeDeadline) || !!composeScheduleProblem || sending) ? 0.5 : 1, whiteSpace: 'nowrap' }}>
             {sending ? '送信中...' : `送信（${composeRecipientIds.length}人）`}
           </button>
         </div>
@@ -4626,13 +4634,15 @@ const BoardPage: React.FC = () => {
                 )}
               </div>
               {/* 送信予約 */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 12, color: textColor, fontWeight: 600, flexShrink: 0 }}>🕐 送信予約</span>
-                {/* 予約送信は緊急チェックを運べないため、予約を入れたら緊急チェックを外してグレーアウトする */}
-                <input type="datetime-local" value={newScheduledAt} onChange={e => { setNewScheduledAt(e.target.value); if (e.target.value) setNewUrgent(false); }}
-                  min={localDatetimeMin()}
-                  style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: `1px solid ${border}`, background: isDark ? '#2a2a42' : '#fff', color: textColor, cursor: 'pointer', flex: 1 }} />
-                {newScheduledAt && <button type="button" onClick={() => setNewScheduledAt('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 12, color: textColor, fontWeight: 600, flexShrink: 0 }}>🕐 送信予約</span>
+                  {/* 予約送信は緊急チェックを運べないため、予約を入れたら緊急チェックを外してグレーアウトする */}
+                  <DateTimeInput value={newScheduledAt} onChange={v => { setNewScheduledAt(v); if (v) setNewUrgent(false); }}
+                    isDark={isDark} minDate={todayJstStr()} invalid={!!newScheduleProblem} ariaLabel="送信予約" style={{ flex: 1 }} />
+                  {newScheduledAt && <button type="button" onClick={() => setNewScheduledAt('')} style={{ fontSize: 11, color: subColor, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>}
+                </div>
+                {newScheduleProblem && <div style={{ fontSize: 11, color: '#dc3545', marginTop: 3 }}>{newScheduleProblem}</div>}
               </div>
               {/* ⚡当日の連絡・緊急 */}
               <div>
@@ -4663,14 +4673,14 @@ const BoardPage: React.FC = () => {
             onChange={e => setNewBody(e.target.value)}
             placeholder="メッセージを入力... (Ctrl+Enterで送信)"
             rows={2}
-            onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (newBody.trim() && (!newDeadlineType || newDeadline)) setShowSendConfirm(true); }}}
+            onKeyDown={e => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (newBody.trim() && (!newDeadlineType || newDeadline) && !newScheduleProblem) setShowSendConfirm(true); }}}
             style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: `1px solid ${border}`, background: inputBg, color: textColor, fontSize: 14, resize: 'none', fontFamily: 'inherit', lineHeight: 1.4 }}
           />
           <button
             type="button"
-            onClick={() => { if (newBody.trim() && (!newDeadlineType || newDeadline)) setShowSendConfirm(true); }}
-            disabled={sending || !newBody.trim() || (!!newDeadlineType && !newDeadline)}
-            style={{ padding: '10px 18px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, alignSelf: 'flex-end', opacity: sending || !newBody.trim() || (!!newDeadlineType && !newDeadline) ? 0.5 : 1 }}
+            onClick={() => { if (newBody.trim() && (!newDeadlineType || newDeadline) && !newScheduleProblem) setShowSendConfirm(true); }}
+            disabled={sending || !newBody.trim() || (!!newDeadlineType && !newDeadline) || !!newScheduleProblem}
+            style={{ padding: '10px 18px', background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 14, alignSelf: 'flex-end', opacity: sending || !newBody.trim() || (!!newDeadlineType && !newDeadline) || !!newScheduleProblem ? 0.5 : 1 }}
           >
             {sending ? '送信中' : '送信'}
           </button>

@@ -20,6 +20,8 @@ import {
   STATUS_LABEL,
   type EffectiveStatus,
 } from '../../lib/announcementDates';
+import { dateTimeProblem, splitDateTime } from '../../lib/dateTimeValue';
+import DateTimeInput from '../DateTimeInput';
 import { describePartial, describeUpdate } from '../../lib/statusUpdate';
 
 // 作成時の通知（announcement-notify）を送る。失敗したら理由を返す（成功は null）。
@@ -83,7 +85,6 @@ const AnnouncementsTab: React.FC = () => {
   const subText = isDarkMode ? '#adb5bd' : '#666';
   const borderColor = isDarkMode ? '#6c757d' : '#ddd';
   const inputBg = isDarkMode ? '#495057' : 'white';
-  const colorScheme = isDarkMode ? 'dark' : 'light';
 
   const inputStyle: React.CSSProperties = {
     width: '100%', boxSizing: 'border-box', padding: '8px 10px',
@@ -116,12 +117,17 @@ const AnnouncementsTab: React.FC = () => {
 
   // 終了日が未設定だとリマインド（終了日基準）は成立しないので使えない
   const hasEnd = endDate.trim().length > 0;
-  // 開始日 > 終了日 は不正
-  const dateOrderError = !!startDate && !!endDate && startDate > endDate;
+  // 表示期間は日付だけでもよい（開始は0:00・終了は23:59 とみなす）。時刻だけは不可
+  const startProblem = dateTimeProblem(startDate);
+  const endProblem = dateTimeProblem(endDate);
+  // 開始 > 終了 は不正。🚨 文字で比べないこと（日付だけの終了「10-06」＝23:59 が、時刻つきの開始「10-06T08:00」より小さく見える）
+  const startIso = startProblem ? null : dateInputToStartIso(startDate);
+  const endIso = endProblem ? null : dateInputToEndIso(endDate);
+  const dateOrderError = !!startIso && !!endIso && startIso > endIso;
   const remindOn = hasEnd && (remindInApp || remindPush || remindEmail);
 
   const canSubmit =
-    title.trim().length > 0 && body.trim().length > 0 && !dateOrderError && !saving;
+    title.trim().length > 0 && body.trim().length > 0 && !dateOrderError && !startProblem && !endProblem && !saving;
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
@@ -305,17 +311,19 @@ const AnnouncementsTab: React.FC = () => {
                   <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                     <div style={{ flex: 1, minWidth: 180 }}>
                       <label htmlFor="ann-start" style={{ display: 'block', fontSize: 11, color: subText, marginBottom: 4 }}>開始日時</label>
-                      <input id="ann-start" type="datetime-local" value={startDate} max={endDate || undefined}
-                        onChange={e => setStartDate(e.target.value)} style={{ ...inputStyle, colorScheme }} />
+                      <DateTimeInput id="ann-start" value={startDate} onChange={setStartDate} isDark={isDarkMode}
+                        maxDate={splitDateTime(endDate).date || undefined} invalid={!!startProblem} ariaLabel="開始日時" />
+                      {startProblem && <div style={{ fontSize: 12, color: '#dc3545', marginTop: 4 }}>{startProblem}</div>}
                     </div>
                     <div style={{ flex: 1, minWidth: 180 }}>
                       <label htmlFor="ann-end" style={{ display: 'block', fontSize: 11, color: subText, marginBottom: 4 }}>終了日時（＝期限）</label>
-                      <input id="ann-end" type="datetime-local" value={endDate} min={startDate || undefined}
-                        onChange={e => setEndDate(e.target.value)} style={{ ...inputStyle, colorScheme }} />
+                      <DateTimeInput id="ann-end" value={endDate} onChange={setEndDate} isDark={isDarkMode}
+                        minDate={splitDateTime(startDate).date || undefined} invalid={!!endProblem} ariaLabel="終了日時" />
+                      {endProblem && <div style={{ fontSize: 12, color: '#dc3545', marginTop: 4 }}>{endProblem}</div>}
                     </div>
                   </div>
                   <div style={{ fontSize: 11, color: subText, marginTop: 6, lineHeight: 1.6 }}>
-                    開始日時を空にすると<strong>今すぐ</strong>表示、終了日時を空にすると<strong>期限なし</strong>（手動停止まで）。
+                    開始日時を空にすると<strong>今すぐ</strong>表示、終了日時を空にすると<strong>期限なし</strong>（手動停止まで）。時刻を空にすると、開始は0:00・終了は23:59 になります。
                   </div>
                   {dateOrderError && (
                     <div style={{ fontSize: 12, color: '#dc3545', fontWeight: 600, marginTop: 6 }}>⚠️ 開始日時は終了日時より前にしてください。</div>
