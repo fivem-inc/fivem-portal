@@ -48,9 +48,10 @@ export const CLOCK_ONLY_REASONS = [
 export function reasonExamplesFor(
   applicationTypes: OvertimeType[], fullDay: boolean, fullDayType: OvertimeType | null,
   /** 「開始が遅い／終わりが早い理由」で押した事情（2026-09-26）。イベントなど／出張・在宅などのときは文例をそれに寄せる */
-  situation: 'event' | 'telework' | null = null,
+  situation: 'short_term' | 'event' | 'telework' | null = null,
 ): string[] {
-  if (!fullDay && situation === 'event') return ['大掃除のため', '会議のため', 'イベント対応のため'];
+  if (!fullDay && situation === 'short_term') return ['短期教室のため', 'イベント対応のため'];
+  if (!fullDay && situation === 'event') return ['大掃除のため', '会議のため'];
   if (!fullDay && situation === 'telework') return ['出張のため', '直行直帰のため', '在宅勤務のため'];
   if (fullDay) {
     if (fullDayType === 'chosei_off') return ['〇〇イベント準備により時間外労働が発生したため', '勤務時間調整のため'];
@@ -81,9 +82,10 @@ export const FULL_DAY_TYPES: OvertimeType[] = ['chosei_off', 'furikae_off', 'abs
  * 種別は調整遅出／調整早退のまま、**札の表記だけ**を変える（2026-09-26 ユーザー確定）。
  * 🚨 同じ表記が Edge Function の gcal-sync（カレンダーの見出し）と send-overtime-slack にもある（3か所管理・片方だけ直さない）
  */
-export type ChoiceSituation = 'adj' | 'event' | 'telework';
+export type ChoiceSituation = 'adj' | 'short_term' | 'event' | 'telework';
 export interface SituationLike { late_situation?: ChoiceSituation | string | null; early_situation?: ChoiceSituation | string | null }
-const SITUATION_SUFFIX: Record<string, string> = { event: 'イベント・会議など', telework: '出張・在宅など' };
+// 🚨 'event' は「会議・大掃除など」（2026-10-04 に「短期・イベントなど」を分けた。overtimeSubmit.ts の LATE_CHOICES の注意を参照）
+const SITUATION_SUFFIX: Record<string, string> = { short_term: '短期・イベントなど', event: '会議・大掃除など', telework: '出張・在宅など' };
 export function typeLabelFor(t: OvertimeType, s?: SituationLike | null): string {
   if (t === 'late_start_adj' && s?.late_situation && SITUATION_SUFFIX[s.late_situation]) return `遅出(${SITUATION_SUFFIX[s.late_situation]})`;
   if (t === 'early_end_adj' && s?.early_situation && SITUATION_SUFFIX[s.early_situation]) return `早退(${SITUATION_SUFFIX[s.early_situation]})`;

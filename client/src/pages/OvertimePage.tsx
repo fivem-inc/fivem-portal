@@ -2046,6 +2046,7 @@ const OvertimeForm: React.FC<{
 
       {/* 種別の選択（遅刻/早退か、それ以外＝調整か を本人に確認）。
           2026-09-26 ユーザー確定：4つ（時間調整・会社の予定・テレワーク・遅刻/早退）を2列で。種別は増やさない（上3つは調整）。
+          2026-10-04：「短期・イベントなど」を足して5つ。いちばん下（遅刻／早退＝種別が変わる唯一のもの）は横長にして上の4つと分ける。
           🚨 文言・値は lib/overtimeSubmit の LATE_CHOICES / EARLY_CHOICES（表入力と共用） */}
       {!fullDay && !clockOnlyMode && hasInput && typeDetect.lateQ && (
         <div style={{ marginBottom: 12 }}>
@@ -2054,6 +2055,7 @@ const OvertimeForm: React.FC<{
             {LATE_CHOICES.map(({ value: v, label }) => (
               <button key={v} type="button" onClick={() => setLateChoice(v)}
                 style={{
+                  gridColumn: v === 'tardiness' ? '1 / -1' : undefined,
                   padding: '11px 4px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 12.5, lineHeight: 1.35,
                   fontWeight: lateChoice === v ? 'bold' : 'normal',
                   background: lateChoice === v ? '#1976d2' : (isDark ? '#495057' : '#e9ecef'),
@@ -2063,7 +2065,7 @@ const OvertimeForm: React.FC<{
               </button>
             ))}
           </div>
-          <p style={{ margin: '4px 0 0', fontSize: 11, color: subText }}>時間の計算はどれを押しても同じです。遅刻でなければ上の3つから選んでください</p>
+          <p style={{ margin: '4px 0 0', fontSize: 11, color: subText }}>時間の計算はどれを押しても同じです。遅刻でなければ上の4つから選んでください</p>
         </div>
       )}
       {!fullDay && !clockOnlyMode && hasInput && typeDetect.earlyQ && (
@@ -2073,6 +2075,7 @@ const OvertimeForm: React.FC<{
             {EARLY_CHOICES.map(({ value: v, label }) => (
               <button key={v} type="button" onClick={() => setEarlyChoice(v)}
                 style={{
+                  gridColumn: v === 'early_leave' ? '1 / -1' : undefined,
                   padding: '11px 4px', borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 12.5, lineHeight: 1.35,
                   fontWeight: earlyChoice === v ? 'bold' : 'normal',
                   background: earlyChoice === v ? '#1976d2' : (isDark ? '#495057' : '#e9ecef'),
@@ -2082,7 +2085,7 @@ const OvertimeForm: React.FC<{
               </button>
             ))}
           </div>
-          <p style={{ margin: '4px 0 0', fontSize: 11, color: subText }}>時間の計算はどれを押しても同じです。早退でなければ上の3つから選んでください</p>
+          <p style={{ margin: '4px 0 0', fontSize: 11, color: subText }}>時間の計算はどれを押しても同じです。早退でなければ上の4つから選んでください</p>
         </div>
       )}
 

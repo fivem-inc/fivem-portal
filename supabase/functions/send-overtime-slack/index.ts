@@ -93,7 +93,8 @@ type Report = {
 }
 
 // 押した事情があれば表記を変える。🚨 client/src/lib/overtimeTypes.ts の typeLabelFor・gcal-sync と同じ文字（3か所管理）
-const SITUATION_SUFFIX: Record<string, string> = { event: 'イベント・会議など', telework: '出張・在宅など' }
+// 2026-10-04：「短期・イベントなど」を分けた。'event' は「会議・大掃除など」（client/src/lib/overtimeSubmit.ts の LATE_CHOICES の注意を参照）
+const SITUATION_SUFFIX: Record<string, string> = { short_term: '短期・イベントなど', event: '会議・大掃除など', telework: '出張・在宅など' }
 function typeLabelOf(t: string, r: Report): string {
   if (t === 'late_start_adj' && SITUATION_SUFFIX[String(r.late_situation ?? '')]) return `遅出(${SITUATION_SUFFIX[String(r.late_situation)]})`
   if (t === 'early_end_adj' && SITUATION_SUFFIX[String(r.early_situation ?? '')]) return `早退(${SITUATION_SUFFIX[String(r.early_situation)]})`

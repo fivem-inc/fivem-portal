@@ -361,7 +361,8 @@ serve(async (req) => {
 
       // 押した事情（late_situation / early_situation＝event・telework）があれば、その表記に変える（2026-09-26）。
       // 🚨 同じ表記が client/src/lib/overtimeTypes.ts の typeLabelFor と send-overtime-slack にもある（3か所管理・片方だけ直さない）
-      const SITUATION_SUFFIX: Record<string, string> = { event: 'イベント・会議など', telework: '出張・在宅など' }
+      // 2026-10-04：「短期・イベントなど」を分けた。'event' は「会議・大掃除など」（client/src/lib/overtimeSubmit.ts の LATE_CHOICES の注意を参照）
+      const SITUATION_SUFFIX: Record<string, string> = { short_term: '短期・イベントなど', event: '会議・大掃除など', telework: '出張・在宅など' }
       const labelOf = (t: string): string => {
         if (t === 'late_start_adj' && SITUATION_SUFFIX[String(report.late_situation ?? '')]) return `遅出(${SITUATION_SUFFIX[String(report.late_situation)]})`
         if (t === 'early_end_adj' && SITUATION_SUFFIX[String(report.early_situation ?? '')]) return `早退(${SITUATION_SUFFIX[String(report.early_situation)]})`
