@@ -61,7 +61,11 @@ const ShiftManagementTab: React.FC = () => {
   });
 
   const [applyFrom, setApplyFrom] = useState(() => todayJstStr());
-  const [includePartTime, setIncludePartTime] = useState(false);
+  // 対象（2026-10-04 ユーザー指示：［すべて］［正社員］［パート］の3つ・すべてを左端に・最初はすべて）
+  const [target, setTarget] = useState<'all' | 'full' | 'part'>('all');
+  const includePartTime = target !== 'full';   // Excel の取り込みはパートを含めるかだけを見る
+  const inTarget = (employmentType: string | null | undefined) =>
+    target === 'all' ? true : target === 'part' ? employmentType === 'パート' : isShiftTarget(employmentType ?? null, false);
   const [areaFilter, setAreaFilter] = useState<string>('all');
   const [onlyDraft, setOnlyDraft] = useState(false);
   const [data, setData] = useState<RosterData | null>(null);
@@ -184,12 +188,12 @@ const ShiftManagementTab: React.FC = () => {
   const scoped = useMemo(() => {
     if (!data) return [];
     return data.staff
-      .filter(s => isShiftTarget(s.employment_type, includePartTime))
+      .filter(s => inTarget(s.employment_type))
       .sort((a, b) => areaSort(mainAreaOf(a.id)) - areaSort(mainAreaOf(b.id))
         || (rankOf(roles, a.role_title) ?? 99) - (rankOf(roles, b.role_title) ?? 99)
         || a.name.localeCompare(b.name, 'ja'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, includePartTime, roles, drafts]);
+  }, [data, target, roles, drafts]);
 
   const draftIds = Object.keys(drafts).filter(id => draftChanged(id));
   const visible = scoped.filter(s => (areaFilter === 'all' || mainAreaOf(s.id) === areaFilter) && (!onlyDraft || draftIds.includes(s.id)));
@@ -585,8 +589,9 @@ const ShiftManagementTab: React.FC = () => {
         </label>
         {isPast && <span style={{ fontSize: 12, color: '#856404' }}>今日より前の日付です</span>}
         <span style={{ fontSize: 12.5, color: subText }}>対象</span>
-        <button type="button" onClick={() => setIncludePartTime(false)} style={toggle(!includePartTime)}>正社員だけ</button>
-        <button type="button" onClick={() => setIncludePartTime(true)} style={toggle(includePartTime)}>パートも</button>
+        <button type="button" onClick={() => setTarget('all')} style={toggle(target === 'all')}>すべて</button>
+        <button type="button" onClick={() => setTarget('full')} style={toggle(target === 'full')}>正社員</button>
+        <button type="button" onClick={() => setTarget('part')} style={toggle(target === 'part')}>パート</button>
       </div>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
         <span style={{ fontSize: 12.5, color: subText }}>メインの部門</span>
