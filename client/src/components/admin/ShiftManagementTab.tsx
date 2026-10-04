@@ -759,6 +759,7 @@ const ShiftManagementTab: React.FC = () => {
                     <td onClick={() => openPerson(s.id)}
                       style={{ position: 'sticky', left: 0, background: cardBg, padding: '5px 6px', borderBottom: `1px solid ${borderColor}`, cursor: 'pointer', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
                       <span style={{ color: '#1976d2' }}>{openId === s.id ? '▼' : '▶'}</span> {s.name}
+                      {s.prehire_from && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 'bold', color: isDarkMode ? '#ffc107' : '#b35900' }}>入社予定 {Number(s.prehire_from.slice(5, 7))}/{Number(s.prehire_from.slice(8, 10))}〜</span>}
                       {dirty && <span style={{ fontSize: 10.5, color: '#e65100', marginLeft: 4 }}>未保存</span>}
                       <div style={{ fontSize: 10.5, color: subText }}>{s.role_title}{s.employment_type === 'パート' ? '・パート' : ''}</div>
                       {noteOf(s.id) && <div style={{ fontSize: 10.5, color: subText, whiteSpace: 'normal', maxWidth: 160 }}>{noteOf(s.id)}</div>}

@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { describeUpdate } from '../../lib/statusUpdate';
 import { backBtn } from '../../lib/buttonStyles';
+// 入社予定の人もグループに入れておけるように出す（2026-10-04 ユーザー確定）。判定は lib/staffState の1か所
+import { isShiftRosterMember, prehireBadge, isPlaceholderEmail } from '../../lib/staffState';
 
 // 🚨 マネージャー以上に開いたとき（2026-09-15）はスタッフの所属の出し入れだけ。
 //    グループの追加・名前の変更・削除は管理者だけ（docs/計画-管理画面の開放.md）
@@ -107,7 +109,7 @@ const GroupsTab: React.FC = () => {
               /* グループ一覧 */
               <div style={{ maxWidth: 600, margin: '0 auto' }}>
                 {masterOptions.group.map(g => {
-                  const memberCount = users.filter(u => u.is_active !== false && (u.group_names || []).includes(g)).length;
+                  const memberCount = users.filter(u => isShiftRosterMember(u) && (u.group_names || []).includes(g)).length;
                   return (
                     <div key={g} onClick={() => setSelectedGroup(g)}
                       style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 20px', marginBottom: 8, background: isDarkMode ? '#343a40' : 'white', border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, borderRadius: 10, cursor: 'pointer', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}
@@ -155,7 +157,7 @@ const GroupsTab: React.FC = () => {
               <div style={{ maxWidth: 600, margin: '0 auto' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                   <span style={{ color: isDarkMode ? '#adb5bd' : '#666', fontSize: 14 }}>
-                    メンバー {users.filter(u => u.is_active !== false && (u.group_names || []).includes(selectedGroup)).length}人
+                    メンバー {users.filter(u => isShiftRosterMember(u) && (u.group_names || []).includes(selectedGroup)).length}人
                   </span>
                   {isUserEditMode ? (
                     <button onClick={() => setIsUserEditMode(false)} style={{ ...backBtn(isDarkMode), padding: '5px 14px', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 12 }}>✅ 編集終了</button>
@@ -173,11 +175,12 @@ const GroupsTab: React.FC = () => {
                 )}
 
                 {/* 現在のメンバー */}
-                {users.filter(u => u.is_active !== false && (u.group_names || []).includes(selectedGroup)).map(u => (
+                {users.filter(u => isShiftRosterMember(u) && (u.group_names || []).includes(selectedGroup)).map(u => (
                   <div key={u.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', marginBottom: 6, background: isDarkMode ? '#343a40' : 'white', border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, borderRadius: 8 }}>
                     <div>
                       <span style={{ fontWeight: 'bold', color: isDarkMode ? '#fff' : '#000' }}>{u.name || '未設定'}</span>
-                      <span style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888', marginLeft: 8 }}>{u.email}</span>
+                      {prehireBadge(u) && <span style={{ fontSize: 11, fontWeight: 'bold', color: isDarkMode ? '#ffc107' : '#b35900', marginLeft: 6 }}>{prehireBadge(u)}</span>}
+                      <span style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888', marginLeft: 8 }}>{isPlaceholderEmail(u.email) ? 'メール未登録' : u.email}</span>
                     </div>
                     {isUserEditMode && (
                       <button onClick={() => changeMembership(u.id, false)} style={{ padding: '3px 10px', background: '#dc3545', color: 'white', border: 'none', borderRadius: 20, cursor: 'pointer', fontSize: 12 }}>外す</button>
@@ -189,11 +192,12 @@ const GroupsTab: React.FC = () => {
                 {isUserEditMode && (
                   <div style={{ marginTop: 20 }}>
                     <p style={{ color: isDarkMode ? '#adb5bd' : '#666', fontSize: 13, marginBottom: 8 }}>＋ 追加できるメンバー</p>
-                    {users.filter(u => u.is_active !== false && !(u.group_names || []).includes(selectedGroup)).map(u => (
+                    {users.filter(u => isShiftRosterMember(u) && !(u.group_names || []).includes(selectedGroup)).map(u => (
                       <div key={u.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', marginBottom: 6, background: isDarkMode ? '#3d4349' : '#f8f9fa', border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, borderRadius: 8, opacity: 0.8 }}>
                         <div>
                           <span style={{ color: isDarkMode ? '#fff' : '#000' }}>{u.name || '未設定'}</span>
-                          <span style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888', marginLeft: 8 }}>{u.email}</span>
+                          {prehireBadge(u) && <span style={{ fontSize: 11, fontWeight: 'bold', color: isDarkMode ? '#ffc107' : '#b35900', marginLeft: 6 }}>{prehireBadge(u)}</span>}
+                          <span style={{ fontSize: 12, color: isDarkMode ? '#adb5bd' : '#888', marginLeft: 8 }}>{isPlaceholderEmail(u.email) ? 'メール未登録' : u.email}</span>
                         </div>
                         <button onClick={() => changeMembership(u.id, true)} style={{ padding: '3px 10px', background: '#007bff', color: 'white', border: 'none', borderRadius: 20, cursor: 'pointer', fontSize: 12 }}>＋追加</button>
                       </div>

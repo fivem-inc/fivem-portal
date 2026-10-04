@@ -3,7 +3,7 @@
 //    （書き込みの許可は管理者だけのまま。関数が形を確かめ、先の版を残し、途中で失敗したら何も残さない）
 // 🚨 読むときは「基準日に効いている行と、それより先の行」だけにする。条件なしで読むと1,000行で黙って欠ける
 
-import { isShiftRosterMember, PREHIRE_COLS, type PrehireFields } from './staffState';
+import { isPrehire, isShiftRosterMember, PREHIRE_COLS, type PrehireFields } from './staffState';
 import { supabase } from './supabaseClient';
 import type { PatternRowLike, RosterDayKind, RosterSegment, WorkArea } from './shiftRoster';
 
@@ -12,6 +12,8 @@ export interface RosterStaff {
   name: string;
   role_title: string;
   employment_type: string | null;
+  /** 入社予定の人だけ入社日（名前の横に「入社予定 10/6〜」と出す・2026-10-04） */
+  prehire_from?: string | null;
 }
 
 export interface RosterPatternRow extends PatternRowLike {
@@ -65,7 +67,7 @@ export async function loadRosterData(sinceDate: string): Promise<{ data: RosterD
     data: {
       staff: ((staffRes.data ?? []) as (RosterStaff & PrehireFields)[])
         .filter(isShiftRosterMember)
-        .map(p => ({ id: p.id, name: p.name, role_title: p.role_title, employment_type: p.employment_type }) as RosterStaff),
+        .map(p => ({ id: p.id, name: p.name, role_title: p.role_title, employment_type: p.employment_type, prehire_from: isPrehire(p) ? p.hire_date ?? null : null }) as RosterStaff),
       areas: (areaRes.data ?? []) as WorkArea[],
       mainAreas,
       patterns: (patRes.data ?? []) as RosterPatternRow[],

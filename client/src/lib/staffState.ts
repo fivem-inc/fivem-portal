@@ -24,6 +24,12 @@ export function isShiftRosterMember(p: PrehireFields): boolean {
   return p.is_active !== false || isPrehire(p);
 }
 
+/** 名前の横に出す札（入社予定の人だけ「入社予定 10/6〜」）。それ以外は空 */
+export function prehireBadge(p: PrehireFields): string {
+  if (!isPrehire(p) || !p.hire_date) return '';
+  return `入社予定 ${Number(p.hire_date.slice(5, 7))}/${Number(p.hire_date.slice(8, 10))}〜`;
+}
+
 /** profiles から読むときに足す列（isShiftRosterMember に要るもの） */
 export const PREHIRE_COLS = 'is_active, approval_status, hire_date, retired_at, retire_date';
 
