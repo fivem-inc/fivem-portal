@@ -9,6 +9,9 @@ import type { AdminUserProfile } from '../../types';
 import { BTN_BLUE, TOGGLE_BLUE, tintBtn, backBtn, primaryBtn } from '../../lib/buttonStyles';
 import PrehireSection from './PrehireSection';
 import EmailEditRow from './EmailEditRow';
+import PwRequestHistory from './PwRequestHistory';
+import DateTimeInput from '../DateTimeInput';
+import { dateTimeProblem } from '../../lib/dateTimeValue';
 import { isPrehire } from '../../lib/staffState';
 
 // ユーザー追加モーダル
@@ -556,13 +559,31 @@ const UsersTab: React.FC = () => {
   // ［メールを直す］（2026-10-04・案A）。開いている人の id
   const [emailEditFor, setEmailEditFor] = useState<string | null>(null);
   const [pwReason, setPwReason] = useState<'initial' | 'review'>('initial');
+  // 送るとき（2026-10-04 ユーザー確定：日時を決めて送れる）
+  const [pwWhen, setPwWhen] = useState<'now' | 'later'>('now');
+  const [pwAt, setPwAt] = useState('');
+  const [pwErr, setPwErr] = useState('');
+  const [pwHistoryKey, setPwHistoryKey] = useState(0);
   const sendPasswordRequest = async () => {
+    let scheduledFor: string | null = null;
+    if (pwWhen === 'later') {
+      const problem = dateTimeProblem(pwAt, { requireTime: true, future: true }) ?? (pwAt ? null : '送る日時を入れてください');
+      if (problem) { setPwErr(problem); return; }
+      scheduledFor = new Date(pwAt).toISOString();
+    }
+    setPwErr('');
     setPwBusy(true);
     const ids = sortedUsers.filter(u => selectedForEmail.has(u.id) && u.is_active !== false).map(u => u.id);
-    const { data, error } = await supabase.functions.invoke('staff-onboard', { body: { action: 'request_password_change', ids, reason: pwReason } });
+    const { data, error } = await supabase.functions.invoke('staff-onboard', { body: { action: 'request_password_change', ids, reason: pwReason, scheduled_for: scheduledFor } });
     setPwBusy(false);
-    const d = (data ?? {}) as { success?: boolean; error?: string; flagged?: number; mailed?: number; mail_failed?: string[] };
+    const d = (data ?? {}) as { success?: boolean; error?: string; flagged?: number; mailed?: number; mail_failed?: string[]; scheduled_for?: string };
     if (error || d.success !== true) { setErrorMsg(`パスワード変更の依頼を送れませんでした：${d.error ?? error?.message ?? ''}`); return; }
+    setPwHistoryKey(k => k + 1);
+    if (d.scheduled_for) {
+      setSuccessMsg(`${ids.length}名へのパスワード変更の依頼を予約しました（${pwAt.replace('T', ' ')} に送ります）`);
+      setPwConfirm(false); setSelectedForEmail(new Set()); setPwWhen('now'); setPwAt('');
+      return;
+    }
     const failed = d.mail_failed ?? [];
     setSuccessMsg(`${d.flagged ?? 0}名にパスワード変更の依頼を送りました（メール ${d.mailed ?? 0}通）${failed.length ? `。メールを送れなかった方：${failed.join('、')}` : ''}`);
     setPwConfirm(false);
@@ -661,6 +682,7 @@ const UsersTab: React.FC = () => {
                       </button>
                     )}
                   </div>
+                  <PwRequestHistory isDarkMode={isDarkMode} refreshKey={pwHistoryKey} onMessage={(m, isErr) => (isErr ? setErrorMsg(m) : setSuccessMsg(m))} />
                   {pwConfirm && selectedForEmail.size > 0 && (
                     <div style={{ maxWidth: 520, margin: '0 auto 10px', padding: '10px 12px', borderRadius: 8, background: isDarkMode ? '#3d3420' : '#fff3cd', border: '2px solid #ffc107', color: isDarkMode ? '#ffe08a' : '#856404', fontSize: 13, textAlign: 'left', lineHeight: 1.6 }}>
                       選んだ{selectedForEmail.size}名に、パスワード変更のお願いを送ります（ホームのお知らせ・ベル・メール）。
@@ -671,9 +693,22 @@ const UsersTab: React.FC = () => {
                           <input type="radio" checked={pwReason === v} onChange={() => setPwReason(v)} /> {l}
                         </label>
                       ))}
+                      <div style={{ marginTop: 8 }}>送るとき：</div>
+                      {([['now', '今すぐ'], ['later', '日時を決めて送る']] as const).map(([v, l]) => (
+                        <label key={v} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', marginTop: 2 }}>
+                          <input type="radio" checked={pwWhen === v} onChange={() => setPwWhen(v)} /> {l}
+                        </label>
+                      ))}
+                      {pwWhen === 'later' && (
+                        <div style={{ marginTop: 6 }}>
+                          <DateTimeInput value={pwAt} onChange={setPwAt} isDark={isDarkMode} ariaLabel="送る日時" />
+                          <div style={{ fontSize: 12, marginTop: 4 }}>15分ごとに確かめて送ります（9:00 にすると 9:00〜9:15 に届きます）。送る前なら取り消せます。</div>
+                        </div>
+                      )}
+                      {pwErr && <div style={{ color: '#dc3545', marginTop: 6, fontWeight: 'bold' }}>{pwErr}</div>}
                       <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                         <button onClick={() => setPwConfirm(false)} disabled={pwBusy} style={{ ...backBtn(isDarkMode), flex: 1, padding: '7px', borderRadius: 6, cursor: 'pointer' }}>やめる</button>
-                        <button onClick={sendPasswordRequest} disabled={pwBusy} style={{ ...primaryBtn({ disabled: pwBusy }), flex: 2, padding: '7px', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold' }}>{pwBusy ? '送っています...' : '送る'}</button>
+                        <button onClick={sendPasswordRequest} disabled={pwBusy} style={{ ...primaryBtn({ disabled: pwBusy }), flex: 2, padding: '7px', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold' }}>{pwBusy ? '送っています...' : pwWhen === 'later' ? '予約する' : '送る'}</button>
                       </div>
                     </div>
                   )}

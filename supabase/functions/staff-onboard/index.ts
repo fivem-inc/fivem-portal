@@ -5,7 +5,10 @@
 //   create                  … 管理者。入社予定の人を登録（メールは任意・無ければ仮のアドレス）
 //   update                  … 管理者。入社日の変更・メールの差し替え・送るタイミングの変更
 //   send                    … 管理者。招待メールを今すぐ送る（再送）
-//   request_password_change … 管理者。選んだ人にパスワード変更の依頼（印＋ベル＋メール）
+//   request_password_change … 管理者。選んだ人にパスワード変更の依頼（印＋ベル＋メール）。scheduled_for を付けると予約
+//   cancel_pw_request       … 管理者。送る前の予約を取り消す
+//   pw_requests             … 管理者。依頼の履歴（相手ごとの既読・変更したか）
+//   send_due_pw             … service_role だけ（cron pw-request-due）。予約の時刻を過ぎた依頼を送る
 //   send_due                … service_role だけ（cron staff-invite-due）。送信予定を過ぎた人へ送る
 //
 // 🚨 入社予定＝is_active=false かつ hire_date あり かつ retired_at なし（判定は lib/staffState.ts・my_access_state と同じ）
@@ -63,6 +66,10 @@ serve(async (req) => {
     if (!gate.ok || gate.kind !== 'service') return reply({ success: false, error: 'unauthorized' }, 401);
     return reply(await sendDue(admin));
   }
+  if (action === 'send_due_pw') {
+    if (!gate.ok || gate.kind !== 'service') return reply({ success: false, error: 'unauthorized' }, 401);
+    return reply(await sendDuePw(admin));
+  }
   if (!gate.ok || gate.kind !== 'staff') return reply({ success: false, error: 'unauthorized' }, gate.ok ? 403 : gate.status);
   const { data: { user } } = await admin.auth.admin.getUserById(gate.userId);
   // 🚨 システム管理者（app_metadata.role = 'admin'）だけ（create-user と同じ）
@@ -75,6 +82,8 @@ serve(async (req) => {
     if (action === 'update') return reply(await update(admin, body, gate.userId));
     if (action === 'send') return reply(await sendNow(admin, String(body.id ?? '')));
     if (action === 'request_password_change') return reply(await requestPasswordChange(admin, body, gate.userId));
+    if (action === 'cancel_pw_request') return reply(await cancelPwRequest(admin, String(body.id ?? '')));
+    if (action === 'pw_requests') return reply(await listPwRequests(admin));
     return reply({ success: false, error: '知らない操作です' }, 400);
   } catch (e) {
     console.error('[staff-onboard]', action, e);
@@ -297,47 +306,140 @@ async function sendNow(admin: SupabaseClient, id: string) {
   return r.ok ? { success: true } : { success: false, error: r.error };
 }
 
+interface PwRequestRow { id: string; reason: 'initial' | 'review'; user_ids: string[]; created_by: string | null }
+
+/** 依頼を受け付ける。予約（未来の時刻）なら記録だけ。そうでなければすぐ送る */
 async function requestPasswordChange(admin: SupabaseClient, b: Record<string, unknown>, by: string) {
-  const ids = Array.isArray(b.ids) ? (b.ids as unknown[]).map(String).filter(Boolean) : [];
+  const ids = Array.isArray(b.ids) ? [...new Set((b.ids as unknown[]).map(String).filter(Boolean))] : [];
+  if (ids.length === 0) return { success: false, error: '送る相手を選んでください' };
   // 送る理由（2026-10-04 ユーザー確定）：initial＝初期パスワードのままの方へ／review＝安全のための見直し（全員へ）
   const reason: 'initial' | 'review' = b.reason === 'review' ? 'review' : 'initial';
-  if (ids.length === 0) return { success: false, error: '送る相手を選んでください' };
-  // 🚨 在籍している人だけ（入社予定・退職者には送らない）
-  const { data: rows, error } = await admin.from('profiles').select('id, name, email').in('id', ids).eq('is_active', true);
+  let scheduledFor: string | null = null;
+  if (b.scheduled_for) {
+    const t = new Date(String(b.scheduled_for));
+    if (Number.isNaN(t.getTime())) return { success: false, error: '送る日時が正しくありません' };
+    if (t.getTime() <= Date.now()) return { success: false, error: 'この日時はもう過ぎています' };
+    scheduledFor = t.toISOString();
+  }
+  const { data: req, error } = await admin.from('pw_change_requests')
+    .insert({ reason, user_ids: ids, scheduled_for: scheduledFor, created_by: by }).select('id, reason, user_ids, created_by').single();
+  if (error || !req) return { success: false, error: `受け付けられませんでした：${error?.message ?? '不明'}` };
+  if (scheduledFor) return { success: true, scheduled_for: scheduledFor, request_id: (req as PwRequestRow).id };
+  return await deliverPwRequest(admin, req as PwRequestRow);
+}
+
+/** 依頼を実際に送る：印＋ベル＋メール、送った相手を記録する。
+ *  🚨 送る瞬間に在籍しているかを確かめ直す（予約のあとに辞めた人・入社予定の人には送らない） */
+async function deliverPwRequest(admin: SupabaseClient, req: PwRequestRow) {
+  const { data: rows, error } = await admin.from('profiles').select('id, name, email').in('id', req.user_ids).eq('is_active', true);
   if (error) return { success: false, error: `読み込めませんでした：${error.message}` };
   const targets = (rows ?? []) as { id: string; name: string | null; email: string | null }[];
-  if (targets.length === 0) return { success: false, error: '在籍している人が選ばれていません' };
   const now = new Date().toISOString();
-  const { data: upd, error: updErr } = await admin.from('profiles')
-    .update({ must_change_password: true, pw_change_requested_at: now, pw_change_reason: reason }).in('id', targets.map(t => t.id)).select('id');
-  if (updErr) return { success: false, error: `保存できませんでした：${updErr.message}` };
+  if (targets.length > 0) {
+    const { error: updErr } = await admin.from('profiles')
+      .update({ must_change_password: true, pw_change_requested_at: now, pw_change_reason: req.reason }).in('id', targets.map(t => t.id)).select('id');
+    if (updErr) return { success: false, error: `保存できませんでした：${updErr.message}` };
+  }
   // ベル（🚨 banner_dismissed=true：ホームには印のバナーを別に出すので、同じ知らせを2つ並べない）
-  const { error: nErr } = await admin.from('notifications').insert(targets.map(t => ({
-    user_id: t.id,
-    message: reason === 'review' ? '🔑 パスワードの見直しをお願いします' : '🔑 パスワードの変更をお願いします',
-    sub_message: reason === 'review' ? '安全のため、パスワードの変更をお願いしています' : 'ご自身で決めたパスワードへの変更をお願いします',
-    source_type: 'account:password_change',
-    event_key: 'account:password_change',
-    created_by: by,
-    banner_dismissed: true,
-  })));
-  if (nErr) console.error('[staff-onboard] ベルの通知に失敗', nErr.message);
-  let mailed = 0;
+  const notifByUser = new Map<string, string>();
+  let bellError: string | null = null;
+  if (targets.length > 0) {
+    const { data: notifs, error: nErr } = await admin.from('notifications').insert(targets.map(t => ({
+      user_id: t.id,
+      message: req.reason === 'review' ? '🔑 パスワードの見直しをお願いします' : '🔑 パスワードの変更をお願いします',
+      sub_message: req.reason === 'review' ? '安全のため、パスワードの変更をお願いしています' : 'ご自身で決めたパスワードへの変更をお願いします',
+      source_type: 'account:password_change',
+      event_key: 'account:password_change',
+      created_by: req.created_by,
+      banner_dismissed: true,
+    }))).select('id, user_id');
+    if (nErr) { bellError = nErr.message; console.error('[staff-onboard] ベルの通知に失敗', nErr.message); }
+    for (const n of (notifs ?? []) as { id: string; user_id: string }[]) notifByUser.set(n.user_id, n.id);
+  }
+  const mailedSet = new Set<string>();
   const failed: string[] = [];
   for (const t of targets) {
     if (isPlaceholderEmail(t.email)) continue;
-    const m = passwordChangeMail({ name: t.name ?? '', email: t.email!, reason });
+    const m = passwordChangeMail({ name: t.name ?? '', email: t.email!, reason: req.reason });
     const r = await sendMail(t.email!, m.subject, m.text);
-    if (r.ok) mailed++; else failed.push(t.name ?? t.id);
+    if (r.ok) mailedSet.add(t.id); else failed.push(t.name ?? t.id);
   }
+  if (targets.length > 0) {
+    const { error: recErr } = await admin.from('pw_change_request_recipients').upsert(targets.map(t => ({
+      request_id: req.id, user_id: t.id, notification_id: notifByUser.get(t.id) ?? null, mailed: mailedSet.has(t.id),
+    })));
+    if (recErr) console.error('[staff-onboard] 送った相手の記録に失敗', recErr.message);
+  }
+  const { error: doneErr } = await admin.from('pw_change_requests')
+    .update({ sent_at: now, sent_count: targets.length, mailed_count: mailedSet.size, claimed_at: null }).eq('id', req.id).select('id');
+  if (doneErr) console.error('[staff-onboard] 送った記録に失敗', doneErr.message);
   return {
     success: true,
-    flagged: (upd ?? []).length,
-    skipped: ids.length - targets.length,
-    mailed,
+    flagged: targets.length,
+    skipped: req.user_ids.length - targets.length,
+    mailed: mailedSet.size,
     mail_failed: failed,
-    bell_error: nErr?.message ?? null,
+    bell_error: bellError,
   };
+}
+
+async function cancelPwRequest(admin: SupabaseClient, id: string) {
+  const { data, error } = await admin.from('pw_change_requests').update({ cancelled_at: new Date().toISOString() })
+    .eq('id', id).is('sent_at', null).is('cancelled_at', null).is('claimed_at', null).select('id');
+  if (error) return { success: false, error: error.message };
+  if ((data ?? []).length === 0) return { success: false, error: 'もう送り始めているか、取り消し済みです' };
+  return { success: true };
+}
+
+/** 依頼の履歴（新しい順に20件）。相手ごとに「ベルを読んだか」「パスワードを変えたか（いつ）」 */
+async function listPwRequests(admin: SupabaseClient) {
+  const { data: reqs, error } = await admin.from('pw_change_requests')
+    .select('id, reason, user_ids, scheduled_for, sent_at, sent_count, mailed_count, cancelled_at, created_at')
+    .order('created_at', { ascending: false }).limit(20);
+  if (error) return { success: false, error: error.message };
+  const list = (reqs ?? []) as { id: string; reason: string; user_ids: string[]; scheduled_for: string | null; sent_at: string | null; sent_count: number; mailed_count: number; cancelled_at: string | null; created_at: string }[];
+  const reqIds = list.map(r => r.id);
+  const recRes = reqIds.length ? await admin.from('pw_change_request_recipients').select('request_id, user_id, notification_id, mailed').in('request_id', reqIds) : { data: [] };
+  const recRows = (recRes.data ?? []) as { request_id: string; user_id: string; notification_id: string | null; mailed: boolean }[];
+  const userIds = [...new Set(recRows.map(r => r.user_id))];
+  const notifIds = recRows.map(r => r.notification_id).filter((x): x is string => !!x);
+  const profRes = userIds.length ? await admin.from('profiles').select('id, name, pw_changed_at').in('id', userIds) : { data: [] };
+  const notifRes = notifIds.length ? await admin.from('notifications').select('id, read').in('id', notifIds) : { data: [] };
+  const profMap = new Map(((profRes.data ?? []) as { id: string; name: string | null; pw_changed_at: string | null }[]).map(p => [p.id, p]));
+  const readMap = new Map(((notifRes.data ?? []) as { id: string; read: boolean | null }[]).map(n => [n.id, !!n.read]));
+  return {
+    success: true,
+    requests: list.map(r => ({
+      id: r.id, reason: r.reason, target_count: r.user_ids.length, scheduled_for: r.scheduled_for, sent_at: r.sent_at,
+      sent_count: r.sent_count, mailed_count: r.mailed_count, cancelled_at: r.cancelled_at, created_at: r.created_at,
+      recipients: recRows.filter(x => x.request_id === r.id).map(x => {
+        const p = profMap.get(x.user_id);
+        // 依頼を送ったあとに変えたときだけ「変更済み」（それより前の変更は依頼に応えたものではない）
+        const changedAt = p?.pw_changed_at && r.sent_at && new Date(p.pw_changed_at).getTime() >= new Date(r.sent_at).getTime() ? p.pw_changed_at : null;
+        return { user_id: x.user_id, name: p?.name ?? '（削除された方）', read: x.notification_id ? (readMap.get(x.notification_id) ?? false) : false, changed_at: changedAt, mailed: x.mailed };
+      }).sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '', 'ja')),
+    })),
+  };
+}
+
+async function sendDuePw(admin: SupabaseClient) {
+  const now = new Date().toISOString();
+  const stale = new Date(Date.now() - 10 * 60_000).toISOString();
+  const { data: due, error } = await admin.from('pw_change_requests').select('id, reason, user_ids, created_by')
+    .not('scheduled_for', 'is', null).lte('scheduled_for', now).is('sent_at', null).is('cancelled_at', null).limit(5);
+  if (error) return { success: false, error: error.message };
+  let sent = 0;
+  for (const r of (due ?? []) as PwRequestRow[]) {
+    // 🚨 先に取り押さえる（cron が重なっても二重に送らない）
+    const { data: claimed } = await admin.from('pw_change_requests').update({ claimed_at: now })
+      .eq('id', r.id).is('sent_at', null).is('cancelled_at', null)
+      .or(`claimed_at.is.null,claimed_at.lt.${stale}`).select('id');
+    if ((claimed ?? []).length === 0) continue;
+    const res = await deliverPwRequest(admin, r) as { success: boolean; error?: string };
+    if (res.success) sent++;
+    else console.error('[staff-onboard] 予約の依頼を送れませんでした', r.id, res.error);
+  }
+  return { success: true, sent };
 }
 
 async function sendDue(admin: SupabaseClient) {
