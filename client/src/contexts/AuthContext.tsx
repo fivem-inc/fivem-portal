@@ -3,7 +3,7 @@ import type { AuthContextType, AuthUser, RetireeAccess } from '../types';
 import { supabase } from '../lib/supabaseClient';
 import { timeoutSignal, withTimeout, AUTH_TIMEOUT_MS } from '../lib/netFailure';
 import { bootMark } from '../lib/bootMark';
-import { fetchAccessState } from '../lib/retire';
+import { fetchAccessState, mdLabel } from '../lib/retire';
 
 // AuthContextの作成
 // eslint-disable-next-line react-refresh/only-export-components
@@ -92,7 +92,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setRetiree(null);
       await supabase.auth.signOut();
       setUser(null);
-      setBlockedMessage('このアカウントは無効です。管理者にお問い合わせください。');
+      // 入社予定の人（2026-10-04）：無効ではなく、入社日から使えることを伝える。🚨 判定は DB（my_access_state）
+      setBlockedMessage(st?.mode === 'prehire' && st.hire_date
+        ? `このアカウントは入社日（${mdLabel(st.hire_date)}）から使えます。当日、［はじめての方（パスワードを決める）］からパスワードを決めてください。`
+        : 'このアカウントは無効です。管理者にお問い合わせください。');
       return;
     }
     setRetiree(null);
@@ -115,7 +118,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     lastRecheckAt.current = Date.now();
     const st = await fetchAccessState();
     if (!st) return;                                   // 分からない＝何もしない
-    if (st.mode === 'blocked') {
+    if (st.mode === 'blocked' || st.mode === 'prehire') {
       await supabase.auth.signOut();
       setRetiree(null);
       setUser(null);

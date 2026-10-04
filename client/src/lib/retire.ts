@@ -5,6 +5,7 @@
 // 🚨 退職・取り消し・復活は RPC（retire_schedule / retire_cancel / retire_restore）。is_active を画面から書かない
 
 import { supabase } from './supabaseClient';
+import { isPrehire } from './staffState';
 
 export type RetireState = 'none' | 'scheduled' | 'switch_failed' | 'grace' | 'retired';
 
@@ -13,6 +14,9 @@ export interface RetireFields {
   approval_status?: string | null;
   retire_date?: string | null;
   retiree_access_until?: string | null;
+  /** 入社予定の判定に使う（2026-10-04） */
+  hire_date?: string | null;
+  retired_at?: string | null;
 }
 
 /**
@@ -24,6 +28,8 @@ export interface RetireFields {
  */
 export function retireState(p: RetireFields, todayJst: string): RetireState {
   if (p.approval_status === 'pending') return 'none';
+  // 🚨 入社予定（is_active=false）を退職者と取り違えない（2026-10-04）。退職の手続きの対象ではない
+  if (isPrehire(p)) return 'none';
   if (p.is_active !== false) {
     if (!p.retire_date) return 'none';
     return p.retire_date < todayJst ? 'switch_failed' : 'scheduled';
@@ -99,7 +105,7 @@ export function retireRemaining(
 // ============================================================
 
 /** いまログインしている人の立場。🚨 判定そのものは DB の my_access_state() が持つ（画面で日付を比べない） */
-export type AccessMode = 'staff' | 'retiree_grace' | 'blocked';
+export type AccessMode = 'staff' | 'retiree_grace' | 'blocked' | 'prehire';
 
 export interface AccessState {
   mode: AccessMode;
@@ -107,6 +113,8 @@ export interface AccessState {
   access_until?: string | null;
   /** 退職者のとき：退職日 */
   retire_date?: string | null;
+  /** 入社予定のとき：入社日（2026-10-04） */
+  hire_date?: string | null;
   /** 退職者のとき：出してよい機能（app_settings.retiree_feature_keys） */
   feature_keys?: string[];
 }
@@ -121,7 +129,7 @@ export async function fetchAccessState(): Promise<AccessState | null> {
   const { data, error } = await supabase.rpc('my_access_state');
   if (error || !data) return null;
   const st = data as AccessState;
-  if (st.mode !== 'staff' && st.mode !== 'retiree_grace' && st.mode !== 'blocked') return null;
+  if (st.mode !== 'staff' && st.mode !== 'retiree_grace' && st.mode !== 'blocked' && st.mode !== 'prehire') return null;
   return st;
 }
 

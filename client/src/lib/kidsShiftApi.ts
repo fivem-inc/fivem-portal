@@ -4,6 +4,7 @@
 // 🚨 読むときは「基準日に効いている版と、それより先の版」だけ（1,000行で黙って欠けないように）
 // 🚨 人の名前は在籍者に絞らずに読む（退職した人の名前が空にならないように）
 
+import { isShiftRosterMember, PREHIRE_COLS, type PrehireFields } from './staffState';
 import { supabase } from './supabaseClient';
 import { normTime } from './shiftRoster';
 import type {
@@ -91,7 +92,7 @@ export async function loadKidsData(sinceDate: string): Promise<{ data: KidsData 
     supabase.from('kids_shift_settings').select('lesson_check, required_by_groups, min_lesson_by_groups, plan_limit').maybeSingle(),
     supabase.from('kids_shift_staff_flags').select('user_id, can_lesson'),
     supabase.from('staff_display_names').select('user_id, label'),
-    supabase.from('profiles').select('id, name, is_active, employment_type').order('name'),
+    supabase.from('profiles').select(`id, name, employment_type, ${PREHIRE_COLS}`).order('name'),
     supabase.from('staff_main_work_areas').select('user_id, shift_work_areas(name)'),
     supabase.from('kids_shift_acks').select('cell_id, plan_cell_id, issue_key'),
   ]);
@@ -134,8 +135,9 @@ export async function loadKidsData(sinceDate: string): Promise<{ data: KidsData 
       } : DEFAULT_SETTINGS,
       flags: new Map(((flagRes.data ?? []) as { user_id: string; can_lesson: boolean }[]).map(r => [r.user_id, r.can_lesson])),
       labels: new Map(((labelRes.data ?? []) as { user_id: string; label: string }[]).map(r => [r.user_id, r.label])),
-      staff: ((staffRes.data ?? []) as { id: string; name: string; is_active: boolean; employment_type: string | null }[])
-        .map<KidsStaffLite>(p => ({ ...p, main_area: areaByUser.get(p.id) ?? null })),
+      // 🚨 is_active は「シフト管理に出す人か」に置き換える（入社予定の人も出す・2026-10-04）
+      staff: ((staffRes.data ?? []) as ({ id: string; name: string; employment_type: string | null } & PrehireFields)[])
+        .map<KidsStaffLite>(p => ({ id: p.id, name: p.name, employment_type: p.employment_type, is_active: isShiftRosterMember(p), main_area: areaByUser.get(p.id) ?? null })),
       acks: (ackRes.data ?? []) as { cell_id: string | null; plan_cell_id: string | null; issue_key: string }[],
     },
     error: null,

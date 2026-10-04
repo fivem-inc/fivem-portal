@@ -6,7 +6,9 @@ import { describeUpdate } from '../../lib/statusUpdate';
 import { retireState, retireStateLabel, retireStateColor, mdLabel, fetchRetireAccessDefault, type RetireScheduleResult } from '../../lib/retire';
 import { todayJstStr } from '../../lib/breakCalc';
 import type { AdminUserProfile } from '../../types';
-import { BTN_BLUE, TOGGLE_BLUE, tintBtn, backBtn } from '../../lib/buttonStyles';
+import { BTN_BLUE, TOGGLE_BLUE, tintBtn, backBtn, primaryBtn } from '../../lib/buttonStyles';
+import PrehireSection from './PrehireSection';
+import { isPrehire } from '../../lib/staffState';
 
 // ユーザー追加モーダル
 const AddUserModal: React.FC<{
@@ -546,6 +548,25 @@ const UsersTab: React.FC = () => {
     setShowEmailModal(true);
   };
 
+  // パスワード変更の依頼（2026-10-04）。選んだ人に「ホームのお知らせ・ベル・メール」で変更をお願いする
+  // 🚨 誰が初期パスワードのままかは読めない（パスワードは暗号にして保存）。だから「選んだ人に送る」形
+  const [pwConfirm, setPwConfirm] = useState(false);
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwReason, setPwReason] = useState<'initial' | 'review'>('initial');
+  const sendPasswordRequest = async () => {
+    setPwBusy(true);
+    const ids = sortedUsers.filter(u => selectedForEmail.has(u.id) && u.is_active !== false).map(u => u.id);
+    const { data, error } = await supabase.functions.invoke('staff-onboard', { body: { action: 'request_password_change', ids, reason: pwReason } });
+    setPwBusy(false);
+    const d = (data ?? {}) as { success?: boolean; error?: string; flagged?: number; mailed?: number; mail_failed?: string[] };
+    if (error || d.success !== true) { setErrorMsg(`パスワード変更の依頼を送れませんでした：${d.error ?? error?.message ?? ''}`); return; }
+    const failed = d.mail_failed ?? [];
+    setSuccessMsg(`${d.flagged ?? 0}名にパスワード変更の依頼を送りました（メール ${d.mailed ?? 0}通）${failed.length ? `。メールを送れなかった方：${failed.join('、')}` : ''}`);
+    setPwConfirm(false);
+    setSelectedForEmail(new Set());
+    fetchUsers();
+  };
+
   const handleSingleEmail = (user: typeof sortedUsers[0]) => {
     setEmailTarget([{ id: user.id, name: user.name || '', email: user.email || '' }]);
     setShowEmailModal(true);
@@ -584,6 +605,7 @@ const UsersTab: React.FC = () => {
                     ))}
                   </div>
                 )}
+                <PrehireSection />
                 {showEmailModal && (
                   <SendEmailModal
                     isDarkMode={isDarkMode}
@@ -594,7 +616,7 @@ const UsersTab: React.FC = () => {
                 )}
                 <div style={{ marginBottom: '20px', textAlign: 'center' }}>
                   <p style={{ color: isDarkMode ? '#fff' : '#000' }}>
-                    現役: {users.filter(u => u.is_active !== false).length}人 ／ 退職済み: {users.filter(u => u.is_active === false).length}人
+                    現役: {users.filter(u => u.is_active !== false).length}人 ／ 退職済み: {users.filter(u => u.is_active === false && !isPrehire(u)).length}人
                   </p>
                   <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: 8 }}>
                     <button
@@ -621,6 +643,14 @@ const UsersTab: React.FC = () => {
                     )}
                     {selectedForEmail.size > 0 && (
                       <button
+                        onClick={() => setPwConfirm(true)}
+                        style={{ ...backBtn(isDarkMode), padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: 14 }}
+                      >
+                        🔑 選択した{selectedForEmail.size}名にパスワード変更の依頼
+                      </button>
+                    )}
+                    {selectedForEmail.size > 0 && (
+                      <button
                         onClick={() => setSelectedForEmail(new Set())}
                         style={{ padding: '8px 12px', background: '#6c757d', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: 13 }}
                       >
@@ -628,6 +658,22 @@ const UsersTab: React.FC = () => {
                       </button>
                     )}
                   </div>
+                  {pwConfirm && selectedForEmail.size > 0 && (
+                    <div style={{ maxWidth: 520, margin: '0 auto 10px', padding: '10px 12px', borderRadius: 8, background: isDarkMode ? '#3d3420' : '#fff3cd', border: '2px solid #ffc107', color: isDarkMode ? '#ffe08a' : '#856404', fontSize: 13, textAlign: 'left', lineHeight: 1.6 }}>
+                      選んだ{selectedForEmail.size}名に、パスワード変更のお願いを送ります（ホームのお知らせ・ベル・メール）。
+                      お知らせは、本人がパスワードを変えるまで消えません。在籍していない方には送りません。
+                      <div style={{ marginTop: 8 }}>送る理由：</div>
+                      {([['initial', '初期パスワードのままの方へ'], ['review', '安全のための見直し（全員へ）']] as const).map(([v, l]) => (
+                        <label key={v} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', marginTop: 2 }}>
+                          <input type="radio" checked={pwReason === v} onChange={() => setPwReason(v)} /> {l}
+                        </label>
+                      ))}
+                      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                        <button onClick={() => setPwConfirm(false)} disabled={pwBusy} style={{ ...backBtn(isDarkMode), flex: 1, padding: '7px', borderRadius: 6, cursor: 'pointer' }}>やめる</button>
+                        <button onClick={sendPasswordRequest} disabled={pwBusy} style={{ ...primaryBtn({ disabled: pwBusy }), flex: 2, padding: '7px', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold' }}>{pwBusy ? '送っています...' : '送る'}</button>
+                      </div>
+                    </div>
+                  )}
                   <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', flexWrap: 'wrap' }}>
                     <button
                       onClick={() => setShowRetired('active')}

@@ -30,6 +30,9 @@ export default function ChangePassword() {
     if (updateError) {
       setError('パスワードの変更に失敗しました: ' + updateError.message);
     } else {
+      // ホームの「パスワードを変更してください」のバナーを消す（2026-10-04）。失敗しても変更自体は成功している
+      const { error: flagErr } = await supabase.rpc('clear_my_password_flag');
+      if (flagErr) console.error('[change-password] 印の解除に失敗:', flagErr.message);
       setSuccess(true);
     }
   };

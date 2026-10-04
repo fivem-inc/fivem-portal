@@ -69,15 +69,30 @@ serve(async (req) => {
       { auth: { autoRefreshToken: false, persistSession: false } }
     );
 
+    // 0. 作る直前に控えに書く（handle_new_user がこれを見て、経理への「新規登録」の通知を止める・2026-10-04）
+    //    🚨 app_metadata の印だけでは止まらない（作った瞬間にはまだ入っていない）
+    const markEmail = String(email).trim().toLowerCase();
+    const { error: markErr } = await supabaseAdmin.from('admin_provisioning_emails').upsert({ email: markEmail });
+    if (markErr) {
+      return new Response(JSON.stringify({ error: '準備に失敗しました: ' + markErr.message }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // 1. Supabase Auth にユーザー作成
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email,
       password,
       email_confirm: true,
-      user_metadata: { full_name: name },
+      // 🚨 管理者が作った印は app_metadata（2026-10-04）。handle_new_user が見て、経理への「新規登録」の通知を飛ばさない。
+      //    user_metadata は本人が signUp で書けるので、そこには置かない。name は handle_new_user が読む名前
+      app_metadata: { provisioned_by_admin: true },
+      user_metadata: { full_name: name, name },
     });
 
     if (authError) {
+      await supabaseAdmin.from('admin_provisioning_emails').delete().eq('email', markEmail);
       return new Response(JSON.stringify({ error: authError.message }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -112,6 +127,11 @@ serve(async (req) => {
         employment_type: employment_type || '正社員',
         role_title: role_title || '一般',
         is_active: true,
+        // 🚨 明示する（書かないとトリガーが入れた 'pending' が残る・2026-10-04）
+        approval_status: 'approved',
+        // 管理者が決めた初期パスワードなので、初回ログインで変更をお願いする（ホームにバナー・2026-10-04 ユーザー確定）
+        must_change_password: true,
+        pw_change_reason: 'initial',
         registered_at: new Date().toISOString(),
         sort_order: nextSortOrder,
       });

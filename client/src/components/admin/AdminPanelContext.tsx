@@ -7,6 +7,7 @@ import { supabase } from '../../lib/supabaseClient';
 import { sendLeaveSlack } from '../../lib/leaveSlack';
 import { useDarkMode } from '../../hooks/useDarkMode';
 import { resolveItems } from '../../lib/purchaseItemsFallback';
+import { isPrehire } from '../../lib/staffState';
 
 // 修正依頼から「どの申請へ飛んだか」を飛び先のタブへ伝えるための型
 export type AdminFocusTarget = { type: 'leave' | 'shift' | 'overtime'; id: string };
@@ -539,7 +540,7 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, email, name, is_active, approval_status, sort_order, registered_at, employment_type, role_title, group_names, leave_request_enabled, last_sign_in_at, signup_ip, signup_country, signup_city, retire_date, retiree_access_until, retired_at')
+        .select('id, email, name, is_active, approval_status, sort_order, registered_at, employment_type, role_title, group_names, leave_request_enabled, last_sign_in_at, signup_ip, signup_country, signup_city, retire_date, retiree_access_until, retired_at, hire_date, invite_scheduled_for, invite_sent_at, invite_send_count, must_change_password')
         .order('sort_order', { ascending: true, nullsFirst: false });
       if (error) {
         console.error('ユーザー取得エラー:', error);
@@ -559,7 +560,8 @@ export const AdminPanelProvider: React.FC<AdminPanelProviderProps> = ({
   const pendingLeaveRequests = useMemo(() => leaveRequests.filter(l => !['approved', 'rejected'].includes(l.status)), [leaveRequests]);
 
   const sortedUsers = useMemo(() => {
-    const nonPending = users.filter(u => u.approval_status !== 'pending');
+    // 🚨 入社予定の人は一覧に入れない（is_active=false なので退職者に混ざる）。ユーザー管理の「入社予定」の欄に出す（2026-10-04）
+    const nonPending = users.filter(u => u.approval_status !== 'pending' && !isPrehire(u));
     const filtered = showRetired === 'all' ? nonPending : showRetired === 'retired' ? nonPending.filter(u => u.is_active === false) : nonPending.filter(u => u.is_active !== false);
     return [...filtered].sort((a, b) => {
       let aVal, bVal;

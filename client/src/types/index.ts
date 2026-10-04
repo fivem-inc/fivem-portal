@@ -189,6 +189,15 @@ export interface AdminUserProfile {
   retiree_access_until?: string | null;
   /** 実際に退職へ切り替わった日時（予約だけの人は空） */
   retired_at?: string | null;
+  /** 入社日。入社予定（is_active=false）の人はこの日に在籍になる（docs/計画-入社予定スタッフの登録と招待.md） */
+  hire_date?: string | null;
+  /** 招待メールの送信予定（入社日の朝10時など）。null＝予定なし */
+  invite_scheduled_for?: string | null;
+  /** 招待メールを最後に送った時刻・回数 */
+  invite_sent_at?: string | null;
+  invite_send_count?: number | null;
+  /** パスワードの変更をお願いしている印 */
+  must_change_password?: boolean | null;
 }
 
 export interface AdminLeaveRequest {

@@ -2,6 +2,7 @@
 // 🚨 書き込みは study_sessions_save（DB の関数）だけ。版・参加者の表に画面から直接書かない
 // 🚨 参加者の名前は在籍中の人に絞らずに読む（退職した人の名前が空にならないように）
 
+import { isShiftRosterMember, PREHIRE_COLS, type PrehireFields } from './staffState';
 import { supabase } from './supabaseClient';
 import type { RosterDayKind } from './shiftRoster';
 import type { StudyVersion } from './studySessions';
@@ -41,7 +42,7 @@ export async function loadStudyData(sinceDate: string): Promise<{ data: StudyDat
       .or(`valid_to.is.null,valid_to.gte.${sinceDate}`)
       .order('valid_from'),
     supabase.from('study_session_acks').select('version_id, issue_key, acked_by, acked_at'),
-    supabase.from('profiles').select('id, name, is_active, employment_type, role_title').order('name'),
+    supabase.from('profiles').select(`id, name, employment_type, role_title, ${PREHIRE_COLS}`).order('name'),
     supabase.from('master_options').select('category, value, sort_order').like('category', 'floor_%').order('sort_order'),
     supabase.from('app_settings').select('value').eq('key', 'study_sessions_show_self').maybeSingle(),
   ]);
@@ -66,7 +67,9 @@ export async function loadStudyData(sinceDate: string): Promise<{ data: StudyDat
     data: {
       versions,
       acks: (ackRes.data ?? []) as StudyAck[],
-      staff: (staffRes.data ?? []) as StudyStaff[],
+      // 🚨 is_active は「シフト管理に出す人か」に置き換える（入社予定の人も出す・2026-10-04）
+      staff: ((staffRes.data ?? []) as (Omit<StudyStaff, 'is_active'> & PrehireFields)[])
+        .map(p => ({ ...p, is_active: isShiftRosterMember(p) }) as StudyStaff),
       floors,
       showSelf: setRes.data?.value === true,
     },

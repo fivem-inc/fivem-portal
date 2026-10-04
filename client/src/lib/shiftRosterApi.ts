@@ -3,6 +3,7 @@
 //    （書き込みの許可は管理者だけのまま。関数が形を確かめ、先の版を残し、途中で失敗したら何も残さない）
 // 🚨 読むときは「基準日に効いている行と、それより先の行」だけにする。条件なしで読むと1,000行で黙って欠ける
 
+import { isShiftRosterMember, PREHIRE_COLS, type PrehireFields } from './staffState';
 import { supabase } from './supabaseClient';
 import type { PatternRowLike, RosterDayKind, RosterSegment, WorkArea } from './shiftRoster';
 
@@ -42,7 +43,8 @@ const PATTERN_COLS = 'id, user_id, day_kind, start_time, end_time, start_time2, 
 /** 基準日（sinceDate）に効いている行と、それより先の行を読む。失敗したら理由 */
 export async function loadRosterData(sinceDate: string): Promise<{ data: RosterData | null; error: string | null }> {
   const [staffRes, areaRes, mainRes, patRes, noteRes, wpRes] = await Promise.all([
-    supabase.from('profiles').select('id, name, role_title, employment_type').eq('is_active', true).order('name'),
+    // 🚨 在籍者に加えて入社予定の人も出す（入社日からのシフトを先に入れるため・2026-10-04）。絞り込みは lib/staffState の1か所
+    supabase.from('profiles').select(`id, name, role_title, employment_type, ${PREHIRE_COLS}`).order('name'),
     supabase.from('shift_work_areas').select('id, name, short_name, color, sort_order, active').order('sort_order'),
     supabase.from('staff_main_work_areas').select('user_id, area_id'),
     supabase.from('weekly_shift_patterns').select(PATTERN_COLS)
@@ -61,7 +63,9 @@ export async function loadRosterData(sinceDate: string): Promise<{ data: RosterD
   for (const r of (mainRes.data ?? []) as { user_id: string; area_id: string }[]) mainAreas[r.user_id] = r.area_id;
   return {
     data: {
-      staff: (staffRes.data ?? []) as RosterStaff[],
+      staff: ((staffRes.data ?? []) as (RosterStaff & PrehireFields)[])
+        .filter(isShiftRosterMember)
+        .map(p => ({ id: p.id, name: p.name, role_title: p.role_title, employment_type: p.employment_type }) as RosterStaff),
       areas: (areaRes.data ?? []) as WorkArea[],
       mainAreas,
       patterns: (patRes.data ?? []) as RosterPatternRow[],

@@ -1327,6 +1327,8 @@ const classifyNotif = (n: NotifLike) => {
     if (isEnc) return { path: '/?enc=1', closeOnTap: false };
     // 退職の手続きが残っている（マネージャー以上と管理者・2026-09-19）。済むまで残す
     if (n.source_type === 'retire:checklist') return { path: '/retire', closeOnTap: false };
+    // パスワード変更の依頼（2026-10-04・staff-onboard の request_password_change）
+    if (n.source_type === 'account:password_change') return { path: '/change-password', closeOnTap: true };
     // 出勤のお願い（パート向け・2026-09-13）。🚨 答えるまで消さない＝ closeOnTap: false
     if (n.source_type === 'shift_adjust:part_request') return { path: '/shift-request', closeOnTap: false };
     // 出勤のお願いの担当が別の方に決まった（選ばれなかったパート向け・2026-09-13）。読めば用が済む
@@ -2138,6 +2140,37 @@ const ShiftRequestBanner: React.FC<{ employmentType: string }> = ({ employmentTy
 };
 
 
+// パスワード変更のお願い（2026-10-04）。profiles.must_change_password が立っている人だけ。
+// 🚨 閉じるボタンは置かない（変えるまで出す・ユーザー確定）。変えると ChangePassword / ResetPassword が印を消す
+const PasswordChangeBanner: React.FC<{ userId: string }> = ({ userId }) => {
+  const navigate = useNavigate();
+  const [need, setNeed] = useState<null | 'initial' | 'review'>(null);
+  useEffect(() => {
+    supabase.from('profiles').select('must_change_password, pw_change_reason').eq('id', userId).maybeSingle()
+      .then(({ data, error }) => {
+        if (error) return;
+        const d = data as { must_change_password?: boolean; pw_change_reason?: string | null } | null;
+        setNeed(d?.must_change_password ? (d.pw_change_reason === 'review' ? 'review' : 'initial') : null);
+      });
+  }, [userId]);
+  if (!need) return null;
+  return (
+    <div
+      onClick={() => navigate('/change-password')}
+      style={{ margin: '0 0 16px 0', padding: '12px 16px', background: '#fff3cd', border: '2px solid #f59e0b', borderRadius: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, fontWeight: 'bold', color: '#92400e' }}
+    >
+      <span style={{ fontSize: 22 }}>⚠️</span>
+      {/* ✅ 文言はユーザー確定（2026-10-04）。送る理由で出し分ける */}
+      {need === 'review' ? (
+        <span>パスワードの見直しをお願いします<br /><span style={{ fontSize: 12.5, fontWeight: 'normal' }}>安全のため、パスワードの変更をお願いしています。お手数ですが、新しいパスワードへの変更をお願いします。変更するとこのお知らせは消えます</span></span>
+      ) : (
+        <span>パスワードの変更をお願いします<br /><span style={{ fontSize: 12.5, fontWeight: 'normal' }}>最初に設定されたパスワードのままになっている方は、お手数ですが、ご自身で決めたパスワードへの変更をお願いします。変更するとこのお知らせは消えます</span></span>
+      )}
+      <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 'normal', whiteSpace: 'nowrap' }}>変更する ›</span>
+    </div>
+  );
+};
+
 // メインのDashboardコンポーネント
 const Dashboard: React.FC = () => {
   // 通常のダッシュボード処理（パスワードリセットは専用ページで処理）
@@ -2340,6 +2373,9 @@ const Dashboard: React.FC = () => {
       {!isRetiree && (<>
       {/* ⓪-0 安否確認の未回答バナー（最優先。消せない） */}
       <SafetyCheckBanner userId={user.id} isAdmin={isAdmin} roleTitle={roleTitle} />
+
+      {/* ⓪-1 パスワード変更のお願い（印が立っている人だけ・変えるまで消えない・2026-10-04） */}
+      <PasswordChangeBanner userId={user.id} />
 
       {/* ⓪ プッシュ通知の有効化を促すバナー（未ONの人にのみ表示） */}
       <PushEnableBanner />

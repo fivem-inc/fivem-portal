@@ -3,6 +3,7 @@
 // 🚨 読むときは「基準日に効いている版と、それより先の版」だけ（1,000行で黙って欠けないように）
 // 🚨 人の名前は在籍者に絞らずに読む（退職した人の名前が空にならないように）
 
+import { isShiftRosterMember, PREHIRE_COLS, type PrehireFields } from './staffState';
 import { supabase } from './supabaseClient';
 import { normTime, type RosterDayKind } from './shiftRoster';
 import type { CleaningCellValue, CleaningCellVersion, CleaningNote, CleaningRow } from './cleaningRoster';
@@ -53,7 +54,7 @@ export async function loadCleaningData(sinceDate: string): Promise<{ data: Clean
     supabase.from('cleaning_acks').select('cell_id, issue_key'),
     supabase.from('cleaning_excluded_staff').select('user_id'),
     supabase.from('staff_display_names').select('user_id, label'),
-    supabase.from('profiles').select('id, name, is_active').order('name'),
+    supabase.from('profiles').select(`id, name, ${PREHIRE_COLS}`).order('name'),
   ]);
   const failed = [
     rowRes.error && '行の一覧', noteRes.error && '注意書き', cellRes.error && 'マス', ackRes.error && '確認の記録',
@@ -75,7 +76,9 @@ export async function loadCleaningData(sinceDate: string): Promise<{ data: Clean
       acks: (ackRes.data ?? []) as CleaningAck[],
       excluded: new Set(((exRes.data ?? []) as { user_id: string }[]).map(r => r.user_id)),
       labels: new Map(((labelRes.data ?? []) as { user_id: string; label: string }[]).map(r => [r.user_id, r.label])),
-      staff: (staffRes.data ?? []) as CleaningStaff[],
+      // 🚨 is_active は「シフト管理に出す人か」に置き換える（入社予定の人も出す・2026-10-04）
+      staff: ((staffRes.data ?? []) as ({ id: string; name: string } & PrehireFields)[])
+        .map(p => ({ id: p.id, name: p.name, is_active: isShiftRosterMember(p) }) as CleaningStaff),
     },
     error: null,
   };

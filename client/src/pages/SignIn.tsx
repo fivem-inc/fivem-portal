@@ -13,15 +13,14 @@ export default function SignIn() {
   const location = useLocation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [name, setName] = useState(''); // 新規追加: 名前
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null); // 成功・案内メッセージ（alert廃止・緑表示）
-  const [isSignUp, setIsSignUp] = useState(false); // 新規登録モードかどうかの状態
-  const [isResettingPassword, setIsResettingPassword] = useState(false); // パスワードリセットモードかどうかの状態
+  // パスワード設定のメールを送る画面（2026-10-04）。first＝［はじめての方］／forgot＝「パスワードを忘れた場合」。中身は同じ
+  // 🚨 自分で登録する入口（新規登録）は 2026-10-04 に閉じた（アカウントはすべて管理者が作る・ユーザー確定）
+  const [resetMode, setResetMode] = useState<null | 'first' | 'forgot'>(null);
+  const isResettingPassword = resetMode !== null;
   const [showPassword, setShowPassword] = useState(false); // パスワード表示切り替え
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false); // 確認用パスワード表示切り替え
   const { user, blockedMessage, clearBlockedMessage } = useContext(AuthContext);
   const { isAdmin } = useAuth();
 
@@ -95,107 +94,27 @@ export default function SignIn() {
     // 成功時のloading解除はAuthContextのapplySessionUser完了後（blockedMessage or 通常ログイン）に任せる
   };
 
-  const handleSignUp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-
-    if (password !== confirmPassword) {
-      setError('パスワードが一致しません。');
-      setLoading(false);
-      return;
-    }
-
-    if (!name.trim()) {
-      setError('名前を入力してください。');
-      setLoading(false);
-      return;
-    }
-
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          name: name.trim(),
-          display_name: name.trim(),
-          full_name: name.trim()
-        }
-      }
-    });
-
-    if (!error && data.user) {
-      // 承認待ちの新規登録を管理画面で確認する際の参考情報として、接続元IP・国を記録する。
-      // 🚨 記録できなくても登録自体は続ける（あくまで参考情報）が、失敗を完全に握りつぶすと
-      //    「ずっと記録されていない」ことに誰も気づけない。ログには必ず残す
-      //    （実際、CORSが本番URLのみ許可でローカルからの登録が記録されていなかった）
-      supabase.functions.invoke('record-signup-ip', { body: { user_id: data.user.id } })
-        .then(
-          ({ error: ipError }) => { if (ipError) console.error('[signup] IPの記録に失敗:', ipError); },
-          (e) => console.error('[signup] IPの記録に失敗:', e),
-        );
-    }
-
-    if (error) {
-      // エラーメッセージを日本語化
-      let errorMessage = error.message;
-      if (error.message.includes('Unable to validate email address: invalid format')) {
-        errorMessage = 'メールアドレスの形式が正しくありません。';
-      } else if (error.message.includes('User already registered')) {
-        errorMessage = 'このメールアドレスは既に登録されています。';
-      } else if (error.message.includes('Password should be at least')) {
-        errorMessage = 'パスワードは6文字以上で入力してください。';
-      } else if (error.message.includes('Signup is disabled')) {
-        errorMessage = '新規登録は現在無効になっています。';
-      }
-      setError(errorMessage);
-    } else {
-      // トリガーで自動作成されるため、コード側での作成は不要
-      setError(null);
-      setInfo('登録が完了しました。メールを確認してアカウントを有効にしてください。');
-      setIsSignUp(false); // 登録後、ログインフォームに戻る
-    }
-    setLoading(false);
-  };
-
   const handlePasswordReset = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
 
-    try {
-      // メールアドレスの形式を検証・修正
-      const cleanEmail = email.replace(/＠/g, '@').trim();
-      console.log('パスワードリセット email:', { original: email, clean: cleanEmail });
-      
-      // 強制的にログアウト
-      await supabase.auth.signOut();
-      
-      // パスワードリセットメールを送信
-      const { error: resetError } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-        redirectTo: `${window.location.origin}/reset-password`
-      });
-
-      if (resetError) {
-        let errorMessage = resetError.message;
-        if (resetError.message.includes('Unable to validate email address: invalid format')) {
-          errorMessage = 'メールアドレスの形式が正しくありません。半角の@を使用してください。';
-        } else if (resetError.message.includes('For security purposes')) {
-          errorMessage = 'セキュリティのため、しばらく時間をおいてから再度お試しください。';
-        } else if (resetError.message.includes('User not found')) {
-          errorMessage = 'このメールアドレスは登録されていません。';
-        }
-        setError(errorMessage);
-      } else {
-        setError(null);
-        setInfo('パスワードリセットメールを送信しました。メールを確認して新しいパスワードを設定してください。');
-        setIsResettingPassword(false);
-      }
-    } catch (error) {
-      console.error('パスワードリセット処理エラー:', error);
-      setError('パスワードリセット処理中にエラーが発生しました。');
+    // 🚨 Supabase Auth のメール（送信上限が低い）は使わない。自前の Edge Function が Resend から送る（2026-10-04）
+    //    関数は、アドレスが登録されているかどうかで返事を変えない（誰が在籍しているか探られないため）
+    const cleanEmail = email.replace(/＠/g, '@').trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setError('メールアドレスの形式が正しくありません。半角の@を使用してください。');
+      setLoading(false);
+      return;
     }
-    
+    await supabase.auth.signOut();
+    const { error: fnError } = await supabase.functions.invoke('password-setup-mail', { body: { email: cleanEmail } });
+    if (fnError) {
+      setError('送信できませんでした。通信の状態を確かめて、もう一度お試しください。');
+    } else {
+      setInfo('このメールアドレスが登録されていれば、パスワード設定のメールを送りました。届かないときは迷惑メールのフォルダも確かめ、1分ほどあけてもう一度お試しください。');
+      setResetMode(null);
+    }
     setLoading(false);
   };
 
@@ -211,16 +130,7 @@ export default function SignIn() {
     <div style={{ maxWidth: 320, margin: '80px auto', textAlign: 'center' }}>
       <h2>ファイブM スタッフサイト</h2>
       {!isResettingPassword ? (
-        <form onSubmit={isSignUp ? handleSignUp : handleLogin}>
-          {isSignUp && (
-            <input
-              style={{ width: '100%', margin: '6px 0', padding: 8, boxSizing: 'border-box' }}
-              placeholder='名前'
-              value={name}
-              onChange={e => setName(e.target.value)}
-              required
-            />
-          )}
+        <form onSubmit={handleLogin}>
           <input
             style={{ width: '100%', margin: '6px 0', padding: 8, boxSizing: 'border-box' }}
             placeholder='メールアドレス'
@@ -257,38 +167,7 @@ export default function SignIn() {
               {showPassword ? '●' : '○'}
             </button>
           </div>
-          {isSignUp && (
-            <div style={{ position: 'relative', margin: '6px 0' }}>
-              <input
-                type={showConfirmPassword ? 'text' : 'password'}
-                style={{ width: '100%', padding: 8, paddingRight: '35px', boxSizing: 'border-box' }}
-                placeholder='パスワード（確認用）'
-                value={confirmPassword}
-                onChange={e => setConfirmPassword(e.target.value)}
-                required
-              />
-              <button
-                type="button"
-                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                style={{
-                  position: 'absolute',
-                  right: '10px',
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  background: 'none',
-                  border: 'none',
-                  cursor: 'pointer',
-                  fontSize: '16px',
-                  color: '#666',
-                  padding: 0,
-                  lineHeight: 1
-                }}
-              >
-                {showConfirmPassword ? '●' : '○'}
-              </button>
-            </div>
-          )}
-          {!isSignUp && showIdleCheck && (
+          {showIdleCheck && (
             <div style={{ textAlign: 'left', margin: '10px 0 4px', fontSize: 13 }}>
               <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
                 <input
@@ -349,7 +228,7 @@ export default function SignIn() {
             }} 
             disabled={loading}
           >
-            {loading ? (isSignUp ? '登録中...' : 'ログイン中...') : (isSignUp ? '新規登録' : 'ログイン')}
+            {loading ? 'ログイン中...' : 'ログイン'}
           </button>
           {error && <p style={{ color: 'red', marginTop: '10px' }}>{error}</p>}
           {info && <p style={{ color: '#1e7e34', marginTop: '10px' }}>{info}</p>}
@@ -361,7 +240,9 @@ export default function SignIn() {
         </form>
       ) : (
         <form onSubmit={handlePasswordReset}>
-          <p>パスワードリセットメールを送信します。登録しているメールアドレスを入力してください。</p>
+          <p>{resetMode === 'first'
+            ? 'パスワードを決めるためのメールを送ります。ご自身のメールアドレスを入れてください。'
+            : 'パスワードを決め直すためのメールを送ります。登録しているメールアドレスを入れてください。'}</p>
           <input
             style={{ width: '100%', margin: '6px 0', padding: 8, boxSizing: 'border-box' }}
             placeholder='メールアドレス'
@@ -382,7 +263,7 @@ export default function SignIn() {
             }} 
             disabled={loading}
           >
-            {loading ? '送信中...' : 'パスワードリセットメールを送信'}
+            {loading ? '送信中...' : 'パスワード設定のメールを送る'}
           </button>
           {error && <p style={{ color: 'red', marginTop: '10px' }}>{error}</p>}
           {info && <p style={{ color: '#1e7e34', marginTop: '10px' }}>{info}</p>}
@@ -390,23 +271,23 @@ export default function SignIn() {
       )}
       {!isResettingPassword && (
         <button
-          onClick={() => setIsSignUp(!isSignUp)}
-          style={{ 
-            background: '#007bff', 
-            border: '1px solid #007bff', 
-            color: 'white', 
-            cursor: 'pointer', 
+          onClick={() => { setResetMode('first'); setError(null); setInfo(null); }}
+          style={{
+            background: '#007bff',
+            border: '1px solid #007bff',
+            color: 'white',
+            cursor: 'pointer',
             marginTop: '10px',
             padding: '8px 16px',
             borderRadius: '4px'
           }}
         >
-          {isSignUp ? 'ログイン画面に戻る' : '新規登録はこちら'}
+          はじめての方（パスワードを決める）
         </button>
       )}
-      {!isSignUp && !isResettingPassword && (
+      {!isResettingPassword && (
         <button
-          onClick={() => setIsResettingPassword(true)}
+          onClick={() => { setResetMode('forgot'); setError(null); setInfo(null); }}
           style={{ 
             background: '#17a2b8', 
             border: '1px solid #17a2b8', 
@@ -420,9 +301,14 @@ export default function SignIn() {
           パスワードを忘れた場合
         </button>
       )}
+      {!isResettingPassword && (
+        <p style={{ fontSize: 12, color: '#666', marginTop: 14, lineHeight: 1.6 }}>
+          アカウントは会社が用意します。案内のメールが届いていない方は、マネージャーにお知らせください。
+        </p>
+      )}
       {isResettingPassword && (
         <button
-          onClick={() => setIsResettingPassword(false)}
+          onClick={() => setResetMode(null)}
           style={{ 
             background: '#007bff', 
             border: '1px solid #007bff', 

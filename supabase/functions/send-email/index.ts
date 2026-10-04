@@ -64,6 +64,15 @@ serve(async (req) => {
       });
     }
 
+    // 🚨 仮のアドレス（入社予定でメールが未定の人・2026-10-04）には送らない。宛先不明で戻ると送り元の評判が下がる
+    const recipients = (Array.isArray(to) ? to : [to]).filter((a: string) => !String(a).toLowerCase().endsWith('.invalid'));
+    if (recipients.length === 0) {
+      return new Response(JSON.stringify({ success: true, skipped: 'placeholder' }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
     if (!RESEND_API_KEY) {
       return new Response(JSON.stringify({ error: 'RESEND_API_KEY が設定されていません' }), {
@@ -76,7 +85,7 @@ serve(async (req) => {
 
     const body: Record<string, unknown> = {
       from: `${FROM_NAME} <${FROM_ADDRESS}>`,
-      to: Array.isArray(to) ? to : [to],
+      to: recipients,
       subject,
     };
     if (sanitizedHtml) body.html = sanitizedHtml;
