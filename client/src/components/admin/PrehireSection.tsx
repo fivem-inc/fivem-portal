@@ -3,6 +3,7 @@
 // ・名前と入社日だけで先に登録できる（メールは任意）。勤務表には登録した日から出る（入社日からのシフトを先に入れられる）
 // ・招待メールは「入社日の朝10時／今すぐ／まだ送らない」を選ぶ。あとからメールを入れたら、保存の前に送るかを確かめる
 // ・入社したあともメールが仮のままの人はここに残る（メールを聞いて入れるため）
+// ・名前・雇用形態・役職も直せる（2026-10-04 ユーザー指示。入社予定の人はユーザー一覧に出ないので、ここで直す）
 // 🚨 書き込みは Edge Function staff-onboard だけ（アカウントの作成・メールの差し替えに管理者の権限が要るため）
 // 🚨 判定は lib/staffState.ts（isPrehire / isPlaceholderEmail）。ここで条件を書き直さない
 // 🚨 supabase.functions.invoke は 4xx/5xx でも throw しない。error と success を見る
@@ -89,7 +90,10 @@ const PrehireSection: React.FC = () => {
   };
 
   // ── 行ごとの操作 ──
-  const [rowMode, setRowMode] = useState<{ id: string; kind: 'email' | 'date' | 'cancel' } | null>(null);
+  const [rowMode, setRowMode] = useState<{ id: string; kind: 'email' | 'date' | 'cancel' | 'info' } | null>(null);
+  const [rowName, setRowName] = useState('');
+  const [rowEmployment, setRowEmployment] = useState('');
+  const [rowRole, setRowRole] = useState('');
   const [rowEmail, setRowEmail] = useState('');
   const [rowSend, setRowSend] = useState<SendMode>('hire_date');
   const [rowDate, setRowDate] = useState('');
@@ -97,11 +101,14 @@ const PrehireSection: React.FC = () => {
   const [rowErr, setRowErr] = useState('');
   const [rowBusy, setRowBusy] = useState(false);
   const [shiftCount, setShiftCount] = useState<number | null>(null);
-  const openRow = async (u: AdminUserProfile, kind: 'email' | 'date' | 'cancel') => {
+  const openRow = async (u: AdminUserProfile, kind: 'email' | 'date' | 'cancel' | 'info') => {
     setRowMode({ id: u.id, kind }); setRowErr(''); setRowConfirm(false);
     setRowEmail(isPlaceholderEmail(u.email) ? '' : (u.email ?? ''));
     setRowSend(isPrehire(u) ? 'hire_date' : 'now');
     setRowDate(u.hire_date ?? '');
+    setRowName(u.name ?? '');
+    setRowEmployment(u.employment_type ?? '正社員');
+    setRowRole(u.role_title ?? '一般');
     setShiftCount(null);
     if (kind === 'cancel') {
       // 🚨 取り消すと勤務表なども一緒に消える（on delete cascade）。先に件数を見せる
@@ -132,6 +139,16 @@ const PrehireSection: React.FC = () => {
     setRowBusy(false);
     if (!r.ok) { setRowErr(r.error ?? ''); return; }
     done(rowDate <= today ? '入社日を変えました（今日から使えるようにしました）' : '入社日を変えました');
+  };
+  // 名前・雇用形態・役職（🚨 役職の id は DB のトリガーが役職名から入れる。0件でもエラーにならないので件数を見る）
+  const saveInfo = async (u: AdminUserProfile) => {
+    if (!rowName.trim()) { setRowErr('名前を入れてください'); return; }
+    setRowBusy(true);
+    const { data, error } = await supabase.from('profiles')
+      .update({ name: rowName.trim(), employment_type: rowEmployment, role_title: rowRole }).eq('id', u.id).select('id');
+    setRowBusy(false);
+    if (error || (data ?? []).length === 0) { setRowErr(`保存できませんでした：${error?.message ?? '対象が見つかりません'}`); return; }
+    done(`${rowName.trim()}さんの内容を直しました`);
   };
   const sendNow = async (u: AdminUserProfile) => {
     setRowBusy(true);
@@ -241,6 +258,7 @@ const PrehireSection: React.FC = () => {
             </div>
             {!mode && (
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                <button onClick={() => openRow(u, 'info')} style={{ ...backBtn(isDarkMode), padding: '5px 12px', borderRadius: 6, fontSize: 12.5, cursor: 'pointer' }}>名前・雇用形態・役職を直す</button>
                 <button onClick={() => openRow(u, 'email')} style={{ ...tintBtn(isDarkMode), padding: '5px 12px', borderRadius: 6, fontSize: 12.5, cursor: 'pointer' }}>{noMail ? 'メールを入れる' : 'メールを直す'}</button>
                 {!noMail && <button onClick={() => sendNow(u)} disabled={rowBusy} style={{ ...backBtn(isDarkMode), padding: '5px 12px', borderRadius: 6, fontSize: 12.5, cursor: 'pointer' }}>{u.invite_sent_at ? '再送' : '今すぐ送る'}</button>}
                 {pre && <button onClick={() => openRow(u, 'date')} style={{ ...backBtn(isDarkMode), padding: '5px 12px', borderRadius: 6, fontSize: 12.5, cursor: 'pointer' }}>入社日を変える</button>}
@@ -268,6 +286,27 @@ const PrehireSection: React.FC = () => {
                   <button onClick={() => saveEmail(u)} disabled={rowBusy} style={{ ...primaryBtn({ disabled: rowBusy }), flex: 2, padding: '7px', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold' }}>
                     {rowBusy ? '保存しています...' : !rowConfirm ? '確認へ' : rowSend === 'now' ? '保存して送る' : '保存する'}
                   </button>
+                </div>
+              </div>
+            )}
+            {mode === 'info' && (
+              <div style={{ marginTop: 10 }}>
+                <label style={{ ...label, marginTop: 0 }}>名前</label>
+                <input value={rowName} onChange={e => setRowName(e.target.value)} style={input} />
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={label}>雇用形態</label>
+                    <select value={rowEmployment} onChange={e => setRowEmployment(e.target.value)} style={input}>{employmentOptions.map(o => <option key={o} value={o}>{o}</option>)}</select>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={label}>役職</label>
+                    <select value={rowRole} onChange={e => setRowRole(e.target.value)} style={input}>{roleNames.map(o => <option key={o} value={o}>{o}</option>)}</select>
+                  </div>
+                </div>
+                {rowErr && <p style={{ color: '#dc3545', fontSize: 13, margin: '8px 0 0' }}>{rowErr}</p>}
+                <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                  <button onClick={closeRow} disabled={rowBusy} style={{ ...backBtn(isDarkMode), flex: 1, padding: '7px', borderRadius: 6, cursor: 'pointer' }}>やめる</button>
+                  <button onClick={() => saveInfo(u)} disabled={rowBusy} style={{ ...primaryBtn({ disabled: rowBusy }), flex: 2, padding: '7px', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold' }}>{rowBusy ? '保存しています...' : '保存する'}</button>
                 </div>
               </div>
             )}
