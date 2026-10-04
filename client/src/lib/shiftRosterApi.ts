@@ -127,6 +127,12 @@ export async function saveRoster(payload: {
   };
 }
 
+/** 勤務表が保存されたことをベルで知らせる（2026-10-05）。宛先は通知設定の shift_roster:saved。失敗したら理由 */
+export async function notifyRosterSaved(userIds: string[], applyFrom: string): Promise<string | null> {
+  const { error } = await supabase.rpc('notify_shift_roster_saved', { p_user_ids: userIds, p_from: applyFrom });
+  return error ? error.message : null;
+}
+
 /** 部門を足す。🚨 件数を見る（権限で弾かれても error にならないため） */
 export async function addWorkArea(input: { name: string; short_name: string; color: string; sort_order: number }): Promise<string | null> {
   const { data, error } = await supabase.from('shift_work_areas').insert(input).select('id');

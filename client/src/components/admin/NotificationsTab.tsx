@@ -60,6 +60,19 @@ const EVENT_GROUPS = [
     ],
   },
   {
+    // 2026-10-05：勤務表の保存・入社予定のスタッフ（ベルだけ。スマホ通知・メール・Slack は今は送りません）
+    label: 'シフト・入社予定のスタッフ',
+    icon: '📑',
+    headerBg: '#E8F5E9', headerBorder: '#2E7D32', headerText: '#1B5E20',
+    note: 'ベル（サイト通知）だけです。社長・管理者は「同じチームのみ」でもいつも届きます。',
+    events: [
+      { key: 'shift_roster:saved',  label: '勤務表（シフト）が保存されたとき', to: '→ 保存した人には届きません' },
+      { key: 'staff:hired',         label: '入社予定の人が入社日に使えるようになったとき' },
+      { key: 'staff:invite_failed', label: '招待メールを送れなかったとき（入社日の朝などの予約）' },
+      { key: 'staff:first_login',   label: '入社した人が初めてログインしたとき' },
+    ],
+  },
+  {
     label: '交通費申請',
     icon: '🚃',
     headerBg: '#E3F2FD', headerBorder: '#1565C0', headerText: '#0D47A1',
@@ -190,6 +203,10 @@ const PUSH_RECIPIENT_BY_EVENT: Record<string, string> = {
   'trip:report_end':          'サイト通知と同じ宛先',
   'shift_report:new_request': '申請の確認依頼先（勤務校のリーダー・マネージャー）',
   'attendance:registered':    '設定した宛先（本人・リーダー・マネージャー・管理者・社長）',
+  'shift_roster:saved':       '設定した役職（同じチームのみ・社長と管理者はいつも）',
+  'staff:hired':              '設定した役職',
+  'staff:invite_failed':      '設定した役職',
+  'staff:first_login':        '設定した役職',
   'attendance:cancelled':     '設定した宛先（本人・リーダー・マネージャー・管理者・社長）',
   'shift_report:returned':    '申請者本人',
   'purchase_request:submitted':             '承認担当リーダー',
@@ -285,7 +302,7 @@ const VARIABLES_BY_EVENT: Record<string, string[]> = {
 };
 
 // 役職＋グループ絞り込みで一斉配信するイベント（時間調整・勤務変更受理など、UIとロジックを共有する）
-const ROLE_GROUP_BROADCAST_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi', 'overtime:threshold', 'leave:shift_adjust_due', 'shift_adjust:digest', 'shift_adjust:plan_created'];
+const ROLE_GROUP_BROADCAST_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi', 'overtime:threshold', 'leave:shift_adjust_due', 'shift_adjust:digest', 'shift_adjust:plan_created', 'shift_roster:saved', 'staff:hired', 'staff:invite_failed', 'staff:first_login'];
 // プッシュ通知で役職を選択できるイベント（一斉通知系。宛先が自動で決まらないもの）
 const PUSH_ROLE_SELECT_EVENTS = ['time_adjustment:registered', 'shift_report:confirmed', 'purchase:reimbursement_recorded', 'attendance:registered', 'attendance:cancelled', 'leave:approved_fyi', 'overtime:threshold', 'leave:shift_adjust_due'];
 

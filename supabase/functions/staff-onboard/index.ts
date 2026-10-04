@@ -460,6 +460,14 @@ async function sendDue(admin: SupabaseClient) {
     const r = await deliverInvite(admin, p);
     if (r.ok) { sent++; continue; }
     failures.push(`${p.id}: ${r.error}`);
+    // 管理者・社長にベルで知らせる（2026-10-05・通知設定の staff:invite_failed）。🚨 失敗しても送信の処理は続ける
+    const { error: nErr } = await admin.rpc('notify_event', {
+      p_event: 'staff:invite_failed', p_subjects: [p.id],
+      p_message: `⚠️ ${(p.name ?? '').replace(/[\s　]+/g, ' ')}さんへの招待メールを送れませんでした`,
+      p_sub: `${r.error}（1時間後にもう一度送ります。アドレスが違うときは［メールを直す］から）`,
+      p_source: 'staff:invite_failed', p_exclude: null, p_created_by: null,
+    });
+    if (nErr) console.error('[staff-onboard] 失敗の通知に失敗', nErr.message);
     // 失敗したら1時間後にもう一度（15分ごとに同じ失敗を繰り返さない）
     await admin.from('profiles').update({
       invite_claimed_at: null,

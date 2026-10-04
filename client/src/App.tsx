@@ -1327,6 +1327,9 @@ const classifyNotif = (n: NotifLike) => {
     if (isEnc) return { path: '/?enc=1', closeOnTap: false };
     // 退職の手続きが残っている（マネージャー以上と管理者・2026-09-19）。済むまで残す
     if (n.source_type === 'retire:checklist') return { path: '/retire', closeOnTap: false };
+    // シフト・入社予定のスタッフ（2026-10-05）。勤務表はシフト管理、入社予定はユーザー管理へ
+    if (n.source_type === 'shift_roster:saved') return { path: '/admin?tab=shift_patterns', closeOnTap: true };
+    if (n.source_type === 'staff:hired' || n.source_type === 'staff:invite_failed' || n.source_type === 'staff:first_login') return { path: '/admin?tab=users', closeOnTap: true };
     // パスワード変更の依頼（2026-10-04・staff-onboard の request_password_change）
     if (n.source_type === 'account:password_change') return { path: '/change-password', closeOnTap: true };
     // 出勤のお願い（パート向け・2026-09-13）。🚨 答えるまで消さない＝ closeOnTap: false

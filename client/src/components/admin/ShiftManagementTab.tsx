@@ -11,7 +11,7 @@ import {
   type RosterDay, type RosterDayKind, type RosterSegment, type WorkArea,
 } from '../../lib/shiftRoster';
 import {
-  addWorkArea, loadPersonHistory, loadRosterData, loadRosterToken, saveRoster, updateWorkArea,
+  addWorkArea, loadPersonHistory, loadRosterData, loadRosterToken, notifyRosterSaved, saveRoster, updateWorkArea,
   type RosterData, type RosterPatternRow, type SavePerson,
 } from '../../lib/shiftRosterApi';
 import { buildRosterPrintHtml, openRosterPrint, type PrintPerson } from '../../lib/shiftRosterPrint';
@@ -319,6 +319,13 @@ const ShiftManagementTab: React.FC = () => {
     setConfirming(false);
     setSaveMsg(`保存しました（${applyFrom} から・変更あり ${result.changed_people}人・変更なし ${result.unchanged_people}人${result.kept_future.length > 0 ? `・先のシフトを残した曜日 ${result.kept_future.length}` : ''}）`);
     setHistory({});
+    // 勤務表が保存されたことを、管理者・社長と同じチームのマネージャー・リーダーにベルで知らせる（2026-10-05 ユーザー確定）。
+    // 宛先は「🔔 通知設定」の shift_roster:saved。🚨 通知の失敗で保存を失敗扱いにしない（保存は済んでいる）
+    const changedIds = people.filter(p => p.days || p.person_note !== undefined || p.main_area_id).map(p => p.user_id);
+    if (result.changed_people > 0 && changedIds.length > 0) {
+      const nErr = await notifyRosterSaved(changedIds, applyFrom);
+      if (nErr) console.error('[shift] 保存の通知に失敗:', nErr);
+    }
     await load(false);
   };
 
