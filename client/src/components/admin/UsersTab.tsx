@@ -8,6 +8,7 @@ import { todayJstStr } from '../../lib/breakCalc';
 import type { AdminUserProfile } from '../../types';
 import { BTN_BLUE, TOGGLE_BLUE, tintBtn, backBtn, primaryBtn } from '../../lib/buttonStyles';
 import PrehireSection from './PrehireSection';
+import EmailEditRow from './EmailEditRow';
 import { isPrehire } from '../../lib/staffState';
 
 // ユーザー追加モーダル
@@ -552,6 +553,8 @@ const UsersTab: React.FC = () => {
   // 🚨 誰が初期パスワードのままかは読めない（パスワードは暗号にして保存）。だから「選んだ人に送る」形
   const [pwConfirm, setPwConfirm] = useState(false);
   const [pwBusy, setPwBusy] = useState(false);
+  // ［メールを直す］（2026-10-04・案A）。開いている人の id
+  const [emailEditFor, setEmailEditFor] = useState<string | null>(null);
   const [pwReason, setPwReason] = useState<'initial' | 'review'>('initial');
   const sendPasswordRequest = async () => {
     setPwBusy(true);
@@ -980,6 +983,10 @@ const UsersTab: React.FC = () => {
                                 {user.email && user.email !== 'fivem.kyoto@gmail.com' && (
                                   <button style={{ padding: '3px 6px', background: '#6610f2', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }} onClick={() => handleSingleEmail(user)}>メール</button>
                                 )}
+                                {user.is_active !== false && !user.retire_date && (
+                                  <button style={{ padding: '3px 6px', background: 'transparent', color: isDarkMode ? '#90caf9' : '#1565c0', border: '1px solid #90caf9', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
+                                    onClick={() => setEmailEditFor(emailEditFor === user.id ? null : user.id)}>メールを直す</button>
+                                )}
                                 {user.email !== 'fivem.kyoto@gmail.com' && (
                                   <>
                                     {/* 退職は「退職日を入れて確定」の1本だけ（2026-09-19・案A）。復活は RPC で退職日も空にする */}
@@ -1005,6 +1012,15 @@ const UsersTab: React.FC = () => {
                               </div>
                             </td>
                           </tr>
+                          {emailEditFor === user.id && (
+                            <EmailEditRow
+                              user={user}
+                              isDarkMode={isDarkMode}
+                              colSpan={14}
+                              onClose={() => setEmailEditFor(null)}
+                              onDone={(msg, isError) => { if (isError) setErrorMsg(msg); else setSuccessMsg(msg); setEmailEditFor(null); fetchUsers(); }}
+                            />
+                          )}
                           {retireEditFor === user.id && (
                             <tr>
                               <td colSpan={14} style={{ border: `1px solid ${isDarkMode ? '#6c757d' : '#dee2e6'}`, padding: '10px 12px', background: isDarkMode ? '#1f2d3d' : '#eef6ff' }}>
