@@ -4,11 +4,13 @@
 // ・招待メールは「入社日の朝10時／今すぐ／まだ送らない」を選ぶ。あとからメールを入れたら、保存の前に送るかを確かめる
 // ・入社したあともメールが仮のままの人はここに残る（メールを聞いて入れるため）
 // ・名前・雇用形態・役職も直せる（2026-10-04 ユーザー指示。入社予定の人はユーザー一覧に出ないので、ここで直す）
+// ・メインの部門（こども など）とグループも、登録・直すときに一緒に入れられる（2026-10-04 ユーザー指示）。
+//   中身はシフト管理・グループの画面と同じもの（staff_main_work_areas / profiles.group_names）
 // 🚨 書き込みは Edge Function staff-onboard だけ（アカウントの作成・メールの差し替えに管理者の権限が要るため）
 // 🚨 判定は lib/staffState.ts（isPrehire / isPlaceholderEmail）。ここで条件を書き直さない
 // 🚨 supabase.functions.invoke は 4xx/5xx でも throw しない。error と success を見る
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useAdminPanel } from './AdminPanelContext';
 import { supabase } from '../../lib/supabaseClient';
 import { useRoles } from '../../hooks/useRoles';
@@ -42,6 +44,20 @@ const PrehireSection: React.FC = () => {
   const roleNames = useRoles().map(r => r.name);
   const employmentOptions = masterOptions.employment_type.length > 0 ? masterOptions.employment_type : ['正社員', 'パート'];
   const today = todayJstStr();
+  const groupOptions = masterOptions.group;
+  // メインの部門の選択肢と、今の部門（シフト管理と同じ表）
+  const [areas, setAreas] = useState<{ id: string; name: string }[]>([]);
+  const [mainAreaOf, setMainAreaOf] = useState<Map<string, string>>(new Map());
+  const loadAreas = async () => {
+    const [a, m] = await Promise.all([
+      supabase.from('shift_work_areas').select('id, name').eq('active', true).order('sort_order'),
+      supabase.from('staff_main_work_areas').select('user_id, area_id'),
+    ]);
+    if (!a.error) setAreas((a.data ?? []) as { id: string; name: string }[]);
+    if (!m.error) setMainAreaOf(new Map(((m.data ?? []) as { user_id: string; area_id: string }[]).map(r => [r.user_id, r.area_id])));
+  };
+  useEffect(() => { void loadAreas(); }, []);
+  const areaName = (id: string | null | undefined) => areas.find(a => a.id === id)?.name ?? '';
   const text = isDarkMode ? '#fff' : '#212529';
   const sub = isDarkMode ? '#adb5bd' : '#6c757d';
   const cardBg = isDarkMode ? '#2b3035' : '#f8f9fa';
@@ -65,12 +81,14 @@ const PrehireSection: React.FC = () => {
   const [role, setRole] = useState('一般');
   const [email, setEmail] = useState('');
   const [send, setSend] = useState<SendMode>('hire_date');
+  const [mainArea, setMainArea] = useState('');
+  const [groups, setGroups] = useState<string[]>([]);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [formErr, setFormErr] = useState('');
   const hasEmail = email.trim() !== '';
   const effectiveSend: SendMode = hasEmail ? send : 'none';
-  const resetForm = () => { setName(''); setHireDate(''); setEmployment('正社員'); setRole('一般'); setEmail(''); setSend('hire_date'); setConfirming(false); setFormErr(''); };
+  const resetForm = () => { setName(''); setHireDate(''); setEmployment('正社員'); setRole('一般'); setEmail(''); setSend('hire_date'); setMainArea(''); setGroups([]); setConfirming(false); setFormErr(''); };
 
   const toConfirm = () => {
     if (!name.trim()) { setFormErr('名前を入れてください'); return; }
@@ -80,13 +98,15 @@ const PrehireSection: React.FC = () => {
   };
   const submit = async () => {
     setBusy(true);
-    const r = await callOnboard({ action: 'create', name: name.trim(), hire_date: hireDate, employment_type: employment, role_title: role, email: email.trim() || null, send: effectiveSend });
+    const r = await callOnboard({ action: 'create', name: name.trim(), hire_date: hireDate, employment_type: employment, role_title: role, email: email.trim() || null, send: effectiveSend, main_area_id: mainArea || null, group_names: groups });
     setBusy(false);
     if (!r.ok) { setFormErr(r.error ?? ''); setConfirming(false); return; }
     const mailErr = r.data?.mail_error as string | null;
     if (mailErr) setErrorMsg(`登録しましたが、招待メールを送れませんでした：${mailErr}（下の［今すぐ送る］で送り直せます）`);
     else setSuccessMsg(effectiveSend === 'now' ? '登録して、招待メールを送りました' : effectiveSend === 'hire_date' ? '登録しました（招待メールは入社日の朝10時に送ります）' : '登録しました');
-    resetForm(); setOpen(false); fetchUsers();
+    const areaErr = r.data?.area_error as string | null;
+    if (areaErr) setErrorMsg(`登録しましたが、メインの部門を保存できませんでした：${areaErr}（下の［名前・雇用形態・役職などを直す］で入れ直せます）`);
+    resetForm(); setOpen(false); fetchUsers(); void loadAreas();
   };
 
   // ── 行ごとの操作 ──
@@ -94,6 +114,8 @@ const PrehireSection: React.FC = () => {
   const [rowName, setRowName] = useState('');
   const [rowEmployment, setRowEmployment] = useState('');
   const [rowRole, setRowRole] = useState('');
+  const [rowArea, setRowArea] = useState('');
+  const [rowGroups, setRowGroups] = useState<string[]>([]);
   const [rowEmail, setRowEmail] = useState('');
   const [rowSend, setRowSend] = useState<SendMode>('hire_date');
   const [rowDate, setRowDate] = useState('');
@@ -109,6 +131,8 @@ const PrehireSection: React.FC = () => {
     setRowName(u.name ?? '');
     setRowEmployment(u.employment_type ?? '正社員');
     setRowRole(u.role_title ?? '一般');
+    setRowArea(mainAreaOf.get(u.id) ?? '');
+    setRowGroups(u.group_names ?? []);
     setShiftCount(null);
     if (kind === 'cancel') {
       // 🚨 取り消すと勤務表なども一緒に消える（on delete cascade）。先に件数を見せる
@@ -140,14 +164,14 @@ const PrehireSection: React.FC = () => {
     if (!r.ok) { setRowErr(r.error ?? ''); return; }
     done(rowDate <= today ? '入社日を変えました（今日から使えるようにしました）' : '入社日を変えました');
   };
-  // 名前・雇用形態・役職（🚨 役職の id は DB のトリガーが役職名から入れる。0件でもエラーにならないので件数を見る）
+  // 名前・雇用形態・役職・メインの部門・グループ。🚨 部門（staff_main_work_areas）は画面から書けないので staff-onboard の update で一緒に書く
   const saveInfo = async (u: AdminUserProfile) => {
     if (!rowName.trim()) { setRowErr('名前を入れてください'); return; }
     setRowBusy(true);
-    const { data, error } = await supabase.from('profiles')
-      .update({ name: rowName.trim(), employment_type: rowEmployment, role_title: rowRole }).eq('id', u.id).select('id');
+    const r = await callOnboard({ action: 'update', id: u.id, name: rowName.trim(), employment_type: rowEmployment, role_title: rowRole, main_area_id: rowArea || null, group_names: rowGroups });
     setRowBusy(false);
-    if (error || (data ?? []).length === 0) { setRowErr(`保存できませんでした：${error?.message ?? '対象が見つかりません'}`); return; }
+    if (!r.ok) { setRowErr(`保存できませんでした：${r.error}`); return; }
+    void loadAreas();
     done(`${rowName.trim()}さんの内容を直しました`);
   };
   const sendNow = async (u: AdminUserProfile) => {
@@ -166,6 +190,23 @@ const PrehireSection: React.FC = () => {
     done(`${u.name ?? ''}さんの登録を取り消しました`);
   };
 
+  const areaGroupFields = (area: string, setArea: (v: string) => void, gs: string[], setGs: (v: string[]) => void) => (
+    <>
+      <label style={label}>メインの部門</label>
+      <select value={area} onChange={e => setArea(e.target.value)} style={input}>
+        <option value="">（まだ決めない）</option>
+        {areas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+      </select>
+      <label style={label}>グループ</label>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px' }}>
+        {groupOptions.map(g => (
+          <label key={g} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: text, cursor: 'pointer' }}>
+            <input type="checkbox" checked={gs.includes(g)} onChange={e => setGs(e.target.checked ? [...gs, g] : gs.filter(x => x !== g))} /> {g}
+          </label>
+        ))}
+      </div>
+    </>
+  );
   const sendChoices = (value: SendMode, onChange: (m: SendMode) => void, allowHireDate: boolean) => (
     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
       {(['hire_date', 'now', 'none'] as SendMode[]).filter(m => allowHireDate || m !== 'hire_date').map(m => (
@@ -205,6 +246,7 @@ const PrehireSection: React.FC = () => {
                   <select value={role} onChange={e => setRole(e.target.value)} style={input}>{roleNames.map(o => <option key={o} value={o}>{o}</option>)}</select>
                 </div>
               </div>
+              {areaGroupFields(mainArea, setMainArea, groups, setGroups)}
               <label style={label}>メールアドレス（分かっていれば）</label>
               <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="あとから入れることもできます" style={input} />
               {hasEmail && (<><label style={label}>招待メール</label>{sendChoices(send, setSend, true)}</>)}
@@ -219,6 +261,7 @@ const PrehireSection: React.FC = () => {
               <div style={{ fontSize: 14, color: text, lineHeight: 1.9 }}>
                 <div><strong>{name}</strong>（{employment}・{role}）</div>
                 <div>入社日：{mdWeek(hireDate)}{hireDate <= today ? ' … 今日から使えるようになります' : ''}</div>
+                <div>メインの部門：{areaName(mainArea) || 'まだ決めない'} ／ グループ：{groups.length ? groups.join('・') : 'なし'}</div>
                 {hasEmail ? (
                   <div style={{ marginTop: 6, padding: '8px 10px', borderRadius: 6, border: `2px solid ${TOGGLE_BLUE}` }}>
                     <div style={{ fontSize: 12, color: sub }}>招待メールの送り先（打ち間違いがないか確かめてください）</div>
@@ -255,10 +298,11 @@ const PrehireSection: React.FC = () => {
             </div>
             <div style={{ fontSize: 12.5, color: sub, marginTop: 4, wordBreak: 'break-all' }}>
               メール：{noMail ? '未登録' : u.email} ／ 招待：{inviteStatusLabel(u)}
+              <br />部門：{areaName(mainAreaOf.get(u.id)) || 'まだ決めていない'} ／ グループ：{(u.group_names ?? []).length ? (u.group_names ?? []).join('・') : 'なし'}
             </div>
             {!mode && (
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-                <button onClick={() => openRow(u, 'info')} style={{ ...backBtn(isDarkMode), padding: '5px 12px', borderRadius: 6, fontSize: 12.5, cursor: 'pointer' }}>名前・雇用形態・役職を直す</button>
+                <button onClick={() => openRow(u, 'info')} style={{ ...backBtn(isDarkMode), padding: '5px 12px', borderRadius: 6, fontSize: 12.5, cursor: 'pointer' }}>名前・役職・部門・グループを直す</button>
                 <button onClick={() => openRow(u, 'email')} style={{ ...tintBtn(isDarkMode), padding: '5px 12px', borderRadius: 6, fontSize: 12.5, cursor: 'pointer' }}>{noMail ? 'メールを入れる' : 'メールを直す'}</button>
                 {!noMail && <button onClick={() => sendNow(u)} disabled={rowBusy} style={{ ...backBtn(isDarkMode), padding: '5px 12px', borderRadius: 6, fontSize: 12.5, cursor: 'pointer' }}>{u.invite_sent_at ? '再送' : '今すぐ送る'}</button>}
                 {pre && <button onClick={() => openRow(u, 'date')} style={{ ...backBtn(isDarkMode), padding: '5px 12px', borderRadius: 6, fontSize: 12.5, cursor: 'pointer' }}>入社日を変える</button>}
@@ -303,6 +347,7 @@ const PrehireSection: React.FC = () => {
                     <select value={rowRole} onChange={e => setRowRole(e.target.value)} style={input}>{roleNames.map(o => <option key={o} value={o}>{o}</option>)}</select>
                   </div>
                 </div>
+                {areaGroupFields(rowArea, setRowArea, rowGroups, setRowGroups)}
                 {rowErr && <p style={{ color: '#dc3545', fontSize: 13, margin: '8px 0 0' }}>{rowErr}</p>}
                 <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
                   <button onClick={closeRow} disabled={rowBusy} style={{ ...backBtn(isDarkMode), flex: 1, padding: '7px', borderRadius: 6, cursor: 'pointer' }}>やめる</button>

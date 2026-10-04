@@ -71,8 +71,8 @@ serve(async (req) => {
   }
 
   try {
-    if (action === 'create') return reply(await create(admin, body));
-    if (action === 'update') return reply(await update(admin, body));
+    if (action === 'create') return reply(await create(admin, body, gate.userId));
+    if (action === 'update') return reply(await update(admin, body, gate.userId));
     if (action === 'send') return reply(await sendNow(admin, String(body.id ?? '')));
     if (action === 'request_password_change') return reply(await requestPasswordChange(admin, body, gate.userId));
     return reply({ success: false, error: '知らない操作です' }, 400);
@@ -81,6 +81,40 @@ serve(async (req) => {
     return reply({ success: false, error: `処理に失敗しました：${String(e)}` }, 500);
   }
 });
+
+/** メインの部門とグループを確かめる（2026-10-04 ユーザー指示：登録・直すときに一緒に入れる）。
+ *  undefined＝触らない／null・空配列＝外す。知らない部門・グループは断る */
+async function checkAreaGroups(admin: SupabaseClient, b: Record<string, unknown>): Promise<{ ok: true; areaId: string | null | undefined; groups: string[] | undefined } | { ok: false; error: string }> {
+  let areaId: string | null | undefined = undefined;
+  if (b.main_area_id !== undefined) {
+    areaId = b.main_area_id ? String(b.main_area_id) : null;
+    if (areaId) {
+      const { data } = await admin.from('shift_work_areas').select('id').eq('id', areaId).eq('active', true).maybeSingle();
+      if (!data) return { ok: false, error: 'その部門は見つかりません' };
+    }
+  }
+  let groups: string[] | undefined = undefined;
+  if (b.group_names !== undefined) {
+    groups = Array.isArray(b.group_names) ? [...new Set((b.group_names as unknown[]).map(String).filter(Boolean))] : [];
+    if (groups.length > 0) {
+      const { data } = await admin.from('master_options').select('value').eq('category', 'group');
+      const known = new Set(((data ?? []) as { value: string }[]).map(r => r.value));
+      const unknown = groups.filter(g => !known.has(g));
+      if (unknown.length) return { ok: false, error: `知らないグループです：${unknown.join('、')}` };
+    }
+  }
+  return { ok: true, areaId, groups };
+}
+
+/** メインの部門を書く（null なら外す）。🚨 staff_main_work_areas は画面からは書けない（シフト管理は shift_patterns_save だけ）ので、ここで service_role で書く */
+async function writeMainArea(admin: SupabaseClient, userId: string, areaId: string | null, by: string | null): Promise<string | null> {
+  if (areaId === null) {
+    const { error } = await admin.from('staff_main_work_areas').delete().eq('user_id', userId);
+    return error?.message ?? null;
+  }
+  const { error } = await admin.from('staff_main_work_areas').upsert({ user_id: userId, area_id: areaId, updated_at: new Date().toISOString(), updated_by: by });
+  return error?.message ?? null;
+}
 
 async function emailTaken(admin: SupabaseClient, email: string, exceptId?: string): Promise<boolean> {
   let q = admin.from('profiles').select('id').ilike('email', email);
@@ -121,7 +155,7 @@ function scheduleFor(mode: SendMode, hireDate: string | null): { scheduled: stri
   return { scheduled: null, sendNow: false };
 }
 
-async function create(admin: SupabaseClient, b: Record<string, unknown>) {
+async function create(admin: SupabaseClient, b: Record<string, unknown>, by: string) {
   const name = String(b.name ?? '').trim();
   const hireDate = b.hire_date;
   const employmentType = String(b.employment_type ?? '正社員');
@@ -133,6 +167,8 @@ async function create(admin: SupabaseClient, b: Record<string, unknown>) {
   if (email && !isValidEmail(email)) return { success: false, error: 'メールアドレスの形が正しくありません' };
   if (!email && mode !== 'none') return { success: false, error: '招待メールを送るには、メールアドレスが要ります' };
   if (email && await emailTaken(admin, email)) return { success: false, error: 'このメールアドレスは、すでに登録されています' };
+  const ag = await checkAreaGroups(admin, b);
+  if (!ag.ok) return { success: false, error: ag.error };
 
   const loginEmail = email || `prehire-${crypto.randomUUID()}@staff.invalid`;
   // 🚨 作る直前に控えに書く（handle_new_user がこれを見て、経理への「新規登録」の通知を止める）。
@@ -162,11 +198,16 @@ async function create(admin: SupabaseClient, b: Record<string, unknown>) {
     registered_at: new Date().toISOString(),
     sort_order: ((maxRow as { sort_order?: number } | null)?.sort_order ?? 0) + 1,
     invite_scheduled_for: sch.scheduled,
+    ...(ag.groups !== undefined ? { group_names: ag.groups } : {}),
   });
   if (profErr) {
     await admin.auth.admin.deleteUser(id);
     return { success: false, error: `登録に失敗しました：${profErr.message}` };
   }
+
+  // メインの部門（失敗しても登録は済んでいる。理由を返す）
+  let areaError: string | null = null;
+  if (ag.areaId) areaError = await writeMainArea(admin, id, ag.areaId, by);
 
   let mailError: string | null = null;
   if (sch.sendNow) {
@@ -174,16 +215,27 @@ async function create(admin: SupabaseClient, b: Record<string, unknown>) {
     const r = p ? await deliverInvite(admin, p) : { ok: false as const, error: '登録した内容を読み直せませんでした' };
     if (!r.ok) mailError = r.error;
   }
-  return { success: true, id, active, sent: sch.sendNow && !mailError, scheduled_for: sch.scheduled, mail_error: mailError };
+  return { success: true, id, active, sent: sch.sendNow && !mailError, scheduled_for: sch.scheduled, mail_error: mailError, area_error: areaError };
 }
 
-async function update(admin: SupabaseClient, b: Record<string, unknown>) {
+async function update(admin: SupabaseClient, b: Record<string, unknown>, by: string) {
   const id = String(b.id ?? '');
   const p = await loadProfile(admin, id);
   if (!p) return { success: false, error: 'その人が見つかりません' };
   if (p.retired_at || p.retire_date) return { success: false, error: '退職の手続きがある人は、ここでは変えられません' };
 
+  const ag = await checkAreaGroups(admin, b);
+  if (!ag.ok) return { success: false, error: ag.error };
   const patch: Record<string, unknown> = {};
+  if (ag.groups !== undefined) patch.group_names = ag.groups;
+  // 名前・雇用形態・役職（入社予定の欄の［名前・雇用形態・役職を直す］）
+  if (b.name !== undefined) {
+    const n = String(b.name ?? '').trim();
+    if (!n) return { success: false, error: '名前を入れてください' };
+    patch.name = n;
+  }
+  if (b.employment_type !== undefined) patch.employment_type = String(b.employment_type);
+  if (b.role_title !== undefined) patch.role_title = String(b.role_title);
   // メールの差し替え（仮のアドレス → 本物、または打ち間違いの直し）
   if (b.email !== undefined) {
     const email = normalizeEmail(b.email);
@@ -208,6 +260,10 @@ async function update(admin: SupabaseClient, b: Record<string, unknown>) {
       patch.invite_scheduled_for = sch.scheduled;
       if (sch.sendNow) b.send = 'now';
     }
+  }
+  if (ag.areaId !== undefined) {
+    const e = await writeMainArea(admin, id, ag.areaId, by);
+    if (e) return { success: false, error: `メインの部門を保存できませんでした：${e}` };
   }
   let sendNowFlag = false;
   if (b.send !== undefined) {
